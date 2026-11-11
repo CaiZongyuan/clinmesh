@@ -76,6 +76,10 @@ const imagingService: ImagingServiceSnapshot = {
     source: 'synthetic-browser-contract', effectiveOn: '2026-08-24' },
   reportSections: ['technique', 'findings', 'impression'], version: 1,
 }
+const imagingRadiograph: ImagingServiceSnapshot = { ...imagingService, id: 'imaging-chest-radiograph', code: 'DX-CHEST',
+  examCode: 'chest-radiograph', method: 'X 线摄影', modality: 'DX', name: '胸片',
+  outpatientBilling: { ...imagingService.outpatientBilling!, id: 'synthetic-radiograph-price', priceFen: 8000 } }
+const imagingServices = [imagingService, imagingRadiograph]
 const pathologyService: PathologyServiceSnapshot = {
   applicability: '既往乳腺手术切除标本切片的会诊复核', bodySite: '乳腺', code: 'PATH-BREAST-SLIDE-CONSULT',
   department: '病理科', examCode: 'breast-slide-consultation', id: 'pathology-breast-slide-consultation',
@@ -84,6 +88,7 @@ const pathologyService: PathologyServiceSnapshot = {
     source: 'synthetic-browser-contract', effectiveOn: '2026-08-24' },
   specimenType: '既往手术切除标本的石蜡切片', stain: 'HE', version: 1,
 }
+const secondPathologyService: PathologyServiceSnapshot = { ...pathologyService, id: 'synthetic-pathology-second', code: 'SYN-PATH-SECOND', name: '合成第二病理会诊' }
 const sourceProcedures = [
   { code: '392021009', display: '乳房肿块切除术', performedAt: '2022-04-01T08:00:00+08:00', sourceReference: 'urn:uuid:procedure-0' },
   { code: '392023007', display: '乳腺病灶切除术', performedAt: '2023-01-05T08:00:00+08:00', sourceReference: 'urn:uuid:procedure-1' },
@@ -199,26 +204,30 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
         draftVersion = detail.laboratoryRequests!.draftVersion += 2
         recordIds.push(issued.id)
       } else if (item.kind === 'imaging') {
-        if (item.serviceId !== imagingService.id) throw new Error('Unknown selected imaging service')
-        const issued: ImagingRequest = { indication: item.indication, service: imagingService,
-          id: 'imaging-1', serviceRequestId: 'service-request-imaging-1', serviceRequestVersion: '1',
-          previousReports: [], status: 'issued', taskId: 'task-imaging-1', taskVersion: '1', version: 1 }
+        const service = imagingServices.find(service => service.id === item.serviceId)
+        if (service === undefined) throw new Error('Unknown selected imaging service')
+        const id = `imaging-${pending.requests.length + 1}`
+        const issued: ImagingRequest = { indication: item.indication, service,
+          id, serviceRequestId: `service-request-${id}`, serviceRequestVersion: '1',
+          previousReports: [], status: 'issued', taskId: `task-${id}`, taskVersion: '1', version: 1 }
         detail.imagingRequests!.requests.unshift(issued)
         draftVersion = detail.imagingRequests!.draftVersion += 2
         recordIds.push(issued.id)
       } else if (item.kind === 'pathology') {
-        if (item.serviceId !== pathologyService.id) throw new Error('Unknown selected pathology service')
+        const service = [pathologyService, secondPathologyService].find(service => service.id === item.serviceId)
+        if (service === undefined) throw new Error('Unknown selected pathology service')
         const sourceProcedure = sourceProcedures.find(source => source.sourceReference === item.sourceProcedureReference)
         if (sourceProcedure === undefined) throw new Error('Unknown prepared source procedure')
-        const issued: PathologyRequest = { purpose: item.purpose, sourceProcedure, service: pathologyService,
-          id: 'pathology-1', serviceRequestId: 'service-request-pathology-1', serviceRequestVersion: '1',
-          previousReports: [], status: 'issued', taskId: 'task-pathology-1', taskVersion: '1', version: 1 }
+        const issued: PathologyRequest = { purpose: item.purpose, sourceProcedure, service,
+          id: `pathology-${detail.pathologyRequests!.requests.length + 1}`, serviceRequestId: `service-request-pathology-${detail.pathologyRequests!.requests.length + 1}`, serviceRequestVersion: '1',
+          previousReports: [], status: 'issued', taskId: `task-pathology-${detail.pathologyRequests!.requests.length + 1}`, taskVersion: '1', version: 1 }
         detail.pathologyRequests!.requests.unshift(issued)
         draftVersion = detail.pathologyRequests!.draftVersion += 2
         recordIds.push(issued.id)
       } else throw new Error('Unexpected prepared investigation kind')
     }
-    return command({ kind, draftVersion, encounterVersion: detail.encounter.versionId, recordIds })
+    return command({ kind, draftVersion, encounterVersion: detail.encounter.versionId, recordIds,
+      results: recordIds.map((recordId, selectionIndex) => ({ selectionIndex, status: 'succeeded', recordId })) })
   }
   const disposition = /^\/api\/his\/v1\/doctor\/cases\/synthetic-case\/recommendations\/([^/]+)\/considerations\/disposition$/.exec(path)
   if (disposition !== null) {
@@ -309,8 +318,8 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
     const page = Number(url.searchParams.get('page') ?? '1')
     return Response.json({ items: items.slice((page - 1) * 20, page * 20), page, pageSize: 20, total: items.length })
   }
-  if (path.endsWith('/imaging-services')) return Response.json({ items: [{ available: true, service: imagingService }] })
-  if (path.endsWith('/pathology-services')) return Response.json({ items: [{ available: true, service: pathologyService, sourceProcedures }] })
+  if (path.endsWith('/imaging-services')) return Response.json({ items: imagingServices.map(service => ({ available: true, service })) })
+  if (path.endsWith('/pathology-services')) return Response.json({ items: [pathologyService, secondPathologyService].map(service => ({ available: true, service, sourceProcedures })) })
   if (path.endsWith('/laboratory-request/draft') && init?.method === 'PUT') {
     const saved = saveLaboratoryRequestDraftRequestSchema.parse(JSON.parse(String(init.body))).input
     const selectedService = [service, secondService].find(item => item.id === saved.catalogItemId)

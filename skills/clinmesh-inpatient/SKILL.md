@@ -122,6 +122,14 @@ clinmesh inpatient reverse-charge --input @reversal.json --idempotency-key <key>
 
 校对及停嘱传 `orderId`、`expectedOrderVersion`；医生申请停嘱还需 `reason`。本院虚拟班次 QD 为上海时间08:00，BID为08:00与20:00；首日只生成护士校对时尚未过去的时点。临时医嘱一次执行，PRN仅由护士按已校对医嘱和理由显式请求，时钟推进不自动执行PRN。班次是本院仿真策略，不代表全国统一用药时间。
 
+医生停嘱与护士核停分别选择和确认；共同理由允许逐项覆盖，确认前核对每项最终理由。`clinical`、`pharmacy-read` 及医嘱相关回执的 `stopReason` 仅返回该医嘱停嘱事务明确标记的理由；历史缺失时回查原记录，不把任意 `note` 当作停嘱理由。旧回执可以缺失该字段，恢复先查原 receipt，不为补理由重新申请停嘱。页面集中操作最多20条，逐项沿用原 Command 与幂等键；结果不明暂停后续，恢复原项后重新审阅余项，不提供跨岗或混合动作批次。
+
+```bash
+clinmesh operations schema inpatient.clinical.read
+clinmesh operations schema inpatient.order.request-stop
+clinmesh operations schema inpatient.order.verify-stop
+```
+
 药师使用独立药房清单与详情；这些响应只含药嘱、执行单、相关批次、实际发药与有效药物过敏风险，不含诊断备注、服务医嘱、预交金或账目。旧 `catalog/list/read/clinical-catalog/clinical` 不授权药师。收费员从 `charges` 读取真实项目标签、逐项金额、冲正关联、净额和财务状态，不能读取 `clinical`。
 
 ```bash
@@ -645,6 +653,8 @@ clinmesh command receipt get --operation-id inpatient.drg.reservation.create --i
 
 预留创建、释放与核定均返回标准 Command 回执，业务列表位于 `data`，`effects/auditId/requestId` 用于核对提交结果。响应丢失先按原 operation 和幂等键查 receipt，再核对业务列表；不能因未拿到列表换键重做。
 
+释放明确拒绝时按 `error.reason` 处理：`RESERVATION_REMAINDER_CHANGED` 重新读取并核对余量和预留版本，`RESERVATION_NOT_RELEASABLE` 核对当前状态并停止释放该项；`INPATIENT_RESERVATION_NOT_FOUND` 刷新本次住院的清单，确认原项是否仍在。
+
 `simulation.json`（推演草稿；空草稿等价于只对照已记账事实）：
 
 多个待实施手术计划时，在完整推演中用 `draft.primarySurgeryRequestId` 明确假想主操作；唯一计划可省略。该选择只改变 projected 主次顺序，formal 仍读取首页实际主操作。未选择时 projected 明确输入不完整；`INPATIENT_DRG_PLAN_CONFLICT` 表示计划已取消、完成或不属本次住院，刷新后重新选择。单项医嘱审阅使用与 `issue-order` 实际选择一致的 medications/services 草稿。
@@ -674,11 +684,14 @@ clinmesh command receipt get --operation-id inpatient.drg.reservation.create --i
 
 `release.json`：
 
+释放前读取预留的 `version/consumedQuantity/remainingQuantity/status/requestId`，把审阅时的 `version` 写入 `expectedReservationVersion`。审阅后部分使用也会使版本变化；`INPATIENT_RESERVATION_CONFLICT` 时保留失败输入，明确重新审阅后以新键提交新尝试。结果未知时按原 body、原键恢复，不能更新版本后复用原键。该字段对旧单条调用可省略，连续维护始终携带；释放只改变未使用余量，不冲销已记账材料费用。
+
 ```json
 {
   "admissionId": "synthetic-admission",
   "encounterVersion": "2",
   "reservationId": "synthetic-reservation",
+  "expectedReservationVersion": 1,
   "reason": "合成手术取消释放预留"
 }
 ```

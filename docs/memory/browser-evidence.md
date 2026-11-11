@@ -24,9 +24,19 @@
 
 - 窄屏与 CSS zoom 组合验证前，按 `viewport / zoom` 核有效 CSS 宽度，并读取全局 `body` 的 computed `min-width`；低于产品最小宽度会使 Portal 等空容器也表现为横向溢出。组件验收分别覆盖受支持窄屏和缩放，用 DOM 尺寸区分全局宽度下限与组件溢出；不要为局部回归改写全站宽度合同。住院收款入口的文字与聚合尺寸证据见 [真实入口测试](../../apps/web/e2e/inpatient-discharge.spec.ts)。
 
+- 固定弹窗在根节点 CSS zoom 下若按 `svh` 计算高度，物理高度可能随缩放超出视口；使用固定包含块的百分比高度约束，并同时核对弹窗上下边界和底栏。Surface 样式会将 `100svh` 改写为 `100%`，因此仅通过 ShadowRoot 合同不能证明 standalone Web 的缩放行为；复用[手术连续选材旅程](../../apps/web/e2e/inpatient-surgery-batch.spec.ts)在已填长清单中只滚动清单，验证末行和底栏可达、底栏位置不变。
+
+- Surface fixture 在 `100vh` 外框上应用 CSS zoom 时，外框可能随缩放超出真实视口，造成假裁切。将 fixture 宽高除以 zoom，保持宿主实际物理尺寸，并断言应用根实际高度等于视口高度、宿主实际宽度等于目标宽度，再验证末项可达与固定头尾；不要放宽产品可见性断言来迁就错误外框。参考[实际执行双版本合同](../../apps/dsh-web/src/client/inpatient-execution-batch.browser.test.ts)。
+
+- Playwright 的 TypeScript 转译不承担类型检查，浏览器 fixture 还须通过所属包的 `typecheck`。DOM 祖先遍历将 `parentElement` 或 `ShadowRoot.host` 回写到当前节点时，为中间父节点显式声明 `Element | null`，避免循环推断触发 TS7022；参考[实际执行布局证据采集](../../apps/dsh-web/src/client/inpatient-execution-batch.browser.test.ts)。
+
 - Base UI 的可换行 TabsList 使用 `h-auto!` 覆盖 `group-data-horizontal/tabs:h-8`；普通 `h-auto` 的优先级不足，英文大字号窄屏下可能遮挡后续按钮。需要多行显示的筛选页签还应在调用处允许 Trigger 文字换行和长词断行，让高度按完整内容计算。浏览器回归验证文字边界、实际行数及真实指针命中；短单词被挤成逐字纵排即使完整可见也不适合阅读，参见[来源页签布局合同](../../apps/dsh-web/src/client/non-doctor-filter-layout.browser.test.ts)。
 
 - 模态审阅弹窗内的写入失败须在弹窗内展示；页面背景的全局 Alert 会被模态可访问性隔离遮住。资金请求丢回执后，只在请求仍进行时禁用关闭；持久原意图待恢复时应允许退出审阅，再从原 receipt 恢复，不能把全部关闭按钮随 pending intent 永久禁用。用真实[结算后退款旅程](../../apps/web/e2e/inpatient-discharge.spec.ts)验证错误可见、刷新只查原回执且只发送一次资金请求。
+
+- 异步清空草稿的确认窗须同时在 `onOpenChange` 阻止请求期间关闭，并禁用取消按钮；只禁用确认按钮仍会允许取消或 Escape 关闭，后台删除继续执行。回归暂停真实 DELETE，检查取消与 Escape 均受保护，再分别验证成功关闭、失败在窗内可见且恢复退出能力；见[门诊放射草稿回归](../../apps/web/e2e/outpatient-imaging-batch.spec.ts)。
+
+- 多行本地草稿替代服务端单草稿后，页签待办摘要须订阅同一账号、Workspace/Epoch、岗位、病例和 Encounter 的草稿来源；只读服务端草稿与自动建议会漏报人工待办。核对跨类别切换、刷新、清空及开立后的数量，并覆盖本地行与旧单草稿或 Agent 建议同服务时只计一次；见[双版本检查工作台合同](../../apps/dsh-web/src/client/investigation-workspace.browser.test.ts)和[放射真实入口](../../apps/web/e2e/outpatient-imaging-batch.spec.ts)。
 
 - 浏览器高光坐标测试应比较目标的可见部分；headless Chrome 的默认视口可能裁掉目标底部，不能把完整 `getBoundingClientRect()` 与已按视口裁剪的边框直接比较。保留裁剪断言，不通过放大窗口掩盖差异。
 
@@ -38,17 +48,23 @@
 
 - 表格里的 `sr-only` 标签虽然被视觉裁剪，仍可能因 Field 直属子项的宽度规则扩大单元格 `scrollWidth`。定位无可见内容的横向溢出时同时测量隐藏标签的实际盒子；已有列表头能说明字段时，用表头和控件完整的 `aria-label` 保留可访问名称，避免绝对定位隐藏盒子撑宽。验证批次与数量时同时覆盖长药名、826px 和浅深主题，不靠截图中看不见内容就判定没有溢出。
 
+- 长名称表格仅检查单元格宽度，会漏掉 `nowrap` 文字穿越相邻金额列；同时核对实际单元格的 computed `whiteSpace`、逐行 DOM Range 边界和安全截图。浏览器 fixture 若以虚拟模块注入当前构建的 CSS，插件须在默认文件解析前拦截（`enforce: 'pre'`）并断言实际 `load`，避免同名磁盘生成文件抢先命中；源码变更后以全新进程重建，再核对 DOM class 与实际样式。不能把不同构建产物的画面差异直接归因于选择器；复用[多费用预览合同](../../apps/dsh-web/src/client/multi-charge-payment.browser.test.ts)。
+
 - 固定宽度的状态标签须验证中英文与三档应用字号。仅检查 Badge 或列表项边界会漏掉被 `overflow-hidden` 裁切的文字；浏览器回归用 DOM Range 检查各行文字边界，并验证内部换行后业务区末尾仍可滚动到达。字号偏好通过实际应用根的 `data-clinmesh-app` 与 `data-font-size` 生效，fixture 须沿用这些属性并核对实际计算字号变化，防止空根标记或无效字号让矩阵退回同一默认样式。
 
 - 验证独立滚动时只设置目标区域的 `scrollTop` 或使用真实滚轮，等待页签切换和滚动后的渲染帧，并将末尾边界与实际宿主比较。`scrollIntoView` 会滚动 `overflow-hidden` 祖先，可能掩盖内容已被固定头部挤出宿主的问题；头部 fixture 同时覆盖多条过敏、长文本、矮屏和大字号。
 
 - 刷新队列并连续选择下一条时，查询失效刷新可能先于 mutation 的 success 通知移走旧行。应保留完成操作前的行位置，待本次写入确认后再选择该位置的下一条；不能在每次查询更新时先覆盖旧队列。用至少两条真实执行验证自动选择与清空后的交接，单条成功用例无法证明连续选择。参考[住院原型共享旅程](../../apps/web/e2e/inpatient-prototype-layout.journey.ts)。
 
+- 新增带优先级的业务操作栏时，真实入口回归还须覆盖零待办、无草稿且无历史尝试的患者，验证该空环节不会覆盖接诊、换床等原操作的完成反馈或虚报完成。成功断言优先匹配具体患者与实际动作的通知，并回读原业务事实；只查任意 `role=status` 的通用成功文案会混淆其他保留挂载的环节。参考[住院接诊旅程](../../apps/web/e2e/inpatient-admission.spec.ts)。
+
 - 多个 `keepMounted` 分区复用表单时，固定 `id` 会使后挂载标签关联到隐藏实例；只用控件 locator 填写会漏掉真实标签点击和读屏名称问题。实例 ID 用 `useId`，Agent 高亮用稳定语义属性，并在两个分区往返后真实点击标签验证焦点和各自输入保留。当前依据见[住院结构决策](../decisions/implemented/architecture/2026-11-03-inpatient-prototype-composition.md)。
 
 - 字号属性更新后，按钮仍可能处于约 150 毫秒的 `font-size` 过渡；若干渲染帧不保证结束，布局断言须先等实际 computed 字号到达目标，不能禁用动画或固定 sleep。复用[住院细节旅程](../../apps/web/e2e/inpatient-review-layout.journey.ts)同时核对放大与恢复字号。
 
 ## 预览文件与浏览器会话
+
+- 验证响应丢失后的恢复时，除刷新和组件重挂载，还须通过真实退出、同身份重新登录及原回执查询覆盖账号清理边界；退出前同时保留一项未提交草稿，分别断言草稿清除、原操作仍可恢复、请求与费用未重复。仅重挂载不会执行 `signOut` 的存储清理，相关回归见[门诊检查真实入口](../../apps/web/e2e/investigation-workspace.spec.ts)。
 
 - 本地 HTTP 预览服务可能随会话结束或重启停止。交付自包含 HTML 时同时保留文件入口；面向 Windows 用户提供并校验用户侧持久目录中的副本，不能将临时服务 URL 作为唯一交付入口。
 
@@ -71,6 +87,8 @@
 - `agent-browser click @ref` 对位于嵌套滚动容器可视区之外的按钮可能不产生点击且不报错；先 `scrollintoview @ref` 再点击。Base UI 的 Select 用 `focus` 加 `press Enter` 打开，直接 click 不展开选项。
 
 ## 录制、剪辑与发布证据
+
+- 共享 `AlertDialogAction` 是普通按钮，异步成功不会自动关闭确认框。业务组件须控制 `open`，在本地丢弃或服务端删除成功后关闭；失败留在框内展示，且保留输入。回归同时验证记录消失、确认框退出和下一患者入口可操作，避免只检查背景数据就漏掉模态遮挡。参见[检验清空与跨病例回归](../../apps/web/src/app/role-workspaces.test.tsx)。
 
 - `agent-browser` 原生 WebM 会忠实记录自动化输入和等待，未经编排的完整闭环可能远慢于人类观看速度。优先按业务阶段分段录制，成片统一到 3–4 倍速并添加开场、岗位/动作字幕和结束状态。
 

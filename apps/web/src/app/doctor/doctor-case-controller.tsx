@@ -157,6 +157,9 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     selectInvestigation,
     selectInvestigationRequest,
     pageScope,
+    laboratoryPendingDrafts,
+    imagingPendingDrafts,
+    pathologyPendingDrafts,
     imagingView,
     detail,
     investigationView,
@@ -182,7 +185,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     issueRequest,
     deleteRequestDraft,
     cancelRequest,
-    retryResultGeneration,
     acknowledgeReport,
     correctReport,
     controlRecording,
@@ -247,6 +249,9 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
         activeCaseSection,
         investigationView,
         laboratorySelection: { catalogItemId: resolvedLaboratoryItemId, indicationCode: resolvedIndicationCode },
+        laboratoryPendingDrafts,
+        imagingPendingDrafts,
+        pathologyPendingDrafts,
         clinicalDocument: currentClinicalDocument,
         consultationVersion: detail.data?.consultation?.version,
         firstVisitDraftVersion: detail.data?.drafts?.firstVisit?.version,
@@ -328,7 +333,10 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
         presentation: detail.data.presentation,
       },
       clinicalDocumentDraft: currentClinicalDocument ?? null,
-      laboratoryDraft: { catalogItemId: resolvedLaboratoryItemId, indicationCode: resolvedIndicationCode },
+      laboratoryDraft: laboratoryPendingDrafts.at(-1)?.value ?? { catalogItemId: resolvedLaboratoryItemId, indicationCode: resolvedIndicationCode },
+      laboratoryDrafts: laboratoryPendingDrafts,
+      imagingDrafts: imagingPendingDrafts,
+      pathologyDrafts: pathologyPendingDrafts,
       queue: queue.data ?? null,
       queueCount: queue.data?.total ?? 0,
       section: activeCaseSection,
@@ -347,6 +355,9 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     correctReport.mutateAsync,
     currentClinicalDocument,
     detail.data,
+    laboratoryPendingDrafts,
+    imagingPendingDrafts,
+    pathologyPendingDrafts,
     detailUnavailable,
     detail.isPending,
     canCorrectReports,
@@ -380,7 +391,7 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
   ])
   useRegisterAgentPage(agentPage)
   return (
-    <DoctorDraftMarksProvider><DoctorPreparationProvider detail={detailUnavailable ? undefined : detail.data} scope={pageScope}
+    <DoctorDraftMarksProvider><DoctorPreparationProvider session={session} detail={detailUnavailable ? undefined : detail.data} scope={pageScope}
       inputRevision={recommendationRevision}
       formRevisions={activeCaseId === undefined ? undefined : agentDraftHydrationRevisions[activeCaseId]}
       enabled={!detailUnavailable && detail.data?.consultation !== undefined && detail.data.encounter.status === 'in-progress' && detail.data.status !== 'awaiting-doctor'}>
@@ -533,6 +544,9 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
             <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
           ) : (
             <CaseDetail
+              investigationActionContext={{ session, caseId: detail.data.caseId, patientId: detail.data.patient.id,
+                encounterId: detail.data.encounter.id, patientName: detail.data.patient.name,
+                onChanged: () => refreshCaseById(detail.data.caseId) }}
               patientActions={<InpatientReferral key={detail.data.encounter.id} encounterId={detail.data.encounter.id} encounterVersion={detail.data.encounter.versionId} locale={locale} session={session}
                 patient={detail.data.patient} registrationNumber={detail.data.registrationNumber} diagnosisConfirmation={detail.data.diagnosis?.confirmation} />}
               clinicalDocumentUpdates={clinicalDocumentUpdates}
@@ -636,10 +650,10 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
                   error: saveCaseDiagnosis.variables?.caseId === detail.data.caseId
                     ? saveCaseDiagnosis.error
                     : null,
-                  onSubmit: entries => saveCaseDiagnosis.mutate({
+                  onSubmit: (entries, callbacks) => saveCaseDiagnosis.mutate({
                     caseId: detail.data.caseId,
                     entries,
-                  }),
+                  }, callbacks),
                   pending: saveCaseDiagnosis.isPending
                     && saveCaseDiagnosis.variables?.caseId === detail.data.caseId,
                   savedRevision: saveCaseDiagnosis.isSuccess
@@ -711,36 +725,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
               onSelectInvestigation={selectInvestigation}
               onSelectInvestigationRequest={selectInvestigationRequest}
               laboratoryRequestActions={{
-                acknowledge: {
-                  error: acknowledgeReport.variables?.caseId === detail.data.caseId
-                    ? acknowledgeReport.error
-                    : null,
-                  onSubmit: request => acknowledgeReport.mutate({
-                    caseId: detail.data.caseId,
-                    request,
-                  }),
-                  pending: acknowledgeReport.isPending
-                    && acknowledgeReport.variables?.caseId === detail.data.caseId,
-                  ...(acknowledgeReport.isPending
-                    && acknowledgeReport.variables?.caseId === detail.data.caseId
-                    ? { pendingRequestId: acknowledgeReport.variables.request.id }
-                    : {}),
-                },
-                cancel: {
-                  error: cancelRequest.variables?.caseId === detail.data.caseId
-                    && detail.data.laboratoryRequests?.requests.some(
-                      request => request.id === cancelRequest.variables?.request.id,
-                    ) === true
-                    ? cancelRequest.error
-                    : null,
-                  onSubmit: request => cancelRequest.mutate({ caseId: detail.data.caseId, request }),
-                  pending: cancelRequest.isPending
-                    && cancelRequest.variables?.caseId === detail.data.caseId,
-                  ...(cancelRequest.isSuccess
-                    && cancelRequest.variables?.caseId === detail.data.caseId
-                    ? { successRequestId: cancelRequest.variables.request.id }
-                    : {}),
-                },
                 correct: {
                   allowed: canCorrectReports,
                   error: correctReport.variables?.caseId === detail.data.caseId
@@ -796,21 +780,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
                     && issueRequest.variables?.caseId === detail.data.caseId,
                   ...(issueRequest.variables?.caseId === detail.data.caseId && issueRequest.data !== undefined
                     ? { successRequestId: issueRequest.data.data.request.id } : {}),
-                },
-                retry: {
-                  error: retryResultGeneration.variables?.caseId === detail.data.caseId
-                    ? retryResultGeneration.error
-                    : null,
-                  onSubmit: request => retryResultGeneration.mutate({
-                    caseId: detail.data.caseId,
-                    request,
-                  }),
-                  pending: retryResultGeneration.isPending
-                    && retryResultGeneration.variables?.caseId === detail.data.caseId,
-                  ...(retryResultGeneration.isPending
-                    && retryResultGeneration.variables?.caseId === detail.data.caseId
-                    ? { pendingRequestId: retryResultGeneration.variables.request.id }
-                    : {}),
                 },
                 save: {
                   error: saveLaboratoryRequest.variables?.caseId === detail.data.caseId

@@ -34,7 +34,8 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
     const panel = page.getByRole('tabpanel', { name: stage, exact: true })
     if (stage === '诊断医嘱') {
       await expectBefore(panel.getByRole('region', { name: '住院诊断摘要', exact: true }), panel.getByRole('region', { name: '住院医嘱', exact: true }))
-      await expectBefore(panel.getByRole('region', { name: '住院医嘱', exact: true }), panel.getByRole('region', { name: '开立医嘱', exact: true }))
+      await expect(page.getByRole('button', { name: '开立医嘱', exact: true })).toBeVisible()
+      await expect(panel.getByLabel('医嘱项目', { exact: true })).toHaveCount(0)
       const recordsTrigger = panel.getByRole('button', { name: /^执行记录 \(\d+\)$/ })
       await recordsTrigger.click()
       const records = page.getByRole('dialog', { name: /执行记录/ })
@@ -57,7 +58,7 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
       await expect(composer).toHaveCount(0)
       await panel.getByRole('button', { name: '开立住院检查', exact: true }).click()
       await expect(composer.getByLabel('搜索检查检验目录', { exact: true })).toBeVisible()
-      await composer.getByRole('button', { name: '取消', exact: true }).click()
+      await composer.getByRole('button', { name: '关闭', exact: true }).click()
       await expect(composer).toHaveCount(0)
     } else if (stage === '手术') {
       await expectBefore(panel.getByRole('region', { name: '当前手术计划', exact: true }), panel.getByRole('region', { name: '开始手术还差', exact: true }))
@@ -116,13 +117,15 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
   const nurseOrders = page.getByRole('tab', { name: '诊断医嘱', exact: true })
   await expect(nurseOrders.getByText('1', { exact: true })).toBeVisible()
   const action = page.getByRole('region', { name: '当前操作', exact: true })
-  await expect(action).toContainText('还差 1 条医嘱待校对')
+  await page.getByRole('checkbox', { name: '选择校对：苯磺酸氨氯地平片', exact: true }).check()
+  await expect(action).toContainText('已选 1 条新医嘱待核对')
   if (options.capture) {
     await workspace.evaluate(element => { element.style.width = '1101px' })
     await options.appearance('light')
     await options.capture('nurse-校对底栏')
   }
-  await action.getByRole('button', { name: '校对下一条医嘱', exact: true }).click()
+  await action.getByRole('button', { name: '集中核对新医嘱 (1)', exact: true }).click()
+  await page.getByRole('dialog', { name: '集中核对新医嘱', exact: true }).getByRole('button', { name: '确认校对 1 条新医嘱', exact: true }).click()
   await expect(action).toContainText('本次医嘱校对已完成')
   await expect(nurseOrders.getByText('1', { exact: true })).toHaveCount(0)
   await expect(page.getByLabel('停嘱或按需执行理由', { exact: true })).toHaveCount(0)

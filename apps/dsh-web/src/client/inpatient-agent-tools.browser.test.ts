@@ -47,6 +47,7 @@ const require = createRequire(import.meta.url)
 for (const version of ['18', '19']) test.describe(`inpatient Agent React ${version}`, () => {
   let code: string, styles: string
   test.beforeAll(async () => {
+    test.setTimeout(120_000)
     const react = version === '18' ? 'react18' : 'react', dom = version === '18' ? 'react-dom18' : 'react-dom'
     const result = await build({ configFile: false, logLevel: 'silent', esbuild: { jsx: 'automatic', jsxDev: false },
       define: { 'process.env.NODE_ENV': JSON.stringify('production') }, resolve: { alias: [
@@ -113,10 +114,13 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await page.getByRole('button', { name: '查看合成上下文绑定患者', exact: true }).click()
     await expect(page.getByLabel('当前上下文')).toContainText(subject.order.id)
     const action = page.getByRole('region', { name: '当前操作', exact: true })
-    await expect(action.getByRole('button', { name: '确认住院诊断', exact: true })).toBeVisible()
+    await expect(action.getByRole('button', { name: '开立医嘱', exact: true })).toBeVisible()
+    await expect(page.getByLabel('医嘱项目', { exact: true })).toHaveCount(0)
+    await action.getByRole('button', { name: '开立医嘱', exact: true }).click()
     await page.getByLabel('医嘱项目', { exact: true }).fill('糖尿病健康教育')
     await page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: /糖尿病健康教育/ }).click()
     await expect(action.getByRole('button', { name: '开立医嘱', exact: true })).toBeVisible()
+    await page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByRole('button', { name: '关闭', exact: true }).click()
     await page.getByRole('button', { name: '添加诊断', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '确认住院诊断', exact: true })
     await dialog.getByLabel('搜索诊断名称或编码', { exact: true }).fill('高血压')
@@ -124,8 +128,9 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await dialog.getByRole('group', { name: '高血压 入院病情', exact: true }).getByRole('button', { name: '有', exact: true }).click()
     await dialog.getByRole('button', { name: '确认住院诊断', exact: true }).click()
     await expect.poll(async () => (await clinical()).diagnosis.entries[0]?.coding.id).toBe('diagnosis-hypertension')
-    await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
     await action.getByRole('button', { name: '开立医嘱', exact: true }).click()
+    await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
+    await page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByRole('button', { name: '开立所选医嘱（1）', exact: true }).click()
     await expect.poll(async () => (await clinical()).orders.length).toBe(2)
   })
   test('收费助手只填写和预览，人工原位收款结算后仍可进入财务更正', async ({ page, browserApp }) => {
@@ -232,8 +237,11 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await page.getByRole('button', { name: '助手准备已阅', exact: true }).click()
     await expect(page.getByLabel('助手结果')).toContainText('请先实际查看该报告的影像')
     await expect(page.getByRole('region', { name: '已阅报告', exact: true })).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '已阅', exact: true })).toBeDisabled()
-    await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '已阅：合成胸片', exact: true })).toBeDisabled()
+    await page.getByRole('button', { name: '连续阅读住院报告', exact: true }).click()
+    const reader = page.getByRole('dialog', { name: '住院报告阅读与已阅确认', exact: true })
+    await reader.getByRole('button', { name: '打开报告：合成胸片', exact: true }).click()
+    await expect(reader.getByRole('checkbox', { name: '选择已阅：合成胸片', exact: true })).toBeDisabled()
+    await expect(reader.getByRole('button', { name: '核对选中报告', exact: true })).toBeDisabled()
     expect(acknowledgements).toBe(0)
   })
   test('开立住院检查窗口选择项目并确认适应证后开立', async ({ page, browserApp }) => {
@@ -267,8 +275,10 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     const indication = composer.getByRole('combobox', { name: '检验适应证', exact: true })
     if (await indication.count() > 0) { await indication.click(); await page.getByRole('option').first().click() }
     const issued = page.waitForResponse(response => response.url().endsWith(`${subject.path}/investigations/issue`))
-    await composer.getByRole('button', { name: '开立住院检查', exact: true }).click()
+    await composer.getByRole('button', { name: '开立所选检验（1）', exact: true }).click()
     expect((await issued).status()).toBe(200)
+    await expect(composer.getByText('已成功开立 1 项', { exact: true })).toBeVisible()
+    await composer.getByRole('button', { name: '关闭', exact: true }).click()
     await expect(composer).toHaveCount(0)
     expect(issuedPayload).toEqual({ input: { encounterVersion: '2', catalogVersion: 1, selection: { kind: 'laboratory', catalogItemId: 'hospital-lab-wbc', indicationCode: 'infection-screening' } } })
     await expect(page.locator('article').filter({ hasText: '合成白细胞计数' })).toContainText('待送检')
@@ -304,7 +314,9 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     page.on('request', request => { if (request.method() === 'POST' && request.url().includes('/api/his/v1/inpatient/')) writes++ })
     await page.setContent(`<!doctype html><html data-binding-mode="report" data-admission-id="${subject.admission.id}"><head><style>${styles}</style></head><body><script>${code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     await page.getByRole('button', { name: '查看影像', exact: true }).click()
-    await expect(page.getByRole('button', { name: '已阅', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: '已阅', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('region', { name: '影像阅片', exact: true })).toBeVisible()
+    await expect(page.getByText('先查看影像，再已阅', { exact: true })).toHaveCount(0)
     await page.getByRole('button', { name: '准备当前报告已阅', exact: true }).click()
     const review = page.getByRole('region', { name: '已阅报告', exact: true })
     await expect(review).toBeVisible()

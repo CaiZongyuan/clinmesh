@@ -32,6 +32,8 @@
 
 - HTTP 代理 CONNECT 已建立后仍持续 TLS 中断时，可对同一本地混合代理比较 `socks5h`，并为 Git 临时指定 `http.proxy` 和 `http.version=HTTP/1.1`；以真实 `ls-remote`／push 验证，保留命令局部设置，不改全局代理。单次 curl HEAD 成功不表示 Git 或 gh API 已恢复；改用 curl API 时，认证头经进程标准输入传入，不将凭证放入命令参数、文件或日志，也不关闭 TLS 校验。
 
+- TUN下HTTPS握手持续失败时，先区分实际规则组选中节点与未使用的GLOBAL选择，分别做小范围只读连接探测。代理配置中的控制管道名可能与当前运行实例不同，读取控制API前核对活跃管道；凭证只在内存使用。任务临时切换现有可用路径时，保存原选择，在子进程结束的finally中恢复并回读，不修改持久订阅或全局默认配置，也不把一次恢复推断为TLS根因。
+
 - PR 从 draft 转为 ready 会触发仓库的异步 Codex 审查。合并前核对最新提交对应的 review summary、审查评论与完成反应；审查运行中先等待结果，处理 findings 后沿用已有合并授权。推送修复后若摘要仍指向旧提交，核对是否触发新一轮审查；已有 Ready 授权时可通过 draft → ready 状态事件重新触发，并确认审查绑定新提交。CI 与自动审查的状态分别核对。
 
 - 关联 issue 用 `Ref`/`Refs #N` 只建立引用，GitHub 自动关闭只识别 `Closes`/`Fixes`/`Resolves` 关键词；本仓库 squash merge 的提交说明是"PR 标题 + 各条提交正文"，不含 PR 正文，所以正文里的关闭关键词在 squash 下也不生效。交付型 PR（issue 范围随本次交付完成）的正文统一写 `Closes #N`；合并后发现 issue 仍 OPEN 时核对提交说明后手动关闭并附原因，不重复推送只改关键词的空提交。
@@ -44,7 +46,7 @@
 
 - 给 drizzle 新增迁移时，用 `rg -n '<上一版迁移文件名>' apps/server/tests` 扫描全部测试：精确 `applied` 数组断言须补新迁移项，旧库 fixture 的 `pending`／排除分组也须同步。漏掉后者会把新迁移提前装入尚无依赖表或列的旧 schema，表现为 `no such table`／`no such column`，参见[旧库升级回归](../../apps/server/tests/inpatient-main-migration.test.ts)。修改后逐项核对全部搜索结果，并运行所有涉及这些迁移清单的完整测试文件；仅跑新增迁移或局部业务用例会漏掉全局升级合同。
 
-- 扩展 Agent-facing DTO 后，沿 schema 的消费者核对读取操作的 Catalog 版本与摘要；只更新保存、签署等写操作会漏掉共享响应 schema 自动带出的字段。用 operation ID 扫描版本漂移断言，并检查字段数量等旧描述；病例详情新增 `clinicalHistory` 时曾遗漏 `doctor.case.get`，对应回归见 `apps/cli/tests/skill-commands.test.ts`。
+- 扩展 Agent-facing DTO 后，沿 schema 的消费者核对读取操作的 Catalog 版本与摘要；只更新保存、签署等写操作会漏掉共享响应 schema 自动带出的字段。Catalog 升版时用 operation ID 同时扫描共享合同和 CLI 的版本断言，并检查字段数量等旧描述；病例详情和预留释放的回归分别见 `apps/cli/tests/skill-commands.test.ts` 和 `packages/contracts/tests/his-operations.test.ts`。
 
 - 迁移清单也有固定历史边界：[共享收款切换前夹具](../../apps/server/tests/fixtures/historical-payment-schema.ts)只装载 `0103_payment-collection-cutover.sql` 之前的迁移，其 `applied` 断言不追加后续版本。[切换运行表清单](../../apps/server/src/infrastructure/sqlite/payment-cutover.ts)会无条件读取并删除每个登记表，不能把 `0103` 执行时尚不存在的后续表加入其中；新增表的隔离与清理由自身外键和当前迁移回归验证。
 

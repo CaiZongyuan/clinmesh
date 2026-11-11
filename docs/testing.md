@@ -32,6 +32,8 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 `inpatient-drg-review.spec.ts` 和 `inpatient-drg.spec.ts` 验证医生草稿迟到隔离、异步事实变化主动过期并锁定已开确认、服务端过期重验、取消、实际手术显式引用预留、医保办原回执恢复及缺规则入口；`inpatient-drg.browser.test.ts` 验证 React 18/19 ShadowRoot 下的医嘱、预留和核定审阅。业务拒绝、权限、幂等与读取审计矩阵留在 Server HTTP 测试，CLI Skill 示例检查保留完整 Command envelope，不在浏览器复制同一矩阵。
 
+跨患者连续办理由 `cross-patient-record-queue.spec.ts`、`inpatient-insurance-queue.spec.ts` 和 `cross-patient-library-queue.spec.ts` 经真实岗位入口与公开业务回读验证：每份成功仍停当前、点击具名下一位仅导航、再次明确确认，以及已展示目标失格时不自动替换。医保保留十加二分页与读取失败边界；患者库 fixture 只准备不同的合成来源及手工激活 Persona，开始动作留给真实页面。`cross-patient-queue.journey.ts` 同时供 Web 和 React 18/19 Surface 使用；Surface 夹具硬性核对本树新建 CSS 已载入。`patient-library-start-recovery-http.test.ts` 验证管理员开始后重启 Server，原身份按原 Operation/键读取同一回执及重放，重复新键拒绝且不产生第二份登记，其他 Actor 不能取得原回执。组件与写意图测试继续覆盖未发稿隔离、存储受限、迟到响应和原回执完成，视频绑定最终提交而不代替这些断言。
+
 `inpatient-drg-dependencies-http.test.ts` 通过实际诊断修订、护士执行、LIS 计费、四类临时目录价格输入及有效合成规则包重启，验证持最新就诊版本的旧审阅仍被拒绝、无额外医嘱或费用，重新推演可恢复。`inpatient-drg-dependencies.spec.ts` 验证真实 Web 的患者切换迟到隔离，以及价目变化和真实规则包重启后已开确认锁定、人工重算后恢复；没有公开价目维护 Command 时，仅在临时库设置测试输入，结果仍从公开接口和页面核对。成本当前只验证缺项展示，不把没有可变输入 owner 的成本变化记为通过。`inpatient-drg-review-concurrency-http.test.ts` 使用同进程两个 runtime 和独立 SQLite 连接，验证同审阅的不同键竞争、同键并发、丢弃响应后的回执恢复及执行／重启重放不重复；这属于有界功能回归，不代表多进程或负载验证。
 
 完整临床目录验收另成对设置 `CLINMESH_TEST_REFERENCE_DATABASE`（关闭、已 checkpoint 或通过 SQLite backup 得到的参考库快照绝对路径）和 `CLINMESH_TEST_REFERENCE_RELEASE_ID=clinmesh-cn-health-2026-09-15.r1`。fixture 仅复制参考快照到临时目录，通过管理员公开 Release 接口核对 published 身份和固定 contentHash，不修改来源库。这两项与 `CLINMESH_TEST_DRG_RULES_DIRECTORY` 同时提供后，运行 `pnpm --filter @clinmesh/server exec vitest run tests/pci-payment-drg-acceptance-http.test.ts` 和 `pnpm exec playwright test apps/web/e2e/inpatient-pci.spec.ts --project=web --workers=1 --repeat-each=2`；不读取开发 `.env` 或使用已有业务库。完整参考库约 26.9 万药品，一次初始化实测约 20 秒；显式完整库的初始化 hook 和包含同库重启的联合旅程分别使用 60 秒上限，默认 CI 的 hook 10 秒、用例 15 秒保持不变。
@@ -47,6 +49,8 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 `inpatient-drg-review.spec.ts` 与 React 18/19 的 `inpatient-drg.browser.test.ts` 共用归档切换旅程：医生先读取推演并切到其他页签，由独立认证会话完成归档，再刷新并返回原页签；断言冻结分组可读、旧在院分组及费用表消失，刷新冻结结果后仍保持该边界。
 
 住院 Agent 的同次住院联合验收在场景局部 `beforeEach` 准备参考资料、runtime、合成病例和已确认参数，沿用默认 10 秒 hook 预算；从主动开启跟进到三阶段模型、术中更正、结算、归档交接及重启，仍在一个 15 秒业务测试中使用同一患者、runtime 和数据库。准备失败与业务停滞分别报告，全部公开接口、计量及历史保留断言继续执行，清理仍由原 `afterEach` 负责。
+
+护士实际执行集中办理通过原给药、健康教育和 PRN 公开 HTTP 与临时 SQLite 验证每项唯一事实、费用归属、原键重放和服务重启恢复；PRN 断言只创建本次 pending Task，不产生 MedicationAdministration 或给药费用。组件 seam 验证三动作隔离、逐项事实核实、理由覆盖、完整身份、持久草稿、版本变化、存储阻写、成功结算原修订和真实退出清理。真实 Web 与 React18/19 ShadowRoot 共用护士岗位旅程，验证两项实际办理、第二项已提交后丢响应停止第三项、刷新只查询原回执及余项重新核对，并覆盖长中文、窄容器、缩放、焦点与末尾确认可达；不在浏览器重复服务端全部状态矩阵。
 
 ### Application composition
 
@@ -177,6 +181,10 @@ pnpm docs:check
 用户界面修改默认使用 Playwright 在 standalone Web 与受影响的 DSH Surface 真实入口验证；`agent-browser` 按探索或现有会话接管需要选用。布局需要覆盖长中文文本、窄宽度、缩放和空/错误/加载状态；DSH `workspace` 在缩放和原生右栏开关时保持左右分屏，并验证手动全屏往返恢复侧栏及分栏偏好、保留病例和草稿。容器缩放与动画卸载使用真实浏览器帧和有界状态等待。用户要求演示时再录制绑定精确 commit 的原生 WebM，成片使用 3–4 倍速、步骤字幕和真实点击高亮，在临床文字仍可读的前提下压缩体积。WebM 不替代自动回归测试。Desktop 进入实际开发后再增加真实 renderer 证据。
 
 `playwright.config.ts` 的 `contracts` project 拥有 `*.browser.test.ts`，Vitest 排除这些文件；`web` project 拥有 `apps/web/e2e/*.spec.ts`。合同保留现有 Vite/Tailwind 生产构建、React 18/19、ShadowRoot、布局和合成 canvas 断言。Playwright 在 worker 内复用 Chromium，每个测试有独立 context/page；默认两 worker、零重试，runner 限时等待 fixture 的结果信号，不用 Chrome DOM 导出取得结果。字号合同断言 standalone computed font-size、布局尺寸、Desktop 默认 token、Surface 字号和宿主隔离。
+
+门诊合并收款由 `outpatient-multi-charge-collection-http.test.ts` 通过公开 HTTP 与临时 SQLite 核对整笔 outcome、唯一原款和完整分配、跨 runtime 重启原回执及恢复、旧单项历史与交易分页，以及原分配、整款和跨原款依据的退款额度、未知预占与原渠道。退款与原款恢复不能增加第二次资金尝试，临床放行保留原事实。真实收费入口与双 React 合同验证明确确认、原交易恢复、逐项分配及原退款恢复，预览旅程仍只核对零收款行为。
+
+门诊多费用预览由 `outpatient-multi-charge-preview-http.test.ts` 通过真实临时 SQLite 和公开 Command 验证零收款与临床副作用、旧单项确认拒绝新预览、原回执跨 runtime 重启、单项不足额兼容及整组非法输入和未知资金阻断。`multi-charge-payment.spec.ts` 与同名双 React 浏览器合同从真实医生开立跨类别原申请，再由收费员选择和核对冻结预览；不能用预先付清的检查、循环单项收款或直接写入业务状态代替。收费验收停留文字工作区，禁止请求影像或切片像素。
 
 诊断处方外观矩阵在字号属性更新后继续等待标签的实际 `font-size` 到达目标值，再通过真实指针切换标签并确认 `aria-selected=true`。React 18/19 回归延长 fixture 中的 CSS 过渡，覆盖窄转宽与字号同时变化时属性已提交而文字仍在移动的窗口；不增加交互时限或自动重试。
 

@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
-import type { CaseLaboratoryCatalogSearch, DoctorCaseDetail, LaboratoryReport, LaboratoryRequest } from '@clinmesh/contracts/his'
+import { cancelLaboratoryRequestRequestSchema, doctorCaseDetailSchema, laboratoryRequestActionResponseSchema, laboratoryRequestSchema,
+  retryLaboratoryResultGenerationRequestSchema, type CaseLaboratoryCatalogSearch, type DoctorCaseDetail, type LaboratoryReport,
+  type LaboratoryRequest, type SessionContext } from '@clinmesh/contracts/his'
 import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { act, cleanup, render as renderView, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState, type ComponentProps } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { getDoctorCase } from '../api-client.ts'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
+import { signOut } from '../api-client.ts'
 import { LaboratoryPage } from './laboratory-page.tsx'
 
 const service: CaseLaboratoryCatalogSearch['items'][number] = {
@@ -55,12 +59,9 @@ function request(id: string, name: string, conclusion: string): LaboratoryReques
 function props(overrides: Partial<ComponentProps<typeof LaboratoryPage>> = {}): ComponentProps<typeof LaboratoryPage> {
   return {
     actions: {
-      acknowledge: { error: null, onSubmit: vi.fn(), pending: false },
-      cancel: { error: null, onSubmit: vi.fn(), pending: false },
       correct: { allowed: false, error: null, onSubmit: vi.fn(), pending: false },
       deleteDraft: { error: null, onSubmit: vi.fn(), pending: false },
       issue: { error: null, onSubmit: vi.fn(), pending: false },
-      retry: { error: null, onSubmit: vi.fn(), pending: false },
       save: { error: null, onSubmit: vi.fn(), pending: false },
     }, catalogError: null, catalogPending: false, detail, elementId: 'laboratory', indicationCode: '',
     issueLegacyOrderError: null, issueLegacyOrderPending: false, laboratoryCatalog: [], laboratoryItemId: '',
@@ -91,10 +92,152 @@ function recommendations(overrides: Partial<DoctorRecommendationState> = {}): Do
     ...overrides,
   }
 }
-beforeEach(() => { vi.stubGlobal('fetch', vi.fn(async () => Response.json(recommendations({ items: [] })))) })
+const session: SessionContext = {
+  actor: { actorId: 'synthetic-doctor', workspaceId: 'synthetic-workspace', epoch: 'synthetic-epoch', scenarioRunId: 'synthetic-run',
+    practitionerRoleId: 'synthetic-role', practitionerId: 'synthetic-practitioner', organizationId: 'synthetic-organization',
+    locationId: 'synthetic-location', roleCode: 'outpatient-doctor' },
+  user: { id: 'synthetic-account', name: '合成医生', email: 'synthetic-doctor@example.test' }, availableRoles: [],
+}
+function recoveryApi(initial: LaboratoryRequest, pauseResponse = false) {
+  const initialDetail = doctorCaseDetailSchema.parse({ ...detail, encounter: { ...detail.encounter, status: 'in-progress' },
+    laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [initial] } })
+  let current = initialDetail
+  let releaseResponse = () => {}
+  const responseBarrier = new Promise<void>(resolve => { releaseResponse = resolve })
+  const posts: { action: 'cancel' | 'retry'; body: unknown; key: string | null }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path === `/api/his/v1/doctor/cases/${detail.caseId}`) return Response.json(current)
+    if (init?.method === 'POST' && [
+      `/api/his/v1/laboratory-requests/${initial.id}/actions/cancel`,
+      `/api/his/v1/laboratory-requests/${initial.id}/actions/retry-generation`,
+    ].includes(path)) {
+      const action = path.endsWith('/cancel') ? 'cancel' : 'retry'
+      const body = (action === 'cancel' ? cancelLaboratoryRequestRequestSchema : retryLaboratoryResultGenerationRequestSchema).parse(JSON.parse(String(init.body)))
+      posts.push({ action, body, key: new Headers(init.headers).get('idempotency-key') })
+      if (pauseResponse) await responseBarrier
+      const updated = laboratoryRequestSchema.parse({ ...initial, generationError: undefined,
+        status: action === 'cancel' ? 'cancelled' : 'in-progress', version: 2, taskVersion: '2',
+        serviceRequestVersion: action === 'cancel' ? '2' : '1' })
+      current = doctorCaseDetailSchema.parse({ ...current, laboratoryRequests: { ...current.laboratoryRequests, requests: [updated] } })
+      return Response.json(laboratoryRequestActionResponseSchema.parse({ auditId: 'synthetic-action-audit', requestId: 'synthetic-action-command', warnings: [],
+        effects: [{ kind: 'updated', reference: `Task/${initial.taskId}`, versionId: '2' },
+          ...(action === 'cancel' ? [{ kind: 'updated', reference: `ServiceRequest/${initial.serviceRequestId}`, versionId: '2' }] : [])],
+        data: { request: updated } }))
+    }
+    if (path.includes('/recommendations/')) return Response.json(recommendations({ items: [] }))
+    throw new Error(`Unexpected ${init?.method ?? 'GET'} ${path}`)
+  }))
+  return { initialDetail, posts, facts: () => current, releaseResponse }
+}
+function renderRecovery(api: ReturnType<typeof recoveryApi>, overrides: Partial<ComponentProps<typeof LaboratoryPage>> = {}) {
+  function Harness() {
+    const query = useQuery({ queryKey: ['doctor-case', detail.caseId], queryFn: () => getDoctorCase(detail.caseId), initialData: api.initialDetail })
+    return <LaboratoryPage {...props({ ...overrides, detail: query.data, actionContext: {
+      session, caseId: detail.caseId, patientId: detail.patient.id, encounterId: detail.encounter.id,
+      patientName: detail.patient.name, onChanged: () => query.refetch(),
+    } })} />
+  }
+  return render(<Harness />)
+}
+beforeEach(() => { sessionStorage.clear(); vi.stubGlobal('fetch', vi.fn(async () => Response.json(recommendations({ items: [] })))) })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('laboratory investigation workspace', () => {
+  it('preserves a modified pending row when another successful order removes its old server draft', async () => {
+    const source = { ...service, allowedIndicationCodes: ['clinical-evaluation', 'fever'] }
+    const page = props({ laboratoryItemId: service.id, indicationCode: 'clinical-evaluation', detail: {
+      ...detail, laboratoryRequests: { draftVersion: 1, reportingSupported: true, requests: [],
+        draft: { catalogItemId: service.id, indicationCode: 'clinical-evaluation', laboratoryService: source } },
+    }, referenceSearch: { ...props().referenceSearch, data: { items: [source], page: 1, pageSize: 20, total: 1 } } })
+    const mounted = render(<LaboratoryPage {...page} />), user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '调整' }))
+    await user.click(screen.getByRole('combobox', { name: '检查目的' }))
+    await user.click(await screen.findByRole('option', { name: '发热' }))
+    await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+    await user.click(screen.getByRole('checkbox', { name: '选择合成检验项目' }))
+    mounted.rerender(<LaboratoryPage {...page} detail={{ ...detail,
+      laboratoryRequests: { draftVersion: 2, reportingSupported: true, requests: [] } }} />)
+    const pending = within(screen.getByRole('region', { name: '待开具检验' }))
+    await waitFor(() => expect(pending.getByText('发热')).toBeTruthy())
+    expect(pending.queryByText('临床评估')).toBeNull()
+    expect(pending.getByRole('checkbox').getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('isolates manual rows and selections by authorization and encounter, confirms discard and clears them on logout', async () => {
+    const page = props({ recommendationScope: 'workspace:epoch:account:doctor:patient' })
+    const mounted = render(<LaboratoryPage {...page} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    const composer = within(screen.getByRole('dialog'))
+    await user.click(composer.getByRole('button', { name: '选择 合成检验项目 SYN-1' }))
+    await user.click(composer.getByRole('button', { name: '加入检验' }))
+    await user.click(composer.getByRole('button', { name: '关闭' }))
+    await user.click(screen.getByRole('checkbox', { name: '选择合成检验项目' }))
+    for (const changed of [
+      { ...page, recommendationScope: 'workspace:epoch:another-account:doctor:patient' },
+      { ...page, detail: { ...detail, caseId: 'another-case', encounter: { ...detail.encounter, id: 'another-encounter' } } },
+    ]) {
+      mounted.rerender(<LaboratoryPage {...changed} />)
+      expect(screen.queryByRole('checkbox', { name: '选择合成检验项目' })).toBeNull()
+      mounted.rerender(<LaboratoryPage {...page} />)
+      expect(screen.getByRole('checkbox', { name: '选择合成检验项目' }).getAttribute('aria-checked')).toBe('false')
+    }
+    await user.click(screen.getByRole('button', { name: '清空待开清单' }))
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: page.messages.cancel }))
+    expect(screen.getByRole('checkbox', { name: '选择合成检验项目' })).toBeTruthy()
+    await signOut()
+    mounted.unmount()
+    render(<LaboratoryPage {...page} />)
+    expect(screen.queryByRole('checkbox', { name: '选择合成检验项目' })).toBeNull()
+  })
+
+  it('retains eight manual rows and explicitly blocks a ninth without truncating inputs', async () => {
+    const services = Array.from({ length: 9 }, (_, index) => ({ ...service, id: `lab-${index}`, nameZh: `合成检验${index}` }))
+    const page = props({ referenceSearch: { ...props().referenceSearch, data: { items: services, page: 1, pageSize: 20, total: 9 } } })
+    render(<LaboratoryPage {...page} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    const composer = within(screen.getByRole('dialog'))
+    for (const item of services) {
+      await user.click(composer.getByRole('button', { name: `选择 ${item.nameZh} SYN-1` }))
+      await user.click(composer.getByRole('button', { name: '加入检验' }))
+    }
+    await user.click(composer.getByRole('button', { name: '关闭' }))
+    expect(screen.getByText('最多保留 8 项，请先开立或移除项目。')).toBeTruthy()
+    expect(screen.getAllByRole('checkbox')).toHaveLength(8)
+    expect(screen.queryByRole('checkbox', { name: '选择合成检验8' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '清空待开清单' }))
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '确认清空' }))
+    await waitFor(() => expect(screen.queryAllByRole('checkbox')).toHaveLength(0))
+  })
+
+  it('continuously adds two manual tests into one pending list and restores them after remount without overwriting the single server draft', async () => {
+    const second = { ...service, id: 'synthetic-laboratory-second', nameZh: '合成第二项检验' }
+    const page = props({ recommendationScope: 'workspace:epoch:account:doctor:synthetic-case',
+      referenceSearch: { ...props().referenceSearch, data: { items: [service, second], page: 1, pageSize: 20, total: 2 } } })
+    const mounted = render(<LaboratoryPage {...page} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    const dialog = within(screen.getByRole('dialog', { name: '选择检验项目' }))
+    for (const name of ['合成检验项目', '合成第二项检验']) {
+      await user.click(dialog.getByRole('button', { name: `选择 ${name} SYN-1` }))
+      await user.click(dialog.getByRole('button', { name: '加入检验' }))
+      expect(screen.getByRole('dialog', { name: '选择检验项目' })).toBeTruthy()
+    }
+    await user.click(dialog.getByRole('button', { name: '关闭' }))
+    const pending = within(screen.getByRole('region', { name: '待开具检验' }))
+    expect(pending.getByRole('checkbox', { name: '选择合成检验项目' })).toBeTruthy()
+    expect(pending.getByRole('checkbox', { name: '选择合成第二项检验' })).toBeTruthy()
+    expect(pending.getByRole('button', { name: '开具选中项目（2）' })).toBeTruthy()
+    expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
+    mounted.unmount()
+    render(<LaboratoryPage {...page} />)
+    expect(screen.getByRole('checkbox', { name: '选择合成检验项目' })).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: '选择合成第二项检验' })).toBeTruthy()
+  })
+
   it('keeps the selected service facts and outpatient price together, with price provenance available on demand', async () => {
     render(<LaboratoryPage {...props()} />)
     const user = userEvent.setup()
@@ -130,22 +273,28 @@ describe('laboratory investigation workspace', () => {
       generationError: { code: 'INVESTIGATION_TRUTH_INCOMPATIBLE', message: 'Synthetic truth unit mismatch' },
     }
     delete failed.report
-    const page = props({ locale, messages: getWorkspaceMessages(locale), detail: {
-      ...detail, laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [failed] },
-    } })
-    render(<LaboratoryPage {...page} />)
+    const api = recoveryApi(failed)
+    renderRecovery(api, { locale, messages: getWorkspaceMessages(locale) })
     expect(screen.getByText(locale === 'zh-CN'
       ? '该病例的合成检验真值与申请的结果定义或单位不兼容，无法生成结果。请取消此申请。'
       : 'This case’s synthetic laboratory truth is incompatible with the requested result definition or unit. Cancel this request.')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /重试结果生成|Retry result generation/ })).toBeNull()
+    const title = locale === 'zh-CN' ? '不兼容合成检验' : service.nameEn
+    expect(screen.getByRole('checkbox', { name: locale === 'zh-CN' ? `选择重试：${title}` : `Select retry: ${title}` }).getAttribute('aria-disabled')).toBe('true')
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: `${page.messages.cancelLaboratoryRequest} ${locale === 'zh-CN' ? '不兼容合成检验' : service.nameEn}` }))
-    const confirmation = within(screen.getByRole('alertdialog', { name: page.messages.cancelLaboratoryRequestTitle }))
-    expect(confirmation.getByText(page.messages.laboratoryRequestStatus_generationFailed)).toBeTruthy()
-    expect(page.actions.cancel.onSubmit).not.toHaveBeenCalled()
-    await user.click(confirmation.getByRole('button', { name: page.messages.confirmCancelLaboratoryRequest }))
-    expect(page.actions.cancel.onSubmit).toHaveBeenCalledExactlyOnceWith(failed)
-    expect(page.actions.retry.onSubmit).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('checkbox', { name: locale === 'zh-CN' ? `选择取消：${title}` : `Select cancellation: ${title}` }))
+    await user.click(screen.getByRole('button', { name: locale === 'zh-CN' ? '集中取消申请' : 'Cancel selected requests' }))
+    const confirmation = within(screen.getByRole('dialog', { name: locale === 'zh-CN' ? '集中取消申请核对' : 'Review request cancellations' }))
+    expect(confirmation.getByText(locale === 'zh-CN' ? '未取得结果 · 取消原因：不再需要' : /Reason: no longer needed/)).toBeTruthy()
+    if (locale === 'en-US') expect(confirmation.queryByText(/未取得结果|不再需要|取消申请/)).toBeNull()
+    expect(api.posts).toHaveLength(0)
+    await user.click(confirmation.getByRole('button', { name: locale === 'zh-CN' ? '确认取消申请' : 'Confirm cancellations' }))
+    await waitFor(() => expect(screen.getByRole('region', { name: locale === 'zh-CN' ? '取消申请逐项结果' : 'Cancellation results' }).textContent).toContain(locale === 'zh-CN' ? '本次办理已结束 · 成功 1/1' : 'Succeeded 1/1'))
+    expect(api.posts).toEqual([{ action: 'cancel', key: expect.any(String), body: {
+      expectedVersions: { 'ServiceRequest/service-request-failed': '1', 'Task/task-failed': '1' },
+      input: { expectedRequestVersion: 1, reasonCode: 'no-longer-needed' },
+    } }])
+    expect(api.facts().laboratoryRequests!.requests[0]).toMatchObject({ id: 'failed', status: 'cancelled', version: 2,
+      serviceRequestId: 'service-request-failed', serviceRequestVersion: '2', taskId: 'task-failed', taskVersion: '2' })
   })
 
   it.each(['INVESTIGATION_OUTPUT_INVALID', 'AI_TIMEOUT', 'AI_REQUEST_FAILED', 'INVESTIGATION_UNSUPPORTED'])(
@@ -153,17 +302,24 @@ describe('laboratory investigation workspace', () => {
       const failed: LaboratoryRequest = { ...request('failed', '失败合成检验', ''), status: 'generation-failed',
         generationError: { code, message: 'Synthetic failure' } }
       delete failed.report
-      const page = props({ detail: { ...detail, laboratoryRequests: {
-        draftVersion: 0, reportingSupported: true, requests: [failed],
-      } } })
-      render(<LaboratoryPage {...page} />)
-      expect(screen.getByRole('button', { name: '取消检验申请 失败合成检验' })).toBeTruthy()
-      const retry = screen.queryByRole('button', { name: '重试结果生成 失败合成检验' })
-      if (code === 'INVESTIGATION_UNSUPPORTED') expect(retry).toBeNull()
-      else {
-        await userEvent.setup().click(retry!)
-        expect(page.actions.retry.onSubmit).toHaveBeenCalledExactlyOnceWith(failed)
-      }
+      const api = recoveryApi(failed), user = userEvent.setup()
+      renderRecovery(api)
+      expect(screen.getByRole('checkbox', { name: '选择取消：失败合成检验' }).getAttribute('aria-disabled')).not.toBe('true')
+      const retry = screen.getByRole('checkbox', { name: '选择重试：失败合成检验' })
+      const unsupported = code === 'INVESTIGATION_UNSUPPORTED', label = unsupported ? '取消' : '重试'
+      expect(retry.getAttribute('aria-disabled') === 'true').toBe(unsupported)
+      await user.click(screen.getByRole('checkbox', { name: `选择${label}：失败合成检验` }))
+      await user.click(screen.getByRole('button', { name: `集中${label}申请` }))
+      const preview = within(screen.getByRole('dialog', { name: `集中${label}申请核对` }))
+      expect(api.posts).toHaveLength(0)
+      await user.click(preview.getByRole('button', { name: `确认${label}申请` }))
+      await waitFor(() => expect(screen.getByRole('region', { name: `${label}申请逐项结果` }).textContent).toContain('本次办理已结束 · 成功 1/1'))
+      expect(api.posts).toEqual([{ action: unsupported ? 'cancel' : 'retry', key: expect.any(String), body: unsupported ? {
+        expectedVersions: { 'ServiceRequest/service-request-failed': '1', 'Task/task-failed': '1' },
+        input: { expectedRequestVersion: 1, reasonCode: 'no-longer-needed' },
+      } : { expectedVersions: { 'Task/task-failed': '1' }, input: { expectedRequestVersion: 1 } } }])
+      expect(api.facts().laboratoryRequests!.requests[0]).toMatchObject({ id: 'failed', status: unsupported ? 'cancelled' : 'in-progress', version: 2,
+        serviceRequestId: 'service-request-failed', serviceRequestVersion: unsupported ? '2' : '1', taskId: 'task-failed', taskVersion: '2' })
     },
   )
 
@@ -171,33 +327,46 @@ describe('laboratory investigation workspace', () => {
     const failed: LaboratoryRequest = { ...request('failed', '失败合成检验', ''), status: 'generation-failed',
       generationError: { code: 'INVESTIGATION_OUTPUT_INVALID', message: 'Synthetic output error' } }
     delete failed.report
-    const page = props({ detail: { ...detail, laboratoryRequests: {
-      draftVersion: 0, reportingSupported: true, requests: [failed],
-    } } })
-    page.actions[action].pending = true
-    render(<LaboratoryPage {...page} />)
-    const cancel = screen.getByRole('button', { name: '取消检验申请 失败合成检验' }) as HTMLButtonElement
-    const retry = screen.getByRole('button', { name: '重试结果生成 失败合成检验' }) as HTMLButtonElement
-    expect(cancel.disabled).toBe(true)
-    expect(retry.disabled).toBe(true)
-    await userEvent.setup().click(cancel)
-    await userEvent.setup().click(retry)
-    expect(screen.queryByRole('alertdialog')).toBeNull()
-    expect(page.actions.cancel.onSubmit).not.toHaveBeenCalled()
-    expect(page.actions.retry.onSubmit).not.toHaveBeenCalled()
+    const api = recoveryApi(failed, true), user = userEvent.setup(), label = action === 'cancel' ? '取消' : '重试'
+    renderRecovery(api)
+    for (const selection of ['取消', '重试']) await user.click(screen.getByRole('checkbox', { name: `选择${selection}：失败合成检验` }))
+    await user.click(screen.getByRole('button', { name: `集中${label}申请` }))
+    await user.click(within(screen.getByRole('dialog', { name: `集中${label}申请核对` })).getByRole('button', { name: `确认${label}申请` }))
+    await waitFor(() => expect(api.posts).toHaveLength(1))
+    for (const selection of ['取消', '重试']) {
+      const checkbox = screen.getByRole('checkbox', { name: `选择${selection}：失败合成检验` })
+      const submit = screen.getByRole('button', { name: `集中${selection}申请` })
+      expect(checkbox.getAttribute('aria-disabled')).toBe('true')
+      expect(submit.hasAttribute('disabled')).toBe(true)
+      expect(screen.getByRole('checkbox', { name: `待处理${selection}：失败合成检验` }).getAttribute('aria-disabled')).toBe('true')
+      await user.click(checkbox)
+      await user.click(submit)
+    }
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(api.posts.map(item => item.action)).toEqual([action])
+    api.releaseResponse()
+    await waitFor(() => expect(screen.getByRole('region', { name: `${label}申请逐项结果` }).textContent).toContain('本次办理已结束 · 成功 1/1'))
   })
 
   it.each([
     { readOnly: true, status: 'generation-failed' as const },
     { readOnly: false, status: 'in-progress' as const },
     { readOnly: false, status: 'accepted' as const },
-  ])('keeps recovery actions unavailable with %o', ({ readOnly, status }) => {
+  ])('keeps recovery actions unavailable with %o', async ({ readOnly, status }) => {
     const current: LaboratoryRequest = { ...request('current', '合成检验', ''), status }
     delete current.report
-    render(<LaboratoryPage {...props({ readOnly, detail: { ...detail, laboratoryRequests: {
-      draftVersion: 0, reportingSupported: true, requests: [current],
-    } } })} />)
-    expect(screen.queryByRole('button', { name: /取消检验申请|重试结果生成/ })).toBeNull()
+    const api = recoveryApi(current), user = userEvent.setup()
+    renderRecovery(api, { readOnly })
+    for (const action of ['取消', '重试']) {
+      const checkbox = screen.getByRole('checkbox', { name: `选择${action}：合成检验` })
+      const submit = screen.getByRole('button', { name: `集中${action}申请` })
+      expect(checkbox.getAttribute('aria-disabled')).toBe('true')
+      expect(submit.hasAttribute('disabled')).toBe(true)
+      await user.click(checkbox)
+      await user.click(submit)
+    }
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(api.posts).toHaveLength(0)
   })
 
   it.each(['unloaded', 'other-page', 'newer-version'])('confirms an AI laboratory order independently of its manual catalog page (%s)', async catalogPage => {
@@ -258,7 +427,7 @@ describe('laboratory investigation workspace', () => {
     expect(page.onIndicationChange).not.toHaveBeenCalled()
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
     expect(page.actions.issue.onSubmit).not.toHaveBeenCalled()
-    expect(screen.getByText('尚未选择检验项目')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '添加检验' })).toBeTruthy()
     if (code === 'CATALOG_CONFLICT') {
       await waitFor(() => expect(paths.filter(path => path.endsWith('/recommendations/laboratory')).length).toBeGreaterThan(1))
       expect(screen.queryByText(/本院门诊价格：.*36\.00/)).toBeNull()
@@ -288,11 +457,11 @@ describe('laboratory investigation workspace', () => {
     const dialog = within(screen.getByRole('dialog'))
     await user.click(dialog.getByRole('button', { name: '选择 人工选择的合成项目 SYN-1' }))
     await user.click(dialog.getByRole('button', { name: '加入检验' }))
+    await user.click(dialog.getByRole('button', { name: '关闭' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await act(async () => { resolvePending(Response.json(recommendations())) })
-    const draft = within(screen.getByRole('region', { name: '检验申请' }))
+    const draft = within(screen.getByRole('region', { name: '待开具检验' }))
     expect(draft.getByText('人工选择的合成项目')).toBeTruthy()
-    expect(draft.queryByText('合成检验项目')).toBeNull()
     expect(screen.getByRole('checkbox', { name: '选择人工选择的合成项目' })).toBeTruthy()
     expect(await screen.findByRole('checkbox', { name: '选择合成检验项目' })).toBeTruthy()
   })
@@ -391,19 +560,19 @@ describe('laboratory investigation workspace', () => {
     render(<ControlledPage />)
     const user = userEvent.setup()
     await screen.findByRole('checkbox', { name: '选择合成检验项目' })
-    await user.click(screen.getAllByRole('button', { name: '调整' })[1]!)
+    await user.click(within(screen.getByRole('group', { name: '合成检验项目' })).getByRole('button', { name: '调整' }))
     const dialog = screen.getByRole('dialog', { name: '调整项目' })
     await user.click(within(dialog).getByRole('combobox', { name: '检查目的' }))
     await user.click(await screen.findByRole('option', { name: '发热' }))
     await user.click(within(dialog).getByRole('button', { name: '保留本次调整' }))
     expect(screen.getByRole('checkbox', { name: '选择人工检验项目' })).toBeTruthy()
     expect(screen.getByRole('checkbox', { name: '选择合成检验项目' })).toBeTruthy()
-    expect(screen.getByRole('region', { name: '检验申请' }).textContent).toContain('人工检验项目')
+    expect(screen.getByRole('region', { name: '待开具检验' }).textContent).toContain('人工检验项目')
     await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
     await waitFor(() => expect(bodies).toHaveLength(1))
     expect(bodies[0]).toMatchObject({ input: { expectedDraftVersion: 1, resolveExistingDraft: true, selections: [
       { source: 'manual', kind: 'laboratory', catalogItemId: manualService.id, indicationCode: 'clinical-evaluation' },
-      { source: 'manual', kind: 'laboratory', catalogItemId: service.id, indicationCode: 'fever' },
+      { source: 'agent', suggestionId: 'synthetic-laboratory-suggestion', kind: 'laboratory', catalogItemId: service.id, indicationCode: 'fever' },
     ] } })
   })
 
@@ -548,10 +717,11 @@ describe('laboratory investigation workspace', () => {
     expect(dialog.getAllByText(/25/).length).toBeGreaterThan(0)
     expect(dialog.getByText('临床评估')).toBeTruthy()
     await user.click(dialog.getByRole('button', { name: '加入检验' }))
+    await user.click(dialog.getByRole('button', { name: '关闭' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.queryByRole('button', { name: '开具检验申请' })).toBeNull()
   })
-  it('keeps the draft card while searching the composer catalog for another project', async () => {
+  it('keeps the shared pending row while searching the composer catalog for another project', async () => {
     const page = props()
     function Page() {
       const [itemId, setItemId] = useState('')
@@ -563,19 +733,14 @@ describe('laboratory investigation workspace', () => {
     const dialog = within(screen.getByRole('dialog'))
     await user.click(dialog.getByRole('button', { name: '选择 合成检验项目 SYN-1' }))
     await user.click(dialog.getByRole('button', { name: '加入检验' }))
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    // 条目点击用同一弹窗重开编辑：已选项目与适应证保留，检索另一个项目不影响草稿卡片。
-    await user.click(screen.getByRole('button', { name: /编辑检验 合成检验项目/ }))
-    const editDialog = within(screen.getByRole('dialog'))
-    expect(screen.getByRole('dialog').textContent).toContain('编辑检验')
-    expect(editDialog.getByRole('button', { name: '选择 合成检验项目 SYN-1' }).getAttribute('aria-pressed')).toBe('true')
-    await user.type(editDialog.getByRole('textbox', { name: '搜索检验目录' }), '另一个项目')
+    expect(dialog.getByRole('button', { name: '选择 合成检验项目 SYN-1' }).getAttribute('aria-pressed')).toBe('false')
+    await user.type(dialog.getByRole('textbox', { name: '搜索检验目录' }), '另一个项目')
     await waitFor(() => expect(page.referenceSearch.onSearch).toHaveBeenLastCalledWith('另一个项目', 1))
-    await user.click(editDialog.getByRole('button', { name: '取消' }))
+    await user.click(dialog.getByRole('button', { name: '关闭' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(within(screen.getByRole('region', { name: '检验申请' })).getByText('合成检验项目')).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: '选择合成检验项目' })).toBeTruthy()
   })
-  it('does not replace a saved manual laboratory draft from a different catalog selection', async () => {
+  it('adds a different catalog selection alongside an imported server draft', async () => {
     const other = { ...service, id: 'other-service', nameZh: '另一个合成项目' }
     const page = props({ laboratoryItemId: service.id, indicationCode: 'clinical-evaluation', detail: { ...detail,
       laboratoryRequests: { draftVersion: 1, reportingSupported: true, requests: [],
@@ -584,25 +749,32 @@ describe('laboratory investigation workspace', () => {
     })
     render(<LaboratoryPage {...page} />)
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /编辑检验 合成检验项目/ }))
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
     const dialog = within(screen.getByRole('dialog'))
     await user.click(dialog.getByRole('button', { name: '选择 另一个合成项目 SYN-1' }))
-    expect(dialog.getByRole('alert').textContent).toContain('请先开具或删除已有检验草稿')
+    await user.click(dialog.getByRole('button', { name: '加入检验' }))
+    await user.click(dialog.getByRole('button', { name: '关闭' }))
+    expect(screen.getByRole('checkbox', { name: '选择合成检验项目' })).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: '选择另一个合成项目' })).toBeTruthy()
+    expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
     expect(page.onLaboratoryItemChange).not.toHaveBeenCalled()
   })
 
-  it('keeps the saved draft inline through save failures alongside the pending list', async () => {
+  it('preserves existing rows and blocks new orders when browser draft storage fails', async () => {
     const state = { draft: { catalogItemId: service.id, indicationCode: 'clinical-evaluation', laboratoryService: service },
       draftVersion: 1, reportingSupported: true, requests: [request('first', '合成第一项', '第一份结论')] }
     const page = props({ detail: { ...detail, laboratoryRequests: state }, laboratoryItemId: service.id, indicationCode: 'clinical-evaluation' })
-    const { rerender } = render(<LaboratoryPage {...page} />)
+    render(<LaboratoryPage {...page} />)
     const user = userEvent.setup()
-    const dialog = screen.getByRole('region', { name: '检验申请' })
-    rerender(<LaboratoryPage {...page} actions={{ ...page.actions, save: { ...page.actions.save, error: new Error('synthetic failure') } }} />)
-    expect(within(dialog).getByRole('alert')).toBeTruthy()
-    await user.click(within(dialog).getByRole('button', { name: '重试保存' }))
-    expect(page.actions.save.onSubmit).toHaveBeenCalledOnce()
-    expect(within(dialog).queryByRole('button', { name: '开具检验申请' })).toBeNull()
+    await screen.findByRole('checkbox', { name: '选择合成检验项目' })
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('Synthetic storage failure', 'QuotaExceededError') })
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    const composer = within(screen.getByRole('dialog'))
+    await user.click(composer.getByRole('button', { name: '选择 合成检验项目 SYN-1' }))
+    await user.click(composer.getByRole('button', { name: '加入检验' }))
+    await user.click(composer.getByRole('button', { name: '关闭' }))
+    expect(screen.getByText(/待开清单无法保存或读取/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^开具选中项目/ }).hasAttribute('disabled')).toBe(true)
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.getByRole('checkbox', { name: '选择合成检验项目' })).toBeTruthy()
     expect(screen.getByText('第一份结论')).toBeTruthy()
@@ -649,7 +821,7 @@ describe('laboratory investigation workspace', () => {
     expect(page.actions.issue.onSubmit).not.toHaveBeenCalled()
   })
 
-  it('acknowledges the current report and can return to all requests after the last unread report is acknowledged', async () => {
+  it('shows acknowledged query results without a separate single-report write button and can return to all requests', async () => {
     const current = request('first', '合成第一项', '当前结论')
     current.previousReports = [report('历史结论', 'historical-report')]
     const page = props({ detail: { ...detail, laboratoryRequests: {
@@ -658,8 +830,7 @@ describe('laboratory investigation workspace', () => {
     const user = userEvent.setup()
     const list = within(screen.getByRole('region', { name: '申请列表' }))
     await user.click(list.getByRole('button', { name: '待阅' }))
-    await user.click(screen.getByRole('button', { name: '确认已阅 合成第一项' }))
-    expect(page.actions.acknowledge.onSubmit).toHaveBeenCalledExactlyOnceWith(current)
+    expect(screen.queryByRole('button', { name: '确认已阅 合成第一项' })).toBeNull()
     const acknowledged: LaboratoryRequest = { ...current, status: 'acknowledged', report: {
       ...current.report!, acknowledgement: { id: 'synthetic-acknowledgement', acknowledgedBy: 'synthetic-doctor',
         acknowledgedAt: '2026-10-10T10:30:00+08:00' } } }
@@ -722,7 +893,7 @@ describe('laboratory investigation workspace', () => {
     expect(screen.getByText('No laboratory item selected')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Add laboratory item' })).toBeTruthy()
   })
-  it('adds a laboratory item through the composer dialog and lands it in the draft card', async () => {
+  it('adds a laboratory item to the shared pending list without overwriting the server draft', async () => {
     const page = props()
     function Page() {
       const [itemId, setItemId] = useState('')
@@ -738,12 +909,11 @@ describe('laboratory investigation workspace', () => {
     // 单一适应证在选中后自动取首个允许值，确认按钮随后可用。
     expect(dialog.getByText('临床评估')).toBeTruthy()
     await user.click(dialog.getByRole('button', { name: '加入检验' }))
+    await user.click(dialog.getByRole('button', { name: '关闭' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    const card = within(screen.getByRole('region', { name: '检验申请' })).getByRole('button', { name: '编辑检验 合成检验项目' })
-    expect(card.textContent).toContain('SYN-1')
-    expect(card.textContent).toContain('临床评估')
-    // 确认即写入服务端草稿：不等 800ms 自动保存，确认后立即换例等卸载场景也不丢保存。
-    expect(page.actions.save.onSubmit).toHaveBeenCalledWith({ catalogItemId: 'synthetic-laboratory-service', indicationCode: 'clinical-evaluation' })
+    const row = screen.getByRole('group', { name: '合成检验项目' })
+    expect(row.textContent).toContain('临床评估')
+    expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
   })
   it('discards in-dialog input when closing without confirm and offers a fresh add next time', async () => {
     const page = props()
@@ -752,7 +922,7 @@ describe('laboratory investigation workspace', () => {
     await user.click(screen.getByRole('button', { name: '添加检验' }))
     const dialog = within(screen.getByRole('dialog'))
     await user.click(dialog.getByRole('button', { name: '选择 合成检验项目 SYN-1' }))
-    await user.click(dialog.getByRole('button', { name: '取消' }))
+    await user.click(dialog.getByRole('button', { name: '关闭' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(page.onLaboratoryItemChange).not.toHaveBeenCalled()
     expect(page.onIndicationChange).not.toHaveBeenCalled()
@@ -761,24 +931,24 @@ describe('laboratory investigation workspace', () => {
     const reopened = within(screen.getByRole('dialog'))
     expect(reopened.getByRole('button', { name: '选择 合成检验项目 SYN-1' }).getAttribute('aria-pressed')).toBe('false')
     expect(reopened.queryByRole('combobox', { name: '检验适应证' })).toBeNull()
-    await userEvent.setup().click(reopened.getByRole('button', { name: '取消' }))
+    await userEvent.setup().click(reopened.getByRole('button', { name: '关闭' }))
   })
-  it('reopens the same dialog from the draft card for editing and saves changes once', async () => {
+  it('edits an imported manual row in the shared pending list', async () => {
     const state = { draft: { catalogItemId: service.id, indicationCode: 'clinical-evaluation', laboratoryService: service },
       draftVersion: 1, reportingSupported: true, requests: [] }
     const page = props({ detail: { ...detail, laboratoryRequests: state }, laboratoryItemId: service.id, indicationCode: 'clinical-evaluation' })
     render(<LaboratoryPage {...page} />)
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /编辑检验 合成检验项目/ }))
+    await screen.findByRole('group', { name: '合成检验项目' })
+    await user.click(within(screen.getByRole('group', { name: '合成检验项目' })).getByRole('button', { name: /调整|核对/ }))
     const dialog = within(screen.getByRole('dialog'))
-    expect(dialog.getByText('编辑检验')).toBeTruthy()
-    expect(dialog.getByRole('button', { name: '保存修改' })).toBeTruthy()
-    // 重开即恢复已选项目与适应证（单一适应证为静态展示）；确认后仅回写一次页面状态。
+    expect(dialog.getByText('调整项目')).toBeTruthy()
     expect(dialog.getByText('临床评估')).toBeTruthy()
-    await user.click(dialog.getByRole('button', { name: '保存修改' }))
+    await user.click(dialog.getByRole('button', { name: '保留本次调整' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(page.onLaboratoryItemChange).toHaveBeenCalledExactlyOnceWith(service.id)
-    expect(page.onIndicationChange).toHaveBeenCalledExactlyOnceWith('clinical-evaluation')
+    expect(page.onLaboratoryItemChange).not.toHaveBeenCalled()
+    expect(page.onIndicationChange).not.toHaveBeenCalled()
+    expect(screen.getByRole('checkbox', { name: '选择合成检验项目' })).toBeTruthy()
   })
   it('opens the catalog and order form in one dialog and selects by the candidate name', async () => {
     const page = props()

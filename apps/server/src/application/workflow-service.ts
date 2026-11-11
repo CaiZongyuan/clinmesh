@@ -87,6 +87,9 @@ import {
   type LaboratoryRequestCatalogItemId,
   type InvestigationGenerationCapability,
   paymentPreviewResponseSchema,
+  multiChargePaymentPreviewInputSchema,
+  multiChargePaymentPreviewResponseSchema,
+  multiChargePaymentResponseSchema,
   paymentResponseSchema,
   paymentTendersSchema,
   paymentRecordedTendersSchema,
@@ -179,6 +182,10 @@ const diagnosisCatalogRowSchema = z.object({
   version: z.number().int().positive(),
 })
 
+// 空条目保留已丢弃草稿的单调版本，不投影为临床待办。
+const storedDiagnosisDraftContentSchema = diagnosisDraftContentSchema.extend({
+  entries: z.array(diagnosisDraftContentSchema.shape.entries.element).max(8),
+})
 const diagnosisStateRowSchema = z.object({
   draft_json: z.string().nullable(),
   status: z.enum(['draft', 'confirmed']),
@@ -3389,6 +3396,8 @@ export class WorkflowService {
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
       `).get(context.workspaceId, context.epoch, row.case_id),
     )
+    const diagnosisDraft = diagnosisState?.draft_json === null || diagnosisState?.draft_json === undefined
+      ? undefined : storedDiagnosisDraftContentSchema.parse(JSON.parse(diagnosisState.draft_json))
     const diagnosisConfirmation = this.#diagnosisConfirmation(context, row.case_id)
     const prescriptionDraftState = prescriptionDraftStateRowSchema.optional().parse(
       this.#database.driver.prepare(`
@@ -3426,9 +3435,9 @@ export class WorkflowService {
       ...(diagnosisState === undefined ? {} : {
         diagnosis: {
           ...(diagnosisConfirmation === undefined ? {} : { confirmation: diagnosisConfirmation }),
-          ...(diagnosisState.draft_json === null
+          ...(diagnosisDraft === undefined || diagnosisDraft.entries.length === 0
             ? {}
-            : { draft: diagnosisDraftContentSchema.parse(JSON.parse(diagnosisState.draft_json)) }),
+            : { draft: diagnosisDraft }),
           draftVersion: diagnosisState.version,
         },
       }),
@@ -3800,7 +3809,7 @@ export class WorkflowService {
     if ((current?.version ?? 0) !== input.expectedDraftVersion) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
     }
-    const draft = diagnosisDraftContentSchema.parse({ entries: resolvedEntries })
+    const draft = JSON.stringify(storedDiagnosisDraftContentSchema.parse({ entries: resolvedEntries }))
     const nextVersion = input.expectedDraftVersion + 1
     const updatedAt = this.#virtualTime(input.context)
     if (current === undefined) {
@@ -3814,7 +3823,7 @@ export class WorkflowService {
         input.context.epoch,
         outpatientCase.case_id,
         nextVersion,
-        JSON.stringify(draft),
+        draft,
         input.context.actorId,
         updatedAt,
       )
@@ -3826,7 +3835,7 @@ export class WorkflowService {
           AND version = ?
       `).run(
         nextVersion,
-        JSON.stringify(draft),
+        draft,
         input.context.actorId,
         updatedAt,
         input.context.workspaceId,
@@ -3899,7 +3908,7 @@ export class WorkflowService {
     ) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
     }
-    const draft = diagnosisDraftContentSchema.parse(JSON.parse(state.draft_json))
+    const draft = storedDiagnosisDraftContentSchema.parse(JSON.parse(state.draft_json))
     if (draft.entries.filter(entry => entry.role === 'primary').length !== 1) {
       throw new WorkflowError(
         'DIAGNOSIS_PRIMARY_REQUIRED',
@@ -9321,6 +9330,203 @@ export class WorkflowService {
     }] }
   }
 
+  previewMultiChargePayment(input: {
+    context: ActorContext
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    input: z.infer<typeof multiChargePaymentPreviewInputSchema>
+  }) {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: multiChargePaymentPreviewResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: input.input,
+      operation: 'payment.multi-charge.preview',
+    }, () => {
+      this.#assertRole(input.context, ['cashier'])
+      const requested = multiChargePaymentPreviewInputSchema.parse(input.input)
+      const references = requested.chargeItemIds.map(id => `ChargeItem/${id}`)
+      if (Object.keys(input.expectedVersions).length !== references.length
+        || references.some(reference => input.expectedVersions[reference] === undefined)) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', '必须逐项提供且仅提供所选费用的预期版本')
+      }
+      const bill = this.billingCase({ context: input.context, caseId: requested.caseId, page: 1, pageSize: 1 })
+      const charges = requested.chargeItemIds.map(chargeItemId => {
+        const charge = bill.charges.find(item => item.chargeItemId === chargeItemId)
+        if (charge === undefined || charge.category === 'registration' || !['billable', 'declined'].includes(charge.status)
+          || charge.remainingFen <= 0) throw new WorkflowError('WORKFLOW_CONFLICT', '所选费用不可收款，请刷新完整清单')
+        const workflow = this.#readPaymentCharge(input.context, requested.caseId, charge.category, chargeItemId)
+        if (workflow === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', '原费用已不可用')
+        this.#assertCollectionWorkflow(input.context, charge.category, workflow)
+        if (this.#payments.balance(input.context, chargeItemId).unresolved > 0) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', '请先查询原未知收款或退款，不能再次收款')
+        }
+        return {
+          chargeItemId, chargeVersion: charge.chargeVersion, category: charge.category,
+          descriptionZh: charge.descriptionZh, descriptionEn: charge.descriptionEn,
+          amountFen: charge.amountFen, paidFen: charge.paidFen, insuranceFen: charge.insuranceFen,
+          remainingFen: charge.remainingFen, collectionAmountFen: charge.remainingFen,
+        }
+      })
+      this.#assertExpectedVersions(input.expectedVersions, references)
+      const remainingFen = charges.reduce((total, charge) => total + charge.remainingFen, 0)
+      const tenders = paymentTendersSchema.parse(requested.tenders ?? [{ method: 'cash', amountFen: remainingFen }])
+      if (tenders.reduce((total, tender) => total + tender.amountFen, 0) !== remainingFen) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', '组合支付合计必须等于全部所选费用的剩余应收')
+      }
+      const previewId = uuidv7()
+      const commitToken = `${previewId}.${this.#hashToken(previewId)}`
+      const expiresAt = new Date(this.#now().getTime() + 5 * 60_000).toISOString()
+      const data = multiChargePaymentPreviewResponseSchema.shape.data.parse({
+        amountFen: remainingFen, caseId: bill.caseId, patientId: bill.patient.id, encounterId: bill.encounterId,
+        charges, channel: 'synthetic-payment', commitToken,
+        expectedOutcome: paymentChannelPlan(this.#database, input.context, requested.simulatorRule).outcome,
+        expiresAt, previewId, tenders, remainingFen,
+        totalFen: charges.reduce((total, charge) => total + charge.amountFen, 0),
+        paidFen: charges.reduce((total, charge) => total + charge.paidFen, 0),
+        insuranceFen: charges.reduce((total, charge) => total + charge.insuranceFen, 0),
+      })
+      this.#database.driver.prepare(`INSERT INTO multi_charge_payment_preview (
+        workspace_id,epoch,preview_id,case_id,patient_id,encounter_id,actor_context_json,
+        expected_versions_json,snapshot_json,simulator_rule,token_hash,expires_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        input.context.workspaceId, input.context.epoch, previewId, bill.caseId, bill.patient.id, bill.encounterId,
+        JSON.stringify(input.context), JSON.stringify(input.expectedVersions), JSON.stringify(data),
+        requested.simulatorRule, this.#hashToken(commitToken), expiresAt,
+      )
+      return { data, effects: [{ kind: 'created', reference: `MultiChargePaymentPreview/${previewId}`, versionId: '1' }] }
+    })
+  }
+
+  #readMultiChargePreview(context: ActorContext, previewId: string) {
+    const row = z.object({ actor_context_json: z.string(), snapshot_json: z.string(), token_hash: z.string(),
+      simulator_rule: paymentSimulatorRuleSchema, expires_at: z.string(), consumed_at: z.string().nullable() }).optional().parse(
+      this.#database.driver.prepare('SELECT * FROM multi_charge_payment_preview WHERE workspace_id=? AND epoch=? AND preview_id=?')
+        .get(context.workspaceId, context.epoch, previewId))
+    return row === undefined ? undefined : { ...row, snapshot: multiChargePaymentPreviewResponseSchema.shape.data.parse(JSON.parse(row.snapshot_json)) }
+  }
+
+  #exactPaymentVersions(expectedVersions: Record<string, string>, chargeItemIds: string[]) {
+    const references = chargeItemIds.map(id => `ChargeItem/${id}`)
+    if (Object.keys(expectedVersions).length !== references.length || references.some(reference => expectedVersions[reference] === undefined)) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', '必须逐项提供且仅提供原交易全部费用的预期版本')
+    }
+  }
+
+  #multiPaymentCharges(context: ActorContext, snapshot: z.infer<typeof multiChargePaymentPreviewResponseSchema>['data']) {
+    const owner = z.object({ patient_id: z.string(), encounter_id: z.string(), prescription_id: z.string().nullable(),
+      service_request_id: z.string().nullable() }).optional().parse(this.#database.driver.prepare(`
+      SELECT patient_id,encounter_id,prescription_id,service_request_id FROM outpatient_case
+      WHERE workspace_id=? AND epoch=? AND case_id=?`).get(context.workspaceId, context.epoch, snapshot.caseId))
+    if (owner === undefined || owner.patient_id !== snapshot.patientId || owner.encounter_id !== snapshot.encounterId) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', '原收款就诊归属已变化')
+    }
+    return snapshot.charges.map(frozen => {
+      const charge = this.#readPaymentCharge(context, snapshot.caseId, frozen.category, frozen.chargeItemId)
+      if (charge === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', '原收款费用已不可用')
+      return { ...charge, ...owner, case_id: snapshot.caseId, category: frozen.category,
+        charge_version: charge.version, current_amount_fen: charge.total_fen }
+    })
+  }
+
+  #multiPaymentData(context: ActorContext, paymentId: string, snapshot: z.infer<typeof multiChargePaymentPreviewResponseSchema>['data']) {
+    const payment = this.#collections.attempt(context, paymentId)!
+    const charges = this.#multiPaymentCharges(context, snapshot)
+    return multiChargePaymentResponseSchema.shape.data.parse({ kind: 'multi-charge', paymentId, version: payment.version,
+      caseId: snapshot.caseId, patientId: payment.patientId, encounterId: payment.encounterId,
+      amountFen: payment.amountFen, outcome: payment.outcome, tenders: this.#collections.tenders(context, paymentId),
+      allocations: charges.map((charge, index) => ({ chargeItemId: charge.charge_item_id,
+        amountFen: snapshot.charges[index]!.collectionAmountFen, chargeVersion: charge.version,
+        remainingFen: this.#remainingPaymentFen(context, charge), status: charge.status })),
+    })
+  }
+
+  confirmMultiChargePayment(input: { context: ActorContext; expectedVersions: Record<string, string>; idempotencyKey: string; previewId: string; commitToken: string }) {
+    return this.#commands.execute({ context: input.context, dataSchema: multiChargePaymentResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions, idempotencyKey: input.idempotencyKey,
+      input: { previewId: input.previewId, commitToken: input.commitToken }, operation: 'payment.multi-charge.confirm',
+    }, transaction => {
+      this.#assertRole(input.context, ['cashier'])
+      const preview = this.#readMultiChargePreview(input.context, input.previewId)
+      if (preview === undefined || preview.consumed_at !== null || preview.token_hash !== this.#hashToken(input.commitToken)
+        || preview.actor_context_json !== JSON.stringify(input.context) || Date.parse(preview.expires_at) <= this.#now().getTime()) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', '合并收款预览失效，请重新预览')
+      }
+      const { snapshot } = preview
+      this.#exactPaymentVersions(input.expectedVersions, snapshot.charges.map(charge => charge.chargeItemId))
+      const charges = this.#multiPaymentCharges(input.context, snapshot)
+      charges.forEach((charge, index) => {
+        const frozen = snapshot.charges[index]!
+        const balance = this.#payments.balance(input.context, charge.charge_item_id)
+        const insuranceFen = this.insurance.coverage(input.context, `ChargeItem/${charge.charge_item_id}`)
+        if (!['billable', 'declined'].includes(charge.status) || balance.unresolved > 0
+          || input.expectedVersions[`ChargeItem/${charge.charge_item_id}`] !== String(frozen.chargeVersion)
+          || charge.version !== frozen.chargeVersion || charge.total_fen !== frozen.amountFen || balance.paidFen !== frozen.paidFen
+          || insuranceFen !== frozen.insuranceFen || charge.total_fen - balance.paidFen - insuranceFen !== frozen.collectionAmountFen) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', '逐项费用、资金或医保已变化，请重新预览合并收款')
+        }
+        this.#assertCollectionWorkflow(input.context, charge.category, charge)
+      })
+      if (snapshot.charges.reduce((sum, item) => sum + item.collectionAmountFen, 0) !== snapshot.amountFen) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', '分配金额与整笔收款不一致')
+      }
+      const now = this.#virtualTime(input.context)
+      const payment = this.#collections.create(input.context, { owner: { kind: 'outpatient', id: snapshot.caseId },
+        purpose: 'outpatient-charge', previewId: input.previewId, amountFen: snapshot.amountFen,
+        tenders: snapshot.tenders, simulatorRule: preview.simulator_rule, createdAt: now })
+      snapshot.charges.forEach((charge, position) => this.#payments.allocate(input.context, payment.paymentId, snapshot.caseId,
+        charge.chargeItemId, charge.collectionAmountFen, position))
+      this.#database.driver.prepare('UPDATE multi_charge_payment_preview SET consumed_at=? WHERE workspace_id=? AND epoch=? AND preview_id=?')
+        .run(now, input.context.workspaceId, input.context.epoch, input.previewId)
+      const effects: CommandEffect[] = [{ kind: 'created', reference: `PaymentTransaction/${payment.paymentId}`, versionId: '1' }]
+      for (const charge of charges) this.#applyPaymentOutcome(transaction, input.context, charge, payment.outcome, effects)
+      return { data: this.#multiPaymentData(input.context, payment.paymentId, snapshot), effects }
+    })
+  }
+
+  recoverMultiChargePayment(input: { context: ActorContext; expectedVersions: Record<string, string>; idempotencyKey: string; paymentId: string; expectedPaymentVersion: number }) {
+    return this.#commands.execute({ context: input.context, dataSchema: multiChargePaymentResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions, idempotencyKey: input.idempotencyKey,
+      input: { paymentId: input.paymentId, expectedPaymentVersion: input.expectedPaymentVersion }, operation: 'payment.multi-charge.recover',
+    }, transaction => {
+      this.#assertRole(input.context, ['cashier'])
+      const attempt = this.#payments.attempt(input.context, input.paymentId)
+      if (attempt === undefined || attempt.allocations.length < 2) throw new WorkflowError('WORKFLOW_CONFLICT', '原合并收款不存在')
+      const preview = this.#readMultiChargePreview(input.context, attempt.previewId)
+      if (preview === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', '原合并收款分配不可用')
+      this.#exactPaymentVersions(input.expectedVersions, attempt.allocations.map(item => item.chargeItemId))
+      const charges = this.#multiPaymentCharges(input.context, preview.snapshot)
+      if (attempt.outcome === 'ambiguous') for (const charge of charges) {
+        if (charge.status !== 'ambiguous') throw new WorkflowError('WORKFLOW_CONFLICT', '原合并收款费用已变化')
+        this.#assertCollectionWorkflow(input.context, charge.category, charge)
+      }
+      const recovered = this.#collections.recover(input.context, input.paymentId, input.expectedPaymentVersion, this.#virtualTime(input.context))
+      const effects: CommandEffect[] = []
+      if (recovered.changed) {
+        effects.push({ kind: 'created', reference: `PaymentResolution/${input.paymentId}`, versionId: '1' })
+        for (const charge of charges) this.#applyPaymentOutcome(transaction, input.context, charge, recovered.payment.outcome, effects)
+      }
+      return { data: this.#multiPaymentData(input.context, input.paymentId, preview.snapshot), effects }
+    })
+  }
+
+  #readPaymentCharge(context: ActorContext, caseId: string, category: 'laboratory' | 'imaging' | 'pathology' | 'medication', chargeItemId: string) {
+    return paymentChargeRowSchema.optional().parse(this.#database.driver.prepare(`
+      SELECT charge.charge_id, charge.charge_item_id, charge.total_fen - COALESCE((SELECT SUM(adjustment.amount_fen)
+        FROM financial_charge_adjustment adjustment WHERE adjustment.workspace_id=charge.workspace_id AND adjustment.epoch=charge.epoch
+          AND adjustment.charge_item_id=charge.charge_item_id),0) AS total_fen,
+        charge.version,charge.status,outpatient_case.status AS case_status,outpatient_case.encounter_id,
+        prescription.status AS prescription_status,withdrawal.withdrawal_id
+      FROM charge_record AS charge JOIN outpatient_case USING(workspace_id,epoch,case_id)
+      LEFT JOIN prescription ON prescription.workspace_id=charge.workspace_id AND prescription.epoch=charge.epoch
+        AND prescription.prescription_id=outpatient_case.prescription_id
+      LEFT JOIN prescription_withdrawal AS withdrawal ON withdrawal.workspace_id=prescription.workspace_id
+        AND withdrawal.epoch=prescription.epoch AND withdrawal.prescription_id=prescription.prescription_id
+      WHERE charge.workspace_id=? AND charge.epoch=? AND charge.case_id=? AND charge.category=? AND charge.charge_item_id=?
+    `).get(context.workspaceId, context.epoch, caseId, category, chargeItemId))
+  }
+
   previewPayment(input: {
     category: 'laboratory' | 'imaging' | 'pathology' | 'medication'
     chargeItemId?: string | undefined
@@ -9364,32 +9570,7 @@ export class WorkflowService {
       if (targets.length !== 1 || chargeItemId === undefined || targets[0] !== `ChargeItem/${chargeItemId}`) {
         throw new WorkflowError('WORKFLOW_CONFLICT', '必须指定与预期版本一致的原费用')
       }
-      const charge = paymentChargeRowSchema.optional().parse(
-        this.#database.driver.prepare(`
-          SELECT charge.charge_id, charge.charge_item_id, charge.total_fen - COALESCE((SELECT SUM(adjustment.amount_fen)
-            FROM financial_charge_adjustment adjustment WHERE adjustment.workspace_id=charge.workspace_id AND adjustment.epoch=charge.epoch
-              AND adjustment.charge_item_id=charge.charge_item_id),0) AS total_fen,
-            charge.version, charge.status, outpatient_case.status AS case_status,
-            outpatient_case.encounter_id,
-            prescription.status AS prescription_status,
-            withdrawal.withdrawal_id
-          FROM charge_record AS charge
-          JOIN outpatient_case
-            ON outpatient_case.workspace_id = charge.workspace_id
-           AND outpatient_case.epoch = charge.epoch
-           AND outpatient_case.case_id = charge.case_id
-          LEFT JOIN prescription
-            ON prescription.workspace_id = outpatient_case.workspace_id
-           AND prescription.epoch = outpatient_case.epoch
-           AND prescription.prescription_id = outpatient_case.prescription_id
-          LEFT JOIN prescription_withdrawal AS withdrawal
-            ON withdrawal.workspace_id = prescription.workspace_id
-           AND withdrawal.epoch = prescription.epoch
-           AND withdrawal.prescription_id = prescription.prescription_id
-          WHERE charge.workspace_id = ? AND charge.epoch = ?
-            AND charge.case_id = ? AND charge.category = ? AND charge.charge_item_id = ?
-        `).get(input.context.workspaceId, input.context.epoch, input.caseId, input.category, chargeItemId),
-      )
+      const charge = this.#readPaymentCharge(input.context, input.caseId, input.category, chargeItemId)
       if (charge === undefined || !['billable', 'declined'].includes(charge.status)) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The charge is not available for payment')
       }
@@ -9590,12 +9771,13 @@ export class WorkflowService {
     }, transaction => {
       this.#assertRole(input.context, ['cashier'])
       const attempt = this.#payments.attempt(input.context, input.paymentId)
-      if (attempt === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The original payment attempt is unavailable')
+      if (attempt === undefined || attempt.allocations.length !== 1) throw new WorkflowError('WORKFLOW_CONFLICT', '请使用合并收款恢复入口查询原多费用交易')
+      const chargeItemId = attempt.allocations[0]!.chargeItemId
       const preview = this.#readPaymentPreview(input.context, attempt.previewId)
       if (preview === undefined || attempt.version !== input.expectedPaymentVersion) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The original payment version has changed; refresh the bill')
       }
-      this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${attempt.chargeItemId}`])
+      this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${chargeItemId}`])
       if (attempt.outcome === 'ambiguous' && preview.charge_status !== 'ambiguous') {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The original receivable is no longer recoverable')
       }
@@ -10607,7 +10789,8 @@ export class WorkflowService {
       pendingDraftTarget = 'imaging'
     } else if (this.pathology.hasDraft(context, outpatientCase.case_id)) {
       pendingDraftTarget = 'pathology'
-    } else if (diagnosisDraft?.draft_json !== null && diagnosisDraft?.draft_json !== undefined) {
+    } else if (diagnosisDraft?.draft_json !== null && diagnosisDraft?.draft_json !== undefined
+      && storedDiagnosisDraftContentSchema.parse(JSON.parse(diagnosisDraft.draft_json)).entries.length > 0) {
       pendingDraftTarget = 'diagnosis'
     } else if (prescriptionDraft?.draft_json !== null && prescriptionDraft?.draft_json !== undefined) {
       pendingDraftTarget = 'medication-conclusion'

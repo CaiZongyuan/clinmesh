@@ -20,6 +20,20 @@ const clinicalDocumentOperationIds = {
 } as const
 
 describe('HIS operation catalog', () => {
+  it('手工释放保留旧调用兼容，编码审阅版本并限制为正整数', () => {
+    const operation = getHisOperation('inpatient.drg.reservation.release')
+    const original = { admissionId: 'synthetic-admission', encounterVersion: '2',
+      reservationId: 'synthetic-reservation', reason: '合成审阅释放余量' }
+    expect(operation.input.parse(original)).toEqual(original)
+    const reviewed = { ...original, expectedReservationVersion: 2 }
+    expect(operation.input.parse(reviewed)).toEqual(reviewed)
+    expect(operation.http.encodeBody?.(reviewed)).toEqual({ input: {
+      encounterVersion: '2', expectedReservationVersion: 2, reason: original.reason,
+    } })
+    for (const expectedReservationVersion of [0, -1, 1.5, '2'])
+      expect(operation.input.safeParse({ ...original, expectedReservationVersion }).success).toBe(false)
+    expect(operation.version).toBe(6)
+  })
   it('结算后收退确认声明原预览token，恢复只接受原尝试及版本', () => {
     for (const kind of ['refund', 'payment']) {
       const confirm = getHisOperation(`inpatient.financial.${kind}.confirm`)
@@ -615,8 +629,8 @@ describe('HIS operation catalog', () => {
     expect(operation.input.parse({ caseId: 'case-1', page: 2, pageSize: 1 })).toEqual({ caseId: 'case-1', page: 2, pageSize: 1 })
     expect(operation.input.safeParse({ caseId: 'case-1', pageSize: 101 }).success).toBe(false)
     expect(operation.input.safeParse({ caseId: 'case-1', patientId: 'other-patient' }).success).toBe(false)
-    expect(operation.summary).toContain('registration')
-    expect(operation.summary).toContain('unpaid')
+    expect(operation.summary).toContain('未缴挂号费用')
+    expect(operation.summary).toContain('挂号只读')
   })
 
   it('previews a bounded combination of payment methods and uncertain channel outcomes', () => {
@@ -761,7 +775,7 @@ describe('HIS operation catalog', () => {
 
     expect(counts).toEqual({
       'clinmesh-administrator': 4,
-      'clinmesh-billing': 14,
+      'clinmesh-billing': 18,
       'clinmesh-doctor': 55,
       'clinmesh-fhir': 5,
       'clinmesh-inpatient': 113,
@@ -786,6 +800,7 @@ describe('HIS operation catalog', () => {
     expect(listHisOperations()
       .filter(operation => operation.previewToken === 'required')
       .map(operation => operation.id)).toEqual([
+      'payment.multi-charge.confirm',
       'inpatient.financial.refund.confirm',
       'inpatient.financial.payment.confirm',
       clinicalDocumentOperationIds.sign,

@@ -13,6 +13,36 @@ Read the queue, then the selected case's unified bill. The bill includes registr
 
 Payment uses preview then confirm, binding the exact `chargeItemId` and its current version; `caseId` and `category` only filter. Optional `tenders` combine `cash`, `bank-card` and `mobile` amounts in positive integer fen; omitted tenders use the default full remaining amount. Keep the preview ID, commit token, ChargeItem version and each command's idempotency key together. Confirm freezes the previewed tenders. A successful partial payment leaves a balance; only a fully paid charge with definite funds, including valid insurance allocations, releases its original investigation once. An accepted request keeps that release snapshot through later financial changes. A cancelled request cannot be collected or released.
 
+For multiple existing charges, `payment.multi-charge.preview` reviews 2–20 distinct original charges belonging to the same patient and encounter. Copy every `chargeItemId` and `chargeVersion` from the complete bill; laboratory, imaging, pathology and medication may be selected together when already collectable. Each frozen row shows net `amountFen`, `paidFen`, `insuranceFen`, `remainingFen` and `collectionAmountFen`; the collection total equals all selected remaining balances. Omitted tenders default to cash; explicit tenders must match that full total. A missing, stale, cancelled, paid or unresolved-funds item rejects the entire preview. Refresh and review all selected rows before creating a new intent.
+
+The preview creates no collection or clinical release. Review it, then use `payment.multi-charge.confirm` with its required `commitToken` and every frozen charge version to create one collection with the full `allocations`, not one payment per charge. Operation discovery declares `previewToken: "required"`; never confirm without the reviewed original token. Its preview ID and token cannot be consumed by single-charge `payment.confirm`. Preserve the single-charge flow for partial payments. Any change to selected charges, balances, insurance coverage, tenders or versions requires a fresh preview and human review; `WORKFLOW_CONFLICT` rejects the entire collection.
+
+Multi-charge history has `kind: "multi-charge"`, an original whole-payment `amountFen` and complete `allocations`; there is no top-level `chargeItemId`. Pagination counts whole collections and never splits an allocation list. A recorded ambiguous collection blocks all its original charges. Use `payment.multi-charge.recover` with the original `paymentId`, `expectedPaymentVersion` and all current original ChargeItem versions. Recovery appends the original resolution and creates no new collection, allocation or clinical request. An ambiguous-pending result stays blocked. Do not use single-charge recovery for multi-charge money.
+
+Before sending preview, confirm or recovery, persist the complete actor/patient/encounter binding, exact input and original idempotency key. After response loss query the original Command receipt first; only a missing receipt permits exact replay with the same key and payload. An existing ambiguous receipt requires original transaction recovery. Draft loss or logout must not erase a submitted money intent.
+
+```bash
+clinmesh operations schema payment.multi-charge.preview
+clinmesh payment preview-multi-charge --input @payment-multi-charge-preview.json --idempotency-key <key>
+clinmesh command receipt get --operation-id payment.multi-charge.preview --idempotency-key <key>
+clinmesh payment confirm-multi-charge --input @payment-multi-charge-confirm.json --idempotency-key <confirm-key>
+clinmesh command receipt get --operation-id payment.multi-charge.confirm --idempotency-key <confirm-key>
+clinmesh payment recover-multi-charge --input @payment-multi-charge-recover.json --idempotency-key <recovery-key>
+clinmesh command receipt get --operation-id payment.multi-charge.recover --idempotency-key <recovery-key>
+```
+
+```json
+{"caseId":"<case-id>","charges":[{"chargeItemId":"<laboratory-charge-id>","chargeVersion":1},{"chargeItemId":"<imaging-charge-id>","chargeVersion":2}],"simulatorRule":"success"}
+```
+
+```json
+{"previewId":"<preview-id>","commitToken":"<commit-token-from-preview>","charges":[{"chargeItemId":"<laboratory-charge-id>","chargeVersion":1},{"chargeItemId":"<imaging-charge-id>","chargeVersion":2}]}
+```
+
+```json
+{"paymentId":"<payment-id>","expectedPaymentVersion":1,"charges":[{"chargeItemId":"<laboratory-charge-id>","chargeVersion":2},{"chargeItemId":"<imaging-charge-id>","chargeVersion":3}]}
+```
+
 ```bash
 clinmesh billing queue list --category laboratory --status pending
 clinmesh billing queue list --category imaging --status pending
@@ -59,6 +89,17 @@ clinmesh command receipt get --operation-id payment.recover --idempotency-key <r
 Read `billing.refunds.get` before correcting fees or refunding. Each successful source reports its `version`, `refundedFen`, `reservedFen` and `refundableFen`. The current bill subtracts recorded fee corrections from receivables and successful refunds from collections; original charges, payment attempts and clinical execution remain in their original history.
 
 `billing.charge.adjust` records a positive integer fen reduction with the original ChargeItem version and a specific financial-error reason. It creates refund allowance but sends no money. Refund only an original successful payment, bounded by both its remaining funds and the unconsumed correction allowance across every original payment for that charge. Refunds consume the original frozen tender order and remaining amount per method; do not choose a new refund method. Unknown refunds reserve these amounts; definite decline releases the reservation.
+
+For multi-charge originals, `billing.refunds.get` groups one whole source with its complete allocation list. Select an explicit original allocation and use `refund.allocation.preview`: the amount cannot exceed the remaining whole source, that source's remaining original allocation, or the charge's unused cumulative correction allowance across all sources. Successful and ambiguous refunds consume or reserve all three. An unknown refund blocks further refunds from that source until recovered. Whole-source totals are counted once. Original tenders remain whole-payment facts. `refund.confirm` follows the frozen allocation; `refund.recover` follows the immutable original `basisId`, never the first allocation. Legacy `refund.preview` only accepts a single-allocation source.
+
+```bash
+clinmesh refund preview-allocation --input @refund-allocation-preview.json --idempotency-key <allocation-preview-key>
+clinmesh command receipt get --operation-id refund.allocation.preview --idempotency-key <allocation-preview-key>
+```
+
+```json
+{"paymentId":"<payment-id>","chargeItemId":"<original-charge-id>","chargeVersion":3,"amountFen":500,"expectedSourceVersion":1,"simulatorRule":"success"}
+```
 
 For a new independent investigation before its first release, ask the responsible doctor to cancel the original request instead of reducing its release threshold with an ordinary correction. Cancellation appends the full fee reduction and preserves the original charge; it does not refund money. Refresh the refund read model and return only the actual original successful collections, even when the original charge was only partly paid. Resolve unknown funds first and cancel active insurance through its original settlement before clinical cancellation. Pending cancellation refunds keep the Scenario Run active through Encounter completion or dispensing until the original refund responsibility is settled. Follow the [investigation billing and cancellation contract](../../docs/spec/2026-10-26-outpatient-investigation-billing.md#取消执行失败与退款) for allowed states.
 

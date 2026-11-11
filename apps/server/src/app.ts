@@ -22,7 +22,7 @@ import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema
 import { InpatientError, type InpatientService } from './application/inpatient-service.ts'
 import { inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, advanceVirtualTimeInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { randomUUID } from 'node:crypto'
-import { chargeAdjustmentInputSchema, refundConfirmInputSchema, refundPreviewInputSchema, refundRecoverInputSchema } from '@clinmesh/contracts/refunds'
+import { chargeAdjustmentInputSchema, refundConfirmInputSchema, refundPreviewInputSchema, refundAllocationPreviewInputSchema, refundRecoverInputSchema } from '@clinmesh/contracts/refunds'
 import { installHostModelUsageRoutes } from './model-usage-host-routes.ts'
 import { modelUsageFilterSchema, modelUsageControlUpdateSchema, modelUsageReconcileSchema, modelUsageRepriceSchema, modelUsageRetentionUpdateSchema } from '@clinmesh/contracts/model-usage'
 import { ModelUsagePolicyError } from './application/model-usage-control.ts'
@@ -37,6 +37,9 @@ import {
 import {
   resetScenarioRequestSchema,
   paymentTendersSchema,
+  multiChargePaymentPreviewInputSchema,
+  multiChargePaymentConfirmInputSchema,
+  multiChargePaymentRecoverInputSchema,
   paymentSimulatorRuleSchema,
   doctorQueueViewSchema,
   acknowledgeImagingReportRequestSchema,
@@ -285,7 +288,7 @@ function apiErrorResponse(
       error.code,
       error.message,
       error instanceof WorkflowError ? error.conflict : undefined,
-      error instanceof WorkflowError ? error.reason : undefined,
+      error instanceof WorkflowError || error instanceof InpatientError ? error.reason : undefined,
     ), error.status)
   }
   if (
@@ -2222,6 +2225,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           ))
         } catch (error) { return apiErrorResponse(context, error) }
       })
+      app.get('/api/his/v1/doctor/cases/:caseId/recommendations/:kind/confirmations/:idempotencyKey', async (context) => {
+        try {
+          return context.json(options.doctorRecommendations!.confirmationReceipt(
+            await actor(context), context.req.param('caseId'), doctorRecommendationKindSchema.parse(context.req.param('kind')),
+            z.string().min(8).max(128).parse(context.req.param('idempotencyKey')),
+          ))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
       app.post('/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm', async (context) => {
         try {
           identity.assertTrustedMutation(context.req.raw.headers)
@@ -3364,6 +3375,34 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.post('/api/his/v1/payments/actions/preview-multi-charge', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: multiChargePaymentPreviewInputSchema,
+        }).strict().parse(await context.req.json())
+        return context.json(workflow.previewMultiChargePayment({
+          ...body, context: await actor(context), idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/payments/:previewId/actions/confirm-multi-charge', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ expectedVersions: z.record(z.string(), z.string()), input: multiChargePaymentConfirmInputSchema }).strict().parse(await context.req.json())
+        return context.json(workflow.confirmMultiChargePayment({ ...body.input, expectedVersions: body.expectedVersions,
+          context: await actor(context), idempotencyKey: idempotencyKey(context), previewId: context.req.param('previewId') }))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/payments/:paymentId/actions/recover-multi-charge', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ expectedVersions: z.record(z.string(), z.string()), input: multiChargePaymentRecoverInputSchema }).strict().parse(await context.req.json())
+        return context.json(workflow.recoverMultiChargePayment({ ...body.input, expectedVersions: body.expectedVersions,
+          context: await actor(context), idempotencyKey: idempotencyKey(context), paymentId: context.req.param('paymentId') }))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.post('/api/his/v1/payments/actions/preview', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -3396,6 +3435,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         identity.assertTrustedMutation(context.req.raw.headers)
         const body = z.object({ expectedVersions: z.record(z.string(), z.string()), input: chargeAdjustmentInputSchema }).strict().parse(await context.req.json())
         return context.json(workflow.refunds.adjust(await actor(context), context.req.param('caseId'), body.input, body.expectedVersions, idempotencyKey(context)))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/refunds/actions/preview-allocation', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ expectedVersions: z.record(z.string(), z.string()), input: refundAllocationPreviewInputSchema }).strict().parse(await context.req.json())
+        return context.json(workflow.refunds.previewAllocation(await actor(context), body.input, body.expectedVersions, idempotencyKey(context)))
       } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/his/v1/refunds/actions/preview', async context => {

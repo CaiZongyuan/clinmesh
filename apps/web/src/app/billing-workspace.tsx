@@ -1,5 +1,5 @@
 import { InsurancePanel } from './insurance-panel.tsx'
-import type { BillingQueueItem, SessionContext } from '@clinmesh/contracts/his'
+import { multiChargePaymentResponseSchema, type BillingQueueItem, type SessionContext } from '@clinmesh/contracts/his'
 import { refundPreviewResponseSchema } from '@clinmesh/contracts/refunds'
 import { parseAgentToolInput } from '@clinmesh/contracts/agent'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
@@ -15,9 +15,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircleIcon, CircleAlertIcon, CreditCardIcon, ReceiptTextIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { confirmPayment, getBillingCase, getBillingQueue, newIdempotencyKey, previewPayment, recoverPayment } from './api-client.ts'
-import { BillingCasePanel, BillingPaymentHistory, outpatientBillTotals, paymentMethodLabel } from './billing-case-panel.tsx'
+import { BillingCasePanel, BillingPaymentHistory, outpatientBillTotals, paymentMethodLabel, paymentAllocations } from './billing-case-panel.tsx'
+import { BillingMultiChargePanel } from './billing-multi-charge-panel.tsx'
+import { parseTenderAmounts } from './billing-payment-input.ts'
 import { BillingRefundPanel, type FrozenRefund } from './billing-refund-panel.tsx'
-import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { CollectedMultiChargeDraftUnreadable, useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
@@ -77,6 +79,9 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const paymentInFlight = useRef(false)
   const [selectedChargeId, setSelectedChargeId] = useState<string>()
   const [paymentDrafts, setPaymentDrafts] = useState<Record<string, PaymentDraft>>({})
+  type MultiOutcome = { amountFen: number; outcome: 'ambiguous' | 'declined' | 'success'; caseId: string; patientId: string; encounterId: string }
+  const [multiOutcome, setMultiOutcome] = useState<MultiOutcome & { scope: string }>()
+  const [discardingRecoveredDraft, setDiscardingRecoveredDraft] = useState<string>()
   const simulatorItems: Array<{ label: string; value: SimulatorRule }> = [
     { label: messages.simulatorSuccess, value: 'success' },
     { label: messages.simulatorDecline, value: 'decline' },
@@ -91,6 +96,18 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   })
   const selectedCharge = queue.data?.items.find(item => item.chargeItemId === selectedChargeId)
     ?? queue.data?.items[0]
+  const currentMultiTarget = useRef({ scope: refundScope, charge: selectedCharge, ready: queue.data !== undefined })
+  currentMultiTarget.current = { scope: refundScope, charge: selectedCharge, ready: queue.data !== undefined }
+  const multiPaymentOutcome = (value: MultiOutcome) => {
+    const target = currentMultiTarget.current
+    if (target.scope !== refundScope || !target.ready || (target.charge !== undefined
+      && (target.charge.caseId !== value.caseId || target.charge.patient.id !== value.patientId || target.charge.encounterId !== value.encounterId))) return
+    setMultiOutcome({ ...value, scope: refundScope })
+    setStatus(value.outcome === 'success' ? 'paid' : value.outcome)
+    setPage(1)
+  }
+  const visibleMultiOutcome = multiOutcome?.scope === refundScope && (selectedCharge === undefined
+    || (selectedCharge.caseId === multiOutcome.caseId && selectedCharge.patient.id === multiOutcome.patientId && selectedCharge.encounterId === multiOutcome.encounterId)) ? multiOutcome : undefined
   const draftKey = agentViewRevision({ accountId: session.user.id, actor: session.actor, chargeItemId: selectedCharge?.chargeItemId })
   const { simulatorRule, tenderAmounts } = paymentDrafts[draftKey] ?? emptyPaymentDraft
   const setSimulatorRule = (value: SimulatorRule) => setPaymentDrafts(current => ({ ...current,
@@ -104,6 +121,12 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   latestForm.current = formSignature
   const caseId = selectedCharge?.caseId
   const caseKey = agentViewRevision({ owner: refundScope, caseId })
+  const historyDisclosure = useRef<HTMLDetailsElement>(null)
+  const [historyReview, setHistoryReview] = useState<{ caseKey: string; paymentId: string }>()
+  const reviewPaymentId = historyReview?.caseKey === caseKey ? historyReview.paymentId : undefined
+  const reviewPayment = (paymentId: string) => setHistoryReview({ caseKey, paymentId })
+  const closePaymentReview = (paymentId: string | undefined) => setHistoryReview(current =>
+    current?.caseKey === caseKey && current.paymentId === paymentId ? undefined : current)
   const paymentPage = historyPage.caseKey === caseKey ? historyPage.page : 1
   if (historyPage.caseKey !== caseKey) setHistoryPage({ caseKey, page: 1 })
   const bill = useQuery({
@@ -147,7 +170,11 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     ])
   },[queryClient,session.actor.workspaceId,session.actor.epoch])
   const refundWrite = useInpatientWriteIntent(session, async (command, response) => {
-    if (command.operation === 'refund.preview') setRefundPreview(command.caseId, {
+    if (command.operation === 'payment.multi-charge.confirm' || command.operation === 'payment.multi-charge.recover') {
+      const value = multiChargePaymentResponseSchema.parse(response).data
+      multiPaymentOutcome(value)
+    }
+    if (command.operation === 'refund.preview' || command.operation === 'refund.allocation.preview') setRefundPreview(command.caseId, {
       preview: refundPreviewResponseSchema.parse(response).data, chargeVersion: command.input.chargeVersion,
     })
     if (command.operation === 'billing.charge.adjust') setRefundPreview(command.input.caseId)
@@ -227,6 +254,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     confirm.reset()
     recover.reset()
     setTenderAmounts({})
+    setMultiOutcome(undefined)
   },[preview.reset,confirm.reset,recover.reset,draftKey])
   useEffect(() => {
     setPaymentConfirmation(undefined)
@@ -255,7 +283,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     setSelectedChargeId(chargeItemId)
     clearPayment()
   }
-  const unknownAttempt = bill.data?.payments.find(payment => payment.chargeItemId === selectedCharge?.chargeItemId && payment.outcome === 'ambiguous')
+  const unknownAttempt = bill.data?.payments.find(payment => paymentAllocations(payment).some(item => item.chargeItemId === selectedCharge?.chargeItemId) && payment.outcome === 'ambiguous')
   const paymentPending = preview.isPending || confirm.isPending || recover.isPending || refundWrite.mutation.isPending
   const paymentWriteBlocked = paymentPending || refundWrite.blocked
   const paymentCollectionBlocked = paymentWriteBlocked || selectedCharge?.status === 'cancelled'
@@ -275,6 +303,9 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const refundError = refundWrite.storageFailure ?? refundWrite.mutation.error
   const frozenRefund = bill.data !== undefined && refundPreviews.scope === refundScope ? refundPreviews.cases.get(bill.data.caseId) : undefined
   const pendingRefundCommand = refundWrite.pending?.command
+  const unreadableCollectedDraft = refundWrite.mutation.error instanceof CollectedMultiChargeDraftUnreadable
+    && refundWrite.mutation.error.idempotencyKey === refundWrite.pending?.idempotencyKey
+    && (pendingRefundCommand?.operation === 'payment.multi-charge.confirm' || pendingRefundCommand?.operation === 'payment.multi-charge.recover')
   const pendingRefundForCase = pendingRefund && bill.data !== undefined && pendingRefundCommand !== undefined
     && (pendingRefundCommand.operation === 'billing.charge.adjust' ? pendingRefundCommand.input.caseId === bill.data.caseId
       : 'caseId' in pendingRefundCommand && pendingRefundCommand.caseId === bill.data.caseId)
@@ -282,6 +313,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const changeHistoryPage = (page: number) => {
     if (paymentInFlight.current) return
     historyRevision.current += 1
+    closePaymentReview(reviewPaymentId)
     setHistoryPage({ caseKey, page })
   }
   const previewSubmission = (): PreviewSubmission => {
@@ -304,7 +336,18 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     return { input: { paymentId, expectedPaymentVersion: attempt.version, chargeItemId: charge.chargeItemId, chargeVersion: charge.chargeVersion },
       context: { ...paymentMutationContext(), chargeItemId: charge.chargeItemId, category: charge.category } }
   }
-  const recoverOriginal = (paymentId: string) => recover.mutateAsync(recoverSubmission(paymentId))
+  const recoverOriginal = (paymentId: string) => {
+    const attempt = bill.data?.payments.find(item => item.paymentId === paymentId)
+    if (attempt?.kind !== 'multi-charge' || bill.data === undefined) return recover.mutateAsync(recoverSubmission(paymentId))
+    const currentBill = bill.data
+    return refundWrite.mutation.mutateAsync({ operation: 'payment.multi-charge.recover', caseId: currentBill.caseId,
+      patientId: currentBill.patient.id, encounterId: currentBill.encounterId,
+      input: { paymentId, expectedPaymentVersion: attempt.version, charges: attempt.allocations.map(allocation => {
+        const charge = currentBill.charges.find(item => item.chargeItemId === allocation.chargeItemId)
+        if (charge === undefined) throw new Error(messages.paymentUnavailable)
+        return { chargeItemId: charge.chargeItemId, chargeVersion: charge.chargeVersion }
+      }) } })
+  }
   const currentPreview = selectedCharge?.status !== 'cancelled' && preview.data?.data.chargeItemId === selectedCharge?.chargeItemId
     && displaysPaymentResult(paymentContexts.current.preview) ? preview.data?.data : undefined
 
@@ -335,10 +378,10 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       },
       'billing.payment.recover.propose': {
         description: 'Request human review to query the original unknown payment attempt.',
-        enabled: !paymentWriteBlocked && unknownAttempt !== undefined,
+        enabled: !paymentWriteBlocked && unknownAttempt !== undefined && unknownAttempt.kind !== 'multi-charge',
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: (_raw: unknown, signal: AbortSignal) => {
-          if (paymentWriteBlocked || unknownAttempt === undefined) throw new Error(messages.paymentUnavailable)
+          if (paymentWriteBlocked || unknownAttempt === undefined || unknownAttempt.kind === 'multi-charge') throw new Error(messages.paymentUnavailable)
           const submission = recoverSubmission(unknownAttempt.paymentId)
           return agentReview.request({
             confirmLabel: locale => getWorkspaceMessages(locale).recoverPayment,
@@ -480,7 +523,11 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
         : status === 'paid' ? (locale === 'zh-CN' ? '本项费用已缴清' : 'This charge is paid')
           : selectedCharge.status === 'cancelled' ? (locale === 'zh-CN' ? '已取消，请按原交易办理退款' : 'Cancelled; refund the original payment')
             : currentPreview === undefined ? messages.installmentHint : messages.confirmPaymentDescription
-  const action = unknownAttempt !== undefined ? <Button ref={recoveryFocus.triggerRef} disabled={paymentWriteBlocked} onClick={() => { recoveryFocus.captureTrigger(); setRecoveryConfirmation(recoverSubmission(unknownAttempt.paymentId)) }}>{messages.recoverPayment}</Button>
+  const action = unknownAttempt?.kind === 'multi-charge' ? <Button disabled={paymentWriteBlocked} onClick={() => {
+    if (historyDisclosure.current !== null) historyDisclosure.current.open = true
+    reviewPayment(unknownAttempt.paymentId)
+  }}>{locale === 'zh-CN' ? '查询原合并收款' : 'Query original combined payment'}</Button>
+    : unknownAttempt !== undefined ? <Button ref={recoveryFocus.triggerRef} disabled={paymentWriteBlocked} onClick={() => { recoveryFocus.captureTrigger(); setRecoveryConfirmation(recoverSubmission(unknownAttempt.paymentId)) }}>{messages.recoverPayment}</Button>
     : status === 'ambiguous' ? <Button className="disabled:border disabled:border-dashed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100" disabled>{messages.recoverPayment}</Button>
       : selectedCharge === undefined ? <Button className="disabled:border disabled:border-dashed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100" disabled>{messages.previewPayment}</Button>
         : status === 'paid' ? <div className="flex flex-wrap items-center gap-2"><Button type="button" variant="outline" onClick={() => window.print?.()}>{locale === 'zh-CN' ? '打印收费凭条' : 'Print receipt'}</Button><Button type="button" onClick={() => changeStatus('pending')}>{locale === 'zh-CN' ? '返回待缴队列' : 'Back to pending queue'}</Button></div>
@@ -590,7 +637,10 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
             {bill.isPending ? <Skeleton className="h-24 w-full" /> : bill.isError ? (
               <PaymentError message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} />
             ) : bill.data === undefined ? null : (
-              <BillingCasePanel key={caseKey} bill={bill.data} chargeDetails={queue.isSuccess && !queue.isFetching ? queue.data.items : []} locale={locale} messages={messages} onRefresh={refreshBilling} />
+              <div className="flex min-w-0 flex-col gap-4">
+                <BillingCasePanel key={caseKey} bill={bill.data} chargeDetails={queue.isSuccess && !queue.isFetching ? queue.data.items : []} locale={locale} messages={messages} onRefresh={refreshBilling} />
+                <BillingMultiChargePanel key={`multi:${caseKey}`} bill={bill.data} session={session} locale={locale} blocked={paymentWriteBlocked || bill.isFetching} onRefresh={refreshBilling} onOutcome={multiPaymentOutcome} />
+              </div>
             )}
             {selectedCharge.status === 'cancelled' ? <p className="text-sm">{locale === 'zh-CN' ? '已取消，原付款由收费员按原交易退款。' : 'Cancelled. The cashier refunds the original payments through their original transactions.'}</p> : null}
           </div>
@@ -698,8 +748,26 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       {refundWrite.pending === null ? null : <Alert className="xl:col-span-2"><AlertTitle>{locale === 'zh-CN' ? '原操作结果待确认' : 'Original operation awaiting confirmation'}</AlertTitle><AlertDescription>
         <p>{locale === 'zh-CN' ? '已保留原输入和幂等键；先恢复原操作，再办理新的收退款。' : 'The original input and key are saved. Resolve the original operation before another collection or refund.'}</p>
         {pendingRefund ? <Button disabled={refundWrite.mutation.isPending} onClick={() => refundWrite.mutation.mutate(undefined)} variant="outline">{locale === 'zh-CN' ? '恢复原费用操作' : 'Recover original billing operation'}</Button> : null}
+        {refundWrite.pending.command.operation === 'payment.multi-charge.confirm' || refundWrite.pending.command.operation === 'payment.multi-charge.recover'
+          ? <Button disabled={refundWrite.mutation.isPending || refundWrite.storageFailure !== null} onClick={() => refundWrite.mutation.mutate(undefined)} variant="outline">{locale === 'zh-CN' ? '查询原合并收款操作' : 'Recover original payment command'}</Button> : null}
+        {!unreadableCollectedDraft ? null : <div className="flex flex-col gap-2">
+          <p>{locale === 'zh-CN' ? '原收款已查明成功，原患者私稿无法读取。可恢复存储后重试查询，或明确丢弃该私稿并完成恢复。' : 'The original collection succeeded, but its private draft cannot be read. Restore storage and retry, or explicitly discard that draft to finish recovery.'}</p>
+          {discardingRecoveredDraft !== refundWrite.pending.idempotencyKey
+            ? <Button variant="outline" disabled={refundWrite.mutation.isPending} onClick={() => setDiscardingRecoveredDraft(refundWrite.pending?.idempotencyKey)}>{locale === 'zh-CN' ? '丢弃不可读原私稿' : 'Discard unreadable original draft'}</Button>
+            : <><p>{locale === 'zh-CN' ? '将丢弃原收款所属患者的整份未提交多费用私稿，包括尚未收款项目的选择和付款输入。再次查询原回执确认成功后才清除；不会再次收款。' : 'This removes the original patient’s entire unsubmitted multi-charge draft, including remaining selections and tender inputs. The original receipt must prove success again before removal; no new payment is collected.'}</p>
+              <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={refundWrite.mutation.isPending} onClick={() => setDiscardingRecoveredDraft(undefined)}>{messages.cancel}</Button>
+                <Button disabled={refundWrite.mutation.isPending || refundWrite.storageFailure !== null} onClick={() => {
+                  const intent = refundWrite.pending
+                  if (!intent || (intent.command.operation !== 'payment.multi-charge.confirm' && intent.command.operation !== 'payment.multi-charge.recover')) return
+                  refundWrite.mutation.mutate({ ...intent.command, idempotencyKey: intent.idempotencyKey, recoverOriginal: true, discardUnreadMultiChargeDraft: true })
+                  setDiscardingRecoveredDraft(undefined)
+                }}>{locale === 'zh-CN' ? '确认丢弃原私稿并完成恢复' : 'Confirm original draft discard and finish recovery'}</Button></div></>}
+        </div>}
       </AlertDescription></Alert>}
       {refundError === null ? null : <div className="xl:col-span-2"><PaymentError message={getWorkspaceErrorMessage(refundError, messages)} title={messages.operationFailed} /></div>}
+      {visibleMultiOutcome === undefined ? null : <Alert className="xl:col-span-2"><AlertTitle>{visibleMultiOutcome.outcome === 'success' ? (locale === 'zh-CN' ? '合并收款成功' : 'Combined payment succeeded')
+        : visibleMultiOutcome.outcome === 'declined' ? (locale === 'zh-CN' ? '合并收款未成功' : 'Combined payment declined') : (locale === 'zh-CN' ? '合并收款结果待确认' : 'Combined payment result unknown')}</AlertTitle>
+        <AlertDescription>{formatFen(visibleMultiOutcome.amountFen, locale)}</AlertDescription></Alert>}
 
     {confirm.isError && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentError message={getWorkspaceErrorMessage(confirm.error, messages)} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
     {paymentPanel}
@@ -707,9 +775,10 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     {bill.data === undefined || (status !== 'paid' && selectedCharge?.status !== 'paid' && outpatientBillTotals(bill.data).paid === 0 && frozenRefund === undefined && !pendingRefundForCase) ? null : <RefundDisclosure key={caseKey} label={locale === 'zh-CN' ? '费用更正与退款' : 'Fee corrections and refunds'} attention={frozenRefund?.preview.previewId ?? (pendingRefundForCase ? 'pending' : undefined)}><BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
       frozen={frozenRefund} onFrozenChange={setRefundPreview} /></RefundDisclosure>}
     {selectedCharge === undefined ? null : <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{locale === 'zh-CN' ? '医保待遇' : 'Insurance'}</summary><div className="mt-4"><InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/></div></details>}
-    {caseId === undefined ? undefined : <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{messages.paymentHistory}</summary><div className="mt-4">
+    {caseId === undefined ? undefined : <details ref={historyDisclosure} onToggle={event => { if (!event.currentTarget.open) closePaymentReview(reviewPaymentId) }} className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{messages.paymentHistory}</summary><div className="mt-4">
       {bill.isPending ? <Skeleton className="h-32 w-full" /> : bill.isError ? <PaymentError action={<Button size="sm" variant="outline" onClick={() => void bill.refetch()}>{messages.refreshBill}</Button>} message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} />
-        : bill.data === undefined ? null : <BillingPaymentHistory key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={recoverOriginal} recovering={paymentPending} />}
+        : bill.data === undefined ? null : <BillingPaymentHistory key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={recoverOriginal}
+          reviewPaymentId={reviewPaymentId} onReview={reviewPayment} onCloseReview={closePaymentReview} recoveryBlocked={paymentWriteBlocked} recovering={paymentPending} />}
     </div></details>}
     </div>
   </WorkspaceCardLayout>
@@ -726,19 +795,6 @@ function RefundDisclosure({ attention, children, label }: { attention: string | 
   return <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary className="cursor-pointer text-sm font-medium">{label}</summary><div className="mt-4">{children}</div>
   </details>
-}
-
-function parseTenderAmounts(amounts: Partial<Record<TenderMethod, string>>, errorMessage: string) {
-  const tenders = (['cash', 'bank-card', 'mobile'] as const).flatMap(method => {
-    const value = amounts[method]?.trim() ?? ''
-    if (value === '') return []
-    if (!/^(0|[1-9]\d*)(\.\d{1,2})?$/.test(value)) throw new Error(errorMessage)
-    const [yuan, fraction = ''] = value.split('.')
-    const amountFen = Number(yuan) * 100 + Number(fraction.padEnd(2, '0'))
-    if (!Number.isSafeInteger(amountFen) || amountFen <= 0 || amountFen > 1_000_000_000) throw new Error(errorMessage)
-    return [{ method, amountFen }]
-  })
-  return tenders.length === 0 ? undefined : tenders
 }
 
 function billingString(value: unknown, key: string): string {

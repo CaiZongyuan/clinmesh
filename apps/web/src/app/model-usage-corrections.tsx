@@ -3,7 +3,7 @@ import { useMutation } from '@tanstack/react-query'
 import { modelUsageReconcileSchema, modelUsageRepriceSchema, type ModelUsageAttempt } from '@clinmesh/contracts/model-usage'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@clinmesh/ui/components/dialog'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@clinmesh/ui/components/dialog'
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { ApiClientError } from './api-client.ts'
@@ -30,11 +30,10 @@ function CorrectionDialog({ item, mode, locale, saved }: {
   const title = mode === 'reconcile' ? messages.reconcile : messages.reprice
   const error = mutation.error instanceof ApiClientError && mutation.error.status === 409 ? messages.correctionConflict
     : mutation.error instanceof ApiClientError && (mutation.error.status === 403 || mutation.error.status === 404) ? messages.correctionDenied : messages.correctionError
-  return <Dialog open={open} onOpenChange={value => {
-    if (mutation.isPending) return
+  return <Dialog pending={mutation.isPending} open={open} onOpenChange={value => {
     setOpen(value)
     if (value) { setEvidence(''); setTokens(''); setCny(''); setInvalid(false); mutation.reset() }
-  }}><DialogTrigger render={<Button variant="outline" size="sm" />}>{title}</DialogTrigger>
+  }}><DialogTrigger render={<Button disabled={mutation.isPending} variant="outline" size="sm" />}>{title}</DialogTrigger>
     <DialogContent><DialogHeader><DialogTitle>{title}</DialogTitle>
       <DialogDescription>{mode === 'reconcile' ? messages.reconcileDescription : messages.repriceDescription}</DialogDescription></DialogHeader>
       <form className="flex min-h-0 flex-col p-0" noValidate onSubmit={event => {
@@ -64,7 +63,7 @@ function CorrectionDialog({ item, mode, locale, saved }: {
           {invalid ? <FieldError id={`usage-${mode}-error`}>{messages.correctionInvalid}</FieldError> : null}
           {mutation.isError ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
         </FieldGroup>
-        <DialogFooter><Button type="button" variant="outline" disabled={mutation.isPending} onClick={() => setOpen(false)}>{messages.cancel}</Button>
+        <DialogFooter><DialogClose render={<Button type="button" variant="outline" />}>{messages.cancel}</DialogClose>
           <Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? messages.savingPolicy
             : mode === 'reconcile' ? messages.confirmReconcile : messages.confirmReprice}</Button></DialogFooter>
       </form>

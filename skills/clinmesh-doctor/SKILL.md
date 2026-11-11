@@ -44,11 +44,23 @@ Diagnosis and medication conclusions are independent. Save a controlled diagnosi
 
 ```bash
 clinmesh encounter diagnosis draft set --input @diagnosis.json --idempotency-key <key>
+clinmesh encounter diagnosis draft set --input @diagnosis-discard.json --idempotency-key <key>
 clinmesh encounter diagnosis confirm --input @diagnosis-confirm.json --idempotency-key <key>
 clinmesh encounter prescription draft set --input @prescription.json --idempotency-key <key>
 clinmesh encounter prescription issue --input @prescription-issue.json --idempotency-key <key>
 clinmesh encounter medication-conclusion confirm-none --input @no-medication.json --idempotency-key <key>
 clinmesh prescription withdraw --input @withdrawal.json --idempotency-key <key>
+```
+
+`encounter.diagnosis.draft.set` version 2 accepts empty `entries` to explicitly discard only the unconfirmed diagnosis draft. Read the current case first; retain the original payload and idempotency key if the outcome is unknown, then read its Command receipt before deciding to retry. Confirmed diagnoses remain unchanged. `diagnosis-discard.json`:
+
+```json
+{
+  "encounterId": "synthetic-encounter",
+  "encounterVersion": "3",
+  "expectedDraftVersion": 2,
+  "entries": []
+}
 ```
 
 ## Laboratory and services

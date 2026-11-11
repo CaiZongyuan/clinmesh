@@ -16,16 +16,21 @@ export const refundResponseSchema = commandResponseSchema(refundAttemptSchema)
 export const chargeAdjustmentInputSchema = z.object({ chargeItemId: id, amountFen: positiveFen, reason: z.string().trim().min(5).max(1000) }).strict()
 export const chargeAdjustmentResponseSchema = commandResponseSchema(z.object({ adjustmentId: id, chargeItemId: id, adjustedFen: positiveFen, chargeVersion: z.number().int().positive() }))
 export const refundPreviewInputSchema = z.object({ paymentId: id, amountFen: positiveFen, expectedSourceVersion: z.number().int().positive(), simulatorRule: paymentSimulatorRuleSchema }).strict()
+export const refundAllocationPreviewInputSchema = refundPreviewInputSchema.extend({ chargeItemId: id }).strict()
 export const refundConfirmInputSchema = z.object({ commitToken: z.string().min(16).max(256) }).strict()
 export const refundRecoverInputSchema = z.object({ expectedRefundVersion: z.number().int().positive() }).strict()
 export const refundPreviewResponseSchema = commandResponseSchema(z.object({
   previewId: id, commitToken: id, sourceId: id, chargeItemId: id, amountFen: positiveFen,
   refundableFen: fen, expectedSourceVersion: z.number().int().positive(), expectedOutcome: z.enum(['success', 'declined', 'ambiguous']), expiresAt: id,
 }))
+const refundAllocationSchema = z.object({ chargeItemId: id, amountFen: fen, refundedFen: fen, reservedFen: fen, refundableFen: fen }).strict()
+const singleRefundSourceSchema = refundAllocationSchema.extend({ sourceId: id, version: z.number().int().positive(), kind: z.never().optional(), allocations: z.never().optional() }).strict()
 export const refundCaseSchema = z.object({
   caseId: id,
   adjustments: z.array(z.object({ adjustmentId: id, chargeItemId: id, amountFen: positiveFen, reason: id, createdAt: id })),
   refunds: z.array(refundAttemptSchema),
-  sources: z.array(z.object({ sourceId: id, chargeItemId: id, amountFen: fen, refundedFen: fen, reservedFen: fen, refundableFen: fen, version: z.number().int().positive() })),
+  sources: z.array(z.union([singleRefundSourceSchema, singleRefundSourceSchema.omit({ chargeItemId: true, kind: true, allocations: true }).extend({
+    kind: z.literal('multi-charge'), chargeItemId: z.never().optional(), allocations: z.array(refundAllocationSchema).min(2).max(20),
+  }).strict()])),
   adjustedFen: fen, refundedFen: fen, reservedFen: fen,
 }).strict()

@@ -265,6 +265,7 @@ export function ClinicalDocumentPage({
               />
               )}
               <AlertDialog
+                pending={actions.revise.pending}
                 onOpenChange={open => {
                   if (!open) setRevisionPreview(undefined)
                 }}
@@ -409,8 +410,9 @@ export function ClinicalDocumentPage({
             />
           )}
           <AlertDialog
+            pending={actions.sign.pending || cancelPending}
             onOpenChange={open => {
-              if (!open && !actions.sign.pending && !cancelPending) actions.prepareSign.onReset()
+              if (!open) actions.prepareSign.onReset()
             }}
             open={currentPreview !== undefined}
           >
@@ -430,7 +432,7 @@ export function ClinicalDocumentPage({
                 </div>
               )}
               <AlertDialogFooter>
-                <AlertDialogCancel disabled={actions.sign.pending || cancelPending}>
+                <AlertDialogCancel>
                   {messages.cancel}
                 </AlertDialogCancel>
                 <Button

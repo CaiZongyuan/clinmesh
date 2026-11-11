@@ -3,7 +3,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import { paymentTendersSchema } from '@clinmesh/contracts/his'
 import { chargeAdjustmentInputSchema, chargeAdjustmentResponseSchema, refundCaseSchema, refundConfirmInputSchema,
-  refundPreviewInputSchema, refundPreviewResponseSchema, refundRecoverInputSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
+  refundPreviewInputSchema, refundAllocationPreviewInputSchema, refundPreviewResponseSchema, refundRecoverInputSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
 import type { ActorContext, CommandEffect, CommandExecutor } from './command-executor.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
@@ -51,7 +51,7 @@ export class OutpatientRefunds {
     const attempt = new PaymentLedger(this.database).attempt(context, paymentId)
     if (attempt === undefined || attempt.outcome !== 'success' || attempt.amountFen === 0) throw new WorkflowError('WORKFLOW_CONFLICT', '退款必须关联已确定成功且有余额的原交易')
     const tenders = paymentTendersSchema.parse(new PaymentCollection(this.database).tenders(context, paymentId))
-    return { attempt, source: { kind: 'outpatient-payment' as const, id: paymentId, amountFen: attempt.amountFen, tenders }, charge: this.#charge(context, attempt.chargeItemId) }
+    return { attempt, source: { kind: 'outpatient-payment' as const, id: paymentId, amountFen: attempt.amountFen, tenders } }
   }
   #allowance(context: ActorContext, chargeItemId: string) {
     const basis = this.ledger.basisBalance(context, `outpatient-charge:${chargeItemId}`)
@@ -81,9 +81,19 @@ export class OutpatientRefunds {
     const sources = z.array(z.object({ paymentId: z.string() })).parse(this.database.driver.prepare(`SELECT p.payment_id AS paymentId
       FROM collection_transaction p LEFT JOIN collection_resolution r USING(workspace_id,epoch,payment_id)
       WHERE p.workspace_id=? AND p.epoch=? AND p.owner_id=? AND p.owner_kind='outpatient' AND p.amount_fen>0 AND COALESCE(r.outcome,p.outcome)='success' ORDER BY p.created_at,p.payment_id`).all(context.workspaceId, context.epoch, caseId))
-      .map(({ paymentId }) => { const { source, attempt } = this.#source(context, paymentId); const balance = this.ledger.balance(context, source)
-        return { sourceId: paymentId, chargeItemId: attempt.chargeItemId, amountFen: source.amountFen, ...balance,
-          refundableFen: Math.min(balance.refundableFen, this.#allowance(context, attempt.chargeItemId)) } })
+      .map(({ paymentId }) => {
+        const { source, attempt } = this.#source(context, paymentId)
+        const balance = this.ledger.balance(context, source)
+        const allocations = attempt.allocations.map(allocation => {
+          const used = this.ledger.sourceBasisBalance(context, source, `outpatient-charge:${allocation.chargeItemId}`)
+          return { ...allocation, ...used, refundableFen: Math.min(balance.refundableFen,
+            Math.max(0, allocation.amountFen - used.refundedFen - used.reservedFen), this.#allowance(context, allocation.chargeItemId)) }
+        })
+        const refundableFen = Math.min(balance.refundableFen, allocations.reduce((sum, item) => sum + item.refundableFen, 0))
+        return allocations.length === 1
+          ? { sourceId: paymentId, ...allocations[0]!, ...balance, refundableFen }
+          : { kind: 'multi-charge' as const, sourceId: paymentId, amountFen: source.amountFen, ...balance, refundableFen, allocations }
+      })
     const refunds = this.ledger.attempts(context, 'outpatient', caseId)
     return refundCaseSchema.parse({ caseId, adjustments, sources, refunds,
       adjustedFen: adjustments.reduce((sum, item) => sum + item.amountFen, 0),
@@ -117,32 +127,49 @@ export class OutpatientRefunds {
     })
   }
   #expectedCharge(expectedVersions: Record<string, string>, chargeItemId: string) {
-    if (expectedVersions[`ChargeItem/${chargeItemId}`] === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', '必须提供原费用版本')
+    if (Object.keys(expectedVersions).length !== 1 || expectedVersions[`ChargeItem/${chargeItemId}`] === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', '必须仅提供所选原费用版本')
   }
   #hash(value: string) { return createHmac('sha256', this.options.tokenSecret).update(value).digest('hex') }
   #contextHash(context: ActorContext) { return this.#hash(JSON.stringify(context)) }
-  #validate(context: ActorContext, paymentId: string, amountFen: number, version: number, expectedVersions: Record<string, string>) {
+  #validate(context: ActorContext, paymentId: string, chargeItemId: string, amountFen: number, version: number, expectedVersions: Record<string, string>) {
     const value = this.#source(context, paymentId)
-    this.#expectedCharge(expectedVersions, value.attempt.chargeItemId)
-    if (new PaymentLedger(this.database).balance(context, value.attempt.chargeItemId).unresolved > 0) {
+    const allocation = value.attempt.allocations.find(item => item.chargeItemId === chargeItemId)
+    if (allocation === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', '所选费用不属于原款分配')
+    const charge = this.#charge(context, chargeItemId)
+    this.#expectedCharge(expectedVersions, chargeItemId)
+    if (new PaymentLedger(this.database).balance(context, chargeItemId).unresolved > 0) {
       throw new WorkflowError('WORKFLOW_CONFLICT', '请先查明该费用的原收款或退款结果')
     }
     const balance = this.ledger.balance(context, value.source)
-    if (balance.version !== version || amountFen > balance.refundableFen || amountFen > this.#allowance(context, value.attempt.chargeItemId)) {
+    const used = this.ledger.sourceBasisBalance(context, value.source, `outpatient-charge:${chargeItemId}`)
+    const refundableFen = Math.min(balance.refundableFen, allocation.amountFen - used.refundedFen - used.reservedFen, this.#allowance(context, chargeItemId))
+    if (balance.version !== version || balance.reservedFen > 0 || amountFen > refundableFen) {
       throw new WorkflowError('WORKFLOW_CONFLICT', '原交易余额或费用更正依据已变化，请重新预览')
     }
-    return { ...value, balance }
+    return { ...value, charge, chargeItemId, balance, refundableFen }
   }
   preview(context: ActorContext, raw: unknown, expectedVersions: Record<string, string>, idempotencyKey: string) {
     const input = refundPreviewInputSchema.parse(raw)
-    return this.commands.execute({ context, input, expectedVersions, idempotencyKey, operation: 'refund.preview', dataSchema: refundPreviewResponseSchema.shape.data,
+    return this.#preview(context, input, expectedVersions, idempotencyKey, 'refund.preview')
+  }
+  previewAllocation(context: ActorContext, raw: unknown, expectedVersions: Record<string, string>, idempotencyKey: string) {
+    const input = refundAllocationPreviewInputSchema.parse(raw)
+    return this.#preview(context, input, expectedVersions, idempotencyKey, 'refund.allocation.preview')
+  }
+  #preview(context: ActorContext, input: z.infer<typeof refundPreviewInputSchema> & { chargeItemId?: string }, expectedVersions: Record<string, string>, idempotencyKey: string, operation: 'refund.preview' | 'refund.allocation.preview') {
+    return this.commands.execute({ context, input, expectedVersions, idempotencyKey, operation, dataSchema: refundPreviewResponseSchema.shape.data,
       authorize: () => this.#authorize(context) }, () => {
-      const value = this.#validate(context, input.paymentId, input.amountFen, input.expectedSourceVersion, expectedVersions)
+      const original = this.#source(context, input.paymentId)
+      if (input.chargeItemId === undefined && original.attempt.allocations.length !== 1) throw new WorkflowError('WORKFLOW_CONFLICT', '多费用原款必须明确选择原收款项目')
+      const chargeItemId = input.chargeItemId ?? original.attempt.allocations[0]!.chargeItemId
+      const value = this.#validate(context, input.paymentId, chargeItemId, input.amountFen, input.expectedSourceVersion, expectedVersions)
       const previewId = uuidv7(), commitToken = `${previewId}.${this.#hash(previewId)}`, expiresAt = new Date(this.options.now().getTime() + 300_000).toISOString()
-      this.database.driver.prepare('INSERT INTO outpatient_refund_preview VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)').run(context.workspaceId, context.epoch, previewId,
-        input.paymentId, input.amountFen, input.expectedSourceVersion, value.charge.version, input.simulatorRule, this.#contextHash(context), this.#hash(commitToken), expiresAt)
-      return { data: { previewId, commitToken, sourceId: input.paymentId, chargeItemId: value.attempt.chargeItemId, amountFen: input.amountFen,
-        refundableFen: Math.min(value.balance.refundableFen, this.#allowance(context, value.attempt.chargeItemId)), expectedSourceVersion: input.expectedSourceVersion,
+      this.database.driver.prepare(`INSERT INTO outpatient_refund_preview
+        (workspace_id,epoch,preview_id,payment_id,charge_item_id,amount_fen,source_version,charge_version,simulator_rule,actor_context_hash,token_hash,expires_at,consumed_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL)`).run(context.workspaceId, context.epoch, previewId,
+        input.paymentId, chargeItemId, input.amountFen, input.expectedSourceVersion, value.charge.version, input.simulatorRule, this.#contextHash(context), this.#hash(commitToken), expiresAt)
+      return { data: { previewId, commitToken, sourceId: input.paymentId, chargeItemId, amountFen: input.amountFen,
+        refundableFen: value.refundableFen, expectedSourceVersion: input.expectedSourceVersion,
         expectedOutcome: input.simulatorRule.startsWith('ambiguous') ? 'ambiguous' as const : input.simulatorRule === 'decline' ? 'declined' as const : 'success' as const, expiresAt },
         effects: [{ kind: 'created' as const, reference: `RefundPreview/${previewId}`, versionId: '1' }] }
     })
@@ -151,15 +178,15 @@ export class OutpatientRefunds {
     const input = refundConfirmInputSchema.parse(raw)
     return this.commands.execute({ context, input: { previewId, ...input }, expectedVersions, idempotencyKey, operation: 'refund.confirm', dataSchema: refundResponseSchema.shape.data,
       authorize: () => this.#authorize(context) }, () => {
-      const preview = z.object({ payment_id: z.string(), amount_fen: z.number(), source_version: z.number(), charge_version: z.number(), simulator_rule: refundPreviewInputSchema.shape.simulatorRule,
+      const preview = z.object({ payment_id: z.string(), charge_item_id: z.string(), amount_fen: z.number(), source_version: z.number(), charge_version: z.number(), simulator_rule: refundPreviewInputSchema.shape.simulatorRule,
         actor_context_hash: z.string(), token_hash: z.string(), expires_at: z.string(), consumed_at: z.string().nullable() }).optional().parse(this.database.driver.prepare(
         'SELECT * FROM outpatient_refund_preview WHERE workspace_id=? AND epoch=? AND preview_id=?').get(context.workspaceId, context.epoch, previewId))
       if (preview === undefined || preview.consumed_at !== null || preview.actor_context_hash !== this.#contextHash(context)
         || preview.token_hash !== this.#hash(input.commitToken) || Date.parse(preview.expires_at) <= this.options.now().getTime()) throw new WorkflowError('WORKFLOW_CONFLICT', '退款预览失效，请重新预览')
-      const value = this.#validate(context, preview.payment_id, preview.amount_fen, preview.source_version, expectedVersions)
+      const value = this.#validate(context, preview.payment_id, preview.charge_item_id, preview.amount_fen, preview.source_version, expectedVersions)
       if (value.charge.version !== preview.charge_version) throw new WorkflowError('WORKFLOW_CONFLICT', '原费用已变化，请重新预览')
       const now = this.options.virtualTime(context)
-      const refund = this.ledger.create(context, { source: value.source, basisId: `outpatient-charge:${value.attempt.chargeItemId}`, ownerKind: 'outpatient', ownerId: value.charge.case_id,
+      const refund = this.ledger.create(context, { source: value.source, basisId: `outpatient-charge:${value.chargeItemId}`, ownerKind: 'outpatient', ownerId: value.charge.case_id,
         amountFen: preview.amount_fen, simulatorRule: preview.simulator_rule, createdAt: now })
       this.database.driver.prepare('UPDATE outpatient_refund_preview SET consumed_at=? WHERE workspace_id=? AND epoch=? AND preview_id=?').run(now, context.workspaceId, context.epoch, previewId)
       return { data: refund, effects: [
@@ -175,7 +202,10 @@ export class OutpatientRefunds {
       const attempt = this.ledger.attempt(context, refundId)
       if (attempt === undefined || attempt.ownerKind !== 'outpatient') throw new WorkflowError('WORKFLOW_CONFLICT', '原退款不存在')
       const value = this.#source(context, attempt.sourceId)
-      this.#expectedCharge(expectedVersions, value.attempt.chargeItemId)
+      const chargeItemId = attempt.basisId.startsWith('outpatient-charge:') ? attempt.basisId.slice('outpatient-charge:'.length) : ''
+      if (!value.attempt.allocations.some(item => item.chargeItemId === chargeItemId)) throw new WorkflowError('WORKFLOW_CONFLICT', '原退款费用不属于原款分配')
+      this.#charge(context, chargeItemId, attempt.ownerId)
+      this.#expectedCharge(expectedVersions, chargeItemId)
       const refund = this.ledger.recover(context, refundId, input.expectedRefundVersion, this.options.virtualTime(context))
       return { data: refund, effects: [
         ...(refund.version === attempt.version ? [] : [{ kind: 'created' as const, reference: `RefundResolution/${refundId}`, versionId: '1' }]),

@@ -72,7 +72,7 @@ for (const version of ['18', '19']) {
     })
     await expect(dialog.getByRole('button', { name: '加入检验', exact: true })).toBeInViewport()
     expect(await dialog.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
-    await dialog.getByRole('button', { name: '取消', exact: true }).click()
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
     for (const item of [
       { tab: /^放射检查 \d+$/, trigger: '添加放射检查', title: '选择放射检查', name: '胸部 CT 平扫', code: 'CT-CHEST-PLAIN', field: '检查指征' },
       { tab: /^病理会诊 \d+$/, trigger: '添加病理会诊', title: '选择病理会诊', name: '乳腺切片病理会诊', code: 'PATH-BREAST-SLIDE-CONSULT', field: '会诊目的' },
@@ -87,8 +87,9 @@ for (const version of ['18', '19']) {
       expect((await current.boundingBox())!.height).toBeLessThanOrEqual(721)
       await current.getByLabel(item.field, { exact: true }).fill('结合已核实的临床资料评估')
       if (version === '19' && process.env.CLINMESH_CAPTURE_OUTPATIENT_DETAILS === '1') await current.screenshot({ path: test.info().outputPath(`outpatient-${item.code}-detail.png`), animations: 'disabled' })
-      await expect(current.getByRole('button', { name: '取消', exact: true })).toBeInViewport()
-      await current.getByRole('button', { name: '取消', exact: true }).click()
+      const close = current.getByRole('button', { name: item.title === '选择放射检查' || item.title === '选择病理会诊' ? '关闭' : '取消', exact: true })
+      await expect(close).toBeInViewport()
+      await close.click()
     }
     if (version === '19' && process.env.CLINMESH_CAPTURE_OUTPATIENT_DETAILS === '1') await page.locator('.clinmesh-card-workspace').screenshot({ path: test.info().outputPath('outpatient-doctor-workspace.png'), animations: 'disabled' })
   })

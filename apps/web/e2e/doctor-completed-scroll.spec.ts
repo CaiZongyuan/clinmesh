@@ -27,6 +27,7 @@ test('completed doctor case reaches its final timeline and preserves navigation 
   await page.getByRole('button', { name: '查看病例 滚动测试患者', exact: true }).click()
   const region = page.getByRole('region', { name: '已完诊病例详情', exact: true })
   const end = region.locator('[data-timeline-reference="Encounter/scroll-event-29"]')
+  await expect(end).toBeAttached()
   for (const width of [1440, 390, 1440]) {
     await page.setViewportSize({ width, height: 700 })
     const viewport = await region.evaluateHandle(findScrollViewport)

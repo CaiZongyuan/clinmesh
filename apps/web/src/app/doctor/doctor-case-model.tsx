@@ -10,6 +10,7 @@ import {
 } from '@clinmesh/contracts/his'
 import { mergeDocumentText } from '@clinmesh/core/document-text'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useManualInvestigationDrafts } from './investigation-draft-storage.ts'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAgentReview } from '../agent-review.tsx'
 import {
@@ -36,7 +37,6 @@ import {
   previewClinicalSign,
   previewStructuredClinicalDocumentSign,
   retryConsultationReply,
-  retryLaboratoryResultGeneration,
   reviseStructuredClinicalDocument,
   saveClinicalDocumentDraft,
   saveDiagnosisDraft,
@@ -183,7 +183,7 @@ export function useDoctorCaseModel({
       }
     })
   }, [activeCaseId])
-  const pageScope = JSON.stringify([session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId, activeCaseId])
+  const pageScope = JSON.stringify([session.user.id, session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId, activeCaseId])
   const pageScopeRef = useRef(pageScope)
   pageScopeRef.current = pageScope
   const mountedRef = useRef(true)
@@ -246,6 +246,9 @@ export function useDoctorCaseModel({
   const detailUnavailable = detail.isError && (detail.data === undefined
     || !(detail.error instanceof ApiClientError)
     || (detail.error.status !== 0 && detail.error.status < 500))
+  const laboratoryPendingDrafts = useManualInvestigationDrafts(JSON.stringify([pageScope, activeCaseId, detail.data?.encounter.id, 'laboratory'])).rows
+  const imagingPendingDrafts = useManualInvestigationDrafts(JSON.stringify([pageScope, activeCaseId, detail.data?.encounter.id, 'imaging']), 'imaging').rows
+  const pathologyPendingDrafts = useManualInvestigationDrafts(JSON.stringify([pageScope, activeCaseId, detail.data?.encounter.id, 'pathology']), 'pathology').rows
   const completion = useQuery({
     enabled: detail.data?.consultation !== undefined
       && detail.data.encounter.status === 'in-progress'
@@ -710,16 +713,6 @@ export function useDoctorCaseModel({
     onError: async (_error, variables) => refreshCaseById(variables.caseId),
     onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
-  const retryResultGeneration = useMutation({
-    mutationFn: ({ request }: { caseId: string; request: LaboratoryRequest }) => retryLaboratoryResultGeneration({
-      requestId: request.id,
-      requestVersion: request.version,
-      taskId: request.taskId,
-      taskVersion: request.taskVersion,
-    }, newIdempotencyKey()),
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
   const acknowledgeReport = useMutation({
     mutationFn: ({ request }: { caseId: string; request: LaboratoryRequest }) => {
       if (request.report === undefined) throw new Error(messages.consultationUnavailable)
@@ -1168,6 +1161,9 @@ export function useDoctorCaseModel({
     selectInvestigation,
     selectInvestigationRequest,
     pageScope,
+    laboratoryPendingDrafts,
+    imagingPendingDrafts,
+    pathologyPendingDrafts,
     pageScopeRef,
     mountedRef,
     imagingView,
@@ -1197,7 +1193,6 @@ export function useDoctorCaseModel({
     issueRequest,
     deleteRequestDraft,
     cancelRequest,
-    retryResultGeneration,
     acknowledgeReport,
     correctReport,
     controlRecording,

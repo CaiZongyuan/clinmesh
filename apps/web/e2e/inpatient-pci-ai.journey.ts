@@ -120,7 +120,13 @@ export async function runPciAiJourney(page: Page, app: PciAiBrowserApp) {
   const estimate = (await f.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates.find(item => item.requestId === planned.id)!
   expect((estimate.analysis?.costExplanation ?? '').trim()).not.toBe('')
   await expect(panel).toContainText('做完手术后预计病组 FM39')
-  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true }).click()
+  // 同进程的服务端读取不等待浏览器事件，先以真实响应同步请求监听。
+  const [confirmation] = await Promise.all([
+    page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === `${stay.path}/material-estimates/confirm`, { timeout: 10_000 }),
+    page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true }).click(),
+  ])
+  expect(confirmation.status()).toBe(200)
   await expect.poll(async () => (await selection()).confirmation?.parameters.requestId).toBe(planned.id)
   const reservations = await f.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
   expect(reservations.reservations.filter(item => item.requestId === planned.id && item.status === 'reserved')).toHaveLength(4)

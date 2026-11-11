@@ -67,6 +67,10 @@ DSH 通用设置提供独立“ClinMesh 模型”，默认解析 DSH 默认模�
 
 开始是带 expected revision 和幂等键的一次性 Command，创建本院 R5 Patient 和相应运行状态：门诊创建 Registration、Encounter、Queue Task 与问诊，直接住院创建住院 Encounter/Account；不复制来源历史或参考目录。默认重置在新 Epoch replay 同一不可变 Case Revision，并复用所选 Brief、Case Truth 和全部成功 Investigation Result Snapshot；直接住院回到默认病区待接诊，replay 不重新调用 Synthea 或模型。患者库在门诊未完成或来源绑定的住院尚未清账时显示活动就诊。管理员在模拟数据页通过带悬浮说明的“重置数据”打开二次确认，默认保留患者库，可选择同时清空。清空模式将当前患者库归档并退役关联 Case，不重放这些病例；来源病史、Brief 和真值从当前工作台移除，旧轮次诊疗及审计事实保留。清空后再次准备固定 PCI 来源会建立同一 Profile 的新修订和新 Case，保留来源哈希与旧病例，不重新消费旧 Case。两种模式都保留标准目录、已启用检验服务和账号。清空模式拒绝正在运行的患者或 Brief 生成任务，并取消尚未开始的相关生成任务。
 
+患者库连续开始门诊仍逐患者确认，成功后停留原患者并提供具名下一位。候选仅从原页及搜索范围内的有界详情确认当前 Case 为 `brief-ready` 且具有活动 Persona，不能把列表的 `activeVisit=false` 当作开始资格。入口固定 Profile、Case、患者姓名、页码、搜索和完整身份；点击重读该目标，资格变化或读取失败时解释并刷新，不替换为其他人，不自动发送开始请求。手动搜索、清除检索或翻页时重置患者选择及档案编辑面板，由新队列首位提供详情；无结果时不保留上一队列的详情或开始入口。后页显式读取，当前页无候选不代表整个患者库已完成；生成任务的迟到结果不能覆盖正在办理的患者。
+
+门诊开始在发送前持久保存原输入、预期 Case 修订、活动 Persona 修订、完整账号/Actor 绑定和幂等键。响应不明或刷新后，在同一原身份下先查询 `registration.synthetic-case.start` 的原 Command receipt；校验原 Operation、原键及类型化结果中的原 Case，明确未找到才原键同体重发。其他账户、岗位或 Epoch 的 404 不是重发原请求的依据，单凭 Case 已开始也不能认定是本次请求成功。未发输入退出清理，已发原意图保留至确认完成；持久成功处理失败仍保留原回执恢复入口。决策与持久完成顺序见[具名队列决策](../decisions/implemented/architecture/2026-11-10-cross-patient-continuation.md)。
+
 <a id="104-确定性与故障注入"></a>
 
 ### 10.4 确定性与故障注入

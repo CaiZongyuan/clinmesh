@@ -34,9 +34,7 @@
 
 - Windows worktree 以 junction 复用依赖时，`git status --ignored` 可能追随依赖环并遍历超长路径。检查源码使用 tracked diff，本地数据按明确路径检查；中断扫描后若遗留 `index.lock`，先确认对应 Git 进程已退出、锁路径属于该 worktree，再清理该锁，避免并发切分支被阻塞。
 
-- 独立 worktree 借用已有依赖进行检查时，pnpm 11 的依赖状态检查可能自动尝试安装。明确使用 `--config.verify-deps-before-run=false` 或现有锁定 runner，不能让它清理、安装或重写其他任务共用的 `node_modules`；构建与测试产物仍按任务隔离。
-
-- pnpm 11 默认会在运行脚本前检查依赖；复用依赖的 worktree 可能触发自动重装并因无 TTY 失败。已核对依赖与锁一致时，可通过进程环境 `pnpm_config_verify_deps_before_run=false` 运行检查，不修改仓库配置。复用外部依赖时仍须让 `@clinmesh/*` 链接指向目标 worktree 的包，否则集成测试可能误用原工作区源码。
+- 独立 worktree 借用已有依赖进行检查时，pnpm 11 的依赖状态检查可能触发自动重装并因无 TTY 失败。核对依赖与锁一致后，使用进程环境 `pnpm_config_verify_deps_before_run=false`、`--config.verify-deps-before-run=false` 或现有锁定 runner，不修改仓库配置，也不能让它清理、安装或重写其他任务共用的 `node_modules`；构建与测试产物仍按任务隔离。重建 `@clinmesh/*` 链接须按各 `package.json` 的名称同时覆盖 `apps/` 和 `packages/`；只映射共享包会让 `apps/dsh-web/node_modules/@clinmesh/web` 等应用链接仍指旧 worktree，导致真实 Surface 验证借用旧源码。验证前回读链接目标，确认应用与共享包都属于当前副本；隔离浏览器构建可显式 alias 当前 worktree 的 Web 入口，并验证实际构建来源。
 
 - pnpm 11 在执行脚本前可能自动安装并改写锁文件，包括重新解析间接依赖。纯文档检查遇到此行为时，先核对并撤回本次检查引入的无关锁文件变更；已安装工具可通过 Node 直接调用对应 CLI，避免重复触发安装。锁文件变化不属于文档交付。
 
@@ -69,6 +67,8 @@
 - Windows 读取中文 PDF 时显式使用 `pdftotext -enc UTF-8`，并以 UTF-8 解码；默认输出编码可能产生非 UTF-8 字节。若显式编码后中文仍被映射为拉丁字母、数字或标点，应渲染相关页核对原文，不能以文件长度或提取命令成功判断正文可用。指南的阈值、单位、否定词和图表条件需逐页核验；实例见[冠心病指南资料核对](../research/2026-10-26-coronary-guidelines-project-reference.md#文件核对与阅读范围)。
 
 - Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。Windows PowerShell 5 的 `Set-Content -Encoding utf8` 会写入 BOM；Git 消息文件使用 `UTF8Encoding(false)` 写入，并核对最终提交主题，避免不可见字符进入标题。
+
+- Windows PowerShell 将原生命令 stderr 经 `2>&1` 重定向时，可能产生 `NativeCommandError`，使宿主报告非零退出，即使测试摘要全绿。调用后立即保存 `$LASTEXITCODE` 并显式返回，或用 Node `spawnSync` 将 stdout/stderr 写入日志并记录 `result.status`；分别核对原生退出码、宿主退出码和测试摘要，不仅凭摘要宣称命令成功。
 
 - Node 测试用 `execFile('pnpm', ...)` 构建 CLI 时，Windows 只有 PowerShell／CMD shim 会报 `spawn pnpm ENOENT`。跨平台测试通过 `process.execPath` 启动已安装构建工具的 JS 入口，并显式设置目标包目录；CLI 进程验收见 `apps/server/tests/cli-process-http.test.ts`。
 

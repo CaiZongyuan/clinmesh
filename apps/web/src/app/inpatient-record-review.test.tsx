@@ -42,6 +42,20 @@ it('病案诊断展示临床代码与入院病情，不铺技术来源或POA编�
   for (const raw of ['POA', 'urn:clinmesh:', 'synthetic-browser-', 'cn-health:']) expect(diagnoses.textContent).not.toContain(raw)
 })
 
+it('病案审核说明关闭重开仍归原患者，切换患者不带入说明', async () => {
+  const submitted = { ...record, revision: { revision: 1, sourcesHash: record.sourcesHash, snapshot: record.snapshot, actorId: 'doctor', practitionerRoleId: 'role-doctor', recordedAt: '2026-11-03T09:00:00+08:00' } }
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(submitted)))
+  const user = userEvent.setup()
+  const first = mount(write => <InpatientRecord admission={admission} session={session} locale="zh-CN" write={write} />)
+  await user.type(await screen.findByRole('textbox', { name: '编码审核说明' }), '原患者待核对')
+  first.unmount()
+  const other = mount(write => <InpatientRecord admission={{ ...admission, id: 'admission-2', patientId: 'patient-2' }} session={session} locale="zh-CN" write={write} />)
+  expect(await screen.findByRole('textbox', { name: '编码审核说明' })).toHaveProperty('value', '')
+  other.unmount()
+  mount(write => <InpatientRecord admission={admission} session={session} locale="zh-CN" write={write} />)
+  await waitFor(() => expect(screen.getByRole('textbox', { name: '编码审核说明' })).toHaveProperty('value', '原患者待核对'))
+})
+
 it.each([false, true])('病案岗位复用原预分组与病案投影，冻结状态为%s', async frozen => {
   const paths: string[] = []
   const grouping = inpatientDrgPregroupResultSchema.parse({ admissionId: admission.id, recordRevision: 1, rulesId: 'synthetic-rules', rulesVersion: '1', inputCoding: 'nhc-icd10-clinical@2022.r4', codingNote: '合成分组口径', frozen, result })

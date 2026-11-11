@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { multiChargeDraftStorage } from './billing-multi-charge-draft.ts'
 
 const session: SessionContext = { actor: { actorId: 'actor-registrar', epoch: 'epoch-1', workspaceId: 'workspace-demo',
   scenarioRunId: 'scenario-run-1', roleCode: 'registrar', practitionerRoleId: 'practitioner-role-registrar',
@@ -16,11 +17,160 @@ const response = { auditId: 'synthetic-audit', requestId: 'synthetic-request', e
   wardId: 'ward-general', organizationId: 'organization-inpatient-medicine', status: 'registered', financialStatus: 'open', recordStatus: 'open',
   registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 100000, chargesFen: 0, versionId: '1',
 } } }
-const createHook = () => renderHook(() => useInpatientWriteIntent(session, () => undefined), {
+const createHook = (onSuccess: () => void = () => undefined) => renderHook(() => useInpatientWriteIntent(session, onSuccess), {
   wrapper: ({ children }) => <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}>{children}</QueryClientProvider>,
 })
 beforeEach(() => sessionStorage.clear())
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+it.each(['新项', '缺失回执', '已有回执'] as const)('发送门禁不影响原回执结算，并区分新项未发与原未知保留：%s', async mode => {
+  const key = '3f48ba78-2a43-491d-8b82-ea59392ca025'
+  let posts = 0, lookups = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.includes('/command-receipts?')) {
+      lookups++
+      if (mode === '缺失回执') return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'Synthetic missing receipt' } }, { status: 404 })
+      return Response.json({ operationId: command.operation, idempotencyKey: key, status: 'completed', response })
+    }
+    posts++; return Response.json(response)
+  }))
+  const { result } = createHook()
+  await act(async () => {
+    const attempt = result.current.mutation.mutateAsync({ ...command, idempotencyKey: key, canSend: () => false,
+      ...(mode === '新项' ? {} : { recoverOriginal: true as const }) })
+    if (mode === '已有回执') await expect(attempt).resolves.toMatchObject({ command, response })
+    else if (mode === '新项') await expect(attempt).rejects.toMatchObject({ commandNotSent: true })
+    else await expect(attempt).rejects.toMatchObject({ code: 'INPATIENT_INTENT_CONTEXT_CHANGED' })
+  })
+  expect(posts).toBe(0)
+  expect(lookups).toBe(mode === '新项' ? 0 : 1)
+  if (mode === '缺失回执') expect(result.current.pending?.idempotencyKey).toBe(key)
+  else expect(result.current.pending).toBeNull()
+})
+
+it('查询原回执期间服务端岗位已切换时，重新核对 Session 并阻止旧意图重放', async () => {
+  let authReads = 0, posts = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') {
+      authReads++
+      return Response.json(authReads === 1 ? session : { ...session, actor: { ...session.actor, practitionerRoleId: 'other-role' } })
+    }
+    if (path.includes('/command-receipts?')) return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'No receipt' } }, { status: 404 })
+    posts++; return Response.json(response)
+  }))
+  const { result } = createHook()
+  await act(async () => {
+    await expect(result.current.mutation.mutateAsync({ ...command, idempotencyKey: '3f48ba78-2a43-491d-8b82-ea59392ca025', recoverOriginal: true })).rejects.toMatchObject({ code: 'INPATIENT_INTENT_CONTEXT_CHANGED' })
+  })
+  expect(posts).toBe(0)
+  expect(result.current.pending).not.toBeNull()
+})
+
+it('由冻结草稿恢复时先查原回执，等待期间视图切换不重发旧患者操作', async () => {
+  let current = true, posts = 0, receiptReads = 0
+  let release: () => void = () => undefined
+  const gate = new Promise<void>(resolve => { release = resolve })
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.includes('/command-receipts?')) {
+      receiptReads++; await gate
+      return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'No receipt' } }, { status: 404 })
+    }
+    posts++; return Response.json(response)
+  }))
+  const { result } = createHook()
+  let attempt: Promise<unknown> = Promise.resolve()
+  await act(async () => {
+    attempt = result.current.mutation.mutateAsync({ ...command, idempotencyKey: '3f48ba78-2a43-491d-8b82-ea59392ca025', recoverOriginal: true, isCurrent: () => current }).catch(error => error)
+  })
+  await waitFor(() => expect(receiptReads).toBe(1))
+  current = false; release()
+  await act(async () => { await expect(attempt).resolves.toMatchObject({ code: 'INPATIENT_INTENT_CONTEXT_CHANGED' }) })
+  expect(posts).toBe(0)
+})
+
+it('岗位级意图已清除但草稿仍待恢复时只读取原回执，不产生新写入', async () => {
+  let posts = 0
+  const key = '3f48ba78-2a43-491d-8b82-ea59392ca025'
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.includes('/command-receipts?')) {
+      expect(new URL(path, 'http://synthetic.local').searchParams.get('idempotencyKey')).toBe(key)
+      return Response.json({ operationId: command.operation, idempotencyKey: key, status: 'completed', response })
+    }
+    posts++; return Response.json(response)
+  }))
+  const { result } = createHook()
+  await act(async () => { await expect(result.current.mutation.mutateAsync({ ...command, idempotencyKey: key, recoverOriginal: true })).resolves.toMatchObject({ response }) })
+  expect(posts).toBe(0)
+  expect(result.current.pending).toBeNull()
+})
+
+it('调用方持久原key后即使本地intent缺失，恢复仍先查同回执而不发新写入', async () => {
+  const originalKey = crypto.randomUUID(), posts: unknown[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) {
+      expect(new URL(path, 'http://synthetic.local').searchParams.get('idempotencyKey')).toBe(originalKey)
+      return Response.json({ operationId: command.operation, idempotencyKey: originalKey, status: 'completed', response })
+    }
+    posts.push(init); return Response.json(response)
+  }))
+  const mounted = createHook()
+  await act(async () => { await expect(mounted.result.current.mutation.mutateAsync({ ...command, idempotencyKey: originalKey, recoverOriginal: true })).resolves.toMatchObject({ command }) })
+  expect(posts).toEqual([])
+  expect(mounted.result.current.pending).toBeNull()
+})
+
+it('调用方原尝试缺回执时只重放原body及原key，不能用同key替换持久输入', async () => {
+  const originalKey = crypto.randomUUID(), posts: Array<{ key: string | null; body: unknown }> = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成尚无原回执' } }, { status: 404 })
+    posts.push({ key: new Headers(init?.headers).get('idempotency-key'), body: JSON.parse(String(init?.body)) })
+    throw new TypeError('合成重放响应未知')
+  }))
+  const mounted = createHook()
+  await act(async () => { await expect(mounted.result.current.mutation.mutateAsync({ ...command, idempotencyKey: originalKey, recoverOriginal: true })).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
+  expect(posts).toEqual([{ key: originalKey, body: { input: command.input } }])
+  await act(async () => { await expect(mounted.result.current.mutation.mutateAsync({ ...command, input: { ...command.input, patientId: 'other-patient' }, idempotencyKey: originalKey, recoverOriginal: true })).rejects.toMatchObject({ code: 'INVALID_INPUT' }) })
+  expect(posts).toHaveLength(1)
+  expect(mounted.result.current.pending?.command).toEqual(command)
+})
+
+it.each(['missing-session', 'completed-session', 'completed-unmounted'] as const)('查询原回执期间上下文变化后不清意图或重放旧请求：%s', async kind => {
+  let fresh = session, posts = 0, receiptReads = 0
+  let release: () => void = () => undefined
+  const held = new Promise<void>(resolve => { release = resolve })
+  const completed = vi.fn()
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(fresh)
+    if (path.startsWith('/api/his/v1/command-receipts?')) {
+      receiptReads += 1
+      await held
+      if (kind === 'missing-session') return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成回执尚不存在' } }, { status: 404 })
+      return Response.json({ operationId: command.operation, idempotencyKey: new URL(path, 'http://synthetic.local').searchParams.get('idempotencyKey'), status: 'completed', response })
+    }
+    posts += 1
+    if (posts === 1) throw new TypeError('合成原请求丢响应')
+    return Response.json(response)
+  }))
+  const original = createHook(completed)
+  await act(async () => { await expect(original.result.current.mutation.mutateAsync(command)).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
+  let recovery: Promise<void> = Promise.resolve()
+  await act(async () => {
+    recovery = expect(original.result.current.mutation.mutateAsync(undefined)).rejects.toMatchObject({ code: 'INPATIENT_INTENT_CONTEXT_CHANGED' })
+    await vi.waitFor(() => expect(receiptReads).toBe(1))
+  })
+  if (kind === 'completed-unmounted') original.unmount()
+  else fresh = { ...session, actor: { ...session.actor, locationId: 'other-location' } }
+  await act(async () => { release(); await recovery })
+  expect(posts).toBe(1)
+  expect(completed).not.toHaveBeenCalled()
+  const restored = createHook()
+  expect(restored.result.current.pending?.command).toEqual(command)
+})
 
 it('身份预检期间视图已切换时不发送旧写入，也不留下可误重放的意图', async () => {
   let current = true, authReads = 0, posts = 0
@@ -45,6 +195,38 @@ it('身份预检期间视图已切换时不发送旧写入，也不留下可误�
   expect(outcome).toMatchObject({ code: 'INPATIENT_INTENT_CONTEXT_CHANGED' })
   expect(result.current.pending).toBeNull()
   expect(sessionStorage.length).toBe(0)
+})
+
+it.each(['operation', 'key', 'not-found-conflict'] as const)('恢复收到其他%s回执时保留原意图且不重发，正确回执仍可完成恢复', async mismatch => {
+  const posts: string[] = []
+  let matching = false
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) {
+      const query = new URL(path, 'http://synthetic.local').searchParams
+      expect(query.get('operationId')).toBe(command.operation)
+      expect(query.get('idempotencyKey')).toBe(posts[0])
+      if (!matching && mismatch === 'not-found-conflict') return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'synthetic conflicting lookup' } }, { status: 409 })
+      return Response.json({ operationId: !matching && mismatch === 'operation' ? 'inpatient.admission.receive' : command.operation,
+        idempotencyKey: !matching && mismatch === 'key' ? '00000000-0000-4000-8000-000000000000' : posts[0], status: 'completed', response })
+    }
+    posts.push(new Headers(init?.headers).get('idempotency-key')!)
+    throw new TypeError('synthetic committed response loss')
+  }))
+  const first = createHook()
+  await act(async () => { await expect(first.result.current.mutation.mutateAsync(command)).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
+  first.unmount()
+  const stored = sessionStorage.getItem(Object.keys(sessionStorage)[0]!)
+  const restored = createHook()
+  await act(async () => { await expect(restored.result.current.mutation.mutateAsync(undefined)).rejects.toMatchObject({ code: mismatch === 'not-found-conflict' ? 'COMMAND_RECEIPT_NOT_FOUND' : 'INPATIENT_INTENT_PENDING' }) })
+  expect(restored.result.current.pending?.command).toEqual(command)
+  expect(sessionStorage.getItem(Object.keys(sessionStorage)[0]!)).toBe(stored)
+  expect(posts).toHaveLength(1)
+  matching = true
+  await act(async () => { await expect(restored.result.current.mutation.mutateAsync(undefined)).resolves.toMatchObject({ command, response }) })
+  expect(restored.result.current.pending).toBeNull()
+  expect(sessionStorage.length).toBe(0)
+  expect(posts).toHaveLength(1)
 })
 
 it('报告选型草稿保存丢回执后刷新恢复原参数，不重复保存', async () => {
@@ -137,6 +319,44 @@ it('来源绑定入院丢回执后刷新只查询原回执，保留病例与Pers
   expect(restored.result.current.pending).toBeNull()
 })
 
+it.each(['completed', 'missing'] as const)('患者库门诊开始丢响应后%s只恢复原病例、原body和原key', async receipt => {
+  const original = { operation: 'registration.synthetic-case.start' as const,
+    input: { caseId: 'synthetic/case', activeBriefRevision: 2, expectedCaseRevision: 3,
+      departmentId: 'synthetic-department', locationId: 'synthetic-location', visitDate: '2026-11-10', visitTypeId: 'synthetic-visit' },
+    continuation: { current: { profileId: 'synthetic-profile', caseId: 'synthetic/case', name: '合成当前患者' },
+      next: { profileId: 'synthetic-next', caseId: 'synthetic-next-case', name: '合成下一患者', profileRevision: 1, caseRevision: 3, activeBriefRevision: 2 },
+      page: 1, search: '合成', hasMore: false, queueReady: true } }
+  const output = { ...response, data: { syntheticCaseId: 'synthetic/case', patientId: 'synthetic-patient',
+    encounterId: 'synthetic-encounter', outpatientCaseId: 'synthetic-outpatient', queueTaskId: 'synthetic-queue', registrationId: 'synthetic-registration', status: 'awaiting-triage' } }
+  const posts: Array<{ path: string; key: string | null; body: unknown }> = []
+  let receiptKey: string | null = null
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) {
+      const query = new URL(path, 'http://synthetic.local').searchParams
+      receiptKey = query.get('idempotencyKey')
+      expect(query.get('operationId')).toBe(original.operation)
+      return receipt === 'missing'
+        ? Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成原回执不存在' } }, { status: 404 })
+        : Response.json({ operationId: original.operation, idempotencyKey: receiptKey, status: 'completed', response: output })
+    }
+    posts.push({ path, key: new Headers(init.headers).get('idempotency-key'), body: JSON.parse(String(init.body)) })
+    if (posts.length === 1) throw new TypeError('synthetic committed response loss')
+    return Response.json(output)
+  }))
+  const first = createHook()
+  await act(async () => { await expect(first.result.current.mutation.mutateAsync(original)).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
+  first.unmount()
+  const restored = createHook()
+  expect(restored.result.current.pending?.command).toEqual(original)
+  await act(async () => { await restored.result.current.mutation.mutateAsync(undefined) })
+  expect(posts).toHaveLength(receipt === 'missing' ? 2 : 1)
+  expect(posts[0]).toEqual({ path: '/api/his/v1/synthetic-cases/synthetic%2Fcase/actions/start-outpatient-visit', key: receiptKey,
+    body: { activeBriefRevision: 2, expectedCaseRevision: 3, departmentId: 'synthetic-department', locationId: 'synthetic-location', visitDate: '2026-11-10', visitTypeId: 'synthetic-visit' } })
+  if (posts.length === 2) expect(posts[1]).toEqual(posts[0])
+  expect(restored.result.current.pending).toBeNull()
+})
+
 it('缺少回执时只用原输入和原key重发，未确认期间拒绝新输入', async () => {
   const posts: Array<{ key: string | undefined; body: unknown }> = []
   vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {
@@ -155,6 +375,43 @@ it('缺少回执时只用原输入和原key重发，未确认期间拒绝新输�
   expect(posts[1]).toEqual(posts[0])
   expect(result.current.pending).toBeNull()
   expect(sessionStorage.length).toBe(0)
+})
+
+it('回执网关返回非404的不存在代码时保留原意图，不视为可重发证明', async () => {
+  let posts = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成网关不可用' } }, { status: 503 })
+    posts += 1
+    throw new TypeError('synthetic response loss')
+  }))
+  const { result } = createHook()
+  await act(async () => { await expect(result.current.mutation.mutateAsync(command)).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
+  await act(async () => { await expect(result.current.mutation.mutateAsync(undefined)).rejects.toMatchObject({ status: 503, code: 'COMMAND_RECEIPT_NOT_FOUND' }) })
+  expect(posts).toBe(1)
+  expect(result.current.pending?.command).toEqual(command)
+})
+
+it('原回执404后的第二次身份复核期间切页时不补发旧请求', async () => {
+  let authReads = 0, posts = 0
+  let releaseAuth: () => void = () => undefined
+  const authGate = new Promise<void>(resolve => { releaseAuth = resolve })
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') { authReads += 1; if (authReads === 3) await authGate; return Response.json(session) }
+    if (path.startsWith('/api/his/v1/command-receipts?')) return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: '合成原回执不存在' } }, { status: 404 })
+    posts += 1
+    throw new TypeError('synthetic response loss')
+  }))
+  const hook = createHook()
+  await act(async () => { await expect(hook.result.current.mutation.mutateAsync(command)).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
+  let recovery: Promise<unknown> = Promise.resolve()
+  await act(async () => { recovery = hook.result.current.mutation.mutateAsync(undefined).catch(error => error) })
+  await waitFor(() => expect(authReads).toBe(3))
+  hook.unmount()
+  let outcome: unknown
+  await act(async () => { releaseAuth(); outcome = await recovery })
+  expect(outcome).toMatchObject({ code: 'INPATIENT_INTENT_CONTEXT_CHANGED' })
+  expect(posts).toBe(1)
 })
 
 const outpatientRefundResponse = { auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: {
@@ -331,4 +588,47 @@ it('病例切换卸载原挂载后，旧请求成功仍能解锁接收原意图�
   await act(async () => { finish(); await submitting })
   expect(current.result.current.pending).toBeNull()
   expect(current.result.current.blocked).toBe(false)
+})
+
+it.each(['confirm', 'recover'] as const)('整笔%s成功后清稿失败保留原意图，恢复存储后只查回执并完成清理', async action => {
+  const charges = ['synthetic-charge-a', 'synthetic-charge-b'].map(chargeItemId => ({ chargeItemId, chargeVersion: 1 }))
+  const target = { caseId: 'synthetic-case', patientId: 'synthetic-patient', encounterId: 'synthetic-encounter' }
+  const original = action === 'confirm'
+    ? { operation: 'payment.multi-charge.confirm' as const, ...target, input: { charges, previewId: 'synthetic-preview', commitToken: 'synthetic-frozen-token' } }
+    : { operation: 'payment.multi-charge.recover' as const, ...target, input: { charges, paymentId: 'synthetic-payment', expectedPaymentVersion: 1 } }
+  const output = { ...response, data: { kind: 'multi-charge', ...target, paymentId: 'synthetic-payment', version: 2,
+    amountFen: 1600, outcome: 'success', tenders: [{ method: 'cash', amountFen: 1600 }],
+    allocations: charges.map(charge => ({ chargeItemId: charge.chargeItemId, amountFen: 800, chargeVersion: 2, remainingFen: 0, status: 'paid' })) } }
+  const storage = multiChargeDraftStorage(session, target)
+  const draft = { selectedChargeIds: charges.map(charge => charge.chargeItemId), simulatorRule: 'success' as const, tenderAmounts: { cash: '16.00' }, filter: '', page: 1 }
+  storage.save(draft)
+  const removeItem = Storage.prototype.removeItem
+  const failedCleanup = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, key: string) {
+    if (key === storage.key) throw new Error('synthetic draft cleanup unavailable')
+    removeItem.call(this, key)
+  })
+  let writes = 0, receiptKey: string | null = null, originalKey: string | null = null
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) {
+      const query = new URL(path, 'http://synthetic.local').searchParams
+      receiptKey = query.get('idempotencyKey')
+      expect(query.get('operationId')).toBe(original.operation)
+      return Response.json({ operationId: original.operation, idempotencyKey: receiptKey, status: 'completed', response: output })
+    }
+    writes += 1
+    originalKey = new Headers(init.headers).get('idempotency-key')
+    return Response.json(output)
+  }))
+  const { result } = createHook()
+  await act(async () => { await expect(result.current.mutation.mutateAsync(original)).rejects.toMatchObject({ code: 'INPATIENT_INTENT_STORAGE_UNAVAILABLE' }) })
+  expect(result.current.pending?.command).toEqual(original)
+  expect(result.current.pending?.idempotencyKey).toBe(originalKey)
+  expect(storage.load()).toEqual({ draft, failure: null })
+  failedCleanup.mockRestore()
+  await act(async () => { await result.current.mutation.mutateAsync(undefined) })
+  expect(writes).toBe(1)
+  expect(receiptKey).toBe(originalKey)
+  expect(sessionStorage.getItem(storage.key)).toBeNull()
+  expect(result.current.pending).toBeNull()
 })

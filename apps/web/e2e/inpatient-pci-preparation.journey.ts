@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test'
 import { inpatientDetailSchema, inpatientListSchema } from '@clinmesh/contracts/inpatient'
-import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientPharmacySchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientInvestigationCatalogSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -8,6 +8,7 @@ import { pciCaseSourceResponseSchema } from '@clinmesh/contracts/inpatient-pci-d
 import { registrationQueueSchema } from '@clinmesh/contracts/his'
 import { loginPciBrowser, type PciBrowserApp } from './inpatient-pci.fixture.ts'
 import { acknowledgeInpatientCompletion, selectWorkspaceMode, selectInpatientStage } from './inpatient-ui.ts'
+import { openExecutionBatch, recordOneActualExecution } from './inpatient-execution-batch.journey.ts'
 
 export type OpenPciPatient = (role: string, patientName: string) => Promise<void>
 const stage = selectInpatientStage
@@ -72,26 +73,45 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
     await composer.getByLabel('搜索检查检验目录', { exact: true }).fill('hospital-lab-pci-')
     await composer.getByRole('button', { name: `选择${item.display}`, exact: true }).click()
     const issued = page.waitForResponse(response => response.url().endsWith(`${path}/investigations/issue`) && response.request().method() === 'POST')
-    await composer.getByRole('button', { name: '开立住院检查', exact: true }).click()
+    await composer.getByRole('button', { name: '开立所选检验（1）', exact: true }).click()
     expect((await issued).status()).toBe(200)
+    await expect(composer.getByText(/已成功开立 \d+ 项/, { exact: true })).toBeVisible()
+    await composer.getByRole('button', { name: '关闭', exact: true }).click()
     await expect(composer).toHaveCount(0)
   }
   await open('ward-nurse', admission.patientName)
   await stage(page, '检查检验')
-  for (let index = 0; index < 9; index++) {
-    const sent = page.waitForResponse(response => response.url().endsWith(`${path}/investigations/send`) && response.request().method() === 'POST')
-    await page.getByRole('button', { name: '校对并送检', exact: true }).first().click()
-    expect((await sent).status()).toBe(200)
-  }
+  await page.getByRole('button', { name: '全选本页可送检申请', exact: true }).click()
+  await page.getByRole('button', { name: '集中送检', exact: true }).click()
+  const dispatch = page.getByRole('dialog', { name: '集中送检核对', exact: true })
+  await expect(dispatch.getByRole('article')).toHaveCount(9)
+  await dispatch.getByRole('button', { name: '确认送检', exact: true }).click()
+  await expect.poll(async () => (await s.read('ward-nurse', `${path}/investigations`, inpatientInvestigationsSchema)).sent.length).toBe(9)
+  await expect(page.getByRole('region', { name: '送检逐项结果', exact: true })).toContainText(/成功\s*9|9\s*项成功/)
   // Run the ordinary background worker after the nurse sends the requests, without manufacturing reports.
   await s.runtime.dispatchPending()
   await open('inpatient-doctor', admission.patientName)
   await stage(page, '检查检验')
-  for (let index = 0; index < 9; index++) {
-    const acknowledged = page.waitForResponse(response => response.url().endsWith(`${path}/investigations/acknowledge`) && response.request().method() === 'POST')
-    await page.getByRole('button', { name: "已阅", exact: true }).first().click()
-    expect((await acknowledged).status()).toBe(200)
+  await page.getByRole('button', { name: '连续阅读住院报告', exact: true }).click()
+  const reader = page.getByRole('dialog', { name: '住院报告阅读与已阅确认', exact: true })
+  for (const item of laboratories) {
+    await reader.getByRole('button', { name: `打开报告：${item.display}`, exact: true }).click()
+    await expect(reader.getByRole('article', { name: '当前报告全文', exact: true }).getByRole('table')).toBeVisible()
+    await reader.getByRole('checkbox', { name: `选择已阅：${item.display}`, exact: true }).check()
   }
+  await reader.getByRole('button', { name: '核对选中报告', exact: true }).click()
+  const review = page.getByRole('dialog', { name: '住院报告已阅核对', exact: true })
+  await expect(review.getByRole('article')).toHaveCount(9)
+  const acknowledgements: number[] = []
+  const receiveAcknowledgement = async (response: import('@playwright/test').Response) => {
+    if (response.url().endsWith(`${path}/investigations/acknowledge`) && response.request().method() === 'POST') acknowledgements.push(response.status())
+  }
+  page.on('response', receiveAcknowledgement)
+  await review.getByRole('button', { name: '确认选中报告已阅', exact: true }).click()
+  await expect(reader.getByRole('region', { name: '报告已阅逐项结果', exact: true })).toContainText('本次办理已结束 · 成功 9/9')
+  page.off('response', receiveAcknowledgement)
+  expect(acknowledgements).toEqual(Array.from({ length: 9 }, () => 200))
+  await reader.getByRole('button', { name: '关闭阅读窗口', exact: true }).click()
   const reports = await s.read('inpatient-doctor', `${path}/investigations`, inpatientInvestigationsSchema)
   expect(reports.laboratoryRequests.every(item => item.report?.acknowledgement !== undefined)).toBe(true)
 
@@ -190,6 +210,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
   await stage(page, '诊断医嘱')
   for (const suffix of suffixes) {
     const medication = catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!
+    await page.getByRole('button', { name: '开立医嘱', exact: true }).click()
     await page.getByLabel('医嘱项目', { exact: true }).fill(medication.display)
     await page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: new RegExp(medication.display) }).click()
     await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
@@ -197,39 +218,53 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
       await page.getByLabel('术后医嘱关联手术', { exact: true }).click()
       await page.getByRole('option', { name: /36.0700 ·/ }).click()
     }
-    await page.getByRole('button', { name: "开立医嘱", exact: true }).click()
+    await page.getByRole('button', { name: '开立所选医嘱（1）', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByText(`${medication.display} · 待护士校对`, { exact: true })).toBeVisible()
+    await page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByRole('button', { name: '关闭', exact: true }).click()
     await expect(page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '待校对' })).toBeVisible()
   }
   await open('ward-nurse', admission.patientName)
   await stage(page, '诊断医嘱')
   for (let index = 0; index < suffixes.length; index++) {
     const response = page.waitForResponse(value => value.url().endsWith('/orders/verify') && value.request().method() === 'POST')
-    await page.getByRole('button', { name: '校对医嘱', exact: true }).first().click()
+    await page.getByRole('checkbox', { name: /^选择校对：/ }).first().check()
+    await page.getByRole('button', { name: '集中核对新医嘱 (1)', exact: true }).click()
+    await page.getByRole('dialog', { name: '集中核对新医嘱', exact: true }).getByRole('button', { name: '确认校对 1 条新医嘱', exact: true }).click()
     expect((await response).status()).toBe(200)
     await acknowledgeCompleted()
   }
   for (const suffix of suffixes.filter(item => ['heparin', 'iohexol'].includes(item))) {
     const medication = catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!
-    const article = page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '已校对' })
-    await article.getByRole('button', { name: '按需给药', exact: true }).click()
-    await page.getByLabel('按需执行理由', { exact: true }).fill('固定合成病例本次介入用药')
-    await page.getByRole('button', { name: '确认按需给药', exact: true }).click()
+    const order = (await s.read('ward-nurse', `${stay.path}/clinical`, inpatientFullClinicalSchema)).orders.find(item => item.catalogItemId === medication.id && !ordersBefore.includes(item.id))!
+    const dialog = await openExecutionBatch(page, 'request-prn')
+    await dialog.getByRole('article', { name: `PRN项目：${order.id}`, exact: true }).getByRole('checkbox', { name: `选择PRN：${medication.display}`, exact: true }).check()
+    await dialog.getByRole('textbox', { name: 'PRN共同理由', exact: true }).fill('固定合成病例本次介入用药')
+    await dialog.getByRole('button', { name: '核对 PRN 发起 (1)', exact: true }).click()
+    await dialog.getByRole('button', { name: '确认发起 PRN', exact: true }).click()
+    await expect(dialog.getByRole('region', { name: 'PRN逐项结果', exact: true })).toContainText('成功 1/1')
+    await dialog.getByRole('button', { name: '关闭办理窗口', exact: true }).click()
     await expect(page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '待执行' })).toBeVisible()
     await acknowledgeCompleted()
   }
   await open('pharmacist', admission.patientName)
-  for (let index = 0; index < suffixes.length; index++) {
-    const response = page.waitForResponse(value => value.url().endsWith('/executions/dispense') && value.request().method() === 'POST')
-    const actions = page.getByRole('region', { name: '当前操作', exact: true })
-    await actions.getByRole('button', { name: '发药', exact: true }).click()
-    await actions.getByRole('button', { name: '确认发药', exact: true }).click()
-    expect((await response).status()).toBe(200)
-  }
+  await page.getByRole('button', { name: '全选本页可发药执行单', exact: true }).click()
+  await page.getByRole('button', { name: '集中发药', exact: true }).click()
+  const dispensing = page.getByRole('dialog', { name: '集中发药核对', exact: true })
+  await expect(dispensing.getByRole('article')).toHaveCount(suffixes.length)
+  await dispensing.getByRole('button', { name: '确认发药', exact: true }).click()
+  await expect.poll(async () => {
+    const state = await s.read('pharmacist', `${stay.path}/pharmacy`, inpatientPharmacySchema)
+    const current = state.orders.filter(item => !ordersBefore.includes(item.id))
+    return state.executions.filter(item => current.some(order => order.id === item.orderId) && item.status === 'dispensed').length
+  }).toBe(suffixes.length)
+  await expect(page.getByRole('region', { name: '发药逐项结果', exact: true }).getByRole('heading', { name: `逐项发药结果 · 成功 ${suffixes.length}/${suffixes.length}`, exact: true })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: /^已完成发药$/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: '恢复原发药', exact: true })).toHaveCount(0)
   await open('ward-nurse', admission.patientName)
   await stage(page, '诊断医嘱')
   for (let index = 0; index < suffixes.length; index++) {
     const response = page.waitForResponse(value => value.url().endsWith('/executions/administer') && value.request().method() === 'POST')
-    await page.getByRole('button', { name: '给药', exact: true }).first().click()
+    await recordOneActualExecution(page, 'administer')
     expect((await response).status()).toBe(200)
     // 通过正常关闭本次完成提示，确认交接后连续处理下一条；不绕过全宽布局或指针命中。
     await acknowledgeCompleted()

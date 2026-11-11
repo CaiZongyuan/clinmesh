@@ -263,9 +263,10 @@ export function InsurancePanel({
           )}
           {review === null ? feedback : null}
           <AlertDialog
+            pending={write.mutation.isPending}
             open={review !== null}
             onOpenChange={(open) => {
-              if (!write.mutation.isPending && !open) setReview(null)
+              if (!open) setReview(null)
             }}
           >
             <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
@@ -293,7 +294,7 @@ export function InsurancePanel({
               ) : null}
               {feedback}
               <AlertDialogFooter>
-                <AlertDialogCancel disabled={write.mutation.isPending}>
+                <AlertDialogCancel>
                   {zh ? '返回核对' : 'Back'}
                 </AlertDialogCancel>
                 <Button

@@ -344,10 +344,21 @@ describe('Web application shell', () => {
       '/registration', '/settings/model-usage', '/settings/developer/components',
     ])
     const latestRelease = register.mock.results.at(-1)?.value
+    const reviewDraft = 'clinmesh.inpatient-review-draft:v1:unsubmitted'
+    const preparedDraft = 'clinmesh.inpatient-review-draft:v1:prepared-before-send'
+    const libraryDraft = 'clinmesh.patient-library-visit:v1:unsubmitted'
+    const oldQueue = 'clinmesh.inpatient-review-queue:v1:old'
+    const originalIntent = 'clinmesh.inpatient-intent:v1:original'
+    for (const key of [reviewDraft, preparedDraft, libraryDraft, oldQueue, originalIntent]) sessionStorage.setItem(key, '{}')
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     await user.click(await screen.findByRole('menuitem', { name: '退出登录' }))
     await screen.findByRole('heading', { name: '登录科灵脉智' })
     expect(latestRelease).toHaveBeenCalled()
+    expect(sessionStorage.getItem(reviewDraft)).toBeNull()
+    expect(sessionStorage.getItem(preparedDraft)).toBeNull()
+    expect(sessionStorage.getItem(libraryDraft)).toBeNull()
+    expect(sessionStorage.getItem(oldQueue)).toBeNull()
+    expect(sessionStorage.getItem(originalIntent)).toBe('{}')
   })
 
   it('groups the role menu into outpatient, inpatient, and system sections', async () => {

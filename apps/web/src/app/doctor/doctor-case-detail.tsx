@@ -1,4 +1,5 @@
 import { doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
+import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 import {
   type ClinicalCatalog,
   type ClinicalDocumentContent,
@@ -55,16 +56,19 @@ import { DoctorPreparationDetailsDialog, DoctorRecommendationDetails } from './d
 import { RevisitEditor } from './doctor-revisit-editor.tsx'
 import { DocumentQualityCompact, DocumentQualityDetails, locateDocumentQualityIssue, openIssues, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
 import { ImagingPage, type ImagingPageActions } from './imaging-page.tsx'
+import { useManualInvestigationDrafts } from './investigation-draft-storage.ts'
 import {
   LaboratoryPage,
   type LaboratoryPageActions
 } from './laboratory-page.tsx'
 import { PathologyPage, type PathologyPageActions } from './pathology-page.tsx'
+import { OutpatientReportReader } from './outpatient-report-reader.tsx'
 import { PatientBanner } from './patient-summary.tsx'
 import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
 import { DoctorCaseLayout, DoctorCasePanel } from './responsive-layout.tsx'
 
 export function CaseDetail({
+  investigationActionContext,
   patientActions,
   clinicalDocumentUpdates,
   onCompletionNavigateChange,
@@ -122,6 +126,7 @@ export function CaseDetail({
   startRevisitPending: _startRevisitPending,
   workingClinicalDocument,
 }: {
+  investigationActionContext?: OutpatientInvestigationActionContext | undefined
   patientActions: ReactNode
   clinicalDocumentUpdates: ClinicalDocumentUpdates
   agentDraftHydrationRevisions: DoctorAgentDraftHydrationRevisions
@@ -203,6 +208,8 @@ export function CaseDetail({
   const visitNotStarted = detail.status === 'awaiting-doctor'
   const clinicalReadOnly = readOnly || visitNotStarted
   const preparation = useDoctorPreparation()
+  const imagingDrafts = useManualInvestigationDrafts(JSON.stringify([recommendationScope, detail.caseId, detail.encounter.id, 'imaging']), 'imaging')
+  const manualImagingIds = new Set(imagingDrafts.rows.flatMap(({ value }) => value.kind === 'imaging' ? [value.serviceId] : []))
   const quality = useDocumentQualityControl({
     detail, document: workingClinicalDocument, scope: recommendationScope,
     enabled: !clinicalReadOnly && (detail.clinicalDocument?.signed.length ?? 0) === 0
@@ -653,14 +660,16 @@ export function CaseDetail({
           </DoctorDraftScope></DoctorCasePanel>
 
           <DoctorCasePanel value="laboratory">
+            {investigationActionContext === undefined ? null : <OutpatientReportReader context={investigationActionContext} detail={detail} locale={locale} readOnly={clinicalReadOnly} />}
             <Tabs onValueChange={value => { if (value === 'laboratory' || value === 'imaging' || value === 'pathology') onSelectInvestigation(value) }} value={investigationView.category}>
               {(() => {
                 const labIssued = detail.laboratoryRequests?.requests.filter(r => r.status !== 'cancelled').length ?? (detail.report === undefined ? 0 : 1)
                 const labPending = (detail.laboratoryRequests?.draft !== undefined ? 1 : 0)
                   + (preparation ? readyRecommendationCount(preparation.jobs.laboratory, detail, preparation.preferences('laboratory')) : 0)
                 const imgIssued = detail.imagingRequests?.requests.filter(r => r.status !== 'cancelled').length ?? 0
-                const imgPending = (detail.imagingRequests?.draft !== undefined ? 1 : 0)
-                  + (preparation ? readyRecommendationCount(preparation.jobs.imaging, detail, preparation.preferences('imaging')) : 0)
+                const imgPending = manualImagingIds.size
+                  + (detail.imagingRequests?.draft !== undefined && !manualImagingIds.has(detail.imagingRequests.draft.service.id) ? 1 : 0)
+                  + (preparation ? readyRecommendationCount(preparation.jobs.imaging, detail, preparation.preferences('imaging'), manualImagingIds) : 0)
                 const pathIssued = detail.pathologyRequests?.requests.filter(r => r.status !== 'cancelled').length ?? 0
                 const pathPending = (detail.pathologyRequests?.draft !== undefined ? 1 : 0)
                   + (preparation ? readyRecommendationCount(preparation.jobs.pathology, detail, preparation.preferences('pathology')) : 0)
@@ -691,6 +700,7 @@ export function CaseDetail({
               })()}
               <TabsContent keepMounted value="laboratory"><DoctorDraftScope caseId={detail.caseId} kind="laboratory" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['laboratory'] ?? 0} locale={locale}>
                 <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('laboratory') === true}><LaboratoryPage
+                  actionContext={investigationActionContext}
                   actions={laboratoryRequestActions}
                   recommendationScope={recommendationScope}
                   recommendationRevision={recommendationRevision}
@@ -721,6 +731,7 @@ export function CaseDetail({
               </DoctorDraftScope></TabsContent>
               <TabsContent keepMounted value="imaging"><DoctorDraftScope caseId={detail.caseId} kind="imaging" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['imaging'] ?? 0} locale={locale}>
                 <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('imaging') === true}><ImagingPage
+                  actionContext={investigationActionContext}
                   actions={imagingActions}
                   recommendationScope={recommendationScope}
                   recommendationRevision={recommendationRevision}
@@ -740,6 +751,7 @@ export function CaseDetail({
               </DoctorDraftScope></TabsContent>
               <TabsContent keepMounted value="pathology"><DoctorDraftScope caseId={detail.caseId} kind="pathology" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['pathology'] ?? 0} locale={locale}>
                 <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('pathology') === true}><PathologyPage
+                  actionContext={investigationActionContext}
                   actions={pathologyActions}
                   recommendationScope={recommendationScope}
                   recommendationRevision={recommendationRevision}

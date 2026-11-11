@@ -9,12 +9,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { DiagnosisPage } from './diagnosis-page.tsx'
 import { DoctorPreparationProvider } from './doctor-preparation-state.tsx'
+import { signOut } from '../api-client.ts'
+import { createDraftDiscard } from '../draft-discard.ts'
 
 function props(overrides: Partial<ComponentProps<typeof DiagnosisPage>> = {}): ComponentProps<typeof DiagnosisPage> {
   return {
     actions: {
       confirm: { error: null, onSubmit: vi.fn(), pending: false },
-      save: { error: null, onSubmit: vi.fn(), pending: false, savedRevision: undefined, success: false },
+      save: { error: null, onSubmit: vi.fn((_entries, callbacks) => callbacks?.onSuccess()), pending: false, savedRevision: undefined, success: false },
     },
     caseId: 'synthetic-case', encounter: { id: 'synthetic-encounter', versionId: '1' }, catalog: [1, 2].map(id => ({
       id: `diagnosis-${id}`, code: `SYN-${id}`, nameZh: `合成诊断${id}`, nameEn: `Synthetic diagnosis ${id}`,
@@ -72,6 +74,7 @@ function diagnosisSuggestionState(overrides: Partial<DoctorRecommendationState> 
 }
 
 beforeEach(() => {
+  sessionStorage.clear()
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(recommendationState()), {
     headers: { 'content-type': 'application/json' },
   })))
@@ -87,6 +90,48 @@ async function cleanupDiagnosisPage() {
   vi.unstubAllGlobals()
 }
 afterEach(cleanupDiagnosisPage)
+
+it('退出清理删除失败后重挂不回显门诊诊断编辑私稿，持久标记补清理后可保存新输入', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/sign-out') return Response.json({})
+    return Response.json(recommendationState())
+  }))
+  const page = props({ state: savedState() }), user = userEvent.setup()
+  const original = render(<DiagnosisPage {...page} />)
+  const composer = await openComposer(user, /编辑诊断 合成诊断1/)
+  await user.type(composer.getByRole('textbox', { name: '诊断备注' }), ' · 退出前私稿')
+  const prefix = 'clinmesh.outpatient-investigation.'
+  const key = Object.keys(sessionStorage).find(key => key.startsWith(`${prefix}diagnosis-composer:v2:`))!
+  expect(key).toBeDefined()
+  const remove = Storage.prototype.removeItem
+  const denied = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, target) {
+    if (target.startsWith(prefix) && !target.startsWith(`${prefix}confirmation:`)) throw new DOMException('合成退出删除失败', 'SecurityError')
+    remove.call(this, target)
+  })
+  try {
+    await act(async () => { await expect(signOut()).resolves.toBeUndefined() })
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+    original.unmount()
+    const unavailable = render(<DiagnosisPage {...page} />)
+    const editor = screen.getByRole('button', { name: /编辑诊断 合成诊断1/ })
+    if (!editor.hasAttribute('disabled')) await user.click(editor)
+    expect(screen.queryByDisplayValue('第一条保存备注 · 退出前私稿')).toBeNull()
+    unavailable.unmount()
+    denied.mockRestore()
+    expect(createDraftDiscard(prefix).read(key)).toBeNull()
+    const restored = render(<DiagnosisPage {...page} />)
+    const fresh = await openComposer(user, /编辑诊断 合成诊断1/)
+    expect(fresh.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注')
+    await user.type(fresh.getByRole('textbox', { name: '诊断备注' }), ' · 重新填写')
+    await user.click(fresh.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    restored.unmount()
+    render(<DiagnosisPage {...page} />)
+    const saved = await openComposer(user, /编辑诊断 合成诊断1/)
+    expect(saved.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注 · 重新填写')
+    expect(page.actions.confirm.onSubmit).not.toHaveBeenCalled()
+  } finally { denied.mockRestore() }
+})
 
 function savedState(confirmed = false): DiagnosisState {
   const entries: DiagnosisState['draft'] = { entries: [
@@ -116,7 +161,174 @@ async function openComposer(user: ReturnType<typeof userEvent.setup>, name: stri
 }
 
 describe('diagnosis workspace', () => {
-  it('collects the diagnosis details inside one dialog and commits the entry on confirm', async () => {
+  it('rebases an untouched role when another diagnosis becomes primary while keeping an unfinished note', async () => {
+    render(<DiagnosisPage {...props({ state: savedState() })} />)
+    const user = userEvent.setup()
+    const first = await openComposer(user, /编辑诊断 合成诊断1/)
+    await user.type(first.getByRole('textbox', { name: '诊断备注' }), ' · 尚未保存')
+    await user.click(first.getByRole('button', { name: '编辑待确认诊断 合成诊断2' }))
+    await user.click(first.getByRole('button', { name: '主诊断' }))
+    await user.click(first.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    const reopened = await openComposer(user, /编辑诊断 合成诊断1/)
+    expect(reopened.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注 · 尚未保存')
+    expect(reopened.getByRole('button', { name: '次诊断' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('blocks a pending manual diagnosis whose current catalog is unavailable before confirming the group', async () => {
+    const page = props({ state: savedState(), catalog: props().catalog.filter(item => item.id !== 'diagnosis-2') })
+    render(<DiagnosisPage {...page} />)
+    const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
+    expect(within(panel.getByRole('group', { name: 'diagnosis-2' })).getByText(page.messages.recommendationDiagnosisUnavailable)).toBeTruthy()
+    expect(panel.getByRole('button', { name: /^确认选中诊断/ })).toHaveProperty('disabled', true)
+    expect(panel.getAllByRole('checkbox')).toHaveLength(2)
+  })
+
+  it('requires the pending editor to be saved before confirming the old diagnosis group', async () => {
+    const page = props({ state: savedState() })
+    render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    const dialog = await openComposer(user, /编辑诊断 合成诊断1/)
+    await user.type(dialog.getByRole('textbox', { name: '诊断备注' }), ' · 较新输入')
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    expect(screen.getAllByText('有未保存诊断编辑，请保存修改后再确认。').length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /^确认选中诊断/ })).toHaveProperty('disabled', true)
+    const reopened = await openComposer(user, /编辑诊断 合成诊断1/)
+    expect(reopened.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注 · 较新输入')
+    await user.click(reopened.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.queryByText('有未保存诊断编辑，请保存修改后再确认。')).toBeNull()
+    expect(screen.getByRole('button', { name: /^确认选中诊断/ })).toHaveProperty('disabled', false)
+  })
+
+  it('keeps unfinished input for each edited diagnosis and the next new diagnosis when switching targets in the same window', async () => {
+    const page = props({ state: savedState() })
+    const mounted = render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    let dialog = await openComposer(user, /编辑诊断 合成诊断1/)
+    await user.type(dialog.getByRole('textbox', { name: '诊断备注' }), ' · A待保存')
+    await user.click(dialog.getByRole('button', { name: '编辑待确认诊断 合成诊断2' }))
+    await user.type(dialog.getByRole('textbox', { name: '诊断备注' }), ' · B待保存')
+    await user.click(dialog.getByRole('button', { name: '编辑待确认诊断 合成诊断1' }))
+    expect(dialog.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注 · A待保存')
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    mounted.unmount()
+    render(<DiagnosisPage {...page} />)
+    dialog = await openComposer(user, /编辑诊断 合成诊断2/)
+    expect(dialog.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第二条保存备注 · B待保存')
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    await user.click(screen.getByRole('button', { name: '移除合成诊断2' }))
+    dialog = await openComposer(user)
+    await user.click(dialog.getByRole('button', { name: '选择 合成诊断2 SYN-2' }))
+    await user.type(dialog.getByRole('textbox', { name: '诊断备注' }), '下一项尚未加入')
+    await user.click(dialog.getByRole('button', { name: '编辑待确认诊断 合成诊断1' }))
+    expect(dialog.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注 · A待保存')
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    dialog = await openComposer(user)
+    expect(dialog.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '下一项尚未加入')
+  })
+
+  it('restores pending entries and unfinished composer input only in the original account and encounter scope', async () => {
+    const page = props({ recommendationScope: 'synthetic-user-role-workspace-epoch' })
+    const mounted = render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    let dialog = await openComposer(user)
+    await user.click(dialog.getByRole('button', { name: '选择 合成诊断1 SYN-1' }))
+    await user.type(dialog.getByRole('textbox', { name: '诊断备注' }), '已加入的人工备注')
+    await user.click(dialog.getByRole('button', { name: '加入诊断' }))
+    await user.click(dialog.getByRole('button', { name: '选择 合成诊断2 SYN-2' }))
+    await user.type(dialog.getByRole('textbox', { name: '诊断备注' }), '未加入的草稿输入')
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    mounted.unmount()
+    const restored = render(<DiagnosisPage {...page} />)
+    expect(screen.getByRole('checkbox', { name: '选择合成诊断1' })).toBeTruthy()
+    dialog = await openComposer(user)
+    expect(dialog.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '未加入的草稿输入')
+    expect(dialog.getByRole('button', { name: '次诊断' }).getAttribute('aria-pressed')).toBe('true')
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    restored.rerender(<DiagnosisPage {...page} recommendationScope="another-account-role" />)
+    expect(screen.queryByRole('checkbox', { name: '选择合成诊断1' })).toBeNull()
+    dialog = await openComposer(user)
+    expect(dialog.queryByRole('textbox', { name: '诊断备注' })).toBeNull()
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    restored.rerender(<DiagnosisPage {...page} />)
+    expect(screen.getByRole('checkbox', { name: '选择合成诊断1' })).toBeTruthy()
+    dialog = await openComposer(user)
+    expect(dialog.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '未加入的草稿输入')
+  })
+
+  it('requires confirmation to discard the private draft and retains the failure dialog when storage refuses the write', async () => {
+    const page = props({ state: savedState() })
+    const mounted = render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '清空手动草稿' }))
+    await user.click(screen.getByRole('button', { name: '保留草稿' }))
+    expect(screen.getAllByRole('checkbox')).toHaveLength(2)
+    await user.click(screen.getByRole('button', { name: '清空手动草稿' }))
+    const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Synthetic storage unavailable') })
+    await user.click(screen.getByRole('button', { name: '确认丢弃' }))
+    expect(screen.getByRole('alertdialog')).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain('清空失败')
+    storage.mockRestore()
+    await user.click(screen.getByRole('button', { name: '确认丢弃' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    mounted.unmount()
+    render(<DiagnosisPage {...page} />)
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+  })
+
+  it('waits for persisted discard, retains input on rejection, and clears both drafts only after success', async () => {
+    const page = props({ state: savedState() })
+    const submitted = vi.fn<ComponentProps<typeof DiagnosisPage>['actions']['save']['onSubmit']>()
+    page.actions.save.onSubmit = submitted
+    const mounted = render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '清空手动草稿' }))
+    await user.click(screen.getByRole('button', { name: '确认丢弃' }))
+    expect(submitted).toHaveBeenCalledWith([], expect.any(Object))
+    expect(screen.getByRole('button', { name: '确认丢弃' })).toHaveProperty('disabled', true)
+    act(() => submitted.mock.calls[0]![1]!.onError())
+    expect(screen.getByRole('alertdialog').textContent).toContain('清空失败')
+    await user.click(screen.getByRole('button', { name: '保留草稿' }))
+    expect(screen.getAllByRole('checkbox')).toHaveLength(2)
+    await user.click(screen.getByRole('button', { name: '清空手动草稿' }))
+    await user.click(screen.getByRole('button', { name: '确认丢弃' }))
+    act(() => submitted.mock.calls[1]![1]!.onSuccess())
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    mounted.unmount()
+    sessionStorage.clear()
+    render(<DiagnosisPage {...page} state={{ draftVersion: 3 }} />)
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+  })
+
+  it.each([false, true])('reconciles a persisted discard after losing its callback, preserving newer composer input: %s', async newerInput => {
+    const page = props({ state: savedState() })
+    const submitted = vi.fn<ComponentProps<typeof DiagnosisPage>['actions']['save']['onSubmit']>()
+    page.actions.save.onSubmit = submitted
+    const mounted = render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '清空手动草稿' }))
+    await user.click(screen.getByRole('button', { name: '确认丢弃' }))
+    mounted.unmount()
+    const restored = render(<DiagnosisPage {...page} />)
+    if (newerInput) {
+      const composer = await openComposer(user, /编辑诊断 合成诊断1/)
+      await user.type(composer.getByRole('textbox', { name: '诊断备注' }), ' · 丢弃后新输入')
+      await user.click(composer.getByRole('button', { name: '完成选择' }))
+    }
+    // 离开的旧页面回调迟到也不能覆盖重新打开后的私稿。
+    act(() => submitted.mock.calls[0]![1]!.onSuccess())
+    restored.rerender(<DiagnosisPage {...page} state={{ draftVersion: 3 }} />)
+    await waitFor(() => expect(screen.queryAllByRole('checkbox')).toHaveLength(newerInput ? 2 : 0))
+    if (newerInput) {
+      const composer = await openComposer(user, /编辑诊断 合成诊断1/)
+      expect(composer.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注 · 丢弃后新输入')
+    }
+  })
+
+  it('adds two diagnoses in one dialog and keeps their primary role and notes independent', async () => {
     const page = props()
     render(<DiagnosisPage {...page} />)
     const user = userEvent.setup()
@@ -124,11 +336,29 @@ describe('diagnosis workspace', () => {
     expect(dialog.getByRole('textbox', { name: '搜索疾病目录' })).toBeTruthy()
     await user.click(dialog.getByRole('button', { name: '选择 合成诊断1 SYN-1' }))
     expect(dialog.getByRole('textbox', { name: page.messages.diagnosisNote })).toBeTruthy()
+    await user.type(dialog.getByRole('textbox', { name: page.messages.diagnosisNote }), '第一项已核实')
     await user.click(dialog.getByRole('button', { name: '加入诊断' }))
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(dialog.getByRole('region', { name: '本次待确认诊断' }).textContent).toContain('第一项已核实')
+    await user.click(dialog.getByRole('button', { name: '选择 合成诊断2 SYN-2' }))
+    expect(dialog.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '')
+    expect(dialog.getByRole('button', { name: '次诊断' }).getAttribute('aria-pressed')).toBe('true')
+    await user.type(dialog.getByRole('textbox', { name: page.messages.diagnosisNote }), '第二项已核实')
+    await user.click(dialog.getByRole('button', { name: '加入诊断' }))
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     // modal 弹窗打开时背景内容被 aria-hidden，落单后的断言在关闭后进行。
     expect(screen.getByRole('region', { name: '待确认诊断' })).toBeTruthy()
     expect(screen.getByRole('button', { name: /编辑诊断 合成诊断1/ })).toBeTruthy()
+    const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
+    expect(panel.getAllByRole('checkbox')).toHaveLength(2)
+    const first = await openComposer(user, /编辑诊断 合成诊断1/)
+    expect(first.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '第一项已核实')
+    expect(first.getByRole('button', { name: '主诊断' }).getAttribute('aria-pressed')).toBe('true')
+    await user.click(first.getByRole('button', { name: '完成选择' }))
+    const second = await openComposer(user, /编辑诊断 合成诊断2/)
+    expect(second.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '第二项已核实')
+    expect(second.getByRole('button', { name: '次诊断' }).getAttribute('aria-pressed')).toBe('true')
   })
   it('keeps the pending draft list independent from the selected formal record', async () => {
     const page = props({ state: savedState(true) })
@@ -240,6 +470,7 @@ describe('diagnosis workspace', () => {
     await user.click(dialog.getByRole('button', { name: '选择 合成诊断1 SYN-1' }))
     await user.type(dialog.getByRole('textbox', { name: page.messages.diagnosisNote }), '医生手动诊断备注')
     await user.click(dialog.getByRole('button', { name: '加入诊断' }))
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
     expect(panel.getByRole('checkbox', { name: '选择合成诊断1' })).toBeTruthy()
@@ -252,6 +483,7 @@ describe('diagnosis workspace', () => {
     expect(secondDialog.getByRole('button', { name: '选择 合成诊断1 SYN-1' }).hasAttribute('disabled')).toBe(true)
     await user.click(secondDialog.getByRole('button', { name: '选择 合成诊断2 SYN-2' }))
     await user.click(secondDialog.getByRole('button', { name: '加入诊断' }))
+    await user.click(secondDialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.getAllByRole('button', { name: /编辑诊断 合成诊断/ })).toHaveLength(2)
   })
@@ -466,7 +698,7 @@ describe('diagnosis workspace', () => {
     expect(dialog.getByRole('button', { name: '选择 合成诊断1 SYN-1' })).toHaveProperty('disabled', false)
     expect(dialog.queryByRole('textbox', { name: page.messages.diagnosisNote })).toBeNull()
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
-    await user.click(dialog.getByRole('button', { name: '取消' }))
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
   })
@@ -478,20 +710,22 @@ describe('diagnosis workspace', () => {
     await user.click(dialog.getByRole('button', { name: '选择 合成诊断1 SYN-1' }))
     const note = dialog.getByRole('textbox', { name: page.messages.diagnosisNote })
     await user.type(note, '第一条的备注')
-    // 换选目录项只更换编码，已填备注保留（未确认关闭才弃置）。
+    // 换选目录项只更换编码，已填备注在换选及关闭重开后保留。
     await user.click(dialog.getByRole('button', { name: '选择 合成诊断2 SYN-2' }))
     expect((dialog.getByRole('textbox', { name: page.messages.diagnosisNote }) as HTMLTextAreaElement).value).toBe('第一条的备注')
-    await user.click(dialog.getByRole('button', { name: '取消' }))
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
     dialog = await openComposer(user)
+    expect(dialog.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '第一条的备注')
     await user.click(dialog.getByRole('button', { name: '选择 合成诊断1 SYN-1' }))
-    await user.type(dialog.getByRole('textbox', { name: page.messages.diagnosisNote }), '第一条的备注')
     await user.click(dialog.getByRole('button', { name: '加入诊断' }))
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     const secondDialog = await openComposer(user)
     await user.click(secondDialog.getByRole('button', { name: '选择 合成诊断2 SYN-2' }))
     await user.click(secondDialog.getByRole('button', { name: '加入诊断' }))
+    await user.click(secondDialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.getAllByRole('button', { name: /编辑诊断 / })).toHaveLength(2)
   })
@@ -501,7 +735,7 @@ describe('diagnosis workspace', () => {
     const user = userEvent.setup()
     const dialog = await openComposer(user, /编辑诊断 合成诊断1/)
     expect(dialog.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '第一条保存备注')
-    await user.click(dialog.getByRole('button', { name: '取消' }))
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     rerender(<DiagnosisPage {...page} state={savedState(true)} />)
     const list = within(screen.getByRole('region', { name: '诊断列表' }))
@@ -509,7 +743,7 @@ describe('diagnosis workspace', () => {
     expect(list.getByRole('cell', { name: '第二条保存备注' })).toBeTruthy()
     const reopened = await openComposer(user, /编辑诊断 合成诊断1/)
     expect(reopened.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '第一条保存备注')
-    await user.click(reopened.getByRole('button', { name: '取消' }))
+    await user.click(reopened.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(screen.getByRole('button', { name: '修改已确认诊断' }))
     const editDialog = await openComposer(user, /编辑诊断 合成诊断2/)
@@ -524,7 +758,7 @@ describe('diagnosis workspace', () => {
     await user.click(screen.getByRole('button', { name: '修改已确认诊断' }))
     const dialog = await openComposer(user, /编辑诊断 合成诊断1/)
     expect(dialog.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注')
-    await user.click(dialog.getByRole('button', { name: '取消' }))
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(within(screen.getByRole('region', { name: '待确认诊断' })).getAllByRole('checkbox')).toHaveLength(2)
   })
@@ -537,7 +771,7 @@ describe('diagnosis workspace', () => {
     await user.click(screen.getByRole('button', { name: '修改已确认诊断' }))
     const dialog = await openComposer(user, /编辑诊断 合成诊断2/)
     expect(dialog.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '当前未确认的医生备注')
-    await user.click(dialog.getByRole('button', { name: '取消' }))
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.getAllByRole('button', { name: /编辑诊断 / })).toHaveLength(1)
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
@@ -572,6 +806,7 @@ describe('diagnosis workspace', () => {
     await user.click(dialog.getByRole('button', { name: '选择 合成诊断3 SYN-3' }))
     await user.type(dialog.getByRole('textbox', { name: page.messages.diagnosisNote }), '新添加的备注')
     await user.click(dialog.getByRole('button', { name: '加入诊断' }))
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     // modal 弹窗打开时背景被 aria-hidden，记录视图断言在关闭后进行。
     expect(within(screen.getByRole('region', { name: '待确认诊断' })).getAllByRole('checkbox')).toHaveLength(3)
@@ -596,7 +831,7 @@ describe('diagnosis workspace', () => {
     rerender(<DiagnosisPage {...page} actions={failed} />)
     const reopened = await openComposer(user, /编辑诊断 合成诊断1/)
     expect(reopened.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '第一条保存备注 · 补充')
-    await user.click(reopened.getByRole('button', { name: '取消' }))
+    await user.click(reopened.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(screen.getByRole('button', { name: '重试保存' }))
     expect(page.actions.save.onSubmit).toHaveBeenLastCalledWith(editedEntries)
@@ -740,8 +975,9 @@ describe('诊断页签弹窗双语与右列布局', () => {
     expect(dialog.getByRole('region', { name: 'Diagnosis details' })).toBeTruthy()
     expect(dialog.getByRole('group', { name: 'Diagnosis role' })).toBeTruthy()
     expect(dialog.getByRole('textbox', { name: 'Diagnosis note' })).toBeTruthy()
-    expect(dialog.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    expect(dialog.getByRole('button', { name: 'Finish selection' })).toBeTruthy()
     await user.click(dialog.getByRole('button', { name: 'Add diagnosis' }))
+    await user.click(dialog.getByRole('button', { name: 'Finish selection' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     // modal 弹窗打开时背景内容被 aria-hidden，落单后的断言在关闭后进行。
     expect(screen.getByRole('region', { name: 'Diagnoses to confirm' })).toBeTruthy()

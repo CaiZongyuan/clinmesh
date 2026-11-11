@@ -9,7 +9,7 @@ import { inpatientDrgFollowupSchema, inpatientDrgFollowupResponseSchema, inpatie
 import { insuranceTargetSchema, insurancePlanCodeSchema, insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from './insurance.ts'
 import { inpatientFinancialInsuranceCancelInputSchema, inpatientFinancialInsurancePreviewInputSchema,
   inpatientFinancialInsuranceConfirmInputSchema } from './inpatient-finance.ts'
-import { chargeAdjustmentInputSchema, chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewInputSchema, refundPreviewResponseSchema,
+import { chargeAdjustmentInputSchema, chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewInputSchema, refundAllocationPreviewInputSchema, refundPreviewResponseSchema,
   refundConfirmInputSchema, refundRecoverInputSchema, refundResponseSchema } from './refunds.ts'
 import { inpatientRecordSchema, inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema, inpatientRecordResponseSchema } from './inpatient-record.ts'
 import { inpatientFinancialSchema, inpatientFinancialResponseSchema, inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPreviewInputSchema, inpatientFinancialRefundPreviewResponseSchema, inpatientFinancialRefundConfirmInputSchema, inpatientFinancialRefundRecoverInputSchema, inpatientFinancialPaymentPreviewInputSchema } from './inpatient-finance.ts'
@@ -119,6 +119,11 @@ import {
   orderHospitalServiceResponseSchema,
   patientSearchSchema,
   paymentPreviewResponseSchema,
+  multiChargePaymentPreviewInputSchema,
+  multiChargePaymentPreviewResponseSchema,
+  multiChargePaymentConfirmInputSchema,
+  multiChargePaymentRecoverInputSchema,
+  multiChargePaymentResponseSchema,
   paymentSimulatorRuleSchema,
   paymentTendersSchema,
   paymentResponseSchema,
@@ -591,6 +596,7 @@ const billingCaseInputSchema = paginationInputSchema.extend({ caseId: z.string()
 const refundChargeVersionShape = { chargeVersion: z.number().int().positive() }
 const chargeAdjustmentOperationInputSchema = chargeAdjustmentInputSchema.extend({ caseId: z.string().min(1), ...refundChargeVersionShape }).strict()
 const refundPreviewOperationInputSchema = refundPreviewInputSchema.extend({ chargeItemId: z.string().min(1), ...refundChargeVersionShape }).strict()
+export const refundAllocationPreviewOperationInputSchema = refundAllocationPreviewInputSchema.extend(refundChargeVersionShape).strict()
 const refundConfirmOperationInputSchema = refundConfirmInputSchema.extend({ previewId: z.string().min(1), chargeItemId: z.string().min(1), ...refundChargeVersionShape }).strict()
 const refundRecoverOperationInputSchema = refundRecoverInputSchema.extend({ refundId: z.string().min(1), chargeItemId: z.string().min(1), ...refundChargeVersionShape }).strict()
 
@@ -601,6 +607,18 @@ const paymentPreviewOperationInputSchema = z.object({
   chargeVersion: z.number().int().positive(),
   simulatorRule: paymentSimulatorRuleSchema,
   tenders: paymentTendersSchema.optional(),
+}).strict()
+
+export const multiChargePaymentPreviewOperationInputSchema = multiChargePaymentPreviewInputSchema.omit({ chargeItemIds: true }).extend({
+  charges: z.array(z.object({ chargeItemId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict()).min(2).max(20)
+    .refine(charges => new Set(charges.map(charge => charge.chargeItemId)).size === charges.length, 'Charge items must be unique'),
+}).strict()
+
+export const multiChargePaymentConfirmOperationInputSchema = multiChargePaymentConfirmInputSchema.extend({
+  previewId: z.string().min(1), charges: multiChargePaymentPreviewOperationInputSchema.shape.charges,
+}).strict()
+export const multiChargePaymentRecoverOperationInputSchema = multiChargePaymentRecoverInputSchema.extend({
+  paymentId: z.string().min(1), charges: multiChargePaymentPreviewOperationInputSchema.shape.charges,
 }).strict()
 
 const paymentConfirmOperationInputSchema = z.object({
@@ -984,6 +1002,12 @@ const bodyEncoders = {
     const { expectedVersions } = completeHospitalServiceOperationInputSchema.parse(rawInput)
     return commandBody(expectedVersions, {})
   },
+  'payment.multi-charge.preview': (rawInput: unknown) => {
+    const { charges, ...input } = multiChargePaymentPreviewOperationInputSchema.parse(rawInput)
+    return commandBody(Object.fromEntries(charges.map(charge => [`ChargeItem/${charge.chargeItemId}`, String(charge.chargeVersion)])), {
+      ...input, chargeItemIds: charges.map(charge => charge.chargeItemId),
+    })
+  },
   'payment.preview': (rawInput: unknown) => {
     const { chargeItemId, chargeVersion, ...input } = paymentPreviewOperationInputSchema.parse(rawInput)
     return commandBody({ [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, { ...input, chargeItemId })
@@ -991,6 +1015,14 @@ const bodyEncoders = {
   'payment.confirm': (rawInput: unknown) => {
     const { chargeItemId, chargeVersion, commitToken } = paymentConfirmOperationInputSchema.parse(rawInput)
     return commandBody({ [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, { commitToken })
+  },
+  'payment.multi-charge.confirm': (rawInput: unknown) => {
+    const { charges, commitToken } = multiChargePaymentConfirmOperationInputSchema.parse(rawInput)
+    return commandBody(Object.fromEntries(charges.map(charge => [`ChargeItem/${charge.chargeItemId}`, String(charge.chargeVersion)])), { commitToken })
+  },
+  'payment.multi-charge.recover': (rawInput: unknown) => {
+    const { charges, expectedPaymentVersion } = multiChargePaymentRecoverOperationInputSchema.parse(rawInput)
+    return commandBody(Object.fromEntries(charges.map(charge => [`ChargeItem/${charge.chargeItemId}`, String(charge.chargeVersion)])), { expectedPaymentVersion })
   },
   'payment.recover': (rawInput: unknown) => {
     const { chargeItemId, chargeVersion, expectedPaymentVersion }
@@ -1032,6 +1064,30 @@ const bodyEncoders = {
 } satisfies Record<string, (input: unknown) => unknown>
 
 const operationDefinitions = [
+  {
+    cliPath: ['payment', 'confirm-multi-charge'], id: 'payment.multi-charge.confirm',
+    http: { method: 'POST', path: '/api/his/v1/payments/:previewId/actions/confirm-multi-charge' },
+    input: multiChargePaymentConfirmOperationInputSchema, output: multiChargePaymentResponseSchema,
+    mode: 'command', risk: 'high-risk-write', roles: ['cashier'],
+    requirements: { expectedVersions: true, idempotency: 'required' }, version: 1,
+    summary: '按冻结预览一次创建整笔原款与完整逐项分配；WORKFLOW_CONFLICT 时刷新后重预览，未知结果查询原交易',
+  },
+  {
+    cliPath: ['payment', 'recover-multi-charge'], id: 'payment.multi-charge.recover',
+    http: { method: 'POST', path: '/api/his/v1/payments/:paymentId/actions/recover-multi-charge' },
+    input: multiChargePaymentRecoverOperationInputSchema, output: multiChargePaymentResponseSchema,
+    mode: 'command', risk: 'high-risk-write', roles: ['cashier'],
+    requirements: { expectedVersions: true, idempotency: 'required' }, version: 1,
+    summary: '携带全部原费用版本查询原合并收款，只追加原交易结果，不重收、不重建申请',
+  },
+  {
+    cliPath: ['payment', 'preview-multi-charge'], id: 'payment.multi-charge.preview',
+    http: { method: 'POST', path: '/api/his/v1/payments/actions/preview-multi-charge' },
+    input: multiChargePaymentPreviewOperationInputSchema, output: multiChargePaymentPreviewResponseSchema,
+    mode: 'preview', risk: 'write', roles: ['cashier'],
+    requirements: { expectedVersions: true, idempotency: 'required' }, version: 1,
+    summary: '冻结同患者同次门诊多项原费用的逐项余额与组合支付预览，尚不收款',
+  },
   { cliPath: ['inpatient', 'financial-adjustments'], id: 'inpatient.financial.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments' },
     input: z.object({ admissionId: inpatientFinancialAdjustmentInputSchema.shape.admissionId }).strict(), output: inpatientFinancialSchema,
     mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['cashier', 'medical-records'], summary: '分别读取首次冻结费用、后续更正、原款及当前待收退差异', version: 1 },
@@ -1585,8 +1641,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save the version-protected diagnosis draft',
-    version: 1,
+    summary: 'Save the version-protected diagnosis draft; empty entries discard only the unconfirmed draft',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'diagnosis', 'confirm'],
@@ -2310,8 +2366,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['cashier'],
-    summary: 'Read one unified bill with separate laboratory, imaging, pathology and medication charges, frozen request prices, complete balances, paged payment attempts and unpaid registration charges; registration remains read-only',
-    version: 2,
+    summary: '读取含未缴挂号费用的统一账单、完整逐项余额和按整笔分页的原收款历史；多费用原款显式列出完整分配，挂号只读',
+    version: 3,
   },
   {
     cliPath:['insurance','get'],id:'insurance.get',http:{method:'GET',path:'/api/his/v1/insurance/:kind/:id'},
@@ -2330,7 +2386,7 @@ const operationDefinitions = [
     input:insuranceTargetSchema.extend({settlementId:z.string().min(1),expectedBalanceVersion:z.number().int().nonnegative()}),output:insuranceResponseSchema,mode:'command',requirements:{expectedVersions:false,idempotency:'required'},risk:'high-risk-write',roles:['cashier'],summary:'Append compensation using expectedBalanceVersion from annualBalances for the original settlement year; preserve later encounters annual and account balances',version:1,
   },
   {
-    cliPath: ['billing', 'refunds', 'get'], id: 'billing.refunds.get', mode: 'query', version: 1,
+    cliPath: ['billing', 'refunds', 'get'], id: 'billing.refunds.get', mode: 'query', version: 2,
     http: { method: 'GET', path: '/api/his/v1/billing/cases/:caseId/refunds' },
     input: z.object({ caseId: z.string().min(1) }).strict(), output: refundCaseSchema,
     roles: ['cashier'], risk: 'read', requirements: { expectedVersions: false, idempotency: 'none' },
@@ -2344,6 +2400,15 @@ const operationDefinitions = [
     } }, input: chargeAdjustmentOperationInputSchema, output: chargeAdjustmentResponseSchema,
     roles: ['cashier'], risk: 'high-risk-write', requirements: { expectedVersions: true, idempotency: 'required' },
     summary: 'Append a reasoned correction to the original charge without reversing clinical execution; WORKFLOW_CONFLICT: an uncancelled prepaid investigation before first release must be cancelled by its responsible doctor instead of reducing the release threshold',
+  },
+  {
+    cliPath: ['refund', 'preview-allocation'], id: 'refund.allocation.preview', mode: 'preview', version: 1,
+    http: { method: 'POST', path: '/api/his/v1/refunds/actions/preview-allocation', encodeBody: raw => {
+      const { chargeVersion, ...input } = refundAllocationPreviewOperationInputSchema.parse(raw)
+      return { expectedVersions: { [`ChargeItem/${input.chargeItemId}`]: String(chargeVersion) }, input }
+    } }, input: refundAllocationPreviewOperationInputSchema, output: refundPreviewResponseSchema,
+    roles: ['cashier'], risk: 'write', requirements: { expectedVersions: true, idempotency: 'required' },
+    summary: '明确选择原款内费用分配，冻结原款余额、该项原收余额及累计冲减依据的三重上限；未知原退款须先恢复',
   },
   {
     cliPath: ['refund', 'preview'], id: 'refund.preview', mode: 'preview', version: 1,
@@ -2692,7 +2757,7 @@ const operationDefinitions = [
   { cliPath:['inpatient','drg-reserve-material'],id:'inpatient.drg.reservation.create',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/reservations',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientMaterialReservationCreateInputSchema.parse(raw);return {input}}},input:inpatientMaterialReservationCreateInputSchema,output:commandResponseSchema(inpatientMaterialReservationListSchema),
     mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'为计划手术预留材料，绑定目录版本与原因，不改变临床事实',version:4 },
   { cliPath:['inpatient','drg-release-reservation'],id:'inpatient.drg.reservation.release',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/reservations/:reservationId/release',encodeBody:raw=>{const {admissionId:_id,reservationId:_rid,...input}=inpatientMaterialReservationReleaseInputSchema.parse(raw);return {input}}},input:inpatientMaterialReservationReleaseInputSchema,output:commandResponseSchema(inpatientMaterialReservationListSchema),
-    mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'释放预留中的材料，仅预留态可释放',version:4 },
+    mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'释放未用余量，不改已用量或实际收费。INPATIENT_RESERVATION_CONFLICT 的 reason 为 RESERVATION_NOT_RELEASABLE（已非预留态）或 RESERVATION_REMAINDER_CHANGED（expectedReservationVersion 已变化）；找不到原预留时返回 INPATIENT_RESERVATION_NOT_FOUND',version:6 },
   { cliPath:['inpatient','drg-payer-review-preview'],id:'inpatient.drg.payer.review.preview',http:{method:'GET',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/payer-review-preview'},input:z.object({admissionId:z.string().min(1)}).strict(),output:inpatientDrgPayerReviewPreviewSchema,
     mode:'preview',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['medical-insurance','medical-records'],summary:'预览冻结病例来源、合成核定与原预估及收费的两项差额，指纹绑定病例、规则及参数版本',version:2 },
   { cliPath:['inpatient','drg-payer-review'],id:'inpatient.drg.payer.review',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/payer-review',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientDrgPayerReviewCreateInputSchema.parse(raw);return {input}}},input:inpatientDrgPayerReviewCreateInputSchema,output:commandResponseSchema(inpatientDrgPayerReviewListSchema),
@@ -2823,7 +2888,7 @@ const operationDefinitions = [
   {
     cliPath: ['inpatient', 'pharmacy-read'], id: 'inpatient.pharmacy.read',
     http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/pharmacy' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientPharmacySchema,
-    mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['pharmacist'], summary: '读取本次住院药嘱、发药任务、批次与有效药物过敏风险', version: 1,
+    mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['pharmacist'], summary: '读取本次住院药嘱、发药任务、批次与有效药物过敏风险；stopReason仅返回可归属停嘱理由，历史可缺失', version: 2,
   },
   {
     cliPath: ['inpatient', 'charges'], id: 'inpatient.charges.read',
@@ -2873,43 +2938,43 @@ const operationDefinitions = [
   {
     cliPath: ['inpatient', 'clinical'], id: 'inpatient.clinical.read',
     http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/clinical' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientFullClinicalSchema, mode: 'query',
-    requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse','medical-records'], summary: '读取本次住院诊断医嘱执行及费用', version: 1,
+    requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse','medical-records'], summary: '读取本次住院诊断医嘱执行及费用；stopReason仅返回可归属停嘱理由，历史可缺失', version: 2,
   },
   {
     cliPath: ['inpatient', 'confirm-diagnosis'], id: 'inpatient.diagnosis.confirm',
     http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/diagnoses/confirm', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDiagnosisConfirmInputSchema.parse(raw); return { input } } },
-    input: inpatientDiagnosisConfirmInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '确认本次住院主次诊断并生成正式Condition', version: 1,
+    input: inpatientDiagnosisConfirmInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '确认本次住院主次诊断并生成正式Condition；医嘱含可选停嘱理由stopReason', version: 2,
   },
   {
     cliPath: ['inpatient', 'issue-order'], id: 'inpatient.order.issue',
     http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/orders/issue', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientOrderIssueInputSchema.parse(raw); return { input } } },
-    input: inpatientOrderIssueInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '签发住院医嘱；按明确单位换算并重验有界剂量、责任、版本及可选 DRG 审阅指纹', version: 4,
+    input: inpatientOrderIssueInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '签发住院医嘱；按明确单位换算并重验有界剂量、责任、版本及可选 DRG 审阅指纹；医嘱含可选停嘱理由stopReason', version: 5,
   },
   {
     cliPath: ['inpatient', 'verify-order'], id: 'inpatient.order.verify',
     http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/orders/verify', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientOrderActionInputSchema.parse(raw); return { input } } },
-    input: inpatientOrderActionInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['ward-nurse'], summary: '住院医嘱verify；校验当前责任与版本', version: 1,
+    input: inpatientOrderActionInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['ward-nurse'], summary: '住院医嘱verify；校验当前责任与版本；医嘱含可选停嘱理由stopReason', version: 2,
   },
   {
     cliPath: ['inpatient', 'request-stop-order'], id: 'inpatient.order.request-stop',
     http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/orders/request-stop', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientOrderReasonInputSchema.parse(raw); return { input } } },
-    input: inpatientOrderReasonInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '住院医嘱request-stop；校验当前责任与版本', version: 1,
+    input: inpatientOrderReasonInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '住院医嘱request-stop；校验当前责任与版本；医嘱含可选停嘱理由stopReason', version: 2,
   },
   {
     cliPath: ['inpatient', 'verify-stop-order'], id: 'inpatient.order.verify-stop',
     http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/orders/verify-stop', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientOrderActionInputSchema.parse(raw); return { input } } },
-    input: inpatientOrderActionInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['ward-nurse'], summary: '住院医嘱verify-stop；校验当前责任与版本', version: 1,
+    input: inpatientOrderActionInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['ward-nurse'], summary: '住院医嘱verify-stop；校验当前责任与版本；医嘱含可选停嘱理由stopReason', version: 2,
   },
   { cliPath:['inpatient','dispense'],id:'inpatient.execution.dispense',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/executions/dispense',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientDispenseInputSchema.parse(raw);return {input}}},
-    input:inpatientDispenseInputSchema,output:inpatientPharmacyResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['pharmacist'],summary:'住院实际dispense；按执行单校验版本与责任',version:1 },
+    input:inpatientDispenseInputSchema,output:inpatientPharmacyResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['pharmacist'],summary: '住院实际dispense；按执行单校验版本与责任；医嘱含可选停嘱理由stopReason', version: 2 },
   { cliPath:['inpatient','administer'],id:'inpatient.execution.administer',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/executions/administer',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientExecutionActionInputSchema.parse(raw);return {input}}},
-    input:inpatientExecutionActionInputSchema,output:inpatientFullClinicalResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary:'住院实际administer；按执行单校验版本与责任',version:1 },
+    input:inpatientExecutionActionInputSchema,output:inpatientFullClinicalResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary: '住院实际administer；按执行单校验版本与责任；医嘱含可选停嘱理由stopReason', version: 2 },
   { cliPath:['inpatient','complete-service'],id:'inpatient.execution.complete',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/executions/complete',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientExecutionActionInputSchema.parse(raw);return {input}}},
-    input:inpatientExecutionActionInputSchema,output:inpatientFullClinicalResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary:'完成已校对的健康教育服务执行并按声明计费；不执行检查检验',version:1 },
+    input:inpatientExecutionActionInputSchema,output:inpatientFullClinicalResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary: '完成已校对的健康教育服务执行并按声明计费；不执行检查检验；医嘱含可选停嘱理由stopReason', version: 2 },
   { cliPath:['inpatient','reverse-charge'],id:'inpatient.charge.reverse',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/charges/reverse',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientChargeReverseInputSchema.parse(raw);return {input}}},
     input:inpatientChargeReverseInputSchema,output:inpatientChargesResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['cashier'],summary:'关联原费用全额冲正；原账保留，不接受任意金额',version:1 },
   { cliPath:['inpatient','request-prn'],id:'inpatient.execution.request-prn',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/executions/request-prn',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientOrderReasonInputSchema.parse(raw);return {input}}},
-    input:inpatientOrderReasonInputSchema,output:inpatientFullClinicalResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary:'护士按已校对PRN医嘱和显式理由请求本次执行任务',version:1 },
+    input:inpatientOrderReasonInputSchema,output:inpatientFullClinicalResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary: '护士按已校对PRN医嘱和显式理由请求本次执行任务；医嘱含可选停嘱理由stopReason', version: 2 },
   {
     cliPath: ['inpatient', 'catalog'], id: 'inpatient.catalog',
     http: { method: 'GET', path: '/api/his/v1/inpatient/catalog' },
@@ -3079,6 +3144,10 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'insurance.cancel': 'clinmesh-billing',
   'payment.confirm': 'clinmesh-billing',
   'payment.preview': 'clinmesh-billing',
+  'payment.multi-charge.preview': 'clinmesh-billing',
+  'payment.multi-charge.confirm': 'clinmesh-billing',
+  'payment.multi-charge.recover': 'clinmesh-billing',
+  'refund.allocation.preview': 'clinmesh-billing',
   'payment.recover': 'clinmesh-billing',
   'billing.refunds.get': 'clinmesh-billing',
   'billing.charge.adjust': 'clinmesh-billing',
@@ -3133,7 +3202,8 @@ export const hisOperationCatalog: readonly HisOperationDefinition[] = operationD
     handlerOwner: handlerOwnerFor(operation),
     identities: hisOperationIdentitySchema.options,
     previewToken: operation.id === clinicalDocumentOperationIds.sign
-      || operation.id === 'payment.confirm' || operation.id === 'insurance.confirm' || operation.id === 'refund.confirm'
+      || operation.id === 'payment.confirm' || operation.id === 'payment.multi-charge.confirm'
+      || operation.id === 'insurance.confirm' || operation.id === 'refund.confirm'
       || operation.id === 'inpatient.financial.refund.confirm'
       || operation.id === 'inpatient.financial.payment.confirm'
       || operation.id === 'inpatient.payment.confirm' || operation.id === 'inpatient.refund.confirm'
@@ -3168,6 +3238,8 @@ export interface ExcludedHisRoute {
 }
 
 export const excludedHisRoutes = [
+  { method: 'GET', path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/confirmations/:idempotencyKey',
+    reason: '医生 Session 按原病例、诊断、检查或处方类别和幂等键读取自己的确认回执，不授予独立 CLI 或 Agent Grant 能力。' },
   { method: 'PUT', path: '/api/his/v1/encounters/:encounterId/clinical-document/visit-kind',
     reason: '负责医生首次签署前人工核实临床初诊或随访；Agent 仅读取规则结果，不授予分类写入。' },
   { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId',

@@ -59,7 +59,7 @@ describe('UI accessibility contracts', () => {
   it('names an alert dialog and restores focus when it is cancelled', async () => {
     const user = userEvent.setup()
     render(
-      <AlertDialog>
+      <AlertDialog pending={false}>
         <AlertDialogTrigger render={<Button type="button" />}>删除草稿</AlertDialogTrigger>
         <AlertDialogContent>
           <AlertDialogTitle>确认删除草稿</AlertDialogTitle>

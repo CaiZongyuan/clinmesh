@@ -1,16 +1,48 @@
 # 测试与验证排障
 
+- 搜索或翻页清空选择后，后台任务完成时的自动定位可能抢在新列表前写回旧选择。回归时阻塞新列表请求，先让后台任务完成，再分别返回非空和空列表，核对详情与可提交对象仍属于当前队列；只验证列表加载完成后的切换会漏掉此竞态，参见[患者库组件回归](../../apps/web/src/app/synthetic-patient-library.test.tsx)。
+
+- 私稿失败回归分开注入 `getItem` 暂时抛错、损坏 JSON 和 `setItem` 失败；仅用坏 JSON 会漏掉重试时覆盖仍有效原稿。先保存非空选择与付款方式，再重挂载并阻断读取，恢复后逐字核对原文和公开输入。丢弃保护还须先展开确认条再发请求，覆盖在途及未知状态下仍存在的确认按钮，见[多费用预览组件合同](../../apps/web/src/app/billing-multi-charge-panel.test.tsx)。
+
+- 带自动保存的手动编辑长旅程，在最终版本化确认前，用公开保存提示与最新完整输入回读固定前置；按钮已经存在不代表最后一轮草稿保存已完成。保留正式事实及字段断言，不靠延长超时处理最终结果缺失；CI仅有最终空值而本地单例通过时，仍不能据此断言具体请求时序根因。参见[双React手动诊断处方旅程](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
+
+- 验证“丢弃草稿”时先等公开读取确认自动保存已落到服务端，再清空并退出重登；只重挂载且保留 sessionStorage 会让本地空草稿遮住服务端旧稿。同步核对清空失败保留输入、已确认资源不变和完诊待办，见[门诊诊断旅程](../../apps/web/e2e/outpatient-diagnosis-batch.spec.ts)与[诊断 HTTP 合同](../../apps/server/tests/outpatient-workflow-http.test.ts)。
+
+- 验证确定拒绝后可以修正并新提交时，按业务实际错误码注入 409（如 `WORKFLOW_CONFLICT`、`CATALOG_CONFLICT`、`DIAGNOSIS_PRIMARY_REQUIRED`），不能只断言错误文案；须检查首次提交及原键重放后均解除冻结、保留输入，并能修改后用新键成功提交。回执查询错误不能当作提交被拒绝；503、网络中断及无法解析的响应属于结果未知，必须先恢复原回执，不能用新键重提。先例见[诊断恢复组件旅程](../../apps/web/src/app/doctor/doctor-agent-diagnosis-hydration.test.tsx)。切换目录来源后，先等待首个候选可见再枚举 `.all()`，避免把加载态误判为空目录；先例见[诊断处方双版本合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
+
+- 浏览器私有草稿须允许尚未合法的表单输入，正式提交仍按业务 schema 校验。将提交时数值范围直接用于待编辑偏好，会在表单保留越界疗程或数量时持续保存失败；同步 effect 若每次渲染都重试，可能卡住主线程。保留非法字段待修正，并在持久存储失败后停止自动同步，以真实页面的越界输入与修正旅程验证。
+
+- 原操作意图临时回显的清单行不代表表单输入已持久恢复。退出后只剩原意图、服务端没有完整草稿时，确定拒绝须先保存缺失输入再释放意图；诊断和处方的待恢复门禁仍应阻止用户修改，内部回填在门禁解除后执行，不能在释放前调用受该门禁保护的编辑回调。用真实退出流程、重新挂载、无回执与原键重放拒绝、再次挂载及编辑字段验证，参见[处方页面集成回归](../../apps/web/src/app/doctor/doctor-agent-prescription-hydration.test.tsx)及[诊断恢复组件旅程](../../apps/web/src/app/doctor/doctor-agent-diagnosis-hydration.test.tsx)。
+
+- 新增浏览器草稿清理时，将对应 key 加入真实退出流程的正常存储、禁止访问和禁止删除三种回归。服务端退出成功后，存储策略异常不能阻断界面卸载与业务缓存清理；只验证草稿删除会漏掉仍显示已登录工作区的回归，参见[登录退出流程](../../apps/web/src/app/auth-workflow.test.tsx)。
+
+- 门诊检查原意图在发送 POST 前保存，“恢复原开立”会在请求仍进行时显示并禁用。模拟服务端成功但响应丢失后，先等恢复按钮可操作，再回读正式申请或退出登录；只等 `toBeVisible()` 会读到尚无申请的合法中间状态。诊断时暂停真实 POST，核对按钮已显示但禁用、HTTP 读取无申请，释放后核对原 POST 成功及正式申请，参见[检验恢复旅程](../../apps/web/e2e/investigation-workspace.spec.ts)。
+
+- 比较业务意图时按稳定标识和值判断，不用 `JSON.stringify` 比较由不同构造或 schema 路径生成的对象。Zod 解析与表单解析可能以不同字段顺序重建同一付款方式，导致成功预览被误判为草稿变化；回归需包含显式组合方式以及响应丢失后的原回执恢复，参见[多费用预览组件合同](../../apps/web/src/app/billing-multi-charge-panel.test.tsx)。
+
 - 排查恢复写操作后弹窗错误消失时，检查错误归属是否只读取 `mutation.variables` 或待办：恢复使用 `mutate(undefined)`，终态拒绝又会清除待办，两个位置都可能丢失原 Command。用本次 mutation 上下文保留操作归属；回归覆盖断线、无回执、同键重发冲突、弹窗内刷新、输入保留及跨患者隔离，参见[手术弹窗回归](../../apps/web/src/app/inpatient-surgery-prototype.test.tsx)与[真实恢复旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
 
 - 住院恢复入口在 `mutation.isPending` 时即隐藏，因此按钮消失只能证明已开始恢复。弹窗外恢复旅程重开窗口前须等待回执完成、查询刷新和实际可操作状态；只等 `toHaveCount(0)` 会在仍禁止打开弹窗时点击一次，随后错误地报告耗材记录不存在。用受控回执延迟核对这一边界，同时查询正式历史和页面最终耗材以区分测试时序与写入失败，参见[恢复入口](../../apps/web/src/app/inpatient-write-recovery.tsx)及[共享耗材旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
 
+- 原操作恢复回归同时覆盖允许新写与业务只读：让命令已提交但丢响应，再结束就诊或离院，核对原回执仍可查询、明确404时不重发且原意图保留。另用身份请求屏障覆盖意图落盘后、业务发送前转为只读，等待真实入口更新后放行，分别断言新操作明确未发可解除意图、原未知恢复仍保留原文。专用只读错误仅由业务发送前守卫产生，不把身份失效或卸载一并归类；另用落盘后卸载、退出、放行身份请求验证迟到回调不会在清理后写回未提交选择，原尝试仍按原键恢复。只在活动状态验证恢复按钮会漏掉把结果查询绑到新写权限的错误；见[门诊检查动作回归](../../apps/web/src/app/doctor/outpatient-investigation-actions.test.tsx)与[报告恢复回归](../../apps/web/src/app/doctor/outpatient-report-reader.test.tsx)。
+
+- 原操作同时有动作窗口和全局恢复入口时，两者都须走真实入口验证。只给窗口调用传发送回调会漏掉全局 `mutate(undefined)`；刷新后不持久化的回调也不会自动恢复。用同一原键分别验证只读404、状态读取失败与已有回执，再核对当前未提交坏稿在只读时仍能打开确认丢弃，参见[护士执行组件回归](../../apps/web/src/app/inpatient-execution-batch.test.tsx)和[共享真实旅程](../../apps/web/e2e/inpatient-execution-batch.journey.ts)。
+
 - Playwright `APIRequestContext` 的连接重置可能发生在页面断言已通过后的独立只读核对。确需吸收一次 `ECONNRESET` 时，在该次 GET 显式使用 `maxRetries: 1`；它不重试 HTTP 错误，也不改变 Command 或模型的执行次数。以真实 HTTP socket 重置验证读取两次、业务调用次数不变，并保留连续重置后的失败；不能把本地复验通过或连接复用实验当作 CI 具体断连原因已被证实。先例见[住院用量共享旅程](../../apps/web/e2e/inpatient-drg-usage.journey.ts)。
+
+- 将单项选择弹窗改为连续添加 composer 时，同时搜索 Web e2e 与 Surface browser 中该弹窗的关闭按钮和成功等待断言。旧“取消”可能已变为“关闭”，同次就诊关闭重开后的成功数也可能累计；循环旅程应等待本次项目的成功结果及关闭可用，再访问背景页。用真实多项目旅程验证，不能只修改组件测试或一直等待固定“成功 1 项”。先例见[住院 PCI 多药旅程](../../apps/web/e2e/inpatient-pci-preparation.journey.ts)。
 
 - 队列按逐条审计读取补充分组时，分页须约束实际请求集合，不能只把全量结果切成可见页；用至少两页合成病案断言初页读取上限、翻页后才读取余量。核定状态加载或失败不等于未核定；显式继续后的首次选择须固化，提交刷新、归档新增改变页边界时保留原病例与回执，失败优先于完成态。复用[医保队列组件](../../apps/web/src/app/inpatient-insurance-review.test.tsx)和[真实归档核定旅程](../../apps/web/e2e/inpatient-insurance-queue.spec.ts)。
 
+- Surface 浏览器代理须将患者文字请求的 `/_fhir/` 路径转到真实 `/fhir/`，并断言患者身份加载成功且没有读取错误；只验证主业务按钮可能漏掉 SPA fallback 返回 HTML 导致的 schema 错误。叠加故障 route 使用 `fallback()` 保留底层代理转发，`continue()` 会绕过它。复用[跨患者 Surface 夹具](../../apps/dsh-web/src/client/cross-patient-queue.browser.artifact.ts)及其真实患者断言。
+
 - 业务详情异步挂载时，不能用即时 `locator.count()` 判断折叠入口不存在；先等待当前可见的业务 region，再枚举其内 summary。角色权限不同的页面只展开当前页面实际提供的入口，复用[住院 DRG 入口 helper](../../apps/web/e2e/inpatient-ui.ts)，避免尚未挂载时跳过必需步骤。
 
+- 滚动验收的 `locator.evaluateHandle()` 只等待目标节点存在，不等待异步详情挂载；始终存在的 region 可能仍显示 Skeleton，此时 `scrollHeight === clientHeight` 会让 `findScrollViewport` 报没有滚动容器。先对末条业务内容使用 `toBeAttached()`，再检查滚动范围；末条位于视口外，不能把前置条件写成可见于视口。用受控详情响应延迟复现原报错，并在相同延迟下验证等待后完整宽窄屏滚动断言通过，区分加载竞态与实际高度链问题；入口见[已完诊病例滚动旅程](../../apps/web/e2e/doctor-completed-scroll.spec.ts)。
+
 - 确认按钮已可见、可用且稳定，但 Playwright 仍报告通知拦截点击时，检查实际命中的通知正文及透明堆叠层，并用真实鼠标停留与点击复现。保留通知的自动消退、操作和关闭合同，不用强制点击、主动关闭通知或扩大超时绕过；复用[通知指针合同](../../apps/dsh-web/src/client/toast.browser.test.ts)。
+
+- 等待通知自然消退的外观检查先将真实指针移到通知区外。正文允许指针穿透，但关闭按钮及其扩展命中区仍可触发悬停并暂停计时；仅等待通知数量归零会把正常交互暂停误报为超时。保留原生命周期及预算，以真实悬停再移开的[队列双版本合同](../../apps/dsh-web/src/client/cross-patient-inpatient-queue.browser.test.ts)验证，不删除通知或强制触发计时器。
 
 - Base UI 收起的完成通知即使处于最前排，其关闭按钮也可能是 `aria-hidden=true`；`getByRole` 会等待不存在的可访问入口。需要在核对完成通知后关闭它时，先通过 F6 展开 Notifications，再点击关闭，复用[住院交接 helper](../../apps/web/e2e/inpatient-ui.ts)。不要吞掉完整点击超时后把通知自然消失当作关闭成功，连续医嘱旅程会逐次耗尽交互预算；分段 reporter 与无截图 trace 的动作、DOM 文本和网络路径聚合可区分这种等待、初始化和真正的慢请求。
 
@@ -33,6 +65,8 @@
 - 用完整参考目录重放固定病例时，同名同价的院内项目也可能有不同身份；浏览器不能用名称前缀或任意首项代替选择。沿用共享目录检索限定固定院内项目，并以公开申请与逐项账本核对实际身份；PCI 示例见[演示手册](../pci-demo.md#九项检查与报告)。完整参考库初始化单独计时，含重启的联合旅程也包含此成本；显式完整库可使用其独立时限，不能据此放宽默认 CI。
 
 ## 范围、快照与资源争用
+
+- 表单偏好使用 `JSON.stringify` 比较时，手写价目夹具的字段顺序可能在持久 schema 解析后改变，触发同步 effect 反复保存。服务与价目夹具按生产读取边界先解析，再传给组件；异步恢复回归同时覆盖请求在途期间替换表单回调，确保迟到拒绝调用当前 adapter，保留新输入。先例见[检查确认组件回归](../../apps/web/src/app/doctor/doctor-recommendations.test.tsx)。
 
 - 判断文档修改是否影响测试时，先检查构建工具的自动扫描范围，不能只看静态 import。DSH 的 [Surface 样式构建](../../apps/dsh-web/src/surface-styles.ts)和 Web 的[字号](../../apps/web/src/app/font-size.browser.test.ts)、[主题](../../apps/web/src/app/web-theme.browser.test.ts)浏览器合同都以仓库根为 Tailwind 扫描根，普通说明文档和其他组的测试文件也可能改变运行时生成的 CSS；CI 成功复用因此用 Tailwind 候选 class 代替被排除文件的原文，见[测试策略](../testing.md#github-ci-的检查选择与并行)。
 
@@ -149,6 +183,8 @@
 - 待办数等异步数据会让页签变宽，已显示的页签可能在数据到达后才收进“更多”下拉菜单。一次性的 `isVisible()` 判断会与重排竞态，应在 `expect(...).toPass()` 中重试“若可见则直接点 tab，否则打开更多菜单点击 `menuitem`”，见[页签辅助](../../apps/web/e2e/workspace-tabs.fixture.ts)。jsdom 中 `clientWidth` 为 `0`，非当前页签默认进入“更多”菜单且模态菜单打开期间会给页面其余区域加 `data-base-ui-inert`；同时模块级 Zustand 卡片视图（`useCardViews` 的当前 `tab`）在同 `id` 用例间保留，切页签应通过 `menuitem` 选择并闭合菜单，仅断言属性时用 `{ hidden: true }`。向已有 React 文本子节点的标题行做 `createPortal` 时须挂载到独立空子节点（如 `span[data-slot]`），避免 React 18/19 报混合子节点警告。
 
 ## 替身、异步屏障与断言
+
+- 真实浏览器旅程用 `page.on('request')` 核对写入次数时，同进程 fixture 的 `runtime.app.request()` 读到已提交事实，不保证浏览器协议事件已交付测试进程。点击前注册精确 method/path 的 `waitForResponse()`，等待成功响应后再核对原请求次数与正式事实；不要删除次数断言或用重跑代替同步。参考 [PCI AI 共享旅程](../../apps/web/e2e/inpatient-pci-ai.journey.ts)，跨岗位交接继续等待表单解除写入阻塞。
 
 - 目录从行尾按钮改为整行选择时，同步检查实际调用页面的组件测试，不能只验证 picker 自身。`li` 上有某个 padding 或 `max-height` 类不证明弹窗的可见密度：父布局可覆盖这些样式。组件层用名称点击、选中反馈和真实字段验收，行数与裁切交给[开具浏览器合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)测量实际文字、候选及滚动边界，避免旧“五条封顶”断言与当前规格冲突。
 
@@ -270,6 +306,22 @@
 
 - 住院工作台整合主线新增组件时，单独挂载的组件测试可能全部通过，但可见文案和操作位置仍未满足工作台合同。合并后同时运行 `apps/web/src/app/inpatient-visible-copy.test.ts`，并从真实工作台验证页签导航和「当前操作」的 portal 位置；沿用 `inpatient-ui.ts` 的阶段选择入口，不把 Git 自动合并成功作为界面合同已保留的证据。
 
+- 住院可见文案检查也会扫描文本替换函数的字符串参数。匹配旧术语时使用明确的正则模式，保留面向岗位的替换结果；不要放宽文案检查或把原始系统术语重新显示给用户。
+
 - Toast 同样使用 `role="dialog"`，但 `aria-modal="false"`；连续写入后的通知会让未限定名称的 `getByRole('dialog')` 匹配多个元素。验证模态窗口时限定名称或可见的 `[data-slot="dialog-content"]`，滚动验收要核对底栏关闭按钮可达，不能以顶部同名关闭按钮代替；参见[住院减负实机入口](../../apps/web/e2e/issue400-comparison.spec.ts)。
 
+- 模拟检验目录并发更新时，须同步修改 `hospital_service_catalog.version` 和 `config_json.laboratoryService.version`。只改外层版本会构造不一致的服务快照，导致重新选择后仍被 `CATALOG_CONFLICT` 拒绝，无法验证正常目录冲突的恢复；准备状态后通过真实页面和公开 HTTP 回读结果，参见[住院检查批量开立旅程](../../apps/web/e2e/inpatient-investigation-batch.spec.ts)。
+
+- Playwright 在 POST 的 `response` 事件后立即 `unroute` 页面唯一拦截，可能与成功回调发起的并发刷新发生竞态，遗留未结束的读请求。表现可以是业务已成功但 mutation 仍 `pending`、主卡 `data-busy` 不解除；先核对未完成请求及操作栏是否仍连接，不删忙碌断言或扩大超时。页面独占、后续不再使用的屏障拦截保留至独立 context 销毁，参见[住院细节复核旅程](../../apps/web/e2e/inpatient-review-layout.journey.ts)。
+
 - 合并重复账单或业务表前，逐列核对不同投影的独有字段与金额含义；汇总投影不能自动替代操作队列中的明细。验证同时准备多收费项、版本不一致、读取失败和费用更正的状态，既断言只有一张表，也断言原有名称、数量、单价、小计及各自金额口径仍可核对。门诊收费的具体来源与关联规则归[临床 UI](../ui/design.md)，单表容器不构成删除核对信息或扫描全队列补数据的理由。
+
+- 私稿监听按存储 key 注册时，闭包不能固定首次业务初值：资料刷新后清空或消费回执触发通知，旧监听可能把最新默认清单覆盖为旧值。监听读取 latest reader 并复核仍属原 key；用受控 props 先新增实际业务事实、再明确清空并重新带入，核对新事实和原编辑保护，参见[手术私稿回归](../../apps/web/src/app/inpatient-surgery-draft.test.tsx)。
+
+- 连续录入弹窗的编辑回归须包含「修改 A 不保存 → 切 B 修改 → 回 A → 关闭或刷新」并逐行核对原输入，只有加入多项和单行保存无法发现共用编辑稿覆盖。丢回执恢复还须在业务已成功后损坏原私稿，从真实恢复按钮核对保留原文、明确丢弃和无重复 POST；确认期间回执变成 404 或失败时须保留原意图，存储读取被拒不能按内容损坏删除。参考[连续处方旅程](../../apps/web/e2e/outpatient-prescription-batch.journey.ts)和[手术双清单旅程](../../apps/web/e2e/inpatient-surgery-batch.journey.ts)。
+
+- 多个挂载共享活动集合时，原 hook 卸载后的 `finally` 只删除集合项不会让新实例重新渲染。回归在业务 POST 已发、响应挂起时卸载并同范围重挂，放行丢响应后核对恢复和关闭入口解除忙碌，再验证仅查询原键；解除活动须通知当前实例，不能靠成功结算事件间接刷新。见[住院报告恢复回归](../../apps/web/src/app/inpatient-report-reader.test.tsx)。
+
+- 子视图卸载不代表上层写入 hook 已卸载；提交前异步身份查询等待期间直接卸载子视图，最后一次渲染的 `active` 或 `open` ref 仍可能为真。上下文守卫须同时检查挂载状态；回归保留上层 hook、只卸载子视图，再放行查询并断言零业务 POST、重挂载输入可恢复，见[手术补录回归](../../apps/web/src/app/inpatient-surgery-prototype.test.tsx)。
+
+- 私稿退出清理会持久标记整个命名空间时，损坏内容可能使补清理反复失败。显式确认丢弃当前上下文的入口应在原操作待恢复、未知结果及运行中守卫通过后先删除当前记录，再补清理；普通读取、保存与结算仍先完成清理，不能静默删除其他上下文的未知原键。命名空间内另一坏稿可能先阻塞读取，使当前有效未知尝试被投影为空；删除前还须直接检查当前原文中的可识别未知项，读取失败则保留。回归需将坏键排在未知稿前并模拟共享意图未写成，逐字核对当前原键仍在，不能只断言清理返回失败。损坏草稿回归同时覆盖退出前后，确认未丢弃时原文保留、丢弃后可重新选择且没有业务请求，见[送检组件回归](../../apps/web/src/app/inpatient-investigation-send-batch.test.tsx)。还须从真实组件点击现有丢弃入口：坏稿通常投影为空清单，按行数隐藏或禁用按钮会让底层修复不可达；见[医嘱页面回归](../../apps/web/src/app/inpatient-doctor-clinical-pages.test.tsx)与[执行窗口回归](../../apps/web/src/app/inpatient-execution-batch.test.tsx)。

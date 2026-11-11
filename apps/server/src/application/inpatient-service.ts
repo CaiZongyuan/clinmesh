@@ -41,7 +41,7 @@ import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-reposito
 import { type ActorContext, type CommandTransaction, CommandExecutor } from './command-executor.ts'
 
 export class InpatientError extends Error {
-  constructor(readonly code: string, message: string, readonly status: 400 | 403 | 404 | 409 = 409) { super(message) }
+  constructor(readonly code: string, message: string, readonly status: 400 | 403 | 404 | 409 = 409, readonly reason?: string) { super(message) }
 }
 const rowSchema = z.object({ admission_id: z.string(), patient_id: z.string(), inpatient_number: z.string(),
   admission_route: inpatientAdmissionSchema.shape.admissionRoute, referral_id: z.string().nullable(),
