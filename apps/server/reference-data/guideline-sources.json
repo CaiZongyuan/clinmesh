@@ -28,7 +28,9 @@
           ]
         }
       ],
-      "publishedAt": "2025-06-17"
+      "publishedAt": "2025-06-17",
+      "population": "all",
+      "specialty": "rare-diseases"
     },
     {
       "id": "nhc-influenza-2025",
@@ -62,7 +64,9 @@
           ]
         }
       ],
-      "publishedAt": "2025-01-20"
+      "publishedAt": "2025-01-20",
+      "population": "all",
+      "specialty": "infectious-disease"
     },
     {
       "id": "nhc-hypertension-wst-872-2025",
@@ -94,7 +98,9 @@
           ]
         }
       ],
-      "publishedAt": "2025-09-19"
+      "publishedAt": "2025-09-19",
+      "population": "adult",
+      "specialty": "cardiology"
     },
     {
       "id": "nhc-breast-cancer-2022",
@@ -123,7 +129,9 @@
             "乳腺"
           ]
         }
-      ]
+      ],
+      "population": "adult",
+      "specialty": "oncology"
     },
     {
       "id": "nhc-obesity-2024",
@@ -152,7 +160,9 @@
           ]
         }
       ],
-      "publishedAt": "2024-10-12"
+      "publishedAt": "2024-10-12",
+      "population": "adult",
+      "specialty": "endocrinology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-01",
@@ -181,7 +191,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-02",
@@ -210,7 +222,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-03",
@@ -239,7 +253,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-04",
@@ -268,7 +284,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-05",
@@ -297,7 +315,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-06",
@@ -326,7 +346,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-07",
@@ -355,7 +377,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-08",
@@ -384,7 +408,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-09",
@@ -413,7 +439,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-10",
@@ -442,7 +470,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-11",
@@ -471,7 +501,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-12",
@@ -500,7 +532,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-13",
@@ -529,7 +563,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-14",
@@ -558,7 +594,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-15",
@@ -587,7 +625,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "nhc-pediatric-oncohematology-2019-16",
@@ -616,7 +656,9 @@
           ]
         }
       ],
-      "publishedAt": "2019-09-04"
+      "publishedAt": "2019-09-04",
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
     },
     {
       "id": "who-hypertension-2021",
@@ -647,7 +689,9 @@
             "高血压"
           ]
         }
-      ]
+      ],
+      "population": "adult",
+      "specialty": "cardiology"
     },
     {
       "id": "who-diabetes-medicines-2018",
@@ -680,7 +724,9 @@
             "糖尿病"
           ]
         }
-      ]
+      ],
+      "population": "adult",
+      "specialty": "endocrinology"
     },
     {
       "id": "who-mhgap-2023",
@@ -799,7 +845,9 @@
             "儿童行为"
           ]
         }
-      ]
+      ],
+      "population": "all",
+      "specialty": "mental-health"
     },
     {
       "id": "who-pen-2020",
@@ -875,7 +923,9 @@
             "慢性阻塞性肺病"
           ]
         }
-      ]
+      ],
+      "population": "adult",
+      "specialty": "primary-care"
     },
     {
       "id": "who-physical-activity-2020",
@@ -905,7 +955,9 @@
           ],
           "diagnosisQueries": []
         }
-      ]
+      ],
+      "population": "all",
+      "specialty": "public-health"
     }
   ]
 }

@@ -81,7 +81,7 @@ pnpm --filter @clinmesh/server reference-db verify --database ../../.data/clinme
 
 ### 运行时 DRG 规则启用
 
-离线清单就绪只证明文件完整，默认不启用住院分组。需要物化运行时规则时，从上述安装目录中选取当前锁身份对应的精简资料根目录，在仓库根目录执行：
+离线清单就绪默认不启用住院分组。当同步后的精简资料包含 `apps/server/reference-data/drg-rules-source.lock.json` 固定的三份输入时，`pnpm dev:server` 执行的 `pnpm --filter @clinmesh/server db:prepare` 会自动将 `clinmesh-chs-drg-30-2026-10-25.conditions-v2` 物化到 `.data/drg-rules/clinmesh-chs-drg-30-2026-10-25.conditions-v2`，在 `deployment/drg/pci-demo-review.json` 存在时调用 `loadReviewedDrgRules` 联动校验规则 Manifest 与当前临床 Reference Release 的绑定关系，并将同目录 `NOTICE.md` 复制到物化目录保留署名（`runtimeEnabled: false`，不自动开启运行时分组；合成最小测试夹具缺失来源输入时跳过物化）。需要单独物化到自定义目录时，从已安装精简资料根目录在仓库根执行：
 
 ```sh
 pnpm --filter @clinmesh/server drg:rules:prepare --input-root <已安装精简资料根目录绝对路径> --output-directory <新规则目录绝对路径>
@@ -93,11 +93,11 @@ pnpm --filter @clinmesh/server drg:rules:prepare --input-root <已安装精简�
 
 部署审核使用 [`drgRulesReviewSchema`](../apps/server/src/infrastructure/reference-data/drg-rules-package.ts) 定义的本地 JSON：固定 `schemaVersion=clinmesh.drg-rules-review.v1`、`scope=hospital-simulation`，绑定实际 `releaseId/sourceVersion/manifestSha256/referenceReleaseId`，记录核验人和 UTC 时间。`checks.usageTerms/codingCompatibility/sourceApplicability/algorithmValidation` 必须分别有 `status=verified` 和非空证据引用。审核是部署受信配置，文件完整性和制包成功不能代替来源用途、编码与算法核验；不得为通过启动而填写未经证实的结论。
 
-完成这些核验后，在根 `.env` 同时配置以下两个变量并重启 Server：
+本机合成医院演示已完成核验时，在根 `.env` 同时配置以下两个变量并重启 Server（自定义部署改为对应审核文件路径）：
 
 ```sh
 CLINMESH_DRG_RULES_DIRECTORY=.data/drg-rules/clinmesh-chs-drg-30-2026-10-25.conditions-v2
-CLINMESH_DRG_RULES_REVIEW_PATH=.data/drg-rules/reviews/clinmesh-chs-drg-30-2026-10-25.conditions-v2.json
+CLINMESH_DRG_RULES_REVIEW_PATH=deployment/drg/pci-demo-review.json
 ```
 
 相对路径以环境文件所在目录解析。只配置其中一个、审核不完整、包哈希或规则身份不一致、临床 Reference Release 不匹配时启动失败。审核核对的同一份 Manifest 用于装载文件并再次验证完整条件；旧 v1 包及其审核不能用于 v2，重新制包后须按实际产物哈希、规则身份与临床目录版本核验。未配置时其他 HIS 流程可用，DRG 入口明确显示规则未就绪。运行期只读取物化包，不临时下载来源或执行原分组程序。
@@ -165,7 +165,7 @@ pnpm guidelines:prepare
 pnpm guidelines:prepare -- --check
 ```
 
-包锁拥有精确版本、Release URL、归档 SHA-256、解包规模、清单身份及原始段落数量；[来源清单](../apps/server/reference-data/guideline-release-manifest.json)拥有逐项题名、机构、文献性质、年份、来源、原件哈希及派生正文、核验记录的哈希。快照为 `guidelines-2026-10-26-v1`，包含既有 26 项及新增冠心病 32 项：58 份原件（53 PDF、5 WHO 文本），另有一份题录 XLSX。2016 年中国 PCI 指南使用 MinerU 恢复正文，2015 年冠状动脉痉挛共识使用 PDF.js CMap 正文并以 MinerU 辅助对照；原始导出、独立物理页映射及 Agent 校对修订随包锁定。核验记录的 `reviewerKind` 区分自动检查、Agent 校对与自然人审校；`manualReview` 只记录自然人状态，安装者无需另行提供人工记录。`textStatus=verified` 表示提取正文及定位通过登记的检查，具体校对页和未确认内容以核验记录为准；不能把局部校对称为全篇临床审校，也不能把 2015—2023 年冠心病合集称为最新指南全集。
+包锁拥有精确版本、Release URL、归档 SHA-256、解包规模、清单身份及原始段落数量；[来源清单](../apps/server/reference-data/guideline-release-manifest.json)拥有逐项题名、机构、文献性质、年份、来源、原件哈希及派生正文、核验记录的哈希；静态打包的[发行叠加层](../apps/server/reference-data/guideline-release-overlay.json)在不改动包锁与原始清单哈希的前提下，对全部 58 项来源做 1:1 人群（16 项 `pediatric`、4 项 `all`、38 项 `adult`）和专科标注，并经 `beforeSha256`／`afterSha256` 双重校验对 `coronary-20-2021` 物理第 4 页剥离图 1 矢量字体控制字符乱码、恢复可读全文与按页定位。快照为 `guidelines-2026-10-26-v1`，包含既有 26 项及新增冠心病 32 项：58 份原件（53 PDF、5 WHO 文本），另有一份题录 XLSX。2016 年中国 PCI 指南使用 MinerU 恢复正文，2015 年冠状动脉痉挛共识使用 PDF.js CMap 正文并以 MinerU 辅助对照；原始导出、独立物理页映射及 Agent 校对修订随包锁定。核验记录的 `reviewerKind` 区分自动检查、Agent 校对与自然人审校；`manualReview` 只记录自然人状态，安装者无需另行提供人工记录。`textStatus=verified` 表示提取正文及定位通过登记的检查，具体校对页和未确认内容以核验记录为准；不能把局部校对称为全篇临床审校，也不能把 2015—2023 年冠心病合集称为最新指南全集。
 
 默认沿用原用途过滤，当前包可检索全文为 0。内部测试部署在根 `.env` 显式选择以下策略后重启 Server，再检查准备结果：
 
@@ -173,7 +173,7 @@ pnpm guidelines:prepare -- --check
 CLINMESH_GUIDELINE_DEPLOYMENT_POLICY=internal-testing
 ```
 
-该策略仅启用固定包中正文检查通过、状态 active 且至少有一段可靠正文的已登记来源；正文待核验、不可读、已撤回或被替代的来源保持停用。尚未确认的控制字符或替代字符段落完整保留，但在检索候选限额前隔离；可检索段落数因此可能少于已提取段落数，以准备结果为准。来源原始许可和用途待核实状态不变，不将内部测试策略表示为开放许可。取消该策略或设回 `default` 后恢复原限制，部署策略、来源身份、状态、正文与质量规则共同进入 revision，旧建议随之失效；首次建库或切换库路径需重启，已打开的库通过独立 writer 更新后运行中的只读连接可见新内容。未配置路径时，准备器和 Server 都使用 `.data/clinmesh-guidelines.sqlite`。
+单独设置该策略即可启用固定包中全部 58 份正文检查通过、状态 active 且至少有一段可靠正文的已登记来源（无需同时开启 `CLINMESH_GUIDELINE_NON_COMMERCIAL_USE`；成人上下文可检索 42 份 `adult`＋`all` 指南，16 份儿童血液肿瘤规范零召回）；正文待核验、不可读、已撤回或被替代的来源保持停用。尚未确认的控制字符或替代字符段落完整保留，但在检索候选限额前隔离；可检索段落数因此可能少于已提取段落数，以准备结果为准。来源原始许可和用途待核实状态不变，不将内部测试策略表示为开放许可。取消该策略或设回 `default` 后恢复原限制，部署策略、人群边界、来源身份、状态、正文与质量规则共同进入 revision，旧建议随之失效；首次建库或切换库路径需重启，已打开的库通过独立 writer 更新后运行中的只读连接可见新内容。未配置路径时，准备器和 Server 都使用 `.data/clinmesh-guidelines.sqlite`。
 
 `guidelines:prepare` 的 stdout JSON 报告来源、物理原件、提取、正文核验、原始／可检索段落及 `withheldReason`（顶层描述固定包，`corpus` 单列全库共享正文去重统计），进度写入 stderr；支持 `--database <path>`、`--install-directory <path>`（默认数据库同级 `guidelines/<manifest-sha256>/`）与 `--manifest <lock>`。完整安装重复准备可离线复用；`--check` 不下载、不建库、不改写正式目录及其 WAL/SHM sidecar，而是在系统临时副本中核对已提交事务的全文索引与正文一致性（复制期间若有活跃写入，待写入完成后重跑；索引损坏可由普通准备离线重建）。异常遗留 `.prepare.lock` 时确认无准备进程后再删除；若报告 recovery failed，先保全提示中的 staging／previous 路径并恢复备份。维护者制包在仓库外快照上运行 `pnpm guidelines:package -- --input-root <snapshot> --output <archive.tar.gz> --url <固定Release资产URL>`，校对定位须唯一匹配锁定正文；维护同步发布的撤回、替代、正文限制和用途收紧优先于固定包并在导入或修复时保留，完整持久化与恢复边界见[存储合同](architecture/storage.md#99-数据库迁移边界)。
 

@@ -21,6 +21,7 @@ import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.t
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
+import { setHospitalPatientBirthDate } from './fixtures/guideline-corpus.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
 afterEach(async () => { for (const dispose of cleanups.splice(0).reverse()) await dispose() })
@@ -36,7 +37,8 @@ function documents(): GuidelineDocument[] {
     title: '合成CVIT测量共识测试原文', pages: [6], texts: paragraphs.slice(2) }].map(item => ({ source: {
       id: item.id, title: item.title, publisher: '合成验收机构', documentType: 'guideline', version: '2021',
       url: `https://example.test/${item.id}`, sha256: item.hash, format: 'pdf', scope: '仅用于合成HTTP合同，非真实临床原件',
-      status: 'active', license: { id: 'CC0', url: 'https://example.test/license', usage: 'open' }, topics: [],
+      status: 'active', population: 'adult', specialty: 'cardiology',
+      license: { id: 'CC0', url: 'https://example.test/license', usage: 'open' }, topics: [],
     }, passages: item.pages.map((page, index) => ({ locator: `PDF 物理第 ${page} 页`, text: item.texts[index]! })) }))
 }
 const modelInput = z.object({ guidelines: z.array(z.object({ id: z.string(), text: z.string() })), missing: z.array(z.string()) }).passthrough()
@@ -478,4 +480,21 @@ it('仅持有指南请求的窄Grant可显式准备，不能创建手术；撤�
   expect(revokedAgentCapabilityGrantSchema.parse(await revoked.json())).toMatchObject({ grantId: grant.grantId, status: 'revoked' })
   expect(await s.read()).toMatchObject({ status: 'stale', result: null })
   expect(s.calls).toHaveLength(2)
+})
+
+it('儿科或缺失出生日期患者隔离成人 PCI 指南专题，返回 no-evidence 且不发起模型请求', async () => {
+  const s = await setup()
+  setHospitalPatientBirthDate(s.prepared.options.databasePath, s.stay.patientId, '2014-06-01')
+  const pediatricAdvice = await s.read()
+  expect(pediatricAdvice).toMatchObject({ status: 'no-evidence', result: null })
+  expect(pediatricAdvice.missing.join()).toContain('不可用')
+  await s.fixture.runtime.dispatchPending()
+  expect(s.calls).toHaveLength(0)
+
+  setHospitalPatientBirthDate(s.prepared.options.databasePath, s.stay.patientId, undefined)
+  const allOnlyAdvice = await s.read()
+  expect(allOnlyAdvice).toMatchObject({ status: 'no-evidence', result: null })
+  expect(allOnlyAdvice.fingerprint).not.toBe(pediatricAdvice.fingerprint)
+  await s.fixture.runtime.dispatchPending()
+  expect(s.calls).toHaveLength(0)
 })

@@ -24,6 +24,28 @@ const complicationTablesSchema = z.object({
 
 function sha256(content: string | Buffer): string { return createHash('sha256').update(content).digest('hex') }
 
+export async function inspectDrgRulesSourceInputs(input: {
+  inputRoot: string
+  sourceLockPath?: string
+  offlineLockPath?: string
+}) {
+  const sourceLockPath = resolve(input.sourceLockPath ?? join(import.meta.dirname, '../reference-data/drg-rules-source.lock.json'))
+  const source = sourceLockSchema.parse(JSON.parse(await readFile(sourceLockPath, 'utf8')))
+  const offlineLockPath = resolve(input.offlineLockPath ?? join(import.meta.dirname, '../reference-data/drg-offline.lock.json'))
+  const offlineLock = offlineReferenceLockSchema.parse(JSON.parse(await readFile(offlineLockPath, 'utf8')))
+  const storage = await openCompactStorage(offlineLock, input.inputRoot)
+  const pinned = await listPinnedArtifacts(offlineLock, path => storage.read(path))
+  const requiredInputs = [source.inputs.groups, source.inputs.js, source.inputs.tables]
+  return {
+    source,
+    sourceLockPath,
+    offlineLockPath,
+    storage,
+    pinned,
+    available: requiredInputs.every(file => pinned.get(file.path) === file.sha256),
+  }
+}
+
 /** 只物化并核验锁定的离线输入；不执行上游程序、不生成启用审核。 */
 export async function runDrgRulesPrepare(input: {
   inputRoot: string
@@ -31,12 +53,7 @@ export async function runDrgRulesPrepare(input: {
   sourceLockPath?: string
   offlineLockPath?: string
 }) {
-  const sourceLockPath = input.sourceLockPath ?? join(import.meta.dirname, '../reference-data/drg-rules-source.lock.json')
-  const source = sourceLockSchema.parse(JSON.parse(await readFile(sourceLockPath, 'utf8')))
-  const offlineLockPath = input.offlineLockPath ?? join(import.meta.dirname, '../reference-data/drg-offline.lock.json')
-  const offlineLock = offlineReferenceLockSchema.parse(JSON.parse(await readFile(offlineLockPath, 'utf8')))
-  const storage = await openCompactStorage(offlineLock, input.inputRoot)
-  const pinned = await listPinnedArtifacts(offlineLock, path => storage.read(path))
+  const { source, storage, pinned } = await inspectDrgRulesSourceInputs(input)
   const lockedInput = async (file: z.infer<typeof sourceFileSchema>) => {
     if (pinned.get(file.path) !== file.sha256) throw new Error(`DRG input is not pinned by the offline inventory: ${file.path}`)
     const bytes = await storage.read(file.path)

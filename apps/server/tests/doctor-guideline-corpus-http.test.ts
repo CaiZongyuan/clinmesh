@@ -14,7 +14,7 @@ import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.t
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
-import { syntheticGuidelineDocument as document, syntheticGuidelineParagraph as paragraph } from './fixtures/guideline-corpus.ts'
+import { setHospitalPatientBirthDate, syntheticGuidelineDocument as document, syntheticGuidelineParagraph as paragraph } from './fixtures/guideline-corpus.ts'
 import { doctorGuidelineGroups } from '../src/application/doctor-guideline-evidence.ts'
 import { runGuidelinePrepare } from '../src/guideline-prepare.ts'
 import { runGuidelineSync } from '../src/guideline-sync.ts'
@@ -352,4 +352,87 @@ it.each([
   expect(refreshed.guidelines.some(item => item.sourceHash === quotation.sourceHash)).toBe(false)
   expect(fixture.seen.verification).toEqual(fixture.seen.generation)
   expect(fixture.seen.generation).not.toContainEqual(expect.objectContaining({ sourceHash: quotation.sourceHash }))
+})
+
+it('isolates adult and pediatric guidelines and fixed excerpts by patient Shanghai calendar age', async () => {
+  const fixture = await setup('反复发热咳嗽伴血压升高及乳腺结节复查。')
+  const pediatricDoc: GuidelineDocument = {
+    source: {
+      ...document.source,
+      id: 'nhc-pediatric-oncohematology-2019-01',
+      title: '儿童急性淋巴细胞白血病诊疗规范（2018年版）',
+      sha256: '1'.repeat(64),
+      population: 'pediatric',
+      specialty: 'pediatric-oncohematology',
+      topics: [{ terms: ['发热', '白血病'], diagnosisQueries: ['白血病'] }],
+    },
+    passages: [{ locator: 'PDF 物理第 1 页', text: '儿童急性淋巴细胞白血病伴发热需骨髓形态学评估。' }],
+  }
+  const adultDoc: GuidelineDocument = {
+    source: {
+      ...document.source,
+      id: 'coronary-01-2021',
+      title: '成人心血管疾病预防指南',
+      sha256: '2'.repeat(64),
+      population: 'adult',
+      specialty: 'cardiology',
+      topics: [{ terms: ['高血压', '血压'], diagnosisQueries: ['高血压'] }],
+    },
+    passages: [{ locator: 'PDF 物理第 5 页', text: '成人高血压与心血管风险综合评估建议。' }],
+  }
+  const allAgeDoc: GuidelineDocument = {
+    source: {
+      ...document.source,
+      id: 'who-mhgap-2023',
+      title: '全人群心理健康指南',
+      sha256: '3'.repeat(64),
+      population: 'all',
+      specialty: 'mental-health',
+      topics: [{ terms: ['复查', '糖尿病'], diagnosisQueries: ['糖尿病'] }],
+    },
+    passages: [{ locator: '第 1 节', text: '全人群慢病复查需兼顾心理社会支持。' }],
+  }
+  fixture.writer.importDocuments([pediatricDoc, adultDoc, allAgeDoc])
+
+  const adultState = await fixture.generate()
+  const adultIds = adultState.guidelines.map(item => item.id)
+  const adultHashes = adultState.guidelines.map(item => item.sourceHash)
+  expect(adultHashes).not.toContain(pediatricDoc.source.sha256)
+  expect(adultHashes).toContain(adultDoc.source.sha256)
+  expect(adultHashes).toContain(allAgeDoc.source.sha256)
+  expect(adultIds).toContain('nhc-influenza-2025-diagnosis')
+  expect(adultIds).toContain('ws-t-872-2025-initial-assessment')
+  expect(adultIds).toContain('nhc-breast-2022-pathology')
+
+  // Switch patient birthDate to a pediatric patient (8 years old in 2026) and verify snapshot invalidation + pediatric isolation
+  const caseDetail = await fixture.readCase()
+  setHospitalPatientBirthDate(fixture.options.databasePath, caseDetail.patient.id, '2018-05-01')
+
+  const staleAfterAgeChange = await fixture.read()
+  expect(staleAfterAgeChange.stale).toBe(true)
+  expect(staleAfterAgeChange.inputFingerprint).not.toBe(adultState.inputFingerprint)
+
+  const pediatricState = await fixture.generate()
+  const pediatricIds = pediatricState.guidelines.map(item => item.id)
+  const pediatricHashes = pediatricState.guidelines.map(item => item.sourceHash)
+  expect(pediatricHashes).toContain(pediatricDoc.source.sha256)
+  expect(pediatricHashes).toContain(allAgeDoc.source.sha256)
+  expect(pediatricHashes).not.toContain(adultDoc.source.sha256)
+  expect(pediatricIds).toContain('nhc-influenza-2025-diagnosis')
+  expect(pediatricIds).not.toContain('ws-t-872-2025-initial-assessment')
+  expect(pediatricIds).not.toContain('viatris-norvasc-adult-hypertension-dose')
+  expect(pediatricIds).not.toContain('nhc-breast-2022-pathology')
+
+  // Remove birthDate -> falls back to all-only (neither adult nor pediatric sources leak)
+  setHospitalPatientBirthDate(fixture.options.databasePath, caseDetail.patient.id, undefined)
+
+  const allOnlyState = await fixture.generate()
+  const allOnlyIds = allOnlyState.guidelines.map(item => item.id)
+  const allOnlyHashes = allOnlyState.guidelines.map(item => item.sourceHash)
+  expect(allOnlyHashes).toContain(allAgeDoc.source.sha256)
+  expect(allOnlyHashes).not.toContain(adultDoc.source.sha256)
+  expect(allOnlyHashes).not.toContain(pediatricDoc.source.sha256)
+  expect(allOnlyIds).toContain('nhc-influenza-2025-diagnosis')
+  expect(allOnlyIds).not.toContain('ws-t-872-2025-initial-assessment')
+  expect(allOnlyIds).not.toContain('nhc-breast-2022-pathology')
 })

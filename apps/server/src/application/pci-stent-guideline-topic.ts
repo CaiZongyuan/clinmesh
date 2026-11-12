@@ -1,3 +1,4 @@
+import type { GuidelinePatientPopulation } from './guideline-corpus.ts'
 import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 
@@ -18,13 +19,16 @@ export const pciStentGuidelineTopic = {
 }
 const normalize = (text: string) => text.replace(/-\r?\n/g, '').replace(/\s/g, '').toLowerCase()
 
-export function readPciStentGuidelineTopic(corpus?: GuidelineCorpus) {
+export function readPciStentGuidelineTopic(
+  corpus?: GuidelineCorpus,
+  options?: { population?: GuidelinePatientPopulation },
+) {
   const { references, ...topic } = pciStentGuidelineTopic
   const empty = { topic, guidelines: [] as ReturnType<GuidelineCorpus['readReferences']>['guidelines'],
     missing: ['尚无本专题可用的固定指南原文，无法提供指南参考意见。'], sourceStatus: 'unavailable' as 'available' | 'unavailable' | 'read-failed' }
   if (!corpus) return empty
   let read: ReturnType<GuidelineCorpus['readReferences']>
-  try { read = corpus.readReferences(references.map(({ fragments: _fragments, title: _title, ...reference }) => reference)) }
+  try { read = corpus.readReferences(references.map(({ fragments: _fragments, title: _title, ...reference }) => reference), options) }
   catch { return { ...empty, missing: ['指南原文读取失败，请核查指南库后显式重新评估。'], sourceStatus: 'read-failed' as const } }
   if (read.missing.length > 0) return { ...empty, missing: read.missing.map(item =>
     `${references.find(reference => reference.sourceId === item.sourceId)!.title}物理第${item.page}页不可用，请核查来源版本、用途与正文。`) }

@@ -16,6 +16,7 @@ import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatche
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 import { modelTaskOutcomeUnknown, type ModelTaskRecovery } from './model-task-recovery.ts'
 import { ModelUsageControlError, modelUsageControlFailure } from './model-usage-control.ts'
+import { resolvePatientGuidelinePopulation } from './patient-age.ts'
 import { readPciStentGuidelineTopic, pciStentGuidelineTopicFingerprint } from './pci-stent-guideline-topic.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 
@@ -80,9 +81,16 @@ export class InpatientGuidelineAdvice {
     }
     if (!parameters?.targetSite) missing.push('缺少靶血管具体部位。')
     if (!selection.candidates.some(item => item.eligibility === 'valid')) missing.push('缺少本计划适用的具体耗材候选，类别意见不能代替具体产品。')
-    const topic = readPciStentGuidelineTopic(this.options.guidelines)
+    const binding = this.owner.readAdmissionBinding(context, admissionId)
+    const patient = z.object({ birthDate: z.string().optional() }).parse(this.owner.fhir.read(context, 'Patient', binding.patientId))
+    const departedAt = this.owner.discharge.activeDeparture(context, admissionId)?.virtualTime
+    const population = resolvePatientGuidelinePopulation(
+      patient.birthDate,
+      departedAt ?? binding.row.admitted_at ?? binding.row.registered_at ?? this.owner.virtualTime(context),
+    )
+    const topic = readPciStentGuidelineTopic(this.options.guidelines, { population })
     const input = basisSchema.parse({ ...topic, missing: [...new Set([...missing, ...topic.missing])],
-      dependencyFingerprint: canonicalJsonHash({ candidates: selection.candidates, parameters, topic: pciStentGuidelineTopicFingerprint }),
+      dependencyFingerprint: canonicalJsonHash({ candidates: selection.candidates, parameters, population, topic: pciStentGuidelineTopicFingerprint }),
       clinicalFacts: { request: { id: request.id, plannedProcedure: request.plannedProcedure, plannedFor: request.plannedFor },
         diagnosis: this.owner.orders.diagnosis(context, admissionId), investigations: this.owner.investigations.read(context, admissionId),
         measurements, targetSite: parameters?.targetSite ?? null } })

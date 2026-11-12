@@ -5,8 +5,10 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { prepareDevelopmentDatabases, prepareDevelopmentEnvironment } from '../src/development-database-prepare.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
-import { createDrgReferenceFixture } from './fixtures/drg-reference.ts'
+import { createDrgReferenceFixture, writeDrgCompactFixtureIndex } from './fixtures/drg-reference.ts'
+import { syntheticDrgSource } from './fixtures/drg-synthetic-program.ts'
 import { createGuidelineReleaseFixture } from './fixtures/guideline-release.ts'
+import { loadDrgRules } from '../src/infrastructure/reference-data/drg-rules-package.ts'
 import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
 import {
   expectedSchemaVersion,
@@ -92,7 +94,7 @@ describe('development database preparation', () => {
     }))
     await runReferenceDatabaseCli(['import', '--database', referenceDatabasePath, '--manifest', join(directory, 'clinical-release.json')])
 
-    await prepareDevelopmentEnvironment({
+    const prepared = await prepareDevelopmentEnvironment({
       databasePath,
       referenceDatabasePath,
       referenceReleaseId: 'synthetic-clinical-reference',
@@ -102,8 +104,219 @@ describe('development database preparation', () => {
       guidelineReference: { lockPath: guidelines.lockPath, inputRoot: guidelines.inputRoot },
     })
 
+    expect(prepared).toMatchObject({
+      drgRules: {
+        status: 'skipped',
+        reason: 'source-inputs-absent',
+        outputDirectory: null,
+        reviewPath: null,
+      },
+    })
     expect(await runReferenceDatabaseCli(['list-inventories', '--database', referenceDatabasePath]))
       .toMatchObject({ items: [{ inventoryId: 'synthetic-inventory-v1', runtimeEnabled: false }] })
+  })
+
+  it('materializes locked DRG v2 rules and validates the committed review during startup preparation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-development-drg-rules-'))
+    temporaryDirectories.push(directory)
+    const guidelines = await createGuidelineReleaseFixture(join(directory, 'guidelines'))
+    const databasePath = join(directory, 'operational.sqlite')
+    const referenceDatabasePath = join(directory, 'reference.sqlite')
+    await runReferenceDatabaseCli(['migrate', '--database', referenceDatabasePath])
+    const clinicalArtifact = JSON.stringify({ schemaVersion: '1', concepts: [], valueSetEntries: [] })
+    await writeFile(join(directory, 'clinical.json'), clinicalArtifact)
+    const digest = (value: string) => createHash('sha256').update(value).digest('hex')
+    await writeFile(join(directory, 'clinical-release.json'), JSON.stringify({
+      createdAt: '2026-10-22T00:00:00.000Z', releaseId: 'synthetic-clinical-reference', schemaVersion: '1',
+      sources: [{ acquisitionMethod: 'generated', artifactPath: 'clinical.json',
+        checksum: digest(clinicalArtifact), licenseId: 'LicenseRef-Synthetic-Test',
+        retrievedAt: '2026-10-22T00:00:00.000Z', sourceId: 'synthetic-clinical-reference',
+        sourceUrl: 'https://example.test/synthetic-clinical-reference', upstreamVersion: 'synthetic-v1' }],
+    }))
+    await runReferenceDatabaseCli(['import', '--database', referenceDatabasePath, '--manifest', join(directory, 'clinical-release.json')])
+
+    const preparedRoot = '.data/reference-prepared/r3'
+    const openDrgRoot = '.data/exports/opendrg-2026-10-20'
+    const groupsText = `${[
+      { level: 'MDC', code: 'MDCR', name: '合成系统', parentCode: null },
+      { level: 'ADRG', code: 'RA1', name: '合成入口', parentCode: 'MDCR' },
+      { level: 'DRG', code: 'RA15', name: '合成终端', parentCode: 'RA1' },
+    ].map(row => JSON.stringify(row)).join('\n')}\n`
+    const jsText = syntheticDrgSource()
+    const tablesText = JSON.stringify({ CC: {}, MCC: {}, CCE: {}, SS_VALID: [] })
+    const datasetsText = '[]'
+    const schemesText = JSON.stringify([{
+      id: 'chs_drg_30',
+      grouperSourceUrl: 'https://example.test/opendrg/raw/3258.b47bba5f.js',
+      groupDataPath: 'groupers/chs_drg_30.json',
+    }])
+    const openDrgManifestText = JSON.stringify({
+      completed: '2026-10-20T00:00:00.000Z',
+      baseUrl: 'https://example.test/opendrg',
+      assets: [{ url: 'https://example.test/opendrg/raw/3258.b47bba5f.js', localPath: 'raw/3258.b47bba5f.js' }],
+    })
+    const openDrgChecksumsText = JSON.stringify({
+      algorithm: 'SHA-256',
+      files: [
+        { path: 'catalog/datasets.json', sha256: digest(datasetsText) },
+        { path: 'catalog/schemes.json', sha256: digest(schemesText) },
+        { path: 'raw/3258.b47bba5f.js', sha256: digest(jsText) },
+        { path: 'groupers/chs_drg_30.json', sha256: digest(tablesText) },
+      ],
+    })
+    const preparedManifestText = JSON.stringify({
+      schemaVersion: 'clinmesh.prepared-catalogues.v1',
+      releaseId: 'synthetic-prepared-v1',
+      sources: {},
+      files: [{ path: 'drg/groups.jsonl', sha256: digest(groupsText), rows: 3, sourceVersion: 'synthetic-2026' }],
+    })
+
+    await mkdir(join(directory, preparedRoot, 'drg'), { recursive: true })
+    await mkdir(join(directory, openDrgRoot, 'catalog'), { recursive: true })
+    await mkdir(join(directory, openDrgRoot, 'raw'), { recursive: true })
+    await mkdir(join(directory, openDrgRoot, 'groupers'), { recursive: true })
+    await writeFile(join(directory, preparedRoot, 'drg/groups.jsonl'), groupsText)
+    await writeFile(join(directory, preparedRoot, 'manifest.json'), preparedManifestText)
+    await writeFile(join(directory, openDrgRoot, 'catalog/datasets.json'), datasetsText)
+    await writeFile(join(directory, openDrgRoot, 'catalog/schemes.json'), schemesText)
+    await writeFile(join(directory, openDrgRoot, 'raw/3258.b47bba5f.js'), jsText)
+    await writeFile(join(directory, openDrgRoot, 'groupers/chs_drg_30.json'), tablesText)
+    await writeFile(join(directory, openDrgRoot, 'manifest.json'), openDrgManifestText)
+    await writeFile(join(directory, openDrgRoot, 'checksums.json'), openDrgChecksumsText)
+
+    const compact = await writeDrgCompactFixtureIndex(directory, [
+      `${preparedRoot}/manifest.json`,
+      `${preparedRoot}/drg/groups.jsonl`,
+      `${openDrgRoot}/manifest.json`,
+      `${openDrgRoot}/checksums.json`,
+      `${openDrgRoot}/catalog/datasets.json`,
+      `${openDrgRoot}/catalog/schemes.json`,
+      `${openDrgRoot}/raw/3258.b47bba5f.js`,
+      `${openDrgRoot}/groupers/chs_drg_30.json`,
+    ])
+    const offlineLockPath = join(directory, 'offline-full.lock.json')
+    await writeFile(offlineLockPath, JSON.stringify({
+      schemaVersion: 'clinmesh.offline-inventory.v1',
+      inventoryId: 'synthetic-full-drg-inventory-v1',
+      createdAt: '2026-10-25T00:00:00.000Z',
+      scheme: 'CHS-DRG-3.0',
+      storage: compact.storage,
+      packages: [
+        {
+          id: 'prepared-five-catalogues',
+          format: 'prepared-catalogues-v1',
+          root: preparedRoot,
+          version: 'synthetic-prepared-v1',
+          manifest: { path: 'manifest.json', sha256: digest(preparedManifestText) },
+          sourceUrl: 'https://example.test/synthetic-prepared',
+          quarantineReasons: ['usage-terms-unconfirmed'],
+        },
+        {
+          id: 'opendrg-export',
+          format: 'opendrg-public-data-v1',
+          root: openDrgRoot,
+          version: '2026-10-20',
+          manifest: { path: 'manifest.json', sha256: digest(openDrgManifestText) },
+          checksums: { path: 'checksums.json', sha256: digest(openDrgChecksumsText) },
+          sourceUrl: 'https://example.test/opendrg',
+          quarantineReasons: ['usage-terms-unconfirmed'],
+        },
+      ],
+    }))
+    const sourceLockPath = join(directory, 'drg-rules-source.lock.json')
+    await writeFile(sourceLockPath, JSON.stringify({
+      schemaVersion: 'clinmesh.drg-rules-source.v1',
+      releaseId: 'clinmesh-chs-drg-30-2026-10-25.conditions-v2',
+      sourceVersion: 'opendrg-chs-drg-3.0@2026-10-20',
+      inputs: {
+        groups: { path: `${preparedRoot}/drg/groups.jsonl`, sha256: digest(groupsText) },
+        js: { path: `${openDrgRoot}/raw/3258.b47bba5f.js`, sha256: digest(jsText) },
+        tables: { path: `${openDrgRoot}/groupers/chs_drg_30.json`, sha256: digest(tablesText) },
+      },
+    }))
+
+    // First run without review file materializes .data/drg-rules/<releaseId> cleanly with reviewPath: null
+    const first = await prepareDevelopmentEnvironment({
+      databasePath,
+      referenceDatabasePath,
+      referenceReleaseId: 'synthetic-clinical-reference',
+      repositoryRoot: directory,
+      drgReference: { lockPath: offlineLockPath },
+      drgRules: { sourceLockPath },
+      guidelineDatabasePath: join(directory, 'guidelines.sqlite'),
+      guidelineReference: { lockPath: guidelines.lockPath, inputRoot: guidelines.inputRoot },
+    })
+    const expectedOutputDir = join(directory, '.data/drg-rules/clinmesh-chs-drg-30-2026-10-25.conditions-v2')
+    expect(first).toMatchObject({
+      drgRules: {
+        status: 'prepared',
+        releaseId: 'clinmesh-chs-drg-30-2026-10-25.conditions-v2',
+        outputDirectory: expectedOutputDir,
+        reviewPath: null,
+        runtimeEnabled: false,
+      },
+    })
+    expect((await loadDrgRules(expectedOutputDir)).rulesId).toBe('clinmesh-chs-drg-30-2026-10-25.conditions-v2')
+
+    // Now write deployment/drg/pci-demo-review.json matching manifestSha256 and referenceReleaseId -> validates association
+    const manifestSha256 = digest(await readFile(join(expectedOutputDir, 'manifest.json'), 'utf8'))
+    const reviewDirectory = join(directory, 'deployment/drg')
+    await mkdir(reviewDirectory, { recursive: true })
+    const noticeText = '# 分组规则来源与版权声明\n\n© 2023 OpenDRG.cn\n'
+    await writeFile(join(reviewDirectory, 'NOTICE.md'), noticeText)
+    const reviewPath = join(reviewDirectory, 'pci-demo-review.json')
+    const validReview = {
+      schemaVersion: 'clinmesh.drg-rules-review.v1',
+      scope: 'hospital-simulation',
+      releaseId: 'clinmesh-chs-drg-30-2026-10-25.conditions-v2',
+      sourceVersion: 'opendrg-chs-drg-3.0@2026-10-20',
+      manifestSha256,
+      referenceReleaseId: 'synthetic-clinical-reference',
+      reviewedBy: 'Synthetic Test Reviewer',
+      reviewedAt: '2026-11-12T00:00:00.000Z',
+      checks: {
+        usageTerms: { status: 'verified', evidence: ['synthetic usage check'] },
+        codingCompatibility: { status: 'verified', evidence: ['synthetic coding check'] },
+        sourceApplicability: { status: 'verified', evidence: ['synthetic applicability check'] },
+        algorithmValidation: { status: 'verified', evidence: ['synthetic algorithm check'] },
+      },
+    }
+    await writeFile(reviewPath, JSON.stringify(validReview))
+
+    const second = await prepareDevelopmentEnvironment({
+      databasePath,
+      referenceDatabasePath,
+      referenceReleaseId: 'synthetic-clinical-reference',
+      repositoryRoot: directory,
+      drgReference: { lockPath: offlineLockPath },
+      drgRules: { sourceLockPath },
+      guidelineDatabasePath: join(directory, 'guidelines.sqlite'),
+      guidelineReference: { lockPath: guidelines.lockPath, inputRoot: guidelines.inputRoot },
+    })
+    expect(second).toMatchObject({
+      drgRules: {
+        status: 'already-prepared',
+        releaseId: 'clinmesh-chs-drg-30-2026-10-25.conditions-v2',
+        outputDirectory: expectedOutputDir,
+        reviewPath,
+        manifestSha256,
+        runtimeEnabled: false,
+      },
+    })
+    expect(await readFile(join(expectedOutputDir, 'NOTICE.md'), 'utf8')).toBe(noticeText)
+
+    // Mismatched review referenceReleaseId must fail closed
+    await writeFile(reviewPath, JSON.stringify({ ...validReview, referenceReleaseId: 'wrong-clinical-release' }))
+    await expect(prepareDevelopmentEnvironment({
+      databasePath,
+      referenceDatabasePath,
+      referenceReleaseId: 'synthetic-clinical-reference',
+      repositoryRoot: directory,
+      drgReference: { lockPath: offlineLockPath },
+      drgRules: { sourceLockPath },
+      guidelineDatabasePath: join(directory, 'guidelines.sqlite'),
+      guidelineReference: { lockPath: guidelines.lockPath, inputRoot: guidelines.inputRoot },
+    })).rejects.toThrow(/DRG review reference release mismatch/)
   })
 
   it('keeps explicitly unconfigured fixture mode free of unused reference downloads', async () => {
