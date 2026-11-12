@@ -109,9 +109,11 @@ describe('heading anchors', () => {
 })
 
 describe('verifyMarkdownFiles', () => {
-  it('validates GFM heading anchors, explicit HTML ids, and line-range links while rejecting drifted anchors', () => {
+  it('validates GFM heading anchors, explicit HTML ids, and source-blob line links while rejecting broken Markdown anchors', () => {
     const root = mkdtempSync(join(tmpdir(), 'clinmesh-verify-docs-'))
     mkdirSync(join(root, 'docs'))
+    mkdirSync(join(root, 'src'))
+    writeFileSync(join(root, 'src/example.ts'), 'export const answer = 42\n')
     writeFileSync(
       join(root, 'docs/target.md'),
       ['# 目标页', '', '<a id="database-operations"></a>', '', '## 1.4 明确不做', ''].join('\n'),
@@ -123,19 +125,26 @@ describe('verifyMarkdownFiles', () => {
         '',
         '- [章节](target.md#14-明确不做)',
         '- [显式锚点](target.md#database-operations)',
-        '- [行号引用](target.md#L1-L5)',
+        '- [源码行号引用](../src/example.ts#L1-L5)',
         '- [同页章节](#正常页)',
         '',
       ].join('\n'),
     )
     writeFileSync(
       join(root, 'docs/broken.md'),
-      ['# 断链页', '', '- [漂移锚点](target.md#_1-4-明确不做)', ''].join('\n'),
+      [
+        '# 断链页',
+        '',
+        '- [漂移锚点](target.md#_1-4-明确不做)',
+        '- [Markdown 伪行号锚点](target.md#L1-L5)',
+        '',
+      ].join('\n'),
     )
 
     expect(verifyMarkdownFiles(root, ['docs/target.md', 'docs/valid.md'])).toEqual([])
     expect(verifyMarkdownFiles(root, ['docs/target.md', 'docs/broken.md'])).toEqual([
       'docs/broken.md: missing heading anchor "target.md#_1-4-明确不做"',
+      'docs/broken.md: missing heading anchor "target.md#L1-L5"',
     ])
   })
 })

@@ -87,7 +87,6 @@ export function verifyMarkdownFiles(repoRoot: string, relFiles: string[]): strin
           node.type !== 'image'
           && decodedFragment !== undefined
           && decodedFragment !== ''
-          && !/^L\d+(?:-L?\d+)?$/.test(decodedFragment)
           && !lstatSync(target).isDirectory()
           && target.toLowerCase().endsWith('.md')
         ) {
