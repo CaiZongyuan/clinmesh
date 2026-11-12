@@ -60,6 +60,12 @@ function App(): React.JSX.Element {
   return <PortalContainerProvider container={root}>
     <div className="h-full overflow-y-auto">
     <button type="button" onClick={() => setLocale(current => current === 'zh-CN' ? 'en-US' : 'zh-CN')}>切换语言</button>
+    <button type="button" onClick={() => setClinicalHistory(current => ({
+      ...current,
+      showByDefault: !current.showByDefault,
+      reason: current.showByDefault ? 'non-female' : 'context-incomplete',
+      requiredFields: [],
+    }))}>切换默认免填</button>
     <button type="button" onClick={() => setWorking(current => ({ ...current,
       chiefComplaint: '自述头晕六天', priorMedicalHistory: '合成长病史记录。'.repeat(80),
       familyHistory: '患者自述父亲患高血压。', allergyHistory: '患者自述青霉素用药后出现皮疹。',

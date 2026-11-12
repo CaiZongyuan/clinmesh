@@ -23,16 +23,22 @@ test('restores independent histories across cases, records family history automa
         return { ...corpus, sources }
       }
     }(),
-    chatCompletionsProvider: { async completeJson(input) {
-      if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
-      if (input.schemaName === 'patient_dialogue_reply') return { content: JSON.stringify({ reply }), model: 'synthetic' }
-      const payload = input.userPayload as { turns: Array<{ id: string }> }
-      const sourceTurnId = payload.turns.at(-1)!.id
-      return { content: JSON.stringify({ additions: [
-        { field: 'familyHistory', sourceTurnId, quote: '我父亲患高血压。', relation: 'addition' },
-        { field: 'allergyHistory', sourceTurnId, quote: '对青霉素过敏。', relation: 'addition' },
-      ] }), model: 'synthetic' }
-    } },
+    chatCompletionsProvider: {
+      async completeJson(input) {
+        if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
+        if (input.schemaName === 'patient_dialogue_reply') return { content: JSON.stringify({ reply }), model: 'synthetic' }
+        const payload = input.userPayload as { turns: Array<{ id: string }> }
+        const sourceTurnId = payload.turns.at(-1)!.id
+        return {
+          content: JSON.stringify({
+            additions: [
+              { field: 'familyHistory', sourceTurnId, quote: '我父亲患高血压。', relation: 'addition' },
+              { field: 'allergyHistory', sourceTurnId, quote: '对青霉素过敏。', relation: 'addition' },
+            ]
+          }), model: 'synthetic'
+        }
+      }
+    },
   })
   try {
     const first = await startConsultationCase(server.runtime, server.password, server.origin)
@@ -62,7 +68,8 @@ test('restores independent histories across cases, records family history automa
     await allergy.fill('医生记录：药物待核实。')
     await expect(unsaved).toBeVisible()
     await expect(page.locator('[data-clinical-document-update]')).toHaveCount(0)
-    await page.route('**/clinical-document/draft', route => route.fulfill({ status: 503,
+    await page.route('**/clinical-document/draft', route => route.fulfill({
+      status: 503,
       json: { error: { code: 'SERVICE_UNAVAILABLE', message: 'Synthetic save failure' } },
     }), { times: 1 })
     const failedSave = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/clinical-document/draft') && response.status() === 503)
@@ -84,11 +91,46 @@ test('restores independent histories across cases, records family history automa
     await expect(allergy).toHaveValue('')
     for (const label of ['月经史', '孕产史']) {
       await expect(page.getByLabel(label, { exact: true })).not.toBeVisible()
-      await page.locator('summary').filter({ hasText: label }).click()
+    }
+    const documentForm = page.getByRole('form', { name: '结构化病历', exact: true })
+    await expect(documentForm.locator('summary')).toHaveCount(0)
+    await expect(documentForm.getByText(/可留空|默认免填/)).toHaveCount(0)
+    await documentForm.getByRole('button', { name: /展开/ }).click()
+    const disclosure = documentForm.locator('[data-reproductive-history-disclosure="expanded"]')
+    for (const label of ['月经史', '孕产史']) {
+      await expect(disclosure.getByText(label, { exact: true })).toHaveCount(1)
+      await expect(page.getByLabel(label, { exact: true })).toBeVisible()
       await expect(page.getByLabel(label, { exact: true })).toHaveValue('')
       await expect(page.getByLabel(label, { exact: true })).not.toHaveAttribute('required', '')
     }
+    const chiefBox = (await page.getByLabel('主诉', { exact: true }).boundingBox())!
+    const hpiBox = (await page.getByLabel('现病史', { exact: true }).boundingBox())!
+    const allergyBox = (await allergy.boundingBox())!
+    const menstrualBox = (await page.getByLabel('月经史', { exact: true }).boundingBox())!
+    const obstetricBox = (await page.getByLabel('孕产史', { exact: true }).boundingBox())!
+    const exam = page.getByLabel('体格检查', { exact: true })
+    const examBox = (await exam.boundingBox())!
+    const followUpBox = (await page.getByLabel('随访', { exact: true }).boundingBox())!
+    expect(chiefBox.width).toBeGreaterThan(hpiBox.width * 1.8)
+    expect(Math.abs(chiefBox.width - followUpBox.width)).toBeLessThanOrEqual(1)
+    expect(Math.abs(menstrualBox.y - obstetricBox.y)).toBeLessThanOrEqual(1)
+    expect(allergyBox.y).toBeLessThan(menstrualBox.y)
+    expect(menstrualBox.y).toBeLessThan(examBox.y)
+    await disclosure.getByRole('button', { name: '收起', exact: true }).click()
+    for (const label of ['月经史', '孕产史']) {
+      await expect(page.getByLabel(label, { exact: true })).not.toBeVisible()
+    }
     await expect(unsaved).toHaveCount(0)
+    await documentForm.getByRole('button', { name: /展开/ }).click()
+    const chief = page.getByLabel('主诉', { exact: true })
+    const examOffsetBeforeFill = (await exam.boundingBox())!.y - (await chief.boundingBox())!.y
+    await page.getByLabel('月经史', { exact: true }).fill('男性病例补充说明。')
+    await expect(disclosure.getByRole('button', { name: '收起', exact: true })).toHaveCount(0)
+    const examOffsetAfterFill = (await exam.boundingBox())!.y - (await chief.boundingBox())!.y
+    expect(Math.abs(examOffsetAfterFill - examOffsetBeforeFill)).toBeLessThanOrEqual(0.5)
+    await save.click()
+    await expect(unsaved).toHaveCount(0)
+    await expect(saved).toBeVisible()
     await page.getByRole('tab', { name: '在诊', exact: true }).click()
     await select(first.outpatientCaseId)
     await openWorkspaceTab(page, '病历记录')
@@ -96,6 +138,11 @@ test('restores independent histories across cases, records family history automa
     await expect(allergy).toHaveValue('医生记录：药物待核实。')
     await expect(page.getByLabel('月经史', { exact: true })).toHaveValue('患者自述月经不规律。')
     await expect(page.getByLabel('孕产史', { exact: true })).toHaveValue('患者自述从未妊娠。')
+    await select(second.outpatientCaseId)
+    await openWorkspaceTab(page, '病历记录')
+    await expect(page.getByLabel('月经史', { exact: true })).toHaveValue('男性病例补充说明。')
+    await select(first.outpatientCaseId)
+    await openWorkspaceTab(page, '病历记录')
     await page.reload()
     await openWorkspaceTab(page, '病历记录')
     await expect(page.getByLabel('月经史', { exact: true })).toHaveValue('患者自述月经不规律。')

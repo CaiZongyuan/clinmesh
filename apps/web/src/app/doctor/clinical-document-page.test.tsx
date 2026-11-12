@@ -98,7 +98,7 @@ it('preserves open history across data refreshes, collapses new versions and res
   expect([...screen.getByRole('region', { name: '签署历史' }).querySelectorAll('details')].every(entry => !entry.open)).toBe(true)
 })
 
-it('allows read-only history review and keeps unsigned drafts free of empty history', async () => {
+function stubReadyQualityFetch() {
   let quality: ClinicalDocumentQualityControlState | undefined
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), 'http://localhost').pathname
@@ -113,6 +113,10 @@ it('allows read-only history review and keeps unsigned drafts free of empty hist
     if (path === '/api/his/v1/doctor/cases/synthetic-case/document-quality-control' && quality !== undefined) return Response.json(quality)
     throw new Error(`Unexpected request: ${path}`)
   }))
+}
+
+it('allows read-only history review and keeps unsigned drafts free of empty history', async () => {
+  stubReadyQualityFetch()
   const { props } = setup()
   const { rerender } = render(<ClinicalDocumentPage {...props} allowRevision={false} />)
   expect(screen.queryByRole('form')).toBeNull()
@@ -121,4 +125,99 @@ it('allows read-only history review and keeps unsigned drafts free of empty hist
   rerender(<ClinicalDocumentPage {...props} detail={{ ...detail, clinicalDocument: { signed: [] } }} />)
   expect(screen.queryByRole('region', { name: '签署历史' })).toBeNull()
   expect(screen.getByRole('form', { name: '结构化病历' })).toBeTruthy()
+})
+
+it('merges collapsed reproductive history fields without duplicate labels, restores focus and keeps nonblank values expanded', async () => {
+  stubReadyQualityFetch()
+  const user = userEvent.setup()
+  const { actions, props } = setup()
+  const blankReproductive: ClinicalDocumentContent = { ...content, menstrualHistory: '', obstetricHistory: '' }
+  const maleDetail: DoctorCaseDetail = {
+    ...detail,
+    patient: { ...detail.patient, gender: 'male' },
+    clinicalHistory: {
+      policyVersion: 'outpatient-history-v2',
+      requiredFields: [],
+      reason: 'non-female',
+      showByDefault: false,
+      visitKind: 'unknown',
+      classificationEditable: false,
+    },
+    clinicalDocument: { signed: [] },
+  }
+  const { rerender } = render(<ClinicalDocumentPage {...props} detail={maleDetail} workingDocument={blankReproductive} />)
+  const form = screen.getByRole('form', { name: '结构化病历' })
+  expect(form.querySelectorAll('summary').length).toBe(0)
+  expect(within(form).queryByText(/可留空|默认免填/)).toBeNull()
+  expect(form.querySelector('[data-clinical-document-field="chiefComplaint"] [data-required-indicator]')?.textContent).toBe('*')
+  expect(form.querySelector('[data-clinical-document-field="familyHistory"] [data-required-indicator]')).toBeNull()
+  expect(form.querySelector('[data-clinical-document-field="allergyHistory"] [data-required-indicator]')).toBeNull()
+  const disclosure = form.querySelector('[data-reproductive-history-disclosure]')!
+  expect(disclosure.getAttribute('data-reproductive-history-disclosure')).toBe('collapsed')
+  expect(within(disclosure as HTMLElement).getByText('月经史、孕产史').classList.contains('text-muted-foreground')).toBe(true)
+  expect(form.querySelector('[data-clinical-document-field="allergyHistory"]')!.compareDocumentPosition(disclosure)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  expect(disclosure.compareDocumentPosition(form.querySelector('[data-clinical-document-field="physicalExamination"]')!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  expect(within(form).getByLabelText('月经史').closest('[hidden]')).toBeTruthy()
+  expect(within(form).getByLabelText('孕产史').closest('[hidden]')).toBeTruthy()
+
+  const expandButton = within(form).getByRole('button', { name: /展开/ })
+  await user.click(expandButton)
+  expect(disclosure.getAttribute('data-reproductive-history-disclosure')).toBe('expanded')
+  expect(within(form).queryByText(/可留空|默认免填/)).toBeNull()
+  expect(disclosure.querySelectorAll('[data-required-indicator]')).toHaveLength(0)
+  for (const label of ['月经史', '孕产史']) {
+    expect(within(disclosure as HTMLElement).getByText(label).classList.contains('text-muted-foreground')).toBe(true)
+  }
+  const menstrualInput = within(form).getByLabelText<HTMLTextAreaElement>('月经史')
+  const obstetricInput = within(form).getByLabelText<HTMLTextAreaElement>('孕产史')
+  expect(menstrualInput.closest('[hidden]')).toBeNull()
+  expect(obstetricInput.closest('[hidden]')).toBeNull()
+  expect(document.activeElement).toBe(menstrualInput)
+  expect(within(disclosure as HTMLElement).getAllByText('月经史')).toHaveLength(1)
+  expect(within(disclosure as HTMLElement).getAllByText('孕产史')).toHaveLength(1)
+
+  await user.click(within(disclosure as HTMLElement).getByRole('button', { name: '收起' }))
+  expect(disclosure.getAttribute('data-reproductive-history-disclosure')).toBe('collapsed')
+  expect(document.activeElement).toBe(within(form).getByRole('button', { name: /展开/ }))
+
+  rerender(<ClinicalDocumentPage {...props} detail={maleDetail} workingDocument={{ ...blankReproductive, menstrualHistory: '补充记录。' }} />)
+  expect(disclosure.getAttribute('data-reproductive-history-disclosure')).toBe('expanded')
+  expect(within(disclosure as HTMLElement).queryByRole('button', { name: '收起' })).toBeNull()
+
+  const signedBlank = { ...signed(1), content: blankReproductive }
+  rerender(<ClinicalDocumentPage {...props} detail={{ ...maleDetail, clinicalDocument: { signed: [signedBlank] } }} workingDocument={blankReproductive} />)
+  const revisionForm = screen.getByRole('form', { name: '修订病历版本' })
+  expect(within(revisionForm).queryByText(/可留空|默认免填/)).toBeNull()
+  expect(within(revisionForm).getByLabelText('修订原因').closest('[data-slot="field"]')!.querySelector('[data-required-indicator]')?.textContent).toBe('*')
+  expect(within(revisionForm).getByLabelText('家族史').closest('[data-slot="field"]')!.querySelector('[data-required-indicator]')).toBeNull()
+  const revisionDisclosure = revisionForm.querySelector('[data-reproductive-history-disclosure]')!
+  expect(revisionDisclosure.getAttribute('data-reproductive-history-disclosure')).toBe('collapsed')
+  expect(within(revisionForm).getByLabelText('过敏史').compareDocumentPosition(revisionDisclosure)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  expect(revisionDisclosure.compareDocumentPosition(within(revisionForm).getByLabelText('体格检查'))).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  await user.type(within(revisionForm).getByLabelText('修订原因'), '折叠状态下核对。')
+  await user.click(within(revisionForm).getByRole('button', { name: '提交病历修订' }))
+  await user.click(within(screen.getByRole('alertdialog', { name: '确认提交病历修订' })).getByRole('button', { name: '确认提交修订' }))
+  expect(actions.revise.onSubmit).toHaveBeenLastCalledWith(expect.objectContaining({
+    document: expect.objectContaining({
+      chiefComplaint: blankReproductive.chiefComplaint,
+      menstrualHistory: '',
+      obstetricHistory: '',
+      followUp: blankReproductive.followUp,
+    }),
+    reason: '折叠状态下核对。',
+  }))
+
+  await user.click(within(revisionForm).getByRole('button', { name: /展开/ }))
+  expect(within(revisionDisclosure as HTMLElement).getAllByText('月经史')).toHaveLength(1)
+  await user.type(within(revisionForm).getByLabelText('孕产史'), '无特殊。')
+  expect(within(revisionDisclosure as HTMLElement).queryByRole('button', { name: '收起' })).toBeNull()
+  await user.clear(within(revisionForm).getByLabelText('修订原因'))
+  await user.type(within(revisionForm).getByLabelText('修订原因'), '补充核对。')
+  await user.click(within(revisionForm).getByRole('button', { name: '提交病历修订' }))
+  const dialog = screen.getByRole('alertdialog', { name: '确认提交病历修订' })
+  await user.click(within(dialog).getByRole('button', { name: '确认提交修订' }))
+  expect(actions.revise.onSubmit).toHaveBeenLastCalledWith(expect.objectContaining({
+    document: expect.objectContaining({ menstrualHistory: '', obstetricHistory: '无特殊。' }),
+    reason: '补充核对。',
+  }))
 })
