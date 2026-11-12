@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "baselineDigest": "9589e484ed24b88cd0d30767c00e4700e88d412377e04440e0fbdaf976a1b838",
+  "baselineDigest": "0f28cb05a61f4561755a154631e4505581995b55e4f74b758910080ecc413303",
   "target": {
     "schemaVersion": 1,
     "hostDependencyLock": "deployment/dsh/host/package-lock.json",
@@ -8,11 +8,11 @@
     "components": [
       {
         "name": "@deepseek-ai/dsh",
-        "source": "https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.2-rc.1.tgz",
+        "source": "https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.2-rc.2.tgz",
         "owner": "https://github.com/deepseek-ai/deepseek-harness",
         "role": "原生会话、工具调度与 Web 宿主",
-        "version": "0.2.2-rc.1",
-        "integrity": "sha512-ijR9UEVYkG15Q/Q79JzvzLBzQOQfc63VLr9n6flpwHPhr5IKn2UxthnSoto/P9l7qGd7pPvI1Ra6TW7LH3oKpg=="
+        "version": "0.2.2-rc.2",
+        "integrity": "sha512-J727r2C471x2cYXGjqZ0D9T1ZyaYQDFH/Ynx8iq+85oslM4nky5YTBnbAuTtxMhW7nhY8wuAEfjjFCQ+K6Swgw=="
       },
       {
         "name": "@dsh-so/dshvm",
@@ -27,27 +27,27 @@
       },
       {
         "name": "dsh-ag-ui",
-        "source": "https://github.com/keaideppk/dsh-ag-ui.git",
+        "source": "https://github.com/CaiZongyuan/dsh-ag-ui.git",
         "owner": "https://github.com/CaiZongyuan/dsh-ag-ui",
         "role": "原生 browser Tool broker；不另建 Gateway 模型会话",
-        "commit": "e3a290687c974811154d5a9e6d7235111a6a0620",
+        "commit": "7b200d6f8557557e491ab9c82340d4b69c078951",
         "requires": [
           "@deepseek-ai/dsh"
         ],
-        "supportPullRequest": "https://github.com/CaiZongyuan/dsh-ag-ui/pull/66"
+        "supportPullRequest": "https://github.com/CaiZongyuan/dsh-ag-ui/pull/68"
       },
       {
         "name": "dsh-react-surface",
         "source": "https://github.com/CaiZongyuan/dsh-react-surface.git",
         "owner": "https://github.com/CaiZongyuan/dsh-react-surface",
         "role": "React runtime、Surface 生命周期、布局和构建工具",
-        "commit": "7db43def0f73532e3f10e39fc372258003f27b81",
+        "commit": "1b777b59f38f49c0499cdb4b413698359dfb2072",
         "requires": [
           "@deepseek-ai/dsh",
           "dsh-ag-ui"
         ],
         "checkout": "vendor/dsh-react-surface",
-        "supportPullRequest": "https://github.com/CaiZongyuan/dsh-react-surface/pull/15"
+        "supportPullRequest": "https://github.com/CaiZongyuan/dsh-react-surface/pull/17"
       },
       {
         "name": "@clinmesh/dsh-web",
@@ -65,8 +65,8 @@
   "changes": [
     {
       "name": "@deepseek-ai/dsh",
-      "from": "0.2.1-rc.2",
-      "to": "0.2.2-rc.1"
+      "from": "0.2.2-rc.1",
+      "to": "0.2.2-rc.2"
     }
   ]
 }
