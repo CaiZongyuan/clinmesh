@@ -6,7 +6,7 @@ Status: implemented
 
 ## Problem
 
-[病史增量基础边界](2026-10-08-consultation-history-increments.md)在草稿并发变化或同字段存在人工内容时保守地留下待核对建议。这能保护人工内容，但不能满足[自动记录规格](../../../../docs/spec/2026-10-08-consultation-auto-record.md)要求的局部保护：编辑一句现病史不应停止同字段其他片段的补充与更正。
+[病史增量基础边界](2026-10-08-consultation-history-increments.md)在草稿并发变化或同字段存在人工内容时保守地留下待核对建议。这能保护人工内容，但不能满足[自动记录需求（Issue #166）](https://github.com/CaiZongyuan/clinmesh/issues/166)要求的局部保护：编辑一句现病史不应停止同字段其他片段的补充与更正。
 
 ## Decision
 

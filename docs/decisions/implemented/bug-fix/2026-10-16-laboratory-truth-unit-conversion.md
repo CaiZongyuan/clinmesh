@@ -8,7 +8,7 @@ Status: implemented
 
 ## Decision
 
-Investigation 在精确真值进入结果闭包前执行受控换算。冻结服务继续拥有目标单位与患者适用参考范围，Case Truth 保持不可变。转换只接受明确 UCUM system 和显式源／目标单位对；等价计数保留数值，`g/dL → g/L` 乘以 10，葡萄糖沿用已有审核映射的 LOINC 身份和因子。支持范围和验收由[修复规格](../../../../docs/spec/2026-10-16-laboratory-unit-conversion.md)拥有。
+Investigation 在精确真值进入结果闭包前执行受控换算。冻结服务继续拥有目标单位与患者适用参考范围，Case Truth 保持不可变。转换只接受明确 UCUM system 和显式源／目标单位对；等价计数保留数值，`g/dL → g/L` 乘以 10，葡萄糖沿用已有审核映射的 LOINC 身份和因子。支持范围和验收见 [Issue #203](https://github.com/CaiZongyuan/clinmesh/issues/203)。
 
 精确真值保留换算后的有限值，不按健康基线的 simulation bounds 夹紧，也不套用其 precision 截断；判读使用冻结目标参考范围。任何叶子的值类型、单位或允许值不兼容都拒绝整个组合，不把已有异常替换成正常值，不创建部分正式报告。
 

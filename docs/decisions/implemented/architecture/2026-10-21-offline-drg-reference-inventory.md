@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-既有五目录清洗包和 OpenDRG 快照具有可校验的文件身份，但使用条件、编码兼容、当前适用性和算法正确性尚未全部确认。直接导入已发布临床目录会让完整性核验被误认为业务启用。需求来自 [Issue #267](https://github.com/CaiZongyuan/clinmesh/issues/267) 及其[固定批准规格](https://github.com/CaiZongyuan/clinmesh/blob/e322fef689b009cc0175931b4070b8713c8dedff/docs/spec/2026-10-15-drg-prescription-budget.md)。
+既有五目录清洗包和 OpenDRG 快照具有可校验的文件身份，但使用条件、编码兼容、当前适用性和算法正确性尚未全部确认。直接导入已发布临床目录会让完整性核验被误认为业务启用。需求来自 [Issue #267](https://github.com/CaiZongyuan/clinmesh/issues/267) 及其[Issue #225](https://github.com/CaiZongyuan/clinmesh/issues/225)。
 
 ## Decision
 

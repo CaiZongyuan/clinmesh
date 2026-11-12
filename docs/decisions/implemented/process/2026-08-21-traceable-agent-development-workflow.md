@@ -10,7 +10,7 @@ Agent development needs a reliable path from user intent to implementation evide
 
 The fixed development lifecycle and DSH skill orchestration are superseded by [Task-scoped Agent skills](2026-10-02-task-scoped-agent-skills.md). This Note retains the rationale for task ownership, engineering evidence and public-content authorization.
 
-New implementation contracts belong to [repository-owned specs](2026-10-06-repository-owned-specs.md); existing approved Issues retain their contracts until explicitly migrated. GitHub Issues for repository specs track execution and link to the spec; Agent Notes retain decision rationale, while merged code and current-state documentation own shipped behavior.
+Active implementation contracts belong to GitHub Issues per [GitHub Issue canonical specs](2026-11-11-github-issue-canonical-specs.md) and [issue tracker](../../../agents/issue-tracker.md). Agent Notes retain decision rationale, while merged code and current-state documentation own shipped behavior.
 
 Observable verification evidence covers the actual changed behavior. External writes follow the user's authorization, and public artifacts are checked for sensitive content before publication.
 

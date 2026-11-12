@@ -1,6 +1,6 @@
 # 住院费用链路完整度核查
 
-核查日期：2026-10-23。基线为 `origin/main` `e32ff60`；证据来源为[住院规格](../spec/2026-10-20-inpatient-closed-loop.md)、[临床流程合同](../architecture/clinical-workflows.md)、`apps/server` 源码、GitHub PR 状态（当日 `gh` 查询）与[住院流程数据缺口核查](2026-10-22-inpatient-data-gaps.md)。本记录是时点完整度评估，不是需求或验收声明；当前合同以上述 owner 文档为准，这里不维护另一套实现描述。
+核查日期：2026-10-23。基线为 `origin/main` `e32ff60`；证据来源为[住院需求（Issue #245）](https://github.com/CaiZongyuan/clinmesh/issues/245)、[临床流程合同](../architecture/clinical-workflows.md)、`apps/server` 源码、GitHub PR 状态（当日 `gh` 查询）与[住院流程数据缺口核查](2026-10-22-inpatient-data-gaps.md)。本记录是时点完整度评估，不是需求或验收声明；当前合同以上述 owner 文档为准，这里不维护另一套实现描述。
 
 ## 已在 main 的收费能力
 

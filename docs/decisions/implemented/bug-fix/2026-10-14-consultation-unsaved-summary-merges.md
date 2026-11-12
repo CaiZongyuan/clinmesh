@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-直接记录允许后台替换尚归 automatic 的病史片段，浏览器可能同时存在未保存的医生改写。字符三方合并会丢弃重叠的新患者事实，或把另一部分改写拼进人工句子；随后保存会把已完成任务的事实永久删掉。当前保护要求由[病历字段规格](../../../../docs/spec/2026-10-14-clinical-document-fields.md)拥有。
+直接记录允许后台替换尚归 automatic 的病史片段，浏览器可能同时存在未保存的医生改写。字符三方合并会丢弃重叠的新患者事实，或把另一部分改写拼进人工句子；随后保存会把已完成任务的事实永久删掉。当前保护要求见 [病历字段需求（Issue #205）](https://github.com/CaiZongyuan/clinmesh/issues/205)。
 
 ## Decision
 

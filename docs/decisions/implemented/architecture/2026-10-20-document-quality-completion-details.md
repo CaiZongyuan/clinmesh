@@ -10,7 +10,7 @@ Status: implemented
 
 “依据与说明”的病历质控按字段展示待补充和待核实问题，包含已有摘要、影响、处理建议与字段定位；签署汇总展开后的详情复用相同展示，旧处理记录保持只读。页面顶部的紧凑提示仍只展示开放的待核实问题。
 
-本决策部分取代[安静质控提示决策](2026-10-18-quiet-document-quality-hints.md)中完全隐藏待补充问题的范围。后台检查、证据、缓存、授权及签署校验不变；不新增逐条来源展开或确认动作。当前验收合同由[质控规格](../../../spec/2026-10-15-doctor-document-quality-control.md)拥有。
+本决策部分取代[安静质控提示决策](2026-10-18-quiet-document-quality-hints.md)中完全隐藏待补充问题的范围。后台检查、证据、缓存、授权及签署校验不变；不新增逐条来源展开或确认动作。当前验收合同见 [质控需求（Issue #178）](https://github.com/CaiZongyuan/clinmesh/issues/178)。
 
 ## Alternatives considered
 

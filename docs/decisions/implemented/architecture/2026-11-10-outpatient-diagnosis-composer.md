@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-多诊断记录需要在一次目录选择中连续核对主次与备注。逐条关闭窗口和只保存有效服务端草稿会丢失未完成输入；丢响应后重新确认可能产生重复修订。[集中办理规格](https://github.com/CaiZongyuan/clinmesh/blob/spec/batch-clinical-actions/docs/spec/2026-11-09-batch-clinical-actions.md)同时要求连续添加、唯一主诊断和完整组原子性。
+多诊断记录需要在一次目录选择中连续核对主次与备注。逐条关闭窗口和只保存有效服务端草稿会丢失未完成输入；丢响应后重新确认可能产生重复修订。[集中办理需求（Issue #407）](https://github.com/CaiZongyuan/clinmesh/issues/407)同时要求连续添加、唯一主诊断和完整组原子性。
 
 ## Decision
 

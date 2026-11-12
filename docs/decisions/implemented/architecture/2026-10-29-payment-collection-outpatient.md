@@ -12,7 +12,7 @@ Status: implemented
 
 门诊 owner 继续校验应收、预览、岗位和费用版本，关联原费用并执行既有放行。`RefundLedger` 继续拥有可退余额、未知预占和退款方式消耗，门诊只将新交易的原款及方式事实交给它。存储与事务的当前合同见[收款记录](../../../architecture/storage.md#门诊收款记录)。
 
-本决策拥有门诊路径及公共内核的取舍；[住院用途决策](2026-10-29-payment-collection-inpatient.md)和[开发切换决策](2026-10-30-payment-collection-development-cutover.md)分别拥有其他切片的理由，整体边界归[支付职责决策](2026-10-21-payment-inpatient-drg-boundaries.md)。需求及验收归[共享收款规格](../../../spec/2026-10-28-shared-payment-collection.md)。
+本决策拥有门诊路径及公共内核的取舍；[住院用途决策](2026-10-29-payment-collection-inpatient.md)和[开发切换决策](2026-10-30-payment-collection-development-cutover.md)分别拥有其他切片的理由，整体边界归[支付职责决策](2026-10-21-payment-inpatient-drg-boundaries.md)。需求及验收见 [共享收款需求（Issue #342）](https://github.com/CaiZongyuan/clinmesh/issues/342)。
 
 ## Alternatives considered
 

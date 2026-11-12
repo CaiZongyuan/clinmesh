@@ -12,7 +12,7 @@ Status: implemented
 
 `PaymentCollection` 统一负责门诊与住院的收款尝试、结果确认及原尝试查询恢复，使用统一交易存储。门诊 owner 负责费用关联、应收与结清判断及收费后的业务放行；住院 owner 负责预交金入账与抵扣、补缴、首次结算及后续调整，继续拥有临床执行、计费来源、出院与清床门禁及病案首页。原交易退款继续归既有 `RefundLedger`，业务 owner 消费正式资金结果，不重复维护收款交易状态机。
 
-支付方式及其金额记录属于交易事实；收款抵扣哪些费用或哪次结算属于业务资金分配。共享交易内核不接管门诊费用分配或住院预交金使用政策。具体接入取舍归[门诊分配决策](2026-10-29-payment-collection-outpatient.md)和[住院用途决策](2026-10-29-payment-collection-inpatient.md)，需求及验收归[共享收款规格](../../../spec/2026-10-28-shared-payment-collection.md)。当前业务合同归[临床流程](../../../architecture/clinical-workflows.md)，#225 的已交付业务及结案边界归[一体化规格](../../../spec/2026-10-15-drg-prescription-budget.md)。
+支付方式及其金额记录属于交易事实；收款抵扣哪些费用或哪次结算属于业务资金分配。共享交易内核不接管门诊费用分配或住院预交金使用政策。具体接入取舍归[门诊分配决策](2026-10-29-payment-collection-outpatient.md)和[住院用途决策](2026-10-29-payment-collection-inpatient.md)，需求及验收见 [共享收款需求（Issue #342）](https://github.com/CaiZongyuan/clinmesh/issues/342)。当前业务合同归[临床流程](../../../architecture/clinical-workflows.md)，#225 的已交付业务及结案边界见 [一体化需求（Issue #225）](https://github.com/CaiZongyuan/clinmesh/issues/225)。
 
 交易与资金分配始终绑定原就诊及业务用途。同一患者的门诊费用、不同次住院和各次住院预交金分别核算；本次住院预交金可以按本次住院规则抵扣其费用，不因共用交易存储而成为跨就诊余额。跨门诊或住院转款需要独立业务设计，不属于本次共享收款范围。付款方式组成与业务资金分配的领域术语见 [Payment Tender 与 Payment Allocation](../../../../CONTEXT.md#费用与医保)。
 
@@ -54,4 +54,4 @@ Status: implemented
 
 患者库来源资产与就诊运行事实位于同一 operational SQLite，重建关联合成就诊运行链须按保留清单处理，不能通过删除整库丢失患者库、账号及目录配置。现有 Epoch reset 关闭并保留旧 Epoch，不是清除旧交易存储或跳过 schema 变更的入口。切换路径须明确完成 schema 转换、隔离旧运行意图并通过保留资产的完整性检查，审计保留边界继续按[仿真合同](../../../architecture/simulation.md#106-重置与-epoch-隔离)执行。
 
-共同内核、两端公开 HTTP、独立进程竞争、新交易重启恢复、切换后 PCI 联合账本及原岗位页面分别验证交易机制和业务边界，不能只用两个业务成功路径证明共同 owner。验收入口与范围由[共享收款规格](../../../spec/2026-10-28-shared-payment-collection.md#验收证据)和[测试策略](../../../testing.md)拥有，本地事务原子性不表示外部支付渠道可以随数据库回滚。
+共同内核、两端公开 HTTP、独立进程竞争、新交易重启恢复、切换后 PCI 联合账本及原岗位页面分别验证交易机制和业务边界，不能只用两个业务成功路径证明共同 owner。验收入口与范围由[共享收款需求（Issue #342）](https://github.com/CaiZongyuan/clinmesh/issues/342)和[测试策略](../../../testing.md)拥有，本地事务原子性不表示外部支付渠道可以随数据库回滚。

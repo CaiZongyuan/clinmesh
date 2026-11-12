@@ -25,4 +25,4 @@ Status: implemented
 
 ## Consequences
 
-不新增逐条确认、核实保留或签署门禁。来源关系由服务器在病例授权后按 Workspace、Epoch 和病例读取，模型仍只给辅助提示，不修改病历。公开 HTTP 与真实 SQLite 回归覆盖来源去重、时间缺失、正常整理、真实冲突及同文复用；组件和 Playwright 覆盖页头、保存冲突与双 React 版本。合成模型替身证明输入、输出和独立复核接线，不能证明实模的临床准确率。验收范围见[规格](../../../spec/2026-10-20-current-chief-complaint.md)，测试归属见[测试策略](../../../testing.md)。
+不新增逐条确认、核实保留或签署门禁。来源关系由服务器在病例授权后按 Workspace、Epoch 和病例读取，模型仍只给辅助提示，不修改病历。公开 HTTP 与真实 SQLite 回归覆盖来源去重、时间缺失、正常整理、真实冲突及同文复用；组件和 Playwright 覆盖页头、保存冲突与双 React 版本。合成模型替身证明输入、输出和独立复核接线，不能证明实模的临床准确率。验收范围见[Issue #252](https://github.com/CaiZongyuan/clinmesh/issues/252)，测试归属见[测试策略](../../../testing.md)。

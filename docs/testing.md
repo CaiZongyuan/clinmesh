@@ -40,7 +40,7 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 `inpatient-pci.spec.ts` 通过生产 Web 从空患者库开始，由管理员页面准备目录、固定来源和首个手工 Persona，登记员直接入院，护士接诊，再由各岗位页面完成诊断、九检开立／送检／报告已阅、术前与术中药品执行、造影、PCI 与四项材料预留替换。环境维护可安装参考资料和规则，后台 worker 可处理页面产生的检查申请；本次要求展示的病例、临床和资金写入不以后台预置替代。公开 HTTP 只读核对来源关系、逐项账本和时序，后半程复用 PCI 术后关联用药、未知组合收款门禁及原尝试恢复、清床归档、医保办两种核定差额、归档后更正及原款退款。重复执行使用独立临时库，每轮都证明后续账务不会覆盖首次结算、归档、冻结分组或临床状态；操作步骤与金额由[PCI 演示手册](pci-demo.md)拥有。
 
-`inpatient-pci.browser.test.ts` 在 React 18/19 ShadowRoot 中使用生产 `InpatientWorkspace` 和真实 HTTP，复用手术、术后用药与未知资金恢复至更正退款的共享旅程；固定来源、直接入院、九检、术前／术中药品与造影仍由公开 HTTP fixture 准备。它证明共享交互与接线，不声称 Surface 从零完成全部岗位，也不代替原生 DSH Session 或 Tool proposal 验收。实际完整包、临床 Release、受信审核和正常启动与重启证据见[部署核验](research/2026-10-27-pci-drg-demo-enablement.md)，本次最终集成的运行结果归[正式规格](spec/2026-10-27-pci-golden-demo-readiness.md)关联的交付证据；默认自编小规则通过不替代完整规则验收。分层取舍见[Agent Note](decisions/implemented/testing/2026-10-27-pci-from-zero-journey.md)。
+`inpatient-pci.browser.test.ts` 在 React 18/19 ShadowRoot 中使用生产 `InpatientWorkspace` 和真实 HTTP，复用手术、术后用药与未知资金恢复至更正退款的共享旅程；固定来源、直接入院、九检、术前／术中药品与造影仍由公开 HTTP fixture 准备。它证明共享交互与接线，不声称 Surface 从零完成全部岗位，也不代替原生 DSH Session 或 Tool proposal 验收。实际完整包、临床 Release、受信审核和正常启动与重启证据见[部署核验](research/2026-10-27-pci-drg-demo-enablement.md)，本次最终集成的运行结果见 [Issue #321](https://github.com/CaiZongyuan/clinmesh/issues/321) 关联的交付证据；默认自编小规则通过不替代完整规则验收。分层取舍见[Agent Note](decisions/implemented/testing/2026-10-27-pci-from-zero-journey.md)。
 
 `inpatient-pci-ai.spec.ts` 与 `inpatient-pci-ai.browser.test.ts` 共用真实页面旅程：固定来源与合成住院初始化由公开 HTTP 准备，造影请求与实施、首页主操作、PCI 计划、报告参数审阅、一次确认、逐笔用量及术后差异导航从工作台办理。受控 Provider 分别核对造影预计、PCI 预计与指南的生成／核验及实际用量；造影报告生成和术中登记各自断言零模型请求增量。指南夹具保存已逐字核对的 2021 血运重建指南物理 35／36 页与 CVIT 测量共识物理 6 页的有限原句，测试包装与实际发布来源及许可明确区分。跨岗位切换先等待当前手术表单恢复可编辑，再登录下一岗位，不能用后端已出现确认或术前核对事实代替浏览器已接收 Command 回执。受控回归在真实确认已落库后暂停 HTTP 回执，观测真实登录 API 的调用入口，验证交接保持等待，放行后再完成护士核对与医生知情同意且无待恢复操作。保存并发旅程暂停真实写请求，核对继续输入、回执元数据推进与后续确认，不以“请求已发出”代替保存成功；无报告和缺单位从真实资料状态验证有条件意见。上述证据不代表真实模型的医学质量评估。
 
@@ -90,7 +90,7 @@ CLI E2E 先构建真实 bin，再启动 Node listener 与 file-backed SQLite，�
 
 本地资料的 `guideline-local-sync.test.ts` 验证显式文件哈希、物理页范围、幂等、完整清单移除、失败后的范围收紧及出版链接校验。`coronary-guideline-workflow-http.test.ts` 从合成两页 PDF 的 p1 导入开始，通过真实参考库和 PCI 目录准备、三类建议及医生确认，证明原文进入生成与核验、p2 不进入模型、处方字段缺依据保持空值及关闭模式保留正式事实。`coronary-guideline-workflow.spec.ts` 从真实 Web 登录接诊验证同一链路的依据详情、人工补全处方与刷新保留；所有模型均为受控响应，不以其通过推断临床准确性。
 
-大病例回归使用 596 条合成历史与超过单次预算的检验目录，验证授权批量读取、完整诊断分页、全部历史批次覆盖、单条原文选择与重打包、短句柄到真实来源的追溯、旧安全信息、跨建议种类复用、输入变更失效、失败不发布和核验完整候选分批；筛选阶段的紧凑索引与瘦身目录、字节预算打包和已选记录收敛轮由同套件持有（见[信封预算规格](spec/2026-10-20-recommendation-envelope-budget.md)）。限流回归组合真实模型桥与 Provider，验证有界等待、初次生成与格式修复共享原始截止时间、预算耗尽后不再调用、共享一次限流重试、取消和建议 outbox 不叠加重试。SQL 数量、模型请求数、实际字节与并发边界作为稳定性能合同，公开 HTTP 耗时单独记录；不以裸 SQL 下界代替整条读取链，也不固定真实模型墙钟时间。输入组织和恢复边界见[分批读取决策](decisions/implemented/architecture/2026-10-15-recommendation-context-budget.md)、[记录级筛选决策](decisions/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)与[信封瘦身决策](decisions/implemented/architecture/2026-10-20-recommendation-envelope-slimming.md)。
+大病例回归使用 596 条合成历史与超过单次预算的检验目录，验证授权批量读取、完整诊断分页、全部历史批次覆盖、单条原文选择与重打包、短句柄到真实来源的追溯、旧安全信息、跨建议种类复用、输入变更失效、失败不发布和核验完整候选分批；筛选阶段的紧凑索引与瘦身目录、字节预算打包和已选记录收敛轮由同套件持有（见[临床业务流程](architecture/clinical-workflows.md#81-门诊闭环)）。限流回归组合真实模型桥与 Provider，验证有界等待、初次生成与格式修复共享原始截止时间、预算耗尽后不再调用、共享一次限流重试、取消和建议 outbox 不叠加重试。SQL 数量、模型请求数、实际字节与并发边界作为稳定性能合同，公开 HTTP 耗时单独记录；不以裸 SQL 下界代替整条读取链，也不固定真实模型墙钟时间。输入组织和恢复边界见[分批读取决策](decisions/implemented/architecture/2026-10-15-recommendation-context-budget.md)、[记录级筛选决策](decisions/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)与[信封瘦身决策](decisions/implemented/architecture/2026-10-20-recommendation-envelope-slimming.md)。
 
 核心病例轨迹见[场景测试](#144-场景测试)。每次运行固定 app build、数据库 schema、Operation Catalog hash、Workspace policy version、Synthea commit、localization profile、生成参数与 Case Revision；未来实际发布 IG 时再把对应版本加入固定输入。
 
@@ -149,7 +149,7 @@ pnpm docs:check
 | PR 改动 | 检查范围 |
 | --- | --- |
 | 只有根 README 或 docs 下普通 Markdown | `doc-sync`；Agent 规则、`docs/agents/` 工程 skills 配置和运行时 Skills/提示词不在此范围 |
-| 只有已修改的独立测试入口，可包含普通文档 | 逐文件运行全部用例、所属包 typecheck、定向 lint；Web E2E 追加浏览器 tsconfig，文档变化追加 `doc-sync` |
+| 只有已修改的独立测试入口，可包含普通文档 | 逐文件运行全部用例（入口缺失或发现零个用例时失败）、所属包 typecheck、定向 lint；Web E2E 追加浏览器 tsconfig，文档变化追加 `doc-sync` |
 | 明确的普通 Web 页面、DSH 显示组件、共享 UI/views 源码 | 全局类型/lint/边界、短性能预算、文档和构建；UI/views、Web、DSH、Desktop 组件测试；完整 Playwright `contracts` 与 `web` |
 | 其他、关键边界、服务端影响范围过广或无法识别 | 全量，覆盖原 `pnpm check` 与 `pnpm check:mobile` 的完整集合 |
 
@@ -163,7 +163,7 @@ pnpm docs:check
 
 最终 `verify` 始终汇总计划及四组结果；矩阵组的结果由全部分片汇总。计划失败、必需组或任一分片失败/取消/意外跳过、结果缺失或未知状态均失败；只有计划明确排除的组允许跳过。计划与汇总入口仅依赖 Node 内建能力，不需要先安装业务依赖；执行组调用已有 pnpm/Vitest/Playwright 命令，文件名与分片经验证后作为 argv 传递。
 
-选择、分片、复用、真实 Git/进程边界及汇总回归由 `scripts/ci.spec.ts`、`scripts/ci-cli.spec.ts` 持有，CI 脚本与测试纳入 `tsconfig.ci.json`。设计理由见 [CI 分流与并行决策](decisions/implemented/testing/2026-10-25-selective-parallel-ci.md)与[分片及成功复用决策](decisions/implemented/testing/2026-11-04-ci-shard-success-reuse.md)，正式验收条件见[分流规格](spec/2026-10-25-selective-parallel-ci.md)与[分片及复用规格](spec/2026-11-04-ci-success-reuse.md)。`verify` 输出与仓库分支保护是不同能力，强制拦截合并仍需管理员单独启用规则。
+选择、分片、复用、真实 Git/进程边界及汇总回归由 `scripts/ci.spec.ts`、`scripts/ci-cli.spec.ts` 持有，CI 脚本与测试纳入 `tsconfig.ci.json`。设计理由见 [CI 分流与并行决策](decisions/implemented/testing/2026-10-25-selective-parallel-ci.md)与[分片及成功复用决策](decisions/implemented/testing/2026-11-04-ci-shard-success-reuse.md)。`verify` 输出与仓库分支保护是不同能力，强制拦截合并仍需管理员单独启用规则。
 
 跨包 interface、workspace 配置、构建、文档投影或发布 workflow 变化运行 `pnpm check`。只有 Mobile 文件、共享给 Mobile 的 contract/core 入口或 Expo 配置变化时才运行 `pnpm check:mobile`。
 

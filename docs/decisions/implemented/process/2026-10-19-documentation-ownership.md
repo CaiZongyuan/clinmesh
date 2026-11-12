@@ -10,7 +10,7 @@ Status: implemented
 
 保留 `docs/architecture.md` 与 `docs/memory/memory.md` 两个入口，详细架构按事实职责拆分，低频经验按操作场景拆分。架构中的外部参考进入研究目录，测试要求回到测试 owner。公开入口 route 保留，新增详细 owner 经现有 manifest 发布。
 
-文档归属由 [docs/AGENTS.md](../../../../docs/AGENTS.md)统一说明；正式需求与验收继续由 [docs/spec/](../../../../docs/spec/README.md)拥有，当前合同与实现描述已交付行为，本目录保留决策理由。完成的规格只在独有要求已迁回 owner、活跃依赖和引用已处理后删除。工程记忆入口拥有稳定协作偏好，场景主题保留可操作经验和来源。
+文档归属由 [docs/AGENTS.md](../../../../docs/AGENTS.md)统一说明；正式需求与拆票由 [GitHub Issue](../../../agents/issue-tracker.md) 拥有（见 [恢复 GitHub Issue 为正式需求规格与自包含子票](2026-11-11-github-issue-canonical-specs.md)），当前合同与实现描述已交付行为，本目录保留决策理由，不再在仓库内保留平行的需求规格目录。工程记忆入口拥有稳定协作偏好，场景主题保留可操作经验和来源。
 
 ## Alternatives considered
 

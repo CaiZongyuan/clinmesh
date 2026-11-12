@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-[卡片工作台](2026-10-30-workspace-card-composition.md)按 900／600px 切换三栏、两栏和单栏。DSH 宿主 1280 宽时 Surface 约 826px，右栏落到主区下方，编辑区只剩约 300px；宿主对话区加 Surface 右栏在屏幕上形成四栏。提交时只有按钮变灰，成功后没有交接说明，队列选中与悬停难以区分。[外壳与反馈规格](../../../spec/2026-11-02-dsh-shell-feedback-redesign.md)要求以 DSH 实际宽度为基准重排，并让每次提交都有进行中、完成和受阻反馈。
+[卡片工作台](2026-10-30-workspace-card-composition.md)按 900／600px 切换三栏、两栏和单栏。DSH 宿主 1280 宽时 Surface 约 826px，右栏落到主区下方，编辑区只剩约 300px；宿主对话区加 Surface 右栏在屏幕上形成四栏。提交时只有按钮变灰，成功后没有交接说明，队列选中与悬停难以区分。[外壳与反馈需求（Issue #372）](https://github.com/CaiZongyuan/clinmesh/issues/372)要求以 DSH 实际宽度为基准重排，并让每次提交都有进行中、完成和受阻反馈。
 
 ## Decision
 

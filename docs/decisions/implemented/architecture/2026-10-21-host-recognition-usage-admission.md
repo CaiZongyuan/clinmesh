@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-医生代问意图识别由 DSH Host 自发调用模型，未经过 Server Provider，不能靠桥接请求外的计数覆盖。医生输入来源证明只确认输入归属，不代表当前仍有病例权限；同病例页面续签也会撤销旧 Page Context，直接要求旧上下文 active 会破坏已接受任务。[正式规格](../../../spec/2026-10-19-model-usage-control.md)拥有需求，Server 既有逐次计量取舍见[账本决策](2026-10-21-server-model-usage-ledger.md)。
+医生代问意图识别由 DSH Host 自发调用模型，未经过 Server Provider，不能靠桥接请求外的计数覆盖。医生输入来源证明只确认输入归属，不代表当前仍有病例权限；同病例页面续签也会撤销旧 Page Context，直接要求旧上下文 active 会破坏已接受任务。[Issue #228](https://github.com/CaiZongyuan/clinmesh/issues/228)拥有需求，Server 既有逐次计量取舍见[账本决策](2026-10-21-server-model-usage-ledger.md)。
 
 ## Decision
 

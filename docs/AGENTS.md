@@ -24,8 +24,7 @@
 | `docs/demo-architecture.md` | 首期 Demo 运行时、数据库与部署决策 |
 | `docs/agent-development.md` | Agent 参与工程开发的操作规范 |
 | `docs/testing.md` | 测试层级、场景和检查要求 |
-| `docs/templates/`、`docs/pull_request_template.md` | 项目开发模板；入口见 [开发模板](templates/README.md)，PR 模板沿用 GitHub 支持的自动发现位置 |
-| `docs/spec/` | 正式需求、独有验收条件与状态；生命周期及索引见 [需求规格](spec/README.md) |
+| `docs/templates/`、`docs/pull_request_template.md` | 项目开发模板；入口见 [开发模板](templates/README.md)，PR 与功能规格模板沿用 GitHub 支持的发现位置 |
 | `docs/decisions/` | 决策动机、真实替代方案和后果；生命周期见 [Agent Notes](decisions/README.md) |
 | `docs/agents/` | 通用工程 skills 使用的仓库配置；不作为产品行为权威 |
 | `docs/memory/` | [工程记忆](memory/memory.md)拥有稳定协作偏好并按场景导航低频操作经验；不作为产品行为或架构权威 |
@@ -35,7 +34,7 @@
 ## 维护与生命周期
 
 - 当前合同随实现维护；新增合同优先扩展现有 owner，仅在职责和阅读任务不同且确实过长时拆分。入口只说明去哪查。
-- 规格的验收状态不由文档整理推断；完成后的保留、迁回与删除按[规格生命周期](spec/README.md#完成后的维护)执行。
+- 正式需求与验收标准由 [GitHub Issue](agents/issue-tracker.md) 拥有；任务合入后，长期有效的产品事实与行为合同归入对应 `docs/architecture/` 或 `docs/ui/` owner。
 - Agent Note 保留仍有价值的理由与取舍，当前机制链接对应合同；替代关系与保留条件由 [Notes 规则](decisions/README.md)拥有。
 - 研究材料注明证据范围及当前 owner；已吸收的结论写入当前合同或 Note，研究保留独有来源，不维护另一套当前实现。
 - 记忆条目放到对应场景，保留触发条件、可操作经验及必要来源；长期合同迁入 owner 后，记忆只留排障线索和链接。

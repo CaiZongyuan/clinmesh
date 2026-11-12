@@ -2,7 +2,7 @@
 
 ## 范围与结论
 
-核验日期：2026-10-20。本文核验自有桥接仓库 `dsh-react-surface`（main 工作区与 worktree 副本均在 commit `ab6092e`，干净无本地修改）的 workspace 布局引擎与 ClinMesh 侧集成面（`apps/dsh-web`、`dsh-upstreams.lock.json`、升级验收流程），回答[医生工作台规格](../spec/2026-10-19-ai-native-doctor-workspace.md)风险条款中"布局引擎几何模型是否支持会话列换位"的判定问题。核验方式为只读源码与构建产物检查；DSH 宿主包以 `apps/dsh-web/node_modules` 内 `0.2.1-rc.2` 压缩 bundle 的 grep 证据为辅，未运行浏览器验证。当前 Surface 行为以[Surface 与 Host 边界](../architecture/agent-integration.md#71-surface-与-host-边界)为准。
+核验日期：2026-10-20。本文核验自有桥接仓库 `dsh-react-surface`（main 工作区与 worktree 副本均在 commit `ab6092e`，干净无本地修改）的 workspace 布局引擎与 ClinMesh 侧集成面（`apps/dsh-web`、`dsh-upstreams.lock.json`、升级验收流程），回答[医生工作台需求（Issue #236）](https://github.com/CaiZongyuan/clinmesh/issues/236)风险条款中"布局引擎几何模型是否支持会话列换位"的判定问题。核验方式为只读源码与构建产物检查；DSH 宿主包以 `apps/dsh-web/node_modules` 内 `0.2.1-rc.2` 压缩 bundle 的 grep 证据为辅，未运行浏览器验证。当前 Surface 行为以[Surface 与 Host 边界](../architecture/agent-integration.md#71-surface-与-host-边界)为准。
 
 **研究判断：镜像预设可行。** 布局引擎的会话列位置不是硬编码的 DOM 搬移，而是"几何 bounds + 会话列内联样式"的纯计算输出；`justify-self: "start" | "end"` 已是引擎内部模型的一等字段，现有 `right-panel` 预设已在产出"原生会话在左、Surface 在右"的镜像几何。新增镜像预设是纯增量改动（估计 250 行上下，含测试），不影响既有预设，可经布局选择器随时回退； ClinMesh 侧不引入该布局即完全回退。真正的开放点不在几何模型，而在真实宿主下镜像会话列的内部呈现细节（原生产物是否假定自己在右侧）与队列卡片钉顶缺少宿主注入点。以下是分项证据。
 
@@ -23,7 +23,7 @@ ClinMesh 当前的布局声明是 `default: 'workspace'`、`fallback: 'shrink'`�
 
 **事实：DSH 帧是三列 grid，会话列是中间列；runtime 不搬 DOM，只给会话列设 width、justify-self、border 内联样式。** ClinMesh 侧模拟宿主帧即 `grid-template-columns:280px 1fr 300px` 加 `data-pane="sidebar"` / `data-pane="conversation"` / `data-rightbar-col` / `data-shell-overlay` 四个子元素（`apps/dsh-web/src/client/surface-layout.browser.fixture.tsx:72-77`）；真实宿主 `@deepseek-ai/dsh-client-ui-layout` bundle（压缩产物，`apps/dsh-web/node_modules/@deepseek-ai/dsh-client-ui-layout/lib/client.js`，无行号，grep 证据）的帧模板为 `gridTemplateColumns: ${cols.sidebar}px minmax(${cols.rightbar === 0 ? 0 : 400}px, 1fr) minmax(0px, ${rightbarMax}px)`。会话列几何由 `workspace()` 输出：`bounds.right = detailsWidth + conversationWidth`，`nativePane: { width, justifySelf: "end", borderLeft: true }`（`layout-engine.ts:229-243`），即会话贴中间列右缘、Surface 占其余。
 
-**事实：`justify-self` 的 `"start" | "end"` 是 `ReactSurfaceNativePaneLayout` 的既有字段（`layout-engine.ts:27-36`），且 `right-panel` 预设已经在产出镜像几何**——原生会话 `justifySelf: "start"` 贴左、Surface 在右（`layout-engine.ts:291-304`）。因此规格风险条款（`docs/spec/2026-10-19-ai-native-doctor-workspace.md:59`）担心的"几何模型不支持会话列换位"不成立：换位所需的全部原语（bounds 两侧 inset、会话列贴边方向、resize 元数据）都已在模型中。
+**事实：`justify-self` 的 `"start" | "end"` 是 `ReactSurfaceNativePaneLayout` 的既有字段（`layout-engine.ts:27-36`），且 `right-panel` 预设已经在产出镜像几何**——原生会话 `justifySelf: "start"` 贴左、Surface 在右（`layout-engine.ts:291-304`）。因此原需求风险条款（[Issue #236](https://github.com/CaiZongyuan/clinmesh/issues/236)）担心的"几何模型不支持会话列换位"不成立：换位所需的全部原语（bounds 两侧 inset、会话列贴边方向、resize 元数据）都已在模型中。
 
 镜像预设（下称 `workspace-mirror`）需要的具体改动点（事实为文件行号，行数为推断）：
 
@@ -69,13 +69,13 @@ ClinMesh 当前的布局声明是 `default: 'workspace'`、`fallback: 'shrink'`�
 | 420 | 364 | shrink | 177 | 187 |
 | 360 | 304 | shrink | 148 | 156 |
 
-两个推论：其一，**shrink 模式下 Surface 会跌破自身 360px 名义最小值**（比例共享本来就是"双方各让"的语义），360px 壳宽时 Surface 仅约 156px——A7 的"任何宽度不横向滚动、不截断"实际要求病例区+建议栈容器在 ~160px 下退化为近单列，建议栈折叠页签/抽屉的断点须按容器查询实测定，不能只按 360 设计；其二，**更实用的窄屏出口是既有会话收起**（点击收起后会话与右栏隐藏、Surface 占满侧栏以外），镜像预设不改这一行为，演示与真实使用都应把"收起会话"作为窄屏首选动作，规格风险条款"三栏在窄屏会频繁触发回落"（`docs/spec/2026-10-19-ai-native-doctor-workspace.md:59`）与推演一致。镜像侧还需要注意：若希望保护 Surface 宽度，可在 ClinMesh 布局声明里显式收紧 `conversation.min`（现为默认 340），这是纯配置级调节。
+两个推论：其一，**shrink 模式下 Surface 会跌破自身 360px 名义最小值**（比例共享本来就是"双方各让"的语义），360px 壳宽时 Surface 仅约 156px——A7 的"任何宽度不横向滚动、不截断"实际要求病例区+建议栈容器在 ~160px 下退化为近单列，建议栈折叠页签/抽屉的断点须按容器查询实测定，不能只按 360 设计；其二，**更实用的窄屏出口是既有会话收起**（点击收起后会话与右栏隐藏、Surface 占满侧栏以外），镜像预设不改这一行为，演示与真实使用都应把"收起会话"作为窄屏首选动作，原需求风险条款"三栏在窄屏会频繁触发回落"（[Issue #236](https://github.com/CaiZongyuan/clinmesh/issues/236)）与推演一致。镜像侧还需要注意：若希望保护 Surface 宽度，可在 ClinMesh 布局声明里显式收紧 `conversation.min`（现为默认 340），这是纯配置级调节。
 
 ## 产物与升级合同
 
 **事实：新增预设对产物合同无结构性冲击。** 上游产物检查（`vendor/dsh-react-surface/scripts/verify-artifacts.ts:30-70`）只约束单文件 `client.js`、DSH lazy-CJS 包装、禁止 ESM import 与私有 React、require 白名单；镜像预设全部在既有 runtime 源码内，不新增依赖，不触碰这些断言。ClinMesh 侧 `apps/dsh-web/src/verify-artifact.ts` 同样只约束包装前缀（`:10-11`）、无 ESM/`import.meta`（`:12-13`）、无私有 React（`:14`）、5MB 预算（`:15`，依据 [DSH 客户端产物体积预算](../decisions/implemented/testing/2026-10-07-dsh-client-size-budget.md)）、require 白名单含 `dsh-react-surface/client`（`:17-27`）——布局逻辑在被 externalize 的 runtime 内，ClinMesh 产物体积增量接近零。**需要同步的一处是 stale-runtime 标记检查**：`verify-artifact.ts:99-112` 通过在 `vendor/dsh-react-surface/packages/runtime/lib/client.js` 中查找 `surfaceRuntimeMarkers`（现为 `['fullFrameKeepDetails']`）防止过期 vendor 构建静默吞掉声明的能力；镜像预设落地后应把新标记（如 `workspace-mirror`）加入该数组，否则过期 runtime 会让 `supported` 里的镜像布局在注册时被 `supported.includes` 校验拒绝（`registry.ts:177-185`），症状是布局选择器缺项而非报错，不易排查。另按既有经验，ClinMesh 侧本地类型镜像 `apps/dsh-web/src/client/dsh-react-surface.d.ts:29` 的布局联合类型需同步新成员，否则 `supported` 声明在 `apps/dsh-web` typecheck 失败。
 
-**事实：`dsh-upstreams.lock.json` 升级走文档化流程。** 锁内 `dsh-react-surface` 组件记录来源、owner、锁定 commit `ab6092e`、checkout 路径与支持 PR（`dsh-upstreams.lock.json:36-48`），上游预设 PR 合入后按 [DSH 持续升级]（`docs/deployment.md:390`）推进：发现工作流每日比较候选并生成 draft PR（`docs/deployment.md:392-396`）；维护者在全新独立 clone 检出 PR HEAD、递归恢复子模块、`pnpm install --frozen-lockfile` 后运行 `pnpm upstream:verify`，依次核对 registry 摘要、按精确源码构建 Surface 与 AG-UI、隔离安装宿主、HTTP smoke 与设置持久化检查、`pnpm check`（`docs/deployment.md:398`）；全部检查通过才写入目标锁，原生会话、browser Tool→review→Effect 等业务闭环仍按测试策略补人工证据，由维护者决定合并（`docs/deployment.md:400`）。配套操作经验：worktree 无 vendor 产物时须按锁在子模块 `bun install --frozen-lockfile && bun run build:runtime`（`docs/memory/dsh-integration.md:105`、`:77`）；跨仓库合并须保留支持提交 SHA 在主分支历史且全新 clone 可检出（`docs/memory/dsh-integration.md:83`）；锁推进期间 DSH 面新布局不得先行合入 main 宣称验收（规格原文，`docs/spec/2026-10-19-ai-native-doctor-workspace.md:59`）。
+**事实：`dsh-upstreams.lock.json` 升级走文档化流程。** 锁内 `dsh-react-surface` 组件记录来源、owner、锁定 commit `ab6092e`、checkout 路径与支持 PR（`dsh-upstreams.lock.json:36-48`），上游预设 PR 合入后按 [DSH 持续升级]（`docs/deployment.md:390`）推进：发现工作流每日比较候选并生成 draft PR（`docs/deployment.md:392-396`）；维护者在全新独立 clone 检出 PR HEAD、递归恢复子模块、`pnpm install --frozen-lockfile` 后运行 `pnpm upstream:verify`，依次核对 registry 摘要、按精确源码构建 Surface 与 AG-UI、隔离安装宿主、HTTP smoke 与设置持久化检查、`pnpm check`（`docs/deployment.md:398`）；全部检查通过才写入目标锁，原生会话、browser Tool→review→Effect 等业务闭环仍按测试策略补人工证据，由维护者决定合并（`docs/deployment.md:400`）。配套操作经验：worktree 无 vendor 产物时须按锁在子模块 `bun install --frozen-lockfile && bun run build:runtime`（`docs/memory/dsh-integration.md:105`、`:77`）；跨仓库合并须保留支持提交 SHA 在主分支历史且全新 clone 可检出（`docs/memory/dsh-integration.md:83`）；锁推进期间 DSH 面新布局不得先行合入 main 宣称验收（[Issue #236](https://github.com/CaiZongyuan/clinmesh/issues/236) 约束）。
 
 ## 结论与开放问题
 

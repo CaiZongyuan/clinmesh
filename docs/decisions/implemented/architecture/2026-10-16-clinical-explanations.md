@@ -6,7 +6,7 @@ Status: implemented
 
 诊疗建议把病例缺项、指南未覆盖、院内不能执行和独立核验失败汇总为“缺少依据”，模型顶层清单又可能把所有未记录事项变成前置门槛。病历质控的自由文本缺少影响和动作，任意 missing-field 及宽泛官方书写原则无法约束具体临床推断。用户需要能理解并核实的说明，且已允许显示无指南支持的待核实诊断或检查思路。
 
-需求分别由[诊疗建议规格](../../../../docs/spec/2026-10-13-doctor-guideline-recommendations.md#待核实思路与说明)和[病历质控规格](../../../../docs/spec/2026-10-15-doctor-document-quality-control.md#说明与判断边界)拥有，既有[来源与草稿决策](2026-10-13-doctor-guideline-recommendations.md)及[质控输入归属](2026-10-15-doctor-document-quality-control.md)继续约束原有边界。
+需求分别由[诊疗建议需求（Issue #179）](https://github.com/CaiZongyuan/clinmesh/issues/179)和[病历质控需求（Issue #178）](https://github.com/CaiZongyuan/clinmesh/issues/178)拥有，既有[来源与草稿决策](2026-10-13-doctor-guideline-recommendations.md)及[质控输入归属](2026-10-15-doctor-document-quality-control.md)继续约束原有边界。
 
 ## Decision
 

@@ -8,7 +8,7 @@ ClinMesh 是面向 Agent 的中国公立医院仿真 HIS。修改业务或接口
 
 - 代码简化按 [实施与交付](docs/agent-development.md#实施与交付)保留行为和合同；本机可用时使用 `reduce-complexity`。开发 skills 及宿主配置只留本机，不纳入 Git。
 - 编写文档遵循 [docs/AGENTS.md](docs/AGENTS.md)；编写 skills 或 Agent 指令时使用 `writing-for-agents`。
-- 需要正式需求记录时按 [Spec 规则](docs/spec/README.md) 写入 `docs/spec/`；GitHub Issue 只追踪执行并引用该文件。
+- 正式需求与拆票追踪按 [Issue 规则](docs/agents/issue-tracker.md) 由 GitHub Issue 与原生 sub-issues 拥有。
 - Matt skills 保持上游原文及显式调用设置；默认自动编排由本仓库规则驱动，不以自动调用显式入口实现。仓库代码和 owner 文档拥有事实，通用 ADR 产物映射为 Agent Note。
 - GitHub 写入和交付遵循 [实施与交付](docs/agent-development.md#实施与交付)，沿用已有授权。
 

@@ -2,13 +2,13 @@
 
 Status: implemented
 
-当前十字段、统一来源与直接记录合同由[全病历自动整理规格](../../../../docs/spec/2026-10-14-doctor-full-document-recording.md)拥有，整合取舍见[十字段直接记录决策](2026-10-15-unified-direct-document-recording.md)。本记录的来源、片段保护、持久任务与逆操作理由继续适用。
+当前统一来源与直接记录合同由[临床业务流程](../../../architecture/clinical-workflows.md#81-门诊闭环)拥有（需求溯源见 [Issue #177](https://github.com/CaiZongyuan/clinmesh/issues/177)），整合取舍见[十字段直接记录决策](2026-10-15-unified-direct-document-recording.md)。本记录的来源、片段保护、持久任务与逆操作理由继续适用。
 
 正文逐字摘录与单来源约束由[病史总结与多轮溯源](2026-10-12-consultation-agent-summary-sources.md)替代；本记录中的持久任务、共享 Command、患者自述边界与失败恢复理由继续适用。
 
 ## Problem
 
-患者回答与病历填写原来是两次独立操作。后台提取可能晚于医生编辑、签署或 Epoch reset，整篇重生成不能保留人工内容，也不能证明模型使用了患者已公开的信息。整体需求及职责归属见[规格](../../../../docs/spec/2026-10-08-consultation-auto-record.md)与[整体决策](2026-10-08-consultation-auto-record.md)。
+患者回答与病历填写原来是两次独立操作。后台提取可能晚于医生编辑、签署或 Epoch reset，整篇重生成不能保留人工内容，也不能证明模型使用了患者已公开的信息。整体需求及职责归属见[Issue #166](https://github.com/CaiZongyuan/clinmesh/issues/166)与[整体决策](2026-10-08-consultation-auto-record.md)。
 
 ## Decision
 

@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-岗位页面各自管理队列、患者横幅、分区和主操作，Web 与 DSH 的视觉及窄屏行为不同。模态 proposal 审阅遮挡对象；若批准时重新读取可编辑状态，等待审批期间的输入可能替换人类实际核对的内容。[工作台规格](../../../spec/2026-10-30-workspace-card-redesign.md)要求全岗位一致，同时保留全部业务、权限和未知结果恢复。
+岗位页面各自管理队列、患者横幅、分区和主操作，Web 与 DSH 的视觉及窄屏行为不同。模态 proposal 审阅遮挡对象；若批准时重新读取可编辑状态，等待审批期间的输入可能替换人类实际核对的内容。[工作台需求（Issue #364）](https://github.com/CaiZongyuan/clinmesh/issues/364)要求全岗位一致，同时保留全部业务、权限和未知结果恢复。
 
 ## Decision
 

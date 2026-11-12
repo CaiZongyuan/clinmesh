@@ -18,7 +18,7 @@ Status: implemented
 
 前向迁移以 `retired_status` 保留旧核对记录原状态、原因和证据，将 pending 标为 stale，并回填历史批次关联。旧 `consultation.verify-history` outbox 事件仅兼容消费与退役，不能绑定或调用模型；重复消费安全完成。Query 与历史控制回执中的兼容 `verification` 计数固定为零、issues 为空，不表示事实通过核验。历史判定不能触发活动提示或核对重试。病历编辑器、签署对话框和 Agent 签署审阅只保留现有质控及真实记录失败恢复，无逐条确认门禁。
 
-本决策部分替代[增量记录决策](2026-10-15-low-latency-document-recording.md)中的写入后独立核对及其展示，并调整[句子编号决策](2026-10-19-recording-sentence-references.md)的核对归属；其增量保存、不可变来源、程序解码与输入预算继续有效。[病历质控决策](2026-10-15-doctor-document-quality-control.md)继续拥有生成、独立复核、输入复用与签署汇总。当前运行合同见[临床业务流程](../../../architecture/clinical-workflows.md)，完整验收由[正式规格](../../../spec/2026-10-19-recording-quality-consolidation.md)拥有。
+本决策部分替代[增量记录决策](2026-10-15-low-latency-document-recording.md)中的写入后独立核对及其展示，并调整[句子编号决策](2026-10-19-recording-sentence-references.md)的核对归属；其增量保存、不可变来源、程序解码与输入预算继续有效。[病历质控决策](2026-10-15-doctor-document-quality-control.md)继续拥有生成、独立复核、输入复用与签署汇总。当前运行合同见[临床业务流程](../../../architecture/clinical-workflows.md)，完整验收见 [Issue #233](https://github.com/CaiZongyuan/clinmesh/issues/233)。
 
 本决策也接替[病史总结决策](2026-10-12-consultation-agent-summary-sources.md)中的独立忠实性模型调用；其原始来源、事实限定及编辑保护理由继续适用。
 

@@ -4,7 +4,7 @@
 
 核验日期：2026-10-19；仓库基线：`758c1b92` 及核验时的工作区源码。本文保存静态审计和[三个风险的离线动态复现](#七三个风险的离线动态复现)的固定基线证据，下文“当前”均指该核验范围，不替代现行[系统架构](../architecture.md)。复现使用临时 SQLite、进程内 HTTP 和合成模型传输，没有调用真实模型、启动实际开发服务或执行压测。
 
-同输入建议复用、患者回答去重与阶段恢复由 [#235](https://github.com/CaiZongyuan/clinmesh/issues/235) 的[正式规格](../spec/2026-10-19-model-request-reuse-recovery.md)追踪；当前合同见[临床业务流程](../architecture/clinical-workflows.md#81-门诊闭环)与[存储合同](../architecture/storage.md#模型执行恢复)，理由见[持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。全局停用、Token／金额预算、用量账本及其他链路缺口继续由 [#228](https://github.com/CaiZongyuan/clinmesh/issues/228) 和[模型用量控制草案](../spec/2026-10-19-model-usage-control.md)拥有，局部恢复不能证明全局保护已经生效。
+同输入建议复用、患者回答去重与阶段恢复由 [Issue #235](https://github.com/CaiZongyuan/clinmesh/issues/235) 追踪；当前合同见[临床业务流程](../architecture/clinical-workflows.md#81-门诊闭环)与[存储合同](../architecture/storage.md#模型执行恢复)，理由见[持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。全局停用、Token／金额预算、用量账本及其他链路缺口继续由 [Issue #228](https://github.com/CaiZongyuan/clinmesh/issues/228) 追踪，局部恢复不能证明全局保护已经生效。
 
 当前不能保证不浪费 Token。系统已有幂等写入、输入尺寸限制、分通道并发、部分任务去重和超时，但缺少统一的请求/Token/金额预算；多数 Agent 的业务失效检查只能阻止旧结果落库，不能主动取消已经发出的模型请求。明显风险集中在建议暂停不停止后台、质控旧正文任务未淘汰、患者回复并发重复生成，以及多层纠错、重试和重启恢复叠加。
 

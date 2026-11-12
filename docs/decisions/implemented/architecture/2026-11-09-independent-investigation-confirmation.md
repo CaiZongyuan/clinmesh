@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-同类独立检查可以分别形成临床申请及费用，整批回滚会丢弃已经合法完成的项目。连续准备多项手动检查后，单草稿字段也无法保存各行输入；响应丢失时把剩余清单当成新开立，会重复产生申请与费用。[批量办理规格](https://github.com/CaiZongyuan/clinmesh/blob/spec/batch-clinical-actions/docs/spec/2026-11-09-batch-clinical-actions.md)明确要求独立检查逐项报告结果，诊断组与整张处方继续保持整体边界。
+同类独立检查可以分别形成临床申请及费用，整批回滚会丢弃已经合法完成的项目。连续准备多项手动检查后，单草稿字段也无法保存各行输入；响应丢失时把剩余清单当成新开立，会重复产生申请与费用。[批量办理需求（Issue #407）](https://github.com/CaiZongyuan/clinmesh/issues/407)明确要求独立检查逐项报告结果，诊断组与整张处方继续保持整体边界。
 
 ## Decision
 

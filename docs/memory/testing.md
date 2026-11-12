@@ -78,7 +78,7 @@
 
 - 跨患者的迟到草稿回填，须在写入后离开原病例、返回并观察实际 GET 与后续写入次数。TanStack Query 默认 invalidation 只刷新 active query；已离开的病例可能保留旧缓存，先初始化表单再产生一次额外 autosave。定向刷新需包含该 ID 的 inactive query 并等待完成，不能只断言原 PUT 成功或最终文本一度出现。合同及取舍见[临床准备确认 Note](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
 
-- 验收 AI 推荐、选型或规划时，先核对原规格要求模型作出的决定是否已被医生输入、固定方案或受控响应预填。候选适用范围不等于最终推荐答案；请求成功、输出引用正确和回执恢复只能证明各自合同，不能替代推荐能力验收。核对时并排追踪原始需求、模型输入、输出限制和测试期望，保留不预填最终产品与数量的独立样例；若当前依据不足以完成该样例，明确记录未满足项，不用有限演示通过或 Issue／PR 状态推断能力完整。PCI 排查入口见[原推荐规格](../spec/2026-10-27-inpatient-drg-agent.md)、`apps/server/tests/fixtures/inpatient-drg-agent.ts` 和 `apps/server/src/application/inpatient-drg-agent.ts`。
+- 验收 AI 推荐、选型或规划时，先核对原始需求要求模型作出的决定是否已被医生输入、固定方案或受控响应预填。候选适用范围不等于最终推荐答案；请求成功、输出引用正确和回执恢复只能证明各自合同，不能替代推荐能力验收。核对时并排追踪原始需求、模型输入、输出限制和测试期望，保留不预填最终产品与数量的独立样例；若当前依据不足以完成该样例，明确记录未满足项，不用有限演示通过或 Issue／PR 状态推断能力完整。PCI 排查入口见[PCI 参数与候选依据](../architecture/clinical-workflows.md#pci-参数与候选依据)、[住院 DRG Agent 决策](../decisions/implemented/architecture/2026-10-27-inpatient-drg-agent.md)、`apps/server/tests/fixtures/inpatient-drg-agent.ts` 和 `apps/server/src/application/inpatient-drg-agent.ts`。
 
 - Base UI Checkbox 同时渲染可访问的 checkbox 和表单隐藏 input；Playwright 的 `getByLabel()` 可能同时命中二者。勾选时使用带准确名称的 `getByRole('checkbox', { name })`，并核对实际预留及费用结果，避免用 `.first()` 绕过双匹配；示例见[最终耗材核实旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
 
@@ -86,7 +86,7 @@
 
 - 自动生成会首次初始化工作稿时，回归从服务端尚无稿开始输入，并让生成在首个保存到达前发布；只测已有稿的晚到结果会漏掉修订从零到一的冲突。跨岗位快照读取要覆盖完成转科后的目标会话，仅撤销原 Membership 不能证明原科室失权时的恢复。对应合同见[单次耗材预计](../architecture/clinical-workflows.md#手术计划的单次耗材预计)。
 
-- 验收“共享 owner／统一状态机”时，分别跑通两个业务入口只能证明各自行为；还须追踪尝试创建、确认、分配和恢复是否委托给同一业务 owner。共享渠道计划或退款账不代表收款生命周期也已统一，边界示例见[共享收款规格](../spec/2026-10-28-shared-payment-collection.md)。
+- 验收“共享 owner／统一状态机”时，分别跑通两个业务入口只能证明各自行为；还须追踪尝试创建、确认、分配和恢复是否委托给同一业务 owner。共享渠道计划或退款账不代表收款生命周期也已统一，边界示例见[支付与住院职责边界决策](../decisions/implemented/architecture/2026-10-21-payment-inpatient-drg-boundaries.md)与[门诊收款记录](../architecture/storage.md#门诊收款记录)。
 
 - 固定 Virtual Time 的临床旅程中，先后发生的医嘱和操作可能共享相同时间戳，`signedAt >= performedAt` 与账本阶段标签都不能独立证明时序。用真实 Command 请求顺序及执行关联核对阶段；PCI 的术中医嘱、发药和给药须在造影同意后、实际操作记录前，见[从零旅程](../../apps/web/e2e/inpatient-pci.spec.ts)。
 

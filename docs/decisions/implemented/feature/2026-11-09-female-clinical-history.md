@@ -23,4 +23,4 @@ Status: implemented
 
 ## Consequences
 
-现有女性草稿签署或历史结构化文书正式修订时需要补齐两项，缺项通过稳定原因 `CLINICAL_HISTORY_REQUIRED` 提示重新询问记录。已经签署的原件保持不可变且不补写。数据库扩展记录字段约束时保留来源、人工归属、锚点、顺序和逆操作数据，并在事务外关闭外键、重建后检查引用再恢复外键。接口回归覆盖草稿、缺项、非女性、修订、自动记录与有数据升级；真实 Web 和 React 18/19 DSH 浏览器合同覆盖文本框、必填及保存恢复。当前合同由[临床业务流程](../../../architecture/clinical-workflows.md)拥有，验收范围见[需求规格](../../../spec/2026-11-09-female-clinical-history.md)。
+现有女性草稿签署或历史结构化文书正式修订时需要补齐两项，缺项通过稳定原因 `CLINICAL_HISTORY_REQUIRED` 提示重新询问记录。已经签署的原件保持不可变且不补写。数据库扩展记录字段约束时保留来源、人工归属、锚点、顺序和逆操作数据，并在事务外关闭外键、重建后检查引用再恢复外键。接口回归覆盖草稿、缺项、非女性、修订、自动记录与有数据升级；真实 Web 和 React 18/19 DSH 浏览器合同覆盖文本框、必填及保存恢复。当前合同由[临床业务流程](../../../architecture/clinical-workflows.md)拥有，验收范围见[Issue #430](https://github.com/CaiZongyuan/clinmesh/issues/430)。

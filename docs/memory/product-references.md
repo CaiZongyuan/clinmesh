@@ -14,7 +14,7 @@
 
 - 用户明确不要自动记录的 6 秒硬截止；实时记录沿用常规模型等待配置，不用短预算把尚在正常生成的请求提前判成失败。配置、取消与恢复边界见[常规模型预算决定](../decisions/implemented/architecture/2026-10-18-recording-normal-model-budget.md)。
 
-- 当前自动记录性能由用户自行试用认可，交付不再追加真实模型性能验收；沿用[规格中的验收约定](../spec/2026-10-15-low-latency-document-recording.md#验收条件)，不将体验确认写成量化延迟达标，也不重复将固定负载压测作为该交付的前置条件。
+- 当前自动记录性能由用户自行试用认可，交付不再追加真实模型性能验收；沿用[增量记录决策](../decisions/implemented/architecture/2026-10-15-low-latency-document-recording.md)与[实时病历整理模型说明](../deployment.md#实时病历整理模型与负载验证)，不将体验确认写成量化延迟达标，也不重复将固定负载压测作为该交付的前置条件。
 
 ## 工作台布局与交互偏好
 

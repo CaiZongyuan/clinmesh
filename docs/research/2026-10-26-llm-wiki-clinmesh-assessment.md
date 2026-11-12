@@ -2,7 +2,7 @@
 
 核对日期：2026-10-26。研究对象为飞书《LLM-Wiki》正文 revision 82，使用飞书 CLI 以用户身份读取；文档地址见来源 [F]。本轮取得正文及带块 ID 的内容，没有取得 8 个内嵌电子表格，原因是现有 CLI 身份缺少 `sheets:spreadsheet:read`；正文返回的外部参考标签也没有可追随的非图片 URL。下文独立找到并核验相应一手来源，不把它们误称为课程已经提供的可下载附件。课程所述 `page-specs`、脚本、冻结文件和查询轨迹未独立取得或复现，因此有关课程实例的事实均限定为正文自述。
 
-本文记录外部证据和候选方案，不表示已经批准或实施。ClinMesh 当前行为由[临床流程](../architecture/clinical-workflows.md)、[Agent 集成](../architecture/agent-integration.md)、[指南全文规格](../spec/2026-10-16-free-guideline-corpus.md)和[诊疗建议规格](../spec/2026-10-13-doctor-guideline-recommendations.md)拥有；已有检索质量与工具缺口见[指南检索与 Agent 使用能力优化研究](2026-10-26-guideline-retrieval-agent-usability.md)。
+本文记录外部证据和候选方案，不表示已经批准或实施。ClinMesh 当前行为由[临床流程](../architecture/clinical-workflows.md)、[Agent 集成](../architecture/agent-integration.md)、[指南全文交付（PR #221）](https://github.com/CaiZongyuan/clinmesh/pull/221)和[诊疗建议需求（Issue #179）](https://github.com/CaiZongyuan/clinmesh/issues/179)拥有；已有检索质量与工具缺口见[指南检索与 Agent 使用能力优化研究](2026-10-26-guideline-retrieval-agent-usability.md)。
 
 ## 采用判断
 

@@ -2,7 +2,7 @@
 
 研究日期：2026-10-22。用户已确认全部 surface 重构，本文为该决策提供可对比的设计风格选项，覆盖六个方向：临床专业密集型、现代企业级设计体系、极简效率型、AI 原生对话式工作台、医疗行业专属设计体系、视觉趋势类，每类给出视觉特征、设计理念、一手来源与适配度分析。本文不定义 ClinMesh 当前行为，也不构成实施授权；界面 token 与组件的当前合同以 [UI 设计合同](../ui/design.md) 为准。与既有研究分工：[HIS UI/UX 一手参考](his-ui-ux-references.md) 拥有岗位工作流与开源 HIS 模式证据，[现代专业 UI 与临床可视化设计参考](modern-ui-design-references.md) 拥有高密度专业工具与 shadcn 生态资产核验，本文不重复其条目，只在其之上补足"整体风格/设计体系"级别的选型证据。
 
-评估锚点是项目内实际功能：门诊医生、住院、挂号、分诊、收费、药房、检验、管理员、设置九类岗位页面与 DSH 宿主 surface。"方向四"（AI 原生三栏，[规格](../spec/2026-10-19-ai-native-doctor-workspace.md)）是 2026-10-19 已实施的历史决定，在本次全量重构中只作为候选之一，不构成既定基线（用户 2026-10-22 确认）。
+评估锚点是项目内实际功能：门诊医生、住院、挂号、分诊、收费、药房、检验、管理员、设置九类岗位页面与 DSH 宿主 surface。"方向四"（AI 原生三栏，[Issue #236](https://github.com/CaiZongyuan/clinmesh/issues/236)）是 2026-10-19 已实施的历史决定，在本次全量重构中只作为候选之一，不构成既定基线（用户 2026-10-22 确认）。
 
 核心结论（推断）：六个方向差异主要落在 token 语言（色彩、圆角、密度、字阶）与信息组织方式（对话流 vs 结构化表格），而非 React 技术栈本身；本项目已拥有语义 token 抽象，任何方向的"再定向"成本都主要是重写 token 值与组件视觉细节，而非重写业务组件；真正与项目硬约束冲突的只有"整套运行时组件库"路线（Ant Design v5、Fluent UI React、Material Web Components），它们与单文件产物预算、ShadowRoot 隔离和双 React 版本共存成本高。趋势类（bento、glassmorphism）只适合营销面，不适合作为临床工作台基线。
 
@@ -12,7 +12,7 @@
 
 - 技术栈：shadcn 式复制粘贴组件 + Tailwind + 语义 CSS 变量 token，业务组件只消费语义 token、不写 Tailwind 色阶；token owner 是 `packages/ui/src/styles.css`（[design.md](../ui/design.md)）。
 - 双 React 版本：DSH 宿主锁定 React 18.3.1，standalone Web 使用 React 19.2，共享代码只用两版本共有 API（[根 AGENTS.md](../../AGENTS.md)）。
-- DSH Surface 经 ShadowRoot portal 挂载，有单文件 lazy-CJS 产物体积预算，宿主拥有侧栏、主题、locale 与 colorScheme 所有权（[医生工作台规格](../spec/2026-10-19-ai-native-doctor-workspace.md) 验收 A6–A8、[Agent 集成合同](../architecture/agent-integration.md)）。
+- DSH Surface 经 ShadowRoot portal 挂载，有单文件 lazy-CJS 产物体积预算，宿主拥有侧栏、主题、locale 与 colorScheme 所有权（[医生工作台需求（Issue #236）](https://github.com/CaiZongyuan/clinmesh/issues/236) 验收 A6–A8、[Agent 集成合同](../architecture/agent-integration.md)）。
 - 中文为主（zh-CN/en-US 双语），提供标准/较大/大三档字号偏好（100% / 112.5% / 125%），全局字距 0，日期金额检验值用等宽数字（[design.md](../ui/design.md)）。
 - 九类岗位共享高密度事务底座：处方明细、检验结果、费用账单、队列表格；现行六原则是"安静的密度、表面优先于阴影、动作紧邻对象、渐进展开、工作区连续性、语义色克制"（[design.md](../ui/design.md)）。
 - 浅深两主题同等成立，DSH 面随宿主 colorScheme 切换（[design.md](../ui/design.md)）。
@@ -112,7 +112,7 @@
 
 ### 项目内既有 AI 原生实践
 
-事实：现行实现已包含一套 AI 原生语言——医生工作台三栏（队列/病例/建议栈）、DSH 面会话列与队列折叠卡片、`--clinmesh-glow` 环绕柔光、建议栈数据来自确定性服务（[规格](../spec/2026-10-19-ai-native-doctor-workspace.md) A1–A9、[design.md](../ui/design.md)）。这些是已验收事实；全量重构可以延续、收敛或替换它（用户 2026-10-22 已确认不作为既定基线）。
+事实：现行实现已包含一套 AI 原生语言——医生工作台三栏（队列/病例/建议栈）、DSH 面会话列与队列折叠卡片、`--clinmesh-glow` 环绕柔光、建议栈数据来自确定性服务（[Issue #236](https://github.com/CaiZongyuan/clinmesh/issues/236) A1–A9、[design.md](../ui/design.md)）。这些是已验收事实；全量重构可以延续、收敛或替换它（用户 2026-10-22 已确认不作为既定基线）。
 
 chat-first 界面模式（Claude、ChatGPT、Linear 会话面板等）的形态为产品常识级观察，无一手设计文档来源，本文不作为证据（未核实）。
 

@@ -8,7 +8,7 @@ Status: implemented
 
 病历字段持续显示“评估/处置/随访尚未记录”等待补充提示，即使不阻止保存，也会给正常问诊增加重复提醒。“查看依据”又在每条问题旁增加操作入口，与医生要求自动写入、发现错误后直接修改正文的使用方式不符。
 
-本决策取代[仅提示与直接编辑决策](2026-10-18-advisory-quality-without-confirmation.md)中保留可选依据入口的取舍，并收窄[原质控决策](2026-10-15-doctor-document-quality-control.md)的界面展示范围。当前验收合同由[质控规格](../../../../docs/spec/2026-10-15-doctor-document-quality-control.md)拥有。
+本决策取代[仅提示与直接编辑决策](2026-10-18-advisory-quality-without-confirmation.md)中保留可选依据入口的取舍，并收窄[原质控决策](2026-10-15-doctor-document-quality-control.md)的界面展示范围。当前验收合同见 [质控需求（Issue #178）](https://github.com/CaiZongyuan/clinmesh/issues/178)。
 
 ## Decision
 

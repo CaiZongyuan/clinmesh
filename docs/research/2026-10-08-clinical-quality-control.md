@@ -2,7 +2,7 @@
 
 ## 范围与证据
 
-核验日期：2026-10-08。代码基线：`4a3e1cf065f086f4b1aeca572272f25cb1a6d7c2`。本文为医生 Agent 规划提供输入，不定义当前产品行为，也不替代[医生 Agent 助手规格](../spec/2026-10-08-doctor-agent-assistant.md)。当前行为以[系统架构](../architecture.md)和下面引用的实现为准。
+核验日期：2026-10-08。代码基线：`4a3e1cf065f086f4b1aeca572272f25cb1a6d7c2`。本文为医生 Agent 规划提供输入，不定义当前产品行为，也不替代[医生 Agent 助手需求（Issue #175）](https://github.com/CaiZongyuan/clinmesh/issues/175)。当前行为以[系统架构](../architecture.md)和下面引用的实现为准。
 
 核验范围为当前门诊流程的完诊门禁、结构化病历签署、诊断确认和处方校验。证据来自仓库源码与现有测试；本轮未运行业务测试，不把测试文件存在描述为本轮测试通过。本地没有 `references/` 研究输入，本轮没有取得可直接引用的临床质控官方标准，因此下文的内容质控例子仅用于讨论产品范围，不是监管要求、临床阈值或已实现检查。
 
@@ -36,7 +36,7 @@
 
 ## 与已批准自动记录方案的关系
 
-既有已批准的[问诊病史自动记录规格](https://github.com/CaiZongyuan/clinmesh/blob/4c947b325315d233b355dc19baaa843c54cc1406/docs/spec/2026-10-08-consultation-auto-record.md)和[设计记录](https://github.com/CaiZongyuan/clinmesh/blob/4c947b325315d233b355dc19baaa843c54cc1406/.agents/notes/proposed/architecture/2026-10-08-consultation-auto-record.md)已明确：ClinMesh 编排提取、来源校验、增量合并与共享 Command，DSH 提供辅助模型能力。其来源是已保存的 Consultation Record，范围限于患者自述的主诉、现病史和既往史，排除整个 DSH Session、Assistant reasoning 和隐藏病例事实。全病历扩展应继承局部人工保护、可识别新增提示、来源与撤销、历史首次补录以及签署冻结的合同；新增质控不能代替写入前的来源校验，也不应重复建立已有事实冲突的处理队列。规格批准和设计记录存在均不证明功能已经实施。
+既有已批准的[问诊病史自动记录需求（Issue #166）](https://github.com/CaiZongyuan/clinmesh/issues/166)和[设计记录](https://github.com/CaiZongyuan/clinmesh/blob/4c947b325315d233b355dc19baaa843c54cc1406/.agents/notes/proposed/architecture/2026-10-08-consultation-auto-record.md)已明确：ClinMesh 编排提取、来源校验、增量合并与共享 Command，DSH 提供辅助模型能力。其来源是已保存的 Consultation Record，范围限于患者自述的主诉、现病史和既往史，排除整个 DSH Session、Assistant reasoning 和隐藏病例事实。全病历扩展应继承局部人工保护、可识别新增提示、来源与撤销、历史首次补录以及签署冻结的合同；新增质控不能代替写入前的来源校验，也不应重复建立已有事实冲突的处理队列。规格批准和设计记录存在均不证明功能已经实施。
 
 ## 尚待产品决定
 

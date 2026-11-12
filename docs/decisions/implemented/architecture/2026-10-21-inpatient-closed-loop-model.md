@@ -12,7 +12,7 @@ Status: implemented
 
 ## Decision
 
-需求与验收由[住院闭环规格](../../../spec/2026-10-20-inpatient-closed-loop.md)拥有；本 Note 记录其架构取舍的动机与后果。
+需求与验收见 [住院闭环需求（Issue #245）](https://github.com/CaiZongyuan/clinmesh/issues/245)；本 Note 记录其架构取舍的动机与后果。
 
 - 分层状态模型：`Encounter.status` 只表达 FHIR R5 标准生命周期；住院行政状态使用有明确取值约束的扩展字段与独立任务表达（入科、转科、待出院、已出区、待清床、召回），关键操作全程生成审计记录，行政状态不反向写入标准生命周期取值。
 - 床位所有权是领域互斥事实：床位同一时刻只被一次有效住院占用，再次分配返回业务冲突；转床与换床以原子命令完成，不产生中间占用状态。`Encounter.location` 仅作为互操作投影，不参与所有权判断。

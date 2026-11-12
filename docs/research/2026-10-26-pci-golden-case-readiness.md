@@ -1,6 +1,6 @@
 # PCI 黄金病例端到端演示就绪度核查
 
-核查日期：2026-10-26。当前主分支基线为 `91f3cce7`；另只读核对 PR [#308](https://github.com/CaiZongyuan/clinmesh/pull/308) 的精确 head `ed83da0388c6e039f1c81d7918321289ad2e3ef3` 与本地 `issue-279-pci-acceptance@dc2aebec`。未合入分支的能力不计入当前主分支可用能力。本记录是带基线的源码核查，不替代[总体规格](../spec/2026-10-15-drg-prescription-budget.md)、[临床流程](../architecture/clinical-workflows.md)或[DRG 合同](../architecture/drg-grouping.md)。未读取患者明细、影像像素或运行库；未运行真实模型或压测。
+核查日期：2026-10-26。当前主分支基线为 `91f3cce7`；另只读核对 PR [#308](https://github.com/CaiZongyuan/clinmesh/pull/308) 的精确 head `ed83da0388c6e039f1c81d7918321289ad2e3ef3` 与本地 `issue-279-pci-acceptance@dc2aebec`。未合入分支的能力不计入当前主分支可用能力。本记录是带基线的源码核查，不替代[Issue #225](https://github.com/CaiZongyuan/clinmesh/issues/225)、[临床流程](../architecture/clinical-workflows.md)或[DRG 合同](../architecture/drg-grouping.md)。未读取患者明细、影像像素或运行库；未运行真实模型或压测。
 
 ## 就绪度结论
 
@@ -17,7 +17,7 @@ Issue正文还存在未随#305关闭更新的依赖描述，本表按本次API�
 
 ## 演示范围与完成口径
 
-既定目标是一例非急诊、无复杂并发症的冠心病患者：评估入院、冠脉造影、实际植入一枚支架、术后用药、稳定出区、费用结清及清床、病案审核归档、冻结 DRG 分组及医保岗模拟核定。总体规格还要求在同一次住院演示收退款未知恢复、归档后的受控财务更正与相关医保重结算，另外回归心衰、肺炎与冻结历史；见[总体规格](../spec/2026-10-15-drg-prescription-budget.md)。
+既定目标是一例非急诊、无复杂并发症的冠心病患者：评估入院、冠脉造影、实际植入一枚支架、术后用药、稳定出区、费用结清及清床、病案审核归档、冻结 DRG 分组及医保岗模拟核定。总体规格还要求在同一次住院演示收退款未知恢复、归档后的受控财务更正与相关医保重结算，另外回归心衰、肺炎与冻结历史；见[Issue #225](https://github.com/CaiZongyuan/clinmesh/issues/225)。
 
 “黄金病例”至少应有固定版本底稿、可重复建立的病例来源与就诊、预期临床及账务事实、独立分组预期和真实岗位验收证据。现有 Scenario 合同虽然允许 `golden`，内置可安装蓝图只有发热门诊的 candidate/density，初始安装仍选 candidate，不能仅把现有患者改名就视为已安装 PCI 黄金病例。来源：[蓝图](../../apps/server/src/application/scenario-service.ts#L128)、[初始安装](../../apps/server/src/application/scenario-service.ts#L321)。
 
@@ -32,7 +32,7 @@ Issue正文还存在未随#305关闭更新的依赖描述，本表按本次API�
 | 检验/检查 | 住院目录要求开展条件、正数且明确的住院价目；申请、送检、报告和签收有独立流程 | “参考库有检验概念”不等于本院已可开，也不等于已有本次报告。[目录与申请](../../apps/server/src/application/inpatient-investigations.ts#L44) |
 | 病案 | 首页收集正式诊断、已实施操作、出区、费用及来源版本；主操作必须显式选定，当前修订审核通过、结算及清床后才能归档 | 可以复用现有审核归档；不能直接插入孤立首页或用术式申请替代实际操作。[来源](../../apps/server/src/application/inpatient-records.ts#L27)、[审核/归档](../../apps/server/src/application/inpatient-records.ts#L113) |
 
-主分支的 231 条心血管参考耗材不构成可执行 PCI 材料套装。按归一化 JSON 直接聚合，52 条可收费记录全部属于起搏类；179 条冠脉记录全部缺计价单位，服务端明确拒绝执行。原有两项通用合成耗材是缝合材料与导管，也没有可直接替代的冠脉支架、球囊、导丝。来源：[材料读取及启用规则](../../apps/server/src/application/scenario-data/cardiovascular-materials.ts#L45)、[缺单位拒绝](../../apps/server/src/application/inpatient-surgery.ts#L119)、[已实现规格](../spec/2026-10-22-cardiovascular-surgical-materials.md)。
+主分支的 231 条心血管参考耗材不构成可执行 PCI 材料套装。按归一化 JSON 直接聚合，52 条可收费记录全部属于起搏类；179 条冠脉记录全部缺计价单位，服务端明确拒绝执行。原有两项通用合成耗材是缝合材料与导管，也没有可直接替代的冠脉支架、球囊、导丝。来源：[材料读取及启用规则](../../apps/server/src/application/scenario-data/cardiovascular-materials.ts#L45)、[缺单位拒绝](../../apps/server/src/application/inpatient-surgery.ts#L119)、[PR #287](https://github.com/CaiZongyuan/clinmesh/pull/287)。
 
 | 来源类别 | 条数 | 单位明确、可收费 | 缺单位、不可收费 |
 | --- | ---: | ---: | ---: |
@@ -56,7 +56,7 @@ Issue正文还存在未随#305关闭更新的依赖描述，本表按本次API�
 | 九项检验 | 白细胞、血红蛋白、血小板、肌酐、INR、ALT、AST、钾、钠；LOINC、标本、单位、合成区间与住院价目 | 以已绑定来源生成当前就诊的正式报告并签收；历史和底稿值不能冒充此次实施。[检验定义](https://github.com/CaiZongyuan/clinmesh/blob/ed83da0388c6e039f1c81d7918321289ad2e3ef3/apps/server/src/application/scenario-data/pci-data.ts#L34) |
 | 四种冠脉耗材 | 独立合成院内导丝、导引导管、预扩球囊、药物洗脱支架；沿用来源金额，合成规格/计价单位分别保存 | 使用新合成院内 ID 形成预留与实际使用；保留原表缺单位事实，不覆盖179条原来源。[材料定义](https://github.com/CaiZongyuan/clinmesh/blob/ed83da0388c6e039f1c81d7918321289ad2e3ef3/apps/server/src/application/scenario-data/pci-data.ts#L67) |
 | 编码目标与参数 | 临床主诊断 `I25.103`，造影 `88.5500`、支架 `36.0700`；目标 `FM39`；独立合成基础费率500000分、权重24000bp，即目标病组模拟支付1200000分（12000元） | v2完整程序对实际主次诊断和全部实际操作重新分组，独立核对后由既有核定算法消费参数；`target-only`不是计算结果。[目标](https://github.com/CaiZongyuan/clinmesh/blob/ed83da0388c6e039f1c81d7918321289ad2e3ef3/apps/server/src/application/scenario-data/pci-data.ts#L55)、[参数](https://github.com/CaiZongyuan/clinmesh/blob/ed83da0388c6e039f1c81d7918321289ad2e3ef3/apps/server/src/application/scenario-data/pci-drg-payment-parameters.ts#L1) |
-| 目录录入 | 共享目录搜索、缺项说明、医生填写本次合法用量和精确换算，沿用原医嘱/发药/计费 Command | 与 #279 的工作台和推演指纹集成后，验证两侧剂量合同、旧回执和并发失效。[规格](https://github.com/CaiZongyuan/clinmesh/blob/ed83da0388c6e039f1c81d7918321289ad2e3ef3/docs/spec/2026-10-25-inpatient-shared-catalog-pci.md) |
+| 目录录入 | 共享目录搜索、缺项说明、医生填写本次合法用量和精确换算，沿用原医嘱/发药/计费 Command | 与 #279 的工作台和推演指纹集成后，验证两侧剂量合同、旧回执和并发失效。[Issue #303](https://github.com/CaiZongyuan/clinmesh/issues/303) |
 
 该 PR 的 `inpatient.pci-data.prepare` 是管理员补目录/库存的幂等动作，显式不创建患者、门诊、住院、挂号费用、正式诊断、手术、归档或核定；来源：[prepare实现](https://github.com/CaiZongyuan/clinmesh/blob/ed83da0388c6e039f1c81d7918321289ad2e3ef3/apps/server/src/application/inpatient-pci-data.ts#L66)、[数据包边界](https://github.com/CaiZongyuan/clinmesh/blob/ed83da0388c6e039f1c81d7918321289ad2e3ef3/apps/server/src/application/scenario-data/pci-data.ts#L88)。因此 #303 合入后仍不能直接宣布完整 PCI 演示已打通。
 
@@ -116,7 +116,7 @@ Issue正文还存在未随#305关闭更新的依赖描述，本表按本次API�
 | 收费员 | 患者基金、账户、现金与预交金/补退分别核对；首次未知资金阻断财务完成和清床；归档后更正与首次结算分开展示 |
 | CLI/Agent | 复用已有[Operation Catalog](../../packages/contracts/src/his-operations.ts#L2615)及[住院Skill](../../skills/clinmesh-inpatient/SKILL.md#L376)；新增预览、指纹或错误合同同步Catalog/Skill/示例漂移测试，验证context binding、人工审阅与receipt恢复 |
 
-本地#279已有DRG医生页面、医保办页面及专项Playwright E2E，可复用；其浏览器fixture仍用`I10.x09→RA15`的合成小规则，不能替代完整PCI数据和完整v2规则的端到端证据。该分支还已有`apps/dsh-web/src/client/inpatient-drg.browser.test.ts`，覆盖React 18/19 ShadowRoot内医嘱、耗材预留与医保核定审阅的焦点、窄屏、取消及提交，应在最终集成版本适配并回归。本轮未查到原生DSH PCI整链smoke，实际DSH岗位入口证据仍需按[总体测试要求](../spec/2026-10-15-drg-prescription-budget.md#测试策略)补齐；CLI/Agent只验证适配边界，不重复所有业务矩阵。
+本地#279已有DRG医生页面、医保办页面及专项Playwright E2E，可复用；其浏览器fixture仍用`I10.x09→RA15`的合成小规则，不能替代完整PCI数据和完整v2规则的端到端证据。该分支还已有`apps/dsh-web/src/client/inpatient-drg.browser.test.ts`，覆盖React 18/19 ShadowRoot内医嘱、耗材预留与医保核定审阅的焦点、窄屏、取消及提交，应在最终集成版本适配并回归。本轮未查到原生DSH PCI整链smoke，实际DSH岗位入口证据仍需按[Issue #225](https://github.com/CaiZongyuan/clinmesh/issues/225)补齐；CLI/Agent只验证适配边界，不重复所有业务矩阵。
 
 ## 建议的集成顺序与最终验收
 
@@ -131,7 +131,7 @@ Issue正文还存在未随#305关闭更新的依赖描述，本表按本次API�
 9. 同一归档住院追加一笔费用更正、医保补偿/重结算和关联原款退款；退款未知在重启后恢复，旧病案、首次结算及清床不回退，其他就诊的账户和年度累计不被覆盖。
 10. 在同一最终集成提交保留公开HTTP/临时SQLite证据、standalone Web真实岗位旅程、受影响React 18/19合同、DSH岗位入口与CLI适配证据；另回归门诊、心衰、旧肺炎、冻结历史、越岗、并发、迟到和缺参。用户要求演示媒体时，再绑定精确提交录制WebM。
 
-该范围不要求补齐全院目录、全部病组支付参数、完整手术排班/麻醉设备/供应链、真实医保接入或完整成本会计；首例及其辅助回归用到的项目应完整，其他明确缺项如实展示。依据：[总体范围外](../spec/2026-10-15-drg-prescription-budget.md#范围外)及[PCI数据范围外](https://github.com/CaiZongyuan/clinmesh/blob/ed83da0388c6e039f1c81d7918321289ad2e3ef3/docs/spec/2026-10-25-inpatient-shared-catalog-pci.md#范围外)。
+该范围不要求补齐全院目录、全部病组支付参数、完整手术排班/麻醉设备/供应链、真实医保接入或完整成本会计；首例及其辅助回归用到的项目应完整，其他明确缺项如实展示。依据：[Issue #225](https://github.com/CaiZongyuan/clinmesh/issues/225)及[PCI数据范围外（Issue #303）](https://github.com/CaiZongyuan/clinmesh/issues/303)。
 
 ## 本轮验证范围
 

@@ -150,7 +150,7 @@
 
 - 合并 Command 回执与 Query 缓存前，先确认版本号覆盖的事实范围。记录控制版本不随后台进度、编辑归属或显式保存推进，同版本的迟到控制回执不能整块覆盖已经读取的新状态。回归组合覆盖回执延迟、期间读取新状态、后续读取失败及切换病例后返回，并检查显式保存的空字段是否被旧预填恢复。
 
-- 排查 Agent 代问后病历未更新时，用 Tool 回执的 `patientTurn.id` 关联实际病例、记录任务与增量，并对照控制 Command 的时间；先确认人工提问和 Agent 提问是否发生在同一病例及相同记录状态。`outbox_event.status=completed` 只证明事件已结束，病史整理可能已经失败，须同时核对 `consultation_recording_job` 和失败 Command。暂停会重置未完成任务的当前错误码，既往失败应从 Command 记录追溯。耗时诊断同时核对排队、outbox 的真实创建／完成时间、尝试次数和失败回执；患者来源的 `recorded_at` 可能是虚拟时间，不能据此计算真实等待，后续来源的事件也可能直到前一任务结束才创建。启用、补录与恢复合同见[问诊自动记录规格](../spec/2026-10-08-consultation-auto-record.md)。
+- 排查 Agent 代问后病历未更新时，用 Tool 回执的 `patientTurn.id` 关联实际病例、记录任务与增量，并对照控制 Command 的时间；先确认人工提问和 Agent 提问是否发生在同一病例及相同记录状态。`outbox_event.status=completed` 只证明事件已结束，病史整理可能已经失败，须同时核对 `consultation_recording_job` 和失败 Command。暂停会重置未完成任务的当前错误码，既往失败应从 Command 记录追溯。耗时诊断同时核对排队、outbox 的真实创建／完成时间、尝试次数和失败回执；患者来源的 `recorded_at` 可能是虚拟时间，不能据此计算真实等待，后续来源的事件也可能直到前一任务结束才创建。启用、补录与恢复合同见[临床业务流程](../architecture/clinical-workflows.md#81-门诊闭环)与[记录恢复决策](../decisions/implemented/architecture/2026-10-08-consultation-recording-recovery.md)。
 
 ## 模型、来源与后台任务
 

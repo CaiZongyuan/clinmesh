@@ -1,6 +1,6 @@
 # PCI 演示环境的完整 DRG 包核验
 
-核验日期：2026-10-27。需求为 [#319](https://github.com/CaiZongyuan/clinmesh/issues/319) 及[补充规格 T01](../spec/2026-10-27-pci-golden-demo-readiness.md#t01演示环境的-drg-启用)；业务实现基线为 `80c155e3ce9071a849b524f5ce939d66e966c348`。本记录保留固定来源和实际检查证据；正常操作说明归[本机演示部署](../../deployment/drg/README.md)，审核记录为[固定包审核](../../deployment/drg/pci-demo-review.json)。
+核验日期：2026-10-27。需求为 [#319](https://github.com/CaiZongyuan/clinmesh/issues/319) 及[补充规格 T01（Issue #225）](https://github.com/CaiZongyuan/clinmesh/issues/225)；业务实现基线为 `80c155e3ce9071a849b524f5ce939d66e966c348`。本记录保留固定来源和实际检查证据；正常操作说明归[本机演示部署](../../deployment/drg/README.md)，审核记录为[固定包审核](../../deployment/drg/pci-demo-review.json)。
 
 ## 来源用途
 

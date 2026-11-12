@@ -1,6 +1,6 @@
 # UI/UX 现状审计：从零重构的事实基础
 
-研究日期：2026-10-29。范围：standalone Web（`apps/web`）、DSH Surface（`apps/dsh-web`）、共享包 `packages/ui` 与 `packages/views`、Desktop 与 Mobile 壳，以及仓库内既有设计材料。证据以当前工作区代码为一手来源，引用格式为 `path:line`；统计来自本文末尾列出的只读命令。本文不定义当前行为，也不构成实施授权；当前 UI 合同以 [UI 设计合同](../ui/design.md) 和[跨端前端架构](../frontend-architecture.md)为准，需求与验收以[规格索引](../spec/README.md)为准。
+研究日期：2026-10-29。范围：standalone Web（`apps/web`）、DSH Surface（`apps/dsh-web`）、共享包 `packages/ui` 与 `packages/views`、Desktop 与 Mobile 壳，以及仓库内既有设计材料。证据以当前工作区代码为一手来源，引用格式为 `path:line`；统计来自本文末尾列出的只读命令。本文不定义当前行为，也不构成实施授权；当前 UI 合同以 [UI 设计合同](../ui/design.md) 和[跨端前端架构](../frontend-architecture.md)为准，正式需求与验收以[Issue 规则](../agents/issue-tracker.md)为准。
 
 用户已决定 UI/UX 重构从零开始，不以 `design/` 七步法产物和 `design-preview/` 候选作为基线。本文因此把材料分为三类：工程硬约束（重来也必须遵守）、现行视觉与交互惯例（重来可以推翻）、既有设计材料（只作参考输入）。外部风格与 HIS 模式证据由[HIS UI/UX 一手参考](his-ui-ux-references.md)、[现代专业 UI 参考](modern-ui-design-references.md)和[UI 设计风格选型研究](2026-10-22-ui-design-styles.md)拥有，本文不重复。
 
@@ -13,7 +13,7 @@
 3. 事实：浅色主题下语义色作为前景文字时对比度不足：`warning` 2.89:1、`success` 3.25:1、`info` 3.79:1、`destructive` 4.34:1（对 `#fdfdfe` 背景，WCAG 相对亮度公式计算，token 见 `packages/ui/src/styles.css:173-177`）；Badge 的 `success`/`info`/`destructive` 变体正是“同色浅底 + 同色文字”（`packages/ui/src/components/badge.tsx:14-22`）。这是现行 token 值的问题，属于可推翻的惯例。
 4. 事实：文案有三套并行机制：类型化字典 `workspace-i18n.ts`（1,984 行）、局部 `t(cn, en)` 辅助函数（12 个文件约 575 处）、内联 `zh ? … : …` 或 `locale === 'zh-CN' ? …` 三元式（755 处，最多的是 `doctor/doctor-recommendations.tsx` 72 处）。推断：从零重做时文案迁移量与组件重写量相当，需要单独决定。
 5. 事实：存在巨型组件。`DoctorCaseController` 是单个函数，跨 `doctor/doctor-case-controller.tsx:358-3118`（约 2,760 行），全文件 26 个 `useState`、41 处 `useQuery/useMutation`；`registrar-workspace.tsx` 757 行只有 3 个顶层函数。推断：“逐岗位重做”在医生工作台会先遇到拆分这个控制器的成本。
-6. 事实：Agent 能力依赖 DOM 钩子。`agent-action-feedback.tsx:70,136,155,220` 通过 `querySelector` 读取 `data-agent-consultation-message`、`[role="dialog"][data-agent-catalog]`、`data-agent-feedback-status`；源码共使用 15 种 `data-agent-*` 属性（`data-agent-catalog` 26 处、`data-agent-selection` 13 处）。这些属性、`DoctorCaseSection` 枚举和 Page Context 合同在[医生工作台规格](../spec/2026-10-19-ai-native-doctor-workspace.md)范围中明确“保持不变”。这是硬约束。
+6. 事实：Agent 能力依赖 DOM 钩子。`agent-action-feedback.tsx:70,136,155,220` 通过 `querySelector` 读取 `data-agent-consultation-message`、`[role="dialog"][data-agent-catalog]`、`data-agent-feedback-status`；源码共使用 15 种 `data-agent-*` 属性（`data-agent-catalog` 26 处、`data-agent-selection` 13 处）。这些属性、`DoctorCaseSection` 枚举和 Page Context 合同在[医生工作台需求（Issue #236）](https://github.com/CaiZongyuan/clinmesh/issues/236)范围中明确“保持不变”。这是硬约束。
 7. 事实：DSH 单文件产物已无体积余量。已提交预算为 5,000,000 字节（`git show HEAD:apps/dsh-web/src/verify-artifact.ts` 第 15 行；[预算 Note](../decisions/implemented/testing/2026-10-07-dsh-client-size-budget.md)），未提交的本地修改把门禁临时放宽到 5,200,000，注释记录实际产物为 5,065,297 字节（`apps/dsh-web/src/verify-artifact.ts:15-17`，该数值本次未重新构建核实）。推断：任何新增运行时依赖（动效库、图表库、组件库）都会直接触碰预算，需要先决定预算处置。
 8. 事实：浏览器测试以可访问名称和中文文案定位元素：`apps/web/e2e`（49 个 spec 与 28 个辅助文件）中 `getByRole` 1,747 处、`getByLabel` 472 处、`getByText` 283 处，DSH 浏览器合同（36 个 `*.browser.test.ts`）中 `getByRole` 741 处；`data-testid` 全仓只有 1 处。推断：保留语义角色和可访问名称的重做可以复用大部分测试；改动按钮文案、标签或页签名称会成批打断测试，文案也就成了事实上的测试合同。
 
@@ -180,7 +180,7 @@ i18n（事实）：语言只有 zh-CN / en-US。主字典 `workspace-i18n.ts` �
 | H6 | 单文件 lazy-CJS 产物 | 不生成动态 chunk，不打包第二份 React；预算 5,000,000 字节且当前已超出（核心结论第 7 条）；整套运行时组件库与大型依赖实际不可行 | [预算 Note](../decisions/implemented/testing/2026-10-07-dsh-client-size-budget.md)、[压缩 Note](../decisions/implemented/testing/2026-10-22-dsh-client-whitespace-compaction.md) |
 | H7 | 包依赖方向 | `ui` 不依赖 `core`、不含业务概念；`views` 不导入 Vite/路由/Electron；`contracts`/`core` 不读 DOM 与 `localStorage`；新共享抽象须已有两个实际消费者；`pnpm verify:boundaries` 校验 | [packages/AGENTS.md](../../packages/AGENTS.md) |
 | H8 | 状态所有权 | TanStack Query 独占服务端状态；Zustand 只存筛选、布局、草稿和临时选择；复杂状态变化走共享 Command，界面不复制状态机 | [根 AGENTS.md](../../AGENTS.md)、[跨端前端架构](../frontend-architecture.md#状态所有权) |
-| H9 | Agent 钩子与 Page Context | `data-agent-*` 属性、`DoctorCaseSection` 枚举、`data-agent-page-title`（`workspace-shell.tsx:470`）与 Page Context 注册由 Agent tools 和反馈读取；重做必须保留或在同一 diff 迁移 Tool、Skill 与漂移测试 | [医生工作台规格](../spec/2026-10-19-ai-native-doctor-workspace.md#范围)、[Agent 集成](../architecture/agent-integration.md) |
+| H9 | Agent 钩子与 Page Context | `data-agent-*` 属性、`DoctorCaseSection` 枚举、`data-agent-page-title`（`workspace-shell.tsx:470`）与 Page Context 注册由 Agent tools 和反馈读取；重做必须保留或在同一 diff 迁移 Tool、Skill 与漂移测试 | [医生工作台需求（Issue #236）](https://github.com/CaiZongyuan/clinmesh/issues/236)、[Agent 集成](../architecture/agent-integration.md) |
 | H10 | 写入恢复语义 | 结果未确认的写入保留原输入、预期版本和幂等键；会导航、支付、发药、退费的流程等服务端成功后才清理本地状态；界面需能表达 ambiguous 等未知结果 | [跨端前端架构](../frontend-architecture.md#web)、[住院写入恢复 Note](../decisions/implemented/bug-fix/2026-10-20-inpatient-command-intent-recovery.md) |
 | H11 | 合成数据与像素纪律 | 演示数据全部合成；Agent 开发验证不读取影像像素或截图；显示名称不加“合成”前缀 | [根 AGENTS.md](../../AGENTS.md)、[design.md](../ui/design.md#门诊医生工作台) |
 | H12 | 不虚构能力 | 界面不出现未实现能力的按钮；FHIR 只声明实际实现的能力 | [根 AGENTS.md](../../AGENTS.md) |
@@ -239,7 +239,7 @@ i18n（事实）：语言只有 zh-CN / en-US。主字典 `workspace-i18n.ts` �
 - [独立 Web 工作台 UI 评审观察](2026-10-19-workspace-ui-review.md)：8 项发现。深色主题缺陷已修复（见 A1）；内部数据暴露、枚举未映射、横幅与表格密度等发现本次未逐条复核现状。
 - [现代专业 UI 参考](modern-ui-design-references.md)：Linear、Grafana、shadcn 生态、Radix Colors、cmdk、TanStack Table、Base UI 等资产核验。仍有效。
 - [UI 设计风格选型研究](2026-10-22-ui-design-styles.md)：六类风格的一手来源与适配度；其“整套运行时组件库与 H2/H6 冲突”的结论与本文一致。
-- [AI 原生医生工作台规格](../spec/2026-10-19-ai-native-doctor-workspace.md)（implemented）：定义当前门诊三栏、建议栈、A6–A8 工程合同与 A11 三页签结构。从零重做会替代它的布局部分，A8 工程合同继续有效。
+- [AI 原生医生工作台需求（Issue #236）](https://github.com/CaiZongyuan/clinmesh/issues/236)（implemented）：定义当前门诊三栏、建议栈、A6–A8 工程合同与 A11 三页签结构。从零重做会替代它的布局部分，A8 工程合同继续有效。
 - 相关 Agent Note：[UI 合同与组件目录](../decisions/implemented/architecture/2026-08-26-clinical-ui-contract-and-catalog.md)、[开具工作区](../decisions/implemented/architecture/2026-10-19-clinical-order-workspace.md)、[建议栈与横幅进度](../decisions/implemented/architecture/2026-10-20-doctor-suggestion-stack-banner-progress.md)、[住院阶段工作台](../decisions/implemented/architecture/2026-10-21-inpatient-stage-workspace.md)、[Agent 柔光](../decisions/implemented/architecture/2026-10-07-agent-workspace-glow.md)、[字号偏好](../decisions/implemented/feature/2026-09-02-web-font-size-preference.md)。布局类 Note 在重做后需要标记替代；工程类 Note（H1–H6 引用的）继续有效。
 - `feature-inventory-2026-10-28.md`：按九个域列出的功能快照（194 issue / 145 PR / 46 份规格），开放项为 #145 服务启停、#225 门诊住院共享支付与 DRG、PCI 住院 Agent 线。可作为重做的功能覆盖清单。
 

@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-宿主侧栏的工作区与会话浏览占用分屏空间，但隐藏整个侧栏会丢失品牌、岗位和设置入口。正式需求见 [spec](../../../../docs/spec/2026-10-06-dsh-compact-sidebar-workspace-history.md)，执行跟踪见 [Issue #150](https://github.com/CaiZongyuan/clinmesh/issues/150)。
+宿主侧栏的工作区与会话浏览占用分屏空间，但隐藏整个侧栏会丢失品牌、岗位和设置入口。正式需求与执行跟踪见 [Issue #150](https://github.com/CaiZongyuan/clinmesh/issues/150)。
 
 ## Decision
 

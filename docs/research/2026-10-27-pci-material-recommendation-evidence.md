@@ -1,6 +1,6 @@
 # PCI 耗材推荐所需临床输入与证据边界
 
-核验日期：2026-10-27。代码基线：`84ae9e577fe1cd1ee46654de9147c7094f627835`，同时核对当前工作区相关合同与数据。本研究回答 PCI 具体耗材规格及预计数量的证据条件，不制定临床选型算法，也不构成正式实施要求。Agent 范围及参数取得方式由[PCI 住院 DRG Agent 规格](../spec/2026-10-27-inpatient-drg-agent.md)拥有，支付由[支付与 DRG 规格](../spec/2026-10-15-drg-prescription-budget.md)拥有，既有目录及病例数据分别由[心血管耗材规格](../spec/2026-10-22-cardiovascular-surgical-materials.md)和[共享目录与 PCI 规格](../spec/2026-10-25-inpatient-shared-catalog-pci.md)拥有。
+核验日期：2026-10-27。代码基线：`84ae9e577fe1cd1ee46654de9147c7094f627835`，同时核对当前工作区相关合同与数据。本研究回答 PCI 具体耗材规格及预计数量的证据条件，不制定临床选型算法，也不构成正式实施要求。Agent 范围及参数取得方式见 [PCI 住院 DRG Agent 需求（Issue #329）](https://github.com/CaiZongyuan/clinmesh/issues/329)，支付见 [支付与 DRG 需求（Issue #225）](https://github.com/CaiZongyuan/clinmesh/issues/225)，既有目录及病例数据分别由[心血管耗材需求（PR #287）](https://github.com/CaiZongyuan/clinmesh/pull/287)和[共享目录与 PCI 需求（Issue #303）](https://github.com/CaiZongyuan/clinmesh/issues/303)拥有。
 
 ## 研究结论
 
@@ -40,13 +40,13 @@
 
 ## 参数取得方式的证据要求
 
-手工确认录入与从报告提取后确认，都可以只处理文字与结构化数据，并保留单位、测量对象、来源报告及版本；当前产品选择由[正式规格](../spec/2026-10-27-inpatient-drg-agent.md#推荐依据与费用口径)维护。提取出的候选值不自动变成已确认临床事实。已有报告不包含某项值时，应保留缺项，不能从器械规格反推；报告中的测量含义或来源不明确时也需要人工核对。[S1][P2；研究建议]
+手工确认录入与从报告提取后确认，都可以只处理文字与结构化数据，并保留单位、测量对象、来源报告及版本；当前产品选择由[Issue #329](https://github.com/CaiZongyuan/clinmesh/issues/329)维护。提取出的候选值不自动变成已确认临床事实。已有报告不包含某项值时，应保留缺项，不能从器械规格反推；报告中的测量含义或来源不明确时也需要人工核对。[S1][P2；研究建议]
 
 ## 来源与核验限制
 
 - **[S1] 已读取的学会原文：** [CVIT 2021 专家共识出版页](https://link.springer.com/article/10.1007/s12928-021-00824-0)，重点核对 `#Sec3`、`#Sec5`、`#Sec6`、`#Sec8`、`#Sec9`、`#Sec10`、`#Sec12` 的文字和标题。既有[本地来源登记](../../apps/server/reference-data/local-guideline-sources.json)保存文献身份与许可，本文没有核验后续版本或把该共识当作特定器械 IFU。
 - **[P1] 已核对的项目源码：** [PCI 数据](../../apps/server/src/application/scenario-data/pci-data.ts)的 `caseDraft`、`materials` 与合成说明；[PCI 数据合同](../../packages/contracts/src/inpatient-pci-data.ts)的病例、规格和来源结构。
 - **[P2] 已核对的项目合同：** [住院手术合同](../../packages/contracts/src/inpatient-surgery.ts)的耗材来源、可用目录、申请和执行字段；未查询真实运行库，不据此断言所有自由文本中均不存在相关信息。
-- **[P3] 项目已有价格与目录归属：** [心血管耗材规格](../spec/2026-10-22-cardiovascular-surgical-materials.md)、[共享目录与 PCI 规格](../spec/2026-10-25-inpatient-shared-catalog-pci.md)、[心血管来源映射](../../apps/server/src/application/scenario-data/cardiovascular-materials.ts)。[冠心病资料适配评估](2026-10-26-coronary-guideline-folder-assessment.md)与[临床建议依据研究](2026-10-13-clinical-recommendation-guidelines.md)仅作为已有导航，未将其中未重新读取的外部结论标为本轮核验。
+- **[P3] 项目已有价格与目录归属：** [心血管耗材需求（PR #287）](https://github.com/CaiZongyuan/clinmesh/pull/287)、[共享目录与 PCI 需求（Issue #303）](https://github.com/CaiZongyuan/clinmesh/issues/303)、[心血管来源映射](../../apps/server/src/application/scenario-data/cardiovascular-materials.ts)。[冠心病资料适配评估](2026-10-26-coronary-guideline-folder-assessment.md)与[临床建议依据研究](2026-10-13-clinical-recommendation-guidelines.md)仅作为已有导航，未将其中未重新读取的外部结论标为本轮核验。
 
 本轮尝试的 FDA 历史标签 PDF 入口 `https://www.accessdata.fda.gov/cdrh_docs/pdf7/P070015c.pdf` 遇到 TLS 连接失败；Boston Scientific 的候选说明页面返回 404，均未取得正文，不作为临床证据或已核实的 IFU 字段示例。没有扩大为全量器械资料采集，没有核实本院具体产品的中国注册及当前适用版本，也没有形成具体产品选型阈值、数量算法或临床推荐金标准。未运行真实模型、服务、业务测试或影像分析。

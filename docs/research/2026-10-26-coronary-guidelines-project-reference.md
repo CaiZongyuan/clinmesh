@@ -68,24 +68,24 @@ ACC 当日出院共识明确其路径不适用于 STEMI/NSTEMI，要求术前条
 
 | 参考方向 | 已有承接能力 | 仍需核对或补齐的内容 | 项目证据 |
 | --- | --- | --- | --- |
-| 可追溯指南证据 | 来源模型已有发布机构、文献性质、版本、适用范围、URL、SHA-256、用途及状态；本地 SQLite 保存原文定位并全文检索 | 本次本地文件需要逐篇核对原始出版来源、正文可靠性、版本替代及集成用途；文件可读不等于已经获准集成，也不等于运行库已启用 | [来源模型](../../apps/server/src/application/guideline-corpus.ts)、[检索实现](../../apps/server/src/infrastructure/sqlite/guideline-corpus.ts)、[全文检索规格](../spec/2026-10-16-free-guideline-corpus.md) |
-| 病例相关诊疗建议 | 门诊建议读取当前授权病例、问诊、病历、正式报告、可见历史及真实院内目录；候选经独立核验，正文及来源变化会使旧结果失效 | 冠心病条款必须先成为可靠且允许使用的检索依据；现有医生建议入口不能直接被描述为完整住院 PCI 决策支持；检索命中不等于临床方案成立 | [门诊建议合同](../architecture/clinical-workflows.md#81-门诊闭环)、[建议输入](../../apps/server/src/application/doctor-recommendation-input.ts)、[建议规格](../spec/2026-10-13-doctor-guideline-recommendations.md) |
+| 可追溯指南证据 | 来源模型已有发布机构、文献性质、版本、适用范围、URL、SHA-256、用途及状态；本地 SQLite 保存原文定位并全文检索 | 本次本地文件需要逐篇核对原始出版来源、正文可靠性、版本替代及集成用途；文件可读不等于已经获准集成，也不等于运行库已启用 | [来源模型](../../apps/server/src/application/guideline-corpus.ts)、[检索实现](../../apps/server/src/infrastructure/sqlite/guideline-corpus.ts)、[全文检索交付（PR #221）](https://github.com/CaiZongyuan/clinmesh/pull/221) |
+| 病例相关诊疗建议 | 门诊建议读取当前授权病例、问诊、病历、正式报告、可见历史及真实院内目录；候选经独立核验，正文及来源变化会使旧结果失效 | 冠心病条款必须先成为可靠且允许使用的检索依据；现有医生建议入口不能直接被描述为完整住院 PCI 决策支持；检索命中不等于临床方案成立 | [门诊建议合同](../architecture/clinical-workflows.md#81-门诊闭环)、[建议输入](../../apps/server/src/application/doctor-recommendation-input.ts)、[建议需求（Issue #179）](https://github.com/CaiZongyuan/clinmesh/issues/179) |
 | 医嘱与临床事实 | 草稿、正式诊断、申请、处方、实际发药与给药各有独立事实；正式动作复用共享 Command、权限、预期版本、幂等和审计 | 指南的“推荐考虑”不能直接生成已确诊、已检查或已给药事实；药品剂量、频次、疗程、数量仍须有适用证据及当前院内产品映射 | [临床流程](../architecture/clinical-workflows.md)、[处方建议实现](../../apps/server/src/application/doctor-prescription-recommendations.ts)、[住院医嘱实现](../../apps/server/src/application/inpatient-orders.ts) |
 | PCI 及耗材 | 已有手术申请、术前核对、已签署知情同意确认、实际实施、材料使用和逐项计费；实际实施生成 Procedure，术后医嘱可引用本次实施 | 现有术前核对保存责任人、时间和说明，不能宣称已经逐条实现全部指南安全清单；指南列出的器械或操作不能自动变成本院已开展目录；现有耗材范围不含完整采购、库存或批号供应链 | [手术合同](../architecture/clinical-workflows.md#住院手术最小闭环)、[实施实现](../../apps/server/src/application/inpatient-surgery.ts)、[术式目录](../../apps/server/src/application/scenario-data/inpatient-surgery-catalog.ts) |
 | 合成病例与临床证据 | Case Truth 与普通医生/Agent 视图隔离，检查有独立申请、执行和固定结果快照，管理员可核对私有病例事实 | 指南用于设计合成病例及其允许观察路径；不能向普通 Agent 暴露诊断答案，也不能把底稿或既往来源结果直接当作本院本次报告 | [仿真合同](../architecture/simulation.md)、[检查流程](../architecture/clinical-workflows.md#87-检验检查与报告修订)、[领域词汇](../../CONTEXT.md) |
 | 时间线、复现与评价 | 有 Virtual Time、Epoch 隔离、Command Action Trace 和不可变 Case Revision 在新 Epoch 的重新物化 | 当前重放不是 command-log replay，没有通用 checkpoint、逐步 state hash、Evaluation Spec 或评分运行时；指南路径可先形成固定版本验收矩阵，不能写成已有自动临床评分能力 | [仿真合同](../architecture/simulation.md#104-确定性与故障注入)、[系统范围](../architecture/system.md#1-背景与目标) |
-| 文书质控 | 现有质控检查模板缺项、已知事实遗漏、不一致及 Agent 新增片段来源，并保留时间、否定、自述等限定 | 冠心病诊疗合理性、适应证、抗栓策略和病情演变属于新的临床评价范围，不能只增提示词就声称现有文书质控已覆盖 | [质控实现](../../apps/server/src/application/clinical-document-quality.ts)、[质控规格](../spec/2026-10-15-doctor-document-quality-control.md) |
+| 文书质控 | 现有质控检查模板缺项、已知事实遗漏、不一致及 Agent 新增片段来源，并保留时间、否定、自述等限定 | 冠心病诊疗合理性、适应证、抗栓策略和病情演变属于新的临床评价范围，不能只增提示词就声称现有文书质控已覆盖 | [质控实现](../../apps/server/src/application/clinical-document-quality.ts)、[质控需求（Issue #178）](https://github.com/CaiZongyuan/clinmesh/issues/178) |
 | DRG、费用与医保 | 完整条件分组消费正式主次诊断及实际操作，病案归档冻结来源与结果；患者医保待遇、现金交易和院方 DRG 模拟支付分开 | 临床指南不能决定收费标准、集采价、地方待遇或 DRG 支付参数；不能为命中目标病组而倒推临床诊断和操作 | [DRG 合同](../architecture/drg-grouping.md)、[住院病案与医保](../architecture/clinical-workflows.md#82-住院闭环) |
 
 ## 与当前 PCI 黄金病例工作的关系
 
 当前 PCI 黄金病例目标是非急诊、无复杂并发症、单枚支架的完整住院旅程。已有住院、手术、医嘱、资金、医保和病案内核可以复用；完整演示仍需病例来源物化、目录与规则接线和固定版本联合验收。具体缺口与未合入工作只由带基线的[PCI 就绪度核查](2026-10-26-pci-golden-case-readiness.md)拥有，本文不复制其任务状态。
 
-指南最适合为这条旅程补充“为什么做、何时做、何种条件下不做”的临床证据。技术闭环中的“造影、支架、术后用药都执行成功”只能证明系统接受这些操作；临床验收还应核对该合成病例是否具备适应证、风险因素和必要评估，是否存在应改变方案的信息，是否把计划与实际事实、病史与本次证据清楚区分。既定范围之外的急性心肌梗死、休克和机械并发症应作为后续独立 Scenario 设计输入，不能因为文件夹中有相关指南就把它们计入本次单枚支架演示能力。依据：[总体规格](../spec/2026-10-15-drg-prescription-budget.md)、[系统当前范围](../architecture/system.md#0-执行摘要)。
+指南最适合为这条旅程补充“为什么做、何时做、何种条件下不做”的临床证据。技术闭环中的“造影、支架、术后用药都执行成功”只能证明系统接受这些操作；临床验收还应核对该合成病例是否具备适应证、风险因素和必要评估，是否存在应改变方案的信息，是否把计划与实际事实、病史与本次证据清楚区分。既定范围之外的急性心肌梗死、休克和机械并发症应作为后续独立 Scenario 设计输入，不能因为文件夹中有相关指南就把它们计入本次单枚支架演示能力。依据：[Issue #225](https://github.com/CaiZongyuan/clinmesh/issues/225)、[系统当前范围](../architecture/system.md#0-执行摘要)。
 
 ## 建议的落地顺序
 
-1. **先整理证据，而后启用。** 对候选核心资料记录正式题名、机构、年份、文献性质、原始来源、哈希、物理页与印刷页映射、适用范围及用途状态；可靠原文和图表条件完整保留。当前源码已支持版本、定位和用途筛选，可复用现有指南语料通路；文件存在不表示运行库已启用，使用条件还需按下节逐篇核对。依据：[来源模型](../../apps/server/src/application/guideline-corpus.ts)、[全文检索规格](../spec/2026-10-16-free-guideline-corpus.md)。
+1. **先整理证据，而后启用。** 对候选核心资料记录正式题名、机构、年份、文献性质、原始来源、哈希、物理页与印刷页映射、适用范围及用途状态；可靠原文和图表条件完整保留。当前源码已支持版本、定位和用途筛选，可复用现有指南语料通路；文件存在不表示运行库已启用，使用条件还需按下节逐篇核对。依据：[来源模型](../../apps/server/src/application/guideline-corpus.ts)、[全文检索交付（PR #221）](https://github.com/CaiZongyuan/clinmesh/pull/221)。
 2. **优先补强既有非急诊单支架病例的临床底稿和验收矩阵。** 在固定合成事实下，为评估、操作选择、术前风险核对、术后观察、用药及出院交代分别列出适用条款、可见证据、允许动作和预期结果；证据不足时允许继续核实或保留不确定性。复用现有业务 Command 和岗位交接，不另建病例、费用状态机。依据：[PCI 就绪度核查](2026-10-26-pci-golden-case-readiness.md)、[临床流程](../architecture/clinical-workflows.md)。
 3. **再做可比较的病例分支。** 在主路径成立后，设计不适合直接 PCI、存在用药风险、检查证据变化或应转诊等合成分支，以验证 Agent 是否会改变行动；分支初始事实、揭示条件、虚拟时间及引用版本必须冻结，预期独立于产品输出。现有 Case Truth、固定快照和新 Epoch 重放是基础，不等于已经存在临床评分器。依据：[仿真合同](../architecture/simulation.md)、[测试策略](../testing.md)。
 4. **最后扩展急诊与长期管理。** 急性冠脉综合征时效路径、复杂抗栓、康复和长期随访需要新的业务范围及正式验收；先明确当前模块能表达哪些事实，再决定扩展字段、任务、时间或评价能力。后续非平凡流程或测试策略变化应形成正式规格与 Agent Note。依据：[系统范围](../architecture/system.md)、[工程开发](../agent-development.md#开发入口)。
