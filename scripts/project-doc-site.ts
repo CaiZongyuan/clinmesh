@@ -27,6 +27,147 @@ export function resolveRepositoryUrl(environment: NodeJS.ProcessEnv): string {
   return (environment.DOCS_REPOSITORY_URL ?? 'https://github.com/CaiZongyuan/clinmesh').replace(/\/$/, '')
 }
 
+export function slugifyHeading(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}\p{Pc}\-\s]/gu, '')
+    .replace(/\s/g, '-')
+}
+
+function headingText(node: Nodes): string {
+  if ('value' in node && typeof node.value === 'string') {
+    return node.type === 'html' ? '' : node.value
+  }
+  if ('children' in node) return node.children.map(headingText).join('')
+  return ''
+}
+
+const HTML_OPEN_TAG = /<([a-zA-Z][a-zA-Z0-9:-]*)(?:\s+((?:[^>"']|"[^"]*"|'[^']*')*))?\/?>/g
+const HTML_ATTRIBUTE = /([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
+const HTML_ATTR_CHAR_REF = /&(?:#(?:[xX]([0-9A-Fa-f]+)|([0-9]+));?|([A-Za-z][A-Za-z0-9]*)(;?))/g
+const LEADING_FRONTMATTER = /^---[ \t]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/
+
+const HTML_C1_REPLACEMENTS = new Map<number, number>([
+  [0x80, 0x20ac], [0x82, 0x201a], [0x83, 0x0192], [0x84, 0x201e],
+  [0x85, 0x2026], [0x86, 0x2020], [0x87, 0x2021], [0x88, 0x02c6],
+  [0x89, 0x2030], [0x8a, 0x0160], [0x8b, 0x2039], [0x8c, 0x0152],
+  [0x8e, 0x017d], [0x91, 0x2018], [0x92, 0x2019], [0x93, 0x201c],
+  [0x94, 0x201d], [0x95, 0x2022], [0x96, 0x2013], [0x97, 0x2014],
+  [0x98, 0x02dc], [0x99, 0x2122], [0x9a, 0x0161], [0x9b, 0x203a],
+  [0x9c, 0x0153], [0x9e, 0x017e], [0x9f, 0x0178],
+])
+
+const LEGACY_NAMED_ENTITIES = new Set([
+  'AElig', 'AMP', 'Aacute', 'Acirc', 'Agrave', 'Aring', 'Atilde', 'Auml',
+  'COPY', 'Ccedil', 'ETH', 'Eacute', 'Ecirc', 'Egrave', 'Euml', 'GT',
+  'Iacute', 'Icirc', 'Igrave', 'Iuml', 'LT', 'Ntilde', 'Oacute', 'Ocirc',
+  'Ograve', 'Oslash', 'Otilde', 'Ouml', 'QUOT', 'REG', 'THORN', 'Uacute',
+  'Ucirc', 'Ugrave', 'Uuml', 'Yacute', 'aacute', 'acirc', 'acute', 'aelig',
+  'agrave', 'amp', 'aring', 'atilde', 'auml', 'brvbar', 'ccedil', 'cedil',
+  'cent', 'copy', 'curren', 'deg', 'divide', 'eacute', 'ecirc', 'egrave',
+  'eth', 'euml', 'frac12', 'frac14', 'frac34', 'gt', 'iacute', 'icirc',
+  'iexcl', 'igrave', 'iquest', 'iuml', 'laquo', 'lt', 'macr', 'micro',
+  'middot', 'nbsp', 'not', 'ntilde', 'oacute', 'ocirc', 'ograve', 'ordf',
+  'ordm', 'oslash', 'otilde', 'ouml', 'para', 'plusmn', 'pound', 'quot',
+  'raquo', 'reg', 'sect', 'shy', 'sup1', 'sup2', 'sup3', 'szlig', 'thorn',
+  'times', 'uacute', 'ucirc', 'ugrave', 'uml', 'uuml', 'yacute', 'yen', 'yuml',
+])
+
+const NAMED_ENTITY_CACHE = new Map<string, string | undefined>()
+
+function decodeSemicolonNamedEntity(entity: string): string | undefined {
+  if (NAMED_ENTITY_CACHE.has(entity)) return NAMED_ENTITY_CACHE.get(entity)
+  const tree = fromMarkdown(`a${entity}b`)
+  const first = tree.children[0]
+  const text = first?.type === 'paragraph'
+    ? first.children.map(child => ('value' in child && typeof child.value === 'string' ? child.value : '')).join('').slice(1, -1)
+    : entity
+  const resolved = text === entity ? undefined : text
+  NAMED_ENTITY_CACHE.set(entity, resolved)
+  return resolved
+}
+
+function decodeNumericEntity(digits: string, base: 10 | 16): string {
+  let code = 0
+  for (const ch of digits) {
+    code = code * base + Number.parseInt(ch, base)
+    if (code > 0x110000) {
+      code = 0x110000
+      break
+    }
+  }
+  if (code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return '\ufffd'
+  return String.fromCodePoint(HTML_C1_REPLACEMENTS.get(code) ?? code)
+}
+
+function decodeHtmlAttribute(value: string): string {
+  if (!value.includes('&')) return value
+  return value.replace(
+    HTML_ATTR_CHAR_REF,
+    (match, hex: string | undefined, dec: string | undefined, name: string | undefined, semi: string | undefined, offset: number) => {
+      if (hex !== undefined) return decodeNumericEntity(hex, 16)
+      if (dec !== undefined) return decodeNumericEntity(dec, 10)
+      if (name !== undefined) {
+        if (semi === ';') return decodeSemicolonNamedEntity(`&${name};`) ?? match
+        if (value[offset + match.length] !== '=' && LEGACY_NAMED_ENTITIES.has(name)) {
+          return decodeSemicolonNamedEntity(`&${name};`) ?? match
+        }
+      }
+      return match
+    },
+  )
+}
+
+function collectHtmlAnchors(rawHtml: string, anchors: Set<string>): void {
+  const sanitized = rawHtml
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+  for (const tagMatch of sanitized.matchAll(HTML_OPEN_TAG)) {
+    const tagName = tagMatch[1]?.toLowerCase()
+    const attributes = tagMatch[2] ?? ''
+    for (const attrMatch of attributes.matchAll(HTML_ATTRIBUTE)) {
+      const attrName = attrMatch[1]?.toLowerCase()
+      if (attrName !== 'id' && !(tagName === 'a' && attrName === 'name')) continue
+      const rawValue = attrMatch[2] ?? attrMatch[3] ?? attrMatch[4]
+      if (rawValue === undefined) continue
+      const value = decodeHtmlAttribute(rawValue)
+      if (value !== '') anchors.add(value)
+    }
+  }
+}
+
+export function collectMarkdownAnchors(markdown: string): Set<string> {
+  const body = markdown.replace(LEADING_FRONTMATTER, '')
+  const tree = fromMarkdown(body, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] })
+  const anchors = new Set<string>()
+  const headingSlugs = new Set<string>()
+
+  const visit = (node: Nodes): void => {
+    if (node.type === 'html') {
+      collectHtmlAnchors(node.value, anchors)
+    }
+    if (node.type === 'heading') {
+      const base = slugifyHeading(headingText(node))
+      if (base !== '') {
+        let slug = base
+        let suffix = 1
+        while (headingSlugs.has(slug)) {
+          slug = `${base}-${suffix}`
+          suffix += 1
+        }
+        headingSlugs.add(slug)
+        anchors.add(slug)
+      }
+    }
+    if ('children' in node) {
+      for (const child of node.children) visit(child)
+    }
+  }
+  visit(tree)
+  return anchors
+}
+
 interface Replacement {
   start: number
   end: number

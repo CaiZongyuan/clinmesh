@@ -3,7 +3,7 @@ import type { ViteDevServer } from 'vite'
 import type { DefaultTheme } from 'vitepress'
 import { defineConfig } from 'vitepress'
 import { orderedPages, routeLink, type DocsSidebar } from '../docs.ts'
-import { docsSourceFiles, projectDocs } from '../../../scripts/project-doc-site.ts'
+import { docsSourceFiles, projectDocs, slugifyHeading } from '../../../scripts/project-doc-site.ts'
 
 projectDocs()
 
@@ -36,6 +36,11 @@ export default defineConfig({
   srcDir: '.generated',
   cacheDir: '.cache',
   outDir: '.dist',
+  markdown: {
+    anchor: {
+      slugify: slugifyHeading,
+    },
+  },
   themeConfig: {
     logo: '/clinmesh-mark.webp',
     nav: [

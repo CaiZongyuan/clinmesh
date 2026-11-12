@@ -21,7 +21,6 @@
 | `docs/imaging.md` | 放射检查的使用指南：各岗位操作步骤、界面状态含义和常见问题 |
 | `docs/pathology.md` | 病理切片会诊的使用指南：切片复核、病例准备、各岗位操作步骤和常见问题 |
 | `docs/pci-demo.md` | PCI 黄金病例从零跨岗位演示的使用指南 |
-| `docs/demo-architecture.md` | 首期 Demo 运行时、数据库与部署决策 |
 | `docs/agent-development.md` | Agent 参与工程开发的操作规范 |
 | `docs/testing.md` | 测试层级、场景和检查要求 |
 | `docs/templates/`、`docs/pull_request_template.md` | 项目开发模板；入口见 [开发模板](templates/README.md)，PR 与功能规格模板沿用 GitHub 支持的发现位置 |

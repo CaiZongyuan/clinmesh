@@ -74,7 +74,7 @@
 | 使用者 | 已有行为 | 主要缺口与边界 |
 | --- | --- | --- |
 | 内置诊疗建议模型 | 服务端从有权读取的当前病例及可见历史构造快照，将除人口学外的证据正文拼接为一次检索；生成请求得到本次建议类型、完整入选指南、选定病例资料与实际目录 | 检索发生在可选历史筛选之前，未把建议类型、当前临床问题或 ACS/CCS 阶段传给检索；生成过程中没有再搜索及展开条款的工具回合。来源：[快照与检索](../../apps/server/src/application/doctor-recommendations-service.ts#L179)、[模型输入](../../apps/server/src/application/doctor-recommendations-service.ts#L922) |
-| 外部 DSH/CLI Agent | 已有受控病例读取及业务操作；建议读取/生成明确排除在现有 CLI/Agent tool 授权外；没有独立指南 search/read 操作 | 需要评估新增窄范围只读能力，才能自主补查指南；不能把“内置模型收到过指南”解释为外部 Agent 已可搜索全文。来源：[操作排除项](../../packages/contracts/src/his-operations.ts#L3050)、[医生运行时说明](../../skills/clinmesh-doctor/references/clinical-workflows.md#L15)、[接入合同](../architecture/agent-integration.md) |
+| 外部 DSH/CLI Agent | 已有受控病例读取及业务操作；建议读取/生成明确排除在现有 CLI/Agent tool 授权外；没有独立指南 search/read 操作 | 需要评估新增窄范围只读能力，才能自主补查指南；不能把“内置模型收到过指南”解释为外部 Agent 已可搜索全文。来源：[操作排除项](../../packages/contracts/src/his-operations.ts#L3050)、[医生运行时说明](../../skills/clinmesh-doctor/references/clinical-workflows.md#recommendation-recovery)、[接入合同](../architecture/agent-integration.md) |
 
 当前确定性合同检查引用 ID 属于本轮输入；生成后的独立核验另行判断指南支持、病例支持、适用性、否定/时间/限定语、诊断主次及处方各字段，要求覆盖全部候选。因此现状不能概括成“只检查引用是否存在”。独立核验与生成使用同一个已绑定模型，独立的是请求和任务阶段；两者看到同一批检索指南，不能补救未召回的例外和反证。来源：[引用合同](../../packages/contracts/src/doctor-recommendations.ts#L132)、[核验提示](../../apps/server/src/application/doctor-recommendations-service.ts#L95)、[绑定模型](../../apps/server/src/application/doctor-recommendations-service.ts#L898)、[核验请求](../../apps/server/src/application/doctor-recommendations-service.ts#L1009)。
 

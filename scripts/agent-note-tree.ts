@@ -1,4 +1,4 @@
-import { globSync, readdirSync } from 'node:fs'
+import { existsSync, globSync, readdirSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
 
 export const agentNoteRoot = resolve(import.meta.dirname, '../docs/decisions')
@@ -13,11 +13,11 @@ export interface AgentNote {
   date: string
 }
 
-export function walkAgentNoteTree(): { notes: AgentNote[]; errors: string[] } {
+export function walkAgentNoteTree(rootDir = agentNoteRoot): { notes: AgentNote[]; errors: string[] } {
   const notes: AgentNote[] = []
   const errors: string[] = []
 
-  for (const entry of readdirSync(agentNoteRoot, { withFileTypes: true })) {
+  for (const entry of readdirSync(rootDir, { withFileTypes: true })) {
     if (entry.name === 'INDEX.md') errors.push('structure: INDEX.md is not allowed; browse or search the lifecycle tree')
     if (entry.isDirectory() && !(AGENT_NOTE_LIFECYCLES as readonly string[]).includes(entry.name)) {
       errors.push(`structure: ${entry.name}/ is not an Agent Note lifecycle`)
@@ -25,7 +25,20 @@ export function walkAgentNoteTree(): { notes: AgentNote[]; errors: string[] } {
   }
 
   for (const lifecycle of AGENT_NOTE_LIFECYCLES) {
-    const matches = globSync(`${lifecycle}/**/*.md`, { cwd: agentNoteRoot })
+    const lifecycleDir = resolve(rootDir, lifecycle)
+    if (existsSync(lifecycleDir)) {
+      for (const entry of readdirSync(lifecycleDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue
+        if (!(AGENT_NOTE_CLASSES as readonly string[]).includes(entry.name)) {
+          errors.push(`structure: ${lifecycle}/${entry.name}/ uses unknown class ${JSON.stringify(entry.name)}`)
+          continue
+        }
+        if (globSync('*.md', { cwd: resolve(lifecycleDir, entry.name) }).length === 0) {
+          errors.push(`structure: ${lifecycle}/${entry.name}/ is empty`)
+        }
+      }
+    }
+    const matches = globSync(`${lifecycle}/**/*.md`, { cwd: rootDir })
       .map(path => path.split(sep).join('/'))
       .sort()
     for (const match of matches) {

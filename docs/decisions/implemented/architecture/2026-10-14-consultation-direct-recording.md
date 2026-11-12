@@ -2,7 +2,7 @@
 
 Status: implemented
 
-同步语义核对、整轮自动重试和质量提示的当前边界由[增量记录决策](2026-10-15-low-latency-document-recording.md)补充或取代；本记录的其他来源与编辑保护理由继续适用。
+同步语义核对、整轮自动重试和质量提示的当前边界由[增量记录决策](2026-10-15-low-latency-document-recording.md)与[十字段统一来源直接记录](2026-10-15-unified-direct-document-recording.md)补充或取代；本记录的其他来源与编辑保护理由继续适用。
 
 ## Problem
 
@@ -22,7 +22,7 @@ Status: implemented
 
 旧控制与签署预览回执重放时校验并投影到当前 DTO，移除核对字段，把旧 pending 记录映射为被替代历史；原始回执与审计保持原值。公开新请求不接受旧确认参数，历史回执查询仍提供原证据。
 
-本决定取代[字段建议](2026-10-13-consultation-field-suggestions.md)的先确认再写入，以及[审阅与撤销](2026-10-10-consultation-history-review-undo.md)和[签署准备](2026-10-10-consultation-signing-preparation.md)中的病史人工核对；来源、片段归属和签署冻结仍有效。[独立病历字段](2026-10-14-clinical-document-fields.md)的分类和原件不可变约束继续适用。
+本决定取代[字段建议](2026-10-13-consultation-field-suggestions.md)的先确认再写入，以及[问诊病史增量](2026-10-08-consultation-history-increments.md)、[问诊病史归属](2026-10-08-consultation-history-ownership.md)、[审阅与撤销](2026-10-10-consultation-history-review-undo.md)和[签署准备](2026-10-10-consultation-signing-preparation.md)中的病史逐条审阅与人工核对；来源、片段归属和签署冻结仍有效。[独立病历字段](2026-10-14-clinical-document-fields.md)的分类和原件不可变约束继续适用。
 
 ## Alternatives considered
 

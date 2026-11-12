@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-既有五目录清洗包和 OpenDRG 快照具有可校验的文件身份，但使用条件、编码兼容、当前适用性和算法正确性尚未全部确认。直接导入已发布临床目录会让完整性核验被误认为业务启用。需求来自 [Issue #267](https://github.com/CaiZongyuan/clinmesh/issues/267) 及其[Issue #225](https://github.com/CaiZongyuan/clinmesh/issues/225)。
+既有五目录清洗包和 OpenDRG 快照具有可校验的文件身份，但使用条件、编码兼容、当前适用性和算法正确性尚未全部确认。直接导入已发布临床目录会让完整性核验被误认为业务启用。需求来自 [Issue #267](https://github.com/CaiZongyuan/clinmesh/issues/267) 及 [Issue #225](https://github.com/CaiZongyuan/clinmesh/issues/225)。
 
 ## Decision
 
@@ -12,7 +12,7 @@ Status: implemented
 
 ## Alternatives considered
 
-- 将整个旧 DRG 原型及其 prepared 查询迁入主分支：会把本票依赖绑到独立模拟业务和额外状态，超出资料前置范围。
+- 将整个旧 DRG 原型及其 prepared 查询迁入主分支：会把资料核对绑到独立模拟业务和额外状态，超出资料前置范围。
 - 直接发布成临床 Reference Release：会把来源文字通过、机器核验和业务适用性混为一个启用状态。
 - 只提交研究报告与哈希：维护者无法从现有公开运维及查询入口复核实际本地文件、重复执行和失败恢复。
 

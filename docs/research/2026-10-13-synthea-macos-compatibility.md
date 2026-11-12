@@ -1,5 +1,7 @@
 # Synthea 患者生成的 macOS 兼容性核验
 
+> 证据范围：2026-10-13 对 Synthea Provider 与中国化 localizer 镜像 manifest 的架构核验；现行患者生成部署要求归[部署指南](../deployment.md#6-synthea-患者生成)。
+
 核验日期：2026-10-13。仓库基线：`87783c4b9182a75a07bbb94e08dc5157e77cb750`。本记录核对当前镜像发行、Docker 官方平台能力与 ClinMesh 的运行合同，不定义新平台支持方案。尚未取得同事 MacBook 的芯片型号、Docker Desktop 配置、失败命令和实际错误，不能据此认定其个案根因。
 
 ## 已确定的结论

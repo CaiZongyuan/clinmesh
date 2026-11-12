@@ -4,7 +4,7 @@
 
 <a id="7-agent-适配器与能力边界"></a>
 
-## 7. Agent 适配器与能力边界
+## Agent 适配器与能力边界
 
 页面控制、结构化表单读取、真实执行反馈和人工审阅的详细行为见 [DSH 页面操作与视觉反馈](../agent-capabilities.md)。
 
@@ -14,7 +14,7 @@ ClinMesh Profile 通过 `apps/dsh-web/cordis.patch.yml` 声明业务 preset `cli
 
 <a id="71-surface-与-host-边界"></a>
 
-### 7.1 Surface 与 Host 边界
+### Surface 与 Host 边界
 
 `apps/dsh-web` 把完整 `apps/web` application 作为第二个 adapter：
 
@@ -31,7 +31,7 @@ ClinMesh Profile 通过 `apps/dsh-web/cordis.patch.yml` 声明业务 preset `cli
 
 <a id="72-page-context"></a>
 
-### 7.2 Page Context
+### Page Context
 
 浏览器提交由 `packages/contracts` 验证的 `PageContextClaim`，以及当前 DSH Session、Surface client ID 和单调递增的 client revision。Claim 只包含 view、active section、单个选择、草稿引用、加载/错误状态和受限搜索文本。Hono 从当前 session 重新解析 User Account、Actor、Practitioner Role、Workspace/Epoch、Scenario Run 和岗位允许 view，并在同一个 SQLite 写事务中重新读取 selection、Patient/Encounter 版本和资源状态，再签发五分钟 `PageContextSnapshot` 与不可伪造 token。旧请求晚于新 revision 到达时返回 superseded，不撤销较新的 context。
 
@@ -43,9 +43,9 @@ Claim 和 snapshot 不包含 DOM、Query cache、浏览器存储、任意页面 
 
 <a id="73-tool-目录与风险"></a>
 
-### 7.3 Tool 目录与风险
+### Tool 目录与风险
 
-`packages/contracts/src/agent.ts` 是 Tool 名称、operation、岗位、view、诊疗栏目、模式和风险的可执行目录，`agent-tool-input.ts` 拥有每项 operation 的完整输入 schema。每个岗位、view 与当前栏目动态获得不超过 32 个 Tools（DSH browser Tool broker 的单次注册上限）：通用读取/导航/真实聚焦，加上当前管理员、挂号、分诊、医生、收费或药房页面的窄动作。医生“接诊”页按当前诊疗栏目发布：目录中声明栏目的 Tool 只在 claim 的 active section 等于该栏目时进入 Page Context，Server 授权与 Surface 注册调用同一个 `agentToolsForContext`；栏目归属见 [DSH 页面操作](../agent-capabilities.md#医生诊疗栏目与-tool-发布)。管理员只能读取 Scenario Run、Provider 可用性和当前 generation job 状态；导航 enum 只包含当前岗位主页和共享设置页。
+`packages/contracts/src/agent.ts` 是 Tool 名称、operation、岗位、view、诊疗栏目、模式和风险的可执行目录，`agent-tool-input.ts` 拥有每项 operation 的完整输入 schema。每个岗位、view 与当前栏目动态获得不超过 32 个 Tools（DSH browser Tool broker 的单次注册上限）：通用读取/导航/真实聚焦，加上当前管理员、挂号、分诊、门诊医生、住院（住院医生、病区护士、收费员、病案人员）、收费或药房页面的窄动作。门诊医生“接诊”页与住院工作台分别按当前诊疗栏目或住院阶段发布：目录中声明栏目或阶段的 Tool 只在 claim 的 `activeSection` 匹配时进入 Page Context，Server 授权与 Surface 注册调用同一个 `agentToolsForContext`；栏目归属见 [DSH 页面操作](../agent-capabilities.md#医生诊疗栏目与-tool-发布)。管理员页面仅发布 Scenario Run、Provider 可用性与当前 generation job 状态的只读查询，以及触发原生二次确认框的 `scenario.reset.propose`（不直接执行重置写操作）；导航 enum 只包含当前岗位主页和共享设置页。
 
 报告更正 Tool 只在当前账户通过服务端 membership 仍持有 active administrator role 时进入 outpatient-doctor Page Context；普通医生即使面对可更正报告也不会取得该 operation。管理员账户可在 acting-doctor 页面准备更正，Page Context 的当前 Practitioner Role 必须继续匹配最终 Command receipt 与 Audit Event。
 
@@ -61,7 +61,7 @@ Claim 和 snapshot 不包含 DOM、Query cache、浏览器存储、任意页面 
 
 <a id="74-execution-proof-与调用记录"></a>
 
-### 7.4 Execution proof 与调用记录
+### Execution proof 与调用记录
 
 DSH Host 将受信医生 RPC 输入与 inbox、原生回合、Session header 和 `tool/call` 关联，在 `tools/pre-execute` 核对原请求目录、Tool 名及已记录输入，再捕获执行时绑定。Header 或 `source.kind === 'user'` 单独不能证明真实来源。只保留消息引用、正文 hash 和绑定元数据，不复制 transcript 或 reasoning，不修改 arguments；来源与许可状态有界且在结束、取消或卸载时清理。
 
@@ -81,7 +81,7 @@ Proof 协议为 `version: 3`，包括原请求绑定、原医生任务锚点与�
 
 <a id="75-人工审阅语义"></a>
 
-### 7.5 人工审阅语义
+### 人工审阅语义
 
 正式挂号、分诊、临床、支付、药房和 Scenario Command 始终由 ClinMesh 原生审阅框提交，最终 Actor 是登录人类，Agent 只记录为 proposal 来源。明确点击取消写入人类 `rejected` decision；批准执行既有 Command，并保留其 idempotency、expected version、preview token、审计和状态机语义。
 
@@ -91,18 +91,19 @@ Proof 协议为 `version: 3`，包括原请求绑定、原医生任务锚点与�
 
 Surface 隐藏、DSH Session/lease 失效、page scope、selection、资源版本、页面 revision 或 context ID 改变，以及 context/receipt 过期或 action 错误，都会关闭尚未决定的 review，并把 proposal 标记为 `stale`，不伪造人类拒绝。签名有效且明确 `ok:false` 的 completion 可以越过 receipt 到期或旧 Epoch 只执行这项清理；它不能关联 Command 或产生 Effect。decision gate 是批准的线性化点；gate 失败时不会调用 Command。Agent call 已失败或 stale 时不能留下仍可提交的孤立审阅框。拒绝、stale、冲突和取消都不自动重放，也不产生正式业务 Effect。
 
-### 7.6 内容与能力边界
+### 内容与能力边界
 
 病历、患者备注、术语 display、历史 Tool result、外部错误和模拟器消息都是不可信数据，不能改变 Tool catalog、岗位权限、page scope 或 Command 状态机。当前结果只返回完成动作所需的结构化可见事实，不返回 server prompt、secret、access token、reasoning 或仿真私有事实。
 
 共享 bridge secret 至少 32 bytes，只存在于 DSH Host 与 Hono 环境，不进入浏览器、日志、Tool result 或版本库。当前没有 MCP、Agent OAuth/SMART、自治 Agent Run、跨进程 DSH Session 恢复、Evaluation Spec、评分或 Agent 专用医院角色；这些能力不能从 React Surface 的存在推断出来。
+
 <a id="77-agent-cli-与-operation-catalog"></a>
 
-### 7.7 Agent CLI 与 Operation Catalog
+### Agent CLI 与 Operation Catalog
 
 `apps/cli` 发布可安装的 `clinmesh` 命令。它是现有 HTTP/FHIR adapter 的 schema 驱动消费者，不直接访问 Repository、SQLite 或业务状态机。模型 runner、AG-UI、MCP、Agent OAuth/SMART、Evaluation Spec 和评分入口仍不属于当前能力。
 
-### 7.8 HIS Operation Catalog
+### HIS Operation Catalog
 
 `packages/contracts/src/his-operations.ts` 导出的 `hisOperationCatalog` 是 CLI/Capability Grant 直接 HIS 操作面的唯一合同 owner。每项 operation 显式声明稳定 ID、版本、`cliPath`、`query/draft/preview/command` mode、输入/输出/错误 Zod schema、HTTP method/path adapter、唯一 handler owner、human/agent identity、岗位 allowlist、风险、幂等、expected version 与 preview token 要求；既有 Command 的持久 operation 名称不同时，Catalog 还保存 receipt adapter 名称。DSH 页面 Tools 由独立的 `agentToolCatalog` 拥有，并在当前人类 Session 内投影 UI action 与 proposal，不能作为 Capability Grant operation 使用。两个 Catalog 都不依赖 Hono、Node.js、环境变量或 handler。
 
@@ -110,7 +111,9 @@ CLI 命令树、`operations list/schema`、服务端 Agent route matching、Gran
 
 CLI 没有通用 invoke、任意 URL、method/path/body、SQL、JSON Patch、FHIR write 或 Bundle write。兼容组合 route 不进入命令树，Agent 使用独立 diagnosis、prescription、laboratory request、clinical document 和 Encounter Completion 生命周期。
 
-### 7.9 输入、输出与恢复
+<a id="79-输入输出与恢复"></a>
+
+### 输入、输出与恢复
 
 标量、ID、分页和查询条件使用 typed flags；嵌套临床输入使用 `--input @<workspace-file>` 或 `--input -`。文件路径必须留在当前 workspace，单次输入上限为 1 MiB，同一 operation 不能同时使用 typed flags 和结构化输入。所有输入和服务端结果在边界通过 Catalog schema 验证。
 
@@ -118,7 +121,7 @@ CLI 没有通用 invoke、任意 URL、method/path/body、SQL、JSON Patch、FHI
 
 读写恢复按 Catalog 的 `risk` 判定；`risk=read` 的 query 即使用 POST 传递结构化输入，连接中断、响应无效或 5xx 仍按读取错误返回，不要求查询 Command receipt。每个 write 要求调用者提供同一业务意图稳定复用的 idempotency key；修改既有事实还要提供 Catalog 声明的 expected versions。CLI 不自动重发 write。write 连接在结果返回前中断或收到 5xx 时返回 `ambiguous_outcome`，调用者用公开 operation ID 和原 key 执行 `command receipt get`；服务端把公开 ID 映射到既有持久 Command receipt 名称，并保持 Actor、Acting Practitioner Role、Workspace 和 Epoch 隔离。receipt 示例只能指向实际产生 Command receipt 的 write operation。
 
-### 7.10 Human 与 Agent 身份
+### Human 与 Agent 身份
 
 Human mode 使用 Better Auth profile。登录密码只从 stdin 读取，不进入 argv 或 profile；profile 只保存 Server origin 和 session cookie，配置目录使用 `0700`，文件通过同目录原子替换并保持 `0600`。human write 发送同源 `Origin`，高风险命令还要求本地显式 `--yes`；服务端仍重新执行岗位、状态与版本授权。
 
@@ -132,13 +135,13 @@ Agent 高风险 command 不使用 `--yes` 作为授权；operation 必须在单�
 
 <a id="711-agent-skills"></a>
 
-### 7.11 Agent Skills
+### Agent Skills
 
 仓库在根 [`skills/`](../../skills) 提供九个 model-invoked 运行时 Skills：`clinmesh-shared`、`clinmesh-administrator`、`clinmesh-registration`、`clinmesh-triage`、`clinmesh-doctor`、`clinmesh-billing`、`clinmesh-pharmacy`、`clinmesh-inpatient` 和 `clinmesh-fhir`，供项目启动后操作 HIS 的 Agent 使用。`clinmesh-shared` 拥有 context、Catalog discovery、幂等、结构化错误和 ambiguous receipt 恢复；领域 Skills 只说明意图路由、前置状态、岗位交接、风险和反例，并在执行前读取 shared Skill。
 
 Skills 不复制 flags、输入 schema 或完整命令目录，Agent 对不熟悉的 operation 使用 `operations schema` 读取当前合同。临床 Skills 不包含 Agent Client/Grant 控制面。测试收集每个 bash 示例并要求其命令路径存在于真实 Catalog 或共享 CLI manifest，从而让命令重命名和文档漂移直接失败。
 
-### 7.12 后续 Agent 传输与内容安全
+### 后续 Agent 传输与内容安全
 
 后续嵌入式助手、AG-UI、tool adapter 或 MCP 只能投影同一 Catalog 并保留受信 context、幂等、expected version、receipt 与审计语义。MCP 是可选传输协议，不是业务领域模型；新增 adapter 不能提供比 CLI 更宽的 raw escape hatch。
 

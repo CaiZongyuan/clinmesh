@@ -1,14 +1,20 @@
 # 测试与验证排障
 
+选择验证范围、定位资源争用，或处理替身、时钟和异步断言时查阅。本文保存会影响证据有效性的操作经验；测试层级、必需检查和真实入口要求由[测试策略](../testing.md)拥有。业务专属回归另见[临床数据与模型任务排障](clinical-data.md)，宿主专属回归见[DSH 集成排障](dsh-integration.md)。
+
+其他操作经验见[工程记忆入口](memory.md)。
+
+## 私稿、回执恢复与跨页状态
+
 - 搜索或翻页清空选择后，后台任务完成时的自动定位可能抢在新列表前写回旧选择。回归时阻塞新列表请求，先让后台任务完成，再分别返回非空和空列表，核对详情与可提交对象仍属于当前队列；只验证列表加载完成后的切换会漏掉此竞态，参见[患者库组件回归](../../apps/web/src/app/synthetic-patient-library.test.tsx)。
 
-- 私稿失败回归分开注入 `getItem` 暂时抛错、损坏 JSON 和 `setItem` 失败；仅用坏 JSON 会漏掉重试时覆盖仍有效原稿。先保存非空选择与付款方式，再重挂载并阻断读取，恢复后逐字核对原文和公开输入。丢弃保护还须先展开确认条再发请求，覆盖在途及未知状态下仍存在的确认按钮，见[多费用预览组件合同](../../apps/web/src/app/billing-multi-charge-panel.test.tsx)。
+- 私稿异常与丢弃回归分开注入 `getItem` 抛错、损坏 JSON 与 `setItem` 失败（仅测坏 JSON 会漏掉重试覆盖有效原稿），并覆盖退出前后、坏键排在有效未知稿之前及行数为空时丢弃入口仍可达：先保存非空输入再阻断读取，核对未确认丢弃前保留原文、展开确认条在在途/未知状态下受保护、确认后先删当前记录再补命名空间清理且零业务 POST；连续录入弹窗额外覆盖「改 A 不保存 → 切 B 修改 → 回 A → 关闭或刷新」。参见[多费用预览组件合同](../../apps/web/src/app/billing-multi-charge-panel.test.tsx)、[连续处方旅程](../../apps/web/e2e/outpatient-prescription-batch.journey.ts)、[送检组件回归](../../apps/web/src/app/inpatient-investigation-send-batch.test.tsx)与[执行窗口回归](../../apps/web/src/app/inpatient-execution-batch.test.tsx)。
 
 - 带自动保存的手动编辑长旅程，在最终版本化确认前，用公开保存提示与最新完整输入回读固定前置；按钮已经存在不代表最后一轮草稿保存已完成。保留正式事实及字段断言，不靠延长超时处理最终结果缺失；CI仅有最终空值而本地单例通过时，仍不能据此断言具体请求时序根因。参见[双React手动诊断处方旅程](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
 
 - 验证“丢弃草稿”时先等公开读取确认自动保存已落到服务端，再清空并退出重登；只重挂载且保留 sessionStorage 会让本地空草稿遮住服务端旧稿。同步核对清空失败保留输入、已确认资源不变和完诊待办，见[门诊诊断旅程](../../apps/web/e2e/outpatient-diagnosis-batch.spec.ts)与[诊断 HTTP 合同](../../apps/server/tests/outpatient-workflow-http.test.ts)。
 
-- 验证确定拒绝后可以修正并新提交时，按业务实际错误码注入 409（如 `WORKFLOW_CONFLICT`、`CATALOG_CONFLICT`、`DIAGNOSIS_PRIMARY_REQUIRED`），不能只断言错误文案；须检查首次提交及原键重放后均解除冻结、保留输入，并能修改后用新键成功提交。回执查询错误不能当作提交被拒绝；503、网络中断及无法解析的响应属于结果未知，必须先恢复原回执，不能用新键重提。先例见[诊断恢复组件旅程](../../apps/web/src/app/doctor/doctor-agent-diagnosis-hydration.test.tsx)。切换目录来源后，先等待首个候选可见再枚举 `.all()`，避免把加载态误判为空目录；先例见[诊断处方双版本合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
+- 验证确定拒绝后可以修正并新提交时，按业务实际错误码注入 409（如 `WORKFLOW_CONFLICT`、`CATALOG_CONFLICT`、`DIAGNOSIS_PRIMARY_REQUIRED`），不能只断言错误文案；须检查首次提交及原键重放后均解除冻结、保留输入，并能修改后用新键成功提交。回执查询错误不能当作提交被拒绝；503、网络中断及无法解析的响应属于结果未知，必须先恢复原回执，不能用新键重提。切换目录来源后，先等待首个候选可见再枚举 `.all()`，避免把加载态误判为空目录；先例见[诊断恢复组件旅程](../../apps/web/src/app/doctor/doctor-agent-diagnosis-hydration.test.tsx)与[诊断处方双版本合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
 
 - 浏览器私有草稿须允许尚未合法的表单输入，正式提交仍按业务 schema 校验。将提交时数值范围直接用于待编辑偏好，会在表单保留越界疗程或数量时持续保存失败；同步 effect 若每次渲染都重试，可能卡住主线程。保留非法字段待修正，并在持久存储失败后停止自动同步，以真实页面的越界输入与修正旅程验证。
 
@@ -18,55 +24,33 @@
 
 - 门诊检查原意图在发送 POST 前保存，“恢复原开立”会在请求仍进行时显示并禁用。模拟服务端成功但响应丢失后，先等恢复按钮可操作，再回读正式申请或退出登录；只等 `toBeVisible()` 会读到尚无申请的合法中间状态。诊断时暂停真实 POST，核对按钮已显示但禁用、HTTP 读取无申请，释放后核对原 POST 成功及正式申请，参见[检验恢复旅程](../../apps/web/e2e/investigation-workspace.spec.ts)。
 
-- 比较业务意图时按稳定标识和值判断，不用 `JSON.stringify` 比较由不同构造或 schema 路径生成的对象。Zod 解析与表单解析可能以不同字段顺序重建同一付款方式，导致成功预览被误判为草稿变化；回归需包含显式组合方式以及响应丢失后的原回执恢复，参见[多费用预览组件合同](../../apps/web/src/app/billing-multi-charge-panel.test.tsx)。
+- 比较业务意图或表单偏好时按稳定标识和解析后值判断，不用 `JSON.stringify` 直接比较不同构造路径或手写夹具（Zod 解析后字段顺序变化会误判草稿改动或触发同步 effect 死循环）；服务与价目夹具先经生产读取边界解析再传入组件，异步恢复回归同时覆盖在途替换表单回调，参见[多费用预览组件合同](../../apps/web/src/app/billing-multi-charge-panel.test.tsx)与[检查确认组件回归](../../apps/web/src/app/doctor/doctor-recommendations.test.tsx)。
 
-- 排查恢复写操作后弹窗错误消失时，检查错误归属是否只读取 `mutation.variables` 或待办：恢复使用 `mutate(undefined)`，终态拒绝又会清除待办，两个位置都可能丢失原 Command。用本次 mutation 上下文保留操作归属；回归覆盖断线、无回执、同键重发冲突、弹窗内刷新、输入保留及跨患者隔离，参见[手术弹窗回归](../../apps/web/src/app/inpatient-surgery-prototype.test.tsx)与[真实恢复旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
+- 住院弹窗与恢复入口：恢复调用 `mutate(undefined)` 且终态拒绝会清除待办，错误归属须保存在本次 mutation 上下文而非只读 `mutation.variables`；住院恢复按钮在 `mutation.isPending` 时即隐藏，重开窗口前须等回执完成、查询刷新与控件实际可操作，而非只等 `toHaveCount(0)`。参见[恢复入口](../../apps/web/src/app/inpatient-write-recovery.tsx)、[手术弹窗回归](../../apps/web/src/app/inpatient-surgery-prototype.test.tsx)与[共享耗材旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
 
-- 住院恢复入口在 `mutation.isPending` 时即隐藏，因此按钮消失只能证明已开始恢复。弹窗外恢复旅程重开窗口前须等待回执完成、查询刷新和实际可操作状态；只等 `toHaveCount(0)` 会在仍禁止打开弹窗时点击一次，随后错误地报告耗材记录不存在。用受控回执延迟核对这一边界，同时查询正式历史和页面最终耗材以区分测试时序与写入失败，参见[恢复入口](../../apps/web/src/app/inpatient-write-recovery.tsx)及[共享耗材旅程](../../apps/web/e2e/inpatient-surgery-materials.journey.ts)。
+- 原操作恢复回归须同时覆盖活动态与业务只读态，且动作窗口与全局恢复入口均走真实入口验证：命令已提交丢响应后再完诊或离院，原回执仍可查询、404 不重发且保留原意图；落盘后发送前转只读或退出卸载时，新操作未发可解除意图、迟到回调不写回选择，且只读态下坏稿仍能确认丢弃。参见[门诊检查动作回归](../../apps/web/src/app/doctor/outpatient-investigation-actions.test.tsx)、[报告恢复回归](../../apps/web/src/app/doctor/outpatient-report-reader.test.tsx)与[护士执行共享旅程](../../apps/web/e2e/inpatient-execution-batch.journey.ts)。
 
-- 原操作恢复回归同时覆盖允许新写与业务只读：让命令已提交但丢响应，再结束就诊或离院，核对原回执仍可查询、明确404时不重发且原意图保留。另用身份请求屏障覆盖意图落盘后、业务发送前转为只读，等待真实入口更新后放行，分别断言新操作明确未发可解除意图、原未知恢复仍保留原文。专用只读错误仅由业务发送前守卫产生，不把身份失效或卸载一并归类；另用落盘后卸载、退出、放行身份请求验证迟到回调不会在清理后写回未提交选择，原尝试仍按原键恢复。只在活动状态验证恢复按钮会漏掉把结果查询绑到新写权限的错误；见[门诊检查动作回归](../../apps/web/src/app/doctor/outpatient-investigation-actions.test.tsx)与[报告恢复回归](../../apps/web/src/app/doctor/outpatient-report-reader.test.tsx)。
+- Playwright `APIRequestContext` 的连接重置可能发生在页面断言已通过后的独立只读核对。确需吸收一次 `ECONNRESET` 时，在该次 GET 显式使用 `maxRetries: 1`；它不重试 HTTP 错误，也不改变 Command 或模型的执行次数。以真实 HTTP socket 重置验证读取两次、业务调用次数不变，并保留连续重置后的失败；先例见[住院用量共享旅程](../../apps/web/e2e/inpatient-drg-usage.journey.ts)。
 
-- 原操作同时有动作窗口和全局恢复入口时，两者都须走真实入口验证。只给窗口调用传发送回调会漏掉全局 `mutate(undefined)`；刷新后不持久化的回调也不会自动恢复。用同一原键分别验证只读404、状态读取失败与已有回执，再核对当前未提交坏稿在只读时仍能打开确认丢弃，参见[护士执行组件回归](../../apps/web/src/app/inpatient-execution-batch.test.tsx)和[共享真实旅程](../../apps/web/e2e/inpatient-execution-batch.journey.ts)。
+- 将单项选择弹窗改为连续添加 composer 时，同时搜索 Web e2e 与 Surface browser 中该弹窗的关闭按钮和成功等待断言。旧“取消”可能已变为“关闭”，同次就诊关闭重开后的成功数也可能累计；循环旅程应等待本次项目的成功结果及关闭可用，再访问背景页。先例见[住院 PCI 多药旅程](../../apps/web/e2e/inpatient-pci-preparation.journey.ts)。
 
-- Playwright `APIRequestContext` 的连接重置可能发生在页面断言已通过后的独立只读核对。确需吸收一次 `ECONNRESET` 时，在该次 GET 显式使用 `maxRetries: 1`；它不重试 HTTP 错误，也不改变 Command 或模型的执行次数。以真实 HTTP socket 重置验证读取两次、业务调用次数不变，并保留连续重置后的失败；不能把本地复验通过或连接复用实验当作 CI 具体断连原因已被证实。先例见[住院用量共享旅程](../../apps/web/e2e/inpatient-drg-usage.journey.ts)。
+- 分页队列与审计分组回归须约束每页实际请求集合，并覆盖第二页写操作后保持原页码、患者选择与金额刷新（支付历史分页另核对整单余额与跨页恢复入口）；核定加载或失败不等于未核定，显式继续后的首次选择须固化，归档新增改变页边界时保留原病例。复用[医保队列组件](../../apps/web/src/app/inpatient-insurance-review.test.tsx)和[真实归档核定旅程](../../apps/web/e2e/inpatient-insurance-queue.spec.ts)。
 
-- 将单项选择弹窗改为连续添加 composer 时，同时搜索 Web e2e 与 Surface browser 中该弹窗的关闭按钮和成功等待断言。旧“取消”可能已变为“关闭”，同次就诊关闭重开后的成功数也可能累计；循环旅程应等待本次项目的成功结果及关闭可用，再访问背景页。用真实多项目旅程验证，不能只修改组件测试或一直等待固定“成功 1 项”。先例见[住院 PCI 多药旅程](../../apps/web/e2e/inpatient-pci-preparation.journey.ts)。
+- Surface 浏览器代理须将患者文字请求的 `/_fhir/` 路径转到真实 `/fhir/`，并断言患者身份加载成功且没有读取错误；叠加故障 route 使用 `fallback()` 保留底层代理转发，`continue()` 会绕过它。复用[跨患者 Surface 夹具](../../apps/dsh-web/src/client/cross-patient-queue.browser.artifact.ts)。
 
-- 队列按逐条审计读取补充分组时，分页须约束实际请求集合，不能只把全量结果切成可见页；用至少两页合成病案断言初页读取上限、翻页后才读取余量。核定状态加载或失败不等于未核定；显式继续后的首次选择须固化，提交刷新、归档新增改变页边界时保留原病例与回执，失败优先于完成态。复用[医保队列组件](../../apps/web/src/app/inpatient-insurance-review.test.tsx)和[真实归档核定旅程](../../apps/web/e2e/inpatient-insurance-queue.spec.ts)。
+- 异步挂载与滚动验收：枚举折叠 summary 前先等可见业务 region（复用[住院 DRG 入口 helper](../../apps/web/e2e/inpatient-ui.ts)）；检查滚动容器前先对视口外的末条业务内容等待 `toBeAttached()`，避免 region 仍在 Skeleton 时 `scrollHeight === clientHeight` 误报无滚动容器，见[已完诊病例滚动旅程](../../apps/web/e2e/doctor-completed-scroll.spec.ts)。
 
-- Surface 浏览器代理须将患者文字请求的 `/_fhir/` 路径转到真实 `/fhir/`，并断言患者身份加载成功且没有读取错误；只验证主业务按钮可能漏掉 SPA fallback 返回 HTML 导致的 schema 错误。叠加故障 route 使用 `fallback()` 保留底层代理转发，`continue()` 会绕过它。复用[跨患者 Surface 夹具](../../apps/dsh-web/src/client/cross-patient-queue.browser.artifact.ts)及其真实患者断言。
+- Toast 指针、悬停与关闭：通知拦截点击时核对透明堆叠层（复用[通知指针合同](../../apps/dsh-web/src/client/toast.browser.test.ts)）；等通知自然消退前先将指针移出关闭按钮扩展命中区以免暂停计时（见[队列双版本合同](../../apps/dsh-web/src/client/cross-patient-inpatient-queue.browser.test.ts)）；Base UI 收起通知的关闭按钮可能 `aria-hidden=true`，需显式关闭时先按 F6 展开 Notifications 再点击（复用[住院交接 helper](../../apps/web/e2e/inpatient-ui.ts)）。
 
-- 业务详情异步挂载时，不能用即时 `locator.count()` 判断折叠入口不存在；先等待当前可见的业务 region，再枚举其内 summary。角色权限不同的页面只展开当前页面实际提供的入口，复用[住院 DRG 入口 helper](../../apps/web/e2e/inpatient-ui.ts)，避免尚未挂载时跳过必需步骤。
+- TanStack Query 的 `enabled: false` 停止自动查询但保留 `data` 和 `error`。验证实时页面切到归档等冻结模式时，先加载真实结果、切走并保留组件和 QueryClient，再从独立会话改变状态后刷新返回；复用[DRG 归档切换旅程](../../apps/web/e2e/inpatient-drg-archive.journey.ts)。
 
-- 滚动验收的 `locator.evaluateHandle()` 只等待目标节点存在，不等待异步详情挂载；始终存在的 region 可能仍显示 Skeleton，此时 `scrollHeight === clientHeight` 会让 `findScrollViewport` 报没有滚动容器。先对末条业务内容使用 `toBeAttached()`，再检查滚动范围；末条位于视口外，不能把前置条件写成可见于视口。用受控详情响应延迟复现原报错，并在相同延迟下验证等待后完整宽窄屏滚动断言通过，区分加载竞态与实际高度链问题；入口见[已完诊病例滚动旅程](../../apps/web/e2e/doctor-completed-scroll.spec.ts)。
+- standalone Web 与原生 Agent 共用签署旅程时，按动作来源定位人工确认：医生签署使用 `alertdialog`，Agent 提案使用内嵌 `region`，不使用任意匹配兜底；复用[签署双版本合同](../../apps/dsh-web/src/client/consultation-sign.browser.test.ts)与[问诊旅程](../../apps/web/e2e/consultation-recording-journey.ts)。
 
-- 确认按钮已可见、可用且稳定，但 Playwright 仍报告通知拦截点击时，检查实际命中的通知正文及透明堆叠层，并用真实鼠标停留与点击复现。保留通知的自动消退、操作和关闭合同，不用强制点击、主动关闭通知或扩大超时绕过；复用[通知指针合同](../../apps/dsh-web/src/client/toast.browser.test.ts)。
+- `tar` 的异步解包 `filter` 在流回调中运行，直接抛错可能成为未捕获异常并使返回 Promise 挂起：拒绝条目时记录错误并返回 `false`，解包结束后从调用边界抛出，覆盖链接与越界条目；分发锁身份摘要按 schema 解析后 JSON 计算，不依赖 CRLF/LF 原字节。
 
-- 等待通知自然消退的外观检查先将真实指针移到通知区外。正文允许指针穿透，但关闭按钮及其扩展命中区仍可触发悬停并暂停计时；仅等待通知数量归零会把正常交互暂停误报为超时。保留原生命周期及预算，以真实悬停再移开的[队列双版本合同](../../apps/dsh-web/src/client/cross-patient-inpatient-queue.browser.test.ts)验证，不删除通知或强制触发计时器。
-
-- Base UI 收起的完成通知即使处于最前排，其关闭按钮也可能是 `aria-hidden=true`；`getByRole` 会等待不存在的可访问入口。需要在核对完成通知后关闭它时，先通过 F6 展开 Notifications，再点击关闭，复用[住院交接 helper](../../apps/web/e2e/inpatient-ui.ts)。不要吞掉完整点击超时后把通知自然消失当作关闭成功，连续医嘱旅程会逐次耗尽交互预算；分段 reporter 与无截图 trace 的动作、DOM 文本和网络路径聚合可区分这种等待、初始化和真正的慢请求。
-
-- TanStack Query 的 `enabled: false` 停止自动查询但保留 `data` 和 `error`。验证实时页面切到归档等冻结模式时，先加载真实结果、切走并保留组件和 QueryClient，再从独立会话改变状态后刷新返回；只用归档初始状态挂载会漏掉旧缓存继续渲染。复用[DRG 归档切换旅程](../../apps/web/e2e/inpatient-drg-archive.journey.ts)核对模式转换及后续刷新。
-
-- 本机同时运行完整 Server、Web 组件和 Playwright 时，内存交换及资源竞争可能使既有长交互触及默认超时。保留原失败日志，在主线与当前分支对照同一用例，再在资源释放后以原超时、原断言复验完整文件；不要仅据墙钟超时修改业务代码或扩大预算。GitHub 的并行检查组使用独立 runner，本地 worktree 共享机器资源。
-
-- [上游兼容任务](../../.github/workflows/dsh-upstreams-verify.yml)执行完整串行 `pnpm check`，不能用普通 CI 中最长的并行 job 耗时估算其总预算。任务触及 GitHub 总时限时，先核对日志中单元、浏览器合同与 e2e 的时间戳、已通过结果和实际停留阶段，再为整条链路分配总预算；保留各用例的时限与全部检查，不把任务取消记成测试通过。
-
-- standalone Web 与原生 Agent 共用签署旅程时，按动作来源定位人工确认：医生签署使用 `alertdialog`，Agent 提案使用内嵌 `region`。不能在调用 Agent Tool 后继续等待医生弹窗，也不使用两种角色任意匹配的兜底；两条路径都保留确认内容、人工点击、正式签署及回执/审计断言。复用[签署双版本合同](../../apps/dsh-web/src/client/consultation-sign.browser.test.ts)、[问诊旅程](../../apps/web/e2e/consultation-recording-journey.ts)和[质控旅程](../../apps/web/e2e/doctor-document-quality-journey.ts)。
-
-- `tar` 的异步解包 `filter` 在流回调中运行，直接抛错可能成为未捕获异常并使返回 Promise 挂起。拒绝条目时记录错误并返回 `false`，解包结束后从调用边界抛出；回归必须覆盖链接和越界条目，确认非零失败且无未处理错误。分发锁的身份摘要按 schema 解析后 JSON 计算，不能依赖 Windows CRLF 与 Linux LF 不同的原文件字节。
-
-- 分页队列上的写操作回归须包含第二页及操作后仍留在同一筛选状态的场景，核对页码、患者选择与金额刷新；只测第一页或晚到回执无法发现无条件跳回第一页。支付历史分页同时验证整单余额、跨页恢复入口，以及历史页切换不改变收费队列选择。
-
-选择验证范围、定位资源争用，或处理替身、时钟和异步断言时查阅。本文保存会影响证据有效性的操作经验；测试层级、必需检查和真实入口要求由[测试策略](../testing.md)拥有。业务专属回归另见[临床数据与模型任务排障](clinical-data.md)，宿主专属回归见[DSH 集成排障](dsh-integration.md)。
-
-其他操作经验见[工程记忆入口](memory.md)。
-
-- 用完整参考目录重放固定病例时，同名同价的院内项目也可能有不同身份；浏览器不能用名称前缀或任意首项代替选择。沿用共享目录检索限定固定院内项目，并以公开申请与逐项账本核对实际身份；PCI 示例见[演示手册](../pci-demo.md#九项检查与报告)。完整参考库初始化单独计时，含重启的联合旅程也包含此成本；显式完整库可使用其独立时限，不能据此放宽默认 CI。
+- 用完整参考目录重放固定病例时，同名同价的院内项目也可能有不同身份；沿用共享目录检索限定固定院内项目，并以公开申请与逐项账本核对实际身份（PCI 示例见[演示手册](../pci-demo.md#九项检查与报告)）。完整参考库初始化单独计时，显式完整库可使用独立时限，不放宽默认 CI。
 
 ## 范围、快照与资源争用
-
-- 表单偏好使用 `JSON.stringify` 比较时，手写价目夹具的字段顺序可能在持久 schema 解析后改变，触发同步 effect 反复保存。服务与价目夹具按生产读取边界先解析，再传给组件；异步恢复回归同时覆盖请求在途期间替换表单回调，确保迟到拒绝调用当前 adapter，保留新输入。先例见[检查确认组件回归](../../apps/web/src/app/doctor/doctor-recommendations.test.tsx)。
 
 - 判断文档修改是否影响测试时，先检查构建工具的自动扫描范围，不能只看静态 import。DSH 的 [Surface 样式构建](../../apps/dsh-web/src/surface-styles.ts)和 Web 的[字号](../../apps/web/src/app/font-size.browser.test.ts)、[主题](../../apps/web/src/app/web-theme.browser.test.ts)浏览器合同都以仓库根为 Tailwind 扫描根，普通说明文档和其他组的测试文件也可能改变运行时生成的 CSS；CI 成功复用因此用 Tailwind 候选 class 代替被排除文件的原文，见[测试策略](../testing.md#github-ci-的检查选择与并行)。
 
@@ -74,7 +58,7 @@
 
 - CLI 根入口回归经根 `pnpm`、包级 `pnpm` 和 `tsx` 启动，额外进程与依赖校验都计入整例时限。单次冷启动超时时，先对照同快照的原入口、包级入口与直接 `tsx` 的输出和耗时，并核对锁文件、配置及 runner；只有启动抖动证据时保留原代码、断言、worker 和时限，定向复跑失败执行组。不要为减少进程改写入口而静默改变当前目录与相对输入文件的解析边界；合同见[CLI 进程入口回归](../../apps/cli/tests/bin.test.ts)。
 
-- Playwright 的 `getByRole` 支持 `exact`，Testing Library 的同名查询不接受该选项，字符串 `name` 本身默认精确匹配。迁移浏览器定位到 jsdom 测试时按各自的类型使用选项；运行时忽略额外字段而通过，不能代替 Web/browser 类型检查。
+- Playwright 的 `getByRole` 支持 `exact`，Testing Library 的同名查询默认按完整可访问名称精确匹配且不接受 `exact` 选项；混用参数在 Vitest 运行时可能被忽略，但会使类型检查失败。迁移定位时按各自 API 传参并补跑类型检查。
 
 - 跨患者的迟到草稿回填，须在写入后离开原病例、返回并观察实际 GET 与后续写入次数。TanStack Query 默认 invalidation 只刷新 active query；已离开的病例可能保留旧缓存，先初始化表单再产生一次额外 autosave。定向刷新需包含该 ID 的 inactive query 并等待完成，不能只断言原 PUT 成功或最终文本一度出现。合同及取舍见[临床准备确认 Note](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
 
@@ -106,19 +90,17 @@
 
 - 固定包失败保旧的回归需让本次包外的一条持久化来源记录损坏，再从完整准备入口更新有效新包；只测包内无效输入会漏掉导入已提交、随后全库统计才报错的窗口。移除注入故障后通过公共来源查询核对仍是旧版，同时比较安装目录，见[指南准备回归](../../apps/server/tests/guideline-prepare.test.ts)。
 
-- `perf:ci` 的数据库增长意外超限时，先分别核对主文件、WAL、SHM 大小与 `page_count`，区分持久页面增长和初始化 WAL 的延迟刷盘；不要直接提高预算。Scenario 生命周期的采样边界由[性能合同](../testing.md#性能合同)拥有。
+- `perf:ci` 是临时 SQLite 上固定次数的常规合成门禁（全程约 13 秒，无需真实模型/压测许可；采样边界由[性能合同](../testing.md#性能合同)拥有）：数据库增长超限时先分别核对主文件、WAL、SHM 与 `page_count` 以区分初始化延迟刷盘；断言首败即抛且 trace 指标按 iteration 均摊，更新基线前先列出全部越界项。改写路径或合成账号后先在本地运行 `pnpm --filter @clinmesh/server performance -- --profile ci`。
 
 - HIS 路由与 Operation Catalog 的覆盖检查从源码提取完整路由字面量。共享处理器可用工厂复用，但每个公开路由须显式注册；循环拼接路径会使运行时可用的路由在覆盖检查中变成不完整路径。新增或调整注册后运行 `his-operation-catalog.test.ts`，避免只用请求成功证明目录已同步。
 
-- CLI Skill 示例漂移测试读取 Markdown 后统一将 CRLF 转为 LF，再解析代码块；否则 Windows checkout 的有效 JSON 示例会被仅匹配 `\n` 的正则漏掉。统一在读取 helper 归一化，不批量改产品文档换行或放宽业务 schema。
-
-- Markdown 校验应兼容 Git 在 Windows 的 checkout 形态：逐行结构识别接受 CRLF；`core.symlinks=false` 会把 `120000` 模式的别名检出为无换行的目标路径占位文件，应按 Git 索引识别别名并校验其 canonical 文档，不能往别名补换行或批量重写正文。
+- CLI Skill 示例漂移测试与 Markdown 校验统一兼容 Windows checkout 的 CRLF 行尾，并按 Git index 识别 `120000` 符号链接别名以校验 canonical 文档（不在业务文档批量改换行或给占位别名补换行，详见[跨平台文件经验](development-environment.md#windowswsl-与跨平台文件)）。
 
 - 新增 Operation Catalog 路径参数时，同时核对真实 UI 的持久化意图发送器：只替换已有 `admissionId` 的 adapter 不会自动绑定新的 `adjustmentId`。公开 HTTP 直接调用正确路径仍可全部通过，须从真实按钮验证请求路径及丢回执后的原意图恢复；回归见[后续医保更正入口](../../apps/web/e2e/inpatient-insurance-adjustments.spec.ts)与 React 18/19 Surface 合同。
 
 - Catalog 的 Command 输出须验证完整 `data/effects/auditId/requestId` 回执。仅在 HTTP 测试中手取 `data` 会漏掉裸业务列表 schema 与真实回执的漂移，使页面把已提交写入判为响应异常并进入恢复；修复 owning Catalog，并保留真实按钮和 receipt 恢复证据，不在 UI 绕过响应校验。
 
-- 跨包测试调用 Server 迁移时，显式用测试文件的 `import.meta.url` 解析 `apps/server/drizzle/` 并传给 `applyMigrations`。默认目录只覆盖 Server 包或仓库根目录；从仓库根运行测试可能通过，而 Turbo 在其他包目录执行时会报 `ENOENT`。用 `pnpm --filter <package> exec vitest run <file>` 复核实际 CI 工作目录，参见 `apps/dsh-web/src/model-bridge.test.ts`。
+- 跨包与浏览器测试的迁移目录解析：Vitest 跨包测试调用 `applyMigrations` 时显式用 `import.meta.url` 解析 `apps/server/drizzle/`（参见 `apps/dsh-web/src/model-bridge.test.ts`）；收费真实入口与 Surface 浏览器合同统一从仓库根运行 Playwright（`--project=web` / `--project=contracts`），避免从 `apps/web` 启动时把 `apps/server/drizzle` 错拼到子目录。
 
 - 合并含独立迁移的分支时，非空旧库测试必须显式排除该历史基线尚不存在的全部迁移，不能只排除原分支待应用的文件，否则新迁移会混入旧库夹具。保留旧库固定版本、迁移完整身份和事实不变断言，当前目标版本使用 `expectedSchemaVersion()`；先验证合并前夹具失败的原因，再核对迁移顺序、重开及回滚。先例见[住院与主分支旧库迁移](../../apps/server/tests/inpatient-main-migration.test.ts)。
 
@@ -126,59 +108,31 @@
 
 - Web composition 或 Playwright 测试只有总时限超时时，区分停滞与累计交互成本；状态展示、报告已阅、取消冲突、草稿删除等独立流程使用同一初始化 helper、每例重新挂载。模型建议的生成与人工编辑确认、丢回执后刷新恢复也分别验证；恢复旅程通过公开接口准备已核验建议，仍从真实 UI 提交并恢复原键，保留单次写入、历史版本及不重复调用模型的断言。不要把多个独立流程串在一个用例后扩大默认时限；示例见[工作台组件测试](../../apps/web/src/app/role-workspaces.test.tsx)和[住院建议共享旅程](../../apps/web/e2e/inpatient-drg-agent.journey.ts)。
 
-- 当前 Web 交付使用 Node.js 真实入口即可证明运行时和数据库生命周期；没有明确容器验收条件时，不安装、不启动也不要求 Docker。
+- 验证范围严格对应 outgoing diff：纯 Markdown、设计资产或 PR 媒体只跑对应文档、解码或可达性检查；无容器验收条件时不要求 Docker；已通过且未被后续修改失效的证据不因 commit、push、review、Ready 或 merge 重复运行。[上游兼容工作流](../../.github/workflows/dsh-upstreams-verify.yml)执行完整串行 `pnpm check`，触及总时限时按单元、浏览器合同与 e2e 各阶段时间戳分配总预算，不拿普通并行 CI 最长单 job 估算。
 
-- 验证必须对应 outgoing diff。纯 Markdown、设计资产或 PR 媒体变更不触发代码单元测试、全量 `pnpm test` 或 `pnpm check`；只运行 owning 文档检查、媒体解码或发布可达性检查。
+- 本地多 worktree 共享宿主 CPU 与内存（不同于独立 CI runner），可用仓库外 `flock <lock-file> <command>` 串行化重检查。并发争用触发 5s/10s/15s 超时（`apps/server` 单例上限 15s，跨阶段联合闭环见[准备边界](../testing.md#adapter)）时，先对比单文件与主线基线，并用 `lscpu -e=CPU,CORE,SOCKET`（按不同物理核而非相邻 SMT 线程选核）与 `free -h` swap 占用区分 CPU 或内存超卖：小内存宿主上 `@clinmesh/web` jsdom 可用 `--maxWorkers=4`；全局收窄可用 `taskset -c <cores>` 或 `TURBO_ENV_MODE=loose VITEST_MAX_WORKERS=1`（Turbo 默认 strict 会过滤 `VITEST_MAX_WORKERS`，且 `strict` 与 `loose` 缓存隔离，先跑 `--concurrency=1` 再跑 `pnpm check` 须保持同一 `TURBO_ENV_MODE`）。验证报告须明确注明受限并发，不将其表述为默认并行通过，也不扩大超时掩盖争用。
 
-- 已经通过且没有被后续变更失效的证据不因 commit、push、review、Ready 或 merge 再次运行。
+- 定向运行 Vitest 文件统一使用 `pnpm --filter <package> exec vitest run <file> [-t <pattern>]` 并核对实际 `Test Files` 数量：`pnpm --filter <package> test -- <file>` 会保留额外 `--` 导致整包运行，Turbo `--filter` 会沿 `^test` 触发上游包，而从仓库根裸跑 `npx vitest run apps/server/tests/...` 会加载根级 5s 默认超时使 `apps/server` 的 `15_000ms` 配置失效。
 
-- 多个 worktree 的类型检查、Vitest 和 Playwright 共用宿主内存；单个任务限制 worker 仍可能与其他 Agent 一起耗尽 swap。主 Agent 统一串行重检查，可用仓库外共享文件的 `flock <lock-file> <command>` 协调全部验证进程；锁随命令退出释放，编码和只读审查继续并行。先保留已通过证据，不放宽超时或一次启动多套检查。
+- 干净克隆或独立 worktree 单跑 DSH 单元或 Playwright 浏览器合同前，先执行 `pnpm --filter @clinmesh/dsh-web build:styles` 生成被忽略的 `apps/dsh-web/src/client/styles.generated.ts`（见[浏览器准备步骤](../testing.md#用户界面验证)），避免 Vite/Rollup 在收集阶段报模块缺失。
 
-- 资源竞争使既有测试超时时，可在验证进程用 `VITEST_MAX_WORKERS=1` 收窄单元测试并发，不扩大超时或削弱断言。Turbo strict 环境会过滤此变量，通过 Turbo 的验证同时使用 `TURBO_ENV_MODE=loose` 才能把 worker 设置传给 Vitest；仅设置前者不证明实际并发已经收窄。不同包仍可并行，需要进一步隔离时用 `pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行完成包级测试，再由 `pnpm check` 复用有效缓存并继续其他阶段。预验证与后续检查须保持相同的 Turbo 环境模式；strict 与 loose 使用不同任务缓存，切回默认模式可能让包级测试再次并行运行。
+- 外观矩阵更新 `data-font-size` 后，带 `transition-all` 的标签文字与边界仍可能继续过渡；先等待 computed `font-size` 到达目标值再真实 click 并确认 `aria-selected`（回归见 `diagnosis-prescription.browser.test.ts`）。
 
-- 定向 Vitest 回归使用 `pnpm --filter <package> exec vitest run <file> -t <pattern>`，并核对实际文件和用例计数。当前 pnpm/Vitest 组合中，`pnpm --filter <package> test -- <file>` 把额外 `--` 传给 Vitest 后仍运行完整包，不能仅凭命令文本认定已限制范围。Turbo 过滤包仍会沿 `^test` 执行依赖；只补 DSH 等单包证据时直接运行包内 Vitest，避免重新触发已验过的 Web 全集。
+- 浏览器动效的保持、淡出或 Canvas 卸载断言若在并行整组失败、单文件通过，可用 `pnpm exec playwright test --project=contracts --workers=1` 验证完整合同集合，保留原断言和超时。交付证据应区分串行集合通过与默认并行 `pnpm check` 未通过，不把单项重跑成功作为整组成功。若点击日志停在 `performing click action`，元素已可见且稳定，先隔离其他 worktree 的构建、类型和浏览器重检查，再用原断言复现。
 
-- 判断性能检查是否需要单独授权时，先核对[性能合同](../testing.md#性能合同)与实际工作负载，不按命令或测试文件名判断。`perf:ci` 是临时 SQLite 上固定次数的合成回归，随常规 CI 执行；实际并发压测或真实模型运行仍须取得本次明确许可。不要将这类授权边界扩大成整套 CI 的跳过标记，其他必需检查应保留并分别报告结果。
+- 浏览器合同在单文件通过、完整集合却报合成账户初始化失败时，检查前一文件的 Vite 构建是否改变了 `NODE_ENV`。Better Auth 在首次导入时捕获生产默认值，可能只在复用 worker 时触发注册限流；按原文件顺序复现并核对宿主与 bundle 的环境边界，隔离方式见[测试策略](../testing.md#用户界面验证)。
 
-- 收费真实入口和 Surface 浏览器合同从仓库根运行 Playwright，并沿用根配置。收费 HTTP fixture 以当前工作目录定位 `apps/server/drizzle`；从 `apps/web` 启动会错误查找 `apps/web/apps/server/drizzle`，尚未执行业务断言。根 runner 的 `--project=web` 与 `--project=contracts` 分别选择真实入口和组件合同。
-
-- 新检出只运行 Playwright 时，先按[浏览器准备步骤](../testing.md#用户界面验证)生成 Surface 样式；已有开发构建会掩盖缺少 `styles.generated.ts` 的前置条件。Rollup 在部分 fixture 中报该模块缺失时，先补齐与 CI prepare 相同的步骤，再原样验证受影响文件，不修改影像、用量或布局业务。
-
-- 外观矩阵中 `data-font-size` 已更新不代表带 `transition-all` 的标签已完成字号变化；诊断处方曾在属性等待返回后仍测得字体和边界继续变化。先等待 computed font-size 到达目标，保持真实 click 并确认 `aria-selected`，不要用扩大超时、重复点击或键盘替换掩盖导航前态。React 18/19 的确定性过渡回归见 `diagnosis-prescription.browser.test.ts`。
-
-- WSL 全仓验证的较多 Vitest worker 可能使宿主导航和长 SQLite HTTP 测试触及原有超时。先用原断言聚焦复现并区分功能失败与资源争用；核对 `taskset -pc $$` 的可用 CPU 后，可限制整个检查进程树的 CPU affinity，已实际验证 `taskset -c 0-3 pnpm check`。不通过扩大超时或改变业务时序掩盖失败。
-
-- WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。验证记录须明确 CPU affinity、worker 或串行限制，不把受限并发结果说成默认并发通过。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；跨阶段联合闭环先按[准备与连续验收边界](../testing.md#adapter)区分合成环境初始化和业务断言；仍超时时先查是否真变慢，不继续加大上限。
-
-- 包级串行仍可能因包内测试文件并行，让 CLI 子进程启动触发原有超时。先测真实启动耗时并单独运行失败文件；若单项通过，可将上述包级集合绑定到一个空闲 CPU，让 Vitest 按 `os.availableParallelism()` 串行测试文件。也可用 `VITEST_MAX_WORKERS=2 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1 --env-mode=loose` 显式限制文件并发；Turbo 默认 strict 环境会过滤该变量，仅在父进程设置它并不会约束包内 Vitest。选择 CPU 时避开其他正在验证的任务；不增加超时或缩减测试集合。
-
-- CPU affinity 的编号代表逻辑线程，不保证分属不同物理核。WSL 验证前用 `lscpu -e=CPU,CORE,SOCKET` 核对拓扑；连续四个逻辑线程可能只有两个物理核，三个 worker 仍会争用 SMT 资源，使原有 HTTP 场景触及 15 秒，而单项只需约 4 秒。按不同 CORE 选择空闲 CPU，再以原集合、断言和时限验证；不要仅据逻辑线程数推断资源已隔离。
-
-- 资源争用也可能是内存超卖而非 CPU：小内存宿主（如 6.8 GB 的 WSL2）上 `@clinmesh/web` 的 jsdom 套件按 `os.availableParallelism()`（16）开满 worker 时会进入 swap 抖动，失败集合每次运行都不同且与 diff 无关。先看 `free -h` 的 swap 占用区分于 CPU 争用；单项复跑通过后，对同一套件用 `pnpm --filter @clinmesh/web exec vitest run --maxWorkers=4` 重取证据（已实际验证 624/624 通过），并照上一条的规则在验证记录中注明受限并发。
-
-- 浏览器动效的保持、淡出或 Canvas 卸载断言若在并行整组失败、单文件通过，可用 `pnpm exec playwright test --project=contracts --workers=1` 验证完整合同集合，保留原断言和超时。交付证据应区分串行集合通过与默认并行 `pnpm check` 未通过，不把单项重跑成功作为整组成功。 若点击日志停在 `performing click action`，元素已可见且稳定，先隔离其他 worktree 的构建、类型和浏览器重检查，再用原断言复现；worktree 不隔离 CPU 与内存资源。
-
-- 浏览器合同在单文件通过、完整集合却报合成账户初始化失败时，检查前一文件的 Vite 构建是否改变了 `NODE_ENV`。Better Auth 在首次导入时捕获生产默认值，可能只在复用 worker 时触发注册限流；按原文件顺序复现并核对宿主与 bundle 的环境边界，不修改生产认证或增加注册等待。隔离方式见[测试策略](../testing.md#用户界面验证)。
-
-- 长时间运行 `vitest run` 或 `pnpm check` 时固定被测快照。执行期间修改源码和回归可能让转换缓存与新读取的测试混用不同版本；这类结果不能作为最终提交证据，应固定代码后重跑受影响集合，只复用未被修改影响的成功检查。跨平台副本在启动最终检查前，核对任务的全部 tracked diff、新增文件清单及统一换行后的内容；只按增量复制不能证明快照完整。
-
-- 精确运行 Vitest 文件时使用 `pnpm --filter <package> exec vitest run <file>`。脚本经 `pnpm --filter <package> test -- <file>` 转发时会保留 `--`，当前 Vitest 可能运行整个包而未应用文件筛选；以实际 Test Files 数量确认范围。
-
-- 从仓库根目录 `npx vitest run apps/server/tests/...` 不报错且用例照常运行，但加载的是根级配置：`apps/server` 的 `testTimeout: 15_000` 静默失效、回落默认 5s，多次模型请求的重型 HTTP 测试在本机会出现看似回归的超时失败。怀疑超时回归时先核对实际生效的配置入口，再 stash 修复复跑基线判定"变慢"归属；从包目录执行或用 `pnpm --filter` 入口即为正确超时。
+- 长时间运行 `vitest run` 或 `pnpm check`（含 `beforeAll` 现场构建 fixture 的 React 18/19 Surface 合同）期间固定被测源码：运行中修改代码会让转换缓存或后续 `describe` 混入半改源码产生伪失败，应等运行结束后统一修改并重跑受影响集合；跨平台副本在最终检查前核对全部 tracked diff、新增文件及换行一致性。
 
 - Playwright 使用与锁定版本匹配的 browser cache；跨项目参考配置时同时核对 runner 版本与已安装 revision，缺失时用本仓库的 `pnpm exec playwright install chromium` 安装。运行合同与真实入口的方式见[测试策略](../testing.md#用户界面验证)。
 
-- `tsconfig.browser.json` 的 E2E 入口会递归导入 Server 实现，但不会自动加载 Server 项目中的 ambient module 声明；Server 新增无类型依赖时，同时将对应声明文件纳入浏览器类型检查入口，不能只凭包级 `tsc` 通过判断完整类型检查通过。修改 `apps/web/e2e/` 后运行 `pnpm exec tsc --noEmit -p tsconfig.browser.json`；Playwright 会转译 TypeScript，但不做类型检查，E2E 通过不能替代这项检查。
+- `tsconfig.browser.json` 的 E2E 入口会递归导入 Server 实现，但不会自动加载 Server 项目中的 ambient module 声明；Server 新增无类型依赖时，同时将对应声明文件纳入浏览器类型检查入口，修改 `apps/web/e2e/` 后运行 `pnpm exec tsc --noEmit -p tsconfig.browser.json`。
 
-- 卡片工作台窄于 800px 时队列收起为浮层，选中后自动收起，队列页签与筛选不在 DOM 中：窄屏旅程用 `e2e/queue-overlay.fixture.ts` 的 `openQueue` 先展开，用 `expectConsultationStarted` 代替断言「在诊」页签；切换门诊／住院后要再次展开。进入页面前先 `page.setViewportSize` 设定目标宽度。登录提交是异步请求：点击"登录"后先等待"候诊队列"可见再 `goto` 其他路由，否则跳转会中断登录请求，应用回到登录页并让后续定位超时。 “开始首诊”同样须等按钮消失、病例进入首诊后再切页签；点击返回只表示动作已派发，焦点的 `active` 不等于页签的 `aria-selected=true`。问诊恢复场景通过[真实入口测试](../../apps/web/e2e/consultation-reply-recovery.spec.ts)等待这些可观察状态，保留回答复用和重放断言。 共享表单的列表/详情导航也按实际内容容器判断：先等待列表或返回控件就绪，实际宽容器保留双栏断言，窄容器保留返回搜索框焦点；以宽视口、窄宿主组合验证两种宽度独立，回归见 `apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts`。
-
-- 全仓测试因并发争用触发既有交互超时时，先用原断言及原超时串行复现；本机需要限制 Vitest worker 时可使用 `TURBO_ENV_MODE=loose VITEST_MAX_WORKERS=1 pnpm check`。Turbo 严格环境模式会过滤未声明的 `VITEST_MAX_WORKERS`，单独设置该变量不影响其子任务；可用 dry-run 的 envMode 确认实际传递，不通过扩大超时或跳过用例制造通过。
+- 卡片工作台窄于 800px 时队列收起为浮层，选中后自动收起，队列页签与筛选不在 DOM 中：窄屏旅程用 `e2e/queue-overlay.fixture.ts` 的 `openQueue` 先展开，用 `expectConsultationStarted` 代替断言「在诊」页签；切换门诊／住院后要再次展开。进入页面前先 `page.setViewportSize` 设定目标宽度。登录提交是异步请求：点击"登录"后先等待"候诊队列"可见再 `goto` 其他路由，否则跳转会中断登录请求。“开始首诊”同样须等按钮消失、病例进入首诊后再切页签；问诊恢复场景通过[真实入口测试](../../apps/web/e2e/consultation-reply-recovery.spec.ts)等待可观察状态。共享表单的列表/详情导航按实际内容容器判断，回归见 `apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts`。
 
 - 编写手工验收步骤前，核对测试 setup 是否经过当前产品入口。收费 E2E 的[前置数据](../../apps/web/e2e/billing-payments.fixture.ts)使用兼容检验命令生成应收，不能据此推断医生当前独立开单入口已经接通收费；先按[收费流程合同](../architecture/clinical-workflows.md#85-收费支付与退款)确认可验收范围，再提供页面操作步骤。
 
-- React 18/19 Surface 合同在各 `describe` 的 `beforeAll` 中从当前源码现场构建 fixture。全量运行期间修改源码，后续用例会构建半改代码并产生无关失败。先等运行结束、按文件归类失败，再统一修改并定向复跑受影响文件。
-
-- Surface 跨窗口旅程关闭菜单时，只向菜单所在的 Page 发送 Escape；上游宿主会把未被控件消费的 Escape 解释为关闭整个 Surface。若已选中页签和“更多”同时不可见，先核对宿主是否关闭，并在返回另一窗口后断言其真实工作台标题可见，不靠延长页签等待或强制显示修复。参考[检查收费合同](../../apps/dsh-web/src/client/investigation-billing.browser.test.ts)。
+- Surface 跨窗口旅程关闭菜单时，只向菜单所在的 Page 发送 Escape；上游宿主会把未被控件消费的 Escape 解释为关闭整个 Surface。若已选中页签和“更多”同时不可见，先核对宿主是否关闭，并在返回另一窗口后断言其真实工作台标题可见，参考[检查收费合同](../../apps/dsh-web/src/client/investigation-billing.browser.test.ts)。
 
 - 待办数等异步数据会让页签变宽，已显示的页签可能在数据到达后才收进“更多”下拉菜单。一次性的 `isVisible()` 判断会与重排竞态，应在 `expect(...).toPass()` 中重试“若可见则直接点 tab，否则打开更多菜单点击 `menuitem`”，见[页签辅助](../../apps/web/e2e/workspace-tabs.fixture.ts)。jsdom 中 `clientWidth` 为 `0`，非当前页签默认进入“更多”菜单且模态菜单打开期间会给页面其余区域加 `data-base-ui-inert`；同时模块级 Zustand 卡片视图（`useCardViews` 的当前 `tab`）在同 `id` 用例间保留，切页签应通过 `menuitem` 选择并闭合菜单，仅断言属性时用 `{ hidden: true }`。向已有 React 文本子节点的标题行做 `createPortal` 时须挂载到独立空子节点（如 `span[data-slot]`），避免 React 18/19 报混合子节点警告。
 
@@ -203,8 +157,6 @@
 - 验证文件读取次数时，只替换 `node:fs` 中需要观测的函数并委托真实实现；整模块 `{ spy: true }` 会连带代理 `ReadStream` 等类，可能让真实流悬挂并触发超时。保留真实文件和流，仅在文件系统边界统计读取，复用 [DRG 安装回归](../../apps/server/tests/drg-reference-sync.test.ts)。
 
 - 安装资料的 check-only 回归先通过公开安装入口准备合成资料，再让分发源不可用；只放仓库本地资料会命中另一条复用路径，掩盖临时数据库路径改变资料查找位置的问题。通过公开入口核对 `source: installed`、默认与自定义安装目录，以及正式数据库和资料字节未变，见[参考同步回归](../../apps/server/tests/reference-sync.test.ts)。
-
-- Testing Library 的 `getByRole` 使用字符串 `name` 时已按完整可访问名称匹配，不接受 Playwright 的 `exact` 选项；混用两者参数可能让 Vitest 运行通过而 TypeScript 检查失败。组件测试省略 `exact`，真实浏览器测试按 Playwright API 保留该选项。
 
 - 验证模型手动恢复时，逐个继续意图核对实际外部派发次数，并在下一次仍失败时证明自动重试没有被一并放开；同时覆盖重放、准入拒绝和重启。任务来源 `trigger: manual` 会延续到后续阶段，不能用它证明某一次请求已获得人工授权；恢复合同见[模型执行恢复](../architecture/storage.md#模型执行恢复)。
 
@@ -270,8 +222,6 @@
 
 - `vendor/dsh-react-surface` 的 `lib/` 是未跟踪的生成目录。ClinMesh 的 Vitest 若直接导入由 DSH 注入的 `dsh-react-surface/client` external，必须通过显式测试 alias 解析到本地 stub；测试不能依赖开发机曾构建 submodule 后遗留的 `lib/client.js`。
 
-- 在独立 worktree 或干净克隆运行 DSH 单元测试或浏览器合同前，先执行 `pnpm --filter ./apps/dsh-web build:styles` 生成 gitignored 的 `apps/dsh-web/src/client/styles.generated.ts`；缺失时相关入口在 Vite 加载或构建阶段报 `Failed to resolve import` 或 `Could not resolve "./styles.generated.ts"`，尚未执行测试断言。该文件不进入提交。
-
 - 浏览器合同从包级 runner 迁到根 runner 时，Vite 的 `resolve.dedupe` 会改用根目录解析 React；build 必须显式设置 owning app 的 `root`。动画回归同时保留“完成后仍保持高光”的阶段断言和有界卸载等待，固定 sleep 不能证明渲染帧已经执行。
 
 - 首诊浏览器旅程在点击“开始首诊”后，先等待“在诊”队列已选中，再切换问诊或检验检查页签。Command 回执后的队列刷新可能重建详情；只等待点击完成会把旧详情上的页签选择丢失。窄屏详情用 CSS 隐藏队列但保留 DOM，可用 `getByRole` 的 `includeHidden: true` 等待 `aria-selected`；DSH 的 queue rail 选择病例后会卸载队列导航，须先展开、等待选中后再收起，不能用 `includeHidden` 查询已卸载节点。共享等待示例见[检验收费 fixture](../../apps/web/e2e/investigation-billing.fixture.ts)。
@@ -292,17 +242,15 @@
 
 - 病历“未保存”提示回归须包含首次自动记录只写其他字段、`hasSavedDraft=false` 且持久主诉仍为空的场景；页面预填可能与数据库空值不同，保存基准应与编辑器采用同一份预填规则。通过[医生工作台组件](../../apps/web/src/app/role-workspaces.test.tsx)和[真实病历入口](../../apps/web/e2e/doctor-document-quality.spec.ts)同时核对页头与编辑器状态，并保留手工清空、恢复原文和清空保存刷新后的断言；只有完整人工保存稿的 fixture 无法捕获该差异。
 
-- 交互合同类重构（如目录+表单改弹窗）会同时波及四层引用同一交互的测试：组件套件、跨页签集成套件（`role-workspaces.test.tsx`）、DSH browser 合同（fixture 渲染 `WebApp`）、`--project=web` 真实入口 e2e。只跑直接修改的套件会连续漏层：本次弹窗迁移先后两次因未跑 role-workspaces 与 web e2e 在 CI 的 `pnpm check` 才暴露。合同迁移完成后先在本机全量复跑这四层（组件 vitest、role-workspaces、`--project=contracts`、`--project=web`），再推送。
+- 交互合同重构（如目录+表单改为弹窗）会同时影响四层测试：组件套件、跨页签集成（`role-workspaces.test.tsx`）、DSH browser 合同（`--project=contracts`）与真实入口 E2E（`--project=web`）。只跑直接修改的组件套件容易漏掉上层入口回归，推送前须在本机覆盖全部四层。
 
 - Node 环境的纯函数回归若在导入工作台时出现 `document is not defined`，先检查新增阅片器是否把 OpenSeadragon 等 DOM 依赖提前带入模块。仅在用户展开影像时以 React.lazy/Suspense 加载既有 viewer，保持 React 18/19 共有 API，不给纯函数测试全局注入 DOM；住院入口的回归见 `inpatient-workspace.test.ts` 与[申请及责任决策](../decisions/implemented/architecture/2026-10-21-inpatient-investigations-and-transfer.md)。
 
-- vitest 默认 `testTimeout` 5000ms 只够轻量用例；交互最重的 `role-workspaces.test.tsx` 场景（450 行、大量 userEvent）本地实测约 4 秒，CI runner 稍慢即越线，表象是三连失败且耗时压在 5000ms 附近（如 5031ms）。判定"边界慢"而非偶发 flake 的依据：多 run 失败于同一用例、超时值贴近上限、本地耗时已过半。修复沿用文件内既有 per-test 先例补 `}, 15_000)`，不改断言、不全局放宽 testTimeout。 多患者晚到 Agent 检验草稿回归还包含自动保存和工具重绑定；独立单 worker 复验实测 4.02 秒，另两类检查约 2.08／2.23 秒，CI 同一检验场景触及 5 秒时，给这一组长交互设置局部预算，保留病例、版本、写入次数与幂等断言。
+- vitest 默认 `testTimeout` 5000ms 只够轻量用例；交互最重的 `role-workspaces.test.tsx` 场景（450 行、大量 userEvent）本地实测约 4 秒，CI runner 稍慢即越线。判定“边界慢”而非偶发 flake 的依据：多 run 失败于同一用例、超时值贴近上限、本地耗时已过半；修复沿用文件内既有 per-test 先例补 `}, 15_000)`，保留病例、版本、写入次数与幂等断言，不改断言、不全局放宽 `testTimeout`。
 
 - 约束性 schema 的重复性校验不得用 `new Set(items.map(x => x.field ?? ''))` 兜底缺值：多项都缺该字段时会全部映射为同一空串而被误判重复，正常业务输入直接被拒。先 `filter` 出有值项再比对集合大小；负例必须覆盖「多项均缺值」组合，只有单项正反例无法捕获该误判。先例见 `packages/contracts/src/inpatient-surgery.ts` 与 `inpatient-drg-simulation-http.test.ts` 的多项无预留用例。
 
-- CI `perf:ci` 全程仅约 13 秒（绿 run 日志实测，2026-10-23）：performance assert 首败即抛只报第一项越界，更新基线前先用探针列出全部越界项（trace 类指标断言按 iteration 均摊，比较时不除以 iterations 会假越界）。改写路径或合成账号的改动应本地先跑 `pnpm --filter @clinmesh/server performance -- --profile ci`，成本以秒计，不构成跳过理由。
-
-- 住院浏览器旅程在普通填表、导航或交接处累计超时时，先比较公开读取耗时、依据指纹和模型请求数，并读取 trace 动作耗时与 `error-context.md` 文字；最后报错的 locator 不一定是根因。[PCI fixture](../../apps/web/e2e/inpatient-pci.fixture.ts) 和 [DRG fixture](../../apps/web/e2e/inpatient-drg.fixture.ts) 均沿[生产入口](../../apps/server/src/index.ts)的 250 毫秒派发。测试服务端与 Playwright 共用 Node 事件循环，25 毫秒轮询会叠加四类刷新及空 Outbox 领取，即使指纹和模型数稳定、控件可见可用，也可能挤占正常交互并耗尽原 30 秒预算；校准驱动频率时保留全部交互、断言和时限。沿[独立分组核对决策](../decisions/implemented/architecture/2026-10-30-drg-record-checks-on-demand.md)复用当前计算结果；总时限超时还须分开测量 fixture 初始化、前端构建和页面交互，把可复用的版本构建放在 `beforeAll`，不通过放宽导航或旅程时限掩盖重复工作。
+- 住院浏览器旅程在普通填表、导航或交接处累计超时时，先比较公开读取耗时、依据指纹和模型请求数，并读取 trace 动作耗时与 `error-context.md` 文字；最后报错的 locator 不一定是根因。[PCI fixture](../../apps/web/e2e/inpatient-pci.fixture.ts) 和 [DRG fixture](../../apps/web/e2e/inpatient-drg.fixture.ts) 均沿[生产入口](../../apps/server/src/index.ts)的 250 毫秒派发。测试服务端与 Playwright 共用 Node 事件循环，25 毫秒轮询会叠加四类刷新及空 Outbox 领取，挤占正常交互并耗尽原 30 秒预算；校准驱动频率时保留全部交互、断言和时限。沿[独立分组核对决策](../decisions/implemented/architecture/2026-10-30-drg-record-checks-on-demand.md)复用当前计算结果，并把可复用的版本构建放在 `beforeAll`。
 
 - 住院工作台整合主线新增组件时，单独挂载的组件测试可能全部通过，但可见文案和操作位置仍未满足工作台合同。合并后同时运行 `apps/web/src/app/inpatient-visible-copy.test.ts`，并从真实工作台验证页签导航和「当前操作」的 portal 位置；沿用 `inpatient-ui.ts` 的阶段选择入口，不把 Git 自动合并成功作为界面合同已保留的证据。
 
@@ -318,10 +266,4 @@
 
 - 私稿监听按存储 key 注册时，闭包不能固定首次业务初值：资料刷新后清空或消费回执触发通知，旧监听可能把最新默认清单覆盖为旧值。监听读取 latest reader 并复核仍属原 key；用受控 props 先新增实际业务事实、再明确清空并重新带入，核对新事实和原编辑保护，参见[手术私稿回归](../../apps/web/src/app/inpatient-surgery-draft.test.tsx)。
 
-- 连续录入弹窗的编辑回归须包含「修改 A 不保存 → 切 B 修改 → 回 A → 关闭或刷新」并逐行核对原输入，只有加入多项和单行保存无法发现共用编辑稿覆盖。丢回执恢复还须在业务已成功后损坏原私稿，从真实恢复按钮核对保留原文、明确丢弃和无重复 POST；确认期间回执变成 404 或失败时须保留原意图，存储读取被拒不能按内容损坏删除。参考[连续处方旅程](../../apps/web/e2e/outpatient-prescription-batch.journey.ts)和[手术双清单旅程](../../apps/web/e2e/inpatient-surgery-batch.journey.ts)。
-
-- 多个挂载共享活动集合时，原 hook 卸载后的 `finally` 只删除集合项不会让新实例重新渲染。回归在业务 POST 已发、响应挂起时卸载并同范围重挂，放行丢响应后核对恢复和关闭入口解除忙碌，再验证仅查询原键；解除活动须通知当前实例，不能靠成功结算事件间接刷新。见[住院报告恢复回归](../../apps/web/src/app/inpatient-report-reader.test.tsx)。
-
-- 子视图卸载不代表上层写入 hook 已卸载；提交前异步身份查询等待期间直接卸载子视图，最后一次渲染的 `active` 或 `open` ref 仍可能为真。上下文守卫须同时检查挂载状态；回归保留上层 hook、只卸载子视图，再放行查询并断言零业务 POST、重挂载输入可恢复，见[手术补录回归](../../apps/web/src/app/inpatient-surgery-prototype.test.tsx)。
-
-- 私稿退出清理会持久标记整个命名空间时，损坏内容可能使补清理反复失败。显式确认丢弃当前上下文的入口应在原操作待恢复、未知结果及运行中守卫通过后先删除当前记录，再补清理；普通读取、保存与结算仍先完成清理，不能静默删除其他上下文的未知原键。命名空间内另一坏稿可能先阻塞读取，使当前有效未知尝试被投影为空；删除前还须直接检查当前原文中的可识别未知项，读取失败则保留。回归需将坏键排在未知稿前并模拟共享意图未写成，逐字核对当前原键仍在，不能只断言清理返回失败。损坏草稿回归同时覆盖退出前后，确认未丢弃时原文保留、丢弃后可重新选择且没有业务请求，见[送检组件回归](../../apps/web/src/app/inpatient-investigation-send-batch.test.tsx)。还须从真实组件点击现有丢弃入口：坏稿通常投影为空清单，按行数隐藏或禁用按钮会让底层修复不可达；见[医嘱页面回归](../../apps/web/src/app/inpatient-doctor-clinical-pages.test.tsx)与[执行窗口回归](../../apps/web/src/app/inpatient-execution-batch.test.tsx)。
+- 共享活动集合与子视图卸载守卫：原 hook 卸载后的 `finally` 除删除活动项外还须通知当前挂载实例重新渲染（覆盖 POST 已发挂起时卸载重挂，见[住院报告恢复回归](../../apps/web/src/app/inpatient-report-reader.test.tsx)）；子视图卸载不代表上层写入 hook 已卸载，提交前异步身份查询等待期间的上下文守卫须同时检查子视图挂载状态，避免最后一次渲染的 `active`/`open` ref 仍为真而误发业务 POST（见[手术补录回归](../../apps/web/src/app/inpatient-surgery-prototype.test.tsx)）。

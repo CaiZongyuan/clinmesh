@@ -1,5 +1,7 @@
 # 通用门诊病历缺项的官方依据与适用边界
 
+> 证据范围：《病历书写基本规范》（卫医政发〔2010〕11号）公开全文逐条核验；现行门诊病历质控规则与统一质控合同归[临床业务流程](../architecture/clinical-workflows.md#81-门诊闭环)与[统一病历质控决策](../decisions/implemented/architecture/2026-10-19-recording-quality-consolidation.md)。
+
 ## 范围与证据
 
 核验日期：2026-10-15。代码基线：`ed31de7d1da490f3344164e24bc3210dd8922706`。本文为 #178 的病历缺项规则提供研究输入，不定义已批准规则，不替代[医生 Agent 临床助手需求（Issue #175）](https://github.com/CaiZongyuan/clinmesh/issues/175)。既有实现边界见[质控能力研究](2026-10-08-clinical-quality-control.md)。本次只研究普通门诊文书完整性，不将住院病案首页、DRG、病种路径、诊疗合理性或药学审查纳入门诊必填。

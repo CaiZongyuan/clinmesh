@@ -127,14 +127,6 @@ export const docsPages: DocsPage[] = [
     order: 10,
   },
   {
-    source: 'docs/demo-architecture.md',
-    route: 'architecture/demo.md',
-    label: 'Demo 部署',
-    sidebar: 'architecture',
-    section: 'Architecture',
-    order: 11,
-  },
-  {
     source: 'CONTEXT.md',
     route: 'architecture/domain-language.md',
     label: '领域词汇',
@@ -149,6 +141,15 @@ export const docsPages: DocsPage[] = [
     sidebar: 'architecture',
     section: 'Reference',
     order: 2,
+    outline: [2, 3],
+  },
+  {
+    source: 'docs/drg-reference-storage.md',
+    route: 'architecture/drg-reference-storage.md',
+    label: 'DRG 离线资料储存合同',
+    sidebar: 'architecture',
+    section: 'Reference',
+    order: 3,
     outline: [2, 3],
   },
   {
@@ -168,12 +169,21 @@ export const docsPages: DocsPage[] = [
     order: 2,
   },
   {
+    source: 'docs/pci-demo.md',
+    route: 'guide/pci-demo.md',
+    label: 'PCI 黄金病例演示',
+    sidebar: 'guide',
+    section: 'Guide',
+    order: 3,
+    outline: [2, 3],
+  },
+  {
     source: 'docs/imaging.md',
     route: 'guide/imaging.md',
     label: '影像检查使用指南',
     sidebar: 'guide',
     section: 'Guide',
-    order: 3,
+    order: 4,
   },
   {
     source: 'docs/pathology.md',
@@ -181,7 +191,7 @@ export const docsPages: DocsPage[] = [
     label: '病理切片会诊使用指南',
     sidebar: 'guide',
     section: 'Guide',
-    order: 4,
+    order: 5,
   },
   {
     source: 'docs/testing.md',

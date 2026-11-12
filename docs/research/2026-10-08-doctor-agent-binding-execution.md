@@ -1,6 +1,6 @@
 # 医生助手只读绑定与安全恢复
 
-研究日期：2026-10-08。状态：技术研究，未实施。正式产品行为见 [医生 Agent 临床助手需求（Issue #175）](https://github.com/CaiZongyuan/clinmesh/issues/175)；本文件只研究 #176 的工具执行 Interface，不替代规格，也不表示新增权限已交付。
+研究日期：2026-10-08。本文保存医生助手只读绑定与 DSH 原生 `Session.requestHeader()` 时序探针的研究证据；已落地的正式行为归[Agent 集成合同](../architecture/agent-integration.md#7-agent-适配器与能力边界)、[医生 Agent 临床助手需求（Issue #175）](https://github.com/CaiZongyuan/clinmesh/issues/175)与[医生助手只读绑定决策](../decisions/implemented/architecture/2026-10-08-doctor-agent-query-binding.md)。
 
 ## 结论
 

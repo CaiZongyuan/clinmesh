@@ -111,15 +111,9 @@ G26 的实际正文是《2023 ESC Guidelines for the management of acute coronar
 
 住院检查入口目前区分 `laboratory` 与 `imaging`，后者的明确检查代码为胸片和胸部平扫 CT；冠脉造影另已存在于本院诊断性操作目录，能形成实际 Procedure、实施备注和费用，但当前手术合同没有病变血管、狭窄程度、FFR/iFR 或 LVEF 等专用字段。这说明“已有造影操作”与“已有供指南判断使用的完整心血管报告”是不同能力。是否先使用有来源的结构化合成报告，还是扩展专用报告合同，需要在正式功能范围中决定。证据：[PCI 数据](../../apps/server/src/application/scenario-data/pci-data.ts)、[住院检查接线](../../apps/server/src/application/inpatient-investigations.ts)、[手术目录](../../apps/server/src/application/scenario-data/inpatient-surgery-catalog.ts)、[手术合同](../../packages/contracts/src/inpatient-surgery.ts)。
 
-来源“可下载”或“已在桌面”不表示全文已获产品使用或再分发授权。默认用途仍只启用 `active` 且许可满足部署条件的来源，未知许可和非商业来源保持原有默认限制；可信配置可单独打开本次显式导入资料的本地验证用途。原注册表的心血管覆盖主要为 WHO PEN，本地清单另登记专门 PCI、双联抗血小板、血运重建等来源。证据：[原来源清单](../../apps/server/reference-data/guideline-sources.json)、[本地清单](../../apps/server/reference-data/local-guideline-sources.json)、[启用条件](../../apps/server/src/application/guideline-corpus.ts)。
+来源“可下载”或“已在桌面”不表示全文已获产品使用或再分发授权。默认用途仍只启用 `active` 且许可满足部署条件的来源，未知许可和非商业来源保持原有默认限制；可信配置可单独打开显式导入资料的本地验证用途，固定 Release 分发与自动安装合同见[指南库固定 Release 决策](../decisions/implemented/architecture/2026-10-26-guideline-release-installation.md)与[部署指南](../deployment.md)。证据：[原来源清单](../../apps/server/reference-data/guideline-sources.json)、[本地清单](../../apps/server/reference-data/local-guideline-sources.json)、[启用条件](../../apps/server/src/application/guideline-corpus.ts)。
 
-### 建议的最小落地顺序
-
-1. 先以当前已确认的择期单枚支架合成病例为对象，选取与之匹配的稳定性冠心病、血运重建、PCI、抗血小板和对比剂资料，编制“病例已有事实—所需证据—指南原文位置”核对表。急性冠脉综合征、休克、机械并发症或 CABG 等资料作为独立场景候选，不混入当前无复杂并发症病例。
-2. 将核对结果转为有来源的病例创作资料和少量合成正反用例，例如资料不足时不能直接断言 PCI 适应症、肾功能及过敏信息缺失时提示核对、长期抗凝与出血风险影响抗栓判断。病例作者可以核对 Case Truth；运行时临床助手仍仅使用岗位可见、实际形成的证据。
-3. 需要运行时助手使用时，再确认来源接入及许可方案，复用现有指南库、证据核验和人工正式开具入口。住院接线作为单独明确的行为变化处理，不能用放宽门诊角色或读取隐藏底稿的方式实现。
-
-当前 PCI 数据中的合成价格、库存、常用用量和数量上限明确标为院内仿真补充，不是临床处方依据；不应仅因某份指南出现相同药名，就把这些值升级为临床推荐。指南之间的版本、人群、地区及急慢性场景存在差异时，应保留来源和适用条件，不能合并成无条件通用规则。正式实现前仍需按项目规则完成需求确认和可观察验收。
+当前 PCI 数据中的合成价格、库存、常用用量和数量上限明确标为院内仿真补充，不是临床处方依据；不应仅因某份指南出现相同药名，就把这些值升级为临床推荐。指南之间的版本、人群、地区及急慢性场景存在差异时，应保留来源和适用条件，不能合并成无条件通用规则。住院侧已落地的主题知识层与手术计划参考意见合同见[临床业务流程](../architecture/clinical-workflows.md#pci-计划的只读指南参考意见)与 [LLM-Wiki 主题知识层评估](2026-11-02-llm-wiki-for-inpatient-guidelines.md)。
 
 ## 可复用的验证位置
 

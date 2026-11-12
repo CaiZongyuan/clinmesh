@@ -2,9 +2,9 @@
 
 本文拥有 FHIR R5 能力、资源映射、术语、Search、版本与 HIS Command 接口合同。系统总入口见[系统架构](../architecture.md)，业务验证要求见[测试策略](../testing.md)。
 
-## 5. FHIR R5 策略
+## FHIR R5 策略
 
-### 5.1 版本决策
+### 版本决策
 
 统一基路径：
 
@@ -34,7 +34,7 @@ Canonical URL 是定义身份，不要求该地址承担运行中 API。`Capabil
 
 <a id="52-只声明真实能力"></a>
 
-### 5.2 只声明真实能力
+### 只声明真实能力
 
 当前提供：
 
@@ -46,7 +46,7 @@ Canonical URL 是定义身份，不要求该地址承担运行中 API。`Capabil
 
 资源能力注册表中的每种资源只声明 `read`、`vread`、`history-instance` 和 `search-type`。当前注册 Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense、MedicationAdministration、Procedure、Composition、Bundle、Provenance、InventoryItem、AuditEvent 和 ImagingStudy。
 
-逐资源 SearchParameter 白名单见 [5.5 节](fhir-and-commands.md#55-fhir-search-最小实现)。所有资源共享 `_count`、`_cursor` 和 `_total=none|accurate` 三个结果控制参数。
+逐资源 SearchParameter 白名单见[FHIR Search 最小实现](fhir-and-commands.md#55-fhir-search-最小实现)。所有资源共享 `_count`、`_cursor` 和 `_total=none|accurate` 三个结果控制参数。
 
 首期不声明：
 
@@ -65,11 +65,11 @@ Canonical URL 是定义身份，不要求该地址承担运行中 API。`Capabil
 
 <a id="53-资源映射"></a>
 
-### 5.3 资源映射
+### 资源映射
 
-#### 5.3.1 直接作为 FHIR native
+#### 直接作为 FHIR native
 
-下表是领域到 FHIR R5 的架构映射，不是当前 CapabilityStatement 清单。只有 [5.2 节](fhir-and-commands.md#52-只声明真实能力)列出的资源和 interaction 可由当前 FHIR API 访问；其他映射在对应业务实现并加入同一能力注册表后才构成公开能力。
+下表是领域到 FHIR R5 的架构映射，不是当前 CapabilityStatement 清单。只有[只声明真实能力](fhir-and-commands.md#52-只声明真实能力)列出的资源和 interaction 可由当前 FHIR API 访问；其他映射在对应业务实现并加入同一能力注册表后才构成公开能力。
 
 | 中国 HIS 概念 | FHIR R5 资源 | 说明 |
 | --- | --- | --- |
@@ -110,7 +110,7 @@ Canonical URL 是定义身份，不要求该地址承担运行中 API。`Capabil
 | 模板/表单 | `Questionnaire`、`QuestionnaireResponse` | 病案首页补充字段可采用 profile |
 | 本地术语 | `CodeSystem`、`ValueSet`、`ConceptMap` | 显式版本化 |
 
-#### 5.3.2 后续 FHIR Profile/Extension 边界
+#### 后续 FHIR Profile/Extension 边界
 
 适合扩展的事实必须满足：主体仍是一个标准 FHIR 资源，只是缺少中国场景字段。
 
@@ -140,7 +140,7 @@ Canonical URL 是定义身份，不要求该地址承担运行中 API。`Capabil
 
 签署临床文书的业务实例不可原地覆盖。每个病例最多有一个签署根文书，后续更正或修订只能从最新版本创建新的 document Bundle、Composition 和 Provenance，并通过 `Composition.relatesTo` 表达 `replaces`。FHIR `_history` 只记录同一 logical id 的服务器版本，不作为临床修订链、Provenance 或 AuditEvent 的追加机制；结构化病历历史从 Composition 的稳定编码 section 重建，不在关系表复制正文。
 
-#### 5.3.3 不强行映射为 FHIR CRUD
+#### 不强行映射为 FHIR CRUD
 
 | 业务 | 处理方式 | 可选 FHIR 投影 |
 | --- | --- | --- |
@@ -158,7 +158,9 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 医保投影必须遵守资源原义：Coverage 表达保障资格，不表示一次人员查询；Claim 表达向付款方提出的费用申报；ClaimResponse 表达付款方裁决；ExplanationOfBenefit 是面向受益人的裁决结果表达，不是接口调用日志。签到、查询、上传批次、游标、重试和原始报文不得机械转换为 Claim 系列资源。一次结算、多次申报、撤销和重结算之间使用稳定 identifier 和明确 replacement 关系。
 
-### 5.4 中国术语与参考数据策略
+<a id="54-中国术语与参考数据策略"></a>
+
+### 中国术语与参考数据策略
 
 离线 DRG 资料清单使用 `apps/server/reference-data/drg-offline.lock.json`，正常安装准备自动获取完整固定快照，`reference-db` 保留运维查询入口，运行方式见[部署指南](../deployment.md#离线-drg-资料核对)。分发锁 `drg-distribution.lock.json` 固定 Release 下载地址、压缩包 SHA-256、文件数和解包规模；安装先复用经完整核验的本地或已安装版本，否则暂存下载、限制解包并完整检查后原子安装，理由见[自动分发决策](../decisions/implemented/architecture/2026-10-22-drg-reference-distribution.md)。`reference_offline_inventory` 保存不可变摘要及内容哈希，不进入 `reference_release` 或临床编码目录；Server 继续只读 Reference SQLite。准备一次性验证所有包后，在事务中发布整个清单及本地审计，失败保留原清单；`verify` 同时检查已存摘要的身份和哈希。
 
@@ -204,7 +206,7 @@ Simulator 对每个冻结报告叶子先复用编码、值类型和单位兼容�
 
 <a id="55-fhir-search-最小实现"></a>
 
-### 5.5 FHIR Search 最小实现
+### FHIR Search 最小实现
 
 每个受支持参数必须引用一个 R5 `SearchParameter` canonical 定义。标准参数采用 R5 定义；项目自定义参数在 IG 中发布固定 `url`、`version`、`base`、`code`、`type`、`expression`、target 以及 modifier/chain 范围。CapabilityStatement 的 `rest.resource.searchParam.definition` 引用该 canonical，并只声明真实实现的参数；不得从 profile 字段名自行猜测搜索语义。
 
@@ -239,7 +241,7 @@ reference 参数只索引本地相对引用。资源写入时 Repository 按 reg
 - Bundle link 返回可直接调用的完整 `self` 和 `next`，Agent 只能跟随服务端给出的同源 URL。
 - `_total=accurate` 只在受控查询中计算并返回 `Bundle.total`；默认 `none` 时不返回 total。
 
-### 5.6 版本与并发
+### 版本与并发
 
 每个 FHIR 资源具有：
 
@@ -256,7 +258,7 @@ HTTP 行为：
 - 资源实际内容未变化时不创建新版本。
 - expunge 不属于首期公开能力。
 
-### 5.7 校验与 Implementation Guide
+### 校验与 Implementation Guide
 
 当前仓库没有 SUSHI 工程、生成的 IG package 或官方 FHIR Validator 流程。`packages/contracts` 的 Zod schema 只验证 Resource 基础 envelope、CapabilityStatement、Bundle 和 OperationOutcome 的当前 wire shape；临床、支付、库存和引用不变量由拥有它们的 Command 验证。
 
@@ -266,11 +268,11 @@ Scenario 创建的 Patient 使用固定 `synthetic-data` extension 标记合成�
 
 后续只有在仓库同时交付 FSH/StructureDefinition、固定版本的生成包、官方 Validator 合约测试和运行时所需校验后，才能在 CapabilityStatement 中加入 `profile` 或 `supportedProfile`。TypeScript 类型与 `meta.profile` 本身都不能证明 profile conformance。
 
-## 6. 接口设计
+## 接口设计
 
-### 6.1 路径规划
+### 路径规划
 
-`docs/demo-architecture.md` 中“业务 API 使用 `/api`”继续适用，但 FHIR 标准端点作为明确例外使用独立根路径。
+业务 API 统一使用 `/api/*` 前缀，FHIR 标准端点作为明确例外使用独立根路径 `/fhir/R5`。
 
 | 路径 | 说明 |
 | --- | --- |
@@ -288,18 +290,18 @@ Scenario 创建的 Patient 使用固定 `synthetic-data` extension 标记合成�
 
 当前路由表不包含通用 `/api/tools/v1`、`/mcp`、SMART discovery 或 Agent OAuth 端点。`/api/agent/v1` 同时拥有私有 Agent Client/Grant 控制面和同源 DSH Surface 的 Page Context/调用关联，不是开放 Tool Gateway；后续增加传输协议时按实际实现的版本和能力扩展，不能提前发布空路由或虚假元数据。
 
-### 6.2 FHIR 写入策略
+### FHIR 写入策略
 
 当前 FHIR API 是只读互操作面。所有注册资源都拒绝 generic write；`PUT /fhir/R5/{ResourceType}/{id}` 明确返回 `405 OperationOutcome`，其他 FHIR 写 method 没有路由。内部写权限仍按 owner 分开：
 
 | 写策略 | 资源示例 | 行为 |
 | --- | --- | --- |
 | Command-owned FHIR native | Patient、Encounter、Observation、ServiceRequest、MedicationRequest、MedicationDispense 等 | Case 直接开始或拥有该状态变化的业务 Command 可创建/更新，HTTP FHIR API 只读 |
-| Read-only projection | AuditEvent、InventoryItem | 领域 Command 同事务投影，generic FHIR write 被拒绝 |
+| Read-only projection | AuditEvent、InventoryItem、ImagingStudy、Procedure | 领域 Command 同事务投影，generic FHIR write 被拒绝 |
 | 业务不可变 | 已签署文书 Bundle/Composition、Provenance | 更正创建新的 logical resource 与修订关系，不能覆盖已签业务实例 |
 | Hidden | Case Truth、隐藏来源资源、内部 command receipt 和 Action Trace | 普通 FHIR API 不暴露 |
 
-### 6.3 后续自定义 FHIR Operation
+### 后续自定义 FHIR Operation
 
 当前不提供或宣告自定义 FHIR Operation。未来业务主体明确对应某个 FHIR 资源时，可优先定义 OperationDefinition：
 
@@ -322,11 +324,11 @@ POST /fhir/R5/MedicationRequest/{id}/$dispense
 
 输入和输出使用 `Parameters`，但内部立即转换为强类型 command。Operation 名称、输入、输出、幂等和错误在 IG 中发布。
 
-### 6.4 HIS Command API
+### HIS Command API
 
 普通挂号、合成病例开始及 Epoch 重放共用同一个门诊发号边界，发行状态、Registration、Encounter.identifier 与 Command 回执原子提交；幂等重放返回原就诊事实。发行状态损坏、容量耗尽或发行源退休时返回可识别的 `REGISTRATION_NUMBER_*` 错误，保留原意图与幂等键，由管理员恢复后重试。号码的持久性、迁移与恢复合同见[存储与事务](storage.md#94-标识符)。
 
-FHIR 没有稳定等价物的聚合使用显式 API。当前写路由为：
+FHIR 没有稳定等价物的聚合使用显式 API（完整可执行路由、输入/输出 schema、岗位 allowlist、风险分级及幂等/expectedVersion 合同由 [`packages/contracts/src/his-operations.ts`](../../packages/contracts/src/his-operations.ts) 的 `hisOperationCatalog` 与 `excludedHisRoutes` 拥有，并由路由覆盖测试校验）。当前代表写与管理路由为：
 
 ```text
 POST /api/his/v1/patients
@@ -380,10 +382,12 @@ POST /api/sim/v1/synthetic-cases/{id}/patient-persona-revisions
 PUT  /api/sim/v1/synthetic-cases/{id}/patient-persona-revisions/active
 GET  /api/his/v1/registration/synthetic-cases
 POST /api/his/v1/synthetic-cases/{id}/actions/start-outpatient-visit
+POST /api/his/v1/synthetic-cases/{id}/actions/start-inpatient-visit
+POST /api/sim/v1/scenario-runs/{id}/actions/advance-time
+POST /api/sim/v1/synthetic-cases/pci/prepare
 ```
 
 `GET /api/his/v1/registration/synthetic-cases` 只允许挂号员读取同一 Workspace 中 `brief-ready`、具有活动 Patient Persona 且尚未开始的病例，支持按姓名或病历号分页检索。响应从 Case 固定的 Profile Revision 投影病例 ID、Case/Profile/Persona revision、病例类型、姓名、病历号、性别和出生日期；不读取当前 Profile，也不返回 Case Truth、来源 Bundle、生成配置或来源历史详情。
-
 
 Command 写请求使用同源 session 与 CSRF 校验，并通过以下 header 提供幂等键：
 
@@ -428,7 +432,7 @@ Workspace、Epoch、Scenario Run、Actor 和 Acting Practitioner Context 只从�
 
 <a id="65-idempotency"></a>
 
-### 6.5 Idempotency
+### Idempotency
 
 Web mutation、outbox dispatcher 和模拟器处理都可能重试。CommandExecutor 以 `(workspace_id, epoch, actor_id, operation, idempotency_key)` 唯一识别业务请求，并保存规范化请求 hash、Acting Practitioner Role、完整响应与 Effect 引用。请求 hash 同时绑定 expected versions、业务输入以及服务端解析的 Practitioner、Practitioner Role、role code、Organization 和 Location；相同 Actor 切换 Acting Practitioner Context 后重用 key 会得到稳定冲突，公开 receipt 查询也要求当前 Practitioner Role 与原 Command 一致，不能读取上一岗位的回执。升级前 receipt 从对应成功 Audit Event 回填岗位，无法可靠解析的旧记录保持不可由有岗位 context 查询。
 
@@ -438,7 +442,9 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 外部模拟工作不复用 Command receipt 状态机。持久 outbox 独立使用 `queued`、`claimed`、`completed`、`failed`、`ambiguous` 和 `abandoned`；claim 带 owner、lease version、过期时间、attempt 和 correlation ID。可重试失败在达到最大尝试前按 `next_attempt_at` 重新领取，结果未知保持 `ambiguous`，Epoch 关闭变为 `abandoned`。结果未知不得当作普通失败盲目重做。
 
-### 6.6 预览与提交
+<a id="66-预览与提交"></a>
+
+### 预览与提交
 
 临床文书签署和门诊支付使用带时效 token 的预览/提交协议。结构化病历预览绑定 Actor context、独立草稿版本和 Encounter 版本；首期复诊兼容预览同时绑定旧文书、诊断、Prescription 和 Encounter；门诊支付预览绑定岗位上下文、ChargeItem 版本、本次金额及组合方式。预览从服务端事实计算文书摘要或金额分配并返回按服务端真实时间计时、五分钟有效的签名 `commitToken`，不修改权威临床、费用或支付状态。
 
@@ -447,6 +453,7 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 `insurance.get/preview/confirm/cancel` 使用受信路径中的 `kind/id` 绑定门诊或住院目标，只有收费员拥有能力。医保预览冻结原费用和目录指纹、患者年度与账户版本，确认用 `previewId/commitToken` 重读依赖；撤销用原 `settlementId` 和 `expectedBalanceVersion` 追加补偿。这些是领域版本，不伪装为 FHIR resource expected versions。确认、撤销和回执恢复复用共享 Command 的幂等及审计；响应未知时保留原输入和键，先查询 receipt。当前合成待遇不机械投影 Coverage、Claim 或 EOB，详细资金和临床边界见[医保模拟](clinical-workflows.md#86-医保模拟)。
 
 门诊账单 GET（`billing.case.get` v3）仅向收费员返回当前作用域内一次门诊的完整应收与余额，以及一页原支付历史。HTTP 与 CLI 使用 `page`、`pageSize`，默认 1、20，单页最多 100；`paymentsPagination` 返回页码、页大小与原款总笔数，`payments` 按创建时间及 payment ID 倒序排列。单项原款沿用 `chargeItemId`，合并原款使用 `kind: "multi-charge"` 和完整 `allocations`，仍只占一条历史记录。Surface 的 `billing.case.read` 只绑定当前就诊，可选 `page` 读取并显示每页 20 条的历史，供人工审阅恢复；不接受其他病例 ID。`payment.recover` 和 `payment.multi-charge.recover` 分别要求原应收或全部原分配的 ChargeItem expected versions，并共用幂等键与 `input.expectedPaymentVersion` 合同；没有任意金额或 outcome 输入，也不重用预览 token。未解决支付版本为 1，追加确定结果后为 2；终态查询返回既有结果，继续未知不改变版本。HTTP、Operation Catalog、CLI 和 Surface 共用此账单读取合同，业务与恢复边界见[收费与支付](clinical-workflows.md#85-收费支付与退款)。
+
 住院结算使用独立的逐项账目指纹预览：提交校验原预览指纹、Encounter 版本与预期金额，不使用上述五分钟 `commitToken`。住院结算包含补缴或关联原入金的退款，与医生出院医嘱、护士出区和清床分别执行；状态门禁及原意图恢复合同见[住院出院与结算](clinical-workflows.md#住院出院与结算)。
 
 病案首页通过 `inpatient.record.read/submit/review/archive` 共享 Query/Command 暴露四组核心字段及独立修订、审核和不可变快照，不新增未实现的通用FHIR病历写能力。提交显式携带本次实际主操作选择或空值，提交、审核与归档均绑定 `expectedRevision` 与 `expectedSourcesHash`；`INPATIENT_RECORD_STALE` 要求重新审阅来源并由医生重新提交，不能静默刷新hash后重做。归档新写返回 `INPATIENT_RECORD_ARCHIVED`，旧receipt优先重放；岗位和门禁见[病案首页与归档](clinical-workflows.md#病案首页与归档)。

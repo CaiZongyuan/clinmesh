@@ -6,7 +6,7 @@ Status: implemented
 
 ## Problem
 
-独立 Web 的医生工作台此前为"候诊栏 + 病例主区"两栏，Agent 参与没有稳定的位置表达；患者横幅内联的七项完诊状态块在中间列变窄后占用过多纵向空间。规格 [AI 原生医生工作台（Issue #236）](https://github.com/CaiZongyuan/clinmesh/issues/236) 要求三栏骨架与建议栈，本 Note 记录第一步（独立 Web 面）落地的结构决定。
+独立 Web 的医生工作台此前为“候诊栏 + 病例主区”两栏，Agent 参与没有稳定的位置表达；患者横幅内联的七项完诊状态块在中间列变窄后占用过多纵向空间。早期 [AI 原生医生工作台（Issue #236）](https://github.com/CaiZongyuan/clinmesh/issues/236) 要求三栏骨架与建议栈，本 Note 记录第一步（独立 Web 面）落地的结构决定（位置合同后由[外壳与反馈 Note](2026-11-02-dsh-shell-feedback.md)收口至患者头部，当前布局归 [UI 设计系统](../../../ui/design.md)）。
 
 ## Decision
 

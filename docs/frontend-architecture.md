@@ -7,17 +7,18 @@
 ## 目标拓扑
 
 ```text
-apps/dsh-web --> apps/web application/runtime --+
-apps/web ----------------------------------------+--> packages/views --> packages/core --> packages/contracts
-apps/desktop ------------------------------------+          |
-                                                            v
-                                                      packages/ui
+apps/dsh-web --> apps/web application/runtime -----------------+
+apps/web ------------------------------------------------------+--> packages/core --> packages/contracts
+apps/desktop --> packages/views (shared view boundary / shell) -+          |
+                        |                                                  |
+                        v                                                  |
+                  packages/ui <--------------------------------------------+ (apps/web + packages/views)
 
 apps/mobile ------------> packages/core (pure entrypoints)
         +---------------> packages/contracts
 ```
 
-standalone Web、DSH Surface 和 Desktop 都运行 DOM/React UI，因此共享视觉 primitives、业务视图、Query hooks 和客户端视图状态。当前 DSH adapter 直接复用 `apps/web` application/runtime；Mobile 使用 React Native，信息密度、导航、生命周期、安全存储和发布节奏不同，只共享协议 schema、类型和纯领域函数。
+standalone Web、DSH Surface 和 Desktop 都运行 DOM/React UI，共享视觉 primitives、Query hooks 和客户端视图状态。当前临床岗位视图位于 `apps/web/src/app` 并由 standalone Web 与 DSH adapter 直接共用，`packages/views` 维护跨端共享视图边界（当前导出 Desktop 的 `AppShell` 骨架）；Mobile 使用 React Native，信息密度、导航、生命周期、安全存储和发布节奏不同，只共享协议 schema、类型和纯领域函数。
 
 ## 应用职责
 
@@ -43,7 +44,7 @@ DSH Client artifact 是一个 lazy-CJS 文件，React、ReactDOM 和 Surface run
 
 ### Server
 
-`apps/server` 的首期目标是运行于 Node.js 的 Hono 后端应用。它负责 HTTP/FHIR adapter、鉴权、Command 调用、SQLite adapter 和可部署构建中的 Web 静态资源 fallback。浏览器与服务端保持同源；具体运行和持久化约束由[Web Demo 运行与部署架构](demo-architecture.md)拥有。
+`apps/server` 是运行于 Node.js 的 Hono 后端应用。它负责 HTTP/FHIR adapter、鉴权、Command 调用、SQLite adapter 和可部署构建中的 Web 静态资源 fallback。浏览器与服务端保持同源；单实例运行与持久化约束分别由[系统架构](architecture/system.md#部署拓扑与单实例约束)与[存储合同](architecture/storage.md)拥有。
 
 ### Desktop
 
@@ -88,7 +89,7 @@ Web/Desktop 的尺寸、主题、组件组合与真实目录由[临床 UI 设计
 
 ### views
 
-`packages/views` 保存 Web/Desktop 共享业务页面和组合组件。它可依赖 `core + ui`，但不得导入 Vite、Electron、Expo、Next.js 或具体路由库。
+`packages/views` 定义 Web/Desktop 共享业务视图与组合边界（当前承载 Desktop `AppShell` 骨架，现行临床岗位页面集中在 `apps/web/src/app` 并直接供 standalone Web 与 DSH Surface 复用，待 Desktop 进入业务开发时按本边界下沉）。它可依赖 `core + ui`，但不得导入 Vite、Electron、Expo、Next.js 或具体路由库。
 
 平台动作通过小 interface 注入，例如：
 

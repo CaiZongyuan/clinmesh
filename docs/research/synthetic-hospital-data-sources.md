@@ -2,7 +2,7 @@
 
 ## 范围与执行结论
 
-本文研究 ClinMesh 在患者生成之外，如何获得诊断、药品、检验、检查/影像、医疗服务价格、耗材、术语和组织主数据。结论来自截至 2026-08-26 可核验的官方规范、官方公开数据、项目文档和固定 commit 源码；它们是 Scenario 数据编译的设计输入，不定义当前产品行为。病例真值、揭示策略与运行留痕的完整边界见[虚拟患者与病例创作系统研究](./virtual-patient-and-case-authoring-systems.md)，FHIR ownership 和业务状态机见[系统架构](../architecture.md)。
+本文研究 ClinMesh 在患者生成之外，如何获得诊断、药品、检验、检查/影像、医疗服务价格、耗材、术语和组织主数据。结论来自截至 2026-08-26 可核验的官方规范、官方公开数据、项目文档和固定 commit 源码；它们是项目启动期的数据编译设计输入，不定义当前产品行为（现行存储与参考资料合同见[存储与参考数据](../architecture/storage.md)；放射与病理公开去标识像素素材的受控豁免清单见[影像素材清单](../../imaging-assets/README.md)与[病理切片素材清单](../../pathology-assets/README.md)）。病例真值、揭示策略与运行留痕的完整边界见[虚拟患者与病例创作系统研究](./virtual-patient-and-case-authoring-systems.md)，FHIR ownership 和业务状态机见[系统架构](../architecture.md)。
 
 ClinMesh 不存在一个可以直接下载的“中国仿真医院数据集”。患者纵向病史、国家或行业术语、医院目录、地方价格、库存事实和病例结果属于不同 authority、地域、时间与许可边界，必须分别取得、版本化并在离线 compiler 中组合。
 
@@ -225,32 +225,3 @@ UDI 数据共享页则明确提供全量与增量 ZIP/RSS，核验时页面显�
 9. 使用固定 seed、虚拟时间、package hashes、compiler 和 policy version 重复编译，要求 canonical state hash 相同；然后安装不可变快照。
 
 FHIR validator 只能证明结构和 profile；临床耦合、目录可执行性、金额、库存、时序与 Hidden Fact 泄漏需要 ClinMesh 自己的验证器。项目尚未发布正式 R5 IG 时，不得用 `meta.profile` 或 TypeScript 类型声称 conformance。
-
-## 实施优先级
-
-### P0：完成 #39 所需的最小参考包合同
-
-- 在 compiler 输入中显式加入 Reference Data Package 与 Hospital Baseline 的 ID、版本和 hash，不把目录塞进 Synthea 请求。
-- 为发热与 2 型糖尿病建立完全合成、临床人工审阅的最小诊断、药品、检验、服务价格、科室和库存 overlay。
-- 为 Synthea code 建立小型显式 mapping 表；未映射代码形成可编辑诊断并阻止安装所需事实缺失的数据集。
-- 安装快照固定 patient corpus、参考包、compiler/mapping/policy 和 FHIR R5 输出。
-
-### P1：完成 #40 的检验定义与结果引擎
-
-- 建立检验 definition、panel、specimen、method、UCUM unit、分层参考区间、危急值、TAT、价格和 formula DAG。
-- 实现 L1/L2/L3 来源、复测噪声、跨项目公式/病理/时间校验和原子报告发布。
-- 用 OpenELIS 只校准目录字段和工作流；不导入其 seed。需要 LOINC/UCUM 时先完成固定版本与许可清单。
-
-### P2：受控官方目录 adapter
-
-- 优先实现通用本地 artifact + manifest + quarantine 框架，再分别加入 NHSA、NMPA UDI、LOINC/UCUM 等窄 adapter。
-- 选择一个明确地区和生效日建立医疗服务价格包；不建设伪“全国价格表”。
-- 将药品批准信息、医保产品码、医保目录属性、本院 Medication、价格和 Inventory Lot 保持分层。
-
-### P3：扩大检查、耗材和组织容量
-
-- 增加结构化影像报告、检查 protocol、侧别/部位一致性；影像像素仍只使用合成 phantom。
-- 增加耗材/器械 definition、包装、lot/serial/trace 与领用移动，不导入真实流通记录。
-- 从 Hospital Baseline 派生科室、人员、地点、服务、排班、床位和设备容量，再扩展更多垂直病例。
-
-每个阶段都以完整纵向 Scenario 验收，而不是以“导入了多少万条目录”验收。对仿真系统而言，小型、有血缘、可执行且医学一致的本院目录，比全量但许可和映射不清的镜像更有价值。

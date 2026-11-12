@@ -2,6 +2,8 @@
 
 Status: implemented
 
+> 本决策在[住院阶段工作台](2026-10-21-inpatient-stage-workspace.md)的按需挂载与滚动边界上演进；住院医生步骤内嵌 AI 与报告阅片详情交互进一步由[住院医生步骤融合与壳层对齐](../feature/2026-11-05-inpatient-ai-step-fusion-and-ui-shell-alignment.md)及[住院报告阅读与详情弹窗](../feature/2026-11-09-inpatient-report-reading-and-detail-dialogs.md)细化。
+
 ## Problem
 
 住院岗位已有共享 Command 与岗位门禁，但患者头部、阶段卡和药房队列各自组合，行为一致仍可能让结构偏离已确认原型。原型包含床位、药师校对人、厂家批号与部分发药，而当前药房许可投影及单次执行 Command 不提供这些能力；照抄原型会产生虚构事实或必然失败的操作。

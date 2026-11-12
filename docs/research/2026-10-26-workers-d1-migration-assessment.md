@@ -1,6 +1,6 @@
 # ClinMesh 迁移 Workers 与 D1 的方案评估
 
-核验日期：2026-10-26。代码基线为 `76aac7a2014b16ba9e905db443fa36327c8d73f5`，同时读取当前工作区；工作区存在未提交修改，本记录不是干净发行版本的验收结果。本次只评估 Cloudflare Workers + D1 对现有产品的适配，不代表批准实施、创建云资源或改变产品范围。当前合同由[系统架构](../architecture.md)、[存储与事务](../architecture/storage.md)、[部署指南](../deployment.md)和 [Demo 部署架构](../demo-architecture.md)拥有；Cloudflare 其他部署路线见[试用部署可行性](2026-10-26-cloudflare-trial-hosting.md)。
+核验日期：2026-10-26。代码基线为 `76aac7a2014b16ba9e905db443fa36327c8d73f5`，本次只评估 Cloudflare Workers + D1 对现有产品的适配，不代表批准实施、创建云资源或改变产品范围。当前合同由[系统架构](../architecture.md)、[存储与事务](../architecture/storage.md)和[部署指南](../deployment.md)拥有；Cloudflare 其他部署路线见[试用部署可行性](2026-10-26-cloudflare-trial-hosting.md)。
 
 ## 评估结论
 

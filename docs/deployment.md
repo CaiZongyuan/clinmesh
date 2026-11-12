@@ -1,6 +1,6 @@
 # 部署指南
 
-本指南从 clone 开始，按顺序完成本地部署：基础运行、参考目录同步、AI Provider 配置、Synthea 患者生成与可选运行方式。每一步都以前一步为前提；只想快速体验的读者完成步骤 1、2、5 即可登录演示账号。产品定位与工程形态见仓库根 [README](../README.md)，部署决策与单实例约束见 [Demo 部署架构](demo-architecture.md)。
+本指南从 clone 开始，按顺序完成本地部署：基础运行、参考目录同步、AI Provider 配置、Synthea 患者生成与可选运行方式。每一步都以前一步为前提；只想快速体验的读者完成步骤 1、2、5 即可登录演示账号。产品定位与工程形态见仓库根 [README](../README.md)，单实例与持久化运行边界见[系统架构](architecture/system.md#部署拓扑与单实例约束)。
 
 不配置 Synthea Provider 不阻塞 ClinMesh 启动；Provider 缺失只影响新的患者生成任务。生成患者后，"生成患者档案"和"开始门诊就诊"要求步骤 4 的 AI Provider 已配置。
 
@@ -136,13 +136,7 @@ pnpm guidelines:local-sync -- --source-dir <原件目录> --database <指南库�
 
 本地清单是 `local-evaluation-` 来源空间的完整快照，不是增量补丁；删掉条目或收紧范围会先停用相应旧段落，随后原件缺失或导入失败不会恢复已撤销范围。其他来源保持不变，原文及范围相同的重复导入不新增段落。导入校验文件哈希、32 MiB 大小上限、页范围和可读文本；失败逐项报告，不提交完整原文或 SQLite。
 
-同一指南的院内上传副本或节选在清单的 `source.derivedFromSourceId` 登记原来源的稳定 ID，例如 `"derivedFromSourceId": "coronary-01-2021"`；副本自身可使用任意受控的 `local-evaluation-` 编号，不要求从文件名或原编号拼接。独立院内资料保留自己的稳定 ID，无原来源时不填写该字段。既有 30 项本地冠心病来源已登记对应固定包来源。撤回、替代和正文未核验沿关联链停用副本，即使维护记录更换了文件哈希或网址；关联不能自指或形成环。原来源尚未导入或编号填写错误时，副本保留但不可检索，补齐原来源或更正关联后再检查可用状态。
-
-相同文献、版本、完整原文和定位通过不同入口导入时，共享一份正文与索引，检索只返回一组依据；每个入口的来源 ID、用途、范围和停用记录仍保留。同一个 PDF 的不同节选、修订或不同版本分别保存并关联，不能仅凭文件哈希把节选视为全文。原指南停用会影响其派生来源；停用一条上传记录不反向停用原指南或其他独立上传记录，移除一条来源也不删除其他来源仍在使用的正文。
-
-普通导入和 `guidelines:prepare` 会为旧来源补齐可唯一确认的同字节或既有前缀关联，并保留其他内容与限制；关联确定后，旧清单缺省该字段的重导也不会清除它。只读检查如提示库不匹配，运行普通准备完成补齐；若原文件身份已变化或出现多个候选，维护者在本地清单明确登记原来源后重新导入，不靠删除库解除停用。当前入口仍为显式本地同步，尚未提供院内上传页面。
-
-指南库 schema version 1、2 升级到共享正文的 version 3 时，先停用所有访问指南库的进程并保留一致备份，再用新版本运行普通 `guidelines:prepare`，检查成功后启动新 Server。只读 `--check` 在临时副本核对，正式旧库仍提示待准备，不会自动升级。回滚旧代码必须恢复对应旧 schema 的指南库备份，不回滚业务库；完整迁移与损坏修复边界见[存储合同](architecture/storage.md#99-数据库迁移边界)。
+同一指南的院内上传副本或节选可在 `source.derivedFromSourceId` 登记原来源稳定 ID（如 `"coronary-01-2021"`），无原来源则留空；既有 30 项本地冠心病来源已登记对应固定包来源。原来源撤回、替代或正文未核验会沿关联链停用派生副本，相同完整正文跨入口共享一份索引而各自保留来源状态与用途限制。普通导入和 `guidelines:prepare` 会补齐可唯一确认的旧来源关联；若出现多候选歧义，在清单显式登记后再重导，不靠删除库解除停用。指南库 schema v1/v2 升级到 v3 时，先停止所有访问进程并保留一致备份，再运行普通 `guidelines:prepare`（只读 `--check` 在临时副本核对，不升级正式旧库）；回滚旧代码须恢复对应旧 schema 的指南库备份，不回滚业务库，完整迁移边界见[存储合同](architecture/storage.md#99-数据库迁移边界)。
 
 在本地内部流程验证部署中，根 `.env` 显式设置：
 
@@ -181,15 +175,7 @@ CLINMESH_GUIDELINE_DEPLOYMENT_POLICY=internal-testing
 
 该策略仅启用固定包中正文检查通过、状态 active 且至少有一段可靠正文的已登记来源；正文待核验、不可读、已撤回或被替代的来源保持停用。尚未确认的控制字符或替代字符段落完整保留，但在检索候选限额前隔离；可检索段落数因此可能少于已提取段落数，以准备结果为准。来源原始许可和用途待核实状态不变，不将内部测试策略表示为开放许可。取消该策略或设回 `default` 后恢复原限制，部署策略、来源身份、状态、正文与质量规则共同进入 revision，旧建议随之失效；首次建库或切换库路径需重启，已打开的库通过独立 writer 更新后运行中的只读连接可见新内容。未配置路径时，准备器和 Server 都使用 `.data/clinmesh-guidelines.sqlite`。
 
-`guidelines:prepare` 的 stdout JSON 分别报告来源、物理原件、提取、正文核验、原始段落、可检索、异常段落、不可读和自然人待审校数量，并列出逐来源核验说明及 `withheldReason` 停用原因；进度写入 stderr。顶层固定快照计数仍描述包内容，`documentCount` 和 `searchableDocumentCount` 分别表示包内唯一正文及可用正文数量；`corpus` 单列全库去重统计，包含包外来源。官方与本地同步的 `sourceCount` 保留来源记录数，`documentCount`、`passageCount` 和可检索正文／段落数按共享正文去重，不把重复导入当作新增覆盖。`--database <path>` 指定目标库，`--install-directory <path>` 指定资料目录，`--manifest <lock>` 指定版本锁。默认原件和正文安装在数据库同目录的 `guidelines/<manifest-sha256>/`；完整安装重复准备可离线复用，`--check` 不下载、不建库、不修改正式目录或审计，同时核对实际库正文，不能用安装成功代替检索命中。更新时维护者发布新版本并修改锁，不覆盖已发布的同版本资产；候选完整验证后整包事务导入，保留其他来源，失败回滚，不替换运行连接所读的 SQLite 文件。下载失败时保留旧库；修复损坏文件后重新准备。进程异常留下 `.prepare.lock` 时，先确认没有准备进程再删除该锁；若报告 recovery failed，先保存错误中给出的 staging／previous 路径并恢复备份，不清理唯一旧版。
-
-准备器的库正文核对会将稳定的数据库主文件和 WAL 一起复制到系统临时目录，在副本中读取已提交事务并核对全文索引与实际正文的一致性；共享内存文件只在临时目录创建，结束后清理，正式目录及其 sidecar 不改写。正文完好但索引损坏也会使检查失败，普通准备可从已安装资料离线重建索引。复制期间如有 writer 提交、checkpoint、文件消失或替换，核对失败；等待写入完成后重跑原命令。遇到 rollback journal 时也等待 writer 完成，不忽略 WAL 或退回仅核对主文件。运行时普通只读连接仍可见后续 writer 更新。
-
-维护者制包时准备原件、派生正文及核验记录，保留正文工具版本和物理页／行字符定位，在仓库外创建完整快照，然后运行 `pnpm guidelines:package -- --input-root <snapshot> --output <archive.tar.gz> --url <固定Release资产URL>`。命令验证全部文件并生成可重复的归档，stdout 返回新版本锁；源码仅纳入清单、锁与实现。首次获取依赖该固定 Release 已发布且可达；备份保留对应锁、完整资料目录和一致性 SQLite 备份。恢复到新路径后先准备／只读检查，再启动 Server；不要复制维护者个人桌面目录作为部署合同。
-
-已核验记录声明的校对定位必须唯一且能回查锁定正文，可以只声明实际校对的选定范围，不要求把未审校全文列为已审校。定位直接精确匹配当前段落；保留的旧定位仅在已锁定校对记录绑定同一来源与原件、原提取摘要及修订前后正文摘要，并唯一对应当前段落时采用。不存在的定位、断开的校对链、歧义及解析后重复定位均拒绝制包或安装，不按页码近似匹配。
-
-维护同步发布的撤回、替代、正文待核验／不可读及后续用途收紧优先于固定包，限制与正文在同一事务保存。普通准备、离线复用、新包安装和损坏修复均保留这些限制，可检索、正文不可读统计及 `withheldReason` 按实际库内状态报告，包内核验和规模计数仍描述固定快照；修复正文不会自动恢复启用。整包导入、限制更新和返回结果所需的全库来源状态读取在同一事务完成；任何来源的状态解析失败都会回滚本次导入，安装文件也恢复到更新前的状态。
+`guidelines:prepare` 的 stdout JSON 报告来源、物理原件、提取、正文核验、原始／可检索段落及 `withheldReason`（顶层描述固定包，`corpus` 单列全库共享正文去重统计），进度写入 stderr；支持 `--database <path>`、`--install-directory <path>`（默认数据库同级 `guidelines/<manifest-sha256>/`）与 `--manifest <lock>`。完整安装重复准备可离线复用；`--check` 不下载、不建库、不改写正式目录及其 WAL/SHM sidecar，而是在系统临时副本中核对已提交事务的全文索引与正文一致性（复制期间若有活跃写入，待写入完成后重跑；索引损坏可由普通准备离线重建）。异常遗留 `.prepare.lock` 时确认无准备进程后再删除；若报告 recovery failed，先保全提示中的 staging／previous 路径并恢复备份。维护者制包在仓库外快照上运行 `pnpm guidelines:package -- --input-root <snapshot> --output <archive.tar.gz> --url <固定Release资产URL>`，校对定位须唯一匹配锁定正文；维护同步发布的撤回、替代、正文限制和用途收紧优先于固定包并在导入或修复时保留，完整持久化与恢复边界见[存储合同](architecture/storage.md#99-数据库迁移边界)。
 
 固定包来源需要重新启用时，维护者先复核对应版本、正文和用途，确认当前锁定快照仍可使用，再明确指定来源 ID：
 
@@ -267,9 +253,10 @@ pnpm dev:server
 | 住院医生 | `inpatient-doctor@demo.clinmesh.local` |
 | 病区护士 | `ward-nurse@demo.clinmesh.local` |
 | 病案人员 | `medical-records@demo.clinmesh.local` |
+| 医保办 | `medical-insurance@demo.clinmesh.local` |
 | 管理员 | `admin@demo.clinmesh.local` |
 
-住院医生、病区护士与病案人员登录后进入住院工作台；挂号员、收费员与药师在各自工作台切换住院页签。住院医生与病区护士的当前岗位绑定具体科室和病区，转科时使用目标科室岗位接管，业务门禁见[临床业务流程](architecture/clinical-workflows.md#82-住院闭环后续)。
+住院医生、病区护士、病案人员与医保办登录后进入对应住院或医保核定工作台；挂号员、收费员与药师在各自工作台切换住院页签。住院医生与病区护士的当前岗位绑定具体科室和病区，转科时使用目标科室岗位接管，业务门禁见[临床业务流程](architecture/clinical-workflows.md#82-住院闭环后续)。
 
 完成步骤 3 后，以门诊医生登录并打开诊断选择器应能搜索到 ICD-10 条目，即参考目录生效。
 
@@ -386,7 +373,16 @@ pnpm --filter @clinmesh/server start
 
 构建顺序由 workspace 依赖和 Turborepo 决定：先生成 Web assets，再生成 Server 的 Node.js bundle，同时构建 Desktop、DSH Surface artifact 和文档站。Server 启动时只验证 migration 状态，不隐式修改 schema；`CLINMESH_HOST`、`CLINMESH_PORT` 和 `CLINMESH_WEB_ROOT` 可覆盖运行配置。
 
-升级前保留一致备份。门诊号迁移要求完整可信的历史发行证据，证据不足时拒绝迁移并保留原库；不要从现存最大号手工补发号状态。恢复旧备份需要同时保全可信最新发行权威库，停用旧 Server，再执行带 `--authority-database` 的受控恢复并切换到新目标。具体命令、失败处理和克隆边界见[数据库运维](demo-architecture.md#database-operations)。
+升级前保留一致备份。门诊号迁移要求完整可信的历史发行证据，证据不足时拒绝迁移并保留原库；不要从现存最大号手工补发号状态。在线备份与带发行权威高水位合并的受控恢复通过 `@clinmesh/server` CLI 执行（连接活跃期间禁止直接复制主 `.sqlite` 文件或双开克隆实例）：
+
+```sh
+pnpm --filter @clinmesh/server db:verify
+pnpm --filter @clinmesh/server db:reindex
+pnpm --filter @clinmesh/server db:backup --output ./.data/clinmesh-backup.sqlite
+pnpm --filter @clinmesh/server db:restore --authority-database ./.data/clinmesh.sqlite --backup ./.data/clinmesh-backup.sqlite --destination ./.data/clinmesh-restored.sqlite
+```
+
+恢复旧备份前须先停止使用旧权威库的 Server，同时保全可信最新发行权威库 `--authority-database`，生成新目标文件 `--destination` 后再切换配置启动。权威退休、按日高水位合并与校验失败边界见[数据库运维](architecture/storage.md#database-operations)。
 
 ### 局域网访问 Web 开发入口
 
@@ -544,70 +540,35 @@ pnpm smoke:recommendations:live
 
 ### DSH 持续升级
 
-[`DSH upstream updates`](../.github/workflows/dsh-upstreams.yml) 每日 UTC 02:23（北京时间 10:23）发现更新，也支持 Actions 页面手动运行。发现范围由 [`dsh-upstreams.lock.json`](../dsh-upstreams.lock.json) 拥有：npm 组件比较全部公开正式版和 `rc.N`，不以 `latest` 或 `next` 标签决定候选；源码组件跟踪公开来源的默认分支完整 commit。源码默认分支落后于已验证支持提交时保留支持提交，历史分叉时明确失败并等待维护者协调。
+[`DSH upstream updates`](../.github/workflows/dsh-upstreams.yml) 每日 UTC 02:23（北京时间 10:23）按 [`dsh-upstreams.lock.json`](../dsh-upstreams.lock.json) 发现 npm 正式版／`rc.N` 与源码默认分支 commit 更新（也支持手动运行），并串行触发[候选验收](../.github/workflows/dsh-upstreams-verify.yml)。`main` 上的上游锁是已验证基线，升级分支的 `deployment/dsh/candidate.json` 与 `discovery.json` 记录待适配目标。需要跳过某次升级时，在对应升级 PR 上添加 **`跳过此版本`** 标签并关闭 PR（仅跳过该候选中实际变化的精确版本或 commit，恢复时移除标签）；不要 force-push 自动分支或把未经核对的人工改动覆写为 `discovery.json`。
 
-决定跳过一次升级时，给对应升级 PR 添加 **`跳过此版本`** 标签并关闭 PR，无需修改仓库配置；已关闭的 PR 可以补加标签。自动化分页读取同一目标分支上已关闭且未合并的升级 PR，从其精确 HEAD 的 `deployment/dsh/candidate.json` 读取本次变化的组件名与目标 npm 版本或源码 commit。只跳过这些精确目标，候选中未变化的组件不受影响；后续正式版、RC、源码 commit 和其他组件继续发现，不回退已验证基线。跳过决定不依赖当前基线摘要或原分支是否仍存在。恢复更新时移除所有记录该目标的跳过标签；仅关闭 PR 或写评论不构成跳过，已合并、其他目标分支、外部 fork 和普通 PR 不参与。只读发现与发布使用相同入口；标签记录或对应候选读取失败、响应非法时停止，不把读取失败当作没有跳过记录。
-
-本地只读发现命令为 `pnpm upstream:discover`，结果写入已忽略的 `dsh-upstreams.discovery.json`。所有来源解析成功后才产生新候选；已验证 npm 版本被撤销、发行身份或完整性变化、非法响应和网络错误均失败，不产生部分更新。没有差异不创建 PR。发布模式先从目标分支的精确 HEAD 读取基线锁，不采用运行分支或本地 checkout 的锁；读取失败停止，不回退到本地。手动和定时运行以仓库默认分支为目标，专用验证分支的 push 以该验证分支为目标。随后在新版本发现前检查当前基线对应的活动候选；官方 npm registry 对已知候选包直接返回 404、目标版本已撤销或内容变化时，保留候选和人工提交，确认 HEAD 未变化后将该提交的兼容状态置为失败，并在 PR 自动管理区和发现报告的 `result` 中记录待适配原因，不调度安装。即使后续发现因基线版本撤销或其他来源错误而失败，候选失效证据仍保存：报告的 `result` 保留待适配结果，报告和 CLI 输出另以 `discoveryError` 记录发现错误，不产生新候选或验收 HEAD。没有候选失效时，发现错误仍以非零退出码结束。正常候选不写入；候选核对禁止重定向，403、503、超时和非法响应仍报错，不判定为撤销。只有固定官方 registry 地址的直接 404 按整包撤销处理，其他来源的 404 不采用该规则。`pnpm upstream:discover --publish` 还要求 `GH_TOKEN`，使用 GitHub Git API 在当前升级分支 HEAD 上原子追加候选文件与 `deployment/dsh/discovery.json`，后者保存上一次自动发现的完整候选。再次更新前比较 PR 当前候选与该记录；人工支持 commit、版本或其他目标字段有变化时停止，保留人工目标，不先合并基线。没有人工修改时，新的上游目标同步更新两份文件。基于目标分支和基线摘要的分支名保证重复发现复用活动 draft PR；PR 中的自动管理区更新完整组件差异，区外人工说明保留。
-
-main 上的上游锁是已验证基线；升级分支的 `deployment/dsh/candidate.json` 是待适配目标。发现只更新候选。同一目标分支的发现与 PR 验收由工作流串行执行，防止先前验收覆盖撤销后的失败状态。工作流随后显式调用[候选验收](../.github/workflows/dsh-upstreams-verify.yml)，不依赖 `GITHUB_TOKEN` 创建 PR 后触发 `pull_request`。安装与构建进程不获得写入 token；最终追加提交和写入 commit status 的步骤单独使用 token。需要仓库允许 Actions 创建 PR，并授予发现 job `contents:write`、`pull-requests:write`、`statuses:write`，验收收尾 job `contents:write`、`statuses:write`；权限不足保留明确的 HTTP 错误。
-
-维护者可在全新独立 clone 中检出升级 PR 的精确 HEAD、递归恢复子模块并执行 `pnpm install --frozen-lockfile`，随后运行 `pnpm upstream:verify`。该命令拒绝主分支和已有未提交修改，保护不同于锁定版本的人工依赖或子模块适配；pnpm 给构建 CLI 添加的可执行位仅在文件内容与 Git 相同时恢复。它在安装前和全部检查结束后核对 npm registry 中的目标版本及发行摘要；版本撤销或内容变化时停止，不因旧 tarball 仍可下载而通过验收。它从候选的精确 URL 下载 DSH/dshvm tarball，逐字节计算 SHA-512，摘要一致后才准备依赖或执行候选；下载错误、重定向及摘要不符均停止，失败下载不保留为可安装文件。随后按精确源码构建 Surface 与 AG-UI，在新的系统临时目录安装已校验的 dshvm 文件，并由它安装已校验的宿主文件。宿主 `npm ci` 前还核对依赖锁中的版本、来源与完整性是否匹配候选，npm 安装时继续验证锁定摘要。宿主与 Web Profile 重建后，通过 dshvm 隔离、选择和 `exec` 检查实际版本并启动 HTTP smoke，随后向隔离 Profile 写入专用设置标记并核对返回值，验证设置持久化与热重载；该标记不等于宿主预览提示的确认版本。最后运行 `pnpm check`。子进程只继承运行工具所需环境，npm 使用临时空用户配置，模型密钥、GitHub token、日常 Profile 与数据库配置不传入；smoke 临时凭证在日志中脱敏。临时 Profile 只加载必要组合，不切换日常 Profile，也不调用付费模型。POSIX 命令与宿主在独立进程组中运行，退出或取消后有界清理；Windows 取消时回收 launcher 的现存子树。进程结束后保留临时安装供诊断；它不作为日常运行目录。
-
-只有自动检查全部通过才写入升级 checkout 的目标上游锁与 `deployment/dsh/automation.json` 摘要回执。回执允许同一 PR 在已自动准备的组合上继续接收新候选；人工改动锁后摘要不匹配时拒绝覆盖。Actions 在确认远端 HEAD 未被人工提交改变后追加精确依赖锁与子模块引用；普通 push 的快进约束处理检查后的并发竞争。结果、日志和准备补丁在 `.upstream-evidence/` 中，并作为当前 Actions 运行的 artifact 保存；`DSH candidate compatibility` status 绑定被检查的精确 commit。失败状态是待适配，已验证基线不推进，draft 不自动变为 ready，也不自动合并。自动通过只证明记录中的安装、构建、smoke 和测试；原生会话、browser Tool → review → Effect、Windows 实际使用和业务闭环仍按[测试策略](testing.md)补充人工证据，由维护者决定合并。
-
-故障恢复按原因处理：网络或权限故障修复后重跑发现；依赖或编译失败由维护者在同一升级分支追加适配；人工 HEAD 已变化时重新运行验收；基线发生变化或候选与人工支持 commit 冲突时先协调目标再运行。不要 force-push 自动分支、降低宿主到 alpha 或覆盖人工改动来消除失败。合并后新的基线摘要拥有下一轮升级分支。`automation/dsh-upstreams-validation` 是受控集成验证入口：推送该分支会针对它自身创建候选 PR 并执行相同权限与验收路径，不向 main 提交或合并更新。
-
-旧候选缺少 `deployment/dsh/discovery.json` 时，发现停止而不猜测归属。维护者可从 Git 历史恢复最后一次机器人写入的候选到该文件；有人工目标差异时继续保留，由 PR 验收验证支持提交。只有决定将当前候选重新交给自动发现管理时，才把经确认的 `candidate.json` 同步为 `discovery.json` 并提交；下一次发现即可采用更新的上游目标。不要为了消除报错而把未经核对的人工修复标为机器人目标。
-
-如果 Actions 报 `GitHub Actions is not permitted to create or approve pull requests`，需要仓库管理员在 Settings → Actions → General → Workflow permissions 开启 `Allow GitHub Actions to create and approve pull requests`。暂时无法开启时，有创建 PR 权限的维护者可把已生成的候选分支手动建为 draft PR，目标分支必须与该次发现一致，再重跑发现工作流；机器人可复用已有 PR 并显式执行验收。这只能证明更新与验收路径，不能替代首次自动创建 PR 的权限验收，也不会自动修复下一轮新基线的创建权限。
+本地只读发现运行 `pnpm upstream:discover`（输出至已忽略的 `dsh-upstreams.discovery.json`，`--publish` 另需 `GH_TOKEN`）；独立验收在全新 clone 检出升级 PR HEAD、递归初始化子模块并 `pnpm install --frozen-lockfile` 后运行 `pnpm upstream:verify`，在隔离临时目录核对 registry 摘要、重建宿主与 Profile、运行 HTTP smoke 与 `pnpm check`，全部通过才写入目标锁与 `deployment/dsh/automation.json`（原生会话与业务闭环仍按[测试策略](testing.md)补充人工核验）。若 Actions 报 `GitHub Actions is not permitted to create or approve pull requests`，在仓库 Settings → Actions → General → Workflow permissions 开启该权限；专用验证分支 `automation/dsh-upstreams-validation` 用于验证该自动化链路而不改动 `main`。
 
 ## 8. 升级与重置
 
-普通升级先停止 Server，保留一致备份，再执行 `pnpm --filter @clinmesh/server db:migrate` 和 `pnpm --filter @clinmesh/server db:verify`；启动只验证当前 schema。患者来源库、账号与配置同在 operational SQLite，不能通过删除整库处理 schema 变化。日常重跑 Scenario 使用管理员 Epoch reset，原运行世代和审计保留；它不转换旧支付结构。通用备份、恢复和单实例约束见[数据库运维](demo-architecture.md#database-operations)。
+普通升级先停止 Server，保留一致备份，再执行 `pnpm --filter @clinmesh/server db:migrate` 和 `pnpm --filter @clinmesh/server db:verify`；启动只验证当前 schema。患者来源库、账号与配置同在 operational SQLite，不能通过删除整库处理 schema 变化。日常重跑 Scenario 使用管理员 Epoch reset，原运行世代和审计保留；它不转换旧支付结构。通用备份、恢复和单实例约束见[数据库运维](architecture/storage.md#database-operations)与[系统架构](architecture/system.md#部署拓扑与单实例约束)。
 
 ### 共享收款的一次性开发切换
 
-旧合成收款升级返回 `PAYMENT_CUTOVER_REQUIRED` 时，维护者可按本次[保留与舍弃清单](architecture/storage.md#共享收款的一次性开发切换)执行开发切换。它舍弃受影响的全部合成运行链，再从岗位重新建立就诊，保留患者来源、可复用结果、账号配置、跨 Epoch 状态及这些持久 owner 的幂等回执；不迁移旧交易，也不允许把该例外用于后续普通升级。
-
-1. 让来源生成、Persona 和检验目录发布任务结束，再停止 Server、dispatcher 及其他业务库写入进程。核对 `CLINMESH_DATABASE_PATH` 的实际文件，并确认操作对象是允许重建运行链的合成库；新模型已经产生任何交易或切换已完成时不得使用此入口。
-2. 为原业务库和未存在的备份目标填写绝对路径，保存命令输出及错误诊断。备份目录须可写，目标已存在时更换新路径，不能覆盖前次备份。切换自行创建并校验一致备份，无须先把旧库升级为当前 schema。
+旧合成收款升级返回 `PAYMENT_CUTOVER_REQUIRED` 时，先让来源生成、Persona 和检验目录发布任务结束并停止所有业务库写入进程，再按[保留与舍弃清单](architecture/storage.md#共享收款的一次性开发切换)执行一次性开发切换（舍弃旧合成运行链并推进新 Epoch，保留患者来源、账号配置及持久 owner 回执；新模型已产生交易后不得再次使用）：
 
 ```sh
 pnpm --filter @clinmesh/server db payment-cutover --database "<业务库绝对路径>" --backup "<新的备份绝对路径>" --confirm discard-synthetic-runtime
-```
-
-3. 成功后核对 JSON 输出中的 `preMigrationBackup`、`schemaVersion`、`applied` 和 `cutover`：每个 Workspace 已切换新 Epoch，保留表数量及摘要校验通过，舍弃表数量符合预期。报告只包含身份、数量及摘要；独立 Reference SQLite、Guideline SQLite 和素材文件不需要重新导入或删除。
-4. 对相同业务库执行下列验证，确认 `.env` 仍指向该库后启动应用。通过原挂号／合成病例入口重新物化 Patient 与就诊，重新完成门诊和住院的诊疗、费用及收退款；原结算和归档进度已舍弃，必须由新资金链重新建立。目录及岗位配置已复制到新 Epoch，库存基线已回补被舍弃的耗用，再由新流程扣减。
-
-```sh
 pnpm --filter @clinmesh/server db verify --database "<业务库绝对路径>"
 pnpm dev:server
 ```
 
-切换失败时保持服务停止，保留原库、错误和已生成的切换前备份。`PAYMENT_CUTOVER_BUSY` 要先完成来源任务；未登记表、保留摘要不一致、外键或完整性失败须修复对应原因。备份后源状态变化会被拒绝，须先停止所有写入。事务内失败整体回滚；修复后以新的备份路径重跑相同切换命令，不删除原库或用旧交易格式补写新表。
-
-切换前备份可能是旧 schema，当前版本的 `db restore` 会因 schema 不匹配拒绝它。优先使用已回滚的原文件继续诊断；需要检查旧备份时使用匹配其 schema 的历史 release 并保持只读。确需回退运行代码或恢复文件时，先形成与该历史 release 匹配、保全可信最新发行高水位的单权威恢复方案；未核对前保持停止发号，不对最新权威尝试当前 `restore`，不直接以旧备份替换当前库，也不并行启动两份克隆。切换成功后产生的新交易、未决尝试、退款引用和回执必须保留，不能再次切换或回退到只认旧格式的代码。
+`--backup` 必须指向尚不存在的新路径；命令自行生成并校验切换前备份，失败时整体回滚并保留原库与备份（`PAYMENT_CUTOVER_BUSY` 需先等待后台来源任务结束）。切换前备份属于旧 schema，不能直接交给当前 `db restore`；确需回退旧代码时须先制定保全最新发号高水位的单权威恢复方案。
 
 ## 模型用量
 
-Web 与 DSH 的 ClinMesh 设置菜单均提供“模型用量”。默认总览展示 Server 直接调用、DSH bridge 调用及 Host 独立医生代问识别的请求、已知 Token、人民币费用估算、未知请求数、未决预占、趋势、功能分布和授权最近请求；已知部分不表示完整账单。功能筛选提供“医生代问识别”，详情保留调用时模型、阶段来源及计价依据。DSH 原生会话及其他插件在监控边界之外；Host 使用已有 `upstreamOrigin` 与 `bridgeSecret` 接入 Server，不新增本地账本。权限与统计口径见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)。
+Web 与 DSH 的 ClinMesh 设置菜单提供“模型用量”总览、“额度与策略”（Workspace 级停用／恢复、请求数／Token／人民币上限及默认 90 天的明细保留期）与只读“计价说明”。权限、统计与核对接口见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)，持久化、保留期清理与长期汇总边界见[模型账本](architecture/storage.md#910-模型调用账本)与[明细保留与长期汇总](architecture/storage.md#明细保留与长期汇总)。
 
-“额度与策略”页签中，Workspace 管理员可停用或恢复本工作区的全部 ClinMesh 模型入口，分别设置请求次数、Token 与人民币累计上限或无限，并关闭自动重试；普通成员只读自身工作区政策及生效状态。页面显示各项余量、预占、等待恢复的任务和最近拒绝原因，部署总上限及累计量仅管理员可只读查看。默认启用、三项无限、保留原有有界重试；请求上限零会阻止新请求。`PUT /api/model-usage/control` 省略 `tokens` 或 `cny` 时保留原有限值，显式 `null` 才取消该项限制。
-
-同一页签提供本 Workspace 的“明细保留”设置，默认 90 天。管理员输入正整数天数并保存，或选择永久保留；普通成员只能读取。刷新、重启与 Epoch reset 后设置继续生效，页面同时显示已清理明细数量及最后清理时间。缩短期限后立即检查到期明细，Server 启动、每小时及读取用量时也会检查；期限按每次真实调用开始时间计算。总览持续包含已清理请求的长期统计，最近请求和明细页仅展示仍留存且有权查看的记录，因此下钻数量可能小于汇总；延长期限或改为永久不会恢复已删除明细，也不能对其核对或补算。
-
-在途、派发或实际消费未知及仍有任一未决预占的请求不受到期清理影响，可继续等待可信用量或管理员核对；仅缺价／缺汇率但实际消费已知且无未决预占的明细可以到期清理，长期统计仍显示未知金额。清理不恢复任何额度、不重置累计起点，必要核对审计独立保留。接口授权及字段见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)，完整持久化边界见[明细保留与长期汇总](architecture/storage.md#明细保留与长期汇总)。
-
-部署维护者可设置 `CLINMESH_MODEL_CONTROL_PATH=.data/model-control.json`，文件路径相对 `.env` 所在仓库解析；文件由部署方管理，不进入 Git。示例保留请求次数保护，其余两项无限：
+部署维护者可通过相对 `.env` 目录解析的本地 JSON 配置部署级总上限（`CLINMESH_MODEL_CONTROL_PATH=.data/model-control.json`）与统一合成价表／汇率（`CLINMESH_MODEL_PRICING_PATH=.data/model-pricing.json`），修改后重启 Server 生效，配置缺失或校验失败时启动失败：
 
 ```json
 { "enabled": true, "requests": 1000, "tokens": null, "cny": null, "automaticRetries": true }
 ```
-
-`requests`、`tokens` 接受非负安全整数或 `null`；`cny` 接受最多六位小数的非负人民币金额或 `null`，省略的部署维度默认为无限。金额缩放为百万分之一单位后必须在 `Number.MAX_SAFE_INTEGER` 范围内。重启 Server 后配置生效；已配置路径不存在、JSON 无效或数值越界时启动失败。部署与 Workspace 任一层停用、余量不足或无法核算适用有限额度都会拒绝新派发，Workspace 设置不能放宽部署政策。每层的每个维度首次有限配置建立独立起点，之后改额、切回无限、重启或 Epoch reset 均不重置，无限期间仍累计。停用尽力取消在途调用，未知派发保留对应维度的占用。恢复条件只接续仍有效的待办并复用成功阶段，已派发而结果未知的请求不会自动重做。普通 HIS 读写和确定性检查继续可用。
-
-部署统一价表与汇率通过 `CLINMESH_MODEL_PRICING_PATH=.data/model-pricing.json` 配置，路径解析方式相同，修改后重启 Server。未设置时价表为空，全部额度无限仍可调用并显示缺价；已设置文件无法读取或验证失败则停止启动。下面全部是合成价格，单价单位为原币／百万 Token，`cnyPerUnit` 表示一单位原币兑换多少人民币：
 
 ```json
 {
@@ -626,21 +587,13 @@ Web 与 DSH 的 ClinMesh 设置菜单均提供“模型用量”。默认总览�
 }
 ```
 
-`provider` 与请求详情的 Provider 一致；直接调用取配置端点的 hostname。`model` 必须与 `requestedModel` 完全相同，DSH 填完整 `dsh:{"provider":"...","model":"..."}` 固定路由，含有的推理强度也保留；不按显示名、别名、响应中的 `actualModel` 或通配规则匹配。每个 Provider／模型只配置一项价格，每个币种只配置一项汇率。币种为三位大写字母，版本以字母或数字开头，后续可含字母、数字、`_`、`.`、`-`；每次改价或汇率应使用新版本。`input`、`output` 必填，缓存读写和推理单价省略时分别沿用输入、输出单价。单价非负、汇率为正，均最多六位小数且缩放后为安全整数。`CNY` 自动使用 `identity-v1` 的 1:1 汇率；若显式配置 CNY 汇率，其值必须为 1。零单价须显式填写，与缺价不同。
-
-每次请求冻结准入时的价表与汇率，修改只影响后续调用；原币与人民币金额按对应计量分项估算，不能当作服务商扣费凭证。输入包含缓存、输出包含推理，分项不重复计价。缺价、缺汇率与未知用量分别显示；所有当前 Workspace 成员可从“计价说明”或 `GET /api/model-usage/pricing` 只读查看统一配置，Workspace 管理员也不能在界面修改价格。
-
-当前三类入口的有限保护能力如下。`reservationBoundary` 随明细保存入口、版本及原因；请求次数限制与全部无限模式均保持可用。
+`requests`/`tokens` 为非负安全整数或 `null`，`cny`、单价（原币／百万 Token）与汇率 `cnyPerUnit` 最多六位小数（`CNY` 默认 1:1）；`model` 必须精确匹配 `requestedModel`（DSH 填完整 `dsh:{"provider":"...","model":"..."}` 路由）。当前三类调用入口对有限 Token／非零人民币额度的预占边界如下（请求次数限制与无限模式均保持可用，配置有限 Token 或非零人民币上限后新派发以 `MODEL_METERING_UNAVAILABLE` 阻断）：
 
 | 入口 | 有限 Token／非零金额的可信边界 | 明细原因 |
 | --- | --- | --- |
 | Server 直接 OpenAI-compatible 请求 | 未发送硬输出 Token 上限；响应字节限制不能约束服务商计费 Token | `output-limit-unbounded` |
 | Server 经 DSH bridge 调用 | SDK 准备句柄锁定配置，但未公开实际 wire adapter 的计量与硬上限保证 | `adapter-metering-unavailable` |
 | Host 独立医生代问识别 | 使用同一准备句柄和既有 1024 输出配置，仍缺少可信计量保证 | `adapter-metering-unavailable` |
-
-因此，为这些入口配置有限 Token 或非零人民币保护后，新派发以 `MODEL_METERING_UNAVAILABLE` 停止。SDK 上下文容量可能是目录回退值，输出配置也可能被底层协议省略；不能用 `contextWindow`、`maxTokens`、字符除数或历史均值代替上界。若人民币价表明确将所有适用分项配置为零，可信金额预占可为零；这不建立 Token 上界，也不能绕过其他有限维度。预占不足时显示所需量与剩余量，不自动降低输出上限、裁剪输入或改推理强度。
-
-管理员可从请求详情核对未知消费，提供受限的依据标识并仅填写已核实的 Token 总量或人民币金额；两项可分次处理，未核实维度继续占用。仍留存的缺价或缺汇率请求可显式补算；缺汇率时保留原单价，只补汇率。原始服务商用量、调用时快照和原估算保留，修订独立留审计，不把补算显示成调用时已知，也不触发模型重发。HTTP 版本、幂等及授权合同见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)，精度与持久化见[模型账本](architecture/storage.md#910-模型调用账本)。
 
 ## 实时病历整理模型与负载验证
 
