@@ -47,7 +47,13 @@ test('confirms specialty visit classification, recovers signing preparation and 
     await expect(page.getByLabel('家族史', { exact: true })).toHaveValue('')
     await expect(page.getByLabel('过敏史', { exact: true })).toHaveValue('')
     expect((await read()).clinicalHistory).toMatchObject({ visitKind: 'unknown', requiredFields: [] })
-    for (const field of ['月经史', '孕产史']) await expect(page.getByLabel(field, { exact: true })).not.toHaveAttribute('required', '')
+    await expect(page.locator('[data-clinical-document-field="chiefComplaint"] [data-required-indicator]')).toHaveText('*')
+    await expect(page.locator('[data-clinical-document-field="familyHistory"] [data-required-indicator]')).toHaveCount(0)
+    for (const field of ['月经史', '孕产史']) {
+      const input = page.getByLabel(field, { exact: true })
+      await expect(input).not.toHaveAttribute('required', '')
+      await expect(page.locator('[data-clinical-document-field]').filter({ has: input }).locator('[data-required-indicator]')).toHaveCount(0)
+    }
     const confirmClassification = async (kind: '初诊' | '随访／复诊') => {
       await page.getByRole('button', { name: '核实文书类型', exact: true }).click()
       const classification = page.getByRole('dialog', { name: '核实文书类型', exact: true })
@@ -64,7 +70,7 @@ test('confirms specialty visit classification, recovers signing preparation and 
       const field = page.getByLabel(label, { exact: true })
       await expect(field).toHaveValue('')
       await expect(field).toHaveAttribute('required', '')
-      await expect(page.locator('[data-clinical-document-field]').filter({ has: field })).toContainText('必填')
+      await expect(page.locator('[data-clinical-document-field]').filter({ has: field }).locator('[data-required-indicator]')).toHaveText('*')
     }
     await page.getByLabel('家族史', { exact: true }).fill('父亲患高血压，患者自述。')
     await page.getByLabel('过敏史', { exact: true }).fill('青霉素用药后皮疹，患者自述。')

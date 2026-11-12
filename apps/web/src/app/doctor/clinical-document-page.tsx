@@ -13,13 +13,15 @@ import {
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
-import { FieldDescription, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
+import { FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Textarea } from '@clinmesh/ui/components/textarea'
+import { cn } from '@clinmesh/ui/lib/utils'
 import {
   CheckCircleIcon,
   CheckIcon,
   ChevronDownIcon,
+  ChevronUpIcon,
   CircleAlertIcon,
   ClipboardPenIcon,
   FileSignatureIcon,
@@ -462,12 +464,129 @@ export function ClinicalDocumentPage({
   )
 }
 
-function HistoryVisibility({ collapsed, label, value, children }: { collapsed: boolean; label: string; value: string; children: ReactNode }) {
-  const [open, setOpen] = useState(value.trim().length > 0)
-  useEffect(() => { if (value.trim()) setOpen(true) }, [value])
-  return collapsed ? <details open={open} onToggle={event => setOpen(event.currentTarget.open)} className="min-w-0">
-    <summary className="cursor-pointer text-sm">{label}</summary>{children}
-  </details> : <>{children}</>
+const editorGridClassName = 'grid grid-cols-1 gap-4 @min-[640px]/case-content:grid-cols-2'
+const revisionGridClassName = 'grid grid-cols-1 gap-3 @min-[768px]/case-content:grid-cols-2'
+
+function hasReproductiveHistoryContent(content: Pick<ClinicalDocumentContent, 'menstrualHistory' | 'obstetricHistory'>): boolean {
+  return Boolean(content.menstrualHistory?.trim() || content.obstetricHistory?.trim())
+}
+
+function isReproductiveHistoryRequired(
+  historyRequirements: ClinicalHistoryRequirements | undefined,
+  field: 'menstrualHistory' | 'obstetricHistory',
+): boolean {
+  return (historyRequirements?.requiredFields ?? []).includes(field)
+}
+
+function ClinicalFieldLabel({ htmlFor, label, muted = false, required }: {
+  htmlFor: string
+  label: string
+  muted?: boolean | undefined
+  required: boolean
+}): React.JSX.Element {
+  return (
+    <div className="inline-flex items-center gap-0.5">
+      <FieldLabel className={cn('pe-0!', muted && 'text-muted-foreground')} htmlFor={htmlFor}>{label}</FieldLabel>
+      {required ? (
+        <span aria-hidden="true" data-required-indicator="" className="text-sm leading-none font-medium text-destructive select-none">
+          *
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
+function ReproductiveHistoryGroup({
+  collapsible,
+  disabled = false,
+  gridClassName,
+  hasContent,
+  messages,
+  children,
+}: {
+  collapsible: boolean
+  disabled?: boolean | undefined
+  gridClassName: string
+  hasContent: boolean
+  messages: ReturnType<typeof getWorkspaceMessages>
+  children: (collapseAction: ReactNode) => ReactNode
+}): React.JSX.Element {
+  const [expanded, setExpanded] = useState(hasContent)
+  const expandButton = useRef<HTMLButtonElement>(null)
+  const fieldsContainer = useRef<HTMLDivElement>(null)
+  const focusTarget = useRef<'field' | 'trigger' | null>(null)
+  useEffect(() => {
+    if (hasContent) setExpanded(true)
+  }, [hasContent])
+  const isOpen = !collapsible || expanded || hasContent
+  useEffect(() => {
+    if (!collapsible) return
+    if (focusTarget.current === 'field' && isOpen) {
+      focusTarget.current = null
+      fieldsContainer.current?.querySelector<HTMLTextAreaElement>('textarea:not(:disabled)')?.focus({ preventScroll: true })
+    } else if (focusTarget.current === 'trigger' && !isOpen) {
+      focusTarget.current = null
+      expandButton.current?.focus({ preventScroll: true })
+    }
+  }, [collapsible, isOpen])
+  if (!collapsible) return <>{children(null)}</>
+  const collapseAction = isOpen && !hasContent ? (
+    <Button
+      aria-expanded={true}
+      className="-my-1 text-muted-foreground"
+      disabled={disabled}
+      onClick={() => {
+        focusTarget.current = 'trigger'
+        setExpanded(false)
+      }}
+      size="xs"
+      type="button"
+      variant="ghost"
+    >
+      {messages.collapseReproductiveHistory}
+      <ChevronUpIcon aria-hidden="true" data-icon="inline-end" />
+    </Button>
+  ) : null
+  return (
+    <div
+      data-reproductive-history-disclosure={isOpen ? 'expanded' : 'collapsed'}
+      className={cn(
+        'col-span-full min-w-0',
+        !isOpen && 'rounded-lg border border-dashed bg-muted/20',
+      )}
+    >
+      {!isOpen ? (
+        <button
+          aria-expanded={false}
+          disabled={disabled}
+          onClick={() => {
+            focusTarget.current = 'field'
+            setExpanded(true)
+          }}
+          ref={expandButton}
+          type="button"
+          className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border border-transparent px-3 py-2 text-left outline-none transition-colors hover:bg-muted/45 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+        >
+          <span className="min-w-0 text-sm font-medium text-muted-foreground">{messages.reproductiveHistoryGroup}</span>
+          <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground">
+            {messages.expandReproductiveHistory}
+            <ChevronDownIcon aria-hidden="true" className="size-3.5" />
+          </span>
+        </button>
+      ) : null}
+      <div ref={fieldsContainer} hidden={!isOpen} className={isOpen ? gridClassName : 'hidden'}>
+        {children(collapseAction)}
+      </div>
+    </div>
+  )
+}
+
+interface EditorFieldSpec {
+  field: keyof ClinicalDocumentContent
+  label: string
+  maxLength: number
+  multiline: boolean
+  fullSpan?: boolean | undefined
 }
 
 function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange, updates, historyRequirements }: {
@@ -479,73 +598,90 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
   onChange: (document: ClinicalDocumentContent) => void
   updates: ClinicalDocumentUpdates | undefined
 }): React.JSX.Element {
-  const fields = [
-    { field: 'chiefComplaint', label: messages.chiefComplaint, maxLength: 1_000, multiline: false },
+  const leadingFields: EditorFieldSpec[] = [
+    { field: 'chiefComplaint', label: messages.chiefComplaint, maxLength: 1_000, multiline: false, fullSpan: true },
     { field: 'historyOfPresentIllness', label: messages.historyOfPresentIllness, maxLength: 5_000, multiline: true },
     { field: 'priorMedicalHistory', label: messages.priorMedicalHistory, maxLength: 4_000, multiline: true },
-    { field: 'menstrualHistory', label: messages.menstrualHistory, maxLength: 4_000, multiline: true },
-    { field: 'obstetricHistory', label: messages.obstetricHistory, maxLength: 4_000, multiline: true },
     { field: 'familyHistory', label: messages.familyHistory, maxLength: 4_000, multiline: true },
     { field: 'allergyHistory', label: messages.allergyHistory, maxLength: 4_000, multiline: true },
+  ]
+  const reproductiveFields: EditorFieldSpec[] = [
+    { field: 'menstrualHistory', label: messages.menstrualHistory, maxLength: 4_000, multiline: true },
+    { field: 'obstetricHistory', label: messages.obstetricHistory, maxLength: 4_000, multiline: true },
+  ]
+  const trailingFields: EditorFieldSpec[] = [
     { field: 'physicalExamination', label: messages.physicalExamination, maxLength: 4_000, multiline: true },
     { field: 'auxiliaryExamination', label: messages.auxiliaryExamination, maxLength: 4_000, multiline: true },
     { field: 'assessment', label: messages.assessment, maxLength: 4_000, multiline: true },
     { field: 'disposition', label: messages.disposition, maxLength: 4_000, multiline: true },
-    { field: 'followUp', label: messages.followUp, maxLength: 4_000, multiline: true },
-  ] satisfies Array<{
-    field: keyof ClinicalDocumentContent
-    label: string
-    maxLength: number
-    multiline: boolean
-  }>
+    { field: 'followUp', label: messages.followUp, maxLength: 4_000, multiline: true, fullSpan: true },
+  ]
+  const renderField = ({ field, label, maxLength, multiline, fullSpan }: EditorFieldSpec, collapseAction: ReactNode = null) => {
+    const id = `${idPrefix}-${field}`
+    const value = content[field] ?? ''
+    const reproductiveHistory = field === 'menstrualHistory' || field === 'obstetricHistory'
+    const optional = field === 'familyHistory' || field === 'allergyHistory'
+      || reproductiveHistory && !isReproductiveHistoryRequired(historyRequirements, field)
+    const trailing = field === 'obstetricHistory' ? collapseAction : null
+    return (
+      <Field key={field} data-clinical-document-field={field} className={cn('flex flex-col gap-1.5', fullSpan && 'col-span-full')}>
+        <div className="flex flex-wrap items-center justify-between gap-2 in-data-[agent-draft-source]:pe-14">
+          <ClinicalFieldLabel
+            htmlFor={id}
+            label={label}
+            muted={reproductiveHistory && historyRequirements?.showByDefault === false}
+            required={!optional}
+          />
+          {updates?.fields[field] !== undefined || trailing != null ? (
+            <div className="flex items-center gap-1.5">
+              {updates?.fields[field] === undefined ? null : <span className="clinical-document-update-label" role="status">{messages.clinicalDocumentFieldUpdated}</span>}
+              {trailing}
+            </div>
+          ) : null}
+        </div>
+        <div className="flex min-w-0 flex-col gap-2">
+          <ClinicalDocumentUpdateControl field={field} updates={updates}>
+            {multiline ? (
+              <Textarea
+                disabled={disabled}
+                className="min-h-[4.5rem] resize-y"
+                id={id}
+                maxLength={maxLength}
+                minLength={optional ? undefined : reproductiveHistory ? 1 : 2}
+                onChange={event => onChange({ ...content, [field]: event.currentTarget.value })}
+                required={!optional}
+                value={value}
+              />
+            ) : (
+              <Input
+                disabled={disabled}
+                id={id}
+                maxLength={maxLength}
+                minLength={optional ? undefined : 2}
+                onChange={event => onChange({ ...content, [field]: event.currentTarget.value })}
+                required={!optional}
+                value={value}
+              />
+            )}
+          </ClinicalDocumentUpdateControl>
+        </div>
+      </Field>
+    )
+  }
   return (
-    <FieldGroup className="grid grid-cols-1 gap-4 @min-[640px]/case-content:grid-cols-2">
-      {fields.map(({ field, label, maxLength, multiline }) => {
-        const id = `${idPrefix}-${field}`
-        const value = content[field] ?? ''
-        const reproductiveHistory = field === 'menstrualHistory' || field === 'obstetricHistory'
-        const optional = field === 'familyHistory' || field === 'allergyHistory'
-          || reproductiveHistory && !(historyRequirements?.requiredFields ?? []).some(required => required === field)
-        return (
-          <HistoryVisibility key={field} collapsed={reproductiveHistory && historyRequirements?.showByDefault === false} label={label} value={value}>
-          <Field data-clinical-document-field={field} className="flex flex-col gap-1.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <FieldLabel htmlFor={id}>{label}</FieldLabel>
-              <div className="flex items-center gap-1.5">
-                {optional ? <FieldDescription className="text-xs">{messages.clinicalHistoryOptional}</FieldDescription> : null}
-                {reproductiveHistory && !optional ? <FieldDescription className="text-xs">{messages.clinicalHistoryRequired}</FieldDescription> : null}
-                {updates?.fields[field] === undefined ? null : <span className="clinical-document-update-label" role="status">{messages.clinicalDocumentFieldUpdated}</span>}
-              </div>
-            </div>
-            <div className="flex min-w-0 flex-col gap-2">
-              <ClinicalDocumentUpdateControl field={field} updates={updates}>
-                {multiline ? (
-                  <Textarea
-                    disabled={disabled}
-                    className="min-h-[4.5rem] resize-y"
-                    id={id}
-                    maxLength={maxLength}
-                    minLength={optional ? undefined : reproductiveHistory ? 1 : 2}
-                    onChange={event => onChange({ ...content, [field]: event.currentTarget.value })}
-                    required={!optional}
-                    value={value}
-                  />
-                ) : (
-                  <Input
-                    disabled={disabled}
-                    id={id}
-                    maxLength={maxLength}
-                    minLength={optional ? undefined : 2}
-                    onChange={event => onChange({ ...content, [field]: event.currentTarget.value })}
-                    required={!optional}
-                    value={value}
-                  />
-                )}
-              </ClinicalDocumentUpdateControl>
-            </div>
-          </Field></HistoryVisibility>
-        )
-      })}
+    <FieldGroup className={editorGridClassName}>
+      {leadingFields.map(spec => renderField(spec))}
+      <ReproductiveHistoryGroup
+        key={`${idPrefix}-reproductive`}
+        collapsible={historyRequirements?.showByDefault === false}
+        disabled={disabled}
+        gridClassName={editorGridClassName}
+        hasContent={hasReproductiveHistoryContent(content)}
+        messages={messages}
+      >
+        {collapseAction => reproductiveFields.map(spec => renderField(spec, collapseAction))}
+      </ReproductiveHistoryGroup>
+      {trailingFields.map(spec => renderField(spec))}
     </FieldGroup>
   )
 }
@@ -574,6 +710,10 @@ function ClinicalDocumentForm({
   submitLabel: string
 }): React.JSX.Element {
   const [reasonText, setReasonText] = useState('')
+  const [reproductiveDraft, setReproductiveDraft] = useState(() => ({
+    menstrualHistory: content.menstrualHistory ?? '',
+    obstetricHistory: content.obstetricHistory ?? '',
+  }))
   return (
     <form
       aria-label={formName}
@@ -596,9 +736,9 @@ function ClinicalDocumentForm({
         }, String(data.get('revisionReason') ?? ''))
       }}
     >
-      <FieldGroup className="grid grid-cols-1 gap-3 @min-[768px]/case-content:grid-cols-2">
-        <Field className="flex flex-col gap-1.5">
-          <FieldLabel htmlFor={`${idPrefix}-chief-complaint`}>{messages.chiefComplaint}</FieldLabel>
+      <FieldGroup className={revisionGridClassName}>
+        <Field className="flex flex-col gap-1.5 col-span-full">
+          <ClinicalFieldLabel htmlFor={`${idPrefix}-chief-complaint`} label={messages.chiefComplaint} required />
           <Textarea
             defaultValue={content.chiefComplaint}
             id={`${idPrefix}-chief-complaint`}
@@ -609,7 +749,7 @@ function ClinicalDocumentForm({
           />
         </Field>
         <Field className="flex flex-col gap-1.5">
-          <FieldLabel htmlFor={`${idPrefix}-history`}>{messages.historyOfPresentIllness}</FieldLabel>
+          <ClinicalFieldLabel htmlFor={`${idPrefix}-history`} label={messages.historyOfPresentIllness} required />
           <Textarea
             className="min-h-20"
             defaultValue={content.historyOfPresentIllness}
@@ -621,7 +761,7 @@ function ClinicalDocumentForm({
           />
         </Field>
         <Field className="flex flex-col gap-1.5">
-          <FieldLabel htmlFor={`${idPrefix}-prior-history`}>{messages.priorMedicalHistory}</FieldLabel>
+          <ClinicalFieldLabel htmlFor={`${idPrefix}-prior-history`} label={messages.priorMedicalHistory} required />
           <Textarea
             defaultValue={content.priorMedicalHistory}
             id={`${idPrefix}-prior-history`}
@@ -631,20 +771,51 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        {(['menstrualHistory', 'obstetricHistory', 'familyHistory', 'allergyHistory'] as const).map(field => (
-          <HistoryVisibility key={field} collapsed={(field === 'menstrualHistory' || field === 'obstetricHistory') && historyRequirements?.showByDefault === false}
-            label={messages[field]} value={content[field] ?? ''}>
-          <Field className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <FieldLabel htmlFor={`${idPrefix}-${field}`}>{messages[field]}</FieldLabel>
-              <FieldDescription className="text-xs">{(historyRequirements?.requiredFields ?? []).some(required => required === field) ? messages.clinicalHistoryRequired : messages.clinicalHistoryOptional}</FieldDescription>
-            </div>
-            <Textarea defaultValue={content[field] ?? ''} id={`${idPrefix}-${field}`} maxLength={4_000} name={field}
-              required={(historyRequirements?.requiredFields ?? []).some(required => required === field)} />
-          </Field></HistoryVisibility>
+        {(['familyHistory', 'allergyHistory'] as const).map(field => (
+          <Field key={field} className="flex flex-col gap-1.5">
+            <ClinicalFieldLabel htmlFor={`${idPrefix}-${field}`} label={messages[field]} required={false} />
+            <Textarea defaultValue={content[field] ?? ''} id={`${idPrefix}-${field}`} maxLength={4_000} name={field} />
+          </Field>
         ))}
+        <ReproductiveHistoryGroup
+          key={`${idPrefix}-reproductive`}
+          collapsible={historyRequirements?.showByDefault === false}
+          disabled={pending}
+          gridClassName={revisionGridClassName}
+          hasContent={hasReproductiveHistoryContent(reproductiveDraft)}
+          messages={messages}
+        >
+          {collapseAction => (['menstrualHistory', 'obstetricHistory'] as const).map(field => {
+            const required = isReproductiveHistoryRequired(historyRequirements, field)
+            const trailing = field === 'obstetricHistory' ? collapseAction : null
+            return (
+              <Field key={field} className="flex flex-col gap-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 in-data-[agent-draft-source]:pe-14">
+                  <ClinicalFieldLabel
+                    htmlFor={`${idPrefix}-${field}`}
+                    label={messages[field]}
+                    muted={historyRequirements?.showByDefault === false}
+                    required={required}
+                  />
+                  {trailing}
+                </div>
+                <Textarea
+                  defaultValue={content[field] ?? ''}
+                  id={`${idPrefix}-${field}`}
+                  maxLength={4_000}
+                  name={field}
+                  onChange={event => {
+                    const value = event.currentTarget.value
+                    setReproductiveDraft(current => ({ ...current, [field]: value }))
+                  }}
+                  required={required}
+                />
+              </Field>
+            )
+          })}
+        </ReproductiveHistoryGroup>
         <Field className="flex flex-col gap-1.5">
-          <FieldLabel htmlFor={`${idPrefix}-examination`}>{messages.physicalExamination}</FieldLabel>
+          <ClinicalFieldLabel htmlFor={`${idPrefix}-examination`} label={messages.physicalExamination} required />
           <Textarea
             defaultValue={content.physicalExamination}
             id={`${idPrefix}-examination`}
@@ -655,7 +826,7 @@ function ClinicalDocumentForm({
           />
         </Field>
         <Field className="flex flex-col gap-1.5">
-          <FieldLabel htmlFor={`${idPrefix}-auxiliary`}>{messages.auxiliaryExamination}</FieldLabel>
+          <ClinicalFieldLabel htmlFor={`${idPrefix}-auxiliary`} label={messages.auxiliaryExamination} required />
           <Textarea
             defaultValue={content.auxiliaryExamination}
             id={`${idPrefix}-auxiliary`}
@@ -666,7 +837,7 @@ function ClinicalDocumentForm({
           />
         </Field>
         <Field className="flex flex-col gap-1.5">
-          <FieldLabel htmlFor={`${idPrefix}-assessment`}>{messages.assessment}</FieldLabel>
+          <ClinicalFieldLabel htmlFor={`${idPrefix}-assessment`} label={messages.assessment} required />
           <Textarea
             defaultValue={content.assessment}
             id={`${idPrefix}-assessment`}
@@ -677,7 +848,7 @@ function ClinicalDocumentForm({
           />
         </Field>
         <Field className="flex flex-col gap-1.5">
-          <FieldLabel htmlFor={`${idPrefix}-disposition`}>{messages.disposition}</FieldLabel>
+          <ClinicalFieldLabel htmlFor={`${idPrefix}-disposition`} label={messages.disposition} required />
           <Textarea
             defaultValue={content.disposition}
             id={`${idPrefix}-disposition`}
@@ -687,8 +858,8 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="flex flex-col gap-1.5">
-          <FieldLabel htmlFor={`${idPrefix}-follow-up`}>{messages.followUp}</FieldLabel>
+        <Field className="flex flex-col gap-1.5 col-span-full">
+          <ClinicalFieldLabel htmlFor={`${idPrefix}-follow-up`} label={messages.followUp} required />
           <Textarea
             defaultValue={content.followUp}
             id={`${idPrefix}-follow-up`}
@@ -699,8 +870,8 @@ function ClinicalDocumentForm({
           />
         </Field>
         {includeRevisionReason ? (
-          <Field className="flex flex-col gap-1.5 @min-[768px]/case-content:col-span-2">
-            <FieldLabel htmlFor={`${idPrefix}-reason`}>{messages.revisionReason}</FieldLabel>
+          <Field className="flex flex-col gap-1.5 col-span-full">
+            <ClinicalFieldLabel htmlFor={`${idPrefix}-reason`} label={messages.revisionReason} required />
             <Textarea
               id={`${idPrefix}-reason`}
               maxLength={500}
@@ -711,7 +882,7 @@ function ClinicalDocumentForm({
             />
           </Field>
         ) : null}
-        <div className="flex justify-end @min-[768px]/case-content:col-span-2">
+        <div className="flex justify-end col-span-full">
           <Button
             data-unavailable={includeRevisionReason && reasonText.trim().length < 2 ? '' : undefined}
             disabled={pending}
@@ -733,7 +904,7 @@ export function ClinicalDocumentContentView({ content, messages }: {
   content: ClinicalDocumentContent
   messages: ReturnType<typeof getWorkspaceMessages>
 }): React.JSX.Element {
-  const fields = ['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'menstrualHistory', 'obstetricHistory', 'familyHistory', 'allergyHistory', 'physicalExamination',
+  const fields = ['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'familyHistory', 'allergyHistory', 'menstrualHistory', 'obstetricHistory', 'physicalExamination',
     'auxiliaryExamination', 'assessment', 'disposition', 'followUp'] as const
   return (
     <dl className="grid grid-cols-1 gap-3 text-sm @min-[768px]/case-content:grid-cols-2">
