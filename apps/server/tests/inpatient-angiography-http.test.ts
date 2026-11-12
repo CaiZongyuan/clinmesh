@@ -476,3 +476,151 @@ it('计划B的编辑草稿不与计划A的默认确认混用，也不污染A预�
   expect(unbound.drafts?.map(item => item.requestId)).toEqual([planned.id])
   expect(unbound.history).toContainEqual(confirmed)
 })
+
+it('多支冠脉造影伴阴性 FFR（无支架选型 QCA 且不实施 PCI）生成完整正式报告并兼容旧快照读取', async () => {
+  const s = await setup()
+  const cancelSurgery = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, z.object({
+    requests: z.array(z.object({ id: z.string(), version: z.number() })),
+  }))
+  const pciRequest = cancelSurgery.requests.find(item => item.id === s.stay.requestId)!
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/cancel`, {
+    requestId: pciRequest.id,
+    expectedRequestVersion: pciRequest.version,
+    note: '拟先行诊断性冠脉造影及 FFR 评估，暂不预设 PCI',
+  })).status).toBe(200)
+
+  const row = z.object({ hidden_resources_json: z.string() }).parse(s.fixture.runtime.database.driver.prepare(
+    'SELECT hidden_resources_json FROM synthetic_case_truth WHERE case_id=?',
+  ).get(s.stay.sourceCaseId))
+  const facts = z.array(z.object({ resource: z.record(z.string(), z.unknown()), sourceReference: z.string() })).parse(JSON.parse(row.hidden_resources_json))
+  const baseFacts = facts.filter(item => !String(item.resource.id ?? '').startsWith('pci-angiography-'))
+  const codingSystem = 'urn:clinmesh:synthetic:coronary-angiography'
+  const vesselFindings = [
+    { id: 'angio-vessel-lm', vessel: 'LM', segment: 'LM', stenosis: 0, timi: 3, characteristics: '管壁规则，未见明显狭窄' },
+    { id: 'angio-vessel-lad', vessel: 'LAD', segment: 'pLAD', stenosis: 60, timi: 3, characteristics: '近段弥漫性轻中度钙化斑块', ffr: 0.86, ifr: 0.92 },
+    { id: 'angio-vessel-lcx', vessel: 'LCX', segment: 'mLCX', stenosis: 30, timi: 3, characteristics: '中段偏心性斑块，远端血流正常' },
+    { id: 'angio-vessel-rca', vessel: 'RCA', segment: 'mRCA', stenosis: 40, timi: 3, characteristics: '中段局限性斑块，无血栓影' },
+  ] as const
+  const nextFacts = [
+    ...baseFacts,
+    ...vesselFindings.map(item => ({
+      sourceReference: `urn:uuid:${item.id}`,
+      resource: {
+        resourceType: 'Observation',
+        id: item.id,
+        status: 'final',
+        code: { coding: [{ system: codingSystem, code: 'vessel-finding' }] },
+        bodySite: { text: item.segment },
+        component: [
+          { code: { coding: [{ system: codingSystem, code: 'vessel' }] }, valueString: item.vessel },
+          { code: { coding: [{ system: codingSystem, code: 'segment' }] }, valueString: item.segment },
+          { code: { coding: [{ system: codingSystem, code: 'stenosis-percent' }] }, valueQuantity: { value: item.stenosis, unit: '%' } },
+          { code: { coding: [{ system: codingSystem, code: 'timi-flow' }] }, valueInteger: item.timi },
+          { code: { coding: [{ system: codingSystem, code: 'lesion-characteristics' }] }, valueString: item.characteristics },
+          ...('ffr' in item ? [{ code: { coding: [{ system: codingSystem, code: 'ffr' }] }, valueQuantity: { value: item.ffr, unit: '1' } }] : []),
+          ...('ifr' in item ? [{ code: { coding: [{ system: codingSystem, code: 'ifr' }] }, valueQuantity: { value: item.ifr, unit: '1' } }] : []),
+        ],
+      },
+    })),
+    {
+      sourceReference: 'urn:uuid:angio-conclusion',
+      resource: {
+        resourceType: 'Observation',
+        id: 'angio-conclusion',
+        status: 'final',
+        code: { coding: [{ system: codingSystem, code: 'angiography-conclusion' }] },
+        valueString: '前降支近段中度狭窄，FFR 0.86 阴性，未见功能性缺血证据，建议优化药物治疗，暂不行 PCI。',
+      },
+    },
+  ]
+  s.fixture.runtime.database.driver.prepare('UPDATE synthetic_case_truth SET hidden_resources_json=? WHERE case_id=?')
+    .run(JSON.stringify(nextFacts), s.stay.sourceCaseId)
+
+  const execution = await s.fixture.executeAngiography(s.stay)
+  expect(await s.fixture.runtime.dispatcher.dispatchOnce({ kinds: ['inpatient.angiography.report'] })).toMatchObject({ status: 'completed' })
+
+  const path = `${s.stay.path}/angiography-reports`
+  const reports = await s.fixture.read('inpatient-doctor', path, inpatientAngiographyReportsSchema)
+  expect(reports.reports).toHaveLength(1)
+  const report = reports.reports[0]!
+  expect(report).toMatchObject({
+    procedureId: execution.id,
+    status: 'final',
+    targetSite: null,
+    measurements: [],
+    missing: [],
+    conclusion: '前降支近段中度狭窄，FFR 0.86 阴性，未见功能性缺血证据，建议优化药物治疗，暂不行 PCI。',
+    vessels: [
+      { vessel: 'LM', segment: 'LM', stenosisPercent: 0, timiFlow: 3, lesionCharacteristics: '管壁规则，未见明显狭窄' },
+      { vessel: 'LAD', segment: 'pLAD', stenosisPercent: 60, timiFlow: 3, lesionCharacteristics: '近段弥漫性轻中度钙化斑块', ffr: 0.86, ifr: 0.92 },
+      { vessel: 'LCX', segment: 'mLCX', stenosisPercent: 30, timiFlow: 3, lesionCharacteristics: '中段偏心性斑块，远端血流正常' },
+      { vessel: 'RCA', segment: 'mRCA', stenosisPercent: 40, timiFlow: 3, lesionCharacteristics: '中段局限性斑块，无血栓影' },
+    ],
+  })
+  expect(JSON.stringify(reports)).not.toMatch(/sourceCaseId|Case Truth|hiddenResources|case_truth|angio-vessel-/)
+  expect(s.prepared.modelCalls).toBe(0)
+
+  const fhir = await s.fixture.read('inpatient-doctor', `/fhir/R5/DiagnosticReport/${report.id}`, fhirResourceSchema)
+  expect(fhir.status).toBe('final')
+  expect(fhir.conclusion).toContain('LAD(pLAD) 狭窄 60%')
+  expect(fhir.conclusion).toContain('FFR 0.86')
+  expect(fhir.conclusion).toContain('暂不行 PCI')
+
+  const legacyJson = JSON.stringify({
+    id: report.id,
+    admissionId: s.stay.admissionId,
+    procedureId: execution.id,
+    version: report.version,
+    synthetic: true,
+    status: 'final',
+    targetSite: 'LAD 中段',
+    measurements: [],
+    missing: [],
+    issuedAt: report.issuedAt,
+  })
+  s.fixture.runtime.database.driver.prepare('UPDATE inpatient_angiography_report SET report_json=? WHERE report_id=?')
+    .run(legacyJson, report.id)
+
+  const withLegacy = await s.fixture.read('inpatient-doctor', path, inpatientAngiographyReportsSchema)
+  const parsedLegacy = withLegacy.reports.find(item => item.id === report.id)!
+  expect(parsedLegacy.vessels).toEqual([])
+  expect(parsedLegacy.conclusion).toBeNull()
+})
+
+it('多支冠脉节段缺少必要血流或生理学数值越界时降级为 partial 并记录缺项', async () => {
+  const s = await setup()
+  const row = z.object({ hidden_resources_json: z.string() }).parse(s.fixture.runtime.database.driver.prepare(
+    'SELECT hidden_resources_json FROM synthetic_case_truth WHERE case_id=?',
+  ).get(s.stay.sourceCaseId))
+  const facts = z.array(z.object({ resource: z.record(z.string(), z.unknown()), sourceReference: z.string() })).parse(JSON.parse(row.hidden_resources_json))
+  const baseFacts = facts.filter(item => !String(item.resource.id ?? '').startsWith('pci-angiography-'))
+  const codingSystem = 'urn:clinmesh:synthetic:coronary-angiography'
+  const nextFacts = [
+    ...baseFacts,
+    {
+      sourceReference: 'urn:uuid:angio-vessel-lad-incomplete',
+      resource: {
+        resourceType: 'Observation',
+        id: 'angio-vessel-lad-incomplete',
+        status: 'final',
+        code: { coding: [{ system: codingSystem, code: 'vessel-finding' }] },
+        component: [
+          { code: { coding: [{ system: codingSystem, code: 'vessel' }] }, valueString: 'LAD' },
+          { code: { coding: [{ system: codingSystem, code: 'segment' }] }, valueString: 'pLAD' },
+          { code: { coding: [{ system: codingSystem, code: 'stenosis-percent' }] }, valueQuantity: { value: 65, unit: '%' } },
+          { code: { coding: [{ system: codingSystem, code: 'lesion-characteristics' }] }, valueString: '近段中度狭窄' },
+          { code: { coding: [{ system: codingSystem, code: 'ffr' }] }, valueQuantity: { value: 1.9, unit: '1' } },
+        ],
+      },
+    },
+  ]
+  s.fixture.runtime.database.driver.prepare('UPDATE synthetic_case_truth SET hidden_resources_json=? WHERE case_id=?')
+    .run(JSON.stringify(nextFacts), s.stay.sourceCaseId)
+
+  await s.fixture.executeAngiography(s.stay)
+  await s.fixture.runtime.dispatcher.dispatchOnce({ kinds: ['inpatient.angiography.report'] })
+  const report = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/angiography-reports`, inpatientAngiographyReportsSchema)).reports[0]!
+  expect(report.status).toBe('partial')
+  expect(report.missing.length).toBeGreaterThan(0)
+  expect(s.prepared.modelCalls).toBe(0)
+})

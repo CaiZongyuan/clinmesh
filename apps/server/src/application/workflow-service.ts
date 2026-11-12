@@ -1,4 +1,5 @@
 import { InsuranceService, InsuranceError, type InsuranceSource, type InsuranceTarget } from './insurance-service.ts'
+import { hasLaboratoryCriticalBounds, isLaboratoryValueCritical } from './laboratory-adult-reference.ts'
 import { readOutpatientInsuranceAllocations, readOutpatientInsuranceSource } from './outpatient-insurance.ts'
 import { assertInpatientRequestScope, inpatientRequestOwner } from './clinical-request-context.ts'
 import { clinicalVisitKindSystem, clinicalVisitTypes, readClinicalHistoryContext } from './clinical-history-context.ts'
@@ -1185,6 +1186,19 @@ function legacyDiagnosisReferenceFromComposition(resource: FhirResource): string
     .find(section => section.title === '诊断')
     ?.entry?.find(entry => entry.reference.startsWith('Condition/'))
     ?.reference
+}
+
+const laboratoryCriticalValueExtensionUrl = 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/laboratory-critical-value'
+
+function observationCriticalFlag(resource: FhirResource): boolean | undefined {
+  if (!Array.isArray(resource.extension)) return undefined
+  const found = resource.extension.find((item): item is { url: string; valueBoolean: boolean } => (
+    typeof item === 'object'
+    && item !== null
+    && (item as { url?: unknown }).url === laboratoryCriticalValueExtensionUrl
+    && typeof (item as { valueBoolean?: unknown }).valueBoolean === 'boolean'
+  ))
+  return found?.valueBoolean
 }
 
 function completedCaseInterpretation(code: string | undefined): string | undefined {
@@ -7746,9 +7760,24 @@ export class WorkflowService {
                     text: result.value.display,
                   },
                 }
+        const criticalFlag = typeof result.value === 'number'
+          ? ('critical' in result && result.critical !== undefined
+              ? result.critical
+              : resultDefinition !== undefined && hasLaboratoryCriticalBounds(resultDefinition)
+                ? isLaboratoryValueCritical(result.value, resultDefinition)
+                : undefined)
+          : undefined
         return transaction.fhir.create(input.context, {
           resourceType: 'Observation',
           id: observationId,
+          ...(criticalFlag === undefined
+            ? {}
+            : {
+                extension: [{
+                  url: laboratoryCriticalValueExtensionUrl,
+                  valueBoolean: criticalFlag,
+                }],
+              }),
           status: 'final',
           category: [{
             coding: [{
@@ -8221,6 +8250,12 @@ export class WorkflowService {
           resource,
         }
       })
+      const laboratoryService = request.service_snapshot_json === null
+        ? undefined
+        : laboratoryServiceSnapshotSchema.parse(JSON.parse(request.service_snapshot_json))
+      const resultDefinitions = new Map(laboratoryService?.reportDefinition.results.map(
+        definition => [definition.referenceConcept.code, definition],
+      ))
       const observations = sourceObservations.map((source) => {
         const code = source.content.code.coding[0]?.code
         const referenceRange = source.content.referenceRange[0]
@@ -8239,11 +8274,26 @@ export class WorkflowService {
         const interpretation = referenceRange.low !== undefined && value < referenceRange.low.value
           ? 'L'
           : referenceRange.high !== undefined && value > referenceRange.high.value ? 'H' : 'N'
+        const resultDefinition = resultDefinitions.get(code)
+        const criticalFlag = resultDefinition !== undefined && hasLaboratoryCriticalBounds(resultDefinition)
+          ? isLaboratoryValueCritical(value, resultDefinition)
+          : undefined
+        const priorExtensions = Array.isArray(source.resource.extension)
+          ? source.resource.extension.filter(item => (
+              typeof item !== 'object'
+              || item === null
+              || (item as { url?: unknown }).url !== laboratoryCriticalValueExtensionUrl
+            ))
+          : []
+        const nextExtensions = criticalFlag === undefined
+          ? priorExtensions
+          : [...priorExtensions, { url: laboratoryCriticalValueExtensionUrl, valueBoolean: criticalFlag }]
         const content = Object.fromEntries(Object.entries(source.resource).filter(
-          ([key]) => key !== 'id' && key !== 'meta',
+          ([key]) => key !== 'id' && key !== 'meta' && key !== 'extension',
         ))
         return transaction.fhir.create(input.context, {
           ...content,
+          ...(nextExtensions.length === 0 ? {} : { extension: nextExtensions }),
           resourceType: 'Observation',
           id: uuidv7(),
           status: 'final',
@@ -11054,9 +11104,8 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The completed laboratory result is invalid')
       }
       const observationId = reference.reference.slice('Observation/'.length)
-      const observation = completedCaseObservationSchema.parse(
-        this.#fhir.read(context, 'Observation', observationId),
-      )
+      const rawObservation = this.#fhir.read(context, 'Observation', observationId)
+      const observation = completedCaseObservationSchema.parse(rawObservation)
       const coding = observation.code.coding[0]
       const codeableValue = observation.valueCodeableConcept?.coding[0]
       const value = observation.valueBoolean
@@ -11066,10 +11115,12 @@ export class WorkflowService {
       if (coding === undefined || value === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The completed laboratory result is incomplete')
       }
+      const critical = typeof value === 'number' ? observationCriticalFlag(rawObservation) : undefined
       const referenceRange = observation.referenceRange?.[0]
       const unit = observation.valueQuantity?.unit
       return {
         code: coding.code,
+        ...(critical === undefined ? {} : { critical }),
         display: coding.display ?? coding.code,
         ...(completedCaseInterpretation(observation.interpretation?.[0]?.coding[0]?.code) === undefined
           ? {}
@@ -11680,9 +11731,8 @@ export class WorkflowService {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory report result is invalid')
         }
         const observationId = resultReference.reference.slice('Observation/'.length)
-        const observation = laboratoryObservationContentSchema.parse(
-          this.#fhir.read(context, 'Observation', observationId),
-        )
+        const rawObservation = this.#fhir.read(context, 'Observation', observationId)
+        const observation = laboratoryObservationContentSchema.parse(rawObservation)
         if (!observation.basedOn.some(reference => (
           reference.reference === serviceRequestReference
         )) || observation.specimen.reference !== specimenReference) {
@@ -11697,6 +11747,7 @@ export class WorkflowService {
         if (coding === undefined || interpretationCode === undefined || referenceRange === undefined) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result is incomplete')
         }
+        const critical = observationCriticalFlag(rawObservation)
         const base = {
           code: coding.code,
           display: coding.display,
@@ -11713,6 +11764,7 @@ export class WorkflowService {
           }
           return {
             ...base,
+            ...(critical === undefined ? {} : { critical }),
             referenceRange: {
               ...(referenceRange.high === undefined ? {} : { high: referenceRange.high.value }),
               ...(referenceRange.low === undefined ? {} : { low: referenceRange.low.value }),

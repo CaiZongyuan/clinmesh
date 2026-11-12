@@ -29,25 +29,199 @@ import {
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
-import { laboratoryOutpatientPrice } from './outpatient-investigation-billing.ts'
+import { defaultSyntheticLaboratoryPriceFen, laboratoryOutpatientPrice } from './outpatient-investigation-billing.ts'
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 
-function inpatientLaboratoryBilling(snapshot: LaboratoryServiceSnapshot, existingInpatientPrice: boolean) {
-  const coding=snapshot.referenceConcept
-  const key=`${coding.system}#${coding.version}#${coding.code}`
-  const prices:Record<string,number>={
-    'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026#2026#0100101A':800,
-    'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026#2026#0100501A':800,
-    'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn#2026-09-01#CN-LAB-CBC':2500,
+function inpatientLaboratoryBilling(
+  snapshot: Pick<LaboratoryServiceSnapshot, 'id' | 'nameZh' | 'priceFen'> & {
+    referenceConcept: Pick<LaboratoryServiceSnapshot['referenceConcept'], 'code' | 'system' | 'version'>
+  },
+  existingInpatientPrice: boolean,
+) {
+  const priceFen = existingInpatientPrice && snapshot.priceFen > 0
+    ? snapshot.priceFen
+    : defaultSyntheticLaboratoryPriceFen(snapshot.referenceConcept)
+  if (priceFen === undefined) return undefined
+  return {
+    id: `inpatient-charge-definition-${snapshot.id}`,
+    version: 1,
+    display: snapshot.nameZh,
+    priceFen,
+    currency: 'CNY' as const,
+    trigger: 'execution-completed' as const,
+    source: existingInpatientPrice && snapshot.priceFen > 0 ? 'published-hospital-price' : 'synthetic-hospital-basic-laboratory-2026',
+    availableScopes: ['inpatient'],
+    effectiveOn: '2026-08-24',
   }
-  const priceFen=existingInpatientPrice&&snapshot.priceFen>0?snapshot.priceFen:prices[key]
-  if(priceFen===undefined)return undefined
-  return {id:`inpatient-charge-definition-${snapshot.id}`,version:1,display:snapshot.nameZh,priceFen,currency:'CNY' as const,trigger:'execution-completed' as const,
-    source:existingInpatientPrice&&snapshot.priceFen>0?'published-hospital-price':'synthetic-hospital-basic-laboratory-2026',availableScopes:['inpatient'],effectiveOn:'2026-08-24'}
+}
+
+const hsCtniConceptId = 'wst-886:2026:2100404B'
+const wst886System = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026'
+
+function syntheticHsCtniRecord(datasetReleaseId: string): ReferenceLaboratoryRecord {
+  const ruleMeta = {
+    sourceLocation: '心肌肌钙蛋白实验室检测与临床应用中国专家共识（合成校准）',
+    sourceStandard: 'ClinMesh Curated Baseline',
+    sourceType: 'project-curated' as const,
+    sourceVersion: '2026-11-12',
+  }
+  return {
+    concept: {
+      code: '2100404B',
+      display: '高敏心肌肌钙蛋白I测定',
+      domain: 'laboratory',
+      id: hsCtniConceptId,
+      sourceLocator: 'clinmesh-curated:laboratory-cn:test:2100404B',
+      status: 'active',
+      system: wst886System,
+      version: '2026',
+    },
+    definition: {
+      adultReferenceRules: [{
+        high: 16,
+        notes: '成年女性静脉血 99th 百分位上限',
+        referenceKind: 'upper-bound',
+        sex: 'female',
+        simulationHigh: 16,
+        simulationLow: 1,
+        ...ruleMeta,
+      }, {
+        high: 34,
+        notes: '成年男性静脉血 99th 百分位上限',
+        referenceKind: 'upper-bound',
+        sex: 'male',
+        simulationHigh: 34,
+        simulationLow: 1.2,
+        ...ruleMeta,
+      }, {
+        high: 16,
+        notes: '成人通用静脉血参考上限',
+        referenceKind: 'upper-bound',
+        sex: 'all',
+        simulationHigh: 16,
+        simulationLow: 1,
+        ...ruleMeta,
+      }],
+      alternateCodings: [{ code: '89579-7', system: 'http://loinc.org', version: '2.83' }],
+      analyte: '高敏心肌肌钙蛋白I',
+      category: '心脏标志物',
+      conceptId: hsCtniConceptId,
+      datasetReleaseId,
+      healthyStrategy: 'uniform',
+      kind: 'laboratory-cn-test',
+      precision: 1,
+      resultKind: 'quantity',
+      scale: '定量',
+      sourceLocator: 'clinmesh-curated:laboratory-cn:test:2100404B',
+      sourceVersion: '2026',
+      specimen: '血清、血浆',
+      unit: { code: 'ng/L', display: 'ng/L', system: 'http://unitsofmeasure.org' },
+    },
+    panelMembers: [],
+    specimens: [],
+    units: [],
+  }
+}
+
+const supplementalLaboratoryCnLoincCodings: Readonly<Record<string, readonly string[]>> = {
+  '0100401A': ['718-7'],
+  '0100501A': ['4544-3', '20570-8'],
+  '0501703A': ['48065-7', '48066-5'],
+  '1100301A': ['4548-4', '17856-6'],
+  '1101204A': ['33863-2'],
+  '1400205A': ['2951-2'],
+  '1400305A': ['19123-9', '2601-3'],
+  '1400404A': ['2777-1', '14879-1'],
+  '1400505A': ['2075-0'],
+  '1400605A': ['2823-3'],
+  '1400705A': ['17861-6', '2000-8'],
+  '1700204A': ['3094-0', '22664-7'],
+  '1700304A': ['3084-1', '14933-6'],
+  '1700404A': ['2160-0', '14682-9'],
+  '2000104A': ['2093-3', '14647-2'],
+  '2000204A': ['2571-8', '14927-8'],
+  '2000304A': ['2085-9', '14646-4'],
+  '2000404A': ['2089-1', '13457-7', '18262-6'],
+  '2100104A': ['2157-6'],
+  '2100304A': ['2639-3'],
+  '2100404A': ['10839-9', '6598-7'],
+  '2100404B': ['89579-7', '49563-0'],
+  '2100504A': ['6597-9', '67151-1'],
+  '2100604A': ['30934-4'],
+  '2100704A': ['33762-6'],
+}
+
+function enrichedLaboratoryCnAlternateCodings(
+  code: string,
+  existing: LaboratoryCnTestRecord['definition']['alternateCodings'],
+) {
+  const supplemental = Object.hasOwn(supplementalLaboratoryCnLoincCodings, code)
+    ? supplementalLaboratoryCnLoincCodings[code]
+    : undefined
+  if (supplemental === undefined) return existing
+  const seen = new Set(existing.map(item => item.code))
+  return [
+    ...existing,
+    ...supplemental
+      .filter(loincCode => !seen.has(loincCode))
+      .map(loincCode => ({ code: loincCode, system: 'http://loinc.org' as const, version: '2.83' })),
+  ].slice(0, 4)
+}
+
+const defaultLaboratoryCriticalBoundsTable: Readonly<Record<string, { criticalMaximum?: number; criticalMinimum?: number }>> = {
+  'wst-886:2026:0100101A#10*9/L': { criticalMaximum: 30, criticalMinimum: 2 },
+  'wst-886:2026:0100301A#10*9/L': { criticalMaximum: 1000, criticalMinimum: 30 },
+  'wst-886:2026:0100401A#g/L': { criticalMaximum: 200, criticalMinimum: 60 },
+  'wst-886:2026:0100501A#L/L': { criticalMaximum: 0.6, criticalMinimum: 0.2 },
+  'wst-886:2026:0501703A#mg/L': { criticalMaximum: 5 },
+  'wst-886:2026:0501703A#ug/L': { criticalMaximum: 5000 },
+  'wst-886:2026:1400205A#mmol/L': { criticalMaximum: 160, criticalMinimum: 120 },
+  'wst-886:2026:1400605A#mmol/L': { criticalMaximum: 6.2, criticalMinimum: 2.8 },
+  'wst-886:2026:1400705A#mmol/L': { criticalMaximum: 3.5, criticalMinimum: 1.75 },
+  'wst-886:2026:1700404A#umol/L': { criticalMaximum: 600 },
+  'wst-886:2026:2100404A#ng/L': { criticalMaximum: 500 },
+  'wst-886:2026:2100404A#ng/mL': { criticalMaximum: 0.5 },
+  'wst-886:2026:2100404A#pg/mL': { criticalMaximum: 500 },
+  'wst-886:2026:2100404A#ug/L': { criticalMaximum: 0.5 },
+  'wst-886:2026:2100404B#ng/L': { criticalMaximum: 100 },
+  'wst-886:2026:2100504A#ng/L': { criticalMaximum: 100 },
+  'wst-886:2026:2100504A#ng/mL': { criticalMaximum: 0.1 },
+  'wst-886:2026:2100504A#ug/L': { criticalMaximum: 0.1 },
+  'wst-886:2026:2100704A#ng/L': { criticalMaximum: 5000 },
+  'wst-886:2026:2100704A#pg/mL': { criticalMaximum: 5000 },
+}
+
+function defaultLaboratoryCriticalBounds(definition: LaboratoryCnTestRecord['definition']): {
+  criticalMaximum?: number
+  criticalMinimum?: number
+} {
+  if (definition.resultKind !== 'quantity' || definition.unit === undefined) return {}
+  const key = `${definition.conceptId}#${definition.unit.code}`
+  const candidate = Object.hasOwn(defaultLaboratoryCriticalBoundsTable, key)
+    ? defaultLaboratoryCriticalBoundsTable[key]
+    : undefined
+  if (candidate === undefined) return {}
+  const lows = definition.adultReferenceRules.flatMap(rule => rule.low === undefined ? [] : [rule.low])
+  const highs = definition.adultReferenceRules.flatMap(rule => rule.high === undefined ? [] : [rule.high])
+  const criticalMinimum = candidate.criticalMinimum !== undefined
+    && lows.every(low => candidate.criticalMinimum! < low)
+    && highs.every(high => candidate.criticalMinimum! < high)
+    ? candidate.criticalMinimum
+    : undefined
+  const criticalMaximum = candidate.criticalMaximum !== undefined
+    && highs.every(high => candidate.criticalMaximum! > high)
+    && lows.every(low => candidate.criticalMaximum! > low)
+    ? candidate.criticalMaximum
+    : undefined
+  if (criticalMinimum !== undefined && criticalMaximum !== undefined && criticalMinimum >= criticalMaximum) return {}
+  return {
+    ...(criticalMinimum === undefined ? {} : { criticalMinimum }),
+    ...(criticalMaximum === undefined ? {} : { criticalMaximum }),
+  }
 }
 
 const promptVersion = 'laboratory-service-enrichment-v1'
-const laboratoryCnPublicationPolicyVersion = 'clinmesh-laboratory-defaults-v1'
+const laboratoryCnPublicationPolicyVersion = 'clinmesh-laboratory-defaults-v2'
 const laboratoryCnConclusion = '本报告为 ClinMesh 合成检验结果，仅用于仿真。'
 const laboratorySpecimenSystem = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-specimen-cn'
 const wst886EffectiveOn = '2026-11-01'
@@ -166,16 +340,53 @@ export class LaboratoryServicePublisher {
   }
 
   ensureInpatientPrices(): void {
-    const rows=z.array(z.object({workspace_id:z.string(),epoch:z.string(),service_id:z.string(),config_json:z.string()})).parse(this.#database.driver.prepare(`
-      SELECT h.* FROM hospital_service_catalog h JOIN workspace w ON w.workspace_id=h.workspace_id AND w.active_epoch=h.epoch
+    const rowSchema = z.object({
+      availableScopesJson: z.string(),
+      code: z.string(),
+      epoch: z.string(),
+      id: z.string(),
+      nameZh: z.string(),
+      priceFen: z.number().int().nonnegative(),
+      service_id: z.string(),
+      system: z.string(),
+      version: z.string(),
+      workspace_id: z.string(),
+    })
+    const rows = z.array(rowSchema).parse(this.#database.driver.prepare(`
+      SELECT h.workspace_id, h.epoch, h.service_id,
+        json_extract(h.config_json, '$.availableScopes') AS availableScopesJson,
+        json_extract(h.config_json, '$.laboratoryService.id') AS id,
+        json_extract(h.config_json, '$.laboratoryService.nameZh') AS nameZh,
+        json_extract(h.config_json, '$.laboratoryService.priceFen') AS priceFen,
+        json_extract(h.config_json, '$.laboratoryService.referenceConcept.system') AS system,
+        json_extract(h.config_json, '$.laboratoryService.referenceConcept.version') AS version,
+        json_extract(h.config_json, '$.laboratoryService.referenceConcept.code') AS code
+      FROM hospital_service_catalog h JOIN workspace w ON w.workspace_id=h.workspace_id AND w.active_epoch=h.epoch
       WHERE h.active=1 AND json_type(h.config_json,'$.laboratoryService')='object'
-        AND json_type(h.config_json,'$.inpatientInvestigationBilling') IS NULL`).all())
-    const update=this.#database.driver.prepare("UPDATE hospital_service_catalog SET config_json=json_set(config_json,'$.inpatientInvestigationBilling',json(?),'$.availableScopes',json(?)) WHERE workspace_id=? AND epoch=? AND service_id=?")
-    this.#database.driver.transaction(()=>{
-      for(const row of rows) {
-        const config=z.object({laboratoryService:laboratoryServiceSnapshotSchema,availableScopes:z.array(z.string())}).parse(JSON.parse(row.config_json))
-        const billing=inpatientLaboratoryBilling(config.laboratoryService,config.availableScopes.includes('inpatient'))
-        if(billing!==undefined)update.run(JSON.stringify(billing),JSON.stringify([...new Set([...config.availableScopes,'inpatient'])]),row.workspace_id,row.epoch,row.service_id)
+        AND json_type(h.config_json,'$.inpatientInvestigationBilling') IS NULL
+    `).all())
+    const update = this.#database.driver.prepare("UPDATE hospital_service_catalog SET config_json=json_set(config_json,'$.inpatientInvestigationBilling',json(?),'$.availableScopes',json(?)) WHERE workspace_id=? AND epoch=? AND service_id=?")
+    this.#database.driver.transaction(() => {
+      for (const row of rows) {
+        const availableScopes = z.array(z.string()).parse(JSON.parse(row.availableScopesJson))
+        const billing = inpatientLaboratoryBilling(
+          {
+            id: row.id,
+            nameZh: row.nameZh,
+            priceFen: row.priceFen,
+            referenceConcept: { code: row.code, system: row.system, version: row.version },
+          },
+          availableScopes.includes('inpatient'),
+        )
+        if (billing !== undefined) {
+          update.run(
+            JSON.stringify(billing),
+            JSON.stringify([...new Set([...availableScopes, 'inpatient'])]),
+            row.workspace_id,
+            row.epoch,
+            row.service_id,
+          )
+        }
       }
     })()
   }
@@ -204,6 +415,14 @@ export class LaboratoryServicePublisher {
         page += 1
       }
       if (records.length === 0) continue
+      const cardiacAnchor = records.find(record => (
+        (record.concept.code === 'CN-LAB-CARDIAC' || record.concept.code === '2100404A')
+        && record.definition.kind !== 'loinc'
+      ))
+      if (cardiacAnchor !== undefined && cardiacAnchor.definition.kind !== 'loinc'
+        && !records.some(record => record.concept.id === hsCtniConceptId)) {
+        records.push(syntheticHsCtniRecord(cardiacAnchor.definition.datasetReleaseId))
+      }
       const hasLoinc = this.#referenceData.searchLaboratoryCandidates(context, { page: 1, pageSize: 1, sourceDataset: 'loinc-zh-cn' }).total > 0
       const retired = hasLoinc ? [] : z.array(z.object({ id: z.string(), version: z.number().int() })).parse(this.#database.driver.prepare(`
         SELECT service_id AS id, version FROM hospital_service_catalog
@@ -211,14 +430,27 @@ export class LaboratoryServicePublisher {
           AND json_extract(config_json, '$.laboratoryService.referenceConcept.system') = 'http://loinc.org'
       `).all(current.workspaceId, current.epoch))
       const input = { referenceReleaseId, policyVersion: laboratoryCnPublicationPolicyVersion, retired }
-      const installed = z.array(z.object({ conceptId: z.string() })).parse(this.#database.driver.prepare(`
-        SELECT json_extract(config_json, '$.laboratoryService.referenceConcept.id') AS conceptId
+      const installed = z.array(z.object({ configJson: z.string().nullable(), conceptId: z.string() })).parse(this.#database.driver.prepare(`
+        SELECT CASE
+            WHEN json_extract(config_json, '$.laboratoryService.referenceConcept.id') = 'laboratory-panel-cn:2026-09-01:CN-LAB-CARDIAC'
+              THEN config_json
+            ELSE NULL
+          END AS configJson,
+          json_extract(config_json, '$.laboratoryService.referenceConcept.id') AS conceptId
         FROM hospital_service_catalog WHERE workspace_id = ? AND epoch = ? AND active = 1
           AND json_extract(config_json, '$.laboratoryService.doctorOrderable') = 1
           AND json_extract(config_json, '$.laboratoryService.referenceReleaseId') = ?
           AND json_extract(config_json, '$.laboratoryService.publicationPolicyVersion') = ?
       `).all(current.workspaceId, current.epoch, referenceReleaseId, laboratoryCnPublicationPolicyVersion))
-      const installedIds = new Set(installed.map(item => item.conceptId))
+      const installedIds = new Set(installed.flatMap((item) => {
+        if (cardiacAnchor !== undefined && item.conceptId === 'laboratory-panel-cn:2026-09-01:CN-LAB-CARDIAC' && item.configJson !== null) {
+          const parsed = z.object({ laboratoryService: laboratoryServiceSnapshotSchema }).parse(JSON.parse(item.configJson))
+          if (!parsed.laboratoryService.reportDefinition.results.some(result => result.referenceConcept.code === '2100404B')) {
+            return []
+          }
+        }
+        return [item.conceptId]
+      }))
       const missing = records.filter(record => !installedIds.has(record.concept.id))
       if (missing.length === 0 && retired.length === 0) continue
       const roots = missing.map(record => this.#resolveRoot(context, referenceReleaseId, record.concept.id))
@@ -237,21 +469,44 @@ export class LaboratoryServicePublisher {
         for (const service of retired) deactivate.run(current.workspaceId, current.epoch, service.id, service.version)
         return {
           data: { serviceCount: published.serviceIds.length },
-          effects: [...published.serviceIds.map(reference => ({
-            kind: 'created' as const, reference: `HospitalService/${reference}`,
-            versionId: String(published.versions.get(reference)),
-          })), ...retired.map(service => ({
+          effects: [...published.serviceIds.map((reference) => {
+            const version = published.versions.get(reference)
+            return {
+              kind: version === 1 ? 'created' as const : 'updated' as const,
+              reference: `HospitalService/${reference}`,
+              versionId: String(version),
+            }
+          }), ...retired.map(service => ({
             kind: 'updated' as const, reference: `HospitalService/${service.id}`, versionId: String(service.version + 1),
           }))],
         }
       })
     }
     this.#ensureOutpatientPrices()
+    this.ensureInpatientPrices()
   }
 
   #ensureOutpatientPrices(): void {
-    const rows = z.array(z.object({ workspace_id: z.string(), epoch: z.string(), service_id: z.string(), config_json: z.string() })).parse(
-      this.#database.driver.prepare(`SELECT h.* FROM hospital_service_catalog h JOIN workspace w
+    const rowSchema = z.object({
+      code: z.string(),
+      epoch: z.string(),
+      id: z.string(),
+      priceFen: z.number().int().nonnegative(),
+      service_id: z.string(),
+      system: z.string(),
+      version: z.number().int().positive(),
+      versionStr: z.string(),
+      workspace_id: z.string(),
+    })
+    const rows = z.array(rowSchema).parse(
+      this.#database.driver.prepare(`SELECT h.workspace_id, h.epoch, h.service_id,
+          json_extract(h.config_json, '$.laboratoryService.id') AS id,
+          json_extract(h.config_json, '$.laboratoryService.version') AS version,
+          json_extract(h.config_json, '$.laboratoryService.priceFen') AS priceFen,
+          json_extract(h.config_json, '$.laboratoryService.referenceConcept.system') AS system,
+          json_extract(h.config_json, '$.laboratoryService.referenceConcept.version') AS versionStr,
+          json_extract(h.config_json, '$.laboratoryService.referenceConcept.code') AS code
+        FROM hospital_service_catalog h JOIN workspace w
         ON w.workspace_id=h.workspace_id AND w.active_epoch=h.epoch
         WHERE h.active=1 AND json_type(h.config_json,'$.laboratoryService')='object'
           AND json_type(h.config_json,'$.laboratoryService.outpatientBilling') IS NULL`).all(),
@@ -261,8 +516,12 @@ export class LaboratoryServicePublisher {
       WHERE workspace_id=? AND epoch=? AND service_id=?`)
     this.#database.driver.transaction(() => {
       for (const row of rows) {
-        const stored = z.object({ laboratoryService: laboratoryServiceSnapshotSchema }).parse(JSON.parse(row.config_json))
-        const price = laboratoryOutpatientPrice(stored.laboratoryService)
+        const price = laboratoryOutpatientPrice({
+          id: row.id,
+          priceFen: row.priceFen,
+          referenceConcept: { code: row.code, system: row.system, version: row.versionStr },
+          version: row.version,
+        })
         if (price !== undefined) update.run(JSON.stringify(price), row.workspace_id, row.epoch, row.service_id)
       }
     })()
@@ -279,24 +538,50 @@ export class LaboratoryServicePublisher {
     },
   ) {
     this.#assertAdministrator(context)
-    const result = this.#referenceData.searchLaboratoryCandidates(context, { ...input, sourceDataset: input.sourceDataset ?? 'laboratory-cn' })
+    const sourceDataset = input.sourceDataset ?? 'laboratory-cn'
+    const result = this.#referenceData.searchLaboratoryCandidates(context, { ...input, sourceDataset })
+    const syntheticHsCtni = sourceDataset === 'laboratory-cn' && input.panelOnly !== true
+      && this.#referenceData.laboratoryRecordFromRelease(context, result.referenceReleaseId, hsCtniConceptId) === undefined
+      ? this.#syntheticHsCtniFromRelease(context, result.referenceReleaseId)
+      : undefined
+    const queryText = input.query?.trim().toLowerCase() ?? ''
+    const matchesSyntheticHsCtni = syntheticHsCtni !== undefined && (
+      queryText === ''
+      || [
+        syntheticHsCtni.concept.id,
+        syntheticHsCtni.concept.code,
+        syntheticHsCtni.concept.display,
+        'hs-ctni',
+        '89579-7',
+      ].some(term => term.toLowerCase().includes(queryText))
+    )
+    const startIndex = (input.page - 1) * input.pageSize
+    const endIndex = startIndex + input.pageSize
+    const candidateItems = matchesSyntheticHsCtni
+      && syntheticHsCtni !== undefined
+      && result.items.length < input.pageSize
+      && result.total >= startIndex
+      && result.total < endIndex
+      ? [...result.items, syntheticHsCtni]
+      : result.items
+    const total = matchesSyntheticHsCtni ? result.total + 1 : result.total
     const states = this.#publications.candidateStates(
       context.workspaceId,
       context.epoch,
       result.referenceReleaseId,
-      result.items.map(item => item.concept.id),
+      candidateItems.map(item => item.concept.id),
     )
     const publishedServices = this.#publishedServices(
       context,
-      result.items.map(item => item.concept.id),
+      candidateItems.map(item => item.concept.id),
     )
     return laboratoryServiceCandidateSearchSchema.parse({
-      items: result.items.map((item) => {
+      items: candidateItems.map((item) => {
         const state = states.get(item.concept.id)
         const publishedServiceId = state?.publishedServiceId
           ?? publishedServices.get(item.concept.id)
           ?? null
-        const metadata = this.#candidateMetadata(context, item)
+        const metadata = this.#candidateMetadata(context, item, result.referenceReleaseId)
         return {
           ...metadata,
           concept: item.concept,
@@ -310,11 +595,11 @@ export class LaboratoryServicePublisher {
       page: input.page,
       pageSize: input.pageSize,
       referenceReleaseId: result.referenceReleaseId,
-      total: result.total,
+      total,
     })
   }
 
-  #candidateMetadata(context: ActorContext, record: ReferenceLaboratoryRecord) {
+  #candidateMetadata(context: ActorContext, record: ReferenceLaboratoryRecord, referenceReleaseId: string) {
     if (record.definition.kind === 'loinc') {
       const source = this.#referenceData.current().sources.find(item => (
         item.candidate?.datasetId === 'loinc-zh-cn' || item.sourceId.includes('loinc')
@@ -336,6 +621,12 @@ export class LaboratoryServicePublisher {
       : record.panelMembers.map(member => (
           this.#referenceData.laboratoryRecord(context, member.memberConceptId)
         )).filter(isLaboratoryCnTestRecord)
+    if (record.definition.kind === 'laboratory-cn-panel'
+      && record.concept.code === 'CN-LAB-CARDIAC'
+      && !leaves.some(leaf => leaf.concept.id === hsCtniConceptId)) {
+      const syntheticHs = this.#syntheticHsCtniFromRelease(context, referenceReleaseId)
+      if (isLaboratoryCnTestRecord(syntheticHs)) leaves.push(syntheticHs)
+    }
     const patientSexes = (['female', 'male', 'other', 'unknown'] as const).filter(sex => (
       leaves.length > 0 && leaves.every(leaf => (
         leaf.definition.adultReferenceRules.some(rule => (
@@ -364,7 +655,9 @@ export class LaboratoryServicePublisher {
       adultApplicability: patientSexes.length === 0
         ? null
         : { minimumAgeYears: 18 as const, patientSexes },
-      memberCount: record.panelMembers.length,
+      memberCount: record.definition.kind === 'laboratory-cn-panel' && record.concept.code === 'CN-LAB-CARDIAC'
+        ? leaves.length
+        : record.panelMembers.length,
       referenceSources: [...sources.values()].toSorted((left, right) => (
         JSON.stringify(left).localeCompare(JSON.stringify(right))
       )),
@@ -428,14 +721,13 @@ export class LaboratoryServicePublisher {
           409,
         )
       }
+      const referenceReleaseId = this.#referenceData.current().releaseId
       for (const conceptId of conceptIds) {
-        this.#assertEligibleRoot(this.#referenceData.laboratoryRecord(
-          input.context,
-          conceptId,
-        ))
+        const candidate = this.#referenceData.laboratoryRecord(input.context, conceptId)
+          ?? (conceptId === hsCtniConceptId ? this.#syntheticHsCtniFromRelease(input.context, referenceReleaseId) : undefined)
+        this.#assertEligibleRoot(candidate)
       }
       const now = new Date().toISOString()
-      const referenceReleaseId = this.#referenceData.current().releaseId
       const job = laboratoryServicePublicationJobSchema.parse({
         conceptIds,
         createdAt: now,
@@ -612,6 +904,20 @@ export class LaboratoryServicePublisher {
     }
   }
 
+  #syntheticHsCtniFromRelease(context: ActorContext, referenceReleaseId: string): ReferenceLaboratoryRecord | undefined {
+    const anchor = this.#referenceData.laboratoryRecordFromRelease(
+      context,
+      referenceReleaseId,
+      'laboratory-panel-cn:2026-09-01:CN-LAB-CARDIAC',
+    ) ?? this.#referenceData.laboratoryRecordFromRelease(
+      context,
+      referenceReleaseId,
+      'wst-886:2026:2100404A',
+    )
+    if (anchor === undefined || anchor.definition.kind === 'loinc') return undefined
+    return syntheticHsCtniRecord(anchor.definition.datasetReleaseId)
+  }
+
   #resolveRoot(
     context: ActorContext,
     referenceReleaseId: string,
@@ -621,7 +927,7 @@ export class LaboratoryServicePublisher {
       context,
       referenceReleaseId,
       conceptId,
-    )
+    ) ?? (conceptId === hsCtniConceptId ? this.#syntheticHsCtniFromRelease(context, referenceReleaseId) : undefined)
     this.#assertEligibleRoot(root)
     const leaves: ReferenceLaboratoryRecord[] = []
     const expanded = new Set<string>()
@@ -691,6 +997,13 @@ export class LaboratoryServicePublisher {
       expanded.add(record.concept.id)
     }
     visit(root!, 0)
+    if (root!.definition.kind === 'laboratory-cn-panel'
+      && root!.concept.code === 'CN-LAB-CARDIAC'
+      && !leafIds.has(hsCtniConceptId)) {
+      const hsCtni = syntheticHsCtniRecord(root!.definition.datasetReleaseId)
+      leafIds.add(hsCtni.concept.id)
+      leaves.push(hsCtni)
+    }
     if (leaves.length === 0 || this.#specimen(root!) === undefined) {
       throw new LaboratoryServicePublisherError(
         'LABORATORY_SERVICE_METADATA_INCOMPLETE',
@@ -821,7 +1134,11 @@ export class LaboratoryServicePublisher {
         const definition = leaf.definition
         return {
           adultReferenceRules: definition.adultReferenceRules,
-          alternateCodings: definition.alternateCodings,
+          alternateCodings: enrichedLaboratoryCnAlternateCodings(
+            leaf.concept.code,
+            definition.alternateCodings,
+          ),
+          ...defaultLaboratoryCriticalBounds(definition),
           healthyStrategy: definition.healthyStrategy,
           precision: definition.precision,
           referenceConcept: this.#snapshot(leaf),

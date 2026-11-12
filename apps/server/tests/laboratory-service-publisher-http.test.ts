@@ -2,9 +2,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import {
   caseLaboratoryCatalogSearchSchema,
   commandResponseSchema,
+  correctLaboratoryReportResponseSchema,
   registrationCatalogSchema,
   triageResponseSchema,
   doctorCaseDetailSchema,
@@ -13,11 +15,22 @@ import {
   laboratoryServicePublicationJobSchema,
   laboratoryServiceSnapshotSchema,
   laboratoryRequestDraftResponseSchema,
+  paymentPreviewResponseSchema,
+  paymentResponseSchema,
   publishLaboratoryServicesResponseSchema,
+  scenarioCommandResponseSchema,
+  scenarioStateSchema,
 } from '@clinmesh/contracts/his'
+import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
+import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
+import {
+  inpatientInvestigationCatalogSchema,
+  inpatientInvestigationResponseSchema,
+  inpatientInvestigationsSchema,
+} from '@clinmesh/contracts/inpatient-investigations'
 import { startSyntheticCaseResultSchema, syntheticCaseInstanceSchema } from '@clinmesh/contracts/scenario'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { encodeModelRoute } from '@clinmesh/contracts/model-bridge'
 import type {
   JsonChatCompletionInput,
@@ -853,7 +866,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       doctorOrderable: true,
       nameZh: '合成血常规',
       priceFen: 0,
-      publicationPolicyVersion: 'clinmesh-laboratory-defaults-v1',
+      publicationPolicyVersion: 'clinmesh-laboratory-defaults-v2',
       reportDefinition: {
         conclusionTemplate: '本报告为 ClinMesh 合成检验结果，仅用于仿真。',
         results: [
@@ -1476,6 +1489,591 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         status: 'failed',
         version: 1,
       }],
+    })
+  })
+
+  describe('cardiology defaults in a fresh Epoch without prepare-pci-data', () => {
+    type SyntheticPatient = {
+      birthDate: string
+      gender: 'female' | 'male'
+      observations: Array<{ code: string; unit: string; value: number }>
+    }
+    type PublishedService = {
+      inpatientBilling: { priceFen: number } | undefined
+      service: ReturnType<typeof laboratoryServiceSnapshotSchema.parse>
+    }
+    let directory = ''
+    let runtime: Awaited<ReturnType<typeof createClinMeshRuntime>> | undefined
+    let nextPatient: SyntheticPatient = { birthDate: '1972-05-14', gender: 'female', observations: [] }
+    let investigationModelCalls = 0
+    let byCode = new Map<string, PublishedService>()
+    const cookies = { admin: '', cashier: '', doctor: '', inpatientDoctor: '', nurse: '', registrar: '', triage: '' }
+    const current = () => {
+      if (runtime === undefined) throw new Error('cardiology runtime is not ready')
+      return runtime
+    }
+    const service = (code: string) => {
+      const entry = byCode.get(code)
+      if (entry === undefined) throw new Error(`missing published service ${code}`)
+      return entry.service
+    }
+
+    beforeAll(async () => {
+      directory = await mkdtemp(join(tmpdir(), 'clinmesh-cardiology-lab-defaults-'))
+      const databasePath = join(directory, 'cardiology-reference.sqlite')
+      const wstSystem = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026'
+      const panelSystem = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn'
+      const datasetReleaseId = 'laboratory-cn@2026-09-01.r1'
+      const rangeRule = (low: number, high: number, sex: 'all' | 'female' | 'male' = 'all') => ({
+        high,
+        low,
+        notes: '合成成人参考区间',
+        referenceKind: 'range' as const,
+        sex,
+        simulationHigh: high,
+        simulationLow: low,
+        sourceLocation: '表 1',
+        sourceStandard: 'WS/T 886-2026',
+        sourceType: 'national-standard' as const,
+        sourceVersion: '2026',
+      })
+      const upperRule = (high: number, simulationLow: number, sex: 'all' | 'female' | 'male' = 'all') => ({
+        high,
+        notes: '合成成人参考上限',
+        referenceKind: 'upper-bound' as const,
+        sex,
+        simulationHigh: high,
+        simulationLow,
+        sourceLocation: '表 1',
+        sourceStandard: 'WS/T 886-2026',
+        sourceType: 'project-curated' as const,
+        sourceVersion: '2026-09-01',
+      })
+      const testItem = (
+        code: string,
+        display: string,
+        specimen: string,
+        unitCode: string,
+        precision: number,
+        rules: Array<ReturnType<typeof rangeRule> | ReturnType<typeof upperRule>>,
+      ) => ({
+        concept: {
+          code,
+          display,
+          domain: 'laboratory' as const,
+          id: `wst-886:2026:${code}`,
+          sourceLocator: `synthetic:laboratory-cn:test:${code}`,
+          status: 'active' as const,
+          system: wstSystem,
+          version: '2026',
+        },
+        definition: {
+          adultReferenceRules: rules,
+          alternateCodings: [],
+          analyte: display,
+          category: '临床检验',
+          conceptId: `wst-886:2026:${code}`,
+          datasetReleaseId,
+          healthyStrategy: 'uniform' as const,
+          kind: 'laboratory-cn-test' as const,
+          precision,
+          resultKind: 'quantity' as const,
+          scale: '定量',
+          sourceLocator: `synthetic:laboratory-cn:test:${code}`,
+          sourceVersion: '2026',
+          specimen,
+          unit: { code: unitCode, display: unitCode, system: 'http://unitsofmeasure.org' as const },
+        },
+      })
+      const panelItem = (code: string, display: string, specimen: string, members: string[]) => ({
+        concept: {
+          code,
+          display,
+          domain: 'laboratory' as const,
+          id: `laboratory-panel-cn:2026-09-01:${code}`,
+          sourceLocator: `synthetic:laboratory-cn:panel:${code}`,
+          status: 'active' as const,
+          system: panelSystem,
+          version: '2026-09-01',
+        },
+        definition: {
+          conceptId: `laboratory-panel-cn:2026-09-01:${code}`,
+          datasetReleaseId,
+          kind: 'laboratory-cn-panel' as const,
+          notes: display,
+          sourceLocation: '检验组合',
+          sourceLocator: `synthetic:laboratory-cn:panel:${code}`,
+          sourceType: 'project-authored' as const,
+          sourceVersion: '2026-09-01',
+          specimen,
+        },
+        members: members.map((memberCode, index) => ({
+          memberConceptId: `wst-886:2026:${memberCode}`,
+          memberOrder: index + 1,
+          panelConceptId: `laboratory-panel-cn:2026-09-01:${code}`,
+          relationship: 'contains' as const,
+          sourceLocator: `synthetic:laboratory-cn:panel:${code}:${index + 1}`,
+        })),
+      })
+
+      // 编码与单位对齐锁定的 laboratory-cn@2026-09-01.r1：0100401A 为血红蛋白 g/L，0100501A 为红细胞比容 L/L，心肌标志物为 ng/mL。
+      const tests = [
+        testItem('0100101A', '白细胞计数', '全血', '10*9/L', 2, [rangeRule(3.5, 9.5)]),
+        testItem('0100201A', '红细胞计数', '全血', '10*12/L', 2, [rangeRule(4.3, 5.8, 'male'), rangeRule(3.8, 5.1, 'female')]),
+        testItem('0100301A', '血小板计数', '全血', '10*9/L', 0, [rangeRule(125, 350)]),
+        testItem('0100401A', '血红蛋白测定', '全血', 'g/L', 0, [rangeRule(130, 175, 'male'), rangeRule(115, 150, 'female')]),
+        testItem('0100501A', '红细胞比容', '全血', 'L/L', 2, [rangeRule(0.4, 0.5, 'male'), rangeRule(0.35, 0.45, 'female')]),
+        testItem('0100601A', '平均红细胞体积', '全血', 'fL', 1, [rangeRule(82, 100)]),
+        testItem('0100701A', '平均红细胞血红蛋白含量', '全血', 'pg', 1, [rangeRule(27, 34)]),
+        testItem('0100801A', '平均红细胞血红蛋白浓度', '全血', 'g/L', 0, [rangeRule(316, 354)]),
+        testItem('2100104A', '肌酸激酶同工酶测定', '血清、血浆', 'U/L', 1, [upperRule(24, 2)]),
+        testItem('2100304A', '肌红蛋白测定', '血清、血浆', 'ng/mL', 1, [upperRule(72, 10)]),
+        testItem('2100404A', '心肌肌钙蛋白I测定', '血清、血浆', 'ng/mL', 3, [upperRule(0.04, 0.002)]),
+        testItem('2100504A', '心肌肌钙蛋白T测定', '血清、血浆', 'ng/mL', 3, [upperRule(0.014, 0.003)]),
+        testItem('2100604A', '脑利钠肽测定', '血清、血浆', 'ng/L', 1, [upperRule(100, 5)]),
+        testItem('2100704A', '氨基末端脑利钠肽前体测定', '血清、血浆', 'ng/L', 0, [upperRule(125, 15)]),
+        testItem('2000104A', '总胆固醇测定', '血清、血浆', 'mmol/L', 2, [upperRule(5.2, 3.1)]),
+        testItem('2000204A', '甘油三酯测定', '血清、血浆', 'mmol/L', 2, [upperRule(1.7, 0.4)]),
+        testItem('2000304A', '高密度脂蛋白胆固醇测定', '血清、血浆', 'mmol/L', 2, [rangeRule(1.0, 2.0)]),
+        testItem('2000404A', '低密度脂蛋白胆固醇测定', '血清、血浆', 'mmol/L', 2, [upperRule(3.4, 1.5)]),
+        testItem('2000604A', '载脂蛋白A1测定', '血清、血浆', 'g/L', 2, [rangeRule(1.0, 1.6)]),
+        testItem('2000704A', '载脂蛋白B测定', '血清、血浆', 'g/L', 2, [rangeRule(0.6, 1.1)]),
+        testItem('1700204A', '尿素测定', '血清、血浆', 'mmol/L', 2, [rangeRule(2.8, 7.6)]),
+        testItem('1700304A', '尿酸测定', '血清、血浆', 'umol/L', 0, [rangeRule(208, 428, 'male'), rangeRule(155, 357, 'female')]),
+        testItem('1700404A', '肌酐测定', '血清、血浆', 'umol/L', 0, [rangeRule(57, 97, 'male'), rangeRule(41, 73, 'female')]),
+        testItem('1101204A', '胱抑素C测定', '血清、血浆', 'mg/L', 2, [rangeRule(0.51, 1.09)]),
+        testItem('1400205A', '钠测定', '血清、血浆', 'mmol/L', 1, [rangeRule(137, 147)]),
+        testItem('1400305A', '镁测定', '血清、血浆', 'mmol/L', 2, [rangeRule(0.75, 1.02)]),
+        testItem('1400404A', '无机磷测定', '血清、血浆', 'mmol/L', 2, [rangeRule(0.85, 1.51)]),
+        testItem('1400505A', '氯测定', '血清、血浆', 'mmol/L', 1, [rangeRule(99, 110)]),
+        testItem('1400605A', '钾测定', '血清、血浆', 'mmol/L', 2, [rangeRule(3.5, 5.3)]),
+        testItem('1400705A', '总钙测定', '血清、血浆', 'mmol/L', 2, [rangeRule(2.11, 2.52)]),
+        testItem('1100301A', '糖化血红蛋白测定', '全血', '%', 1, [rangeRule(4.0, 6.0)]),
+        testItem('0501703A', 'D-二聚体测定', '血浆', 'mg/L', 2, [upperRule(0.5, 0.05)]),
+      ]
+      const panels = [
+        panelItem('CN-LAB-CBC-5DIFF', '血常规（五分类）', '全血', ['0100101A', '0100201A', '0100301A', '0100401A', '0100501A', '0100601A', '0100701A', '0100801A']),
+        panelItem('CN-LAB-CARDIAC', '心肌损伤标志物组合', '血清、血浆', ['2100104A', '2100304A', '2100404A', '2100504A', '2100604A', '2100704A']),
+        panelItem('CN-LAB-LIPIDS', '血脂组合', '血清、血浆', ['2000104A', '2000204A', '2000304A', '2000404A', '2000604A', '2000704A']),
+        panelItem('CN-LAB-RENAL', '肾功能组合', '血清、血浆', ['1700204A', '1700304A', '1700404A', '1101204A']),
+        panelItem('CN-LAB-ELECTROLYTES', '电解质组合', '血清、血浆', ['1400205A', '1400305A', '1400404A', '1400505A', '1400605A', '1400705A']),
+        panelItem('CN-LAB-HBA1C', '糖化血红蛋白组合', '全血', ['1100301A']),
+        panelItem('CN-LAB-COAGULATION', '凝血筛查组合', '血浆', ['0501703A']),
+      ]
+      const artifactJson = `${JSON.stringify({
+        concepts: [...tests.map(item => item.concept), ...panels.map(item => item.concept)],
+        laboratoryDefinitions: [...tests.map(item => item.definition), ...panels.map(item => item.definition)],
+        laboratoryPanelMembers: panels.flatMap(item => item.members),
+        laboratorySpecimens: [],
+        laboratoryUnits: [],
+        schemaVersion: '1',
+      })}\n`
+      const manifestPath = join(directory, 'cardiology-release.json')
+      await writeFile(join(directory, 'cardiology-reference.json'), artifactJson)
+      await writeFile(manifestPath, `${JSON.stringify({
+        createdAt: '2026-09-02T00:00:00.000Z',
+        releaseId: 'cardiology-reference-v1',
+        schemaVersion: '1',
+        sources: [{
+          acquisitionMethod: 'generated',
+          artifactPath: 'cardiology-reference.json',
+          checksum: createHash('sha256').update(artifactJson).digest('hex'),
+          licenseId: 'LicenseRef-Synthetic-Test',
+          retrievedAt: '2026-09-02T00:00:00.000Z',
+          sourceId: 'cn-health-laboratory-cn',
+          sourceUrl: 'https://example.test/laboratory-cn',
+          upstreamVersion: '2026-09-01',
+        }],
+      })}\n`)
+      await runReferenceDatabaseCli(['migrate', '--database', databasePath])
+      await runReferenceDatabaseCli(['import', '--database', databasePath, '--manifest', manifestPath])
+
+      const password = `Test-${randomUUID()}-Aa1!`
+      runtime = await createClinMeshRuntime({
+        activeReferenceReleaseId: 'cardiology-reference-v1',
+        authBaseUrl: 'http://localhost',
+        authSecret: 'test-auth-secret-with-at-least-32-characters',
+        chatCompletionsProvider: {
+          completeJson: async (input) => {
+            if (input.model !== 'brief-fixture') investigationModelCalls += 1
+            return {
+              content: JSON.stringify({
+                chiefComplaint: '活动后胸闷三天',
+                knownHistorySummary: '高血压五年。',
+                medicationMemory: '氨氯地平每日一片。',
+                openingStatement: '医生您好，我这几天走路胸闷。',
+                persona: { attitude: '配合', character: '温和', healthLiteracy: '一般', speechStyle: '清晰' },
+                symptomExperience: '爬楼时胸口发紧。',
+              }),
+              model: 'brief-fixture',
+            }
+          },
+        },
+        cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+        databasePath: join(directory, 'operational.sqlite'),
+        demoPassword: password,
+        investigationModel: 'unexpected-investigation-model',
+        migrationMode: 'apply',
+        patientPersonaModel: 'brief-fixture',
+        referenceDatabasePath: databasePath,
+        syntheaProvider: {
+          capabilities: async () => ({ available: true, maxPopulation: 1, modules: [], providerId: 'synthea', providerName: 'Synthea' }),
+          generate: async () => {
+            const bundle = {
+              entry: [
+                { fullUrl: 'urn:uuid:patient', resource: { birthDate: nextPatient.birthDate, gender: nextPatient.gender, id: 'patient', name: [{ text: '合成心内患者' }], resourceType: 'Patient' } },
+                { fullUrl: 'urn:uuid:encounter', resource: { id: 'encounter', period: { end: '2026-06-01T10:30:00+08:00', start: '2026-06-01T10:00:00+08:00' }, reasonCode: [{ text: '胸闷' }], resourceType: 'Encounter', status: 'finished', subject: { reference: 'urn:uuid:patient' } } },
+                { fullUrl: 'urn:uuid:condition', resource: { code: { coding: [{ code: '53741008', display: '冠状动脉粥样硬化性心脏病', system: 'http://snomed.info/sct' }] }, encounter: { reference: 'urn:uuid:encounter' }, id: 'condition', recordedDate: '2026-06-01T10:05:00+08:00', resourceType: 'Condition', subject: { reference: 'urn:uuid:patient' } } },
+                ...nextPatient.observations.map((obs, idx) => ({
+                  fullUrl: `urn:uuid:obs-${idx}`,
+                  resource: {
+                    code: { coding: [{ code: obs.code, system: 'http://loinc.org' }] },
+                    effectiveDateTime: '2026-06-01T10:15:00+08:00',
+                    encounter: { reference: 'urn:uuid:encounter' },
+                    id: `obs-${idx}`,
+                    resourceType: 'Observation',
+                    status: 'final',
+                    subject: { reference: 'urn:uuid:patient' },
+                    valueQuantity: { code: obs.unit, system: 'http://unitsofmeasure.org', unit: obs.unit, value: obs.value },
+                  },
+                })),
+              ],
+              resourceType: 'Bundle',
+              type: 'collection',
+            }
+            return { kind: 'synthea-r4', sources: [{ format: 'fhir-r4-bundle', hash: sourceArtifactHash(bundle), patientId: 'patient', raw: bundle }] }
+          },
+        },
+        trustedOrigins: ['http://localhost'],
+      })
+      const ready = current()
+      cookies.admin = await signIn(ready, password, 'admin@demo.clinmesh.local')
+      cookies.doctor = await signIn(ready, password, 'doctor@demo.clinmesh.local')
+      cookies.triage = await signIn(ready, password, 'triage@demo.clinmesh.local')
+      cookies.cashier = await signIn(ready, password, 'cashier@demo.clinmesh.local')
+      cookies.inpatientDoctor = await signIn(ready, password, 'inpatient-doctor@demo.clinmesh.local')
+      cookies.registrar = await signIn(ready, password, 'registrar@demo.clinmesh.local')
+      cookies.nurse = await signIn(ready, password, 'ward-nurse@demo.clinmesh.local')
+
+      // 重置进入全新 epoch-2，且不调用 prepare-pci-data。
+      const currentScenario = scenarioStateSchema.parse(await (await ready.app.request(
+        '/api/sim/v1/scenario-runs/current',
+        { headers: { cookie: cookies.admin } },
+      )).json())
+      const resetResponse = await postJson(
+        `/api/sim/v1/scenario-runs/${currentScenario.scenarioRunId}/actions/reset`,
+        cookies.admin,
+        {},
+      )
+      expect(resetResponse.status).toBe(200)
+      expect(scenarioCommandResponseSchema.parse(await resetResponse.json()).data.epoch).toBe('epoch-2')
+
+      const activeServices = ready.database.driver.prepare(`
+        SELECT config_json FROM hospital_service_catalog
+        WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-2' AND active = 1
+          AND json_extract(config_json, '$.laboratoryService.doctorOrderable') = 1
+      `).all() as Array<{ config_json: string }>
+      byCode = new Map(activeServices.map((row) => {
+        const parsed = JSON.parse(row.config_json) as { inpatientInvestigationBilling?: { priceFen: number }; laboratoryService: unknown }
+        const published = laboratoryServiceSnapshotSchema.parse(parsed.laboratoryService)
+        return [published.referenceConcept.code, { inpatientBilling: parsed.inpatientInvestigationBilling, service: published }] as const
+      }))
+    }, 60_000)
+
+    afterAll(async () => {
+      await runtime?.close()
+      if (directory !== '') await rm(directory, { force: true, recursive: true })
+    })
+
+    async function postJson(path: string, cookie: string, body: unknown, method: 'POST' | 'PUT' = 'POST') {
+      return current().app.request(path, {
+        body: JSON.stringify(body),
+        headers: { 'content-type': 'application/json', cookie, 'idempotency-key': randomUUID(), origin: 'http://localhost' },
+        method,
+      })
+    }
+
+    async function materializeOutpatientVisit(patient: SyntheticPatient) {
+      nextPatient = patient
+      const ready = current()
+      expect((await postJson('/api/sim/v1/scenario-generation-jobs', cookies.admin, {
+        name: '合成心内门诊病例',
+        population: { age: { maximum: 75, minimum: 1 }, count: 1, gender: 'any' },
+        providerId: 'synthea',
+        seeds: { clinical: Math.floor(Math.random() * 100_000) + 1, population: Math.floor(Math.random() * 100_000) + 1 },
+        timeRange: { end: '2026-08-01', start: '2020-01-01' },
+        timeZone: 'Asia/Shanghai',
+      })).status).toBe(200)
+      const generated = await ready.scenarioData.processNextGenerationJob()
+      const caseId = generated!.caseIds[0]!
+      expect((await postJson(`/api/sim/v1/synthetic-cases/${caseId}/patient-persona-jobs`, cookies.admin, {})).status).toBe(200)
+      expect((await ready.patientPersona.processNext())?.status).toBe('succeeded')
+      const syntheticCase = syntheticCaseInstanceSchema.parse(await (await ready.app.request(
+        `/api/sim/v1/synthetic-cases/${caseId}`,
+        { headers: { cookie: cookies.admin } },
+      )).json())
+      const registration = registrationCatalogSchema.parse(await (await ready.app.request(
+        '/api/his/v1/catalogs/registration',
+        { headers: { cookie: cookies.admin } },
+      )).json())
+      const started = commandResponseSchema(startSyntheticCaseResultSchema).parse(await (await postJson(
+        `/api/his/v1/synthetic-cases/${caseId}/actions/start-outpatient-visit`,
+        cookies.admin,
+        {
+          activeBriefRevision: syntheticCase.activeBriefRevision,
+          departmentId: registration.departments[0]!.id,
+          expectedCaseRevision: syntheticCase.revision,
+          locationId: registration.locations[0]!.id,
+          visitDate: registration.virtualDate,
+          visitTypeId: registration.visitTypes[0]!.id,
+        },
+      )).json()).data
+      const triage = triageResponseSchema.parse(await (await postJson(
+        `/api/his/v1/encounters/${started.encounterId}/actions/record-triage`,
+        cookies.triage,
+        {
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '1', [`Task/${started.queueTaskId}`]: '1' },
+          input: {
+            acuityCode: 'level-3',
+            bloodPressure: { diastolicMmHg: 80, systolicMmHg: 132 },
+            chiefComplaint: '活动后胸闷三天',
+            oxygenSaturationPct: 98,
+            pulseBpm: 78,
+            respirationBpm: 18,
+            temperatureC: 36.5,
+          },
+        },
+      )).json()).data
+      expect((await postJson(`/api/his/v1/encounters/${started.encounterId}/actions/start-first-visit`, cookies.doctor, {
+        expectedVersions: { [`Encounter/${started.encounterId}`]: '2', [`Task/${triage.doctorTaskId}`]: '1' },
+        input: {},
+      })).status).toBe(200)
+      return { ...started, draftVersion: 0 }
+    }
+
+    async function orderPayAndDispatch(visit: { draftVersion: number; encounterId: string; outpatientCaseId: string }, serviceId: string) {
+      const draftResponse = await postJson(`/api/his/v1/encounters/${visit.encounterId}/laboratory-request/draft`, cookies.doctor, {
+        expectedVersions: { [`Encounter/${visit.encounterId}`]: '3' },
+        input: { catalogItemId: serviceId, expectedDraftVersion: visit.draftVersion, indicationCode: 'clinical-evaluation' },
+      }, 'PUT')
+      expect(draftResponse.status, await draftResponse.clone().text()).toBe(200)
+      const draft = laboratoryRequestDraftResponseSchema.parse(await draftResponse.json()).data
+      const issueResponse = await postJson(`/api/his/v1/encounters/${visit.encounterId}/laboratory-request/actions/issue`, cookies.doctor, {
+        expectedVersions: { [`Encounter/${visit.encounterId}`]: '3' },
+        input: { expectedDraftVersion: draft.draftVersion },
+      })
+      expect(issueResponse.status, await issueResponse.clone().text()).toBe(200)
+      const issued = issueLaboratoryRequestResponseSchema.parse(await issueResponse.json()).data
+      const chargeItemId = issued.request.billing!.chargeItemId
+      const preview = paymentPreviewResponseSchema.parse(await (await postJson('/api/his/v1/payments/actions/preview', cookies.cashier, {
+        expectedVersions: { [`ChargeItem/${chargeItemId}`]: '1' },
+        input: { caseId: visit.outpatientCaseId, category: 'laboratory', chargeItemId, simulatorRule: 'success' },
+      })).json()).data
+      expect(paymentResponseSchema.parse(await (await postJson(
+        `/api/his/v1/payments/${preview.previewId}/actions/confirm`,
+        cookies.cashier,
+        {
+          expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(preview.chargeVersion) },
+          input: { commitToken: preview.commitToken },
+        },
+      )).json()).data.outcome).toBe('success')
+      await current().dispatchPending()
+      visit.draftVersion = issued.draftVersion
+      return issued.request.id
+    }
+
+    async function doctorCase(caseId: string) {
+      return doctorCaseDetailSchema.parse(await (await current().app.request(
+        `/api/his/v1/doctor/cases/${caseId}`,
+        { headers: { cookie: cookies.doctor } },
+      )).json())
+    }
+
+    it('publishes hs-cTnI, aligns CN-LAB-CARDIAC and prices every required panel and item for outpatient and inpatient use', async () => {
+      expect(service('2100404B')).toMatchObject({
+        doctorOrderable: true,
+        nameZh: '高敏心肌肌钙蛋白I测定',
+        outpatientBilling: expect.objectContaining({ priceFen: 8_000 }),
+        reportDefinition: {
+          results: [expect.objectContaining({
+            alternateCodings: expect.arrayContaining([{ code: '89579-7', system: 'http://loinc.org', version: '2.83' }]),
+            criticalMaximum: 100,
+            unit: { code: 'ng/L', display: 'ng/L', system: 'http://unitsofmeasure.org' },
+          })],
+        },
+        specimen: expect.objectContaining({ display: '血清、血浆' }),
+      })
+      expect(byCode.get('2100404B')?.inpatientBilling?.priceFen).toBe(8_000)
+      expect(service('CN-LAB-CARDIAC').reportDefinition.results.map(result => result.referenceConcept.code)).toContain('2100404B')
+      expect(service('CN-LAB-CBC-5DIFF').reportDefinition.results.find(result => result.referenceConcept.code === '0100401A'))
+        .toMatchObject({ criticalMaximum: 200, criticalMinimum: 60, unit: expect.objectContaining({ code: 'g/L' }) })
+
+      const requiredPricedCodes = [
+        'CN-LAB-CBC-5DIFF', '0100101A', '0100201A', '0100301A', '0100401A', '0100501A', '0100601A', '0100701A', '0100801A',
+        'CN-LAB-CARDIAC', '2100404B', '2100404A', '2100704A', '2100104A', '2100304A', '2100504A', '2100604A',
+        'CN-LAB-LIPIDS', '2000104A', '2000204A', '2000304A', '2000404A', '2000604A', '2000704A',
+        'CN-LAB-RENAL', '1700404A', '1700204A', '1700304A', '1101204A',
+        'CN-LAB-ELECTROLYTES', '1400605A', '1400205A', '1400505A', '1400705A', '1400305A', '1400404A',
+        'CN-LAB-HBA1C', '1100301A',
+        'CN-LAB-COAGULATION', '0501703A',
+      ]
+      for (const code of requiredPricedCodes) {
+        expect(service(code).outpatientBilling?.priceFen, `missing outpatient price for ${code}`).toBeGreaterThan(0)
+        expect(byCode.get(code)?.inpatientBilling?.priceFen, `missing inpatient price for ${code}`).toBeGreaterThan(0)
+      }
+
+      const inpatientCatalog = inpatientInvestigationCatalogSchema.parse(await (await current().app.request(
+        '/api/his/v1/inpatient/investigation-catalog',
+        { headers: { cookie: cookies.inpatientDoctor } },
+      )).json())
+      for (const code of ['CN-LAB-CBC-5DIFF', 'CN-LAB-CARDIAC', '2100404B', '2100704A', 'CN-LAB-LIPIDS', 'CN-LAB-RENAL', 'CN-LAB-ELECTROLYTES', '1100301A', '0501703A']) {
+        expect(inpatientCatalog.items.find(item => item.id === service(code).id)).toMatchObject({ available: true, kind: 'laboratory' })
+      }
+    })
+
+    it('resolves an adult outpatient without Case Truth from the Adult Reference Baseline with non-critical flags and no model call', async () => {
+      const visit = await materializeOutpatientVisit({ birthDate: '1972-05-14', gender: 'female', observations: [] })
+      const modelCallsBefore = investigationModelCalls
+      for (const code of ['CN-LAB-CARDIAC', 'CN-LAB-RENAL', 'CN-LAB-CBC-5DIFF']) await orderPayAndDispatch(visit, service(code).id)
+      expect(investigationModelCalls).toBe(modelCallsBefore)
+      const detail = await doctorCase(visit.outpatientCaseId)
+      const report = (code: string) => detail.laboratoryRequests?.requests.find(request => request.catalogItemId === service(code).id)?.report
+      expect(report('CN-LAB-CARDIAC')?.results.find(item => item.code === '2100404B')).toMatchObject({
+        critical: false,
+        interpretation: 'normal',
+        referenceRange: { high: 16 },
+      })
+      expect(report('CN-LAB-RENAL')?.results.every(item => 'critical' in item ? item.critical !== true : true)).toBe(true)
+      expect(report('CN-LAB-CBC-5DIFF')?.results.map(item => item.code)).toEqual(expect.arrayContaining(['0100401A', '0100501A']))
+    })
+
+    it('rejects an adult-only baseline request for a pediatric outpatient', async () => {
+      const visit = await materializeOutpatientVisit({ birthDate: '2014-06-01', gender: 'male', observations: [] })
+      const response = await postJson(`/api/his/v1/encounters/${visit.encounterId}/laboratory-request/draft`, cookies.doctor, {
+        expectedVersions: { [`Encounter/${visit.encounterId}`]: '3' },
+        input: { catalogItemId: service('2100404B').id, expectedDraftVersion: 0, indicationCode: 'clinical-evaluation' },
+      }, 'PUT')
+      expect(response.status).toBe(409)
+      expect(await response.json()).toMatchObject({ error: { code: 'LABORATORY_ADULT_REFERENCE_NOT_APPLICABLE' } })
+    })
+
+    it('converts Case Truth units into catalog units and flags critical values', async () => {
+      const visit = await materializeOutpatientVisit({
+        birthDate: '1965-04-12',
+        gender: 'male',
+        observations: [
+          { code: '89579-7', unit: 'pg/mL', value: 280 },
+          { code: '33762-6', unit: 'pg/mL', value: 6_200 },
+          { code: '2160-0', unit: 'mg/dL', value: 0.9 },
+          { code: '2823-3', unit: 'meq/L', value: 6.5 },
+          { code: '48065-7', unit: 'ng/mL{FEU}', value: 6_200 },
+          { code: '4544-3', unit: '%', value: 42 },
+        ],
+      })
+      const modelCallsBefore = investigationModelCalls
+      for (const code of ['2100404B', '2100704A', '1700404A', '1400605A', '0501703A', '0100501A']) await orderPayAndDispatch(visit, service(code).id)
+      expect(investigationModelCalls).toBe(modelCallsBefore)
+      const detail = await doctorCase(visit.outpatientCaseId)
+      const result = (code: string) => detail.laboratoryRequests?.requests
+        .find(request => request.catalogItemId === service(code).id)?.report?.results.find(item => item.code === code)
+      expect(result('2100404B')).toMatchObject({ critical: true, interpretation: 'high', referenceRange: { high: 34 }, value: 280 })
+      expect(result('2100704A')).toMatchObject({ critical: true, interpretation: 'high', value: 6_200 })
+      expect(result('1700404A')).toMatchObject({ critical: false, interpretation: 'normal', value: 79.56 })
+      expect(result('1400605A')).toMatchObject({ critical: true, interpretation: 'high', value: 6.5 })
+      expect(result('0501703A')).toMatchObject({ critical: true, interpretation: 'high', value: 6.2 })
+      expect(result('0100501A')).toMatchObject({ critical: false, interpretation: 'normal', value: 0.42 })
+    })
+
+    it('converts lipid Case Truth from mg/dL into mmol/L', async () => {
+      const visit = await materializeOutpatientVisit({
+        birthDate: '1965-04-12',
+        gender: 'male',
+        observations: [
+          { code: '2093-3', unit: 'mg/dL', value: 193.35 },
+          { code: '2571-8', unit: 'mg/dL', value: 177.14 },
+        ],
+      })
+      await orderPayAndDispatch(visit, service('CN-LAB-LIPIDS').id)
+      const detail = await doctorCase(visit.outpatientCaseId)
+      const results = detail.laboratoryRequests?.requests.find(request => request.catalogItemId === service('CN-LAB-LIPIDS').id)?.report?.results
+      expect(results?.find(item => item.code === '2000104A')).toMatchObject({ interpretation: 'normal', value: 5 })
+      expect(results?.find(item => item.code === '2000204A')).toMatchObject({ interpretation: 'high', value: 2 })
+    })
+
+    it('recomputes the critical flag when a LIS report correction returns a value to normal', async () => {
+      const visit = await materializeOutpatientVisit({
+        birthDate: '1965-04-12',
+        gender: 'male',
+        observations: [{ code: '89579-7', unit: 'pg/mL', value: 280 }],
+      })
+      const requestId = await orderPayAndDispatch(visit, service('2100404B').id)
+      const request = (await doctorCase(visit.outpatientCaseId)).laboratoryRequests!.requests.find(item => item.id === requestId)!
+      expect(request.report?.results[0]).toMatchObject({ critical: true })
+      const corrected = await postJson(
+        `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report!.diagnosticReportId}/actions/correct`,
+        cookies.admin,
+        {
+          expectedVersions: { [`DiagnosticReport/${request.report!.diagnosticReportId}`]: request.report!.diagnosticReportVersion },
+          input: {
+            conclusion: '标本复测后高敏肌钙蛋白I正常。',
+            expectedRequestVersion: request.version,
+            reason: '溶血干扰复测更正',
+            results: [{ code: '2100404B', value: 12 }],
+          },
+        },
+      )
+      expect(corrected.status, await corrected.clone().text()).toBe(200)
+      correctLaboratoryReportResponseSchema.parse(await corrected.json())
+      expect((await doctorCase(visit.outpatientCaseId)).laboratoryRequests?.requests.find(item => item.id === requestId)?.report?.results[0])
+        .toMatchObject({ critical: false, interpretation: 'normal', value: 12 })
+    })
+
+    it('issues, sends and reports a default-priced inpatient cardiac panel with its synthetic inpatient charge', async () => {
+      const ready = current()
+      // 住院检验结果来自同一合成病例来源，因此由合成门诊就诊患者办理入院。
+      const visit = await materializeOutpatientVisit({ birthDate: '1968-03-02', gender: 'male', observations: [] })
+      const patient = fhirResourceSchema.parse(await (await ready.app.request(
+        `/fhir/R5/Patient/${visit.patientId}`,
+        { headers: { cookie: cookies.registrar } },
+      )).json())
+      const registered = inpatientCommandResponseSchema.parse(await (await postJson('/api/his/v1/inpatient/admissions', cookies.registrar, {
+        input: { admissionRoute: 'direct', depositFen: 100_000, expectedEpoch: 'epoch-2', patientId: patient.id, patientVersion: patient.meta!.versionId, wardId: 'ward-general' },
+      })).json()).data.admission
+      const path = `/api/his/v1/inpatient/admissions/${registered.id}`
+      const received = inpatientCommandResponseSchema.parse(await (await postJson(`${path}/receive`, cookies.nurse, {
+        input: { bedId: 'bed-general-1', encounterVersion: registered.versionId },
+      })).json()).data.admission
+      const catalog = inpatientInvestigationCatalogSchema.parse(await (await ready.app.request(
+        '/api/his/v1/inpatient/investigation-catalog',
+        { headers: { cookie: cookies.inpatientDoctor } },
+      )).json())
+      const cardiac = catalog.items.find(item => item.id === service('CN-LAB-CARDIAC').id)!
+      const issuedResponse = await postJson(`${path}/investigations/issue`, cookies.inpatientDoctor, {
+        input: {
+          catalogVersion: cardiac.version,
+          encounterVersion: received.versionId,
+          selection: { catalogItemId: cardiac.id, indicationCode: cardiac.indicationCodes[0]!, kind: 'laboratory' },
+        },
+      })
+      expect(issuedResponse.status, await issuedResponse.clone().text()).toBe(200)
+      const request = inpatientInvestigationResponseSchema.parse(await issuedResponse.json()).data.laboratoryRequests
+        .find(item => item.catalogItemId === cardiac.id)!
+      const sentResponse = await postJson(`${path}/investigations/send`, cookies.nurse, {
+        input: { expectedRequestVersion: request.version, requestId: request.id, serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion },
+      })
+      expect(sentResponse.status, await sentResponse.clone().text()).toBe(200)
+      await ready.dispatchPending()
+      const reported = inpatientInvestigationsSchema.parse(await (await ready.app.request(
+        `${path}/investigations`,
+        { headers: { cookie: cookies.nurse } },
+      )).json()).laboratoryRequests.find(item => item.id === request.id)
+      expect(reported).toMatchObject({ status: 'reported' })
+      expect(reported?.report?.results.find(item => item.code === '2100404B')).toMatchObject({ critical: false, interpretation: 'normal' })
+      const charges = inpatientChargesSchema.parse(await (await ready.app.request(
+        `${path}/charges`,
+        { headers: { cookie: cookies.cashier } },
+      )).json())
+      expect(charges.charges.map(charge => charge.amountFen)).toContain(byCode.get('CN-LAB-CARDIAC')!.inpatientBilling!.priceFen)
     })
   })
 })

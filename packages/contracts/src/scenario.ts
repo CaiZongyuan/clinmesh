@@ -1032,6 +1032,7 @@ export const investigationResultContentSchema = z.object({
   conclusion: z.string().trim().min(1).max(1_000),
   results: z.array(z.object({
     code: z.string().min(1).max(256),
+    critical: z.boolean().optional(),
     display: z.string().min(1).max(1_000),
     interpretation: z.enum(['normal', 'abnormal', 'high', 'low']),
     referenceRange: z.object({
@@ -1067,6 +1068,13 @@ export const investigationResultContentSchema = z.object({
       })
     }
     codes.add(result.code)
+    if (result.critical !== undefined && typeof result.value !== 'number') {
+      context.addIssue({
+        code: 'custom',
+        message: 'Only a quantitative Investigation result can declare a critical flag',
+        path: ['results', index, 'critical'],
+      })
+    }
     if (
       typeof result.value === 'number'
       && result.referenceRange.low === undefined

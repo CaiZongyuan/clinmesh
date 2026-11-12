@@ -4,6 +4,7 @@ import {
   AdultReferenceApplicabilityError,
   exactAdultReferenceScalarResult,
   generateAdultReferenceResult,
+  isLaboratoryValueCritical,
   selectAdultReferenceRule,
 } from '../src/application/laboratory-adult-reference.ts'
 
@@ -201,6 +202,35 @@ describe('adult laboratory reference policy', () => {
       interpretation: 'abnormal',
       source: 'case-truth-exact',
       value: '9.0',
+    })
+  })
+
+  it('evaluates critical value bounds and marks adult reference baseline values as non-critical', () => {
+    const criticalDefinition = {
+      ...definition,
+      criticalMaximum: 8.5,
+      criticalMinimum: 2.5,
+    }
+    expect(isLaboratoryValueCritical(2.4, criticalDefinition)).toBe(true)
+    expect(isLaboratoryValueCritical(4.5, criticalDefinition)).toBe(false)
+    expect(isLaboratoryValueCritical(8.6, criticalDefinition)).toBe(true)
+    expect(isLaboratoryValueCritical(99, definition)).toBe(false)
+
+    const rule = selectAdultReferenceRule(
+      criticalDefinition,
+      { birthDate: '1970-01-01', gender: 'female' },
+      '2026-09-02T09:00:00.000Z',
+    )
+    const generated = generateAdultReferenceResult({
+      definition: criticalDefinition,
+      inputHash: '5'.repeat(64),
+      rule,
+      serviceVersion: 1,
+    })
+    expect(generated).toMatchObject({
+      critical: false,
+      interpretation: 'normal',
+      source: 'adult-reference-baseline',
     })
   })
 })
