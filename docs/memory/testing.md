@@ -267,3 +267,7 @@
 - 私稿监听按存储 key 注册时，闭包不能固定首次业务初值：资料刷新后清空或消费回执触发通知，旧监听可能把最新默认清单覆盖为旧值。监听读取 latest reader 并复核仍属原 key；用受控 props 先新增实际业务事实、再明确清空并重新带入，核对新事实和原编辑保护，参见[手术私稿回归](../../apps/web/src/app/inpatient-surgery-draft.test.tsx)。
 
 - 共享活动集合与子视图卸载守卫：原 hook 卸载后的 `finally` 除删除活动项外还须通知当前挂载实例重新渲染（覆盖 POST 已发挂起时卸载重挂，见[住院报告恢复回归](../../apps/web/src/app/inpatient-report-reader.test.tsx)）；子视图卸载不代表上层写入 hook 已卸载，提交前异步身份查询等待期间的上下文守卫须同时检查子视图挂载状态，避免最后一次渲染的 `active`/`open` ref 仍为真而误发业务 POST（见[手术补录回归](../../apps/web/src/app/inpatient-surgery-prototype.test.tsx)）。
+
+- 住院检查检验的结果生成依赖本次住院绑定的合成病例来源；用 `POST /api/his/v1/patients` 直接建档后入院，开立检验会以 `LABORATORY_GENERATION_UNSUPPORTED` 拒绝。HTTP 测试需从合成门诊就诊（`start-outpatient-visit` 返回的 `patientId`）读取 FHIR Patient 版本后办理入院，参见[检验发布回归](../../apps/server/tests/laboratory-service-publisher-http.test.ts)。
+
+- 需要多个独立行为共享同一份重型夹具（参考库导入、运行时启动与 Epoch 重置）时，用嵌套 `describe` 的 `beforeAll` 承担一次性准备并显式 `afterAll` 释放，每个 `it` 只断言一个行为并保持默认 15s 预算；不要把多条独立流程串进单个 `it` 后放宽单测超时。
