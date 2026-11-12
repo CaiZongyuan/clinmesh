@@ -85,10 +85,13 @@ describe('heading anchors', () => {
     expect(slugifyHeading('3.2 多种 Adapter、一个业务内核')).toBe('32-多种-adapter一个业务内核')
   })
 
-  it('collects duplicate heading counters and explicit HTML anchor ids without false attribute matches', () => {
+  it('collects duplicate heading counters, decoded HTML anchor ids, and skips frontmatter or false attributes', () => {
     const anchors = collectMarkdownAnchors([
+      '---\ntitle: Frontmatter Title\n---',
       '<a id="database-operations"></a>',
       '<a name="legacy-anchor"></a>',
+      '<div id="terms&amp;conditions"></div>',
+      '<div id="num&#38;hex&#x26;legacy&copy-attr&amp=kept&notit;"></div>',
       '<div data-id="details" title=\'id="quoted"\'></div>',
       '<input name="ignored-input-name" />',
       '<!-- <div id="commented-out"></div> -->',
@@ -100,6 +103,8 @@ describe('heading anchors', () => {
     expect([...anchors]).toEqual([
       'database-operations',
       'legacy-anchor',
+      'terms&conditions',
+      'num&hex&legacy©-attr&amp=kept&notit;',
       '14-明确不做',
       'dbrestore-与权威合并',
       '14-明确不做-1',
@@ -109,14 +114,14 @@ describe('heading anchors', () => {
 })
 
 describe('verifyMarkdownFiles', () => {
-  it('validates GFM heading anchors, explicit HTML ids, and source-blob line links while rejecting broken Markdown anchors', () => {
+  it('validates GFM heading anchors, decoded HTML ids, and source-blob line links while rejecting broken Markdown anchors', () => {
     const root = mkdtempSync(join(tmpdir(), 'clinmesh-verify-docs-'))
     mkdirSync(join(root, 'docs'))
     mkdirSync(join(root, 'src'))
     writeFileSync(join(root, 'src/example.ts'), 'export const answer = 42\n')
     writeFileSync(
       join(root, 'docs/target.md'),
-      ['# 目标页', '', '<a id="database-operations"></a>', '', '## 1.4 明确不做', ''].join('\n'),
+      ['# 目标页', '', '<a id="database-operations"></a>', '<div id="terms&amp;conditions"></div>', '', '## 1.4 明确不做', ''].join('\n'),
     )
     writeFileSync(
       join(root, 'docs/valid.md'),
@@ -125,6 +130,7 @@ describe('verifyMarkdownFiles', () => {
         '',
         '- [章节](target.md#14-明确不做)',
         '- [显式锚点](target.md#database-operations)',
+        '- [字符引用锚点](target.md#terms%26conditions)',
         '- [源码行号引用](../src/example.ts#L1-L5)',
         '- [同页章节](#正常页)',
         '',
@@ -136,6 +142,7 @@ describe('verifyMarkdownFiles', () => {
         '# 断链页',
         '',
         '- [漂移锚点](target.md#_1-4-明确不做)',
+        '- [未解码实体锚点](target.md#terms%26amp%3Bconditions)',
         '- [Markdown 伪行号锚点](target.md#L1-L5)',
         '',
       ].join('\n'),
@@ -144,13 +151,14 @@ describe('verifyMarkdownFiles', () => {
     expect(verifyMarkdownFiles(root, ['docs/target.md', 'docs/valid.md'])).toEqual([])
     expect(verifyMarkdownFiles(root, ['docs/target.md', 'docs/broken.md'])).toEqual([
       'docs/broken.md: missing heading anchor "target.md#_1-4-明确不做"',
+      'docs/broken.md: missing heading anchor "target.md#terms%26amp%3Bconditions"',
       'docs/broken.md: missing heading anchor "target.md#L1-L5"',
     ])
   })
 })
 
 describe('validateAgentNotes', () => {
-  it('enforces implemented section allowlist, empty lifecycle directories, and repository doc URL rules', () => {
+  it('enforces implemented section allowlist across all GFM code forms, empty lifecycle directories, and repository doc URL rules', () => {
     const root = mkdtempSync(join(tmpdir(), 'clinmesh-agent-notes-'))
     mkdirSync(join(root, 'proposed/feature'), { recursive: true })
     mkdirSync(join(root, 'implemented/architecture'), { recursive: true })
@@ -164,7 +172,18 @@ describe('validateAgentNotes', () => {
         '',
         '## Problem',
         '',
-        '保留上游外部参考 [Medplum 文档](https://github.com/medplum/medplum/blob/main/docs/fhir.md)。',
+        '保留上游外部参考 [Medplum 文档](https://github.com/medplum/medplum/blob/main/docs/fhir.md)，禁止字面模式 `https://github.com/CaiZongyuan/clinmesh/blob/main/docs/`。',
+        '',
+        '~~~md',
+        '## Usage',
+        'https://github.com/CaiZongyuan/clinmesh/blob/main/docs/overview.md',
+        '~~~',
+        '',
+        '   ```md',
+        '   ## Indented Fence Heading',
+        '   ```',
+        '',
+        '    ## Indented Code Block Heading',
         '',
         '## Decision',
         '',
