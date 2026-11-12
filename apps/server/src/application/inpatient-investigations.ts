@@ -5,7 +5,7 @@ import type { ActorContext } from './command-executor.ts'
 import { ClinicalRequestKernel, laboratoryRequestPolicy } from './clinical-request-kernel.ts'
 import { imagingRequestPolicy } from './imaging-request-service.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
-import type { WorkflowService } from './workflow-service.ts'
+import type { InpatientInvestigationsWorkflowPort } from './outpatient-workflow-context.ts'
 import { inpatientInvestigationBillingSchema, inpatientLaboratoryConfiguration } from './inpatient-laboratory-config.ts'
 
 const requestSchema = z.object({ request_id: z.string(), case_id: z.string(), request_kind: z.enum(['laboratory','imaging']), authored_by: z.string(),
@@ -15,7 +15,7 @@ const requestSchema = z.object({ request_id: z.string(), case_id: z.string(), re
 /** 住院送检与临床责任；执行和报告仍由原 LIS/RIS 适配器与申请内核拥有。 */
 export class InpatientInvestigations {
   readonly #requests: ClinicalRequestKernel
-  constructor(readonly owner: InpatientService, readonly workflow: WorkflowService) { this.#requests = new ClinicalRequestKernel(owner.database) }
+  constructor(readonly owner: InpatientService, readonly workflow: InpatientInvestigationsWorkflowPort) { this.#requests = new ClinicalRequestKernel(owner.database) }
   assertNoPending(context: ActorContext, admissionId: string) {
     if (this.owner.database.driver.prepare(`SELECT 1 FROM inpatient_investigation i JOIN laboratory_request r
       ON r.workspace_id=i.workspace_id AND r.epoch=i.epoch AND r.request_id=i.request_id
