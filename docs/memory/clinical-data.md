@@ -64,6 +64,8 @@
 
 - 构造旧版本 SQLite fixture 时，只复制当时已有的 outbox 事件类型以及旧版能表达的岗位、成员和会话关联，同时排除后来新增的环境 FHIR current/history/Search 投影；不能丢弃新任务投影却保留其事件，否则会先触发旧 CHECK、外键、重复 seed 或幂等键冲突，无法验证真正的业务记录升级。新增后台事件的调用者测试显式处理已知事件，保留原业务顺序与未知事件断言；回归见[开发库准备](../../apps/server/tests/development-database-prepare.test.ts)与[存量记录升级](../../apps/server/tests/consultation-auto-record-http.test.ts)。
 
+- SQLite 表重建前须合并所有后续迁移新增的索引，尤其是作为下游复合外键父键的 UNIQUE 索引；只复制初始建表 SQL 会使 `foreign_key_check` 在空库也报 `foreign key mismatch`。回归须包含非空父子行并检查外键，参见[医嘱频次迁移回归](../../apps/server/tests/inpatient-orders-http.test.ts)。
+
 - 同一张 SQLite 表在并行分支分别迁移时，整合须保留已执行 SQL 的文件名和校验和，并验证两条非空升级路径；来源外键、字段 CHECK、rowid 顺序和任务身份都需一起核对。合并后的字段并集不能只改 TypeScript。
 
 - 本地启动报迁移校验和变化时，先对照 `schema_migration`、LF／CRLF 哈希及实际表结构，区分换行与已执行 SQL 被补改。缺列不能靠更新库内校验和解决；已知历史版本通过精确匹配及前向迁移修复，保留原回执，见[增量记录迁移兼容](../decisions/implemented/bug-fix/2026-10-18-incremental-recording-migration-compatibility.md)。

@@ -10,6 +10,7 @@ import { cn } from '@clinmesh/ui/lib/utils'
 import type { ReactNode } from 'react'
 
 export interface WorkspaceSelectItem<Value extends string = string> {
+  disabled?: boolean
   label: ReactNode
   value: Value
 }
@@ -41,7 +42,7 @@ export function WorkspaceSelect<Value extends string>({
       <SelectContent align={wrapLabels ? 'start' : 'center'} alignItemWithTrigger={!wrapLabels}>
         <SelectGroup>
           {items.map(item => (
-            <SelectItem className={cn(wrapLabels && 'min-w-0 [&>:first-child]:min-w-0 [&>:first-child]:shrink [&>:first-child]:wrap-anywhere [&>:first-child]:whitespace-normal')} key={item.value} value={item.value}>{item.label}</SelectItem>
+            <SelectItem disabled={item.disabled} className={cn(wrapLabels && 'min-w-0 [&>:first-child]:min-w-0 [&>:first-child]:shrink [&>:first-child]:wrap-anywhere [&>:first-child]:whitespace-normal')} key={item.value} value={item.value}>{item.label}</SelectItem>
           ))}
         </SelectGroup>
       </SelectContent>

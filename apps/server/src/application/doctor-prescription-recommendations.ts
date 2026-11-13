@@ -1,3 +1,4 @@
+import { medicationRegimenDoseAllowed, medicationQuantityAllowed } from '@clinmesh/core/medication-safety'
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import type { ClinicalCatalog } from '@clinmesh/contracts/his'
 
@@ -12,10 +13,10 @@ export function normalizePrescriptionRecommendation(
   if (medication === undefined) return undefined
   const doseText = suggestion.doseText?.trim() || null
   const frequencyCode = suggestion.frequencyCode?.trim() || null
-  if ((doseText !== null && !medication.allowedDoseTexts.includes(doseText))
+  if ((doseText !== null && !medicationRegimenDoseAllowed(medication, doseText, frequencyCode ?? medication.defaultFrequencyCode))
     || (frequencyCode !== null && !medication.allowedFrequencyCodes.includes(frequencyCode))
     || (suggestion.courseDays !== null && !medication.allowedCourseDays.includes(suggestion.courseDays))
-    || (suggestion.quantity !== null && !medication.allowedQuantities.includes(suggestion.quantity))) return undefined
+    || (suggestion.quantity !== null && !medicationQuantityAllowed(medication, suggestion.quantity, suggestion.courseDays ?? 30))) return undefined
   return {
     ...suggestion,
     doseText,

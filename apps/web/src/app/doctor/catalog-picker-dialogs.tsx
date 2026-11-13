@@ -1,3 +1,6 @@
+import { inpatientFrequencyLabel } from '../inpatient-labels.ts'
+import { medicationRegimenDoseAllowed, medicationQuantityAllowed } from '@clinmesh/core/medication-safety'
+import { medicationFrequencySchema } from '@clinmesh/contracts/medication-safety'
 import { OrderComposerLayout, OrderComposerFooter, OrderComposerSearch, OrderCatalogCandidate } from './order-composer-layout.tsx'
 import type {
   CaseLaboratoryCatalogSearch,
@@ -861,7 +864,7 @@ export function MedicationComposerDialog({
   if (selected !== undefined) {
     if (selectedMedication === undefined
       ? !prescriptionDraftItemSchema.shape.doseText.safeParse(doseText.trim()).success
-      : !selectedMedication.allowedDoseTexts.includes(doseText)) invalidFields.add('doseText')
+      : !medicationRegimenDoseAllowed(selectedMedication, doseText, frequencyCode)) invalidFields.add('doseText')
     if (selectedMedication === undefined
       ? !prescriptionDraftItemSchema.shape.frequencyCode.safeParse(frequencyCode.trim()).success
       : !selectedMedication.allowedFrequencyCodes.includes(frequencyCode)) invalidFields.add('frequencyCode')
@@ -870,7 +873,7 @@ export function MedicationComposerDialog({
       || (selectedMedication !== undefined && !selectedMedication.allowedCourseDays.includes(courseResult.data))) invalidFields.add('courseDays')
     const quantityResult = prescriptionDraftItemSchema.shape.quantity.safeParse(quantity)
     if (!quantityResult.success
-      || (selectedMedication !== undefined && !selectedMedication.allowedQuantities.includes(quantityResult.data))) invalidFields.add('quantity')
+      || (selectedMedication !== undefined && !medicationQuantityAllowed(selectedMedication, quantityResult.data, courseDays ?? 1))) invalidFields.add('quantity')
   }
   const fieldsValid = selected !== undefined && !composer.failed && invalidFields.size === 0 && !(atCapacity && target === undefined)
   const invalidLabels = [...invalidFields].map(field => ({ doseText: messages.dose, frequencyCode: messages.frequency, courseDays: messages.course, quantity: messages.quantity })[field]).join(locale === 'zh-CN' ? '、' : ', ')
@@ -906,7 +909,7 @@ export function MedicationComposerDialog({
               <fieldset className="contents" disabled={disabled || composer.failed}><FieldGroup className="grid min-w-0 grid-cols-2 gap-3">
                 <Field data-invalid={invalidFields.has('doseText')}>
                   <FieldLabel htmlFor="medication-composer-dose">{messages.dose}</FieldLabel>
-                  {selectedMedication === undefined ? <Input aria-invalid={invalidFields.has('doseText')} id="medication-composer-dose" maxLength={120} onChange={event => setDoseText(event.currentTarget.value)} value={doseText} />
+                  {selectedMedication === undefined || selectedMedication.safety ? <Input aria-invalid={invalidFields.has('doseText')} id="medication-composer-dose" maxLength={120} onChange={event => setDoseText(event.currentTarget.value)} value={doseText} />
                     : <WorkspaceSelect id="medication-composer-dose" items={selectedMedication.allowedDoseTexts.map(value => ({ label: value, value }))}
                       onValueChange={value => { if (value !== null) { if (value !== doseText) markEdited('medication-composer-dose'); setDoseText(value) } }}
                       placeholder={messages.choose} value={doseText || null} />}
@@ -914,7 +917,7 @@ export function MedicationComposerDialog({
                 <Field data-invalid={invalidFields.has('frequencyCode')}>
                   <FieldLabel htmlFor="medication-composer-frequency">{messages.frequency}</FieldLabel>
                   {selectedMedication === undefined ? <Input aria-invalid={invalidFields.has('frequencyCode')} id="medication-composer-frequency" maxLength={32} onChange={event => setFrequencyCode(event.currentTarget.value)} value={frequencyCode} />
-                    : <WorkspaceSelect id="medication-composer-frequency" items={selectedMedication.allowedFrequencyCodes.map(value => ({ label: value, value }))}
+                    : <WorkspaceSelect id="medication-composer-frequency" items={selectedMedication.allowedFrequencyCodes.map(value => ({ label: medicationFrequencySchema.safeParse(value).success ? inpatientFrequencyLabel(medicationFrequencySchema.parse(value), locale, false) : value, value }))}
                       onValueChange={value => { if (value !== null) { if (value !== frequencyCode) markEdited('medication-composer-frequency'); setFrequencyCode(value) } }}
                       placeholder={messages.choose} value={frequencyCode || null} />}
                 </Field>

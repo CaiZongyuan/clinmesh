@@ -1,3 +1,4 @@
+import { medicationCombinationConflict, medicationRegimenDoseAllowed, medicationQuantityAllowed } from '@clinmesh/core/medication-safety'
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import type {
   ClinicalCatalog,
@@ -246,7 +247,7 @@ export function PrescriptionPage({
   ) => items.every((item, index) => {
     if (index === ignoredIndex || item.catalogItemId === candidate.id) return true
     const selected = catalogById.get(item.catalogItemId)
-    return selected?.allowedCombinationIds.includes(candidate.id) === true
+    return selected?.safety && candidate.safety ? !medicationCombinationConflict(selected.safety.pharmacologyClasses, candidate.safety.pharmacologyClasses) : selected?.allowedCombinationIds.includes(candidate.id) === true
       && candidate.allowedCombinationIds.includes(item.catalogItemId)
   })
   const isRecommendationAvailable = (suggestion: DoctorRecommendationSuggestion) => {
@@ -255,10 +256,10 @@ export function PrescriptionPage({
       || usedCatalogItemIds.has(suggestion.catalogItemId)) return false
     const medication = catalogById.get(suggestion.catalogItemId)
     return medication !== undefined && canCombineWithCurrentItems(medication)
-      && (suggestion.doseText === null || medication.allowedDoseTexts.includes(suggestion.doseText))
+      && (suggestion.doseText === null || medicationRegimenDoseAllowed(medication, suggestion.doseText, suggestion.frequencyCode ?? medication.defaultFrequencyCode))
       && (suggestion.frequencyCode === null || medication.allowedFrequencyCodes.includes(suggestion.frequencyCode))
       && (suggestion.courseDays === null || medication.allowedCourseDays.includes(suggestion.courseDays))
-      && (suggestion.quantity === null || medication.allowedQuantities.includes(suggestion.quantity))
+      && (suggestion.quantity === null || medicationQuantityAllowed(medication, suggestion.quantity, suggestion.courseDays ?? 30))
   }
   const medicationLine = (
     selection: MedicationCatalogSelection,
@@ -332,10 +333,10 @@ export function PrescriptionPage({
     if (
       candidate === undefined
       || !canCombineWithCurrentItems(candidate, previousIndex === -1 ? undefined : previousIndex)
-      || (value.doseText !== null && !candidate.allowedDoseTexts.includes(value.doseText))
+      || (value.doseText !== null && !medicationRegimenDoseAllowed(candidate, value.doseText, value.frequencyCode ?? candidate.defaultFrequencyCode))
       || (value.frequencyCode !== null && !candidate.allowedFrequencyCodes.includes(value.frequencyCode))
       || (value.courseDays !== null && !candidate.allowedCourseDays.includes(value.courseDays))
-      || (value.quantity !== null && !candidate.allowedQuantities.includes(value.quantity))
+      || (value.quantity !== null && !medicationQuantityAllowed(candidate, value.quantity, value.courseDays ?? 30))
     ) {
       return messages.recommendationRequestTargetUnavailable
     }

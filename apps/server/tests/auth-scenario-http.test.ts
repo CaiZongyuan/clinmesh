@@ -712,6 +712,14 @@ describe('trusted session and Scenario HTTP contract', () => {
       epoch: 'epoch-1',
       scenarioRunId: 'scenario-run-1',
     })
+    const stockedMedications = (epoch: string) => runtime.database.driver.prepare(`SELECT c.item_id, l.quantity_on_hand
+      FROM outpatient_catalog c JOIN inventory_lot l ON l.workspace_id=c.workspace_id AND l.epoch=c.epoch AND l.medication_id=c.item_id
+      WHERE c.workspace_id='workspace-demo' AND c.epoch=? AND c.kind='medication' AND c.active=1
+        AND EXISTS(SELECT 1 FROM json_each(c.config_json,'$.availableScopes') WHERE value='outpatient')
+        AND EXISTS(SELECT 1 FROM json_each(c.config_json,'$.availableScopes') WHERE value='inpatient') ORDER BY c.item_id`).all(epoch)
+    const initialMedications = stockedMedications(initial.epoch)
+    expect(initialMedications).toHaveLength(22)
+    expect(initialMedications).toContainEqual({ item_id: 'medication-pci-clopidogrel', quantity_on_hand: 1000 })
 
     const idempotencyKey = randomUUID()
     const reset = (body: unknown = {}) => runtime.app.request(
@@ -743,6 +751,7 @@ describe('trusted session and Scenario HTTP contract', () => {
     const replayResponse = await reset()
     expect(replayResponse.status).toBe(200)
     expect(scenarioCommandResponseSchema.parse(await replayResponse.json())).toEqual(resetResult)
+    expect(stockedMedications(resetResult.data.epoch)).toEqual(initialMedications)
 
     const currentResponse = await runtime.app.request('/api/sim/v1/scenario-runs/current', {
       headers: { cookie: adminCookie },
@@ -859,7 +868,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       ['Location', 15],
       ['Practitioner', 10],
       ['PractitionerRole', 10],
-      ['Medication', 4],
+      ['Medication', 22],
     ] as const) {
       const response = await runtime.app.request(
         `/fhir/R5/${resourceType}?_count=20&_total=accurate`,

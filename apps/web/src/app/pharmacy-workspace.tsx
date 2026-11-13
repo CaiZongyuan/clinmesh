@@ -468,7 +468,8 @@ function hasValidDispense(
 }
 
 function formatFrequencyCode(code: string, locale: WorkspaceLocale): string {
-  if (locale !== 'zh-CN') return code
+  const english: Record<string, string> = { QD: 'Once daily', BID: 'Twice daily', TID: 'Three times daily', QN: 'Every night', PRN: 'As needed', ONCE: 'Once only' }
+  if (locale !== 'zh-CN') return english[code.toUpperCase()] ? `${english[code.toUpperCase()]} (${code})` : code
   const map: Record<string, string> = {
     QD: '每日一次 (QD)',
     BID: '每日两次 (BID)',
@@ -478,6 +479,7 @@ function formatFrequencyCode(code: string, locale: WorkspaceLocale): string {
     Q12H: '每12小时一次 (Q12H)',
     QN: '每晚一次 (QN)',
     PRN: '必要时 (PRN)',
+    ONCE: '仅一次 (ONCE)',
   }
   return map[code.toUpperCase()] ?? code
 }

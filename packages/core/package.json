@@ -10,7 +10,8 @@
     "./imaging-display": "./src/imaging-display.ts",
     "./imaging-pyramid": "./src/imaging-pyramid.ts",
     "./platform": "./src/platform.ts",
-    "./references": "./src/references.ts"
+    "./references": "./src/references.ts",
+    "./medication-safety": "./src/medication-safety.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

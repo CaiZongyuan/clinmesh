@@ -7599,15 +7599,15 @@ describe('outpatient workflow HTTP contract', () => {
       }],
       medications: expect.arrayContaining([
         expect.objectContaining({
-          allowedDoseTexts: ['0.5 g'],
-          allowedFrequencyCodes: ['PRN'],
+          allowedDoseTexts: expect.arrayContaining(['0.5 g']),
+          allowedFrequencyCodes: expect.arrayContaining(['PRN']),
           defaultDoseText: '0.5 g',
           defaultFrequencyCode: 'PRN',
           id: 'medication-acetaminophen',
         }),
         expect.objectContaining({
-          allowedDoseTexts: ['75 mg'],
-          allowedFrequencyCodes: ['BID'],
+          allowedDoseTexts: expect.arrayContaining(['75 mg']),
+          allowedFrequencyCodes: expect.arrayContaining(['BID']),
           defaultDoseText: '75 mg',
           defaultFrequencyCode: 'BID',
           id: 'medication-oseltamivir',
@@ -7617,7 +7617,7 @@ describe('outpatient workflow HTTP contract', () => {
       ]),
       prescriptionConclusionSupported: true,
     })
-    expect(clinicalCatalog.medications).toHaveLength(4)
+    expect(clinicalCatalog.medications).toHaveLength(22)
 
     const detailResponse = await runtime.app.request(
       `/api/his/v1/doctor/cases/${testCase.caseId}`,
@@ -9439,10 +9439,10 @@ describe('outpatient workflow HTTP contract', () => {
     const catalog = clinicalCatalogSchema.parse(await catalogResponse.json())
     expect(catalog.medications).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        allowedCourseDays: [5],
-        allowedQuantities: [10],
-        defaultCourseDays: 5,
-        defaultQuantity: 10,
+        allowedCourseDays: expect.arrayContaining([5]),
+        allowedQuantities: expect.arrayContaining([1]),
+        defaultCourseDays: 1,
+        defaultQuantity: 1,
         id: 'medication-oseltamivir',
       }),
     ]))
@@ -10829,7 +10829,7 @@ describe('outpatient workflow HTTP contract', () => {
             expectedVersions: { documentDraft: 0, prescription: 0, revisitDraft: 0 },
             medications: [{
               catalogItemId: 'medication-oseltamivir',
-              doseText: '150 mg',
+              doseText: '500 mg',
               frequencyCode: 'BID',
               quantity: 10,
             }],

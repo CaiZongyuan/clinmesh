@@ -69,6 +69,8 @@ describe('固定 PCI 数据公开 Command 与目录回读', () => {
     const s = await setup(), admin = await s.login('admin'), doctor = await s.login('inpatient-doctor')
     const definition = pciDataPackage.medications.find(item => item.id === 'medication-pci-aspirin')!
     const { workspaceId, epoch } = admin.context
+    s.runtime.database.driver.prepare('DELETE FROM inventory_lot WHERE workspace_id=? AND epoch=? AND medication_id=?').run(workspaceId, epoch, definition.id)
+    s.runtime.database.driver.prepare('DELETE FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').run(workspaceId, epoch, definition.id)
     s.runtime.database.driver.prepare(`INSERT INTO outpatient_catalog
       (workspace_id,epoch,item_id,kind,code,name_zh,name_en,price_fen,version,active,config_json)
       VALUES(?,?,?,'medication',?,?,?,?,1,1,?)`).run(workspaceId, epoch, 'existing-null-unit-aspirin', definition.product.code,
@@ -90,6 +92,8 @@ describe('固定 PCI 数据公开 Command 与目录回读', () => {
     const s = await setup(), admin = await s.login('admin'), doctor = await s.login('inpatient-doctor')
     const definition = pciDataPackage.medications.find(item => item.id === 'medication-pci-aspirin')!
     const { workspaceId, epoch } = admin.context
+    s.runtime.database.driver.prepare('DELETE FROM inventory_lot WHERE workspace_id=? AND epoch=? AND medication_id=?').run(workspaceId, epoch, definition.id)
+    s.runtime.database.driver.prepare('DELETE FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').run(workspaceId, epoch, definition.id)
     s.runtime.database.driver.prepare(`INSERT INTO outpatient_catalog
       (workspace_id,epoch,item_id,kind,code,name_zh,name_en,price_fen,version,active,config_json)
       VALUES(?,?,?,'medication',?,?,?,?,1,1,?)`).run(workspaceId, epoch, 'existing-box-aspirin', definition.product.code,
@@ -154,6 +158,8 @@ describe('固定 PCI 数据公开 Command 与目录回读', () => {
   it('复用精确产品的院内ID和价格，首次仅补住院范围并报告已有规则冲突', async () => {
     const s = await setup(), admin = await s.login('admin')
     const definition = s.data.read(admin.context).package.medications.find(item => item.id === 'medication-pci-clopidogrel')!
+    s.runtime.database.driver.prepare('DELETE FROM inventory_lot WHERE workspace_id=? AND epoch=? AND medication_id=?').run(admin.context.workspaceId, admin.context.epoch, definition.id)
+    s.runtime.database.driver.prepare('DELETE FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').run(admin.context.workspaceId, admin.context.epoch, definition.id)
     // 已发布的院内目录旧数据；assertions 只通过公开 prepare/read 检查保真与补缺。
     s.runtime.database.driver.prepare(`INSERT INTO outpatient_catalog(workspace_id,epoch,item_id,kind,code,name_zh,name_en,price_fen,version,active,config_json)
       VALUES(?,?,?,'medication',?,?,?,321,7,1,?)`)
@@ -234,8 +240,9 @@ describe('固定 PCI 数据公开 Command 与目录回读', () => {
     const diagnosed = await s.request(doctor.cookie, `${path}/diagnoses/confirm`, { encounterVersion: admission.versionId, expectedRevision: 0, entries: [{ catalogItemId: pciDataPackage.diagnosis.id, role: 'primary', admissionCondition: '1' }] })
     expect(diagnosed.status).toBe(200)
     const clinical = inpatientFullClinicalResponseSchema.parse(await diagnosed.json()).data
+    const medications = inpatientFullCatalogSchema.parse(await (await s.request(doctor.cookie, '/api/his/v1/inpatient/clinical-catalog')).json()).medications
     const issued = await s.request(doctor.cookie, `${path}/orders/issue`, { encounterVersion: clinical.encounterVersion, duration: 'temporary', selection: {
-      kind: 'medication', catalogItemId: 'medication-pci-clopidogrel', catalogVersion: 1, doseText: '75 mg', doseQuantity: 1, frequencyCode: 'QD' } })
+      kind: 'medication', catalogItemId: 'medication-pci-clopidogrel', catalogVersion: medications.find(item => item.id === 'medication-pci-clopidogrel')!.version, doseText: '75 mg', doseQuantity: 1, frequencyCode: 'QD' } })
     expect(issued.status).toBe(200)
     const order = inpatientFullClinicalResponseSchema.parse(await issued.json()).data.orders[0]!
     const checked = await s.request(nurse.cookie, `${path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })
