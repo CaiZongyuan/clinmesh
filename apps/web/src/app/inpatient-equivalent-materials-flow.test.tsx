@@ -90,6 +90,7 @@ it('两份未确认计划的草稿各合并一次，当前计划采用换回同�
   const header = () => screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' })
   await waitFor(() => expect(header().textContent).toContain('做完预计 ¥11,960.00'))
   expect(header().textContent).toContain('支付参考 ¥12,000.00')
+  expect(screen.getByRole('region', { name: '做完计划手术后' }).textContent).toContain('预计总费用 = 当前已用 ¥8,100.00 + 手术费 ¥2,000.00 + 预计耗材 ¥1,860.00')
   expect(screen.getByRole('region', { name: '手术耗材' }).textContent).toContain('做完预计 ¥11,960.00')
   expect(screen.getByRole('region', { name: '手术耗材' }).textContent).toContain('换后预计 ¥11,760.00')
   await user.click(screen.getByRole('button', { name: '换成这个' }))
@@ -143,11 +144,16 @@ it('术中从当前手术的确认候选给出等效建议，另一较新手术�
 })
 
 
-it('已保存草稿缺价格时明确保留预计未知，不把缺价格作为零金额合并', async () => {
+it('未选主计划时缺价格不遮住当前口径，选定计划后明确保持预计未知', async () => {
   fixture(false, true)
-  await waitFor(() => expect(screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' }).textContent).toContain('计划耗材费用待核对，预计总费用暂不可用'))
+  const header = () => screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' })
+  await within(await screen.findByRole('region', { name: '费用与支付参考' })).findByText('计划耗材费用待核对，预计总费用暂不可用')
+  expect(header().textContent).toContain('当前病组 FR59')
+  expect(header().textContent).toContain('支付参考 ¥4,000.00')
+  expect(header().textContent).toContain('已超出 ¥4,100.00')
   const user = userEvent.setup(), primary = screen.getByRole('combobox', { name: '计划主操作（仅预计）' })
   primary.focus(); await user.keyboard('{Enter}'); await user.click(await screen.findByRole('option', { name: /合成计划A/ }))
+  await waitFor(() => expect(header().textContent).toContain('计划耗材费用待核对，预计总费用暂不可用'))
   expect(screen.queryByRole('region', { name: '做完计划手术后' })).toBeNull()
   expect(screen.getByRole('region', { name: '费用与支付参考' }).textContent).toContain('计划耗材费用待核对，预计总费用暂不可用')
 })
@@ -155,6 +161,8 @@ it('已保存草稿缺价格时明确保留预计未知，不把缺价格作为�
 
 it('正式预留先刷新时旧草稿增量暂不可用，避免与新基线短暂重复计价', async () => {
   fixture(false, false, true)
+  const user = userEvent.setup(), primary = await screen.findByRole('combobox', { name: '计划主操作（仅预计）' })
+  primary.focus(); await user.keyboard('{Enter}'); await user.click(await screen.findByRole('option', { name: /合成计划A/ }))
   await waitFor(() => expect(screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' }).textContent).toContain('预计总费用暂不可用'))
   expect(screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' }).textContent).toContain('已用 ¥8,100.00')
   expect(screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' }).textContent).not.toContain('做完预计')

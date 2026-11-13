@@ -244,7 +244,7 @@ it('DRG预分组展示费用与支付参考、计划手术预计与中文未入�
   expect(planned.textContent).toContain('计划术式不在当前分组规则可识别的操作编码里，暂不能预分组；规则更新或病案编码审核时再确定。')
   expect(planned.textContent).not.toContain('coding-incompatible')
   expect(planned.textContent).not.toContain('36.0700')
-  expect(planned.textContent).toContain('预计总费用 = 当前已用 ¥2,100.00 + 已开未记费医嘱 ¥300.00 + 手术费 ¥3,200.00 + 预留耗材 ¥4,200.00')
+  expect(planned.textContent).toContain('预计总费用 = 当前已用 ¥2,100.00 + 已开未记费医嘱 ¥300.00 + 手术费 ¥3,200.00 + 预计耗材 ¥4,200.00')
 
   const mix = screen.getByRole('region', { name: '已发生收费构成' })
   expect(mix.textContent).toContain('检验费用')
