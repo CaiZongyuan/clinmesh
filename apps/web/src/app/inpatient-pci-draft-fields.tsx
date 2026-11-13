@@ -8,12 +8,80 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 export type PciSelectionDraft = z.infer<typeof inpatientPciSelectionDraftSchema>
+type AngiographyReport = z.infer<typeof inpatientAngiographyReportSchema>
 const measurementLabels = [['lesion-length', '病变长度', 'Lesion length'], ['proximal-reference-diameter', '近端参考直径', 'Proximal reference diameter'], ['distal-reference-diameter', '远端参考直径', 'Distal reference diameter']] as const
 const categoryLabels = { guidewire: ['导丝', 'Guidewire'], 'guiding-catheter': ['导引导管', 'Guiding catheter'], balloon: ['球囊', 'Balloon'], stent: ['支架', 'Stent'] } as const
 const objectLabels = { lesion: ['病变', 'Lesion'], 'reference-lumen': ['参考管腔', 'Reference lumen'], 'external-elastic-membrane': ['外弹力膜', 'External elastic membrane'], unknown: ['未知', 'Unknown'] } as const
 
+export function CoronaryAngiographyDisclosure({
+  report,
+  locale,
+  summary,
+}: {
+  report: AngiographyReport | undefined
+  locale: WorkspaceLocale
+  summary: string
+}) {
+  const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
+  return (
+    <details className="clinmesh-inpatient-disclosure">
+      <summary>{summary}</summary>
+      <div className="flex min-w-0 flex-col gap-2 py-2 text-xs">
+        {report ? (
+          <>
+            <p>{t('正式合成造影报告：', 'Formal synthetic angiography report: ')}{report.id} v{report.version} · Procedure/{report.procedureId}</p>
+            {report.targetSite !== null || report.measurements.length > 0 || report.vessels.length === 0 ? (
+              <p>{t('报告靶部位：', 'Reported target site: ')}{report.targetSite ?? t('尚未取得', 'Not available')}</p>
+            ) : null}
+            {report.measurements.map(item => {
+              const label = measurementLabels.find(([kind]) => kind === item.kind)!, object = objectLabels[item.object]
+              return <p key={item.kind}>{t(label[1], label[2])} · {item.value ?? t('未知', 'Unknown')} {item.unit ?? t('单位未知', 'Unknown unit')} · {item.site} · {t(object[0], object[1])} · {item.method} · {item.source.reference} v{item.source.version}</p>
+            })}
+            {report.vessels.length > 0 ? (
+              <div className="min-w-0 overflow-x-auto">
+                <table className="clinmesh-inpatient-table">
+                  <thead>
+                    <tr>
+                      <th>{t('血管 / 节段', 'Vessel / segment')}</th>
+                      <th>{t('狭窄', 'Stenosis')}</th>
+                      <th>TIMI</th>
+                      <th>{t('病变特征', 'Lesion')}</th>
+                      <th>FFR / iFR</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.vessels.map(vessel => {
+                      const physiology = [
+                        vessel.ffr !== undefined && vessel.ffr !== null ? `FFR ${vessel.ffr}` : null,
+                        vessel.ifr !== undefined && vessel.ifr !== null ? `iFR ${vessel.ifr}` : null,
+                      ].filter(Boolean).join(' · ')
+                      return (
+                        <tr key={`${vessel.vessel}:${vessel.segment}`}>
+                          <td className="font-medium whitespace-nowrap">{vessel.vessel} ({vessel.segment})</td>
+                          <td className="tabular-nums whitespace-nowrap">{vessel.stenosisPercent}%</td>
+                          <td className="tabular-nums whitespace-nowrap">TIMI {vessel.timiFlow}</td>
+                          <td>{vessel.lesionCharacteristics}</td>
+                          <td className="tabular-nums whitespace-nowrap">{physiology || '—'}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+            {report.conclusion ? <p className="font-medium">{t('造影结论：', 'Angiography conclusion: ')}{report.conclusion}</p> : null}
+            {report.missing.map(reason => <p key={reason} className="text-muted-foreground">{reason}</p>)}
+          </>
+        ) : (
+          <p className="text-muted-foreground">{t('报告原件尚未读取，当前仅显示选型参数关联的报告信息。', 'The original report is not loaded; only the report linked to these selection parameters is shown.')}</p>
+        )}
+      </div>
+    </details>
+  )
+}
+
 export function InpatientPciDraftFields({ draft, value, report, locale, disabled, issues, onChange }: {
-  draft: PciSelectionDraft; value: PciSelectionDraft['parameters']; report: z.infer<typeof inpatientAngiographyReportSchema> | undefined;
+  draft: PciSelectionDraft; value: PciSelectionDraft['parameters']; report: AngiographyReport | undefined;
   locale: WorkspaceLocale; disabled: boolean; issues: readonly z.ZodIssue[]; onChange(value: PciSelectionDraft['parameters']): void;
 }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
@@ -23,17 +91,7 @@ export function InpatientPciDraftFields({ draft, value, report, locale, disabled
     <h6 className="font-medium">{t('报告带入的 PCI 参数', 'Report-derived PCI parameters')}</h6>
     <p>{t('绑定造影报告：', 'Linked angiography report: ')}{draft.reportId} v{draft.reportVersion} · {t('选型参数', 'Selection parameters')} v{draft.version}</p>
     <p>{t('缺少的测量保持未知，不从目录规格倒推。修改后先保存参数，再统一审阅确认。', 'Missing measurements stay unknown and are never inferred from catalog specifications. Save edits before reviewing and confirming together.')}</p>
-    <details><summary>{t('依据', 'Evidence')}</summary>
-      {report ? <>
-        <p>{t('正式合成造影报告：', 'Formal synthetic angiography report: ')}{report.id} v{report.version} · Procedure/{report.procedureId}</p>
-        <p>{t('报告靶部位：', 'Reported target site: ')}{report.targetSite ?? t('尚未取得', 'Not available')}</p>
-        {report.measurements.map(item => {
-          const label = measurementLabels.find(([kind]) => kind === item.kind)!, object = objectLabels[item.object]
-          return <p key={item.kind}>{t(label[1], label[2])} · {item.value ?? t('未知', 'Unknown')} {item.unit ?? t('单位未知', 'Unknown unit')} · {item.site} · {t(object[0], object[1])} · {item.method} · {item.source.reference} v{item.source.version}</p>
-        })}
-        {report.missing.map(reason => <p key={reason}>{reason}</p>)}
-      </> : <p>{t('报告原件尚未读取，当前仅显示选型参数关联的报告信息。', 'The original report is not loaded; only the report linked to these selection parameters is shown.')}</p>}
-    </details>
+    <CoronaryAngiographyDisclosure report={report} locale={locale} summary={t('依据', 'Evidence')} />
     <FieldSet disabled={disabled}><FieldGroup>
       {(['treatmentPlan', 'targetSite'] as const).map(field => {
         const invalid = hasIssue([field]), id = `${prefix}-${field}`

@@ -39,11 +39,15 @@ export function InpatientLabReportTable({ locale, report }: { locale: WorkspaceL
           const unit = 'unit' in result && result.unit.display !== '1' ? ` ${result.unit.display}` : ''
           const flag = result.interpretation === 'high' ? t('偏高 ↑', 'High ↑') : result.interpretation === 'low' ? t('偏低 ↓', 'Low ↓') : t('正常', 'Normal')
           const abnormal = result.interpretation === 'high' || result.interpretation === 'low'
+          const critical = 'critical' in result && result.critical === true
           return <tr key={index}>
             <td className="font-medium">{formatLabResultDisplay(result.display)}</td>
-            <td className={`tabular-nums ${abnormal ? 'font-semibold text-warning' : ''}`}>{val}{unit}</td>
+            <td className={`tabular-nums ${critical ? 'font-semibold text-destructive' : abnormal ? 'font-semibold text-warning' : ''}`}>{val}{unit}</td>
             <td className="tabular-nums text-muted-foreground">{formatLabReferenceRange(result.referenceRange.text)}</td>
-            <td>{abnormal ? <Badge variant="warning">{flag}</Badge> : <span className="text-xs text-muted-foreground">{flag}</span>}</td>
+            <td>{abnormal || critical ? <span className="inline-flex flex-wrap items-center gap-1">
+              {abnormal ? <Badge variant="warning">{flag}</Badge> : null}
+              {critical ? <Badge variant="destructive">{t('危急值', 'Critical')}</Badge> : null}
+            </span> : <span className="text-xs text-muted-foreground">{flag}</span>}</td>
           </tr>
         })}
       </tbody>

@@ -14,10 +14,64 @@ import { WorkflowError } from './workflow-error.ts'
 
 type InvestigationCategory = 'laboratory' | 'imaging' | 'pathology'
 const source = 'synthetic-outpatient-investigation-2026-10-26-v1'
+const panelPrefix = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn#2026-09-01#'
+const wstPrefix = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026#2026#'
 const laboratoryPrices: Readonly<Record<string, number>> = {
-  'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn#2026-09-01#CN-LAB-CBC': 2500,
-  'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026#2026#0100101A': 800,
-  'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026#2026#0100501A': 800,
+  [`${panelPrefix}CN-LAB-CBC`]: 2500,
+  [`${panelPrefix}CN-LAB-CBC-5DIFF`]: 2500,
+  [`${wstPrefix}0100101A`]: 800,
+  [`${wstPrefix}0100201A`]: 800,
+  [`${wstPrefix}0100301A`]: 800,
+  [`${wstPrefix}0100401A`]: 800,
+  [`${wstPrefix}0100501A`]: 800,
+  [`${wstPrefix}0100601A`]: 800,
+  [`${wstPrefix}0100701A`]: 800,
+  [`${wstPrefix}0100801A`]: 800,
+  [`${panelPrefix}CN-LAB-CARDIAC`]: 18000,
+  [`${wstPrefix}2100104A`]: 2500,
+  [`${wstPrefix}2100304A`]: 4000,
+  [`${wstPrefix}2100404A`]: 6000,
+  [`${wstPrefix}2100404B`]: 8000,
+  [`${wstPrefix}2100504A`]: 6000,
+  [`${wstPrefix}2100604A`]: 10000,
+  [`${wstPrefix}2100704A`]: 12000,
+  [`${panelPrefix}CN-LAB-LIPIDS`]: 5500,
+  [`${wstPrefix}2000104A`]: 800,
+  [`${wstPrefix}2000204A`]: 800,
+  [`${wstPrefix}2000304A`]: 1500,
+  [`${wstPrefix}2000404A`]: 1500,
+  [`${wstPrefix}2000604A`]: 2000,
+  [`${wstPrefix}2000704A`]: 2000,
+  [`${panelPrefix}CN-LAB-RENAL`]: 4000,
+  [`${wstPrefix}1700204A`]: 800,
+  [`${wstPrefix}1700304A`]: 800,
+  [`${wstPrefix}1700404A`]: 1000,
+  [`${wstPrefix}1101204A`]: 2500,
+  [`${panelPrefix}CN-LAB-ELECTROLYTES`]: 3500,
+  [`${wstPrefix}1400205A`]: 800,
+  [`${wstPrefix}1400305A`]: 800,
+  [`${wstPrefix}1400404A`]: 800,
+  [`${wstPrefix}1400505A`]: 800,
+  [`${wstPrefix}1400605A`]: 800,
+  [`${wstPrefix}1400705A`]: 800,
+  [`${panelPrefix}CN-LAB-HBA1C`]: 5000,
+  [`${wstPrefix}1100301A`]: 5000,
+  [`${panelPrefix}CN-LAB-COAGULATION`]: 6500,
+  [`${wstPrefix}0500103A`]: 1500,
+  [`${wstPrefix}0500203A`]: 1500,
+  [`${wstPrefix}0500303A`]: 1500,
+  [`${wstPrefix}0500403A`]: 1500,
+  [`${wstPrefix}0500503A`]: 1500,
+  [`${wstPrefix}0501703A`]: 4500,
+}
+
+export function defaultSyntheticLaboratoryPriceFen(coding: {
+  code: string
+  system: string
+  version: string
+}): number | undefined {
+  const key = `${coding.system}#${coding.version}#${coding.code}`
+  return Object.hasOwn(laboratoryPrices, key) ? laboratoryPrices[key] : undefined
 }
 const servicePrices: Readonly<Record<string, { category: InvestigationCategory; priceFen: number; unit: string }>> = {
   'imaging-chest-radiograph': { category: 'imaging', priceFen: 8000, unit: '次检查' },
@@ -30,19 +84,20 @@ function syntheticPrice(id: string, priceFen: number, unit: string): OutpatientI
 }
 
 /** 编码身份经过明确配置才有合成价格；目录零值始终不是免费。 */
-export function laboratoryOutpatientPrice(service: LaboratoryServiceSnapshot): OutpatientInvestigationPrice | undefined {
+export function laboratoryOutpatientPrice(service: Pick<LaboratoryServiceSnapshot, 'id' | 'outpatientBilling' | 'priceFen' | 'version'> & {
+  referenceConcept: Pick<LaboratoryServiceSnapshot['referenceConcept'], 'code' | 'system' | 'version'>
+}): OutpatientInvestigationPrice | undefined {
   if (service.outpatientBilling !== undefined) return service.outpatientBilling
   if (service.priceFen > 0) return {
     ...syntheticPrice(service.id, service.priceFen, '项目'),
     source: 'published-synthetic-laboratory-price', version: service.version,
   }
-  const coding = service.referenceConcept
-  const priceFen = laboratoryPrices[`${coding.system}#${coding.version}#${coding.code}`]
+  const priceFen = defaultSyntheticLaboratoryPriceFen(service.referenceConcept)
   return priceFen === undefined ? undefined : syntheticPrice(service.id, priceFen, '项目')
 }
 
 export function serviceOutpatientPrice(category: 'imaging' | 'pathology', serviceId: string): OutpatientInvestigationPrice | undefined {
-  const price = servicePrices[serviceId]
+  const price = Object.hasOwn(servicePrices, serviceId) ? servicePrices[serviceId] : undefined
   return price?.category === category ? syntheticPrice(serviceId, price.priceFen, price.unit) : undefined
 }
 

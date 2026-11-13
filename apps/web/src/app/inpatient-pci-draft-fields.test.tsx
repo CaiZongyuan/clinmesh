@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, expect, it } from 'vitest'
+import { inpatientAngiographyReportSchema } from '@clinmesh/contracts/inpatient-angiography'
 import { inpatientPciSelectionDraftSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { InpatientPciDraftFields, type PciSelectionDraft } from './inpatient-pci-draft-fields.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
@@ -141,4 +142,44 @@ it.each([
   fireEvent.change(input, { target: { value: '' } })
   expectClear(input)
   expect(screen.getByRole('button', { name: '保存选型参数' }).hasAttribute('disabled')).toBe(false)
+})
+
+it('展开造影依据时紧凑展示多支冠脉节段、FFR/iFR 与整体结论', () => {
+  const report = inpatientAngiographyReportSchema.parse({
+    id: 'report-1',
+    admissionId: 'admission-1',
+    procedureId: 'procedure-angio-1',
+    version: 1,
+    synthetic: true,
+    status: 'final',
+    targetSite: 'LAD 中段',
+    measurements: draft.parameters.measurements,
+    vessels: [
+      { vessel: 'LM', segment: 'LM', stenosisPercent: 0, timiFlow: 3, lesionCharacteristics: '管壁光滑' },
+      { vessel: 'LAD', segment: 'pLAD', stenosisPercent: 60, timiFlow: 3, lesionCharacteristics: '近段弥漫钙化斑块', ffr: 0.86, ifr: 0.92 },
+      { vessel: 'LCX', segment: 'mLCX', stenosisPercent: 30, timiFlow: 3, lesionCharacteristics: '偏心斑块' },
+      { vessel: 'RCA', segment: 'mRCA', stenosisPercent: 40, timiFlow: 3, lesionCharacteristics: '局限性斑块' },
+    ],
+    conclusion: '前降支近段中度狭窄，FFR 0.86 阴性，建议优化药物治疗。',
+    missing: [],
+    issuedAt: '2026-11-03T09:00:00+08:00',
+  })
+  render(
+    <InpatientPciDraftFields
+      draft={draft}
+      value={draft.parameters}
+      report={report}
+      locale="zh-CN"
+      disabled={false}
+      issues={[]}
+      onChange={() => undefined}
+    />,
+  )
+  const summary = screen.getByText('依据', { selector: 'summary' })
+  const details = summary.closest('details')!
+  expect(details.className).toContain('clinmesh-inpatient-disclosure')
+  expect(within(details).getByText(/LAD \(pLAD\)/)).toBeDefined()
+  expect(within(details).getByText('60%')).toBeDefined()
+  expect(within(details).getByText('FFR 0.86 · iFR 0.92', { selector: 'td' })).toBeDefined()
+  expect(within(details).getByText(/前降支近段中度狭窄，FFR 0.86 阴性/)).toBeDefined()
 })

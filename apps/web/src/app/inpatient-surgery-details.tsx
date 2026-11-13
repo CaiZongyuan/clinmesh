@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { z } from 'zod'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
+import type { inpatientAngiographyReportSchema } from '@clinmesh/contracts/inpatient-angiography'
 import type { InpatientMaterialEstimate } from '@clinmesh/contracts/inpatient-material-estimate'
 import type { inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import type { inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -10,6 +11,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@clinmesh/ui/components/dialog'
 import { InpatientGuidelineAdvicePanel } from './inpatient-guideline-advice.tsx'
 import { InpatientMaterialPlanBasisDetails } from './inpatient-material-plan.tsx'
+import { CoronaryAngiographyDisclosure } from './inpatient-pci-draft-fields.tsx'
 import { InpatientMaterialReservations } from './inpatient-surgery-reservations.tsx'
 import { OrderComposerFooter } from './doctor/order-composer-layout.tsx'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
@@ -21,10 +23,11 @@ type Props = {
   admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale
   write: ReturnType<typeof useInpatientWriteIntent>; plan: z.infer<typeof inpatientSurgeryRequestSchema>
   estimate: InpatientMaterialEstimate | undefined; selection: z.infer<typeof inpatientPciSelectionSchema> | undefined
+  report?: z.infer<typeof inpatientAngiographyReportSchema> | undefined
   onOpenUsage: ((taskId?: string, taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline') => void) | undefined
 }
 
-export function InpatientSurgeryDetails({ admission, session, locale, write, plan, estimate, selection, onOpenUsage }: Props) {
+export function InpatientSurgeryDetails({ admission, session, locale, write, plan, estimate, selection, report, onOpenUsage }: Props) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const [open, setOpen] = useState(false)
   const [detail, setDetail] = useState<'estimate' | 'guideline' | 'reservations' | null>(null)
@@ -39,12 +42,13 @@ export function InpatientSurgeryDetails({ admission, session, locale, write, pla
   const categoryNames = { guidewire: t('导丝', 'Guidewire'), 'guiding-catheter': t('指引导管', 'Guiding catheter'), balloon: t('球囊', 'Balloon'), stent: t('支架', 'Stent') }
   const labels = [['estimate', t('预计依据', 'Estimate evidence')], ['guideline', t('指南详情', 'Guideline details')], ['reservations', t('手工预留维护', 'Manual reservations')]] as const
   return <Dialog open={open} pending={write.mutation.isPending} onOpenChange={setOpen}>
-    {labels.filter(([kind]) => kind === 'reservations' || kind === 'estimate' && (estimate || parameters) || kind === 'guideline' && selection).map(([kind, label]) => <DialogTrigger key={kind} render={<Button type="button" variant="ghost" size="sm" />} onClick={() => { setDetail(kind); setOpen(true) }}>{label}</DialogTrigger>)}
+    {labels.filter(([kind]) => kind === 'reservations' || kind === 'estimate' && (estimate || parameters || report) || kind === 'guideline' && selection).map(([kind, label]) => <DialogTrigger key={kind} render={<Button type="button" variant="ghost" size="sm" />} onClick={() => { setDetail(kind); setOpen(true) }}>{label}</DialogTrigger>)}
     <DialogContent keepMounted={detail !== null} className="h-[min(85svh,800px)] sm:max-w-[800px]" showCloseButton={!write.mutation.isPending}>
       <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{plan.plannedProcedure.coding.display}</DialogDescription></DialogHeader>
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
         {estimateError ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(estimateError, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
         {detail === 'estimate' ? <>
+          {report && report.status !== 'processing' ? <CoronaryAngiographyDisclosure report={report} locale={locale} summary={t('冠脉造影与生理学依据', 'Coronary angiography & physiology evidence')} /> : null}
           {parameters ? <section aria-label={t('已保存的扩展参数', 'Saved extended parameters')} className="flex flex-col gap-2 text-sm">
             <h4 className="font-medium">{t('选型参数与测量来源', 'Selection parameters and measurement sources')}</h4>
             <p>{parameters.targetSite} · {parameters.treatmentPlan}</p>

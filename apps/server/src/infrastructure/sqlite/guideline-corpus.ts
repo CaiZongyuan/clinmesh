@@ -4,10 +4,11 @@ import { dirname } from 'node:path'
 import { guidelineEvidenceSchema, type GuidelineEvidence } from '@clinmesh/contracts/doctor-recommendations'
 import Database from 'better-sqlite3'
 import { z } from 'zod'
-import { guidelinePassagePolicyRevision, guidelineSourceLineage, isGuidelinePassageUsable, isGuidelineSourceUsable, localEvaluationSourcePrefix } from '../../application/guideline-corpus.ts'
+import { guidelinePassagePolicyRevision, guidelineSourceLineage, isGuidelinePassageUsable, isGuidelineSourceUsable, localEvaluationSourcePrefix, matchesGuidelineLineagePopulation } from '../../application/guideline-corpus.ts'
 import type {
   GuidelineDocument,
   GuidelineDeploymentPolicy,
+  GuidelinePatientPopulation,
   GuidelineSearchResult,
   GuidelineSourceDefinition,
   GuidelineSourceStatus,
@@ -29,6 +30,8 @@ export const guidelineSourceDefinitionSchema = guidelineEvidenceSchema.omit({
   format: z.enum(['pdf', 'text']),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   status: z.enum(['active', 'withdrawn', 'superseded']),
+  population: z.enum(['adult', 'pediatric', 'all']).optional(),
+  specialty: identity.optional(),
   license: licenseSchema,
   distribution: distributionSchema.optional(),
   topics: z.array(z.object({
@@ -36,12 +39,14 @@ export const guidelineSourceDefinitionSchema = guidelineEvidenceSchema.omit({
     diagnosisQueries: z.array(identity.regex(/\p{Script=Han}/u)),
   }).strict()),
 }).strict().refine(source => source.derivedFromSourceId !== source.id, 'A guideline source cannot derive from itself')
-  .transform(({ publishedAt, effectiveAt, distribution, downloadUrl, derivedFromSourceId, ...source }) => ({
+  .transform(({ publishedAt, effectiveAt, distribution, downloadUrl, derivedFromSourceId, population, specialty, ...source }) => ({
   ...source,
   ...(derivedFromSourceId === undefined ? {} : { derivedFromSourceId }),
   ...(downloadUrl === undefined ? {} : { downloadUrl }),
   ...(publishedAt === undefined ? {} : { publishedAt }),
   ...(effectiveAt === undefined ? {} : { effectiveAt }),
+  ...(population === undefined ? {} : { population }),
+  ...(specialty === undefined ? {} : { specialty }),
   ...(distribution === undefined ? {} : { distribution }),
 }))
 
@@ -78,6 +83,7 @@ const applicationId = 0x434d4743
 const searchRevision = 'topic-shared-body-rounds-v3'
 const searchCacheLimit = 64
 const databaseVersionSchema = z.object({ dataVersion: z.number().int(), totalChanges: z.number().int() })
+const patientPopulationSchema = z.enum(['adult', 'pediatric', 'all-only'])
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex')
@@ -462,9 +468,13 @@ export class GuidelineCorpus {
   }
 
   /** Fixed topic references still pass the same source, lineage and original-body checks as search. */
-  readReferences(references: readonly { sourceId: string; version: string; sha256: string; page: number }[]) {
+  readReferences(
+    references: readonly { sourceId: string; version: string; sha256: string; page: number }[],
+    options?: { population?: GuidelinePatientPopulation },
+  ) {
     const parsed = z.array(z.object({ sourceId: identity, version: identity,
       sha256: z.string().regex(/^[a-f0-9]{64}$/), page: z.number().int().positive() }).strict()).max(7).parse(references)
+    const population = options?.population === undefined ? undefined : patientPopulationSchema.parse(options.population)
     return this.#database.transaction(() => {
       const rows = this.#sourceRows()
       const sources = rows.flatMap(row => {
@@ -476,7 +486,8 @@ export class GuidelineCorpus {
         if (!integrity.has(sourceId)) integrity.set(sourceId, this.#storedDocumentIntegrity(sourceId)?.valid === true)
         return integrity.get(sourceId)!
       }
-      const guidelines: GuidelineEvidence[] = [], missing: Array<{ sourceId: string; page: number; reason: string }> = []
+      const guidelines: GuidelineEvidence[] = []
+      const missing: Array<{ sourceId: string; page: number; status?: 'withheld'; reason: string }> = []
       const revisions: unknown[] = [], seen = new Set<string>()
       for (const reference of parsed) {
         const source = sources.find(item => item.id === reference.sourceId)
@@ -489,6 +500,10 @@ export class GuidelineCorpus {
         else if (source.version !== reference.version || source.sha256 !== reference.sha256) reason = 'source-revision-changed'
         else if (!isGuidelineSourceUsable(source, this.#allowNonCommercial, { deploymentPolicy: this.#deploymentPolicy,
           allowLocalEvaluation: this.#allowLocalEvaluation, knownSources: sources })) reason = 'source-unavailable'
+        else if (!matchesGuidelineLineagePopulation(source, sources, population)) {
+          missing.push({ sourceId: reference.sourceId, page: reference.page, status: 'withheld', reason: 'population-mismatch' })
+          continue
+        }
         const passages = reason === undefined && row?.bodyId ? this.#bodyPassages(row.bodyId)
           .filter(passage => Number(/^PDF 物理第 (\d+) 页/.exec(passage.locator)?.[1]) === reference.page) : []
         if (reason === undefined && passages.length === 0) reason = 'passage-not-available'
@@ -501,7 +516,8 @@ export class GuidelineCorpus {
         }
       }
       return { guidelines, missing, revision: hash(JSON.stringify([guidelinePassagePolicyRevision,
-        this.#allowNonCommercial, this.#deploymentPolicy, this.#allowLocalEvaluation, revisions])) }
+        this.#allowNonCommercial, this.#deploymentPolicy, this.#allowLocalEvaluation, revisions,
+        ...(population === undefined ? [] : [population])])) }
     })()
   }
 
@@ -516,17 +532,19 @@ export class GuidelineCorpus {
     return evidence
   }
 
-  search(text: string): GuidelineSearchResult {
+  search(text: string, options?: { population?: GuidelinePatientPopulation }): GuidelineSearchResult {
+    const population = options?.population === undefined ? undefined : patientPopulationSchema.parse(options.population)
+    const cacheKey = JSON.stringify([population ?? null, text])
     return this.#database.transaction(() => {
       const version = JSON.stringify(databaseVersionSchema.parse(this.#databaseVersion.get()))
       if (version !== this.#searchVersion) {
         this.#searchResults.clear()
         this.#searchVersion = version
       }
-      const cached = this.#searchResults.get(text)
+      const cached = this.#searchResults.get(cacheKey)
       if (cached !== undefined) {
-        this.#searchResults.delete(text)
-        this.#searchResults.set(text, cached)
+        this.#searchResults.delete(cacheKey)
+        this.#searchResults.set(cacheKey, cached)
         return structuredClone(cached)
       }
       const rows = this.#sourceRows()
@@ -540,7 +558,8 @@ export class GuidelineCorpus {
         || Number(left.derivedFromSourceId !== undefined) - Number(right.derivedFromSourceId !== undefined) || left.id.localeCompare(right.id))
       const sourceBodies = new Map(rows.map(row => [row.id, row.bodyId]))
       const revision = hash(JSON.stringify([searchRevision, guidelinePassagePolicyRevision, this.#allowNonCommercial, this.#deploymentPolicy, this.#allowLocalEvaluation,
-        rows.map(row => [row.digest, row.bodyId, validSourceIds.has(row.id)])]))
+        rows.map(row => [row.digest, row.bodyId, validSourceIds.has(row.id)]),
+        ...(population === undefined ? [] : [population])]))
       const guidelines: GuidelineEvidence[] = []
       const diagnosisQueries = new Set<string>()
       const inactiveSources: GuidelineSearchResult['inactiveSources'] = rows.flatMap(row => {
@@ -563,6 +582,7 @@ export class GuidelineCorpus {
         .filter(term => [...term].length >= 2).slice(0, 96)
       for (const source of sources) {
         if (inactiveSourceIds.has(source.id)) continue
+        if (!matchesGuidelineLineagePopulation(source, sources, population)) continue
         if (!isGuidelineSourceUsable(source, this.#allowNonCommercial, { deploymentPolicy: this.#deploymentPolicy,
           allowLocalEvaluation: this.#allowLocalEvaluation, knownSources: sources })) continue
         const bodyId = sourceBodies.get(source.id)
@@ -620,7 +640,7 @@ export class GuidelineCorpus {
         for (const query of queries) diagnosisQueries.add(query)
       }
       const result = { guidelines, diagnosisQueries: [...diagnosisQueries], inactiveSources, revision }
-      this.#searchResults.set(text, structuredClone(result))
+      this.#searchResults.set(cacheKey, structuredClone(result))
       if (this.#searchResults.size > searchCacheLimit) this.#searchResults.delete(this.#searchResults.keys().next().value!)
       return result
     })()

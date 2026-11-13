@@ -1,4 +1,5 @@
 import { InpatientSurgeryMaterials, SurgeryDrgLink } from './inpatient-surgery-materials.tsx'
+import { inpatientAngiographyReportsSchema, type InpatientAngiographyReport } from '@clinmesh/contracts/inpatient-angiography'
 import { inpatientPciSelectionSchema, pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientMaterialEstimateResponseSchema, inpatientMaterialEstimatesSchema, inpatientMaterialEstimateSaveInputSchema, type InpatientMaterialEstimate } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientGuidelineAdviceListSchema, type InpatientGuidelineAdvice } from '@clinmesh/contracts/inpatient-guideline-advice'
@@ -30,6 +31,7 @@ import { OrderComposerFooter } from './doctor/order-composer-layout.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { AlertCircleIcon, CheckCircle2Icon, CheckIcon, ChevronRightIcon, CircleIcon, PlusIcon } from 'lucide-react'
 import { InpatientSurgeryDetails } from './inpatient-surgery-details.tsx'
+import { CoronaryAngiographyDisclosure } from './inpatient-pci-draft-fields.tsx'
 import { InpatientDrgReviewPanel } from './inpatient-drg-review.tsx'
 import { SurgeryExecuteComposer } from './inpatient-surgery-execute-composer.tsx'
 
@@ -44,10 +46,12 @@ type Props = {
 }
 type Request = z.infer<typeof inpatientSurgeryRequestSchema>
 type Catalog = z.infer<typeof inpatientSurgeryCatalogSchema>
+const angiographyProcedureCodes = new Set(['88.5500', '88.5600'])
+const coronaryProcedureCodes = new Set([...angiographyProcedureCodes, ...pciSelectionProcedureCodes])
 
 export function InpatientSurgery({ admission, session, locale, write, active = true, onOpenStage, onOpenUsage }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
-  const doctor = session.actor.roleCode === 'inpatient-doctor', nurse = session.actor.roleCode === 'ward-nurse'
+  const doctor = session.actor.roleCode === 'inpatient-doctor', nurse = session.actor.roleCode === 'ward-nurse', medicalRecords = session.actor.roleCode === 'medical-records'
   const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId]
   const surgery = useQuery({ queryKey: [...scope, admission.id, 'surgeries'], enabled: active, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
   const catalog = useQuery({ queryKey: [...scope, 'surgery-catalog'], enabled: active && (doctor || nurse), queryFn: ({ signal }) => apiGet('/api/his/v1/inpatient/surgery-catalog', inpatientSurgeryCatalogSchema, signal) })
@@ -137,6 +141,30 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/guideline-advice`, inpatientGuidelineAdviceListSchema, signal),
   })
   const completedExecutions = surgery.data?.executions ?? []
+  const hasCoronaryProcedure = Boolean(
+    surgery.data?.requests.some(item => coronaryProcedureCodes.has(item.plannedProcedure.coding.code))
+    || surgery.data?.inProgress.some(item => coronaryProcedureCodes.has(item.actualProcedure.coding.code))
+    || completedExecutions.some(item => coronaryProcedureCodes.has(item.actualProcedure.coding.code)),
+  )
+  const angiographyReports = useQuery<z.infer<typeof inpatientAngiographyReportsSchema>>({
+    queryKey: [...scope, admission.id, 'angiography-reports'],
+    enabled: active && (doctor || nurse || medicalRecords) && hasCoronaryProcedure,
+    retry: false,
+    refetchInterval: (query) => {
+      if (!active) return false
+      if (pollActive && isPci) return 3_000
+      if (admission.status !== 'admitted' || admission.recordStatus === 'archived') return false
+      const reports = query.state.data?.reports
+      const pendingReport = completedExecutions.some((execution) => {
+        if (!angiographyProcedureCodes.has(execution.actualProcedure.coding.code)) return false
+        const matched = reports?.find(item => item.procedureId === execution.id)
+        return matched === undefined || matched.status === 'processing'
+      })
+      return pendingReport ? 3_000 : false
+    },
+    refetchIntervalInBackground: false,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/angiography-reports`, inpatientAngiographyReportsSchema, signal),
+  })
   const selectedCompletedExecution = completedExecutions.find(item => item.id === selectedExecutionId) ?? completedExecutions.at(-1)
   const materialDataReady = catalog.isSuccess && !catalog.isFetching && reservations.isSuccess && !reservations.isFetching
   const activeReservations = reservationRows.filter(item => item.status === 'reserved' && (!item.requestId || item.requestId === selectedPlan?.id))
@@ -144,6 +172,16 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const currentDraft = selectedPlan ? selection.data?.drafts?.find(item => item.requestId === selectedPlan.id) : undefined
   const currentConfirmed = selectedPlan && selection.data?.confirmation?.parameters.requestId === selectedPlan.id ? selection.data.confirmation.parameters : undefined
   const currentAdvice = selectedPlan ? guidelines.data?.advice.find(item => item.requestId === selectedPlan.id) : undefined
+  const selectedAngiographyReport = (currentDraft ? angiographyReports.data?.reports.find(item => item.id === currentDraft.reportId) : undefined)
+    ?? angiographyReports.data?.reports.find(item => item.status === 'final' || item.status === 'partial')
+  const selectedCompletedCode = selectedCompletedExecution?.actualProcedure.coding.code
+  const completedAngiographyReport = selectedCompletedExecution === undefined || selectedCompletedCode === undefined
+    ? undefined
+    : angiographyProcedureCodes.has(selectedCompletedCode)
+      ? angiographyReports.data?.reports.find(item => item.procedureId === selectedCompletedExecution.id)
+      : coronaryProcedureCodes.has(selectedCompletedCode)
+        ? angiographyReports.data?.reports.find(item => item.status !== 'processing' && (item.vessels.length > 0 || item.conclusion !== null))
+        : undefined
   const selDone = !isPci || step1ConfirmedPlanId === selectedPlan?.id || currentConfirmed !== undefined || Boolean(currentDraft?.edited) || activeReservations.length > 0
   const showStepTwo = isPci || currentEstimate !== undefined || activeReservations.length > 0
   const plans = <>
@@ -155,7 +193,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   </>
   return <section aria-label={t('住院手术', 'Inpatient surgery')} className="flex flex-col gap-4">
     {doctor ? <div className="flex flex-wrap items-center justify-end gap-2">
-      {selectedPlan && preopActive && active ? <InpatientSurgeryDetails key={`${requestOwnerKey}:${selectedPlan.id}`} admission={admission} session={session} locale={locale} write={write} plan={selectedPlan} estimate={currentEstimate} selection={selection.data} onOpenUsage={onOpenUsage} /> : null}
+      {selectedPlan && preopActive && active ? <InpatientSurgeryDetails key={`${requestOwnerKey}:${selectedPlan.id}`} admission={admission} session={session} locale={locale} write={write} plan={selectedPlan} estimate={currentEstimate} selection={selection.data} report={selectedAngiographyReport} onOpenUsage={onOpenUsage} /> : null}
       <Dialog open={requestOpen} pending={write.mutation.isPending} onOpenChange={setRequestOpen}>
         <DialogTrigger render={<Button type="button" variant="outline" size="sm" disabled={blocked} />} onClick={event => { requestFocus.current = event.currentTarget }}><PlusIcon aria-hidden="true" data-icon="inline-start" />{t('申请手术', 'Request surgery')}</DialogTrigger>
         <DialogContent className="sm:max-w-[640px]" showCloseButton={!write.mutation.isPending} finalFocus={requestFocus}>
@@ -184,12 +222,13 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     {pendingPlans.length > 0 ? running.length > 0 ? <details className="clinmesh-inpatient-disclosure" onToggle={event => setOtherPlansOpen(event.currentTarget.open)}><summary>{t('其他待实施手术', 'Other planned procedures')}</summary><div className="flex flex-col gap-4 py-3">{plans}</div></details> : <>
       {plans}
       {doctor && selectedPlan && isPci ? <PciStepOneCard
-        key={`${requestOwnerKey}:${selectedPlan.id}`}
+        key={`step1:${requestOwnerKey}:${selectedPlan.id}`}
         admission={admission}
         plan={selectedPlan}
         selectionData={selection.data}
         draft={currentDraft}
         confirmed={currentConfirmed}
+        report={selectedAngiographyReport}
         done={selDone && !editingStep1}
         editedAfterReserve={selectionEditedAfterReserve}
         locale={locale}
@@ -209,7 +248,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         }}
       /> : null}
       {doctor && selectedPlan && showStepTwo ? <PciStepTwoCard
-        key={`${requestOwnerKey}:${selectedPlan.id}`}
+        key={`step2:${requestOwnerKey}:${selectedPlan.id}`}
         admission={admission}
         plan={selectedPlan}
         isPci={isPci}
@@ -235,7 +274,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         onOpenUsage={onOpenUsage}
       /> : null}
     </> : null}
-    {selectedCompletedExecution && running.length === 0 && pendingPlans.length === 0 ? <SurgeryDone execution={selectedCompletedExecution} locale={locale} onOpenDrg={openDrg} /> : null}
+    {selectedCompletedExecution && running.length === 0 && pendingPlans.length === 0 ? <SurgeryDone execution={selectedCompletedExecution} angiographyReport={completedAngiographyReport} locale={locale} onOpenDrg={openDrg} /> : null}
     {surgery.data?.requests.length === 0 ? <>
       <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
         <p>{t('本次住院暂无手术申请。', 'No surgery requests for this admission.')}</p>
@@ -272,7 +311,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   </section>
 }
 
-function SurgeryDone({ execution, locale, onOpenDrg }: { execution: z.infer<typeof inpatientSurgeryExecutionSchema>; locale: WorkspaceLocale; onOpenDrg: (() => void) | undefined }) {
+function SurgeryDone({ execution, angiographyReport, locale, onOpenDrg }: { execution: z.infer<typeof inpatientSurgeryExecutionSchema>; angiographyReport: InpatientAngiographyReport | undefined; locale: WorkspaceLocale; onOpenDrg: (() => void) | undefined }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const rows = execution.materials.reduce<{ item: (typeof execution.materials)[number]['item']; quantity: number; amountFen: number }[]>((result, use) => {
     const row = result.find(item => item.item.id === use.item.id)
@@ -282,6 +321,7 @@ function SurgeryDone({ execution, locale, onOpenDrg }: { execution: z.infer<type
   const procedureFen = execution.actualProcedure.chargeDefinition.priceFen
   return <section aria-label={t('最终耗材', 'Final materials')} className="flex min-w-0 flex-col gap-2">
     <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{execution.actualProcedure.coding.display}</h4><span className="font-mono text-xs text-muted-foreground">{execution.actualProcedure.coding.code}</span><Badge variant="outline" className="text-success">{t('已完成', 'Completed')}</Badge></div>
+    {angiographyReport && angiographyReport.status !== 'processing' ? <CoronaryAngiographyDisclosure report={angiographyReport} locale={locale} summary={t('冠脉造影与生理学报告', 'Coronary angiography & physiology report')} /> : null}
     <Table><TableHeader><TableRow><TableHead>{t('耗材', 'Material')}</TableHead><TableHead>{t('最终用量', 'Final quantity')}</TableHead><TableHead className="text-right">{t('费用', 'Charge')}</TableHead></TableRow></TableHeader>
       <TableBody>{rows.map(row => <TableRow key={row.item.id}><TableCell className="whitespace-normal">{row.item.display}</TableCell><TableCell className="tabular-nums">{row.quantity} {row.item.chargeDefinition.unit}</TableCell><TableCell className="text-right tabular-nums">{formatFen(row.amountFen, locale)}</TableCell></TableRow>)}
         <TableRow><TableCell className="whitespace-normal">{t('术式费', 'Procedure fee')} · {execution.actualProcedure.coding.display}</TableCell><TableCell>{t('1 次', '1')}</TableCell><TableCell className="text-right tabular-nums">{formatFen(procedureFen, locale)}</TableCell></TableRow></TableBody>
@@ -290,12 +330,13 @@ function SurgeryDone({ execution, locale, onOpenDrg }: { execution: z.infer<type
   </section>
 }
 
-function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, done, editedAfterReserve, locale, write, blocked, onEdit, onConfirmed }: {
+function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, report, done, editedAfterReserve, locale, write, blocked, onEdit, onConfirmed }: {
   admission: InpatientAdmission
   plan: Request
   selectionData: z.infer<typeof inpatientPciSelectionSchema> | undefined
   draft: NonNullable<z.infer<typeof inpatientPciSelectionSchema>['drafts']>[number] | undefined
   confirmed: NonNullable<z.infer<typeof inpatientPciSelectionSchema>['confirmation']>['parameters'] | undefined
+  report: InpatientAngiographyReport | undefined
   done: boolean
   editedAfterReserve: boolean
   locale: WorkspaceLocale
@@ -396,13 +437,14 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, done
       <p className="pl-7 text-xs text-muted-foreground">{summaryText}</p>
     </section>
   }
+  const hasPrefilledMeasurements = Boolean(draft && (draft.parameters.targetSite !== null || draft.parameters.measurements.length > 0))
   const primaryButton = <Button disabled={blocked || !valid || write.mutation.isPending} onClick={() => { void saveAndConfirmStepOne() }}>{t('确认选型参数', 'Confirm selection parameters')}</Button>
   return <section role="region" aria-label={t('选型参数', 'Selection parameters')} className="flex flex-col gap-3 rounded-lg border bg-card p-3.5">
     <div className="flex flex-wrap items-center gap-2">
       <span className="inline-grid size-5 place-items-center rounded-full border border-info text-[11px] font-semibold text-info">1</span>
       <h4 className="text-sm font-semibold">{t('选型参数', 'Selection parameters')}</h4>
     </div>
-    {draft ? <div className="flex items-start gap-2 rounded-lg bg-info/10 px-3 py-2 text-xs">
+    {hasPrefilledMeasurements ? <div className="flex items-start gap-2 rounded-lg bg-info/10 px-3 py-2 text-xs">
       <span className="mt-0.5 rounded border border-info/40 px-1 py-0.5 text-[11px] font-semibold text-info">{t('助手', 'Assistant')}</span>
       <div>
         <p>{t('已按冠脉造影报告预填病变测量，请逐项核对后确认。', 'Lesion measurements prefilled from the coronary angiography report; review and confirm each item.')}</p>
@@ -461,6 +503,7 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, done
         </TableRow>
       </TableBody>
     </Table>
+    {report && report.status !== 'processing' ? <CoronaryAngiographyDisclosure report={report} locale={locale} summary={t('冠脉造影与生理学依据', 'Coronary angiography & physiology evidence')} /> : null}
     <p className="text-xs text-muted-foreground">{t('报告没写的测量可以留空；单位、测量对象和来源随报告一并记录。', 'Measurements not in the report can be left blank; units, objects and sources are recorded with the report.')}</p>
     <InpatientPrimaryAction stage="surgery" priority={45} fallback={primaryButton}>
       <WorkspaceActionBar tone={valid ? 'normal' : 'blocked'} summary={plan.plannedProcedure.coding.display} reason={draft ? t('核对助手预填的病变测量', 'Review assistant-prefilled lesion measurements') : t('填写病变测量', 'Enter lesion measurements')} action={primaryButton} />

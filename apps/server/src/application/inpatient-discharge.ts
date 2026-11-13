@@ -22,6 +22,11 @@ export class InpatientDischarge {
       ...(row.departure_method === null ? {} : { departureMethod: row.departure_method }), ...(row.reverses_event_id === null ? {} : { reversesEventId: row.reverses_event_id }),
       actorId: row.actor_id, practitionerRoleId: row.practitioner_role_id, virtualTime: row.virtual_time }))
   }
+  activeDeparture(context: ActorContext, admissionId: string) {
+    const events = this.events(context, admissionId)
+    const reversed = new Set(events.filter(event => event.kind === 'recall').map(event => event.reversesEventId))
+    return events.filter(event => event.kind === 'depart' && !reversed.has(event.id)).at(-1)
+  }
   action(context: ActorContext, raw: unknown, idempotencyKey: string, action: 'issue' | 'depart' | 'recall' | 'clear') {
     const input = (action === 'depart' ? inpatientDepartInputSchema : inpatientDischargeInputSchema).parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: `inpatient.discharge.${action}`,

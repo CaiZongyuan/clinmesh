@@ -860,7 +860,9 @@ export function LaboratoryReportVersion({ current, locale, messages, report }: {
   report: LaboratoryReport
 }): React.JSX.Element {
   const [resultFilter, setResultFilter] = useState('all')
-  const abnormalResults = report.results.filter(result => result.interpretation !== 'normal')
+  const abnormalResults = report.results.filter(
+    result => result.interpretation !== 'normal' || ('critical' in result && result.critical === true),
+  )
   const results = current && resultFilter === 'abnormal' ? abnormalResults : report.results
   const versionLabel = (
     current
@@ -909,16 +911,20 @@ export function LaboratoryReportVersion({ current, locale, messages, report }: {
         <TableBody>
           {results.map((result) => {
             const unit = 'unit' in result ? result.unit.display : undefined
+            const critical = 'critical' in result && result.critical === true
             return (
               <TableRow key={result.observationId}>
                 <TableCell className="break-words whitespace-normal font-medium">
                   {laboratoryResultName(result.code, messages, result.display)}
                 </TableCell>
-                <TableCell className="whitespace-nowrap tabular-nums">{laboratoryResultValue(result.value, undefined, locale, messages)}</TableCell>
+                <TableCell className={`whitespace-nowrap tabular-nums ${critical ? 'font-semibold text-destructive' : ''}`}>{laboratoryResultValue(result.value, undefined, locale, messages)}</TableCell>
                 <TableCell className="whitespace-nowrap text-muted-foreground">{unit ?? '—'}</TableCell>
                 <TableCell className="break-words whitespace-normal">{result.referenceRange.text}</TableCell>
-                <TableCell>{result.interpretation === 'normal' ? <span className="text-xs text-muted-foreground">{messages.normal}</span>
-                  : <Badge variant="warning">{interpretationLabel(result.interpretation, messages)}</Badge>}</TableCell>
+                <TableCell>{result.interpretation === 'normal' && !critical ? <span className="text-xs text-muted-foreground">{messages.normal}</span>
+                  : <span className="inline-flex flex-wrap items-center gap-1">
+                      {result.interpretation !== 'normal' ? <Badge variant="warning">{interpretationLabel(result.interpretation, messages)}</Badge> : null}
+                      {critical ? <Badge variant="destructive">{locale === 'zh-CN' ? '危急值' : 'Critical'}</Badge> : null}
+                    </span>}</TableCell>
               </TableRow>
             )
           })}

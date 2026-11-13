@@ -76,7 +76,8 @@ export class InpatientPciSelection {
     const confirmed = this.owner.database.driver.prepare(`SELECT 1 FROM inpatient_pci_selection WHERE workspace_id=? AND epoch=? AND admission_id=?
       AND json_extract(confirmation_json,'$.parameters.requestId')=? LIMIT 1`).get(context.workspaceId, context.epoch, admissionId, requestId)
     if (confirmed || this.drafts(context, admissionId).some(draft => draft.requestId === requestId)) return
-    const report = this.owner.angiography.reports(context, admissionId).find(item => item.status === 'final' || item.status === 'partial')
+    const report = this.owner.angiography.reports(context, admissionId).find(item => (item.status === 'final' || item.status === 'partial')
+      && (item.targetSite !== null || item.measurements.length > 0))
     if (!report) return
     const draft = inpatientPciSelectionDraftSchema.parse({ requestId, version: 1, reportId: report.id, reportVersion: report.version,
       edited: false, confirmedSelectionVersion: null, parameters: { requestId, treatmentPlan: procedure.coding.display,

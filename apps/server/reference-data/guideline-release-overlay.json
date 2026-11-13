@@ -1,0 +1,251 @@
+{
+  "schemaVersion": 1,
+  "packageId": "clinmesh-guidelines",
+  "releaseId": "guidelines-2026-10-26-v1",
+  "sources": {
+    "nhc-rare-diseases-2025": {
+      "population": "all",
+      "specialty": "rare-diseases"
+    },
+    "nhc-influenza-2025": {
+      "population": "all",
+      "specialty": "infectious-disease"
+    },
+    "nhc-hypertension-wst-872-2025": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "nhc-breast-cancer-2022": {
+      "population": "adult",
+      "specialty": "oncology"
+    },
+    "nhc-obesity-2024": {
+      "population": "all",
+      "specialty": "endocrinology"
+    },
+    "nhc-pediatric-oncohematology-2019-01": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-02": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-03": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-04": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-05": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-06": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-07": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-08": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-09": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-10": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-11": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-12": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-13": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-14": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-15": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "nhc-pediatric-oncohematology-2019-16": {
+      "population": "pediatric",
+      "specialty": "pediatric-oncohematology"
+    },
+    "who-hypertension-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "who-diabetes-medicines-2018": {
+      "population": "adult",
+      "specialty": "endocrinology"
+    },
+    "who-mhgap-2023": {
+      "population": "all",
+      "specialty": "mental-health"
+    },
+    "who-pen-2020": {
+      "population": "adult",
+      "specialty": "primary-care"
+    },
+    "who-physical-activity-2020": {
+      "population": "all",
+      "specialty": "public-health"
+    },
+    "coronary-01-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-02-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-03-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-04-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-05-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-06-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-07-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-08-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-09-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-10-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-11-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-12-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-13-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-14-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-15-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-16-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-17-2020": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-18-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-19-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-20-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-21-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-22-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-23-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-24-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-25-2021": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-26-2023": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-27-2016": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-28-2015": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-29-2022": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-30-2019": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-31-2019": {
+      "population": "adult",
+      "specialty": "cardiology"
+    },
+    "coronary-32-2018": {
+      "population": "adult",
+      "specialty": "cardiology"
+    }
+  },
+  "errata": [
+    {
+      "sourceId": "coronary-20-2021",
+      "sourceSha256": "332e74aa189a08a56053e38cc8deea8b07aeeb1903770a2b41248692cce77c0e",
+      "originalLocator": "PDF 物理第 4 页；提取文本原文第 1–98 行；字符 [0, 2533)",
+      "beforeSha256": "0df9a18785d429337d92f4bef38db85bc143e6a1fb69e2e63d261f683c18b2ba",
+      "afterLocator": "PDF 物理第 4 页；提取文本原文第 1–74、95–98 行（勘误剥离图 1 矢量字体控制字符）",
+      "afterSha256": "7a604933ea55d5e6d3d7eaed34d497cfb7b3ee0530ba0fbbb13854ffe6557623",
+      "afterText": "中华心血管病杂志 2021 年 10 月第 49 卷第 10 期 Chin J Cardiol, October 2021, Vol. 49, No. 10\n究（IMPERIAL 研究），入选了 30 家中心 3 042 例应\n用 碘 克 沙 醇 行 PCI 的 冠 心 病 患 者 ，观 察 PCI 术 后\n72 h 及 30 d 的 主 要 心 脑 血 管 不 良 事 件（major\nadverse cardiovascular and cerebrovascular events，\nMACCE）及 PCAKI 的 发 生 率 ，结 果 显 示 PCI 术 后\n72 h 内 MACCE 发生率为 2.33%，PCI 术后 72 h 至 30\nd 期 间 MACCE 发 生 率 为 0.16%；PCI 术 后 72 h 内\nPCAKI 发生率为 7.86%，证实碘克沙醇应用于中国\nPCI 患者具有良好的安全性［41］。然而，也有研究发\n现 4 种 常 见 的 次 高 渗 对 比 剂 与 等 渗 对 比 剂 相 比\nPCAKI 的发生率差异无统计学意义［45］。一项荟萃\n分析显示，与次高渗对比剂相比，等渗对比剂虽轻\n度降低 PCAKI 的发生率，但不具备足够的临床重\n要性［46］。整体来看，目前对于等渗对比剂和次高渗\n对比剂的选择，仍存在一定的争议。综合考虑多项\n国内外研究、国际指南及药物经济学因素［9，21，45 49］，\n本共识推荐心血管介入诊治患者使用非离子型等\n渗或次高渗碘对比剂，对于肾心不良反应高风险的\n患者推荐应用等渗对比剂。\n2. 显影效果：心脏介入诊断治疗手术所使用的\n血管造影设备具有图像密度分辨力高、成像速度快\n等优点，可显示密度差为 1% 的影像。含碘对比剂\n的显影效果虽然受到造影机设备、参数、患者体重\n指数、术者主观因素等多方面因素的影响，但现有\n市 售 含 碘 对 比 剂 均 可 满 足 心 脏 介 入 手 术 的 临 床\n需求。\n五、PCAKI 的防治\n1.PCAKI 的预防原则和处理流程：应用含碘对\n比剂的患者应在术前进行肾功能的评估并根据患\n者 eGFR 的水平进行危险分层。对\n不同肾功能水平患者的管理流程详\n见图 1。同时，介入治疗前及介入治\n疗后前 3 d 需监测患者血清肌酐值\n并计算 eGFR，建议使用简化肾脏病\n膳 食 改 良 试 验 研 究（simplified\nmodification of diet in renal disease，\nMDRD）公 式 计 算 。 对 于 发 生 了\nPCAKI 的患者，需监测血清肌酐值\n直至恢复至术前水平。\n2. 水化：充分的水化治疗是目\n前预防 PCAKI 发生的最有效的主\n要手段之一［50 51］。水化治疗可扩充\n血 容 量 、稀 释 对 比 剂 、降 低 肾 小 管\n内液体的黏度，从而预防肾血管收\n缩和肾血管缺血的发生［50］。目前，标准的水化方\n案 推 荐 为 术 前 3~12 h 及 术 后 12~24 h 静 脉 应 用\n0.9% 氯化钠溶液 1.0~1.5 ml·kg⁻¹·h-1。水化对预防\nPCAKI 有明确效果，但对有左心功能不全的患者\n需防止容量负荷过重［52］。当患者合并有心功能不\n全时，介入医生应在谨慎补液以防止心力衰竭加\n重、促进排尿以预防 PCAKI 的平衡中随时调整水\n化 方 案 。 POSEIDON 研 究 入 选 了 396 例 eGFR<\n60 ml·min⁻¹·1.73 m-2且伴有其他危险因素（如糖尿\n病、心力衰竭和年龄>75 岁）之一的患者，随机分为\n接 受 左 心 室 舒 张 末 压（left ventricular enddiastolic\npressure，LVEDP）监 测 指 导 的 水 化 和 标 准 水 化\n组［53］。标准水化组患者术前按 3 ml/kg 补液持续 1\nh，术后按 1.5 ml/kg 补液持续 4 h。监测 LVEDP 指\n导水化组患者术前的水化方案与标准水化组相同，\n术后依据LVEDP调整生理盐水的用量，用药时间同标\n准 水 化 组 ，具 体 为 ：LVEDP<13 mmHg（1 mmHg=\n0.133 kPa）时，生理盐水用量为5 ml·kg⁻¹·h-1；LVEDP 介\n于 13~18 mmHg 时，生理盐水用量为 3 ml·kg⁻¹·h-1；\nLVEDP>18 mmHg 时，生理盐水用量为 1.5 ml·kg⁻¹·\nh-1。结果显示，LVEDP 指导水化组的患者，PCAKI\n的发生率降低 59%，术后 6 个月的全因死亡率、心\n肌梗死和血液透析的复合终点发生率降低 68%［53］。\n3. 限制对比剂的应用剂量：限制对比剂应用剂\n量 是 预 防 PCAKI 发 生 的 最 重 要 的 方 法［18，54 55］。\n2018 年欧洲心脏病学会（ESC）/欧洲胸心外科协会\n（EACTS）的心肌血运重建指南推荐，在中重度肾功\n能不全的患者中对比剂剂量与 eGFR 的比值不能大\n于 3.7［21］，鼓励术中尽可能减少对比剂的用量。近\neGFR 为估算的肾小球滤过率，PCAKI 为使用对比剂后的急性肾损伤，NSAID 为非甾体\n类抗炎药，sCr 为血清肌酐\n图 1 应用含碘对比剂患者的管理流程［3］\n·· 975",
+      "reason": "剥离第 4 页图 1 嵌入式矢量字体提取产生的控制字符乱码，保留第 1–74 行水化与对比剂剂量正文及第 95–98 行图注与页码。"
+    }
+  ]
+}

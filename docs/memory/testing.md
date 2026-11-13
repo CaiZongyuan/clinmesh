@@ -52,6 +52,10 @@
 
 ## 范围、快照与资源争用
 
+- 持久化临床来源的负例分别覆盖字段缺失、同一 Observation 内重复 component（含相同数值）和重复节段；只检查数值范围或节段去重会漏掉静默取首条的冲突。通过公开报告及 FHIR 状态核对缺项降级，并保留旧格式兼容正例，复用[冠脉造影 HTTP 回归](../../apps/server/tests/inpatient-angiography-http.test.ts)。
+
+- 年龄与指南人群回归通过公开虚拟时间推进跨过上海午夜的 18 周岁生日，并核对指南可用性与依据指纹；仅修改出生日期会漏掉当前时间被入院时间遮蔽的问题。另覆盖离院与召回，防止修复影响历史参考时间；复用[住院指南 HTTP 回归](../../apps/server/tests/inpatient-guideline-advice-http.test.ts)，业务合同见[指南参考意见](../architecture/clinical-workflows.md#pci-计划的只读指南参考意见)。
+
 - 判断文档修改是否影响测试时，先检查构建工具的自动扫描范围，不能只看静态 import。DSH 的 [Surface 样式构建](../../apps/dsh-web/src/surface-styles.ts)和 Web 的[字号](../../apps/web/src/app/font-size.browser.test.ts)、[主题](../../apps/web/src/app/web-theme.browser.test.ts)浏览器合同都以仓库根为 Tailwind 扫描根，普通说明文档和其他组的测试文件也可能改变运行时生成的 CSS；CI 成功复用因此用 Tailwind 候选 class 代替被排除文件的原文，见[测试策略](../testing.md#github-ci-的检查选择与并行)。
 
 - 新增或修改 DSH 浏览器 `.fixture.tsx` 时，`tsconfig.browser.json` 不足以覆盖夹具类型。补跑 `pnpm --filter @clinmesh/dsh-web typecheck`，同时核对全局测试模式 union 与网络桩使用的局部 URL 变量；Vite 运行成功不等于这些 TypeScript 边界通过。
@@ -267,3 +271,7 @@
 - 私稿监听按存储 key 注册时，闭包不能固定首次业务初值：资料刷新后清空或消费回执触发通知，旧监听可能把最新默认清单覆盖为旧值。监听读取 latest reader 并复核仍属原 key；用受控 props 先新增实际业务事实、再明确清空并重新带入，核对新事实和原编辑保护，参见[手术私稿回归](../../apps/web/src/app/inpatient-surgery-draft.test.tsx)。
 
 - 共享活动集合与子视图卸载守卫：原 hook 卸载后的 `finally` 除删除活动项外还须通知当前挂载实例重新渲染（覆盖 POST 已发挂起时卸载重挂，见[住院报告恢复回归](../../apps/web/src/app/inpatient-report-reader.test.tsx)）；子视图卸载不代表上层写入 hook 已卸载，提交前异步身份查询等待期间的上下文守卫须同时检查子视图挂载状态，避免最后一次渲染的 `active`/`open` ref 仍为真而误发业务 POST（见[手术补录回归](../../apps/web/src/app/inpatient-surgery-prototype.test.tsx)）。
+
+- 住院检查检验的结果生成依赖本次住院绑定的合成病例来源；用 `POST /api/his/v1/patients` 直接建档后入院，开立检验会以 `LABORATORY_GENERATION_UNSUPPORTED` 拒绝。HTTP 测试需从合成门诊就诊（`start-outpatient-visit` 返回的 `patientId`）读取 FHIR Patient 版本后办理入院，参见[检验发布回归](../../apps/server/tests/laboratory-service-publisher-http.test.ts)。
+
+- 需要多个独立行为共享同一份重型夹具（参考库导入、运行时启动与 Epoch 重置）时，用嵌套 `describe` 的 `beforeAll` 承担一次性准备并显式 `afterAll` 释放，每个 `it` 只断言一个行为并保持默认 15s 预算；不要把多条独立流程串进单个 `it` 后放宽单测超时。

@@ -341,6 +341,8 @@ const laboratoryServiceResultDefinitionSchema = z.object({
     system: z.literal('http://loinc.org'),
     version: z.string().min(1).max(256),
   }).strict()).max(4).default([]),
+  criticalMaximum: z.number().finite().optional(),
+  criticalMinimum: z.number().finite().optional(),
   healthyStrategy: z.enum(['uniform', 'fixed-normal']).optional(),
   precision: z.number().int().min(0).max(4).optional(),
   referenceConcept: referenceConceptSnapshotSchema,
@@ -363,6 +365,56 @@ const laboratoryServiceResultDefinitionSchema = z.object({
       message: 'Only a quantitative Laboratory Service result has a UCUM unit',
       path: ['unit'],
     })
+  }
+  if (!quantitative && (result.criticalMinimum !== undefined || result.criticalMaximum !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Only a quantitative Laboratory Service result can define critical bounds',
+      path: [result.criticalMinimum !== undefined ? 'criticalMinimum' : 'criticalMaximum'],
+    })
+  }
+  if (
+    result.criticalMinimum !== undefined
+    && result.criticalMaximum !== undefined
+    && result.criticalMinimum >= result.criticalMaximum
+  ) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Laboratory Service critical minimum must be less than critical maximum',
+      path: ['criticalMinimum'],
+    })
+  }
+  if (quantitative && (result.criticalMinimum !== undefined || result.criticalMaximum !== undefined)) {
+    const lowBounds = [
+      result.referenceRange.low,
+      ...(result.adultReferenceRules?.map(rule => rule.low) ?? []),
+    ].filter((value): value is number => value !== undefined)
+    const highBounds = [
+      result.referenceRange.high,
+      ...(result.adultReferenceRules?.map(rule => rule.high) ?? []),
+    ].filter((value): value is number => value !== undefined)
+    if (
+      result.criticalMinimum !== undefined
+      && (lowBounds.some(low => result.criticalMinimum! > low)
+        || highBounds.some(high => result.criticalMinimum! >= high))
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Laboratory Service critical minimum must not exceed normal reference bounds',
+        path: ['criticalMinimum'],
+      })
+    }
+    if (
+      result.criticalMaximum !== undefined
+      && (highBounds.some(high => result.criticalMaximum! < high)
+        || lowBounds.some(low => result.criticalMaximum! <= low))
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Laboratory Service critical maximum must not be below normal reference bounds',
+        path: ['criticalMaximum'],
+      })
+    }
   }
   if (quantitative && result.adultReferenceRules === undefined
     && result.referenceRange.low === undefined && result.referenceRange.high === undefined) {
@@ -1456,6 +1508,7 @@ const quantitativeLaboratoryReferenceRangeSchema = z.object({
 
 const laboratoryResultMeasurementShape = {
   code: z.string().min(1),
+  critical: z.boolean().optional(),
   display: z.string().min(1),
   interpretation: laboratoryResultInterpretationSchema,
   referenceRange: quantitativeLaboratoryReferenceRangeSchema,
@@ -1661,6 +1714,7 @@ export const laboratoryRequestSchema = z.object({
 
 const completedCaseLaboratoryResultSchema = z.object({
   code: z.string().min(1),
+  critical: z.boolean().optional(),
   display: z.string().min(1),
   interpretation: z.string().min(1).optional(),
   observationId: z.string().min(1),
@@ -1678,7 +1732,10 @@ const completedCaseLaboratoryResultSchema = z.object({
     z.string(),
     investigationCodeableValueSchema,
   ]),
-}).strict()
+}).strict().refine(
+  result => result.critical === undefined || typeof result.value === 'number',
+  { message: 'Only a quantitative laboratory result can declare a critical flag' },
+)
 
 const completedCaseLaboratoryReportSchema = z.object({
   acknowledgement: laboratoryReportAcknowledgementSchema.optional(),

@@ -3,8 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
+import { guidelineCorpusStatistics, type GuidelineDocument } from '../src/application/guideline-corpus.ts'
+import { resolvePatientGuidelinePopulation } from '../src/application/patient-age.ts'
 import { GuidelineCorpus, guidelineSourceDefinitionSchema } from '../src/infrastructure/sqlite/guideline-corpus.ts'
+import { buildOverlaidReleaseDocuments } from './fixtures/guideline-corpus.ts'
 
 function document(): GuidelineDocument {
   return {
@@ -209,7 +211,8 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
       const writer = open(path)
       const released = JSON.parse(readFileSync(new URL('../reference-data/guideline-release-manifest.json', import.meta.url), 'utf8'))
       const registry = JSON.parse(readFileSync(new URL('../reference-data/local-guideline-sources.json', import.meta.url), 'utf8'))
-      const original = { source: guidelineSourceDefinitionSchema.parse(released.sources.find((item: { source: { id: string } }) => item.source.id === 'coronary-01-2021').source),
+      const overlaidDocuments = buildOverlaidReleaseDocuments(released)
+      const original = { source: structuredClone(overlaidDocuments.find(item => item.source.id === 'coronary-01-2021')!.source),
         passages: [{ locator: '合成物理第1页', text: 'Coronary synthetic assessment evidence.' }] }
       original.source.license.usage = 'open'
       const uploaded = { source: guidelineSourceDefinitionSchema.parse(registry.sources[0].source), passages: original.passages }
@@ -783,5 +786,95 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     const before = corpus.search('软骨发育不全')
     expect(() => corpus.importDocument({ source: input.source, passages: [] })).toThrow()
     expect(corpus.search('软骨发育不全')).toEqual(before)
+  })
+
+  it('按上海医院当地日历计算患者人群（>=18 成人、<18 儿科、缺失出生日期或参考时间回退 all-only）', () => {
+    expect(resolvePatientGuidelinePopulation('2008-08-24', '2026-08-23T23:59:59+08:00')).toBe('pediatric')
+    expect(resolvePatientGuidelinePopulation('2008-08-24', '2026-08-24T00:00:00+08:00')).toBe('adult')
+    expect(resolvePatientGuidelinePopulation('2008-08-24', '2026-08-23T16:30:00Z')).toBe('adult')
+    expect(resolvePatientGuidelinePopulation('2026-08-24', '2026-08-24T08:00:00+08:00')).toBe('pediatric')
+    expect(resolvePatientGuidelinePopulation('1980-01-01', undefined)).toBe('all-only')
+    expect(resolvePatientGuidelinePopulation('1980-01-01', '')).toBe('all-only')
+    expect(resolvePatientGuidelinePopulation(undefined, '2026-08-24T08:00:00+08:00')).toBe('all-only')
+    expect(resolvePatientGuidelinePopulation('', '2026-08-24T08:00:00+08:00')).toBe('all-only')
+    expect(resolvePatientGuidelinePopulation('2014-02-30', '2026-08-24T08:00:00+08:00')).toBe('all-only')
+    expect(resolvePatientGuidelinePopulation('2027-01-01', '2026-08-24T08:00:00+08:00')).toBe('all-only')
+  })
+
+  it('全部 58 项固定包来源在单独 internal-testing 下启用，成人上下文零召回全部 16 项儿童血液肿瘤指南并保留 42 项成人与全人群指南', () => {
+    const path = join(directory(), 'guidelines-58.sqlite')
+    const released = JSON.parse(readFileSync(new URL('../reference-data/guideline-release-manifest.json', import.meta.url), 'utf8')) as {
+      packageId: string
+      releaseId: string
+      sources: Array<{ source: Record<string, unknown> & { id: string; sha256: string } }>
+    }
+    const writer = open(path)
+    const docs = buildOverlaidReleaseDocuments(released)
+    writer.importDocuments(docs)
+
+    const prodReader = new GuidelineCorpus({ databasePath: path, readOnly: true })
+    corpora.push(prodReader)
+    expect(guidelineCorpusStatistics(prodReader.sources(), { deploymentPolicy: 'default', allowNonCommercial: false, population: 'adult' }))
+      .toMatchObject({ sourceCount: 58, searchableSourceCount: 0 })
+
+    const testReader = new GuidelineCorpus({
+      databasePath: path,
+      readOnly: true,
+      deploymentPolicy: 'internal-testing',
+      allowNonCommercial: false,
+    })
+    corpora.push(testReader)
+    const sources = testReader.sources()
+    expect(guidelineCorpusStatistics(sources, { deploymentPolicy: 'internal-testing', allowNonCommercial: false }))
+      .toMatchObject({ sourceCount: 58, searchableSourceCount: 58 })
+    expect(guidelineCorpusStatistics(sources, { deploymentPolicy: 'internal-testing', allowNonCommercial: false, population: 'adult' }))
+      .toMatchObject({ sourceCount: 58, searchableSourceCount: 42 })
+    expect(guidelineCorpusStatistics(sources, { deploymentPolicy: 'internal-testing', allowNonCommercial: false, population: 'pediatric' }))
+      .toMatchObject({ sourceCount: 58, searchableSourceCount: 21 })
+    expect(guidelineCorpusStatistics(sources, { deploymentPolicy: 'internal-testing', allowNonCommercial: false, population: 'all-only' }))
+      .toMatchObject({ sourceCount: 58, searchableSourceCount: 5 })
+
+    const pediatricIds = new Set(released.sources
+      .filter(entry => entry.source.id.startsWith('nhc-pediatric-oncohematology-2019-'))
+      .map(entry => entry.source.id))
+    expect(pediatricIds.size).toBe(16)
+    const pediatricHashes = new Set(docs.filter(doc => pediatricIds.has(doc.source.id)).map(doc => doc.source.sha256))
+    expect(guidelineCorpusStatistics(sources, {
+      deploymentPolicy: 'internal-testing',
+      allowNonCommercial: false,
+      population: 'adult',
+      sourceIds: [...pediatricIds],
+    })).toMatchObject({ sourceCount: 16, searchableSourceCount: 0, searchablePassageCount: 0 })
+
+    // Prime cache with pediatric query first, then run identical query for adult, all-only, and unfiltered
+    const query = '儿童急性淋巴细胞白血病 淋巴瘤 发热 冠心病 高血压 评估'
+    const pediatricResult = testReader.search(query, { population: 'pediatric' })
+    const adultResult = testReader.search(query, { population: 'adult' })
+    const allOnlyResult = testReader.search(query, { population: 'all-only' })
+    const unfilteredResult = testReader.search(query)
+
+    expect(pediatricResult.guidelines.some(item => pediatricHashes.has(item.sourceHash))).toBe(true)
+    expect(adultResult.guidelines.length).toBeGreaterThan(0)
+    expect(adultResult.guidelines.some(item => pediatricHashes.has(item.sourceHash))).toBe(false)
+    for (const pediatricId of pediatricIds) {
+      expect(testReader.search(`临床指南测试段落 ${pediatricId} 白血病 发热`, { population: 'adult' }).guidelines
+        .some(item => pediatricHashes.has(item.sourceHash))).toBe(false)
+    }
+    const allPopulationHashes = new Set(docs.filter(doc => doc.source.population === 'all').map(doc => doc.source.sha256))
+    expect(allOnlyResult.guidelines).toHaveLength(5)
+    expect(allOnlyResult.guidelines.every(item => allPopulationHashes.has(item.sourceHash))).toBe(true)
+
+    // Excluded populations must NOT pollute inactiveSources
+    expect(adultResult.inactiveSources).toEqual([])
+    expect(pediatricResult.inactiveSources).toEqual([])
+    expect(allOnlyResult.inactiveSources).toEqual([])
+
+    // Revisions must all be distinct across population filters
+    expect(new Set([
+      pediatricResult.revision,
+      adultResult.revision,
+      allOnlyResult.revision,
+      unfilteredResult.revision,
+    ]).size).toBe(4)
   })
 })

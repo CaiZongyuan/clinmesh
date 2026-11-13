@@ -1,6 +1,8 @@
 import type { GuidelineEvidence } from '@clinmesh/contracts/doctor-recommendations'
 
 export type GuidelineDeploymentPolicy = 'default' | 'internal-testing'
+export type GuidelineSourcePopulation = 'adult' | 'pediatric' | 'all'
+export type GuidelinePatientPopulation = 'adult' | 'pediatric' | 'all-only'
 export const guidelinePassagePolicyRevision = 'readable-original-passages-v1'
 
 export interface GuidelineSourceDefinition {
@@ -18,6 +20,8 @@ export interface GuidelineSourceDefinition {
   sha256: string
   scope: string
   status: 'active' | 'withdrawn' | 'superseded'
+  population?: GuidelineSourcePopulation
+  specialty?: string
   license: {
     id: string
     url: string
@@ -57,15 +61,37 @@ export interface GuidelineSourceStatus {
   unusablePassageCount?: number
 }
 
+export function matchesGuidelinePopulation(
+  sourcePopulation: GuidelineSourcePopulation | undefined,
+  filter: GuidelinePatientPopulation | undefined,
+): boolean {
+  if (filter === undefined || sourcePopulation === undefined || sourcePopulation === 'all') return true
+  if (filter === 'all-only') return false
+  return sourcePopulation === filter
+}
+
+export function matchesGuidelineLineagePopulation(
+  source: GuidelineSourceDefinition,
+  knownSources: readonly GuidelineSourceDefinition[],
+  filter: GuidelinePatientPopulation | undefined,
+): boolean {
+  if (filter === undefined) return true
+  const lineage = guidelineSourceLineage(source, knownSources)
+  if (lineage === null) return false
+  return lineage.sources.every(item => matchesGuidelinePopulation(item.population, filter))
+}
+
 export function guidelineCorpusStatistics(sources: readonly GuidelineSourceStatus[], options: {
   allowNonCommercial?: boolean; deploymentPolicy?: GuidelineDeploymentPolicy; allowLocalEvaluation?: boolean
-  sourceIds?: readonly string[]
+  sourceIds?: readonly string[]; population?: GuidelinePatientPopulation
 } = {}) {
   const sourceIds = options.sourceIds === undefined ? undefined : new Set(options.sourceIds)
   const selected = sources.filter(item => sourceIds === undefined || sourceIds.has(item.source.id))
   const bodies = new Map(selected.filter(item => item.passageCount > 0).map(item => [item.bodyId ?? item.source.id, item]))
-  const policy = { ...options, knownSources: sources.filter(item => item.integrityValid !== false).map(item => item.source) }
+  const knownSources = sources.filter(item => item.integrityValid !== false).map(item => item.source)
+  const policy = { ...options, knownSources }
   const searchable = selected.filter(item => item.integrityValid !== false && item.passageCount > (item.unusablePassageCount ?? 0)
+    && matchesGuidelineLineagePopulation(item.source, knownSources, options.population)
     && isGuidelineSourceUsable(item.source, options.allowNonCommercial, policy))
   const searchableBodies = new Map(searchable.map(item => [item.bodyId ?? item.source.id, item]))
   return {

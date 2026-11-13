@@ -1482,8 +1482,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read one completed outpatient case and its clinical timeline, including optional menstrualHistory and obstetricHistory in signed documents; missing historical sections remain unrecorded',
-    version: 2,
+    summary: 'Read one completed outpatient case and its clinical timeline, including optional menstrualHistory and obstetricHistory in signed documents; missing historical sections remain unrecorded; quantitative laboratory report results expose optional critical flags alongside interpretation',
+    version: 3,
   },
   {
     cliPath: ['doctor', 'case', 'get'],
@@ -1501,8 +1501,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case with its current Registration registrationNumber (null when unrecorded), incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; consultation.replyAttempt exposes executing, blocked, succeeded, failed or unknown with the original deadline and safe error code, including MODEL_CONTROL_BLOCKED, CONSULTATION_CASE_NOT_FOUND and CONSULTATION_PERSONA_OUTDATED; a blocked reply retains the saved question and resumes only while valid within its original deadline, while unknown requests require an explicit clinician retry; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists; clinicalHistory.requiredFields, reason and showByDefault expose the shared menstrualHistory and obstetricHistory policy with the clinician-confirmed visitKind, which Agents may read but cannot change; qualityControl binds current twelve-field content and saved evidence to nonblocking completion and verification prompts',
-    version: 16,
+    summary: 'Read the active doctor case with its current Registration registrationNumber (null when unrecorded), incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; consultation.replyAttempt exposes executing, blocked, succeeded, failed or unknown with the original deadline and safe error code, including MODEL_CONTROL_BLOCKED, CONSULTATION_CASE_NOT_FOUND and CONSULTATION_PERSONA_OUTDATED; a blocked reply retains the saved question and resumes only while valid within its original deadline, while unknown requests require an explicit clinician retry; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists; clinicalHistory.requiredFields, reason and showByDefault expose the shared menstrualHistory and obstetricHistory policy with the clinician-confirmed visitKind, which Agents may read but cannot change; qualityControl binds current twelve-field content and saved evidence to nonblocking completion and verification prompts; laboratory service definitions and quantitative report results expose optional criticalMinimum/criticalMaximum bounds and critical flags',
+    version: 17,
   },
   {
     cliPath: ['doctor', 'document-quality', 'get'],
@@ -1545,8 +1545,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Search active orderable Laboratory Services for one doctor case',
-    version: 1,
+    summary: 'Search active orderable Laboratory Services for one doctor case, including optional criticalMinimum and criticalMaximum bounds on quantitative result definitions',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'consultation', 'ask'],
@@ -1910,8 +1910,8 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: '签发当前检验草稿并冻结门诊价目与唯一原费用，足额确定资金后放行原申请；缺价或价目失效以 CATALOG_CONFLICT 拒绝并保留草稿，刷新目录后重新审阅；缺少结果底账时以 LABORATORY_GENERATION_UNSUPPORTED 拒绝，不可重试',
-    version: 1,
+    summary: '签发当前检验草稿并冻结门诊价目与唯一原费用，足额确定资金后放行原申请；缺价或价目失效以 CATALOG_CONFLICT 拒绝并保留草稿，刷新目录后重新审阅；缺少结果底账时以 LABORATORY_GENERATION_UNSUPPORTED 拒绝，不可重试；返回冻结检验目录危急值阈值与定量结果危急值标记',
+    version: 2,
   },
   {
     cliPath: ['laboratory-request', 'cancel'],
@@ -1929,8 +1929,8 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: '取消 issued 或 generation-failed 检验申请并全额冲减原费用；未知资金或有效医保以 WORKFLOW_CONFLICT 拒绝，先查询原尝试或由收费员 insurance.cancel；已受理拒绝普通取消，保留原申请及冻结输入，实收款由收费员按原成功交易退款，legacy-unbilled 不补收',
-    version: 1,
+    summary: '取消 issued 或 generation-failed 检验申请并全额冲减原费用；未知资金或有效医保以 WORKFLOW_CONFLICT 拒绝，先查询原尝试或由收费员 insurance.cancel；已受理拒绝普通取消，保留原申请及冻结输入，实收款由收费员按原成功交易退款，legacy-unbilled 不补收；返回含冻结目录危急值阈值与结果危急值标记的当前检验申请',
+    version: 2,
   },
   {
     cliPath: ['laboratory-request', 'retry-generation'],
@@ -1948,8 +1948,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: '沿用原申请、冻结价目及原费用重试，不重复收费；按当前模型配置重试生成，自动尝试固定该模型；INVESTIGATION_TRUTH_INCOMPATIBLE 或 INVESTIGATION_UNSUPPORTED 拒绝重试，可取消申请；控制拒绝保留有效待办，MODEL_OUTCOME_UNKNOWN 停止自动重发，仅由医生明确重试生成',
-    version: 4,
+    summary: '沿用原申请、冻结价目及原费用重试，不重复收费；按当前模型配置重试生成，自动尝试固定该模型；INVESTIGATION_TRUTH_INCOMPATIBLE 或 INVESTIGATION_UNSUPPORTED 拒绝重试，可取消申请；控制拒绝保留有效待办，MODEL_OUTCOME_UNKNOWN 停止自动重发，仅由医生明确重试生成；返回含冻结目录危急值阈值与结果危急值标记的当前检验申请',
+    version: 5,
   },
   {
     cliPath: ['laboratory-report', 'acknowledge'],
@@ -2830,7 +2830,7 @@ const operationDefinitions = [
   },
   {
     cliPath:['inpatient','investigations'],id:'inpatient.investigation.read',http:{method:'GET',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations'},input:z.object({admissionId:z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)}).strict(),output:inpatientInvestigationsSchema,mode:'query',
-    requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor', 'ward-nurse'],summary:'读取当前责任科室的住院检查与报告',version:1,
+    requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor', 'ward-nurse'],summary:'读取当前责任科室的住院检查与报告，检验服务定义含可选危急值上下限，定量检验结果含可选 critical 危急值标记',version:2,
   },
   {
     cliPath:['inpatient','transfer-catalog'],id:'inpatient.transfer.catalog',http:{method:'GET',path:'/api/his/v1/inpatient/transfer-catalog'},input:emptyInputSchema,output:inpatientTransferCatalogSchema,mode:'query',
@@ -2846,23 +2846,23 @@ const operationDefinitions = [
   },
   {
     cliPath:['inpatient','issue-investigation'],id:'inpatient.investigation.issue',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/issue',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationIssueInputSchema.parse(raw);return {input}}},
-    input:inpatientInvestigationIssueInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'开立住院检验或影像，固定来源与价目，等待护士送检',version:1,
+    input:inpatientInvestigationIssueInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'开立住院检验或影像，固定来源、价目与检验危急值定义，等待护士送检',version:2,
   },
   {
     cliPath:['inpatient','send-investigation'],id:'inpatient.investigation.send',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/send',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationActionInputSchema.parse(raw);return {input}}},
-    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary:'护士校对送检后进入原LIS/RIS执行',version:1,
+    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary:'护士校对送检后进入原LIS/RIS执行，返回含检验危急值定义与结果标记的检查状态',version:2,
   },
   {
     cliPath:['inpatient','cancel-investigation'],id:'inpatient.investigation.cancel',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/cancel',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationActionInputSchema.parse(raw);return {input}}},
-    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'取消未送检或明确失败的住院检查',version:1,
+    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'取消未送检或明确失败的住院检查，返回含检验危急值定义与结果标记的检查状态',version:2,
   },
   {
     cliPath:['inpatient','retry-investigation'],id:'inpatient.investigation.retry',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/retry',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationActionInputSchema.parse(raw);return {input}}},
-    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'当前责任医生重试可恢复的失败检查',version:1,
+    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'当前责任医生重试可恢复的失败检查，返回含检验危急值定义与结果标记的检查状态',version:2,
   },
   {
     cliPath:['inpatient','acknowledge-investigation'],id:'inpatient.investigation.acknowledge',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/acknowledge',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationAcknowledgeInputSchema.parse(raw);return {input}}},
-    input:inpatientInvestigationAcknowledgeInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'当前责任医生确认当前正式报告，影像须当前可读',version:1,
+    input:inpatientInvestigationAcknowledgeInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'当前责任医生确认当前正式报告（定量检验保留 critical 危急值标记），影像须当前可读',version:2,
   },
   {
     cliPath:['inpatient','request-transfer'],id:'inpatient.transfer.request',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/transfers/request',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientTransferRequestInputSchema.parse(raw);return {input}}},
@@ -2899,14 +2899,14 @@ const operationDefinitions = [
     cliPath: ['inpatient', 'pci-data'], id: 'inpatient.pci-data.read',
     http: { method: 'GET', path: '/api/his/v1/inpatient/pci-data' }, input: emptyInputSchema,
     output: inpatientPciDataSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' },
-    risk: 'read', roles: ['administrator', 'inpatient-doctor'], summary: '读取固定版本 PCI 合成底稿、来源、院内补充和已安装资料，不创建就诊', version: 1,
+    risk: 'read', roles: ['administrator', 'inpatient-doctor'], summary: '读取固定版本 PCI 合成底稿、来源、院内补充（含检验结果危急值阈值定义）和已安装资料，不创建就诊', version: 2,
   },
   {
     cliPath: ['inpatient', 'prepare-pci-data'], id: 'inpatient.pci-data.prepare',
     http: { method: 'POST', path: '/api/his/v1/inpatient/pci-data/prepare', encodeBody: raw => ({ input: inpatientPciDataPrepareRequestSchema.shape.input.parse(raw) }) },
     input: inpatientPciDataPrepareRequestSchema.shape.input, output: inpatientPciDataResponseSchema, mode: 'command',
     requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['administrator'],
-    summary: '在当前场景幂等准备 PCI 目录与库存基础数据，保留原配置和业务；不创建患者就诊或临床费用', version: 1,
+    summary: '在当前场景幂等准备 PCI 目录（含检验危急值阈值定义）与库存基础数据，保留原配置和业务；不创建患者就诊或临床费用', version: 2,
   },
   {
     cliPath: ['admin', 'pci-case', 'prepare'], id: 'admin.pci-case.prepare',

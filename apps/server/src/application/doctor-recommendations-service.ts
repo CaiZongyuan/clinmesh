@@ -11,7 +11,7 @@ import {
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import { doctorCaseDetailSchema, type PrescriptionConflictReason } from '@clinmesh/contracts/his'
 import { CommandReceiptNotFoundError, type ActorContext, type CommandEffect, type CommandExecutor } from './command-executor.ts'
-import type { WorkflowService } from './workflow-service.ts'
+import type { DoctorRecommendationsWorkflowPort } from './outpatient-workflow-context.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { legacyRecommendationInput, recommendationInputFingerprint } from './doctor-recommendation-input.ts'
 import { DoctorRecommendationExecution, DoctorRecommendationExecutionError, readDoctorRecommendationExecution,
@@ -21,7 +21,9 @@ import { ChatCompletionsError, type JsonChatCompletionInput, type JsonChatComple
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
-import { doctorGuidelineGroups, doctorGuidelineRevision, doctorGuidelineSourceIds } from './doctor-guideline-evidence.ts'
+import { doctorGuidelineGroups, doctorGuidelineRevision, selectDoctorGuidelineEvidence } from './doctor-guideline-evidence.ts'
+import { matchesGuidelinePopulation } from './guideline-corpus.ts'
+import { resolvePatientGuidelinePopulation } from './patient-age.ts'
 import { normalizeDoctorDiagnosisRecommendation, resolveDoctorDiagnosisReference } from './doctor-diagnosis-recommendations.ts'
 import { normalizeInvestigationRecommendation, type DoctorInvestigationRecommendationCatalogs } from './doctor-investigation-recommendations.ts'
 import { normalizePrescriptionRecommendation } from './doctor-prescription-recommendations.ts'
@@ -148,7 +150,7 @@ export class DoctorRecommendationsService {
   readonly #active = new Map<string, { controller: AbortController; check: () => void }>()
   readonly #unsubscribe: () => void
   constructor(private readonly options: {
-    database: ClinMeshDatabase; workflow: WorkflowService; commands: CommandExecutor; referenceData: ReferenceDataService
+    database: ClinMeshDatabase; workflow: DoctorRecommendationsWorkflowPort; commands: CommandExecutor; referenceData: ReferenceDataService
     models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider
     recovery?: ModelTaskRecovery
     automaticRetries?: (workspaceId: string) => boolean
@@ -250,12 +252,29 @@ export class DoctorRecommendationsService {
     const requiredCaseEvidenceIds = [...caseEvidence, ...history.required].map(item => item.id)
     caseEvidence.push(...history.required, ...history.optional)
     for (const message of history.missingInformation) missingInformation.add(message)
-    const groups = doctorGuidelineGroups.filter(group => applicableGroups.has(group))
+    const visitRow = z.object({ visit_date: z.string().nullable(), virtual_time: z.string().nullable() }).optional().parse(
+      this.options.database.driver.prepare(`
+        SELECT registration.visit_date, epoch_state.virtual_time
+        FROM outpatient_case AS clinical_case
+        LEFT JOIN registration ON registration.workspace_id = clinical_case.workspace_id
+          AND registration.epoch = clinical_case.epoch AND registration.registration_id = clinical_case.registration_id
+        LEFT JOIN scenario_epoch_state AS epoch_state ON epoch_state.workspace_id = clinical_case.workspace_id
+          AND epoch_state.epoch = clinical_case.epoch
+        WHERE clinical_case.workspace_id = ? AND clinical_case.epoch = ? AND clinical_case.case_id = ?
+      `).get(context.workspaceId, context.epoch, caseId),
+    )
+    const population = resolvePatientGuidelinePopulation(
+      detail.patient.birthDate,
+      visitRow?.visit_date ?? visitRow?.virtual_time ?? undefined,
+    )
+    const groups = doctorGuidelineGroups.filter(group =>
+      applicableGroups.has(group) && matchesGuidelinePopulation(group.population, population))
     const retrieved = this.options.guidelines?.search(caseEvidence.filter(item => item.kind !== 'demographics')
-      .map(item => item.text).join('\n'))
-    const fixedEvidence = groups.flatMap(group => group.evidence).filter(evidence =>
-      !retrieved?.inactiveSources.some(source => source.id === doctorGuidelineSourceIds.get(evidence.sourceHash)
-        || source.sourceHash === evidence.sourceHash || source.url === evidence.url))
+      .map(item => item.text).join('\n'), { population })
+    const fixedEvidence = selectDoctorGuidelineEvidence(groups, {
+      population,
+      inactiveSources: retrieved?.inactiveSources,
+    })
     const guidelines = [...fixedEvidence, ...retrieved?.guidelines ?? []]
     let catalogs: DoctorRecommendationCatalogs
     if (kind === 'diagnosis') {
@@ -268,7 +287,7 @@ export class DoctorRecommendationsService {
     return { context, encounter: detail.encounter, kind, caseEvidence, catalogs, guidelines,
       sourceHashes, requiredCaseEvidenceIds, historyEvidenceIds: [...history.required, ...history.optional].map(item => item.id),
       missingInformation: [...missingInformation], contextPolicyVersion: 'ready-to-order-2026-10-18-v1',
-      guidelineRevision: retrieved === undefined ? doctorGuidelineRevision : `${doctorGuidelineRevision}:${retrieved.revision}`,
+      guidelineRevision: `${doctorGuidelineRevision}:${population}${retrieved === undefined ? '' : `:${retrieved.revision}`}`,
       ...(kind === 'diagnosis' ? { referenceRevision: this.options.referenceData.provenance() } : {}),
       prescriptionConcluded: detail.medicationConclusion?.prescription !== undefined || detail.medicationConclusion?.noMedication !== undefined }
   }
