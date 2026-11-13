@@ -76,10 +76,17 @@ export function packDoctorRecommendationHistory(caseId: string, history: DoctorC
       if (withinBudget(serialize([entry]))) return [entry]
       if (group.required) {
         const { clinical, record, ...identity } = entry
-        const parts = Object.entries(clinical ?? record ?? {}).map(([field, value]) => ({
-          ...identity, fieldPath: `${clinical === undefined ? 'record' : 'clinical'}.${field}`,
-          ...(clinical === undefined ? { record: { [field]: value } } : { clinical: { [field]: value } }),
-        }))
+        const parts = Object.entries(clinical ?? record ?? {}).flatMap(([field, value]) => {
+          const part = {
+            ...identity, fieldPath: `${clinical === undefined ? 'record' : 'clinical'}.${field}`,
+            ...(clinical === undefined ? { record: { [field]: value } } : { clinical: { [field]: value } }),
+          }
+          if (withinBudget(serialize([part]))) return [part]
+          if (record !== undefined && 'kind' in record && record.kind === 'inpatient' && Array.isArray(value)) {
+            return value.map((member, index) => ({ ...identity, fieldPath: `record.${field}[${index}]`, record: { [field]: [member] } }))
+          }
+          return [part]
+        })
         if (parts.every(part => withinBudget(serialize([part])))) return parts
       }
       if (result.missingInformation.length === 0) {

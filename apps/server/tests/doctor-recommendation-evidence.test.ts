@@ -44,6 +44,42 @@ describe('doctor recommendation history evidence', () => {
     expect(Buffer.byteLength(JSON.stringify(packed.required))).toBeLessThanOrEqual(240 * 1024)
     for (const evidence of packed.required) expect(Buffer.byteLength(evidence.text)).toBeLessThanOrEqual(12 * 1024)
   })
+  it('keeps a fortnight of inpatient reports and safety facts required without exceeding any evidence budget', () => {
+    const history = doctorCaseHistoryDetailSchema.parse({ source: 'local-completed', entryId: 'inpatient:fortnight',
+      title: '本院住院诊疗摘要', clinicalDate: '2026-08-24T10:00:00+08:00', record: {
+        kind: 'inpatient', admissionId: 'fortnight', admittedAt: '2026-08-10T10:00:00+08:00', dischargedAt: '2026-08-24T10:00:00+08:00',
+        diagnoses: [{ code: 'I25.1', display: '冠状动脉粥样硬化性心脏病', role: 'primary' }],
+        procedures: [{ code: '36.06', display: '冠状动脉支架置入术', performedAt: '2026-08-11T10:00:00+08:00' }],
+        medications: [{ display: '阿司匹林', doseText: '100 mg', frequencyCode: 'QD', state: 'stopped' }],
+        reports: Array.from({ length: 28 }, (_, index) => ({ title: `合成住院每日血常规与生化复查 ${index}`,
+          issuedAt: '2026-08-12T10:00:00+08:00', conclusion: '未见明确异常，仍需结合临床病史及其他检验结果。',
+          findings: Array.from({ length: 20 }, (_, finding) => `合成检验指标${finding}：3.5 mmol/L（已签发）`) })),
+      } })
+    const packed = packDoctorRecommendationHistory('follow-up', [history])
+
+    expect(packed.missingInformation).toEqual([])
+    expect(packed.optional).toEqual([])
+    expect(packed.required.length).toBeGreaterThan(1)
+    const fragments = packed.required.flatMap(evidence => {
+      doctorCaseEvidenceSchema.parse(evidence)
+      expect(Buffer.byteLength(evidence.text)).toBeLessThanOrEqual(12 * 1024)
+      return JSON.parse(evidence.text).entries
+    })
+    expect(fragments.every(fragment => fragment.entryId === history.entryId
+      && fragment.clinicalDate === history.clinicalDate && fragment.title === history.title)).toBe(true)
+    const restored = fragments.reduce((record, fragment) => {
+      for (const [field, value] of Object.entries(fragment.record)) {
+        record[field] = Array.isArray(value) ? [...record[field] ?? [], ...value] : value
+      }
+      return record
+    }, {})
+    expect(history.source).toBe('local-completed')
+    expect(restored).toEqual(history.source === 'local-completed' ? history.record : undefined)
+    expect(Buffer.byteLength(JSON.stringify(packed.required))).toBeLessThanOrEqual(240 * 1024)
+    expect(new Set(packed.required.map(evidence => evidence.id)).size).toBe(packed.required.length)
+    expect(packDoctorRecommendationHistory('follow-up', [history])).toEqual(packed)
+  })
+
   it('refuses an indivisible field beyond the byte budget while splitting Chinese records between complete fields', () => {
     const chinese = visible('Condition', 0, { conclusion: '并非确诊。'.repeat(700), note: [{ text: '仅既往可疑，尚待复查。'.repeat(350) }],
       clinicalStatus: { text: '已缓解' }, onsetDateTime: '1995-01-01' })
