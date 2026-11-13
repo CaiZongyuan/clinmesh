@@ -3,6 +3,7 @@ import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgPregroupResultSchema } from '@clinmesh/contracts/inpatient-drg'
 import { inpatientDrgRecordChecksSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgSimulationSchema, type InpatientDrgSimulationInput } from '@clinmesh/contracts/inpatient-drg-simulation'
+import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
@@ -39,7 +40,13 @@ export function useInpatientDrgQuery({ admission, session, active, draft, allowP
   const checks = useQuery({ queryKey: [...scope, 'drg-record-checks'], enabled: active && visible && selectPlan && admission.status !== 'registered', retry: false,
     refetchInterval: enabled && selectPlan ? 3_000 : false, refetchIntervalInBackground: false,
     queryFn: ({ signal }) => apiGet(`${path}/record-checks`, inpatientDrgRecordChecksSchema, signal) })
-  return { scope, path, archived, visible, enabled, allowPlanSelection: selectPlan, surgery, plans, primarySurgeryRequestId,
+  // 术前准备拥有读取；这里只订阅同一缓存，避免另一组轮询。
+  const estimates = useQuery({ queryKey: [...scope, 'material-estimates'], enabled: false,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/material-estimates`, inpatientMaterialEstimatesSchema, signal) })
+  const pendingEstimate = plans.length === 1 ? estimates.data?.estimates.find(estimate => estimate.requestId === plans[0]!.id
+    && estimate.status !== 'cancelled' && (estimate.draft === null || estimate.draft.confirmedRevision !== estimate.draft.revision)) : undefined
+  const projectedCosts = pendingEstimate?.costs ?? (checks.error === null ? checks.data?.costs : undefined)
+  return { projectedCosts, scope, path, archived, visible, enabled, allowPlanSelection: selectPlan, surgery, plans, primarySurgeryRequestId,
     setSelectedPlanId, simulationInput, grouping, simulation, checks }
 }
 

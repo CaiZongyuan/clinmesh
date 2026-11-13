@@ -63,3 +63,12 @@ it('没有支付参考时仍显示病组和已用，但不画进度或报告未�
   expect(screen.getByRole('button').textContent).not.toContain('未超')
   expect(screen.queryByRole('img')).toBeNull()
 })
+
+
+it('已开未执行医嘱只计入预计，不计为当前已用收费', () => {
+  const data = { ...simulation, committed: { items: [{ kind: 'medication' as const, id: 'pending-order', display: '合成未执行医嘱', quantity: 1, estimatedFen: 50000 }] },
+    coverage: { ...simulation.coverage, estimatedTotalFen: 200000 } }
+  render(<DrgProgressBar data={data} costs={undefined} locale="zh-CN" onOpenDrg={() => {}} />)
+  expect(screen.getByRole('button').textContent).toContain('已用 ¥1,500.00')
+  expect(screen.getByRole('button').textContent).toContain('还剩 ¥2,500.00')
+})

@@ -1,4 +1,6 @@
 import { SurgeryRequestReason } from './inpatient-surgery-request-reason.tsx'
+import { EquivalentMaterialAdvice } from './inpatient-equivalent-materials.tsx'
+import type { InpatientEquivalentMaterialSuggestion } from '@clinmesh/contracts/inpatient-pci-selection'
 import { InpatientSurgeryMaterials, SurgeryDrgLink } from './inpatient-surgery-materials.tsx'
 import { inpatientAngiographyReportsSchema, type InpatientAngiographyReport } from '@clinmesh/contracts/inpatient-angiography'
 import { inpatientPciSelectionSchema, pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -544,6 +546,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, done, selectionEdited
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const [items, setItems] = useState<Array<{ materialId: string; catalogVersion: number; quantity: string; reason: string }> | null>(null)
   const [note, setNote] = useState<string | null>(null)
+  const [adopted, setAdopted] = useState<InpatientEquivalentMaterialSuggestion | null>(null)
   const candidates = estimate?.candidates ?? []
   const eligible = candidates.filter(candidate => candidate.eligibility === 'valid' && candidate.item !== null)
   const loading = estimate?.status === 'queued' || estimate?.status === 'running'
@@ -584,7 +587,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, done, selectionEdited
       <p className="pl-7 text-xs text-muted-foreground">{summaryText}</p>
     </section>
   }
-  const baseRows = (estimate?.draft?.items.length ? estimate.draft.items : eligible.map(c => ({
+  const baseRows = (estimate?.draft?.items.length ? estimate.draft.items : eligible.filter(candidate => candidate.selected !== false).map(c => ({
     materialId: c.materialId,
     catalogVersion: c.catalogVersion,
     quantity: failed && reservations.length === 0 ? 0 : (c.expectedQuantity ?? 1),
@@ -598,6 +601,20 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, done, selectionEdited
     const price = candidate?.item?.chargeDefinition.priceFen ?? 0
     return sum + price * (Number(item.quantity) || 0)
   }, 0)
+  const replaceEquivalent = async (suggestion: InpatientEquivalentMaterialSuggestion, restore = false) => {
+    if (!estimate || blocked || write.mutation.isPending) return
+    const from = restore ? suggestion.to : suggestion.from, to = restore ? suggestion.from : suggestion.to
+    const rows = currentItems.map(item => item.materialId === from.id ? { ...item, materialId: to.id, catalogVersion: to.version } : item)
+    const parsed = inpatientMaterialEstimateSaveInputSchema.safeParse({ admissionId: admission.id, requestId: plan.id,
+      expectedVersion: estimate.version, expectedDraftRevision: estimate.draft?.revision ?? 0,
+      expectedBasisFingerprint: estimate.basisFingerprint, analysisId: null,
+      items: rows.filter(item => Number(item.quantity) > 0).map(item => ({ ...item, quantity: Number(item.quantity) })), note: currentNote })
+    if (!parsed.success) return
+    try {
+      await write.mutation.mutateAsync({ operation: 'inpatient.material-estimate.save', input: parsed.data })
+      setItems(null); setNote(null); setAdopted(restore ? null : suggestion)
+    } catch { /* Existing write recovery keeps the original intent and current input. */ }
+  }
   const saveAndConfirm = async () => {
     if (!estimate || blocked || nonZeroItems.length === 0 || !encounterVersion || !reservationFingerprint) return
     let target = estimate
@@ -717,6 +734,10 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, done, selectionEdited
         </div>
       </div>
     </> : isPci ? renderGuideBox(true) : null}
+    <EquivalentMaterialAdvice locale={locale} assistantExplanation={estimate?.status === 'succeeded' && estimate.analysis?.basisFingerprint === estimate.basisFingerprint ? estimate.analysis.costExplanation : null} disabled={blocked || write.mutation.isPending}
+      suggestions={(estimate?.equivalentSuggestions ?? []).filter(suggestion => currentItems.some(item => item.materialId === suggestion.from.id && Number(item.quantity) === suggestion.quantity))}
+      onPick={suggestion => { void replaceEquivalent(suggestion) }}
+      undo={adopted && currentItems.some(item => item.materialId === adopted.to.id) ? { savingsFen: adopted.totalSavingsFen, onUndo: () => { void replaceEquivalent(adopted, true) } } : undefined} />
     <Table>
       <TableHeader><TableRow>
         <TableHead>{t('耗材', 'Material')}</TableHead>
@@ -768,7 +789,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, done, selectionEdited
         <FieldLabel htmlFor={`step2-add-${plan.id}`}>{t('+ 添加候选耗材', '+ Add candidate material')}</FieldLabel>
         <WorkspaceSelect id={`step2-add-${plan.id}`} value={null}
           items={candidates.filter(c => c.item !== null && !currentItems.some(i => i.materialId === c.materialId)).map(c => ({ value: c.materialId, label: `${c.item!.display} · ${c.evidence.specification}` }))}
-          onValueChange={id => { const c = candidates.find(item => item.materialId === id); if (c) setItems([...currentItems, { materialId: c.materialId, catalogVersion: c.catalogVersion, quantity: String(c.expectedQuantity ?? 1), reason: c.quantityBasis }]) }} />
+          onValueChange={id => { const c = candidates.find(item => item.materialId === id); if (!c) return; const other = currentItems.find(item => c.equivalenceGroupId && candidates.find(candidate => candidate.materialId === item.materialId)?.equivalenceGroupId === c.equivalenceGroupId); setItems(other ? currentItems.map(item => item === other ? { ...item, materialId: c.materialId, catalogVersion: c.catalogVersion } : item) : [...currentItems, { materialId: c.materialId, catalogVersion: c.catalogVersion, quantity: String(c.expectedQuantity ?? 1), reason: c.quantityBasis }]) }} />
       </Field> : null}
       <Field>
         <FieldLabel htmlFor={`step2-note-${plan.id}`}>{t('耗材清单说明', 'Material list note')}</FieldLabel>

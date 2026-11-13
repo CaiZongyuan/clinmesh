@@ -17,8 +17,8 @@ function referenceProgress(total: number, reference: number | null) {
 export function drgProgress(data: InpatientDrgSimulation, costs: InpatientCosts | null | undefined) {
   const planned = data.grouping.projected?.status === 'grouped' ? data.grouping.projected : null
   const projected = planned !== null, grouping = planned ?? data.grouping.formal
-  const spent = data.formal.chargesFen + data.committed.items.filter(item => item.kind !== 'surgery').reduce((total, item) => total + (item.estimatedFen ?? 0), 0)
-  const total = projected ? data.coverage.estimatedTotalFen : spent
+  const spent = data.formal.chargesFen
+  const total = projected ? costs?.components.projectedTotalFen ?? data.coverage.estimatedTotalFen : spent
   const reference = projected
     ? (costs?.projectedPaymentReference?.drgCode === grouping.drgCode ? costs.projectedPaymentReference.referenceFen : null)
     : data.paymentReference?.referenceFen ?? costs?.currentPaymentReference?.referenceFen ?? null
@@ -60,7 +60,7 @@ export function InpatientDrgHeader({ admission, session, query, locale, onOpenDr
     return <ProgressLine locale={locale} onOpenDrg={onOpenDrg} progress={{ projected: false, grouping, spent: total, total, reference,
       ...referenceProgress(total, reference) }} />
   }
-  if (query.simulation.data && !query.simulation.error) return <DrgProgressBar data={query.simulation.data} costs={query.checks.error === null ? query.checks.data?.costs : undefined} locale={locale} onOpenDrg={onOpenDrg} />
+  if (query.simulation.data && !query.simulation.error) return <DrgProgressBar data={query.simulation.data} costs={query.projectedCosts} locale={locale} onOpenDrg={onOpenDrg} />
   const unavailable = query.simulation.error || query.grouping.error || admission.status === 'registered'
   return <button type="button" className="clinmesh-inpatient-drg-progress" onClick={onOpenDrg} aria-label={locale === 'zh-CN' ? 'DRG 费用进度，点击查看 DRG 预分组' : 'DRG charge progress; open DRG pre-grouping'}>
     <span>DRG</span><span>{unavailable ? locale === 'zh-CN' ? '暂无支付参考' : 'No payment reference' : locale === 'zh-CN' ? '正在核对费用' : 'Checking charges'}</span><ChevronRightIcon aria-hidden="true" />

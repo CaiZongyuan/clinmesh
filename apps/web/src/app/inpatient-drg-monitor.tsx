@@ -34,7 +34,7 @@ export function drgGroupingReason(result: DrgGroupingResult, locale: WorkspaceLo
 export function DrgPaymentMonitor({ data, costs, locale }: { data: InpatientDrgSimulation; costs: InpatientCosts | null | undefined; locale: WorkspaceLocale }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const reference = data.paymentReference?.referenceFen ?? costs?.currentPaymentReference?.referenceFen ?? null
-  const posted = data.formal.chargesFen, pending = sum(data.committed.items.filter(item => item.kind !== 'surgery')), spent = posted + pending
+  const posted = data.formal.chargesFen, pending = sum(data.committed.items.filter(item => item.kind !== 'surgery')), spent = posted
   const over = reference !== null && spent > reference
   const exceptionTriggered = costs?.exceptionAlert === 'triggered' || (reference !== null && reference > 0 && BigInt(posted) > 3n * BigInt(reference))
   const scale = over ? spent * 1.08 : reference ?? spent
@@ -52,7 +52,7 @@ export function DrgPaymentMonitor({ data, costs, locale }: { data: InpatientDrgS
     {reference !== null ? <>
       <div role="img" aria-label={`${t('已用 ', 'Used ')}${formatFen(spent, locale)}${t('，支付参考 ', ', payment reference ')}${formatFen(reference, locale)}`} className="relative h-3.5 rounded-full border bg-muted">
         <div className="absolute inset-y-0 left-0 flex overflow-hidden rounded-full" style={{ width: percent(spent) }}>
-          <i className={over ? 'bg-warning' : 'bg-info'} style={{ width: spent > 0 ? `${posted / spent * 100}%` : 0 }} /><i className={`flex-1 ${over ? 'bg-warning/40' : 'bg-info/40'}`} /></div>
+          <i className={`w-full ${over ? 'bg-warning' : 'bg-info'}`} /></div>
         <span aria-hidden="true" className="absolute -inset-y-1.5 w-0.5 rounded-sm bg-foreground" style={{ left: percent(reference) }} />
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -71,8 +71,8 @@ export function DrgPaymentMonitor({ data, costs, locale }: { data: InpatientDrgS
 function PlannedLine({ data, projected, costs, spent, locale }: { data: InpatientDrgSimulation; projected: DrgGroupingResult; costs: InpatientCosts | null | undefined; spent: number; locale: WorkspaceLocale }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const surgery = data.committed.items.filter(item => item.kind === 'surgery')
-  const total = data.coverage.estimatedTotalFen, reference = costs?.projectedPaymentReference?.referenceFen ?? null
-  const parts = [[t('手术费 ', 'procedure '), sum(surgery)], [t('预留耗材 ', 'reserved materials '), sum(data.reserved.items)], [t('待提交项目 ', 'pending items '), sum(data.draft.items)]] as const
+  const total = costs?.components.projectedTotalFen ?? data.coverage.estimatedTotalFen, reference = costs?.projectedPaymentReference?.referenceFen ?? null
+  const parts = [[t('已开未记费医嘱 ', 'ordered, not charged '), sum(data.committed.items.filter(item => item.kind !== 'surgery'))], [t('手术费 ', 'procedure '), sum(surgery)], [t('预留耗材 ', 'reserved materials '), sum(data.reserved.items)], [t('待提交项目 ', 'pending items '), sum(data.draft.items)]] as const
   return <section aria-label={t('做完计划手术后', 'After the planned surgery')} className="flex min-w-0 flex-col gap-1 rounded-md bg-muted p-3 text-sm">
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1"><b>{t('做完计划手术后', 'After the planned surgery')}</b>
       <span className="text-xs text-muted-foreground">{surgery.map(item => item.display).join('、')}</span>

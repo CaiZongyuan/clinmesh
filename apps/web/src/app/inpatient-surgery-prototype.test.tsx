@@ -439,8 +439,9 @@ it('手术进行中隐藏术前耗材预计并显示本台耗材与逐笔登记�
     { id: 'reservation-2', admissionId: admission.id, requestId: plan.id, materialId: material.id, materialDisplay: material.display, unit: '枚', catalogVersion: 1, priceFen: 2000, quantity: 1, consumedQuantity: 0, remainingQuantity: 1, status: 'reserved', version: 1, reason: '另一条未用预留', createdAt: time },
   ])
   const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '登记计划外的其他耗材' }))
   expect(await screen.findByRole('combobox', { name: '耗材' })).toBeDefined()
-  expect(await screen.findByText(/剩 1/)).toBeDefined()
+  expect(screen.getByRole('row', { name: '合成钛夹 × 2枚' }).textContent).toContain('3 枚')
   expect(screen.getByRole('button', { name: '登记这笔' })).toBeDefined()
   expect(screen.getByRole('region', { name: '本台耗材' })).toBeDefined()
   expect(screen.queryByRole('region', { name: '术前耗材预计' })).toBeNull()
