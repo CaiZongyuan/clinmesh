@@ -59,8 +59,9 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
   const reservations = useQuery({ queryKey: [...scope, 'drg-reservations'], enabled: active && doctor, retry: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/reservations`, inpatientMaterialReservationListSchema, signal) })
-  const noteFor = (todo: z.infer<typeof inpatientDrgReviewTodoSchema>) => notes[todo.id] ?? (doctor
-    ? postoperativeDispositionNote(todo, surgeries.data?.executions ?? [], reservations.data?.reservations ?? [], locale) : '')
+  const noteFor = (todo: z.infer<typeof inpatientDrgReviewTodoSchema>) => notes[todo.id]
+    ?? (doctor && todo.status === 'in-progress' ? todo.reason : null)
+    ?? (doctor ? postoperativeDispositionNote(todo, surgeries.data?.executions ?? [], reservations.data?.reservations ?? [], locale) : '')
   const [batching, setBatching] = useState(false), [actionError, setActionError] = useState<unknown>(null)
   const ownerKey = JSON.stringify([session.user.id, session.actor, admission.id, requestId]), currentOwner = useRef(ownerKey), mounted = useRef(true)
   currentOwner.current = active ? ownerKey : ''

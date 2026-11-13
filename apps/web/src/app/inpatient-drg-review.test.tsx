@@ -236,3 +236,34 @@ it('全部确认保留已处置历史，但不再显示确认按钮或未完成�
   expect(screen.queryByRole('button', { name: '一次全部确认' })).toBeNull()
   expect(screen.queryByRole('textbox', { name: '待办处理说明' })).toBeNull()
 })
+
+it('需要跟进的已记说明在重开后仍优先显示，明确清空禁确认且直接确认不覆盖原说明', async () => {
+  const savedNote = '分支保护，交下一班核查导丝余量'
+  let current = inpatientDrgReviewSchema.parse({ ...review, todos: [{ ...todo, status: 'in-progress', reason: savedNote }] })
+  const posts: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (init?.method === 'POST') {
+      const input = JSON.parse(String(init.body)).input
+      posts.push(input.note)
+      current = { ...current, todos: current.todos.map(item => ({ ...item, status: 'dismissed', reason: input.note })) }
+      return Response.json({ data: current, auditId: 'audit-follow-up', requestId: 'receipt-follow-up', effects: [], warnings: [] })
+    }
+    if (path.endsWith('/drg/review')) return Response.json(current)
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料未准备' } }, { status: 503 })
+  }))
+  mount(session, admission, true)
+  await screen.findByText(savedNote)
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '修改处理说明 导丝' }))
+  expect(screen.getByRole('textbox', { name: '待办处理说明' })).toHaveProperty('value', savedNote)
+  await user.clear(screen.getByRole('textbox', { name: '待办处理说明' }))
+  expect(screen.getByRole('button', { name: '按此说明确认' })).toHaveProperty('disabled', true)
+  expect(screen.getByRole('button', { name: '一次全部确认' })).toHaveProperty('disabled', true)
+  cleanup()
+  mount(session, admission, true)
+  await screen.findByText(savedNote)
+  await user.click(screen.getByRole('button', { name: '按此说明确认' }))
+  await waitFor(() => expect(posts).toEqual([savedNote]))
+  await screen.findByText('已全部确认')
+})
