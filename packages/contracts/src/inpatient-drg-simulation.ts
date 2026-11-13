@@ -65,6 +65,9 @@ export const inpatientDrgSimulationSchema = z.object({
     coveredRatioBp: z.number().int().min(0).max(10_000).nullable(), note: z.string().max(500) }).strict(),
   /** formal=正式事实分组；projected=「若计划手术实施」的推演分组，不构成临床事实或正式病组。 */
   grouping: z.object({ formal: drgGroupingResultSchema, projected: drgGroupingResultSchema.nullable(), note: text }).strict(),
+  /** 新完成操作尚未被医生的主操作确认覆盖；仅作只读假想比较，多候选分组不一致时保持未知。 */
+  postoperativeEstimate: z.object({ pendingExecutionIds: z.array(id).min(1), grouping: drgGroupingResultSchema.nullable(),
+    paymentReference: inpatientDrgPaymentReferenceSchema.nullable() }).strict().nullable().default(null),
   paymentReference: inpatientDrgPaymentReferenceSchema.nullable(),
   incompleteness: z.object({ costMissing: z.boolean(), paymentReferenceMissing: z.boolean() }).strict(),
 }).strict()

@@ -72,3 +72,46 @@ it('已开未执行医嘱只计入预计，不计为当前已用收费', () => {
   expect(screen.getByRole('button').textContent).toContain('已用 ¥1,500.00')
   expect(screen.getByRole('button').textContent).toContain('还剩 ¥2,500.00')
 })
+
+it('新完成手术待确认主操作时使用当前术后预计参考，不按旧正式参考报警', () => {
+  const data = inpatientDrgSimulationSchema.parse({ ...simulation,
+    formal: { ...simulation.formal, chargesFen: 405000 },
+    coverage: { ...simulation.coverage, estimatedTotalFen: 425000 },
+    postoperativeEstimate: { pendingExecutionIds: ['completed-pci'], grouping: { ...grouped, drgCode: 'FM39' },
+      paymentReference: { ...simulation.paymentReference, drgCode: 'FM39', referenceFen: 1200000 } } })
+  render(<DrgProgressBar data={data} costs={undefined} locale="zh-CN" onOpenDrg={() => {}} />)
+  const button = screen.getByRole('button')
+  expect(button.textContent).toContain('术后预计 FM39')
+  expect(button.textContent).toContain('待确认主操作')
+  expect(button.textContent).toContain('已用 ¥4,050.00')
+  expect(button.textContent).toContain('预计 ¥4,250.00')
+  expect(button.textContent).toContain('支付参考 ¥12,000.00')
+  expect(button.textContent).toContain('预计还剩 ¥7,750.00')
+  expect(button.textContent).not.toContain('已超')
+  expect(button.textContent).not.toContain('¥4,000.00')
+})
+
+it('术后多候选分组不一致或不可分组时保持待确认，不使用旧参考、旧病组或进度', () => {
+  const data = inpatientDrgSimulationSchema.parse({ ...simulation, formal: { ...simulation.formal, chargesFen: 405000 },
+    postoperativeEstimate: { pendingExecutionIds: ['angiography', 'pci'], grouping: null, paymentReference: null } })
+  render(<DrgProgressBar data={data} costs={undefined} locale="zh-CN" onOpenDrg={() => {}} />)
+  const button = screen.getByRole('button')
+  expect(button.textContent).toContain('待确认主操作')
+  expect(button.textContent).toContain('暂无支付参考')
+  expect(button.textContent).not.toContain('FR59')
+  expect(button.textContent).not.toContain('¥4,000.00')
+  expect(button.textContent).not.toContain('已超')
+  expect(button.textContent).not.toContain('接近')
+  expect(screen.queryByRole('img')).toBeNull()
+})
+
+it('可分组待实施计划优先于未确认的术后预计', () => {
+  const data = inpatientDrgSimulationSchema.parse({ ...simulation,
+    grouping: { ...simulation.grouping, projected: { ...grouped, drgCode: 'FR25' } },
+    postoperativeEstimate: { pendingExecutionIds: ['completed-pci'], grouping: { ...grouped, drgCode: 'FM39' },
+      paymentReference: { ...simulation.paymentReference, drgCode: 'FM39', referenceFen: 1200000 } } })
+  render(<DrgProgressBar data={data} costs={undefined} locale="zh-CN" onOpenDrg={() => {}} />)
+  expect(screen.getByRole('button').textContent).toContain('按计划手术预计 FR25')
+  expect(screen.getByRole('button').textContent).not.toContain('待确认主操作')
+  expect(screen.getByRole('button').textContent).not.toContain('FM39')
+})

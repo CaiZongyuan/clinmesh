@@ -29,14 +29,21 @@ const costs = inpatientCostsSchema.parse({ fingerprint: 'c'.repeat(64), componen
 const clients: QueryClient[] = []
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
 
-function fixture(role: SessionContext['actor']['roleCode'] = 'inpatient-doctor') {
+function fixture(role: SessionContext['actor']['roleCode'] = 'inpatient-doctor', postoperative = false) {
   let amount = 150000
+  let pendingMainProcedure = postoperative, mainConfirmed = false, simulationFailed = false, costsIncomplete = false
+  const postoperativeGroup = { ...grouped, drgCode: 'FM39' }
+  const postoperativeReference = { ...simulation.paymentReference!, drgCode: 'FM39', referenceFen: 1200000 }
   const reads: string[] = []
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     reads.push(path)
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: time, requests: [], executions: [], inProgress: [] })
-    if (path.endsWith('/drg/simulation')) return Response.json({ ...simulation, formal: { ...simulation.formal, chargesFen: amount }, coverage: { ...simulation.coverage, coveredFen: amount, estimatedTotalFen: amount } })
-    if (path.endsWith('/drg/record-checks')) return Response.json(inpatientDrgRecordChecksSchema.parse({ admissionId: admission.id, encounterVersion: '2', fingerprint: 'a'.repeat(64), status: 'complete', simulation, issues: [], sources: [], paymentStatus: 'available', paymentMessage: '合成参考', missing: [], costs, usage: [] }))
+    if (path.endsWith('/drg/simulation')) return simulationFailed ? Response.json({ error: { code: 'SYNTHETIC_UNAVAILABLE', message: '合成分组读取失败' } }, { status: 503 })
+      : Response.json({ ...simulation, formal: { ...simulation.formal, chargesFen: amount }, coverage: { ...simulation.coverage, coveredFen: amount, estimatedTotalFen: amount },
+        grouping: { ...simulation.grouping, formal: mainConfirmed ? postoperativeGroup : grouped },
+        paymentReference: mainConfirmed ? postoperativeReference : simulation.paymentReference,
+        postoperativeEstimate: pendingMainProcedure ? { pendingExecutionIds: ['completed-pci'], grouping: postoperativeGroup, paymentReference: postoperativeReference } : null })
+    if (path.endsWith('/drg/record-checks')) return Response.json(inpatientDrgRecordChecksSchema.parse({ admissionId: admission.id, encounterVersion: '2', fingerprint: 'a'.repeat(64), status: 'complete', simulation, issues: [], sources: [], paymentStatus: 'available', paymentMessage: '合成参考', missing: [], costs: { ...costs, projectionComplete: !costsIncomplete }, usage: [] }))
     return Response.json({ error: { code: 'SYNTHETIC_UNAVAILABLE', message: '合成次级资料未准备' } }, { status: 503 })
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
@@ -50,7 +57,8 @@ function fixture(role: SessionContext['actor']['roleCode'] = 'inpatient-doctor')
       {open ? <InpatientDrgPanel query={query} admission={admission} session={currentSession} locale="zh-CN" write={write} /> : null}</>
   }
   render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
-  return { reads, update: () => { amount = 200000 } }
+  return { reads, update: () => { amount = 200000 }, confirmMain: () => { pendingMainProcedure = false; mainConfirmed = true },
+    failSimulation: () => { simulationFailed = true }, markCostsIncomplete: () => { costsIncomplete = true } }
 }
 
 it('患者头部与 DRG 页复用一次查询，登记后的失效刷新同时更新两处金额', async () => {
@@ -88,4 +96,37 @@ it('页面隐藏时停止患者头部的 DRG 轮询，恢复可见后继续更�
   visibility.mockReturnValue('visible')
   await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
   await waitFor(() => expect(screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' }).textContent).toContain('已用 ¥2,000.00'))
+})
+
+it('术后预计持续读取当前费用，主操作确认后自然切换正式口径', async () => {
+  const f = fixture('inpatient-doctor', true), user = userEvent.setup()
+  const header = () => screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' })
+  await waitFor(() => expect(header().textContent).toContain('术后预计 FM39'))
+  expect(header().textContent).toContain('待确认主操作')
+  expect(header().textContent).toContain('支付参考 ¥12,000.00')
+  f.update()
+  await user.click(screen.getByRole('button', { name: '刷新住院事实' }))
+  await waitFor(() => expect(header().textContent).toContain('已用 ¥2,000.00'))
+  expect(header().textContent).toContain('待确认主操作')
+  f.confirmMain()
+  await user.click(screen.getByRole('button', { name: '刷新住院事实' }))
+  await waitFor(() => expect(header().textContent).toContain('当前病组 FM39'))
+  expect(header().textContent).not.toContain('待确认主操作')
+  expect(header().textContent).toContain('支付参考 ¥12,000.00')
+})
+
+it('术后预计费用缺价或重新读取失败时不使用部分总额与旧支付参考继续画进度', async () => {
+  const f = fixture('inpatient-doctor', true), user = userEvent.setup()
+  const header = () => screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' })
+  await waitFor(() => expect(header().textContent).toContain('待确认主操作'))
+  f.markCostsIncomplete()
+  await user.click(screen.getByRole('button', { name: '刷新住院事实' }))
+  await waitFor(() => expect(header().textContent).toContain('预计总费用暂不可用'))
+  expect(screen.queryByRole('img')).toBeNull()
+  f.failSimulation()
+  await user.click(screen.getByRole('button', { name: '刷新住院事实' }))
+  await waitFor(() => expect(header().textContent).toContain('暂无支付参考'))
+  expect(header().textContent).not.toContain('FM39')
+  expect(header().textContent).not.toContain('¥12,000.00')
+  expect(screen.queryByRole('img')).toBeNull()
 })

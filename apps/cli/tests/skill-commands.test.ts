@@ -182,7 +182,7 @@ it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', 
   expect(skill).toContain('INPATIENT_DRG_PLAN_CONFLICT')
   expect(getHisOperation('inpatient.drg.simulate').input.parse({ admissionId: 'synthetic-admission',
     draft: { primarySurgeryRequestId: 'synthetic-plan' } })).toMatchObject({ draft: { primarySurgeryRequestId: 'synthetic-plan' } })
-  expect(getHisOperation('inpatient.drg.simulate').version).toBe(3)
+  expect(getHisOperation('inpatient.drg.simulate').version).toBe(4)
   expect(getHisOperation('inpatient.drg.pregroup').version).toBe(4)
   expect(getHisOperation('inpatient.drg.payer.review.preview').version).toBe(2)
   expect(payer.version).toBe(4)
