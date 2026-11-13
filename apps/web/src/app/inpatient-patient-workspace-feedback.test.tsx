@@ -123,14 +123,14 @@ async function finish(f: ReturnType<typeof fixture>) {
 it('A 的分床确认已发送后切到 B，晚到的 A 回执不显示 B 完成或交接', async () => {
   const f = fixture()
   await receive(f)
-  expect(screen.queryByText(/^已完成本次操作/)).toBeNull()
+  expect(screen.queryByText(/^已完成接诊分床/)).toBeNull()
   await f.user.click(screen.getByRole('button', { name: '切到合成患者 B' }))
   expect(screen.getByRole('region', { name: '当前住院患者' }).textContent).toContain('合成患者 B')
   await finish(f)
   expect(f.posts).toEqual([{ path: '/api/his/v1/inpatient/admissions/admission-A/receive', body: { input: { encounterVersion: '1', bedId: 'feedback-bed' } } }])
   expect(f.receipts).toEqual([f.response])
   expect(sessionStorage.length).toBe(0)
-  expect(screen.queryByText('已完成本次操作 · 合成患者 B')).toBeNull()
+  expect(screen.queryByText('已完成接诊分床 · 合成患者 B')).toBeNull()
   expect(screen.queryByText('已完成本次操作')).toBeNull()
 })
 
@@ -138,7 +138,7 @@ it('当前 A 的正式分床确认仍显示 A 的完成和下一步交接', asyn
   const f = fixture()
   await receive(f)
   await finish(f)
-  const title = await screen.findByText('已完成本次操作 · 合成患者 A · 已完成接诊分床')
+  const title = await screen.findByText('已完成接诊分床 · 合成患者 A')
   expect(within(title.closest<HTMLElement>('[data-slot="toast"]')!).getByText('入科登记已完成')).toBeTruthy()
 })
 
@@ -147,7 +147,7 @@ it('医生的 PCI 工作稿保存仍不显示正式完成或交接', async () =>
   await f.user.click(screen.getByRole('button', { name: '保存 PCI 工作稿' }))
   await vi.waitFor(() => expect(f.posts).toHaveLength(1))
   await finish(f)
-  expect(screen.queryByText('已完成本次操作 · 合成患者 A')).toBeNull()
+  expect(screen.queryByText('已保存选型参数草稿 · 合成患者 A')).toBeNull()
   expect(screen.queryByText('已完成本次操作')).toBeNull()
 })
 
@@ -157,7 +157,7 @@ it('不带 admissionId 的全局时钟命令保持当前页面的完成反馈合
   await vi.waitFor(() => expect(f.posts).toHaveLength(1))
   await f.user.click(screen.getByRole('button', { name: '切到合成患者 B' }))
   await finish(f)
-  expect(await screen.findByText('已完成本次操作 · 合成患者 B')).toBeTruthy()
+  expect(await screen.findByText('已推进虚拟时间 · 合成患者 B')).toBeTruthy()
 })
 
 it.each([false, true])('医生在归档=%s时仍能打开本次住院累计用量，状态不伪装成正常跟进', async archived => {

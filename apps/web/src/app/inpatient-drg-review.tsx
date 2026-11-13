@@ -9,6 +9,7 @@ import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useQuery } from '@tanstack/react-query'
+import { CheckCircle2Icon, CircleIcon } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { z } from 'zod'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -43,8 +44,8 @@ export function InpatientDrgReviewDisclosure(props: Props): React.JSX.Element {
 export function InpatientDrgReviewPanel({ admission, session, locale, write, active = true, compact = false, onOpenRecord, requestId }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const financial = session.actor.roleCode === 'cashier', [notes, setNotes] = useState<Record<string, string>>({}), [handoff, setHandoff] = useState('')
-  const [historyOpen, setHistoryOpen] = useState(false), [sourceId, setSourceId] = useState<string | null>(null)
-  useLayoutEffect(() => { if (!active) { setHistoryOpen(false); setSourceId(null) } }, [active])
+  const [historyOpen, setHistoryOpen] = useState(false), [sourceId, setSourceId] = useState<string | null>(null), [editingTodo, setEditingTodo] = useState<string | null>(null)
+  useLayoutEffect(() => { if (!active) { setHistoryOpen(false); setSourceId(null); setEditingTodo(null) } }, [active])
   const review = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'drg-review'], enabled: active,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/review`, inpatientDrgReviewSchema, signal),
     refetchInterval: active ? 3_000 : false, refetchIntervalInBackground: false, retry: false })
@@ -99,53 +100,88 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
       if (mounted.current && currentOwner.current === ownerKey) { setActionError(error); await review.refetch() }
     } finally { if (mounted.current) setBatching(false) }
   }
-  return <section aria-label={financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')} className="flex flex-col gap-3">
-    <h4 className="font-medium">{financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')}</h4>
-    {!compact ? <p className="text-sm text-muted-foreground">{financial ? t('核对实际收费与应计费用。发现差异时先查看费用原记录，完成更正后再复查。', 'Compare posted and expected charges. Check the original charge and recheck after correction.') : t('核对术前计划与实际用量。发现差异时先查看手术原记录，填写处理说明后复查或交接。', 'Compare the preoperative plan with actual use. Check the surgery record, then record the disposition and recheck or hand over.')}</p> : null}
+  const compactClinical = compact && doctor
+  const ownTodos = openTodos.filter(todo => todo.ownerRole === session.actor.roleCode)
+  const canConfirmAll = doctor && !readonly && ownTodos.length > 0
+  const modelStatus = data?.model ? data.model.current ? t('术后分析可查看', 'Postoperative analysis available')
+    : data.model.status === 'unknown' ? t('AI请求结果未知，保留待核查，不自动重发。', 'AI outcome unknown; awaiting investigation without automatic resubmission.')
+      : data.model.status === 'blocked' ? blockedReason(data.model.failureCode)
+        : data.model.status === 'failed' ? t('术后分析未完成，按已有核查结果处理。', 'Analysis incomplete; use the available findings.') : null : null
+  const history = data && compact ? <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+    <DialogTrigger render={<Button type="button" variant="ghost" size="sm" />}>{t('核查依据与历史', 'Review evidence and history')}</DialogTrigger>
+    <DialogContent className="sm:max-w-[800px]"><DialogHeader><DialogTitle>{t('核查依据与历史', 'Review evidence and history')}</DialogTitle><DialogDescription>{admission.patientName}</DialogDescription></DialogHeader>
+      <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-4">
+        {data.summary.formalChargesFen !== null ? <p>{t('阶段正式收费 ', 'Posted charges at review ')}{formatFen(data.summary.formalChargesFen, locale)}{financial ? '' : ` · ${t('阶段 DRG ', 'Stage DRG ')}${data.summary.formalDrgCode ?? t('未确定', 'Undetermined')}`}</p> : null}
+        {!financial && data.summary.projectedTotalFen !== null ? <p>{t('阶段费用预计 ', 'Projected charges at review ')}{formatFen(data.summary.projectedTotalFen, locale)}</p> : null}
+        {modelStatus ? <p role="status">{modelStatus}</p> : null}
+        {data.planBases.map(basis => <InpatientMaterialPlanBasisDetails key={basis.requestId} basis={basis} locale={locale} procedureDisplay={data.comparisons.find(item => item.requestId === basis.requestId)?.procedureDisplay ?? data.todos.find(item => item.requestId === basis.requestId)?.procedureDisplay} />)}
+        {data.comparisons.map(item => <p key={`${item.executionId ?? ''}:${item.materialId}@${item.catalogVersion}`}>{item.display} · {t('术前确认 ', 'Confirmed ')}{item.plannedQuantity ?? t('未知', 'Unknown')} · {t('实际 ', 'Actual ')}{item.actualQuantity}</p>)}
+        {data.model?.observations.map(item => <p key={item.key}>{item.explanation}</p>)}
+        {data.resolvedTodos.map(todo => <p key={todo.id}>{todo.display} · {statusName(todo.status)} · {todo.reason}</p>)}
+        {data.actions.map((action, index) => <p key={index}>{roleName(action.role)} · {action.note} · {new Date(action.at).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</p>)}
+      </div><DialogFooter><DialogClose render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></DialogFooter>
+    </DialogContent>
+  </Dialog> : null
+  const confirmAllButton = canConfirmAll ? <Button type="button" variant="outline" size="sm" disabled={batching || write.blocked || ownTodos.some(todo => !noteFor(todo).trim())} onClick={() => { void confirmAll() }}>{batching ? t('正在逐项确认', 'Confirming each task') : t('一次全部确认', 'Confirm all')}</Button> : null
+  const pendingLabel = ownTodos.length > 0 ? t(`${ownTodos.length} 项待你确认`, `${ownTodos.length} to confirm`)
+    : openTodos.length > 0 ? t(`${openTodos.length} 项待处理`, `${openTodos.length} pending`)
+      : data?.missing.length ? t('核查不完整', 'Review incomplete') : data?.todos.length ? t('已全部确认', 'All confirmed') : t('无待核查差异', 'No review findings')
+  return <section aria-label={financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')} className={compactClinical ? 'flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3.5' : 'flex flex-col gap-3'}>
+    <div className="flex flex-wrap items-center gap-2">
+      <h4 className="font-medium">{compactClinical ? t('术后核查', 'Postoperative review') : financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')}</h4>
+      {compactClinical && data && !['inactive', 'waiting-surgery'].includes(data.status) ? <Badge variant="outline" className={openTodos.length > 0 ? 'text-warning' : 'text-success'} role="status">{pendingLabel}</Badge> : null}
+      {compactClinical ? <><span className="flex-1" />{history}{confirmAllButton}</> : null}
+    </div>
     {actionError ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(actionError instanceof Error ? actionError : new Error(String(actionError)), getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {review.isPending ? <p role="status">{t('正在读取核查结果', 'Loading review')}</p> : null}
     {review.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(review.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {data ? <>
-      {data.status === 'waiting-surgery' ? <p>{t('等待相关手术完成后进行计划与实际核查。', 'The related surgery must finish before comparison.')}</p> : null}
-      {data.status === 'inactive' ? <p>{t('尚无已完成手术的核查结果。手术完成后可在此核对。', 'No completed surgery is available for review. Return here after surgery.')}</p> : null}
+      {data.status === 'waiting-surgery' ? <p>{t('等待相关手术完成', 'Waiting for surgery completion')}</p> : null}
+      {data.status === 'inactive' ? <p>{t('尚无术后核查结果', 'No postoperative review yet')}</p> : null}
       {data.freezeReason ? <p role="status">{data.freezeReason}</p> : null}
-      {data.summary.formalChargesFen !== null ? <p>{t('阶段正式收费 ', 'Posted charges at review ')}{formatFen(data.summary.formalChargesFen, locale)}{financial ? '' : ` · ${t('阶段 DRG ', 'Stage DRG ')}${data.summary.formalDrgCode ?? t('未确定', 'Undetermined')}`}</p> : null}
-      {!financial && data.summary.projectedTotalFen !== null ? <p>{t('含医生已有后续治疗计划的费用预计 ', 'Projection including existing treatment plans ')}{formatFen(data.summary.projectedTotalFen, locale)}</p> : null}
+      {!compact && data.summary.formalChargesFen !== null ? <p>{t('阶段正式收费 ', 'Posted charges at review ')}{formatFen(data.summary.formalChargesFen, locale)}{financial ? '' : ` · ${t('阶段 DRG ', 'Stage DRG ')}${data.summary.formalDrgCode ?? t('未确定', 'Undetermined')}`}</p> : null}
+      {!compact && !financial && data.summary.projectedTotalFen !== null ? <p>{t('含医生已有后续治疗计划的费用预计 ', 'Projection including existing treatment plans ')}{formatFen(data.summary.projectedTotalFen, locale)}</p> : null}
       {data.missing.length > 0 && data.status !== 'waiting-surgery' && data.status !== 'inactive' ? <p role="status">{t('核查不完整：', 'Incomplete review: ')}{data.missing.join(' · ')}</p> : null}
-      {compact ? <Dialog open={historyOpen} onOpenChange={setHistoryOpen}><DialogTrigger render={<Button type="button" variant="outline" className="self-start" />}>{t('核查依据与历史', 'Review evidence and history')}</DialogTrigger>
-        <DialogContent className="sm:max-w-[800px]"><DialogHeader><DialogTitle>{t('核查依据与历史', 'Review evidence and history')}</DialogTitle><DialogDescription>{admission.patientName}</DialogDescription></DialogHeader>
-          <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-4">
-            {data.planBases.map(basis => <InpatientMaterialPlanBasisDetails key={basis.requestId} basis={basis} locale={locale} procedureDisplay={data.comparisons.find(item => item.requestId === basis.requestId)?.procedureDisplay ?? data.todos.find(item => item.requestId === basis.requestId)?.procedureDisplay} />)}
-            {data.comparisons.map(item => <p key={`${item.executionId ?? ''}:${item.materialId}@${item.catalogVersion}`}>{item.display} · {t('术前确认 ', 'Confirmed ')}{item.plannedQuantity ?? t('未知', 'Unknown')} · {t('实际 ', 'Actual ')}{item.actualQuantity}</p>)}
-            {data.model?.observations.map(item => <p key={item.key}>{item.explanation}</p>)}
-            {data.resolvedTodos.map(todo => <p key={todo.id}>{todo.display} · {statusName(todo.status)} · {todo.reason}</p>)}
-            {data.actions.map((action, index) => <p key={index}>{roleName(action.role)} · {action.note} · {new Date(action.at).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</p>)}
-          </div><DialogFooter><DialogClose render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></DialogFooter>
-        </DialogContent></Dialog> : <>
+      {compact && !compactClinical ? history : null}
+      {!compact ? <>
         {!financial ? data.planBases.map(basis => <InpatientMaterialPlanBasisDetails key={basis.requestId} basis={basis} locale={locale} procedureDisplay={data.comparisons.find(item => item.requestId === basis.requestId)?.procedureDisplay ?? data.todos.find(item => item.requestId === basis.requestId)?.procedureDisplay} />) : null}
-        {data.comparisons.length > 0 ? <Table><TableHeader><TableRow><TableHead>{t('耗材产品', 'Material')}</TableHead><TableHead>{t('术前确认数量', 'Confirmed preoperative quantity')}</TableHead><TableHead>{t('实际使用', 'Actual use')}</TableHead></TableRow></TableHeader><TableBody>{data.comparisons.map(item => <TableRow key={`${item.executionId ?? ""}:${item.materialId}@${item.catalogVersion}`}><TableCell>{item.display}{item.executionId ? <p className="text-sm text-muted-foreground">{item.procedureDisplay ?? t('实际手术记录', 'Performed procedure record')}</p> : null}</TableCell><TableCell>{item.plannedQuantity ?? t('未知', 'Unknown')}</TableCell><TableCell>{item.actualQuantity}</TableCell></TableRow>)}</TableBody></Table> : null}
-      </>}
-      {data.model ? <>
-        <p role="status">{data.model.current ? t('术后分析已就绪，可展开查看核对依据。', 'Postoperative analysis is ready. Open its supporting explanation.')
-          : data.model.status === 'unknown' ? t('AI请求结果未知，保留待核查，不自动重发。', 'AI outcome unknown; awaiting investigation without automatic resubmission.')
-            : data.model.status === 'blocked' ? `${t('术后分析未完成：', 'Postoperative analysis incomplete: ')}${blockedReason(data.model.failureCode)}`
-              : data.model.status === 'failed' ? t('术后分析未完成，请按已有核查结果继续处理待办。', 'Postoperative analysis is incomplete. Continue with the available findings and tasks.')
-              : data.status === 'frozen' ? t('本轮已停止新分析，保留最后结果与未完成状态。', 'New analysis ended; prior results and unfinished states are retained.')
-                : data.status === 'complete' || data.status === 'incomplete' ? '' : ''}</p>
-        {!compact && data.model.observations.length > 0 ? <details><summary>{data.model.current ? t('查看已核验解释', 'Verified explanations') : t('查看保留的历史解释', 'Retained historical explanations')}</summary>{data.model.observations.map(item => <p key={item.key}>{item.explanation}</p>)}</details> : null}
+        {data.comparisons.length > 0 ? <Table><TableHeader><TableRow><TableHead>{t('耗材产品', 'Material')}</TableHead><TableHead>{t('术前确认数量', 'Confirmed preoperative quantity')}</TableHead><TableHead>{t('实际使用', 'Actual use')}</TableHead></TableRow></TableHeader><TableBody>{data.comparisons.map(item => <TableRow key={`${item.executionId ?? ''}:${item.materialId}@${item.catalogVersion}`}><TableCell>{item.display}{item.executionId ? <p className="text-sm text-muted-foreground">{item.procedureDisplay ?? t('实际手术记录', 'Performed procedure record')}</p> : null}</TableCell><TableCell>{item.plannedQuantity ?? t('未知', 'Unknown')}</TableCell><TableCell>{item.actualQuantity}</TableCell></TableRow>)}</TableBody></Table> : null}
+        {modelStatus ? <p role="status">{modelStatus}</p> : null}
+        {data.model && data.model.observations.length > 0 ? <details><summary>{data.model.current ? t('查看已核验解释', 'Verified explanations') : t('查看保留的历史解释', 'Retained historical explanations')}</summary>{data.model.observations.map(item => <p key={item.key}>{item.explanation}</p>)}</details> : null}
       </> : null}
-      {openTodos.length === 0 && data.status !== 'waiting-surgery' && data.status !== 'inactive' ? <p>{t('当前没有未解决核查待办。', 'No unresolved review tasks.')}</p> : null}
-      {doctor && !readonly && openTodos.some(todo => todo.ownerRole === session.actor.roleCode) ? <Button type="button" variant="outline" className="self-start" disabled={batching || write.blocked || openTodos.filter(todo => todo.ownerRole === session.actor.roleCode).some(todo => !noteFor(todo).trim())} onClick={() => { void confirmAll() }}>{batching ? t('正在逐项确认', 'Confirming each task') : t('一次全部确认', 'Confirm all')}</Button> : null}
-      {data.todos.map(todo => <article key={todo.id} className="flex flex-col gap-2 rounded-md border p-3">
-        <div className="flex flex-wrap items-center gap-2"><h5 className="font-medium">{todo.display}</h5><Badge variant="secondary">{statusName(todo.status)}</Badge><span>{t('负责岗位：', 'Responsible: ')}{roleName(todo.ownerRole)}</span></div>
-        <p>{todo.explanation}</p>{compact ? <Dialog open={sourceId === todo.id} onOpenChange={open => setSourceId(open ? todo.id : null)}><DialogTrigger render={<Button type="button" variant="link" className="self-start" />}>{t('查看来源与原记录', 'View sources and original records')}</DialogTrigger>
-          <DialogContent className="sm:max-w-[720px]"><DialogHeader><DialogTitle>{todo.display}</DialogTitle><DialogDescription>{t('核查来源与恢复入口', 'Review sources and recovery actions')}</DialogDescription></DialogHeader><div className="min-h-0 overflow-y-auto p-4"><InpatientDrgIssueDetails issue={todo} locale={locale} financial={financial} onOpenRecord={onOpenRecord ? target => { setSourceId(null); onOpenRecord(target) } : undefined} /></div><DialogFooter><DialogClose render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></DialogFooter></DialogContent>
-        </Dialog> : <InpatientDrgIssueDetails issue={todo} locale={locale} financial={financial} onOpenRecord={onOpenRecord} />}{todo.reason ? <p>{t('处置依据：', 'Disposition reason: ')}{todo.reason}</p> : null}
-        {!readonly && todo.ownerRole === session.actor.roleCode && (todo.status === 'pending' || todo.status === 'in-progress') ? <>
-          <Field><FieldLabel htmlFor={`drg-todo-${todo.id}`}>{t('待办处理说明', 'Task disposition reason')}</FieldLabel><Input id={`drg-todo-${todo.id}`} value={noteFor(todo)} onChange={event => setNotes(previous => ({ ...previous, [todo.id]: event.target.value }))} maxLength={2000} /></Field>
-          <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={batching || write.blocked || !(noteFor(todo)).trim()} onClick={() => { void act(todo.id, 'in-progress') }}>{doctor ? t('需要跟进', 'Follow up') : t('标记处理中', 'Start processing')}</Button><Button variant="outline" disabled={batching || write.blocked || !(noteFor(todo)).trim()} onClick={() => { void act(todo.id, 'dismiss') }}>{doctor ? t('按此说明确认', 'Confirm this note') : t('人工判断无需处理', 'Dismiss with reason')}</Button><Button variant="outline" disabled={batching || write.blocked || !(noteFor(todo)).trim() || data.status === 'frozen'} onClick={() => { void act(todo.id, 'recheck') }}>{t('复查最新业务记录', 'Recheck business facts')}</Button></div>
-        </> : null}
-      </article>)}
+      {!compactClinical && openTodos.length === 0 && data.status !== 'waiting-surgery' && data.status !== 'inactive' ? <p>{t('当前没有未解决核查待办。', 'No unresolved review tasks.')}</p> : null}
+      {!compactClinical ? confirmAllButton : null}
+      <div role={compactClinical ? 'list' : undefined} aria-label={compactClinical ? t('术后核查清单', 'Postoperative checklist') : undefined} className={compactClinical ? '-mx-3.5 flex min-w-0 flex-col' : 'contents'}>
+      {data.todos.map(todo => {
+        const actionable = !readonly && todo.ownerRole === session.actor.roleCode && (todo.status === 'pending' || todo.status === 'in-progress')
+        const confirmed = todo.status === 'resolved' || todo.status === 'dismissed'
+        const difference = todo.plannedQuantity !== null && todo.actualQuantity !== null ? todo.actualQuantity - todo.plannedQuantity : null
+        const badge = compactClinical && !confirmed && difference !== null && difference !== 0 ? difference > 0 ? t(`多用 ${difference}`, `${difference} extra`) : t(`未用 ${-difference}`, `${-difference} unused`)
+          : compactClinical && confirmed ? t('已确认', 'Confirmed') : statusName(todo.status)
+        const note = noteFor(todo)
+        const recheck = actionable ? <Button type="button" variant="outline" size="sm" disabled={batching || write.blocked || !note.trim() || data.status === 'frozen'} onClick={() => { setSourceId(null); void act(todo.id, 'recheck') }}>{t('复查最新业务记录', 'Recheck business facts')}</Button> : null
+        const source = compact ? <Dialog open={sourceId === todo.id} onOpenChange={open => setSourceId(open ? todo.id : null)}><DialogTrigger render={<Button type="button" variant="link" size="sm" />}>{compactClinical ? t('看术中登记', 'View intraoperative entries') : t('查看来源与原记录', 'View sources and original records')}</DialogTrigger>
+          <DialogContent className="sm:max-w-[720px]"><DialogHeader><DialogTitle>{todo.display}</DialogTitle><DialogDescription>{t('核查来源与恢复入口', 'Review sources and recovery actions')}</DialogDescription></DialogHeader><div className="min-h-0 overflow-y-auto p-4"><InpatientDrgIssueDetails issue={todo} locale={locale} financial={financial} onOpenRecord={onOpenRecord ? target => { setSourceId(null); onOpenRecord(target) } : undefined} /></div><DialogFooter>{recheck}<DialogClose render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></DialogFooter></DialogContent>
+        </Dialog> : null
+        return <article key={todo.id} role={compactClinical ? 'listitem' : undefined} className={compactClinical ? 'flex min-w-0 flex-col gap-2 border-t px-3.5 py-3' : 'flex flex-col gap-2 rounded-md border p-3'}>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {compactClinical ? confirmed ? <CheckCircle2Icon className="size-4 shrink-0 text-success" aria-hidden="true" /> : <CircleIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : null}
+            <h5 className="min-w-0 font-medium break-words">{todo.display}</h5><Badge variant="secondary">{badge}</Badge>
+            {!compactClinical || todo.ownerRole !== session.actor.roleCode ? <span className="text-xs text-muted-foreground">{t('负责岗位：', 'Responsible: ')}{roleName(todo.ownerRole)}</span> : null}
+            {compactClinical && todo.status === 'in-progress' ? <span className="text-xs text-warning">{t('需要跟进', 'Follow-up needed')}</span> : null}
+            {compactClinical ? <><span className="flex-1" />{source}</> : null}
+          </div>
+          {!compactClinical ? <>{todo.explanation}{source ?? <InpatientDrgIssueDetails issue={todo} locale={locale} financial={financial} onOpenRecord={onOpenRecord} />}</> : null}
+          {compactClinical ? <div className="flex min-w-0 items-start gap-2 text-sm"><p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-muted-foreground">{confirmed ? todo.reason ?? todo.explanation : note || todo.explanation}</p>
+            {actionable ? <Button type="button" size="sm" variant="ghost" className="h-auto shrink-0 px-1 py-0.5" aria-label={`${t('修改处理说明', 'Edit disposition note')} ${todo.display}`} aria-expanded={editingTodo === todo.id} onClick={() => setEditingTodo(editingTodo === todo.id ? null : todo.id)}>{t('修改说明', 'Edit note')}</Button> : null}
+          </div> : todo.reason ? <p>{t('处置依据：', 'Disposition reason: ')}{todo.reason}</p> : null}
+          {actionable ? <>
+            {!compactClinical || editingTodo === todo.id ? <Field><FieldLabel htmlFor={`drg-todo-${todo.id}`}>{t('待办处理说明', 'Task disposition reason')}</FieldLabel><Input id={`drg-todo-${todo.id}`} value={note} onChange={event => setNotes(previous => ({ ...previous, [todo.id]: event.target.value }))} maxLength={2000} /></Field> : null}
+            <div className={compactClinical ? 'flex flex-wrap justify-end gap-2' : 'flex flex-wrap gap-2'}><Button type="button" variant="ghost" size="sm" disabled={batching || write.blocked || !note.trim()} onClick={() => { void act(todo.id, 'in-progress') }}>{doctor ? t('需要跟进', 'Follow up') : t('标记处理中', 'Start processing')}</Button><Button type="button" variant="outline" size="sm" disabled={batching || write.blocked || !note.trim()} onClick={() => { void act(todo.id, 'dismiss') }}>{doctor ? t('按此说明确认', 'Confirm this note') : t('人工判断无需处理', 'Dismiss with reason')}</Button>{!compact ? recheck : null}</div>
+          </> : null}
+        </article>
+      })}
+      </div>
       {!compact && data.resolvedTodos.length > 0 ? <details><summary>{t('已按记录解决的待办', 'Tasks resolved by facts')}</summary>{data.resolvedTodos.map(todo => <p key={todo.id}>{todo.display} · {statusName(todo.status)} · {todo.reason}</p>)}</details> : null}
       {!compact && data.actions.length > 0 ? <details><summary>{t('查看人工处置历史', 'Disposition history')}</summary>{data.actions.map((action, index) => <p key={index}>{roleName(action.role)} · {action.note} · {new Date(action.at).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</p>)}</details> : null}
       {data.handedOver ? <p>{t('本轮已交接：', 'Handoff completed: ')}{data.handedOver.note}</p> : !readonly && data.status === 'frozen' && ['inpatient-doctor', 'medical-records'].includes(session.actor.roleCode) ? <>

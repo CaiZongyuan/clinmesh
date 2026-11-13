@@ -29,14 +29,21 @@ function mount(currentSession = session, stay = admission, compact = false) {
 }
 
 it('医生术后待办直接可处理，来源与已解决历史按需打开且焦点归还', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...review, resolvedTodos: [{ ...todo, id: 'resolved-1', status: 'resolved', display: '已解决的合成导管', reason: '原记录已核实' }] })))
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...review, summary: { ...review.summary, projectedTotalFen: 220000 },
+    model: { current: true, status: 'succeeded', failureCode: null, observations: [] },
+    resolvedTodos: [{ ...todo, id: 'resolved-1', status: 'resolved', display: '已解决的合成导管', reason: '原记录已核实' }] })))
   const navigate = mount(session, admission, true)
   const item = (await screen.findByText('导丝')).closest('article')!
-  expect(item.textContent).toContain('负责岗位：住院医生')
-  expect(within(item).getByRole('textbox', { name: '待办处理说明' })).toBeDefined()
+  expect(screen.getByRole('list', { name: '术后核查清单' })).toBeDefined()
+  expect(screen.queryByText(/^阶段正式收费/)).toBeNull()
+  expect(screen.queryByText(/^阶段费用预计|术后分析可查看/)).toBeNull()
+  expect(item.textContent).toContain('多用 1')
+  expect(within(item).queryByRole('textbox', { name: '待办处理说明' })).toBeNull()
   expect(screen.queryByText('Procedure/execution-1')).toBeNull()
   expect(screen.queryByText(/已解决的合成导管/)).toBeNull()
-  const user = userEvent.setup(), source = within(item).getByRole('button', { name: '查看来源与原记录' })
+  const user = userEvent.setup(), source = within(item).getByRole('button', { name: '看术中登记' })
+  await user.click(within(item).getByRole('button', { name: '修改处理说明 导丝' }))
+  expect(within(item).getByRole('textbox', { name: '待办处理说明' })).toBeDefined()
   await user.click(source)
   const dialog = await screen.findByRole('dialog', { name: '导丝' })
   expect(dialog.textContent).toContain('计划量：1')
@@ -47,6 +54,7 @@ it('医生术后待办直接可处理，来源与已解决历史按需打开且�
   await waitFor(() => expect(document.activeElement).toBe(source))
   await user.click(screen.getByRole('button', { name: '核查依据与历史' }))
   expect(await screen.findByText(/已解决的合成导管/)).toBeDefined()
+  expect(within(screen.getByRole('dialog', { name: '核查依据与历史' })).getByText('术后分析可查看')).toBeDefined()
   await user.keyboard('{Escape}')
   expect(within(item).getByRole('textbox', { name: '待办处理说明' })).toBeDefined()
 })
@@ -167,6 +175,7 @@ it('术后处理说明按记录带出，一次确认逐项提交，第二项失�
   }))
   mount(session, admission, true)
   await screen.findByText('导丝')
+  await userEvent.setup().click(screen.getByRole('button', { name: '修改处理说明 导丝' }))
   expect(screen.getAllByRole<HTMLInputElement>('textbox', { name: '待办处理说明' })[0]!.value).toContain('实际用量超出原确认计划')
   await userEvent.setup().click(screen.getByRole('button', { name: '一次全部确认' }))
   await waitFor(() => expect(posts).toEqual(['todo-1', 'todo-2']))
@@ -222,8 +231,8 @@ it('全部确认保留已处置历史，但不再显示确认按钮或未完成�
   }))
   mount(session, admission, true)
   await userEvent.setup().click(await screen.findByRole('button', { name: '一次全部确认' }))
-  await screen.findByText('当前没有未解决核查待办。')
-  expect(screen.getByText('人工无需处理')).toBeDefined()
+  await screen.findByText('已全部确认')
+  expect(screen.getByText('已确认')).toBeDefined()
   expect(screen.queryByRole('button', { name: '一次全部确认' })).toBeNull()
   expect(screen.queryByRole('textbox', { name: '待办处理说明' })).toBeNull()
 })

@@ -215,7 +215,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
   const admission = (await s.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
   const catalog = await s.read('inpatient-doctor', '/api/his/v1/inpatient/clinical-catalog', inpatientFullCatalogSchema)
   const ordersBefore = (await s.read('inpatient-doctor', `${stay.path}/clinical`, inpatientFullClinicalSchema)).orders.map(item => item.id)
-  const acknowledgeCompleted = () => acknowledgeInpatientCompletion(page, `已完成本次操作 · ${admission.patientName}`)
+  const acknowledgeCompleted = (label: string) => acknowledgeInpatientCompletion(page, `${label} · ${admission.patientName}`)
   await open('inpatient-doctor', admission.patientName)
   await stage(page, '诊断医嘱')
   for (const suffix of suffixes) {
@@ -241,7 +241,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
     await page.getByRole('button', { name: '集中核对新医嘱 (1)', exact: true }).click()
     await page.getByRole('dialog', { name: '集中核对新医嘱', exact: true }).getByRole('button', { name: '确认校对 1 条新医嘱', exact: true }).click()
     expect((await response).status()).toBe(200)
-    await acknowledgeCompleted()
+    await acknowledgeCompleted('已校对医嘱')
   }
   for (const suffix of suffixes.filter(item => ['heparin', 'iohexol'].includes(item))) {
     const medication = catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!
@@ -254,7 +254,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
     await expect(dialog.getByRole('region', { name: 'PRN逐项结果', exact: true })).toContainText('成功 1/1')
     await dialog.getByRole('button', { name: '关闭办理窗口', exact: true }).click()
     await expect(page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '待执行' })).toBeVisible()
-    await acknowledgeCompleted()
+    await acknowledgeCompleted('已申请本次按需执行')
   }
   await open('pharmacist', admission.patientName)
   await page.getByRole('button', { name: '全选本页可发药执行单', exact: true }).click()
@@ -277,7 +277,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
     await recordOneActualExecution(page, 'administer')
     expect((await response).status()).toBe(200)
     // 通过正常关闭本次完成提示，确认交接后连续处理下一条；不绕过全宽布局或指针命中。
-    await acknowledgeCompleted()
+    await acknowledgeCompleted('已登记给药')
   }
   const clinical = await s.read('inpatient-doctor', `${stay.path}/clinical`, inpatientFullClinicalSchema)
   const newOrders = clinical.orders.filter(item => !ordersBefore.includes(item.id))

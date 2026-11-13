@@ -124,7 +124,7 @@ async function captureFactory(page: Page, info: TestInfo, origin: string, screen
 
 /** 同一合成病例逐阶段验收；模型只由受控 HTTP Provider 返回。 */
 export async function runSurgeryFlowJourney(page: Page, app: PciAiBrowserApp, info: TestInfo) {
-  const { stay, planned, panel, stepOne, errors } = await preparePciAiReview(page, app), f = app.fixture
+  const { stay, planned, panel, stepOne, errors, catalog } = await preparePciAiReview(page, app), f = app.fixture
   const capture = await captureFactory(page, info, app.origin, process.env.CLINMESH_SURGERY_FLOW_CAPTURE === '1')
   try {
     await page.getByRole('button', { name: '助手自动跟进', exact: true }).click()
@@ -191,18 +191,34 @@ export async function runSurgeryFlowJourney(page: Page, app: PciAiBrowserApp, in
     const reservations = await f.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
     expect(reservations.reservations.find(item => item.requestId === planned.id && item.materialId === 'hospital-material-pci-guidewire')).toMatchObject({ consumedQuantity: 1, remainingQuantity: 0 })
     await expect(page.locator('.clinmesh-inpatient-drg-progress-amount')).toContainText(`已用 ${money(agent.costs!.components.formalChargesFen)}`)
+    for (const id of ['hospital-material-pci-guiding-catheter', 'hospital-material-pci-balloon', 'hospital-material-pci-stent']) {
+      const material = catalog.materials.find(item => item.id === id)
+      if (!material || !('chargeDefinition' in material)) throw new Error(`Missing synthetic material ${id}`)
+      await live.getByRole('row').filter({ has: page.getByText(material.display, { exact: true }) }).getByRole('button', { name: /^用 1 / }).click()
+      await expect(live.getByRole('row', { name: `${material.display} × 1${material.chargeDefinition.unit}`, exact: true })).toBeVisible()
+    }
+    const completeUse = (await f.read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)).inProgress.find(item => item.requestId === planned.id)!
+    expect(completeUse.materialHistory).toHaveLength(5)
     await capture.capture('running')
     await actions(page).getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
     const completion = page.getByRole('dialog', { name: '核实最终耗材并完成手术', exact: true })
     await expect(completion).toContainText('已登记量默认作为最终用量')
     await expect(completion).toContainText('多用 1')
     await expect(completion.getByLabel('核实说明', { exact: true })).not.toHaveValue('')
+    await expect(completion.getByLabel('核实说明', { exact: true })).toHaveValue(/分支保护/)
+    await expect(completion.getByLabel('核实说明', { exact: true })).not.toHaveValue(/按计划 ·/)
     await expect(completion.getByRole('region', { name: '本次差额', exact: true })).toContainText('耗材差额合计 ¥0.00')
     await expect(completion.getByRole('button', { name: '确认完成手术', exact: true })).toBeEnabled()
     await capture.capture('completion')
     await completion.getByRole('button', { name: '确认完成手术', exact: true }).click()
     const postoperative = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
     await expect(postoperative.getByRole('button', { name: '一次全部确认', exact: true })).toBeEnabled()
+    await expect(postoperative.getByRole('list', { name: '术后核查清单', exact: true }).getByRole('listitem')).toHaveCount(1)
+    await expect(postoperative.getByText(/^阶段正式收费|^含医生已有后续治疗计划|^术后分析已就绪/)).toHaveCount(0)
+    const progress = page.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组', exact: true })
+    await expect(progress).toContainText('术后预计 FM39')
+    await expect(progress).toContainText('待确认主操作')
+    await expect(progress).toContainText('支付参考 ¥12,000.00')
     await capture.capture('postoperative')
     await postoperative.getByRole('button', { name: '一次全部确认', exact: true }).click()
     await expect.poll(async () => (await f.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)).todos.filter(item => item.requestId === planned.id && item.ownerRole === 'inpatient-doctor' && ['pending', 'in-progress'].includes(item.status)), { timeout: 30_000 }).toHaveLength(0)

@@ -639,6 +639,8 @@ clinmesh command receipt get --operation-id inpatient.financial.insurance.confir
 3. 住院医生为计划手术预留材料：`encounterVersion` 做预期版本校验，绑定目录 ID、版本与原因；预留不改变临床事实与库存。仅预留态可释放并须附原因。
 4. 归档后先用 `drg-payer-review-preview` 读取冻结分组、`caseSummary` 中的病例与编码来源摘要、固定版本合成核定金额，医保办审阅后用 `drg-payer-review` 携带预览的 `encounterVersion` 和 `expectedFingerprint` 核定。`paymentEstimate` 是归档时冻结的医院支付预估；`estimateDifferenceFen` 为核定减原预估，`differenceFen` 为核定减归档收费。旧归档没有预估时前两项为 null，不用当前参数回填。金额由服务端确定性产生，不落真实支付；未归档、缺参数或过期预览明确拒绝，`INPATIENT_DRG_PAYER_PREVIEW_STALE` 后须重新读取与审阅。`drg-payer-reviews` 回查历次核定及依据。
 
+`drg-simulate.postoperativeEstimate` 非空时，表示有实际完成操作尚待当前主操作确认；它是按当前事实重算的术后预计，`formal` 仍是正式结果。展示时注明“待确认主操作”，确认覆盖当前实际操作后该字段清空。`grouping/paymentReference=null` 表示候选不一致或依据不足，保持未知，不按旧正式参考判断接近或已超；费用仍读取当前统一口径。详细合同见[手术费用与医保说明](../../docs/architecture/clinical-workflows.md#手术费用与医保说明)。
+
 ```bash
 clinmesh inpatient drg-pregroup --admission-id <admission-id>
 clinmesh inpatient drg-simulate --input @simulation.json

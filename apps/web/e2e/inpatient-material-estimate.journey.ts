@@ -62,7 +62,7 @@ export async function runMaterialEstimateDraftRecoveryJourney(page: Page, app: P
     await openEstimatePatient(page, app)
     await requestAngiography(page)
     const panel = page.getByRole('region', { name: '手术耗材', exact: true })
-    await expect(panel).toContainText('助手正在按确认的选型参数生成指南参考并预填耗材')
+    await expect(panel).toContainText('助手正在预填耗材，可直接填写。')
     const note = panel.getByLabel('耗材清单说明', { exact: true })
     await note.fill('生成期间保留的人工说明')
     app.releaseGeneration()

@@ -33,6 +33,7 @@ function mountCorrections(history = execution.materialHistory) {
 it('共同依据与逐项覆盖可核对，清空选择保留人工输入，清空输入另行确认', async () => {
   const second = { ...execution.materialHistory[0]!, id: 'use-2', quantity: 1, note: '另一笔原用量' }
   const user = mountCorrections([...execution.materialHistory, second])
+  expect(screen.queryByRole('region', { name: '待更正清单' })).toBeNull()
   await user.click(screen.getByRole('button', { name: '更正 导丝 × 2' }))
   await user.click(screen.getByRole('button', { name: '更正 导丝 × 1' }))
   await user.type(screen.getByRole('textbox', { name: '共同更正依据' }), '合成共同更正依据')
@@ -46,6 +47,7 @@ it('共同依据与逐项覆盖可核对，清空选择保留人工输入，清�
   const preview = screen.getByRole('region', { name: '更正核对清单' })
   expect(preview.textContent).toContain('导丝 × 2 → 撤销这笔，不替换 · 最终依据：合成共同更正依据')
   expect(preview.textContent).toContain('导丝 × 1 → 撤销这笔，不替换 · 最终依据：第二笔单独核实')
+  expect(within(preview).getByText('仅调整费用记录，不自动退款。')).toBeDefined()
   await user.click(screen.getByRole('button', { name: '返回编辑' }))
   await user.click(screen.getByRole('button', { name: '清空更正输入' }))
   expect(screen.getByRole('alertdialog', { name: '丢弃未提交更正输入？' })).toBeDefined()
@@ -54,6 +56,7 @@ it('共同依据与逐项覆盖可核对，清空选择保留人工输入，清�
   await user.click(screen.getByRole('button', { name: '清空更正输入' }))
   await user.click(screen.getByRole('button', { name: '确认丢弃' }))
   expect(screen.queryByRole('textbox', { name: '共同更正依据' })).toBeNull()
+  expect(screen.queryByRole('region', { name: '待更正清单' })).toBeNull()
 })
 
 it('当前页全选只加入可见原笔，跨页保留完整清单，超过20项明确阻止', async () => {

@@ -1,7 +1,7 @@
 import { SurgeryRequestReason } from './inpatient-surgery-request-reason.tsx'
 import { EquivalentMaterialAdvice } from './inpatient-equivalent-materials.tsx'
 import type { InpatientEquivalentMaterialSuggestion } from '@clinmesh/contracts/inpatient-pci-selection'
-import { InpatientSurgeryMaterials, SurgeryDrgLink } from './inpatient-surgery-materials.tsx'
+import { InpatientSurgeryMaterials } from './inpatient-surgery-materials.tsx'
 import { inpatientAngiographyReportsSchema, type InpatientAngiographyReport } from '@clinmesh/contracts/inpatient-angiography'
 import { inpatientPciSelectionSchema, pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientMaterialEstimateResponseSchema, inpatientMaterialEstimatesSchema, inpatientMaterialEstimateSaveInputSchema, type InpatientMaterialEstimate } from '@clinmesh/contracts/inpatient-material-estimate'
@@ -119,7 +119,6 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const running = surgery.data?.inProgress ?? []
   const reservationRows = reservations.data?.reservations ?? []
   const refresh = () => Promise.all([surgery.refetch(), catalog.refetch(), reservations.refetch()])
-  const openDrg = onOpenStage ? () => onOpenStage('drg') : undefined
   const estimatePlans = surgery.data?.requests.filter(row => ['requested', 'ready'].includes(row.status)) ?? []
   const pendingPlans = estimatePlans.filter(row => !running.some(execution => execution.requestId === row.id))
   const selectedPlan = pendingPlans.find(row => row.id === selectedRequestId) ?? pendingPlans[0] ?? estimatePlans[0]
@@ -228,7 +227,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     {running.map(execution => {
       const plan = surgery.data?.requests.find(row => row.id === execution.requestId)
       return plan ? <InpatientSurgeryMaterials key={execution.id} admission={admission} session={session} locale={locale} write={write} active={active}
-        execution={execution} request={plan} catalog={catalog.data} reservations={reservationRows} dataReady={materialDataReady} running onOpenDrg={openDrg} refresh={refresh} /> : null
+        execution={execution} request={plan} catalog={catalog.data} reservations={reservationRows} dataReady={materialDataReady} running refresh={refresh} /> : null
     })}
     {pendingPlans.length > 0 ? running.length > 0 ? <details className="clinmesh-inpatient-disclosure" onToggle={event => setOtherPlansOpen(event.currentTarget.open)}><summary>{t('其他待实施手术', 'Other planned procedures')}</summary><div className="flex flex-col gap-4 py-3">{plans}</div></details> : <>
       {plans}
@@ -286,7 +285,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
       /> : null}
       <div ref={setPreparationSlot} />
     </> : null}
-    {selectedCompletedExecution && running.length === 0 && pendingPlans.length === 0 ? <SurgeryDone execution={selectedCompletedExecution} angiographyReport={completedAngiographyReport} locale={locale} onOpenDrg={openDrg} /> : null}
+    {selectedCompletedExecution && running.length === 0 && pendingPlans.length === 0 ? <SurgeryDone execution={selectedCompletedExecution} angiographyReport={completedAngiographyReport} locale={locale} /> : null}
     {surgery.data?.requests.length === 0 ? <>
       <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
         <p>{t('本次住院暂无手术申请。', 'No surgery requests for this admission.')}</p>
@@ -316,7 +315,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
             {doctor && (running.length > 0 || pendingPlans.length > 0) && correctionVisited ? <InpatientDrgReviewPanel key={`review:${requestOwnerKey}:${req.id}`} requestId={req.id} admission={admission} session={session} locale={locale} write={write} active={active && correctionOpen} compact onOpenRecord={target => onOpenStage?.(target)} /> : null}
             {correctionVisited ? <InpatientSurgeryMaterials key={`${requestOwnerKey}:${selectedCompletedExecution.id}`} admission={admission} session={session} locale={locale} write={write} active={active && correctionOpen} execution={selectedCompletedExecution} request={req} catalog={catalog.data} reservations={reservationRows} dataReady={materialDataReady} running={false} inDialog refresh={refresh} /> : null}
           </div>
-          <OrderComposerFooter hint={t('补登记只增加本笔费用；更正保留原记录与历史', 'Addenda add one charge; corrections retain the original record and history')}><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>
+          <OrderComposerFooter><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>
         </DialogContent>
       </Dialog>
       {doctor && running.length === 0 && pendingPlans.length === 0 ? <InpatientDrgReviewPanel key={requestOwnerKey} requestId={selectedCompletedExecution.requestId} admission={admission} session={session} locale={locale} write={write} active={active} compact onOpenRecord={target => onOpenStage?.(target)} /> : null}</>
@@ -324,7 +323,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   </section>
 }
 
-function SurgeryDone({ execution, angiographyReport, locale, onOpenDrg }: { execution: z.infer<typeof inpatientSurgeryExecutionSchema>; angiographyReport: InpatientAngiographyReport | undefined; locale: WorkspaceLocale; onOpenDrg: (() => void) | undefined }) {
+function SurgeryDone({ execution, angiographyReport, locale }: { execution: z.infer<typeof inpatientSurgeryExecutionSchema>; angiographyReport: InpatientAngiographyReport | undefined; locale: WorkspaceLocale }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const rows = execution.materials.reduce<{ item: (typeof execution.materials)[number]['item']; quantity: number; amountFen: number }[]>((result, use) => {
     const row = result.find(item => item.item.id === use.item.id)
@@ -339,7 +338,7 @@ function SurgeryDone({ execution, angiographyReport, locale, onOpenDrg }: { exec
       <TableBody>{rows.map(row => <TableRow key={row.item.id}><TableCell className="whitespace-normal">{row.item.display}</TableCell><TableCell className="tabular-nums">{row.quantity} {row.item.chargeDefinition.unit}</TableCell><TableCell className="text-right tabular-nums">{formatFen(row.amountFen, locale)}</TableCell></TableRow>)}
         <TableRow><TableCell className="whitespace-normal">{t('术式费', 'Procedure fee')} · {execution.actualProcedure.coding.display}</TableCell><TableCell>{t('1 次', '1')}</TableCell><TableCell className="text-right tabular-nums">{formatFen(procedureFen, locale)}</TableCell></TableRow></TableBody>
       <TableFooter><TableRow><TableCell colSpan={2}>{t('本台合计', 'Surgery total')}</TableCell><TableCell className="text-right tabular-nums">{formatFen(rows.reduce((sum, row) => sum + row.amountFen, procedureFen), locale)}</TableCell></TableRow></TableFooter></Table>
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground"><span>{t('耗材与术式费已计入住院费用', 'Materials and procedure fee are posted')}</span><span className="flex-1" /><SurgeryDrgLink locale={locale} onOpenDrg={onOpenDrg} /></div>
+    <p className="text-sm text-muted-foreground">{t('耗材与术式费已计入住院费用', 'Materials and procedure fee are posted')}</p>
   </section>
 }
 
@@ -460,12 +459,9 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, repo
     </div>
     {hasPrefilledMeasurements ? <div className="flex items-start gap-2 rounded-lg bg-info/10 px-3 py-2 text-xs">
       <span className="mt-0.5 rounded border border-info/40 px-1 py-0.5 text-[11px] font-semibold text-info">{t('助手', 'Assistant')}</span>
-      <div>
-        <p>{t('已按冠脉造影报告预填病变测量，请逐项核对后确认。', 'Lesion measurements prefilled from the coronary angiography report; review and confirm each item.')}</p>
-        <p className="mt-0.5 text-muted-foreground">{t('测量只取报告里已有的数值；报告没写的项留空，不推测。', 'Only measurements present in the report are prefilled; missing items are left blank.')}</p>
-      </div>
+      <p>{t('已从冠脉造影报告预填，请核对。', 'Prefilled from the angiography report; please review.')}</p>
     </div> : <div className="rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-      {t('开启自动跟进后，助手按冠脉造影报告预填；也可以直接填写。', 'Enable auto follow-up to prefill from the angiography report, or enter directly.')}
+      {t('尚未预填，可直接填写。', 'Not prefilled; enter directly.')}
     </div>}
     <FieldSet disabled={blocked}><FieldGroup className="grid gap-3 md:grid-cols-2">
       <Field>
@@ -518,7 +514,6 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, repo
       </TableBody>
     </Table>
     {report && report.status !== 'processing' ? <CoronaryAngiographyDisclosure report={report} locale={locale} summary={t('冠脉造影与生理学依据', 'Coronary angiography & physiology evidence')} /> : null}
-    <p className="text-xs text-muted-foreground">{t('报告没写的测量可以留空；单位、测量对象和来源随报告一并记录。', 'Measurements not in the report can be left blank; units, objects and sources are recorded with the report.')}</p>
     <InpatientPrimaryAction stage="surgery" priority={45} fallback={primaryButton}>
       <WorkspaceActionBar tone={valid ? 'normal' : 'blocked'} summary={plan.plannedProcedure.coding.display} reason={draft ? t('核对助手预填的病变测量', 'Review assistant-prefilled lesion measurements') : t('填写病变测量', 'Enter lesion measurements')} action={primaryButton} />
     </InpatientPrimaryAction>
@@ -695,7 +690,7 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
       item.text,
     ])
     : []
-  const renderGuideBox = (withTail: boolean) => <div className="flex flex-col gap-1.5 rounded-lg bg-info/10 px-3 py-2.5 text-xs">
+  const renderGuideBox = () => <div className="flex flex-col gap-1.5 rounded-lg bg-info/10 px-3 py-2.5 text-xs">
     <div className="flex flex-wrap items-center gap-2">
       <strong className="font-semibold">{t('指南参考', 'Guideline reference')}</strong>
       <span className="rounded border border-info/40 px-1 py-0.5 text-[11px] font-semibold text-info">{t('助手', 'Assistant')}</span>
@@ -708,10 +703,6 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
       {advice.message}
       {advice.status === 'unknown' && onOpenUsage ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => onOpenUsage(advice.taskId ?? undefined, 'guideline')}>{t('查看原因', 'View reason')}</Button> : null}
     </p> : <p className="text-muted-foreground">{t('尚无本计划的指南参考结果。', 'No guideline advice is available for this plan.')}</p>}
-    {withTail ? <div className="mt-1 border-t border-info/20 pt-1.5">
-      <p>{t('请结合指南参考与当前病情核对下表耗材和数量后确认。', 'Review materials and quantities against the available guideline advice and current patient facts before confirming.')}</p>
-      <p className="text-muted-foreground">{t('只在兼容的候选里选择；确认后即为本计划预留并记作计划数量，实际用量在术中逐笔登记。', 'Confirming reserves materials for this plan and records planned quantities; actual use is logged during surgery.')}</p>
-    </div> : null}
   </div>
   const confirmLabel = t('确认手术耗材', 'Confirm surgical materials')
   const confirmBtn = <Button disabled={blocked || !estimate || !encounterVersion || !reservationFingerprint || nonZeroItems.length === 0 || hasIneligibleItems || write.mutation.isPending} onClick={() => { void saveAndConfirm() }}>{confirmLabel}</Button>
@@ -733,21 +724,15 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
     </div> : null}
     {loading ? <div role="status" className="flex items-start gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
       <Spinner aria-hidden="true" className="mt-0.5 size-3.5" />
-      <div>
-        <p>{t('助手正在按确认的选型参数生成指南参考并预填耗材…', 'Assistant is generating guideline reference and prefilling materials from confirmed parameters…')}</p>
-        <p className="mt-0.5">{t('通常几秒；也可以先直接填写，助手不会覆盖你填的数量。', 'Usually takes a few seconds; you can also enter quantities directly without being overwritten.')}</p>
-      </div>
+      <p>{t('助手正在预填耗材，可直接填写。', 'Assistant is prefilling materials; you may enter directly.')}</p>
     </div> : changedAfterReserve ? <>
       <div className="flex items-start gap-2 rounded-lg bg-warning/15 px-3 py-2 text-xs">
         <AlertCircleIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
-        <div>
-          <p className="font-medium">{t('选型已变化，已有预留保持不变，请核对耗材后再次确认。', 'Selection parameters changed; existing reservations are kept unchanged. Review materials and confirm again.')}</p>
-          <p className="mt-0.5 text-muted-foreground">{t('助手只标出与新测量不符的行，不改你已确认的数量。', 'The assistant highlights rows that differ from new measurements without changing your confirmed quantities.')}</p>
-        </div>
+        <p className="font-medium">{t('选型已变化，请核对耗材后再次确认。', 'Selection changed; review materials and confirm again.')}</p>
       </div>
-      {isPci ? renderGuideBox(false) : null}
+      {isPci ? renderGuideBox() : null}
     </> : failed && !changedAfterReserve ? <>
-      {isPci && advice?.result ? renderGuideBox(false) : null}
+      {isPci && advice?.result ? renderGuideBox() : null}
       <div className="flex items-start gap-2 rounded-lg bg-warning/15 px-3 py-2 text-xs">
         <AlertCircleIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
         <div>
@@ -755,10 +740,9 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
             {t('助手这次未能预填耗材，请直接填写。', 'Assistant could not prefill materials this time; please enter directly.')}
             {onOpenUsage ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => onOpenUsage(estimate?.id, 'estimate')}>{t('查看原因', 'View reason')}</Button> : null}
           </p>
-          <p className="mt-0.5 text-muted-foreground">{t('依据变化后会自动再试；你填写的内容不会被覆盖。', 'Will retry automatically when inputs change; your entries will not be overwritten.')}</p>
         </div>
       </div>
-    </> : isPci ? renderGuideBox(true) : null}
+    </> : isPci ? renderGuideBox() : null}
     <EquivalentMaterialAdvice locale={locale} assistantExplanation={estimate?.status === 'succeeded' && estimate.analysis?.basisFingerprint === estimate.basisFingerprint ? estimate.analysis.costExplanation : null} disabled={blocked || write.mutation.isPending}
       suggestions={(estimate?.equivalentSuggestions ?? []).filter(suggestion => currentItems.some(item => item.materialId === suggestion.from.id && Number(item.quantity) === suggestion.quantity))}
       onPick={suggestion => { void replaceEquivalent(suggestion) }}
@@ -825,7 +809,7 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
       <WorkspaceActionBar
         tone={nonZeroItems.length === 0 ? 'blocked' : 'normal'}
         summary={plan.plannedProcedure.coding.display}
-        reason={loading ? t('助手正在预填耗材，也可以直接填写', 'Assistant is prefilling materials; you may also enter directly') : nonZeroItems.length === 0 ? t('还差：耗材数量', 'Enter material quantities') : changedAfterReserve ? t('已预留的耗材保持不变；核对后更新预留', 'Reserved materials remain unchanged; review and update reservations') : t('确认后为本计划预留，费用按预留预计', 'Confirm to reserve for this plan and project costs')}
+        reason={nonZeroItems.length === 0 ? t('还差：耗材数量', 'Enter material quantities') : confirmLabel}
         action={confirmBtn}
       />
     </InpatientPrimaryAction>
@@ -913,7 +897,7 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
       <DialogContent className="max-h-[calc(100%-2rem)] sm:max-w-[640px]" showCloseButton={!write.mutation.isPending} finalFocus={() => startTrigger.current}>
       <DialogHeader>
         <DialogTitle>{t('开始手术', 'Start surgery')}</DialogTitle>
-        <DialogDescription>{t('开始时不登记耗材、不收术式费。', 'Starting records no materials or procedure fee.')}{actual ? `${t('术式费 ', ' Procedure fee ')}${formatFen(actual.chargeDefinition.priceFen, locale)}${t(' 在完成手术时计入。', ' is posted at completion.')}` : null}</DialogDescription>
+        <DialogDescription>{admission.patientName}</DialogDescription>
       </DialogHeader>
       <form className="flex min-h-0 flex-col p-0" onSubmit={event => { event.preventDefault(); start() }}>
         <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4">
@@ -922,7 +906,7 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
             <Field><FieldLabel htmlFor={`surgery-start-${row.id}`}>{t('开始说明', 'Start note')}</FieldLabel><div className="flex flex-wrap gap-2">{[["术前准备已完成，按计划开始手术", "Preoperative preparation complete; start as planned"], ["核对患者、术式及部位无误，开始手术", "Patient, procedure and site verified; start surgery"]].map(([cn, en]) => t(cn!, en!)).map(value => <Button key={value} type="button" variant="outline" size="sm" disabled={blocked} onClick={() => setStartNote(value)}>{value}</Button>)}</div><Input id={`surgery-start-${row.id}`} maxLength={2000} value={startNote} onChange={event => setStartNote(event.currentTarget.value)} /></Field>
           </FieldGroup></FieldSet>
         </div>
-        <OrderComposerFooter hint={startNote.trim() ? t('开始后在本页逐笔登记耗材', 'Record materials on this page after starting') : t('还差：开始说明', 'Enter the start note')}>
+        <OrderComposerFooter hint={startNote.trim() ? undefined : t('还差：开始说明', 'Enter the start note')}>
           <Button type="button" variant="outline" disabled={write.mutation.isPending} onClick={() => setPanel(null)}>{t('取消', 'Cancel')}</Button>
           <Button type="submit" aria-busy={pending('inpatient.surgery.start') || undefined} disabled={blocked || !ready || !actual || !startNote.trim()}>{pending('inpatient.surgery.start') ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{t('开始手术', 'Start surgery')}</Button>
         </OrderComposerFooter>

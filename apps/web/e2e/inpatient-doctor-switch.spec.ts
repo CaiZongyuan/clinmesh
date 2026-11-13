@@ -40,7 +40,7 @@ test('医生就地切换患者后不保留前一患者的诊断草稿', async ({
     await page.getByRole('button', { name: new RegExp(name) }).click()
     await page.getByRole('group', { name: '目标床位' }).getByRole('button', { name: /床/, disabled: false }).first().click()
     await page.getByRole('button', { name: '接诊并分床', exact: true }).click()
-    await expect(page.getByText(`已完成本次操作 · ${name} · 已完成接诊分床`, { exact: true })).toBeVisible()
+    await expect(page.getByText(`已完成接诊分床 · ${name}`, { exact: true })).toBeVisible()
   }
   await page.getByRole('button', { name: '用户菜单' }).click()
   await page.getByRole('menuitem', { name: '退出登录' }).click()

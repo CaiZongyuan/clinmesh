@@ -15,18 +15,17 @@ import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { InpatientSurgeryCompletion } from './inpatient-surgery-completion.tsx'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
-import { ChevronRightIcon } from 'lucide-react'
 import { correctionDraftScope, useCorrectionBatchDraft, type CorrectionRow } from './inpatient-correction-batch.ts'
 import { InpatientCorrectionComposer } from './inpatient-correction-composer.tsx'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
   write: ReturnType<typeof useInpatientWriteIntent>; execution: z.infer<typeof inpatientSurgeryExecutionSchema>;
   request: z.infer<typeof inpatientSurgeryRequestSchema>; catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined;
-  reservations: InpatientMaterialReservation[]; dataReady: boolean; running: boolean; active?: boolean; inDialog?: boolean; refresh: () => Promise<unknown>; onOpenDrg?: (() => void) | undefined }
+  reservations: InpatientMaterialReservation[]; dataReady: boolean; running: boolean; active?: boolean; inDialog?: boolean; refresh: () => Promise<unknown> }
 
 const remaining = (item: InpatientMaterialReservation) => item.remainingQuantity ?? (item.status === 'reserved' ? item.quantity - item.consumedQuantity : 0)
 
-export function InpatientSurgeryMaterials({ admission, session, locale, write, execution, request, catalog, reservations, dataReady, running, active = true, inDialog = false, refresh, onOpenDrg }: Props): React.JSX.Element {
+export function InpatientSurgeryMaterials({ admission, session, locale, write, execution, request, catalog, reservations, dataReady, running, active = true, inDialog = false, refresh }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const time = (value: string) => new Date(value).toLocaleTimeString(locale, { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' })
   const [materialId, setMaterialId] = useState<string | null>(null), [quantity, setQuantity] = useState('1'), [note, setNote] = useState('')
@@ -130,7 +129,6 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
       <span>{t('已登记耗材 ', 'Recorded materials ')}<b className="font-semibold text-foreground tabular-nums">{formatFen(live, locale)}</b></span>
       {running ? <span>{t('术式费 ', 'Procedure fee ')}<b className="font-semibold text-foreground tabular-nums">{formatFen(execution.actualProcedure.chargeDefinition.priceFen, locale)}</b>{t(' 在完成手术时计入', ' is posted at completion')}</span> : null}
-      <span className="flex-1" /><SurgeryDrgLink locale={locale} onOpenDrg={onOpenDrg} />
     </div>
     {supplement && writable ? <section aria-label={supplement ? t('补登记耗材', 'Add omitted material') : t('登记本笔使用', 'Record a material entry')} className="flex min-w-0 flex-col gap-2 border-t pt-3">
       <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{supplement ? t('补登记耗材', 'Add omitted material') : t('登记本笔使用', 'Record a material entry')}</h4></div>
@@ -169,10 +167,4 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
     {running && writable ? <InpatientSurgeryCompletion admission={admission} session={session} active={active} dataReady={dataReady} execution={execution} request={request} catalog={catalog} reservations={reservations} locale={locale} write={write} refresh={refresh}
       summary={`${t('已登记 ', 'Recorded ')}${execution.materials.length}${t(' 笔 · ', ' entries · ')}${formatFen(live, locale)}`} /> : null}
   </section>
-}
-
-/** 费用只写一行，分组与支付由 DRG 预分组页签统一呈现。 */
-export function SurgeryDrgLink({ locale, onOpenDrg }: { locale: WorkspaceLocale; onOpenDrg: (() => void) | undefined }): React.JSX.Element | null {
-  if (!onOpenDrg) return null
-  return <Button variant="link" size="sm" className="h-auto px-0 text-info" onClick={onOpenDrg}>{locale === 'zh-CN' ? '分组与支付见 DRG 预分组' : 'Grouping and payment under DRG'}<ChevronRightIcon aria-hidden="true" data-icon="inline-end" /></Button>
 }

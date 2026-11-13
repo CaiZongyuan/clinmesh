@@ -42,6 +42,7 @@ import { InpatientInvestigations } from './inpatient-investigations.tsx'
 import { InpatientRecord, inpatientRecordPhase } from './inpatient-record.tsx'
 import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
 import { surgeryPreparation, surgeryStepLabel, useSurgeryView } from './inpatient-surgery-flow.ts'
+import { inpatientCompletionLabel } from './inpatient-completion-label.ts'
 import { InpatientSurgery } from './inpatient-surgery.tsx'
 import { InpatientTransfers } from './inpatient-transfers.tsx'
 import { inpatientDefaultStage, inpatientFlow, inpatientInvestigationWaiting, inpatientPending, inpatientStageTabs } from './inpatient-stage-activity.ts'
@@ -296,20 +297,9 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   // The write resolves after the shared refresh, so the waiting line already names who acts next. A success seen at mount
   // belongs to the previously viewed patient and is not announced again.
   const announced = useRef(succeededAt), handoff = useRef({ title: '', description: '' })
-  const opSummary = completedCommand ? ({
-    'inpatient.admission.receive': t('已完成接诊分床', 'Admission received and bed assigned'),
-    'inpatient.admission.move-bed': t('已完成转床', 'Bed moved'),
-    'inpatient.admission.swap-bed': t('已完成互换床位', 'Beds swapped'),
-    'inpatient.order.verify': t('已校对医嘱', 'Order verified'),
-    'inpatient.order.administer': t('已登记给药', 'Medication administered'),
-    'inpatient.discharge.clear': t('已完成清床', 'Bed cleared'),
-    'inpatient.discharge.settle': t('已完成出院结算', 'Discharge settled'),
-    'inpatient.payment.collect': t('已确认收款', 'Payment collected'),
-    'inpatient.payment.refund': t('已确认退款', 'Payment refunded'),
-    'inpatient.record.approve': t('编码审核通过', 'Coding review approved'),
-    'inpatient.record.archive': t('病案已归档', 'Medical record archived'),
-  } as Record<string, string>)[completedCommand.operation] : undefined
-  handoff.current = { title: `${t('已完成本次操作', 'Action completed')} · ${admission.patientName}${opSummary ? ` · ${opSummary}` : ''}`, description: waiting[active] }
+  const completionLabel = completedCommand ? inpatientCompletionLabel(completedCommand, locale) : ''
+  const completionNext = doctor && active === 'surgery' ? doctorSurgeryTurn() : waiting[active]
+  handoff.current = { title: `${completionLabel} · ${admission.patientName}`, description: completionNext }
   useEffect(() => {
     if (succeededAt === 0 || succeededAt === announced.current) return
     announced.current = succeededAt
@@ -409,7 +399,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     return (zh ? stageOwners : stageOwnersEn)[stage]
   }
   return <InpatientAgentProvider value={agent}><InpatientActionProvider stage={active}><WorkspaceCardLayout id={id} locale={locale} queue={queue} patient={<>{patient}<InpatientAssistantPrepared locale={locale} pci={pciPreparation} activeStage={active} followOn={followOn} onOpenSurgery={() => changeStage('surgery')} onOpenDrg={() => changeStage('drg')} />{aside}</>} flow={inpatientFlow(admission, locale)} action={<InpatientActionOutlet />}>
-    {showForegroundSuccess ? <InpatientPrimaryAction stage={active} priority={-100}><WorkspaceActionBar tone="complete" summary={<span role="status">{t('已完成本次操作', 'Action completed')}</span>} reason={waiting[active]} /></InpatientPrimaryAction> : null}
+    {showForegroundSuccess ? <InpatientPrimaryAction stage={active} priority={-100}><WorkspaceActionBar tone="complete" summary={<span role="status">{completionLabel}</span>} reason={completionNext} /></InpatientPrimaryAction> : null}
     {careReads.map(({ key, query, label, retryLabel }) => query.error ? <WorkspaceCard key={key}>
       <div className="flex flex-col items-start gap-2">
         <p role="alert" className="text-sm">{label}{getWorkspaceErrorMessage(query.error, getWorkspaceMessages(locale))}</p>

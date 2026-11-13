@@ -85,7 +85,7 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   await expect(toggle).toHaveAttribute('aria-pressed', 'true')
   const review = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
   await expect(review).toBeVisible()
-  await expect(review).toContainText('负责岗位：住院医生')
+  await expect(review.getByRole('list', { name: '术后核查清单', exact: true })).toBeVisible()
   const state = await f.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)
   expect(state.planBases).toContainEqual(confirmed)
   expect(state.todos.some(todo => todo.kind === 'extra-use')).toBe(true)

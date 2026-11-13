@@ -56,9 +56,10 @@ export async function runDrgReviewJourney(page: Page, app: PciBrowserApp, prepar
   const extraUseTodo = reviewState.todos.find(item => item.kind === 'extra-use')!
   expect(extraUseTodo).toMatchObject({ ownerRole: 'inpatient-doctor' })
   const todo = reviewPanel.locator('article').filter({ hasText: extraUseTodo.explanation }).first()
-  await expect(todo).toContainText('负责岗位：住院医生')
+  await expect(reviewPanel.getByRole('list', { name: '术后核查清单', exact: true })).toBeVisible()
+  await todo.getByRole('button', { name: `修改处理说明 ${extraUseTodo.display}`, exact: true }).click()
   await expect(todo.getByLabel('待办处理说明', { exact: true })).toBeVisible()
-  await todo.getByRole('button', { name: '查看来源与原记录', exact: true }).click()
+  await todo.getByRole('button', { name: '看术中登记', exact: true }).click()
   const sourceDialog = page.getByRole('dialog', { name: extraUseTodo.display, exact: true })
   await expect(sourceDialog).toContainText('实际量：2')
   await page.keyboard.press('Escape')
