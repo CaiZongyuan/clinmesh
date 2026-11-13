@@ -89,7 +89,7 @@ it('医生在院病案列出提交首页前的条件，字段直接展示，无�
   expect(screen.getByRole('status').textContent).toContain('出院结算后')
 })
 
-it('在院已实施操作时结算前主操作单选与提交仍禁用，出院结算后可选择主操作提交', async () => {
+it('在院已有实际操作时可保存主操作供预分组使用，完整首页仍等结算后提交', async () => {
   const writes: unknown[] = []
   const coding = { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical' as const, version: '3.0' as const, code: '36.0700', display: '合成支架置入', category: '介入治疗' as const, releaseId: 'clinmesh-surgery-subset-2026-10-20' as const, sourceUrl: 'https://example.test/source', sourceSha256: 'c'.repeat(64), sourceLocator: 'row-1' }
   const operation = { id: 'execution-1', admissionId: admission.id, requestId: 'surgery-1', actualProcedure: { id: 'procedure-1', version: 1, coding, chargeDefinition: { id: 'charge-def-1', priceFen: 100, unit: '次', synthetic: true as const, trigger: 'execution' as const } },
@@ -98,7 +98,12 @@ it('在院已实施操作时结算前主操作单选与提交仍禁用，出院�
   mount(write => <InpatientRecord admission={admission} session={session} locale="zh-CN" write={write} />)
   const submit = await screen.findByRole('button', { name: '提交病案首页' })
   expect(submit.hasAttribute('disabled')).toBe(true)
-  expect(screen.queryByRole('radiogroup', { name: '本次主操作' })).toBeNull()
+  const save = screen.getByRole('button', { name: '保存主操作，更新预分组' })
+  expect(save.hasAttribute('disabled')).toBe(true)
+  await userEvent.setup().click(screen.getByRole('radio', { name: '36.0700 合成支架置入' }))
+  await waitFor(() => expect(save).toHaveProperty('disabled', false))
+  await userEvent.setup().click(save)
+  await waitFor(() => expect(writes).toEqual([{ input: { expectedRevision: 0, expectedSourcesHash: 'a'.repeat(64), mainProcedureExecutionId: operation.id } }]))
   expect(screen.getByRole('status').textContent).toContain('出院结算后')
 })
 
