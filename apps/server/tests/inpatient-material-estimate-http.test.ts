@@ -829,3 +829,38 @@ it('接近支付参考的等效建议由同组规则筛选，九成边界前为�
     expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/reservations/${reservation.id}/release`, { encounterVersion: list.encounterVersion, reason: '结束本项合成边界验证' })).status).toBe(200)
   }
 })
+
+it('人工采用等效候选只改产品并保存同数量工作稿，换回恢复费用，原确认流程预留替代品', async () => {
+  const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true), stay = s.pciAdmission!
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId } })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  const admission = (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/reservations`, { encounterVersion: admission.versionId,
+    materialId: 'hospital-material-balloon', catalogVersion: 1, quantity: 20, reason: '独立合成备用方案' })).status).toBe(200)
+  const original = (await s.read()).estimates[0]!
+  expect(original.equivalentSuggestions).toHaveLength(1)
+  const change = async (from: string, to: string) => {
+    const state = (await s.read()).estimates[0]!
+    const response = await s.fixture.request('inpatient-doctor', `${stay.path}/material-estimates/save`, { requestId: stay.requestId,
+      expectedVersion: state.version, expectedDraftRevision: state.draft!.revision, expectedBasisFingerprint: state.basisFingerprint,
+      analysisId: null, note: '医生选择同规格等效产品，保持已确认数量',
+      items: state.draft!.items.map(item => item.materialId === from ? { ...item, materialId: to } : item) })
+    expect(response.status, await response.clone().text()).toBe(200)
+    return inpatientMaterialEstimateResponseSchema.parse(await response.json()).data
+  }
+  const adopted = await change('hospital-material-pci-stent', 'hospital-material-pci-stent-equivalent-b')
+  expect(adopted.draft!.items.map(item => item.quantity)).toEqual([1, 1, 1, 1])
+  expect(adopted.costs!.components.projectedTotalFen).toBe(1086598)
+  expect(adopted.draft!.analysisId).toBeNull()
+  const restored = await change('hospital-material-pci-stent-equivalent-b', 'hospital-material-pci-stent')
+  expect(restored.costs!.components.projectedTotalFen).toBe(1106598)
+  expect(restored.equivalentSuggestions).toHaveLength(1)
+  await change('hospital-material-pci-stent', 'hospital-material-pci-stent-equivalent-b')
+  await confirmEstimate(s)
+  const list = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
+  const own = list.reservations.filter(item => item.requestId === stay.requestId && item.status === 'reserved')
+  expect(own).toHaveLength(4)
+  expect(own.map(item => item.quantity)).toEqual([1, 1, 1, 1])
+  expect(own.some(item => item.materialId === 'hospital-material-pci-stent-equivalent-b' && item.priceFen === 53000)).toBe(true)
+  expect(own.some(item => item.materialId === 'hospital-material-pci-stent')).toBe(false)
+})
