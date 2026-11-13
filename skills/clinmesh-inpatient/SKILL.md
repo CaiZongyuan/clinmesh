@@ -158,7 +158,7 @@ clinmesh command receipt get --operation-id inpatient.pci-selection.save --idemp
 
 医生在本次住院确认 `admissionId/expectedVersion/parameters`，首次版本为0；修改使用当前 `confirmation.version`。`parameters` 包含治疗方向 `treatmentPlan`、靶部位 `targetSite`、可选本次有效 `requestId`、`measurements`、`plannedQuantities` 及医生认可的具体 `approvedMaterialIds`。测量分别保存 `kind/object/site/value/unit/method` 和 `source.reference/version/note/synthetic`；缺少测量保留空数组，未知数值或单位为null，不能由耗材规格倒推。数量逐类保存 `category/quantity/basis`，不从DRG差额推算。
 
-读取返回当前确认和历史版本，以及本院实际安装的候选、产品版本、合成适用／兼容依据、独立数量计划、预计收费和 `missing`。仅 `eligibility=valid` 可作为后续建议输入；其他状态为 `incomplete/inapplicable/unavailable`，来源价格不能证明临床适用。当前依据仅支持明确标识的有限单病变合成仿真，不是真实器械IFU或临床金标准。本步骤不调用模型、不完成手术、不产生费用。结果未知时保持原输入、原版本及原key，先查询原receipt。
+读取返回当前确认和历史版本，以及本院实际安装的候选、产品版本、合成适用／兼容依据、独立数量计划、预计收费和 `missing`；`measurementCompatible` 独立表示测量与规格是否相容，不把数量缺项解释为测量不符。仅 `eligibility=valid` 可作为后续建议输入；其他状态为 `incomplete/inapplicable/unavailable`，来源价格不能证明临床适用。当前依据仅支持明确标识的有限单病变合成仿真，不是真实器械IFU或临床金标准。本步骤不调用模型、不完成手术、不产生费用。结果未知时保持原输入、原版本及原key，先查询原receipt。
 
 报告带入的 `drafts` 按 `requestId` 归属计划，仅在正式造影报告包含 `targetSite` 或 QCA `measurements` 时自动生成（纯诊断性多支造影／阴性 FFR 无 QCA 测量时不生成空草稿）；编辑时先读取当前草稿，完整保留未改字段及测量来源，用其 `version` 作为 `expectedDraftVersion`。服务端对照原报告核实每条测量来源；对象、部位、值、单位或方法修改后标为人工修订，原报告绑定仍保留，不能把修改值当作报告原值。`save-pci-selection` 仅保存工作稿，正式认可与预留由整批清单确认完成。`pci-selection-draft.json` 以下仅示意缺项草稿形状；实际保存使用本次读回并由医生编辑的完整 `parameters`，不以示例空数组清除已有报告测量：
 
@@ -317,7 +317,7 @@ clinmesh command receipt get --operation-id inpatient.drg.agent.confirm --idempo
 
 单次预计与跟进的 `costs` 由既有费用推演确定性计算，包含正式收费净额、待执行医嘱、剩余计划耗材、计划手术费、预计总额，以及当前与计划分组、医院支付参考和差额。规则未启用、分组资料不足或缺支付参数时，医保说明给出对应原因，耗材建议继续准备；模型受阻、失败或未知时费用块仍可读取。`analysis.costExplanation` 只有与当前 `basisFingerprint` 一致且已独立核验时才是当前说明，旧金额文字作为历史；费用差额不改变临床选择，也不等于患者医保待遇。
 
-术中登记或更正耗材后，从 `drg-agent` 读取实时 `costs/usage`：计划量、实际量、剩余量、计划外与超计划使用及费用影响不依赖持续跟进，`status=inactive` 仅表示没有后台模型任务。术中不自动派发模型；医生需要解释时使用下文的 `explain-drg-records`，已核验费用说明在 `result.costExplanation`，同依据结果复用，生成与独立核验按实际请求计量。
+术中登记或更正耗材后，从 `drg-agent` 读取实时 `costs/usage` 与 `intraoperativePlans` 的冻结术前清单；计划量、实际量、剩余量和费用不依赖持续跟进。助手自动跟进开启时，仅对新登记的超计划、计划外或与已确认测量不符的笔，生成并独立核验说明；按计划登记、普通刷新及更正不新增模型意图。`intraoperativeReviews` 按 `materialUseId` 返回状态、`explanation/costExplanation`，用量计入本次住院；未开启、受阻、失败或结果未知时登记与完成照常，未知沿原任务核查而不自动重发。非 PCI 手术只显示确定性金额。分组差异的按需解释继续使用下文的 `explain-drg-records`。
 
 确认输入为 `admissionId/analysisId/expectedBasisFingerprint/expectedRevision/items/note`，首次计划修订为0；`items` 逐项提供 `materialId/catalogVersion/quantity/reason`。以最新 `basisFingerprint` 和产品版本为准，保留医生独立数量依据；超出当前核验范围时先更新参数并核查依据。`confirmedPlan/planHistory` 保留每次人工确认，确认计划不提交正式手术、医嘱、预留或收费。结果未知时查询原 receipt，保持原输入和原 key。
 

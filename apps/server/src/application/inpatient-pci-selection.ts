@@ -53,7 +53,7 @@ export class InpatientPciSelection {
       if (item?.chargeDefinition.priceFen === 0) missing.push('缺少有效正数院内收费价')
       const amount = item === null || quantity === null || item.chargeDefinition.priceFen === 0 ? null : item.chargeDefinition.priceFen * quantity
       if (amount !== null && !Number.isSafeInteger(amount)) missing.push('预计收费超出安全整数范围')
-      return { ...definition, item, eligibility: item === null ? 'unavailable' : notApplicable.length > 0 ? 'inapplicable' : missing.length > 0 ? 'incomplete' : 'valid',
+      return { ...definition, item, measurementCompatible: incompatible.length === 0, eligibility: item === null ? 'unavailable' : notApplicable.length > 0 ? 'inapplicable' : missing.length > 0 ? 'incomplete' : 'valid',
         missing: [...missing, ...notApplicable],
         expectedQuantity: quantity, expectedAmountFen: amount !== null && Number.isSafeInteger(amount) ? amount : null }
     })

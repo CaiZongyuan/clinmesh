@@ -111,6 +111,27 @@ it('单次耗材预计示例绑定工作稿修订、当前依据与整批预留�
   expect(skill).toContain('conflict')
 })
 
+it('术中核对读取示例保留逐笔结果与冻结清单，按计划登记不调用模型', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  const line = commandLines(skill).find(line => line.startsWith('clinmesh inpatient drg-agent '))!
+  const operation = inspectExample(program, line).operation!
+  expect(operation.id).toBe('inpatient.drg.agent.read')
+  expect(operation.version).toBe(2)
+  expect(getHisOperation('inpatient.pci-selection.read').version).toBe(3)
+  expect(skill).toContain('measurementCompatible')
+  expect(skill).toContain('intraoperativePlans')
+  expect(skill).toContain('intraoperativeReviews')
+  expect(skill).toContain('materialUseId')
+  expect(skill).toContain('按计划登记、普通刷新及更正不新增模型意图')
+  const state = operation.output.parse({ admissionId: 'synthetic-admission', taskId: null, status: 'inactive', basisFingerprint: null,
+    stage: 'intraoperative', missing: [], failureCode: null, analysis: null, confirmedPlan: null, planHistory: [],
+    intraoperativePlans: [], intraoperativeReviews: [{ materialUseId: 'synthetic-use', executionId: 'synthetic-execution', requestId: 'synthetic-request',
+      taskId: null, reasons: ['unplanned'], status: 'unavailable', explanation: null, costExplanation: null, failureCode: null }],
+  })
+  expect(state).toMatchObject({ intraoperativeReviews: [{ materialUseId: 'synthetic-use', status: 'unavailable' }] })
+})
+
 it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')

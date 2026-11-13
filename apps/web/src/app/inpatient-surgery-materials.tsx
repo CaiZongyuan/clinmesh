@@ -1,3 +1,4 @@
+import { IntraoperativeMaterialRows } from './inpatient-surgery-intraoperative.tsx'
 import type { z } from 'zod'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
@@ -97,7 +98,9 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
         <div><dt className="text-xs text-muted-foreground">{t('开始', 'Started')}</dt><dd className="tabular-nums">{formatShanghaiMinute(execution.performedAt)}</dd></div>
         <div><dt className="text-xs text-muted-foreground">{t('开始说明', 'Start note')}</dt><dd>{execution.note}</dd></div></dl>
     </div> : null}
-    <div className="flex flex-wrap items-baseline gap-2"><h4 className="text-sm font-semibold">{t('本台耗材', 'Materials for this surgery')}</h4><span className="text-xs text-muted-foreground">{t('按笔登记即计费；更正保留原记录并另记退回', 'Each entry is charged; corrections keep the original and record a reversal')}</span></div>
+    {running ? <IntraoperativeMaterialRows admissionId={admission.id} session={session} locale={locale} execution={execution} catalog={catalog}
+      reservations={reservations} active={active} dataReady={dataReady} editable={editable} onCorrect={addCorrections} write={write} requestVersion={request.version} /> : <>
+    <div className="flex flex-wrap items-baseline gap-2"><h4 className="text-sm font-semibold">{t('本台耗材', 'Materials for this surgery')}</h4></div>
     {execution.materialHistory.length > 0 ? <div className="flex flex-wrap items-center gap-2">
       <Input aria-label={t('搜索原耗材记录', 'Search original material entries')} value={search} className="min-w-0 flex-1" onChange={event => { setSearch(event.target.value); setPage(1) }} />
       {writable ? <Button type="button" variant="outline" size="sm" disabled={!editable || visible.every(use => use.correction)} onClick={() => addCorrections(visible)}>{t('全选当前页可更正记录', 'Select correctable entries on this page')}</Button> : null}
@@ -123,26 +126,14 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
             </TableRow>
           </Fragment>)
         })}</TableBody></Table>
+    </>}
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
       <span>{t('已登记耗材 ', 'Recorded materials ')}<b className="font-semibold text-foreground tabular-nums">{formatFen(live, locale)}</b></span>
       {running ? <span>{t('术式费 ', 'Procedure fee ')}<b className="font-semibold text-foreground tabular-nums">{formatFen(execution.actualProcedure.chargeDefinition.priceFen, locale)}</b>{t(' 在完成手术时计入', ' is posted at completion')}</span> : null}
       <span className="flex-1" /><SurgeryDrgLink locale={locale} onOpenDrg={onOpenDrg} />
     </div>
-    {(running || supplement) && writable ? <section aria-label={supplement ? t('补登记耗材', 'Add omitted material') : t('登记本笔使用', 'Record a material entry')} className="flex min-w-0 flex-col gap-2 border-t pt-3">
+    {supplement && writable ? <section aria-label={supplement ? t('补登记耗材', 'Add omitted material') : t('登记本笔使用', 'Record a material entry')} className="flex min-w-0 flex-col gap-2 border-t pt-3">
       <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{supplement ? t('补登记耗材', 'Add omitted material') : t('登记本笔使用', 'Record a material entry')}</h4></div>
-      {running ? (() => {
-        const remainingList = planned.filter(item => item.status === 'reserved' && remaining(item) > 0)
-        const nextItem = remainingList[0]
-        if (!nextItem) return null
-        const summaryText = remainingList.map(item => `${item.materialDisplay.replace(/^合成演示/, '')} ${remaining(item)}${item.unit ? ` ${item.unit}` : ''}`).join(t('、', ', '))
-        const nextLabel = `${nextItem.materialDisplay.replace(/^合成演示/, '')} 1${nextItem.unit ? ` ${nextItem.unit}` : ''}`
-        return <div className="flex flex-wrap items-center gap-2 rounded-lg bg-info/10 px-3 py-2 text-xs">
-          <span className="rounded border border-info/40 px-1 py-0.5 text-[11px] font-semibold text-info">{t('助手', 'Assistant')}</span>
-          <span>{t(`预留还剩：${summaryText}。下一笔多为${nextLabel}。`, `Remaining reservation: ${summaryText}. Next entry is typically ${nextLabel}.`)}</span>
-          <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" disabled={write.blocked}
-            onClick={() => { setMaterialId(nextItem.materialId); setQuantity('1'); setExtra(false) }}>{t('填入', 'Fill in')}</Button>
-        </div>
-      })() : null}
       <FieldGroup className="grid gap-3 @lg:grid-cols-[minmax(0,2fr)_6rem_minmax(0,1.6fr)_auto] @lg:items-end">
         <Field><FieldLabel htmlFor={`surgery-entry-material-${execution.id}`}>{t('耗材', 'Material')}</FieldLabel><WorkspaceSelect id={`surgery-entry-material-${execution.id}`} value={materialId} disabled={write.blocked} items={materials.map(item => {
           const rem = usable(item.id, item.version).reduce((sum, r) => sum + remaining(r), 0)

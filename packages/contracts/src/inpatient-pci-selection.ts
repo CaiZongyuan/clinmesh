@@ -42,6 +42,7 @@ export const pciSelectionEvidenceSchema = z.object({
 export const pciSelectionCandidateSchema = z.object({
   materialId: id, materialVersion: z.number().int().positive(), category: pciMaterialCategorySchema,
   item: inpatientMaterialItemSchema.nullable(), evidence: pciSelectionEvidenceSchema,
+  measurementCompatible: z.boolean().optional(),
   eligibility: z.enum(['valid', 'incomplete', 'inapplicable', 'unavailable']), missing: z.array(text),
   expectedQuantity: z.number().int().positive().max(1000).nullable(), expectedAmountFen: z.number().int().nonnegative().safe().nullable(),
 }).strict()

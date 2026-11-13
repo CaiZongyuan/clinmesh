@@ -54,6 +54,7 @@ function triggerSourceLabel(id: string, locale: WorkspaceLocale) {
 
 function stagePurpose(stage: string, locale: WorkspaceLocale) {
   if (stage.startsWith('guideline-')) return locale === 'zh-CN' ? '选型参数与指南参考' : 'Selection & guideline reference'
+  if (stage.startsWith('intraoperative-')) return locale === 'zh-CN' ? '术中偏离核对' : 'Intraoperative deviation review'
   if (stage.startsWith('estimate-') || stage.startsWith('preoperative-') || stage.startsWith('intraoperative-') || stage.startsWith('postoperative-')) {
     return locale === 'zh-CN' ? '手术耗材预填' : 'Surgical material prefill'
   }

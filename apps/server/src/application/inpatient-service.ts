@@ -1,4 +1,5 @@
 import { InpatientSurgeryRequestReason } from './inpatient-surgery-request-reason.ts'
+import { InpatientIntraoperativeReview } from './inpatient-intraoperative-review.ts'
 import { InpatientDrgReview } from './inpatient-drg-review.ts'
 import { InpatientMaterialPlans } from './inpatient-material-plans.ts'
 import { InpatientDrgFollowup } from './inpatient-drg-followup.ts'
@@ -71,6 +72,7 @@ export class InpatientService {
   readonly followup: InpatientDrgFollowup
   readonly drg: InpatientDrg
   readonly drgReview: InpatientDrgReview
+  readonly intraoperativeReviews: InpatientIntraoperativeReview
   readonly drgAgent: InpatientDrgAgent
   readonly materialEstimates: InpatientMaterialEstimate
   readonly materialPlans: InpatientMaterialPlans
@@ -103,6 +105,7 @@ export class InpatientService {
     this.drgReview = new InpatientDrgReview(this)
     this.surgeryRequestReasons = new InpatientSurgeryRequestReason(this, estimateContextStatus)
     this.drgExplanations = new InpatientDrgExplanation(this, estimateContextStatus)
+    this.intraoperativeReviews = new InpatientIntraoperativeReview(this)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)

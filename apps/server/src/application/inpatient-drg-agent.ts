@@ -175,10 +175,12 @@ export class InpatientDrgAgent {
       missing: basis?.missing ?? [], failureCode: unresolved ? 'MODEL_OUTCOME_UNKNOWN' : (current ?? latest)?.error_code ?? null,
       costs: basis?.input.costs ?? readInpatientCosts(this.owner, context, admissionId),
       usage: readInpatientSurgeryUsage(this.owner, context, admissionId),
+      ...this.owner.intraoperativeReviews.read(context, admissionId),
       analysis, lastAnalysis, lastStatus: latest?.status ?? null, confirmedPlan: planHistory[0] ?? null, planHistory })
   }
 
   refreshPending(workspaceId?: string, epoch?: string) {
+    this.owner.intraoperativeReviews.refreshPending(workspaceId, epoch)
     const tasks = z.array(z.object({ task_id: z.string() })).parse(this.owner.database.driver.prepare(`SELECT task_id FROM inpatient_drg_followup
       WHERE status='active' ${workspaceId === undefined ? '' : 'AND workspace_id=? AND epoch=?'}`)
       .all(...(workspaceId === undefined ? [] : [workspaceId, epoch ?? ''])))
@@ -234,6 +236,8 @@ export class InpatientDrgAgent {
     const payload = eventSchema.parse(event.payload)
     if (this.owner.surgeryRequestReasons.owns(event.workspaceId, event.epoch, payload.taskId))
       return this.owner.surgeryRequestReasons.process(event, options)
+    if (this.owner.intraoperativeReviews.owns(event.workspaceId, event.epoch, payload.taskId))
+      return this.owner.intraoperativeReviews.process(event, options)
     if (this.owner.drgExplanations.owns(event.workspaceId, event.epoch, payload.taskId))
       return this.owner.drgExplanations.process(event, options)
     const row = rowSchema.optional().parse(this.owner.database.driver.prepare(`SELECT * FROM inpatient_drg_agent_analysis
