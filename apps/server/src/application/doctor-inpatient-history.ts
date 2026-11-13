@@ -42,13 +42,20 @@ export function inpatientHistoryDetail(database: ClinMeshDatabase, context: Acto
     .parse(database.driver.prepare(`SELECT coding_json,role,note FROM inpatient_diagnosis_entry WHERE workspace_id=? AND epoch=? AND admission_id=?
       AND revision=(SELECT MAX(revision) FROM inpatient_diagnosis_confirmation WHERE workspace_id=? AND epoch=? AND admission_id=?) ORDER BY ordinal`).all(...bindings,...bindings))
     .map(row => { const code = conceptSchema.parse(JSON.parse(row.coding_json)); return { code: code.code ?? code.coding?.[0]?.code ?? '', display: conceptLabel(code), role: row.role, ...(row.note === null ? {} : { note: row.note }) } })
-  const procedures = z.array(z.object({ actual_procedure_json: z.string(), performed_at: z.string(), report_json: z.string().nullable() }))
-    .parse(database.driver.prepare(`SELECT execution.actual_procedure_json,execution.performed_at,angiography.report_json FROM inpatient_surgery_execution execution
-      LEFT JOIN inpatient_angiography_report angiography ON angiography.workspace_id=execution.workspace_id AND angiography.epoch=execution.epoch AND angiography.procedure_id=execution.execution_id
-      WHERE execution.workspace_id=? AND execution.epoch=? AND execution.admission_id=? AND execution.status='completed' ORDER BY execution.performed_at,execution.execution_id`).all(...bindings))
-    .map(row => { const { coding: code } = inpatientProcedureItemSchema.parse(JSON.parse(row.actual_procedure_json)); const angiography = row.report_json === null ? undefined : z.object({ conclusion: z.string().nullable(), status: z.string() }).parse(JSON.parse(row.report_json));
+  const procedures = z.array(z.object({ actual_procedure_json: z.string(), performed_at: z.string(), report_conclusion: z.string().nullable() }))
+    .parse(database.driver.prepare(`SELECT execution.actual_procedure_json,execution.performed_at,
+        json_extract(report.content_json,'$.conclusion') AS report_conclusion FROM inpatient_surgery_execution execution
+      LEFT JOIN inpatient_angiography_report angiography ON angiography.workspace_id=execution.workspace_id AND angiography.epoch=execution.epoch
+        AND angiography.admission_id=execution.admission_id AND angiography.procedure_id=execution.execution_id
+      LEFT JOIN fhir_resource report ON report.workspace_id=angiography.workspace_id AND report.epoch=angiography.epoch
+        AND report.resource_type='DiagnosticReport' AND report.resource_id=angiography.report_id AND report.deleted=0
+        AND json_extract(report.content_json,'$.encounter.reference')='Encounter/' || execution.admission_id
+        AND json_extract(report.content_json,'$.subject.reference')=?
+        AND json_extract(report.content_json,'$.status') IN ('final','partial','amended','corrected')
+      WHERE execution.workspace_id=? AND execution.epoch=? AND execution.admission_id=? AND execution.status='completed' ORDER BY execution.performed_at,execution.execution_id`).all(`Patient/${patientId}`,...bindings))
+    .map(row => { const { coding: code } = inpatientProcedureItemSchema.parse(JSON.parse(row.actual_procedure_json));
       return { code: code.code ?? '', display: conceptLabel(code), performedAt: row.performed_at,
-        ...(angiography === undefined || angiography.conclusion === null || !['final','partial'].includes(angiography.status) ? {} : { conclusion: angiography.conclusion }) } })
+        ...(row.report_conclusion === null ? {} : { conclusion: row.report_conclusion }) } })
   const medications = z.array(z.object({ display: z.string(), dose_text: z.string(), frequency_code: z.string(), state: z.string() }))
     .parse(database.driver.prepare(`SELECT display,dose_text,frequency_code,state FROM inpatient_order WHERE workspace_id=? AND epoch=? AND admission_id=?
       AND kind='medication' AND state IN ('signed','verified','stop-requested','stopped','completed') ORDER BY signed_at,order_id`).all(...bindings))

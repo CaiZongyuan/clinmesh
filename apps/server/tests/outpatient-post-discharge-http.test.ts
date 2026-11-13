@@ -10,6 +10,8 @@ import {
   startVisitResponseSchema, triageResponseSchema,
 } from '@clinmesh/contracts/his'
 import { doctorCaseHistoryDetailSchema, doctorCaseHistorySchema } from '@clinmesh/contracts/agent'
+import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
+import { inpatientAngiographyReportsSchema } from '@clinmesh/contracts/inpatient-angiography'
 import {
   createPciPaymentDrgFixture, parsePciResponse, preparePciPaymentDrgFixture,
   type PciPaymentDrgFixture,
@@ -32,7 +34,12 @@ it('completes a new consultation and exact follow-up investigation after PCI dis
   const stay = await fixture.preparePciAdmission()
   await fixture.completePciLaboratories(stay)
   await fixture.dispensePciMedications(stay, 'preoperative')
-  await fixture.executeAngiography(stay)
+  const angiography = await fixture.executeAngiography(stay)
+  await fixture.runtime.dispatchPending()
+  const angiographyReport = (await fixture.read('inpatient-doctor', `${stay.path}/angiography-reports`, inpatientAngiographyReportsSchema))
+    .reports.find(item => item.procedureId === angiography.id)!
+  const signedAngiography = await fixture.read('inpatient-doctor', `/fhir/R5/DiagnosticReport/${angiographyReport.id}`, fhirResourceSchema)
+  expect(signedAngiography).toMatchObject({ conclusion: expect.stringMatching(/\S/) })
   const surgery = await fixture.executePci(stay)
   await fixture.dispensePostoperativePciAspirin(stay, surgery.id)
   const departed = await fixture.depart(stay)
@@ -87,7 +94,12 @@ it('completes a new consultation and exact follow-up investigation after PCI dis
     kind: 'inpatient', admissionId: stay.admissionId,
     diagnoses: expect.arrayContaining([expect.objectContaining({ code: 'I25.103' })]),
     procedures: expect.arrayContaining([expect.objectContaining({ code: '36.0700' })]),
+    medications: expect.arrayContaining([expect.objectContaining({ state: 'completed' })]),
+    reports: expect.arrayContaining([expect.objectContaining({ findings: expect.arrayContaining([expect.stringContaining('白细胞')]) })]),
   } })
+  if (inpatient.source === 'local-completed' && 'kind' in inpatient.record) {
+    expect(inpatient.record.procedures).toContainEqual(expect.objectContaining({ code: '88.5500', conclusion: signedAngiography.conclusion }))
+  }
   expect(JSON.stringify(inpatient)).not.toMatch(/caseTruth|hiddenResources|source_case_id|rawBundle|assetId/)
   const visible = await fixture.read('doctor', `${historyPath}?source=visible-source&page=1&pageSize=20`, doctorCaseHistorySchema)
   expect(visible.availability).not.toBe('no-materialization')
