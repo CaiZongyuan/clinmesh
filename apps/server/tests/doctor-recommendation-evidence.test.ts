@@ -26,6 +26,24 @@ function unpack(history: ReturnType<typeof packDoctorRecommendationHistory>): Do
 }
 
 describe('doctor recommendation history evidence', () => {
+  it('packs inpatient summaries as required history with clinical date and title within the UTF-8 request budget', () => {
+    const history = doctorCaseHistoryDetailSchema.parse({ source: 'local-completed', entryId: 'inpatient:admission',
+      title: '本院住院诊疗摘要', clinicalDate: '2026-08-24T10:00:00+08:00', record: {
+        kind: 'inpatient', admissionId: 'admission', admittedAt: '2026-08-20T10:00:00+08:00', dischargedAt: '2026-08-24T10:00:00+08:00',
+        diagnoses: [{ code: 'I25.1', display: '冠状动脉粥样硬化性心脏病', role: 'primary' }],
+        procedures: [{ code: '36.06', display: '冠状动脉支架置入术', performedAt: '2026-08-21T10:00:00+08:00', conclusion: '支架内血流通畅' }],
+        medications: [{ display: '阿司匹林', doseText: '100 mg', frequencyCode: 'QD', state: 'stopped' }],
+        reports: [{ title: '超声心动图', conclusion: '左室收缩功能正常', findings: ['LVEF：60 %'] }],
+      } })
+    const packed = packDoctorRecommendationHistory('follow-up', [history])
+    expect(packed.optional).toEqual([])
+    expect(packed.missingInformation).toEqual([])
+    expect(JSON.parse(packed.required[0]!.text)).toMatchObject({ resourceType: 'InpatientEncounter', entries: [{
+      clinicalDate: '2026-08-24T10:00:00+08:00', title: '本院住院诊疗摘要', record: { kind: 'inpatient', medications: [{ display: '阿司匹林' }] },
+    }] })
+    expect(Buffer.byteLength(JSON.stringify(packed.required))).toBeLessThanOrEqual(240 * 1024)
+    for (const evidence of packed.required) expect(Buffer.byteLength(evidence.text)).toBeLessThanOrEqual(12 * 1024)
+  })
   it('refuses an indivisible field beyond the byte budget while splitting Chinese records between complete fields', () => {
     const chinese = visible('Condition', 0, { conclusion: '并非确诊。'.repeat(700), note: [{ text: '仅既往可疑，尚待复查。'.repeat(350) }],
       clinicalStatus: { text: '已缓解' }, onsetDateTime: '1995-01-01' })

@@ -6,6 +6,8 @@
 
 ## SQLite、迁移与持久回执
 
+- 投影住院手术历史时，`inpatient_surgery_execution.actual_procedure_json` 是本院目录快照，其 `coding` 是单个 Coding；FHIR `CodeableConcept.coding` 才是数组。用 owning `inpatientProcedureItemSchema` 校验持久快照后挑选临床字段，避免仅用空住院 fixture 通过而真实 PCI 摘要报 `INVALID_INPUT`；端到端回归见 `apps/server/tests/outpatient-post-discharge-http.test.ts`。
+
 - 开发启动返回 `PAYMENT_CUTOVER_REQUIRED` 时，先按 Server 环境解析规则定位实际业务库，用只读连接核对旧资金表和 `0103_payment-collection-cutover.sql` 的应用状态；这是共享收款切换守卫，重跑普通迁移不能消除旧资金。处理按[显式开发切换步骤](../deployment.md#共享收款的一次性开发切换)，先确认可舍弃旧就诊运行链，不删除整库或绕过守卫；保留范围由[存储合同](../architecture/storage.md#共享收款的一次性开发切换)拥有。
 
 - 重建运行世代但保留来源、配置等跨 Epoch owner 时，同时保留其按 Workspace 绑定的幂等回执与 effects；只保留资产行会让同 body／key 在新世代重新派发，可能再次安装场景或覆盖原来源。回归通过原 owner 入口重放，核对世代、身份与内容均未新增或改写；保留边界归[开发切换合同](../architecture/storage.md#共享收款的一次性开发切换)。

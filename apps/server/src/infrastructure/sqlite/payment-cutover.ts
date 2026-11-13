@@ -54,7 +54,7 @@ const runtimeTables = [
   'inpatient_surgery_material_correction', 'inpatient_surgery_material_record', 'inpatient_surgery_request', 'inpatient_transfer',
   'insurance_event', 'insurance_preview', 'inventory_movement', 'laboratory_report_acknowledgement', 'laboratory_report_revision',
   'laboratory_request', 'laboratory_request_state', 'model_host_wait', 'model_reply_wait', 'model_task_step', 'model_task_wait',
-  'no_medication_conclusion', 'outbox_event', 'outpatient_case', 'outpatient_case_responsibility', 'outpatient_investigation_billing',
+  'no_medication_conclusion', 'outbox_event', 'outpatient_case', 'outpatient_case_responsibility', 'outpatient_case_source', 'outpatient_investigation_billing',
   'outpatient_payment_allocation', 'outpatient_refund_preview', 'pathology_report_content', 'pathology_request_detail', 'pathology_request_state',
   'pathology_study', 'payment_allocation', 'payment_preview', 'payment_resolution', 'payment_tender', 'payment_transaction',
   'prescription', 'prescription_authorship', 'prescription_draft_state', 'prescription_item', 'prescription_review', 'prescription_withdrawal',
