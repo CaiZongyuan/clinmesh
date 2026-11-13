@@ -830,9 +830,9 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     expect(guidelineCorpusStatistics(sources, { deploymentPolicy: 'internal-testing', allowNonCommercial: false, population: 'adult' }))
       .toMatchObject({ sourceCount: 58, searchableSourceCount: 42 })
     expect(guidelineCorpusStatistics(sources, { deploymentPolicy: 'internal-testing', allowNonCommercial: false, population: 'pediatric' }))
-      .toMatchObject({ sourceCount: 58, searchableSourceCount: 20 })
+      .toMatchObject({ sourceCount: 58, searchableSourceCount: 21 })
     expect(guidelineCorpusStatistics(sources, { deploymentPolicy: 'internal-testing', allowNonCommercial: false, population: 'all-only' }))
-      .toMatchObject({ sourceCount: 58, searchableSourceCount: 4 })
+      .toMatchObject({ sourceCount: 58, searchableSourceCount: 5 })
 
     const pediatricIds = new Set(released.sources
       .filter(entry => entry.source.id.startsWith('nhc-pediatric-oncohematology-2019-'))
@@ -861,7 +861,7 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
         .some(item => pediatricHashes.has(item.sourceHash))).toBe(false)
     }
     const allPopulationHashes = new Set(docs.filter(doc => doc.source.population === 'all').map(doc => doc.source.sha256))
-    expect(allOnlyResult.guidelines).toHaveLength(4)
+    expect(allOnlyResult.guidelines).toHaveLength(5)
     expect(allOnlyResult.guidelines.every(item => allPopulationHashes.has(item.sourceHash))).toBe(true)
 
     // Excluded populations must NOT pollute inactiveSources

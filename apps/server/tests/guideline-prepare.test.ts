@@ -608,8 +608,8 @@ it('内置 guidelines-2026-10-26-v1 覆盖层对全部 58 项来源做 1:1 标�
   expect(Object.keys(defaultGuidelineReleaseOverlay.sources).sort()).toEqual(manifest.sources.map(item => item.source.id).sort())
   const populations = Object.values(defaultGuidelineReleaseOverlay.sources)
   expect(populations.filter(item => item.population === 'pediatric')).toHaveLength(16)
-  expect(populations.filter(item => item.population === 'all')).toHaveLength(4)
-  expect(populations.filter(item => item.population === 'adult')).toHaveLength(38)
+  expect(populations.filter(item => item.population === 'all')).toHaveLength(5)
+  expect(populations.filter(item => item.population === 'adult')).toHaveLength(37)
 
   const overlaidDocuments = buildOverlaidReleaseDocuments(manifest, (sourceId, index) => sourceId === 'coronary-20-2021'
     ? []

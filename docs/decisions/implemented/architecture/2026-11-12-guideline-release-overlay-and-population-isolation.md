@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-固定指南包 `guidelines-2026-10-26-v1` 同时包含 16 份国家卫健委儿童血液病／恶性肿瘤诊疗规范、4 份全人群指南和 38 份成人心血管／慢病／肿瘤指南，检索、固定页引用和可检索统计缺少患者人群边界时，成人就诊可能召回儿科血液肿瘤指南，儿科或缺失出生日期病例也可能读取成人专用的高血压、乳腺癌短引文与住院 PCI 支架专题；同时 `coronary-20-2021` 物理第 4 页包含图 1 矢量字体控制字符乱码而整页被质量过滤隔离。此外，本地开发准备入口只同步 DRG 精简资料库，未自动物化 `clinmesh.drg-rules.v2` 规则包并与 `deployment/drg/pci-demo-review.json` 校验绑定，且 `.env.example` 仍指向旧 v1 规则路径。需求见 [指南人群隔离与本地准备链路（Issue #466）](https://github.com/CaiZongyuan/clinmesh/issues/466)。
+固定指南包 `guidelines-2026-10-26-v1` 同时包含 16 份国家卫健委儿童血液病／恶性肿瘤诊疗规范、5 份全人群指南（含设有儿童青少年章节的肥胖症诊疗指南）和 37 份成人心血管／慢病／肿瘤指南，检索、固定页引用和可检索统计缺少患者人群边界时，成人就诊可能召回儿科血液肿瘤指南，儿科或缺失出生日期病例也可能读取成人专用的高血压、乳腺癌短引文与住院 PCI 支架专题；同时 `coronary-20-2021` 物理第 4 页包含图 1 矢量字体控制字符乱码而整页被质量过滤隔离。此外，本地开发准备入口只同步 DRG 精简资料库，未自动物化 `clinmesh.drg-rules.v2` 规则包并与 `deployment/drg/pci-demo-review.json` 校验绑定，且 `.env.example` 仍指向旧 v1 规则路径。需求见 [指南人群隔离与本地准备链路（Issue #466）](https://github.com/CaiZongyuan/clinmesh/issues/466)。
 
 ## Decision
 
