@@ -122,6 +122,8 @@
 
 - 外观矩阵更新 `data-font-size` 后，带 `transition-all` 的标签文字与边界仍可能继续过渡；先等待 computed `font-size` 到达目标值再真实 click 并确认 `aria-selected`（回归见 `diagnosis-prescription.browser.test.ts`）。
 
+- 中断串行检查链时，单独向 Turbo 子进程发送 SIGINT 可能让它以成功状态退出，后续阶段仍会开始。先核对本次顶层检查的工作目录和进程归属，按整个任务树停止并确认共享锁释放；保留中断记录，只有明确完成的任务才作为成功证据，不把后续阶段启动当作前序集合全部通过。
+
 - 浏览器动效的保持、淡出或 Canvas 卸载断言若在并行整组失败、单文件通过，可用 `pnpm exec playwright test --project=contracts --workers=1` 验证完整合同集合，保留原断言和超时。交付证据应区分串行集合通过与默认并行 `pnpm check` 未通过，不把单项重跑成功作为整组成功。若点击日志停在 `performing click action`，元素已可见且稳定，先隔离其他 worktree 的构建、类型和浏览器重检查，再用原断言复现。
 
 - 浏览器合同在单文件通过、完整集合却报合成账户初始化失败时，检查前一文件的 Vite 构建是否改变了 `NODE_ENV`。Better Auth 在首次导入时捕获生产默认值，可能只在复用 worker 时触发注册限流；按原文件顺序复现并核对宿主与 bundle 的环境边界，隔离方式见[测试策略](../testing.md#用户界面验证)。
