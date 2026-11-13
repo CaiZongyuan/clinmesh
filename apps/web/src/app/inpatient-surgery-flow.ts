@@ -25,7 +25,8 @@ export function surgeryPreparation(plan: Plan, selection: Selection | undefined,
     || draft?.edited === true && draft.confirmedSelectionVersion === null
     || frozen?.sources.selectionVersion !== undefined && confirmation !== undefined && frozen.sources.selectionVersion !== confirmation.version)
   const selectionDone = !isPci || !view.editingStep1 && Boolean(confirmation || draft?.edited || confirmed || view.step1ConfirmedPlanId === plan.id)
-  const materialsDone = confirmed && !selectionChanged && !view.editingStep2
+  const hasUnconfirmedDraft = estimate?.draft !== null && estimate?.draft !== undefined && estimate.draft.confirmedRevision !== estimate.draft.revision
+  const materialsDone = confirmed && !hasUnconfirmedDraft && !selectionChanged && !view.editingStep2
   const needsMaterials = isPci || estimate !== undefined || hasReservations
   const step: 'selection' | 'materials' | 'consent' | 'nurse' | 'start' = !selectionDone ? 'selection' : needsMaterials && !materialsDone ? 'materials'
     : !plan.consentConfirmation ? 'consent' : !plan.preopCheck ? 'nurse' : 'start'

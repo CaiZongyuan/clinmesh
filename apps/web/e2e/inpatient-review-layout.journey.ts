@@ -60,7 +60,7 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   const refresh = queue.getByRole('button', { name: '刷新', exact: true })
   await expect(refresh.locator('svg')).toHaveCount(1)
   await expect(refresh).toHaveText('')
-  const preparation = page.getByRole('region', { name: '开始手术还差', exact: true })
+  const preparation = page.getByRole('region', { name: '术前准备', exact: true })
   await expect(preparation.getByText('术前核对', { exact: true })).toBeVisible()
   await expect(preparation.getByText('病区护士', { exact: true })).toBeVisible()
   await expect(preparation.getByText('手术知情同意书已签', { exact: true })).toBeVisible()

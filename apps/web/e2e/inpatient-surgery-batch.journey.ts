@@ -208,6 +208,7 @@ export async function runSurgeryBatchJourney(page: Page, s: Patient, open: () =>
 
   await page.getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
   let review = page.getByRole('dialog', { name: '核实最终耗材并完成手术', exact: true })
+  await review.getByRole('button', { name: '有出入，改数量', exact: true }).click()
   await review.getByRole('button', { name: '新增最终耗材', exact: true }).click()
   const picker = page.getByRole('dialog', { name: '选择最终耗材', exact: true })
   await expect(picker).toBeVisible()
@@ -244,12 +245,13 @@ export async function runSurgeryBatchJourney(page: Page, s: Patient, open: () =>
   await openSurgeryBatchPatient(page, s, async () => {})
   await page.getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
   review = page.getByRole('dialog', { name: '核实最终耗材并完成手术', exact: true })
+  await review.getByRole('button', { name: '有出入，改数量', exact: true }).click()
   await expect(review.getByLabel('合成演示缝合材料 · 最终总量 3', { exact: true })).toHaveValue('2')
   await expect(review.getByRole('checkbox', { checked: true })).toHaveCount(1)
-  await expect(page.getByRole('button', { name: '确认完成手术', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '确认完成手术', exact: true })).toBeDisabled()
   let previews = 0, completePosts = 0, completeKey: string | undefined
   page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith(`${s.path}/surgeries/preview-completion`)) previews += 1 })
-  await page.getByRole('button', { name: '预览本次差额', exact: true }).click()
+  await expect(page.getByRole('button', { name: '确认完成手术', exact: true })).toBeEnabled()
   await expect(review.getByRole('region', { name: '本次差额', exact: true })).toContainText('保留预留 · 合成演示冠脉球囊')
   await step('统一预览最终差额，支架释放、球囊保留，再一次完成手术')
   const beforeCompleteAudit = await auditCount('inpatient.surgery.complete')

@@ -181,7 +181,7 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   for (const input of await qtyInputs.all()) {
     if ((await input.inputValue()) === '') await input.fill('1')
   }
-  await page.getByRole('button', { name: '确认并预留', exact: true }).click()
+  await page.getByRole('button', { name: '确认手术耗材', exact: true }).click()
   await expect(stepTwo).toContainText('已为本计划预留')
   const reservations = await s.read('inpatient-doctor', `${path}/drg/reservations`, inpatientMaterialReservationListSchema)
   expect(reservations.reservations).toHaveLength(4)

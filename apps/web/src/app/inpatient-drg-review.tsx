@@ -1,6 +1,6 @@
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
-import { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-review'
+import { inpatientDrgReviewSchema, inpatientDrgReviewResponseSchema, type inpatientDrgReviewTodoSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
@@ -9,7 +9,11 @@ import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useQuery } from '@tanstack/react-query'
-import { useLayoutEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { z } from 'zod'
+import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
+import { postoperativeDispositionNote } from './inpatient-surgery-notes.ts'
 import { apiGet } from './api-client.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { formatFen } from './workspace-format.ts'
@@ -19,7 +23,7 @@ import { InpatientMaterialPlanBasisDetails } from './inpatient-material-plan.tsx
 import { InpatientDrgIssueDetails, type DrgRecordTarget } from './inpatient-drg-record-checks.tsx'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
-  write: ReturnType<typeof useInpatientWriteIntent>; active?: boolean; compact?: boolean; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }
+  write: ReturnType<typeof useInpatientWriteIntent>; active?: boolean; compact?: boolean; requestId?: string | undefined; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }
 
 /** 折叠保留处置稿；患者或行动上下文变化必须换编辑器实例。 */
 export function InpatientDrgReviewDisclosure(props: Props): React.JSX.Element {
@@ -36,7 +40,7 @@ export function InpatientDrgReviewDisclosure(props: Props): React.JSX.Element {
   </details>
 }
 
-export function InpatientDrgReviewPanel({ admission, session, locale, write, active = true, compact = false, onOpenRecord }: Props): React.JSX.Element {
+export function InpatientDrgReviewPanel({ admission, session, locale, write, active = true, compact = false, onOpenRecord, requestId }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const financial = session.actor.roleCode === 'cashier', [notes, setNotes] = useState<Record<string, string>>({}), [handoff, setHandoff] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false), [sourceId, setSourceId] = useState<string | null>(null)
@@ -44,21 +48,59 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
   const review = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'drg-review'], enabled: active,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/review`, inpatientDrgReviewSchema, signal),
     refetchInterval: active ? 3_000 : false, refetchIntervalInBackground: false, retry: false })
-  const data = review.error === null ? review.data : undefined
+  const raw = review.error === null ? review.data : undefined
+  const data = raw && requestId ? { ...raw, todos: raw.todos.filter(item => item.requestId === requestId), resolvedTodos: raw.resolvedTodos.filter(item => item.requestId === requestId),
+    comparisons: raw.comparisons.filter(item => item.requestId === requestId), planBases: raw.planBases.filter(item => item.requestId === requestId) } : raw
+  const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id]
+  const doctor = session.actor.roleCode === 'inpatient-doctor'
+  const surgeries = useQuery({ queryKey: [...scope, 'surgeries'], enabled: active && doctor, retry: false,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
+  const reservations = useQuery({ queryKey: [...scope, 'drg-reservations'], enabled: active && doctor, retry: false,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/reservations`, inpatientMaterialReservationListSchema, signal) })
+  const noteFor = (todo: z.infer<typeof inpatientDrgReviewTodoSchema>) => notes[todo.id] ?? (doctor
+    ? postoperativeDispositionNote(todo, surgeries.data?.executions ?? [], reservations.data?.reservations ?? [], locale) : '')
+  const [batching, setBatching] = useState(false), [actionError, setActionError] = useState<unknown>(null)
+  const ownerKey = JSON.stringify([session.user.id, session.actor, admission.id, requestId]), currentOwner = useRef(ownerKey), mounted = useRef(true)
+  currentOwner.current = active ? ownerKey : ''
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const readonly = !active || admission.recordStatus === 'archived'
   const roleName = (role: string) => ({ 'inpatient-doctor': t('住院医生', 'Inpatient doctor'), cashier: t('收费员', 'Cashier'), 'medical-records': t('病案人员', 'Medical records') })[role] ?? role
   const statusName = (status: string) => ({ pending: t('待核实', 'Pending'), 'in-progress': t('处理中', 'In progress'), resolved: t('已按记录解决', 'Resolved by facts'), dismissed: t('人工无需处理', 'Dismissed with reason') })[status] ?? status
   const blockedReason = (code: string | null) => ({ MODEL_DISABLED: t('AI功能已停用。', 'AI processing is disabled.'), MODEL_REQUEST_LIMIT: t('本次分析的请求额度不足。', 'The request allowance is insufficient.'), MODEL_TOKEN_LIMIT: t('本次分析的用量额度不足。', 'The usage allowance is insufficient.'), MODEL_CNY_LIMIT: t('本次分析的费用额度不足。', 'The cost allowance is insufficient.'), MODEL_METERING_UNAVAILABLE: t('暂时无法确认本次分析的用量，请联系管理员。', 'Usage cannot be confirmed. Contact an administrator.'), MODEL_RETRY_DISABLED: t('当前不允许自动重试。', 'Automatic retries are disabled.'), MODEL_LEDGER_UNAVAILABLE: t('分析用量暂时无法读取。', 'Analysis usage is temporarily unavailable.') })[code ?? ''] ?? t('分析暂不可用，请联系管理员。', 'Analysis is unavailable. Contact an administrator.')
-  const act = (todoId: string, action: 'in-progress' | 'dismiss' | 'recheck') => {
+  const submit = async (todo: z.infer<typeof inpatientDrgReviewTodoSchema>, action: 'in-progress' | 'dismiss' | 'recheck', fingerprint: string, note: string) => {
+    const result = await write.mutation.mutateAsync({ operation: 'inpatient.drg.review.todo.act', input: { admissionId: admission.id, todoId: todo.id,
+      expectedTodoVersion: todo.version, expectedFingerprint: fingerprint, action, note: note.trim() } })
+    return inpatientDrgReviewResponseSchema.parse(result.response).data
+  }
+  const act = async (todoId: string, action: 'in-progress' | 'dismiss' | 'recheck') => {
     const todo = data?.todos.find(item => item.id === todoId)
-    if (readonly || write.blocked || !data?.fingerprint || !todo) return
-    write.mutation.mutate({ operation: 'inpatient.drg.review.todo.act', input: { admissionId: admission.id, todoId,
-      expectedTodoVersion: todo.version, expectedFingerprint: data.fingerprint, action, note: (notes[todoId] ?? '').trim() } },
-    { onSuccess: () => { void review.refetch() } })
+    if (readonly || batching || write.blocked || !data?.fingerprint || !todo || !noteFor(todo).trim()) return
+    setActionError(null)
+    try { await submit(todo, action, data.fingerprint, noteFor(todo)); await review.refetch() }
+    catch (error) { if (mounted.current && currentOwner.current === ownerKey) setActionError(error) }
+  }
+  const confirmAll = async () => {
+    if (readonly || batching || write.blocked || !data?.fingerprint) return
+    const selected = data.todos.filter(todo => todo.ownerRole === session.actor.roleCode).map(todo => ({ todo, note: noteFor(todo) }))
+    if (selected.some(item => !item.note.trim())) return
+    setBatching(true); setActionError(null)
+    let latest = data
+    try {
+      for (const item of selected) {
+        if (!mounted.current || currentOwner.current !== ownerKey) break
+        const todo = latest.todos.find(todo => todo.id === item.todo.id)
+        if (!todo || !latest.fingerprint) break
+        latest = await submit(todo, 'dismiss', latest.fingerprint, item.note)
+      }
+      if (mounted.current && currentOwner.current === ownerKey) await review.refetch()
+    } catch (error) {
+      if (mounted.current && currentOwner.current === ownerKey) { setActionError(error); await review.refetch() }
+    } finally { if (mounted.current && currentOwner.current === ownerKey) setBatching(false) }
   }
   return <section aria-label={financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')} className="flex flex-col gap-3">
     <h4 className="font-medium">{financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')}</h4>
-    <p className="text-sm text-muted-foreground">{financial ? t('核对实际收费与应计费用。发现差异时先查看费用原记录，完成更正后再复查。', 'Compare posted and expected charges. Check the original charge and recheck after correction.') : t('核对术前计划与实际用量。发现差异时先查看手术原记录，填写处理说明后复查或交接。', 'Compare the preoperative plan with actual use. Check the surgery record, then record the disposition and recheck or hand over.')}</p>
+    {!compact ? <p className="text-sm text-muted-foreground">{financial ? t('核对实际收费与应计费用。发现差异时先查看费用原记录，完成更正后再复查。', 'Compare posted and expected charges. Check the original charge and recheck after correction.') : t('核对术前计划与实际用量。发现差异时先查看手术原记录，填写处理说明后复查或交接。', 'Compare the preoperative plan with actual use. Check the surgery record, then record the disposition and recheck or hand over.')}</p> : null}
+    {actionError ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(actionError instanceof Error ? actionError : new Error(String(actionError)), getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {review.isPending ? <p role="status">{t('正在读取核查结果', 'Loading review')}</p> : null}
     {review.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(review.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {data ? <>
@@ -87,18 +129,19 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
             : data.model.status === 'blocked' ? `${t('术后分析未完成：', 'Postoperative analysis incomplete: ')}${blockedReason(data.model.failureCode)}`
               : data.model.status === 'failed' ? t('术后分析未完成，请按已有核查结果继续处理待办。', 'Postoperative analysis is incomplete. Continue with the available findings and tasks.')
               : data.status === 'frozen' ? t('本轮已停止新分析，保留最后结果与未完成状态。', 'New analysis ended; prior results and unfinished states are retained.')
-                : data.status === 'complete' || data.status === 'incomplete' ? t('核查结果已就绪，术后分析仍待核验。', 'Findings are available; postoperative analysis awaits verification.') : ''}</p>
+                : data.status === 'complete' || data.status === 'incomplete' ? '' : ''}</p>
         {!compact && data.model.observations.length > 0 ? <details><summary>{data.model.current ? t('查看已核验解释', 'Verified explanations') : t('查看保留的历史解释', 'Retained historical explanations')}</summary>{data.model.observations.map(item => <p key={item.key}>{item.explanation}</p>)}</details> : null}
       </> : null}
       {data.todos.length === 0 && data.status !== 'waiting-surgery' && data.status !== 'inactive' ? <p>{t('当前没有未解决核查待办。', 'No unresolved review tasks.')}</p> : null}
+      {doctor && !readonly && data.todos.some(todo => todo.ownerRole === session.actor.roleCode) ? <Button type="button" variant="outline" className="self-start" disabled={batching || write.blocked || data.todos.filter(todo => todo.ownerRole === session.actor.roleCode).some(todo => !noteFor(todo).trim())} onClick={() => { void confirmAll() }}>{batching ? t('正在逐项确认', 'Confirming each task') : t('一次全部确认', 'Confirm all')}</Button> : null}
       {data.todos.map(todo => <article key={todo.id} className="flex flex-col gap-2 rounded-md border p-3">
         <div className="flex flex-wrap items-center gap-2"><h5 className="font-medium">{todo.display}</h5><Badge variant="secondary">{statusName(todo.status)}</Badge><span>{t('负责岗位：', 'Responsible: ')}{roleName(todo.ownerRole)}</span></div>
         <p>{todo.explanation}</p>{compact ? <Dialog open={sourceId === todo.id} onOpenChange={open => setSourceId(open ? todo.id : null)}><DialogTrigger render={<Button type="button" variant="link" className="self-start" />}>{t('查看来源与原记录', 'View sources and original records')}</DialogTrigger>
           <DialogContent className="sm:max-w-[720px]"><DialogHeader><DialogTitle>{todo.display}</DialogTitle><DialogDescription>{t('核查来源与恢复入口', 'Review sources and recovery actions')}</DialogDescription></DialogHeader><div className="min-h-0 overflow-y-auto p-4"><InpatientDrgIssueDetails issue={todo} locale={locale} financial={financial} onOpenRecord={onOpenRecord ? target => { setSourceId(null); onOpenRecord(target) } : undefined} /></div><DialogFooter><DialogClose render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></DialogFooter></DialogContent>
         </Dialog> : <InpatientDrgIssueDetails issue={todo} locale={locale} financial={financial} onOpenRecord={onOpenRecord} />}{todo.reason ? <p>{t('处置依据：', 'Disposition reason: ')}{todo.reason}</p> : null}
         {!readonly && todo.ownerRole === session.actor.roleCode ? <>
-          <Field><FieldLabel htmlFor={`drg-todo-${todo.id}`}>{t('待办处理说明', 'Task disposition reason')}</FieldLabel><Input id={`drg-todo-${todo.id}`} value={notes[todo.id] ?? ''} onChange={event => setNotes(previous => ({ ...previous, [todo.id]: event.target.value }))} maxLength={2000} /></Field>
-          <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={write.blocked || !(notes[todo.id] ?? '').trim()} onClick={() => act(todo.id, 'in-progress')}>{t('标记处理中', 'Start processing')}</Button><Button variant="outline" disabled={write.blocked || !(notes[todo.id] ?? '').trim()} onClick={() => act(todo.id, 'dismiss')}>{t('人工判断无需处理', 'Dismiss with reason')}</Button><Button variant="outline" disabled={write.blocked || !(notes[todo.id] ?? '').trim() || data.status === 'frozen'} onClick={() => act(todo.id, 'recheck')}>{t('复查最新业务记录', 'Recheck business facts')}</Button></div>
+          <Field><FieldLabel htmlFor={`drg-todo-${todo.id}`}>{t('待办处理说明', 'Task disposition reason')}</FieldLabel><Input id={`drg-todo-${todo.id}`} value={noteFor(todo)} onChange={event => setNotes(previous => ({ ...previous, [todo.id]: event.target.value }))} maxLength={2000} /></Field>
+          <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={batching || write.blocked || !(noteFor(todo)).trim()} onClick={() => { void act(todo.id, 'in-progress') }}>{doctor ? t('需要跟进', 'Follow up') : t('标记处理中', 'Start processing')}</Button><Button variant="outline" disabled={batching || write.blocked || !(noteFor(todo)).trim()} onClick={() => { void act(todo.id, 'dismiss') }}>{doctor ? t('按此说明确认', 'Confirm this note') : t('人工判断无需处理', 'Dismiss with reason')}</Button><Button variant="outline" disabled={batching || write.blocked || !(noteFor(todo)).trim() || data.status === 'frozen'} onClick={() => { void act(todo.id, 'recheck') }}>{t('复查最新业务记录', 'Recheck business facts')}</Button></div>
         </> : null}
       </article>)}
       {!compact && data.resolvedTodos.length > 0 ? <details><summary>{t('已按记录解决的待办', 'Tasks resolved by facts')}</summary>{data.resolvedTodos.map(todo => <p key={todo.id}>{todo.display} · {statusName(todo.status)} · {todo.reason}</p>)}</details> : null}

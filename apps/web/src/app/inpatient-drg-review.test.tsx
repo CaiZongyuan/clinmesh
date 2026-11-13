@@ -148,3 +148,29 @@ it.each(['cashier', 'medical-records'] as const)('%s核查首开后保留真实�
     vi.useRealTimers()
   }
 })
+
+it('术后处理说明按记录带出，一次确认逐项提交，第二项失败保留未提交项', async () => {
+  const items = [todo, { ...todo, id: 'todo-2', key: 'extra-use:balloon', materialId: 'balloon', display: '球囊' }, { ...todo, id: 'todo-3', key: 'unused-plan:stent', kind: 'unused-plan', materialId: 'stent', display: '支架' }]
+  const posts: string[] = []
+  let current = inpatientDrgReviewSchema.parse({ ...review, todos: items })
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (init?.method === 'POST') {
+      const input = JSON.parse(String(init.body)).input
+      posts.push(input.todoId)
+      if (input.todoId === 'todo-2') return Response.json({ error: { code: 'VERSION_CONFLICT', message: '合成第二项依据已变化' } }, { status: 409 })
+      current = { ...current, todos: current.todos.filter(item => item.id !== input.todoId) }
+      return Response.json({ data: current, auditId: 'audit-1', requestId: 'receipt-1', effects: [], warnings: [] })
+    }
+    if (path.endsWith('/drg/review')) return Response.json(current)
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成原记录未准备' } }, { status: 503 })
+  }))
+  mount(session, admission, true)
+  await screen.findByText('导丝')
+  expect(screen.getAllByRole<HTMLInputElement>('textbox', { name: '待办处理说明' })[0]!.value).toContain('实际用量超出原确认计划')
+  await userEvent.setup().click(screen.getByRole('button', { name: '一次全部确认' }))
+  await waitFor(() => expect(posts).toEqual(['todo-1', 'todo-2']))
+  expect((await screen.findByRole('alert')).textContent).toMatch(/变化|更新|刷新|冲突|重试/)
+  expect(screen.getByText('球囊')).toBeDefined()
+  expect(screen.getByText('支架')).toBeDefined()
+})

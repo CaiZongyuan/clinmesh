@@ -44,7 +44,7 @@ export async function runDrgAgentJourney(page: Page, app: PciBrowserApp, open: O
   let posts = 0
   await page.route(`**${stay.path}/material-estimates/confirm`, async route => { posts++; await route.continue() })
   const response = page.waitForResponse(response => response.url().endsWith(`${stay.path}/material-estimates/confirm`))
-  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true }).click()
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认手术耗材', exact: true }).click()
   const confirmedResponse = await response
   expect(confirmedResponse.status()).toBe(200)
   inpatientMaterialEstimateResponseSchema.parse(await confirmedResponse.json())
@@ -70,7 +70,7 @@ export async function runDrgAgentRecoveryJourney(page: Page, app: PciBrowserApp,
     inpatientMaterialEstimateResponseSchema.parse(await response.json())
     await route.abort('failed')
   })
-  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true }).click()
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认手术耗材', exact: true }).click()
   await expect(page.getByRole('button', { name: '恢复原住院操作', exact: true })).toBeVisible()
   await page.reload()
   await page.getByRole('button', { name: new RegExp(admission.patientName) }).click()
@@ -94,7 +94,7 @@ export async function runDrgAgentInvalidationJourney(page: Page, app: PciBrowser
   await selectInpatientStage(page, '手术')
   const stepOne = page.getByRole('region', { name: '选型参数', exact: true })
   const stepTwo = page.getByRole('region', { name: '手术耗材', exact: true })
-  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true }).click()
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认手术耗材', exact: true }).click()
   await expect(stepTwo).toContainText('已为本计划预留')
   await stepOne.getByRole('button', { name: '修改', exact: true }).click()
   await stepOne.getByLabel('病变长度 (mm)', { exact: true }).fill('30')

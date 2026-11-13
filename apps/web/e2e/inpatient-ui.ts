@@ -57,7 +57,7 @@ export async function openInpatientDrgTools(page: Page) {
 
 /** 在对应术前事项中核对完成状态、责任岗位与真实记录时间。 */
 export async function expectCompletedSurgeryPreparation(plan: Locator, item: '术前核对' | '手术知情同意书已签', owner: '病区护士' | '住院医生') {
-  const preparation = plan.getByRole('region', { name: /^(开始手术还差|术前准备已完成|术前准备记录)$/ })
+  const preparation = plan.page().getByRole('region', { name: '术前准备', exact: true })
   const row = preparation.getByRole('listitem').filter({ hasText: item })
   await expect(row).toHaveCount(1)
   await expect(row.locator('strong').getByText(item, { exact: true })).toBeVisible()

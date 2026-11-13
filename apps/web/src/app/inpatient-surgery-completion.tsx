@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import type { z } from 'zod'
 import { inpatientSurgeryCompletionPreviewSchema, type inpatientSurgeryCompletionReviewInputSchema,
   type inpatientSurgeryCatalogSchema, type inpatientSurgeryExecutionSchema, type inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -7,11 +7,16 @@ import type { InpatientMaterialReservation } from '@clinmesh/contracts/inpatient
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { OrderComposerFooter } from './doctor/order-composer-layout.tsx'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
 import { Input } from '@clinmesh/ui/components/input'
-import { ApiClientError, apiMutation, getSession } from './api-client.ts'
+import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
+import { completionQuantities, completionReviewNote } from './inpatient-surgery-notes.ts'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
+import { apiGet, ApiClientError, apiMutation, getSession } from './api-client.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { formatFen } from './workspace-format.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
@@ -39,13 +44,12 @@ export function InpatientSurgeryCompletion(props: Props): React.JSX.Element {
   return <>
     <InpatientPrimaryAction stage="surgery" priority={50} fallback={action}><WorkspaceActionBar summary={props.execution.actualProcedure.coding.display}
       reason={props.summary} action={action} /></InpatientPrimaryAction>
-    {open && props.active !== false ? <section role="dialog" aria-label={t('核实最终耗材并完成手术', 'Review final materials and complete surgery')} className="flex max-h-[min(80svh,900px)] min-h-0 flex-col rounded-lg border bg-card shadow-sm">
-      <div className="flex shrink-0 flex-col gap-1 border-b px-4 py-3">
-        <h4 className="text-sm font-semibold">{t('核实最终耗材并完成手术', 'Review final materials and complete surgery')}</h4>
-        <p className="text-xs text-muted-foreground">{t('按真实最终总量填写；最多100项，只补登或冲减与已登记的差额。剩余预留默认保留，可选择需要释放的余量。', 'Enter true final totals, up to 100 items; only the differences are posted. Remaining reservations are kept unless selected for release.')}</p>
-      </div>
-      <CompletionEditor key={ownerKey} {...props} onClose={() => { if (!props.write.mutation.isPending) setOpen(false) }} />
-    </section> : null}
+    <Dialog open={open && props.active !== false} pending={props.write.mutation.isPending} onOpenChange={setOpen}>
+      <DialogContent className="max-h-[calc(100%-2rem)] sm:max-w-[900px]" showCloseButton={!props.write.mutation.isPending}>
+        <DialogHeader><DialogTitle>{t('核实最终耗材并完成手术', 'Review final materials and complete surgery')}</DialogTitle><DialogDescription>{t('默认采用术中已登记量；有出入时可改数量。', 'Recorded quantities are used by default; edit them if needed.')}</DialogDescription></DialogHeader>
+        {open && props.active !== false ? <CompletionEditor key={ownerKey} {...props} onClose={() => { if (!props.write.mutation.isPending) setOpen(false) }} /> : null}
+      </DialogContent>
+    </Dialog>
   </>
 }
 
@@ -55,7 +59,13 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
   const scope = surgeryDraftScope({ session, patientId: admission.patientId, admissionId: admission.id, requestId: request.id, executionId: execution.id, action: 'complete' })
   const scopeKey = JSON.stringify(scope)
   const draft = useSurgeryDraft({ scope, schema: completionDraftSchema, initial: initialCompletionDraft(execution, reservations, request.id) })
-  const { rows, note, releases } = draft.value
+  const { rows, releases } = draft.value
+  const [editing, setEditing] = useState(false)
+  const estimates = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'material-estimates'],
+    enabled: active !== false, retry: false, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/material-estimates`, inpatientMaterialEstimatesSchema, signal) })
+  const planBasis = estimates.data?.estimates.find(item => item.requestId === request.id)?.planBasis
+  const plan = planBasis?.history.find(item => item.reference === planBasis.effectiveReference)
+  const note = draft.value.noteSource === 'rule' ? completionReviewNote(rows, plan, execution, releases, locale) : draft.value.note
   const setRows = (change: (previous: CompletionDraftRow[]) => CompletionDraftRow[], discard = false) => draft.save({ ...draft.value, rows: change(rows) }, { keepCurrentOnFailure: discard })
   const [clearOpen, setClearOpen] = useState(false), [clearFailed, setClearFailed] = useState(false)
   const current = useRef({ scopeKey, active, dataReady }), mounted = useRef(true)
@@ -119,10 +129,11 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
         : rows.map(rowProblem).find(problem => problem !== null)
         ?? (invalidRelease ? t(`已选释放的 ${invalidRelease.display} 已无合法余量或依据变化，请取消选择或刷新核实`, `Selected release ${invalidRelease.display} changed or has no eligible remainder; deselect it or refresh sources`) : null)
   const valid = note.trim().length > 0 && validation == null
-  const blocked = write.blocked || preview.isPending || refreshBasis.isPending || draft.failed || active === false
+  const editingBlocked = write.blocked || refreshBasis.isPending || draft.failed || active === false
+  const blocked = editingBlocked || preview.isPending
   const materialList = <SurgeryFinalMaterialList rows={rows} catalog={catalog} reservations={reservations} requestId={request.id}
-    locale={locale} disabled={blocked} rowProblem={rowProblem} onChange={setRows} />
-  const hint = validation ?? (!note.trim() ? t('还差：核实说明', 'Enter the review note') : reviewed ? t('确认后补登差额并计入术式费，手术结束', 'Confirmation posts the differences and procedure fee and completes surgery') : t('先预览差额，再确认完成', 'Preview the differences before completing'))
+    locale={locale} disabled={editingBlocked} rowProblem={rowProblem} onChange={setRows} />
+  const hint = validation ?? (!note.trim() ? t('还差：核实说明', 'Enter the review note') : reviewed ? t('确认后补登差额并计入术式费，手术结束', 'Confirmation posts the differences and procedure fee and completes surgery') : t('正在核对差额，完成后可确认', 'Checking differences before confirmation'))
   const confirm = () => {
     if (!isCurrent() || blocked || !valid || !reviewed || !preview.data) return
     const command = { operation: 'inpatient.surgery.complete' as const, input: {
@@ -131,22 +142,37 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
     } }
     if (draft.prepareSubmission(command)) write.mutation.mutate({ ...command, isCurrent: () => isCurrent() && current.current.dataReady })
   }
+  const previewKey = JSON.stringify({ input, basis })
+  const attemptedPreview = useRef('')
+  useEffect(() => {
+    if (!valid || blocked || reviewed || attemptedPreview.current === previewKey) return
+    const timer = setTimeout(() => {
+      if (!isCurrent()) return
+      attemptedPreview.current = previewKey
+      preview.mutate({ input, basis })
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [previewKey, valid, blocked, reviewed])
   const actions = <>
-    {reviewed && preview.data ? <Button type="button" variant="ghost" disabled={blocked} onClick={() => preview.reset()}>{t('改数量', 'Edit quantities')}</Button>
-      : <Button type="button" variant="outline" disabled={write.mutation.isPending} onClick={onClose}>{t('取消', 'Cancel')}</Button>}
-    {reviewed && preview.data ? <Button type="button" disabled={blocked || !valid} onClick={confirm}>{t('确认完成手术', 'Complete surgery')}</Button>
-      : <Button type="button" disabled={blocked || !valid} onClick={() => { if (isCurrent() && valid && !blocked) preview.mutate({ input, basis }) }}>{preview.isPending ? t('正在预览差额', 'Previewing differences') : t('预览本次差额', 'Preview differences')}</Button>}
+    <Button type="button" variant="outline" disabled={write.mutation.isPending} onClick={onClose}>{t('取消', 'Cancel')}</Button>
+    <Button type="button" disabled={blocked || !valid || !reviewed} onClick={confirm}>{t('确认完成手术', 'Complete surgery')}</Button>
   </>
   return <form className="flex min-h-0 flex-1 flex-col p-0" onSubmit={event => event.preventDefault()}>
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-    <FieldSet disabled={blocked}><FieldGroup>
+    <FieldSet disabled={editingBlocked}><FieldGroup>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><span>{t('已登记量默认作为最终用量', 'Recorded quantities are the default final quantities')}</span><Button type="button" variant="link" size="sm" disabled={editingBlocked} onClick={() => setEditing(value => !value)}>{editing ? t('收起数量编辑', 'Hide quantity editor') : t('有出入，改数量', 'Edit quantities if needed')}</Button></div>
+      {!editing ? <Table><TableHeader><TableRow><TableHead>{t('耗材', 'Material')}</TableHead><TableHead>{t('计划', 'Planned')}</TableHead><TableHead>{t('最终用量', 'Final quantity')}</TableHead><TableHead>{t('与计划的差异', 'Difference from plan')}</TableHead></TableRow></TableHeader><TableBody>
+        {completionQuantities(rows, plan).map(row => <TableRow key={row.key}><TableCell className="whitespace-normal">{row.display}</TableCell><TableCell>{row.planned ?? t('待核实', 'Unverified')} {row.unit}</TableCell><TableCell>{row.quantity} {row.unit}</TableCell><TableCell className={row.difference ? 'text-warning' : undefined}>{row.difference === null ? t('待核实', 'Unverified') : row.difference === 0 ? t('一致', 'Matches') : row.difference > 0 ? t(`多用 ${row.difference}`, `${row.difference} extra`) : t(`未用 ${-row.difference}`, `${-row.difference} unused`)}</TableCell></TableRow>)}
+      </TableBody></Table> : <>
       {materialList}
-      <SurgeryReleasePicker reservations={originalReservations} rows={rows} selected={releases} locale={locale} disabled={blocked} onChange={next => draft.save({ ...draft.value, releases: next }, { keepCurrentOnFailure: next.length < releases.length })} />
-      <SurgeryFinalMaterialPicker catalog={catalog} locale={locale} count={rows.length} disabled={blocked} onAdd={item => { if (rows.length < 100) setRows(previous => [...previous, {
+      <SurgeryReleasePicker reservations={originalReservations} rows={rows} selected={releases} locale={locale} disabled={editingBlocked} onChange={next => draft.save({ ...draft.value, releases: next }, { keepCurrentOnFailure: next.length < releases.length })} />
+      <SurgeryFinalMaterialPicker catalog={catalog} locale={locale} count={rows.length} disabled={editingBlocked} onAdd={item => { if (rows.length < 100) setRows(previous => [...previous, {
             key: crypto.randomUUID(), materialId: item.id, catalogVersion: item.version, quantity: '1', materialUseIds: [], previousQuantity: 0, display: item.display,
             unit: item.chargeDefinition.unit, priceFen: item.chargeDefinition.priceFen,
           }]) }}>{materialList}</SurgeryFinalMaterialPicker>
-      <Field><FieldLabel htmlFor={`final-note-${execution.id}`}>{t('核实说明', 'Review note')}</FieldLabel><Input id={`final-note-${execution.id}`} maxLength={2000} value={note} onChange={event => draft.save({ ...draft.value, note: event.target.value })} /></Field>
+      </>}
+      {originalReservations.some(item => (remainingAfterCompletion(item, rows) ?? 0) > 0) && !editing ? <div className="flex flex-col gap-2 text-sm"><span>{t('未用的预留', 'Unused reservations')}</span><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" aria-pressed={releases.length === 0} onClick={() => draft.save({ ...draft.value, releases: [] })}>{t('保留预留', 'Keep reservations')}</Button><Button type="button" variant="outline" aria-pressed={releases.length > 0} onClick={() => draft.save({ ...draft.value, releases: originalReservations.filter(item => item.releaseReason == null && (remainingAfterCompletion(item, rows) ?? 0) > 0).map(item => ({ reservationId: item.id, expectedReservationVersion: item.version, display: item.materialDisplay })) })}>{t('释放预留', 'Release reservations')}</Button></div></div> : null}
+      <Field><FieldLabel htmlFor={`final-note-${execution.id}`}>{t('核实说明', 'Review note')}</FieldLabel><Input id={`final-note-${execution.id}`} maxLength={2000} value={note} onChange={event => draft.save({ ...draft.value, note: event.target.value, noteSource: 'doctor' })} /></Field>
     </FieldGroup></FieldSet>
     {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('未提交输入无法保存，已阻止提交。请检查浏览器存储后重试，已填内容仍保留。', 'The draft could not be saved, so submission is blocked. Check browser storage and retry; entered values are retained.')}
       <Button type="button" size="sm" variant="outline" disabled={write.blocked} onClick={() => draft.save(draft.value)}>{t('重试保存核实输入', 'Retry saving review draft')}</Button>
@@ -165,7 +191,8 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
       <AlertDialogFooter><AlertDialogCancel>{t('保留未提交输入', 'Keep draft')}</AlertDialogCancel>
       <Button type="button" variant="destructive" disabled={write.blocked} onClick={() => { if (!isCurrent()) return; if (draft.clear()) { preview.reset(); setClearOpen(false) } else setClearFailed(true) }}>{t('确认丢弃并重新带入', 'Discard and reload')}</Button>
     </AlertDialogFooter></AlertDialogContent></AlertDialog>
-    {preview.data && !reviewed ? <Alert><AlertDescription>{t('输入或依据已变化，请重新预览后确认。', 'Inputs or sources changed. Preview again before confirming.')}</AlertDescription></Alert> : null}
+    {preview.error ? <Button type="button" variant="outline" disabled={blocked || !valid} onClick={() => preview.mutate({ input, basis })}>{t('重试核对差额', 'Retry difference review')}</Button> : null}
+    {preview.data && !reviewed ? <Alert><AlertDescription>{t('正在按当前输入与依据重新核对差额。', 'Rechecking differences against current inputs and sources.')}</AlertDescription></Alert> : null}
     {reviewed && preview.data ? <section aria-label={t('本次差额', 'Differences')} className="flex flex-col gap-1 rounded-md bg-muted p-3 text-sm">
       {preview.data.materials.map((row, index) => <div key={index} className="flex flex-col gap-1">
         {row.deltaQuantity !== 0 ? <p className="flex gap-3"><span className="flex-1">{row.item.display} {row.deltaQuantity > 0 ? t('补登', 'add') : t('冲减', 'reduce')} {Math.abs(row.deltaQuantity)} {row.item.chargeDefinition.unit}</span>{' '}<b className="tabular-nums">{formatFen(row.deltaFen, locale)}</b></p> : null}
@@ -179,14 +206,6 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
       <p className="flex gap-3 border-t pt-1.5 font-semibold"><span className="flex-1">{t('本次新增费用', 'New charges')}</span>{' '}<b className="tabular-nums">{formatFen(preview.data.totalDeltaFen, locale)}</b></p>
     </section> : null}
     </div>
-    <InpatientPrimaryAction stage="surgery" priority={60} fallback={actions}>
-      <WorkspaceActionBar
-        tone={!valid ? 'blocked' : reviewed ? 'confirm' : 'normal'}
-        summary={execution.actualProcedure.coding.display}
-        reason={hint}
-        busy={preview.isPending ? t('正在预览差额', 'Previewing differences') : undefined}
-        action={actions}
-      />
-    </InpatientPrimaryAction>
+    <OrderComposerFooter hint={hint}>{actions}</OrderComposerFooter>
   </form>
 }

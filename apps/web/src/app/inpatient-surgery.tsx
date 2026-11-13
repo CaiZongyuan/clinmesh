@@ -30,7 +30,7 @@ import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { OrderComposerFooter } from './doctor/order-composer-layout.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
-import { AlertCircleIcon, CheckCircle2Icon, CheckIcon, ChevronRightIcon, CircleIcon, PlusIcon } from 'lucide-react'
+import { AlertCircleIcon, CheckCircle2Icon, CheckIcon, CircleIcon, PlusIcon } from 'lucide-react'
 import { InpatientSurgeryDetails } from './inpatient-surgery-details.tsx'
 import { CoronaryAngiographyDisclosure } from './inpatient-pci-draft-fields.tsx'
 import { InpatientDrgReviewPanel } from './inpatient-drg-review.tsx'
@@ -65,12 +65,12 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const [correctionOpen, setCorrectionOpen] = useState(false), [correctionVisited, setCorrectionVisited] = useState(false)
   const localView = useSurgeryView()
   const [view, setView] = providedView ?? localView
-  const { step1ConfirmedPlanId, editingStep1, editingStep2, selectionEditedAfterReserve, selectedRequestId } = view
+  const { editingStep1, selectionEditedAfterReserve, selectedRequestId } = view
   const setStep1ConfirmedPlanId = (value: string | null) => setView(previous => ({ ...previous, step1ConfirmedPlanId: value }))
   const setEditingStep1 = (value: boolean) => setView(previous => ({ ...previous, editingStep1: value }))
   const setEditingStep2 = (value: boolean) => setView(previous => ({ ...previous, editingStep2: value }))
   const setSelectionEditedAfterReserve = (value: boolean) => setView(previous => ({ ...previous, selectionEditedAfterReserve: value }))
-  const setSelectedRequestId = (value: string | null) => setView(previous => ({ ...previous, selectedRequestId: value }))
+  const setSelectedRequestId = (value: string | null) => setView(previous => ({ ...previous, selectedRequestId: value, editingStep1: false, editingStep2: false, selectionEditedAfterReserve: false }))
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null)
   const requestOwnerKey = JSON.stringify([session.user.id, session.actor, admission.id])
   const requestOwner = useRef(requestOwnerKey)
@@ -197,7 +197,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
       items={pendingPlans.map(row => ({ value: row.id, label: `${row.plannedProcedure.coding.display} · ${row.reason}` }))} onValueChange={setSelectedRequestId} /></Field> : null}
     {pendingPlans.map(row => <div key={row.id} hidden={row.id !== selectedPlan?.id || running.length > 0 && !otherPlansOpen}><SurgeryRequest row={row} catalog={catalog.data} reservations={reservationRows}
       dataReady={materialDataReady} onRetry={() => { void refresh() }}
-      admission={admission} session={session} locale={locale} write={write} preparationSlot={preparationSlot} preparation={row.id === selectedPlan?.id ? preparation : undefined} focused={active && row.id === selectedPlan?.id && (running.length === 0 || otherPlansOpen)} /></div>)}
+      admission={admission} session={session} locale={locale} write={write} preparationSlot={isPci || showStepTwo ? preparationSlot : null} preparation={row.id === selectedPlan?.id ? preparation : undefined} focused={active && row.id === selectedPlan?.id && (running.length === 0 || otherPlansOpen)} /></div>)}
   </>
   return <section aria-label={t('住院手术', 'Inpatient surgery')} className="flex flex-col gap-4">
     {doctor ? <div className="flex flex-wrap items-center justify-end gap-2">
@@ -261,7 +261,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         plan={selectedPlan}
         isPci={isPci}
         selDone={selDone && !editingStep1}
-        editing={editingStep2}
+        done={preparation?.materialsDone ?? false}
         selectionEditedAfterReserve={preparation?.selectionChanged ?? false}
         estimate={currentEstimate}
         advice={currentAdvice}
@@ -278,7 +278,6 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
           void estimates.refetch()
           void reservations.refetch()
         }}
-        onOpenDrg={openDrg}
         onOpenUsage={onOpenUsage}
       /> : null}
       <div ref={setPreparationSlot} />
@@ -310,12 +309,13 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
             {write.mutation.error && (attemptedCommand?.operation === 'inpatient.surgery.correct-material' || attemptedCommand?.operation === 'inpatient.surgery.supplement-material')
               && attemptedCommand.input.admissionId === admission.id && attemptedCommand.input.requestId === req.id
               && attemptedCommand.input.executionId === selectedCompletedExecution.id ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))} <Button type="button" variant="outline" size="sm" disabled={write.blocked} onClick={() => { void refresh() }}>{t('刷新目录与记录，保留编辑', 'Refresh catalog and records, keep edits')}</Button></AlertDescription></Alert> : null}
+            {doctor && (running.length > 0 || pendingPlans.length > 0) && correctionVisited ? <InpatientDrgReviewPanel key={`review:${requestOwnerKey}:${req.id}`} requestId={req.id} admission={admission} session={session} locale={locale} write={write} active={active && correctionOpen} compact onOpenRecord={target => onOpenStage?.(target)} /> : null}
             {correctionVisited ? <InpatientSurgeryMaterials key={`${requestOwnerKey}:${selectedCompletedExecution.id}`} admission={admission} session={session} locale={locale} write={write} active={active && correctionOpen} execution={selectedCompletedExecution} request={req} catalog={catalog.data} reservations={reservationRows} dataReady={materialDataReady} running={false} inDialog refresh={refresh} /> : null}
           </div>
           <OrderComposerFooter hint={t('补登记只增加本笔费用；更正保留原记录与历史', 'Addenda add one charge; corrections retain the original record and history')}><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>
         </DialogContent>
       </Dialog>
-      {doctor && running.length === 0 && pendingPlans.length === 0 ? <InpatientDrgReviewPanel key={requestOwnerKey} admission={admission} session={session} locale={locale} write={write} active={active} compact onOpenRecord={target => onOpenStage?.(target)} /> : null}</>
+      {doctor && running.length === 0 && pendingPlans.length === 0 ? <InpatientDrgReviewPanel key={requestOwnerKey} requestId={selectedCompletedExecution.requestId} admission={admission} session={session} locale={locale} write={write} active={active} compact onOpenRecord={target => onOpenStage?.(target)} /> : null}</>
     })() : null}
   </section>
 }
@@ -521,12 +521,12 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, repo
   </section>
 }
 
-function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEditedAfterReserve, estimate, advice, reservations, encounterVersion, reservationFingerprint, locale, write, blocked, onEdit, onConfirmed, onOpenDrg, onOpenUsage }: {
+function PciStepTwoCard({ admission, plan, isPci, selDone, done, selectionEditedAfterReserve, estimate, advice, reservations, encounterVersion, reservationFingerprint, locale, write, blocked, onEdit, onConfirmed, onOpenUsage }: {
   admission: InpatientAdmission
   plan: Request
   isPci: boolean
   selDone: boolean
-  editing: boolean
+  done: boolean
   selectionEditedAfterReserve: boolean
   estimate: InpatientMaterialEstimate | undefined
   advice: InpatientGuidelineAdvice | undefined
@@ -538,7 +538,6 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEdi
   blocked: boolean
   onEdit: () => void
   onConfirmed: () => void
-  onOpenDrg: (() => void) | undefined
   onOpenUsage: ((taskId?: string, taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline') => void) | undefined
 }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
@@ -549,7 +548,7 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, editing, selectionEdi
   const loading = estimate?.status === 'queued' || estimate?.status === 'running'
   const failed = estimate?.status === 'failed' || estimate?.status === 'blocked' || estimate?.status === 'unknown'
   const changedAfterReserve = selectionEditedAfterReserve
-  const matDone = (reservations.length > 0 || (estimate?.draft?.confirmedRevision !== null && estimate?.draft?.confirmedRevision !== undefined)) && !changedAfterReserve && !editing
+  const matDone = done
   if (!selDone) {
     return <section role="region" aria-label={t('手术耗材', 'Surgical materials')} className="flex flex-col rounded-lg border border-dashed px-3.5 py-2.5 text-muted-foreground">
       <div className="flex flex-wrap items-center gap-2">
@@ -845,7 +844,8 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
   const procedureItems = (catalog?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))
   const actualField = <Field><FieldLabel htmlFor={`surgery-actual-${row.id}`}>{t('实际术式', 'Performed procedure')}</FieldLabel><WorkspaceSelect id={`surgery-actual-${row.id}`} value={actual?.id ?? null} items={procedureItems} onValueChange={setActualId} />
     <FieldDescription>{actual && actual.coding.code !== row.plannedProcedure.coding.code ? `${t('与计划不同（计划：', 'Differs from plan (')}${row.plannedProcedure.coding.display}${t('）；DRG 预分组按实际术式重算', '); DRG is recalculated with the performed procedure')}` : t('默认与计划术式相同', 'Defaults to the planned procedure')}</FieldDescription></Field>
-  const preparationContent = <div hidden={doctor && !focused} className="flex flex-col gap-4">    {!preparationReady ? <section aria-label={preparationTitle} className="rounded-lg border border-dashed px-3.5 py-2.5 text-sm text-muted-foreground"><h4>{preparationTitle}</h4><p>{t('确认手术耗材后办理术前准备', 'Confirm surgical materials before preoperative preparation')}</p></section> : <section aria-label={preparationTitle} className="clinmesh-inpatient-preparation"><h4 className="font-medium">{doctor ? '3 · ' : ''}{preparationTitle}</h4>
+  const preparationContent = <div hidden={doctor && !focused} className="flex flex-col gap-4">
+    {!preparationReady ? <section aria-label={preparationTitle} className="rounded-lg border border-dashed px-3.5 py-2.5 text-sm text-muted-foreground"><h4>{preparationTitle}</h4><p>{t('确认手术耗材后办理术前准备', 'Confirm surgical materials before preoperative preparation')}</p></section> : <section aria-label={preparationTitle} className="clinmesh-inpatient-preparation"><h4 className="font-medium">{doctor ? '3 · ' : ''}{preparationTitle}</h4>
       <ul className="clinmesh-inpatient-preparation-list">{[
         { key: 'consent', title: t('手术知情同意书已签', 'Signed surgical consent'), owner: t('住院医生', 'Inpatient doctor'), record: row.consentConfirmation },
         { key: 'preop', title: t('术前核对', 'Preoperative checks'), owner: t('病区护士', 'Ward nurse'), record: row.preopCheck },
