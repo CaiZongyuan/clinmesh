@@ -104,6 +104,15 @@ function parseVesselFindings(rawResources: unknown[], missing: string[]): { hasV
     const segment = componentText(matchingComponents(components, 'segment')[0]) ?? observation.bodySite?.text?.trim()
     const label = segment ?? rawVessel ?? observation.id ?? `#${index + 1}`
 
+    const duplicateFields = ([
+      ['vessel', '血管'], ['segment', '节段'], ['stenosis-percent', '狭窄比例'],
+      ['timi-flow', 'TIMI 血流'], ['lesion-characteristics', '病变特征'],
+    ] as const).filter(([code]) => matchingComponents(components, code).length > 1)
+    if (duplicateFields.length > 0) {
+      missing.push(...duplicateFields.map(([, name]) => `冠脉节段 ${name} 记录冲突：${label}`))
+      continue
+    }
+
     const rawStenosis = componentNumber(matchingComponents(components, 'stenosis-percent')[0])
     const stenosisParsed = z.number().finite().min(0).max(100).safeParse(rawStenosis)
     const rawTimi = componentNumber(matchingComponents(components, 'timi-flow')[0])
@@ -262,6 +271,7 @@ export class InpatientAngiography {
       const missing: string[] = []
       const { hasVesselSource, vessels } = parseVesselFindings(hiddenResources, missing)
       const { hasConclusionResource, conclusion } = parseAngiographyConclusion(hiddenResources, missing)
+      if (hasVesselSource && !hasConclusionResource) missing.push('缺少冠脉造影总体结论')
       const hasAnySource = qcaObservations.length > 0 || hasVesselSource || hasConclusionResource
 
       const measurements = !hasAnySource

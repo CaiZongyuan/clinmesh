@@ -48,6 +48,50 @@ async function setup(estimate = false) {
   return { fixture, prepared, stay, calls, payloads }
 }
 
+const angiographyCodingSystem = 'urn:clinmesh:synthetic:coronary-angiography'
+const vesselComponent = (code: string, value: Record<string, unknown>) => ({
+  code: { coding: [{ system: angiographyCodingSystem, code }] }, ...value,
+})
+function completeVesselComponents() {
+  return [
+    vesselComponent('vessel', { valueString: 'LAD' }),
+    vesselComponent('segment', { valueString: 'pLAD' }),
+    vesselComponent('stenosis-percent', { valueQuantity: { value: 60, unit: '%' } }),
+    vesselComponent('timi-flow', { valueInteger: 3 }),
+    vesselComponent('lesion-characteristics', { valueString: '近段中度狭窄' }),
+    vesselComponent('ffr', { valueQuantity: { value: 0.86, unit: '1' } }),
+    vesselComponent('ifr', { valueQuantity: { value: 0.92, unit: '1' } }),
+  ]
+}
+async function generateVesselReport(options: { components?: unknown[]; conclusion?: string | null; keepQca?: boolean } = {}) {
+  const s = await setup()
+  const row = z.object({ hidden_resources_json: z.string() }).parse(s.fixture.runtime.database.driver.prepare(
+    'SELECT hidden_resources_json FROM synthetic_case_truth WHERE case_id=?',
+  ).get(s.stay.sourceCaseId))
+  const facts = z.array(z.object({ resource: z.record(z.string(), z.unknown()), sourceReference: z.string() })).parse(JSON.parse(row.hidden_resources_json))
+  const nextFacts = [
+    ...facts.filter(item => options.keepQca || !String(item.resource.id ?? '').startsWith('pci-angiography-')),
+    { sourceReference: 'urn:uuid:synthetic-vessel', resource: {
+      resourceType: 'Observation', id: 'synthetic-vessel', status: 'final',
+      code: { coding: [{ system: angiographyCodingSystem, code: 'vessel-finding' }] },
+      component: options.components ?? completeVesselComponents(),
+    } },
+    ...(options.conclusion === null ? [] : [{ sourceReference: 'urn:uuid:synthetic-conclusion', resource: {
+      resourceType: 'Observation', status: 'final',
+      code: { coding: [{ system: angiographyCodingSystem, code: 'angiography-conclusion' }] },
+      valueString: options.conclusion ?? '合成造影：FFR 阴性，暂不实施 PCI。',
+    } }]),
+  ]
+  s.fixture.runtime.database.driver.prepare('UPDATE synthetic_case_truth SET hidden_resources_json=? WHERE case_id=?')
+    .run(JSON.stringify(nextFacts), s.stay.sourceCaseId)
+  await s.fixture.executeAngiography(s.stay)
+  expect(await s.fixture.runtime.dispatcher.dispatchOnce({ kinds: ['inpatient.angiography.report'] })).toMatchObject({ status: 'completed' })
+  const report = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/angiography-reports`, inpatientAngiographyReportsSchema)).reports[0]!
+  const fhir = await s.fixture.read('inpatient-doctor', `/fhir/R5/DiagnosticReport/${report.id}`, fhirResourceSchema)
+  expect(s.prepared.modelCalls).toBe(0)
+  return { report, fhir }
+}
+
 it('造影完成后持久任务生成关联本院操作的正式报告，刷新和重启不重复且不请求模型', async () => {
   const s = await setup()
   const execution = await s.fixture.executeAngiography(s.stay)
@@ -623,4 +667,34 @@ it('多支冠脉节段缺少必要血流或生理学数值越界时降级为 par
   expect(report.status).toBe('partial')
   expect(report.missing.length).toBeGreaterThan(0)
   expect(s.prepared.modelCalls).toBe(0)
+})
+
+it.each([false, true])('多支冠脉所见缺少总体结论时降级 partial，保留已有测量（含QCA=%s）', async keepQca => {
+  const { report, fhir } = await generateVesselReport({ conclusion: null, keepQca })
+  expect(report).toMatchObject({ status: 'partial', conclusion: null,
+    vessels: [expect.objectContaining({ vessel: 'LAD', stenosisPercent: 60, timiFlow: 3, ffr: 0.86 })],
+    missing: [expect.stringContaining('结论')],
+  })
+  expect(report.measurements).toHaveLength(keepQca ? 3 : 0)
+  expect(fhir.status).toBe('partial')
+})
+
+it.each([
+  { code: 'vessel', value: { valueString: 'RCA' }, label: '血管' },
+  { code: 'segment', value: { valueString: 'mLAD' }, label: '节段' },
+  { code: 'stenosis-percent', value: { valueQuantity: { value: 80, unit: '%' } }, label: '狭窄比例' },
+  { code: 'timi-flow', value: { valueInteger: 0 }, label: 'TIMI' },
+  { code: 'lesion-characteristics', value: { valueString: '完全闭塞伴血栓影' }, label: '病变特征' },
+  { code: 'ffr', value: { valueQuantity: { value: 0.70, unit: '1' } }, label: 'FFR' },
+  { code: 'ifr', value: { valueQuantity: { value: 0.70, unit: '1' } }, label: 'iFR' },
+  { code: 'stenosis-percent', value: { valueQuantity: { value: 60, unit: '%' } }, label: '狭窄比例' },
+])('血管字段 $code 重复时拒绝该节段并记录冲突，不按首条签发 final', async ({ code, value, label }) => {
+  const components = [...completeVesselComponents(), vesselComponent(code, value)]
+  const { report, fhir } = await generateVesselReport({ components })
+  expect(report).toMatchObject({ status: 'partial', vessels: [],
+    conclusion: '合成造影：FFR 阴性，暂不实施 PCI。',
+    missing: expect.arrayContaining([expect.stringContaining(label)]),
+  })
+  expect(report.missing.join()).toContain('冲突')
+  expect(fhir.status).toBe('partial')
 })
