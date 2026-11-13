@@ -147,7 +147,7 @@ it('医生的 PCI 工作稿保存仍不显示正式完成或交接', async () =>
   await f.user.click(screen.getByRole('button', { name: '保存 PCI 工作稿' }))
   await vi.waitFor(() => expect(f.posts).toHaveLength(1))
   await finish(f)
-  expect(screen.queryByText('已保存选型参数草稿 · 合成患者 A')).toBeNull()
+  expect(screen.queryByText('已保存选型工作稿 · 合成患者 A')).toBeNull()
   expect(screen.queryByText('已完成本次操作')).toBeNull()
 })
 
@@ -157,7 +157,7 @@ it('不带 admissionId 的全局时钟命令保持当前页面的完成反馈合
   await vi.waitFor(() => expect(f.posts).toHaveLength(1))
   await f.user.click(screen.getByRole('button', { name: '切到合成患者 B' }))
   await finish(f)
-  expect(await screen.findByText('已推进虚拟时间 · 合成患者 B')).toBeTruthy()
+  expect(await screen.findByText('已推进时间 · 合成患者 B')).toBeTruthy()
 })
 
 it.each([false, true])('医生在归档=%s时仍能打开本次住院累计用量，状态不伪装成正常跟进', async archived => {

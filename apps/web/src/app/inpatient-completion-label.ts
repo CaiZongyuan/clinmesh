@@ -29,7 +29,7 @@ export function inpatientCompletionLabel(command: CompletedCommand, locale: Work
       break
     case 'inpatient.drg.review.handoff': return t('已交接术后核查', 'Postoperative review handed over')
     case 'inpatient.pci-selection.confirm': return t('已确认选型参数', 'Selection parameters confirmed')
-    case 'inpatient.pci-selection.save': return t('已保存选型参数草稿', 'Selection draft saved')
+    case 'inpatient.pci-selection.save': return t('已保存选型工作稿', 'Selection draft saved')
     case 'inpatient.drg.followup.start': return t('已开启助手自动跟进', 'Assistant follow-up enabled')
     case 'inpatient.drg.followup.stop': return t('已停止助手自动跟进', 'Assistant follow-up stopped')
     case 'inpatient.pci-data.prepare': return t('已准备 PCI 目录', 'PCI catalog prepared')
@@ -106,7 +106,7 @@ export function inpatientCompletionLabel(command: CompletedCommand, locale: Work
     case 'inpatient.transfer.handover': return t('已完成转出交接', 'Transfer handover recorded')
     case 'inpatient.transfer.receive': return t('已接收转科患者', 'Transferred patient received')
     case 'inpatient.transfer.cancel': return t('已取消转科申请', 'Transfer request cancelled')
-    case 'scenario.advance-time': return t('已推进虚拟时间', 'Virtual time advanced')
+    case 'scenario.advance-time': return t('已推进时间', 'Time advanced')
   }
   const unhandled: never = command
   return unhandled
