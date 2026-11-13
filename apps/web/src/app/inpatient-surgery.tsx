@@ -1,3 +1,4 @@
+import { SurgeryRequestReason } from './inpatient-surgery-request-reason.tsx'
 import { InpatientSurgeryMaterials, SurgeryDrgLink } from './inpatient-surgery-materials.tsx'
 import { inpatientAngiographyReportsSchema, type InpatientAngiographyReport } from '@clinmesh/contracts/inpatient-angiography'
 import { inpatientPciSelectionSchema, pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -212,7 +213,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
               <FieldSet disabled={blocked}><FieldGroup className="grid gap-3 md:grid-cols-2">
                 <Field><FieldLabel htmlFor={`${formId}-plan`}>{t('计划术式', 'Planned procedure')}</FieldLabel><WorkspaceSelect id={`${formId}-plan`} value={procedureId} items={(catalog.data?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))} onValueChange={setProcedureId} /></Field>
                 <Field><FieldLabel htmlFor={`${formId}-time`}>{t('计划手术时间（上海时间）', 'Planned surgery time (Shanghai)')}</FieldLabel><Input id={`${formId}-time`} type="datetime-local" value={plannedFor} onChange={event => setPlannedFor(event.currentTarget.value)} required /></Field>
-                <Field className="md:col-span-2"><FieldLabel htmlFor={`${formId}-reason`}>{t('手术申请理由', 'Surgery request reason')}</FieldLabel><Input id={`${formId}-reason`} maxLength={2000} value={reason} onChange={event => setReason(event.currentTarget.value)} required /></Field>
+                <div className="md:col-span-2"><SurgeryRequestReason key={requestOwnerKey} admissionId={admission.id} session={session} open={requestOpen && active} locale={locale} value={reason} onChange={setReason} id={`${formId}-reason`} disabled={blocked} /></div>
               </FieldGroup></FieldSet>
             </div>
             <OrderComposerFooter hint={!procedure ? t('还差：选择计划术式', 'Select the planned procedure') : !plannedFor ? t('还差：填写计划手术时间', 'Enter the planned surgery time') : !reason.trim() ? t('还差：填写手术申请理由', 'Enter the surgery request reason') : t('提交后办理知情同意与术前核对', 'Complete consent and preoperative checks after submission')}>{requestAction}</OrderComposerFooter>

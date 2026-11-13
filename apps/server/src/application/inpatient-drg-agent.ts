@@ -232,6 +232,8 @@ export class InpatientDrgAgent {
   async process(event: OutboxHandlerInput, options: { models: GenerationModelBinding; recovery: ModelTaskRecovery;
     provider?: JsonChatCompletionsProvider; model?: string; signal: AbortSignal }): Promise<OutboxHandlerResult> {
     const payload = eventSchema.parse(event.payload)
+    if (this.owner.surgeryRequestReasons.owns(event.workspaceId, event.epoch, payload.taskId))
+      return this.owner.surgeryRequestReasons.process(event, options)
     if (this.owner.drgExplanations.owns(event.workspaceId, event.epoch, payload.taskId))
       return this.owner.drgExplanations.process(event, options)
     const row = rowSchema.optional().parse(this.owner.database.driver.prepare(`SELECT * FROM inpatient_drg_agent_analysis

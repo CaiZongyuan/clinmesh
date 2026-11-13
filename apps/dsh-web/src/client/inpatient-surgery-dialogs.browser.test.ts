@@ -5,6 +5,32 @@ import { buildInpatientPciFixture } from './inpatient-pci.browser.artifact.ts'
 for (const version of ['18', '19']) test.describe(`Surgery dialogs React ${version}`, () => {
   let artifact: Awaited<ReturnType<typeof buildInpatientPciFixture>>
   test.beforeAll(async () => { test.setTimeout(120_000); artifact = await buildInpatientPciFixture(version) })
+  test('ShadowRoot 申请理由助手草稿可编辑并保留人工修改', async ({ page, pciApp: app }) => {
+    test.setTimeout(60_000)
+    const stay = await app.fixture.preparePciAdmission([])
+    await page.route(`${app.origin}/request-reason-contract`, route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<!doctype html><html><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>` }))
+    await page.route(`**${stay.path}/surgeries/request-reason`, route => route.fulfill({ json: {
+      admissionId: stay.admissionId, taskId: 'synthetic-request-reason', fingerprint: 'a'.repeat(64), status: 'succeeded',
+      reason: '已核对主诊断和最近正式冠脉造影报告，拟进一步介入治疗。', failureCode: null,
+    } }))
+    await loginPciBrowser(page, app, 'inpatient-doctor')
+    await page.goto(`${app.origin}/request-reason-contract`)
+    await page.getByRole('button', { name: /合成冠脉病例甲/ }).click()
+    await selectInpatientStage(page, '手术')
+    const trigger = page.getByRole('button', { name: '申请手术', exact: true })
+    await trigger.click()
+    const dialog = page.getByRole('dialog', { name: '申请手术', exact: true })
+    expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
+    const reason = dialog.getByLabel('手术申请理由', { exact: true })
+    await expect(reason).toHaveValue('已核对主诊断和最近正式冠脉造影报告，拟进一步介入治疗。')
+    await expect(dialog.getByText('助手', { exact: true })).toBeVisible()
+    await reason.fill('医生修改后的申请理由')
+    await expect(dialog.getByText('助手', { exact: true })).toBeHidden()
+    await page.keyboard.press('Escape')
+    await expect(trigger).toBeFocused()
+    await trigger.click()
+    await expect(dialog.getByLabel('手术申请理由', { exact: true })).toHaveValue('医生修改后的申请理由')
+  })
   test('ShadowRoot 申请、预留与术后更正保留键盘、草稿和提交保护', async ({ page, pciApp: app }) => {
     test.setTimeout(90_000)
     const stay = await app.fixture.preparePciAdmission()

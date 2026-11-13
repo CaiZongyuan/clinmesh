@@ -1,3 +1,4 @@
+import { InpatientSurgeryRequestReason } from './inpatient-surgery-request-reason.ts'
 import { InpatientDrgReview } from './inpatient-drg-review.ts'
 import { InpatientMaterialPlans } from './inpatient-material-plans.ts'
 import { InpatientDrgFollowup } from './inpatient-drg-followup.ts'
@@ -73,6 +74,7 @@ export class InpatientService {
   readonly drgAgent: InpatientDrgAgent
   readonly materialEstimates: InpatientMaterialEstimate
   readonly materialPlans: InpatientMaterialPlans
+  readonly surgeryRequestReasons: InpatientSurgeryRequestReason
   readonly drgExplanations: InpatientDrgExplanation
   readonly guidelineAdvice: InpatientGuidelineAdvice
   readonly #workspaces: WorkspaceRepository
@@ -99,6 +101,7 @@ export class InpatientService {
     this.guidelineAdvice = new InpatientGuidelineAdvice(this, { contextStatus: estimateContextStatus, ...(guidelines === undefined ? {} : { guidelines }) })
     this.materialEstimates = new InpatientMaterialEstimate(this, estimateContextStatus)
     this.drgReview = new InpatientDrgReview(this)
+    this.surgeryRequestReasons = new InpatientSurgeryRequestReason(this, estimateContextStatus)
     this.drgExplanations = new InpatientDrgExplanation(this, estimateContextStatus)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
