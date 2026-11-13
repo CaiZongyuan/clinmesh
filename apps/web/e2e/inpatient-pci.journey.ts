@@ -81,7 +81,12 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   expect(pci.materials).toHaveLength(4)
   expect(executionPosts).toBe(1)
   const reservations = await s.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
-  expect(reservations.reservations.every(item => item.status === 'replaced' && item.replacedByMaterialUseId !== undefined)).toBe(true)
+  const pciReservations = reservations.reservations.filter(item => item.requestId === stay.requestId)
+  expect(pciReservations).toHaveLength(4)
+  expect(pciReservations.every(item => item.status === 'replaced' && item.replacedByMaterialUseId !== undefined)).toBe(true)
+  expect(reservations.reservations.filter(item => item.requestId !== stay.requestId)).toEqual(preparedStay ? [expect.objectContaining({
+    materialId: 'hospital-material-catheter', quantity: 1, consumedQuantity: 0, status: 'reserved',
+  })] : [])
   await executePciMedicationThroughPages(page, app, open, stay, ['aspirin'], pci.id)
   const clinical = await s.read('inpatient-doctor', `${stay.path}/clinical`, inpatientFullClinicalSchema)
   expect(clinical.charges.filter(item => item.kind === 'material')).toHaveLength(4)

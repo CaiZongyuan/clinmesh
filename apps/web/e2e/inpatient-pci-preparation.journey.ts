@@ -134,6 +134,10 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   await open('inpatient-doctor', admission.patientName)
   await stage(page, '手术')
   await requestSurgery(page, angiography, '固定合成病例实际冠脉造影')
+  const angiographyMaterials = page.getByRole('region', { name: '手术耗材', exact: true })
+  await expect(angiographyMaterials.getByRole('spinbutton', { name: '预计数量：合成演示导管', exact: true })).toHaveValue('1')
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认手术耗材', exact: true }).click()
+  await expect(angiographyMaterials).toContainText('你 · 已确认')
   await open('ward-nurse', admission.patientName)
   await stage(page, '手术')
   await page.getByLabel('术前核对说明', { exact: true }).fill('九项术前检验已阅，合成造影核对')
@@ -183,10 +187,14 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   }
   await page.getByRole('button', { name: '确认手术耗材', exact: true }).click()
   await expect(stepTwo).toContainText('已为本计划预留')
-  const reservations = await s.read('inpatient-doctor', `${path}/drg/reservations`, inpatientMaterialReservationListSchema)
-  expect(reservations.reservations).toHaveLength(4)
+  const reservations = (await s.read('inpatient-doctor', `${path}/drg/reservations`, inpatientMaterialReservationListSchema)).reservations
+  const pciReservations = reservations.filter(item => item.requestId === planned.id)
+  expect(pciReservations).toHaveLength(4)
+  expect(reservations.filter(item => item.requestId !== planned.id)).toEqual([expect.objectContaining({
+    materialId: 'hospital-material-catheter', quantity: 1, consumedQuantity: 0, status: 'reserved',
+  })])
   expect((await s.read('inpatient-doctor', `${path}/clinical`, inpatientFullClinicalSchema)).charges.filter(item => item.kind === 'material')).toHaveLength(0)
-  return { ...stay, requestId: planned.id, reservations: reservations.reservations }
+  return { ...stay, requestId: planned.id, reservations: pciReservations }
 }
 
 async function requestSurgery(page: Page, procedure: { coding: { code: string; display: string } }, reason: string) {
