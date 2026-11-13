@@ -35,8 +35,9 @@ export async function preparePciAiPlan(page: Page, app: PciAiBrowserApp) {
   const prepareSurgery = async (reason: string) => {
     const actions = page.getByRole('region', { name: '当前操作', exact: true })
     const confirmMaterials = actions.getByRole('button', { name: '确认手术耗材', exact: true })
-    if (await confirmMaterials.count()) await confirmMaterials.click()
     const consent = actions.getByRole('button', { name: '确认手术知情同意书已签', exact: true })
+    await expect(confirmMaterials.or(consent)).toBeVisible()
+    if (await confirmMaterials.isVisible()) await confirmMaterials.click()
     await expect(consent).toBeEnabled()
     await consent.click()
     const preparation = page.getByRole('region', { name: '术前准备', exact: true })

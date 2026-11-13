@@ -16,6 +16,8 @@ const scenes: Record<string, string> = { request: 'req', selection: 'sel', mater
 
 async function captureFactory(page: Page, info: TestInfo, origin: string, screenshots: boolean) {
   const root = page.locator('.clinmesh-web-root'), surface = await root.evaluate(element => element.getRootNode() instanceof ShadowRoot)
+  await root.evaluate(element => { element.dataset.fontSize = 'standard' })
+  await expect.poll(() => root.locator('input:visible').first().evaluate(element => getComputedStyle(element).fontSize)).toBe('14px')
   // 本机原型不进入 Git；CI 仍执行下方可观察的界面合同。
   const prototype = await readFile(new URL('../../../.prototypes/2026-11-13-surgery-flow/surgery-flow.html', import.meta.url), 'utf8').catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error })
   let reference: Page | null = null
@@ -29,17 +31,23 @@ async function captureFactory(page: Page, info: TestInfo, origin: string, screen
   const evidence: unknown[] = []
   return {
     async capture(stage: string, nextAction?: string) {
+      const captureStage = screenshots && (!process.env.CLINMESH_SURGERY_FLOW_CAPTURE_STAGES || process.env.CLINMESH_SURGERY_FLOW_CAPTURE_STAGES.split(',').includes(stage))
       if (nextAction) {
         await expect(page.locator('.clinmesh-inpatient-turn')).toContainText(nextAction)
         await expect(actions(page).getByRole('button', { name: nextAction, exact: true })).toBeVisible()
       }
       await expect(page.locator('.clinmesh-inpatient-head .clinmesh-inpatient-drg-progress')).toBeVisible()
+      if (process.env.CLINMESH_SURGERY_FLOW_FULL_MATRIX !== '1' && !['running', 'completion'].includes(stage)) return
       for (const width of [1600, 1280]) for (const theme of ['light', 'dark']) {
         const height = width === 1600 ? 1000 : 800, hostWidth = surface ? width - 56 - (width === 1600 ? 443 : 398) : width
         await page.setViewportSize({ width, height })
         await root.evaluate((element, input) => {
           element.classList.toggle('dark', input.theme === 'dark'); element.dataset.theme = input.theme; element.dataset.fontSize = 'standard'
-          if (input.surface) { element.style.width = `${input.hostWidth}px`; element.style.marginLeft = '56px' }
+          if (input.surface) {
+            const host = (element.getRootNode() as ShadowRoot).host as HTMLElement
+            host.style.width = `${input.hostWidth}px`; host.style.marginLeft = '56px'
+            element.style.width = '100%'; element.style.marginLeft = ''
+          }
           for (const child of element.querySelectorAll<HTMLElement>('*')) if (getComputedStyle(child).overflowY === 'auto') child.scrollTop = 0
         }, { theme, surface, hostWidth })
         await expect.poll(() => root.evaluate(element => Math.round(element.getBoundingClientRect().width))).toBe(hostWidth)
@@ -51,14 +59,15 @@ async function captureFactory(page: Page, info: TestInfo, origin: string, screen
           })
           const steps = Array.from(element.querySelectorAll<HTMLElement>('[role="region"],section[aria-label]')).filter(item => visible(item) && ['选型参数', '手术耗材', '术前准备'].includes(item.getAttribute('aria-label') ?? '')).map(item => ({ name: item.getAttribute('aria-label'), y: item.getBoundingClientRect().top }))
           const text = element.querySelector('.clinmesh-inpatient-turn')?.textContent
-          return { regions, steps, turn: text, rootOverflow: element.scrollWidth - element.clientWidth }
+          const bounds = element.getBoundingClientRect()
+          return { regions, steps, turn: text, rootLeft: bounds.left, rootRight: bounds.right, rootOverflow: element.scrollWidth - element.clientWidth }
         })
         const issues = layout.regions.filter(item => item.scrollWidth > item.clientWidth + 1).map(item => `horizontal overflow: ${JSON.stringify(item)}`)
         if (layout.rootOverflow > 1) issues.push(`root overflow ${layout.rootOverflow}`)
-        for (const modal of layout.regions.filter(item => item.modal)) if (modal.top < -1 || modal.bottom > height + 1) issues.push(`modal outside viewport: ${JSON.stringify(modal)}`)
+        for (const modal of layout.regions.filter(item => item.modal)) if (modal.top < -1 || modal.bottom > height + 1 || surface && (modal.left < layout.rootLeft - 1 || modal.right > layout.rootRight + 1)) issues.push(`modal outside viewport: ${JSON.stringify(modal)}`)
         const record = { stage, width, theme, hostWidth, surface, ...layout, issues, prototypeSha256: prototype ? createHash('sha256').update(prototype).digest('hex') : null }
         evidence.push(record)
-        if (screenshots) {
+        if (captureStage) {
           const path = info.outputPath(`surgery-flow-${stage}-${width}-${theme}.png`)
           await page.screenshot({ path, animations: 'disabled' })
           await info.attach(`surgery-flow-${stage}-${width}-${theme}`, { path, contentType: 'image/png' })
@@ -75,7 +84,7 @@ async function captureFactory(page: Page, info: TestInfo, origin: string, screen
           })
           if (scrolls.length) {
             await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-            if (screenshots) {
+            if (captureStage) {
               const detail = info.outputPath(`surgery-flow-${stage}-${width}-${theme}-detail.png`)
               await page.screenshot({ path: detail, animations: 'disabled' })
               await info.attach(`surgery-flow-${stage}-${width}-${theme}-detail`, { path: detail, contentType: 'image/png' })
@@ -83,7 +92,7 @@ async function captureFactory(page: Page, info: TestInfo, origin: string, screen
             expect(await page.locator('.clinmesh-inpatient-head').boundingBox()).toEqual(headBefore)
           }
         }
-        if (reference) {
+        if (reference && captureStage) {
           await reference.locator(`.seg[data-key="width"] [data-v="${width}"]`).click()
           await reference.locator(`.seg[data-key="theme"] [data-v="${theme}"]`).click()
           await reference.locator(`.seg[data-key="scene"] [data-v="${scenes[stage]}"]`).click()
@@ -98,7 +107,11 @@ async function captureFactory(page: Page, info: TestInfo, origin: string, screen
         }
       }
       await page.setViewportSize({ width: 1600, height: 1000 })
-      await root.evaluate(element => { element.classList.remove('dark'); element.dataset.theme = 'light'; element.style.width = ''; element.style.marginLeft = '' })
+      await root.evaluate(element => {
+        element.classList.remove('dark'); element.dataset.theme = 'light'; element.style.width = ''; element.style.marginLeft = ''
+        const shadow = element.getRootNode()
+        if (shadow instanceof ShadowRoot) { const host = shadow.host as HTMLElement; host.style.width = '100%'; host.style.marginLeft = '' }
+      })
     },
     async close() {
       await reference?.close()
@@ -144,6 +157,7 @@ export async function runSurgeryFlowJourney(page: Page, app: PciAiBrowserApp, in
     await actions(page).getByRole('button', { name: '确认手术知情同意书已签', exact: true }).click()
     await capture.capture('nurse', '等病区护士术前核对')
     await openPciAiPatient(page, app, 'ward-nurse', stay.patientName); await selectInpatientStage(page, '手术')
+    await expect(page.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组', exact: true })).toHaveCount(0)
     await page.getByLabel('术前核对说明', { exact: true }).fill('合成组合验收术前核对')
     await actions(page).getByRole('button', { name: '术前核对', exact: true }).click()
     await expect(page.getByRole('region', { name: '当前手术计划', exact: true })).toContainText('已就绪')
@@ -192,6 +206,10 @@ export async function runSurgeryFlowJourney(page: Page, app: PciAiBrowserApp, in
     await capture.capture('postoperative')
     await postoperative.getByRole('button', { name: '一次全部确认', exact: true }).click()
     await expect.poll(async () => (await f.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)).todos.filter(item => item.requestId === planned.id && item.ownerRole === 'inpatient-doctor' && ['pending', 'in-progress'].includes(item.status)), { timeout: 30_000 }).toHaveLength(0)
+    await expect(postoperative.getByRole('button', { name: '一次全部确认', exact: true })).toHaveCount(0)
+    await expect(postoperative.getByRole('textbox', { name: '待办处理说明', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('tab', { name: '手术', exact: true })).toHaveAccessibleDescription(/待办 0 项/)
+    await expect(page.getByRole('tab', { name: '手术', exact: true }).getByText(/^\d+$/)).toHaveCount(0)
     await requestPciAiSurgery(page, app, stay.path, '36.0700', '合成下一台手术计划')
     await expect(postoperative).toHaveCount(0)
     expect(errors).toEqual([])

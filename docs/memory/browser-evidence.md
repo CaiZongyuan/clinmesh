@@ -62,6 +62,8 @@
 
 - 字号属性更新后，按钮仍可能处于约 150 毫秒的 `font-size` 过渡；若干渲染帧不保证结束，布局断言须先等实际 computed 字号到达目标，不能禁用动画或固定 sleep。复用[住院细节旅程](../../apps/web/e2e/inpatient-review-layout.journey.ts)同时核对放大与恢复字号。
 
+- Surface CSS 将响应式规则转换为 `@container dsh-react-surface-content` 时，fixture 还须复现同名宿主容器及其 containment；仅有 ShadowRoot 和 Portal 会漏掉断点规则及 fixed 弹窗的宿主边界。调整 DSH 宽度时修改真实宿主盒子，同时核对弹窗留在该盒子内；参考[PCI 浏览器宿主](../../apps/dsh-web/src/client/inpatient-pci.browser.fixture.tsx)和[手术全程矩阵](../../apps/web/e2e/inpatient-surgery-flow.journey.ts)。
+
 ## 预览文件与浏览器会话
 
 - 验证响应丢失后的恢复时，除刷新和组件重挂载，还须通过真实退出、同身份重新登录及原回执查询覆盖账号清理边界；退出前同时保留一项未提交草稿，分别断言草稿清除、原操作仍可恢复、请求与费用未重复。仅重挂载不会执行 `signOut` 的存储清理，相关回归见[门诊检查真实入口](../../apps/web/e2e/investigation-workspace.spec.ts)。
