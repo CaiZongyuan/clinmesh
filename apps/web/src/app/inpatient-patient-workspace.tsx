@@ -37,6 +37,7 @@ import { InpatientDischarge, InpatientSettlement, inpatientDepartureLabel } from
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
 import { InpatientRecord, inpatientRecordPhase } from './inpatient-record.tsx'
 import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
+import { surgeryPreparation, surgeryStepLabel, useSurgeryView } from './inpatient-surgery-flow.ts'
 import { InpatientSurgery } from './inpatient-surgery.tsx'
 import { InpatientTransfers } from './inpatient-transfers.tsx'
 import { inpatientDefaultStage, inpatientFlow, inpatientInvestigationWaiting, inpatientPending, inpatientStageTabs } from './inpatient-stage-activity.ts'
@@ -157,6 +158,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const activeSurgeryPlans = (surgery.data?.requests ?? []).filter(plan => ['requested', 'ready'].includes(plan.status)
     && !surgery.data?.inProgress.some(execution => execution.requestId === plan.id))
   const pciPlans = activeSurgeryPlans.filter(plan => pciSelectionProcedureCodes.includes(plan.plannedProcedure.coding.code))
+  const surgeryView = useSurgeryView()
   const pciPreparation = useInpatientPciPreparation({ admission, session, plans: pciPlans, allPlans: activeSurgeryPlans, locale })
   const tabs = inpatientStageTabs(activity, allowTransfers, locale)
   const counts = inpatientPending(activity)
@@ -251,22 +253,13 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     if (!data) return waiting.surgery
     if (data.inProgress.length > 0) return t('轮到你：逐笔登记耗材，核实后完成手术', 'Your turn: record materials and complete surgery')
     const activeRequests = data.requests.filter(request => request.status === 'requested' || request.status === 'ready')
-    const readyRequest = activeRequests.find(request => request.status === 'ready')
-    if (readyRequest) {
-      const isPciPlan = pciSelectionProcedureCodes.includes(readyRequest.plannedProcedure.coding.code)
-      if (isPciPlan) {
-        const draft = pciPreparation.selectionData?.drafts?.find(item => item.requestId === readyRequest.id)
-        const confirmed = pciPreparation.selectionData?.confirmation?.parameters.requestId === readyRequest.id
-        const estimate = pciPreparation.estimatesData?.estimates.find(item => item.requestId === readyRequest.id)
-        const matConfirmed = Boolean(estimate?.draft && estimate.draft.confirmedRevision === estimate.draft.revision)
-        const selDone = confirmed || Boolean(draft?.edited) || matConfirmed
-        if (!selDone) return t('轮到你：确认选型参数', 'Your turn: confirm selection parameters')
-        if (!matConfirmed) return t('轮到你：确认手术耗材', 'Your turn: confirm surgical materials')
-      }
-      return t('轮到你：开始手术', 'Your turn: start surgery')
+    const selectedPlan = activeRequests.find(request => request.id === surgeryView[0].selectedRequestId) ?? activeRequests[0]
+    if (selectedPlan) {
+      const estimate = pciPreparation.estimatesData?.estimates.find(item => item.requestId === selectedPlan.id)
+      const state = surgeryPreparation(selectedPlan, pciPreparation.selectionData, estimate, surgeryView[0])
+      const label = surgeryStepLabel(state.step, locale)
+      return state.step === 'nurse' ? label : `${t('轮到你：', 'Your turn: ')}${label}`
     }
-    if (activeRequests.some(request => !request.consentConfirmation)) return t('轮到你：确认手术知情同意书已签', 'Your turn: confirm signed surgical consent')
-    if (activeRequests.length > 0) return t('等病区护士完成术前核对', 'Waiting for the ward nurse to complete preoperative checks')
     if (data.executions.length > 0) return t('手术已完成', 'Surgery completed')
     return t('尚无手术计划，可按诊疗需要申请', 'No surgery planned; request as clinically needed')
   }
@@ -419,7 +412,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
         {stage.value === 'orders' ? <InpatientClinical key={admission.id} admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /> : null}
         {stage.value === 'drg' ? <InpatientDrgPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} followOn={followOn} onOpenRecord={changeStage} /> : null}
         {stage.value === 'investigations' ? <InpatientInvestigations active={active === stage.value} admission={admission} session={session} locale={locale} write={write} onOpenStage={changeStage} /> : null}
-        {stage.value === 'surgery' ? <InpatientSurgery admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenStage={changeStage} onOpenUsage={(taskId, taskKind) => { setUsageTarget({ taskId, taskKind }); setUsageOpen(true) }} /> : null}
+        {stage.value === 'surgery' ? <InpatientSurgery view={surgeryView} admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenStage={changeStage} onOpenUsage={(taskId, taskKind) => { setUsageTarget({ taskId, taskKind }); setUsageOpen(true) }} /> : null}
         {stage.value === 'transfer' ? <InpatientTransfers admission={admission} session={session} locale={locale} write={write} /> : null}
         {stage.value === 'fees' ? cashier ? <InpatientCharges admission={admission} admissionId={admission.id} session={session} locale={locale} write={write} /> : <InpatientClinical admission={admission} session={session} locale={locale} write={write} view="fees" /> : null}
         {stage.value === 'discharge' ? cashier ? <InpatientSettlement admission={admission} session={session} locale={locale} write={write} /> : <InpatientDischarge admission={admission} session={session} locale={locale} write={write} activity={activity} onOpenStage={changeStage} /> : null}

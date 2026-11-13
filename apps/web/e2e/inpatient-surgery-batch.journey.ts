@@ -186,7 +186,7 @@ export async function runSurgeryBatchJourney(page: Page, s: Patient, open: () =>
   ])
   await step('丢失响应后读取原回执，未重复执行或计费；继续核实另一台手术')
 
-  await page.getByRole('button', { name: '开始手术逐笔登记', exact: true }).click()
+  await page.getByRole('button', { name: '开始手术', exact: true }).click()
   const start = page.getByRole('dialog', { name: '开始手术', exact: true })
   await start.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: '00.6600 · 经皮冠状动脉腔内血管成形术[PTCA]', exact: true }).click()

@@ -176,7 +176,7 @@ export async function runSurgeryMaterialsJourney(page: Page, s: Patient, open: (
   await openQueue(page)
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
   await selectInpatientStage(page, "手术")
-  await page.getByRole('button', { name: '开始手术逐笔登记', exact: true }).click()
+  await page.getByRole('button', { name: '开始手术', exact: true }).click()
   const startDialog = page.getByRole('dialog', { name: '开始手术', exact: true })
   await startDialog.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: '00.6600 · 经皮冠状动脉腔内血管成形术[PTCA]', exact: true }).click()
