@@ -495,7 +495,7 @@ it.each(['success', 'unknown', 'changed-session'])('申请弹窗在%s时保护�
     await waitFor(() => expect(screen.getByLabelText('写入状态').textContent).toBe(outcome === 'unknown' ? 'error' : 'success'))
     expect(within(screen.getByRole('dialog', { name: '申请手术' })).getByRole('alert')).toBeDefined()
   }
-  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术申请理由' }).value).toBe(outcome === 'changed-session' ? '' : '保留原手术申请未提交输入')
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术申请理由' }).value).toBe(outcome === 'unknown' ? '保留原手术申请未提交输入' : '')
 })
 
 it.each([null, '盒'])('补登记不提供计费单位未知或不一致（%s）的预留', async unit => {

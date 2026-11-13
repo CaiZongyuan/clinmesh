@@ -104,7 +104,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         reason,
       },
     }, {
-      onSuccess: () => { if (requestOwner.current === requestOwnerKey) setRequestOpen(false) },
+      onSuccess: () => { if (requestOwner.current === requestOwnerKey) { setRequestOpen(false); setProcedureId(null); setPlannedFor(''); setReason('') } },
     })
   }
   const error = surgery.error ?? catalog.error ?? reservations.error
