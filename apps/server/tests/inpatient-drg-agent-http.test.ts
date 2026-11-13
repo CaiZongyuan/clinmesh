@@ -7,8 +7,11 @@ import { inpatientDrgPayerReviewPreviewSchema, inpatientDrgPayerReviewListSchema
 import { modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
 import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgReviewSchema, inpatientDrgReviewResponseSchema, inpatientDrgRecordChecksSchema } from '@clinmesh/contracts/inpatient-drg-review'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { rm } from 'node:fs/promises'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdir, rm } from 'node:fs/promises'
+import { fork } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { inpatientDrgFollowupResponseSchema } from '@clinmesh/contracts/inpatient-drg-followup'
@@ -534,6 +537,75 @@ it('费用依据变化后仍明确保留原unknown，旧说明仅作历史且重
     costs: { components: { formalChargesFen: fees.chargesFen } }, lastAnalysis: { id: published.analysis!.id } })
   expect(s.requests).toHaveLength(3)
 })
+
+it('两个runtime并发恢复同一偏离笔只保留一次生成核验与住院用量', async () => {
+  const s = await setupAgent()
+  await s.start(); await s.fixture.runtime.dispatchPending()
+  const before = await s.read()
+  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/agent/confirm`, {
+    analysisId: before.analysis!.id, expectedBasisFingerprint: before.basisFingerprint!, expectedRevision: 0, note: '医生确认冻结术前清单',
+    items: before.analysis!.items.map(({ materialId, catalogVersion, quantity, reason }) => ({ materialId, catalogVersion, quantity, reason })),
+  })).status).toBe(200)
+  const { materials: _materials, ...ready } = await s.fixture.pciExecutionInput(s.stay)
+  const started = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/start`, ready)).json()).data
+  // 在数据库边界注入一次丢失通知；正式登记仍由公开Command提交并回读其响应。
+  const prepare = s.fixture.runtime.database.driver.prepare.bind(s.fixture.runtime.database.driver)
+  const lost = vi.spyOn(s.fixture.runtime.database.driver, 'prepare').mockImplementation(sql => {
+    if (sql.includes('INSERT INTO inpatient_drg_agent_analysis') && sql.includes("'intraoperative'")) throw new Error('Synthetic notification lost before enqueue')
+    return prepare(sql)
+  })
+  let materialUseId: string
+  try {
+    const response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/record-material`, {
+      requestId: s.stay.requestId, expectedRequestVersion: started.requests.find(item => item.id === s.stay.requestId)!.version,
+      executionId: started.inProgress[0]!.id, note: '分支保护，额外导丝实际使用',
+      material: { materialId: 'hospital-material-pci-guidewire', catalogVersion: 1, quantity: 2 },
+    })
+    expect(response.status, await response.clone().text()).toBe(200)
+    materialUseId = inpatientSurgeryResponseSchema.parse(await response.json()).data.inProgress[0]!.materials[0]!.id
+  } finally { lost.mockRestore() }
+  const cookie = await s.fixture.login('inpatient-doctor'), barrier = join(s.fixture.directory, 'intraoperative-recovery-barrier')
+  await mkdir(barrier)
+  await s.fixture.runtime.close()
+  const { chatCompletionsProvider: _provider, ...options } = s.fixture.options
+  const workerReply = z.discriminatedUnion('kind', [z.object({ kind: z.literal('ready') }), z.object({ kind: z.literal('error'), message: z.string() }),
+    z.object({ kind: z.literal('result'), stateStatus: z.number(), state: inpatientDrgAgentSchema, usageStatus: z.number(), usage: modelUsageListSchema })])
+  const createWorker = async (index: string) => {
+    const child = fork(fileURLToPath(new URL('./fixtures/intraoperative-review-worker.ts', import.meta.url)), [JSON.stringify(options), barrier, index], {
+      execArgv: ['--import', 'tsx'], stdio: ['ignore', 'ignore', 'pipe', 'ipc'], env: { ...process.env, TSX_DISABLE_CACHE: '1' },
+    })
+    let stderr = ''
+    child.stderr!.on('data', value => { stderr += String(value) })
+    cleanups.push(async () => {
+      if (child.exitCode !== null || child.signalCode !== null) return
+      await new Promise<void>(resolve => {
+        const timeout = setTimeout(() => child.kill(), 5000)
+        child.once('exit', () => { clearTimeout(timeout); resolve() })
+        if (child.connected) child.send({ kind: 'close' }); else child.kill()
+      })
+    })
+    const next = (timeoutMs: number) => new Promise<z.infer<typeof workerReply>>((resolve, reject) => {
+      const timeout = setTimeout(() => { detach(); reject(new Error(`Synthetic recovery worker timed out: ${stderr}`)) }, timeoutMs)
+      const received = (raw: unknown) => { detach(); try { resolve(workerReply.parse(raw)) } catch (error) { reject(error) } }
+      const exited = (code: number | null) => { detach(); reject(new Error(`Synthetic recovery worker exited ${code}: ${stderr}`)) }
+      function detach() { clearTimeout(timeout); child.off('message', received); child.off('exit', exited) }
+      child.once('message', received); child.once('exit', exited)
+    })
+    expect(await next(30_000)).toEqual({ kind: 'ready' })
+    return { recover: () => { const result = next(20_000); child.send({ kind: 'recover', cookie, path: s.stay.path }); return result } }
+  }
+  // 初始化的模式写入串行完成，下面只并发本次恢复操作。
+  const workers = [await createWorker('0'), await createWorker('1')]
+  const results = await Promise.all(workers.map(worker => worker.recover()))
+  for (const result of results) {
+    expect(result.kind).toBe('result')
+    if (result.kind !== 'result') throw new Error(JSON.stringify(result))
+    expect(result.stateStatus).toBe(200); expect(result.usageStatus).toBe(200)
+    expect(result.state.intraoperativeReviews.filter(item => item.materialUseId === materialUseId)).toHaveLength(1)
+    expect(result.state.intraoperativeReviews[0]).toMatchObject({ status: 'succeeded' })
+    expect(result.usage.items.filter(item => item.context.stage.startsWith('intraoperative'))).toHaveLength(2)
+  }
+}, 45_000)
 
 it('术中只为新偏离笔生成并核验说明，后续按计划登记与刷新不重复调用', async () => {
   const s = await setupAgent((feature, _index, raw) => {

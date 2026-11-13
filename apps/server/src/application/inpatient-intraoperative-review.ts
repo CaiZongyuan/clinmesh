@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { v7 as uuidv7 } from 'uuid'
 import { inpatientPciSelectionSchema, pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientMaterialPlanSchema } from '@clinmesh/contracts/inpatient-material-plan'
 import { inpatientSurgeryMaterialHistorySchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -93,17 +92,21 @@ export class InpatientIntraoperativeReview {
         for (const fact of this.#facts(context, task.admissionId)) for (const deviation of fact.deviations) {
           if (rows.some(row => inputSchema.parse(JSON.parse(row.input_json)).deviation.use.id === deviation.use.id)) continue
           this.owner.database.driver.transaction(() => {
+            // 原随机任务也按本笔身份复用；跨runtime的旧读取不能创建第二份意图。
+            if (this.owner.database.driver.prepare(`SELECT 1 FROM inpatient_drg_agent_analysis
+              WHERE workspace_id=? AND epoch=? AND admission_id=? AND json_extract(input_json,'$.kind')='intraoperative-review'
+              AND json_extract(input_json,'$.deviation.use.id')=?`).get(context.workspaceId, context.epoch, task.admissionId, deviation.use.id)) return
             const input = inputSchema.parse({ kind: 'intraoperative-review', followupTaskId: taskId, followupVersion: task.version,
               requestId: fact.plan.requestId, executionId: fact.execution.id, plan: fact.plan, selection: fact.selection, deviation,
               costs: readInpatientCosts(this.owner, context, task.admissionId) })
-            const id = uuidv7(), createdAt = this.owner.virtualTime(context)
+            const id = `intra-${deviation.use.id}`, createdAt = this.owner.virtualTime(context)
             this.owner.database.driver.prepare(`INSERT INTO inpatient_drg_agent_analysis
               (workspace_id,epoch,analysis_id,task_id,admission_id,revision,task_version,basis_fingerprint,stage,status,input_json,created_at)
               VALUES(?,?,?,?,?,1,1,?,'intraoperative','queued',?,?)`).run(context.workspaceId, context.epoch, id, id, task.admissionId,
                 canonicalJsonHash(input), JSON.stringify(input), createdAt)
             new CommandTransaction(this.owner.database, this.owner.fhir, context, () => new Date()).enqueue({
               kind: 'inpatient.drg.agent.analyze', dedupKey: `${id}:1`, payload: { taskId: id, analysisId: id } })
-          })()
+          }).immediate()
         }
       } catch (error) { if (!(error instanceof InpatientError)) throw error }
     }
