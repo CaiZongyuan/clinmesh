@@ -6,6 +6,7 @@ import { InpatientRecordDrgSummary } from './inpatient-record-drg.tsx'
 import { inpatientPaymentsSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
+import { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientTransfersSchema } from '@clinmesh/contracts/inpatient-transfer'
@@ -158,7 +159,9 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const view = useWorkspaceCardView(id), chosen = inpatientStageSchema.safeParse(view.tab)
   // 与病案页同键，在医生打开病案页或已结算患者计算病案待办时读取，用于第一行写清提交、退回或等待审核并更新角标。
   const record = useQuery({ queryKey: [...scope, admission.id, 'record'], enabled: (doctor && (chosen.data === 'record' || (admission.financialStatus === 'settled' && admission.recordStatus === 'open'))) || admission.recordStatus === 'archived', queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/record`, inpatientRecordSchema, signal) })
-  const activity = { admission, role, ...(careOpen ? { clinical: clinical.data, investigations: investigations.data, surgery: surgery.data, transfers: transfers.data } : {}), record: record.data, virtualTime: scenario.data?.virtualTime }
+  const surgeryReview = useQuery({ queryKey: [...scope, admission.id, 'drg-review'], enabled: false,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/review`, inpatientDrgReviewSchema, signal) })
+  const activity = { admission, role, ...(careOpen ? { clinical: clinical.data, investigations: investigations.data, surgery: surgery.data, transfers: transfers.data, review: surgeryReview.error === null ? surgeryReview.data : undefined } : {}), record: record.data, virtualTime: scenario.data?.virtualTime }
   const activeSurgeryPlans = (surgery.data?.requests ?? []).filter(plan => ['requested', 'ready'].includes(plan.status)
     && !surgery.data?.inProgress.some(execution => execution.requestId === plan.id))
   const pciPlans = activeSurgeryPlans.filter(plan => pciSelectionProcedureCodes.includes(plan.plannedProcedure.coding.code))
@@ -266,6 +269,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
       const label = surgeryStepLabel(state.step, locale)
       return state.step === 'nurse' ? label : `${t('轮到你：', 'Your turn: ')}${label}`
     }
+    if (surgeryReview.data?.todos.some(todo => todo.ownerRole === 'inpatient-doctor' && (todo.status === 'pending' || todo.status === 'in-progress'))) return t('轮到你：确认术后核查差异', 'Your turn: confirm postoperative review findings')
     if (data.executions.length > 0) return t('手术已完成', 'Surgery completed')
     return t('尚无手术计划，可按诊疗需要申请', 'No surgery planned; request as clinically needed')
   }

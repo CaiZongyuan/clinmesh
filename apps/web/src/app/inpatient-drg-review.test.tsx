@@ -159,7 +159,7 @@ it('术后处理说明按记录带出，一次确认逐项提交，第二项失�
       const input = JSON.parse(String(init.body)).input
       posts.push(input.todoId)
       if (input.todoId === 'todo-2') return Response.json({ error: { code: 'VERSION_CONFLICT', message: '合成第二项依据已变化' } }, { status: 409 })
-      current = { ...current, todos: current.todos.filter(item => item.id !== input.todoId) }
+      current = { ...current, todos: current.todos.map(item => item.id === input.todoId ? { ...item, status: 'dismissed', reason: input.note } : item) }
       return Response.json({ data: current, auditId: 'audit-1', requestId: 'receipt-1', effects: [], warnings: [] })
     }
     if (path.endsWith('/drg/review')) return Response.json(current)
@@ -186,7 +186,7 @@ it('批量确认途中离开页面会停止后续提交，回来后仍可办理�
     if (init?.method === 'POST') {
       const input = JSON.parse(String(init.body)).input; posts.push(input.todoId)
       await gate
-      current = { ...current, todos: current.todos.filter(item => item.id !== input.todoId) }
+      current = { ...current, todos: current.todos.map(item => item.id === input.todoId ? { ...item, status: 'dismissed', reason: input.note } : item) }
       return Response.json({ data: current, auditId: 'audit-leave', requestId: 'receipt-leave', effects: [], warnings: [] })
     }
     if (path.endsWith('/drg/review')) return Response.json(current)
@@ -206,4 +206,24 @@ it('批量确认途中离开页面会停止后续提交，回来后仍可办理�
   await screen.findByText('下一项')
   expect(await screen.findByRole<HTMLButtonElement>('button', { name: '一次全部确认' })).toHaveProperty('disabled', false)
   expect(posts).toEqual(['todo-1'])
+})
+
+it('全部确认保留已处置历史，但不再显示确认按钮或未完成输入', async () => {
+  let current = inpatientDrgReviewSchema.parse({ ...review, todos: [todo] })
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (init?.method === 'POST') {
+      const input = JSON.parse(String(init.body)).input
+      current = { ...current, todos: current.todos.map(item => ({ ...item, status: 'dismissed', reason: input.note })) }
+      return Response.json({ data: current, auditId: 'audit-done', requestId: 'receipt-done', effects: [], warnings: [] })
+    }
+    if (path.endsWith('/drg/review')) return Response.json(current)
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料未准备' } }, { status: 503 })
+  }))
+  mount(session, admission, true)
+  await userEvent.setup().click(await screen.findByRole('button', { name: '一次全部确认' }))
+  await screen.findByText('当前没有未解决核查待办。')
+  expect(screen.getByText('人工无需处理')).toBeDefined()
+  expect(screen.queryByRole('button', { name: '一次全部确认' })).toBeNull()
+  expect(screen.queryByRole('textbox', { name: '待办处理说明' })).toBeNull()
 })

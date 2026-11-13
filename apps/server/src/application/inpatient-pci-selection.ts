@@ -96,7 +96,7 @@ export class InpatientPciSelection {
       edited: false, confirmedSelectionVersion: null, parameters: { requestId, treatmentPlan: procedure.coding.display,
         targetSite: report.targetSite, measurements: report.measurements, approvedMaterialIds: [],
         plannedQuantities: pciSelectionEvidence.map(item => ({ category: item.category, quantity: 1,
-          basis: `合成单病变方案 ${pciSelectionEvidencePackage.id}/${pciSelectionEvidencePackage.version} 每类一件；不由指南、价格或目录反推数量。` })) } })
+          basis: '合成单病变 PCI 计划：每类耗材1件' })) } })
     this.owner.database.driver.prepare('INSERT INTO inpatient_pci_selection_draft VALUES(?,?,?,?,?)')
       .run(context.workspaceId, context.epoch, admissionId, requestId, JSON.stringify(draft))
   }

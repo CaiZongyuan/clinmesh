@@ -46,7 +46,7 @@ export function InpatientSurgeryCompletion(props: Props): React.JSX.Element {
       reason={props.summary} action={action} /></InpatientPrimaryAction>
     <Dialog open={open && props.active !== false} pending={props.write.mutation.isPending} onOpenChange={setOpen}>
       <DialogContent className="max-h-[calc(100%-2rem)] sm:max-w-[900px]" showCloseButton={!props.write.mutation.isPending}>
-        <DialogHeader><DialogTitle>{t('核实最终耗材并完成手术', 'Review final materials and complete surgery')}</DialogTitle><DialogDescription>{t('默认采用术中已登记量；有出入时可改数量。', 'Recorded quantities are used by default; edit them if needed.')}</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{t('核实最终耗材并完成手术', 'Review final materials and complete surgery')}</DialogTitle><DialogDescription>{props.execution.actualProcedure.coding.display} · {t('默认采用术中已登记量；有出入时可改数量。', 'Recorded quantities are used by default; edit them if needed.')}</DialogDescription></DialogHeader>
         {open && props.active !== false ? <CompletionEditor key={ownerKey} {...props} onClose={() => { if (!props.write.mutation.isPending) setOpen(false) }} /> : null}
       </DialogContent>
     </Dialog>
@@ -61,11 +61,12 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
   const draft = useSurgeryDraft({ scope, schema: completionDraftSchema, initial: initialCompletionDraft(execution, reservations, request.id) })
   const { rows, releases } = draft.value
   const [editing, setEditing] = useState(false)
+  const attemptedPreview = useRef('')
   const estimates = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'material-estimates'],
     enabled: active !== false, retry: false, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/material-estimates`, inpatientMaterialEstimatesSchema, signal) })
   const planBasis = estimates.data?.estimates.find(item => item.requestId === request.id)?.planBasis
   const plan = planBasis?.history.find(item => item.reference === planBasis.effectiveReference)
-  const note = draft.value.noteSource === 'rule' ? completionReviewNote(rows, plan, execution, releases, locale) : draft.value.note
+  const note = draft.value.noteSource === 'rule' ? completionReviewNote(rows, plan, execution, releases, locale, reservations) : draft.value.note
   const setRows = (change: (previous: CompletionDraftRow[]) => CompletionDraftRow[], discard = false) => draft.save({ ...draft.value, rows: change(rows) }, { keepCurrentOnFailure: discard })
   const [clearOpen, setClearOpen] = useState(false), [clearFailed, setClearFailed] = useState(false)
   const current = useRef({ scopeKey, active, dataReady }), mounted = useRef(true)
@@ -103,7 +104,7 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
     releases: releases.map(row => ({ ...row, expectedReservationVersion: reservations.find(item => item.id === row.reservationId)?.version ?? row.expectedReservationVersion })) })
   }
   useEffect(() => { if (refreshCount > 0) refreshSnapshot.current() }, [refreshCount])
-  const refreshBasis = useMutation({ retry: false, mutationFn: refresh, onSuccess: () => { preview.reset(); if (isCurrent()) setRefreshCount(value => value + 1) } })
+  const refreshBasis = useMutation({ retry: false, mutationFn: refresh, onSuccess: () => { attemptedPreview.current = ''; preview.reset(); if (isCurrent()) setRefreshCount(value => value + 1) } })
   const rowProblem = (row: CompletionDraftRow) => {
     if (!validFinalQuantity(row.quantity)) return t('最终总量须为0至1000的整数', 'Final quantity must be an integer from 0 to 1000')
     const currentMaterial = catalog?.materials.find(item => item.id === row.materialId && item.version === row.catalogVersion)
@@ -143,7 +144,6 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
     if (draft.prepareSubmission(command)) write.mutation.mutate({ ...command, isCurrent: () => isCurrent() && current.current.dataReady })
   }
   const previewKey = JSON.stringify({ input, basis })
-  const attemptedPreview = useRef('')
   useEffect(() => {
     if (!valid || blocked || reviewed || attemptedPreview.current === previewKey) return
     const timer = setTimeout(() => {
@@ -171,7 +171,18 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
             unit: item.chargeDefinition.unit, priceFen: item.chargeDefinition.priceFen,
           }]) }}>{materialList}</SurgeryFinalMaterialPicker>
       </>}
-      {originalReservations.some(item => (remainingAfterCompletion(item, rows) ?? 0) > 0) && !editing ? <div className="flex flex-col gap-2 text-sm"><span>{t('未用的预留', 'Unused reservations')}</span><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" aria-pressed={releases.length === 0} onClick={() => draft.save({ ...draft.value, releases: [] })}>{t('保留预留', 'Keep reservations')}</Button><Button type="button" variant="outline" aria-pressed={releases.length > 0} onClick={() => draft.save({ ...draft.value, releases: originalReservations.filter(item => item.releaseReason == null && (remainingAfterCompletion(item, rows) ?? 0) > 0).map(item => ({ reservationId: item.id, expectedReservationVersion: item.version, display: item.materialDisplay })) })}>{t('释放预留', 'Release reservations')}</Button></div></div> : null}
+      {originalReservations.some(item => (remainingAfterCompletion(item, rows) ?? 0) > 0) && !editing ? <div className="flex flex-col gap-2 text-sm"><span>{t('未用的预留', 'Unused reservations')}</span><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" className={releases.length === 0 ? 'border-info bg-info/10 text-info' : undefined} aria-pressed={releases.length === 0} onClick={() => draft.save({ ...draft.value, releases: [] })}>{t('保留预留', 'Keep reservations')}</Button><Button type="button" variant="outline" className={releases.length > 0 ? 'border-info bg-info/10 text-info' : undefined} aria-pressed={releases.length > 0} onClick={() => draft.save({ ...draft.value, releases: originalReservations.filter(item => item.releaseReason == null && (remainingAfterCompletion(item, rows) ?? 0) > 0).map(item => ({ reservationId: item.id, expectedReservationVersion: item.version, display: item.materialDisplay })) })}>{t('释放预留', 'Release reservations')}</Button></div></div> : null}
+      {reviewed && preview.data ? <section aria-label={t('本次差额', 'Differences')} className="flex flex-col gap-2 text-sm">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums"><span>{t('耗材差额合计 ', 'Material difference ')}<b>{formatFen(preview.data.materialDeltaFen, locale)}</b></span><span>{t('术式费 ', 'Procedure fee ')}<b>{formatFen(preview.data.procedureAmountFen, locale)}</b></span><span>{t('本次新增费用 ', 'New charges ')}<b>{formatFen(preview.data.totalDeltaFen, locale)}</b></span></div>
+        {editing ? <details open className="clinmesh-inpatient-disclosure"><summary>{t('费用差额与预留明细', 'Charge differences and reservation details')}</summary><div className="flex flex-col gap-1 p-2">      {preview.data.materials.map((row, index) => <div key={index} className="flex flex-col gap-1">
+        {row.deltaQuantity !== 0 ? <p className="flex gap-3"><span className="flex-1">{row.item.display} {row.deltaQuantity > 0 ? t('补登', 'add') : t('冲减', 'reduce')} {Math.abs(row.deltaQuantity)} {row.item.chargeDefinition.unit}</span>{' '}<b className="tabular-nums">{formatFen(row.deltaFen, locale)}</b></p> : null}
+        {rows[index] && (rows[index]!.priceFen !== row.item.chargeDefinition.priceFen || rows[index]!.unit !== row.item.chargeDefinition.unit)
+          ? <Alert><AlertDescription>{t('计价依据已变化，请按本次预览的单价及单位重新核实数量。', 'Pricing changed. Review quantities using the price and unit in this preview.')}</AlertDescription></Alert> : null}
+      </div>)}
+      {releases.map(item => <p key={item.reservationId} className="flex gap-3"><span className="flex-1">{t('释放预留', 'Release reservation')} · {item.display}</span><b>—</b></p>)}
+      {preview.data.retainedReservations.map(item => <p key={item.id} className="flex gap-3"><span className="flex-1">{t('保留预留', 'Keep reservation')} · {item.materialDisplay}</span><b>—</b></p>)}
+</div></details> : null}
+      </section> : null}
       <Field><FieldLabel htmlFor={`final-note-${execution.id}`}>{t('核实说明', 'Review note')}</FieldLabel><Input id={`final-note-${execution.id}`} maxLength={2000} value={note} onChange={event => draft.save({ ...draft.value, note: event.target.value, noteSource: 'doctor' })} /></Field>
     </FieldGroup></FieldSet>
     {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('未提交输入无法保存，已阻止提交。请检查浏览器存储后重试，已填内容仍保留。', 'The draft could not be saved, so submission is blocked. Check browser storage and retry; entered values are retained.')}
@@ -189,22 +200,11 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
       <AlertDialogDescription>{t('将丢弃未提交的最终数量、新增耗材、核实说明及释放选择，重新带入当前已登记用量；不会删除已保存记录。', 'Discard unsaved final quantities, added materials, review note and release selections, then reload recorded use. Saved records remain.')}</AlertDialogDescription>
       </AlertDialogHeader>{clearFailed ? <Alert variant="destructive"><AlertDescription>{t('清空未提交输入失败，原内容仍保留。请检查浏览器存储后重试。', 'The draft could not be cleared. Its contents are retained. Check browser storage and retry.')}</AlertDescription></Alert> : null}
       <AlertDialogFooter><AlertDialogCancel>{t('保留未提交输入', 'Keep draft')}</AlertDialogCancel>
-      <Button type="button" variant="destructive" disabled={write.blocked} onClick={() => { if (!isCurrent()) return; if (draft.clear()) { preview.reset(); setClearOpen(false) } else setClearFailed(true) }}>{t('确认丢弃并重新带入', 'Discard and reload')}</Button>
+      <Button type="button" variant="destructive" disabled={write.blocked} onClick={() => { if (!isCurrent()) return; if (draft.clear()) { attemptedPreview.current = ''; preview.reset(); setClearOpen(false) } else setClearFailed(true) }}>{t('确认丢弃并重新带入', 'Discard and reload')}</Button>
     </AlertDialogFooter></AlertDialogContent></AlertDialog>
     {preview.error ? <Button type="button" variant="outline" disabled={blocked || !valid} onClick={() => preview.mutate({ input, basis })}>{t('重试核对差额', 'Retry difference review')}</Button> : null}
     {preview.data && !reviewed ? <Alert><AlertDescription>{t('正在按当前输入与依据重新核对差额。', 'Rechecking differences against current inputs and sources.')}</AlertDescription></Alert> : null}
-    {reviewed && preview.data ? <section aria-label={t('本次差额', 'Differences')} className="flex flex-col gap-1 rounded-md bg-muted p-3 text-sm">
-      {preview.data.materials.map((row, index) => <div key={index} className="flex flex-col gap-1">
-        {row.deltaQuantity !== 0 ? <p className="flex gap-3"><span className="flex-1">{row.item.display} {row.deltaQuantity > 0 ? t('补登', 'add') : t('冲减', 'reduce')} {Math.abs(row.deltaQuantity)} {row.item.chargeDefinition.unit}</span>{' '}<b className="tabular-nums">{formatFen(row.deltaFen, locale)}</b></p> : null}
-        {rows[index] && (rows[index]!.priceFen !== row.item.chargeDefinition.priceFen || rows[index]!.unit !== row.item.chargeDefinition.unit)
-          ? <Alert><AlertDescription>{t('计价依据已变化，请按本次预览的单价及单位重新核实数量。', 'Pricing changed. Review quantities using the price and unit in this preview.')}</AlertDescription></Alert> : null}
-      </div>)}
-      {releases.map(item => <p key={item.reservationId} className="flex gap-3"><span className="flex-1">{t('释放预留', 'Release reservation')} · {item.display}</span><b>—</b></p>)}
-      {preview.data.retainedReservations.map(item => <p key={item.id} className="flex gap-3"><span className="flex-1">{t('保留预留', 'Keep reservation')} · {item.materialDisplay}</span><b>—</b></p>)}
-      <p className="flex gap-3"><span className="flex-1">{t('耗材差额合计', 'Material difference')}</span>{' '}<b className="tabular-nums">{formatFen(preview.data.materialDeltaFen, locale)}</b></p>
-      <p className="flex gap-3"><span className="flex-1">{t('术式费', 'Procedure fee')} · {execution.actualProcedure.coding.display}</span>{' '}<b className="tabular-nums">{formatFen(preview.data.procedureAmountFen, locale)}</b></p>
-      <p className="flex gap-3 border-t pt-1.5 font-semibold"><span className="flex-1">{t('本次新增费用', 'New charges')}</span>{' '}<b className="tabular-nums">{formatFen(preview.data.totalDeltaFen, locale)}</b></p>
-    </section> : null}
+
     </div>
     <OrderComposerFooter hint={hint}>{actions}</OrderComposerFooter>
   </form>

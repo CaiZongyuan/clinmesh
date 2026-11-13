@@ -291,3 +291,22 @@ it('打开即以已登记量显示差额和规则说明，无须手点预览即�
   await user.clear(screen.getByRole('textbox', { name: '核实说明' }))
   expect(screen.getByRole<HTMLButtonElement>('button', { name: '确认完成手术' }).disabled).toBe(true)
 })
+
+it('资料未变化时刷新核实依据仍重新自动预览并恢复完成入口', async () => {
+  let previews = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (path.endsWith('/preview-completion')) {
+      previews += 1
+      return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000 })
+    }
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料未准备' } }, { status: 503 })
+  }))
+  const user = userEvent.setup(); mount()
+  await user.click(screen.getByRole('button', { name: '核实最终耗材并完成手术' }))
+  await waitFor(() => expect(previews).toBe(1))
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>('button', { name: '确认完成手术' }).disabled).toBe(false))
+  await user.click(screen.getByRole('button', { name: '刷新核实依据，保留编辑' }))
+  await waitFor(() => expect(previews).toBe(2))
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>('button', { name: '确认完成手术' }).disabled).toBe(false))
+})

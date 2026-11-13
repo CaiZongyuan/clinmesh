@@ -1,3 +1,4 @@
+import { inpatientMaterialReservationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { expect, it } from 'vitest'
 import { inpatientMaterialPlanSchema } from '@clinmesh/contracts/inpatient-material-plan'
 import { inpatientSurgeryExecutionSchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -16,16 +17,22 @@ const plan = inpatientMaterialPlanSchema.parse({ reference: 'InpatientMaterialPl
   items: [{ materialId: 'wire', catalogVersion: 1, display: '合成导丝', specification: '合成规格', quantity: 1, unit: '根', unitPriceFen: 20000, estimatedFen: 20000, reason: '按计划', quantityBasis: '合成单病变', evidenceIds: ['wire-evidence'] }] })
 const row: CompletionDraftRow = { key: 'use-1', materialId: 'wire', catalogVersion: 1, quantity: '1', previousQuantity: 1, display: '合成导丝', unit: '根', priceFen: 20000, materialUseIds: ['use-1'], reservationId: 'reservation-1', expectedReservationVersion: 1 }
 
+const reservation = inpatientMaterialReservationSchema.parse({ id: 'reservation-1', admissionId: 'admission-1', requestId: 'request-1', materialId: 'wire', materialDisplay: '合成导丝', catalogVersion: 1, quantity: 1, consumedQuantity: 0, version: 1, priceFen: 20000, status: 'reserved', reason: '原计划预留', createdAt: time })
+
 it('无差异的核实说明不要求再次输入，也不宣称模型起草', () => {
-  expect(completionReviewNote([row], plan, execution, [], 'zh-CN')).toBe('最终用量与术中登记、术前计划一致。')
+  expect(completionReviewNote([row], plan, execution, [], 'zh-CN', [reservation])).toBe('最终用量与术中登记、术前计划一致。')
 })
 it('多用带出登记依据，未用明确保留或释放的去向', () => {
-  expect(completionReviewNote([{ ...row, quantity: '2', previousQuantity: 2 }], plan, execution, [], 'zh-CN')).toBe('最终用量按术中已登记量核实；合成导丝多用1 根，首根无法通过病变，更换。')
-  expect(completionReviewNote([{ ...row, quantity: '0', previousQuantity: 0 }], plan, execution, [], 'zh-CN')).toBe('最终用量按术中已登记量核实；合成导丝未用1 根，保留预留。')
-  expect(completionReviewNote([{ ...row, quantity: '0', previousQuantity: 0 }], plan, execution, [{ reservationId: 'reservation-1', expectedReservationVersion: 1, display: '合成导丝' }], 'zh-CN')).toContain('释放预留')
+  expect(completionReviewNote([{ ...row, quantity: '2', previousQuantity: 2 }], plan, execution, [], 'zh-CN', [reservation])).toBe('最终用量按术中已登记量核实；合成导丝多用1 根，首根无法通过病变，更换。')
+  expect(completionReviewNote([{ ...row, quantity: '0', previousQuantity: 0 }], plan, execution, [], 'zh-CN', [reservation])).toBe('最终用量按术中已登记量核实；合成导丝未用1 根，保留预留。')
+  expect(completionReviewNote([{ ...row, quantity: '0', previousQuantity: 0 }], plan, execution, [{ reservationId: 'reservation-1', expectedReservationVersion: 1, display: '合成导丝' }], 'zh-CN', [reservation])).toContain('释放预留')
 })
 it('术后多用说明引用正式登记原因，缺少预留记录时不假定已经释放', () => {
   const todo = inpatientDrgReviewTodoSchema.parse({ id: 'todo-1', version: 1, evidenceFingerprint: 'a'.repeat(64), key: 'extra-use:wire', kind: 'extra-use', ownerRole: 'inpatient-doctor', materialId: 'wire', display: '合成导丝', plannedQuantity: 1, actualQuantity: 2, explanation: '导丝多用1根。', evidence: ['Procedure/execution-1'], requestId: 'request-1', executionId: 'execution-1', status: 'pending', reason: null })
   expect(postoperativeDispositionNote(todo, [execution], [], 'zh-CN')).toBe('导丝多用1根。登记依据：首根无法通过病变，更换')
   expect(postoperativeDispositionNote({ ...todo, kind: 'unused-plan', actualQuantity: 0 }, [], [], 'zh-CN')).toBe('合成导丝未使用原计划全部数量；预留状态待核实。')
+})
+
+it('术前已经释放的未用预留在完成说明中保持已释放事实', () => {
+  expect(completionReviewNote([{ ...row, quantity: '0', previousQuantity: 0 }], plan, execution, [], 'zh-CN', [{ ...reservation, status: 'released', releaseReason: '术前已核实释放' }])).toBe('最终用量按术中已登记量核实；合成导丝未用1 根，预留已释放。')
 })

@@ -51,6 +51,7 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
   const raw = review.error === null ? review.data : undefined
   const data = raw && requestId ? { ...raw, todos: raw.todos.filter(item => item.requestId === requestId), resolvedTodos: raw.resolvedTodos.filter(item => item.requestId === requestId),
     comparisons: raw.comparisons.filter(item => item.requestId === requestId), planBases: raw.planBases.filter(item => item.requestId === requestId) } : raw
+  const openTodos = data?.todos.filter(todo => todo.status === 'pending' || todo.status === 'in-progress') ?? []
   const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id]
   const doctor = session.actor.roleCode === 'inpatient-doctor'
   const surgeries = useQuery({ queryKey: [...scope, 'surgeries'], enabled: active && doctor, retry: false,
@@ -73,7 +74,7 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
     return inpatientDrgReviewResponseSchema.parse(result.response).data
   }
   const act = async (todoId: string, action: 'in-progress' | 'dismiss' | 'recheck') => {
-    const todo = data?.todos.find(item => item.id === todoId)
+    const todo = openTodos.find(item => item.id === todoId)
     if (readonly || batching || write.blocked || !data?.fingerprint || !todo || !noteFor(todo).trim()) return
     setActionError(null)
     try { await submit(todo, action, data.fingerprint, noteFor(todo)); await review.refetch() }
@@ -81,7 +82,7 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
   }
   const confirmAll = async () => {
     if (readonly || batching || write.blocked || !data?.fingerprint) return
-    const selected = data.todos.filter(todo => todo.ownerRole === session.actor.roleCode).map(todo => ({ todo, note: noteFor(todo) }))
+    const selected = openTodos.filter(todo => todo.ownerRole === session.actor.roleCode).map(todo => ({ todo, note: noteFor(todo) }))
     if (selected.some(item => !item.note.trim())) return
     setBatching(true); setActionError(null)
     let latest = data
@@ -89,7 +90,8 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
       for (const item of selected) {
         if (!mounted.current || currentOwner.current !== ownerKey) break
         const todo = latest.todos.find(todo => todo.id === item.todo.id)
-        if (!todo || !latest.fingerprint) break
+        if (!latest.fingerprint) break
+        if (!todo || !['pending', 'in-progress'].includes(todo.status)) continue
         latest = await submit(todo, 'dismiss', latest.fingerprint, item.note)
       }
       if (mounted.current && currentOwner.current === ownerKey) await review.refetch()
@@ -132,14 +134,14 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
                 : data.status === 'complete' || data.status === 'incomplete' ? '' : ''}</p>
         {!compact && data.model.observations.length > 0 ? <details><summary>{data.model.current ? t('查看已核验解释', 'Verified explanations') : t('查看保留的历史解释', 'Retained historical explanations')}</summary>{data.model.observations.map(item => <p key={item.key}>{item.explanation}</p>)}</details> : null}
       </> : null}
-      {data.todos.length === 0 && data.status !== 'waiting-surgery' && data.status !== 'inactive' ? <p>{t('当前没有未解决核查待办。', 'No unresolved review tasks.')}</p> : null}
-      {doctor && !readonly && data.todos.some(todo => todo.ownerRole === session.actor.roleCode) ? <Button type="button" variant="outline" className="self-start" disabled={batching || write.blocked || data.todos.filter(todo => todo.ownerRole === session.actor.roleCode).some(todo => !noteFor(todo).trim())} onClick={() => { void confirmAll() }}>{batching ? t('正在逐项确认', 'Confirming each task') : t('一次全部确认', 'Confirm all')}</Button> : null}
+      {openTodos.length === 0 && data.status !== 'waiting-surgery' && data.status !== 'inactive' ? <p>{t('当前没有未解决核查待办。', 'No unresolved review tasks.')}</p> : null}
+      {doctor && !readonly && openTodos.some(todo => todo.ownerRole === session.actor.roleCode) ? <Button type="button" variant="outline" className="self-start" disabled={batching || write.blocked || openTodos.filter(todo => todo.ownerRole === session.actor.roleCode).some(todo => !noteFor(todo).trim())} onClick={() => { void confirmAll() }}>{batching ? t('正在逐项确认', 'Confirming each task') : t('一次全部确认', 'Confirm all')}</Button> : null}
       {data.todos.map(todo => <article key={todo.id} className="flex flex-col gap-2 rounded-md border p-3">
         <div className="flex flex-wrap items-center gap-2"><h5 className="font-medium">{todo.display}</h5><Badge variant="secondary">{statusName(todo.status)}</Badge><span>{t('负责岗位：', 'Responsible: ')}{roleName(todo.ownerRole)}</span></div>
         <p>{todo.explanation}</p>{compact ? <Dialog open={sourceId === todo.id} onOpenChange={open => setSourceId(open ? todo.id : null)}><DialogTrigger render={<Button type="button" variant="link" className="self-start" />}>{t('查看来源与原记录', 'View sources and original records')}</DialogTrigger>
           <DialogContent className="sm:max-w-[720px]"><DialogHeader><DialogTitle>{todo.display}</DialogTitle><DialogDescription>{t('核查来源与恢复入口', 'Review sources and recovery actions')}</DialogDescription></DialogHeader><div className="min-h-0 overflow-y-auto p-4"><InpatientDrgIssueDetails issue={todo} locale={locale} financial={financial} onOpenRecord={onOpenRecord ? target => { setSourceId(null); onOpenRecord(target) } : undefined} /></div><DialogFooter><DialogClose render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></DialogFooter></DialogContent>
         </Dialog> : <InpatientDrgIssueDetails issue={todo} locale={locale} financial={financial} onOpenRecord={onOpenRecord} />}{todo.reason ? <p>{t('处置依据：', 'Disposition reason: ')}{todo.reason}</p> : null}
-        {!readonly && todo.ownerRole === session.actor.roleCode ? <>
+        {!readonly && todo.ownerRole === session.actor.roleCode && (todo.status === 'pending' || todo.status === 'in-progress') ? <>
           <Field><FieldLabel htmlFor={`drg-todo-${todo.id}`}>{t('待办处理说明', 'Task disposition reason')}</FieldLabel><Input id={`drg-todo-${todo.id}`} value={noteFor(todo)} onChange={event => setNotes(previous => ({ ...previous, [todo.id]: event.target.value }))} maxLength={2000} /></Field>
           <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={batching || write.blocked || !(noteFor(todo)).trim()} onClick={() => { void act(todo.id, 'in-progress') }}>{doctor ? t('需要跟进', 'Follow up') : t('标记处理中', 'Start processing')}</Button><Button variant="outline" disabled={batching || write.blocked || !(noteFor(todo)).trim()} onClick={() => { void act(todo.id, 'dismiss') }}>{doctor ? t('按此说明确认', 'Confirm this note') : t('人工判断无需处理', 'Dismiss with reason')}</Button><Button variant="outline" disabled={batching || write.blocked || !(noteFor(todo)).trim() || data.status === 'frozen'} onClick={() => { void act(todo.id, 'recheck') }}>{t('复查最新业务记录', 'Recheck business facts')}</Button></div>
         </> : null}

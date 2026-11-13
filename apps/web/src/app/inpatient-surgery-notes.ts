@@ -3,7 +3,7 @@ import type { inpatientSurgeryExecutionSchema } from '@clinmesh/contracts/inpati
 import type { inpatientDrgReviewTodoSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import type { InpatientMaterialReservation } from '@clinmesh/contracts/inpatient-drg-simulation'
 import type { z } from 'zod'
-import type { CompletionDraftRow, CompletionRelease } from './inpatient-surgery-completion-draft.ts'
+import { remainingAfterCompletion, type CompletionDraftRow, type CompletionRelease } from './inpatient-surgery-completion-draft.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 export function completionQuantities(rows: CompletionDraftRow[], plan: InpatientMaterialPlan | undefined) {
@@ -19,7 +19,7 @@ export function completionQuantities(rows: CompletionDraftRow[], plan: Inpatient
 }
 
 export function completionReviewNote(rows: CompletionDraftRow[], plan: InpatientMaterialPlan | undefined,
-  execution: z.infer<typeof inpatientSurgeryExecutionSchema>, releases: CompletionRelease[], locale: WorkspaceLocale) {
+  execution: z.infer<typeof inpatientSurgeryExecutionSchema>, releases: CompletionRelease[], locale: WorkspaceLocale, reservations: InpatientMaterialReservation[]) {
   const zh = locale === 'zh-CN'
   const changed = rows.some(row => Number(row.quantity) !== row.previousQuantity)
   const lead = changed ? zh ? '最终用量已按逐项核实调整' : 'Final quantities adjusted after item review'
@@ -31,7 +31,7 @@ export function completionReviewNote(rows: CompletionDraftRow[], plan: Inpatient
   const details = differences.map(row => {
     const notes = [...new Set(execution.materialHistory.filter(use => !use.correction && `${use.item.id}@${use.item.version}` === row.key).map(use => use.note))]
     return row.difference! > 0 ? `${row.display}${zh ? '多用' : ' extra '}${row.difference} ${row.unit}${notes.length ? `，${notes.join('；')}` : ''}`
-      : `${row.display}${zh ? '未用' : ' unused '}${-row.difference!} ${row.unit}，${releases.some(release => rows.some(item => item.reservationId === release.reservationId && `${item.materialId}@${item.catalogVersion}` === row.key)) ? zh ? '释放预留' : 'release reservation' : zh ? '保留预留' : 'retain reservation'}`
+      : `${row.display}${zh ? '未用' : ' unused '}${-row.difference!} ${row.unit}，${reservationDisposition(reservations.filter(item => item.requestId === plan.requestId && `${item.materialId}@${item.catalogVersion}` === row.key && (plan.reservationIds.length === 0 || plan.reservationIds.includes(item.id))), locale, releases, rows)}`
   })
   return `${lead}；${details.join('；')}。`.slice(0, 2000)
 }
@@ -41,11 +41,22 @@ export function postoperativeDispositionNote(todo: z.infer<typeof inpatientDrgRe
   const zh = locale === 'zh-CN', execution = executions.find(item => item.id === todo.executionId)
   const notes = [...new Set(execution?.materialHistory.filter(use => !use.correction && use.item.id === todo.materialId).map(use => use.note) ?? [])]
   if (todo.kind === 'unused-plan') {
-    const remaining = reservations.filter(item => item.requestId === todo.requestId && item.materialId === todo.materialId && item.quantity > item.consumedQuantity)
-    const disposition = remaining.length === 0 ? zh ? '预留状态待核实' : 'reservation disposition needs review'
-      : remaining.every(item => item.status === 'released') ? zh ? '未用预留已释放' : 'unused reservations released'
-        : zh ? '未用预留保留，后续按需释放' : 'unused reservations retained for later review'
+    const disposition = reservationDisposition(reservations.filter(item => item.requestId === todo.requestId && item.materialId === todo.materialId), locale)
     return `${todo.display}${zh ? '未使用原计划全部数量' : ': not all planned quantities were used'}；${disposition}。`
   }
   return `${todo.explanation}${notes.length ? `${zh ? '登记依据：' : 'Recorded reason: '}${notes.join('；')}` : ''}`.slice(0, 2000)
+}
+
+function reservationDisposition(reservations: InpatientMaterialReservation[], locale: WorkspaceLocale, releases: CompletionRelease[] = [], rows?: CompletionDraftRow[]) {
+  const zh = locale === 'zh-CN'
+  if (reservations.length === 0) return zh ? '预留状态待核实' : 'Reservation disposition needs review'
+  const closed = reservations.filter(item => item.status === 'released' || item.releaseReason != null)
+  if (closed.length === reservations.length) return zh ? '预留已释放' : 'Reservations already released'
+  const open = reservations.filter(item => !closed.includes(item) && (rows ? remainingAfterCompletion(item, rows) ?? 0 : item.quantity - item.consumedQuantity) > 0)
+  if (open.length === 0) return zh ? '原预留无剩余量' : 'No reservation remainder'
+  const selected = open.filter(item => releases.some(release => release.reservationId === item.id))
+  if (selected.length === open.length) return zh ? '释放预留' : 'Release reservations'
+  if (selected.length > 0) return zh ? '部分释放，其余保留' : 'Release selected reservations and retain the remainder'
+  return closed.length > 0 ? zh ? '部分预留已释放，其余保留' : 'Some reservations already released; retain the remainder'
+    : zh ? '保留预留' : 'Retain reservations'
 }
