@@ -106,6 +106,8 @@
 
 - `verify:docs` 与 `verify:agent-notes` 兼容 CRLF/LF 行尾并按 Git index 识别 `120000` 符号链接别名，但新编写或编辑的仓库文件仍统一保存 LF 与末尾单换行（Windows 符号链接与归档注意事项见上节）。
 
+- `verify:docs` 的 `.github/**/*.md` 匹配也会纳入 Git 忽略的 `.github/skills/` 本机副本；若只报这些文件的格式问题，先用 `git check-ignore` 和 `git ls-files` 确认归属，再在同一提交的干净 worktree 跑 `pnpm doc-sync`。保留本机 skills 原文，并分别记录主工作区失败与干净副本结果。
+
 - Vite SSR 将带 CLI 守卫的模块内联到另一个入口后，`import.meta.filename` 会变成构建入口文件，单独比较 argv 路径可能误执行被导入模块的 CLI。库逻辑优先直接依赖 typed service；保留 CLI 的模块还要核对入口 basename，并用真正构建出的 JS 执行合成资料准备验证退出码和 JSON 输出。见[DRG 自动分发决策](../decisions/implemented/architecture/2026-10-22-drg-reference-distribution.md)。
 
 - VitePress 文档站与 `verify:docs` 共用 GFM 兼容的 `slugifyHeading` 生成标题锚点；在标题旁保留显式 `<a id="...">` 兼容历史锚点时，避免与标题自身生成的 slug 产生同页重复 `id`，搬迁章节后同时运行 `pnpm verify:docs` 与 `pnpm docs:check` 核对构建产物。归属与校验规则见[文档整理决策](../decisions/implemented/process/2026-10-19-documentation-ownership.md)。
