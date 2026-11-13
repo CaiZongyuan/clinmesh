@@ -76,8 +76,8 @@ async function captureFactory(page: Page, info: TestInfo, origin: string, screen
         if (['selection', 'materials', 'running', 'completion', 'postoperative'].includes(stage)) {
           const headBefore = await page.locator('.clinmesh-inpatient-head').boundingBox()
           const scrolls = await root.evaluate(element => {
-            const modal = Array.from(element.querySelectorAll<HTMLElement>('[data-slot="dialog-content"]')).find(item => item.getBoundingClientRect().width > 0)
-            return Array.from(element.querySelectorAll<HTMLElement>('*')).filter(item => getComputedStyle(item).overflowY === 'auto' && item.scrollHeight > item.clientHeight && (modal ? modal.contains(item) : item.classList.contains('clinmesh-card-content'))).map(item => {
+            const modal = Array.from(element.querySelectorAll<HTMLElement>('[data-slot="dialog-content"]')).find(item => item.getBoundingClientRect().width > 0 && getComputedStyle(item).visibility !== 'hidden' && !item.hasAttribute('data-closed'))
+            return Array.from(element.querySelectorAll<HTMLElement>('*')).filter(item => getComputedStyle(item).overflowY === 'auto' && item.scrollHeight > item.clientHeight && (modal ? modal.contains(item) : item.classList.contains('clinmesh-card-content') || item.getAttribute('role') === 'tabpanel' && item.getBoundingClientRect().width > 0)).map(item => {
               item.scrollTop = item.scrollHeight
               return { scrollTop: item.scrollTop, height: item.clientHeight, scrollHeight: item.scrollHeight }
             })
