@@ -7,10 +7,11 @@ import { afterEach, expect, it } from 'vitest'
 import { create } from 'tar'
 import { runGuidelinePrepare } from '../src/guideline-prepare.ts'
 import { runGuidelineSync } from '../src/guideline-sync.ts'
+import { guidelineCorpusStatistics, isGuidelinePassageUsable, type GuidelineDocument, type GuidelinePassage } from '../src/application/guideline-corpus.ts'
+import { defaultGuidelineReleaseOverlay } from '../src/infrastructure/guidelines/guideline-release-overlay.ts'
 import { GuidelineCorpus, guidelineSourceDefinitionSchema } from '../src/infrastructure/sqlite/guideline-corpus.ts'
-import type { GuidelineDocument, GuidelinePassage } from '../src/application/guideline-corpus.ts'
 import { createGuidelineReleaseFixture, guidelineDigest } from './fixtures/guideline-release.ts'
-import { syntheticGuidelineDocument } from './fixtures/guideline-corpus.ts'
+import { buildOverlaidReleaseDocuments, syntheticGuidelineDocument } from './fixtures/guideline-corpus.ts'
 
 const roots: string[] = []
 const servers: Server[] = []
@@ -585,4 +586,162 @@ it.each([['../escape', '0'], ['/absolute', '0'], ['linked', '1'], ['symlink', '2
   await expect(runGuidelinePrepare(input.options)).rejects.toThrow()
   await expect(readFile(input.options.databasePath)).rejects.toMatchObject({ code: 'ENOENT' })
   expect(await readdir(input.options.installDirectory)).toEqual([])
+})
+
+it('内置 guidelines-2026-10-26-v1 覆盖层对全部 58 项来源做 1:1 标注并在 SQLite FTS 与按页读取中验证 coronary-20-2021 第 4 页净文本勘误', async () => {
+  const referenceDir = join(import.meta.dirname, '../reference-data')
+  const manifest = JSON.parse(await readFile(join(referenceDir, 'guideline-release-manifest.json'), 'utf8')) as {
+    packageId: string
+    releaseId: string
+    sources: Array<{ source: Record<string, unknown> & { id: string; sha256: string } }>
+  }
+  const officialRegistry = JSON.parse(await readFile(join(referenceDir, 'guideline-sources.json'), 'utf8')) as {
+    sources: Array<{ id: string; population?: string; specialty?: string }>
+  }
+  const localRegistry = JSON.parse(await readFile(join(referenceDir, 'local-guideline-sources.json'), 'utf8')) as {
+    sources: Array<{ source: { id: string; population?: string; specialty?: string } }>
+  }
+  expect(defaultGuidelineReleaseOverlay.packageId).toBe(manifest.packageId)
+  expect(defaultGuidelineReleaseOverlay.releaseId).toBe('guidelines-2026-10-26-v1')
+  expect(manifest.sources).toHaveLength(58)
+  expect(manifest.sources.every(item => item.source.population === undefined && item.source.specialty === undefined)).toBe(true)
+  expect(Object.keys(defaultGuidelineReleaseOverlay.sources).sort()).toEqual(manifest.sources.map(item => item.source.id).sort())
+  const populations = Object.values(defaultGuidelineReleaseOverlay.sources)
+  expect(populations.filter(item => item.population === 'pediatric')).toHaveLength(16)
+  expect(populations.filter(item => item.population === 'all')).toHaveLength(5)
+  expect(populations.filter(item => item.population === 'adult')).toHaveLength(37)
+
+  const overlaidDocuments = buildOverlaidReleaseDocuments(manifest, (sourceId, index) => sourceId === 'coronary-20-2021'
+    ? []
+    : [{ locator: `PDF 物理第 1 页（#${index + 1}）`, text: `含碘对比剂 水化 氯化钠 3.7 发热 白血病（${sourceId}）` }])
+  for (const doc of overlaidDocuments) {
+    expect({ population: doc.source.population, specialty: doc.source.specialty }).toEqual(defaultGuidelineReleaseOverlay.sources[doc.source.id])
+  }
+  for (const item of officialRegistry.sources) {
+    expect({ population: item.population, specialty: item.specialty }).toEqual(defaultGuidelineReleaseOverlay.sources[item.id])
+  }
+  expect(localRegistry.sources).toHaveLength(30)
+  for (const entry of localRegistry.sources) {
+    expect({ population: entry.source.population, specialty: entry.source.specialty }).toEqual({ population: 'adult', specialty: 'cardiology' })
+  }
+  const erratum = defaultGuidelineReleaseOverlay.errata.find(item => item.sourceId === 'coronary-20-2021')
+  expect(erratum).toBeDefined()
+  expect(erratum!.beforeSha256).toBe('0df9a18785d429337d92f4bef38db85bc143e6a1fb69e2e63d261f683c18b2ba')
+  expect(guidelineDigest(erratum!.afterText)).toBe(erratum!.afterSha256)
+  expect(isGuidelinePassageUsable({ text: erratum!.afterText })).toBe(true)
+  expect(erratum!.afterLocator).toMatch(/^PDF 物理第 4 页/)
+  expect(erratum!.afterText).toContain('鼓励术中尽可能减少对比剂的用量。近\neGFR 为估算的肾小球滤过率')
+  expect(erratum!.afterText).toContain('图 1 应用含碘对比剂患者的管理流程［3］')
+
+  const root = await mkdtemp(join(tmpdir(), 'clinmesh-guideline-overlay-fts-'))
+  roots.push(root)
+  const databasePath = join(root, 'guidelines.sqlite')
+  const writer = new GuidelineCorpus({ databasePath })
+  try { writer.importReleaseDocuments(overlaidDocuments) }
+  finally { writer.close() }
+
+  const corpus = new GuidelineCorpus({
+    databasePath,
+    readOnly: true,
+    deploymentPolicy: 'internal-testing',
+    allowNonCommercial: false,
+  })
+  try {
+    const sources = corpus.sources()
+    expect(guidelineCorpusStatistics(sources, { deploymentPolicy: 'default', allowNonCommercial: false, population: 'adult' }))
+      .toMatchObject({ sourceCount: 58, searchableSourceCount: 0 })
+    expect(guidelineCorpusStatistics(sources, { deploymentPolicy: 'internal-testing', allowNonCommercial: false }))
+      .toMatchObject({ sourceCount: 58, searchableSourceCount: 58 })
+    expect(guidelineCorpusStatistics(sources, { deploymentPolicy: 'internal-testing', allowNonCommercial: false, population: 'adult' }))
+      .toMatchObject({ sourceCount: 58, searchableSourceCount: 42 })
+
+    const pediatricIds = manifest.sources
+      .filter(entry => entry.source.id.startsWith('nhc-pediatric-oncohematology-2019-'))
+      .map(entry => entry.source.id)
+    const pediatricHashes = new Set(overlaidDocuments.filter(doc => pediatricIds.includes(doc.source.id)).map(doc => doc.source.sha256))
+    expect(guidelineCorpusStatistics(sources, {
+      deploymentPolicy: 'internal-testing',
+      allowNonCommercial: false,
+      population: 'adult',
+      sourceIds: pediatricIds,
+    })).toMatchObject({ sourceCount: 16, searchableSourceCount: 0 })
+
+    const coronary20Doc = overlaidDocuments.find(doc => doc.source.id === 'coronary-20-2021')!
+    const adultSearch = corpus.search('含碘对比剂 水化 氯化钠 3.7', { population: 'adult' })
+    expect(adultSearch.guidelines.some(item => pediatricHashes.has(item.sourceHash))).toBe(false)
+    const coronary20Hit = adultSearch.guidelines.find(item => item.sourceHash === coronary20Doc.source.sha256)
+    expect(coronary20Hit).toBeDefined()
+    expect(coronary20Hit!.locator).toBe(erratum!.afterLocator)
+    expect(coronary20Hit!.text).toContain('0.9% 氯化钠溶液')
+    expect(coronary20Hit!.text).toContain('不能大\n于 3.7［21］')
+
+    const pediatricSearch = corpus.search('含碘对比剂 水化 氯化钠 3.7', { population: 'pediatric' })
+    expect(pediatricSearch.guidelines.some(item => item.sourceHash === coronary20Doc.source.sha256)).toBe(false)
+
+    const page4Ref = [{
+      sourceId: 'coronary-20-2021',
+      version: coronary20Doc.source.version,
+      sha256: coronary20Doc.source.sha256,
+      page: 4,
+    }]
+    const adultRead = corpus.readReferences(page4Ref, { population: 'adult' })
+    expect(adultRead.missing).toEqual([])
+    expect(adultRead.guidelines).toMatchObject([{ locator: erratum!.afterLocator, text: erratum!.afterText }])
+
+    const pediatricRead = corpus.readReferences(page4Ref, { population: 'pediatric' })
+    expect(pediatricRead.guidelines).toEqual([])
+    expect(pediatricRead.missing).toMatchObject([{ sourceId: 'coronary-20-2021', status: 'withheld', reason: 'population-mismatch' }])
+  } finally {
+    corpus.close()
+  }
+})
+
+it('准备阶段叠加人群元数据与第 4 页净文本勘误，并在 beforeSha256 或覆盖范围失配时失败关闭', async () => {
+  const garbledPage4 = {
+    locator: 'PDF 物理第 4 页；提取文本原文第 1–98 行；字符 [0, 2533)',
+    text: '在中重度肾功能不全的患者中对比剂剂量与 eGFR 的比值不能大于 3.7［21］，鼓励术中尽可能减少对比剂的用量。近\u0006\u0006 \u0006H*)5J\n\u000e\bV&U\neGFR 为估算的肾小球滤过率，PCAKI 为使用对比剂后的急性肾损伤。\n图 1 应用含碘对比剂患者的管理流程［3］\n·· 975',
+  }
+  const cleanPage4Text = '在中重度肾功能不全的患者中对比剂剂量与 eGFR 的比值不能大于 3.7［21］，鼓励术中尽可能减少对比剂的用量。近\neGFR 为估算的肾小球滤过率，PCAKI 为使用对比剂后的急性肾损伤。\n图 1 应用含碘对比剂患者的管理流程［3］\n·· 975'
+  const input = await fixture([garbledPage4])
+  const validOverlay = {
+    schemaVersion: 1 as const,
+    packageId: input.lock.packageId,
+    releaseId: input.lock.releaseId,
+    sources: { [input.source.id]: { population: 'adult' as const, specialty: 'cardiology' } },
+    errata: [{
+      sourceId: input.source.id,
+      sourceSha256: input.source.sha256,
+      originalLocator: garbledPage4.locator,
+      beforeSha256: guidelineDigest(garbledPage4.text),
+      afterLocator: 'PDF 物理第 4 页；提取文本原文第 1–74、95–98 行（勘误剥离图 1 矢量字体控制字符）',
+      afterSha256: guidelineDigest(cleanPage4Text),
+      afterText: cleanPage4Text,
+      reason: '合成验证第 4 页矢量乱码勘误',
+    }],
+  }
+
+  await expect(runGuidelinePrepare({
+    ...input.options,
+    overlay: { ...validOverlay, errata: [{ ...validOverlay.errata[0]!, beforeSha256: '0'.repeat(64) }] },
+  })).rejects.toThrow(/beforeSha256/)
+  await expect(readFile(input.options.databasePath)).rejects.toMatchObject({ code: 'ENOENT' })
+
+  await expect(runGuidelinePrepare({
+    ...input.options,
+    overlay: { ...validOverlay, sources: {} },
+  })).rejects.toThrow(/1-to-1|coverage|sources/i)
+  await expect(readFile(input.options.databasePath)).rejects.toMatchObject({ code: 'ENOENT' })
+
+  const prepared = await runGuidelinePrepare({ ...input.options, overlay: validOverlay })
+  expect(prepared).toMatchObject({ created: true, unusablePassageCount: 0, searchableSourceCount: 1, searchablePassageCount: 1 })
+  expect(await runGuidelinePrepare({ ...input.options, overlay: validOverlay })).toMatchObject({ created: false, source: 'installed' })
+  expect(await runGuidelinePrepare({ ...input.options, overlay: validOverlay, checkOnly: true })).toMatchObject({ created: false, source: 'installed' })
+
+  const corpus = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+  try {
+    expect(corpus.sources()[0]!.source).toMatchObject({ population: 'adult', specialty: 'cardiology' })
+    const read = corpus.readReferences([{ sourceId: input.source.id, version: input.source.version, sha256: input.source.sha256, page: 4 }])
+    expect(read.missing).toEqual([])
+    expect(read.guidelines).toMatchObject([{ locator: validOverlay.errata[0]!.afterLocator, text: cleanPage4Text }])
+  } finally { corpus.close() }
 })

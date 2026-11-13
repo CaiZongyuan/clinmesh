@@ -52,6 +52,8 @@
 
 ## 范围、快照与资源争用
 
+- 年龄与指南人群回归通过公开虚拟时间推进跨过上海午夜的 18 周岁生日，并核对指南可用性与依据指纹；仅修改出生日期会漏掉当前时间被入院时间遮蔽的问题。另覆盖离院与召回，防止修复影响历史参考时间；复用[住院指南 HTTP 回归](../../apps/server/tests/inpatient-guideline-advice-http.test.ts)，业务合同见[指南参考意见](../architecture/clinical-workflows.md#pci-计划的只读指南参考意见)。
+
 - 判断文档修改是否影响测试时，先检查构建工具的自动扫描范围，不能只看静态 import。DSH 的 [Surface 样式构建](../../apps/dsh-web/src/surface-styles.ts)和 Web 的[字号](../../apps/web/src/app/font-size.browser.test.ts)、[主题](../../apps/web/src/app/web-theme.browser.test.ts)浏览器合同都以仓库根为 Tailwind 扫描根，普通说明文档和其他组的测试文件也可能改变运行时生成的 CSS；CI 成功复用因此用 Tailwind 候选 class 代替被排除文件的原文，见[测试策略](../testing.md#github-ci-的检查选择与并行)。
 
 - 新增或修改 DSH 浏览器 `.fixture.tsx` 时，`tsconfig.browser.json` 不足以覆盖夹具类型。补跑 `pnpm --filter @clinmesh/dsh-web typecheck`，同时核对全局测试模式 union 与网络桩使用的局部 URL 变量；Vite 运行成功不等于这些 TypeScript 边界通过。

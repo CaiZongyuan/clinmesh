@@ -77,3 +77,38 @@ it('正式来源与院内副本指向同一正文时只回读一次，祖先撤�
   s.writer.importDocument({ ...s.document, source: { ...s.document.source, status: 'withdrawn', sha256: 'c'.repeat(64) }, passages: [] })
   expect(reader.readReferences(references)).toMatchObject({ guidelines: [], missing: [{ sourceId: s.reference.sourceId }, { sourceId: aliasId }] })
 })
+
+it('固定引用按患者人群过滤成人与儿科来源，不匹配时标记 withheld 且更新 revision', () => {
+  const s = setup()
+  const adultSource = { ...s.document.source, id: 'synthetic-adult-pci', population: 'adult' as const, sha256: '1'.repeat(64) }
+  const pediatricSource = { ...s.document.source, id: 'synthetic-pediatric-all', population: 'pediatric' as const, sha256: '2'.repeat(64) }
+  const universalSource = { ...s.document.source, id: 'synthetic-universal-flu', population: 'all' as const, sha256: '3'.repeat(64) }
+  s.writer.importDocuments([
+    { source: adultSource, passages: [{ locator: 'PDF 物理第 35 页', text: 'Adult PCI recommendation.' }] },
+    { source: pediatricSource, passages: [{ locator: 'PDF 物理第 35 页', text: 'Pediatric oncology recommendation.' }] },
+    { source: universalSource, passages: [{ locator: 'PDF 物理第 35 页', text: 'All-age influenza recommendation.' }] },
+  ])
+  const refs = [
+    { sourceId: adultSource.id, version: '2021', sha256: adultSource.sha256, page: 35 },
+    { sourceId: pediatricSource.id, version: '2021', sha256: pediatricSource.sha256, page: 35 },
+    { sourceId: universalSource.id, version: '2021', sha256: universalSource.sha256, page: 35 },
+  ]
+  const adultRead = s.reader.readReferences(refs, { population: 'adult' })
+  expect(adultRead.guidelines.map(item => item.sourceHash)).toEqual([adultSource.sha256, universalSource.sha256])
+  expect(adultRead.missing).toEqual([{ sourceId: pediatricSource.id, page: 35, status: 'withheld', reason: 'population-mismatch' }])
+
+  const pediatricRead = s.reader.readReferences(refs, { population: 'pediatric' })
+  expect(pediatricRead.guidelines.map(item => item.sourceHash)).toEqual([pediatricSource.sha256, universalSource.sha256])
+  expect(pediatricRead.missing).toEqual([{ sourceId: adultSource.id, page: 35, status: 'withheld', reason: 'population-mismatch' }])
+
+  const allOnlyRead = s.reader.readReferences(refs, { population: 'all-only' })
+  expect(allOnlyRead.guidelines.map(item => item.sourceHash)).toEqual([universalSource.sha256])
+  expect(allOnlyRead.missing).toEqual([
+    { sourceId: adultSource.id, page: 35, status: 'withheld', reason: 'population-mismatch' },
+    { sourceId: pediatricSource.id, page: 35, status: 'withheld', reason: 'population-mismatch' },
+  ])
+
+  const unfilteredRead = s.reader.readReferences(refs)
+  expect(unfilteredRead.missing).toEqual([])
+  expect(new Set([adultRead.revision, pediatricRead.revision, allOnlyRead.revision, unfilteredRead.revision]).size).toBe(4)
+})

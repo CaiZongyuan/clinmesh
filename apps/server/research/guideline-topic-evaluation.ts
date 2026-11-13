@@ -128,8 +128,8 @@ try {
       && !contrast.evidence.some(item => physicalPage(item.locator) === 4), '不可用水化原文不能经专题进入上下文')
     const canonicalContrast = sources.find(item => item.source.id === 'coronary-20-2021')
     assert(canonicalContrast)
-    const isolatedPage = passages(canonicalContrast).find(item => physicalPage(item.locator) === 4)
-    assert(isolatedPage && !isGuidelinePassageUsable(isolatedPage), '第4页质量隔离状态已改变，需重新核对实验边界')
+    const correctedPage = passages(canonicalContrast).find(item => physicalPage(item.locator) === 4)
+    assert(correctedPage && isGuidelinePassageUsable(correctedPage), '固定包第4页需通过勘误覆盖层恢复为可读原文')
     const restricted = readTopic('pci-stent', sources, false)
     const restrictedCorpus = new GuidelineCorpus({ databasePath, readOnly: true, deploymentPolicy: 'default', allowLocalEvaluation: false })
     try {

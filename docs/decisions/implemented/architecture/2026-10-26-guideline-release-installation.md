@@ -42,4 +42,4 @@ Status: implemented
 
 固定包和本地入口的相同正文按[共享正文决定](2026-10-27-guideline-shared-bodies.md)复用，保留各来源及维护限制；分发清单与锁仍描述原始快照。运行库去重及 schema 升级不重制或覆盖已有固定资产。
 
-合成归档、临时库、公共准备入口和受控模型 HTTP 旅程分别验证取得、加载、检索和引用，不借用维护者现有 SQLite 作为新安装证据。安装、失败恢复与正文核验状态由[部署指南](../../../deployment.md#免费指南全文同步)拥有；完整验收见 [Issue #315](https://github.com/CaiZongyuan/clinmesh/issues/315)。代码中的固定 URL 和内容锁不代表 Release 已发布。
+合成归档、临时库、公共准备入口和受控模型 HTTP 旅程分别验证取得、加载、检索和引用，不借用维护者现有 SQLite 作为新安装证据。安装、失败恢复与正文核验状态由[部署指南](../../../deployment.md#免费指南全文同步)拥有；完整验收见 [Issue #315](https://github.com/CaiZongyuan/clinmesh/issues/315)。代码中的固定 URL 和内容锁不代表 Release 已发布。固定包归档与清单校验保持不变之上的静态叠加层（58 项来源人群与专科标注、`coronary-20-2021` 第 4 页净文本勘误）及运行期上海日历年龄人群隔离增量见[指南发行叠加与人群隔离决策](2026-11-12-guideline-release-overlay-and-population-isolation.md)。
