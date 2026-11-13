@@ -21,7 +21,7 @@ import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { createPortal } from 'react-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { apiGet } from './api-client.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
@@ -263,6 +263,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         admission={admission}
         plan={selectedPlan}
         isPci={isPci}
+        estimateQueryKey={[...scope, admission.id, 'material-estimates']}
         selDone={selDone && !editingStep1}
         done={preparation?.materialsDone ?? false}
         selectionEditedAfterReserve={preparation?.selectionChanged ?? false}
@@ -524,10 +525,11 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, repo
   </section>
 }
 
-function PciStepTwoCard({ admission, plan, isPci, selDone, done, selectionEditedAfterReserve, estimate, advice, reservations, encounterVersion, reservationFingerprint, locale, write, blocked, onEdit, onConfirmed, onOpenUsage }: {
+function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, done, selectionEditedAfterReserve, estimate, advice, reservations, encounterVersion, reservationFingerprint, locale, write, blocked, onEdit, onConfirmed, onOpenUsage }: {
   admission: InpatientAdmission
   plan: Request
   isPci: boolean
+  estimateQueryKey: readonly unknown[]
   selDone: boolean
   done: boolean
   selectionEditedAfterReserve: boolean
@@ -544,6 +546,11 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, done, selectionEdited
   onOpenUsage: ((taskId?: string, taskKind?: 'estimate' | 'followup' | 'explanation' | 'guideline') => void) | undefined
 }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
+  const client = useQueryClient(), mounted = useRef(true)
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const estimateList = useQuery({ queryKey: estimateQueryKey, enabled: false, retry: false,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/material-estimates`, inpatientMaterialEstimatesSchema, signal) })
+
   const [items, setItems] = useState<Array<{ materialId: string; catalogVersion: number; quantity: string; reason: string }> | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [adopted, setAdopted] = useState<InpatientEquivalentMaterialSuggestion | null>(null)
@@ -613,7 +620,17 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, done, selectionEdited
     const submittedNote = note
     setItems(rows)
     try {
-      await write.mutation.mutateAsync({ operation: 'inpatient.material-estimate.save', input: parsed.data })
+      const result = await write.mutation.mutateAsync({ operation: 'inpatient.material-estimate.save', input: parsed.data })
+      const saved = inpatientMaterialEstimateResponseSchema.parse(result.response).data
+      if (!mounted.current) return
+      client.setQueryData<z.infer<typeof inpatientMaterialEstimatesSchema>>(estimateQueryKey, current => {
+        if (!current || current.admissionId !== saved.admissionId) return current
+        return { ...current, estimates: current.estimates.map(item => {
+          if (item.id !== saved.id || item.requestId !== saved.requestId || item.version > saved.version || item.requestVersion > saved.requestVersion
+            || (item.draft?.revision ?? 0) >= (saved.draft?.revision ?? 0)) return item
+          return saved
+        }) }
+      })
       setItems(current => current === rows ? null : current)
       setNote(current => current === submittedNote ? null : current)
       setAdopted(restore ? null : suggestion)
@@ -706,6 +723,10 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, done, selectionEdited
       </div>
       {loading && estimate ? <Button type="button" variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={blocked} onClick={() => write.mutation.mutate({ operation: 'inpatient.material-estimate.cancel', input: { admissionId: admission.id, requestId: plan.id, expectedRequestVersion: estimate.requestVersion, expectedVersion: estimate.version, expectedBasisFingerprint: estimate.basisFingerprint } })}>{t('取消本次预计', 'Cancel estimate')}</Button> : null}
     </div>
+    {estimateList.isError || estimateList.failureCount > 0 ? <Alert variant="destructive"><AlertDescription>
+      {t('完整清单读取失败，已保留最近保存的选择。', 'The full list could not be read. The latest saved selection is retained.')}
+      <Button type="button" variant="outline" size="sm" disabled={estimateList.isFetching || write.mutation.isPending} onClick={() => { void estimateList.refetch() }}>{t('重新读取完整清单', 'Reload the full list')}</Button>
+    </AlertDescription></Alert> : null}
     {hasIneligibleItems && estimate?.missing.length ? <div role="alert" className="flex items-start gap-2 rounded-lg bg-warning/15 px-3 py-2 text-xs">
       <AlertCircleIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
       <p>{estimate.missing.join(' · ')}</p>

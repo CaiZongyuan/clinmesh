@@ -33,10 +33,11 @@ const selection = inpatientPciSelectionSchema.parse({ admissionId: admission.id,
 const clients: QueryClient[] = []
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals(); sessionStorage.clear() })
 
-function fixture(held = false, unpriced = false, oldReservationBasis = false) {
+function fixture(held = false, unpriced = false, oldReservationBasis = false, readFailsAfterSave = false) {
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
   const posts: Array<{ expectedDraftRevision: number; items: Array<{ materialId: string; quantity: number }>; note: string }> = []
+  const confirmations: Array<{ expectedDraftRevision: number }> = []
   const makeState = (requestId: string, reservedFen: number) => ({ id: `estimate-${requestId}`, admissionId: admission.id, requestId, version: 1, requestVersion: 1, status: 'blocked', basisFingerprint: 'a'.repeat(64), failureCode: null, missing: [], candidates, analysis: null, candidateItems: [],
     materialDraftDeltaFen: 73000 - reservedFen,
     materialDraftReservationBasis: oldReservationBasis ? [] : [['general', 1, 40000], ['reserved-b', 1, 30000]],
@@ -52,7 +53,12 @@ function fixture(held = false, unpriced = false, oldReservationBasis = false) {
     if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [from, to] })
     if (path.endsWith('/pci-selection')) return Response.json(selection)
     if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: admission.id, encounterVersion: '1', reservations: [], reservationSets: plans.map(plan => ({ requestId: plan.id, fingerprint: 'b'.repeat(64) })) })
-    if (path.endsWith('/material-estimates')) return Response.json(estimates)
+    if (path.endsWith('/material-estimates')) return readFailsAfterSave && posts.length > 0
+      ? Response.json({ error: { code: 'SYNTHETIC_READ_FAILED', message: '合成清单回读失败' } }, { status: 503 }) : Response.json(estimates)
+    if (path.endsWith('/material-estimates/confirm')) {
+      confirmations.push(JSON.parse(String(init?.body)).input)
+      return Response.json({ data: estimates.estimates[0], auditId: 'synthetic-audit', requestId: 'synthetic-confirm', effects: [], warnings: [] })
+    }
     if (path.endsWith('/material-estimates/save')) {
       const input = JSON.parse(String(init?.body)).input
       posts.push(input)
@@ -78,7 +84,7 @@ function fixture(held = false, unpriced = false, oldReservationBasis = false) {
     return <><InpatientDrgHeader query={query} admission={admission} session={session} locale="zh-CN" onOpenDrg={() => {}} /><InpatientDrgPanel query={query} admission={admission} session={session} locale="zh-CN" write={write} /><InpatientSurgery admission={admission} session={session} locale="zh-CN" write={write} /></>
   }
   render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
-  return { posts, release }
+  return { posts, confirmations, release }
 }
 
 it('两份未确认计划的草稿各合并一次，当前计划采用换回同步头部和DRG正文且保留主计划支付参考', async () => {
@@ -166,4 +172,24 @@ it('正式预留先刷新时旧草稿增量暂不可用，避免与新基线短�
   await waitFor(() => expect(screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' }).textContent).toContain('预计总费用暂不可用'))
   expect(screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' }).textContent).toContain('已用 ¥8,100.00')
   expect(screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' }).textContent).not.toContain('做完预计')
+})
+
+
+it('等效保存成功后完整清单回读失败仍展示B和换回，明确提示读取失败并以返回修订继续确认', async () => {
+  const f = fixture(false, false, false, true), user = userEvent.setup()
+  const primary = await screen.findByRole('combobox', { name: '计划主操作（仅预计）' })
+  primary.focus(); await user.keyboard('{Enter}')
+  await user.click(await screen.findByRole('option', { name: /合成计划A/ }))
+  const materials = await screen.findByRole('region', { name: '手术耗材' })
+  await user.click(await within(materials).findByRole('button', { name: '换成这个' }))
+  await waitFor(() => expect(f.posts).toHaveLength(1))
+  await within(materials).findByRole('button', { name: '换回原耗材' })
+  expect(within(materials).getByRole('spinbutton', { name: '预计数量：合成支架 B' }).getAttribute('value')).toBe('1')
+  expect(within(materials).getByRole('spinbutton', { name: '预计数量：合成支架 B' }).hasAttribute('disabled')).toBe(false)
+  expect(within(materials).getByRole('alert').textContent).toContain('完整清单读取失败')
+  await waitFor(() => expect(screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' }).textContent).toContain('做完预计 ¥11,760.00'))
+  await user.click(screen.getByRole('button', { name: '确认手术耗材' }))
+  await waitFor(() => expect(f.confirmations).toHaveLength(1))
+  expect(f.posts).toHaveLength(1)
+  expect(f.confirmations[0]).toMatchObject({ expectedDraftRevision: 2 })
 })
