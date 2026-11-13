@@ -56,12 +56,12 @@ export function IntraoperativeMaterialRows({ admissionId, session, locale, execu
     const cachedQuantity = data?.usage.find(item => item.executionId === execution.id && item.materialId === use.item.id && item.catalogVersion === use.item.version)?.actualQuantity ?? 0
     const actualQuantity = execution.materials.filter(item => item.item.id === use.item.id && item.item.version === use.item.version).reduce((sum, item) => sum + item.quantity, 0)
     const pendingFen = review ? 0 : Math.max(0, actualQuantity - cachedQuantity) * use.item.chargeDefinition.priceFen
-    const projected = costs ? costs.components.projectedTotalFen + pendingFen : null
+    const projected = costs && costs.projectionComplete !== false ? costs.components.projectedTotalFen + pendingFen : null
     return <TableRow key={`review-${use.id}`}><TableCell colSpan={5} className="whitespace-normal bg-muted/30">
       <div className="flex min-w-0 flex-col gap-1 text-xs">
         <p className="flex flex-wrap gap-x-3 tabular-nums"><span>{t('本笔金额 ', 'Entry charge ')}{formatFen(use.amountFen, locale)}</span>
           <span>{t('做完预计总费用 ', 'Projected total ')}{projected === null ? t('正在核对', 'Checking') : formatFen(projected, locale)}</span>
-          <span>{t('离支付参考还剩 ', 'Reference headroom ')}{projected === null || !reference ? t('暂无支付参考', 'No payment reference') : formatFen(reference.referenceFen - projected, locale)}</span></p>
+          <span>{t('离支付参考还剩 ', 'Reference headroom ')}{projected === null ? t('预计费用待核对', 'Projected charges under review') : !reference ? t('暂无支付参考', 'No payment reference') : formatFen(reference.referenceFen - projected, locale)}</span></p>
         {plan && review ? review.status === 'succeeded' && review.explanation ? <p><Badge variant="secondary" className="mr-2">{t('助手', 'Assistant')}</Badge>{review.explanation}{review.costExplanation ? ` ${review.costExplanation}` : ''}</p>
           : <p className="text-muted-foreground" role="status">{review.status === 'queued' || review.status === 'running' ? t('助手正在核对这笔计划外使用…', 'Assistant is reviewing this entry…') : t('助手未能说明', 'Assistant could not explain')}</p>
           : plan ? <p className="text-muted-foreground">{t('助手未能说明', 'Assistant could not explain')}</p> : null}

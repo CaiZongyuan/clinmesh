@@ -7,7 +7,7 @@ import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinm
 import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
 import { inpatientMaterialEstimatesSchema, inpatientMaterialEstimateResponseSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
-import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
+import { inpatientMaterialReservationListSchema, inpatientCostsSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { modelUsageOverviewSchema, modelUsageListSchema } from '@clinmesh/contracts/model-usage'
 import { inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -889,4 +889,69 @@ it('术中清单返回自身确认候选，后确认的另一PCI计划不会替�
   expect(own.candidates).toHaveLength(4)
   expect(own.candidates.every(item => item.eligibility === 'valid')).toBe(true)
   expect(own.alternatives).toMatchObject([{ materialId: 'hospital-material-pci-stent-equivalent-b', eligibility: 'valid', equivalenceGroupId: 'synthetic-pci-stent-3.0x18' }])
+})
+
+
+it('两份明确草稿合并才达到九成时，候选与模型费用使用同一住院总额，采用换回不叠加旧稿', async () => {
+  const s = await setup((feature, input) => {
+    if (feature === 'inpatient_drg_recommendation') {
+      const payload = z.object({ costs: inpatientCostsSchema, equivalentSuggestions: z.array(z.object({ beforeTotalFen: z.number(), afterTotalFen: z.number() })).default([]) }).parse(input)
+      const suggestion = payload.equivalentSuggestions[0]
+      return { ...pciAgentGeneration, costExplanation: suggestion ? `预计总费用 ${suggestion.beforeTotalFen / 100}元，等效替换后预计 ${suggestion.afterTotalFen / 100}元。` : null }
+    }
+    return { ...pciAgentVerification, costExplanationSupported: true }
+  }, true), stay = s.pciAdmission!
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId } })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  let admission = (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
+  const nextResponse = await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, { encounterVersion: admission.versionId, procedureId: stay.procedure.id, catalogVersion: 1,
+    plannedFor: '2026-08-24T18:00:00+08:00', reason: '合成第二计划，独立材料清单' })
+  expect(nextResponse.status).toBe(200)
+  const next = inpatientSurgeryResponseSchema.parse(await nextResponse.json()).data.requests.find(item => item.id !== stay.requestId)!
+  s.fixture.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET snapshot_json=json_set(snapshot_json,'$.chargeDefinition.priceFen',466804) WHERE item_id='hospital-material-balloon'").run()
+  admission = (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/reservations`, { encounterVersion: admission.versionId,
+    materialId: 'hospital-material-balloon', catalogVersion: 1, quantity: 1, reason: '独立合成备用预留，用于九成边界' })).status).toBe(200)
+  const onlyFirst = (await s.read()).estimates.find(item => item.requestId === stay.requestId)!
+  expect(onlyFirst.costs!.components.projectedTotalFen).toBe(953402)
+  expect(onlyFirst.equivalentSuggestions).toEqual([])
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 1, parameters: { ...pciAgentParameters, requestId: next.id } })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  const both = (await s.read()).estimates
+  for (const state of both) {
+    expect(state.draft!.items).toHaveLength(4)
+    expect(state.costs!.components.projectedTotalFen).toBe(1080000)
+    expect(state.costs!.projectionComplete).toBe(true)
+    expect(state.equivalentSuggestions).toMatchObject([{ beforeTotalFen: 1080000, afterTotalFen: 1060000, totalSavingsFen: 20000, paymentReferenceFen: 1200000 }])
+  }
+  const payloads = s.calls.filter(call => call.feature === 'inpatient_drg_recommendation').map(call => z.object({
+    estimate: z.object({ request: z.object({ id: z.string() }) }), costs: inpatientCostsSchema,
+    equivalentSuggestions: z.array(z.object({ beforeTotalFen: z.number(), afterTotalFen: z.number() })).default([]),
+  }).parse(call.input))
+  expect(payloads.some(payload => payload.estimate.request.id === next.id && payload.costs.components.projectedTotalFen === 1080000
+    && payload.equivalentSuggestions[0]?.afterTotalFen === 1060000)).toBe(true)
+  const change = async (from: string, to: string) => {
+    const state = (await s.read()).estimates.find(item => item.requestId === stay.requestId)!
+    const response = await s.fixture.request('inpatient-doctor', `${stay.path}/material-estimates/save`, { requestId: stay.requestId,
+      expectedVersion: state.version, expectedDraftRevision: state.draft!.revision, expectedBasisFingerprint: state.basisFingerprint, analysisId: null, note: '合成同数量等效替换',
+      items: state.draft!.items.map(item => item.materialId === from ? { ...item, materialId: to } : item) })
+    expect(response.status, await response.clone().text()).toBe(200)
+    return inpatientMaterialEstimateResponseSchema.parse(await response.json()).data
+  }
+  const adopted = await change('hospital-material-pci-stent', 'hospital-material-pci-stent-equivalent-b')
+  expect(adopted.costs!.components.projectedTotalFen).toBe(1060000)
+  const after = (await s.read()).estimates
+  expect(after.every(item => item.costs!.components.projectedTotalFen === 1060000 && item.equivalentSuggestions.length === 0)).toBe(true)
+  expect((await s.fixture.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)).costs!.components.projectedTotalFen).toBe(1060000)
+  const restored = await change('hospital-material-pci-stent-equivalent-b', 'hospital-material-pci-stent')
+  expect(restored.costs!.components.projectedTotalFen).toBe(1080000)
+  expect((await s.read()).estimates.every(item => item.equivalentSuggestions[0]?.beforeTotalFen === 1080000)).toBe(true)
+  await confirmEstimate(s)
+  expect((await s.read()).estimates.every(item => item.costs!.components.projectedTotalFen === 1080000)).toBe(true)
+  s.fixture.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET version=2,snapshot_json=json_set(snapshot_json,'$.version',2) WHERE item_id='hospital-material-pci-balloon'").run()
+  const incomplete = (await s.read()).estimates.find(item => item.requestId === stay.requestId)!
+  expect(incomplete.costs!.projectionComplete).toBe(false)
+  expect(incomplete.costs!.projectionMissing.join('；')).toContain('缺少可核验价格')
+  expect(incomplete.costs!.projectedDifferenceFen).toBeNull()
+  expect(incomplete.equivalentSuggestions).toEqual([])
 })

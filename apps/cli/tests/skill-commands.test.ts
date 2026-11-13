@@ -103,7 +103,7 @@ it('单次耗材预计示例绑定工作稿修订、当前依据与整批预留�
   const saved = JSON.parse(draft[1]!)
   expect(getHisOperation('inpatient.material-estimate.save').input.safeParse({ ...saved, expectedDraftRevision: undefined }).success).toBe(false)
   expect(getHisOperation('inpatient.material-estimate.save').input.safeParse({ ...saved, expectedBasisFingerprint: undefined }).success).toBe(false)
-  expect(getHisOperation('inpatient.material-estimate.read').version).toBe(4)
+  expect(getHisOperation('inpatient.material-estimate.read').version).toBe(5)
   expect(getHisOperation('inpatient.drg.review.read').version).toBe(2)
   expect(skill).toContain('planBasis')
   expect(skill).toContain('planBases')
@@ -117,11 +117,13 @@ it('术中核对读取示例保留逐笔结果与冻结清单，按计划登记�
   const line = commandLines(skill).find(line => line.startsWith('clinmesh inpatient drg-agent '))!
   const operation = inspectExample(program, line).operation!
   expect(operation.id).toBe('inpatient.drg.agent.read')
-  expect(operation.version).toBe(4)
+  expect(operation.version).toBe(5)
   expect(getHisOperation('inpatient.pci-selection.read').version).toBe(4)
   expect(skill).toContain('equivalentSuggestions')
   expect(skill).toContain('alternatives')
   expect(skill).toContain('materialDraftDeltaFen')
+  expect(skill).toContain('projectionComplete')
+  expect(getHisOperation('inpatient.drg.record-checks.read').version).toBe(2)
   expect(skill).toContain('同数量工作稿')
   expect(skill).toContain('measurementCompatible')
   expect(skill).toContain('intraoperativePlans')

@@ -40,12 +40,12 @@ function fixture(held = false, unpriced = false, oldReservationBasis = false) {
   const makeState = (requestId: string, reservedFen: number) => ({ id: `estimate-${requestId}`, admissionId: admission.id, requestId, version: 1, requestVersion: 1, status: 'blocked', basisFingerprint: 'a'.repeat(64), failureCode: null, missing: [], candidates, analysis: null, candidateItems: [],
     materialDraftDeltaFen: 73000 - reservedFen,
     materialDraftReservationBasis: oldReservationBasis ? [] : [['general', 1, 40000], ['reserved-b', 1, 30000]],
-    costs: { ...baseCosts, components: { ...baseCosts.components, remainingMaterialsFen: 70000 + 73000 - reservedFen, projectedTotalFen: 1080000 + 73000 - reservedFen } },
+    costs: { ...baseCosts, components: { ...baseCosts.components, remainingMaterialsFen: 186000, projectedTotalFen: 1196000 } },
     draft: { revision: 1, basisFingerprint: 'a'.repeat(64), analysisId: null, items: [{ materialId: 'stent-a', catalogVersion: 1, quantity: 1, reason: '医生确认一枚' }], note: '', edited: true, updatedAt: time, updatedBy: 'doctor', confirmedRevision: null, reservationIds: [] },
-    equivalentSuggestions: [{ groupId: 'synthetic-stent', from, to, quantity: 1, unitSavingsFen: 20000, totalSavingsFen: 20000, beforeTotalFen: 1153000, afterTotalFen: 1133000, paymentReferenceFen: 1200000 }],
+    equivalentSuggestions: [{ groupId: 'synthetic-stent', from, to, quantity: 1, unitSavingsFen: 20000, totalSavingsFen: 20000, beforeTotalFen: 1196000, afterTotalFen: 1176000, paymentReferenceFen: 1200000 }],
   })
   let estimates = inpatientMaterialEstimatesSchema.parse({ admissionId: admission.id, estimates: [makeState('plan-a', 0), makeState('plan-b', 30000)], unprepared: [] })
-  if (unpriced) estimates.estimates[0]!.materialDraftDeltaFen = null
+  if (unpriced) { estimates.estimates[0]!.materialDraftDeltaFen = null; estimates.estimates[0]!.costs!.projectionComplete = false; estimates.estimates[0]!.costs!.projectionMissing = ['合成未核验价格'] }
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path.endsWith('/api/auth/context')) return Response.json(session)
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '1', virtualTime: time, requests: plans, executions: [], inProgress: [] })
@@ -60,7 +60,7 @@ function fixture(held = false, unpriced = false, oldReservationBasis = false) {
       const materialFen = input.items.reduce((sum: number, row: { materialId: string; quantity: number }) => sum + (row.materialId === 'stent-b' ? 53000 : 73000) * row.quantity, 0)
       const state = estimates.estimates[0]!
       const saved = { ...state, materialDraftDeltaFen: materialFen, draft: { ...state.draft!, revision: input.expectedDraftRevision + 1, items: input.items, note: input.note },
-        costs: { ...state.costs!, components: { ...state.costs!.components, remainingMaterialsFen: 70000 + materialFen, projectedTotalFen: 1080000 + materialFen } } }
+        costs: { ...state.costs!, components: { ...state.costs!.components, remainingMaterialsFen: 113000 + materialFen, projectedTotalFen: 1123000 + materialFen } } }
       estimates = { ...estimates, estimates: [saved, estimates.estimates[1]!] }
       return Response.json({ data: saved, auditId: 'synthetic-audit', requestId: 'synthetic-save', effects: [], warnings: [] })
     }
@@ -90,6 +90,8 @@ it('两份未确认计划的草稿各合并一次，当前计划采用换回同�
   const header = () => screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' })
   await waitFor(() => expect(header().textContent).toContain('做完预计 ¥11,960.00'))
   expect(header().textContent).toContain('支付参考 ¥12,000.00')
+  expect(screen.getByRole('region', { name: '手术耗材' }).textContent).toContain('做完预计 ¥11,960.00')
+  expect(screen.getByRole('region', { name: '手术耗材' }).textContent).toContain('换后预计 ¥11,760.00')
   await user.click(screen.getByRole('button', { name: '换成这个' }))
   await waitFor(() => expect(header().textContent).toContain('做完预计 ¥11,760.00'))
   expect(screen.getByRole('region', { name: '做完计划手术后' }).textContent).toContain('预计住院总费用 ¥11,760.00')

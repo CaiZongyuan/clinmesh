@@ -155,12 +155,12 @@ export class InpatientIntraoperativeReview {
         return true
       }
       const generated = await options.provider.completeJson({ model, schemaName: 'inpatient_drg_recommendation', jsonSchema: z.toJSONSchema(inpatientIntraoperativeGenerationSchema),
-        systemPrompt: '你是术中耗材核对助手。只按 deviation 的本笔实际使用、登记原因、冻结 plan、已确认 selection 及合成兼容依据说明：是否与本次选型和测量相符，以及对后续计划余量的影响。未知保持待核实；不改变医生计划或必要用量，不修改诊断、术式、主操作，不自动建议换规格。explanation 不写任何金额。costExplanation 可为空，或只逐字引用 costs 和本笔 amountFen 的金额（分或换算为元）；不得计算新金额。只解释，不提交正式业务。',
+        systemPrompt: '你是术中耗材核对助手。只按 deviation 的本笔实际使用、登记原因、冻结 plan、已确认 selection 及合成兼容依据说明：是否与本次选型和测量相符，以及对后续计划余量的影响。未知保持待核实；不改变医生计划或必要用量，不修改诊断、术式、主操作，不自动建议换规格。explanation 不写任何金额。costExplanation 可为空，或只逐字引用 costs 和本笔 amountFen 的金额（分或换算为元）；不得计算新金额。costs.projectionComplete=false时只说明projectionMissing，不引用部分预计总额或预计余额。只解释，不提交正式业务。',
         userPayload: modelInput, usageContext: { ...usageContext, stage: 'intraoperative-generation' }, signal: options.signal,
         maxAttempts: 2, onBeforeRequest: () => { assertCurrent() }, validate })
       const result = inpatientIntraoperativeGenerationSchema.parse(JSON.parse(generated.content)); validate(result); assertCurrent()
       const verified = await options.provider.completeJson({ model, schemaName: 'inpatient_drg_verification', jsonSchema: z.toJSONSchema(inpatientIntraoperativeVerificationSchema),
-        systemPrompt: '独立核验 proposed 说明是否仅由本笔登记、原确认计划、已确认测量和给定合成兼容依据支持，是否解释后续余量而未改变计划；未知不能当作相符。金额只能引用给定 costs 和本笔 amountFen，不得计算或改变临床选择。supported 为整体临床说明是否有据；costExplanationSupported 在未写费用说明时为null。',
+        systemPrompt: '独立核验 proposed 说明是否仅由本笔登记、原确认计划、已确认测量和给定合成兼容依据支持，是否解释后续余量而未改变计划；未知不能当作相符。金额只能引用给定 costs 和本笔 amountFen，不得计算或改变临床选择；projectionComplete=false时没有引用部分预计总额或预计余额。supported 为整体临床说明是否有据；costExplanationSupported 在未写费用说明时为null。',
         userPayload: { ...modelInput, proposed: result }, usageContext: { ...usageContext, stage: 'intraoperative-verification' }, signal: options.signal,
         maxAttempts: 2, onBeforeRequest: () => { assertCurrent() }, validate: raw => { inpatientIntraoperativeVerificationSchema.parse(raw); return true } })
       const checked = inpatientIntraoperativeVerificationSchema.parse(JSON.parse(verified.content))

@@ -5,6 +5,7 @@ import { type InpatientPciSelection, type InpatientEquivalentMaterialSuggestion 
 export function equivalentMaterialSuggestions(selection: Pick<InpatientPciSelection, 'candidates' | 'alternatives'>,
   selected: ReadonlyArray<{ materialId: string; catalogVersion: number; quantity: number }>, costs: InpatientCosts,
   extra = false) {
+  if (costs.projectionComplete === false) return []
   const reference = (costs.projectedGrouping?.status === 'grouped' ? costs.projectedPaymentReference : costs.currentPaymentReference)?.referenceFen
   if (reference === undefined || reference <= 0) return []
   const pool = [...selection.candidates, ...selection.alternatives]

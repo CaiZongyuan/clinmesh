@@ -55,7 +55,7 @@ export function useInpatientDrgQuery({ admission, session, active, draft, allowP
     .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)) : undefined
   const pendingEstimates = previewEstimates.filter(estimate => estimate.materialDraftDeltaFen !== null && estimate.materialDraftReservationBasis !== null
     && JSON.stringify(estimate.materialDraftReservationBasis) === reservationBasis)
-  const materialProjectionIncomplete = data !== undefined && previewEstimates.some(estimate => !pendingEstimates.includes(estimate)
+  const materialProjectionIncomplete = referenceCosts?.projectionComplete === false || data !== undefined && previewEstimates.some(estimate => !pendingEstimates.includes(estimate)
     && (estimate.draft?.items.length ?? 0) > 0)
   const delta = pendingEstimates.reduce((sum, estimate) => sum + estimate.materialDraftDeltaFen!, 0)
   const sum = (items: NonNullable<typeof data>['reserved']['items']) => items.reduce((total, item) => total + (item.estimatedFen ?? 0), 0)

@@ -82,6 +82,8 @@ export const inpatientCostsSchema = z.object({
   currentGrouping: drgGroupingResultSchema.nullable(), projectedGrouping: drgGroupingResultSchema.nullable(),
   currentPaymentReference: inpatientDrgPaymentReferenceSchema.nullable(), projectedPaymentReference: inpatientDrgPaymentReferenceSchema.nullable(),
   currentDifferenceFen: z.number().int().safe().nullable(), projectedDifferenceFen: z.number().int().safe().nullable(),
+  /** 其他未确认、未开始的已保存耗材稿一起计价；缺价时components只含已知部分，预计总额与差额不可作为完整结果。 */
+  projectionComplete: z.boolean().default(true), projectionMissing: z.array(text).max(100).default([]),
   paymentStatus: z.enum(['available', 'rules-unavailable', 'grouping-incomplete', 'reference-missing']), paymentMessage: text,
   exceptionAlert: z.enum(['triggered', 'below-threshold', 'unknown']),
 }).strict()

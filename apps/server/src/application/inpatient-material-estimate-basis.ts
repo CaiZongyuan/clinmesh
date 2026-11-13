@@ -105,7 +105,7 @@ export function readMaterialEstimateBasis(owner: InpatientService, context: Acto
     try { evaluated = owner.drg.simulate(context, admissionId, { medications: [], services: [], primarySurgeryRequestId: requestId }) }
     catch (error) { if (!(error instanceof InpatientError) || error.code !== 'DRG_RULES_NOT_CONFIGURED') throw error; evaluated = null }
   }
-  const costs = readInpatientCosts(owner, context, admissionId, planned, evaluated)
+  const costs = readInpatientCosts(owner, context, admissionId, planned ? { ...planned, incomplete: planned.items.length !== forecast.length } : undefined, evaluated)
   // 每份全住院 costs 都包含其他计划；只发布本计划可独立合并的预留差额。
   const reservations = planned ? owner.drg.reservations(context, admissionId).reservations : []
   const materialDraftReservationBasis = planned ? reservations.filter(item => item.status === 'reserved' && (item.remainingQuantity ?? item.quantity - item.consumedQuantity) > 0)
@@ -115,7 +115,7 @@ export function readMaterialEstimateBasis(owner: InpatientService, context: Acto
     .filter(item => item.requestId === requestId && item.status === 'reserved')
     .reduce((sum, item) => sum + item.priceFen * (item.remainingQuantity ?? item.quantity - item.consumedQuantity), 0) : 0
   const delta = planned?.items.length === forecast.length ? planned.items.reduce((sum, item) => sum + item.unitPriceFen * item.quantity, 0) - ownReservedFen : null
-  const materialDraftDeltaFen = delta !== null && Number.isSafeInteger(delta) ? delta : null
+  const materialDraftDeltaFen = draft !== null && delta !== null && Number.isSafeInteger(delta) ? delta : null
   const equivalentSuggestions = angiography ? [] : equivalentMaterialSuggestions(selection, forecast, costs)
   const input = { equivalentSuggestions, selection: angiography ? { ...selection, confirmation: null, candidates: [], drafts: [] } : selection,
     surgery: { ...surgeryFacts, requests: [estimate.request], executions: [], inProgress: [] },

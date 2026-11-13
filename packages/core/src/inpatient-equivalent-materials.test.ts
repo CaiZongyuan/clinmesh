@@ -19,6 +19,7 @@ const selected = [{ materialId: source.materialId, catalogVersion: 1, quantity: 
 
 describe('公开等效建议规则', () => {
   it('仅相同显式组、类别、规格和单位的更低单价有效候选可被建议，数量保持不变', () => {
+    expect(equivalentMaterialSuggestions(selection, selected, { ...costs, projectionComplete: false, projectionMissing: ['未核验价格'] })).toEqual([])
     expect(equivalentMaterialSuggestions(selection, selected, costs)).toMatchObject([{ quantity: 1, unitSavingsFen: 20000, afterTotalFen: 1060000 }])
     for (const change of [ { equivalenceGroupId: null }, { equivalenceGroupId: 'another-group' }, { category: 'balloon' },
       { evidence: { ...evidence, specification: '3.5×18 mm' } }, { eligibility: 'inapplicable' },
