@@ -64,6 +64,8 @@
 
 - Surface CSS 将响应式规则转换为 `@container dsh-react-surface-content` 时，fixture 还须复现同名宿主容器及其 containment；仅有 ShadowRoot 和 Portal 会漏掉断点规则及 fixed 弹窗的宿主边界。调整 DSH 宽度时修改真实宿主盒子，同时核对弹窗留在该盒子内；参考[PCI 浏览器宿主](../../apps/dsh-web/src/client/inpatient-pci.browser.fixture.tsx)和[手术全程矩阵](../../apps/web/e2e/inpatient-surgery-flow.journey.ts)。
 
+- 窄栏仅溢出几像素时，也检查带计数徽标按钮的固有宽度。先记录 computed 字号并等待已有动画结束；溢出仍存在时，可局部约束按钮最大宽度、允许文字及徽标换行，再撤销作尺寸对照。入口保留正常最小高度，并用原宽度门槛复验，参考[连续阅读入口](../../apps/web/src/app/doctor/outpatient-report-reader.tsx)与[检查工作台外观矩阵](../../apps/dsh-web/src/client/investigation-workspace.browser.test.ts)。
+
 ## 预览文件与浏览器会话
 
 - 验证响应丢失后的恢复时，除刷新和组件重挂载，还须通过真实退出、同身份重新登录及原回执查询覆盖账号清理边界；退出前同时保留一项未提交草稿，分别断言草稿清除、原操作仍可恢复、请求与费用未重复。仅重挂载不会执行 `signOut` 的存储清理，相关回归见[门诊检查真实入口](../../apps/web/e2e/investigation-workspace.spec.ts)。
