@@ -315,7 +315,7 @@ clinmesh command receipt get --operation-id inpatient.drg.agent.confirm --idempo
 
 医生开启住院跟进并确认本次有效手术计划的参数后，后台按完整依据版本生成并独立核验耗材建议；实际模型请求进入本住院任务的用量账。规则检查本身不产生模型请求。`status=incomplete/stale/blocked/unknown/failed` 时先读取 `missing/failureCode`，未知结果保持待核查，不新建任务或换幂等键重发。停止、失权或归档后只保留历史结果，不继续临床分析。
 
-单次预计与跟进的 `costs` 由既有费用推演确定性计算，包含正式收费净额、待执行医嘱、剩余计划耗材、计划手术费、预计总额，以及当前与计划分组、医院支付参考和差额。规则未启用、分组资料不足或缺支付参数时，医保说明给出对应原因，耗材建议继续准备；模型受阻、失败或未知时费用块仍可读取。`analysis.costExplanation` 只有与当前 `basisFingerprint` 一致且已独立核验时才是当前说明，旧金额文字作为历史；费用差额不改变临床选择，也不等于患者医保待遇。
+单次预计与跟进的 `costs` 由既有费用推演确定性计算，包含正式收费净额、待执行医嘱、剩余计划耗材、计划手术费、预计总额，以及当前与计划分组、医院支付参考和差额。规则未启用、分组资料不足或缺支付参数时，医保说明给出对应原因，耗材建议继续准备；模型受阻、失败或未知时费用块仍可读取。`analysis.costExplanation` 只有与当前 `basisFingerprint` 一致且已独立核验时才是当前说明，旧金额文字作为历史。`pci-selection.candidates` 是当前或默认每类候选，`alternatives` 是独立替代池，不能把两者全部加入计划。达到支付参考九成时，`material-estimates.equivalentSuggestions` 只列同一显式合成等效组内、同类别同规格、适用且兼容的更低单价产品，差价和换后预计由程序给出；模型仅说明给定候选，不自行判定等效。医生采用或换回时沿 `save-material-estimate` 保存同数量工作稿，再按原流程确认预留；不能据费用减少用量、改规格、改诊断、术式或主操作。规则建议不依赖跟进或模型成功；费用说明不等于患者医保待遇。
 
 术中登记或更正耗材后，从 `drg-agent` 读取实时 `costs/usage` 与 `intraoperativePlans` 的冻结术前清单；计划量、实际量、剩余量和费用不依赖持续跟进。助手自动跟进开启时，仅对新登记的超计划、计划外或与已确认测量不符的笔，生成并独立核验说明；按计划登记、普通刷新及更正不新增模型意图。`intraoperativeReviews` 按 `materialUseId` 返回状态、`explanation/costExplanation`，用量计入本次住院；未开启、受阻、失败或结果未知时登记与完成照常，未知沿原任务核查而不自动重发。非 PCI 手术只显示确定性金额。分组差异的按需解释继续使用下文的 `explain-drg-records`。
 

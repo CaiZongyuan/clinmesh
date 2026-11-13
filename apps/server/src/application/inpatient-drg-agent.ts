@@ -5,10 +5,11 @@ import { v7 as uuidv7 } from 'uuid'
 import { inpatientDrgAgentSchema, inpatientDrgAgentAnalysisSchema, inpatientDrgAgentGenerationSchema,
   inpatientDrgAgentVerificationSchema, inpatientDrgAgentStageSchema, inpatientDrgAgentConfirmInputSchema,
   inpatientDrgAgentPlanSchema, inpatientDrgAgentPostGenerationSchema, inpatientDrgAgentPostVerificationSchema } from '@clinmesh/contracts/inpatient-drg-agent'
-import { inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
+import { inpatientPciSelectionSchema, inpatientEquivalentMaterialSuggestionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { CommandTransaction, type ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
+import { equivalentMaterialSuggestions } from '@clinmesh/core/inpatient-equivalent-materials'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { ModelTaskRecovery } from './model-task-recovery.ts'
@@ -29,15 +30,16 @@ const inputSchema = z.object({
   remaining: z.array(z.object({ materialId: z.string(), quantity: z.number().int().nonnegative() }).strict()),
   estimate: materialEstimateBasisSchema.optional(),
   costs: inpatientCostsSchema.optional(),
+  equivalentSuggestions: z.array(inpatientEquivalentMaterialSuggestionSchema).max(20).default([]),
 }).strict()
 const rowSchema = z.object({ workspace_id: z.string(), epoch: z.string(), analysis_id: z.string(), task_id: z.string(),
   admission_id: z.string(), revision: z.number(), task_version: z.number(), basis_fingerprint: z.string(),
   stage: inpatientDrgAgentStageSchema, status: z.enum(['queued', 'running', 'succeeded', 'stale', 'blocked', 'unknown', 'failed']),
   input_json: z.string(), result_json: z.string().nullable(), error_code: z.string().nullable(), created_at: z.string() })
 const eventSchema = z.object({ analysisId: z.string(), taskId: z.string() }).strict()
-const generationPrompt = '你是住院 PCI 耗材建议助手，只消费本次医生确认的参数、具体产品版本及合成依据。仅在给定 valid 候选内选择，不改变治疗方向；每项引用其 evidence.id，数量严格使用 remaining 中尚待使用的数量，完整覆盖正余量候选，零余量不再建议；全部已用时 items 为空。已发生事实保留在 surgery 中，不再计入后续用量或费用。费用不影响临床选择，不建议减少必要耗材、更换尺寸或修改诊断、术式和主操作。不从目录或费用反推患者信息，不把合成协议称为真实临床金标准。返回 items 和 costExplanation，不提交任何正式业务。'
+const generationPrompt = '你是住院 PCI 耗材建议助手，只消费本次医生确认的参数、具体产品版本及合成依据。仅在给定 valid 候选内选择，不改变治疗方向；每项引用其 evidence.id，数量严格使用 remaining 中尚待使用的数量，完整覆盖正余量候选，零余量不再建议；全部已用时 items 为空。已发生事实保留在 surgery 中，不再计入后续用量或费用。费用说明只可列出 equivalentSuggestions 中程序已筛出的同类别同规格兼容等效候选，不自动改选 items；不得减少必要耗材、更换尺寸或修改诊断、术式和主操作。不从目录或费用反推患者信息，不把合成协议称为真实临床金标准。返回 items 和 costExplanation，不提交任何正式业务。'
 const verificationPrompt = '独立逐项核对建议与给定本次住院参数、具体产品版本、数量来源和兼容依据。核验全部建议且不增项；适用、兼容、数量及引用任一不成立即返回 false。未知不视为通过，合成依据仅适用于明确的合成范围。'
-const costPrompt = '同时在 costExplanation 中用自然语言说明 costs 的费用组成、当前和计划实施后的医院支付参考及差额；数值只能逐字引用给定的分或换算为元，金额使用阿拉伯数字，不计算新金额或阈值距离。DRG 不可用时照常起草耗材，仅说明 costs.paymentMessage；资料不足时 costExplanation 为 null。不得建议减少必要耗材、改变尺寸、诊断、术式或主操作，不把支付参考称为患者报销或利润。'
+const costPrompt = '同时在 costExplanation 中用自然语言说明 costs 的费用组成、当前和计划实施后的医院支付参考及差额；数值只能逐字引用给定的分或换算为元，金额使用阿拉伯数字，不计算新金额或阈值距离。DRG 不可用时照常起草耗材，仅说明 costs.paymentMessage；资料不足时 costExplanation 为 null。不得建议减少必要耗材、改变尺寸、诊断、术式或主操作，不把支付参考称为患者报销或利润。费用接近参考时可说明 equivalentSuggestions 的严格等效替换、给定单价差及换后总额，不自行判定等效，不改变用量或 items，由医生决定采用。'
 
 export class InpatientDrgAgent {
   readonly #unsubscribe: () => void
@@ -134,8 +136,12 @@ export class InpatientDrgAgent {
       return { materialId: candidate.materialId, quantity: completed ? 0 : Math.max(0, planned - used) }
     })
     const review = stage === 'postoperative' ? this.owner.drgReview.modelBasis(current.context, current.task.admissionId) : undefined
-    const input = inputSchema.parse({ selection, surgery: facts, rulesFingerprint: current.fingerprint, stage, remaining,
-      costs: readInpatientCosts(this.owner, current.context, current.task.admissionId, undefined, current.simulation), ...(review === undefined ? {} : { review }) })
+    const costs = readInpatientCosts(this.owner, current.context, current.task.admissionId, undefined, current.simulation)
+    const equivalentSuggestions = stage === 'postoperative' ? [] : equivalentMaterialSuggestions(selection,
+      remaining.flatMap(item => { const candidate = candidates.find(candidate => candidate.materialId === item.materialId)
+        return candidate && item.quantity > 0 ? [{ materialId: item.materialId, catalogVersion: candidate.materialVersion, quantity: item.quantity }] : [] }), costs)
+    const input = inputSchema.parse({ selection, surgery: facts, rulesFingerprint: current.fingerprint, stage, remaining, equivalentSuggestions,
+      costs, ...(review === undefined ? {} : { review }) })
     const missing: string[] = []
     if (selection.confirmation === null) missing.push('尚无医生确认的选型参数')
     if (approvedMaterialIds.length === 0) missing.push('尚无医生认可的具体耗材候选')
@@ -174,6 +180,7 @@ export class InpatientDrgAgent {
       basisFingerprint: basis?.fingerprint ?? null, stage: basis?.input.stage ?? latest?.stage ?? null,
       missing: basis?.missing ?? [], failureCode: unresolved ? 'MODEL_OUTCOME_UNKNOWN' : (current ?? latest)?.error_code ?? null,
       costs: basis?.input.costs ?? readInpatientCosts(this.owner, context, admissionId),
+      equivalentSuggestions: basis?.input.equivalentSuggestions ?? [],
       usage: readInpatientSurgeryUsage(this.owner, context, admissionId),
       ...this.owner.intraoperativeReviews.read(context, admissionId),
       analysis, lastAnalysis, lastStatus: latest?.status ?? null, confirmedPlan: planHistory[0] ?? null, planHistory })
@@ -300,7 +307,7 @@ export class InpatientDrgAgent {
         : { ...inpatientDrgAgentVerificationSchema.parse(raw), observations: [] }
       const normalize = (raw: unknown) => {
         const generated = parseGeneration(raw), { observations, costExplanation } = generated
-        assertInpatientCostExplanation(costExplanation, input.costs)
+        assertInpatientCostExplanation(costExplanation, input.costs, [], input.equivalentSuggestions.flatMap(item => [item.from.chargeDefinition.priceFen, item.to.chargeDefinition.priceFen, item.unitSavingsFen, item.totalSavingsFen, item.beforeTotalFen, item.afterTotalFen]))
         if (postoperative && (observations.length !== (input.review?.issues.length ?? 0) || observations.some(observation => {
           const issue = input.review?.issues.find(item => item.key === observation.key)
           return !issue || observation.evidenceIds.length !== issue.evidence.length || new Set(observation.evidenceIds).size !== issue.evidence.length
@@ -329,7 +336,7 @@ export class InpatientDrgAgent {
         return { items, observations, costExplanation }
       }
       const generated = await options.provider.completeJson({ model, schemaName: 'inpatient_drg_recommendation',
-        jsonSchema: z.toJSONSchema(generationSchema), systemPrompt: costPrompt + (input.estimate ? '你是冠脉造影/PCI耗材预计助手。只按 estimate 中当前正式计划、诊断、报告及明确的有限合成院内方案，选择全部有效候选并提出有依据的数量和理由。逐项引用 evidence.id；remaining 是本方案核验的数量范围，不得从价格、目录规格、病组目标或隐藏信息推断患者事实。不得将造影与PCI方案混用，不能增加未经核对器械。返回 items 和 costExplanation；身份、单位与金额由业务规则解析，生成不创建预留或收费。' : postoperative ? `${generationPrompt.replace('返回 items 和 costExplanation', '返回 items、observations 和 costExplanation')} 术后另外逐项解释 review.issues，observations 每项保留原 key，evidenceIds 必须完整引用该问题给出的 evidence。说明额外、未使用、替换或记录计费疑点；无依据的用途保留待核实，不自行关闭待办，不改变诊断、治疗或病组。` : generationPrompt), userPayload: input,
+        jsonSchema: z.toJSONSchema(generationSchema), systemPrompt: costPrompt + (input.estimate ? '你是冠脉造影/PCI耗材预计助手。只按 estimate 中当前正式计划、诊断、报告及明确的有限合成院内方案，只选择 remaining 列出的当前清单候选并提出有依据的数量和理由，未选中的等效候选只供说明，不另加到 items。逐项引用 evidence.id；remaining 是本方案核验的数量范围，不得从价格、目录规格、病组目标或隐藏信息推断患者事实。不得将造影与PCI方案混用，不能增加未经核对器械。返回 items 和 costExplanation；身份、单位与金额由业务规则解析，生成不创建预留或收费。' : postoperative ? `${generationPrompt.replace('返回 items 和 costExplanation', '返回 items、observations 和 costExplanation')} 术后另外逐项解释 review.issues，observations 每项保留原 key，evidenceIds 必须完整引用该问题给出的 evidence。说明额外、未使用、替换或记录计费疑点；无依据的用途保留待核实，不自行关闭待办，不改变诊断、治疗或病组。` : generationPrompt), userPayload: input,
         usageContext: { ...usageContext, stage: input.estimate ? `estimate-${row.task_version}-generation` : `${row.stage}-generation` }, signal: options.signal, maxAttempts: 2,
         onBeforeRequest: () => { assertCurrent() }, validate: value => { normalize(value); return true } })
       const { items, observations, costExplanation } = normalize(JSON.parse(generated.content))
@@ -348,7 +355,7 @@ export class InpatientDrgAgent {
           && (costExplanation === null || result.costExplanationSupported === true)
       }
       const verified = await options.provider.completeJson({ model, schemaName: 'inpatient_drg_verification',
-        jsonSchema: z.toJSONSchema(verificationSchema), systemPrompt: `${postoperative ? `${verificationPrompt} 同时核验 observations 的每个原问题 key、差异解释和引用是否由 review 的正式事实支持；不能把关闭提示或模型自述当作业务已解决。` : verificationPrompt} 独立核验 costExplanation 仅引用 costs 的确定性金额、分组和缺项，没有按费用改变临床选择，返回 costExplanationSupported；未提供费用说明时返回 null。`,
+        jsonSchema: z.toJSONSchema(verificationSchema), systemPrompt: `${postoperative ? `${verificationPrompt} 同时核验 observations 的每个原问题 key、差异解释和引用是否由 review 的正式事实支持；不能把关闭提示或模型自述当作业务已解决。` : verificationPrompt} 独立核验 costExplanation 仅引用 costs 的确定性金额、分组和缺项，只允许说明 equivalentSuggestions 中预筛的同组等效替换，不按费用减少用量或更换规格和术式，返回 costExplanationSupported；未提供费用说明时返回 null。`,
         userPayload: { ...input, proposed: items, costExplanation, ...(postoperative ? { observations } : {}) },
         usageContext: { ...usageContext, stage: input.estimate ? `estimate-${row.task_version}-verification` : `${row.stage}-verification` }, signal: options.signal, maxAttempts: 2,
         onBeforeRequest: () => { assertCurrent() }, validate: verificationShape })

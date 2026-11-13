@@ -43,14 +43,25 @@ export const pciSelectionCandidateSchema = z.object({
   materialId: id, materialVersion: z.number().int().positive(), category: pciMaterialCategorySchema,
   item: inpatientMaterialItemSchema.nullable(), evidence: pciSelectionEvidenceSchema,
   measurementCompatible: z.boolean().optional(),
+  equivalenceGroupId: id.nullable().default(null),
   eligibility: z.enum(['valid', 'incomplete', 'inapplicable', 'unavailable']), missing: z.array(text),
   expectedQuantity: z.number().int().positive().max(1000).nullable(), expectedAmountFen: z.number().int().nonnegative().safe().nullable(),
 }).strict()
+/** 规则预筛的同组替换；模型只说明这些冻结数值，不能扩大候选。 */
+export const inpatientEquivalentMaterialSuggestionSchema = z.object({
+  groupId: id, from: inpatientMaterialItemSchema, to: inpatientMaterialItemSchema,
+  quantity: z.number().int().positive().max(1000), unitSavingsFen: z.number().int().positive().safe(),
+  totalSavingsFen: z.number().int().positive().safe(), beforeTotalFen: z.number().int().nonnegative().safe(),
+  afterTotalFen: z.number().int().nonnegative().safe(), paymentReferenceFen: z.number().int().positive().safe(),
+}).strict()
+export type InpatientEquivalentMaterialSuggestion = z.infer<typeof inpatientEquivalentMaterialSuggestionSchema>
+
 export const inpatientPciSelectionSchema = z.object({
   admissionId: id, confirmation: inpatientPciSelectionConfirmationSchema.nullable(),
   history: z.array(inpatientPciSelectionConfirmationSchema),
   evidencePackage: z.object({ id, version: text, synthetic: z.literal(true), limitation: text }).strict(),
   candidates: z.array(pciSelectionCandidateSchema),
+  alternatives: z.array(pciSelectionCandidateSchema).default([]),
   drafts: z.array(inpatientPciSelectionDraftSchema).optional(),
 }).strict()
 export const inpatientPciSelectionResponseSchema = commandResponseSchema(inpatientPciSelectionSchema)

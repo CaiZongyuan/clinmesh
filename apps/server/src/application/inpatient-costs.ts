@@ -35,10 +35,10 @@ export function readInpatientCosts(owner: InpatientService, context: ActorContex
 }
 
 export function assertInpatientCostExplanation(explanation: string | null, costs?: InpatientCosts | null,
-  usage: ReadonlyArray<Pick<InpatientSurgeryUsage, 'usedFen' | 'additionalFen'>> = []) {
+  usage: ReadonlyArray<Pick<InpatientSurgeryUsage, 'usedFen' | 'additionalFen'>> = [], equivalentAmounts: readonly number[] = []) {
   if (explanation === null) return
   if (!costs) throw new InpatientError('INPATIENT_DRG_COST_EXPLANATION_INVALID', '费用说明缺少确定性金额依据')
-  const amounts = [...Object.values(costs.components), costs.currentPaymentReference?.referenceFen, costs.projectedPaymentReference?.referenceFen,
+  const amounts = [...equivalentAmounts, ...Object.values(costs.components), costs.currentPaymentReference?.referenceFen, costs.projectedPaymentReference?.referenceFen,
     costs.currentDifferenceFen, costs.projectedDifferenceFen, ...usage.flatMap(item => [item.usedFen, item.additionalFen]),
     usage.reduce((sum, item) => sum + item.usedFen, 0), usage.reduce((sum, item) => sum + item.additionalFen, 0)]
     .filter((amount): amount is number => amount != null)

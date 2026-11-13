@@ -8,7 +8,7 @@ import { cardiovascularMaterials } from './cardiovascular-materials.ts'
 import { syntheticInpatientSurgeryCatalog } from './inpatient-surgery-catalog.ts'
 import { syntheticPciDrgPaymentParameters } from './pci-drg-payment-parameters.ts'
 
-const version = '2026-10-25.r1'
+const version = '2026-11-13.r1'
 const referenceReleaseId = 'clinmesh-cn-health-2026-09-02.r1'
 const medicationProducts = referenceMedicationProductSchema.array().parse(products)
 const laboratoryReferences = referenceConceptSnapshotSchema.array().parse(laboratoryCodings)
@@ -64,7 +64,7 @@ export const pciDataPackage = inpatientPciDataPackageSchema.parse({
       sourceLocator: `${clopidogrelQuotation.source.path}#${clopidogrelQuotation.source.worksheet}!N321`,
       priceFen: 700, unit: null, basis: 'denominator_unverified', original: clopidogrelQuotation } } : {}),
   })),
-  materials: ([
+  materials: [...([
     [60, 'guidewire', '冠脉导丝，0.014英寸，合成院内规格', '根'],
     [102, 'guiding-catheter', '冠脉导引导管，6F，合成院内规格', '根'],
     [122, 'balloon', '预扩球囊，2.5×15 mm，合成院内规格', '个'],
@@ -74,7 +74,12 @@ export const pciDataPackage = inpatientPciDataPackageSchema.parse({
     return { item: { id: `hospital-material-pci-${suffix}`, version: 1, display: `合成院内 ${specification}`, reference: source.reference,
       chargeDefinition: { id: `hospital-charge-pci-${suffix}`, priceFen: source.reference!.priceFen, unit, synthetic: true, trigger: 'execution' } },
     hospitalSupplement: { synthetic: true, specification, note: '沿用来源金额；计费单位与规格为独立的合成院内声明，原表空值及地区/时效适用性保持原样，不声称已确认原报价分母。' } }
-  }),
+  }), {
+    item: { id: 'hospital-material-pci-stent-equivalent-b', version: 1, display: '合成院内 药物洗脱支架 3.0×18 mm（合成等效 B）',
+      chargeDefinition: { id: 'hospital-charge-pci-stent-equivalent-b', priceFen: 53000, unit: '枚', synthetic: true, trigger: 'execution' } },
+    hospitalSupplement: { synthetic: true, specification: '药物洗脱支架，3.0×18 mm，合成院内规格',
+      note: '独立合成等效候选与价格；仅适用于 PCI 合成依据包显式声明的同类别、同规格兼容组，不引用真实器械报价。' },
+  }],
   laboratories: laboratoryDefinitions.map(([suffix, code, nameZh, unit, low, high, , specimenCode, specimenDisplay, priceFen]) => laboratoryServiceSnapshotSchema.parse({
     id: `hospital-lab-pci-${suffix}`, version: 1, localCode: `PCI-LAB-${suffix.toUpperCase()}`, nameZh, priceFen,
     allowedIndicationCodes: ['clinical-assessment'], componentServiceIds: [], doctorOrderable: true,

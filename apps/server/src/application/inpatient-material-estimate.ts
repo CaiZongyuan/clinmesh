@@ -9,6 +9,7 @@ import type { ActorContext, CommandTransaction, CommandEffect } from './command-
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { materialEstimateBasisSchema, readMaterialEstimateBasis, supportsMaterialEstimate } from './inpatient-material-estimate-basis.ts'
 import { WorkspaceContextError } from '../infrastructure/sqlite/workspace-repository.ts'
+import { pciEquivalentGroups } from './scenario-data/pci-selection-evidence.ts'
 import { readInpatientCosts } from './inpatient-costs.ts'
 
 const contextSchema = z.object({ workspaceId: z.string(), epoch: z.string(), scenarioRunId: z.string(), actorId: z.string(),
@@ -91,6 +92,7 @@ export class InpatientMaterialEstimate {
       ? currentBasis ?? readMaterialEstimateBasis(this.owner, context, row.admission_id, row.request_id)
       : { request: snapshot.request, fingerprint: original?.fingerprint ?? '',
         missing: original?.missing ?? [stoppedReason], candidates: snapshot.candidates }
+    const liveInput = 'input' in basis ? basis.input : undefined
     const rows = this.owner.drgAgent.analyses(row.workspace_id, row.epoch, row.task_id)
     const latest = rows.find(item => item.task_version === row.version)
     const unresolved = rows.find(item => item.status === 'unknown')
@@ -111,7 +113,8 @@ export class InpatientMaterialEstimate {
       missing: basis.missing, candidates: basis.candidates, analysis, draft,
       candidateItems: analysis && analysis.basisFingerprint === fingerprint && analysis.id !== draft?.analysisId ? analysis.items : [],
       planBasis: this.owner.materialPlans.forRequest(context, row.admission_id, row.request_id),
-      costs: currentBasis?.input.costs ?? original?.input.costs ?? readInpatientCosts(this.owner, context, row.admission_id) })
+      equivalentSuggestions: liveInput?.equivalentSuggestions ?? [],
+      costs: liveInput?.costs ?? readInpatientCosts(this.owner, context, row.admission_id) })
   }
   list(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
@@ -240,6 +243,8 @@ export class InpatientMaterialEstimate {
       if (draft.items.length === 0 || draft.items.some(item => !state.candidates.some(candidate => candidate.eligibility === 'valid'
         && candidate.materialId === item.materialId && candidate.catalogVersion === item.catalogVersion && candidate.expectedQuantity === item.quantity)))
         throw new InpatientError('INPATIENT_DRG_PLAN_UNSUPPORTED', '清单含未经适用、兼容或数量依据核验的材料，请先核实')
+      if (pciEquivalentGroups.some(group => draft.items.filter(item => group.members.some(member => member.materialId === item.materialId)).length > 1))
+        throw new InpatientError('INPATIENT_DRG_PLAN_UNSUPPORTED', '同一合成等效组只能选择一种产品，不能增加该类计划数量')
       const effects: CommandEffect[] = []
       const selectionConfirmation = this.owner.pciSelection.confirmDraftInTransaction(context, input.admissionId, input.requestId,
         draft.items.map(item => item.materialId), effects)

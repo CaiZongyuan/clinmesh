@@ -803,3 +803,29 @@ it('转科后目标病区护士和病案按当前读权限读取历史预计与�
   await s.fixture.runtime.dispatchPending()
   expect(s.calls).toHaveLength(2)
 })
+
+it('接近支付参考的等效建议由同组规则筛选，九成边界前为空、达到后给出固定差价与换后费用，默认仍四件', async () => {
+  const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true), stay = s.pciAdmission!
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId } })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  const initial = (await s.read()).estimates[0]!
+  expect(initial.costs?.components.projectedTotalFen).toBe(306598)
+  expect(initial.draft?.items).toHaveLength(4)
+  expect(initial.equivalentSuggestions).toEqual([])
+  for (const [extra, expected] of [[773401, false], [773402, true], [773403, true]] as const) {
+    // 固定合成备用项目的价格是测试输入；行为与金额只通过公开 HTTP 回读核对。
+    s.fixture.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET snapshot_json=json_set(snapshot_json,'$.chargeDefinition.priceFen',?) WHERE item_id='hospital-material-balloon'").run(extra)
+    const admission = (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
+    expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/reservations`, { encounterVersion: admission.versionId,
+      materialId: 'hospital-material-balloon', catalogVersion: 1, quantity: 1, reason: '独立合成备用用量',
+    })).status).toBe(200)
+    const current = (await s.read()).estimates[0]!
+    expect(current.equivalentSuggestions).toHaveLength(expected ? 1 : 0)
+    if (expected) expect(current.equivalentSuggestions[0]).toMatchObject({ groupId: 'synthetic-pci-stent-3.0x18',
+      from: { id: 'hospital-material-pci-stent' }, to: { id: 'hospital-material-pci-stent-equivalent-b' }, quantity: 1,
+      unitSavingsFen: 20000, totalSavingsFen: 20000, beforeTotalFen: 306598 + extra, afterTotalFen: 286598 + extra, paymentReferenceFen: 1200000 })
+    const list = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
+    const reservation = list.reservations.find(item => item.materialId === 'hospital-material-balloon' && item.status === 'reserved')!
+    expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/reservations/${reservation.id}/release`, { encounterVersion: list.encounterVersion, reason: '结束本项合成边界验证' })).status).toBe(200)
+  }
+})

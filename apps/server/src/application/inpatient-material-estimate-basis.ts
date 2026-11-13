@@ -7,6 +7,8 @@ import { pciSelectionProcedureCodes, pciSelectionEvidenceSchema } from '@clinmes
 import type { ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
+import { pciEquivalentGroups } from './scenario-data/pci-selection-evidence.ts'
+import { equivalentMaterialSuggestions } from '@clinmesh/core/inpatient-equivalent-materials'
 import { readInpatientCosts } from './inpatient-costs.ts'
 
 export const materialEstimateBasisSchema = z.object({
@@ -44,7 +46,7 @@ export function readMaterialEstimateBasis(owner: InpatientService, context: Acto
       ? ['当前目录单位不匹配已核验的造影根数依据'] : item.chargeDefinition.priceFen <= 0 ? ['造影导管缺少有效正数院内价'] : []
     const quantityBasis = `正式计划 ${code} 明确${quantity}根导管；仅适用于本合成造影方案，不适用于 PCI 或真实临床选型。`
     candidates.push({ materialId: 'hospital-material-catheter', catalogVersion: 1, item, expectedQuantity: quantity,
-      eligibility: problems.length > 0 ? 'unavailable' : 'valid', missing: problems, quantityBasis,
+      selected: true, equivalenceGroupId: null, eligibility: problems.length > 0 ? 'unavailable' : 'valid', missing: problems, quantityBasis,
       evidence: pciSelectionEvidenceSchema.parse({ id: quantity === 1 ? 'angiography-one-catheter' : 'angiography-two-catheter',
         version: evidencePackage.version, synthetic: true, scope: `仅限正式选择 ${code} 的合成冠脉造影计划。`,
         applicability: '仅核验合成目录的诊断性冠脉造影，不推断病变长度、管径或支架需求。',
@@ -55,16 +57,17 @@ export function readMaterialEstimateBasis(owner: InpatientService, context: Acto
     const matched = selection.confirmation?.parameters.requestId === requestId || selectionDraft !== undefined
     const parameters = selectionDraft?.parameters ?? selection.confirmation?.parameters
     if (!matched) missing.push('请核实本计划真实缺少的 PCI 测量、部位、数量来源与具体候选；已有正式确认会自动带入')
-    for (const candidate of selection.candidates) {
+    for (const candidate of [...selection.candidates, ...selection.alternatives]) {
       const basis = parameters?.plannedQuantities.find(item => item.category === candidate.category)?.basis ?? '尚无本计划正式数量依据'
       candidates.push({ materialId: candidate.materialId, catalogVersion: candidate.materialVersion, item: candidate.item,
-        evidence: candidate.evidence, quantityBasis: basis, expectedQuantity: matched ? candidate.expectedQuantity : null,
+        evidence: candidate.evidence, quantityBasis: basis, selected: selection.candidates.some(item => item.materialId === candidate.materialId),
+        equivalenceGroupId: pciEquivalentGroups.find(group => group.members.some(member => member.materialId === candidate.materialId))?.id ?? null, expectedQuantity: matched ? candidate.expectedQuantity : null,
         eligibility: matched ? candidate.eligibility : 'incomplete',
         missing: matched ? candidate.missing : ['尚无本计划确认的适用与数量依据', ...candidate.missing] })
     }
     // 手填路径只消费已认可集合；报告草稿按明确的合成数量依据核验。
     if (selectionDraft) {
-      for (const candidate of candidates) if (candidate.eligibility !== 'valid') missing.push(...candidate.missing)
+      for (const candidate of candidates.filter(item => item.selected)) if (candidate.eligibility !== 'valid') missing.push(...candidate.missing)
     } else if (selection.confirmation?.parameters.requestId === requestId) {
       const approved = selection.confirmation.parameters.approvedMaterialIds
       for (const materialId of approved) if (!candidates.some(candidate => candidate.materialId === materialId)) missing.push(`${materialId}: 不在已发布的 PCI 候选中`)
@@ -73,19 +76,20 @@ export function readMaterialEstimateBasis(owner: InpatientService, context: Acto
     }
   }
   if (!supportsMaterialEstimate(code)) missing.push('本次术式尚无已核验耗材方案')
-  for (const candidate of candidates) if (candidate.eligibility === 'unavailable') missing.push(...candidate.missing)
+  for (const candidate of candidates.filter(item => item.selected)) if (candidate.eligibility === 'unavailable') missing.push(...candidate.missing)
   const { preopCheck: _check, consentConfirmation: _consent, ...plan } = request
   const estimate = materialEstimateBasisSchema.parse({ request: plan,
     diagnosis: owner.orders.diagnosis(context, admissionId), investigations: owner.investigations.read(context, admissionId), candidates, evidencePackage })
-  const remaining = candidates.filter(item => item.eligibility === 'valid').map(item => ({ materialId: item.materialId, quantity: item.expectedQuantity! }))
   const stored = z.object({ draft_json: z.string().nullable(), status: z.enum(['active', 'cancelled']) }).optional().parse(owner.database.driver.prepare(`
     SELECT draft_json,status FROM inpatient_material_estimate WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?`)
     .get(context.workspaceId, context.epoch, admissionId, requestId))
   const draft = stored?.draft_json ? inpatientMaterialEstimateDraftSchema.parse(JSON.parse(stored.draft_json)) : null
   const preview = ['requested', 'ready'].includes(request.status) && !surgery.inProgress.some(item => item.requestId === requestId)
     && stored?.status !== 'cancelled' && (draft === null || draft.confirmedRevision !== draft.revision)
-  const forecast = draft?.items ?? candidates.filter(candidate => candidate.eligibility === 'valid')
+  const forecast = draft?.items ?? candidates.filter(candidate => candidate.eligibility === 'valid' && candidate.selected)
     .map(candidate => ({ materialId: candidate.materialId, catalogVersion: candidate.catalogVersion, quantity: candidate.expectedQuantity! }))
+  const remaining = forecast.filter(item => candidates.some(candidate => candidate.materialId === item.materialId && candidate.eligibility === 'valid'))
+    .map(item => ({ materialId: item.materialId, quantity: item.quantity })).sort((a, b) => a.materialId.localeCompare(b.materialId))
   const planned = preview && (draft !== null || forecast.length > 0) ? { requestId, items: forecast.flatMap(item => {
     const candidate = candidates.find(candidate => candidate.materialId === item.materialId && candidate.catalogVersion === item.catalogVersion)
     if (!candidate?.item || candidate.item.chargeDefinition.priceFen <= 0) {
@@ -95,10 +99,12 @@ export function readMaterialEstimateBasis(owner: InpatientService, context: Acto
     return [{ materialId: item.materialId, catalogVersion: item.catalogVersion, quantity: item.quantity,
       unitPriceFen: candidate.item.chargeDefinition.priceFen, display: candidate.item.display }]
   }) } : undefined
-  const input = { selection: angiography ? { ...selection, confirmation: null, candidates: [], drafts: [] } : selection,
+  const costs = readInpatientCosts(owner, context, admissionId, planned)
+  const equivalentSuggestions = angiography ? [] : equivalentMaterialSuggestions(selection, forecast, costs)
+  const input = { equivalentSuggestions, selection: angiography ? { ...selection, confirmation: null, candidates: [], drafts: [] } : selection,
     surgery: { ...surgeryFacts, requests: [estimate.request], executions: [], inProgress: [] },
     rulesFingerprint: canonicalJsonHash({ diagnosis: estimate.diagnosis, investigations: estimate.investigations }),
     stage: 'preoperative' as const, remaining, estimate,
-    costs: readInpatientCosts(owner, context, admissionId, planned) }
+    costs }
   return { input, missing: [...new Set(missing)], fingerprint: canonicalJsonHash(input), request, candidates }
 }

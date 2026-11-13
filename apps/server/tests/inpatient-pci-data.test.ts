@@ -143,7 +143,7 @@ describe('固定 PCI 数据公开 Command 与目录回读', () => {
     expect(surgery.materials.find(item => item.id === 'hospital-material-cv-223')).toMatchObject({ unavailableReason: 'unit-unconfirmed', reference: { specification: null, unit: null, priceFen: 73000 } })
     expect(surgery.materials.find(item => item.id === 'hospital-material-pci-stent')).toMatchObject({ chargeDefinition: { priceFen: 73000, unit: '枚', synthetic: true }, reference: { specification: null, unit: null } })
     expect(s.data.read(admin.context).installed.laboratories).toHaveLength(9)
-    expect(s.data.read(admin.context).installed.materialIds).toHaveLength(4)
+    expect(s.data.read(admin.context).installed.materialIds).toHaveLength(5)
     const shared = await s.request(doctor.cookie, '/api/his/v1/inpatient/catalog-search?kind=laboratory&source=hospital&query=hospital-lab-pci&page=1&pageSize=20')
     expect(shared.status).toBe(200)
     const candidates = inpatientCatalogSearchSchema.parse(await shared.json())

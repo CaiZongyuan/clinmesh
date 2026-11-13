@@ -57,7 +57,7 @@ export class InpatientIntraoperativeReview {
         const reasons: Input['deviation']['reasons'] = []
         if (!item) reasons.push('unplanned')
         else if (before + use.quantity > item.quantity) reasons.push('excess')
-        const candidate = selected.candidates.find(item => item.materialId === use.item.id && item.materialVersion === use.item.version)
+        const candidate = [...selected.candidates, ...selected.alternatives].find(item => item.materialId === use.item.id && item.materialVersion === use.item.version)
         if (candidate?.measurementCompatible === false) reasons.push('measurement-mismatch')
         if (reasons.length === 0) return []
         return [{ use, reasons, plannedQuantity: item?.quantity ?? 0, usedBeforeQuantity: before,

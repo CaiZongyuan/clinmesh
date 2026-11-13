@@ -1,3 +1,4 @@
+import { inpatientEquivalentMaterialSuggestionSchema } from './inpatient-pci-selection.ts'
 import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
 import { pciSelectionEvidenceSchema } from './inpatient-pci-selection.ts'
@@ -61,6 +62,7 @@ export const inpatientDrgAgentSchema = z.object({
   basisFingerprint: fingerprint.nullable(), stage: inpatientDrgAgentStageSchema.nullable(),
   missing: z.array(text), failureCode: text.nullable(),
   costs: inpatientCostsSchema.nullable().default(null),
+  equivalentSuggestions: z.array(inpatientEquivalentMaterialSuggestionSchema).max(20).default([]),
   usage: z.array(inpatientSurgeryUsageSchema).default([]),
   lastAnalysis: inpatientDrgAgentAnalysisSchema.nullable().default(null),
   lastStatus: z.enum(['queued', 'running', 'succeeded', 'stale', 'blocked', 'unknown', 'failed']).nullable().default(null),
