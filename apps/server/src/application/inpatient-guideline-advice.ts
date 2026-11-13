@@ -86,7 +86,7 @@ export class InpatientGuidelineAdvice {
     const departedAt = this.owner.discharge.activeDeparture(context, admissionId)?.virtualTime
     const population = resolvePatientGuidelinePopulation(
       patient.birthDate,
-      departedAt ?? binding.row.admitted_at ?? binding.row.registered_at ?? this.owner.virtualTime(context),
+      departedAt ?? this.owner.virtualTime(context),
     )
     const topic = readPciStentGuidelineTopic(this.options.guidelines, { population })
     const input = basisSchema.parse({ ...topic, missing: [...new Set([...missing, ...topic.missing])],

@@ -165,7 +165,7 @@ pnpm guidelines:prepare
 pnpm guidelines:prepare -- --check
 ```
 
-包锁拥有精确版本、Release URL、归档 SHA-256、解包规模、清单身份及原始段落数量；[来源清单](../apps/server/reference-data/guideline-release-manifest.json)拥有逐项题名、机构、文献性质、年份、来源、原件哈希及派生正文、核验记录的哈希；静态打包的[发行叠加层](../apps/server/reference-data/guideline-release-overlay.json)在不改动包锁与原始清单哈希的前提下，对全部 58 项来源做 1:1 人群（16 项 `pediatric`、4 项 `all`、38 项 `adult`）和专科标注，并经 `beforeSha256`／`afterSha256` 双重校验对 `coronary-20-2021` 物理第 4 页剥离图 1 矢量字体控制字符乱码、恢复可读全文与按页定位。快照为 `guidelines-2026-10-26-v1`，包含既有 26 项及新增冠心病 32 项：58 份原件（53 PDF、5 WHO 文本），另有一份题录 XLSX。2016 年中国 PCI 指南使用 MinerU 恢复正文，2015 年冠状动脉痉挛共识使用 PDF.js CMap 正文并以 MinerU 辅助对照；原始导出、独立物理页映射及 Agent 校对修订随包锁定。核验记录的 `reviewerKind` 区分自动检查、Agent 校对与自然人审校；`manualReview` 只记录自然人状态，安装者无需另行提供人工记录。`textStatus=verified` 表示提取正文及定位通过登记的检查，具体校对页和未确认内容以核验记录为准；不能把局部校对称为全篇临床审校，也不能把 2015—2023 年冠心病合集称为最新指南全集。
+包锁拥有精确版本、Release URL、归档 SHA-256、解包规模、清单身份及原始段落数量；[来源清单](../apps/server/reference-data/guideline-release-manifest.json)拥有逐项题名、机构、文献性质、年份、来源、原件哈希及派生正文、核验记录的哈希；静态打包的[发行叠加层](../apps/server/reference-data/guideline-release-overlay.json)在不改动包锁与原始清单哈希的前提下，对全部 58 项来源做 1:1 人群（16 项 `pediatric`、5 项 `all`、37 项 `adult`）和专科标注，并经 `beforeSha256`／`afterSha256` 双重校验对 `coronary-20-2021` 物理第 4 页剥离图 1 矢量字体控制字符乱码、恢复可读全文与按页定位。快照为 `guidelines-2026-10-26-v1`，包含既有 26 项及新增冠心病 32 项：58 份原件（53 PDF、5 WHO 文本），另有一份题录 XLSX。2016 年中国 PCI 指南使用 MinerU 恢复正文，2015 年冠状动脉痉挛共识使用 PDF.js CMap 正文并以 MinerU 辅助对照；原始导出、独立物理页映射及 Agent 校对修订随包锁定。核验记录的 `reviewerKind` 区分自动检查、Agent 校对与自然人审校；`manualReview` 只记录自然人状态，安装者无需另行提供人工记录。`textStatus=verified` 表示提取正文及定位通过登记的检查，具体校对页和未确认内容以核验记录为准；不能把局部校对称为全篇临床审校，也不能把 2015—2023 年冠心病合集称为最新指南全集。
 
 默认沿用原用途过滤，当前包可检索全文为 0。内部测试部署在根 `.env` 显式选择以下策略后重启 Server，再检查准备结果：
 
