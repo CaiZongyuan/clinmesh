@@ -148,7 +148,7 @@ operational SQLite 启用 `foreign_keys = ON`、`journal_mode = WAL` 和 `busy_t
 └── .agents/                 # 本机开发 skills（不纳入 Git）
 ```
 
-后端以少量深模块隐藏内部复杂性：`IdentityService` 解析 Better Auth 会话、Membership、Agent Capability Grant 与活动 Workspace/Epoch；`CommandExecutor` 统一 `BEGIN IMMEDIATE` 事务、expected version、幂等回执、审计与 Action Trace；`FhirRepository` 封装资源读写、历史与白名单搜索；`ScenarioDataService`、`SyntheticCaseVisitService` 与 `ScenarioService` 负责合成患者生成、待挂号投影与 Epoch 重置重放；`WorkflowService`、`InpatientService` 与 `InsuranceService` 分别拥有门诊闭环、住院全链路和合成医保待遇规则；`AgentIntegrationService` 拥有 Page Context、execution proof 与 proposal 审阅生命周期；`OutboxRepository` 与 `OutboxDispatcher` 负责持久异步调度。
+后端以少量深模块隐藏内部复杂性：`IdentityService` 解析 Better Auth 会话、Membership、Agent Capability Grant 与活动 Workspace/Epoch；`CommandExecutor` 统一 `BEGIN IMMEDIATE` 事务、expected version、幂等回执、审计与 Action Trace；`FhirRepository` 封装资源读写、历史与白名单搜索；`ScenarioDataService`、`SyntheticCaseVisitService` 与 `ScenarioService` 负责合成患者生成、待挂号投影与 Epoch 重置重放；`WorkflowService` 拥有门诊挂号、分诊、问诊、诊断与收退款主干，并在共享 `OutpatientWorkflowContext` 之上协同 `OutpatientPrescriptionService`、`OutpatientLaboratoryService`、`OutpatientClinicalDocumentService`、`ImagingRequestService`、`PathologyRequestService`、`ConsultationRecordingService` 与 `ClinicalDocumentQualityControl` 完成门诊闭环（拆分边界见[门诊工作流拆分决策](../decisions/implemented/architecture/2026-11-12-outpatient-workflow-domain-split.md)）；`InpatientService` 与 `InsuranceService` 分别拥有住院全链路和合成医保待遇规则；`AgentIntegrationService` 拥有 Page Context、execution proof 与 proposal 审阅生命周期；`OutboxRepository` 与 `OutboxDispatcher` 负责持久异步调度。
 
 模块依赖方向遵循：应用层不依赖 Hono Request、React、DSH、CLI 或外部 runner；Hono 路由与 Agent HTTP adapter 只做输入校验、上下文绑定和结果关联，不复制状态机或直写业务表；`packages/contracts` 不导出 SQLite 表定义或服务端私有实现；跨端前端包约束见[跨端前端架构](../frontend-architecture.md)。
 

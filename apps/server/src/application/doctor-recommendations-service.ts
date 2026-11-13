@@ -11,7 +11,7 @@ import {
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import { doctorCaseDetailSchema, type PrescriptionConflictReason } from '@clinmesh/contracts/his'
 import { CommandReceiptNotFoundError, type ActorContext, type CommandEffect, type CommandExecutor } from './command-executor.ts'
-import type { WorkflowService } from './workflow-service.ts'
+import type { DoctorRecommendationsWorkflowPort } from './outpatient-workflow-context.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { legacyRecommendationInput, recommendationInputFingerprint } from './doctor-recommendation-input.ts'
 import { DoctorRecommendationExecution, DoctorRecommendationExecutionError, readDoctorRecommendationExecution,
@@ -150,7 +150,7 @@ export class DoctorRecommendationsService {
   readonly #active = new Map<string, { controller: AbortController; check: () => void }>()
   readonly #unsubscribe: () => void
   constructor(private readonly options: {
-    database: ClinMeshDatabase; workflow: WorkflowService; commands: CommandExecutor; referenceData: ReferenceDataService
+    database: ClinMeshDatabase; workflow: DoctorRecommendationsWorkflowPort; commands: CommandExecutor; referenceData: ReferenceDataService
     models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider
     recovery?: ModelTaskRecovery
     automaticRetries?: (workspaceId: string) => boolean
