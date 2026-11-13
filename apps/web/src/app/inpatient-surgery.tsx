@@ -174,9 +174,14 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const currentAdvice = selectedPlan ? guidelines.data?.advice.find(item => item.requestId === selectedPlan.id) : undefined
   const selectedAngiographyReport = (currentDraft ? angiographyReports.data?.reports.find(item => item.id === currentDraft.reportId) : undefined)
     ?? angiographyReports.data?.reports.find(item => item.status === 'final' || item.status === 'partial')
-  const completedAngiographyReport = selectedCompletedExecution && angiographyProcedureCodes.has(selectedCompletedExecution.actualProcedure.coding.code)
-    ? angiographyReports.data?.reports.find(item => item.procedureId === selectedCompletedExecution.id)
-    : angiographyReports.data?.reports.find(item => item.status !== 'processing' && (item.vessels.length > 0 || item.conclusion !== null))
+  const selectedCompletedCode = selectedCompletedExecution?.actualProcedure.coding.code
+  const completedAngiographyReport = selectedCompletedExecution === undefined || selectedCompletedCode === undefined
+    ? undefined
+    : angiographyProcedureCodes.has(selectedCompletedCode)
+      ? angiographyReports.data?.reports.find(item => item.procedureId === selectedCompletedExecution.id)
+      : coronaryProcedureCodes.has(selectedCompletedCode)
+        ? angiographyReports.data?.reports.find(item => item.status !== 'processing' && (item.vessels.length > 0 || item.conclusion !== null))
+        : undefined
   const selDone = !isPci || step1ConfirmedPlanId === selectedPlan?.id || currentConfirmed !== undefined || Boolean(currentDraft?.edited) || activeReservations.length > 0
   const showStepTwo = isPci || currentEstimate !== undefined || activeReservations.length > 0
   const plans = <>

@@ -757,6 +757,62 @@ it('非冠脉手术不查询造影报告；已完成冠脉造影伴阴性 FFR（
   expect(within(details).getByText(/暂不行 PCI/)).toBeDefined()
 })
 
+it('同次住院先完成冠脉造影、后完成非冠脉手术时，非冠脉手术的完成区不挂接造影报告', async () => {
+  const angioProcedure = {
+    ...procedure,
+    id: 'procedure-angio',
+    coding: { ...procedure.coding, code: '88.5500', display: '用单根导管的冠状动脉造影术', category: '诊断性操作' as const },
+  }
+  const angioPlan = inpatientSurgeryRequestSchema.parse({ ...plan, id: 'request-angio', status: 'completed', plannedProcedure: angioProcedure, reason: '胸痛待查行诊断性冠脉造影' })
+  const cholePlan = inpatientSurgeryRequestSchema.parse({ ...plan, id: 'request-chole', status: 'completed' })
+  const execution = (id: string, requestId: string, actualProcedure: typeof procedure, note: string) => inpatientSurgeryExecutionSchema.parse({
+    id, admissionId: admission.id, requestId, actualProcedure, performedAt: time, performedBy: 'doctor',
+    practitionerRoleId: 'role-doctor', organizationId: 'org-1', note, materials: [], materialHistory: [],
+  })
+  const surgeries = inpatientSurgerySchema.parse({
+    admissionId: admission.id,
+    encounterVersion: '3',
+    virtualTime: time,
+    requests: [angioPlan, cholePlan],
+    executions: [
+      execution('execution-angio', angioPlan.id, angioProcedure, '完成冠脉造影，未实施 PCI'),
+      execution('execution-chole', cholePlan.id, procedure, '合成腹腔镜胆囊切除完成'),
+    ],
+    inProgress: [],
+  })
+  const reports = inpatientAngiographyReportsSchema.parse({
+    admissionId: admission.id,
+    reports: [{
+      id: 'report-angio-earlier', admissionId: admission.id, procedureId: 'execution-angio', version: 1, synthetic: true,
+      status: 'final', targetSite: null, measurements: [],
+      vessels: [{ vessel: 'LAD', segment: 'pLAD', stenosisPercent: 50, timiFlow: 3, lesionCharacteristics: '中度狭窄', ffr: 0.88 }],
+      conclusion: '前降支中度狭窄，FFR 阴性，暂不行 PCI。', missing: [], issuedAt: time,
+    }],
+  })
+  const urls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    urls.push(path)
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (path.endsWith('/surgeries')) return Response.json(surgeries)
+    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure, angioProcedure], materials: [material] })
+    if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: admission.id, encounterVersion: '3', reservations: [], reservationSets: [] })
+    if (path.endsWith('/angiography-reports')) return Response.json(reports)
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料暂不可用' } }, { status: 503 })
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  clients.push(client)
+  function Harness() {
+    const write = useInpatientWriteIntent(session, () => undefined)
+    return <InpatientActionProvider stage="surgery"><InpatientSurgery admission={admission} session={session} locale="zh-CN" write={write} /><InpatientActionOutlet /></InpatientActionProvider>
+  }
+  render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
+  const doneRegion = await screen.findByRole('region', { name: '最终耗材' })
+  await waitFor(() => expect(urls.some(url => url.includes('/angiography-reports'))).toBe(true))
+  expect(within(doneRegion).getByText('51.2300')).toBeDefined()
+  await waitFor(() => expect(client.getQueryState(['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'angiography-reports'])?.status).toBe('success'))
+  expect(within(doneRegion).queryByText(/冠脉造影与生理学报告/, { selector: 'summary' })).toBeNull()
+})
+
 it('PCI 术前选型卡片与预计依据弹窗均可展开查看多支冠脉造影及 FFR 依据', async () => {
   const pciProcedure = {
     ...procedure,
