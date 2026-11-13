@@ -198,7 +198,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const plans = <>
     {pendingPlans.length > 1 ? <Field><FieldLabel htmlFor="current-surgery-plan">{t('当前计划', 'Current plan')}</FieldLabel><WorkspaceSelect id="current-surgery-plan" value={selectedPlan?.id ?? null} disabled={write.blocked}
       items={pendingPlans.map(row => ({ value: row.id, label: `${row.plannedProcedure.coding.display} · ${row.reason}` }))} onValueChange={setSelectedRequestId} /></Field> : null}
-    {pendingPlans.map(row => <div key={row.id} hidden={row.id !== selectedPlan?.id || running.length > 0 && !otherPlansOpen}><SurgeryRequest row={row} catalog={catalog.data} reservations={reservationRows}
+    {pendingPlans.map(row => <div key={row.id} hidden={row.id !== selectedPlan?.id || running.length > 0 && !otherPlansOpen}><SurgeryRequest key={`${requestOwnerKey}:${row.id}`} row={row} catalog={catalog.data} reservations={reservationRows}
       dataReady={materialDataReady} onRetry={() => { void refresh() }}
       admission={admission} session={session} locale={locale} write={write} preparationSlot={isPci || showStepTwo ? preparationSlot : null} preparation={row.id === selectedPlan?.id ? preparation : undefined} focused={active && row.id === selectedPlan?.id && (running.length === 0 || otherPlansOpen)} /></div>)}
   </>
@@ -840,7 +840,7 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
   const [startNote, setStartNote] = useState('')
   const [actualId, setActualId] = useState<string | null>(null)
   const batchTrigger = useRef<HTMLButtonElement | null>(null), startTrigger = useRef<HTMLButtonElement | null>(null)
-  useLayoutEffect(() => { if (!focused) setPanel(null) }, [focused])
+  useLayoutEffect(() => { if (!focused) setPanel(current => current === 'start' || current === 'batch' ? null : current) }, [focused])
   const actual = catalog?.procedures.find(item => item.id === (actualId ?? row.plannedProcedure.id))
   const active = ['requested', 'ready'].includes(row.status), ready = row.status === 'ready', blocked = write.blocked || admission.status !== 'admitted'
   const common = { admissionId: admission.id, requestId: row.id, expectedRequestVersion: row.version }
