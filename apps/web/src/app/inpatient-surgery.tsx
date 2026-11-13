@@ -814,7 +814,8 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
   const [consentNote, setConsentNote] = useState(''), [preopNote, setPreopNote] = useState(''), [cancelNote, setCancelNote] = useState('')
   const [startNote, setStartNote] = useState('')
   const [actualId, setActualId] = useState<string | null>(null)
-  const batchTrigger = useRef<HTMLButtonElement | null>(null)
+  const batchTrigger = useRef<HTMLButtonElement | null>(null), startTrigger = useRef<HTMLButtonElement | null>(null)
+  useLayoutEffect(() => { if (!focused) setPanel(null) }, [focused])
   const actual = catalog?.procedures.find(item => item.id === (actualId ?? row.plannedProcedure.id))
   const active = ['requested', 'ready'].includes(row.status), ready = row.status === 'ready', blocked = write.blocked || admission.status !== 'admitted'
   const common = { admissionId: admission.id, requestId: row.id, expectedRequestVersion: row.version }
@@ -856,7 +857,7 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
         busy: undefined,
         reason: missing.length > 0 ? `${t('还差：', 'Still needed: ')}${missing.join(t('、', ', '))}` : t('开始后逐笔登记耗材；术式费在完成手术时计入', 'Record materials one by one after starting; the procedure fee is posted at completion'),
         action: <>{ready ? <Button ref={batchTrigger} variant="outline" disabled={blocked} onClick={() => setPanel('batch')}>{t('整台补录', 'Record entire surgery')}</Button> : null}
-          <Button disabled={blocked || !ready} onClick={() => { setActualId(null); setPanel('start') }}>{t('开始手术', 'Start surgery')}</Button></>,
+          <Button ref={startTrigger} disabled={blocked || !ready} onClick={() => { setActualId(null); setPanel('start') }}>{t('开始手术', 'Start surgery')}</Button></>,
       }
   const nextStep = preparation?.step ?? (!row.consentConfirmation ? 'consent' : !row.preopCheck ? 'nurse' : 'start')
   if (panel === null && nextStep !== 'start') {
@@ -883,13 +884,14 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
     </section>}
     {nurse && active && focused && !row.preopCheck ? <InpatientPrimaryAction stage="surgery" priority={1} fallback={<Button className="self-start" aria-busy={pending('inpatient.surgery.check-preop') || undefined} data-busy={pending('inpatient.surgery.check-preop') || undefined} data-unavailable={!write.mutation.isPending && (blocked || !preopNote.trim()) || undefined} disabled={blocked || !preopNote.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.check-preop', input: { ...common, note: preopNote.trim() } })}>{pending('inpatient.surgery.check-preop') ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{pending('inpatient.surgery.check-preop') ? t('正在术前核对', 'Recording preoperative checks') : t('术前核对', 'Record preoperative checks')}</Button>}><WorkspaceActionBar summary={row.plannedProcedure.coding.display} tone={blocked || !preopNote.trim() ? 'blocked' : 'normal'} reason={preopNote.trim() ? t('已填写术前核对说明，可提交术前核对', 'Ready to record preoperative checks') : t('还差：术前核对说明', 'Complete: Preoperative check note')} busy={pending('inpatient.surgery.check-preop') ? t('正在术前核对', 'Recording preoperative checks') : undefined} action={<Button aria-busy={pending('inpatient.surgery.check-preop') || undefined} data-busy={pending('inpatient.surgery.check-preop') || undefined} data-unavailable={!write.mutation.isPending && (blocked || !preopNote.trim()) || undefined} disabled={blocked || !preopNote.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.check-preop', input: { ...common, note: preopNote.trim() } })}>{pending('inpatient.surgery.check-preop') ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{pending('inpatient.surgery.check-preop') ? t('正在术前核对', 'Recording preoperative checks') : t('术前核对', 'Record preoperative checks')}</Button>} /></InpatientPrimaryAction> : null}
     {doctor && (preparationReady || panel === 'cancel') && active && focused && panel !== 'start' && panel !== 'batch' ? <InpatientPrimaryAction stage="surgery" priority={bar.priority} fallback={bar.action}><WorkspaceActionBar summary={row.plannedProcedure.coding.display} tone={bar.tone} reason={bar.reason} busy={bar.busy} action={bar.action} /></InpatientPrimaryAction> : null}
-    {doctor && active && panel === 'start' ? <section role="dialog" aria-label={t('开始手术', 'Start surgery')} className="flex flex-col rounded-lg border bg-card shadow-sm">
-      <div className="flex flex-col gap-1 border-b px-4 py-3">
-        <h4 className="text-sm font-semibold">{t('开始手术', 'Start surgery')}</h4>
-        <p className="text-xs text-muted-foreground">{t('开始时不登记耗材、不收术式费。', 'Starting records no materials or procedure fee.')}{actual ? `${t('术式费 ', ' Procedure fee ')}${formatFen(actual.chargeDefinition.priceFen, locale)}${t(' 在完成手术时计入。', ' is posted at completion.')}` : null}</p>
-      </div>
+    {doctor && active ? <Dialog open={panel === 'start' && focused} pending={write.mutation.isPending} onOpenChange={open => { if (!open) setPanel(null) }}>
+      <DialogContent className="max-h-[calc(100%-2rem)] sm:max-w-[640px]" showCloseButton={!write.mutation.isPending} finalFocus={() => startTrigger.current}>
+      <DialogHeader>
+        <DialogTitle>{t('开始手术', 'Start surgery')}</DialogTitle>
+        <DialogDescription>{t('开始时不登记耗材、不收术式费。', 'Starting records no materials or procedure fee.')}{actual ? `${t('术式费 ', ' Procedure fee ')}${formatFen(actual.chargeDefinition.priceFen, locale)}${t(' 在完成手术时计入。', ' is posted at completion.')}` : null}</DialogDescription>
+      </DialogHeader>
       <form className="flex min-h-0 flex-col p-0" onSubmit={event => { event.preventDefault(); start() }}>
-        <div className="flex min-h-0 flex-col gap-4 p-4">
+        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4">
           {write.mutation.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
           <FieldSet disabled={blocked}><FieldGroup>{actualField}
             <Field><FieldLabel htmlFor={`surgery-start-${row.id}`}>{t('开始说明', 'Start note')}</FieldLabel><div className="flex flex-wrap gap-2">{[["术前准备已完成，按计划开始手术", "Preoperative preparation complete; start as planned"], ["核对患者、术式及部位无误，开始手术", "Patient, procedure and site verified; start surgery"]].map(([cn, en]) => t(cn!, en!)).map(value => <Button key={value} type="button" variant="outline" size="sm" disabled={blocked} onClick={() => setStartNote(value)}>{value}</Button>)}</div><Input id={`surgery-start-${row.id}`} maxLength={2000} value={startNote} onChange={event => setStartNote(event.currentTarget.value)} /></Field>
@@ -900,7 +902,7 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
           <Button type="submit" aria-busy={pending('inpatient.surgery.start') || undefined} disabled={blocked || !ready || !actual || !startNote.trim()}>{pending('inpatient.surgery.start') ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{t('开始手术', 'Start surgery')}</Button>
         </OrderComposerFooter>
       </form>
-    </section> : null}
+    </DialogContent></Dialog> : null}
     {doctor && active ? <SurgeryExecuteComposer admission={admission} session={session} request={row} catalog={catalog} reservations={reservations} locale={locale} write={write}
       dataReady={dataReady} onRetry={onRetry} open={panel === 'batch'} focused={focused} onOpenChange={open => setPanel(open ? 'batch' : null)} returnFocus={batchTrigger} /> : null}</div>
   return <article role="region" aria-label={focused ? t('当前手术计划', 'Current surgery plan') : t('手术计划记录', 'Surgery plan record')} className="flex min-w-0 flex-col gap-4">

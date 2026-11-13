@@ -907,3 +907,30 @@ it('PCI 术前选型卡片与预计依据弹窗均可展开查看多支冠脉造
   const dialogSummary = within(dialog).getByText(/冠脉造影与生理学依据/, { selector: 'summary' })
   expect(within(dialogSummary.closest('details')!).getByText(/前降支中段重度狭窄，FFR 0.72 阳性/)).toBeDefined()
 })
+
+it('开始手术使用模态弹窗，取消归还焦点且发送期间阻止Escape关闭', async () => {
+  const ready = inpatientSurgeryRequestSchema.parse({ ...plan, status: 'ready', preopCheck: { actorId: 'nurse', practitionerRoleId: 'role-nurse', recordedAt: time, note: '已核对' } })
+  let release!: () => void
+  const wait = new Promise<void>(resolve => { release = resolve })
+  const { posts } = mount([ready], session, [], { wait })
+  const user = userEvent.setup()
+  const trigger = await screen.findByRole('button', { name: '开始手术', exact: true })
+  await user.click(trigger)
+  let dialog = screen.getByRole('dialog', { name: '开始手术' })
+  expect(screen.queryByRole('button', { name: '申请手术', exact: true })).toBeNull()
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '开始手术' })).toBeNull())
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: '开始手术', exact: true })))
+  await user.click(screen.getByRole('button', { name: '开始手术', exact: true }))
+  dialog = screen.getByRole('dialog', { name: '开始手术' })
+  await user.click(within(dialog).getByRole('button', { name: '术前准备已完成，按计划开始手术', exact: true }))
+  await user.click(within(dialog).getByRole('button', { name: '开始手术', exact: true }))
+  try {
+    await waitFor(() => expect(posts).toHaveLength(1))
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: '开始手术' })).toBeDefined()
+    expect(within(dialog).getByRole('button', { name: '开始手术', exact: true }).hasAttribute('disabled')).toBe(true)
+  } finally { release() }
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '开始手术' })).toBeNull())
+  expect(posts[0]).toMatchObject({ path: '/api/his/v1/inpatient/admissions/admission-1/surgeries/start', body: { input: { note: '术前准备已完成，按计划开始手术', procedureId: procedure.id, requestId: ready.id } } })
+})

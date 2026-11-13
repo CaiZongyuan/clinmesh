@@ -1,3 +1,4 @@
+import { pciAgentParameters } from '../../../server/tests/fixtures/inpatient-drg-agent.ts'
 import { test, expect, loginPciBrowser } from '../../../web/e2e/inpatient-pci.fixture.ts'
 import { selectInpatientStage } from '../../../web/e2e/inpatient-ui.ts'
 import { buildInpatientPciFixture } from './inpatient-pci.browser.artifact.ts'
@@ -5,6 +6,47 @@ import { buildInpatientPciFixture } from './inpatient-pci.browser.artifact.ts'
 for (const version of ['18', '19']) test.describe(`Surgery dialogs React ${version}`, () => {
   let artifact: Awaited<ReturnType<typeof buildInpatientPciFixture>>
   test.beforeAll(async () => { test.setTimeout(120_000); artifact = await buildInpatientPciFixture(version) })
+  test('ShadowRoot开始手术模态弹窗保留焦点、说明选项与发送期间关闭保护', async ({ page, pciApp: app }) => {
+    test.setTimeout(60_000)
+    const stay = await app.fixture.preparePciAdmission()
+    expect((await app.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId } })).status).toBe(200)
+    await app.fixture.pciExecutionInput(stay)
+    await page.route(`${app.origin}/start-dialog-contract`, route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<!doctype html><html><head><style>${artifact.styles}</style></head><body style="margin:0"><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>` }))
+    await loginPciBrowser(page, app, 'inpatient-doctor')
+    await page.goto(`${app.origin}/start-dialog-contract`)
+    await page.getByRole('button', { name: /合成冠脉病例甲/ }).click()
+    await selectInpatientStage(page, '手术')
+    const trigger = page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '开始手术', exact: true })
+    await trigger.click()
+    const dialog = page.getByRole('dialog', { name: '开始手术', exact: true })
+    expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
+    for (const width of [1600, 1280]) for (const theme of ['light', 'dark']) {
+      const height = width === 1600 ? 1000 : 800
+      await page.setViewportSize({ width, height })
+      await page.locator('.clinmesh-web-root').evaluate((element, theme) => { element.classList.toggle('dark', theme === 'dark'); element.dataset.theme = theme }, theme)
+      await expect(dialog.getByRole('button', { name: '开始手术', exact: true })).toBeInViewport()
+      expect(await dialog.evaluate(element => { const box = element.getBoundingClientRect(); return box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth })).toBe(true)
+    }
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+    await expect(trigger).toBeFocused()
+    await trigger.click()
+    await dialog.getByRole('button', { name: '术前准备已完成，按计划开始手术', exact: true }).click()
+    await expect(dialog.getByLabel('开始说明', { exact: true })).toHaveValue('术前准备已完成，按计划开始手术')
+    let release!: () => void, posts = 0
+    const gate = new Promise<void>(resolve => { release = resolve })
+    await page.route(`**${stay.path}/surgeries/start`, async route => { posts += 1; await gate; await route.continue() })
+    try {
+      await dialog.getByRole('button', { name: '开始手术', exact: true }).click()
+      await expect.poll(() => posts).toBe(1)
+      await page.keyboard.press('Escape')
+      await expect(dialog).toBeVisible()
+      await expect(dialog.getByRole('button', { name: '取消', exact: true })).toBeDisabled()
+    } finally { release() }
+    await expect(dialog).toBeHidden()
+    await expect(page.getByRole('region', { name: '本台耗材', exact: true })).toBeVisible()
+    expect(posts).toBe(1)
+  })
   test('ShadowRoot 申请理由助手草稿可编辑并保留人工修改', async ({ page, pciApp: app }) => {
     test.setTimeout(60_000)
     const stay = await app.fixture.preparePciAdmission([])
