@@ -1,4 +1,10 @@
 import { guidelineEvidenceSchema, type GuidelineEvidence } from '@clinmesh/contracts/doctor-recommendations'
+import {
+  matchesGuidelinePopulation,
+  type GuidelinePatientPopulation,
+  type GuidelineSearchResult,
+  type GuidelineSourcePopulation,
+} from './guideline-corpus.ts'
 
 export const doctorGuidelineRevision = 'official-clauses-2026-10-13-v2'
 
@@ -40,8 +46,14 @@ export const doctorGuidelineSourceIds: ReadonlyMap<string, string> = new Map([
   [breast.sourceHash, 'nhc-breast-cancer-2022'],
 ])
 
-export const doctorGuidelineGroups: ReadonlyArray<{ terms: readonly string[]; evidence: readonly GuidelineEvidence[] }> = [
-  { terms: ['流感', '发热', '咳嗽', 'influenza', 'fever', 'cough'], evidence: [
+export type DoctorGuidelineGroup = {
+  terms: readonly string[]
+  population: GuidelineSourcePopulation
+  evidence: readonly GuidelineEvidence[]
+}
+
+export const doctorGuidelineGroups: readonly DoctorGuidelineGroup[] = [
+  { terms: ['流感', '发热', '咳嗽', 'influenza', 'fever', 'cough'], population: 'all', evidence: [
     { ...influenza, id: 'nhc-influenza-2025-diagnosis', locator: '第六节“诊断”，印刷第 5 页',
       text: '主要结合流行病学史、临床表现和病原学检查进行诊断。' },
     { ...influenza, id: 'nhc-influenza-2025-antigen', locator: '第五节“病原学相关检查”，印刷第 5 页',
@@ -49,7 +61,7 @@ export const doctorGuidelineGroups: ReadonlyArray<{ terms: readonly string[]; ev
     { ...influenza, id: 'nhc-influenza-2025-antimicrobial', locator: '第十节“治疗”，印刷第 9 页',
       text: '避免盲目或不恰当使用抗菌药物。' },
   ].map(item => guidelineEvidenceSchema.parse(item)) },
-  { terms: ['高血压', 'hypertension', 'I10'], evidence: [
+  { terms: ['高血压', 'hypertension', 'I10'], population: 'adult', evidence: [
     { ...hypertension, id: 'ws-t-872-2025-initial-assessment', locator: '第 7 节，印刷第 2 页',
       text: '符合高血压诊断的患者，应进行首次评估，询问病史、进行体格检查和血尿常规、生化及心电图检测。' },
     { ...hypertension, id: 'ws-t-872-2025-treatment', locator: '第 8.2 节，印刷第 3 页',
@@ -57,8 +69,24 @@ export const doctorGuidelineGroups: ReadonlyArray<{ terms: readonly string[]; ev
     { ...amlodipine, id: 'viatris-norvasc-adult-hypertension-dose', locator: '“用法用量—成人”，印刷第 3 页',
       text: '通常本品治疗高血压的起始剂量为5 mg，每日一次，最大剂量为10 mg，每日一次。\n身材小、虚弱、老年、或伴肝功能不全患者，起始剂量为2.5 mg，每日一次；此剂量也可为本品联合其它抗高血压药物治疗的剂量。' },
   ].map(item => guidelineEvidenceSchema.parse(item)) },
-  { terms: ['乳腺', 'breast'], evidence: [
+  { terms: ['乳腺', 'breast'], population: 'adult', evidence: [
     { ...breast, id: 'nhc-breast-2022-pathology', locator: '第三节“组织病理学诊断”，印刷第 11 页',
       text: '病理学诊断是乳腺癌确诊和治疗的依据。' },
   ].map(item => guidelineEvidenceSchema.parse(item)) },
 ]
+
+export function selectDoctorGuidelineEvidence(
+  groups: readonly DoctorGuidelineGroup[],
+  options?: {
+    population?: GuidelinePatientPopulation | undefined
+    inactiveSources?: GuidelineSearchResult['inactiveSources'] | undefined
+  },
+): GuidelineEvidence[] {
+  return groups
+    .filter(group => matchesGuidelinePopulation(group.population, options?.population))
+    .flatMap(group => group.evidence)
+    .filter(evidence => !options?.inactiveSources?.some(source =>
+      source.id === doctorGuidelineSourceIds.get(evidence.sourceHash)
+      || source.sourceHash === evidence.sourceHash
+      || source.url === evidence.url))
+}

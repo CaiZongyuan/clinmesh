@@ -12,6 +12,8 @@ import { GuidelineCorpus } from './infrastructure/sqlite/guideline-corpus.ts'
 import { inspectGuidelineDocuments } from './infrastructure/sqlite/guideline-corpus-check.ts'
 import { guidelinePathSchema, guidelineReleaseLockSchema, inspectGuidelineRelease,
   type GuidelineReleaseLock } from './infrastructure/guidelines/guideline-release.ts'
+import { applyGuidelineReleaseOverlay, defaultGuidelineReleaseOverlay,
+  type GuidelineReleaseOverlay } from './infrastructure/guidelines/guideline-release-overlay.ts'
 
 export interface GuidelinePrepareOptions {
   databasePath: string
@@ -23,9 +25,20 @@ export interface GuidelinePrepareOptions {
   deploymentPolicy?: GuidelineDeploymentPolicy
   allowNonCommercial?: boolean
   allowLocalEvaluation?: boolean
+  overlay?: GuidelineReleaseOverlay | null
   onProgress?: (line: string) => void
 }
 type Snapshot = Awaited<ReturnType<typeof inspectGuidelineRelease>>
+
+function resolveOverlaySnapshot(lock: GuidelineReleaseLock, snapshot: Snapshot, overlay: GuidelineReleaseOverlay | null | undefined): Snapshot {
+  if (overlay === null) return snapshot
+  if (overlay !== undefined) return applyGuidelineReleaseOverlay(snapshot, overlay)
+  if (lock.packageId === defaultGuidelineReleaseOverlay.packageId
+    && lock.releaseId === defaultGuidelineReleaseOverlay.releaseId) {
+    return applyGuidelineReleaseOverlay(snapshot, defaultGuidelineReleaseOverlay)
+  }
+  return snapshot
+}
 
 function checkLock(lock: GuidelineReleaseLock, snapshot: Snapshot) {
   if (lock.packageId !== snapshot.manifest.packageId || lock.releaseId !== snapshot.manifest.releaseId
@@ -129,7 +142,7 @@ export async function runGuidelinePrepare(options: GuidelinePrepareOptions) {
     const root = resolve(options.inputRoot)
     const snapshot = await inspectGuidelineRelease(root, lock.manifest)
     checkLock(lock, snapshot)
-    return publish(options, snapshot, 'local', root)
+    return publish(options, resolveOverlaySnapshot(lock, snapshot, options.overlay), 'local', root)
   }
   let existing: Snapshot | undefined
   try { existing = await inspectGuidelineRelease(installedRoot, lock.manifest); checkLock(lock, existing) }
@@ -138,7 +151,7 @@ export async function runGuidelinePrepare(options: GuidelinePrepareOptions) {
     if (options.checkOnly) throw new Error('Guideline installation is missing or damaged; run guidelines:prepare to repair it', { cause: error })
     options.onProgress?.('指南固定资料尚未安装或已损坏，准备下载并核验。')
   }
-  if (existing !== undefined) return publish(options, existing, 'installed', installedRoot)
+  if (existing !== undefined) return publish(options, resolveOverlaySnapshot(lock, existing, options.overlay), 'installed', installedRoot)
   await mkdir(installDirectory, { recursive: true })
   const guardPath = join(installDirectory, '.prepare.lock')
   const guard = await open(guardPath, 'wx').catch(error => { throw new Error('Another guideline preparation may be running; verify before removing .prepare.lock', { cause: error }) })
@@ -172,9 +185,10 @@ export async function runGuidelinePrepare(options: GuidelinePrepareOptions) {
     if (paths.size !== lock.artifact.fileCount || bytes !== lock.artifact.unpackedSizeBytes) throw new Error('Guideline archive is incomplete')
     const snapshot = await inspectGuidelineRelease(extractedRoot, lock.manifest)
     checkLock(lock, snapshot)
+    const overlaid = resolveOverlaySnapshot(lock, snapshot, options.overlay)
     if (existsSync(installedRoot)) { await rename(installedRoot, join(staging, 'previous')); replaced = true }
     await rename(extractedRoot, installedRoot); installed = true
-    const result = publish(options, snapshot, 'download', installedRoot)
+    const result = publish(options, overlaid, 'download', installedRoot)
     options.onProgress?.(`指南库已加载：${result.sourceCount} 项来源，${result.searchableSourceCount} 项可检索，${result.failedSourceCount} 项正文不可读。`)
     return result
   } catch (error) {

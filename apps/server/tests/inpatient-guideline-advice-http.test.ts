@@ -21,6 +21,7 @@ import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.t
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
+import { setHospitalPatientBirthDate } from './fixtures/guideline-corpus.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
 afterEach(async () => { for (const dispose of cleanups.splice(0).reverse()) await dispose() })
@@ -36,7 +37,8 @@ function documents(): GuidelineDocument[] {
     title: '合成CVIT测量共识测试原文', pages: [6], texts: paragraphs.slice(2) }].map(item => ({ source: {
       id: item.id, title: item.title, publisher: '合成验收机构', documentType: 'guideline', version: '2021',
       url: `https://example.test/${item.id}`, sha256: item.hash, format: 'pdf', scope: '仅用于合成HTTP合同，非真实临床原件',
-      status: 'active', license: { id: 'CC0', url: 'https://example.test/license', usage: 'open' }, topics: [],
+      status: 'active', population: 'adult', specialty: 'cardiology',
+      license: { id: 'CC0', url: 'https://example.test/license', usage: 'open' }, topics: [],
     }, passages: item.pages.map((page, index) => ({ locator: `PDF 物理第 ${page} 页`, text: item.texts[index]! })) }))
 }
 const modelInput = z.object({ guidelines: z.array(z.object({ id: z.string(), text: z.string() })), missing: z.array(z.string()) }).passthrough()
@@ -100,6 +102,13 @@ async function cancelSingleEstimate(s: Awaited<ReturnType<typeof setup>>) {
     requestId: estimate.requestId, expectedVersion: estimate.version, expectedRequestVersion: estimate.requestVersion,
     expectedBasisFingerprint: estimate.basisFingerprint,
   })).status).toBe(200)
+}
+
+async function advanceTime(s: Awaited<ReturnType<typeof setup>>, expectedVirtualTime: string, targetVirtualTime: string) {
+  const response = await s.fixture.request('admin', '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', {
+    expectedVirtualTime, targetVirtualTime,
+  })
+  expect(response.status, await response.clone().text()).toBe(200)
 }
 
 it('有效PCI计划在无报告、未开跟进时自动准备有条件的只读意见，生成与独立核验读取同一原文', async () => {
@@ -478,4 +487,75 @@ it('仅持有指南请求的窄Grant可显式准备，不能创建手术；撤�
   expect(revokedAgentCapabilityGrantSchema.parse(await revoked.json())).toMatchObject({ grantId: grant.grantId, status: 'revoked' })
   expect(await s.read()).toMatchObject({ status: 'stale', result: null })
   expect(s.calls).toHaveLength(2)
+})
+
+it('儿科或缺失出生日期患者隔离成人 PCI 指南专题，返回 no-evidence 且不发起模型请求', async () => {
+  const s = await setup()
+  setHospitalPatientBirthDate(s.prepared.options.databasePath, s.stay.patientId, '2014-06-01')
+  const pediatricAdvice = await s.read()
+  expect(pediatricAdvice).toMatchObject({ status: 'no-evidence', result: null })
+  expect(pediatricAdvice.missing.join()).toContain('不可用')
+  await s.fixture.runtime.dispatchPending()
+  expect(s.calls).toHaveLength(0)
+
+  setHospitalPatientBirthDate(s.prepared.options.databasePath, s.stay.patientId, undefined)
+  const allOnlyAdvice = await s.read()
+  expect(allOnlyAdvice).toMatchObject({ status: 'no-evidence', result: null })
+  expect(allOnlyAdvice.fingerprint).not.toBe(pediatricAdvice.fingerprint)
+  await s.fixture.runtime.dispatchPending()
+  expect(s.calls).toHaveLength(0)
+})
+
+it('在院患者满18周岁时更新指南人群和依据指纹，显式重评后读取成人原文', async () => {
+  const s = await setup()
+  setHospitalPatientBirthDate(s.prepared.options.databasePath, s.stay.patientId, '2008-08-25')
+  const pediatric = await s.read()
+  expect(pediatric).toMatchObject({ status: 'no-evidence', result: null })
+  expect((await s.reprepare()).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  expect(s.calls).toHaveLength(0)
+
+  await advanceTime(s, '2026-08-24T09:00:00+08:00', '2026-08-24T23:59:59+08:00')
+  expect(await s.read()).toMatchObject({ status: 'no-evidence', fingerprint: pediatric.fingerprint, result: null })
+
+  await advanceTime(s, '2026-08-24T23:59:59+08:00', '2026-08-25T00:00:00+08:00')
+  const adult = await s.read()
+  expect(adult).toMatchObject({ status: 'stale', result: null })
+  expect(adult.fingerprint).not.toBe(pediatric.fingerprint)
+  expect(s.calls).toHaveLength(0)
+  expect((await s.reprepare()).status).toBe(200)
+  for (let step = 0; step < 2; step++) await s.fixture.runtime.dispatcher.dispatchOnce({ kinds: ['inpatient.guideline-advice.prepare'] })
+  const evaluated = await s.read()
+  expect(evaluated).toMatchObject({ status: 'incomplete', result: { guidelines: expect.any(Array) } })
+  expect(s.calls).toHaveLength(2)
+  expect(modelInput.parse(s.calls[0]!.input).guidelines.map(item => item.text)).toEqual(paragraphs)
+
+  await advanceTime(s, '2026-08-25T00:00:00+08:00', '2026-08-25T01:00:00+08:00')
+  expect(await s.read()).toEqual(evaluated)
+  expect(s.calls).toHaveLength(2)
+})
+
+it('已出区患者跨18周岁生日仍按离院时间保留指南人群，召回后恢复按当前时间判断', async () => {
+  const s = await setup()
+  setHospitalPatientBirthDate(s.prepared.options.databasePath, s.stay.patientId, '2008-08-25')
+  expect((await s.reprepare()).status).toBe(200)
+  const surgery = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgerySchema)
+  const cancelled = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/cancel`, {
+    requestId: s.stay.requestId, expectedRequestVersion: surgery.requests[0]!.version, note: '合成取消计划后出区',
+  })
+  expect(cancelled.status).toBe(200)
+  await s.fixture.depart(s.stay)
+  const departed = await s.read()
+  expect(departed).toMatchObject({ status: 'cancelled', result: null })
+
+  await advanceTime(s, '2026-08-24T09:00:00+08:00', '2026-08-25T00:00:00+08:00')
+  expect(await s.read()).toEqual(departed)
+  const current = await s.fixture.read('inpatient-doctor', s.stay.path, inpatientDetailSchema)
+  const recalled = await s.fixture.request('inpatient-doctor', `${s.stay.path}/discharge/recall`, {
+    encounterVersion: current.admission.versionId, reason: '合成召回后按当前年龄核对指南',
+  })
+  expect(recalled.status).toBe(200)
+  expect((await s.read()).fingerprint).not.toBe(departed.fingerprint)
+  await s.fixture.runtime.dispatchPending()
+  expect(s.calls).toHaveLength(0)
 })

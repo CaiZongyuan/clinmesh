@@ -4,7 +4,7 @@
 
 ## 准备与身份
 
-先按[参考资料安装](../../docs/deployment.md#离线-drg-资料核对)准备完整资料和临床 Reference 库，再以现有维护命令物化规则。以下路径参数使用绝对路径；输入根目录包含 `.data/drg-compact/v1/index.json`：
+先按[参考资料安装](../../docs/deployment.md#离线-drg-资料核对)准备完整资料和临床 Reference 库。已同步完整精简资料时，`pnpm dev:server` 执行的 `pnpm --filter @clinmesh/server db:prepare` 会自动将规则物化到 `.data/drg-rules/clinmesh-chs-drg-30-2026-10-25.conditions-v2`、校验 [pci-demo-review.json](pci-demo-review.json) 与临床 Reference Release 绑定并将本目录 [NOTICE.md](NOTICE.md) 复制到物化目录；也可显式运行维护命令物化规则（路径参数使用绝对路径，输入根目录包含 `.data/drg-compact/v1/index.json`）：
 
 ```sh
 pnpm --filter @clinmesh/server drg:rules:prepare --input-root <已安装精简资料根目录绝对路径> --output-directory <仓库绝对路径>/.data/drg-rules/clinmesh-chs-drg-30-2026-10-25.conditions-v2

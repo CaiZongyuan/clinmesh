@@ -3,7 +3,6 @@ import { v7 as uuidv7 } from 'uuid'
 import { groupDrgCase } from './drg-grouping.ts'
 import type { DrgGroupingInput, DrgGroupingResult, DrgRules } from '@clinmesh/contracts/drg'
 import type { inpatientOrderIssueInputSchema } from '@clinmesh/contracts/inpatient-clinical'
-import { shanghaiBusinessDate } from '@clinmesh/contracts/scenario'
 import { inpatientDrgPregroupResultSchema, type InpatientDrgPregroupResult } from '@clinmesh/contracts/inpatient-drg'
 import { inpatientRecordSnapshotSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientDrgSimulationSchema, inpatientMaterialReservationListSchema,
@@ -20,6 +19,7 @@ import { syntheticDrgPaymentParameters } from './scenario-data/drg-payment-param
 import { syntheticPciDrgPaymentParameters } from './scenario-data/pci-drg-payment-parameters.ts'
 import { syntheticAngiographyDrgPaymentParameters } from './scenario-data/angiography-drg-payment-parameters.ts'
 import { readInpatientBirthWeight } from './inpatient-birth-weight.ts'
+import { ageAt } from './patient-age.ts'
 
 const clinicalCodingNote = '病案首页为临床版编码（nhc-icd10-clinical@2022.r4），分组规则字典为医保版口径；'
   + '两套码同码直通，未同码的诊断/操作如实报告为无法入组，不做名称模糊映射。'
@@ -29,27 +29,11 @@ const coverageNote = '收费进度仅表达已发生收费净额占推演总额�
 
 const projectedNote = 'projected 为「若计划手术按当前计划实施」的推演分组，不构成临床事实或正式病组；'
   + '草稿与预留只参与计价对照，不改变分组。'
-const birthDateSchema = z.iso.date()
 
 function reservationSetFingerprint(context: ActorContext, admissionId: string, requestId: string,
   rows: Array<{ reservation_id: string; version: number }>) {
   return canonicalJsonHash({ workspaceId: context.workspaceId, epoch: context.epoch, admissionId, requestId,
     reservations: rows.map(row => ({ id: row.reservation_id, version: row.version })).sort((a, b) => a.id.localeCompare(b.id)) })
-}
-
-/** 年龄：以离院时点（无离院用入院时点）的医院当地日期计算整岁和日龄。 */
-export function ageAt(birthDate: string, at: string | undefined): { ageYears: number, ageDays: number | null } {
-  if (!birthDateSchema.safeParse(birthDate).success) return { ageYears: -1, ageDays: null }
-  const referenceTime = at === undefined ? new Date() : new Date(at)
-  if (Number.isNaN(referenceTime.getTime())) return { ageYears: -1, ageDays: null }
-  const birth = new Date(birthDate)
-  const reference = new Date(shanghaiBusinessDate(referenceTime.toISOString()))
-  if (birth > reference) return { ageYears: -1, ageDays: null }
-  const days = Math.max(0, Math.floor((reference.getTime() - birth.getTime()) / 86_400_000))
-  let years = reference.getUTCFullYear() - birth.getUTCFullYear()
-  if (reference.getUTCMonth() < birth.getUTCMonth()
-    || (reference.getUTCMonth() === birth.getUTCMonth() && reference.getUTCDate() < birth.getUTCDate())) years -= 1
-  return { ageYears: Math.min(150, Math.max(0, years)), ageDays: years === 0 ? days : null }
 }
 
 function genderOf(rawGender: string | undefined): 'male' | 'female' | 'unknown' {
@@ -372,9 +356,7 @@ export class InpatientDrg {
     const patient = this.owner.fhir.read(context, 'Patient', admission.patientId)
     const birthWeight = readInpatientBirthWeight(this.owner.fhir, context, admission.patientId)
     const identity = z.object({ gender: z.string().optional(), birthDate: z.string().optional() }).parse(patient)
-    const events = this.owner.discharge.events(context, admission.id)
-    const reversed = new Set(events.filter(event => event.kind === 'recall').map(event => event.reversesEventId))
-    const departure = events.filter(event => event.kind === 'depart' && !reversed.has(event.id)).at(-1)
+    const departure = this.owner.discharge.activeDeparture(context, admission.id)
     const admittedAt = admission.row.admitted_at ?? undefined
     const departedAt = departure?.virtualTime
     const input: DrgGroupingInput = {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ageAt } from '../src/application/inpatient-drg.ts'
+import { ageAt } from '../src/application/patient-age.ts'
 
 describe('DRG 评估年龄口径', () => {
   it('北京时间出生当天凌晨按第 0 天计算，UTC 与带时区的同一时点一致', () => {
