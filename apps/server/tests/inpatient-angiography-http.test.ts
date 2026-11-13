@@ -180,7 +180,9 @@ it('报告预计手工删项即时重算费用，一次确认与实际预留一�
   expect(saved).toMatchObject({ status: 'blocked', draft: { items: [guidewire], analysisId: null, basisFingerprint: saved.basisFingerprint } })
   expect(saved.basisFingerprint).not.toBe(initial.basisFingerprint)
   expect(saved.analysis?.basisFingerprint).not.toBe(saved.basisFingerprint)
-  expect(saved.candidates.filter(item => item.eligibility === 'valid')).toHaveLength(4)
+  expect(saved.candidates.filter(item => item.eligibility === 'valid' && item.selected !== false)).toHaveLength(4)
+  expect(saved.candidates.filter(item => item.eligibility === 'valid' && item.selected === false).map(item => item.materialId))
+    .toEqual(['hospital-material-pci-stent-equivalent-b'])
   const before = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
   const confirmedResponse = await s.fixture.request('inpatient-doctor', `${s.stay.path}/material-estimates/confirm`, {
     requestId: saved.requestId, expectedVersion: saved.version, expectedDraftRevision: saved.draft!.revision,
@@ -476,7 +478,14 @@ it('计划B的编辑草稿不与计划A的默认确认混用，也不污染A预�
     encounterVersion: s.stay.encounterVersion, expectedTaskVersion: 0,
   })).status).toBe(200)
   await s.fixture.runtime.dispatchPending()
+  const published = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema))
+    .estimates.find(item => item.requestId === s.stay.requestId)!
+  expect(published.draft!.items).toHaveLength(4)
+  expect(published.costs?.components.projectedTotalFen).toBe(306598)
+  // 首次发布的明确稿进入全住院费用后，沿实际后台周期再核对一次跟进依据。
+  await s.fixture.runtime.dispatchPending()
   const beforeFollowup = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)
+  expect(beforeFollowup.analysis?.basisFingerprint).toBe(beforeFollowup.basisFingerprint)
   expect(beforeFollowup.status).toBe('succeeded')
   await s.fixture.executeAngiography(s.stay)
   await s.fixture.runtime.dispatchPending()
