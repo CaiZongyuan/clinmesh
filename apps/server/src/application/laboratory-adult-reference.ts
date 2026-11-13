@@ -82,6 +82,21 @@ export function adultReferenceRange(
   return { text: rule.normalValue! }
 }
 
+export function hasLaboratoryCriticalBounds(
+  definition: Pick<ResultDefinition, 'criticalMaximum' | 'criticalMinimum'> | undefined,
+): boolean {
+  return definition?.criticalMinimum !== undefined || definition?.criticalMaximum !== undefined
+}
+
+export function isLaboratoryValueCritical(
+  value: number,
+  definition: Pick<ResultDefinition, 'criticalMaximum' | 'criticalMinimum'> | undefined,
+): boolean {
+  if (definition === undefined) return false
+  return (definition.criticalMinimum !== undefined && value < definition.criticalMinimum)
+    || (definition.criticalMaximum !== undefined && value > definition.criticalMaximum)
+}
+
 function deterministicUnitInterval(input: string): number {
   const digest = createHash('sha256').update(input).digest()
   const first53Bits = digest.readBigUInt64BE(0) >> 11n
@@ -128,6 +143,7 @@ export function generateAdultReferenceResult(input: {
   const value = Math.min(rule.simulationHigh, Math.max(rule.simulationLow, rounded))
   return {
     code: definition.referenceConcept.code,
+    ...(hasLaboratoryCriticalBounds(definition) ? { critical: isLaboratoryValueCritical(value, definition) } : {}),
     display: definition.referenceConcept.display,
     interpretation: 'normal',
     referenceRange: resultRange,

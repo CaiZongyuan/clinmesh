@@ -16,9 +16,11 @@ import {
   laboratoryRequestSchema,
   laboratoryRequestStateSchema,
   laboratoryResultSchema,
+  laboratoryServiceSnapshotSchema,
   prescriptionDraftContentSchema,
   publishLaboratoryServicesRequestSchema,
 } from '../src/his.ts'
+import { investigationResultContentSchema } from '../src/scenario.ts'
 
 function completedCaseLaboratoryRequestFixture() {
   const report = {
@@ -446,6 +448,177 @@ describe('HIS contracts', () => {
     expect(laboratoryResultSchema.safeParse({
       ...result,
       unit: { ...result.unit, system: 'https://example.test/units' },
+    }).success).toBe(false)
+    expect(laboratoryResultSchema.safeParse({
+      ...result,
+      critical: true,
+    }).success).toBe(true)
+    expect(laboratoryResultSchema.safeParse({
+      ...result,
+      critical: false,
+    }).success).toBe(true)
+    expect(laboratoryResultSchema.safeParse({
+      code: '5778-6',
+      critical: false,
+      display: '尿液颜色',
+      interpretation: 'normal',
+      observationId: 'observation-urine-color-1',
+      referenceRange: { text: '淡黄色' },
+      value: '淡黄色',
+    }).success).toBe(false)
+  })
+
+  it('validates optional critical bounds on quantitative laboratory service definitions and result payloads', () => {
+    const baseService = {
+      allowedIndicationCodes: ['chest-pain'],
+      componentServiceIds: [],
+      doctorOrderable: true,
+      executingDepartmentId: 'department-laboratory',
+      id: 'hospital-service:wst-886:2026:1400605A',
+      localCode: 'CM-LAB-1400605A',
+      nameZh: '钾测定',
+      priceFen: 0,
+      referenceConcept: {
+        code: '1400605A',
+        display: '钾测定',
+        id: 'wst-886:2026:1400605A',
+        sourceLocator: 'laboratory-cn:test:1400605A',
+        system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+        version: '2026',
+      },
+      referenceReleaseId: 'release-1',
+      reportDefinition: {
+        conclusionTemplate: '{name}检验完成。',
+        results: [{
+          adultReferenceRules: [{
+            high: 5.3,
+            low: 3.5,
+            notes: '',
+            referenceKind: 'range',
+            sex: 'all',
+            simulationHigh: 5.3,
+            simulationLow: 3.5,
+            sourceLocation: 'WS/T 404.3-2012 表1',
+            sourceStandard: 'WS/T 404.3-2012',
+            sourceType: 'national-standard',
+            sourceVersion: '2012',
+          }],
+          alternateCodings: [{
+            code: '2823-3',
+            system: 'http://loinc.org',
+            version: '2.81',
+          }],
+          criticalMaximum: 6.2,
+          criticalMinimum: 2.8,
+          healthyStrategy: 'uniform',
+          precision: 2,
+          referenceConcept: {
+            code: '1400605A',
+            display: '钾测定',
+            id: 'wst-886:2026:1400605A',
+            sourceLocator: 'laboratory-cn:test:1400605A',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+            version: '2026',
+          },
+          referenceRange: {
+            high: 5.3,
+            low: 3.5,
+            text: '3.50-5.30 mmol/L',
+          },
+          unit: {
+            code: 'mmol/L',
+            display: 'mmol/L',
+            system: 'http://unitsofmeasure.org',
+          },
+          valueType: 'quantity',
+        }],
+      },
+      serviceKind: 'laboratory',
+      specimen: {
+        code: '血清、血浆',
+        display: '血清、血浆',
+      },
+      tatMinutes: 30,
+      version: 1,
+    }
+    expect(laboratoryServiceSnapshotSchema.safeParse(baseService).success).toBe(true)
+
+    const withInvertedCritical = structuredClone(baseService)
+    withInvertedCritical.reportDefinition.results[0]!.criticalMinimum = 6.5
+    withInvertedCritical.reportDefinition.results[0]!.criticalMaximum = 6.2
+    expect(laboratoryServiceSnapshotSchema.safeParse(withInvertedCritical).success).toBe(false)
+
+    const withCriticalMinAboveLow = structuredClone(baseService)
+    withCriticalMinAboveLow.reportDefinition.results[0]!.criticalMinimum = 3.8
+    expect(laboratoryServiceSnapshotSchema.safeParse(withCriticalMinAboveLow).success).toBe(false)
+
+    const withCriticalMaxBelowHigh = structuredClone(baseService)
+    withCriticalMaxBelowHigh.reportDefinition.results[0]!.criticalMaximum = 5.0
+    expect(laboratoryServiceSnapshotSchema.safeParse(withCriticalMaxBelowHigh).success).toBe(false)
+
+    const qualitativeWithCritical = {
+      ...baseService,
+      reportDefinition: {
+        conclusionTemplate: '{name}检验完成。',
+        results: [{
+          allowedValues: ['阴性', '阳性'],
+          alternateCodings: [],
+          criticalMaximum: 1,
+          referenceConcept: baseService.referenceConcept,
+          referenceRange: { text: '阴性' },
+          valueType: 'string',
+        }],
+      },
+    }
+    expect(laboratoryServiceSnapshotSchema.safeParse(qualitativeWithCritical).success).toBe(false)
+
+    const { report, request } = completedCaseLaboratoryRequestFixture()
+    expect(completedCaseLaboratoryRequestSchema.safeParse({
+      ...request,
+      report: {
+        ...report,
+        results: [{ ...report.results[0]!, critical: true }],
+      },
+    }).success).toBe(true)
+    expect(completedCaseLaboratoryRequestSchema.safeParse({
+      ...request,
+      report: {
+        ...report,
+        results: [{
+          code: '5778-6',
+          critical: true,
+          display: '尿液颜色',
+          interpretation: 'normal',
+          observationId: 'obs-1',
+          referenceRange: { text: '淡黄色' },
+          value: '淡黄色',
+        }],
+      },
+    }).success).toBe(false)
+
+    expect(investigationResultContentSchema.safeParse({
+      conclusion: '血钾危急值升高。',
+      results: [{
+        code: '1400605A',
+        critical: true,
+        display: '钾测定',
+        interpretation: 'high',
+        referenceRange: { high: 5.3, low: 3.5, text: '3.50-5.30 mmol/L' },
+        source: 'case-truth-exact',
+        unit: { code: 'mmol/L', display: 'mmol/L', system: 'http://unitsofmeasure.org' },
+        value: 6.6,
+      }],
+    }).success).toBe(true)
+    expect(investigationResultContentSchema.safeParse({
+      conclusion: '定性结果。',
+      results: [{
+        code: '5778-6',
+        critical: false,
+        display: '尿液颜色',
+        interpretation: 'normal',
+        referenceRange: { text: '淡黄色' },
+        value: '淡黄色',
+      }],
     }).success).toBe(false)
   })
 

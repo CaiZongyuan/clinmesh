@@ -32,6 +32,8 @@ import {
   adultRuleProvenance,
   exactAdultReferenceScalarResult,
   generateAdultReferenceResult,
+  hasLaboratoryCriticalBounds,
+  isLaboratoryValueCritical,
   selectAdultReferenceRule,
 } from './laboratory-adult-reference.ts'
 
@@ -226,20 +228,139 @@ function quantity(value: unknown) {
   }
 }
 
+const loincSystem = 'http://loinc.org'
+const wst886System = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026'
+
+function analyteCodings(loincCodes: readonly string[], wstCodes: readonly string[]) {
+  return [
+    ...loincCodes.map(code => ({ code, system: loincSystem, version: '2.83' })),
+    ...wstCodes.map(code => ({ code, system: wst886System, version: '2026' })),
+  ]
+}
+
+const analyteUnitConversions: ReadonlyArray<{
+  codings: ReadonlyArray<{ code: string; system: string; version: string }>
+  conversions: ReadonlyArray<{ convert: (value: number) => number; from: string; to: string }>
+}> = [
+  {
+    codings: analyteCodings(['2160-0', '14682-9'], ['1700404A']),
+    conversions: [{ convert: value => value * 88.4, from: 'mg/dL', to: 'umol/L' }],
+  },
+  {
+    codings: analyteCodings(['2093-3', '14647-2', '2085-9', '14646-4', '2089-1', '13457-7', '18262-6'], ['2000104A', '2000304A', '2000404A']),
+    conversions: [{ convert: value => value / 38.67, from: 'mg/dL', to: 'mmol/L' }],
+  },
+  {
+    codings: analyteCodings(['2571-8', '14927-8'], ['2000204A']),
+    conversions: [{ convert: value => value / 88.57, from: 'mg/dL', to: 'mmol/L' }],
+  },
+  {
+    codings: analyteCodings(['4544-3', '20570-8'], ['0100501A']),
+    conversions: [
+      { convert: value => value / 100, from: '%', to: 'L/L' },
+      { convert: value => value * 100, from: 'L/L', to: '%' },
+    ],
+  },
+  {
+    codings: analyteCodings(
+      ['89579-7', '49563-0', '10839-9', '6598-7', '6597-9', '67151-1', '2639-3', '30934-4', '33762-6'],
+      ['2100404B', '2100404A', '2100504A', '2100304A', '2100604A', '2100704A'],
+    ),
+    conversions: [
+      { convert: value => value, from: 'pg/mL', to: 'ng/L' },
+      { convert: value => value, from: 'ng/L', to: 'pg/mL' },
+      { convert: value => value / 1000, from: 'ng/L', to: 'ng/mL' },
+      { convert: value => value / 1000, from: 'pg/mL', to: 'ng/mL' },
+      { convert: value => value * 1000, from: 'ng/mL', to: 'ng/L' },
+      { convert: value => value * 1000, from: 'ug/L', to: 'ng/L' },
+      { convert: value => value * 1000, from: 'ng/mL', to: 'pg/mL' },
+      { convert: value => value * 1000, from: 'ug/L', to: 'pg/mL' },
+      { convert: value => value / 1000, from: 'ng/L', to: 'ug/L' },
+      { convert: value => value / 1000, from: 'pg/mL', to: 'ug/L' },
+      { convert: value => value, from: 'ng/mL', to: 'ug/L' },
+      { convert: value => value, from: 'ug/L', to: 'ng/mL' },
+    ],
+  },
+  {
+    codings: analyteCodings(['48065-7', '48066-5'], ['0501703A']),
+    conversions: [
+      { convert: value => value, from: 'ug/mL', to: 'mg/L' },
+      { convert: value => value, from: 'ug/mL{FEU}', to: 'mg/L' },
+      { convert: value => value, from: 'mg/L{FEU}', to: 'mg/L' },
+      { convert: value => value / 1000, from: 'ng/mL', to: 'mg/L' },
+      { convert: value => value / 1000, from: 'ng/mL{FEU}', to: 'mg/L' },
+      { convert: value => value / 1000, from: 'ug/L', to: 'mg/L' },
+      { convert: value => value / 1000, from: 'ug/L{FEU}', to: 'mg/L' },
+      { convert: value => value, from: 'ng/mL', to: 'ug/L' },
+      { convert: value => value, from: 'ng/mL{FEU}', to: 'ug/L' },
+      { convert: value => value, from: 'ug/L{FEU}', to: 'ug/L' },
+      { convert: value => value * 1000, from: 'mg/L', to: 'ug/L' },
+      { convert: value => value * 1000, from: 'mg/L{FEU}', to: 'ug/L' },
+      { convert: value => value * 1000, from: 'ug/mL', to: 'ug/L' },
+      { convert: value => value * 1000, from: 'ug/mL{FEU}', to: 'ug/L' },
+    ],
+  },
+  {
+    codings: analyteCodings(['3094-0', '22664-7'], ['1700204A']),
+    conversions: [{ convert: value => value / 2.801, from: 'mg/dL', to: 'mmol/L' }],
+  },
+  {
+    codings: analyteCodings(['3084-1', '14933-6'], ['1700304A']),
+    conversions: [{ convert: value => value * 59.48, from: 'mg/dL', to: 'umol/L' }],
+  },
+  {
+    codings: analyteCodings(['17861-6', '2000-8'], ['1400705A']),
+    conversions: [{ convert: value => value / 4.008, from: 'mg/dL', to: 'mmol/L' }],
+  },
+  {
+    codings: analyteCodings(['2823-3', '2951-2', '2075-0'], ['1400605A', '1400205A', '1400505A']),
+    conversions: [{ convert: value => value, from: 'meq/L', to: 'mmol/L' }],
+  },
+]
+
+function convertAnalyteQuantityValue(
+  definition: ServiceResultDefinition,
+  observation: Resource,
+  sourceUnitCode: string,
+  targetUnitCode: string,
+  sourceValue: number,
+): number | undefined {
+  const definitionCodings = [definition.referenceConcept, ...definition.alternateCodings]
+  const observationCodings = conceptCodings(observation)
+  for (const rule of analyteUnitConversions) {
+    const matchesDefinition = definitionCodings.some(coding => rule.codings.some(expected => (
+      coding.code === expected.code
+      && coding.system === expected.system
+      && coding.version === expected.version
+    )))
+    const matchesObservation = observationCodings.some(coding => rule.codings.some(expected => (
+      coding.code === expected.code
+      && coding.system === expected.system
+      && (coding.version === undefined || coding.version === expected.version)
+    )))
+    if (!matchesDefinition || !matchesObservation) continue
+    const conversion = rule.conversions.find(
+      candidate => candidate.from === sourceUnitCode && candidate.to === targetUnitCode,
+    )
+    if (conversion !== undefined) return conversion.convert(sourceValue)
+  }
+  return undefined
+}
+
 function serviceQuantityValue(definition: ServiceResultDefinition, observation: Resource) {
   const sourceQuantity = observation.valueQuantity
   if (typeof sourceQuantity !== 'object' || sourceQuantity === null
     || !('code' in sourceQuantity) || typeof sourceQuantity.code !== 'string') return undefined
   const result = quantity(sourceQuantity)
   const unit = definition.unit
-  if (result === undefined || unit === undefined || result.system !== unit.system) return undefined
-  let multiplier: number | undefined
+  if (result === undefined || result.code === undefined || unit === undefined || result.system !== unit.system) return undefined
+  let value: number | undefined
   if (result.code === unit.code
     || (result.code === '10*3/uL' && unit.code === '10*9/L')
     || (result.code === '10*6/uL' && unit.code === '10*12/L')) {
-    multiplier = 1
+    value = result.value
   } else if (result.code === 'g/dL' && unit.code === 'g/L') {
-    multiplier = 10
+    value = result.value * 10
   } else {
     const mapping = [definition.referenceConcept, ...definition.alternateCodings]
       .map(coding => resolveObservationMapping({ code: coding.code, system: coding.system, version: coding.version }))
@@ -248,11 +369,13 @@ function serviceQuantityValue(definition: ServiceResultDefinition, observation: 
       coding.code === mapping.coding.code && coding.system === mapping.coding.system
       && (coding.version === undefined || coding.version === mapping.coding.version)
     ))
-    if (mapping?.unit.code === unit.code && matchingGlucose) {
-      multiplier = mapping.sourceUnits.find(source => source.unitCode === result.code)?.multiplier
-    }
+    const multiplier = mapping?.unit.code === unit.code && matchingGlucose
+      ? mapping.sourceUnits.find(source => source.unitCode === result.code)?.multiplier
+      : undefined
+    value = multiplier === undefined
+      ? convertAnalyteQuantityValue(definition, observation, result.code, unit.code, result.value)
+      : result.value * multiplier
   }
-  const value = multiplier === undefined ? undefined : result.value * multiplier
   return value !== undefined && Number.isFinite(value) ? value : undefined
 }
 
@@ -887,6 +1010,9 @@ export class InvestigationService {
         : adultReferenceRange(adultRule, definition.unit)
       return {
         code: definition.referenceConcept.code,
+        ...(hasLaboratoryCriticalBounds(definition)
+          ? { critical: isLaboratoryValueCritical(value, definition) }
+          : {}),
         display: definition.referenceConcept.display,
         interpretation: interpretationFor(value, referenceRange),
         referenceRange,
@@ -961,6 +1087,11 @@ export class InvestigationService {
     }
     return investigationResultContentSchema.shape.results.element.parse({
       code: definition.referenceConcept.code,
+      ...(definition.valueType === 'quantity'
+        && typeof generated.value === 'number'
+        && hasLaboratoryCriticalBounds(definition)
+        ? { critical: isLaboratoryValueCritical(generated.value, definition) }
+        : {}),
       display: definition.referenceConcept.display,
       interpretation: generated.interpretation,
       referenceRange: generated.referenceRange,

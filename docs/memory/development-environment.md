@@ -115,3 +115,5 @@
 - 文档站构建与全仓 lint 顺序执行：VitePress 会短暂创建并删除 `.vitepress/config.ts.timestamp-*.mjs`，并行 oxlint 可能在扫描后读取到已删除文件而报 `Failed to open file`。先确认构建结束，再原样重跑 lint，不扩大忽略范围掩盖源码错误。
 
 - 从已导出 `CLINMESH_DATABASE_PATH` 等变量的终端或 Agent 运行环境切换 worktree 时，调用环境会覆盖新副本的 `.env`。启动命令显式传入该 worktree 的业务、Reference 和指南数据库路径；启动后核对 Server 子进程的实际环境与迁移备份路径，再以健康响应确认就绪，不能仅核对 `.env`。
+
+- Windows PowerShell 的 `Set-Location` 不会改变 .NET 进程当前目录；在其后用相对路径调用 `[System.IO.File]::ReadAllText` 或 `WriteAllText` 会解析到启动目录，静默读写错文件或报找不到标记。脚本内的 .NET 文件 API 一律使用绝对路径；需要多行替换或插入时，把逻辑写成仓库外的 Node 脚本文件运行，避免 `node -e` 在 PowerShell 中的引号拆分。

@@ -313,6 +313,7 @@ describe('HIS operation catalog', () => {
         path: '/api/his/v1/doctor/cases/:caseId/reference-catalogs/laboratory',
       },
       skill: 'clinmesh-doctor',
+      version: 2,
     })
     expect(operation.input.parse({
       caseId: 'case-1',
@@ -357,6 +358,8 @@ describe('HIS operation catalog', () => {
               version: '2.83',
             },
             referenceRange: { high: 10, low: 4, text: '4.0-10.0 x10^9/L' },
+            criticalMaximum: 30,
+            criticalMinimum: 2,
             unit: {
               code: '10*9/L',
               display: '10*9/L',
@@ -539,6 +542,21 @@ describe('HIS operation catalog', () => {
       const operation = getHisOperation(id as string)
       return [operation.id, operation.mode, operation.risk, operation.roles]
     })).toEqual(expected)
+    expect(getHisOperation('encounter.laboratory-request.issue').version).toBe(2)
+    expect(getHisOperation('laboratory-request.cancel').version).toBe(2)
+    expect(getHisOperation('laboratory-request.retry-generation').version).toBe(5)
+    for (const id of [
+      'inpatient.investigation.read',
+      'inpatient.investigation.issue',
+      'inpatient.investigation.send',
+      'inpatient.investigation.cancel',
+      'inpatient.investigation.retry',
+      'inpatient.investigation.acknowledge',
+      'inpatient.pci-data.read',
+      'inpatient.pci-data.prepare',
+    ]) {
+      expect(getHisOperation(id).version).toBe(2)
+    }
   })
 
   it('publishes version-protected Hospital Service order and completion commands', () => {
