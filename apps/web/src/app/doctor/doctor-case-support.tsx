@@ -48,6 +48,7 @@ export type DoctorAgentDraftKind =
   | 'diagnosis'
   | 'first-visit'
   | 'imaging'
+  | 'examination'
   | 'laboratory'
   | 'pathology'
   | 'prescription'
@@ -74,6 +75,7 @@ export interface ReferenceCatalogSearchParameters {
 export const encounterCompletionTargetElementIds = {
   diagnosis: 'encounter-completion-target-diagnosis',
   'clinical-document': 'encounter-completion-target-clinical-document',
+  examination: 'encounter-completion-target-examination',
   imaging: 'encounter-completion-target-imaging',
   laboratory: 'encounter-completion-target-laboratory',
   'medication-conclusion': 'encounter-completion-target-medication-conclusion',
@@ -84,6 +86,7 @@ export const caseDetailSectionByCompletionTarget = {
   diagnosis: 'diagnosis',
   'clinical-document': 'record',
   // 放射检查、病理会诊与检验在同一个“检验检查”分区内。
+  examination: 'laboratory',
   imaging: 'laboratory',
   laboratory: 'laboratory',
   'medication-conclusion': 'prescription',
@@ -156,7 +159,7 @@ export function usesStructuredClinicalDocument(detail: DoctorCaseDetail | undefi
     || detail.clinicalDocument?.draft !== undefined || (detail.clinicalDocument?.signed.length ?? 0) > 0)
 }
 
-export type InvestigationCategory = 'laboratory' | 'imaging' | 'pathology'
+export type InvestigationCategory = 'laboratory' | 'imaging' | 'pathology' | 'examination'
 
 export interface InvestigationView {
   caseId: string
@@ -168,6 +171,7 @@ export interface InvestigationView {
 export function caseInvestigationRequests(detail: DoctorCaseDetail | undefined) {
   return {
     laboratory: detail?.laboratoryRequests?.requests ?? [],
+    examination: detail?.examinationRequests?.requests ?? [],
     imaging: detail?.imagingRequests?.requests ?? [],
     pathology: detail?.pathologyRequests?.requests ?? [],
   }

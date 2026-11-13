@@ -252,7 +252,7 @@ export const paymentPreviewRowSchema = paymentWorkflowRowSchema.extend({
   actor_context_hash: z.string().nullable(),
   amount_fen: z.number().int().nonnegative(),
   case_id: z.string().min(1),
-  category: z.enum(['laboratory', 'imaging', 'pathology', 'medication']),
+  category: z.enum(['laboratory', 'imaging', 'pathology', 'examination', 'medication']),
   charge_id: z.string().min(1),
   charge_item_id: z.string().min(1),
   charge_status: chargeStatusRowSchema,
@@ -910,6 +910,7 @@ export interface DoctorRecommendationsWorkflowPort
 
 export interface InpatientInvestigationsWorkflowPort
   extends Pick<OutpatientLaboratoryTransactionPort, 'applySaveLaboratoryRequestDraft' | 'applyIssueLaboratoryRequest'> {
+  readonly examination: Pick<import('./examination-request-service.ts').ExaminationRequestService, 'state' | 'applySaveDraft' | 'applyIssue'>
   readonly imaging: Pick<ImagingWorkflowPort, 'state' | 'applySaveDraft' | 'applyIssue'>
   inpatientLaboratoryRequests(context: ActorContext, admissionId: string): LaboratoryRequest[]
 }

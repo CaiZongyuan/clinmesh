@@ -555,7 +555,7 @@ describe('HIS operation catalog', () => {
       'inpatient.pci-data.read',
       'inpatient.pci-data.prepare',
     ]) {
-      expect(getHisOperation(id).version).toBe(2)
+      expect(getHisOperation(id).version).toBe(id.startsWith('inpatient.investigation.') ? 3 : 2)
     }
   })
 
@@ -661,7 +661,7 @@ describe('HIS operation catalog', () => {
       simulatorRule: 'ambiguous-decline',
       tenders: [{ method: 'cash', amountFen: 100 }, { method: 'mobile', amountFen: 200 }],
     }
-    expect(operation.version).toBe(2)
+    expect(operation.version).toBe(3)
     expect(operation.input.parse(input)).toEqual(input)
     expect(operation.http.encodeBody?.(input)).toEqual({
       expectedVersions: { 'ChargeItem/charge-1': '3' },
@@ -761,6 +761,9 @@ describe('HIS operation catalog', () => {
       'encounter.consultation.reply.retry': 'consultation.reply.retry',
       'encounter.diagnosis.confirm': 'encounter.confirm-diagnosis',
       'encounter.diagnosis.draft.set': 'encounter.save-diagnosis-draft',
+      'encounter.examination-request.draft.delete': 'examination-request.delete-draft',
+      'encounter.examination-request.draft.set': 'examination-request.save-draft',
+      'encounter.examination-request.issue': 'examination-request.issue',
       'encounter.imaging-request.draft.delete': 'imaging-request.delete-draft',
       'encounter.imaging-request.draft.set': 'imaging-request.save-draft',
       'encounter.imaging-request.issue': 'imaging-request.issue',
@@ -794,7 +797,7 @@ describe('HIS operation catalog', () => {
     expect(counts).toEqual({
       'clinmesh-administrator': 4,
       'clinmesh-billing': 18,
-      'clinmesh-doctor': 57,
+      'clinmesh-doctor': 64,
       'clinmesh-fhir': 5,
       'clinmesh-inpatient': 113,
       'clinmesh-pharmacy': 3,
@@ -840,7 +843,20 @@ describe('HIS operation catalog', () => {
   })
 })
 
-it('keeps case history scoped to authorized clinical sources', () => {
+it('keeps functional examinations narrow and encodes versioned report acknowledgement', () => {
+  const draft = getHisOperation('encounter.examination-request.draft.set')
+  const input = { encounterId: 'encounter-1', encounterVersion: '3', expectedDraftVersion: 0,
+    serviceId: 'examination-ecg-12-lead', indication: '活动后心悸' }
+  expect(draft.http.encodeBody?.(input)).toEqual({ expectedVersions: { 'Encounter/encounter-1': '3' },
+    input: { expectedDraftVersion: 0, serviceId: 'examination-ecg-12-lead', indication: '活动后心悸' } })
+  expect(draft.input.safeParse({ ...input, findings: '窦性心律' }).success).toBe(false)
+  expect(draft.input.safeParse({ ...input, assetId: 'asset-1' }).success).toBe(false)
+  const acknowledge = getHisOperation('examination-report.acknowledge')
+  expect(acknowledge.http.encodeBody?.({ requestId: 'request-1', expectedRequestVersion: 4,
+    diagnosticReportId: 'report-1', diagnosticReportVersion: '2' })).toEqual({
+    expectedVersions: { 'DiagnosticReport/report-1': '2' }, input: { expectedRequestVersion: 4 } })
+  expect(acknowledge.roles).toEqual(['outpatient-doctor'])
+  expect(acknowledge.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
   for (const id of ['doctor.case.history.search', 'doctor.case.history.read']) {
     const operation = getHisOperation(id)
     expect(operation.roles).toEqual(['outpatient-doctor'])

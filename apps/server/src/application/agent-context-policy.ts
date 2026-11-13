@@ -33,6 +33,10 @@ const doctorCaseRowSchema = z.object({
   has_consultation: z.number().int(),
   has_correctable_laboratory: z.number().int(),
   has_diagnosis_draft: z.number().int(),
+  has_cancellable_examination: z.number().int(),
+  has_failed_examination: z.number().int(),
+  has_examination_draft: z.number().int(),
+  has_examination_report: z.number().int(),
   has_cancellable_imaging: z.number().int(),
   has_failed_imaging: z.number().int(),
   has_imaging_draft: z.number().int(),
@@ -44,6 +48,7 @@ const doctorCaseRowSchema = z.object({
   has_pathology_report: z.number().int(),
   has_prescription_draft: z.number().int(),
   has_reported_imaging: z.number().int(),
+  has_reported_examination: z.number().int(),
   has_reported_laboratory: z.number().int(),
   has_reported_pathology: z.number().int(),
   has_signed_document: z.number().int(),
@@ -104,9 +109,11 @@ const commonOperations = new Set<AgentOperationId>([
 
 /** 指向一条放射或病理申请的操作：申请类型，以及该申请此时必须处于的状态。 */
 const boundRequestsByOperation: Partial<Record<AgentOperationId, {
-  kind: 'imaging' | 'pathology'
+  kind: 'imaging' | 'pathology' | 'examination'
   statuses: readonly string[]
 }>> = {
+  'outpatient.examination.cancel.propose': { kind: 'examination', statuses: ['issued', 'generation-failed'] },
+  'outpatient.examination.retry.propose': { kind: 'examination', statuses: ['generation-failed'] },
   'outpatient.imaging.cancel.propose': { kind: 'imaging', statuses: ['issued', 'generation-failed'] },
   'outpatient.imaging.correct.propose': { kind: 'imaging', statuses: ['reported', 'acknowledged'] },
   'outpatient.imaging.retry.propose': { kind: 'imaging', statuses: ['generation-failed'] },
@@ -184,10 +191,14 @@ export const proposalCommandOperations: Readonly<Record<string, readonly string[
   'outpatient.laboratory.cancel.propose': ['laboratory-request.cancel'],
   'outpatient.report.acknowledge.propose': [
     'laboratory-report.acknowledge',
+    'examination-report.acknowledge',
     'imaging-report.acknowledge',
     'pathology-report.acknowledge',
   ],
   'outpatient.report.correct.propose': ['laboratory-report.correct'],
+  'outpatient.examination.issue.propose': ['examination-request.issue'],
+  'outpatient.examination.cancel.propose': ['examination-request.cancel'],
+  'outpatient.examination.retry.propose': ['examination-request.retry'],
   'outpatient.imaging.issue.propose': ['imaging-request.issue'],
   'outpatient.imaging.cancel.propose': ['imaging-request.cancel'],
   'outpatient.imaging.retry.propose': ['imaging-request.retry'],
@@ -332,6 +343,25 @@ function resolveSelection(
           AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
           AND laboratory_request.request_kind = 'laboratory'
           AND laboratory_request.status IN ('reported', 'acknowledged')) AS has_correctable_laboratory,
+        EXISTS (SELECT 1 FROM examination_request_state WHERE examination_request_state.workspace_id = outpatient_case.workspace_id
+          AND examination_request_state.epoch = outpatient_case.epoch AND examination_request_state.case_id = outpatient_case.case_id
+          AND examination_request_state.draft_service_id IS NOT NULL) AS has_examination_draft,
+        EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
+          AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
+          AND laboratory_request.request_kind = 'examination'
+          AND laboratory_request.status IN ('issued', 'generation-failed')) AS has_cancellable_examination,
+        EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
+          AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
+          AND laboratory_request.request_kind = 'examination'
+          AND laboratory_request.status = 'generation-failed') AS has_failed_examination,
+        EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
+          AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
+          AND laboratory_request.request_kind = 'examination'
+          AND laboratory_request.status = 'reported') AS has_reported_examination,
+        EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
+          AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
+          AND laboratory_request.request_kind = 'examination'
+          AND laboratory_request.status IN ('reported', 'acknowledged')) AS has_examination_report,
         EXISTS (SELECT 1 FROM imaging_request_state WHERE imaging_request_state.workspace_id = outpatient_case.workspace_id
           AND imaging_request_state.epoch = outpatient_case.epoch AND imaging_request_state.case_id = outpatient_case.case_id
           AND imaging_request_state.draft_service_id IS NOT NULL) AS has_imaging_draft,
@@ -582,6 +612,7 @@ function narrowOperations(
         'outpatient.diagnosis.draft.set',
         'outpatient.diagnosis.confirm.propose',
         'outpatient.laboratory.draft.set',
+        'outpatient.examination.draft.set',
         'outpatient.imaging.draft.set',
         'outpatient.pathology.draft.set',
         'outpatient.prescription.draft.set',
@@ -598,6 +629,7 @@ function narrowOperations(
     }
     if (
       selection.has_reported_laboratory === 1
+      || selection.has_reported_examination === 1
       || selection.has_reported_imaging === 1
       || selection.has_reported_pathology === 1
     ) {
@@ -606,6 +638,9 @@ function narrowOperations(
     if (selection.has_correctable_laboratory === 1 && accountCanCorrectReports) {
       operations.push('outpatient.report.correct.propose')
     }
+    if (selection.has_examination_draft === 1) operations.push('outpatient.examination.issue.propose')
+    if (selection.has_cancellable_examination === 1) operations.push('outpatient.examination.cancel.propose')
+    if (selection.has_failed_examination === 1) operations.push('outpatient.examination.retry.propose')
     if (selection.has_imaging_draft === 1) operations.push('outpatient.imaging.issue.propose')
     if (selection.has_cancellable_imaging === 1) operations.push('outpatient.imaging.cancel.propose')
     if (selection.has_failed_imaging === 1) operations.push('outpatient.imaging.retry.propose')
@@ -749,7 +784,7 @@ function inputMatchesCurrentResources(
     return exists(`SELECT 1 FROM outpatient_case WHERE workspace_id = ? AND epoch = ? AND case_id = ?`,
       ...scope, value.caseId)
   }
-  const boundRequest = (kind: 'imaging' | 'pathology', requestId: unknown, statuses: readonly string[]) => (
+  const boundRequest = (kind: 'imaging' | 'pathology' | 'examination', requestId: unknown, statuses: readonly string[]) => (
     claim.selection?.kind === 'case'
     && exists(`SELECT 1 FROM laboratory_request WHERE workspace_id = ? AND epoch = ?
       AND case_id = ? AND request_id = ? AND request_kind = ? AND status IN (${statuses.map(() => '?').join(', ')})`,
@@ -757,7 +792,8 @@ function inputMatchesCurrentResources(
   )
   if (operationId === 'outpatient.section.select') {
     // 栏目切换只有在同时要求展开影像或切片时才绑定到对应类型的一条申请。
-    return (value.imagingRequestId === undefined || boundRequest('imaging', value.imagingRequestId, openableRequestStatuses))
+    return (value.examinationRequestId === undefined || boundRequest('examination', value.examinationRequestId, openableRequestStatuses))
+      && (value.imagingRequestId === undefined || boundRequest('imaging', value.imagingRequestId, openableRequestStatuses))
       && (value.pathologyRequestId === undefined || boundRequest('pathology', value.pathologyRequestId, openableRequestStatuses))
   }
   const bound = boundRequestsByOperation[operationId]

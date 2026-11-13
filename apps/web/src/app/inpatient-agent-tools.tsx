@@ -113,14 +113,14 @@ export function useInpatientAgentTools(input: Input) {
           const values = parseAgentToolInput('inpatient.report.acknowledge.propose', raw)
           const check = () => {
             const frame = current()
-            const request = [...frame.investigations?.laboratoryRequests ?? [], ...frame.investigations?.imagingRequests ?? []].find(request => request.id === values.requestId)
+            const request = [...frame.investigations?.laboratoryRequests ?? [], ...frame.investigations?.imagingRequests ?? [], ...frame.investigations?.examinationRequests ?? []].find(request => request.id === values.requestId)
             if (frame.session.actor.roleCode !== 'inpatient-doctor' || frame.stage !== 'investigations' || !request?.report
               || request.status !== 'reported' || request.version !== values.expectedRequestVersion
               || request.serviceRequestVersion !== values.serviceRequestVersion || request.taskVersion !== values.taskVersion
               || request.report.diagnosticReportId !== values.diagnosticReportId || request.report.diagnosticReportVersion !== values.diagnosticReportVersion) {
               throw new Error(t('报告已变化，请核对当前报告后重新准备。', 'The report changed. Review the current report and prepare again.'))
             }
-            if ('service' in request && !shownReports.current.has(reportIdentity({ admissionId: frame.admission.id, requestId: request.id,
+            if ('studyId' in request.report && !shownReports.current.has(reportIdentity({ admissionId: frame.admission.id, requestId: request.id,
               diagnosticReportId: values.diagnosticReportId, diagnosticReportVersion: values.diagnosticReportVersion }))) {
               throw new Error(t('请先实际查看该报告的影像，再准备已阅。', 'Display the images for this report before preparing acknowledgement.'))
             }

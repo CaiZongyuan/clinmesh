@@ -6,7 +6,7 @@ export type { OutpatientInvestigationBilling, OutpatientInvestigationPrice } fro
 import { fhirResourceSchema } from './fhir.ts'
 import { imagingExamCodeSchema, pathologyExamCodeSchema } from './imaging.ts'
 import { pathologySourceProcedureSchema } from './pathology.ts'
-import { investigationCodeableValueSchema } from './scenario.ts'
+import { investigationCodeableValueSchema, investigationResultContentSchema } from './scenario.ts'
 import {
   referenceConceptSchema,
   referenceConceptSnapshotSchema,
@@ -62,6 +62,9 @@ export const apiConflictSchema = z.object({
     'imaging-report',
     'imaging-request',
     'imaging-request-draft',
+    'examination-report',
+    'examination-request',
+    'examination-request-draft',
     'pathology-report',
     'pathology-request',
     'pathology-request-draft',
@@ -961,6 +964,7 @@ export const encounterCompletionItemCodeSchema = z.enum([
 ])
 
 export const encounterCompletionTargetSchema = z.enum([
+  'examination',
   'diagnosis',
   'clinical-document',
   'imaging',
@@ -1950,6 +1954,53 @@ export const correctImagingReportRequestSchema = z.object({
 
 export const correctImagingReportResponseSchema = correctLaboratoryReportResponseSchema
 
+/** 无像素功能检查，使用共享申请状态与纯文本结构化指标。 */
+export const examinationExamCodeSchema = z.enum(['ecg-12-lead', 'tte'])
+export const examinationServiceSnapshotSchema = imagingServiceSnapshotSchema.extend({
+  examCode: examinationExamCodeSchema,
+  modality: z.enum(['ECG', 'US']),
+}).strict()
+export const examinationReportSchema = z.object({
+  acknowledgement: laboratoryReportAcknowledgementSchema.optional(),
+  diagnosticReportId: z.string().min(1),
+  diagnosticReportVersion: z.string().regex(/^\d+$/),
+  examinedAt: z.iso.datetime({ offset: true }),
+  issuedAt: z.iso.datetime({ offset: true }),
+  findings: z.string().min(1),
+  impression: z.string().min(1),
+  technique: z.string().min(1),
+  revisionNumber: z.number().int().positive(),
+  status: z.literal('final'),
+  results: investigationResultContentSchema.shape.results,
+}).strict()
+export const examinationRequestSchema = imagingRequestSchema.extend({
+  service: examinationServiceSnapshotSchema,
+  report: examinationReportSchema.optional(),
+  previousReports: z.array(examinationReportSchema).default([]),
+}).strict()
+export const examinationRequestStateSchema = imagingRequestStateSchema.extend({
+  draft: z.object({ indication: imagingIndicationSchema, service: examinationServiceSnapshotSchema }).strict().optional(),
+  requests: z.array(examinationRequestSchema),
+}).strict()
+export const caseExaminationServiceCatalogSchema = z.object({
+  items: z.array(z.object({ available: z.boolean(), service: examinationServiceSnapshotSchema }).strict()),
+}).strict()
+export const issueExaminationRequestResponseSchema = commandResponseSchema(z.object({
+  caseId: z.string().min(1), draftVersion: z.number().int().positive(), request: examinationRequestSchema,
+}).strict())
+export const examinationRequestActionResponseSchema = commandResponseSchema(z.object({ request: examinationRequestSchema }).strict())
+export const saveExaminationRequestDraftRequestSchema = saveImagingRequestDraftRequestSchema
+export const deleteExaminationRequestDraftRequestSchema = deleteImagingRequestDraftRequestSchema
+export const issueExaminationRequestRequestSchema = issueImagingRequestRequestSchema
+export const cancelExaminationRequestRequestSchema = cancelImagingRequestRequestSchema
+export const retryExaminationRequestRequestSchema = retryImagingRequestRequestSchema
+export const acknowledgeExaminationReportRequestSchema = acknowledgeImagingReportRequestSchema
+export const examinationRequestDraftResponseSchema = imagingRequestDraftResponseSchema
+export const acknowledgeExaminationReportResponseSchema = acknowledgeImagingReportResponseSchema
+export type ExaminationReport = z.infer<typeof examinationReportSchema>
+export type ExaminationRequest = z.infer<typeof examinationRequestSchema>
+export type ExaminationServiceSnapshot = z.infer<typeof examinationServiceSnapshotSchema>
+
 /** 开立时冻结的病理会诊服务定义：部位、标本类型、染色、执行科室、适用范围与报告结构。 */
 export const pathologyServiceSnapshotSchema = z.object({
   outpatientBilling: outpatientInvestigationPriceSchema.optional(),
@@ -2137,6 +2188,7 @@ export const doctorCompletedCaseDetailSchema = z.object({
     versionId: z.string().regex(/^\d+$/),
   }).strict(),
   imagingRequests: z.array(imagingRequestSchema).default([]),
+  examinationRequests: z.array(examinationRequestSchema).default([]),
   laboratoryRequests: z.array(completedCaseLaboratoryRequestSchema),
   pathologyRequests: z.array(pathologyRequestSchema).default([]),
   medicationConclusion: z.object({
@@ -2201,6 +2253,7 @@ export const doctorCaseDetailSchema = z.object({
     versionId: z.string().regex(/^\d+$/),
   }),
   imagingRequests: imagingRequestStateSchema.optional(),
+  examinationRequests: examinationRequestStateSchema.optional(),
   laboratoryRequests: laboratoryRequestStateSchema.optional(),
   pathologyRequests: pathologyRequestStateSchema.optional(),
   medicationConclusion: medicationConclusionStateSchema.optional(),
@@ -2299,7 +2352,7 @@ export const clinicalDocumentRevisionResponseSchema = commandResponseSchema(z.ob
   revisionOfCompositionId: z.string().min(1),
 }))
 
-export const billingCategorySchema = z.enum(['laboratory', 'imaging', 'pathology', 'medication'])
+export const billingCategorySchema = z.enum(['laboratory', 'imaging', 'pathology', 'examination', 'medication'])
 export type BillingCategory = z.infer<typeof billingCategorySchema>
 
 export const billingQueueSchema = z.object({

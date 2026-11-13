@@ -17,7 +17,7 @@ import { installSyntheticPathologySlides } from '../../server/tests/fixtures/pat
 import { createInvestigationReferenceDatabase, type InvestigationReferenceOptions } from './investigation-workspace.fixture.ts'
 
 /** 只准备待诊病例，所有正式申请和应收均由浏览器中的医生工作流创建。 */
-export async function startInvestigationBillingServer(webRoot: string, allKinds = false, options: InvestigationReferenceOptions & { includeCt?: boolean; pathologyBatch?: boolean } = {}) {
+export async function startInvestigationBillingServer(webRoot: string, allKinds = false, options: InvestigationReferenceOptions & { includeCt?: boolean; pathologyBatch?: boolean; normalCardiovascularBaseline?: boolean } = {}) {
   const pathologyBatch = options.pathologyBatch === true
   const additionalLaboratoryItems = options.additionalLaboratoryItems ?? []
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-investigation-billing-'))
@@ -44,9 +44,11 @@ export async function startInvestigationBillingServer(webRoot: string, allKinds 
         override async generate() {
           const corpus = await super.generate()
           const generation = ++this.generated
-          if (!allKinds) return corpus
+          if (!allKinds && !options.normalCardiovascularBaseline) return corpus
           return { ...corpus, sources: corpus.sources.map(source => {
             const raw = z.object({ entry: z.array(z.object({ resource: z.record(z.string(), z.unknown()) }).passthrough()) }).passthrough().parse(source.raw)
+            if (options.normalCardiovascularBaseline) raw.entry = raw.entry.filter(entry => entry.resource.id !== 'pc')
+            if (!allKinds) return { ...source, raw, hash: sourceArtifactHash(raw) }
             if (generation > 1) raw.entry.find(entry => entry.resource.resourceType === 'Patient')!.resource.name = [{ text: `合成收费患者${generation}` }]
             raw.entry.find(entry => entry.resource.id === 'iwtest')!.resource.valueQuantity = {
               code: '10*3/uL', system: 'http://unitsofmeasure.org', unit: '10*3/uL', value: 11.2,

@@ -12,7 +12,7 @@ import { readOutpatientInsuranceAllocations } from './outpatient-insurance.ts'
 import { PaymentLedger } from './payment-ledger.ts'
 import { WorkflowError } from './workflow-error.ts'
 
-type InvestigationCategory = 'laboratory' | 'imaging' | 'pathology'
+type InvestigationCategory = 'laboratory' | 'imaging' | 'pathology' | 'examination'
 const source = 'synthetic-outpatient-investigation-2026-10-26-v1'
 const panelPrefix = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn#2026-09-01#'
 const wstPrefix = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026#2026#'
@@ -74,6 +74,8 @@ export function defaultSyntheticLaboratoryPriceFen(coding: {
   return Object.hasOwn(laboratoryPrices, key) ? laboratoryPrices[key] : undefined
 }
 const servicePrices: Readonly<Record<string, { category: InvestigationCategory; priceFen: number; unit: string }>> = {
+  'examination-ecg-12-lead': { category: 'examination', priceFen: 3000, unit: '次检查' },
+  'examination-tte': { category: 'examination', priceFen: 18000, unit: '次检查' },
   'imaging-chest-radiograph': { category: 'imaging', priceFen: 8000, unit: '次检查' },
   'imaging-chest-ct-plain': { category: 'imaging', priceFen: 30000, unit: '次检查' },
   'pathology-breast-slide-consultation': { category: 'pathology', priceFen: 20000, unit: '次会诊' },
@@ -96,7 +98,7 @@ export function laboratoryOutpatientPrice(service: Pick<LaboratoryServiceSnapsho
   return priceFen === undefined ? undefined : syntheticPrice(service.id, priceFen, '项目')
 }
 
-export function serviceOutpatientPrice(category: 'imaging' | 'pathology', serviceId: string): OutpatientInvestigationPrice | undefined {
+export function serviceOutpatientPrice(category: 'imaging' | 'pathology' | 'examination', serviceId: string): OutpatientInvestigationPrice | undefined {
   const price = Object.hasOwn(servicePrices, serviceId) ? servicePrices[serviceId] : undefined
   return price?.category === category ? syntheticPrice(serviceId, price.priceFen, price.unit) : undefined
 }
@@ -104,7 +106,7 @@ export function serviceOutpatientPrice(category: 'imaging' | 'pathology', servic
 const rowSchema = z.object({
   request_id: z.string(), case_id: z.string(), payment_policy: z.enum(['legacy-unbilled', 'prepaid-v1']),
   charge_item_id: z.string().min(1).nullable(), price_json: z.string().min(1).nullable(), released_at: z.string().datetime({ offset: true }).nullable(),
-  release_json: z.string().nullable(), status: z.enum(['issued', 'accepted', 'in-progress', 'generation-failed', 'reported', 'acknowledged', 'cancelled']), request_kind: z.enum(['laboratory', 'imaging', 'pathology']),
+  release_json: z.string().nullable(), status: z.enum(['issued', 'accepted', 'in-progress', 'generation-failed', 'reported', 'acknowledged', 'cancelled']), request_kind: z.enum(['laboratory', 'imaging', 'pathology', 'examination']),
   total_fen: z.number().int().nonnegative().nullable(), charge_version: z.number().int().positive().nullable(),
 }).refine(row => row.payment_policy === 'legacy-unbilled' || (
   row.charge_item_id !== null && row.price_json !== null && row.total_fen !== null && row.charge_version !== null
@@ -127,7 +129,7 @@ export class OutpatientInvestigationBilling {
       source: 'published-synthetic-laboratory-price',
     }
   }
-  priceForService(category: 'imaging' | 'pathology', serviceId: string) { return serviceOutpatientPrice(category, serviceId) }
+  priceForService(category: 'imaging' | 'pathology' | 'examination', serviceId: string) { return serviceOutpatientPrice(category, serviceId) }
 
   issue(transaction: CommandTransaction, context: ActorContext, input: {
     requestId: string; serviceRequestId: string; caseId: string; category: InvestigationCategory

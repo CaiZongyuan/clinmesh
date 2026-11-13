@@ -9,7 +9,7 @@ import type { ActorContext, CommandEffect, CommandTransaction } from './command-
 import { WorkflowError } from './workflow-error.ts'
 import { OutpatientInvestigationBilling } from './outpatient-investigation-billing.ts'
 
-export type ClinicalRequestKind = 'laboratory' | 'imaging' | 'pathology'
+export type ClinicalRequestKind = 'laboratory' | 'imaging' | 'pathology' | 'examination'
 
 export type ClinicalRequestStatus =
   | 'acknowledged'

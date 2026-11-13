@@ -79,6 +79,7 @@ import {
   doctorVisibleHistoryDetail,
   doctorVisibleHistoryDetails,
 } from './doctor-case-history.ts'
+import { ExaminationRequestService } from './examination-request-service.ts'
 import { ImagingRequestService } from './imaging-request-service.ts'
 import { InsuranceError, InsuranceService, type InsuranceSource, type InsuranceTarget } from './insurance-service.ts'
 import { OutpatientClinicalDocumentService } from './outpatient-clinical-document-service.ts'
@@ -301,6 +302,7 @@ export class WorkflowService
   readonly #laboratory: OutpatientLaboratoryService
   readonly #clinicalDocuments: OutpatientClinicalDocumentService
   /** 放射申请适配器；与检验共用申请内核。 */
+  readonly examination: ExaminationRequestService
   readonly imaging: ImagingRequestService
   /** 病理会诊申请适配器；与检验、放射共用申请内核。 */
   readonly pathology: PathologyRequestService
@@ -384,7 +386,7 @@ export class WorkflowService
             charge_item_id: z.string(),
             current_amount_fen: z.number(),
             charge_version: z.number(),
-            category: z.enum(['laboratory', 'medication']),
+            category: z.enum(['laboratory', 'examination', 'medication']),
             case_id: z.string(),
             case_status: paymentPreviewRowSchema.shape.case_status,
             patient_id: z.string(),
@@ -456,6 +458,7 @@ export class WorkflowService
         this.#recordPublishedReport(transaction, context, caseId, reportReference),
       virtualTime: (context: ActorContext) => this.#context.virtualTime(context),
     }
+    this.examination = new ExaminationRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.imaging = new ImagingRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.pathology = new PathologyRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.#prescriptions = new OutpatientPrescriptionService({
@@ -488,6 +491,7 @@ export class WorkflowService
         openRequestStatuses: (context, caseId) => this.#requests.openRequestStatuses(context, caseId),
         pendingInvestigationDraftTarget: (context, caseId) => {
           if (this.#laboratory.hasDraft(context, caseId)) return 'laboratory'
+          if (this.examination.hasDraft(context, caseId)) return 'examination'
           if (this.imaging.hasDraft(context, caseId)) return 'imaging'
           if (this.pathology.hasDraft(context, caseId)) return 'pathology'
           return undefined
@@ -624,6 +628,7 @@ export class WorkflowService
         WHERE workspace_id = ? AND epoch = ? AND active = 1
           AND json_type(config_json, '$.imagingService') IS NULL
           AND json_type(config_json, '$.pathologyService') IS NULL
+          AND json_type(config_json, '$.examinationService') IS NULL
           AND (
             ? IS NULL
             OR instr(lower(code), lower(?)) > 0
@@ -638,6 +643,7 @@ export class WorkflowService
       WHERE workspace_id = ? AND epoch = ? AND active = 1
         AND json_type(config_json, '$.imagingService') IS NULL
           AND json_type(config_json, '$.pathologyService') IS NULL
+          AND json_type(config_json, '$.examinationService') IS NULL
         AND (
           ? IS NULL
           OR instr(lower(code), lower(?)) > 0
@@ -703,6 +709,7 @@ export class WorkflowService
         WHERE workspace_id = ? AND epoch = ? AND service_id = ? AND active = 1
           AND json_type(config_json, '$.imagingService') IS NULL
           AND json_type(config_json, '$.pathologyService') IS NULL
+          AND json_type(config_json, '$.examinationService') IS NULL
       `).get(input.context.workspaceId, input.context.epoch, input.serviceId))
       if (service === undefined) throw new WorkflowError('CATALOG_CONFLICT', 'The Hospital Service is unavailable')
       const config = serviceCatalogConfigSchema.parse(JSON.parse(service.config_json) as unknown)
@@ -2186,6 +2193,7 @@ export class WorkflowService
         versionId: encounter.meta.versionId,
       },
       imagingRequests: this.imaging.state(context, caseId).requests,
+      examinationRequests: this.examination.state(context, caseId).requests,
       laboratoryRequests,
       pathologyRequests: this.pathology.state(context, caseId).requests,
       ...(medicationConclusion === undefined ? {} : { medicationConclusion }),
@@ -2348,6 +2356,7 @@ export class WorkflowService
         status: encounter.status,
         versionId: encounter.meta?.versionId,
       },
+      ...(consultation === undefined ? {} : { examinationRequests: this.examination.state(context, row.case_id) }),
       ...(consultation === undefined ? {} : { imagingRequests: this.imaging.state(context, row.case_id) }),
       ...(consultation === undefined ? {} : { pathologyRequests: this.pathology.state(context, row.case_id) }),
       ...(laboratoryRequests === undefined ? {} : { laboratoryRequests }),
@@ -3221,7 +3230,7 @@ export class WorkflowService
     if (row === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The billing case is unavailable')
     const ledger = this.#payments
     const charges = z.array(z.object({
-      amountFen: z.number(), category: z.enum(['registration', 'laboratory', 'imaging', 'pathology', 'medication']),
+      amountFen: z.number(), category: z.enum(['registration', 'laboratory', 'imaging', 'pathology', 'examination', 'medication']),
       chargeItemId: z.string(), chargeVersion: z.number(), descriptionEn: z.string(), descriptionZh: z.string(), status: z.string(),
       sourceReference: z.string(),
     })).parse(this.#database.driver.prepare(`
@@ -3256,7 +3265,7 @@ export class WorkflowService
   }
 
   billingQueue(input: {
-    category: 'laboratory' | 'imaging' | 'pathology' | 'medication'
+    category: 'laboratory' | 'imaging' | 'pathology' | 'examination' | 'medication'
     context: ActorContext
     page: number
     pageSize: number
@@ -3576,7 +3585,7 @@ export class WorkflowService
     })
   }
 
-  #readPaymentCharge(context: ActorContext, caseId: string, category: 'laboratory' | 'imaging' | 'pathology' | 'medication', chargeItemId: string) {
+  #readPaymentCharge(context: ActorContext, caseId: string, category: 'laboratory' | 'imaging' | 'pathology' | 'examination' | 'medication', chargeItemId: string) {
     return paymentChargeRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT charge.charge_id, charge.charge_item_id, charge.total_fen - COALESCE((SELECT SUM(adjustment.amount_fen)
         FROM financial_charge_adjustment adjustment WHERE adjustment.workspace_id=charge.workspace_id AND adjustment.epoch=charge.epoch
@@ -3593,7 +3602,7 @@ export class WorkflowService
   }
 
   previewPayment(input: {
-    category: 'laboratory' | 'imaging' | 'pathology' | 'medication'
+    category: 'laboratory' | 'imaging' | 'pathology' | 'examination' | 'medication'
     chargeItemId?: string | undefined
     caseId: string
     context: ActorContext
@@ -3866,7 +3875,7 @@ export class WorkflowService
 
   #assertCollectionWorkflow(
     context: ActorContext,
-    category: 'laboratory' | 'imaging' | 'pathology' | 'medication',
+    category: 'laboratory' | 'imaging' | 'pathology' | 'examination' | 'medication',
     charge: Pick<z.infer<typeof paymentChargeRowSchema>, 'charge_item_id' | 'case_status' | 'encounter_id' | 'prescription_status' | 'withdrawal_id'>,
   ): void {
     const investigation = this.#outpatientBilling.readByCharge(context, charge.charge_item_id)
@@ -3878,7 +3887,7 @@ export class WorkflowService
     if ((category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment' && !compensated)
       || (category === 'medication' && (this.#fhir.read(context, 'Encounter', charge.encounter_id).status !== 'completed'
         || (charge.prescription_status !== 'signed' && !compensated) || charge.withdrawal_id !== null))
-      || category === 'imaging' || category === 'pathology') {
+      || category === 'imaging' || category === 'pathology' || category === 'examination') {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The clinical workflow is not ready for this payment')
     }
   }

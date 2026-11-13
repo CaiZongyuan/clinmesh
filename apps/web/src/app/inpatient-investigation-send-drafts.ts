@@ -17,7 +17,7 @@ const discard = createDraftDiscard(prefix, () => notify('*'), (key, raw) => {
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(),
   patientId: z.string().min(1), admissionId: z.string().min(1), action: z.literal('send') }).strict()
 type Scope = z.infer<typeof scopeSchema>
-const snapshotSchema = z.object({ id: z.string().min(1), kind: z.enum(['laboratory', 'imaging']), display: z.string().min(1),
+const snapshotSchema = z.object({ id: z.string().min(1), kind: z.enum(['laboratory', 'imaging', 'examination']), display: z.string().min(1),
   specimen: z.string().nullable(), indication: z.string(), input: inpatientInvestigationActionInputSchema }).strict()
 export type InvestigationSendSnapshot = z.infer<typeof snapshotSchema>
 export type InvestigationSendEntry = { snapshot: InvestigationSendSnapshot; status: string; sent: boolean; unavailable: 'sent' | 'state' | 'versions' | null }
@@ -42,6 +42,7 @@ export const sameSendSnapshot = (left: InvestigationSendSnapshot, right: Investi
 export function investigationSendEntries(facts: Facts): InvestigationSendEntry[] {
   const sent = new Set(facts.sent.map(item => item.requestId))
   return [...facts.laboratoryRequests.map(request => ({ kind: 'laboratory' as const, request })),
+    ...facts.examinationRequests.map(request => ({ kind: 'examination' as const, request })),
     ...facts.imagingRequests.map(request => ({ kind: 'imaging' as const, request }))].map(({ kind, request }) => {
     const snapshot: InvestigationSendSnapshot = { id: request.id, kind,
       display: 'service' in request ? request.service.name : request.laboratoryService?.nameZh ?? request.referenceConcept?.display ?? request.catalogItemId,
@@ -192,7 +193,7 @@ export function settleInvestigationSendAttempt(raw: unknown, idempotencyKey: str
     if (!record || !item) continue
     if (!error) {
       const result = inpatientInvestigationResponseSchema.parse(response).data
-      const request = [...result.laboratoryRequests, ...result.imagingRequests].find(request => request.id === item.row.snapshot.id)
+      const request = [...result.laboratoryRequests, ...result.imagingRequests, ...result.examinationRequests].find(request => request.id === item.row.snapshot.id)
       if (result.admissionId !== scope.data.admissionId || !request || !result.sent.some(sent => sent.requestId === item.row.snapshot.id)) {
         throw new Error('Investigation send response does not match its original request')
       }

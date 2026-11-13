@@ -6,7 +6,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNo
 import type { z } from 'zod'
 import { PlusIcon } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import type { SessionContext, ImagingRequest } from '@clinmesh/contracts/his'
+import type { SessionContext, ExaminationRequest, ImagingRequest } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { inpatientInvestigationCatalogSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
@@ -23,16 +23,15 @@ import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { InpatientInvestigationComposer } from './inpatient-investigation-composer.tsx'
 import { investigationDraftKey, type InvestigationAttempt } from './inpatient-investigation-drafts.ts'
-import { ReportText } from './doctor/investigation-service-details.tsx'
 import { formatClinicalDateTime } from './doctor/clinical-date-time.ts'
 import { formatLabReferenceRange, formatLabResultDisplay } from './inpatient-report-format.ts'
-import { InpatientReportBody, InpatientLabReportTable } from './inpatient-report-body.tsx'
+import { InpatientReportBody } from './inpatient-report-body.tsx'
 import { InpatientReportReader } from './inpatient-report-reader.tsx'
 import { InpatientInvestigationActionBatch } from './inpatient-investigation-action-batch.tsx'
 
 type Write=ReturnType<typeof useInpatientWriteIntent>
 type Props={admission:InpatientAdmission;session:SessionContext;locale:WorkspaceLocale;write:Write;onOpenStage?:(stage:string)=>void;active?:boolean}
-type InvestigationRequest = z.infer<typeof inpatientInvestigationsSchema>['laboratoryRequests'][number] | ImagingRequest
+type InvestigationRequest = z.infer<typeof inpatientInvestigationsSchema>['laboratoryRequests'][number] | ImagingRequest | ExaminationRequest
 type Report = NonNullable<InvestigationRequest['report']>
 const reportKey = (admissionId: string, report: Report) => `${admissionId}:${report.diagnosticReportId}:${report.diagnosticReportVersion}`
 const ImagingViewer=lazy(()=>import('./imaging/imaging-viewer.tsx').then(module=>({default:module.ImagingViewer})))
@@ -52,15 +51,15 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
   }),[])
   const error=facts.error??catalog.error
   const status=(value:string,sent:boolean)=>({issued:sent?t('已送检，待受理','Sent, awaiting acceptance'):t('待送检','Awaiting dispatch'),accepted:t('已受理','Accepted'),'in-progress':t('执行中','In progress'),'generation-failed':t('结果生成失败','Result failed'),reported:t('待阅','Awaiting review'),acknowledged:t('报告已阅','Acknowledged'),cancelled:t('已取消','Cancelled')}[value]??value)
-  const rows=[...(facts.data?.laboratoryRequests??[]).map(request=>({kind:'laboratory' as const,request})),...(facts.data?.imagingRequests??[]).map(request=>({kind:'imaging' as const,request}))]
+  const rows=[...(facts.data?.laboratoryRequests??[]).map(request=>({kind:'laboratory' as const,request})),...(facts.data?.examinationRequests??[]).map(request=>({kind:'examination' as const,request})),...(facts.data?.imagingRequests??[]).map(request=>({kind:'imaging' as const,request}))]
   const nameOf=(request:typeof rows[number]['request'])=>'service' in request?request.service.name:request.laboratoryService?.nameZh??request.referenceConcept?.display??request.catalogItemId
   const unread=rows.filter(row=>row.request.status==='reported'&&row.request.report!==undefined)
   const renderInvestigation = ({kind,request}: typeof rows[number], sendChoice?: ReactNode, sendMetadata?: ReactNode) => {
       const sent=facts.data?.sent.some(item=>item.requestId===request.id)===true
       const isAngio = kind === 'imaging' && 'service' in request && (request.service.name.includes('造影') || request.service.code.toLowerCase().includes('angio'))
       const renderRow = (imageActions?: ReactNode, imageContent?: ReactNode) => <InpatientItemRow key={request.id} title={nameOf(request)} complete={request.status === 'acknowledged'}
-        badge={<span className="text-xs text-muted-foreground">{kind==='imaging'?t('检查','Imaging'):t('检验','Laboratory')}</span>}
-        metadata={<>{sendMetadata}{request.report ? <>{!doctor || request.status === 'acknowledged' ? <ReportSummary report={request.report} locale={locale} compact={doctor} /> : null}{'impression' in request.report && request.status === 'reported' && !shownReports.has(reportKey(admission.id, request.report)) ? <span>{t('先查看影像，再已阅', 'View images before acknowledging')}</span> : null}<span>{t('签发 ', 'Issued ')}{formatClinicalDateTime(request.report.issuedAt, locale)}</span></> : null}</>}
+        badge={<span className="text-xs text-muted-foreground">{kind==='examination'?t('功能检查','Functional examination'):kind==='imaging'?t('检查','Imaging'):t('检验','Laboratory')}</span>}
+        metadata={<>{sendMetadata}{request.report ? <>{!doctor || request.status === 'acknowledged' ? <ReportSummary report={request.report} locale={locale} compact={doctor} /> : null}{'studyId' in request.report && request.status === 'reported' && !shownReports.has(reportKey(admission.id, request.report)) ? <span>{t('先查看影像，再已阅', 'View images before acknowledging')}</span> : null}<span>{t('签发 ', 'Issued ')}{formatClinicalDateTime(request.report.issuedAt, locale)}</span></> : null}</>}
         actions={<><Badge variant={request.status==='reported'||request.status==='generation-failed'?'warning':'outline'}>{status(request.status,sent)}</Badge>
           {sendChoice}
           {imageActions}
@@ -72,9 +71,9 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
         </div> : null}
         {request.generationError?<p>{kind==='laboratory'?laboratoryGenerationErrorMessage(request.generationError.code,locale):t('本次检查没有取得结果，未生成报告。可以重试，或取消该申请。','This examination produced no result and no report. Retry or cancel the request.')}</p>:null}
         {doctor && request.report && request.status === 'reported' ? <div className="min-w-0 overflow-x-auto"><InpatientReportBody report={request.report} locale={locale} /></div> : null}
-        {!doctor ? request.previousReports.map(report=><details className="clinmesh-inpatient-disclosure" key={report.diagnosticReportId}><summary>{t('既往报告修订','Previous report revision')} {report.revisionNumber}</summary>{'impression' in report?<ReportText locale={locale} report={report}/>:<InpatientLabReportTable locale={locale} report={report}/>}</details>) : null}
+        {!doctor ? request.previousReports.map(report=><details className="clinmesh-inpatient-disclosure" key={report.diagnosticReportId}><summary>{t('既往报告修订','Previous report revision')} {report.revisionNumber}</summary><InpatientReportBody locale={locale} report={report}/></details>) : null}
         {!doctor && request.report?<details className="clinmesh-inpatient-disclosure"><summary>{t('查看完整报告', 'View full report')}</summary><div className="min-w-0 overflow-x-auto">
-          {'impression' in request.report?<ReportText locale={locale} report={request.report}/>:<InpatientLabReportTable locale={locale} report={request.report}/>}
+          <InpatientReportBody locale={locale} report={request.report}/>
         </div></details>:null}
         {imageContent}
         <AgentReviewAnchor id={inpatientReportAnchor(admission.id, request.id)} />

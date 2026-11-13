@@ -1,3 +1,4 @@
+import { ExaminationReportText } from './examination-report-text.tsx'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
@@ -42,7 +43,7 @@ function ReportPreview({ record, locale, onReady }: { record: ReportRecord; loca
   if (!report) return null
   return <article aria-label={locale === 'zh-CN' ? '当前报告全文' : 'Current full report'} className="min-w-0 space-y-3">
     <h3 className="font-semibold">{record.title}</h3>
-    {'results' in report ? <LaboratoryReportVersion current locale={locale} messages={getWorkspaceMessages(locale)} report={report} />
+    {'technique' in report && 'results' in report ? <ExaminationReportText report={report} locale={locale} /> : 'results' in report ? <LaboratoryReportVersion current locale={locale} messages={getWorkspaceMessages(locale)} report={report} />
       : 'microscopy' in report ? <PathologyReportText locale={locale} report={report} /> : <ImagingReportText locale={locale} report={report} />}
     {studyId === undefined ? null : study.isPending ? <p role="status">{locale === 'zh-CN' ? '正在读取影像或切片' : 'Loading images or slides'}</p>
       : study.isError || !source || !source.study.available ? <Alert variant="destructive">

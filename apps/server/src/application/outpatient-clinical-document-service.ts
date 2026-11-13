@@ -213,7 +213,7 @@ export interface OutpatientClinicalDocumentHost {
   pendingInvestigationDraftTarget(
     context: ActorContext,
     caseId: string,
-  ): 'laboratory' | 'imaging' | 'pathology' | undefined
+  ): 'laboratory' | 'imaging' | 'pathology' | 'examination' | undefined
   medicationCompletionStatus(
     context: ActorContext,
     caseId: string,
@@ -359,6 +359,11 @@ export class OutpatientClinicalDocumentService {
     const requiredReportsAcknowledged = this.#host
       .openRequestStatuses(context, outpatientCase.case_id)
       .every(status => status === 'acknowledged')
+    const pendingReport = z.object({ request_kind: z.enum(['laboratory', 'imaging', 'pathology', 'examination']) }).optional().parse(
+      this.#context.database.driver.prepare(`SELECT request_kind FROM laboratory_request
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status NOT IN ('cancelled', 'acknowledged')
+        ORDER BY authored_at, request_id LIMIT 1`).get(context.workspaceId, context.epoch, outpatientCase.case_id),
+    )
     const medicationStatus = this.#host.medicationCompletionStatus(
       context,
       outpatientCase.case_id,
@@ -417,7 +422,7 @@ export class OutpatientClinicalDocumentService {
         statusText: requiredReportsAcknowledged
           ? '必要报告已全部确认已阅'
           : '待确认必要报告已阅',
-        target: 'laboratory' as const,
+        target: pendingReport?.request_kind ?? 'laboratory',
       },
       {
         code: 'medication-conclusion-recorded' as const,

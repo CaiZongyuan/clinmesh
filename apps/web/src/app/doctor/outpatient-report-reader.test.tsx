@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { examinationFixture } from './examination.test-support.ts'
 import { doctorCaseDetailSchema, type DoctorCaseDetail, type SessionContext } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
@@ -54,9 +55,11 @@ function server(count = 3) {
       if (controls.reject.includes(id)) return Response.json({ error: { code: controls.rejectionStatus === 403 ? 'ROLE_NOT_ALLOWED' : 'WORKFLOW_CONFLICT',
         message: `Unsafe original key ${key}`, ...(controls.rejectionStatus === 409 ? { conflict: { owner: 'laboratory-report', resource: 'DiagnosticReport/report-1', currentStatus: 'superseded', currentVersion: '2', expectedVersion: '1' } } : {}) } }, { status: controls.rejectionStatus })
       if (receipts.has(key)) return Response.json(receipts.get(key))
-      const request = current.laboratoryRequests!.requests.find(item => item.id === id)!
+      const examination = path.includes('/examination-requests/')
+      const state = examination ? current.examinationRequests! : current.laboratoryRequests!
+      const request = state.requests.find(item => item.id === id)!
       const ack = { id: `ack-${id}`, acknowledgedAt: '2026-10-10T11:00:00+08:00', acknowledgedBy: session.actor.practitionerId }
-      current = doctorCaseDetailSchema.parse({ ...current, laboratoryRequests: { ...current.laboratoryRequests, requests: current.laboratoryRequests!.requests.map(item => item.id !== id ? item
+      current = doctorCaseDetailSchema.parse({ ...current, [examination ? 'examinationRequests' : 'laboratoryRequests']: { ...state, requests: state.requests.map(item => item.id !== id ? item
         : { ...item, version: item.version + 1, status: 'acknowledged', report: { ...item.report, acknowledgement: ack } }) } })
       const response = { auditId: `audit-${id}`, requestId: `command-${id}`, effects: [], warnings: [], data: { acknowledgementId: ack.id, acknowledgedAt: ack.acknowledgedAt,
         acknowledgedBy: ack.acknowledgedBy, diagnosticReportId: request.report!.diagnosticReportId, requestId: id, requestVersion: request.version + 1, status: 'acknowledged' } }
@@ -95,6 +98,25 @@ beforeEach(() => {
   vi.stubGlobal('ImageData', class { constructor(readonly data: Uint8ClampedArray, readonly width: number, readonly height: number) {} })
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+it('ECG与TTE纯文本报告打开后逐项已阅，无影像请求', async () => {
+  const api = server(0), user = userEvent.setup(); api.controls.loseSecond = false
+  api.update({ ...api.get(), examinationRequests: { draftVersion: 0, requests: [examinationFixture(), examinationFixture(true)] } })
+  mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读报告' }))
+  for (const request of api.get().examinationRequests!.requests) {
+    const choice = screen.getByRole('checkbox', { name: `选择已阅：${request.service.name}` })
+    expect(choice.getAttribute('aria-disabled')).toBe('true')
+    await user.click(screen.getByRole('button', { name: `打开报告：${request.service.name}` }))
+    expect(screen.getByRole('article', { name: '当前报告全文' }).textContent).toContain(request.report!.results[0]!.display)
+    expect(choice.getAttribute('aria-disabled')).not.toBe('true')
+    await user.click(choice)
+  }
+  await confirmSelected(user)
+  await waitFor(() => expect(api.get().examinationRequests!.requests.every(request => request.status === 'acknowledged')).toBe(true))
+  expect(api.posts.map(post => post.id)).toEqual(['ecg', 'tte'])
+  expect(vi.mocked(fetch).mock.calls.some(([path]) => String(path).includes('imaging-studies'))).toBe(false)
+})
 
 it.each(['正常恢复', '坏稿遮蔽', '只读回执', '只读缺失回执', '恢复时变只读'] as const)('退出后仅保留未知原已阅，原键查回执且不恢复未发送的选择：%s', async mode => {
   const api = server(), user = userEvent.setup(), original = mount()

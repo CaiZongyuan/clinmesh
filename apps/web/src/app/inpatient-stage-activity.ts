@@ -35,7 +35,7 @@ export function inpatientInvestigationWaiting(data: InpatientActivity['investiga
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   if (failed) return t('检查检验资料读取失败，请重试后核对报告状态。', 'Investigation data failed to load. Retry before checking report status.')
   if (!data) return t('正在读取检查检验与报告状态。', 'Loading investigations and report status.')
-  const requests = [...data.laboratoryRequests, ...data.imagingRequests]
+  const requests = [...data.laboratoryRequests, ...data.examinationRequests, ...data.imagingRequests]
   if (requests.length === 0) return role === 'ward-nurse'
     ? t('等住院医生开立检查检验', 'Waiting for the inpatient doctor to order investigations')
     : t('尚无检查检验申请，可按诊疗需要开立', 'No investigations requested; order as clinically needed')
@@ -76,7 +76,7 @@ export function inpatientPending(input: InpatientActivity): Record<InpatientStag
         return order?.state === 'verified' && now !== undefined && Date.parse(execution.scheduledFor) <= now
           && (execution.status === 'dispensed' || execution.status === 'pending' && order.kind === 'service')
       }).length ?? 0 : 0)
-    result.investigations = [...investigations?.laboratoryRequests ?? [], ...investigations?.imagingRequests ?? []]
+    result.investigations = [...investigations?.laboratoryRequests ?? [], ...investigations?.examinationRequests ?? [], ...investigations?.imagingRequests ?? []]
       .filter(request => request.status === 'issued' && !investigations?.sent.some(sent => sent.requestId === request.id)).length
     result.surgery = surgery?.requests.filter(request => ['requested', 'ready'].includes(request.status) && !request.preopCheck).length ?? 0
     result.transfer = input.transfers?.transfers.filter(transfer => transfer.status === 'requested').length ?? 0
@@ -84,7 +84,7 @@ export function inpatientPending(input: InpatientActivity): Record<InpatientStag
   }
   if (doctor) {
     result.orders = admission.status === 'admitted' && clinical?.diagnosis.entries.length === 0 ? 1 : 0
-    result.investigations = [...investigations?.laboratoryRequests ?? [], ...investigations?.imagingRequests ?? []]
+    result.investigations = [...investigations?.laboratoryRequests ?? [], ...investigations?.examinationRequests ?? [], ...investigations?.imagingRequests ?? []]
       .filter(request => request.status === 'reported' || request.status === 'generation-failed').length
     result.surgery = surgery?.requests.filter(request => request.status === 'ready' && !surgery.inProgress.some(execution => execution.requestId === request.id)
       || request.status === 'requested' && !request.consentConfirmation).length ?? 0

@@ -11,7 +11,7 @@ export function inpatientDepartureLabel(value: string | undefined, locale: Works
 }
 
 export function inpatientChargeCategoryLabel(value: string, locale: WorkspaceLocale): string {
-  const labels: Record<string, [string, string]> = { bed: ['床位费用', 'Bed charges'], medication: ['药品费用', 'Medication charges'], service: ['诊疗服务费用', 'Clinical service charges'], surgery: ['手术费用', 'Surgery charges'], material: ['耗材费用', 'Material charges'], laboratory: ['检验费用', 'Laboratory charges'], imaging: ['影像检查费用', 'Imaging charges'] }
+  const labels: Record<string, [string, string]> = { bed: ['床位费用', 'Bed charges'], medication: ['药品费用', 'Medication charges'], service: ['诊疗服务费用', 'Clinical service charges'], surgery: ['手术费用', 'Surgery charges'], material: ['耗材费用', 'Material charges'], laboratory: ['检验费用', 'Laboratory charges'], imaging: ['影像检查费用', 'Imaging charges'], examination: ['功能检查费用', 'Functional examination charges'] }
   return labels[value]?.[locale === 'zh-CN' ? 0 : 1] ?? (locale === 'zh-CN' ? '未分类费用' : 'Unclassified charges')
 }
 

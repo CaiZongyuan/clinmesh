@@ -11,6 +11,7 @@ const coverageRules: Record<string, { included: boolean; priorSelfPayBps: number
   laboratory: { included: true, priorSelfPayBps: 0 },
   surgery: { included: true, priorSelfPayBps: 0 },
   medication: { included: true, priorSelfPayBps: 1000 },
+  examination: { included: true, priorSelfPayBps: 1000 },
   imaging: { included: true, priorSelfPayBps: 1000 },
   material: { included: false, priorSelfPayBps: 0 },
 }

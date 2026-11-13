@@ -220,7 +220,7 @@ function useActionList(context: OutpatientInvestigationActionContext, kind: Inve
         if (detail.patient.id !== scope.patientId || detail.encounter.id !== scope.encounterId || detail.encounter.status !== 'in-progress') {
           notify('患者或就诊状态已变化，请重新核对'); break
         }
-        const requests = kind === 'laboratory' ? detail.laboratoryRequests?.requests : kind === 'imaging' ? detail.imagingRequests?.requests : detail.pathologyRequests?.requests
+        const requests = kind === 'laboratory' ? detail.laboratoryRequests?.requests : kind === 'imaging' ? detail.imagingRequests?.requests : kind === 'examination' ? detail.examinationRequests?.requests : detail.pathologyRequests?.requests
         const request = requests?.find(item => item.id === row.snapshot.id)
         const issue = request === undefined ? '申请已不存在' : unavailableAction(request, action)
         if (!sameSnapshot(row, request) || issue !== undefined) {

@@ -247,7 +247,7 @@ export class InpatientDrg {
     const estimatedTotalFen = chargesFen + estimatedAdditionalFen
     return {
       formal: { chargesFen, items: facts.charges.map(charge => ({
-        kind: (charge.reversalOf === undefined ? charge : chargesById.get(charge.reversalOf) ?? charge).kind as 'medication' | 'service' | 'surgery' | 'material' | 'bed' | 'laboratory' | 'imaging',
+        kind: (charge.reversalOf === undefined ? charge : chargesById.get(charge.reversalOf) ?? charge).kind as 'medication' | 'service' | 'surgery' | 'material' | 'bed' | 'laboratory' | 'imaging' | 'examination',
         id: charge.id, display: charge.label,
         quantity: quantities.get((charge.reversalOf === undefined ? charge : chargesById.get(charge.reversalOf) ?? charge).sourceId) ?? 1,
         estimatedFen: charge.amountFen })) },

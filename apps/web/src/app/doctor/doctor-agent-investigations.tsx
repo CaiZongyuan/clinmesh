@@ -1,5 +1,10 @@
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import {
+  acknowledgeExaminationReport,
+  cancelExaminationRequest,
+  issueExaminationRequest,
+  retryExaminationRequest,
+  saveExaminationRequestDraft,
   acknowledgeImagingReport,
   acknowledgePathologyReport,
   cancelImagingRequest,
@@ -103,6 +108,35 @@ export function doctorInvestigationsAgentActions({
           setLaboratoryItemId(catalogItemId)
           setIndicationCode(nextIndication)
           selectInvestigation('laboratory')
+        }
+        return result
+      },
+    },
+    'outpatient.examination.draft.set': {
+      description: 'Validate and save an examination request draft (serviceId from examinationServices, free-text indication) without issuing it.',
+      enabled: detail.data?.consultation !== undefined
+        && detail.data.encounter.status === 'in-progress',
+      parameters: {
+        type: 'object' as const,
+        properties: {
+          indication: { type: 'string', minLength: 2, maxLength: 500 },
+          serviceId: { type: 'string', maxLength: 128 },
+        },
+        required: ['indication', 'serviceId'],
+        additionalProperties: false,
+      },
+      execute: async (raw: unknown) => {
+        const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+        const result = await saveExaminationRequestDraft({
+          ...agentToolInputSchemas['outpatient.examination.draft.set'].parse(raw),
+          encounterId: current.encounter.id,
+          encounterVersion: current.encounter.versionId,
+          expectedDraftVersion: current.examinationRequests?.draftVersion ?? 0,
+        }, newIdempotencyKey())
+        await refreshCaseById(current.caseId)
+        hydrateAgentDraft(current.caseId, 'examination')
+        if (activeCaseIdRef.current === current.caseId) {
+          selectInvestigation('examination')
         }
         return result
       },
@@ -224,7 +258,7 @@ export function doctorInvestigationsAgentActions({
       description: 'Open human review before acknowledging one signed laboratory, imaging or pathology consultation report. An imaging or pathology report can be acknowledged only after its images or slide were opened and displayed to the human reader.',
       enabled: detail.data?.laboratoryRequests?.requests.some(
         request => request.status === 'reported',
-      ) === true || detail.data?.imagingRequests?.requests.some(
+      ) === true || detail.data?.examinationRequests?.requests.some(request => request.status === 'reported') === true || detail.data?.imagingRequests?.requests.some(
         request => request.status === 'reported',
       ) === true || detail.data?.pathologyRequests?.requests.some(
         request => request.status === 'reported',
@@ -238,6 +272,24 @@ export function doctorInvestigationsAgentActions({
       execute: (raw: unknown, signal: AbortSignal) => {
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
         const requestId = doctorString(raw, 'requestId', 128)
+        const examinationRequest = current.examinationRequests?.requests.find(item => item.id === requestId)
+        if (examinationRequest !== undefined) {
+          const report = examinationRequest.report
+          if (examinationRequest.status !== 'reported' || report === undefined) {
+            throw new Error(messages.consultationUnavailable)
+          }
+          return agentReview.request({
+          anchor: `doctor-investigation:${examinationRequest.id}`,
+            confirmLabel: locale => locale === 'zh-CN' ? '确认已阅' : 'Acknowledge',
+            description: examinationRequest.service.name,
+            onConfirm: () => runImagingAction(
+              current.caseId,
+              () => acknowledgeExaminationReport(examinationRequest, report, newIdempotencyKey()),
+            ),
+            signal,
+            title: locale => locale === 'zh-CN' ? '确认已阅功能检查报告' : 'Acknowledge examination report',
+          })
+        }
         const imagingRequest = current.imagingRequests?.requests.find(item => item.id === requestId)
         if (imagingRequest !== undefined) {
           const report = imagingRequest.report
@@ -347,6 +399,85 @@ export function doctorInvestigationsAgentActions({
           }),
           signal,
           title: locale => getWorkspaceMessages(locale).previewLaboratoryReportCorrection,
+        })
+      },
+    },
+    'outpatient.examination.issue.propose': {
+      description: 'Open human review before issuing the saved examination request draft.',
+      enabled: detail.data?.examinationRequests?.draft !== undefined,
+      parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+      execute: (_raw: unknown, signal: AbortSignal) => {
+        const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+        const state = current.examinationRequests
+        if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
+        return agentReview.request({
+          confirmLabel: locale => locale === 'zh-CN' ? '签发申请' : 'Issue request',
+          description: `${state.draft.service.name} · ${state.draft.indication}`,
+          onConfirm: async () => {
+            const result = await runImagingAction(current.caseId, () => issueExaminationRequest({
+              encounterId: current.encounter.id,
+              encounterVersion: current.encounter.versionId,
+              expectedDraftVersion: state.draftVersion,
+            }, newIdempotencyKey()))
+            hydrateAgentDraft(current.caseId, 'examination')
+            return result
+          },
+          signal,
+          title: locale => locale === 'zh-CN' ? '签发功能检查申请' : 'Issue examination request',
+        })
+      },
+    },
+    'outpatient.examination.cancel.propose': {
+      description: 'Open human review before cancelling one examination request that is issued or produced no result.',
+      enabled: detail.data?.examinationRequests?.requests.some(
+        request => request.status === 'issued' || request.status === 'generation-failed',
+      ) === true,
+      parameters: {
+        type: 'object' as const,
+        properties: { requestId: { type: 'string', maxLength: 128 } },
+        required: ['requestId'],
+        additionalProperties: false,
+      },
+      execute: (raw: unknown, signal: AbortSignal) => {
+        const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+        const requestId = doctorString(raw, 'requestId', 128)
+        const request = current.examinationRequests?.requests.find(item => item.id === requestId)
+        if (request?.status !== 'issued' && request?.status !== 'generation-failed') {
+          throw new Error(messages.consultationUnavailable)
+        }
+        return agentReview.request({
+          anchor: `doctor-investigation:${request.id}`,
+          confirmLabel: locale => locale === 'zh-CN' ? '取消申请' : 'Cancel request',
+          description: request.service.name,
+          onConfirm: () => runImagingAction(current.caseId, () => cancelExaminationRequest(request, newIdempotencyKey())),
+          signal,
+          title: locale => locale === 'zh-CN' ? '取消功能检查申请' : 'Cancel examination request',
+        })
+      },
+    },
+    'outpatient.examination.retry.propose': {
+      description: 'Open human review before retrying one examination request that produced no result.',
+      enabled: detail.data?.examinationRequests?.requests.some(
+        request => request.status === 'generation-failed',
+      ) === true,
+      parameters: {
+        type: 'object' as const,
+        properties: { requestId: { type: 'string', maxLength: 128 } },
+        required: ['requestId'],
+        additionalProperties: false,
+      },
+      execute: (raw: unknown, signal: AbortSignal) => {
+        const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+        const requestId = doctorString(raw, 'requestId', 128)
+        const request = current.examinationRequests?.requests.find(item => item.id === requestId)
+        if (request?.status !== 'generation-failed') throw new Error(messages.consultationUnavailable)
+        return agentReview.request({
+          anchor: `doctor-investigation:${request.id}`,
+          confirmLabel: locale => locale === 'zh-CN' ? '重试' : 'Retry',
+          description: request.service.name,
+          onConfirm: () => runImagingAction(current.caseId, () => retryExaminationRequest(request, newIdempotencyKey())),
+          signal,
+          title: locale => locale === 'zh-CN' ? '重试功能检查' : 'Retry functional examination',
         })
       },
     },

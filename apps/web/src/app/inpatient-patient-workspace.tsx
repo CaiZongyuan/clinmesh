@@ -225,8 +225,8 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     : awaitingNurseStop ? t('等病区护士在诊断医嘱核对停嘱，再办理出院。', 'Waiting for the ward nurse to verify order stops under Diagnoses & orders before discharge.') : undefined
   const closingOrdersWaiting = clinical.data === undefined ? t('请先读取医嘱资料，核对停嘱情况。', 'Load the order data before checking order stops.')
     : t('医嘱已结束，请在出院环节继续办理。', 'Orders are closed. Continue under Discharge.')
-  const failedInvestigations = [...investigations.data?.laboratoryRequests ?? [], ...investigations.data?.imagingRequests ?? []].filter(request => request.status === 'generation-failed').length
-  const unreadInvestigations = [...investigations.data?.laboratoryRequests ?? [], ...investigations.data?.imagingRequests ?? []].filter(request => request.status === 'reported' && request.report !== undefined).length
+  const failedInvestigations = [...investigations.data?.laboratoryRequests ?? [], ...investigations.data?.examinationRequests ?? [], ...investigations.data?.imagingRequests ?? []].filter(request => request.status === 'generation-failed').length
+  const unreadInvestigations = [...investigations.data?.laboratoryRequests ?? [], ...investigations.data?.examinationRequests ?? [], ...investigations.data?.imagingRequests ?? []].filter(request => request.status === 'reported' && request.report !== undefined).length
   const hasFailedInvestigation = failedInvestigations > 0
   const fixedStay = admission.departedAt !== undefined || admission.status === 'departed' || admission.status === 'cleared' || admission.recordStatus === 'archived'
   const balanceRead = settled ? adjustments : funds
