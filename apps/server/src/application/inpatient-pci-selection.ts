@@ -4,6 +4,7 @@ import { pciSelectionProcedureCodes, inpatientPciSelectionSchema, inpatientPciSe
 import type { ActorContext, CommandEffect } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { pciSelectionEvidence, pciSelectionEvidencePackage, pciSelectionAlternatives, pciEquivalentGroups } from './scenario-data/pci-selection-evidence.ts'
+import { pciPlanQuantityBasis } from './inpatient-pci-plan-basis.ts'
 
 export class InpatientPciSelection {
   constructor(readonly owner: InpatientService) {}
@@ -96,7 +97,7 @@ export class InpatientPciSelection {
       edited: false, confirmedSelectionVersion: null, parameters: { requestId, treatmentPlan: procedure.coding.display,
         targetSite: report.targetSite, measurements: report.measurements, approvedMaterialIds: [],
         plannedQuantities: pciSelectionEvidence.map(item => ({ category: item.category, quantity: 1,
-          basis: '合成单病变 PCI 计划：每类耗材1件' })) } })
+          basis: pciPlanQuantityBasis(item.category, report, 1, item.evidence) })) } })
     this.owner.database.driver.prepare('INSERT INTO inpatient_pci_selection_draft VALUES(?,?,?,?,?)')
       .run(context.workspaceId, context.epoch, admissionId, requestId, JSON.stringify(draft))
   }

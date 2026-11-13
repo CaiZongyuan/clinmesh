@@ -90,6 +90,35 @@ async function confirmEstimate(s: Awaited<ReturnType<typeof setup>>) {
   return inpatientMaterialEstimateResponseSchema.parse(await response.json()).data
 }
 
+it('术中旧通用数量依据只读展开为原确认事实，不借用另一台新确认且不改历史', async () => {
+  const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true)
+  const stay = s.pciAdmission!
+  const legacy = '合成单病变 PCI 计划：每类耗材1件'
+  const parameters = { ...pciAgentParameters, requestId: stay.requestId, plannedQuantities: pciAgentParameters.plannedQuantities.map(item => ({ ...item,
+    basis: item.category === 'guidewire' ? '医生确认导丝用于本次分支保护' : legacy })) }
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  const confirmed = await confirmEstimate(s)
+  const input = await s.fixture.pciExecutionInput(stay)
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/start`, { requestId: input.requestId,
+    expectedRequestVersion: input.expectedRequestVersion, procedureId: input.procedureId, catalogVersion: input.catalogVersion, note: '合成按原确认开始手术' })).status).toBe(200)
+  const read = () => s.fixture.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)
+  const expected = [
+    ['hospital-material-pci-balloon', '合成兼容组合：2.5×15 mm预扩球囊配3.0×18 mm支架'],
+    ['hospital-material-pci-guidewire', '医生确认导丝用于本次分支保护'],
+    ['hospital-material-pci-guiding-catheter', '合成兼容组合：6F导引导管配0.014英寸导丝'],
+    ['hospital-material-pci-stent', '病变12 mm · 近端参考3 mm · 远端参考3 mm'],
+  ]
+  expect((await read()).intraoperativePlans.find(plan => plan.requestId === stay.requestId)!.items.map(item => [item.materialId, item.quantityBasis])).toEqual(expected)
+  const next = await plan(s, stay.procedure.id)
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 1, parameters: {
+    ...pciAgentParameters, requestId: next.id, targetSite: 'RCA 中段', measurements: pciAgentParameters.measurements.map(item => item.kind === 'lesion-length'
+      ? { ...item, site: 'RCA 中段', value: 16 } : item),
+  } })).status).toBe(200)
+  expect((await read()).intraoperativePlans.find(plan => plan.requestId === stay.requestId)!.items.map(item => [item.materialId, item.quantityBasis])).toEqual(expected)
+  expect((await s.read()).estimates.find(item => item.requestId === stay.requestId)!.planBasis).toEqual(confirmed.planBasis)
+})
+
 it('一次确认的PCI清单术后核查不依赖跟进，开启跟进后不重复待办', async () => {
   const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true)
   const stay = s.pciAdmission!

@@ -13,6 +13,7 @@ import { modelTaskOutcomeUnknown, type ModelTaskRecovery } from './model-task-re
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { JsonChatCompletionsProvider } from '../infrastructure/ai/openai-chat-completions.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
+import { legacyPciQuantityBasis, pciPlanQuantityBasis } from './inpatient-pci-plan-basis.ts'
 
 const inputSchema = z.object({ kind: z.literal('intraoperative-review'), followupTaskId: z.string(), followupVersion: z.number().int().positive(),
   requestId: z.string(), executionId: z.string(), plan: inpatientMaterialPlanSchema,
@@ -47,9 +48,11 @@ export class InpatientIntraoperativeReview {
       const plan = basis.history.find(item => item.reference === basis.effectiveReference)
       const selection = this.owner.pciSelection.read(context, admissionId, execution.requestId, 'confirmation')
       if (!plan || selection.candidates.length === 0) return []
+      const parameters = selection.history.find(item => item.id === plan.sources.selectionConfirmationId
+        && item.version === plan.sources.selectionVersion && item.parameters.requestId === execution.requestId)?.parameters
       const { history: _history, ...selected } = selection
       const active = execution.materialHistory.filter(use => !use.correction && execution.materials.some(item => item.id === use.id))
-      return [{ execution, plan, selection: selected, deviations: active.flatMap((use, index) => {
+      return [{ execution, plan, parameters, selection: selected, deviations: active.flatMap((use, index) => {
         if (execution.materialHistory.some(original => original.correction?.replacementMaterialUseId === use.id)) return []
         const item = plan.items.find(item => item.materialId === use.item.id && item.catalogVersion === use.item.version)
         const before = active.slice(0, index).filter(item => item.item.id === use.item.id && item.item.version === use.item.version)
@@ -69,8 +72,16 @@ export class InpatientIntraoperativeReview {
   read(context: ActorContext, admissionId: string) {
     const facts = this.#facts(context, admissionId), rows = this.#rows(context, admissionId)
     const task = this.owner.followup.state(context, admissionId).task
-    return { intraoperativePlans: facts.map(({ plan, selection }) => ({ requestId: plan.requestId, reference: plan.reference,
-      items: plan.items.map(({ specification: _specification, ...item }) => item), candidates: selection.candidates, alternatives: selection.alternatives })),
+    return { intraoperativePlans: facts.map(({ plan, parameters, selection }) => ({ requestId: plan.requestId, reference: plan.reference,
+      items: plan.items.map(({ specification: _specification, ...item }) => {
+        if (item.quantityBasis !== legacyPciQuantityBasis) return item
+        const candidate = [...selection.candidates, ...selection.alternatives].find(candidate => candidate.materialId === item.materialId
+          && candidate.materialVersion === item.catalogVersion)
+        const evidence = candidate ? plan.sources.materialEvidence.find(evidence => item.evidenceIds.includes(evidence.id)
+          && evidence.id === candidate.evidence.id && evidence.version === candidate.evidence.version) : undefined
+        return { ...item, quantityBasis: parameters && candidate && evidence
+          ? pciPlanQuantityBasis(candidate.category, parameters, item.quantity, evidence) : `已确认计划${item.quantity}${item.unit}` }
+      }), candidates: selection.candidates, alternatives: selection.alternatives })),
       intraoperativeReviews: facts.flatMap(fact => fact.deviations.map(deviation => {
         const row = rows.find(row => inputSchema.parse(JSON.parse(row.input_json)).deviation.use.id === deviation.use.id)
         const input = row ? inputSchema.parse(JSON.parse(row.input_json)) : undefined

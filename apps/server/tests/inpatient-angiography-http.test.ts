@@ -227,6 +227,12 @@ it('报告晚于PCI计划到达时带入逐字段相等且绑定报告版本的�
   expect(selection).toMatchObject({ confirmation: null, drafts: [{ requestId: s.stay.requestId, version: 1,
     reportId: report.id, reportVersion: report.version, edited: false, parameters: { targetSite: report.targetSite, measurements: report.measurements } }] })
   expect(selection.candidates.every(candidate => candidate.eligibility === 'valid' && candidate.expectedQuantity === 1)).toBe(true)
+  expect(selection.drafts![0]!.parameters.plannedQuantities.map(item => [item.category, item.basis])).toEqual([
+    ['guidewire', 'LAD 中段 · 合成方案导丝1根'],
+    ['guiding-catheter', '合成兼容组合：6F导引导管配0.014英寸导丝'],
+    ['balloon', '合成兼容组合：2.5×15 mm预扩球囊配3.0×18 mm支架'],
+    ['stent', '病变12 mm · 近端参考3 mm · 远端参考3 mm'],
+  ])
 })
 
 it('医生编辑草稿后新报告不覆盖人工值，旧版本保存返回冲突', async () => {
