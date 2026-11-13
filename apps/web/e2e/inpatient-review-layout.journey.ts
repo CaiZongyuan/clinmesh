@@ -78,7 +78,11 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
     await workspace.evaluate((element, width) => { element.style.width = `${width}px` }, width)
     await options.appearance(theme)
     await expect.poll(() => workspace.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
-    await expect.poll(() => workspace.locator('.clinmesh-card-patient').evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(width === 1101 ? 190 : 220)
+    // 常驻 DRG 行单独限制；原患者摘要仍沿用既有高度合同。
+    await expect(workspace.locator('.clinmesh-inpatient-drg-progress')).toBeVisible()
+    await expect.poll(() => workspace.locator('.clinmesh-inpatient-drg-progress').evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(64)
+    await expect.poll(() => workspace.locator('.clinmesh-card-patient').evaluate(element => element.getBoundingClientRect().height
+      - element.querySelector('.clinmesh-inpatient-drg-progress')!.getBoundingClientRect().height)).toBeLessThanOrEqual(width === 1101 ? 190 : 220)
     await expect.poll(() => assistant.evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(width === 1101 ? 34 : 64)
     for (const chip of await assistant.getByRole('button').all()) {
       const lineHeight = await chip.evaluate(element => parseFloat(getComputedStyle(element).lineHeight))
