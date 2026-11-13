@@ -99,7 +99,7 @@ export async function runDrgAgentInvalidationJourney(page: Page, app: PciBrowser
   await stepOne.getByRole('button', { name: '修改', exact: true }).click()
   await stepOne.getByLabel('病变长度 (mm)', { exact: true }).fill('30')
   await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认选型参数', exact: true }).click()
-  await expect(stepTwo).toContainText('选型已变化，已有预留保持不变，请核对耗材后再次确认。')
+  await expect(stepTwo).toContainText('选型已变化，请核对耗材后再次确认。')
   await expect(stepTwo).toContainText('与新测量不符：')
   await expect(stepTwo.getByRole('spinbutton', { name: /预计数量：.*支架/ })).toHaveValue('1')
   expect((await app.fixture.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)).reservations.filter(item => item.status === 'reserved')).toHaveLength(4)
