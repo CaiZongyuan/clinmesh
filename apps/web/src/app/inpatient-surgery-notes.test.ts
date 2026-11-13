@@ -27,10 +27,111 @@ it('多用带出登记依据，未用明确保留或释放的去向', () => {
   expect(completionReviewNote([{ ...row, quantity: '0', previousQuantity: 0 }], plan, execution, [], 'zh-CN', [reservation])).toBe('最终用量按术中已登记量核实；合成导丝未用1 根，保留预留。')
   expect(completionReviewNote([{ ...row, quantity: '0', previousQuantity: 0 }], plan, execution, [{ reservationId: 'reservation-1', expectedReservationVersion: 1, display: '合成导丝' }], 'zh-CN', [reservation])).toContain('释放预留')
 })
+it('计划内用完后再次登记，只把超出计划那笔的依据带入多用说明', () => {
+  const plannedUse = { ...execution.materialHistory[0]!, id: 'planned-use', quantity: 1, amountFen: 20000, note: '按计划：单病变导丝' }
+  const extraUse = { ...execution.materialHistory[0]!, id: 'extra-use', quantity: 1, amountFen: 20000, note: '分支保护' }
+  const current = { ...execution, materialHistory: [plannedUse, extraUse], materials: [
+    { id: 'planned-use', item, quantity: 1, amountFen: 20000 }, { id: 'extra-use', item, quantity: 1, amountFen: 20000 },
+  ] }
+  expect(completionReviewNote([{ ...row, quantity: '2', previousQuantity: 2, materialUseIds: ['planned-use', 'extra-use'] }], plan, current, [], 'zh-CN', [reservation]))
+    .toBe('最终用量按术中已登记量核实；合成导丝多用1 根，分支保护。')
+})
+it('计划内原笔被替换更正后，按原登记位置累计，不把计划内更正当作多用依据', () => {
+  const plannedUse = { ...execution.materialHistory[0]!, id: 'planned-use', quantity: 1, amountFen: 20000, note: '按计划：单病变导丝',
+    correction: { id: 'correction-1', recordedAt: time, recordedBy: 'doctor', practitionerRoleId: 'role-doctor', note: '核实计划内原笔',
+      replacementMaterialUseId: 'replacement-use', originalChargeId: 'original-charge', reversalChargeId: 'reversal-charge' } }
+  const extraUse = { ...execution.materialHistory[0]!, id: 'extra-use', quantity: 1, amountFen: 20000, note: '分支保护' }
+  const replacementUse = { ...execution.materialHistory[0]!, id: 'replacement-use', quantity: 1, amountFen: 20000, note: '已核实计划内原笔' }
+  const current = { ...execution, materialHistory: [plannedUse, extraUse, replacementUse], materials: [
+    { id: 'extra-use', item, quantity: 1, amountFen: 20000 }, { id: 'replacement-use', item, quantity: 1, amountFen: 20000 },
+  ] }
+  expect(completionReviewNote([{ ...row, quantity: '2', previousQuantity: 2, materialUseIds: ['extra-use', 'replacement-use'] }], plan, current, [], 'zh-CN', [reservation]))
+    .toBe('最终用量按术中已登记量核实；合成导丝多用1 根，分支保护。')
+})
+it('一笔数量跨过累计计划边界时，带出该笔额外依据', () => {
+  const largerPlan = { ...plan, items: [{ ...plan.items[0]!, quantity: 3, estimatedFen: 60000 }] }
+  const plannedUse = { ...execution.materialHistory[0]!, id: 'planned-use', quantity: 1, amountFen: 20000, note: '按计划：单病变导丝' }
+  const crossingUse = { ...execution.materialHistory[0]!, id: 'crossing-use', quantity: 3, amountFen: 60000, note: '追加支路保护' }
+  const current = { ...execution, materialHistory: [plannedUse, crossingUse], materials: [
+    { id: 'planned-use', item, quantity: 1, amountFen: 20000 }, { id: 'crossing-use', item, quantity: 3, amountFen: 60000 },
+  ] }
+  expect(completionReviewNote([{ ...row, quantity: '4', previousQuantity: 4, materialUseIds: ['planned-use', 'crossing-use'] }], largerPlan, current, [], 'zh-CN', []))
+    .toBe('最终用量按术中已登记量核实；合成导丝多用1 根，追加支路保护。')
+})
+it('已撤销登记既不占计划量，也不把旧依据带入多用说明', () => {
+  const voidedUse = { ...execution.materialHistory[0]!, id: 'voided-use', note: '已撤销的误登记原因',
+    correction: { id: 'correction-1', recordedAt: time, recordedBy: 'doctor', practitionerRoleId: 'role-doctor', note: '撤销误登记',
+      replacementMaterialUseId: null, originalChargeId: 'original-charge', reversalChargeId: 'reversal-charge' } }
+  const plannedUse = { ...execution.materialHistory[0]!, id: 'planned-use', quantity: 1, amountFen: 20000, note: '按计划：单病变导丝' }
+  const extraUse = { ...execution.materialHistory[0]!, id: 'extra-use', quantity: 1, amountFen: 20000, note: '分支保护' }
+  const current = { ...execution, materialHistory: [voidedUse, plannedUse, extraUse], materials: [
+    { id: 'planned-use', item, quantity: 1, amountFen: 20000 }, { id: 'extra-use', item, quantity: 1, amountFen: 20000 },
+  ] }
+  expect(completionReviewNote([{ ...row, quantity: '2', previousQuantity: 2, materialUseIds: ['planned-use', 'extra-use'] }], plan, current, [], 'zh-CN', []))
+    .toBe('最终用量按术中已登记量核实；合成导丝多用1 根，分支保护。')
+})
+it('计划内登记连续替换更正时，仅在原位置计最终有效记录一次', () => {
+  const correction = { id: 'correction-1', recordedAt: time, recordedBy: 'doctor', practitionerRoleId: 'role-doctor', note: '核实计划内原笔',
+    replacementMaterialUseId: 'middle-use', originalChargeId: 'original-charge', reversalChargeId: 'reversal-charge' }
+  const original = { ...execution.materialHistory[0]!, id: 'original-use', quantity: 1, amountFen: 20000, note: '原计划内依据', correction }
+  const extraUse = { ...execution.materialHistory[0]!, id: 'extra-use', quantity: 1, amountFen: 20000, note: '分支保护' }
+  const middle = { ...execution.materialHistory[0]!, id: 'middle-use', quantity: 1, amountFen: 20000, note: '中间更正依据',
+    correction: { ...correction, id: 'correction-2', replacementMaterialUseId: 'final-use', originalChargeId: 'middle-charge', reversalChargeId: 'middle-reversal' } }
+  const finalUse = { ...execution.materialHistory[0]!, id: 'final-use', quantity: 1, amountFen: 20000, note: '最终计划内更正依据' }
+  const current = { ...execution, materialHistory: [original, extraUse, middle, finalUse], materials: [
+    { id: 'extra-use', item, quantity: 1, amountFen: 20000 }, { id: 'final-use', item, quantity: 1, amountFen: 20000 },
+  ] }
+  expect(completionReviewNote([{ ...row, quantity: '2', previousQuantity: 2, materialUseIds: ['extra-use', 'final-use'] }], plan, current, [], 'zh-CN', []))
+    .toBe('最终用量按术中已登记量核实；合成导丝多用1 根，分支保护。')
+})
+it('另一目录版本不占用本版本的计划量，也不混入本版本多用依据', () => {
+  const oldItem = { ...item, version: 2, display: '合成导丝另一目录版本' }
+  const otherVersion = { ...execution.materialHistory[0]!, id: 'other-version', item: oldItem, quantity: 1, amountFen: 20000, note: '另一版本依据' }
+  const plannedUse = { ...execution.materialHistory[0]!, id: 'planned-use', quantity: 1, amountFen: 20000, note: '按计划：单病变导丝' }
+  const extraUse = { ...execution.materialHistory[0]!, id: 'extra-use', quantity: 1, amountFen: 20000, note: '分支保护' }
+  const current = { ...execution, materialHistory: [otherVersion, plannedUse, extraUse], materials: [
+    { id: 'other-version', item: oldItem, quantity: 1, amountFen: 20000 }, { id: 'planned-use', item, quantity: 1, amountFen: 20000 },
+    { id: 'extra-use', item, quantity: 1, amountFen: 20000 },
+  ] }
+  expect(completionReviewNote([{ ...row, quantity: '2', previousQuantity: 2, materialUseIds: ['planned-use', 'extra-use'] },
+    { ...row, key: 'other-version', catalogVersion: 2, display: oldItem.display, quantity: '0', previousQuantity: 1, materialUseIds: ['other-version'] }], plan, current, [], 'zh-CN', []))
+    .toBe('最终用量已按逐项核实调整；合成导丝多用1 根，分支保护。')
+})
 it('术后多用说明引用正式登记原因，缺少预留记录时不假定已经释放', () => {
   const todo = inpatientDrgReviewTodoSchema.parse({ id: 'todo-1', version: 1, evidenceFingerprint: 'a'.repeat(64), key: 'extra-use:wire', kind: 'extra-use', ownerRole: 'inpatient-doctor', materialId: 'wire', display: '合成导丝', plannedQuantity: 1, actualQuantity: 2, explanation: '导丝多用1根。', evidence: ['Procedure/execution-1'], requestId: 'request-1', executionId: 'execution-1', status: 'pending', reason: null })
   expect(postoperativeDispositionNote(todo, [execution], [], 'zh-CN')).toBe('导丝多用1根。登记依据：首根无法通过病变，更换')
   expect(postoperativeDispositionNote({ ...todo, kind: 'unused-plan', actualQuantity: 0 }, [], [], 'zh-CN')).toBe('合成导丝未使用原计划全部数量；预留状态待核实。')
+})
+it('术后多用待办只带出其有效来源中的额外依据，不混入计划内或其他目录版本', () => {
+  const plannedUse = { ...execution.materialHistory[0]!, id: 'planned-use', quantity: 1, amountFen: 20000, note: '按计划：单病变导丝' }
+  const otherVersion = { ...execution.materialHistory[0]!, id: 'other-version', item: { ...item, version: 2 }, quantity: 10, amountFen: 200000, note: '另一目录版本的登记依据' }
+  const extraUse = { ...execution.materialHistory[0]!, id: 'extra-use', quantity: 1, amountFen: 20000, note: '分支保护' }
+  const current = { ...execution, materialHistory: [plannedUse, otherVersion, extraUse], materials: [
+    { id: 'planned-use', item, quantity: 1, amountFen: 20000 }, { id: 'other-version', item: { ...item, version: 2 }, quantity: 10, amountFen: 200000 },
+    { id: 'extra-use', item, quantity: 1, amountFen: 20000 },
+  ] }
+  const todo = inpatientDrgReviewTodoSchema.parse({ id: 'todo-1', version: 1, evidenceFingerprint: 'a'.repeat(64), key: 'extra-use:wire-v1',
+    kind: 'extra-use', ownerRole: 'inpatient-doctor', materialId: 'wire', display: '合成导丝', plannedQuantity: 1, actualQuantity: 2,
+    explanation: '导丝多用1根。', evidence: ['InpatientSurgeryMaterial/planned-use', 'InpatientSurgeryMaterial/extra-use', 'Procedure/execution-1'],
+    requestId: 'request-1', executionId: 'execution-1', status: 'pending', reason: null })
+  expect(postoperativeDispositionNote(todo, [current], [], 'zh-CN')).toBe('导丝多用1根。登记依据：分支保护')
+})
+it('额外登记更正后，完成与术后说明均只引用最终有效数量的更正依据', () => {
+  const plannedUse = { ...execution.materialHistory[0]!, id: 'planned-use', quantity: 1, amountFen: 20000, note: '按计划：单病变导丝' }
+  const oldExtra = { ...execution.materialHistory[0]!, id: 'old-extra', note: '已被替代的额外依据',
+    correction: { id: 'correction-1', recordedAt: time, recordedBy: 'doctor', practitionerRoleId: 'role-doctor', note: '核实额外使用仅一根',
+      replacementMaterialUseId: 'replacement-use', originalChargeId: 'original-charge', reversalChargeId: 'reversal-charge' } }
+  const replacement = { ...execution.materialHistory[0]!, id: 'replacement-use', quantity: 1, amountFen: 20000, note: '分支保护' }
+  const current = { ...execution, materialHistory: [plannedUse, oldExtra, replacement], materials: [
+    { id: 'planned-use', item, quantity: 1, amountFen: 20000 }, { id: 'replacement-use', item, quantity: 1, amountFen: 20000 },
+  ] }
+  expect(completionReviewNote([{ ...row, quantity: '2', previousQuantity: 2, materialUseIds: ['planned-use', 'replacement-use'] }], plan, current, [], 'zh-CN', []))
+    .toBe('最终用量按术中已登记量核实；合成导丝多用1 根，分支保护。')
+  const todo = inpatientDrgReviewTodoSchema.parse({ id: 'todo-1', version: 1, evidenceFingerprint: 'a'.repeat(64), key: 'extra-use:wire-v1',
+    kind: 'extra-use', ownerRole: 'inpatient-doctor', materialId: 'wire', display: '合成导丝', plannedQuantity: 1, actualQuantity: 2,
+    explanation: '导丝多用1根。', evidence: ['InpatientSurgeryMaterial/planned-use', 'InpatientSurgeryMaterial/replacement-use', 'Procedure/execution-1'],
+    requestId: 'request-1', executionId: 'execution-1', status: 'pending', reason: null })
+  expect(postoperativeDispositionNote(todo, [current], [], 'zh-CN')).toBe('导丝多用1根。登记依据：分支保护')
 })
 
 it('术前已经释放的未用预留在完成说明中保持已释放事实', () => {

@@ -28,8 +28,9 @@ export function completionReviewNote(rows: CompletionDraftRow[], plan: Inpatient
   const differences = completionQuantities(rows, plan).filter(row => row.difference !== 0)
   if (differences.length === 0) return changed ? `${lead}${zh ? '，与术前计划一致。' : '; consistent with the preoperative plan.'}`
     : zh ? '最终用量与术中登记、术前计划一致。' : 'Final quantities match recorded use and the preoperative plan.'
+  const history = materialHistoryInOriginalOrder(execution.materialHistory)
   const details = differences.map(row => {
-    const notes = [...new Set(execution.materialHistory.filter(use => !use.correction && `${use.item.id}@${use.item.version}` === row.key).map(use => use.note))]
+    const notes = excessUseNotes(history.filter(use => `${use.item.id}@${use.item.version}` === row.key), row.planned ?? 0)
     return row.difference! > 0 ? `${row.display}${zh ? '多用' : ' extra '}${row.difference} ${row.unit}${notes.length ? `，${notes.join('；')}` : ''}`
       : `${row.display}${zh ? '未用' : ' unused '}${-row.difference!} ${row.unit}，${reservationDisposition(reservations.filter(item => item.requestId === plan.requestId && `${item.materialId}@${item.catalogVersion}` === row.key && (plan.reservationIds.length === 0 || plan.reservationIds.includes(item.id))), locale, releases, rows)}`
   })
@@ -39,12 +40,43 @@ export function completionReviewNote(rows: CompletionDraftRow[], plan: Inpatient
 export function postoperativeDispositionNote(todo: z.infer<typeof inpatientDrgReviewTodoSchema>,
   executions: z.infer<typeof inpatientSurgeryExecutionSchema>[], reservations: InpatientMaterialReservation[], locale: WorkspaceLocale) {
   const zh = locale === 'zh-CN', execution = executions.find(item => item.id === todo.executionId)
-  const notes = [...new Set(execution?.materialHistory.filter(use => !use.correction && use.item.id === todo.materialId).map(use => use.note) ?? [])]
   if (todo.kind === 'unused-plan') {
     const disposition = reservationDisposition(reservations.filter(item => item.requestId === todo.requestId && item.materialId === todo.materialId), locale)
     return `${todo.display}${zh ? '未使用原计划全部数量' : ': not all planned quantities were used'}；${disposition}。`
   }
+  const history = execution?.materialHistory ?? []
+  const sources = new Set(todo.evidence.filter(reference => reference.startsWith('InpatientSurgeryMaterial/')))
+  const notes = todo.kind === 'extra-use' && todo.plannedQuantity !== null
+    ? excessUseNotes(materialHistoryInOriginalOrder(history).filter(use => use.item.id === todo.materialId
+      && (sources.size === 0 || sources.has(`InpatientSurgeryMaterial/${use.id}`))), todo.plannedQuantity)
+    : [...new Set(history.filter(use => !use.correction && use.item.id === todo.materialId).map(use => use.note))]
   return `${todo.explanation}${notes.length ? `${zh ? '登记依据：' : 'Recorded reason: '}${notes.join('；')}` : ''}`.slice(0, 2000)
+}
+
+function excessUseNotes(history: z.infer<typeof inpatientSurgeryExecutionSchema>['materialHistory'], plannedQuantity: number) {
+  let used = 0
+  const notes = new Set<string>()
+  for (const use of history) {
+    used += use.quantity
+    if (used > plannedQuantity) notes.add(use.note)
+  }
+  return [...notes]
+}
+
+/** 更正替代原笔的事实，累计时保留原笔的位置；替换链只计最终有效记录一次。 */
+function materialHistoryInOriginalOrder(history: z.infer<typeof inpatientSurgeryExecutionSchema>['materialHistory']) {
+  const byId = new Map(history.map(use => [use.id, use]))
+  const replacements = new Set(history.flatMap(use => use.correction?.replacementMaterialUseId ? [use.correction.replacementMaterialUseId] : []))
+  const visited = new Set<string>()
+  return history.filter(use => !replacements.has(use.id)).flatMap(original => {
+    let use: typeof original | undefined = original
+    while (use && !visited.has(use.id)) {
+      visited.add(use.id)
+      if (!use.correction) return [use]
+      use = use.correction.replacementMaterialUseId ? byId.get(use.correction.replacementMaterialUseId) : undefined
+    }
+    return []
+  })
 }
 
 function reservationDisposition(reservations: InpatientMaterialReservation[], locale: WorkspaceLocale, releases: CompletionRelease[] = [], rows?: CompletionDraftRow[]) {
