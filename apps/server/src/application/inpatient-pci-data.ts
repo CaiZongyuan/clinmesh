@@ -1,3 +1,6 @@
+import { medicationCombinationConflict, medicationIndicationMatches } from '@clinmesh/core/medication-safety'
+import { medicationSafetyRuleSchema } from '@clinmesh/contracts/medication-safety'
+import { standardMedicationSafety } from './scenario-data/standard-medications.ts'
 import { z } from 'zod'
 import { inpatientPciDataSchema, inpatientPciDataPrepareRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import type { ActorContext, CommandEffect } from './command-executor.ts'
@@ -32,7 +35,7 @@ export class InpatientPciData {
     const medications = pciDataPackage.medications.flatMap(definition => {
       const row = this.medication(context, definition.product)
       if (row === undefined) return []
-      const parsedConfig = z.object({ unit: z.string().nullish(), availableScopes: z.array(z.string()).optional(),
+      const parsedConfig = z.object({ safety: medicationSafetyRuleSchema.optional(), unit: z.string().nullish(), availableScopes: z.array(z.string()).optional(),
         inpatientIndications: z.array(z.object({ id: z.string(), system: z.string(), version: z.string(), code: z.string(), sourceLocator: z.string() })).optional(),
         allowedCombinationIds: z.array(z.string()).optional(), allowedFrequencyCodes: z.array(z.string()).optional(),
       }).safeParse(JSON.parse(row.config_json))
@@ -43,10 +46,10 @@ export class InpatientPciData {
       if (!config.availableScopes?.includes('inpatient')) conflicts.push('scope-disabled')
       if (config.unit !== definition.hospitalSupplement.unit) conflicts.push('unit-mismatch')
       if (row.price_fen <= 0) conflicts.push('unpriced')
-      if (!config.inpatientIndications?.some(coding => coding.id === pciDataPackage.diagnosis.id && coding.system === pciDataPackage.diagnosis.system
-        && coding.version === pciDataPackage.diagnosis.version && coding.code === pciDataPackage.diagnosis.code && coding.sourceLocator === pciDataPackage.diagnosis.sourceLocator)) conflicts.push('indication-restricted')
+      if (!(config.safety ? medicationIndicationMatches(config.safety.indicationPrefixes, [pciDataPackage.diagnosis.code]) : config.inpatientIndications?.some(coding => coding.id === pciDataPackage.diagnosis.id && coding.system === pciDataPackage.diagnosis.system
+        && coding.version === pciDataPackage.diagnosis.version && coding.code === pciDataPackage.diagnosis.code && coding.sourceLocator === pciDataPackage.diagnosis.sourceLocator))) conflicts.push('indication-restricted')
       if (!definition.hospitalSupplement.frequencyCodes.some(code => config.allowedFrequencyCodes?.includes(code))) conflicts.push('frequency-restricted')
-      if (pciDataPackage.medications.some(other => other.id !== definition.id && !config.allowedCombinationIds?.includes(this.medication(context, other.product)?.item_id ?? other.id))) conflicts.push('combination-restricted')
+      if (pciDataPackage.medications.some(other => other.id !== definition.id && (config.safety && standardMedicationSafety(other.id) ? medicationCombinationConflict(config.safety.pharmacologyClasses, standardMedicationSafety(other.id)!.pharmacologyClasses) : !config.allowedCombinationIds?.includes(this.medication(context, other.product)?.item_id ?? other.id)))) conflicts.push('combination-restricted')
       return [{ definitionId: definition.id, catalogItemId: row.item_id, version: row.version,
         active: row.active === 1, priceFen: row.price_fen, unit: config.unit ?? null, availableScopes: config.availableScopes ?? [], conflicts,
         lots: z.array(z.object({ id: z.string(), version: z.number(), quantityOnHand: z.number(), expiresOn: z.string() })).parse(this.owner.database.driver.prepare(
@@ -134,6 +137,7 @@ export class InpatientPciData {
       const supplement = definition.hospitalSupplement
       const { sourceLocator: _sourceLocator, status: _status, ...productSnapshot } = definition.product
       const defaults = {
+        ...(standardMedicationSafety(itemId) ? { safety: standardMedicationSafety(itemId) } : {}),
         product: productSnapshot, availableScopes: ['outpatient', 'inpatient'], unit: supplement.unit,
         dose: supplement.suggestedDoseText, frequency: supplement.frequencyCodes[0], route: supplement.route,
         inpatientDoses: [{ doseText: supplement.suggestedDoseText, quantity: supplement.suggestedQuantity }],

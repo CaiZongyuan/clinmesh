@@ -98,7 +98,7 @@ it('本地冠心病PDF只用纳入页生成三类建议，医生确认后关闭�
       reviewedService: { id: service.id, version: service.version, outpatientBilling: service.outpatientBilling ?? null } }])
     await runtime.dispatchPending()
     const prescription = await generate('prescription')
-    expect(prescription.items).toMatchObject([{ kind: 'prescription', catalogItemId: 'medication-pci-aspirin', doseText: null, quantity: null }])
+    expect(prescription.items).toMatchObject([{ kind: 'prescription', catalogItemId: 'medication-pci-aspirin', doseText: '100 mg', quantity: 1 }])
     await confirm(prescription, [{ kind: 'prescription', source: 'manual', catalogItemId: 'medication-pci-aspirin',
       doseText: '100 mg', frequencyCode: 'QD', courseDays: 1, quantity: 1 }])
     for (const kind of ['diagnosis', 'laboratory', 'prescription']) {

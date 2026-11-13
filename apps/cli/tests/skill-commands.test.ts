@@ -527,9 +527,9 @@ it('停嘱理由投影的读取与全部医嘱回执保持版本和 Skill 示例
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   for (const [id, version] of [
     ['inpatient.pharmacy.read', 2], ['inpatient.clinical.read', 2], ['inpatient.diagnosis.confirm', 2],
-    ['inpatient.order.issue', 5], ['inpatient.order.verify', 2], ['inpatient.order.request-stop', 2],
+    ['inpatient.order.issue', 6], ['inpatient.order.verify', 2], ['inpatient.order.request-stop', 2],
     ['inpatient.order.verify-stop', 2], ['inpatient.execution.dispense', 2], ['inpatient.execution.administer', 2],
-    ['inpatient.execution.complete', 2], ['inpatient.execution.request-prn', 2],
+    ['inpatient.execution.complete', 2], ['inpatient.execution.request-prn', 3],
   ] as const) {
     const operation = getHisOperation(id)
     expect(operation.version).toBe(version)
@@ -730,7 +730,7 @@ it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
   expect(admissionExample).not.toBeNull()
   expect(getHisOperation('inpatient.admission.register').input.parse(JSON.parse(admissionExample![1]!)))
     .toMatchObject({ expectedEpoch: 'epoch-1', wardId: 'ward-general', depositFen: 100000 })
-  const diagnosisExample=[...skill.matchAll(/```json\n([\s\S]+?)\n```/g)][1]
+  const diagnosisExample=skill.match(/`diagnoses\.json`[^]*?```json\n([^]*?)\n```/)
   expect(diagnosisExample).toBeDefined()
   expect(getHisOperation('inpatient.diagnosis.confirm').input.parse(JSON.parse(diagnosisExample![1]!))).toMatchObject({entries:[{role:'primary',admissionCondition:'1'}]})
   const referenceSkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
@@ -1026,7 +1026,7 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
   const executionExample = skill.match(/`surgery-execution\.json`[^]*?```json\n([^]*?)\n```/)
   expect(executionExample).toBeDefined()
   expect(getHisOperation('inpatient.surgery.execute').input.parse(JSON.parse(executionExample![1]!))).toMatchObject({ expectedRequestVersion: 3, materials: [{ quantity: 2 }] })
-  expect(getHisOperation('inpatient.order.issue').version).toBe(5)
+  expect(getHisOperation('inpatient.order.issue').version).toBe(6)
   expect(skill).toContain('surgeryExecutionId')
   expect(skill).toContain('inpatient.surgery.execute')
   expect(getHisOperation('inpatient.surgery.catalog').version).toBe(2)
@@ -1078,6 +1078,21 @@ it('病案示例绑定原修订与来源指纹、显式主操作及独立审核�
   expect(getHisOperation('inpatient.record.submit').input.safeParse({admissionId:'synthetic',expectedRevision:0,expectedSourcesHash:'a'.repeat(64)}).success).toBe(false)
   expect(getHisOperation('inpatient.record.review').input.safeParse({admissionId:'synthetic',expectedRevision:1,expectedSourcesHash:'a'.repeat(64),outcome:'returned'}).success).toBe(false)
   expect(skill).toContain('INPATIENT_RECORD_STALE')
+})
+
+it('药物频次、审方拒绝与CLI Skill的当前合同保持一致', async () => {
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  const match = skill.match(/`order\.json`[^]*?```json\n([^]*?)\n```/)!
+  const example = JSON.parse(match[1]!)
+  const operation = getHisOperation('inpatient.order.issue')
+  expect(operation.version).toBe(6)
+  for (const frequencyCode of ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE']) {
+    expect(operation.input.safeParse({ ...example, selection: { ...example.selection, frequencyCode } }).success).toBe(true)
+  }
+  expect(operation.input.safeParse({ ...example, selection: { ...example.selection, frequencyCode: 'Q4H' } }).success).toBe(false)
+  for (const reason of ['MEDICATION_COMBINATION_NOT_ALLOWED', 'MEDICATION_DIAGNOSIS_NOT_ALLOWED', 'MEDICATION_ALLERGY_CONFLICT', 'MEDICATION_DOSAGE_NOT_ALLOWED', 'MEDICATION_ONCE_REQUIRES_TEMPORARY']) expect(skill).toContain(reason)
+  expect(getHisOperation('inpatient.execution.request-prn').version).toBe(3)
+  for (const id of ['encounter.prescription.draft.set', 'encounter.prescription.issue'] as const) expect(getHisOperation(id).version).toBe(2)
 })
 
 it('门诊处方操作、错误reason与clinmesh-doctor单源外延处方说明保持一致', async () => {

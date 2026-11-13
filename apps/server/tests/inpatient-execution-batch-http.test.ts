@@ -19,13 +19,16 @@ describe('护士三类集中办理沿原 Command 的真实事实与恢复', () =
   beforeAll(async () => {
     stay = await s.preparePciAdmission([])
     let clinical = await s.read('ward-nurse', `${stay.path}/clinical`, inpatientFullClinicalSchema)
+    const catalog = await s.read('inpatient-doctor', '/api/his/v1/inpatient/clinical-catalog', inpatientFullCatalogSchema)
     for (const [suffix, doseText, doseQuantity, frequencyCode] of [
       ['aspirin', '100 mg', 1, 'QD'], ['clopidogrel', '75 mg', 1, 'QD'],
       ['heparin', '1 mL', 1, 'PRN'], ['iohexol', '50 mL', 50, 'PRN'],
     ] as const) {
       clinical = (await parsePciResponse(inpatientFullClinicalResponseSchema, await s.request('inpatient-doctor', `${stay.path}/orders/issue`, {
         encounterVersion: clinical.encounterVersion, duration: 'temporary', selection: {
-          kind: 'medication', catalogItemId: `medication-pci-${suffix}`, catalogVersion: 1, doseText, doseQuantity, frequencyCode,
+          kind: 'medication', catalogItemId: `medication-pci-${suffix}`,
+          catalogVersion: catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!.version,
+          doseText, doseQuantity, frequencyCode,
         },
       }))).data
     }

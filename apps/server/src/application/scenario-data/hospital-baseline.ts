@@ -1,3 +1,4 @@
+import { enableStandardMedicationRules, standardMedicationCatalog } from './standard-medications.ts'
 import {
   type ScenarioHospitalServiceCatalogItem,
   type ScenarioInvestigationCatalogItem,
@@ -277,7 +278,7 @@ export function createHospitalBaseline(
     tatMinutes: 20,
     valueSetEntries,
   }))
-  return {
+  const baseline = {
     catalog: {
       departments: [{
         ...catalogBase({ code: 'GM', id: 'department-general-medicine', name: '全科医学科', priceFen: 0 }),
@@ -566,7 +567,7 @@ export function createHospitalBaseline(
       ]),
       medications: [{
         ...catalogBase({ code: 'ACETAMINOPHEN', id: 'medication-acetaminophen', name: '对乙酰氨基酚片', priceFen: 120 }),
-        availableScopes: ['outpatient'] as const,
+        availableScopes: ['outpatient'] as Array<'outpatient' | 'inpatient'>,
         category: '解热镇痛药',
         defaultDose: '0.5 g',
         defaultFrequency: 'PRN',
@@ -596,7 +597,7 @@ export function createHospitalBaseline(
         },
       }, {
         ...catalogBase({ code: 'METFORMIN', id: 'medication-metformin', name: '盐酸二甲双胍片', priceFen: 1_200 }),
-        availableScopes: ['outpatient'] as const,
+        availableScopes: ['outpatient'] as Array<'outpatient' | 'inpatient'>,
         category: '双胍类降糖药',
         defaultDose: '0.5 g',
         defaultFrequency: 'BID',
@@ -626,7 +627,7 @@ export function createHospitalBaseline(
         },
       }, {
         ...catalogBase({ code: 'AMLODIPINE', id: 'medication-amlodipine', name: '苯磺酸氨氯地平片', priceFen: 1_500 }),
-        availableScopes: ['outpatient'] as const,
+        availableScopes: ['outpatient'] as Array<'outpatient' | 'inpatient'>,
         category: '钙通道阻滞剂',
         defaultDose: '5 mg',
         defaultFrequency: 'QD',
@@ -727,4 +728,16 @@ export function createHospitalBaseline(
       quantity: 1_000,
     }],
   }
+  const medications = enableStandardMedicationRules([...baseline.catalog.medications, ...standardMedicationCatalog()])
+  const diagnoses = ([
+    ['I25.1', 'coronary-heart-disease', '冠状动脉粥样硬化性心脏病'], ['I50.9', 'heart-failure', '心力衰竭'],
+    ['E78.5', 'dyslipidemia', '血脂异常'], ['N18.9', 'chronic-kidney-disease', '慢性肾脏病'], ['J18.9', 'pneumonia', '肺炎'],
+  ] as const).map(([code, id, name]) => ({
+    ...catalogBase({ code, id: `diagnosis-${id}`, name, priceFen: 0 }), codeSystem: 'http://hl7.org/fhir/sid/icd-10',
+  }))
+  const additionalLots = medications.filter(item => !baseline.inventory.some(lot => lot.itemId === item.id)).map(item => ({
+    itemId: item.id, lotId: `lot-${item.id}-synthetic-001`, expiresOn: '2030-12-31', quantity: 1000,
+  }))
+  return { ...baseline, catalog: { ...baseline.catalog, medications, diagnoses: [...baseline.catalog.diagnoses, ...diagnoses] },
+    inventory: [...baseline.inventory, ...additionalLots] }
 }

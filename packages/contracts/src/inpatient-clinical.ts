@@ -1,3 +1,4 @@
+import { medicationSafetyRuleSchema } from './medication-safety.ts'
 import { referenceConceptSnapshotSchema } from './reference-data.ts'
 import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
@@ -22,7 +23,7 @@ export const inpatientOrderIssueInputSchema = z.object({ admissionId: id, encoun
   expectedDrgFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   duration: z.enum(['long','temporary']), selection: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('medication'), catalogItemId: id, catalogVersion: z.number().int().positive(), doseText: z.string().trim().min(1).max(120),
-      frequencyCode: z.enum(['QD','BID','PRN']), doseQuantity: z.number().int().positive().max(100) }).strict(),
+      frequencyCode: z.enum(['QD','BID','TID','QN','PRN','ONCE']), doseQuantity: z.number().int().positive().max(100) }).strict(),
     z.object({ kind: z.literal('service'), serviceId: id, serviceVersion: z.number().int().positive(), quantity: z.number().int().positive().max(100) }).strict(),
   ]),
 }).strict()
@@ -35,7 +36,7 @@ export const inpatientDispenseInputSchema = inpatientExecutionActionInputSchema.
 export const inpatientChargeReverseInputSchema = z.object({ admissionId: id, chargeId: id, expectedChargeVersion: z.number().int().positive(), reason: z.string().trim().min(1).max(2000) }).strict()
 export const inpatientOrderSchema = z.object({ id, admissionId: id, surgeryExecutionId: id.optional(), kind: z.enum(['medication','service']), duration: z.enum(['long','temporary']),
   catalogItemId: id, catalogVersion: z.number().int().positive(), display: z.string(), doseText: z.string(), doseQuantity: z.number().int().positive(),
-  unit: z.string(), frequencyCode: z.enum(['QD','BID','PRN']), state: z.enum(['signed','verified','stop-requested','stopped','completed']),
+  unit: z.string(), frequencyCode: z.enum(['QD','BID','TID','QN','PRN','ONCE']), state: z.enum(['signed','verified','stop-requested','stopped','completed']),
   version: z.number().int().positive(), requestVersion: version, signedAt: z.iso.datetime({ offset: true }), signedBy: z.string(),
   organizationId: id, verifiedAt: z.iso.datetime({ offset: true }).optional(), stoppedAt: z.iso.datetime({ offset: true }).optional(),
   stopReason: z.string().trim().min(1).max(2000).optional(),
@@ -47,9 +48,10 @@ export const inpatientExecutionSchema = z.object({ id, orderId: id, scheduledFor
 export const inpatientDispenseSchema = z.object({ id, executionId: id, lotId: id, quantity: z.number().int().positive(), dispensedAt: z.iso.datetime({ offset: true }), dispensedBy: z.string() }).strict()
 export const inpatientChargeSchema = z.object({ id, label: z.string().min(1), kind: z.string(), sourceId: id, organizationId: id, serviceDate: z.string(), amountFen: z.number().int().safe(),
   virtualTime: z.iso.datetime({ offset: true }), version: z.number().int().positive(), reversalOf: id.optional(), reason: z.string().optional() }).strict()
-export const inpatientMedicationSchema = z.object({ id, display: z.string(), version: z.number().int().positive(), priceFen: z.number().int().nonnegative(), unit: z.string(),
+export const inpatientMedicationSchema = z.object({
+  safety: medicationSafetyRuleSchema.optional(), id, display: z.string(), version: z.number().int().positive(), priceFen: z.number().int().nonnegative(), unit: z.string(),
   doseBasis: z.object({ amount: z.number().positive(), unit: z.string().min(1) }).strict().optional(), maxDoseQuantity: z.number().int().positive().optional(),
-  doses: z.array(z.object({ doseText: z.string(), quantity: z.number().int().positive() }).strict()), frequencyCodes: z.array(z.enum(['QD','BID','PRN'])),
+  doses: z.array(z.object({ doseText: z.string(), quantity: z.number().int().positive() }).strict()), frequencyCodes: z.array(z.enum(['QD','BID','TID','QN','PRN','ONCE'])),
   lots: z.array(z.object({ id, version: z.number().int().positive(), quantityOnHand: z.number().int().nonnegative(), expiresOn: z.string() }).strict()),
 }).strict()
 export const inpatientServiceSchema = z.object({ id, display: z.string(), version: z.number().int().positive(), priceFen: z.number().int().nonnegative(), unit: z.string() }).strict()

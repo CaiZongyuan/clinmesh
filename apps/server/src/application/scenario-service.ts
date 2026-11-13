@@ -1,3 +1,4 @@
+import { standardMedicationDoseBasis } from './scenario-data/standard-medications.ts'
 import { seedInpatientEnvironment } from './inpatient-environment.ts'
 import { createHash } from 'node:crypto'
 import { scenarioStateSchema } from '@clinmesh/contracts/his'
@@ -30,6 +31,12 @@ function installedMedicationConfigJson(
 ) {
   return JSON.stringify({
     allowedCombinationIds,
+    safety: medication.workflow.safety,
+    unit: medication.unit,
+    inpatientDoseBasis: standardMedicationDoseBasis(medication.id),
+    inpatientMaxDoseQuantity: 100,
+    inpatientDoses: [{ doseText: medication.defaultDose, quantity: 1 }],
+    inpatientBillingTrigger: 'dispense',
     allowedCourseDays: medication.workflow.allowedCourseDays,
     allowedDiagnosisCatalogItemIds: medication.workflow.allowedDiagnosisCodes.flatMap((code) => {
       const diagnosisId = diagnosisIdByCode.get(code)
@@ -791,7 +798,7 @@ export class ScenarioService {
       quantity: 1_000,
     }, ...(supportsPrescriptionConclusion
       ? hospitalBaseline.inventory
-          .filter(lot => lot.itemId !== 'medication-acetaminophen')
+          .filter(lot => !['medication-acetaminophen', 'medication-oseltamivir'].includes(lot.itemId))
           .map(lot => ({ ...lot, lotNumber: lot.lotId }))
       : [])]
     for (const lot of inventory) {
@@ -891,13 +898,13 @@ export class ScenarioService {
           name: '对乙酰氨基酚片',
           product: undefined,
         }]
-    const medications = [{
+    const medications = [...legacyMedications, {
         id: 'medication-oseltamivir',
         code: 'OSELTAMIVIR',
         name: '磷酸奥司他韦胶囊',
         product: undefined,
-      }, ...legacyMedications]
-    for (const medication of medications) {
+      }]
+    for (const medication of medications.filter((item, index, all) => all.findIndex(candidate => candidate.id === item.id) === index)) {
       this.#fhir.create(context, {
         resourceType: 'Medication',
         id: medication.id,

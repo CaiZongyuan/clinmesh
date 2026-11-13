@@ -1,3 +1,4 @@
+import { medicationSafetyRuleSchema } from '@clinmesh/contracts/medication-safety'
 import { createHmac } from 'node:crypto'
 import type { DoctorCaseHistoryDetail } from '@clinmesh/contracts/agent'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
@@ -110,10 +111,6 @@ const diagnosisEntryRowSchema = z.object({
   condition_id: z.string().min(1),
   ordinal: z.number().int().positive(),
   role: z.enum(['primary', 'secondary']),
-})
-
-const confirmedDiagnosisCatalogItemRowSchema = z.object({
-  catalog_item_id: z.string().min(1),
 })
 
 export const confirmedDiagnosisConditionSchema = z.object({
@@ -284,6 +281,7 @@ export const issuedMedicationRequestSchema = z.object({
 })
 
 export const legacyMedicationCatalogConfigSchema = z.object({
+  safety: medicationSafetyRuleSchema.optional(),
   allowedCombinationIds: z.array(z.string().min(1)),
   allowedDoseTexts: z.array(z.string().min(1)).min(1),
   allowedFrequencyCodes: z.array(z.string().min(1)).min(1),
@@ -293,7 +291,7 @@ export const legacyMedicationCatalogConfigSchema = z.object({
 
 export const prescriptionMedicationCatalogConfigSchema = legacyMedicationCatalogConfigSchema.extend({
   allowedCourseDays: z.array(z.number().int().positive()).min(1),
-  allowedDiagnosisCatalogItemIds: z.array(z.string().min(1)).min(1),
+  allowedDiagnosisCatalogItemIds: z.array(z.string().min(1)),
   allowedQuantities: z.array(z.number().int().positive()).min(1),
   defaultCourseDays: z.number().int().positive(),
   defaultQuantity: z.number().int().positive(),
@@ -1175,31 +1173,6 @@ export class OutpatientWorkflowContext {
         ? {}
         : { supersedesConfirmationId: confirmation.supersedes_confirmation_id }),
     }
-  }
-
-  confirmedDiagnosisCatalogItemIds(context: ActorContext, caseId: string): Set<string> {
-    return new Set(
-      z.array(confirmedDiagnosisCatalogItemRowSchema).parse(
-        this.database.driver.prepare(`
-          SELECT diagnosis_entry.catalog_item_id
-          FROM diagnosis_confirmation
-          JOIN diagnosis_entry
-            ON diagnosis_entry.workspace_id = diagnosis_confirmation.workspace_id
-           AND diagnosis_entry.epoch = diagnosis_confirmation.epoch
-           AND diagnosis_entry.confirmation_id = diagnosis_confirmation.confirmation_id
-          WHERE diagnosis_confirmation.workspace_id = ?
-            AND diagnosis_confirmation.epoch = ?
-            AND diagnosis_confirmation.case_id = ?
-            AND diagnosis_confirmation.revision_number = (
-              SELECT MAX(current_confirmation.revision_number)
-              FROM diagnosis_confirmation AS current_confirmation
-              WHERE current_confirmation.workspace_id = diagnosis_confirmation.workspace_id
-                AND current_confirmation.epoch = diagnosis_confirmation.epoch
-                AND current_confirmation.case_id = diagnosis_confirmation.case_id
-            )
-        `).all(context.workspaceId, context.epoch, caseId),
-      ).map(row => row.catalog_item_id),
-    )
   }
 
   #diagnosisCatalogItem(context: ActorContext, itemId: string) {

@@ -127,7 +127,7 @@ describe('Reference Data source importers', () => {
       syntheticWstValueSetSnapshot,
     )
     expect(hospitalBaseline.catalog.medications.map(medication => medication.product.id)).toEqual(
-      artifact.medicationProducts.map(product => product.id),
+      expect.arrayContaining(artifact.medicationProducts.map(product => product.id)),
     )
     expect(() => createHospitalBaseline(
       artifact.medicationProducts.map(product => (

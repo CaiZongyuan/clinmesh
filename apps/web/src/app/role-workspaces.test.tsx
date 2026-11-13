@@ -7840,7 +7840,7 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '编辑药品 磷酸奥司他韦胶囊' }))
     const draftComposer = within(await screen.findByRole('dialog'))
     expect(draftComposer.getByRole('combobox', { name: '剂量' }).textContent).toContain('75 mg')
-    expect(draftComposer.getByRole('combobox', { name: '频次' }).textContent).toContain('BID')
+    expect(draftComposer.getByRole('combobox', { name: '频次' }).textContent).toContain('每日两次')
     expect(draftComposer.getByRole('combobox', { name: '疗程' }).textContent).toContain('5 天')
     expect(draftComposer.getByRole('combobox', { name: '数量' }).textContent).toContain('10')
   })

@@ -1,3 +1,4 @@
+import { medicationSafetyRuleSchema } from './medication-safety.ts'
 import { z } from 'zod'
 import { outpatientInvestigationBillingSchema, outpatientInvestigationPriceSchema } from './investigation-billing.ts'
 export { outpatientInvestigationBillingSchema, outpatientInvestigationPriceSchema } from './investigation-billing.ts'
@@ -203,6 +204,7 @@ const clinicalCatalogBaseShape = {
 }
 
 const legacyMedicationCatalogItemSchema = catalogItemSchema.extend({
+  safety: medicationSafetyRuleSchema.optional(),
   allowedCombinationIds: z.array(z.string().min(1)),
   allowedDoseTexts: z.array(z.string().min(1)).min(1),
   allowedFrequencyCodes: z.array(z.string().min(1)).min(1),
@@ -658,6 +660,7 @@ export const prescriptionConflictReasonSchema = z.enum([
   'PRESCRIPTION_DIAGNOSIS_UNCONFIRMED',
   'PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED',
   'PRESCRIPTION_DOSAGE_NOT_ALLOWED',
+  'PRESCRIPTION_COMBINATION_NOT_ALLOWED',
   'PRESCRIPTION_MIXED_CATALOG_SOURCES',
 ])
 export type PrescriptionConflictReason = z.infer<typeof prescriptionConflictReasonSchema>

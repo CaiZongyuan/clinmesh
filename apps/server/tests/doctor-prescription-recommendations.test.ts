@@ -48,10 +48,10 @@ describe('prescription recommendation normalization', () => {
   })
 
   it.each([
-    { doseText: '1 g' },
-    { frequencyCode: 'BID' },
-    { courseDays: 5 },
-    { quantity: 12 },
+    { doseText: '5 g' },
+    { frequencyCode: 'Q4H' },
+    { courseDays: 31 },
+    { quantity: 1001 },
   ])('rejects a supplied regimen field outside the current hospital choices: %j', fields => {
     expect(normalizePrescriptionRecommendation({ ...suggestion, ...fields }, catalog)).toBeUndefined()
   })

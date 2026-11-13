@@ -72,7 +72,9 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 门诊诊断目录支持同窗连续加入最多 8 项，按当前组自动设定默认主次，显式改主使原主让位，移除主诊断后晋升首条；最终所选组与 Agent 提议均必须恰有一个主诊断。整组确认发送前冻结完整请求与原幂等键，结果未知先查限定病例及 diagnosis 类别的医生 Session 原回执，仅查无回执才原键重放；收到 `EXPECTED_VERSION_CONFLICT`、`WORKFLOW_CONFLICT`、`CATALOG_CONFLICT` 或 `DIAGNOSIS_PRIMARY_REQUIRED` 明确拒绝时释放冻结并保留整组供修改，显式 Agent 回填成功才清对应私稿。私稿隔离、清空确认与恢复协议见[浏览器未提交私稿](storage.md#浏览器未提交私稿)与[临床连续办理与原回执恢复决策](../decisions/implemented/architecture/2026-11-10-clinical-batch-draft-and-receipt-recovery.md)。
 
-处方草稿是病例级 domain-native 聚合，保存一至八条受控药品、剂量、频次、疗程和数量，并以 Encounter expected version 与单调 `expectedDraftVersion` 做 CAS。门诊药品选择显式区分默认选中的「本院药房」（当前启用的门诊可用院内目录）与「国家参考目录」（电子外延处方品规），单张处方在草稿保存、直接正式开具和建议待办确认时统一强制单一来源，混源返回 `CATALOG_CONFLICT` 与 `PRESCRIPTION_MIXED_CATALOG_SOURCES`。保存或删除草稿不创建 MedicationRequest；正式开具时重新读取目录和已确认诊断，校验药品组合、诊断适应规则、患者过敏、剂量、频次、疗程和数量，不满足时在直接开具与建议待办确认统一返回 `PRESCRIPTION_DIAGNOSIS_UNCONFIRMED`、`PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED`、`PRESCRIPTION_ALLERGY_CONFLICT`、`PRESCRIPTION_DOSAGE_NOT_ALLOWED`、`PRESCRIPTION_ALREADY_ISSUED`、`PRESCRIPTION_NO_MEDICATION_RECORDED`、`PRESCRIPTION_DRAFT_STALE`、`PRESCRIPTION_ENCOUNTER_NOT_ACTIVE` 等细分 `reason`。「本院药房」处方在同一 Command 创建稳定处方号、Prescription、每种药一个的 active FHIR R5 MedicationRequest、Medication ChargeItem 和 Charge Record，收费预览在 Encounter 已完诊、处方仍 signed 且未撤回时可用，支付成功把病例移交药房；纯「国家参考目录」外延处方同样创建稳定处方号、Prescription 与 MedicationRequest、满足完诊门禁并支持未撤回时按 `prescription.withdraw` 撤回，但不创建 `0 元` ChargeItem 或 Charge Record，也不进入院内收费与药房队列。`prescription_authorship` 通过 `workspace_actor` 与 Practitioner Role 复合外键保存负责身份，草稿正文同时清除且版本递增。独立处方入口与首期复诊组合草稿互斥，已存在正式用药结论时不能继续普通编辑；分轨与外延处方取舍见[本院药房与国家参考目录分轨决策](../decisions/implemented/architecture/2026-11-05-outpatient-external-prescription-split.md)。
+处方草稿是病例级 domain-native 聚合，保存一至八条受控药品、剂量、频次、疗程和数量，并以 Encounter expected version 与单调 `expectedDraftVersion` 做 CAS。门诊药品选择显式区分默认选中的「本院药房」（当前启用的门诊可用院内目录）与「国家参考目录」（电子外延处方品规），单张处方在草稿保存、直接正式开具和建议待办确认时统一强制单一来源，混源返回 `CATALOG_CONFLICT` 与 `PRESCRIPTION_MIXED_CATALOG_SOURCES`。保存或删除草稿不创建 MedicationRequest；正式开具时重新读取目录和已确认诊断，校验药品组合、诊断适应规则、患者过敏、剂量、频次、疗程和数量，不满足时在直接开具与建议待办确认统一返回 `PRESCRIPTION_DIAGNOSIS_UNCONFIRMED`、`PRESCRIPTION_COMBINATION_NOT_ALLOWED`、`PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED`、`PRESCRIPTION_ALLERGY_CONFLICT`、`PRESCRIPTION_DOSAGE_NOT_ALLOWED`、`PRESCRIPTION_ALREADY_ISSUED`、`PRESCRIPTION_NO_MEDICATION_RECORDED`、`PRESCRIPTION_DRAFT_STALE`、`PRESCRIPTION_ENCOUNTER_NOT_ACTIVE` 等细分 `reason`。「本院药房」处方在同一 Command 创建稳定处方号、Prescription、每种药一个的 active FHIR R5 MedicationRequest、Medication ChargeItem 和 Charge Record，收费预览在 Encounter 已完诊、处方仍 signed 且未撤回时可用，支付成功把病例移交药房；纯「国家参考目录」外延处方同样创建稳定处方号、Prescription 与 MedicationRequest、满足完诊门禁并支持未撤回时按 `prescription.withdraw` 撤回，但不创建 `0 元` ChargeItem 或 Charge Record，也不进入院内收费与药房队列。`prescription_authorship` 通过 `workspace_actor` 与 Practitioner Role 复合外键保存负责身份，草稿正文同时清除且版本递增。独立处方入口与首期复诊组合草稿互斥，已存在正式用药结论时不能继续普通编辑；分轨与外延处方取舍见[本院药房与国家参考目录分轨决策](../decisions/implemented/architecture/2026-11-05-outpatient-external-prescription-split.md)。
+
+门诊本院药房与住院共用[声明式药事规则](#声明式药事规则)，国家参考目录继续使用其独立外延处方合同。
 
 门诊处方目录支持同窗连续加入、编辑与移除药品，仍按整张处方原子提交：新增输入与按稳定行身份保存的编辑稿各自保留（兼容读取旧版单稿），已加入药品的未保存编辑须先保存才允许正式确认或 Agent 回填覆盖。任何药品确定拒绝均整单回滚并保留全部待开行；结果未知时通过限定病例与 prescription 类别的医生 Session 回执恢复，私稿与恢复协议同见[浏览器未提交私稿](storage.md#浏览器未提交私稿)与[临床连续办理与原回执恢复决策](../decisions/implemented/architecture/2026-11-10-clinical-batch-draft-and-receipt-recovery.md)。
 
@@ -417,21 +419,29 @@ Web/Desktop 和 DSH Surface 的住院医嘱页面只保留开立入口，目录�
 
 药师可在同患者、同次住院内集中核对最多 20 张发药执行单，逐项显示药品、完整剂量、真实库存批次与执行时点；每单仍由原发药 Command 验证医嘱、执行状态与库存 CAS，分别记录发药、库存与费用而不形成给药记录。同批次后项只认可本批已证明成功的库存增量，外部变化要求重审，结果不明停止后续并在原回执恢复后重新核对余项；取舍及恢复依据见[集中发药库存推进决策](../decisions/implemented/architecture/2026-11-10-inpatient-dispense-stock-progress.md)。
 
-住院医生正式确认主次诊断和逐项入院病情（1有、2临床未确定、3情况不明、4无），形成引用本次住院的 Condition 和 Encounter.diagnosis。病情必须显式选择，Web 保留全部已确认诊断的顺序、逐项入院病情和备注，支持多个次诊断增删与排序；检索及分页保留已选标签，首次编辑固定确认与 Encounter 版本，避免后台刷新覆盖未提交内容。输入次序以 ordinal 随确认修订持久保存，不根据备注或日期推断，也不以生成的 Condition ID 排序。server 优先解析活动 Reference Data Release 的实际诊断条目并冻结 `system/version/code/display/sourceLocator` 与当次 `releaseId`；合成院内 fallback 以 `operational:diagnosis_catalog` 明确标识。药品适应症按完整真实 coding 与来源定位匹配，不以显示名或编码前缀推断，既有编码依据见[研究](../research/2026-10-20-inpatient-record-coding-and-recall.md)。
+住院医生正式确认主次诊断和逐项入院病情（1有、2临床未确定、3情况不明、4无），形成引用本次住院的 Condition 和 Encounter.diagnosis。病情必须显式选择，Web 保留全部已确认诊断的顺序、逐项入院病情和备注，支持多个次诊断增删与排序；检索及分页保留已选标签，首次编辑固定确认与 Encounter 版本，避免后台刷新覆盖未提交内容。输入次序以 ordinal 随确认修订持久保存，不根据备注或日期推断，也不以生成的 Condition ID 排序。server 优先解析活动 Reference Data Release 的实际诊断条目并冻结 `system/version/code/display/sourceLocator` 与当次 `releaseId`；合成院内 fallback 以 `operational:diagnosis_catalog` 明确标识。诊断身份继续冻结完整真实 coding 与来源定位；药品适应证由[声明式药事规则](#声明式药事规则)匹配 ICD-10 前缀，未声明该规则的旧目录保留原完整 coding 与来源匹配。既有编码依据见[研究](../research/2026-10-20-inpatient-record-coding-and-recall.md)。
 
 住院医生通过 `catalog-search` 分别分页检索院内与 Reference 药品、检验候选。可用、待补和停用各自表达，缺项列明规格、计价单位、价格、启用范围及必要规则；只有完整、唯一匹配的院内项目返回可开立 ID 与版本。药品按具体产品 `id/system/version`，检验按根项目 Reference 身份精确映射，歧义保留为待补。诊断继续复用既有 Reference 查询；旧 `clinical-catalog` 保留可用项目响应。页面查询失败、无结果与单项缺失分别呈现，写入重读权威配置，候选查询不代替开立授权。
 
-医生填写本次 `doseText` 及频次，服务端与页面共用纯剂量换算：按明确 `unit` 直接填写，或通过每制剂含量 `inpatientDoseBasis` 换算为完整制剂数量，核对请求的 `doseQuantity`。`inpatientMaxDoseQuantity` 声明每次上限；旧项目没有新上限时以原建议的最大制剂数保守兼容，`inpatientDoses` 继续作常用建议。缺少换算依据、单位不兼容、非整数制剂数量及超量明确拒绝；现有库存数量合同仍为整数，不推定支持分片或任意小数输液。角色、完整编码适应症、双向组合、过敏、频次及发药有效批次/库存检查保留。
+医生填写本次 `doseText` 及频次，服务端与页面共用纯剂量换算：按明确 `unit` 直接填写，或通过每制剂含量 `inpatientDoseBasis` 换算为完整制剂数量，核对请求的 `doseQuantity`。`inpatientMaxDoseQuantity` 声明每次上限；旧项目没有新上限时以原建议的最大制剂数保守兼容，`inpatientDoses` 继续作常用建议。缺少换算依据、单位不兼容、非整数制剂数量及超量明确拒绝；现有库存数量合同仍为整数，不推定支持分片或任意小数输液。角色、声明的适应证与药理互斥、过敏、频次及发药有效批次/库存检查保留。
 
 管理员通过 `pci-data` 回读固定版本的 PCI 合成底稿、来源与院内补充，再以当前 `expectedEpoch` 和幂等键执行 `prepare-pci-data`。准备只补目录、药品基础批次及可供后续消费的数据，保留已有明确价格、配置、库存余额和旧业务；病例底稿不物化患者、门诊或住院，不生成挂号费、手术、归档或核定事实。住院医生可只读资料。原始报价与规格/单位空值和独立合成补充分别保存，FM39 合成参数与目标病组标记不表示已取得分组或核定结果。设计理由见[共享目录与 PCI 数据前置](../decisions/implemented/architecture/2026-10-25-inpatient-shared-catalog-data.md)；固定作者病例及直接入院见[仿真来源合同](simulation.md)，完整规则装载见[部署指南](../deployment.md#运行时-drg-规则启用)，联合验收见[测试策略](../testing.md)。
 
-本院虚拟班次是 Shanghai QD08:00、BID08:00/20:00；首日只产生校对时尚未过去的执行时点，临时医嘱一次，PRN只由护士以理由显式申请。场景推进按业务日展开后续长期任务，以医嘱和时点去重；不会自动形成给药事实。申请停嘱立即冻结新任务、发药和给药，护士核停将 pending/dispensed 任务明确取消，保留已有发药、给药和费用，不自动退库存。该班次只描述本院仿真策略，事实分离的设计理由见[Agent Note](../decisions/implemented/architecture/2026-10-21-inpatient-orders-and-administration.md)。
+本院虚拟班次采用 Shanghai 时区，`QD -> 08:00`、`BID -> 08:00/20:00`、`TID -> 08:00/14:00/20:00`、`QN -> 22:00`；首日只产生校对时尚未过去的执行时点，临时医嘱只生成一次执行。`ONCE` 仅可用于临时医嘱，长期医嘱在页面禁用并由后端拒绝。`PRN` 只由护士以理由显式申请，不自动排程。未首次排程的长期医嘱按每日计划次数折算未记费承诺，已排程后仅计未记费的实际待执行任务。场景推进按业务日展开后续长期任务，以医嘱和时点去重；不会自动形成给药事实。申请停嘱立即冻结新任务、发药和给药，护士核停将 pending/dispensed 任务明确取消，保留已有发药、给药和费用，不自动退库存。该班次只描述本院仿真策略，事实分离的设计理由见[Agent Note](../decisions/implemented/architecture/2026-10-21-inpatient-orders-and-administration.md)。
 
 病区护士可在同一患者、同次住院内集中校对最多 20 条 `signed` 新医嘱，集中审阅各自药品或服务、用法、剂量、频次及长期、临时或 PRN 属性后确认，待核停医嘱单独办理。每项仍执行原 `inpatient.order.verify` Command，分别校验当前岗位责任、住院状态和预期医嘱版本，独立提交状态、校对记录、FHIR、执行计划和审计，不生成发药、给药、健康教育完成或费用事实；未提交选择与逐项原回执恢复遵循[临床连续办理私稿与逐项原回执恢复](../decisions/implemented/architecture/2026-11-10-clinical-batch-draft-and-receipt-recovery.md)。
 
 医生申请停嘱与护士核停各自在同患者、同住院内集中办理最多20条，不与新医嘱校对混合。医生可填写共同理由并逐项覆盖，空覆盖保持为空并阻止确认；预览显示每项最终理由。护士核停显示原医嘱、当前状态、停嘱理由，以及 pending、dispensed 任务的取消影响；既有发药、给药、库存扣减和费用仍保留。各项分别执行原 `request-stop` 或 `verify-stop` Command，确定失败保留输入及成功结果，结果未知暂停后续并恢复原回执，余项重新审阅。待出院仍可停嘱、核停；财务关闭、归档或失去当前责任时拒绝。
 
 `InpatientOrder.stopReason` 从停嘱事务写入原 MedicationRequest 或 ServiceRequest 的 `note.id=clinmesh-stop-reason` 投影，理由与状态在同一原事务保存；临床详情、药房详情和相关 Command 回执沿用该可选字段。历史未标记备注不猜测来源，界面明确说明理由缺失，仍可按原权限及状态核停；旧回执缺少该字段不代表需要重新停嘱。取舍见[停嘱理由归属与集中核停](../decisions/implemented/architecture/2026-11-10-order-stop-batch.md)。
+
+#### 声明式药事规则
+
+Hospital Baseline 默认启用 22 种心血管与基础内科常备药，覆盖门诊和住院，并建立合成药房初始批次。PCI 准备按具体产品身份复用这些项目，继续保留已有价格、规则、库存余额及重放幂等性，不以再次准备补足已消耗库存。全部药品、价格、剂量限制与监管核验标记均为固定合成规则，不代表临床建议或真实医保资格。
+
+`safety` 配置声明药理类别、ICD-10 适应证前缀及单次／单日剂量上限，纯函数由门诊审方、住院 Command 与编辑页面共享。默认允许跨药理类别的联合治疗；ACEI/ARB、ACEI/ARNI、ARB/ARNI、双 P2Y12、双他汀及同药重复开具拒绝。适应证读取本次最新确认的正式 Condition 冻结编码，对任一诊断按不区分大小写的 ICD-10 前缀匹配，保留诊断原身份及来源；Reference Data 诊断不要求重复存在于院内诊断目录，也不因后续目录变化改写已确认依据。未声明 `safety` 的旧院内配置继续使用原剂量枚举、双向组合白名单与精确适应证，保留原三种基线药既有输入。
+
+门诊疗程为 1–30 天，数量必须为正整数且不超过每制剂单日极量乘疗程（最多 1000）；处方剂量另按所选频次校验单次／单日极量，不再靠固定总片数枚举限制新目录。住院继续核对真实制剂整数换算；`PRN` 开具按每日最多四次的保守上界审方，并在上海业务日内限制非取消任务不超过四次及配置的单日数量极量，临时 PRN 仍最多一次。已确认有效药物过敏独立阻断开具。门诊返回 `PRESCRIPTION_*`，住院返回 `MEDICATION_*` 的组合、剂量、适应证或过敏细分 `reason`；ONCE 长期医嘱另返回 `MEDICATION_ONCE_REQUIRES_TEMPORARY`，页面在原错误区展示本地化原因并保留输入。共享规则与旧配置兼容的取舍见[药事规则决策](../decisions/implemented/architecture/2026-11-13-shared-medication-safety.md)。
 
 #### 护士实际执行与 PRN 集中办理
 

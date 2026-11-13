@@ -1,3 +1,4 @@
+import { medicationCombinationConflict, medicationRegimenDoseAllowed, medicationQuantityAllowed, medicationIndicationMatches } from '@clinmesh/core/medication-safety'
 import {
   confirmNoMedicationResponseSchema,
   dispenseResponseSchema,
@@ -25,7 +26,6 @@ import {
   type CommandResponse,
   type CommandTransaction,
 } from './command-executor.ts'
-import { medicationDoseAndFrequencyAllowed } from './medication-rules.ts'
 import { readOutpatientInsuranceAllocations } from './outpatient-insurance.ts'
 import {
   activePrescriptionRowSchema,
@@ -129,6 +129,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
           ...summary(row),
           ...medicationMetadata(config.dose, presentation),
           allowedCombinationIds: config.allowedCombinationIds,
+          ...(config.safety ? { safety: config.safety } : {}),
           allowedDoseTexts: config.allowedDoseTexts,
           allowedFrequencyCodes: config.allowedFrequencyCodes,
           defaultDoseText: config.dose,
@@ -144,6 +145,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
           ...summary(row),
           ...medicationMetadata(config.dose, presentation),
           allowedCombinationIds: config.allowedCombinationIds,
+          ...(config.safety ? { safety: config.safety } : {}),
           allowedCourseDays: config.allowedCourseDays,
           allowedDoseTexts: config.allowedDoseTexts,
           allowedFrequencyCodes: config.allowedFrequencyCodes,
@@ -583,19 +585,21 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       medications.filter(medication => !medication.external).map(medication => medication.catalog),
       'PRESCRIPTION_ALLERGY_CONFLICT',
     )
-    const confirmedDiagnosisIds = this.#context.confirmedDiagnosisCatalogItemIds(
+    const confirmedDiagnoses = this.#context.confirmedDiagnoses(
       input.context,
       outpatientCase.case_id,
     )
+    const confirmedDiagnosisIds = new Set(confirmedDiagnoses?.entries.map(entry => entry.catalogItemId))
     if (confirmedDiagnosisIds.size === 0) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'A confirmed diagnosis is required to issue a prescription', undefined, 'PRESCRIPTION_DIAGNOSIS_UNCONFIRMED')
     }
+    const confirmedCodes = confirmedDiagnoses?.entries.map(entry => entry.code) ?? []
     for (const medication of medications) {
       if (medication.external) continue
       const config = prescriptionMedicationCatalogConfigSchema.parse(
         JSON.parse(medication.catalog.config_json ?? '{}') as unknown,
       )
-      if (!config.allowedDiagnosisCatalogItemIds.some(id => confirmedDiagnosisIds.has(id))) {
+      if (config.safety ? !medicationIndicationMatches(config.safety.indicationPrefixes, confirmedCodes) : !config.allowedDiagnosisCatalogItemIds.some(id => confirmedDiagnosisIds.has(id))) {
         throw new WorkflowError(
           'CATALOG_CONFLICT',
           `The confirmed diagnosis does not allow ${medication.catalogItemId}`,
@@ -1973,7 +1977,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         JSON.parse(medication.configJson ?? '{}') as unknown,
       )
       if (
-        !medicationDoseAndFrequencyAllowed(config, medication.doseText, medication.frequencyCode)
+        !medicationRegimenDoseAllowed(config, medication.doseText, medication.frequencyCode)
       ) {
         throw new WorkflowError(
           'CATALOG_CONFLICT',
@@ -1985,10 +1989,16 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       const otherMedicationIds = medications
         .map(candidate => candidate.catalogItemId)
         .filter(candidateId => candidateId !== medication.catalogItemId)
-      if (otherMedicationIds.some(candidateId => !config.allowedCombinationIds.includes(candidateId))) {
+      if (otherMedicationIds.some(candidateId => {
+        const other = medications.find(item => item.catalogItemId === candidateId)!
+        const otherConfig = legacyMedicationCatalogConfigSchema.parse(JSON.parse(other.configJson ?? '{}'))
+        return config.safety && otherConfig.safety ? medicationCombinationConflict(config.safety.pharmacologyClasses, otherConfig.safety.pharmacologyClasses) : !config.allowedCombinationIds.includes(candidateId)
+      })) {
         throw new WorkflowError(
           'CATALOG_CONFLICT',
           `The medication combination is not allowed for ${medication.catalogItemId}`,
+          undefined,
+          'PRESCRIPTION_COMBINATION_NOT_ALLOWED',
         )
       }
     }
@@ -2087,7 +2097,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       const config = prescriptionMedicationCatalogConfigSchema.parse(rawConfig)
       if (
         !config.allowedCourseDays.includes(medication.courseDays)
-        || !config.allowedQuantities.includes(medication.quantity)
+        || !medicationQuantityAllowed(config, medication.quantity, medication.courseDays)
       ) {
         throw new WorkflowError(
           'CATALOG_CONFLICT',

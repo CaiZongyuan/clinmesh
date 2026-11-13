@@ -15,9 +15,9 @@ export function inpatientChargeCategoryLabel(value: string, locale: WorkspaceLoc
   return labels[value]?.[locale === 'zh-CN' ? 0 : 1] ?? (locale === 'zh-CN' ? '未分类费用' : 'Unclassified charges')
 }
 
-/** 住院频次的中文名与给药时间；executions 按 QD 08:00、BID 08:00/20:00 生成。 */
-export function inpatientFrequencyLabel(code: 'QD' | 'BID' | 'PRN', locale: WorkspaceLocale, withTime = true): string {
-  const labels = { QD: ['每日一次', '08:00', 'Once daily'], BID: ['每日两次', '08:00、20:00', 'Twice daily'], PRN: ['按需', '', 'As needed'] } as const
+/** 展示本院频次名称与显式执行时点。 */
+export function inpatientFrequencyLabel(code: 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE', locale: WorkspaceLocale, withTime = true): string {
+  const labels = { QD: ['每日一次', '08:00', 'Once daily'], BID: ['每日两次', '08:00、20:00', 'Twice daily'], TID: ['每日三次', '08:00、14:00、20:00', 'Three times daily'], QN: ['每晚一次', '22:00', 'Every night'], ONCE: ['仅一次', '', 'Once only'], PRN: ['按需', '', 'As needed'] } as const
   const [zh, time, en] = labels[code]
   const timeText = locale === 'zh-CN' ? time : time.replace('、', ', ')
   return `${locale === 'zh-CN' ? zh : en}${withTime && timeText ? ` · ${timeText}` : ''}`

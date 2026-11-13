@@ -1,3 +1,4 @@
+import { medicationSafetyRuleSchema } from './medication-safety.ts'
 import { z } from 'zod'
 import {
   referenceConceptSnapshotSchema,
@@ -269,6 +270,7 @@ export const scenarioInvestigationCatalogItemSchema = scenarioCatalogItemBaseSch
 }).strict()
 
 const scenarioMedicationWorkflowSchema = z.object({
+  safety: medicationSafetyRuleSchema.optional(),
   allowedCombinationIds: z.array(z.string().min(1)),
   allowedCourseDays: z.array(z.number().int().positive()).min(1),
   allowedDiagnosisCodes: z.array(z.string().min(1)).min(1),

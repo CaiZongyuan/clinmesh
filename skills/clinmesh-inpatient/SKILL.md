@@ -105,6 +105,19 @@ clinmesh inpatient reverse-charge --input @reversal.json --idempotency-key <key>
 
 每个文件使用受信读取结果的 `admissionId`。诊断确认传 `encounterVersion`、`expectedRevision` 与恰好一个 primary 的 `entries`；每项必须显式选择 `admissionCondition`（`1`有、`2`临床未确定、`3`情况不明、`4`无），输入顺序保存在正式确认中，不根据备注或日期推断病情；签发传当前 `encounterVersion`、`duration` 和受控 `selection`。药品选择含目录 ID/版本、医生本次填写的 `doseText`、`frequencyCode`、每次 `doseQuantity`；数量以目录 `unit` 计，质量单位按明确的 `doseBasis` 换算为整数制剂数量，并受 `maxDoseQuantity` 约束。`doses` 是常用建议，未填写本次剂量由医嘱表单提示。单位或含量不明确时先补资料；合成本院适应症、组合、过敏、剂量和频次不满足时不得换 ID 绕过。
 
+`inpatient.order.issue` version 6 accepts `QD | BID | TID | QN | PRN | ONCE`. ONCE 仅用于 `duration=temporary`；长期 QD/BID/TID/QN 分别按上海 08:00、08:00/20:00、08:00/14:00/20:00、22:00 排程。声明 `safety` 的药品按 ICD-10 前缀适应证、药理互斥及单次／单日极量审方，PRN 按每日最多四次校验，实际任务也受业务日四次及单日数量上限限制。按 `error.reason` 修正本次选择：`MEDICATION_COMBINATION_NOT_ALLOWED` 更换互斥药理类别，`MEDICATION_DIAGNOSIS_NOT_ALLOWED` 核对已确认诊断，`MEDICATION_ALLERGY_CONFLICT` 更换过敏冲突药品，`MEDICATION_DOSAGE_NOT_ALLOWED` 调整剂量／频次／数量，`MEDICATION_ONCE_REQUIRES_TEMPORARY` 改为临时或其他合法频次。保留原输入，重新读取权威目录和版本，不换身份绕过。
+
+`order.json` 合成示例；实际使用本次受信目录和住院版本：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "encounterVersion": "1",
+  "duration": "temporary",
+  "selection": { "kind": "medication", "catalogItemId": "medication-amlodipine", "catalogVersion": 1, "doseText": "5 mg", "doseQuantity": 1, "frequencyCode": "ONCE" }
+}
+```
+
 `diagnoses.json` 合成示例；医生须按本次患者实际判断明确填写入院病情，并以受信读取的住院和版本替换示例值：
 
 ```json
