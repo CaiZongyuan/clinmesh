@@ -1,3 +1,4 @@
+import { useInpatientDrgQuery, type InpatientDrgQuery } from './inpatient-drg-query.ts'
 import { DrgChargeMix, DrgPaymentMonitor } from './inpatient-drg-monitor.tsx'
 import { InpatientDrgRecordChecksPanel, type DrgRecordTarget } from './inpatient-drg-record-checks.tsx'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
@@ -6,18 +7,14 @@ import { formatFen } from './workspace-format.ts'
 import type { z } from 'zod'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
-import { inpatientDrgPregroupResultSchema } from '@clinmesh/contracts/inpatient-drg'
 import type { drgGroupingResultSchema } from '@clinmesh/contracts/drg'
-import { inpatientDrgRecordChecksSchema } from '@clinmesh/contracts/inpatient-drg-review'
-import { inpatientDrgSimulationSchema, type InpatientDrgSimulationInput } from '@clinmesh/contracts/inpatient-drg-simulation'
-import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
+import { type InpatientDrgSimulationInput } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
-import { useQuery } from '@tanstack/react-query'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ApiClientError, apiGet, apiMutation } from './api-client.ts'
+import { ApiClientError } from './api-client.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
@@ -51,39 +48,19 @@ export function DrgGrouping({ result, locale, title }: { result: z.infer<typeof 
   </section>
 }
 
-export function InpatientDrgPanel({ admission, session, locale, write, draft, onReview, active = true, followOn, onEvaluationChange, onOpenRecord }: Props & {
-  draft?: InpatientDrgSimulationInput; onReview?: (review: DrgReview) => void; reservations?: boolean; active?: boolean; followOn?: boolean | undefined; onEvaluationChange?: (state: DrgEvaluationState) => void; onOpenRecord?: (target: DrgRecordTarget) => void
+export function InpatientDrgPanel({ admission, session, locale, write, draft, onReview, active = true, followOn, onEvaluationChange, onOpenRecord, query: sharedQuery }: Props & {
+  query?: InpatientDrgQuery; draft?: InpatientDrgSimulationInput; onReview?: (review: DrgReview) => void; reservations?: boolean; active?: boolean; followOn?: boolean | undefined; onEvaluationChange?: (state: DrgEvaluationState) => void; onOpenRecord?: (target: DrgRecordTarget) => void
 }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
-  const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id]
-  const path = `/api/his/v1/inpatient/admissions/${admission.id}/drg`
-  const archived = admission.recordStatus === 'archived'
-  const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden')
-  useEffect(() => {
-    const update = () => setVisible(document.visibilityState !== 'hidden')
-    document.addEventListener('visibilitychange', update)
-    return () => document.removeEventListener('visibilitychange', update)
-  }, [])
-  const enabled = active && visible && !archived && admission.status !== 'registered'
-  const allowPlanSelection = draft === undefined && onReview === undefined && !archived
-  const surgery = useQuery({ queryKey: [...scope, 'surgeries'], enabled: enabled && allowPlanSelection,
-    refetchInterval: enabled && allowPlanSelection ? 3_000 : false, refetchIntervalInBackground: false,
-    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
-  const plans = (surgery.data?.requests ?? []).filter(item => item.status === 'requested' || item.status === 'ready')
-  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
-  const primarySurgeryRequestId = allowPlanSelection && plans.length > 1 && plans.some(item => item.id === selectedPlanId) ? selectedPlanId : null
-  const simulationInput = draft ?? (primarySurgeryRequestId === null ? undefined : { medications: [], services: [], primarySurgeryRequestId })
+  const localQuery = useInpatientDrgQuery({ admission, session, active: active && sharedQuery === undefined, draft,
+    allowPlanSelection: onReview === undefined })
+  const { scope, archived, visible, enabled, allowPlanSelection, surgery, plans, primarySurgeryRequestId,
+    setSelectedPlanId, simulationInput, grouping, simulation, checks } = sharedQuery ?? localQuery
   const evaluationKey = JSON.stringify([...scope, simulationInput ?? null])
   const currentKey = useRef(evaluationKey)
   currentKey.current = evaluationKey
   // Only the accepted fingerprint and its invalidation latch are view state; Query owns the result.
   const [basis, setBasis] = useState<{ key: string; fingerprint: string; stale: boolean }>()
-  const grouping = useQuery({ queryKey: [...scope, 'drg-pregroup'], enabled: archived, retry: false,
-    queryFn: ({ signal }) => apiGet(`${path}/pregroup`, inpatientDrgPregroupResultSchema, signal) })
-  const simulation = useQuery({ queryKey: [...scope, 'drg-simulation', simulationInput ?? null], enabled, retry: false, refetchInterval: enabled ? 3_000 : false, refetchIntervalInBackground: false,
-    queryFn: ({ signal }) => apiMutation(`${path}/simulation`, inpatientDrgSimulationSchema, { input: simulationInput ?? {} }, { signal }) })
-  const checks = useQuery({ queryKey: [...scope, 'drg-record-checks'], enabled: false, retry: false,
-    queryFn: ({ signal }) => apiGet(`${path}/record-checks`, inpatientDrgRecordChecksSchema, signal) })
   const data = simulation.data
   const fingerprint = data?.fingerprint ?? null
   const accepted = basis?.key === evaluationKey ? basis : undefined
@@ -151,7 +128,7 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
     </>}
     {onReview === undefined ? <>
       <div className="rounded-lg border p-3">
-        <InpatientDrgRecordChecksPanel key={`${session.actor.workspaceId}/${session.actor.epoch}/${session.actor.practitionerRoleId}/${admission.id}`} admission={admission} session={session} locale={locale} write={write} active={active && visible} followOn={followOn} onOpenRecord={onOpenRecord} />
+        <InpatientDrgRecordChecksPanel query={checks} key={`${session.actor.workspaceId}/${session.actor.epoch}/${session.actor.practitionerRoleId}/${admission.id}`} admission={admission} session={session} locale={locale} write={write} active={active && visible} followOn={followOn} onOpenRecord={onOpenRecord} />
       </div>
       <InpatientPrimaryAction stage="drg" priority={-50}>
         <WorkspaceActionBar showWithoutAction summary={t('预分组只供参考，以病案编码审核为准', 'Pre-grouping is for reference only; subject to coding review')} />

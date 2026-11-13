@@ -29,6 +29,8 @@ import { InpatientClinical } from './inpatient-clinical.tsx'
 import { InpatientDoctorReminders } from './inpatient-doctor-reminders.tsx'
 import { InpatientNumber } from './inpatient-number.tsx'
 import { inpatientCareDay, inpatientScopeKey } from './inpatient-scope.ts'
+import { InpatientDrgHeader } from './inpatient-drg-progress.tsx'
+import { useInpatientDrgQuery } from './inpatient-drg-query.ts'
 import { InpatientDrgPanel } from './inpatient-drg.tsx'
 import { inpatientDrgFollowupResponseSchema, inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { InpatientDrgUsagePanel } from './inpatient-drg-usage.tsx'
@@ -130,6 +132,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const client = useQueryClient()
   const role = session.actor.roleCode, nurse = role === 'ward-nurse', doctor = role === 'inpatient-doctor', cashier = role === 'cashier'
+  const drgQuery = useInpatientDrgQuery({ admission, session, active: doctor })
   const careOpen = (doctor || nurse) && admission.recordStatus !== 'archived'
   const scope = inpatientScopeKey(session)
   const settled = admission.financialStatus === 'settled'
@@ -368,6 +371,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     statusVariant={statusVariant}
     amount={cashier ? <span className={amountKnown && ((remainingFen !== 0 && (remainingFen > 0 || fixedStay)) || settledRefundFen > 0) ? 'text-xl font-semibold leading-tight' : 'text-sm text-muted-foreground'}>{amountLabel}</span> : undefined}
     details={<><InpatientNumber locale={locale} number={admission.inpatientNumber} />{recordNumber ? <InpatientNumber locale={locale} number={recordNumber} label={t('病案号', 'Record')} /> : null}{admission.status === 'registered' ? <span>{t('登记 ', 'Registered ')}{formatShanghaiMinute(admission.registeredAt).slice(5)}</span> : null}{showDepositInHeader ? <span>{t('预交金 ', 'Deposits ')}{formatFen(admission.depositFen, locale)}</span> : null}{admission.status === 'registered' ? (admission.referralReason ? <span>{t('住院原因 ', 'Reason ')}{admission.referralReason}</span> : null) : <span>{role === 'medical-records' ? t('结算费用 ', 'Settled charges ') : fixedStay && admission.financialStatus === 'settled' ? t('已结清 ', 'Settled ') : t('累计费用 ', 'Charges ')}{formatFen(admission.chargesFen, locale)}</span>}{admission.departedAt ? <span>{t('出院 ', 'Discharged ')}{formatShanghaiMinute(admission.departedAt).slice(5)}{admission.departureMethod ? ` · ${inpatientDepartureLabel(admission.departureMethod, locale)}` : ''}</span> : null}{followControls}</>}>
+    <InpatientDrgHeader admission={admission} session={session} query={drgQuery} locale={locale} onOpenDrg={() => changeStage('drg')} />
     {balanceRead.error ? <p role="alert" className="text-sm">{t('资金读取失败：', 'Funding failed to load: ')}{getWorkspaceErrorMessage(balanceRead.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void balanceRead.refetch()}>{t('重试资金', 'Retry funding')}</Button></p> : null}
     {identity.error ? <p role="alert" className="text-sm">{t('患者基本信息读取失败：', 'Patient information failed to load: ')}{getWorkspaceErrorMessage(identity.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void identity.refetch()}>{t('重试患者信息', 'Retry patient information')}</Button></p> : null}
   </InpatientPatientHeader></section>
@@ -410,7 +414,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
       {tabs.map(stage => <TabsContent key={stage.value} value={stage.value} data-inpatient-stage={stage.value} keepMounted className="min-h-0 min-w-0 overflow-y-auto">{active === stage.value || visited.includes(stage.value as InpatientStage) ? <InpatientStageCard title={stage.label} turn={turn(stage.value as InpatientStage)} owners={<ol aria-label={t('办理顺序', 'Handling order')} className="flex flex-wrap items-center gap-x-1.5 text-xs">{ownersForStage(stage.value as InpatientStage).map((owner, index) => <li key={index} className="flex items-center gap-1.5">{index > 0 ? <span aria-hidden="true">›</span> : null}{roleLabel && owner.startsWith(roleLabel) ? <strong className="text-foreground">{owner}</strong> : owner}</li>)}</ol>}>
         {stage.value === 'admission' ? nurse && admission.recordStatus !== 'archived' ? <InpatientBedAssignment admission={admission} admissions={admissions} catalog={catalog} locale={locale} write={write} onOpenStage={changeStage} /> : <InpatientAdmissionReadonlySummary admission={admission} place={place} bedDailyPriceFen={bed?.dailyPriceFen} clinical={clinical.data} locale={locale} /> : null}
         {stage.value === 'orders' ? <InpatientClinical key={admission.id} admission={admission} session={session} locale={locale} write={write} active={active === stage.value} /> : null}
-        {stage.value === 'drg' ? <InpatientDrgPanel admission={admission} session={session} locale={locale} write={write} active={active === stage.value} followOn={followOn} onOpenRecord={changeStage} /> : null}
+        {stage.value === 'drg' ? <InpatientDrgPanel query={drgQuery} admission={admission} session={session} locale={locale} write={write} active={active === stage.value} followOn={followOn} onOpenRecord={changeStage} /> : null}
         {stage.value === 'investigations' ? <InpatientInvestigations active={active === stage.value} admission={admission} session={session} locale={locale} write={write} onOpenStage={changeStage} /> : null}
         {stage.value === 'surgery' ? <InpatientSurgery view={surgeryView} admission={admission} session={session} locale={locale} write={write} active={active === stage.value} onOpenStage={changeStage} onOpenUsage={(taskId, taskKind) => { setUsageTarget({ taskId, taskKind }); setUsageOpen(true) }} /> : null}
         {stage.value === 'transfer' ? <InpatientTransfers admission={admission} session={session} locale={locale} write={write} /> : null}

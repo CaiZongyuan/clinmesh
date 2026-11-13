@@ -68,6 +68,7 @@ function fixture(mode: 'receive' | 'draft' | 'clock' | 'usage' | 'follow-stop' =
     const url = new URL(path, 'http://localhost')
     requested.push(url)
     if (path === '/api/auth/context') return Response.json(session)
+    if (url.pathname.endsWith('/drg/simulation')) return Response.json({ error: { code: 'DRG_RULES_NOT_CONFIGURED', message: '合成场景未配置分组规则' } }, { status: 409 })
     if (init?.method === 'POST') {
       posts.push({ path, body: JSON.parse(String(init.body)) }); await held
       if (mode === 'follow-stop') return Response.json({ error: { code: 'VERSION_CONFLICT', message: '合成并发冲突，请重新核对' } }, { status: 409 })
