@@ -794,7 +794,7 @@ describe('HIS operation catalog', () => {
     expect(counts).toEqual({
       'clinmesh-administrator': 4,
       'clinmesh-billing': 18,
-      'clinmesh-doctor': 55,
+      'clinmesh-doctor': 57,
       'clinmesh-fhir': 5,
       'clinmesh-inpatient': 113,
       'clinmesh-pharmacy': 3,
@@ -838,4 +838,13 @@ describe('HIS operation catalog', () => {
     expect(getHisOperation('fhir.resource.search').handlerOwner).toBe('FhirRepository')
     expect(getHisOperation('patient.create').handlerOwner).toBe('WorkflowService')
   })
+})
+
+it('keeps case history scoped to authorized clinical sources', () => {
+  for (const id of ['doctor.case.history.search', 'doctor.case.history.read']) {
+    const operation = getHisOperation(id)
+    expect(operation.roles).toEqual(['outpatient-doctor'])
+    expect(operation.risk).toBe('read')
+    expect(operation.input.safeParse({ caseId: 'case-1', source: 'case-truth', entryId: 'private' }).success).toBe(false)
+  }
 })

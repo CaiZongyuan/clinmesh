@@ -16,6 +16,8 @@ clinmesh doctor queue list
 clinmesh doctor queue list --view waiting
 clinmesh doctor queue list --view active
 clinmesh doctor case get --case-id <case-id>
+clinmesh doctor case history search --case-id <case-id> --source local-completed --page 1 --page-size 10
+clinmesh doctor case history read --case-id <case-id> --source local-completed --entry-id <entry-id>
 clinmesh encounter consultation ask --input @question.json --idempotency-key <key>
 clinmesh encounter consultation retry-reply --input @reply-retry.json --idempotency-key <retry-intent-key>
 ```
@@ -37,6 +39,8 @@ clinmesh reference medications search --query 阿司匹林 --page 1 --page-size 
 clinmesh reference laboratory search --query 血红蛋白 --page 1 --page-size 20
 ```
 
+
+同患者出院后可从挂号入口建立独立门诊问诊。病例历史使用上面的 case-scoped 命令；先检索，再用返回的 entryId 读取详情。local-completed 包含当前医生经治的完诊门诊和当前患者的已出院住院摘要；record.kind 为 inpatient 时保留住院日期、正式诊断、已完成手术和报告，以及药物医嘱状态，不当作本次处方。visible-source 只返回物化可见病史，缺失表示未记录；完诊病例库仍只含门诊。
 
 ## Clinical conclusions
 
