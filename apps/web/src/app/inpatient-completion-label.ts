@@ -1,0 +1,113 @@
+import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import type { WorkspaceLocale } from './workspace-i18n.ts'
+
+type CompletedCommand = NonNullable<ReturnType<typeof useInpatientWriteIntent>['mutation']['data']>['command']
+
+/** 只说明本次 Command 已完成的动作；请求受理和资金提交不表示后续结果已成功。 */
+export function inpatientCompletionLabel(command: CompletedCommand, locale: WorkspaceLocale): string {
+  const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
+  switch (command.operation) {
+    case 'registration.synthetic-case.start': return t('已开始门诊就诊', 'Outpatient visit started')
+    case 'registration.synthetic-case.start-inpatient': return t('已开始住院就诊', 'Inpatient visit started')
+    case 'payment.multi-charge.preview': return t('已生成合并收款预览', 'Combined collection preview ready')
+    case 'payment.multi-charge.confirm': return t('已提交合并收款', 'Combined collection submitted')
+    case 'payment.multi-charge.recover': return t('已查询原合并收款结果', 'Original combined collection checked')
+    case 'inpatient.drg.record-checks.explain': return t('已申请分组核对解释', 'Grouping explanation requested')
+    case 'inpatient.guideline-advice.request': return t('已申请指南参考', 'Guideline advice requested')
+    case 'inpatient.drg.agent.confirm': return t('已确认耗材计划', 'Material plan confirmed')
+    case 'inpatient.material-estimate.request': return t('已申请耗材预计', 'Material estimate requested')
+    case 'inpatient.material-estimate.cancel': return t('已取消本次耗材预计', 'Material estimate cancelled')
+    case 'inpatient.material-estimate.save': return t('已保存耗材工作稿', 'Material draft saved')
+    case 'inpatient.material-estimate.confirm': return t('已确认手术耗材', 'Surgical materials confirmed')
+    case 'inpatient.drg.review.todo.act':
+      switch (command.input.action) {
+        case 'in-progress': return t('已标记需要跟进', 'Marked for follow-up')
+        case 'dismiss': return t('已确认核查处理说明', 'Review disposition confirmed')
+        case 'resolve': return t('已核实差异消除', 'Finding verified as resolved')
+        case 'recheck': return t('已复查核查差异', 'Review findings rechecked')
+      }
+      break
+    case 'inpatient.drg.review.handoff': return t('已交接术后核查', 'Postoperative review handed over')
+    case 'inpatient.pci-selection.confirm': return t('已确认选型参数', 'Selection parameters confirmed')
+    case 'inpatient.pci-selection.save': return t('已保存选型参数草稿', 'Selection draft saved')
+    case 'inpatient.drg.followup.start': return t('已开启助手自动跟进', 'Assistant follow-up enabled')
+    case 'inpatient.drg.followup.stop': return t('已停止助手自动跟进', 'Assistant follow-up stopped')
+    case 'inpatient.pci-data.prepare': return t('已准备 PCI 目录', 'PCI catalog prepared')
+    case 'admin.pci-case.prepare': return t('已准备合成 PCI 病例', 'Synthetic PCI case prepared')
+    case 'inpatient.drg.reservation.create': return t('已新增耗材预留', 'Material reservation created')
+    case 'inpatient.drg.reservation.release': return t('已释放未用预留', 'Unused reservation released')
+    case 'inpatient.drg.payer.review': return t('已提交 DRG 模拟核定', 'Simulated DRG assessment submitted')
+    case 'billing.charge.adjust': return t('已调整收费金额', 'Charge amount adjusted')
+    case 'refund.preview': return t('已生成退款预览', 'Refund preview ready')
+    case 'refund.allocation.preview': return t('已生成分项退款预览', 'Allocated refund preview ready')
+    case 'refund.confirm': return t('已提交退款', 'Refund submitted')
+    case 'refund.recover': return t('已查询原退款结果', 'Original refund checked')
+    case 'inpatient.financial.insurance.cancel': return t('已记录原医保待遇补偿', 'Original insurance compensation recorded')
+    case 'inpatient.financial.insurance.preview': return t('已生成更正医保待遇预览', 'Corrected insurance preview ready')
+    case 'inpatient.financial.insurance.confirm': return t('已确认更正医保待遇', 'Corrected insurance settlement confirmed')
+    case 'insurance.confirm': return t('已确认医保待遇结算', 'Insurance settlement confirmed')
+    case 'insurance.cancel': return t('已撤销医保待遇结算', 'Insurance settlement reversed')
+    case 'inpatient.financial.adjust': return command.input.direction === 'increase'
+      ? t('已追加费用', 'Additional charge recorded') : t('已冲减费用', 'Charge reduction recorded')
+    case 'inpatient.financial.refund.preview': return t('已生成后续退款预览', 'Later refund preview ready')
+    case 'inpatient.financial.refund.confirm': return t('已提交后续退款', 'Later refund submitted')
+    case 'inpatient.financial.refund.recover': return t('已查询原后续退款结果', 'Original later refund checked')
+    case 'inpatient.financial.payment.preview': return t('已生成后续收款预览', 'Later collection preview ready')
+    case 'inpatient.financial.payment.confirm': return t('已提交后续收款', 'Later collection submitted')
+    case 'inpatient.financial.payment.recover': return t('已查询原后续收款结果', 'Original later collection checked')
+    case 'inpatient.payment.preview': return command.input.kind === 'deposit'
+      ? t('已生成预交金收款预览', 'Deposit collection preview ready') : t('已生成出院补交预览', 'Discharge supplement preview ready')
+    case 'inpatient.payment.confirm': return t('已提交住院收款', 'Inpatient collection submitted')
+    case 'inpatient.payment.recover': return t('已查询原住院收款结果', 'Original inpatient collection checked')
+    case 'inpatient.refund.preview': return t('已生成住院退款预览', 'Inpatient refund preview ready')
+    case 'inpatient.refund.confirm': return t('已提交住院退款', 'Inpatient refund submitted')
+    case 'inpatient.refund.recover': return t('已查询原住院退款结果', 'Original inpatient refund checked')
+    case 'inpatient.record.submit': return t('已提交病案首页', 'Medical record submitted')
+    case 'inpatient.record.review': return command.input.outcome === 'approved'
+      ? t('编码审核通过', 'Coding review approved') : t('病案首页已退回', 'Medical record returned')
+    case 'inpatient.record.archive': return t('病案已归档', 'Medical record archived')
+    case 'inpatient.admission.register': return t('已办理住院登记', 'Admission registered')
+    case 'inpatient.admission.receive': return t('已完成接诊分床', 'Admission received and bed assigned')
+    case 'inpatient.admission.move-bed': return t('已完成转床', 'Bed moved')
+    case 'inpatient.admission.swap-bed': return t('已完成互换床位', 'Beds swapped')
+    case 'inpatient.referral.issue': return t('已开具住院证', 'Inpatient referral issued')
+    case 'inpatient.diagnosis.confirm': return t('已确认住院诊断', 'Inpatient diagnoses confirmed')
+    case 'inpatient.order.issue': return t('已开立医嘱', 'Order issued')
+    case 'inpatient.order.verify': return t('已校对医嘱', 'Order verified')
+    case 'inpatient.order.request-stop': return t('已申请停嘱', 'Order stop requested')
+    case 'inpatient.order.verify-stop': return t('已核停医嘱', 'Order stop verified')
+    case 'inpatient.execution.request-prn': return t('已申请本次按需执行', 'As-needed execution requested')
+    case 'inpatient.execution.dispense': return t('已完成发药', 'Medication dispensed')
+    case 'inpatient.execution.administer': return t('已登记给药', 'Medication administered')
+    case 'inpatient.execution.complete': return t('已完成服务执行', 'Service execution completed')
+    case 'inpatient.charge.reverse': return t('已冲正费用记录', 'Charge reversed')
+    case 'inpatient.discharge.issue': return t('已开出院医嘱', 'Discharge ordered')
+    case 'inpatient.discharge.depart': return t('已办理出院', 'Departure recorded')
+    case 'inpatient.discharge.recall': return t('已召回出院患者', 'Discharged patient recalled')
+    case 'inpatient.discharge.clear': return t('已完成清床', 'Bed cleared')
+    case 'inpatient.discharge.settle': return t('已完成出院结算', 'Discharge settled')
+    case 'inpatient.surgery.request': return t('已申请手术', 'Surgery requested')
+    case 'inpatient.surgery.check-preop': return t('已完成术前核对', 'Preoperative checks recorded')
+    case 'inpatient.surgery.confirm-consent': return t('已确认同意书签署', 'Signed surgical consent confirmed')
+    case 'inpatient.surgery.cancel': return t('已取消手术申请', 'Surgery request cancelled')
+    case 'inpatient.surgery.start': return t('手术已开始', 'Surgery started')
+    case 'inpatient.surgery.record-material': return t('已登记耗材用量', 'Material use recorded')
+    case 'inpatient.surgery.supplement-material': return t('已补登记术后耗材', 'Postoperative material use added')
+    case 'inpatient.surgery.correct-material': return command.input.replacement
+      ? t('已更正耗材登记', 'Material entry corrected') : t('已撤销耗材登记', 'Material entry voided')
+    case 'inpatient.surgery.complete': return t('手术已完成', 'Surgery completed')
+    case 'inpatient.surgery.execute': return t('已补录整台手术', 'Complete surgery record added')
+    case 'inpatient.investigation.issue': return t('已开立检查申请', 'Investigation requested')
+    case 'inpatient.investigation.send': return t('已送检', 'Investigation sent')
+    case 'inpatient.investigation.cancel': return t('已取消检查申请', 'Investigation request cancelled')
+    case 'inpatient.investigation.retry': return t('已申请重试检查', 'Investigation retry requested')
+    case 'inpatient.investigation.acknowledge': return t('已确认报告已阅', 'Report acknowledged')
+    case 'inpatient.transfer.request': return t('已申请转科', 'Ward transfer requested')
+    case 'inpatient.transfer.handover': return t('已完成转出交接', 'Transfer handover recorded')
+    case 'inpatient.transfer.receive': return t('已接收转科患者', 'Transferred patient received')
+    case 'inpatient.transfer.cancel': return t('已取消转科申请', 'Transfer request cancelled')
+    case 'scenario.advance-time': return t('已推进虚拟时间', 'Virtual time advanced')
+  }
+  const unhandled: never = command
+  return unhandled
+}
