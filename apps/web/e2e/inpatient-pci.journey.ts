@@ -52,8 +52,9 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
 
   await open('inpatient-doctor', admission.patientName)
   await stage('手术')
-  await surgeryPlan().getByRole('button', { name: '确认已签', exact: true }).click()
-  await surgeryPlan().getByLabel('签署说明', { exact: true }).fill('合成PCI知情同意已签署并完成支架植入')
+  const preparation = page.getByRole('region', { name: '术前准备', exact: true })
+  await preparation.getByRole('button', { name: '确认已签', exact: true }).click()
+  await preparation.getByLabel('签署说明', { exact: true }).fill('合成PCI知情同意已签署并完成支架植入')
   await page.getByRole('button', { name: "确认手术知情同意书已签", exact: true }).click()
   await expect(surgeryPlan()).toContainText('已就绪')
   await page.getByRole('button', { name: '整台补录', exact: true }).click()
