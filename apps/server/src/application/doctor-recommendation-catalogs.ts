@@ -1,11 +1,11 @@
 import type { ClinicalCatalog } from '@clinmesh/contracts/his'
 import type { ReferenceConcept, ReferenceConceptSnapshot } from '@clinmesh/contracts/reference-data'
 import type { DoctorInvestigationRecommendationCatalogs } from './doctor-investigation-recommendations.ts'
-import type { WorkflowService } from './workflow-service.ts'
+import type { DoctorRecommendationMedicationCatalogItem } from './outpatient-workflow-context.ts'
 
 export type DoctorRecommendationCatalogs = DoctorInvestigationRecommendationCatalogs & {
   diagnoses?: { local: ClinicalCatalog['diagnoses']; reference: ReferenceConcept[] }
-  medications?: ReturnType<WorkflowService['doctorRecommendationMedications']>
+  medications?: DoctorRecommendationMedicationCatalogItem[]
 }
 
 function projectCoding({ id, system, version, code, display }: ReferenceConceptSnapshot) {
