@@ -163,7 +163,7 @@ it('术中从耗材行一键登记计划用量，说明带出原计划依据', a
   function Harness() {
     const write = useInpatientWriteIntent(session, () => Promise.resolve())
     return <InpatientSurgeryMaterials admission={admission} session={session} locale="zh-CN" write={write} execution={empty} request={activeRequest}
-      catalog={{ procedures: [procedure], materials: [execution.materialHistory[0]!.item] }} reservations={[{ id: 'reservation-1', admissionId: admission.id, requestId: request.id,
+      catalog={{ procedures: [request.plannedProcedure], materials: [execution.materialHistory[0]!.item] }} reservations={[{ id: 'reservation-1', admissionId: admission.id, requestId: request.id,
         materialId: 'wire', materialDisplay: '导丝', unit: '根', specification: null, quantity: 1, catalogVersion: 1, consumedQuantity: 0, remainingQuantity: 1, version: 3,
         priceFen: 10000, status: 'reserved', reason: '原计划预留', createdAt: '2026-11-03T00:00:00Z' }]} dataReady running refresh={() => Promise.resolve()} />
   }
@@ -202,7 +202,7 @@ it.each([
   function Harness() {
     const write = useInpatientWriteIntent(session, () => Promise.resolve())
     return <InpatientSurgeryMaterials admission={admission} session={session} locale="zh-CN" write={write} execution={execution} request={{ ...request, status: 'ready' }}
-      catalog={{ procedures: [procedure], materials: [execution.materialHistory[0]!.item] }} reservations={[]} dataReady running refresh={() => Promise.resolve()} />
+      catalog={{ procedures: [request.plannedProcedure], materials: [execution.materialHistory[0]!.item] }} reservations={[]} dataReady running refresh={() => Promise.resolve()} />
   }
   render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
   await screen.findByText(message)

@@ -6,6 +6,7 @@ import { InpatientRecordDrgSummary } from './inpatient-record-drg.tsx'
 import { inpatientPaymentsSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
+import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientTransfersSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientStageSchema, type InpatientStage } from '@clinmesh/contracts/agent'
@@ -161,6 +162,8 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const activeSurgeryPlans = (surgery.data?.requests ?? []).filter(plan => ['requested', 'ready'].includes(plan.status)
     && !surgery.data?.inProgress.some(execution => execution.requestId === plan.id))
   const pciPlans = activeSurgeryPlans.filter(plan => pciSelectionProcedureCodes.includes(plan.plannedProcedure.coding.code))
+  const surgeryReservations = useQuery({ queryKey: [...scope, admission.id, 'drg-reservations'], enabled: false,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/reservations`, inpatientMaterialReservationListSchema, signal) })
   const surgeryView = useSurgeryView()
   const pciPreparation = useInpatientPciPreparation({ admission, session, plans: pciPlans, allPlans: activeSurgeryPlans, locale })
   const tabs = inpatientStageTabs(activity, allowTransfers, locale)
@@ -259,7 +262,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     const selectedPlan = activeRequests.find(request => request.id === surgeryView[0].selectedRequestId) ?? activeRequests[0]
     if (selectedPlan) {
       const estimate = pciPreparation.estimatesData?.estimates.find(item => item.requestId === selectedPlan.id)
-      const state = surgeryPreparation(selectedPlan, pciPreparation.selectionData, estimate, surgeryView[0])
+      const state = surgeryPreparation(selectedPlan, pciPreparation.selectionData, estimate, surgeryView[0], surgeryReservations.data?.reservations.some(item => item.requestId === selectedPlan.id && item.status === 'reserved') ?? false)
       const label = surgeryStepLabel(state.step, locale)
       return state.step === 'nurse' ? label : `${t('轮到你：', 'Your turn: ')}${label}`
     }

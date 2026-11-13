@@ -82,7 +82,7 @@ export class InpatientSurgeryRequestReason {
     provider?: JsonChatCompletionsProvider; model?: string; signal: AbortSignal }): Promise<OutboxHandlerResult> {
     const payload = z.object({ taskId: z.string(), analysisId: z.string() }).strict().parse(event.payload)
     const row = this.owner.drgAgent.analyses(event.workspaceId, event.epoch, payload.taskId).find(item => item.analysis_id === payload.analysisId)
-    if (!row || ['succeeded', 'unknown', 'stale'].includes(row.status)) return { status: 'completed' }
+    if (!row || ['succeeded', 'unknown', 'stale', 'failed'].includes(row.status)) return { status: 'completed' }
     const input = inputSchema.parse(JSON.parse(row.input_json))
     const update = (status: typeof row.status, code: string | null, result: string | null = null) => this.owner.database.driver.prepare(`UPDATE inpatient_drg_agent_analysis
       SET status=?,error_code=?,result_json=? WHERE workspace_id=? AND epoch=? AND analysis_id=?`)

@@ -174,3 +174,36 @@ it('术后处理说明按记录带出，一次确认逐项提交，第二项失�
   expect(screen.getByText('球囊')).toBeDefined()
   expect(screen.getByText('支架')).toBeDefined()
 })
+
+it('批量确认途中离开页面会停止后续提交，回来后仍可办理余项', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const posts: string[] = []
+  let current = inpatientDrgReviewSchema.parse({ ...review, todos: [todo, { ...todo, id: 'todo-next', key: 'extra-use:next', display: '下一项' }] })
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (init?.method === 'POST') {
+      const input = JSON.parse(String(init.body)).input; posts.push(input.todoId)
+      await gate
+      current = { ...current, todos: current.todos.filter(item => item.id !== input.todoId) }
+      return Response.json({ data: current, auditId: 'audit-leave', requestId: 'receipt-leave', effects: [], warnings: [] })
+    }
+    if (path.endsWith('/drg/review')) return Response.json(current)
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料未准备' } }, { status: 503 })
+  }))
+  function Harness({ active }: { active: boolean }) {
+    const write = useInpatientWriteIntent(session, () => undefined)
+    return <InpatientDrgReviewPanel admission={admission} session={session} locale="zh-CN" write={write} active={active} compact />
+  }
+  const view = (active: boolean) => <QueryClientProvider client={client}><Harness active={active} /></QueryClientProvider>
+  const rendered = render(view(true)), user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '一次全部确认' }))
+  await waitFor(() => expect(posts).toEqual(['todo-1']))
+  rendered.rerender(view(false))
+  await act(async () => { release() })
+  rendered.rerender(view(true))
+  await screen.findByText('下一项')
+  expect(await screen.findByRole<HTMLButtonElement>('button', { name: '一次全部确认' })).toHaveProperty('disabled', false)
+  expect(posts).toEqual(['todo-1'])
+})

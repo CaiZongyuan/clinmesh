@@ -95,7 +95,7 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
       if (mounted.current && currentOwner.current === ownerKey) await review.refetch()
     } catch (error) {
       if (mounted.current && currentOwner.current === ownerKey) { setActionError(error); await review.refetch() }
-    } finally { if (mounted.current && currentOwner.current === ownerKey) setBatching(false) }
+    } finally { if (mounted.current) setBatching(false) }
   }
   return <section aria-label={financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')} className="flex flex-col gap-3">
     <h4 className="font-medium">{financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')}</h4>
