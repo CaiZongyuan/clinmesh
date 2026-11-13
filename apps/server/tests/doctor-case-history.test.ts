@@ -191,6 +191,37 @@ describe('current doctor case authorized history', () => {
     }
   })
 
+  it('includes discharged inpatient summaries for the current patient while preserving the outpatient completed library', async () => {
+    const runtime = await setup()
+    createCase(runtime, 'current', 'patient-current')
+    createCase(runtime, 'older', 'patient-current', { completedAt: '2026-08-20T10:00:00+08:00' })
+    createCase(runtime, 'other-current', 'patient-other')
+    for (const [id, patientId, status, encounterStatus] of [
+      ['departed', 'patient-current', 'departed', 'discharged'],
+      ['cleared', 'patient-current', 'cleared', 'completed'],
+      ['still-admitted', 'patient-current', 'admitted', 'in-progress'],
+      ['other-patient', 'patient-other', 'departed', 'discharged'],
+    ] as const) {
+      runtime.fhir.create(doctor, { resourceType: 'Encounter', id: `inpatient-${id}`, status: encounterStatus,
+        subject: { reference: `Patient/${patientId}` },
+        actualPeriod: { start: recordedAt, ...(status === 'admitted' ? {} : { end: '2026-08-24T10:00:00+08:00' }) } })
+      runtime.database.driver.prepare(`INSERT INTO inpatient_admission
+        (workspace_id,epoch,admission_id,patient_id,inpatient_number,admission_route,ward_id,organization_id,status,registered_at,admitted_at)
+        VALUES(?,?,?,?,?,'direct','ward-general','organization-inpatient-medicine',?,?,?)`)
+        .run(doctor.workspaceId, doctor.epoch, `inpatient-${id}`, patientId, `SYN-${id}`, status, recordedAt, recordedAt)
+    }
+    const history = runtime.workflow.doctorCaseHistory(doctor, 'current', { page: 1, pageSize: 20, source: 'local-completed' })
+    expect(history.items.map(item => item.entryId)).toEqual(['inpatient:inpatient-cleared', 'inpatient:inpatient-departed', 'older'])
+    const detail = runtime.workflow.doctorCaseHistoryDetail(doctor, 'current', { entryId: 'inpatient:inpatient-departed', source: 'local-completed' })
+    expect(detail).toMatchObject({ source: 'local-completed', title: '本院住院诊疗摘要', clinicalDate: '2026-08-24T10:00:00+08:00',
+      record: { kind: 'inpatient', admissionId: 'inpatient-departed', admittedAt: recordedAt, dischargedAt: '2026-08-24T10:00:00+08:00', diagnoses: [], procedures: [], medications: [], reports: [] } })
+    expect(runtime.workflow.doctorCompletedCases(doctor, { patientId: 'patient-current', page: 1, pageSize: 20 }).total).toBe(1)
+    for (const entryId of ['inpatient:inpatient-still-admitted', 'inpatient:inpatient-other-patient']) {
+      expect(() => runtime.workflow.doctorCaseHistoryDetail(doctor, 'current', { entryId, source: 'local-completed' })).toThrow('authorized history')
+    }
+    expect(runtime.workflow.doctorRecommendationHistory(doctor, 'current')).toContainEqual(detail)
+  })
+
   it('reads paged visible materialized history without exposing raw resources or hidden truth', async () => {
     const runtime = await setup()
     createCase(runtime, 'current', 'patient-current')

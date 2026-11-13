@@ -6,6 +6,8 @@ import {
   type DoctorCaseHistoryInput,
 } from '@clinmesh/contracts/agent'
 import type { FhirResource } from '@clinmesh/contracts/fhir'
+import { inpatientHistoryDetail, inpatientHistoryItems, isInpatientHistoryEntry } from './doctor-inpatient-history.ts'
+import { outpatientCaseSource, uniquePatientCaseSource } from './outpatient-case-source.ts'
 import {
   billingCaseSchema,
   commandResponseSchema,
@@ -1341,7 +1343,7 @@ export class WorkflowService
     const patient = this.applyMaterializeSyntheticPatient(input)
     const now = this.#context.virtualTime(input.context)
     const registered = this.#registerPatient(input.transaction, input.context, {
-      createConsultation: true,
+      materializingSyntheticCase: true,
       departmentId: input.departmentId,
       locationId: input.locationId,
       patientId: patient.id,
@@ -1395,7 +1397,7 @@ export class WorkflowService
     transaction: CommandTransaction,
     context: ActorContext,
     registration: {
-      createConsultation?: boolean
+      materializingSyntheticCase?: boolean
       departmentId: string
       locationId: string
       patientId: string
@@ -1416,6 +1418,8 @@ export class WorkflowService
     if (this.#context.activeCaseByPatient(context, patient.id) !== undefined) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The patient already has an active outpatient case')
     }
+    const source = registration.materializingSyntheticCase === true
+      ? undefined : uniquePatientCaseSource(this.#database, context, patient.id)
     const caseId = uuidv7()
     const registrationId = uuidv7()
     const encounterId = uuidv7()
@@ -1494,7 +1498,9 @@ export class WorkflowService
     )
     this.#database.driver.prepare(`INSERT INTO clinical_request_context(workspace_id,epoch,case_id,outpatient_case_id,patient_id,encounter_id)
       VALUES(?,?,?,?,?,?)`).run(context.workspaceId,context.epoch,caseId,caseId,patient.id,encounterId)
-    if (registration.createConsultation === true) this.#createConsultation(context, caseId)
+    if (source !== undefined) this.#database.driver.prepare(`INSERT INTO outpatient_case_source
+      (workspace_id,epoch,outpatient_case_id,source_case_id) VALUES(?,?,?,?)`).run(context.workspaceId,context.epoch,caseId,source.case_id)
+    if (registration.materializingSyntheticCase === true || source !== undefined) this.#createConsultation(context, caseId)
     this.#database.driver.prepare(`
       INSERT INTO registration (
         workspace_id, epoch, registration_id, case_id, registration_number,
@@ -2025,18 +2031,29 @@ export class WorkflowService
     if (input.source === 'visible-source') {
       return doctorVisibleHistory(this.#database, context, currentCaseId, patientId, input)
     }
-    const history = this.doctorCompletedCases(context, { ...input, patientId })
+    const outpatient = z.array(z.object({ case_id: z.string(), completed_at: z.string() })).parse(this.#database.driver.prepare(`
+      SELECT history.case_id, json_extract(encounter.content_json,'$.actualPeriod.end') AS completed_at
+      FROM outpatient_case history JOIN outpatient_case_responsibility responsibility
+        ON responsibility.workspace_id=history.workspace_id AND responsibility.epoch=history.epoch
+        AND responsibility.case_id=history.case_id AND responsibility.practitioner_role_id=?
+      JOIN fhir_resource encounter ON encounter.workspace_id=history.workspace_id AND encounter.epoch=history.epoch
+        AND encounter.resource_type='Encounter' AND encounter.resource_id=history.encounter_id AND encounter.deleted=0
+      WHERE history.workspace_id=? AND history.epoch=? AND history.patient_id=?
+        AND json_extract(encounter.content_json,'$.status')='completed'
+        AND json_extract(encounter.content_json,'$.actualPeriod.end') IS NOT NULL
+    `).all(context.practitionerRoleId, context.workspaceId, context.epoch, patientId))
+    const items = [...outpatient.map(item => ({
+      clinicalDate: item.completed_at, entryId: item.case_id, resourceType: 'Encounter', source: input.source,
+      title: '本院完诊记录',
+    })), ...inpatientHistoryItems(this.#database, context, patientId)]
+      .sort((left, right) => Date.parse(right.clinicalDate) - Date.parse(left.clinicalDate) || left.entryId.localeCompare(right.entryId))
     return doctorCaseHistorySchema.parse({
-      ...history,
-      availability: history.total === 0 ? 'no-data' : 'available',
+      page: input.page, pageSize: input.pageSize, total: items.length,
+      availability: items.length === 0 ? 'no-data' : 'available',
       coverage: 'current-patient-responsible-doctor',
-      items: history.items.map(item => ({
-        clinicalDate: item.completedAt,
-        entryId: item.caseId,
-        resourceType: 'Encounter',
-        source: input.source,
-        title: item.primaryDiagnosis?.display ?? '本院完诊记录',
-      })),
+      items: items.slice((input.page - 1) * input.pageSize, input.page * input.pageSize).map(item => item.resourceType === 'Encounter'
+        ? { ...item, title: this.#completedCaseDiagnosis(context, item.entryId)?.entries.find(entry => entry.role === 'primary')?.display ?? item.title }
+        : item),
       source: input.source,
     })
   }
@@ -2046,6 +2063,9 @@ export class WorkflowService
     if (input.source === 'visible-source') {
       return doctorVisibleHistoryDetail(this.#database, context, currentCaseId, patientId, input.entryId)
     }
+    if (isInpatientHistoryEntry(input.entryId)) return doctorCompletedHistoryDetailSchema.parse(
+      inpatientHistoryDetail(this.#database, context, patientId, input.entryId),
+    )
     if (!doctorHistoryEntryAllowed(this.#database, context, currentCaseId, input)) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The authorized history entry was not found')
     }
@@ -2060,9 +2080,9 @@ export class WorkflowService
     const patientId = this.#doctorHistoryPatient(context, currentCaseId)
     const history: DoctorCaseHistoryDetail[] = doctorVisibleHistoryDetails(this.#database, context, currentCaseId, patientId)
     for (let page = 1; ; page += 1) {
-      const completed = this.doctorCompletedCases(context, { patientId, page, pageSize: 20 })
+      const completed = this.doctorCaseHistory(context, currentCaseId, { source: 'local-completed', page, pageSize: 20 })
       for (const item of completed.items) history.push(this.doctorCaseHistoryDetail(context, currentCaseId, {
-        source: 'local-completed', entryId: item.caseId,
+        source: 'local-completed', entryId: item.entryId,
       }))
       if (page * completed.pageSize >= completed.total) break
     }
@@ -4204,6 +4224,8 @@ export class WorkflowService
     syntheticCaseId: string
   } | undefined {
     this.#context.assertRole(context, ['outpatient-doctor'])
+    const source = outpatientCaseSource(this.#database, context, caseId)
+    if (source === undefined) return undefined
     const row = z.object({
       content_json: z.string(),
       revision: z.number().int().positive(),
@@ -4215,8 +4237,8 @@ export class WorkflowService
         ON brief.workspace_id = materialization.workspace_id
        AND brief.case_id = materialization.case_id
        AND brief.revision = materialization.brief_revision
-      WHERE materialization.workspace_id = ? AND materialization.outpatient_case_id = ?
-    `).get(context.workspaceId, caseId))
+      WHERE materialization.workspace_id = ? AND materialization.epoch = ? AND materialization.case_id = ?
+    `).get(context.workspaceId, context.epoch, source.case_id))
     if (row === undefined) return undefined
     return {
       content: patientPersonaRevisionContentSchema.parse(JSON.parse(row.content_json) as unknown),

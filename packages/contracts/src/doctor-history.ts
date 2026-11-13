@@ -30,9 +30,22 @@ export const doctorCaseHistorySchema = z.object({
   total: z.number().int().nonnegative(),
 }).strict()
 
+export const doctorInpatientHistoryRecordSchema = z.object({
+  kind: z.literal('inpatient'),
+  admissionId: z.string().min(1),
+  admittedAt: z.iso.datetime({ offset: true }),
+  dischargedAt: z.iso.datetime({ offset: true }),
+  diagnoses: z.array(z.object({ code: z.string(), display: z.string(), role: z.enum(['primary', 'secondary']), note: z.string().optional() }).strict()),
+  procedures: z.array(z.object({ code: z.string(), display: z.string(), performedAt: z.iso.datetime({ offset: true }), conclusion: z.string().optional() }).strict()),
+  medications: z.array(z.object({ display: z.string(), doseText: z.string(), frequencyCode: z.string(), state: z.string() }).strict()),
+  reports: z.array(z.object({ title: z.string(), issuedAt: z.string().optional(), conclusion: z.string(), findings: z.array(z.string()) }).strict()),
+}).strict()
+
 export const doctorCompletedHistoryDetailSchema = z.object({
   entryId: z.string().min(1).max(512),
-  record: doctorCompletedCaseDetailSchema,
+  clinicalDate: z.iso.datetime({ offset: true }).optional(),
+  title: z.string().min(1).max(500).optional(),
+  record: z.union([doctorCompletedCaseDetailSchema, doctorInpatientHistoryRecordSchema]),
   source: z.literal('local-completed'),
 }).strict()
 

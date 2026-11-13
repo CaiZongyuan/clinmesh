@@ -64,6 +64,7 @@ import {
 import { PathologyPage, type PathologyPageActions } from './pathology-page.tsx'
 import { OutpatientReportReader } from './outpatient-report-reader.tsx'
 import { PatientBanner } from './patient-summary.tsx'
+import { DoctorHistoryPanel } from './doctor-history-panel.tsx'
 import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
 import { DoctorCaseLayout, DoctorCasePanel } from './responsive-layout.tsx'
 
@@ -489,6 +490,8 @@ export function CaseDetail({
           assistant={<DoctorAssistantSummary key={detail.caseId} completion={completion} detail={detail} clinicalDocument={workingClinicalDocument}
             locale={locale} messages={messages} scope={recommendationScope} onNavigateToCompletionTarget={navigateToCompletionTarget} />}
         />
+
+        <DoctorHistoryPanel key={detail.caseId} caseId={detail.caseId} scope={recommendationScope} locale={locale} />
 
         {overviewWorkflow === null ? null : (
           <div className="shrink-0 border-b p-4">{overviewWorkflow}</div>

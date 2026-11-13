@@ -2166,6 +2166,21 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.get('/api/his/v1/doctor/cases/:caseId/history', async context => {
+      try {
+        const input = doctorCaseHistoryInputSchema.extend({
+          page: z.coerce.number().int().positive().default(1),
+          pageSize: z.coerce.number().int().positive().max(20).default(10),
+        }).parse(context.req.query())
+        return context.json(workflow.doctorCaseHistory(await actor(context), context.req.param('caseId'), input))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/doctor/cases/:caseId/history/detail', async context => {
+      try {
+        return context.json(workflow.doctorCaseHistoryDetail(await actor(context), context.req.param('caseId'),
+          doctorCaseHistoryDetailInputSchema.parse(context.req.query())))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.get('/api/his/v1/doctor/completed-cases', async (context) => {
       try {
         const query = z.object({

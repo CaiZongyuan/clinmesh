@@ -6,6 +6,12 @@
 
 ## SQLite、迁移与持久回执
 
+- 推荐证据的字节预算回归要准备真实规模的集合：两周住院的多份复查报告会使整个 `reports` 数组超限，即使每份报告都很短。保留完整成员、来源标识和顺序后分包，并核对全部临床事实可重建、每包字节数及总输入预算；只验证空摘要或单份报告无法捕获整次历史被丢弃的问题。当前边界见[推荐证据打包](../architecture/clinical-workflows.md#门诊闭环)，回归见 `apps/server/tests/doctor-recommendation-evidence.test.ts`。
+
+- 投影住院手术历史时，`inpatient_surgery_execution.actual_procedure_json` 是本院目录快照，其 `coding` 是单个 Coding；FHIR `CodeableConcept.coding` 才是数组。用 owning `inpatientProcedureItemSchema` 校验持久快照后挑选临床字段，避免仅用空住院 fixture 通过而真实 PCI 摘要报 `INVALID_INPUT`；端到端回归见 `apps/server/tests/outpatient-post-discharge-http.test.ts`。
+
+- 造影领域报告的 `conclusion` 只保存来源中的独立总结，可能为空；正式 FHIR `DiagnosticReport.conclusion` 还会汇总 QCA 与血管所见。跨业务摘要沿关联的 `report_id` 读取正式报告结论，并核对同患者、Encounter、Workspace/Epoch 与可用签发状态，不能仅取内部可空字段，也不能在摘要里重新组装造影报告。上述院后复诊 HTTP 回归按公开 FHIR 原结论逐字核对。
+
 - 开发启动返回 `PAYMENT_CUTOVER_REQUIRED` 时，先按 Server 环境解析规则定位实际业务库，用只读连接核对旧资金表和 `0103_payment-collection-cutover.sql` 的应用状态；这是共享收款切换守卫，重跑普通迁移不能消除旧资金。处理按[显式开发切换步骤](../deployment.md#共享收款的一次性开发切换)，先确认可舍弃旧就诊运行链，不删除整库或绕过守卫；保留范围由[存储合同](../architecture/storage.md#共享收款的一次性开发切换)拥有。
 
 - 重建运行世代但保留来源、配置等跨 Epoch owner 时，同时保留其按 Workspace 绑定的幂等回执与 effects；只保留资产行会让同 body／key 在新世代重新派发，可能再次安装场景或覆盖原来源。回归通过原 owner 入口重放，核对世代、身份与内容均未新增或改写；保留边界归[开发切换合同](../architecture/storage.md#共享收款的一次性开发切换)。

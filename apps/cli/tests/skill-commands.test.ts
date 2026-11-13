@@ -1102,3 +1102,16 @@ it('门诊处方操作、错误reason与clinmesh-doctor单源外延处方说明�
     expect(workflowsRef).toContain(reason)
   }
 })
+
+it('院后复诊历史命令与当前病例授权合同保持一致', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+  for (const [path, id] of [
+    ['doctor case history search', 'doctor.case.history.search'],
+    ['doctor case history read', 'doctor.case.history.read'],
+  ]) {
+    const line = commandLines(skill).find(line => line.startsWith('clinmesh ' + path + ' '))
+    expect(line, path).toBeDefined()
+    expect(inspectExample(program, line!).operation?.id).toBe(id)
+  }
+})
