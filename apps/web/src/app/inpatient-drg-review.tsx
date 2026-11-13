@@ -17,7 +17,7 @@ import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpa
 import { postoperativeDispositionNote } from './inpatient-surgery-notes.ts'
 import { apiGet } from './api-client.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
-import { formatFen } from './workspace-format.ts'
+import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { InpatientMaterialPlanBasisDetails } from './inpatient-material-plan.tsx'
@@ -159,9 +159,12 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
         const badge = compactClinical && !confirmed && difference !== null && difference !== 0 ? difference > 0 ? t(`多用 ${difference}`, `${difference} extra`) : t(`未用 ${-difference}`, `${-difference} unused`)
           : compactClinical && confirmed ? t('已确认', 'Confirmed') : statusName(todo.status)
         const note = noteFor(todo)
+        const entries = compactClinical && todo.materialId ? surgeries.data?.executions.find(execution => execution.id === todo.executionId)?.materialHistory.filter(use => use.item.id === todo.materialId) ?? [] : []
         const recheck = actionable ? <Button type="button" variant="outline" size="sm" disabled={batching || write.blocked || !note.trim() || data.status === 'frozen'} onClick={() => { setSourceId(null); void act(todo.id, 'recheck') }}>{t('复查最新业务记录', 'Recheck business facts')}</Button> : null
         const source = compact ? <Dialog open={sourceId === todo.id} onOpenChange={open => setSourceId(open ? todo.id : null)}><DialogTrigger render={<Button type="button" variant="link" size="sm" />}>{compactClinical ? t('看术中登记', 'View intraoperative entries') : t('查看来源与原记录', 'View sources and original records')}</DialogTrigger>
-          <DialogContent className="sm:max-w-[720px]"><DialogHeader><DialogTitle>{todo.display}</DialogTitle><DialogDescription>{t('核查来源与恢复入口', 'Review sources and recovery actions')}</DialogDescription></DialogHeader><div className="min-h-0 overflow-y-auto p-4"><InpatientDrgIssueDetails issue={todo} locale={locale} financial={financial} onOpenRecord={onOpenRecord ? target => { setSourceId(null); onOpenRecord(target) } : undefined} /></div><DialogFooter>{recheck}<DialogClose render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></DialogFooter></DialogContent>
+          <DialogContent className="sm:max-w-[720px]"><DialogHeader><DialogTitle>{todo.display}</DialogTitle><DialogDescription>{t('核查来源与恢复入口', 'Review sources and recovery actions')}</DialogDescription></DialogHeader><div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-4"><InpatientDrgIssueDetails issue={todo} locale={locale} financial={financial} onOpenRecord={onOpenRecord ? target => { setSourceId(null); onOpenRecord(target) } : undefined} />
+            {entries.length > 0 ? <section aria-label={t('本项术中登记', 'Intraoperative entries for this material')}><h5 className="mb-2 font-medium">{t('术中登记', 'Intraoperative entries')}</h5><ul className="flex flex-col divide-y">{entries.map(use => <li key={use.id} className="flex flex-col gap-1 py-2 text-sm"><p className="flex flex-wrap gap-x-3"><time dateTime={use.recordedAt}>{formatShanghaiMinute(use.recordedAt).slice(5)}</time><span>{use.quantity} {use.item.chargeDefinition.unit}</span><span className="text-muted-foreground">v{use.item.version}</span></p><p className="whitespace-pre-wrap break-words">{use.note}</p>{use.correction ? <p className="text-muted-foreground">{t('已更正：', 'Corrected: ')}{use.correction.note}</p> : null}</li>)}</ul></section> : null}
+          </div><DialogFooter>{recheck}<DialogClose render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></DialogFooter></DialogContent>
         </Dialog> : null
         return <article key={todo.id} role={compactClinical ? 'listitem' : undefined} className={compactClinical ? 'flex min-w-0 flex-col gap-2 border-t px-3.5 py-3' : 'flex flex-col gap-2 rounded-md border p-3'}>
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -171,7 +174,7 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
             {compactClinical && todo.status === 'in-progress' ? <span className="text-xs text-warning">{t('需要跟进', 'Follow-up needed')}</span> : null}
             {compactClinical ? <><span className="flex-1" />{source}</> : null}
           </div>
-          {!compactClinical ? <>{todo.explanation}{source ?? <InpatientDrgIssueDetails issue={todo} locale={locale} financial={financial} onOpenRecord={onOpenRecord} />}</> : null}
+          {!compactClinical ? <><p>{todo.explanation}</p>{source ?? <InpatientDrgIssueDetails issue={todo} locale={locale} financial={financial} onOpenRecord={onOpenRecord} />}</> : null}
           {compactClinical ? <div className="flex min-w-0 items-start gap-2 text-sm"><p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-muted-foreground">{confirmed ? todo.reason ?? todo.explanation : note || todo.explanation}</p>
             {actionable ? <Button type="button" size="sm" variant="ghost" className="h-auto shrink-0 px-1 py-0.5" aria-label={`${t('修改处理说明', 'Edit disposition note')} ${todo.display}`} aria-expanded={editingTodo === todo.id} onClick={() => setEditingTodo(editingTodo === todo.id ? null : todo.id)}>{t('修改说明', 'Edit note')}</Button> : null}
           </div> : todo.reason ? <p>{t('处置依据：', 'Disposition reason: ')}{todo.reason}</p> : null}
