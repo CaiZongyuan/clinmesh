@@ -14,7 +14,7 @@ export const investigationDraftRowSchema = z.object({
   indicationCode: z.string().max(64), indication: z.string().max(500), selected: z.boolean(),
   attempt: investigationAttemptSchema.optional(), error: z.union([z.string(), issueDraftFailureSchema]).optional(),
 }).strict().refine(row => row.attempt === undefined || (row.attempt.input.catalogVersion === row.item.version && row.attempt.input.selection.kind === row.item.kind
-  && (row.attempt.input.selection.kind === 'imaging' ? row.attempt.input.selection.serviceId : row.attempt.input.selection.catalogItemId) === row.item.id))
+  && (row.attempt.input.selection.kind !== 'laboratory' ? row.attempt.input.selection.serviceId : row.attempt.input.selection.catalogItemId) === row.item.id))
 export const investigationDraftSchema = z.object({
   rows: z.array(investigationDraftRowSchema).max(investigationBatchLimit),
   successes: z.array(z.object({ id: z.uuid(), display: z.string() }).strict()).max(investigationBatchLimit),

@@ -1,11 +1,11 @@
-import { laboratoryRequestStatusSchema, sessionContextSchema, type ImagingRequest, type LaboratoryRequest, type PathologyRequest, type SessionContext } from '@clinmesh/contracts/his'
+import { laboratoryRequestStatusSchema, sessionContextSchema, type ExaminationRequest, type ImagingRequest, type LaboratoryRequest, type PathologyRequest, type SessionContext } from '@clinmesh/contracts/his'
 import { getHisOperation } from '@clinmesh/contracts/his-operations'
 import { z } from 'zod'
 import { createDraftDiscard } from '../draft-discard.ts'
 
-export type InvestigationKind = 'laboratory' | 'imaging' | 'pathology'
+export type InvestigationKind = 'laboratory' | 'imaging' | 'pathology' | 'examination'
 export type InvestigationAction = 'cancel' | 'retry'
-export type InvestigationRequest = ImagingRequest | LaboratoryRequest | PathologyRequest
+export type InvestigationRequest = ExaminationRequest | ImagingRequest | LaboratoryRequest | PathologyRequest
 export interface OutpatientInvestigationActionContext {
   session: SessionContext
   caseId: string
@@ -16,13 +16,13 @@ export interface OutpatientInvestigationActionContext {
 }
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(),
   caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1),
-  kind: z.enum(['laboratory', 'imaging', 'pathology']), action: z.enum(['cancel', 'retry']) }).strict()
+  kind: z.enum(['laboratory', 'imaging', 'pathology', 'examination']), action: z.enum(['cancel', 'retry']) }).strict()
 const snapshotSchema = z.object({ id: z.string().min(1), title: z.string().min(1), status: laboratoryRequestStatusSchema,
   version: z.number().int().positive(), serviceRequestId: z.string().min(1), serviceRequestVersion: z.string().min(1),
   taskId: z.string().min(1), taskVersion: z.string().min(1), financial: z.string() }).strict()
 const rowSchema = z.object({ revision: z.uuid(), snapshot: snapshotSchema, selected: z.boolean() }).strict()
 const commandSchema = z.object({ operation: z.enum(['laboratory-request.cancel', 'laboratory-request.retry-generation',
-  'imaging-request.cancel', 'imaging-request.retry', 'pathology-request.cancel', 'pathology-request.retry']),
+  'examination-request.cancel', 'examination-request.retry', 'imaging-request.cancel', 'imaging-request.retry', 'pathology-request.cancel', 'pathology-request.retry']),
   input: z.object({ requestId: z.string().min(1), expectedRequestVersion: z.number().int().positive(), taskId: z.string().min(1), taskVersion: z.string().min(1),
     serviceRequestId: z.string().min(1).optional(), serviceRequestVersion: z.string().min(1).optional(), reasonCode: z.literal('no-longer-needed').optional() }).strict(),
   body: z.object({ expectedVersions: z.record(z.string(), z.string()), input: z.object({ expectedRequestVersion: z.number().int().positive(), reasonCode: z.literal('no-longer-needed').optional() }).strict() }).strict(),

@@ -41,6 +41,17 @@ import {
   supportedFhirResourceTypeSchema,
 } from './fhir.ts'
 import {
+  acknowledgeExaminationReportRequestSchema,
+  acknowledgeExaminationReportResponseSchema,
+  cancelExaminationRequestRequestSchema,
+  deleteExaminationRequestDraftRequestSchema,
+  issueExaminationRequestRequestSchema,
+  retryExaminationRequestRequestSchema,
+  saveExaminationRequestDraftRequestSchema,
+  caseExaminationServiceCatalogSchema,
+  examinationRequestActionResponseSchema,
+  examinationRequestDraftResponseSchema,
+  issueExaminationRequestResponseSchema,
   acknowledgeImagingReportRequestSchema,
   acknowledgeImagingReportResponseSchema,
   acknowledgePathologyReportRequestSchema,
@@ -548,6 +559,32 @@ const acknowledgeImagingReportOperationInputSchema = acknowledgeImagingReportReq
 const correctImagingReportOperationInputSchema = correctImagingReportRequestSchema.shape.input
   .extend(imagingReportVersionInputShape).strict()
 
+const saveExaminationRequestDraftOperationInputSchema = saveExaminationRequestDraftRequestSchema.shape.input
+  .extend(encounterVersionInputShape).strict()
+
+const deleteExaminationRequestDraftOperationInputSchema = deleteExaminationRequestDraftRequestSchema.shape.input
+  .extend(encounterVersionInputShape).strict()
+
+const issueExaminationRequestOperationInputSchema = issueExaminationRequestRequestSchema.shape.input
+  .extend(encounterVersionInputShape).strict()
+
+const cancelExaminationRequestOperationInputSchema = cancelExaminationRequestRequestSchema.shape.input.extend({
+  requestId: z.string().min(1),
+  serviceRequestId: z.string().min(1),
+  serviceRequestVersion: z.string().regex(/^\d+$/),
+  taskId: z.string().min(1),
+  taskVersion: z.string().regex(/^\d+$/),
+}).strict()
+
+const retryExaminationRequestOperationInputSchema = retryExaminationRequestRequestSchema.shape.input.extend({
+  requestId: z.string().min(1),
+  taskId: z.string().min(1),
+  taskVersion: z.string().regex(/^\d+$/),
+}).strict()
+
+const acknowledgeExaminationReportOperationInputSchema = acknowledgeExaminationReportRequestSchema.shape.input
+  .extend(imagingReportVersionInputShape).strict()
+
 const savePathologyRequestDraftOperationInputSchema = savePathologyRequestDraftRequestSchema.shape.input
   .extend(encounterVersionInputShape).strict()
 
@@ -589,7 +626,7 @@ const completeHospitalServiceOperationInputSchema = z.object({
 }).strict()
 
 const billingQueueInputSchema = paginationInputSchema.extend({
-  category: z.enum(['laboratory', 'imaging', 'pathology', 'medication']),
+  category: z.enum(['laboratory', 'imaging', 'pathology', 'examination', 'medication']),
   status: z.enum(['ambiguous', 'declined', 'paid', 'pending']),
 }).strict()
 
@@ -603,7 +640,7 @@ const refundRecoverOperationInputSchema = refundRecoverInputSchema.extend({ refu
 
 const paymentPreviewOperationInputSchema = z.object({
   caseId: z.string().min(1),
-  category: z.enum(['laboratory', 'imaging', 'pathology', 'medication']),
+  category: z.enum(['laboratory', 'imaging', 'pathology', 'examination', 'medication']),
   chargeItemId: z.string().min(1),
   chargeVersion: z.number().int().positive(),
   simulatorRule: paymentSimulatorRuleSchema,
@@ -952,6 +989,42 @@ const bodyEncoders = {
   'imaging-report.correct': (rawInput: unknown) => {
     const { diagnosticReportId, diagnosticReportVersion, requestId: _requestId, ...input }
       = correctImagingReportOperationInputSchema.parse(rawInput)
+    return commandBody({ [`DiagnosticReport/${diagnosticReportId}`]: diagnosticReportVersion }, input)
+  },
+  'encounter.examination-request.draft.set': (rawInput: unknown) => {
+    const { encounterId, encounterVersion, ...input } = saveExaminationRequestDraftOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  'encounter.examination-request.draft.delete': (rawInput: unknown) => {
+    const { encounterId, encounterVersion, ...input } = deleteExaminationRequestDraftOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  'encounter.examination-request.issue': (rawInput: unknown) => {
+    const { encounterId, encounterVersion, ...input } = issueExaminationRequestOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  'examination-request.cancel': (rawInput: unknown) => {
+    const {
+      requestId: _requestId,
+      serviceRequestId,
+      serviceRequestVersion,
+      taskId,
+      taskVersion,
+      ...input
+    } = cancelExaminationRequestOperationInputSchema.parse(rawInput)
+    return commandBody({
+      [`ServiceRequest/${serviceRequestId}`]: serviceRequestVersion,
+      [`Task/${taskId}`]: taskVersion,
+    }, input)
+  },
+  'examination-request.retry': (rawInput: unknown) => {
+    const { requestId: _requestId, taskId, taskVersion, ...input }
+      = retryExaminationRequestOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Task/${taskId}`]: taskVersion }, input)
+  },
+  'examination-report.acknowledge': (rawInput: unknown) => {
+    const { diagnosticReportId, diagnosticReportVersion, requestId: _requestId, ...input }
+      = acknowledgeExaminationReportOperationInputSchema.parse(rawInput)
     return commandBody({ [`DiagnosticReport/${diagnosticReportId}`]: diagnosticReportVersion }, input)
   },
   'encounter.pathology-request.draft.set': (rawInput: unknown) => {
@@ -2017,6 +2090,139 @@ const operationDefinitions = [
     version: 1,
   },
   {
+    cliPath: ['doctor', 'case', 'examination-services', 'list'],
+    http: {
+      method: 'GET',
+      path: '/api/his/v1/doctor/cases/:caseId/examination-services',
+    },
+    id: 'doctor.case.examination-services.list',
+    input: caseIdInputSchema,
+    mode: 'query',
+    output: caseExaminationServiceCatalogSchema,
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'none',
+    },
+    risk: 'read',
+    roles: ['outpatient-doctor'],
+    summary: '列出本院已开展的 ECG 与 TTE 服务；报告为文字与结构化结果，无像素或素材依赖',
+    version: 1,
+  },
+  {
+    cliPath: ['encounter', 'examination-request', 'draft', 'set'],
+    http: {
+      method: 'PUT',
+      path: '/api/his/v1/encounters/:encounterId/examination-request/draft',
+    },
+    id: 'encounter.examination-request.draft.set',
+    input: saveExaminationRequestDraftOperationInputSchema,
+    mode: 'draft',
+    output: examinationRequestDraftResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['outpatient-doctor'],
+    summary: '保存版本受保护的功能检查申请草稿（服务与检查指征）',
+    version: 1,
+  },
+  {
+    cliPath: ['encounter', 'examination-request', 'draft', 'delete'],
+    http: {
+      method: 'DELETE',
+      path: '/api/his/v1/encounters/:encounterId/examination-request/draft',
+    },
+    id: 'encounter.examination-request.draft.delete',
+    input: deleteExaminationRequestDraftOperationInputSchema,
+    mode: 'draft',
+    output: examinationRequestDraftResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['outpatient-doctor'],
+    summary: '按版本删除当前功能检查申请草稿',
+    version: 1,
+  },
+  {
+    cliPath: ['encounter', 'examination-request', 'issue'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/encounters/:encounterId/examination-request/actions/issue',
+    },
+    id: 'encounter.examination-request.issue',
+    input: issueExaminationRequestOperationInputSchema,
+    mode: 'command',
+    output: issueExaminationRequestResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'high-risk-write',
+    roles: ['outpatient-doctor'],
+    summary: '签发当前功能检查申请草稿并冻结门诊价目与唯一原费用，足额确定资金后放行原申请；本院未开展、缺价或价目失效以 CATALOG_CONFLICT 拒绝并保留草稿，刷新目录后重新审阅；同一服务已有进行中申请时以 EXAMINATION_REQUEST_DUPLICATE 拒绝',
+    version: 1,
+  },
+  {
+    cliPath: ['examination-request', 'cancel'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/examination-requests/:requestId/actions/cancel',
+    },
+    id: 'examination-request.cancel',
+    input: cancelExaminationRequestOperationInputSchema,
+    mode: 'command',
+    output: examinationRequestActionResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'high-risk-write',
+    roles: ['outpatient-doctor'],
+    summary: '仅取消 issued 或 generation-failed 功能检查申请并全额冲减原费用；未知资金或有效医保以 WORKFLOW_CONFLICT 拒绝，先查询原尝试或由收费员 insurance.cancel；已受理拒绝普通取消，实收款由收费员按原成功交易退款，legacy-unbilled 不补收',
+    version: 1,
+  },
+  {
+    cliPath: ['examination-request', 'retry'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/examination-requests/:requestId/actions/retry',
+    },
+    id: 'examination-request.retry',
+    input: retryExaminationRequestOperationInputSchema,
+    mode: 'command',
+    output: examinationRequestActionResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['outpatient-doctor'],
+    summary: '沿用原申请、冻结价目及原费用重试未取得结果的功能检查申请，不重复收费；无精确结果且不满足保守正常条件时以未取得结果结束',
+    version: 1,
+  },
+  {
+    cliPath: ['examination-report', 'acknowledge'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/examination-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge',
+    },
+    id: 'examination-report.acknowledge',
+    input: acknowledgeExaminationReportOperationInputSchema,
+    mode: 'command',
+    output: acknowledgeExaminationReportResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['outpatient-doctor'],
+    summary: '确认已阅当前功能检查报告及其冻结的文字和结构化结果',
+    version: 1,
+  },
+  {
     cliPath: ['doctor', 'case', 'imaging-services', 'list'],
     http: {
       method: 'GET',
@@ -2374,8 +2580,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['cashier'],
-    summary: 'List laboratory, imaging, pathology or medication work by payment state; each row identifies its original ChargeItem and investigation request when present',
-    version: 1,
+    summary: 'List laboratory, imaging, pathology, functional examination or medication work by payment state; each row identifies its original ChargeItem and investigation request when present',
+    version:2,
   },
   {
     cliPath: ['billing', 'case', 'get'],
@@ -2393,8 +2599,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['cashier'],
-    summary: '读取含未缴挂号费用的统一账单、完整逐项余额和按整笔分页的原收款历史；多费用原款显式列出完整分配，挂号只读',
-    version: 3,
+    summary: '读取含功能检查和未缴挂号费用的统一账单、完整逐项余额和按整笔分页的原收款历史；多费用原款显式列出完整分配，挂号只读',
+    version:4,
   },
   {
     cliPath:['insurance','get'],id:'insurance.get',http:{method:'GET',path:'/api/his/v1/insurance/:kind/:id'},
@@ -2481,7 +2687,7 @@ const operationDefinitions = [
     risk: 'write',
     roles: ['cashier'],
     summary: 'Create a version-bound preview for the exact chargeItemId in laboratory, imaging, pathology or medication; case/category only filter; optional cash, bank-card, and mobile tenders; recorded ambiguous results require recovery before another payment',
-    version: 2,
+    version:3,
   },
   {
     cliPath: ['payment', 'confirm'],
@@ -2853,11 +3059,11 @@ const operationDefinitions = [
     input: inpatientSurgeryExecuteInputSchema, output: inpatientSurgeryResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '按双准备门禁记录实际手术和耗材并原子计费', version: 2 },
   {
     cliPath:['inpatient','investigation-catalog'],id:'inpatient.investigation.catalog',http:{method:'GET',path:'/api/his/v1/inpatient/investigation-catalog'},input:emptyInputSchema,output:inpatientInvestigationCatalogSchema,mode:'query',
-    requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor', 'ward-nurse'],summary:'读取本院已声明住院价格与执行触发的检查目录',version:1,
+    requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor', 'ward-nurse'],summary:'读取含无像素 ECG/TTE 的本院检查目录、住院价格与执行触发',version:2,
   },
   {
     cliPath:['inpatient','investigations'],id:'inpatient.investigation.read',http:{method:'GET',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations'},input:z.object({admissionId:z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)}).strict(),output:inpatientInvestigationsSchema,mode:'query',
-    requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor', 'ward-nurse'],summary:'读取当前责任科室的住院检查与报告，检验服务定义含可选危急值上下限，定量检验结果含可选 critical 危急值标记',version:2,
+    requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor', 'ward-nurse'],summary:'读取当前责任科室的住院检查与报告（含 ECG/TTE examinationRequests），检验服务定义含可选危急值上下限，定量检验结果含可选 critical 危急值标记',version:3,
   },
   {
     cliPath:['inpatient','transfer-catalog'],id:'inpatient.transfer.catalog',http:{method:'GET',path:'/api/his/v1/inpatient/transfer-catalog'},input:emptyInputSchema,output:inpatientTransferCatalogSchema,mode:'query',
@@ -2873,23 +3079,23 @@ const operationDefinitions = [
   },
   {
     cliPath:['inpatient','issue-investigation'],id:'inpatient.investigation.issue',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/issue',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationIssueInputSchema.parse(raw);return {input}}},
-    input:inpatientInvestigationIssueInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'开立住院检验或影像，固定来源、价目与检验危急值定义，等待护士送检',version:2,
+    input:inpatientInvestigationIssueInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'开立住院检验、影像或无像素功能检查，固定来源、价目与检验危急值定义，等待护士送检',version:3,
   },
   {
     cliPath:['inpatient','send-investigation'],id:'inpatient.investigation.send',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/send',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationActionInputSchema.parse(raw);return {input}}},
-    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary:'护士校对送检后进入原LIS/RIS执行，返回含检验危急值定义与结果标记的检查状态',version:2,
+    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary:'护士校对送检后按申请类型进入原内核执行（含无像素功能检查），返回含检验危急值定义与结果标记的检查状态',version:3,
   },
   {
     cliPath:['inpatient','cancel-investigation'],id:'inpatient.investigation.cancel',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/cancel',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationActionInputSchema.parse(raw);return {input}}},
-    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'取消未送检或明确失败的住院检查，返回含检验危急值定义与结果标记的检查状态',version:2,
+    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'取消未送检或明确失败的住院检查，返回含检验危急值定义与结果标记的检查状态',version:3,
   },
   {
     cliPath:['inpatient','retry-investigation'],id:'inpatient.investigation.retry',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/retry',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationActionInputSchema.parse(raw);return {input}}},
-    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'当前责任医生重试可恢复的失败检查，返回含检验危急值定义与结果标记的检查状态',version:2,
+    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'当前责任医生重试可恢复的失败检查，返回含检验危急值定义与结果标记的检查状态',version:3,
   },
   {
     cliPath:['inpatient','acknowledge-investigation'],id:'inpatient.investigation.acknowledge',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/acknowledge',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationAcknowledgeInputSchema.parse(raw);return {input}}},
-    input:inpatientInvestigationAcknowledgeInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'当前责任医生确认当前正式报告（定量检验保留 critical 危急值标记），影像须当前可读',version:2,
+    input:inpatientInvestigationAcknowledgeInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'当前责任医生按原申请类型确认当前正式报告（含无像素 ECG/TTE，定量检验保留 critical 危急值标记），影像须当前可读',version:3,
   },
   {
     cliPath:['inpatient','request-transfer'],id:'inpatient.transfer.request',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/transfers/request',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientTransferRequestInputSchema.parse(raw);return {input}}},
@@ -3078,6 +3284,9 @@ const commandOperationAliases: Readonly<Record<string, string>> = {
   'encounter.consultation.reply.retry': 'consultation.reply.retry',
   'encounter.diagnosis.confirm': 'encounter.confirm-diagnosis',
   'encounter.diagnosis.draft.set': 'encounter.save-diagnosis-draft',
+  'encounter.examination-request.draft.delete': 'examination-request.delete-draft',
+  'encounter.examination-request.draft.set': 'examination-request.save-draft',
+  'encounter.examination-request.issue': 'examination-request.issue',
   'encounter.imaging-request.draft.delete': 'imaging-request.delete-draft',
   'encounter.imaging-request.draft.set': 'imaging-request.save-draft',
   'encounter.imaging-request.issue': 'imaging-request.issue',
@@ -3118,6 +3327,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'doctor.case.get': 'clinmesh-doctor',
   'doctor.case.history.search': 'clinmesh-doctor',
   'doctor.case.history.read': 'clinmesh-doctor',
+  'doctor.case.examination-services.list': 'clinmesh-doctor',
   'doctor.case.imaging-services.list': 'clinmesh-doctor',
   'doctor.case.laboratory-catalog.search': 'clinmesh-doctor',
   'doctor.case.pathology-services.list': 'clinmesh-doctor',
@@ -3135,6 +3345,12 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'encounter.consultation.reply.retry': 'clinmesh-doctor',
   'encounter.diagnosis.confirm': 'clinmesh-doctor',
   'encounter.diagnosis.draft.set': 'clinmesh-doctor',
+  'encounter.examination-request.draft.delete': 'clinmesh-doctor',
+  'encounter.examination-request.draft.set': 'clinmesh-doctor',
+  'encounter.examination-request.issue': 'clinmesh-doctor',
+  'examination-request.cancel': 'clinmesh-doctor',
+  'examination-request.retry': 'clinmesh-doctor',
+  'examination-report.acknowledge': 'clinmesh-doctor',
   'encounter.imaging-request.draft.delete': 'clinmesh-doctor',
   'encounter.imaging-request.draft.set': 'clinmesh-doctor',
   'encounter.imaging-request.issue': 'clinmesh-doctor',

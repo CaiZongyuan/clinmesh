@@ -3,12 +3,13 @@ import { inpatientInvestigationAcknowledgeInputSchema, inpatientInvestigationAct
 import type { ImagingExamCode } from '@clinmesh/contracts/imaging'
 import type { ActorContext } from './command-executor.ts'
 import { ClinicalRequestKernel, laboratoryRequestPolicy } from './clinical-request-kernel.ts'
+import { examinationRequestPolicy } from './examination-request-service.ts'
 import { imagingRequestPolicy } from './imaging-request-service.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { InpatientInvestigationsWorkflowPort } from './outpatient-workflow-context.ts'
 import { inpatientInvestigationBillingSchema, inpatientLaboratoryConfiguration } from './inpatient-laboratory-config.ts'
 
-const requestSchema = z.object({ request_id: z.string(), case_id: z.string(), request_kind: z.enum(['laboratory','imaging']), authored_by: z.string(),
+const requestSchema = z.object({ request_id: z.string(), case_id: z.string(), request_kind: z.enum(['laboratory','imaging','examination']), authored_by: z.string(),
   service_request_id: z.string(), execution_task_id: z.string(), diagnostic_report_id: z.string().nullable(),
   status: z.enum(['issued','accepted','in-progress','generation-failed','reported','acknowledged','cancelled']), version: z.number().int().positive() })
 
@@ -36,6 +37,7 @@ export class InpatientInvestigations {
     const sent = z.array(z.object({request_id:z.string(),sent_at:z.string(),sent_by:z.string()})).parse(this.owner.database.driver.prepare(
       'SELECT request_id,sent_at,sent_by FROM inpatient_investigation WHERE workspace_id=? AND epoch=? AND admission_id=? AND sent_at IS NOT NULL ORDER BY julianday(sent_at),request_id').all(context.workspaceId,context.epoch,admissionId))
     return inpatientInvestigationsSchema.parse({admissionId,laboratoryRequests:this.workflow.inpatientLaboratoryRequests(context,admissionId),imagingRequests:this.workflow.imaging.state(context,admissionId).requests,
+      examinationRequests:this.workflow.examination.state(context,admissionId).requests,
       sent:sent.map(row=>({requestId:row.request_id,sentAt:row.sent_at,sentBy:row.sent_by}))})
   }
   catalog(context: ActorContext, ready: ReadonlySet<ImagingExamCode>) {
@@ -45,8 +47,10 @@ export class InpatientInvestigations {
     return inpatientInvestigationCatalogSchema.parse({items:rows.flatMap<z.infer<typeof inpatientInvestigationCatalogSchema>['items'][number]>(row=>{
       const raw: unknown = JSON.parse(row.config_json)
       const record = z.record(z.string(), z.unknown()).safeParse(raw), config = record.success ? record.data : {}
+      const examination = z.object({name:z.string(),examCode:z.enum(['ecg-12-lead','tte'])}).safeParse(config.examinationService)
       const imaging = z.object({name:z.string(),examCode:z.enum(['chest-radiograph','chest-ct-plain'])}).safeParse(config.imagingService)
       const billing = inpatientInvestigationBillingSchema.safeParse(config.inpatientInvestigationBilling)
+      if(examination.success && billing.success) return [{id:row.service_id,kind:'examination' as const,display:examination.data.name,version:row.version,priceFen:billing.data.priceFen,available:true,indicationCodes:[]}]
       if(imaging.success && billing.success) return [{id:row.service_id,kind:'imaging' as const,display:imaging.data.name,version:row.version,priceFen:billing.data.priceFen,available:ready.has(imaging.data.examCode),indicationCodes:[]}]
       const laboratory = inpatientLaboratoryConfiguration(raw)
       if(laboratory.service?.doctorOrderable) {
@@ -62,13 +66,18 @@ export class InpatientInvestigations {
     return this.owner.commands.execute({context,input,idempotencyKey,operation:'inpatient.investigation.issue',expectedVersions:{[`Encounter/${input.admissionId}`]:input.encounterVersion},
       dataSchema:inpatientInvestigationsSchema,authorize:()=>{this.owner.assertRole(context,['inpatient-doctor']);this.owner.orders.assertAdmitted(context,input.admissionId)}},transaction=>{
       this.owner.assertNotArchived(context,input.admissionId)
-      const available=this.catalog(context,ready).items.find(item=>item.id===(input.selection.kind==='imaging'?input.selection.serviceId:input.selection.catalogItemId) && item.kind===input.selection.kind)
+      const available=this.catalog(context,ready).items.find(item=>item.id===(input.selection.kind!=='laboratory'?input.selection.serviceId:input.selection.catalogItemId) && item.kind===input.selection.kind)
       if(available===undefined || !available.available || available.priceFen===undefined) throw new InpatientError('INPATIENT_INVESTIGATION_UNAVAILABLE','该检查尚未开展或没有声明住院价目')
       if(available.version!==input.catalogVersion) throw new InpatientError('INPATIENT_INVESTIGATION_CATALOG_CONFLICT','检查目录或价目版本已变化，请重新选择')
       const versions={[`Encounter/${input.admissionId}`]:input.encounterVersion}
       let requestId:string
       let effects:Array<{kind:'created'|'updated';reference:string;versionId:string}>
-      if(input.selection.kind==='imaging') {
+      if(input.selection.kind==='examination') {
+        const draft=this.workflow.examination.state(context,input.admissionId)
+        const saved=this.workflow.examination.applySaveDraft(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:draft.draftVersion,expectedVersions:versions,idempotencyKey,indication:input.selection.indication,serviceId:input.selection.serviceId})
+        const issued=this.workflow.examination.applyIssue(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:saved.data.draftVersion,expectedVersions:versions,idempotencyKey,readyExamCodes:new Set(['ecg-12-lead','tte'])})
+        requestId=issued.data.request.id;effects=issued.effects
+      } else if(input.selection.kind==='imaging') {
         const draft=this.workflow.imaging.state(context,input.admissionId)
         const saved=this.workflow.imaging.applySaveDraft(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:draft.draftVersion,expectedVersions:versions,idempotencyKey,
           indication:input.selection.indication,serviceId:input.selection.serviceId})
@@ -99,7 +108,7 @@ export class InpatientInvestigations {
       const request=this.request(context,input.admissionId,input.requestId)
       const service=transaction.fhir.read(context,'ServiceRequest',request.service_request_id),task=transaction.fhir.read(context,'Task',request.execution_task_id)
       if(request.version!==input.expectedRequestVersion || service.meta!.versionId!==input.serviceRequestVersion || task.meta!.versionId!==input.taskVersion) throw new InpatientError('INPATIENT_INVESTIGATION_VERSION_CONFLICT','检查申请或执行任务版本已变化')
-      const policy=request.request_kind==='imaging'?imagingRequestPolicy:laboratoryRequestPolicy
+      const policy=request.request_kind==='imaging'?imagingRequestPolicy:request.request_kind==='examination'?examinationRequestPolicy:laboratoryRequestPolicy
       const now=this.owner.virtualTime(context)
       let effects:Array<{kind:'created'|'updated';reference:string;versionId:string}>=[]
       if(action==='send') {
@@ -132,11 +141,11 @@ export class InpatientInvestigations {
       const request=this.request(context,input.admissionId,input.requestId)
       const service=transaction.fhir.read(context,'ServiceRequest',request.service_request_id),task=transaction.fhir.read(context,'Task',request.execution_task_id)
       if(service.meta!.versionId!==input.serviceRequestVersion || task.meta!.versionId!==input.taskVersion) throw new InpatientError('INPATIENT_INVESTIGATION_VERSION_CONFLICT','检查申请或执行任务版本已变化')
-      const policy=request.request_kind==='imaging'?imagingRequestPolicy:laboratoryRequestPolicy
+      const policy=request.request_kind==='imaging'?imagingRequestPolicy:request.request_kind==='examination'?examinationRequestPolicy:laboratoryRequestPolicy
       const acknowledgement=this.#requests.acknowledge(policy,transaction,context,request,{diagnosticReportId:input.diagnosticReportId,expectedRequestVersion:input.expectedRequestVersion,now:this.owner.virtualTime(context),
         assertReportContent:()=>{
           const facts=this.read(context,input.admissionId)
-          const projected=(request.request_kind==='imaging'?facts.imagingRequests:facts.laboratoryRequests).find(item=>item.id===request.request_id)
+          const projected=(request.request_kind==='imaging'?facts.imagingRequests:request.request_kind==='examination'?facts.examinationRequests:facts.laboratoryRequests).find(item=>item.id===request.request_id)
           if(projected?.report?.diagnosticReportId!==input.diagnosticReportId) throw new InpatientError('INPATIENT_INVESTIGATION_STATE_CONFLICT','仅可确认本次检查的当前正式报告')
           if(request.request_kind==='imaging' && !studyAvailable) throw new InpatientError('IMAGING_STUDY_UNAVAILABLE','影像当前不可读取，不能确认已阅')
         }})

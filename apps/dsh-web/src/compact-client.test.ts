@@ -7,7 +7,7 @@ const packageDirectory = fileURLToPath(new URL('..', import.meta.url))
 function compact(source: string) {
   return execFileSync('bun', ['--eval', `
     import { compactLazyCjsClient } from './src/compact-client.ts';
-    process.stdout.write(compactLazyCjsClient(JSON.parse(await Bun.stdin.text())));
+    process.stdout.write(await compactLazyCjsClient(JSON.parse(await Bun.stdin.text())));
   `], { cwd: packageDirectory, input: JSON.stringify(source), encoding: 'utf8', stdio: 'pipe' })
 }
 
@@ -16,6 +16,7 @@ const artifact = `window.__ModuleLoader__.load({
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
+    /*! Synthetic dependency license must remain. */
     // A dependency must stay lazy and use the host require.
     var react = require("react");
     var runtime = require("dsh-react-surface/client");
@@ -53,6 +54,7 @@ describe('DSH lazy-CJS artifact compression', () => {
     })
     expect(exports).toMatchObject({ pattern: /\s+/ })
     expect(result.startsWith('window.__ModuleLoader__.load({\n  id: "@clinmesh/dsh-web"')).toBe(true)
+    expect(result).toContain('Synthetic dependency license must remain.')
   })
 
   it('is stable when the same artifact is compacted again', () => {

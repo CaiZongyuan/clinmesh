@@ -150,11 +150,15 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.case.select': z.object({ caseId: boundedIdSchema }).strict(),
   'outpatient.section.select': z.object({
     /** 同时展开这条放射申请的影像；只与 `laboratory` 栏目一起使用。Agent 不读取像素。 */
+    examinationRequestId: boundedIdSchema.optional(),
     imagingRequestId: boundedIdSchema.optional(),
     /** 同时展开这条病理会诊申请的切片；只与 `laboratory` 栏目一起使用。Agent 不读取像素。 */
     pathologyRequestId: boundedIdSchema.optional(),
     section: doctorCaseSectionSchema,
   }).strict().refine(
+    input => input.examinationRequestId === undefined || input.section === 'laboratory',
+    { message: 'Functional reports open in the laboratory section', path: ['examinationRequestId'] },
+  ).refine(
     input => input.imagingRequestId === undefined || input.section === 'laboratory',
     { message: 'Imaging studies open in the laboratory section', path: ['imagingRequestId'] },
   ).refine(
@@ -176,6 +180,10 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.laboratory.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),
   'outpatient.report.acknowledge.propose': z.object({ requestId: boundedIdSchema }).strict(),
   'outpatient.report.correct.propose': reportCorrectionInputSchema,
+  'outpatient.examination.draft.set': imagingDraftInputSchema,
+  'outpatient.examination.issue.propose': emptyInputSchema,
+  'outpatient.examination.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),
+  'outpatient.examination.retry.propose': z.object({ requestId: boundedIdSchema }).strict(),
   'outpatient.imaging.draft.set': imagingDraftInputSchema,
   'outpatient.imaging.issue.propose': emptyInputSchema,
   'outpatient.imaging.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),

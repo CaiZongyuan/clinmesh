@@ -50,7 +50,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
       current.current = next; setDraft(next); setStorageError(false)
     } catch { setStorageError(true) }
   }), [draftKey, admissionId])
-  const [query, setQuery] = useState(''), [kind, setKind] = useState<'laboratory' | 'imaging'>('laboratory'), [page, setPage] = useState(1), [draftPage, setDraftPage] = useState(1)
+  const [query, setQuery] = useState(''), [kind, setKind] = useState<'laboratory' | 'imaging' | 'examination'>('laboratory'), [page, setPage] = useState(1), [draftPage, setDraftPage] = useState(1)
   const [showUnavailable, setShowUnavailable] = useState(false), [confirmClear, setConfirmClear] = useState(false), [notice, setNotice] = useState('')
   const save = (next: InvestigationDraft) => {
     try {
@@ -70,7 +70,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
     const latest = items.find(item => item.kind === row.item.kind && item.id === row.item.id)
     if (!latest?.available) return t('该项目当前不可开立', 'This item is currently unavailable')
     if (latest.version !== row.item.version || latest.priceFen !== row.item.priceFen) return t('目录或价格已变化，请移除后重新选择', 'Catalog or price changed; remove and select again')
-    if (row.item.kind === 'imaging') return row.indication.trim().length < 2 ? t('请填写检查指征（至少 2 字）', 'Enter a clinical indication (at least 2 characters)') : undefined
+    if (row.item.kind !== 'laboratory') return row.indication.trim().length < 2 ? t('请填写检查指征（至少 2 字）', 'Enter a clinical indication (at least 2 characters)') : undefined
     return !latest.indicationCodes.includes(row.indicationCode) ? t('请选择有效检验适应证', 'Choose a valid laboratory indication') : undefined
   }
   const add = (item: CatalogItem) => {
@@ -86,7 +86,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
       for (const row of recover ? [recover] : selected) {
         if (!active.current) break
         const attempt: InvestigationAttempt = row.attempt ?? { idempotencyKey: newIdempotencyKey(), input: { admissionId, encounterVersion, catalogVersion: row.item.version,
-          selection: row.item.kind === 'imaging' ? { kind: 'imaging', serviceId: row.item.id, indication: row.indication.trim() } : { kind: 'laboratory', catalogItemId: row.item.id, indicationCode: row.indicationCode } } }
+          selection: row.item.kind !== 'laboratory' ? { kind: row.item.kind, serviceId: row.item.id, indication: row.indication.trim() } : { kind: 'laboratory', catalogItemId: row.item.id, indicationCode: row.indicationCode } } }
         if (!update(row.id, { attempt, error: undefined })) break
         try {
           await (recover ? onRecover(attempt, () => active.current) : onIssue(attempt, () => active.current))
@@ -104,7 +104,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
     } finally { busy.current = false; setRunning(false) }
   }
   if (!open) return null
-  const kindName = kind === 'laboratory' ? t('检验', 'laboratory') : t('检查', 'imaging')
+  const kindName = kind === 'laboratory' ? t('检验', 'laboratory') : kind === 'examination' ? t('功能检查', 'functional examination') : t('检查', 'imaging')
   return <>
     <Dialog open={open} pending={running} onOpenChange={next => { if (!busy.current) onOpenChange(next) }}>
       <DialogContent className="flex h-[min(760px,calc(100svh-2.5rem))] flex-col sm:max-w-5xl" showCloseButton={!running}>
@@ -113,9 +113,10 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
         <div className="flex flex-wrap items-center justify-between gap-2">
           <ToggleGroup data-view-switch="" aria-label={t('检查类别', 'Investigation category')} size="sm" variant="outline" disabled={running} value={[kind]} onValueChange={values => {
             const next = values[0]
-            if (next === 'laboratory' || next === 'imaging') { setKind(next); setPage(1); setDraftPage(1); setQuery('') }
+            if (next === 'laboratory' || next === 'imaging' || next === 'examination') { setKind(next); setPage(1); setDraftPage(1); setQuery('') }
           }}>
             <ToggleGroupItem value="laboratory">{t('检验', 'Laboratory')}</ToggleGroupItem>
+            <ToggleGroupItem value="examination">{t('功能检查', 'Functional examination')}</ToggleGroupItem>
             <ToggleGroupItem value="imaging">{t('检查', 'Imaging')}</ToggleGroupItem>
           </ToggleGroup>
           <Button size="sm" variant="outline" disabled={running || loading} onClick={onReload}>{t('刷新目录', 'Refresh catalog')}</Button>
@@ -144,8 +145,8 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
               <div className="flex items-start gap-2"><Checkbox aria-label={t(`选择待开${row.item.display}`, `Select draft ${row.item.display}`)} checked={row.selected} disabled={locked || !!row.attempt} onCheckedChange={selected => update(row.id, { selected })} /><strong className="min-w-0 flex-1 text-sm wrap-anywhere">{row.item.display}</strong>
                 <Button variant="ghost" size="sm" disabled={locked || !!row.attempt} onClick={() => save({ ...current.current, rows: current.current.rows.filter(item => item.id !== row.id) })}>{t('移除项目', 'Remove item')}</Button></div>
               <span className="text-xs text-muted-foreground"><span>{t('住院价格', 'Inpatient price')}</span> · {row.item.priceFen === undefined ? '—' : formatFen(row.item.priceFen, locale)}</span>
-              <Field><FieldLabel htmlFor={`${formId}-${row.id}`}>{row.item.kind === 'imaging' ? t('检查指征', 'Clinical indication') : messages.laboratoryIndication}</FieldLabel>
-                {row.item.kind === 'imaging' ? <Input id={`${formId}-${row.id}`} disabled={locked || !!row.attempt} value={row.indication} maxLength={500} onChange={event => update(row.id, { indication: event.currentTarget.value, error: undefined })} />
+              <Field><FieldLabel htmlFor={`${formId}-${row.id}`}>{row.item.kind !== 'laboratory' ? t('检查指征', 'Clinical indication') : messages.laboratoryIndication}</FieldLabel>
+                {row.item.kind !== 'laboratory' ? <Input id={`${formId}-${row.id}`} disabled={locked || !!row.attempt} value={row.indication} maxLength={500} onChange={event => update(row.id, { indication: event.currentTarget.value, error: undefined })} />
                   : row.item.indicationCodes.length === 1 ? <div id={`${formId}-${row.id}`} className="flex h-8 items-center rounded-md border px-2.5 text-sm">{indicationLabel(row.item.indicationCodes[0]!, messages)}</div>
                     : <WorkspaceSelect id={`${formId}-${row.id}`} disabled={locked || !!row.attempt} value={row.indicationCode || null} onValueChange={value => update(row.id, { indicationCode: value ?? '', error: undefined })} items={row.item.indicationCodes.map(code => ({ value: code, label: indicationLabel(code, messages) }))} />}</Field>
               {!loading && error === undefined && problem(row) ? <p className="text-xs text-destructive">{problem(row)}</p> : null}
@@ -170,6 +171,6 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
         </OrderComposerFooter>
       </DialogContent>
     </Dialog>
-    <AlertDialog pending={false} open={confirmClear} onOpenChange={setConfirmClear}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t('丢弃全部未提交待开清单？', 'Discard all unsubmitted drafts?')}</AlertDialogTitle><AlertDialogDescription>{t('将删除本次住院两类检查的未提交输入，已开立申请不受影响。', 'Discard unsubmitted inputs in both categories for this admission. Issued requests remain.')}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>{t('保留待开清单', 'Keep drafts')}</AlertDialogCancel><AlertDialogAction onClick={() => { save(emptyDraft()); setConfirmClear(false) }}>{t('确认清空', 'Confirm discard')}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog pending={false} open={confirmClear} onOpenChange={setConfirmClear}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t('丢弃全部未提交待开清单？', 'Discard all unsubmitted drafts?')}</AlertDialogTitle><AlertDialogDescription>{t('将删除本次住院全部检查的未提交输入，已开立申请不受影响。', 'Discard unsubmitted inputs in all categories for this admission. Issued requests remain.')}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>{t('保留待开清单', 'Keep drafts')}</AlertDialogCancel><AlertDialogAction onClick={() => { save(emptyDraft()); setConfirmClear(false) }}>{t('确认清空', 'Confirm discard')}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </>
 }

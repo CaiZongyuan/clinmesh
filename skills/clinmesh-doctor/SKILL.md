@@ -1,6 +1,6 @@
 ---
 name: clinmesh-doctor
-description: ClinMesh outpatient doctor CLI workflows for consultation, diagnosis, Hospital Services, laboratory and imaging requests, medication conclusions, structured clinical documents, automatic recording controls and patient/doctor/report source attribution, report acknowledgement, correction navigation, and Encounter completion.
+description: ClinMesh outpatient doctor CLI workflows for consultation, diagnosis, Hospital Services, laboratory, imaging and pixel-free functional examination requests, medication conclusions, structured clinical documents, automatic recording controls and patient/doctor/report source attribution, report acknowledgement, correction navigation, and Encounter completion.
 ---
 
 # ClinMesh Doctor
@@ -69,7 +69,7 @@ clinmesh prescription withdraw --input @withdrawal.json --idempotency-key <key>
 
 ## Laboratory and services
 
-独立门诊检验、放射和病理申请开立前审阅当前服务的 `outpatientBilling` 价格、币种、单位、来源和版本；缺价仍可保存草稿，正式开立以 `CATALOG_CONFLICT` 拒绝并保留草稿，刷新目录后重新审阅。医生页面清单的 `reviewedService` 保留已审阅服务与价格，变更后须显式重新审阅；该确认接口没有 CLI 或 Agent Grant。开立产生原申请的唯一费用，足额确定资金后才放行。取消、重试和历史免费申请按[独立检查收费与取消步骤](references/clinical-workflows.md#outpatient-investigation-billing-and-cancellation)处理。
+独立门诊检验、放射、病理和功能检查申请开立前审阅当前服务的 `outpatientBilling` 价格、币种、单位、来源和版本；缺价仍可保存草稿，正式开立以 `CATALOG_CONFLICT` 拒绝并保留草稿，刷新目录后重新审阅。医生页面清单的 `reviewedService` 保留已审阅服务与价格，变更后须显式重新审阅；该确认接口没有 CLI 或 Agent Grant。开立产生原申请的唯一费用，足额确定资金后才放行。取消、重试和历史免费申请按[独立检查收费与取消步骤](references/clinical-workflows.md#outpatient-investigation-billing-and-cancellation)处理。
 
 Laboratory draft, issue, cancellation, generation retry and report acknowledgement are separate states. Search the current case laboratory catalog before saving a draft; every returned item is an active, doctor-orderable Hospital Laboratory Service. Use its Hospital Service ID and current versioned report definition. Quantitative result definitions expose optional `criticalMinimum` and `criticalMaximum` bounds, and quantitative report results (including `doctor completed-cases get`) expose an optional boolean `critical` flag separate from `interpretation`. A global Reference Concept is terminology, not an orderable service, and cannot be submitted as the catalog item. Only acknowledge a signed current report. Report correction requires an administrator Grant, recomputes `interpretation` and `critical` against the frozen definition, and creates a new immutable report chain. Other Hospital Service order and completion operations use their current ServiceRequest versions.
 
@@ -88,6 +88,45 @@ clinmesh laboratory-report acknowledge --input @report-acknowledgement.json --id
 clinmesh laboratory-report correct --input @report-correction.json --idempotency-key <key>
 clinmesh service order --input @service-order.json --idempotency-key <key>
 clinmesh service complete --input @service-completion.json --idempotency-key <key>
+```
+
+## Functional examination requests
+
+ECG（12 导联心电图）与 TTE（经胸超声心动图）使用 examination 独立申请，不依赖影像或病理素材。先查当前病例服务目录，保存服务与指征草稿，再用其当前版本签发；收费员按原费用收款或办理医保，足额确定资金后才执行。报告中的 findings、impression 与 results 是可读的冻结结果，不提供波形、像素或任意报告正文写入。
+
+作者定义病例必须提供完整精确真值；普通 Synthea 成人病例缺少完整精确真值且存在心血管阳性事实时，申请进入 generation-failed，不会补造正常报告；INVESTIGATION_TRUTH_INCOMPATIBLE 与 INVESTIGATION_UNSUPPORTED 先保留原失败事实并重新评估检查需求，不通过重复开单绕过。其他可恢复执行故障按当前 Task 与申请版本重试原申请，保留原费用与结果快照。已签发报告用 examination-report acknowledge 确认已阅；该确认只表示阅读文字和结构化结果，完诊前必须处理所有未完成申请与未阅报告。取消与资金冲突按[共享收费与取消步骤](references/clinical-workflows.md#outpatient-investigation-billing-and-cancellation)处理。
+
+```bash
+clinmesh doctor case examination-services list --case-id <case-id>
+clinmesh encounter examination-request draft set --input @examination-draft.json --idempotency-key <key>
+clinmesh encounter examination-request draft delete --input @examination-draft-delete.json --idempotency-key <key>
+clinmesh encounter examination-request issue --input @examination-issue.json --idempotency-key <key>
+clinmesh examination-request cancel --input @examination-cancel.json --idempotency-key <key>
+clinmesh examination-request retry --input @examination-retry.json --idempotency-key <key>
+clinmesh examination-report acknowledge --input @examination-acknowledgement.json --idempotency-key <key>
+```
+
+`examination-draft.json`（使用当前目录中的 serviceId）：
+
+```json
+{
+  "encounterId": "synthetic-encounter",
+  "encounterVersion": "3",
+  "expectedDraftVersion": 0,
+  "serviceId": "examination-ecg-12-lead",
+  "indication": "活动后心悸，明确心律及传导情况"
+}
+```
+
+`examination-acknowledgement.json`（从当前申请读取报告与版本）：
+
+```json
+{
+  "requestId": "synthetic-examination",
+  "expectedRequestVersion": 4,
+  "diagnosticReportId": "synthetic-report",
+  "diagnosticReportVersion": "1"
+}
 ```
 
 ## Imaging requests

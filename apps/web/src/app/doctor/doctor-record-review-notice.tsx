@@ -17,6 +17,7 @@ export function DoctorRecordReviewNotice({ caseId, authoredAt, locale, onReview 
     detail.clinicalDocument?.draft?.updatedAt,
     ...(detail.clinicalDocument?.signed.map(document => document.signedAt) ?? []),
     ...(detail.laboratoryRequests?.requests.map(request => request.report?.issuedAt) ?? []),
+    ...(detail.examinationRequests?.requests.map(request => request.report?.issuedAt) ?? []),
     ...(detail.imagingRequests?.requests.map(request => request.report?.issuedAt) ?? []),
     ...(detail.pathologyRequests?.requests.map(request => request.report?.issuedAt) ?? []),
     detail.diagnosis?.confirmation?.confirmedAt,

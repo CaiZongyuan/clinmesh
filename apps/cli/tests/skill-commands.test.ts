@@ -391,8 +391,8 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-billing/SKILL.md'), 'utf8')
   for (const [prefix, id, version] of [
-    ['clinmesh billing case get ', 'billing.case.get', 3],
-    ['clinmesh payment preview ', 'payment.preview', 2],
+    ['clinmesh billing case get ', 'billing.case.get', 4],
+    ['clinmesh payment preview ', 'payment.preview', 3],
     ['clinmesh payment preview-multi-charge ', 'payment.multi-charge.preview', 1],
     ['clinmesh payment confirm-multi-charge ', 'payment.multi-charge.confirm', 1],
     ['clinmesh payment recover-multi-charge ', 'payment.multi-charge.recover', 1],
@@ -755,7 +755,7 @@ it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
   }
   expect(skill).toContain('criticalMinimum')
   expect(skill).toContain('CN-LAB-CBC-5DIFF')
-  expect(getHisOperation('inpatient.investigation.read').version).toBe(2)
+  expect(getHisOperation('inpatient.investigation.read').version).toBe(3)
   expect(getHisOperation('inpatient.pci-data.read').version).toBe(2)
   expect(getHisOperation('inpatient.pci-data.prepare').version).toBe(2)
 })
@@ -1040,6 +1040,9 @@ it('keeps inpatient investigation and transfer examples bound to narrow versione
   const examples=[...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match=>JSON.parse(match[1]!))
   const investigation=examples.find(input=>input.selection?.kind==='imaging')
   expect(getHisOperation('inpatient.investigation.issue').input.parse(investigation)).toMatchObject({catalogVersion:1,selection:{kind:'imaging'}})
+  const examination = examples.find(input => input.selection?.kind === 'examination')
+  expect(getHisOperation('inpatient.investigation.issue').input.parse(examination)).toMatchObject({ catalogVersion: 1, selection: { kind: 'examination', serviceId: 'examination-tte' } })
+  expect(getHisOperation('inpatient.investigation.issue').version).toBe(3)
   expect(getHisOperation('inpatient.investigation.issue').input.safeParse({...investigation,amountFen:1}).success).toBe(false)
   expect(getHisOperation('inpatient.investigation.issue').input.safeParse({...investigation,url:'https://example.invalid'}).success).toBe(false)
   expect(getHisOperation('inpatient.transfer.receive').roles).toEqual(['ward-nurse'])
@@ -1118,15 +1121,36 @@ it('门诊处方操作、错误reason与clinmesh-doctor单源外延处方说明�
   }
 })
 
-it('院后复诊历史命令与当前病例授权合同保持一致', async () => {
+it('功能检查示例绑定当前草稿和报告版本，不接受报告正文或素材标识', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
   for (const [path, id] of [
+    ['doctor case examination-services list', 'doctor.case.examination-services.list'],
+    ['encounter examination-request draft set', 'encounter.examination-request.draft.set'],
+    ['encounter examination-request draft delete', 'encounter.examination-request.draft.delete'],
+    ['encounter examination-request issue', 'encounter.examination-request.issue'],
+    ['examination-request cancel', 'examination-request.cancel'],
+    ['examination-request retry', 'examination-request.retry'],
+    ['examination-report acknowledge', 'examination-report.acknowledge'],
     ['doctor case history search', 'doctor.case.history.search'],
     ['doctor case history read', 'doctor.case.history.read'],
   ]) {
     const line = commandLines(skill).find(line => line.startsWith('clinmesh ' + path + ' '))
     expect(line, path).toBeDefined()
     expect(inspectExample(program, line!).operation?.id).toBe(id)
+  }
+  for (const [filename, id] of [
+    ['examination-draft.json', 'encounter.examination-request.draft.set'],
+    ['examination-acknowledgement.json', 'examination-report.acknowledge'],
+  ]) {
+    const start = skill.indexOf('`' + filename + '`')
+    const example = skill.slice(start).match(/```json\n([^]*?)\n```/)
+    expect(example, filename).not.toBeNull()
+    const input = JSON.parse(example![1]!)
+    const operation = getHisOperation(id!)
+    expect(operation.input.safeParse(input).success).toBe(true)
+    expect(operation.input.safeParse({ ...input, impression: '正常' }).success).toBe(false)
+    expect(operation.input.safeParse({ ...input, assetId: 'private-asset' }).success).toBe(false)
+    expect(operation.input.safeParse({ ...input, expectedRequestVersion: undefined, expectedDraftVersion: undefined }).success).toBe(false)
   }
 })

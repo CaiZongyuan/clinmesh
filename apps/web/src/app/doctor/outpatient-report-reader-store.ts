@@ -6,11 +6,11 @@ import type { OutpatientInvestigationActionContext } from './outpatient-investig
 
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(),
   caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1) }).strict()
-const snapshotSchema = z.object({ kind: z.enum(['laboratory', 'imaging', 'pathology']), requestId: z.string().min(1),
+const snapshotSchema = z.object({ kind: z.enum(['laboratory', 'imaging', 'pathology', 'examination']), requestId: z.string().min(1),
   requestVersion: z.number().int().positive(), reportId: z.string().min(1), reportVersion: z.string().regex(/^\d+$/),
   title: z.string().min(1), issuedAt: z.iso.datetime({ offset: true }), revisionNumber: z.number().int().positive() }).strict()
 const rowSchema = z.object({ revision: z.uuid(), snapshot: snapshotSchema, selected: z.boolean() }).strict()
-const commandSchema = z.object({ operation: z.enum(['laboratory-report.acknowledge', 'imaging-report.acknowledge', 'pathology-report.acknowledge']),
+const commandSchema = z.object({ operation: z.enum(['examination-report.acknowledge', 'laboratory-report.acknowledge', 'imaging-report.acknowledge', 'pathology-report.acknowledge']),
   input: z.object({ requestId: z.string().min(1), expectedRequestVersion: z.number().int().positive(), diagnosticReportId: z.string().min(1), diagnosticReportVersion: z.string().regex(/^\d+$/) }).strict(),
   body: z.object({ expectedVersions: z.record(z.string(), z.string()), input: z.object({ expectedRequestVersion: z.number().int().positive() }).strict() }).strict(),
 }).strict().superRefine((command, ctx) => {
@@ -87,11 +87,12 @@ export function reportCommand(row: ReportRow) {
   return commandSchema.parse({ operation: operation.id, input, body: operation.http.encodeBody?.(input) })
 }
 export type ReportRecord = { kind: ReportSnapshot['kind']; title: string; request: NonNullable<DoctorCaseDetail['laboratoryRequests']>['requests'][number]
-  | NonNullable<DoctorCaseDetail['imagingRequests']>['requests'][number] | NonNullable<DoctorCaseDetail['pathologyRequests']>['requests'][number] }
+  | NonNullable<DoctorCaseDetail['examinationRequests']>['requests'][number] | NonNullable<DoctorCaseDetail['imagingRequests']>['requests'][number] | NonNullable<DoctorCaseDetail['pathologyRequests']>['requests'][number] }
 export function reportRecords(detail: DoctorCaseDetail, locale: string): ReportRecord[] {
   return [
     ...(detail.laboratoryRequests?.requests ?? []).map(request => ({ kind: 'laboratory' as const, request,
       title: (locale === 'zh-CN' ? request.laboratoryService?.nameZh : request.laboratoryService?.nameEn ?? request.laboratoryService?.nameZh) ?? request.referenceConcept?.display ?? request.catalogItemId })),
+    ...(detail.examinationRequests?.requests ?? []).map(request => ({ kind: 'examination' as const, request, title: request.service.name })),
     ...(detail.imagingRequests?.requests ?? []).map(request => ({ kind: 'imaging' as const, request, title: request.service.name })),
     ...(detail.pathologyRequests?.requests ?? []).map(request => ({ kind: 'pathology' as const, request, title: request.service.name })),
   ]

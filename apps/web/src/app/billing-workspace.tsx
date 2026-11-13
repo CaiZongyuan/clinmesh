@@ -69,7 +69,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     })
   }
   const categoryView = useWorkspaceCardView('billing-category')
-  const category: BillingCategory = ['imaging', 'pathology', 'medication'].includes(categoryView.tab ?? '') ? categoryView.tab as BillingCategory : 'laboratory'
+  const category: BillingCategory = ['imaging', 'pathology', 'examination', 'medication'].includes(categoryView.tab ?? '') ? categoryView.tab as BillingCategory : 'laboratory'
   const setCategory = (value: BillingCategory) => categoryView.setTab(value)
   const statusView = useWorkspaceCardView('billing-status')
   const status: BillingStatus = ['declined', 'paid', 'ambiguous'].includes(statusView.tab ?? '') ? statusView.tab as BillingStatus : 'pending'
@@ -196,7 +196,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       if (!ownsPaymentResult(context)) return
       setRecoveryConfirmation(undefined)
       setSelectedChargeId(context?.chargeItemId)
-      if (context?.category === 'laboratory' || context?.category === 'imaging' || context?.category === 'pathology' || context?.category === 'medication') setCategory(context.category)
+      if (context?.category === 'laboratory' || context?.category === 'imaging' || context?.category === 'pathology' || context?.category === 'examination' || context?.category === 'medication') setCategory(context.category)
       const nextStatus = paymentQueueStatus(response.data)
       if (nextStatus !== status || (context.category !== undefined && context.category !== category)) setPage(1)
       setStatus(nextStatus)
@@ -541,7 +541,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
         <div className="flex min-w-0 flex-wrap gap-2 [&>[data-slot=select-trigger]]:w-auto [&>[data-slot=select-trigger]]:max-w-full [&>[data-slot=select-trigger]]:flex-auto"><WorkspaceModeSwitch presentation="select" />
         <WorkspaceSelect id="billing-category-filter" ariaLabel={locale === 'zh-CN' ? '费用类别' : 'Charge category'} disabled={paymentPending} value={category} onValueChange={value => { if (value !== null) changeCategory(value as BillingCategory) }} items={[
           { value: 'laboratory', label: messages.laboratoryCharges }, { value: 'imaging', label: messages.imagingCharges },
-          { value: 'pathology', label: messages.pathologyCharges }, { value: 'medication', label: messages.medicationCharges },
+          { value: 'examination', label: locale === 'zh-CN' ? '功能检查费用' : 'Functional examination charges' }, { value: 'pathology', label: messages.pathologyCharges }, { value: 'medication', label: messages.medicationCharges },
         ]} /></div>
         <Tabs onValueChange={value => changeStatus(value as BillingStatus)} value={status}>
           <TabsList className="h-auto! w-full items-stretch">

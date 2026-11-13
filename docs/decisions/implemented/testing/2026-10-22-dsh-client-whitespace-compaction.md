@@ -2,6 +2,8 @@
 
 Status: implemented
 
+仅用 Transpiler 压缩空白的限制由[语法压缩决策](2026-11-13-dsh-client-syntax-compaction.md)替代；本记录的 wrapper 保护、外部模块与语义校验理由继续适用。
+
 ## Problem
 
 共享收费与医保界面使单文件 DSH 客户端超过既有 5,000,000 字节预算。锁定的 Surface builder 没有暴露压缩选项，而产物校验需要保留 lazy-CJS wrapper、宿主 require 以及按名称提取的 Tool descriptor 函数，不能直接启用标识符压缩。

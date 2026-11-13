@@ -1,3 +1,4 @@
+import { ExaminationPage } from './examination-page.tsx'
 import { doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
 import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 import {
@@ -246,14 +247,14 @@ export function CaseDetail({
     return () => cancelAnimationFrame(frame)
   }, [activeSection, pendingQualityIssue, detail.caseId])
   const navigateInvestigationTarget = useCallback((target: EncounterCompletionTarget): void => {
-    if (target === 'laboratory' || target === 'imaging' || target === 'pathology') {
+    if (target === 'laboratory' || target === 'imaging' || target === 'pathology' || target === 'examination') {
       const requests = caseInvestigationRequests(detail)[target]
       const selected = requests?.find(request => request.status === 'reported')
         ?? requests?.find(request => request.report !== undefined)
         ?? requests?.[0]
       onSelectInvestigation(target, selected?.id)
     }
-  }, [detail.laboratoryRequests, detail.imagingRequests, detail.pathologyRequests, onSelectInvestigation])
+  }, [detail.laboratoryRequests, detail.imagingRequests, detail.pathologyRequests, detail.examinationRequests, onSelectInvestigation])
   useEffect(() => {
     if (correctionTarget === undefined) return
     const key = `${detail.caseId}:${correctionTarget}`
@@ -522,6 +523,7 @@ export function CaseDetail({
             const pending = completion.data?.items.filter(check => check.status === 'incomplete'
               && caseDetailSectionByCompletionTarget[check.target] === item.value).length ?? 0
             const hasInvestigationActivity = (detail.laboratoryRequests?.requests.some(r => r.status !== 'cancelled') ?? detail.report !== undefined)
+              || (detail.examinationRequests?.requests.some(r => r.status !== 'cancelled') ?? false)
               || (detail.imagingRequests?.requests.some(r => r.status !== 'cancelled') ?? false)
               || (detail.pathologyRequests?.requests.some(r => r.status !== 'cancelled') ?? false)
             const known = item.value === 'consultation'
@@ -549,7 +551,7 @@ export function CaseDetail({
                 action={{
                   ...consultationAction, onOpenReport: reference => {
                     const reportId = reference?.split('/')[1]
-                    const categories = ['laboratory', 'imaging', 'pathology'] as const
+                    const categories = ['laboratory', 'imaging', 'pathology', 'examination'] as const
                     for (const category of reportId === undefined ? [] : categories) {
                       const requests = caseInvestigationRequests(detail)[category]
                       const request = requests?.find(item => item.report?.diagnosticReportId === reportId
@@ -664,7 +666,7 @@ export function CaseDetail({
 
           <DoctorCasePanel value="laboratory">
             {investigationActionContext === undefined ? null : <OutpatientReportReader context={investigationActionContext} detail={detail} locale={locale} readOnly={clinicalReadOnly} />}
-            <Tabs onValueChange={value => { if (value === 'laboratory' || value === 'imaging' || value === 'pathology') onSelectInvestigation(value) }} value={investigationView.category}>
+            <Tabs onValueChange={value => { if (value === 'laboratory' || value === 'imaging' || value === 'pathology' || value === 'examination') onSelectInvestigation(value) }} value={investigationView.category}>
               {(() => {
                 const labIssued = detail.laboratoryRequests?.requests.filter(r => r.status !== 'cancelled').length ?? (detail.report === undefined ? 0 : 1)
                 const labPending = (detail.laboratoryRequests?.draft !== undefined ? 1 : 0)
@@ -678,6 +680,7 @@ export function CaseDetail({
                   + (preparation ? readyRecommendationCount(preparation.jobs.pathology, detail, preparation.preferences('pathology')) : 0)
                 const allActiveRequests = [
                   ...(detail.laboratoryRequests?.requests ?? []),
+                  ...(detail.examinationRequests?.requests ?? []),
                   ...(detail.imagingRequests?.requests ?? []),
                   ...(detail.pathologyRequests?.requests ?? []),
                 ].filter(r => r.status !== 'cancelled' && (r.report !== undefined || r.status === 'reported' || r.status === 'acknowledged'))
@@ -692,6 +695,7 @@ export function CaseDetail({
                       <TabsTrigger aria-label={`${zh ? '检验' : 'Laboratory'} ${detail.laboratoryRequests?.requests.length ?? (detail.report === undefined ? 0 : 1)}`} value="laboratory">{zh ? '检验' : 'Laboratory'} <Badge className="px-1.5 tabular-nums" variant="secondary"><span aria-hidden="true">{subBadgeText(labPending, labIssued)}</span><span className="sr-only">{detail.laboratoryRequests?.requests.length ?? (detail.report === undefined ? 0 : 1)}</span></Badge></TabsTrigger>
                       <TabsTrigger aria-label={`${zh ? '放射检查' : 'Radiology'} ${detail.imagingRequests?.requests.length ?? 0}`} value="imaging">{zh ? '放射检查' : 'Radiology'} <Badge className="px-1.5 tabular-nums" variant="secondary"><span aria-hidden="true">{subBadgeText(imgPending, imgIssued)}</span><span className="sr-only">{detail.imagingRequests?.requests.length ?? 0}</span></Badge></TabsTrigger>
                       <TabsTrigger aria-label={`${zh ? '病理会诊' : 'Pathology'} ${detail.pathologyRequests?.requests.length ?? 0}`} value="pathology">{zh ? '病理会诊' : 'Pathology'} <Badge className="px-1.5 tabular-nums" variant="secondary"><span aria-hidden="true">{subBadgeText(pathPending, pathIssued)}</span><span className="sr-only">{detail.pathologyRequests?.requests.length ?? 0}</span></Badge></TabsTrigger>
+                      <TabsTrigger value="examination">{zh ? '功能检查' : 'Functional examination'} <Badge className="px-1.5 tabular-nums" variant="secondary">{subBadgeText(detail.examinationRequests?.draft ? 1 : 0, detail.examinationRequests?.requests.filter(r => r.status !== 'cancelled').length ?? 0)}</Badge></TabsTrigger>
                     </TabsList>
                     <span className="text-xs text-muted-foreground tabular-nums">
                       {zh
@@ -752,6 +756,7 @@ export function CaseDetail({
                   selectedReportId={investigationView.reportId}
                 /></fieldset>
               </DoctorDraftScope></TabsContent>
+              <TabsContent keepMounted value="examination"><ExaminationPage detail={detail} locale={locale} readOnly={clinicalReadOnly} active={investigationView.category === 'examination'} elementId={encounterCompletionTargetElementIds.examination} actionContext={investigationActionContext} selectedRequestId={investigationView.selected.examination} onSelectRequest={id => onSelectInvestigationRequest('examination', id)} key={`examination:${detail.caseId}:${agentDraftHydrationRevisions.examination ?? 0}`} /></TabsContent>
               <TabsContent keepMounted value="pathology"><DoctorDraftScope caseId={detail.caseId} kind="pathology" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['pathology'] ?? 0} locale={locale}>
                 <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('pathology') === true}><PathologyPage
                   actionContext={investigationActionContext}

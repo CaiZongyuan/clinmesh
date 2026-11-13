@@ -9,7 +9,7 @@ import {
 } from './agent-tool-input.ts'
 import { hisOperationIdSchema } from './his-operations.ts'
 import { commandResponseSchema, doctorCaseDetailSchema, doctorQueueSchema, roleCodeSchema,
-  caseImagingServiceCatalogSchema, casePathologyServiceCatalogSchema } from './his.ts'
+  caseExaminationServiceCatalogSchema, caseImagingServiceCatalogSchema, casePathologyServiceCatalogSchema } from './his.ts'
 
 export * from './doctor-history.ts'
 
@@ -252,6 +252,7 @@ export const agentDoctorQueryRequestSchema = z.object({
 }).strict()
 
 export const agentDoctorCaseReadSchema = doctorCaseDetailSchema.extend({
+  examinationServices: caseExaminationServiceCatalogSchema.shape.items.nullable().default(null),
   imagingServices: caseImagingServiceCatalogSchema.shape.items.nullable(),
   pathologyServices: casePathologyServiceCatalogSchema.shape.items.nullable(),
   queue: doctorQueueSchema.nullable(),
@@ -419,6 +420,10 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('outpatient.laboratory.cancel.propose', 'clinmesh_prepare_cancel_laboratory', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
   tool('outpatient.report.acknowledge.propose', 'clinmesh_prepare_acknowledge_report', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
   tool('outpatient.report.correct.propose', 'clinmesh_prepare_correct_report', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.examination.draft.set', 'clinmesh_fill_examination_draft', 'draft', 'draft-only', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.examination.issue.propose', 'clinmesh_prepare_issue_examination', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.examination.cancel.propose', 'clinmesh_prepare_cancel_examination', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.examination.retry.propose', 'clinmesh_prepare_retry_examination', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
   tool('outpatient.imaging.draft.set', 'clinmesh_fill_imaging_draft', 'draft', 'draft-only', doctor, ['consultation'], 'laboratory'),
   tool('outpatient.imaging.issue.propose', 'clinmesh_prepare_issue_imaging', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
   tool('outpatient.imaging.cancel.propose', 'clinmesh_prepare_cancel_imaging', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),

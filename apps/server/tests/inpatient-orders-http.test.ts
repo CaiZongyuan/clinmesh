@@ -1161,6 +1161,7 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     const catalog=serviceCatalogSearchSchema.parse(await response.json())
     expect(catalog.items.find(item=>item.id==='hospital-service-diabetes-education')).toMatchObject({chargeDefinition:{priceFen:3000}})
     expect(JSON.stringify(catalog)).not.toContain('inpatientBillingTrigger')
+    expect(catalog.items.some(item => item.id.startsWith('examination-'))).toBe(false)
   })
 
 })
