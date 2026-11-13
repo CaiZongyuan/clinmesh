@@ -410,7 +410,7 @@ it('医生确认参数后后台生成并独立核验术前建议，同依据刷�
   expect(result.status).toBe('succeeded')
   expect(result.analysis?.stage).toBe('preoperative')
   expect(result.analysis).toMatchObject({ sources: { selectionVersion: 1,
-    evidencePackageId: 'clinmesh-pci-selection-evidence', evidencePackageVersion: '2026-11-02.r1',
+    evidencePackageId: 'clinmesh-pci-selection-evidence', evidencePackageVersion: '2026-11-13.r1',
     materialEvidence: expect.arrayContaining([expect.objectContaining({ id: 'pci-evidence-stent', synthetic: true })]),
   } })
   expect(result.analysis?.items.map(item => item.materialId).sort()).toEqual([
@@ -867,6 +867,7 @@ it('术前冻结计划按选型确认身份及版本绑定原手术，不被同�
     encounterVersion: state.encounterVersion, procedureId: s.stay.procedure.id, catalogVersion: s.stay.procedure.version,
     plannedFor: '2026-08-24T15:00:00+08:00', reason: '医生新增另一 PCI 计划，原术前计划保持冻结',
   })).json()).data.requests.at(-1)!
+  await cancelAutomaticMaterialEstimate(s.fixture, { path: s.stay.path, requestId: requested.id })
   const confirmed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, { expectedVersion: 1,
     parameters: { ...s.parameters, requestId: requested.id } })
   expect(confirmed.status).toBe(200)
@@ -1363,6 +1364,7 @@ it('第二台PCI没有自己的冻结计划时使用本次参数，不继承第�
     procedureId: s.stay.procedure.id, catalogVersion: s.stay.procedure.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: '医生另开第二台PCI计划' })
   expect(requested.status).toBe(200)
   const secondRequest = inpatientSurgeryResponseSchema.parse(await requested.json()).data.requests.at(-1)!
+  await cancelAutomaticMaterialEstimate(s.fixture, { path: s.stay.path, requestId: secondRequest.id })
   const selected = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, { expectedVersion: 1,
     parameters: { ...s.parameters, requestId: secondRequest.id } })
   expect(selected.status).toBe(200); inpatientPciSelectionResponseSchema.parse(await selected.json())

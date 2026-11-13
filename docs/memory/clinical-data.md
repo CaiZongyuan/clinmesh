@@ -18,7 +18,7 @@
 
 - 整批替换的回归要覆盖通过单项入口累计、超过新清单产品种类上限的旧记录；旧记录数不能复用新清单长度限制。用公开读取返回的集合指纹验证审阅后新增／释放冲突，并以原指纹和原幂等键验证丢回执及重启恢复，见[整批集合确认决策](../decisions/implemented/bug-fix/2026-10-29-reservation-set-confirmation.md)。
 
-- 冠脉计划现在自动留下单次预计意图。独立验证持续跟进时，在 `preparePciAdmission` 后、确认 PCI 参数前调用[公共取消 helper](../../apps/server/tests/fixtures/inpatient-drg-agent.ts)，保持原旅程精确的生成／核验计量断言；不要把两类独立授权产生的额外请求误判为重复派发，也不要直接放宽总次数。自动单次意图、刷新复用和未知恢复由[独立 HTTP 旅程](../../apps/server/tests/inpatient-material-estimate-http.test.ts)验证。
+- 冠脉计划现在自动留下单次预计意图。独立验证持续跟进时，在每次创建需要独立验证的计划后（包括同住院的第二台）、确认 PCI 参数前调用[公共取消 helper](../../apps/server/tests/fixtures/inpatient-drg-agent.ts)，保持原旅程精确的生成／核验计量断言；不要把两类独立授权产生的额外请求误判为重复派发，也不要直接放宽总次数。自动单次意图、刷新复用和未知恢复由[独立 HTTP 旅程](../../apps/server/tests/inpatient-material-estimate-http.test.ts)验证。
 
 - SQLite 迁移发现只匹配 `^\d{4}_[a-z0-9-]+\.sql$`，数字前缀后只允许小写字母、数字与连字符（`0102_local_material_snapshot.sql` 等下划线文件名会被 `apps/server/src/infrastructure/sqlite/database.ts` 静默忽略，表现为新接口缺列 500）；先核对 `schema_migration` 实际应用记录并通过公开 HTTP 验证，不以启动成功代替迁移证据。跨包测试调用 `applyMigrations` 时显式用测试文件的 `import.meta.url` 解析 `apps/server/drizzle/`，避免 Turbo 在 DSH 等子包目录执行时拼成包内路径报 `ENOENT`（参见 `apps/dsh-web/src/model-bridge.test.ts`）。
 

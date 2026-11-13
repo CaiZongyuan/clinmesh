@@ -3238,6 +3238,10 @@ export interface ExcludedHisRoute {
 }
 
 export const excludedHisRoutes = [
+  { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/surgeries/request-reason',
+    reason: '负责住院医生的登录会话读取申请理由草稿；不授予独立 CLI 或 Agent Grant 能力。' },
+  { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/surgeries/request-reason',
+    reason: '负责住院医生的登录会话按当前跟进授权准备申请理由草稿；不写正式申请，不提供独立 CLI 或 Agent Grant 授权。' },
   { method: 'GET', path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/confirmations/:idempotencyKey',
     reason: '医生 Session 按原病例、诊断、检查或处方类别和幂等键读取自己的确认回执，不授予独立 CLI 或 Agent Grant 能力。' },
   { method: 'PUT', path: '/api/his/v1/encounters/:encounterId/clinical-document/visit-kind',

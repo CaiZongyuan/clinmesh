@@ -14,15 +14,18 @@ export function pendingMaterialDraftCostDelta(owner: InpatientService, context: 
     SELECT request_id,draft_json FROM inpatient_material_estimate
     WHERE workspace_id=? AND epoch=? AND admission_id=? AND status='active' AND draft_json IS NOT NULL`)
     .all(context.workspaceId, context.epoch, admissionId))
+  const pending = rows.flatMap(row => {
+    const request = requests.find(request => request.id === row.request_id)
+    if (!request) return []
+    const draft = inpatientMaterialEstimateDraftSchema.parse(JSON.parse(row.draft_json))
+    return draft.confirmedRevision === draft.revision ? [] : [{ request, draft }]
+  })
+  if (pending.length === 0) return { deltaFen: 0, missing: [] }
   const reservations = owner.drg.reservations(context, admissionId).reservations
   const catalog = owner.surgery.catalog(context).materials
   let deltaFen = 0
   const missing: string[] = []
-  for (const row of rows) {
-    const request = requests.find(request => request.id === row.request_id)
-    if (!request) continue
-    const draft = inpatientMaterialEstimateDraftSchema.parse(JSON.parse(row.draft_json))
-    if (draft.confirmedRevision === draft.revision) continue
+  for (const { request, draft } of pending) {
     const selection = pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code) ? owner.pciSelection.read(context, admissionId, request.id) : null
     const allowed = selection ? [...selection.candidates, ...selection.alternatives].flatMap(candidate => candidate.item === null ? [] : [candidate.item])
       : ['88.5500', '88.5600'].includes(request.plannedProcedure.coding.code) ? catalog.filter(item => item.id === 'hospital-material-catheter' && item.version === 1) : []
