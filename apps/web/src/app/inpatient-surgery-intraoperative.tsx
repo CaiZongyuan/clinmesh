@@ -1,5 +1,5 @@
 import { equivalentMaterialSuggestions } from '@clinmesh/core/inpatient-equivalent-materials'
-import { inpatientPciSelectionSchema, type InpatientEquivalentMaterialSuggestion } from '@clinmesh/contracts/inpatient-pci-selection'
+import { type InpatientEquivalentMaterialSuggestion } from '@clinmesh/contracts/inpatient-pci-selection'
 import { EquivalentMaterialAdvice } from './inpatient-equivalent-materials.tsx'
 import type { z } from 'zod'
 import { Fragment, useState } from 'react'
@@ -38,8 +38,6 @@ export function IntraoperativeMaterialRows({ admissionId, session, locale, execu
   const [extraId, setExtraId] = useState<string | null>(null), [extraNote, setExtraNote] = useState(''), [otherOpen, setOtherOpen] = useState(false)
   const [otherId, setOtherId] = useState<string | null>(null), [quantity, setQuantity] = useState('1'), [otherNote, setOtherNote] = useState('')
   const [adopted, setAdopted] = useState<InpatientEquivalentMaterialSuggestion | null>(null)
-  const selection = useQuery({ queryKey: [...inpatientScopeKey(session), admissionId, 'pci-selection'], enabled: active && otherOpen, retry: false,
-    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admissionId}/pci-selection`, inpatientPciSelectionSchema, signal) })
   const own = reservations.filter(item => item.requestId === execution.requestId)
   const plan = data?.intraoperativePlans.find(item => item.requestId === execution.requestId)
   const items = catalog?.materials.filter(item => 'chargeDefinition' in item) ?? []
@@ -71,8 +69,8 @@ export function IntraoperativeMaterialRows({ admissionId, session, locale, execu
     </TableCell></TableRow>
   }
   const otherMaterial = items.find(item => item.id === otherId), amount = Number(quantity)
-  const equivalentSuggestions = otherMaterial && data?.costs && selection.error === null && selection.data?.confirmation?.parameters.requestId === execution.requestId
-    ? equivalentMaterialSuggestions(selection.data, [{ materialId: otherMaterial.id, catalogVersion: otherMaterial.version, quantity: amount }], data.costs, true) : []
+  const equivalentSuggestions = otherMaterial && data?.costs && plan
+    ? equivalentMaterialSuggestions(plan, [{ materialId: otherMaterial.id, catalogVersion: otherMaterial.version, quantity: amount }], data.costs, true) : []
   return <>
     <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{t('本台耗材', 'Materials for this surgery')}</h4><span className="flex-1" />
       <Button variant="link" size="sm" onClick={() => setOtherOpen(value => !value)}>{otherOpen ? t('收起', 'Collapse') : t('登记计划外的其他耗材', 'Record another unplanned material')}</Button></div>

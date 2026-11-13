@@ -31,7 +31,7 @@ export function drgGroupingReason(result: DrgGroupingResult, locale: WorkspaceLo
 }
 
 /** 主块只比较医院支付参考与已用费用，状态只分未超和已超；系统没有标杆住院日或预警阈值。 */
-export function DrgPaymentMonitor({ data, costs, locale }: { data: InpatientDrgSimulation; costs: InpatientCosts | null | undefined; locale: WorkspaceLocale }): React.JSX.Element {
+export function DrgPaymentMonitor({ data, costs, locale, projectionIncomplete = false }: { projectionIncomplete?: boolean; data: InpatientDrgSimulation; costs: InpatientCosts | null | undefined; locale: WorkspaceLocale }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const reference = data.paymentReference?.referenceFen ?? costs?.currentPaymentReference?.referenceFen ?? null
   const posted = data.formal.chargesFen, pending = sum(data.committed.items.filter(item => item.kind !== 'surgery')), spent = posted
@@ -61,7 +61,7 @@ export function DrgPaymentMonitor({ data, costs, locale }: { data: InpatientDrgS
         <span className="flex-1" /><span>{t('竖线 = 支付参考 · 已用 ', 'Line = payment reference · used ')}{reference > 0 ? Math.round(spent / reference * 100) : 0}%</span>
       </div>
     </> : null}
-    {data.grouping.projected ? <PlannedLine data={data} projected={data.grouping.projected} costs={costs} spent={spent} locale={locale} /> : null}
+    {data.grouping.projected && projectionIncomplete ? <p className="text-sm text-muted-foreground">{t('计划耗材费用待核对，预计总费用暂不可用', 'Review planned material prices; projected charges unavailable')}</p> : data.grouping.projected ? <PlannedLine data={data} projected={data.grouping.projected} costs={costs} spent={spent} locale={locale} /> : null}
     {exceptionTriggered ? <Alert><AlertDescription>{t('已发生正式收费合计严格超过当前 DRG 支付参考额的 3 倍。建议本次住院诊疗结束后由医保办人工评估特例单议申请；此提醒不阻断出院，不自动申请、不调整分组或核定，也不预测补付。', 'Net posted charges exceed three times the current DRG payment reference. After inpatient care ends, the insurance office should assess an exceptional-case application. This advisory does not block discharge or change grouping or payment.')}</AlertDescription></Alert> : null}
     {formal.status !== 'grouped' ? <p className="text-sm text-muted-foreground">{drgGroupingReason(formal, locale)}</p> : null}
     <DrgGroupingEvidence result={{ ...formal, reason: null }} locale={locale} />

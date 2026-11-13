@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
-import { inpatientDrgSimulationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
+import { inpatientDrgSimulationSchema, inpatientCostsSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgRecordChecksSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { InpatientDrgHeader } from './inpatient-drg-progress.tsx'
 import { InpatientDrgPanel } from './inpatient-drg.tsx'
@@ -25,6 +25,7 @@ const simulation = inpatientDrgSimulationSchema.parse({ admissionId: admission.i
   formal: { chargesFen: 150000, items: [] }, committed: { items: [] }, reserved: { items: [] }, draft: { items: [], missing: [] },
   coverage: { coveredFen: 150000, estimatedTotalFen: 150000, coveredRatioBp: 10000, note: '合成费用' }, grouping: { formal: grouped, projected: null, note: '合成分组' },
   paymentReference: { parameterSetId: 'synthetic-reference', parameterVersion: '1', drgCode: 'FR59', referenceFen: 400000, note: '合成参考' }, incompleteness: { costMissing: false, paymentReferenceMissing: false } })
+const costs = inpatientCostsSchema.parse({ fingerprint: 'c'.repeat(64), components: { formalChargesFen: 150000, pendingOrdersFen: 0, remainingMaterialsFen: 0, plannedSurgeryFen: 0, projectedTotalFen: 150000 }, currentGrouping: grouped, projectedGrouping: null, currentPaymentReference: simulation.paymentReference, projectedPaymentReference: null, currentDifferenceFen: 250000, projectedDifferenceFen: null, paymentStatus: 'available', paymentMessage: '合成参考可用', exceptionAlert: 'below-threshold' })
 const clients: QueryClient[] = []
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
 
@@ -35,7 +36,7 @@ function fixture(role: SessionContext['actor']['roleCode'] = 'inpatient-doctor')
     reads.push(path)
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: time, requests: [], executions: [], inProgress: [] })
     if (path.endsWith('/drg/simulation')) return Response.json({ ...simulation, formal: { ...simulation.formal, chargesFen: amount }, coverage: { ...simulation.coverage, coveredFen: amount, estimatedTotalFen: amount } })
-    if (path.endsWith('/drg/record-checks')) return Response.json(inpatientDrgRecordChecksSchema.parse({ admissionId: admission.id, encounterVersion: '2', fingerprint: 'a'.repeat(64), status: 'complete', simulation, issues: [], sources: [], paymentStatus: 'available', paymentMessage: '合成参考', missing: [], costs: null, usage: [] }))
+    if (path.endsWith('/drg/record-checks')) return Response.json(inpatientDrgRecordChecksSchema.parse({ admissionId: admission.id, encounterVersion: '2', fingerprint: 'a'.repeat(64), status: 'complete', simulation, issues: [], sources: [], paymentStatus: 'available', paymentMessage: '合成参考', missing: [], costs, usage: [] }))
     return Response.json({ error: { code: 'SYNTHETIC_UNAVAILABLE', message: '合成次级资料未准备' } }, { status: 503 })
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)

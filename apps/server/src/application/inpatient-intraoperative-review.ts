@@ -69,7 +69,8 @@ export class InpatientIntraoperativeReview {
   read(context: ActorContext, admissionId: string) {
     const facts = this.#facts(context, admissionId), rows = this.#rows(context, admissionId)
     const task = this.owner.followup.state(context, admissionId).task
-    return { intraoperativePlans: facts.map(({ plan }) => ({ requestId: plan.requestId, reference: plan.reference, items: plan.items.map(({ specification: _specification, ...item }) => item) })),
+    return { intraoperativePlans: facts.map(({ plan, selection }) => ({ requestId: plan.requestId, reference: plan.reference,
+      items: plan.items.map(({ specification: _specification, ...item }) => item), candidates: selection.candidates, alternatives: selection.alternatives })),
       intraoperativeReviews: facts.flatMap(fact => fact.deviations.map(deviation => {
         const row = rows.find(row => inputSchema.parse(JSON.parse(row.input_json)).deviation.use.id === deviation.use.id)
         const input = row ? inputSchema.parse(JSON.parse(row.input_json)) : undefined

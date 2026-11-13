@@ -1,7 +1,7 @@
 import { inpatientEquivalentMaterialSuggestionSchema } from './inpatient-pci-selection.ts'
 import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
-import { pciSelectionEvidenceSchema } from './inpatient-pci-selection.ts'
+import { pciSelectionEvidenceSchema, pciSelectionCandidateSchema } from './inpatient-pci-selection.ts'
 import { inpatientCostsSchema, inpatientSurgeryUsageSchema } from './inpatient-drg-simulation.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
@@ -52,6 +52,8 @@ export const inpatientIntraoperativeGenerationSchema = z.object({ explanation: t
 export const inpatientIntraoperativeVerificationSchema = z.object({ supported: z.boolean(), costExplanationSupported: z.boolean().nullable() }).strict()
 export const inpatientIntraoperativePlanSchema = z.object({ requestId: id,
   reference: z.string().min(1).max(512), items: z.array(inpatientDrgAgentMaterialSchema).max(20),
+  candidates: z.array(pciSelectionCandidateSchema).max(20).default([]),
+  alternatives: z.array(pciSelectionCandidateSchema).max(20).default([]),
 }).strict()
 
 export const inpatientDrgAgentSchema = z.object({

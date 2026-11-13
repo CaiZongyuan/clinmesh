@@ -43,10 +43,38 @@ export function useInpatientDrgQuery({ admission, session, active, draft, allowP
   // 术前准备拥有读取；这里只订阅同一缓存，避免另一组轮询。
   const estimates = useQuery({ queryKey: [...scope, 'material-estimates'], enabled: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/material-estimates`, inpatientMaterialEstimatesSchema, signal) })
-  const pendingEstimate = plans.length === 1 ? estimates.data?.estimates.find(estimate => estimate.requestId === plans[0]!.id
-    && estimate.status !== 'cancelled' && (estimate.draft === null || estimate.draft.confirmedRevision !== estimate.draft.revision)) : undefined
-  const projectedCosts = pendingEstimate?.costs ?? (checks.error === null ? checks.data?.costs : undefined)
-  return { projectedCosts, scope, path, archived, visible, enabled, allowPlanSelection: selectPlan, surgery, plans, primarySurgeryRequestId,
+  const planEstimates = (estimates.data?.estimates ?? []).filter(estimate => plans.some(plan => plan.id === estimate.requestId))
+  const previewEstimates = selectPlan ? planEstimates.filter(estimate => estimate.status !== 'cancelled'
+    && !surgery.data?.inProgress.some(execution => execution.requestId === estimate.requestId)
+    && (estimate.draft === null || estimate.draft.confirmedRevision !== estimate.draft.revision)) : []
+  const referencePlanId = primarySurgeryRequestId ?? (plans.length === 1 ? plans[0]!.id : null)
+  const referenceCosts = planEstimates.find(estimate => estimate.requestId === referencePlanId)?.costs
+    ?? (checks.error === null ? checks.data?.costs : undefined)
+  const data = simulation.error === null ? simulation.data : undefined
+  const reservationBasis = data ? JSON.stringify(data.reserved.items.map((item): [string, number, number | null] => [item.id, item.quantity, item.estimatedFen])
+    .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)) : undefined
+  const pendingEstimates = previewEstimates.filter(estimate => estimate.materialDraftDeltaFen !== null && estimate.materialDraftReservationBasis !== null
+    && JSON.stringify(estimate.materialDraftReservationBasis) === reservationBasis)
+  const materialProjectionIncomplete = data !== undefined && previewEstimates.some(estimate => !pendingEstimates.includes(estimate)
+    && (estimate.draft?.items.length ?? 0) > 0)
+  const delta = pendingEstimates.reduce((sum, estimate) => sum + estimate.materialDraftDeltaFen!, 0)
+  const sum = (items: NonNullable<typeof data>['reserved']['items']) => items.reduce((total, item) => total + (item.estimatedFen ?? 0), 0)
+  // 仅读取显示投影，不覆盖 Query 的正式事实或审阅指纹；全局基线始终来自本次 simulation。
+  const projectedTotalFen = data ? data.coverage.estimatedTotalFen + delta : undefined
+  const plannedReference = referenceCosts?.projectedPaymentReference
+    && referenceCosts.projectedPaymentReference.drgCode === data?.grouping.projected?.drgCode ? referenceCosts.projectedPaymentReference : null
+  const projectedCosts = data && referenceCosts && projectedTotalFen !== undefined ? { ...referenceCosts,
+    components: { formalChargesFen: data.formal.chargesFen,
+      pendingOrdersFen: sum(data.committed.items.filter(item => item.kind !== 'surgery')),
+      plannedSurgeryFen: sum(data.committed.items.filter(item => item.kind === 'surgery')),
+      remainingMaterialsFen: sum(data.reserved.items) + delta, projectedTotalFen },
+    currentGrouping: data.grouping.formal, projectedGrouping: data.grouping.projected,
+    currentPaymentReference: data.paymentReference,
+    projectedPaymentReference: plannedReference,
+    currentDifferenceFen: data.paymentReference === null ? null : data.paymentReference.referenceFen - projectedTotalFen,
+    projectedDifferenceFen: plannedReference === null ? null : plannedReference.referenceFen - projectedTotalFen,
+  } : referenceCosts
+  return { materialProjectionIncomplete, projectedCosts, scope, path, archived, visible, enabled, allowPlanSelection: selectPlan, surgery, plans, primarySurgeryRequestId,
     setSelectedPlanId, simulationInput, grouping, simulation, checks }
 }
 

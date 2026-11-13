@@ -36,6 +36,8 @@ export const inpatientMaterialEstimateSchema = z.object({
   candidateItems: z.array(inpatientDrgAgentMaterialSchema).max(20),
   planBasis: inpatientMaterialPlanBasisSchema.optional(),
   costs: inpatientCostsSchema.nullable().default(null),
+  materialDraftDeltaFen: z.number().int().safe().nullable().default(null),
+  materialDraftReservationBasis: z.array(z.tuple([id, z.number().int().positive(), z.number().int().safe().nonnegative()])).max(500).nullable().default(null),
   equivalentSuggestions: z.array(inpatientEquivalentMaterialSuggestionSchema).max(20).default([]),
 }).strict()
 export const inpatientMaterialEstimatesSchema = z.object({

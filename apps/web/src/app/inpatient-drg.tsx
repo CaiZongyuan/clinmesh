@@ -55,7 +55,7 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
   const localQuery = useInpatientDrgQuery({ admission, session, active: active && sharedQuery === undefined, draft,
     allowPlanSelection: onReview === undefined })
   const { scope, archived, visible, enabled, allowPlanSelection, surgery, plans, primarySurgeryRequestId,
-    setSelectedPlanId, simulationInput, grouping, simulation, checks, projectedCosts } = sharedQuery ?? localQuery
+    setSelectedPlanId, simulationInput, grouping, simulation, checks, projectedCosts, materialProjectionIncomplete } = sharedQuery ?? localQuery
   const evaluationKey = JSON.stringify([...scope, simulationInput ?? null])
   const currentKey = useRef(evaluationKey)
   currentKey.current = evaluationKey
@@ -119,7 +119,7 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
     <DrgError error={simulation.error ?? (allowPlanSelection ? surgery.error : null)} locale={locale} />
     {stale ? <DrgStaleNotice locale={locale} /> : null}
     {data && !simulation.error ? <>
-      <DrgPaymentMonitor data={data} costs={projectedCosts} locale={locale} />
+      <DrgPaymentMonitor data={data} costs={projectedCosts} projectionIncomplete={materialProjectionIncomplete} locale={locale} />
       <DrgChargeMix data={data} locale={locale} onOpenFees={onOpenRecord ? () => onOpenRecord('fees') : undefined} />
       {data.draft.missing.length > 0 ? <Alert><AlertDescription>{t('部分待提交项目缺少当前目录价格，请刷新目录后重新选择；本次费用预计不完整。', 'Some pending items lack current catalog prices. Refresh and select again; this estimate is incomplete.')}</AlertDescription></Alert> : null}
       {data.incompleteness.paymentReferenceMissing ? <p className="text-sm text-muted-foreground">{t('当前正式病组的医院支付参考参数不完整。', 'Hospital payment reference parameters are incomplete for the formal group.')}</p> : null}

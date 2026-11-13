@@ -851,16 +851,42 @@ it('人工采用等效候选只改产品并保存同数量工作稿，换回恢�
   const adopted = await change('hospital-material-pci-stent', 'hospital-material-pci-stent-equivalent-b')
   expect(adopted.draft!.items.map(item => item.quantity)).toEqual([1, 1, 1, 1])
   expect(adopted.costs!.components.projectedTotalFen).toBe(1086598)
+  expect(adopted.materialDraftDeltaFen).toBe(106598)
+  expect(adopted.materialDraftReservationBasis).toEqual([[expect.any(String), 20, 800000]])
   expect(adopted.draft!.analysisId).toBeNull()
   const restored = await change('hospital-material-pci-stent-equivalent-b', 'hospital-material-pci-stent')
   expect(restored.costs!.components.projectedTotalFen).toBe(1106598)
   expect(restored.equivalentSuggestions).toHaveLength(1)
   await change('hospital-material-pci-stent', 'hospital-material-pci-stent-equivalent-b')
-  await confirmEstimate(s)
+  const confirmed = await confirmEstimate(s)
+  expect(confirmed.materialDraftDeltaFen).toBeNull()
   const list = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
   const own = list.reservations.filter(item => item.requestId === stay.requestId && item.status === 'reserved')
   expect(own).toHaveLength(4)
   expect(own.map(item => item.quantity)).toEqual([1, 1, 1, 1])
   expect(own.some(item => item.materialId === 'hospital-material-pci-stent-equivalent-b' && item.priceFen === 53000)).toBe(true)
   expect(own.some(item => item.materialId === 'hospital-material-pci-stent')).toBe(false)
+})
+
+it('术中清单返回自身确认候选，后确认的另一PCI计划不会替代当前手术的等效依据', async () => {
+  const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true), stay = s.pciAdmission!
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId } })).status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  await confirmEstimate(s)
+  const admission = (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
+  const next = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, { encounterVersion: admission.versionId,
+    procedureId: stay.procedure.id, catalogVersion: 1, plannedFor: '2026-08-24T18:00:00+08:00', reason: '另一台已确认的合成PCI计划' })).json()).data.requests.find(item => item.id !== stay.requestId)!
+  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 1,
+    parameters: { ...pciAgentParameters, requestId: next.id, measurements: pciAgentParameters.measurements.map(item => item.kind === 'proximal-reference-diameter' ? { ...item, value: 3.5 } : item) } })).status).toBe(200)
+  const latest = await s.fixture.read('inpatient-doctor', `${stay.path}/pci-selection`, inpatientPciSelectionResponseSchema.shape.data)
+  expect(latest.confirmation!.parameters.requestId).toBe(next.id)
+  expect(latest.candidates.every(item => item.eligibility === 'inapplicable')).toBe(true)
+  const { materials: _materials, ...start } = await s.fixture.pciExecutionInput(stay)
+  const started = await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/start`, start)
+  expect(started.status, await started.clone().text()).toBe(200)
+  const state = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)
+  const own = state.intraoperativePlans.find(item => item.requestId === stay.requestId)!
+  expect(own.candidates).toHaveLength(4)
+  expect(own.candidates.every(item => item.eligibility === 'valid')).toBe(true)
+  expect(own.alternatives).toMatchObject([{ materialId: 'hospital-material-pci-stent-equivalent-b', eligibility: 'valid', equivalenceGroupId: 'synthetic-pci-stent-3.0x18' }])
 })

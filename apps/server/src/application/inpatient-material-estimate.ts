@@ -114,6 +114,9 @@ export class InpatientMaterialEstimate {
       candidateItems: analysis && analysis.basisFingerprint === fingerprint && analysis.id !== draft?.analysisId ? analysis.items : [],
       planBasis: this.owner.materialPlans.forRequest(context, row.admission_id, row.request_id),
       equivalentSuggestions: liveInput?.equivalentSuggestions ?? [],
+      materialDraftDeltaFen: draft !== null && draft.confirmedRevision === draft.revision ? null
+        : 'materialDraftDeltaFen' in basis ? basis.materialDraftDeltaFen : null,
+      materialDraftReservationBasis: 'materialDraftReservationBasis' in basis ? basis.materialDraftReservationBasis : null,
       costs: liveInput?.costs ?? readInpatientCosts(this.owner, context, row.admission_id) })
   }
   list(context: ActorContext, admissionId: string) {

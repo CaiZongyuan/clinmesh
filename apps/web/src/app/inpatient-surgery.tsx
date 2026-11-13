@@ -610,9 +610,13 @@ function PciStepTwoCard({ admission, plan, isPci, selDone, done, selectionEdited
       expectedBasisFingerprint: estimate.basisFingerprint, analysisId: null,
       items: rows.filter(item => Number(item.quantity) > 0).map(item => ({ ...item, quantity: Number(item.quantity) })), note: currentNote })
     if (!parsed.success) return
+    const submittedNote = note
+    setItems(rows)
     try {
       await write.mutation.mutateAsync({ operation: 'inpatient.material-estimate.save', input: parsed.data })
-      setItems(null); setNote(null); setAdopted(restore ? null : suggestion)
+      setItems(current => current === rows ? null : current)
+      setNote(current => current === submittedNote ? null : current)
+      setAdopted(restore ? null : suggestion)
     } catch { /* Existing write recovery keeps the original intent and current input. */ }
   }
   const saveAndConfirm = async () => {

@@ -60,6 +60,9 @@ export function InpatientDrgHeader({ admission, session, query, locale, onOpenDr
     return <ProgressLine locale={locale} onOpenDrg={onOpenDrg} progress={{ projected: false, grouping, spent: total, total, reference,
       ...referenceProgress(total, reference) }} />
   }
+  if (query.materialProjectionIncomplete) return <button type="button" className="clinmesh-inpatient-drg-progress" onClick={onOpenDrg} aria-label={locale === 'zh-CN' ? 'DRG 费用进度，点击查看 DRG 预分组' : 'DRG charge progress; open DRG pre-grouping'}>
+    <span>DRG</span><span>{locale === 'zh-CN' ? '已用 ' : 'Used '}{formatFen(query.simulation.data?.formal.chargesFen ?? admission.chargesFen, locale)}</span><span>{locale === 'zh-CN' ? '计划耗材费用待核对，预计总费用暂不可用' : 'Review planned material prices; projected charges unavailable'}</span><ChevronRightIcon aria-hidden="true" />
+  </button>
   if (query.simulation.data && !query.simulation.error) return <DrgProgressBar data={query.simulation.data} costs={query.projectedCosts} locale={locale} onOpenDrg={onOpenDrg} />
   const unavailable = query.simulation.error || query.grouping.error || admission.status === 'registered'
   return <button type="button" className="clinmesh-inpatient-drg-progress" onClick={onOpenDrg} aria-label={locale === 'zh-CN' ? 'DRG 费用进度，点击查看 DRG 预分组' : 'DRG charge progress; open DRG pre-grouping'}>
