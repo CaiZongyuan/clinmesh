@@ -1,13 +1,13 @@
 import { inpatientMaterialReservationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { expect, it } from 'vitest'
 import { inpatientMaterialPlanSchema } from '@clinmesh/contracts/inpatient-material-plan'
-import { inpatientSurgeryExecutionSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientMaterialItemSchema, inpatientSurgeryExecutionSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { completionReviewNote, postoperativeDispositionNote } from './inpatient-surgery-notes.ts'
 import { inpatientDrgReviewTodoSchema } from '@clinmesh/contracts/inpatient-drg-review'
-import type { CompletionDraftRow } from './inpatient-surgery-completion-draft.ts'
+import { initialCompletionDraft, type CompletionDraftRow } from './inpatient-surgery-completion-draft.ts'
 
 const time = '2026-11-13T09:00:00+08:00'
-const item = { id: 'wire', version: 1, display: '合成导丝', chargeDefinition: { id: 'wire-price', priceFen: 20000, unit: '根', synthetic: true, trigger: 'execution' } }
+const item = inpatientMaterialItemSchema.parse({ id: 'wire', version: 1, display: '合成导丝', chargeDefinition: { id: 'wire-price', priceFen: 20000, unit: '根', synthetic: true, trigger: 'execution' } })
 const execution = inpatientSurgeryExecutionSchema.parse({ id: 'execution-1', admissionId: 'admission-1', requestId: 'request-1', actualProcedure: {
   id: 'pci', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '36.0700', display: '合成PCI', category: '介入治疗', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.com', sourceSha256: 'a'.repeat(64), sourceLocator: 'synthetic' }, chargeDefinition: { ...item.chargeDefinition, unit: '次' } },
   performedAt: time, performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: 'org-1', note: '合成手术', materials: [],
@@ -35,6 +35,34 @@ it('计划内用完后再次登记，只把超出计划那笔的依据带入多�
   ] }
   expect(completionReviewNote([{ ...row, quantity: '2', previousQuantity: 2, materialUseIds: ['planned-use', 'extra-use'] }], plan, current, [], 'zh-CN', [reservation]))
     .toBe('最终用量按术中已登记量核实；合成导丝多用1 根，分支保护。')
+})
+it('将额外原笔清零再新增同版本用量时，不借用已冲减原笔的原因', () => {
+  const plannedUse = { ...execution.materialHistory[0]!, id: 'planned-use', quantity: 1, amountFen: 20000, reservationId: 'reservation-1', note: '按计划：单病变导丝' }
+  const extraUse = { ...execution.materialHistory[0]!, id: 'extra-use', quantity: 1, amountFen: 20000, note: '污染更换' }
+  const current = { ...execution, materialHistory: [plannedUse, extraUse], materials: [
+    { id: 'planned-use', item, quantity: 1, amountFen: 20000 }, { id: 'extra-use', item, quantity: 1, amountFen: 20000 },
+  ] }
+  const draft = initialCompletionDraft(current, [reservation], 'request-1')
+  expect(draft.rows).toHaveLength(2)
+  const finalRows = draft.rows.map(row => row.materialUseIds.includes('extra-use') ? { ...row, quantity: '0' } : row)
+  finalRows.push({ key: 'new-use', materialId: item.id, catalogVersion: item.version, display: item.display, unit: '根', priceFen: 20000,
+    quantity: '1', previousQuantity: 0, materialUseIds: [] })
+  expect(completionReviewNote(finalRows, plan, current, [], 'zh-CN', [reservation]))
+    .toBe('最终用量已按逐项核实调整；合成导丝多用1 根。')
+})
+it('聚合行减少用量时末笔先减，仍保留前一笔部分额外用量的依据', () => {
+  const largerPlan = { ...plan, items: [{ ...plan.items[0]!, quantity: 2, estimatedFen: 40000 }] }
+  const plannedUse = { ...execution.materialHistory[0]!, id: 'planned-use', note: '按计划：两根导丝' }
+  const firstExtra = { ...execution.materialHistory[0]!, id: 'first-extra', note: '分支保护' }
+  const lastExtra = { ...execution.materialHistory[0]!, id: 'last-extra', note: '污染更换' }
+  const current = { ...execution, materialHistory: [plannedUse, firstExtra, lastExtra], materials: [
+    { id: 'planned-use', item, quantity: 2, amountFen: 40000 }, { id: 'first-extra', item, quantity: 2, amountFen: 40000 },
+    { id: 'last-extra', item, quantity: 2, amountFen: 40000 },
+  ] }
+  const draft = initialCompletionDraft(current, [], 'request-1')
+  expect(draft.rows).toHaveLength(1)
+  expect(completionReviewNote(draft.rows.map(row => ({ ...row, quantity: '3' })), largerPlan, current, [], 'zh-CN', []))
+    .toBe('最终用量已按逐项核实调整；合成导丝多用1 根，分支保护。')
 })
 it('计划内原笔被替换更正后，按原登记位置累计，不把计划内更正当作多用依据', () => {
   const plannedUse = { ...execution.materialHistory[0]!, id: 'planned-use', quantity: 1, amountFen: 20000, note: '按计划：单病变导丝',

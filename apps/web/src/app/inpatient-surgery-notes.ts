@@ -28,7 +28,7 @@ export function completionReviewNote(rows: CompletionDraftRow[], plan: Inpatient
   const differences = completionQuantities(rows, plan).filter(row => row.difference !== 0)
   if (differences.length === 0) return changed ? `${lead}${zh ? '，与术前计划一致。' : '; consistent with the preoperative plan.'}`
     : zh ? '最终用量与术中登记、术前计划一致。' : 'Final quantities match recorded use and the preoperative plan.'
-  const history = materialHistoryInOriginalOrder(execution.materialHistory)
+  const history = retainedMaterialHistory(materialHistoryInOriginalOrder(execution.materialHistory), rows)
   const details = differences.map(row => {
     const notes = excessUseNotes(history.filter(use => `${use.item.id}@${use.item.version}` === row.key), row.planned ?? 0)
     return row.difference! > 0 ? `${row.display}${zh ? '多用' : ' extra '}${row.difference} ${row.unit}${notes.length ? `，${notes.join('；')}` : ''}`
@@ -61,6 +61,26 @@ function excessUseNotes(history: z.infer<typeof inpatientSurgeryExecutionSchema>
     if (used > plannedQuantity) notes.add(use.note)
   }
   return [...notes]
+}
+
+/** 对齐核实事务的末笔先减：每行先保留来源列表前部用量，新增无历史量不借用原登记原因。 */
+function retainedMaterialHistory(history: z.infer<typeof inpatientSurgeryExecutionSchema>['materialHistory'], rows: CompletionDraftRow[]) {
+  const byId = new Map(history.map(use => [use.id, use]))
+  const retained = new Map<string, number>()
+  for (const row of rows) {
+    let remaining = Number(row.quantity)
+    for (const id of row.materialUseIds) {
+      const use = byId.get(id)
+      if (!use || use.item.id !== row.materialId || use.item.version !== row.catalogVersion) continue
+      const quantity = Math.min(use.quantity, Math.max(0, remaining))
+      retained.set(id, quantity)
+      remaining -= quantity
+    }
+  }
+  return history.flatMap(use => {
+    const quantity = retained.get(use.id) ?? 0
+    return quantity > 0 ? [{ ...use, quantity }] : []
+  })
 }
 
 /** 更正替代原笔的事实，累计时保留原笔的位置；替换链只计最终有效记录一次。 */
