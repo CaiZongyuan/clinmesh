@@ -61,9 +61,9 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
   const reservations = useQuery({ queryKey: [...scope, 'drg-reservations'], enabled: active && doctor, retry: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/reservations`, inpatientMaterialReservationListSchema, signal) })
-  const noteFor = (todo: z.infer<typeof inpatientDrgReviewTodoSchema>) => notes[todo.id]
+  const noteFor = (todo: z.infer<typeof inpatientDrgReviewTodoSchema>, disposition: 'confirm' | 'follow-up' = 'confirm') => notes[todo.id]
     ?? (doctor && todo.status === 'in-progress' ? todo.reason : null)
-    ?? (doctor ? postoperativeDispositionNote(todo, surgeries.data?.executions ?? [], reservations.data?.reservations ?? [], locale) : '')
+    ?? (doctor ? postoperativeDispositionNote(todo, surgeries.data?.executions ?? [], reservations.data?.reservations ?? [], locale, disposition) : '')
   const [batching, setBatching] = useState(false), [actionError, setActionError] = useState<unknown>(null)
   const ownerKey = JSON.stringify([session.user.id, session.actor, admission.id, requestId]), currentOwner = useRef(ownerKey), mounted = useRef(true)
   currentOwner.current = active ? ownerKey : ''
@@ -81,7 +81,7 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
     const todo = openTodos.find(item => item.id === todoId)
     if (readonly || batching || write.blocked || !data?.fingerprint || !todo || !noteFor(todo).trim()) return
     setActionError(null)
-    try { await submit(todo, action, data.fingerprint, noteFor(todo)); await review.refetch() }
+    try { await submit(todo, action, data.fingerprint, noteFor(todo, action === 'in-progress' ? 'follow-up' : 'confirm')); await review.refetch() }
     catch (error) { if (mounted.current && currentOwner.current === ownerKey) setActionError(error) }
   }
   const confirmAll = async () => {

@@ -235,6 +235,10 @@ export async function runSurgeryFlowJourney(page: Page, app: PciAiBrowserApp, in
     await expect(postoperative.getByRole('listitem')).not.toContainText('需术者核实额外用途')
     await capture.capture('postoperative')
     const finding = postoperative.getByRole('listitem')
+    await finding.getByRole('button', { name: '需要跟进', exact: true }).click()
+    const followupNote = '术中多用 1 根，分支保护；已在登记时说明，需继续跟进核实。'
+    await expect.poll(async () => (await f.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)).todos.find(item => item.requestId === planned.id)?.reason).toBe(followupNote)
+    await expect(finding).toContainText(followupNote)
     await finding.getByRole('button', { name: '看术中登记', exact: true }).click()
     const source = page.getByRole('dialog').filter({ has: page.getByRole('region', { name: '本项术中登记', exact: true }) })
     await expect(source.getByRole('region', { name: '本项术中登记', exact: true })).toContainText('分支保护')

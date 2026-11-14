@@ -267,6 +267,44 @@ it('全部确认保留已处置历史，但不再显示确认按钮或未完成�
   expect(screen.queryByRole('textbox', { name: '待办处理说明' })).toBeNull()
 })
 
+it.each([null, '分支保护，交下一班核查导丝余量'])('选择跟进时改写未编辑的默认结论并保留人工说明：%s', async manualNote => {
+  const time = '2026-11-14T09:00:00+08:00'
+  const charge = { id: 'charge-wire', priceFen: 20000, unit: '根', synthetic: true, trigger: 'execution' }
+  const material = { id: 'wire', version: 1, display: '导丝', chargeDefinition: charge }
+  const procedure = { id: 'pci', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '36.0700', display: '合成PCI', category: '介入治疗', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.com/synthetic', sourceSha256: 'a'.repeat(64), sourceLocator: 'synthetic' }, chargeDefinition: { ...charge, unit: '次' } }
+  const surgery = { admissionId: admission.id, encounterVersion: '1', virtualTime: time, requests: [], executions: [{
+    id: 'execution-1', admissionId: admission.id, requestId: 'request-1', actualProcedure: procedure, performedAt: time,
+    performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: 'org-1', note: '合成手术', materials: [],
+    materialHistory: ['按计划', '分支保护'].map((note, index) => ({ id: `use-${index}`, item: material, quantity: 1, amountFen: 20000, recordedAt: time, recordedBy: 'doctor', practitionerRoleId: 'role-doctor', reservationId: null, note })),
+  }] }
+  let current = review
+  const posts: { action: string; note: string }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (init?.method === 'POST') {
+      const input = JSON.parse(String(init.body)).input
+      posts.push({ action: input.action, note: input.note })
+      current = { ...current, todos: current.todos.map(item => ({ ...item, status: 'in-progress', reason: input.note })) }
+      return Response.json({ data: current, auditId: 'audit-follow', requestId: 'receipt-follow', effects: [], warnings: [] })
+    }
+    if (path.endsWith('/drg/review')) return Response.json(current)
+    if (path.endsWith('/surgeries')) return Response.json(surgery)
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成预留未准备' } }, { status: 503 })
+  }))
+  mount(session, admission, true)
+  await screen.findByText('术中多用 1 根，分支保护；已在登记时说明，无需进一步处理。')
+  const user = userEvent.setup()
+  if (manualNote !== null) {
+    await user.click(screen.getByRole('button', { name: '修改处理说明 导丝' }))
+    await user.clear(screen.getByRole('textbox', { name: '待办处理说明' }))
+    await user.type(screen.getByRole('textbox', { name: '待办处理说明' }), manualNote)
+  }
+  await user.click(screen.getByRole('button', { name: '需要跟进' }))
+  const expected = manualNote ?? '术中多用 1 根，分支保护；已在登记时说明，需继续跟进核实。'
+  await waitFor(() => expect(posts).toEqual([{ action: 'in-progress', note: expected }]))
+  expect(await screen.findByText(expected)).toBeDefined()
+})
+
 it('需要跟进的已记说明在重开后仍优先显示，明确清空禁确认且直接确认不覆盖原说明', async () => {
   const savedNote = '分支保护，交下一班核查导丝余量'
   let current = inpatientDrgReviewSchema.parse({ ...review, todos: [{ ...todo, status: 'in-progress', reason: savedNote }] })

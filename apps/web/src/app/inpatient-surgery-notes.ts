@@ -38,7 +38,8 @@ export function completionReviewNote(rows: CompletionDraftRow[], plan: Inpatient
 }
 
 export function postoperativeDispositionNote(todo: z.infer<typeof inpatientDrgReviewTodoSchema>,
-  executions: z.infer<typeof inpatientSurgeryExecutionSchema>[], reservations: InpatientMaterialReservation[], locale: WorkspaceLocale) {
+  executions: z.infer<typeof inpatientSurgeryExecutionSchema>[], reservations: InpatientMaterialReservation[], locale: WorkspaceLocale,
+  disposition: 'confirm' | 'follow-up' = 'confirm') {
   const zh = locale === 'zh-CN', execution = executions.find(item => item.id === todo.executionId)
   if (todo.kind === 'unused-plan') {
     const disposition = reservationDisposition(reservations.filter(item => item.requestId === todo.requestId && item.materialId === todo.materialId), locale)
@@ -51,13 +52,18 @@ export function postoperativeDispositionNote(todo: z.infer<typeof inpatientDrgRe
   const notes = todo.kind === 'extra-use' && todo.plannedQuantity !== null
     ? excessUseNotes(materialHistory, todo.plannedQuantity).filter(note => note.trim())
     : [...new Set(history.filter(use => !use.correction && use.item.id === todo.materialId).map(use => use.note))]
+  const loadedSources = new Set(materialHistory.map(use => `InpatientSurgeryMaterial/${use.id}`))
+  const hasCompleteHistory = materialHistory.reduce((quantity, use) => quantity + use.quantity, 0) === todo.actualQuantity
+    && [...sources].every(source => loadedSources.has(source))
   if (todo.kind === 'extra-use' && todo.plannedQuantity !== null && todo.actualQuantity !== null
-    && todo.actualQuantity > todo.plannedQuantity && notes.length > 0) {
+    && todo.actualQuantity > todo.plannedQuantity && notes.length > 0 && hasCompleteHistory) {
     const quantity = todo.actualQuantity - todo.plannedQuantity
     const unit = materialHistory[0]?.item.chargeDefinition.unit
     const amount = `${quantity}${unit ? ` ${unit}` : ''}`
-    return (zh ? `术中多用 ${amount}，${notes.join('；')}；已在登记时说明，无需进一步处理。`
-      : `${amount} extra used during surgery: ${notes.join('; ')}. Reason recorded during surgery; no further action needed.`).slice(0, 2000)
+    const conclusion = disposition === 'follow-up' ? zh ? '需继续跟进核实。' : 'further review needed.'
+      : zh ? '无需进一步处理。' : 'no further action needed.'
+    return (zh ? `术中多用 ${amount}，${notes.join('；')}；已在登记时说明，${conclusion}`
+      : `${amount} extra used during surgery: ${notes.join('; ')}. Reason recorded during surgery; ${conclusion}`).slice(0, 2000)
   }
   return `${todo.explanation}${notes.length ? `${zh ? '登记依据：' : 'Recorded reason: '}${notes.join('；')}` : ''}`.slice(0, 2000)
 }

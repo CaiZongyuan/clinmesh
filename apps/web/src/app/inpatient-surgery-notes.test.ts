@@ -145,6 +145,14 @@ it('术后多用待办只带出其有效来源中的额外依据，不混入计�
     requestId: 'request-1', executionId: 'execution-1', status: 'pending', reason: null })
   expect(postoperativeDispositionNote(todo, [current], [], 'zh-CN')).toBe('术中多用 1 根，分支保护；已在登记时说明，无需进一步处理。')
 })
+it('术后来源未齐或数量尚未同步时，不把已知的一笔原因当作全部用量的处理结论', () => {
+  const pending = inpatientDrgReviewTodoSchema.parse({ id: 'todo-pending', version: 2, evidenceFingerprint: 'b'.repeat(64), key: 'extra-use:wire-v1',
+    kind: 'extra-use', ownerRole: 'inpatient-doctor', materialId: 'wire', display: '合成导丝', plannedQuantity: 1, actualQuantity: 3,
+    explanation: '实际使用数量超过术前人工计划，需术者核实额外用途。', evidence: ['InpatientSurgeryMaterial/use-1', 'InpatientSurgeryMaterial/not-yet-loaded'],
+    requestId: 'request-1', executionId: 'execution-1', status: 'pending', reason: null })
+  expect(postoperativeDispositionNote(pending, [execution], [], 'zh-CN')).not.toContain('无需进一步处理')
+  expect(postoperativeDispositionNote(pending, [{ ...execution, materialHistory: [{ ...execution.materialHistory[0]!, quantity: 3 }] }], [], 'zh-CN')).not.toContain('无需进一步处理')
+})
 it('额外登记更正后，完成与术后说明均只引用最终有效数量的更正依据', () => {
   const plannedUse = { ...execution.materialHistory[0]!, id: 'planned-use', quantity: 1, amountFen: 20000, note: '按计划：单病变导丝' }
   const oldExtra = { ...execution.materialHistory[0]!, id: 'old-extra', note: '已被替代的额外依据',
