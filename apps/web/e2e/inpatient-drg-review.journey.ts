@@ -54,8 +54,9 @@ export async function runDrgReviewJourney(page: Page, app: PciBrowserApp, prepar
   expect(reviewState.model).toMatchObject({ current: true, status: 'succeeded', observations: verified.analysis!.observations })
   expect(app.modelFeatures.slice(-2)).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
   const extraUseTodo = reviewState.todos.find(item => item.kind === 'extra-use')!
-  expect(extraUseTodo).toMatchObject({ ownerRole: 'inpatient-doctor' })
-  const todo = reviewPanel.locator('article').filter({ hasText: extraUseTodo.explanation }).first()
+  expect(extraUseTodo).toMatchObject({ ownerRole: 'inpatient-doctor', plannedQuantity: 1, actualQuantity: 2 })
+  const todo = reviewPanel.getByRole('listitem').filter({ has: page.getByRole('heading', { name: extraUseTodo.display, exact: true }) })
+    .filter({ hasText: '多用 1' }).first()
   await expect(reviewPanel.getByRole('list', { name: '术后核查清单', exact: true })).toBeVisible()
   await todo.getByRole('button', { name: `修改处理说明 ${extraUseTodo.display}`, exact: true }).click()
   await expect(todo.getByLabel('待办处理说明', { exact: true })).toBeVisible()

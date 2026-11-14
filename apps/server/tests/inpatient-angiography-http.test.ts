@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
 import { inpatientAngiographyReportsSchema } from '@clinmesh/contracts/inpatient-angiography'
 import { inpatientPciSelectionSchema, inpatientPciSelectionResponseSchema, type InpatientPciSelectionParameters } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -475,65 +475,77 @@ it('医生从原确认入口显式修订参数后，候选采用人工值而非�
   expect(selection.candidates.every(item => item.eligibility === 'inapplicable')).toBe(true)
 })
 
-it('计划B的编辑草稿不与计划A的默认确认混用，也不污染A预计依据，显式B读取保留其草稿', async () => {
-  const s = await setup(true)
-  const confirmed = inpatientPciSelectionResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, {
-    expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: s.stay.requestId },
-  })).json()).data.confirmation!
-  expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/followup/start`, {
-    encounterVersion: s.stay.encounterVersion, expectedTaskVersion: 0,
-  })).status).toBe(200)
-  await s.fixture.runtime.dispatchPending()
-  const published = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema))
-    .estimates.find(item => item.requestId === s.stay.requestId)!
-  expect(published.draft!.items).toHaveLength(4)
-  expect(published.costs?.components.projectedTotalFen).toBe(306598)
-  // 首次发布的明确稿进入全住院费用后，沿实际后台周期再核对一次跟进依据。
-  await s.fixture.runtime.dispatchPending()
-  const beforeFollowup = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)
-  expect(beforeFollowup.analysis?.basisFingerprint).toBe(beforeFollowup.basisFingerprint)
-  expect(beforeFollowup.status).toBe('succeeded')
-  await s.fixture.executeAngiography(s.stay)
-  await s.fixture.runtime.dispatchPending()
-  const report = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/angiography-reports`, inpatientAngiographyReportsSchema)).reports[0]!
-  const encounterVersion = (await s.fixture.read('inpatient-doctor', s.stay.path, inpatientDetailSchema)).admission.versionId
-  const planned = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    encounterVersion, procedureId: s.stay.procedure.id, catalogVersion: s.stay.procedure.version,
-    plannedFor: '2026-08-24T15:00:00+08:00', reason: '第二个PCI计划独立准备报告草稿',
-  })).json()).data.requests.at(-1)!
-  const before = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema))
-    .estimates.find(item => item.requestId === s.stay.requestId)!
-  const followupBeforeEdit = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)
-  const saved = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/save`, {
-    requestId: planned.id, expectedDraftVersion: 1, parameters: { ...pciAgentParameters, requestId: planned.id,
-      measurements: report.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 17 } : item) },
+describe('多手术计划的选型依据隔离', () => {
+  let s: Awaited<ReturnType<typeof setup>>
+  let confirmed: NonNullable<z.infer<typeof inpatientPciSelectionResponseSchema>['data']['confirmation']>
+  let report: z.infer<typeof inpatientAngiographyReportsSchema>['reports'][number]
+  let encounterVersion: string
+
+  beforeEach(async () => { s = await setup(true) })
+  beforeEach(async () => {
+    confirmed = inpatientPciSelectionResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, {
+      expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: s.stay.requestId },
+    })).json()).data.confirmation!
+    expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/followup/start`, {
+      encounterVersion: s.stay.encounterVersion, expectedTaskVersion: 0,
+    })).status).toBe(200)
+    await s.fixture.runtime.dispatchPending()
+    const published = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema))
+      .estimates.find(item => item.requestId === s.stay.requestId)!
+    expect(published.draft!.items).toHaveLength(4)
+    expect(published.costs?.components.projectedTotalFen).toBe(306598)
+    // 首次发布的明确稿进入全住院费用后，沿实际后台周期再核对一次跟进依据。
+    await s.fixture.runtime.dispatchPending()
+    const beforeFollowup = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)
+    expect(beforeFollowup.analysis?.basisFingerprint).toBe(beforeFollowup.basisFingerprint)
+    expect(beforeFollowup.status).toBe('succeeded')
   })
-  expect(saved.status).toBe(200)
-  const explicitB = inpatientPciSelectionResponseSchema.parse(await saved.json()).data
-  const selected = await s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema)
-  expect(selected.confirmation).toEqual(confirmed)
-  expect(selected.candidates.every(item => item.eligibility === 'valid' && item.expectedQuantity === 1)).toBe(true)
-  expect(selected.drafts?.map(item => item.requestId)).toEqual([planned.id])
-  expect(explicitB.confirmation).toBeNull()
-  expect(explicitB.drafts?.map(item => item.requestId)).toEqual([planned.id])
-  expect(explicitB.candidates.every(item => item.eligibility === 'inapplicable')).toBe(true)
-  expect(explicitB.history).toEqual([confirmed])
-  const after = await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)
-  expect(after.estimates.find(item => item.requestId === s.stay.requestId)!.basisFingerprint).toBe(before.basisFingerprint)
-  expect(after.estimates.find(item => item.requestId === planned.id)!.candidates.every(item => item.eligibility === 'inapplicable')).toBe(true)
-  const followup = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)
-  expect(followup.basisFingerprint).toBe(followupBeforeEdit.basisFingerprint)
-  expect(followup.lastAnalysis?.sources).toMatchObject({ selectionConfirmationId: confirmed.id, selectionVersion: confirmed.version })
-  expect(followup.missing.join(' ')).not.toContain('测量不在已核验仿真范围')
-  const unboundResponse = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, {
-    expectedVersion: confirmed.version, parameters: pciAgentParameters,
+  beforeEach(async () => {
+    await s.fixture.executeAngiography(s.stay)
+    await s.fixture.runtime.dispatchPending()
+    report = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/angiography-reports`, inpatientAngiographyReportsSchema)).reports[0]!
+    encounterVersion = (await s.fixture.read('inpatient-doctor', s.stay.path, inpatientDetailSchema)).admission.versionId
   })
-  expect(unboundResponse.status).toBe(200)
-  const unbound = await s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema)
-  expect(unbound.confirmation!.parameters.requestId).toBeUndefined()
-  expect(unbound.candidates.every(item => item.eligibility === 'valid' && item.expectedQuantity === 1)).toBe(true)
-  expect(unbound.drafts?.map(item => item.requestId)).toEqual([planned.id])
-  expect(unbound.history).toContainEqual(confirmed)
+
+  it('计划B的编辑草稿不与计划A的默认确认混用，也不污染A预计依据，显式B读取保留其草稿', async () => {
+    const planned = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
+      encounterVersion, procedureId: s.stay.procedure.id, catalogVersion: s.stay.procedure.version,
+      plannedFor: '2026-08-24T15:00:00+08:00', reason: '第二个PCI计划独立准备报告草稿',
+    })).json()).data.requests.at(-1)!
+    const before = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema))
+      .estimates.find(item => item.requestId === s.stay.requestId)!
+    const followupBeforeEdit = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)
+    const saved = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/save`, {
+      requestId: planned.id, expectedDraftVersion: 1, parameters: { ...pciAgentParameters, requestId: planned.id,
+        measurements: report.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 17 } : item) },
+    })
+    expect(saved.status).toBe(200)
+    const explicitB = inpatientPciSelectionResponseSchema.parse(await saved.json()).data
+    const selected = await s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema)
+    expect(selected.confirmation).toEqual(confirmed)
+    expect(selected.candidates.every(item => item.eligibility === 'valid' && item.expectedQuantity === 1)).toBe(true)
+    expect(selected.drafts?.map(item => item.requestId)).toEqual([planned.id])
+    expect(explicitB.confirmation).toBeNull()
+    expect(explicitB.drafts?.map(item => item.requestId)).toEqual([planned.id])
+    expect(explicitB.candidates.every(item => item.eligibility === 'inapplicable')).toBe(true)
+    expect(explicitB.history).toEqual([confirmed])
+    const after = await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)
+    expect(after.estimates.find(item => item.requestId === s.stay.requestId)!.basisFingerprint).toBe(before.basisFingerprint)
+    expect(after.estimates.find(item => item.requestId === planned.id)!.candidates.every(item => item.eligibility === 'inapplicable')).toBe(true)
+    const followup = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)
+    expect(followup.basisFingerprint).toBe(followupBeforeEdit.basisFingerprint)
+    expect(followup.lastAnalysis?.sources).toMatchObject({ selectionConfirmationId: confirmed.id, selectionVersion: confirmed.version })
+    expect(followup.missing.join(' ')).not.toContain('测量不在已核验仿真范围')
+    const unboundResponse = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, {
+      expectedVersion: confirmed.version, parameters: pciAgentParameters,
+    })
+    expect(unboundResponse.status).toBe(200)
+    const unbound = await s.fixture.read('inpatient-doctor', `${s.stay.path}/pci-selection`, inpatientPciSelectionSchema)
+    expect(unbound.confirmation!.parameters.requestId).toBeUndefined()
+    expect(unbound.candidates.every(item => item.eligibility === 'valid' && item.expectedQuantity === 1)).toBe(true)
+    expect(unbound.drafts?.map(item => item.requestId)).toEqual([planned.id])
+    expect(unbound.history).toContainEqual(confirmed)
+  })
 })
 
 it('多支冠脉造影伴阴性 FFR（无支架选型 QCA 且不实施 PCI）生成完整正式报告并兼容旧快照读取', async () => {

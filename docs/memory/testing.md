@@ -282,4 +282,6 @@
 
 - 需要多个独立行为共享同一份重型夹具（参考库导入、运行时启动与 Epoch 重置）时，用嵌套 `describe` 的 `beforeAll` 承担一次性准备并显式 `afterAll` 释放，每个 `it` 只断言一个行为并保持默认 15s 预算；不要把多条独立流程串进单个 `it` 后放宽单测超时。
 
+- 单例 HTTP 合同的完整临床前置占满测试预算时，分开测量准备与受测行为；每例必须使用独立数据库时，将重型前置分段放入局部 `beforeEach`，保留原 hook 和 `it` 时限、完整临床路径、前置断言及 `afterEach` 清理。已有分阶段 hook 模式可直接复用，参见[多计划选型隔离回归](../../apps/server/tests/inpatient-angiography-http.test.ts)；单纯抽取 helper 后仍在 `it` 内调用不会改变预算归属。
+
 - 文档校验的 `.github/**/*.md` 文件 glob 会命中 Git 忽略的 `.github/skills/` 本机副本；上游 Skill 的末尾换行等格式差异可能因此使 `verify:docs` 失败。使用不包含本机适配目录的仓库外干净 worktree 验证正式变更，不为通过工程检查改写上游 Skill；范围由 [校验脚本](../../scripts/verify-docs.ts) 拥有。
