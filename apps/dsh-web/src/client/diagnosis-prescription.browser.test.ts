@@ -1114,19 +1114,22 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     expect(await editor.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
     // 仅暂缓最终编辑的自动保存，验证关闭后保存启动的焦点与激活边界。
     await page.evaluate(() => {
-      const originalFetch = window.fetch.bind(window)
+      const originalFetch = window.fetch
       window.addEventListener('clinmesh.test.release-prescription-save', () => {
         window.fetch = originalFetch
         document.documentElement.removeAttribute('data-prescription-save-held')
       }, { once: true })
-      window.fetch = async (resource, init) => {
-        const path = new URL(resource instanceof Request ? resource.url : String(resource), location.href).pathname
-        if (path.endsWith('/prescription/draft') && init?.method === 'PUT' && String(init.body).includes('未保存的每日三次')) {
-          document.documentElement.setAttribute('data-prescription-save-held', 'true')
-          await new Promise<void>(resolve => window.addEventListener('clinmesh.test.release-prescription-save', () => resolve(), { once: true }))
-        }
-        return originalFetch(resource, init)
-      }
+      window.fetch = new Proxy(originalFetch, {
+        async apply(target, thisArg, args: Parameters<typeof window.fetch>) {
+          const [resource, init] = args
+          const path = new URL(resource instanceof Request ? resource.url : String(resource), location.href).pathname
+          if (path.endsWith('/prescription/draft') && init?.method === 'PUT' && String(init.body).includes('未保存的每日三次')) {
+            document.documentElement.setAttribute('data-prescription-save-held', 'true')
+            await new Promise<void>(resolve => window.addEventListener('clinmesh.test.release-prescription-save', () => resolve(), { once: true }))
+          }
+          return target.apply(thisArg, args)
+        },
+      })
     })
     try {
       await editor.getByRole('button', { name: '保存修改', exact: true }).click()
