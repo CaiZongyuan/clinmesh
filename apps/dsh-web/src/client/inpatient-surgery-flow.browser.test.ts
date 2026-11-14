@@ -1,6 +1,9 @@
 import { test } from '../../../web/e2e/inpatient-pci-ai.fixture.ts'
 import { runSurgeryFlowJourney } from '../../../web/e2e/inpatient-surgery-flow.journey.ts'
 import { buildInpatientPciFixture } from './inpatient-pci.browser.artifact.ts'
+
+test.describe.configure({ mode: 'default' })
+
 for (const version of ['18', '19']) test.describe(`Surgery flow React ${version}`, () => {
   let artifact: Awaited<ReturnType<typeof buildInpatientPciFixture>>
   test.beforeAll(async () => { test.setTimeout(120_000); artifact = await buildInpatientPciFixture(version) })
