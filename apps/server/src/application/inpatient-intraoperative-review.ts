@@ -72,6 +72,8 @@ export class InpatientIntraoperativeReview {
   read(context: ActorContext, admissionId: string) {
     const facts = this.#facts(context, admissionId), rows = this.#rows(context, admissionId)
     const task = this.owner.followup.state(context, admissionId).task
+    // 已发布说明校验当前费用；未知结果保留原状态，费用刷新不恢复派发。
+    const costs = rows.some(row => row.status === 'succeeded') ? readInpatientCosts(this.owner, context, admissionId) : null
     return { intraoperativePlans: facts.map(({ plan, parameters, selection }) => ({ requestId: plan.requestId, reference: plan.reference,
       items: plan.items.map(({ specification: _specification, ...item }) => {
         if (item.quantityBasis !== legacyPciQuantityBasis) return item
@@ -87,6 +89,7 @@ export class InpatientIntraoperativeReview {
         const input = row ? inputSchema.parse(JSON.parse(row.input_json)) : undefined
         const current = task?.status === 'active' && input?.followupTaskId === task.id && input.followupVersion === task.version
           && input.plan.reference === fact.plan.reference && canonicalJsonHash(input.selection) === canonicalJsonHash(fact.selection)
+          && (row?.status !== 'succeeded' || input.costs.fingerprint === costs?.fingerprint)
         const result = current && row?.status === 'succeeded' && row.result_json
           ? inpatientIntraoperativeGenerationSchema.parse(JSON.parse(row.result_json)) : null
         return inpatientIntraoperativeReviewSchema.parse({ materialUseId: deviation.use.id, executionId: fact.execution.id, requestId: fact.plan.requestId,
@@ -142,6 +145,8 @@ export class InpatientIntraoperativeReview {
       if (!fact || !deviation || canonicalJsonHash(deviation.use) !== canonicalJsonHash(input.deviation.use)
         || fact.plan.reference !== input.plan.reference || canonicalJsonHash(fact.selection) !== canonicalJsonHash(input.selection))
         throw new InpatientError('INPATIENT_DRG_AGENT_STALE', '原登记、选型或确认计划已变化')
+      if (readInpatientCosts(this.owner, current.context, row.admission_id, undefined, current.simulation).fingerprint !== input.costs.fingerprint)
+        throw new InpatientError('INPATIENT_DRG_AGENT_STALE', '术中核对费用依据已变化')
       return current.context
     }
     let waitUntil: 'runtime-restart' | undefined
