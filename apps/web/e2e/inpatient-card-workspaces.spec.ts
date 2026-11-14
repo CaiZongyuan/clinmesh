@@ -459,7 +459,7 @@ test('护士床位卡将已结算患者计为一项待清床，不读取额外�
   await bed.click()
   await page.getByLabel('出院处理说明', { exact: true }).fill('床单位清洁完成')
   await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '清床', exact: true }).click()
-  await expect(page.getByText(`已完成本次操作 · ${name} · 已完成清床`, { exact: true })).toBeVisible()
+  await expect(page.getByText(`已完成清床 · ${name}`, { exact: true })).toBeVisible()
   const ward = page.getByRole('region', { name: '住院病区', exact: true })
   await expect(ward.getByRole('button', { name: `1床 ${name}`, exact: true })).toHaveCount(0)
   await expect(ward.getByRole('listitem').filter({ hasText: /^1床\s*空床/ })).toContainText(/空床.*\/日/)

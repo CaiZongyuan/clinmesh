@@ -53,7 +53,7 @@ test('30mm超出合成范围时具体清单不可确认，指南重评仅保留�
   await stepOne.getByLabel('病变长度 (mm)', { exact: true }).fill('30')
   await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认选型参数', exact: true }).click()
   await expect(panel.getByRole('alert').filter({ hasText: '测量不在已核验仿真范围' })).toBeVisible()
-  await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true })).toBeDisabled()
+  await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认手术耗材', exact: true })).toBeDisabled()
   const draft = (await selection()).drafts!.find(item => item.requestId === planned.id)!
   expect(draft.parameters.measurements.find(item => item.kind === 'lesion-length')).toMatchObject({ value: 30, unit: 'mm' })
   const report = (await app.fixture.read('inpatient-doctor', `${stay.path}/angiography-reports`, inpatientAngiographyReportsSchema)).reports.find(item => item.id === draft.reportId)!
@@ -67,7 +67,7 @@ test('无可用指南来源时页面明确来源缺口，独立有效清单与�
   const state = (await app.fixture.read('inpatient-doctor', `${stay.path}/guideline-advice`, inpatientGuidelineAdviceListSchema)).advice.find(item => item.requestId === planned.id)!
   expect(state).toMatchObject({ status: 'no-evidence', result: null })
   await panel.getByLabel('耗材清单说明', { exact: true }).fill('无指南原文时人工核对独立清单依据')
-  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true }).click()
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认手术耗材', exact: true }).click()
   await expect.poll(async () => (await selection()).confirmation?.parameters.requestId).toBe(planned.id)
   expect(app.calls.filter(call => call.kind === 'guideline')).toHaveLength(0)
   expect(app.calls.filter(call => call.kind === 'material')).toHaveLength(4)
@@ -81,7 +81,7 @@ test('来源撤回后旧指南与原句停止展示，人工清单依据保持�
   const guideline = (await app.fixture.read('inpatient-doctor', `${stay.path}/guideline-advice`, inpatientGuidelineAdviceListSchema)).advice.find(item => item.requestId === planned.id)!
   expect(guideline).toMatchObject({ status: 'no-evidence', result: null })
   await panel.getByLabel('耗材清单说明', { exact: true }).fill('人工清单仅依据正式报告与有效院内耗材方案')
-  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true }).click()
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认手术耗材', exact: true }).click()
   await expect.poll(async () => (await selection()).confirmation?.parameters.requestId).toBe(planned.id)
   expect((await read()).draft?.note).toBe('人工清单仅依据正式报告与有效院内耗材方案')
   expect(app.calls).toEqual(calls)

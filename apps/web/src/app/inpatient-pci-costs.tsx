@@ -16,7 +16,7 @@ export function InpatientPciCosts({ costs, locale }: { costs: InpatientCosts | n
   ] as const
   return <section aria-label={t('住院费用与医保参考', 'Admission costs and payment reference')} className="flex min-w-0 flex-col gap-3">
     <h5 className="font-medium">{t('住院费用与医保参考', 'Admission costs and payment reference')}</h5>
-    <dl className="grid gap-2">{rows.map(([label, value]) => <div key={label} className="flex flex-wrap justify-between gap-x-4 gap-y-1"><dt>{label}</dt><dd className="tabular-nums">{formatFen(value, locale)}</dd></div>)}</dl>
+    <dl className="grid gap-2">{rows.map(([label, value]) => <div key={label} className="flex flex-wrap justify-between gap-x-4 gap-y-1"><dt>{label}</dt><dd className="tabular-nums">{costs.projectionComplete === false && (label === t('预计住院总费用', 'Projected admission total') || label === t('剩余计划耗材', 'Remaining planned materials')) ? t('预计费用暂不可用', 'Projected total unavailable') : formatFen(value, locale)}</dd></div>)}</dl>
     <p className="text-sm text-muted-foreground">{t('差额为医院支付参考减预计住院总费用，不代表患者报销或医院利润。预分组不改变正式病组或治疗方案。', 'Differences are hospital payment references minus projected admission costs, not patient reimbursement or hospital profit. Projections do not change formal grouping or treatment.')}</p>
     <div className="grid gap-3 @lg:grid-cols-2">
       <Payment title={t('当前正式分组', 'Current formal group')} grouping={costs.currentGrouping} payment={costs.currentPaymentReference} difference={costs.currentDifferenceFen} locale={locale} />

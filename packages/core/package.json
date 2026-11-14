@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./clinical-document": "./src/clinical-document.ts",
+    "./inpatient-equivalent-materials": "./src/inpatient-equivalent-materials.ts",
     "./inpatient-dose": "./src/inpatient-dose.ts",
     "./document-text": "./src/document-text.ts",
     "./imaging-display": "./src/imaging-display.ts",

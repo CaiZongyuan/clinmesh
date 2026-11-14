@@ -9,6 +9,7 @@ import { InpatientPharmacy } from '../../../web/src/app/inpatient-pharmacy.tsx'
 import { getSession } from '../../../web/src/app/api-client.ts'
 
 const host = document.createElement('div')
+host.style.cssText = 'width:100%;height:100dvh;container-type:inline-size;container-name:dsh-react-surface-content;contain:strict'
 document.body.append(host)
 const shadow = host.attachShadow({ mode: 'open' })
 for (const style of document.querySelectorAll('style')) shadow.append(style.cloneNode(true))
