@@ -264,6 +264,8 @@
 
 - 精简或删除界面文案后，同时搜索组件测试与 `apps/web/e2e/*.journey.ts` 的旧全文和关键片段；Surface 合同复用共享旅程，组件和词表通过仍可能留下 Web／React 18／19 的旧整句断言。按当前可见文案或缺席状态同步，保留字段、数量、正式预留回读与历史验证，参见 [PCI 参数旅程](../../apps/web/e2e/inpatient-pci-selection.journey.ts)及[计划变化旅程](../../apps/web/e2e/inpatient-drg-agent.journey.ts)。
 
+- 多个动作共用自动带出的说明时，分别验证未编辑确认、未编辑跟进、人工改写、显式清空及刷新后的已存说明，核对提交动作与文字结论一致。组合独立读取的事实时，额外构造“旧来源配新数量”和“数量相同但来源尚缺”两种输入，防止将部分依据写成完整处理结论；参见[术后规则回归](../../apps/web/src/app/inpatient-surgery-notes.test.ts)与[术后组件回归](../../apps/web/src/app/inpatient-drg-review.test.tsx)。
+
 - Toast 同样使用 `role="dialog"`，但 `aria-modal="false"`；连续写入后的通知会让未限定名称的 `getByRole('dialog')` 匹配多个元素。验证模态窗口时限定名称或可见的 `[data-slot="dialog-content"]`，滚动验收要核对底栏关闭按钮可达，不能以顶部同名关闭按钮代替；参见[住院减负实机入口](../../apps/web/e2e/issue400-comparison.spec.ts)。
 
 - 模拟检验目录并发更新时，须同步修改 `hospital_service_catalog.version` 和 `config_json.laboratoryService.version`。只改外层版本会构造不一致的服务快照，导致重新选择后仍被 `CATALOG_CONFLICT` 拒绝，无法验证正常目录冲突的恢复；准备状态后通过真实页面和公开 HTTP 回读结果，参见[住院检查批量开立旅程](../../apps/web/e2e/inpatient-investigation-batch.spec.ts)。
