@@ -216,7 +216,7 @@ it.each([
   { materialIds: undefined, extra: 773402, total: 1080000, suggested: true },
   { materialIds: ['hospital-material-pci-stent'], extra: 773402, total: 1080000, suggested: true },
 ])('持续跟进按完整计划及已有预留提供等效费用：$materialIds，备用$extra分', async ({ materialIds, extra, total, suggested }) => {
-  const s = await setupAgent(undefined, { ...(materialIds === undefined ? {} : { materialIds }) })
+  const s = await setupAgent(undefined, materialIds === undefined ? {} : { materialIds })
   await s.start()
   s.fixture.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET snapshot_json=json_set(snapshot_json,'$.chargeDefinition.priceFen',?) WHERE item_id='hospital-material-balloon'").run(extra)
   await reserveEquivalentCostMaterial(s, 'hospital-material-balloon')

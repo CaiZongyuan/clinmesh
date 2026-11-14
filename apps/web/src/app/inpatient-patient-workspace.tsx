@@ -150,18 +150,20 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const investigations = useQuery({ queryKey: [...scope, admission.id, 'investigations'], enabled: careOpen, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/investigations`, inpatientInvestigationsSchema, signal) })
   const surgery = useQuery({ queryKey: [...scope, admission.id, 'surgeries'], enabled: careOpen, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
   const transfers = useQuery({ queryKey: [...scope, admission.id, 'transfers'], enabled: careOpen && allowTransfers, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/transfers`, inpatientTransfersSchema, signal) })
+  const reviewNeeded = doctor && careOpen && (surgery.data?.executions.length ?? 0) > 0
+  const surgeryReview = useQuery({ queryKey: [...scope, admission.id, 'drg-review'], enabled: reviewNeeded, retry: false,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/review`, inpatientDrgReviewSchema, signal) })
   const careReads = careOpen ? [
     { key: 'orders', query: clinical, label: t('医嘱资料读取失败：', 'Order data failed to load: '), retryLabel: t('重试医嘱资料', 'Retry order data') },
     { key: 'investigations', query: investigations, label: t('检查检验资料读取失败：', 'Investigation data failed to load: '), retryLabel: t('重试检查检验资料', 'Retry investigation data') },
     { key: 'surgery', query: surgery, label: t('手术资料读取失败：', 'Surgery data failed to load: '), retryLabel: t('重试手术资料', 'Retry surgery data') },
+    ...(reviewNeeded ? [{ key: 'surgery-review', query: surgeryReview, label: t('术后核查读取失败：', 'Postoperative review failed to load: '), retryLabel: t('重试术后核查', 'Retry postoperative review') }] : []),
     ...(allowTransfers ? [{ key: 'transfer', query: transfers, label: t('转科交接资料读取失败：', 'Transfer data failed to load: '), retryLabel: t('重试转科交接资料', 'Retry transfer data') }] : []),
   ] : []
   const id = `inpatient-${session.actor.workspaceId}-${session.actor.epoch}-${session.actor.practitionerRoleId}-${admission.id}`
   const view = useWorkspaceCardView(id), chosen = inpatientStageSchema.safeParse(view.tab)
   // 与病案页同键，在医生打开病案页或已结算患者计算病案待办时读取，用于第一行写清提交、退回或等待审核并更新角标。
   const record = useQuery({ queryKey: [...scope, admission.id, 'record'], enabled: (doctor && (chosen.data === 'record' || (admission.financialStatus === 'settled' && admission.recordStatus === 'open'))) || admission.recordStatus === 'archived', queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/record`, inpatientRecordSchema, signal) })
-  const surgeryReview = useQuery({ queryKey: [...scope, admission.id, 'drg-review'], enabled: false,
-    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/review`, inpatientDrgReviewSchema, signal) })
   const activity = { admission, role, ...(careOpen ? { clinical: clinical.data, investigations: investigations.data, surgery: surgery.data, transfers: transfers.data, review: surgeryReview.error === null ? surgeryReview.data : undefined } : {}), record: record.data, virtualTime: scenario.data?.virtualTime }
   const activeSurgeryPlans = (surgery.data?.requests ?? []).filter(plan => ['requested', 'ready'].includes(plan.status)
     && !surgery.data?.inProgress.some(execution => execution.requestId === plan.id))
@@ -193,6 +195,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const followError = write.mutation.variables?.operation.startsWith('inpatient.drg.followup.')
     && 'admissionId' in write.mutation.variables.input && write.mutation.variables.input.admissionId === admission.id ? write.mutation.error : null
   const defaultReady = !scenario.isPending && (!careOpen || !clinical.isPending && !investigations.isPending && !surgery.isPending && (!allowTransfers || !transfers.isPending))
+    && (!reviewNeeded || !surgeryReview.isPending)
   const setTab = view.setTab
   useEffect(() => {
     // 分床前保留入科后的默认落点；其他阶段只在初次资料就绪时选择，办理后不随待办变化跳页。
@@ -270,6 +273,8 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
       const label = surgeryStepLabel(state.step, locale)
       return state.step === 'nurse' ? label : `${t('轮到你：', 'Your turn: ')}${label}`
     }
+    if (reviewNeeded && surgeryReview.isPending) return t('正在读取术后核查', 'Loading postoperative review')
+    if (reviewNeeded && surgeryReview.error) return t('术后核查读取失败，请重试', 'Postoperative review failed to load; retry')
     if (surgeryReview.data?.todos.some(todo => todo.ownerRole === 'inpatient-doctor' && (todo.status === 'pending' || todo.status === 'in-progress'))) return t('轮到你：确认术后核查差异', 'Your turn: confirm postoperative review findings')
     if (data.executions.length > 0) return t('手术已完成', 'Surgery completed')
     return t('尚无手术计划，可按诊疗需要申请', 'No surgery planned; request as clinically needed')
