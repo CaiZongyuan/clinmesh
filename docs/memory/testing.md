@@ -287,3 +287,5 @@
 - 双版本完整浏览器旅程并发时整体耗时异常放大，而单例执行正常时，先对比时序和执行轨迹定位预算消耗。需要隔离同一文件的重型夹具时，可沿现有模式使用 `test.describe.configure({ mode: 'default' })`，保留每例数据库、页面与监听器隔离，以及全部版本、断言、时限和全局 worker 设置；该模式在失败后仍执行后续用例。参见[双版本手术全程合同](../../apps/dsh-web/src/client/inpatient-surgery-flow.browser.test.ts)。
 
 - 文档校验的 `.github/**/*.md` 文件 glob 会命中 Git 忽略的 `.github/skills/` 本机副本；上游 Skill 的末尾换行等格式差异可能因此使 `verify:docs` 失败。使用不包含本机适配目录的仓库外干净 worktree 验证正式变更，不为通过工程检查改写上游 Skill；范围由 [校验脚本](../../scripts/verify-docs.ts) 拥有。
+
+- 共享 Query 订阅设为 disabled 时，冷缓存的 `data === undefined` 与已成功读取的空清单必须分开验证；失效不会清除旧 data，disabled observer 的 `isStale` 也不能证明缓存新鲜。费用回归同时覆盖未访问数据所属页、离页后另一会话改稿，以及保存回执成功但完整清单回读失败；不要只用全部面板同时挂载的夹具。完整费用的产品合同见[手术费用与医保说明](../architecture/clinical-workflows.md#手术费用与医保说明)。

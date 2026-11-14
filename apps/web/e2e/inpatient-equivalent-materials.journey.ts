@@ -9,14 +9,19 @@ import { expect, loginPciBrowser, type PciBrowserApp } from './inpatient-pci.fix
 import { selectInpatientStage } from './inpatient-ui.ts'
 import { openQueue } from './queue-overlay.fixture.ts'
 
-/** 独立合成备用预留使预计接近参考；采用、换回、确认与术中选择均从真实工作台办理。 */
-export async function runEquivalentMaterialJourney(page: Page, app: PciBrowserApp, info: TestInfo, mount: () => Promise<void>) {
+async function prepareNearReferencePlan(app: PciBrowserApp) {
   const s = app.fixture, stay = await s.preparePciAdmission([])
   expect((await s.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId } })).status).toBe(200)
   await s.runtime.dispatchPending()
   const admission = (await s.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
   expect((await s.request('inpatient-doctor', `${stay.path}/drg/reservations`, { encounterVersion: admission.versionId,
     materialId: 'hospital-material-balloon', catalogVersion: 1, quantity: 20, reason: '独立合成备用方案' })).status).toBe(200)
+  return { s, stay, admission }
+}
+
+/** 独立合成备用预留使预计接近参考；采用、换回、确认与术中选择均从真实工作台办理。 */
+export async function runEquivalentMaterialJourney(page: Page, app: PciBrowserApp, info: TestInfo, mount: () => Promise<void>) {
+  const { s, stay, admission } = await prepareNearReferencePlan(app)
   await loginPciBrowser(page, app, 'inpatient-doctor')
   await mount()
   await openQueue(page)
@@ -78,5 +83,31 @@ export async function runEquivalentMaterialJourney(page: Page, app: PciBrowserAp
   const simulation = inpatientDrgSimulationSchema.parse(await (await s.request('inpatient-doctor', `${stay.path}/drg/simulation`, {})).json())
   expect(simulation.formal.chargesFen).toBe(53000)
   await expect(header).toContainText('已用 ¥530.00')
+  await page.goto('about:blank')
+}
+
+/** 单独验证未加载清单的冷入口，不与完整采用换回旅程共享客户端缓存。 */
+export async function runColdDraftCostJourney(page: Page, app: PciBrowserApp, mount: () => Promise<void>) {
+  const { s, stay, admission } = await prepareNearReferencePlan(app)
+  const estimate = (await s.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates.find(item => item.requestId === stay.requestId)!
+  const items = estimate.candidates.filter(item => item.selected && item.eligibility === 'valid').map(item => ({
+    materialId: item.materialId, catalogVersion: item.catalogVersion, quantity: item.expectedQuantity!, reason: '合成冷入口工作稿',
+  }))
+  expect(items).toHaveLength(4)
+  expect((await s.request('inpatient-doctor', `${stay.path}/material-estimates/save`, { requestId: stay.requestId,
+    expectedVersion: estimate.version, expectedDraftRevision: estimate.draft?.revision ?? 0,
+    expectedBasisFingerprint: estimate.basisFingerprint, analysisId: null, items, note: '合成未确认耗材稿',
+  })).status).toBe(200)
+  await loginPciBrowser(page, app, 'inpatient-doctor')
+  await page.route(`${app.origin}${stay.path}/material-estimates`, route => route.abort('failed'))
+  await mount()
+  await openQueue(page)
+  await page.getByRole('button', { name: `查看${admission.patientName}`, exact: true }).click()
+  await selectInpatientStage(page, 'DRG 预分组')
+  const header = page.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组', exact: true })
+  await expect(header).toContainText('做完预计 ¥11,065.98')
+  await expect(header).toContainText('接近')
+  await expect(header).toContainText('预计还剩 ¥934.02')
+  await expect(page.getByRole('region', { name: '做完计划手术后', exact: true })).toContainText('预计住院总费用 ¥11,065.98')
   await page.goto('about:blank')
 }

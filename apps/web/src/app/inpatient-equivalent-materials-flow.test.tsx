@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useState } from 'react'
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -74,17 +75,25 @@ function fixture(held = false, unpriced = false, oldReservationBasis = false, re
       const input = JSON.parse(String(init?.body)).input
       return Response.json(inpatientDrgSimulationSchema.parse({ admissionId: admission.id, evaluatedAt: time, fingerprint: 'a'.repeat(64), rulesId: 'synthetic', rulesVersion: '1', formal: { chargesFen: 810000, items: [] }, committed: { items: plans.map(plan => ({ kind: 'surgery', id: plan.id, display: '合成PCI', quantity: 1, estimatedFen: 100000 })) }, reserved: { items: [{ kind: 'material', id: 'reserved-b', display: '计划B已预留', quantity: 1, estimatedFen: 30000 }, { kind: 'material', id: 'general', display: '通用预留', quantity: 1, estimatedFen: 40000 }] }, draft: { items: [], missing: [] }, coverage: { coveredFen: 810000, estimatedTotalFen: 1080000, coveredRatioBp: 7500, note: '合成费用' }, grouping: { formal, projected: input.primarySurgeryRequestId ? projected : { ...projected, status: 'ambiguous', drgCode: null }, note: '合成主计划' }, paymentReference: baseCosts.currentPaymentReference, incompleteness: { costMissing: false, paymentReferenceMissing: false } }))
     }
-    if (path.endsWith('/drg/record-checks')) return Response.json({ admissionId: admission.id, encounterVersion: '1', fingerprint: 'a'.repeat(64), status: 'complete', simulation: null, issues: [], sources: [], paymentStatus: 'available', paymentMessage: '合成参考', missing: [], costs: baseCosts, usage: [] })
+    if (path.endsWith('/drg/record-checks')) return Response.json({ admissionId: admission.id, encounterVersion: '1', fingerprint: 'a'.repeat(64), status: 'complete', simulation: null, issues: [], sources: [], paymentStatus: 'available', paymentMessage: '合成参考', missing: [], costs: estimates.estimates[0]!.costs, usage: [] })
     return Response.json({ error: { code: 'SYNTHETIC_UNAVAILABLE', message: '合成次级资料未准备' } }, { status: 503 })
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
   function Harness() {
+    const [surgeryOpen, setSurgeryOpen] = useState(true)
     const query = useInpatientDrgQuery({ admission, session, active: true })
     const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
-    return <><InpatientDrgHeader query={query} admission={admission} session={session} locale="zh-CN" onOpenDrg={() => {}} /><InpatientDrgPanel query={query} admission={admission} session={session} locale="zh-CN" write={write} /><InpatientSurgery admission={admission} session={session} locale="zh-CN" write={write} /></>
+    return <><InpatientDrgHeader query={query} admission={admission} session={session} locale="zh-CN" onOpenDrg={() => {}} /><InpatientDrgPanel query={query} admission={admission} session={session} locale="zh-CN" write={write} />
+      <button onClick={() => setSurgeryOpen(false)}>离开手术页</button><button onClick={() => { void client.invalidateQueries({ queryKey: ['inpatient'] }) }}>刷新住院事实</button>
+      {surgeryOpen ? <InpatientSurgery admission={admission} session={session} locale="zh-CN" write={write} /> : null}</>
   }
   render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
-  return { posts, confirmations, release }
+  return { posts, confirmations, release, changeDraftElsewhere: () => {
+    const estimate = estimates.estimates[0]!
+    estimates = { ...estimates, estimates: [{ ...estimate, materialDraftDeltaFen: 146000,
+      draft: { ...estimate.draft!, revision: 2, items: [{ ...estimate.draft!.items[0]!, quantity: 2 }] },
+      costs: { ...estimate.costs!, components: { ...estimate.costs!.components, remainingMaterialsFen: 259000, projectedTotalFen: 1269000 } } }, estimates.estimates[1]!] }
+  } }
 }
 
 it('两份未确认计划的草稿各合并一次，当前计划采用换回同步头部和DRG正文且保留主计划支付参考', async () => {
@@ -105,6 +114,22 @@ it('两份未确认计划的草稿各合并一次，当前计划采用换回同�
   await user.click(screen.getByRole('button', { name: '换回原耗材' }))
   await waitFor(() => expect(header().textContent).toContain('做完预计 ¥11,960.00'))
   expect(screen.getByRole('region', { name: '做完计划手术后' }).textContent).toContain('预计住院总费用 ¥11,960.00')
+})
+
+it('离开手术页后另一会话改稿，新费用核查不被未再读取的旧草稿缓存覆盖', async () => {
+  const f = fixture(), user = userEvent.setup()
+  const primary = await screen.findByRole('combobox', { name: '计划主操作（仅预计）' })
+  primary.focus(); await user.keyboard('{Enter}')
+  await user.click(await screen.findByRole('option', { name: /合成计划A/ }))
+  const header = () => screen.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组' })
+  await waitFor(() => expect(header().textContent).toContain('做完预计 ¥11,960.00'))
+  await user.click(screen.getByRole('button', { name: '离开手术页' }))
+  f.changeDraftElsewhere()
+  await user.click(screen.getByRole('button', { name: '刷新住院事实' }))
+  await waitFor(() => expect(header().textContent).toContain('做完预计 ¥12,690.00'))
+  expect(header().textContent).toContain('支付参考 ¥12,000.00')
+  expect(header().textContent).toContain('预计超出 ¥690.00')
+  expect(screen.getByRole('region', { name: '做完计划手术后' }).textContent).toContain('预计住院总费用 ¥12,690.00')
 })
 
 it('等效保存回执延迟时仍可改数量与说明，迟到成功只消费原提交并保留新输入和新工作稿修订', async () => {

@@ -48,31 +48,36 @@ export function useInpatientDrgQuery({ admission, session, active, draft, allowP
     && !surgery.data?.inProgress.some(execution => execution.requestId === estimate.requestId)
     && (estimate.draft === null || estimate.draft.confirmedRevision !== estimate.draft.revision)) : []
   const referencePlanId = primarySurgeryRequestId ?? (plans.length === 1 ? plans[0]!.id : null)
-  const referenceCosts = planEstimates.find(estimate => estimate.requestId === referencePlanId)?.costs
-    ?? (checks.error === null ? checks.data?.costs : undefined)
+  const selectedEstimateCosts = planEstimates.find(estimate => estimate.requestId === referencePlanId)?.costs
+  // 未加载不等于空清单；disabled 缓存也不能一直盖过后来读到的完整费用。
+  // 更新时间只用于选择最近观察到的投影，不作为服务端修订号。
+  const useEstimateProjection = estimates.data !== undefined
+    && (checks.data === undefined || checks.error !== null || estimates.dataUpdatedAt > checks.dataUpdatedAt)
+  const checkedCosts = checks.error === null ? checks.data?.costs : undefined
+  const referenceCosts = useEstimateProjection ? selectedEstimateCosts ?? checkedCosts : checkedCosts
   const data = simulation.error === null ? simulation.data : undefined
   const reservationBasis = data ? JSON.stringify(data.reserved.items.map((item): [string, number, number | null] => [item.id, item.quantity, item.estimatedFen])
     .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)) : undefined
   const pendingEstimates = previewEstimates.filter(estimate => estimate.materialDraftDeltaFen !== null && estimate.materialDraftReservationBasis !== null
     && JSON.stringify(estimate.materialDraftReservationBasis) === reservationBasis)
-  const materialProjectionIncomplete = referenceCosts?.projectionComplete === false || data !== undefined && previewEstimates.some(estimate => !pendingEstimates.includes(estimate)
+  const materialProjectionIncomplete = referenceCosts?.projectionComplete === false || useEstimateProjection && data !== undefined && previewEstimates.some(estimate => !pendingEstimates.includes(estimate)
     && (estimate.draft?.items.length ?? 0) > 0)
   const delta = pendingEstimates.reduce((sum, estimate) => sum + estimate.materialDraftDeltaFen!, 0)
   const sum = (items: NonNullable<typeof data>['reserved']['items']) => items.reduce((total, item) => total + (item.estimatedFen ?? 0), 0)
-  // 仅读取显示投影，不覆盖 Query 的正式事实或审阅指纹；全局基线始终来自本次 simulation。
-  const projectedTotalFen = data ? data.coverage.estimatedTotalFen + delta : undefined
-  const plannedReference = referenceCosts?.projectedPaymentReference
-    && referenceCosts.projectedPaymentReference.drgCode === data?.grouping.projected?.drgCode ? referenceCosts.projectedPaymentReference : null
-  const projectedCosts = data && referenceCosts && projectedTotalFen !== undefined ? { ...referenceCosts,
-    components: { formalChargesFen: data.formal.chargesFen,
+  // 仅读取显示投影，不覆盖 Query 的正式事实或审阅指纹。
+  const components = (!selectPlan || useEstimateProjection) && data ? { formalChargesFen: data.formal.chargesFen,
       pendingOrdersFen: sum(data.committed.items.filter(item => item.kind !== 'surgery')),
       plannedSurgeryFen: sum(data.committed.items.filter(item => item.kind === 'surgery')),
-      remainingMaterialsFen: sum(data.reserved.items) + delta, projectedTotalFen },
+      remainingMaterialsFen: sum(data.reserved.items) + delta, projectedTotalFen: data.coverage.estimatedTotalFen + delta }
+    : referenceCosts?.components
+  const plannedReference = [referenceCosts?.projectedPaymentReference, selectedEstimateCosts?.projectedPaymentReference]
+    .find(reference => reference != null && reference.drgCode === data?.grouping.projected?.drgCode) ?? null
+  const projectedCosts = data && referenceCosts && components ? { ...referenceCosts, components,
     currentGrouping: data.grouping.formal, projectedGrouping: data.grouping.projected,
     currentPaymentReference: data.paymentReference,
     projectedPaymentReference: plannedReference,
-    currentDifferenceFen: data.paymentReference === null ? null : data.paymentReference.referenceFen - projectedTotalFen,
-    projectedDifferenceFen: plannedReference === null ? null : plannedReference.referenceFen - projectedTotalFen,
+    currentDifferenceFen: materialProjectionIncomplete || data.paymentReference === null ? null : data.paymentReference.referenceFen - components.projectedTotalFen,
+    projectedDifferenceFen: materialProjectionIncomplete || plannedReference === null ? null : plannedReference.referenceFen - components.projectedTotalFen,
   } : referenceCosts
   return { materialProjectionIncomplete, projectedCosts, scope, path, archived, visible, enabled, allowPlanSelection: selectPlan, surgery, plans, primarySurgeryRequestId,
     setSelectedPlanId, simulationInput, grouping, simulation, checks }
