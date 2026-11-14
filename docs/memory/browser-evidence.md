@@ -12,7 +12,7 @@
 
 - 队列侧栏底部露出画布时，同时测量队列容器、直接子元素和白色卡片的边界；外层等高不表示卡片已铺满。若[队列样式](../../apps/web/src/app/workspace-card-layout.css)只将撑高规则施加给直接子元素，额外的语义 section 可能截断 Flex 高度传递；在浏览器临时补齐包装层与卡片的 Flex 布局，撤销后核对缺口是否恢复，以区分结构问题与加载状态。
 
-- 原位确认的焦点回归同时覆盖 Escape、取消、成功、身份切换和原触发器消失。DOM 节点仍连接不表示仍属原身份；恢复前须核对作用域。成功后触发器禁用但仍需返回焦点时，可复用 Base UI `focusableWhenDisabled`，并验证 Enter 和指针都不会触发额外写入；查询结果刷新会删除触发器时，先等账本更新，再关闭确认并回到同卡入口。参考[收费双版本合同](../../apps/dsh-web/src/client/billing-card.browser.test.ts)。
+- 原位确认的焦点回归同时覆盖 Escape、取消、成功、身份切换和原触发器消失。DOM 节点仍连接不表示仍属原身份；恢复前须核对作用域。成功后触发器禁用但仍需返回焦点时，可复用 Base UI `focusableWhenDisabled`，并验证 Enter 和指针都不会触发额外写入；查询结果刷新会删除触发器时，先等账本更新，再关闭确认并回到同卡入口。自动保存与返回焦点重叠时，可用受控保存响应覆盖关闭后进入保存中的窗口，核对焦点、禁用语义及激活保护。参考[收费双版本合同](../../apps/dsh-web/src/client/billing-card.browser.test.ts)和[处方双版本合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
 
 - 真实 Surface fixture 需注入 `PortalContainerProvider`，否则目录和确认可能渲染到 ShadowRoot 外，测试通过也不能证明宿主内可操作。受控 input 的捕获阶段若立即更新来源元数据，会触发重渲染并还原旧值；先让输入 handler 读取当前值，再清理来源，并以真实键盘输入验证值和标记两者。原位审阅还须暂缓 decision gate 后修改表单，核对实际 Command 仍提交人类审阅的快照。
 
