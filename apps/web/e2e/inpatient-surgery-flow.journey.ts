@@ -60,23 +60,41 @@ async function captureFactory(page: Page, info: TestInfo, origin: string, screen
           const steps = Array.from(element.querySelectorAll<HTMLElement>('[role="region"],section[aria-label]')).filter(item => visible(item) && ['选型参数', '手术耗材', '术前准备'].includes(item.getAttribute('aria-label') ?? '')).map(item => ({ name: item.getAttribute('aria-label'), y: item.getBoundingClientRect().top }))
           const text = element.querySelector('.clinmesh-inpatient-turn')?.textContent
           const bounds = element.getBoundingClientRect()
-          return { regions, steps, turn: text, rootLeft: bounds.left, rootRight: bounds.right, rootOverflow: element.scrollWidth - element.clientWidth }
+          const actionBars = Array.from(element.querySelectorAll<HTMLElement>('.clinmesh-card-action')).map(item => {
+            const blockedBy: string[] = []
+            for (let node: Element | null = item; node;) {
+              const style = getComputedStyle(node)
+              const reasons = [node.getAttribute('aria-hidden') === 'true' ? 'aria-hidden' : null, node.hasAttribute('inert') ? 'inert' : null,
+                node.hasAttribute('hidden') ? 'hidden' : null, style.display === 'none' ? 'display:none' : null, style.visibility === 'hidden' ? 'visibility:hidden' : null].filter(Boolean)
+              if (reasons.length) blockedBy.push(`${node.tagName}: ${reasons.join(', ')}`)
+              const tree = node.getRootNode()
+              node = node.parentElement ?? (tree instanceof ShadowRoot ? tree.host : null)
+            }
+            return { name: item.getAttribute('aria-label'), visible: visible(item), blockedBy }
+          })
+          const dialogs = Array.from(element.querySelectorAll<HTMLElement>('[role="dialog"]')).map(item => ({ open: item.hasAttribute('data-open'), closed: item.hasAttribute('data-closed'), visible: visible(item), ariaHidden: item.getAttribute('aria-hidden') }))
+          const stages = Array.from(element.querySelectorAll<HTMLElement>('[data-inpatient-stage]')).map(item => ({ stage: item.dataset.inpatientStage, hidden: item.hidden, ariaHidden: item.getAttribute('aria-hidden'), display: getComputedStyle(item).display }))
+          return { regions, steps, turn: text, actionBars, dialogs, stages, selectedTab: element.querySelector('[role="tab"][aria-selected="true"]')?.textContent, rootLeft: bounds.left, rootRight: bounds.right, rootOverflow: element.scrollWidth - element.clientWidth }
         })
         const issues = layout.regions.filter(item => item.scrollWidth > item.clientWidth + 1).map(item => `horizontal overflow: ${JSON.stringify(item)}`)
         const reviewActions = stage === 'postoperative' ? await page.getByRole('group', { name: /^术后核查操作 / }).evaluateAll(groups => groups.map(group => Array.from(group.querySelectorAll('button')).map(button => {
           const bounds = button.getBoundingClientRect()
           return { text: button.textContent, top: bounds.top, left: bounds.left, right: bounds.right }
         }))) : []
+        const record = { stage, width, theme, hostWidth, surface, ...layout, reviewActions, issues, prototypeSha256: prototype ? createHash('sha256').update(prototype).digest('hex') : null }
+        evidence.push(record)
+        if (stage === 'postoperative') {
+          expect(reviewActions, JSON.stringify(record)).toHaveLength(1)
+          await expect(actions(page), JSON.stringify(record)).toBeVisible()
+        }
         for (const buttons of reviewActions) {
           expect(buttons.map(button => button.text)).toEqual(['看术中登记', '修改说明', '需要跟进', '按此说明确认'])
           expect(Math.max(...buttons.map(button => button.top)) - Math.min(...buttons.map(button => button.top))).toBeLessThanOrEqual(1)
         }
-        const footerBefore = stage === 'postoperative' ? await actions(page).boundingBox() : null
+        const footerBefore = stage === 'postoperative' ? await actions(page).boundingBox({ timeout: 10_000 }) : null
         if (stage === 'postoperative') await expect(actions(page).getByRole('button', { name: '一次全部确认', exact: true })).toBeVisible()
         if (layout.rootOverflow > 1) issues.push(`root overflow ${layout.rootOverflow}`)
         for (const modal of layout.regions.filter(item => item.modal)) if (modal.top < -1 || modal.bottom > height + 1 || surface && (modal.left < layout.rootLeft - 1 || modal.right > layout.rootRight + 1)) issues.push(`modal outside viewport: ${JSON.stringify(modal)}`)
-        const record = { stage, width, theme, hostWidth, surface, ...layout, reviewActions, issues, prototypeSha256: prototype ? createHash('sha256').update(prototype).digest('hex') : null }
-        evidence.push(record)
         if (captureStage) {
           const path = info.outputPath(`surgery-flow-${stage}-${width}-${theme}.png`)
           await page.screenshot({ path, animations: 'disabled' })
@@ -100,7 +118,7 @@ async function captureFactory(page: Page, info: TestInfo, origin: string, screen
               await info.attach(`surgery-flow-${stage}-${width}-${theme}-detail`, { path: detail, contentType: 'image/png' })
             }
             expect(await page.locator('.clinmesh-inpatient-head').boundingBox()).toEqual(headBefore)
-            if (stage === 'postoperative') expect(await actions(page).boundingBox()).toEqual(footerBefore)
+            if (stage === 'postoperative') expect(await actions(page).boundingBox({ timeout: 10_000 })).toEqual(footerBefore)
           }
         }
         if (reference && captureStage) {
