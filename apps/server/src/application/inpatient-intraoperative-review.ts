@@ -89,7 +89,7 @@ export class InpatientIntraoperativeReview {
         const input = row ? inputSchema.parse(JSON.parse(row.input_json)) : undefined
         const current = task?.status === 'active' && input?.followupTaskId === task.id && input.followupVersion === task.version
           && input.plan.reference === fact.plan.reference && canonicalJsonHash(input.selection) === canonicalJsonHash(fact.selection)
-          && (row?.status !== 'succeeded' || input.costs.fingerprint === costs?.fingerprint)
+          && (row?.status !== 'succeeded' || input.costs.fingerprint === costs?.fingerprint && canonicalJsonHash(input.deviation) === canonicalJsonHash(deviation))
         const result = current && row?.status === 'succeeded' && row.result_json
           ? inpatientIntraoperativeGenerationSchema.parse(JSON.parse(row.result_json)) : null
         return inpatientIntraoperativeReviewSchema.parse({ materialUseId: deviation.use.id, executionId: fact.execution.id, requestId: fact.plan.requestId,
@@ -142,7 +142,7 @@ export class InpatientIntraoperativeReview {
         throw new InpatientError('INPATIENT_DRG_AGENT_STALE', '术中核对授权已变化')
       const fact = this.#facts(current.context, row.admission_id).find(fact => fact.execution.id === input.executionId)
       const deviation = fact?.deviations.find(item => item.use.id === input.deviation.use.id)
-      if (!fact || !deviation || canonicalJsonHash(deviation.use) !== canonicalJsonHash(input.deviation.use)
+      if (!fact || !deviation || canonicalJsonHash(deviation) !== canonicalJsonHash(input.deviation)
         || fact.plan.reference !== input.plan.reference || canonicalJsonHash(fact.selection) !== canonicalJsonHash(input.selection))
         throw new InpatientError('INPATIENT_DRG_AGENT_STALE', '原登记、选型或确认计划已变化')
       if (readInpatientCosts(this.owner, current.context, row.admission_id, undefined, current.simulation).fingerprint !== input.costs.fingerprint)

@@ -662,7 +662,7 @@ it('费用依据变化后仍明确保留原unknown，旧说明仅作历史且重
   expect(s.requests).toHaveLength(3)
 })
 
-async function setupQueuedIntraoperativeReview(beforeReply?: (feature: string) => Promise<void>) {
+async function setupQueuedIntraoperativeReview(beforeReply?: (feature: string) => Promise<void>, quantities = [2]) {
   const s = await setupAgent(async (feature, _index, raw) => {
     const input = z.object({ deviation: z.unknown().optional(), costs: inpatientCostsSchema }).passthrough().parse(raw)
     if (!input.deviation) return feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification
@@ -683,14 +683,17 @@ async function setupQueuedIntraoperativeReview(beforeReply?: (feature: string) =
   const { materials: _materials, ...ready } = await s.fixture.pciExecutionInput(s.stay)
   const started = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/start`, ready)
   expect(started.status, await started.clone().text()).toBe(200)
-  const surgery = inpatientSurgeryResponseSchema.parse(await started.json()).data
-  const recorded = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/record-material`, {
-    requestId: s.stay.requestId, expectedRequestVersion: surgery.requests.find(item => item.id === s.stay.requestId)!.version,
-    executionId: surgery.inProgress[0]!.id, note: '分支保护，本笔额外导丝实际使用',
-    material: { materialId: 'hospital-material-pci-guidewire', catalogVersion: 1, quantity: 2 },
-  })
-  expect(recorded.status, await recorded.clone().text()).toBe(200)
-  const use = inpatientSurgeryResponseSchema.parse(await recorded.json()).data.inProgress[0]!.materials.at(-1)!
+  let surgery = inpatientSurgeryResponseSchema.parse(await started.json()).data
+  for (const quantity of quantities) {
+    const recorded = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/record-material`, {
+      requestId: s.stay.requestId, expectedRequestVersion: surgery.requests.find(item => item.id === s.stay.requestId)!.version,
+      executionId: surgery.inProgress[0]!.id, note: '分支保护，本笔导丝实际使用',
+      material: { materialId: 'hospital-material-pci-guidewire', catalogVersion: 1, quantity },
+    })
+    expect(recorded.status, await recorded.clone().text()).toBe(200)
+    surgery = inpatientSurgeryResponseSchema.parse(await recorded.json()).data
+  }
+  const use = surgery.inProgress[0]!.materials.at(-1)!
   return { ...s, review: async () => (await s.read()).intraoperativeReviews.find(item => item.materialUseId === use.id)! }
 }
 
@@ -720,6 +723,37 @@ it('术中费用说明成功后保持原依据可读，新增预留后隐藏旧�
   await s.fixture.runtime.dispatchPending()
   expect(await s.review()).toMatchObject({ taskId: published.taskId, status: 'stale', costExplanation: null })
   expect(s.requests).toHaveLength(4)
+})
+
+it.each(['queued', 'succeeded'] as const)('术中核对%s后同价同量更正前笔，费用未变但后笔已用依据变化仍失效', async status => {
+  const s = await setupQueuedIntraoperativeReview(undefined, [1, 1, 1])
+  if (status === 'succeeded') await s.fixture.runtime.dispatchPending()
+  const before = await s.read(), review = await s.review()
+  expect(review).toMatchObject({ status, reasons: ['excess'] })
+  if (status === 'succeeded') expect(review.explanation).not.toBeNull()
+  const calls = s.requests.length
+  const surgery = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgerySchema)
+  const execution = surgery.inProgress[0]!, [first, second, third] = execution.materials
+  expect(execution.materials.map(item => item.quantity)).toEqual([1, 1, 1])
+  expect(review.materialUseId).toBe(third!.id)
+  const corrected = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/correct-material`, {
+    requestId: s.stay.requestId, expectedRequestVersion: surgery.requests.find(item => item.id === s.stay.requestId)!.version,
+    executionId: execution.id, materialUseId: first!.id, note: '核实第一笔导丝用途，数量和价格不变',
+    replacement: { materialId: first!.item.id, catalogVersion: first!.item.version, quantity: 1 },
+  })
+  expect(corrected.status, await corrected.clone().text()).toBe(200)
+  const updated = inpatientSurgeryResponseSchema.parse(await corrected.json()).data.inProgress[0]!
+  const replacementId = updated.materialHistory.find(item => item.id === first!.id)!.correction!.replacementMaterialUseId
+  expect(updated.materials.map(item => item.id)).toEqual([second!.id, third!.id, replacementId])
+  const current = await s.read()
+  expect(current.costs?.fingerprint).toBe(before.costs!.fingerprint)
+  expect(current.intraoperativePlans).toEqual(before.intraoperativePlans)
+  expect((await s.review()).reasons).toEqual(['excess'])
+  if (status === 'succeeded') expect(await s.review()).toMatchObject({ taskId: review.taskId,
+    status: 'stale', explanation: null, costExplanation: null })
+  await s.fixture.runtime.dispatchPending()
+  expect(await s.review()).toMatchObject({ taskId: review.taskId, status: 'stale', explanation: null, costExplanation: null })
+  expect(s.requests).toHaveLength(calls)
 })
 
 it.each([
