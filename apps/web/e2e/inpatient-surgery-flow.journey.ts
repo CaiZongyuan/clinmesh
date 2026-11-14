@@ -9,6 +9,7 @@ import { modelUsageListSchema } from '@clinmesh/contracts/model-usage'
 import { expect, openPciAiPatient, type PciAiBrowserApp } from './inpatient-pci-ai.fixture.ts'
 import { preparePciAiReview, requestPciAiSurgery } from './inpatient-pci-ai.journey.ts'
 import { selectInpatientStage } from './inpatient-ui.ts'
+import { waitForLayout } from './layout-stability.ts'
 
 const money = (fen: number) => new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(fen / 100)
 const actions = (page: Page) => page.getByRole('region', { name: '当前操作', exact: true })
@@ -51,7 +52,7 @@ async function captureFactory(page: Page, info: TestInfo, origin: string, screen
           for (const child of element.querySelectorAll<HTMLElement>('*')) if (getComputedStyle(child).overflowY === 'auto') child.scrollTop = 0
         }, { theme, surface, hostWidth })
         await expect.poll(() => root.evaluate(element => Math.round(element.getBoundingClientRect().width))).toBe(hostWidth)
-        await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+        await waitForLayout(root)
         const layout = await root.evaluate(element => {
           const visible = (item: Element) => { const r = item.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(item).visibility !== 'hidden' }
           const regions = Array.from(element.querySelectorAll<HTMLElement>('.clinmesh-inpatient-head,.clinmesh-card-main,.clinmesh-inpatient-stage,[data-slot="dialog-content"],[role="dialog"][aria-label="开始手术"]')).filter(visible).map(item => {
@@ -111,7 +112,7 @@ async function captureFactory(page: Page, info: TestInfo, origin: string, screen
             })
           })
           if (scrolls.length) {
-            await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+            await waitForLayout(root)
             if (captureStage) {
               const detail = info.outputPath(`surgery-flow-${stage}-${width}-${theme}-detail.png`)
               await page.screenshot({ path: detail, animations: 'disabled' })
