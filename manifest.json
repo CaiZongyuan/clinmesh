@@ -1,0 +1,28 @@
+{
+  "sourceCommit": "6ba82a9a84d7258e73ca31374b65e18d12f47ea4",
+  "syntheticData": true,
+  "images": [
+    {
+      "name": "postoperative-1280-dark.png",
+      "sha256": "b3944506c840cc13e096431811dc3dc14a32cb87770d892ad3d5ea7b67bf7ab0",
+      "sourceSha256": "f6012498842d73bf7605d9ca42acaf7fbb4753552eb8f853c39740ad16b78509",
+      "crop": [
+        56,
+        0,
+        882,
+        800
+      ]
+    },
+    {
+      "name": "postoperative-1600-light.png",
+      "sha256": "f344281ce81d410d653b854eb924e202457ddd0984eb6fa6024b9a1be1e8eafc",
+      "sourceSha256": "f90b913f871a01cc7559a6ee03f7d938e5294350e9a1736d72d06ae74ab57cf7",
+      "crop": [
+        56,
+        0,
+        1157,
+        1000
+      ]
+    }
+  ]
+}
