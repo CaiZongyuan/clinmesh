@@ -19,6 +19,7 @@ import { ModelUsageControlError, modelUsageControlFailure } from './model-usage-
 import { modelTaskOutcomeUnknown } from './model-task-recovery.ts'
 import { materialEstimateBasisSchema } from './inpatient-material-estimate-basis.ts'
 import { assertInpatientCostExplanation, readInpatientCosts, readInpatientSurgeryUsage } from './inpatient-costs.ts'
+import { readPendingMaterialDrafts } from './inpatient-material-cost-projection.ts'
 import { inpatientCostsSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import type { RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 
@@ -136,10 +137,31 @@ export class InpatientDrgAgent {
       return { materialId: candidate.materialId, quantity: completed ? 0 : Math.max(0, planned - used) }
     })
     const review = stage === 'postoperative' ? this.owner.drgReview.modelBasis(current.context, current.task.admissionId) : undefined
-    const costs = readInpatientCosts(this.owner, current.context, current.task.admissionId, undefined, current.simulation)
+    const pendingDraft = readPendingMaterialDrafts(this.owner, current.context, current.task.admissionId)
+      .find(item => item.request.id === requestId)?.draft
+    const suggestedItems = pendingDraft?.items ?? remaining.flatMap(item => {
+      const candidate = candidates.find(candidate => candidate.materialId === item.materialId)
+      return candidate && item.quantity > 0 ? [{ materialId: item.materialId, catalogVersion: candidate.materialVersion, quantity: item.quantity }] : []
+    })
+    const ownReservations = requestId === undefined || pendingDraft ? [] : this.owner.drg.reservations(current.context, current.task.admissionId).reservations
+      .filter(item => item.requestId === requestId && item.status === 'reserved' && (item.remainingQuantity ?? item.quantity - item.consumedQuantity) > 0)
+    const unreserved = suggestedItems.flatMap(item => {
+      const candidate = candidates.find(candidate => candidate.materialId === item.materialId && candidate.materialVersion === item.catalogVersion)
+      const covered = ownReservations.filter(reservation => reservation.materialId === item.materialId && reservation.catalogVersion === item.catalogVersion)
+        .reduce((sum, reservation) => sum + (reservation.remainingQuantity ?? reservation.quantity - reservation.consumedQuantity), 0)
+      const quantity = Math.max(0, item.quantity - covered)
+      return quantity > 0 ? [{ ...item, quantity, candidate }] : []
+    })
+    // 明确工作稿优先；其余只补本计划未被同版本预留覆盖的余量，保留原预留的冻结价格及额外数量。
+    const forecast = !pendingDraft && requestId !== undefined && stage !== 'postoperative' ? { requestId,
+      incomplete: unreserved.some(item => !item.candidate?.item || item.candidate.eligibility !== 'valid' || item.candidate.item.chargeDefinition.priceFen <= 0),
+      items: [...ownReservations.map(item => ({ materialId: item.materialId, catalogVersion: item.catalogVersion!,
+        quantity: item.remainingQuantity ?? item.quantity - item.consumedQuantity, unitPriceFen: item.priceFen, display: item.materialDisplay })),
+      ...unreserved.flatMap(({ candidate, ...item }) => candidate?.item && candidate.eligibility === 'valid' && candidate.item.chargeDefinition.priceFen > 0
+        ? [{ ...item, unitPriceFen: candidate.item.chargeDefinition.priceFen, display: candidate.item.display }] : [])] } : undefined
+    const costs = readInpatientCosts(this.owner, current.context, current.task.admissionId, forecast, current.simulation)
     const equivalentSuggestions = stage === 'postoperative' ? [] : equivalentMaterialSuggestions(selection,
-      remaining.flatMap(item => { const candidate = candidates.find(candidate => candidate.materialId === item.materialId)
-        return candidate && item.quantity > 0 ? [{ materialId: item.materialId, catalogVersion: candidate.materialVersion, quantity: item.quantity }] : [] }), costs)
+      suggestedItems, costs)
     const input = inputSchema.parse({ selection, surgery: facts, rulesFingerprint: current.fingerprint, stage, remaining, equivalentSuggestions,
       costs, ...(review === undefined ? {} : { review }) })
     const missing: string[] = []

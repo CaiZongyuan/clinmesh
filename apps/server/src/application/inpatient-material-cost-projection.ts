@@ -4,22 +4,27 @@ import { pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-se
 import type { ActorContext } from './command-executor.ts'
 import type { InpatientService } from './inpatient-service.ts'
 
-/** 当前读者在本住院下的明确工作稿；每份只替换自己现有预留，不创建费用或借用原任务权限。 */
-export function pendingMaterialDraftCostDelta(owner: InpatientService, context: ActorContext, admissionId: string, overriddenRequestId?: string) {
+/** 仅纳入尚未确认、尚未开始且仍有效的当前住院工作稿。 */
+export function readPendingMaterialDrafts(owner: InpatientService, context: ActorContext, admissionId: string, overriddenRequestId?: string) {
   const surgery = owner.surgery.read(context, admissionId)
   const requests = surgery.requests.filter(request => request.id !== overriddenRequestId && ['requested', 'ready'].includes(request.status)
     && !surgery.inProgress.some(execution => execution.requestId === request.id))
-  if (requests.length === 0) return { deltaFen: 0, missing: [] }
+  if (requests.length === 0) return []
   const rows = z.array(z.object({ request_id: z.string(), draft_json: z.string() })).parse(owner.database.driver.prepare(`
     SELECT request_id,draft_json FROM inpatient_material_estimate
     WHERE workspace_id=? AND epoch=? AND admission_id=? AND status='active' AND draft_json IS NOT NULL`)
     .all(context.workspaceId, context.epoch, admissionId))
-  const pending = rows.flatMap(row => {
+  return rows.flatMap(row => {
     const request = requests.find(request => request.id === row.request_id)
     if (!request) return []
     const draft = inpatientMaterialEstimateDraftSchema.parse(JSON.parse(row.draft_json))
     return draft.confirmedRevision === draft.revision ? [] : [{ request, draft }]
   })
+}
+
+/** 当前读者在本住院下的明确工作稿；每份只替换自己现有预留，不创建费用或借用原任务权限。 */
+export function pendingMaterialDraftCostDelta(owner: InpatientService, context: ActorContext, admissionId: string, overriddenRequestId?: string) {
+  const pending = readPendingMaterialDrafts(owner, context, admissionId, overriddenRequestId)
   if (pending.length === 0) return { deltaFen: 0, missing: [] }
   const reservations = owner.drg.reservations(context, admissionId).reservations
   const catalog = owner.surgery.catalog(context).materials
