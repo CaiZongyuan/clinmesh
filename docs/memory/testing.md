@@ -289,3 +289,5 @@
 - 文档校验的 `.github/**/*.md` 文件 glob 会命中 Git 忽略的 `.github/skills/` 本机副本；上游 Skill 的末尾换行等格式差异可能因此使 `verify:docs` 失败。使用不包含本机适配目录的仓库外干净 worktree 验证正式变更，不为通过工程检查改写上游 Skill；范围由 [校验脚本](../../scripts/verify-docs.ts) 拥有。
 
 - 共享 Query 订阅设为 disabled 时，冷缓存的 `data === undefined` 与已成功读取的空清单必须分开验证；失效不会清除旧 data，disabled observer 的 `isStale` 也不能证明缓存新鲜。费用回归同时覆盖未访问数据所属页、离页后另一会话改稿，以及保存回执成功但完整清单回读失败；不要只用全部面板同时挂载的夹具。完整费用的产品合同见[手术费用与医保说明](../architecture/clinical-workflows.md#手术费用与医保说明)。
+
+- 浏览器几何检查前后只差小数像素或等待 `Animation.finished` 报 `AbortError` 时，先用受控尺寸动画、取消及替代动画复现；不要直接放宽位置或尺寸容差。复用[布局动画采样边界](../decisions/implemented/testing/2026-11-15-browser-layout-animation-boundary.md)，保留真实旅程与全部滚动断言。
