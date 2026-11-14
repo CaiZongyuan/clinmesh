@@ -46,10 +46,19 @@ export function postoperativeDispositionNote(todo: z.infer<typeof inpatientDrgRe
   }
   const history = execution?.materialHistory ?? []
   const sources = new Set(todo.evidence.filter(reference => reference.startsWith('InpatientSurgeryMaterial/')))
+  const materialHistory = materialHistoryInOriginalOrder(history).filter(use => use.item.id === todo.materialId
+    && (sources.size === 0 || sources.has(`InpatientSurgeryMaterial/${use.id}`)))
   const notes = todo.kind === 'extra-use' && todo.plannedQuantity !== null
-    ? excessUseNotes(materialHistoryInOriginalOrder(history).filter(use => use.item.id === todo.materialId
-      && (sources.size === 0 || sources.has(`InpatientSurgeryMaterial/${use.id}`))), todo.plannedQuantity)
+    ? excessUseNotes(materialHistory, todo.plannedQuantity).filter(note => note.trim())
     : [...new Set(history.filter(use => !use.correction && use.item.id === todo.materialId).map(use => use.note))]
+  if (todo.kind === 'extra-use' && todo.plannedQuantity !== null && todo.actualQuantity !== null
+    && todo.actualQuantity > todo.plannedQuantity && notes.length > 0) {
+    const quantity = todo.actualQuantity - todo.plannedQuantity
+    const unit = materialHistory[0]?.item.chargeDefinition.unit
+    const amount = `${quantity}${unit ? ` ${unit}` : ''}`
+    return (zh ? `术中多用 ${amount}，${notes.join('；')}；已在登记时说明，无需进一步处理。`
+      : `${amount} extra used during surgery: ${notes.join('; ')}. Reason recorded during surgery; no further action needed.`).slice(0, 2000)
+  }
   return `${todo.explanation}${notes.length ? `${zh ? '登记依据：' : 'Recorded reason: '}${notes.join('；')}` : ''}`.slice(0, 2000)
 }
 

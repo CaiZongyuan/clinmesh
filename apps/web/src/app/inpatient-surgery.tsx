@@ -319,7 +319,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
           <OrderComposerFooter><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>
         </DialogContent>
       </Dialog>
-      {doctor && running.length === 0 && pendingPlans.length === 0 ? <InpatientDrgReviewPanel key={requestOwnerKey} requestId={selectedCompletedExecution.requestId} admission={admission} session={session} locale={locale} write={write} active={active} compact onOpenRecord={target => onOpenStage?.(target)} /> : null}</>
+      {doctor && running.length === 0 && pendingPlans.length === 0 ? <InpatientDrgReviewPanel key={requestOwnerKey} requestId={selectedCompletedExecution.requestId} admission={admission} session={session} locale={locale} write={write} active={active} compact showPrimaryAction onOpenRecord={target => onOpenStage?.(target)} /> : null}</>
     })() : null}
   </section>
 }

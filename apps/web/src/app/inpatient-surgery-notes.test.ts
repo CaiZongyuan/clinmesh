@@ -125,9 +125,10 @@ it('另一目录版本不占用本版本的计划量，也不混入本版本多�
     { ...row, key: 'other-version', catalogVersion: 2, display: oldItem.display, quantity: '0', previousQuantity: 1, materialUseIds: ['other-version'] }], plan, current, [], 'zh-CN', []))
     .toBe('最终用量已按逐项核实调整；合成导丝多用1 根，分支保护。')
 })
-it('术后多用说明引用正式登记原因，缺少预留记录时不假定已经释放', () => {
-  const todo = inpatientDrgReviewTodoSchema.parse({ id: 'todo-1', version: 1, evidenceFingerprint: 'a'.repeat(64), key: 'extra-use:wire', kind: 'extra-use', ownerRole: 'inpatient-doctor', materialId: 'wire', display: '合成导丝', plannedQuantity: 1, actualQuantity: 2, explanation: '导丝多用1根。', evidence: ['Procedure/execution-1'], requestId: 'request-1', executionId: 'execution-1', status: 'pending', reason: null })
-  expect(postoperativeDispositionNote(todo, [execution], [], 'zh-CN')).toBe('导丝多用1根。登记依据：首根无法通过病变，更换')
+it('术后多用说明按有效登记带出可确认的处理结论，缺少依据时保留待核实', () => {
+  const todo = inpatientDrgReviewTodoSchema.parse({ id: 'todo-1', version: 1, evidenceFingerprint: 'a'.repeat(64), key: 'extra-use:wire', kind: 'extra-use', ownerRole: 'inpatient-doctor', materialId: 'wire', display: '合成导丝', plannedQuantity: 1, actualQuantity: 2, explanation: '实际使用数量超过术前人工计划，需术者核实额外用途。', evidence: ['Procedure/execution-1'], requestId: 'request-1', executionId: 'execution-1', status: 'pending', reason: null })
+  expect(postoperativeDispositionNote(todo, [execution], [], 'zh-CN')).toBe('术中多用 1 根，首根无法通过病变，更换；已在登记时说明，无需进一步处理。')
+  expect(postoperativeDispositionNote(todo, [], [], 'zh-CN')).toBe(todo.explanation)
   expect(postoperativeDispositionNote({ ...todo, kind: 'unused-plan', actualQuantity: 0 }, [], [], 'zh-CN')).toBe('合成导丝未使用原计划全部数量；预留状态待核实。')
 })
 it('术后多用待办只带出其有效来源中的额外依据，不混入计划内或其他目录版本', () => {
@@ -142,7 +143,7 @@ it('术后多用待办只带出其有效来源中的额外依据，不混入计�
     kind: 'extra-use', ownerRole: 'inpatient-doctor', materialId: 'wire', display: '合成导丝', plannedQuantity: 1, actualQuantity: 2,
     explanation: '导丝多用1根。', evidence: ['InpatientSurgeryMaterial/planned-use', 'InpatientSurgeryMaterial/extra-use', 'Procedure/execution-1'],
     requestId: 'request-1', executionId: 'execution-1', status: 'pending', reason: null })
-  expect(postoperativeDispositionNote(todo, [current], [], 'zh-CN')).toBe('导丝多用1根。登记依据：分支保护')
+  expect(postoperativeDispositionNote(todo, [current], [], 'zh-CN')).toBe('术中多用 1 根，分支保护；已在登记时说明，无需进一步处理。')
 })
 it('额外登记更正后，完成与术后说明均只引用最终有效数量的更正依据', () => {
   const plannedUse = { ...execution.materialHistory[0]!, id: 'planned-use', quantity: 1, amountFen: 20000, note: '按计划：单病变导丝' }
@@ -159,7 +160,7 @@ it('额外登记更正后，完成与术后说明均只引用最终有效数量�
     kind: 'extra-use', ownerRole: 'inpatient-doctor', materialId: 'wire', display: '合成导丝', plannedQuantity: 1, actualQuantity: 2,
     explanation: '导丝多用1根。', evidence: ['InpatientSurgeryMaterial/planned-use', 'InpatientSurgeryMaterial/replacement-use', 'Procedure/execution-1'],
     requestId: 'request-1', executionId: 'execution-1', status: 'pending', reason: null })
-  expect(postoperativeDispositionNote(todo, [current], [], 'zh-CN')).toBe('导丝多用1根。登记依据：分支保护')
+  expect(postoperativeDispositionNote(todo, [current], [], 'zh-CN')).toBe('术中多用 1 根，分支保护；已在登记时说明，无需进一步处理。')
 })
 
 it('术前已经释放的未用预留在完成说明中保持已释放事实', () => {

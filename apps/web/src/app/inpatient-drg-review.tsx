@@ -22,9 +22,11 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { InpatientMaterialPlanBasisDetails } from './inpatient-material-plan.tsx'
 import { InpatientDrgIssueDetails, type DrgRecordTarget } from './inpatient-drg-record-checks.tsx'
+import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
+import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
-  write: ReturnType<typeof useInpatientWriteIntent>; active?: boolean; compact?: boolean; requestId?: string | undefined; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }
+  write: ReturnType<typeof useInpatientWriteIntent>; active?: boolean; compact?: boolean; showPrimaryAction?: boolean; requestId?: string | undefined; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }
 
 /** 折叠保留处置稿；患者或行动上下文变化必须换编辑器实例。 */
 export function InpatientDrgReviewDisclosure(props: Props): React.JSX.Element {
@@ -41,7 +43,7 @@ export function InpatientDrgReviewDisclosure(props: Props): React.JSX.Element {
   </details>
 }
 
-export function InpatientDrgReviewPanel({ admission, session, locale, write, active = true, compact = false, onOpenRecord, requestId }: Props): React.JSX.Element {
+export function InpatientDrgReviewPanel({ admission, session, locale, write, active = true, compact = false, showPrimaryAction = false, onOpenRecord, requestId }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const financial = session.actor.roleCode === 'cashier', [notes, setNotes] = useState<Record<string, string>>({}), [handoff, setHandoff] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false), [sourceId, setSourceId] = useState<string | null>(null), [editingTodo, setEditingTodo] = useState<string | null>(null)
@@ -123,15 +125,15 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
       </div><DialogFooter><DialogClose render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></DialogFooter>
     </DialogContent>
   </Dialog> : null
-  const confirmAllButton = canConfirmAll ? <Button type="button" variant="outline" size="sm" disabled={batching || write.blocked || ownTodos.some(todo => !noteFor(todo).trim())} onClick={() => { void confirmAll() }}>{batching ? t('正在逐项确认', 'Confirming each task') : t('一次全部确认', 'Confirm all')}</Button> : null
+  const confirmAllButton = canConfirmAll ? <Button type="button" variant={showPrimaryAction ? 'default' : 'outline'} size="sm" disabled={batching || write.blocked || ownTodos.some(todo => !noteFor(todo).trim())} onClick={() => { void confirmAll() }}>{batching ? t('正在逐项确认', 'Confirming each task') : t('一次全部确认', 'Confirm all')}</Button> : null
   const pendingLabel = ownTodos.length > 0 ? t(`${ownTodos.length} 项待你确认`, `${ownTodos.length} to confirm`)
     : openTodos.length > 0 ? t(`${openTodos.length} 项待处理`, `${openTodos.length} pending`)
       : data?.missing.length ? t('核查不完整', 'Review incomplete') : data?.todos.length ? t('已全部确认', 'All confirmed') : t('无待核查差异', 'No review findings')
-  return <section aria-label={financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')} className={compactClinical ? 'flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3.5' : 'flex flex-col gap-3'}>
+  return <><section aria-label={financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')} className={compactClinical ? 'flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3.5' : 'flex flex-col gap-3'}>
     <div className="flex flex-wrap items-center gap-2">
       <h4 className="font-medium">{compactClinical ? t('术后核查', 'Postoperative review') : financial ? t('费用差异核对', 'Charge differences') : t('术后核查与责任交接', 'Postoperative review and handoff')}</h4>
       {compactClinical && data && !['inactive', 'waiting-surgery'].includes(data.status) ? <Badge variant="outline" className={openTodos.length > 0 ? 'text-warning' : 'text-success'} role="status">{pendingLabel}</Badge> : null}
-      {compactClinical ? <><span className="flex-1" />{history}{confirmAllButton}</> : null}
+      {compactClinical ? <><span className="flex-1" />{history}</> : null}
     </div>
     {actionError ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(actionError instanceof Error ? actionError : new Error(String(actionError)), getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {review.isPending ? <p role="status">{t('正在读取核查结果', 'Loading review')}</p> : null}
@@ -162,7 +164,7 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
         const note = noteFor(todo)
         const entries = compactClinical && todo.materialId ? surgeries.data?.executions.find(execution => execution.id === todo.executionId)?.materialHistory.filter(use => use.item.id === todo.materialId) ?? [] : []
         const recheck = actionable ? <Button type="button" variant="outline" size="sm" disabled={batching || write.blocked || !note.trim() || data.status === 'frozen'} onClick={() => { setSourceId(null); void act(todo.id, 'recheck') }}>{t('复查最新业务记录', 'Recheck business facts')}</Button> : null
-        const source = compact ? <Dialog open={sourceId === todo.id} onOpenChange={open => setSourceId(open ? todo.id : null)}><DialogTrigger render={<Button type="button" variant="link" size="sm" />}>{compactClinical ? t('看术中登记', 'View intraoperative entries') : t('查看来源与原记录', 'View sources and original records')}</DialogTrigger>
+        const source = compact ? <Dialog open={sourceId === todo.id} onOpenChange={open => setSourceId(open ? todo.id : null)}><DialogTrigger render={<Button type="button" variant="link" size="sm" className={compactClinical ? 'px-2 text-xs' : undefined} />}>{compactClinical ? t('看术中登记', 'View intraoperative entries') : t('查看来源与原记录', 'View sources and original records')}</DialogTrigger>
           <DialogContent className="sm:max-w-[720px]"><DialogHeader><DialogTitle>{todo.display}</DialogTitle><DialogDescription>{t('核查来源与恢复入口', 'Review sources and recovery actions')}</DialogDescription></DialogHeader><div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-4"><InpatientDrgIssueDetails issue={todo} locale={locale} financial={financial} onOpenRecord={onOpenRecord ? target => { setSourceId(null); onOpenRecord(target) } : undefined} />
             {entries.length > 0 ? <section aria-label={t('本项术中登记', 'Intraoperative entries for this material')}><h5 className="mb-2 font-medium">{t('术中登记', 'Intraoperative entries')}</h5><ul className="flex flex-col divide-y">{entries.map(use => <li key={use.id} className="flex flex-col gap-1 py-2 text-sm"><p className="flex flex-wrap gap-x-3"><time dateTime={use.recordedAt}>{formatShanghaiMinute(use.recordedAt).slice(5)}</time><span>{use.quantity} {use.item.chargeDefinition.unit}</span><span className="text-muted-foreground">v{use.item.version}</span></p><p className="whitespace-pre-wrap break-words">{use.note}</p>{use.correction ? <p className="text-muted-foreground">{t('已更正：', 'Corrected: ')}{use.correction.note}</p> : null}</li>)}</ul></section> : null}
           </div><DialogFooter>{recheck}<DialogClose render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></DialogFooter></DialogContent>
@@ -173,19 +175,24 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
             <h5 className="min-w-0 font-medium break-words">{todo.display}</h5><Badge variant="secondary">{badge}</Badge>
             {!compactClinical || todo.ownerRole !== session.actor.roleCode ? <span className="text-xs text-muted-foreground">{t('负责岗位：', 'Responsible: ')}{roleName(todo.ownerRole)}</span> : null}
             {compactClinical && todo.status === 'in-progress' ? <span className="text-xs text-warning">{t('需要跟进', 'Follow-up needed')}</span> : null}
-            {compactClinical ? <><span className="flex-1" />{source}</> : null}
           </div>
           {!compactClinical ? <><p>{todo.explanation}</p>{source ?? <InpatientDrgIssueDetails issue={todo} locale={locale} financial={financial} onOpenRecord={onOpenRecord} />}</> : null}
-          {compactClinical ? <div className="flex min-w-0 items-start gap-2 text-sm"><p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-muted-foreground">{confirmed ? todo.reason ?? todo.explanation : note || todo.explanation}</p>
-            {actionable ? <Button type="button" size="sm" variant="ghost" className="h-auto shrink-0 px-1 py-0.5" aria-label={`${t('修改处理说明', 'Edit disposition note')} ${todo.display}`} aria-expanded={editingTodo === todo.id} onClick={() => setEditingTodo(editingTodo === todo.id ? null : todo.id)}>{t('修改说明', 'Edit note')}</Button> : null}
-          </div> : todo.reason ? <p>{t('处置依据：', 'Disposition reason: ')}{todo.reason}</p> : null}
-          {actionable ? <>
-            {!compactClinical || editingTodo === todo.id ? <Field><FieldLabel htmlFor={`drg-todo-${todo.id}`}>{t('待办处理说明', 'Task disposition reason')}</FieldLabel><Input id={`drg-todo-${todo.id}`} value={note} onChange={event => setNotes(previous => ({ ...previous, [todo.id]: event.target.value }))} maxLength={2000} /></Field> : null}
-            <div className={compactClinical ? 'flex flex-wrap justify-end gap-2' : 'flex flex-wrap gap-2'}><Button type="button" variant="ghost" size="sm" disabled={batching || write.blocked || !note.trim()} onClick={() => { void act(todo.id, 'in-progress') }}>{doctor ? t('需要跟进', 'Follow up') : t('标记处理中', 'Start processing')}</Button><Button type="button" variant="outline" size="sm" disabled={batching || write.blocked || !note.trim()} onClick={() => { void act(todo.id, 'dismiss') }}>{doctor ? t('按此说明确认', 'Confirm this note') : t('人工判断无需处理', 'Dismiss with reason')}</Button>{!compact ? recheck : null}</div>
-          </> : null}
+          {compactClinical ? <p className="min-w-0 whitespace-pre-wrap break-words text-sm text-muted-foreground">{confirmed ? todo.reason ?? todo.explanation : note || todo.explanation}</p>
+            : todo.reason ? <p>{t('处置依据：', 'Disposition reason: ')}{todo.reason}</p> : null}
+          {actionable && (!compactClinical || editingTodo === todo.id) ? <Field><FieldLabel htmlFor={`drg-todo-${todo.id}`}>{t('待办处理说明', 'Task disposition reason')}</FieldLabel><Input id={`drg-todo-${todo.id}`} value={note} onChange={event => setNotes(previous => ({ ...previous, [todo.id]: event.target.value }))} maxLength={2000} /></Field> : null}
+          {compactClinical || actionable ? <div role={compactClinical ? 'group' : undefined} aria-label={compactClinical ? `${t('术后核查操作', 'Postoperative review actions')} ${todo.display}` : undefined} className={compactClinical ? 'flex flex-wrap items-center justify-end gap-1' : 'flex flex-wrap gap-2'}>
+            {compactClinical ? source : null}
+            {compactClinical && actionable ? <Button type="button" size="sm" variant="ghost" className="px-2 text-xs" aria-label={`${t('修改处理说明', 'Edit disposition note')} ${todo.display}`} aria-expanded={editingTodo === todo.id} onClick={() => setEditingTodo(editingTodo === todo.id ? null : todo.id)}>{t('修改说明', 'Edit note')}</Button> : null}
+            {actionable ? <>
+              <Button type="button" variant="ghost" size="sm" className={compactClinical ? 'px-2 text-xs' : undefined} disabled={batching || write.blocked || !note.trim()} onClick={() => { void act(todo.id, 'in-progress') }}>{doctor ? t('需要跟进', 'Follow up') : t('标记处理中', 'Start processing')}</Button>
+              <Button type="button" variant="outline" size="sm" className={compactClinical ? 'px-2 text-xs' : undefined} disabled={batching || write.blocked || !note.trim()} onClick={() => { void act(todo.id, 'dismiss') }}>{doctor ? t('按此说明确认', 'Confirm this note') : t('人工判断无需处理', 'Dismiss with reason')}</Button>
+              {!compact ? recheck : null}
+            </> : null}
+          </div> : null}
         </article>
       })}
       </div>
+      {compactClinical && !showPrimaryAction ? confirmAllButton : null}
       {!compact && data.resolvedTodos.length > 0 ? <details><summary>{t('已按记录解决的待办', 'Tasks resolved by facts')}</summary>{data.resolvedTodos.map(todo => <p key={todo.id}>{todo.display} · {statusName(todo.status)} · {todo.reason}</p>)}</details> : null}
       {!compact && data.actions.length > 0 ? <details><summary>{t('查看人工处置历史', 'Disposition history')}</summary>{data.actions.map((action, index) => <p key={index}>{roleName(action.role)} · {action.note} · {new Date(action.at).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</p>)}</details> : null}
       {data.handedOver ? <p>{t('本轮已交接：', 'Handoff completed: ')}{data.handedOver.note}</p> : !readonly && data.status === 'frozen' && ['inpatient-doctor', 'medical-records'].includes(session.actor.roleCode) ? <>
@@ -195,4 +202,8 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
       </> : null}
     </> : null}
   </section>
+    {compactClinical && showPrimaryAction && active && data && !['inactive', 'waiting-surgery'].includes(data.status) ? <InpatientPrimaryAction stage="surgery" priority={1}>
+      <WorkspaceActionBar reason={readonly && data.freezeReason ? data.freezeReason : pendingLabel} tone={ownTodos.length === 0 ? 'complete' : 'normal'} showWithoutAction action={confirmAllButton} />
+    </InpatientPrimaryAction> : null}
+  </>
 }

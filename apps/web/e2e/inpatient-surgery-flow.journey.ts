@@ -37,7 +37,7 @@ async function captureFactory(page: Page, info: TestInfo, origin: string, screen
         await expect(actions(page).getByRole('button', { name: nextAction, exact: true })).toBeVisible()
       }
       await expect(page.locator('.clinmesh-inpatient-head .clinmesh-inpatient-drg-progress')).toBeVisible()
-      if (process.env.CLINMESH_SURGERY_FLOW_FULL_MATRIX !== '1' && !['running', 'completion'].includes(stage)) return
+      if (process.env.CLINMESH_SURGERY_FLOW_FULL_MATRIX !== '1' && !['running', 'completion', 'postoperative'].includes(stage)) return
       for (const width of [1600, 1280]) for (const theme of ['light', 'dark']) {
         const height = width === 1600 ? 1000 : 800, hostWidth = surface ? width - 56 - (width === 1600 ? 443 : 398) : width
         await page.setViewportSize({ width, height })
@@ -63,9 +63,19 @@ async function captureFactory(page: Page, info: TestInfo, origin: string, screen
           return { regions, steps, turn: text, rootLeft: bounds.left, rootRight: bounds.right, rootOverflow: element.scrollWidth - element.clientWidth }
         })
         const issues = layout.regions.filter(item => item.scrollWidth > item.clientWidth + 1).map(item => `horizontal overflow: ${JSON.stringify(item)}`)
+        const reviewActions = stage === 'postoperative' ? await page.getByRole('group', { name: /^术后核查操作 / }).evaluateAll(groups => groups.map(group => Array.from(group.querySelectorAll('button')).map(button => {
+          const bounds = button.getBoundingClientRect()
+          return { text: button.textContent, top: bounds.top, left: bounds.left, right: bounds.right }
+        }))) : []
+        for (const buttons of reviewActions) {
+          expect(buttons.map(button => button.text)).toEqual(['看术中登记', '修改说明', '需要跟进', '按此说明确认'])
+          expect(Math.max(...buttons.map(button => button.top)) - Math.min(...buttons.map(button => button.top))).toBeLessThanOrEqual(1)
+        }
+        const footerBefore = stage === 'postoperative' ? await actions(page).boundingBox() : null
+        if (stage === 'postoperative') await expect(actions(page).getByRole('button', { name: '一次全部确认', exact: true })).toBeVisible()
         if (layout.rootOverflow > 1) issues.push(`root overflow ${layout.rootOverflow}`)
         for (const modal of layout.regions.filter(item => item.modal)) if (modal.top < -1 || modal.bottom > height + 1 || surface && (modal.left < layout.rootLeft - 1 || modal.right > layout.rootRight + 1)) issues.push(`modal outside viewport: ${JSON.stringify(modal)}`)
-        const record = { stage, width, theme, hostWidth, surface, ...layout, issues, prototypeSha256: prototype ? createHash('sha256').update(prototype).digest('hex') : null }
+        const record = { stage, width, theme, hostWidth, surface, ...layout, reviewActions, issues, prototypeSha256: prototype ? createHash('sha256').update(prototype).digest('hex') : null }
         evidence.push(record)
         if (captureStage) {
           const path = info.outputPath(`surgery-flow-${stage}-${width}-${theme}.png`)
@@ -90,6 +100,7 @@ async function captureFactory(page: Page, info: TestInfo, origin: string, screen
               await info.attach(`surgery-flow-${stage}-${width}-${theme}-detail`, { path: detail, contentType: 'image/png' })
             }
             expect(await page.locator('.clinmesh-inpatient-head').boundingBox()).toEqual(headBefore)
+            if (stage === 'postoperative') expect(await actions(page).boundingBox()).toEqual(footerBefore)
           }
         }
         if (reference && captureStage) {
@@ -212,13 +223,16 @@ export async function runSurgeryFlowJourney(page: Page, app: PciAiBrowserApp, in
     await capture.capture('completion')
     await completion.getByRole('button', { name: '确认完成手术', exact: true }).click()
     const postoperative = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
-    await expect(postoperative.getByRole('button', { name: '一次全部确认', exact: true })).toBeEnabled()
+    await expect(actions(page).getByRole('button', { name: '一次全部确认', exact: true })).toBeEnabled()
+    await expect(postoperative.getByRole('button', { name: '一次全部确认', exact: true })).toHaveCount(0)
     await expect(postoperative.getByRole('list', { name: '术后核查清单', exact: true }).getByRole('listitem')).toHaveCount(1)
     await expect(postoperative.getByText(/^阶段正式收费|^含医生已有后续治疗计划|^术后分析已就绪/)).toHaveCount(0)
     const progress = page.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组', exact: true })
     await expect(progress).toContainText('术后预计 FM39')
     await expect(progress).toContainText('待确认主操作')
     await expect(progress).toContainText('支付参考 ¥12,000.00')
+    await expect(postoperative.getByRole('listitem')).toContainText('术中多用 1 根，分支保护；已在登记时说明，无需进一步处理。')
+    await expect(postoperative.getByRole('listitem')).not.toContainText('需术者核实额外用途')
     await capture.capture('postoperative')
     const finding = postoperative.getByRole('listitem')
     await finding.getByRole('button', { name: '看术中登记', exact: true }).click()
@@ -232,11 +246,11 @@ export async function runSurgeryFlowJourney(page: Page, app: PciAiBrowserApp, in
     await finding.getByRole('button', { name: /^修改处理说明 / }).click()
     const disposition = finding.getByRole('textbox', { name: '待办处理说明', exact: true })
     await disposition.fill('')
-    await expect(postoperative.getByRole('button', { name: '一次全部确认', exact: true })).toBeDisabled()
+    await expect(actions(page).getByRole('button', { name: '一次全部确认', exact: true })).toBeDisabled()
     await disposition.fill('分支保护已按本笔登记核实，无需后续处理。')
-    await postoperative.getByRole('button', { name: '一次全部确认', exact: true }).click()
+    await actions(page).getByRole('button', { name: '一次全部确认', exact: true }).click()
     await expect.poll(async () => (await f.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)).todos.filter(item => item.requestId === planned.id && item.ownerRole === 'inpatient-doctor' && ['pending', 'in-progress'].includes(item.status)), { timeout: 30_000 }).toHaveLength(0)
-    await expect(postoperative.getByRole('button', { name: '一次全部确认', exact: true })).toHaveCount(0)
+    await expect(actions(page).getByRole('button', { name: '一次全部确认', exact: true })).toHaveCount(0)
     await expect(postoperative.getByRole('textbox', { name: '待办处理说明', exact: true })).toHaveCount(0)
     expect((await f.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)).todos.find(item => item.requestId === planned.id)?.reason).toBe('分支保护已按本笔登记核实，无需后续处理。')
     await expect(page.getByRole('tab', { name: '手术', exact: true })).toHaveAccessibleDescription(/待办 0 项/)

@@ -71,6 +71,36 @@ it('未开启跟进的术后待办展示原手术和数量，并直接进入原�
   expect(screen.queryByText('尚未开启本次住院跟进。')).toBeNull()
 })
 
+it('当前手术的全部确认进入固定操作栏，清空说明禁提交且离开后释放主操作', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(review)))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
+  function Harness({ active }: { active: boolean }) {
+    const write = useInpatientWriteIntent(session, () => undefined)
+    return <>
+      <InpatientPrimaryAction stage="surgery" priority={-10}><button>其他手术操作</button></InpatientPrimaryAction>
+      <InpatientDrgReviewPanel admission={admission} session={session} locale="zh-CN" write={write} active={active} compact showPrimaryAction />
+    </>
+  }
+  const view = (active: boolean) => <QueryClientProvider client={client}><InpatientActionProvider stage="surgery">
+    <Harness active={active} /><footer aria-label="工作台底部"><InpatientActionOutlet /></footer>
+  </InpatientActionProvider></QueryClientProvider>
+  const rendered = render(view(true)), user = userEvent.setup()
+  const panel = await screen.findByRole('region', { name: '术后核查与责任交接' })
+  await within(panel).findByText('导丝')
+  expect(within(panel).queryByRole('button', { name: '一次全部确认' })).toBeNull()
+  const footer = screen.getByRole('contentinfo', { name: '工作台底部' })
+  const confirm = within(footer).getByRole<HTMLButtonElement>('button', { name: '一次全部确认' })
+  expect(confirm.disabled).toBe(false)
+  const rowActions = within(panel).getByRole('group', { name: '术后核查操作 导丝' })
+  expect(within(rowActions).getAllByRole('button').map(button => button.textContent)).toEqual(['看术中登记', '修改说明', '需要跟进', '按此说明确认'])
+  await user.click(within(rowActions).getByRole('button', { name: '修改处理说明 导丝' }))
+  await user.clear(within(panel).getByRole('textbox', { name: '待办处理说明' }))
+  expect(confirm.disabled).toBe(true)
+  rendered.rerender(view(false))
+  await waitFor(() => expect(within(footer).queryByRole('button', { name: '一次全部确认' })).toBeNull())
+  expect(within(footer).getByRole('button', { name: '其他手术操作' })).toBeDefined()
+})
+
 it('归档后保留待办与原记录入口，关闭处置、复查和交接写入', async () => {
   const posts: string[] = []
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
