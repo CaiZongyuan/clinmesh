@@ -158,7 +158,7 @@ clinmesh command receipt get --operation-id inpatient.pci-selection.save --idemp
 
 医生在本次住院确认 `admissionId/expectedVersion/parameters`，首次版本为0；修改使用当前 `confirmation.version`。`parameters` 包含治疗方向 `treatmentPlan`、靶部位 `targetSite`、可选本次有效 `requestId`、`measurements`、`plannedQuantities` 及医生认可的具体 `approvedMaterialIds`。测量分别保存 `kind/object/site/value/unit/method` 和 `source.reference/version/note/synthetic`；缺少测量保留空数组，未知数值或单位为null，不能由耗材规格倒推。数量逐类保存 `category/quantity/basis`，不从DRG差额推算。
 
-读取返回当前确认和历史版本，以及本院实际安装的候选、产品版本、合成适用／兼容依据、独立数量计划、预计收费和 `missing`。仅 `eligibility=valid` 可作为后续建议输入；其他状态为 `incomplete/inapplicable/unavailable`，来源价格不能证明临床适用。当前依据仅支持明确标识的有限单病变合成仿真，不是真实器械IFU或临床金标准。本步骤不调用模型、不完成手术、不产生费用。结果未知时保持原输入、原版本及原key，先查询原receipt。
+读取返回当前确认和历史版本，以及本院实际安装的候选、产品版本、合成适用／兼容依据、独立数量计划、预计收费和 `missing`；`measurementCompatible` 独立表示测量与规格是否相容，不把数量缺项解释为测量不符。仅 `eligibility=valid` 可作为后续建议输入；其他状态为 `incomplete/inapplicable/unavailable`，来源价格不能证明临床适用。当前依据仅支持明确标识的有限单病变合成仿真，不是真实器械IFU或临床金标准。本步骤不调用模型、不完成手术、不产生费用。结果未知时保持原输入、原版本及原key，先查询原receipt。
 
 报告带入的 `drafts` 按 `requestId` 归属计划，仅在正式造影报告包含 `targetSite` 或 QCA `measurements` 时自动生成（纯诊断性多支造影／阴性 FFR 无 QCA 测量时不生成空草稿）；编辑时先读取当前草稿，完整保留未改字段及测量来源，用其 `version` 作为 `expectedDraftVersion`。服务端对照原报告核实每条测量来源；对象、部位、值、单位或方法修改后标为人工修订，原报告绑定仍保留，不能把修改值当作报告原值。`save-pci-selection` 仅保存工作稿，正式认可与预留由整批清单确认完成。`pci-selection-draft.json` 以下仅示意缺项草稿形状；实际保存使用本次读回并由医生编辑的完整 `parameters`，不以示例空数组清除已有报告测量：
 
@@ -315,9 +315,9 @@ clinmesh command receipt get --operation-id inpatient.drg.agent.confirm --idempo
 
 医生开启住院跟进并确认本次有效手术计划的参数后，后台按完整依据版本生成并独立核验耗材建议；实际模型请求进入本住院任务的用量账。规则检查本身不产生模型请求。`status=incomplete/stale/blocked/unknown/failed` 时先读取 `missing/failureCode`，未知结果保持待核查，不新建任务或换幂等键重发。停止、失权或归档后只保留历史结果，不继续临床分析。
 
-单次预计与跟进的 `costs` 由既有费用推演确定性计算，包含正式收费净额、待执行医嘱、剩余计划耗材、计划手术费、预计总额，以及当前与计划分组、医院支付参考和差额。规则未启用、分组资料不足或缺支付参数时，医保说明给出对应原因，耗材建议继续准备；模型受阻、失败或未知时费用块仍可读取。`analysis.costExplanation` 只有与当前 `basisFingerprint` 一致且已独立核验时才是当前说明，旧金额文字作为历史；费用差额不改变临床选择，也不等于患者医保待遇。
+单次预计与跟进的 `costs` 由既有费用推演确定性计算，包含正式收费净额、待执行医嘱、剩余计划耗材、计划手术费、预计总额，以及当前与计划分组、医院支付参考和差额。规则未启用、分组资料不足或缺支付参数时，医保说明给出对应原因，耗材建议继续准备；模型受阻、失败或未知时费用块仍可读取。`analysis.costExplanation` 只有与当前 `basisFingerprint` 一致且已独立核验时才是当前说明，旧金额文字作为历史。`pci-selection.candidates` 是当前或默认每类候选，`alternatives` 是独立替代池，不能把两者全部加入计划。服务端 `costs` 已将本次住院其他未确认、未开始且已保存的明确清单相对其实际预留的差额各计一次；当前计划的显式清单覆盖自身存量稿。模型输入与 `equivalentSuggestions` 的九成阈值、替换前后总额均使用这份统一预计。`projectionComplete=false` 时按 `projectionMissing` 保留预计未知，不把已知部分合计当作完整预计，也不引用预计差额或生成等效建议。前端以正式推演为基线时，多份未确认清单只将各自的 `materialDraftDeltaFen` 加入一次，不能再加到已合并的 `costs`；该值是本计划草稿耗材金额减本计划现有预留余量，已确认、已开始或缺价格时为 null，不累计每份清单的全住院 `costs`。合并前 `materialDraftReservationBasis` 必须与当前正式推演的预留列表一致；价格缺失或基线刷新尚未对齐时保留预计未知。主计划选择仅用于预计分组与支付参考，不修改正式主操作。达到支付参考九成时，`material-estimates.equivalentSuggestions` 只列同一显式合成等效组内、同类别同规格、适用且兼容的更低单价产品，差价和换后预计由程序给出；模型仅说明给定候选，不自行判定等效。医生采用或换回时沿 `save-material-estimate` 保存同数量工作稿，再按原流程确认预留；不能据费用减少用量、改规格、改诊断、术式或主操作。规则建议不依赖跟进或模型成功；费用说明不等于患者医保待遇。
 
-术中登记或更正耗材后，从 `drg-agent` 读取实时 `costs/usage`：计划量、实际量、剩余量、计划外与超计划使用及费用影响不依赖持续跟进，`status=inactive` 仅表示没有后台模型任务。术中不自动派发模型；医生需要解释时使用下文的 `explain-drg-records`，已核验费用说明在 `result.costExplanation`，同依据结果复用，生成与独立核验按实际请求计量。
+术中登记或更正耗材后，从 `drg-agent` 读取实时 `costs/usage` 与 `intraoperativePlans` 的冻结术前清单；每个 `requestId` 同时返回该手术自身确认的 `candidates/alternatives`，术中等效建议使用本手术这份候选，不借用较新手术的确认。计划量、实际量、剩余量和费用不依赖持续跟进。助手自动跟进开启时，仅对新登记的超计划、计划外或与已确认测量不符的笔，生成并独立核验说明；按计划登记、普通刷新及更正不新增模型意图。`intraoperativeReviews` 按 `materialUseId` 返回状态、`explanation/costExplanation`，用量计入本次住院；未开启、受阻、失败或结果未知时登记与完成照常，未知沿原任务核查而不自动重发。非 PCI 手术只显示确定性金额。分组差异的按需解释继续使用下文的 `explain-drg-records`。
 
 确认输入为 `admissionId/analysisId/expectedBasisFingerprint/expectedRevision/items/note`，首次计划修订为0；`items` 逐项提供 `materialId/catalogVersion/quantity/reason`。以最新 `basisFingerprint` 和产品版本为准，保留医生独立数量依据；超出当前核验范围时先更新参数并核查依据。`confirmedPlan/planHistory` 保留每次人工确认，确认计划不提交正式手术、医嘱、预留或收费。结果未知时查询原 receipt，保持原输入和原 key。
 
@@ -638,6 +638,8 @@ clinmesh command receipt get --operation-id inpatient.financial.insurance.confir
 2. `drg-simulate` 把草稿医嘱对照正式收费、在途承诺、材料预留与草稿推演金额，附依赖指纹及独立的合成医院支付参考。`estimatedFen=null` 表示目录缺价，不以零值填充。推演不产生费用、预留或核定事实。用与待开具单项相同的草稿推演并审阅后，`issue-order` 携带 `expectedDrgFingerprint`；服务端按实际选择重算，`INPATIENT_DRG_EVALUATION_STALE` 要求重新推演与审阅。病例、目录或事实变化均不可继续使用旧指纹，响应丢失先查原回执，沿用原输入和幂等键。
 3. 住院医生为计划手术预留材料：`encounterVersion` 做预期版本校验，绑定目录 ID、版本与原因；预留不改变临床事实与库存。仅预留态可释放并须附原因。
 4. 归档后先用 `drg-payer-review-preview` 读取冻结分组、`caseSummary` 中的病例与编码来源摘要、固定版本合成核定金额，医保办审阅后用 `drg-payer-review` 携带预览的 `encounterVersion` 和 `expectedFingerprint` 核定。`paymentEstimate` 是归档时冻结的医院支付预估；`estimateDifferenceFen` 为核定减原预估，`differenceFen` 为核定减归档收费。旧归档没有预估时前两项为 null，不用当前参数回填。金额由服务端确定性产生，不落真实支付；未归档、缺参数或过期预览明确拒绝，`INPATIENT_DRG_PAYER_PREVIEW_STALE` 后须重新读取与审阅。`drg-payer-reviews` 回查历次核定及依据。
+
+`drg-simulate.postoperativeEstimate` 非空时，表示有实际完成操作尚待当前主操作确认；它是按当前事实重算的术后预计，`formal` 仍是正式结果。展示时注明“待确认主操作”，确认覆盖当前实际操作后该字段清空。`grouping/paymentReference=null` 表示候选不一致或依据不足，保持未知，不按旧正式参考判断接近或已超；费用仍读取当前统一口径。详细合同见[手术费用与医保说明](../../docs/architecture/clinical-workflows.md#手术费用与医保说明)。
 
 ```bash
 clinmesh inpatient drg-pregroup --admission-id <admission-id>

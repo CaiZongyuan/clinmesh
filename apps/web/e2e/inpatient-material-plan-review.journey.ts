@@ -38,7 +38,7 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   const estimates = page.getByRole('region', { name: '手术耗材', exact: true })
   await expect(estimates.getByRole('spinbutton', { name: /预计数量/ })).toHaveCount(4)
   const callsBeforeConfirmation = app.modelCalls
-  await actions.getByRole('button', { name: '确认并预留', exact: true }).click()
+  await actions.getByRole('button', { name: '确认手术耗材', exact: true }).click()
   await expect(estimates).toContainText('已为本计划预留')
   const confirmed = (await f.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates[0]!.planBasis!
   expect(confirmed).toMatchObject({ status: 'confirmed', history: [{ source: 'material-estimate', sourceVersion: 1,
@@ -46,7 +46,7 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   expect((await f.read('inpatient-doctor', `${stay.path}/drg/followup`, inpatientDrgFollowupSchema)).task).toBeNull()
   expect(app.modelCalls).toBe(callsBeforeConfirmation)
 
-  await actions.getByRole('button', { name: '开始手术逐笔登记', exact: true }).click()
+  await actions.getByRole('button', { name: '开始手术', exact: true }).click()
   const startDialog = page.getByRole('dialog', { name: '开始手术', exact: true })
   await startDialog.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${stay.procedure.coding.code} · ${stay.procedure.coding.display}`, exact: true }).click()
@@ -57,6 +57,7 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   await expect(estimates).toHaveCount(0)
   await actions.getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
   const final = page.getByRole('dialog', { name: '核实最终耗材并完成手术', exact: true })
+  await final.getByRole('button', { name: '有出入，改数量', exact: true }).click()
   const name = (id: string) => stay.catalog.materials.find(item => item.id === id)!.display
   for (const id of ['hospital-material-pci-guidewire', 'hospital-material-pci-balloon', 'hospital-material-pci-stent']) {
     await final.getByLabel(new RegExp(`${name(id)} · 最终总量`)).fill('1')
@@ -69,7 +70,7 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   await picker.getByRole('button', { name: '完成选择', exact: true }).click()
   await final.getByRole('checkbox', { name: new RegExp(`释放剩余预留 · ${name('hospital-material-pci-guiding-catheter')}`) }).check()
   await final.getByLabel('核实说明', { exact: true }).fill('导丝两根，导引导管未用并释放原预留，支架和球囊各一件')
-  await page.getByRole('button', { name: '预览本次差额', exact: true }).click()
+  await expect(page.getByRole('button', { name: '确认完成手术', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: '确认完成手术', exact: true }).click()
   const done = page.getByRole('region', { name: '最终耗材', exact: true })
   await expect(done).toContainText(stay.procedure.coding.code)
@@ -84,7 +85,7 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   await expect(toggle).toHaveAttribute('aria-pressed', 'true')
   const review = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
   await expect(review).toBeVisible()
-  await expect(review).toContainText('负责岗位：住院医生')
+  await expect(review.getByRole('list', { name: '术后核查清单', exact: true })).toBeVisible()
   const state = await f.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)
   expect(state.planBases).toContainEqual(confirmed)
   expect(state.todos.some(todo => todo.kind === 'extra-use')).toBe(true)

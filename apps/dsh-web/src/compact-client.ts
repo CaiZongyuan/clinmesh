@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { minify } from 'terser'
 import ts from 'typescript'
 
 const prefix = `window.__ModuleLoader__.load({
@@ -13,7 +14,7 @@ const suffix = `    return module.exports;
 `
 
 /** Keep the host wrapper and names used by verify-artifact; compact only bundled code. */
-export function compactLazyCjsClient(client: string): string {
+export async function compactLazyCjsClient(client: string): Promise<string> {
   const parsed = ts.createSourceFile('client.js', client, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
   const statement = parsed.statements[0]
   const call = statement && ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression)
@@ -28,17 +29,18 @@ export function compactLazyCjsClient(client: string): string {
     throw new Error('Unexpected ClinMesh DSH lazy-CJS wrapper; rebuild before compacting')
   }
   const body = client.slice(prefix.length, -suffix.length)
-  const transpiler = new Bun.Transpiler({
-    loader: 'js', target: 'browser', minifyWhitespace: true,
-    deadCodeElimination: false, inline: false, treeShaking: false,
+  const result = await minify(body, {
+    ecma: 2023, compress: { defaults: false, booleans: true }, mangle: false,
+    keep_fnames: true, keep_classnames: true, format: { comments: 'some', ascii_only: false },
   })
-  return prefix + transpiler.transformSync(body).trimEnd() + '\n' + suffix
+  if (result.code === undefined) throw new Error('Missing compacted ClinMesh DSH client')
+  return prefix + result.code.trimEnd() + '\n' + suffix
 }
 
 if (import.meta.main) {
   const path = join(import.meta.dir, '..', 'lib', 'client.js')
   const original = await Bun.file(path).text()
-  const compacted = compactLazyCjsClient(original)
+  const compacted = await compactLazyCjsClient(original)
   await Bun.write(path, compacted)
-  console.info(`DSH client whitespace: ${Buffer.byteLength(original)} -> ${Buffer.byteLength(compacted)} bytes`)
+  console.info(`DSH client compaction: ${Buffer.byteLength(original)} -> ${Buffer.byteLength(compacted)} bytes`)
 }

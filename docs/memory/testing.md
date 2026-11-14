@@ -58,7 +58,7 @@
 
 - 判断文档修改是否影响测试时，先检查构建工具的自动扫描范围，不能只看静态 import。DSH 的 [Surface 样式构建](../../apps/dsh-web/src/surface-styles.ts)和 Web 的[字号](../../apps/web/src/app/font-size.browser.test.ts)、[主题](../../apps/web/src/app/web-theme.browser.test.ts)浏览器合同都以仓库根为 Tailwind 扫描根，普通说明文档和其他组的测试文件也可能改变运行时生成的 CSS；CI 成功复用因此用 Tailwind 候选 class 代替被排除文件的原文，见[测试策略](../testing.md#github-ci-的检查选择与并行)。
 
-- 新增或修改 DSH 浏览器 `.fixture.tsx` 时，`tsconfig.browser.json` 不足以覆盖夹具类型。补跑 `pnpm --filter @clinmesh/dsh-web typecheck`，同时核对全局测试模式 union 与网络桩使用的局部 URL 变量；Vite 运行成功不等于这些 TypeScript 边界通过。
+- 新增或修改 DSH 浏览器 `.fixture.tsx` 或 `.browser.test.ts` 时，`tsconfig.browser.json` 不足以覆盖这些文件的类型。补跑 `pnpm --filter @clinmesh/dsh-web typecheck`，同时核对全局测试模式 union 与网络桩使用的局部 URL 变量。该包加载 Bun 类型，替换浏览器 `fetch` 的测试替身还须保留其声明的完整接口，可代理原函数；Vite 运行成功不等于这些 TypeScript 边界通过。
 
 - CLI 根入口回归经根 `pnpm`、包级 `pnpm` 和 `tsx` 启动，额外进程与依赖校验都计入整例时限。单次冷启动超时时，先对照同快照的原入口、包级入口与直接 `tsx` 的输出和耗时，并核对锁文件、配置及 runner；只有启动抖动证据时保留原代码、断言、worker 和时限，定向复跑失败执行组。不要为减少进程改写入口而静默改变当前目录与相对输入文件的解析边界；合同见[CLI 进程入口回归](../../apps/cli/tests/bin.test.ts)。
 
@@ -121,6 +121,8 @@
 - 干净克隆或独立 worktree 单跑 DSH 单元或 Playwright 浏览器合同前，先执行 `pnpm --filter @clinmesh/dsh-web build:styles` 生成被忽略的 `apps/dsh-web/src/client/styles.generated.ts`（见[浏览器准备步骤](../testing.md#用户界面验证)），避免 Vite/Rollup 在收集阶段报模块缺失。
 
 - 外观矩阵更新 `data-font-size` 后，带 `transition-all` 的标签文字与边界仍可能继续过渡；先等待 computed `font-size` 到达目标值再真实 click 并确认 `aria-selected`（回归见 `diagnosis-prescription.browser.test.ts`）。
+
+- 中断串行检查链时，单独向 Turbo 子进程发送 SIGINT 可能让它以成功状态退出，后续阶段仍会开始。先核对本次顶层检查的工作目录和进程归属，按整个任务树停止并确认共享锁释放；保留中断记录，只有明确完成的任务才作为成功证据，不把后续阶段启动当作前序集合全部通过。
 
 - 浏览器动效的保持、淡出或 Canvas 卸载断言若在并行整组失败、单文件通过，可用 `pnpm exec playwright test --project=contracts --workers=1` 验证完整合同集合，保留原断言和超时。交付证据应区分串行集合通过与默认并行 `pnpm check` 未通过，不把单项重跑成功作为整组成功。若点击日志停在 `performing click action`，元素已可见且稳定，先隔离其他 worktree 的构建、类型和浏览器重检查，再用原断言复现。
 
@@ -260,6 +262,10 @@
 
 - 住院可见文案检查也会扫描文本替换函数的字符串参数。匹配旧术语时使用明确的正则模式，保留面向岗位的替换结果；不要放宽文案检查或把原始系统术语重新显示给用户。
 
+- 精简或删除界面文案后，同时搜索组件测试与 `apps/web/e2e/*.journey.ts` 的旧全文和关键片段；Surface 合同复用共享旅程，组件和词表通过仍可能留下 Web／React 18／19 的旧整句断言。按当前可见文案或缺席状态同步，保留字段、数量、正式预留回读与历史验证，参见 [PCI 参数旅程](../../apps/web/e2e/inpatient-pci-selection.journey.ts)及[计划变化旅程](../../apps/web/e2e/inpatient-drg-agent.journey.ts)。
+
+- 多个动作共用自动带出的说明时，分别验证未编辑确认、未编辑跟进、人工改写、显式清空及刷新后的已存说明，核对提交动作与文字结论一致。组合独立读取的事实时，额外构造“旧来源配新数量”和“数量相同但来源尚缺”两种输入，防止将部分依据写成完整处理结论；参见[术后规则回归](../../apps/web/src/app/inpatient-surgery-notes.test.ts)与[术后组件回归](../../apps/web/src/app/inpatient-drg-review.test.tsx)。
+
 - Toast 同样使用 `role="dialog"`，但 `aria-modal="false"`；连续写入后的通知会让未限定名称的 `getByRole('dialog')` 匹配多个元素。验证模态窗口时限定名称或可见的 `[data-slot="dialog-content"]`，滚动验收要核对底栏关闭按钮可达，不能以顶部同名关闭按钮代替；参见[住院减负实机入口](../../apps/web/e2e/issue400-comparison.spec.ts)。
 
 - 模拟检验目录并发更新时，须同步修改 `hospital_service_catalog.version` 和 `config_json.laboratoryService.version`。只改外层版本会构造不一致的服务快照，导致重新选择后仍被 `CATALOG_CONFLICT` 拒绝，无法验证正常目录冲突的恢复；准备状态后通过真实页面和公开 HTTP 回读结果，参见[住院检查批量开立旅程](../../apps/web/e2e/inpatient-investigation-batch.spec.ts)。
@@ -275,3 +281,9 @@
 - 住院检查检验的结果生成依赖本次住院绑定的合成病例来源；用 `POST /api/his/v1/patients` 直接建档后入院，开立检验会以 `LABORATORY_GENERATION_UNSUPPORTED` 拒绝。HTTP 测试需从合成门诊就诊（`start-outpatient-visit` 返回的 `patientId`）读取 FHIR Patient 版本后办理入院，参见[检验发布回归](../../apps/server/tests/laboratory-service-publisher-http.test.ts)。
 
 - 需要多个独立行为共享同一份重型夹具（参考库导入、运行时启动与 Epoch 重置）时，用嵌套 `describe` 的 `beforeAll` 承担一次性准备并显式 `afterAll` 释放，每个 `it` 只断言一个行为并保持默认 15s 预算；不要把多条独立流程串进单个 `it` 后放宽单测超时。
+
+- 单例 HTTP 合同的完整临床前置占满测试预算时，分开测量准备与受测行为；每例必须使用独立数据库时，将重型前置分段放入局部 `beforeEach`，保留原 hook 和 `it` 时限、完整临床路径、前置断言及 `afterEach` 清理。已有分阶段 hook 模式可直接复用，参见[多计划选型隔离回归](../../apps/server/tests/inpatient-angiography-http.test.ts)；单纯抽取 helper 后仍在 `it` 内调用不会改变预算归属。
+
+- 双版本完整浏览器旅程并发时整体耗时异常放大，而单例执行正常时，先对比时序和执行轨迹定位预算消耗。需要隔离同一文件的重型夹具时，可沿现有模式使用 `test.describe.configure({ mode: 'default' })`，保留每例数据库、页面与监听器隔离，以及全部版本、断言、时限和全局 worker 设置；该模式在失败后仍执行后续用例。参见[双版本手术全程合同](../../apps/dsh-web/src/client/inpatient-surgery-flow.browser.test.ts)。
+
+- 文档校验的 `.github/**/*.md` 文件 glob 会命中 Git 忽略的 `.github/skills/` 本机副本；上游 Skill 的末尾换行等格式差异可能因此使 `verify:docs` 失败。使用不包含本机适配目录的仓库外干净 worktree 验证正式变更，不为通过工程检查改写上游 Skill；范围由 [校验脚本](../../scripts/verify-docs.ts) 拥有。

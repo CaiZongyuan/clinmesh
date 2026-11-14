@@ -135,8 +135,10 @@ export function ciCommands(plan: CiPlan, stage: CiStage, shard = '1/1'): string[
     ...plan.tests.filter(path => testStage(path) === stage).map(path =>
       ['exec', 'playwright', 'test', stage === 'browser' ? '--project=contracts' : '--project=web', path.replaceAll('.', '\\.') + '$']),
   ]
+  const suiteCommand = stage === 'browser' ? 'test:browser' : 'test:e2e'
   return [['exec', 'playwright', 'install', '--with-deps', 'chromium'],
-    [stage === 'browser' ? 'test:browser' : 'test:e2e', ...shardArgs]]
+    [suiteCommand, ...shardArgs, '--grep-invert=@surgery-flow'],
+    ...(shard === '2/2' ? [] : [[suiteCommand, '--grep=@surgery-flow']])]
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

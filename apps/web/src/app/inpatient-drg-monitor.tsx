@@ -31,10 +31,10 @@ export function drgGroupingReason(result: DrgGroupingResult, locale: WorkspaceLo
 }
 
 /** 主块只比较医院支付参考与已用费用，状态只分未超和已超；系统没有标杆住院日或预警阈值。 */
-export function DrgPaymentMonitor({ data, costs, locale }: { data: InpatientDrgSimulation; costs: InpatientCosts | null | undefined; locale: WorkspaceLocale }): React.JSX.Element {
+export function DrgPaymentMonitor({ data, costs, locale, projectionIncomplete = false }: { projectionIncomplete?: boolean; data: InpatientDrgSimulation; costs: InpatientCosts | null | undefined; locale: WorkspaceLocale }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const reference = data.paymentReference?.referenceFen ?? costs?.currentPaymentReference?.referenceFen ?? null
-  const posted = data.formal.chargesFen, pending = sum(data.committed.items.filter(item => item.kind !== 'surgery')), spent = posted + pending
+  const posted = data.formal.chargesFen, pending = sum(data.committed.items.filter(item => item.kind !== 'surgery')), spent = posted
   const over = reference !== null && spent > reference
   const exceptionTriggered = costs?.exceptionAlert === 'triggered' || (reference !== null && reference > 0 && BigInt(posted) > 3n * BigInt(reference))
   const scale = over ? spent * 1.08 : reference ?? spent
@@ -52,7 +52,7 @@ export function DrgPaymentMonitor({ data, costs, locale }: { data: InpatientDrgS
     {reference !== null ? <>
       <div role="img" aria-label={`${t('已用 ', 'Used ')}${formatFen(spent, locale)}${t('，支付参考 ', ', payment reference ')}${formatFen(reference, locale)}`} className="relative h-3.5 rounded-full border bg-muted">
         <div className="absolute inset-y-0 left-0 flex overflow-hidden rounded-full" style={{ width: percent(spent) }}>
-          <i className={over ? 'bg-warning' : 'bg-info'} style={{ width: spent > 0 ? `${posted / spent * 100}%` : 0 }} /><i className={`flex-1 ${over ? 'bg-warning/40' : 'bg-info/40'}`} /></div>
+          <i className={`w-full ${over ? 'bg-warning' : 'bg-info'}`} /></div>
         <span aria-hidden="true" className="absolute -inset-y-1.5 w-0.5 rounded-sm bg-foreground" style={{ left: percent(reference) }} />
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -61,7 +61,7 @@ export function DrgPaymentMonitor({ data, costs, locale }: { data: InpatientDrgS
         <span className="flex-1" /><span>{t('竖线 = 支付参考 · 已用 ', 'Line = payment reference · used ')}{reference > 0 ? Math.round(spent / reference * 100) : 0}%</span>
       </div>
     </> : null}
-    {data.grouping.projected ? <PlannedLine data={data} projected={data.grouping.projected} costs={costs} spent={spent} locale={locale} /> : null}
+    {data.grouping.projected && projectionIncomplete ? <p className="text-sm text-muted-foreground">{t('计划耗材费用待核对，预计总费用暂不可用', 'Review planned material prices; projected charges unavailable')}</p> : data.grouping.projected ? <PlannedLine data={data} projected={data.grouping.projected} costs={costs} spent={spent} locale={locale} /> : null}
     {exceptionTriggered ? <Alert><AlertDescription>{t('已发生正式收费合计严格超过当前 DRG 支付参考额的 3 倍。建议本次住院诊疗结束后由医保办人工评估特例单议申请；此提醒不阻断出院，不自动申请、不调整分组或核定，也不预测补付。', 'Net posted charges exceed three times the current DRG payment reference. After inpatient care ends, the insurance office should assess an exceptional-case application. This advisory does not block discharge or change grouping or payment.')}</AlertDescription></Alert> : null}
     {formal.status !== 'grouped' ? <p className="text-sm text-muted-foreground">{drgGroupingReason(formal, locale)}</p> : null}
     <DrgGroupingEvidence result={{ ...formal, reason: null }} locale={locale} />
@@ -71,8 +71,8 @@ export function DrgPaymentMonitor({ data, costs, locale }: { data: InpatientDrgS
 function PlannedLine({ data, projected, costs, spent, locale }: { data: InpatientDrgSimulation; projected: DrgGroupingResult; costs: InpatientCosts | null | undefined; spent: number; locale: WorkspaceLocale }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const surgery = data.committed.items.filter(item => item.kind === 'surgery')
-  const total = data.coverage.estimatedTotalFen, reference = costs?.projectedPaymentReference?.referenceFen ?? null
-  const parts = [[t('手术费 ', 'procedure '), sum(surgery)], [t('预留耗材 ', 'reserved materials '), sum(data.reserved.items)], [t('待提交项目 ', 'pending items '), sum(data.draft.items)]] as const
+  const total = costs?.components.projectedTotalFen ?? data.coverage.estimatedTotalFen, reference = costs?.projectedPaymentReference?.referenceFen ?? null
+  const parts = [[t('已开未记费医嘱 ', 'ordered, not charged '), costs?.components.pendingOrdersFen ?? sum(data.committed.items.filter(item => item.kind !== 'surgery'))], [t('手术费 ', 'procedure '), costs?.components.plannedSurgeryFen ?? sum(surgery)], [t('预计耗材 ', 'projected materials '), costs?.components.remainingMaterialsFen ?? sum(data.reserved.items)], [t('待提交项目 ', 'pending items '), sum(data.draft.items)]] as const
   return <section aria-label={t('做完计划手术后', 'After the planned surgery')} className="flex min-w-0 flex-col gap-1 rounded-md bg-muted p-3 text-sm">
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1"><b>{t('做完计划手术后', 'After the planned surgery')}</b>
       <span className="text-xs text-muted-foreground">{surgery.map(item => item.display).join('、')}</span>

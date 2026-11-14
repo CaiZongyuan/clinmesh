@@ -368,7 +368,7 @@ it('默认突出当前手术计划和真实准备清单，实际术式仅在开�
   expect(screen.queryByRole('combobox', { name: '计划术式' })).toBeNull()
   expect(screen.queryByRole('combobox', { name: '手术耗材' })).toBeNull()
   expect(within(current).getByRole('heading', { name: '腹腔镜下胆囊切除术' })).toBeDefined()
-  const preparation = screen.getByRole('region', { name: '开始手术还差' })
+  const preparation = screen.getByRole('region', { name: '术前准备' })
   const action = screen.getByRole('region', { name: '当前操作' })
   expect(current.compareDocumentPosition(preparation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   expect(preparation.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -381,7 +381,7 @@ it('默认突出当前手术计划和真实准备清单，实际术式仅在开�
   expect(preparation.textContent).toContain('病区护士')
   expect(preparation.textContent).toContain('待完成')
   expect(preparation.textContent).toContain('住院医生')
-  expect(screen.getByRole('button', { name: '开始手术逐笔登记' }).hasAttribute('disabled')).toBe(true)
+  expect(screen.getByRole('button', { name: '等病区护士术前核对' }).hasAttribute('disabled')).toBe(true)
   expect(screen.queryByRole('button', { name: '整台补录' })).toBeNull()
   const user = userEvent.setup()
   await user.click(screen.getByRole('button', { name: '申请手术' }))
@@ -408,7 +408,7 @@ it('可开始阶段在操作栏提供整台补录次级入口，开始手术弹�
   expect(within(current).getByRole<HTMLInputElement>('textbox', { name: '取消理由' }).value).toBe('第一台保留取消未提交输入')
   await select('当前计划', /第二台合成手术计划/)
   expect(screen.getByRole('button', { name: '整台补录' })).toBeDefined()
-  const start = screen.getByRole('button', { name: '开始手术逐笔登记' })
+  const start = screen.getByRole('button', { name: '开始手术' })
   expect(start.hasAttribute('disabled')).toBe(false)
   await user.click(start)
   const dialog = await screen.findByRole('dialog', { name: '开始手术' })
@@ -425,7 +425,7 @@ it('护士仍可核对当前计划，但不出现医生开始、整台补录或�
   const check = await screen.findByRole('button', { name: '术前核对' })
   expect(check.hasAttribute('disabled')).toBe(true)
   expect(screen.queryByRole('combobox', { name: '实际术式' })).toBeNull()
-  expect(screen.queryByRole('button', { name: '开始手术逐笔登记' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '开始手术' })).toBeNull()
   expect(screen.queryByRole('button', { name: '申请手术' })).toBeNull()
   expect(screen.queryByRole('button', { name: '整台补录' })).toBeNull()
 })
@@ -439,8 +439,9 @@ it('手术进行中隐藏术前耗材预计并显示本台耗材与逐笔登记�
     { id: 'reservation-2', admissionId: admission.id, requestId: plan.id, materialId: material.id, materialDisplay: material.display, unit: '枚', catalogVersion: 1, priceFen: 2000, quantity: 1, consumedQuantity: 0, remainingQuantity: 1, status: 'reserved', version: 1, reason: '另一条未用预留', createdAt: time },
   ])
   const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '登记计划外的其他耗材' }))
   expect(await screen.findByRole('combobox', { name: '耗材' })).toBeDefined()
-  expect(await screen.findByText(/剩 1/)).toBeDefined()
+  expect(screen.getByRole('row', { name: '合成钛夹 × 2枚' }).textContent).toContain('3 枚')
   expect(screen.getByRole('button', { name: '登记这笔' })).toBeDefined()
   expect(screen.getByRole('region', { name: '本台耗材' })).toBeDefined()
   expect(screen.queryByRole('region', { name: '术前耗材预计' })).toBeNull()
@@ -488,14 +489,14 @@ it.each(['success', 'unknown', 'changed-session'])('申请弹窗在%s时保护�
   finish()
   if (outcome === 'success' || outcome === 'changed-session') {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '申请手术' })).toBeNull())
-    expect(await screen.findByRole('button', { name: '开始手术逐笔登记' })).toBeDefined()
+    expect(await screen.findByRole('region', { name: '当前手术计划' })).toBeDefined()
     await waitFor(() => expect(screen.getByRole('button', { name: '申请手术' }).hasAttribute('disabled')).toBe(false))
     await user.click(screen.getByRole('button', { name: '申请手术' }))
   } else {
     await waitFor(() => expect(screen.getByLabelText('写入状态').textContent).toBe(outcome === 'unknown' ? 'error' : 'success'))
     expect(within(screen.getByRole('dialog', { name: '申请手术' })).getByRole('alert')).toBeDefined()
   }
-  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术申请理由' }).value).toBe(outcome === 'changed-session' ? '' : '保留原手术申请未提交输入')
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '手术申请理由' }).value).toBe(outcome === 'unknown' ? '保留原手术申请未提交输入' : '')
 })
 
 it.each([null, '盒'])('补登记不提供计费单位未知或不一致（%s）的预留', async unit => {
@@ -616,7 +617,7 @@ it('第 ② 步编辑耗材清单后先保存未提交输入并以新 revision �
   await user.type(qtyInput, '2')
   const noteInput = within(stepTwo).getByRole('textbox', { name: '耗材清单说明' })
   await user.type(noteInput, '医生核对后更新说明')
-  await user.click(screen.getByRole('button', { name: '确认并预留' }))
+  await user.click(screen.getByRole('button', { name: '确认手术耗材' }))
   await waitFor(() => expect(posts).toHaveLength(2))
   expect(posts[0]).toMatchObject({
     path: '/api/his/v1/inpatient/admissions/admission-1/material-estimates/save',
@@ -905,4 +906,31 @@ it('PCI 术前选型卡片与预计依据弹窗均可展开查看多支冠脉造
   const dialog = await screen.findByRole('dialog', { name: '完整预计依据与扩展参数' })
   const dialogSummary = within(dialog).getByText(/冠脉造影与生理学依据/, { selector: 'summary' })
   expect(within(dialogSummary.closest('details')!).getByText(/前降支中段重度狭窄，FFR 0.72 阳性/)).toBeDefined()
+})
+
+it('开始手术使用模态弹窗，取消归还焦点且发送期间阻止Escape关闭', async () => {
+  const ready = inpatientSurgeryRequestSchema.parse({ ...plan, status: 'ready', preopCheck: { actorId: 'nurse', practitionerRoleId: 'role-nurse', recordedAt: time, note: '已核对' } })
+  let release!: () => void
+  const wait = new Promise<void>(resolve => { release = resolve })
+  const { posts } = mount([ready], session, [], { wait })
+  const user = userEvent.setup()
+  const trigger = await screen.findByRole('button', { name: '开始手术' })
+  await user.click(trigger)
+  let dialog = screen.getByRole('dialog', { name: '开始手术' })
+  expect(screen.queryByRole('button', { name: '申请手术' })).toBeNull()
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '开始手术' })).toBeNull())
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: '开始手术' })))
+  await user.click(screen.getByRole('button', { name: '开始手术' }))
+  dialog = screen.getByRole('dialog', { name: '开始手术' })
+  await user.click(within(dialog).getByRole('button', { name: '术前准备已完成，按计划开始手术' }))
+  await user.click(within(dialog).getByRole('button', { name: '开始手术' }))
+  try {
+    await waitFor(() => expect(posts).toHaveLength(1))
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: '开始手术' })).toBeDefined()
+    expect(within(dialog).getByRole('button', { name: '开始手术' }).hasAttribute('disabled')).toBe(true)
+  } finally { release() }
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '开始手术' })).toBeNull())
+  expect(posts[0]).toMatchObject({ path: '/api/his/v1/inpatient/admissions/admission-1/surgeries/start', body: { input: { note: '术前准备已完成，按计划开始手术', procedureId: procedure.id, requestId: ready.id } } })
 })

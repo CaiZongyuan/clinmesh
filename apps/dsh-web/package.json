@@ -118,6 +118,7 @@
     "react-dom": "catalog:",
     "react-dom18": "npm:react-dom@18.3.1",
     "react18": "npm:react@18.3.1",
+    "terser": "5.50.0",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",

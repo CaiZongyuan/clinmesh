@@ -162,13 +162,14 @@ export class InpatientDrg {
    * 草稿只参与计价，不落库、不改变临床事实；评估过期由调用方比对 fingerprint 隔离。
    */
   simulate(context: ActorContext, admissionId: string, draft: InpatientDrgSimulationInput | undefined): InpatientDrgSimulation {
-    if (this.rules === null) throw new InpatientError('DRG_RULES_NOT_CONFIGURED', '分组规则数据包未配置，无法推演', 409)
+    const rules = this.rules
+    if (rules === null) throw new InpatientError('DRG_RULES_NOT_CONFIGURED', '分组规则数据包未配置，无法推演', 409)
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     const admission = this.owner.readAdmissionBinding(context, admissionId)
     const facts = this.owner.orders.facts(context, admissionId)
-    const { input, demographics } = this.#liveGroupingInput(context, admission)
+    const { input, demographics, executions, confirmedOperationIds } = this.#liveGroupingInput(context, admission)
     const dependencies = { ...this.#dependencies(context, admissionId, facts.charges, demographics), groupingInput: input }
-    const formal = groupDrgCase(this.rules, input)
+    const formal = groupDrgCase(rules, input)
     const surgery = this.owner.surgery.read(context, admissionId)
     const requests = surgery.requests
       .filter(request => request.status === 'requested' || request.status === 'ready')
@@ -179,17 +180,29 @@ export class InpatientDrg {
       procedure: surgery.inProgress.find(execution => execution.requestId === request.id)?.actualProcedure ?? request.plannedProcedure }))
     const plannedOperations = requestProcedures.map(({ request, procedure }) => ({ code: procedure.coding.code, primary: request.id === primaryRequestId }))
     const projected = plannedOperations.length > 0
-      ? groupDrgCase(this.rules, { ...input, operations: [
+      ? groupDrgCase(rules, { ...input, operations: [
         ...input.operations.map(operation => ({ ...operation, primary: false })), ...plannedOperations,
       ] }) : null
+    const pending = executions.filter(execution => !confirmedOperationIds.includes(execution.id))
+    const hypotheses = pending.map(primary => {
+      const grouping = groupDrgCase(rules, { ...input,
+        operations: executions.map(execution => ({ code: execution.actualProcedure.coding.code, primary: execution.id === primary.id })) })
+      return { grouping, paymentReference: this.paymentReference(grouping) }
+    })
+    const first = hypotheses[0]
+    const common = first !== undefined && hypotheses.every(hypothesis => hypothesis.grouping.status === 'grouped'
+      && hypothesis.grouping.drgCode === first.grouping.drgCode
+      && canonicalJsonHash(hypothesis.paymentReference) === canonicalJsonHash(first.paymentReference)) ? first : null
+    const postoperativeEstimate = pending.length === 0 ? null : { pendingExecutionIds: pending.map(execution => execution.id),
+      grouping: common?.grouping ?? null, paymentReference: common?.paymentReference ?? null }
 
     const priced = this.costProjection(context, admissionId, draft)
     const paymentReference = this.paymentReference(formal)
     return inpatientDrgSimulationSchema.parse({
       admissionId, evaluatedAt: this.owner.virtualTime(context),
-      fingerprint: canonicalJsonHash({ ...dependencies, draft: draft ?? null }),
-      rulesId: this.rules.rulesId, rulesVersion: this.rules.version,
-      ...priced, grouping: { formal, projected, note: projectedNote }, paymentReference,
+      fingerprint: canonicalJsonHash({ ...dependencies, draft: draft ?? null, postoperativeEstimate }),
+      rulesId: rules.rulesId, rulesVersion: rules.version,
+      ...priced, grouping: { formal, projected, note: projectedNote }, postoperativeEstimate, paymentReference,
       incompleteness: { costMissing: true, paymentReferenceMissing: paymentReference === null },
     })
   }
@@ -351,8 +364,10 @@ export class InpatientDrg {
     const revisionRow = z.object({ snapshot_json: z.string() }).optional().parse(this.owner.database.driver.prepare(
       'SELECT snapshot_json FROM inpatient_record_revision WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY revision DESC LIMIT 1')
       .get(context.workspaceId, context.epoch, admission.id))
-    const mainProcedureExecutionId = revisionRow === undefined ? null
-      : z.object({ clinical: z.object({ mainProcedureExecutionId: z.string().nullable() }) }).parse(JSON.parse(revisionRow.snapshot_json)).clinical.mainProcedureExecutionId
+    const confirmation = revisionRow === undefined ? null
+      : inpatientRecordSnapshotSchema.pick({ clinical: true }).strip().parse(JSON.parse(revisionRow.snapshot_json)).clinical
+    const mainProcedureExecutionId = confirmation?.mainProcedureExecutionId ?? null
+    const confirmedOperationIds = mainProcedureExecutionId === null ? [] : confirmation!.operations.map(operation => operation.id)
     const patient = this.owner.fhir.read(context, 'Patient', admission.patientId)
     const birthWeight = readInpatientBirthWeight(this.owner.fhir, context, admission.patientId)
     const identity = z.object({ gender: z.string().optional(), birthDate: z.string().optional() }).parse(patient)
@@ -366,7 +381,8 @@ export class InpatientDrg {
       ...stayDemographics(identity.birthDate ?? '', admittedAt, departedAt, departure?.departureMethod ?? 'unknown'),
       birthWeightGrams: birthWeight.snapshot?.grams ?? null,
     }
-    return { input, demographics: { patientVersion: patient.meta!.versionId!, birthWeightObservations: birthWeight.snapshot?.observations ?? [] } }
+    return { input, executions, confirmedOperationIds,
+      demographics: { patientVersion: patient.meta!.versionId!, birthWeightObservations: birthWeight.snapshot?.observations ?? [] } }
   }
 
   reservations(context: ActorContext, admissionId: string): InpatientMaterialReservationList {

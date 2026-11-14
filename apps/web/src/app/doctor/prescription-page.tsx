@@ -594,7 +594,7 @@ export function PrescriptionPage({
       {canEditDraft ? (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button data-agent-catalog-trigger="medication" disabled={pending || !canAddMedication}
+            <Button data-agent-catalog-trigger="medication" className="data-disabled:pointer-events-none data-disabled:opacity-50" disabled={pending || !canAddMedication} focusableWhenDisabled={actions.saveDraft.pending}
               onClick={() => { setComposerEditIndex(undefined); setComposerOpen(true) }} size="sm" type="button" variant="outline">
               <PlusIcon data-icon="inline-start" />{locale === 'zh-CN' ? '添加药品' : 'Add medication'}
             </Button>

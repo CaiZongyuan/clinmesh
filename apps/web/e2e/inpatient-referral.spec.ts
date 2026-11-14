@@ -69,7 +69,7 @@ test('门诊开具住院证后按可见交接提示由登记员转收，病区�
   await expect(page.getByRole('tab', { name: "入科", exact: true })).toHaveAttribute('aria-selected', 'true')
   await page.getByRole('group', { name: '目标床位' }).getByRole('button', { name: /1床/ }).first().click()
   await page.getByRole('button', { name: '接诊并分床', exact: true }).click()
-  await expect(page.getByText('已完成本次操作 · 张琴 · 已完成接诊分床', { exact: true })).toBeVisible()
+  await expect(page.getByText('已完成接诊分床 · 张琴', { exact: true })).toBeVisible()
   await expect(banner).toContainText('住院号')
   await expect(banner.getByRole('button', { name: `复制住院号 ${admission.inpatientNumber}` })).toBeVisible()
   await expect(banner).toContainText('1床')

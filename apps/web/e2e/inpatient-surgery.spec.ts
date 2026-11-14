@@ -45,7 +45,7 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
   const consentTime = await expectCompletedSurgeryPreparation(page.getByRole('region', { name: '当前手术计划', exact: true }), '手术知情同意书已签', '住院医生')
   const confirmed = inpatientSurgerySchema.parse(await (await page.request.get(`${browserApp.origin}${path}/surgeries`)).json()).requests[0]!.consentConfirmation!
   await expect(consentTime).toHaveAttribute('datetime', confirmed.recordedAt)
-  await expect(page.getByRole('button', { name: '开始手术逐笔登记', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '等病区护士术前核对', exact: true })).toBeDisabled()
   await expect(page.getByRole('button', { name: '整台补录', exact: true })).toHaveCount(0)
   await login('ward-nurse')
   await selectPatient()

@@ -1112,7 +1112,39 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await editor.locator('[data-order-details]').evaluate(element => { element.scrollTop = element.scrollHeight })
     await expect(editor.getByRole('spinbutton', { name: '数量', exact: true })).toBeInViewport()
     expect(await editor.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
-    await editor.getByRole('button', { name: '保存修改', exact: true }).click()
+    // 仅暂缓最终编辑的自动保存，验证关闭后保存启动的焦点与激活边界。
+    await page.evaluate(() => {
+      const originalFetch = window.fetch
+      window.addEventListener('clinmesh.test.release-prescription-save', () => {
+        window.fetch = originalFetch
+        document.documentElement.removeAttribute('data-prescription-save-held')
+      }, { once: true })
+      window.fetch = new Proxy(originalFetch, {
+        async apply(target, thisArg, args: Parameters<typeof window.fetch>) {
+          const [resource, init] = args
+          const path = new URL(resource instanceof Request ? resource.url : String(resource), location.href).pathname
+          if (path.endsWith('/prescription/draft') && init?.method === 'PUT' && String(init.body).includes('未保存的每日三次')) {
+            document.documentElement.setAttribute('data-prescription-save-held', 'true')
+            await new Promise<void>(resolve => window.addEventListener('clinmesh.test.release-prescription-save', () => resolve(), { once: true }))
+          }
+          return target.apply(thisArg, args)
+        },
+      })
+    })
+    try {
+      await editor.getByRole('button', { name: '保存修改', exact: true }).click()
+      await expect(editor).toBeHidden()
+      await expect(page.locator('html')).toHaveAttribute('data-prescription-save-held', 'true')
+      await expect(trigger).toBeDisabled()
+      await expect(trigger).toBeFocused()
+      await trigger.press('Enter')
+      await trigger.dispatchEvent('click')
+      await expect(page.getByRole('dialog', { name: '选择药品', exact: true })).toHaveCount(0)
+      await expect(editor).toHaveCount(0)
+    } finally {
+      if (!page.isClosed()) await page.evaluate(() => window.dispatchEvent(new Event('clinmesh.test.release-prescription-save')))
+    }
+    await expect(trigger).toBeEnabled()
     await expect(trigger).toBeFocused()
     const pending = page.getByRole('region', { name: '待开具处方', exact: true })
     await expect(pending.getByRole('button', { name: /^开具处方/ })).toHaveCount(1)

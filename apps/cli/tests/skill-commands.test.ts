@@ -103,12 +103,39 @@ it('单次耗材预计示例绑定工作稿修订、当前依据与整批预留�
   const saved = JSON.parse(draft[1]!)
   expect(getHisOperation('inpatient.material-estimate.save').input.safeParse({ ...saved, expectedDraftRevision: undefined }).success).toBe(false)
   expect(getHisOperation('inpatient.material-estimate.save').input.safeParse({ ...saved, expectedBasisFingerprint: undefined }).success).toBe(false)
-  expect(getHisOperation('inpatient.material-estimate.read').version).toBe(2)
+  expect(getHisOperation('inpatient.material-estimate.read').version).toBe(5)
   expect(getHisOperation('inpatient.drg.review.read').version).toBe(2)
   expect(skill).toContain('planBasis')
   expect(skill).toContain('planBases')
   expect(skill).toContain('unverifiable')
   expect(skill).toContain('conflict')
+})
+
+it('术中核对读取示例保留逐笔结果与冻结清单，按计划登记不调用模型', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  const line = commandLines(skill).find(line => line.startsWith('clinmesh inpatient drg-agent '))!
+  const operation = inspectExample(program, line).operation!
+  expect(operation.id).toBe('inpatient.drg.agent.read')
+  expect(operation.version).toBe(5)
+  expect(getHisOperation('inpatient.pci-selection.read').version).toBe(4)
+  expect(skill).toContain('equivalentSuggestions')
+  expect(skill).toContain('alternatives')
+  expect(skill).toContain('materialDraftDeltaFen')
+  expect(skill).toContain('projectionComplete')
+  expect(getHisOperation('inpatient.drg.record-checks.read').version).toBe(2)
+  expect(skill).toContain('同数量工作稿')
+  expect(skill).toContain('measurementCompatible')
+  expect(skill).toContain('intraoperativePlans')
+  expect(skill).toContain('intraoperativeReviews')
+  expect(skill).toContain('materialUseId')
+  expect(skill).toContain('按计划登记、普通刷新及更正不新增模型意图')
+  const state = operation.output.parse({ admissionId: 'synthetic-admission', taskId: null, status: 'inactive', basisFingerprint: null,
+    stage: 'intraoperative', missing: [], failureCode: null, analysis: null, confirmedPlan: null, planHistory: [],
+    intraoperativePlans: [], intraoperativeReviews: [{ materialUseId: 'synthetic-use', executionId: 'synthetic-execution', requestId: 'synthetic-request',
+      taskId: null, reasons: ['unplanned'], status: 'unavailable', explanation: null, costExplanation: null, failureCode: null }],
+  })
+  expect(state).toMatchObject({ intraoperativeReviews: [{ materialUseId: 'synthetic-use', status: 'unavailable' }] })
 })
 
 it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', async () => {
@@ -155,7 +182,7 @@ it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', 
   expect(skill).toContain('INPATIENT_DRG_PLAN_CONFLICT')
   expect(getHisOperation('inpatient.drg.simulate').input.parse({ admissionId: 'synthetic-admission',
     draft: { primarySurgeryRequestId: 'synthetic-plan' } })).toMatchObject({ draft: { primarySurgeryRequestId: 'synthetic-plan' } })
-  expect(getHisOperation('inpatient.drg.simulate').version).toBe(3)
+  expect(getHisOperation('inpatient.drg.simulate').version).toBe(4)
   expect(getHisOperation('inpatient.drg.pregroup').version).toBe(4)
   expect(getHisOperation('inpatient.drg.payer.review.preview').version).toBe(2)
   expect(payer.version).toBe(4)

@@ -12,7 +12,7 @@
 
 - 队列侧栏底部露出画布时，同时测量队列容器、直接子元素和白色卡片的边界；外层等高不表示卡片已铺满。若[队列样式](../../apps/web/src/app/workspace-card-layout.css)只将撑高规则施加给直接子元素，额外的语义 section 可能截断 Flex 高度传递；在浏览器临时补齐包装层与卡片的 Flex 布局，撤销后核对缺口是否恢复，以区分结构问题与加载状态。
 
-- 原位确认的焦点回归同时覆盖 Escape、取消、成功、身份切换和原触发器消失。DOM 节点仍连接不表示仍属原身份；恢复前须核对作用域。成功后触发器禁用但仍需返回焦点时，可复用 Base UI `focusableWhenDisabled`，并验证 Enter 和指针都不会触发额外写入；查询结果刷新会删除触发器时，先等账本更新，再关闭确认并回到同卡入口。参考[收费双版本合同](../../apps/dsh-web/src/client/billing-card.browser.test.ts)。
+- 原位确认的焦点回归同时覆盖 Escape、取消、成功、身份切换和原触发器消失。DOM 节点仍连接不表示仍属原身份；恢复前须核对作用域。成功后触发器禁用但仍需返回焦点时，可复用 Base UI `focusableWhenDisabled`，并验证 Enter 和指针都不会触发额外写入；查询结果刷新会删除触发器时，先等账本更新，再关闭确认并回到同卡入口。自动保存与返回焦点重叠时，可用受控保存响应覆盖关闭后进入保存中的窗口，核对焦点、禁用语义及激活保护。参考[收费双版本合同](../../apps/dsh-web/src/client/billing-card.browser.test.ts)和[处方双版本合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)。
 
 - 真实 Surface fixture 需注入 `PortalContainerProvider`，否则目录和确认可能渲染到 ShadowRoot 外，测试通过也不能证明宿主内可操作。受控 input 的捕获阶段若立即更新来源元数据，会触发重渲染并还原旧值；先让输入 handler 读取当前值，再清理来源，并以真实键盘输入验证值和标记两者。原位审阅还须暂缓 decision gate 后修改表单，核对实际 Command 仍提交人类审阅的快照。
 
@@ -62,6 +62,10 @@
 
 - 字号属性更新后，按钮仍可能处于约 150 毫秒的 `font-size` 过渡；若干渲染帧不保证结束，布局断言须先等实际 computed 字号到达目标，不能禁用动画或固定 sleep。复用[住院细节旅程](../../apps/web/e2e/inpatient-review-layout.journey.ts)同时核对放大与恢复字号。
 
+- Surface CSS 将响应式规则转换为 `@container dsh-react-surface-content` 时，fixture 还须复现同名宿主容器及其 containment；仅有 ShadowRoot 和 Portal 会漏掉断点规则及 fixed 弹窗的宿主边界。调整 DSH 宽度时修改真实宿主盒子，同时核对弹窗留在该盒子内；参考[PCI 浏览器宿主](../../apps/dsh-web/src/client/inpatient-pci.browser.fixture.tsx)和[手术全程矩阵](../../apps/web/e2e/inpatient-surgery-flow.journey.ts)。
+
+- 窄栏仅溢出几像素时，也检查带计数徽标按钮的固有宽度。先记录 computed 字号并等待已有动画结束；溢出仍存在时，可局部约束按钮最大宽度、允许文字及徽标换行，再撤销作尺寸对照。入口保留正常最小高度，并用原宽度门槛复验，参考[连续阅读入口](../../apps/web/src/app/doctor/outpatient-report-reader.tsx)与[检查工作台外观矩阵](../../apps/dsh-web/src/client/investigation-workspace.browser.test.ts)。
+
 ## 预览文件与浏览器会话
 
 - 验证响应丢失后的恢复时，除刷新和组件重挂载，还须通过真实退出、同身份重新登录及原回执查询覆盖账号清理边界；退出前同时保留一项未提交草稿，分别断言草稿清除、原操作仍可恢复、请求与费用未重复。仅重挂载不会执行 `signOut` 的存储清理，相关回归见[门诊检查真实入口](../../apps/web/e2e/investigation-workspace.spec.ts)。
@@ -106,4 +110,4 @@
 
 - 并行 UI 分支各自无文本冲突、各自截图或 CI 通过，仍可能在共同入口切换时呈现不同控件。组合验收须真实合并到隔离副本，沿生产 Provider 在模式切换前后比较控件类型、尺寸与状态；不能用 Git 自动合并成功替代视觉一致性。 单独挂载 `BillingWorkspace` 会缺少模式 Provider 及门诊切换控件，双筛选宽度验收应使用真实 `RoleWorkspace` 组合，沿[模式切换旅程](../../apps/web/e2e/workspace-mode-presentation.spec.ts)验证。 共享改动仍分别编译各交付分支，避免仅在合并副本中借到另一分支提供的组件参数。
 
-- 操作状态回归同时覆盖未选项目、已选但缺字段、真正提交中三种情况；边框只在未选状态正确不足以证明所有不可执行状态。几何断言也须结合实际文字布局看图：完整 Range 可能仍被挤成多行而难以阅读。
+- 操作状态回归同时覆盖未选项目、已选但缺字段、真正提交中三种情况；边框只在未选状态正确不足以证明所有不可执行状态。几何断言也须结合实际文字布局看图：完整 Range 可能仍被挤成多行而难以阅读。用 `evaluateAll` 采样操作组时须断言同一批采样的组数，避免空集合跳过全部断言；测量底栏先确认可访问并给 `boundingBox` 显式时限，失败记录原始节点及 `aria-hidden`、`inert` 和隐藏祖先，并核对弹窗与当前分区，以区分卸载与不可访问。参见[手术全程几何回归](../../apps/web/e2e/inpatient-surgery-flow.journey.ts)。

@@ -3,7 +3,8 @@ import { v7 as uuidv7 } from 'uuid'
 import { pciSelectionProcedureCodes, inpatientPciSelectionSchema, inpatientPciSelectionConfirmationSchema, inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionDraftSchema, inpatientPciSelectionSaveInputSchema, type InpatientPciSelectionParameters } from '@clinmesh/contracts/inpatient-pci-selection'
 import type { ActorContext, CommandEffect } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
-import { pciSelectionEvidence, pciSelectionEvidencePackage } from './scenario-data/pci-selection-evidence.ts'
+import { pciSelectionEvidence, pciSelectionEvidencePackage, pciSelectionAlternatives, pciEquivalentGroups } from './scenario-data/pci-selection-evidence.ts'
+import { pciPlanQuantityBasis } from './inpatient-pci-plan-basis.ts'
 
 export class InpatientPciSelection {
   constructor(readonly owner: InpatientService) {}
@@ -39,8 +40,13 @@ export class InpatientPciSelection {
     }
     if (parameters?.requestId !== undefined && this.owner.surgery.read(context, admissionId).requests
       .find(request => request.id === parameters.requestId)?.status === 'cancelled') incompatible.push('关联手术计划已取消，需重新确认治疗方向')
-    const combinationAvailable = pciSelectionEvidence.every(definition => installed.some(item => item.id === definition.materialId && item.version === definition.materialVersion && 'chargeDefinition' in item))
-    const candidates = pciSelectionEvidence.map(definition => {
+    const definitions = [...pciSelectionEvidence, ...pciSelectionAlternatives]
+    const combinationAvailable = pciSelectionEvidence.every(definition => {
+      const group = pciEquivalentGroups.find(group => group.members.some(member => member.materialId === definition.materialId))
+      const members = group?.members ?? [{ materialId: definition.materialId, version: definition.materialVersion }]
+      return members.some(member => installed.some(item => item.id === member.materialId && item.version === member.version && 'chargeDefinition' in item))
+    })
+    const pool = definitions.map(definition => {
       const found = installed.find(item => item.id === definition.materialId && item.version === definition.materialVersion)
       const item = found !== undefined && 'chargeDefinition' in found ? found : null
       const quantity = parameters?.plannedQuantities.find(plan => plan.category === definition.category)?.quantity ?? null
@@ -49,15 +55,23 @@ export class InpatientPciSelection {
       if (!combinationAvailable) missing.push('合成兼容组合存在未安装或版本不匹配的器械')
       if (quantity === null) missing.push('缺少医生独立确认的预计数量及依据')
       else if (quantity !== 1) notApplicable.push('预计数量不在已核验的单病变各一件仿真范围')
-      if (!draft && !confirmation?.parameters.approvedMaterialIds.includes(definition.materialId)) missing.push('医生尚未认可此具体候选')
+      const group = pciEquivalentGroups.find(group => group.members.some(member => member.materialId === definition.materialId))
+      const approved = confirmation?.parameters.approvedMaterialIds ?? []
+      if (!draft && !approved.includes(definition.materialId) && !group?.members.some(member => approved.includes(member.materialId))) missing.push('医生尚未认可此具体候选')
       if (item?.chargeDefinition.priceFen === 0) missing.push('缺少有效正数院内收费价')
       const amount = item === null || quantity === null || item.chargeDefinition.priceFen === 0 ? null : item.chargeDefinition.priceFen * quantity
       if (amount !== null && !Number.isSafeInteger(amount)) missing.push('预计收费超出安全整数范围')
-      return { ...definition, item, eligibility: item === null ? 'unavailable' : notApplicable.length > 0 ? 'inapplicable' : missing.length > 0 ? 'incomplete' : 'valid',
+      return { ...definition, item, equivalenceGroupId: group?.id ?? null, measurementCompatible: incompatible.length === 0, eligibility: item === null ? 'unavailable' : notApplicable.length > 0 ? 'inapplicable' : missing.length > 0 ? 'incomplete' : 'valid',
         missing: [...missing, ...notApplicable],
         expectedQuantity: quantity, expectedAmountFen: amount !== null && Number.isSafeInteger(amount) ? amount : null }
     })
-    return inpatientPciSelectionSchema.parse({ admissionId, confirmation, history, evidencePackage: pciSelectionEvidencePackage, candidates, drafts })
+    const candidates = pciSelectionEvidence.map(definition => {
+      const group = pciEquivalentGroups.find(group => group.members.some(member => member.materialId === definition.materialId))
+      const chosen = group?.members.find(member => parameters?.approvedMaterialIds.includes(member.materialId))?.materialId ?? definition.materialId
+      return pool.find(candidate => candidate.materialId === chosen)!
+    })
+    const alternatives = pool.filter(candidate => !candidates.some(selected => selected.materialId === candidate.materialId))
+    return inpatientPciSelectionSchema.parse({ admissionId, confirmation, history, evidencePackage: pciSelectionEvidencePackage, candidates, alternatives, drafts })
   }
 
   drafts(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, admissionId: string) {
@@ -83,7 +97,7 @@ export class InpatientPciSelection {
       edited: false, confirmedSelectionVersion: null, parameters: { requestId, treatmentPlan: procedure.coding.display,
         targetSite: report.targetSite, measurements: report.measurements, approvedMaterialIds: [],
         plannedQuantities: pciSelectionEvidence.map(item => ({ category: item.category, quantity: 1,
-          basis: `合成单病变方案 ${pciSelectionEvidencePackage.id}/${pciSelectionEvidencePackage.version} 每类一件；不由指南、价格或目录反推数量。` })) } })
+          basis: pciPlanQuantityBasis(item.category, report, 1, item.evidence) })) } })
     this.owner.database.driver.prepare('INSERT INTO inpatient_pci_selection_draft VALUES(?,?,?,?,?)')
       .run(context.workspaceId, context.epoch, admissionId, requestId, JSON.stringify(draft))
   }
@@ -140,7 +154,13 @@ export class InpatientPciSelection {
     const selected = this.read(context, admissionId, requestId)
     const draft = selected.drafts?.find(item => item.requestId === requestId
       && (selected.confirmation === null || item.confirmedSelectionVersion === selected.confirmation.version || item.edited && item.confirmedSelectionVersion === null))
-    if (!draft) return selected.confirmation
+    if (!draft) {
+      const confirmed = selected.confirmation
+      if (!confirmed || confirmed.parameters.approvedMaterialIds.length === materialIds.length && materialIds.every(id => confirmed.parameters.approvedMaterialIds.includes(id))) return confirmed
+      const current = this.read(context, admissionId).history[0]
+      return this.confirmInTransaction(context, inpatientPciSelectionConfirmInputSchema.parse({ admissionId,
+        expectedVersion: current?.version ?? 0, parameters: { ...confirmed.parameters, approvedMaterialIds: materialIds } }), effects)
+    }
     const current = this.read(context, admissionId).history[0]
     const confirmation = this.confirmInTransaction(context, inpatientPciSelectionConfirmInputSchema.parse({ admissionId,
       expectedVersion: current?.version ?? 0, parameters: { ...draft.parameters, approvedMaterialIds: materialIds } }), effects)

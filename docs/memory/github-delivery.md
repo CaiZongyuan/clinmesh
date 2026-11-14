@@ -44,7 +44,7 @@
 
 - 扩展 Agent-facing DTO 后，沿 schema 的消费者核对读取操作的 Catalog 版本与摘要；只更新保存、签署等写操作会漏掉共享响应 schema 自动带出的字段。Catalog 升版时用 operation ID 同时扫描共享合同和 CLI 的版本断言，并检查字段数量等旧描述；病例详情和预留释放的回归分别见 `apps/cli/tests/skill-commands.test.ts` 和 `packages/contracts/tests/his-operations.test.ts`。
 
-- run/job 级 `status` 由服务端异步收尾，可能滞后步骤级结果数十分钟；判定 CI 实际完成看步骤列表（`Complete job` 的 `completed_at` 与结论）。轮询终态用 run id 直接查 `actions/runs/<id>`；`head_sha` 过滤必须传完整 40 位 SHA，缩写 SHA 会静默返回空结果。
+- run/job 级 `status` 由服务端异步收尾，可能滞后步骤级结果数十分钟；判定 CI 实际完成看步骤列表（`Complete job` 的 `completed_at` 与结论）。轮询终态用 run id 直接查 `actions/runs/<id>`；`head_sha` 过滤必须传完整 40 位 SHA，缩写 SHA 会静默返回空结果。重跑单个已结束 job 也须等待整轮 workflow run 结束；其他 job 仍在运行时，重跑 API 会返回 `403`（workflow run already running）。
 
 - Actions 的 `pull-requests:write` 不等于仓库允许机器人创建 PR；出现明确的创建权限错误时先核对仓库设置，不反复重试。没有管理员权限时，可按[持续升级故障恢复](../deployment.md#dsh-持续升级)验证已有候选 PR 的更新与验收，并单独保留首次创建权限限制。
 

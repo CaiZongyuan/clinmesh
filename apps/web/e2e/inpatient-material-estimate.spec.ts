@@ -18,7 +18,7 @@ test('模型结果未知显示原尝试恢复入口，刷新与只读浏览均�
   await requestAngiography(page)
   const panel = page.getByRole('region', { name: '手术耗材', exact: true })
   await expect(panel).toContainText('助手这次未能预填耗材，请直接填写。')
-  await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true })).toBeDisabled()
+  await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认手术耗材', exact: true })).toBeDisabled()
   await panel.getByRole('button', { name: '查看原因', exact: true }).click()
   const usageDialog = page.getByRole('dialog', { name: '本次住院 AI 用量', exact: true })
   const usage = usageDialog.getByRole('region', { name: '本次住院AI用量', exact: true })

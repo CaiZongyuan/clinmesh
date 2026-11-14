@@ -1,6 +1,7 @@
+import { inpatientEquivalentMaterialSuggestionSchema } from './inpatient-pci-selection.ts'
 import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
-import { pciSelectionEvidenceSchema } from './inpatient-pci-selection.ts'
+import { pciSelectionEvidenceSchema, pciSelectionCandidateSchema } from './inpatient-pci-selection.ts'
 import { inpatientCostsSchema, inpatientSurgeryUsageSchema } from './inpatient-drg-simulation.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
@@ -41,12 +42,29 @@ export const inpatientDrgAgentConfirmInputSchema = z.object({
     .min(1).max(20).refine(items => new Set(items.map(item => item.materialId)).size === items.length, '计划耗材不得重复'),
 }).strict()
 
+export const inpatientIntraoperativeReviewSchema = z.object({
+  materialUseId: id, executionId: id, requestId: id, taskId: id.nullable(),
+  reasons: z.array(z.enum(['excess', 'unplanned', 'measurement-mismatch'])).min(1),
+  status: z.enum(['unavailable', 'queued', 'running', 'succeeded', 'stale', 'blocked', 'unknown', 'failed']),
+  explanation: text.nullable(), costExplanation: text.nullable(), failureCode: text.nullable(),
+}).strict()
+export const inpatientIntraoperativeGenerationSchema = z.object({ explanation: text, costExplanation: text.nullable() }).strict()
+export const inpatientIntraoperativeVerificationSchema = z.object({ supported: z.boolean(), costExplanationSupported: z.boolean().nullable() }).strict()
+export const inpatientIntraoperativePlanSchema = z.object({ requestId: id,
+  reference: z.string().min(1).max(512), items: z.array(inpatientDrgAgentMaterialSchema).max(20),
+  candidates: z.array(pciSelectionCandidateSchema).max(20).default([]),
+  alternatives: z.array(pciSelectionCandidateSchema).max(20).default([]),
+}).strict()
+
 export const inpatientDrgAgentSchema = z.object({
   admissionId: id, taskId: id.nullable(),
+  intraoperativeReviews: z.array(inpatientIntraoperativeReviewSchema).default([]),
+  intraoperativePlans: z.array(inpatientIntraoperativePlanSchema).default([]),
   status: z.enum(['inactive', 'incomplete', 'queued', 'running', 'succeeded', 'stale', 'blocked', 'unknown', 'failed']),
   basisFingerprint: fingerprint.nullable(), stage: inpatientDrgAgentStageSchema.nullable(),
   missing: z.array(text), failureCode: text.nullable(),
   costs: inpatientCostsSchema.nullable().default(null),
+  equivalentSuggestions: z.array(inpatientEquivalentMaterialSuggestionSchema).max(20).default([]),
   usage: z.array(inpatientSurgeryUsageSchema).default([]),
   lastAnalysis: inpatientDrgAgentAnalysisSchema.nullable().default(null),
   lastStatus: z.enum(['queued', 'running', 'succeeded', 'stale', 'blocked', 'unknown', 'failed']).nullable().default(null),

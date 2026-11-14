@@ -18,7 +18,7 @@
 
 - 整批替换的回归要覆盖通过单项入口累计、超过新清单产品种类上限的旧记录；旧记录数不能复用新清单长度限制。用公开读取返回的集合指纹验证审阅后新增／释放冲突，并以原指纹和原幂等键验证丢回执及重启恢复，见[整批集合确认决策](../decisions/implemented/bug-fix/2026-10-29-reservation-set-confirmation.md)。
 
-- 冠脉计划现在自动留下单次预计意图。独立验证持续跟进时，在 `preparePciAdmission` 后、确认 PCI 参数前调用[公共取消 helper](../../apps/server/tests/fixtures/inpatient-drg-agent.ts)，保持原旅程精确的生成／核验计量断言；不要把两类独立授权产生的额外请求误判为重复派发，也不要直接放宽总次数。自动单次意图、刷新复用和未知恢复由[独立 HTTP 旅程](../../apps/server/tests/inpatient-material-estimate-http.test.ts)验证。
+- 冠脉计划现在自动留下单次预计意图。独立验证持续跟进时，在每次创建需要独立验证的计划后（包括同住院的第二台）、确认 PCI 参数前调用[公共取消 helper](../../apps/server/tests/fixtures/inpatient-drg-agent.ts)，保持原旅程精确的生成／核验计量断言；不要把两类独立授权产生的额外请求误判为重复派发，也不要直接放宽总次数。自动单次意图、刷新复用和未知恢复由[独立 HTTP 旅程](../../apps/server/tests/inpatient-material-estimate-http.test.ts)验证。
 
 - SQLite 迁移发现只匹配 `^\d{4}_[a-z0-9-]+\.sql$`，数字前缀后只允许小写字母、数字与连字符（`0102_local_material_snapshot.sql` 等下划线文件名会被 `apps/server/src/infrastructure/sqlite/database.ts` 静默忽略，表现为新接口缺列 500）；先核对 `schema_migration` 实际应用记录并通过公开 HTTP 验证，不以启动成功代替迁移证据。跨包测试调用 `applyMigrations` 时显式用测试文件的 `import.meta.url` 解析 `apps/server/drizzle/`，避免 Turbo 在 DSH 等子包目录执行时拼成包内路径报 `ENOENT`（参见 `apps/dsh-web/src/model-bridge.test.ts`）。
 
@@ -259,3 +259,5 @@
 - 给模型任务增加显式失败重试时，核对恢复步骤键是否区分新执行版本；仅增加业务版本而复用原步骤，会永久回放旧核验否决或已耗尽预算。旧持久输入须保留原步骤身份，避免升级后重发已经发生的请求。通过公开 HTTP 同时验证失败后新请求、同意图重放、未知保护、控制阻塞及重启恢复；归档读取另走完整出院、结算、清床和归档，防止状态投影误用写门禁。实现与回归入口见[直接核对与单次解释决策](../decisions/implemented/architecture/2026-10-30-drg-record-checks-on-demand.md)。
 
 - 在一致快照事务内复用业务读取前，核对下游是否直接执行 `BEGIN`；`InpatientRecord.read` 的独立事务不能嵌套在核对查询中。归档分组先由 DRG owner 按归档状态读取冻结 JSON，再走未归档实时首页路径；回归同时更换和移除当前规则，确认冻结病组、支付参考及来源不变，见[分组公共 HTTP 测试](../../apps/server/tests/inpatient-drg-http.test.ts)。
+
+- 耗材工作稿首次初始化后立即误报 `stale` 时，先对照指纹输入中集合的顺序：模型结果可能按金额排列，候选按类别排列；语义相同的剩余量集合须先按稳定产品身份排序，再参与指纹。用“首次生成 → 公开读取 → 无需重存即可确认”的 [HTTP 旅程](../../apps/server/tests/inpatient-material-estimate-http.test.ts) 验证，不以重新保存掩盖依据漂移。

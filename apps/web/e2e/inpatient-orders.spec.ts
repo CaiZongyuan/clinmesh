@@ -195,7 +195,7 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
   const reversalReceipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
   await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
   expect(new URL((await reversalReceipt).url()).searchParams.get('idempotencyKey')).toBe(reversalKey)
-  await expect(page.getByRole('status')).toContainText('已完成本次操作')
+  await expect(page.getByRole('status')).toContainText('已冲正费用记录')
   await selectInpatientStage(page, "费用")
   await expect(page.getByLabel('住院费用明细')).toContainText("关联退费")
   expect(reversalPosts).toBe(1)
