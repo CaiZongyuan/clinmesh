@@ -291,3 +291,5 @@
 - 共享 Query 订阅设为 disabled 时，冷缓存的 `data === undefined` 与已成功读取的空清单必须分开验证；失效不会清除旧 data，disabled observer 的 `isStale` 也不能证明缓存新鲜。费用回归同时覆盖未访问数据所属页、离页后另一会话改稿，以及保存回执成功但完整清单回读失败；不要只用全部面板同时挂载的夹具。完整费用的产品合同见[手术费用与医保说明](../architecture/clinical-workflows.md#手术费用与医保说明)。
 
 - 浏览器几何检查前后只差小数像素或等待 `Animation.finished` 报 `AbortError` 时，先用受控尺寸动画、取消及替代动画复现；不要直接放宽位置或尺寸容差。复用[布局动画采样边界](../decisions/implemented/testing/2026-11-15-browser-layout-animation-boundary.md)，保留真实旅程与全部滚动断言。
+
+- 跨岗位只读验收记录网络副作用时，先结束前一岗位的活动文档，再建立基准与请求监听，并覆盖新岗位挂载全过程；旧医生页的 `/drg/simulation` 使用 POST 轮询，监听过早会被误计为护士写入。保留零 POST、草稿与模型调用不变的断言，参见[PCI 护士只读验收](../../apps/web/e2e/inpatient-pci-ai.spec.ts)。

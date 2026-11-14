@@ -113,6 +113,9 @@ test('指南请求结果未知时刷新重开与核查原用量都不重发模�
 
 test('护士只读审阅保留正式测量清单与费用，不开放编辑确认或产生业务写入', async ({ page, pciAiApp: app }) => {
   const { stay, planned, panel, stepOne } = await preparePciAiReview(page, app)
+  // 先覆盖医生页仍在轮询的场景，再关闭旧文档；只读观察从护士文档挂载前开始。
+  await page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname === `${stay.path}/drg/simulation`)
+  await page.goto('about:blank')
   const before = (await app.fixture.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates.find(item => item.requestId === planned.id)!
   const calls = [...app.calls], posts: string[] = []
   page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.startsWith(stay.path)) posts.push(request.url()) })
