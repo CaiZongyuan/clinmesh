@@ -1,3 +1,4 @@
+import type { InpatientDrgQuery } from './inpatient-drg-query.ts'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgExplanationSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
@@ -18,7 +19,7 @@ import { formatFen } from './workspace-format.ts'
 
 export type DrgRecordTarget = InpatientDrgRecordChecks['sources'][number]['target'] | 'fees'
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
-  write: ReturnType<typeof useInpatientWriteIntent>; active: boolean; followOn?: boolean | undefined; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }
+  write: ReturnType<typeof useInpatientWriteIntent>; active: boolean; query?: InpatientDrgQuery['checks']; followOn?: boolean | undefined; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }
 
 function formatCheckSourceDisplay(source: InpatientDrgRecordChecks['sources'][number], admission: InpatientAdmission, locale: WorkspaceLocale): {
   label: string
@@ -51,11 +52,12 @@ function formatCheckSourceDisplay(source: InpatientDrgRecordChecks['sources'][nu
   }
 }
 
-export function InpatientDrgRecordChecksPanel({ admission, session, locale, active, followOn, onOpenRecord }: Props): React.JSX.Element {
+export function InpatientDrgRecordChecksPanel({ admission, session, locale, active, followOn, onOpenRecord, query: sharedQuery }: Props): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
-  const query = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'drg-record-checks'],
+  const localQuery = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'drg-record-checks'],
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/record-checks`, inpatientDrgRecordChecksSchema, signal),
-    enabled: active, refetchInterval: active ? 3_000 : false, refetchIntervalInBackground: false, retry: false })
+    enabled: active && sharedQuery === undefined, refetchInterval: active && sharedQuery === undefined ? 3_000 : false, refetchIntervalInBackground: false, retry: false })
+  const query = sharedQuery ?? localQuery
   const explanation = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'drg-explanation'],
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/record-checks/explanation`, inpatientDrgExplanationSchema, signal),
     enabled: active && session.actor.roleCode === 'inpatient-doctor', refetchInterval: active && session.actor.roleCode === 'inpatient-doctor' ? 3_000 : false, refetchIntervalInBackground: false, retry: false })

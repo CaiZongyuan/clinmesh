@@ -48,3 +48,18 @@ it('护士床位队列以住院状态代替零待办，保留选中患者和空�
   await userEvent.setup().click(patient)
   expect(select).toHaveBeenCalledWith(admission.id)
 })
+
+it('手术页签计入未解决术后核查，确认后保留历史且待办数清零', async () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  const { inpatientStageTabs } = await import('./inpatient-stage-activity.ts')
+  const { inpatientDrgReviewSchema } = await import('@clinmesh/contracts/inpatient-drg-review')
+  const admission = inpatientAdmissionSchema.parse({ id: 'admission-review', patientId: 'patient-review', patientName: '合成术后患者', inpatientNumber: 'ZY-POST', admissionRoute: 'direct', wardId: 'ward-1', organizationId: 'org-1', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-11-13T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '1' })
+  let review = inpatientDrgReviewSchema.parse({ admissionId: admission.id, taskId: null, version: 1, status: 'complete', fingerprint: 'a'.repeat(64), summary: { formalDrgCode: null, formalChargesFen: 0, projectedTotalFen: 0 }, simulation: null, comparisons: [], missing: [], actions: [], model: null, handedOver: null, resolvedTodos: [],
+    todos: [1, 2, 3].map(index => ({ id: `todo-${index}`, version: 1, evidenceFingerprint: 'a'.repeat(64), key: `extra-use:${index}`, kind: 'extra-use', ownerRole: 'inpatient-doctor', materialId: `material-${index}`, display: '合成耗材', plannedQuantity: 1, actualQuantity: 2, explanation: '核对额外用量', evidence: ['Procedure/execution-1'], status: index === 3 ? 'dismissed' : 'pending', reason: null })) })
+  const content = () => <InpatientTabs id="postoperative-count" locale="zh-CN" value="surgery" onValueChange={() => undefined} items={inpatientStageTabs({ admission, role: 'inpatient-doctor', review }, false, 'zh-CN')}>{null}</InpatientTabs>
+  const view = render(content())
+  expect(within(screen.getByRole('tab', { name: '手术' })).getByText('2')).toBeDefined()
+  review = { ...review, todos: review.todos.map(todo => ({ ...todo, status: 'dismissed', reason: '医生已核对' })) }
+  view.rerender(content())
+  expect(within(screen.getByRole('tab', { name: '手术' })).queryByText('2')).toBeNull()
+})

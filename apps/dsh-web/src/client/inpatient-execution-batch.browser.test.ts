@@ -7,6 +7,7 @@ import { expect, test } from '../../../web/e2e/inpatient-pci.fixture.ts'
 import { openInpatientExecutionWorkspace, prepareInpatientExecutionBatch, runInpatientExecutionBatchJourney,
   runInpatientExecutionRecoveryJourney, runInpatientExecutionSelectionJourney } from '../../../web/e2e/inpatient-execution-batch.journey.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
+import { waitForLayout } from '../../../web/e2e/layout-stability.ts'
 
 const require = createRequire(import.meta.url)
 const artifacts = new Map<string, Promise<string>>()
@@ -74,13 +75,13 @@ async function reviewAppearanceMatrix(page: Page, dialog: Locator, trigger: Loca
     }
     const heading = dialog.getByRole('heading').first(), confirm = dialog.getByRole('button', { name: /^确认/ })
     const close = dialog.getByRole('button', { name: '关闭办理窗口', exact: true })
-    await dialog.evaluate(async element => { await Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished)) })
+    await waitForLayout(dialog)
     await expect(dialog.getByRole('article')).toHaveCount(2)
     await expect(heading).toBeVisible(); await expect(confirm).toBeEnabled(); await expect(close).toBeEnabled()
     const scroller = dialog.locator('.overflow-y-auto').first()
     const before = await heading.boundingBox(), footer = await confirm.boundingBox()
     await scroller.evaluate(element => { element.scrollTop = element.scrollHeight })
-    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    await waitForLayout(dialog)
     const last = await dialog.getByRole('article').last().boundingBox(), bounds = await scroller.boundingBox()
     expect(last!.y).toBeGreaterThanOrEqual(bounds!.y - 1)
     expect(last!.y + last!.height).toBeLessThanOrEqual(bounds!.y + bounds!.height + 1)
