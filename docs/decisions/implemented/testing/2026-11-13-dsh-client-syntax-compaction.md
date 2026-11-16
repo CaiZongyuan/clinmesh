@@ -10,7 +10,7 @@ Status: implemented
 
 `apps/dsh-web/src/compact-client.ts` 使用 Terser，在锁定 Surface builder 之后对 factory 正文进行一次受限语法及空白压缩，再执行原产物校验。它取代[空白压缩决策](2026-10-22-dsh-client-whitespace-compaction.md)中的 Bun Transpiler 选型及只压缩空白的限制；原 TypeScript AST、精确前后缀、lazy-CJS wrapper、宿主 `require`、module/exports 初始化与返回边界继续保留。转换不打包、不执行产物、不重新解析依赖，也不修改 vendor。Terser 5.50.0 已存在于依赖锁中，应用显式声明同版本构建依赖，避免依赖 Vite 的间接包提升。
 
-压缩设置 `compress: { defaults: false, booleans: true }`，只开启布尔表达式缩写及压缩器对内建字面量的安全表示，不开启控制流折叠、死代码消除、内联或 tree shaking。`mangle: false` 保留绑定和属性名称，`keep_fnames` 与 `keep_classnames` 显式保留函数和类名；`ecma` 与共享 `tsconfig.base.json` 已有的 ES2023 对齐，输出保留 UTF-8 和内联许可证注释。Tool descriptor 仍由最终产物按名称提取并执行，不能以源代码测试替代。
+压缩设置关闭 `defaults` 与 `toplevel`，仅开启局部语法等价缩写及函数内局部收敛（`booleans`、`join_vars`、`properties`、`sequences`、`comparisons`、`if_return`、`arrows`、`computed_props`、`unused`、`collapse_vars`、`passes: 2` 与输出 `shorthand`），保留 factory 顶层声明供产物校验提取，不开启条件控制流折叠、死代码分支消除、函数调用内联或 tree shaking。`mangle: false` 保留绑定和属性名称，`keep_fnames` 与 `keep_classnames` 显式保留函数和类名；`ecma` 与共享 `tsconfig.base.json` 已有的 ES2023 对齐，输出保留 UTF-8 和内联许可证注释。Tool descriptor 仍由最终产物按名称提取并执行，不能以源代码测试替代。
 
 ## Alternatives considered
 
