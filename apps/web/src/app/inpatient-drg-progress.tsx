@@ -51,10 +51,10 @@ function ProgressLine({ progress, locale, onOpenDrg }: { progress: ReturnType<ty
   const { projected, pendingMainProcedure, grouping, spent, total, reference, status } = progress
   const percent = (amount: number) => `${reference !== null && reference > 0 ? Math.min(100, Math.max(0, amount) / reference * 100) : 0}%`
   const group = grouping?.drgCode ?? (grouping ? drgGroupingStatusLabel(grouping.status, locale) : t('病组待确定', 'Group pending'))
-  const remaining = reference === null ? null : `${status === 'over' ? t('超出 ', 'Over by ') : t('还剩 ', 'Remaining ')}${formatFen(Math.abs(reference - total), locale)}`
+  const remainingLabel = status === 'over' ? t('超出 ', 'Over by ') : t('还剩 ', 'Remaining '), remainingAmount = reference === null ? '' : formatFen(Math.abs(reference - total), locale)
   const detail = `${pendingMainProcedure ? t('术后预计 ', 'After surgery ') : projected ? t('按计划手术预计 ', 'With planned surgery ') : t('当前病组 ', 'Current group ')}${group} · ${t('已用 ', 'Used ')}${formatFen(spent, locale)}`
     + (projected ? ` · ${pendingMainProcedure ? t('预计 ', 'Projected ') : t('做完预计 ', 'Projected total ')}${formatFen(total, locale)}` : '')
-    + (reference === null ? '' : ` / ${t('支付参考 ', 'Payment reference ')}${formatFen(reference, locale)} · ${projected ? t('预计', 'Projected: ') : status === 'over' ? t('已', '') : ''}${remaining}`)
+    + (reference === null ? '' : ` / ${t('支付参考 ', 'Payment reference ')}${formatFen(reference, locale)} · ${projected ? t('预计', 'Projected: ') : status === 'over' ? t('已', '') : ''}${remainingLabel}${remainingAmount}`)
   return <ProgressChip locale={locale} onOpenDrg={onOpenDrg} detail={detail} over={status === 'over'}>
     {status === null ? null : <Badge variant="outline" className={status === 'within' ? 'text-success' : 'text-warning'}>{status === 'over' ? t('已超', 'Above') : status === 'near' ? t('接近', 'Near') : t('未超', 'Within')}</Badge>}
     <b>{group}</b>{pendingMainProcedure ? <span className="text-warning">{t('待确认主操作', 'Main procedure pending')}</span> : null}
@@ -62,7 +62,7 @@ function ProgressLine({ progress, locale, onOpenDrg }: { progress: ReturnType<ty
       <span aria-hidden="true" className="clinmesh-inpatient-drg-progress-track">
         <i className="clinmesh-inpatient-drg-progress-projected" style={{ width: percent(total) }} /><i className="clinmesh-inpatient-drg-progress-spent" style={{ width: percent(spent) }} />
       </span>
-      <span aria-hidden="true">{remaining!.split(' ')[0]} <b>{formatFen(Math.abs(reference - total), locale)}</b></span>
+      <span aria-hidden="true">{remainingLabel}<b>{remainingAmount}</b></span>
     </>}
   </ProgressChip>
 }
