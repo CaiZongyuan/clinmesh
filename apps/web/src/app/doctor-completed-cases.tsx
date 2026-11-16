@@ -32,6 +32,7 @@ import {
   getDoctorCompletedCases,
   type DoctorCompletedCaseFilters,
 } from './api-client.ts'
+import { ExaminationReportText } from './doctor/examination-report-text.tsx'
 import { ImagingRequestList, useImagingViewState } from './doctor/imaging-page.tsx'
 import { PathologyRequestList } from './doctor/pathology-page.tsx'
 import { DoctorWorkspaceLayout } from './doctor/responsive-layout.tsx'
@@ -86,6 +87,11 @@ const timelineMessageKeys = {
   'consultation-recorded': 'timeline_consultationRecorded',
   'diagnosis-confirmed': 'timeline_diagnosisConfirmed',
   'encounter-completed': 'timeline_encounterCompleted',
+  'examination-report-acknowledged': 'timeline_examinationReportAcknowledged',
+  'examination-report-issued': 'timeline_examinationReportIssued',
+  'examination-request-cancelled': 'timeline_examinationRequestCancelled',
+  'examination-request-draft-deleted': 'timeline_examinationRequestDraftDeleted',
+  'examination-request-issued': 'timeline_examinationRequestIssued',
   'imaging-report-acknowledged': 'timeline_imagingReportAcknowledged',
   'imaging-report-issued': 'timeline_imagingReportIssued',
   'imaging-report-revised': 'timeline_imagingReportRevised',
@@ -527,6 +533,33 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
             readOnly
             requests={detail.imagingRequests}
           />
+        </CompletedCaseSection>
+      )}
+
+      {detail.examinationRequests.length === 0 ? null : (
+        <CompletedCaseSection heading={locale === 'zh-CN' ? '功能检查' : 'Functional examination'}>
+          <ol className="flex flex-col gap-4">
+            {detail.examinationRequests.map(request => (
+              <li className="flex min-w-0 flex-col gap-2 rounded-lg border p-3" key={request.id}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm font-medium">{request.service.name}</span>
+                  <Badge variant="outline">
+                    {({
+                      issued: locale === 'zh-CN' ? '待收费/执行' : 'Issued',
+                      accepted: locale === 'zh-CN' ? '已受理' : 'Accepted',
+                      'in-progress': locale === 'zh-CN' ? '检查中' : 'In progress',
+                      reported: locale === 'zh-CN' ? '待阅' : 'Unread',
+                      acknowledged: locale === 'zh-CN' ? '已阅' : 'Acknowledged',
+                      cancelled: locale === 'zh-CN' ? '已取消' : 'Cancelled',
+                      'generation-failed': locale === 'zh-CN' ? '未取得结果' : 'No result',
+                    })[request.status]}
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">{request.indication}</p>
+                {request.report === undefined ? null : <ExaminationReportText locale={locale} report={request.report} />}
+              </li>
+            ))}
+          </ol>
         </CompletedCaseSection>
       )}
 

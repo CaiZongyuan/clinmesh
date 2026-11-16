@@ -149,8 +149,9 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.history.read': doctorCaseHistoryDetailInputSchema,
   'outpatient.case.select': z.object({ caseId: boundedIdSchema }).strict(),
   'outpatient.section.select': z.object({
-    /** 同时展开这条放射申请的影像；只与 `laboratory` 栏目一起使用。Agent 不读取像素。 */
+    /** 同时定位这条功能检查申请的结构化文字报告；只与 `laboratory` 栏目一起使用。 */
     examinationRequestId: boundedIdSchema.optional(),
+    /** 同时展开这条放射申请的影像；只与 `laboratory` 栏目一起使用。Agent 不读取像素。 */
     imagingRequestId: boundedIdSchema.optional(),
     /** 同时展开这条病理会诊申请的切片；只与 `laboratory` 栏目一起使用。Agent 不读取像素。 */
     pathologyRequestId: boundedIdSchema.optional(),

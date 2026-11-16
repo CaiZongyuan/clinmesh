@@ -157,6 +157,7 @@ const draftDeletionTraceRowSchema = z.object({
   effect_json: z.string(),
   operation: z.enum([
     'encounter.delete-prescription-draft',
+    'examination-request.delete-draft',
     'imaging-request.delete-draft',
     'laboratory-request.delete-draft',
     'pathology-request.delete-draft',
@@ -4157,7 +4158,8 @@ export class WorkflowService
     const report = z.object({ status: z.enum(['final', 'amended', 'corrected']),
       category: z.array(z.object({ coding: z.array(z.object({ code: z.string().optional() })).optional() })).optional(),
       encounter: z.object({ reference: z.string() }), subject: z.object({ reference: z.string() }),
-      conclusion: z.string().optional(), code: z.object({ text: z.string().optional() }).optional(),
+      conclusion: z.string().optional(),
+      code: z.object({ text: z.string().optional(), coding: z.array(z.object({ system: z.string().optional() })).optional() }).optional(),
       result: z.array(z.object({ reference: z.string() })).optional(), issued: z.string(),
     }).parse(transaction.fhir.vread(context, 'DiagnosticReport', parsed[1]!, parsed[2]!))
     const outpatientCase = z.object({ encounter_id: z.string(), patient_id: z.string() }).parse(
@@ -4183,9 +4185,11 @@ export class WorkflowService
       return `${name}：${value}。`
     })
     const categories = report.category?.flatMap(category => category.coding?.map(coding => coding.code) ?? []) ?? []
+    const isExamination = report.code?.coding?.some(coding => coding.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service') === true
     const published = categories.includes('RAD') ? this.imaging.publishedReportText(context, caseId, parsed[1]!)
-      : categories.includes('SP') ? this.pathology.publishedReportText(context, caseId, parsed[1]!) : undefined
-    const messageText = [report.code?.text, published?.text ?? report.conclusion, ...observations].filter(Boolean).join('\n')
+      : categories.includes('SP') ? this.pathology.publishedReportText(context, caseId, parsed[1]!)
+        : isExamination ? this.examination.publishedReportText(context, caseId, parsed[1]!) : undefined
+    const messageText = [report.code?.text, ...(published !== undefined ? [published.text] : [report.conclusion, ...observations])].filter(Boolean).join('\n')
     if (report.conclusion === undefined && observations.length === 0) throw new Error('The published report contains no recordable facts')
     this.consultationRecording.enqueueReport(context, transaction, { caseId, encounterId: outpatientCase.encounter_id,
       messageText, recordedAt: report.issued, reportReference,
@@ -4315,6 +4319,7 @@ export class WorkflowService
       | 'completedAt'
       | 'consultation'
       | 'diagnosis'
+      | 'examinationRequests'
       | 'imagingRequests'
       | 'laboratoryRequests'
       | 'medicationConclusion'
@@ -4502,6 +4507,45 @@ export class WorkflowService
         }
       }
     }
+    for (const request of input.examinationRequests) {
+      const row = z.object({
+        authored_at: z.iso.datetime({ offset: true }),
+        cancelled_at: z.iso.datetime({ offset: true }).nullable(),
+      }).strict().parse(this.#database.driver.prepare(`
+        SELECT authored_at, cancelled_at FROM laboratory_request
+        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+      `).get(context.workspaceId, context.epoch, request.id))
+      events.push({
+        kind: 'examination-request-issued',
+        occurredAt: row.authored_at,
+        reference: `ServiceRequest/${request.serviceRequestId}`,
+        relatedReferences: [`ExaminationRequest/${request.id}`, `Task/${request.taskId}`],
+      })
+      if (row.cancelled_at !== null) {
+        events.push({
+          kind: 'examination-request-cancelled',
+          occurredAt: row.cancelled_at,
+          reference: `ExaminationRequest/${request.id}`,
+          relatedReferences: [`ServiceRequest/${request.serviceRequestId}`, `Task/${request.taskId}`],
+        })
+      }
+      for (const report of [...request.previousReports, ...(request.report === undefined ? [] : [request.report])]) {
+        events.push({
+          kind: 'examination-report-issued',
+          occurredAt: report.issuedAt,
+          reference: `DiagnosticReport/${report.diagnosticReportId}`,
+          relatedReferences: [`ServiceRequest/${request.serviceRequestId}`],
+        })
+        if (report.acknowledgement !== undefined) {
+          events.push({
+            kind: 'examination-report-acknowledged',
+            occurredAt: report.acknowledgement.acknowledgedAt,
+            reference: `ReportAcknowledgement/${report.acknowledgement.id}`,
+            relatedReferences: [`DiagnosticReport/${report.diagnosticReportId}`],
+          })
+        }
+      }
+    }
     if (input.diagnosis !== undefined) {
       const legacyCondition = input.diagnosis.id.startsWith('legacy-')
         ? input.diagnosis.entries[0]
@@ -4570,6 +4614,7 @@ export class WorkflowService
         AND outcome = 'success'
         AND operation IN (
           'encounter.delete-prescription-draft',
+          'examination-request.delete-draft',
           'imaging-request.delete-draft',
           'laboratory-request.delete-draft',
           'pathology-request.delete-draft'
@@ -4583,6 +4628,7 @@ export class WorkflowService
     return rows.flatMap(row => {
       const draft = {
         'encounter.delete-prescription-draft': ['PrescriptionDraft', 'prescription-draft-deleted'],
+        'examination-request.delete-draft': ['ExaminationRequestDraft', 'examination-request-draft-deleted'],
         'imaging-request.delete-draft': ['ImagingRequestDraft', 'imaging-request-draft-deleted'],
         'laboratory-request.delete-draft': ['LaboratoryRequestDraft', 'laboratory-request-draft-deleted'],
         'pathology-request.delete-draft': ['PathologyRequestDraft', 'pathology-request-draft-deleted'],

@@ -1582,8 +1582,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read one completed outpatient case and its clinical timeline, including optional menstrualHistory and obstetricHistory in signed documents; missing historical sections remain unrecorded; quantitative laboratory report results expose optional critical flags alongside interpretation',
-    version: 3,
+    summary: 'Read one completed outpatient case and its clinical timeline, including examinationRequests and functional examination timeline events alongside optional menstrualHistory and obstetricHistory in signed documents; missing historical sections remain unrecorded; quantitative laboratory report results expose optional critical flags alongside interpretation',
+    version: 4,
   },
   {
     cliPath: ['doctor', 'case', 'get'],
@@ -1601,8 +1601,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case with its current Registration registrationNumber (null when unrecorded), incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; consultation.replyAttempt exposes executing, blocked, succeeded, failed or unknown with the original deadline and safe error code, including MODEL_CONTROL_BLOCKED, CONSULTATION_CASE_NOT_FOUND and CONSULTATION_PERSONA_OUTDATED; a blocked reply retains the saved question and resumes only while valid within its original deadline, while unknown requests require an explicit clinician retry; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists; clinicalHistory.requiredFields, reason and showByDefault expose the shared menstrualHistory and obstetricHistory policy with the clinician-confirmed visitKind, which Agents may read but cannot change; qualityControl binds current twelve-field content and saved evidence to nonblocking completion and verification prompts; laboratory service definitions and quantitative report results expose optional criticalMinimum/criticalMaximum bounds and critical flags',
-    version: 17,
+    summary: 'Read the active doctor case with its current Registration registrationNumber (null when unrecorded), incomplete draft, examinationRequests and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; consultation.replyAttempt exposes executing, blocked, succeeded, failed or unknown with the original deadline and safe error code, including MODEL_CONTROL_BLOCKED, CONSULTATION_CASE_NOT_FOUND and CONSULTATION_PERSONA_OUTDATED; a blocked reply retains the saved question and resumes only while valid within its original deadline, while unknown requests require an explicit clinician retry; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists; clinicalHistory.requiredFields, reason and showByDefault expose the shared menstrualHistory and obstetricHistory policy with the clinician-confirmed visitKind, which Agents may read but cannot change; qualityControl binds current twelve-field content and saved evidence to nonblocking completion and verification prompts; laboratory service definitions and quantitative report results expose optional criticalMinimum/criticalMaximum bounds and critical flags',
+    version: 18,
   },
   {
     cliPath: ['doctor', 'document-quality', 'get'],
@@ -2686,8 +2686,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['cashier'],
-    summary: 'Create a version-bound preview for the exact chargeItemId in laboratory, imaging, pathology or medication; case/category only filter; optional cash, bank-card, and mobile tenders; recorded ambiguous results require recovery before another payment',
-    version:3,
+    summary: 'Create a version-bound preview for the exact chargeItemId in laboratory, examination, imaging, pathology or medication; case/category only filter; optional cash, bank-card, and mobile tenders; recorded ambiguous results require recovery before another payment',
+    version: 4,
   },
   {
     cliPath: ['payment', 'confirm'],

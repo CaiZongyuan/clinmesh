@@ -42,19 +42,25 @@ import {
   multiChargePaymentRecoverInputSchema,
   paymentSimulatorRuleSchema,
   doctorQueueViewSchema,
+  acknowledgeExaminationReportRequestSchema,
   acknowledgeImagingReportRequestSchema,
   acknowledgePathologyReportRequestSchema,
   acknowledgeLaboratoryReportRequestSchema,
+  cancelExaminationRequestRequestSchema,
   cancelImagingRequestRequestSchema,
   cancelPathologyRequestRequestSchema,
   correctImagingReportRequestSchema,
   correctPathologyReportRequestSchema,
+  deleteExaminationRequestDraftRequestSchema,
   deleteImagingRequestDraftRequestSchema,
   deletePathologyRequestDraftRequestSchema,
+  issueExaminationRequestRequestSchema,
   issueImagingRequestRequestSchema,
   issuePathologyRequestRequestSchema,
+  retryExaminationRequestRequestSchema,
   retryImagingRequestRequestSchema,
   retryPathologyRequestRequestSchema,
+  saveExaminationRequestDraftRequestSchema,
   saveImagingRequestDraftRequestSchema,
   savePathologyRequestDraftRequestSchema,
   cancelLaboratoryRequestRequestSchema,
@@ -2899,7 +2905,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.put('/api/his/v1/encounters/:encounterId/examination-request/draft', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
-        const body = saveImagingRequestDraftRequestSchema.parse(await context.req.json())
+        const body = saveExaminationRequestDraftRequestSchema.parse(await context.req.json())
         return context.json(workflow.examination.saveDraft({
           context: await actor(context),
           encounterId: context.req.param('encounterId'),
@@ -2916,7 +2922,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.delete('/api/his/v1/encounters/:encounterId/examination-request/draft', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
-        const body = deleteImagingRequestDraftRequestSchema.parse(await context.req.json())
+        const body = deleteExaminationRequestDraftRequestSchema.parse(await context.req.json())
         return context.json(workflow.examination.deleteDraft({
           context: await actor(context),
           encounterId: context.req.param('encounterId'),
@@ -2931,7 +2937,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.post('/api/his/v1/encounters/:encounterId/examination-request/actions/issue', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
-        const body = issueImagingRequestRequestSchema.parse(await context.req.json())
+        const body = issueExaminationRequestRequestSchema.parse(await context.req.json())
         return context.json(workflow.examination.issue({
           context: await actor(context),
           encounterId: context.req.param('encounterId'),
@@ -2947,7 +2953,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.post('/api/his/v1/examination-requests/:requestId/actions/cancel', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
-        const body = cancelImagingRequestRequestSchema.parse(await context.req.json())
+        const body = cancelExaminationRequestRequestSchema.parse(await context.req.json())
         return context.json(workflow.examination.cancel({
           context: await actor(context),
           expectedRequestVersion: body.input.expectedRequestVersion,
@@ -2963,7 +2969,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.post('/api/his/v1/examination-requests/:requestId/actions/retry', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
-        const body = retryImagingRequestRequestSchema.parse(await context.req.json())
+        const body = retryExaminationRequestRequestSchema.parse(await context.req.json())
         return context.json(workflow.examination.retry({
           context: await actor(context),
           expectedRequestVersion: body.input.expectedRequestVersion,
@@ -2980,7 +2986,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       async (context) => {
         try {
           identity.assertTrustedMutation(context.req.raw.headers)
-          const body = acknowledgeImagingReportRequestSchema.parse(await context.req.json())
+          const body = acknowledgeExaminationReportRequestSchema.parse(await context.req.json())
           const context_ = await actor(context)
           const requestId = context.req.param('requestId')
           return context.json(workflow.examination.acknowledge({

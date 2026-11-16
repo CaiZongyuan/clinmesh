@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FilePlus2, Trash2 } from 'lucide-react'
+import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import { ExaminationReportText } from './examination-report-text.tsx'
+import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { AgentReviewAnchor } from '../agent-review.tsx'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import type { DoctorCaseDetail, ExaminationRequest } from '@clinmesh/contracts/his'
@@ -63,6 +65,25 @@ export function ExaminationPage({
     messages = getWorkspaceMessages(locale)
   const [serviceId, setServiceId] = useState(state?.draft?.service.id ?? 'examination-ecg-12-lead'),
     [indication, setIndication] = useState(state?.draft?.indication ?? '')
+  const previousCaseIdRef = useRef(detail.caseId)
+  useEffect(() => {
+    const caseChanged = previousCaseIdRef.current !== detail.caseId
+    previousCaseIdRef.current = detail.caseId
+    if (state?.draft !== undefined) {
+      setServiceId(state.draft.service.id)
+      setIndication(state.draft.indication)
+    } else if (caseChanged) {
+      setServiceId('examination-ecg-12-lead')
+      setIndication('')
+    }
+  }, [detail.caseId, state?.draft?.indication, state?.draft?.service.id, state?.draftVersion])
+  const draftInput = agentToolInputSchemas['outpatient.examination.draft.set'].safeParse({ serviceId, indication })
+  useRegisterAgentForm({
+    name: 'examination',
+    selectionId: detail.caseId,
+    viewId: 'consultation',
+    values: readOnly || !draftInput.success ? null : draftInput.data,
+  })
   const [deleteReview, setDeleteReview] = useState<{
     version: number
     encounterVersion: string
@@ -86,6 +107,9 @@ export function ExaminationPage({
         : action === 'issue'
           ? issueExaminationRequest(input, newIdempotencyKey())
           : deleteExaminationRequestDraft(input, newIdempotencyKey())
+    },
+    onSuccess: (_result, action) => {
+      if (action === 'issue') setIndication('')
     },
     onSettled: () => actionContext?.onChanged(),
   })

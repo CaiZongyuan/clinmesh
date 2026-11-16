@@ -16,6 +16,7 @@ async function buildExaminationSurface(version: string) {
   const styles = await buildSurfaceStyles(),
     react = version === '18' ? 'react18' : 'react',
     reactDom = version === '18' ? 'react-dom18' : 'react-dom'
+  let freshStylesLoaded = false
   const generatedStyles = '\0clinmesh-examination-styles'
   const result = await build({
     configFile: false,
@@ -25,11 +26,15 @@ async function buildExaminationSurface(version: string) {
     plugins: [
       {
         name: 'examination-styles',
+        enforce: 'pre',
         resolveId(source) {
           if (source === './styles.generated.ts') return generatedStyles
         },
         load(id) {
-          if (id === generatedStyles) return `export const clinMeshStyles = ${JSON.stringify(styles)}`
+          if (id === generatedStyles) {
+            freshStylesLoaded = true
+            return `export const clinMeshStyles = ${JSON.stringify(styles)}`
+          }
         },
       },
     ],
@@ -68,6 +73,7 @@ async function buildExaminationSurface(version: string) {
       },
     },
   })
+  if (!freshStylesLoaded) throw new Error('The examination Surface must bundle freshly built styles from this worktree')
   const script = (Array.isArray(result) ? result : [result])
     .flatMap((output) => ('output' in output ? output.output : []))
     .find((output) => output.type === 'chunk')
@@ -92,10 +98,16 @@ for (const version of ['18', '19'])
         pixels.push(route.request().url())
         await route.abort('blockedbyclient')
       })
+      await page.route('**/examination-surface.js', (route) =>
+        route.fulfill({
+          contentType: 'application/javascript; charset=utf-8',
+          body: script,
+        }),
+      )
       await page.route('**/examination-surface?*', (route) =>
         route.fulfill({
-          contentType: 'text/html',
-          body: `<!doctype html><html><head><meta charset="utf-8"></head><body><script>${script.replaceAll('</script', '<\\/script')}</script></body></html>`,
+          contentType: 'text/html; charset=utf-8',
+          body: '<!doctype html><html><head><meta charset="utf-8"></head><body><script src="/examination-surface.js"></script></body></html>',
         }),
       )
       await page.route('**/clinmesh-api/**', (route) => {

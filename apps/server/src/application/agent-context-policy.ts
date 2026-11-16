@@ -353,7 +353,8 @@ function resolveSelection(
         EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
           AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
           AND laboratory_request.request_kind = 'examination'
-          AND laboratory_request.status = 'generation-failed') AS has_failed_examination,
+          AND laboratory_request.status = 'generation-failed'
+          AND COALESCE(laboratory_request.generation_error_code, '') NOT IN ('INVESTIGATION_UNSUPPORTED', 'INVESTIGATION_TRUTH_INCOMPATIBLE')) AS has_failed_examination,
         EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
           AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
           AND laboratory_request.request_kind = 'examination'
@@ -797,7 +798,17 @@ function inputMatchesCurrentResources(
       && (value.pathologyRequestId === undefined || boundRequest('pathology', value.pathologyRequestId, openableRequestStatuses))
   }
   const bound = boundRequestsByOperation[operationId]
-  if (bound !== undefined) return boundRequest(bound.kind, value.requestId, bound.statuses)
+  if (bound !== undefined) {
+    if (operationId === 'outpatient.examination.retry.propose') {
+      return claim.selection?.kind === 'case'
+        && exists(`SELECT 1 FROM laboratory_request WHERE workspace_id = ? AND epoch = ?
+          AND case_id = ? AND request_id = ? AND request_kind = 'examination'
+          AND status = 'generation-failed'
+          AND COALESCE(generation_error_code, '') NOT IN ('INVESTIGATION_UNSUPPORTED', 'INVESTIGATION_TRUTH_INCOMPATIBLE')`,
+        ...scope, claim.selection.id, value.requestId)
+    }
+    return boundRequest(bound.kind, value.requestId, bound.statuses)
+  }
   if (
     operationId === 'outpatient.laboratory.cancel.propose'
     || operationId === 'outpatient.report.acknowledge.propose'
@@ -810,7 +821,7 @@ function inputMatchesCurrentResources(
         AND status IN ('issued', 'generation-failed')`,
       ...scope, claim.selection.id, value.requestId)
     }
-    // 已阅提案覆盖检验、放射与病理三类报告；更正提案只面向检验报告，放射与病理更正使用各自的提案。
+    // 已阅提案覆盖检验、功能检查、放射与病理四类报告；更正提案只面向检验报告，放射与病理更正使用各自的提案。
     if (operationId === 'outpatient.report.acknowledge.propose') {
       return exists(`SELECT 1 FROM laboratory_request WHERE workspace_id = ? AND epoch = ?
         AND case_id = ? AND request_id = ? AND status = 'reported'`,

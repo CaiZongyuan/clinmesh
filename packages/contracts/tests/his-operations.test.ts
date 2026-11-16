@@ -661,8 +661,9 @@ describe('HIS operation catalog', () => {
       simulatorRule: 'ambiguous-decline',
       tenders: [{ method: 'cash', amountFen: 100 }, { method: 'mobile', amountFen: 200 }],
     }
-    expect(operation.version).toBe(3)
+    expect(operation.version).toBe(4)
     expect(operation.input.parse(input)).toEqual(input)
+    expect(operation.input.parse({ ...input, category: 'examination' })).toEqual({ ...input, category: 'examination' })
     expect(operation.http.encodeBody?.(input)).toEqual({
       expectedVersions: { 'ChargeItem/charge-1': '3' },
       input: {

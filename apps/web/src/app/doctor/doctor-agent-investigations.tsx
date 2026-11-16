@@ -255,7 +255,7 @@ export function doctorInvestigationsAgentActions({
       },
     },
     'outpatient.report.acknowledge.propose': {
-      description: 'Open human review before acknowledging one signed laboratory, imaging or pathology consultation report. An imaging or pathology report can be acknowledged only after its images or slide were opened and displayed to the human reader.',
+      description: 'Open human review before acknowledging one signed laboratory, examination, imaging or pathology consultation report. An imaging or pathology report can be acknowledged only after its images or slide were opened and displayed to the human reader.',
       enabled: detail.data?.laboratoryRequests?.requests.some(
         request => request.status === 'reported',
       ) === true || detail.data?.examinationRequests?.requests.some(request => request.status === 'reported') === true || detail.data?.imagingRequests?.requests.some(
@@ -458,7 +458,9 @@ export function doctorInvestigationsAgentActions({
     'outpatient.examination.retry.propose': {
       description: 'Open human review before retrying one examination request that produced no result.',
       enabled: detail.data?.examinationRequests?.requests.some(
-        request => request.status === 'generation-failed',
+        request => request.status === 'generation-failed'
+          && request.generationError?.code !== 'INVESTIGATION_UNSUPPORTED'
+          && request.generationError?.code !== 'INVESTIGATION_TRUTH_INCOMPATIBLE',
       ) === true,
       parameters: {
         type: 'object' as const,
@@ -470,7 +472,11 @@ export function doctorInvestigationsAgentActions({
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
         const requestId = doctorString(raw, 'requestId', 128)
         const request = current.examinationRequests?.requests.find(item => item.id === requestId)
-        if (request?.status !== 'generation-failed') throw new Error(messages.consultationUnavailable)
+        if (
+          request?.status !== 'generation-failed'
+          || request.generationError?.code === 'INVESTIGATION_UNSUPPORTED'
+          || request.generationError?.code === 'INVESTIGATION_TRUTH_INCOMPATIBLE'
+        ) throw new Error(messages.consultationUnavailable)
         return agentReview.request({
           anchor: `doctor-investigation:${request.id}`,
           confirmLabel: locale => locale === 'zh-CN' ? '重试' : 'Retry',

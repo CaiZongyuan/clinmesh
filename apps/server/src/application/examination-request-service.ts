@@ -393,6 +393,7 @@ export class ExaminationRequestService {
         idempotencyKey: input.idempotencyKey,
         input: { encounterId: input.encounterId, expectedDraftVersion: input.expectedDraftVersion },
         operation: 'examination-request.delete-draft',
+        authorize: () => assertRole(input.context, ['outpatient-doctor']),
       },
       (transaction) => this.applyDeleteDraft(transaction, input),
     )

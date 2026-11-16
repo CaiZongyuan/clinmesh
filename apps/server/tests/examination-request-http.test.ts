@@ -1,6 +1,6 @@
 import { rm } from 'node:fs/promises'
 import { afterEach, expect, it } from 'vitest'
-import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { doctorCaseDetailSchema, doctorCompletedCaseDetailSchema } from '@clinmesh/contracts/his'
 import {
   acuteBronchitis,
   caseBundle,
@@ -78,4 +78,125 @@ it('offers pixel-free ECG/TTE and freezes a normal adult report after payment', 
     JSON.stringify(detail.examinationRequests),
   ).toBe(72)
   expect(detail.examinationRequests?.requests[0]?.status).toBe('reported')
+  const reported = detail.examinationRequests!.requests[0]!,
+    report = reported.report!
+  const recordedSource = item.runtime.database.driver
+    .prepare(
+      "SELECT message_text, metadata_json FROM consultation_recording_source WHERE case_id = ? AND source_kind = 'report'",
+    )
+    .get(visit.outpatientCaseId) as { message_text: string; metadata_json: string } | undefined
+  expect(recordedSource?.message_text).toContain(report.technique)
+  expect(JSON.parse(recordedSource?.metadata_json ?? '{}')).toMatchObject({
+    reportReference: `DiagnosticReport/${report.diagnosticReportId}/_history/${report.diagnosticReportVersion}`,
+    reportContentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+  })
+  const ack = await item.runtime.app.request(
+    `/api/his/v1/examination-requests/${reported.id}/reports/${report.diagnosticReportId}/actions/acknowledge`,
+    mutation(visit.doctor, {
+      expectedVersions: { [`DiagnosticReport/${report.diagnosticReportId}`]: report.diagnosticReportVersion },
+      input: { expectedRequestVersion: reported.version },
+    }),
+  )
+  expect(ack.status, await ack.clone().text()).toBe(200)
+  const encounterVersions = async () => {
+    const res = await item.runtime.app.request(`/api/his/v1/doctor/cases/${visit.outpatientCaseId}`, {
+      headers: { cookie: visit.doctor },
+    })
+    return { [`Encounter/${visit.encounterId}`]: doctorCaseDetailSchema.parse(await res.json()).encounter.versionId }
+  }
+  expect(
+    (
+      await item.runtime.app.request(
+        `/api/his/v1/encounters/${visit.encounterId}/diagnosis/draft`,
+        mutation(
+          visit.doctor,
+          {
+            expectedVersions: await encounterVersions(),
+            input: { expectedDraftVersion: 0, entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary' }] },
+          },
+          'PUT',
+        ),
+      )
+    ).status,
+  ).toBe(200)
+  expect(
+    (
+      await item.runtime.app.request(
+        `/api/his/v1/encounters/${visit.encounterId}/diagnosis/actions/confirm`,
+        mutation(visit.doctor, { expectedVersions: await encounterVersions(), input: { expectedDraftVersion: 1 } }),
+      )
+    ).status,
+  ).toBe(200)
+  expect(
+    (
+      await item.runtime.app.request(
+        `/api/his/v1/encounters/${visit.encounterId}/medication-conclusion/actions/confirm-no-medication`,
+        mutation(visit.doctor, { expectedVersions: await encounterVersions(), input: { expectedDraftVersion: 0 } }),
+      )
+    ).status,
+  ).toBe(200)
+  const docDraft = await item.runtime.app.request(
+    `/api/his/v1/encounters/${visit.encounterId}/clinical-document/draft`,
+    mutation(
+      visit.doctor,
+      {
+        expectedVersions: await encounterVersions(),
+        input: {
+          expectedDraftVersion: 0,
+          document: {
+            chiefComplaint: '咳嗽三天伴胸闷。',
+            historyOfPresentIllness: '患者咳嗽三天，行心电图排查。',
+            physicalExamination: '双肺呼吸音粗，心律齐。',
+            assessment: '急性支气管炎，心电图正常。',
+            disposition: '门诊随访观察。',
+            followUp: '症状加重随诊。',
+          },
+        },
+      },
+      'PUT',
+    ),
+  )
+  expect(docDraft.status).toBe(200)
+  const preview = await item.runtime.app.request(
+    `/api/his/v1/encounters/${visit.encounterId}/clinical-document/actions/preview-sign`,
+    mutation(visit.doctor, {
+      expectedVersions: await encounterVersions(),
+      input: { expectedDraftVersion: (await docDraft.json()).data.draftVersion },
+    }),
+  )
+  expect(preview.status).toBe(200)
+  const previewData = (await preview.json()).data
+  expect(
+    (
+      await item.runtime.app.request(
+        `/api/his/v1/encounters/${visit.encounterId}/clinical-document/actions/sign`,
+        mutation(visit.doctor, {
+          expectedVersions: await encounterVersions(),
+          input: { previewId: previewData.previewId, commitToken: previewData.commitToken },
+        }),
+      )
+    ).status,
+  ).toBe(200)
+  expect(
+    (
+      await item.runtime.app.request(
+        `/api/his/v1/encounters/${visit.encounterId}/actions/complete`,
+        mutation(visit.doctor, { expectedVersions: await encounterVersions(), input: {} }),
+      )
+    ).status,
+  ).toBe(200)
+  const completedRes = await item.runtime.app.request(
+    `/api/his/v1/doctor/completed-cases/${visit.outpatientCaseId}`,
+    { headers: { cookie: visit.doctor } },
+  )
+  expect(completedRes.status, await completedRes.clone().text()).toBe(200)
+  const completed = doctorCompletedCaseDetailSchema.parse(await completedRes.json())
+  expect(completed.examinationRequests).toHaveLength(1)
+  expect(completed.timeline.map((event) => event.kind)).toEqual(
+    expect.arrayContaining([
+      'examination-request-issued',
+      'examination-report-issued',
+      'examination-report-acknowledged',
+    ]),
+  )
 })

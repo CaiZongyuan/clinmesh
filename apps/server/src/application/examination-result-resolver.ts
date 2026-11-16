@@ -127,15 +127,15 @@ function refuted(resource: z.infer<typeof resourceSchema>): boolean {
 }
 function cardiovascular(resource: z.infer<typeof resourceSchema>): boolean {
   if (!['Condition', 'Procedure', 'Observation'].includes(resource.resourceType)) return false
-  if (refuted(resource)) return false
+  if (resource.status === 'entered-in-error' || refuted(resource)) return false
   const codings = resource.code?.coding ?? []
   return (
     codings.some(
       (item) =>
-        (/icd-?10/i.test(item.system ?? '') && /^(?:I\d|Q2[0-8]|R0[01]|Z95)/i.test(item.code)) ||
+        (/icd-?10/i.test(item.system ?? '') && /^(?:I\d|Q2[0-8]|R0[01]|R94\.3|Z86\.7|Z95|Z98\.6)/i.test(item.code)) ||
         (item.system === 'http://snomed.info/sct' && cardiovascularSnomed.has(item.code)),
     ) ||
-    /冠心病|高血压|心肌|心衰|心力衰竭|心律|房颤|房扑|瓣膜|心脏|室性|室上性|心动过速|心动过缓|早搏|传导阻滞|心包|主动脉|肺心病|肺动脉高压|动脉粥样硬化|先天性心|心绞痛|缺血|coronary|cardiac|cardiovascular|heart (?:failure|disease|attack|defect)|myocard|ischemi|infarct|atheroscl|hypertension|arrhythm|tachycard|bradycard|fibrillation|flutter|heart block|conduction.*block|atrioventricular.*block|bundle branch block|cardiomyopath|endocard|pericard|valvular|mitral|tricuspid|pulmonic|angina|cardiomegaly|aortic|pulmonary hypertension/i.test(
+    /冠心病|冠状动脉|心血管|循环系统|高血压|心肌|心衰|心力衰竭|心律|房颤|房扑|瓣膜|心脏|室性|室上性|心动过速|心动过缓|早搏|传导阻滞|心包|主动脉|肺心病|肺动脉高压|动脉粥样硬化|先天性心|心绞痛|缺血|coronary|cardiac|cardiovascular|heart (?:failure|disease|attack|defect)|myocard|ischemi|infarct|atheroscl|hypertension|arrhythm|tachycard|bradycard|fibrillation|flutter|heart block|conduction.*block|atrioventricular.*block|bundle branch block|cardiomyopath|endocard|pericard|valvular|mitral|tricuspid|pulmonic|angina|cardiomegaly|aortic|pulmonary hypertension/i.test(
       [resource.code?.text, ...codings.map((item) => item.display)].join(' '),
     )
   )
@@ -258,33 +258,46 @@ export class ExaminationResultResolver {
     const existing = snapshots.getByEvidence(workspaceId, row.synthetic_case_id, service.id, inputHash)
     if (existing !== undefined) return { snapshotId: existing.snapshotId, content: existing.content }
     const requested = definitions[service.examCode]
-    const hasEcgSpecificTruth = hidden.some(
-      (item) =>
-        item.resourceType === 'Observation' &&
-        item.code?.coding?.some(
-          (coding) =>
-            (coding.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service' &&
-              requested.some((definition) => definition.code === coding.code)) ||
-            (coding.system === 'http://loinc.org' &&
-              requested.some(
-                (definition) => definition.code !== 'ventricular-rate' && definition.sourceCodes?.includes(coding.code),
-              )),
-        ),
+    const validHiddenMeasurements = hidden
+      .filter((item) => item.resourceType === 'Observation' && item.status !== 'entered-in-error' && !refuted(item))
+      .flatMap((item) => [item, ...(item.component ?? [])])
+    const hasEcgSpecificTruth = validHiddenMeasurements.some((measurement) =>
+      measurement.code?.coding?.some(
+        (coding) =>
+          (coding.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service' &&
+            requested.some((definition) => definition.code === coding.code)) ||
+          (coding.system === 'http://loinc.org' &&
+            requested.some(
+              (definition) => definition.code !== 'ventricular-rate' && definition.sourceCodes?.includes(coding.code),
+            )),
+      ),
     )
+    const normalizeExactUnit = (definition: Definition, rawUnit: string | undefined) =>
+      definition.unit === '/min' && rawUnit !== undefined && ['/min', '{beats}/min', 'min-1', 'bpm', 'beats/min'].includes(rawUnit)
+        ? '/min'
+        : rawUnit
     const exact = requested.map((definition) => {
       // A routine heart-rate vital alone does not declare a partial ECG panel.
       if (service.examCode === 'ecg-12-lead' && definition.code === 'ventricular-rate' && !hasEcgSpecificTruth)
         return undefined
-      const matches = hidden.filter(
-        (item) =>
-          item.resourceType === 'Observation' &&
-          item.code?.coding?.some(
-            (coding) =>
-              (coding.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service' &&
-                coding.code === definition.code) ||
-              (coding.system === 'http://loinc.org' && definition.sourceCodes?.includes(coding.code)),
-          ),
+      const directMatches = validHiddenMeasurements.filter((measurement) =>
+        measurement.code?.coding?.some(
+          (coding) =>
+            coding.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service' &&
+            coding.code === definition.code,
+        ),
       )
+      const matches =
+        definition.code === 'ventricular-rate' && directMatches.length > 0
+          ? directMatches
+          : validHiddenMeasurements.filter((measurement) =>
+              measurement.code?.coding?.some(
+                (coding) =>
+                  (coding.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service' &&
+                    coding.code === definition.code) ||
+                  (coding.system === 'http://loinc.org' && definition.sourceCodes?.includes(coding.code)),
+              ),
+            )
       const values = matches.map((item) => {
         if (typeof definition.value !== 'number') return { value: item.valueString }
         const quantity = z
@@ -292,7 +305,7 @@ export class ExaminationResultResolver {
           .loose()
           .safeParse(item.valueQuantity)
         return quantity.success
-          ? { value: quantity.data.value, unit: quantity.data.code ?? quantity.data.unit }
+          ? { value: quantity.data.value, unit: normalizeExactUnit(definition, quantity.data.code ?? quantity.data.unit) }
           : { invalidQuantity: item.valueQuantity }
       })
       if (new Set(values.map((value) => canonicalJsonHash(value))).size > 1)
@@ -358,7 +371,7 @@ export class ExaminationResultResolver {
         if (
           observation !== undefined &&
           definition.unit !== undefined &&
-          (!quantity.success || (quantity.data.code ?? quantity.data.unit) !== definition.unit)
+          (!quantity.success || normalizeExactUnit(definition, quantity.data.code ?? quantity.data.unit) !== definition.unit)
         )
           throw new InvestigationGenerationError('INVESTIGATION_TRUTH_INCOMPATIBLE', '功能检查精确真值单位不相容')
         return {
