@@ -373,12 +373,18 @@ export class InpatientOrders {
       if (order.duration === 'temporary' && this.owner.database.driver.prepare('SELECT 1 FROM inpatient_execution WHERE workspace_id=? AND epoch=? AND order_id=?').get(context.workspaceId, context.epoch, order.order_id)) throw new InpatientError('INPATIENT_ORDER_CONFLICT', '临时PRN医嘱只能形成一次执行任务')
       if(this.owner.database.driver.prepare('SELECT 1 FROM inpatient_execution WHERE workspace_id=? AND epoch=? AND order_id=? AND julianday(scheduled_for)=julianday(?)').get(context.workspaceId,context.epoch,order.order_id,now)) throw new InpatientError('INPATIENT_ORDER_CONFLICT','该虚拟时点已有PRN执行任务')
       if (order.kind === 'medication') {
-        const config = medicationConfigSchema.parse(JSON.parse(z.object({ config_json: z.string() }).parse(this.owner.database.driver.prepare(
-          'SELECT config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').get(context.workspaceId, context.epoch, order.catalog_item_id)).config_json))
-        const dailyTasks = z.object({ count: z.number() }).parse(this.owner.database.driver.prepare(`SELECT COUNT(*) count FROM inpatient_execution
-          WHERE workspace_id=? AND epoch=? AND order_id=? AND date(scheduled_for,'+8 hours')=date(?,'+8 hours') AND status<>'cancelled'`)
-          .get(context.workspaceId, context.epoch, order.order_id, now)).count
-        if (config.safety && (dailyTasks >= 4 || (dailyTasks + 1) * order.dose_quantity > config.safety.maximumDailyQuantity))
+        const catalogRow = z.object({ code: z.string(), config_json: z.string() }).parse(this.owner.database.driver.prepare(
+          'SELECT code,config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').get(context.workspaceId, context.epoch, order.catalog_item_id))
+        const config = medicationConfigSchema.parse(JSON.parse(catalogRow.config_json))
+        const dailyUsage = z.object({ prn_tasks: z.number(), daily_quantity: z.number() }).parse(this.owner.database.driver.prepare(`SELECT
+          COALESCE(SUM(CASE WHEN o.frequency_code='PRN' THEN 1 ELSE 0 END),0) prn_tasks,
+          COALESCE(SUM(o.dose_quantity),0) daily_quantity
+          FROM inpatient_execution e
+          JOIN inpatient_order o ON o.workspace_id=e.workspace_id AND o.epoch=e.epoch AND o.order_id=e.order_id
+          JOIN outpatient_catalog c ON c.workspace_id=o.workspace_id AND c.epoch=o.epoch AND c.item_id=o.catalog_item_id
+          WHERE e.workspace_id=? AND e.epoch=? AND o.admission_id=? AND o.kind='medication' AND c.code=? AND date(e.scheduled_for,'+8 hours')=date(?,'+8 hours') AND e.status<>'cancelled'`)
+          .get(context.workspaceId, context.epoch, order.admission_id, catalogRow.code, now))
+        if (config.safety && (dailyUsage.prn_tasks >= 4 || dailyUsage.daily_quantity + order.dose_quantity > config.safety.maximumDailyQuantity))
           throw new InpatientError('CATALOG_CONFLICT', 'PRN 当日任务已达每日极量或四次上限', 409, 'MEDICATION_DOSAGE_NOT_ALLOWED')
       }
       const effects: Effects = []
