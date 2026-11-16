@@ -41,6 +41,7 @@ export function useDocumentQualityControl({ detail, document, scope, initialStat
     detail.consultationRecording?.additions.filter(addition => addition.status === 'applied' && addition.ownership === 'automatic'),
     detail.allergies, detail.presentation, detail.triage, detail.diagnosis?.confirmation, detail.priorFacts,
     detail.laboratoryRequests?.requests.map(request => [request.report, request.previousReports]),
+    detail.examinationRequests?.requests.map(request => [request.report, request.previousReports]),
     detail.imagingRequests?.requests.map(request => [request.report, request.previousReports]),
     detail.pathologyRequests?.requests.map(request => [request.report, request.previousReports]),
   ])

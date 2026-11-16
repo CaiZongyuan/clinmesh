@@ -1,5 +1,7 @@
 # DSH 集成排障
 
+- DSH 客户端超过体积预算时，以实际产物字节数、Tool descriptor 提取校验和 React 18/19 lazy-CJS 浏览器合同判断压缩是否有效。仅在编译器配置中添加选项或看到零退出码，不能证明所用 API 实施了该优化；保留 wrapper 及宿主 require，不修改上游 builder 或绕过 5 MB 门禁。当前方案见[语法压缩决策](../decisions/implemented/testing/2026-11-13-dsh-client-syntax-compaction.md)。
+
 - DSH 的浏览器 fixture 同时接受 Bun ambient types 检查；直接把异步函数赋给 `globalThis.fetch` 会丢失类型要求的 `preconnect` 静态属性。沿用原 fetch 属性构造测试替身，并单独检查自定义 runtime 可选字段的 `exactOptionalPropertyTypes`，不要用断言或放宽 tsconfig 掩盖平台类型差异。
 
 应用 CSS 应从各平台样式入口加载：Web 的 `main.tsx`，DSH 的 `styles-entry.ts`。Surface builder 按调用 cwd 确定仓库根，组件跨包直接导入 CSS 可能触发依赖边界错误；核对实际构建入口和查询标记，不通过放宽 builder 边界或改宿主源码解决。真实 WebApp 的浏览器 fixture 使用独立 UTF-8 JavaScript 路由，避免把完整构建正文内嵌 HTML 时被转义或替换语义破坏。

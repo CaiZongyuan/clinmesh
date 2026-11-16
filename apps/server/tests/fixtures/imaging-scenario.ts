@@ -379,7 +379,7 @@ export async function startOutpatientVisit(runtime: Runtime, administrator: stri
 }
 
 /** 从开始就诊走到医生接诊：分诊、医生开始首诊。返回医生会话与本院就诊标识。 */
-export async function startConsultation(runtime: Runtime, administrator: string, caseId: string) {
+export async function startConsultation(runtime: Runtime, administrator: string, caseId: string, options: { pulseBpm?: number } = {}) {
   const visit = await startOutpatientVisit(runtime, administrator, caseId)
   const triageNurse = await signIn(runtime, 'triage@demo.clinmesh.local')
   const triageResponse = await runtime.app.request(
@@ -391,7 +391,7 @@ export async function startConsultation(runtime: Runtime, administrator: string,
         bloodPressure: { diastolicMmHg: 80, systolicMmHg: 122 },
         chiefComplaint: persona.chiefComplaint,
         oxygenSaturationPct: 98,
-        pulseBpm: 86,
+        pulseBpm: options.pulseBpm ?? 86,
         respirationBpm: 18,
         temperatureC: 36.7,
       },

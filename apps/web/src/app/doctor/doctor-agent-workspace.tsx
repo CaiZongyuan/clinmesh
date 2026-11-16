@@ -103,6 +103,7 @@ export function doctorWorkspaceAgentActions({
       parameters: {
         type: 'object' as const,
         properties: {
+          examinationRequestId: { type: 'string', maxLength: 128 },
           imagingRequestId: { type: 'string', maxLength: 128 },
           pathologyRequestId: { type: 'string', maxLength: 128 },
           section: { type: 'string', enum: doctorCaseSectionSchema.options },
@@ -111,7 +112,7 @@ export function doctorWorkspaceAgentActions({
         additionalProperties: false,
       },
       execute: (raw: unknown) => {
-        const { imagingRequestId, pathologyRequestId, section } = agentToolInputSchemas['outpatient.section.select'].parse(raw)
+        const { examinationRequestId, imagingRequestId, pathologyRequestId, section } = agentToolInputSchemas['outpatient.section.select'].parse(raw)
         if (
           imagingRequestId !== undefined
           && detail.data?.imagingRequests?.requests.find(item => item.id === imagingRequestId)?.report === undefined
@@ -120,11 +121,13 @@ export function doctorWorkspaceAgentActions({
           pathologyRequestId !== undefined
           && detail.data?.pathologyRequests?.requests.find(item => item.id === pathologyRequestId)?.report === undefined
         ) throw new Error('The pathology consultation has no report to open')
+        if (examinationRequestId !== undefined && detail.data?.examinationRequests?.requests.find(item => item.id === examinationRequestId)?.report === undefined) throw new Error('The functional examination has no report to open')
         const tab = caseDetailRoot.current?.querySelector(`#${doctorCaseSectionTabElementIds[section]}`)
         if (!(tab instanceof HTMLButtonElement)) {
           throw new Error('Doctor case section is not available')
         }
         tab.click()
+        if (examinationRequestId !== undefined) selectInvestigation('examination', examinationRequestId)
         if (imagingRequestId !== undefined) {
           selectInvestigation('imaging', imagingRequestId)
           imagingView.setOpen(imagingRequestId, true)
@@ -134,6 +137,7 @@ export function doctorWorkspaceAgentActions({
           imagingView.setOpen(pathologyRequestId, true)
         }
         return {
+          ...(examinationRequestId === undefined ? {} : { examinationRequestId }),
           ...(imagingRequestId === undefined ? {} : { imagesOpened: pathologyRequestId === undefined, imagingRequestId }),
           ...(pathologyRequestId === undefined ? {} : { pathologyRequestId, slideOpened: true }),
           ...(imagingRequestId !== undefined && pathologyRequestId !== undefined ? { category: 'pathology' } : {}),

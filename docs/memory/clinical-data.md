@@ -6,6 +6,8 @@
 
 ## SQLite、迁移与持久回执
 
+- 本院分诊生命体征保存在组合 Observation 的 `component` 中；只扫描顶层 code/value 会漏掉正式异常脉搏。检查正常基线的门禁须同时覆盖来源单值、可见历史和正式组合指标，以公开分诊输入验证实际物化形态，见[功能检查合同](../architecture/clinical-workflows.md#无像素功能检查)与 `apps/server/tests/examination-lifecycle.test.ts`。
+
 - 推荐证据的字节预算回归要准备真实规模的集合：两周住院的多份复查报告会使整个 `reports` 数组超限，即使每份报告都很短。保留完整成员、来源标识和顺序后分包，并核对全部临床事实可重建、每包字节数及总输入预算；只验证空摘要或单份报告无法捕获整次历史被丢弃的问题。当前边界见[推荐证据打包](../architecture/clinical-workflows.md#门诊闭环)，回归见 `apps/server/tests/doctor-recommendation-evidence.test.ts`。
 
 - 投影住院手术历史时，`inpatient_surgery_execution.actual_procedure_json` 是本院目录快照，其 `coding` 是单个 Coding；FHIR `CodeableConcept.coding` 才是数组。用 owning `inpatientProcedureItemSchema` 校验持久快照后挑选临床字段，避免仅用空住院 fixture 通过而真实 PCI 摘要报 `INVALID_INPUT`；端到端回归见 `apps/server/tests/outpatient-post-discharge-http.test.ts`。

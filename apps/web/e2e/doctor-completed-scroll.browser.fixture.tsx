@@ -24,7 +24,7 @@ export async function runCompletedCaseScrollFixture(appRoot: Root, root: HTMLEle
   } satisfies DoctorCompletedCaseList)
   queryClient.setQueryData(['doctor-completed-case', ...scope, 'completed'], {
     caseId: 'completed', completedAt: '2026-10-06T09:00:00+08:00',
-    clinicalDocuments: [], laboratoryRequests: [], imagingRequests: [], pathologyRequests: [],
+    clinicalDocuments: [], laboratoryRequests: [], imagingRequests: [], pathologyRequests: [], examinationRequests: [],
     encounter: { id: 'completed-encounter', status: 'completed', versionId: '1' }, patient: patient,
     timeline: Array.from({ length: 30 }, (_, index) => ({ kind: 'encounter-completed',
       occurredAt: '2026-10-06T09:00:00+08:00', reference: `Encounter/completed-${index}`, relatedReferences: [] })),

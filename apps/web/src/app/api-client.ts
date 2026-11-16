@@ -15,6 +15,13 @@ import { clearSurgeryDrafts } from './inpatient-surgery-draft.ts'
 import { clearReservationDrafts } from './inpatient-reservation-batch.ts'
 import { clearCorrectionDrafts } from './inpatient-correction-batch.ts'
 import {
+  acknowledgeExaminationReportResponseSchema,
+  caseExaminationServiceCatalogSchema,
+  examinationRequestActionResponseSchema,
+  examinationRequestDraftResponseSchema,
+  issueExaminationRequestResponseSchema,
+  type ExaminationRequest,
+  type ExaminationReport,
   acknowledgeImagingReportResponseSchema,
   caseImagingServiceCatalogSchema,
   correctImagingReportResponseSchema,
@@ -728,6 +735,108 @@ export function getImagingStudy(studyId: string, signal?: AbortSignal) {
 
 export function getImagingStudyBlock(studyId: string, blockPath: string, signal?: AbortSignal) {
   return apiGetBinary(`/api/his/v1/imaging-studies/${encodeURIComponent(studyId)}/${blockPath}`, signal)
+}
+
+export function getCaseExaminationServices(caseId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/examination-services`,
+    caseExaminationServiceCatalogSchema,
+    signal,
+  )
+}
+
+export function saveExaminationRequestDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+  indication: string
+  serviceId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/examination-request/draft`,
+    examinationRequestDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {
+        expectedDraftVersion: input.expectedDraftVersion,
+        indication: input.indication,
+        serviceId: input.serviceId,
+      },
+    },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function deleteExaminationRequestDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/examination-request/draft`,
+    examinationRequestDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey, method: 'DELETE' },
+  )
+}
+
+export function issueExaminationRequest(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/examination-request/actions/issue`,
+    issueExaminationRequestResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+/** 取消与重试都按申请当前的 ServiceRequest、Task 与申请版本提交。 */
+export function cancelExaminationRequest(request: ExaminationRequest, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/examination-requests/${encodeURIComponent(request.id)}/actions/cancel`,
+    examinationRequestActionResponseSchema,
+    {
+      expectedVersions: {
+        [`ServiceRequest/${request.serviceRequestId}`]: request.serviceRequestVersion,
+        [`Task/${request.taskId}`]: request.taskVersion,
+      },
+      input: { expectedRequestVersion: request.version, reasonCode: 'no-longer-needed' },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function retryExaminationRequest(request: ExaminationRequest, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/examination-requests/${encodeURIComponent(request.id)}/actions/retry`,
+    examinationRequestActionResponseSchema,
+    {
+      expectedVersions: { [`Task/${request.taskId}`]: request.taskVersion },
+      input: { expectedRequestVersion: request.version },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function acknowledgeExaminationReport(request: ExaminationRequest, report: ExaminationReport, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/examination-requests/${encodeURIComponent(request.id)}/reports/${encodeURIComponent(report.diagnosticReportId)}/actions/acknowledge`,
+    acknowledgeExaminationReportResponseSchema,
+    {
+      expectedVersions: { [`DiagnosticReport/${report.diagnosticReportId}`]: report.diagnosticReportVersion },
+      input: { expectedRequestVersion: request.version },
+    },
+    { idempotencyKey },
+  )
 }
 
 export function getCaseImagingServices(caseId: string, signal?: AbortSignal) {
@@ -1963,7 +2072,7 @@ export function signClinicalDocument(input: {
 }
 
 export function getBillingQueue(
-  category: 'laboratory' | 'imaging' | 'pathology' | 'medication',
+  category: 'laboratory' | 'imaging' | 'pathology' | 'examination' | 'medication',
   status: 'ambiguous' | 'declined' | 'paid' | 'pending',
   signal?: AbortSignal,
   page = 1,
@@ -1974,7 +2083,7 @@ export function getBillingQueue(
 
 export function previewPayment(input: {
   caseId: string
-  category: 'laboratory' | 'imaging' | 'pathology' | 'medication'
+  category: 'laboratory' | 'imaging' | 'pathology' | 'examination' | 'medication'
   chargeItemId: string
   chargeVersion: number
   simulatorRule: z.infer<typeof paymentSimulatorRuleSchema>

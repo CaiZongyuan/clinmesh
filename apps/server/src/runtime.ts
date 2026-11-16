@@ -66,6 +66,7 @@ import type { GuidelineDeploymentPolicy } from './application/guideline-corpus.t
 import { DshModelProvider } from './infrastructure/ai/dsh-model-provider.ts'
 import { dshDefaultModel } from '@clinmesh/contracts/model-bridge'
 import { ImagingPreparationService } from './application/imaging-preparation-service.ts'
+import { ExaminationResultResolver } from './application/examination-result-resolver.ts'
 import { ImagingStudyReader } from './application/imaging-study-reader.ts'
 import { PathologyPreparationService } from './application/pathology-preparation-service.ts'
 import {
@@ -429,6 +430,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     laboratoryServicePublisher.ensureDefaultServices()
     laboratoryServicePublisher.ensureInpatientPrices()
+    workflow.examination.ensureServices()
+    const examinationResults = new ExaminationResultResolver(database)
     workflow.imaging.ensureServices()
     workflow.pathology.ensureServices()
     const identity = new IdentityService(database, {
@@ -589,6 +592,24 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
               eventId: event.eventId,
               requestId: payload.requestId,
             })
+          }
+          return { status: 'completed' }
+        },
+        'examination.accept-request': async event => {
+          workflow.examination.accept({ context: risActorContext(event), eventId: event.eventId, requestId: laboratoryRequestPayloadSchema.parse(event.payload).requestId })
+          return { status: 'completed' }
+        },
+        'examination.start-request': async event => {
+          workflow.examination.start({ context: risActorContext(event), eventId: event.eventId, requestId: laboratoryRequestPayloadSchema.parse(event.payload).requestId })
+          return { status: 'completed' }
+        },
+        'examination.report-request': async event => {
+          const context = risActorContext(event), requestId = laboratoryRequestPayloadSchema.parse(event.payload).requestId
+          try { workflow.examination.report({ context, eventId: event.eventId, requestId, result: examinationResults.resolve(event.workspaceId,event.epoch,requestId) }) }
+          catch (error) {
+            const failure = investigationFailure(error)
+            if (!['INVESTIGATION_UNSUPPORTED','INVESTIGATION_TRUTH_INCOMPATIBLE','INVESTIGATION_OUTPUT_INVALID'].includes(failure.code) && event.attempt < 3) return { status: 'retryable-failed' }
+            workflow.examination.fail({ context, eventId: event.eventId, requestId, error: failure })
           }
           return { status: 'completed' }
         },

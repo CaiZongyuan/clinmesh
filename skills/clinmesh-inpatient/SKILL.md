@@ -446,6 +446,27 @@ clinmesh inpatient acknowledge-investigation --input @report-acknowledgement.jso
 }
 ```
 
+无像素 ECG/TTE 使用 `selection.kind=examination`、当前目录的 `serviceId` 和 `indication`，与放射使用不同申请类型。护士送检后发布文字和结构化结果，不要求素材或影像阅读器；必须通过同一 `acknowledge-investigation` 命令确认当前报告版本，出院门禁照常汇总。作者定义病例缺少完整精确真值、普通 Synthea 成人病例存在心血管阳性冲突时保留明确失败，不生成正常报告。
+
+`inpatient-examination.json` 使用相同开立命令，替换为当前住院和目录版本：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "encounterVersion": "2",
+  "catalogVersion": 1,
+  "selection": {
+    "kind": "examination",
+    "serviceId": "examination-tte",
+    "indication": "评估心脏结构及左室收缩功能"
+  }
+}
+```
+
+```bash
+clinmesh inpatient issue-investigation --input @inpatient-examination.json --idempotency-key <key>
+```
+
 检验选择为 `kind=laboratory`、`catalogItemId` 和目录允许的 `indicationCode`。医生开立后保持待送检，病区护士校对并送检才进入原 LIS/RIS 申请内核。操作文件传 `admissionId/requestId/expectedRequestVersion/serviceRequestVersion/taskVersion`；已阅另传当前 `diagnosticReportId/diagnosticReportVersion`，影像须当前可读取。检验目录定量定义含可选 `criticalMinimum`/`criticalMaximum` 危急值上下限，定量检验结果（及更正后重算结果）含独立于 `interpretation` 的可选布尔 `critical` 危急值标记。仅未送检或明确生成失败的申请可取消；已送检在途申请继续完成。来源不相容或不支持的检验不可重试，须取消。报告更正保留原报告和已阅事实，不再次收执行费。
 
 ```bash

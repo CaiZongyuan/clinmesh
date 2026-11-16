@@ -18,6 +18,31 @@ const session: SessionContext = {
 const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-1', admissionRoute: 'direct', wardId: 'ward-general', organizationId: 'organization-inpatient', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '2' })
 const items = ['白细胞计数', '血红蛋白'].map((display, index) => ({ id: `lab-${index}`, display, kind: 'laboratory', version: 1, priceFen: 100, available: true, indicationCodes: ['screening'] }))
 const clients: QueryClient[] = []
+
+it('住院功能检查分类保留两项指征并按examination类型逐项开立', async () => {
+  const functional = ['常规十二导联心电图', '经胸超声心动图'].map((display, index) => ({ id: `exam-${index}`, display, kind: 'examination', version: 1, priceFen: 3000, available: true, indicationCodes: [] }))
+  const inputs: unknown[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/investigation-catalog')) return Response.json({ items: functional })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], examinationRequests: [], sent: [] })
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.endsWith('/admissions/admission-1')) return Response.json({ admission })
+    if (path.endsWith('/investigations/issue')) {
+      inputs.push(JSON.parse(String(init?.body)).input)
+      return Response.json({ auditId: 'audit-1', requestId: 'command-1', effects: [], warnings: [], data: { admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], examinationRequests: [], sent: [] } })
+    }
+    throw new Error(`Unexpected ${path}`)
+  }))
+  const user = userEvent.setup(); mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  const dialog = within(screen.getByRole('dialog', { name: '开立住院检查' }))
+  await user.click(dialog.getByRole('button', { name: '功能检查' }))
+  for (const item of functional) await user.click(dialog.getByRole('button', { name: `选择${item.display}` }))
+  for (const input of dialog.getAllByRole('textbox', { name: '检查指征' })) await user.type(input, '合成心功能评估')
+  await user.click(dialog.getByRole('button', { name: '开立所选功能检查（2）' }))
+  await vi.waitFor(() => expect(inputs).toHaveLength(2))
+  expect(inputs).toEqual(functional.map(item => ({ encounterVersion: admission.versionId, catalogVersion: 1, selection: { kind: 'examination', serviceId: item.id, indication: '合成心功能评估' } })))
+})
 function mount(current = admission, currentSession = session) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
