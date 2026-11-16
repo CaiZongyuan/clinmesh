@@ -6556,7 +6556,7 @@ describe('role workspaces', () => {
     await user.click(medicationSelect)
     await user.click(await screen.findByRole('option', { name: '磷酸奥司他韦胶囊' }))
     expect(screen.getByRole('combobox', { name: '剂量' }).textContent).toContain('75 mg')
-    expect(screen.getByRole('combobox', { name: '频次' }).textContent).toContain('BID')
+    expect(screen.getByRole('combobox', { name: '频次' }).textContent).toContain('每日两次')
 
     await user.type(await screen.findByLabelText('诊断编码'), 'J10.1')
     await user.type(screen.getByLabelText('诊断名称'), '甲型流感')

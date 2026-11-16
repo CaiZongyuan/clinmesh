@@ -9440,9 +9440,9 @@ describe('outpatient workflow HTTP contract', () => {
     expect(catalog.medications).toEqual(expect.arrayContaining([
       expect.objectContaining({
         allowedCourseDays: expect.arrayContaining([5]),
-        allowedQuantities: expect.arrayContaining([1]),
-        defaultCourseDays: 1,
-        defaultQuantity: 1,
+        allowedQuantities: expect.arrayContaining([1, 10]),
+        defaultCourseDays: 5,
+        defaultQuantity: 10,
         id: 'medication-oseltamivir',
       }),
     ]))
