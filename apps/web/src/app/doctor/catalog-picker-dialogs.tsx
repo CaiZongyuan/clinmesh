@@ -873,7 +873,7 @@ export function MedicationComposerDialog({
       || (selectedMedication !== undefined && !selectedMedication.allowedCourseDays.includes(courseResult.data))) invalidFields.add('courseDays')
     const quantityResult = prescriptionDraftItemSchema.shape.quantity.safeParse(quantity)
     if (!quantityResult.success
-      || (selectedMedication !== undefined && !medicationQuantityAllowed(selectedMedication, quantityResult.data, courseDays ?? 1))) invalidFields.add('quantity')
+      || (selectedMedication !== undefined && !medicationQuantityAllowed(selectedMedication, quantityResult.data, courseDays ?? 1, frequencyCode))) invalidFields.add('quantity')
   }
   const fieldsValid = selected !== undefined && !composer.failed && invalidFields.size === 0 && !(atCapacity && target === undefined)
   const invalidLabels = [...invalidFields].map(field => ({ doseText: messages.dose, frequencyCode: messages.frequency, courseDays: messages.course, quantity: messages.quantity })[field]).join(locale === 'zh-CN' ? '、' : ', ')
@@ -930,7 +930,7 @@ export function MedicationComposerDialog({
                 </Field>
                 <Field data-invalid={invalidFields.has('quantity')}>
                   <FieldLabel htmlFor="medication-composer-quantity">{messages.quantity}</FieldLabel>
-                  {selectedMedication === undefined ? <Input aria-invalid={invalidFields.has('quantity')} id="medication-composer-quantity" max={1_000} min={1} onChange={event => setQuantity(event.currentTarget.value === '' ? null : Number(event.currentTarget.value))} step={1} type="number" value={quantity ?? ''} />
+                  {selectedMedication === undefined || selectedMedication.safety ? <Input aria-invalid={invalidFields.has('quantity')} id="medication-composer-quantity" max={1_000} min={1} onChange={event => setQuantity(event.currentTarget.value === '' ? null : Number(event.currentTarget.value))} step={1} type="number" value={quantity ?? ''} />
                     : <WorkspaceSelect id="medication-composer-quantity" items={selectedMedication.allowedQuantities.map(value => ({ label: String(value), value: String(value) }))}
                       onValueChange={value => { if (value !== null) { if (Number(value) !== quantity) markEdited('medication-composer-quantity'); setQuantity(Number(value)) } }}
                       placeholder={messages.choose} value={quantity === null ? null : String(quantity)} />}

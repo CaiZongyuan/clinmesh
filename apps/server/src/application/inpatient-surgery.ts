@@ -22,8 +22,9 @@ export class InpatientSurgery {
       'SELECT kind,snapshot_json FROM inpatient_surgery_catalog WHERE workspace_id=? AND epoch=? ORDER BY item_id').all(context.workspaceId, context.epoch))
     const key = rows.map(row => `${row.kind}:${row.snapshot_json}`).join('\n')
     if (this.#catalogCache?.key !== key) {
-      this.#catalogCache = { key, value: inpatientSurgeryCatalogSchema.parse({ procedures: rows.filter(row => row.kind === 'procedure').map(row => JSON.parse(row.snapshot_json)),
-        materials: rows.filter(row => row.kind === 'material').map(row => readMaterialSnapshot(JSON.parse(row.snapshot_json))) }) }
+      const parsed = inpatientSurgeryCatalogSchema.parse({ procedures: rows.filter(row => row.kind === 'procedure').map(row => JSON.parse(row.snapshot_json)),
+        materials: rows.filter(row => row.kind === 'material').map(row => readMaterialSnapshot(JSON.parse(row.snapshot_json))) })
+      this.#catalogCache = { key, value: Object.freeze({ procedures: [...parsed.procedures], materials: [...parsed.materials] }) }
     }
     return this.#catalogCache.value
   }

@@ -2097,7 +2097,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       const config = prescriptionMedicationCatalogConfigSchema.parse(rawConfig)
       if (
         !config.allowedCourseDays.includes(medication.courseDays)
-        || !medicationQuantityAllowed(config, medication.quantity, medication.courseDays)
+        || !medicationQuantityAllowed(config, medication.quantity, medication.courseDays, medication.frequencyCode)
       ) {
         throw new WorkflowError(
           'CATALOG_CONFLICT',
