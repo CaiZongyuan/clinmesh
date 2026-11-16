@@ -20,7 +20,7 @@ export async function runPciSelectionJourney(page: Page, app: { origin: string; 
   await show()
   const region = page.getByRole('region', { name: '选型参数', exact: true })
   const actions = page.getByRole('region', { name: '当前操作', exact: true })
-  await expect(region).toContainText('报告没写的测量可以留空')
+  await expect(region).not.toContainText('报告没写的测量可以留空')
   await expect(region.getByLabel('靶病变部位', { exact: true })).toHaveValue('')
   await expect(region.getByLabel('病变长度 (mm)', { exact: true })).toHaveValue('')
   await region.getByLabel('治疗方向与术式', { exact: true }).fill('医生确认的合成单病变择期PCI')

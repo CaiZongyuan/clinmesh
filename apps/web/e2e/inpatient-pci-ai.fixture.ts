@@ -10,6 +10,7 @@ import { inpatientDetailSchema, inpatientCommandResponseSchema } from '@clinmesh
 import { inpatientFullClinicalResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientPciDataResponseSchema, pciCaseSourceResponseSchema, startSyntheticInpatientCaseResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { inpatientMaterialEstimateCandidateSchema } from '@clinmesh/contracts/inpatient-material-estimate'
+import { pciSelectionCandidateSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientCostsSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture, parsePciResponse, type PciPaymentDrgFixture } from '../../server/tests/fixtures/pci-payment-drg.ts'
 import { OpenAIChatCompletionsClient } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
@@ -35,10 +36,14 @@ export function pciAiGuidelineDocuments(): GuidelineDocument[] {
 }
 const issueSchema = z.object({ key: z.string(), evidence: z.array(z.string()) })
 const payloadSchema = z.object({
+  kind: z.enum(['surgery-request-reason', 'intraoperative-review']).optional(),
+  deviation: z.object({ reasons: z.array(z.string()) }).optional(),
+  selection: z.object({ candidates: z.array(pciSelectionCandidateSchema) }).optional(),
   guidelines: z.array(z.object({ id: z.string(), text: z.string() })).optional(), missing: z.array(z.string()).optional(),
   estimate: z.object({ request: z.object({ id: z.string(), plannedProcedure: z.object({ coding: z.object({ code: z.string() }) }) }), candidates: z.array(inpatientMaterialEstimateCandidateSchema) }).optional(),
   remaining: z.array(z.object({ materialId: z.string(), quantity: z.number() })).optional(),
   costs: inpatientCostsSchema.optional(),
+  review: z.object({ issues: z.array(issueSchema) }).optional(),
   recordChecks: z.object({ issues: z.array(issueSchema), costs: inpatientCostsSchema.nullable() }).optional(),
 })
 
@@ -46,7 +51,7 @@ export async function createPciAiBrowserApp(webRoot?: string, options: { guideli
   const prepared = await preparePciPaymentDrgFixture()
   const writer = new GuidelineCorpus({ databasePath: join(prepared.directory, 'guidelines.sqlite') })
   writer.importDocuments(options.guidelines ?? pciAiGuidelineDocuments())
-  const calls: Array<{ kind: 'guideline' | 'material' | 'explanation'; phase: 'angiography' | 'pci' | 'record-explanation'; feature: string }> = []
+  const calls: Array<{ kind: 'guideline' | 'material' | 'explanation' | 'request-reason' | 'intraoperative'; phase: 'angiography' | 'pci' | 'record-explanation' | 'request-reason' | 'intraoperative'; feature: string }> = []
   prepared.options.guidelineDatabasePath = join(prepared.directory, 'guidelines.sqlite')
   prepared.options.consultationModel = 'synthetic-pci-ai-browser'
   prepared.options.autoDispatchIntervalMs = 250
@@ -57,11 +62,12 @@ export async function createPciAiBrowserApp(webRoot?: string, options: { guideli
       if (!['inpatient_drg_recommendation', 'inpatient_drg_verification'].includes(feature)) throw new Error(`Uncontrolled feature ${feature}`)
       const payload = payloadSchema.parse(JSON.parse(body.messages.find(message => message.role === 'user')!.content))
       const generation = feature === 'inpatient_drg_recommendation'
-      const kind = payload.guidelines ? 'guideline' : payload.recordChecks ? 'explanation' : 'material'
-      calls.push({ kind, phase: kind === 'explanation' ? 'record-explanation' : payload.estimate?.request.plannedProcedure.coding.code.startsWith('88.') ? 'angiography' : 'pci', feature })
+      const kind = payload.kind === 'surgery-request-reason' ? 'request-reason' : payload.deviation ? 'intraoperative' : payload.guidelines ? 'guideline' : payload.recordChecks ? 'explanation' : 'material'
+      calls.push({ kind, phase: kind === 'request-reason' ? 'request-reason' : kind === 'intraoperative' ? 'intraoperative' : kind === 'explanation' ? 'record-explanation' : payload.estimate?.request.plannedProcedure.coding.code.startsWith('88.') ? 'angiography' : 'pci', feature })
       if (kind === 'guideline' && generation && options.unknownGuideline) throw new Error('Synthetic guideline response lost after dispatch')
       let result: unknown
-      if (payload.guidelines) {
+      if (kind === 'request-reason') result = { reason: '已确认冠状动脉粥样硬化性心脏病，冠脉造影提示前降支病变，拟进一步介入治疗。' }
+      else if (payload.guidelines) {
         const texts = ['对接受PCI的患者，DES相对BMS的类别推荐用于预防再狭窄、心肌梗死或急性支架血栓，仍须核对本次患者的适用条件。', '对冠脉支架置入患者，IVUS可以用于操作指导，尤其左主干或复杂支架置入；OCT是合理的替代方式，但须保留左主干开口病变例外，并非所有PCI必须检查。', '选定参考段后，应核对近远端参考段、管腔、EEM和斑块。IVUS测长可用电动回撤或纵向成像；手动回撤缺少电动回撤系统时不能据此测长。']
         result = { conclusions: ['stent-category', 'imaging-guidance', 'measurement-requirements'].map((kind, index) => generation
           ? { kind, applicability: 'conditional', text: texts[index]!, citations: pciAiQuotes[index]!.map(quote => ({ evidenceId: payload.guidelines![index]!.id, quote })) }
@@ -69,12 +75,13 @@ export async function createPciAiBrowserApp(webRoot?: string, options: { guideli
       } else {
         const costs = payload.recordChecks?.costs ?? payload.costs
         const costExplanation = costs ? `预计住院总费用为${(costs.components.projectedTotalFen / 100).toFixed(2)}元；费用位置不改变必要治疗与耗材选择。` : null
-        if (payload.recordChecks) result = generation ? { costExplanation, observations: payload.recordChecks.issues.map(issue => ({ key: issue.key, explanation: '请回到原记录核实，本说明不改变诊断、主操作或费用。', evidenceIds: issue.evidence })) }
+        if (payload.deviation) result = generation ? { explanation: '本笔超出已确认计划，登记依据为分支保护，其余计划用量仍按已确认清单核对。', costExplanation } : { supported: true, costExplanationSupported: true }
+        else if (payload.recordChecks) result = generation ? { costExplanation, observations: payload.recordChecks.issues.map(issue => ({ key: issue.key, explanation: '请回到原记录核实，本说明不改变诊断、主操作或费用。', evidenceIds: issue.evidence })) }
           : { costExplanationSupported: true, observations: payload.recordChecks.issues.map(issue => ({ key: issue.key, supported: true, reason: '已核对当前正式来源' })) }
         else {
-          const candidates = (payload.estimate?.candidates ?? []).filter(item => item.eligibility === 'valid' && item.expectedQuantity !== null)
-          result = generation ? { costExplanation, items: candidates.map(item => ({ materialId: item.materialId, catalogVersion: item.catalogVersion, quantity: payload.remaining?.find(value => value.materialId === item.materialId)?.quantity ?? item.expectedQuantity!, reason: '已按当前合成适用范围和独立数量依据准备，等待医生统一审阅。', evidenceIds: [item.evidence.id] })) }
-            : { costExplanationSupported: true, items: candidates.map(item => ({ materialId: item.materialId, applicable: true, compatible: true, quantitySupported: true, evidenceSupported: true, reason: '已独立核对传入候选与数量来源' })) }
+          const candidates = (payload.estimate?.candidates ?? payload.selection?.candidates.map(item => ({ ...item, catalogVersion: item.materialVersion })) ?? []).filter(item => item.eligibility === 'valid' && item.expectedQuantity !== null && (payload.remaining ? payload.remaining.find(value => value.materialId === item.materialId)?.quantity ?? 0 : item.expectedQuantity ?? 0) > 0)
+          result = generation ? { costExplanation, ...(payload.review ? { observations: payload.review.issues.map(issue => ({ key: issue.key, explanation: '已核对术前计划与实际使用，仍由医生确认处理。', evidenceIds: issue.evidence })) } : {}), items: candidates.map(item => ({ materialId: item.materialId, catalogVersion: item.catalogVersion, quantity: payload.remaining?.find(value => value.materialId === item.materialId)?.quantity ?? item.expectedQuantity!, reason: '已按当前合成适用范围和独立数量依据准备，等待医生统一审阅。', evidenceIds: [item.evidence.id] })) }
+            : { costExplanationSupported: true, ...(payload.review ? { observations: payload.review.issues.map(issue => ({ key: issue.key, supported: true, reason: '已独立核对计划与实际来源' })) } : {}), items: candidates.map(item => ({ materialId: item.materialId, applicable: true, compatible: true, quantitySupported: true, evidenceSupported: true, reason: '已独立核对传入候选与数量来源' })) }
         }
       }
       return Response.json({ id: `synthetic-pci-ai-${calls.length}`, model: 'synthetic-pci-ai-browser', choices: [{ message: { content: JSON.stringify(result) } }], usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 } })

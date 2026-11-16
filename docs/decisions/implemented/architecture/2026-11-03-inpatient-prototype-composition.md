@@ -2,6 +2,8 @@
 
 Status: implemented
 
+术前指引、头部费用进度、偏离登记的助手触发及完成核实界面的局部演进见[手术流程减负决策](2026-11-13-surgery-flow-assistance.md)；本页未被该决策调整的业务与恢复边界继续有效。
+
 > 本决策在[住院阶段工作台](2026-10-21-inpatient-stage-workspace.md)的按需挂载与滚动边界上演进；住院医生步骤内嵌 AI 与报告阅片详情交互进一步由[住院医生步骤融合与壳层对齐](../feature/2026-11-05-inpatient-ai-step-fusion-and-ui-shell-alignment.md)及[住院报告阅读与详情弹窗](../feature/2026-11-09-inpatient-report-reading-and-detail-dialogs.md)细化。
 
 ## Problem

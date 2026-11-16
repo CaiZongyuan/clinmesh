@@ -1667,6 +1667,18 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.get('/api/his/v1/inpatient/admissions/:admissionId/surgeries', async context => {
       try { return context.json(inpatient.surgery.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/surgeries/request-reason', async context => {
+      try { return context.json(inpatient.surgeryRequestReasons.read(await actor(context), context.req.param('admissionId'))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/request-reason', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        z.object({ input: z.object({}).strict() }).strict().parse(await context.req.json())
+        return context.json(inpatient.surgeryRequestReasons.request(await actor(context), { admissionId: context.req.param('admissionId') },
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/request', async context => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)

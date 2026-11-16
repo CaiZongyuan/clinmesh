@@ -74,7 +74,7 @@ it('未安装候选不能推荐；安装后已确认的合成参数产生可核�
   const admin = await s.login('admin')
   expect((await s.request(admin, '/api/his/v1/inpatient/pci-data/prepare', { expectedEpoch: 'epoch-1' })).status).toBe(200)
   const installed = inpatientPciSelectionSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection`)).json())
-  expect(installed.evidencePackage).toMatchObject({ id: 'clinmesh-pci-selection-evidence', version: '2026-11-02.r1', synthetic: true })
+  expect(installed.evidencePackage).toMatchObject({ id: 'clinmesh-pci-selection-evidence', version: '2026-11-13.r1', synthetic: true })
   expect(installed.candidates.map(candidate => [candidate.eligibility, candidate.expectedQuantity])).toEqual([
     ['valid', 1], ['valid', 1], ['valid', 1], ['valid', 1],
   ])
@@ -170,7 +170,7 @@ it('独立反对照覆盖仿真边界、未认可、缺单位与目录版本漂�
   const boundary = { ...parameters, measurements: parameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 16 } : item) }
   const valid = inpatientPciSelectionResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection/confirm`, { expectedVersion: negative.length, parameters: boundary })).json())
   expect(valid.data.candidates.every(item => item.eligibility === 'valid')).toBe(true)
-  s.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET version=2,snapshot_json=json_set(snapshot_json,'$.version',2) WHERE item_id='hospital-material-pci-stent'").run()
+  s.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET version=2,snapshot_json=json_set(snapshot_json,'$.version',2) WHERE item_id IN ('hospital-material-pci-stent','hospital-material-pci-stent-equivalent-b')").run()
   const drift = inpatientPciSelectionSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection`)).json())
   expect(drift.candidates.find(item => item.category === 'stent')).toMatchObject({ eligibility: 'unavailable', item: null })
   expect(drift.candidates.filter(item => item.category !== 'stent').every(item => item.eligibility === 'incomplete')).toBe(true)
@@ -209,4 +209,22 @@ it('参数关联只接受本次有效PCI计划，其他术式不能混作PCI依�
   const accepted = await s.request(s.doctor, `${s.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: { ...parameters, requestId } })
   expect(accepted.status).toBe(200)
   expect(inpatientPciSelectionResponseSchema.parse(await accepted.json()).data.confirmation?.parameters.requestId).toBe(requestId)
+})
+
+it('等效候选单独提供，不增加默认支架数量；确认替代品后当前清单切换且可以换回', async () => {
+  const s = await setup(), admin = await s.login('admin')
+  expect((await s.request(admin, '/api/his/v1/inpatient/pci-data/prepare', { expectedEpoch: 'epoch-1' })).status).toBe(200)
+  expect((await s.request(s.doctor, `${s.path}/pci-selection/confirm`, { expectedVersion: 0, parameters })).status).toBe(200)
+  const initial = inpatientPciSelectionSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection`)).json())
+  expect(initial.candidates).toHaveLength(4)
+  expect(initial.alternatives).toEqual([expect.objectContaining({ materialId: 'hospital-material-pci-stent-equivalent-b', category: 'stent', eligibility: 'valid',
+    item: expect.objectContaining({ chargeDefinition: expect.objectContaining({ priceFen: 53000, unit: '枚' }) }) })])
+  expect((await s.request(s.doctor, `${s.path}/pci-selection/confirm`, { expectedVersion: 1, parameters: { ...parameters,
+    approvedMaterialIds: parameters.approvedMaterialIds.map(id => id === 'hospital-material-pci-stent' ? 'hospital-material-pci-stent-equivalent-b' : id) } })).status).toBe(200)
+  const changed = inpatientPciSelectionSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection`)).json())
+  expect(changed.candidates.map(item => item.materialId)).toEqual(['hospital-material-pci-guidewire', 'hospital-material-pci-guiding-catheter', 'hospital-material-pci-balloon', 'hospital-material-pci-stent-equivalent-b'])
+  expect(changed.alternatives.map(item => item.materialId)).toEqual(['hospital-material-pci-stent'])
+  expect((await s.request(s.doctor, `${s.path}/pci-selection/confirm`, { expectedVersion: 2, parameters })).status).toBe(200)
+  const restored = inpatientPciSelectionSchema.parse(await (await s.request(s.doctor, `${s.path}/pci-selection`)).json())
+  expect(restored.candidates.map(item => item.materialId)).toEqual(initial.candidates.map(item => item.materialId))
 })

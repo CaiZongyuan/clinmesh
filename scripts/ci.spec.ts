@@ -96,10 +96,10 @@ describe('CI stage execution contracts', () => {
     ])
     expect(ciCommands(plan, 'unit', '1/2')).toEqual([['test:packages', '--', '--shard=1/2'], ['test:scripts', '--shard=1/2']])
     expect(ciCommands(plan, 'browser', '2/2')).toEqual([
-      ['exec', 'playwright', 'install', '--with-deps', 'chromium'], ['test:browser', '--shard=2/2'],
+      ['exec', 'playwright', 'install', '--with-deps', 'chromium'], ['test:browser', '--shard=2/2', '--grep-invert=@surgery-flow'],
     ])
     expect(ciCommands(plan, 'e2e')).toEqual([
-      ['exec', 'playwright', 'install', '--with-deps', 'chromium'], ['test:e2e'],
+      ['exec', 'playwright', 'install', '--with-deps', 'chromium'], ['test:e2e', '--grep-invert=@surgery-flow'], ['test:e2e', '--grep=@surgery-flow'],
     ])
   })
 
@@ -108,8 +108,10 @@ describe('CI stage execution contracts', () => {
     const commands = ciCommands(plan, 'unit', '2/2')
     expect(commands).toEqual([['-r', '--filter', '@clinmesh/ui', '--filter', '@clinmesh/views',
       '--filter', '@clinmesh/web', '--filter', '@clinmesh/dsh-web', '--filter', '@clinmesh/desktop', 'test', '--shard=2/2']])
-    expect(ciCommands(plan, 'browser', '1/2').at(-1)).toEqual(['test:browser', '--shard=1/2'])
-    expect(ciCommands(plan, 'e2e').at(-1)).toEqual(['test:e2e'])
+    expect(ciCommands(plan, 'browser', '1/2').slice(-2)).toEqual([
+      ['test:browser', '--shard=1/2', '--grep-invert=@surgery-flow'], ['test:browser', '--grep=@surgery-flow'],
+    ])
+    expect(ciCommands(plan, 'e2e').slice(-2)).toEqual([['test:e2e', '--grep-invert=@surgery-flow'], ['test:e2e', '--grep=@surgery-flow']])
     expect(ciCommands(plan, 'checks')).not.toContainEqual(['check:mobile'])
   })
 

@@ -21,7 +21,7 @@ test('医生在真实住院页面只认可两项候选，生成并确认对应�
   await stepTwo.getByRole('spinbutton', { name: /预计数量：.*球囊/ }).fill('0')
   await stepTwo.getByRole('spinbutton', { name: /预计数量：.*支架/ }).fill('0')
   await stepTwo.getByLabel('耗材清单说明', { exact: true }).fill('仅确认本次已认可的导丝和导管')
-  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true }).click()
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认手术耗材', exact: true }).click()
   await expect(stepTwo).toContainText('已为本计划预留')
   const reserved = await s.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
   expect(reserved.reservations.filter(item => item.status === 'reserved')).toHaveLength(2)

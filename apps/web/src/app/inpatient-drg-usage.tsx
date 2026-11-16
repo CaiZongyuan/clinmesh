@@ -33,6 +33,7 @@ function stageLabel(stage: string, locale: WorkspaceLocale) {
     'preoperative-generation': ['术前生成', 'Preoperative generation'], 'preoperative-verification': ['术前核验', 'Preoperative verification'],
     'intraoperative-generation': ['术中生成', 'Intraoperative generation'], 'intraoperative-verification': ['术中核验', 'Intraoperative verification'],
     'postoperative-generation': ['术后生成', 'Postoperative generation'], 'postoperative-verification': ['术后核验', 'Postoperative verification'],
+    'request-reason-generation': ['手术申请理由起草', 'Surgery request reason draft'],
     'record-check-generation': ['核对解释生成', 'Record explanation generation'], 'record-check-verification': ['核对解释核验', 'Record explanation verification'],
   }
   return labels[stage]?.[locale === 'zh-CN' ? 0 : 1] ?? stage
@@ -53,9 +54,11 @@ function triggerSourceLabel(id: string, locale: WorkspaceLocale) {
 
 function stagePurpose(stage: string, locale: WorkspaceLocale) {
   if (stage.startsWith('guideline-')) return locale === 'zh-CN' ? '选型参数与指南参考' : 'Selection & guideline reference'
+  if (stage.startsWith('intraoperative-')) return locale === 'zh-CN' ? '术中偏离核对' : 'Intraoperative deviation review'
   if (stage.startsWith('estimate-') || stage.startsWith('preoperative-') || stage.startsWith('intraoperative-') || stage.startsWith('postoperative-')) {
     return locale === 'zh-CN' ? '手术耗材预填' : 'Surgical material prefill'
   }
+  if (stage === 'request-reason-generation') return locale === 'zh-CN' ? '手术申请理由起草' : 'Surgery request reason draft'
   if (stage.startsWith('record-check-')) return locale === 'zh-CN' ? '分组差异说明' : 'Grouping difference explanation'
   return stageLabel(stage, locale)
 }

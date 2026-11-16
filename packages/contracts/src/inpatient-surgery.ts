@@ -99,3 +99,13 @@ export const inpatientSurgeryCompletionPreviewSchema = z.object({
   retainedReservations: z.array(inpatientMaterialReservationSchema),
   materialDeltaFen: z.number().int().safe(), procedureAmountFen: z.number().int().nonnegative().safe(), totalDeltaFen: z.number().int().safe(),
 }).strict()
+
+/** 医生 Session 内的申请理由草稿，不创建正式手术申请。 */
+export const inpatientSurgeryRequestReasonInputSchema = z.object({ admissionId: id }).strict()
+export const inpatientSurgeryRequestReasonGenerationSchema = z.object({ reason: note }).strict()
+export const inpatientSurgeryRequestReasonSchema = z.object({
+  admissionId: id, taskId: id.nullable(), fingerprint: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  status: z.enum(['unavailable', 'idle', 'queued', 'running', 'succeeded', 'stale', 'blocked', 'unknown', 'failed']),
+  reason: note.nullable(), failureCode: z.string().nullable(),
+}).strict()
+export const inpatientSurgeryRequestReasonResponseSchema = commandResponseSchema(inpatientSurgeryRequestReasonSchema)

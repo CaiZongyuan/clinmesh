@@ -3,7 +3,7 @@ import { inpatientCostsSchema } from './inpatient-drg-simulation.ts'
 import { commandResponseSchema } from './his.ts'
 import { inpatientDrgAgentAnalysisSchema, inpatientDrgAgentMaterialSchema } from './inpatient-drg-agent.ts'
 import { inpatientMaterialItemSchema } from './inpatient-surgery.ts'
-import { pciSelectionEvidenceSchema } from './inpatient-pci-selection.ts'
+import { pciSelectionEvidenceSchema, inpatientEquivalentMaterialSuggestionSchema } from './inpatient-pci-selection.ts'
 import { inpatientMaterialPlanBasisSchema } from './inpatient-material-plan.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
@@ -17,7 +17,7 @@ const items = z.array(inpatientMaterialEstimateItemInputSchema).max(20)
   .refine(values => new Set(values.map(item => item.materialId)).size === values.length, '预计耗材不得重复')
 export const inpatientMaterialEstimateCandidateSchema = z.object({
   materialId: id, catalogVersion: version, item: inpatientMaterialItemSchema.nullable(),
-  evidence: pciSelectionEvidenceSchema, quantityBasis: text,
+  evidence: pciSelectionEvidenceSchema, quantityBasis: text, selected: z.boolean().default(true), equivalenceGroupId: id.nullable().default(null),
   expectedQuantity: z.number().int().positive().max(1000).nullable(),
   eligibility: z.enum(['valid', 'incomplete', 'inapplicable', 'unavailable']), missing: z.array(text),
 }).strict()
@@ -36,6 +36,9 @@ export const inpatientMaterialEstimateSchema = z.object({
   candidateItems: z.array(inpatientDrgAgentMaterialSchema).max(20),
   planBasis: inpatientMaterialPlanBasisSchema.optional(),
   costs: inpatientCostsSchema.nullable().default(null),
+  materialDraftDeltaFen: z.number().int().safe().nullable().default(null),
+  materialDraftReservationBasis: z.array(z.tuple([id, z.number().int().positive(), z.number().int().safe().nonnegative()])).max(500).nullable().default(null),
+  equivalentSuggestions: z.array(inpatientEquivalentMaterialSuggestionSchema).max(20).default([]),
 }).strict()
 export const inpatientMaterialEstimatesSchema = z.object({
   admissionId: id, estimates: z.array(inpatientMaterialEstimateSchema),
