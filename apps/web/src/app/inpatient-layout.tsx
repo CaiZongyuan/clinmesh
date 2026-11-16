@@ -30,7 +30,7 @@ export function InpatientPatientHeader({ name, identity, status, statusVariant =
 
 export type InpatientInfoItem = { label: string; value: string; copy?: boolean }
 
-/** 姓名行放不下的字段收在这里；编号点一下复制全文。 */
+/** 姓名行放不下的字段收在这里，每行都是菜单项以便键盘和读屏逐行到达；编号点一下复制全文。 */
 export function InpatientInfoMenu({ locale, items }: { locale: WorkspaceLocale; items: readonly InpatientInfoItem[] }) {
   const zh = locale === 'zh-CN'
   const [copied, setCopied] = useState<{ label: string; ok: boolean }>()
@@ -43,7 +43,7 @@ export function InpatientInfoMenu({ locale, items }: { locale: WorkspaceLocale; 
           try { await navigator.clipboard.writeText(item.value); setCopied({ label: item.label, ok: true }) } catch { setCopied({ label: item.label, ok: false }) }
         }}><span className="text-muted-foreground">{item.label}</span><span className="font-mono" title={item.value}>{shortInpatientNumber(item.value)}</span><CopyIcon aria-hidden="true" className="size-3.5" />
           {copied?.label === item.label ? <span className="text-xs text-muted-foreground" role={copied.ok ? 'status' : 'alert'}>{copied.ok ? zh ? '已复制' : 'Copied' : zh ? '复制失败' : 'Copy failed'}</span> : null}</DropdownMenuItem>
-        : <div key={item.label}><span className="text-muted-foreground">{item.label}</span><span>{item.value}</span></div>)}
+        : <DropdownMenuItem key={item.label} closeOnClick={false}><span className="text-muted-foreground">{item.label}</span><span>{item.value}</span></DropdownMenuItem>)}
     </DropdownMenuContent>
   </DropdownMenu>
 }

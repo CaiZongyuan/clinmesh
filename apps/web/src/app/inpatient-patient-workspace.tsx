@@ -1,4 +1,3 @@
-export { formatLabReferenceRange, formatLabResultDisplay } from './inpatient-report-format.ts'
 import { inpatientFinancialSchema } from '@clinmesh/contracts/inpatient-finance'
 import { InpatientInfoMenu, InpatientPatientHeader, InpatientStageCard, InpatientTabs, type InpatientInfoItem } from './inpatient-layout.tsx'
 import { InpatientRecordDrgSummary } from './inpatient-record-drg.tsx'
@@ -355,8 +354,9 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     : admission.status === 'departed' ? (admission.financialStatus === 'settled' ? 'success' : 'warning')
     : admission.status === 'admitted' ? 'info' : 'warning'
   const showDepositInHeader = admission.recordStatus !== 'archived' && admission.status !== 'cleared' && !(admission.status === 'departed' && admission.financialStatus === 'settled') && role !== 'medical-records'
-  const followLabel = followup.error ? t('跟进状态读取失败', 'Could not load follow-up status') : followStatus ?? t('未跟进', 'Follow-up off')
-  const followControls = doctor ? <DropdownMenu>
+  const followLabel = followup.error ? t('跟进状态读取失败', 'Could not load follow-up status') : followStatus ?? (followup.isPending ? t('正在读取跟进状态', 'Loading follow-up status') : t('未跟进', 'Follow-up off'))
+  // 按钮文字就是跟进状态；另留一个仅读屏可见的区域，让状态变化和读取失败被朗读。
+  const followControls = doctor ? <><span className="sr-only" role={followup.error ? 'alert' : 'status'}>{followLabel}</span><DropdownMenu>
     <DropdownMenuTrigger render={<Button type="button" variant="outline" size="sm" aria-label={`${t('助手自动跟进', 'Assistant auto follow-up')}：${followLabel}`}
       className={cn(followOn && 'border-info/50 bg-info/10 text-info', (followTask?.status === 'authorization-lost' || followup.error) && 'border-warning/50 text-warning')} />}>
       <SparklesIcon aria-hidden="true" data-icon="inline-start" />{followLabel}<ChevronDownIcon aria-hidden="true" data-icon="inline-end" /></DropdownMenuTrigger>
@@ -366,7 +366,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
       {followup.error ? <DropdownMenuItem onClick={() => void followup.refetch()}>{t('重试跟进状态', 'Retry follow-up status')}</DropdownMenuItem> : null}
       <DropdownMenuItem onClick={() => { setUsageTarget({}); setUsageOpen(true) }}>{t('本次住院 AI 用量', 'AI usage for this admission')}</DropdownMenuItem>
     </DropdownMenuContent>
-  </DropdownMenu> : null
+  </DropdownMenu></> : null
   // 姓名行只留本岗位主业字段；其余收进「住院信息」。
   const headerItems: (InpatientInfoItem & { key: string })[] = [
     ...(ward ? [{ key: 'ward', label: t('病区', 'Ward'), value: ward.name }] : []),

@@ -54,7 +54,7 @@ function ProgressLine({ progress, locale, onOpenDrg }: { progress: ReturnType<ty
   const remainingLabel = status === 'over' ? t('超出 ', 'Over by ') : t('还剩 ', 'Remaining '), remainingAmount = reference === null ? '' : formatFen(Math.abs(reference - total), locale)
   const detail = `${pendingMainProcedure ? t('术后预计 ', 'After surgery ') : projected ? t('按计划手术预计 ', 'With planned surgery ') : t('当前病组 ', 'Current group ')}${group} · ${t('已用 ', 'Used ')}${formatFen(spent, locale)}`
     + (projected ? ` · ${pendingMainProcedure ? t('预计 ', 'Projected ') : t('做完预计 ', 'Projected total ')}${formatFen(total, locale)}` : '')
-    + (reference === null ? '' : ` / ${t('支付参考 ', 'Payment reference ')}${formatFen(reference, locale)} · ${projected ? t('预计', 'Projected: ') : status === 'over' ? t('已', '') : ''}${remainingLabel}${remainingAmount}`)
+    + (reference === null ? '' : ` / ${t('支付参考 ', 'Payment reference ')}${formatFen(reference, locale)} · ${status === 'over' ? projected ? t('预计超出 ', 'Projected over by ') : t('已超出 ', 'Over by ') : projected ? t('预计还剩 ', 'Projected remaining ') : t('还剩 ', 'Remaining ')}${remainingAmount}`)
   return <ProgressChip locale={locale} onOpenDrg={onOpenDrg} detail={detail} over={status === 'over'}>
     {status === null ? null : <Badge variant="outline" className={status === 'within' ? 'text-success' : 'text-warning'}>{status === 'over' ? t('已超', 'Above') : status === 'near' ? t('接近', 'Near') : t('未超', 'Within')}</Badge>}
     <b>{group}</b>{pendingMainProcedure ? <span className="text-warning">{t('待确认主操作', 'Main procedure pending')}</span> : null}

@@ -74,6 +74,11 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   await refresh.click()
   const assistant = page.getByRole('region', { name: '助手已准备', exact: true })
   await expect(assistant.getByRole('button')).toHaveCount(1)
+  // 助手已准备的各项收在菜单里，键盘可关闭。
+  await assistant.getByRole('button', { name: /助手已准备 \d+ 项/ }).click()
+  await expect(page.getByRole('menuitem').first()).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
   for (const width of [1101, 826]) for (const theme of ['light', 'dark'] as const) {
     await workspace.evaluate((element, width) => { element.style.width = `${width}px` }, width)
     await options.appearance(theme)
