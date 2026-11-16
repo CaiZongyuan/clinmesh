@@ -354,7 +354,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     : admission.status === 'departed' ? (admission.financialStatus === 'settled' ? 'success' : 'warning')
     : admission.status === 'admitted' ? 'info' : 'warning'
   const showDepositInHeader = admission.recordStatus !== 'archived' && admission.status !== 'cleared' && !(admission.status === 'departed' && admission.financialStatus === 'settled') && role !== 'medical-records'
-  const followLabel = followup.error ? t('跟进状态读取失败', 'Could not load follow-up status') : followStatus ?? (followup.isPending ? t('正在读取跟进状态', 'Loading follow-up status') : t('未跟进', 'Follow-up off'))
+  const followLabel = followup.error ? t('跟进状态读取失败', 'Could not load follow-up status') : followStatus ?? (followupEnabled && followup.isPending ? t('正在读取跟进状态', 'Loading follow-up status') : t('未跟进', 'Follow-up off'))
   // 按钮文字就是跟进状态；另留一个仅读屏可见的区域，让状态变化和读取失败被朗读。
   const followControls = doctor ? <><span className="sr-only" role={followup.error ? 'alert' : 'status'}>{followLabel}</span><DropdownMenu>
     <DropdownMenuTrigger render={<Button type="button" variant="outline" size="sm" aria-label={`${t('助手自动跟进', 'Assistant auto follow-up')}：${followLabel}`}
