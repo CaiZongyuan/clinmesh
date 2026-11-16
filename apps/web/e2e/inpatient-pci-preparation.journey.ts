@@ -222,14 +222,18 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
     const medication = catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!
     await page.getByRole('button', { name: '开立医嘱', exact: true }).click()
     await page.getByLabel('医嘱项目', { exact: true }).fill(medication.display)
-    await page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: new RegExp(medication.display) }).click()
+    await page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: `选择${medication.display}`, exact: true }).click()
     await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
+    if (['heparin', 'iohexol'].includes(suffix)) {
+      await page.getByLabel('医嘱频次', { exact: true }).click()
+      await page.getByRole('option', { name: '按需', exact: true }).click()
+    }
     if (surgeryExecutionId) {
       await page.getByLabel('术后医嘱关联手术', { exact: true }).click()
       await page.getByRole('option', { name: /36.0700 ·/ }).click()
     }
     await page.getByRole('button', { name: '开立所选医嘱（1）', exact: true }).click()
-    await expect(page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByText(`${medication.display} · 待护士校对`, { exact: true })).toBeVisible()
+    await expect(page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByText(`${medication.display} · 待护士校对`, { exact: true }).last()).toBeVisible()
     await page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByRole('button', { name: '关闭', exact: true }).click()
     await expect(page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '待校对' })).toBeVisible()
   }

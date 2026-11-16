@@ -396,7 +396,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           try { settleInpatientReportAttempt(intent.command, intent.idempotencyKey, session, { status: error.status, code: error.code,
             ...(error.conflict === undefined ? {} : { conflict: error.conflict }), ...(error.reason === undefined ? {} : { reason: error.reason }) }) } catch { throw storageError() }
           try { settleExecutionAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, status: error.status }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
-          settleIssue({ failure: { status: error.status, code: error.code,
+          settleIssue({ failure: { status: error.status, code: error.code, ...(error.reason === undefined ? {} : { reason: error.reason }),
             ...(intent.command.operation === 'inpatient.order.issue' && error.code === 'CATALOG_CONFLICT' ? { message: error.message } : {}) } })
           clear()
           throw new InpatientCommandRejection(error)

@@ -66,7 +66,7 @@
 
 - Node 测试用 `execFile('pnpm', ...)` 构建 CLI 时，Windows 只有 PowerShell／CMD shim 会报 `spawn pnpm ENOENT`。跨平台测试通过 `process.execPath` 启动已安装构建工具的 JS 入口，并显式设置目标包目录；CLI 进程验收见 `apps/server/tests/cli-process-http.test.ts`。
 
-- Windows 的 `core.symlinks=false` 会将 Git mode `120000` 的符号链接（如 `CLAUDE.md`）检出为仅含目标路径的无换行普通文件：修改或校验前先检查 Git index mode，切勿向 `120000` 占位文件追加换行或改写共享 Git 配置；CLI 的 POSIX 权限与符号链接测试在原生 Linux 文件系统检出上验证（将 Linux Node、pnpm、Bun 置于 `PATH` 前端，持久目录存放跨命令产物）。从 Windows 归档 Git 原始字节时显式加 `git -c core.autocrlf=false archive`（防止 `core.autocrlf` 带入 CRLF 破坏合成数据 SHA-256 或 LF 行格式检查）；而从 Windows worktree 向 Linux 副本导出变更补丁时先暂存再用默认 `git diff --cached <base> --binary --output=<path>`（不强制 `core.autocrlf=false` 以免产生整文件换行伪 diff，也不改写原 worktree 的盘符 `.git` 指针）。
+- Windows 的 `core.symlinks=false` 会将 Git mode `120000` 的符号链接（如 `CLAUDE.md`）检出为仅含目标路径的无换行普通文件：修改或校验前先检查 Git index mode，切勿向 `120000` 占位文件追加换行或改写共享 Git 配置；CLI 的 POSIX 权限与符号链接测试在原生 Linux 文件系统检出上验证（将 Linux Node、pnpm、Bun 置于 `PATH` 前端，持久目录存放跨命令产物）。从 Windows 归档 Git 原始字节时显式加 `git -c core.autocrlf=false archive`（防止 `core.autocrlf` 带入 CRLF 破坏合成数据 SHA-256 或 LF 行格式检查）；而从 Windows worktree 向 Linux 副本导出变更补丁时先暂存再用默认 `git diff --cached <base> --binary --output=<path>`（不强制 `core.autocrlf=false` 以免产生整文件换行伪 diff，也不改写原 worktree 的盘符 `.git` 指针）。 原生 Windows checkout 的文本 fixture 若受 manifest SHA-256 约束，先比较工作区字节与 `git show HEAD:<path>`；确认仅为 CRLF 转换时，在隔离副本恢复 Git blob 原字节后重跑，核对 `git diff` 为空，不改 manifest 哈希迁就本机换行。
 
 - WSL2 中 pnpm 为 Bun bin 生成的 shim 可能优先选择同目录 `bun.exe`，并把 Linux 路径转换成无法由该 Bun 解析的 UNC 路径。React Surface 构建脚本应由当前 Linux `bun` 直接执行 builder 的 TypeScript CLI，不能依赖该 shim；诊断时先比较实际 Bun 与 shim 目标，不要重复安装 Bun。候选验收会净化 PATH，构建前分别验证 `bun --version` 与 `bunx --version`；只有单文件 Bun 时，在隔离工具目录提供指向同一二进制的 `bunx` 入口，不修改业务脚本补偿本机工具缺失。
 

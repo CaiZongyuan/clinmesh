@@ -20,7 +20,7 @@ export const inpatientPciMedicationDataSchema = z.object({
     maxDoseQuantity: amount,
     suggestedDoseText: z.string().min(1),
     suggestedQuantity: amount,
-    frequencyCodes: z.array(z.enum(['QD', 'BID', 'PRN'])).min(1),
+    frequencyCodes: z.array(z.enum(['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE'])).min(1),
     route: z.string().min(1),
     initialStock: amount,
     note: z.string().min(1),

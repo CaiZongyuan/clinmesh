@@ -1255,8 +1255,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active clinical catalog',
-    version: 1,
+    summary: 'Read the active clinical catalog including shared medication safety rules and six frequency codes',
+    version: 2,
   },
   {
     cliPath: ['catalog', 'services', 'search'],
@@ -1706,8 +1706,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save the version-protected single-source prescription draft (hospital pharmacy or national reference, never mixed)',
-    version: 1,
+    summary: 'Save the version-protected single-source prescription draft (hospital pharmacy or national reference, never mixed); hospital medications use shared indication, pharmacology and daily-dose limits',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'prescription', 'draft', 'delete'],
@@ -1744,8 +1744,8 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Issue the current single-source prescription draft; hospital pharmacy items create ChargeItems while national reference items issue an external electronic prescription without hospital billing or pharmacy tasks',
-    version: 1,
+    summary: 'Issue the current single-source prescription draft with shared indication, allergy, pharmacology and daily-dose checks; hospital pharmacy items create ChargeItems while national reference items issue an external electronic prescription without hospital billing or pharmacy tasks',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'medication-conclusion', 'confirm-none'],
@@ -2778,7 +2778,7 @@ const operationDefinitions = [
   { cliPath:['inpatient','drg-pregroup'],id:'inpatient.drg.pregroup',http:{method:'GET',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/pregroup'},input:z.object({admissionId:z.string().min(1)}).strict(),output:inpatientDrgPregroupResultSchema,
     mode:'query',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor','ward-nurse','medical-records','medical-insurance'],summary:'临床岗位未归档读取当前事实（修订可为0）；医保办仅可读归档冻结分组与支付预估，旧归档不回填',version:4 },
   { cliPath:['inpatient','drg-simulate'],id:'inpatient.drg.simulate',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/simulation',encodeBody:raw=>{const {admissionId:_id,draft}=inpatientDrgSimulationRequestSchema.parse(raw);return {input:draft}}},input:inpatientDrgSimulationRequestSchema,output:inpatientDrgSimulationSchema,
-    mode:'preview',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor','medical-records'],summary:'处方推演对照正式收费与承诺，可选择计划主操作；postoperativeEstimate提供新完成操作的假想主操作预计，不改正式分组或主操作',version:4 },
+    mode:'preview',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor','medical-records'],summary:'处方推演对照正式收费与六频次承诺折算，可选择计划主操作；postoperativeEstimate提供新完成操作的假想主操作预计，不改正式分组或主操作',version:5 },
   { cliPath:['inpatient','drg-reservations'],id:'inpatient.drg.reservation.read',http:{method:'GET',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/reservations'},input:z.object({admissionId:z.string().min(1)}).strict(),output:inpatientMaterialReservationListSchema,
     mode:'query',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor','ward-nurse','medical-records'],summary:'读取治疗材料预留、替换释放历史及各计划完整有效集合指纹',version:4 },
   { cliPath:['inpatient','drg-reserve-material'],id:'inpatient.drg.reservation.create',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/reservations',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientMaterialReservationCreateInputSchema.parse(raw);return {input}}},input:inpatientMaterialReservationCreateInputSchema,output:commandResponseSchema(inpatientMaterialReservationListSchema),
@@ -2960,12 +2960,12 @@ const operationDefinitions = [
   {
     cliPath: ['inpatient', 'clinical-catalog'], id: 'inpatient.clinical.catalog',
     http: { method: 'GET', path: '/api/his/v1/inpatient/clinical-catalog' }, input: emptyInputSchema, output: inpatientFullCatalogSchema, mode: 'query',
-    requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse'], summary: '读取住院实际可用临床目录', version: 1,
+    requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse'], summary: '读取住院实际可用临床目录（含声明式药事安全规则与六种频次）', version: 2,
   },
   {
     cliPath: ['inpatient', 'clinical'], id: 'inpatient.clinical.read',
     http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/clinical' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientFullClinicalSchema, mode: 'query',
-    requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse','medical-records'], summary: '读取本次住院诊断医嘱执行及费用；stopReason仅返回可归属停嘱理由，历史可缺失', version: 2,
+    requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse','medical-records'], summary: '读取本次住院诊断医嘱（支持六种给药频次）执行及费用；stopReason仅返回可归属停嘱理由，历史可缺失', version: 3,
   },
   {
     cliPath: ['inpatient', 'confirm-diagnosis'], id: 'inpatient.diagnosis.confirm',
@@ -2975,7 +2975,7 @@ const operationDefinitions = [
   {
     cliPath: ['inpatient', 'issue-order'], id: 'inpatient.order.issue',
     http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/orders/issue', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientOrderIssueInputSchema.parse(raw); return { input } } },
-    input: inpatientOrderIssueInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '签发住院医嘱；按明确单位换算并重验有界剂量、责任、版本及可选 DRG 审阅指纹；医嘱含可选停嘱理由stopReason', version: 5,
+    input: inpatientOrderIssueInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '签发住院医嘱；QD/BID/TID/QN/PRN/ONCE，ONCE仅限临时；重验单位换算、单次/单日极量、ICD前缀适应证、药理互斥、过敏、责任、版本及可选DRG指纹，返回MEDICATION_*拒绝原因；医嘱含可选停嘱理由stopReason', version: 6,
   },
   {
     cliPath: ['inpatient', 'verify-order'], id: 'inpatient.order.verify',
@@ -3001,7 +3001,7 @@ const operationDefinitions = [
   { cliPath:['inpatient','reverse-charge'],id:'inpatient.charge.reverse',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/charges/reverse',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientChargeReverseInputSchema.parse(raw);return {input}}},
     input:inpatientChargeReverseInputSchema,output:inpatientChargesResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['cashier'],summary:'关联原费用全额冲正；原账保留，不接受任意金额',version:1 },
   { cliPath:['inpatient','request-prn'],id:'inpatient.execution.request-prn',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/executions/request-prn',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientOrderReasonInputSchema.parse(raw);return {input}}},
-    input:inpatientOrderReasonInputSchema,output:inpatientFullClinicalResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary: '护士按已校对PRN医嘱和显式理由请求本次执行任务；医嘱含可选停嘱理由stopReason', version: 2 },
+    input:inpatientOrderReasonInputSchema,output:inpatientFullClinicalResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary: '护士按已校对PRN医嘱和显式理由请求任务；声明safety时上海业务日最多四次且受单日数量极量限制；医嘱含可选停嘱理由stopReason', version: 3 },
   {
     cliPath: ['inpatient', 'catalog'], id: 'inpatient.catalog',
     http: { method: 'GET', path: '/api/his/v1/inpatient/catalog' },

@@ -13,7 +13,7 @@ export const inpatientDrgSimulationInputSchema = z.object({
   /** 仅指定假想实施后的主计划；不代替首页的实际主操作选择。 */
   primarySurgeryRequestId: id.optional(),
   medications: z.array(z.object({ catalogItemId: id, catalogVersion: z.number().int().positive(),
-    doseText: z.string().trim().min(1).max(120), frequencyCode: z.enum(['QD', 'BID', 'PRN']),
+    doseText: z.string().trim().min(1).max(120), frequencyCode: z.enum(['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE']),
     doseQuantity: z.number().int().positive().max(100) }).strict()).max(20).default([]),
   services: z.array(z.object({ serviceId: id, serviceVersion: z.number().int().positive(),
     quantity: z.number().int().positive().max(100) }).strict()).max(20).default([]),

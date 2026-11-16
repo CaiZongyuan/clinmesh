@@ -63,6 +63,7 @@ export async function preparePciAiPlan(page: Page, app: PciAiBrowserApp) {
   const angiographyRequest = await requestPciAiSurgery(page, app, stay.path, '88.5500', '合成AI验收诊断造影')
   await expect.poll(async () => (await f.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates.find(item => item.requestId === angiographyRequest.id)?.status).toBe('succeeded')
   expect(app.calls).toEqual([{ kind: 'material', phase: 'angiography', feature: 'inpatient_drg_recommendation' }, { kind: 'material', phase: 'angiography', feature: 'inpatient_drg_verification' }])
+  await expect(page.getByRole('region', { name: '手术耗材', exact: true })).toContainText('已按当前合成适用范围和独立数量依据准备，等待医生统一审阅。')
   await prepareSurgery(angiographyRequest.reason)
   await page.getByRole('button', { name: '整台补录', exact: true }).click()
   const batch = page.getByRole('dialog', { name: '整台补录', exact: true })
@@ -94,6 +95,7 @@ export async function preparePciAiPlan(page: Page, app: PciAiBrowserApp) {
   await expect(stepOne).toContainText('你 · 已确认')
   const panel = page.getByRole('region', { name: '手术耗材', exact: true })
   await expect.poll(async () => (await f.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates.find(item => item.requestId === planned.id)?.status).toBe('succeeded')
+  await expect(panel).toContainText('已按当前合成适用范围和独立数量依据准备，等待医生统一审阅。')
   await expect(panel).toContainText('指南参考')
   await expect(page.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组', exact: true })).toContainText('FM39')
   return { stay, planned, panel, stepOne, selection, errors, writes, prepareSurgery, catalog, angiographyRequest }
@@ -103,7 +105,7 @@ export async function preparePciAiReview(page: Page, app: PciAiBrowserApp) {
   const prepared = await preparePciAiPlan(page, app)
   const { stay, planned, panel, angiographyRequest } = prepared, f = app.fixture
   await expect.poll(async () => (await f.read('inpatient-doctor', `${stay.path}/guideline-advice`, inpatientGuidelineAdviceListSchema)).advice.find(item => item.requestId === planned.id)?.status).toBe('succeeded')
-  await expect(panel).toContainText('指南参考')
+  await expect(panel).toContainText('支架类别')
   expect(app.calls.filter(call => call.kind === 'guideline')).toHaveLength(2)
   expect(app.calls.filter(call => call.kind === 'material' && call.phase === 'pci')).toHaveLength(2)
   expect(app.calls).toHaveLength(6)

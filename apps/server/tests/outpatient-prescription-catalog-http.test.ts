@@ -194,6 +194,36 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
     clinicalDocumentSignResponseSchema.parse(await signed.json())
   }
 
+  it('允许冠心病跨类联合处方并在整单拒绝药理互斥与超单日极量后保留可重试状态', async () => {
+    const { password, runtime } = await setupRuntime()
+    const visit = await startActiveVisit(runtime, password)
+    const encounterVersion = await confirmDiagnosis(runtime, visit.doctor, visit.encounterId, visit.encounterVersion, 'diagnosis-coronary-heart-disease')
+    const regimen = [
+      { catalogItemId: 'medication-pci-aspirin', doseText: '100 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 },
+      { catalogItemId: 'medication-pci-clopidogrel', doseText: '75 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 },
+      { catalogItemId: 'medication-pci-atorvastatin', doseText: '20 mg', frequencyCode: 'QN', courseDays: 30, quantity: 60 },
+      { catalogItemId: 'medication-metoprolol', doseText: '47.5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 },
+      { catalogItemId: 'medication-perindopril', doseText: '4 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 },
+    ]
+    const save = (items: typeof regimen) => runtime.app.request(`/api/his/v1/encounters/${visit.encounterId}/prescription/draft`, {
+      method: 'PUT', headers: commandHeaders(visit.doctor), body: JSON.stringify({ expectedVersions: { [visit.encounterRef]: encounterVersion }, input: { expectedDraftVersion: 0, items } }),
+    })
+    const duplicateClass = await save([...regimen, { ...regimen[1]!, catalogItemId: 'medication-ticagrelor', doseText: '90 mg', frequencyCode: 'BID' }])
+    expect(duplicateClass.status).toBe(409)
+    expect(await duplicateClass.json()).toMatchObject({ error: { reason: 'PRESCRIPTION_COMBINATION_NOT_ALLOWED' } })
+    const extremeDose = await save([{ ...regimen[2]!, doseText: '80 mg', frequencyCode: 'BID' }])
+    expect(extremeDose.status).toBe(409)
+    expect(await extremeDose.json()).toMatchObject({ error: { reason: 'PRESCRIPTION_DOSAGE_NOT_ALLOWED' } })
+    const saved = await save(regimen)
+    expect(saved.status, await saved.clone().text()).toBe(200)
+    const draft = prescriptionDraftResponseSchema.parse(await saved.json()).data
+    const issued = await runtime.app.request(`/api/his/v1/encounters/${visit.encounterId}/prescription/actions/issue`, {
+      method: 'POST', headers: commandHeaders(visit.doctor), body: JSON.stringify({ expectedVersions: { [visit.encounterRef]: encounterVersion }, input: { expectedDraftVersion: draft.draftVersion } }),
+    })
+    expect(issued.status, await issued.clone().text()).toBe(200)
+    expect(issuePrescriptionResponseSchema.parse(await issued.json()).data.prescription.items).toHaveLength(5)
+  })
+
   it('exposes hospital pharmacy medication specifications and unit prices in clinicalCatalog', async () => {
     const { password, runtime } = await setupRuntime()
     const doctor = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
@@ -367,7 +397,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
     // 3. Disallowed dose/frequency & disallowed course/quantity
     const doseDisallowed = await confirmPrepared(encounterVersion, {
       ...oseltamivir,
-      doseText: '150 mg',
+      doseText: '300 mg',
     })
     expect(doseDisallowed.status).toBe(409)
     expect(apiErrorSchema.parse(await doseDisallowed.json())).toMatchObject({

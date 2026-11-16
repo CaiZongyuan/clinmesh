@@ -1,7 +1,9 @@
+import { medicationSafetyRuleSchema } from '@clinmesh/contracts/medication-safety'
 import { z } from 'zod'
 import type { InpatientCatalogMissingField } from '@clinmesh/contracts/inpatient-clinical'
 
 export const inpatientMedicationConfigSchema = z.object({
+  safety: medicationSafetyRuleSchema.optional(),
   availableScopes: z.array(z.string()), unit: z.string().trim().min(1),
   product: z.object({ id: z.string().min(1), system: z.string().min(1), version: z.string().min(1),
     strength: z.string().min(1), dosageForm: z.string().min(1), packageDescription: z.string().min(1) }),
@@ -34,8 +36,8 @@ export function inpatientMedicationMissingFields(raw: unknown, priceFen: number)
   const doses = shape.inpatientDoses.safeParse(config.inpatientDoses), maximum = shape.inpatientMaxDoseQuantity.safeParse(config.inpatientMaxDoseQuantity)
   if (maximum.success && maximum.data === undefined && doses.success && doses.data.length === 0) fields.add('dose-limit')
   const frequencies = shape.allowedFrequencyCodes.safeParse(config.allowedFrequencyCodes)
-  if (frequencies.success && !frequencies.data.some(code => ['QD', 'BID', 'PRN'].includes(code))) fields.add('frequency')
+  if (frequencies.success && !frequencies.data.some(code => ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE'].includes(code))) fields.add('frequency')
   const diagnoses = shape.allowedDiagnosisCatalogItemIds.safeParse(config.allowedDiagnosisCatalogItemIds), indications = shape.inpatientIndications.safeParse(config.inpatientIndications)
-  if (diagnoses.success && indications.success && diagnoses.data.length === 0 && indications.data.length === 0) fields.add('indication')
+  if (diagnoses.success && indications.success && diagnoses.data.length === 0 && indications.data.length === 0 && !(result.success && result.data.safety)) fields.add('indication')
   return [...fields]
 }

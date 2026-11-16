@@ -1173,13 +1173,13 @@ describe('PrescriptionPage', () => {
     await user.click(panel.getByRole('button', { name: /^编辑药品 合成对乙酰氨基酚/ }))
     let dialog = within(screen.getByRole('dialog', { name: '编辑药品' }))
     expect(within(dialog.getByRole('combobox', { name: '剂量' })).getByText('500 mg')).toBeTruthy()
-    expect(within(dialog.getByRole('combobox', { name: '频次' })).getByText('PRN')).toBeTruthy()
+    expect(within(dialog.getByRole('combobox', { name: '频次' })).getByText('按需')).toBeTruthy()
     await user.click(dialog.getByRole('button', { name: '取消' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     // 第二条保留自己的 BID · 5 天 · 10。
     await user.click(panel.getByRole('button', { name: /^编辑药品 合成第二药品/ }))
     dialog = within(screen.getByRole('dialog', { name: '编辑药品' }))
-    expect(within(dialog.getByRole('combobox', { name: '频次' })).getByText('BID')).toBeTruthy()
+    expect(within(dialog.getByRole('combobox', { name: '频次' })).getByText('每日两次')).toBeTruthy()
     await user.click(dialog.getByRole('button', { name: '取消' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(panel.getAllByRole('button', { name: /^编辑药品 / })).toHaveLength(2)
@@ -1588,5 +1588,45 @@ describe('处方页签布局整理', () => {
     expect(issueButton).toHaveProperty('disabled', false)
     await user.click(issueButton)
     await waitFor(() => expect(confirmations).toHaveLength(1))
+  })
+
+  it('带声明式安全规则的本院药品在选药弹窗中支持自由输入多日总数量并加入草稿', async () => {
+    const safetyMedication: Medication = {
+      ...medication,
+      id: 'medication-metoprolol',
+      nameZh: '琥珀酸美托洛尔缓释片',
+      nameEn: 'Metoprolol succinate sustained-release tablet',
+      allowedDoseTexts: ['47.5 mg'],
+      allowedFrequencyCodes: ['QD'],
+      allowedCourseDays: [7, 14, 30],
+      allowedQuantities: [1],
+      defaultCourseDays: 14,
+      defaultDoseText: '47.5 mg',
+      defaultFrequencyCode: 'QD',
+      defaultQuantity: 1,
+      safety: {
+        pharmacologyClasses: ['beta-blocker'],
+        indicationPrefixes: ['I10', 'I20', 'I25'],
+        doseLimits: { unit: 'mg', minimumSingleDose: 23.75, maximumSingleDose: 190, maximumDailyDose: 190 },
+        maximumDailyQuantity: 4,
+      },
+    }
+    const mounted = renderPage({ catalog: [safetyMedication] })
+    const user = userEvent.setup()
+    const dialog = await openComposer(user)
+    await user.click(dialog.getByRole('button', { name: '选择 琥珀酸美托洛尔缓释片' }))
+    const quantityInput = dialog.getByRole('spinbutton', { name: '数量' }) as HTMLInputElement
+    expect(quantityInput.value).toBe('1')
+    await user.clear(quantityInput)
+    await user.type(quantityInput, '14')
+    const addButton = dialog.getByRole('button', { name: '加入处方' })
+    expect(addButton).toHaveProperty('disabled', false)
+    await user.click(addButton)
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(within(screen.getByRole('region', { name: '待开具处方' })).getByText('47.5 mg · 每日一次 · 14 天 · 14')).toBeTruthy()
+    await waitFor(() => expect(mounted.props.actions.saveDraft.onSubmit).toHaveBeenCalledWith([
+      { catalogItemId: 'medication-metoprolol', doseText: '47.5 mg', frequencyCode: 'QD', courseDays: 14, quantity: 14 },
+    ]))
   })
 })

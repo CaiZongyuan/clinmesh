@@ -98,6 +98,22 @@ async function finish(s: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('住院 DRG 处方推演公共 HTTP', () => {
+  it.each([['TID', 3], ['QN', 1]] as const)('长期 %s 首次排程前按每日次数折算未记费承诺', async (frequencyCode, quantity) => {
+    const s = await setup()
+    const clinical = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, {
+      encounterVersion: s.admission.versionId, expectedRevision: 0,
+      entries: [{ catalogItemId: 'diagnosis-fever', role: 'primary', admissionCondition: '1' }],
+    })).json()).data
+    const issued = await s.request(s.doctor, `${s.path}/orders/issue`, {
+      encounterVersion: clinical.encounterVersion, duration: 'long',
+      selection: { kind: 'medication', catalogItemId: 'medication-acetaminophen', catalogVersion: 1,
+        doseText: '0.5 g', doseQuantity: 1, frequencyCode },
+    })
+    expect(issued.status).toBe(200)
+    const order = inpatientFullClinicalResponseSchema.parse(await issued.json()).data.orders[0]!
+    const simulation = inpatientDrgSimulationSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/simulation`, {})).json())
+    expect(simulation.committed.items).toEqual([{ kind: 'medication', id: order.id, display: order.display, quantity, estimatedFen: 120 * quantity }])
+  })
   it('长期 QD 首次排程前保留未记费承诺，排程和发药后不重复计算', async () => {
     const s = await setup()
     const clinical = inpatientFullClinicalResponseSchema.parse(await (await confirmPrimary(s)).json()).data

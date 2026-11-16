@@ -300,7 +300,7 @@ export function applyMigrations(
         continue
       }
 
-      const rebuildReferences = ['0069_inpatient-admission.sql', '0071_inpatient-investigations-transfer.sql', '0082_practitioner-role-medical-insurance.sql', '0092_outpatient-investigation-billing.sql', '0093_synthetic-inpatient-case-materialization.sql', '0094_authored-exact-investigation.sql', '0109_reproductive-history.sql'].includes(migrationFile)
+      const rebuildReferences = ['0069_inpatient-admission.sql', '0071_inpatient-investigations-transfer.sql', '0082_practitioner-role-medical-insurance.sql', '0092_outpatient-investigation-billing.sql', '0093_synthetic-inpatient-case-materialization.sql', '0094_authored-exact-investigation.sql', '0109_reproductive-history.sql', '0112_medication-frequency.sql'].includes(migrationFile)
       if (rebuildReferences && !atomic) database.driver.pragma('foreign_keys = OFF')
       try {
         if (!atomic) database.driver.exec('BEGIN IMMEDIATE')

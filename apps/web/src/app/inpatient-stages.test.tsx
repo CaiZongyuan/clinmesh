@@ -457,7 +457,7 @@ it('药房只读取当前患者页的窄详情，用户翻页后才读取下一�
   const { InpatientPharmacy } = await import('./inpatient-pharmacy.tsx')
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><InpatientPharmacy session={{ ...session, actor: { ...session.actor, roleCode: 'pharmacist' } }} locale="zh-CN" /></QueryClientProvider>)
   const firstRow = await screen.findByRole('button', { name: '查看合成分页患者1 · 分页药品1 · 2026-08-24 15:00' })
-  expect(firstRow.textContent).toContain('5 mg · QD · 1片')
+  expect(firstRow.textContent).toContain('5 mg · 每日一次 · 1片')
   expect(detailReads).toHaveLength(10)
   expect(detailReads).not.toContain('paged-admission-11')
   expect(screen.getByText('药品计数仅限本页患者')).toBeDefined()

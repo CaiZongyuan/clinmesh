@@ -1,3 +1,4 @@
+import { medicationCombinationConflict, medicationDoseConflict, medicationIndicationMatches, medicationScheduledHours } from '@clinmesh/core/medication-safety'
 import { inpatientPharmacyListSchema, inpatientPharmacySchema, inpatientPharmacyResponseSchema, inpatientChargesSchema, inpatientChargesResponseSchema, inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientDiagnosisConfirmInputSchema, inpatientDiagnosisSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientOrderSchema, inpatientExecutionSchema, inpatientDispenseSchema, inpatientChargeSchema, type InpatientOrder } from '@clinmesh/contracts/inpatient-clinical'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
@@ -8,7 +9,17 @@ import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 
 export class InpatientOrders {
+  #medicationConfigs = new Map<string, ReturnType<typeof medicationConfigSchema.parse> | null>()
   constructor(readonly owner: InpatientService) {}
+  #parseMedicationConfig(priceFen: number, configJson: string) {
+    const key = `${priceFen}:${configJson}`
+    if (this.#medicationConfigs.has(key)) return this.#medicationConfigs.get(key)!
+    if (this.#medicationConfigs.size >= 512) this.#medicationConfigs.clear()
+    const raw: unknown = JSON.parse(configJson)
+    const parsed = inpatientMedicationMissingFields(raw, priceFen).length > 0 ? null : Object.freeze(medicationConfigSchema.parse(raw))
+    this.#medicationConfigs.set(key, parsed)
+    return parsed
+  }
   catalog(context: ActorContext) {
     this.owner.assertRole(context, ['inpatient-doctor', 'ward-nurse'])
     const rows = z.array(z.object({ item_id: z.string(), code_system: z.string(), code: z.string(), name_zh: z.string(), version: z.number() })).parse(
@@ -18,19 +29,31 @@ export class InpatientOrders {
   medications(context: ActorContext, ids?: string[]) {
     const medications = z.array(z.object({ item_id: z.string(), name_zh: z.string(), version: z.number(), price_fen: z.number(), config_json: z.string() })).parse(this.owner.database.driver.prepare(
       `SELECT * FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND kind='medication' AND active=1 ${ids === undefined ? '' : `AND item_id IN (${ids.map(() => '?').join(',') || 'NULL'})`}`).all(context.workspaceId, context.epoch, ...(ids ?? [])))
+    if (medications.length === 0) return []
+    const locationId = context.roleCode === 'pharmacist' ? context.locationId ?? '' : 'location-pharmacist'
+    const today = businessDate(this.owner.virtualTime(context))
+    const lotQuery = this.owner.database.driver.prepare('SELECT * FROM inventory_lot WHERE workspace_id=? AND epoch=? AND medication_id=? AND location_id=? AND expires_on>=? AND quantity_on_hand>0 ORDER BY expires_on,lot_id')
     return medications.flatMap(row => {
-      const raw: unknown = JSON.parse(row.config_json)
-      if (inpatientMedicationMissingFields(raw, row.price_fen).length > 0) return []
-      const config = medicationConfigSchema.parse(raw)
-      return [{ id: row.item_id, display: row.name_zh, version: row.version, priceFen: row.price_fen, unit: config.unit, doses: config.inpatientDoses,
-        ...(config.inpatientDoseBasis ? { doseBasis: config.inpatientDoseBasis } : {}),
-        maxDoseQuantity: config.inpatientMaxDoseQuantity ?? Math.max(...config.inpatientDoses.map(dose => dose.quantity)),
-        frequencyCodes: config.allowedFrequencyCodes.filter((code): code is 'QD' | 'BID' | 'PRN' => ['QD','BID','PRN'].includes(code)),
-        lots: z.array(z.object({ lot_id: z.string(), version: z.number(), quantity_on_hand: z.number(), expires_on: z.string() })).parse(this.owner.database.driver.prepare(
-          'SELECT * FROM inventory_lot WHERE workspace_id=? AND epoch=? AND medication_id=? AND location_id=? AND expires_on>=? AND quantity_on_hand>0 ORDER BY expires_on,lot_id')
-          .all(context.workspaceId, context.epoch, row.item_id, context.roleCode === 'pharmacist' ? context.locationId ?? '' : 'location-pharmacist', businessDate(this.owner.virtualTime(context))))
+      const config = this.#parseMedicationConfig(row.price_fen, row.config_json)
+      if (config === null) return []
+      return [{ id: row.item_id, display: row.name_zh, version: row.version, priceFen: row.price_fen, unit: config.unit, ...(config.safety ? { safety: config.safety } : {}), doses: [...config.inpatientDoses],
+        ...(config.inpatientDoseBasis ? { doseBasis: { ...config.inpatientDoseBasis } } : {}),
+        maxDoseQuantity: Math.min(config.inpatientMaxDoseQuantity ?? Math.max(...config.inpatientDoses.map(dose => dose.quantity)), config.safety && config.inpatientDoseBasis?.unit === config.safety.doseLimits.unit ? Math.floor(config.safety.doseLimits.maximumSingleDose / config.inpatientDoseBasis.amount) : 100),
+        frequencyCodes: config.allowedFrequencyCodes.filter((code): code is 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' => ['QD','BID','TID','QN','PRN','ONCE'].includes(code)),
+        lots: z.array(z.object({ lot_id: z.string(), version: z.number(), quantity_on_hand: z.number(), expires_on: z.string() })).parse(lotQuery
+          .all(context.workspaceId, context.epoch, row.item_id, locationId, today))
           .map(lot => ({ id: lot.lot_id, version: lot.version, quantityOnHand: lot.quantity_on_hand, expiresOn: lot.expires_on })) }]
     })
+  }
+  catalogPrices(context: ActorContext) {
+    const medications = z.array(z.object({ item_id: z.string(), version: z.number(), price_fen: z.number(), config_json: z.string() })).parse(this.owner.database.driver.prepare(
+      "SELECT item_id,version,price_fen,config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND kind='medication' AND active=1").all(context.workspaceId, context.epoch))
+    const services = z.array(z.object({ service_id: z.string(), version: z.number(), config_json: z.string() })).parse(this.owner.database.driver.prepare(
+      "SELECT service_id,version,config_json FROM hospital_service_catalog WHERE workspace_id=? AND epoch=? AND active=1 AND json_extract(config_json,'$.inpatientBillingTrigger')='execution'").all(context.workspaceId, context.epoch))
+    return {
+      medications: medications.flatMap(row => this.#parseMedicationConfig(row.price_fen, row.config_json) === null ? [] : [[row.item_id, row.version, row.price_fen] as [string, number, number]]),
+      services: services.map(row => [row.service_id, row.version, serviceConfigSchema.parse(JSON.parse(row.config_json)).chargeDefinition.priceFen] as [string, number, number]),
+    }
   }
   medicationsAndServices(context: ActorContext) {
     const services = z.array(z.object({ service_id: z.string(), name_zh: z.string(), version: z.number(), config_json: z.string() })).parse(this.owner.database.driver.prepare(
@@ -130,7 +153,8 @@ export class InpatientOrders {
       if (input.expectedDrgFingerprint !== undefined)
         this.owner.drg.assertOrderReview(context, input.admissionId, input.selection, input.expectedDrgFingerprint)
       const selection = input.selection, catalog = this.catalog(context)
-      let itemId: string, display: string, catalogVersion: number, unit: string, price: number, doseText = '', frequency: 'QD' | 'BID' | 'PRN' = 'QD', quantity: number
+      if (selection.kind === 'medication' && selection.frequencyCode === 'ONCE' && input.duration !== 'temporary') throw new InpatientError('CATALOG_CONFLICT', 'ONCE 仅允许用于临时医嘱', 409, 'MEDICATION_ONCE_REQUIRES_TEMPORARY')
+      let itemId: string, display: string, catalogVersion: number, unit: string, price: number, doseText = '', frequency: 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' = 'QD', quantity: number
       if (selection.kind === 'medication') {
         const item = catalog.medications.find(item => item.id === selection.catalogItemId)
         if (item === undefined || item.version !== selection.catalogVersion) throw new InpatientError('CATALOG_CONFLICT', '住院药品目录或版本无效')
@@ -139,20 +163,24 @@ export class InpatientOrders {
         const dose = resolveInpatientDose({ unit: config.unit, doses: config.inpatientDoses,
           ...(config.inpatientDoseBasis ? { doseBasis: config.inpatientDoseBasis } : {}),
           ...(config.inpatientMaxDoseQuantity ? { maxDoseQuantity: config.inpatientMaxDoseQuantity } : {}) }, selection.doseText)
+        const strength = /^(\d+(?:\.\d+)?)\s*(mg|g|mL|IU)/.exec(config.product.strength)
+        const basis = config.inpatientDoseBasis ?? (strength ? { amount: Number(strength[1]), unit: strength[2]! } : undefined)
+        const safetyDose = config.safety?.doseLimits.unit === config.unit ? `${selection.doseQuantity} ${config.unit}`
+          : selection.doseText.trim().endsWith(config.unit) && basis ? `${selection.doseQuantity * basis.amount} ${basis.unit}` : selection.doseText
         if (!config.availableScopes.includes('inpatient') || !config.allowedFrequencyCodes.includes(selection.frequencyCode)
-          || !('quantity' in dose) || dose.quantity !== selection.doseQuantity) throw new InpatientError('CATALOG_CONFLICT', '剂量、单位、频次或每次数量不符合住院目录')
+          || !('quantity' in dose) || dose.quantity !== selection.doseQuantity || (config.safety && medicationDoseConflict(config.safety.doseLimits, safetyDose, selection.frequencyCode) !== undefined)) throw new InpatientError('CATALOG_CONFLICT', '剂量、单位、频次或每次数量不符合住院目录', 409, 'MEDICATION_DOSAGE_NOT_ALLOWED')
         const diagnoses = this.diagnosis(context, admission.id).entries
-        if (!diagnoses.some(entry => entry.coding.sourceLocator === 'operational:diagnosis_catalog'
+        if (!(config.safety ? medicationIndicationMatches(config.safety.indicationPrefixes, diagnoses.map(entry => entry.coding.code)) : diagnoses.some(entry => entry.coding.sourceLocator === 'operational:diagnosis_catalog'
           ? config.allowedDiagnosisCatalogItemIds.includes(entry.coding.id)
-          : config.inpatientIndications.some(indication => indication.id === entry.coding.id && indication.system === entry.coding.system && indication.version === entry.coding.version && indication.code === entry.coding.code && indication.sourceLocator === entry.coding.sourceLocator))) throw new InpatientError('CATALOG_CONFLICT', '本次住院确诊不符合药品适应症')
+          : config.inpatientIndications.some(indication => indication.id === entry.coding.id && indication.system === entry.coding.system && indication.version === entry.coding.version && indication.code === entry.coding.code && indication.sourceLocator === entry.coding.sourceLocator)))) throw new InpatientError('CATALOG_CONFLICT', '本次住院确诊不符合药品适应症', 409, 'MEDICATION_DIAGNOSIS_NOT_ALLOWED')
         const allergies = this.owner.fhir.search(context, 'AllergyIntolerance', new URLSearchParams({ patient: `Patient/${admission.patientId}`, _count: '100' })).resources
         const code = z.object({ code: z.string() }).parse(this.owner.database.driver.prepare('SELECT code FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').get(context.workspaceId, context.epoch, item.id)).code
         if (allergies.some(allergy => { const value = allergySchema.parse(allergy); return value.category?.includes('medication') && value.clinicalStatus?.coding?.some(c => c.code === 'active')
-          && value.verificationStatus?.coding?.some(c => c.code === 'confirmed') && value.code?.coding?.some(c => c.code === code) })) throw new InpatientError('CATALOG_CONFLICT', '药品与已确认的有效药物过敏冲突')
+          && value.verificationStatus?.coding?.some(c => c.code === 'confirmed') && value.code?.coding?.some(c => c.code === code) })) throw new InpatientError('CATALOG_CONFLICT', '药品与已确认的有效药物过敏冲突', 409, 'MEDICATION_ALLERGY_CONFLICT')
         const active = this.facts(context, admission.id).orders.filter(order => order.kind === 'medication' && !['stopped','completed'].includes(order.state))
         for (const other of active) {
           const otherConfig = medicationConfigSchema.parse(JSON.parse(z.object({ config_json: z.string() }).parse(this.owner.database.driver.prepare('SELECT config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').get(context.workspaceId, context.epoch, other.catalogItemId)).config_json))
-          if (other.catalogItemId === item.id || !config.allowedCombinationIds.includes(other.catalogItemId) || !otherConfig.allowedCombinationIds.includes(item.id)) throw new InpatientError('CATALOG_CONFLICT', '现有有效药品医嘱不允许此药品组合')
+          if (other.catalogItemId === item.id || (config.safety && otherConfig.safety ? medicationCombinationConflict(config.safety.pharmacologyClasses, otherConfig.safety.pharmacologyClasses) : !config.allowedCombinationIds.includes(other.catalogItemId) || !otherConfig.allowedCombinationIds.includes(item.id))) throw new InpatientError('CATALOG_CONFLICT', '现有有效药品医嘱不允许此药品组合', 409, 'MEDICATION_COMBINATION_NOT_ALLOWED')
         }
         itemId = item.id
         display = item.display
@@ -246,7 +274,7 @@ export class InpatientOrders {
   expandOrder(context: ActorContext, order: OrderRow, from: string, through: string, effects: Effects) {
     if (order.duration !== 'long' || order.frequency_code === 'PRN' || order.state !== 'verified' || order.verified_at === null) return
     const first = Math.floor((Date.parse(from) + 28800000) / 86400000), last = Math.floor((Date.parse(through) + 28800000) / 86400000)
-    for (let day = first; day <= last; day += 1) for (const hour of order.frequency_code === 'BID' ? [8,20] : [8]) {
+    for (let day = first; day <= last; day += 1) for (const hour of medicationScheduledHours(order.frequency_code)) {
       const time = day * 86400000 + hour * 3600000 - 28800000
       if (time >= Date.parse(order.verified_at)) this.createExecution(context, order, new Date(time).toISOString(), undefined, effects)
     }
@@ -344,6 +372,21 @@ export class InpatientOrders {
       if (order.state !== 'verified' || order.frequency_code !== 'PRN' || order.version !== input.expectedOrderVersion) throw new InpatientError('INPATIENT_ORDER_CONFLICT', 'PRN任务须引用已校对的有效医嘱')
       if (order.duration === 'temporary' && this.owner.database.driver.prepare('SELECT 1 FROM inpatient_execution WHERE workspace_id=? AND epoch=? AND order_id=?').get(context.workspaceId, context.epoch, order.order_id)) throw new InpatientError('INPATIENT_ORDER_CONFLICT', '临时PRN医嘱只能形成一次执行任务')
       if(this.owner.database.driver.prepare('SELECT 1 FROM inpatient_execution WHERE workspace_id=? AND epoch=? AND order_id=? AND julianday(scheduled_for)=julianday(?)').get(context.workspaceId,context.epoch,order.order_id,now)) throw new InpatientError('INPATIENT_ORDER_CONFLICT','该虚拟时点已有PRN执行任务')
+      if (order.kind === 'medication') {
+        const catalogRow = z.object({ code: z.string(), config_json: z.string() }).parse(this.owner.database.driver.prepare(
+          'SELECT code,config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').get(context.workspaceId, context.epoch, order.catalog_item_id))
+        const config = medicationConfigSchema.parse(JSON.parse(catalogRow.config_json))
+        const dailyUsage = z.object({ prn_tasks: z.number(), daily_quantity: z.number() }).parse(this.owner.database.driver.prepare(`SELECT
+          COALESCE(SUM(CASE WHEN o.frequency_code='PRN' THEN 1 ELSE 0 END),0) prn_tasks,
+          COALESCE(SUM(o.dose_quantity),0) daily_quantity
+          FROM inpatient_execution e
+          JOIN inpatient_order o ON o.workspace_id=e.workspace_id AND o.epoch=e.epoch AND o.order_id=e.order_id
+          JOIN outpatient_catalog c ON c.workspace_id=o.workspace_id AND c.epoch=o.epoch AND c.item_id=o.catalog_item_id
+          WHERE e.workspace_id=? AND e.epoch=? AND o.admission_id=? AND o.kind='medication' AND c.code=? AND date(e.scheduled_for,'+8 hours')=date(?,'+8 hours') AND e.status<>'cancelled'`)
+          .get(context.workspaceId, context.epoch, order.admission_id, catalogRow.code, now))
+        if (config.safety && (dailyUsage.prn_tasks >= 4 || dailyUsage.daily_quantity + order.dose_quantity > config.safety.maximumDailyQuantity))
+          throw new InpatientError('CATALOG_CONFLICT', 'PRN 当日任务已达每日极量或四次上限', 409, 'MEDICATION_DOSAGE_NOT_ALLOWED')
+      }
       const effects: Effects = []
       this.createExecution(context, order, now, input.reason, effects)
       return { data: this.read(context, input.admissionId), effects }
@@ -426,7 +469,7 @@ const serviceConfigSchema = z.object({ billingUnit: z.object({ display: z.string
 const allergySchema = z.object({ category: z.array(z.string()).optional(), clinicalStatus: z.object({ coding: z.array(z.object({ code: z.string() })).optional() }).optional(),
   verificationStatus: z.object({ coding: z.array(z.object({ code: z.string() })).optional() }).optional(), code: z.object({ coding: z.array(z.object({ code: z.string() })).optional() }).optional() })
 const orderRowSchema = z.object({ order_id: z.string(), admission_id: z.string(), kind: z.enum(['medication','service']), duration: z.enum(['long','temporary']), catalog_item_id: z.string(), catalog_version: z.number(),
- display: z.string(), dose_text: z.string(), dose_quantity: z.number(), unit: z.string(), frequency_code: z.enum(['QD','BID','PRN']), price_fen: z.number(), state: inpatientOrderSchema.shape.state,
+ display: z.string(), dose_text: z.string(), dose_quantity: z.number(), unit: z.string(), frequency_code: z.enum(['QD','BID','TID','QN','PRN','ONCE']), price_fen: z.number(), state: inpatientOrderSchema.shape.state,
  version: z.number(), organization_id: z.string(), signed_at: z.string(), signed_by: z.string(), verified_at: z.string().nullable(), stopped_at: z.string().nullable() })
 const executionRowSchema = z.object({ execution_id: z.string(), order_id: z.string(), scheduled_for: z.string(), status: inpatientExecutionSchema.shape.status, version: z.number(), administration_id: z.string().nullable(), reason: z.string().nullable() })
 type OrderRow = z.infer<typeof orderRowSchema>

@@ -1,3 +1,5 @@
+import { medicationScheduledHours } from '@clinmesh/core/medication-safety'
+import { medicationFrequencySchema } from '@clinmesh/contracts/medication-safety'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import { groupDrgCase } from './drg-grouping.ts'
@@ -196,7 +198,7 @@ export class InpatientDrg {
     const postoperativeEstimate = pending.length === 0 ? null : { pendingExecutionIds: pending.map(execution => execution.id),
       grouping: common?.grouping ?? null, paymentReference: common?.paymentReference ?? null }
 
-    const priced = this.costProjection(context, admissionId, draft)
+    const priced = this.costProjection(context, admissionId, draft, undefined, { facts, surgery })
     const paymentReference = this.paymentReference(formal)
     return inpatientDrgSimulationSchema.parse({
       admissionId, evaluatedAt: this.owner.virtualTime(context),
@@ -209,10 +211,11 @@ export class InpatientDrg {
 
   /** 费用与分组共用计价事实；未启用分组规则时仍能展示正式费用和后续承诺。 */
   costProjection(context: ActorContext, admissionId: string, draft?: InpatientDrgSimulationInput,
-    planned?: { requestId: string; items: Array<{ materialId: string; catalogVersion: number; quantity: number; unitPriceFen: number; display: string }> }) {
+    planned?: { requestId: string; items: Array<{ materialId: string; catalogVersion: number; quantity: number; unitPriceFen: number; display: string }> },
+    loaded?: { facts: ReturnType<InpatientService['orders']['facts']>; surgery: ReturnType<InpatientService['surgery']['read']> }) {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
-    this.owner.readAdmissionBinding(context, admissionId)
-    const facts = this.owner.orders.facts(context, admissionId), surgery = this.owner.surgery.read(context, admissionId)
+    if (!loaded) this.owner.readAdmissionBinding(context, admissionId)
+    const facts = loaded?.facts ?? this.owner.orders.facts(context, admissionId), surgery = loaded?.surgery ?? this.owner.surgery.read(context, admissionId)
     const requestProcedures = surgery.requests.filter(request => ['requested', 'ready'].includes(request.status))
       .map(request => ({ request, procedure: surgery.inProgress.find(execution => execution.requestId === request.id)?.actualProcedure ?? request.plannedProcedure }))
     const chargesFen = facts.charges.reduce((sum, charge) => sum + charge.amountFen, 0)
@@ -224,16 +227,16 @@ export class InpatientDrg {
     const chargesById = new Map(facts.charges.map(charge => [charge.id, charge]))
     const scheduledOrderIds = new Set(facts.executions.map(execution => execution.orderId))
     const pendingOrders = z.array(z.object({ order_id: z.string(), kind: z.string(), display: z.string(),
-      dose_quantity: z.number(), price_fen: z.number(), pending_executions: z.number() })).parse(this.owner.database.driver.prepare(`
-      SELECT o.order_id, o.kind, o.display, o.dose_quantity, o.price_fen,
+      duration: z.string(), frequency_code: medicationFrequencySchema, dose_quantity: z.number(), price_fen: z.number(), pending_executions: z.number() })).parse(this.owner.database.driver.prepare(`
+      SELECT o.order_id, o.kind, o.display, o.duration, o.frequency_code, o.dose_quantity, o.price_fen,
         (SELECT COUNT(*) FROM inpatient_execution e WHERE e.workspace_id=o.workspace_id AND e.epoch=o.epoch
           AND e.order_id=o.order_id AND e.status='pending') AS pending_executions
       FROM inpatient_order o WHERE o.workspace_id=? AND o.epoch=? AND o.admission_id=? AND o.state NOT IN ('stopped','completed')
       ORDER BY o.order_id`).all(context.workspaceId, context.epoch, admissionId))
     const committed = [
-      // 首次排程前保留下一剂（含已校对长期医嘱）；排程后仅计待执行，已记费发药/执行不计入。
+      // 首次排程前长期医嘱按一个给药日频次折算；临时/PRN保留一剂，排程后只计待执行。
       ...pendingOrders.map(row => {
-        const quantity = (scheduledOrderIds.has(row.order_id) ? row.pending_executions : 1) * row.dose_quantity
+        const quantity = (scheduledOrderIds.has(row.order_id) ? row.pending_executions : row.duration === 'long' ? Math.max(1, medicationScheduledHours(row.frequency_code).length) : 1) * row.dose_quantity
         return { kind: row.kind as 'medication' | 'service', id: row.order_id, display: row.display,
           quantity, estimatedFen: quantity * row.price_fen }
       })
@@ -298,7 +301,7 @@ export class InpatientDrg {
   #priceDraft(context: ActorContext, draft: InpatientDrgSimulationInput | undefined): InpatientDrgSimulation['draft'] {
     const items: InpatientDrgSimulation['draft']['items'] = []
     const missing: InpatientDrgSimulation['draft']['missing'] = []
-    if (draft !== undefined) {
+    if (draft !== undefined && (draft.medications.length > 0 || draft.services.length > 0)) {
       const catalog = this.owner.orders.medicationsAndServices(context)
       for (const entry of draft.medications) {
         const medication = catalog.medications.find(item => item.id === entry.catalogItemId && item.version === entry.catalogVersion)
@@ -334,7 +337,7 @@ export class InpatientDrg {
     const reservations = z.array(z.object({ reservation_id: z.string(), status: z.string(), quantity: z.number(), consumed_quantity: z.number(), version: z.number() })).parse(this.owner.database.driver.prepare(
       'SELECT reservation_id, status, quantity, consumed_quantity, version FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY reservation_id')
       .all(context.workspaceId, context.epoch, admissionId))
-    const catalog = this.owner.orders.medicationsAndServices(context)
+    const catalogPrices = this.owner.orders.catalogPrices(context)
     const surgeryCatalog = this.owner.surgery.catalog(context)
     return {
       workspaceId: context.workspaceId, epoch: context.epoch, admissionId,
@@ -346,8 +349,8 @@ export class InpatientDrg {
         .all(context.workspaceId, context.epoch, admissionId)),
       executions, requests, surgeryExecutions, reservations,
       charges: charges.map(charge => ({ id: charge.id, version: charge.version, amountFen: charge.amountFen })),
-      prices: { medications: catalog.medications.map(item => [item.id, item.version, item.priceFen]),
-        services: catalog.services.map(item => [item.id, item.version, item.priceFen]),
+      prices: { medications: catalogPrices.medications,
+        services: catalogPrices.services,
         procedures: surgeryCatalog.procedures.map(item => [item.id, item.version, item.chargeDefinition.priceFen]),
         // 计价单位未确认的耗材无价格，指纹以 null 占位；补价后指纹随之变化即过期。
         materials: surgeryCatalog.materials.map(item => [item.id, item.version, 'chargeDefinition' in item ? item.chargeDefinition.priceFen : null]) },

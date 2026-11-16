@@ -70,6 +70,7 @@ export function InpatientOrderComposer(props: Props) {
   const selected = draft.rows.filter(row => row.selected && !row.attempt)
   const problem = (row: OrderDraftRow) => {
     if (row.pick.kind === 'medication' && !diagnosed) return t('请先确认住院诊断', 'Confirm inpatient diagnoses first')
+    if (row.duration === 'long' && row.frequencyCode === 'ONCE') return t('ONCE 仅允许用于临时医嘱', 'ONCE requires a temporary order')
     if (!orderSelection(row)) return t('请核对每次剂量和频次', 'Check the dose and frequency')
     if (row.pick.kind === 'service' && !services.some(item => item.id === row.pick.item.id && item.version === row.pick.item.version)) return t('目录已变化，请移除后重新选择', 'Catalog changed; remove and select again')
     if (row.surgeryExecutionId && !surgeries.some(item => item.id === row.surgeryExecutionId)) return t('关联手术已变化，请重新核对', 'Review the linked procedure')
@@ -111,7 +112,7 @@ export function InpatientOrderComposer(props: Props) {
           if (!mounted.current || cause instanceof OriginalContinuationUnreadable
             || cause instanceof ApiClientError && cause.code === 'INPATIENT_INTENT_STORAGE_UNAVAILABLE') break
           const definite = cause instanceof InpatientCommandRejection
-          const error = cause instanceof ApiClientError ? { status: cause.status, code: cause.code,
+          const error = cause instanceof ApiClientError ? { status: cause.status, code: cause.code, ...(cause.reason === undefined ? {} : { reason: cause.reason }),
             ...(cause.code === 'CATALOG_CONFLICT' ? { message: cause.message } : {}) } : { status: 0, code: '' }
           if (!definite) {
             update(row.id, { attempt, error })
@@ -136,17 +137,17 @@ export function InpatientOrderComposer(props: Props) {
               const edit = (patch: Partial<OrderDraftRow>) => update(row.id, { ...patch, estimate: undefined, error: undefined })
               return <section key={row.id} aria-label={t(`待开：${row.pick.item.display}`, `Draft: ${row.pick.item.display}`)} className="flex min-w-0 flex-col gap-2 rounded-md border p-3">
                 <div className="flex items-start gap-2"><Checkbox aria-label={t(`选择待开${row.pick.item.display}`, `Select draft ${row.pick.item.display}`)} checked={row.selected} disabled={locked} onCheckedChange={selected => update(row.id, { selected })} /><strong className="min-w-0 flex-1 text-sm wrap-anywhere">{row.pick.item.display}</strong><Button size="sm" variant="ghost" disabled={locked} onClick={() => save({ ...current.current, rows: current.current.rows.filter(item => item.id !== row.id) })}>{t('移除项目', 'Remove item')}</Button></div>
-                <Field><FieldLabel>{t('医嘱时效', 'Order duration')}</FieldLabel><ToggleGroup aria-label={t('医嘱时效', 'Order duration')} disabled={locked} value={[row.duration]} variant="outline" onValueChange={values => { if (values[0] === 'long' || values[0] === 'temporary') edit({ duration: values[0] }) }}><ToggleGroupItem value="long">{t('长期', 'Long')}</ToggleGroupItem><ToggleGroupItem value="temporary">{t('临时', 'Temporary')}</ToggleGroupItem></ToggleGroup></Field>
+                <Field><FieldLabel>{t('医嘱时效', 'Order duration')}</FieldLabel><ToggleGroup aria-label={t('医嘱时效', 'Order duration')} disabled={locked} value={[row.duration]} variant="outline" onValueChange={values => { if (values[0] === 'long' || values[0] === 'temporary') edit({ duration: values[0], ...(values[0] === 'long' && row.frequencyCode === 'ONCE' ? { frequencyCode: row.pick.kind === 'medication' ? row.pick.item.frequencyCodes.find(code => code !== 'ONCE') : undefined } : {}) }) }}><ToggleGroupItem value="long">{t('长期', 'Long')}</ToggleGroupItem><ToggleGroupItem value="temporary">{t('临时', 'Temporary')}</ToggleGroupItem></ToggleGroup></Field>
                 {row.pick.kind === 'medication' ? <>
                   <Field><FieldLabel htmlFor={`${formId}-${row.id}-dose`}>{t('每次剂量', 'Dose per execution')}</FieldLabel><Input id={`${formId}-${row.id}-dose`} disabled={locked} value={row.doseText} maxLength={120} aria-invalid={dose !== undefined && 'reason' in dose} onChange={event => edit({ doseText: event.currentTarget.value })} />{dose && 'quantity' in dose ? <span className="text-xs text-muted-foreground">= {dose.quantity} {row.pick.item.unit}</span> : <p className="text-xs text-destructive">{dose && 'reason' in dose ? doseError(dose.reason, locale) : ''}</p>}</Field>
-                  <Field><FieldLabel htmlFor={`${formId}-${row.id}-frequency`}>{t('医嘱频次', 'Order frequency')}</FieldLabel><WorkspaceSelect id={`${formId}-${row.id}-frequency`} disabled={locked} value={row.frequencyCode ?? null} items={row.pick.item.frequencyCodes.map(code => ({ value: code, label: inpatientFrequencyLabel(code, locale) }))} onValueChange={value => edit({ frequencyCode: value ?? undefined })} /></Field>
+                  <Field><FieldLabel htmlFor={`${formId}-${row.id}-frequency`}>{t('医嘱频次', 'Order frequency')}</FieldLabel><WorkspaceSelect id={`${formId}-${row.id}-frequency`} disabled={locked} value={row.frequencyCode ?? null} items={row.pick.item.frequencyCodes.map(code => ({ value: code, disabled: row.duration === 'long' && code === 'ONCE', label: inpatientFrequencyLabel(code, locale) }))} onValueChange={value => edit({ frequencyCode: value ?? undefined })} /></Field>
                 </> : <p className="text-xs text-muted-foreground">{t('每次 1 次 · 频次不适用', 'One per execution · frequency not applicable')}</p>}
                 <Field><FieldLabel htmlFor={`${formId}-${row.id}-surgery`}>{t('术后医嘱关联手术', 'Postoperative procedure')}</FieldLabel><WorkspaceSelect id={`${formId}-${row.id}-surgery`} disabled={locked || !surgeries.length} value={row.surgeryExecutionId ?? ''} items={[{ value: '', label: t('不关联（普通医嘱）', 'None (regular order)') }, ...surgeries.map(item => ({ value: item.id, label: `${item.actualProcedure.coding.code} · ${item.actualProcedure.coding.display}` }))]} onValueChange={value => edit({ surgeryExecutionId: value || undefined })} /></Field>
                 <Button size="sm" variant="outline" disabled={locked || !orderSelection(row)} onClick={() => update(row.id, { estimate: row.estimate ? undefined : { generation: newIdempotencyKey(), stale: false } })}>{row.estimate ? t('收起费用预计', 'Hide estimate') : t('费用预计', 'Estimate charges')}</Button>
                 {row.estimate ? <InpatientOrderRowEstimate row={row} session={session} admissionId={admission.id} locale={locale} enabled={!locked && props.active} onUpdate={update} onReady={estimateReady} /> : null}
                 {problem(row) ? <p className="text-xs text-destructive">{problem(row)}</p> : null}
                 {row.error ? <p role="alert" className="text-xs text-destructive">{typeof row.error === 'string' && locale === 'zh-CN' ? row.error : <>
-                  {locale === 'en-US' && row.pick.kind === 'medication' && typeof row.error !== 'string' && row.error.code === 'CATALOG_CONFLICT'
+                  {locale === 'en-US' && row.pick.kind === 'medication' && typeof row.error !== 'string' && row.error.code === 'CATALOG_CONFLICT' && !row.error.reason
                     ? 'The medication could not be ordered. Check the indication, allergy information, dose and current catalog.'
                     : getBatchFailureMessage(typeof row.error === 'string' ? undefined : row.error, locale)} · {row.attempt
                     ? t('结果待确认，请恢复原操作', 'Result unconfirmed; recover the original operation')
