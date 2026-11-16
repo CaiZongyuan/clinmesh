@@ -320,11 +320,20 @@ export class ExaminationResultResolver {
       const values = matches.map((item) => {
         if (typeof definition.value !== 'number') return { value: item.valueString }
         const quantity = z
-          .object({ value: z.number().finite(), code: z.string().optional(), unit: z.string().optional() })
+          .object({
+            value: z.number().finite(),
+            code: z.string().optional(),
+            unit: z.string().optional(),
+            system: z.string().optional(),
+          })
           .loose()
           .safeParse(item.valueQuantity)
         return quantity.success
-          ? { value: quantity.data.value, unit: normalizeExactUnit(definition, quantity.data.code ?? quantity.data.unit) }
+          ? {
+              system: quantity.data.system ?? 'http://unitsofmeasure.org',
+              unit: normalizeExactUnit(definition, quantity.data.code ?? quantity.data.unit),
+              value: quantity.data.value,
+            }
           : { invalidQuantity: item.valueQuantity }
       })
       if (new Set(values.map((value) => canonicalJsonHash(value))).size > 1)
@@ -374,7 +383,12 @@ export class ExaminationResultResolver {
       results: requested.map((definition, index) => {
         const observation = exact[index]
         const quantity = z
-          .object({ value: z.number().finite(), code: z.string().optional(), unit: z.string().optional() })
+          .object({
+            value: z.number().finite(),
+            code: z.string().optional(),
+            unit: z.string().optional(),
+            system: z.string().optional(),
+          })
           .loose()
           .safeParse(observation?.valueQuantity)
         const value =
@@ -384,13 +398,17 @@ export class ExaminationResultResolver {
               ? quantity.success
                 ? quantity.data.value
                 : undefined
-              : z.string().min(1).max(1000).safeParse(observation.valueString).data
+              : z.string().trim().min(1).max(1000).safeParse(observation.valueString).data
         if (value === undefined || (typeof value === 'number' && (value < 0 || value > 1000)))
           throw new InvestigationGenerationError('INVESTIGATION_TRUTH_INCOMPATIBLE', '功能检查精确真值数值或单位无效')
         if (
           observation !== undefined &&
           definition.unit !== undefined &&
-          (!quantity.success || normalizeExactUnit(definition, quantity.data.code ?? quantity.data.unit) !== definition.unit)
+          (
+            !quantity.success ||
+            (quantity.data.system !== undefined && quantity.data.system !== 'http://unitsofmeasure.org') ||
+            normalizeExactUnit(definition, quantity.data.code ?? quantity.data.unit) !== definition.unit
+          )
         )
           throw new InvestigationGenerationError('INVESTIGATION_TRUTH_INCOMPATIBLE', '功能检查精确真值单位不相容')
         return {

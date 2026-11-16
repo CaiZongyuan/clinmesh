@@ -844,6 +844,34 @@ it('无合成病例物化绑定的门诊就诊执行功能检查时返回 INVEST
   expect(failed.report).toBeUndefined()
 })
 
+it('非 UCUM 单位系统的完整精确真值拒绝重标为 UCUM 签发', async () => {
+  const nonUcumTte = exactTte.map((entry, index) =>
+    index === 0
+      ? {
+          ...entry,
+          resource: {
+            ...entry.resource,
+            valueQuantity: { value: 35, unit: '%', code: '%', system: 'urn:example:custom-units' },
+          },
+        }
+      : entry,
+  )
+  const s = await setup(true, nonUcumTte),
+    request = await s.issue('examination-tte')
+  await payOutpatientInvestigation(s.runtime, {
+    caseId: s.visit.outpatientCaseId,
+    category: 'examination',
+    chargeItemId: request.billing!.chargeItemId,
+  })
+  await dispatchAll(s.runtime)
+  const failed = (await s.detail()).examinationRequests!.requests[0]!
+  expect(failed).toMatchObject({
+    status: 'generation-failed',
+    generationError: { code: 'INVESTIGATION_TRUTH_INCOMPATIBLE' },
+  })
+  expect(failed.report).toBeUndefined()
+})
+
 it('无素材包住院 ECG/TTE 由护士送检、执行计费并按功能检查已阅', async () => {
   const s = await setup(),
     registrar = await signIn(s.runtime, 'registrar@demo.clinmesh.local')
