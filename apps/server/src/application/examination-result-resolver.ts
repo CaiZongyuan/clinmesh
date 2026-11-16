@@ -150,14 +150,26 @@ function unclassifiedClinicalHistory(resource: z.infer<typeof resourceSchema>): 
   )
 }
 
+const finalizedObservationStatuses = new Set(['final', 'amended', 'corrected'])
+function finalizedObservation(resource: z.infer<typeof resourceSchema>): boolean {
+  return (
+    resource.resourceType === 'Observation'
+    && typeof resource.status === 'string'
+    && finalizedObservationStatuses.has(resource.status)
+    && !refuted(resource)
+  )
+}
+
 function incompatibleBaselineMeasurement(resource: z.infer<typeof resourceSchema>): boolean {
-  if (resource.resourceType !== 'Observation' || resource.status === 'entered-in-error') return false
+  if (resource.resourceType !== 'Observation' || resource.status === 'entered-in-error' || refuted(resource)) return false
+  const finalized = finalizedObservation(resource)
   return [resource, ...resource.component ?? []].some(measurement => {
     const definition = Object.values(definitions).flat().find(item => measurement.code?.coding?.some(coding =>
       coding.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service' && coding.code === item.code
       || coding.system === 'http://loinc.org' && item.sourceCodes?.includes(coding.code),
     ))
     if (definition === undefined) return false
+    if (!finalized) return true
     if (typeof definition.value === 'number') {
       const quantity = z.object({ value: z.number().finite(), code: z.string().optional(), unit: z.string().optional(), system: z.string().optional() })
         .loose().safeParse(measurement.valueQuantity)
@@ -186,10 +198,10 @@ export class ExaminationResultResolver {
         case_id: z.string(),
         service_snapshot_json: z.string(),
         result_snapshot_id: z.string().nullable(),
-        synthetic_case_id: z.string(),
-        synthetic_case_revision: z.number(),
-        profile_id: z.string(),
-        profile_revision: z.number(),
+        synthetic_case_id: z.string().nullable(),
+        synthetic_case_revision: z.number().nullable(),
+        profile_id: z.string().nullable(),
+        profile_revision: z.number().nullable(),
         patient_id: z.string(),
         authored_at: z.string(),
       })
@@ -210,6 +222,13 @@ export class ExaminationResultResolver {
     const snapshots = new InvestigationResultRepository(this.database)
     const bound = row.result_snapshot_id === null ? undefined : snapshots.getById(workspaceId, row.result_snapshot_id)
     if (bound !== undefined) return { snapshotId: bound.snapshotId, content: bound.content }
+    if (
+      row.synthetic_case_id === null
+      || row.synthetic_case_revision === null
+      || row.profile_id === null
+      || row.profile_revision === null
+    )
+      throw new InvestigationGenerationError('INVESTIGATION_UNSUPPORTED', '功能检查缺少固定合成病例来源')
     const service = examinationServiceSnapshotSchema.parse(JSON.parse(row.service_snapshot_json))
     const cases = new SyntheticCaseRepository(this.database)
     const source = cases.get(workspaceId, row.synthetic_case_id)
@@ -259,7 +278,7 @@ export class ExaminationResultResolver {
     if (existing !== undefined) return { snapshotId: existing.snapshotId, content: existing.content }
     const requested = definitions[service.examCode]
     const validHiddenMeasurements = hidden
-      .filter((item) => item.resourceType === 'Observation' && item.status !== 'entered-in-error' && !refuted(item))
+      .filter(finalizedObservation)
       .flatMap((item) => [item, ...(item.component ?? [])])
     const hasEcgSpecificTruth = validHiddenMeasurements.some((measurement) =>
       measurement.code?.coding?.some(

@@ -782,6 +782,68 @@ it.each([true, false])('精确 TTE 真值 complete=%s 保留异常数值并拒�
   }
 })
 
+it.each(['preliminary', 'cancelled'])('非终态完整TTE隐藏观测 status=%s 不得签发为正式报告或回退正常基线', async (status) => {
+  const normalNonFinalTte = [
+    { code: 'lvef', value: 62, unit: '%' },
+    { code: 'lvedd', value: 48, unit: 'mm' },
+    { code: 'regional-wall-motion', value: '未见节段性室壁运动异常' },
+    { code: 'valves', value: '瓣膜结构及启闭未见明显异常' },
+    { code: 'diastolic-function', value: '左室舒张功能未见明显异常' },
+  ].map((item, index) => ({
+    fullUrl: `urn:uuid:non-final-tte-${index}`,
+    resource: {
+      resourceType: 'Observation',
+      id: `non-final-tte-${index}`,
+      status,
+      code: {
+        coding: [
+          { system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service', code: item.code },
+        ],
+      },
+      subject: { reference: 'urn:uuid:patient' },
+      encounter: { reference: 'urn:uuid:index-encounter' },
+      effectiveDateTime: '2026-06-01T10:10:00+08:00',
+      ...(typeof item.value === 'number'
+        ? { valueQuantity: { value: item.value, unit: item.unit, system: 'http://unitsofmeasure.org', code: item.unit } }
+        : { valueString: item.value }),
+    },
+  }))
+  const s = await setup(false, normalNonFinalTte),
+    request = await s.issue('examination-tte')
+  await payOutpatientInvestigation(s.runtime, {
+    caseId: s.visit.outpatientCaseId,
+    category: 'examination',
+    chargeItemId: request.billing!.chargeItemId,
+  })
+  await dispatchAll(s.runtime)
+  const failed = (await s.detail()).examinationRequests!.requests[0]!
+  expect(failed).toMatchObject({
+    status: 'generation-failed',
+    generationError: { code: 'INVESTIGATION_TRUTH_INCOMPATIBLE' },
+  })
+  expect(failed.report).toBeUndefined()
+})
+
+it('无合成病例物化绑定的门诊就诊执行功能检查时返回 INVESTIGATION_UNSUPPORTED 而非可重试解析错误', async () => {
+  const s = await setup(),
+    request = await s.issue('examination-ecg-12-lead')
+  s.runtime.database.driver
+    .prepare('DELETE FROM synthetic_case_materialization WHERE outpatient_case_id = ?')
+    .run(s.visit.outpatientCaseId)
+  await payOutpatientInvestigation(s.runtime, {
+    caseId: s.visit.outpatientCaseId,
+    category: 'examination',
+    chargeItemId: request.billing!.chargeItemId,
+  })
+  await dispatchAll(s.runtime)
+  const failed = (await s.detail()).examinationRequests!.requests[0]!
+  expect(failed).toMatchObject({
+    status: 'generation-failed',
+    generationError: { code: 'INVESTIGATION_UNSUPPORTED' },
+  })
+  expect(failed.report).toBeUndefined()
+})
+
 it('无素材包住院 ECG/TTE 由护士送检、执行计费并按功能检查已阅', async () => {
   const s = await setup(),
     registrar = await signIn(s.runtime, 'registrar@demo.clinmesh.local')
