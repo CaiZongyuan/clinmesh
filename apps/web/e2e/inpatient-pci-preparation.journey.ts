@@ -233,7 +233,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
       await page.getByRole('option', { name: /36.0700 ·/ }).click()
     }
     await page.getByRole('button', { name: '开立所选医嘱（1）', exact: true }).click()
-    await expect(page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByText(`${medication.display} · 待护士校对`, { exact: true })).toBeVisible()
+    await expect(page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByText(`${medication.display} · 待护士校对`, { exact: true }).last()).toBeVisible()
     await page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByRole('button', { name: '关闭', exact: true }).click()
     await expect(page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '待校对' })).toBeVisible()
   }
