@@ -1272,6 +1272,16 @@ export function getDoctorCompletedCase(caseId: string, signal?: AbortSignal) {
   )
 }
 
+export function getDoctorCaseHistory(caseId: string, page: number, signal?: AbortSignal) {
+  const query = new URLSearchParams({ source: 'local-completed', page: String(page), pageSize: '10' })
+  return apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/history?${query}`, doctorCaseHistorySchema, signal)
+}
+
+export function getDoctorCaseHistoryDetail(caseId: string, entryId: string, signal?: AbortSignal) {
+  const query = new URLSearchParams({ source: 'local-completed', entryId })
+  return apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/history/detail?${query}`, doctorCaseHistoryDetailSchema, signal)
+}
+
 export function sendConsultationMessage(input: {
   encounterId: string
   encounterVersion: string

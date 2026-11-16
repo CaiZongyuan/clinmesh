@@ -127,7 +127,7 @@
 
 医生页面的 `clinmesh_read_current_context` 在 `data.pageState.queue` 返回已加载的医生队列页；`clinmesh_read_doctor_context` 保留当前病例详情字段，并在 `data.queue` 返回当前 frame 已加载的同一队列页。`queue.items` 包含可用于切换的 `caseId`、患者身份和病例状态，`page`、`pageSize`、`total` 描述分页。该队列包含待诊与在诊病例，不等同于当前标签筛选后的列表；`queueCount` 保留为总数，不能据此推断已返回全部条目。队列尚未加载时 `queue` 为 `null`，空队列的 `items` 为 `[]`。选择工具只接受这份已加载队列中的病例，不提供任意患者查询、按姓名全库搜索或跨页选择；同名时应结合队列返回的身份字段消歧。
 
-`clinmesh_search_doctor_history` 按 `source`（`local-completed` 或 `visible-source`）、`page` 和 `pageSize` 读取当前患者授权历史，返回来源、时间、覆盖范围与分页。`no-data` 表示允许范围内无记录，`no-materialization` 表示没有合法来源物化关联；查询失败不能当作没有资料。`clinmesh_read_doctor_history` 只接受索引中的 `source` 与 `entryId`，未记录字段标明 `not-recorded`，不开放任意病例或仿真隐藏输入。
+`clinmesh_search_doctor_history` 按 `source`（`local-completed` 或 `visible-source`）、`page` 和 `pageSize` 读取当前患者授权历史，返回来源、时间、覆盖范围与分页。`no-data` 表示允许范围内无记录，`no-materialization` 表示没有合法来源物化关联；查询失败不能当作没有资料。`clinmesh_read_doctor_history` 只接受索引中的 `source` 与 `entryId`，未记录字段标明 `not-recorded`，不开放任意病例或仿真隐藏输入。`local-completed` 同时包含门诊完诊记录和 `record.kind = 'inpatient'` 的已出院住院临床摘要；历史停嘱状态保留，不能作为当前处方，详细范围见[临床业务流程](architecture/clinical-workflows.md#门诊闭环)。
 
 医生在右侧「ClinMesh 医院助手」聊天中明确交代“替我问清起病时间”等任务后，系统核实真实输入与代问意图，助手可在本任务范围内连续追问；问题与患者回答显示在左侧问诊记录。左侧输入框用于医生直接提问。普通讨论病例、请助手拟问题或发现缺项只提示医生，不授予代问许可。进展和叫停沿用原生会话；完成、取消、病例或授权身份变化后许可结束，结果不明时不自动重复。当前医院工具任务支持不超过 2000 字符且无附件的纯文字输入；完整授权与失败合同见 [Execution proof 与调用记录](architecture/agent-integration.md#74-execution-proof-与调用记录)。正式诊疗动作保留工作台人工审阅。
 
@@ -146,7 +146,7 @@ DSH browser Tool broker 每次注册最多接受 32 个 Tool。医生“接诊�
 | `prescription`（处方） | `outpatient.prescription.draft.set`、`outpatient.prescription.issue.propose`、`outpatient.prescription.withdraw.propose`、`outpatient.medication.none.propose` |
 | `laboratory`（检验，含放射检查与病理会诊） | `outpatient.laboratory.draft.set`、`outpatient.laboratory.issue.propose`、`outpatient.laboratory.cancel.propose`、`outpatient.report.acknowledge.propose`、`outpatient.report.correct.propose`、`outpatient.imaging.draft.set`、`outpatient.imaging.issue.propose`、`outpatient.imaging.cancel.propose`、`outpatient.imaging.retry.propose`、`outpatient.imaging.correct.propose`、`outpatient.pathology.draft.set`、`outpatient.pathology.issue.propose`、`outpatient.pathology.cancel.propose`、`outpatient.pathology.retry.propose`、`outpatient.pathology.correct.propose` |
 
-开始就诊和完成就诊位于病例页头，不属于任何栏目。兼容初诊与复诊草稿的表单不只对应一个栏目，也跨栏目发布；它们仍按病例状态收窄，结构化诊疗流程中不占名额。兼容复诊流程的签署预览与签署同样在“病历记录”栏目发布。栏目 Tool 在所属栏目内的前提、输入、提案与授权语义不变。合同测试逐一断言每个岗位、视图与栏目发布的 Tool 不超过 32 个；放射与病理的已阅并入 `outpatient.report.acknowledge.propose`，导航阅片并入 `outpatient.section.select`；“检验检查”栏目共发布 25 个 Tool。
+开始就诊和完成就诊位于病例页头，不属于任何栏目。兼容初诊与复诊草稿的表单不只对应一个栏目，也跨栏目发布；它们仍按病例状态收窄，结构化诊疗流程中不占名额。兼容复诊流程的签署预览与签署同样在“病历记录”栏目发布。栏目 Tool 在所属栏目内的前提、输入、提案与授权语义不变。合同测试逐一断言每个岗位、视图与栏目发布的 Tool 不超过 32 个；放射与病理的已阅并入 `outpatient.report.acknowledge.propose`，导航阅片并入 `outpatient.section.select`；“检验检查”栏目共发布 27 个 Tool。
 
 ## 上游能力与接入限制
 

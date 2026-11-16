@@ -30,6 +30,7 @@ import { inpatientDrgSimulationSchema, inpatientDrgSimulationInputSchema, inpati
   inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema, inpatientMaterialReservationBatchInputSchema } from './inpatient-drg-simulation.ts'
 import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewCreateInputSchema, inpatientDrgPayerReviewPreviewSchema } from './inpatient-drg-payer.ts'
 import { inpatientPciDataSchema, inpatientPciDataPrepareRequestSchema, inpatientPciDataResponseSchema, pciCaseSourcePrepareRequestSchema, pciCaseSourceResponseSchema, startSyntheticInpatientCaseRequestSchema, startSyntheticInpatientCaseResponseSchema } from './inpatient-pci-data.ts'
+import { doctorCaseHistoryInputSchema, doctorCaseHistoryDetailInputSchema, doctorCaseHistorySchema, doctorCaseHistoryDetailSchema } from './doctor-history.ts'
 import { z } from 'zod'
 
 const inpatientDrgSimulationRequestSchema = z.object({ admissionId: z.string().min(1), draft: inpatientDrgSimulationInputSchema.optional() }).strict()
@@ -1446,6 +1447,32 @@ const operationDefinitions = [
     roles: ['outpatient-doctor'],
     summary: 'List the doctor work queue with the current Registration registrationNumber, or null for an unrecorded legacy number; presentation is null when no triage record exists',
     version: 3,
+  },
+  {
+    cliPath: ['doctor', 'case', 'history', 'search'],
+    http: { method: 'GET', path: '/api/his/v1/doctor/cases/:caseId/history' },
+    id: 'doctor.case.history.search',
+    input: doctorCaseHistoryInputSchema.extend({ caseId: z.string().min(1) }).strict(),
+    mode: 'query',
+    output: doctorCaseHistorySchema,
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read',
+    roles: ['outpatient-doctor'],
+    summary: '分页读取当前医生负责病例的同患者本地已完成门诊、出院住院和可见来源历史索引',
+    version: 1,
+  },
+  {
+    cliPath: ['doctor', 'case', 'history', 'read'],
+    http: { method: 'GET', path: '/api/his/v1/doctor/cases/:caseId/history/detail' },
+    id: 'doctor.case.history.read',
+    input: doctorCaseHistoryDetailInputSchema.extend({ caseId: z.string().min(1) }).strict(),
+    mode: 'query',
+    output: doctorCaseHistoryDetailSchema,
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read',
+    roles: ['outpatient-doctor'],
+    summary: '读取当前医生负责病例可见的单条历史临床白名单，不暴露来源真值、费用或隐私字段',
+    version: 1,
   },
   {
     cliPath: ['doctor', 'completed-cases', 'list'],
@@ -3089,6 +3116,8 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   [clinicalDocumentOperationIds.revise]: 'clinmesh-doctor',
   'command.receipt.get': 'clinmesh-shared',
   'doctor.case.get': 'clinmesh-doctor',
+  'doctor.case.history.search': 'clinmesh-doctor',
+  'doctor.case.history.read': 'clinmesh-doctor',
   'doctor.case.imaging-services.list': 'clinmesh-doctor',
   'doctor.case.laboratory-catalog.search': 'clinmesh-doctor',
   'doctor.case.pathology-services.list': 'clinmesh-doctor',

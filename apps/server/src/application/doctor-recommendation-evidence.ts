@@ -39,7 +39,8 @@ export function packDoctorRecommendationHistory(caseId: string, history: DoctorC
   }
   const groups = new Map<string, HistoryGroup>()
   for (const item of history) {
-    const resourceType = item.source === 'visible-source' ? item.resourceType : 'Encounter'
+    const inpatient = item.source === 'local-completed' && 'kind' in item.record && item.record.kind === 'inpatient'
+    const resourceType = item.source === 'visible-source' ? item.resourceType : inpatient ? 'InpatientEncounter' : 'Encounter'
     const required = item.source === 'local-completed' || ['Condition', 'AllergyIntolerance', 'Device', 'Procedure'].includes(resourceType)
       || resourceType.startsWith('Medication')
       || item.source === 'visible-source' && resourceType === 'Observation' && abnormalOrUncertain(item.clinical)
@@ -47,7 +48,9 @@ export function packDoctorRecommendationHistory(caseId: string, history: DoctorC
     const group = groups.get(key) ?? { source: item.source, resourceType, required, entries: [] }
     group.entries.push(item.source === 'visible-source'
       ? { entryId: item.entryId, clinicalDate: item.clinicalDate, title: item.title, clinical: item.clinical }
-      : { entryId: item.entryId, record: item.record })
+      : { entryId: item.entryId, record: item.record,
+        ...(inpatient && item.clinicalDate !== undefined ? { clinicalDate: item.clinicalDate } : {}),
+        ...(inpatient && item.title !== undefined ? { title: item.title } : {}) })
     groups.set(key, group)
   }
   for (const group of groups.values()) {
@@ -73,10 +76,17 @@ export function packDoctorRecommendationHistory(caseId: string, history: DoctorC
       if (withinBudget(serialize([entry]))) return [entry]
       if (group.required) {
         const { clinical, record, ...identity } = entry
-        const parts = Object.entries(clinical ?? record ?? {}).map(([field, value]) => ({
-          ...identity, fieldPath: `${clinical === undefined ? 'record' : 'clinical'}.${field}`,
-          ...(clinical === undefined ? { record: { [field]: value } } : { clinical: { [field]: value } }),
-        }))
+        const parts = Object.entries(clinical ?? record ?? {}).flatMap(([field, value]) => {
+          const part = {
+            ...identity, fieldPath: `${clinical === undefined ? 'record' : 'clinical'}.${field}`,
+            ...(clinical === undefined ? { record: { [field]: value } } : { clinical: { [field]: value } }),
+          }
+          if (withinBudget(serialize([part]))) return [part]
+          if (record !== undefined && 'kind' in record && record.kind === 'inpatient' && Array.isArray(value)) {
+            return value.map((member, index) => ({ ...identity, fieldPath: `record.${field}[${index}]`, record: { [field]: [member] } }))
+          }
+          return [part]
+        })
         if (parts.every(part => withinBudget(serialize([part])))) return parts
       }
       if (result.missingInformation.length === 0) {
@@ -86,7 +96,7 @@ export function packDoctorRecommendationHistory(caseId: string, history: DoctorC
     })
     for (const entry of completeEntries) {
       const next = serialize([...entries, entry])
-      if (entries.length > 0 && (next.length > 12_000 || Buffer.byteLength(next) > 16 * 1024)) {
+      if (entries.length > 0 && !withinBudget(next)) {
         flush(entries)
         entries = []
       }
