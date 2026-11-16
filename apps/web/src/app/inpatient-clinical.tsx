@@ -26,6 +26,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { inpatientAdmissionConditionLabel, inpatientFrequencyLabel } from './inpatient-labels.ts'
 import { formatShanghaiMinute } from './workspace-format.ts'
 import { InpatientVitalsAndScoresDisclosure } from './clinical-scores-panel.tsx'
+import { InpatientGuidelineAdvicePanel } from './inpatient-guideline-advice.tsx'
 import { InpatientVerification } from './inpatient-verification.tsx'
 import { InpatientStopOrders } from './inpatient-stop-orders.tsx'
 import { InpatientExecutionBatch } from './inpatient-execution-batch.tsx'
@@ -49,6 +50,7 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
   const catalog = useQuery({ queryKey: [...scope,'clinical-catalog'], enabled: (doctor || nurse) && view === 'orders', queryFn: ({signal}) => apiGet('/api/his/v1/inpatient/clinical-catalog',inpatientFullCatalogSchema,signal) })
   const [composing, setComposing] = useState(false)
   const [editingDiagnosis, setEditingDiagnosis] = useState(false)
+  const [guidelineOpen, setGuidelineOpen] = useState(false)
   const surgery = useQuery({ queryKey: [...scope,admission.id,'surgeries'], enabled: doctor && view === 'orders', queryFn: ({signal}) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`,inpatientSurgerySchema,signal) })
   const data = clinical.data, blocked = write.blocked || admission.status !== 'admitted'
   const diagnosed = (data?.diagnosis.entries.length ?? 0) > 0
@@ -65,6 +67,7 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
       {doctor ? <InpatientDiagnosisEditor key={data.admissionId} data={data} session={session} locale={locale} blocked={diagnosisBlocked} write={write} open={editingDiagnosis} onOpenChange={setEditingDiagnosis} /> : null}
     </section> : null}
     {data ? <InpatientVitalsAndScoresDisclosure key={`vitals:${admission.id}`} admissionId={admission.id} canEdit={(doctor || nurse) && !write.blocked && admission.recordStatus !== 'archived' && (admission.status === 'admitted' || admission.status === 'discharge-pending')} clinicalRevision={`${data.diagnosis.revision}:${data.orders.length}:${surgery.data?.executions.length ?? 0}`} encounterVersion={data.encounterVersion} latestVitalSigns={data.latestVitalSigns} locale={locale} riskAssessment={data.riskAssessment} scope={scope} write={write} /> : null}
+    {data && !nurse ? <details className="clinmesh-inpatient-disclosure" onToggle={event => { const open = event.currentTarget.open; setGuidelineOpen(open) }}><summary>{t('循证指南专题与参考意见', 'Clinical guideline topics & advice')}</summary><div className="pt-2"><InpatientGuidelineAdvicePanel key={`topic-advice:${admission.id}`} admission={admission} session={session} locale={locale} write={write} canReassess={doctor && !write.blocked && admission.status === 'admitted' && admission.recordStatus !== 'archived'} enableTopicPicker active={active && guidelineOpen} /></div></details> : null}
     {nurse && data ? <InpatientVerification key={`${session.user.id}:${scope.join(':')}:${admission.id}`} admission={admission} session={session} locale={locale} orders={data.orders} loading={clinical.isFetching || clinical.isError} blocked={blocked || admission.recordStatus === 'archived'} active={active} write={write} refresh={async () => { const result = await clinical.refetch(); return result.isSuccess ? result.data.orders : undefined }} /> : null}
     {data ? <InpatientStopOrders key={`stop:${session.user.id}:${scope.join(':')}:${admission.id}`} admission={admission} session={session} locale={locale} data={data} loading={clinical.isFetching || clinical.isError} active={active} write={write} refresh={async () => { const result = await clinical.refetch(); return result.isSuccess ? result.data : undefined }} renderOrder={(order, selection) => {
       const orderExecutions = data.executions.filter(execution => execution.orderId === order.id)

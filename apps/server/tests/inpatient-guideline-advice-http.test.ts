@@ -4,9 +4,18 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
-import { inpatientGuidelineAdviceSchema, inpatientGuidelineAdviceResponseSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
+import { guidelineTopicBundleSchema, guidelineTopicIds, type GuidelineTopicId } from '@clinmesh/contracts/guideline-topics'
+import { inpatientGuidelineAdviceListSchema, inpatientGuidelineAdviceSchema, inpatientGuidelineAdviceResponseSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { inpatientSurgerySchema, inpatientSurgeryResponseSchema, inpatientSurgeryCatalogSchema, inpatientSurgeryRequestInputSchema } from '@clinmesh/contracts/inpatient-surgery'
-import { apiErrorSchema } from '@clinmesh/contracts/his'
+import {
+  apiErrorSchema,
+  createPatientResponseSchema,
+  doctorQueueSchema,
+  registrationCatalogSchema,
+  registrationResponseSchema,
+  startVisitResponseSchema,
+  triageResponseSchema,
+} from '@clinmesh/contracts/his'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -19,6 +28,7 @@ import { agentClientSchema, agentCapabilityGrantSchema, revokedAgentCapabilityGr
 import { pciAgentParameters, pciAgentGeneration, pciAgentVerification } from './fixtures/inpatient-drg-agent.ts'
 import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
+import { getGuidelineTopicDefinition } from '../src/application/guideline-topic-registry.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
 import { setHospitalPatientBirthDate } from './fixtures/guideline-corpus.ts'
@@ -412,7 +422,7 @@ it('非空旧库升级保留原计划、费用和未开启跟进状态，历史�
   const database = new Database(s.prepared.options.databasePath!)
   try {
     // The legacy fixture predates only this additive intent table and its automatic event.
-    database.exec("DELETE FROM outbox_event WHERE kind='inpatient.guideline-advice.prepare'; DROP TABLE inpatient_guideline_advice; DELETE FROM schema_migration WHERE migration_id='0108_inpatient-guideline-advice.sql'")
+    database.exec("DELETE FROM outbox_event WHERE kind='inpatient.guideline-advice.prepare'; DROP TABLE inpatient_guideline_advice; DELETE FROM schema_migration WHERE migration_id IN ('0108_inpatient-guideline-advice.sql','0116_guideline-topic-advice.sql')")
   } finally { database.close() }
   await s.fixture.restart()
   expect(await s.read()).toMatchObject({ version: 0, status: 'idle', result: null })
@@ -558,4 +568,490 @@ it('已出区患者跨18周岁生日仍按离院时间保留指南人群，召�
   expect((await s.read()).fingerprint).not.toBe(departed.fingerprint)
   await s.fixture.runtime.dispatchPending()
   expect(s.calls).toHaveLength(0)
+})
+
+function fullTopicDocuments(): GuidelineDocument[] {
+  const bySource = new Map<string, {
+    pages: Map<number, string[]>
+    sha256: string
+    specialty: 'cardiology' | 'endocrinology'
+    title: string
+    version: string
+  }>()
+  for (const topicId of guidelineTopicIds) {
+    const def = getGuidelineTopicDefinition(topicId)
+    for (const ref of def.references) {
+      let entry = bySource.get(ref.sourceId)
+      if (!entry) {
+        entry = {
+          pages: new Map(),
+          sha256: ref.sha256,
+          specialty: def.specialty,
+          title: ref.title,
+          version: ref.version,
+        }
+        bySource.set(ref.sourceId, entry)
+      }
+      const list = entry.pages.get(ref.page) ?? []
+      for (const frag of ref.fragments) {
+        if (!list.includes(frag)) list.push(frag)
+      }
+      entry.pages.set(ref.page, list)
+    }
+  }
+  return [...bySource.entries()].map(([sourceId, entry]) => ({
+    passages: [...entry.pages.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([page, fragments]) => ({
+        locator: `PDF 物理第 ${page} 页`,
+        text: `${fragments.join('。 ')}（仅供合成HTTP集成测试核验）`,
+      })),
+    source: {
+      documentType: 'guideline',
+      format: 'pdf',
+      id: sourceId,
+      license: { id: 'CC0', url: 'https://example.test/license', usage: 'open' },
+      population: 'adult',
+      publisher: '合成验收机构',
+      scope: '仅用于合成HTTP合同，非真实临床原件',
+      sha256: entry.sha256,
+      specialty: entry.specialty,
+      status: 'active',
+      title: entry.title,
+      topics: [],
+      url: `https://example.test/${sourceId}`,
+      version: entry.version,
+    },
+  }))
+}
+
+it('0108 存量数据经 0116 表重建迁移自动回填 pci-stent，并约束 request_id 可空唯一键与手术复合外键', async () => {
+  const s = await setup()
+  await s.fixture.runtime.dispatchPending()
+  const before = await s.read()
+  expect(before).toMatchObject({ topicId: 'pci-stent', requestId: s.stay.requestId, status: 'incomplete' })
+
+  await s.fixture.runtime.close()
+  const database = new Database(s.prepared.options.databasePath!)
+  try {
+    const saved = database.prepare('SELECT * FROM inpatient_guideline_advice WHERE request_id = ?').get(s.stay.requestId) as Record<string, unknown>
+    database.exec(`
+      DROP TABLE inpatient_guideline_advice;
+      CREATE TABLE inpatient_guideline_advice (
+        workspace_id TEXT NOT NULL, epoch TEXT NOT NULL, task_id TEXT NOT NULL,
+        admission_id TEXT NOT NULL, request_id TEXT NOT NULL, version INTEGER NOT NULL CHECK(version>0),
+        context_json TEXT NOT NULL CHECK(json_valid(context_json)),
+        basis_json TEXT NOT NULL CHECK(json_valid(basis_json)), basis_fingerprint TEXT NOT NULL,
+        trigger TEXT NOT NULL CHECK(trigger IN ('automatic','manual')),
+        cancelled INTEGER NOT NULL DEFAULT 0 CHECK(cancelled IN (0,1)),
+        status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','no-evidence','blocked','unknown','rejected','failed','stale')),
+        error_code TEXT, result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)), created_at TEXT NOT NULL,
+        PRIMARY KEY(workspace_id,epoch,task_id,version), UNIQUE(workspace_id,epoch,request_id,version),
+        FOREIGN KEY(workspace_id,epoch,admission_id) REFERENCES inpatient_admission(workspace_id,epoch,admission_id) ON DELETE RESTRICT,
+        FOREIGN KEY(workspace_id,epoch,request_id) REFERENCES inpatient_surgery_request(workspace_id,epoch,request_id) ON DELETE RESTRICT
+      ) STRICT;
+      DELETE FROM schema_migration WHERE migration_id = '0116_guideline-topic-advice.sql';
+    `)
+    database.prepare(`
+      INSERT INTO inpatient_guideline_advice (
+        workspace_id, epoch, task_id, admission_id, request_id, version,
+        context_json, basis_json, basis_fingerprint, trigger, cancelled, status, error_code, result_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      saved.workspace_id, saved.epoch, saved.task_id, saved.admission_id, saved.request_id, saved.version,
+      saved.context_json, saved.basis_json, saved.basis_fingerprint, saved.trigger, saved.cancelled,
+      saved.status, saved.error_code, saved.result_json, saved.created_at,
+    )
+  } finally {
+    database.close()
+  }
+
+  await s.fixture.restart()
+  const after = await s.read()
+  expect(after).toEqual(before)
+
+  const checkDb = new Database(s.prepared.options.databasePath!)
+  try {
+    checkDb.pragma('foreign_keys = ON')
+    const baseRow = checkDb.prepare('SELECT * FROM inpatient_guideline_advice LIMIT 1').get() as Record<string, unknown>
+    expect(() => checkDb.prepare(`
+      INSERT INTO inpatient_guideline_advice (
+        workspace_id, epoch, task_id, admission_id, topic_id, request_id, version,
+        context_json, basis_json, basis_fingerprint, trigger, status, created_at
+      ) VALUES (?, ?, ?, ?, 'pci-stent', 'non-existent-surgery', 1, ?, ?, ?, 'manual', 'queued', ?)
+    `).run(
+      baseRow.workspace_id, baseRow.epoch, randomUUID(), baseRow.admission_id,
+      baseRow.context_json, baseRow.basis_json, baseRow.basis_fingerprint, baseRow.created_at,
+    )).toThrow()
+
+    checkDb.prepare(`
+      INSERT INTO inpatient_guideline_advice (
+        workspace_id, epoch, task_id, admission_id, topic_id, request_id, version,
+        context_json, basis_json, basis_fingerprint, trigger, status, created_at
+      ) VALUES (?, ?, ?, ?, 'contrast-kidney-hydration', NULL, 1, ?, ?, ?, 'manual', 'queued', ?)
+    `).run(
+      baseRow.workspace_id, baseRow.epoch, randomUUID(), baseRow.admission_id,
+      baseRow.context_json, baseRow.basis_json, baseRow.basis_fingerprint, baseRow.created_at,
+    )
+
+    expect(() => checkDb.prepare(`
+      INSERT INTO inpatient_guideline_advice (
+        workspace_id, epoch, task_id, admission_id, topic_id, request_id, version,
+        context_json, basis_json, basis_fingerprint, trigger, status, created_at
+      ) VALUES (?, ?, ?, ?, 'contrast-kidney-hydration', NULL, 1, ?, ?, ?, 'manual', 'queued', ?)
+    `).run(
+      baseRow.workspace_id, baseRow.epoch, randomUUID(), baseRow.admission_id,
+      baseRow.context_json, baseRow.basis_json, baseRow.basis_fingerprint, baseRow.created_at,
+    )).toThrow()
+  } finally {
+    checkDb.close()
+  }
+})
+
+it('门诊与住院同步读取注册 Guideline Topic 直接返回核验原文与患者缺项，模型请求增量为 0，来源撤回降级为 unavailable', async () => {
+  const s = await setup({ sources: fullTopicDocuments() })
+  expect(s.calls).toHaveLength(0)
+
+  const medicalStay = await s.fixture.admitSyntheticCase(['I25.103', 'I10.x09'], 'bed-general-2')
+  const inpatientBundle = await s.fixture.read(
+    'inpatient-doctor',
+    `${medicalStay.path}/guideline-topics`,
+    guidelineTopicBundleSchema,
+  )
+  expect(inpatientBundle.items.map(item => item.topic.id)).toEqual([...guidelineTopicIds])
+  for (const item of inpatientBundle.items) {
+    expect(item.status, item.topic.id).toBe('available')
+    expect(item.guidelines.length, item.topic.id).toBeGreaterThan(0)
+    expect(item.missingPatientInputs.length, item.topic.id).toBeGreaterThan(0)
+  }
+  expect(s.calls).toHaveLength(0)
+
+  const patient = createPatientResponseSchema.parse(
+    await (await s.fixture.request('registrar', '/api/his/v1/patients', {
+      birthDate: '1965-03-10',
+      gender: 'male',
+      identifier: `OP-${randomUUID()}`,
+      name: '合成门诊专题核对患者',
+    }, randomUUID(), {})).json(),
+  ).data.patient
+  const regCatalog = await s.fixture.read('registrar', '/api/his/v1/catalogs/registration', registrationCatalogSchema)
+  const reg = registrationResponseSchema.parse(
+    await (await s.fixture.request('registrar', '/api/his/v1/registrations/actions/register', {
+      departmentId: regCatalog.departments[0]!.id,
+      locationId: regCatalog.locations[0]!.id,
+      patientId: patient.id,
+      visitDate: regCatalog.virtualDate,
+      visitTypeId: regCatalog.visitTypes[0]!.id,
+    }, randomUUID(), { [`Patient/${patient.id}`]: patient.versionId })).json(),
+  ).data
+  const triageRes = await s.fixture.request('triage', `/api/his/v1/encounters/${reg.encounterId}/actions/record-triage`, {
+    acuityCode: 'level-2',
+    bloodPressure: { diastolicMmHg: 86, systolicMmHg: 146 },
+    chiefComplaint: '活动后胸闷痛2小时',
+    oxygenSaturationPct: 97,
+    pulseBpm: 92,
+    respirationBpm: 18,
+    temperatureC: 36.6,
+  }, randomUUID(), {
+    [`Encounter/${reg.encounterId}`]: '1',
+    [`Task/${reg.queueTaskId}`]: '1',
+  })
+  expect(triageRes.status, await triageRes.clone().text()).toBe(200)
+  const triaged = triageResponseSchema.parse(await triageRes.json()).data
+  const startRes = await s.fixture.request('doctor', `/api/his/v1/encounters/${reg.encounterId}/actions/start-first-visit`, {}, randomUUID(), {
+    [`Encounter/${reg.encounterId}`]: triaged.encounterVersion,
+    [`Task/${triaged.doctorTaskId}`]: '1',
+  })
+  expect(startRes.status, await startRes.clone().text()).toBe(200)
+  startVisitResponseSchema.parse(await startRes.json())
+  const queueJson = await s.fixture.read('doctor', '/api/his/v1/doctor/queue', doctorQueueSchema)
+  const opCase = queueJson.items.find(item => item.encounterId === reg.encounterId)!
+
+  const opTopicRes = await s.fixture.request(
+    'doctor',
+    `/api/his/v1/doctor/cases/${opCase.caseId}/guideline-topics?topicId=acute-chest-pain-acs`,
+  )
+  expect(opTopicRes.status).toBe(200)
+  const opBundle = guidelineTopicBundleSchema.parse(await opTopicRes.json())
+  expect(opBundle.items).toHaveLength(1)
+  expect(opBundle.items[0]!.status).toBe('available')
+  expect(opBundle.items[0]!.guidelines.map(g => g.locator)).toEqual([
+    'PDF 物理第 2 页',
+    'PDF 物理第 3 页',
+    'PDF 物理第 5 页',
+  ])
+  expect(opBundle.items[0]!.missingPatientInputs.join('；')).toContain('12 导联心电图')
+
+  const chestPainDoc = fullTopicDocuments().find(d => d.source.id === 'coronary-31-2019')!
+  s.writer.importDocument({
+    passages: [],
+    source: { ...chestPainDoc.source, sha256: 'f'.repeat(64), status: 'withdrawn' },
+  })
+  const degradedRes = await s.fixture.request(
+    'doctor',
+    `/api/his/v1/doctor/cases/${opCase.caseId}/guideline-topics?topicId=acute-chest-pain-acs`,
+  )
+  const degradedBundle = guidelineTopicBundleSchema.parse(await degradedRes.json())
+  expect(degradedBundle.items[0]!.status).toBe('unavailable')
+  expect(degradedBundle.items[0]!.guidelines).toEqual([])
+  expect(degradedBundle.items[0]!.degradedReason).toContain('不可用')
+  expect(s.calls).toHaveLength(0)
+})
+
+it('无 PCI 手术申请的内科住院可按专题完成术前水化、FFR > 0.80 保守指征及二级预防评估，指标变化后指纹自动失效', async () => {
+  const s = await setup({
+    sources: fullTopicDocuments(),
+    respond: (feature, rawInput) => {
+      const parsed = z.object({
+        guidelines: z.array(z.object({ id: z.string(), text: z.string() })),
+        topic: z.object({ id: z.string() }),
+      }).parse(rawInput)
+      const topicId = parsed.topic.id as GuidelineTopicId
+      const def = getGuidelineTopicDefinition(topicId)
+      if (feature === 'inpatient_drg_recommendation') {
+        return {
+          conclusions: def.conclusionKinds.map((kind, idx) => {
+            const ev = parsed.guidelines[idx % parsed.guidelines.length]!
+            const quote = ev.text.split('。')[0]!
+            return {
+              applicability: 'conditional',
+              citations: [{ evidenceId: ev.id, quote }],
+              kind,
+              text: `针对专题 ${topicId} 的 ${kind} 阶段条件性参考说明。`,
+            }
+          }),
+        }
+      }
+      return {
+        conclusions: def.conclusionKinds.map(kind => ({
+          conditionsPreserved: true,
+          kind,
+          noInventedMeasurements: true,
+          noProductOrQuantity: true,
+          populationPreserved: true,
+          reason: '合成独立核验通过',
+          strengthPreserved: true,
+          supported: true,
+        })),
+      }
+    },
+  })
+
+  const medicalStay = await s.fixture.admitSyntheticCase(['I25.103', 'I10.x09'], 'bed-general-2')
+  const initialSurgeries = await s.fixture.read('inpatient-doctor', `${medicalStay.path}/surgeries`, inpatientSurgerySchema)
+  expect(initialSurgeries.requests).toEqual([])
+
+  for (const topicId of ['contrast-kidney-hydration', 'cad-dapt-and-secondary-prevention'] as const) {
+    const listBefore = await s.fixture.read(
+      'inpatient-doctor',
+      `${medicalStay.path}/guideline-advice?topicId=${topicId}`,
+      inpatientGuidelineAdviceListSchema,
+    )
+    expect(listBefore.advice).toHaveLength(1)
+    expect(listBefore.advice[0]).toMatchObject({
+      admissionId: medicalStay.admissionId,
+      requestId: null,
+      status: 'idle',
+      topicId,
+      version: 0,
+    })
+
+    const reqRes = await s.fixture.request('inpatient-doctor', `${medicalStay.path}/guideline-advice/request`, {
+      expectedFingerprint: listBefore.advice[0]!.fingerprint,
+      expectedVersion: 0,
+      requestId: null,
+      topicId,
+    })
+    expect(reqRes.status, await reqRes.clone().text()).toBe(200)
+    await s.fixture.runtime.dispatchPending()
+
+    const listAfter = await s.fixture.read(
+      'inpatient-doctor',
+      `${medicalStay.path}/guideline-advice?topicId=${topicId}`,
+      inpatientGuidelineAdviceListSchema,
+    )
+    expect(listAfter.advice[0]).toMatchObject({
+      requestId: null,
+      status: 'incomplete',
+      topicId,
+      version: 1,
+      result: {
+        conclusions: getGuidelineTopicDefinition(topicId).conclusionKinds.map(kind => ({
+          applicability: 'conditional',
+          kind,
+        })),
+      },
+    })
+  }
+
+  // Diagnostic coronary angiography (88.5500) with FFR = 0.86 (> 0.80 -> conservative GDMT, zero PCI stent requests)
+  const surgCat = await s.fixture.read('inpatient-doctor', '/api/his/v1/inpatient/surgery-catalog', inpatientSurgeryCatalogSchema)
+  const angioProc = surgCat.procedures.find(item => item.coding.code === '88.5500')!
+  const admDetail = await s.fixture.read('inpatient-doctor', medicalStay.path, inpatientDetailSchema)
+  const angioReq = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${medicalStay.path}/surgeries/request`, {
+    catalogVersion: angioProc.version,
+    encounterVersion: admDetail.admission.versionId,
+    plannedFor: '2026-08-24T11:00:00+08:00',
+    procedureId: angioProc.id,
+    reason: '诊断性冠脉造影与 FFR 功能学评估',
+  })).json()).data.requests[0]!
+  await s.fixture.request('ward-nurse', `${medicalStay.path}/surgeries/check-preop`, {
+    expectedRequestVersion: angioReq.version,
+    note: '造影术前核对完成',
+    requestId: angioReq.id,
+  })
+  const preopSurg = await s.fixture.read('inpatient-doctor', `${medicalStay.path}/surgeries`, inpatientSurgerySchema)
+  await s.fixture.request('inpatient-doctor', `${medicalStay.path}/surgeries/confirm-consent`, {
+    expectedRequestVersion: preopSurg.requests[0]!.version,
+    note: '签署造影知情同意',
+    requestId: angioReq.id,
+  })
+  const readySurg = await s.fixture.read('inpatient-doctor', `${medicalStay.path}/surgeries`, inpatientSurgerySchema)
+  const angioExec = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${medicalStay.path}/surgeries/execute`, {
+    catalogVersion: angioProc.version,
+    expectedRequestVersion: readySurg.requests[0]!.version,
+    materials: [],
+    note: 'LAD 中段 65% 狭窄，测 FFR 0.86（> 0.80），无 PCI 指征，转内科强化药物治疗',
+    procedureId: angioProc.id,
+    requestId: angioReq.id,
+  })).json()).data.executions[0]!
+
+  const db = new Database(s.prepared.options.databasePath!)
+  try {
+    db.prepare(`
+      UPDATE inpatient_angiography_report
+      SET report_json = ?
+      WHERE admission_id = ? AND procedure_id = ?
+    `).run(JSON.stringify({
+      admissionId: medicalStay.admissionId,
+      conclusion: 'LAD 中段临界狭窄，FFR 0.86 > 0.80，无功能性心肌缺血，建议优化药物保守治疗。',
+      id: 'angio-ffr-negative-1',
+      issuedAt: '2026-08-24T11:30:00+08:00',
+      measurements: [],
+      missing: [],
+      procedureId: angioExec.id,
+      status: 'final',
+      synthetic: true,
+      targetSite: null,
+      version: 2,
+      vessels: [{
+        ffr: 0.86,
+        lesionCharacteristics: '局限性偏心斑块',
+        segment: '中段',
+        stenosisPercent: 65,
+        timiFlow: 3,
+        vessel: 'LAD',
+      }],
+    }), medicalStay.admissionId, angioExec.id)
+  } finally {
+    db.close()
+  }
+
+  const revascTopics = await s.fixture.read(
+    'inpatient-doctor',
+    `${medicalStay.path}/guideline-topics?topicId=coronary-revascularization-indication`,
+    guidelineTopicBundleSchema,
+  )
+  expect(revascTopics.items[0]!.patientIndicators.find(i => i.code === 'coronary-angiography')).toMatchObject({
+    status: 'present',
+    valueText: expect.stringContaining('LAD(中段) 狭窄 65%（FFR 0.86 > 0.80 保守治疗范围）'),
+  })
+
+  const revascBefore = await s.fixture.read(
+    'inpatient-doctor',
+    `${medicalStay.path}/guideline-advice?topicId=coronary-revascularization-indication`,
+    inpatientGuidelineAdviceListSchema,
+  )
+  const revascReq = await s.fixture.request('inpatient-doctor', `${medicalStay.path}/guideline-advice/request`, {
+    expectedFingerprint: revascBefore.advice[0]!.fingerprint,
+    expectedVersion: 0,
+    requestId: null,
+    topicId: 'coronary-revascularization-indication',
+  })
+  expect(revascReq.status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+
+  const revascAfter = await s.fixture.read(
+    'inpatient-doctor',
+    `${medicalStay.path}/guideline-advice?topicId=coronary-revascularization-indication`,
+    inpatientGuidelineAdviceListSchema,
+  )
+  expect(revascAfter.advice[0]).toMatchObject({
+    requestId: null,
+    status: 'incomplete',
+    topicId: 'coronary-revascularization-indication',
+    version: 1,
+    result: {
+      conclusions: [
+        { kind: 'functional-ischemia-evaluation' },
+        { kind: 'revascularization-vs-gdmt' },
+        { kind: 'modality-and-anatomy-scope' },
+      ],
+    },
+  })
+
+  // Advancing virtual time (without crossing 18th birthday) must NOT mark surgery-free advice stale!
+  await advanceTime(s, '2026-08-24T09:00:00+08:00', '2026-08-24T12:00:00+08:00')
+  const revascAfterClockAdvance = await s.fixture.read(
+    'inpatient-doctor',
+    `${medicalStay.path}/guideline-advice?topicId=coronary-revascularization-indication`,
+    inpatientGuidelineAdviceListSchema,
+  )
+  expect(revascAfterClockAdvance.advice[0]).toEqual(revascAfter.advice[0])
+
+  // Recording nursing vital signs with weight updates clinical scores and invalidates fingerprint -> stale!
+  const currentAdm = await s.fixture.read('inpatient-doctor', medicalStay.path, inpatientDetailSchema)
+  const vitalsRes = await s.fixture.request('ward-nurse', `${medicalStay.path}/vital-signs`, {
+    bloodPressure: { diastolicMmHg: 78, systolicMmHg: 128 },
+    encounterVersion: currentAdm.admission.versionId,
+    expectedRevision: 0,
+    heightCm: 172,
+    oxygenSaturationPct: 98,
+    pulseBpm: 72,
+    respirationBpm: 16,
+    temperatureC: 36.6,
+    weightKg: 70,
+  })
+  expect(vitalsRes.status, await vitalsRes.clone().text()).toBe(200)
+
+  const hydrationAfterVitals = await s.fixture.read(
+    'inpatient-doctor',
+    `${medicalStay.path}/guideline-advice?topicId=contrast-kidney-hydration`,
+    inpatientGuidelineAdviceListSchema,
+  )
+  expect(hydrationAfterVitals.advice[0]).toMatchObject({
+    requestId: null,
+    status: 'stale',
+    topicId: 'contrast-kidney-hydration',
+    result: null,
+  })
+
+  // Re-evaluate hydration after vitals, then depart -> status transitions to 'frozen' WITH read-only result preserved!
+  const hydrationRefresh = await s.fixture.request('inpatient-doctor', `${medicalStay.path}/guideline-advice/request`, {
+    expectedFingerprint: hydrationAfterVitals.advice[0]!.fingerprint,
+    expectedVersion: 1,
+    requestId: null,
+    topicId: 'contrast-kidney-hydration',
+  })
+  expect(hydrationRefresh.status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  await s.fixture.depart(medicalStay)
+  const hydrationAfterDepart = await s.fixture.read(
+    'inpatient-doctor',
+    `${medicalStay.path}/guideline-advice?topicId=contrast-kidney-hydration`,
+    inpatientGuidelineAdviceListSchema,
+  )
+  expect(hydrationAfterDepart.advice[0]).toMatchObject({
+    requestId: null,
+    status: 'frozen',
+    topicId: 'contrast-kidney-hydration',
+    version: 2,
+    result: {
+      conclusions: [
+        { kind: 'renal-risk-stratification' },
+        { kind: 'hydration-and-volume-balance' },
+        { kind: 'contrast-dose-control' },
+      ],
+    },
+  })
 })

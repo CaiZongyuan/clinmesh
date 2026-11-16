@@ -23,6 +23,7 @@ import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatche
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { doctorGuidelineGroups, doctorGuidelineRevision, selectDoctorGuidelineEvidence } from './doctor-guideline-evidence.ts'
 import { matchesGuidelinePopulation } from './guideline-corpus.ts'
+import { matchApplicableGuidelineTopicIds, normalizeGuidelineFragmentText, readGuidelineTopicSource } from './guideline-topic-registry.ts'
 import { resolvePatientGuidelinePopulation } from './patient-age.ts'
 import { normalizeDoctorDiagnosisRecommendation, resolveDoctorDiagnosisReference } from './doctor-diagnosis-recommendations.ts'
 import { normalizeInvestigationRecommendation, type DoctorInvestigationRecommendationCatalogs } from './doctor-investigation-recommendations.ts'
@@ -269,13 +270,48 @@ export class DoctorRecommendationsService {
     )
     const groups = doctorGuidelineGroups.filter(group =>
       applicableGroups.has(group) && matchesGuidelinePopulation(group.population, population))
-    const retrieved = this.options.guidelines?.search(caseEvidence.filter(item => item.kind !== 'demographics')
-      .map(item => item.text).join('\n'), { population })
+    const searchText = caseEvidence.filter(item => item.kind !== 'demographics').map(item => item.text).join('\n')
+    const retrieved = this.options.guidelines?.search(searchText, { population })
     const fixedEvidence = selectDoctorGuidelineEvidence(groups, {
       population,
       inactiveSources: retrieved?.inactiveSources,
     })
-    const guidelines = [...fixedEvidence, ...retrieved?.guidelines ?? []]
+    const matchedTopicIds = matchApplicableGuidelineTopicIds(searchText)
+    const topicReads = matchedTopicIds
+      .map(topicId => readGuidelineTopicSource(topicId, this.options.guidelines, { population }))
+      .filter(result => result.sourceStatus === 'available')
+    const seenLocators = new Set<string>()
+    const seenTexts = new Set<string>()
+    const dedupeGuidelines: GuidelineEvidence[] = []
+    for (const item of fixedEvidence) {
+      const locatorKey = `${item.sourceHash}:${item.locator}`
+      const textKey = normalizeGuidelineFragmentText(item.text)
+      if (seenLocators.has(locatorKey) || seenTexts.has(textKey)) continue
+      seenLocators.add(locatorKey)
+      seenTexts.add(textKey)
+      dedupeGuidelines.push(item)
+    }
+    let fullTextPassages = 0
+    let fullTextBytes = 0
+    for (const item of [
+      ...topicReads.flatMap(result => result.guidelines),
+      ...retrieved?.guidelines ?? [],
+    ]) {
+      const locatorKey = `${item.sourceHash}:${item.locator}`
+      const textKey = normalizeGuidelineFragmentText(item.text)
+      if (seenLocators.has(locatorKey) || seenTexts.has(textKey)) continue
+      const itemBytes = Buffer.byteLength(JSON.stringify(item), 'utf8')
+      if (fullTextPassages >= 8 || fullTextBytes + itemBytes > 48 * 1024) continue
+      seenLocators.add(locatorKey)
+      seenTexts.add(textKey)
+      fullTextPassages += 1
+      fullTextBytes += itemBytes
+      dedupeGuidelines.push(item)
+    }
+    const guidelines = dedupeGuidelines
+    const topicRevSuffix = topicReads.length === 0
+      ? ''
+      : `:${topicReads.map(result => `${result.definition.id}@${result.definition.fingerprint.slice(0, 12)}`).join(',')}`
     let catalogs: DoctorRecommendationCatalogs
     if (kind === 'diagnosis') {
       const queries = new Set([...groups.map(group => group.terms[0]!), ...retrieved?.diagnosisQueries ?? []])
@@ -287,7 +323,7 @@ export class DoctorRecommendationsService {
     return { context, encounter: detail.encounter, kind, caseEvidence, catalogs, guidelines,
       sourceHashes, requiredCaseEvidenceIds, historyEvidenceIds: [...history.required, ...history.optional].map(item => item.id),
       missingInformation: [...missingInformation], contextPolicyVersion: 'ready-to-order-2026-10-18-v1',
-      guidelineRevision: `${doctorGuidelineRevision}:${population}${retrieved === undefined ? '' : `:${retrieved.revision}`}`,
+      guidelineRevision: `${doctorGuidelineRevision}:${population}${retrieved === undefined ? '' : `:${retrieved.revision}`}${topicRevSuffix}`,
       ...(kind === 'diagnosis' ? { referenceRevision: this.options.referenceData.provenance() } : {}),
       prescriptionConcluded: detail.medicationConclusion?.prescription !== undefined || detail.medicationConclusion?.noMedication !== undefined }
   }

@@ -3,6 +3,7 @@ import {
   inpatientVitalSignsInputSchema,
   outpatientRiskAssessmentInputSchema,
 } from '@clinmesh/contracts/clinical-scores'
+import { guidelineTopicQuerySchema } from '@clinmesh/contracts/guideline-topics'
 import { inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgExplainInputSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionSaveInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -1474,8 +1475,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/guideline-advice', async context => {
-      try { return context.json(inpatient.guidelineAdvice.list(await actor(context), context.req.param('admissionId'))) }
-      catch (error) { return apiErrorResponse(context, error) }
+      try {
+        const query = guidelineTopicQuerySchema.parse(context.req.query())
+        return context.json(inpatient.guidelineAdvice.list(await actor(context), context.req.param('admissionId'), query.topicId))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/guideline-topics', async context => {
+      try {
+        const query = guidelineTopicQuerySchema.parse(context.req.query())
+        return context.json(inpatient.guidelineAdvice.readTopics(await actor(context), context.req.param('admissionId'), query.topicId))
+      } catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId', async context => {
       try { return context.json(inpatient.guidelineAdvice.read(await actor(context), context.req.param('admissionId'), context.req.param('requestId'))) }
@@ -2377,6 +2386,18 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(workflow.clinicalScores.readOutpatientClinicalScores(
           await actor(context),
           context.req.param('caseId'),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/doctor/cases/:caseId/guideline-topics', async (context) => {
+      try {
+        const query = guidelineTopicQuerySchema.parse(context.req.query())
+        return context.json(workflow.clinicalScores.readOutpatientGuidelineTopics(
+          await actor(context),
+          context.req.param('caseId'),
+          query.topicId,
         ))
       } catch (error) {
         return apiErrorResponse(context, error)

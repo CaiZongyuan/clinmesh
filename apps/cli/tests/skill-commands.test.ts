@@ -1189,10 +1189,12 @@ it('keeps clinical risk assessment, nursing vitals, and deterministic clinical s
 
   for (const [skill, path, id] of [
     [doctorSkill, 'doctor case clinical-scores get', 'doctor.case.clinical-scores.read'],
+    [doctorSkill, 'doctor case guideline-topics get', 'doctor.case.guideline-topics.read'],
     [doctorSkill, 'encounter risk-assessment record', 'encounter.risk-assessment.record'],
     [inpatientSkill, 'inpatient record-vital-signs', 'inpatient.vital-signs.record'],
     [inpatientSkill, 'inpatient record-risk-assessment', 'inpatient.risk-assessment.record'],
     [inpatientSkill, 'inpatient clinical-scores', 'inpatient.clinical-scores.read'],
+    [inpatientSkill, 'inpatient guideline-topics', 'inpatient.guideline-topics.read'],
   ] as const) {
     const line = commandLines(skill).find(item => item.startsWith(`clinmesh ${path} `))
     expect(line, path).toBeDefined()
@@ -1211,4 +1213,7 @@ it('keeps clinical risk assessment, nursing vitals, and deterministic clinical s
   const inpatientBlocks = [...inpatientTail.matchAll(/```json\n([^]*?)\n```/g)].map(match => JSON.parse(match[1]!))
   expect(getHisOperation('inpatient.vital-signs.record').input.safeParse(inpatientBlocks[0]).success).toBe(true)
   expect(getHisOperation('inpatient.risk-assessment.record').input.safeParse(inpatientBlocks[1]).success).toBe(true)
+
+  const topicAdviceJson = JSON.parse(inpatientSkill.slice(inpatientSkill.indexOf('`guideline-topic-advice.json`')).match(/```json\n([^]*?)\n```/)![1]!)
+  expect(getHisOperation('inpatient.guideline-advice.request').input.safeParse(topicAdviceJson).success).toBe(true)
 })

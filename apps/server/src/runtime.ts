@@ -286,6 +286,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       qualityModelAvailable: chatCompletions !== undefined && (consultationModel ?? investigationModel ?? patientPersonaModel) !== undefined,
       qualityContextStatus: context => identity.clinicalDocumentQualityContextStatus(context),
       consultationRecordingContextStatus: context => identity.consultationRecordingContextStatus(context),
+      ...(guidelineCorpus === undefined ? {} : { guidelines: guidelineCorpus }),
       investigation,
       ...clockOptions,
       referenceData,

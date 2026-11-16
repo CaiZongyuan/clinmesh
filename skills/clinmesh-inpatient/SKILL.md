@@ -225,17 +225,21 @@ clinmesh command receipt get --operation-id inpatient.pci-selection.save --idemp
 }
 ```
 
-## PCI 指南参考意见
+## 循证指南专题与住院指南参考意见
 
-保存有效 PCI 计划时，同一次单次准备会分别准备指南参考意见与耗材清单；缺少报告、测量、具体产品或数量不阻断有原文依据的条件性类别说明。先读取本计划的 `version/fingerprint/status`；资料、目录或依据变化后由医生显式重评，导航、刷新与成功结果复用不派发新请求。
+`inpatient guideline-topics` 同步读取本次住院在任一已注册 `Guideline Topic`（`acute-chest-pain-acs`、`coronary-revascularization-indication`、`pci-stent`、`contrast-kidney-hydration`、`cad-dapt-and-secondary-prevention`、`t2dm-renal-medication`）下经 SHA-256、物理页码与片段完整性核验的原文段落、限定语及当前患者客观指标与缺项，零模型请求；来源不可用、人群隔离、片段残缺或超出 48 KiB 预算时明确降级为 `unavailable` 并给出 `degradedReason`。
+
+保存有效 PCI 计划时，同一次单次准备仍自动按 `pci-stent` 绑定该 `requestId` 准备指南参考意见与耗材清单；无 PCI 手术申请的内科住院阶段（如术前对比剂肾损伤预防与水化、`FFR > 0.80` 药物保守治疗指征评估、出院双联抗血小板与二级预防、2 型糖尿病合并慢性肾病用药）可传 `--topic-id` 先读取当前 `version/fingerprint/status`，再以 `requestId: null` 与显式 `topicId` 调用 `request-guideline-advice`。导航、刷新与成功结果复用不派发新请求。
 
 ```bash
+clinmesh inpatient guideline-topics --admission-id <admission-id> --topic-id contrast-kidney-hydration
 clinmesh inpatient guideline-advice --admission-id <admission-id>
+clinmesh inpatient guideline-advice --admission-id <admission-id> --topic-id contrast-kidney-hydration
 clinmesh inpatient request-guideline-advice --input @guideline-advice.json --idempotency-key <key>
 clinmesh command receipt get --operation-id inpatient.guideline-advice.request --idempotency-key <key>
 ```
 
-`guideline-advice.json` 的合成形状；提交前使用本次受信读取的计划身份、版本和指纹：
+`guideline-advice.json` 绑定有效 PCI 计划的合成形状；提交前使用本次受信读取的计划身份、版本和指纹：
 
 ```json
 {
@@ -243,6 +247,18 @@ clinmesh command receipt get --operation-id inpatient.guideline-advice.request -
   "requestId": "synthetic-pci-request",
   "expectedVersion": 1,
   "expectedFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+`guideline-topic-advice.json` 无手术申请单时按专题评估的合成形状（`requestId` 设为 `null` 并显式指定 `topicId`）：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "topicId": "contrast-kidney-hydration",
+  "requestId": null,
+  "expectedVersion": 0,
+  "expectedFingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 }
 ```
 

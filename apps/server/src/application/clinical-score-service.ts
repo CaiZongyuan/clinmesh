@@ -14,6 +14,7 @@ import {
   type InpatientVitalSignsRecord,
   type OutpatientRiskAssessmentInput,
 } from '@clinmesh/contracts/clinical-scores'
+import type { GuidelineTopicBundle, GuidelineTopicId } from '@clinmesh/contracts/guideline-topics'
 import { inpatientFullClinicalResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { investigationResultContentSchema } from '@clinmesh/contracts/scenario'
 import {
@@ -24,6 +25,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository, RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
+import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
 import {
   type ActorContext,
   type CommandEffect,
@@ -31,6 +33,7 @@ import {
   type CommandTransaction,
   provenanceAgents,
 } from './command-executor.ts'
+import { buildSynchronousTopicBundle } from './guideline-topic-registry.ts'
 import { businessDate } from './inpatient-orders.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { triageRecordContentSchema, type OutpatientWorkflowContext } from './outpatient-workflow-context.ts'
@@ -274,17 +277,20 @@ export class ClinicalScoreService {
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
   readonly #fhir: FhirRepository
+  readonly #guidelines: GuidelineCorpus | undefined
   readonly #outpatientContext: OutpatientWorkflowContext
 
   constructor(options: {
     commands: CommandExecutor
     database: ClinMeshDatabase
     fhir: FhirRepository
+    guidelines?: GuidelineCorpus
     outpatientContext: OutpatientWorkflowContext
   }) {
     this.#commands = options.commands
     this.#database = options.database
     this.#fhir = options.fhir
+    this.#guidelines = options.guidelines
     this.#outpatientContext = options.outpatientContext
   }
 
@@ -560,6 +566,53 @@ export class ClinicalScoreService {
     return bundle
   }
 
+  readOutpatientGuidelineTopics(
+    context: ActorContext,
+    caseId: string,
+    topicId?: GuidelineTopicId,
+  ): GuidelineTopicBundle {
+    const auditInput = topicId === undefined ? { caseId } : { caseId, topicId }
+    let bundle: GuidelineTopicBundle
+    try {
+      const scores = this.outpatientSnapshot(context, caseId)
+      const caseRow = z.object({
+        encounter_id: z.string(),
+        patient_id: z.string(),
+        visit_date: z.string().nullable(),
+      }).parse(
+        this.#database.driver.prepare(`
+          SELECT c.patient_id, c.encounter_id, r.visit_date
+          FROM outpatient_case c
+          LEFT JOIN registration r
+            ON r.workspace_id = c.workspace_id
+           AND r.epoch = c.epoch
+           AND r.registration_id = c.registration_id
+          WHERE c.workspace_id = ? AND c.epoch = ? AND c.case_id = ?
+        `).get(context.workspaceId, context.epoch, caseId),
+      )
+      const patient = this.#fhir.read(context, 'Patient', caseRow.patient_id)
+      const now = this.#outpatientContext.virtualTime(context)
+      bundle = buildSynchronousTopicBundle({
+        caseId,
+        context,
+        corpus: this.#guidelines,
+        database: this.#database,
+        encounterId: caseRow.encounter_id,
+        evaluatedAt: now,
+        fhir: this.#fhir,
+        patientBirthDate: typeof patient.birthDate === 'string' ? patient.birthDate : undefined,
+        populationReferenceIso: caseRow.visit_date ?? now,
+        scores,
+        topicId,
+      })
+    } catch (error) {
+      try { this.#commands.auditRead(context, 'doctor.case.guideline-topics.read', auditInput, 'failed') } catch { /* preserve original error */ }
+      throw error
+    }
+    this.#commands.auditRead(context, 'doctor.case.guideline-topics.read', auditInput, 'success')
+    return bundle
+  }
+
   readInpatientClinicalScores(inpatient: InpatientService, context: ActorContext, admissionId: string): ClinicalScoreBundle {
     let bundle: ClinicalScoreBundle
     try {
@@ -625,11 +678,16 @@ export class ClinicalScoreService {
     })
   }
 
-  inpatientSnapshot(inpatient: InpatientService, context: ActorContext, admissionId: string): ClinicalScoreBundle {
+  inpatientSnapshot(
+    inpatient: InpatientService,
+    context: ActorContext,
+    admissionId: string,
+    referenceTimeIso?: string,
+  ): ClinicalScoreBundle {
     inpatient.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     const binding = inpatient.readAdmissionBinding(context, admissionId)
     const encounter = this.#fhir.read(context, 'Encounter', admissionId)
-    const now = inpatient.virtualTime(context)
+    const now = referenceTimeIso ?? inpatient.virtualTime(context)
     const latestVitals = this.latestInpatientVitalSigns(context, admissionId)
     const vitalSummary: ClinicalScoreVitalSummary | null = latestVitals === undefined
       ? null

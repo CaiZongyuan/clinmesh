@@ -222,6 +222,10 @@ _Avoid_: Free-text risk note, default negative history, Clinical Score
 依据当前门诊或住院已确认的生命体征、检验检查、正式诊断与 Clinical Risk Assessment 得出的可复现量化临床评分或生理指标结果（如 CKD-EPI 2021 eGFR、Cockcroft-Gault CrCl、GRACE、TIMI UA/NSTEMI、PRECISE-DAPT、ASCVD 风险分层与 LDL-C 目标值），连同风险分层、客观依据引用及缺项清单呈现。它不接受未记录的临时参数覆盖，也不代替医生诊断与医嘱决策。
 _Avoid_: Model prediction, manual calculator override, diagnosis
 
+**Guideline Topic**:
+经人工核对来源身份、版本、原件哈希、物理页码、关键原文与限定语完整性及适用范围的临床循证专题导航单元，同时关联对应场景需要核对的患者客观指标与缺项。它用于定位并校验现行指南库原文，自身导航文字不构成临床结论证据。
+_Avoid_: Free-text search query, unverified summary, standalone clinical rule
+
 **Report Acknowledgement**:
 负责医生确认已查看一份已签发诊断报告的业务事实。它不改变报告内容或签发状态。
 _Avoid_: Report status, report approval, read receipt

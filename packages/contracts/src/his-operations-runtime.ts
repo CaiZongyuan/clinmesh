@@ -5,9 +5,14 @@ import {
   outpatientRiskAssessmentOperationInputSchema,
   outpatientRiskAssessmentResponseSchema,
 } from './clinical-scores.ts'
+import {
+  guidelineTopicBundleSchema,
+  inpatientGuidelineTopicsInputSchema,
+  outpatientGuidelineTopicsInputSchema,
+} from './guideline-topics.ts'
 import { inpatientDrgRecordChecksSchema, inpatientDrgReviewSchema, inpatientDrgReviewResponseSchema, inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from './inpatient-drg-review.ts'
 import { inpatientDrgExplanationSchema, inpatientDrgExplainInputSchema, inpatientDrgExplanationResponseSchema } from './inpatient-drg-explanation.ts'
-import { inpatientGuidelineAdviceListSchema, inpatientGuidelineAdviceRequestInputSchema, inpatientGuidelineAdviceResponseSchema } from './inpatient-guideline-advice.ts'
+import { inpatientGuidelineAdviceListSchema, inpatientGuidelineAdviceReadQuerySchema, inpatientGuidelineAdviceRequestInputSchema, inpatientGuidelineAdviceResponseSchema } from './inpatient-guideline-advice.ts'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema, inpatientDrgAgentConfirmInputSchema } from './inpatient-drg-agent.ts'
 import { inpatientMaterialEstimatesSchema, inpatientMaterialEstimateResponseSchema, inpatientMaterialEstimateRequestInputSchema,
   inpatientMaterialEstimateSaveInputSchema, inpatientMaterialEstimateConfirmInputSchema } from './inpatient-material-estimate.ts'
@@ -1362,6 +1367,12 @@ const rawOperationRuntimeDefinitions = [
     output: clinicalScoreBundleSchema,
   },
   {
+    http: { method: 'GET', path: '/api/his/v1/doctor/cases/:caseId/guideline-topics' },
+    id: 'doctor.case.guideline-topics.read',
+    input: outpatientGuidelineTopicsInputSchema,
+    output: guidelineTopicBundleSchema,
+  },
+  {
     http: { method: 'PUT', path: '/api/his/v1/encounters/:encounterId/risk-assessment' },
     id: 'encounter.risk-assessment.record',
     input: outpatientRiskAssessmentOperationInputSchema,
@@ -2080,8 +2091,14 @@ const rawOperationRuntimeDefinitions = [
   {
     id: 'inpatient.guideline-advice.read',
     http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/guideline-advice' },
-    input: z.object({ admissionId: z.string().min(1) }).strict(),
+    input: inpatientGuidelineAdviceReadQuerySchema,
     output: inpatientGuidelineAdviceListSchema,
+  },
+  {
+    id: 'inpatient.guideline-topics.read',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/guideline-topics' },
+    input: inpatientGuidelineTopicsInputSchema,
+    output: guidelineTopicBundleSchema,
   },
   {
     id: 'inpatient.guideline-advice.request',
