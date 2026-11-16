@@ -9,7 +9,17 @@ import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 
 export class InpatientOrders {
+  #medicationConfigs = new Map<string, ReturnType<typeof medicationConfigSchema.parse> | null>()
   constructor(readonly owner: InpatientService) {}
+  #parseMedicationConfig(priceFen: number, configJson: string) {
+    const key = `${priceFen}:${configJson}`
+    if (this.#medicationConfigs.has(key)) return this.#medicationConfigs.get(key)!
+    if (this.#medicationConfigs.size >= 512) this.#medicationConfigs.clear()
+    const raw: unknown = JSON.parse(configJson)
+    const parsed = inpatientMedicationMissingFields(raw, priceFen).length > 0 ? null : medicationConfigSchema.parse(raw)
+    this.#medicationConfigs.set(key, parsed)
+    return parsed
+  }
   catalog(context: ActorContext) {
     this.owner.assertRole(context, ['inpatient-doctor', 'ward-nurse'])
     const rows = z.array(z.object({ item_id: z.string(), code_system: z.string(), code: z.string(), name_zh: z.string(), version: z.number() })).parse(
@@ -19,19 +29,31 @@ export class InpatientOrders {
   medications(context: ActorContext, ids?: string[]) {
     const medications = z.array(z.object({ item_id: z.string(), name_zh: z.string(), version: z.number(), price_fen: z.number(), config_json: z.string() })).parse(this.owner.database.driver.prepare(
       `SELECT * FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND kind='medication' AND active=1 ${ids === undefined ? '' : `AND item_id IN (${ids.map(() => '?').join(',') || 'NULL'})`}`).all(context.workspaceId, context.epoch, ...(ids ?? [])))
+    if (medications.length === 0) return []
+    const locationId = context.roleCode === 'pharmacist' ? context.locationId ?? '' : 'location-pharmacist'
+    const today = businessDate(this.owner.virtualTime(context))
+    const lotQuery = this.owner.database.driver.prepare('SELECT * FROM inventory_lot WHERE workspace_id=? AND epoch=? AND medication_id=? AND location_id=? AND expires_on>=? AND quantity_on_hand>0 ORDER BY expires_on,lot_id')
     return medications.flatMap(row => {
-      const raw: unknown = JSON.parse(row.config_json)
-      if (inpatientMedicationMissingFields(raw, row.price_fen).length > 0) return []
-      const config = medicationConfigSchema.parse(raw)
+      const config = this.#parseMedicationConfig(row.price_fen, row.config_json)
+      if (config === null) return []
       return [{ id: row.item_id, display: row.name_zh, version: row.version, priceFen: row.price_fen, unit: config.unit, ...(config.safety ? { safety: config.safety } : {}), doses: config.inpatientDoses,
         ...(config.inpatientDoseBasis ? { doseBasis: config.inpatientDoseBasis } : {}),
         maxDoseQuantity: Math.min(config.inpatientMaxDoseQuantity ?? Math.max(...config.inpatientDoses.map(dose => dose.quantity)), config.safety && config.inpatientDoseBasis?.unit === config.safety.doseLimits.unit ? Math.floor(config.safety.doseLimits.maximumSingleDose / config.inpatientDoseBasis.amount) : 100),
         frequencyCodes: config.allowedFrequencyCodes.filter((code): code is 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' => ['QD','BID','TID','QN','PRN','ONCE'].includes(code)),
-        lots: z.array(z.object({ lot_id: z.string(), version: z.number(), quantity_on_hand: z.number(), expires_on: z.string() })).parse(this.owner.database.driver.prepare(
-          'SELECT * FROM inventory_lot WHERE workspace_id=? AND epoch=? AND medication_id=? AND location_id=? AND expires_on>=? AND quantity_on_hand>0 ORDER BY expires_on,lot_id')
-          .all(context.workspaceId, context.epoch, row.item_id, context.roleCode === 'pharmacist' ? context.locationId ?? '' : 'location-pharmacist', businessDate(this.owner.virtualTime(context))))
+        lots: z.array(z.object({ lot_id: z.string(), version: z.number(), quantity_on_hand: z.number(), expires_on: z.string() })).parse(lotQuery
+          .all(context.workspaceId, context.epoch, row.item_id, locationId, today))
           .map(lot => ({ id: lot.lot_id, version: lot.version, quantityOnHand: lot.quantity_on_hand, expiresOn: lot.expires_on })) }]
     })
+  }
+  catalogPrices(context: ActorContext) {
+    const medications = z.array(z.object({ item_id: z.string(), version: z.number(), price_fen: z.number(), config_json: z.string() })).parse(this.owner.database.driver.prepare(
+      "SELECT item_id,version,price_fen,config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND kind='medication' AND active=1").all(context.workspaceId, context.epoch))
+    const services = z.array(z.object({ service_id: z.string(), version: z.number(), config_json: z.string() })).parse(this.owner.database.driver.prepare(
+      "SELECT service_id,version,config_json FROM hospital_service_catalog WHERE workspace_id=? AND epoch=? AND active=1 AND json_extract(config_json,'$.inpatientBillingTrigger')='execution'").all(context.workspaceId, context.epoch))
+    return {
+      medications: medications.flatMap(row => this.#parseMedicationConfig(row.price_fen, row.config_json) === null ? [] : [[row.item_id, row.version, row.price_fen] as [string, number, number]]),
+      services: services.map(row => [row.service_id, row.version, serviceConfigSchema.parse(JSON.parse(row.config_json)).chargeDefinition.priceFen] as [string, number, number]),
+    }
   }
   medicationsAndServices(context: ActorContext) {
     const services = z.array(z.object({ service_id: z.string(), name_zh: z.string(), version: z.number(), config_json: z.string() })).parse(this.owner.database.driver.prepare(
