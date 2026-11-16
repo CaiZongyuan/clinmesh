@@ -706,7 +706,7 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
     </p> : <p className="text-muted-foreground">{t('尚无本计划的指南参考结果。', 'No guideline advice is available for this plan.')}</p>}
   </div>
   const confirmLabel = t('确认手术耗材', 'Confirm surgical materials')
-  const confirmBtn = <Button disabled={blocked || !estimate || !encounterVersion || !reservationFingerprint || nonZeroItems.length === 0 || hasIneligibleItems || write.mutation.isPending} onClick={() => { void saveAndConfirm() }}>{confirmLabel}</Button>
+  const confirmBtn = <Button disabled={blocked || loading || !estimate || !encounterVersion || !reservationFingerprint || nonZeroItems.length === 0 || hasIneligibleItems || write.mutation.isPending} onClick={() => { void saveAndConfirm() }}>{confirmLabel}</Button>
   return <section role="region" aria-label={t('手术耗材', 'Surgical materials')} className="flex flex-col gap-3 rounded-lg border bg-card p-3.5">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div className="flex flex-wrap items-center gap-2">
