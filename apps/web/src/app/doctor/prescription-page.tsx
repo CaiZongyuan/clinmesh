@@ -259,7 +259,7 @@ export function PrescriptionPage({
       && (suggestion.doseText === null || medicationRegimenDoseAllowed(medication, suggestion.doseText, suggestion.frequencyCode ?? medication.defaultFrequencyCode))
       && (suggestion.frequencyCode === null || medication.allowedFrequencyCodes.includes(suggestion.frequencyCode))
       && (suggestion.courseDays === null || medication.allowedCourseDays.includes(suggestion.courseDays))
-      && (suggestion.quantity === null || medicationQuantityAllowed(medication, suggestion.quantity, suggestion.courseDays ?? 30))
+      && (suggestion.quantity === null || medicationQuantityAllowed(medication, suggestion.quantity, suggestion.courseDays ?? 30, suggestion.frequencyCode ?? medication.defaultFrequencyCode))
   }
   const medicationLine = (
     selection: MedicationCatalogSelection,
@@ -336,7 +336,7 @@ export function PrescriptionPage({
       || (value.doseText !== null && !medicationRegimenDoseAllowed(candidate, value.doseText, value.frequencyCode ?? candidate.defaultFrequencyCode))
       || (value.frequencyCode !== null && !candidate.allowedFrequencyCodes.includes(value.frequencyCode))
       || (value.courseDays !== null && !candidate.allowedCourseDays.includes(value.courseDays))
-      || (value.quantity !== null && !medicationQuantityAllowed(candidate, value.quantity, value.courseDays ?? 30))
+      || (value.quantity !== null && !medicationQuantityAllowed(candidate, value.quantity, value.courseDays ?? 30, value.frequencyCode ?? candidate.defaultFrequencyCode))
     ) {
       return messages.recommendationRequestTargetUnavailable
     }

@@ -16,7 +16,7 @@ export function normalizePrescriptionRecommendation(
   if ((doseText !== null && !medicationRegimenDoseAllowed(medication, doseText, frequencyCode ?? medication.defaultFrequencyCode))
     || (frequencyCode !== null && !medication.allowedFrequencyCodes.includes(frequencyCode))
     || (suggestion.courseDays !== null && !medication.allowedCourseDays.includes(suggestion.courseDays))
-    || (suggestion.quantity !== null && !medicationQuantityAllowed(medication, suggestion.quantity, suggestion.courseDays ?? 30))) return undefined
+    || (suggestion.quantity !== null && !medicationQuantityAllowed(medication, suggestion.quantity, suggestion.courseDays ?? 30, suggestion.frequencyCode ?? medication.defaultFrequencyCode))) return undefined
   return {
     ...suggestion,
     doseText,

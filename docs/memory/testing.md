@@ -52,8 +52,6 @@
 
 ## 范围、快照与资源争用
 
-- 药库扩展或药事规则更新后，同时核对共享浏览器旅程的频次选择、同名候选、剂量控件断言与推荐缺依据替身。`frequencyCodes[0]` 会随目录顺序变化把 PRN 准备成 QD，新增依诺肝素会使 `/肝素钠注射液/` 匹配两项，常备药补齐监管标识后核验替身的 `prescriptionFields: true` 不再被缺规格兜底置空；先按旅程意图显式选择频次、完整药名与缺依据核验字段，剂量控件改为输入框时使用 `toHaveValue`。排查来源见[药事 CI 失败报告](https://github.com/CaiZongyuan/clinmesh/actions/runs/43412081780)。
-
 - 持久化临床来源的负例分别覆盖字段缺失、同一 Observation 内重复 component（含相同数值）和重复节段；只检查数值范围或节段去重会漏掉静默取首条的冲突。通过公开报告及 FHIR 状态核对缺项降级，并保留旧格式兼容正例，复用[冠脉造影 HTTP 回归](../../apps/server/tests/inpatient-angiography-http.test.ts)。
 
 - 年龄与指南人群回归通过公开虚拟时间推进跨过上海午夜的 18 周岁生日，并核对指南可用性与依据指纹；仅修改出生日期会漏掉当前时间被入院时间遮蔽的问题。另覆盖离院与召回，防止修复影响历史参考时间；复用[住院指南 HTTP 回归](../../apps/server/tests/inpatient-guideline-advice-http.test.ts)，业务合同见[指南参考意见](../architecture/clinical-workflows.md#pci-计划的只读指南参考意见)。

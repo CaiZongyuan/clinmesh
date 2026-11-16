@@ -492,7 +492,7 @@ export function CaseDetail({
             locale={locale} messages={messages} scope={recommendationScope} onNavigateToCompletionTarget={navigateToCompletionTarget} />}
         />
 
-        <DoctorHistoryPanel key={detail.caseId} caseId={detail.caseId} scope={recommendationScope} locale={locale} />
+        {clinicalReadOnly ? null : <DoctorHistoryPanel key={detail.caseId} caseId={detail.caseId} scope={recommendationScope} locale={locale} />}
 
         {overviewWorkflow === null ? null : (
           <div className="shrink-0 border-b p-4">{overviewWorkflow}</div>

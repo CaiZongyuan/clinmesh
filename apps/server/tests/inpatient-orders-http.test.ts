@@ -1104,8 +1104,8 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       encounterVersion: diagnosed.encounterVersion, duration, selection: { kind: 'medication', catalogItemId: id, catalogVersion: 1, doseText, doseQuantity: quantity, frequencyCode },
     })
     for (const [id, doseText, quantity, frequency] of [
-      ['medication-pci-aspirin', '100 mg', 1, 'QD'], ['medication-pci-clopidogrel', '75 mg', 1, 'QD'],
-      ['medication-pci-atorvastatin', '20 mg', 2, 'QN'], ['medication-metoprolol', '47.5 mg', 1, 'QD'], ['medication-perindopril', '4 mg', 1, 'QD'],
+      ['medication-pci-aspirin', '100 mg', 1, 'QD'], ['medication-pci-clopidogrel', '1片', 1, 'QD'],
+      ['medication-pci-atorvastatin', '2片', 2, 'QN'], ['medication-metoprolol', '47.5 mg', 1, 'QD'], ['medication-perindopril', '4 mg', 1, 'QD'],
     ] as const) {
       const response = await issue(id, doseText, quantity, frequency)
       expect(response.status, await response.clone().text()).toBe(200)

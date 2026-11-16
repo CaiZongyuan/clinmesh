@@ -108,7 +108,7 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   }
   page.on('response', receiveAcknowledgement)
   await review.getByRole('button', { name: '确认选中报告已阅', exact: true }).click()
-  await expect(reader.getByRole('region', { name: '报告已阅逐项结果', exact: true })).toContainText('本次办理已结束 · 成功 9/9', { timeout: 25_000 })
+  await expect(reader.getByRole('region', { name: '报告已阅逐项结果', exact: true })).toContainText('本次办理已结束 · 成功 9/9')
   page.off('response', receiveAcknowledgement)
   expect(acknowledgements).toEqual(Array.from({ length: 9 }, () => 200))
   await reader.getByRole('button', { name: '关闭阅读窗口', exact: true }).click()

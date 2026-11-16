@@ -176,7 +176,7 @@ export async function runInvestigationSendBatchJourney(page: Page, s: Patient, o
   await page.route(`**${s.path}/investigations/send`, async route => {
     keys.push(route.request().headers()['idempotency-key']!)
     sentIds.push(route.request().postDataJSON().input.requestId)
-    const response = await route.fetch({ maxRetries: 1 })
+    const response = await route.fetch()
     expect(response.status()).toBe(200)
     inpatientInvestigationResponseSchema.parse(await response.json())
     if (keys.length === 2) await route.abort('failed'); else await route.fulfill({ response })

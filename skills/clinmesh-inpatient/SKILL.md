@@ -133,7 +133,7 @@ clinmesh inpatient reverse-charge --input @reversal.json --idempotency-key <key>
 }
 ```
 
-校对及停嘱传 `orderId`、`expectedOrderVersion`；医生申请停嘱还需 `reason`。本院虚拟班次 QD 为上海时间08:00，BID为08:00与20:00；首日只生成护士校对时尚未过去的时点。临时医嘱一次执行，PRN仅由护士按已校对医嘱和理由显式请求，时钟推进不自动执行PRN。班次是本院仿真策略，不代表全国统一用药时间。
+校对及停嘱传 `orderId`、`expectedOrderVersion`；医生申请停嘱还需 `reason`。首日只生成护士校对时尚未过去的班次时点；临时医嘱一次执行，PRN仅由护士按已校对医嘱和理由显式请求，时钟推进不自动执行PRN。班次是本院仿真策略，不代表全国统一用药时间。
 
 医生停嘱与护士核停分别选择和确认；共同理由允许逐项覆盖，确认前核对每项最终理由。`clinical`、`pharmacy-read` 及医嘱相关回执的 `stopReason` 仅返回该医嘱停嘱事务明确标记的理由；历史缺失时回查原记录，不把任意 `note` 当作停嘱理由。旧回执可以缺失该字段，恢复先查原 receipt，不为补理由重新申请停嘱。页面集中操作最多20条，逐项沿用原 Command 与幂等键；结果不明暂停后续，恢复原项后重新审阅余项，不提供跨岗或混合动作批次。
 

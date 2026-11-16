@@ -38,6 +38,14 @@ export function medicationRegimenDoseAllowed(config: { safety?: MedicationSafety
   return parsed.success && medicationDoseConflict(config.safety.doseLimits, doseText, parsed.data) === undefined
 }
 
-export function medicationQuantityAllowed(config: { safety?: MedicationSafetyRule | undefined; allowedQuantities: readonly number[] }, quantity: number, courseDays: number): boolean {
-  return config.safety ? Number.isSafeInteger(quantity) && quantity > 0 && quantity <= Math.min(1000, config.safety.maximumDailyQuantity * courseDays) : config.allowedQuantities.includes(quantity)
+export function medicationQuantityAllowed(
+  config: { safety?: MedicationSafetyRule | undefined; allowedQuantities: readonly number[] },
+  quantity: number,
+  courseDays: number,
+  frequencyCode?: string,
+): boolean {
+  const effectiveDays = frequencyCode === 'ONCE' ? 1 : courseDays
+  return config.safety
+    ? Number.isSafeInteger(quantity) && quantity > 0 && quantity <= Math.min(1000, config.safety.maximumDailyQuantity * effectiveDays)
+    : config.allowedQuantities.includes(quantity)
 }

@@ -77,8 +77,11 @@ export function standardMedicationCatalog(): ScenarioProductMedicationCatalogIte
       regulatoryVerification: { evidenceUrl: 'https://www.nmpa.gov.cn/datasearch/home-index.html', result: 'synthetic-match' as const,
         source: 'nmpa-manual-check' as const, verifiedAt: '2026-11-13T00:00:00+08:00', verifiedFieldsHash: canonicalJsonHash({ approvalNumber: snapshot.approvalNumber, genericName: snapshot.genericName, manufacturer: snapshot.manufacturer }) },
       workflow: { allowedCombinationIds: [], allowedCourseDays: Array.from({ length: 30 }, (_, i) => i + 1), allowedDiagnosisCodes: indications.split(','),
-        allowedDoseTexts: [doseText], allowedFrequencyCodes: ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE'], allowedQuantities: [1],
-        defaultCourseDays: 1, defaultQuantity: 1, safety } }
+        allowedDoseTexts: [doseText], allowedFrequencyCodes: ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE'],
+        allowedQuantities: suffix === 'oseltamivir' ? [1, 10] : [1],
+        defaultCourseDays: suffix === 'oseltamivir' ? 5 : 1,
+        defaultQuantity: suffix === 'oseltamivir' ? 10 : 1,
+        safety } }
   })
 }
 

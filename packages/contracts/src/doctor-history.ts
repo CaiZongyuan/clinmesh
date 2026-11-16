@@ -37,7 +37,12 @@ export const doctorInpatientHistoryRecordSchema = z.object({
   dischargedAt: z.iso.datetime({ offset: true }),
   diagnoses: z.array(z.object({ code: z.string(), display: z.string(), role: z.enum(['primary', 'secondary']), note: z.string().optional() }).strict()),
   procedures: z.array(z.object({ code: z.string(), display: z.string(), performedAt: z.iso.datetime({ offset: true }), conclusion: z.string().optional() }).strict()),
-  medications: z.array(z.object({ display: z.string(), doseText: z.string(), frequencyCode: z.string(), state: z.string() }).strict()),
+  medications: z.array(z.object({
+    display: z.string(),
+    doseText: z.string(),
+    frequencyCode: z.string(),
+    state: z.enum(['signed', 'verified', 'stop-requested', 'stopped', 'completed']),
+  }).strict()),
   reports: z.array(z.object({ title: z.string(), issuedAt: z.string().optional(), conclusion: z.string(), findings: z.array(z.string()) }).strict()),
 }).strict()
 

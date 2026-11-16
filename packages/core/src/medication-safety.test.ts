@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { medicationCombinationConflict, medicationDoseConflict, medicationIndicationMatches, medicationScheduledHours } from './medication-safety.ts'
+import { medicationCombinationConflict, medicationDoseConflict, medicationIndicationMatches, medicationQuantityAllowed, medicationScheduledHours } from './medication-safety.ts'
 
 describe('共享药事安全规则', () => {
   it('允许跨类联合并拒绝 ACEI/ARB、ACEI/ARNI、双 P2Y12 和双他汀', () => {
@@ -20,6 +20,16 @@ describe('共享药事安全规则', () => {
     expect(medicationDoseConflict(limits, '1.5 g', 'QD')).toBe('single-dose')
     expect(medicationDoseConflict(limits, '1 g', 'PRN')).toBe('daily-dose')
     expect(medicationDoseConflict(limits, '2 tablets', 'QD')).toBe('invalid-dose')
+  })
+  it('按疗程上限校验发药总量，ONCE 频次不乘多日疗程', () => {
+    const config = {
+      allowedQuantities: [1],
+      safety: { pharmacologyClasses: ['calcium-channel-blocker'], indicationPrefixes: ['I10'], doseLimits: { unit: 'mg' as const, minimumSingleDose: 5, maximumSingleDose: 10, maximumDailyDose: 10 }, maximumDailyQuantity: 2 },
+    }
+    expect(medicationQuantityAllowed(config, 28, 14, 'QD')).toBe(true)
+    expect(medicationQuantityAllowed(config, 29, 14, 'QD')).toBe(false)
+    expect(medicationQuantityAllowed(config, 2, 14, 'ONCE')).toBe(true)
+    expect(medicationQuantityAllowed(config, 3, 14, 'ONCE')).toBe(false)
   })
   it('使用声明的执行时点', () => {
     expect(medicationScheduledHours('QD')).toEqual([8])

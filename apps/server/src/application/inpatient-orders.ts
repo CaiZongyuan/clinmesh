@@ -16,7 +16,7 @@ export class InpatientOrders {
     if (this.#medicationConfigs.has(key)) return this.#medicationConfigs.get(key)!
     if (this.#medicationConfigs.size >= 512) this.#medicationConfigs.clear()
     const raw: unknown = JSON.parse(configJson)
-    const parsed = inpatientMedicationMissingFields(raw, priceFen).length > 0 ? null : medicationConfigSchema.parse(raw)
+    const parsed = inpatientMedicationMissingFields(raw, priceFen).length > 0 ? null : Object.freeze(medicationConfigSchema.parse(raw))
     this.#medicationConfigs.set(key, parsed)
     return parsed
   }
@@ -36,8 +36,8 @@ export class InpatientOrders {
     return medications.flatMap(row => {
       const config = this.#parseMedicationConfig(row.price_fen, row.config_json)
       if (config === null) return []
-      return [{ id: row.item_id, display: row.name_zh, version: row.version, priceFen: row.price_fen, unit: config.unit, ...(config.safety ? { safety: config.safety } : {}), doses: config.inpatientDoses,
-        ...(config.inpatientDoseBasis ? { doseBasis: config.inpatientDoseBasis } : {}),
+      return [{ id: row.item_id, display: row.name_zh, version: row.version, priceFen: row.price_fen, unit: config.unit, ...(config.safety ? { safety: config.safety } : {}), doses: [...config.inpatientDoses],
+        ...(config.inpatientDoseBasis ? { doseBasis: { ...config.inpatientDoseBasis } } : {}),
         maxDoseQuantity: Math.min(config.inpatientMaxDoseQuantity ?? Math.max(...config.inpatientDoses.map(dose => dose.quantity)), config.safety && config.inpatientDoseBasis?.unit === config.safety.doseLimits.unit ? Math.floor(config.safety.doseLimits.maximumSingleDose / config.inpatientDoseBasis.amount) : 100),
         frequencyCodes: config.allowedFrequencyCodes.filter((code): code is 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' => ['QD','BID','TID','QN','PRN','ONCE'].includes(code)),
         lots: z.array(z.object({ lot_id: z.string(), version: z.number(), quantity_on_hand: z.number(), expires_on: z.string() })).parse(lotQuery
@@ -163,9 +163,10 @@ export class InpatientOrders {
         const dose = resolveInpatientDose({ unit: config.unit, doses: config.inpatientDoses,
           ...(config.inpatientDoseBasis ? { doseBasis: config.inpatientDoseBasis } : {}),
           ...(config.inpatientMaxDoseQuantity ? { maxDoseQuantity: config.inpatientMaxDoseQuantity } : {}) }, selection.doseText)
-        const strength = /^(\d+(?:\.\d+)?)\s*(mg|g|mL|IU)$/.exec(config.product.strength)
+        const strength = /^(\d+(?:\.\d+)?)\s*(mg|g|mL|IU)/.exec(config.product.strength)
+        const basis = config.inpatientDoseBasis ?? (strength ? { amount: Number(strength[1]), unit: strength[2]! } : undefined)
         const safetyDose = config.safety?.doseLimits.unit === config.unit ? `${selection.doseQuantity} ${config.unit}`
-          : selection.doseText.trim().endsWith(config.unit) && strength ? `${selection.doseQuantity * Number(strength[1])} ${strength[2]}` : selection.doseText
+          : selection.doseText.trim().endsWith(config.unit) && basis ? `${selection.doseQuantity * basis.amount} ${basis.unit}` : selection.doseText
         if (!config.availableScopes.includes('inpatient') || !config.allowedFrequencyCodes.includes(selection.frequencyCode)
           || !('quantity' in dose) || dose.quantity !== selection.doseQuantity || (config.safety && medicationDoseConflict(config.safety.doseLimits, safetyDose, selection.frequencyCode) !== undefined)) throw new InpatientError('CATALOG_CONFLICT', '剂量、单位、频次或每次数量不符合住院目录', 409, 'MEDICATION_DOSAGE_NOT_ALLOWED')
         const diagnoses = this.diagnosis(context, admission.id).entries

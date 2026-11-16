@@ -182,7 +182,7 @@ it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', 
   expect(skill).toContain('INPATIENT_DRG_PLAN_CONFLICT')
   expect(getHisOperation('inpatient.drg.simulate').input.parse({ admissionId: 'synthetic-admission',
     draft: { primarySurgeryRequestId: 'synthetic-plan' } })).toMatchObject({ draft: { primarySurgeryRequestId: 'synthetic-plan' } })
-  expect(getHisOperation('inpatient.drg.simulate').version).toBe(4)
+  expect(getHisOperation('inpatient.drg.simulate').version).toBe(5)
   expect(getHisOperation('inpatient.drg.pregroup').version).toBe(4)
   expect(getHisOperation('inpatient.drg.payer.review.preview').version).toBe(2)
   expect(payer.version).toBe(4)
@@ -553,7 +553,7 @@ it('停嘱理由投影的读取与全部医嘱回执保持版本和 Skill 示例
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   for (const [id, version] of [
-    ['inpatient.pharmacy.read', 2], ['inpatient.clinical.read', 2], ['inpatient.diagnosis.confirm', 2],
+    ['inpatient.pharmacy.read', 2], ['inpatient.clinical.read', 3], ['inpatient.diagnosis.confirm', 2],
     ['inpatient.order.issue', 6], ['inpatient.order.verify', 2], ['inpatient.order.request-stop', 2],
     ['inpatient.order.verify-stop', 2], ['inpatient.execution.dispense', 2], ['inpatient.execution.administer', 2],
     ['inpatient.execution.complete', 2], ['inpatient.execution.request-prn', 3],
