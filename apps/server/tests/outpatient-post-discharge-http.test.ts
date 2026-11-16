@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import {
-  acknowledgeLaboratoryReportResponseSchema, apiErrorSchema,
+  acknowledgeLaboratoryReportResponseSchema,
   billingCaseSchema, caseLaboratoryCatalogSearchSchema, clinicalDocumentDraftResponseSchema,
   clinicalDocumentSignPreviewResponseSchema, clinicalDocumentSignResponseSchema,
   confirmDiagnosisResponseSchema, confirmNoMedicationResponseSchema, diagnosisDraftResponseSchema,
@@ -9,11 +9,12 @@ import {
   encounterCompletionResponseSchema, issueLaboratoryRequestResponseSchema, laboratoryRequestDraftResponseSchema,
   patientSearchSchema, paymentPreviewResponseSchema, paymentResponseSchema,
   registrationCatalogSchema, registrationResponseSchema, sendConsultationMessageResponseSchema,
-  startVisitResponseSchema, triageResponseSchema,
+  sessionContextSchema, startVisitResponseSchema, triageResponseSchema,
 } from '@clinmesh/contracts/his'
 import { doctorCaseHistoryDetailSchema, doctorCaseHistorySchema } from '@clinmesh/contracts/agent'
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { inpatientAngiographyReportsSchema } from '@clinmesh/contracts/inpatient-angiography'
+import { uniquePatientCaseSource } from '../src/application/outpatient-case-source.ts'
 import {
   createPciPaymentDrgFixture, parsePciResponse, preparePciPaymentDrgFixture,
   type PciPaymentDrgFixture,
@@ -52,25 +53,22 @@ beforeEach(async () => {
 afterEach(async () => { for (const item of fixtures.splice(0)) await item.close() })
 
 it('completes a new consultation and exact follow-up investigation after PCI discharge using the same patient and authorized inpatient history', async () => {
-  const patientsBeforeDepart = await fixture.read('registrar', `/api/his/v1/patients?query=${encodeURIComponent('合成冠脉')}`, patientSearchSchema)
-  const patientBeforeDepart = patientsBeforeDepart.items.find(item => item.id === stay.patientId)!
+  const registrarContext = (await fixture.read('registrar', '/api/auth/context', sessionContextSchema)).actor
+  expect(uniquePatientCaseSource(fixture.runtime.database, registrarContext, stay.patientId)).toBeUndefined()
+
+  const departed = await fixture.depart(stay)
+  expect(departed.status).toBe('departed')
+  expect(uniquePatientCaseSource(fixture.runtime.database, registrarContext, stay.patientId)?.case_id).toBe(stay.sourceCaseId)
+
+  const patients = await fixture.read('registrar', `/api/his/v1/patients?query=${encodeURIComponent('合成冠脉')}`, patientSearchSchema)
+  const patient = patients.items.find(item => item.id === stay.patientId)
+  expect(patient).toBeDefined()
   const registration = await fixture.read('registrar', '/api/his/v1/catalogs/registration', registrationCatalogSchema)
   const registrationInput = {
     patientId: stay.patientId, departmentId: registration.departments[0]!.id,
     locationId: registration.locations[0]!.id, visitTypeId: registration.visitTypes[0]!.id,
     visitDate: registration.virtualDate,
   }
-  const rejectedWhileAdmitted = await fixture.request('registrar',
-    '/api/his/v1/registrations/actions/register', registrationInput, randomUUID(), { [`Patient/${stay.patientId}`]: patientBeforeDepart.versionId })
-  expect(rejectedWhileAdmitted.status).toBe(409)
-  expect(apiErrorSchema.parse(await rejectedWhileAdmitted.json()).error.code).toBe('WORKFLOW_CONFLICT')
-
-  const departed = await fixture.depart(stay)
-  expect(departed.status).toBe('departed')
-
-  const patients = await fixture.read('registrar', `/api/his/v1/patients?query=${encodeURIComponent('合成冠脉')}`, patientSearchSchema)
-  const patient = patients.items.find(item => item.id === stay.patientId)
-  expect(patient).toBeDefined()
   const registered = await parsePciResponse(registrationResponseSchema, await fixture.request('registrar',
     '/api/his/v1/registrations/actions/register', registrationInput, randomUUID(), { [`Patient/${stay.patientId}`]: patient!.versionId }))
   const encounterId = registered.data.encounterId
