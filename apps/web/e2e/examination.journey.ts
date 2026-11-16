@@ -21,6 +21,7 @@ const names = ['常规十二导联心电图', '经胸超声心动图']
 
 export async function signInExaminationRole(page: Page, app: App, role: string) {
   const response = await page.request.post(app.origin + '/api/auth/sign-in/email', {
+    maxRetries: 1,
     headers: { origin: app.origin },
     data: { email: `${role}@demo.clinmesh.local`, password: app.password },
   })
