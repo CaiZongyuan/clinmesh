@@ -36,20 +36,15 @@ const legacyRules: Record<string, { classes: string[]; prefixes: string[]; basis
 export function standardMedicationSafety(id: string): MedicationSafetyRule | undefined {
   if (id === 'medication-pci-iohexol') return { maximumDailyQuantity: 400, pharmacologyClasses: ['contrast'], indicationPrefixes: ['I20', 'I21', 'I25'], doseLimits: { unit: 'mL', minimumSingleDose: 1, maximumSingleDose: 100, maximumDailyDose: 400 } }
   const legacy = legacyRules[id]
-  if (legacy) return {
-    maximumDailyQuantity: legacy.daily / legacy.basis, pharmacologyClasses: legacy.classes, indicationPrefixes: legacy.prefixes,
-    doseLimits: { unit: 'mg', minimumSingleDose: legacy.minimum, maximumSingleDose: legacy.single, maximumDailyDose: legacy.daily }
-  }
+  if (legacy) return { maximumDailyQuantity: legacy.daily / legacy.basis, pharmacologyClasses: legacy.classes, indicationPrefixes: legacy.prefixes,
+    doseLimits: { unit: 'mg', minimumSingleDose: legacy.minimum, maximumSingleDose: legacy.single, maximumDailyDose: legacy.daily } }
   const definition = definitions.find(([suffix]) => id === `medication-${suffix}` || id === `medication-pci-${suffix}`)
   if (!definition) return undefined
   const [suffix, , pharmacology, indications, , minimum, single, daily] = definition
   const pci = pciDataPackage.medications.find(item => item.id === id)
   const basisAmount = suffix === 'heparin' ? 1 : pci?.hospitalSupplement.doseBasis.amount ?? definition[4]
-  return {
-    maximumDailyQuantity: daily / basisAmount, pharmacologyClasses: [pharmacology], indicationPrefixes: indications.split(','), doseLimits: {
-      unit: suffix === 'sodium-chloride' || suffix === 'heparin' ? 'mL' : 'mg', minimumSingleDose: minimum, maximumSingleDose: single, maximumDailyDose: daily
-    }
-  }
+  return { maximumDailyQuantity: daily / basisAmount, pharmacologyClasses: [pharmacology], indicationPrefixes: indications.split(','), doseLimits: {
+    unit: suffix === 'sodium-chloride' || suffix === 'heparin' ? 'mL' : 'mg', minimumSingleDose: minimum, maximumSingleDose: single, maximumDailyDose: daily } }
 }
 
 export function standardMedicationDoseBasis(id: string) {
@@ -69,34 +64,24 @@ export function standardMedicationCatalog(): ScenarioProductMedicationCatalogIte
       : ['valsartan', 'oseltamivir', 'amoxicillin'].includes(suffix) ? '粒' : '片'
     const oral = unit === '片' || unit === '粒'
     const basis = standardMedicationDoseBasis(id)!, safety = standardMedicationSafety(id)!, doseText = `${dose} ${safety.doseLimits.unit}`
-    const product = pci?.product ?? {
-      id: `synthetic-medication-product-${suffix}`, code: `CM-NHSA-PRODUCT-${suffix.toUpperCase()}`,
+    const product = pci?.product ?? { id: `synthetic-medication-product-${suffix}`, code: `CM-NHSA-PRODUCT-${suffix.toUpperCase()}`,
       version: 'clinmesh-synthetic-medications-2026-11-13', system: 'urn:clinmesh:reference:nhsa-medication-product' as const,
       approvalNumber: `CM-SYNTHETIC-${suffix.toUpperCase()}`, brandName: null, dosageForm: unit === '片' ? '片剂' : unit === '粒' ? '胶囊剂' : '注射剂', genericName: name,
-      manufacturer: '仁和仿真制药厂', packageDescription: `合成单${unit}品规`, strength: `${basis.amount} ${basis.unit}`
-    }
+      manufacturer: '仁和仿真制药厂', packageDescription: `合成单${unit}品规`, strength: `${basis.amount} ${basis.unit}` }
     const { sourceLocator: _locator, status: _status, ...snapshot } = { ...product, sourceLocator: '', status: 'active' }
-    return {
-      id, code: suffix.toUpperCase(), name, priceFen, active: true, status: 'active' as const, organizationId: 'hospital-synthetic-renhe',
+    return { id, code: suffix.toUpperCase(), name, priceFen, active: true, status: 'active' as const, organizationId: 'hospital-synthetic-renhe',
       availableScopes: ['outpatient', 'inpatient'], category, defaultDose: doseText, defaultFrequency: frequency, defaultRoute: pci?.hospitalSupplement.route ?? (oral ? '口服' : '注射'),
       dosageForm: snapshot.dosageForm, unit, restriction: '固定合成药事规则，仅用于仿真。', product: { ...snapshot, system: 'urn:clinmesh:reference:nhsa-medication-product' },
-      drugConcept: {
-        code: `CM-DRUG-${suffix.toUpperCase()}`, conceptId: `drug-concept-${suffix}`, display: name, kind: 'drug-concept' as const,
-        system: 'urn:clinmesh:reference:drug-concept' as const, version: 'clinmesh-synthetic-medications-2026-11-13'
-      },
-      regulatoryVerification: {
-        evidenceUrl: 'https://www.nmpa.gov.cn/datasearch/home-index.html', result: 'synthetic-match' as const,
-        source: 'nmpa-manual-check' as const, verifiedAt: '2026-11-13T00:00:00+08:00', verifiedFieldsHash: canonicalJsonHash({ approvalNumber: snapshot.approvalNumber, genericName: snapshot.genericName, manufacturer: snapshot.manufacturer })
-      },
-      workflow: {
-        allowedCombinationIds: [], allowedCourseDays: Array.from({ length: 30 }, (_, i) => i + 1), allowedDiagnosisCodes: indications.split(','),
+      drugConcept: { code: `CM-DRUG-${suffix.toUpperCase()}`, conceptId: `drug-concept-${suffix}`, display: name, kind: 'drug-concept' as const,
+        system: 'urn:clinmesh:reference:drug-concept' as const, version: 'clinmesh-synthetic-medications-2026-11-13' },
+      regulatoryVerification: { evidenceUrl: 'https://www.nmpa.gov.cn/datasearch/home-index.html', result: 'synthetic-match' as const,
+        source: 'nmpa-manual-check' as const, verifiedAt: '2026-11-13T00:00:00+08:00', verifiedFieldsHash: canonicalJsonHash({ approvalNumber: snapshot.approvalNumber, genericName: snapshot.genericName, manufacturer: snapshot.manufacturer }) },
+      workflow: { allowedCombinationIds: [], allowedCourseDays: Array.from({ length: 30 }, (_, i) => i + 1), allowedDiagnosisCodes: indications.split(','),
         allowedDoseTexts: [doseText], allowedFrequencyCodes: ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE'],
         allowedQuantities: suffix === 'oseltamivir' ? [1, 10] : [1],
         defaultCourseDays: suffix === 'oseltamivir' ? 5 : 1,
         defaultQuantity: suffix === 'oseltamivir' ? 10 : 1,
-        safety
-      }
-    }
+        safety } }
   })
 }
 
@@ -104,13 +89,9 @@ export function enableStandardMedicationRules(medications: ScenarioProductMedica
   return medications.map(medication => {
     const safety = standardMedicationSafety(medication.id)
     if (!safety) return medication
-    return {
-      ...medication, availableScopes: ['outpatient', 'inpatient'], workflow: {
-        ...medication.workflow, safety,
-        allowedCourseDays: Array.from({ length: 30 }, (_, i) => i + 1), allowedQuantities: medication.workflow.allowedQuantities,
-        allowedFrequencyCodes: ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE'],
-        allowedCombinationIds: medications.filter(other => other.id !== medication.id && !medicationCombinationConflict(safety.pharmacologyClasses, standardMedicationSafety(other.id)?.pharmacologyClasses ?? [])).map(other => other.id)
-      }
-    }
+    return { ...medication, availableScopes: ['outpatient', 'inpatient'], workflow: { ...medication.workflow, safety,
+      allowedCourseDays: Array.from({ length: 30 }, (_, i) => i + 1), allowedQuantities: medication.workflow.allowedQuantities,
+      allowedFrequencyCodes: ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE'],
+      allowedCombinationIds: medications.filter(other => other.id !== medication.id && !medicationCombinationConflict(safety.pharmacologyClasses, standardMedicationSafety(other.id)?.pharmacologyClasses ?? [])).map(other => other.id) } }
   })
 }

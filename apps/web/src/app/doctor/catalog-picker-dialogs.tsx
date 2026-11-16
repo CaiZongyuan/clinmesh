@@ -486,128 +486,128 @@ export function DiagnosisCatalogPicker({
     if (!disabled && !results.isFetching && !excludedIds.has(selection.catalogItemId)) onConfirm?.(selection)
   }
   return <section aria-label={locale === 'zh-CN' ? '诊断目录' : 'Diagnosis catalog'} data-agent-catalog="diagnosis" className="flex min-h-0 min-w-0 flex-1 flex-col">
-    <CatalogSearchForm
-      active={active}
-      expansion={collapsible ? { expanded: resultsVisible, onChange: setExpanded, resultsId, locale } : undefined}
-      query={query}
-      input={input}
-      inputLabel={messages.diagnosisSearchInput}
-      label={messages.searchDiagnosis}
-      onInputChange={setInput}
-      onSearch={() => {
-        if (collapsible) setExpanded(true)
-        setPage(1)
-        onSearchReset?.()
-        const nextQuery = input.trim()
-        setQuery(nextQuery)
-        search.onSearch(nextQuery, 1)
-      }}
-      pending={results.isFetching}
-      placeholder={messages.diagnosisPlaceholder}
-    />
-    <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
-      {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载疾病目录' : 'Loading diagnosis catalog'} role="status" className="min-h-24 max-h-[12.5rem] px-3 py-2"><Skeleton className="h-24" /></div> : (
-        // 行内目录可见高度封顶五条（12.5rem），超出内部滚动；弹窗目录在弹窗可视高度内滚动，撑满左栏。
-        <div data-catalog-results="" className={onConfirm === undefined ? (collapsible ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'min-h-0 flex-1 overflow-y-auto border-y') : 'mx-4 min-h-0 flex-1 overflow-auto border'}>
-          {results.isError ? (
-            <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
-              <Button disabled={results.isFetching} onClick={() => search.onSearch(query, page)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试目录' : 'Retry catalog'}</Button>
-            </Alert>
-          ) : null}
-          {(useLocal ? localResults : remoteResults).length === 0 ? (
-            <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
-          ) : (
-            onConfirm === undefined ? <ul className="flex flex-col gap-0.5 p-1">
-              {(useLocal ? localResults : remoteResults).map(item => {
-                const selection: DiagnosisCatalogSelection = 'domain' in item
-                  ? { catalogItemId: item.id, code: item.code, display: item.display, referenceConcept: diagnosisReferenceSnapshot(item) }
-                  : item
-                const inactive = 'status' in item && item.status !== 'active'
-                const excluded = excludedIds.has(selection.catalogItemId)
-                return <li key={selection.catalogItemId}>
-                  <OrderCatalogCandidate label={`${messages.choose} ${selection.display} ${selection.code}`}
-                    disabled={disabled || results.isFetching || inactive || excluded} selected={selectedId === selection.catalogItemId}
-                    onSelect={() => select(selection)}>
-                    <strong className="min-w-0 truncate text-sm" title={selection.display}>{selection.display}</strong>
-                    <span className="shrink-0 font-mono text-xs text-muted-foreground" title={useLocal ? undefined : ('system' in item ? item.system : undefined)}>
-                      {useLocal ? `${messages.localCatalog} · ` : ''}{selection.code}
-                    </span>
-                    {excluded || inactive ? <span className="text-xs text-muted-foreground">{excluded ? (locale === 'zh-CN' ? '已添加' : 'Added') : (locale === 'zh-CN' ? '停用' : 'Inactive')}</span> : null}
-                  </OrderCatalogCandidate>
-                </li>
-              })}
-            </ul> : <Table>
-              <TableHeader className="sticky top-0 z-10 bg-popover">
-                <TableRow>
-                  <TableHead className="w-12"><span className="sr-only">{messages.choose}</span></TableHead>
-                  <TableHead>{locale === 'zh-CN' ? '诊断名称' : 'Diagnosis'}</TableHead>
-                  <TableHead className="w-44">{locale === 'zh-CN' ? '诊断编码' : 'Code'}</TableHead>
-                  <TableHead className="w-24">{locale === 'zh-CN' ? '状态' : 'Status'}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+        <CatalogSearchForm
+          active={active}
+          expansion={collapsible ? { expanded: resultsVisible, onChange: setExpanded, resultsId, locale } : undefined}
+          query={query}
+          input={input}
+          inputLabel={messages.diagnosisSearchInput}
+          label={messages.searchDiagnosis}
+          onInputChange={setInput}
+          onSearch={() => {
+            if (collapsible) setExpanded(true)
+            setPage(1)
+            onSearchReset?.()
+            const nextQuery = input.trim()
+            setQuery(nextQuery)
+            search.onSearch(nextQuery, 1)
+          }}
+          pending={results.isFetching}
+          placeholder={messages.diagnosisPlaceholder}
+        />
+        <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
+        {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载疾病目录' : 'Loading diagnosis catalog'} role="status" className="min-h-24 max-h-[12.5rem] px-3 py-2"><Skeleton className="h-24" /></div> : (
+          // 行内目录可见高度封顶五条（12.5rem），超出内部滚动；弹窗目录在弹窗可视高度内滚动，撑满左栏。
+          <div data-catalog-results="" className={onConfirm === undefined ? (collapsible ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'min-h-0 flex-1 overflow-y-auto border-y') : 'mx-4 min-h-0 flex-1 overflow-auto border'}>
+            {results.isError ? (
+              <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
+                <Button disabled={results.isFetching} onClick={() => search.onSearch(query, page)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试目录' : 'Retry catalog'}</Button>
+              </Alert>
+            ) : null}
+            {(useLocal ? localResults : remoteResults).length === 0 ? (
+              <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
+            ) : (
+              onConfirm === undefined ? <ul className="flex flex-col gap-0.5 p-1">
                 {(useLocal ? localResults : remoteResults).map(item => {
                   const selection: DiagnosisCatalogSelection = 'domain' in item
-                    ? {
-                      catalogItemId: item.id,
-                      code: item.code,
-                      display: item.display,
-                      referenceConcept: diagnosisReferenceSnapshot(item),
-                    }
+                    ? { catalogItemId: item.id, code: item.code, display: item.display, referenceConcept: diagnosisReferenceSnapshot(item) }
                     : item
                   const inactive = 'status' in item && item.status !== 'active'
                   const excluded = excludedIds.has(selection.catalogItemId)
-                  const unavailable = disabled || results.isFetching || inactive || excluded
-                  const label = `${messages.choose} ${selection.display} ${selection.code}`
-                  return (
-                    <TableRow
-                      className={cn(unavailable && 'opacity-50', selectedId === selection.catalogItemId && 'bg-muted/70')}
-                      key={selection.catalogItemId}
-                      onDoubleClick={() => { if (!unavailable) confirm(selection) }}
-                    >
-                      <TableCell>
-                        <SelectionButton
-                          disabled={unavailable}
-                          label={label}
-                          onSelectedChange={next => select(next ? selection : undefined)}
-                          selected={selectedId === selection.catalogItemId}
-                        />
-                      </TableCell>
-                      <TableCell className="font-medium">{selection.display}</TableCell>
-                      <TableCell className="font-mono text-xs">{selection.code}</TableCell>
-                      <TableCell>
-                        <Badge variant={unavailable ? 'secondary' : 'outline'}>
-                          {excluded
-                            ? (locale === 'zh-CN' ? '已添加' : 'Added')
-                            : inactive
-                              ? (locale === 'zh-CN' ? '停用' : 'Inactive')
-                              : useLocal
-                                ? messages.localCatalog
-                                : (locale === 'zh-CN' ? '可选' : 'Active')}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  )
+                  return <li key={selection.catalogItemId}>
+                    <OrderCatalogCandidate label={`${messages.choose} ${selection.display} ${selection.code}`}
+                      disabled={disabled || results.isFetching || inactive || excluded} selected={selectedId === selection.catalogItemId}
+                      onSelect={() => select(selection)}>
+                      <strong className="min-w-0 truncate text-sm" title={selection.display}>{selection.display}</strong>
+                      <span className="shrink-0 font-mono text-xs text-muted-foreground" title={useLocal ? undefined : ('system' in item ? item.system : undefined)}>
+                        {useLocal ? `${messages.localCatalog} · ` : ''}{selection.code}
+                      </span>
+                      {excluded || inactive ? <span className="text-xs text-muted-foreground">{excluded ? (locale === 'zh-CN' ? '已添加' : 'Added') : (locale === 'zh-CN' ? '停用' : 'Inactive')}</span> : null}
+                    </OrderCatalogCandidate>
+                  </li>
                 })}
-              </TableBody>
-            </Table>
-          )}
+              </ul> : <Table>
+                <TableHeader className="sticky top-0 z-10 bg-popover">
+                  <TableRow>
+                    <TableHead className="w-12"><span className="sr-only">{messages.choose}</span></TableHead>
+                    <TableHead>{locale === 'zh-CN' ? '诊断名称' : 'Diagnosis'}</TableHead>
+                    <TableHead className="w-44">{locale === 'zh-CN' ? '诊断编码' : 'Code'}</TableHead>
+                    <TableHead className="w-24">{locale === 'zh-CN' ? '状态' : 'Status'}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(useLocal ? localResults : remoteResults).map(item => {
+                    const selection: DiagnosisCatalogSelection = 'domain' in item
+                      ? {
+                          catalogItemId: item.id,
+                          code: item.code,
+                          display: item.display,
+                          referenceConcept: diagnosisReferenceSnapshot(item),
+                        }
+                      : item
+                    const inactive = 'status' in item && item.status !== 'active'
+                    const excluded = excludedIds.has(selection.catalogItemId)
+                    const unavailable = disabled || results.isFetching || inactive || excluded
+                    const label = `${messages.choose} ${selection.display} ${selection.code}`
+                    return (
+                      <TableRow
+                        className={cn(unavailable && 'opacity-50', selectedId === selection.catalogItemId && 'bg-muted/70')}
+                        key={selection.catalogItemId}
+                        onDoubleClick={() => { if (!unavailable) confirm(selection) }}
+                      >
+                        <TableCell>
+                          <SelectionButton
+                            disabled={unavailable}
+                            label={label}
+                            onSelectedChange={next => select(next ? selection : undefined)}
+                            selected={selectedId === selection.catalogItemId}
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium">{selection.display}</TableCell>
+                        <TableCell className="font-mono text-xs">{selection.code}</TableCell>
+                        <TableCell>
+                          <Badge variant={unavailable ? 'secondary' : 'outline'}>
+                            {excluded
+                              ? (locale === 'zh-CN' ? '已添加' : 'Added')
+                              : inactive
+                                ? (locale === 'zh-CN' ? '停用' : 'Inactive')
+                                : useLocal
+                                  ? messages.localCatalog
+                                  : (locale === 'zh-CN' ? '可选' : 'Active')}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        )}
+        {!useLocal && results.data !== undefined ? (
+          <CatalogPagination
+            locale={locale}
+            onPageChange={(nextPage) => {
+              setPage(nextPage)
+              onSearchReset?.()
+              search.onSearch(query, nextPage)
+            }}
+            page={page}
+            pageSize={results.data.pageSize}
+            total={results.data.total}
+          />
+        ) : null}
         </div>
-      )}
-      {!useLocal && results.data !== undefined ? (
-        <CatalogPagination
-          locale={locale}
-          onPageChange={(nextPage) => {
-            setPage(nextPage)
-            onSearchReset?.()
-            search.onSearch(query, nextPage)
-          }}
-          page={page}
-          pageSize={results.data.pageSize}
-          total={results.data.total}
-        />
-      ) : null}
-    </div>
   </section>
 }
 
@@ -689,20 +689,18 @@ export function DiagnosisComposerDialog({
       const current = targetRef.current
       composer.save(previous => current === undefined ? previous?.editingId === undefined ? previous : null
         : previous?.editingId === current.key ? previous : {
-          catalogItemId: current.catalogItemId, code: current.code, display: current.display,
-          note: current.note, role: current.role, editingId: current.key,
-          ...(current.referenceConcept === undefined ? {} : { referenceConcept: current.referenceConcept }),
-        })
+            catalogItemId: current.catalogItemId, code: current.code, display: current.display,
+            note: current.note, role: current.role, editingId: current.key,
+            ...(current.referenceConcept === undefined ? {} : { referenceConcept: current.referenceConcept }),
+          })
     }
     openingRef.current = { open, editorIdentity }
   }, [editorIdentity, open])
   const select = (selection: DiagnosisCatalogSelection | undefined) => {
     if (selection === undefined || disabled || composer.failed || atCapacity && target === undefined) return
     // 换选目录项只更换编码，保留已填的角色与备注（医生填到一半发现选错病，备注仍然适用）。
-    composer.save(previous => ({
-      ...selection, role: previous?.role ?? defaultRole, note: previous?.note ?? '',
-      ...(target === undefined ? {} : { editingId: target.key })
-    }))
+    composer.save(previous => ({ ...selection, role: previous?.role ?? defaultRole, note: previous?.note ?? '',
+      ...(target === undefined ? {} : { editingId: target.key }) }))
   }
   const confirm = () => {
     if (selected === undefined || disabled || composer.failed || atCapacity && target === undefined || excludedIds.has(selected.catalogItemId)) return
@@ -841,9 +839,9 @@ export function MedicationComposerDialog({
       composer.save(previous => current === undefined
         ? previous
         : previous ?? {
-          catalogItemId: medicationComposerSelectionId(current.selection), fields: current.fields,
-          ...(current.selection.kind === 'reference' ? { referenceProduct: current.selection.product } : {}),
-        })
+            catalogItemId: medicationComposerSelectionId(current.selection), fields: current.fields,
+            ...(current.selection.kind === 'reference' ? { referenceProduct: current.selection.product } : {}),
+          })
     }
     openingRef.current = { open, editorIdentity }
   }, [editorIdentity, open])
@@ -853,16 +851,12 @@ export function MedicationComposerDialog({
     if (selection === undefined || disabled || atCapacity && target === undefined) return
     // 换选药品时剂量/频次/疗程/数量的值域随药品变化，重置为该药品默认值；重复点选同一药品保留已填内容。
     if (selected === undefined || medicationComposerSelectionId(selected) !== medicationComposerSelectionId(selection)) {
-      composer.save(() => ({
-        catalogItemId: medicationComposerSelectionId(selection),
+      composer.save(() => ({ catalogItemId: medicationComposerSelectionId(selection),
         ...(selection.kind === 'reference' ? { referenceProduct: selection.product } : {}),
-        fields: {
-          doseText: selection.kind === 'local' ? selection.medication.defaultDoseText : '',
+        fields: { doseText: selection.kind === 'local' ? selection.medication.defaultDoseText : '',
           frequencyCode: selection.kind === 'local' ? selection.medication.defaultFrequencyCode : '',
           courseDays: selection.kind === 'local' ? selection.medication.defaultCourseDays : 3,
-          quantity: selection.kind === 'local' ? selection.medication.defaultQuantity : 1
-        }
-      }))
+          quantity: selection.kind === 'local' ? selection.medication.defaultQuantity : 1 } }))
     }
   }
   // 字段值域复用 prescriptionDraftItemSchema 各字段 schema，避免手抄边界与合同漂移；本院药另按目录 allowed 值域收紧。
@@ -907,9 +901,9 @@ export function MedicationComposerDialog({
                   ?? (locale === 'zh-CN' ? selectedMedication?.nameZh : selectedMedication?.nameEn)}</h4>
                 <p className="mt-1 break-words text-xs text-muted-foreground">{selectedProduct === undefined
                   ? (selectedMedication === undefined ? '' : (() => {
-                    const localPresentation = formatLocalMedicationPresentation(selectedMedication, locale)
-                    return [messages.hospitalPharmacyTab, localPresentation.specText, localPresentation.priceText].filter(Boolean).join(' · ')
-                  })())
+                      const localPresentation = formatLocalMedicationPresentation(selectedMedication, locale)
+                      return [messages.hospitalPharmacyTab, localPresentation.specText, localPresentation.priceText].filter(Boolean).join(' · ')
+                    })())
                   : [selectedProduct.manufacturer, selectedProduct.strength, medicationPackageSummary(selectedProduct.packageDescription)].filter(Boolean).join(' · ')}</p>
               </div>
               <fieldset className="contents" disabled={disabled || composer.failed}><FieldGroup className="grid min-w-0 grid-cols-2 gap-3">
@@ -991,26 +985,26 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
   const visibleResults = results.data?.items ?? []
   return (
     <div data-agent-catalog="laboratory" className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
-      <CatalogSearchForm
-        active={active}
-        expansion={collapsible ? { expanded: resultsVisible, onChange: setExpanded, resultsId, locale } : undefined}
-        query={query}
-        input={input}
-        inputLabel={messages.laboratorySearchInput}
-        label={messages.searchLaboratory}
-        onInputChange={setInput}
-        onSearch={() => {
-          if (collapsible) setExpanded(true)
-          setPage(1)
-          onSearchReset?.()
-          const nextQuery = input.trim()
-          setQuery(nextQuery)
-          search.onSearch(nextQuery, 1)
-        }}
-        pending={results.isFetching}
-        placeholder={messages.laboratoryPlaceholder}
-      />
-      <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col gap-3', resultsVisible ? 'flex' : 'hidden')}>
+        <CatalogSearchForm
+          active={active}
+          expansion={collapsible ? { expanded: resultsVisible, onChange: setExpanded, resultsId, locale } : undefined}
+          query={query}
+          input={input}
+          inputLabel={messages.laboratorySearchInput}
+          label={messages.searchLaboratory}
+          onInputChange={setInput}
+          onSearch={() => {
+            if (collapsible) setExpanded(true)
+            setPage(1)
+            onSearchReset?.()
+            const nextQuery = input.trim()
+            setQuery(nextQuery)
+            search.onSearch(nextQuery, 1)
+          }}
+          pending={results.isFetching}
+          placeholder={messages.laboratoryPlaceholder}
+        />
+        <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col gap-3', resultsVisible ? 'flex' : 'hidden')}>
         {results.isPending ? <Skeleton aria-label={locale === 'zh-CN' ? '正在加载检验目录' : 'Loading laboratory catalog'} role="status" className="m-3 min-h-24" /> : results.isError ? (
           <Alert className="mx-4" variant="destructive"><CircleAlertIcon /><AlertTitle>{locale === 'zh-CN' ? '无法加载本院检验目录' : 'Unable to load the hospital laboratory catalog'}</AlertTitle><Button onClick={() => search.onSearch(query, page)} type="button" variant="outline">{locale === 'zh-CN' ? '重试' : 'Retry'}</Button></Alert>
         ) : (
@@ -1114,7 +1108,7 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
             total={results.data.total}
           />
         ) : null}
-      </div>
+        </div>
     </div>
   )
 }
@@ -1217,27 +1211,27 @@ function MedicationProductRow({ group, disabled = false, disabledReason, exclude
   const selected = group.variants.some(variant => variant.id === selectionId && available(variant))
   const messages = copy[locale]
   const packageSelector = (
-    <Select disabled={unavailable} value={item.id} onValueChange={value => {
-      const next = group.variants.find(variant => variant.id === value && available(variant))
-      if (next === undefined) return
-      setPackageId(next.id)
-      if (selected) onSelect({ kind: 'reference', product: next })
-    }}>
-      <SelectTrigger data-agent-medication-package="" className="w-full min-w-0" aria-label={`${locale === 'zh-CN' ? '包装' : 'Package'} ${item.genericName} ${item.manufacturer}`} title={item.packageDescription}>
-        <SelectValue className="min-w-0"><span className="truncate" title={item.packageDescription}>{medicationPackageSummary(item.packageDescription)}</span></SelectValue>
-      </SelectTrigger>
-      <SelectContent>
-        <SelectGroup>
-          {group.variants.map(variant => (
-            <SelectItem disabled={!available(variant)} key={variant.id} value={variant.id}>
-              <span className="max-w-72 truncate" title={variant.packageDescription}>{variant.packageDescription}</span>
-              {excludedIds.has(variant.id) ? (locale === 'zh-CN' ? ' · 已添加' : ' · Added')
-                : variant.status !== 'active' ? (locale === 'zh-CN' ? ' · 停用' : ' · Inactive') : ''}
-            </SelectItem>
-          ))}
-        </SelectGroup>
-      </SelectContent>
-    </Select>
+        <Select disabled={unavailable} value={item.id} onValueChange={value => {
+          const next = group.variants.find(variant => variant.id === value && available(variant))
+          if (next === undefined) return
+          setPackageId(next.id)
+          if (selected) onSelect({ kind: 'reference', product: next })
+        }}>
+          <SelectTrigger data-agent-medication-package="" className="w-full min-w-0" aria-label={`${locale === 'zh-CN' ? '包装' : 'Package'} ${item.genericName} ${item.manufacturer}`} title={item.packageDescription}>
+            <SelectValue className="min-w-0"><span className="truncate" title={item.packageDescription}>{medicationPackageSummary(item.packageDescription)}</span></SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {group.variants.map(variant => (
+                <SelectItem disabled={!available(variant)} key={variant.id} value={variant.id}>
+                  <span className="max-w-72 truncate" title={variant.packageDescription}>{variant.packageDescription}</span>
+                  {excludedIds.has(variant.id) ? (locale === 'zh-CN' ? ' · 已添加' : ' · Added')
+                    : variant.status !== 'active' ? (locale === 'zh-CN' ? ' · 停用' : ' · Inactive') : ''}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
   )
   if (onConfirm === undefined) return (
     <li title={[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ') || undefined}>
@@ -1366,146 +1360,146 @@ export function MedicationCatalogPicker({
       </Tabs>
     </div>
   )
-  const confirm = (selection: MedicationCatalogSelection) => {
+const confirm = (selection: MedicationCatalogSelection) => {
     const id = medicationComposerSelectionId(selection)
     const fetchBusy = selection.kind === 'reference' && results.isFetching
     if (!disabled && crossSourceReason === undefined && !fetchBusy && !excludedIds.has(id)) onConfirm?.(selection)
   }
   return <section aria-label={locale === 'zh-CN' ? '药品目录' : 'Medication catalog'} data-agent-catalog="medication" className="flex min-h-0 min-w-0 flex-1 flex-col">
-    {collapsible ? null : sourceTabs}
-    <CatalogSearchForm
-      active={active}
-      allowSingleCharacter
-      expansion={collapsible ? { expanded: resultsVisible, onChange: setExpanded, resultsId, locale } : undefined}
-      query={query}
-      input={input}
-      inputLabel={messages.medicationSearchInput}
-      label={messages.searchMedication}
-      onInputChange={setInput}
-      onSearch={() => {
-        if (collapsible) setExpanded(true)
-        setPage(1)
-        onSearchReset?.()
-        const nextQuery = input.trim()
-        setQuery(nextQuery)
-        if (source === 'reference') search.onSearch(nextQuery, 1)
-      }}
-      pending={!isLocalSource && results.isFetching}
-      placeholder={messages.medicationPlaceholder}
-    />
-    <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
-      {collapsible ? sourceTabs : null}
-      {!isLocalSource ? (
-        <p className="mx-4 mb-2 rounded-md border bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground break-words">
-          {messages.externalPrescriptionNotice}
-        </p>
-      ) : null}
-      {!isLocalSource && results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载药品目录' : 'Loading medication catalog'} role="status" className="min-h-24 max-h-[12.5rem] px-3 py-2"><Skeleton className="h-24" /></div> : (
-        // 行内目录可见高度封顶五条（12.5rem），超出内部滚动；弹窗目录在弹窗可视高度内滚动，撑满左栏。
-        <div data-catalog-results="" className={onConfirm === undefined ? (collapsible ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'min-h-0 flex-1 overflow-y-auto border-y') : 'mx-4 min-h-0 max-h-[28rem] flex-1 overflow-auto border'}>
-          {!isLocalSource && results.isError ? (
-            <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
-              <Button disabled={results.isFetching} onClick={() => search.onSearch(query, page)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试目录' : 'Retry catalog'}</Button>
-            </Alert>
-          ) : null}
-          {isLocalSource && localResults.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2.5 p-6 text-center">
-              <p className="text-sm text-muted-foreground">
-                {localCatalog.length === 0
-                  ? (lockedSource === 'local' ? messages.localPharmacyNoCombinable : messages.localPharmacyEmpty)
-                  : messages.localPharmacyNoMatch}
-              </p>
-              {lockedSource === 'local' ? null : (
-                <Button onClick={() => switchSource('reference')} size="sm" type="button" variant="outline">
-                  {messages.switchToNationalReference}
-                </Button>
-              )}
-            </div>
-          ) : !isLocalSource && remoteResults.length === 0 ? (
-            <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
-          ) : (
-            onConfirm === undefined ? <ul className="flex flex-col gap-0.5 p-1">
-              {isLocalSource ? localResults.map(item => {
-                const { priceText, specText } = formatLocalMedicationPresentation(item, locale)
-                return <li key={item.id}>
-                  <OrderCatalogCandidate label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} selected={selectionId === item.id}
-                    disabled={disabled || crossSourceReason !== undefined || excludedIds.has(item.id)} onSelect={() => select({ kind: 'local', medication: item })}>
-                    <strong data-agent-medication-name="" className="min-w-0 truncate text-sm">{locale === 'zh-CN' ? item.nameZh : item.nameEn}</strong>
-                    {specText ? <span className="min-w-0 text-xs text-muted-foreground">{specText}</span> : null}
-                    {priceText ? <span className="shrink-0 tabular-nums text-xs font-medium text-foreground/80">{priceText}</span> : null}
-                    {excludedIds.has(item.id) ? <span className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '已添加' : 'Added'}</span> : null}
-                    {crossSourceReason === undefined ? null : <span className="basis-full text-xs text-muted-foreground">{crossSourceReason}</span>}
-                  </OrderCatalogCandidate>
-                </li>
-              }) : referenceGroups.map(group => <MedicationProductRow key={medicationProductGroupKey(group.product)} group={group} disabled={disabled || results.isFetching || crossSourceReason !== undefined} disabledReason={crossSourceReason} excludedIds={excludedIds} locale={locale} selectionId={selectionId} onSelect={select} />)}
-            </ul> : <Table className="min-w-[1000px] table-fixed" singleScrollContainer>
-              <TableHeader className="sticky top-0 z-10 bg-popover">
-                <TableRow>
-                  <TableHead className="w-12"><span className="sr-only">{messages.choose}</span></TableHead>
-                  <TableHead className="w-60">{locale === 'zh-CN' ? '药品名称' : 'Medication name'}</TableHead>
-                  <TableHead className="w-48">{locale === 'zh-CN' ? '生产企业' : 'Manufacturer'}</TableHead>
-                  <TableHead className="w-32">{locale === 'zh-CN' ? '商品名' : 'Brand name'}</TableHead>
-                  <TableHead className="w-44">{locale === 'zh-CN' ? '规格' : 'Strength'}</TableHead>
-                  <TableHead className="w-56">{locale === 'zh-CN' ? '包装选择' : 'Package'}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {isLocalSource ? localResults.map(item => {
-                  const selection: MedicationCatalogSelection = { kind: 'local', medication: item }
-                  const id = item.id
-                  const excluded = excludedIds.has(id)
-                  const unavailable = disabled || crossSourceReason !== undefined || excluded
-                  const genericName = locale === 'zh-CN' ? item.nameZh : item.nameEn
-                  const { packageSummary, priceText, strength } = formatLocalMedicationPresentation(item, locale)
-                  const specText = [strength, priceText].filter(Boolean).join(' · ')
-                  return (
-                    <TableRow
-                      className={cn(unavailable && 'opacity-50', selectionId === id && 'bg-muted/70')}
-                      key={id}
-                      onDoubleClick={() => { if (!unavailable) confirm(selection) }}
-                    >
-                      <TableCell>
-                        <SelectionButton
-                          disabled={unavailable}
-                          label={`${messages.choose} ${genericName}`}
-                          onSelectedChange={next => select(next ? selection : undefined)}
-                          selected={selectionId === id}
-                        />
-                      </TableCell>
-                      <TableCell data-agent-medication-name="" className="font-medium">
-                        <span className="line-clamp-2 whitespace-normal break-words" title={genericName}>{genericName}</span>
-                        {crossSourceReason === undefined ? null : <span className="mt-0.5 block text-xs font-normal text-muted-foreground">{crossSourceReason}</span>}
-                      </TableCell>
-                      <TableCell>{messages.hospitalPharmacyTab}</TableCell>
-                      <TableCell>-</TableCell>
-                      <TableCell>{specText || '-'}</TableCell>
-                      <TableCell>{excluded ? <Badge variant="secondary">{locale === 'zh-CN' ? '已添加' : 'Added'}</Badge> : (packageSummary ?? '-')}</TableCell>
-                    </TableRow>
-                  )
-                }) : referenceGroups.map(group => (
-                  <MedicationProductRow key={medicationProductGroupKey(group.product)}
-                    group={group} disabled={disabled || results.isFetching || crossSourceReason !== undefined} disabledReason={crossSourceReason} excludedIds={excludedIds} locale={locale}
-                    selectionId={selectionId} onSelect={select} onConfirm={confirm} />
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-      )}
-      {!isLocalSource && results.data !== undefined ? (
-        <CatalogPagination
-          locale={locale}
-          onPageChange={(nextPage) => {
-            setPage(nextPage)
+        {collapsible ? null : sourceTabs}
+        <CatalogSearchForm
+          active={active}
+          allowSingleCharacter
+          expansion={collapsible ? { expanded: resultsVisible, onChange: setExpanded, resultsId, locale } : undefined}
+          query={query}
+          input={input}
+          inputLabel={messages.medicationSearchInput}
+          label={messages.searchMedication}
+          onInputChange={setInput}
+          onSearch={() => {
+            if (collapsible) setExpanded(true)
+            setPage(1)
             onSearchReset?.()
-            search.onSearch(query, nextPage)
+            const nextQuery = input.trim()
+            setQuery(nextQuery)
+            if (source === 'reference') search.onSearch(nextQuery, 1)
           }}
-          page={page}
-          pageSize={results.data.pageSize}
-          total={results.data.total}
+          pending={!isLocalSource && results.isFetching}
+          placeholder={messages.medicationPlaceholder}
         />
-      ) : null}
-    </div>
+        <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
+        {collapsible ? sourceTabs : null}
+        {!isLocalSource ? (
+          <p className="mx-4 mb-2 rounded-md border bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground break-words">
+            {messages.externalPrescriptionNotice}
+          </p>
+        ) : null}
+        {!isLocalSource && results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载药品目录' : 'Loading medication catalog'} role="status" className="min-h-24 max-h-[12.5rem] px-3 py-2"><Skeleton className="h-24" /></div> : (
+          // 行内目录可见高度封顶五条（12.5rem），超出内部滚动；弹窗目录在弹窗可视高度内滚动，撑满左栏。
+          <div data-catalog-results="" className={onConfirm === undefined ? (collapsible ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'min-h-0 flex-1 overflow-y-auto border-y') : 'mx-4 min-h-0 max-h-[28rem] flex-1 overflow-auto border'}>
+            {!isLocalSource && results.isError ? (
+              <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
+                <Button disabled={results.isFetching} onClick={() => search.onSearch(query, page)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试目录' : 'Retry catalog'}</Button>
+              </Alert>
+            ) : null}
+            {isLocalSource && localResults.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2.5 p-6 text-center">
+                <p className="text-sm text-muted-foreground">
+                  {localCatalog.length === 0
+                    ? (lockedSource === 'local' ? messages.localPharmacyNoCombinable : messages.localPharmacyEmpty)
+                    : messages.localPharmacyNoMatch}
+                </p>
+                {lockedSource === 'local' ? null : (
+                  <Button onClick={() => switchSource('reference')} size="sm" type="button" variant="outline">
+                    {messages.switchToNationalReference}
+                  </Button>
+                )}
+              </div>
+            ) : !isLocalSource && remoteResults.length === 0 ? (
+              <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
+            ) : (
+              onConfirm === undefined ? <ul className="flex flex-col gap-0.5 p-1">
+                {isLocalSource ? localResults.map(item => {
+                  const { priceText, specText } = formatLocalMedicationPresentation(item, locale)
+                  return <li key={item.id}>
+                    <OrderCatalogCandidate label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} selected={selectionId === item.id}
+                      disabled={disabled || crossSourceReason !== undefined || excludedIds.has(item.id)} onSelect={() => select({ kind: 'local', medication: item })}>
+                      <strong data-agent-medication-name="" className="min-w-0 truncate text-sm">{locale === 'zh-CN' ? item.nameZh : item.nameEn}</strong>
+                      {specText ? <span className="min-w-0 text-xs text-muted-foreground">{specText}</span> : null}
+                      {priceText ? <span className="shrink-0 tabular-nums text-xs font-medium text-foreground/80">{priceText}</span> : null}
+                      {excludedIds.has(item.id) ? <span className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '已添加' : 'Added'}</span> : null}
+                      {crossSourceReason === undefined ? null : <span className="basis-full text-xs text-muted-foreground">{crossSourceReason}</span>}
+                    </OrderCatalogCandidate>
+                  </li>
+                }) : referenceGroups.map(group => <MedicationProductRow key={medicationProductGroupKey(group.product)} group={group} disabled={disabled || results.isFetching || crossSourceReason !== undefined} disabledReason={crossSourceReason} excludedIds={excludedIds} locale={locale} selectionId={selectionId} onSelect={select} />)}
+              </ul> : <Table className="min-w-[1000px] table-fixed" singleScrollContainer>
+                <TableHeader className="sticky top-0 z-10 bg-popover">
+                  <TableRow>
+                    <TableHead className="w-12"><span className="sr-only">{messages.choose}</span></TableHead>
+                    <TableHead className="w-60">{locale === 'zh-CN' ? '药品名称' : 'Medication name'}</TableHead>
+                    <TableHead className="w-48">{locale === 'zh-CN' ? '生产企业' : 'Manufacturer'}</TableHead>
+                    <TableHead className="w-32">{locale === 'zh-CN' ? '商品名' : 'Brand name'}</TableHead>
+                    <TableHead className="w-44">{locale === 'zh-CN' ? '规格' : 'Strength'}</TableHead>
+                    <TableHead className="w-56">{locale === 'zh-CN' ? '包装选择' : 'Package'}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {isLocalSource ? localResults.map(item => {
+                    const selection: MedicationCatalogSelection = { kind: 'local', medication: item }
+                    const id = item.id
+                    const excluded = excludedIds.has(id)
+                    const unavailable = disabled || crossSourceReason !== undefined || excluded
+                    const genericName = locale === 'zh-CN' ? item.nameZh : item.nameEn
+                    const { packageSummary, priceText, strength } = formatLocalMedicationPresentation(item, locale)
+                    const specText = [strength, priceText].filter(Boolean).join(' · ')
+                    return (
+                      <TableRow
+                        className={cn(unavailable && 'opacity-50', selectionId === id && 'bg-muted/70')}
+                        key={id}
+                        onDoubleClick={() => { if (!unavailable) confirm(selection) }}
+                      >
+                        <TableCell>
+                          <SelectionButton
+                            disabled={unavailable}
+                            label={`${messages.choose} ${genericName}`}
+                            onSelectedChange={next => select(next ? selection : undefined)}
+                            selected={selectionId === id}
+                          />
+                        </TableCell>
+                        <TableCell data-agent-medication-name="" className="font-medium">
+                          <span className="line-clamp-2 whitespace-normal break-words" title={genericName}>{genericName}</span>
+                          {crossSourceReason === undefined ? null : <span className="mt-0.5 block text-xs font-normal text-muted-foreground">{crossSourceReason}</span>}
+                        </TableCell>
+                        <TableCell>{messages.hospitalPharmacyTab}</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>{specText || '-'}</TableCell>
+                        <TableCell>{excluded ? <Badge variant="secondary">{locale === 'zh-CN' ? '已添加' : 'Added'}</Badge> : (packageSummary ?? '-')}</TableCell>
+                      </TableRow>
+                    )
+                  }) : referenceGroups.map(group => (
+                    <MedicationProductRow key={medicationProductGroupKey(group.product)}
+                      group={group} disabled={disabled || results.isFetching || crossSourceReason !== undefined} disabledReason={crossSourceReason} excludedIds={excludedIds} locale={locale}
+                      selectionId={selectionId} onSelect={select} onConfirm={confirm} />
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        )}
+        {!isLocalSource && results.data !== undefined ? (
+          <CatalogPagination
+            locale={locale}
+            onPageChange={(nextPage) => {
+              setPage(nextPage)
+              onSearchReset?.()
+              search.onSearch(query, nextPage)
+            }}
+            page={page}
+            pageSize={results.data.pageSize}
+            total={results.data.total}
+          />
+        ) : null}
+        </div>
   </section>
 }
 

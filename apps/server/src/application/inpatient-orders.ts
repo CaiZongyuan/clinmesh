@@ -10,7 +10,7 @@ import type { RepositoryContext } from '../infrastructure/sqlite/fhir-repository
 
 export class InpatientOrders {
   #medicationConfigs = new Map<string, ReturnType<typeof medicationConfigSchema.parse> | null>()
-  constructor(readonly owner: InpatientService) { }
+  constructor(readonly owner: InpatientService) {}
   #parseMedicationConfig(priceFen: number, configJson: string) {
     const key = `${priceFen}:${configJson}`
     if (this.#medicationConfigs.has(key)) return this.#medicationConfigs.get(key)!
@@ -36,15 +36,13 @@ export class InpatientOrders {
     return medications.flatMap(row => {
       const config = this.#parseMedicationConfig(row.price_fen, row.config_json)
       if (config === null) return []
-      return [{
-        id: row.item_id, display: row.name_zh, version: row.version, priceFen: row.price_fen, unit: config.unit, ...(config.safety ? { safety: config.safety } : {}), doses: [...config.inpatientDoses],
+      return [{ id: row.item_id, display: row.name_zh, version: row.version, priceFen: row.price_fen, unit: config.unit, ...(config.safety ? { safety: config.safety } : {}), doses: [...config.inpatientDoses],
         ...(config.inpatientDoseBasis ? { doseBasis: { ...config.inpatientDoseBasis } } : {}),
         maxDoseQuantity: Math.min(config.inpatientMaxDoseQuantity ?? Math.max(...config.inpatientDoses.map(dose => dose.quantity)), config.safety && config.inpatientDoseBasis?.unit === config.safety.doseLimits.unit ? Math.floor(config.safety.doseLimits.maximumSingleDose / config.inpatientDoseBasis.amount) : 100),
-        frequencyCodes: config.allowedFrequencyCodes.filter((code): code is 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' => ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE'].includes(code)),
+        frequencyCodes: config.allowedFrequencyCodes.filter((code): code is 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' => ['QD','BID','TID','QN','PRN','ONCE'].includes(code)),
         lots: z.array(z.object({ lot_id: z.string(), version: z.number(), quantity_on_hand: z.number(), expires_on: z.string() })).parse(lotQuery
           .all(context.workspaceId, context.epoch, row.item_id, locationId, today))
-          .map(lot => ({ id: lot.lot_id, version: lot.version, quantityOnHand: lot.quantity_on_hand, expiresOn: lot.expires_on }))
-      }]
+          .map(lot => ({ id: lot.lot_id, version: lot.version, quantityOnHand: lot.quantity_on_hand, expiresOn: lot.expires_on })) }]
     })
   }
   catalogPrices(context: ActorContext) {
@@ -60,12 +58,8 @@ export class InpatientOrders {
   medicationsAndServices(context: ActorContext) {
     const services = z.array(z.object({ service_id: z.string(), name_zh: z.string(), version: z.number(), config_json: z.string() })).parse(this.owner.database.driver.prepare(
       "SELECT * FROM hospital_service_catalog WHERE workspace_id=? AND epoch=? AND active=1 AND json_extract(config_json,'$.inpatientBillingTrigger')='execution'").all(context.workspaceId, context.epoch))
-    return {
-      medications: this.medications(context), services: services.map(row => {
-        const config = serviceConfigSchema.parse(JSON.parse(row.config_json));
-        return { id: row.service_id, display: row.name_zh, version: row.version, priceFen: config.chargeDefinition.priceFen, unit: config.billingUnit.display }
-      })
-    }
+    return { medications: this.medications(context), services: services.map(row => { const config = serviceConfigSchema.parse(JSON.parse(row.config_json));
+      return { id: row.service_id, display: row.name_zh, version: row.version, priceFen: config.chargeDefinition.priceFen, unit: config.billingUnit.display } }) }
   }
   orderFacts(context: ActorContext, admissionId: string, medicationOnly = false) {
     const rows = z.array(orderRowSchema).parse(this.owner.database.driver.prepare(`SELECT * FROM inpatient_order WHERE workspace_id=? AND epoch=? AND admission_id=? ${medicationOnly ? "AND kind='medication'" : ''} ORDER BY julianday(signed_at),order_id`)
@@ -73,10 +67,8 @@ export class InpatientOrders {
     const orders = rows.map(row => this.orderDto(context, row))
     const executions = z.array(executionRowSchema).parse(this.owner.database.driver.prepare(`SELECT e.* FROM inpatient_execution e JOIN inpatient_order o
       ON o.workspace_id=e.workspace_id AND o.epoch=e.epoch AND o.order_id=e.order_id WHERE o.workspace_id=? AND o.epoch=? AND o.admission_id=? ${medicationOnly ? "AND o.kind='medication'" : ''} ORDER BY julianday(e.scheduled_for),e.execution_id`)
-      .all(context.workspaceId, context.epoch, admissionId)).map(row => inpatientExecutionSchema.parse({
-        id: row.execution_id, orderId: row.order_id,
-        scheduledFor: row.scheduled_for, status: row.status, version: row.version, ...(row.administration_id === null ? {} : { administrationId: row.administration_id }), ...(row.reason === null ? {} : { reason: row.reason })
-      }))
+      .all(context.workspaceId, context.epoch, admissionId)).map(row => inpatientExecutionSchema.parse({ id: row.execution_id, orderId: row.order_id,
+        scheduledFor: row.scheduled_for, status: row.status, version: row.version, ...(row.administration_id === null ? {} : { administrationId: row.administration_id }), ...(row.reason === null ? {} : { reason: row.reason }) }))
     const dispenses = z.array(z.object({ dispense_id: z.string(), execution_id: z.string(), lot_id: z.string(), quantity: z.number(), dispensed_at: z.string(), dispensed_by: z.string() })).parse(this.owner.database.driver.prepare(`SELECT d.* FROM inpatient_dispense d JOIN inpatient_execution e ON e.workspace_id=d.workspace_id AND e.epoch=d.epoch AND e.execution_id=d.execution_id
       JOIN inpatient_order o ON o.workspace_id=e.workspace_id AND o.epoch=e.epoch AND o.order_id=e.order_id WHERE o.workspace_id=? AND o.epoch=? AND o.admission_id=? ${medicationOnly ? "AND o.kind='medication'" : ''} ORDER BY julianday(d.dispensed_at),d.dispense_id`)
       .all(context.workspaceId, context.epoch, admissionId)).map(row => inpatientDispenseSchema.parse({ id: row.dispense_id, executionId: row.execution_id, lotId: row.lot_id, quantity: row.quantity, dispensedAt: row.dispensed_at, dispensedBy: row.dispensed_by }))
@@ -85,10 +77,8 @@ export class InpatientOrders {
   chargeFacts(context: RepositoryContext, admissionId: string) {
     const charges = z.array(z.object({ charge_id: z.string(), kind: z.string(), source_id: z.string(), organization_id: z.string(), service_date: z.string(), amount_fen: z.number(), virtual_time: z.string(), version: z.number(), reversal_of: z.string().nullable(), reason: z.string().nullable() })).parse(this.owner.database.driver.prepare(
       'SELECT * FROM inpatient_charge WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY julianday(virtual_time),charge_id').all(context.workspaceId, context.epoch, admissionId))
-      .map(row => inpatientChargeSchema.parse({
-        id: row.charge_id, label: z.object({ text: z.string().min(1) }).parse(this.owner.fhir.read(context, 'ChargeItem', row.charge_id).code).text, kind: row.kind, sourceId: row.source_id, organizationId: row.organization_id, serviceDate: row.service_date, amountFen: row.amount_fen,
-        virtualTime: row.virtual_time, version: row.version, ...(row.reversal_of === null ? {} : { reversalOf: row.reversal_of }), ...(row.reason === null ? {} : { reason: row.reason })
-      }))
+      .map(row => inpatientChargeSchema.parse({ id: row.charge_id, label: z.object({ text: z.string().min(1) }).parse(this.owner.fhir.read(context, 'ChargeItem', row.charge_id).code).text, kind: row.kind, sourceId: row.source_id, organizationId: row.organization_id, serviceDate: row.service_date, amountFen: row.amount_fen,
+        virtualTime: row.virtual_time, version: row.version, ...(row.reversal_of === null ? {} : { reversalOf: row.reversal_of }), ...(row.reason === null ? {} : { reason: row.reason }) }))
     return { charges, chargesFen: charges.reduce((sum, charge) => sum + charge.amountFen, 0) }
   }
   facts(context: ActorContext, admissionId: string) {
@@ -98,10 +88,8 @@ export class InpatientOrders {
     const { row } = this.owner.readAdmissionBinding(context, admissionId)
     const patient = this.owner.fhir.read(context, 'Patient', row.patient_id)
     const names = z.array(z.object({ text: z.string().optional() })).optional().parse(patient.name)
-    return {
-      admissionId, patientId: row.patient_id, patientName: names?.[0]?.text ?? row.patient_id,
-      inpatientNumber: row.inpatient_number, wardId: row.ward_id, status: row.status
-    }
+    return { admissionId, patientId: row.patient_id, patientName: names?.[0]?.text ?? row.patient_id,
+      inpatientNumber: row.inpatient_number, wardId: row.ward_id, status: row.status }
   }
   pharmacyList(context: ActorContext) {
     this.owner.assertReadRole(context, ['pharmacist'])
@@ -114,18 +102,15 @@ export class InpatientOrders {
     this.owner.assertReadRole(context, ['pharmacist'])
     const admission = this.pharmacyAdmission(context, admissionId), facts = this.orderFacts(context, admissionId, true)
     const allergies = this.owner.fhir.search(context, 'AllergyIntolerance', new URLSearchParams({ patient: `Patient/${admission.patientId}`, _count: '100' })).resources
-    const medicationAllergies = allergies.filter(resource => {
-      const allergy = allergySchema.parse(resource)
+    const medicationAllergies = allergies.filter(resource => { const allergy = allergySchema.parse(resource)
       return allergy.category?.includes('medication') && allergy.clinicalStatus?.coding?.some(item => item.code === 'active') && allergy.verificationStatus?.coding?.some(item => item.code === 'confirmed')
     }).map(resource => {
       const code = z.object({ text: z.string().optional(), coding: z.array(z.object({ code: z.string(), display: z.string().optional() })).optional() }).parse(resource.code)
       return { id: resource.id, display: code.text ?? code.coding?.[0]?.display ?? code.coding?.[0]?.code ?? '药物过敏' }
     })
-    return inpatientPharmacySchema.parse({
-      admission, ...facts,
+    return inpatientPharmacySchema.parse({ admission, ...facts,
       executions: facts.executions.map(({ administrationId: _administration, ...execution }) => execution),
-      medications: this.medications(context, [...new Set(facts.orders.map(order => order.catalogItemId))]).map(({ id, display, unit, lots }) => ({ id, display, unit, lots })), medicationAllergies
-    })
+      medications: this.medications(context, [...new Set(facts.orders.map(order => order.catalogItemId))]).map(({ id, display, unit, lots }) => ({ id, display, unit, lots })), medicationAllergies })
   }
   charges(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['cashier'])
@@ -138,15 +123,13 @@ export class InpatientOrders {
     const request = this.owner.fhir.read(context, row.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', row.order_id)
     const stopReason = z.array(z.object({ id: z.string().optional(), text: z.string() })).parse(request.note ?? [])
       .find(note => note.id === 'clinmesh-stop-reason')?.text
-    return inpatientOrderSchema.parse({
-      id: row.order_id, admissionId: row.admission_id, kind: row.kind, duration: row.duration, catalogItemId: row.catalog_item_id,
+    return inpatientOrderSchema.parse({ id: row.order_id, admissionId: row.admission_id, kind: row.kind, duration: row.duration, catalogItemId: row.catalog_item_id,
       catalogVersion: row.catalog_version, display: row.display, doseText: row.dose_text, doseQuantity: row.dose_quantity, unit: row.unit, frequencyCode: row.frequency_code,
       state: row.state, version: row.version, requestVersion: request.meta!.versionId,
       ...(postoperative === undefined ? {} : { surgeryExecutionId: postoperative.surgery_execution_id }),
       ...(stopReason === undefined ? {} : { stopReason }),
       signedAt: row.signed_at, signedBy: row.signed_by, organizationId: row.organization_id,
-      ...(row.verified_at === null ? {} : { verifiedAt: row.verified_at }), ...(row.stopped_at === null ? {} : { stoppedAt: row.stopped_at })
-    })
+      ...(row.verified_at === null ? {} : { verifiedAt: row.verified_at }), ...(row.stopped_at === null ? {} : { stoppedAt: row.stopped_at }) })
   }
   order(context: ActorContext, admissionId: string, orderId: string) {
     const row = orderRowSchema.optional().parse(this.owner.database.driver.prepare('SELECT * FROM inpatient_order WHERE workspace_id=? AND epoch=? AND admission_id=? AND order_id=?')
@@ -161,12 +144,10 @@ export class InpatientOrders {
   }
   issue(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientOrderIssueInputSchema.parse(raw)
-    return this.owner.commands.execute({
-      context, input, idempotencyKey, operation: 'inpatient.order.issue',
+    return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.order.issue',
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientFullClinicalResponseSchema.shape.data,
-      authorize: () => { this.owner.assertRole(context, ['inpatient-doctor']); this.owner.admissionBinding(context, input.admissionId) }
-    }, () => {
-      this.owner.assertNotArchived(context, input.admissionId)
+      authorize: () => { this.owner.assertRole(context, ['inpatient-doctor']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.assertAdmitted(context, input.admissionId)
       if (input.surgeryExecutionId !== undefined) this.owner.surgery.assertExecution(context, admission.id, input.surgeryExecutionId)
       if (input.expectedDrgFingerprint !== undefined)
@@ -179,11 +160,9 @@ export class InpatientOrders {
         if (item === undefined || item.version !== selection.catalogVersion) throw new InpatientError('CATALOG_CONFLICT', '住院药品目录或版本无效')
         const config = medicationConfigSchema.parse(JSON.parse(z.object({ config_json: z.string() }).parse(this.owner.database.driver.prepare(
           'SELECT config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').get(context.workspaceId, context.epoch, item.id)).config_json))
-        const dose = resolveInpatientDose({
-          unit: config.unit, doses: config.inpatientDoses,
+        const dose = resolveInpatientDose({ unit: config.unit, doses: config.inpatientDoses,
           ...(config.inpatientDoseBasis ? { doseBasis: config.inpatientDoseBasis } : {}),
-          ...(config.inpatientMaxDoseQuantity ? { maxDoseQuantity: config.inpatientMaxDoseQuantity } : {})
-        }, selection.doseText)
+          ...(config.inpatientMaxDoseQuantity ? { maxDoseQuantity: config.inpatientMaxDoseQuantity } : {}) }, selection.doseText)
         const strength = /^(\d+(?:\.\d+)?)\s*(mg|g|mL|IU)/.exec(config.product.strength)
         const basis = config.inpatientDoseBasis ?? (strength ? { amount: Number(strength[1]), unit: strength[2]! } : undefined)
         const safetyDose = config.safety?.doseLimits.unit === config.unit ? `${selection.doseQuantity} ${config.unit}`
@@ -196,11 +175,9 @@ export class InpatientOrders {
           : config.inpatientIndications.some(indication => indication.id === entry.coding.id && indication.system === entry.coding.system && indication.version === entry.coding.version && indication.code === entry.coding.code && indication.sourceLocator === entry.coding.sourceLocator)))) throw new InpatientError('CATALOG_CONFLICT', '本次住院确诊不符合药品适应症', 409, 'MEDICATION_DIAGNOSIS_NOT_ALLOWED')
         const allergies = this.owner.fhir.search(context, 'AllergyIntolerance', new URLSearchParams({ patient: `Patient/${admission.patientId}`, _count: '100' })).resources
         const code = z.object({ code: z.string() }).parse(this.owner.database.driver.prepare('SELECT code FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').get(context.workspaceId, context.epoch, item.id)).code
-        if (allergies.some(allergy => {
-          const value = allergySchema.parse(allergy); return value.category?.includes('medication') && value.clinicalStatus?.coding?.some(c => c.code === 'active')
-            && value.verificationStatus?.coding?.some(c => c.code === 'confirmed') && value.code?.coding?.some(c => c.code === code)
-        })) throw new InpatientError('CATALOG_CONFLICT', '药品与已确认的有效药物过敏冲突', 409, 'MEDICATION_ALLERGY_CONFLICT')
-        const active = this.facts(context, admission.id).orders.filter(order => order.kind === 'medication' && !['stopped', 'completed'].includes(order.state))
+        if (allergies.some(allergy => { const value = allergySchema.parse(allergy); return value.category?.includes('medication') && value.clinicalStatus?.coding?.some(c => c.code === 'active')
+          && value.verificationStatus?.coding?.some(c => c.code === 'confirmed') && value.code?.coding?.some(c => c.code === code) })) throw new InpatientError('CATALOG_CONFLICT', '药品与已确认的有效药物过敏冲突', 409, 'MEDICATION_ALLERGY_CONFLICT')
+        const active = this.facts(context, admission.id).orders.filter(order => order.kind === 'medication' && !['stopped','completed'].includes(order.state))
         for (const other of active) {
           const otherConfig = medicationConfigSchema.parse(JSON.parse(z.object({ config_json: z.string() }).parse(this.owner.database.driver.prepare('SELECT config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').get(context.workspaceId, context.epoch, other.catalogItemId)).config_json))
           if (other.catalogItemId === item.id || (config.safety && otherConfig.safety ? medicationCombinationConflict(config.safety.pharmacologyClasses, otherConfig.safety.pharmacologyClasses) : !config.allowedCombinationIds.includes(other.catalogItemId) || !otherConfig.allowedCombinationIds.includes(item.id))) throw new InpatientError('CATALOG_CONFLICT', '现有有效药品医嘱不允许此药品组合', 409, 'MEDICATION_COMBINATION_NOT_ALLOWED')
@@ -228,33 +205,29 @@ export class InpatientOrders {
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'signed',?,?,?)`).run(context.workspaceId, context.epoch, id, admission.id, selection.kind, input.duration, itemId, catalogVersion, display, doseText, quantity, unit, frequency, price, admission.organizationId, now, context.actorId)
       if (input.surgeryExecutionId !== undefined) this.owner.database.driver.prepare('INSERT INTO inpatient_postoperative_order VALUES(?,?,?,?,?)')
         .run(context.workspaceId, context.epoch, admission.id, id, input.surgeryExecutionId)
-      const request = this.owner.fhir.create(context, {
-        resourceType: selection.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', id, status: 'active', intent: 'order',
+      const request = this.owner.fhir.create(context, { resourceType: selection.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', id, status: 'active', intent: 'order',
         ...(selection.kind === 'medication' ? { medication: { reference: { reference: `Medication/${itemId}`, display } }, dosageInstruction: [{ text: `${doseText} ${frequency}；每次${quantity}${unit}` }] }
           : { code: { concept: { text: display } }, quantityQuantity: { value: quantity, unit } }),
         ...(input.surgeryExecutionId === undefined ? {} : selection.kind === 'medication'
           ? { supportingInformation: [{ reference: `Procedure/${input.surgeryExecutionId}` }] }
           : { supportingInfo: [{ reference: { reference: `Procedure/${input.surgeryExecutionId}` } }] }),
-        subject: { reference: `Patient/${admission.patientId}` }, encounter: { reference: `Encounter/${admission.id}` }, authoredOn: now, requester: { reference: `PractitionerRole/${context.practitionerRoleId}` }
-      })
+        subject: { reference: `Patient/${admission.patientId}` }, encounter: { reference: `Encounter/${admission.id}` }, authoredOn: now, requester: { reference: `PractitionerRole/${context.practitionerRoleId}` } })
       return { data: this.read(context, admission.id), effects: [{ kind: 'created' as const, reference: `${request.resourceType}/${id}`, versionId: '1' }] }
     })
   }
   action(context: ActorContext, raw: unknown, idempotencyKey: string, action: 'verify' | 'request-stop' | 'verify-stop') {
     const input = (action === 'request-stop' ? inpatientOrderReasonInputSchema : inpatientOrderActionInputSchema).parse(raw)
-    return this.owner.commands.execute({
-      context, input, idempotencyKey, operation: `inpatient.order.${action}`, expectedVersions: {},
-      dataSchema: inpatientFullClinicalResponseSchema.shape.data, authorize: () => { this.owner.assertRole(context, action === 'request-stop' ? ['inpatient-doctor'] : ['ward-nurse']); this.owner.admissionBinding(context, input.admissionId) }
-    }, () => {
-      this.owner.assertNotArchived(context, input.admissionId)
+    return this.owner.commands.execute({ context, input, idempotencyKey, operation: `inpatient.order.${action}`, expectedVersions: {},
+      dataSchema: inpatientFullClinicalResponseSchema.shape.data, authorize: () => { this.owner.assertRole(context, action === 'request-stop' ? ['inpatient-doctor'] : ['ward-nurse']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       if (action === 'verify') this.assertAdmitted(context, input.admissionId)
       else {
         const admission = this.owner.admissionBinding(context, input.admissionId)
-        if (!['admitted', 'discharge-pending'].includes(admission.status) || admission.financialStatus !== 'open') throw new InpatientError('INPATIENT_STATE_CONFLICT', '当前状态不能办理停嘱')
+        if (!['admitted','discharge-pending'].includes(admission.status) || admission.financialStatus !== 'open') throw new InpatientError('INPATIENT_STATE_CONFLICT', '当前状态不能办理停嘱')
       }
       const row = this.order(context, input.admissionId, input.orderId)
       const stateAllowsAction = action === 'verify' ? row.state === 'signed'
-        : action === 'request-stop' ? ['signed', 'verified'].includes(row.state) : row.state === 'stop-requested'
+        : action === 'request-stop' ? ['signed','verified'].includes(row.state) : row.state === 'stop-requested'
       if (row.version !== input.expectedOrderVersion || !stateAllowsAction) {
         throw new InpatientError('INPATIENT_ORDER_CONFLICT', '医嘱状态或版本已变化')
       }
@@ -264,11 +237,9 @@ export class InpatientOrders {
         .run(state, action, now, action, now, context.workspaceId, context.epoch, row.order_id, row.version)
       if (action !== 'request-stop') this.owner.database.driver.prepare('INSERT INTO inpatient_order_verification VALUES(?,?,?,?,?,?,?,?)').run(context.workspaceId, context.epoch, row.order_id, action, row.version, context.actorId, context.practitionerRoleId, now)
       const request = this.owner.fhir.read(context, row.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', row.order_id)
-      const updated = this.owner.fhir.update(context, {
-        ...request, status: action === 'verify-stop' ? (row.kind === 'medication' ? 'stopped' : 'revoked') : 'active',
+      const updated = this.owner.fhir.update(context, { ...request, status: action === 'verify-stop' ? (row.kind === 'medication' ? 'stopped' : 'revoked') : 'active',
         extension: [{ url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/inpatient-order-state', valueCode: state }],
-        ...('reason' in input ? { note: [...(Array.isArray(request.note) ? request.note : []), { id: 'clinmesh-stop-reason', text: input.reason }] } : {})
-      }, request.meta!.versionId!)
+        ...('reason' in input ? { note: [...(Array.isArray(request.note) ? request.note : []), { id: 'clinmesh-stop-reason', text: input.reason }] } : {}) }, request.meta!.versionId!)
       const effects: Effects = [{ kind: 'updated', reference: `${request.resourceType}/${row.order_id}`, versionId: updated.meta!.versionId! }]
       if (action === 'verify') {
         const fresh = this.order(context, input.admissionId, row.order_id)
@@ -283,15 +254,13 @@ export class InpatientOrders {
     })
   }
   createExecution(context: ActorContext, order: OrderRow, time: string, reason: string | undefined, effects: Effects) {
-    this.owner.assertNotArchived(context, order.admission_id)
+    this.owner.assertNotArchived(context,order.admission_id)
     if (this.owner.database.driver.prepare('SELECT 1 FROM inpatient_execution WHERE workspace_id=? AND epoch=? AND order_id=? AND scheduled_for=?').get(context.workspaceId, context.epoch, order.order_id, time)) return
     const id = uuidv7()
     this.owner.database.driver.prepare("INSERT INTO inpatient_execution(workspace_id,epoch,execution_id,order_id,scheduled_for,status,reason) VALUES(?,?,?,?,?,'pending',?)").run(context.workspaceId, context.epoch, id, order.order_id, time, reason ?? null)
-    this.owner.fhir.create(context, {
-      resourceType: 'Task', id, status: 'ready', intent: 'order',
+    this.owner.fhir.create(context, { resourceType: 'Task', id, status: 'ready', intent: 'order',
       focus: { reference: `${order.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest'}/${order.order_id}` }, for: z.object({ reference: z.string() }).parse(this.owner.fhir.read(context, 'Encounter', order.admission_id).subject),
-      restriction: { period: { start: time } }, ...(reason === undefined ? {} : { description: reason })
-    })
+      restriction: { period: { start: time } }, ...(reason === undefined ? {} : { description: reason }) })
     effects.push({ kind: 'created', reference: `Task/${id}`, versionId: '1' })
   }
   updateExecution(context: ActorContext, row: ExecutionRow, status: 'dispensed' | 'completed' | 'cancelled', effects: Effects, administrationId?: string) {
@@ -319,14 +288,12 @@ export class InpatientOrders {
   }
   dispense(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientDispenseInputSchema.parse(raw)
-    return this.owner.commands.execute({
-      context, input, idempotencyKey, operation: 'inpatient.execution.dispense', expectedVersions: {}, dataSchema: inpatientPharmacyResponseSchema.shape.data,
-      authorize: () => { this.owner.assertRole(context, ['pharmacist']); this.owner.admissionBinding(context, input.admissionId) }
-    }, transaction => {
-      this.owner.assertNotArchived(context, input.admissionId)
+    return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.execution.dispense', expectedVersions: {}, dataSchema: inpatientPharmacyResponseSchema.shape.data,
+      authorize: () => { this.owner.assertRole(context, ['pharmacist']); this.owner.admissionBinding(context,input.admissionId) } }, transaction => {
+      this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.assertAdmitted(context, input.admissionId), execution = this.execution(context, admission.id, input.executionId), order = this.order(context, admission.id, execution.order_id)
       if (order.kind !== 'medication' || order.state !== 'verified' || execution.status !== 'pending' || execution.version !== input.expectedExecutionVersion) throw new InpatientError('INPATIENT_EXECUTION_CONFLICT', '医嘱未校对、已停嘱或执行单版本已变化')
-      if (!context.locationId || new Set(input.lotSelections.map(lot => lot.lotId)).size !== input.lotSelections.length || input.lotSelections.reduce((sum, lot) => sum + lot.quantity, 0) !== order.dose_quantity) throw new InpatientError('INPATIENT_DISPENSE_CONFLICT', '发药批次不能重复，合计必须等于本次所需片数')
+      if (!context.locationId || new Set(input.lotSelections.map(lot => lot.lotId)).size !== input.lotSelections.length || input.lotSelections.reduce((sum,lot) => sum + lot.quantity, 0) !== order.dose_quantity) throw new InpatientError('INPATIENT_DISPENSE_CONFLICT', '发药批次不能重复，合计必须等于本次所需片数')
       const now = this.owner.virtualTime(context), effects: Effects = []
       for (const selection of input.lotSelections) {
         const lot = z.object({ medication_id: z.string(), location_id: z.string(), expires_on: z.string(), quantity_on_hand: z.number(), version: z.number() }).optional().parse(this.owner.database.driver.prepare('SELECT * FROM inventory_lot WHERE workspace_id=? AND epoch=? AND lot_id=?').get(context.workspaceId, context.epoch, selection.lotId))
@@ -337,11 +304,9 @@ export class InpatientOrders {
         const inventory = transaction.fhir.read(context, 'InventoryItem', selection.lotId)
         transaction.fhir.updateProjection(context, { ...inventory, netContent: { ...z.object({}).passthrough().parse(inventory.netContent), value: lot.quantity_on_hand - selection.quantity } }, String(selection.expectedVersion))
         const id = uuidv7()
-        transaction.fhir.create(context, {
-          resourceType: 'MedicationDispense', id, status: 'completed', medication: { reference: { reference: `Medication/${order.catalog_item_id}` } },
+        transaction.fhir.create(context, { resourceType: 'MedicationDispense', id, status: 'completed', medication: { reference: { reference: `Medication/${order.catalog_item_id}` } },
           subject: { reference: `Patient/${admission.patientId}` }, encounter: { reference: `Encounter/${admission.id}` }, authorizingPrescription: [{ reference: `MedicationRequest/${order.order_id}` }],
-          performer: [{ actor: { reference: `PractitionerRole/${context.practitionerRoleId}` } }], location: { reference: `Location/${context.locationId}` }, quantity: { value: selection.quantity, unit: order.unit }, whenPrepared: now, whenHandedOver: now
-        })
+          performer: [{ actor: { reference: `PractitionerRole/${context.practitionerRoleId}` } }], location: { reference: `Location/${context.locationId}` }, quantity: { value: selection.quantity, unit: order.unit }, whenPrepared: now, whenHandedOver: now })
         this.owner.database.driver.prepare('INSERT INTO inpatient_dispense VALUES(?,?,?,?,?,?,?,?)').run(context.workspaceId, context.epoch, id, execution.execution_id, selection.lotId, selection.quantity, now, context.actorId)
         const movementId = uuidv7()
         this.owner.database.driver.prepare('INSERT INTO inventory_movement(workspace_id,epoch,movement_id,inpatient_dispense_id,lot_id,quantity,occurred_at) VALUES(?,?,?,?,?,?,?)')
@@ -355,22 +320,18 @@ export class InpatientOrders {
   }
   administer(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientExecutionActionInputSchema.parse(raw)
-    return this.owner.commands.execute({
-      context, input, idempotencyKey, operation: 'inpatient.execution.administer', expectedVersions: {}, dataSchema: inpatientFullClinicalResponseSchema.shape.data,
-      authorize: () => { this.owner.assertRole(context, ['ward-nurse']); this.owner.admissionBinding(context, input.admissionId) }
-    }, () => {
-      this.owner.assertNotArchived(context, input.admissionId)
+    return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.execution.administer', expectedVersions: {}, dataSchema: inpatientFullClinicalResponseSchema.shape.data,
+      authorize: () => { this.owner.assertRole(context, ['ward-nurse']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.assertAdmitted(context, input.admissionId), execution = this.execution(context, admission.id, input.executionId), order = this.order(context, admission.id, execution.order_id), now = this.owner.virtualTime(context)
       if (order.kind !== 'medication' || order.state !== 'verified' || execution.status !== 'dispensed' || execution.version !== input.expectedExecutionVersion || Date.parse(execution.scheduled_for) > Date.parse(now)) throw new InpatientError('INPATIENT_EXECUTION_CONFLICT', '给药须引用已校对、已发药且到期的有效执行单')
       const supplies = this.facts(context, admission.id).dispenses.filter(item => item.executionId === execution.execution_id)
-      if (supplies.reduce((sum, item) => sum + item.quantity, 0) !== order.dose_quantity) throw new InpatientError('INPATIENT_DISPENSE_CONFLICT', '实际发药量不足本次给药')
+      if (supplies.reduce((sum,item) => sum + item.quantity, 0) !== order.dose_quantity) throw new InpatientError('INPATIENT_DISPENSE_CONFLICT', '实际发药量不足本次给药')
       const id = uuidv7(), effects: Effects = []
-      this.owner.fhir.create(context, {
-        resourceType: 'MedicationAdministration', id, status: 'completed', medication: { reference: { reference: `Medication/${order.catalog_item_id}` } },
+      this.owner.fhir.create(context, { resourceType: 'MedicationAdministration', id, status: 'completed', medication: { reference: { reference: `Medication/${order.catalog_item_id}` } },
         subject: { reference: `Patient/${admission.patientId}` }, encounter: { reference: `Encounter/${admission.id}` }, request: { reference: `MedicationRequest/${order.order_id}` },
         partOf: supplies.map(supply => ({ reference: `MedicationDispense/${supply.id}` })), occurenceDateTime: now, recorded: now,
-        performer: [{ actor: { reference: { reference: `PractitionerRole/${context.practitionerRoleId}` } } }], dosage: { text: order.dose_text, dose: { value: order.dose_quantity, unit: order.unit } }
-      })
+        performer: [{ actor: { reference: { reference: `PractitionerRole/${context.practitionerRoleId}` } } }], dosage: { text: order.dose_text, dose: { value: order.dose_quantity, unit: order.unit } } })
       effects.push({ kind: 'created', reference: `MedicationAdministration/${id}`, versionId: '1' })
       this.updateExecution(context, execution, 'completed', effects, id)
       this.completeTemporaryOrder(context, order, effects)
@@ -379,11 +340,9 @@ export class InpatientOrders {
   }
   completeService(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientExecutionActionInputSchema.parse(raw)
-    return this.owner.commands.execute({
-      context, input, idempotencyKey, operation: 'inpatient.execution.complete', expectedVersions: {}, dataSchema: inpatientFullClinicalResponseSchema.shape.data,
-      authorize: () => { this.owner.assertRole(context, ['ward-nurse']); this.owner.admissionBinding(context, input.admissionId) }
-    }, () => {
-      this.owner.assertNotArchived(context, input.admissionId)
+    return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.execution.complete', expectedVersions: {}, dataSchema: inpatientFullClinicalResponseSchema.shape.data,
+      authorize: () => { this.owner.assertRole(context, ['ward-nurse']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.assertAdmitted(context, input.admissionId), execution = this.execution(context, admission.id, input.executionId), order = this.order(context, admission.id, execution.order_id), now = this.owner.virtualTime(context)
       if (order.kind !== 'service' || order.state !== 'verified' || execution.status !== 'pending' || execution.version !== input.expectedExecutionVersion || Date.parse(execution.scheduled_for) > Date.parse(now)) throw new InpatientError('INPATIENT_EXECUTION_CONFLICT', '服务须引用已校对且到期的有效执行单')
       const effects: Effects = []
@@ -395,11 +354,9 @@ export class InpatientOrders {
   }
   reverseCharge(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientChargeReverseInputSchema.parse(raw)
-    return this.owner.commands.execute({
-      context, input, idempotencyKey, operation: 'inpatient.charge.reverse', expectedVersions: {}, dataSchema: inpatientChargesResponseSchema.shape.data,
-      authorize: () => { this.owner.assertRole(context, ['cashier']); this.owner.admissionBinding(context, input.admissionId) }
-    }, () => {
-      this.owner.assertNotArchived(context, input.admissionId)
+    return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.charge.reverse', expectedVersions: {}, dataSchema: inpatientChargesResponseSchema.shape.data,
+      authorize: () => { this.owner.assertRole(context, ['cashier']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       const effects: Effects = [], now = this.owner.virtualTime(context)
       this.owner.billing.reverse(context, { ...input, serviceDate: businessDate(now), virtualTime: now }, effects)
       return { data: this.charges(context, input.admissionId), effects }
@@ -407,16 +364,14 @@ export class InpatientOrders {
   }
   requestPrn(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientOrderReasonInputSchema.parse(raw)
-    return this.owner.commands.execute({
-      context, input, idempotencyKey, operation: 'inpatient.execution.request-prn', expectedVersions: {}, dataSchema: inpatientFullClinicalResponseSchema.shape.data,
-      authorize: () => { this.owner.assertRole(context, ['ward-nurse']); this.owner.admissionBinding(context, input.admissionId) }
-    }, () => {
-      this.owner.assertNotArchived(context, input.admissionId)
+    return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.execution.request-prn', expectedVersions: {}, dataSchema: inpatientFullClinicalResponseSchema.shape.data,
+      authorize: () => { this.owner.assertRole(context, ['ward-nurse']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       this.assertAdmitted(context, input.admissionId)
       const order = this.order(context, input.admissionId, input.orderId), now = this.owner.virtualTime(context)
       if (order.state !== 'verified' || order.frequency_code !== 'PRN' || order.version !== input.expectedOrderVersion) throw new InpatientError('INPATIENT_ORDER_CONFLICT', 'PRN任务须引用已校对的有效医嘱')
       if (order.duration === 'temporary' && this.owner.database.driver.prepare('SELECT 1 FROM inpatient_execution WHERE workspace_id=? AND epoch=? AND order_id=?').get(context.workspaceId, context.epoch, order.order_id)) throw new InpatientError('INPATIENT_ORDER_CONFLICT', '临时PRN医嘱只能形成一次执行任务')
-      if (this.owner.database.driver.prepare('SELECT 1 FROM inpatient_execution WHERE workspace_id=? AND epoch=? AND order_id=? AND julianday(scheduled_for)=julianday(?)').get(context.workspaceId, context.epoch, order.order_id, now)) throw new InpatientError('INPATIENT_ORDER_CONFLICT', '该虚拟时点已有PRN执行任务')
+      if(this.owner.database.driver.prepare('SELECT 1 FROM inpatient_execution WHERE workspace_id=? AND epoch=? AND order_id=? AND julianday(scheduled_for)=julianday(?)').get(context.workspaceId,context.epoch,order.order_id,now)) throw new InpatientError('INPATIENT_ORDER_CONFLICT','该虚拟时点已有PRN执行任务')
       if (order.kind === 'medication') {
         const config = medicationConfigSchema.parse(JSON.parse(z.object({ config_json: z.string() }).parse(this.owner.database.driver.prepare(
           'SELECT config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').get(context.workspaceId, context.epoch, order.catalog_item_id)).config_json))
@@ -447,26 +402,24 @@ export class InpatientOrders {
     const revision = z.object({ revision: z.number() }).parse(this.owner.database.driver.prepare(
       'SELECT COALESCE(MAX(revision),0) revision FROM inpatient_diagnosis_confirmation WHERE workspace_id=? AND epoch=? AND admission_id=?')
       .get(context.workspaceId, context.epoch, admissionId)).revision
-    const rows = z.array(z.object({ condition_id: z.string(), role: z.enum(['primary', 'secondary']), coding_json: z.string(), note: z.string().nullable(), admission_condition: z.enum(['1', '2', '3', '4']), ordinal: z.number().int().positive() })).parse(this.owner.database.driver.prepare(
+    const rows = z.array(z.object({ condition_id: z.string(), role: z.enum(['primary', 'secondary']), coding_json: z.string(), note: z.string().nullable(), admission_condition: z.enum(['1','2','3','4']), ordinal: z.number().int().positive() })).parse(this.owner.database.driver.prepare(
       'SELECT * FROM inpatient_diagnosis_entry WHERE workspace_id=? AND epoch=? AND admission_id=? AND revision=? ORDER BY ordinal')
       .all(context.workspaceId, context.epoch, admissionId, revision))
     return inpatientDiagnosisSchema.parse({ revision, entries: rows.map(row => ({ conditionId: row.condition_id, role: row.role, admissionCondition: row.admission_condition, ordinal: row.ordinal, coding: JSON.parse(row.coding_json), ...(row.note === null ? {} : { note: row.note }) })) })
   }
   read(context: ActorContext, admissionId: string) {
-    this.owner.assertRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
+    this.owner.assertRole(context, ['inpatient-doctor','ward-nurse','medical-records'])
     const admission = this.owner.detail(context, admissionId).admission
     return inpatientFullClinicalSchema.parse({ admissionId, encounterVersion: admission.versionId, diagnosis: this.diagnosis(context, admissionId), ...this.facts(context, admissionId) })
   }
   confirmDiagnosis(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientDiagnosisConfirmInputSchema.parse(raw)
-    return this.owner.commands.execute({
-      context, input, idempotencyKey, operation: 'inpatient.diagnosis.confirm',
+    return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.diagnosis.confirm',
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientFullClinicalResponseSchema.shape.data,
-      authorize: () => { this.owner.assertRole(context, ['inpatient-doctor']); this.owner.admissionBinding(context, input.admissionId) }
-    }, () => {
-      this.owner.assertNotArchived(context, input.admissionId)
+      authorize: () => { this.owner.assertRole(context, ['inpatient-doctor']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.owner.detail(context, input.admissionId).admission
-      if (!['admitted', 'discharge-pending', 'departed', 'cleared'].includes(admission.status)) throw new InpatientError('INPATIENT_STATE_CONFLICT', '尚未入科，不能确认诊断')
+      if (!['admitted','discharge-pending','departed','cleared'].includes(admission.status)) throw new InpatientError('INPATIENT_STATE_CONFLICT', '尚未入科，不能确认诊断')
       const previous = this.diagnosis(context, input.admissionId)
       if (previous.revision !== input.expectedRevision) throw new InpatientError('INPATIENT_DIAGNOSIS_CONFLICT', '诊断确认版本已变化')
       const catalog = this.catalog(context).diagnoses
@@ -485,18 +438,16 @@ export class InpatientOrders {
         effects.push({ kind: 'updated', reference: `Condition/${updated.id}`, versionId: updated.meta!.versionId! })
       }
       this.owner.database.driver.prepare('INSERT INTO inpatient_diagnosis_confirmation VALUES(?,?,?,?,?,?)').run(context.workspaceId, context.epoch, input.admissionId, previous.revision + 1, context.actorId, now)
-      const entries = selected.map((entry, index) => {
-        const condition = this.owner.fhir.create(context, {
-          resourceType: 'Condition', id: uuidv7(),
+      const entries = selected.map((entry,index) => {
+        const condition = this.owner.fhir.create(context, { resourceType: 'Condition', id: uuidv7(),
           category: [{ coding: [{ system: 'http://terminology.hl7.org/CodeSystem/condition-category', code: 'encounter-diagnosis' }] }],
           clinicalStatus: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/condition-clinical', code: 'active' }] },
           verificationStatus: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status', code: 'confirmed' }] },
           code: { coding: [{ system: entry.coding.system, version: entry.coding.version, code: entry.coding.code, display: entry.coding.display }], text: entry.coding.display },
           subject: { reference: `Patient/${admission.patientId}` }, encounter: { reference: `Encounter/${admission.id}` }, recordedDate: now,
           extension: [{ url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/inpatient-admission-condition', valueCode: entry.admissionCondition }],
-          participant: [{ actor: { reference: `PractitionerRole/${context.practitionerRoleId}` } }], ...(entry.note === undefined ? {} : { note: [{ text: entry.note }] })
-        })
-        this.owner.database.driver.prepare('INSERT INTO inpatient_diagnosis_entry VALUES(?,?,?,?,?,?,?,?,?,?)').run(context.workspaceId, context.epoch, admission.id, previous.revision + 1, condition.id, entry.role, JSON.stringify(entry.coding), entry.note ?? null, entry.admissionCondition, index + 1)
+          participant: [{ actor: { reference: `PractitionerRole/${context.practitionerRoleId}` } }], ...(entry.note === undefined ? {} : { note: [{ text: entry.note }] }) })
+        this.owner.database.driver.prepare('INSERT INTO inpatient_diagnosis_entry VALUES(?,?,?,?,?,?,?,?,?,?)').run(context.workspaceId, context.epoch, admission.id, previous.revision + 1, condition.id, entry.role, JSON.stringify(entry.coding), entry.note ?? null, entry.admissionCondition, index+1)
         effects.push({ kind: 'created', reference: `Condition/${condition.id}`, versionId: '1' })
         return { condition: [{ reference: { reference: `Condition/${condition.id}` } }], use: [{ coding: [{ system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/encounter-diagnosis-role', code: entry.role }] }] }
       })
@@ -509,17 +460,13 @@ export class InpatientOrders {
 }
 
 const serviceConfigSchema = z.object({ billingUnit: z.object({ display: z.string() }), chargeDefinition: z.object({ priceFen: z.number().int().nonnegative() }), inpatientBillingTrigger: z.literal('execution') })
-const allergySchema = z.object({
-  category: z.array(z.string()).optional(), clinicalStatus: z.object({ coding: z.array(z.object({ code: z.string() })).optional() }).optional(),
-  verificationStatus: z.object({ coding: z.array(z.object({ code: z.string() })).optional() }).optional(), code: z.object({ coding: z.array(z.object({ code: z.string() })).optional() }).optional()
-})
-const orderRowSchema = z.object({
-  order_id: z.string(), admission_id: z.string(), kind: z.enum(['medication', 'service']), duration: z.enum(['long', 'temporary']), catalog_item_id: z.string(), catalog_version: z.number(),
-  display: z.string(), dose_text: z.string(), dose_quantity: z.number(), unit: z.string(), frequency_code: z.enum(['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE']), price_fen: z.number(), state: inpatientOrderSchema.shape.state,
-  version: z.number(), organization_id: z.string(), signed_at: z.string(), signed_by: z.string(), verified_at: z.string().nullable(), stopped_at: z.string().nullable()
-})
+const allergySchema = z.object({ category: z.array(z.string()).optional(), clinicalStatus: z.object({ coding: z.array(z.object({ code: z.string() })).optional() }).optional(),
+  verificationStatus: z.object({ coding: z.array(z.object({ code: z.string() })).optional() }).optional(), code: z.object({ coding: z.array(z.object({ code: z.string() })).optional() }).optional() })
+const orderRowSchema = z.object({ order_id: z.string(), admission_id: z.string(), kind: z.enum(['medication','service']), duration: z.enum(['long','temporary']), catalog_item_id: z.string(), catalog_version: z.number(),
+ display: z.string(), dose_text: z.string(), dose_quantity: z.number(), unit: z.string(), frequency_code: z.enum(['QD','BID','TID','QN','PRN','ONCE']), price_fen: z.number(), state: inpatientOrderSchema.shape.state,
+ version: z.number(), organization_id: z.string(), signed_at: z.string(), signed_by: z.string(), verified_at: z.string().nullable(), stopped_at: z.string().nullable() })
 const executionRowSchema = z.object({ execution_id: z.string(), order_id: z.string(), scheduled_for: z.string(), status: inpatientExecutionSchema.shape.status, version: z.number(), administration_id: z.string().nullable(), reason: z.string().nullable() })
 type OrderRow = z.infer<typeof orderRowSchema>
 type ExecutionRow = z.infer<typeof executionRowSchema>
 type Effects = Array<{ kind: 'created' | 'updated'; reference: string; versionId: string }>
-export function businessDate(time: string) { return new Date(Date.parse(time) + 28800000).toISOString().slice(0, 10) }
+export function businessDate(time: string) { return new Date(Date.parse(time) + 28800000).toISOString().slice(0,10) }

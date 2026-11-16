@@ -126,11 +126,9 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
 
   const catalog = await s.read('inpatient-doctor', '/api/his/v1/inpatient/surgery-catalog', inpatientSurgeryCatalogSchema)
   const procedure = catalog.procedures.find(item => item.coding.code === '36.0700')!
-  const stay = {
-    admissionId: admission.id, patientId: admission.patientId, path,
+  const stay = { admissionId: admission.id, patientId: admission.patientId, path,
     encounterVersion: (await s.read('inpatient-doctor', path, inpatientDetailSchema)).admission.versionId,
-    sourceCaseId: source.case.caseId, sourceCaseRevision: source.case.revision, catalog, procedure
-  }
+    sourceCaseId: source.case.caseId, sourceCaseRevision: source.case.revision, catalog, procedure }
   await executePciMedicationThroughPages(page, app, open, stay, ['aspirin', 'clopidogrel', 'atorvastatin'])
   const angiography = catalog.procedures.find(item => item.coding.code === '88.5500')!
   await open('inpatient-doctor', admission.patientName)
@@ -235,7 +233,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
       await page.getByRole('option', { name: /36.0700 ·/ }).click()
     }
     await page.getByRole('button', { name: '开立所选医嘱（1）', exact: true }).click()
-    await expect(page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByText(`${medication.display} · 待护士校对`, { exact: true })).toBeVisible()
+    await expect(page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByText(`${medication.display} · 待护士校对`, { exact: true }).last()).toBeVisible()
     await page.getByRole('dialog', { name: '开立医嘱', exact: true }).getByRole('button', { name: '关闭', exact: true }).click()
     await expect(page.locator('article').filter({ hasText: medication.display }).filter({ hasText: '待校对' })).toBeVisible()
   }
