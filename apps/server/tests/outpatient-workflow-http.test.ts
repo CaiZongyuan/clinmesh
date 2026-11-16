@@ -10841,6 +10841,32 @@ describe('outpatient workflow HTTP contract', () => {
     )
     expect(invalidDoseResponse.status).toBe(409)
 
+    const invalidIndicationResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/drafts/revisit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${testCase.registration.encounterId}`]: '6' },
+          input: {
+            diagnosis: { code: 'J06.9', display: '急性上呼吸道感染' },
+            document: { assessment: '上感复诊。', plan: '对症观察。' },
+            expectedVersions: { documentDraft: 0, prescription: 0, revisitDraft: 0 },
+            medications: [{
+              catalogItemId: 'medication-pci-aspirin',
+              doseText: '100 mg',
+              frequencyCode: 'QD',
+              quantity: 1,
+            }],
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(invalidIndicationResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await invalidIndicationResponse.json())).toMatchObject({
+      error: { code: 'CATALOG_CONFLICT', reason: 'PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED' },
+    })
+
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${testCase.registration.encounterId}/drafts/revisit`,
       {

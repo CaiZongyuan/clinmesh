@@ -482,8 +482,8 @@ export class WorkflowService
         assertMedicationAllergies: (context, patientId, medications) => (
           this.#prescriptions.assertMedicationAllergies(context, patientId, medications)
         ),
-        assertMedicationCatalogRules: medications => (
-          this.#prescriptions.assertMedicationCatalogRules(medications)
+        assertMedicationCatalogRules: (medications, diagnosisCodes) => (
+          this.#prescriptions.assertMedicationCatalogRules(medications, undefined, diagnosisCodes)
         ),
         openRequestStatuses: (context, caseId) => this.#requests.openRequestStatuses(context, caseId),
         pendingInvestigationDraftTarget: (context, caseId) => {

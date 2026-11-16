@@ -208,7 +208,7 @@ export interface OutpatientClinicalDocumentHost {
     patientId: string,
     medications: Array<{ code: string; name_en?: string; name_zh?: string }>,
   ): void
-  assertMedicationCatalogRules(medications: MedicationRuleSelection[]): void
+  assertMedicationCatalogRules(medications: MedicationRuleSelection[], diagnosisCodes?: readonly string[]): void
   openRequestStatuses(context: ActorContext, caseId: string): ClinicalRequestStatus[]
   pendingInvestigationDraftTarget(
     context: ActorContext,
@@ -624,7 +624,7 @@ export class OutpatientClinicalDocumentService {
         configJson: medication.catalog.config_json,
         doseText: medication.doseText,
         frequencyCode: medication.frequencyCode,
-      })))
+      })), [input.draft.diagnosis.code])
       this.#host.assertMedicationAllergies(
         input.context,
         outpatientCase.patient_id,
@@ -1019,19 +1019,19 @@ export class OutpatientClinicalDocumentService {
         quantity: number
       }>
       if (medications.length === 0) throw new WorkflowError('CATALOG_CONFLICT', 'The prescription has no active medication')
-      this.#host.assertMedicationCatalogRules(medications.map(medication => ({
-        catalogItemId: medication.medication_id,
-        configJson: medication.config_json,
-        doseText: medication.dose_text,
-        frequencyCode: medication.frequency_code,
-      })))
-      this.#host.assertMedicationAllergies(input.context, outpatientCase.patient_id, medications)
       const revisit = revisitDraftContentSchema.parse(draftMap.get('revisit')?.content_json === undefined
         ? undefined
         : JSON.parse(draftMap.get('revisit')?.content_json ?? ''))
       const document = documentDraftContentSchema.parse(draftMap.get('document')?.content_json === undefined
         ? undefined
         : JSON.parse(draftMap.get('document')?.content_json ?? ''))
+      this.#host.assertMedicationCatalogRules(medications.map(medication => ({
+        catalogItemId: medication.medication_id,
+        configJson: medication.config_json,
+        doseText: medication.dose_text,
+        frequencyCode: medication.frequency_code,
+      })), [revisit.diagnosis.code])
+      this.#host.assertMedicationAllergies(input.context, outpatientCase.patient_id, medications)
       const medicationTotalFen = medications.reduce(
         (total, medication) => total + medication.price_fen * medication.quantity,
         0,
@@ -1236,7 +1236,7 @@ export class OutpatientClinicalDocumentService {
         configJson: medication.config_json,
         doseText: medication.dose_text,
         frequencyCode: medication.frequency_code,
-      })))
+      })), [revisitDraft.diagnosis.code])
       const medicationTotalFen = medicationRows.reduce(
         (total, medication) => total + medication.price_fen * medication.quantity,
         0,

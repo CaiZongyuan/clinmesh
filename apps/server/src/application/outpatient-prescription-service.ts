@@ -192,10 +192,10 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       ...(prescriptionDraftState.draft_json === null
         ? {}
         : {
-            draft: prescriptionDraftContentSchema.parse(
-              JSON.parse(prescriptionDraftState.draft_json),
-            ),
-          }),
+          draft: prescriptionDraftContentSchema.parse(
+            JSON.parse(prescriptionDraftState.draft_json),
+          ),
+        }),
       draftVersion: prescriptionDraftState.version,
       ...(noMedication === undefined ? {} : { noMedication }),
       ...(issuedPrescription === undefined ? {} : { prescription: issuedPrescription }),
@@ -207,14 +207,14 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
     const completedPrescription = prescription === undefined
       ? undefined
       : {
-          ...prescription,
-          withdrawalSupported: this.prescriptionConclusionSupportedInContext(context)
-            && (
-              prescription.status === 'signed' || prescription.status === 'paid'
-            )
-            && !this.prescriptionHasDispensedQuantity(context, prescription.id)
-            && !this.#prescriptionHasUnsettledFunds(context, prescription.id),
-        }
+        ...prescription,
+        withdrawalSupported: this.prescriptionConclusionSupportedInContext(context)
+          && (
+            prescription.status === 'signed' || prescription.status === 'paid'
+          )
+          && !this.prescriptionHasDispensedQuantity(context, prescription.id)
+          && !this.#prescriptionHasUnsettledFunds(context, prescription.id),
+      }
     const noMedication = this.noMedicationConclusion(context, caseId)
     if (completedPrescription === undefined && noMedication === undefined) return undefined
     return {
@@ -759,10 +759,10 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         quantity: { value: medications.reduce((total, medication) => total + medication.quantity, 0) },
         ...(new Set(medications.map(medication => medication.catalog.price_fen)).size === 1
           ? {
-              unitPriceComponent: {
-                amount: { currency: 'CNY', value: (medications[0]?.catalog.price_fen ?? 0) / 100 },
-              },
-            }
+            unitPriceComponent: {
+              amount: { currency: 'CNY', value: (medications[0]?.catalog.price_fen ?? 0) / 100 },
+            },
+          }
           : {}),
         totalPriceComponent: { amount: { currency: 'CNY', value: medicationTotalFen / 100 } },
       })
@@ -1425,13 +1425,13 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
           ...(row.review_id === null
             ? {}
             : {
-                review: {
-                  note: row.review_note ?? '',
-                  reviewId: row.review_id,
-                  reviewedAt: row.reviewed_at ?? '',
-                  reviewedBy: row.reviewed_by ?? '',
-                },
-              }),
+              review: {
+                note: row.review_note ?? '',
+                reviewId: row.review_id,
+                reviewedAt: row.reviewed_at ?? '',
+                reviewedBy: row.reviewed_by ?? '',
+              },
+            }),
           status: row.case_status === 'completed'
             ? 'completed'
             : medications.some(medication => medication.dispensedQuantity > 0)
@@ -1968,6 +1968,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
   assertMedicationCatalogRules(
     medications: MedicationRuleSelection[],
     dosageReason?: PrescriptionConflictReason,
+    diagnosisCodes?: readonly string[],
   ): void {
     if (new Set(medications.map(medication => medication.catalogItemId)).size !== medications.length) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'A medication can appear only once in a prescription')
@@ -1984,6 +1985,18 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
           `The dose or frequency is not allowed for ${medication.catalogItemId}`,
           undefined,
           dosageReason,
+        )
+      }
+      if (
+        diagnosisCodes !== undefined
+        && config.safety
+        && !medicationIndicationMatches(config.safety.indicationPrefixes, diagnosisCodes)
+      ) {
+        throw new WorkflowError(
+          'CATALOG_CONFLICT',
+          `The diagnosis does not allow ${medication.catalogItemId}`,
+          undefined,
+          'PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED',
         )
       }
       const otherMedicationIds = medications

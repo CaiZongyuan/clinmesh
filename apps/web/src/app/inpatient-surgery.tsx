@@ -319,7 +319,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
           <OrderComposerFooter><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>
         </DialogContent>
       </Dialog>
-      {doctor && running.length === 0 && pendingPlans.length === 0 ? <InpatientDrgReviewPanel key={requestOwnerKey} requestId={selectedCompletedExecution.requestId} admission={admission} session={session} locale={locale} write={write} active={active} compact showPrimaryAction onOpenRecord={target => onOpenStage?.(target)} /> : null}</>
+        {doctor && running.length === 0 && pendingPlans.length === 0 ? <InpatientDrgReviewPanel key={requestOwnerKey} requestId={selectedCompletedExecution.requestId} admission={admission} session={session} locale={locale} write={write} active={active} compact showPrimaryAction onOpenRecord={target => onOpenStage?.(target)} /> : null}</>
     })() : null}
   </section>
 }
@@ -544,8 +544,10 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const client = useQueryClient(), mounted = useRef(true)
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
-  const estimateList = useQuery({ queryKey: estimateQueryKey, enabled: false, retry: false,
-    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/material-estimates`, inpatientMaterialEstimatesSchema, signal) })
+  const estimateList = useQuery({
+    queryKey: estimateQueryKey, enabled: false, retry: false,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/material-estimates`, inpatientMaterialEstimatesSchema, signal)
+  })
 
   const [items, setItems] = useState<Array<{ materialId: string; catalogVersion: number; quantity: string; reason: string }> | null>(null)
   const [note, setNote] = useState<string | null>(null)
@@ -608,10 +610,12 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
     if (!estimate || blocked || write.mutation.isPending) return
     const from = restore ? suggestion.to : suggestion.from, to = restore ? suggestion.from : suggestion.to
     const rows = currentItems.map(item => item.materialId === from.id ? { ...item, materialId: to.id, catalogVersion: to.version } : item)
-    const parsed = inpatientMaterialEstimateSaveInputSchema.safeParse({ admissionId: admission.id, requestId: plan.id,
+    const parsed = inpatientMaterialEstimateSaveInputSchema.safeParse({
+      admissionId: admission.id, requestId: plan.id,
       expectedVersion: estimate.version, expectedDraftRevision: estimate.draft?.revision ?? 0,
       expectedBasisFingerprint: estimate.basisFingerprint, analysisId: null,
-      items: rows.filter(item => Number(item.quantity) > 0).map(item => ({ ...item, quantity: Number(item.quantity) })), note: currentNote })
+      items: rows.filter(item => Number(item.quantity) > 0).map(item => ({ ...item, quantity: Number(item.quantity) })), note: currentNote
+    })
     if (!parsed.success) return
     const submittedNote = note
     setItems(rows)
@@ -621,11 +625,13 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
       if (!mounted.current) return
       client.setQueryData<z.infer<typeof inpatientMaterialEstimatesSchema>>(estimateQueryKey, current => {
         if (!current || current.admissionId !== saved.admissionId) return current
-        return { ...current, estimates: current.estimates.map(item => {
-          if (item.id !== saved.id || item.requestId !== saved.requestId || item.version > saved.version || item.requestVersion > saved.requestVersion
-            || (item.draft?.revision ?? 0) >= (saved.draft?.revision ?? 0)) return item
-          return saved
-        }) }
+        return {
+          ...current, estimates: current.estimates.map(item => {
+            if (item.id !== saved.id || item.requestId !== saved.requestId || item.version > saved.version || item.requestVersion > saved.requestVersion
+              || (item.draft?.revision ?? 0) >= (saved.draft?.revision ?? 0)) return item
+            return saved
+          })
+        }
       })
       setItems(current => current === rows ? null : current)
       setNote(current => current === submittedNote ? null : current)
@@ -896,23 +902,23 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
     {doctor && (preparationReady || panel === 'cancel') && active && focused && panel !== 'start' && panel !== 'batch' ? <InpatientPrimaryAction stage="surgery" priority={bar.priority} fallback={bar.action}><WorkspaceActionBar summary={row.plannedProcedure.coding.display} tone={bar.tone} reason={bar.reason} busy={bar.busy} action={bar.action} /></InpatientPrimaryAction> : null}
     {doctor && active ? <Dialog open={panel === 'start' && focused} pending={write.mutation.isPending} onOpenChange={open => { if (!open) setPanel(null) }}>
       <DialogContent className="max-h-[calc(100%-2rem)] sm:max-w-[640px]" showCloseButton={!write.mutation.isPending} finalFocus={() => startTrigger.current}>
-      <DialogHeader>
-        <DialogTitle>{t('开始手术', 'Start surgery')}</DialogTitle>
-        <DialogDescription>{admission.patientName}</DialogDescription>
-      </DialogHeader>
-      <form className="flex min-h-0 flex-col p-0" onSubmit={event => { event.preventDefault(); start() }}>
-        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4">
-          {write.mutation.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
-          <FieldSet disabled={blocked}><FieldGroup>{actualField}
-            <Field><FieldLabel htmlFor={`surgery-start-${row.id}`}>{t('开始说明', 'Start note')}</FieldLabel><div className="flex flex-wrap gap-2">{[["术前准备已完成，按计划开始手术", "Preoperative preparation complete; start as planned"], ["核对患者、术式及部位无误，开始手术", "Patient, procedure and site verified; start surgery"]].map(([cn, en]) => t(cn!, en!)).map(value => <Button key={value} type="button" variant="outline" size="sm" disabled={blocked} onClick={() => setStartNote(value)}>{value}</Button>)}</div><Input id={`surgery-start-${row.id}`} maxLength={2000} value={startNote} onChange={event => setStartNote(event.currentTarget.value)} /></Field>
-          </FieldGroup></FieldSet>
-        </div>
-        <OrderComposerFooter hint={startNote.trim() ? undefined : t('还差：开始说明', 'Enter the start note')}>
-          <Button type="button" variant="outline" disabled={write.mutation.isPending} onClick={() => setPanel(null)}>{t('取消', 'Cancel')}</Button>
-          <Button type="submit" aria-busy={pending('inpatient.surgery.start') || undefined} disabled={blocked || !ready || !actual || !startNote.trim()}>{pending('inpatient.surgery.start') ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{t('开始手术', 'Start surgery')}</Button>
-        </OrderComposerFooter>
-      </form>
-    </DialogContent></Dialog> : null}
+        <DialogHeader>
+          <DialogTitle>{t('开始手术', 'Start surgery')}</DialogTitle>
+          <DialogDescription>{admission.patientName}</DialogDescription>
+        </DialogHeader>
+        <form className="flex min-h-0 flex-col p-0" onSubmit={event => { event.preventDefault(); start() }}>
+          <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4">
+            {write.mutation.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
+            <FieldSet disabled={blocked}><FieldGroup>{actualField}
+              <Field><FieldLabel htmlFor={`surgery-start-${row.id}`}>{t('开始说明', 'Start note')}</FieldLabel><div className="flex flex-wrap gap-2">{[["术前准备已完成，按计划开始手术", "Preoperative preparation complete; start as planned"], ["核对患者、术式及部位无误，开始手术", "Patient, procedure and site verified; start surgery"]].map(([cn, en]) => t(cn!, en!)).map(value => <Button key={value} type="button" variant="outline" size="sm" disabled={blocked} onClick={() => setStartNote(value)}>{value}</Button>)}</div><Input id={`surgery-start-${row.id}`} maxLength={2000} value={startNote} onChange={event => setStartNote(event.currentTarget.value)} /></Field>
+            </FieldGroup></FieldSet>
+          </div>
+          <OrderComposerFooter hint={startNote.trim() ? undefined : t('还差：开始说明', 'Enter the start note')}>
+            <Button type="button" variant="outline" disabled={write.mutation.isPending} onClick={() => setPanel(null)}>{t('取消', 'Cancel')}</Button>
+            <Button type="submit" aria-busy={pending('inpatient.surgery.start') || undefined} disabled={blocked || !ready || !actual || !startNote.trim()}>{pending('inpatient.surgery.start') ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{t('开始手术', 'Start surgery')}</Button>
+          </OrderComposerFooter>
+        </form>
+      </DialogContent></Dialog> : null}
     {doctor && active ? <SurgeryExecuteComposer admission={admission} session={session} request={row} catalog={catalog} reservations={reservations} locale={locale} write={write}
       dataReady={dataReady} onRetry={onRetry} open={panel === 'batch'} focused={focused} onOpenChange={open => setPanel(open ? 'batch' : null)} returnFocus={batchTrigger} /> : null}</div>
   return <article role="region" aria-label={focused ? t('当前手术计划', 'Current surgery plan') : t('手术计划记录', 'Surgery plan record')} className="flex min-w-0 flex-col gap-4">
@@ -922,7 +928,7 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
       <dl className="grid gap-3 text-sm @lg:grid-cols-3"><div><dt className="text-xs text-muted-foreground">{t('计划手术时间（上海时间）', 'Planned surgery time (Shanghai)')}</dt><dd className="tabular-nums">{formatShanghaiMinute(row.plannedFor).slice(5)}</dd></div>
         {nurse ? <div><dt className="text-xs text-muted-foreground">{t('申请医生', 'Requesting doctor')}</dt><dd>{t('住院医生', 'Inpatient doctor')}</dd></div>
           : planned.length > 0 ? <div><dt className="text-xs text-muted-foreground">{t('预计耗材', 'Estimated materials')}</dt><dd className="tabular-nums">{formatFen(plannedFen, locale)} · {t('已预留', 'Reserved')}</dd></div>
-          : ready && pciSelectionProcedureCodes.includes(row.plannedProcedure.coding.code) ? <div><dt className="text-xs text-muted-foreground">{t('术前准备', 'Preop preparation')}</dt><dd>{t('同意书、术前核对已完成', 'Consent & preop check complete')}</dd></div> : null}
+            : ready && pciSelectionProcedureCodes.includes(row.plannedProcedure.coding.code) ? <div><dt className="text-xs text-muted-foreground">{t('术前准备', 'Preop preparation')}</dt><dd>{t('同意书、术前核对已完成', 'Consent & preop check complete')}</dd></div> : null}
         <div><dt className="text-xs text-muted-foreground">{t('申请理由', 'Request reason')}</dt><dd>{row.reason}</dd></div></dl>
       {panel === 'cancel' ? <Field><FieldLabel htmlFor={`surgery-cancel-${row.id}`}>{t('取消理由', 'Cancellation reason')}</FieldLabel><Input id={`surgery-cancel-${row.id}`} autoFocus maxLength={2000} disabled={blocked} value={cancelNote} onChange={event => setCancelNote(event.currentTarget.value)} /></Field> : null}
       {row.cancellation ? <p className="text-sm">{t('取消原因：', 'Cancellation: ')}{row.cancellation.note}</p> : null}
