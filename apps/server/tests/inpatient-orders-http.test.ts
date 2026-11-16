@@ -876,6 +876,39 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     expect((await s.request(s.nurse, `${s.path}/executions/request-prn`, input)).status).toBe(409)
   })
 
+  it('同日停嘱重开PRN药品时跨医嘱累计有效执行次数与给药总量', async () => {
+    const s = await setup()
+    const diagnosed = await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, { encounterVersion: s.admission.versionId, expectedRevision: 0,
+      entries: [{ catalogItemId: 'diagnosis-fever', role: 'primary', admissionCondition: '1' }] })).json()
+    const firstIssued = await (await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: diagnosed.data.encounterVersion, duration: 'long',
+      selection: { kind: 'medication', catalogItemId: 'medication-acetaminophen', catalogVersion: 1, doseText: '0.5 g', doseQuantity: 1, frequencyCode: 'PRN' } })).json()
+    const firstOrder = firstIssued.data.orders[0]
+    const firstVerified = await (await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: firstOrder.id, expectedOrderVersion: firstOrder.version })).json()
+    const firstRequested = await (await s.request(s.nurse, `${s.path}/executions/request-prn`, { orderId: firstOrder.id, expectedOrderVersion: firstVerified.data.orders[0].version, reason: '首次高热' })).json()
+    const firstExecution = firstRequested.data.executions[0]
+    const catalog = await (await s.request(s.doctor, '/api/his/v1/inpatient/clinical-catalog')).json()
+    const lot = catalog.medications.find((m: { id: string }) => m.id === 'medication-acetaminophen').lots[0]
+    const dispensed = await (await s.request(s.pharmacist, `${s.path}/executions/dispense`, { executionId: firstExecution.id, expectedExecutionVersion: firstExecution.version, lotSelections: [{ lotId: lot.id, expectedVersion: lot.version, quantity: 1 }] })).json()
+    expect((await s.request(s.nurse, `${s.path}/executions/administer`, { executionId: firstExecution.id, expectedExecutionVersion: dispensed.data.executions[0].version })).status).toBe(200)
+    let virtualTime = scenarioStateSchema.parse(await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json()).virtualTime
+    expect((await s.request(s.admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { expectedVirtualTime: virtualTime, targetVirtualTime: '2026-08-24T10:00:00+08:00' })).status).toBe(200)
+    expect((await s.request(s.nurse, `${s.path}/executions/request-prn`, { orderId: firstOrder.id, expectedOrderVersion: firstVerified.data.orders[0].version, reason: '停嘱前待取消任务' })).status).toBe(200)
+    const stopRequested = await (await s.request(s.doctor, `${s.path}/orders/request-stop`, { orderId: firstOrder.id, expectedOrderVersion: firstVerified.data.orders[0].version, reason: '重开医嘱' })).json()
+    const stopped = await (await s.request(s.nurse, `${s.path}/orders/verify-stop`, { orderId: firstOrder.id, expectedOrderVersion: stopRequested.data.orders[0].version })).json()
+    const secondIssued = await (await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: stopped.data.encounterVersion, duration: 'long',
+      selection: { kind: 'medication', catalogItemId: 'medication-acetaminophen', catalogVersion: 1, doseText: '0.5 g', doseQuantity: 1, frequencyCode: 'PRN' } })).json()
+    const secondOrder = secondIssued.data.orders.find((o: { id: string }) => o.id !== firstOrder.id)
+    const secondVerified = await (await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: secondOrder.id, expectedOrderVersion: secondOrder.version })).json()
+    virtualTime = scenarioStateSchema.parse(await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json()).virtualTime
+    for (const hour of [11, 12, 13, 14]) {
+      expect((await s.request(s.admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { expectedVirtualTime: virtualTime, targetVirtualTime: `2026-08-24T${hour}:00:00+08:00` })).status).toBe(200)
+      virtualTime = scenarioStateSchema.parse(await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json()).virtualTime
+      const response = await s.request(s.nurse, `${s.path}/executions/request-prn`, { orderId: secondOrder.id, expectedOrderVersion: secondVerified.data.orders.find((o: { id: string }) => o.id === secondOrder.id).version, reason: '复测高热' })
+      expect(response.status).toBe(hour === 14 ? 409 : 200)
+      if (hour === 14) expect((await response.json()).error.reason).toBe('MEDICATION_DOSAGE_NOT_ALLOWED')
+    }
+  })
+
   it('临床详情严格排除登记员和管理员，读取岗位与Catalog一致', async () => {
     const s = await setup()
     expect((await s.request(s.registrar, `${s.path}/clinical`)).status).toBe(403)
