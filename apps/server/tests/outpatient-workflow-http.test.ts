@@ -10867,6 +10867,32 @@ describe('outpatient workflow HTTP contract', () => {
       error: { code: 'CATALOG_CONFLICT', reason: 'PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED' },
     })
 
+    const invalidQuantityResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/drafts/revisit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${testCase.registration.encounterId}`]: '6' },
+          input: {
+            diagnosis: { code: 'I25.1', display: '冠状动脉粥样硬化性心脏病' },
+            document: { assessment: '冠心病复诊。', plan: '抗血小板二级预防。' },
+            expectedVersions: { documentDraft: 0, prescription: 0, revisitDraft: 0 },
+            medications: [{
+              catalogItemId: 'medication-pci-aspirin',
+              doseText: '100 mg',
+              frequencyCode: 'QD',
+              quantity: 10,
+            }],
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(invalidQuantityResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await invalidQuantityResponse.json())).toMatchObject({
+      error: { code: 'CATALOG_CONFLICT', reason: 'PRESCRIPTION_DOSAGE_NOT_ALLOWED' },
+    })
+
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${testCase.registration.encounterId}/drafts/revisit`,
       {

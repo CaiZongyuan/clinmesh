@@ -1974,9 +1974,11 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       throw new WorkflowError('WORKFLOW_CONFLICT', 'A medication can appear only once in a prescription')
     }
     for (const medication of medications) {
-      const config = legacyMedicationCatalogConfigSchema.parse(
-        JSON.parse(medication.configJson ?? '{}') as unknown,
-      )
+      const rawConfig = JSON.parse(medication.configJson ?? '{}') as unknown
+      if (!isOutpatientMedicationConfig(rawConfig)) {
+        throw new WorkflowError('CATALOG_CONFLICT', `The medication ${medication.catalogItemId} is unavailable for outpatient care`)
+      }
+      const config = legacyMedicationCatalogConfigSchema.parse(rawConfig)
       if (
         !medicationRegimenDoseAllowed(config, medication.doseText, medication.frequencyCode)
       ) {
@@ -1985,6 +1987,24 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
           `The dose or frequency is not allowed for ${medication.catalogItemId}`,
           undefined,
           dosageReason,
+        )
+      }
+      if (
+        medication.quantity !== undefined
+        && medication.courseDays !== undefined
+        && config.safety
+        && !medicationQuantityAllowed(
+          { allowedQuantities: [], safety: config.safety },
+          medication.quantity,
+          medication.courseDays,
+          medication.frequencyCode,
+        )
+      ) {
+        throw new WorkflowError(
+          'CATALOG_CONFLICT',
+          `The course or quantity is not allowed for ${medication.catalogItemId}`,
+          undefined,
+          dosageReason ?? 'PRESCRIPTION_DOSAGE_NOT_ALLOWED',
         )
       }
       if (
