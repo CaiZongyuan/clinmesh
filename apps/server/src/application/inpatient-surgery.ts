@@ -14,13 +14,18 @@ import { planSurgeryCompletion, materialReductions, type MaterialChargeBasis } f
 import type { RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 
 export class InpatientSurgery {
+  #catalogCache: { key: string; value: z.infer<typeof inpatientSurgeryCatalogSchema> } | undefined
   constructor(readonly owner: InpatientService) {}
   catalog(context: ActorContext) {
     this.owner.assertReadRole(context, ['inpatient-doctor','ward-nurse','medical-records'])
     const rows = z.array(z.object({ kind: z.enum(['procedure','material']), snapshot_json: z.string() })).parse(this.owner.database.driver.prepare(
       'SELECT kind,snapshot_json FROM inpatient_surgery_catalog WHERE workspace_id=? AND epoch=? ORDER BY item_id').all(context.workspaceId, context.epoch))
-    return inpatientSurgeryCatalogSchema.parse({ procedures: rows.filter(row => row.kind === 'procedure').map(row => JSON.parse(row.snapshot_json)),
-      materials: rows.filter(row => row.kind === 'material').map(row => readMaterialSnapshot(JSON.parse(row.snapshot_json))) })
+    const key = rows.map(row => `${row.kind}:${row.snapshot_json}`).join('\n')
+    if (this.#catalogCache?.key !== key) {
+      this.#catalogCache = { key, value: inpatientSurgeryCatalogSchema.parse({ procedures: rows.filter(row => row.kind === 'procedure').map(row => JSON.parse(row.snapshot_json)),
+        materials: rows.filter(row => row.kind === 'material').map(row => readMaterialSnapshot(JSON.parse(row.snapshot_json))) }) }
+    }
+    return this.#catalogCache.value
   }
   read(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['inpatient-doctor','ward-nurse','medical-records'])

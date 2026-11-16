@@ -198,7 +198,7 @@ export class InpatientDrg {
     const postoperativeEstimate = pending.length === 0 ? null : { pendingExecutionIds: pending.map(execution => execution.id),
       grouping: common?.grouping ?? null, paymentReference: common?.paymentReference ?? null }
 
-    const priced = this.costProjection(context, admissionId, draft)
+    const priced = this.costProjection(context, admissionId, draft, undefined, { facts, surgery })
     const paymentReference = this.paymentReference(formal)
     return inpatientDrgSimulationSchema.parse({
       admissionId, evaluatedAt: this.owner.virtualTime(context),
@@ -211,10 +211,11 @@ export class InpatientDrg {
 
   /** 费用与分组共用计价事实；未启用分组规则时仍能展示正式费用和后续承诺。 */
   costProjection(context: ActorContext, admissionId: string, draft?: InpatientDrgSimulationInput,
-    planned?: { requestId: string; items: Array<{ materialId: string; catalogVersion: number; quantity: number; unitPriceFen: number; display: string }> }) {
+    planned?: { requestId: string; items: Array<{ materialId: string; catalogVersion: number; quantity: number; unitPriceFen: number; display: string }> },
+    loaded?: { facts: ReturnType<InpatientService['orders']['facts']>; surgery: ReturnType<InpatientService['surgery']['read']> }) {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
-    this.owner.readAdmissionBinding(context, admissionId)
-    const facts = this.owner.orders.facts(context, admissionId), surgery = this.owner.surgery.read(context, admissionId)
+    if (!loaded) this.owner.readAdmissionBinding(context, admissionId)
+    const facts = loaded?.facts ?? this.owner.orders.facts(context, admissionId), surgery = loaded?.surgery ?? this.owner.surgery.read(context, admissionId)
     const requestProcedures = surgery.requests.filter(request => ['requested', 'ready'].includes(request.status))
       .map(request => ({ request, procedure: surgery.inProgress.find(execution => execution.requestId === request.id)?.actualProcedure ?? request.plannedProcedure }))
     const chargesFen = facts.charges.reduce((sum, charge) => sum + charge.amountFen, 0)
@@ -300,7 +301,7 @@ export class InpatientDrg {
   #priceDraft(context: ActorContext, draft: InpatientDrgSimulationInput | undefined): InpatientDrgSimulation['draft'] {
     const items: InpatientDrgSimulation['draft']['items'] = []
     const missing: InpatientDrgSimulation['draft']['missing'] = []
-    if (draft !== undefined) {
+    if (draft !== undefined && (draft.medications.length > 0 || draft.services.length > 0)) {
       const catalog = this.owner.orders.medicationsAndServices(context)
       for (const entry of draft.medications) {
         const medication = catalog.medications.find(item => item.id === entry.catalogItemId && item.version === entry.catalogVersion)
@@ -336,7 +337,7 @@ export class InpatientDrg {
     const reservations = z.array(z.object({ reservation_id: z.string(), status: z.string(), quantity: z.number(), consumed_quantity: z.number(), version: z.number() })).parse(this.owner.database.driver.prepare(
       'SELECT reservation_id, status, quantity, consumed_quantity, version FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY reservation_id')
       .all(context.workspaceId, context.epoch, admissionId))
-    const catalog = this.owner.orders.medicationsAndServices(context)
+    const catalogPrices = this.owner.orders.catalogPrices(context)
     const surgeryCatalog = this.owner.surgery.catalog(context)
     return {
       workspaceId: context.workspaceId, epoch: context.epoch, admissionId,
@@ -348,8 +349,8 @@ export class InpatientDrg {
         .all(context.workspaceId, context.epoch, admissionId)),
       executions, requests, surgeryExecutions, reservations,
       charges: charges.map(charge => ({ id: charge.id, version: charge.version, amountFen: charge.amountFen })),
-      prices: { medications: catalog.medications.map(item => [item.id, item.version, item.priceFen]),
-        services: catalog.services.map(item => [item.id, item.version, item.priceFen]),
+      prices: { medications: catalogPrices.medications,
+        services: catalogPrices.services,
         procedures: surgeryCatalog.procedures.map(item => [item.id, item.version, item.chargeDefinition.priceFen]),
         // 计价单位未确认的耗材无价格，指纹以 null 占位；补价后指纹随之变化即过期。
         materials: surgeryCatalog.materials.map(item => [item.id, item.version, 'chargeDefinition' in item ? item.chargeDefinition.priceFen : null]) },

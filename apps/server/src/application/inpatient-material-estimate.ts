@@ -12,14 +12,18 @@ import { WorkspaceContextError } from '../infrastructure/sqlite/workspace-reposi
 import { pciEquivalentGroups } from './scenario-data/pci-selection-evidence.ts'
 import { readInpatientCosts } from './inpatient-costs.ts'
 
-const contextSchema = z.object({ workspaceId: z.string(), epoch: z.string(), scenarioRunId: z.string(), actorId: z.string(),
+const contextSchema = z.object({
+  workspaceId: z.string(), epoch: z.string(), scenarioRunId: z.string(), actorId: z.string(),
   practitionerId: z.string(), practitionerRoleId: z.string(), roleCode: z.literal('inpatient-doctor'),
-  organizationId: z.string(), locationId: z.string(), agentGrantId: z.string().optional() }).strict()
+  organizationId: z.string(), locationId: z.string(), agentGrantId: z.string().optional()
+}).strict()
   .transform(({ agentGrantId, ...context }) => ({ ...context, ...(agentGrantId === undefined ? {} : { agentGrantId }) }))
-const rowSchema = z.object({ workspace_id: z.string(), epoch: z.string(), task_id: z.string(), admission_id: z.string(), request_id: z.string(),
+const rowSchema = z.object({
+  workspace_id: z.string(), epoch: z.string(), task_id: z.string(), admission_id: z.string(), request_id: z.string(),
   version: z.number().int().positive(), context_json: z.string(), authorization_operation: z.enum(['inpatient.surgery.request', 'inpatient.material-estimate.request']),
   basis_json: z.string(), basis_fingerprint: z.string(), status: z.enum(['active', 'cancelled']), automatic_pending: z.number(),
-  draft_json: z.string().nullable(), created_at: z.string() })
+  draft_json: z.string().nullable(), created_at: z.string()
+})
 type Row = z.infer<typeof rowSchema>
 const estimateReaderOperations = ['inpatient.surgery.request', 'inpatient.material-estimate.read', 'inpatient.material-estimate.request',
   'inpatient.material-estimate.save', 'inpatient.material-estimate.confirm', 'inpatient.material-estimate.cancel']
@@ -89,9 +93,11 @@ export class InpatientMaterialEstimate {
     const canContinue = original !== undefined
     const snapshot = materialEstimateBasisSchema.parse(JSON.parse(row.basis_json))
     const basis = context.roleCode === 'inpatient-doctor' && (canContinue || this.contextStatus(context, estimateReaderOperations) === 'active')
-      ? currentBasis ?? readMaterialEstimateBasis(this.owner, context, row.admission_id, row.request_id)
-      : { request: snapshot.request, fingerprint: original?.fingerprint ?? '',
-        missing: original?.missing ?? [stoppedReason], candidates: snapshot.candidates }
+      ? currentBasis ?? original ?? readMaterialEstimateBasis(this.owner, context, row.admission_id, row.request_id)
+      : {
+        request: snapshot.request, fingerprint: original?.fingerprint ?? '',
+        missing: original?.missing ?? [stoppedReason], candidates: snapshot.candidates
+      }
     const liveInput = 'input' in basis ? basis.input : undefined
     const rows = this.owner.drgAgent.analyses(row.workspace_id, row.epoch, row.task_id)
     const latest = rows.find(item => item.task_version === row.version)
@@ -107,7 +113,8 @@ export class InpatientMaterialEstimate {
     if (!canContinue) status = 'stale'
     if (unresolved) status = 'unknown'
     if (row.status === 'cancelled') status = 'cancelled'
-    return inpatientMaterialEstimateSchema.parse({ id: row.task_id, admissionId: row.admission_id, requestId: row.request_id,
+    return inpatientMaterialEstimateSchema.parse({
+      id: row.task_id, admissionId: row.admission_id, requestId: row.request_id,
       version: row.version, requestVersion: basis.request.version, status, basisFingerprint: fingerprint,
       failureCode: unresolved ? 'MODEL_OUTCOME_UNKNOWN' : changed ? 'INPATIENT_ESTIMATE_ANALYSIS_STALE' : latest?.error_code ?? null,
       missing: basis.missing, candidates: basis.candidates, analysis, draft,
@@ -117,7 +124,8 @@ export class InpatientMaterialEstimate {
       materialDraftDeltaFen: draft !== null && draft.confirmedRevision === draft.revision ? null
         : 'materialDraftDeltaFen' in basis ? basis.materialDraftDeltaFen : null,
       materialDraftReservationBasis: 'materialDraftReservationBasis' in basis ? basis.materialDraftReservationBasis : null,
-      costs: liveInput?.costs ?? readInpatientCosts(this.owner, context, row.admission_id) })
+      costs: liveInput?.costs ?? readInpatientCosts(this.owner, context, row.admission_id)
+    })
   }
   list(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
@@ -128,8 +136,10 @@ export class InpatientMaterialEstimate {
     const unprepared = context.roleCode !== 'inpatient-doctor' || this.contextStatus(context, estimateReaderOperations) !== 'active' ? [] : this.owner.surgery.read(context, admissionId).requests
       .filter(request => supportsMaterialEstimate(request.plannedProcedure.coding.code) && ['requested', 'ready'].includes(request.status)
         && !rows.some(row => row.request_id === request.id))
-      .map(request => ({ requestId: request.id, requestVersion: request.version,
-        basisFingerprint: readMaterialEstimateBasis(this.owner, context, admissionId, request.id).fingerprint }))
+      .map(request => ({
+        requestId: request.id, requestVersion: request.version,
+        basisFingerprint: readMaterialEstimateBasis(this.owner, context, admissionId, request.id).fingerprint
+      }))
     return inpatientMaterialEstimatesSchema.parse({ admissionId, estimates, unprepared })
   }
   #create(context: ActorContext, admissionId: string, requestId: string, operation: Row['authorization_operation']) {
@@ -165,9 +175,11 @@ export class InpatientMaterialEstimate {
   }
   request(context: ActorContext, raw: unknown, key: string, cancel = false) {
     const input = inpatientMaterialEstimateRequestInputSchema.parse(raw)
-    return this.owner.commands.execute({ context, input, idempotencyKey: key,
+    return this.owner.commands.execute({
+      context, input, idempotencyKey: key,
       operation: `inpatient.material-estimate.${cancel ? 'cancel' : 'request'}`, expectedVersions: {}, dataSchema: inpatientMaterialEstimateSchema,
-      authorize: () => this.#authorize(context, input.admissionId, `inpatient.material-estimate.${cancel ? 'cancel' : 'request'}`) }, transaction => {
+      authorize: () => this.#authorize(context, input.admissionId, `inpatient.material-estimate.${cancel ? 'cancel' : 'request'}`)
+    }, transaction => {
       let row = this.#row(context, input.admissionId, input.requestId)
       const basis = readMaterialEstimateBasis(this.owner, context, input.admissionId, input.requestId)
       if ((row?.version ?? 0) !== input.expectedVersion || basis.request.version !== input.expectedRequestVersion || basis.fingerprint !== input.expectedBasisFingerprint)
@@ -196,8 +208,10 @@ export class InpatientMaterialEstimate {
   }
   save(context: ActorContext, raw: unknown, key: string) {
     const input = inpatientMaterialEstimateSaveInputSchema.parse(raw)
-    return this.owner.commands.execute({ context, input, idempotencyKey: key, operation: 'inpatient.material-estimate.save',
-      expectedVersions: {}, dataSchema: inpatientMaterialEstimateSchema, authorize: () => this.#authorize(context, input.admissionId, 'inpatient.material-estimate.save') }, () => {
+    return this.owner.commands.execute({
+      context, input, idempotencyKey: key, operation: 'inpatient.material-estimate.save',
+      expectedVersions: {}, dataSchema: inpatientMaterialEstimateSchema, authorize: () => this.#authorize(context, input.admissionId, 'inpatient.material-estimate.save')
+    }, () => {
       const row = this.#row(context, input.admissionId, input.requestId)
       if (!row || row.version !== input.expectedVersion) throw new InpatientError('INPATIENT_ESTIMATE_CONFLICT', '预计版本已变化')
       const state = this.#dto(context, row), previous = state.draft
@@ -206,9 +220,11 @@ export class InpatientMaterialEstimate {
         throw new InpatientError('INPATIENT_ESTIMATE_CONFLICT', '工作稿或依据已变化，请审阅最新差异')
       if (input.analysisId !== null && (!state.analysis || state.analysis.id !== input.analysisId || state.analysis.basisFingerprint !== state.basisFingerprint))
         throw new InpatientError('INPATIENT_DRG_AGENT_STALE', '不能采用旧生成结果')
-      const draft = inpatientMaterialEstimateDraftSchema.parse({ items: input.items, note: input.note, analysisId: input.analysisId, revision: input.expectedDraftRevision + 1,
+      const draft = inpatientMaterialEstimateDraftSchema.parse({
+        items: input.items, note: input.note, analysisId: input.analysisId, revision: input.expectedDraftRevision + 1,
         basisFingerprint: state.basisFingerprint, edited: true, updatedAt: this.owner.virtualTime(context), updatedBy: context.actorId,
-        confirmedRevision: previous?.confirmedRevision ?? null, reservationIds: previous?.reservationIds ?? [] })
+        confirmedRevision: previous?.confirmedRevision ?? null, reservationIds: previous?.reservationIds ?? []
+      })
       this.#storeDraft(row, draft)
       const currentBasis = readMaterialEstimateBasis(this.owner, context, input.admissionId, input.requestId)
       if (currentBasis.fingerprint !== draft.basisFingerprint)
@@ -226,15 +242,19 @@ export class InpatientMaterialEstimate {
     if (row.version !== version || row.status !== 'active') return
     const previous = row.draft_json ? inpatientMaterialEstimateDraftSchema.parse(JSON.parse(row.draft_json)) : null
     if (previous !== null) return
-    this.#storeDraft(row, inpatientMaterialEstimateDraftSchema.parse({ revision: 1, basisFingerprint: analysis.basisFingerprint, analysisId: analysis.id,
+    this.#storeDraft(row, inpatientMaterialEstimateDraftSchema.parse({
+      revision: 1, basisFingerprint: analysis.basisFingerprint, analysisId: analysis.id,
       items: analysis.items.map(({ materialId, catalogVersion, quantity, reason }) => ({ materialId, catalogVersion, quantity, reason })), note: '',
-      edited: false, updatedAt: analysis.createdAt, updatedBy: 'system', confirmedRevision: null, reservationIds: [] }))
+      edited: false, updatedAt: analysis.createdAt, updatedBy: 'system', confirmedRevision: null, reservationIds: []
+    }))
   }
   confirm(context: ActorContext, raw: unknown, key: string) {
     const input = inpatientMaterialEstimateConfirmInputSchema.parse(raw)
-    return this.owner.commands.execute({ context, input, idempotencyKey: key, operation: 'inpatient.material-estimate.confirm',
+    return this.owner.commands.execute({
+      context, input, idempotencyKey: key, operation: 'inpatient.material-estimate.confirm',
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientMaterialEstimateSchema,
-      authorize: () => this.#authorize(context, input.admissionId, 'inpatient.material-estimate.confirm') }, () => {
+      authorize: () => this.#authorize(context, input.admissionId, 'inpatient.material-estimate.confirm')
+    }, () => {
       const row = this.#row(context, input.admissionId, input.requestId)
       if (!row || row.version !== input.expectedVersion) throw new InpatientError('INPATIENT_ESTIMATE_CONFLICT', '预计版本已变化')
       const basis = readMaterialEstimateBasis(this.owner, context, input.admissionId, input.requestId)
@@ -251,16 +271,22 @@ export class InpatientMaterialEstimate {
       const effects: CommandEffect[] = []
       const selectionConfirmation = this.owner.pciSelection.confirmDraftInTransaction(context, input.admissionId, input.requestId,
         draft.items.map(item => item.materialId), effects)
-      const reservations = this.owner.drg.replaceReservationsInTransaction(context, { admissionId: input.admissionId, requestId: input.requestId,
+      const reservations = this.owner.drg.replaceReservationsInTransaction(context, {
+        admissionId: input.admissionId, requestId: input.requestId,
         expectedRequestVersion: input.expectedRequestVersion, encounterVersion: input.encounterVersion, items: draft.items,
-        expectedReservationFingerprint: input.expectedReservationFingerprint, reason: input.reason }, effects)
+        expectedReservationFingerprint: input.expectedReservationFingerprint, reason: input.reason
+      }, effects)
       const reservationIds = reservations.reservations.filter(item => item.requestId === input.requestId && item.status === 'reserved').map(item => item.id)
       this.owner.materialPlans.confirmEstimate(context, input.admissionId, {
-        taskId: row.task_id, requestId: input.requestId, draft, basis: { ...basis,
-          input: { ...basis.input, selection: { ...basis.input.selection, confirmation: selectionConfirmation } } }, reservationIds,
+        taskId: row.task_id, requestId: input.requestId, draft, basis: {
+          ...basis,
+          input: { ...basis.input, selection: { ...basis.input.selection, confirmation: selectionConfirmation } }
+        }, reservationIds,
       }, effects)
-      this.#storeDraft(row, { ...draft, confirmedRevision: draft.revision,
-        reservationIds })
+      this.#storeDraft(row, {
+        ...draft, confirmedRevision: draft.revision,
+        reservationIds
+      })
       effects.push({ kind: 'updated', reference: `InpatientMaterialDraft/${row.task_id}`, versionId: String(draft.revision) })
       return { data: this.#dto(context, row, basis), effects }
     })
