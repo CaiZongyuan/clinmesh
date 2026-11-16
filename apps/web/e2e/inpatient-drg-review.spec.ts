@@ -111,7 +111,7 @@ test('当前医嘱草稿隔离迟到评估，取消不签发，重新审阅后�
   await selectInpatientStage(page, "诊断医嘱")
   await page.getByRole('button', { name: '开立医嘱', exact: true }).click()
   await page.getByLabel('医嘱项目', { exact: true }).fill(medication.display)
-  await page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: new RegExp(medication.display) }).click()
+  await page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: `选择${medication.display}`, exact: true }).click()
   await page.getByLabel('每次剂量', { exact: true }).fill(`1${medication.unit}`)
   let release!: () => void
   const held = new Promise<void>(resolve => { release = resolve })

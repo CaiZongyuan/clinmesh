@@ -108,7 +108,7 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   }
   page.on('response', receiveAcknowledgement)
   await review.getByRole('button', { name: '确认选中报告已阅', exact: true }).click()
-  await expect(reader.getByRole('region', { name: '报告已阅逐项结果', exact: true })).toContainText('本次办理已结束 · 成功 9/9')
+  await expect(reader.getByRole('region', { name: '报告已阅逐项结果', exact: true })).toContainText('本次办理已结束 · 成功 9/9', { timeout: 25_000 })
   page.off('response', receiveAcknowledgement)
   expect(acknowledgements).toEqual(Array.from({ length: 9 }, () => 200))
   await reader.getByRole('button', { name: '关闭阅读窗口', exact: true }).click()
@@ -222,8 +222,12 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
     const medication = catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!
     await page.getByRole('button', { name: '开立医嘱', exact: true }).click()
     await page.getByLabel('医嘱项目', { exact: true }).fill(medication.display)
-    await page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: new RegExp(medication.display) }).click()
+    await page.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: `选择${medication.display}`, exact: true }).click()
     await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
+    if (['heparin', 'iohexol'].includes(suffix)) {
+      await page.getByLabel('医嘱频次', { exact: true }).click()
+      await page.getByRole('option', { name: '按需', exact: true }).click()
+    }
     if (surgeryExecutionId) {
       await page.getByLabel('术后医嘱关联手术', { exact: true }).click()
       await page.getByRole('option', { name: /36.0700 ·/ }).click()

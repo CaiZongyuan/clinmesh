@@ -59,7 +59,7 @@ for (const version of ['18', '19']) test.describe(`inpatient DRG React ${version
     await page.getByRole('button', { name: '开立医嘱', exact: true }).click()
     const composer = page.getByRole('dialog', { name: '开立医嘱', exact: true })
     await composer.getByLabel('医嘱项目', { exact: true }).fill(medication.display)
-    await composer.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: new RegExp(medication.display) }).click()
+    await composer.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: `选择${medication.display}`, exact: true }).click()
     await composer.getByLabel('每次剂量', { exact: true }).fill(doseText)
     await composer.getByRole('button', { name: '费用预计', exact: true }).click()
     await expect(composer.getByRole('region', { name: '费用预计', exact: true })).toBeVisible()
