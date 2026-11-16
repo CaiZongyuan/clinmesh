@@ -65,8 +65,10 @@ export interface CatalogRow {
 export interface MedicationRuleSelection {
   catalogItemId: string
   configJson: string | undefined
+  courseDays?: number
   doseText: string
   frequencyCode: string
+  quantity?: number
 }
 
 export interface InvestigationCapabilityResolver {
