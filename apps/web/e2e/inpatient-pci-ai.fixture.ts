@@ -145,7 +145,7 @@ export async function preparePciAiPatient(app: PciAiBrowserApp) {
 }
 
 export async function openPciAiPatient(page: Page, app: PciAiBrowserApp, role: string, name: string) {
-  expect((await page.request.post(`${app.origin}/api/auth/sign-in/email`, { headers: { origin: app.origin }, data: { email: `${role}@demo.clinmesh.local`, password: app.password } })).status()).toBe(200)
+  expect((await page.request.post(`${app.origin}/api/auth/sign-in/email`, { headers: { origin: app.origin }, data: { email: `${role}@demo.clinmesh.local`, password: app.password }, maxRetries: 1 })).status()).toBe(200)
   await page.goto(`${app.origin}/${role === 'cashier' ? 'billing' : 'inpatient'}`)
   if (role === 'cashier') await selectWorkspaceMode(page, '住院')
   await page.getByRole('button', { name: role === 'cashier' ? `查看${name}` : new RegExp(name), exact: role === 'cashier' }).click()
