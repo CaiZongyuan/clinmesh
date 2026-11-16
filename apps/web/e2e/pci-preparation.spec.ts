@@ -137,7 +137,7 @@ test('从零页面准备固定PCI及自动选用Persona，原回执恢复直接�
   await page.getByRole('button', { name: new RegExp(profile.identity.displayName) }).click()
   await page.getByRole('group', { name: '目标床位' }).getByRole('button', { name: /1床/ }).first().click()
   await page.getByRole('button', { name: '接诊并分床', exact: true }).click()
-  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText('住院病区 · 1床')
+  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText('1床')
   const received = inpatientListSchema.parse(await (await page.request.get(`${browserApp.origin}/api/his/v1/inpatient/admissions`)).json())
   expect(received.items).toEqual([expect.objectContaining({ id: started!.data.admissionId, status: 'admitted', depositFen: 0, chargesFen: 0 })])
   expect(modelRequests).toEqual([])

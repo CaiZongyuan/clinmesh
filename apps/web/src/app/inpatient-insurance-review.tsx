@@ -1,5 +1,5 @@
 import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
-import { InpatientPatientHeader, InpatientQueueGroup, InpatientStageCard } from './inpatient-layout.tsx'
+import { InpatientInfoMenu, InpatientPatientHeader, InpatientQueueGroup, InpatientStageCard } from './inpatient-layout.tsx'
 import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewPreviewSchema } from '@clinmesh/contracts/inpatient-drg-payer'
 import { inpatientListSchema, type InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -21,7 +21,6 @@ import { InpatientDrgPayer } from './inpatient-drg-payer.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { inpatientFlow } from './inpatient-stage-activity.ts'
-import { InpatientNumber } from './inpatient-number.tsx'
 import { PaginationControls } from './pagination-controls.tsx'
 import { inpatientDepartureLabel } from './inpatient-labels.ts'
 import { useInpatientReviewQueue, type InpatientReviewQueueSnapshot, type ReviewQueueCommand } from './inpatient-review-queue.ts'
@@ -191,7 +190,13 @@ function InsuranceReview({ session, locale }: InsuranceReviewProps): React.JSX.E
     </div>
   </WorkspaceQueueCard></section>
   return <section aria-label={t('医保办核定工作台', 'Insurance assessment workspace')} className="clinmesh-inpatient-workspace flex min-h-0 min-w-0 flex-1 flex-col"><InpatientActionProvider stage="record"><WorkspaceCardLayout id={`inpatient-insurance-${session.actor.practitionerRoleId}`} locale={locale} queue={queue} flow={inpatientFlow(selected, locale)} action={<InpatientActionOutlet />}
-    patient={selected ? <section aria-label={t('当前住院患者', 'Current inpatient')}><InpatientPatientHeader name={selected.patientName} identity={headerInput ? `${gender} · ${headerInput.ageYears}${t(' 岁', ' years')}` : undefined} location={headerInput ? `${t('心内病区 · ', 'Cardiology Ward · ')}${inpatientDepartureLabel(headerInput.dischargeMode, locale)}${headerInput.inpatientDays > 0 ? t(` · 住院 ${headerInput.inpatientDays} 天`, ` · Stay ${headerInput.inpatientDays} days`) : ''}` : undefined} status={t('已归档 · 只读', 'Archived · read only')} statusVariant="outline" details={<><InpatientNumber locale={locale} number={selected.inpatientNumber} />{selected.recordNumber ? <InpatientNumber locale={locale} number={selected.recordNumber} label={t('病案号', 'Record')} /> : null}{selected.departedAt ? <span>{t('出院 ', 'Discharged ')}{formatShanghaiMinute(selected.departedAt).slice(5)}{selected.departureMethod ? ` · ${inpatientDepartureLabel(selected.departureMethod, locale)}` : headerInput ? ` · ${inpatientDepartureLabel(headerInput.dischargeMode, locale)}` : ''}</span> : null}<span>{t('归档费用 ', 'Archived charges ')}{formatFen(selected.chargesFen, locale)}</span></>} /></section> : undefined}>
+    patient={selected ? <section aria-label={t('当前住院患者', 'Current inpatient')}><InpatientPatientHeader name={selected.patientName} identity={headerInput ? `${gender} · ${headerInput.ageYears}${t(' 岁', ' years')}` : undefined} location={headerInput ? `${inpatientDepartureLabel(headerInput.dischargeMode, locale)}${headerInput.inpatientDays > 0 ? t(` · 住院 ${headerInput.inpatientDays} 天`, ` · Stay ${headerInput.inpatientDays} days`) : ''}` : undefined} status={t('已归档 · 只读', 'Archived · read only')} statusVariant="outline"
+      fields={<><span>{t('归档费用 ', 'Archived charges ')}{formatFen(selected.chargesFen, locale)}</span><InpatientInfoMenu locale={locale} items={[
+        ...(headerInput ? [{ label: t('病区', 'Ward'), value: t('心内病区', 'Cardiology Ward') }] : []),
+        { label: t('住院号', 'Inpatient no.'), value: selected.inpatientNumber, copy: true },
+        ...(selected.recordNumber ? [{ label: t('病案号', 'Record'), value: selected.recordNumber, copy: true }] : []),
+        ...(selected.departedAt ? [{ label: t('出院', 'Discharged'), value: `${formatShanghaiMinute(selected.departedAt).slice(5)}${selected.departureMethod ? ` · ${inpatientDepartureLabel(selected.departureMethod, locale)}` : headerInput ? ` · ${inpatientDepartureLabel(headerInput.dischargeMode, locale)}` : ''}` }] : []),
+      ]} /></>} /></section> : undefined}>
     {admissions.error ? <Alert variant="destructive"><AlertDescription>{t('核定队列读取失败：', 'Unable to read the assessment queue: ')}{getWorkspaceErrorMessage(admissions.error, getWorkspaceMessages(locale))}<Button variant="outline" onClick={() => void admissions.refetch()}>{t('重试', 'Retry')}</Button></AlertDescription></Alert> : null}
     <InpatientWriteRecovery write={write} locale={locale} />
     <ReviewDraftFailure key={continuationQueue.scope} failure={continuationQueue.failure} locked={write.blocked || checking} retry={continuationQueue.retry} discardUnread={continuationQueue.discardUnread} zh={locale === 'zh-CN'} queue />

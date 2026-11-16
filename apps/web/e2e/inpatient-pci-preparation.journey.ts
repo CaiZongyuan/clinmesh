@@ -49,7 +49,7 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   await open('ward-nurse', admission.patientName)
   await page.getByRole('group', { name: '目标床位' }).getByRole('button', { name: /1床/ }).first().click()
   await page.getByRole('button', { name: '接诊并分床', exact: true }).click()
-  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText('住院病区 · 1床')
+  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText('1床')
   await open('inpatient-doctor', admission.patientName)
   await page.getByRole('button', { name: '添加诊断', exact: true }).click()
   const diagnosisDialog = page.getByRole('dialog', { name: '确认住院诊断', exact: true })

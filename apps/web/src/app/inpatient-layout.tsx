@@ -1,27 +1,51 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Badge } from '@clinmesh/ui/components/badge'
+import { Button } from '@clinmesh/ui/components/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@clinmesh/ui/components/dropdown-menu'
+import { CopyIcon, InfoIcon } from 'lucide-react'
+import { shortInpatientNumber } from './inpatient-number.tsx'
 import { WorkspaceHeaderPatient, WorkspaceTabs, type WorkspaceTabItem } from './workspace-card-layout.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
-/** 七岗位共用两行患者上下文；窄 DTO 只传入实际可读的事实。 */
-export function InpatientPatientHeader({ name, identity, status, statusVariant = 'outline', location, details, amount, children }: {
+/** 七岗位共用一行患者上下文：身份后接本岗位主业字段，右侧放最要紧的一项；窄 DTO 只传入实际可读的事实。 */
+export function InpatientPatientHeader({ name, identity, status, statusVariant = 'outline', location, fields, trailing, children }: {
   name: string
   identity?: ReactNode
   status?: ReactNode
   statusVariant?: 'default' | 'secondary' | 'destructive' | 'success' | 'warning' | 'info' | 'outline'
   location?: ReactNode
-  details?: ReactNode
-  amount?: ReactNode
+  fields?: ReactNode
+  trailing?: ReactNode
   children?: ReactNode
 }) {
   return <><WorkspaceHeaderPatient>{name}</WorkspaceHeaderPatient><div className="clinmesh-inpatient-head">
     <div className="clinmesh-inpatient-head-main"><h2>{name}</h2>{identity ? <span className="text-sm text-muted-foreground">{identity}</span> : null}
       {status ? <Badge variant={statusVariant}>{status}</Badge> : null}{location ? <span className="text-sm text-muted-foreground">{location}</span> : null}
-      {amount ? <div className="clinmesh-inpatient-head-amount">{amount}</div> : null}
+      {fields ? <div className="clinmesh-inpatient-head-fields">{fields}</div> : null}
+      {trailing ? <div className="clinmesh-inpatient-head-trailing">{trailing}</div> : null}
     </div>
-    {details ? <div className="clinmesh-inpatient-head-details">{details}</div> : null}
     {children}
   </div></>
+}
+
+export type InpatientInfoItem = { label: string; value: string; copy?: boolean }
+
+/** 姓名行放不下的字段收在这里；编号点一下复制全文。 */
+export function InpatientInfoMenu({ locale, items }: { locale: WorkspaceLocale; items: readonly InpatientInfoItem[] }) {
+  const zh = locale === 'zh-CN'
+  const [copied, setCopied] = useState<{ label: string; ok: boolean }>()
+  if (items.length === 0) return null
+  return <DropdownMenu onOpenChange={open => { if (!open) setCopied(undefined) }}>
+    <DropdownMenuTrigger render={<Button aria-label={zh ? '住院信息' : 'Admission details'} size="icon-xs" type="button" variant="ghost" />}><InfoIcon aria-hidden="true" /></DropdownMenuTrigger>
+    <DropdownMenuContent align="start" className="clinmesh-inpatient-info w-auto min-w-60">
+      {items.map(item => item.copy
+        ? <DropdownMenuItem key={item.label} closeOnClick={false} aria-label={`${zh ? '复制' : 'Copy '}${item.label} ${item.value}`} onClick={async () => {
+          try { await navigator.clipboard.writeText(item.value); setCopied({ label: item.label, ok: true }) } catch { setCopied({ label: item.label, ok: false }) }
+        }}><span className="text-muted-foreground">{item.label}</span><span className="font-mono" title={item.value}>{shortInpatientNumber(item.value)}</span><CopyIcon aria-hidden="true" className="size-3.5" />
+          {copied?.label === item.label ? <span className="text-xs text-muted-foreground" role={copied.ok ? 'status' : 'alert'}>{copied.ok ? zh ? '已复制' : 'Copied' : zh ? '复制失败' : 'Copy failed'}</span> : null}</DropdownMenuItem>
+        : <div key={item.label}><span className="text-muted-foreground">{item.label}</span><span>{item.value}</span></div>)}
+    </DropdownMenuContent>
+  </DropdownMenu>
 }
 
 export function InpatientTabs(props: { id: string; items: readonly WorkspaceTabItem[]; value: string; onValueChange(value: string): void; locale: WorkspaceLocale; children: ReactNode }) {

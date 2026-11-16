@@ -49,10 +49,13 @@ it('患者横幅常驻，阶段只显示当前业务表单，切换后保留原�
   const user = userEvent.setup()
   await user.click(await screen.findByRole('button', { name: '查看李淑芬' }))
   const banner = screen.getByRole('region', { name: '当前住院患者' })
-  expect(banner.textContent).toContain('ZY-0001')
-  expect(banner.textContent).toContain('住院病区')
   expect(banner.textContent).toContain('1床')
-  expect(banner.textContent).toContain('50.00')
+  expect(banner.textContent).not.toContain('住院病区')
+  await user.click(within(banner).getByRole('button', { name: '住院信息' }))
+  const info = await screen.findByRole('menu')
+  for (const text of ['住院病区', 'ZY-0001', '50.00']) expect(info.textContent).toContain(text)
+  expect(within(info).getByRole('menuitem', { name: /复制住院号 ZY-0001/ })).toBeTruthy()
+  await user.keyboard('{Escape}')
   await waitFor(() => expect(banner.textContent).toContain('住院第 1 天'))
   expect(within(screen.getByRole('list', { name: '办理流程' })).getByRole('listitem', { current: 'step' }).textContent).toBe('在院诊疗')
   expect(screen.getByRole('tab', { name: '诊断医嘱', selected: true })).toBeDefined()
@@ -277,17 +280,24 @@ it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带
   }))
   mount()
   await userEvent.setup().click(await screen.findByRole('button', { name: '查看李淑芬' }))
-  const prepared = await screen.findByRole('region', { name: '助手已准备' })
-  await waitFor(() => expect(prepared.textContent).toContain('选型参数 · 待你确认'))
-  expect(prepared.textContent).not.toContain('手术耗材 · 正在准备')
-  expect(prepared.textContent).not.toContain('指南参考意见 · 结果未知')
+  const preparedItems = async () => {
+    const user = userEvent.setup()
+    await user.click(within(await screen.findByRole('region', { name: '助手已准备' })).getByRole('button', { name: /助手已准备 \d+ 项/ }))
+    const text = (await screen.findByRole('menu')).textContent
+    await user.keyboard('{Escape}')
+    return text
+  }
+  const prepared = await preparedItems()
+  expect(prepared).toContain('选型参数 · 待你确认')
+  expect(prepared).not.toContain('手术耗材 · 正在准备')
+  expect(prepared).not.toContain('指南参考意见 · 结果未知')
   const surgery = screen.getByRole('tab', { name: /手术/, hidden: true })
   expect(surgery.textContent).not.toContain('助手 1')
   expect(document.body.textContent).not.toContain('SYNTHETIC_RAW_CODE')
   expect(requests.every(request => request.startsWith('GET ') || request.startsWith('POST ') && request.endsWith('/drg/simulation'))).toBe(true)
   manualConfirmed = true
   await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
-  await waitFor(() => expect(screen.getByRole('region', { name: '助手已准备' }).textContent).toContain('选型参数 · 已确认'))
+  await waitFor(async () => expect(await preparedItems()).toContain('选型参数 · 已确认'))
   selectionFailed = true
   await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
   expect(screen.queryByRole('region', { name: '助手已准备' })).toBeNull()
@@ -385,6 +395,30 @@ it('药房详情读取失败时保留未知状态，重试成功后才显示零�
   await userEvent.setup().click(screen.getByRole('button', { name: '重试读取' }))
   await screen.findByText('暂无待发药品')
   expect(state.textContent).toMatch(/待发药\s*0/)
+})
+
+it.each([
+  { roleCode: 'cashier' as const, inline: ['预交金 ', '累计费用 '], menu: ['住院病区', 'ZY-0001'] },
+  { roleCode: 'ward-nurse' as const, inline: [], menu: ['住院病区', 'ZY-0001', '预交金', '累计费用'] },
+])('$roleCode 的姓名行只留本岗位主业字段，其余收进住院信息', async ({ roleCode, inline, menu }) => {
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/inpatient/catalog')) return Response.json(catalog)
+    if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [admission] })
+    if (path.endsWith('/Patient/patient-1')) return Response.json({ resourceType: 'Patient', id: admission.patientId, gender: 'female' })
+    if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成非本次读取' } }, { status: 503 })
+  }))
+  mount({ ...session, actor: { ...session.actor, roleCode } })
+  const user = userEvent.setup()
+  await user.click((await screen.findAllByRole('button', { name: /李淑芬/ }))[0]!)
+  const banner = screen.getByRole('region', { name: '当前住院患者' })
+  expect(banner.textContent).toContain('1床')
+  for (const text of inline) expect(banner.textContent).toContain(text)
+  for (const text of menu) expect(banner.textContent).not.toContain(text)
+  await user.click(within(banner).getByRole('button', { name: '住院信息' }))
+  const info = await screen.findByRole('menu')
+  for (const text of menu) expect(info.textContent).toContain(text)
+  for (const text of inline) expect(info.textContent).not.toContain(text.trim())
 })
 
 it('分次补交已有成功收款但仍有余额时保留当前补交步骤', async () => {

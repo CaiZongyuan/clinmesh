@@ -3,6 +3,7 @@ import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { InpatientDrgQuery } from './inpatient-drg-query.ts'
 import type { InpatientCosts, InpatientDrgSimulation } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { ChevronRightIcon } from 'lucide-react'
+import { useId, type ReactNode } from 'react'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
@@ -36,23 +37,34 @@ export function DrgProgressBar({ data, costs, locale, onOpenDrg }: {
   return <ProgressLine progress={drgProgress(data, costs)} locale={locale} onOpenDrg={onOpenDrg} />
 }
 
+/** 患者头部姓名行右侧的小条：常驻状态、病组、进度与余额；完整金额在悬停说明与无障碍描述里。 */
+function ProgressChip({ locale, onOpenDrg, detail, over, children }: { locale: WorkspaceLocale; onOpenDrg(): void; detail: string; over?: boolean; children: ReactNode }) {
+  const id = useId()
+  return <button type="button" className="clinmesh-inpatient-drg-progress" data-over={over || undefined} title={detail} aria-describedby={id}
+    aria-label={locale === 'zh-CN' ? 'DRG 费用进度，点击查看 DRG 预分组' : 'DRG charge progress; open DRG pre-grouping'} onClick={onOpenDrg}>
+    {children}<span className="sr-only" id={id}>{detail}</span><ChevronRightIcon aria-hidden="true" />
+  </button>
+}
+
 function ProgressLine({ progress, locale, onOpenDrg }: { progress: ReturnType<typeof drgProgress>; locale: WorkspaceLocale; onOpenDrg(): void }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const { projected, pendingMainProcedure, grouping, spent, total, reference, status } = progress
   const percent = (amount: number) => `${reference !== null && reference > 0 ? Math.min(100, Math.max(0, amount) / reference * 100) : 0}%`
-  return <button type="button" className="clinmesh-inpatient-drg-progress" data-over={status === 'over' || undefined} aria-label={t('DRG 费用进度，点击查看 DRG 预分组', 'DRG charge progress; open DRG pre-grouping')} onClick={onOpenDrg}>
-    <span className="clinmesh-inpatient-drg-progress-group">
-      {status === null ? null : <Badge variant="outline" className={status === 'within' ? 'text-success' : 'text-warning'}>{status === 'over' ? t('已超', 'Above') : status === 'near' ? t('接近', 'Near') : t('未超', 'Within')}</Badge>}
-      <span><span className="clinmesh-inpatient-drg-progress-group-label" data-current={!projected || undefined}>{pendingMainProcedure ? t('术后预计 ', 'After surgery ') : projected ? t('按计划手术预计 ', 'With planned surgery ') : t('当前病组 ', 'Current group ')}</span><b>{grouping?.drgCode ?? (grouping ? drgGroupingStatusLabel(grouping.status, locale) : t('病组待确定', 'Group pending'))}</b>{pendingMainProcedure ? <span className="block text-warning">{t('待确认主操作', 'Main procedure pending')}</span> : null}</span>
-    </span>
-    <span className="clinmesh-inpatient-drg-progress-amount">{t('已用 ', 'Used ')}<b>{formatFen(spent, locale)}</b>{projected ? <> · {pendingMainProcedure ? t('预计 ', 'Projected ') : t('做完预计 ', 'Projected total ')}<b>{formatFen(total, locale)}</b></> : null}{reference === null ? null : <> / <span className="clinmesh-inpatient-drg-progress-payment-label">{t('支付参考 ', 'Payment reference ')}</span><b>{formatFen(reference, locale)}</b></>}</span>
+  const group = grouping?.drgCode ?? (grouping ? drgGroupingStatusLabel(grouping.status, locale) : t('病组待确定', 'Group pending'))
+  const remaining = reference === null ? null : `${status === 'over' ? t('超出 ', 'Over by ') : t('还剩 ', 'Remaining ')}${formatFen(Math.abs(reference - total), locale)}`
+  const detail = `${pendingMainProcedure ? t('术后预计 ', 'After surgery ') : projected ? t('按计划手术预计 ', 'With planned surgery ') : t('当前病组 ', 'Current group ')}${group} · ${t('已用 ', 'Used ')}${formatFen(spent, locale)}`
+    + (projected ? ` · ${pendingMainProcedure ? t('预计 ', 'Projected ') : t('做完预计 ', 'Projected total ')}${formatFen(total, locale)}` : '')
+    + (reference === null ? '' : ` / ${t('支付参考 ', 'Payment reference ')}${formatFen(reference, locale)} · ${projected ? t('预计', 'Projected: ') : status === 'over' ? t('已', '') : ''}${remaining}`)
+  return <ProgressChip locale={locale} onOpenDrg={onOpenDrg} detail={detail} over={status === 'over'}>
+    {status === null ? null : <Badge variant="outline" className={status === 'within' ? 'text-success' : 'text-warning'}>{status === 'over' ? t('已超', 'Above') : status === 'near' ? t('接近', 'Near') : t('未超', 'Within')}</Badge>}
+    <b>{group}</b>{pendingMainProcedure ? <span className="text-warning">{t('待确认主操作', 'Main procedure pending')}</span> : null}
     {reference === null ? <span>{t('暂无支付参考', 'No payment reference')}</span> : <>
-      <span role="img" aria-label={`${t('已用 ', 'Used ')}${formatFen(spent, locale)}${projected ? `${t('，做完预计 ', ', projected total ')}${formatFen(total, locale)}` : ''}${t('，支付参考 ', ', payment reference ')}${formatFen(reference, locale)}`} className="clinmesh-inpatient-drg-progress-track">
+      <span aria-hidden="true" className="clinmesh-inpatient-drg-progress-track">
         <i className="clinmesh-inpatient-drg-progress-projected" style={{ width: percent(total) }} /><i className="clinmesh-inpatient-drg-progress-spent" style={{ width: percent(spent) }} />
       </span>
-      <span className="clinmesh-inpatient-drg-progress-remaining">{status === 'over' ? projected ? t('预计超出 ', 'Projected over by ') : t('已超出 ', 'Over by ') : projected ? t('预计还剩 ', 'Projected remaining ') : t('还剩 ', 'Remaining ')}<b>{formatFen(Math.abs(reference - total), locale)}</b><ChevronRightIcon aria-hidden="true" /></span>
+      <span aria-hidden="true">{remaining!.split(' ')[0]} <b>{formatFen(Math.abs(reference - total), locale)}</b></span>
     </>}
-  </button>
+  </ProgressChip>
 }
 
 
@@ -71,12 +83,16 @@ export function InpatientDrgHeader({ admission, session, query, locale, onOpenDr
   const reference = postoperative ? postoperative.paymentReference : query.projectedCosts?.projectedPaymentReference
   const referenceGroup = postoperative ? postoperative.grouping : projectedGroup
   const projectedReference = referenceGroup?.status === 'grouped' && reference?.drgCode === referenceGroup.drgCode ? reference : null
-  if (query.materialProjectionIncomplete && (projectedGroup?.status === 'grouped' || postoperative)) return <button type="button" className="clinmesh-inpatient-drg-progress" onClick={onOpenDrg} aria-label={locale === 'zh-CN' ? 'DRG 费用进度，点击查看 DRG 预分组' : 'DRG charge progress; open DRG pre-grouping'}>
-    <span>{postoperative ? locale === 'zh-CN' ? '术后预计 ' : 'After surgery ' : locale === 'zh-CN' ? '按计划手术预计 ' : 'With planned surgery '}<b>{postoperative ? postoperative.grouping?.drgCode : projectedGroup?.drgCode}</b>{postoperative ? <span className="block text-warning">{locale === 'zh-CN' ? '待确认主操作' : 'Main procedure pending'}</span> : null}</span><span>{locale === 'zh-CN' ? '已用 ' : 'Used '}{formatFen(query.simulation.data?.formal.chargesFen ?? admission.chargesFen, locale)}</span><span>{projectedReference ? <>{locale === 'zh-CN' ? '支付参考 ' : 'Payment reference '}{formatFen(projectedReference.referenceFen, locale)}</> : locale === 'zh-CN' ? '暂无支付参考' : 'No payment reference'}</span><span className="min-w-0 whitespace-normal">{locale === 'zh-CN' ? '计划耗材费用待核对，预计总费用暂不可用' : 'Review planned material prices; projected charges unavailable'}</span><ChevronRightIcon aria-hidden="true" />
-  </button>
+  const zh = locale === 'zh-CN'
+  if (query.materialProjectionIncomplete && (projectedGroup?.status === 'grouped' || postoperative)) {
+    const group = postoperative ? postoperative.grouping?.drgCode : projectedGroup?.drgCode
+    return <ProgressChip locale={locale} onOpenDrg={onOpenDrg}
+      detail={`${postoperative ? zh ? '术后预计 ' : 'After surgery ' : zh ? '按计划手术预计 ' : 'With planned surgery '}${group ?? ''} · ${zh ? '已用 ' : 'Used '}${formatFen(query.simulation.data?.formal.chargesFen ?? admission.chargesFen, locale)} · ${projectedReference ? `${zh ? '支付参考 ' : 'Payment reference '}${formatFen(projectedReference.referenceFen, locale)}` : zh ? '暂无支付参考' : 'No payment reference'} · ${zh ? '计划耗材费用待核对，预计总费用暂不可用' : 'Review planned material prices; projected charges unavailable'}`}>
+      <b>{group}</b>{postoperative ? <span className="text-warning">{zh ? '待确认主操作' : 'Main procedure pending'}</span> : null}<span className="text-warning">{zh ? '耗材费用待核对' : 'Material prices pending'}</span>
+    </ProgressChip>
+  }
   if (data) return <DrgProgressBar data={data} costs={query.projectedCosts} locale={locale} onOpenDrg={onOpenDrg} />
   const unavailable = query.simulation.error || query.grouping.error || admission.status === 'registered'
-  return <button type="button" className="clinmesh-inpatient-drg-progress" onClick={onOpenDrg} aria-label={locale === 'zh-CN' ? 'DRG 费用进度，点击查看 DRG 预分组' : 'DRG charge progress; open DRG pre-grouping'}>
-    <span>DRG</span><span>{unavailable ? locale === 'zh-CN' ? '暂无支付参考' : 'No payment reference' : locale === 'zh-CN' ? '正在核对费用' : 'Checking charges'}</span><ChevronRightIcon aria-hidden="true" />
-  </button>
+  const text = unavailable ? zh ? '暂无支付参考' : 'No payment reference' : zh ? '正在核对费用' : 'Checking charges'
+  return <ProgressChip locale={locale} onOpenDrg={onOpenDrg} detail={`DRG ${text}`}><b>DRG</b><span aria-hidden="true">{text}</span></ProgressChip>
 }
