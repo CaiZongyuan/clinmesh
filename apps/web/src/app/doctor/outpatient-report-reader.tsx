@@ -132,7 +132,7 @@ function ReportReaderSession({ context, detail, locale, readOnly }: ReaderProps)
     }).finally(() => { generation.current++; setReady(new Set()); setSelectedId(null) })
   }
   return <>
-    <Button aria-label={text(['连续阅读报告', 'Read reports continuously'])} variant="outline" onClick={() => { generation.current++; setReady(new Set()); setOpen(true) }}>{text(['连续阅读报告', 'Read reports continuously'])}<Badge variant="secondary">{records.filter(item => item.request.status === 'reported').length}{text([' 份待阅', ' unread'])}</Badge></Button>
+    <Button aria-label={text(['连续阅读报告', 'Read reports continuously'])} className="h-auto min-h-8 max-w-full flex-wrap whitespace-normal" variant="outline" onClick={() => { generation.current++; setReady(new Set()); setOpen(true) }}>{text(['连续阅读报告', 'Read reports continuously'])}<Badge variant="secondary">{records.filter(item => item.request.status === 'reported').length}{text([' 份待阅', ' unread'])}</Badge></Button>
     <Dialog pending={writer.busy} open={open} onOpenChange={value => { if (!value) close() }}><DialogContent showCloseButton={false} className="max-w-[min(94vw,90rem)]">
       <DialogHeader className="pr-4"><div className="flex items-start justify-between gap-3"><DialogTitle>{review ? text(['报告已阅核对', 'Review report acknowledgements']) : text(['报告阅读与已阅确认', 'Read and acknowledge reports'])}</DialogTitle><DialogClose render={<Button size="sm" variant="ghost" />}>{text(['关闭阅读窗口', 'Close reading window'])}</DialogClose></div><DialogDescription>{context.patientName}{text([' · 同患者同次就诊。打开报告不会自动确认已阅。', ' · This patient and encounter. Opening a report does not acknowledge it.'])}</DialogDescription></DialogHeader>
       <div className="min-h-0 overflow-y-auto p-4">

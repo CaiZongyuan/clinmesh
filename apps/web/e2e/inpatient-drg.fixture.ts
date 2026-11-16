@@ -56,12 +56,12 @@ export async function writeDrgBrowserRules(drgRulesDirectory: string, sourceVers
 export { expect }
 
 export function drgBrowserApi(page: Pick<Page, 'request'>, app: { origin: string; password: string }) {
-  const login = async (role: string) => expect((await page.request.post(`${app.origin}/api/auth/sign-in/email`, { headers: { origin: app.origin },
+  const login = async (role: string) => expect((await page.request.post(`${app.origin}/api/auth/sign-in/email`, { maxRetries: 1, headers: { origin: app.origin },
     data: { email: `${role}@demo.clinmesh.local`, password: app.password } })).status()).toBe(200)
   const post = (path: string, input: unknown, expectedVersions?: object) => page.request.post(app.origin + path, {
     headers: { origin: app.origin, 'idempotency-key': randomUUID() }, data: { input, ...(expectedVersions ? { expectedVersions } : {}) },
   })
-  const get = (path: string) => page.request.get(app.origin + path)
+  const get = (path: string) => page.request.get(app.origin + path, { maxRetries: 1 })
   return { login, post, get }
 }
 

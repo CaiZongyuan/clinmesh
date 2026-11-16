@@ -72,15 +72,15 @@ export function InpatientCorrectionComposer({ draft, write, locale, execution, r
     if (draft.prepareBatch(request.version)) setReview(basis)
     else setMessage(t('未能保存本次核对，输入保留，请检查浏览器存储。', 'The review could not be saved. Input is kept. Check browser storage.'))
   }
+  if (rows.length === 0 && draft.items.length === 0 && !draft.failed && !draft.busy) return null
   return <section aria-label={t('待更正清单', 'Pending corrections')} className="flex min-w-0 flex-col gap-3 border-t pt-3">
     <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold">{t('待更正清单', 'Pending corrections')}（{rows.length}/20） · {t('已选 ', 'Selected ')}{selected.length}</h4>
       <div className="flex flex-wrap gap-2"><Button type="button" variant="ghost" size="sm" disabled={!editable || rows.length === 0} onClick={() => { setReview(null); draft.save({ ...draft.value, rows: rows.map(row => ({ ...row, selected: false, revision: crypto.randomUUID() })) }) }}>{t('清空选择', 'Clear selection')}</Button>
         <Button type="button" variant="ghost" size="sm" disabled={!editable || rows.length === 0} onClick={() => { setClearFailed(false); setDiscard('all') }}>{t('清空更正输入', 'Discard correction input')}</Button></div>
     </div>
-    <p className="text-xs text-muted-foreground">{t('每次最多20笔；同一种耗材的不同原登记分别更正。原记录保留并追加费用冲正，不代表现金退款。', 'Up to 20 entries. Separate original uses remain separate corrections. Originals and charge reversals are retained; this does not mean a cash refund.')}</p>
     {!writable ? <p role="status">{t('当前岗位、归档或结算状态不允许更正；未提交输入保留。', 'The current role, archive or settlement state prevents corrections. Input is kept.')}</p> : null}
     {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('更正输入或原尝试的存储不可用，已阻止发送。原输入保留；请检查存储后重试。', 'Correction storage or original attempt is unavailable. Sending is blocked and input is kept. Check storage and retry.')}</AlertDescription><Button type="button" variant="outline" size="sm" disabled={!active || draft.busy || write.mutation.isPending} onClick={() => draft.retryStorage()}>{t('重试保存更正输入', 'Retry saving correction input')}</Button></Alert> : null}
-    {rows.length === 0 ? <p className="text-sm text-muted-foreground">{t('从上方既有用量中选择需要更正的原记录。', 'Choose existing material entries above to correct.')}</p> : <>
+    {rows.length > 0 ? <>
       <Field><FieldLabel htmlFor={`${id}-common`}>{t('共同更正依据', 'Common correction basis')}</FieldLabel><Input id={`${id}-common`} maxLength={2000} disabled={!editable} value={commonReason} onChange={event => { setReview(null); draft.save({ ...draft.value, commonReason: event.target.value, rows: rows.map(row => ({ ...row, revision: crypto.randomUUID() })) }) }} /></Field>
       <div className="flex max-h-[min(45svh,440px)] min-h-0 flex-col gap-3 overflow-y-auto" tabIndex={0} aria-label={t('逐项更正输入', 'Correction entry inputs')}>
         {rows.map(row => { const label = rowLabel(row), problem = issue(row), material = row.material
@@ -110,7 +110,7 @@ export function InpatientCorrectionComposer({ draft, write, locale, execution, r
           </article>
         })}
       </div>
-    </>}
+    </> : null}
     {message ? <Alert variant="destructive"><AlertDescription>{message}</AlertDescription></Alert> : null}
     {draft.items.length ? <section aria-label={t('逐项更正结果', 'Correction results')} className="flex flex-col gap-2 text-sm">
       <h5 className="font-medium">{t('逐项更正结果', 'Correction results')} · {t('成功 ', 'Succeeded ')}{draft.items.filter(item => item.status === 'success').length}/{draft.items.length}</h5>
@@ -127,6 +127,7 @@ export function InpatientCorrectionComposer({ draft, write, locale, execution, r
     }}>{t('重新核对余项', 'Review remaining entries')}</Button> : null}
     {review !== null ? <section aria-label={t('更正核对清单', 'Correction review')} className="flex flex-col gap-2 rounded-lg bg-muted p-3 text-sm">
       <h5 className="font-semibold">{t('本次核对 ', 'Review ')}{selected.length}{t(' 笔更正', ' corrections')}</h5>
+      <p className="text-xs text-muted-foreground">{t('仅调整费用记录，不自动退款。', 'Adjusts charge records; no automatic refund.')}</p>
       {selected.map(row => <p key={row.id} className="break-words">{rowLabel(row)} → {describe(row)} · {t('最终依据：', 'Final basis: ')}{row.reason.trim() || commonReason.trim()}</p>)}
       <p className="text-xs text-muted-foreground">{t('逐笔执行。成功项保留；同一预留受前项影响时暂停余项，重新核对后再办理。', 'Processed entry by entry. Successful corrections remain. If a prior entry changes a shared reservation, later entries pause for review.')}</p>
       {review !== basis ? <p role="status" className="text-destructive">{t('核对期间资料已变化，请重新核对。', 'Data changed during review. Review again.')}</p> : null}

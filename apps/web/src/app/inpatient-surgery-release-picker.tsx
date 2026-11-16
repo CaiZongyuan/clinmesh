@@ -29,7 +29,7 @@ export function SurgeryReleasePicker({ reservations, rows, selected, locale, dis
     ...items.filter(item => !selected.some(value => value.reservationId === item.id)).map(item => ({ reservationId: item.id, expectedReservationVersion: item.version, display: `${item.materialDisplay} · ${item.reason}` }))])
   return <FieldSet disabled={disabled} aria-label={zh ? '剩余预留释放' : 'Release remaining reservations'} className="min-w-0 rounded-md border p-3">
     <FieldLegend>{zh ? '剩余预留释放' : 'Release remaining reservations'}</FieldLegend>
-    <p role="status" className="text-xs text-muted-foreground">{zh ? `已选释放 ${selected.length} / 100 项；仅释放本手术最终用量核实后的剩余预留，未选项继续保留。` : `${selected.length} / 100 releases selected. Only remaining reservations for this surgery are released; unselected items are retained.`}</p>
+    <p role="status" className="text-xs text-muted-foreground">{zh ? `已选释放 ${selected.length} / 100 项` : `${selected.length} / 100 releases selected`}</p>
     <Field><FieldLabel htmlFor={id}>{zh ? '搜索剩余预留' : 'Search remaining reservations'}</FieldLabel><Input id={id} maxLength={200} value={search} onChange={event => { setSearch(event.target.value); setPage(1) }} /></Field>
     <div className="flex flex-wrap gap-2">
       <Button type="button" size="sm" variant="outline" disabled={disabled || shown.every(item => !eligible(item)) || selected.length + shown.filter(item => eligible(item) && !selected.some(value => value.reservationId === item.id)).length > 100}

@@ -52,8 +52,9 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
 
   await open('inpatient-doctor', admission.patientName)
   await stage('手术')
-  await surgeryPlan().getByRole('button', { name: '确认已签', exact: true }).click()
-  await surgeryPlan().getByLabel('签署说明', { exact: true }).fill('合成PCI知情同意已签署并完成支架植入')
+  const preparation = page.getByRole('region', { name: '术前准备', exact: true })
+  await preparation.getByRole('button', { name: '确认已签', exact: true }).click()
+  await preparation.getByLabel('签署说明', { exact: true }).fill('合成PCI知情同意已签署并完成支架植入')
   await page.getByRole('button', { name: "确认手术知情同意书已签", exact: true }).click()
   await expect(surgeryPlan()).toContainText('已就绪')
   await page.getByRole('button', { name: '整台补录', exact: true }).click()
@@ -80,7 +81,12 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   expect(pci.materials).toHaveLength(4)
   expect(executionPosts).toBe(1)
   const reservations = await s.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
-  expect(reservations.reservations.every(item => item.status === 'replaced' && item.replacedByMaterialUseId !== undefined)).toBe(true)
+  const pciReservations = reservations.reservations.filter(item => item.requestId === stay.requestId)
+  expect(pciReservations).toHaveLength(4)
+  expect(pciReservations.every(item => item.status === 'replaced' && item.replacedByMaterialUseId !== undefined)).toBe(true)
+  expect(reservations.reservations.filter(item => item.requestId !== stay.requestId)).toEqual(preparedStay ? [expect.objectContaining({
+    materialId: 'hospital-material-catheter', quantity: 1, consumedQuantity: 0, status: 'reserved',
+  })] : [])
   await executePciMedicationThroughPages(page, app, open, stay, ['aspirin'], pci.id)
   const clinical = await s.read('inpatient-doctor', `${stay.path}/clinical`, inpatientFullClinicalSchema)
   expect(clinical.charges.filter(item => item.kind === 'material')).toHaveLength(4)

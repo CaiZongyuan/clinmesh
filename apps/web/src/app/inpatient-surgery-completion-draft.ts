@@ -9,7 +9,7 @@ const rowSchema = z.object({
   previousQuantity: z.number().int().nonnegative(), display: z.string().min(1), unit: z.string().nullable(),
   priceFen: z.number().int().nonnegative().safe(),
 }).strict()
-export const completionDraftSchema = z.object({ rows: z.array(rowSchema).max(1000), note: z.string().max(2000),
+export const completionDraftSchema = z.object({ rows: z.array(rowSchema).max(1000), note: z.string().max(2000), noteSource: z.enum(['rule', 'doctor']).default('doctor'),
   releases: z.array(z.object({ reservationId: z.string().min(1), expectedReservationVersion: z.number().int().positive(), display: z.string().min(1) }).strict()).max(1000),
 }).strict()
 export type CompletionDraftRow = z.infer<typeof rowSchema>
@@ -33,7 +33,7 @@ export function initialCompletionDraft(execution: z.infer<typeof inpatientSurger
       materialUseIds: [], quantity: '0', previousQuantity: 0, display: reservation.materialDisplay, unit: reservation.unit,
       priceFen: reservation.priceFen, reservationId: reservation.id, expectedReservationVersion: reservation.version })
   }
-  return { rows, note: '', releases: [] }
+  return { rows, note: '', noteSource: 'rule' as const, releases: [] }
 }
 
 export function validFinalQuantity(text: string) {

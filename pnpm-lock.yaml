@@ -395,6 +395,9 @@ importers:
       react18:
         specifier: npm:react@18.3.1
         version: react@18.3.1
+      terser:
+        specifier: 5.50.0
+        version: 5.50.0
       tsx:
         specifier: 'catalog:'
         version: 4.23.12

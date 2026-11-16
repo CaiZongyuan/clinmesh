@@ -1,44 +1,49 @@
 import { inpatientCostsSchema, inpatientSurgeryUsageSchema, type InpatientSurgeryUsage, type InpatientCosts, type InpatientDrgSimulation } from '@clinmesh/contracts/inpatient-drg-simulation'
 import type { ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
+import { pendingMaterialDraftCostDelta } from './inpatient-material-cost-projection.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 
 /** 仅从当前岗位可见的正式事实和既有计价器读取；不依赖模型或持续跟进授权。 */
 export function readInpatientCosts(owner: InpatientService, context: ActorContext, admissionId: string,
-  planned?: { requestId: string; items: Array<{ materialId: string; catalogVersion: number; quantity: number; unitPriceFen: number; display: string }> },
+  planned?: { requestId: string; items: Array<{ materialId: string; catalogVersion: number; quantity: number; unitPriceFen: number; display: string }>; incomplete?: boolean },
   evaluated?: InpatientDrgSimulation | null) {
   let simulation = evaluated ?? null
   if (evaluated === undefined) try { simulation = owner.drg.simulate(context, admissionId, undefined) }
   catch (error) { if (!(error instanceof InpatientError) || error.code !== 'DRG_RULES_NOT_CONFIGURED') throw error }
   const priced = planned === undefined && simulation !== null ? simulation : owner.drg.costProjection(context, admissionId, undefined, planned)
+  const pendingDrafts = pendingMaterialDraftCostDelta(owner, context, admissionId, planned?.requestId)
+  const projectionMissing = [...pendingDrafts.missing, ...(planned?.incomplete ? ['当前计划耗材工作稿缺少可核验价格，预计费用暂不可用'] : [])]
+  const projectionComplete = projectionMissing.length === 0
   const sum = (items: typeof priced.committed.items) => items.reduce((total, item) => total + (item.estimatedFen ?? 0), 0)
   const currentGrouping = simulation?.grouping.formal ?? null, projectedGrouping = simulation?.grouping.projected ?? null
   const currentPaymentReference = simulation?.paymentReference ?? null
   const projectedPaymentReference = projectedGrouping === null ? null : owner.drg.paymentReference(projectedGrouping)
   const components = { formalChargesFen: priced.formal.chargesFen,
     pendingOrdersFen: sum(priced.committed.items.filter(item => item.kind !== 'surgery')),
-    remainingMaterialsFen: sum(priced.reserved.items),
+    remainingMaterialsFen: sum(priced.reserved.items) + pendingDrafts.deltaFen,
     plannedSurgeryFen: sum(priced.committed.items.filter(item => item.kind === 'surgery')),
-    projectedTotalFen: priced.coverage.estimatedTotalFen }
+    projectedTotalFen: priced.coverage.estimatedTotalFen + pendingDrafts.deltaFen }
   const paymentStatus = simulation === null ? 'rules-unavailable' : currentGrouping?.status !== 'grouped' ? 'grouping-incomplete'
     : currentPaymentReference === null ? 'reference-missing' : 'available'
-  const facts = { components, currentGrouping, projectedGrouping, currentPaymentReference, projectedPaymentReference,
-    currentDifferenceFen: currentPaymentReference === null ? null : currentPaymentReference.referenceFen - components.projectedTotalFen,
-    projectedDifferenceFen: projectedPaymentReference === null ? null : projectedPaymentReference.referenceFen - components.projectedTotalFen,
-    paymentStatus, paymentMessage: paymentStatus === 'rules-unavailable' ? '医院尚未启用医保分组'
+  const facts = { projectionComplete, projectionMissing, components, currentGrouping, projectedGrouping, currentPaymentReference, projectedPaymentReference,
+    currentDifferenceFen: !projectionComplete || currentPaymentReference === null ? null : currentPaymentReference.referenceFen - components.projectedTotalFen,
+    projectedDifferenceFen: !projectionComplete || projectedPaymentReference === null ? null : projectedPaymentReference.referenceFen - components.projectedTotalFen,
+    paymentStatus, paymentMessage: !projectionComplete ? projectionMissing.join('；') : paymentStatus === 'rules-unavailable' ? '医院尚未启用医保分组'
       : paymentStatus === 'grouping-incomplete' ? '诊断或手术记录不全，暂时无法分组'
         : paymentStatus === 'reference-missing' ? `已分到${currentGrouping!.drgCode}组，但暂无支付参考，金额暂不可估`
-          : '医院支付参考与患者医保待遇分别核对；费用说明不改变临床选择。',
+          : '医院支付参考与患者医保待遇分别核对；严格等效候选由规则筛选，数量和术式由医生确认。',
     exceptionAlert: currentPaymentReference === null || currentPaymentReference.referenceFen <= 0 ? 'unknown'
       : BigInt(components.formalChargesFen) > 3n * BigInt(currentPaymentReference.referenceFen) ? 'triggered' : 'below-threshold' }
   return inpatientCostsSchema.parse({ ...facts, fingerprint: canonicalJsonHash(facts) })
 }
 
 export function assertInpatientCostExplanation(explanation: string | null, costs?: InpatientCosts | null,
-  usage: ReadonlyArray<Pick<InpatientSurgeryUsage, 'usedFen' | 'additionalFen'>> = []) {
+  usage: ReadonlyArray<Pick<InpatientSurgeryUsage, 'usedFen' | 'additionalFen'>> = [], equivalentAmounts: readonly number[] = []) {
   if (explanation === null) return
   if (!costs) throw new InpatientError('INPATIENT_DRG_COST_EXPLANATION_INVALID', '费用说明缺少确定性金额依据')
-  const amounts = [...Object.values(costs.components), costs.currentPaymentReference?.referenceFen, costs.projectedPaymentReference?.referenceFen,
+  const components = costs.projectionComplete ? Object.values(costs.components) : [costs.components.formalChargesFen, costs.components.pendingOrdersFen, costs.components.plannedSurgeryFen]
+  const amounts = [...equivalentAmounts, ...components, costs.currentPaymentReference?.referenceFen, costs.projectedPaymentReference?.referenceFen,
     costs.currentDifferenceFen, costs.projectedDifferenceFen, ...usage.flatMap(item => [item.usedFen, item.additionalFen]),
     usage.reduce((sum, item) => sum + item.usedFen, 0), usage.reduce((sum, item) => sum + item.additionalFen, 0)]
     .filter((amount): amount is number => amount != null)

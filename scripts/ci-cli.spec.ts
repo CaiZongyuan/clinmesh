@@ -276,11 +276,29 @@ describe('CI command execution boundary', () => {
 
   it.each([
     { stage: 'unit', shard: '2/2', expected: [['test:packages', '--', '--shard=2/2'], ['test:scripts', '--shard=2/2']] },
-    { stage: 'browser', shard: '1/2', expected: [['exec', 'playwright', 'install', '--with-deps', 'chromium'], ['test:browser', '--shard=1/2']] },
+    { stage: 'browser', shard: '1/2', expected: [['exec', 'playwright', 'install', '--with-deps', 'chromium'],
+      ['test:browser', '--shard=1/2', '--grep-invert=@surgery-flow'], ['test:browser', '--grep=@surgery-flow']] },
+    { stage: 'browser', shard: '2/2', expected: [['exec', 'playwright', 'install', '--with-deps', 'chromium'],
+      ['test:browser', '--shard=2/2', '--grep-invert=@surgery-flow']] },
+    { stage: 'e2e', shard: '1/1', expected: [['exec', 'playwright', 'install', '--with-deps', 'chromium'],
+      ['test:e2e', '--grep-invert=@surgery-flow'], ['test:e2e', '--grep=@surgery-flow']] },
   ])('runs complete $stage shard $shard on its own runner', async ({ stage, shard, expected }) => {
     const fixture = commands()
     expect((await run(fixture.directory, ['run', stage, shard], { ...fixture.env, CI_PLAN: JSON.stringify(fullPlan) })).code).toBe(0)
     expect(fixture.calls().map(call => call.args)).toEqual(expected)
+  })
+
+  it.each(['--grep-invert=@surgery-flow', '--grep=@surgery-flow'])('fails the browser stage when phase %s fails', async flag => {
+    const fixture = commands()
+    const result = await run(fixture.directory, ['run', 'browser', '1/2'], {
+      ...fixture.env, CI_PLAN: JSON.stringify(fullPlan), CI_TEST_FAIL_ON: flag,
+    })
+    expect(result.code).not.toBe(0)
+    expect(fixture.calls().map(call => call.args)).toEqual([
+      ['exec', 'playwright', 'install', '--with-deps', 'chromium'],
+      ['test:browser', '--shard=1/2', '--grep-invert=@surgery-flow'],
+      ...(flag === '--grep=@surgery-flow' ? [['test:browser', '--grep=@surgery-flow']] : []),
+    ])
   })
 
   it.each([

@@ -15,6 +15,8 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   expect((await subject.api.post(`${subject.path}/surgeries/request`, { encounterVersion: (await clinical()).encounterVersion,
     procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成布局复核手术' })).status()).toBe(200)
   const request = inpatientSurgerySchema.parse(await (await subject.api.get(`${subject.path}/surgeries`)).json()).requests[0]!
+  expect((await subject.api.post(`${subject.path}/drg/reservations`, { encounterVersion: (await clinical()).encounterVersion,
+    requestId: request.id, materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1, reason: '合成布局复核已确认耗材' })).status()).toBe(200)
   expect((await subject.api.post(`${subject.path}/orders/issue`, { encounterVersion: (await clinical()).encounterVersion, duration: 'temporary',
     selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' } })).status()).toBe(200)
   await subject.api.login('ward-nurse')
@@ -60,7 +62,7 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   const refresh = queue.getByRole('button', { name: '刷新', exact: true })
   await expect(refresh.locator('svg')).toHaveCount(1)
   await expect(refresh).toHaveText('')
-  const preparation = page.getByRole('region', { name: '开始手术还差', exact: true })
+  const preparation = page.getByRole('region', { name: '术前准备', exact: true })
   await expect(preparation.getByText('术前核对', { exact: true })).toBeVisible()
   await expect(preparation.getByText('病区护士', { exact: true })).toBeVisible()
   await expect(preparation.getByText('手术知情同意书已签', { exact: true })).toBeVisible()
@@ -76,7 +78,11 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
     await workspace.evaluate((element, width) => { element.style.width = `${width}px` }, width)
     await options.appearance(theme)
     await expect.poll(() => workspace.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
-    await expect.poll(() => workspace.locator('.clinmesh-card-patient').evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(width === 1101 ? 190 : 220)
+    // 常驻 DRG 行单独限制；原患者摘要仍沿用既有高度合同。
+    await expect(workspace.locator('.clinmesh-inpatient-drg-progress')).toBeVisible()
+    await expect.poll(() => workspace.locator('.clinmesh-inpatient-drg-progress').evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(64)
+    await expect.poll(() => workspace.locator('.clinmesh-card-patient').evaluate(element => element.getBoundingClientRect().height
+      - element.querySelector('.clinmesh-inpatient-drg-progress')!.getBoundingClientRect().height)).toBeLessThanOrEqual(width === 1101 ? 190 : 220)
     await expect.poll(() => assistant.evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(width === 1101 ? 34 : 64)
     for (const chip of await assistant.getByRole('button').all()) {
       const lineHeight = await chip.evaluate(element => parseFloat(getComputedStyle(element).lineHeight))
