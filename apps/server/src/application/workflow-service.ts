@@ -7,7 +7,7 @@ import {
 } from '@clinmesh/contracts/agent'
 import type { FhirResource } from '@clinmesh/contracts/fhir'
 import { inpatientHistoryDetail, inpatientHistoryItems, isInpatientHistoryEntry } from './doctor-inpatient-history.ts'
-import { outpatientCaseSource, uniquePatientCaseSource } from './outpatient-case-source.ts'
+import { hasActiveInpatientAdmission, outpatientCaseSource, uniquePatientCaseSource } from './outpatient-case-source.ts'
 import {
   billingCaseSchema,
   commandResponseSchema,
@@ -1417,6 +1417,9 @@ export class WorkflowService
     }
     if (this.#context.activeCaseByPatient(context, patient.id) !== undefined) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The patient already has an active outpatient case')
+    }
+    if (hasActiveInpatientAdmission(this.#database, context, patient.id)) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The patient still has an active inpatient admission')
     }
     const source = registration.materializingSyntheticCase === true
       ? undefined : uniquePatientCaseSource(this.#database, context, patient.id)

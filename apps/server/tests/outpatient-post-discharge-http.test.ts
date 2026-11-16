@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it } from 'vitest'
 import {
+  acknowledgeLaboratoryReportResponseSchema, apiErrorSchema,
   billingCaseSchema, caseLaboratoryCatalogSearchSchema, clinicalDocumentDraftResponseSchema,
   clinicalDocumentSignPreviewResponseSchema, clinicalDocumentSignResponseSchema,
+  confirmDiagnosisResponseSchema, confirmNoMedicationResponseSchema, diagnosisDraftResponseSchema,
   doctorCaseDetailSchema, doctorCompletedCaseListSchema, doctorQueueSchema,
-  encounterCompletionResponseSchema, issueLaboratoryRequestResponseSchema,
+  encounterCompletionResponseSchema, issueLaboratoryRequestResponseSchema, laboratoryRequestDraftResponseSchema,
   patientSearchSchema, paymentPreviewResponseSchema, paymentResponseSchema,
   registrationCatalogSchema, registrationResponseSchema, sendConsultationMessageResponseSchema,
   startVisitResponseSchema, triageResponseSchema,
@@ -18,42 +20,57 @@ import {
 } from './fixtures/pci-payment-drg.ts'
 
 const fixtures: PciPaymentDrgFixture[] = []
-afterEach(async () => { for (const fixture of fixtures.splice(0)) await fixture.close() })
+let fixture!: PciPaymentDrgFixture
+let stay!: Awaited<ReturnType<PciPaymentDrgFixture['preparePciAdmission']>>
+let signedAngiography!: Record<string, unknown>
+let dialogueCalls = 0
 
-it('completes a new consultation and exact follow-up investigation after PCI discharge using the same patient and authorized inpatient history', async () => {
+beforeEach(async () => {
+  dialogueCalls = 0
   const prepared = await preparePciPaymentDrgFixture()
-  let dialogueCalls = 0
   prepared.options.consultationModel = 'synthetic-post-discharge-dialogue'
   prepared.options.chatCompletionsProvider = { completeJson: async input => {
     expect(input.schemaName).toBe('patient_dialogue_reply')
     dialogueCalls += 1
     return { model: input.model, content: JSON.stringify({ reply: '医生您好，我今天按约定来复查。' }) }
   } }
-  const fixture = await createPciPaymentDrgFixture(prepared)
+  fixture = await createPciPaymentDrgFixture(prepared)
   fixtures.push(fixture)
-  const stay = await fixture.preparePciAdmission()
+  stay = await fixture.preparePciAdmission()
   await fixture.completePciLaboratories(stay)
   await fixture.dispensePciMedications(stay, 'preoperative')
   const angiography = await fixture.executeAngiography(stay)
   await fixture.runtime.dispatchPending()
   const angiographyReport = (await fixture.read('inpatient-doctor', `${stay.path}/angiography-reports`, inpatientAngiographyReportsSchema))
     .reports.find(item => item.procedureId === angiography.id)!
-  const signedAngiography = await fixture.read('inpatient-doctor', `/fhir/R5/DiagnosticReport/${angiographyReport.id}`, fhirResourceSchema)
+  signedAngiography = await fixture.read('inpatient-doctor', `/fhir/R5/DiagnosticReport/${angiographyReport.id}`, fhirResourceSchema)
   expect(signedAngiography).toMatchObject({ conclusion: expect.stringMatching(/\S/) })
   const surgery = await fixture.executePci(stay)
   await fixture.dispensePostoperativePciAspirin(stay, surgery.id)
-  const departed = await fixture.depart(stay)
-  expect(departed.status).toBe('departed')
+}, 60_000)
 
-  const patients = await fixture.read('registrar', `/api/his/v1/patients?query=${encodeURIComponent('合成冠脉')}`, patientSearchSchema)
-  const patient = patients.items.find(item => item.id === stay.patientId)
-  expect(patient).toBeDefined()
+afterEach(async () => { for (const item of fixtures.splice(0)) await item.close() })
+
+it('completes a new consultation and exact follow-up investigation after PCI discharge using the same patient and authorized inpatient history', async () => {
+  const patientsBeforeDepart = await fixture.read('registrar', `/api/his/v1/patients?query=${encodeURIComponent('合成冠脉')}`, patientSearchSchema)
+  const patientBeforeDepart = patientsBeforeDepart.items.find(item => item.id === stay.patientId)!
   const registration = await fixture.read('registrar', '/api/his/v1/catalogs/registration', registrationCatalogSchema)
   const registrationInput = {
     patientId: stay.patientId, departmentId: registration.departments[0]!.id,
     locationId: registration.locations[0]!.id, visitTypeId: registration.visitTypes[0]!.id,
     visitDate: registration.virtualDate,
   }
+  const rejectedWhileAdmitted = await fixture.request('registrar',
+    '/api/his/v1/registrations/actions/register', registrationInput, randomUUID(), { [`Patient/${stay.patientId}`]: patientBeforeDepart.versionId })
+  expect(rejectedWhileAdmitted.status).toBe(409)
+  expect(apiErrorSchema.parse(await rejectedWhileAdmitted.json()).error.code).toBe('WORKFLOW_CONFLICT')
+
+  const departed = await fixture.depart(stay)
+  expect(departed.status).toBe('departed')
+
+  const patients = await fixture.read('registrar', `/api/his/v1/patients?query=${encodeURIComponent('合成冠脉')}`, patientSearchSchema)
+  const patient = patients.items.find(item => item.id === stay.patientId)
+  expect(patient).toBeDefined()
   const registered = await parsePciResponse(registrationResponseSchema, await fixture.request('registrar',
     '/api/his/v1/registrations/actions/register', registrationInput, randomUUID(), { [`Patient/${stay.patientId}`]: patient!.versionId }))
   const encounterId = registered.data.encounterId
@@ -116,9 +133,9 @@ it('completes a new consultation and exact follow-up investigation after PCI dis
   const catalog = await fixture.read('doctor', `/api/his/v1/doctor/cases/${caseId}/reference-catalogs/laboratory?query=${encodeURIComponent('白细胞')}&page=1&pageSize=20`, caseLaboratoryCatalogSearchSchema)
   const laboratory = catalog.items.find(item => item.referenceConcept?.code === '6690-2')
   expect(laboratory).toBeDefined()
-  const saved = await post('laboratory-request/draft', { catalogItemId: laboratory!.id,
-    indicationCode: laboratory!.allowedIndicationCodes[0], expectedDraftVersion: 0 }, 'PUT')
-  expect(saved.status, await saved.clone().text()).toBe(200)
+  await parsePciResponse(laboratoryRequestDraftResponseSchema, await post('laboratory-request/draft', {
+    catalogItemId: laboratory!.id, indicationCode: laboratory!.allowedIndicationCodes[0], expectedDraftVersion: 0,
+  }, 'PUT'))
   const issued = await parsePciResponse(issueLaboratoryRequestResponseSchema,
     await post('laboratory-request/actions/issue', { expectedDraftVersion: 1 }))
   const request = issued.data.request
@@ -136,15 +153,16 @@ it('completes a new consultation and exact follow-up investigation after PCI dis
   const reported = (await read()).laboratoryRequests!.requests.find(item => item.id === request.id)!
   expect(reported.status, JSON.stringify(reported.generationError)).toBe('reported')
   expect(reported.report!.results.find(item => item.code === '6690-2')?.value).toBe(6.2)
-  const acknowledged = await fixture.request('doctor', `/api/his/v1/laboratory-requests/${reported.id}/reports/${reported.report!.diagnosticReportId}/actions/acknowledge`, {
-    expectedRequestVersion: reported.version,
-  }, randomUUID(), { [`DiagnosticReport/${reported.report!.diagnosticReportId}`]: reported.report!.diagnosticReportVersion })
-  expect(acknowledged.status, await acknowledged.clone().text()).toBe(200)
+  await parsePciResponse(acknowledgeLaboratoryReportResponseSchema, await fixture.request('doctor',
+    `/api/his/v1/laboratory-requests/${reported.id}/reports/${reported.report!.diagnosticReportId}/actions/acknowledge`, {
+      expectedRequestVersion: reported.version,
+    }, randomUUID(), { [`DiagnosticReport/${reported.report!.diagnosticReportId}`]: reported.report!.diagnosticReportVersion }))
 
-  expect((await post('diagnosis/draft', { expectedDraftVersion: 0,
-    entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary' }] }, 'PUT')).status).toBe(200)
-  expect((await post('diagnosis/actions/confirm', { expectedDraftVersion: 1 })).status).toBe(200)
-  expect((await post('medication-conclusion/actions/confirm-no-medication', { expectedDraftVersion: 0 })).status).toBe(200)
+  await parsePciResponse(diagnosisDraftResponseSchema, await post('diagnosis/draft', {
+    expectedDraftVersion: 0, entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary' }],
+  }, 'PUT'))
+  await parsePciResponse(confirmDiagnosisResponseSchema, await post('diagnosis/actions/confirm', { expectedDraftVersion: 1 }))
+  await parsePciResponse(confirmNoMedicationResponseSchema, await post('medication-conclusion/actions/confirm-no-medication', { expectedDraftVersion: 0 }))
   const document = {
     chiefComplaint: '冠脉介入出院后复查。', historyOfPresentIllness: '患者按约定返院复查，已核对本院住院摘要。',
     physicalExamination: '生命体征平稳，未见急性异常。', assessment: '已核对住院治疗及本次血常规报告。',
@@ -161,4 +179,4 @@ it('completes a new consultation and exact follow-up investigation after PCI dis
   expect(completed.data.status).toBe('completed')
   expect((await read()).patient.id).toBe(stay.patientId)
   expect(dialogueCalls).toBe(1)
-}, 120_000)
+})

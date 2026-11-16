@@ -56,14 +56,18 @@ export function inpatientHistoryDetail(database: ClinMeshDatabase, context: Acto
     .map(row => { const { coding: code } = inpatientProcedureItemSchema.parse(JSON.parse(row.actual_procedure_json));
       return { code: code.code ?? '', display: conceptLabel(code), performedAt: row.performed_at,
         ...(row.report_conclusion === null ? {} : { conclusion: row.report_conclusion }) } })
-  const medications = z.array(z.object({ display: z.string(), dose_text: z.string(), frequency_code: z.string(), state: z.string() }))
+  const medications = z.array(z.object({ display: z.string(), dose_text: z.string(), frequency_code: z.string(), state: z.enum(['signed', 'verified', 'stop-requested', 'stopped', 'completed']) }))
     .parse(database.driver.prepare(`SELECT display,dose_text,frequency_code,state FROM inpatient_order WHERE workspace_id=? AND epoch=? AND admission_id=?
       AND kind='medication' AND state IN ('signed','verified','stop-requested','stopped','completed') ORDER BY signed_at,order_id`).all(...bindings))
     .map(row => ({ display: row.display, doseText: row.dose_text, frequencyCode: row.frequency_code, state: row.state }))
   const reports = z.array(z.object({ content_json: z.string() })).parse(database.driver.prepare(`SELECT content_json FROM fhir_resource
     WHERE workspace_id=? AND epoch=? AND resource_type='DiagnosticReport' AND deleted=0
       AND json_extract(content_json,'$.encounter.reference')=? AND json_extract(content_json,'$.subject.reference')=?
-      AND json_extract(content_json,'$.status') IN ('final','amended','corrected') ORDER BY resource_id`)
+      AND json_extract(content_json,'$.status') IN ('final','amended','corrected')
+      AND NOT EXISTS (SELECT 1 FROM laboratory_report_revision rev
+        WHERE rev.workspace_id=fhir_resource.workspace_id AND rev.epoch=fhir_resource.epoch
+          AND rev.revision_of_diagnostic_report_id=fhir_resource.resource_id)
+    ORDER BY resource_id`)
     .all(context.workspaceId, context.epoch, `Encounter/${admission.admissionId}`, `Patient/${patientId}`)).map(row => {
       const report = z.object({ code: conceptSchema, issued: z.string().optional(), conclusion: z.string().optional(), result: z.array(z.object({ reference: z.string() })).optional() }).parse(JSON.parse(row.content_json))
       const findings = (report.result ?? []).flatMap(result => {
@@ -73,8 +77,19 @@ export function inpatientHistoryDetail(database: ClinMeshDatabase, context: Acto
           AND json_extract(content_json,'$.encounter.reference')=? AND json_extract(content_json,'$.subject.reference')=?
           AND json_extract(content_json,'$.status') IN ('final','amended','corrected')`).get(context.workspaceId, context.epoch, result.reference.slice(12), `Encounter/${admission.admissionId}`, `Patient/${patientId}`))
         if (observationRow === undefined) return []
-        const observation = z.object({ code: conceptSchema, valueQuantity: z.object({ value: z.number(), unit: z.string().optional() }).optional(), valueCodeableConcept: conceptSchema.optional(), valueString: z.string().optional() }).parse(JSON.parse(observationRow.content_json))
-        const value = observation.valueQuantity === undefined ? observation.valueCodeableConcept === undefined ? observation.valueString : conceptLabel(observation.valueCodeableConcept) : `${observation.valueQuantity.value} ${observation.valueQuantity.unit ?? ''}`.trim()
+        const observation = z.object({
+          code: conceptSchema,
+          valueQuantity: z.object({ value: z.number(), unit: z.string().optional() }).optional(),
+          valueCodeableConcept: conceptSchema.optional(),
+          valueInteger: z.number().int().optional(),
+          valueBoolean: z.boolean().optional(),
+          valueString: z.string().optional(),
+        }).parse(JSON.parse(observationRow.content_json))
+        const value = observation.valueQuantity !== undefined ? `${observation.valueQuantity.value} ${observation.valueQuantity.unit ?? ''}`.trim()
+          : observation.valueCodeableConcept !== undefined ? conceptLabel(observation.valueCodeableConcept)
+          : observation.valueInteger !== undefined ? String(observation.valueInteger)
+          : observation.valueBoolean !== undefined ? (observation.valueBoolean ? '是' : '否')
+          : observation.valueString
         return value === undefined ? [] : [`${conceptLabel(observation.code)}：${value}`]
       })
       return { title: conceptLabel(report.code), ...(report.issued === undefined ? {} : { issuedAt: report.issued }), conclusion: report.conclusion ?? '', findings }

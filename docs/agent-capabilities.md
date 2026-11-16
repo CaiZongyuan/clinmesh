@@ -146,7 +146,7 @@ DSH browser Tool broker 每次注册最多接受 32 个 Tool。医生“接诊�
 | `prescription`（处方） | `outpatient.prescription.draft.set`、`outpatient.prescription.issue.propose`、`outpatient.prescription.withdraw.propose`、`outpatient.medication.none.propose` |
 | `laboratory`（检验，含放射检查与病理会诊） | `outpatient.laboratory.draft.set`、`outpatient.laboratory.issue.propose`、`outpatient.laboratory.cancel.propose`、`outpatient.report.acknowledge.propose`、`outpatient.report.correct.propose`、`outpatient.imaging.draft.set`、`outpatient.imaging.issue.propose`、`outpatient.imaging.cancel.propose`、`outpatient.imaging.retry.propose`、`outpatient.imaging.correct.propose`、`outpatient.pathology.draft.set`、`outpatient.pathology.issue.propose`、`outpatient.pathology.cancel.propose`、`outpatient.pathology.retry.propose`、`outpatient.pathology.correct.propose` |
 
-开始就诊和完成就诊位于病例页头，不属于任何栏目。兼容初诊与复诊草稿的表单不只对应一个栏目，也跨栏目发布；它们仍按病例状态收窄，结构化诊疗流程中不占名额。兼容复诊流程的签署预览与签署同样在“病历记录”栏目发布。栏目 Tool 在所属栏目内的前提、输入、提案与授权语义不变。合同测试逐一断言每个岗位、视图与栏目发布的 Tool 不超过 32 个；放射与病理的已阅并入 `outpatient.report.acknowledge.propose`，导航阅片并入 `outpatient.section.select`；“检验检查”栏目共发布 25 个 Tool。
+开始就诊和完成就诊位于病例页头，不属于任何栏目。兼容初诊与复诊草稿的表单不只对应一个栏目，也跨栏目发布；它们仍按病例状态收窄，结构化诊疗流程中不占名额。兼容复诊流程的签署预览与签署同样在“病历记录”栏目发布。栏目 Tool 在所属栏目内的前提、输入、提案与授权语义不变。合同测试逐一断言每个岗位、视图与栏目发布的 Tool 不超过 32 个；放射与病理的已阅并入 `outpatient.report.acknowledge.propose`，导航阅片并入 `outpatient.section.select`；“检验检查”栏目共发布 27 个 Tool。
 
 ## 上游能力与接入限制
 

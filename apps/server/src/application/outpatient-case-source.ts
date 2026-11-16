@@ -19,7 +19,14 @@ export function outpatientCaseSource(database: ClinMeshDatabase, context: ActorC
   `).get(context.workspaceId, context.epoch, caseId, patientId ?? null, patientId ?? null))
 }
 
+export function hasActiveInpatientAdmission(database: ClinMeshDatabase, context: ActorContext, patientId: string) {
+  return database.driver.prepare(`SELECT 1 FROM inpatient_admission
+    WHERE workspace_id=? AND epoch=? AND patient_id=? AND status NOT IN ('departed','cleared') LIMIT 1`)
+    .get(context.workspaceId, context.epoch, patientId) !== undefined
+}
+
 export function uniquePatientCaseSource(database: ClinMeshDatabase, context: ActorContext, patientId: string) {
+  if (hasActiveInpatientAdmission(database, context, patientId)) return undefined
   const sources = z.array(materializationSchema).parse(database.driver.prepare(`SELECT m.case_id,m.brief_revision
     FROM synthetic_case_materialization m JOIN synthetic_case_instance original ON original.workspace_id=m.workspace_id
       AND original.case_id=m.case_id AND original.profile_id=m.profile_id AND original.profile_revision=m.profile_revision AND original.status!='retired'
