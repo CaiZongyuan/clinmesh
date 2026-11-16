@@ -284,7 +284,7 @@ it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带
   const surgery = screen.getByRole('tab', { name: /手术/, hidden: true })
   expect(surgery.textContent).not.toContain('助手 1')
   expect(document.body.textContent).not.toContain('SYNTHETIC_RAW_CODE')
-  expect(requests.every(request => request.startsWith('GET '))).toBe(true)
+  expect(requests.every(request => request.startsWith('GET ') || request.startsWith('POST ') && request.endsWith('/drg/simulation'))).toBe(true)
   manualConfirmed = true
   await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
   await waitFor(() => expect(screen.getByRole('region', { name: '助手已准备' }).textContent).toContain('选型参数 · 已确认'))
@@ -292,7 +292,7 @@ it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带
   await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
   expect(screen.queryByRole('region', { name: '助手已准备' })).toBeNull()
   expect(document.body.textContent).not.toContain('SYNTHETIC_RAW_CODE')
-  expect(requests.every(request => request.startsWith('GET '))).toBe(true)
+  expect(requests.every(request => request.startsWith('GET ') || request.startsWith('POST ') && request.endsWith('/drg/simulation'))).toBe(true)
   guidePublished = true
   await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
   expect(surgery.textContent).not.toContain('助手 1')

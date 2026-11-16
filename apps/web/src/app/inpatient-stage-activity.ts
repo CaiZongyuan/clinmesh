@@ -2,6 +2,7 @@ import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import type { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import type { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
+import type { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import type { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import type { inpatientTransfersSchema } from '@clinmesh/contracts/inpatient-transfer'
 import type { InpatientStage } from '@clinmesh/contracts/agent'
@@ -16,6 +17,7 @@ export interface InpatientActivity {
   clinical?: z.infer<typeof inpatientFullClinicalSchema> | undefined
   investigations?: z.infer<typeof inpatientInvestigationsSchema> | undefined
   surgery?: z.infer<typeof inpatientSurgerySchema> | undefined
+  review?: z.infer<typeof inpatientDrgReviewSchema> | undefined
   transfers?: z.infer<typeof inpatientTransfersSchema> | undefined
   record?: z.infer<typeof inpatientRecordSchema> | undefined
   virtualTime?: string | undefined
@@ -89,6 +91,7 @@ export function inpatientPending(input: InpatientActivity): Record<InpatientStag
     result.surgery = surgery?.requests.filter(request => request.status === 'ready' && !surgery.inProgress.some(execution => execution.requestId === request.id)
       || request.status === 'requested' && !request.consentConfirmation).length ?? 0
     result.surgery += surgery?.inProgress.length ?? 0
+    result.surgery += input.review?.todos.filter(todo => todo.ownerRole === role && (todo.status === 'pending' || todo.status === 'in-progress')).length ?? 0
     result.record = admission.financialStatus === 'settled' && admission.recordStatus === 'open' && recordSubmissionPending(input.record) ? 1 : 0
     result.discharge = admission.status === 'discharge-pending' ? clinical?.orders.filter(order => order.state === 'signed' || order.state === 'verified').length ?? 0 : 0
   }

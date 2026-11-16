@@ -65,6 +65,9 @@ export const inpatientDrgSimulationSchema = z.object({
     coveredRatioBp: z.number().int().min(0).max(10_000).nullable(), note: z.string().max(500) }).strict(),
   /** formal=正式事实分组；projected=「若计划手术实施」的推演分组，不构成临床事实或正式病组。 */
   grouping: z.object({ formal: drgGroupingResultSchema, projected: drgGroupingResultSchema.nullable(), note: text }).strict(),
+  /** 新完成操作尚未被医生的主操作确认覆盖；仅作只读假想比较，多候选分组不一致时保持未知。 */
+  postoperativeEstimate: z.object({ pendingExecutionIds: z.array(id).min(1), grouping: drgGroupingResultSchema.nullable(),
+    paymentReference: inpatientDrgPaymentReferenceSchema.nullable() }).strict().nullable().default(null),
   paymentReference: inpatientDrgPaymentReferenceSchema.nullable(),
   incompleteness: z.object({ costMissing: z.boolean(), paymentReferenceMissing: z.boolean() }).strict(),
 }).strict()
@@ -82,6 +85,8 @@ export const inpatientCostsSchema = z.object({
   currentGrouping: drgGroupingResultSchema.nullable(), projectedGrouping: drgGroupingResultSchema.nullable(),
   currentPaymentReference: inpatientDrgPaymentReferenceSchema.nullable(), projectedPaymentReference: inpatientDrgPaymentReferenceSchema.nullable(),
   currentDifferenceFen: z.number().int().safe().nullable(), projectedDifferenceFen: z.number().int().safe().nullable(),
+  /** 其他未确认、未开始的已保存耗材稿一起计价；缺价时components只含已知部分，预计总额与差额不可作为完整结果。 */
+  projectionComplete: z.boolean().default(true), projectionMissing: z.array(text).max(100).default([]),
   paymentStatus: z.enum(['available', 'rules-unavailable', 'grouping-incomplete', 'reference-missing']), paymentMessage: text,
   exceptionAlert: z.enum(['triggered', 'below-threshold', 'unknown']),
 }).strict()

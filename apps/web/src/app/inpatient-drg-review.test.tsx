@@ -29,14 +29,21 @@ function mount(currentSession = session, stay = admission, compact = false) {
 }
 
 it('医生术后待办直接可处理，来源与已解决历史按需打开且焦点归还', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...review, resolvedTodos: [{ ...todo, id: 'resolved-1', status: 'resolved', display: '已解决的合成导管', reason: '原记录已核实' }] })))
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...review, summary: { ...review.summary, projectedTotalFen: 220000 },
+    model: { current: true, status: 'succeeded', failureCode: null, observations: [] },
+    resolvedTodos: [{ ...todo, id: 'resolved-1', status: 'resolved', display: '已解决的合成导管', reason: '原记录已核实' }] })))
   const navigate = mount(session, admission, true)
   const item = (await screen.findByText('导丝')).closest('article')!
-  expect(item.textContent).toContain('负责岗位：住院医生')
-  expect(within(item).getByRole('textbox', { name: '待办处理说明' })).toBeDefined()
+  expect(screen.getByRole('list', { name: '术后核查清单' })).toBeDefined()
+  expect(screen.queryByText(/^阶段正式收费/)).toBeNull()
+  expect(screen.queryByText(/^阶段费用预计|术后分析可查看/)).toBeNull()
+  expect(item.textContent).toContain('多用 1')
+  expect(within(item).queryByRole('textbox', { name: '待办处理说明' })).toBeNull()
   expect(screen.queryByText('Procedure/execution-1')).toBeNull()
   expect(screen.queryByText(/已解决的合成导管/)).toBeNull()
-  const user = userEvent.setup(), source = within(item).getByRole('button', { name: '查看来源与原记录' })
+  const user = userEvent.setup(), source = within(item).getByRole('button', { name: '看术中登记' })
+  await user.click(within(item).getByRole('button', { name: '修改处理说明 导丝' }))
+  expect(within(item).getByRole('textbox', { name: '待办处理说明' })).toBeDefined()
   await user.click(source)
   const dialog = await screen.findByRole('dialog', { name: '导丝' })
   expect(dialog.textContent).toContain('计划量：1')
@@ -47,6 +54,7 @@ it('医生术后待办直接可处理，来源与已解决历史按需打开且�
   await waitFor(() => expect(document.activeElement).toBe(source))
   await user.click(screen.getByRole('button', { name: '核查依据与历史' }))
   expect(await screen.findByText(/已解决的合成导管/)).toBeDefined()
+  expect(within(screen.getByRole('dialog', { name: '核查依据与历史' })).getByText('术后分析可查看')).toBeDefined()
   await user.keyboard('{Escape}')
   expect(within(item).getByRole('textbox', { name: '待办处理说明' })).toBeDefined()
 })
@@ -61,6 +69,36 @@ it('未开启跟进的术后待办展示原手术和数量，并直接进入原�
   await userEvent.setup().click(within(item).getByRole('button', { name: '前往手术原记录' }))
   expect(navigate).toHaveBeenCalledWith('surgery')
   expect(screen.queryByText('尚未开启本次住院跟进。')).toBeNull()
+})
+
+it('当前手术的全部确认进入固定操作栏，清空说明禁提交且离开后释放主操作', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(review)))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
+  function Harness({ active }: { active: boolean }) {
+    const write = useInpatientWriteIntent(session, () => undefined)
+    return <>
+      <InpatientPrimaryAction stage="surgery" priority={-10}><button>其他手术操作</button></InpatientPrimaryAction>
+      <InpatientDrgReviewPanel admission={admission} session={session} locale="zh-CN" write={write} active={active} compact showPrimaryAction />
+    </>
+  }
+  const view = (active: boolean) => <QueryClientProvider client={client}><InpatientActionProvider stage="surgery">
+    <Harness active={active} /><footer aria-label="工作台底部"><InpatientActionOutlet /></footer>
+  </InpatientActionProvider></QueryClientProvider>
+  const rendered = render(view(true)), user = userEvent.setup()
+  const panel = await screen.findByRole('region', { name: '术后核查与责任交接' })
+  await within(panel).findByText('导丝')
+  expect(within(panel).queryByRole('button', { name: '一次全部确认' })).toBeNull()
+  const footer = screen.getByRole('contentinfo', { name: '工作台底部' })
+  const confirm = within(footer).getByRole<HTMLButtonElement>('button', { name: '一次全部确认' })
+  expect(confirm.disabled).toBe(false)
+  const rowActions = within(panel).getByRole('group', { name: '术后核查操作 导丝' })
+  expect(within(rowActions).getAllByRole('button').map(button => button.textContent)).toEqual(['看术中登记', '修改说明', '需要跟进', '按此说明确认'])
+  await user.click(within(rowActions).getByRole('button', { name: '修改处理说明 导丝' }))
+  await user.clear(within(panel).getByRole('textbox', { name: '待办处理说明' }))
+  expect(confirm.disabled).toBe(true)
+  rendered.rerender(view(false))
+  await waitFor(() => expect(within(footer).queryByRole('button', { name: '一次全部确认' })).toBeNull())
+  expect(within(footer).getByRole('button', { name: '其他手术操作' })).toBeDefined()
 })
 
 it('归档后保留待办与原记录入口，关闭处置、复查和交接写入', async () => {
@@ -147,4 +185,153 @@ it.each(['cashier', 'medical-records'] as const)('%s核查首开后保留真实�
     client.clear()
     vi.useRealTimers()
   }
+})
+
+it('术后处理说明按记录带出，一次确认逐项提交，第二项失败保留未提交项', async () => {
+  const items = [todo, { ...todo, id: 'todo-2', key: 'extra-use:balloon', materialId: 'balloon', display: '球囊' }, { ...todo, id: 'todo-3', key: 'unused-plan:stent', kind: 'unused-plan', materialId: 'stent', display: '支架' }]
+  const posts: string[] = []
+  let current = inpatientDrgReviewSchema.parse({ ...review, todos: items })
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (init?.method === 'POST') {
+      const input = JSON.parse(String(init.body)).input
+      posts.push(input.todoId)
+      if (input.todoId === 'todo-2') return Response.json({ error: { code: 'VERSION_CONFLICT', message: '合成第二项依据已变化' } }, { status: 409 })
+      current = { ...current, todos: current.todos.map(item => item.id === input.todoId ? { ...item, status: 'dismissed', reason: input.note } : item) }
+      return Response.json({ data: current, auditId: 'audit-1', requestId: 'receipt-1', effects: [], warnings: [] })
+    }
+    if (path.endsWith('/drg/review')) return Response.json(current)
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成原记录未准备' } }, { status: 503 })
+  }))
+  mount(session, admission, true)
+  await screen.findByText('导丝')
+  await userEvent.setup().click(screen.getByRole('button', { name: '修改处理说明 导丝' }))
+  expect(screen.getAllByRole<HTMLInputElement>('textbox', { name: '待办处理说明' })[0]!.value).toContain('实际用量超出原确认计划')
+  await userEvent.setup().click(screen.getByRole('button', { name: '一次全部确认' }))
+  await waitFor(() => expect(posts).toEqual(['todo-1', 'todo-2']))
+  expect((await screen.findByRole('alert')).textContent).toMatch(/变化|更新|刷新|冲突|重试/)
+  expect(screen.getByText('球囊')).toBeDefined()
+  expect(screen.getByText('支架')).toBeDefined()
+})
+
+it('批量确认途中离开页面会停止后续提交，回来后仍可办理余项', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const posts: string[] = []
+  let current = inpatientDrgReviewSchema.parse({ ...review, todos: [todo, { ...todo, id: 'todo-next', key: 'extra-use:next', display: '下一项' }] })
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (init?.method === 'POST') {
+      const input = JSON.parse(String(init.body)).input; posts.push(input.todoId)
+      await gate
+      current = { ...current, todos: current.todos.map(item => item.id === input.todoId ? { ...item, status: 'dismissed', reason: input.note } : item) }
+      return Response.json({ data: current, auditId: 'audit-leave', requestId: 'receipt-leave', effects: [], warnings: [] })
+    }
+    if (path.endsWith('/drg/review')) return Response.json(current)
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料未准备' } }, { status: 503 })
+  }))
+  function Harness({ active }: { active: boolean }) {
+    const write = useInpatientWriteIntent(session, () => undefined)
+    return <InpatientDrgReviewPanel admission={admission} session={session} locale="zh-CN" write={write} active={active} compact />
+  }
+  const view = (active: boolean) => <QueryClientProvider client={client}><Harness active={active} /></QueryClientProvider>
+  const rendered = render(view(true)), user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '一次全部确认' }))
+  await waitFor(() => expect(posts).toEqual(['todo-1']))
+  rendered.rerender(view(false))
+  await act(async () => { release() })
+  rendered.rerender(view(true))
+  await screen.findByText('下一项')
+  expect(await screen.findByRole<HTMLButtonElement>('button', { name: '一次全部确认' })).toHaveProperty('disabled', false)
+  expect(posts).toEqual(['todo-1'])
+})
+
+it('全部确认保留已处置历史，但不再显示确认按钮或未完成输入', async () => {
+  let current = inpatientDrgReviewSchema.parse({ ...review, todos: [todo] })
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (init?.method === 'POST') {
+      const input = JSON.parse(String(init.body)).input
+      current = { ...current, todos: current.todos.map(item => ({ ...item, status: 'dismissed', reason: input.note })) }
+      return Response.json({ data: current, auditId: 'audit-done', requestId: 'receipt-done', effects: [], warnings: [] })
+    }
+    if (path.endsWith('/drg/review')) return Response.json(current)
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料未准备' } }, { status: 503 })
+  }))
+  mount(session, admission, true)
+  await userEvent.setup().click(await screen.findByRole('button', { name: '一次全部确认' }))
+  await screen.findByText('已全部确认')
+  expect(screen.getByText('已确认')).toBeDefined()
+  expect(screen.queryByRole('button', { name: '一次全部确认' })).toBeNull()
+  expect(screen.queryByRole('textbox', { name: '待办处理说明' })).toBeNull()
+})
+
+it.each([null, '分支保护，交下一班核查导丝余量'])('选择跟进时改写未编辑的默认结论并保留人工说明：%s', async manualNote => {
+  const time = '2026-11-14T09:00:00+08:00'
+  const charge = { id: 'charge-wire', priceFen: 20000, unit: '根', synthetic: true, trigger: 'execution' }
+  const material = { id: 'wire', version: 1, display: '导丝', chargeDefinition: charge }
+  const procedure = { id: 'pci', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '36.0700', display: '合成PCI', category: '介入治疗', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.com/synthetic', sourceSha256: 'a'.repeat(64), sourceLocator: 'synthetic' }, chargeDefinition: { ...charge, unit: '次' } }
+  const surgery = { admissionId: admission.id, encounterVersion: '1', virtualTime: time, requests: [], executions: [{
+    id: 'execution-1', admissionId: admission.id, requestId: 'request-1', actualProcedure: procedure, performedAt: time,
+    performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: 'org-1', note: '合成手术', materials: [],
+    materialHistory: ['按计划', '分支保护'].map((note, index) => ({ id: `use-${index}`, item: material, quantity: 1, amountFen: 20000, recordedAt: time, recordedBy: 'doctor', practitionerRoleId: 'role-doctor', reservationId: null, note })),
+  }] }
+  let current = review
+  const posts: { action: string; note: string }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (init?.method === 'POST') {
+      const input = JSON.parse(String(init.body)).input
+      posts.push({ action: input.action, note: input.note })
+      current = { ...current, todos: current.todos.map(item => ({ ...item, status: 'in-progress', reason: input.note })) }
+      return Response.json({ data: current, auditId: 'audit-follow', requestId: 'receipt-follow', effects: [], warnings: [] })
+    }
+    if (path.endsWith('/drg/review')) return Response.json(current)
+    if (path.endsWith('/surgeries')) return Response.json(surgery)
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成预留未准备' } }, { status: 503 })
+  }))
+  mount(session, admission, true)
+  await screen.findByText('术中多用 1 根，分支保护；已在登记时说明，无需进一步处理。')
+  const user = userEvent.setup()
+  if (manualNote !== null) {
+    await user.click(screen.getByRole('button', { name: '修改处理说明 导丝' }))
+    await user.clear(screen.getByRole('textbox', { name: '待办处理说明' }))
+    await user.type(screen.getByRole('textbox', { name: '待办处理说明' }), manualNote)
+  }
+  await user.click(screen.getByRole('button', { name: '需要跟进' }))
+  const expected = manualNote ?? '术中多用 1 根，分支保护；已在登记时说明，需继续跟进核实。'
+  await waitFor(() => expect(posts).toEqual([{ action: 'in-progress', note: expected }]))
+  expect(await screen.findByText(expected)).toBeDefined()
+})
+
+it('需要跟进的已记说明在重开后仍优先显示，明确清空禁确认且直接确认不覆盖原说明', async () => {
+  const savedNote = '分支保护，交下一班核查导丝余量'
+  let current = inpatientDrgReviewSchema.parse({ ...review, todos: [{ ...todo, status: 'in-progress', reason: savedNote }] })
+  const posts: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(session)
+    if (init?.method === 'POST') {
+      const input = JSON.parse(String(init.body)).input
+      posts.push(input.note)
+      current = { ...current, todos: current.todos.map(item => ({ ...item, status: 'dismissed', reason: input.note })) }
+      return Response.json({ data: current, auditId: 'audit-follow-up', requestId: 'receipt-follow-up', effects: [], warnings: [] })
+    }
+    if (path.endsWith('/drg/review')) return Response.json(current)
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料未准备' } }, { status: 503 })
+  }))
+  mount(session, admission, true)
+  await screen.findByText(savedNote)
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '修改处理说明 导丝' }))
+  expect(screen.getByRole('textbox', { name: '待办处理说明' })).toHaveProperty('value', savedNote)
+  await user.clear(screen.getByRole('textbox', { name: '待办处理说明' }))
+  expect(screen.getByRole('button', { name: '按此说明确认' })).toHaveProperty('disabled', true)
+  expect(screen.getByRole('button', { name: '一次全部确认' })).toHaveProperty('disabled', true)
+  cleanup()
+  mount(session, admission, true)
+  await screen.findByText(savedNote)
+  await user.click(screen.getByRole('button', { name: '按此说明确认' }))
+  await waitFor(() => expect(posts).toEqual([savedNote]))
+  await screen.findByText('已全部确认')
 })

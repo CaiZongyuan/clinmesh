@@ -32,6 +32,8 @@
 
 - TUN下HTTPS握手持续失败时，先区分实际规则组选中节点与未使用的GLOBAL选择，分别做小范围只读连接探测。代理配置中的控制管道名可能与当前运行实例不同，读取控制API前核对活跃管道；凭证只在内存使用。任务临时切换现有可用路径时，保存原选择，在子进程结束的finally中恢复并回读，不修改持久订阅或全局默认配置，也不把一次恢复推断为TLS根因。
 
+- 域名请求在代理 CONNECT 成功后仍中断 TLS，而同一 HTTPS URL 经当次核验的 GitHub API 地址能够完成证书校验并返回正常结果时，可对单次 `curl` 使用 `--connect-to api.github.com:443:<当次核实的GitHub地址>:443`。URL、HTTP Host 和 TLS 证书校验仍绑定 `api.github.com`，凭证沿本节标准输入边界提供，不发送到其他域名；回读正文、审查提交和状态确认真实操作结果。地址只用于当次连接排障，不固化为 DNS 配置或长期常量，也不据此推断 Fake-IP 或代理规则的根因。
+
 - PR 从 draft 转为 ready 会触发仓库的异步 Codex 审查。合并前核对最新提交对应的 review summary、审查评论与完成反应；审查运行中先等待结果，处理 findings 后沿用已有合并授权。推送修复后若摘要仍指向旧提交，核对是否触发新一轮审查；已有 Ready 授权时可通过 draft → ready 状态事件重新触发，并确认审查绑定新提交。CI 与自动审查的状态分别核对。
 
 - 关联 issue 用 `Ref`/`Refs #N` 只建立引用，GitHub 自动关闭只识别 `Closes`/`Fixes`/`Resolves` 关键词；本仓库 squash merge 的提交说明是"PR 标题 + 各条提交正文"，不含 PR 正文，所以正文里的关闭关键词在 squash 下也不生效。交付型 PR（issue 范围随本次交付完成）的正文统一写 `Closes #N`；合并后发现 issue 仍 OPEN 时核对提交说明后手动关闭并附原因，不重复推送只改关键词的空提交。
@@ -44,7 +46,7 @@
 
 - 扩展 Agent-facing DTO 后，沿 schema 的消费者核对读取操作的 Catalog 版本与摘要；只更新保存、签署等写操作会漏掉共享响应 schema 自动带出的字段。Catalog 升版时用 operation ID 同时扫描共享合同和 CLI 的版本断言，并检查字段数量等旧描述；病例详情和预留释放的回归分别见 `apps/cli/tests/skill-commands.test.ts` 和 `packages/contracts/tests/his-operations.test.ts`。
 
-- run/job 级 `status` 由服务端异步收尾，可能滞后步骤级结果数十分钟；判定 CI 实际完成看步骤列表（`Complete job` 的 `completed_at` 与结论）。轮询终态用 run id 直接查 `actions/runs/<id>`；`head_sha` 过滤必须传完整 40 位 SHA，缩写 SHA 会静默返回空结果。
+- run/job 级 `status` 由服务端异步收尾，可能滞后步骤级结果数十分钟；判定 CI 实际完成看步骤列表（`Complete job` 的 `completed_at` 与结论）。轮询终态用 run id 直接查 `actions/runs/<id>`；`head_sha` 过滤必须传完整 40 位 SHA，缩写 SHA 会静默返回空结果。重跑单个已结束 job 也须等待整轮 workflow run 结束；其他 job 仍在运行时，重跑 API 会返回 `403`（workflow run already running）。
 
 - Actions 的 `pull-requests:write` 不等于仓库允许机器人创建 PR；出现明确的创建权限错误时先核对仓库设置，不反复重试。没有管理员权限时，可按[持续升级故障恢复](../deployment.md#dsh-持续升级)验证已有候选 PR 的更新与验收，并单独保留首次创建权限限制。
 

@@ -1,24 +1,28 @@
-# Agent Note: DSH 单文件产物采用保留名称的语法压缩
+# Agent Note: DSH 客户端语法压缩并保留可观察合同
 
 Status: implemented
 
 ## Problem
 
-院后复诊、统一审方与功能检查接入共享界面和契约后，仅压缩空白的 DSH 单文件客户端达到 5,012,747 字节，超过既有 5 MB 发布预算。继续增加普通临床能力需要减少实际产物体积，同时保留宿主加载边界及依赖函数名称的 Tool descriptor 产物校验。
+[手术流程减负](https://github.com/CaiZongyuan/clinmesh/issues/489)集成后的 DSH 客户端经既有空白压缩仍为 5,017,317 字节，超过[5,000,000 字节预算](2026-10-07-dsh-client-size-budget.md)。样式已经由 Vite 压缩，再压缩只能减少 58 字节；Bun 的局部内联测量也不足以解决超限。需要减少实际产物，不改变功能、宿主加载方式或预算。
 
 ## Decision
 
-沿用[空白压缩决策](2026-10-22-dsh-client-whitespace-compaction.md)的严格 wrapper 识别及 factory body 边界，使用锁定 Bun 的 `Bun.build` 对已生成的 body 同时压缩空白和语法。该步骤不重新打包依赖，所有模块保持 external；关闭标识符压缩和 tree shaking，外层 lazy-CJS wrapper、宿主 require、module/exports 初始化与返回仍按原字节保留。当前构建合同由[前端架构](../../../frontend-architecture.md)拥有。
+`apps/dsh-web/src/compact-client.ts` 使用 Terser，在锁定 Surface builder 之后对 factory 正文进行一次受限语法及空白压缩，再执行原产物校验。它取代[空白压缩决策](2026-10-22-dsh-client-whitespace-compaction.md)中的 Bun Transpiler 选型及只压缩空白的限制；原 TypeScript AST、精确前后缀、lazy-CJS wrapper、宿主 `require`、module/exports 初始化与返回边界继续保留。转换不打包、不执行产物、不重新解析依赖，也不修改 vendor。Terser 5.50.0 已存在于依赖锁中，应用显式声明同版本构建依赖，避免依赖 Vite 的间接包提升。
 
-编译器可以合并声明、简化表达式等价语法；不依赖其保留任意内部语句形状。最终 verifier 继续从真实产物按名称提取并执行 Tool descriptor，检查描述长度、schema、允许的模块和 5 MB 上限。单元合同核对延迟 require、模板字符串、正则、许可证注释、重复压缩稳定性及未知 wrapper 拒绝；真实 lazy-CJS 浏览器合同覆盖 React 18/19 的宿主加载和业务写入。
+压缩设置关闭 `defaults` 与 `toplevel`，仅开启局部语法等价缩写及函数内局部收敛（`booleans`、`join_vars`、`properties`、`sequences`、`comparisons`、`if_return`、`arrows`、`computed_props`、`unused`、`collapse_vars`、`passes: 2` 与输出 `shorthand`），保留 factory 顶层声明供产物校验提取，不开启条件控制流折叠、死代码分支消除、函数调用内联或 tree shaking。`mangle: false` 保留绑定和属性名称，`keep_fnames` 与 `keep_classnames` 显式保留函数和类名；`ecma` 与共享 `tsconfig.base.json` 已有的 ES2023 对齐，输出保留 UTF-8 和内联许可证注释。Tool descriptor 仍由最终产物按名称提取并执行，不能以源代码测试替代。
 
 ## Alternatives considered
 
-- 提高产物上限：不能减少传输及解析体积，也无法保留原预算的回归信号。
-- 删除临床功能或复用旧检查类型：会破坏本次已批准的临床及接口合同。
-- 标识符压缩、动态 chunk 或修改上游 builder：分别影响按名称校验、当前单文件加载合同和上游维护边界。
-- 继续仅压缩空白：已不足以通过实际产物门禁；`Bun.Transpiler` 不能提供所需语法压缩，改用现有 Bun 构建 API 无需新增编译依赖。
+- 提高预算或删除功能：不能降低当前单文件的实际加载开销。
+- 二次压缩 CSS、调整小依赖入口或只开启 Bun 内联：测量收益不足，额外转换也增加维护成本。
+- 手工替换布尔值与 `undefined` 等文本：需要重新实现语法、作用域和优先级分析，容易改变字符串、属性名或求值顺序。
+- esbuild 的完整语法优化：即使不改名，条件折叠也会把 `const x = true ? function() {} : function() {}` 的匿名名称从空串变成 `x`；开启名称修复会使产物再次超过预算。Terser 的窄规则集保留该可观察行为，并有对应回归。
+- 标识符改名、重新打包或动态拆包：分别扩大名称合同、宿主 `require` 和单文件加载边界的风险，当前窄规则集已经满足预算。
+- 叠加两轮压缩：重复解析和打印，没有必要；直接替换使实际转换范围与配置更容易审查。
 
 ## Consequences
 
-本决策替代原空白压缩决策中“仅使用 Transpiler 压缩空白”的限制，其 wrapper 保护、宿主 React 与独立产物验证仍适用。压缩函数改为异步内部构建函数；生产界面及公开 API 不变。Bun 升级或契约增长后，必须继续验证真实产物和双版本宿主行为，不能以源码组件测试替代发布产物验证。
+压缩器的语义合同覆盖延迟宿主导入、多行字符串、正则、Unicode、许可证、求值顺序、短路、异常与 finally 副作用、可观察函数／类名称、内建字面量与同名局部变量、重复压缩稳定性和不匹配 wrapper 的拒绝。原 5 MB、外部模块、宿主 React 与 Tool 描述/schema 校验继续生效，真实 lazy-CJS 浏览器合同在宿主 React 18/19 的 ShadowRoot 中验证实际产物。
+
+语法优化比单纯空白打印有更大的语义影响范围。升级 Terser、Bun 或 Surface builder 后必须运行这些合同，并比较完整构建后的字节数；不能用第三方入口文件大小或局部转换结果代替最终产物。浏览器合同证明受测入口，不代表覆盖所有业务分支，相关业务回归仍由原测试层拥有。

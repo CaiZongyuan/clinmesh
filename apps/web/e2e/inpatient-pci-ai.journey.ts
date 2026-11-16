@@ -33,22 +33,29 @@ export async function preparePciAiPlan(page: Page, app: PciAiBrowserApp) {
   const catalog = await f.read('inpatient-doctor', '/api/his/v1/inpatient/surgery-catalog', inpatientSurgeryCatalogSchema)
   const angiography = catalog.procedures.find(item => item.coding.code === '88.5500')!
   const prepareSurgery = async (reason: string) => {
-    let plan = page.getByRole('region', { name: '住院手术', exact: true }).locator('article').filter({ hasText: reason })
-    await expect(plan.getByRole('button', { name: '确认已签', exact: true })).toBeEnabled()
+    const actions = page.getByRole('region', { name: '当前操作', exact: true })
+    const confirmMaterials = actions.getByRole('button', { name: '确认手术耗材', exact: true })
+    const consent = actions.getByRole('button', { name: '确认手术知情同意书已签', exact: true })
+    await expect(confirmMaterials.or(consent)).toBeVisible()
+    if (await confirmMaterials.isVisible()) await confirmMaterials.click()
+    await expect(consent).toBeEnabled()
+    await consent.click()
+    const preparation = page.getByRole('region', { name: '术前准备', exact: true })
+    await preparation.getByRole('button', { name: '患者及家属已签署手术知情同意书', exact: true }).click()
+    await expect(preparation.getByLabel('签署说明', { exact: true })).toHaveValue('患者及家属已签署手术知情同意书')
+    await consent.click()
+    await expect(actions.getByRole('button', { name: '等病区护士术前核对', exact: true })).toBeDisabled()
     await open('ward-nurse'); await stage('手术')
-    plan = page.getByRole('region', { name: '住院手术', exact: true }).locator('article').filter({ hasText: reason })
-    await plan.getByLabel('术前核对说明', { exact: true }).fill('已核对合成术前准备')
+    let plan = page.getByRole('region', { name: '住院手术', exact: true }).locator('article').filter({ hasText: reason })
+    await page.getByRole('region', { name: '术前准备', exact: true }).getByLabel('术前核对说明', { exact: true }).fill('已核对合成术前准备')
     await page.getByRole('button', { name: '术前核对', exact: true }).click()
     const preopTime = await expectCompletedSurgeryPreparation(plan, '术前核对', '病区护士')
     const preop = (await f.read('ward-nurse', `${stay.path}/surgeries`, inpatientSurgerySchema)).requests.find(item => item.reason === reason)!.preopCheck!
     await expect(preopTime).toHaveAttribute('datetime', preop.recordedAt)
     await open(); await stage('手术')
     plan = page.getByRole('region', { name: '住院手术', exact: true }).locator('article').filter({ hasText: reason })
-    await plan.getByRole('button', { name: '确认已签', exact: true }).click()
-    await plan.getByLabel('签署说明', { exact: true }).fill('已确认合成知情同意')
-    await page.getByRole('button', { name: '确认手术知情同意书已签', exact: true }).click()
     await expect(plan).toContainText('已就绪')
-    await expect(page.getByRole('button', { name: '开始手术逐笔登记', exact: true })).toBeEnabled()
+    await expect(actions.getByRole('button', { name: '开始手术', exact: true })).toBeEnabled()
     return plan
   }
   expect(app.calls).toEqual([])
@@ -61,6 +68,8 @@ export async function preparePciAiPlan(page: Page, app: PciAiBrowserApp) {
   const batch = page.getByRole('dialog', { name: '整台补录', exact: true })
   await batch.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${angiography.coding.code} · ${angiography.coding.display}`, exact: true }).click()
+  await batch.getByLabel('搜索手术耗材', { exact: true }).fill('合成演示导管')
+  await batch.getByRole('button', { name: '添加 合成演示导管', exact: true }).click()
   await batch.getByLabel('补录依据', { exact: true }).fill('合成AI验收诊断造影实际执行')
   const beforeReport = [...app.calls]
   await batch.getByRole('button', { name: '记录实际手术', exact: true }).click()
@@ -75,7 +84,7 @@ export async function preparePciAiPlan(page: Page, app: PciAiBrowserApp) {
   const selection = () => f.read('inpatient-doctor', `${stay.path}/pci-selection`, inpatientPciSelectionSchema)
   expect((await selection()).confirmation).toBeNull()
   const stepOne = page.getByRole('region', { name: '选型参数', exact: true })
-  await expect(stepOne).toContainText('已按冠脉造影报告预填病变测量，请逐项核对后确认。')
+  await expect(stepOne).toContainText('已从冠脉造影报告预填，请核对。')
   await expect(stepOne.getByLabel('靶病变部位', { exact: true })).toHaveValue('LAD 中段')
   await expect(stepOne.getByLabel('病变长度 (mm)', { exact: true })).toHaveValue('12')
   await expect(stepOne.getByLabel('近端参考管径 (mm)', { exact: true })).toHaveValue('3')
@@ -86,7 +95,7 @@ export async function preparePciAiPlan(page: Page, app: PciAiBrowserApp) {
   const panel = page.getByRole('region', { name: '手术耗材', exact: true })
   await expect.poll(async () => (await f.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates.find(item => item.requestId === planned.id)?.status).toBe('succeeded')
   await expect(panel).toContainText('指南参考')
-  await expect(panel).toContainText('做完手术后预计病组 FM39')
+  await expect(page.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组', exact: true })).toContainText('FM39')
   return { stay, planned, panel, stepOne, selection, errors, writes, prepareSurgery, catalog, angiographyRequest }
 }
 
@@ -115,26 +124,27 @@ export async function preparePciAiReview(page: Page, app: PciAiBrowserApp) {
 }
 
 export async function runPciAiJourney(page: Page, app: PciAiBrowserApp) {
-  const { stay, planned, panel, selection, errors, writes, prepareSurgery, catalog } = await preparePciAiReview(page, app)
+  const { stay, planned, selection, errors, writes, prepareSurgery, catalog } = await preparePciAiReview(page, app)
   const f = app.fixture, pci = planned.plannedProcedure
   const estimate = (await f.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates.find(item => item.requestId === planned.id)!
   expect((estimate.analysis?.costExplanation ?? '').trim()).not.toBe('')
-  await expect(panel).toContainText('做完手术后预计病组 FM39')
+  await expect(page.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组', exact: true })).toContainText('FM39')
+  const confirmationsBefore = writes.filter(path => path.endsWith('/material-estimates/confirm')).length
   // 同进程的服务端读取不等待浏览器事件，先以真实响应同步请求监听。
   const [confirmation] = await Promise.all([
     page.waitForResponse(response => response.request().method() === 'POST'
       && new URL(response.url()).pathname === `${stay.path}/material-estimates/confirm`, { timeout: 10_000 }),
-    page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true }).click(),
+    page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认手术耗材', exact: true }).click(),
   ])
   expect(confirmation.status()).toBe(200)
   await expect.poll(async () => (await selection()).confirmation?.parameters.requestId).toBe(planned.id)
   const reservations = await f.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
   expect(reservations.reservations.filter(item => item.requestId === planned.id && item.status === 'reserved')).toHaveLength(4)
-  expect(writes.filter(path => path.endsWith('/material-estimates/confirm'))).toHaveLength(1)
+  expect(writes.filter(path => path.endsWith('/material-estimates/confirm'))).toHaveLength(confirmationsBefore + 1)
   expect(writes.filter(path => path.endsWith('/pci-selection/confirm'))).toHaveLength(0)
   expect((await f.read('inpatient-doctor', `${stay.path}/drg/followup`, inpatientDrgFollowupSchema)).task).toBeNull()
   await prepareSurgery(planned.reason)
-  await page.getByRole('button', { name: '开始手术逐笔登记', exact: true }).click()
+  await page.getByRole('button', { name: '开始手术', exact: true }).click()
   const startDialog = page.getByRole('dialog', { name: '开始手术', exact: true })
   await startDialog.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${pci.coding.code} · ${pci.coding.display}`, exact: true }).click()
@@ -142,27 +152,33 @@ export async function runPciAiJourney(page: Page, app: PciAiBrowserApp) {
   await startDialog.getByRole('button', { name: '开始手术', exact: true }).click()
   const live = page.getByRole('region', { name: '本台耗材', exact: true })
   const wire = catalog.materials.find(item => item.id === 'hospital-material-pci-guidewire')!
-  const entry = live.getByRole('region', { name: '登记本笔使用', exact: true })
-  await entry.getByLabel('耗材', { exact: true }).click()
-  await page.getByRole('option', { name: new RegExp(`^${wire.display}`) }).click()
-  await entry.getByLabel('数量', { exact: true }).fill('2')
-  await entry.getByRole('button', { name: '额外使用，不消耗预留', exact: true }).click()
-  await entry.getByLabel('依据', { exact: true }).fill('核对额外导丝实际用途')
+  const wireRow = live.getByRole('row', { name: new RegExp(wire.display) })
   const beforeUse = [...app.calls]
-  await entry.getByRole('button', { name: '登记这笔', exact: true }).click()
-  await expect(live.getByRole('row', { name: /导丝/ })).toContainText('2 根')
-  await expect(live.getByRole('row', { name: /导丝/ })).toContainText('额外使用')
+  await wireRow.getByRole('button', { name: /^用 1 根 / }).click()
+  await expect(live.getByRole('row', { name: `${wire.display} × 1根`, exact: true })).toBeVisible()
+  await f.runtime.dispatchPending()
+  expect(app.calls).toEqual(beforeUse)
+  const recorded = (await f.read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)).inProgress.find(item => item.requestId === planned.id)!
+  expect(recorded.materialHistory).toEqual([expect.objectContaining({ quantity: 1, note: expect.stringContaining('按计划') })])
+  await wireRow.getByRole('button', { name: /^再用 1 根 / }).click()
+  await expect(live.getByRole('button', { name: '登记这笔', exact: true })).toBeDisabled()
+  await live.getByRole('button', { name: '分支保护', exact: true }).click()
+  await live.getByRole('button', { name: '登记这笔', exact: true }).click()
+  await expect(wireRow).toContainText('2 根')
+  await expect(wireRow).toContainText('多 1')
+  await expect(live).toContainText('本笔金额')
+  await expect(live).toContainText('助手未能说明')
   await f.runtime.dispatchPending()
   expect(app.calls).toEqual(beforeUse)
   await page.getByRole('button', { name: '核实最终耗材并完成手术', exact: true }).click()
   const completeDialog = page.getByRole('dialog', { name: '核实最终耗材并完成手术', exact: true })
   await completeDialog.getByLabel('核实说明', { exact: true }).fill('合成PCI最终用量核对，仅导丝使用两根')
-  await page.getByRole('button', { name: '预览本次差额', exact: true }).click()
+  await expect(page.getByRole('button', { name: '确认完成手术', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: '确认完成手术', exact: true }).click()
   await expect(page.getByRole('region', { name: '最终耗材', exact: true })).toContainText(wire.display)
   const review = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
   await expect(review).toBeVisible()
-  await expect(review).toContainText('负责岗位：住院医生')
+  await expect(review.getByRole('list', { name: '术后核查清单', exact: true })).toBeVisible()
   await expect(page.getByRole('tab', { name: '手术', exact: true })).toHaveAttribute('aria-selected', 'true')
   expect((await f.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)).todos.some(item => item.kind === 'extra-use')).toBe(true)
   expect(app.calls).toEqual(beforeUse)
@@ -184,11 +200,11 @@ export async function runPciAiConfirmHandoffJourney(page: Page, app: PciAiBrowse
   const post = page.request.post
   let signIns = 0, preparation: Promise<Locator> | undefined
   try {
-    await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true }).click()
+    await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认手术耗材', exact: true }).click()
     await confirmed
     expect((await selection()).confirmation?.parameters.requestId).toBe(planned.id)
-    const plan = page.getByRole('region', { name: '住院手术', exact: true }).locator('article').filter({ hasText: planned.reason })
-    await expect(plan.getByRole('button', { name: '确认已签', exact: true })).toBeDisabled()
+    await expect(page.getByRole('region', { name: '当前操作', exact: true })).toHaveAttribute('aria-busy', 'true')
+    await expect(page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button')).toBeDisabled()
     page.request.post = <T = unknown>(url: string, options?: Parameters<typeof post>[1]) => {
       if (url.endsWith('/api/auth/sign-in/email')) signIns++
       return (post<T>).call(page.request, url, options)
@@ -199,7 +215,7 @@ export async function runPciAiConfirmHandoffJourney(page: Page, app: PciAiBrowse
     const ready = await preparation
     expect(signIns).toBe(2)
     await expect(ready).toContainText('已就绪')
-    await expect(page.getByRole('button', { name: '开始手术逐笔登记', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: '开始手术', exact: true })).toBeEnabled()
     await expect(page.getByRole('region', { name: '待确认操作', exact: true })).toHaveCount(0)
   } finally {
     release()
@@ -227,7 +243,7 @@ export async function runPciAiFrozenJourney(page: Page, app: PciAiBrowserApp) {
   const read = async () => (await app.fixture.read('inpatient-doctor', `${stay.path}/guideline-advice`, inpatientGuidelineAdviceListSchema)).advice.find(item => item.requestId === planned.id)!
   const original = await read(), calls = [...app.calls]
   await prepareSurgery(planned.reason)
-  await page.getByRole('button', { name: '开始手术逐笔登记', exact: true }).click()
+  await page.getByRole('button', { name: '开始手术', exact: true }).click()
   const startDialog = page.getByRole('dialog', { name: '开始手术', exact: true })
   await startDialog.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${planned.plannedProcedure.coding.code} · ${planned.plannedProcedure.coding.display}`, exact: true }).click()
@@ -242,13 +258,13 @@ export async function runPciAiFrozenJourney(page: Page, app: PciAiBrowserApp) {
   await expect(panel).toHaveCount(0)
   await expect(page.getByRole('region', { name: '本台耗材', exact: true })).toContainText('手术进行中')
   expect((await read()).result).toEqual(original.result)
-  expect(posts).toEqual([])
+  expect(posts.filter(url => !new URL(url).pathname.endsWith('/drg/simulation'))).toEqual([])
   expect(app.calls).toEqual(calls)
 }
 
 export async function runPciAiMenuFocusJourney(page: Page, app: PciAiBrowserApp) {
   const { stay } = await preparePciAiReview(page, app)
-  const confirm = page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true })
+  const confirm = page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认手术耗材', exact: true })
   await expect(confirm).toBeEnabled()
   await page.getByRole('button', { name: '用户菜单', exact: true }).click()
   await page.keyboard.press('ArrowDown')
@@ -303,7 +319,7 @@ export async function capturePciAiReviewLayouts(page: Page, panel: Locator) {
         if (bounds.width <= 0 || bounds.scrollWidth > bounds.clientWidth + 1 || bounds.left < bounds.mainLeft - 1 || bounds.right > bounds.mainRight + 1) issues.push(`${name}: ${JSON.stringify(bounds)}`)
       }
       const action = page.getByRole('region', { name: '当前操作', exact: true })
-      await expect(action.getByRole('button', { name: '确认并预留', exact: true })).toBeEnabled()
+      await expect(action.getByRole('button', { name: '确认手术耗材', exact: true })).toBeEnabled()
       const bar = await action.boundingBox(), main = await workspace.locator('.clinmesh-card-main').boundingBox()
       if (!bar || !main || bar.x < main.x - 1 || bar.x + bar.width > main.x + main.width + 1 || bar.y < 0 || bar.y + bar.height > 901) issues.push(`action: ${JSON.stringify({ bar, main })}`)
       if (!await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)) issues.push('document horizontal overflow')
@@ -333,7 +349,7 @@ export async function runPciAiSaveConcurrencyJourney(page: Page, app: PciAiBrows
   expect(initial.draft?.analysisId).toBe(initial.analysis?.id)
   await note.fill('保存期间继续输入的最新说明')
   await expect(note).toHaveValue('保存期间继续输入的最新说明')
-  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认并预留', exact: true }).click()
+  await page.getByRole('region', { name: '当前操作', exact: true }).getByRole('button', { name: '确认手术耗材', exact: true }).click()
   await expect.poll(async () => (await selection()).confirmation?.parameters.requestId).toBe(planned.id)
   const latest = await read()
   expect(latest.draft?.note).toBe('保存期间继续输入的最新说明')

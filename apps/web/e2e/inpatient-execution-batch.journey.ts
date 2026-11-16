@@ -30,7 +30,7 @@ export async function prepareInpatientExecutionBatch(page: Page, app: PciBrowser
     expect(catalogResponse.status()).toBe(200)
     const catalog = inpatientFullCatalogSchema.parse(await catalogResponse.json())
     const item = catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!
-    const dose = item.doses[0]!, frequencyCode = item.frequencyCodes[0]!
+    const dose = item.doses[0]!, frequencyCode = ['heparin', 'iohexol'].includes(suffix) ? 'PRN' as const : 'QD' as const
     const medication = { catalogItemId: item.id, catalogVersion: item.version, doseText: dose.doseText, doseQuantity: dose.quantity, frequencyCode }
     const evaluationResponse = await post(page, app, path + '/drg/simulation', { medications: [medication], services: [] })
     expect(evaluationResponse.status(), await evaluationResponse.text()).toBe(200)

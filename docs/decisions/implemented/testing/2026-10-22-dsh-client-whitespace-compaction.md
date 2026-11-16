@@ -2,7 +2,7 @@
 
 Status: implemented
 
-仅用 Transpiler 压缩空白的限制由[语法压缩决策](2026-11-13-dsh-client-syntax-compaction.md)替代；本记录的 wrapper 保护、外部模块与语义校验理由继续适用。
+压缩引擎及只处理空白的限制由[语法压缩决策](2026-11-13-dsh-client-syntax-compaction.md)取代。本记录保留 wrapper 隔离、拒绝未知包装格式及禁止标识符改名的原始理由。
 
 ## Problem
 

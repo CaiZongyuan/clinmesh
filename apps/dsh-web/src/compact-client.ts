@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { minify } from 'terser'
 import ts from 'typescript'
 
 const prefix = `window.__ModuleLoader__.load({
@@ -28,20 +29,18 @@ export async function compactLazyCjsClient(client: string): Promise<string> {
     throw new Error('Unexpected ClinMesh DSH lazy-CJS wrapper; rebuild before compacting')
   }
   const body = client.slice(prefix.length, -suffix.length)
-  const result = await Bun.build({
-    entrypoints: ['clinmesh:compact-client'],
-    target: 'browser', format: 'cjs', external: ['*'],
-    minify: { whitespace: true, syntax: true, identifiers: false },
-    treeShaking: false,
-    plugins: [{ name: 'clinmesh-generated-client', setup(build) {
-      build.onResolve({ filter: /^clinmesh:compact-client$/ }, () => ({ path: 'client.js', namespace: 'clinmesh-generated-client' }))
-      build.onLoad({ filter: /.*/, namespace: 'clinmesh-generated-client' }, () => ({ contents: body, loader: 'js' }))
-    } }],
+  const result = await minify(body, {
+    ecma: 2023,
+    compress: {
+      defaults: false, booleans: true, join_vars: true, properties: true,
+      sequences: true, comparisons: true, if_return: true, arrows: true, computed_props: true,
+      unused: true, collapse_vars: true, passes: 2,
+    },
+    mangle: false, keep_fnames: true, keep_classnames: true,
+    format: { comments: 'some', ascii_only: false, shorthand: true },
   })
-  if (!result.success) throw new AggregateError(result.logs, 'Unable to compact the generated DSH client')
-  const output = result.outputs[0]
-  if (output === undefined || result.outputs.length !== 1) throw new Error('Expected one compacted DSH client body')
-  return prefix + (await output.text()).trimEnd() + '\n' + suffix
+  if (result.code === undefined) throw new Error('Missing compacted ClinMesh DSH client')
+  return prefix + result.code.trimEnd() + '\n' + suffix
 }
 
 if (import.meta.main) {

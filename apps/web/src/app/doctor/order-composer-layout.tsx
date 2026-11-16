@@ -18,9 +18,9 @@ export function OrderComposerLayout({ catalog, children, locale }: { catalog: Re
   </div>
 }
 
-export function OrderComposerFooter({ children, hint }: { children: ReactNode; hint: string }) {
-  const needsInput = /^(还差：|请先|请选择|Complete:|Choose |Enter )/.test(hint)
-  return <DialogFooter className="clinmesh-order-composer-action items-center"><p className={needsInput ? 'min-w-0 flex-1 text-sm font-medium text-warning' : 'min-w-0 flex-1 text-sm text-muted-foreground'} role="status">{hint}</p>{children}</DialogFooter>
+export function OrderComposerFooter({ children, hint }: { children: ReactNode; hint?: string | undefined }) {
+  const needsInput = /^(还差：|请先|请选择|Complete:|Choose |Enter )/.test(hint ?? '')
+  return <DialogFooter className="clinmesh-order-composer-action items-center">{hint ? <p className={needsInput ? 'min-w-0 flex-1 text-sm font-medium text-warning' : 'min-w-0 flex-1 text-sm text-muted-foreground'} role="status">{hint}</p> : null}{children}</DialogFooter>
 }
 
 export function OrderComposerSearch({ children }: { children: ReactNode }) {

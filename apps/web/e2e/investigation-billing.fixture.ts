@@ -183,7 +183,7 @@ export async function issueDoctorLaboratoryRequest(page: Page, item: { query: st
 }
 
 export async function readDoctorBillingCase(page: Page, server: { origin: string; caseId: string }) {
-  const response = await page.request.get(`${server.origin}/api/his/v1/doctor/cases/${server.caseId}`)
+  const response = await page.request.get(`${server.origin}/api/his/v1/doctor/cases/${server.caseId}`, { maxRetries: 1 })
   expect(response.status()).toBe(200)
   return doctorCaseDetailSchema.parse(await response.json())
 }
