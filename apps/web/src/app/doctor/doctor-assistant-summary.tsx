@@ -132,6 +132,8 @@ export function DoctorAssistantSummary({ completion, detail, clinicalDocument, s
             .replace('{respiration}', String(vitals.respirationBpm))
             .replace('{bloodPressure}', `${vitals.bloodPressure.systolicMmHg}/${vitals.bloodPressure.diastolicMmHg}`)
             .replace('{oxygen}', String(vitals.oxygenSaturationPct))}
+          {vitals.weightKg === undefined ? '' : ` · ${vitals.weightKg} kg`}
+          {vitals.heightCm === undefined ? '' : ` · ${vitals.heightCm} cm`}
         </span>}
         {completionActive ? <div className="relative" ref={checklistRef}>
           <Button aria-expanded={checklistOpen} className={cn(chip, checklistOpen ? 'border-info/50 bg-info/10 text-info' : null)} onClick={() => setChecklistOpen(!checklistOpen)} size="sm" type="button" variant="outline">

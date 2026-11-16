@@ -1,3 +1,4 @@
+import { clinicalRiskAssessmentRecordSchema, inpatientVitalSignsRecordSchema } from './clinical-scores.ts'
 import { medicationSafetyRuleSchema } from './medication-safety.ts'
 import { referenceConceptSnapshotSchema } from './reference-data.ts'
 import { z } from 'zod'
@@ -81,7 +82,8 @@ export const inpatientCatalogSearchSchema = z.object({
 export type InpatientCatalogCandidate = z.infer<typeof inpatientCatalogCandidateSchema>
 export type InpatientCatalogMissingField = z.infer<typeof inpatientCatalogMissingFieldSchema>
 export const inpatientFullClinicalSchema = inpatientClinicalSchema.extend({ orders: z.array(inpatientOrderSchema), executions: z.array(inpatientExecutionSchema),
-  dispenses: z.array(inpatientDispenseSchema), charges: z.array(inpatientChargeSchema), chargesFen: z.number().int().nonnegative().safe() })
+  dispenses: z.array(inpatientDispenseSchema), charges: z.array(inpatientChargeSchema), chargesFen: z.number().int().nonnegative().safe(),
+  latestVitalSigns: inpatientVitalSignsRecordSchema.optional(), riskAssessment: clinicalRiskAssessmentRecordSchema.optional() })
 export const inpatientFullClinicalResponseSchema = commandResponseSchema(inpatientFullClinicalSchema)
 export type InpatientOrder = z.infer<typeof inpatientOrderSchema>
 

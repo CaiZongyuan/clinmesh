@@ -1,4 +1,4 @@
-import { getHisOperation, commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
+import { getHisOperation, commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations-runtime'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'

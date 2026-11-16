@@ -72,6 +72,8 @@ export function inpatientCompletionLabel(command: CompletedCommand, locale: Work
     case 'inpatient.admission.swap-bed': return t('已完成互换床位', 'Beds swapped')
     case 'inpatient.referral.issue': return t('已开具住院证', 'Inpatient referral issued')
     case 'inpatient.diagnosis.confirm': return t('已确认住院诊断', 'Inpatient diagnoses confirmed')
+    case 'inpatient.vital-signs.record': return t('已记录护理生命体征', 'Nursing vital signs recorded')
+    case 'inpatient.risk-assessment.record': return t('已记录专病风险评估', 'Clinical risk assessment recorded')
     case 'inpatient.order.issue': return t('已开立医嘱', 'Order issued')
     case 'inpatient.order.verify': return t('已校对医嘱', 'Order verified')
     case 'inpatient.order.request-stop': return t('已申请停嘱', 'Order stop requested')

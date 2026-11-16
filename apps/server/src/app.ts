@@ -1,3 +1,8 @@
+import {
+  inpatientRiskAssessmentInputSchema,
+  inpatientVitalSignsInputSchema,
+  outpatientRiskAssessmentInputSchema,
+} from '@clinmesh/contracts/clinical-scores'
 import { inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgExplainInputSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionSaveInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -1828,6 +1833,36 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.get('/api/his/v1/inpatient/admissions/:admissionId/clinical', async context => {
       try { return context.json(inpatient.orders.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/vital-signs', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: z.record(z.string(), z.unknown()) }).strict().parse(await context.req.json())
+        const input = inpatientVitalSignsInputSchema.parse({ ...body.input, admissionId: context.req.param('admissionId') })
+        return context.json(inpatient.recordVitalSigns(
+          await actor(context),
+          input,
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key')),
+        ))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.put('/api/his/v1/inpatient/admissions/:admissionId/risk-assessment', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientRiskAssessmentInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const input = { ...body.input, admissionId: context.req.param('admissionId') }
+        return context.json(inpatient.recordRiskAssessment(
+          await actor(context),
+          input,
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key')),
+        ))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/clinical-scores', async context => {
+      try {
+        z.object({}).strict().parse(context.req.query())
+        return context.json(inpatient.readClinicalScores(await actor(context), context.req.param('admissionId')))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/diagnoses/confirm', async context => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -2151,10 +2186,12 @@ export function createApp(options: CreateAppOptions = {}): Hono {
               systolicMmHg: z.number().int().min(50).max(260),
             }),
             chiefComplaint: z.string().trim().min(2).max(500),
+            heightCm: z.number().finite().min(30).max(260).optional(),
             oxygenSaturationPct: z.number().min(50).max(100),
             pulseBpm: z.number().int().min(20).max(250),
             respirationBpm: z.number().int().min(5).max(80),
             temperatureC: z.number().min(30).max(45),
+            weightKg: z.number().finite().min(1).max(400).optional(),
           }),
         }).parse(await context.req.json())
         return context.json(workflow.recordTriage({
@@ -2330,6 +2367,35 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           await actor(context),
           context.req.param('caseId'),
         ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/doctor/cases/:caseId/clinical-scores', async (context) => {
+      try {
+        z.object({}).strict().parse(context.req.query())
+        return context.json(workflow.clinicalScores.readOutpatientClinicalScores(
+          await actor(context),
+          context.req.param('caseId'),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.put('/api/his/v1/encounters/:encounterId/risk-assessment', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: outpatientRiskAssessmentInputSchema,
+        }).strict().parse(await context.req.json())
+        return context.json(workflow.clinicalScores.recordOutpatientRiskAssessment({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          payload: body.input,
+        }))
       } catch (error) {
         return apiErrorResponse(context, error)
       }

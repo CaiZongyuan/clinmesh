@@ -146,5 +146,7 @@ export function PatientVitals({ detail, messages }: { detail: DoctorCaseDetail; 
     <VitalSummary label={messages.respirationBpm} value={vitals.respirationBpm} />
     <VitalSummary label={messages.bloodPressure} value={`${vitals.bloodPressure.systolicMmHg}/${vitals.bloodPressure.diastolicMmHg}`} />
     <VitalSummary label={messages.oxygenSaturationPct} value={vitals.oxygenSaturationPct} />
+    {vitals.weightKg === undefined ? null : <VitalSummary label={messages.weightKg} value={vitals.weightKg} />}
+    {vitals.heightCm === undefined ? null : <VitalSummary label={messages.heightCm} value={vitals.heightCm} />}
   </dl>
 }

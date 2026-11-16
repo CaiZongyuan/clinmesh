@@ -230,3 +230,32 @@ clinmesh doctor completed-cases get --case-id <case-id>
 `consultationRecording.sourceResults` reports each settled source as `recorded`, `no-new-facts`, `needs-verification` or `failed`; `needs-verification` means a recording candidate failed programmatic validation, not a separate model check. Source meaning, preservation of previous facts, correction/conflict relations and rejected facts returning without new support are checked by existing `qualityControl`. Its generation and independent review keep their normal triggers and input reuse. Legacy `consultationRecording.verification` counts are zero and `issues` empty; they do not certify semantic correctness or permit retrying retired checks. Retry only actual recording failures. Review quality status, notices and issues before describing coverage; missing context or a failed check is not a pass. Existing signing completeness, permissions, snapshots and version checks still apply without per-fragment acknowledgement.
 
 负责门诊医生可按 [住院工作流](../clinmesh-inpatient/SKILL.md)开住院证，交登记员转收。
+
+## Clinical risk assessment and deterministic clinical scores
+
+门诊医生可按当前 `Encounter` 版本与 `expectedRevision` 显式录入受审计 `Clinical Risk Assessment`（`killipClass`、`cardiacArrestOnAdmission`、`anginaEpisodes24h`、`stSegmentDeviation`、`aspirinUsedLast7Days`、`smokingStatus`、`priorBleedingHistory`）；未传字段保留既有值或未记录语义，不推断默认阴性。`doctor case clinical-scores get` 从当前就诊已落库客观记录计算六项确定性算子（`ckd-epi-2021-egfr`、`cockcroft-gault-crcl`、`grace-acs`、`timi-ua-nstemi`、`precise-dapt`、`ascvd-ldl-target`），缺项返回 `status: 'incomplete'` 与具体 `missingInputs`。
+
+```bash
+clinmesh doctor case clinical-scores get --case-id <case-id>
+clinmesh encounter risk-assessment record --input @risk-assessment.json --idempotency-key <key>
+clinmesh command receipt get --operation-id encounter.risk-assessment.record --idempotency-key <key>
+```
+
+`risk-assessment.json` 合成示例；使用当前受信 `encounterId`、`encounterVersion` 与 `expectedRevision`（初次为 `0`，冲突返回 `WORKFLOW_CONFLICT` 时重读刷新后重试）：
+
+```json
+{
+  "encounterId": "<encounter-id>",
+  "encounterVersion": "1",
+  "expectedRevision": 0,
+  "fields": {
+    "killipClass": "I",
+    "cardiacArrestOnAdmission": false,
+    "anginaEpisodes24h": 1,
+    "stSegmentDeviation": false,
+    "aspirinUsedLast7Days": true,
+    "smokingStatus": "never",
+    "priorBleedingHistory": "negative"
+  }
+}
+```

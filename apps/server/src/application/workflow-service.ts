@@ -87,6 +87,7 @@ import { readOutpatientInsuranceSource } from './outpatient-insurance.ts'
 import { OutpatientInvestigationBilling } from './outpatient-investigation-billing.ts'
 import { OutpatientLaboratoryService } from './outpatient-laboratory-service.ts'
 import { OutpatientPrescriptionService } from './outpatient-prescription-service.ts'
+import { ClinicalScoreService, buildVitalObservationComponents } from './clinical-score-service.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
 import {
   casePresentation,
@@ -309,6 +310,7 @@ export class WorkflowService
   readonly pathology: PathologyRequestService
   readonly consultationRecording: ConsultationRecordingService
   readonly qualityControl: ClinicalDocumentQualityControl
+  readonly clinicalScores: ClinicalScoreService
 
   constructor(
     database: ClinMeshDatabase,
@@ -347,6 +349,12 @@ export class WorkflowService
       ...(options.referenceData === undefined ? {} : { referenceData: options.referenceData }),
       requests: this.#requests,
       tokenSecret: options.tokenSecret,
+    })
+    this.clinicalScores = new ClinicalScoreService({
+      commands,
+      database,
+      fhir,
+      outpatientContext: this.#context,
     })
     this.insurance = new InsuranceService(database, commands, {
       now: this.#now,
@@ -1721,10 +1729,12 @@ export class WorkflowService
       acuityCode: 'level-1' | 'level-2' | 'level-3' | 'level-4'
       bloodPressure: { diastolicMmHg: number; systolicMmHg: number }
       chiefComplaint: string
+      heightCm?: number | undefined
       oxygenSaturationPct: number
       pulseBpm: number
       respirationBpm: number
       temperatureC: number
+      weightKg?: number | undefined
     }
   }): CommandResponse<{
     doctorTaskId: string
@@ -1782,15 +1792,16 @@ export class WorkflowService
         encounter: { reference: `Encounter/${outpatientCase.encounter_id}` },
         effectiveDateTime: now,
         performer: [{ reference: `Practitioner/${input.context.practitionerId}` }],
-        component: [
-          { code: { coding: [{ code: '8310-5', system: 'http://loinc.org' }] }, valueQuantity: { code: 'Cel', system: 'http://unitsofmeasure.org', unit: '°C', value: input.triage.temperatureC } },
-          { code: { coding: [{ code: '8867-4', system: 'http://loinc.org' }] }, valueQuantity: { code: '/min', system: 'http://unitsofmeasure.org', unit: '/min', value: input.triage.pulseBpm } },
-          { code: { coding: [{ code: '9279-1', system: 'http://loinc.org' }] }, valueQuantity: { code: '/min', system: 'http://unitsofmeasure.org', unit: '/min', value: input.triage.respirationBpm } },
-          { code: { coding: [{ code: '8480-6', system: 'http://loinc.org' }] }, valueQuantity: { code: 'mm[Hg]', system: 'http://unitsofmeasure.org', unit: 'mmHg', value: input.triage.bloodPressure.systolicMmHg } },
-          { code: { coding: [{ code: '8462-4', system: 'http://loinc.org' }] }, valueQuantity: { code: 'mm[Hg]', system: 'http://unitsofmeasure.org', unit: 'mmHg', value: input.triage.bloodPressure.diastolicMmHg } },
-          { code: { coding: [{ code: '59408-5', system: 'http://loinc.org' }] }, valueQuantity: { code: '%', system: 'http://unitsofmeasure.org', unit: '%', value: input.triage.oxygenSaturationPct } },
-        ],
+        component: buildVitalObservationComponents(input.triage),
         note: [{ text: input.triage.chiefComplaint }],
+      })
+      const triageProvenance = transaction.fhir.createImmutable(input.context, {
+        resourceType: 'Provenance',
+        id: uuidv7(),
+        target: [{ reference: `Observation/${observationId}` }],
+        recorded: now,
+        activity: { text: 'Outpatient triage vital signs recording' },
+        agent: provenanceAgents(input.context, 'Triage nurse'),
       })
       const updatedEncounter = transaction.fhir.update(input.context, {
         ...encounter,
@@ -1853,6 +1864,7 @@ export class WorkflowService
         },
         effects: [
           { kind: 'created' as const, resource: observation },
+          { kind: 'created' as const, resource: triageProvenance },
           { kind: 'updated' as const, resource: updatedEncounter },
           { kind: 'updated' as const, resource: completedTriageTask },
           { kind: 'created' as const, resource: doctorTask },

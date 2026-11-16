@@ -15,4 +15,4 @@ clinmesh operations schema triage.record
 clinmesh triage record --input @triage.json --idempotency-key <key>
 ```
 
-Success creates structured vital-sign Observations and moves work to the doctor queue. Confirm the item leaves the pending triage queue, hand the Encounter to an outpatient-doctor Grant, and stop. Triage does not diagnose, order treatment, or complete the Encounter.
+Success creates structured vital-sign Observations (including optional `weightKg` and `heightCm` when measured) with `Provenance` and moves work to the doctor queue. Confirm the item leaves the pending triage queue, hand the Encounter to an outpatient-doctor Grant, and stop. Triage does not diagnose, order treatment, or complete the Encounter.

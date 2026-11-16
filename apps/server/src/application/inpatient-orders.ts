@@ -416,7 +416,16 @@ export class InpatientOrders {
   read(context: ActorContext, admissionId: string) {
     this.owner.assertRole(context, ['inpatient-doctor','ward-nurse','medical-records'])
     const admission = this.owner.detail(context, admissionId).admission
-    return inpatientFullClinicalSchema.parse({ admissionId, encounterVersion: admission.versionId, diagnosis: this.diagnosis(context, admissionId), ...this.facts(context, admissionId) })
+    const latestVitalSigns = this.owner.workflow.clinicalScores.latestInpatientVitalSigns(context, admissionId)
+    const riskAssessment = this.owner.workflow.clinicalScores.latestRiskAssessment(context, admissionId)
+    return inpatientFullClinicalSchema.parse({
+      admissionId,
+      encounterVersion: admission.versionId,
+      diagnosis: this.diagnosis(context, admissionId),
+      ...this.facts(context, admissionId),
+      ...(latestVitalSigns === undefined ? {} : { latestVitalSigns }),
+      riskAssessment,
+    })
   }
   confirmDiagnosis(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientDiagnosisConfirmInputSchema.parse(raw)

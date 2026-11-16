@@ -108,10 +108,12 @@ export const clinicalPresentationSchema = z.object({
       diastolicMmHg: z.number().positive(),
       systolicMmHg: z.number().positive(),
     }).strict(),
+    heightCm: z.number().finite().min(30).max(260).optional(),
     oxygenSaturationPct: z.number().min(0).max(100),
     pulseBpm: z.number().positive(),
     respirationBpm: z.number().positive(),
     temperatureC: z.number(),
+    weightKg: z.number().finite().min(1).max(400).optional(),
   }).strict(),
 }).strict()
 
@@ -862,11 +864,13 @@ export const triageQueueSchema = z.object({
         systolicMmHg: z.number(),
       }),
       chiefComplaint: z.string().min(1),
+      heightCm: z.number().finite().min(30).max(260).optional(),
       oxygenSaturationPct: z.number(),
       pulseBpm: z.number(),
       recordedAt: z.string().min(1),
       respirationBpm: z.number(),
       temperatureC: z.number(),
+      weightKg: z.number().finite().min(1).max(400).optional(),
     }).optional(),
     visitType: z.object({
       id: z.string().min(1),
@@ -896,9 +900,11 @@ const triageVitalSummarySchema = triageSummarySchema.extend({
     diastolicMmHg: z.number(),
     systolicMmHg: z.number(),
   }),
+  heightCm: z.number().finite().min(30).max(260).optional(),
   oxygenSaturationPct: z.number(),
   pulseBpm: z.number(),
   respirationBpm: z.number(),
+  weightKg: z.number().finite().min(1).max(400).optional(),
 })
 
 export const doctorQueueViewSchema = z.enum(['active', 'waiting'])

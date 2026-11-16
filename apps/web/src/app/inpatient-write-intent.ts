@@ -1,4 +1,5 @@
 import { inpatientDrgAgentConfirmInputSchema } from '@clinmesh/contracts/inpatient-drg-agent'
+import { inpatientRiskAssessmentInputSchema, inpatientVitalSignsInputSchema } from '@clinmesh/contracts/clinical-scores'
 import { inpatientDrgExplainInputSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { inpatientGuidelineAdviceRequestInputSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { inpatientMaterialEstimateRequestInputSchema, inpatientMaterialEstimateSaveInputSchema, inpatientMaterialEstimateConfirmInputSchema } from '@clinmesh/contracts/inpatient-material-estimate'
@@ -23,7 +24,7 @@ import { z } from 'zod'
 import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { multiChargePaymentResponseSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { commandReceiptLookupSchema, getHisOperation, multiChargePaymentPreviewOperationInputSchema, multiChargePaymentConfirmOperationInputSchema,
-  multiChargePaymentRecoverOperationInputSchema, refundAllocationPreviewOperationInputSchema } from '@clinmesh/contracts/his-operations'
+  multiChargePaymentRecoverOperationInputSchema, refundAllocationPreviewOperationInputSchema } from '@clinmesh/contracts/his-operations-runtime'
 import { advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema, inpatientBedInputSchema,
   inpatientRegistrationInputSchema, inpatientSwapInputSchema, inpatientReferralInputSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { useMutation } from '@tanstack/react-query'
@@ -103,6 +104,8 @@ const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('inpatient.admission.swap-bed'), input: inpatientSwapInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.referral.issue'), input: inpatientReferralInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.diagnosis.confirm'), input: inpatientDiagnosisConfirmInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.vital-signs.record'), input: inpatientVitalSignsInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.risk-assessment.record'), input: inpatientRiskAssessmentInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.order.issue'), input: inpatientOrderIssueInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.order.verify'), input: inpatientOrderActionInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.order.request-stop'), input: inpatientOrderReasonInputSchema }).strict(),
@@ -379,7 +382,10 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           if ('paymentId' in input) path = path.replace(':paymentId', encodeURIComponent(input.paymentId))
           if ('adjustmentId' in input) path = path.replace(':adjustmentId', encodeURIComponent(input.adjustmentId))
           if ('reservationId' in input) path = path.replace(':reservationId', encodeURIComponent(input.reservationId))
-          response = await apiMutation(path, definition.output, definition.http.encodeBody!(input), { idempotencyKey: intent.idempotencyKey })
+          response = await apiMutation(path, definition.output, definition.http.encodeBody!(input), {
+            idempotencyKey: intent.idempotencyKey,
+            ...(definition.http.method === 'GET' || definition.http.method === 'POST' ? {} : { method: definition.http.method }),
+          })
         }
         return complete(response)
       } catch (error) {

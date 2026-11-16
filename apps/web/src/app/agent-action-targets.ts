@@ -7,7 +7,7 @@ const targets: Record<string, { label: string; selectors: string[] }> = {
   'registration.synthetic-case.search': { label: '查找待诊病例', selectors: ['#registration-case-query'] },
   'registration.patient.draft.set': { label: '填写患者资料', selectors: ['#patient-name', '#patient-identifier', '#patient-birth-date', '#patient-gender'] },
   'registration.draft.set': { label: '填写挂号信息', selectors: ['#registration-department', '#registration-location', '#registration-visit-type'] },
-  'triage.draft.set': { label: '填写分诊评估', selectors: ['#triage-chief-complaint', '#triage-temperature', '#triage-pulse', '#triage-respiration', '#triage-systolic', '#triage-diastolic', '#triage-oxygen', '#triage-acuity'] },
+  'triage.draft.set': { label: '填写分诊评估', selectors: ['#triage-chief-complaint', '#triage-temperature', '#triage-pulse', '#triage-respiration', '#triage-systolic', '#triage-diastolic', '#triage-oxygen', '#triage-weight', '#triage-height', '#triage-acuity'] },
   'pharmacy.review.draft.set': { label: '填写处方审核意见', selectors: ['#prescription-review-note'] },
   'pharmacy.dispense.draft.set': { label: '填写调剂批次与数量', selectors: ['[id^="lot-"]', '[id^="dispense-quantity-"]'] },
   'outpatient.consultation.ask': { label: '问诊并等待患者回答', selectors: ['[data-agent-consultation]', '[data-agent-consultation-pending]'] },

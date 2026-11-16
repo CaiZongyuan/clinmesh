@@ -1,5 +1,5 @@
 import { laboratoryRequestStatusSchema, sessionContextSchema, type ExaminationRequest, type ImagingRequest, type LaboratoryRequest, type PathologyRequest, type SessionContext } from '@clinmesh/contracts/his'
-import { getHisOperation } from '@clinmesh/contracts/his-operations'
+import { getHisOperation } from '@clinmesh/contracts/his-operations-runtime'
 import { z } from 'zod'
 import { createDraftDiscard } from '../draft-discard.ts'
 

@@ -1,3 +1,8 @@
+import {
+  clinicalScoreBundleSchema,
+  outpatientRiskAssessmentResponseSchema,
+  type ClinicalRiskAssessmentFieldsInput,
+} from '@clinmesh/contracts/clinical-scores'
 import { clearOrderDrafts } from './inpatient-order-drafts.ts'
 import { clearInvestigationDrafts as clearInpatientInvestigationDrafts } from './inpatient-investigation-drafts.ts'
 import { clearInpatientOrderDrafts } from './inpatient-order-batch.ts'
@@ -1308,12 +1313,14 @@ export function recordTriage(input: {
   chiefComplaint: string
   encounterId: string
   encounterVersion: string
+  heightCm?: number | undefined
   oxygenSaturationPct: number
   pulseBpm: number
   respirationBpm: number
   taskId: string
   taskVersion: string
   temperatureC: number
+  weightKg?: number | undefined
 }, idempotencyKey: string) {
   return apiMutation(
     `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/actions/record-triage`,
@@ -1327,13 +1334,36 @@ export function recordTriage(input: {
         acuityCode: input.acuityCode,
         bloodPressure: input.bloodPressure,
         chiefComplaint: input.chiefComplaint,
+        ...(input.heightCm === undefined ? {} : { heightCm: input.heightCm }),
         oxygenSaturationPct: input.oxygenSaturationPct,
         pulseBpm: input.pulseBpm,
         respirationBpm: input.respirationBpm,
         temperatureC: input.temperatureC,
+        ...(input.weightKg === undefined ? {} : { weightKg: input.weightKg }),
       },
     },
     { idempotencyKey },
+  )
+}
+
+export function getOutpatientClinicalScores(caseId: string, signal?: AbortSignal) {
+  return apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/clinical-scores`, clinicalScoreBundleSchema, signal)
+}
+
+export function recordOutpatientRiskAssessment(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedRevision: number
+  fields: ClinicalRiskAssessmentFieldsInput
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/risk-assessment`,
+    outpatientRiskAssessmentResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedRevision: input.expectedRevision, fields: input.fields },
+    },
+    { idempotencyKey, method: 'PUT' },
   )
 }
 

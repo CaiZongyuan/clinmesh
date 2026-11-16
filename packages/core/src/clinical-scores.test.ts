@@ -1,0 +1,426 @@
+import { describe, expect, it } from 'vitest'
+import { clinicalScoreBundleSchema } from '@clinmesh/contracts/clinical-scores'
+import {
+  calculateAscvdLdlTarget,
+  calculateCkdEpi2021Egfr,
+  calculateCockcroftGaultCrCl,
+  calculateGraceAcs,
+  calculatePreciseDapt,
+  calculateTimiUaNstemi,
+  evaluateClinicalScores,
+  normalizeCreatinineMgDl,
+  normalizeHemoglobinGdl,
+  normalizeLipidMmolL,
+  normalizeWbc10e9L,
+} from './clinical-scores.ts'
+
+describe('clinical-scores unit conversions and physiological bounds', () => {
+  it('converts creatinine between umol/L (including μmol/L) and mg/dL and rejects extremes', () => {
+    expect(normalizeCreatinineMgDl(88.4, 'umol/L')).toBeCloseTo(1.0, 4)
+    expect(normalizeCreatinineMgDl(176.8, 'μmol/L')).toBeCloseTo(2.0, 4)
+    expect(normalizeCreatinineMgDl(1.5, 'mg/dL')).toBeCloseTo(1.5, 4)
+    expect(() => normalizeCreatinineMgDl(0, 'umol/L')).toThrow(RangeError)
+    expect(() => normalizeCreatinineMgDl(5000, 'umol/L')).toThrow(RangeError)
+    expect(() => normalizeCreatinineMgDl(1.0, 'mmol/L')).toThrow(RangeError)
+  })
+
+  it('converts hemoglobin between g/L and g/dL and rejects extremes', () => {
+    expect(normalizeHemoglobinGdl(135, 'g/L')).toBeCloseTo(13.5, 4)
+    expect(normalizeHemoglobinGdl(9.8, 'g/dL')).toBeCloseTo(9.8, 4)
+    expect(() => normalizeHemoglobinGdl(10, 'g/L')).toThrow(RangeError)
+    expect(() => normalizeHemoglobinGdl(300, 'g/L')).toThrow(RangeError)
+  })
+
+  it('converts WBC between 10*9/L, 10^9/L, and /uL and rejects extremes', () => {
+    expect(normalizeWbc10e9L(8.5, '10*9/L')).toBeCloseTo(8.5, 4)
+    expect(normalizeWbc10e9L(12.2, '10^9/L')).toBeCloseTo(12.2, 4)
+    expect(normalizeWbc10e9L(11000, '/uL')).toBeCloseTo(11.0, 4)
+    expect(() => normalizeWbc10e9L(0.01, '10*9/L')).toThrow(RangeError)
+    expect(() => normalizeWbc10e9L(500, '10*9/L')).toThrow(RangeError)
+  })
+
+  it('converts lipids between mmol/L and mg/dL and rejects extremes', () => {
+    expect(normalizeLipidMmolL(77.34, 'mg/dL', 'ldl')).toBeCloseTo(2.0, 3)
+    expect(normalizeLipidMmolL(1.8, 'mmol/L', 'ldl')).toBeCloseTo(1.8, 4)
+    expect(normalizeLipidMmolL(50, 'mg/dL', 'hdl')).toBeCloseTo(50 / 38.67, 3)
+    expect(() => normalizeLipidMmolL(5, 'mg/dL', 'ldl')).toThrow(RangeError)
+    expect(() => normalizeLipidMmolL(2000, 'mg/dL', 'tc')).toThrow(RangeError)
+  })
+})
+
+describe('six deterministic clinical score formulas', () => {
+  it('computes CKD-EPI 2021 eGFR identically across umol/L and mg/dL and classifies G1–G5', () => {
+    const maleNormal = calculateCkdEpi2021Egfr({
+      ageYears: 55,
+      serumCreatinine: { unit: 'umol/L', value: 79.56 },
+      sex: 'male',
+    })
+    const maleNormalMgDl = calculateCkdEpi2021Egfr({
+      ageYears: 55,
+      serumCreatinine: { unit: 'mg/dL', value: 0.9 },
+      sex: 'male',
+    })
+    expect(maleNormal).toEqual(maleNormalMgDl)
+    expect(maleNormal.tierCode).toBe('G1')
+
+    const stageG3b = calculateCkdEpi2021Egfr({
+      ageYears: 72,
+      serumCreatinine: { unit: 'mg/dL', value: 1.8 },
+      sex: 'male',
+    })
+    expect(stageG3b.tierCode).toBe('G3b')
+    expect(stageG3b.value).toBeGreaterThanOrEqual(30)
+    expect(stageG3b.value).toBeLessThan(45)
+
+    const stageG4 = calculateCkdEpi2021Egfr({
+      ageYears: 74,
+      serumCreatinine: { unit: 'umol/L', value: 240 },
+      sex: 'female',
+    })
+    expect(stageG4.tierCode).toBe('G4')
+    expect(stageG4.value).toBeLessThan(30)
+
+    expect(() =>
+      calculateCkdEpi2021Egfr({
+        ageYears: 14,
+        serumCreatinine: { unit: 'mg/dL', value: 0.8 },
+        sex: 'male',
+      }),
+    ).toThrow(RangeError)
+  })
+
+  it('computes Cockcroft-Gault CrCl with sex factor and weight bounds', () => {
+    const male = calculateCockcroftGaultCrCl({
+      ageYears: 68,
+      serumCreatinine: { unit: 'mg/dL', value: 1.0 },
+      sex: 'male',
+      weightKg: 72,
+    })
+    expect(male.value).toBe(72)
+    expect(male.tierCode).toBe('mild')
+
+    const female = calculateCockcroftGaultCrCl({
+      ageYears: 68,
+      serumCreatinine: { unit: 'umol/L', value: 88.4 },
+      sex: 'female',
+      weightKg: 72,
+    })
+    expect(female.value).toBe(61.2)
+    expect(female.tierCode).toBe('mild')
+
+    expect(() =>
+      calculateCockcroftGaultCrCl({
+        ageYears: 68,
+        serumCreatinine: { unit: 'mg/dL', value: 1.0 },
+        sex: 'male',
+        weightKg: 5,
+      }),
+    ).toThrow(RangeError)
+  })
+
+  it('computes GRACE ACS admission score across low, intermediate, and high risk strata', () => {
+    const low = calculateGraceAcs({
+      ageYears: 45,
+      cardiacArrestOnAdmission: false,
+      elevatedCardiacBiomarker: false,
+      heartRateBpm: 72,
+      killipClass: 'I',
+      serumCreatinine: { unit: 'umol/L', value: 80 },
+      stSegmentDeviation: false,
+      systolicBpMmHg: 145,
+    })
+    expect(low.value).toBeLessThanOrEqual(108)
+    expect(low.tierCode).toBe('low')
+
+    const intermediate = calculateGraceAcs({
+      ageYears: 66,
+      cardiacArrestOnAdmission: false,
+      elevatedCardiacBiomarker: true,
+      heartRateBpm: 88,
+      killipClass: 'I',
+      serumCreatinine: { unit: 'mg/dL', value: 1.1 },
+      stSegmentDeviation: false,
+      systolicBpMmHg: 132,
+    })
+    expect(intermediate.value).toBeGreaterThanOrEqual(109)
+    expect(intermediate.value).toBeLessThanOrEqual(140)
+    expect(intermediate.tierCode).toBe('intermediate')
+
+    const high = calculateGraceAcs({
+      ageYears: 76,
+      cardiacArrestOnAdmission: false,
+      elevatedCardiacBiomarker: true,
+      heartRateBpm: 112,
+      killipClass: 'II',
+      serumCreatinine: { unit: 'umol/L', value: 150 },
+      stSegmentDeviation: true,
+      systolicBpMmHg: 105,
+    })
+    expect(high.value).toBeGreaterThan(140)
+    expect(high.tierCode).toBe('high')
+  })
+
+  it('computes TIMI UA/NSTEMI 0–7 score across low, intermediate, and high risk strata', () => {
+    expect(
+      calculateTimiUaNstemi({
+        ageYears: 52,
+        anginaEpisodes24h: 1,
+        aspirinUsedLast7Days: false,
+        cadRiskFactorCount: 2,
+        elevatedCardiacBiomarker: false,
+        knownCoronaryStenosisGe50Pct: false,
+        stSegmentDeviation: true,
+      }),
+    ).toMatchObject({ tierCode: 'low', value: 1 })
+
+    expect(
+      calculateTimiUaNstemi({
+        ageYears: 68,
+        anginaEpisodes24h: 2,
+        aspirinUsedLast7Days: true,
+        cadRiskFactorCount: 3,
+        elevatedCardiacBiomarker: false,
+        knownCoronaryStenosisGe50Pct: false,
+        stSegmentDeviation: false,
+      }),
+    ).toMatchObject({ tierCode: 'intermediate', value: 4 })
+
+    expect(
+      calculateTimiUaNstemi({
+        ageYears: 70,
+        anginaEpisodes24h: 3,
+        aspirinUsedLast7Days: true,
+        cadRiskFactorCount: 3,
+        elevatedCardiacBiomarker: true,
+        knownCoronaryStenosisGe50Pct: true,
+        stSegmentDeviation: true,
+      }),
+    ).toMatchObject({ tierCode: 'high', value: 7 })
+  })
+
+  it('computes PRECISE-DAPT across g/L and g/dL hemoglobin and <25 vs >=25 bleeding cutoff', () => {
+    const lowBleed = calculatePreciseDapt({
+      ageYears: 56,
+      creatinineClearanceMlMin: 88,
+      hemoglobin: { unit: 'g/L', value: 142 },
+      priorBleedingHistory: 'negative',
+      wbc: { unit: '10*9/L', value: 6.8 },
+    })
+    const lowBleedGdl = calculatePreciseDapt({
+      ageYears: 56,
+      creatinineClearanceMlMin: 88,
+      hemoglobin: { unit: 'g/dL', value: 14.2 },
+      priorBleedingHistory: 'negative',
+      wbc: { unit: '/uL', value: 6800 },
+    })
+    expect(lowBleed).toEqual(lowBleedGdl)
+    expect(lowBleed.value).toBeLessThan(25)
+    expect(lowBleed.tierCode).toBe('low-moderate')
+
+    const highBleed = calculatePreciseDapt({
+      ageYears: 78,
+      creatinineClearanceMlMin: 38,
+      hemoglobin: { unit: 'g/L', value: 102 },
+      priorBleedingHistory: 'positive',
+      wbc: { unit: '10^9/L', value: 11.5 },
+    })
+    expect(highBleed.value).toBeGreaterThanOrEqual(25)
+    expect(highBleed.tierCode).toBe('high')
+  })
+
+  it('stratifies ASCVD LDL-C target for secondary prevention, DM+CKD, and primary prevention smoking requirement', () => {
+    // ACS secondary prevention -> ultra-high (<1.4 mmol/L) + goal attainment check
+    const acs = calculateAscvdLdlTarget({
+      ageYears: 62,
+      confirmedDiagnosisCodes: ['I21.4'],
+      ldlCholesterol: { unit: 'mg/dL', value: 77.34 },
+    })
+    expect(acs).toMatchObject({
+      ldlGoalEvaluation: { atGoal: false, currentLdlMmolL: 2, targetLdlMmolL: 1.4 },
+      status: 'complete',
+      tierCode: 'ultra-high',
+      value: 1.4,
+    })
+
+    // Stable CAD with preserved eGFR -> very-high (<1.8 mmol/L)
+    const stableCad = calculateAscvdLdlTarget({
+      ageYears: 64,
+      confirmedDiagnosisCodes: ['I25.1'],
+      egfrMlMin173m2: 72,
+      ldlCholesterol: { unit: 'mmol/L', value: 1.62 },
+    })
+    expect(stableCad).toMatchObject({
+      ldlGoalEvaluation: { atGoal: true, currentLdlMmolL: 1.62, targetLdlMmolL: 1.8 },
+      status: 'complete',
+      tierCode: 'very-high',
+      value: 1.8,
+    })
+
+    // Diabetes + CKD (eGFR < 60) -> very-high (<1.8 mmol/L) without requiring smoking status
+    const dmCkd = calculateAscvdLdlTarget({
+      ageYears: 58,
+      confirmedDiagnosisCodes: ['E11.2'],
+      egfrMlMin173m2: 42,
+    })
+    expect(dmCkd).toMatchObject({
+      status: 'complete',
+      tierCode: 'very-high',
+      value: 1.8,
+    })
+
+    // Primary prevention missing smokingStatus -> incomplete
+    const primaryMissingSmoking = calculateAscvdLdlTarget({
+      ageYears: 52,
+      confirmedDiagnosisCodes: ['I10'],
+      egfrMlMin173m2: 86,
+      hdlCholesterol: { unit: 'mmol/L', value: 1.2 },
+      ldlCholesterol: { unit: 'mmol/L', value: 3.1 },
+      sex: 'male',
+      systolicBpMmHg: 146,
+    })
+    expect(primaryMissingSmoking).toEqual({
+      missingInputs: ['smokingStatus'],
+      status: 'incomplete',
+    })
+
+    // Primary prevention with smoking recorded -> complete
+    const primaryComplete = calculateAscvdLdlTarget({
+      ageYears: 52,
+      confirmedDiagnosisCodes: ['I10'],
+      egfrMlMin173m2: 86,
+      hdlCholesterol: { unit: 'mmol/L', value: 1.2 },
+      ldlCholesterol: { unit: 'mmol/L', value: 3.1 },
+      sex: 'male',
+      smokingStatus: 'never',
+      systolicBpMmHg: 146,
+    })
+    expect(primaryComplete).toMatchObject({
+      status: 'complete',
+      tierCode: 'low-moderate',
+      value: 3.4,
+    })
+  })
+})
+
+describe('evaluateClinicalScores bundle evaluation', () => {
+  it('returns incomplete with exact missingInputs when objective facts are absent and never fabricates defaults', () => {
+    const patientSrc = { label: '患者人口学', reference: 'Patient/p-1', versionId: '1' }
+    const results = evaluateClinicalScores({
+      ageYears: { source: patientSrc, value: 66 },
+      confirmedDiagnoses: [],
+      sex: { source: patientSrc, value: 'male' },
+    })
+    expect(results).toHaveLength(6)
+    expect(results.every(item => item.status === 'incomplete')).toBe(true)
+    expect(results.find(item => item.id === 'ckd-epi-2021-egfr')?.missingInputs).toEqual(['serumCreatinine'])
+    expect(results.find(item => item.id === 'cockcroft-gault-crcl')?.missingInputs).toEqual([
+      'weightKg',
+      'serumCreatinine',
+    ])
+    expect(results.find(item => item.id === 'grace-acs')?.missingInputs).toEqual([
+      'heartRateBpm',
+      'systolicBpMmHg',
+      'serumCreatinine',
+      'killipClass',
+      'cardiacArrestOnAdmission',
+      'stSegmentDeviation',
+      'elevatedCardiacBiomarker',
+    ])
+    expect(results.find(item => item.id === 'precise-dapt')?.missingInputs).toEqual([
+      'weightKg',
+      'serumCreatinine',
+      'hemoglobin',
+      'wbc',
+      'priorBleedingHistory',
+    ])
+  })
+
+  it('evaluates all 6 scores as complete and validates against clinicalScoreBundleSchema when facts are present', () => {
+    const patientSrc = { label: 'Patient', reference: 'Patient/p-1', versionId: '2' }
+    const vitalSrc = { label: 'Vitals', reference: 'Observation/obs-vital-1', versionId: '1' }
+    const labSrc = { label: 'Labs', reference: 'DiagnosticReport/dr-lab-1', versionId: '1' }
+    const ecgSrc = { label: 'ECG', reference: 'DiagnosticReport/dr-ecg-1', versionId: '1' }
+    const riskSrc = { label: 'Risk', reference: 'Observation/obs-risk-1', versionId: '1' }
+    const condSrc = { label: 'Diagnosis', reference: 'Condition/cond-1', versionId: '1' }
+
+    const scores = evaluateClinicalScores({
+      ageYears: { source: patientSrc, value: 68 },
+      anginaEpisodes24h: { source: riskSrc, value: 2 },
+      aspirinUsedLast7Days: { source: riskSrc, value: true },
+      cardiacArrestOnAdmission: { source: riskSrc, value: false },
+      confirmedDiagnoses: [{ code: 'I21.4', source: condSrc }],
+      elevatedCardiacBiomarker: { source: labSrc, value: true },
+      hdlCholesterol: { source: labSrc, value: { unit: 'mmol/L', value: 1.05 } },
+      heartRateBpm: { source: vitalSrc, value: 92 },
+      hemoglobin: { source: labSrc, value: { unit: 'g/L', value: 132 } },
+      killipClass: { source: riskSrc, value: 'II' },
+      ldlCholesterol: { source: labSrc, value: { unit: 'mmol/L', value: 2.35 } },
+      priorBleedingHistory: { source: riskSrc, value: 'negative' },
+      serumCreatinine: { source: labSrc, value: { unit: 'umol/L', value: 112 } },
+      sex: { source: patientSrc, value: 'male' },
+      smokingStatus: { source: riskSrc, value: 'current' },
+      stSegmentDeviation: { source: ecgSrc, value: true },
+      systolicBpMmHg: { source: vitalSrc, value: 128 },
+      totalCholesterol: { source: labSrc, value: { unit: 'mmol/L', value: 4.6 } },
+      wbc: { source: labSrc, value: { unit: '10*9/L', value: 9.4 } },
+      weightKg: { source: vitalSrc, value: 74 },
+    })
+
+    expect(scores.every(item => item.status === 'complete')).toBe(true)
+    const parsedBundle = clinicalScoreBundleSchema.parse({
+      encounterId: 'enc-1',
+      encounterVersion: '3',
+      evaluatedAt: '2026-11-16T10:00:00+08:00',
+      riskAssessment: {
+        effectiveStSegmentDeviation: {
+          source: 'ecg-report',
+          sourceReference: 'DiagnosticReport/dr-ecg-1',
+          value: true,
+          versionId: '1',
+        },
+        observationId: 'obs-risk-1',
+        observationVersion: '1',
+        provenanceId: 'prov-risk-1',
+        recordedAt: '2026-11-16T09:55:00+08:00',
+        recordedBy: 'actor-doc-1',
+        revision: 1,
+        values: {
+          anginaEpisodes24h: 2,
+          aspirinUsedLast7Days: true,
+          cardiacArrestOnAdmission: false,
+          killipClass: 'II',
+          priorBleedingHistory: 'negative',
+          smokingStatus: 'current',
+          stSegmentDeviation: null,
+        },
+      },
+      scores,
+      vitalSigns: {
+        bloodPressure: { diastolicMmHg: 78, systolicMmHg: 128 },
+        heightCm: 172,
+        observationId: 'obs-vital-1',
+        observationVersion: '1',
+        oxygenSaturationPct: 97,
+        pulseBpm: 92,
+        recordedAt: '2026-11-16T09:30:00+08:00',
+        respirationBpm: 18,
+        temperatureC: 36.6,
+        weightKg: 74,
+      },
+    })
+    expect(parsedBundle.scores).toHaveLength(6)
+    // Acute I21.4 alone does NOT inflate TIMI known coronary stenosis >=50% (age>=65[1] + aspirin[1] + angina>=2[1] + ST[1] + troponin[1] = 5 pts)
+    expect(scores.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 5 })
+    // Adding prior stent Z98.61 or formal >=50% stenosis adds the 6th TIMI point
+    const withPriorStent = evaluateClinicalScores({
+      ageYears: { source: patientSrc, value: 68 },
+      anginaEpisodes24h: { source: riskSrc, value: 2 },
+      aspirinUsedLast7Days: { source: riskSrc, value: true },
+      confirmedDiagnoses: [{ code: 'I21.4', source: condSrc }, { code: 'Z98.61', source: condSrc }],
+      elevatedCardiacBiomarker: { source: labSrc, value: true },
+      smokingStatus: { source: riskSrc, value: 'never' },
+      stSegmentDeviation: { source: ecgSrc, value: true },
+    })
+    expect(withPriorStent.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 6 })
+  })
+})

@@ -214,6 +214,14 @@ _Avoid_: Diagnosis Confirmation, prior diagnosis, Condition history
 医生对一次 Encounter 当前诊断集合的正式确认 revision。后续确认可以替代其当前效力，但不能覆盖或删除既有 revision。
 _Avoid_: Diagnosis Draft, immutable editing lock, prior diagnosis
 
+**Clinical Risk Assessment**:
+一次门诊或住院 Encounter 中受审计记录的床旁专病风险结构化评估，包括 Killip 心功能分级、入院心脏骤停、24 小时心绞痛发作次数、床旁 ST 段偏移确认、近 7 天阿司匹林使用、明确吸烟状态和既往出血史。未录入项保持“未记录”语义，不推断默认阴性；存在已签发 12 导联心电图报告的明确 ST 段结论时优先以其为客观依据。
+_Avoid_: Free-text risk note, default negative history, Clinical Score
+
+**Clinical Score**:
+依据当前门诊或住院已确认的生命体征、检验检查、正式诊断与 Clinical Risk Assessment 得出的可复现量化临床评分或生理指标结果（如 CKD-EPI 2021 eGFR、Cockcroft-Gault CrCl、GRACE、TIMI UA/NSTEMI、PRECISE-DAPT、ASCVD 风险分层与 LDL-C 目标值），连同风险分层、客观依据引用及缺项清单呈现。它不接受未记录的临时参数覆盖，也不代替医生诊断与医嘱决策。
+_Avoid_: Model prediction, manual calculator override, diagnosis
+
 **Report Acknowledgement**:
 负责医生确认已查看一份已签发诊断报告的业务事实。它不改变报告内容或签发状态。
 _Avoid_: Report status, report approval, read receipt

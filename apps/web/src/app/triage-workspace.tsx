@@ -46,9 +46,14 @@ const vitalRanges = {
   diastolicMmHg: { min: 30, max: 180, step: 1 },
   oxygenSaturationPct: { min: 50, max: 100, step: 0.1 },
 }
+const optionalVitalRanges = {
+  weightKg: { min: 1, max: 400, step: 0.1 },
+  heightCm: { min: 30, max: 260, step: 0.1 },
+}
 type VitalKey = keyof typeof vitalRanges
-type TriageDraftField = VitalKey | 'chiefComplaint' | 'acuityCode'
-type TriageDraft = Record<VitalKey | 'chiefComplaint', string> & {
+type OptionalVitalKey = keyof typeof optionalVitalRanges
+type TriageDraftField = VitalKey | OptionalVitalKey | 'chiefComplaint' | 'acuityCode'
+type TriageDraft = Record<VitalKey | OptionalVitalKey | 'chiefComplaint', string> & {
   acuityCode: TriageAcuity | ''
   assisted: readonly TriageDraftField[]
 }
@@ -62,11 +67,13 @@ interface CompletedTriageSnapshot {
   systolicMmHg: string
   diastolicMmHg: string
   oxygenSaturationPct: string
+  weightKg?: string | undefined
+  heightCm?: string | undefined
   completedAt?: string | undefined
 }
 const defaultDraft: TriageDraft = {
   chiefComplaint: '', temperatureC: '37.0', pulseBpm: '92', respirationBpm: '18',
-  systolicMmHg: '118', diastolicMmHg: '78', oxygenSaturationPct: '98', acuityCode: '', assisted: [],
+  systolicMmHg: '118', diastolicMmHg: '78', oxygenSaturationPct: '98', weightKg: '', heightCm: '', acuityCode: '', assisted: [],
 }
 
 export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): React.JSX.Element {
@@ -96,7 +103,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
   const activePatientCase = selectedCase ?? (status === 'pending' ? completedSnapshot?.item : undefined)
   const draftKey = selectedCase === undefined ? undefined : `${draftScope}:${selectedCase.caseId}`
   const draft = draftKey === undefined ? defaultDraft : drafts[draftKey] ?? defaultDraft
-  const { chiefComplaint, temperatureC, pulseBpm, respirationBpm, systolicMmHg, diastolicMmHg, oxygenSaturationPct, acuityCode } = draft
+  const { chiefComplaint, temperatureC, pulseBpm, respirationBpm, systolicMmHg, diastolicMmHg, oxygenSaturationPct, weightKg, heightCm, acuityCode } = draft
   function setField<Field extends TriageDraftField>(field: Field, value: TriageDraft[Field]) {
     if (draftKey === undefined) return
     setDrafts(current => {
@@ -105,11 +112,15 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
     })
   }
   const vitalValues = { temperatureC, pulseBpm, respirationBpm, systolicMmHg, diastolicMmHg, oxygenSaturationPct }
+  const weightInvalid = weightKg.trim() !== '' && !validVital(weightKg, optionalVitalRanges.weightKg)
+  const heightInvalid = heightCm.trim() !== '' && !validVital(heightCm, optionalVitalRanges.heightCm)
   const missingFields = [
     ...(chiefComplaint.trim() === '' ? [messages.chiefComplaint] : []),
     ...(Object.keys(vitalRanges) as VitalKey[])
       .filter(key => !validVital(vitalValues[key], vitalRanges[key]))
       .map(key => messages[key]),
+    ...(weightInvalid ? [locale === 'zh-CN' ? '体重' : 'Weight'] : []),
+    ...(heightInvalid ? [locale === 'zh-CN' ? '身高' : 'Height'] : []),
     ...(acuityCode === '' ? [messages.acuity] : []),
   ]
   const canRecord = status === 'pending' && queue.isSuccess && selectedCase !== undefined && completedSnapshot === undefined && missingFields.length === 0
@@ -125,12 +136,14 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
         chiefComplaint: values.chiefComplaint,
         encounterId: item.encounterId,
         encounterVersion: item.encounterVersion,
+        ...(values.heightCm.trim() === '' ? {} : { heightCm: Number(values.heightCm) }),
         oxygenSaturationPct: Number(values.oxygenSaturationPct),
         pulseBpm: Number(values.pulseBpm),
         respirationBpm: Number(values.respirationBpm),
         taskId: item.taskId,
         taskVersion: item.taskVersion,
         temperatureC: Number(values.temperatureC),
+        ...(values.weightKg.trim() === '' ? {} : { weightKg: Number(values.weightKg) }),
       }, newIdempotencyKey())
     },
     onSuccess: async (_response, { item, draft: values, key }) => {
@@ -145,6 +158,8 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
           systolicMmHg: values.systolicMmHg,
           diastolicMmHg: values.diastolicMmHg,
           oxygenSaturationPct: values.oxygenSaturationPct,
+          ...(values.weightKg.trim() === '' ? {} : { weightKg: values.weightKg }),
+          ...(values.heightCm.trim() === '' ? {} : { heightCm: values.heightCm }),
         })
       }
       if (lastToastId.current !== undefined) toast.close(lastToastId.current)
@@ -213,11 +228,13 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
             acuityCode: { type: 'string', enum: acuities },
             chiefComplaint: { type: 'string', maxLength: 500 },
             diastolicMmHg: { type: 'number', minimum: 30, maximum: 180 },
+            heightCm: { type: 'number', minimum: 30, maximum: 260 },
             oxygenSaturationPct: { type: 'number', minimum: 50, maximum: 100 },
             pulseBpm: { type: 'number', minimum: 20, maximum: 250 },
             respirationBpm: { type: 'number', minimum: 5, maximum: 80 },
             systolicMmHg: { type: 'number', minimum: 50, maximum: 260 },
             temperatureC: { type: 'number', minimum: 30, maximum: 45 },
+            weightKg: { type: 'number', minimum: 1, maximum: 400 },
           },
           required: [
             'acuityCode', 'chiefComplaint', 'diastolicMmHg', 'oxygenSaturationPct',
@@ -233,7 +250,13 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
             diastolicMmHg: String(values.diastolicMmHg), oxygenSaturationPct: String(values.oxygenSaturationPct),
             pulseBpm: String(values.pulseBpm), respirationBpm: String(values.respirationBpm),
             systolicMmHg: String(values.systolicMmHg), temperatureC: String(values.temperatureC),
-            assisted: ['chiefComplaint', 'temperatureC', 'pulseBpm', 'respirationBpm', 'systolicMmHg', 'diastolicMmHg', 'oxygenSaturationPct', 'acuityCode'],
+            weightKg: values.weightKg === undefined ? '' : String(values.weightKg),
+            heightCm: values.heightCm === undefined ? '' : String(values.heightCm),
+            assisted: [
+              'chiefComplaint', 'temperatureC', 'pulseBpm', 'respirationBpm', 'systolicMmHg', 'diastolicMmHg', 'oxygenSaturationPct', 'acuityCode',
+              ...(values.weightKg === undefined ? [] : ['weightKg' as const]),
+              ...(values.heightCm === undefined ? [] : ['heightCm' as const]),
+            ],
           } }))
           return { updated: true }
         },
@@ -261,6 +284,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
         acuityCode,
         chiefComplaint,
         diastolicMmHg,
+        heightCm,
         oxygenSaturationPct,
         page,
         pulseBpm,
@@ -269,6 +293,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
         status,
         systolicMmHg,
         temperatureC,
+        weightKg,
       }),
       activeSection: status,
       ...(selectedCase === undefined ? {} : {
@@ -285,11 +310,13 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
             acuityCode,
             chiefComplaint,
             diastolicMmHg,
+            heightCm,
             oxygenSaturationPct,
             pulseBpm,
             respirationBpm,
             systolicMmHg,
             temperatureC,
+            weightKg,
           }),
         },
       }),
@@ -305,11 +332,13 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
         acuityCode,
         chiefComplaint,
         diastolicMmHg: Number(diastolicMmHg),
+        ...(heightCm.trim() === '' ? {} : { heightCm: Number(heightCm) }),
         oxygenSaturationPct: Number(oxygenSaturationPct),
         pulseBpm: Number(pulseBpm),
         respirationBpm: Number(respirationBpm),
         systolicMmHg: Number(systolicMmHg),
         temperatureC: Number(temperatureC),
+        ...(weightKg.trim() === '' ? {} : { weightKg: Number(weightKg) }),
       },
       queueCount: queue.data?.total ?? 0,
       selectedCase: selectedCase === undefined ? null : {
@@ -324,6 +353,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
     agentReview,
     chiefComplaint,
     diastolicMmHg,
+    heightCm,
     messages,
     mutation.mutateAsync,
     oxygenSaturationPct,
@@ -340,6 +370,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
     draftKey,
     systolicMmHg,
     temperatureC,
+    weightKg,
   ])
   useRegisterAgentPage(agentPage)
 
@@ -504,6 +535,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
             completedAt={completedSnapshot.completedAt}
             departmentName={locale === 'zh-CN' ? completedSnapshot.item.department.nameZh : completedSnapshot.item.department.nameEn}
             diastolicMmHg={completedSnapshot.diastolicMmHg}
+            heightCm={completedSnapshot.heightCm}
             locale={locale}
             locationName={locale === 'zh-CN' ? completedSnapshot.item.location.nameZh : completedSnapshot.item.location.nameEn}
             messages={messages}
@@ -512,6 +544,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
             respirationBpm={completedSnapshot.respirationBpm}
             systolicMmHg={completedSnapshot.systolicMmHg}
             temperatureC={completedSnapshot.temperatureC}
+            weightKg={completedSnapshot.weightKg}
           />
         ) : status === 'completed' && selectedCase !== undefined ? (
           <div className="flex flex-col gap-4">
@@ -526,6 +559,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
                 completedAt={completedRecord.recordedAt}
                 departmentName={locale === 'zh-CN' ? selectedCase.department.nameZh : selectedCase.department.nameEn}
                 diastolicMmHg={String(completedRecord.bloodPressure.diastolicMmHg)}
+                heightCm={completedRecord.heightCm === undefined ? undefined : String(completedRecord.heightCm)}
                 locale={locale}
                 locationName={locale === 'zh-CN' ? selectedCase.location.nameZh : selectedCase.location.nameEn}
                 messages={messages}
@@ -534,6 +568,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
                 respirationBpm={String(completedRecord.respirationBpm)}
                 systolicMmHg={String(completedRecord.bloodPressure.systolicMmHg)}
                 temperatureC={String(completedRecord.temperatureC)}
+                weightKg={completedRecord.weightKg === undefined ? undefined : String(completedRecord.weightKg)}
               />
             ) : (
               <p className="text-sm text-muted-foreground">{locale === 'zh-CN' ? '该患者已完成分诊并进入医生候诊队列。' : 'This patient has completed triage and entered the doctor queue.'}</p>
@@ -570,6 +605,8 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
                 <VitalField id="triage-systolic" label={messages.systolicMmHg} {...vitalRanges.systolicMmHg} locale={locale} assisted={draft.assisted.includes('systolicMmHg')} onChange={value => setField('systolicMmHg', value)} value={systolicMmHg} />
                 <VitalField id="triage-diastolic" label={messages.diastolicMmHg} {...vitalRanges.diastolicMmHg} locale={locale} assisted={draft.assisted.includes('diastolicMmHg')} onChange={value => setField('diastolicMmHg', value)} value={diastolicMmHg} />
                 <VitalField id="triage-oxygen" label={messages.oxygenSaturationPct} {...vitalRanges.oxygenSaturationPct} locale={locale} assisted={draft.assisted.includes('oxygenSaturationPct')} onChange={value => setField('oxygenSaturationPct', value)} value={oxygenSaturationPct} />
+                <VitalField id="triage-weight" label={locale === 'zh-CN' ? '体重 (kg，选填)' : 'Weight (kg, optional)'} {...optionalVitalRanges.weightKg} locale={locale} optional assisted={draft.assisted.includes('weightKg')} onChange={value => setField('weightKg', value)} value={weightKg} />
+                <VitalField id="triage-height" label={locale === 'zh-CN' ? '身高 (cm，选填)' : 'Height (cm, optional)'} {...optionalVitalRanges.heightCm} locale={locale} optional assisted={draft.assisted.includes('heightCm')} onChange={value => setField('heightCm', value)} value={heightCm} />
               </div>
               <AgentDraftField assisted={draft.assisted.includes('acuityCode')} locale={locale}><Field>
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -599,6 +636,7 @@ function ReadOnlyTriageSummary({
   completedAt,
   departmentName,
   diastolicMmHg,
+  heightCm,
   locale,
   locationName,
   messages,
@@ -607,12 +645,14 @@ function ReadOnlyTriageSummary({
   respirationBpm,
   systolicMmHg,
   temperatureC,
+  weightKg,
 }: {
   acuityCode: string
   chiefComplaint: string
   completedAt?: string | undefined
   departmentName: string
   diastolicMmHg: string
+  heightCm?: string | undefined
   locale: WorkspaceLocale
   locationName: string
   messages: ReturnType<typeof getWorkspaceMessages>
@@ -621,6 +661,7 @@ function ReadOnlyTriageSummary({
   respirationBpm: string
   systolicMmHg: string
   temperatureC: string
+  weightKg?: string | undefined
 }): React.JSX.Element {
   const acuityLabel = messages[`acuity_${acuityCode.replace('-', '')}` as 'acuity_level1'] ?? acuityCode
   return (
@@ -649,6 +690,12 @@ function ReadOnlyTriageSummary({
         <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '血压 / 血氧饱和度' : 'BP / SpO₂'}</dt>
         <dd className="font-semibold tabular-nums">{systolicMmHg}/{diastolicMmHg} mmHg · {oxygenSaturationPct}%</dd>
       </div>
+      {weightKg !== undefined || heightCm !== undefined ? (
+        <div className="flex flex-col gap-1">
+          <dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '体重 / 身高' : 'Weight / Height'}</dt>
+          <dd className="font-semibold tabular-nums">{weightKg !== undefined ? `${weightKg} kg` : '—'} · {heightCm !== undefined ? `${heightCm} cm` : '—'}</dd>
+        </div>
+      ) : null}
     </dl>
   )
 }
@@ -689,6 +736,7 @@ function VitalField({
   max,
   min,
   onChange,
+  optional = false,
   step = 1,
   value,
 }: {
@@ -699,10 +747,11 @@ function VitalField({
   max: number
   min: number
   onChange: (value: string) => void
+  optional?: boolean
   step?: number
   value: string
 }): React.JSX.Element {
-  const invalid = !validVital(value, { min, max, step })
+  const invalid = optional ? value.trim() !== '' && !validVital(value, { min, max, step }) : !validVital(value, { min, max, step })
   return (
     <AgentDraftField assisted={assisted} locale={locale}><Field data-invalid={invalid || undefined}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
@@ -715,7 +764,7 @@ function VitalField({
         max={max}
         min={min}
         onChange={event => onChange(event.currentTarget.value)}
-        required
+        required={!optional}
         step={step}
         type="number"
         value={value}

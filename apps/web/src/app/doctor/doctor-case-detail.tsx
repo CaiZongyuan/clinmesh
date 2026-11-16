@@ -65,6 +65,7 @@ import {
 import { PathologyPage, type PathologyPageActions } from './pathology-page.tsx'
 import { OutpatientReportReader } from './outpatient-report-reader.tsx'
 import { PatientBanner } from './patient-summary.tsx'
+import { OutpatientClinicalScoresDisclosure } from '../clinical-scores-panel.tsx'
 import { DoctorHistoryPanel } from './doctor-history-panel.tsx'
 import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
 import { DoctorCaseLayout, DoctorCasePanel } from './responsive-layout.tsx'
@@ -634,6 +635,15 @@ export function CaseDetail({
                 readOnly={clinicalReadOnly}
                 referenceSearch={referenceCatalogSearches.diagnoses}
                 state={detail.diagnosis}
+              />
+              <OutpatientClinicalScoresDisclosure
+                caseId={detail.caseId}
+                clinicalRevision={recommendationRevision}
+                encounterId={detail.encounter.id}
+                encounterVersion={detail.encounter.versionId}
+                locale={locale}
+                readOnly={clinicalReadOnly}
+                scope={recommendationScope}
               /></fieldset>
             )}
           </DoctorDraftScope></DoctorCasePanel>
