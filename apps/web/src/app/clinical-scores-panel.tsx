@@ -28,6 +28,7 @@ interface RiskFormState {
   cardiacArrestOnAdmission: '' | 'true' | 'false'
   familyHistoryPrematureCad: '' | 'true' | 'false'
   killipClass: '' | KillipClass
+  knownCoronaryStenosisGe50: '' | 'true' | 'false'
   priorBleedingHistory: '' | PriorBleedingHistory
   smokingStatus: '' | SmokingStatus
   stSegmentDeviation: '' | 'true' | 'false'
@@ -41,6 +42,7 @@ function toRiskForm(record: ClinicalRiskAssessmentRecord | undefined): RiskFormS
     cardiacArrestOnAdmission: v?.cardiacArrestOnAdmission == null ? '' : String(v.cardiacArrestOnAdmission) as 'true' | 'false',
     familyHistoryPrematureCad: v?.familyHistoryPrematureCad == null ? '' : String(v.familyHistoryPrematureCad) as 'true' | 'false',
     killipClass: v?.killipClass ?? '',
+    knownCoronaryStenosisGe50: v?.knownCoronaryStenosisGe50 == null ? '' : String(v.knownCoronaryStenosisGe50) as 'true' | 'false',
     priorBleedingHistory: v?.priorBleedingHistory ?? '',
     smokingStatus: v?.smokingStatus ?? '',
     stSegmentDeviation: v?.stSegmentDeviation == null ? '' : String(v.stSegmentDeviation) as 'true' | 'false',
@@ -55,6 +57,7 @@ function parseRiskFields(form: RiskFormState): ClinicalRiskAssessmentFieldsInput
     cardiacArrestOnAdmission: form.cardiacArrestOnAdmission === '' ? null : form.cardiacArrestOnAdmission === 'true',
     familyHistoryPrematureCad: form.familyHistoryPrematureCad === '' ? null : form.familyHistoryPrematureCad === 'true',
     killipClass: form.killipClass === '' ? null : form.killipClass,
+    knownCoronaryStenosisGe50: form.knownCoronaryStenosisGe50 === '' ? null : form.knownCoronaryStenosisGe50 === 'true',
     priorBleedingHistory: form.priorBleedingHistory === '' ? null : form.priorBleedingHistory,
     smokingStatus: form.smokingStatus === '' ? null : form.smokingStatus,
     stSegmentDeviation: form.stSegmentDeviation === '' ? null : form.stSegmentDeviation === 'true',
@@ -218,6 +221,14 @@ function ClinicalScoresBody({
               <option value="">{t('未记录', 'Not recorded')}</option>
               <option value="false">{t('阴性', 'Negative')}</option>
               <option value="true">{t('阳性', 'Positive')}</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span>{t('已知冠脉狭窄 ≥50%', 'Known CAD stenosis ≥50%')}</span>
+            <select className={selectCls} disabled={!canEditRisk || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; setForm(s => ({ ...s, knownCoronaryStenosisGe50: v })) }} value={form.knownCoronaryStenosisGe50}>
+              <option value="">{t('未记录', 'Not recorded')}</option>
+              <option value="false">{t('无 / <50%', 'No / <50%')}</option>
+              <option value="true">{t('有 (≥50%)', 'Yes (≥50%)')}</option>
             </select>
           </label>
           <label className="flex flex-col gap-1">

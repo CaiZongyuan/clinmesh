@@ -197,6 +197,7 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       cardiacArrestOnAdmission: null,
       familyHistoryPrematureCad: null,
       killipClass: null,
+      knownCoronaryStenosisGe50: null,
       priorBleedingHistory: null,
       smokingStatus: null,
       stSegmentDeviation: null,
@@ -322,6 +323,13 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       workspaceId: scenario.workspaceId,
     })
 
+    // Before knownCoronaryStenosisGe50 is recorded (and QCA-only angiography has no vessel stenosis %), TIMI stays incomplete
+    const beforeStenosisScores = await fixture.read('inpatient-doctor', `${stay.path}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(beforeStenosisScores.scores.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({
+      missingInputs: expect.arrayContaining(['knownCoronaryStenosisGe50']),
+      status: 'incomplete',
+    })
+
     // Fill remaining risk fields (revision 1 -> 2), preserving killipClass & cardiacArrestOnAdmission!
     const fullRisk = await parsePciResponse(
       inpatientFullClinicalResponseSchema,
@@ -329,6 +337,7 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
         anginaEpisodes24h: 2,
         aspirinUsedLast7Days: true,
         familyHistoryPrematureCad: false,
+        knownCoronaryStenosisGe50: true,
         priorBleedingHistory: 'negative',
         smokingStatus: 'current',
       }),
@@ -492,6 +501,7 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
             aspirinUsedLast7Days: false,
             cardiacArrestOnAdmission: false,
             killipClass: 'I',
+            knownCoronaryStenosisGe50: false,
             priorBleedingHistory: 'negative',
             smokingStatus: 'never',
             stSegmentDeviation: false,

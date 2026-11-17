@@ -26,6 +26,7 @@ export interface ClinicalScoreObjectiveFacts {
   anginaEpisodes24h?: SourcedFact<number>
   antihypertensiveMedicationActive?: SourcedFact<boolean>
   aspirinUsedLast7Days?: SourcedFact<boolean>
+  cadOnsetAgeYears?: SourcedFact<number>
   cardiacArrestOnAdmission?: SourcedFact<boolean>
   confirmedDiagnoses: Array<{
     code: string
@@ -448,6 +449,7 @@ export function hasConfirmedHypertensionDiagnosis(codes: readonly string[]): boo
 export function calculateAscvdLdlTarget(input: {
   ageYears: number
   antihypertensiveTreated?: boolean
+  cadOnsetAgeYears?: number
   confirmedDiagnosisCodes: readonly string[]
   egfrMlMin173m2?: number
   hdlCholesterol?: UnitQuantityInput
@@ -526,8 +528,12 @@ export function calculateAscvdLdlTarget(input: {
       codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['I20', 'I21', 'I22', 'I23', 'I24', 'I25'])
       || input.knownCoronaryRevascularization === true
       || priorRevasc
+    const cadAge =
+      input.cadOnsetAgeYears !== undefined && Number.isFinite(input.cadOnsetAgeYears) && input.cadOnsetAgeYears >= 0
+        ? Math.min(age, input.cadOnsetAgeYears)
+        : age
     const prematureCad =
-      hasCad && ((input.sex === 'male' && age < 55) || (input.sex === 'female' && age < 65))
+      hasCad && ((input.sex === 'male' && cadAge < 55) || (input.sex === 'female' && cadAge < 65))
     const fhOrSevereLdl =
       codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['E78.01'])
       || (ldlMmolL !== undefined && ldlMmolL >= 4.9)
@@ -747,6 +753,7 @@ export const MISSING_INPUT_LABELS: Record<ClinicalScoreMissingInput, { en: strin
   heartRateBpm: { en: 'Heart rate', zh: '心率/脉搏' },
   hemoglobin: { en: 'Hemoglobin report', zh: '血红蛋白 (Hb)' },
   killipClass: { en: 'Killip class', zh: 'Killip 心功能分级' },
+  knownCoronaryStenosisGe50: { en: 'Known coronary stenosis ≥50%', zh: '已知冠脉狭窄 ≥50%' },
   ldlCholesterol: { en: 'LDL-C / TC report', zh: '低密度脂蛋白或总胆固醇' },
   priorBleedingHistory: { en: 'Prior bleeding history', zh: '既往出血史' },
   serumCreatinine: { en: 'Serum creatinine report', zh: '血肌酐 (SCr)' },
@@ -996,10 +1003,12 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
         : (facts.familyHistoryPrematureCad.value ? 1 : 0)
     const minFactors = baseFactors + (smokingFactor ?? 0) + (familyFactor ?? 0)
     const maxFactors = baseFactors + (smokingFactor ?? 1) + (familyFactor ?? 1)
-    const knownCad =
+    const knownCad: boolean | undefined =
       facts.knownCoronaryRevascularizationOrStenosisGe50 !== undefined
         ? facts.knownCoronaryRevascularizationOrStenosisGe50.value
         : codeMatchesPrefixes(diagnosisCodes, ['Z95.1', 'Z95.5', 'Z98.61', 'I25.2'])
+          ? true
+          : undefined
 
     const missing: ClinicalScoreMissingInput[] = []
     if (adultAge === undefined) missing.push('age')
@@ -1007,6 +1016,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
       if (smokingFactor === null) missing.push('smokingStatus')
       if (familyFactor === null) missing.push('familyHistoryPrematureCad')
     }
+    if (knownCad === undefined) missing.push('knownCoronaryStenosisGe50')
     if (facts.aspirinUsedLast7Days === undefined) missing.push('aspirinUsedLast7Days')
     if (facts.anginaEpisodes24h === undefined) missing.push('anginaEpisodes24h')
     if (facts.stSegmentDeviation === undefined) missing.push('stSegmentDeviation')
@@ -1035,7 +1045,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
         aspirinUsedLast7Days: facts.aspirinUsedLast7Days!.value,
         cadRiskFactorCount,
         elevatedCardiacBiomarker: facts.elevatedCardiacBiomarker!.value,
-        knownCoronaryStenosisGe50Pct: knownCad,
+        knownCoronaryStenosisGe50Pct: knownCad!,
         stSegmentDeviation: facts.stSegmentDeviation!.value,
       })
       const meta = SCORE_METADATA['timi-ua-nstemi']
@@ -1118,6 +1128,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
       adultAge?.source,
       sex?.source,
       ...facts.confirmedDiagnoses.map(item => item.source),
+      facts.cadOnsetAgeYears?.source,
       facts.knownCoronaryRevascularizationOrStenosisGe50?.source,
       facts.priorCoronaryRevascularization?.source,
       facts.severeAscvdEventCount?.source,
@@ -1137,6 +1148,9 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
         ...(facts.antihypertensiveMedicationActive === undefined
           ? {}
           : { antihypertensiveTreated: facts.antihypertensiveMedicationActive.value }),
+        ...(facts.cadOnsetAgeYears === undefined
+          ? {}
+          : { cadOnsetAgeYears: facts.cadOnsetAgeYears.value }),
         confirmedDiagnosisCodes: diagnosisCodes,
         ...(egfrValue === undefined ? {} : { egfrMlMin173m2: egfrValue }),
         ...(hdlValid === undefined ? {} : { hdlCholesterol: hdlValid.value }),
