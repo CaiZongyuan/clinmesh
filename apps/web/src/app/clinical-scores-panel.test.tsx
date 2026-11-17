@@ -488,4 +488,94 @@ describe('ClinicalScoresPanel disclosures', () => {
       expect(screen.queryByText(/当前业务状态或前置条件不满足/)).toBeNull()
     })
   })
+
+  it('preserves dirty nursing vital-sign edits and base expectedRevision across concurrent revisions', async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({})
+    const write = {
+      blocked: false,
+      mutation: { isPending: false, mutateAsync, reset: vi.fn(), variables: undefined },
+    } as unknown as ReturnType<typeof useInpatientWriteIntent>
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <InpatientVitalsAndScoresDisclosure
+          admissionId="adm-cas"
+          canEdit
+          encounterVersion="2"
+          latestVitalSigns={{
+            bloodPressure: { diastolicMmHg: 78, systolicMmHg: 122 },
+            observationId: 'obs-v1',
+            observationVersion: '1',
+            oxygenSaturationPct: 98,
+            provenanceId: 'prov-v1',
+            pulseBpm: 72,
+            recordedAt: '2026-10-25T09:00:00+08:00',
+            recordedBy: 'nurse-1',
+            respirationBpm: 16,
+            revision: 1,
+            temperatureC: 36.5,
+          }}
+          locale="zh-CN"
+          riskAssessment={undefined}
+          scope={['inpatient']}
+          write={write}
+        />
+      </QueryClientProvider>,
+    )
+
+    const vitalsDetails = screen.getByText('护理生命体征').closest('details')!
+    vitalsDetails.open = true
+
+    fireEvent.change(screen.getByLabelText('心率 (次/分)'), { target: { value: '96' } })
+    expect((screen.getByLabelText('心率 (次/分)') as HTMLInputElement).value).toBe('96')
+
+    // Another nurse records revision 2 (pulse 84) while local draft is dirty
+    rerender(
+      <QueryClientProvider client={client}>
+        <InpatientVitalsAndScoresDisclosure
+          admissionId="adm-cas"
+          canEdit
+          encounterVersion="2"
+          latestVitalSigns={{
+            bloodPressure: { diastolicMmHg: 80, systolicMmHg: 130 },
+            observationId: 'obs-v2',
+            observationVersion: '1',
+            oxygenSaturationPct: 97,
+            provenanceId: 'prov-v2',
+            pulseBpm: 84,
+            recordedAt: '2026-10-25T09:10:00+08:00',
+            recordedBy: 'nurse-2',
+            respirationBpm: 18,
+            revision: 2,
+            temperatureC: 36.7,
+          }}
+          locale="zh-CN"
+          riskAssessment={undefined}
+          scope={['inpatient']}
+          write={write}
+        />
+      </QueryClientProvider>,
+    )
+
+    expect(screen.getByText(/远端已有更新生命体征 #2/)).toBeTruthy()
+    expect((screen.getByLabelText('心率 (次/分)') as HTMLInputElement).value).toBe('96')
+
+    // Submitting sends base expectedRevision: 1 (not 2) so backend CAS detects the conflict
+    fireEvent.click(screen.getByRole('button', { name: '记录生命体征' }))
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({
+        input: expect.objectContaining({
+          admissionId: 'adm-cas',
+          expectedRevision: 1,
+          pulseBpm: 96,
+        }),
+        operation: 'inpatient.vital-signs.record',
+      }))
+    })
+
+    // Nurse can explicitly discard draft to sync remote #2
+    fireEvent.click(screen.getByRole('button', { name: '放弃体征草稿并同步' }))
+    expect((screen.getByLabelText('心率 (次/分)') as HTMLInputElement).value).toBe('84')
+  })
 })

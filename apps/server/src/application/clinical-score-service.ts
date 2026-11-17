@@ -169,6 +169,34 @@ const procedureResourceSchema = z.object({
   status: z.string().optional(),
 }).loose()
 
+const medicationAdministrationResourceSchema = z.object({
+  effectiveDateTime: z.string().optional(),
+  occurenceDateTime: z.string().optional(),
+  occurrenceDateTime: z.string().optional(),
+  recorded: z.string().optional(),
+}).loose()
+
+function findLatestSameSpecimenTcHdlPair<
+  TTc extends { source: ClinicalScoreSourceReference; specimenKey: string; value: { unit: string; value: number } },
+  THdl extends { source: ClinicalScoreSourceReference; specimenKey: string; value: { unit: string; value: number } },
+>(
+  tcChronological: readonly TTc[],
+  hdlChronological: readonly THdl[],
+): { hdl: THdl; tc: TTc } | undefined {
+  const latestHdlBySpecimen = new Map<string, THdl>()
+  for (const hdl of hdlChronological) {
+    latestHdlBySpecimen.set(hdl.specimenKey, hdl)
+  }
+  for (let i = tcChronological.length - 1; i >= 0; i--) {
+    const tc = tcChronological[i]!
+    const hdl = latestHdlBySpecimen.get(tc.specimenKey)
+    if (hdl !== undefined) {
+      return { hdl, tc }
+    }
+  }
+  return undefined
+}
+
 const medicationRequestResourceSchema = z.object({
   authoredOn: z.string().optional(),
   dosageInstruction: z.array(z.object({
@@ -1355,6 +1383,12 @@ export class ClinicalScoreService {
       ...(labs.totalCholesterol === undefined ? {} : { totalCholesterol: labs.totalCholesterol }),
       ...(labs.hdlCholesterol === undefined ? {} : { hdlCholesterol: labs.hdlCholesterol }),
       ...(labs.ldlCholesterol === undefined ? {} : { ldlCholesterol: labs.ldlCholesterol }),
+      ...(labs.nonHdlPairedTcCholesterol === undefined
+        ? {}
+        : { nonHdlPairedTcCholesterol: labs.nonHdlPairedTcCholesterol }),
+      ...(labs.nonHdlPairedHdlCholesterol === undefined
+        ? {}
+        : { nonHdlPairedHdlCholesterol: labs.nonHdlPairedHdlCholesterol }),
       ...(lipidStratification.lipidLoweringMedicationActive === undefined
         ? {}
         : { lipidLoweringMedicationActive: lipidStratification.lipidLoweringMedicationActive }),
@@ -1367,6 +1401,12 @@ export class ClinicalScoreService {
       ...(lipidStratification.pretreatmentLdlCholesterol === undefined
         ? {}
         : { pretreatmentLdlCholesterol: lipidStratification.pretreatmentLdlCholesterol }),
+      ...(lipidStratification.pretreatmentNonHdlPairedTcCholesterol === undefined
+        ? {}
+        : { pretreatmentNonHdlPairedTcCholesterol: lipidStratification.pretreatmentNonHdlPairedTcCholesterol }),
+      ...(lipidStratification.pretreatmentNonHdlPairedHdlCholesterol === undefined
+        ? {}
+        : { pretreatmentNonHdlPairedHdlCholesterol: lipidStratification.pretreatmentNonHdlPairedHdlCholesterol }),
       ...(lipidStratification.pretreatmentSameSpecimenTcHdl === undefined
         ? {}
         : { pretreatmentSameSpecimenTcHdl: lipidStratification.pretreatmentSameSpecimenTcHdl }),
@@ -2173,9 +2213,12 @@ export class ClinicalScoreService {
       initialHb === undefined ? undefined : { source: initialHb.source, value: initialHb.value }
     const hemoglobin: ClinicalScoreObjectiveFacts['hemoglobin'] =
       latestHb === undefined ? undefined : { source: latestHb.source, value: latestHb.value }
-    const latestTc = sortChrono(tcHitsDesc).at(-1)
-    const latestHdl = sortChrono(hdlHitsDesc).at(-1)
+    const tcChrono = sortChrono(tcHitsDesc)
+    const hdlChrono = sortChrono(hdlHitsDesc)
+    const latestTc = tcChrono.at(-1)
+    const latestHdl = hdlChrono.at(-1)
     const latestLdl = sortChrono(ldlHitsDesc).at(-1)
+    const sameSpecimenPair = findLatestSameSpecimenTcHdlPair(tcChrono, hdlChrono)
     const latestLipidObservationMs = [latestLdl?.timestampMs, latestTc?.timestampMs, latestHdl?.timestampMs]
       .filter((item): item is number => item !== undefined)
       .reduce<number | undefined>((max, item) => (max === undefined || item > max ? item : max), undefined)
@@ -2189,6 +2232,10 @@ export class ClinicalScoreService {
       latestHdl === undefined ? undefined : { source: latestHdl.source, value: latestHdl.value }
     const ldlCholesterol: ClinicalScoreObjectiveFacts['ldlCholesterol'] =
       latestLdl === undefined ? undefined : { source: latestLdl.source, value: latestLdl.value }
+    const nonHdlPairedTcCholesterol: ClinicalScoreObjectiveFacts['nonHdlPairedTcCholesterol'] =
+      sameSpecimenPair === undefined ? undefined : { source: sameSpecimenPair.tc.source, value: sameSpecimenPair.tc.value }
+    const nonHdlPairedHdlCholesterol: ClinicalScoreObjectiveFacts['nonHdlPairedHdlCholesterol'] =
+      sameSpecimenPair === undefined ? undefined : { source: sameSpecimenPair.hdl.source, value: sameSpecimenPair.hdl.value }
 
     return {
       admissionSerumCreatinine,
@@ -2199,6 +2246,8 @@ export class ClinicalScoreService {
       hemoglobin,
       latestLipidObservationMs,
       ldlCholesterol,
+      nonHdlPairedHdlCholesterol,
+      nonHdlPairedTcCholesterol,
       sameSpecimenTcHdl,
       serumCreatinine,
       totalCholesterol,
@@ -2661,6 +2710,8 @@ export class ClinicalScoreService {
     lipidLoweringMedicationActive?: { source: ClinicalScoreSourceReference; value: boolean }
     pretreatmentHdlCholesterol?: { source: ClinicalScoreSourceReference; value: { unit: string; value: number } }
     pretreatmentLdlCholesterol?: { source: ClinicalScoreSourceReference; value: { unit: string; value: number } }
+    pretreatmentNonHdlPairedHdlCholesterol?: { source: ClinicalScoreSourceReference; value: { unit: string; value: number } }
+    pretreatmentNonHdlPairedTcCholesterol?: { source: ClinicalScoreSourceReference; value: { unit: string; value: number } }
     pretreatmentSameSpecimenTcHdl?: boolean
     pretreatmentTotalCholesterol?: { source: ClinicalScoreSourceReference; value: { unit: string; value: number } }
   } {
@@ -2675,6 +2726,8 @@ export class ClinicalScoreService {
     const patientOrders = z.array(z.object({
       catalog_item_id: z.string(),
       display: z.string(),
+      latest_administration_id: z.string().nullable(),
+      latest_completed_scheduled_for: z.string().nullable(),
       order_id: z.string(),
       signed_at: z.string(),
       state: z.string(),
@@ -2682,7 +2735,24 @@ export class ClinicalScoreService {
       version: z.number(),
     })).parse(
       this.#database.driver.prepare(`
-        SELECT o.order_id, o.catalog_item_id, o.display, o.state, o.version, o.signed_at, o.stopped_at
+        SELECT o.order_id, o.catalog_item_id, o.display, o.state, o.version, o.signed_at, o.stopped_at,
+               (SELECT e.scheduled_for
+                  FROM inpatient_execution e
+                 WHERE e.workspace_id = o.workspace_id
+                   AND e.epoch = o.epoch
+                   AND e.order_id = o.order_id
+                   AND e.status = 'completed'
+                 ORDER BY julianday(e.scheduled_for) DESC, e.execution_id DESC
+                 LIMIT 1) AS latest_completed_scheduled_for,
+               (SELECT e.administration_id
+                  FROM inpatient_execution e
+                 WHERE e.workspace_id = o.workspace_id
+                   AND e.epoch = o.epoch
+                   AND e.order_id = o.order_id
+                   AND e.status = 'completed'
+                   AND e.administration_id IS NOT NULL
+                 ORDER BY julianday(e.scheduled_for) DESC, e.execution_id DESC
+                 LIMIT 1) AS latest_administration_id
         FROM inpatient_order o
         JOIN inpatient_admission a
           ON a.workspace_id = o.workspace_id
@@ -2697,10 +2767,33 @@ export class ClinicalScoreService {
       if (!this.#isLipidLoweringMedication(context, order.catalog_item_id, order.display)) continue
       const parsedStart = Date.parse(order.signed_at)
       const startMs = Number.isFinite(parsedStart) ? parsedStart : undefined
-      const parsedStop = order.stopped_at ? Date.parse(order.stopped_at) : Number.NaN
+      let terminalMs = order.stopped_at ? Date.parse(order.stopped_at) : Number.NaN
+      if (!Number.isFinite(terminalMs) && order.state === 'completed') {
+        if (order.latest_administration_id !== null) {
+          try {
+            const admin = medicationAdministrationResourceSchema.safeParse(
+              this.#fhir.read(context, 'MedicationAdministration', order.latest_administration_id),
+            )
+            const adminIso = admin.success
+              ? (admin.data.occurenceDateTime ?? admin.data.occurrenceDateTime ?? admin.data.effectiveDateTime ?? admin.data.recorded)
+              : undefined
+            if (adminIso !== undefined) terminalMs = Date.parse(adminIso)
+          } catch {
+            // fallback to execution scheduled_for / signed_at below
+          }
+        }
+        if (!Number.isFinite(terminalMs) && order.latest_completed_scheduled_for !== null) {
+          terminalMs = Date.parse(order.latest_completed_scheduled_for)
+        }
+        if (!Number.isFinite(terminalMs) && startMs !== undefined) {
+          terminalMs = startMs
+        }
+      }
       const endMs =
-        (order.state === 'stopped' || order.state === 'completed') && Number.isFinite(parsedStop)
-          ? parsedStop + LIPID_WASHOUT_MS
+        (order.state === 'stopped' || order.state === 'completed') && Number.isFinite(terminalMs)
+          ? (order.state === 'stopped' && order.latest_completed_scheduled_for === null
+              ? terminalMs
+              : terminalMs + LIPID_WASHOUT_MS)
           : Number.POSITIVE_INFINITY
       exposures.push({
         endMs,
@@ -2751,7 +2844,9 @@ export class ClinicalScoreService {
         const endMs =
           startMs !== undefined && typeof boundsMs === 'number'
             ? startMs + boundsMs + LIPID_WASHOUT_MS
-            : Number.POSITIVE_INFINITY
+            : (status === 'completed' || status === 'stopped') && startMs !== undefined
+              ? startMs + LIPID_WASHOUT_MS
+              : Number.POSITIVE_INFINITY
         exposures.push({
           endMs,
           source: {
@@ -2895,9 +2990,12 @@ export class ClinicalScoreService {
 
     const sortAsc = <T extends { seq: number; timestampMs: number }>(arr: T[]) =>
       [...arr].sort((a, b) => (a.timestampMs !== b.timestampMs ? a.timestampMs - b.timestampMs : a.seq - b.seq))
-    const preTc = sortAsc(untreatedTc).at(-1)
-    const preHdl = sortAsc(untreatedHdl).at(-1)
+    const untreatedTcAsc = sortAsc(untreatedTc)
+    const untreatedHdlAsc = sortAsc(untreatedHdl)
+    const preTc = untreatedTcAsc.at(-1)
+    const preHdl = untreatedHdlAsc.at(-1)
     const preLdl = sortAsc(untreatedLdl).at(-1)
+    const preSameSpecimenPair = findLatestSameSpecimenTcHdlPair(untreatedTcAsc, untreatedHdlAsc)
     const pretreatmentSameSpecimenTcHdl =
       preTc !== undefined && preHdl !== undefined ? preTc.specimenKey === preHdl.specimenKey : undefined
 
@@ -2905,6 +3003,18 @@ export class ClinicalScoreService {
       lipidLoweringMedicationActive: { source: relevantExposure.source, value: true },
       ...(preHdl === undefined ? {} : { pretreatmentHdlCholesterol: { source: preHdl.source, value: preHdl.value } }),
       ...(preLdl === undefined ? {} : { pretreatmentLdlCholesterol: { source: preLdl.source, value: preLdl.value } }),
+      ...(preSameSpecimenPair === undefined
+        ? {}
+        : {
+            pretreatmentNonHdlPairedHdlCholesterol: {
+              source: preSameSpecimenPair.hdl.source,
+              value: preSameSpecimenPair.hdl.value,
+            },
+            pretreatmentNonHdlPairedTcCholesterol: {
+              source: preSameSpecimenPair.tc.source,
+              value: preSameSpecimenPair.tc.value,
+            },
+          }),
       ...(pretreatmentSameSpecimenTcHdl === undefined ? {} : { pretreatmentSameSpecimenTcHdl }),
       ...(preTc === undefined ? {} : { pretreatmentTotalCholesterol: { source: preTc.source, value: preTc.value } }),
     }

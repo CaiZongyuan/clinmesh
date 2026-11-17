@@ -1058,5 +1058,33 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       missingInputs: ['ldlCholesterol', 'hdlCholesterol'],
       status: 'incomplete',
     })
+
+    // Same-specimen pretreatment TC+HDL pair remains usable for <55 lifetime non-HDL-C even when a newer TC-only pretreatment lab exists
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 50,
+        confirmedDiagnosisCodes: ['I10'],
+        diastolicBpMmHg: 88,
+        egfrMlMin173m2: 88,
+        heightCm: 172,
+        ldlCholesterol: { unit: 'mmol/L', value: 2.0 },
+        lipidLoweringTreated: true,
+        pretreatmentHdlCholesterol: { unit: 'mmol/L', value: 1.1 },
+        pretreatmentLdlCholesterol: { unit: 'mmol/L', value: 3.5 },
+        pretreatmentNonHdlPairedHdlCholesterol: { unit: 'mmol/L', value: 1.1 },
+        pretreatmentNonHdlPairedTcCholesterol: { unit: 'mmol/L', value: 6.5 },
+        pretreatmentSameSpecimenTcHdl: false,
+        pretreatmentTotalCholesterol: { unit: 'mmol/L', value: 5.4 },
+        sex: 'female',
+        smokingStatus: 'current',
+        systolicBpMmHg: 148,
+        weightKg: 70,
+      }),
+    ).toMatchObject({
+      ldlGoalEvaluation: { atGoal: true, currentLdlMmolL: 2.0, targetLdlMmolL: 2.6 },
+      status: 'complete',
+      tierCode: 'high',
+      value: 2.6,
+    })
   })
 })
