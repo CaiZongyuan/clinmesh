@@ -336,16 +336,31 @@ export class ClinicalScoreService {
     this.#outpatientContext = options.outpatientContext
   }
 
+  initialInpatientVitalSigns(
+    context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
+    admissionId: string,
+  ): InpatientVitalSignsRecord | undefined {
+    return this.#readInpatientVitalSignsByOrder(context, admissionId, 'ASC')
+  }
+
   latestInpatientVitalSigns(
     context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
     admissionId: string,
+  ): InpatientVitalSignsRecord | undefined {
+    return this.#readInpatientVitalSignsByOrder(context, admissionId, 'DESC')
+  }
+
+  #readInpatientVitalSignsByOrder(
+    context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
+    admissionId: string,
+    direction: 'ASC' | 'DESC',
   ): InpatientVitalSignsRecord | undefined {
     const row = vitalSignsRowSchema.optional().parse(
       this.#database.driver.prepare(`
         SELECT revision, vital_json, observation_id, observation_version, provenance_id, recorded_at, recorded_by
         FROM inpatient_vital_signs
         WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
-        ORDER BY revision DESC
+        ORDER BY revision ${direction}
         LIMIT 1
       `).get(context.workspaceId, context.epoch, admissionId),
     )
@@ -478,19 +493,6 @@ export class ClinicalScoreService {
       }
       const now = inpatient.virtualTime(context)
       const effects: CommandEffect[] = []
-      if (previous !== undefined) {
-        const oldObservation = transaction.fhir.read(context, 'Observation', previous.observationId)
-        const superseded = transaction.fhir.update(
-          context,
-          { ...oldObservation, status: 'entered-in-error' },
-          oldObservation.meta?.versionId ?? previous.observationVersion,
-        )
-        effects.push({
-          kind: 'updated',
-          reference: `Observation/${superseded.id}`,
-          versionId: superseded.meta?.versionId ?? '2',
-        })
-      }
       const values = {
         bloodPressure: input.bloodPressure,
         ...(input.heightCm === undefined ? {} : { heightCm: input.heightCm }),
@@ -740,22 +742,27 @@ export class ClinicalScoreService {
     const binding = inpatient.readAdmissionBinding(context, admissionId)
     const encounter = this.#fhir.read(context, 'Encounter', admissionId)
     const now = referenceTimeIso ?? inpatient.virtualTime(context)
+    const initialVitals = this.initialInpatientVitalSigns(context, admissionId)
     const latestVitals = this.latestInpatientVitalSigns(context, admissionId)
-    const vitalSummary: ClinicalScoreVitalSummary | null = latestVitals === undefined
-      ? null
-      : {
-          bloodPressure: latestVitals.bloodPressure,
-          ...(latestVitals.heightCm === undefined ? {} : { heightCm: latestVitals.heightCm }),
-          observationId: latestVitals.observationId,
-          observationVersion: latestVitals.observationVersion,
-          oxygenSaturationPct: latestVitals.oxygenSaturationPct,
-          pulseBpm: latestVitals.pulseBpm,
-          recordedAt: latestVitals.recordedAt,
-          respirationBpm: latestVitals.respirationBpm,
-          temperatureC: latestVitals.temperatureC,
-          ...(latestVitals.weightKg === undefined ? {} : { weightKg: latestVitals.weightKg }),
-        }
+    const toVitalSummary = (v: InpatientVitalSignsRecord | undefined): ClinicalScoreVitalSummary | null =>
+      v === undefined
+        ? null
+        : {
+            bloodPressure: v.bloodPressure,
+            ...(v.heightCm === undefined ? {} : { heightCm: v.heightCm }),
+            observationId: v.observationId,
+            observationVersion: v.observationVersion,
+            oxygenSaturationPct: v.oxygenSaturationPct,
+            pulseBpm: v.pulseBpm,
+            recordedAt: v.recordedAt,
+            respirationBpm: v.respirationBpm,
+            temperatureC: v.temperatureC,
+            ...(v.weightKg === undefined ? {} : { weightKg: v.weightKg }),
+          }
+    const admissionVitalSummary = toVitalSummary(initialVitals)
+    const vitalSummary = toVitalSummary(latestVitals)
     return this.#evaluateSnapshot(context, {
+      admissionVitalSummary,
       caseId: admissionId,
       encounterId: admissionId,
       encounterVersion: encounter.meta?.versionId ?? '1',
@@ -981,6 +988,7 @@ export class ClinicalScoreService {
   #evaluateSnapshot(
     context: ActorContext,
     options: {
+      admissionVitalSummary?: ClinicalScoreVitalSummary | null
       caseId: string
       encounterId: string
       encounterVersion: string
@@ -1019,6 +1027,14 @@ export class ClinicalScoreService {
           reference: `Observation/${options.vitalSummary.observationId}`,
           versionId: options.vitalSummary.observationVersion,
         }
+    const effectiveAdmissionVital = options.admissionVitalSummary === undefined ? options.vitalSummary : options.admissionVitalSummary
+    const admissionVitalRef: ClinicalScoreSourceReference | undefined = effectiveAdmissionVital === null
+      ? undefined
+      : {
+          label: '入院首诊生命体征',
+          reference: `Observation/${effectiveAdmissionVital.observationId}`,
+          versionId: effectiveAdmissionVital.observationVersion,
+        }
 
     const birthDateStr = typeof patient.birthDate === 'string' ? patient.birthDate : undefined
     const labs = this.#extractLaboratoryAnalytes(context, options.caseId, options.legacyDiagnosticReportId)
@@ -1045,15 +1061,23 @@ export class ClinicalScoreService {
     const facts: ClinicalScoreObjectiveFacts = {
       ...(age === undefined ? {} : { ageYears: { source: patientRef, value: age } }),
       ...(sex === undefined ? {} : { sex: { source: patientRef, value: sex } }),
+      ...(effectiveAdmissionVital === null || admissionVitalRef === undefined
+        ? {}
+        : {
+            admissionHeartRateBpm: { source: admissionVitalRef, value: effectiveAdmissionVital.pulseBpm },
+            admissionSystolicBpMmHg: { source: admissionVitalRef, value: effectiveAdmissionVital.bloodPressure.systolicMmHg },
+          }),
       ...(options.vitalSummary === null || vitalRef === undefined
         ? {}
         : {
+            diastolicBpMmHg: { source: vitalRef, value: options.vitalSummary.bloodPressure.diastolicMmHg },
             heartRateBpm: { source: vitalRef, value: options.vitalSummary.pulseBpm },
             systolicBpMmHg: { source: vitalRef, value: options.vitalSummary.bloodPressure.systolicMmHg },
             ...(options.vitalSummary.weightKg === undefined
               ? {}
               : { weightKg: { source: vitalRef, value: options.vitalSummary.weightKg } }),
           }),
+      ...(labs.admissionSerumCreatinine === undefined ? {} : { admissionSerumCreatinine: labs.admissionSerumCreatinine }),
       ...(labs.serumCreatinine === undefined ? {} : { serumCreatinine: labs.serumCreatinine }),
       ...(labs.elevatedCardiacBiomarker === undefined ? {} : { elevatedCardiacBiomarker: labs.elevatedCardiacBiomarker }),
       ...(labs.wbc === undefined ? {} : { wbc: labs.wbc }),
@@ -1148,7 +1172,11 @@ export class ClinicalScoreService {
       reportEntries.push({ reportId: legacyDiagnosticReportId, reportTime: null })
     }
 
-    let serumCreatinine: ClinicalScoreObjectiveFacts['serumCreatinine']
+    const creatinineHitsDesc: Array<{
+      source: ClinicalScoreSourceReference
+      timestampMs: number | undefined
+      value: { unit: string; value: number }
+    }> = []
     const troponinHitsDesc: Array<{
       elevated: boolean
       source: ClinicalScoreSourceReference
@@ -1188,12 +1216,17 @@ export class ClinicalScoreService {
         }
 
         if (
-          serumCreatinine === undefined
-          && quantity !== undefined
+          quantity !== undefined
           && unit !== undefined
           && (codes.has('1700404A') || codes.has('2160-0') || codes.has('14682-9') || /^(?:血?肌酐|血清肌酐)/i.test(display))
         ) {
-          serumCreatinine = { source, value: { unit, value: quantity } }
+          const rawScrTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
+          const parsedScrMs = rawScrTs ? Date.parse(rawScrTs) : Number.NaN
+          creatinineHitsDesc.push({
+            source,
+            timestampMs: Number.isFinite(parsedScrMs) ? parsedScrMs : undefined,
+            value: { unit, value: quantity },
+          })
         }
         if (
           codes.has('2100404B') || codes.has('2100404A') || codes.has('2100504A')
@@ -1285,7 +1318,24 @@ export class ClinicalScoreService {
       }
     }
 
+    const creatinineChronological = [...creatinineHitsDesc]
+      .reverse()
+      .map((item, seq) => ({ ...item, seq }))
+      .sort((a, b) => {
+        if (a.timestampMs !== undefined && b.timestampMs !== undefined && a.timestampMs !== b.timestampMs) {
+          return a.timestampMs - b.timestampMs
+        }
+        return a.seq - b.seq
+      })
+    const initialScr = creatinineChronological[0]
+    const latestScr = creatinineChronological.at(-1)
+    const admissionSerumCreatinine: ClinicalScoreObjectiveFacts['admissionSerumCreatinine'] =
+      initialScr === undefined ? undefined : { source: initialScr.source, value: initialScr.value }
+    const serumCreatinine: ClinicalScoreObjectiveFacts['serumCreatinine'] =
+      latestScr === undefined ? undefined : { source: latestScr.source, value: latestScr.value }
+
     return {
+      admissionSerumCreatinine,
       elevatedCardiacBiomarker,
       hdlCholesterol,
       hemoglobin,

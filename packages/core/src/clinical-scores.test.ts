@@ -430,6 +430,7 @@ describe('six deterministic clinical score formulas', () => {
     const primaryModerateNoHtn = calculateAscvdLdlTarget({
       ageYears: 50,
       confirmedDiagnosisCodes: [],
+      diastolicBpMmHg: 78,
       egfrMlMin173m2: 92,
       hdlCholesterol: { unit: 'mmol/L', value: 0.8 },
       ldlCholesterol: { unit: 'mmol/L', value: 4.0 },
@@ -443,10 +444,30 @@ describe('six deterministic clinical score formulas', () => {
       value: 2.6,
     })
 
+    // Isolated diastolic hypertension (130/95 mmHg, DBP >= 90) places patient in hypertensive matrix row: 2 factors + LDL-C 2.8 -> high (<2.6 mmol/L)
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 50,
+        confirmedDiagnosisCodes: [],
+        diastolicBpMmHg: 95,
+        egfrMlMin173m2: 92,
+        hdlCholesterol: { unit: 'mmol/L', value: 1.3 },
+        ldlCholesterol: { unit: 'mmol/L', value: 2.8 },
+        sex: 'male',
+        smokingStatus: 'current',
+        systolicBpMmHg: 130,
+      }),
+    ).toMatchObject({
+      status: 'complete',
+      tierCode: 'high',
+      value: 2.6,
+    })
+
     // 21-cell matrix: non-hypertensive 38yo female non-smoker (0 factors) + LDL-C 3.0 -> low (<3.4 mmol/L)
     const primaryLow = calculateAscvdLdlTarget({
       ageYears: 38,
       confirmedDiagnosisCodes: [],
+      diastolicBpMmHg: 74,
       egfrMlMin173m2: 98,
       hdlCholesterol: { unit: 'mmol/L', value: 1.4 },
       ldlCholesterol: { unit: 'mmol/L', value: 3.0 },
@@ -464,6 +485,7 @@ describe('six deterministic clinical score formulas', () => {
     const youngDiabetic = calculateAscvdLdlTarget({
       ageYears: 30,
       confirmedDiagnosisCodes: ['E11.9'],
+      diastolicBpMmHg: 76,
       egfrMlMin173m2: 105,
       hdlCholesterol: { unit: 'mmol/L', value: 1.2 },
       ldlCholesterol: { unit: 'mmol/L', value: 2.0 },
