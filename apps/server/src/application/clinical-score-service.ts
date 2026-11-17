@@ -292,17 +292,33 @@ function buildRiskObservationComponents(values: ClinicalRiskAssessmentValues) {
   return components
 }
 
+function extractEncounterStartIso(rawEncounter: unknown): string | undefined {
+  const parsed = z.object({
+    actualPeriod: z.object({ start: z.string().optional() }).loose().optional(),
+    period: z.object({ start: z.string().optional() }).loose().optional(),
+  }).loose().safeParse(rawEncounter)
+  if (!parsed.success) return undefined
+  return parsed.data.actualPeriod?.start ?? parsed.data.period?.start
+}
+
 function hasPositiveStDeviationText(text: string): boolean {
-  const positivePattern = /ST\s*段?\s*(?:抬高|压低|下移|上抬|偏移|移位)|ST[- ]?(?:segment\s*)?(?:elevation|depression|deviation)/i
+  const positivePattern = /ST\s*段?\s*(?:抬高|压低|下移|上抬|偏移|移位)|ST[- ]?(?:segment\s*)?(?:elevation|depression|deviation)/gi
   for (const clause of text.split(/[，。；,;！!\r\n]+/)) {
     const trimmed = clause.trim()
-    if (!trimmed || !positivePattern.test(trimmed)) continue
-    const negMatch = /(?:无|未见|否认|排除)/.exec(trimmed)
-    const stMatch = positivePattern.exec(trimmed)
-    if (negMatch && stMatch && negMatch.index < stMatch.index && !/(?:但|而|可见|伴|提示|呈)/.test(trimmed.slice(negMatch.index))) {
-      continue
+    if (!trimmed) continue
+    for (const stMatch of trimmed.matchAll(positivePattern)) {
+      const idx = stMatch.index ?? 0
+      const prefix = trimmed.slice(0, idx)
+      const negMatches = [...prefix.matchAll(/(?:无|未见|否认|排除|\bno\b|\bwithout\b)/gi)]
+      const lastNeg = negMatches.at(-1)
+      if (lastNeg !== undefined) {
+        const between = prefix.slice(lastNeg.index ?? 0)
+        if (!/(?:但|而|可见|伴|提示|呈|\bbut\b|\bwith\b)/i.test(between)) {
+          continue
+        }
+      }
+      return true
     }
-    return true
   }
   return false
 }
@@ -720,6 +736,7 @@ export class ClinicalScoreService {
         ...(triage.weightKg === undefined ? {} : { weightKg: triage.weightKg }),
       }
     }
+    const presentationIso = extractEncounterStartIso(encounter) ?? row.triage_recorded_at ?? now
     return this.#evaluateSnapshot(context, {
       caseId: row.case_id,
       encounterId: row.encounter_id,
@@ -728,6 +745,7 @@ export class ClinicalScoreService {
       legacyDiagnosticReportId: row.diagnostic_report_id,
       now,
       patientId: row.patient_id,
+      presentationIso,
       vitalSummary,
     })
   }
@@ -761,6 +779,7 @@ export class ClinicalScoreService {
           }
     const admissionVitalSummary = toVitalSummary(initialVitals)
     const vitalSummary = toVitalSummary(latestVitals)
+    const presentationIso = extractEncounterStartIso(encounter) ?? initialVitals?.recordedAt ?? now
     return this.#evaluateSnapshot(context, {
       admissionVitalSummary,
       caseId: admissionId,
@@ -770,6 +789,7 @@ export class ClinicalScoreService {
       legacyDiagnosticReportId: null,
       now,
       patientId: binding.patientId,
+      presentationIso,
       vitalSummary,
     })
   }
@@ -996,6 +1016,7 @@ export class ClinicalScoreService {
       legacyDiagnosticReportId: string | null
       now: string
       patientId: string
+      presentationIso?: string
       vitalSummary: ClinicalScoreVitalSummary | null
     },
   ): ClinicalScoreBundle {
@@ -1005,10 +1026,9 @@ export class ClinicalScoreService {
       reference: `Patient/${patient.id}`,
       versionId: patient.meta?.versionId ?? '1',
     }
-    const age = completedAgeYears(
-      typeof patient.birthDate === 'string' ? patient.birthDate : undefined,
-      businessDate(options.now),
-    )
+    const birthDateRaw = typeof patient.birthDate === 'string' ? patient.birthDate : undefined
+    const age = completedAgeYears(birthDateRaw, businessDate(options.now))
+    const admissionAge = completedAgeYears(birthDateRaw, businessDate(options.presentationIso ?? options.now))
     const sex = patient.gender === 'male' ? 'male' : patient.gender === 'female' ? 'female' : undefined
 
     const riskAssessment = this.latestRiskAssessment(context, options.caseId)
@@ -1059,6 +1079,7 @@ export class ClinicalScoreService {
           : (history.knownCoronaryRevascularizationOrStenosisGe50 ?? bedsideKnownStenosis)
 
     const facts: ClinicalScoreObjectiveFacts = {
+      ...(admissionAge === undefined ? {} : { admissionAgeYears: { source: patientRef, value: admissionAge } }),
       ...(age === undefined ? {} : { ageYears: { source: patientRef, value: age } }),
       ...(sex === undefined ? {} : { sex: { source: patientRef, value: sex } }),
       ...(effectiveAdmissionVital === null || admissionVitalRef === undefined
@@ -1626,7 +1647,7 @@ export class ClinicalScoreService {
           SELECT order_id, catalog_item_id, display, version
           FROM inpatient_order
           WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
-            AND kind = 'medication' AND state IN ('signed', 'verified')
+            AND kind = 'medication' AND state IN ('signed', 'verified', 'stop-requested')
         `).all(context.workspaceId, context.epoch, caseId),
       )
       for (const order of activeOrders) {
