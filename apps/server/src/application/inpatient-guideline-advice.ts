@@ -421,17 +421,42 @@ export class InpatientGuidelineAdvice {
         else throw error
       }
     }
+    const isLifecycleFrozen = basis.frozen || basis.binding.row.record_status === 'archived'
+    const persistedBasis = row ? basisSchema.safeParse(JSON.parse(row.basis_json)) : undefined
+    const frozenEvidenceIntact =
+      persistedBasis?.success === true
+      && canonicalJsonHash(persistedBasis.data.guidelines) === canonicalJsonHash(basis.input.guidelines)
+      && canonicalJsonHash(persistedBasis.data.topic) === canonicalJsonHash(basis.input.topic)
     const unchanged = row?.basis_fingerprint === basis.fingerprint
+    const readableSnapshot = unchanged || (isLifecycleFrozen && frozenEvidenceIntact)
     let status: Advice['status'] = row?.status ?? 'idle'
     if (row && (!unchanged || !authorized)) status = 'stale'
-    if (basis.input.sourceStatus !== 'available') status = 'no-evidence'
-    if (basis.frozen || basis.binding.row.record_status === 'archived') status = 'frozen'
+    if (isLifecycleFrozen) status = 'frozen'
     if (row?.cancelled === 1) status = row.status === 'succeeded' ? 'frozen' : 'cancelled'
+    if (basis.input.sourceStatus !== 'available' || (isLifecycleFrozen && row?.status === 'succeeded' && !frozenEvidenceIntact)) {
+      status = 'no-evidence'
+    }
     if (basis.requestStatus === 'cancelled') status = 'cancelled'
     if (row?.status === 'unknown') status = 'unknown'
-    const result = authorized && unchanged && basis.input.sourceStatus === 'available' && row?.status === 'succeeded' && row.result_json
-      && status !== 'cancelled' ? inpatientGuidelineAdviceResultSchema.parse(JSON.parse(row.result_json)) : null
+    const result =
+      authorized
+      && readableSnapshot
+      && basis.input.sourceStatus === 'available'
+      && row?.status === 'succeeded'
+      && row.result_json
+      && status !== 'cancelled'
+      && status !== 'no-evidence'
+        ? inpatientGuidelineAdviceResultSchema.parse(JSON.parse(row.result_json))
+        : null
     if (status === 'succeeded' && basis.input.missing.length > 0) status = 'incomplete'
+    const effectiveMissing =
+      status === 'frozen' && result !== null && persistedBasis?.success === true
+        ? clampTopicMissingList(persistedBasis.data.missing)
+        : basis.input.missing
+    const effectiveFingerprint =
+      isLifecycleFrozen && result !== null && row !== undefined
+        ? row.basis_fingerprint
+        : basis.fingerprint
 
     const idleMessage = requestId !== null ? '尚未准备本计划的指南参考意见。' : messages.idle
     const frozenMessage = requestId !== null ? '手术已开始、完成或病案已归档，指南参考意见保留历史只读。' : messages.frozen
@@ -441,7 +466,7 @@ export class InpatientGuidelineAdvice {
       requestId,
       taskId: row?.task_id ?? null,
       version: row?.version ?? 0,
-      fingerprint: basis.fingerprint,
+      fingerprint: effectiveFingerprint,
       status,
       message: row?.cancelled === 1 && status !== 'unknown'
         ? row.status === 'succeeded'
@@ -454,7 +479,7 @@ export class InpatientGuidelineAdvice {
             : status === 'frozen'
               ? frozenMessage
               : messages[status],
-      missing: basis.input.missing,
+      missing: effectiveMissing,
       failureCode: row?.error_code ?? null,
       result,
     }
