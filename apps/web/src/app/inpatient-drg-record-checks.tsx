@@ -21,7 +21,7 @@ export type DrgRecordTarget = InpatientDrgRecordChecks['sources'][number]['targe
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
   write: ReturnType<typeof useInpatientWriteIntent>; active: boolean; query?: InpatientDrgQuery['checks']; followOn?: boolean | undefined; onOpenRecord?: ((target: DrgRecordTarget) => void) | undefined }
 
-function formatCheckSourceDisplay(source: InpatientDrgRecordChecks['sources'][number], admission: InpatientAdmission, locale: WorkspaceLocale): {
+function formatCheckSourceDisplay(source: InpatientDrgRecordChecks['sources'][number], admission: InpatientAdmission, locale: WorkspaceLocale, hasPerformedProcedures: boolean): {
   label: string
   value: string
   state: 'ok' | 'wait' | 'todo'
@@ -38,10 +38,17 @@ function formatCheckSourceDisplay(source: InpatientDrgRecordChecks['sources'][nu
   }
   const inHospital = admission.status !== 'departed' && admission.status !== 'cleared' && admission.recordStatus !== 'archived'
   if (rawLabel === '首页主操作' && inHospital && rawValue.includes('尚未选择')) {
+    if (!hasPerformedProcedures) {
+      return {
+        label: rawLabel,
+        value: t('完成手术后在病案页选择并保存', 'Choose and save on Medical record after surgery'),
+        state: 'wait',
+      }
+    }
     return {
       label: rawLabel,
-      value: t('出院后在病案首页选择', 'Select on medical record after discharge'),
-      state: 'wait',
+      value: t('尚未选择，请在病案页保存', 'Not selected; save on Medical record'),
+      state: 'todo',
     }
   }
   const pending = rawValue.includes('尚未选择') || rawValue.includes('未确认') || rawValue.includes('待处理')
@@ -69,9 +76,10 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
   const followDisabled = followOn === false && session.actor.roleCode === 'inpatient-doctor' && verifiedObservations === undefined && !explanationRunning
   const issueExplanation = (issue: InpatientDrgRecordChecks['issues'][number]) => verifiedObservations?.find(item => item.key === issue.key)?.explanation ?? issue.explanation
   const goLabel = { surgery: t('去手术', 'Open surgery'), record: t('去病案首页', 'Open medical record'), orders: t('去诊断医嘱', 'Open diagnoses and orders'), fees: t('去费用', 'Open charges') } as const
+  const hasPerformedProcedures = (data?.sources ?? []).some(source => source.reference.startsWith('Procedure/') && !source.display.startsWith('术中实际操作'))
   const formattedSources = (data?.sources ?? []).map(source => ({
     source,
-    ...formatCheckSourceDisplay(source, admission, locale),
+    ...formatCheckSourceDisplay(source, admission, locale, hasPerformedProcedures),
   }))
   const hasWaitRow = formattedSources.some(item => item.state === 'wait')
   const actionableIssues = (data?.issues ?? []).filter(issue => {
@@ -90,9 +98,22 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
   const formalCode = data?.simulation?.grouping.formal.drgCode
   const projectedCode = data?.simulation?.grouping.projected?.drgCode
   const waitExplanation = hasWaitRow && formalCode && projectedCode && formalCode !== projectedCode
-    ? t(`正式分组只看病案首页选定的主操作。现在还没选，所以按无操作分到 ${formalCode}；手术完成、出院后在病案首页选为主操作，预计进入 ${projectedCode}。`,
-      `Formal grouping uses the primary procedure selected on the medical record. Before selection it groups as ${formalCode}; after surgery and discharge selection it is projected as ${projectedCode}.`)
+    ? t(`正式分组只看已保存的主操作。现在尚未完成手术，所以按无操作分到 ${formalCode}；手术完成后在「病案」保存本次主操作，预计进入 ${projectedCode}。`,
+      `Formal grouping uses the saved primary procedure. Before surgery completion it groups as ${formalCode}; after surgery and saving on Medical record it is projected as ${projectedCode}.`)
     : undefined
+  const renderAssistantNote = (text: string, options?: { key?: string; alert?: boolean; readyAlert?: boolean; srText?: string; details?: React.ReactNode }) => {
+    const srNode = options?.srText ? <span className="sr-only">{options.srText}</span> : null
+    if (followDisabled) {
+      return <div key={options?.key} role={options?.alert ? 'alert' : undefined} className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">{srNode}<span>{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</span></div>
+    }
+    if (explanationRunning) {
+      return <div key={options?.key} role={options?.alert ? 'alert' : undefined} className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" />{srNode}<span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
+    }
+    const head = <><Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>{srNode}<span>{text}</span></>
+    return options?.details
+      ? <div key={options.key} role={options.readyAlert ? 'alert' : undefined} className="col-span-full mt-1 flex flex-col gap-1.5 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground"><div className="flex items-start gap-2">{head}</div>{options.details}</div>
+      : <div key={options?.key} role={options?.readyAlert ? 'alert' : undefined} className="col-span-full mt-1 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">{head}</div>
+  }
 
   return <section aria-label={t('分组核对', 'Grouping checks')} className="flex flex-col gap-3">
     <div className="flex flex-wrap items-center gap-2">
@@ -107,9 +128,9 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
       {data.status === 'frozen' ? <p role="status">{t('病案已归档，仅查看归档时的核对依据。', 'The medical record is archived; checks use the archived sources.')}</p> : null}
       {data.status === 'incomplete' ? <Alert><AlertTitle>{t('分组核对依据不完整', 'Record checks are incomplete')}</AlertTitle><AlertDescription>{data.missing.join(' · ')}</AlertDescription></Alert> : null}
       {data.paymentStatus !== 'available' ? <p role="status" className="text-sm">{data.paymentMessage}</p> : null}
-      {formattedSources.length > 0 || data.issues.length > 0 ? <ul aria-label={t('分组核对清单', 'Grouping checklist')} className="clinmesh-inpatient-preparation-list">
+      {formattedSources.length > 0 || actionableIssues.length > 0 ? <ul aria-label={t('分组核对清单', 'Grouping checklist')} className="clinmesh-inpatient-preparation-list">
         {formattedSources.map(({ source, label, value, state }) => {
-          const rowIssues = data.issues.filter(issue => {
+          const rowIssues = actionableIssues.filter(issue => {
             if (matchedIssueKeys.has(issue.key)) return false
             if (issue.plannedQuantity !== null || issue.actualQuantity !== null || (issue.expectedChargeFen !== null && issue.expectedChargeFen !== undefined)) return false
             if (issue.kind === 'primary-procedure-difference' && issue.evidence.some(ref => ref.startsWith('InpatientRecord/'))) {
@@ -130,22 +151,11 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
                   ? <Button variant="link" size="sm" className="text-info" onClick={() => onOpenRecord(source.target)}>{goLabel[source.target]}<ChevronRightIcon aria-hidden="true" data-icon="inline-end" /></Button>
                   : null}
             </div>
-            {rowIssues.map(issue => followDisabled ? <div key={issue.key} role="alert" className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><span className="sr-only">{issue.display}</span><span>{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</span></div>
-              : explanationRunning ? <div key={issue.key} role="alert" className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span className="sr-only">{issue.display}</span><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
-              : <div key={issue.key} role="alert" className="col-span-full mt-1 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
-                <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
-                <span className="sr-only">{issue.display}</span>
-                <span>{issueExplanation(issue)}</span>
-              </div>)}
-            {rowIssues.length === 0 && effectiveState === 'wait' && waitExplanation ? followDisabled ? <div className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</div>
-              : explanationRunning ? <div className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
-              : <div className="col-span-full mt-1 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
-              <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
-              <span>{waitExplanation}</span>
-            </div> : null}
+            {rowIssues.map(issue => renderAssistantNote(issueExplanation(issue), { key: issue.key, alert: true, readyAlert: true, srText: issue.display }))}
+            {rowIssues.length === 0 && effectiveState === 'wait' && waitExplanation ? renderAssistantNote(waitExplanation) : null}
           </li>
         })}
-        {data.issues.filter(issue => !matchedIssueKeys.has(issue.key)).map(issue => {
+        {actionableIssues.filter(issue => !matchedIssueKeys.has(issue.key)).map(issue => {
           const target: DrgRecordTarget | undefined = issue.target === 'charges' ? 'fees' : issue.target
           const hasDetails = issue.plannedQuantity !== null || issue.actualQuantity !== null || (issue.expectedChargeFen !== null && issue.expectedChargeFen !== undefined)
           return <li key={issue.key} role={hasDetails ? 'alert' : undefined} data-complete={false}>
@@ -154,19 +164,11 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
             <div className="clinmesh-inpatient-preparation-owner">
               {target && onOpenRecord ? <Button variant="link" size="sm" className="text-info" onClick={() => onOpenRecord(target)}>{goLabel[target]}<ChevronRightIcon aria-hidden="true" data-icon="inline-end" /></Button> : null}
             </div>
-            {followDisabled ? <div role="alert" className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</div>
-              : explanationRunning ? <div role="alert" className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
-              : <div role={hasDetails ? undefined : 'alert'} className="col-span-full mt-1 flex flex-col gap-1.5 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
-                <div className="flex items-start gap-2">
-                  <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
-                  <span>{issueExplanation(issue)}</span>
-                </div>
-                {hasDetails ? <InpatientDrgIssueDetails issue={issue} locale={locale} onOpenRecord={onOpenRecord} /> : null}
-              </div>}
+            {renderAssistantNote(issueExplanation(issue), { alert: true, readyAlert: !hasDetails, ...(hasDetails ? { details: <InpatientDrgIssueDetails issue={issue} locale={locale} onOpenRecord={onOpenRecord} /> } : {}) })}
           </li>
         })}
       </ul> : null}
-      {data.issues.length === 0 && data.status === 'complete' && !hasWaitRow ? <p className="text-sm text-muted-foreground">{t('当前无本范围核对差异', 'No differences within these checks')}</p> : null}
+      {actionableIssues.length === 0 && data.status === 'complete' && !hasWaitRow ? <p className="text-sm text-muted-foreground">{t('当前无本范围核对差异', 'No differences within these checks')}</p> : null}
       <p className="text-xs text-muted-foreground">{t('对照原记录判断；首页、诊断和手术在各自页签修改，本页只核对。', 'Compare with the original records; change the record, diagnoses and surgery in their own tabs. This page only checks.')}</p>
     </> : null}
   </section>

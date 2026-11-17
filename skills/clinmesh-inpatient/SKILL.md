@@ -588,7 +588,7 @@ clinmesh command receipt get --operation-id inpatient.discharge.settle --idempot
 结算后的费用补计、冲减及原款收退款使用[后续财务更正](#结算清床及归档后的财务更正)，不通过普通临床写入或解档处理。
 
 1. 用 `record` 读取四组核心字段、当前 `sourcesHash` 与首页 `revision`。诊断来自正式诊断确认，操作只来自本次实际执行；有实际操作时主管医生显式选 `mainProcedureExecutionId`，无操作时明确 `null`。需要补充出区后诊断时仍用 `confirm-diagnosis`，可在清床后未归档窗口纠正，其他医嘱、库存和资金动作不因此恢复。
-2. 主管医生提交首页修订；病案人员核编码来源，针对同一修订与来源审核通过或附原因退回。临床版2022诊断保留完整编码、固定Release和来源定位；院内备用编码可提交待审稿，但须通过正式诊断入口更正后才可批准。临床版来源不证明医保等价或原始工作簿权威身份独立核验，操作3.0为有界摘录。
+2. 主管医生在院可先显式保存主操作供预分组使用，离院结算后重新核对并提交正式首页修订；患者离院后病案人员核编码来源，针对同一修订与来源审核通过或附原因退回（未离院病例审核通过或退回均返回 `INPATIENT_RECORD_INCOMPLETE`）。临床版2022诊断保留完整编码、固定Release和来源定位；院内备用编码可提交待审稿，但须通过正式诊断入口更正后才可批准。临床版来源不证明医保等价或原始工作簿权威身份独立核验，操作3.0为有界摘录。
 3. 归档要求已结算、已清床、核心字段完整、唯一主诊断、本次有效实际主操作、当前审核通过、无在途事项且账目资金一致。归档读取固定快照；归档后普通写入及报告更正拒绝，既有原receipt无写重放仍可用。当前Epoch内Scenario完成后人类会话仍可读归档；已失效Agent Grant不因此恢复。
 
 ```bash
@@ -631,7 +631,7 @@ clinmesh command receipt get --operation-id inpatient.record.archive --idempoten
 }
 ```
 
-`INPATIENT_RECORD_STALE` 表示来源或修订变化，旧审核已失效；重新审阅事实，由医生提交新首页再审核。`INPATIENT_RECORD_CODING_UNSUPPORTED` 要求使用正式诊断确认更正固定编码。`INPATIENT_RECORD_ARCHIVED` 表示当前病案只读。结果未知先查同operation原receipt，保留原输入、修订/hash和幂等键；不能自动刷新hash或换key重做。
+`INPATIENT_RECORD_STALE` 表示来源或修订变化，旧审核已失效；重新审阅事实，由医生提交新首页再审核。`INPATIENT_RECORD_INCOMPLETE` 表示患者尚未离院或首页核心字段、唯一主诊断不完整，不能通过或提前退回在院主操作快照。`INPATIENT_RECORD_CODING_UNSUPPORTED` 要求使用正式诊断确认更正固定编码。`INPATIENT_RECORD_ARCHIVED` 表示当前病案只读。结果未知先查同operation原receipt，保留原输入、修订/hash和幂等键；不能自动刷新hash或换key重做。
 
 ## 结算、清床及归档后的财务更正
 

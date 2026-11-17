@@ -1,3 +1,4 @@
+import { chooseFollowMenu, expectFollowing } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import type { IncomingMessage } from 'node:http'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
@@ -23,13 +24,11 @@ export async function runDrgUsageJourney(page: Page, app: PciBrowserApp, open: (
     if (url.pathname === '/api/model-usage/overview' || url.pathname === '/api/model-usage/requests') reads.push(url)
   })
   await open(stay.admissionId, detail.admission.patientName)
-  const header = page.getByRole('region', { name: '当前住院患者', exact: true })
   expect(reads).toHaveLength(0)
-  const toggle = header.getByRole('button', { name: '助手自动跟进', exact: true })
-  await toggle.click()
+  await chooseFollowMenu(page, '开启助手自动跟进')
   await page.getByRole('dialog', { name: '开启助手自动跟进', exact: true }).getByRole('button', { name: '开启', exact: true }).click()
-  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
-  await header.getByRole('button', { name: '本次住院 AI 用量', exact: true }).click()
+  await expectFollowing(page, true)
+  await chooseFollowMenu(page, '本次住院 AI 用量')
   const usage = page.getByRole('region', { name: "本次住院AI用量", exact: true })
   await expect(usage.getByLabel("实际AI请求数", { exact: true })).toHaveText('2')
   await expect(usage.getByLabel('实际AI请求数', { exact: true })).toBeVisible()
@@ -75,16 +74,16 @@ export async function runDrgUsageJourney(page: Page, app: PciBrowserApp, open: (
   await app.fixture.restart()
   await loginPciBrowser(page, app, 'inpatient-doctor')
   await open(stay.admissionId, detail.admission.patientName)
-  await header.getByRole('button', { name: '本次住院 AI 用量', exact: true }).click()
+  await chooseFollowMenu(page, '本次住院 AI 用量')
   await expect(usage.getByLabel("实际AI请求数", { exact: true })).toHaveText('2')
   await expect(usage.getByLabel('已知总 Token', { exact: true })).toHaveText('240')
   await page.getByRole('dialog', { name: '本次住院 AI 用量', exact: true }).getByRole('button', { name: '关闭', exact: true }).click()
-  await toggle.click()
+  await chooseFollowMenu(page, '停止助手自动跟进')
   const stopDialog = page.getByRole('dialog', { name: '停止助手自动跟进', exact: true })
   await stopDialog.getByLabel('停止理由（必填）', { exact: true }).fill('合成用量验收完成，保留已发生消费')
   await stopDialog.getByRole('button', { name: '确认停止', exact: true }).click()
-  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
-  await header.getByRole('button', { name: '本次住院 AI 用量', exact: true }).click()
+  await expectFollowing(page, false)
+  await chooseFollowMenu(page, '本次住院 AI 用量')
   await expect(usage.getByLabel("实际AI请求数", { exact: true })).toHaveText('2')
   expect(app.modelFeatures).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
   app.fixture.options.modelPricing = { prices: [{ provider: 'synthetic.invalid', model: 'synthetic-drg-model',
@@ -95,7 +94,7 @@ export async function runDrgUsageJourney(page: Page, app: PciBrowserApp, open: (
   expect((await page.request.post(`${app.origin}/api/auth/role`, { headers: { origin: app.origin },
     data: { practitionerRoleId: 'practitioner-role-inpatient-doctor' } })).status()).toBe(200)
   await open(stay.admissionId, detail.admission.patientName)
-  await header.getByRole('button', { name: '本次住院 AI 用量', exact: true }).click()
+  await chooseFollowMenu(page, '本次住院 AI 用量')
   await usage.getByRole('button', { name: "展开AI请求明细", exact: true }).click()
   await requests.getByRole('row').filter({ hasText: '术前核验' }).getByRole('button', { name: '查看计量核对', exact: true }).click()
   await usage.getByRole('button', { name: '按当前价表补算', exact: true }).click()

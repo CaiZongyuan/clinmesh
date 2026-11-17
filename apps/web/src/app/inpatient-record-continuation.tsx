@@ -4,6 +4,7 @@ import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
 import { Button } from '@clinmesh/ui/components/button'
 import { useEffect, useRef, useState } from 'react'
 import { apiGet } from './api-client.ts'
+import { inpatientRecordSubmitted } from './inpatient-record.tsx'
 import { useInpatientReviewQueue, type InpatientReviewQueueSnapshot, type ReviewQueueCommand } from './inpatient-review-queue.ts'
 import { ReviewDraftFailure } from './review-draft-failure.tsx'
 
@@ -13,12 +14,12 @@ type Choice = { target?: Target | null; notice?: 'changed' | 'read'; reselect?: 
 const keyOf = (snapshot: InpatientReviewQueueSnapshot) => JSON.stringify([snapshot.sourceId, snapshot.operation, snapshot.signature])
 const orderedAfter = <T,>(items: T[], index: number) => [...items.slice(index + 1), ...items.slice(0, Math.max(0, index))]
 const mayHandle = (item: InpatientAdmission, operation: ReviewQueueCommand['operation']) => operation === 'inpatient.record.review'
-  ? item.recordStatus === 'open' : item.recordStatus === 'reviewed' && item.status === 'cleared' && item.financialStatus === 'settled'
+  ? item.recordStatus === 'open' && item.financialStatus === 'settled' : item.recordStatus === 'reviewed' && item.status === 'cleared' && item.financialStatus === 'settled'
 const targetOf = ({ id, patientId, patientName, versionId }: InpatientAdmission): Target => ({ id, patientId, patientName, versionId })
 const readRecord = (id: string) => apiGet(`/api/his/v1/inpatient/admissions/${encodeURIComponent(id)}/record`, inpatientRecordSchema)
 function canHandle(item: InpatientAdmission, record: ReturnType<typeof inpatientRecordSchema.parse>, operation: ReviewQueueCommand['operation']) {
   return mayHandle(item, operation) && record.admissionId === item.id && record.snapshot.patient.patientId === item.patientId
-    && !record.archive && record.revision?.sourcesHash === record.sourcesHash && record.reviewCurrent === (operation === 'inpatient.record.archive')
+    && !record.archive && inpatientRecordSubmitted(record) && record.revision?.sourcesHash === record.sourcesHash && record.reviewCurrent === (operation === 'inpatient.record.archive')
 }
 
 export function useInpatientRecordContinuation(session: SessionContext, selectedId: string | undefined, items: InpatientAdmission[], filter: string,

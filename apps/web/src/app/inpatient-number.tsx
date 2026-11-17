@@ -3,6 +3,9 @@ import { CopyIcon } from 'lucide-react'
 import { useState } from 'react'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
+/** 过长的编号中间截断。 */
+export const shortInpatientNumber = (number: string) => number.length > 14 ? `${number.slice(0, 7)}…${number.slice(-4)}` : number
+
 /** 患者头部的住院号：过长时中间截断，悬停显示全文，可以复制。 */
 export function InpatientNumber({ locale, number, label }: { locale: WorkspaceLocale; number: string; label?: string }): React.JSX.Element {
   // 不同号码各自拥有复制反馈，包括迟到的剪贴板响应。
@@ -13,7 +16,7 @@ function InpatientNumberValue({ locale, number, label }: { locale: WorkspaceLoca
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const [result, setResult] = useState<'copied' | 'failed'>()
   return <span className="inline-flex items-center gap-1" data-inpatient-number>
-    <span className="font-mono tabular-nums" title={number}>{label === undefined ? t('住院号 ', 'Inpatient no. ') : `${label} `}{number.length > 14 ? `${number.slice(0, 7)}…${number.slice(-4)}` : number}</span>
+    <span className="font-mono tabular-nums" title={number}>{label === undefined ? t('住院号 ', 'Inpatient no. ') : `${label} `}{shortInpatientNumber(number)}</span>
     <Button aria-label={`${label === undefined ? t('复制住院号', 'Copy inpatient number') : `${t('复制', 'Copy ')}${label}`} ${number}`} onClick={async () => {
       setResult(undefined)
       try { await navigator.clipboard.writeText(number); setResult('copied') } catch { setResult('failed') }
