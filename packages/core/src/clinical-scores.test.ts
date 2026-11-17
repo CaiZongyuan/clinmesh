@@ -266,18 +266,46 @@ describe('six deterministic clinical score formulas', () => {
   })
 
   it('stratifies ASCVD LDL-C target per 2023 Chinese lipid guideline ultra-high criteria and 21-cell primary matrix', () => {
-    // First uncomplicated ACS without >=2 high-risk factors -> very-high (<1.8 mmol/L), NOT overclassified as ultra-high
+    // First uncomplicated ACS with all upgrade factors confirmed negative -> very-high (<1.8 mmol/L), NOT overclassified as ultra-high
     const firstUncomplicatedAcs = calculateAscvdLdlTarget({
       ageYears: 62,
+      cadOnsetAgeYears: 62,
       confirmedDiagnosisCodes: ['I21.4'],
+      egfrMlMin173m2: 88,
       ldlCholesterol: { unit: 'mg/dL', value: 77.34 },
       sex: 'male',
+      smokingStatus: 'never',
     })
     expect(firstUncomplicatedAcs).toMatchObject({
       ldlGoalEvaluation: { atGoal: false, currentLdlMmolL: 2, targetLdlMmolL: 1.8 },
       status: 'complete',
       tierCode: 'very-high',
       value: 1.8,
+    })
+
+    // 1 severe ASCVD event + 1 known high-risk factor + unknown smokingStatus (or unknown LDL-C / eGFR / sex / onset) -> stays incomplete!
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 62,
+        cadOnsetAgeYears: 62,
+        confirmedDiagnosisCodes: ['I21.4', 'E11.9'],
+        egfrMlMin173m2: 88,
+        ldlCholesterol: { unit: 'mmol/L', value: 2.2 },
+        sex: 'male',
+      }),
+    ).toEqual({
+      missingInputs: ['smokingStatus'],
+      status: 'incomplete',
+    })
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 62,
+        confirmedDiagnosisCodes: ['I21.4', 'E11.9'],
+        smokingStatus: 'never',
+      }),
+    ).toEqual({
+      missingInputs: ['sex', 'cadOnsetAge', 'ldlCholesterol', 'serumCreatinine'],
+      status: 'incomplete',
     })
 
     // ACS + >=2 high-risk factors (diabetes + hypertension) OR >=2 severe events -> ultra-high (<1.4 mmol/L)
@@ -510,6 +538,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       ageYears: { source: patientSrc, value: 68 },
       anginaEpisodes24h: { source: riskSrc, value: 2 },
       aspirinUsedLast7Days: { source: riskSrc, value: true },
+      cadOnsetAgeYears: { source: condSrc, value: 68 },
       cardiacArrestOnAdmission: { source: riskSrc, value: false },
       confirmedDiagnoses: [{ code: 'I21.4', source: condSrc }],
       elevatedCardiacBiomarker: { source: labSrc, value: true },
