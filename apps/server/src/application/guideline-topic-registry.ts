@@ -1352,14 +1352,29 @@ export function extractSupplementaryIndicators(options: {
     }
   }
 
-  // Check inpatient surgeries & angiography for contrast exposure and CAD/PCI eligibility
+  // Check inpatient surgeries & angiography for planned contrast exposure and CAD/PCI eligibility
+  const nonPendingSurgeryRequestIds = new Set<string>()
   if (inpatient !== undefined) {
     const surgery = inpatient.service.surgery.read(inpatient.actor, caseId)
+    for (const item of surgery.inProgress) nonPendingSurgeryRequestIds.add(item.requestId)
+    for (const exec of surgery.executions) {
+      if (exec.requestId) nonPendingSurgeryRequestIds.add(exec.requestId)
+    }
     for (const req of surgery.requests) {
-      if (req.status === 'cancelled') continue
+      if (req.status === 'cancelled') {
+        nonPendingSurgeryRequestIds.add(req.id)
+        continue
+      }
       const code = req.plannedProcedure.coding.code
       const display = req.plannedProcedure.coding.display
-      if (/^(?:88\.5[567]|36\.0[67]|00\.66)/i.test(code) || /造影|经皮冠状动脉|支架|\bPCI\b|angiography/i.test(display)) {
+      const isPendingContrastPlan =
+        (req.status === 'requested' || req.status === 'ready')
+        && !nonPendingSurgeryRequestIds.has(req.id)
+      if (req.status === 'completed') nonPendingSurgeryRequestIds.add(req.id)
+      if (
+        isPendingContrastPlan
+        && (/^(?:88\.5[567]|36\.0[67]|00\.66)/i.test(code) || /造影|经皮冠状动脉|支架|\bPCI\b|angiography/i.test(display))
+      ) {
         contrastProcedureEligibility ??= {
           sourceReference: `ServiceRequest/${req.id}`,
           valueText: display.trim().slice(0, 240),
@@ -1384,13 +1399,6 @@ export function extractSupplementaryIndicators(options: {
           versionId: '1',
         }
       }
-      if (/^(?:88\.5[567]|36\.0[67]|00\.66)/i.test(code) || /造影|经皮冠状动脉|支架|\bPCI\b|angiography/i.test(display)) {
-        contrastProcedureEligibility ??= {
-          sourceReference: `Procedure/${exec.id}`,
-          valueText: display.trim().slice(0, 240),
-          versionId: '1',
-        }
-      }
     }
     for (const report of inpatient.service.angiography.reports(inpatient.actor, caseId)) {
       if (!['final', 'partial'].includes(report.status)) continue
@@ -1404,7 +1412,7 @@ export function extractSupplementaryIndicators(options: {
     }
   }
 
-  // Check encounter ServiceRequest for planned contrast imaging / angiography
+  // Check encounter ServiceRequest for genuinely pending (status === 'active') planned contrast imaging / angiography
   if (contrastProcedureEligibility === undefined) {
     const srParams = new URLSearchParams({ _count: '100', encounter: `Encounter/${effectiveEncounterId}` })
     for (;;) {
@@ -1419,7 +1427,7 @@ export function extractSupplementaryIndicators(options: {
           meta: z.object({ versionId: z.string().optional() }).loose().optional(),
           status: z.string().optional(),
         }).loose().safeParse(raw)
-        if (!parsed.success || !['active', 'completed'].includes(parsed.data.status ?? '')) continue
+        if (!parsed.success || parsed.data.status !== 'active' || nonPendingSurgeryRequestIds.has(parsed.data.id)) continue
         const display = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
         const codes = (parsed.data.code?.coding ?? []).map(c => c.code ?? '')
         if (

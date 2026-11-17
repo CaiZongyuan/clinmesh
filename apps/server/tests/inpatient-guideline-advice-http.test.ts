@@ -1091,6 +1091,14 @@ it('无 PCI 手术申请的内科住院可按专题完成术前水化、FFR > 0.
     status: 'present',
     valueText: expect.stringContaining('LAD(中段) 狭窄 65%（FFR 0.86 > 0.80 保守治疗范围）'),
   })
+  const postAngioHydrationTopics = await s.fixture.read(
+    'inpatient-doctor',
+    `${medicalStay.path}/guideline-topics?topicId=contrast-kidney-hydration`,
+    guidelineTopicBundleSchema,
+  )
+  expect(postAngioHydrationTopics.items[0]!.patientIndicators.find(i => i.code === 'contrast-procedure-indication')).toMatchObject({
+    status: 'missing',
+  })
 
   const revascBefore = await s.fixture.read(
     'inpatient-doctor',
