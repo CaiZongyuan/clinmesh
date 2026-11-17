@@ -906,18 +906,20 @@ export function extractSupplementaryIndicators(options: {
         id: z.string(),
         meta: z.object({ versionId: z.string().optional() }).loose().optional(),
         status: z.string().optional(),
-        valueQuantity: z.object({ unit: z.string().optional(), value: z.number().finite().optional() }).loose().optional(),
+        valueQuantity: z.object({ code: z.string().optional(), unit: z.string().optional(), value: z.number().finite().optional() }).loose().optional(),
       }).loose().safeParse(fhir.read(context, 'Observation', obsId))
       if (!obs.success || !['final', 'amended', 'corrected'].includes(obs.data.status ?? '')) continue
       const codes = new Set((obs.data.code?.coding ?? []).map(c => c.code ?? ''))
       const text = [obs.data.code?.text, ...(obs.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
+      const rawUnit = (obs.data.valueQuantity?.unit ?? obs.data.valueQuantity?.code)?.trim() ?? ''
       if (
         obs.data.valueQuantity?.value !== undefined
+        && rawUnit.length > 0
         && (codes.has('1100301A') || codes.has('4548-4') || codes.has('17856-6') || /糖化血红蛋白|HbA1c/i.test(text))
       ) {
         hba1c = {
           sourceReference: `Observation/${obs.data.id}`,
-          valueText: `${obs.data.valueQuantity.value}${obs.data.valueQuantity.unit ?? '%'}`,
+          valueText: rawUnit === '%' ? `${obs.data.valueQuantity.value}%` : `${obs.data.valueQuantity.value} ${rawUnit}`,
           versionId: obs.data.meta?.versionId ?? '1',
         }
         break

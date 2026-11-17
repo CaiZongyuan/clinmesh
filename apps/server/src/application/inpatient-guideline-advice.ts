@@ -276,7 +276,9 @@ export class InpatientGuidelineAdvice {
       }
     }
 
-    const clinical = this.owner.orders.read(context, admissionId)
+    const diagnosis = this.owner.orders.diagnosis(context, admissionId)
+    const orders = this.owner.orders.facts(context, admissionId).orders
+    const latestVitalSigns = this.owner.workflow.clinicalScores.latestInpatientVitalSigns(context, admissionId) ?? null
     const scores = this.owner.workflow.clinicalScores.inpatientSnapshot(this.owner, context, admissionId, referenceIso)
     const supplementary = extractSupplementaryIndicators({
       caseId: admissionId,
@@ -288,7 +290,7 @@ export class InpatientGuidelineAdvice {
     const { missingPatientInputs } = evaluateTopicPatientIndicators(topicId, scores, supplementary)
     const angiographyReports = this.owner.angiography.reports(context, admissionId)
       .filter(report => report.status === 'final' || report.status === 'partial')
-    const activeMedicationOrders = clinical.orders
+    const activeMedicationOrders = orders
       .filter(order => order.kind === 'medication' && (order.state === 'signed' || order.state === 'verified'))
       .map(order => ({
         catalogItemId: order.catalogItemId,
@@ -308,20 +310,20 @@ export class InpatientGuidelineAdvice {
       dependencyFingerprint: canonicalJsonHash({
         activeMedicationOrders,
         angiographyReports: angiographyReports.map(r => ({ id: r.id, version: r.version })),
-        diagnosisRevision: clinical.diagnosis.revision,
+        diagnosisRevision: diagnosis.revision,
         population,
         scores: scores.scores,
         topic: definition.fingerprint,
       }),
       clinicalFacts: {
         request: null,
-        diagnosis: clinical.diagnosis,
+        diagnosis,
         investigations: this.owner.investigations.readSnapshot(context, admissionId),
         angiographyReports,
         scores: scores.scores,
         riskAssessment: scores.riskAssessment,
         activeMedicationOrders,
-        latestVitalSigns: clinical.latestVitalSigns ?? null,
+        latestVitalSigns,
       },
     }
     return {
