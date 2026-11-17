@@ -323,6 +323,64 @@ function hasPositiveStDeviationText(text: string): boolean {
   return false
 }
 
+const FHIR_DURATION_UNIT_MS: Readonly<Record<string, number>> = {
+  a: 365.25 * 86_400_000,
+  d: 86_400_000,
+  day: 86_400_000,
+  days: 86_400_000,
+  h: 3_600_000,
+  hour: 3_600_000,
+  hours: 3_600_000,
+  hr: 3_600_000,
+  millisecond: 1,
+  milliseconds: 1,
+  min: 60_000,
+  minute: 60_000,
+  minutes: 60_000,
+  mo: 30.4375 * 86_400_000,
+  month: 30.4375 * 86_400_000,
+  months: 30.4375 * 86_400_000,
+  ms: 1,
+  s: 1_000,
+  sec: 1_000,
+  second: 1_000,
+  seconds: 1_000,
+  w: 7 * 86_400_000,
+  week: 7 * 86_400_000,
+  weeks: 7 * 86_400_000,
+  wk: 7 * 86_400_000,
+  y: 365.25 * 86_400_000,
+  year: 365.25 * 86_400_000,
+  years: 365.25 * 86_400_000,
+  yr: 365.25 * 86_400_000,
+}
+
+function resolveMedicationBoundsDurationMs(
+  bounds: { code?: string | undefined; unit?: string | undefined; value?: number | undefined } | undefined,
+): number | 'invalid' | undefined {
+  if (bounds?.value === undefined) return undefined
+  if (!Number.isFinite(bounds.value) || bounds.value <= 0) return 'invalid'
+  const rawUnit = (bounds.code ?? bounds.unit ?? '').trim().toLowerCase()
+  const multiplierMs = FHIR_DURATION_UNIT_MS[rawUnit]
+  if (multiplierMs === undefined) return 'invalid'
+  return bounds.value * multiplierMs
+}
+
+function countClusteredEventDays(days: readonly string[]): number {
+  const sorted = [...new Set(days)].sort()
+  let clusters = 0
+  let anchorMs: number | undefined
+  for (const day of sorted) {
+    const ms = Date.parse(day)
+    if (!Number.isFinite(ms)) continue
+    if (anchorMs === undefined || (ms - anchorMs) / 86_400_000 > 28) {
+      clusters += 1
+      anchorMs = ms
+    }
+  }
+  return clusters
+}
+
 function hasPositiveStElevationText(text: string): boolean {
   const positivePattern = /ST\s*段?\s*(?:抬高|上抬|弓背向上)|ST[- ]?(?:segment\s*)?elevation/gi
   for (const clause of text.split(/[，。；,;！!\r\n]+/)) {
@@ -1329,13 +1387,12 @@ export class ClinicalScoreService {
           )
       `).all(context.workspaceId, context.epoch, caseId),
     )
-    let hasIssuedEcg = false
+    let hasExplicitNonStElevationEcg = false
     for (const row of ecgRows) {
       const report = diagnosticReportResourceSchema.safeParse(this.#fhir.read(context, 'DiagnosticReport', row.diagnostic_report_id))
       if (!report.success || !['final', 'amended', 'corrected'].includes(report.data.status ?? '')) continue
       const content = investigationResultContentSchema.safeParse(JSON.parse(row.content_json))
       if (!content.success) continue
-      hasIssuedEcg = true
       const combinedText = [
         content.data.conclusion,
         ...content.data.results.map(item => typeof item.value === 'string' ? item.value : ''),
@@ -1346,6 +1403,20 @@ export class ClinicalScoreService {
           reference: `DiagnosticReport/${row.diagnostic_report_id}`,
           versionId: report.data.meta?.versionId ?? '1',
         }
+        continue
+      }
+      const hasCompleteLeadStAssessment = ['st-t-anterior', 'st-t-inferior', 'st-t-lateral'].every(leadCode => {
+        const entry = content.data.results.find(item => item.code === leadCode)
+        return (
+          entry !== undefined
+          && typeof entry.value === 'string'
+          && (isExplicitNormalStLead(entry.value, entry.interpretation) || hasPositiveStDeviationText(entry.value))
+        )
+      })
+      const hasExplicitNoStElevationConclusion =
+        /(?:无|未见|否认)(?:明显)?\s*ST\s*段?\s*(?:抬高|上抬)|\bno\s+ST[- ]?(?:segment\s*)?elevation\b/i.test(combinedText)
+      if (hasCompleteLeadStAssessment || hasExplicitNoStElevationConclusion) {
+        hasExplicitNonStElevationEcg = true
       }
     }
 
@@ -1404,7 +1475,7 @@ export class ClinicalScoreService {
     const effectiveUaNstemiSource =
       stemiSource !== undefined
         ? undefined
-        : (uaNstemiSource ?? (genericAcsSource !== undefined && hasIssuedEcg ? genericAcsSource : undefined))
+        : (uaNstemiSource ?? (genericAcsSource !== undefined && hasExplicitNonStElevationEcg ? genericAcsSource : undefined))
 
     // 3. Check PCI / coronary stenting + DAPT indication for PRECISE-DAPT
     let pciStentEncounterSource: ClinicalScoreSourceReference | undefined
@@ -1544,14 +1615,13 @@ export class ClinicalScoreService {
         for (const raw of page.resources) {
           const parsed = medicationRequestResourceSchema.safeParse(raw)
           if (!parsed.success || parsed.data.status !== 'active' || withdrawnIds.has(parsed.data.id)) continue
-          if (parsed.data.authoredOn !== undefined && Number.isFinite(nowMs)) {
+          const daptBoundsMs = resolveMedicationBoundsDurationMs(
+            parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration,
+          )
+          if (daptBoundsMs === 'invalid') continue
+          if (parsed.data.authoredOn !== undefined && Number.isFinite(nowMs) && daptBoundsMs !== undefined) {
             const authoredMs = Date.parse(parsed.data.authoredOn)
-            const bounds = parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
-            if (Number.isFinite(authoredMs) && bounds?.value !== undefined) {
-              const unit = (bounds.code ?? bounds.unit ?? 'd').toLowerCase()
-              const mult = unit.startsWith('h') ? 3_600_000 : unit.startsWith('w') ? 7 * 86_400_000 : 86_400_000
-              if (authoredMs + bounds.value * mult < nowMs) continue
-            }
+            if (!Number.isFinite(authoredMs) || authoredMs + daptBoundsMs < nowMs) continue
           }
           const display = [
             parsed.data.medication?.reference?.display,
@@ -2057,23 +2127,31 @@ export class ClinicalScoreService {
     let priorCoronaryRevascularization: ClinicalScoreObjectiveFacts['priorCoronaryRevascularization']
     let cadOnsetAgeYears: ClinicalScoreObjectiveFacts['cadOnsetAgeYears']
     let hasUndatedCadRecord = false
-    const coronaryExplicitEventKeys = new Set<string>()
-    const strokeExplicitEventKeys = new Set<string>()
+    const coronaryIdentKeys = new Set<string>()
+    const strokeIdentKeys = new Set<string>()
+    const coronaryEpisodeDays: string[] = []
+    const strokeEpisodeDays: string[] = []
     let hasAnyCoronarySevereEvent = false
     let hasAnyStrokeEvent = false
     let hasSubsequentMiCode = false
     let earliestPriorMiRecordedDay: string | undefined
-    let earliestAcuteAcsRecordedDay: string | undefined
     let latestActiveAcuteAcsRecordedDay: string | undefined
+    let earliestPriorStrokeRecordedDay: string | undefined
+    let latestActiveStrokeRecordedDay: string | undefined
     const hypertensionConditionRefs = new Set<string>()
     let firstSevereEventRef: ClinicalScoreSourceReference | undefined
-    const extractExplicitEventKey = (cond: z.infer<typeof conditionResourceSchema>): string | undefined => {
-      const onsetRaw = cond.onsetDateTime ?? cond.onsetPeriod?.start
-      if (onsetRaw && /^\d{4}-\d{2}-\d{2}/.test(onsetRaw)) {
-        return `onset:${onsetRaw.slice(0, 10)}`
-      }
-      const ident = cond.identifier?.find(item => item.value?.trim())?.value?.trim()
-      return ident ? `id:${ident}` : undefined
+    const encounterStartDayCache = new Map<string, string | undefined>()
+    const resolveEncounterStartDay = (encRef: string | undefined): string | undefined => {
+      if (!encRef?.startsWith('Encounter/')) return undefined
+      const encId = encRef.slice('Encounter/'.length)
+      if (encounterStartDayCache.has(encId)) return encounterStartDayCache.get(encId)
+      let startDay: string | undefined
+      try {
+        const startIso = extractEncounterStartIso(this.#fhir.read(context, 'Encounter', encId))
+        if (startIso && /^\d{4}-\d{2}-\d{2}/.test(startIso)) startDay = startIso.slice(0, 10)
+      } catch { /* ignore unreadable external encounter */ }
+      encounterStartDayCache.set(encId, startDay)
+      return startDay
     }
     const recordCadEventDate = (rawIso: string | undefined, ref: ClinicalScoreSourceReference) => {
       if (!rawIso || !patientBirthDate) {
@@ -2164,31 +2242,45 @@ export class ClinicalScoreService {
         const isAcuteAcs = conditionEffectiveCodes.some(code => /^(?:I20\.0|I2[1-4])/i.test(code))
         const isPriorMi = conditionEffectiveCodes.some(code => /^I25\.2/i.test(code))
         const isStroke = conditionEffectiveCodes.some(code => /^I63/i.test(code))
-        const explicitEventKey = extractExplicitEventKey(parsed.data)
+        const onsetRaw = parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start
+        const onsetDay = onsetRaw && /^\d{4}-\d{2}-\d{2}/.test(onsetRaw) ? onsetRaw.slice(0, 10) : undefined
+        const identVal = parsed.data.identifier?.find(item => item.value?.trim())?.value?.trim()
         const recordedDay =
           parsed.data.recordedDate && /^\d{4}-\d{2}-\d{2}/.test(parsed.data.recordedDate)
             ? parsed.data.recordedDate.slice(0, 10)
-            : undefined
+            : resolveEncounterStartDay(parsed.data.encounter?.reference)
+        const isActiveClinStatus = clinStatus !== 'inactive' && clinStatus !== 'resolved'
         if (isAcuteAcs || isPriorMi) {
           hasAnyCoronarySevereEvent = true
           if (conditionEffectiveCodes.some(code => /^I22/i.test(code))) hasSubsequentMiCode = true
-          if (explicitEventKey !== undefined) coronaryExplicitEventKeys.add(explicitEventKey)
-          if (isPriorMi && recordedDay !== undefined && (earliestPriorMiRecordedDay === undefined || recordedDay < earliestPriorMiRecordedDay)) {
+          if (identVal) coronaryIdentKeys.add(identVal)
+          if (onsetDay !== undefined) {
+            coronaryEpisodeDays.push(onsetDay)
+          } else if (isAcuteAcs && isActiveClinStatus && recordedDay !== undefined) {
+            coronaryEpisodeDays.push(recordedDay)
+          }
+          if ((isPriorMi || !isActiveClinStatus) && recordedDay !== undefined && (earliestPriorMiRecordedDay === undefined || recordedDay < earliestPriorMiRecordedDay)) {
             earliestPriorMiRecordedDay = recordedDay
           }
-          if (isAcuteAcs && recordedDay !== undefined) {
-            if (earliestAcuteAcsRecordedDay === undefined || recordedDay < earliestAcuteAcsRecordedDay) {
-              earliestAcuteAcsRecordedDay = recordedDay
-            }
-            if (clinStatus !== 'inactive' && clinStatus !== 'resolved' && (latestActiveAcuteAcsRecordedDay === undefined || recordedDay > latestActiveAcuteAcsRecordedDay)) {
-              latestActiveAcuteAcsRecordedDay = recordedDay
-            }
+          if (isAcuteAcs && isActiveClinStatus && recordedDay !== undefined && (latestActiveAcuteAcsRecordedDay === undefined || recordedDay > latestActiveAcuteAcsRecordedDay)) {
+            latestActiveAcuteAcsRecordedDay = recordedDay
           }
           firstSevereEventRef ??= ref
         }
         if (isStroke) {
           hasAnyStrokeEvent = true
-          if (explicitEventKey !== undefined) strokeExplicitEventKeys.add(explicitEventKey)
+          if (identVal) strokeIdentKeys.add(identVal)
+          if (onsetDay !== undefined) {
+            strokeEpisodeDays.push(onsetDay)
+          } else if (isActiveClinStatus && recordedDay !== undefined) {
+            strokeEpisodeDays.push(recordedDay)
+          }
+          if (!isActiveClinStatus && recordedDay !== undefined && (earliestPriorStrokeRecordedDay === undefined || recordedDay < earliestPriorStrokeRecordedDay)) {
+            earliestPriorStrokeRecordedDay = recordedDay
+          }
+          if (isActiveClinStatus && recordedDay !== undefined && (latestActiveStrokeRecordedDay === undefined || recordedDay > latestActiveStrokeRecordedDay)) {
+            latestActiveStrokeRecordedDay = recordedDay
+          }
           firstSevereEventRef ??= ref
         }
         if (
@@ -2274,8 +2366,11 @@ export class ClinicalScoreService {
       cadOnsetAgeYears = undefined
     }
 
-    let coronarySevereCount =
-      coronaryExplicitEventKeys.size > 0 ? coronaryExplicitEventKeys.size : (hasAnyCoronarySevereEvent ? 1 : 0)
+    let coronarySevereCount = Math.max(
+      countClusteredEventDays(coronaryEpisodeDays),
+      coronaryIdentKeys.size,
+      hasAnyCoronarySevereEvent ? 1 : 0,
+    )
     if (hasSubsequentMiCode) {
       coronarySevereCount = Math.max(coronarySevereCount, 2)
     }
@@ -2283,13 +2378,23 @@ export class ClinicalScoreService {
       coronarySevereCount < 2
       && earliestPriorMiRecordedDay !== undefined
       && latestActiveAcuteAcsRecordedDay !== undefined
-      && (earliestAcuteAcsRecordedDay === undefined || earliestPriorMiRecordedDay < earliestAcuteAcsRecordedDay)
       && (Date.parse(latestActiveAcuteAcsRecordedDay) - Date.parse(earliestPriorMiRecordedDay)) / 86_400_000 > 28
     ) {
       coronarySevereCount = 2
     }
-    const strokeSevereCount =
-      strokeExplicitEventKeys.size > 0 ? strokeExplicitEventKeys.size : (hasAnyStrokeEvent ? 1 : 0)
+    let strokeSevereCount = Math.max(
+      countClusteredEventDays(strokeEpisodeDays),
+      strokeIdentKeys.size,
+      hasAnyStrokeEvent ? 1 : 0,
+    )
+    if (
+      strokeSevereCount < 2
+      && earliestPriorStrokeRecordedDay !== undefined
+      && latestActiveStrokeRecordedDay !== undefined
+      && (Date.parse(latestActiveStrokeRecordedDay) - Date.parse(earliestPriorStrokeRecordedDay)) / 86_400_000 > 28
+    ) {
+      strokeSevereCount = 2
+    }
     const severeEventTotal = coronarySevereCount + strokeSevereCount
 
     return {
@@ -2363,14 +2468,13 @@ export class ClinicalScoreService {
         const parsed = medicationRequestResourceSchema.safeParse(raw)
         if (!parsed.success || parsed.data.status !== 'active') continue
         if (withdrawnIds.has(parsed.data.id)) continue
-        if (parsed.data.authoredOn !== undefined && Number.isFinite(nowMs)) {
+        const htnBoundsMs = resolveMedicationBoundsDurationMs(
+          parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration,
+        )
+        if (htnBoundsMs === 'invalid') continue
+        if (parsed.data.authoredOn !== undefined && Number.isFinite(nowMs) && htnBoundsMs !== undefined) {
           const authoredMs = Date.parse(parsed.data.authoredOn)
-          const bounds = parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
-          if (Number.isFinite(authoredMs) && bounds?.value !== undefined) {
-            const unit = (bounds.code ?? bounds.unit ?? 'd').toLowerCase()
-            const multiplierMs = unit.startsWith('h') ? 3_600_000 : unit.startsWith('w') ? 7 * 86_400_000 : 86_400_000
-            if (authoredMs + bounds.value * multiplierMs < nowMs) continue
-          }
+          if (!Number.isFinite(authoredMs) || authoredMs + htnBoundsMs < nowMs) continue
         }
         const hasExplicitHtnReason = (parsed.data.reason ?? []).some(reason => {
           const ref = reason.reference?.reference

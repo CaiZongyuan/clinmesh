@@ -713,6 +713,116 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       expect.objectContaining({ reference: triageObsRef }),
     )
 
+    // Two separate acute MI Conditions created with recordedDate (>28 days apart, without onsetDateTime or identifier) count as 2 severe events -> ultra-high (<1.4)
+    const recurrentPatient = (await parsePciResponse(
+      createPatientResponseSchema,
+      await fixture.request('registrar', '/api/his/v1/patients', {
+        birthDate: '1965-03-10',
+        gender: 'male',
+        identifier: `REC-${randomUUID()}`,
+        name: '合成复发心梗与月度处方患者',
+      }, randomUUID(), {}),
+    )).data.patient
+    const recReg = (await parsePciResponse(
+      registrationResponseSchema,
+      await fixture.request('registrar', '/api/his/v1/registrations/actions/register', {
+        departmentId: regCatalog.departments[0]!.id,
+        locationId: regCatalog.locations[0]!.id,
+        patientId: recurrentPatient.id,
+        visitDate: regCatalog.virtualDate,
+        visitTypeId: regCatalog.visitTypes[0]!.id,
+      }, randomUUID(), { [`Patient/${recurrentPatient.id}`]: recurrentPatient.versionId }),
+    )).data
+    const recTriaged = await parsePciResponse(
+      triageResponseSchema,
+      await fixture.request('triage', `/api/his/v1/encounters/${recReg.encounterId}/actions/record-triage`, {
+        acuityCode: 'level-2',
+        bloodPressure: { diastolicMmHg: 78, systolicMmHg: 124 },
+        chiefComplaint: '复发性胸痛 1 小时',
+        oxygenSaturationPct: 97,
+        pulseBpm: 84,
+        respirationBpm: 18,
+        temperatureC: 36.6,
+      }, randomUUID(), {
+        [`Encounter/${recReg.encounterId}`]: '1',
+        [`Task/${recReg.queueTaskId}`]: '1',
+      }),
+    )
+    await parsePciResponse(
+      startVisitResponseSchema,
+      await fixture.request('doctor', `/api/his/v1/encounters/${recReg.encounterId}/actions/start-first-visit`, {}, randomUUID(), {
+        [`Encounter/${recReg.encounterId}`]: recTriaged.data.encounterVersion,
+        [`Task/${recTriaged.data.doctorTaskId}`]: '1',
+      }),
+    )
+    const recQueue = await fixture.read('doctor', '/api/his/v1/doctor/queue', doctorQueueSchema)
+    const recCase = recQueue.items.find(item => item.encounterId === recReg.encounterId)!
+    for (const recordedDate of ['2025-05-10T09:00:00+08:00', '2026-08-24T09:00:00+08:00']) {
+      fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+        clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
+        code: { coding: [{ code: 'I21.9', display: '急性心肌梗死（未特指亚型）' }] },
+        ...(recordedDate.startsWith('2026') ? { encounter: { reference: `Encounter/${recReg.encounterId}` } } : {}),
+        id: uuidv7(),
+        recordedDate,
+        resourceType: 'Condition',
+        subject: { reference: `Patient/${recurrentPatient.id}` },
+        verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
+      })
+    }
+    // Rhythm-only ECG report (no ST-T lead documentation) must NOT satisfy UA/NSTEMI subtype applicability for generic I21.9
+    const rhythmOnlyDr = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      code: { text: '常规 12 导联心电图报告' },
+      conclusion: '窦性心律，心率 84 次/分。',
+      encounter: { reference: `Encounter/${recReg.encounterId}` },
+      id: uuidv7(),
+      issued: '2026-08-24T09:15:00+08:00',
+      resourceType: 'DiagnosticReport',
+      status: 'final',
+      subject: { reference: `Patient/${recurrentPatient.id}` },
+    })
+    const rhythmReqId = uuidv7()
+    fixture.runtime.database.driver.prepare(`
+      INSERT INTO laboratory_request (
+        workspace_id, epoch, request_id, case_id, request_kind, catalog_item_id,
+        indication_code, service_snapshot_json, service_request_id, execution_task_id,
+        diagnostic_report_id, status, version, authored_by, authored_at, reported_at
+      ) VALUES (?, ?, ?, ?, 'examination', 'examination-ecg-12-lead', 'clinical-evaluation', '{}', ?, ?, ?, 'reported', 1, 'actor-test', '2026-08-24T09:10:00+08:00', '2026-08-24T09:15:00+08:00')
+    `).run(scenario.workspaceId, scenario.epoch, rhythmReqId, recCase.caseId, uuidv7(), uuidv7(), rhythmOnlyDr.id)
+    fixture.runtime.database.driver.prepare(`
+      INSERT INTO examination_request_detail (workspace_id, epoch, request_id, exam_code, indication)
+      VALUES (?, ?, ?, 'ecg-12-lead', '胸痛待查')
+    `).run(scenario.workspaceId, scenario.epoch, rhythmReqId)
+    fixture.runtime.database.driver.prepare(`
+      INSERT INTO examination_report_content (
+        workspace_id, epoch, diagnostic_report_id, request_id, case_id, content_json, issued_at
+      ) VALUES (?, ?, ?, ?, ?, ?, '2026-08-24T09:15:00+08:00')
+    `).run(scenario.workspaceId, scenario.epoch, rhythmOnlyDr.id, rhythmReqId, recCase.caseId, JSON.stringify({
+      conclusion: '窦性心律，心率 84 次/分。',
+      results: [{ code: 'ventricular-rate', display: '心室率', value: '84 次/分' }],
+    }))
+    // 3-month ('mo') antihypertensive MedicationRequest authored 40 days earlier stays active (not discarded as 3 days)
+    const htnMedReq = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authoredOn: '2026-07-15T09:00:00+08:00',
+      dosageInstruction: [{ timing: { repeat: { boundsDuration: { code: 'mo', system: 'http://unitsofmeasure.org', unit: 'mo', value: 3 } } } }],
+      id: uuidv7(),
+      intent: 'order',
+      medication: { concept: { text: '苯磺酸氨氯地平片 5mg' } },
+      reason: [{ concept: { coding: [{ code: 'I10', display: '原发性高血压' }], text: '原发性高血压' } }],
+      resourceType: 'MedicationRequest',
+      status: 'active',
+      subject: { reference: `Patient/${recurrentPatient.id}` },
+    })
+    const recScores = await fixture.read('doctor', `/api/his/v1/doctor/cases/${recCase.caseId}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(recScores.scores.find(s => s.id === 'ascvd-ldl-target')).toMatchObject({
+      status: 'complete',
+      tierCode: 'ultra-high',
+      value: 1.4,
+    })
+    expect(recScores.scores.find(s => s.id === 'ascvd-ldl-target')?.sourceReferences).toContainEqual(
+      expect.objectContaining({ reference: `MedicationRequest/${htnMedReq.id}` }),
+    )
+    expect(recScores.scores.find(s => s.id === 'timi-ua-nstemi')?.missingInputs).toContain('uaNstemiPresentation')
+
     const provenances = await fixture.read('doctor', `/fhir/R5/Provenance?target=Observation/${recordedRisk.data.riskAssessment.observationId}`, fhirBundleSchema)
     expect(provenances.entry?.length).toBe(1)
   }, 60_000)
