@@ -1,5 +1,7 @@
 import {
+  guidelineTopicBundleSchema,
   guidelineTopicIds,
+  guidelineTopicReadSchema,
   type GuidelineTopicBundle,
   type GuidelineTopicEvidence,
   type GuidelineTopicId,
@@ -617,6 +619,34 @@ function scoreIndicator(
   }
 }
 
+function clampNullableText(value: string | null | undefined, maxLen: number): string | null {
+  const trimmed = value?.trim() ?? ''
+  if (trimmed.length === 0) return null
+  return trimmed.length > maxLen ? `${trimmed.slice(0, maxLen - 1)}…` : trimmed
+}
+
+function clampStringList(items: readonly string[], maxItems: number, maxLen: number, overflowLabel: string): string[] {
+  const cleaned = items
+    .map(item => clampNullableText(item, maxLen))
+    .filter((item): item is string => item !== null)
+  if (cleaned.length <= maxItems) return cleaned
+  const head = cleaned.slice(0, maxItems - 1)
+  head.push(`另有 ${cleaned.length - head.length} ${overflowLabel}。`)
+  return head
+}
+
+function sanitizeIndicator(indicator: GuidelineTopicPatientIndicator): GuidelineTopicPatientIndicator {
+  return {
+    ...indicator,
+    code: indicator.code.trim().slice(0, 64),
+    labelEn: indicator.labelEn.trim().slice(0, 160),
+    labelZh: indicator.labelZh.trim().slice(0, 160),
+    sourceReference: clampNullableText(indicator.sourceReference, 128),
+    valueText: clampNullableText(indicator.valueText, 240),
+    versionId: clampNullableText(indicator.versionId, 64),
+  }
+}
+
 export function buildGuidelineTopicRead(options: {
   corpus?: GuidelineCorpus | undefined
   population: GuidelinePatientPopulation
@@ -630,18 +660,18 @@ export function buildGuidelineTopicRead(options: {
     options.scores,
     options.supplementary,
   )
-  return {
-    degradedReason: sourceRead.degradedReason,
+  return guidelineTopicReadSchema.parse({
+    degradedReason: clampNullableText(sourceRead.degradedReason, 4000),
     guidelines: sourceRead.guidelines,
-    limitations: [...sourceRead.definition.limitations],
-    missingPatientInputs,
-    missingSources: sourceRead.missing,
-    navigation: sourceRead.definition.navigation,
-    patientIndicators: indicators,
+    limitations: clampStringList(sourceRead.definition.limitations, 12, 4000, '条适用限定说明'),
+    missingPatientInputs: clampStringList(missingPatientInputs, 24, 4000, '项待补齐临床资料'),
+    missingSources: clampStringList(sourceRead.missing, 24, 4000, '项缺失或受限指南来源'),
+    navigation: sourceRead.definition.navigation.trim().slice(0, 4000),
+    patientIndicators: indicators.slice(0, 24).map(sanitizeIndicator),
     population: options.population,
     status: sourceRead.sourceStatus === 'available' ? 'available' : 'unavailable',
     topic: toGuidelineTopicSummary(sourceRead.definition),
-  }
+  })
 }
 
 export function evaluateTopicPatientIndicators(
@@ -1050,7 +1080,15 @@ export function extractSupplementaryIndicators(options: {
 
   let troponinSeries: SupplementaryClinicalIndicators['troponinSeries']
   if (troponinDesc.length > 0) {
-    const chrono = [...troponinDesc].reverse()
+    const chrono = [...troponinDesc]
+      .reverse()
+      .map((item, seq) => ({ ...item, seq }))
+      .sort((a, b) => {
+        if (a.timestampMs !== undefined && b.timestampMs !== undefined && a.timestampMs !== b.timestampMs) {
+          return a.timestampMs - b.timestampMs
+        }
+        return a.seq - b.seq
+      })
     const anyElevated = chrono.some(item => item.elevated)
     const firstMs = chrono[0]!.timestampMs
     const lastMs = chrono.at(-1)!.timestampMs
@@ -1152,7 +1190,7 @@ export function buildSynchronousTopicBundle(options: {
     inpatient: options.inpatient,
   })
   const targetTopicIds = options.topicId === undefined ? guidelineTopicIds : [options.topicId]
-  return {
+  return guidelineTopicBundleSchema.parse({
     encounterId: options.encounterId,
     evaluatedAt: options.evaluatedAt,
     items: targetTopicIds.map(topicId => buildGuidelineTopicRead({
@@ -1162,5 +1200,5 @@ export function buildSynchronousTopicBundle(options: {
       supplementary,
       topicId,
     })),
-  }
+  })
 }
