@@ -365,8 +365,9 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       status: 'incomplete',
     })
 
-    // Confirming NSTEMI (I21.4) on this inpatient encounter activates GRACE and TIMI UA/NSTEMI -> all 6 scores complete!
-    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+    // Confirming NSTEMI (I21.4) with recordedDate only (no onsetDateTime) activates GRACE and TIMI UA/NSTEMI,
+    // while ASCVD LDL-C target preserves uncertainty ('cadOnsetAge') instead of treating recordedDate as CAD onset
+    const nstemiCondition = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
       clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
       code: { coding: [{ code: 'I21.4', display: '急性非ST段抬高型心肌梗死' }], text: '急性非ST段抬高型心肌梗死' },
       encounter: { reference: `Encounter/${stay.admissionId}` },
@@ -376,6 +377,30 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       subject: { reference: `Patient/${stay.patientId}` },
       verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
     })
+    const beforeCadOnsetScores = await fixture.read('inpatient-doctor', `${stay.path}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(beforeCadOnsetScores.scores.find(item => item.id === 'grace-acs')?.status).toBe('complete')
+    expect(beforeCadOnsetScores.scores.find(item => item.id === 'timi-ua-nstemi')?.status).toBe('complete')
+    expect(beforeCadOnsetScores.scores.find(item => item.id === 'ascvd-ldl-target')).toMatchObject({
+      missingInputs: ['cadOnsetAge'],
+      status: 'incomplete',
+    })
+
+    // Documenting explicit onsetDateTime on the patient's CAD/MI Conditions resolves cadOnsetAge -> all 6 scores complete!
+    const stayConditions = fixture.runtime.fhir.search(
+      { epoch: scenario.epoch, workspaceId: scenario.workspaceId },
+      'Condition',
+      new URLSearchParams({ _count: '50', patient: `Patient/${stay.patientId}` }),
+    )
+    for (const cond of stayConditions.resources) {
+      fixture.runtime.fhir.update(
+        { epoch: scenario.epoch, workspaceId: scenario.workspaceId },
+        {
+          ...cond,
+          onsetDateTime: cond.id === nstemiCondition.id ? '2026-10-25T08:00:00+08:00' : '2024-06-01T09:00:00+08:00',
+        },
+        cond.meta?.versionId ?? '1',
+      )
+    }
 
     // 5. All 6 scores now evaluate to 'complete' with deterministic values and exact versioned sourceReferences
     const completedScores = await fixture.read('inpatient-doctor', `${stay.path}/clinical-scores`, clinicalScoreBundleSchema)

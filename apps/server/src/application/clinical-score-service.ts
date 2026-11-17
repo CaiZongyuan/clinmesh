@@ -2807,7 +2807,7 @@ export class ClinicalScoreService {
         }
         if (conditionEffectiveCodes.some(code => /^(?:I2[0-5]|Z95\.[15]|Z98\.61)/i.test(code))) {
           recordCadEventDate(
-            parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start ?? parsed.data.recordedDate,
+            parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start,
             ref,
           )
         }
@@ -2898,7 +2898,14 @@ export class ClinicalScoreService {
             reference: `Procedure/${parsed.data.id}`,
             versionId: parsed.data.meta?.versionId ?? '1',
           }
-          recordCadEventDate(parsed.data.performedDateTime ?? parsed.data.performedPeriod?.start, ref)
+          const procIso = parsed.data.performedDateTime ?? parsed.data.performedPeriod?.start
+          const procPrematureCutoff = patientSex === 'female' ? 65 : 55
+          if (procIso && patientBirthDate) {
+            const procAge = completedAgeYears(patientBirthDate, procIso.slice(0, 10))
+            if (procAge !== undefined && procAge < procPrematureCutoff && (cadOnsetAgeYears === undefined || procAge < cadOnsetAgeYears.value)) {
+              cadOnsetAgeYears = { source: ref, value: procAge }
+            }
+          }
           priorCoronaryRevascularization ??= { source: ref, value: true }
           knownCad ??= { source: ref, value: true }
         }
