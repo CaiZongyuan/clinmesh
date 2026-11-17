@@ -242,7 +242,7 @@ clinmesh encounter risk-assessment record --input @risk-assessment.json --idempo
 clinmesh command receipt get --operation-id encounter.risk-assessment.record --idempotency-key <key>
 ```
 
-`risk-assessment.json` 合成示例；使用当前受信 `encounterId`、`encounterVersion` 与 `expectedRevision`（初次为 `0`，冲突返回 `WORKFLOW_CONFLICT` 时重读刷新后重试）：
+`risk-assessment.json` 合成示例；使用当前受信 `encounterId`、`encounterVersion` 与 `expectedRevision`（初次为 `0`，冲突返回 `WORKFLOW_CONFLICT` 时重读刷新后重试；`priorBleedingHistory` 取 `"spontaneous" | "non-spontaneous" | "negative"`，仅自发性出血计入 PRECISE-DAPT 出血史，外伤或手术出血填 `"non-spontaneous"`）：
 
 ```json
 {

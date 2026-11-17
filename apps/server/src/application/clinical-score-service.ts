@@ -273,7 +273,7 @@ function buildRiskObservationComponents(values: ClinicalRiskAssessmentValues) {
   }
   if (values.priorBleedingHistory !== null) {
     components.push({
-      code: { coding: [{ code: 'prior-bleeding-history', system: RISK_ASSESSMENT_SYSTEM }], text: '既往出血史' },
+      code: { coding: [{ code: 'prior-bleeding-history', system: RISK_ASSESSMENT_SYSTEM }], text: '既往自发性出血史' },
       valueCodeableConcept: { coding: [{ code: values.priorBleedingHistory, system: RISK_ASSESSMENT_SYSTEM }], text: values.priorBleedingHistory },
     })
   }
@@ -359,6 +359,13 @@ export class ClinicalScoreService {
     return this.#readInpatientVitalSignsByOrder(context, admissionId, 'ASC')
   }
 
+  initialInpatientVitalSignsWithWeight(
+    context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
+    admissionId: string,
+  ): InpatientVitalSignsRecord | undefined {
+    return this.#readInpatientVitalSignsByOrder(context, admissionId, 'ASC', true)
+  }
+
   latestInpatientVitalSigns(
     context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
     admissionId: string,
@@ -370,12 +377,15 @@ export class ClinicalScoreService {
     context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
     admissionId: string,
     direction: 'ASC' | 'DESC',
+    requireWeight = false,
   ): InpatientVitalSignsRecord | undefined {
+    const weightClause = requireWeight ? "AND json_extract(vital_json, '$.weightKg') IS NOT NULL" : ''
     const row = vitalSignsRowSchema.optional().parse(
       this.#database.driver.prepare(`
         SELECT revision, vital_json, observation_id, observation_version, provenance_id, recorded_at, recorded_by
         FROM inpatient_vital_signs
         WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
+          ${weightClause}
         ORDER BY revision ${direction}
         LIMIT 1
       `).get(context.workspaceId, context.epoch, admissionId),
@@ -777,11 +787,14 @@ export class ClinicalScoreService {
             temperatureC: v.temperatureC,
             ...(v.weightKg === undefined ? {} : { weightKg: v.weightKg }),
           }
+    const initialWeightedVitals = this.initialInpatientVitalSignsWithWeight(context, admissionId)
     const admissionVitalSummary = toVitalSummary(initialVitals)
+    const baselineWeightVitalSummary = toVitalSummary(initialWeightedVitals)
     const vitalSummary = toVitalSummary(latestVitals)
     const presentationIso = extractEncounterStartIso(encounter) ?? initialVitals?.recordedAt ?? now
     return this.#evaluateSnapshot(context, {
       admissionVitalSummary,
+      baselineWeightVitalSummary,
       caseId: admissionId,
       encounterId: admissionId,
       encounterVersion: encounter.meta?.versionId ?? '1',
@@ -1009,6 +1022,7 @@ export class ClinicalScoreService {
     context: ActorContext,
     options: {
       admissionVitalSummary?: ClinicalScoreVitalSummary | null
+      baselineWeightVitalSummary?: ClinicalScoreVitalSummary | null
       caseId: string
       encounterId: string
       encounterVersion: string
@@ -1055,6 +1069,15 @@ export class ClinicalScoreService {
           reference: `Observation/${effectiveAdmissionVital.observationId}`,
           versionId: effectiveAdmissionVital.observationVersion,
         }
+    const effectiveBaselineWeightVital =
+      options.baselineWeightVitalSummary === undefined ? options.vitalSummary : options.baselineWeightVitalSummary
+    const baselineWeightRef: ClinicalScoreSourceReference | undefined = effectiveBaselineWeightVital === null
+      ? undefined
+      : {
+          label: '基线体重记录',
+          reference: `Observation/${effectiveBaselineWeightVital.observationId}`,
+          versionId: effectiveBaselineWeightVital.observationVersion,
+        }
 
     const birthDateStr = typeof patient.birthDate === 'string' ? patient.birthDate : undefined
     const labs = this.#extractLaboratoryAnalytes(context, options.caseId, options.legacyDiagnosticReportId)
@@ -1098,10 +1121,22 @@ export class ClinicalScoreService {
               ? {}
               : { weightKg: { source: vitalRef, value: options.vitalSummary.weightKg } }),
           }),
-      ...(labs.admissionSerumCreatinine === undefined ? {} : { admissionSerumCreatinine: labs.admissionSerumCreatinine }),
+      ...(effectiveBaselineWeightVital === null
+        || baselineWeightRef === undefined
+        || effectiveBaselineWeightVital.weightKg === undefined
+        ? {}
+        : { baselineWeightKg: { source: baselineWeightRef, value: effectiveBaselineWeightVital.weightKg } }),
+      ...(labs.admissionSerumCreatinine === undefined
+        ? {}
+        : {
+            admissionSerumCreatinine: labs.admissionSerumCreatinine,
+            baselineSerumCreatinine: labs.admissionSerumCreatinine,
+          }),
       ...(labs.serumCreatinine === undefined ? {} : { serumCreatinine: labs.serumCreatinine }),
       ...(labs.elevatedCardiacBiomarker === undefined ? {} : { elevatedCardiacBiomarker: labs.elevatedCardiacBiomarker }),
+      ...(labs.baselineWbc === undefined ? {} : { baselineWbc: labs.baselineWbc }),
       ...(labs.wbc === undefined ? {} : { wbc: labs.wbc }),
+      ...(labs.baselineHemoglobin === undefined ? {} : { baselineHemoglobin: labs.baselineHemoglobin }),
       ...(labs.hemoglobin === undefined ? {} : { hemoglobin: labs.hemoglobin }),
       ...(labs.totalCholesterol === undefined ? {} : { totalCholesterol: labs.totalCholesterol }),
       ...(labs.hdlCholesterol === undefined ? {} : { hdlCholesterol: labs.hdlCholesterol }),
@@ -1203,8 +1238,16 @@ export class ClinicalScoreService {
       source: ClinicalScoreSourceReference
       timestampMs: number | undefined
     }> = []
-    let wbc: ClinicalScoreObjectiveFacts['wbc']
-    let hemoglobin: ClinicalScoreObjectiveFacts['hemoglobin']
+    const wbcHitsDesc: Array<{
+      source: ClinicalScoreSourceReference
+      timestampMs: number | undefined
+      value: { unit: string; value: number }
+    }> = []
+    const hemoglobinHitsDesc: Array<{
+      source: ClinicalScoreSourceReference
+      timestampMs: number | undefined
+      value: { unit: string; value: number }
+    }> = []
     let totalCholesterol: ClinicalScoreObjectiveFacts['totalCholesterol']
     let hdlCholesterol: ClinicalScoreObjectiveFacts['hdlCholesterol']
     let ldlCholesterol: ClinicalScoreObjectiveFacts['ldlCholesterol']
@@ -1267,20 +1310,30 @@ export class ClinicalScoreService {
           }
         }
         if (
-          wbc === undefined
-          && quantity !== undefined
+          quantity !== undefined
           && unit !== undefined
           && (codes.has('0100101A') || codes.has('6690-2') || codes.has('26464-8') || /白细胞计数/i.test(display))
         ) {
-          wbc = { source, value: { unit, value: quantity } }
+          const rawWbcTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
+          const parsedWbcMs = rawWbcTs ? Date.parse(rawWbcTs) : Number.NaN
+          wbcHitsDesc.push({
+            source,
+            timestampMs: Number.isFinite(parsedWbcMs) ? parsedWbcMs : undefined,
+            value: { unit, value: quantity },
+          })
         }
         if (
-          hemoglobin === undefined
-          && quantity !== undefined
+          quantity !== undefined
           && unit !== undefined
           && (codes.has('0100401A') || codes.has('718-7') || /^(?:血红蛋白|hemoglobin)$/i.test(display.trim()))
         ) {
-          hemoglobin = { source, value: { unit, value: quantity } }
+          const rawHbTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
+          const parsedHbMs = rawHbTs ? Date.parse(rawHbTs) : Number.NaN
+          hemoglobinHitsDesc.push({
+            source,
+            timestampMs: Number.isFinite(parsedHbMs) ? parsedHbMs : undefined,
+            value: { unit, value: quantity },
+          })
         }
         if (
           totalCholesterol === undefined
@@ -1355,8 +1408,35 @@ export class ClinicalScoreService {
     const serumCreatinine: ClinicalScoreObjectiveFacts['serumCreatinine'] =
       latestScr === undefined ? undefined : { source: latestScr.source, value: latestScr.value }
 
+    const sortChrono = <T extends { timestampMs: number | undefined }>(desc: readonly T[]) =>
+      [...desc]
+        .reverse()
+        .map((item, seq) => ({ ...item, seq }))
+        .sort((a, b) => {
+          if (a.timestampMs !== undefined && b.timestampMs !== undefined && a.timestampMs !== b.timestampMs) {
+            return a.timestampMs - b.timestampMs
+          }
+          return a.seq - b.seq
+        })
+    const wbcChronological = sortChrono(wbcHitsDesc)
+    const hbChronological = sortChrono(hemoglobinHitsDesc)
+    const initialWbc = wbcChronological[0]
+    const latestWbc = wbcChronological.at(-1)
+    const initialHb = hbChronological[0]
+    const latestHb = hbChronological.at(-1)
+    const baselineWbc: ClinicalScoreObjectiveFacts['baselineWbc'] =
+      initialWbc === undefined ? undefined : { source: initialWbc.source, value: initialWbc.value }
+    const wbc: ClinicalScoreObjectiveFacts['wbc'] =
+      latestWbc === undefined ? undefined : { source: latestWbc.source, value: latestWbc.value }
+    const baselineHemoglobin: ClinicalScoreObjectiveFacts['baselineHemoglobin'] =
+      initialHb === undefined ? undefined : { source: initialHb.source, value: initialHb.value }
+    const hemoglobin: ClinicalScoreObjectiveFacts['hemoglobin'] =
+      latestHb === undefined ? undefined : { source: latestHb.source, value: latestHb.value }
+
     return {
       admissionSerumCreatinine,
+      baselineHemoglobin,
+      baselineWbc,
       elevatedCardiacBiomarker,
       hdlCholesterol,
       hemoglobin,

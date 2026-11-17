@@ -383,6 +383,7 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       ldlGoalEvaluation: { atGoal: false, currentLdlMmolL: 2.35 },
     })
     const crclBefore = completedScores.scores.find(item => item.id === 'cockcroft-gault-crcl')!
+    const preciseBefore = completedScores.scores.find(item => item.id === 'precise-dapt')!
     expect(crclBefore.status).toBe('complete')
 
     // 6. Subsequent nursing vitals & serial chemistry update CrCl/eGFR with latest values while GRACE preserves initial admission vitals & initial creatinine
@@ -415,6 +416,7 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     const crclAfter = scoresAfterVitalRev.scores.find(item => item.id === 'cockcroft-gault-crcl')!
     expect(crclAfter.status).toBe('complete')
     expect(scoresAfterVitalRev.scores.find(item => item.id === 'grace-acs')?.value).toBe(grace.value)
+    expect(scoresAfterVitalRev.scores.find(item => item.id === 'precise-dapt')?.value).toBe(preciseBefore.value)
     if (crclBefore.status === 'complete' && crclAfter.status === 'complete') {
       expect(crclAfter.value).toBeLessThan(crclBefore.value)
       expect(crclAfter.sourceReferences).toContainEqual(expect.objectContaining({

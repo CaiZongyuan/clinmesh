@@ -30,6 +30,10 @@ export interface ClinicalScoreObjectiveFacts {
   anginaEpisodes24h?: SourcedFact<number>
   antihypertensiveMedicationActive?: SourcedFact<boolean>
   aspirinUsedLast7Days?: SourcedFact<boolean>
+  baselineHemoglobin?: SourcedFact<UnitQuantityInput>
+  baselineSerumCreatinine?: SourcedFact<UnitQuantityInput>
+  baselineWbc?: SourcedFact<UnitQuantityInput>
+  baselineWeightKg?: SourcedFact<number>
   cadOnsetAgeYears?: SourcedFact<number>
   cardiacArrestOnAdmission?: SourcedFact<boolean>
   confirmedDiagnoses: Array<{
@@ -405,7 +409,7 @@ export function calculatePreciseDapt(input: {
   const agePoints = (clamp(age, 50, 90) - 50) * (19 / 40)
   const wbcPoints = clamp(wbc10e9L, 5, 20) - 5
   const renalPoints = (100 - clamp(crCl, 0, 100)) * 0.25
-  const bleedPoints = input.priorBleedingHistory === 'positive' ? 26 : 0
+  const bleedPoints = input.priorBleedingHistory === 'spontaneous' ? 26 : 0
   const value = Math.round(hbPoints + agePoints + wbcPoints + renalPoints + bleedPoints)
   if (value >= 25) {
     return { tierCode: 'high', tierLabelEn: 'High bleeding risk (≥25)', tierLabelZh: '高出血风险 (≥25分)', unit: '分', value }
@@ -842,7 +846,7 @@ export const MISSING_INPUT_LABELS: Record<ClinicalScoreMissingInput, { en: strin
   killipClass: { en: 'Killip class', zh: 'Killip 心功能分级' },
   knownCoronaryStenosisGe50: { en: 'Known coronary stenosis ≥50%', zh: '已知冠脉狭窄 ≥50%' },
   ldlCholesterol: { en: 'LDL-C / TC report', zh: '低密度脂蛋白或总胆固醇' },
-  priorBleedingHistory: { en: 'Prior bleeding history', zh: '既往出血史' },
+  priorBleedingHistory: { en: 'Prior spontaneous bleeding history', zh: '既往自发性出血史' },
   serumCreatinine: { en: 'Serum creatinine report', zh: '血肌酐 (SCr)' },
   sex: { en: 'Biological sex', zh: '性别' },
   smokingStatus: { en: 'Smoking status', zh: '明确吸烟状态' },
@@ -908,6 +912,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
   const admissionAdultAge = safeParseFact(facts.admissionAgeYears ?? facts.ageYears, validateAdultAgeYears)
   const sex = facts.sex
   const weightKg = safeParseFact(facts.weightKg, validateWeightKg)
+  const baselineWeightKg = safeParseFact(facts.baselineWeightKg ?? facts.weightKg, validateWeightKg)
   const admissionHeartRateBpm = safeParseFact(facts.admissionHeartRateBpm ?? facts.heartRateBpm, validateHeartRateBpm)
   const systolicBpMmHg = safeParseFact(facts.systolicBpMmHg, validateSystolicBpMmHg)
   const admissionSystolicBpMmHg = safeParseFact(
@@ -923,11 +928,18 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     normalizeCreatinineMgDl(q.value, q.unit)
     return q
   })
-  const hbValid = safeParseFact(facts.hemoglobin, q => {
+  const baselineScrValid = safeParseFact(
+    facts.baselineSerumCreatinine ?? facts.admissionSerumCreatinine ?? facts.serumCreatinine,
+    q => {
+      normalizeCreatinineMgDl(q.value, q.unit)
+      return q
+    },
+  )
+  const hbValid = safeParseFact(facts.baselineHemoglobin ?? facts.hemoglobin, q => {
     normalizeHemoglobinGdl(q.value, q.unit)
     return q
   })
-  const wbcValid = safeParseFact(facts.wbc, q => {
+  const wbcValid = safeParseFact(facts.baselineWbc ?? facts.wbc, q => {
     normalizeWbc10e9L(q.value, q.unit)
     return q
   })
@@ -981,7 +993,6 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
   }
 
   // 2. Cockcroft-Gault CrCl
-  let crClValue: number | undefined
   let crClResult: ClinicalScoreResult
   {
     const missing: ClinicalScoreMissingInput[] = []
@@ -1003,7 +1014,6 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
         sex: sex!.value,
         weightKg: weightKg!.value,
       })
-      crClValue = calc.value
       const meta = SCORE_METADATA['cockcroft-gault-crcl']
       crClResult = {
         id: 'cockcroft-gault-crcl',
@@ -1163,36 +1173,38 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     }
   }
 
-  // 5. PRECISE-DAPT
+  // 5. PRECISE-DAPT (uses baseline/presentation age, weight, creatinine clearance, hemoglobin, WBC, and spontaneous bleeding)
   let preciseDaptResult: ClinicalScoreResult
   {
     const missing: ClinicalScoreMissingInput[] = []
-    if (adultAge === undefined) missing.push('age')
+    if (admissionAdultAge === undefined) missing.push('age')
     if (sex === undefined) missing.push('sex')
-    if (weightKg === undefined) missing.push('weightKg')
-    if (scrValid === undefined) missing.push('serumCreatinine')
+    if (baselineWeightKg === undefined) missing.push('weightKg')
+    if (baselineScrValid === undefined) missing.push('serumCreatinine')
     if (hbValid === undefined) missing.push('hemoglobin')
     if (wbcValid === undefined) missing.push('wbc')
     if (facts.priorBleedingHistory === undefined) missing.push('priorBleedingHistory')
     const sources = [
-      adultAge?.source,
+      admissionAdultAge?.source,
       sex?.source,
-      weightKg?.source,
-      scrValid?.source,
+      baselineWeightKg?.source,
+      baselineScrValid?.source,
       hbValid?.source,
       wbcValid?.source,
       facts.priorBleedingHistory?.source,
     ]
-    if (missing.length > 0 || crClValue === undefined) {
-      preciseDaptResult = buildIncomplete(
-        'precise-dapt',
-        missing.length > 0 ? missing : ['serumCreatinine'],
-        sources,
-      )
+    if (missing.length > 0) {
+      preciseDaptResult = buildIncomplete('precise-dapt', missing, sources)
     } else {
+      const baselineCrCl = calculateCockcroftGaultCrCl({
+        ageYears: admissionAdultAge!.value,
+        serumCreatinine: baselineScrValid!.value,
+        sex: sex!.value,
+        weightKg: baselineWeightKg!.value,
+      }).value
       const calc = calculatePreciseDapt({
-        ageYears: adultAge!.value,
-        creatinineClearanceMlMin: crClValue,
+        ageYears: admissionAdultAge!.value,
+        creatinineClearanceMlMin: baselineCrCl,
         hemoglobin: hbValid!.value,
         priorBleedingHistory: facts.priorBleedingHistory!.value,
         wbc: wbcValid!.value,

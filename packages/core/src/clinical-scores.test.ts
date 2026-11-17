@@ -229,11 +229,22 @@ describe('six deterministic clinical score formulas', () => {
       ageYears: 78,
       creatinineClearanceMlMin: 38,
       hemoglobin: { unit: 'g/L', value: 102 },
-      priorBleedingHistory: 'positive',
+      priorBleedingHistory: 'spontaneous',
       wbc: { unit: '10^9/L', value: 11.5 },
     })
     expect(highBleed.value).toBeGreaterThanOrEqual(25)
     expect(highBleed.tierCode).toBe('high')
+
+    // Non-spontaneous (traumatic/operative) bleed adds 0 bleeding points and matches negative bleeding history
+    const nonSpontaneousBleed = calculatePreciseDapt({
+      ageYears: 56,
+      creatinineClearanceMlMin: 88,
+      hemoglobin: { unit: 'g/L', value: 142 },
+      priorBleedingHistory: 'non-spontaneous',
+      wbc: { unit: '10*9/L', value: 6.8 },
+    })
+    expect(nonSpontaneousBleed.value).toBe(lowBleed.value)
+    expect(nonSpontaneousBleed.tierCode).toBe('low-moderate')
 
     // Published PRECISE-DAPT hemoglobin scale: >=12 g/dL -> 0 pts, <=10 g/dL -> full 15 pts
     expect(

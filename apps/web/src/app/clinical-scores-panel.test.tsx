@@ -334,14 +334,14 @@ describe('ClinicalScoresPanel disclosures', () => {
       expect(screen.getAllByText('待补齐：血清肌酐')).toHaveLength(6)
     })
 
-    fireEvent.change(screen.getByLabelText('既往出血史'), { target: { value: 'positive' } })
+    fireEvent.change(screen.getByLabelText('既往自发性出血史'), { target: { value: 'spontaneous' } })
     fireEvent.click(screen.getByRole('button', { name: '保存风险评估' }))
     await waitFor(() => {
       expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({
         input: expect.objectContaining({
           admissionId: 'adm-1',
           expectedRevision: 0,
-          fields: expect.objectContaining({ priorBleedingHistory: 'positive' }),
+          fields: expect.objectContaining({ priorBleedingHistory: 'spontaneous' }),
         }),
         operation: 'inpatient.risk-assessment.record',
       }))
