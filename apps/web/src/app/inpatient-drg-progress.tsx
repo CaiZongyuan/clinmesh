@@ -86,9 +86,19 @@ export function InpatientDrgHeader({ admission, session, query, locale, onOpenDr
   const zh = locale === 'zh-CN'
   if (query.materialProjectionIncomplete && (projectedGroup?.status === 'grouped' || postoperative)) {
     const group = postoperative ? postoperative.grouping?.drgCode : projectedGroup?.drgCode
-    return <ProgressChip locale={locale} onOpenDrg={onOpenDrg}
-      detail={`${postoperative ? zh ? '术后预计 ' : 'After surgery ' : zh ? '按计划手术预计 ' : 'With planned surgery '}${group ?? ''} · ${zh ? '已用 ' : 'Used '}${formatFen(query.simulation.data?.formal.chargesFen ?? admission.chargesFen, locale)} · ${projectedReference ? `${zh ? '支付参考 ' : 'Payment reference '}${formatFen(projectedReference.referenceFen, locale)}` : zh ? '暂无支付参考' : 'No payment reference'} · ${zh ? '计划耗材费用待核对，预计总费用暂不可用' : 'Review planned material prices; projected charges unavailable'}`}>
-      <b>{group}</b>{postoperative ? <span className="text-warning">{zh ? '待确认主操作' : 'Main procedure pending'}</span> : null}<span className="text-warning">{zh ? '耗材费用待核对' : 'Material prices pending'}</span>
+    const spent = query.simulation.data?.formal.chargesFen ?? admission.chargesFen
+    const referenceFen = projectedReference?.referenceFen ?? null
+    const over = referenceFen !== null && spent > referenceFen
+    const spentPercent = `${referenceFen !== null && referenceFen > 0 ? Math.min(100, Math.max(0, spent) / referenceFen * 100) : 0}%`
+    return <ProgressChip locale={locale} onOpenDrg={onOpenDrg} over={over}
+      detail={`${postoperative ? zh ? '术后预计 ' : 'After surgery ' : zh ? '按计划手术预计 ' : 'With planned surgery '}${group ?? ''} · ${zh ? '已用 ' : 'Used '}${formatFen(spent, locale)} · ${projectedReference ? `${zh ? '支付参考 ' : 'Payment reference '}${formatFen(projectedReference.referenceFen, locale)}` : zh ? '暂无支付参考' : 'No payment reference'} · ${zh ? '计划耗材费用待核对，预计总费用暂不可用' : 'Review planned material prices; projected charges unavailable'}`}>
+      {over ? <Badge variant="outline" className="text-warning">{zh ? '已超' : 'Above'}</Badge> : null}
+      {group ? <b>{group}</b> : null}{postoperative ? <span className="text-warning">{zh ? '待确认主操作' : 'Main procedure pending'}</span> : null}
+      {referenceFen === null ? <span aria-hidden="true">{zh ? '暂无支付参考' : 'No payment reference'}</span> : <>
+        <span aria-hidden="true" className="clinmesh-inpatient-drg-progress-track"><i className="clinmesh-inpatient-drg-progress-spent" style={{ width: spentPercent }} /></span>
+        <span aria-hidden="true">{zh ? '已用 ' : 'Used '}<b>{formatFen(spent, locale)}</b> / {formatFen(referenceFen, locale)}</span>
+      </>}
+      <span className="text-warning">{zh ? '耗材费用待核对' : 'Material prices pending'}</span>
     </ProgressChip>
   }
   if (data) return <DrgProgressBar data={data} costs={query.projectedCosts} locale={locale} onOpenDrg={onOpenDrg} />
