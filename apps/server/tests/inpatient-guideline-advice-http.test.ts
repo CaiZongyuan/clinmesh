@@ -732,6 +732,12 @@ it('门诊与住院同步读取注册 Guideline Topic 直接返回核验原文�
   const nonDiabeticT2dmTopic = inpatientBundle.items.find(item => item.topic.id === 't2dm-renal-medication')!
   expect(nonDiabeticT2dmTopic.patientIndicators.find(i => i.code === 't2dm-diagnosis')).toMatchObject({ status: 'missing' })
   expect(nonDiabeticT2dmTopic.missingPatientInputs.join('；')).toContain('尚未确认 2 型糖尿病')
+  const noContrastTopic = inpatientBundle.items.find(item => item.topic.id === 'contrast-kidney-hydration')!
+  expect(noContrastTopic.patientIndicators.find(i => i.code === 'contrast-procedure-indication')).toMatchObject({ status: 'missing' })
+  const noAcsTopic = inpatientBundle.items.find(item => item.topic.id === 'acute-chest-pain-acs')!
+  expect(noAcsTopic.patientIndicators.find(i => i.code === 'acs-presentation')).toMatchObject({ status: 'missing' })
+  const cadTopic = inpatientBundle.items.find(item => item.topic.id === 'cad-dapt-and-secondary-prevention')!
+  expect(cadTopic.patientIndicators.find(i => i.code === 'cad-acs-eligibility')).toMatchObject({ status: 'present' })
   for (const item of inpatientBundle.items) {
     expect(item.status, item.topic.id).toBe('available')
     expect(item.guidelines.length, item.topic.id).toBeGreaterThan(0)

@@ -91,6 +91,11 @@ const pciRequestFactsSchema = z.object({
 }).strict()
 
 const supplementaryIndicatorsSchema = z.object({
+  acsEligibility: z.object({
+    sourceReference: z.string(),
+    valueText: z.string(),
+    versionId: z.string(),
+  }).strict().nullable().optional(),
   angiographySummary: z.object({
     missingFfrMessages: z.array(z.string()),
     sourceReference: z.string(),
@@ -116,6 +121,16 @@ const supplementaryIndicatorsSchema = z.object({
     targetSite: z.string().nullable(),
     versionId: z.string(),
   }).strict().nullable(),
+  cadEligibility: z.object({
+    sourceReference: z.string(),
+    valueText: z.string(),
+    versionId: z.string(),
+  }).strict().nullable().optional(),
+  contrastProcedureEligibility: z.object({
+    sourceReference: z.string(),
+    valueText: z.string(),
+    versionId: z.string(),
+  }).strict().nullable().optional(),
   t2dmDiagnosis: z.object({
     sourceReference: z.string(),
     valueText: z.string(),
@@ -341,13 +356,17 @@ export class InpatientGuidelineAdvice {
       caseId: admissionId,
       context,
       database: this.owner.database,
+      encounterId: admissionId,
       fhir: this.owner.fhir,
       inpatient: { actor: context, service: this.owner },
       patientId: binding.patientId,
     })
     const { missingPatientInputs } = evaluateTopicPatientIndicators(topicId, scores, supplementary)
     const supplementaryIndicators = {
+      acsEligibility: supplementary.acsEligibility ?? null,
       angiographySummary: supplementary.angiographySummary ?? null,
+      cadEligibility: supplementary.cadEligibility ?? null,
+      contrastProcedureEligibility: supplementary.contrastProcedureEligibility ?? null,
       ecgSummary: supplementary.ecgSummary ?? null,
       hba1c: supplementary.hba1c ?? null,
       pciPlanSummary: supplementary.pciPlanSummary ?? null,

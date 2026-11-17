@@ -560,6 +560,7 @@ export function summarizeCoronaryAngiographyVessels(vessels: readonly CoronaryVe
 }
 
 interface SupplementaryClinicalIndicators {
+  acsEligibility?: { sourceReference: string; valueText: string; versionId: string } | undefined
   angiographySummary?: {
     missingFfrMessages: string[]
     sourceReference: string
@@ -593,6 +594,8 @@ interface SupplementaryClinicalIndicators {
     summaryText: string
     versionId: string
   } | undefined
+  cadEligibility?: { sourceReference: string; valueText: string; versionId: string } | undefined
+  contrastProcedureEligibility?: { sourceReference: string; valueText: string; versionId: string } | undefined
   t2dmDiagnosis?: { sourceReference: string; valueText: string; versionId: string } | undefined
   tteLvef?: { lvefPct: number; sourceReference: string; versionId: string } | undefined
 }
@@ -741,6 +744,13 @@ export function evaluateTopicPatientIndicators(
 
   if (topicId === 'acute-chest-pain-acs') {
     pushExam(
+      'acs-presentation',
+      '急性胸痛或疑似/确诊 ACS 就诊依据',
+      'Acute chest pain or suspected/confirmed ACS presentation',
+      supplementary.acsEligibility,
+      '当前患者尚未记录急性胸痛主诉或疑似/确诊急性冠脉综合征（ACS）就诊依据，仅可按条件性参考核对。',
+    )
+    pushExam(
       'ecg-12-lead',
       '12 导联心电图报告',
       '12-lead ECG report',
@@ -873,6 +883,13 @@ export function evaluateTopicPatientIndicators(
       missing.push('缺少冠脉造影报告及 PCI 靶病变长度、近端/远端参考管径测量。')
     }
   } else if (topicId === 'contrast-kidney-hydration') {
+    pushExam(
+      'contrast-procedure-indication',
+      '含碘对比剂造影/介入检查或手术计划',
+      'Planned iodinated-contrast angiography or PCI procedure',
+      supplementary.contrastProcedureEligibility,
+      '当前尚未关联拟行冠脉造影、PCI 或其他血管内含碘对比剂检查/手术申请，仅可按条件性参考核对。',
+    )
     pushScore('ckd-epi-2021-egfr', '术前估算肾小球滤过率 (eGFR)', 'Pre-procedural eGFR', '缺少术前血肌酐与 eGFR 危险分层依据')
     pushScore('cockcroft-gault-crcl', '肌酐清除率 (CrCl / 体重)', 'Creatinine clearance (CrCl)', '缺少体重或肌酐清除率（影响按体重水化速率计算）')
     pushExam(
@@ -889,6 +906,13 @@ export function evaluateTopicPatientIndicators(
       '缺少经胸超声心动图 LVEF 或心功能评估（水化须防止左心功能不全容量负荷过重）。',
     )
   } else if (topicId === 'cad-dapt-and-secondary-prevention') {
+    pushExam(
+      'cad-acs-eligibility',
+      '冠心病/ACS 确诊或冠脉血运重建依据',
+      'Confirmed CAD/ACS diagnosis or coronary revascularization',
+      supplementary.cadEligibility,
+      '当前患者尚未确认冠心病/急性冠脉综合征（ICD-10 I20–I25）或冠脉血运重建依据，仅可按条件性参考核对。',
+    )
     pushScore('precise-dapt', 'PRECISE-DAPT 出血风险评分', 'PRECISE-DAPT bleeding score', 'PRECISE-DAPT 出血评分未就绪')
     pushScore('ascvd-ldl-target', 'ASCVD 风险分层与 LDL-C 目标核对', 'ASCVD risk & LDL-C goal', 'LDL-C 目标值核对未就绪')
     pushExam(
@@ -930,11 +954,12 @@ export function extractSupplementaryIndicators(options: {
   caseId: string
   context: RepositoryContext
   database: ClinMeshDatabase
+  encounterId?: string | undefined
   fhir: FhirRepository
   inpatient?: { actor: ActorContext; service: InpatientService } | undefined
   patientId?: string | undefined
 }): SupplementaryClinicalIndicators {
-  const { caseId, context, database, fhir, inpatient, patientId } = options
+  const { caseId, context, database, encounterId, fhir, inpatient, patientId } = options
 
   const examRows = z.array(z.object({
     content_json: z.string(),
@@ -1184,6 +1209,170 @@ export function extractSupplementaryIndicators(options: {
     }
   }
 
+  let acsEligibility: SupplementaryClinicalIndicators['acsEligibility']
+  let cadEligibility: SupplementaryClinicalIndicators['cadEligibility']
+  let contrastProcedureEligibility: SupplementaryClinicalIndicators['contrastProcedureEligibility']
+  const effectiveEncounterId = encounterId ?? caseId
+
+  // Check outpatient triage chiefComplaint for acute chest pain / suspected ACS
+  if (inpatient === undefined) {
+    const triageRow = z.object({
+      observation_id: z.string().nullable(),
+      observation_version: z.string().nullable(),
+      vital_json: z.string(),
+    }).optional().parse(
+      database.driver.prepare(`
+        SELECT vital_json, observation_id, observation_version
+        FROM triage_record
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        LIMIT 1
+      `).get(context.workspaceId, context.epoch, caseId),
+    )
+    if (triageRow !== undefined) {
+      const parsedTriage = z.object({ chiefComplaint: z.string().optional() }).loose().safeParse(JSON.parse(triageRow.vital_json))
+      const cc = parsedTriage.success ? (parsedTriage.data.chiefComplaint ?? '') : ''
+      if (
+        /胸痛|胸闷痛|心前区|胸骨后|心绞痛|急性冠脉|chest\s*pain|angina|acute\s*coronary/i.test(cc)
+        && !/(?:无|否认|排除)\s*(?:胸痛|胸闷|心绞痛|chest\s*pain)/i.test(cc)
+      ) {
+        acsEligibility = {
+          sourceReference: triageRow.observation_id ? `Observation/${triageRow.observation_id}` : `Encounter/${effectiveEncounterId}`,
+          valueText: cc.trim().slice(0, 240),
+          versionId: triageRow.observation_version ?? '1',
+        }
+      }
+    }
+  }
+
+  // Check inpatient surgeries & angiography for contrast exposure and CAD/PCI eligibility
+  if (inpatient !== undefined) {
+    const surgery = inpatient.service.surgery.read(inpatient.actor, caseId)
+    for (const req of surgery.requests) {
+      if (req.status === 'cancelled') continue
+      const code = req.plannedProcedure.coding.code
+      const display = req.plannedProcedure.coding.display
+      if (/^(?:88\.5[567]|36\.0[67]|00\.66)/i.test(code) || /造影|经皮冠状动脉|支架|\bPCI\b|angiography/i.test(display)) {
+        contrastProcedureEligibility ??= {
+          sourceReference: `ServiceRequest/${req.id}`,
+          valueText: display.trim().slice(0, 240),
+          versionId: String(req.version),
+        }
+      }
+      if (/^(?:36\.0[67]|00\.66|36\.1)/i.test(code) || /经皮冠状动脉|支架|旁路|\bPCI\b|\bCABG\b/i.test(display)) {
+        cadEligibility ??= {
+          sourceReference: `ServiceRequest/${req.id}`,
+          valueText: display.trim().slice(0, 240),
+          versionId: String(req.version),
+        }
+      }
+    }
+    for (const exec of surgery.executions) {
+      const code = exec.actualProcedure.coding.code
+      const display = exec.actualProcedure.coding.display
+      if (/^(?:36\.0[67]|00\.66|36\.1)/i.test(code) || /经皮冠状动脉|支架|旁路|\bPCI\b|\bCABG\b/i.test(display)) {
+        cadEligibility ??= {
+          sourceReference: `Procedure/${exec.id}`,
+          valueText: display.trim().slice(0, 240),
+          versionId: '1',
+        }
+      }
+      if (/^(?:88\.5[567]|36\.0[67]|00\.66)/i.test(code) || /造影|经皮冠状动脉|支架|\bPCI\b|angiography/i.test(display)) {
+        contrastProcedureEligibility ??= {
+          sourceReference: `Procedure/${exec.id}`,
+          valueText: display.trim().slice(0, 240),
+          versionId: '1',
+        }
+      }
+    }
+    for (const report of inpatient.service.angiography.reports(inpatient.actor, caseId)) {
+      if (!['final', 'partial'].includes(report.status)) continue
+      if (report.vessels.some(v => v.stenosisPercent >= 50)) {
+        cadEligibility ??= {
+          sourceReference: `DiagnosticReport/${report.id}`,
+          valueText: '冠脉造影狭窄 ≥50%',
+          versionId: String(report.version),
+        }
+      }
+    }
+  }
+
+  // Check encounter ServiceRequest for planned contrast imaging / angiography
+  if (contrastProcedureEligibility === undefined) {
+    const srParams = new URLSearchParams({ _count: '100', encounter: `Encounter/${effectiveEncounterId}` })
+    for (;;) {
+      const page = fhir.search(context, 'ServiceRequest', srParams)
+      for (const raw of page.resources) {
+        const parsed = z.object({
+          code: z.object({
+            coding: z.array(z.object({ code: z.string().optional(), display: z.string().optional() }).loose()).optional(),
+            text: z.string().optional(),
+          }).loose().optional(),
+          id: z.string().min(1),
+          meta: z.object({ versionId: z.string().optional() }).loose().optional(),
+          status: z.string().optional(),
+        }).loose().safeParse(raw)
+        if (!parsed.success || !['active', 'completed'].includes(parsed.data.status ?? '')) continue
+        const display = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
+        const codes = (parsed.data.code?.coding ?? []).map(c => c.code ?? '')
+        if (
+          codes.some(c => /^(?:88\.5[567]|36\.0[67]|00\.66)/i.test(c))
+          || (/冠脉造影|冠状动脉造影|冠脉CTA|增强CT|\bPCI\b|angiography|contrast/i.test(display) && !/(?:无|非)增强/i.test(display))
+        ) {
+          contrastProcedureEligibility = {
+            sourceReference: `ServiceRequest/${parsed.data.id}`,
+            valueText: (parsed.data.code?.coding?.[0]?.display ?? parsed.data.code?.text ?? '含碘对比剂检查/手术').trim().slice(0, 240),
+            versionId: parsed.data.meta?.versionId ?? '1',
+          }
+          break
+        }
+      }
+      if (contrastProcedureEligibility !== undefined || page.nextCursor === undefined) break
+      srParams.set('_cursor', page.nextCursor)
+    }
+  }
+
+  // Check Encounter Condition for acute chest pain / suspected or confirmed ACS
+  if (acsEligibility === undefined) {
+    const encCondParams = new URLSearchParams({ _count: '100', encounter: `Encounter/${effectiveEncounterId}` })
+    for (;;) {
+      const page = fhir.search(context, 'Condition', encCondParams)
+      for (const raw of page.resources) {
+        const parsed = z.object({
+          clinicalStatus: z.object({ coding: z.array(z.object({ code: z.string().optional() }).loose()).optional() }).loose().optional(),
+          code: z.object({
+            coding: z.array(z.object({ code: z.string().optional(), display: z.string().optional() }).loose()).optional(),
+            text: z.string().optional(),
+          }).loose().optional(),
+          id: z.string().min(1),
+          meta: z.object({ versionId: z.string().optional() }).loose().optional(),
+          verificationStatus: z.object({ coding: z.array(z.object({ code: z.string().optional() }).loose()).optional() }).loose().optional(),
+        }).loose().safeParse(raw)
+        if (!parsed.success) continue
+        const ver = parsed.data.verificationStatus?.coding?.[0]?.code
+        const clin = parsed.data.clinicalStatus?.coding?.[0]?.code
+        if (ver === 'entered-in-error' || ver === 'refuted' || clin === 'inactive' || clin === 'resolved') continue
+        const codes = (parsed.data.code?.coding ?? []).map(c => c.code?.trim().toUpperCase() ?? '')
+        const display = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
+        if (
+          codes.some(c => /^(?:I20\.0|I2[1234]|R07)/.test(c))
+          || (
+            /急性冠脉|不稳定型心绞痛|心肌梗死|急性胸痛|胸痛|\bACS\b|\bNSTEMI\b|\bSTEMI\b|acute coronary|chest pain/i.test(display)
+            && !/(?:无|否认|排除)\s*(?:胸痛|急性冠脉|心绞痛|心肌梗死)/i.test(display)
+          )
+        ) {
+          acsEligibility = {
+            sourceReference: `Condition/${parsed.data.id}`,
+            valueText: (parsed.data.code?.coding?.[0]?.display ?? parsed.data.code?.text ?? '疑似/确诊 ACS').trim().slice(0, 240),
+            versionId: parsed.data.meta?.versionId ?? '1',
+          }
+          break
+        }
+      }
+      if (acsEligibility !== undefined || page.nextCursor === undefined) break
+      encCondParams.set('_cursor', page.nextCursor)
+    }
+  }
+
   let t2dmDiagnosis: SupplementaryClinicalIndicators['t2dmDiagnosis']
   if (patientId !== undefined) {
     const condParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
@@ -1203,14 +1392,30 @@ export function extractSupplementaryIndicators(options: {
         if (!parsed.success) continue
         if (parsed.data.verificationStatus?.coding?.[0]?.code !== 'confirmed') continue
         const clinCode = parsed.data.clinicalStatus?.coding?.[0]?.code
-        if (clinCode === 'inactive' || clinCode === 'resolved') continue
         const codes = (parsed.data.code?.coding ?? []).map(c => c.code?.trim() ?? '').filter(Boolean)
         const display = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
-        if (
-          codes.some(code => /^E11/i.test(code) || code === '44054006')
+        const isCadCondition =
+          codes.some(code => /^(?:I2[0-5]|Z95\.[15]|Z98\.61)/i.test(code) || code === '53741008' || code === '22298006')
           || (
-            /2\s*型糖尿病|二型糖尿病|type\s*2\s*diabetes/i.test(display)
-            && !/(?:无|否认|排除|非)\s*(?:2\s*型|二型|type\s*2)/i.test(display)
+            /冠心病|冠状动脉粥样硬化|心绞痛|心肌梗死|急性冠脉|冠脉支架|冠脉搭桥|coronary artery disease|myocardial infarction|angina/i.test(display)
+            && !/(?:无|否认|排除|非)\s*(?:冠心病|冠状动脉|心绞痛|心肌梗死|急性冠脉|coronary|angina)/i.test(display)
+          )
+        if (cadEligibility === undefined && isCadCondition && (clinCode !== 'inactive' || codes.some(c => /^(?:I25\.2|Z95\.[15]|Z98\.61)/i.test(c)))) {
+          cadEligibility = {
+            sourceReference: `Condition/${parsed.data.id}`,
+            valueText: (parsed.data.code?.coding?.[0]?.display ?? parsed.data.code?.text ?? '冠心病').trim().slice(0, 240),
+            versionId: parsed.data.meta?.versionId ?? '1',
+          }
+        }
+        if (clinCode === 'inactive' || clinCode === 'resolved') continue
+        if (
+          t2dmDiagnosis === undefined
+          && (
+            codes.some(code => /^E11/i.test(code) || code === '44054006')
+            || (
+              /2\s*型糖尿病|二型糖尿病|type\s*2\s*diabetes/i.test(display)
+              && !/(?:无|否认|排除|非)\s*(?:2\s*型|二型|type\s*2)/i.test(display)
+            )
           )
         ) {
           t2dmDiagnosis = {
@@ -1218,16 +1423,52 @@ export function extractSupplementaryIndicators(options: {
             valueText: (parsed.data.code?.coding?.[0]?.display ?? parsed.data.code?.text ?? '2型糖尿病').trim().slice(0, 240),
             versionId: parsed.data.meta?.versionId ?? '1',
           }
-          break
         }
       }
-      if (t2dmDiagnosis !== undefined || page.nextCursor === undefined) break
+      if ((t2dmDiagnosis !== undefined && cadEligibility !== undefined) || page.nextCursor === undefined) break
       condParams.set('_cursor', page.nextCursor)
+    }
+
+    if (cadEligibility === undefined) {
+      const procParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
+      for (;;) {
+        const page = fhir.search(context, 'Procedure', procParams)
+        for (const raw of page.resources) {
+          const parsed = z.object({
+            code: z.object({
+              coding: z.array(z.object({ code: z.string().optional(), display: z.string().optional() }).loose()).optional(),
+              text: z.string().optional(),
+            }).loose().optional(),
+            id: z.string().min(1),
+            meta: z.object({ versionId: z.string().optional() }).loose().optional(),
+            status: z.string().optional(),
+          }).loose().safeParse(raw)
+          if (!parsed.success || parsed.data.status !== 'completed') continue
+          const codes = (parsed.data.code?.coding ?? []).map(c => c.code ?? '')
+          const display = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
+          if (
+            codes.some(c => /^(?:00\.66|36\.0[67]|36\.1)/i.test(c))
+            || /经皮冠状动脉|冠脉支架|冠状动脉旁路|\bPCI\b|\bCABG\b/i.test(display)
+          ) {
+            cadEligibility = {
+              sourceReference: `Procedure/${parsed.data.id}`,
+              valueText: (parsed.data.code?.coding?.[0]?.display ?? parsed.data.code?.text ?? '冠脉血运重建术后').trim().slice(0, 240),
+              versionId: parsed.data.meta?.versionId ?? '1',
+            }
+            break
+          }
+        }
+        if (cadEligibility !== undefined || page.nextCursor === undefined) break
+        procParams.set('_cursor', page.nextCursor)
+      }
     }
   }
 
   return {
+    acsEligibility,
     angiographySummary,
+    cadEligibility,
+    contrastProcedureEligibility,
     ecgSummary,
     hba1c,
     pciPlanSummary,
@@ -1257,6 +1498,7 @@ export function buildSynchronousTopicBundle(options: {
     caseId: options.caseId,
     context: options.context,
     database: options.database,
+    encounterId: options.encounterId,
     fhir: options.fhir,
     inpatient: options.inpatient,
     patientId: options.patientId,
