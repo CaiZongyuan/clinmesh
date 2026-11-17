@@ -568,7 +568,9 @@ interface SupplementaryClinicalIndicators {
   hba1c?: { sourceReference: string; valueText: string; versionId: string } | undefined
   pciPlanSummary?: {
     hasValidCandidate: boolean
+    measurements: Array<z.infer<typeof pciMeasurementSchema>>
     missingItems: string[]
+    selectionVersion: number
     sourceReference: string
     targetSite: string | null
     versionId: string
@@ -957,17 +959,21 @@ export function extractSupplementaryIndicators(options: {
     const pciRequest = pciCandidates.findLast(item => item.status !== 'completed') ?? pciCandidates.at(-1)
     if (pciRequest !== undefined) {
       const selection = inpatient.service.pciSelection.read(inpatient.actor, caseId, pciRequest.id)
-      const parameters = selection.drafts?.find(item => item.requestId === pciRequest.id)?.parameters
-        ?? (selection.confirmation?.parameters.requestId === pciRequest.id ? selection.confirmation.parameters : undefined)
+      const matchedDraft = selection.drafts?.find(item => item.requestId === pciRequest.id)
+      const matchedConfirmation = selection.confirmation?.parameters.requestId === pciRequest.id ? selection.confirmation : undefined
+      const parameters = matchedDraft?.parameters ?? matchedConfirmation?.parameters
+      const selectionVersion = matchedDraft?.version ?? matchedConfirmation?.version ?? 0
       const measurements = parameters?.measurements ?? []
       const hasValidCandidate = selection.candidates.some(item => item.eligibility === 'valid')
       pciPlanSummary = {
         hasValidCandidate,
+        measurements,
         missingItems: collectPciSelectionMissingItems({
           hasValidCandidate,
           measurements,
           targetSite: parameters?.targetSite,
         }),
+        selectionVersion,
         sourceReference: `ServiceRequest/${pciRequest.id}`,
         targetSite: parameters?.targetSite ?? null,
         versionId: String(pciRequest.version),

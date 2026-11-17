@@ -107,7 +107,9 @@ const supplementaryIndicatorsSchema = z.object({
   }).strict().nullable(),
   pciPlanSummary: z.object({
     hasValidCandidate: z.boolean(),
+    measurements: z.array(pciMeasurementSchema),
     missingItems: z.array(z.string()),
+    selectionVersion: z.number().int().nonnegative(),
     sourceReference: z.string(),
     targetSite: z.string().nullable(),
     versionId: z.string(),
