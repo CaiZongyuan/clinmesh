@@ -923,5 +923,148 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
         expect.objectContaining({ reference: `MedicationRequest/${statinMedReq.id}` }),
       ]),
     )
+
+    // Completed temporary statin order ends after administration washout (28d) rather than permanently suppressing later untreated lipids;
+    // and pretreatment same-specimen TC+HDL pair remains usable even when a newer TC-only pretreatment lab exists
+    const tempOrderPatient = createPatientResponseSchema.parse(
+      await (
+        await fixture.request('registrar', '/api/his/v1/patients', {
+          birthDate: '1976-04-10',
+          gender: 'female',
+          identifier: `OP-TEMP-STATIN-${randomUUID()}`,
+          name: '合成临时他汀洗脱期患者',
+        }, randomUUID(), {})
+      ).json(),
+    ).data.patient
+    const tempReg = registrationResponseSchema.parse(
+      await (
+        await fixture.request('registrar', '/api/his/v1/registrations/actions/register', {
+          departmentId: regCatalog.departments[0]!.id,
+          locationId: regCatalog.locations[0]!.id,
+          patientId: tempOrderPatient.id,
+          visitDate: regCatalog.virtualDate,
+          visitTypeId: regCatalog.visitTypes[0]!.id,
+        }, randomUUID(), { [`Patient/${tempOrderPatient.id}`]: tempOrderPatient.versionId })
+      ).json(),
+    ).data
+    const tempTriage = triageResponseSchema.parse(
+      await (
+        await fixture.request('triage', `/api/his/v1/encounters/${tempReg.encounterId}/actions/record-triage`, {
+          acuityCode: 'level-3',
+          bloodPressure: { diastolicMmHg: 88, systolicMmHg: 146 },
+          chiefComplaint: '既往单次他汀后复查血脂',
+          heightCm: 165,
+          oxygenSaturationPct: 98,
+          pulseBpm: 74,
+          respirationBpm: 16,
+          temperatureC: 36.5,
+          weightKg: 62,
+        }, randomUUID(), {
+          [`Encounter/${tempReg.encounterId}`]: '1',
+          [`Task/${tempReg.queueTaskId}`]: '1',
+        })
+      ).json(),
+    ).data
+    await fixture.request('doctor', `/api/his/v1/encounters/${tempReg.encounterId}/actions/start-first-visit`, {}, randomUUID(), {
+      [`Encounter/${tempReg.encounterId}`]: tempTriage.encounterVersion,
+      [`Task/${tempTriage.doctorTaskId}`]: '1',
+    })
+    const tempCase = (await fixture.read('doctor', '/api/his/v1/doctor/queue', doctorQueueSchema))
+      .items.find(item => item.encounterId === tempReg.encounterId)!
+
+    // Historical completed single-dose MedicationRequest from 6 months ago (>28d washout) does NOT block current untreated lipid panel
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authoredOn: '2026-01-10T10:00:00+08:00',
+      id: uuidv7(),
+      intent: 'order',
+      medication: { concept: { text: '阿托伐他汀钙片 20mg' } },
+      resourceType: 'MedicationRequest',
+      status: 'completed',
+      subject: { reference: `Patient/${tempOrderPatient.id}` },
+    })
+    // Same-specimen TC=6.5 + HDL=1.1 (non-HDL=5.4 >= 5.2), followed by a newer standalone TC-only=5.3 before active statin
+    const pairedPanel = insertSyntheticLabReport(fixture, {
+      caseId: tempCase.caseId,
+      encounterId: tempReg.encounterId,
+      epoch: scenario.epoch,
+      issuedAt: '2026-08-01T09:00:00+08:00',
+      patientId: tempOrderPatient.id,
+      results: [
+        { code: '1700404A', display: '血清肌酐', high: 84, unit: 'umol/L', value: 65 },
+        { code: '2000104A', display: '总胆固醇', high: 5.2, unit: 'mmol/L', value: 6.5 },
+        { code: '2000304A', display: '高密度脂蛋白胆固醇', high: 1.8, unit: 'mmol/L', value: 1.1 },
+      ],
+      workspaceId: scenario.workspaceId,
+    })
+    insertSyntheticLabReport(fixture, {
+      caseId: tempCase.caseId,
+      encounterId: tempReg.encounterId,
+      epoch: scenario.epoch,
+      issuedAt: '2026-08-05T09:00:00+08:00',
+      patientId: tempOrderPatient.id,
+      results: [
+        { code: '2000104A', display: '总胆固醇', high: 5.2, unit: 'mmol/L', value: 5.3 },
+      ],
+      workspaceId: scenario.workspaceId,
+    })
+    await fixture.runtime.app.request(`http://localhost/api/his/v1/encounters/${tempReg.encounterId}/risk-assessment`, {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${tempReg.encounterId}`]: String(Number(tempTriage.encounterVersion) + 1) },
+        input: {
+          expectedRevision: 0,
+          fields: { smokingStatus: 'current' },
+        },
+      }),
+      headers: {
+        'content-type': 'application/json',
+        cookie: await fixture.login('doctor'),
+        'idempotency-key': randomUUID(),
+        origin: 'http://localhost',
+      },
+      method: 'PUT',
+    })
+    const tempScores = await fixture.read('doctor', `/api/his/v1/doctor/cases/${tempCase.caseId}/clinical-scores`, clinicalScoreBundleSchema)
+    const tempAscvd = tempScores.scores.find(s => s.id === 'ascvd-ldl-target')!
+    expect(tempAscvd).toMatchObject({
+      status: 'complete',
+      tierCode: 'high',
+      value: 2.6,
+    })
+    expect(tempAscvd.sourceReferences).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reference: `Observation/${pairedPanel.obsIds[1]}` }),
+        expect.objectContaining({ reference: `Observation/${pairedPanel.obsIds[2]}` }),
+      ]),
+    )
+
+    // Starting an active statin on 2026-08-06 followed by on-treatment LDL-C = 2.0 on 2026-08-20 still uses the 2026-08-01 pretreatment same-specimen pair for <55 non-HDL-C
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authoredOn: '2026-08-06T10:00:00+08:00',
+      dosageInstruction: [{ timing: { repeat: { boundsDuration: { code: 'mo', system: 'http://unitsofmeasure.org', unit: 'mo', value: 3 } } } }],
+      id: uuidv7(),
+      intent: 'order',
+      medication: { concept: { text: '瑞舒伐他汀钙片 10mg' } },
+      resourceType: 'MedicationRequest',
+      status: 'active',
+      subject: { reference: `Patient/${tempOrderPatient.id}` },
+    })
+    insertSyntheticLabReport(fixture, {
+      caseId: tempCase.caseId,
+      encounterId: tempReg.encounterId,
+      epoch: scenario.epoch,
+      issuedAt: '2026-08-20T09:00:00+08:00',
+      patientId: tempOrderPatient.id,
+      results: [
+        { code: '2000404A', display: '低密度脂蛋白胆固醇', high: 3.4, unit: 'mmol/L', value: 2.0 },
+      ],
+      workspaceId: scenario.workspaceId,
+    })
+    const treatedPairedScores = await fixture.read('doctor', `/api/his/v1/doctor/cases/${tempCase.caseId}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(treatedPairedScores.scores.find(s => s.id === 'ascvd-ldl-target')).toMatchObject({
+      ldlGoalEvaluation: { atGoal: true, currentLdlMmolL: 2.0, targetLdlMmolL: 2.6 },
+      status: 'complete',
+      tierCode: 'high',
+      value: 2.6,
+    })
   }, 120_000)
 })

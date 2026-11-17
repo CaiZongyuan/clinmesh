@@ -428,6 +428,25 @@ function toVitalsForm(record: InpatientVitalSignsRecord | undefined): VitalsForm
   }
 }
 
+function normalizeVitalsFormForCompare(form: VitalsFormState) {
+  const numOrNull = (raw: string) => {
+    const trimmed = raw.trim()
+    if (trimmed === '') return null
+    const parsed = Number(trimmed)
+    return Number.isFinite(parsed) ? parsed : trimmed
+  }
+  return {
+    diastolicMmHg: numOrNull(form.diastolicMmHg),
+    heightCm: numOrNull(form.heightCm),
+    oxygenSaturationPct: numOrNull(form.oxygenSaturationPct),
+    pulseBpm: numOrNull(form.pulseBpm),
+    respirationBpm: numOrNull(form.respirationBpm),
+    systolicMmHg: numOrNull(form.systolicMmHg),
+    temperatureC: numOrNull(form.temperatureC),
+    weightKg: numOrNull(form.weightKg),
+  }
+}
+
 export function InpatientVitalsAndScoresDisclosure({
   admissionId,
   canEdit,
@@ -453,11 +472,61 @@ export function InpatientVitalsAndScoresDisclosure({
   const t = (cn: string, en: string) => (zh ? cn : en)
   const queryClient = useQueryClient()
   const [scoresOpen, setScoresOpen] = useState(false)
-  const [vitals, setVitals] = useState<VitalsFormState>(() => toVitalsForm(latestVitalSigns))
+  const vitalsSyncKey =
+    latestVitalSigns === undefined
+      ? 'none:0'
+      : `${latestVitalSigns.observationId}:${latestVitalSigns.revision}`
+  const [vitalsDraft, setVitalsDraft] = useState<{
+    admissionId: string
+    baseRevision: number
+    dirty: boolean
+    form: VitalsFormState
+    vitalsSyncKey: string
+  }>(() => ({
+    admissionId,
+    baseRevision: latestVitalSigns?.revision ?? 0,
+    dirty: false,
+    form: toVitalsForm(latestVitalSigns),
+    vitalsSyncKey,
+  }))
 
   useEffect(() => {
-    setVitals(toVitalsForm(latestVitalSigns))
-  }, [admissionId, latestVitalSigns?.revision])
+    setVitalsDraft(prev => {
+      const nextForm = toVitalsForm(latestVitalSigns)
+      const nextRevision = latestVitalSigns?.revision ?? 0
+      if (prev.admissionId !== admissionId) {
+        return {
+          admissionId,
+          baseRevision: nextRevision,
+          dirty: false,
+          form: nextForm,
+          vitalsSyncKey,
+        }
+      }
+      if (prev.vitalsSyncKey !== vitalsSyncKey) {
+        const matchesRemote =
+          JSON.stringify(normalizeVitalsFormForCompare(prev.form))
+          === JSON.stringify(normalizeVitalsFormForCompare(nextForm))
+        if (!prev.dirty || matchesRemote) {
+          return {
+            admissionId,
+            baseRevision: nextRevision,
+            dirty: false,
+            form: nextForm,
+            vitalsSyncKey,
+          }
+        }
+      }
+      return prev
+    })
+  }, [admissionId, latestVitalSigns, vitalsSyncKey])
+
+  const vitals = vitalsDraft.form
+  const updateVitals = (updater: (prev: VitalsFormState) => VitalsFormState) => {
+    setVitalsDraft(prev => ({ ...prev, dirty: true, form: updater(prev.form) }))
+  }
+  const hasVitalsRemoteAdvance =
+    vitalsDraft.dirty && vitalsDraft.baseRevision !== (latestVitalSigns?.revision ?? 0)
 
   const scoresKey = [
     ...scope,
@@ -504,7 +573,7 @@ export function InpatientVitalsAndScoresDisclosure({
                 admissionId,
                 bloodPressure: { diastolicMmHg: diaNum, systolicMmHg: sysNum },
                 encounterVersion,
-                expectedRevision: latestVitalSigns?.revision ?? 0,
+                expectedRevision: vitalsDraft.baseRevision,
                 ...(vitals.heightCm.trim() === '' ? {} : { heightCm: Number(vitals.heightCm) }),
                 oxygenSaturationPct: Number(vitals.oxygenSaturationPct),
                 pulseBpm: Number(vitals.pulseBpm),
@@ -516,14 +585,45 @@ export function InpatientVitalsAndScoresDisclosure({
             }).then(() => queryClient.invalidateQueries({ queryKey: [...scope, admissionId, 'clinical-scores'] })).catch(() => undefined)
           }}
         >
-          <label className="flex flex-col gap-1"><span>{t('体温 (°C)', 'Temp (°C)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={45} min={30} onChange={e => { const v = e.currentTarget.value; setVitals(s => ({ ...s, temperatureC: v })) }} step={0.1} type="number" value={vitals.temperatureC} /></label>
-          <label className="flex flex-col gap-1"><span>{t('心率 (次/分)', 'Pulse (bpm)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={300} min={20} onChange={e => { const v = e.currentTarget.value; setVitals(s => ({ ...s, pulseBpm: v })) }} step={1} type="number" value={vitals.pulseBpm} /></label>
-          <label className="flex flex-col gap-1"><span>{t('呼吸 (次/分)', 'Resp (/min)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={80} min={4} onChange={e => { const v = e.currentTarget.value; setVitals(s => ({ ...s, respirationBpm: v })) }} step={1} type="number" value={vitals.respirationBpm} /></label>
-          <label className="flex flex-col gap-1"><span>{t('血氧 (%)', 'SpO₂ (%)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={100} min={40} onChange={e => { const v = e.currentTarget.value; setVitals(s => ({ ...s, oxygenSaturationPct: v })) }} step={0.1} type="number" value={vitals.oxygenSaturationPct} /></label>
-          <label className="flex flex-col gap-1"><span>{t('收缩压 (mmHg)', 'Systolic (mmHg)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={300} min={40} onChange={e => { const v = e.currentTarget.value; setVitals(s => ({ ...s, systolicMmHg: v })) }} step={1} type="number" value={vitals.systolicMmHg} /></label>
-          <label className="flex flex-col gap-1"><span>{t('舒张压 (mmHg)', 'Diastolic (mmHg)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={200} min={20} onChange={e => { const v = e.currentTarget.value; setVitals(s => ({ ...s, diastolicMmHg: v })) }} step={1} type="number" value={vitals.diastolicMmHg} /></label>
-          <label className="flex flex-col gap-1"><span>{t('体重 (kg，选填)', 'Weight (kg)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={400} min={1} onChange={e => { const v = e.currentTarget.value; setVitals(s => ({ ...s, weightKg: v })) }} placeholder={t('未记录', 'Optional')} step={0.1} type="number" value={vitals.weightKg} /></label>
-          <label className="flex flex-col gap-1"><span>{t('身高 (cm，选填)', 'Height (cm)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={260} min={30} onChange={e => { const v = e.currentTarget.value; setVitals(s => ({ ...s, heightCm: v })) }} placeholder={t('未记录', 'Optional')} step={0.1} type="number" value={vitals.heightCm} /></label>
+          {hasVitalsRemoteAdvance ? (
+            <div className="col-span-2 sm:col-span-4">
+              <Alert>
+                <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    {t(
+                      `远端已有更新生命体征 #${latestVitalSigns?.revision ?? 0}（当前草稿基于 #${vitalsDraft.baseRevision}）；直接记录将执行并发版本校验，或放弃草稿同步最新记录。`,
+                      `Remote vital signs advanced to #${latestVitalSigns?.revision ?? 0} (draft based on #${vitalsDraft.baseRevision}); saving checks version conflict, or discard draft to sync.`,
+                    )}
+                  </span>
+                  <Button
+                    onClick={() => {
+                      write.mutation.reset?.()
+                      setVitalsDraft({
+                        admissionId,
+                        baseRevision: latestVitalSigns?.revision ?? 0,
+                        dirty: false,
+                        form: toVitalsForm(latestVitalSigns),
+                        vitalsSyncKey,
+                      })
+                    }}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    {t('放弃体征草稿并同步', 'Discard vitals draft & sync')}
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            </div>
+          ) : null}
+          <label className="flex flex-col gap-1"><span>{t('体温 (°C)', 'Temp (°C)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={45} min={30} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, temperatureC: v })) }} step={0.1} type="number" value={vitals.temperatureC} /></label>
+          <label className="flex flex-col gap-1"><span>{t('心率 (次/分)', 'Pulse (bpm)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={300} min={20} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, pulseBpm: v })) }} step={1} type="number" value={vitals.pulseBpm} /></label>
+          <label className="flex flex-col gap-1"><span>{t('呼吸 (次/分)', 'Resp (/min)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={80} min={4} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, respirationBpm: v })) }} step={1} type="number" value={vitals.respirationBpm} /></label>
+          <label className="flex flex-col gap-1"><span>{t('血氧 (%)', 'SpO₂ (%)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={100} min={40} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, oxygenSaturationPct: v })) }} step={0.1} type="number" value={vitals.oxygenSaturationPct} /></label>
+          <label className="flex flex-col gap-1"><span>{t('收缩压 (mmHg)', 'Systolic (mmHg)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={300} min={40} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, systolicMmHg: v })) }} step={1} type="number" value={vitals.systolicMmHg} /></label>
+          <label className="flex flex-col gap-1"><span>{t('舒张压 (mmHg)', 'Diastolic (mmHg)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={200} min={20} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, diastolicMmHg: v })) }} step={1} type="number" value={vitals.diastolicMmHg} /></label>
+          <label className="flex flex-col gap-1"><span>{t('体重 (kg，选填)', 'Weight (kg)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={400} min={1} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, weightKg: v })) }} placeholder={t('未记录', 'Optional')} step={0.1} type="number" value={vitals.weightKg} /></label>
+          <label className="flex flex-col gap-1"><span>{t('身高 (cm，选填)', 'Height (cm)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={260} min={30} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, heightCm: v })) }} placeholder={t('未记录', 'Optional')} step={0.1} type="number" value={vitals.heightCm} /></label>
           {canEdit ? (
             <div className="col-span-2 flex justify-end sm:col-span-4">
               <Button disabled={!vitalsValid || write.blocked} size="sm" type="submit" variant="outline">{t('记录生命体征', 'Record vital signs')}</Button>

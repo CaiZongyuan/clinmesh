@@ -54,9 +54,13 @@ export interface ClinicalScoreObjectiveFacts {
   knownCoronaryRevascularizationOrStenosisGe50?: SourcedFact<boolean>
   ldlCholesterol?: SourcedFact<UnitQuantityInput>
   lipidLoweringMedicationActive?: SourcedFact<boolean>
+  nonHdlPairedHdlCholesterol?: SourcedFact<UnitQuantityInput>
+  nonHdlPairedTcCholesterol?: SourcedFact<UnitQuantityInput>
   pciDaptIndication?: SourcedFact<boolean>
   pretreatmentHdlCholesterol?: SourcedFact<UnitQuantityInput>
   pretreatmentLdlCholesterol?: SourcedFact<UnitQuantityInput>
+  pretreatmentNonHdlPairedHdlCholesterol?: SourcedFact<UnitQuantityInput>
+  pretreatmentNonHdlPairedTcCholesterol?: SourcedFact<UnitQuantityInput>
   pretreatmentSameSpecimenTcHdl?: boolean
   pretreatmentTotalCholesterol?: SourcedFact<UnitQuantityInput>
   priorBleedingHistory?: SourcedFact<PriorBleedingHistory>
@@ -537,8 +541,12 @@ export function calculateAscvdLdlTarget(input: {
   knownCoronaryRevascularization?: boolean
   ldlCholesterol?: UnitQuantityInput
   lipidLoweringTreated?: boolean
+  nonHdlPairedHdlCholesterol?: UnitQuantityInput
+  nonHdlPairedTcCholesterol?: UnitQuantityInput
   pretreatmentHdlCholesterol?: UnitQuantityInput
   pretreatmentLdlCholesterol?: UnitQuantityInput
+  pretreatmentNonHdlPairedHdlCholesterol?: UnitQuantityInput
+  pretreatmentNonHdlPairedTcCholesterol?: UnitQuantityInput
   pretreatmentSameSpecimenTcHdl?: boolean
   pretreatmentTotalCholesterol?: UnitQuantityInput
   priorCoronaryRevascularization?: boolean
@@ -911,10 +919,34 @@ export function calculateAscvdLdlTarget(input: {
         : input.systolicBpMmHg !== undefined && input.diastolicBpMmHg !== undefined
           ? 0
           : null
+    const pairedTcInput =
+      input.lipidLoweringTreated === true
+        ? input.pretreatmentNonHdlPairedTcCholesterol
+        : (input.pretreatmentNonHdlPairedTcCholesterol ?? input.nonHdlPairedTcCholesterol)
+    const pairedHdlInput =
+      input.lipidLoweringTreated === true
+        ? input.pretreatmentNonHdlPairedHdlCholesterol
+        : (input.pretreatmentNonHdlPairedHdlCholesterol ?? input.nonHdlPairedHdlCholesterol)
+    const pairedTcMmolL =
+      pairedTcInput === undefined
+        ? undefined
+        : normalizeLipidMmolL(pairedTcInput.value, pairedTcInput.unit, 'tc')
+    const pairedHdlMmolL =
+      pairedHdlInput === undefined
+        ? undefined
+        : normalizeLipidMmolL(pairedHdlInput.value, pairedHdlInput.unit, 'hdl')
+    const effectiveNonHdlTc =
+      stratTcMmolL !== undefined && stratHdlMmolL !== undefined && stratSameSpecimenTcHdl !== false
+        ? stratTcMmolL
+        : pairedTcMmolL
+    const effectiveNonHdlHdl =
+      stratTcMmolL !== undefined && stratHdlMmolL !== undefined && stratSameSpecimenTcHdl !== false
+        ? stratHdlMmolL
+        : pairedHdlMmolL
     const lifetimeNonHdlFactor: 1 | 0 | null =
-      stratTcMmolL === undefined || stratHdlMmolL === undefined || stratSameSpecimenTcHdl === false
+      effectiveNonHdlTc === undefined || effectiveNonHdlHdl === undefined
         ? null
-        : stratTcMmolL - stratHdlMmolL >= 5.2 - 1e-9
+        : effectiveNonHdlTc - effectiveNonHdlHdl >= 5.2 - 1e-9
           ? 1
           : 0
     const lifetimeHdlFactor: 1 | 0 = stratHdlMmolL! < 1.0 ? 1 : 0
@@ -1181,6 +1213,22 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
   })
   const preLdlValid = safeParseFact(facts.pretreatmentLdlCholesterol, q => {
     normalizeLipidMmolL(q.value, q.unit, 'ldl')
+    return q
+  })
+  const nonHdlPairedTcValid = safeParseFact(facts.nonHdlPairedTcCholesterol, q => {
+    normalizeLipidMmolL(q.value, q.unit, 'tc')
+    return q
+  })
+  const nonHdlPairedHdlValid = safeParseFact(facts.nonHdlPairedHdlCholesterol, q => {
+    normalizeLipidMmolL(q.value, q.unit, 'hdl')
+    return q
+  })
+  const preNonHdlPairedTcValid = safeParseFact(facts.pretreatmentNonHdlPairedTcCholesterol, q => {
+    normalizeLipidMmolL(q.value, q.unit, 'tc')
+    return q
+  })
+  const preNonHdlPairedHdlValid = safeParseFact(facts.pretreatmentNonHdlPairedHdlCholesterol, q => {
+    normalizeLipidMmolL(q.value, q.unit, 'hdl')
     return q
   })
 
@@ -1522,6 +1570,10 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
       preLdlValid?.source,
       preTcValid?.source,
       preHdlValid?.source,
+      preNonHdlPairedTcValid?.source,
+      preNonHdlPairedHdlValid?.source,
+      nonHdlPairedTcValid?.source,
+      nonHdlPairedHdlValid?.source,
       ldlValid?.source,
       tcValid?.source,
       hdlValid?.source,
@@ -1555,8 +1607,20 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
         ...(facts.lipidLoweringMedicationActive === undefined
           ? {}
           : { lipidLoweringTreated: facts.lipidLoweringMedicationActive.value }),
+        ...(nonHdlPairedHdlValid === undefined
+          ? {}
+          : { nonHdlPairedHdlCholesterol: nonHdlPairedHdlValid.value }),
+        ...(nonHdlPairedTcValid === undefined
+          ? {}
+          : { nonHdlPairedTcCholesterol: nonHdlPairedTcValid.value }),
         ...(preHdlValid === undefined ? {} : { pretreatmentHdlCholesterol: preHdlValid.value }),
         ...(preLdlValid === undefined ? {} : { pretreatmentLdlCholesterol: preLdlValid.value }),
+        ...(preNonHdlPairedHdlValid === undefined
+          ? {}
+          : { pretreatmentNonHdlPairedHdlCholesterol: preNonHdlPairedHdlValid.value }),
+        ...(preNonHdlPairedTcValid === undefined
+          ? {}
+          : { pretreatmentNonHdlPairedTcCholesterol: preNonHdlPairedTcValid.value }),
         ...(facts.pretreatmentSameSpecimenTcHdl === undefined
           ? {}
           : { pretreatmentSameSpecimenTcHdl: facts.pretreatmentSameSpecimenTcHdl }),
