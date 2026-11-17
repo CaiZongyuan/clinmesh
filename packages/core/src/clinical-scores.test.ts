@@ -418,6 +418,44 @@ describe('six deterministic clinical score formulas', () => {
     })
     expect(stableCadNoBaseline.status === 'complete' && stableCadNoBaseline.ldlGoalEvaluation).toBeUndefined()
 
+    // Single severe ASCVD event + current smoking + confirmed stage 3-4 CKD (N18.3 / N18.4) reaches ultra-high (<1.4) without requiring current serumCreatinine
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 68,
+        cadOnsetAgeYears: 68,
+        confirmedDiagnosisCodes: ['I21.4', 'N18.3'],
+        sex: 'male',
+        smokingStatus: 'current',
+      }),
+    ).toMatchObject({
+      status: 'complete',
+      tierCode: 'ultra-high',
+      value: 1.4,
+    })
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 68,
+        cadOnsetAgeYears: 68,
+        confirmedDiagnosisCodes: ['I21.4', 'N18.4'],
+        sex: 'male',
+        smokingStatus: 'current',
+      }),
+    ).toMatchObject({
+      status: 'complete',
+      tierCode: 'ultra-high',
+      value: 1.4,
+    })
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 58,
+        confirmedDiagnosisCodes: ['E11.9', 'N18.3'],
+      }),
+    ).toMatchObject({
+      status: 'complete',
+      tierCode: 'very-high',
+      value: 1.8,
+    })
+
     // Boundary conversion (69.57 mg/dL -> 1.799... rounds to 1.8 mmol/L) compares at displayed precision so 1.8 is not marked <1.8 atGoal
     expect(
       calculateAscvdLdlTarget({
