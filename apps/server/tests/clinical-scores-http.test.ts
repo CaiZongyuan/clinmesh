@@ -558,6 +558,24 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     })
     expect(afterNegatedEcg.scores.find(item => item.id === 'ascvd-ldl-target')?.tierCode).not.toBe('ultra-high')
 
+    // Confirmed historical ASCVD Conditions marked 'resolved' (e.g. two prior ischemic strokes) ARE preserved and trigger ultra-high (<1.4)
+    for (const strokeIdx of [1, 2]) {
+      fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+        clinicalStatus: { coding: [{ code: 'resolved', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
+        code: { coding: [{ code: 'I63.9', display: `既往脑梗死 #${strokeIdx}` }] },
+        id: uuidv7(),
+        resourceType: 'Condition',
+        subject: { reference: `Patient/${patientId}` },
+        verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
+      })
+    }
+    const afterResolvedStrokes = await fixture.read('doctor', `/api/his/v1/doctor/cases/${caseItem.caseId}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(afterResolvedStrokes.scores.find(item => item.id === 'ascvd-ldl-target')).toMatchObject({
+      status: 'complete',
+      tierCode: 'ultra-high',
+      value: 1.4,
+    })
+
     // Subsequent non-triage vital-signs Observation on the same Encounter must NOT hijack triage Observation provenance
     const triageObsRef = triaged.effects.find(effect => effect.reference.startsWith('Observation/'))!.reference
     fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {

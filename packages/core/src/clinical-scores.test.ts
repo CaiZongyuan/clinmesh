@@ -286,6 +286,19 @@ describe('six deterministic clinical score formulas', () => {
       value: 1.4,
     })
 
+    // Two severe ASCVD events of the SAME category (e.g. two confirmed ischemic strokes) -> ultra-high (<1.4 mmol/L)
+    const twoIschemicStrokes = calculateAscvdLdlTarget({
+      ageYears: 62,
+      confirmedDiagnosisCodes: ['I63.9', 'I63.9'],
+      ldlCholesterol: { unit: 'mmol/L', value: 2.1 },
+      sex: 'female',
+    })
+    expect(twoIschemicStrokes).toMatchObject({
+      status: 'complete',
+      tierCode: 'ultra-high',
+      value: 1.4,
+    })
+
     // Stable CAD with preserved eGFR -> very-high (<1.8 mmol/L)
     const stableCad = calculateAscvdLdlTarget({
       ageYears: 64,
