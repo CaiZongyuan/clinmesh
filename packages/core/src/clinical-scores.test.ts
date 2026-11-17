@@ -390,6 +390,37 @@ describe('six deterministic clinical score formulas', () => {
       tierCode: 'low',
       value: 3.4,
     })
+
+    // Diabetic patient under 40 with preserved eGFR still retains <2.6 mmol/L LDL-C target per 2023 guideline
+    const youngDiabetic = calculateAscvdLdlTarget({
+      ageYears: 30,
+      confirmedDiagnosisCodes: ['E11.9'],
+      egfrMlMin173m2: 105,
+      hdlCholesterol: { unit: 'mmol/L', value: 1.2 },
+      ldlCholesterol: { unit: 'mmol/L', value: 2.0 },
+      sex: 'male',
+      smokingStatus: 'never',
+      systolicBpMmHg: 120,
+    })
+    expect(youngDiabetic).toMatchObject({
+      status: 'complete',
+      tierCode: 'moderate',
+      value: 2.6,
+    })
+
+    // Sub-1 eGFR (e.g. 90yo woman with creatinine 30 mg/dL -> eGFR 0.9) does not throw in LDL target evaluation
+    const subOneEgfrBundle = evaluateClinicalScores({
+      ageYears: { source: { label: 'P', reference: 'Patient/p', versionId: '1' }, value: 90 },
+      confirmedDiagnoses: [],
+      serumCreatinine: { source: { label: 'L', reference: 'Observation/o', versionId: '1' }, value: { unit: 'mg/dL', value: 30 } },
+      sex: { source: { label: 'P', reference: 'Patient/p', versionId: '1' }, value: 'female' },
+    })
+    expect(subOneEgfrBundle.find(item => item.id === 'ckd-epi-2021-egfr')?.value).toBeLessThan(1)
+    expect(subOneEgfrBundle.find(item => item.id === 'ascvd-ldl-target')).toMatchObject({
+      status: 'complete',
+      tierCode: 'very-high',
+      value: 1.8,
+    })
   })
 })
 

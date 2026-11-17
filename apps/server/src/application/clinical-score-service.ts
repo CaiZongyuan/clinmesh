@@ -1317,7 +1317,7 @@ export class ClinicalScoreService {
     patientId: string,
     inpatient: InpatientService | undefined,
     caseId: string,
-  ): { source: ClinicalScoreSourceReference; value: boolean } {
+  ): { source?: ClinicalScoreSourceReference; value: boolean } {
     if (inpatient !== undefined) {
       const activeOrders = z.array(z.object({
         catalog_item_id: z.string(),
@@ -1374,10 +1374,7 @@ export class ClinicalScoreService {
       medParams.set('_cursor', page.nextCursor)
     }
 
-    return {
-      source: { label: '当前用药记录', reference: `Patient/${patientId}`, versionId: '1' },
-      value: false,
-    }
+    return { value: false }
   }
 
   #isAntihypertensiveCatalogItem(
