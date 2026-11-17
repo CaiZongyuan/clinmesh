@@ -88,6 +88,37 @@ const pciRequestFactsSchema = z.object({
   targetSite: z.string().nullable(),
 }).strict()
 
+const supplementaryIndicatorsSchema = z.object({
+  angiographySummary: z.object({
+    missingFfrMessages: z.array(z.string()),
+    sourceReference: z.string(),
+    summaryText: z.string(),
+    versionId: z.string(),
+  }).strict().nullable(),
+  ecgSummary: z.object({
+    conclusion: z.string(),
+    sourceReference: z.string(),
+    versionId: z.string(),
+  }).strict().nullable(),
+  hba1c: z.object({
+    sourceReference: z.string(),
+    valueText: z.string(),
+    versionId: z.string(),
+  }).strict().nullable(),
+  pciPlanSummary: z.object({
+    hasValidCandidate: z.boolean(),
+    missingItems: z.array(z.string()),
+    sourceReference: z.string(),
+    targetSite: z.string().nullable(),
+    versionId: z.string(),
+  }).strict().nullable(),
+  tteLvef: z.object({
+    lvefPct: z.number().finite(),
+    sourceReference: z.string(),
+    versionId: z.string(),
+  }).strict().nullable(),
+}).strict()
+
 const admissionTopicFactsSchema = z.object({
   request: z.null(),
   diagnosis: inpatientDiagnosisSchema,
@@ -95,6 +126,7 @@ const admissionTopicFactsSchema = z.object({
   angiographyReports: z.array(inpatientAngiographyReportSchema),
   scores: z.array(clinicalScoreResultSchema),
   riskAssessment: clinicalRiskAssessmentRecordSchema,
+  supplementaryIndicators: supplementaryIndicatorsSchema,
   activeMedicationOrders: z.array(inpatientOrderSchema.pick({
     id: true,
     catalogItemId: true,
@@ -288,6 +320,13 @@ export class InpatientGuidelineAdvice {
       inpatient: { actor: context, service: this.owner },
     })
     const { missingPatientInputs } = evaluateTopicPatientIndicators(topicId, scores, supplementary)
+    const supplementaryIndicators = {
+      angiographySummary: supplementary.angiographySummary ?? null,
+      ecgSummary: supplementary.ecgSummary ?? null,
+      hba1c: supplementary.hba1c ?? null,
+      pciPlanSummary: supplementary.pciPlanSummary ?? null,
+      tteLvef: supplementary.tteLvef ?? null,
+    }
     const angiographyReports = this.owner.angiography.reports(context, admissionId)
       .filter(report => report.status === 'final' || report.status === 'partial')
     const activeMedicationOrders = orders
@@ -313,6 +352,7 @@ export class InpatientGuidelineAdvice {
         diagnosisRevision: diagnosis.revision,
         population,
         scores: scores.scores,
+        supplementaryIndicators,
         topic: definition.fingerprint,
       }),
       clinicalFacts: {
@@ -322,6 +362,7 @@ export class InpatientGuidelineAdvice {
         angiographyReports,
         scores: scores.scores,
         riskAssessment: scores.riskAssessment,
+        supplementaryIndicators,
         activeMedicationOrders,
         latestVitalSigns,
       },
