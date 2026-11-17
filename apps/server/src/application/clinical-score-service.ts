@@ -52,6 +52,7 @@ const ANTIHYPERTENSIVE_CLASSES = new Set([
   'thiazide',
 ])
 const ANTIHYPERTENSIVE_TEXT_PATTERN = /氨氯地平|硝苯地平|非洛地平|培哚普利|依那普利|贝那普利|雷米普利|缬沙坦|氯沙坦|厄贝沙坦|替米沙坦|奥美沙坦|沙库巴曲缬沙坦|美托洛尔|比索洛尔|卡维地洛|呋塞米|托拉塞米|螺内酯|氢氯噻嗪|吲达帕胺|amlodipine|nifedipine|perindopril|valsartan|losartan|irbesartan|telmisartan|metoprolol|bisoprolol|carvedilol|furosemide|spironolactone|hydrochlorothiazide|indapamide/i
+const PURE_ANTIHYPERTENSIVE_TEXT_PATTERN = /氨氯地平|硝苯地平|非洛地平|拉西地平|氢氯噻嗪|吲达帕胺|amlodipine|nifedipine|felodipine|lacidipine|hydrochlorothiazide|indapamide|chlorthalidone/i
 
 const EMPTY_RISK_VALUES: ClinicalRiskAssessmentValues = Object.freeze({
   anginaEpisodes24h: null,
@@ -146,12 +147,28 @@ const procedureResourceSchema = z.object({
 }).loose()
 
 const medicationRequestResourceSchema = z.object({
+  authoredOn: z.string().optional(),
+  dosageInstruction: z.array(z.object({
+    timing: z.object({
+      repeat: z.object({
+        boundsDuration: z.object({
+          code: z.string().optional(),
+          unit: z.string().optional(),
+          value: z.number().finite().positive().optional(),
+        }).loose().optional(),
+      }).loose().optional(),
+    }).loose().optional(),
+  }).loose()).optional(),
   id: z.string().min(1),
   medication: z.object({
     concept: z.object({ coding: z.array(codingItemSchema).optional(), text: z.string().optional() }).loose().optional(),
     reference: z.object({ display: z.string().optional(), reference: z.string().optional() }).loose().optional(),
   }).loose().optional(),
   meta: z.object({ versionId: z.string().optional() }).loose().optional(),
+  reason: z.array(z.object({
+    concept: z.object({ coding: z.array(codingItemSchema).optional(), text: z.string().optional() }).loose().optional(),
+    reference: z.object({ reference: z.string().optional() }).loose().optional(),
+  }).loose()).optional(),
   status: z.string().optional(),
 }).loose()
 
@@ -989,7 +1006,14 @@ export class ClinicalScoreService {
 
     const labs = this.#extractLaboratoryAnalytes(context, options.caseId, options.legacyDiagnosticReportId)
     const history = this.#extractClinicalHistoryFlags(context, options.patientId, options.inpatient, options.caseId)
-    const onAntihypertensive = this.#extractAntihypertensiveFlag(context, options.patientId, options.inpatient, options.caseId)
+    const onAntihypertensive = this.#extractAntihypertensiveFlag(
+      context,
+      options.patientId,
+      options.inpatient,
+      options.caseId,
+      options.now,
+      history.hypertensionConditionRefs,
+    )
 
     const facts: ClinicalScoreObjectiveFacts = {
       ...(age === undefined ? {} : { ageYears: { source: patientRef, value: age } }),
@@ -1230,6 +1254,7 @@ export class ClinicalScoreService {
     let knownCad: ClinicalScoreObjectiveFacts['knownCoronaryRevascularizationOrStenosisGe50']
     let priorCoronaryRevascularization: ClinicalScoreObjectiveFacts['priorCoronaryRevascularization']
     const severeEventKeys = new Set<string>()
+    const hypertensionConditionRefs = new Set<string>()
     let firstSevereEventRef: ClinicalScoreSourceReference | undefined
 
     const conditionParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
@@ -1276,6 +1301,7 @@ export class ClinicalScoreService {
         }
         for (const code of conditionEffectiveCodes) {
           confirmedDiagnoses.push({ code, source: ref })
+          if (/^I1[0-5]/i.test(code)) hypertensionConditionRefs.add(ref.reference)
         }
         const isAcuteAcs = conditionEffectiveCodes.some(code => /^(?:I20\.0|I2[1-4])/i.test(code))
         const isPriorMi = conditionEffectiveCodes.some(code => /^I25\.2/i.test(code))
@@ -1361,6 +1387,7 @@ export class ClinicalScoreService {
 
     return {
       confirmedDiagnoses,
+      hypertensionConditionRefs,
       knownCoronaryRevascularizationOrStenosisGe50: knownCad,
       priorCoronaryRevascularization,
       severeAscvdEventCount:
@@ -1375,6 +1402,8 @@ export class ClinicalScoreService {
     patientId: string,
     inpatient: InpatientService | undefined,
     caseId: string,
+    nowIso: string,
+    hypertensionConditionRefs: ReadonlySet<string>,
   ): { source?: ClinicalScoreSourceReference; value: boolean } {
     if (inpatient !== undefined) {
       const activeOrders = z.array(z.object({
@@ -1387,11 +1416,11 @@ export class ClinicalScoreService {
           SELECT order_id, catalog_item_id, display, version
           FROM inpatient_order
           WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
-            AND kind = 'medication' AND state IN ('issued', 'verified')
+            AND kind = 'medication' AND state IN ('signed', 'verified')
         `).all(context.workspaceId, context.epoch, caseId),
       )
       for (const order of activeOrders) {
-        if (this.#isAntihypertensiveCatalogItem(context, order.catalog_item_id, order.display)) {
+        if (this.#isAntihypertensiveForHypertension(context, order.catalog_item_id, order.display, hypertensionConditionRefs.size > 0)) {
           return {
             source: {
               label: `在用医嘱 ${order.display}`,
@@ -1404,12 +1433,44 @@ export class ClinicalScoreService {
       }
     }
 
+    const nowMs = Date.parse(nowIso)
+    const withdrawnIds = new Set(
+      z.array(z.object({ medication_request_id: z.string() })).parse(
+        this.#database.driver.prepare(`
+          SELECT pi.medication_request_id
+          FROM prescription_item pi
+          JOIN prescription_withdrawal pw
+            ON pw.workspace_id = pi.workspace_id
+           AND pw.epoch = pi.epoch
+           AND pw.prescription_id = pi.prescription_id
+          WHERE pi.workspace_id = ? AND pi.epoch = ?
+        `).all(context.workspaceId, context.epoch),
+      ).map(row => row.medication_request_id),
+    )
+
     const medParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
     for (;;) {
       const page = this.#fhir.search(context, 'MedicationRequest', medParams)
       for (const raw of page.resources) {
         const parsed = medicationRequestResourceSchema.safeParse(raw)
         if (!parsed.success || parsed.data.status !== 'active') continue
+        if (withdrawnIds.has(parsed.data.id)) continue
+        if (parsed.data.authoredOn !== undefined && Number.isFinite(nowMs)) {
+          const authoredMs = Date.parse(parsed.data.authoredOn)
+          const bounds = parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
+          if (Number.isFinite(authoredMs) && bounds?.value !== undefined) {
+            const unit = (bounds.code ?? bounds.unit ?? 'd').toLowerCase()
+            const multiplierMs = unit.startsWith('h') ? 3_600_000 : unit.startsWith('w') ? 7 * 86_400_000 : 86_400_000
+            if (authoredMs + bounds.value * multiplierMs < nowMs) continue
+          }
+        }
+        const hasExplicitHtnReason = (parsed.data.reason ?? []).some(reason => {
+          const ref = reason.reference?.reference
+          if (ref !== undefined && hypertensionConditionRefs.has(ref)) return true
+          const codes = (reason.concept?.coding ?? []).map(c => c.code ?? '')
+          const text = [reason.concept?.text, ...(reason.concept?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
+          return codes.some(code => /^(?:I1[0-5]|38341003|59621000)/i.test(code)) || /高血压|hypertension/i.test(text)
+        })
         const medRef = parsed.data.medication?.reference?.reference
         const medId = medRef?.startsWith('Medication/') ? medRef.slice('Medication/'.length) : undefined
         const display = [
@@ -1417,7 +1478,7 @@ export class ClinicalScoreService {
           parsed.data.medication?.concept?.text,
           ...(parsed.data.medication?.concept?.coding ?? []).map(item => item.display),
         ].filter(Boolean).join(' ')
-        if (this.#isAntihypertensiveCatalogItem(context, medId, display)) {
+        if (this.#isAntihypertensiveForHypertension(context, medId, display, hasExplicitHtnReason)) {
           return {
             source: {
               label: `在用处方 ${display || parsed.data.id}`,
@@ -1435,14 +1496,22 @@ export class ClinicalScoreService {
     return { value: false }
   }
 
-  #isAntihypertensiveCatalogItem(
+  #isAntihypertensiveForHypertension(
     context: RepositoryContext,
     catalogItemId: string | undefined,
     display: string,
+    hasHypertensionIndication: boolean,
   ): boolean {
     if (catalogItemId !== undefined) {
       const safety = standardMedicationSafety(catalogItemId)
-      if (safety?.pharmacologyClasses.some(cls => ANTIHYPERTENSIVE_CLASSES.has(cls))) return true
+      if (safety !== undefined) {
+        if (!safety.pharmacologyClasses.some(cls => ANTIHYPERTENSIVE_CLASSES.has(cls))) return false
+        if (hasHypertensionIndication) return true
+        return (
+          safety.indicationPrefixes.length > 0
+          && safety.indicationPrefixes.every(prefix => /^I1[0-5]/i.test(prefix))
+        )
+      }
       const row = z.object({ config_json: z.string() }).optional().parse(
         this.#database.driver.prepare(`
           SELECT config_json FROM outpatient_catalog
@@ -1450,14 +1519,21 @@ export class ClinicalScoreService {
         `).get(context.workspaceId, context.epoch, catalogItemId),
       )
       if (row !== undefined) {
-        const classes = z.object({
-          safety: z.object({ pharmacologyClasses: z.array(z.string()).optional() }).loose().optional(),
+        const parsed = z.object({
+          safety: z.object({
+            indicationPrefixes: z.array(z.string()).optional(),
+            pharmacologyClasses: z.array(z.string()).optional(),
+          }).loose().optional(),
         }).loose().safeParse(JSON.parse(row.config_json))
-        if (classes.success && classes.data.safety?.pharmacologyClasses?.some(cls => ANTIHYPERTENSIVE_CLASSES.has(cls))) {
-          return true
+        if (parsed.success && parsed.data.safety?.pharmacologyClasses?.some(cls => ANTIHYPERTENSIVE_CLASSES.has(cls))) {
+          if (hasHypertensionIndication) return true
+          const prefixes = parsed.data.safety.indicationPrefixes ?? []
+          return prefixes.length > 0 && prefixes.every(prefix => /^I1[0-5]/i.test(prefix))
         }
       }
     }
-    return ANTIHYPERTENSIVE_TEXT_PATTERN.test(display)
+    return hasHypertensionIndication
+      ? ANTIHYPERTENSIVE_TEXT_PATTERN.test(display)
+      : PURE_ANTIHYPERTENSIVE_TEXT_PATTERN.test(display)
   }
 }

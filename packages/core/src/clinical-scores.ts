@@ -79,7 +79,7 @@ export function validateAdultAgeYears(ageYears: number): number {
 }
 
 export function validateWeightKg(weightKg: number): number {
-  return assertFiniteRange(weightKg, 20, 300, 'weightKg')
+  return assertFiniteRange(weightKg, 1, 400, 'weightKg')
 }
 
 export function validateHeartRateBpm(heartRateBpm: number): number {

@@ -324,13 +324,13 @@ interface VitalsFormState {
 
 function toVitalsForm(record: InpatientVitalSignsRecord | undefined): VitalsFormState {
   return {
-    diastolicMmHg: String(record?.bloodPressure.diastolicMmHg ?? 78),
+    diastolicMmHg: record === undefined ? '' : String(record.bloodPressure.diastolicMmHg),
     heightCm: record?.heightCm === undefined ? '' : String(record.heightCm),
-    oxygenSaturationPct: String(record?.oxygenSaturationPct ?? 98),
-    pulseBpm: String(record?.pulseBpm ?? 76),
-    respirationBpm: String(record?.respirationBpm ?? 18),
-    systolicMmHg: String(record?.bloodPressure.systolicMmHg ?? 126),
-    temperatureC: String(record?.temperatureC ?? 36.8),
+    oxygenSaturationPct: record === undefined ? '' : String(record.oxygenSaturationPct),
+    pulseBpm: record === undefined ? '' : String(record.pulseBpm),
+    respirationBpm: record === undefined ? '' : String(record.respirationBpm),
+    systolicMmHg: record === undefined ? '' : String(record.bloodPressure.systolicMmHg),
+    temperatureC: record === undefined ? '' : String(record.temperatureC),
     weightKg: record?.weightKg === undefined ? '' : String(record.weightKg),
   }
 }
@@ -363,9 +363,8 @@ export function InpatientVitalsAndScoresDisclosure({
   const [vitals, setVitals] = useState<VitalsFormState>(() => toVitalsForm(latestVitalSigns))
 
   useEffect(() => {
-    if (!latestVitalSigns) return
     setVitals(toVitalsForm(latestVitalSigns))
-  }, [latestVitalSigns?.revision])
+  }, [admissionId, latestVitalSigns?.revision])
 
   const scoresKey = [
     ...scope,
