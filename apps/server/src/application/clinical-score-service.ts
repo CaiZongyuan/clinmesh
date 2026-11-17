@@ -18,6 +18,7 @@ import type { GuidelineTopicBundle, GuidelineTopicId } from '@clinmesh/contracts
 import { inpatientFullClinicalResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { investigationResultContentSchema } from '@clinmesh/contracts/scenario'
 import {
+  calculateCkdEpi2021Egfr,
   evaluateClinicalScores,
   type ClinicalScoreObjectiveFacts,
 } from '@clinmesh/core/clinical-scores'
@@ -363,7 +364,7 @@ export class ClinicalScoreService {
     context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
     admissionId: string,
   ): InpatientVitalSignsRecord | undefined {
-    return this.#readInpatientVitalSignsByOrder(context, admissionId, 'ASC', true)
+    return this.#readInpatientVitalSignsByOrder(context, admissionId, 'ASC', 'weightKg')
   }
 
   latestInpatientVitalSigns(
@@ -373,13 +374,32 @@ export class ClinicalScoreService {
     return this.#readInpatientVitalSignsByOrder(context, admissionId, 'DESC')
   }
 
+  latestInpatientVitalSignsWithHeight(
+    context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
+    admissionId: string,
+  ): InpatientVitalSignsRecord | undefined {
+    return this.#readInpatientVitalSignsByOrder(context, admissionId, 'DESC', 'heightCm')
+  }
+
+  latestInpatientVitalSignsWithWeight(
+    context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
+    admissionId: string,
+  ): InpatientVitalSignsRecord | undefined {
+    return this.#readInpatientVitalSignsByOrder(context, admissionId, 'DESC', 'weightKg')
+  }
+
   #readInpatientVitalSignsByOrder(
     context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
     admissionId: string,
     direction: 'ASC' | 'DESC',
-    requireWeight = false,
+    requiredField?: 'weightKg' | 'heightCm',
   ): InpatientVitalSignsRecord | undefined {
-    const weightClause = requireWeight ? "AND json_extract(vital_json, '$.weightKg') IS NOT NULL" : ''
+    const weightClause =
+      requiredField === 'weightKg'
+        ? "AND json_extract(vital_json, '$.weightKg') IS NOT NULL"
+        : requiredField === 'heightCm'
+          ? "AND json_extract(vital_json, '$.heightCm') IS NOT NULL"
+          : ''
     const row = vitalSignsRowSchema.optional().parse(
       this.#database.driver.prepare(`
         SELECT revision, vital_json, observation_id, observation_version, provenance_id, recorded_at, recorded_by
@@ -789,14 +809,20 @@ export class ClinicalScoreService {
             ...(v.weightKg === undefined ? {} : { weightKg: v.weightKg }),
           }
     const initialWeightedVitals = this.initialInpatientVitalSignsWithWeight(context, admissionId)
+    const latestHeightVitals = this.latestInpatientVitalSignsWithHeight(context, admissionId)
+    const latestWeightVitals = this.latestInpatientVitalSignsWithWeight(context, admissionId)
     const admissionVitalSummary = toVitalSummary(initialVitals)
     const baselineWeightVitalSummary = toVitalSummary(initialWeightedVitals)
+    const latestHeightVitalSummary = toVitalSummary(latestHeightVitals)
+    const latestWeightVitalSummary = toVitalSummary(latestWeightVitals)
     const vitalSummary = toVitalSummary(latestVitals)
     const presentationIso = extractEncounterStartIso(encounter) ?? initialVitals?.recordedAt ?? now
     return this.#evaluateSnapshot(context, {
       admissionVitalSummary,
       baselineWeightVitalSummary,
       caseId: admissionId,
+      latestHeightVitalSummary,
+      latestWeightVitalSummary,
       encounterId: admissionId,
       encounterVersion: encounter.meta?.versionId ?? '1',
       inpatient,
@@ -1050,6 +1076,8 @@ export class ClinicalScoreService {
       encounterId: string
       encounterVersion: string
       inpatient: InpatientService | undefined
+      latestHeightVitalSummary?: ClinicalScoreVitalSummary | null
+      latestWeightVitalSummary?: ClinicalScoreVitalSummary | null
       legacyDiagnosticReportId: string | null
       now: string
       patientId: string
@@ -1102,8 +1130,46 @@ export class ClinicalScoreService {
           versionId: effectiveBaselineWeightVital.observationVersion,
         }
 
+    const effectiveLatestWeightVital = options.latestWeightVitalSummary ?? options.vitalSummary
+    const latestWeightRef: ClinicalScoreSourceReference | undefined =
+      effectiveLatestWeightVital == null
+        ? undefined
+        : {
+            label: '体重记录',
+            reference: `Observation/${effectiveLatestWeightVital.observationId}`,
+            versionId: effectiveLatestWeightVital.observationVersion,
+          }
+    const effectiveLatestHeightVital = options.latestHeightVitalSummary ?? options.vitalSummary
+    const latestHeightRef: ClinicalScoreSourceReference | undefined =
+      effectiveLatestHeightVital == null
+        ? undefined
+        : {
+            label: '身高记录',
+            reference: `Observation/${effectiveLatestHeightVital.observationId}`,
+            versionId: effectiveLatestHeightVital.observationVersion,
+          }
+
     const birthDateStr = typeof patient.birthDate === 'string' ? patient.birthDate : undefined
     const labs = this.#extractLaboratoryAnalytes(context, options.caseId, options.legacyDiagnosticReportId)
+    let ckdChronicity: {
+      ckdLt30Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
+      ckdLt60Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
+    } = {}
+    if (labs.serumCreatinine !== undefined && age !== undefined && age >= 18 && age <= 120 && sex !== undefined) {
+      let currentEgfr: number | undefined
+      try {
+        currentEgfr = calculateCkdEpi2021Egfr({
+          ageYears: age,
+          serumCreatinine: labs.serumCreatinine.value,
+          sex,
+        }).value
+      } catch {
+        currentEgfr = undefined
+      }
+      if (currentEgfr !== undefined && currentEgfr < 60) {
+        ckdChronicity = this.#extractPatientEgfrChronicity(context, options.patientId, birthDateStr, age, sex)
+      }
+    }
     const history = this.#extractClinicalHistoryFlags(context, options.patientId, birthDateStr, sex, options.inpatient, options.caseId)
     const onAntihypertensive = this.#extractAntihypertensiveFlag(
       context,
@@ -1140,10 +1206,17 @@ export class ClinicalScoreService {
             diastolicBpMmHg: { source: vitalRef, value: options.vitalSummary.bloodPressure.diastolicMmHg },
             heartRateBpm: { source: vitalRef, value: options.vitalSummary.pulseBpm },
             systolicBpMmHg: { source: vitalRef, value: options.vitalSummary.bloodPressure.systolicMmHg },
-            ...(options.vitalSummary.weightKg === undefined
-              ? {}
-              : { weightKg: { source: vitalRef, value: options.vitalSummary.weightKg } }),
           }),
+      ...(effectiveLatestHeightVital == null
+        || latestHeightRef === undefined
+        || effectiveLatestHeightVital.heightCm === undefined
+        ? {}
+        : { heightCm: { source: latestHeightRef, value: effectiveLatestHeightVital.heightCm } }),
+      ...(effectiveLatestWeightVital == null
+        || latestWeightRef === undefined
+        || effectiveLatestWeightVital.weightKg === undefined
+        ? {}
+        : { weightKg: { source: latestWeightRef, value: effectiveLatestWeightVital.weightKg } }),
       ...(effectiveBaselineWeightVital === null
         || baselineWeightRef === undefined
         || effectiveBaselineWeightVital.weightKg === undefined
@@ -1199,6 +1272,8 @@ export class ClinicalScoreService {
         : {}),
       antihypertensiveMedicationActive: onAntihypertensive,
       ...(history.cadOnsetAgeYears === undefined ? {} : { cadOnsetAgeYears: history.cadOnsetAgeYears }),
+      ...(ckdChronicity.ckdLt30Chronicity === undefined ? {} : { ckdLt30Chronicity: ckdChronicity.ckdLt30Chronicity }),
+      ...(ckdChronicity.ckdLt60Chronicity === undefined ? {} : { ckdLt60Chronicity: ckdChronicity.ckdLt60Chronicity }),
       confirmedDiagnoses: history.confirmedDiagnoses,
       ...(effectiveKnownStenosis === undefined
         ? {}
@@ -1218,6 +1293,143 @@ export class ClinicalScoreService {
       riskAssessment,
       scores: evaluateClinicalScores(facts),
       vitalSigns: options.vitalSummary,
+    }
+  }
+
+  #extractPatientEgfrChronicity(
+    context: RepositoryContext,
+    patientId: string,
+    birthDateStr: string | undefined,
+    fallbackAgeYears: number,
+    sex: 'male' | 'female',
+  ): {
+    ckdLt30Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
+    ckdLt60Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
+  } {
+    const supersededReports = new Set(
+      z.array(z.object({ revision_of_diagnostic_report_id: z.string() })).parse(
+        this.#database.driver.prepare(`
+          SELECT revision_of_diagnostic_report_id
+          FROM laboratory_report_revision
+          WHERE workspace_id = ? AND epoch = ?
+        `).all(context.workspaceId, context.epoch),
+      ).map(row => row.revision_of_diagnostic_report_id),
+    )
+    const excludedObsIds = new Set<string>()
+    const reportIssuedByObsId = new Map<string, string>()
+    const reportParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
+    for (;;) {
+      const page = this.#fhir.search(context, 'DiagnosticReport', reportParams)
+      for (const raw of page.resources) {
+        const parsed = diagnosticReportResourceSchema.safeParse(raw)
+        if (!parsed.success) continue
+        const isSupersededOrInvalid =
+          supersededReports.has(parsed.data.id)
+          || !['final', 'amended', 'corrected'].includes(parsed.data.status ?? '')
+        for (const ref of parsed.data.result ?? []) {
+          const obsId = ref.reference?.startsWith('Observation/') ? ref.reference.slice('Observation/'.length) : undefined
+          if (!obsId) continue
+          if (isSupersededOrInvalid) {
+            excludedObsIds.add(obsId)
+          } else if (parsed.data.issued) {
+            reportIssuedByObsId.set(obsId, parsed.data.issued)
+          }
+        }
+      }
+      if (page.nextCursor === undefined) break
+      reportParams.set('_cursor', page.nextCursor)
+    }
+
+    const hits: Array<{ egfr: number; source: ClinicalScoreSourceReference; timestampMs: number }> = []
+    const obsParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
+    for (;;) {
+      const page = this.#fhir.search(context, 'Observation', obsParams)
+      for (const raw of page.resources) {
+        const obs = observationResourceSchema.safeParse(raw)
+        if (!obs.success || excludedObsIds.has(obs.data.id)) continue
+        if (!['final', 'amended', 'corrected'].includes(obs.data.status ?? '')) continue
+        const codes = new Set(
+          (obs.data.code?.coding ?? [])
+            .map(item => item.code?.trim())
+            .filter((item): item is string => Boolean(item)),
+        )
+        const display = [
+          obs.data.code?.text,
+          ...(obs.data.code?.coding ?? []).map(item => item.display),
+        ].filter((item): item is string => Boolean(item)).join(' ')
+        const unit = obs.data.valueQuantity?.code ?? obs.data.valueQuantity?.unit
+        const quantity = obs.data.valueQuantity?.value
+        if (
+          quantity === undefined
+          || unit === undefined
+          || !(codes.has('1700404A') || codes.has('2160-0') || codes.has('14682-9') || /^(?:血?肌酐|血清肌酐)/i.test(display))
+        ) {
+          continue
+        }
+        const rawTs = obs.data.effectiveDateTime ?? reportIssuedByObsId.get(obs.data.id)
+        const tsMs = rawTs ? Date.parse(rawTs) : Number.NaN
+        if (!Number.isFinite(tsMs)) continue
+        const obsAge =
+          rawTs && birthDateStr
+            ? (completedAgeYears(birthDateStr, rawTs.slice(0, 10)) ?? fallbackAgeYears)
+            : fallbackAgeYears
+        if (obsAge < 18 || obsAge > 120) continue
+        try {
+          const egfr = calculateCkdEpi2021Egfr({
+            ageYears: obsAge,
+            serumCreatinine: { unit, value: quantity },
+            sex,
+          }).value
+          hits.push({
+            egfr,
+            source: {
+              label: obs.data.code?.coding?.[0]?.display ?? obs.data.code?.text ?? `检验 ${obs.data.id}`,
+              reference: `Observation/${obs.data.id}`,
+              versionId: obs.data.meta?.versionId ?? '1',
+            },
+            timestampMs: tsMs,
+          })
+        } catch {
+          // ignore malformed out-of-bounds historical value
+        }
+      }
+      if (page.nextCursor === undefined) break
+      obsParams.set('_cursor', page.nextCursor)
+    }
+
+    if (hits.length < 2) return {}
+    hits.sort((a, b) => a.timestampMs - b.timestampMs)
+    const latest = hits.at(-1)!
+    const NINETY_DAYS_MS = 90 * 86_400_000
+
+    const evaluateThreshold = (
+      threshold: number,
+    ): { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' } | undefined => {
+      if (latest.egfr >= threshold) return undefined
+      let lastAbove: (typeof hits)[number] | undefined
+      let streakStart = latest
+      for (let i = hits.length - 1; i >= 0; i--) {
+        const item = hits[i]!
+        if (item.egfr >= threshold) {
+          lastAbove = item
+          break
+        }
+        streakStart = item
+      }
+      if (lastAbove !== undefined && latest.timestampMs - lastAbove.timestampMs < NINETY_DAYS_MS) {
+        return { source: lastAbove.source, value: 'excluded' }
+      }
+      if (latest.timestampMs - streakStart.timestampMs >= NINETY_DAYS_MS) {
+        return { source: streakStart.source, value: 'confirmed' }
+      }
+      return undefined
+    }
+
+    const ckdLt60Chronicity = evaluateThreshold(60)
+    const ckdLt30Chronicity = evaluateThreshold(30)
+    return {
+      ...(ckdLt30Chronicity === undefined ? {} : { ckdLt30Chronicity }),
+      ...(ckdLt60Chronicity === undefined ? {} : { ckdLt60Chronicity }),
     }
   }
 
@@ -1598,6 +1810,24 @@ export class ClinicalScoreService {
         if (!codes.some(code => /^[A-Z]\d/i.test(code))) {
           if (codes.includes('44054006') || codes.includes('73211009') || /糖尿病|diabetes/i.test(text)) {
             conditionEffectiveCodes.push('E11')
+          }
+          if (
+            codes.includes('709044004')
+            || (
+              /慢性肾脏病|慢性肾功能不全|慢性肾衰竭|糖尿病肾病|chronic kidney disease/i.test(text)
+              && !/(?:无|否认|排除|非)\s*(?:慢性肾|糖尿病肾|chronic kidney)/i.test(text)
+            )
+          ) {
+            conditionEffectiveCodes.push('N18')
+          }
+          if (
+            codes.includes('14669001')
+            || (
+              /急性肾损伤|急性肾衰竭|acute kidney (?:injury|failure)/i.test(text)
+              && !/(?:无|否认|排除|非)\s*(?:急性肾|acute kidney)/i.test(text)
+            )
+          ) {
+            conditionEffectiveCodes.push('N17')
           }
           if (codes.includes('38341003') || codes.includes('59621000') || /高血压|hypertension/i.test(text)) {
             conditionEffectiveCodes.push('I10')

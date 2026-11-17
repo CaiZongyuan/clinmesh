@@ -417,16 +417,18 @@ describe('six deterministic clinical score formulas', () => {
       status: 'incomplete',
     })
 
-    // 21-cell matrix: hypertensive 52yo male (1 factor) + LDL-C 3.1 (band 1) -> moderate (<2.6 mmol/L)
+    // 21-cell matrix: hypertensive 52yo male (1 factor) + LDL-C 3.1 (band 1) with <2 lifetime factors -> moderate (<2.6 mmol/L)
     const primaryModerateHtn = calculateAscvdLdlTarget({
       ageYears: 52,
       confirmedDiagnosisCodes: ['I10'],
+      diastolicBpMmHg: 86,
       egfrMlMin173m2: 86,
       hdlCholesterol: { unit: 'mmol/L', value: 1.2 },
       ldlCholesterol: { unit: 'mmol/L', value: 3.1 },
       sex: 'male',
       smokingStatus: 'never',
       systolicBpMmHg: 146,
+      totalCholesterol: { unit: 'mmol/L', value: 4.5 },
     })
     expect(primaryModerateHtn).toMatchObject({
       status: 'complete',
@@ -439,12 +441,14 @@ describe('six deterministic clinical score formulas', () => {
       calculateAscvdLdlTarget({
         ageYears: 50,
         confirmedDiagnosisCodes: ['I10'],
+        diastolicBpMmHg: 84,
         egfrMlMin173m2: 88,
         hdlCholesterol: { unit: 'mmol/L', value: 1.2 },
         ldlCholesterol: { unit: 'mmol/L', value: 2.5 },
         sex: 'male',
         smokingStatus: 'never',
         systolicBpMmHg: 144,
+        totalCholesterol: { unit: 'mmol/L', value: 4.2 },
       }),
     ).toMatchObject({
       status: 'complete',
@@ -452,9 +456,9 @@ describe('six deterministic clinical score formulas', () => {
       value: 2.6,
     })
 
-    // 21-cell matrix: non-hypertensive 50yo male smoker with HDL-C 0.8 (3 factors) + LDL-C 4.0 (band 2) -> moderate (<2.6 mmol/L)
+    // 21-cell matrix at age >=55 (no lifetime upgrade): non-hypertensive 58yo male smoker with HDL-C 0.8 (3 factors) + LDL-C 4.0 -> moderate (<2.6)
     const primaryModerateNoHtn = calculateAscvdLdlTarget({
-      ageYears: 50,
+      ageYears: 58,
       confirmedDiagnosisCodes: [],
       diastolicBpMmHg: 78,
       egfrMlMin173m2: 92,
@@ -468,6 +472,43 @@ describe('six deterministic clinical score formulas', () => {
       status: 'complete',
       tierCode: 'moderate',
       value: 2.6,
+    })
+
+    // Lifetime-risk upgrade (<55 yo with 10-year moderate + >=2 lifetime factors, e.g. SBP >=160 + smoking) -> high (<2.6 mmol/L)
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 50,
+        confirmedDiagnosisCodes: ['I10'],
+        diastolicBpMmHg: 92,
+        egfrMlMin173m2: 88,
+        hdlCholesterol: { unit: 'mmol/L', value: 1.2 },
+        ldlCholesterol: { unit: 'mmol/L', value: 2.1 },
+        sex: 'male',
+        smokingStatus: 'current',
+        systolicBpMmHg: 165,
+      }),
+    ).toMatchObject({
+      status: 'complete',
+      tierCode: 'high',
+      value: 2.6,
+    })
+
+    // Lifetime-risk incomplete gate: <55 yo with 10-year moderate, 1 known lifetime factor (smoking), and missing BMI/TC -> incomplete
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 50,
+        confirmedDiagnosisCodes: ['I10'],
+        diastolicBpMmHg: 88,
+        egfrMlMin173m2: 88,
+        hdlCholesterol: { unit: 'mmol/L', value: 1.2 },
+        ldlCholesterol: { unit: 'mmol/L', value: 2.1 },
+        sex: 'male',
+        smokingStatus: 'current',
+        systolicBpMmHg: 148,
+      }),
+    ).toEqual({
+      missingInputs: ['totalCholesterol', 'weightKg', 'heightCm'],
+      status: 'incomplete',
     })
 
     // Isolated diastolic hypertension (130/95 mmHg, DBP >= 90) places patient in hypertensive matrix row: 2 factors + LDL-C 2.8 -> high (<2.6 mmol/L)
@@ -518,6 +559,7 @@ describe('six deterministic clinical score formulas', () => {
       sex: 'male',
       smokingStatus: 'never',
       systolicBpMmHg: 120,
+      totalCholesterol: { unit: 'mmol/L', value: 3.8 },
     })
     expect(youngDiabetic).toMatchObject({
       status: 'complete',
@@ -525,10 +567,47 @@ describe('six deterministic clinical score formulas', () => {
       value: 2.6,
     })
 
-    // Sub-1 eGFR (e.g. 90yo woman with creatinine 30 mg/dL -> eGFR 0.9) does not throw in LDL target evaluation
+    // Single low eGFR caused by AKI (N17.9) without CKD diagnosis does NOT classify patient into CKD very-high/high tiers
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 38,
+        confirmedDiagnosisCodes: ['N17.9'],
+        diastolicBpMmHg: 74,
+        egfrMlMin173m2: 24,
+        hdlCholesterol: { unit: 'mmol/L', value: 1.4 },
+        ldlCholesterol: { unit: 'mmol/L', value: 2.6 },
+        sex: 'female',
+        smokingStatus: 'never',
+        systolicBpMmHg: 118,
+      }),
+    ).toMatchObject({
+      status: 'complete',
+      tierCode: 'low',
+      value: 3.4,
+    })
+
+    // Single low eGFR without CKD/AKI diagnosis or >=3-month longitudinal evidence stays incomplete (requests ckdChronicity)
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 38,
+        confirmedDiagnosisCodes: [],
+        diastolicBpMmHg: 74,
+        egfrMlMin173m2: 24,
+        hdlCholesterol: { unit: 'mmol/L', value: 1.4 },
+        ldlCholesterol: { unit: 'mmol/L', value: 2.6 },
+        sex: 'female',
+        smokingStatus: 'never',
+        systolicBpMmHg: 118,
+      }),
+    ).toEqual({
+      missingInputs: ['ckdChronicity'],
+      status: 'incomplete',
+    })
+
+    // Sub-1 eGFR (e.g. 90yo woman with confirmed N18.5 and creatinine 30 mg/dL -> eGFR 0.9) does not throw in LDL target evaluation
     const subOneEgfrBundle = evaluateClinicalScores({
       ageYears: { source: { label: 'P', reference: 'Patient/p', versionId: '1' }, value: 90 },
-      confirmedDiagnoses: [],
+      confirmedDiagnoses: [{ code: 'N18.5', source: { label: 'C', reference: 'Condition/c', versionId: '1' } }],
       serumCreatinine: { source: { label: 'L', reference: 'Observation/o', versionId: '1' }, value: { unit: 'mg/dL', value: 30 } },
       sex: { source: { label: 'P', reference: 'Patient/p', versionId: '1' }, value: 'female' },
     })
