@@ -188,6 +188,24 @@ describe('ClinicalScoresPanel disclosures', () => {
     await waitFor(() => {
       expect(calls.filter(call => call.method === 'GET').length).toBeGreaterThan(getCountBefore)
     })
+
+    // Switching directly between two cached cases with identical revision (both 0) must reset unsaved/prior case form values
+    fireEvent.change(screen.getByLabelText('Killip 分级'), { target: { value: 'IV' } })
+    expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).value).toBe('IV')
+    rerender(
+      <QueryClientProvider client={client}>
+        <OutpatientClinicalScoresDisclosure
+          caseId="case-2"
+          clinicalRevision="rev-1"
+          encounterId="enc-2"
+          encounterVersion="1"
+          locale="zh-CN"
+          readOnly={false}
+          scope="scope-1"
+        />
+      </QueryClientProvider>,
+    )
+    expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).value).toBe('')
   })
 
   it('records inpatient nursing vital signs and risk assessment via InpatientVitalsAndScoresDisclosure and localizes PatientVitals weight/height', async () => {

@@ -257,14 +257,29 @@ describe('six deterministic clinical score formulas', () => {
     ).toMatchObject({ tierCode: 'high' })
   })
 
-  it('stratifies ASCVD LDL-C target for secondary prevention, DM+CKD, and primary prevention smoking requirement', () => {
-    // ACS secondary prevention -> ultra-high (<1.4 mmol/L) + goal attainment check
-    const acs = calculateAscvdLdlTarget({
+  it('stratifies ASCVD LDL-C target per 2023 Chinese lipid guideline ultra-high criteria and 21-cell primary matrix', () => {
+    // First uncomplicated ACS without >=2 high-risk factors -> very-high (<1.8 mmol/L), NOT overclassified as ultra-high
+    const firstUncomplicatedAcs = calculateAscvdLdlTarget({
       ageYears: 62,
       confirmedDiagnosisCodes: ['I21.4'],
       ldlCholesterol: { unit: 'mg/dL', value: 77.34 },
+      sex: 'male',
     })
-    expect(acs).toMatchObject({
+    expect(firstUncomplicatedAcs).toMatchObject({
+      ldlGoalEvaluation: { atGoal: false, currentLdlMmolL: 2, targetLdlMmolL: 1.8 },
+      status: 'complete',
+      tierCode: 'very-high',
+      value: 1.8,
+    })
+
+    // ACS + >=2 high-risk factors (diabetes + hypertension) OR >=2 severe events -> ultra-high (<1.4 mmol/L)
+    const ultraHighAcs = calculateAscvdLdlTarget({
+      ageYears: 62,
+      confirmedDiagnosisCodes: ['I21.4', 'E11.9', 'I10'],
+      ldlCholesterol: { unit: 'mg/dL', value: 77.34 },
+      sex: 'male',
+    })
+    expect(ultraHighAcs).toMatchObject({
       ldlGoalEvaluation: { atGoal: false, currentLdlMmolL: 2, targetLdlMmolL: 1.4 },
       status: 'complete',
       tierCode: 'ultra-high',
@@ -312,8 +327,8 @@ describe('six deterministic clinical score formulas', () => {
       status: 'incomplete',
     })
 
-    // Primary prevention with smoking recorded -> complete
-    const primaryComplete = calculateAscvdLdlTarget({
+    // 21-cell matrix: hypertensive 52yo male (1 factor) + LDL-C 3.1 (band 1) -> moderate (<2.6 mmol/L)
+    const primaryModerateHtn = calculateAscvdLdlTarget({
       ageYears: 52,
       confirmedDiagnosisCodes: ['I10'],
       egfrMlMin173m2: 86,
@@ -323,9 +338,43 @@ describe('six deterministic clinical score formulas', () => {
       smokingStatus: 'never',
       systolicBpMmHg: 146,
     })
-    expect(primaryComplete).toMatchObject({
+    expect(primaryModerateHtn).toMatchObject({
       status: 'complete',
-      tierCode: 'low-moderate',
+      tierCode: 'moderate',
+      value: 2.6,
+    })
+
+    // 21-cell matrix: non-hypertensive 50yo male smoker with HDL-C 0.8 (3 factors) + LDL-C 4.0 (band 2) -> moderate (<2.6 mmol/L)
+    const primaryModerateNoHtn = calculateAscvdLdlTarget({
+      ageYears: 50,
+      confirmedDiagnosisCodes: [],
+      egfrMlMin173m2: 92,
+      hdlCholesterol: { unit: 'mmol/L', value: 0.8 },
+      ldlCholesterol: { unit: 'mmol/L', value: 4.0 },
+      sex: 'male',
+      smokingStatus: 'current',
+      systolicBpMmHg: 122,
+    })
+    expect(primaryModerateNoHtn).toMatchObject({
+      status: 'complete',
+      tierCode: 'moderate',
+      value: 2.6,
+    })
+
+    // 21-cell matrix: non-hypertensive 38yo female non-smoker (0 factors) + LDL-C 3.0 -> low (<3.4 mmol/L)
+    const primaryLow = calculateAscvdLdlTarget({
+      ageYears: 38,
+      confirmedDiagnosisCodes: [],
+      egfrMlMin173m2: 98,
+      hdlCholesterol: { unit: 'mmol/L', value: 1.4 },
+      ldlCholesterol: { unit: 'mmol/L', value: 3.0 },
+      sex: 'female',
+      smokingStatus: 'never',
+      systolicBpMmHg: 118,
+    })
+    expect(primaryLow).toMatchObject({
+      status: 'complete',
+      tierCode: 'low',
       value: 3.4,
     })
   })

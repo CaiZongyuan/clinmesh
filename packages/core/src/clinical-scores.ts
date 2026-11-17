@@ -40,6 +40,7 @@ export interface ClinicalScoreObjectiveFacts {
   knownCoronaryRevascularizationOrStenosisGe50?: SourcedFact<boolean>
   ldlCholesterol?: SourcedFact<UnitQuantityInput>
   priorBleedingHistory?: SourcedFact<PriorBleedingHistory>
+  priorCoronaryRevascularization?: SourcedFact<boolean>
   serumCreatinine?: SourcedFact<UnitQuantityInput>
   sex?: SourcedFact<ClinicalSex>
   smokingStatus?: SourcedFact<SmokingStatus>
@@ -451,6 +452,7 @@ export function calculateAscvdLdlTarget(input: {
   hdlCholesterol?: UnitQuantityInput
   knownCoronaryRevascularization?: boolean
   ldlCholesterol?: UnitQuantityInput
+  priorCoronaryRevascularization?: boolean
   sex?: ClinicalSex
   smokingStatus?: SmokingStatus
   systolicBpMmHg?: number
@@ -459,7 +461,7 @@ export function calculateAscvdLdlTarget(input: {
   | {
       ldlGoalEvaluation?: LdlGoalEvaluation
       status: 'complete'
-      tierCode: 'ultra-high' | 'very-high' | 'high' | 'low-moderate'
+      tierCode: 'ultra-high' | 'very-high' | 'high' | 'moderate' | 'low'
       tierLabelEn: string
       tierLabelZh: string
       unit: 'mmol/L'
@@ -494,13 +496,51 @@ export function calculateAscvdLdlTarget(input: {
           targetLdlMmolL: target,
         }
 
-  const hasAscvd = hasConfirmedAscvdDiagnosis(input.confirmedDiagnosisCodes) || input.knownCoronaryRevascularization === true
+  const priorRevasc =
+    input.priorCoronaryRevascularization === true
+    || codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['Z95.1', 'Z95.5', 'Z98.61'])
+  const hasAscvd =
+    hasConfirmedAscvdDiagnosis(input.confirmedDiagnosisCodes)
+    || input.knownCoronaryRevascularization === true
+    || priorRevasc
   const hasAcs = codeMatchesPrefixes(input.confirmedDiagnosisCodes, ACS_ICD10_PREFIXES)
+  const hasPriorMi = codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['I25.2'])
+  const hasIschemicStroke = codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['I63'])
+  const hasPadWithRevascOrAmp =
+    codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['I70.2', 'I73.9'])
+    && codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['Z95.8', 'Z89'])
   const hasDiabetes = hasConfirmedDiabetesDiagnosis(input.confirmedDiagnosisCodes)
+  const hasConfirmedHtn =
+    hasConfirmedHypertensionDiagnosis(input.confirmedDiagnosisCodes) || input.antihypertensiveTreated === true
 
-  // 1. 已确诊 ASCVD 二级预防：ACS 或合并糖尿病/CKD G3b-G5 (eGFR < 45) 判定为超高危 (<1.4 mmol/L)，其余极高危 (<1.8 mmol/L)
+  // 1. 已确诊 ASCVD 二级预防：按《中国血脂管理指南（2023年）》仅在 ≥2 次严重 ASCVD 事件或 1 次严重事件合并 ≥2 个高风险因素时定为超高危 (<1.4 mmol/L)，其余为极高危 (<1.8 mmol/L)
   if (hasAscvd) {
-    if (hasAcs || hasDiabetes || (input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 < 45)) {
+    const severeEventCount =
+      (hasAcs ? 1 : 0)
+      + (hasPriorMi ? 1 : 0)
+      + (hasIschemicStroke ? 1 : 0)
+      + (hasPadWithRevascOrAmp ? 1 : 0)
+    const hasCad =
+      codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['I20', 'I21', 'I22', 'I23', 'I24', 'I25'])
+      || input.knownCoronaryRevascularization === true
+      || priorRevasc
+    const prematureCad =
+      hasCad && ((input.sex === 'male' && age < 55) || (input.sex === 'female' && age < 65))
+    const fhOrSevereLdl =
+      codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['E78.01'])
+      || (ldlMmolL !== undefined && ldlMmolL >= 4.9)
+    const ckdStage3To4 =
+      input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 >= 15 && input.egfrMlMin173m2 < 60
+    const highRiskFactorCount =
+      (prematureCad ? 1 : 0)
+      + (fhOrSevereLdl ? 1 : 0)
+      + (priorRevasc ? 1 : 0)
+      + (hasDiabetes ? 1 : 0)
+      + (hasConfirmedHtn ? 1 : 0)
+      + (ckdStage3To4 ? 1 : 0)
+      + (input.smokingStatus === 'current' ? 1 : 0)
+
+    if (severeEventCount >= 2 || (severeEventCount === 1 && highRiskFactorCount >= 2)) {
       const goal = evaluateGoal(1.4)
       return {
         ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
@@ -511,9 +551,6 @@ export function calculateAscvdLdlTarget(input: {
         unit: 'mmol/L',
         value: 1.4,
       }
-    }
-    if (input.egfrMlMin173m2 === undefined) {
-      return { missingInputs: ['serumCreatinine'], status: 'incomplete' }
     }
     const goal = evaluateGoal(1.8)
     return {
@@ -589,7 +626,7 @@ export function calculateAscvdLdlTarget(input: {
     }
   }
 
-  // 3. 低中危一级预防：严禁缺项默认阴性，必须具备吸烟状态、血压、血脂与肾功客观指标
+  // 3. 21 种组合一级预防矩阵：严禁缺项默认阴性，必须具备性别、肾功、血压、血脂与吸烟状态
   const missing: ClinicalScoreMissingInput[] = []
   if (input.sex === undefined) missing.push('sex')
   if (input.egfrMlMin173m2 === undefined) missing.push('serumCreatinine')
@@ -601,17 +638,32 @@ export function calculateAscvdLdlTarget(input: {
     return { missingInputs: missing, status: 'incomplete' }
   }
 
-  const hasHypertension =
-    hasConfirmedHypertensionDiagnosis(input.confirmedDiagnosisCodes)
-    || input.antihypertensiveTreated === true
-    || (input.systolicBpMmHg ?? 0) >= 140
+  const hasHypertension = hasConfirmedHtn || (input.systolicBpMmHg ?? 0) >= 140
   const ageFactor = input.sex === 'male' ? age >= 45 : age >= 55
   const riskFactors =
     (ageFactor ? 1 : 0)
     + (input.smokingStatus === 'current' ? 1 : 0)
     + ((hdlMmolL ?? 99) < 1.0 ? 1 : 0)
 
-  if (hasHypertension && riskFactors >= 2) {
+  const ldlBand = ldlMmolL === undefined ? -1 : ldlMmolL >= 3.4 ? 2 : ldlMmolL >= 2.6 ? 1 : ldlMmolL >= 1.8 ? 0 : -1
+  const tcBand = tcMmolL === undefined ? -1 : tcMmolL >= 5.2 ? 2 : tcMmolL >= 4.1 ? 1 : tcMmolL >= 3.1 ? 0 : -1
+  const band = Math.max(ldlBand, tcBand)
+
+  let primaryTier: 'low' | 'moderate' | 'high'
+  if (band < 0) {
+    primaryTier = hasHypertension && riskFactors >= 3 ? 'high' : hasHypertension && riskFactors === 2 ? 'moderate' : 'low'
+  } else if (!hasHypertension) {
+    if (riskFactors <= 1) primaryTier = 'low'
+    else if (riskFactors === 2) primaryTier = band === 2 ? 'moderate' : 'low'
+    else primaryTier = band >= 1 ? 'moderate' : 'low'
+  } else {
+    if (riskFactors === 0) primaryTier = 'low'
+    else if (riskFactors === 1) primaryTier = band >= 1 ? 'moderate' : 'low'
+    else if (riskFactors === 2) primaryTier = band === 0 ? 'moderate' : 'high'
+    else primaryTier = 'high'
+  }
+
+  if (primaryTier === 'high') {
     const goal = evaluateGoal(2.6)
     return {
       ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
@@ -623,14 +675,26 @@ export function calculateAscvdLdlTarget(input: {
       value: 2.6,
     }
   }
+  if (primaryTier === 'moderate') {
+    const goal = evaluateGoal(2.6)
+    return {
+      ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
+      status: 'complete',
+      tierCode: 'moderate',
+      tierLabelEn: 'Moderate risk (<2.6 mmol/L)',
+      tierLabelZh: '中危（目标 <2.6 mmol/L）',
+      unit: 'mmol/L',
+      value: 2.6,
+    }
+  }
 
   const goal = evaluateGoal(3.4)
   return {
     ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
     status: 'complete',
-    tierCode: 'low-moderate',
-    tierLabelEn: 'Low-to-moderate risk (<3.4 mmol/L)',
-    tierLabelZh: '低/中危（目标 <3.4 mmol/L）',
+    tierCode: 'low',
+    tierLabelEn: 'Low risk (<3.4 mmol/L)',
+    tierLabelZh: '低危（目标 <3.4 mmol/L）',
     unit: 'mmol/L',
     value: 3.4,
   }
@@ -1052,6 +1116,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
       sex?.source,
       ...facts.confirmedDiagnoses.map(item => item.source),
       facts.knownCoronaryRevascularizationOrStenosisGe50?.source,
+      facts.priorCoronaryRevascularization?.source,
       scrValid?.source,
       systolicBpMmHg?.source,
       facts.antihypertensiveMedicationActive?.source,
@@ -1075,6 +1140,9 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
           ? {}
           : { knownCoronaryRevascularization: facts.knownCoronaryRevascularizationOrStenosisGe50.value }),
         ...(ldlValid === undefined ? {} : { ldlCholesterol: ldlValid.value }),
+        ...(facts.priorCoronaryRevascularization === undefined
+          ? {}
+          : { priorCoronaryRevascularization: facts.priorCoronaryRevascularization.value }),
         ...(sex === undefined ? {} : { sex: sex.value }),
         ...(facts.smokingStatus === undefined ? {} : { smokingStatus: facts.smokingStatus.value }),
         ...(systolicBpMmHg === undefined ? {} : { systolicBpMmHg: systolicBpMmHg.value }),
