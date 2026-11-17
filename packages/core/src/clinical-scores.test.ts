@@ -375,6 +375,21 @@ describe('six deterministic clinical score formulas', () => {
       value: 1.8,
     })
 
+    // Boundary conversion (69.57 mg/dL -> 1.799... rounds to 1.8 mmol/L) compares at displayed precision so 1.8 is not marked <1.8 atGoal
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 64,
+        confirmedDiagnosisCodes: ['I25.1'],
+        egfrMlMin173m2: 72,
+        ldlCholesterol: { unit: 'mg/dL', value: 69.57 },
+      }),
+    ).toMatchObject({
+      ldlGoalEvaluation: { atGoal: false, currentLdlMmolL: 1.8, targetLdlMmolL: 1.8 },
+      status: 'complete',
+      tierCode: 'very-high',
+      value: 1.8,
+    })
+
     // Diabetes + CKD (eGFR < 60) -> very-high (<1.8 mmol/L) without requiring smoking status
     const dmCkd = calculateAscvdLdlTarget({
       ageYears: 58,

@@ -506,14 +506,15 @@ export function calculateAscvdLdlTarget(input: {
   if (input.diastolicBpMmHg !== undefined) validateDiastolicBpMmHg(input.diastolicBpMmHg)
   if (input.egfrMlMin173m2 !== undefined) assertFiniteRange(input.egfrMlMin173m2, 0, 500, 'egfrMlMin173m2')
 
-  const evaluateGoal = (target: number): LdlGoalEvaluation | undefined =>
-    ldlMmolL === undefined
-      ? undefined
-      : {
-          atGoal: ldlMmolL < target,
-          currentLdlMmolL: roundTwoDecimals(ldlMmolL),
-          targetLdlMmolL: target,
-        }
+  const evaluateGoal = (target: number): LdlGoalEvaluation | undefined => {
+    if (ldlMmolL === undefined) return undefined
+    const currentLdlMmolL = roundTwoDecimals(ldlMmolL)
+    return {
+      atGoal: currentLdlMmolL < target,
+      currentLdlMmolL,
+      targetLdlMmolL: target,
+    }
+  }
 
   const priorRevasc =
     input.priorCoronaryRevascularization === true
