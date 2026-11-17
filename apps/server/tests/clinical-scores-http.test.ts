@@ -1304,5 +1304,88 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       missingInputs: expect.arrayContaining(['ldlCholesterol']),
       status: 'incomplete',
     })
+
+    // Inconclusive rhythm-only presentation ECG at 2026-08-24T09:15 on recCase is NOT overridden by a later serial ECG at 12:00 showing ST depression
+    const laterSerialEcgDr = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      code: { text: '复查 12 导联心电图' },
+      conclusion: 'V2-V4 导联 ST 段压低 0.15 mV。',
+      encounter: { reference: `Encounter/${recReg.encounterId}` },
+      id: uuidv7(),
+      issued: '2026-08-24T12:00:00+08:00',
+      resourceType: 'DiagnosticReport',
+      status: 'final',
+      subject: { reference: `Patient/${recurrentPatient.id}` },
+    })
+    const laterSerialEcgReqId = uuidv7()
+    fixture.runtime.database.driver.prepare(`
+      INSERT INTO laboratory_request (
+        workspace_id, epoch, request_id, case_id, request_kind, catalog_item_id,
+        indication_code, service_snapshot_json, service_request_id, execution_task_id,
+        diagnostic_report_id, status, version, authored_by, authored_at, reported_at
+      ) VALUES (?, ?, ?, ?, 'examination', 'examination-ecg-12-lead', 'clinical-evaluation', '{}', ?, ?, ?, 'reported', 1, 'actor-test', '2026-08-24T11:55:00+08:00', '2026-08-24T12:00:00+08:00')
+    `).run(scenario.workspaceId, scenario.epoch, laterSerialEcgReqId, recCase.caseId, uuidv7(), uuidv7(), laterSerialEcgDr.id)
+    fixture.runtime.database.driver.prepare(`
+      INSERT INTO examination_request_detail (workspace_id, epoch, request_id, exam_code, indication)
+      VALUES (?, ?, ?, 'ecg-12-lead', '动态复查')
+    `).run(scenario.workspaceId, scenario.epoch, laterSerialEcgReqId)
+    fixture.runtime.database.driver.prepare(`
+      INSERT INTO examination_report_content (
+        workspace_id, epoch, diagnostic_report_id, request_id, case_id, content_json, issued_at
+      ) VALUES (?, ?, ?, ?, ?, ?, '2026-08-24T12:00:00+08:00')
+    `).run(scenario.workspaceId, scenario.epoch, laterSerialEcgDr.id, laterSerialEcgReqId, recCase.caseId, JSON.stringify({
+      conclusion: 'V2-V4 导联 ST 段压低 0.15 mV。',
+      results: [{ code: 'st-t-anterior', display: '前壁导联', value: 'V2-V4 ST 段压低 0.15 mV' }],
+    }))
+    const recAfterLaterEcg = await fixture.read('doctor', `/api/his/v1/doctor/cases/${recCase.caseId}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(recAfterLaterEcg.riskAssessment.effectiveStSegmentDeviation).toBeNull()
+
+    // Stopped inpatient statin order whose final administered dose was Jan 1 (formally stopped Feb 1) finishes 28d washout on Jan 29 so Jan 31 LDL-C is untreated
+    fixture.runtime.database.driver.prepare(`
+      UPDATE inpatient_order SET state = 'stopped', stopped_at = '2026-02-01T10:00:00+08:00' WHERE order_id = ?
+    `).run(outOfOrderId)
+    fixture.runtime.database.driver.prepare(`DELETE FROM inpatient_execution WHERE order_id = ?`).run(outOfOrderId)
+    const jan1Admin = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      encounter: { reference: `Encounter/${outOfOrderStay.admissionId}` },
+      id: uuidv7(),
+      medication: { reference: { reference: 'Medication/medication-pci-atorvastatin' } },
+      occurenceDateTime: '2026-01-01T10:00:00+08:00',
+      recorded: '2026-01-01T10:00:00+08:00',
+      request: { reference: `MedicationRequest/${outOfOrderId}` },
+      resourceType: 'MedicationAdministration',
+      status: 'completed',
+      subject: { reference: `Patient/${outOfOrderStay.patientId}` },
+    })
+    fixture.runtime.database.driver.prepare(`
+      INSERT INTO inpatient_execution (workspace_id, epoch, execution_id, order_id, scheduled_for, status, version, administration_id)
+      VALUES (?, ?, ?, ?, '2026-01-01T10:00:00+08:00', 'completed', 2, ?)
+    `).run(scenario.workspaceId, scenario.epoch, uuidv7(), outOfOrderId, jan1Admin.id)
+    insertSyntheticLabReport(fixture, {
+      caseId: outOfOrderStay.admissionId,
+      encounterId: outOfOrderStay.admissionId,
+      epoch: scenario.epoch,
+      issuedAt: '2026-01-31T09:00:00+08:00',
+      patientId: outOfOrderStay.patientId,
+      results: [
+        { code: '2000404A', display: '低密度脂蛋白胆固醇', high: 3.4, unit: 'mmol/L', value: 5.0 },
+      ],
+      workspaceId: scenario.workspaceId,
+    })
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authoredOn: '2026-08-10T09:00:00+08:00',
+      dosageInstruction: [{ timing: { repeat: { boundsDuration: { code: 'mo', system: 'http://unitsofmeasure.org', unit: 'mo', value: 3 } } } }],
+      id: uuidv7(),
+      intent: 'order',
+      medication: { concept: { text: '瑞舒伐他汀钙片 10mg' } },
+      resourceType: 'MedicationRequest',
+      status: 'active',
+      subject: { reference: `Patient/${outOfOrderStay.patientId}` },
+    })
+    const afterFinalDoseWashout = await fixture.read('inpatient-doctor', `${outOfOrderStay.path}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(afterFinalDoseWashout.scores.find(s => s.id === 'ascvd-ldl-target')).toMatchObject({
+      ldlGoalEvaluation: { atGoal: true, currentLdlMmolL: 2.0, targetLdlMmolL: 2.6 },
+      status: 'complete',
+      tierCode: 'high',
+      value: 2.6,
+    })
   }, 120_000)
 })

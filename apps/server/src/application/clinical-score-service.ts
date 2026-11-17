@@ -1137,6 +1137,8 @@ export class ClinicalScoreService {
           versionId,
         }
       }
+      // Restrict ST-segment ECG resolution strictly to the earliest valid presentation 12-lead ECG
+      break
     }
 
     if (values.stSegmentDeviation !== null && bedsideObservation !== null) {
@@ -2768,9 +2770,7 @@ export class ClinicalScoreService {
         }
       }
       const parsedStop = order.stopped_at ? Date.parse(order.stopped_at) : Number.NaN
-      const terminalMs = Number.isFinite(parsedStop)
-        ? (maxDoseEndMs !== undefined && maxDoseEndMs > parsedStop ? maxDoseEndMs : parsedStop)
-        : (order.state === 'completed' && maxDoseEndMs !== undefined ? maxDoseEndMs : Number.NaN)
+      const terminalMs = maxDoseEndMs !== undefined ? maxDoseEndMs : parsedStop
       const endMs =
         (order.state === 'stopped' || order.state === 'completed') && Number.isFinite(terminalMs)
           ? terminalMs + LIPID_WASHOUT_MS
