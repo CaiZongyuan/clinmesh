@@ -105,13 +105,29 @@ export const inpatientGuidelineAdviceReadQuerySchema = z.object({
   topicId: guidelineTopicIdSchema.optional(),
 }).strict()
 
-export const inpatientGuidelineAdviceRequestInputSchema = z.object({
-  admissionId: id,
-  topicId: guidelineTopicIdSchema.optional(),
-  requestId: id.nullable().optional(),
+const pciPlanGuidelineAdviceRequestBodySchema = z.object({
+  topicId: z.literal('pci-stent').optional(),
+  requestId: id,
   expectedVersion: z.number().int().nonnegative(),
   expectedFingerprint: fingerprint,
 }).strict()
+
+const admissionTopicGuidelineAdviceRequestBodySchema = z.object({
+  topicId: guidelineTopicIdSchema,
+  requestId: z.null().optional(),
+  expectedVersion: z.number().int().nonnegative(),
+  expectedFingerprint: fingerprint,
+}).strict()
+
+export const inpatientGuidelineAdviceRequestBodySchema = z.union([
+  pciPlanGuidelineAdviceRequestBodySchema,
+  admissionTopicGuidelineAdviceRequestBodySchema,
+])
+
+export const inpatientGuidelineAdviceRequestInputSchema = z.union([
+  pciPlanGuidelineAdviceRequestBodySchema.extend({ admissionId: id }).strict(),
+  admissionTopicGuidelineAdviceRequestBodySchema.extend({ admissionId: id }).strict(),
+])
 
 export const inpatientGuidelineAdviceResponseSchema = commandResponseSchema(inpatientGuidelineAdviceSchema)
 export type InpatientGuidelineAdvice = z.infer<typeof inpatientGuidelineAdviceSchema>

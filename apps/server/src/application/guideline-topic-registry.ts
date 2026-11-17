@@ -1139,12 +1139,16 @@ export function extractSupplementaryIndicators(options: {
     const lastMs = chrono.at(-1)!.timestampMs
     const hasValidRepeatInterval =
       chrono.length >= 2 && firstMs !== undefined && lastMs !== undefined && lastMs - firstMs >= 60 * 60 * 1000
-    const serialComplete = anyElevated || hasValidRepeatInterval
+    const serialComplete = hasValidRepeatInterval
     const missingMessage = serialComplete
       ? null
       : chrono.length < 2
-        ? '当前仅有单次阴性肌钙蛋白记录，尚未完成动态复测（如 1–3h 复查 cTn/hs-cTn），单次阴性不能排除 NSTE-ACS。'
-        : '已记录多次阴性肌钙蛋白但采样间隔不足 1 小时（或缺少有效时间），尚未满足动态复测排除条件。'
+        ? (
+            anyElevated
+              ? '当前仅有单次升高肌钙蛋白记录，尚未完成动态复测（如 1–3h 复查 cTn/hs-cTn 评估升降变化幅度）。'
+              : '当前仅有单次阴性肌钙蛋白记录，尚未完成动态复测（如 1–3h 复查 cTn/hs-cTn），单次阴性不能排除 NSTE-ACS。'
+          )
+        : '已记录多次肌钙蛋白但采样间隔不足 1 小时（或缺少有效时间），尚未满足动态复测条件。'
     const latest = chrono.at(-1)!
     troponinSeries = {
       anyElevated,
