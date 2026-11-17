@@ -1157,4 +1157,24 @@ it('无 PCI 手术申请的内科住院可按专题完成术前水化、FFR > 0.
       ],
     },
   })
+
+  // Future T2DM Condition recorded days AFTER medicalStay departed must NOT retroactively populate medicalStay's archived topic read
+  const depScenario = await s.fixture.read('admin', '/api/sim/v1/scenario-runs/current', z.object({ epoch: z.string(), workspaceId: z.string() }))
+  s.fixture.runtime.fhir.create({ epoch: depScenario.epoch, workspaceId: depScenario.workspaceId }, {
+    clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
+    code: { coding: [{ code: 'E11.9', display: '2型糖尿病' }], text: '2型糖尿病' },
+    id: randomUUID(),
+    recordedDate: '2026-09-10T09:00:00+08:00',
+    resourceType: 'Condition',
+    subject: { reference: `Patient/${medicalStay.patientId}` },
+    verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
+  })
+  const archivedT2dmTopics = await s.fixture.read(
+    'medical-records',
+    `${medicalStay.path}/guideline-topics?topicId=t2dm-renal-medication`,
+    guidelineTopicBundleSchema,
+  )
+  expect(archivedT2dmTopics.items[0]!.patientIndicators.find(i => i.code === 't2dm-diagnosis')).toMatchObject({
+    status: 'missing',
+  })
 })

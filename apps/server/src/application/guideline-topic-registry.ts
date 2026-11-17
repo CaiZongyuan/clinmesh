@@ -958,8 +958,40 @@ export function extractSupplementaryIndicators(options: {
   fhir: FhirRepository
   inpatient?: { actor: ActorContext; service: InpatientService } | undefined
   patientId?: string | undefined
+  referenceCutoffIso?: string | undefined
 }): SupplementaryClinicalIndicators {
-  const { caseId, context, database, encounterId, fhir, inpatient, patientId } = options
+  const { caseId, context, database, encounterId, fhir, inpatient, patientId, referenceCutoffIso } = options
+  const cutoffMs =
+    referenceCutoffIso === undefined
+      ? Number.NaN
+      : /^\d{4}-\d{2}-\d{2}$/.test(referenceCutoffIso)
+        ? Date.parse(`${referenceCutoffIso}T23:59:59.999+08:00`)
+        : Date.parse(referenceCutoffIso)
+  const encounterTimeCache = new Map<string, number | undefined>()
+  const resolveExternalEncounterStartMs = (encRef: string | undefined): number | undefined => {
+    const encId = encRef?.startsWith('Encounter/') ? encRef.slice('Encounter/'.length) : undefined
+    if (!encId) return undefined
+    if (encounterTimeCache.has(encId)) return encounterTimeCache.get(encId)
+    let startMs: number | undefined
+    try {
+      const enc = z.object({
+        actualPeriod: z.object({ start: z.string().optional() }).loose().optional(),
+        plannedStartDate: z.string().optional(),
+      }).loose().safeParse(fhir.read(context, 'Encounter', encId))
+      const iso = enc.success ? (enc.data.actualPeriod?.start ?? enc.data.plannedStartDate) : undefined
+      const parsed = iso ? (iso.length === 10 ? Date.parse(`${iso}T00:00:00+08:00`) : Date.parse(iso)) : Number.NaN
+      if (Number.isFinite(parsed)) startMs = parsed
+    } catch {
+      startMs = undefined
+    }
+    encounterTimeCache.set(encId, startMs)
+    return startMs
+  }
+  const parseResourceTimestampMs = (iso: string | undefined): number | undefined => {
+    if (!iso) return undefined
+    const parsed = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? Date.parse(`${iso}T00:00:00+08:00`) : Date.parse(iso)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
 
   const examRows = z.array(z.object({
     content_json: z.string(),
@@ -1461,12 +1493,24 @@ export function extractSupplementaryIndicators(options: {
             coding: z.array(z.object({ code: z.string().optional(), display: z.string().optional() }).loose()).optional(),
             text: z.string().optional(),
           }).loose().optional(),
+          encounter: z.object({ reference: z.string().optional() }).loose().optional(),
           id: z.string().min(1),
           meta: z.object({ versionId: z.string().optional() }).loose().optional(),
+          onsetDateTime: z.string().optional(),
+          onsetPeriod: z.object({ start: z.string().optional() }).loose().optional(),
+          recordedDate: z.string().optional(),
           verificationStatus: z.object({ coding: z.array(z.object({ code: z.string().optional() }).loose()).optional() }).loose().optional(),
         }).loose().safeParse(raw)
         if (!parsed.success) continue
         if (parsed.data.verificationStatus?.coding?.[0]?.code !== 'confirmed') continue
+        const isCurrentEncCondition =
+          effectiveEncounterId !== undefined && parsed.data.encounter?.reference === `Encounter/${effectiveEncounterId}`
+        if (!isCurrentEncCondition && Number.isFinite(cutoffMs)) {
+          const condTsMs =
+            parseResourceTimestampMs(parsed.data.recordedDate ?? parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start)
+            ?? resolveExternalEncounterStartMs(parsed.data.encounter?.reference)
+          if (condTsMs !== undefined && condTsMs > cutoffMs) continue
+        }
         const clinCode = parsed.data.clinicalStatus?.coding?.[0]?.code
         const codes = (parsed.data.code?.coding ?? []).map(c => c.code?.trim() ?? '').filter(Boolean)
         const display = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
@@ -1515,11 +1559,31 @@ export function extractSupplementaryIndicators(options: {
               coding: z.array(z.object({ code: z.string().optional(), display: z.string().optional() }).loose()).optional(),
               text: z.string().optional(),
             }).loose().optional(),
+            encounter: z.object({ reference: z.string().optional() }).loose().optional(),
             id: z.string().min(1),
             meta: z.object({ versionId: z.string().optional() }).loose().optional(),
+            occurenceDateTime: z.string().optional(),
+            occurrenceDateTime: z.string().optional(),
+            occurrencePeriod: z.object({ start: z.string().optional() }).loose().optional(),
+            performedDateTime: z.string().optional(),
+            performedPeriod: z.object({ start: z.string().optional() }).loose().optional(),
             status: z.string().optional(),
           }).loose().safeParse(raw)
           if (!parsed.success || parsed.data.status !== 'completed') continue
+          const isCurrentEncProc =
+            effectiveEncounterId !== undefined && parsed.data.encounter?.reference === `Encounter/${effectiveEncounterId}`
+          if (!isCurrentEncProc && Number.isFinite(cutoffMs)) {
+            const procTsMs =
+              parseResourceTimestampMs(
+                parsed.data.occurrenceDateTime
+                ?? parsed.data.occurenceDateTime
+                ?? parsed.data.performedDateTime
+                ?? parsed.data.occurrencePeriod?.start
+                ?? parsed.data.performedPeriod?.start,
+              )
+              ?? resolveExternalEncounterStartMs(parsed.data.encounter?.reference)
+            if (procTsMs !== undefined && procTsMs > cutoffMs) continue
+          }
           const codes = (parsed.data.code?.coding ?? []).map(c => c.code ?? '')
           const display = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
           if (
@@ -1566,6 +1630,7 @@ export function buildSynchronousTopicBundle(options: {
   patientBirthDate: string | undefined
   patientId?: string | undefined
   populationReferenceIso: string
+  referenceCutoffIso?: string | undefined
   scores: ClinicalScoreBundle
   topicId?: GuidelineTopicId | undefined
 }): GuidelineTopicBundle {
@@ -1578,6 +1643,7 @@ export function buildSynchronousTopicBundle(options: {
     fhir: options.fhir,
     inpatient: options.inpatient,
     patientId: options.patientId,
+    referenceCutoffIso: options.referenceCutoffIso ?? options.populationReferenceIso,
   })
   const targetTopicIds = options.topicId === undefined ? guidelineTopicIds : [options.topicId]
   return guidelineTopicBundleSchema.parse({

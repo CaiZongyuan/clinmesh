@@ -360,6 +360,7 @@ export class InpatientGuidelineAdvice {
       fhir: this.owner.fhir,
       inpatient: { actor: context, service: this.owner },
       patientId: binding.patientId,
+      referenceCutoffIso: referenceIso,
     })
     const { missingPatientInputs } = evaluateTopicPatientIndicators(topicId, scores, supplementary)
     const supplementaryIndicators = {
@@ -487,7 +488,7 @@ export class InpatientGuidelineAdvice {
 
     const idleMessage = requestId !== null ? '尚未准备本计划的指南参考意见。' : messages.idle
     const frozenMessage = requestId !== null ? '手术已开始、完成或病案已归档，指南参考意见保留历史只读。' : messages.frozen
-    return {
+    return inpatientGuidelineAdviceSchema.parse({
       admissionId,
       topicId,
       requestId,
@@ -509,7 +510,7 @@ export class InpatientGuidelineAdvice {
       missing: effectiveMissing,
       failureCode: row?.error_code ?? null,
       result,
-    }
+    })
   }
 
   read(context: ActorContext, admissionId: string, requestId: string) {
@@ -586,6 +587,7 @@ export class InpatientGuidelineAdvice {
         patientBirthDate,
         patientId: binding.patientId,
         populationReferenceIso: referenceIso,
+        referenceCutoffIso: referenceIso,
         scores,
         topicId,
       })

@@ -823,7 +823,15 @@ export class ClinicalScoreService {
         `).get(context.workspaceId, context.epoch, caseId),
       )
       const patient = this.#fhir.read(context, 'Patient', caseRow.patient_id)
+      const encounter = z.object({
+        actualPeriod: z.object({ end: z.string().optional(), start: z.string().optional() }).loose().optional(),
+        status: z.string().optional(),
+      }).loose().safeParse(this.#fhir.read(context, 'Encounter', caseRow.encounter_id))
       const now = this.#outpatientContext.virtualTime(context)
+      const encCompleted = encounter.success && encounter.data.status === 'completed'
+      const referenceCutoffIso = encCompleted
+        ? (encounter.data.actualPeriod?.end ?? (caseRow.visit_date ? `${caseRow.visit_date}T23:59:59.999+08:00` : now))
+        : now
       bundle = buildSynchronousTopicBundle({
         caseId,
         context,
@@ -834,7 +842,8 @@ export class ClinicalScoreService {
         fhir: this.#fhir,
         patientBirthDate: typeof patient.birthDate === 'string' ? patient.birthDate : undefined,
         patientId: caseRow.patient_id,
-        populationReferenceIso: caseRow.visit_date ?? now,
+        populationReferenceIso: encCompleted ? referenceCutoffIso : (caseRow.visit_date ?? now),
+        referenceCutoffIso,
         scores,
         topicId,
       })
