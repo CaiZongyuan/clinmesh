@@ -956,6 +956,24 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       missingInputs: ['uaNstemiPresentation'],
       status: 'incomplete',
     })
+    const priorStemiCurrentNstemi = evaluateClinicalScores({
+      ageYears: { source: src, value: 68 },
+      anginaEpisodes24h: { source: src, value: 2 },
+      aspirinUsedLast7Days: { source: src, value: true },
+      confirmedDiagnoses: [{ code: 'I21.0', source: src }, { code: 'I21.4', source: src }],
+      elevatedCardiacBiomarker: { source: src, value: true },
+      familyHistoryPrematureCad: { source: src, value: false },
+      knownCoronaryRevascularizationOrStenosisGe50: { source: src, value: true },
+      ldlCholesterol: { source: src, value: { unit: 'mmol/L', value: 2.5 } },
+      smokingStatus: { source: src, value: 'never' },
+      stSegmentDeviation: { source: src, value: true },
+      totalCholesterol: { source: src, value: { unit: 'mmol/L', value: 4.4 } },
+      uaNstemiPresentation: { source: src, value: true },
+    })
+    expect(priorStemiCurrentNstemi.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({
+      status: 'complete',
+      value: 6,
+    })
     expect(stemiWithoutPci.find(item => item.id === 'precise-dapt')).toMatchObject({
       missingInputs: ['pciDaptIndication'],
       status: 'incomplete',
