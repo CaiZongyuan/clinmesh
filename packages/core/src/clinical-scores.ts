@@ -1098,18 +1098,22 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     const hasDm = hasConfirmedDiabetesDiagnosis(diagnosisCodes)
     const ldlMmol = ldlValid === undefined ? undefined : normalizeLipidMmolL(ldlValid.value.value, ldlValid.value.unit, 'ldl')
     const tcMmol = tcValid === undefined ? undefined : normalizeLipidMmolL(tcValid.value.value, tcValid.value.unit, 'tc')
-    const hasDyslipidemia =
+    const dyslipidemiaFactor: 1 | 0 | null =
       codeMatchesPrefixes(diagnosisCodes, DYSLIPIDEMIA_ICD10_PREFIXES)
       || (ldlMmol !== undefined && ldlMmol >= 3.4)
       || (tcMmol !== undefined && tcMmol >= 5.2)
-    const baseFactors = (hasHtn ? 1 : 0) + (hasDm ? 1 : 0) + (hasDyslipidemia ? 1 : 0)
+        ? 1
+        : ldlMmol !== undefined && tcMmol !== undefined
+          ? 0
+          : null
+    const baseFactors = (hasHtn ? 1 : 0) + (hasDm ? 1 : 0)
     const smokingFactor = facts.smokingStatus === undefined ? null : (facts.smokingStatus.value === 'current' ? 1 : 0)
     const familyFactor =
       facts.familyHistoryPrematureCad === undefined
         ? null
         : (facts.familyHistoryPrematureCad.value ? 1 : 0)
-    const minFactors = baseFactors + (smokingFactor ?? 0) + (familyFactor ?? 0)
-    const maxFactors = baseFactors + (smokingFactor ?? 1) + (familyFactor ?? 1)
+    const minFactors = baseFactors + (dyslipidemiaFactor ?? 0) + (smokingFactor ?? 0) + (familyFactor ?? 0)
+    const maxFactors = baseFactors + (dyslipidemiaFactor ?? 1) + (smokingFactor ?? 1) + (familyFactor ?? 1)
     const knownCad: boolean | undefined =
       facts.knownCoronaryRevascularizationOrStenosisGe50 !== undefined
         ? facts.knownCoronaryRevascularizationOrStenosisGe50.value
@@ -1120,6 +1124,10 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     const missing: ClinicalScoreMissingInput[] = []
     if (admissionAdultAge === undefined) missing.push('age')
     if (minFactors < 3 && maxFactors >= 3) {
+      if (dyslipidemiaFactor === null) {
+        if (ldlMmol === undefined) missing.push('ldlCholesterol')
+        if (tcMmol === undefined) missing.push('totalCholesterol')
+      }
       if (smokingFactor === null) missing.push('smokingStatus')
       if (familyFactor === null) missing.push('familyHistoryPrematureCad')
     }
