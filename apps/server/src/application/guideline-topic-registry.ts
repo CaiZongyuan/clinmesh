@@ -1135,11 +1135,39 @@ export function extractSupplementaryIndicators(options: {
         return a.seq - b.seq
       })
     const anyElevated = chrono.some(item => item.elevated)
-    const firstMs = chrono[0]!.timestampMs
-    const lastMs = chrono.at(-1)!.timestampMs
+    const MIN_RETEST_MS = 60 * 60 * 1000
+    const MAX_RETEST_MS = 6 * 60 * 60 * 1000
+    const timedObs = chrono.filter((item): item is (typeof chrono)[number] & { timestampMs: number } => item.timestampMs !== undefined)
+    const episodes: Array<typeof timedObs> = []
+    for (const item of timedObs) {
+      const currentEp = episodes.at(-1)
+      if (currentEp === undefined || item.timestampMs - currentEp.at(-1)!.timestampMs > MAX_RETEST_MS) {
+        episodes.push([item])
+      } else {
+        currentEp.push(item)
+      }
+    }
+    const episodeHasSerialWindow = (ep: typeof timedObs) =>
+      ep.some((earlier, idx) =>
+        ep.slice(idx + 1).some(later => {
+          const delta = later.timestampMs - earlier.timestampMs
+          return delta >= MIN_RETEST_MS && delta <= MAX_RETEST_MS
+        }),
+      )
+    const latestEpisode = episodes.at(-1)
+    const hasCompletedEarlierEpisode = episodes.slice(0, -1).some(episodeHasSerialWindow)
     const hasValidRepeatInterval =
-      chrono.length >= 2 && firstMs !== undefined && lastMs !== undefined && lastMs - firstMs >= 60 * 60 * 1000
+      latestEpisode !== undefined
+      && (
+        episodeHasSerialWindow(latestEpisode)
+        || (hasCompletedEarlierEpisode && !latestEpisode.some(item => item.elevated))
+      )
     const serialComplete = hasValidRepeatInterval
+    const hasSubHourOnly =
+      !serialComplete
+      && latestEpisode !== undefined
+      && latestEpisode.length >= 2
+      && latestEpisode.at(-1)!.timestampMs - latestEpisode[0]!.timestampMs < MIN_RETEST_MS
     const missingMessage = serialComplete
       ? null
       : chrono.length < 2
@@ -1148,7 +1176,9 @@ export function extractSupplementaryIndicators(options: {
               ? '当前仅有单次升高肌钙蛋白记录，尚未完成动态复测（如 1–3h 复查 cTn/hs-cTn 评估升降变化幅度）。'
               : '当前仅有单次阴性肌钙蛋白记录，尚未完成动态复测（如 1–3h 复查 cTn/hs-cTn），单次阴性不能排除 NSTE-ACS。'
           )
-        : '已记录多次肌钙蛋白但采样间隔不足 1 小时（或缺少有效时间），尚未满足动态复测条件。'
+        : hasSubHourOnly
+          ? '已记录多次肌钙蛋白但采样间隔不足 1 小时，尚未满足动态复测条件。'
+          : '已记录多次肌钙蛋白但采样间隔超出 1–6 小时急性动态复测窗口（或缺少有效时间），尚未满足同次急性发作动态复测条件。'
     const latest = chrono.at(-1)!
     troponinSeries = {
       anyElevated,

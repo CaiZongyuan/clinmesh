@@ -801,6 +801,56 @@ it('门诊与住院同步读取注册 Guideline Topic 直接返回核验原文�
   ])
   expect(opBundle.items[0]!.missingPatientInputs.join('；')).toContain('12 导联心电图')
 
+  // Unrelated troponins separated by >6h (e.g. 48h apart) do NOT satisfy acute dynamic 1-6h serial retesting
+  const opScenario = await s.fixture.read('admin', '/api/sim/v1/scenario-runs/current', z.object({ epoch: z.string(), workspaceId: z.string() }))
+  const addOpTroponin = (issuedIso: string, value: number, interp: 'H' | 'N') => {
+    const scope = { epoch: opScenario.epoch, workspaceId: opScenario.workspaceId } as const
+    const obs = s.fixture.runtime.fhir.create(scope, {
+      code: { coding: [{ code: '2100404B', display: '高敏心肌肌钙蛋白I', system: 'urn:clinmesh:wst:886-2026' }], text: '高敏心肌肌钙蛋白I' },
+      effectiveDateTime: issuedIso,
+      encounter: { reference: `Encounter/${reg.encounterId}` },
+      id: randomUUID(),
+      interpretation: [{ coding: [{ code: interp }] }],
+      referenceRange: [{ high: { value: 0.04 } }],
+      resourceType: 'Observation',
+      status: 'final',
+      subject: { reference: `Patient/${patient.id}` },
+      valueQuantity: { code: 'ng/mL', system: 'http://unitsofmeasure.org', unit: 'ng/mL', value },
+    })
+    const dr = s.fixture.runtime.fhir.create(scope, {
+      code: { text: '心肌标志物检验报告' },
+      conclusion: '合成肌钙蛋白报告。',
+      encounter: { reference: `Encounter/${reg.encounterId}` },
+      id: randomUUID(),
+      issued: issuedIso,
+      resourceType: 'DiagnosticReport',
+      result: [{ reference: `Observation/${obs.id}` }],
+      status: 'final',
+      subject: { reference: `Patient/${patient.id}` },
+    })
+    s.fixture.runtime.database.driver.prepare(`
+      INSERT INTO laboratory_request (
+        workspace_id, epoch, request_id, case_id, request_kind, catalog_item_id, reference_json,
+        indication_code, service_snapshot_json, service_request_id, execution_task_id,
+        diagnostic_report_id, status, version, authored_by, authored_at, reported_at
+      ) VALUES (?, ?, ?, ?, 'laboratory', 'synthetic-lab-cardiac', '{}', 'clinical-assessment', '{}', ?, ?, ?, 'reported', 1, 'actor-test', ?, ?)
+    `).run(scope.workspaceId, scope.epoch, randomUUID(), opCase.caseId, randomUUID(), randomUUID(), dr.id, issuedIso, issuedIso)
+  }
+  addOpTroponin('2026-08-22T09:00:00+08:00', 0.02, 'N')
+  addOpTroponin('2026-08-24T09:00:00+08:00', 0.03, 'N')
+  const wideGapBundle = guidelineTopicBundleSchema.parse(
+    await (await s.fixture.request('doctor', `/api/his/v1/doctor/cases/${opCase.caseId}/guideline-topics?topicId=acute-chest-pain-acs`)).json(),
+  )
+  expect(wideGapBundle.items[0]!.patientIndicators.find(i => i.code === 'cardiac-troponin')?.status).toBe('missing')
+  expect(wideGapBundle.items[0]!.missingPatientInputs.join('；')).toContain('1–6 小时')
+
+  // Adding a 2h repeat within the [1h, 6h] acute window completes serial troponin verification
+  addOpTroponin('2026-08-24T11:00:00+08:00', 0.02, 'N')
+  const completedSerialBundle = guidelineTopicBundleSchema.parse(
+    await (await s.fixture.request('doctor', `/api/his/v1/doctor/cases/${opCase.caseId}/guideline-topics?topicId=acute-chest-pain-acs`)).json(),
+  )
+  expect(completedSerialBundle.items[0]!.patientIndicators.find(i => i.code === 'cardiac-troponin')?.status).toBe('present')
+
   const chestPainDoc = fullTopicDocuments().find(d => d.source.id === 'coronary-31-2019')!
   s.writer.importDocument({
     passages: [],
