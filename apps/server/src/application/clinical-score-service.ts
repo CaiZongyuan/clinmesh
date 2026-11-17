@@ -1271,7 +1271,7 @@ export class ClinicalScoreService {
     context: ActorContext,
     patientId: string,
     patientBirthDate: string | undefined,
-    patientSex: AdministrativeSex | undefined,
+    patientSex: 'male' | 'female' | undefined,
     inpatient: InpatientService | undefined,
     caseId: string,
   ) {
@@ -1461,7 +1461,7 @@ export class ClinicalScoreService {
           knownCad = { source: ref, value: true }
           break
         }
-        if (knownCad === undefined && report.vessels.length > 0) {
+        if (knownCad === undefined && report.status === 'final' && report.vessels.length > 0) {
           knownCad = {
             source: {
               label: '冠状动脉造影报告（狭窄<50%）',
