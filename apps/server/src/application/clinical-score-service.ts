@@ -100,6 +100,7 @@ const observationResourceSchema = z.object({
     coding: z.array(codingItemSchema).optional(),
     text: z.string().optional(),
   }).loose().optional(),
+  effectiveDateTime: z.string().optional(),
   id: z.string().min(1),
   interpretation: z.array(z.object({
     coding: z.array(codingItemSchema).optional(),
@@ -126,6 +127,7 @@ const observationResourceSchema = z.object({
 
 const diagnosticReportResourceSchema = z.object({
   id: z.string().min(1),
+  issued: z.string().optional(),
   meta: z.object({ versionId: z.string().optional() }).loose().optional(),
   result: z.array(z.object({ reference: z.string().optional() }).loose()).optional(),
   status: z.string().optional(),
@@ -1121,9 +1123,12 @@ export class ClinicalScoreService {
     caseId: string,
     legacyDiagnosticReportId: string | null,
   ) {
-    const rows = z.array(z.object({ diagnostic_report_id: z.string() })).parse(
+    const rows = z.array(z.object({
+      diagnostic_report_id: z.string(),
+      report_time: z.string().nullable(),
+    })).parse(
       this.#database.driver.prepare(`
-        SELECT r.diagnostic_report_id
+        SELECT r.diagnostic_report_id, COALESCE(r.reported_at, r.authored_at) AS report_time
         FROM laboratory_request r
         WHERE r.workspace_id = ? AND r.epoch = ? AND r.case_id = ?
           AND r.request_kind = 'laboratory'
@@ -1138,20 +1143,24 @@ export class ClinicalScoreService {
         ORDER BY julianday(COALESCE(r.reported_at, r.authored_at)) DESC, r.request_id DESC
       `).all(context.workspaceId, context.epoch, caseId),
     )
-    const reportIds = rows.map(row => row.diagnostic_report_id)
-    if (legacyDiagnosticReportId !== null && !reportIds.includes(legacyDiagnosticReportId)) {
-      reportIds.push(legacyDiagnosticReportId)
+    const reportEntries = rows.map(row => ({ reportId: row.diagnostic_report_id, reportTime: row.report_time }))
+    if (legacyDiagnosticReportId !== null && !reportEntries.some(item => item.reportId === legacyDiagnosticReportId)) {
+      reportEntries.push({ reportId: legacyDiagnosticReportId, reportTime: null })
     }
 
     let serumCreatinine: ClinicalScoreObjectiveFacts['serumCreatinine']
-    let elevatedCardiacBiomarker: ClinicalScoreObjectiveFacts['elevatedCardiacBiomarker']
+    const troponinHitsDesc: Array<{
+      elevated: boolean
+      source: ClinicalScoreSourceReference
+      timestampMs: number | undefined
+    }> = []
     let wbc: ClinicalScoreObjectiveFacts['wbc']
     let hemoglobin: ClinicalScoreObjectiveFacts['hemoglobin']
     let totalCholesterol: ClinicalScoreObjectiveFacts['totalCholesterol']
     let hdlCholesterol: ClinicalScoreObjectiveFacts['hdlCholesterol']
     let ldlCholesterol: ClinicalScoreObjectiveFacts['ldlCholesterol']
 
-    for (const reportId of reportIds) {
+    for (const { reportId, reportTime } of reportEntries) {
       const rawReport = this.#fhir.read(context, 'DiagnosticReport', reportId)
       const report = diagnosticReportResourceSchema.safeParse(rawReport)
       if (!report.success || !['final', 'amended', 'corrected'].includes(report.data.status ?? '')) continue
@@ -1187,16 +1196,21 @@ export class ClinicalScoreService {
           serumCreatinine = { source, value: { unit, value: quantity } }
         }
         if (
-          elevatedCardiacBiomarker === undefined
-          && (
-            codes.has('2100404B') || codes.has('2100404A') || codes.has('2100504A')
-            || codes.has('89579-7') || codes.has('49563-0') || codes.has('10839-9')
-            || codes.has('6598-7') || codes.has('6597-9') || codes.has('67151-1') || codes.has('42757-5')
-            || /肌钙蛋白|troponin/i.test(display)
-          )
+          codes.has('2100404B') || codes.has('2100404A') || codes.has('2100504A')
+          || codes.has('89579-7') || codes.has('49563-0') || codes.has('10839-9')
+          || codes.has('6598-7') || codes.has('6597-9') || codes.has('67151-1') || codes.has('42757-5')
+          || /肌钙蛋白|troponin/i.test(display)
         ) {
           const elevated = this.#evaluateTroponinElevation(obs.data)
-          if (elevated !== undefined) elevatedCardiacBiomarker = { source, value: elevated }
+          if (elevated !== undefined) {
+            const rawTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
+            const parsedMs = rawTs ? Date.parse(rawTs) : Number.NaN
+            troponinHitsDesc.push({
+              elevated,
+              source,
+              timestampMs: Number.isFinite(parsedMs) ? parsedMs : undefined,
+            })
+          }
         }
         if (
           wbc === undefined
@@ -1238,6 +1252,28 @@ export class ClinicalScoreService {
         ) {
           ldlCholesterol = { source, value: { unit, value: quantity } }
         }
+      }
+    }
+
+    const troponinChronological = [...troponinHitsDesc].reverse()
+    const initialTroponin = troponinChronological[0]
+    let elevatedCardiacBiomarker: ClinicalScoreObjectiveFacts['elevatedCardiacBiomarker']
+    if (initialTroponin !== undefined) {
+      if (initialTroponin.elevated) {
+        elevatedCardiacBiomarker = { source: initialTroponin.source, value: true }
+      } else {
+        const earlySerialPositive =
+          initialTroponin.timestampMs === undefined
+            ? undefined
+            : troponinChronological.find(
+                item =>
+                  item.elevated
+                  && item.timestampMs !== undefined
+                  && item.timestampMs - initialTroponin.timestampMs! <= 6 * 60 * 60 * 1000,
+              )
+        elevatedCardiacBiomarker = earlySerialPositive
+          ? { source: earlySerialPositive.source, value: true }
+          : { source: initialTroponin.source, value: false }
       }
     }
 

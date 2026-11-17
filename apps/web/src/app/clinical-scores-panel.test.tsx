@@ -207,6 +207,7 @@ describe('ClinicalScoresPanel disclosures', () => {
       </QueryClientProvider>,
     )
     expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).value).toBe('')
+    expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).disabled).toBe(true)
   })
 
   it('records inpatient nursing vital signs and risk assessment via InpatientVitalsAndScoresDisclosure and localizes PatientVitals weight/height', async () => {
