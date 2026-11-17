@@ -153,3 +153,30 @@ it('核对依据更新使旧解释失效时不显示旧解释文本且不自动�
   await waitFor(() => expect(screen.queryByText('旧依据解释不应继续显示')).toBeNull())
   expect(writes).toEqual([])
 })
+
+it('在院未选主操作仅在无已完成手术时显示等手术完成，手术完成后提示去病案页保存', async () => {
+  let currentSources: typeof checks.sources = [
+    { reference: 'InpatientRecord/admission-1/revision/1', display: '首页主操作：尚未选择', target: 'record' },
+    { reference: 'Procedure/in-progress-1', display: '术中实际操作（参与计划推演，尚未完成）：经皮冠状动脉介入治疗（36.0700）', target: 'surgery' },
+  ]
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/drg/record-checks')) return Response.json({ ...checks, sources: currentSources })
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const { client, navigate } = mount()
+  const panel = await screen.findByRole('region', { name: '分组核对' })
+  await within(panel).findByText('暂无需你处理')
+  expect(within(panel).getByText('完成手术后在病案页选择并保存')).toBeDefined()
+  expect(within(panel).getByText('等手术完成')).toBeDefined()
+  expect(within(panel).queryByRole('button', { name: '去病案首页' })).toBeNull()
+
+  currentSources = [
+    { reference: 'InpatientRecord/admission-1/revision/1', display: '首页主操作：尚未选择', target: 'record' },
+    { reference: 'Procedure/procedure-1', display: '实际操作：经皮冠状动脉介入治疗（36.0700）', target: 'surgery' },
+  ]
+  await act(async () => { await client.invalidateQueries({ queryKey: ['inpatient'] }) })
+  await within(panel).findByText('1 项待处理')
+  expect(within(panel).getByText('尚未选择，请在病案页保存')).toBeDefined()
+  await userEvent.setup().click(within(panel).getByRole('button', { name: '去病案首页' }))
+  expect(navigate).toHaveBeenCalledWith('record')
+})

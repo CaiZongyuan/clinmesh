@@ -33,7 +33,9 @@ test('实际手术更新后保留首次待办落点和医生当前手术页签',
   expect(result.executions).toHaveLength(1)
   const execution = result.executions[0]!
   const price = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(execution.actualProcedure.chargeDefinition.priceFen / 100)
-  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText(`累计费用 ${price}`)
+  await page.getByRole('region', { name: '当前住院患者', exact: true }).getByRole('button', { name: '住院信息', exact: true }).click()
+  await expect(page.getByRole('menu')).toContainText(`累计费用${price}`)
+  await page.keyboard.press('Escape')
   await expect(stage).toHaveAttribute('aria-selected', 'true')
   const done = page.getByRole('region', { name: '最终耗材', exact: true })
   await expect(done).toContainText(execution.actualProcedure.coding.code)

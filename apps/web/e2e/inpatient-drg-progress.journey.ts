@@ -33,7 +33,7 @@ export async function runDrgProgressJourney(page: Page, app: { origin: string; p
     await expect.poll(() => header.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
     const bounds = await header.evaluate(element => {
       const box = element.getBoundingClientRect(), texts: string[] = []
-      for (const child of element.querySelectorAll('b, .clinmesh-inpatient-drg-progress-group > span:last-child')) {
+      for (const child of element.querySelectorAll('b')) {
         const range = document.createRange(); range.selectNodeContents(child)
         for (const rect of range.getClientRects()) if (rect.left < box.left - 1 || rect.right > box.right + 1) texts.push(child.textContent ?? '')
       }

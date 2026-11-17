@@ -340,7 +340,7 @@ test('护士从新入院队列办理分床，按本岗待办落点导航并可�
   const response = await receipt
   expect(response.status()).toBe(200)
   expect(inpatientCommandResponseSchema.parse(await response.json()).data.admission.status).toBe('admitted')
-  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText('住院病区 · 1床')
+  await expect(page.getByRole('region', { name: '当前住院患者', exact: true })).toContainText('1床')
   await expect(page.getByRole('tab', { name: '诊断医嘱', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('tab', { name: 'DRG 预分组', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: '更多', exact: true }).click()

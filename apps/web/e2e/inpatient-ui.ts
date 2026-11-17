@@ -67,3 +67,16 @@ export async function expectCompletedSurgeryPreparation(plan: Locator, item: '�
   await expect(recordedAt).toBeVisible()
   return recordedAt
 }
+
+/** 患者头部的助手跟进菜单按钮，文字是当前跟进状态。 */
+export const followMenu = (page: Page) => page.getByRole('region', { name: '当前住院患者', exact: true }).getByRole('button', { name: /^助手自动跟进：/ })
+
+export async function chooseFollowMenu(page: Page, item: '开启助手自动跟进' | '停止助手自动跟进' | '本次住院 AI 用量') {
+  await followMenu(page).click()
+  await page.getByRole('menuitem', { name: item, exact: true }).click()
+}
+
+export async function expectFollowing(page: Page, on: boolean) {
+  if (on) await expect(followMenu(page)).toHaveAccessibleName('助手自动跟进：正在跟进')
+  else await expect(followMenu(page)).not.toHaveAccessibleName('助手自动跟进：正在跟进')
+}

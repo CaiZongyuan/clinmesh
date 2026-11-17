@@ -5,7 +5,7 @@ import type { Locator } from '@playwright/test'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientInvestigationCatalogSchema, inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { expect, test, loginPciBrowser } from './inpatient-pci.fixture.ts'
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { selectInpatientStage, followMenu } from './inpatient-ui.ts'
 
 const output = process.env.CLINMESH_CAPTURE_ISSUE400
 const before = process.env.CLINMESH_CAPTURE_ISSUE400_PHASE === 'before'
@@ -109,14 +109,14 @@ test('住院医生减负实机同病例对比', async ({ page, pciApp: app }) =>
     await expect(close).toBeInViewport()
     layoutChecks.push({ scene, kind: 'dialog', ...result })
   }
-  const modal = async (entry: Locator, scene: string, width: number, variant?: string) => {
+  const modal = async (entry: Locator, scene: string, width: number, variant?: string, returnsTo = entry) => {
     await entry.click()
     await expect(activeDialog).toBeVisible()
     await shoot(scene, width, variant)
     await checkDialog(`${scene}-${width}-${variant ?? 'light-zh-CN'}`)
     await page.keyboard.press('Escape')
     await expect(activeDialog).toHaveCount(0)
-    await expect(entry).toBeFocused()
+    await expect(returnsTo).toBeFocused()
   }
   let locale: 'zh-CN' | 'en-US' = 'zh-CN'
   let theme: 'light' | 'dark' = 'light'
@@ -229,7 +229,8 @@ test('住院医生减负实机同病例对比', async ({ page, pciApp: app }) =>
       await entry.click()
     } else {
       await modal(page.getByRole('button', { name: '补登记与更正耗材', exact: true }).first(), '07-material-correction', width)
-      await modal(page.getByRole('button', { name: '本次住院 AI 用量', exact: true }), '08-ai-usage', width)
+      await followMenu(page).click()
+      await modal(page.getByRole('menuitem', { name: '本次住院 AI 用量', exact: true }), '08-ai-usage', width, undefined, followMenu(page))
     }
   }
   if (!before) await matrix(async (width, variant) => {
@@ -246,8 +247,9 @@ test('住院医生减负实机同病例对比', async ({ page, pciApp: app }) =>
     await shoot('06-postoperative-summary', width, variant)
     await modal(page.getByRole('button', { name: zh ? '申请手术' : 'Request surgery', exact: true }).first(), '05-new-surgery', width, variant)
     await modal(page.getByRole('button', { name: zh ? '补登记与更正耗材' : 'Add or correct materials', exact: true }).first(), '07-material-correction', width, variant)
-    const usage = page.getByRole('button', { name: zh ? '本次住院 AI 用量' : 'AI usage for this admission', exact: true })
-    await modal(usage, '08-ai-usage', width, variant)
+    const follow = page.getByRole('button', { name: zh ? /^助手自动跟进：/ : /^Assistant auto follow-up：/ })
+    await follow.click()
+    await modal(page.getByRole('menuitem', { name: zh ? '本次住院 AI 用量' : 'AI usage for this admission', exact: true }), '08-ai-usage', width, variant, follow)
   })
   expect(app.modelCalls).toBe(0)
   expect(errors).toEqual([])

@@ -1526,8 +1526,8 @@ const operationCliMetadataList = [
     requirements:{expectedVersions:true,idempotency:'required'},
     risk:'write',
     roles:['inpatient-doctor'],
-    summary:'主管医生显式确认本次实际主操作并提交首页修订',
-    version:1,
+    summary:'主管医生显式确认本次实际主操作并保存当前来源修订（在院供预分组使用，离院结算后核对提交正式首页）',
+    version:2,
   },
   {
     cliPath:['inpatient','review-record'],
@@ -1536,8 +1536,8 @@ const operationCliMetadataList = [
     requirements:{expectedVersions:true,idempotency:'required'},
     risk:'write',
     roles:['medical-records'],
-    summary:'编码人员核验固定临床编码与当前来源，审核通过或退回',
-    version:1,
+    summary:'患者离院后编码人员核验固定临床编码与当前来源，审核通过或附原因退回；未离院拒绝并返回INPATIENT_RECORD_INCOMPLETE',
+    version:2,
   },
   {
     cliPath:['inpatient','archive-record'],

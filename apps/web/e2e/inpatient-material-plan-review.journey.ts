@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { selectInpatientStage, chooseFollowMenu, expectFollowing } from './inpatient-ui.ts'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -79,10 +79,9 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   expect(reservations.find(item => item.materialId === 'hospital-material-pci-guiding-catheter')?.status).toBe('released')
   expect(reservations.find(item => item.materialId === 'hospital-material-pci-guidewire')?.consumedQuantity).toBe(1)
 
-  const toggle = page.getByRole('region', { name: '当前住院患者', exact: true }).getByRole('button', { name: '助手自动跟进', exact: true })
-  await toggle.click()
+  await chooseFollowMenu(page, '开启助手自动跟进')
   await page.getByRole('dialog', { name: '开启助手自动跟进', exact: true }).getByRole('button', { name: '开启', exact: true }).click()
-  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  await expectFollowing(page, true)
   const review = page.getByRole('region', { name: '术后核查与责任交接', exact: true })
   await expect(review).toBeVisible()
   await expect(review.getByRole('list', { name: '术后核查清单', exact: true })).toBeVisible()

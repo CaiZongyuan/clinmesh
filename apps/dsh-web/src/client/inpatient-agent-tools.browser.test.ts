@@ -90,7 +90,7 @@ for (const version of ['18', '19']) test.describe(`inpatient Agent React ${versi
     await expect(page.getByRole('alertdialog')).toHaveCount(0)
     // 患者头部只在助手真正准备了待确认内容时显示「助手已准备」。
     const prepared = page.getByRole('region', { name: '助手已准备', exact: true })
-    await expect(prepared).toHaveText('助手已准备校对医嘱 · 等你确认')
+    await expect(prepared).toHaveText('校对医嘱 · 等你确认')
     await page.getByRole('button', { name: '中止助手', exact: true }).click()
     await expect(review).toHaveCount(0)
     await expect(prepared).toHaveCount(0)
