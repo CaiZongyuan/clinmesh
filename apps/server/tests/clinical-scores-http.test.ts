@@ -992,6 +992,29 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       status: 'completed',
       subject: { reference: `Patient/${tempOrderPatient.id}` },
     })
+    // Combined clinical-sign flow MedicationRequest (status='active', no FHIR boundsDuration, stored course_days=14 in prescription_item) from Jan 2026 expires after 14d + 28d washout instead of staying active forever
+    const signedShortMedReq = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authoredOn: '2026-01-05T10:00:00+08:00',
+      dosageInstruction: [{ text: '20mg QD' }],
+      id: uuidv7(),
+      intent: 'order',
+      medication: { concept: { text: '阿托伐他汀钙片 20mg' } },
+      resourceType: 'MedicationRequest',
+      status: 'active',
+      subject: { reference: `Patient/${tempOrderPatient.id}` },
+    })
+    const signedShortPrescriptionId = uuidv7()
+    fixture.runtime.database.driver.prepare(`
+      INSERT INTO prescription (
+        workspace_id, epoch, prescription_id, case_id, prescription_number, status, version, authored_by, authored_at
+      ) VALUES (?, ?, ?, ?, ?, 'signed', 1, 'actor-test', '2026-01-05T10:00:00+08:00')
+    `).run(scenario.workspaceId, scenario.epoch, signedShortPrescriptionId, tempCase.caseId, `RX-SHORT-${randomUUID().slice(0, 8)}`)
+    fixture.runtime.database.driver.prepare(`
+      INSERT INTO prescription_item (
+        workspace_id, epoch, prescription_id, medication_request_id, medication_id, medication_snapshot_json, quantity, dose_text, frequency_code, course_days
+      ) VALUES (?, ?, ?, ?, 'medication-atorvastatin', '{}', 2, '20mg', 'QD', 14)
+    `).run(scenario.workspaceId, scenario.epoch, signedShortPrescriptionId, signedShortMedReq.id)
+
     // Same-specimen TC=6.5 + HDL=1.1 (non-HDL=5.4 >= 5.2), followed by a newer standalone TC-only=5.3 before active statin
     const pairedPanel = insertSyntheticLabReport(fixture, {
       caseId: tempCase.caseId,

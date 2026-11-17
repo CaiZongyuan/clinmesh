@@ -1198,6 +1198,26 @@ export class ClinicalScoreService {
     return null
   }
 
+  #readPrescriptionCourseDurationByMedicationRequestId(
+    context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
+  ): Map<string, number> {
+    const rows = z.array(z.object({
+      course_days: z.number().int().positive(),
+      medication_request_id: z.string(),
+    })).parse(
+      this.#database.driver.prepare(`
+        SELECT medication_request_id, course_days
+        FROM prescription_item
+        WHERE workspace_id = ? AND epoch = ?
+      `).all(context.workspaceId, context.epoch),
+    )
+    const map = new Map<string, number>()
+    for (const row of rows) {
+      map.set(row.medication_request_id, row.course_days * 86_400_000)
+    }
+    return map
+  }
+
   #resolveExternalEncounterStartMs(
     context: RepositoryContext,
     encRef: string | undefined,
@@ -1802,6 +1822,7 @@ export class ClinicalScoreService {
     }
 
     if (pciStentEncounterSource === undefined && priorCoronaryStentSource !== undefined && (!hasActiveP2y12 || !hasActiveAspirin)) {
+      const courseDurationByMedReqId = this.#readPrescriptionCourseDurationByMedicationRequestId(context)
       const withdrawnIds = new Set(
         z.array(z.object({ medication_request_id: z.string() })).parse(
           this.#database.driver.prepare(`
@@ -1827,10 +1848,12 @@ export class ClinicalScoreService {
               ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
             if (medTsMs !== undefined && medTsMs > nowMs) continue
           }
-          const daptBoundsMs = resolveMedicationBoundsDurationMs(
-            parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration,
+          const rawDaptBoundsMs = resolveMedicationBoundsDurationMs(
+            parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
+            ?? parsed.data.dispenseRequest?.expectedSupplyDuration,
           )
-          if (daptBoundsMs === 'invalid') continue
+          if (rawDaptBoundsMs === 'invalid') continue
+          const daptBoundsMs = rawDaptBoundsMs ?? courseDurationByMedReqId.get(parsed.data.id)
           if (parsed.data.authoredOn !== undefined && Number.isFinite(nowMs) && daptBoundsMs !== undefined) {
             const authoredMs = Date.parse(parsed.data.authoredOn)
             if (!Number.isFinite(authoredMs) || authoredMs + daptBoundsMs < nowMs) continue
@@ -2685,6 +2708,7 @@ export class ClinicalScoreService {
 
     const nowMs = Date.parse(nowIso)
     const encounterTimeCache = new Map<string, number | undefined>()
+    const courseDurationByMedReqId = this.#readPrescriptionCourseDurationByMedicationRequestId(context)
     const withdrawnIds = new Set(
       z.array(z.object({ medication_request_id: z.string() })).parse(
         this.#database.driver.prepare(`
@@ -2712,10 +2736,12 @@ export class ClinicalScoreService {
             ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
           if (medTsMs !== undefined && medTsMs > nowMs) continue
         }
-        const htnBoundsMs = resolveMedicationBoundsDurationMs(
-          parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration,
+        const rawHtnBoundsMs = resolveMedicationBoundsDurationMs(
+          parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
+          ?? parsed.data.dispenseRequest?.expectedSupplyDuration,
         )
-        if (htnBoundsMs === 'invalid') continue
+        if (rawHtnBoundsMs === 'invalid') continue
+        const htnBoundsMs = rawHtnBoundsMs ?? courseDurationByMedReqId.get(parsed.data.id)
         if (parsed.data.authoredOn !== undefined && Number.isFinite(nowMs) && htnBoundsMs !== undefined) {
           const authoredMs = Date.parse(parsed.data.authoredOn)
           if (!Number.isFinite(authoredMs) || authoredMs + htnBoundsMs < nowMs) continue
@@ -2922,6 +2948,7 @@ export class ClinicalScoreService {
       })
     }
 
+    const courseDurationByMedReqId = this.#readPrescriptionCourseDurationByMedicationRequestId(context)
     const withdrawnIds = new Set(
       z.array(z.object({ medication_request_id: z.string() })).parse(
         this.#database.driver.prepare(`
@@ -2962,10 +2989,11 @@ export class ClinicalScoreService {
         if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs) && startMs !== undefined && startMs > nowMs) {
           continue
         }
-        const boundsMs = resolveMedicationBoundsDurationMs(
+        const rawBoundsMs = resolveMedicationBoundsDurationMs(
           parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
           ?? parsed.data.dispenseRequest?.expectedSupplyDuration,
         )
+        const boundsMs = rawBoundsMs === undefined ? courseDurationByMedReqId.get(parsed.data.id) : rawBoundsMs
         const explicitPeriodEndIso =
           parsed.data.effectiveDosePeriod?.end
           ?? parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsPeriod?.end
