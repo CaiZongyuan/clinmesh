@@ -971,6 +971,16 @@ export class ClinicalScoreService {
       options.now,
       history.hypertensionConditionRefs,
     )
+    const bedsideKnownStenosis =
+      riskRef !== undefined && riskAssessment.values.knownCoronaryStenosisGe50 !== null
+        ? { source: riskRef, value: riskAssessment.values.knownCoronaryStenosisGe50 }
+        : undefined
+    const effectiveKnownStenosis =
+      history.knownCoronaryRevascularizationOrStenosisGe50?.value === true
+        ? history.knownCoronaryRevascularizationOrStenosisGe50
+        : bedsideKnownStenosis?.value === true
+          ? bedsideKnownStenosis
+          : (history.knownCoronaryRevascularizationOrStenosisGe50 ?? bedsideKnownStenosis)
 
     const facts: ClinicalScoreObjectiveFacts = {
       ...(age === undefined ? {} : { ageYears: { source: patientRef, value: age } }),
@@ -1027,16 +1037,9 @@ export class ClinicalScoreService {
       antihypertensiveMedicationActive: onAntihypertensive,
       ...(history.cadOnsetAgeYears === undefined ? {} : { cadOnsetAgeYears: history.cadOnsetAgeYears }),
       confirmedDiagnoses: history.confirmedDiagnoses,
-      ...((history.knownCoronaryRevascularizationOrStenosisGe50
-        ?? (riskRef !== undefined && riskAssessment.values.knownCoronaryStenosisGe50 !== null
-          ? { source: riskRef, value: riskAssessment.values.knownCoronaryStenosisGe50 }
-          : undefined)) === undefined
+      ...(effectiveKnownStenosis === undefined
         ? {}
-        : {
-            knownCoronaryRevascularizationOrStenosisGe50:
-              history.knownCoronaryRevascularizationOrStenosisGe50
-              ?? { source: riskRef!, value: riskAssessment.values.knownCoronaryStenosisGe50! },
-          }),
+        : { knownCoronaryRevascularizationOrStenosisGe50: effectiveKnownStenosis }),
       ...(history.priorCoronaryRevascularization === undefined
         ? {}
         : { priorCoronaryRevascularization: history.priorCoronaryRevascularization }),
