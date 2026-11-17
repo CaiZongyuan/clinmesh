@@ -43,17 +43,33 @@ it('病案诊断展示临床代码与入院病情，不铺技术来源或POA编�
 })
 
 it('病案审核说明关闭重开仍归原患者，切换患者不带入说明', async () => {
-  const submitted = { ...record, revision: { revision: 1, sourcesHash: record.sourcesHash, snapshot: record.snapshot, actorId: 'doctor', practitionerRoleId: 'role-doctor', recordedAt: '2026-11-03T09:00:00+08:00' } }
+  const settledAdmission = { ...admission, status: 'cleared' as const, financialStatus: 'settled' as const }
+  const settledSnapshot = { ...record.snapshot, stay: { ...record.snapshot.stay, departedAt: '2026-11-03T10:00:00+08:00', departureMethod: 'home' as const },
+    fees: { ...record.snapshot.fees, status: 'cleared' as const, financialStatus: 'settled' as const } }
+  const submitted = { ...record, snapshot: settledSnapshot, revision: { revision: 1, sourcesHash: record.sourcesHash, snapshot: settledSnapshot, actorId: 'doctor', practitionerRoleId: 'role-doctor', recordedAt: '2026-11-03T10:05:00+08:00' } }
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(submitted)))
   const user = userEvent.setup()
-  const first = mount(write => <InpatientRecord admission={admission} session={session} locale="zh-CN" write={write} />)
+  const first = mount(write => <InpatientRecord admission={settledAdmission} session={session} locale="zh-CN" write={write} />)
   await user.type(await screen.findByRole('textbox', { name: '编码审核说明' }), '原患者待核对')
   first.unmount()
-  const other = mount(write => <InpatientRecord admission={{ ...admission, id: 'admission-2', patientId: 'patient-2' }} session={session} locale="zh-CN" write={write} />)
+  const other = mount(write => <InpatientRecord admission={{ ...settledAdmission, id: 'admission-2', patientId: 'patient-2' }} session={session} locale="zh-CN" write={write} />)
   expect(await screen.findByRole('textbox', { name: '编码审核说明' })).toHaveProperty('value', '')
   other.unmount()
-  mount(write => <InpatientRecord admission={admission} session={session} locale="zh-CN" write={write} />)
+  mount(write => <InpatientRecord admission={settledAdmission} session={session} locale="zh-CN" write={write} />)
   await waitFor(() => expect(screen.getByRole('textbox', { name: '编码审核说明' })).toHaveProperty('value', '原患者待核对'))
+})
+
+it('医生在院仅保存主操作时，病案人员不展示提交次数或提前开放编码审核与退回', async () => {
+  const inStaySaved = { ...record, revision: { revision: 1, sourcesHash: record.sourcesHash, snapshot: record.snapshot, actorId: 'doctor', practitionerRoleId: 'role-doctor', recordedAt: '2026-11-03T09:30:00+08:00' } }
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(inStaySaved)))
+  mount(write => <InpatientActionProvider stage="record"><InpatientRecord admission={admission} session={session} locale="zh-CN" write={write} /><InpatientActionOutlet /></InpatientActionProvider>)
+  const history = await screen.findByRole('region', { name: '审核与归档记录' })
+  expect(history.textContent).toContain('在院已保存主操作（待结算后提交首页）')
+  expect(history.textContent).not.toContain('第 1 次提交')
+  expect(screen.queryByRole('textbox', { name: '编码审核说明' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '编码审核通过' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '退回医生修订' })).toBeNull()
+  expect(screen.getByRole('region', { name: '当前操作' }).textContent).toContain('患者尚未出院结算')
 })
 
 it.each([false, true])('病案岗位复用原预分组与病案投影，冻结状态为%s', async frozen => {

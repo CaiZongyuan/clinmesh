@@ -300,7 +300,15 @@ describe('住院病案首页公共 HTTP', () => {
       expect((await s.request(s.doctor, `${s.path}/record/submit`, { ...input, mainProcedureExecutionId: main })).status).toBe(409)
     const submitted = await s.request(s.doctor, `${s.path}/record/submit`, { ...input, mainProcedureExecutionId: execution.id })
     expect(submitted.status).toBe(200)
-    expect((await submitted.json()).data.revision.snapshot.clinical.operations[0]).toMatchObject({ id: execution.id, primary: true, actualProcedure: { coding: procedure.coding }, practitionerRoleId: 'practitioner-role-inpatient-doctor', procedureVersion: '1', materials: [] })
+    const saved = (await submitted.json()).data
+    expect(saved.revision.snapshot.clinical.operations[0]).toMatchObject({ id: execution.id, primary: true, actualProcedure: { coding: procedure.coding }, practitionerRoleId: 'practitioner-role-inpatient-doctor', procedureVersion: '1', materials: [] })
+    const coder = await s.login('medical-records')
+    for (const review of [{ outcome: 'approved' as const }, { outcome: 'returned' as const, reason: '在院期间尚未离院不可提前退回' }]) {
+      const premature = await s.request(coder, `${s.path}/record/review`, { expectedRevision: saved.revision.revision, expectedSourcesHash: saved.sourcesHash, ...review })
+      expect(premature.status).toBe(409)
+      expect((await premature.json()).error.code).toBe('INPATIENT_RECORD_INCOMPLETE')
+    }
+    expect((await (await s.request(coder, `${s.path}/record`)).json()).reviews).toEqual([])
   })
   it('首页公开写拒绝缺Cookie或恶意Origin，错误来源不产生修订', async () => {
     const s = await setup(), coder = await s.login('medical-records'), draft = await (await s.request(s.doctor, `${s.path}/record`)).json()

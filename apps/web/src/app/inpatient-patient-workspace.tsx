@@ -302,8 +302,10 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   // The write resolves after the shared refresh, so the waiting line already names who acts next. A success seen at mount
   // belongs to the previously viewed patient and is not announced again.
   const announced = useRef(succeededAt), handoff = useRef({ title: '', description: '' })
-  const completionLabel = completedCommand ? inpatientCompletionLabel(completedCommand, locale) : ''
-  const completionNext = doctor && active === 'surgery' ? doctorSurgeryTurn() : waiting[active]
+  const completionLabel = completedCommand ? inpatientCompletionLabel(completedCommand, locale, { inStayRecordSave: !settled }) : ''
+  const completionNext = doctor && active === 'surgery' ? doctorSurgeryTurn()
+    : doctor && active === 'record' && !settled ? t('预分组已按所选主操作更新；出院结算后再核对并提交完整病案首页', 'Pre-grouping updated with primary procedure; review and submit the complete record after settlement')
+    : waiting[active]
   handoff.current = { title: `${completionLabel} · ${admission.patientName}`, description: completionNext }
   useEffect(() => {
     if (succeededAt === 0 || succeededAt === announced.current) return

@@ -1105,9 +1105,12 @@ it('病案示例绑定原修订与来源指纹、显式主操作及独立审核�
     const match=skill.match(new RegExp('`record-'+id+'.json`[^]*?```json\\n([^]*?)\\n```'))!
     expect(getHisOperation(`inpatient.record.${id}`).input.parse(JSON.parse(match[1]!))).toMatchObject({expectedSourcesHash:'a'.repeat(64)})
   }
+  expect(getHisOperation('inpatient.record.submit').version).toBe(2)
+  expect(getHisOperation('inpatient.record.review').version).toBe(2)
   expect(getHisOperation('inpatient.record.submit').input.safeParse({admissionId:'synthetic',expectedRevision:0,expectedSourcesHash:'a'.repeat(64)}).success).toBe(false)
   expect(getHisOperation('inpatient.record.review').input.safeParse({admissionId:'synthetic',expectedRevision:1,expectedSourcesHash:'a'.repeat(64),outcome:'returned'}).success).toBe(false)
   expect(skill).toContain('INPATIENT_RECORD_STALE')
+  expect(skill).toContain('INPATIENT_RECORD_INCOMPLETE')
 })
 
 it('药物频次、审方拒绝与CLI Skill的当前合同保持一致', async () => {

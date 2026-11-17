@@ -64,15 +64,24 @@ function stubRecord(initial: Record<string, unknown>, writes: unknown[] = []) {
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path.endsWith('/api/auth/context')) return Response.json(session)
     if (path.endsWith('/record/submit')) {
-      writes.push(JSON.parse(String(init?.body)))
-      record = { ...record, revision: { ...recordRevision, revision: (record.revision?.revision ?? 0) + 1 } }
+      const body = JSON.parse(String(init?.body)) as { input: { expectedRevision: number; expectedSourcesHash: string; mainProcedureExecutionId: string | null } }
+      writes.push(body)
+      if (body.input.expectedRevision !== (record.revision?.revision ?? 0) || body.input.expectedSourcesHash !== record.sourcesHash) {
+        return Response.json({ error: { code: 'INPATIENT_RECORD_STALE', message: '首页修订或来源已变化，请重新审阅后提交' } }, { status: 409 })
+      }
+      const nextSnapshot = { ...record.snapshot, clinical: { ...record.snapshot.clinical, mainProcedureExecutionId: body.input.mainProcedureExecutionId,
+        operations: record.snapshot.clinical.operations.map(item => ({ ...item, primary: item.id === body.input.mainProcedureExecutionId })) } }
+      record = { ...record, snapshot: nextSnapshot, revision: { ...recordRevision, revision: (record.revision?.revision ?? 0) + 1, sourcesHash: record.sourcesHash, snapshot: nextSnapshot } }
       return Response.json({ auditId: 'audit-1', requestId: 'request-1', effects: [], warnings: [], data: record })
     }
     if (path.endsWith('/record')) return Response.json(record)
     throw new Error(`Unexpected record read ${path}`)
   }))
+  return { advanceSources: (sourcesHash: string, patch?: Record<string, unknown>) => { record = inpatientRecordSchema.parse({ ...record, sourcesHash, ...patch }) } }
 }
 const clearedAdmission = { ...admission, status: 'cleared' as const, financialStatus: 'settled' as const }
+const settledSnapshot = { ...recordSnapshot, stay: { ...recordSnapshot.stay, departedAt: '2026-11-03T16:00:00+08:00', departureMethod: 'home' as const },
+  fees: { ...recordSnapshot.fees, status: 'cleared' as const, financialStatus: 'settled' as const, settlement: { id: 'settlement-1', settledAt: '2026-11-03T16:10:00+08:00', chargesFen: 5000, depositFen: 100000, balanceFen: -95000, fingerprint: 'b'.repeat(64) } } }
 
 it('医生在院病案列出提交首页前的条件，字段直接展示，无已实施操作时结算前不能提交', async () => {
   stubRecord({})
@@ -89,22 +98,63 @@ it('医生在院病案列出提交首页前的条件，字段直接展示，无�
   expect(screen.getByRole('status').textContent).toContain('出院结算后')
 })
 
-it('在院已实施操作时结算前主操作单选与提交仍禁用，出院结算后可选择主操作提交', async () => {
+it('在院已有实际操作时可保存主操作供预分组使用，来源冲突保留输入并要求重新审阅，结算后首次提交仍显示提交病案首页', async () => {
   const writes: unknown[] = []
   const coding = { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical' as const, version: '3.0' as const, code: '36.0700', display: '合成支架置入', category: '介入治疗' as const, releaseId: 'clinmesh-surgery-subset-2026-10-20' as const, sourceUrl: 'https://example.test/source', sourceSha256: 'c'.repeat(64), sourceLocator: 'row-1' }
+  const angiography = { id: 'execution-0', admissionId: admission.id, requestId: 'surgery-0', actualProcedure: { id: 'procedure-0', version: 1, coding: { ...coding, code: '88.5500', display: '合成冠脉造影' }, chargeDefinition: { id: 'charge-def-0', priceFen: 80, unit: '次', synthetic: true as const, trigger: 'execution' as const } },
+    performedAt: '2026-11-03T15:10:00+08:00', performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: admission.organizationId, note: '合成造影记录', materials: [], procedureVersion: '1', primary: false }
   const operation = { id: 'execution-1', admissionId: admission.id, requestId: 'surgery-1', actualProcedure: { id: 'procedure-1', version: 1, coding, chargeDefinition: { id: 'charge-def-1', priceFen: 100, unit: '次', synthetic: true as const, trigger: 'execution' as const } },
     performedAt: '2026-11-03T15:40:00+08:00', performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: admission.organizationId, note: '合成手术记录', materials: [], procedureVersion: '1', primary: false }
-  stubRecord({ snapshot: { ...recordSnapshot, clinical: { ...recordSnapshot.clinical, operations: [operation] } } }, writes)
-  mount(write => <InpatientRecord admission={admission} session={session} locale="zh-CN" write={write} />)
+  const { advanceSources } = stubRecord({ snapshot: { ...recordSnapshot, clinical: { ...recordSnapshot.clinical, operations: [angiography, operation] } } }, writes)
+  const user = userEvent.setup()
+  const mounted = mount(write => <InpatientRecord admission={admission} session={session} locale="zh-CN" write={write} />)
   const submit = await screen.findByRole('button', { name: '提交病案首页' })
   expect(submit.hasAttribute('disabled')).toBe(true)
-  expect(screen.queryByRole('radiogroup', { name: '本次主操作' })).toBeNull()
-  expect(screen.getByRole('status').textContent).toContain('出院结算后')
+  const inStaySection = screen.getByRole('region', { name: '在院主操作与预分组' })
+  const save = within(inStaySection).getByRole('button', { name: '保存主操作，更新预分组' })
+  expect(save.hasAttribute('disabled')).toBe(true)
+  const pciRadio = within(inStaySection).getByRole('radio', { name: '36.0700 合成支架置入' })
+  await user.click(pciRadio)
+  await waitFor(() => expect(save).toHaveProperty('disabled', false))
+  // 保存前外部来源推进：首次点击按原捕获指纹发送并 409，重读后禁用保存并在同区展示重新审阅入口。
+  advanceSources('b'.repeat(64))
+  await user.click(save)
+  await waitFor(() => expect(writes).toHaveLength(1))
+  const discard = await within(inStaySection).findByRole('button', { name: '放弃原主操作选择，重新审阅来源' })
+  expect(save.hasAttribute('disabled')).toBe(true)
+  expect(pciRadio).toHaveProperty('checked', true)
+  expect(within(screen.getByRole('region', { name: '当前操作' })).queryByRole('button', { name: '放弃原主操作选择，重新审阅来源' })).toBeNull()
+  await user.click(discard)
+  expect(pciRadio).toHaveProperty('checked', false)
+  expect(within(inStaySection).getByRole('radio', { name: '88.5500 合成冠脉造影' })).toHaveProperty('checked', false)
+  await user.click(pciRadio)
+  await waitFor(() => expect(save).toHaveProperty('disabled', false))
+  await user.click(save)
+  await waitFor(() => expect(writes).toEqual([
+    { input: { expectedRevision: 0, expectedSourcesHash: 'a'.repeat(64), mainProcedureExecutionId: operation.id } },
+    { input: { expectedRevision: 0, expectedSourcesHash: 'b'.repeat(64), mainProcedureExecutionId: operation.id } },
+  ]))
+  // 在院保存后若后续医嘱或离院改变来源，未结算时不弹“病案人员只能审核最新内容”，结算后首次提交按钮仍为“提交病案首页”。
+  advanceSources('d'.repeat(64))
+  mounted.unmount()
+  const inStayAfterChange = mount(write => <InpatientRecord admission={admission} session={session} locale="zh-CN" write={write} />)
+  await screen.findByRole('region', { name: '在院主操作与预分组' })
+  expect(screen.queryByText('提交后来源有变化')).toBeNull()
+  inStayAfterChange.unmount()
+
+  advanceSources('e'.repeat(64), { snapshot: { ...settledSnapshot, clinical: { ...recordSnapshot.clinical, mainProcedureExecutionId: operation.id,
+    operations: [angiography, { ...operation, primary: true }] } } })
+  mount(write => <InpatientRecord admission={clearedAdmission} session={session} locale="zh-CN" write={write} />)
+  const firstSubmit = await screen.findByRole('button', { name: '提交病案首页' })
+  expect(firstSubmit.hasAttribute('disabled')).toBe(false)
+  expect(screen.queryByText('提交后来源有变化')).toBeNull()
+  expect(screen.getByRole('radio', { name: '36.0700 合成支架置入' })).toHaveProperty('checked', true)
+  expect(screen.getByText('在院已保存主操作依据')).toBeDefined()
 })
 
 it('结算后提交病案首页，提交后显示第 1 次提交并不再给提交按钮', async () => {
   const writes: unknown[] = []
-  stubRecord({}, writes)
+  stubRecord({ snapshot: settledSnapshot }, writes)
   const open = vi.fn()
   mount(write => <InpatientRecord admission={clearedAdmission} session={session} locale="zh-CN" write={write} onOpenStage={open} />)
   const user = userEvent.setup()
