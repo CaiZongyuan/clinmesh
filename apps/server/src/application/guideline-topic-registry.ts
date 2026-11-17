@@ -939,8 +939,9 @@ export function extractSupplementaryIndicators(options: {
         versionId: String(latest.version),
       }
     }
-    const pciRequest = inpatient.service.surgery.read(inpatient.actor, caseId).requests
-      .find(item => item.status !== 'cancelled' && pciSelectionProcedureCodes.includes(item.plannedProcedure.coding.code))
+    const pciCandidates = inpatient.service.surgery.read(inpatient.actor, caseId).requests
+      .filter(item => item.status !== 'cancelled' && pciSelectionProcedureCodes.includes(item.plannedProcedure.coding.code))
+    const pciRequest = pciCandidates.findLast(item => item.status !== 'completed') ?? pciCandidates.at(-1)
     if (pciRequest !== undefined) {
       const selection = inpatient.service.pciSelection.read(inpatient.actor, caseId, pciRequest.id)
       const parameters = selection.drafts?.find(item => item.requestId === pciRequest.id)?.parameters
