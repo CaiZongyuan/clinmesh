@@ -379,7 +379,12 @@ export function calculatePreciseDapt(input: {
   value: number
 } {
   const age = validateAdultAgeYears(input.ageYears)
-  const crCl = assertFiniteRange(input.creatinineClearanceMlMin, 1, 300, 'creatinineClearanceMlMin')
+  if (!Number.isFinite(input.creatinineClearanceMlMin) || input.creatinineClearanceMlMin < 0) {
+    throw new RangeError(
+      `creatinineClearanceMlMin out of physiological bounds [0, ∞): ${String(input.creatinineClearanceMlMin)}`,
+    )
+  }
+  const crCl = input.creatinineClearanceMlMin
   const hbGdl = normalizeHemoglobinGdl(input.hemoglobin.value, input.hemoglobin.unit)
   const wbc10e9L = normalizeWbc10e9L(input.wbc.value, input.wbc.unit)
 
@@ -906,7 +911,6 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     const hasHtn =
       hasConfirmedHypertensionDiagnosis(diagnosisCodes)
       || facts.antihypertensiveMedicationActive?.value === true
-      || (systolicBpMmHg?.value ?? 0) >= 140
     const hasDm = hasConfirmedDiabetesDiagnosis(diagnosisCodes)
     const ldlMmol = ldlValid === undefined ? undefined : normalizeLipidMmolL(ldlValid.value.value, ldlValid.value.unit, 'ldl')
     const tcMmol = tcValid === undefined ? undefined : normalizeLipidMmolL(tcValid.value.value, tcValid.value.unit, 'tc')
@@ -930,6 +934,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     const sources = [
       adultAge?.source,
       ...facts.confirmedDiagnoses.map(item => item.source),
+      facts.antihypertensiveMedicationActive?.source,
       facts.knownCoronaryRevascularizationOrStenosisGe50?.source,
       facts.smokingStatus?.source,
       facts.aspirinUsedLast7Days?.source,
@@ -938,7 +943,6 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
       facts.elevatedCardiacBiomarker?.source,
       ldlValid?.source,
       tcValid?.source,
-      systolicBpMmHg?.source,
     ]
     if (missing.length > 0) {
       timiResult = buildIncomplete('timi-ua-nstemi', missing, sources)

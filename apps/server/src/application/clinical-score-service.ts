@@ -632,12 +632,15 @@ export class ClinicalScoreService {
       diagnostic_report_id: z.string().nullable(),
       encounter_id: z.string(),
       patient_id: z.string(),
+      triage_observation_id: z.string().nullable(),
+      triage_observation_version: z.string().nullable(),
       triage_recorded_at: z.string().nullable(),
       vital_json: z.string().nullable(),
     }).optional().parse(
       this.#database.driver.prepare(`
         SELECT outpatient_case.case_id, outpatient_case.patient_id, outpatient_case.encounter_id,
-          outpatient_case.diagnostic_report_id, triage.vital_json, triage.recorded_at AS triage_recorded_at
+          outpatient_case.diagnostic_report_id, triage.vital_json, triage.recorded_at AS triage_recorded_at,
+          triage.observation_id AS triage_observation_id, triage.observation_version AS triage_observation_version
         FROM outpatient_case
         LEFT JOIN triage_record AS triage
           ON triage.workspace_id = outpatient_case.workspace_id
@@ -652,7 +655,14 @@ export class ClinicalScoreService {
     let vitalSummary: ClinicalScoreVitalSummary | null = null
     if (row.vital_json !== null && row.triage_recorded_at !== null) {
       const triage = triageRecordContentSchema.parse(JSON.parse(row.vital_json))
-      const triageObservation = this.#findLatestVitalObservation(context, row.patient_id, row.encounter_id)
+      const triageObservation = this.#resolveTriageVitalObservation(
+        context,
+        row.patient_id,
+        row.encounter_id,
+        row.triage_recorded_at,
+        row.triage_observation_id,
+        row.triage_observation_version,
+      )
       vitalSummary = {
         bloodPressure: triage.bloodPressure,
         ...(triage.heightCm === undefined ? {} : { heightCm: triage.heightCm }),
@@ -822,29 +832,40 @@ export class ClinicalScoreService {
     }
   }
 
-  #findLatestVitalObservation(
+  #resolveTriageVitalObservation(
     context: RepositoryContext,
     patientId: string,
     encounterId: string,
+    triageRecordedAt: string,
+    persistedObservationId: string | null,
+    persistedObservationVersion: string | null,
   ): { id: string; versionId: string } | undefined {
+    if (persistedObservationId !== null) {
+      try {
+        const obs = this.#fhir.read(context, 'Observation', persistedObservationId)
+        return { id: obs.id, versionId: obs.meta?.versionId ?? persistedObservationVersion ?? '1' }
+      } catch {
+        return { id: persistedObservationId, versionId: persistedObservationVersion ?? '1' }
+      }
+    }
     const params = new URLSearchParams({ _count: '100', encounter: `Encounter/${encounterId}`, patient: `Patient/${patientId}` })
+    let triageTitleFallback: { id: string; versionId: string } | undefined
     for (;;) {
       const page = this.#fhir.search(context, 'Observation', params)
       for (const resource of page.resources) {
         const parsed = observationResourceSchema.safeParse(resource)
         if (!parsed.success || parsed.data.status !== 'final') continue
-        const isVitalCategory = parsed.data.category?.some(cat =>
-          cat.coding?.some(coding => coding.code === 'vital-signs'),
-        ) === true
         const text = parsed.data.code?.text ?? ''
-        if (isVitalCategory || text.includes('vital signs')) {
-          return { id: parsed.data.id, versionId: parsed.data.meta?.versionId ?? '1' }
+        if (text === 'Outpatient triage vital signs') {
+          const candidate = { id: parsed.data.id, versionId: parsed.data.meta?.versionId ?? '1' }
+          if (parsed.data.effectiveDateTime === triageRecordedAt) return candidate
+          triageTitleFallback ??= candidate
         }
       }
       if (page.nextCursor === undefined) break
       params.set('_cursor', page.nextCursor)
     }
-    return undefined
+    return triageTitleFallback
   }
 
   #resolveEffectiveStDeviation(

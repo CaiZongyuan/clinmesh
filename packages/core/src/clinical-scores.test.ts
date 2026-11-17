@@ -423,4 +423,69 @@ describe('evaluateClinicalScores bundle evaluation', () => {
     })
     expect(withPriorStent.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 6 })
   })
+
+  it('clamps extreme Cockcroft-Gault CrCl (<1 and >300 mL/min) in PRECISE-DAPT without aborting bundle and restricts TIMI hypertension to confirmed history/therapy', () => {
+    const src = { label: 'Source', reference: 'Observation/obs-1', versionId: '1' }
+    const ultraLowCrClBundle = evaluateClinicalScores({
+      ageYears: { source: src, value: 110 },
+      confirmedDiagnoses: [],
+      hemoglobin: { source: src, value: { unit: 'g/L', value: 105 } },
+      priorBleedingHistory: { source: src, value: 'negative' },
+      serumCreatinine: { source: src, value: { unit: 'mg/dL', value: 20 } },
+      sex: { source: src, value: 'female' },
+      wbc: { source: src, value: { unit: '10*9/L', value: 8.2 } },
+      weightKg: { source: src, value: 25 },
+    })
+    expect(ultraLowCrClBundle.find(item => item.id === 'cockcroft-gault-crcl')).toMatchObject({
+      status: 'complete',
+      value: 0.4,
+    })
+    expect(ultraLowCrClBundle.find(item => item.id === 'precise-dapt')).toMatchObject({
+      status: 'complete',
+      tierCode: 'high',
+    })
+
+    const ultraHighCrClBundle = evaluateClinicalScores({
+      ageYears: { source: src, value: 20 },
+      confirmedDiagnoses: [],
+      hemoglobin: { source: src, value: { unit: 'g/L', value: 145 } },
+      priorBleedingHistory: { source: src, value: 'negative' },
+      serumCreatinine: { source: src, value: { unit: 'mg/dL', value: 0.2 } },
+      sex: { source: src, value: 'male' },
+      wbc: { source: src, value: { unit: '10*9/L', value: 6.0 } },
+      weightKg: { source: src, value: 120 },
+    })
+    expect(ultraHighCrClBundle.find(item => item.id === 'cockcroft-gault-crcl')?.value).toBeGreaterThan(300)
+    expect(ultraHighCrClBundle.find(item => item.id === 'precise-dapt')).toMatchObject({
+      status: 'complete',
+      tierCode: 'low-moderate',
+    })
+
+    // Single elevated SBP (158 mmHg) with DM + current smoking (2 CAD factors) does NOT add the >=3 CAD risk factor point
+    const transientHighSbp = evaluateClinicalScores({
+      ageYears: { source: src, value: 58 },
+      anginaEpisodes24h: { source: src, value: 1 },
+      aspirinUsedLast7Days: { source: src, value: false },
+      confirmedDiagnoses: [{ code: 'E11.9', source: src }],
+      elevatedCardiacBiomarker: { source: src, value: false },
+      smokingStatus: { source: src, value: 'current' },
+      stSegmentDeviation: { source: src, value: false },
+      systolicBpMmHg: { source: src, value: 158 },
+    })
+    expect(transientHighSbp.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 0 })
+
+    // Confirmed hypertension diagnosis (I10) or active antihypertensive therapy DOES count as the 3rd CAD risk factor
+    const confirmedHtn = evaluateClinicalScores({
+      ageYears: { source: src, value: 58 },
+      anginaEpisodes24h: { source: src, value: 1 },
+      antihypertensiveMedicationActive: { source: src, value: true },
+      aspirinUsedLast7Days: { source: src, value: false },
+      confirmedDiagnoses: [{ code: 'E11.9', source: src }],
+      elevatedCardiacBiomarker: { source: src, value: false },
+      smokingStatus: { source: src, value: 'current' },
+      stSegmentDeviation: { source: src, value: false },
+      systolicBpMmHg: { source: src, value: 126 },
+    })
+    expect(confirmedHtn.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 1 })
+  })
 })
