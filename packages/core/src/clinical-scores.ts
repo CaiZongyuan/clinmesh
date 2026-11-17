@@ -665,6 +665,19 @@ export function calculateAscvdLdlTarget(input: {
   const hasDiabetes = hasConfirmedDiabetesDiagnosis(input.confirmedDiagnosisCodes)
   const hasConfirmedHtn =
     hasConfirmedHypertensionDiagnosis(input.confirmedDiagnosisCodes) || input.antihypertensiveTreated === true
+  const normalizedDxCodes = input.confirmedDiagnosisCodes.map(code => code.trim().toUpperCase()).filter(Boolean)
+  const hasCodedStage4Ckd = normalizedDxCodes.some(code => code.startsWith('N18.4'))
+  const hasCodedStage5OrDialysisCkd = normalizedDxCodes.some(code => /^(?:N18\.[56]|Z99\.2)/.test(code))
+  const hasCodedStage4To5Ckd =
+    hasCodedStage4Ckd
+    || hasCodedStage5OrDialysisCkd
+    || normalizedDxCodes.some(code => /^(?:I12\.0|I13\.2)/.test(code))
+  const hasCodedStage3Ckd = normalizedDxCodes.some(code => code.startsWith('N18.3'))
+  const hasCodedStage3To4Ckd = (hasCodedStage3Ckd || hasCodedStage4Ckd) && !hasCodedStage5OrDialysisCkd
+  const hasCodedGenericCkdOnly =
+    !hasCodedStage4To5Ckd
+    && !hasCodedStage3Ckd
+    && normalizedDxCodes.some(code => /^(?:N18(?:\.9|$)|E1[0-4]\.2|I12(?!\.0)|I13(?!\.2)|N03|Z94\.0)/.test(code))
 
   // 1. 已确诊 ASCVD 二级预防：按《中国血脂管理指南（2023年）》仅在 ≥2 次严重 ASCVD 事件或 1 次严重事件合并 ≥2 个高风险因素时定为超高危 (<1.4 mmol/L)，其余为极高危 (<1.8 mmol/L)
   if (hasAscvd) {
@@ -749,7 +762,10 @@ export function calculateAscvdLdlTarget(input: {
           upgradeMissing.push('ckdChronicity')
         }
       }
-    } else {
+    } else if (hasCodedStage3To4Ckd) {
+      minHighRiskFactors += 1
+      maxHighRiskFactors += 1
+    } else if (!hasCodedStage5OrDialysisCkd) {
       maxHighRiskFactors += 1
       upgradeMissing.push('serumCreatinine')
     }
@@ -795,6 +811,18 @@ export function calculateAscvdLdlTarget(input: {
 
   // 2. 糖尿病合并慢性肾脏病（已证实病程 ≥3 个月或确诊 CKD 的 eGFR < 60）或重度慢性肾脏病（已证实慢性 eGFR < 30）直接判定极高危 (<1.8 mmol/L)
   if (hasDiabetes) {
+    if (hasCodedStage3Ckd || hasCodedStage4To5Ckd) {
+      const goal = evaluateGoal(1.8)
+      return {
+        ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
+        status: 'complete',
+        tierCode: 'very-high',
+        tierLabelEn: 'Very-high risk (<1.8 mmol/L)',
+        tierLabelZh: '极高危（目标 <1.8 mmol/L）',
+        unit: 'mmol/L',
+        value: 1.8,
+      }
+    }
     if (input.egfrMlMin173m2 === undefined) {
       return { missingInputs: ['serumCreatinine'], status: 'incomplete' }
     }
@@ -828,14 +856,6 @@ export function calculateAscvdLdlTarget(input: {
       }
     }
   }
-
-  const normalizedDxCodes = input.confirmedDiagnosisCodes.map(code => code.trim().toUpperCase()).filter(Boolean)
-  const hasCodedStage4To5Ckd = normalizedDxCodes.some(code => /^(?:N18\.[456]|Z99\.2|I12\.0|I13\.2)/.test(code))
-  const hasCodedStage3Ckd = normalizedDxCodes.some(code => code.startsWith('N18.3'))
-  const hasCodedGenericCkdOnly =
-    !hasCodedStage4To5Ckd
-    && !hasCodedStage3Ckd
-    && normalizedDxCodes.some(code => /^(?:N18(?:\.9|$)|E1[0-4]\.2|I12(?!\.0)|I13(?!\.2)|N03|Z94\.0)/.test(code))
 
   if (hasCodedStage4To5Ckd || (input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 < 30)) {
     if (hasCodedStage4To5Ckd || ckdChronicity.lt30 === 'confirmed') {

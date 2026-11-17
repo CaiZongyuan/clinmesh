@@ -5,6 +5,8 @@ import { InpatientOrderComposer } from './inpatient-order-composer.tsx'
 import { orderDraftKey } from './inpatient-order-drafts.ts'
 import { InpatientChargeList } from './inpatient-charges.tsx'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
+import type { z } from 'zod'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { scenarioStateSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
@@ -25,7 +27,7 @@ import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { inpatientAdmissionConditionLabel, inpatientFrequencyLabel } from './inpatient-labels.ts'
 import { formatShanghaiMinute } from './workspace-format.ts'
-import { InpatientVitalsAndScoresDisclosure } from './clinical-scores-panel.tsx'
+import { buildInpatientClinicalScoreRevision, InpatientVitalsAndScoresDisclosure } from './clinical-scores-panel.tsx'
 import { InpatientVerification } from './inpatient-verification.tsx'
 import { InpatientStopOrders } from './inpatient-stop-orders.tsx'
 import { InpatientExecutionBatch } from './inpatient-execution-batch.tsx'
@@ -38,7 +40,7 @@ export function isInpatientOrderRejection(mutation: Write['mutation']): boolean 
   return mutation.variables?.operation === 'inpatient.order.issue' && error instanceof ApiClientError && error.code === 'CATALOG_CONFLICT'
 }
 
-export function InpatientClinical({ admission, session, locale, write, view = 'orders', active = true }: { view?: 'orders' | 'fees'; active?: boolean; admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: Write }): React.JSX.Element {
+export function InpatientClinical({ admission, investigations, session, locale, write, view = 'orders', active = true }: { view?: 'orders' | 'fees'; active?: boolean; admission: InpatientAdmission; investigations?: z.infer<typeof inpatientInvestigationsSchema> | undefined; session: SessionContext; locale: WorkspaceLocale; write: Write }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const doctor = session.actor.roleCode === 'inpatient-doctor', nurse = session.actor.roleCode === 'ward-nurse'
   const scope = ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId]
@@ -49,7 +51,16 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
   const catalog = useQuery({ queryKey: [...scope,'clinical-catalog'], enabled: (doctor || nurse) && view === 'orders', queryFn: ({signal}) => apiGet('/api/his/v1/inpatient/clinical-catalog',inpatientFullCatalogSchema,signal) })
   const [composing, setComposing] = useState(false)
   const [editingDiagnosis, setEditingDiagnosis] = useState(false)
+  const [scoresOpen, setScoresOpen] = useState(false)
   const surgery = useQuery({ queryKey: [...scope,admission.id,'surgeries'], enabled: doctor && view === 'orders', queryFn: ({signal}) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`,inpatientSurgerySchema,signal) })
+  const investigationsQuery = useQuery({
+    queryKey: [...scope, admission.id, 'investigations'],
+    enabled: (doctor || nurse) && view === 'orders' && scoresOpen && admission.recordStatus !== 'archived',
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/investigations`, inpatientInvestigationsSchema, signal),
+    refetchInterval: scoresOpen && active && admission.recordStatus !== 'archived' ? 3_000 : false,
+    refetchIntervalInBackground: false,
+  })
+  const effectiveInvestigations = investigationsQuery.data ?? investigations
   const data = clinical.data, blocked = write.blocked || admission.status !== 'admitted'
   const diagnosed = (data?.diagnosis.entries.length ?? 0) > 0
   const error=clinical.error ?? catalog.error
@@ -87,7 +98,7 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
       </>}>
       <AgentReviewAnchor id={inpatientOrderAnchor(admission.id, order.id)} />
     </InpatientItemRow>}} /> : null}
-    {data ? <InpatientVitalsAndScoresDisclosure key={`vitals:${admission.id}`} admissionId={admission.id} canEdit={(doctor || nurse) && !write.blocked && admission.recordStatus !== 'archived' && (admission.status === 'admitted' || admission.status === 'discharge-pending')} clinicalRevision={`${data.diagnosis.revision}:${data.orders.map(o => `${o.id}@${o.version}:${o.state}`).join(',')}:${data.executions.map(e => `${e.id}@${e.version}:${e.status}`).join(',')}:${surgery.data?.requests.map(r => `${r.id}@${r.version}:${r.status}`).join(',') ?? ''}:${surgery.data?.executions.length ?? 0}`} encounterVersion={data.encounterVersion} latestVitalSigns={data.latestVitalSigns} locale={locale} riskAssessment={data.riskAssessment} scope={scope} write={write} /> : null}
+    {data ? <InpatientVitalsAndScoresDisclosure key={`vitals:${admission.id}`} admissionId={admission.id} canEdit={(doctor || nurse) && !write.blocked && admission.recordStatus !== 'archived' && (admission.status === 'admitted' || admission.status === 'discharge-pending')} clinicalRevision={buildInpatientClinicalScoreRevision({ chargesCount: data.charges.length, diagnosisRevision: data.diagnosis.revision, executions: data.executions, investigations: effectiveInvestigations, orders: data.orders, surgeries: surgery.data })} encounterVersion={data.encounterVersion} latestVitalSigns={data.latestVitalSigns} locale={locale} onScoresOpenChange={setScoresOpen} riskAssessment={data.riskAssessment} scope={scope} write={write} /> : null}
     {!doctor && data && data.executions.length > 0 ? <details open className="clinmesh-inpatient-disclosure"><summary>{t('执行记录', 'Execution records')} <span className="tabular-nums">{data.executions.length}</span></summary><div>
     {data?.executions.map(execution=>{
       const order=data.orders.find(order=>order.id===execution.orderId)!

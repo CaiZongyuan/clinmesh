@@ -471,6 +471,55 @@ function normalizeVitalsFormForCompare(form: VitalsFormState) {
   }
 }
 
+type InpatientInvestigationSummaryItem = {
+  id: string
+  previousReports?: ReadonlyArray<{ diagnosticReportId: string }> | undefined
+  report?: { diagnosticReportId: string; diagnosticReportVersion: string } | undefined
+  status: string
+  version: number
+}
+
+export function buildInpatientClinicalScoreRevision(input: {
+  chargesCount?: number | undefined
+  diagnosisRevision: number
+  executions: ReadonlyArray<{ id: string; status: string; version: number }>
+  investigations?:
+    | {
+        examinationRequests?: ReadonlyArray<InpatientInvestigationSummaryItem> | undefined
+        imagingRequests?: ReadonlyArray<InpatientInvestigationSummaryItem> | undefined
+        laboratoryRequests?: ReadonlyArray<InpatientInvestigationSummaryItem> | undefined
+      }
+    | undefined
+  orders: ReadonlyArray<{ id: string; state: string; version: number }>
+  surgeries?:
+    | {
+        executions: ReadonlyArray<{ id: string }>
+        requests: ReadonlyArray<{ id: string; status: string; version: number }>
+      }
+    | undefined
+}): string {
+  const formatInv = (items: ReadonlyArray<InpatientInvestigationSummaryItem> | undefined) =>
+    (items ?? [])
+      .map(
+        r =>
+          `${r.id}@${r.version}:${r.status}:${r.report?.diagnosticReportId ?? ''}#${r.report?.diagnosticReportVersion ?? ''}:${r.previousReports?.length ?? 0}`,
+      )
+      .join(',')
+  const invSummary =
+    input.investigations === undefined
+      ? ''
+      : `${formatInv(input.investigations.laboratoryRequests)}|${formatInv(input.investigations.examinationRequests)}|${formatInv(input.investigations.imagingRequests)}`
+  return [
+    String(input.diagnosisRevision),
+    String(input.chargesCount ?? 0),
+    input.orders.map(o => `${o.id}@${o.version}:${o.state}`).join(','),
+    input.executions.map(e => `${e.id}@${e.version}:${e.status}`).join(','),
+    input.surgeries?.requests.map(r => `${r.id}@${r.version}:${r.status}`).join(',') ?? '',
+    String(input.surgeries?.executions.length ?? 0),
+    invSummary,
+  ].join(':')
+}
+
 export function InpatientVitalsAndScoresDisclosure({
   admissionId,
   canEdit,
@@ -478,6 +527,7 @@ export function InpatientVitalsAndScoresDisclosure({
   encounterVersion,
   latestVitalSigns,
   locale,
+  onScoresOpenChange,
   riskAssessment,
   scope,
   write,
@@ -488,6 +538,7 @@ export function InpatientVitalsAndScoresDisclosure({
   encounterVersion: string
   latestVitalSigns: InpatientVitalSignsRecord | undefined
   locale: WorkspaceLocale
+  onScoresOpenChange?: ((open: boolean) => void) | undefined
   riskAssessment: ClinicalRiskAssessmentRecord | undefined
   scope: readonly (string | undefined)[]
   write: Write
@@ -658,7 +709,11 @@ export function InpatientVitalsAndScoresDisclosure({
 
       <details
         className="clinmesh-inpatient-disclosure"
-        onToggle={event => setScoresOpen(event.currentTarget.open)}
+        onToggle={event => {
+          const nextOpen = event.currentTarget.open
+          setScoresOpen(nextOpen)
+          onScoresOpenChange?.(nextOpen)
+        }}
       >
         <summary>
           {t('专病风险评估与临床评分', 'Clinical risk assessment & scores')}

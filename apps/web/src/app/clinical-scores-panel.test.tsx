@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  buildInpatientClinicalScoreRevision,
   buildOutpatientClinicalScoreRevision,
   InpatientVitalsAndScoresDisclosure,
   OutpatientClinicalScoresDisclosure,
@@ -609,5 +610,156 @@ describe('ClinicalScoresPanel disclosures', () => {
       } as unknown as DoctorCaseDetail['examinationRequests'],
     }, 'rev-static')
     expect(afterReport).not.toBe(beforeReport)
+  })
+
+  it('refetches open inpatient clinical scores when a laboratory or 12-lead ECG report arrives', async () => {
+    const baseInput = {
+      chargesCount: 1,
+      diagnosisRevision: 1,
+      executions: [],
+      orders: [],
+      surgeries: undefined,
+    }
+    const revBeforeReport = buildInpatientClinicalScoreRevision({
+      ...baseInput,
+      investigations: {
+        examinationRequests: [{ id: 'ecg-req-1', status: 'accepted', version: 1 }],
+        imagingRequests: [],
+        laboratoryRequests: [{ id: 'lab-req-1', status: 'in-progress', version: 1 }],
+      },
+    })
+    const revAfterReport = buildInpatientClinicalScoreRevision({
+      ...baseInput,
+      investigations: {
+        examinationRequests: [
+          {
+            id: 'ecg-req-1',
+            report: { diagnosticReportId: 'dr-ecg-inp-1', diagnosticReportVersion: '1' },
+            status: 'reported',
+            version: 2,
+          },
+        ],
+        imagingRequests: [],
+        laboratoryRequests: [
+          {
+            id: 'lab-req-1',
+            report: { diagnosticReportId: 'dr-lab-inp-1', diagnosticReportVersion: '1' },
+            status: 'reported',
+            version: 2,
+          },
+        ],
+      },
+    })
+    expect(revAfterReport).not.toBe(revBeforeReport)
+
+    let scoreReads = 0
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/his/v1/inpatient/admissions/adm-rep/clinical-scores')) {
+        scoreReads += 1
+        return Response.json({
+          encounterId: 'adm-rep',
+          encounterVersion: '1',
+          evaluatedAt: '2026-10-25T10:00:00+08:00',
+          riskAssessment: {
+            effectiveStSegmentDeviation: null,
+            observationId: null,
+            observationVersion: null,
+            provenanceId: null,
+            recordedAt: null,
+            recordedBy: null,
+            revision: 0,
+            values: {
+              anginaEpisodes24h: null,
+              aspirinUsedLast7Days: null,
+              cardiacArrestOnAdmission: null,
+              killipClass: null,
+              priorBleedingHistory: null,
+              smokingStatus: null,
+              stSegmentDeviation: null,
+            },
+          },
+          scores: (['ckd-epi-2021-egfr', 'cockcroft-gault-crcl', 'grace-acs', 'timi-ua-nstemi', 'precise-dapt', 'ascvd-ldl-target'] as const).map(id =>
+            id === 'ckd-epi-2021-egfr' && scoreReads >= 2
+              ? {
+                  id,
+                  missingInputs: [],
+                  sourceReferences: [],
+                  status: 'complete' as const,
+                  summaryEn: '88 mL/min/1.73m²',
+                  summaryZh: '88 mL/min/1.73m² · G2',
+                  tierCode: 'G2',
+                  tierLabelEn: 'G2',
+                  tierLabelZh: 'G2',
+                  titleEn: id,
+                  titleZh: id,
+                  unit: 'mL/min/1.73m²',
+                  value: 88,
+                }
+              : {
+                  id,
+                  missingInputs: ['serumCreatinine'],
+                  sourceReferences: [],
+                  status: 'incomplete' as const,
+                  summaryEn: 'Missing serum creatinine',
+                  summaryZh: '待补齐：血清肌酐',
+                  tierCode: null,
+                  tierLabelEn: null,
+                  tierLabelZh: null,
+                  titleEn: id,
+                  titleZh: id,
+                  unit: '分',
+                  value: null,
+                },
+          ),
+          vitalSigns: null,
+        })
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+
+    const write = {
+      blocked: false,
+      mutation: { isPending: false, mutateAsync: vi.fn(), variables: undefined },
+    } as unknown as ReturnType<typeof useInpatientWriteIntent>
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <InpatientVitalsAndScoresDisclosure
+          admissionId="adm-rep"
+          canEdit={true}
+          clinicalRevision={revBeforeReport}
+          encounterVersion="1"
+          latestVitalSigns={undefined}
+          locale="zh-CN"
+          riskAssessment={undefined}
+          scope={['inpatient', 'ws-1', 'ep-1', 'role-1']}
+          write={write}
+        />
+      </QueryClientProvider>,
+    )
+
+    const scoresDetails = screen.getByText('专病风险评估与临床评分').closest('details')!
+    scoresDetails.open = true
+    fireEvent(scoresDetails, new Event('toggle'))
+    await waitFor(() => expect(scoreReads).toBe(1))
+
+    rerender(
+      <QueryClientProvider client={client}>
+        <InpatientVitalsAndScoresDisclosure
+          admissionId="adm-rep"
+          canEdit={true}
+          clinicalRevision={revAfterReport}
+          encounterVersion="1"
+          latestVitalSigns={undefined}
+          locale="zh-CN"
+          riskAssessment={undefined}
+          scope={['inpatient', 'ws-1', 'ep-1', 'role-1']}
+          write={write}
+        />
+      </QueryClientProvider>,
+    )
+    await waitFor(() => expect(scoreReads).toBe(2))
+    await waitFor(() => expect(screen.getByText('88 mL/min/1.73m² · G2')).toBeTruthy())
   })
 })
