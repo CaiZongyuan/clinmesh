@@ -177,6 +177,12 @@ it.each(['report-draft', 'manual-confirmation'] as const)('指南只使用所属
   expect(modelInput.parse(s.calls.at(-2)!.input).clinicalFacts).toMatchObject({ request: { id: s.stay.requestId },
     measurements: [expect.objectContaining({ kind: 'lesion-length', value: 12 }),
       expect.objectContaining({ value: 3 }), expect.objectContaining({ value: 3 })] })
+  const pciTopicInitial = await s.fixture.read('inpatient-doctor', `${s.stay.path}/guideline-topics?topicId=pci-stent`, guidelineTopicBundleSchema)
+  expect(pciTopicInitial.items[0]!.patientIndicators.find(i => i.code === 'pci-selection-plan')).toMatchObject({
+    status: source === 'report-draft' ? 'present' : 'missing',
+    valueText: expect.stringMatching(/长度 12mm.*近端 3mm.*远端 3mm.*选型 v1/),
+    versionId: '1.s1',
+  })
   const admission = await s.fixture.read('inpatient-doctor', s.stay.path, inpatientDetailSchema)
   const requested = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
     encounterVersion: admission.admission.versionId, procedureId: s.stay.procedure.id, catalogVersion: s.stay.procedure.version,
@@ -198,6 +204,10 @@ it.each(['report-draft', 'manual-confirmation'] as const)('指南只使用所属
     expectedVersion: (await readSelection()).confirmation?.version ?? 0,
     parameters: { ...pciAgentParameters, requestId: second.id,
       measurements: pciAgentParameters.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 17 } : item) },
+  })
+  const pciTopicEdited = await s.fixture.read('inpatient-doctor', `${s.stay.path}/guideline-topics?topicId=pci-stent`, guidelineTopicBundleSchema)
+  expect(pciTopicEdited.items[0]!.patientIndicators.find(i => i.code === 'pci-selection-plan')).toMatchObject({
+    valueText: expect.stringMatching(/长度 17mm.*近端 3mm.*远端 3mm.*选型 v\d+/),
   })
   expect(await s.read()).toEqual(original)
   expect((await s.reprepare()).status).toBe(200)

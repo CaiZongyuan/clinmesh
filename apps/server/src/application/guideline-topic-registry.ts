@@ -745,16 +745,32 @@ export function evaluateTopicPatientIndicators(
     pushScore('ckd-epi-2021-egfr', '估算肾小球滤过率 (eGFR)', 'eGFR', '缺少造影/血运重建前血肌酐与 eGFR')
   } else if (topicId === 'pci-stent') {
     if (supplementary.pciPlanSummary !== undefined) {
+      const plan = supplementary.pciPlanSummary
+      const findMeas = (kind: 'lesion-length' | 'proximal-reference-diameter' | 'distal-reference-diameter') => {
+        const m = plan.measurements.find(item => item.kind === kind)
+        return m?.value != null ? `${m.value}${m.unit ?? 'mm'}` : null
+      }
+      const lenStr = findMeas('lesion-length')
+      const proxStr = findMeas('proximal-reference-diameter')
+      const distStr = findMeas('distal-reference-diameter')
+      const measParts = [
+        lenStr ? `长度 ${lenStr}` : null,
+        proxStr ? `近端 ${proxStr}` : null,
+        distStr ? `远端 ${distStr}` : null,
+      ].filter((part): part is string => part !== null)
+      const sitePart = plan.targetSite ? plan.targetSite.slice(0, 80) : null
+      const verPart = plan.selectionVersion > 0 ? `选型 v${plan.selectionVersion}` : null
+      const detailParts = [sitePart, ...measParts, verPart].filter((part): part is string => part !== null)
       indicators.push({
         code: 'pci-selection-plan',
         labelEn: 'PCI target vessel & sizing measurements',
         labelZh: 'PCI 靶血管与参考段测量',
-        sourceReference: supplementary.pciPlanSummary.sourceReference,
-        status: supplementary.pciPlanSummary.missingItems.length === 0 ? 'present' : 'missing',
-        valueText: supplementary.pciPlanSummary.targetSite ?? '待补充靶血管与管径/长度测量',
-        versionId: supplementary.pciPlanSummary.versionId,
+        sourceReference: plan.sourceReference,
+        status: plan.missingItems.length === 0 ? 'present' : 'missing',
+        valueText: (detailParts.length > 0 ? detailParts.join(' · ') : '待补充靶血管与管径/长度测量').slice(0, 240),
+        versionId: plan.selectionVersion > 0 ? `${plan.versionId}.s${plan.selectionVersion}` : plan.versionId,
       })
-      missing.push(...supplementary.pciPlanSummary.missingItems)
+      missing.push(...plan.missingItems)
     } else if (supplementary.angiographySummary !== undefined) {
       indicators.push({
         code: 'coronary-angiography',
