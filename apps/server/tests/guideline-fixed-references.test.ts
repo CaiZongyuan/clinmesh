@@ -255,5 +255,10 @@ it('六个注册 Guideline Topic 均通过精确 SHA-256、物理页码、软连
   const { fingerprint: baseFp, ...acsSpec } = acsDef
   expect(computeGuidelineTopicFingerprint(acsSpec)).toBe(baseFp)
   expect(computeGuidelineTopicFingerprint({ ...acsSpec, generationRule: `${acsSpec.generationRule}（附加条款）` })).not.toBe(baseFp)
-  expect(computeGuidelineTopicFingerprint({ ...acsSpec, conclusionKinds: [...acsSpec.conclusionKinds, 'extra-kind'] })).not.toBe(baseFp)
+  expect(
+    computeGuidelineTopicFingerprint({
+      ...acsSpec,
+      conclusionKinds: [acsSpec.conclusionKinds[0], acsSpec.conclusionKinds[1], 'stent-category'],
+    }),
+  ).not.toBe(baseFp)
 })
