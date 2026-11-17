@@ -67,6 +67,7 @@ function ClinicalScoresBody({
   bundle,
   canEditRisk,
   error,
+  identityKey,
   loading,
   locale,
   onRetry,
@@ -77,6 +78,7 @@ function ClinicalScoresBody({
   bundle: ClinicalScoreBundle | undefined
   canEditRisk: boolean
   error: Error | null | undefined
+  identityKey: string
   loading: boolean
   locale: WorkspaceLocale
   onRetry: () => void
@@ -88,10 +90,11 @@ function ClinicalScoresBody({
   const t = (cn: string, en: string) => (zh ? cn : en)
   const messages = getWorkspaceMessages(locale)
   const effectiveRecord = bundle?.riskAssessment ?? riskRecord
+  const resetKey = `${identityKey}:${bundle?.encounterId ?? ''}:${effectiveRecord?.observationId ?? 'none'}:${effectiveRecord?.revision ?? 0}`
   const [form, setForm] = useState<RiskFormState>(() => toRiskForm(effectiveRecord))
   useEffect(() => {
     setForm(toRiskForm(effectiveRecord))
-  }, [effectiveRecord?.revision])
+  }, [resetKey])
 
   const anginaInvalid = form.anginaEpisodes24h.trim() !== ''
     && (!Number.isInteger(Number(form.anginaEpisodes24h)) || Number(form.anginaEpisodes24h) < 0 || Number(form.anginaEpisodes24h) > 100)
@@ -296,6 +299,7 @@ export function OutpatientClinicalScoresDisclosure({
         bundle={scores.data}
         canEditRisk={!readOnly}
         error={scores.error ?? saveRisk.error}
+        identityKey={`${caseId}:${encounterId}`}
         loading={scores.isFetching}
         locale={locale}
         onRetry={() => { void scores.refetch() }}
@@ -448,6 +452,7 @@ export function InpatientVitalsAndScoresDisclosure({
           bundle={scores.data}
           canEditRisk={canEdit}
           error={scores.error}
+          identityKey={admissionId}
           loading={scores.isFetching}
           locale={locale}
           onRetry={() => { void scores.refetch() }}

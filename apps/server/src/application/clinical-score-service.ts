@@ -989,6 +989,9 @@ export class ClinicalScoreService {
       ...(history.knownCoronaryRevascularizationOrStenosisGe50 === undefined
         ? {}
         : { knownCoronaryRevascularizationOrStenosisGe50: history.knownCoronaryRevascularizationOrStenosisGe50 }),
+      ...(history.priorCoronaryRevascularization === undefined
+        ? {}
+        : { priorCoronaryRevascularization: history.priorCoronaryRevascularization }),
     }
 
     return {
@@ -1163,6 +1166,7 @@ export class ClinicalScoreService {
   ) {
     const confirmedDiagnoses: ClinicalScoreObjectiveFacts['confirmedDiagnoses'] = []
     let knownCad: ClinicalScoreObjectiveFacts['knownCoronaryRevascularizationOrStenosisGe50']
+    let priorCoronaryRevascularization: ClinicalScoreObjectiveFacts['priorCoronaryRevascularization']
 
     const conditionParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
     for (;;) {
@@ -1200,6 +1204,15 @@ export class ClinicalScoreService {
           }
         }
         if (
+          priorCoronaryRevascularization === undefined
+          && (
+            codes.some(code => /^(?:Z95\.[15]|Z98\.61)/i.test(code))
+            || /支架植入|冠脉搭桥|经皮冠状动脉介入|coronary angioplasty|coronary bypass/i.test(text)
+          )
+        ) {
+          priorCoronaryRevascularization = { source: ref, value: true }
+        }
+        if (
           knownCad === undefined
           && (
             codes.some(code => /^(?:Z95\.[15]|Z98\.61|I25\.2)/i.test(code))
@@ -1230,6 +1243,7 @@ export class ClinicalScoreService {
             reference: `Procedure/${parsed.data.id}`,
             versionId: parsed.data.meta?.versionId ?? '1',
           }
+          priorCoronaryRevascularization ??= { source: ref, value: true }
           knownCad ??= { source: ref, value: true }
         }
       }
@@ -1265,6 +1279,7 @@ export class ClinicalScoreService {
     return {
       confirmedDiagnoses,
       knownCoronaryRevascularizationOrStenosisGe50: knownCad,
+      priorCoronaryRevascularization,
     }
   }
 

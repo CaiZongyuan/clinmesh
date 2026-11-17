@@ -637,6 +637,7 @@ export function CaseDetail({
                 state={detail.diagnosis}
               />
               <OutpatientClinicalScoresDisclosure
+                key={detail.caseId}
                 caseId={detail.caseId}
                 clinicalRevision={recommendationRevision}
                 encounterId={detail.encounter.id}
