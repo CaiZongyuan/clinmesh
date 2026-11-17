@@ -36,6 +36,8 @@ export interface ClinicalScoreObjectiveFacts {
   baselineWeightKg?: SourcedFact<number>
   cadOnsetAgeYears?: SourcedFact<number>
   cardiacArrestOnAdmission?: SourcedFact<boolean>
+  ckdLt30Chronicity?: SourcedFact<'confirmed' | 'excluded'>
+  ckdLt60Chronicity?: SourcedFact<'confirmed' | 'excluded'>
   confirmedDiagnoses: Array<{
     code: string
     source: ClinicalScoreSourceReference
@@ -45,6 +47,7 @@ export interface ClinicalScoreObjectiveFacts {
   familyHistoryPrematureCad?: SourcedFact<boolean>
   hdlCholesterol?: SourcedFact<UnitQuantityInput>
   heartRateBpm?: SourcedFact<number>
+  heightCm?: SourcedFact<number>
   hemoglobin?: SourcedFact<UnitQuantityInput>
   killipClass?: SourcedFact<KillipClass>
   knownCoronaryRevascularizationOrStenosisGe50?: SourcedFact<boolean>
@@ -90,6 +93,10 @@ export function validateAdultAgeYears(ageYears: number): number {
 
 export function validateWeightKg(weightKg: number): number {
   return assertFiniteRange(weightKg, 1, 400, 'weightKg')
+}
+
+export function validateHeightCm(heightCm: number): number {
+  return assertFiniteRange(heightCm, 30, 260, 'heightCm')
 }
 
 export function validateHeartRateBpm(heartRateBpm: number): number {
@@ -459,14 +466,63 @@ export function hasConfirmedHypertensionDiagnosis(codes: readonly string[]): boo
   return codeMatchesPrefixes(codes, HYPERTENSION_ICD10_PREFIXES)
 }
 
+function resolveCkdChronicityStates(
+  codes: readonly string[],
+  egfr: number | undefined,
+  explicitLt60: 'confirmed' | 'excluded' | undefined,
+  explicitLt30: 'confirmed' | 'excluded' | undefined,
+): {
+  lt30: 'confirmed' | 'excluded' | 'unknown'
+  lt60: 'confirmed' | 'excluded' | 'unknown'
+} {
+  if (egfr === undefined || egfr >= 60) {
+    return { lt30: 'excluded', lt60: 'excluded' }
+  }
+  const normalized = codes.map(code => code.trim().toUpperCase()).filter(Boolean)
+  const hasStage4To5Dx = normalized.some(code => /^(?:N18\.[456]|Z99\.2|I12\.0|I13\.2)/.test(code))
+  const hasStage3Dx = normalized.some(code => code.startsWith('N18.3'))
+  const hasGenericCkdDx = normalized.some(code => /^(?:N18(?:\.9|$)|E1[0-4]\.2|I12(?!\.0)|I13(?!\.2)|N03|Z94\.0)/.test(code))
+  const hasStage1To2OnlyDx =
+    normalized.some(code => /^N18\.[12]/.test(code)) && !hasStage3Dx && !hasStage4To5Dx && !hasGenericCkdDx
+  const hasAkiDx = normalized.some(code => code.startsWith('N17'))
+
+  let lt60: 'confirmed' | 'excluded' | 'unknown'
+  if (hasStage4To5Dx || hasStage3Dx || (hasGenericCkdDx && !hasAkiDx && explicitLt60 !== 'excluded')) {
+    lt60 = 'confirmed'
+  } else if (explicitLt60 === 'confirmed') {
+    lt60 = 'confirmed'
+  } else if (explicitLt60 === 'excluded' || hasAkiDx || hasStage1To2OnlyDx) {
+    lt60 = 'excluded'
+  } else {
+    lt60 = 'unknown'
+  }
+
+  let lt30: 'confirmed' | 'excluded' | 'unknown' = 'excluded'
+  if (egfr < 30) {
+    if (hasStage4To5Dx || (hasGenericCkdDx && !hasAkiDx && explicitLt30 !== 'excluded')) {
+      lt30 = 'confirmed'
+    } else if (explicitLt30 === 'confirmed') {
+      lt30 = 'confirmed'
+    } else if (explicitLt30 === 'excluded' || hasAkiDx || hasStage3Dx || hasStage1To2OnlyDx) {
+      lt30 = 'excluded'
+    } else {
+      lt30 = 'unknown'
+    }
+  }
+  return { lt30, lt60 }
+}
+
 export function calculateAscvdLdlTarget(input: {
   ageYears: number
   antihypertensiveTreated?: boolean
   cadOnsetAgeYears?: number
+  ckdLt30Chronicity?: 'confirmed' | 'excluded'
+  ckdLt60Chronicity?: 'confirmed' | 'excluded'
   confirmedDiagnosisCodes: readonly string[]
   diastolicBpMmHg?: number
   egfrMlMin173m2?: number
   hdlCholesterol?: UnitQuantityInput
+  heightCm?: number
   knownCoronaryRevascularization?: boolean
   ldlCholesterol?: UnitQuantityInput
   priorCoronaryRevascularization?: boolean
@@ -475,6 +531,7 @@ export function calculateAscvdLdlTarget(input: {
   smokingStatus?: SmokingStatus
   systolicBpMmHg?: number
   totalCholesterol?: UnitQuantityInput
+  weightKg?: number
 }):
   | {
       ldlGoalEvaluation?: LdlGoalEvaluation
@@ -504,7 +561,15 @@ export function calculateAscvdLdlTarget(input: {
       : normalizeLipidMmolL(input.hdlCholesterol.value, input.hdlCholesterol.unit, 'hdl')
   if (input.systolicBpMmHg !== undefined) validateSystolicBpMmHg(input.systolicBpMmHg)
   if (input.diastolicBpMmHg !== undefined) validateDiastolicBpMmHg(input.diastolicBpMmHg)
+  if (input.heightCm !== undefined) validateHeightCm(input.heightCm)
+  if (input.weightKg !== undefined) validateWeightKg(input.weightKg)
   if (input.egfrMlMin173m2 !== undefined) assertFiniteRange(input.egfrMlMin173m2, 0, 500, 'egfrMlMin173m2')
+  const ckdChronicity = resolveCkdChronicityStates(
+    input.confirmedDiagnosisCodes,
+    input.egfrMlMin173m2,
+    input.ckdLt60Chronicity,
+    input.ckdLt30Chronicity,
+  )
 
   const evaluateGoal = (target: number): LdlGoalEvaluation | undefined => {
     if (ldlMmolL === undefined) return undefined
@@ -605,8 +670,13 @@ export function calculateAscvdLdlTarget(input: {
 
     if (input.egfrMlMin173m2 !== undefined) {
       if (input.egfrMlMin173m2 >= 15 && input.egfrMlMin173m2 < 60) {
-        minHighRiskFactors += 1
-        maxHighRiskFactors += 1
+        if (ckdChronicity.lt60 === 'confirmed') {
+          minHighRiskFactors += 1
+          maxHighRiskFactors += 1
+        } else if (ckdChronicity.lt60 === 'unknown') {
+          maxHighRiskFactors += 1
+          upgradeMissing.push('ckdChronicity')
+        }
       }
     } else {
       maxHighRiskFactors += 1
@@ -652,21 +722,26 @@ export function calculateAscvdLdlTarget(input: {
     }
   }
 
-  // 2. 糖尿病合并 CKD（eGFR < 60）或重度 CKD（eGFR < 30）直接判定极高危 (<1.8 mmol/L)
+  // 2. 糖尿病合并慢性肾脏病（已证实病程 ≥3 个月或确诊 CKD 的 eGFR < 60）或重度慢性肾脏病（已证实慢性 eGFR < 30）直接判定极高危 (<1.8 mmol/L)
   if (hasDiabetes) {
     if (input.egfrMlMin173m2 === undefined) {
       return { missingInputs: ['serumCreatinine'], status: 'incomplete' }
     }
     if (input.egfrMlMin173m2 < 60) {
-      const goal = evaluateGoal(1.8)
-      return {
-        ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
-        status: 'complete',
-        tierCode: 'very-high',
-        tierLabelEn: 'Very-high risk (<1.8 mmol/L)',
-        tierLabelZh: '极高危（目标 <1.8 mmol/L）',
-        unit: 'mmol/L',
-        value: 1.8,
+      if (ckdChronicity.lt60 === 'confirmed') {
+        const goal = evaluateGoal(1.8)
+        return {
+          ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
+          status: 'complete',
+          tierCode: 'very-high',
+          tierLabelEn: 'Very-high risk (<1.8 mmol/L)',
+          tierLabelZh: '极高危（目标 <1.8 mmol/L）',
+          unit: 'mmol/L',
+          value: 1.8,
+        }
+      }
+      if (ckdChronicity.lt60 === 'unknown') {
+        return { missingInputs: ['ckdChronicity'], status: 'incomplete' }
       }
     }
     if (age >= 40) {
@@ -684,23 +759,28 @@ export function calculateAscvdLdlTarget(input: {
   }
 
   if (input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 < 30) {
-    const goal = evaluateGoal(1.8)
-    return {
-      ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
-      status: 'complete',
-      tierCode: 'very-high',
-      tierLabelEn: 'Very-high risk (<1.8 mmol/L)',
-      tierLabelZh: '极高危（目标 <1.8 mmol/L）',
-      unit: 'mmol/L',
-      value: 1.8,
+    if (ckdChronicity.lt30 === 'confirmed') {
+      const goal = evaluateGoal(1.8)
+      return {
+        ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
+        status: 'complete',
+        tierCode: 'very-high',
+        tierLabelEn: 'Very-high risk (<1.8 mmol/L)',
+        tierLabelZh: '极高危（目标 <1.8 mmol/L）',
+        unit: 'mmol/L',
+        value: 1.8,
+      }
+    }
+    if (ckdChronicity.lt30 === 'unknown') {
+      return { missingInputs: ['ckdChronicity'], status: 'incomplete' }
     }
   }
 
-  // 原发性重度高胆固醇血症或 CKD 3 期（30 <= eGFR < 60）直接高危 (<2.6 mmol/L)
+  // 原发性重度高胆固醇血症或已确认慢性病程的 CKD 3 期（30 <= eGFR < 60）直接高危 (<2.6 mmol/L)
   if (
     (ldlMmolL !== undefined && ldlMmolL >= 4.9)
     || (tcMmolL !== undefined && tcMmolL >= 7.2)
-    || (input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 < 60)
+    || (input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 < 60 && ckdChronicity.lt60 === 'confirmed')
   ) {
     if (input.egfrMlMin173m2 === undefined) {
       return { missingInputs: ['serumCreatinine'], status: 'incomplete' }
@@ -717,7 +797,7 @@ export function calculateAscvdLdlTarget(input: {
     }
   }
 
-  // 3. 21 种组合一级预防矩阵：严禁缺项默认阴性，必须具备性别、肾功、血压（收缩压≥140 或舒张压≥90 判定高血压）、血脂与吸烟状态
+  // 3. 21 种组合一级预防矩阵 + <55 岁中危人群余生危险升级：严禁缺项默认阴性
   const bpAlreadyHypertensive =
     hasConfirmedHtn
     || (input.systolicBpMmHg !== undefined && input.systolicBpMmHg >= 140)
@@ -733,7 +813,10 @@ export function calculateAscvdLdlTarget(input: {
   if (hdlMmolL === undefined) missing.push('hdlCholesterol')
   if (input.smokingStatus === undefined) missing.push('smokingStatus')
   if (missing.length > 0) {
-    return { missingInputs: missing, status: 'incomplete' }
+    if (input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 < 60 && ckdChronicity.lt60 === 'unknown') {
+      missing.push('ckdChronicity')
+    }
+    return { missingInputs: [...new Set(missing)], status: 'incomplete' }
   }
 
   const hasHypertension = bpAlreadyHypertensive
@@ -762,6 +845,63 @@ export function calculateAscvdLdlTarget(input: {
     primaryTier = 'moderate'
   }
 
+  // 《中国血脂管理指南（2023年）》：10 年 ASCVD 中危且年龄 <55 岁时评估 5 项余生危险因素，具备 ≥2 项升级为高危
+  if (primaryTier === 'moderate' && age < 55) {
+    const lifetimeBpFactor: 1 | 0 | null =
+      (input.systolicBpMmHg !== undefined && input.systolicBpMmHg >= 160)
+      || (input.diastolicBpMmHg !== undefined && input.diastolicBpMmHg >= 100)
+        ? 1
+        : input.systolicBpMmHg !== undefined && input.diastolicBpMmHg !== undefined
+          ? 0
+          : null
+    const lifetimeNonHdlFactor: 1 | 0 | null =
+      tcMmolL === undefined || hdlMmolL === undefined
+        ? null
+        : tcMmolL - hdlMmolL >= 5.2 - 1e-9
+          ? 1
+          : 0
+    const lifetimeHdlFactor: 1 | 0 = hdlMmolL! < 1.0 ? 1 : 0
+    const bmi =
+      input.weightKg !== undefined && input.heightCm !== undefined
+        ? input.weightKg / ((input.heightCm / 100) ** 2)
+        : undefined
+    const lifetimeBmiFactor: 1 | 0 | null = bmi === undefined ? null : bmi >= 28 - 1e-9 ? 1 : 0
+    const lifetimeSmokingFactor: 1 | 0 = input.smokingStatus === 'current' ? 1 : 0
+
+    const minLifetimeFactors =
+      (lifetimeBpFactor ?? 0)
+      + (lifetimeNonHdlFactor ?? 0)
+      + lifetimeHdlFactor
+      + (lifetimeBmiFactor ?? 0)
+      + lifetimeSmokingFactor
+    const maxLifetimeFactors =
+      (lifetimeBpFactor ?? 1)
+      + (lifetimeNonHdlFactor ?? 1)
+      + lifetimeHdlFactor
+      + (lifetimeBmiFactor ?? 1)
+      + lifetimeSmokingFactor
+    if (minLifetimeFactors >= 2) {
+      primaryTier = 'high'
+    } else if (maxLifetimeFactors >= 2) {
+      const lifetimeMissing: ClinicalScoreMissingInput[] = []
+      if (lifetimeBpFactor === null) {
+        if (input.systolicBpMmHg === undefined) lifetimeMissing.push('systolicBpMmHg')
+        if (input.diastolicBpMmHg === undefined) lifetimeMissing.push('diastolicBpMmHg')
+      }
+      if (lifetimeNonHdlFactor === null && tcMmolL === undefined) {
+        lifetimeMissing.push('totalCholesterol')
+      }
+      if (lifetimeBmiFactor === null) {
+        if (input.weightKg === undefined) lifetimeMissing.push('weightKg')
+        if (input.heightCm === undefined) lifetimeMissing.push('heightCm')
+      }
+      if (input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 < 60 && ckdChronicity.lt60 === 'unknown') {
+        lifetimeMissing.push('ckdChronicity')
+      }
+      return { missingInputs: [...new Set(lifetimeMissing)], status: 'incomplete' }
+    }
+  }
+
   if (primaryTier === 'high') {
     const goal = evaluateGoal(2.6)
     return {
@@ -774,6 +914,11 @@ export function calculateAscvdLdlTarget(input: {
       value: 2.6,
     }
   }
+
+  if (input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 < 60 && ckdChronicity.lt60 === 'unknown') {
+    return { missingInputs: ['ckdChronicity'], status: 'incomplete' }
+  }
+
   if (primaryTier === 'moderate') {
     const goal = evaluateGoal(2.6)
     return {
@@ -838,11 +983,13 @@ export const MISSING_INPUT_LABELS: Record<ClinicalScoreMissingInput, { en: strin
   aspirinUsedLast7Days: { en: 'Aspirin in past 7d', zh: '近7天阿司匹林使用' },
   cadOnsetAge: { en: 'CAD onset age/date', zh: '冠心病发病年龄' },
   cardiacArrestOnAdmission: { en: 'Cardiac arrest on admission', zh: '入院心脏骤停' },
+  ckdChronicity: { en: 'CKD chronicity (≥3 mo eGFR or CKD/AKI diagnosis)', zh: '慢性肾脏病病程确认（≥3个月或 CKD/AKI 诊断）' },
   diastolicBpMmHg: { en: 'Diastolic BP', zh: '舒张压' },
   elevatedCardiacBiomarker: { en: 'Cardiac troponin report', zh: '心肌损伤标志物报告' },
   familyHistoryPrematureCad: { en: 'Family history of premature CAD', zh: '早发冠心病家族史' },
   hdlCholesterol: { en: 'HDL-C report', zh: '高密度脂蛋白胆固醇 (HDL-C)' },
   heartRateBpm: { en: 'Heart rate', zh: '心率/脉搏' },
+  heightCm: { en: 'Standing height (cm)', zh: '身高 (cm)' },
   hemoglobin: { en: 'Hemoglobin report', zh: '血红蛋白 (Hb)' },
   killipClass: { en: 'Killip class', zh: 'Killip 心功能分级' },
   knownCoronaryStenosisGe50: { en: 'Known coronary stenosis ≥50%', zh: '已知冠脉狭窄 ≥50%' },
@@ -912,6 +1059,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
   const adultAge = safeParseFact(facts.ageYears, validateAdultAgeYears)
   const admissionAdultAge = safeParseFact(facts.admissionAgeYears ?? facts.ageYears, validateAdultAgeYears)
   const sex = facts.sex
+  const heightCm = safeParseFact(facts.heightCm, validateHeightCm)
   const weightKg = safeParseFact(facts.weightKg, validateWeightKg)
   const baselineWeightKg = safeParseFact(facts.baselineWeightKg ?? facts.weightKg, validateWeightKg)
   const admissionHeartRateBpm = safeParseFact(facts.admissionHeartRateBpm ?? facts.heartRateBpm, validateHeartRateBpm)
@@ -1249,9 +1397,13 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
       facts.knownCoronaryRevascularizationOrStenosisGe50?.source,
       facts.priorCoronaryRevascularization?.source,
       facts.severeAscvdEventCount?.source,
+      facts.ckdLt60Chronicity?.source,
+      facts.ckdLt30Chronicity?.source,
       scrValid?.source,
       systolicBpMmHg?.source,
       diastolicBpMmHg?.source,
+      heightCm?.source,
+      weightKg?.source,
       facts.antihypertensiveMedicationActive?.source,
       facts.smokingStatus?.source,
       ldlValid?.source,
@@ -1269,10 +1421,17 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
         ...(facts.cadOnsetAgeYears === undefined
           ? {}
           : { cadOnsetAgeYears: facts.cadOnsetAgeYears.value }),
+        ...(facts.ckdLt30Chronicity === undefined
+          ? {}
+          : { ckdLt30Chronicity: facts.ckdLt30Chronicity.value }),
+        ...(facts.ckdLt60Chronicity === undefined
+          ? {}
+          : { ckdLt60Chronicity: facts.ckdLt60Chronicity.value }),
         confirmedDiagnosisCodes: diagnosisCodes,
         ...(diastolicBpMmHg === undefined ? {} : { diastolicBpMmHg: diastolicBpMmHg.value }),
         ...(egfrValue === undefined ? {} : { egfrMlMin173m2: egfrValue }),
         ...(hdlValid === undefined ? {} : { hdlCholesterol: hdlValid.value }),
+        ...(heightCm === undefined ? {} : { heightCm: heightCm.value }),
         ...(facts.knownCoronaryRevascularizationOrStenosisGe50 === undefined
           ? {}
           : { knownCoronaryRevascularization: facts.knownCoronaryRevascularizationOrStenosisGe50.value }),
@@ -1287,6 +1446,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
         ...(facts.smokingStatus === undefined ? {} : { smokingStatus: facts.smokingStatus.value }),
         ...(systolicBpMmHg === undefined ? {} : { systolicBpMmHg: systolicBpMmHg.value }),
         ...(tcValid === undefined ? {} : { totalCholesterol: tcValid.value }),
+        ...(weightKg === undefined ? {} : { weightKg: weightKg.value }),
       })
       if (calc.status === 'incomplete') {
         const normalizedMissing = [
