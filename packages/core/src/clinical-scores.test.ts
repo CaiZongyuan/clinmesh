@@ -361,12 +361,14 @@ describe('six deterministic clinical score formulas', () => {
       value: 1.4,
     })
 
-    // Stable CAD with preserved eGFR -> very-high (<1.8 mmol/L)
+    // Stable CAD with preserved eGFR -> very-high (<1.8 mmol/L AND >50% reduction from baseline)
     const stableCad = calculateAscvdLdlTarget({
       ageYears: 64,
       confirmedDiagnosisCodes: ['I25.1'],
       egfrMlMin173m2: 72,
       ldlCholesterol: { unit: 'mmol/L', value: 1.62 },
+      lipidLoweringTreated: true,
+      pretreatmentLdlCholesterol: { unit: 'mmol/L', value: 3.6 },
     })
     expect(stableCad).toMatchObject({
       ldlGoalEvaluation: { atGoal: true, currentLdlMmolL: 1.62, targetLdlMmolL: 1.8 },
@@ -374,6 +376,47 @@ describe('six deterministic clinical score formulas', () => {
       tierCode: 'very-high',
       value: 1.8,
     })
+
+    // Very-high / ultra-high below absolute cutoff but <=50% reduction (e.g. 2.0 -> 1.7 mmol/L, or exact 50% 2.0 -> 1.0) is NOT atGoal
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 64,
+        confirmedDiagnosisCodes: ['I25.1'],
+        egfrMlMin173m2: 72,
+        ldlCholesterol: { unit: 'mmol/L', value: 1.7 },
+        lipidLoweringTreated: true,
+        pretreatmentLdlCholesterol: { unit: 'mmol/L', value: 2.0 },
+      }),
+    ).toMatchObject({
+      ldlGoalEvaluation: { atGoal: false, currentLdlMmolL: 1.7, targetLdlMmolL: 1.8 },
+      status: 'complete',
+      tierCode: 'very-high',
+      value: 1.8,
+    })
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 64,
+        confirmedDiagnosisCodes: ['I25.1'],
+        egfrMlMin173m2: 72,
+        ldlCholesterol: { unit: 'mmol/L', value: 1.0 },
+        lipidLoweringTreated: true,
+        pretreatmentLdlCholesterol: { unit: 'mmol/L', value: 2.0 },
+      }),
+    ).toMatchObject({
+      ldlGoalEvaluation: { atGoal: false, currentLdlMmolL: 1.0, targetLdlMmolL: 1.8 },
+      status: 'complete',
+      tierCode: 'very-high',
+      value: 1.8,
+    })
+
+    // Very-high / ultra-high below absolute cutoff WITHOUT pretreatment baseline omits ldlGoalEvaluation rather than claiming atGoal: true
+    const stableCadNoBaseline = calculateAscvdLdlTarget({
+      ageYears: 64,
+      confirmedDiagnosisCodes: ['I25.1'],
+      egfrMlMin173m2: 72,
+      ldlCholesterol: { unit: 'mmol/L', value: 1.62 },
+    })
+    expect(stableCadNoBaseline.status === 'complete' && stableCadNoBaseline.ldlGoalEvaluation).toBeUndefined()
 
     // Boundary conversion (69.57 mg/dL -> 1.799... rounds to 1.8 mmol/L) compares at displayed precision so 1.8 is not marked <1.8 atGoal
     expect(

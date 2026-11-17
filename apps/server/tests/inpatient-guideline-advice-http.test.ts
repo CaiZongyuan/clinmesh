@@ -868,6 +868,55 @@ it('门诊与住院同步读取注册 Guideline Topic 直接返回核验原文�
   )
   expect(newIsolatedEpisodeBundle.items[0]!.patientIndicators.find(i => i.code === 'cardiac-troponin')?.status).toBe('missing')
 
+  // Non-responsible outpatient doctor cannot read another doctor's outpatient guideline-topics (returns 403)
+  const prevOpResp = s.fixture.runtime.database.driver.prepare(`
+    SELECT practitioner_role_id FROM outpatient_case_responsibility
+    WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+  `).get(opScenario.workspaceId, opScenario.epoch, opCase.caseId) as { practitioner_role_id: string }
+  s.fixture.runtime.database.driver.prepare(`
+    UPDATE outpatient_case_responsibility SET practitioner_role_id = 'practitioner-role-administrator'
+    WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+  `).run(opScenario.workspaceId, opScenario.epoch, opCase.caseId)
+  const crossDoctorTopicRes = await s.fixture.request(
+    'doctor',
+    `/api/his/v1/doctor/cases/${opCase.caseId}/guideline-topics?topicId=acute-chest-pain-acs`,
+  )
+  expect(crossDoctorTopicRes.status).toBe(403)
+  s.fixture.runtime.database.driver.prepare(`
+    UPDATE outpatient_case_responsibility SET practitioner_role_id = ?
+    WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+  `).run(prevOpResp.practitioner_role_id, opScenario.workspaceId, opScenario.epoch, opCase.caseId)
+
+  // Completed outpatient encounter evaluates topic scores & supplementary indicators strictly at its actualPeriod.end cutoff
+  const opEnc = s.fixture.runtime.fhir.read(
+    { epoch: opScenario.epoch, workspaceId: opScenario.workspaceId },
+    'Encounter',
+    reg.encounterId,
+  )
+  s.fixture.runtime.fhir.update(
+    { epoch: opScenario.epoch, workspaceId: opScenario.workspaceId },
+    {
+      ...opEnc,
+      actualPeriod: { end: '2026-08-25T12:00:00+08:00', start: '2026-08-24T08:30:00+08:00' },
+      status: 'completed',
+    },
+    opEnc.meta?.versionId ?? '1',
+  )
+  s.fixture.runtime.fhir.create({ epoch: opScenario.epoch, workspaceId: opScenario.workspaceId }, {
+    clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
+    code: { coding: [{ code: 'I25.2', display: '陈旧性心肌梗死' }], text: '陈旧性心肌梗死' },
+    id: randomUUID(),
+    recordedDate: '2026-09-15T10:00:00+08:00',
+    resourceType: 'Condition',
+    subject: { reference: `Patient/${patient.id}` },
+    verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
+  })
+  const archivedCadBundle = guidelineTopicBundleSchema.parse(
+    await (await s.fixture.request('doctor', `/api/his/v1/doctor/cases/${opCase.caseId}/guideline-topics?topicId=cad-dapt-and-secondary-prevention`)).json(),
+  )
+  expect(archivedCadBundle.items[0]!.patientIndicators.find(i => i.code === 'ascvd-ldl-target')?.status).toBe('missing')
+  expect(archivedCadBundle.items[0]!.patientIndicators.find(i => i.code === 'cad-acs-eligibility')?.status).toBe('missing')
+
   const chestPainDoc = fullTopicDocuments().find(d => d.source.id === 'coronary-31-2019')!
   s.writer.importDocument({
     passages: [],

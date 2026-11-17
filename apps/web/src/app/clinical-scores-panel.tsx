@@ -246,7 +246,7 @@ function ClinicalScoresBody({
         ) : null}
         {effectiveRecord?.effectiveStSegmentDeviation?.source === 'ecg-report' ? (
           <p className="text-muted-foreground">
-            {t('ST 段状态当前优先采用已签发 12 导联心电图报告：', 'ST-segment status resolved from issued 12-lead ECG report: ')}
+            {t('ST 段状态当前采用首份已签发 12 导联心电图报告：', 'ST-segment status resolved from initial issued 12-lead ECG report: ')}
             <strong>{effectiveRecord.effectiveStSegmentDeviation.value ? t('有偏移', 'Deviation present') : t('无偏移', 'No deviation')}</strong>
             {` (${effectiveRecord.effectiveStSegmentDeviation.sourceReference}#${effectiveRecord.effectiveStSegmentDeviation.versionId})`}
           </p>
