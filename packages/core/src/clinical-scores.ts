@@ -524,31 +524,7 @@ export function calculateAscvdLdlTarget(input: {
       input.severeAscvdEventCount === undefined
         ? codeSevereEventCount
         : Math.max(0, Math.trunc(input.severeAscvdEventCount)) + (hasPadWithRevascOrAmp ? 1 : 0)
-    const hasCad =
-      codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['I20', 'I21', 'I22', 'I23', 'I24', 'I25'])
-      || input.knownCoronaryRevascularization === true
-      || priorRevasc
-    const cadAge =
-      input.cadOnsetAgeYears !== undefined && Number.isFinite(input.cadOnsetAgeYears) && input.cadOnsetAgeYears >= 0
-        ? Math.min(age, input.cadOnsetAgeYears)
-        : age
-    const prematureCad =
-      hasCad && ((input.sex === 'male' && cadAge < 55) || (input.sex === 'female' && cadAge < 65))
-    const fhOrSevereLdl =
-      codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['E78.01'])
-      || (ldlMmolL !== undefined && ldlMmolL >= 4.9)
-    const ckdStage3To4 =
-      input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 >= 15 && input.egfrMlMin173m2 < 60
-    const highRiskFactorCount =
-      (prematureCad ? 1 : 0)
-      + (fhOrSevereLdl ? 1 : 0)
-      + (priorRevasc ? 1 : 0)
-      + (hasDiabetes ? 1 : 0)
-      + (hasConfirmedHtn ? 1 : 0)
-      + (ckdStage3To4 ? 1 : 0)
-      + (input.smokingStatus === 'current' ? 1 : 0)
-
-    if (severeEventCount >= 2 || (severeEventCount === 1 && highRiskFactorCount >= 2)) {
+    if (severeEventCount >= 2) {
       const goal = evaluateGoal(1.4)
       return {
         ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
@@ -560,6 +536,94 @@ export function calculateAscvdLdlTarget(input: {
         value: 1.4,
       }
     }
+    if (severeEventCount === 0) {
+      const goal = evaluateGoal(1.8)
+      return {
+        ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
+        status: 'complete',
+        tierCode: 'very-high',
+        tierLabelEn: 'Very-high risk (<1.8 mmol/L)',
+        tierLabelZh: '极高危（目标 <1.8 mmol/L）',
+        unit: 'mmol/L',
+        value: 1.8,
+      }
+    }
+
+    const hasCad =
+      codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['I20', 'I21', 'I22', 'I23', 'I24', 'I25'])
+      || input.knownCoronaryRevascularization === true
+      || priorRevasc
+    const knownCadOnsetAge =
+      input.cadOnsetAgeYears !== undefined && Number.isFinite(input.cadOnsetAgeYears) && input.cadOnsetAgeYears >= 0
+        ? Math.min(age, input.cadOnsetAgeYears)
+        : undefined
+    let minHighRiskFactors = (priorRevasc ? 1 : 0) + (hasDiabetes ? 1 : 0) + (hasConfirmedHtn ? 1 : 0)
+    let maxHighRiskFactors = minHighRiskFactors
+    const upgradeMissing: ClinicalScoreMissingInput[] = []
+
+    if (hasCad) {
+      const definitelyPremature =
+        age < 55
+        || (knownCadOnsetAge !== undefined && knownCadOnsetAge < 55)
+        || (input.sex === 'female' && (age < 65 || (knownCadOnsetAge !== undefined && knownCadOnsetAge < 65)))
+      const definitelyNotPremature =
+        (knownCadOnsetAge !== undefined && knownCadOnsetAge >= 65)
+        || (input.sex === 'male' && knownCadOnsetAge !== undefined && knownCadOnsetAge >= 55)
+      if (definitelyPremature) {
+        minHighRiskFactors += 1
+        maxHighRiskFactors += 1
+      } else if (!definitelyNotPremature) {
+        maxHighRiskFactors += 1
+        if (input.sex === undefined) upgradeMissing.push('sex')
+        if (knownCadOnsetAge === undefined) upgradeMissing.push('cadOnsetAge')
+      }
+    }
+
+    if (codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['E78.01']) || (ldlMmolL !== undefined && ldlMmolL >= 4.9)) {
+      minHighRiskFactors += 1
+      maxHighRiskFactors += 1
+    } else if (ldlMmolL === undefined) {
+      maxHighRiskFactors += 1
+      upgradeMissing.push('ldlCholesterol')
+    }
+
+    if (input.egfrMlMin173m2 !== undefined) {
+      if (input.egfrMlMin173m2 >= 15 && input.egfrMlMin173m2 < 60) {
+        minHighRiskFactors += 1
+        maxHighRiskFactors += 1
+      }
+    } else {
+      maxHighRiskFactors += 1
+      upgradeMissing.push('serumCreatinine')
+    }
+
+    if (input.smokingStatus === 'current') {
+      minHighRiskFactors += 1
+      maxHighRiskFactors += 1
+    } else if (input.smokingStatus === undefined) {
+      maxHighRiskFactors += 1
+      upgradeMissing.push('smokingStatus')
+    }
+
+    if (minHighRiskFactors >= 2) {
+      const goal = evaluateGoal(1.4)
+      return {
+        ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
+        status: 'complete',
+        tierCode: 'ultra-high',
+        tierLabelEn: 'Ultra-high risk (<1.4 mmol/L)',
+        tierLabelZh: '超高危（目标 <1.4 mmol/L）',
+        unit: 'mmol/L',
+        value: 1.4,
+      }
+    }
+    if (maxHighRiskFactors >= 2) {
+      return {
+        missingInputs: [...new Set(upgradeMissing)],
+        status: 'incomplete',
+      }
+    }
+
     const goal = evaluateGoal(1.8)
     return {
       ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
@@ -622,6 +686,9 @@ export function calculateAscvdLdlTarget(input: {
     || (tcMmolL !== undefined && tcMmolL >= 7.2)
     || (input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 < 60)
   ) {
+    if (input.egfrMlMin173m2 === undefined) {
+      return { missingInputs: ['serumCreatinine'], status: 'incomplete' }
+    }
     const goal = evaluateGoal(2.6)
     return {
       ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
@@ -746,6 +813,7 @@ export const MISSING_INPUT_LABELS: Record<ClinicalScoreMissingInput, { en: strin
   age: { en: 'Adult age (18–120 y)', zh: '成人年龄（18–120岁）' },
   anginaEpisodes24h: { en: '24h angina episodes', zh: '24h 心绞痛发作次数' },
   aspirinUsedLast7Days: { en: 'Aspirin in past 7d', zh: '近7天阿司匹林使用' },
+  cadOnsetAge: { en: 'CAD onset age/date', zh: '冠心病发病年龄' },
   cardiacArrestOnAdmission: { en: 'Cardiac arrest on admission', zh: '入院心脏骤停' },
   elevatedCardiacBiomarker: { en: 'Cardiac troponin report', zh: '心肌损伤标志物报告' },
   familyHistoryPrematureCad: { en: 'Family history of premature CAD', zh: '早发冠心病家族史' },
@@ -1170,7 +1238,14 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
         ...(tcValid === undefined ? {} : { totalCholesterol: tcValid.value }),
       })
       if (calc.status === 'incomplete') {
-        ascvdResult = buildIncomplete('ascvd-ldl-target', calc.missingInputs, sources)
+        const normalizedMissing = [
+          ...new Set(
+            calc.missingInputs.map(item =>
+              item === 'serumCreatinine' && scrValid !== undefined && sex === undefined ? 'sex' : item,
+            ),
+          ),
+        ]
+        ascvdResult = buildIncomplete('ascvd-ldl-target', normalizedMissing, sources)
       } else {
         const meta = SCORE_METADATA['ascvd-ldl-target']
         const goalNoteZh =

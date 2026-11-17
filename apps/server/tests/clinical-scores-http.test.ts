@@ -568,17 +568,35 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     })
     expect(afterNegatedEcg.scores.find(item => item.id === 'ascvd-ldl-target')?.tierCode).not.toBe('ultra-high')
 
-    // Confirmed historical ASCVD Conditions marked 'resolved' (e.g. two prior ischemic strokes) ARE preserved and trigger ultra-high (<1.4)
-    for (const strokeIdx of [1, 2]) {
+    // Same historical stroke copied across two Condition records (same onset or carried forward without new onset) counts as 1 event -> very-high (<1.8), NOT ultra-high
+    for (const copyIdx of [1, 2]) {
       fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
         clinicalStatus: { coding: [{ code: 'resolved', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
-        code: { coding: [{ code: 'I63.9', display: `既往脑梗死 #${strokeIdx}` }] },
+        code: { coding: [{ code: 'I63.9', display: `既往脑梗死延续记录 #${copyIdx}` }] },
+        ...(copyIdx === 1 ? { onsetDateTime: '2022-04-10T08:00:00+08:00' } : {}),
         id: uuidv7(),
         resourceType: 'Condition',
         subject: { reference: `Patient/${patientId}` },
         verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
       })
     }
+    const afterCopiedSingleStroke = await fixture.read('doctor', `/api/his/v1/doctor/cases/${caseItem.caseId}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(afterCopiedSingleStroke.scores.find(item => item.id === 'ascvd-ldl-target')).toMatchObject({
+      status: 'complete',
+      tierCode: 'very-high',
+      value: 1.8,
+    })
+
+    // Adding a genuinely repeated second stroke with a distinct onset date reaches >=2 severe ASCVD events -> ultra-high (<1.4)
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      clinicalStatus: { coding: [{ code: 'resolved', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
+      code: { coding: [{ code: 'I63.9', display: '第二次缺血性脑卒中' }] },
+      id: uuidv7(),
+      onsetDateTime: '2024-09-18T10:30:00+08:00',
+      resourceType: 'Condition',
+      subject: { reference: `Patient/${patientId}` },
+      verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
+    })
     const afterResolvedStrokes = await fixture.read('doctor', `/api/his/v1/doctor/cases/${caseItem.caseId}/clinical-scores`, clinicalScoreBundleSchema)
     expect(afterResolvedStrokes.scores.find(item => item.id === 'ascvd-ldl-target')).toMatchObject({
       status: 'complete',

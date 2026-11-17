@@ -141,6 +141,7 @@ export type ClinicalScoreId = z.infer<typeof clinicalScoreIdSchema>
 
 export const clinicalScoreMissingInputSchema = z.enum([
   'age',
+  'cadOnsetAge',
   'sex',
   'weightKg',
   'heartRateBpm',

@@ -133,6 +133,7 @@ const conditionResourceSchema = z.object({
   code: z.object({ coding: z.array(codingItemSchema).optional(), text: z.string().optional() }).loose().optional(),
   encounter: z.object({ reference: z.string().optional() }).loose().optional(),
   id: z.string().min(1),
+  identifier: z.array(z.object({ system: z.string().optional(), value: z.string().optional() }).loose()).optional(),
   meta: z.object({ versionId: z.string().optional() }).loose().optional(),
   onsetDateTime: z.string().optional(),
   onsetPeriod: z.object({ start: z.string().optional() }).loose().optional(),
@@ -961,7 +962,7 @@ export class ClinicalScoreService {
 
     const birthDateStr = typeof patient.birthDate === 'string' ? patient.birthDate : undefined
     const labs = this.#extractLaboratoryAnalytes(context, options.caseId, options.legacyDiagnosticReportId)
-    const history = this.#extractClinicalHistoryFlags(context, options.patientId, birthDateStr, options.inpatient, options.caseId)
+    const history = this.#extractClinicalHistoryFlags(context, options.patientId, birthDateStr, sex, options.inpatient, options.caseId)
     const onAntihypertensive = this.#extractAntihypertensiveFlag(
       context,
       options.patientId,
@@ -1212,6 +1213,7 @@ export class ClinicalScoreService {
     context: ActorContext,
     patientId: string,
     patientBirthDate: string | undefined,
+    patientSex: AdministrativeSex | undefined,
     inpatient: InpatientService | undefined,
     caseId: string,
   ) {
@@ -1219,14 +1221,37 @@ export class ClinicalScoreService {
     let knownCad: ClinicalScoreObjectiveFacts['knownCoronaryRevascularizationOrStenosisGe50']
     let priorCoronaryRevascularization: ClinicalScoreObjectiveFacts['priorCoronaryRevascularization']
     let cadOnsetAgeYears: ClinicalScoreObjectiveFacts['cadOnsetAgeYears']
-    const severeEventKeys = new Set<string>()
+    let hasUndatedCadRecord = false
+    const coronaryExplicitEventKeys = new Set<string>()
+    const strokeExplicitEventKeys = new Set<string>()
+    let hasAnyCoronarySevereEvent = false
+    let hasAnyStrokeEvent = false
+    let hasSubsequentMiCode = false
+    let earliestPriorMiRecordedDay: string | undefined
+    let earliestAcuteAcsRecordedDay: string | undefined
+    let latestActiveAcuteAcsRecordedDay: string | undefined
     const hypertensionConditionRefs = new Set<string>()
     let firstSevereEventRef: ClinicalScoreSourceReference | undefined
+    const extractExplicitEventKey = (cond: z.infer<typeof conditionResourceSchema>): string | undefined => {
+      const onsetRaw = cond.onsetDateTime ?? cond.onsetPeriod?.start
+      if (onsetRaw && /^\d{4}-\d{2}-\d{2}/.test(onsetRaw)) {
+        return `onset:${onsetRaw.slice(0, 10)}`
+      }
+      const ident = cond.identifier?.find(item => item.value?.trim())?.value?.trim()
+      return ident ? `id:${ident}` : undefined
+    }
     const recordCadEventDate = (rawIso: string | undefined, ref: ClinicalScoreSourceReference) => {
-      if (!rawIso || !patientBirthDate) return
+      if (!rawIso || !patientBirthDate) {
+        hasUndatedCadRecord = true
+        return
+      }
       const dateStr = rawIso.slice(0, 10)
       const eventAge = completedAgeYears(patientBirthDate, dateStr)
-      if (eventAge !== undefined && (cadOnsetAgeYears === undefined || eventAge < cadOnsetAgeYears.value)) {
+      if (eventAge === undefined) {
+        hasUndatedCadRecord = true
+        return
+      }
+      if (cadOnsetAgeYears === undefined || eventAge < cadOnsetAgeYears.value) {
         cadOnsetAgeYears = { source: ref, value: eventAge }
       }
     }
@@ -1286,10 +1311,31 @@ export class ClinicalScoreService {
         const isAcuteAcs = conditionEffectiveCodes.some(code => /^(?:I20\.0|I2[1-4])/i.test(code))
         const isPriorMi = conditionEffectiveCodes.some(code => /^I25\.2/i.test(code))
         const isStroke = conditionEffectiveCodes.some(code => /^I63/i.test(code))
-        if (isAcuteAcs || isPriorMi || isStroke) {
-          const encounterRef = parsed.data.encounter?.reference
-          const eventKey = isAcuteAcs && encounterRef ? `acs:${encounterRef}` : `cond:${parsed.data.id}`
-          severeEventKeys.add(eventKey)
+        const explicitEventKey = extractExplicitEventKey(parsed.data)
+        const recordedDay =
+          parsed.data.recordedDate && /^\d{4}-\d{2}-\d{2}/.test(parsed.data.recordedDate)
+            ? parsed.data.recordedDate.slice(0, 10)
+            : undefined
+        if (isAcuteAcs || isPriorMi) {
+          hasAnyCoronarySevereEvent = true
+          if (conditionEffectiveCodes.some(code => /^I22/i.test(code))) hasSubsequentMiCode = true
+          if (explicitEventKey !== undefined) coronaryExplicitEventKeys.add(explicitEventKey)
+          if (isPriorMi && recordedDay !== undefined && (earliestPriorMiRecordedDay === undefined || recordedDay < earliestPriorMiRecordedDay)) {
+            earliestPriorMiRecordedDay = recordedDay
+          }
+          if (isAcuteAcs && recordedDay !== undefined) {
+            if (earliestAcuteAcsRecordedDay === undefined || recordedDay < earliestAcuteAcsRecordedDay) {
+              earliestAcuteAcsRecordedDay = recordedDay
+            }
+            if (clinStatus !== 'inactive' && clinStatus !== 'resolved' && (latestActiveAcuteAcsRecordedDay === undefined || recordedDay > latestActiveAcuteAcsRecordedDay)) {
+              latestActiveAcuteAcsRecordedDay = recordedDay
+            }
+          }
+          firstSevereEventRef ??= ref
+        }
+        if (isStroke) {
+          hasAnyStrokeEvent = true
+          if (explicitEventKey !== undefined) strokeExplicitEventKeys.add(explicitEventKey)
           firstSevereEventRef ??= ref
         }
         if (
@@ -1370,6 +1416,29 @@ export class ClinicalScoreService {
       }
     }
 
+    const prematureCutoff = patientSex === 'female' ? 65 : 55
+    if (hasUndatedCadRecord && !(cadOnsetAgeYears !== undefined && cadOnsetAgeYears.value < prematureCutoff)) {
+      cadOnsetAgeYears = undefined
+    }
+
+    let coronarySevereCount =
+      coronaryExplicitEventKeys.size > 0 ? coronaryExplicitEventKeys.size : (hasAnyCoronarySevereEvent ? 1 : 0)
+    if (hasSubsequentMiCode) {
+      coronarySevereCount = Math.max(coronarySevereCount, 2)
+    }
+    if (
+      coronarySevereCount < 2
+      && earliestPriorMiRecordedDay !== undefined
+      && latestActiveAcuteAcsRecordedDay !== undefined
+      && (earliestAcuteAcsRecordedDay === undefined || earliestPriorMiRecordedDay < earliestAcuteAcsRecordedDay)
+      && (Date.parse(latestActiveAcuteAcsRecordedDay) - Date.parse(earliestPriorMiRecordedDay)) / 86_400_000 > 28
+    ) {
+      coronarySevereCount = 2
+    }
+    const strokeSevereCount =
+      strokeExplicitEventKeys.size > 0 ? strokeExplicitEventKeys.size : (hasAnyStrokeEvent ? 1 : 0)
+    const severeEventTotal = coronarySevereCount + strokeSevereCount
+
     return {
       cadOnsetAgeYears,
       confirmedDiagnoses,
@@ -1379,7 +1448,7 @@ export class ClinicalScoreService {
       severeAscvdEventCount:
         firstSevereEventRef === undefined
           ? undefined
-          : { source: firstSevereEventRef, value: severeEventKeys.size },
+          : { source: firstSevereEventRef, value: severeEventTotal },
     }
   }
 
