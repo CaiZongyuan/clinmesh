@@ -22,6 +22,7 @@ export interface SourcedFact<T> {
 }
 
 export interface ClinicalScoreObjectiveFacts {
+  acsPresentation?: SourcedFact<boolean>
   admissionAgeYears?: SourcedFact<number>
   admissionHeartRateBpm?: SourcedFact<number>
   admissionSerumCreatinine?: SourcedFact<UnitQuantityInput>
@@ -52,8 +53,10 @@ export interface ClinicalScoreObjectiveFacts {
   killipClass?: SourcedFact<KillipClass>
   knownCoronaryRevascularizationOrStenosisGe50?: SourcedFact<boolean>
   ldlCholesterol?: SourcedFact<UnitQuantityInput>
+  pciDaptIndication?: SourcedFact<boolean>
   priorBleedingHistory?: SourcedFact<PriorBleedingHistory>
   priorCoronaryRevascularization?: SourcedFact<boolean>
+  sameSpecimenTcHdl?: boolean
   serumCreatinine?: SourcedFact<UnitQuantityInput>
   severeAscvdEventCount?: SourcedFact<number>
   sex?: SourcedFact<ClinicalSex>
@@ -61,6 +64,7 @@ export interface ClinicalScoreObjectiveFacts {
   stSegmentDeviation?: SourcedFact<boolean>
   systolicBpMmHg?: SourcedFact<number>
   totalCholesterol?: SourcedFact<UnitQuantityInput>
+  uaNstemiPresentation?: SourcedFact<boolean>
   wbc?: SourcedFact<UnitQuantityInput>
   weightKg?: SourcedFact<number>
 }
@@ -450,6 +454,8 @@ const ASCVD_ICD10_PREFIXES = [
 ] as const
 
 const ACS_ICD10_PREFIXES = ['I20.0', 'I21', 'I22', 'I23', 'I24'] as const
+const STEMI_ICD10_PREFIXES = ['I21.0', 'I21.1', 'I21.2', 'I21.3', 'I22.0', 'I22.1', 'I22.8', 'I22.9'] as const
+const UA_NSTEMI_ICD10_PREFIXES = ['I20.0', 'I21.4', 'I22.2', 'I24.0', 'I24.8', 'I24.9'] as const
 const DIABETES_ICD10_PREFIXES = ['E10', 'E11', 'E12', 'E13', 'E14'] as const
 const HYPERTENSION_ICD10_PREFIXES = ['I10', 'I11', 'I12', 'I13', 'I15'] as const
 const DYSLIPIDEMIA_ICD10_PREFIXES = ['E78'] as const
@@ -526,6 +532,7 @@ export function calculateAscvdLdlTarget(input: {
   knownCoronaryRevascularization?: boolean
   ldlCholesterol?: UnitQuantityInput
   priorCoronaryRevascularization?: boolean
+  sameSpecimenTcHdl?: boolean
   severeAscvdEventCount?: number
   sex?: ClinicalSex
   smokingStatus?: SmokingStatus
@@ -561,6 +568,13 @@ export function calculateAscvdLdlTarget(input: {
       : normalizeLipidMmolL(input.hdlCholesterol.value, input.hdlCholesterol.unit, 'hdl')
   if (input.systolicBpMmHg !== undefined) validateSystolicBpMmHg(input.systolicBpMmHg)
   if (input.diastolicBpMmHg !== undefined) validateDiastolicBpMmHg(input.diastolicBpMmHg)
+  if (
+    input.systolicBpMmHg !== undefined
+    && input.diastolicBpMmHg !== undefined
+    && input.systolicBpMmHg <= input.diastolicBpMmHg
+  ) {
+    throw new RangeError('systolicBpMmHg must exceed diastolicBpMmHg')
+  }
   if (input.heightCm !== undefined) validateHeightCm(input.heightCm)
   if (input.weightKg !== undefined) validateWeightKg(input.weightKg)
   if (input.egfrMlMin173m2 !== undefined) assertFiniteRange(input.egfrMlMin173m2, 0, 500, 'egfrMlMin173m2')
@@ -855,7 +869,7 @@ export function calculateAscvdLdlTarget(input: {
           ? 0
           : null
     const lifetimeNonHdlFactor: 1 | 0 | null =
-      tcMmolL === undefined || hdlMmolL === undefined
+      tcMmolL === undefined || hdlMmolL === undefined || input.sameSpecimenTcHdl === false
         ? null
         : tcMmolL - hdlMmolL >= 5.2 - 1e-9
           ? 1
@@ -888,8 +902,11 @@ export function calculateAscvdLdlTarget(input: {
         if (input.systolicBpMmHg === undefined) lifetimeMissing.push('systolicBpMmHg')
         if (input.diastolicBpMmHg === undefined) lifetimeMissing.push('diastolicBpMmHg')
       }
-      if (lifetimeNonHdlFactor === null && tcMmolL === undefined) {
+      if (lifetimeNonHdlFactor === null) {
         lifetimeMissing.push('totalCholesterol')
+        if (hdlMmolL === undefined || input.sameSpecimenTcHdl === false) {
+          lifetimeMissing.push('hdlCholesterol')
+        }
       }
       if (lifetimeBmiFactor === null) {
         if (input.weightKg === undefined) lifetimeMissing.push('weightKg')
@@ -978,6 +995,7 @@ const SCORE_METADATA: Record<ClinicalScoreId, { titleEn: string; titleZh: string
 }
 
 export const MISSING_INPUT_LABELS: Record<ClinicalScoreMissingInput, { en: string; zh: string }> = {
+  acsPresentation: { en: 'Suspected/confirmed ACS presentation', zh: '疑似或确诊急性冠脉综合征（ACS）就诊依据' },
   age: { en: 'Adult age (18–120 y)', zh: '成人年龄（18–120岁）' },
   anginaEpisodes24h: { en: '24h angina episodes', zh: '24h 心绞痛发作次数' },
   aspirinUsedLast7Days: { en: 'Aspirin in past 7d', zh: '近7天阿司匹林使用' },
@@ -994,6 +1012,7 @@ export const MISSING_INPUT_LABELS: Record<ClinicalScoreMissingInput, { en: strin
   killipClass: { en: 'Killip class', zh: 'Killip 心功能分级' },
   knownCoronaryStenosisGe50: { en: 'Known coronary stenosis ≥50%', zh: '已知冠脉狭窄 ≥50%' },
   ldlCholesterol: { en: 'LDL-C / TC report', zh: '低密度脂蛋白或总胆固醇' },
+  pciDaptIndication: { en: 'Coronary stenting (PCI) or DAPT indication', zh: '冠脉支架植入（PCI）或双联抗血小板（DAPT）指征' },
   priorBleedingHistory: { en: 'Prior spontaneous bleeding history', zh: '既往自发性出血史' },
   serumCreatinine: { en: 'Serum creatinine report', zh: '血肌酐 (SCr)' },
   sex: { en: 'Biological sex', zh: '性别' },
@@ -1001,6 +1020,7 @@ export const MISSING_INPUT_LABELS: Record<ClinicalScoreMissingInput, { en: strin
   stSegmentDeviation: { en: 'ECG ST-segment status', zh: '心电图 ST 段偏移确认' },
   systolicBpMmHg: { en: 'Systolic BP', zh: '收缩压' },
   totalCholesterol: { en: 'Total cholesterol report', zh: '总胆固醇 (TC)' },
+  uaNstemiPresentation: { en: 'UA / NSTEMI presentation (non-STEMI)', zh: '不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）' },
   wbc: { en: 'WBC count report', zh: '白细胞计数 (WBC)' },
   weightKg: { en: 'Body weight (kg)', zh: '体重 (kg)' },
 }
@@ -1063,12 +1083,16 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
   const weightKg = safeParseFact(facts.weightKg, validateWeightKg)
   const baselineWeightKg = safeParseFact(facts.baselineWeightKg ?? facts.weightKg, validateWeightKg)
   const admissionHeartRateBpm = safeParseFact(facts.admissionHeartRateBpm ?? facts.heartRateBpm, validateHeartRateBpm)
-  const systolicBpMmHg = safeParseFact(facts.systolicBpMmHg, validateSystolicBpMmHg)
+  const rawSystolicBp = safeParseFact(facts.systolicBpMmHg, validateSystolicBpMmHg)
+  const rawDiastolicBp = safeParseFact(facts.diastolicBpMmHg, validateDiastolicBpMmHg)
+  const bpOrderValid =
+    rawSystolicBp === undefined || rawDiastolicBp === undefined || rawSystolicBp.value > rawDiastolicBp.value
+  const systolicBpMmHg = bpOrderValid ? rawSystolicBp : undefined
+  const diastolicBpMmHg = bpOrderValid ? rawDiastolicBp : undefined
   const admissionSystolicBpMmHg = safeParseFact(
-    facts.admissionSystolicBpMmHg ?? facts.systolicBpMmHg,
+    facts.admissionSystolicBpMmHg ?? systolicBpMmHg,
     validateSystolicBpMmHg,
   )
-  const diastolicBpMmHg = safeParseFact(facts.diastolicBpMmHg, validateDiastolicBpMmHg)
   const scrValid = safeParseFact(facts.serumCreatinine, q => {
     normalizeCreatinineMgDl(q.value, q.unit)
     return q
@@ -1182,10 +1206,16 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     }
   }
 
-  // 3. GRACE ACS (uses presenting/admission age, heart rate, systolic BP, and initial serum creatinine)
+  // 3. GRACE ACS (uses presenting/admission age, heart rate, systolic BP, and initial serum creatinine; gated on ACS presentation)
   let graceResult: ClinicalScoreResult
   {
+    const diagnosisCodes = facts.confirmedDiagnoses.map(item => item.code)
+    const acsApplicable =
+      facts.acsPresentation !== undefined
+        ? facts.acsPresentation.value
+        : codeMatchesPrefixes(diagnosisCodes, ACS_ICD10_PREFIXES)
     const missing: ClinicalScoreMissingInput[] = []
+    if (!acsApplicable) missing.push('acsPresentation')
     if (admissionAdultAge === undefined) missing.push('age')
     if (admissionHeartRateBpm === undefined) missing.push('heartRateBpm')
     if (admissionSystolicBpMmHg === undefined) missing.push('systolicBpMmHg')
@@ -1195,6 +1225,8 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     if (facts.stSegmentDeviation === undefined) missing.push('stSegmentDeviation')
     if (facts.elevatedCardiacBiomarker === undefined) missing.push('elevatedCardiacBiomarker')
     const sources = [
+      facts.acsPresentation?.source,
+      ...(facts.acsPresentation === undefined ? facts.confirmedDiagnoses.map(item => item.source) : []),
       admissionAdultAge?.source,
       admissionHeartRateBpm?.source,
       admissionSystolicBpMmHg?.source,
@@ -1269,7 +1301,16 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
           ? true
           : undefined
 
+    const hasStemiDx = codeMatchesPrefixes(diagnosisCodes, STEMI_ICD10_PREFIXES)
+    const uaNstemiApplicable =
+      !hasStemiDx
+      && (
+        facts.uaNstemiPresentation !== undefined
+          ? facts.uaNstemiPresentation.value
+          : codeMatchesPrefixes(diagnosisCodes, UA_NSTEMI_ICD10_PREFIXES)
+      )
     const missing: ClinicalScoreMissingInput[] = []
+    if (!uaNstemiApplicable) missing.push('uaNstemiPresentation')
     if (admissionAdultAge === undefined) missing.push('age')
     if (minFactors < 3 && maxFactors >= 3) {
       if (dyslipidemiaFactor === null) {
@@ -1285,6 +1326,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     if (facts.stSegmentDeviation === undefined) missing.push('stSegmentDeviation')
     if (facts.elevatedCardiacBiomarker === undefined) missing.push('elevatedCardiacBiomarker')
     const sources = [
+      facts.uaNstemiPresentation?.source,
       admissionAdultAge?.source,
       ...facts.confirmedDiagnoses.map(item => item.source),
       facts.antihypertensiveMedicationActive?.source,
@@ -1330,10 +1372,12 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     }
   }
 
-  // 5. PRECISE-DAPT (uses baseline/presentation age, weight, creatinine clearance, hemoglobin, WBC, and spontaneous bleeding)
+  // 5. PRECISE-DAPT (uses baseline/presentation age, weight, creatinine clearance, hemoglobin, WBC, and spontaneous bleeding; gated on PCI/DAPT)
   let preciseDaptResult: ClinicalScoreResult
   {
+    const pciDaptApplicable = facts.pciDaptIndication?.value === true
     const missing: ClinicalScoreMissingInput[] = []
+    if (!pciDaptApplicable) missing.push('pciDaptIndication')
     if (admissionAdultAge === undefined) missing.push('age')
     if (sex === undefined) missing.push('sex')
     if (baselineWeightKg === undefined) missing.push('weightKg')
@@ -1342,6 +1386,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     if (wbcValid === undefined) missing.push('wbc')
     if (facts.priorBleedingHistory === undefined) missing.push('priorBleedingHistory')
     const sources = [
+      facts.pciDaptIndication?.source,
       admissionAdultAge?.source,
       sex?.source,
       baselineWeightKg?.source,
@@ -1439,6 +1484,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
         ...(facts.priorCoronaryRevascularization === undefined
           ? {}
           : { priorCoronaryRevascularization: facts.priorCoronaryRevascularization.value }),
+        ...(facts.sameSpecimenTcHdl === undefined ? {} : { sameSpecimenTcHdl: facts.sameSpecimenTcHdl }),
         ...(facts.severeAscvdEventCount === undefined
           ? {}
           : { severeAscvdEventCount: facts.severeAscvdEventCount.value }),

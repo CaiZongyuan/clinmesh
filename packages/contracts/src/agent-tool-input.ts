@@ -104,7 +104,10 @@ const triageDraftInputSchema = z.object({
   systolicMmHg: z.number().finite().min(50).max(260),
   temperatureC: z.number().finite().min(30).max(45),
   weightKg: z.number().finite().min(1).max(400).optional(),
-}).strict()
+}).strict().refine(value => value.systolicMmHg > value.diastolicMmHg, {
+  message: 'Systolic blood pressure must exceed diastolic blood pressure',
+  path: ['systolicMmHg'],
+})
 
 export const agentToolInputSchemas = Object.freeze({
   'ui.context.read': emptyInputSchema,

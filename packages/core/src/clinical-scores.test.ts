@@ -636,6 +636,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       'serumCreatinine',
     ])
     expect(results.find(item => item.id === 'grace-acs')?.missingInputs).toEqual([
+      'acsPresentation',
       'heartRateBpm',
       'systolicBpMmHg',
       'serumCreatinine',
@@ -645,6 +646,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       'elevatedCardiacBiomarker',
     ])
     expect(results.find(item => item.id === 'precise-dapt')?.missingInputs).toEqual([
+      'pciDaptIndication',
       'weightKg',
       'serumCreatinine',
       'hemoglobin',
@@ -675,6 +677,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       killipClass: { source: riskSrc, value: 'II' },
       knownCoronaryRevascularizationOrStenosisGe50: { source: riskSrc, value: false },
       ldlCholesterol: { source: labSrc, value: { unit: 'mmol/L', value: 2.35 } },
+      pciDaptIndication: { source: condSrc, value: true },
       priorBleedingHistory: { source: riskSrc, value: 'negative' },
       serumCreatinine: { source: labSrc, value: { unit: 'umol/L', value: 112 } },
       sex: { source: patientSrc, value: 'male' },
@@ -750,6 +753,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       ageYears: { source: src, value: 110 },
       confirmedDiagnoses: [],
       hemoglobin: { source: src, value: { unit: 'g/L', value: 105 } },
+      pciDaptIndication: { source: src, value: true },
       priorBleedingHistory: { source: src, value: 'negative' },
       serumCreatinine: { source: src, value: { unit: 'mg/dL', value: 20 } },
       sex: { source: src, value: 'female' },
@@ -769,6 +773,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       ageYears: { source: src, value: 20 },
       confirmedDiagnoses: [],
       hemoglobin: { source: src, value: { unit: 'g/L', value: 145 } },
+      pciDaptIndication: { source: src, value: true },
       priorBleedingHistory: { source: src, value: 'negative' },
       serumCreatinine: { source: src, value: { unit: 'mg/dL', value: 0.2 } },
       sex: { source: src, value: 'male' },
@@ -794,6 +799,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       stSegmentDeviation: { source: src, value: false },
       systolicBpMmHg: { source: src, value: 158 },
       totalCholesterol: { source: src, value: { unit: 'mmol/L', value: 4.1 } },
+      uaNstemiPresentation: { source: src, value: true },
     })
     expect(transientHighSbpUnknownFamily.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({
       missingInputs: ['familyHistoryPrematureCad'],
@@ -812,6 +818,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       smokingStatus: { source: src, value: 'never' },
       stSegmentDeviation: { source: src, value: false },
       systolicBpMmHg: { source: src, value: 126 },
+      uaNstemiPresentation: { source: src, value: true },
     })
     expect(unmeasuredLipidsTwoFactors.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({
       missingInputs: ['ldlCholesterol', 'totalCholesterol'],
@@ -827,6 +834,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       elevatedCardiacBiomarker: { source: src, value: false },
       smokingStatus: { source: src, value: 'never' },
       stSegmentDeviation: { source: src, value: false },
+      uaNstemiPresentation: { source: src, value: true },
     })
     expect(unknownStenosis.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({
       missingInputs: ['knownCoronaryStenosisGe50'],
@@ -846,6 +854,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       stSegmentDeviation: { source: src, value: false },
       systolicBpMmHg: { source: src, value: 158 },
       totalCholesterol: { source: src, value: { unit: 'mmol/L', value: 4.1 } },
+      uaNstemiPresentation: { source: src, value: true },
     })
     expect(transientHighSbpNegativeFamily.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 0 })
 
@@ -863,6 +872,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       stSegmentDeviation: { source: src, value: false },
       systolicBpMmHg: { source: src, value: 126 },
       totalCholesterol: { source: src, value: { unit: 'mmol/L', value: 4.1 } },
+      uaNstemiPresentation: { source: src, value: true },
     })
     expect(genericZ824NegativePremature.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 0 })
 
@@ -878,6 +888,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       smokingStatus: { source: src, value: 'never' },
       stSegmentDeviation: { source: src, value: false },
       systolicBpMmHg: { source: src, value: 126 },
+      uaNstemiPresentation: { source: src, value: true },
     })
     expect(positiveFamilyAsThirdFactor.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 1 })
 
@@ -893,7 +904,59 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       smokingStatus: { source: src, value: 'current' },
       stSegmentDeviation: { source: src, value: false },
       systolicBpMmHg: { source: src, value: 126 },
+      uaNstemiPresentation: { source: src, value: true },
     })
     expect(confirmedHtn.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 1 })
+
+    // STEMI (I21.0) and routine non-UA/NSTEMI / non-PCI visits withhold TIMI UA/NSTEMI and PRECISE-DAPT
+    const stemiWithoutPci = evaluateClinicalScores({
+      ageYears: { source: src, value: 64 },
+      anginaEpisodes24h: { source: src, value: 2 },
+      aspirinUsedLast7Days: { source: src, value: true },
+      confirmedDiagnoses: [{ code: 'I21.0', source: src }],
+      elevatedCardiacBiomarker: { source: src, value: true },
+      familyHistoryPrematureCad: { source: src, value: false },
+      hemoglobin: { source: src, value: { unit: 'g/L', value: 140 } },
+      knownCoronaryRevascularizationOrStenosisGe50: { source: src, value: true },
+      ldlCholesterol: { source: src, value: { unit: 'mmol/L', value: 2.5 } },
+      priorBleedingHistory: { source: src, value: 'negative' },
+      serumCreatinine: { source: src, value: { unit: 'mg/dL', value: 0.9 } },
+      sex: { source: src, value: 'male' },
+      smokingStatus: { source: src, value: 'never' },
+      stSegmentDeviation: { source: src, value: true },
+      totalCholesterol: { source: src, value: { unit: 'mmol/L', value: 4.4 } },
+      wbc: { source: src, value: { unit: '10*9/L', value: 8.0 } },
+      weightKg: { source: src, value: 72 },
+    })
+    expect(stemiWithoutPci.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({
+      missingInputs: ['uaNstemiPresentation'],
+      status: 'incomplete',
+    })
+    expect(stemiWithoutPci.find(item => item.id === 'precise-dapt')).toMatchObject({
+      missingInputs: ['pciDaptIndication'],
+      status: 'incomplete',
+    })
+
+    // Cross-specimen TC and HDL-C do NOT fabricate non-HDL-C in <55 lifetime-risk evaluation
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 50,
+        confirmedDiagnosisCodes: ['I10'],
+        diastolicBpMmHg: 88,
+        egfrMlMin173m2: 88,
+        hdlCholesterol: { unit: 'mmol/L', value: 1.1 },
+        heightCm: 172,
+        ldlCholesterol: { unit: 'mmol/L', value: 2.2 },
+        sameSpecimenTcHdl: false,
+        sex: 'female',
+        smokingStatus: 'current',
+        systolicBpMmHg: 148,
+        totalCholesterol: { unit: 'mmol/L', value: 6.5 },
+        weightKg: 70,
+      }),
+    ).toEqual({
+      missingInputs: ['totalCholesterol', 'hdlCholesterol'],
+      status: 'incomplete',
+    })
   })
 })

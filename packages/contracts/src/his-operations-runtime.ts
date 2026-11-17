@@ -257,7 +257,10 @@ const triageRecordInputSchema = z.object({
   bloodPressure: z.object({
     diastolicMmHg: z.number().positive(),
     systolicMmHg: z.number().positive(),
-  }).strict(),
+  }).strict().refine(value => value.systolicMmHg > value.diastolicMmHg, {
+    message: 'Systolic blood pressure must exceed diastolic blood pressure',
+    path: ['systolicMmHg'],
+  }),
   chiefComplaint: z.string().trim().min(1),
   encounterId: z.string().min(1),
   encounterVersion: z.string().regex(/^\d+$/),

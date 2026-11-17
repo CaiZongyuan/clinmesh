@@ -2184,6 +2184,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
             bloodPressure: z.object({
               diastolicMmHg: z.number().int().min(30).max(180),
               systolicMmHg: z.number().int().min(50).max(260),
+            }).refine(value => value.systolicMmHg > value.diastolicMmHg, {
+              message: 'Systolic blood pressure must exceed diastolic blood pressure',
+              path: ['systolicMmHg'],
             }),
             chiefComplaint: z.string().trim().min(2).max(500),
             heightCm: z.number().finite().min(30).max(260).optional(),
