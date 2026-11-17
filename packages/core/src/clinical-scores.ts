@@ -647,14 +647,12 @@ export function calculateAscvdLdlTarget(input: {
     + (input.smokingStatus === 'current' ? 1 : 0)
     + ((hdlMmolL ?? 99) < 1.0 ? 1 : 0)
 
-  const ldlBand = ldlMmolL === undefined ? -1 : ldlMmolL >= 3.4 ? 2 : ldlMmolL >= 2.6 ? 1 : ldlMmolL >= 1.8 ? 0 : -1
-  const tcBand = tcMmolL === undefined ? -1 : tcMmolL >= 5.2 ? 2 : tcMmolL >= 4.1 ? 1 : tcMmolL >= 3.1 ? 0 : -1
-  const band = Math.max(ldlBand, tcBand)
+  const ldlBand = ldlMmolL === undefined ? -1 : ldlMmolL >= 3.4 ? 2 : ldlMmolL >= 2.4 ? 1 : 0
+  const tcBand = tcMmolL === undefined ? -1 : tcMmolL >= 5.2 ? 2 : tcMmolL >= 4.1 ? 1 : 0
+  const band = Math.max(ldlBand, tcBand, 0)
 
   let primaryTier: 'low' | 'moderate' | 'high'
-  if (band < 0) {
-    primaryTier = hasHypertension && riskFactors >= 3 ? 'high' : hasHypertension && riskFactors === 2 ? 'moderate' : 'low'
-  } else if (!hasHypertension) {
+  if (!hasHypertension) {
     if (riskFactors <= 1) primaryTier = 'low'
     else if (riskFactors === 2) primaryTier = band === 2 ? 'moderate' : 'low'
     else primaryTier = band >= 1 ? 'moderate' : 'low'
