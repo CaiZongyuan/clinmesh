@@ -6,6 +6,7 @@ import { guidelineTopicIds } from '@clinmesh/contracts/guideline-topics'
 import { afterEach, expect, it } from 'vitest'
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
 import {
+  computeGuidelineTopicFingerprint,
   getGuidelineTopicDefinition,
   normalizeGuidelineFragmentText,
   readGuidelineTopicSource,
@@ -248,4 +249,11 @@ it('六个注册 Guideline Topic 均通过精确 SHA-256、物理页码、软连
   expect(unmeasuredIntermediate.missingFfrMessages).toEqual([
     'LAD(中段) 呈 65% 临界/中等狭窄，尚未记录该支 FFR/iFR 功能学测量或客观缺血证据。',
   ])
+
+  // Verify topic fingerprint incorporates generationRule and conclusionKinds so semantic changes invalidate prior advice
+  const acsDef = getGuidelineTopicDefinition('acute-chest-pain-acs')
+  const { fingerprint: baseFp, ...acsSpec } = acsDef
+  expect(computeGuidelineTopicFingerprint(acsSpec)).toBe(baseFp)
+  expect(computeGuidelineTopicFingerprint({ ...acsSpec, generationRule: `${acsSpec.generationRule}（附加条款）` })).not.toBe(baseFp)
+  expect(computeGuidelineTopicFingerprint({ ...acsSpec, conclusionKinds: [...acsSpec.conclusionKinds, 'extra-kind'] })).not.toBe(baseFp)
 })

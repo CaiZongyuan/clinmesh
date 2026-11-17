@@ -55,15 +55,23 @@ const DAPT_CONSENSUS_HASH = '02c7080308bc64e9c499f8ba01f70a572127aee069f256e1993
 const DM_CVD_HASH = '9bcd9a39a232cd028f3d83f775ff3d5663cc199544a0392522c1bba0a886b54b'
 const CVD_GLYCEMIC_HASH = '2dbf8c8053ce6fd10d6eb004d36f8149103260397fd94146bc691f6f8c767b0f'
 
-function buildTopic(spec: Omit<GuidelineTopicDefinition, 'fingerprint'>): GuidelineTopicDefinition {
-  const fingerprint = canonicalJsonHash({
+export function computeGuidelineTopicFingerprint(spec: Omit<GuidelineTopicDefinition, 'fingerprint'>): string {
+  return canonicalJsonHash({
+    conclusionKinds: spec.conclusionKinds,
+    generationRule: spec.generationRule,
     id: spec.id,
     limitations: spec.limitations,
     navigation: spec.navigation,
     references: spec.references,
+    specialty: spec.specialty,
+    titleEn: spec.titleEn,
+    titleZh: spec.titleZh,
     version: spec.version,
   })
-  return { ...spec, fingerprint }
+}
+
+function buildTopic(spec: Omit<GuidelineTopicDefinition, 'fingerprint'>): GuidelineTopicDefinition {
+  return { ...spec, fingerprint: computeGuidelineTopicFingerprint(spec) }
 }
 
 const TOPICS_LIST: readonly GuidelineTopicDefinition[] = [
