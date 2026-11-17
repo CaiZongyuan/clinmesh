@@ -575,6 +575,15 @@ interface SupplementaryClinicalIndicators {
     targetSite: string | null
     versionId: string
   } | undefined
+  troponinSeries?: {
+    anyElevated: boolean
+    count: number
+    latestReference: string
+    missingMessage: string | null
+    serialComplete: boolean
+    summaryText: string
+    versionId: string
+  } | undefined
   tteLvef?: { lvefPct: number; sourceReference: string; versionId: string } | undefined
 }
 
@@ -702,6 +711,31 @@ export function evaluateTopicPatientIndicators(
           },
       '缺少已签发 12 导联心电图结构化报告。',
     )
+    if (supplementary.troponinSeries === undefined) {
+      indicators.push({
+        code: 'cardiac-troponin',
+        labelEn: 'Serial cardiac troponin (cTn/hs-cTn)',
+        labelZh: '心肌肌钙蛋白（cTn/hs-cTn 动态复测）',
+        sourceReference: null,
+        status: 'missing',
+        valueText: null,
+        versionId: null,
+      })
+      missing.push('缺少心肌肌钙蛋白（cTn/hs-cTn）检验及动态复测记录。')
+    } else {
+      indicators.push({
+        code: 'cardiac-troponin',
+        labelEn: 'Serial cardiac troponin (cTn/hs-cTn)',
+        labelZh: '心肌肌钙蛋白（cTn/hs-cTn 动态复测）',
+        sourceReference: supplementary.troponinSeries.latestReference,
+        status: supplementary.troponinSeries.serialComplete ? 'present' : 'missing',
+        valueText: supplementary.troponinSeries.summaryText,
+        versionId: supplementary.troponinSeries.versionId,
+      })
+      if (supplementary.troponinSeries.missingMessage !== null) {
+        missing.push(supplementary.troponinSeries.missingMessage)
+      }
+    }
     pushScore('grace-acs', 'GRACE 急性冠脉综合征评分', 'GRACE ACS score', 'GRACE 危险分层未就绪')
     pushScore('timi-ua-nstemi', 'TIMI UA/NSTEMI 评分', 'TIMI UA/NSTEMI score', 'TIMI 缺血评分未就绪')
     pushScore('ckd-epi-2021-egfr', '基线估算肾小球滤过率 (eGFR)', 'Baseline eGFR', '缺少基线血肌酐与 eGFR')
@@ -902,9 +936,19 @@ export function extractSupplementaryIndicators(options: {
   }
 
   let hba1c: SupplementaryClinicalIndicators['hba1c']
-  const labReportRows = z.array(z.object({ diagnostic_report_id: z.string() })).parse(
+  const troponinDesc: Array<{
+    elevated: boolean
+    itemText: string
+    obsId: string
+    timestampMs: number | undefined
+    versionId: string
+  }> = []
+  const labReportRows = z.array(z.object({
+    diagnostic_report_id: z.string(),
+    report_time: z.string().nullable(),
+  })).parse(
     database.driver.prepare(`
-      SELECT r.diagnostic_report_id
+      SELECT r.diagnostic_report_id, COALESCE(r.reported_at, r.authored_at) AS report_time
       FROM laboratory_request r
       WHERE r.workspace_id = ? AND r.epoch = ? AND r.case_id = ?
         AND r.request_kind = 'laboratory'
@@ -920,8 +964,8 @@ export function extractSupplementaryIndicators(options: {
     `).all(context.workspaceId, context.epoch, caseId),
   )
   for (const row of labReportRows) {
-    if (hba1c !== undefined) break
     const report = z.object({
+      issued: z.string().optional(),
       result: z.array(z.object({ reference: z.string().optional() }).loose()).optional(),
       status: z.string().optional(),
     }).loose().safeParse(fhir.read(context, 'DiagnosticReport', row.diagnostic_report_id))
@@ -934,9 +978,18 @@ export function extractSupplementaryIndicators(options: {
           coding: z.array(z.object({ code: z.string().optional(), display: z.string().optional() }).loose()).optional(),
           text: z.string().optional(),
         }).loose().optional(),
+        effectiveDateTime: z.string().optional(),
         id: z.string(),
+        interpretation: z.array(z.object({
+          coding: z.array(z.object({ code: z.string().optional() }).loose()).optional(),
+          text: z.string().optional(),
+        }).loose()).optional(),
         meta: z.object({ versionId: z.string().optional() }).loose().optional(),
+        referenceRange: z.array(z.object({
+          high: z.object({ value: z.number().finite().optional() }).loose().optional(),
+        }).loose()).optional(),
         status: z.string().optional(),
+        valueBoolean: z.boolean().optional(),
         valueQuantity: z.object({ code: z.string().optional(), unit: z.string().optional(), value: z.number().finite().optional() }).loose().optional(),
       }).loose().safeParse(fhir.read(context, 'Observation', obsId))
       if (!obs.success || !['final', 'amended', 'corrected'].includes(obs.data.status ?? '')) continue
@@ -944,7 +997,8 @@ export function extractSupplementaryIndicators(options: {
       const text = [obs.data.code?.text, ...(obs.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
       const rawUnit = (obs.data.valueQuantity?.unit ?? obs.data.valueQuantity?.code)?.trim() ?? ''
       if (
-        obs.data.valueQuantity?.value !== undefined
+        hba1c === undefined
+        && obs.data.valueQuantity?.value !== undefined
         && rawUnit.length > 0
         && (codes.has('1100301A') || codes.has('4548-4') || codes.has('17856-6') || /糖化血红蛋白|HbA1c/i.test(text))
       ) {
@@ -953,8 +1007,70 @@ export function extractSupplementaryIndicators(options: {
           valueText: rawUnit === '%' ? `${obs.data.valueQuantity.value}%` : `${obs.data.valueQuantity.value} ${rawUnit}`,
           versionId: obs.data.meta?.versionId ?? '1',
         }
-        break
       }
+      if (
+        codes.has('2100404B') || codes.has('2100404A') || codes.has('2100504A')
+        || codes.has('89579-7') || codes.has('49563-0') || codes.has('10839-9')
+        || codes.has('6598-7') || codes.has('6597-9') || codes.has('67151-1') || codes.has('42757-5')
+        || /肌钙蛋白|troponin/i.test(text)
+      ) {
+        const interpCodes = (obs.data.interpretation ?? [])
+          .flatMap(item => [item.text, ...(item.coding ?? []).map(coding => coding.code)])
+          .filter((item): item is string => Boolean(item))
+          .map(item => item.trim().toUpperCase())
+        const high = obs.data.referenceRange?.[0]?.high?.value
+        const qty = obs.data.valueQuantity?.value
+        const elevated =
+          obs.data.valueBoolean !== undefined
+            ? obs.data.valueBoolean
+            : interpCodes.some(c => ['H', 'HH', 'HU', 'A', 'AA', 'POS', 'POSITIVE', 'HIGH', 'CRITICAL', 'ABNORMAL'].includes(c))
+              ? true
+              : interpCodes.some(c => ['N', 'NORMAL', 'NEG', 'NEGATIVE', 'L', 'LL', 'LOW'].includes(c))
+                ? false
+                : qty !== undefined && high !== undefined
+                  ? qty > high
+                  : undefined
+        if (elevated !== undefined) {
+          const rawTs = obs.data.effectiveDateTime ?? report.data.issued ?? row.report_time ?? undefined
+          const parsedMs = rawTs ? Date.parse(rawTs) : Number.NaN
+          const timeLabel = rawTs && rawTs.length >= 16 ? rawTs.slice(5, 16).replace('T', ' ') : '未标时间'
+          const valLabel = qty !== undefined ? (rawUnit ? `${qty} ${rawUnit}` : `${qty}`) : (elevated ? '阳性' : '阴性')
+          const ver = obs.data.meta?.versionId ?? '1'
+          troponinDesc.push({
+            elevated,
+            itemText: `${timeLabel} ${valLabel}(${elevated ? '升高' : '正常'}#v${ver})`,
+            obsId: obs.data.id,
+            timestampMs: Number.isFinite(parsedMs) ? parsedMs : undefined,
+            versionId: ver,
+          })
+        }
+      }
+    }
+  }
+
+  let troponinSeries: SupplementaryClinicalIndicators['troponinSeries']
+  if (troponinDesc.length > 0) {
+    const chrono = [...troponinDesc].reverse()
+    const anyElevated = chrono.some(item => item.elevated)
+    const firstMs = chrono[0]!.timestampMs
+    const lastMs = chrono.at(-1)!.timestampMs
+    const hasValidRepeatInterval =
+      chrono.length >= 2 && firstMs !== undefined && lastMs !== undefined && lastMs - firstMs >= 60 * 60 * 1000
+    const serialComplete = anyElevated || hasValidRepeatInterval
+    const missingMessage = serialComplete
+      ? null
+      : chrono.length < 2
+        ? '当前仅有单次阴性肌钙蛋白记录，尚未完成动态复测（如 1–3h 复查 cTn/hs-cTn），单次阴性不能排除 NSTE-ACS。'
+        : '已记录多次阴性肌钙蛋白但采样间隔不足 1 小时（或缺少有效时间），尚未满足动态复测排除条件。'
+    const latest = chrono.at(-1)!
+    troponinSeries = {
+      anyElevated,
+      count: chrono.length,
+      latestReference: `Observation/${latest.obsId}`,
+      missingMessage,
+      serialComplete,
+      summaryText: chrono.map(item => item.itemText).join(' → ').slice(0, 240),
+      versionId: `n${chrono.length}.${latest.versionId}`.slice(0, 64),
     }
   }
 
@@ -1008,6 +1124,7 @@ export function extractSupplementaryIndicators(options: {
     ecgSummary,
     hba1c,
     pciPlanSummary,
+    troponinSeries,
     tteLvef,
   }
 }
