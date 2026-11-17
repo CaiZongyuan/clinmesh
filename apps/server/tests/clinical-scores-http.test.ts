@@ -1018,9 +1018,11 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       status: 'completed',
       subject: { reference: `Patient/${tempOrderPatient.id}` },
     })
-    // Combined clinical-sign flow MedicationRequest (status='active', no FHIR boundsDuration, stored course_days=14 in prescription_item) dispensed in Jan 2026 expires after 14d + 28d washout instead of staying active forever
+    // Combined clinical-sign flow MedicationRequest (status='active', no FHIR boundsDuration, stored course_days=14 in prescription_item)
+    // with split deliveries on 2026-06-15 and 2026-06-28 anchors the 14d course to the FIRST delivery (2026-06-15 + 14d + 28d washout = 2026-07-27 < 2026-08-01 blood draw)
+    // instead of restarting the full 14d course at the second delivery (which would falsely suppress the 2026-08-01 pretreatment panel through 2026-08-09)
     const signedShortMedReq = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
-      authoredOn: '2026-01-05T10:00:00+08:00',
+      authoredOn: '2026-06-15T10:00:00+08:00',
       dosageInstruction: [{ text: '20mg QD' }],
       id: uuidv7(),
       intent: 'order',
@@ -1033,22 +1035,24 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     fixture.runtime.database.driver.prepare(`
       INSERT INTO prescription (
         workspace_id, epoch, prescription_id, case_id, prescription_number, status, version, authored_by, authored_at
-      ) VALUES (?, ?, ?, ?, ?, 'dispensed', 1, 'actor-test', '2026-01-05T10:00:00+08:00')
+      ) VALUES (?, ?, ?, ?, ?, 'dispensed', 1, 'actor-test', '2026-06-15T10:00:00+08:00')
     `).run(scenario.workspaceId, scenario.epoch, signedShortPrescriptionId, tempCase.caseId, `RX-SHORT-${randomUUID().slice(0, 8)}`)
     fixture.runtime.database.driver.prepare(`
       INSERT INTO prescription_item (
         workspace_id, epoch, prescription_id, medication_request_id, medication_id, medication_snapshot_json, quantity, dose_text, frequency_code, course_days
       ) VALUES (?, ?, ?, ?, 'medication-atorvastatin', '{}', 2, '20mg', 'QD', 14)
     `).run(scenario.workspaceId, scenario.epoch, signedShortPrescriptionId, signedShortMedReq.id)
-    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
-      authorizingPrescription: [{ reference: `MedicationRequest/${signedShortMedReq.id}` }],
-      id: uuidv7(),
-      medication: { concept: { text: '阿托伐他汀钙片 20mg' } },
-      resourceType: 'MedicationDispense',
-      status: 'completed',
-      subject: { reference: `Patient/${tempOrderPatient.id}` },
-      whenHandedOver: '2026-01-05T10:30:00+08:00',
-    })
+    for (const handedOver of ['2026-06-15T10:30:00+08:00', '2026-06-28T10:30:00+08:00']) {
+      fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+        authorizingPrescription: [{ reference: `MedicationRequest/${signedShortMedReq.id}` }],
+        id: uuidv7(),
+        medication: { concept: { text: '阿托伐他汀钙片 20mg' } },
+        resourceType: 'MedicationDispense',
+        status: 'completed',
+        subject: { reference: `Patient/${tempOrderPatient.id}` },
+        whenHandedOver: handedOver,
+      })
+    }
     // External active MedicationRequest with no request-level boundsDuration but finite MedicationDispense.daysSupply=30d from 2025 expires after 30d + 28d washout instead of staying active forever
     const externalSuppliedReq = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
       authoredOn: '2025-06-01T09:00:00+08:00',

@@ -1307,14 +1307,15 @@ export class ClinicalScoreService {
     isArchivedCutoff: boolean,
   ): {
     earliestEvidenceMs: number | undefined
+    finiteSupplyEndMs: number | undefined
     hasEvidence: boolean
-    latestEvidenceMs: number | undefined
     supplyEndMs: number | undefined
   } {
     let hasEvidence = false
     let earliestEvidenceMs: number | undefined
-    let latestEvidenceMs: number | undefined
     let supplyEndMs: number | undefined
+    let validDispenseCount = 0
+    let hasUnsuppliedDispense = false
     const enforceStrictCutoff = !isCurrentEncounter || !isArchivedCutoff
 
     const dispenseParams = new URLSearchParams({
@@ -1338,12 +1339,10 @@ export class ClinicalScoreService {
           }
         }
         hasEvidence = true
+        validDispenseCount += 1
         if (handedMs !== undefined) {
           if (earliestEvidenceMs === undefined || handedMs < earliestEvidenceMs) {
             earliestEvidenceMs = handedMs
-          }
-          if (latestEvidenceMs === undefined || handedMs > latestEvidenceMs) {
-            latestEvidenceMs = handedMs
           }
           const supplyMs = resolveMedicationBoundsDurationMs(disp.data.daysSupply)
           if (typeof supplyMs === 'number') {
@@ -1351,7 +1350,11 @@ export class ClinicalScoreService {
             if (supplyEndMs === undefined || candidateEnd > supplyEndMs) {
               supplyEndMs = candidateEnd
             }
+          } else {
+            hasUnsuppliedDispense = true
           }
+        } else {
+          hasUnsuppliedDispense = true
         }
       }
       if (dispPage.nextCursor === undefined) break
@@ -1377,13 +1380,7 @@ export class ClinicalScoreService {
           ?? admin.data.occurrenceDateTime
           ?? admin.data.effectiveDateTime
           ?? admin.data.recorded
-        const adminEndIso =
-          admin.data.occurencePeriod?.end
-          ?? admin.data.occurrencePeriod?.end
-          ?? admin.data.effectivePeriod?.end
-          ?? adminStartIso
         const adminStartMs = parseResourceTimestampMs(adminStartIso)
-        const adminEndMs = parseResourceTimestampMs(adminEndIso)
         if (Number.isFinite(cutoffMs)) {
           if (adminStartMs === undefined) {
             if (!isCurrentEncounter && isArchivedCutoff) continue
@@ -1395,16 +1392,17 @@ export class ClinicalScoreService {
         if (adminStartMs !== undefined && (earliestEvidenceMs === undefined || adminStartMs < earliestEvidenceMs)) {
           earliestEvidenceMs = adminStartMs
         }
-        const effectiveLatest = adminEndMs ?? adminStartMs
-        if (effectiveLatest !== undefined && (latestEvidenceMs === undefined || effectiveLatest > latestEvidenceMs)) {
-          latestEvidenceMs = effectiveLatest
-        }
       }
       if (adminPage.nextCursor === undefined) break
       adminParams.set('_cursor', adminPage.nextCursor)
     }
 
-    return { earliestEvidenceMs, hasEvidence, latestEvidenceMs, supplyEndMs }
+    return {
+      earliestEvidenceMs,
+      finiteSupplyEndMs: validDispenseCount > 0 && !hasUnsuppliedDispense ? supplyEndMs : undefined,
+      hasEvidence,
+      supplyEndMs,
+    }
   }
 
   #readLocalPrescriptionMetaByMedicationRequestId(
@@ -2116,9 +2114,10 @@ export class ClinicalScoreService {
           const enforceExpiry = !isCurrentEncounter || !isArchivedCutoff
           if (enforceExpiry && Number.isFinite(nowMs)) {
             if (daptBoundsMs !== undefined) {
-              const anchorMs = delivery.latestEvidenceMs ?? parseResourceTimestampMs(parsed.data.authoredOn)
-              if (anchorMs === undefined || anchorMs + daptBoundsMs < nowMs) continue
-            } else if (delivery.supplyEndMs !== undefined && delivery.supplyEndMs < nowMs) {
+              const anchorMs = delivery.earliestEvidenceMs ?? parseResourceTimestampMs(parsed.data.authoredOn)
+              const courseEndMs = anchorMs === undefined ? undefined : Math.max(anchorMs + daptBoundsMs, delivery.supplyEndMs ?? 0)
+              if (courseEndMs === undefined || courseEndMs < nowMs) continue
+            } else if (delivery.finiteSupplyEndMs !== undefined && delivery.finiteSupplyEndMs < nowMs) {
               continue
             }
           }
@@ -3100,9 +3099,10 @@ export class ClinicalScoreService {
         const enforceExpiry = !isCurrentEncounter || !isArchivedCutoff
         if (enforceExpiry && Number.isFinite(nowMs)) {
           if (htnBoundsMs !== undefined) {
-            const anchorMs = delivery.latestEvidenceMs ?? parseResourceTimestampMs(parsed.data.authoredOn)
-            if (anchorMs === undefined || anchorMs + htnBoundsMs < nowMs) continue
-          } else if (delivery.supplyEndMs !== undefined && delivery.supplyEndMs < nowMs) {
+            const anchorMs = delivery.earliestEvidenceMs ?? parseResourceTimestampMs(parsed.data.authoredOn)
+            const courseEndMs = anchorMs === undefined ? undefined : Math.max(anchorMs + htnBoundsMs, delivery.supplyEndMs ?? 0)
+            if (courseEndMs === undefined || courseEndMs < nowMs) continue
+          } else if (delivery.finiteSupplyEndMs !== undefined && delivery.finiteSupplyEndMs < nowMs) {
             continue
           }
         }
@@ -3328,7 +3328,6 @@ export class ClinicalScoreService {
         const isCurrentEncounter = parsed.data.encounter?.reference === `Encounter/${encounterId}`
         const enforceStrictCutoff = !isCurrentEncounter || !isArchivedCutoff
         let earliestAnyDispenseMs: number | undefined
-        let dispenseAnchorMs: number | undefined
         let dispenseSupplyEndMs: number | undefined
         let validDispenseCount = 0
         let hasUnsuppliedDispense = false
@@ -3356,9 +3355,6 @@ export class ClinicalScoreService {
             }
             validDispenseCount += 1
             if (handedMs !== undefined) {
-              if (dispenseAnchorMs === undefined || handedMs > dispenseAnchorMs) {
-                dispenseAnchorMs = handedMs
-              }
               const supplyMs = resolveMedicationBoundsDurationMs(disp.data.daysSupply)
               if (typeof supplyMs === 'number') {
                 const candidateEnd = handedMs + supplyMs
@@ -3462,10 +3458,9 @@ export class ClinicalScoreService {
 
         let endMs = Number.POSITIVE_INFINITY
         if (Number.isFinite(parsedExplicitEnd)) {
-          endMs = Math.max(parsedExplicitEnd, finiteDispenseSupplyEndMs ?? 0) + LIPID_WASHOUT_MS
-        } else if (typeof boundsMs === 'number' && (startMs !== undefined || dispenseAnchorMs !== undefined)) {
-          const anchor = Math.max(startMs ?? 0, dispenseAnchorMs ?? 0)
-          endMs = anchor + boundsMs + LIPID_WASHOUT_MS
+          endMs = Math.max(parsedExplicitEnd, dispenseSupplyEndMs ?? 0) + LIPID_WASHOUT_MS
+        } else if (typeof boundsMs === 'number' && startMs !== undefined) {
+          endMs = Math.max(startMs + boundsMs, dispenseSupplyEndMs ?? 0) + LIPID_WASHOUT_MS
         } else if (finiteDispenseSupplyEndMs !== undefined) {
           endMs = finiteDispenseSupplyEndMs + LIPID_WASHOUT_MS
         } else if (status === 'completed' || status === 'stopped') {
