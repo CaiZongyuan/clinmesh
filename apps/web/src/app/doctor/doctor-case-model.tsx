@@ -277,6 +277,7 @@ export function useDoctorCaseModel({
     turns: detail.data.consultation?.turns, clinicalDocument: detail.data.clinicalDocument,
     drafts: detail.data.drafts, diagnosis: detail.data.diagnosis, medicationConclusion: detail.data.medicationConclusion,
     report: detail.data.report, laboratoryRequests: detail.data.laboratoryRequests,
+    examinationRequests: detail.data.examinationRequests,
     imagingRequests: detail.data.imagingRequests, pathologyRequests: detail.data.pathologyRequests,
   }, catalog.data])
   const recommendationInput = useRef({ identity: recommendationIdentity, revision: 0 })

@@ -1166,5 +1166,72 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       missingInputs: expect.arrayContaining(['ldlCholesterol']),
       status: 'incomplete',
     })
+
+    // Signing an inpatient statin order BEFORE its first dose is administered must NOT mark subsequent pre-dose baseline LDL-C >= 4.9 as treated
+    const preDoseStay = await fixture.admitSyntheticCase(['I10.x09'], 'bed-general-2')
+    const preDoseOrderId = uuidv7()
+    fixture.runtime.database.driver.prepare(`
+      INSERT INTO inpatient_order (
+        workspace_id, epoch, order_id, admission_id, kind, duration, catalog_item_id, catalog_version,
+        display, dose_text, dose_quantity, unit, frequency_code, price_fen, state, organization_id, signed_at, signed_by
+      ) VALUES (?, ?, ?, ?, 'medication', 'long', 'medication-pci-atorvastatin', 1, '阿托伐他汀钙片', '20 mg', 1, '片', 'QN', 70, 'signed', 'hospital-synthetic-renhe', '2026-08-24T09:00:00+08:00', 'actor-test')
+    `).run(scenario.workspaceId, scenario.epoch, preDoseOrderId, preDoseStay.admissionId)
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authoredOn: '2026-08-24T09:00:00+08:00',
+      encounter: { reference: `Encounter/${preDoseStay.admissionId}` },
+      id: preDoseOrderId,
+      intent: 'order',
+      medication: { concept: { text: '阿托伐他汀钙片' }, reference: { display: '阿托伐他汀钙片', reference: 'Medication/medication-pci-atorvastatin' } },
+      resourceType: 'MedicationRequest',
+      status: 'active',
+      subject: { reference: `Patient/${preDoseStay.patientId}` },
+    })
+    // Baseline lipid panel collected at 09:30 (after order signature at 09:00, BEFORE first evening QN administration at 22:00)
+    insertSyntheticLabReport(fixture, {
+      caseId: preDoseStay.admissionId,
+      encounterId: preDoseStay.admissionId,
+      epoch: scenario.epoch,
+      issuedAt: '2026-08-24T09:30:00+08:00',
+      patientId: preDoseStay.patientId,
+      results: [
+        { code: '2000404A', display: '低密度脂蛋白胆固醇', high: 3.4, unit: 'mmol/L', value: 5.1 },
+      ],
+      workspaceId: scenario.workspaceId,
+    })
+    // First dose administered at 22:00, followed by treated LDL-C = 2.2 mmol/L two weeks later
+    const firstAdmin = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      encounter: { reference: `Encounter/${preDoseStay.admissionId}` },
+      id: uuidv7(),
+      medication: { reference: { reference: 'Medication/medication-pci-atorvastatin' } },
+      occurenceDateTime: '2026-08-24T22:00:00+08:00',
+      recorded: '2026-08-24T22:00:00+08:00',
+      request: { reference: `MedicationRequest/${preDoseOrderId}` },
+      resourceType: 'MedicationAdministration',
+      status: 'completed',
+      subject: { reference: `Patient/${preDoseStay.patientId}` },
+    })
+    fixture.runtime.database.driver.prepare(`
+      INSERT INTO inpatient_execution (
+        workspace_id, epoch, execution_id, order_id, scheduled_for, status, version, administration_id
+      ) VALUES (?, ?, ?, ?, '2026-08-24T22:00:00+08:00', 'completed', 2, ?)
+    `).run(scenario.workspaceId, scenario.epoch, uuidv7(), preDoseOrderId, firstAdmin.id)
+    insertSyntheticLabReport(fixture, {
+      caseId: preDoseStay.admissionId,
+      encounterId: preDoseStay.admissionId,
+      epoch: scenario.epoch,
+      issuedAt: '2026-09-07T08:00:00+08:00',
+      patientId: preDoseStay.patientId,
+      results: [
+        { code: '2000404A', display: '低密度脂蛋白胆固醇', high: 3.4, unit: 'mmol/L', value: 2.2 },
+      ],
+      workspaceId: scenario.workspaceId,
+    })
+    const preDoseScores = await fixture.read('inpatient-doctor', `${preDoseStay.path}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(preDoseScores.scores.find(s => s.id === 'ascvd-ldl-target')).toMatchObject({
+      ldlGoalEvaluation: { atGoal: true, currentLdlMmolL: 2.2, targetLdlMmolL: 2.6 },
+      status: 'complete',
+      tierCode: 'high',
+      value: 2.6,
+    })
   }, 120_000)
 })

@@ -1,3 +1,4 @@
+import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 import {
   clinicalScoreBundleSchema,
   type ClinicalRiskAssessmentFieldsInput,
@@ -331,6 +332,29 @@ function ClinicalScoresBody({
       </form>
     </div>
   )
+}
+
+export function buildOutpatientClinicalScoreRevision(
+  detail: Partial<Pick<
+    DoctorCaseDetail,
+    'diagnosis' | 'examinationRequests' | 'laboratoryRequests' | 'medicationConclusion' | 'triage'
+  >>,
+  baseRevision?: string,
+): string {
+  const examKey = (detail.examinationRequests?.requests ?? [])
+    .map(r => `${r.id}:${r.version}:${r.status}:${r.report?.diagnosticReportId ?? ''}:${r.report?.diagnosticReportVersion ?? ''}`)
+    .join(',')
+  const labKey = (detail.laboratoryRequests?.requests ?? [])
+    .map(r => `${r.id}:${r.version}:${r.status}:${r.report?.diagnosticReportId ?? ''}:${r.report?.diagnosticReportVersion ?? ''}`)
+    .join(',')
+  const rxKey = JSON.stringify(detail.medicationConclusion ?? null)
+  const dxKey = (detail.diagnosis?.confirmation?.entries ?? [])
+    .map(d => `${d.conditionId}:${d.conditionVersion}:${d.code}`)
+    .join(',')
+  const triageKey = detail.triage === undefined
+    ? ''
+    : `${detail.triage.bloodPressure.systolicMmHg}/${detail.triage.bloodPressure.diastolicMmHg}:${detail.triage.pulseBpm}:${detail.triage.weightKg ?? ''}:${detail.triage.heightCm ?? ''}`
+  return [baseRevision ?? '', examKey, labKey, rxKey, dxKey, triageKey].join('|')
 }
 
 export function OutpatientClinicalScoresDisclosure({
