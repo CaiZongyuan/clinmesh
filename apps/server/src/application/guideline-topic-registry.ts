@@ -1215,7 +1215,7 @@ export function extractSupplementaryIndicators(options: {
         ) {
           t2dmDiagnosis = {
             sourceReference: `Condition/${parsed.data.id}`,
-            valueText: clampTopicText(parsed.data.code?.coding?.[0]?.display ?? parsed.data.code?.text ?? '2型糖尿病', 240),
+            valueText: (parsed.data.code?.coding?.[0]?.display ?? parsed.data.code?.text ?? '2型糖尿病').trim().slice(0, 240),
             versionId: parsed.data.meta?.versionId ?? '1',
           }
           break
