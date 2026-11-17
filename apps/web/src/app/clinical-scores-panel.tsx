@@ -382,6 +382,8 @@ export function OutpatientClinicalScoresDisclosure({
     enabled: open,
     queryFn: ({ signal }) => getOutpatientClinicalScores(caseId, signal),
     queryKey: scoresKey,
+    refetchInterval: open && !readOnly ? 3_000 : false,
+    refetchIntervalInBackground: false,
   })
   const saveRisk = useMutation({
     mutationFn: (payload: { expectedRevision: number; fields: ClinicalRiskAssessmentFieldsInput }) =>
@@ -494,6 +496,7 @@ export function buildInpatientClinicalScoreRevision(input: {
   surgeries?:
     | {
         executions: ReadonlyArray<{ id: string }>
+        inProgress?: ReadonlyArray<{ id: string; requestId?: string | undefined }> | undefined
         requests: ReadonlyArray<{ id: string; status: string; version: number }>
       }
     | undefined
@@ -515,13 +518,16 @@ export function buildInpatientClinicalScoreRevision(input: {
     input.orders.map(o => `${o.id}@${o.version}:${o.state}`).join(','),
     input.executions.map(e => `${e.id}@${e.version}:${e.status}`).join(','),
     input.surgeries?.requests.map(r => `${r.id}@${r.version}:${r.status}`).join(',') ?? '',
-    String(input.surgeries?.executions.length ?? 0),
+    input.surgeries?.inProgress?.map(p => `${p.id}:${p.requestId ?? ''}`).join(',') ?? '',
+    input.surgeries?.executions.map(e => e.id).join(',') ?? '',
     invSummary,
   ].join(':')
 }
 
 export function InpatientVitalsAndScoresDisclosure({
+  active = true,
   admissionId,
+  archived = false,
   canEdit,
   clinicalRevision,
   encounterVersion,
@@ -532,7 +538,9 @@ export function InpatientVitalsAndScoresDisclosure({
   scope,
   write,
 }: {
+  active?: boolean | undefined
   admissionId: string
+  archived?: boolean | undefined
   canEdit: boolean
   clinicalRevision?: string | undefined
   encounterVersion: string
@@ -616,6 +624,8 @@ export function InpatientVitalsAndScoresDisclosure({
     enabled: scoresOpen,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${encodeURIComponent(admissionId)}/clinical-scores`, clinicalScoreBundleSchema, signal),
     queryKey: scoresKey,
+    refetchInterval: scoresOpen && active && !archived ? 3_000 : false,
+    refetchIntervalInBackground: false,
   })
 
   const sysNum = Number(vitals.systolicMmHg)
