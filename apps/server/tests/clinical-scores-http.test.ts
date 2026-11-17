@@ -385,22 +385,36 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     const crclBefore = completedScores.scores.find(item => item.id === 'cockcroft-gault-crcl')!
     expect(crclBefore.status).toBe('complete')
 
-    // 6. Revising inpatient vitals (revision 1 -> 2, weight 74 -> 62 kg) supersedes old Observation and updates CrCl & sourceReferences
+    // 6. Subsequent nursing vitals & serial chemistry update CrCl/eGFR with latest values while GRACE preserves initial admission vitals & initial creatinine
     const revisedVitals = await parsePciResponse(
       inpatientFullClinicalResponseSchema,
       await fixture.request('ward-nurse', `${stay.path}/vital-signs`, {
         ...vitalsPayload,
+        bloodPressure: { diastolicMmHg: 58, systolicMmHg: 86 },
         encounterVersion: fullRisk.data.encounterVersion,
         expectedRevision: 1,
+        pulseBpm: 152,
         weightKg: 62,
       }, randomUUID()),
     )
     expect(revisedVitals.data.latestVitalSigns?.revision).toBe(2)
-    const supersededObs = await fixture.read('inpatient-doctor', `/fhir/R5/Observation/${recordedVitals.data.latestVitalSigns!.observationId}`, fhirResourceSchema)
-    expect(supersededObs.status).toBe('entered-in-error')
+    const initialVitalObs = await fixture.read('inpatient-doctor', `/fhir/R5/Observation/${recordedVitals.data.latestVitalSigns!.observationId}`, fhirResourceSchema)
+    expect(initialVitalObs.status).toBe('final')
+    insertSyntheticLabReport(fixture, {
+      caseId: stay.admissionId,
+      encounterId: stay.admissionId,
+      epoch: scenario.epoch,
+      issuedAt: '2026-10-30T09:30:00+08:00',
+      patientId: stay.patientId,
+      results: [
+        { code: '1700404A', display: '血清肌酐', high: 84, unit: 'mg/dL', value: 3.2 },
+      ],
+      workspaceId: scenario.workspaceId,
+    })
     const scoresAfterVitalRev = await fixture.read('inpatient-doctor', `${stay.path}/clinical-scores`, clinicalScoreBundleSchema)
     const crclAfter = scoresAfterVitalRev.scores.find(item => item.id === 'cockcroft-gault-crcl')!
     expect(crclAfter.status).toBe('complete')
+    expect(scoresAfterVitalRev.scores.find(item => item.id === 'grace-acs')?.value).toBe(grace.value)
     if (crclBefore.status === 'complete' && crclAfter.status === 'complete') {
       expect(crclAfter.value).toBeLessThan(crclBefore.value)
       expect(crclAfter.sourceReferences).toContainEqual(expect.objectContaining({

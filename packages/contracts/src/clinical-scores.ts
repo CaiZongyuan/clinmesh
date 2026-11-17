@@ -146,6 +146,7 @@ export const clinicalScoreMissingInputSchema = z.enum([
   'weightKg',
   'heartRateBpm',
   'systolicBpMmHg',
+  'diastolicBpMmHg',
   'serumCreatinine',
   'elevatedCardiacBiomarker',
   'hemoglobin',

@@ -22,6 +22,9 @@ export interface SourcedFact<T> {
 }
 
 export interface ClinicalScoreObjectiveFacts {
+  admissionHeartRateBpm?: SourcedFact<number>
+  admissionSerumCreatinine?: SourcedFact<UnitQuantityInput>
+  admissionSystolicBpMmHg?: SourcedFact<number>
   ageYears?: SourcedFact<number>
   anginaEpisodes24h?: SourcedFact<number>
   antihypertensiveMedicationActive?: SourcedFact<boolean>
@@ -32,6 +35,7 @@ export interface ClinicalScoreObjectiveFacts {
     code: string
     source: ClinicalScoreSourceReference
   }>
+  diastolicBpMmHg?: SourcedFact<number>
   elevatedCardiacBiomarker?: SourcedFact<boolean>
   familyHistoryPrematureCad?: SourcedFact<boolean>
   hdlCholesterol?: SourcedFact<UnitQuantityInput>
@@ -89,6 +93,10 @@ export function validateHeartRateBpm(heartRateBpm: number): number {
 
 export function validateSystolicBpMmHg(systolicBpMmHg: number): number {
   return assertFiniteRange(systolicBpMmHg, 40, 300, 'systolicBpMmHg')
+}
+
+export function validateDiastolicBpMmHg(diastolicBpMmHg: number): number {
+  return assertFiniteRange(diastolicBpMmHg, 20, 200, 'diastolicBpMmHg')
 }
 
 /** 血肌酐双轨单位换算：统一折算为 mg/dL（1 mg/dL = 88.4 umol/L），拒绝非法极值。 */
@@ -451,6 +459,7 @@ export function calculateAscvdLdlTarget(input: {
   antihypertensiveTreated?: boolean
   cadOnsetAgeYears?: number
   confirmedDiagnosisCodes: readonly string[]
+  diastolicBpMmHg?: number
   egfrMlMin173m2?: number
   hdlCholesterol?: UnitQuantityInput
   knownCoronaryRevascularization?: boolean
@@ -489,6 +498,7 @@ export function calculateAscvdLdlTarget(input: {
       ? undefined
       : normalizeLipidMmolL(input.hdlCholesterol.value, input.hdlCholesterol.unit, 'hdl')
   if (input.systolicBpMmHg !== undefined) validateSystolicBpMmHg(input.systolicBpMmHg)
+  if (input.diastolicBpMmHg !== undefined) validateDiastolicBpMmHg(input.diastolicBpMmHg)
   if (input.egfrMlMin173m2 !== undefined) assertFiniteRange(input.egfrMlMin173m2, 0, 500, 'egfrMlMin173m2')
 
   const evaluateGoal = (target: number): LdlGoalEvaluation | undefined =>
@@ -701,11 +711,18 @@ export function calculateAscvdLdlTarget(input: {
     }
   }
 
-  // 3. 21 种组合一级预防矩阵：严禁缺项默认阴性，必须具备性别、肾功、血压、血脂与吸烟状态
+  // 3. 21 种组合一级预防矩阵：严禁缺项默认阴性，必须具备性别、肾功、血压（收缩压≥140 或舒张压≥90 判定高血压）、血脂与吸烟状态
+  const bpAlreadyHypertensive =
+    hasConfirmedHtn
+    || (input.systolicBpMmHg !== undefined && input.systolicBpMmHg >= 140)
+    || (input.diastolicBpMmHg !== undefined && input.diastolicBpMmHg >= 90)
   const missing: ClinicalScoreMissingInput[] = []
   if (input.sex === undefined) missing.push('sex')
   if (input.egfrMlMin173m2 === undefined) missing.push('serumCreatinine')
-  if (input.systolicBpMmHg === undefined) missing.push('systolicBpMmHg')
+  if (!bpAlreadyHypertensive) {
+    if (input.systolicBpMmHg === undefined) missing.push('systolicBpMmHg')
+    if (input.diastolicBpMmHg === undefined) missing.push('diastolicBpMmHg')
+  }
   if (ldlMmolL === undefined && tcMmolL === undefined) missing.push('ldlCholesterol')
   if (hdlMmolL === undefined) missing.push('hdlCholesterol')
   if (input.smokingStatus === undefined) missing.push('smokingStatus')
@@ -713,7 +730,7 @@ export function calculateAscvdLdlTarget(input: {
     return { missingInputs: missing, status: 'incomplete' }
   }
 
-  const hasHypertension = hasConfirmedHtn || (input.systolicBpMmHg ?? 0) >= 140
+  const hasHypertension = bpAlreadyHypertensive
   const ageFactor = input.sex === 'male' ? age >= 45 : age >= 55
   const riskFactors =
     (ageFactor ? 1 : 0)
@@ -815,6 +832,7 @@ export const MISSING_INPUT_LABELS: Record<ClinicalScoreMissingInput, { en: strin
   aspirinUsedLast7Days: { en: 'Aspirin in past 7d', zh: '近7天阿司匹林使用' },
   cadOnsetAge: { en: 'CAD onset age/date', zh: '冠心病发病年龄' },
   cardiacArrestOnAdmission: { en: 'Cardiac arrest on admission', zh: '入院心脏骤停' },
+  diastolicBpMmHg: { en: 'Diastolic BP', zh: '舒张压' },
   elevatedCardiacBiomarker: { en: 'Cardiac troponin report', zh: '心肌损伤标志物报告' },
   familyHistoryPrematureCad: { en: 'Family history of premature CAD', zh: '早发冠心病家族史' },
   hdlCholesterol: { en: 'HDL-C report', zh: '高密度脂蛋白胆固醇 (HDL-C)' },
@@ -888,9 +906,18 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
   const adultAge = safeParseFact(facts.ageYears, validateAdultAgeYears)
   const sex = facts.sex
   const weightKg = safeParseFact(facts.weightKg, validateWeightKg)
-  const heartRateBpm = safeParseFact(facts.heartRateBpm, validateHeartRateBpm)
+  const admissionHeartRateBpm = safeParseFact(facts.admissionHeartRateBpm ?? facts.heartRateBpm, validateHeartRateBpm)
   const systolicBpMmHg = safeParseFact(facts.systolicBpMmHg, validateSystolicBpMmHg)
+  const admissionSystolicBpMmHg = safeParseFact(
+    facts.admissionSystolicBpMmHg ?? facts.systolicBpMmHg,
+    validateSystolicBpMmHg,
+  )
+  const diastolicBpMmHg = safeParseFact(facts.diastolicBpMmHg, validateDiastolicBpMmHg)
   const scrValid = safeParseFact(facts.serumCreatinine, q => {
+    normalizeCreatinineMgDl(q.value, q.unit)
+    return q
+  })
+  const admissionScrValid = safeParseFact(facts.admissionSerumCreatinine ?? facts.serumCreatinine, q => {
     normalizeCreatinineMgDl(q.value, q.unit)
     return q
   })
@@ -994,23 +1021,23 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     }
   }
 
-  // 3. GRACE ACS
+  // 3. GRACE ACS (uses presenting/admission heart rate, systolic BP, and initial serum creatinine)
   let graceResult: ClinicalScoreResult
   {
     const missing: ClinicalScoreMissingInput[] = []
     if (adultAge === undefined) missing.push('age')
-    if (heartRateBpm === undefined) missing.push('heartRateBpm')
-    if (systolicBpMmHg === undefined) missing.push('systolicBpMmHg')
-    if (scrValid === undefined) missing.push('serumCreatinine')
+    if (admissionHeartRateBpm === undefined) missing.push('heartRateBpm')
+    if (admissionSystolicBpMmHg === undefined) missing.push('systolicBpMmHg')
+    if (admissionScrValid === undefined) missing.push('serumCreatinine')
     if (facts.killipClass === undefined) missing.push('killipClass')
     if (facts.cardiacArrestOnAdmission === undefined) missing.push('cardiacArrestOnAdmission')
     if (facts.stSegmentDeviation === undefined) missing.push('stSegmentDeviation')
     if (facts.elevatedCardiacBiomarker === undefined) missing.push('elevatedCardiacBiomarker')
     const sources = [
       adultAge?.source,
-      heartRateBpm?.source,
-      systolicBpMmHg?.source,
-      scrValid?.source,
+      admissionHeartRateBpm?.source,
+      admissionSystolicBpMmHg?.source,
+      admissionScrValid?.source,
       facts.killipClass?.source,
       facts.cardiacArrestOnAdmission?.source,
       facts.stSegmentDeviation?.source,
@@ -1023,11 +1050,11 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
         ageYears: adultAge!.value,
         cardiacArrestOnAdmission: facts.cardiacArrestOnAdmission!.value,
         elevatedCardiacBiomarker: facts.elevatedCardiacBiomarker!.value,
-        heartRateBpm: heartRateBpm!.value,
+        heartRateBpm: admissionHeartRateBpm!.value,
         killipClass: facts.killipClass!.value,
-        serumCreatinine: scrValid!.value,
+        serumCreatinine: admissionScrValid!.value,
         stSegmentDeviation: facts.stSegmentDeviation!.value,
-        systolicBpMmHg: systolicBpMmHg!.value,
+        systolicBpMmHg: admissionSystolicBpMmHg!.value,
       })
       const meta = SCORE_METADATA['grace-acs']
       graceResult = {
@@ -1202,6 +1229,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
       facts.severeAscvdEventCount?.source,
       scrValid?.source,
       systolicBpMmHg?.source,
+      diastolicBpMmHg?.source,
       facts.antihypertensiveMedicationActive?.source,
       facts.smokingStatus?.source,
       ldlValid?.source,
@@ -1220,6 +1248,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
           ? {}
           : { cadOnsetAgeYears: facts.cadOnsetAgeYears.value }),
         confirmedDiagnosisCodes: diagnosisCodes,
+        ...(diastolicBpMmHg === undefined ? {} : { diastolicBpMmHg: diastolicBpMmHg.value }),
         ...(egfrValue === undefined ? {} : { egfrMlMin173m2: egfrValue }),
         ...(hdlValid === undefined ? {} : { hdlCholesterol: hdlValid.value }),
         ...(facts.knownCoronaryRevascularizationOrStenosisGe50 === undefined
