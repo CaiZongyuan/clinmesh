@@ -1197,7 +1197,15 @@ export class ClinicalScoreService {
       }
     }
 
-    const troponinChronological = [...troponinHitsDesc].reverse()
+    const troponinChronological = [...troponinHitsDesc]
+      .reverse()
+      .map((item, seq) => ({ ...item, seq }))
+      .sort((a, b) => {
+        if (a.timestampMs !== undefined && b.timestampMs !== undefined && a.timestampMs !== b.timestampMs) {
+          return a.timestampMs - b.timestampMs
+        }
+        return a.seq - b.seq
+      })
     const initialTroponin = troponinChronological[0]
     let elevatedCardiacBiomarker: ClinicalScoreObjectiveFacts['elevatedCardiacBiomarker']
     if (initialTroponin !== undefined) {
