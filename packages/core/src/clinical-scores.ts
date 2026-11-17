@@ -42,6 +42,7 @@ export interface ClinicalScoreObjectiveFacts {
   priorBleedingHistory?: SourcedFact<PriorBleedingHistory>
   priorCoronaryRevascularization?: SourcedFact<boolean>
   serumCreatinine?: SourcedFact<UnitQuantityInput>
+  severeAscvdEventCount?: SourcedFact<number>
   sex?: SourcedFact<ClinicalSex>
   smokingStatus?: SourcedFact<SmokingStatus>
   stSegmentDeviation?: SourcedFact<boolean>
@@ -453,6 +454,7 @@ export function calculateAscvdLdlTarget(input: {
   knownCoronaryRevascularization?: boolean
   ldlCholesterol?: UnitQuantityInput
   priorCoronaryRevascularization?: boolean
+  severeAscvdEventCount?: number
   sex?: ClinicalSex
   smokingStatus?: SmokingStatus
   systolicBpMmHg?: number
@@ -503,9 +505,6 @@ export function calculateAscvdLdlTarget(input: {
     hasConfirmedAscvdDiagnosis(input.confirmedDiagnosisCodes)
     || input.knownCoronaryRevascularization === true
     || priorRevasc
-  const hasAcs = codeMatchesPrefixes(input.confirmedDiagnosisCodes, ACS_ICD10_PREFIXES)
-  const hasPriorMi = codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['I25.2'])
-  const hasIschemicStroke = codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['I63'])
   const hasPadWithRevascOrAmp =
     codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['I70.2', 'I73.9'])
     && codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['Z95.8', 'Z89'])
@@ -515,11 +514,14 @@ export function calculateAscvdLdlTarget(input: {
 
   // 1. 已确诊 ASCVD 二级预防：按《中国血脂管理指南（2023年）》仅在 ≥2 次严重 ASCVD 事件或 1 次严重事件合并 ≥2 个高风险因素时定为超高危 (<1.4 mmol/L)，其余为极高危 (<1.8 mmol/L)
   if (hasAscvd) {
+    const codeSevereEventCount =
+      input.confirmedDiagnosisCodes.filter(code =>
+        codeMatchesPrefixes([code], [...ACS_ICD10_PREFIXES, 'I25.2', 'I63']),
+      ).length + (hasPadWithRevascOrAmp ? 1 : 0)
     const severeEventCount =
-      (hasAcs ? 1 : 0)
-      + (hasPriorMi ? 1 : 0)
-      + (hasIschemicStroke ? 1 : 0)
-      + (hasPadWithRevascOrAmp ? 1 : 0)
+      input.severeAscvdEventCount === undefined
+        ? codeSevereEventCount
+        : Math.max(0, Math.trunc(input.severeAscvdEventCount)) + (hasPadWithRevascOrAmp ? 1 : 0)
     const hasCad =
       codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['I20', 'I21', 'I22', 'I23', 'I24', 'I25'])
       || input.knownCoronaryRevascularization === true
@@ -1117,6 +1119,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
       ...facts.confirmedDiagnoses.map(item => item.source),
       facts.knownCoronaryRevascularizationOrStenosisGe50?.source,
       facts.priorCoronaryRevascularization?.source,
+      facts.severeAscvdEventCount?.source,
       scrValid?.source,
       systolicBpMmHg?.source,
       facts.antihypertensiveMedicationActive?.source,
@@ -1143,6 +1146,9 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
         ...(facts.priorCoronaryRevascularization === undefined
           ? {}
           : { priorCoronaryRevascularization: facts.priorCoronaryRevascularization.value }),
+        ...(facts.severeAscvdEventCount === undefined
+          ? {}
+          : { severeAscvdEventCount: facts.severeAscvdEventCount.value }),
         ...(sex === undefined ? {} : { sex: sex.value }),
         ...(facts.smokingStatus === undefined ? {} : { smokingStatus: facts.smokingStatus.value }),
         ...(systolicBpMmHg === undefined ? {} : { systolicBpMmHg: systolicBpMmHg.value }),

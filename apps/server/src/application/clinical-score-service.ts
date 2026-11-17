@@ -129,6 +129,7 @@ const diagnosticReportResourceSchema = z.object({
 const conditionResourceSchema = z.object({
   clinicalStatus: z.object({ coding: z.array(codingItemSchema).optional() }).loose().optional(),
   code: z.object({ coding: z.array(codingItemSchema).optional(), text: z.string().optional() }).loose().optional(),
+  encounter: z.object({ reference: z.string().optional() }).loose().optional(),
   id: z.string().min(1),
   meta: z.object({ versionId: z.string().optional() }).loose().optional(),
   verificationStatus: z.object({ coding: z.array(codingItemSchema).optional() }).loose().optional(),
@@ -992,6 +993,9 @@ export class ClinicalScoreService {
       ...(history.priorCoronaryRevascularization === undefined
         ? {}
         : { priorCoronaryRevascularization: history.priorCoronaryRevascularization }),
+      ...(history.severeAscvdEventCount === undefined
+        ? {}
+        : { severeAscvdEventCount: history.severeAscvdEventCount }),
     }
 
     return {
@@ -1167,6 +1171,8 @@ export class ClinicalScoreService {
     const confirmedDiagnoses: ClinicalScoreObjectiveFacts['confirmedDiagnoses'] = []
     let knownCad: ClinicalScoreObjectiveFacts['knownCoronaryRevascularizationOrStenosisGe50']
     let priorCoronaryRevascularization: ClinicalScoreObjectiveFacts['priorCoronaryRevascularization']
+    const severeEventKeys = new Set<string>()
+    let firstSevereEventRef: ClinicalScoreSourceReference | undefined
 
     const conditionParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
     for (;;) {
@@ -1176,32 +1182,51 @@ export class ClinicalScoreService {
         if (!parsed.success) continue
         const verStatus = parsed.data.verificationStatus?.coding?.[0]?.code
         const clinStatus = parsed.data.clinicalStatus?.coding?.[0]?.code
-        if (verStatus !== 'confirmed' || clinStatus === 'inactive' || clinStatus === 'resolved') continue
-        const codes = (parsed.data.code?.coding ?? []).map(item => item.code?.trim() ?? '').filter(Boolean)
+        if (verStatus !== 'confirmed') continue
+        const codes = [...new Set((parsed.data.code?.coding ?? []).map(item => item.code?.trim() ?? '').filter(Boolean))]
         const text = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(item => item.display)].filter(Boolean).join(' ')
+        const isHistoricalAscvdOrRevasc =
+          codes.some(code => /^(?:I2[0-5]|I6[356]|I70|I73\.9|G45|Z95\.[158]|Z98\.61|Z89|Z82\.4)/i.test(code))
+          || codes.includes('22298006')
+          || codes.includes('53741008')
+          || codes.includes('230690007')
+          || /冠心病|冠状动脉|心绞痛|心肌梗死|脑梗死|缺血性卒中|短暂性脑缺血|支架植入|冠脉搭桥|经皮冠状动脉介入|外周动脉|coronary|myocardial infarction|ischemic stroke/i.test(text)
+        if ((clinStatus === 'inactive' || clinStatus === 'resolved') && !isHistoricalAscvdOrRevasc) continue
         const ref: ClinicalScoreSourceReference = {
           label: parsed.data.code?.coding?.[0]?.display ?? parsed.data.code?.text ?? `诊断 ${parsed.data.id}`,
           reference: `Condition/${parsed.data.id}`,
           versionId: parsed.data.meta?.versionId ?? '1',
         }
-        for (const code of codes) {
-          confirmedDiagnoses.push({ code, source: ref })
-        }
+        const conditionEffectiveCodes = [...codes]
         if (!codes.some(code => /^[A-Z]\d/i.test(code))) {
           if (codes.includes('44054006') || codes.includes('73211009') || /糖尿病|diabetes/i.test(text)) {
-            confirmedDiagnoses.push({ code: 'E11', source: ref })
+            conditionEffectiveCodes.push('E11')
           }
           if (codes.includes('38341003') || codes.includes('59621000') || /高血压|hypertension/i.test(text)) {
-            confirmedDiagnoses.push({ code: 'I10', source: ref })
+            conditionEffectiveCodes.push('I10')
           }
           if (codes.includes('370992007') || codes.includes('13644009') || /高脂血症|血脂异常|高胆固醇血症|dyslipidemia|hyperlipidemia/i.test(text)) {
-            confirmedDiagnoses.push({ code: 'E78', source: ref })
+            conditionEffectiveCodes.push('E78')
           }
-          if (codes.includes('22298006') || /急性冠脉|急性心肌梗死|不稳定型心绞痛|STEMI|NSTEMI/i.test(text)) {
-            confirmedDiagnoses.push({ code: 'I21', source: ref })
-          } else if (codes.includes('53741008') || /冠心病|冠状动脉粥样硬化|心绞痛|心肌梗死|脑梗死|缺血性卒中/i.test(text)) {
-            confirmedDiagnoses.push({ code: 'I25', source: ref })
+          if (codes.includes('22298006') || /急性冠脉|急性心肌梗死|不稳定型心绞痛|STEMI|NSTEMI|myocardial infarction/i.test(text)) {
+            conditionEffectiveCodes.push('I21')
+          } else if (codes.includes('230690007') || /脑梗死|缺血性卒中|ischemic stroke/i.test(text)) {
+            conditionEffectiveCodes.push('I63')
+          } else if (codes.includes('53741008') || /冠心病|冠状动脉粥样硬化|心绞痛|coronary/i.test(text)) {
+            conditionEffectiveCodes.push('I25')
           }
+        }
+        for (const code of conditionEffectiveCodes) {
+          confirmedDiagnoses.push({ code, source: ref })
+        }
+        const isAcuteAcs = conditionEffectiveCodes.some(code => /^(?:I20\.0|I2[1-4])/i.test(code))
+        const isPriorMi = conditionEffectiveCodes.some(code => /^I25\.2/i.test(code))
+        const isStroke = conditionEffectiveCodes.some(code => /^I63/i.test(code))
+        if (isAcuteAcs || isPriorMi || isStroke) {
+          const encounterRef = parsed.data.encounter?.reference
+          const eventKey = isAcuteAcs && encounterRef ? `acs:${encounterRef}` : `cond:${parsed.data.id}`
+          severeEventKeys.add(eventKey)
+          firstSevereEventRef ??= ref
         }
         if (
           priorCoronaryRevascularization === undefined
@@ -1280,6 +1305,10 @@ export class ClinicalScoreService {
       confirmedDiagnoses,
       knownCoronaryRevascularizationOrStenosisGe50: knownCad,
       priorCoronaryRevascularization,
+      severeAscvdEventCount:
+        firstSevereEventRef === undefined
+          ? undefined
+          : { source: firstSevereEventRef, value: severeEventKeys.size },
     }
   }
 
