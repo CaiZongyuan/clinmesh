@@ -671,6 +671,7 @@ export class ClinicalScoreService {
         evaluatedAt: now,
         fhir: this.#fhir,
         patientBirthDate: typeof patient.birthDate === 'string' ? patient.birthDate : undefined,
+        patientId: caseRow.patient_id,
         populationReferenceIso: caseRow.visit_date ?? now,
         scores,
         topicId,

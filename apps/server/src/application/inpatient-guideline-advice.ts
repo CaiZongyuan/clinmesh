@@ -116,6 +116,11 @@ const supplementaryIndicatorsSchema = z.object({
     targetSite: z.string().nullable(),
     versionId: z.string(),
   }).strict().nullable(),
+  t2dmDiagnosis: z.object({
+    sourceReference: z.string(),
+    valueText: z.string(),
+    versionId: z.string(),
+  }).strict().nullable().optional(),
   troponinSeries: z.object({
     anyElevated: z.boolean(),
     count: z.number().int().positive(),
@@ -338,6 +343,7 @@ export class InpatientGuidelineAdvice {
       database: this.owner.database,
       fhir: this.owner.fhir,
       inpatient: { actor: context, service: this.owner },
+      patientId: binding.patientId,
     })
     const { missingPatientInputs } = evaluateTopicPatientIndicators(topicId, scores, supplementary)
     const supplementaryIndicators = {
@@ -345,6 +351,7 @@ export class InpatientGuidelineAdvice {
       ecgSummary: supplementary.ecgSummary ?? null,
       hba1c: supplementary.hba1c ?? null,
       pciPlanSummary: supplementary.pciPlanSummary ?? null,
+      t2dmDiagnosis: supplementary.t2dmDiagnosis ?? null,
       troponinSeries: supplementary.troponinSeries ?? null,
       tteLvef: supplementary.tteLvef ?? null,
     }
@@ -546,7 +553,7 @@ export class InpatientGuidelineAdvice {
   readTopics(context: ActorContext, admissionId: string, topicId?: GuidelineTopicId): GuidelineTopicBundle {
     try {
       this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
-      const { patientBirthDate, referenceIso } = this.#population(context, admissionId)
+      const { binding, patientBirthDate, referenceIso } = this.#population(context, admissionId)
       const scores = this.owner.workflow.clinicalScores.inpatientSnapshot(this.owner, context, admissionId, referenceIso)
       const bundle = buildSynchronousTopicBundle({
         caseId: admissionId,
@@ -558,6 +565,7 @@ export class InpatientGuidelineAdvice {
         fhir: this.owner.fhir,
         inpatient: { actor: context, service: this.owner },
         patientBirthDate,
+        patientId: binding.patientId,
         populationReferenceIso: referenceIso,
         scores,
         topicId,

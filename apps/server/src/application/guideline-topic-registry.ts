@@ -593,6 +593,7 @@ interface SupplementaryClinicalIndicators {
     summaryText: string
     versionId: string
   } | undefined
+  t2dmDiagnosis?: { sourceReference: string; valueText: string; versionId: string } | undefined
   tteLvef?: { lvefPct: number; sourceReference: string; versionId: string } | undefined
 }
 
@@ -904,6 +905,13 @@ export function evaluateTopicPatientIndicators(
       '缺少 LVEF 评估（影响合并 LVEF ≤ 40% 时 ACEI/ARB/β 受体阻滞剂二级预防核对）。',
     )
   } else {
+    pushExam(
+      't2dm-diagnosis',
+      '2 型糖尿病确诊依据',
+      'Confirmed type 2 diabetes diagnosis',
+      supplementary.t2dmDiagnosis,
+      '当前患者尚未确认 2 型糖尿病（ICD-10 E11）适用诊断，仅可按条件性参考核对。',
+    )
     pushScore('ckd-epi-2021-egfr', '估算肾小球滤过率 (eGFR / CKD 分期)', 'eGFR & CKD stage', '缺少血肌酐与 eGFR（无法判定二甲双胍/达格列净肾功能分期界值）')
     pushScore('cockcroft-gault-crcl', '肌酐清除率 (CrCl)', 'Creatinine clearance (CrCl)', '缺少体重或肌酐清除率')
     pushExam(
@@ -924,8 +932,9 @@ export function extractSupplementaryIndicators(options: {
   database: ClinMeshDatabase
   fhir: FhirRepository
   inpatient?: { actor: ActorContext; service: InpatientService } | undefined
+  patientId?: string | undefined
 }): SupplementaryClinicalIndicators {
-  const { caseId, context, database, fhir, inpatient } = options
+  const { caseId, context, database, fhir, inpatient, patientId } = options
 
   const examRows = z.array(z.object({
     content_json: z.string(),
@@ -1175,11 +1184,54 @@ export function extractSupplementaryIndicators(options: {
     }
   }
 
+  let t2dmDiagnosis: SupplementaryClinicalIndicators['t2dmDiagnosis']
+  if (patientId !== undefined) {
+    const condParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
+    for (;;) {
+      const page = fhir.search(context, 'Condition', condParams)
+      for (const raw of page.resources) {
+        const parsed = z.object({
+          clinicalStatus: z.object({ coding: z.array(z.object({ code: z.string().optional() }).loose()).optional() }).loose().optional(),
+          code: z.object({
+            coding: z.array(z.object({ code: z.string().optional(), display: z.string().optional() }).loose()).optional(),
+            text: z.string().optional(),
+          }).loose().optional(),
+          id: z.string().min(1),
+          meta: z.object({ versionId: z.string().optional() }).loose().optional(),
+          verificationStatus: z.object({ coding: z.array(z.object({ code: z.string().optional() }).loose()).optional() }).loose().optional(),
+        }).loose().safeParse(raw)
+        if (!parsed.success) continue
+        if (parsed.data.verificationStatus?.coding?.[0]?.code !== 'confirmed') continue
+        const clinCode = parsed.data.clinicalStatus?.coding?.[0]?.code
+        if (clinCode === 'inactive' || clinCode === 'resolved') continue
+        const codes = (parsed.data.code?.coding ?? []).map(c => c.code?.trim() ?? '').filter(Boolean)
+        const display = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
+        if (
+          codes.some(code => /^E11/i.test(code) || code === '44054006')
+          || (
+            /2\s*型糖尿病|二型糖尿病|type\s*2\s*diabetes/i.test(display)
+            && !/(?:无|否认|排除|非)\s*(?:2\s*型|二型|type\s*2)/i.test(display)
+          )
+        ) {
+          t2dmDiagnosis = {
+            sourceReference: `Condition/${parsed.data.id}`,
+            valueText: clampTopicText(parsed.data.code?.coding?.[0]?.display ?? parsed.data.code?.text ?? '2型糖尿病', 240),
+            versionId: parsed.data.meta?.versionId ?? '1',
+          }
+          break
+        }
+      }
+      if (t2dmDiagnosis !== undefined || page.nextCursor === undefined) break
+      condParams.set('_cursor', page.nextCursor)
+    }
+  }
+
   return {
     angiographySummary,
     ecgSummary,
     hba1c,
     pciPlanSummary,
+    t2dmDiagnosis,
     troponinSeries,
     tteLvef,
   }
@@ -1195,6 +1247,7 @@ export function buildSynchronousTopicBundle(options: {
   fhir: FhirRepository
   inpatient?: { actor: ActorContext; service: InpatientService } | undefined
   patientBirthDate: string | undefined
+  patientId?: string | undefined
   populationReferenceIso: string
   scores: ClinicalScoreBundle
   topicId?: GuidelineTopicId | undefined
@@ -1206,6 +1259,7 @@ export function buildSynchronousTopicBundle(options: {
     database: options.database,
     fhir: options.fhir,
     inpatient: options.inpatient,
+    patientId: options.patientId,
   })
   const targetTopicIds = options.topicId === undefined ? guidelineTopicIds : [options.topicId]
   return guidelineTopicBundleSchema.parse({

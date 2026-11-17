@@ -729,6 +729,9 @@ it('门诊与住院同步读取注册 Guideline Topic 直接返回核验原文�
     guidelineTopicBundleSchema,
   )
   expect(inpatientBundle.items.map(item => item.topic.id)).toEqual([...guidelineTopicIds])
+  const nonDiabeticT2dmTopic = inpatientBundle.items.find(item => item.topic.id === 't2dm-renal-medication')!
+  expect(nonDiabeticT2dmTopic.patientIndicators.find(i => i.code === 't2dm-diagnosis')).toMatchObject({ status: 'missing' })
+  expect(nonDiabeticT2dmTopic.missingPatientInputs.join('；')).toContain('尚未确认 2 型糖尿病')
   for (const item of inpatientBundle.items) {
     expect(item.status, item.topic.id).toBe('available')
     expect(item.guidelines.length, item.topic.id).toBeGreaterThan(0)
