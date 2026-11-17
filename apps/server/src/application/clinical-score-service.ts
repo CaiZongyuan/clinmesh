@@ -852,7 +852,7 @@ export class ClinicalScoreService {
       const referenceCutoffIso = encCompleted
         ? (extractEncounterEndIso(rawEncounter) ?? (caseRow.visit_date ? `${caseRow.visit_date}T23:59:59.999+08:00` : now))
         : now
-      const scores = this.outpatientSnapshot(context, caseId, referenceCutoffIso)
+      const scores = this.outpatientSnapshot(context, caseId, referenceCutoffIso, encCompleted)
       bundle = buildSynchronousTopicBundle({
         caseId,
         context,
@@ -861,6 +861,7 @@ export class ClinicalScoreService {
         encounterId: caseRow.encounter_id,
         evaluatedAt: now,
         fhir: this.#fhir,
+        isArchivedCutoff: encCompleted,
         patientBirthDate: typeof patient.birthDate === 'string' ? patient.birthDate : undefined,
         patientId: caseRow.patient_id,
         populationReferenceIso: encCompleted ? referenceCutoffIso : (caseRow.visit_date ?? now),
@@ -888,7 +889,12 @@ export class ClinicalScoreService {
     return bundle
   }
 
-  outpatientSnapshot(context: ActorContext, caseId: string, referenceCutoffIso?: string): ClinicalScoreBundle {
+  outpatientSnapshot(
+    context: ActorContext,
+    caseId: string,
+    referenceCutoffIso?: string,
+    isArchivedCutoffOverride?: boolean,
+  ): ClinicalScoreBundle {
     this.#outpatientContext.requireDoctorCase(context, caseId)
     this.#outpatientContext.assertCaseResponsibility(context, caseId)
     const row = z.object({
@@ -922,8 +928,9 @@ export class ClinicalScoreService {
     if (row === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case was not found')
     const encounter = this.#fhir.read(context, 'Encounter', row.encounter_id)
     const virtualNow = this.#outpatientContext.virtualTime(context)
+    const isArchivedCutoff = isArchivedCutoffOverride ?? (encounter.status === 'completed')
     const derivedCutoffIso =
-      encounter.status === 'completed'
+      isArchivedCutoff
         ? (extractEncounterEndIso(encounter) ?? (row.visit_date ? `${row.visit_date}T23:59:59.999+08:00` : virtualNow))
         : virtualNow
     const now = normalizeCutoffIso(referenceCutoffIso ?? derivedCutoffIso)
@@ -958,6 +965,7 @@ export class ClinicalScoreService {
       encounterVersion: encounter.meta?.versionId ?? '1',
       evaluatedAt: virtualNow,
       inpatient: undefined,
+      isArchivedCutoff,
       legacyDiagnosticReportId: row.diagnostic_report_id,
       now,
       patientId: row.patient_id,
@@ -971,15 +979,17 @@ export class ClinicalScoreService {
     context: ActorContext,
     admissionId: string,
     referenceTimeIso?: string,
+    isArchivedCutoffOverride?: boolean,
   ): ClinicalScoreBundle {
     inpatient.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     const binding = inpatient.readAdmissionBinding(context, admissionId)
     const encounter = this.#fhir.read(context, 'Encounter', admissionId)
     const virtualNow = inpatient.virtualTime(context)
-    const departedAt =
-      binding.status === 'departed'
-        ? (inpatient.discharge.activeDeparture(context, admissionId)?.virtualTime ?? extractEncounterEndIso(encounter))
-        : undefined
+    const departureIso = inpatient.discharge.activeDeparture(context, admissionId)?.virtualTime
+    const isArchivedCutoff =
+      isArchivedCutoffOverride
+      ?? (departureIso !== undefined || binding.status === 'departed' || binding.status === 'cleared')
+    const departedAt = isArchivedCutoff ? (departureIso ?? extractEncounterEndIso(encounter)) : undefined
     const now = normalizeCutoffIso(referenceTimeIso ?? departedAt ?? virtualNow)
     const admTiming = z.object({
       admitted_at: z.string().nullable(),
@@ -1045,6 +1055,7 @@ export class ClinicalScoreService {
       encounterVersion: encounter.meta?.versionId ?? '1',
       evaluatedAt: virtualNow,
       inpatient,
+      isArchivedCutoff,
       legacyDiagnosticReportId: null,
       now,
       patientId: binding.patientId,
@@ -1354,6 +1365,7 @@ export class ClinicalScoreService {
       encounterVersion: string
       evaluatedAt: string
       inpatient: InpatientService | undefined
+      isArchivedCutoff: boolean
       latestHeightVitalSummary?: ClinicalScoreVitalSummary | null
       latestWeightVitalSummary?: ClinicalScoreVitalSummary | null
       legacyDiagnosticReportId: string | null
@@ -1466,6 +1478,7 @@ export class ClinicalScoreService {
       options.inpatient,
       options.caseId,
       cutoffMs,
+      options.isArchivedCutoff,
     )
     const encounterApplicability = this.#extractEncounterScoreApplicability(
       context,
@@ -1474,6 +1487,7 @@ export class ClinicalScoreService {
       options.caseId,
       options.inpatient,
       options.now,
+      options.isArchivedCutoff,
     )
     const onAntihypertensive = this.#extractAntihypertensiveFlag(
       context,
@@ -1483,6 +1497,7 @@ export class ClinicalScoreService {
       options.caseId,
       options.now,
       history.hypertensionConditionRefs,
+      options.isArchivedCutoff,
     )
     const lipidStratification = this.#extractPatientLipidStratification(
       context,
@@ -1491,6 +1506,7 @@ export class ClinicalScoreService {
       options.caseId,
       options.now,
       labs.latestLipidObservationMs,
+      options.isArchivedCutoff,
     )
     const bedsideKnownStenosis =
       riskRef !== undefined && riskAssessment.values.knownCoronaryStenosisGe50 !== null
@@ -1653,6 +1669,7 @@ export class ClinicalScoreService {
     caseId: string,
     inpatient: InpatientService | undefined,
     nowIso: string,
+    isArchivedCutoff: boolean,
   ): {
     acsPresentation: { source?: ClinicalScoreSourceReference; value: boolean }
     pciDaptIndication: { source?: ClinicalScoreSourceReference; value: boolean }
@@ -1887,7 +1904,7 @@ export class ClinicalScoreService {
               const procTsMs =
                 parseResourceTimestampMs(parsed.data.performedDateTime ?? parsed.data.performedPeriod?.start)
                 ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-              if (Number.isFinite(nowMs) && procTsMs !== undefined && procTsMs > nowMs) continue
+              if (Number.isFinite(nowMs) && (procTsMs === undefined ? isArchivedCutoff : procTsMs > nowMs)) continue
               priorCoronaryStentSource ??= ref
             }
           }
@@ -1908,7 +1925,7 @@ export class ClinicalScoreService {
             const condTsMs =
               parseResourceTimestampMs(parsed.data.recordedDate ?? parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start)
               ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-            if (condTsMs !== undefined && condTsMs > nowMs) continue
+            if (condTsMs === undefined ? isArchivedCutoff : condTsMs > nowMs) continue
           }
           const codes = (parsed.data.code?.coding ?? []).map(c => c.code?.trim().toUpperCase() ?? '')
           const text = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
@@ -1954,7 +1971,7 @@ export class ClinicalScoreService {
             const medTsMs =
               parseResourceTimestampMs(parsed.data.authoredOn)
               ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-            if (medTsMs !== undefined && medTsMs > nowMs) continue
+            if (medTsMs === undefined ? isArchivedCutoff : medTsMs > nowMs) continue
           }
           const rawDaptBoundsMs = resolveMedicationBoundsDurationMs(
             parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
@@ -2482,6 +2499,7 @@ export class ClinicalScoreService {
     inpatient: InpatientService | undefined,
     caseId: string,
     cutoffMs: number,
+    isArchivedCutoff: boolean,
   ) {
     const encounterTimeCache = new Map<string, number | undefined>()
     const confirmedDiagnoses: ClinicalScoreObjectiveFacts['confirmedDiagnoses'] = []
@@ -2542,7 +2560,7 @@ export class ClinicalScoreService {
           const condTsMs =
             parseResourceTimestampMs(parsed.data.recordedDate ?? parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start)
             ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-          if (condTsMs !== undefined && condTsMs > cutoffMs) continue
+          if (condTsMs === undefined ? isArchivedCutoff : condTsMs > cutoffMs) continue
         }
         const codes = [...new Set((parsed.data.code?.coding ?? []).map(item => item.code?.trim() ?? '').filter(Boolean))]
         const text = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(item => item.display)].filter(Boolean).join(' ')
@@ -2679,7 +2697,7 @@ export class ClinicalScoreService {
           const procTsMs =
             parseResourceTimestampMs(parsed.data.performedDateTime ?? parsed.data.performedPeriod?.start)
             ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-          if (procTsMs !== undefined && procTsMs > cutoffMs) continue
+          if (procTsMs === undefined ? isArchivedCutoff : procTsMs > cutoffMs) continue
         }
         const codes = (parsed.data.code?.coding ?? []).map(item => item.code ?? '').filter(Boolean)
         const text = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(item => item.display)].filter(Boolean).join(' ')
@@ -2785,6 +2803,7 @@ export class ClinicalScoreService {
     caseId: string,
     nowIso: string,
     hypertensionConditionRefs: ReadonlySet<string>,
+    isArchivedCutoff: boolean,
   ): { source?: ClinicalScoreSourceReference; value: boolean } {
     if (inpatient !== undefined) {
       const activeOrders = z.array(z.object({
@@ -2842,7 +2861,7 @@ export class ClinicalScoreService {
           const medTsMs =
             parseResourceTimestampMs(parsed.data.authoredOn)
             ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-          if (medTsMs !== undefined && medTsMs > nowMs) continue
+          if (medTsMs === undefined ? isArchivedCutoff : medTsMs > nowMs) continue
         }
         const rawHtnBoundsMs = resolveMedicationBoundsDurationMs(
           parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
@@ -2934,6 +2953,7 @@ export class ClinicalScoreService {
     caseId: string,
     nowIso: string,
     latestCurrentCaseLipidMs: number | undefined,
+    isArchivedCutoff: boolean,
   ): {
     lipidLoweringMedicationActive?: { source: ClinicalScoreSourceReference; value: boolean }
     pretreatmentHdlCholesterol?: { source: ClinicalScoreSourceReference; value: { unit: string; value: number } }
@@ -3134,7 +3154,11 @@ export class ClinicalScoreService {
           ?? earliestDispenseMs
           ?? parseResourceTimestampMs(parsed.data.authoredOn)
           ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-        if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs) && startMs !== undefined && startMs > nowMs) {
+        if (
+          parsed.data.encounter?.reference !== `Encounter/${encounterId}`
+          && Number.isFinite(nowMs)
+          && (startMs === undefined ? isArchivedCutoff : startMs > nowMs)
+        ) {
           continue
         }
         const rawBoundsMs = resolveMedicationBoundsDurationMs(

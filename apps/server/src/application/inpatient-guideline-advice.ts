@@ -288,7 +288,8 @@ export class InpatientGuidelineAdvice {
       patient.birthDate,
       departedAt ?? this.owner.virtualTime(context),
     )
-    return { binding, patientBirthDate: patient.birthDate, population, referenceIso: departedAt ?? this.owner.virtualTime(context) }
+    const isArchivedCutoff = departedAt !== undefined || binding.status === 'departed' || binding.status === 'cleared'
+    return { binding, isArchivedCutoff, patientBirthDate: patient.birthDate, population, referenceIso: departedAt ?? this.owner.virtualTime(context) }
   }
 
   #basis(
@@ -297,7 +298,7 @@ export class InpatientGuidelineAdvice {
     topicId: GuidelineTopicId,
     requestId: string | null,
   ) {
-    const { binding, population, referenceIso } = this.#population(context, admissionId)
+    const { binding, isArchivedCutoff, population, referenceIso } = this.#population(context, admissionId)
     const definition = getGuidelineTopicDefinition(topicId)
     const sourceRead = readGuidelineTopicSource(topicId, this.options.guidelines, { population })
 
@@ -351,7 +352,7 @@ export class InpatientGuidelineAdvice {
     const diagnosis = this.owner.orders.diagnosis(context, admissionId)
     const orders = this.owner.orders.facts(context, admissionId).orders
     const latestVitalSigns = this.owner.workflow.clinicalScores.latestInpatientVitalSigns(context, admissionId) ?? null
-    const scores = this.owner.workflow.clinicalScores.inpatientSnapshot(this.owner, context, admissionId, referenceIso)
+    const scores = this.owner.workflow.clinicalScores.inpatientSnapshot(this.owner, context, admissionId, referenceIso, isArchivedCutoff)
     const supplementary = extractSupplementaryIndicators({
       caseId: admissionId,
       context,
@@ -359,6 +360,7 @@ export class InpatientGuidelineAdvice {
       encounterId: admissionId,
       fhir: this.owner.fhir,
       inpatient: { actor: context, service: this.owner },
+      isArchivedCutoff,
       patientId: binding.patientId,
       referenceCutoffIso: referenceIso,
     })
@@ -573,8 +575,8 @@ export class InpatientGuidelineAdvice {
   readTopics(context: ActorContext, admissionId: string, topicId?: GuidelineTopicId): GuidelineTopicBundle {
     try {
       this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
-      const { binding, patientBirthDate, referenceIso } = this.#population(context, admissionId)
-      const scores = this.owner.workflow.clinicalScores.inpatientSnapshot(this.owner, context, admissionId, referenceIso)
+      const { binding, isArchivedCutoff, patientBirthDate, referenceIso } = this.#population(context, admissionId)
+      const scores = this.owner.workflow.clinicalScores.inpatientSnapshot(this.owner, context, admissionId, referenceIso, isArchivedCutoff)
       const bundle = buildSynchronousTopicBundle({
         caseId: admissionId,
         context,
@@ -584,6 +586,7 @@ export class InpatientGuidelineAdvice {
         evaluatedAt: this.owner.virtualTime(context),
         fhir: this.owner.fhir,
         inpatient: { actor: context, service: this.owner },
+        isArchivedCutoff,
         patientBirthDate,
         patientId: binding.patientId,
         populationReferenceIso: referenceIso,

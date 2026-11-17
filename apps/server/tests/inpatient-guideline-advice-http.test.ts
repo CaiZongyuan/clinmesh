@@ -1226,6 +1226,15 @@ it('无 PCI 手术申请的内科住院可按专题完成术前水化、FFR > 0.
     subject: { reference: `Patient/${medicalStay.patientId}` },
     verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
   })
+  // Even a valid FHIR cross-encounter Condition WITHOUT recordedDate/onset/encounter cannot bypass the archived cutoff
+  s.fixture.runtime.fhir.create({ epoch: depScenario.epoch, workspaceId: depScenario.workspaceId }, {
+    clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
+    code: { coding: [{ code: 'E11.9', display: '2型糖尿病' }], text: '2型糖尿病' },
+    id: randomUUID(),
+    resourceType: 'Condition',
+    subject: { reference: `Patient/${medicalStay.patientId}` },
+    verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
+  })
   const archivedT2dmTopics = await s.fixture.read(
     'medical-records',
     `${medicalStay.path}/guideline-topics?topicId=t2dm-renal-medication`,

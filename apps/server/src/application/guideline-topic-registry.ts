@@ -957,10 +957,11 @@ export function extractSupplementaryIndicators(options: {
   encounterId?: string | undefined
   fhir: FhirRepository
   inpatient?: { actor: ActorContext; service: InpatientService } | undefined
+  isArchivedCutoff?: boolean | undefined
   patientId?: string | undefined
   referenceCutoffIso?: string | undefined
 }): SupplementaryClinicalIndicators {
-  const { caseId, context, database, encounterId, fhir, inpatient, patientId, referenceCutoffIso } = options
+  const { caseId, context, database, encounterId, fhir, inpatient, isArchivedCutoff, patientId, referenceCutoffIso } = options
   const cutoffMs =
     referenceCutoffIso === undefined
       ? Number.NaN
@@ -1517,7 +1518,7 @@ export function extractSupplementaryIndicators(options: {
           const condTsMs =
             parseResourceTimestampMs(parsed.data.recordedDate ?? parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start)
             ?? resolveExternalEncounterStartMs(parsed.data.encounter?.reference)
-          if (condTsMs !== undefined && condTsMs > cutoffMs) continue
+          if (condTsMs === undefined ? isArchivedCutoff === true : condTsMs > cutoffMs) continue
         }
         const clinCode = parsed.data.clinicalStatus?.coding?.[0]?.code
         const codes = (parsed.data.code?.coding ?? []).map(c => c.code?.trim() ?? '').filter(Boolean)
@@ -1590,7 +1591,7 @@ export function extractSupplementaryIndicators(options: {
                 ?? parsed.data.performedPeriod?.start,
               )
               ?? resolveExternalEncounterStartMs(parsed.data.encounter?.reference)
-            if (procTsMs !== undefined && procTsMs > cutoffMs) continue
+            if (procTsMs === undefined ? isArchivedCutoff === true : procTsMs > cutoffMs) continue
           }
           const codes = (parsed.data.code?.coding ?? []).map(c => c.code ?? '')
           const display = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
@@ -1635,6 +1636,7 @@ export function buildSynchronousTopicBundle(options: {
   evaluatedAt: string
   fhir: FhirRepository
   inpatient?: { actor: ActorContext; service: InpatientService } | undefined
+  isArchivedCutoff?: boolean | undefined
   patientBirthDate: string | undefined
   patientId?: string | undefined
   populationReferenceIso: string
@@ -1650,6 +1652,7 @@ export function buildSynchronousTopicBundle(options: {
     encounterId: options.encounterId,
     fhir: options.fhir,
     inpatient: options.inpatient,
+    isArchivedCutoff: options.isArchivedCutoff,
     patientId: options.patientId,
     referenceCutoffIso: options.referenceCutoffIso ?? options.populationReferenceIso,
   })
