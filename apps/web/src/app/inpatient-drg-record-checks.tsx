@@ -101,6 +101,19 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
     ? t(`正式分组只看已保存的主操作。现在尚未完成手术，所以按无操作分到 ${formalCode}；手术完成后在「病案」保存本次主操作，预计进入 ${projectedCode}。`,
       `Formal grouping uses the saved primary procedure. Before surgery completion it groups as ${formalCode}; after surgery and saving on Medical record it is projected as ${projectedCode}.`)
     : undefined
+  const renderAssistantNote = (text: string, options?: { key?: string; alert?: boolean; readyAlert?: boolean; srText?: string; details?: React.ReactNode }) => {
+    const srNode = options?.srText ? <span className="sr-only">{options.srText}</span> : null
+    if (followDisabled) {
+      return <div key={options?.key} role={options?.alert ? 'alert' : undefined} className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">{srNode}<span>{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</span></div>
+    }
+    if (explanationRunning) {
+      return <div key={options?.key} role={options?.alert ? 'alert' : undefined} className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" />{srNode}<span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
+    }
+    const head = <><Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>{srNode}<span>{text}</span></>
+    return options?.details
+      ? <div key={options.key} role={options.readyAlert ? 'alert' : undefined} className="col-span-full mt-1 flex flex-col gap-1.5 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground"><div className="flex items-start gap-2">{head}</div>{options.details}</div>
+      : <div key={options?.key} role={options?.readyAlert ? 'alert' : undefined} className="col-span-full mt-1 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">{head}</div>
+  }
 
   return <section aria-label={t('分组核对', 'Grouping checks')} className="flex flex-col gap-3">
     <div className="flex flex-wrap items-center gap-2">
@@ -138,19 +151,8 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
                   ? <Button variant="link" size="sm" className="text-info" onClick={() => onOpenRecord(source.target)}>{goLabel[source.target]}<ChevronRightIcon aria-hidden="true" data-icon="inline-end" /></Button>
                   : null}
             </div>
-            {rowIssues.map(issue => followDisabled ? <div key={issue.key} role="alert" className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><span className="sr-only">{issue.display}</span><span>{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</span></div>
-              : explanationRunning ? <div key={issue.key} role="alert" className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span className="sr-only">{issue.display}</span><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
-              : <div key={issue.key} role="alert" className="col-span-full mt-1 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
-                <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
-                <span className="sr-only">{issue.display}</span>
-                <span>{issueExplanation(issue)}</span>
-              </div>)}
-            {rowIssues.length === 0 && effectiveState === 'wait' && waitExplanation ? followDisabled ? <div className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</div>
-              : explanationRunning ? <div className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
-              : <div className="col-span-full mt-1 flex items-start gap-2 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
-              <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
-              <span>{waitExplanation}</span>
-            </div> : null}
+            {rowIssues.map(issue => renderAssistantNote(issueExplanation(issue), { key: issue.key, alert: true, readyAlert: true, srText: issue.display }))}
+            {rowIssues.length === 0 && effectiveState === 'wait' && waitExplanation ? renderAssistantNote(waitExplanation) : null}
           </li>
         })}
         {actionableIssues.filter(issue => !matchedIssueKeys.has(issue.key)).map(issue => {
@@ -162,15 +164,7 @@ export function InpatientDrgRecordChecksPanel({ admission, session, locale, acti
             <div className="clinmesh-inpatient-preparation-owner">
               {target && onOpenRecord ? <Button variant="link" size="sm" className="text-info" onClick={() => onOpenRecord(target)}>{goLabel[target]}<ChevronRightIcon aria-hidden="true" data-icon="inline-end" /></Button> : null}
             </div>
-            {followDisabled ? <div role="alert" className="col-span-full mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">{t('开启自动跟进后，助手在这里说明原因。', 'Enable auto follow-up to see assistant explanations here.')}</div>
-              : explanationRunning ? <div role="alert" className="col-span-full mt-1 flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" className="size-3" /><span>{t('依据刚变化，助手正在重写说明…', 'Sources just changed; assistant is rewriting explanation…')}</span></div>
-              : <div role={hasDetails ? undefined : 'alert'} className="col-span-full mt-1 flex flex-col gap-1.5 rounded-md bg-info/10 px-2.5 py-2 text-xs text-foreground">
-                <div className="flex items-start gap-2">
-                  <Badge variant="outline" className="shrink-0 border-info/50 px-1 py-0 text-[11px] text-info">{t('助手', 'Assistant')}</Badge>
-                  <span>{issueExplanation(issue)}</span>
-                </div>
-                {hasDetails ? <InpatientDrgIssueDetails issue={issue} locale={locale} onOpenRecord={onOpenRecord} /> : null}
-              </div>}
+            {renderAssistantNote(issueExplanation(issue), { alert: true, readyAlert: !hasDetails, ...(hasDetails ? { details: <InpatientDrgIssueDetails issue={issue} locale={locale} onOpenRecord={onOpenRecord} /> } : {}) })}
           </li>
         })}
       </ul> : null}
