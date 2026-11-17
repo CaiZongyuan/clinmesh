@@ -1483,8 +1483,9 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       subject: { reference: `Patient/${outOfOrderStay.patientId}` },
       verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
     })
+    const daptReqIds: string[] = []
     for (const medText of ['阿司匹林肠溶片 100mg', '替格瑞洛片 90mg']) {
-      fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      const daptReq = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
         authoredOn: '2026-08-10T09:00:00+08:00',
         dosageInstruction: [{ timing: { repeat: { boundsDuration: { code: 'mo', system: 'http://unitsofmeasure.org', unit: 'mo', value: 6 } } } }],
         id: uuidv7(),
@@ -1494,7 +1495,35 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
         status: 'active',
         subject: { reference: `Patient/${outOfOrderStay.patientId}` },
       })
+      daptReqIds.push(daptReq.id)
     }
+    // Signed/active outpatient DAPT requests without pharmacy dispense handover do NOT make PRECISE-DAPT applicable
+    const undispensedDaptScores = await fixture.read('inpatient-doctor', `${outOfOrderStay.path}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(undispensedDaptScores.scores.find(s => s.id === 'precise-dapt')?.missingInputs).toContain('pciDaptIndication')
+
+    // Partial dispense of aspirin alone still requires P2Y12 handover before PRECISE-DAPT becomes applicable
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authorizingPrescription: [{ reference: `MedicationRequest/${daptReqIds[0]!}` }],
+      id: uuidv7(),
+      resourceType: 'MedicationDispense',
+      status: 'completed',
+      subject: { reference: `Patient/${outOfOrderStay.patientId}` },
+      whenHandedOver: '2026-08-10T09:30:00+08:00',
+      whenPrepared: '2026-08-10T09:20:00+08:00',
+    })
+    const partialDaptScores = await fixture.read('inpatient-doctor', `${outOfOrderStay.path}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(partialDaptScores.scores.find(s => s.id === 'precise-dapt')?.missingInputs).toContain('pciDaptIndication')
+
+    // Once P2Y12 is also dispensed, ongoing DAPT applicability is satisfied while post-24h baseline labs remain gated out
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authorizingPrescription: [{ reference: `MedicationRequest/${daptReqIds[1]!}` }],
+      id: uuidv7(),
+      resourceType: 'MedicationDispense',
+      status: 'completed',
+      subject: { reference: `Patient/${outOfOrderStay.patientId}` },
+      whenHandedOver: '2026-08-10T09:30:00+08:00',
+      whenPrepared: '2026-08-10T09:20:00+08:00',
+    })
     const lateFirstVitalsScores = await fixture.read('inpatient-doctor', `${outOfOrderStay.path}/clinical-scores`, clinicalScoreBundleSchema)
     expect(lateFirstVitalsScores.vitalSigns).not.toBeNull()
     expect(lateFirstVitalsScores.scores.find(s => s.id === 'ckd-epi-2021-egfr')?.status).toBe('complete')
@@ -1503,7 +1532,9 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       missingInputs: expect.arrayContaining(['heartRateBpm', 'systolicBpMmHg', 'serumCreatinine']),
       status: 'incomplete',
     })
-    expect(lateFirstVitalsScores.scores.find(s => s.id === 'precise-dapt')).toMatchObject({
+    const preciseAfterDispense = lateFirstVitalsScores.scores.find(s => s.id === 'precise-dapt')!
+    expect(preciseAfterDispense.missingInputs).not.toContain('pciDaptIndication')
+    expect(preciseAfterDispense).toMatchObject({
       missingInputs: expect.arrayContaining(['weightKg', 'serumCreatinine', 'wbc', 'hemoglobin']),
       status: 'incomplete',
     })

@@ -1299,14 +1299,112 @@ export class ClinicalScoreService {
     return null
   }
 
-  #readPrescriptionCourseDurationByMedicationRequestId(
-    context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
-  ): Map<string, number> {
-    const map = new Map<string, number>()
-    for (const [id, meta] of this.#readLocalPrescriptionMetaByMedicationRequestId(context)) {
-      map.set(id, meta.courseDurationMs)
+  #readMedicationDeliveryEvidence(
+    context: ActorContext,
+    medicationRequestId: string,
+    isCurrentEncounter: boolean,
+    cutoffMs: number,
+    isArchivedCutoff: boolean,
+  ): {
+    earliestEvidenceMs: number | undefined
+    hasEvidence: boolean
+    latestEvidenceMs: number | undefined
+    supplyEndMs: number | undefined
+  } {
+    let hasEvidence = false
+    let earliestEvidenceMs: number | undefined
+    let latestEvidenceMs: number | undefined
+    let supplyEndMs: number | undefined
+    const enforceStrictCutoff = !isCurrentEncounter || !isArchivedCutoff
+
+    const dispenseParams = new URLSearchParams({
+      _count: '50',
+      prescription: `MedicationRequest/${medicationRequestId}`,
+    })
+    for (;;) {
+      const dispPage = this.#fhir.search(context, 'MedicationDispense', dispenseParams)
+      for (const rawDisp of dispPage.resources) {
+        const disp = medicationDispenseResourceSchema.safeParse(rawDisp)
+        if (!disp.success) continue
+        const status = disp.data.status ?? ''
+        if (['entered-in-error', 'cancelled', 'declined', 'preparation', 'unknown', ''].includes(status)) continue
+        const handedIso = disp.data.whenHandedOver ?? disp.data.whenPrepared
+        const handedMs = parseResourceTimestampMs(handedIso)
+        if (Number.isFinite(cutoffMs)) {
+          if (handedMs === undefined) {
+            if (!isCurrentEncounter && isArchivedCutoff) continue
+          } else if (enforceStrictCutoff && handedMs > cutoffMs) {
+            continue
+          }
+        }
+        hasEvidence = true
+        if (handedMs !== undefined) {
+          if (earliestEvidenceMs === undefined || handedMs < earliestEvidenceMs) {
+            earliestEvidenceMs = handedMs
+          }
+          if (latestEvidenceMs === undefined || handedMs > latestEvidenceMs) {
+            latestEvidenceMs = handedMs
+          }
+          const supplyMs = resolveMedicationBoundsDurationMs(disp.data.daysSupply)
+          if (typeof supplyMs === 'number') {
+            const candidateEnd = handedMs + supplyMs
+            if (supplyEndMs === undefined || candidateEnd > supplyEndMs) {
+              supplyEndMs = candidateEnd
+            }
+          }
+        }
+      }
+      if (dispPage.nextCursor === undefined) break
+      dispenseParams.set('_cursor', dispPage.nextCursor)
     }
-    return map
+
+    const adminParams = new URLSearchParams({
+      _count: '50',
+      request: `MedicationRequest/${medicationRequestId}`,
+    })
+    for (;;) {
+      const adminPage = this.#fhir.search(context, 'MedicationAdministration', adminParams)
+      for (const rawAdmin of adminPage.resources) {
+        const admin = medicationAdministrationResourceSchema.safeParse(rawAdmin)
+        if (!admin.success) continue
+        const status = admin.data.status ?? ''
+        if (['entered-in-error', 'not-done', 'unknown', ''].includes(status)) continue
+        const adminStartIso =
+          admin.data.occurencePeriod?.start
+          ?? admin.data.occurrencePeriod?.start
+          ?? admin.data.effectivePeriod?.start
+          ?? admin.data.occurenceDateTime
+          ?? admin.data.occurrenceDateTime
+          ?? admin.data.effectiveDateTime
+          ?? admin.data.recorded
+        const adminEndIso =
+          admin.data.occurencePeriod?.end
+          ?? admin.data.occurrencePeriod?.end
+          ?? admin.data.effectivePeriod?.end
+          ?? adminStartIso
+        const adminStartMs = parseResourceTimestampMs(adminStartIso)
+        const adminEndMs = parseResourceTimestampMs(adminEndIso)
+        if (Number.isFinite(cutoffMs)) {
+          if (adminStartMs === undefined) {
+            if (!isCurrentEncounter && isArchivedCutoff) continue
+          } else if (enforceStrictCutoff && adminStartMs > cutoffMs) {
+            continue
+          }
+        }
+        hasEvidence = true
+        if (adminStartMs !== undefined && (earliestEvidenceMs === undefined || adminStartMs < earliestEvidenceMs)) {
+          earliestEvidenceMs = adminStartMs
+        }
+        const effectiveLatest = adminEndMs ?? adminStartMs
+        if (effectiveLatest !== undefined && (latestEvidenceMs === undefined || effectiveLatest > latestEvidenceMs)) {
+          latestEvidenceMs = effectiveLatest
+        }
+      }
+      if (adminPage.nextCursor === undefined) break
+      adminParams.set('_cursor', adminPage.nextCursor)
+    }
+
+    return { earliestEvidenceMs, hasEvidence, latestEvidenceMs, supplyEndMs }
   }
 
   #readLocalPrescriptionMetaByMedicationRequestId(
@@ -1872,10 +1970,17 @@ export class ClinicalScoreService {
         version: z.number(),
       })).parse(
         this.#database.driver.prepare(`
-          SELECT order_id, catalog_item_id, display, version
-          FROM inpatient_order
-          WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
-            AND kind = 'medication' AND state IN ('signed', 'verified', 'stop-requested')
+          SELECT o.order_id, o.catalog_item_id, o.display, o.version
+          FROM inpatient_order o
+          WHERE o.workspace_id = ? AND o.epoch = ? AND o.admission_id = ?
+            AND o.kind = 'medication' AND o.state IN ('signed', 'verified', 'stop-requested')
+            AND EXISTS (
+              SELECT 1 FROM inpatient_execution e
+              WHERE e.workspace_id = o.workspace_id
+                AND e.epoch = o.epoch
+                AND e.order_id = o.order_id
+                AND e.status = 'completed'
+            )
         `).all(context.workspaceId, context.epoch, caseId),
       )
       for (const order of activeOrders) {
@@ -1958,7 +2063,7 @@ export class ClinicalScoreService {
     }
 
     if (pciStentEncounterSource === undefined && priorCoronaryStentSource !== undefined && (!hasActiveP2y12 || !hasActiveAspirin)) {
-      const courseDurationByMedReqId = this.#readPrescriptionCourseDurationByMedicationRequestId(context)
+      const localPrescriptionByMedReqId = this.#readLocalPrescriptionMetaByMedicationRequestId(context)
       const withdrawnIds = new Set(
         z.array(z.object({ medication_request_id: z.string() })).parse(
           this.#database.driver.prepare(`
@@ -1978,7 +2083,16 @@ export class ClinicalScoreService {
         for (const raw of page.resources) {
           const parsed = medicationRequestResourceSchema.safeParse(raw)
           if (!parsed.success || parsed.data.status !== 'active' || withdrawnIds.has(parsed.data.id)) continue
-          if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs)) {
+          const display = [
+            parsed.data.medication?.reference?.display,
+            parsed.data.medication?.concept?.text,
+            ...(parsed.data.medication?.concept?.coding ?? []).map(c => c.display),
+          ].filter(Boolean).join(' ')
+          const isP2y12 = /氯吡格雷|替格瑞洛|普拉格雷|clopidogrel|ticagrelor|prasugrel/i.test(display)
+          const isAspirin = /阿司匹林|aspirin/i.test(display)
+          if (!isP2y12 && !isAspirin) continue
+          const isCurrentEncounter = parsed.data.encounter?.reference === `Encounter/${encounterId}`
+          if (!isCurrentEncounter && Number.isFinite(nowMs)) {
             const medTsMs =
               parseResourceTimestampMs(parsed.data.authoredOn)
               ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
@@ -1989,17 +2103,26 @@ export class ClinicalScoreService {
             ?? parsed.data.dispenseRequest?.expectedSupplyDuration,
           )
           if (rawDaptBoundsMs === 'invalid') continue
-          const daptBoundsMs = rawDaptBoundsMs ?? courseDurationByMedReqId.get(parsed.data.id)
-          if (parsed.data.authoredOn !== undefined && Number.isFinite(nowMs) && daptBoundsMs !== undefined) {
-            const authoredMs = Date.parse(parsed.data.authoredOn)
-            if (!Number.isFinite(authoredMs) || authoredMs + daptBoundsMs < nowMs) continue
+          const delivery = this.#readMedicationDeliveryEvidence(
+            context,
+            parsed.data.id,
+            isCurrentEncounter,
+            nowMs,
+            isArchivedCutoff,
+          )
+          // Ongoing outpatient DAPT requires actual dispense handover or administration evidence
+          if (!delivery.hasEvidence) continue
+          const daptBoundsMs = rawDaptBoundsMs ?? localPrescriptionByMedReqId.get(parsed.data.id)?.courseDurationMs
+          const enforceExpiry = !isCurrentEncounter || !isArchivedCutoff
+          if (enforceExpiry && Number.isFinite(nowMs)) {
+            if (daptBoundsMs !== undefined) {
+              const anchorMs = delivery.latestEvidenceMs ?? parseResourceTimestampMs(parsed.data.authoredOn)
+              if (anchorMs === undefined || anchorMs + daptBoundsMs < nowMs) continue
+            } else if (delivery.supplyEndMs !== undefined && delivery.supplyEndMs < nowMs) {
+              continue
+            }
           }
-          const display = [
-            parsed.data.medication?.reference?.display,
-            parsed.data.medication?.concept?.text,
-            ...(parsed.data.medication?.concept?.coding ?? []).map(c => c.display),
-          ].filter(Boolean).join(' ')
-          if (/氯吡格雷|替格瑞洛|普拉格雷|clopidogrel|ticagrelor|prasugrel/i.test(display)) {
+          if (isP2y12) {
             hasActiveP2y12 = true
             activeP2y12Source ??= {
               label: `在用处方 ${display || parsed.data.id}`,
@@ -2007,7 +2130,7 @@ export class ClinicalScoreService {
               versionId: parsed.data.meta?.versionId ?? '1',
             }
           }
-          if (/阿司匹林|aspirin/i.test(display)) {
+          if (isAspirin) {
             hasActiveAspirin = true
           }
         }
@@ -2889,10 +3012,17 @@ export class ClinicalScoreService {
         version: z.number(),
       })).parse(
         this.#database.driver.prepare(`
-          SELECT order_id, catalog_item_id, display, version
-          FROM inpatient_order
-          WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
-            AND kind = 'medication' AND state IN ('signed', 'verified', 'stop-requested')
+          SELECT o.order_id, o.catalog_item_id, o.display, o.version
+          FROM inpatient_order o
+          WHERE o.workspace_id = ? AND o.epoch = ? AND o.admission_id = ?
+            AND o.kind = 'medication' AND o.state IN ('signed', 'verified', 'stop-requested')
+            AND EXISTS (
+              SELECT 1 FROM inpatient_execution e
+              WHERE e.workspace_id = o.workspace_id
+                AND e.epoch = o.epoch
+                AND e.order_id = o.order_id
+                AND e.status = 'completed'
+            )
         `).all(context.workspaceId, context.epoch, caseId),
       )
       for (const order of activeOrders) {
@@ -2911,7 +3041,7 @@ export class ClinicalScoreService {
 
     const nowMs = Date.parse(nowIso)
     const encounterTimeCache = new Map<string, number | undefined>()
-    const courseDurationByMedReqId = this.#readPrescriptionCourseDurationByMedicationRequestId(context)
+    const localPrescriptionByMedReqId = this.#readLocalPrescriptionMetaByMedicationRequestId(context)
     const withdrawnIds = new Set(
       z.array(z.object({ medication_request_id: z.string() })).parse(
         this.#database.driver.prepare(`
@@ -2933,7 +3063,8 @@ export class ClinicalScoreService {
         const parsed = medicationRequestResourceSchema.safeParse(raw)
         if (!parsed.success || parsed.data.status !== 'active') continue
         if (withdrawnIds.has(parsed.data.id)) continue
-        if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs)) {
+        const isCurrentEncounter = parsed.data.encounter?.reference === `Encounter/${encounterId}`
+        if (!isCurrentEncounter && Number.isFinite(nowMs)) {
           const medTsMs =
             parseResourceTimestampMs(parsed.data.authoredOn)
             ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
@@ -2944,11 +3075,6 @@ export class ClinicalScoreService {
           ?? parsed.data.dispenseRequest?.expectedSupplyDuration,
         )
         if (rawHtnBoundsMs === 'invalid') continue
-        const htnBoundsMs = rawHtnBoundsMs ?? courseDurationByMedReqId.get(parsed.data.id)
-        if (parsed.data.authoredOn !== undefined && Number.isFinite(nowMs) && htnBoundsMs !== undefined) {
-          const authoredMs = Date.parse(parsed.data.authoredOn)
-          if (!Number.isFinite(authoredMs) || authoredMs + htnBoundsMs < nowMs) continue
-        }
         const hasExplicitHtnReason = (parsed.data.reason ?? []).some(reason => {
           const ref = reason.reference?.reference
           if (ref !== undefined && hypertensionConditionRefs.has(ref)) return true
@@ -2963,15 +3089,34 @@ export class ClinicalScoreService {
           parsed.data.medication?.concept?.text,
           ...(parsed.data.medication?.concept?.coding ?? []).map(item => item.display),
         ].filter(Boolean).join(' ')
-        if (this.#isAntihypertensiveForHypertension(context, medId, display, hasExplicitHtnReason)) {
-          return {
-            source: {
-              label: `在用处方 ${display || parsed.data.id}`,
-              reference: `MedicationRequest/${parsed.data.id}`,
-              versionId: parsed.data.meta?.versionId ?? '1',
-            },
-            value: true,
+        if (!this.#isAntihypertensiveForHypertension(context, medId, display, hasExplicitHtnReason)) continue
+        const localMeta = localPrescriptionByMedReqId.get(parsed.data.id)
+        const delivery = this.#readMedicationDeliveryEvidence(
+          context,
+          parsed.data.id,
+          isCurrentEncounter,
+          nowMs,
+          isArchivedCutoff,
+        )
+        // Local outpatient prescriptions are marked active on sign before pharmacy handover
+        if (localMeta !== undefined && !delivery.hasEvidence) continue
+        const htnBoundsMs = rawHtnBoundsMs ?? localMeta?.courseDurationMs
+        const enforceExpiry = !isCurrentEncounter || !isArchivedCutoff
+        if (enforceExpiry && Number.isFinite(nowMs)) {
+          if (htnBoundsMs !== undefined) {
+            const anchorMs = delivery.latestEvidenceMs ?? parseResourceTimestampMs(parsed.data.authoredOn)
+            if (anchorMs === undefined || anchorMs + htnBoundsMs < nowMs) continue
+          } else if (delivery.supplyEndMs !== undefined && delivery.supplyEndMs < nowMs) {
+            continue
           }
+        }
+        return {
+          source: {
+            label: `在用处方 ${display || parsed.data.id}`,
+            reference: `MedicationRequest/${parsed.data.id}`,
+            versionId: parsed.data.meta?.versionId ?? '1',
+          },
+          value: true,
         }
       }
       if (page.nextCursor === undefined) break
