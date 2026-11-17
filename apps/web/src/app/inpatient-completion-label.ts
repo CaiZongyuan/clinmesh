@@ -4,7 +4,7 @@ import type { WorkspaceLocale } from './workspace-i18n.ts'
 type CompletedCommand = NonNullable<ReturnType<typeof useInpatientWriteIntent>['mutation']['data']>['command']
 
 /** 只说明本次 Command 已完成的动作；请求受理和资金提交不表示后续结果已成功。 */
-export function inpatientCompletionLabel(command: CompletedCommand, locale: WorkspaceLocale): string {
+export function inpatientCompletionLabel(command: CompletedCommand, locale: WorkspaceLocale, options?: { inStayRecordSave?: boolean }): string {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   switch (command.operation) {
     case 'registration.synthetic-case.start': return t('已开始门诊就诊', 'Outpatient visit started')
@@ -62,7 +62,8 @@ export function inpatientCompletionLabel(command: CompletedCommand, locale: Work
     case 'inpatient.refund.preview': return t('已生成住院退款预览', 'Inpatient refund preview ready')
     case 'inpatient.refund.confirm': return t('已提交住院退款', 'Inpatient refund submitted')
     case 'inpatient.refund.recover': return t('已查询原住院退款结果', 'Original inpatient refund checked')
-    case 'inpatient.record.submit': return t('已提交病案首页', 'Medical record submitted')
+    case 'inpatient.record.submit': return options?.inStayRecordSave
+      ? t('已保存本次主操作', 'Primary procedure saved') : t('已提交病案首页', 'Medical record submitted')
     case 'inpatient.record.review': return command.input.outcome === 'approved'
       ? t('编码审核通过', 'Coding review approved') : t('病案首页已退回', 'Medical record returned')
     case 'inpatient.record.archive': return t('病案已归档', 'Medical record archived')

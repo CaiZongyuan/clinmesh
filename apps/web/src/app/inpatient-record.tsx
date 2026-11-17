@@ -34,10 +34,15 @@ function Kv({ label, children }: { label: string; children: React.ReactNode }): 
 }
 
 export type InpatientRecordPhase = 'none' | 'submitted' | 'returned' | 'stale' | 'approved' | 'archived'
+/** 区分离院或结算后的病案首页提交与住院期间仅为预分组保存的主操作快照。 */
+export function inpatientRecordSubmitted(data: z.infer<typeof inpatientRecordSchema>): boolean {
+  return Boolean(data.revision && (data.revision.snapshot.stay.departedAt !== undefined
+    || data.revision.snapshot.fees.financialStatus === 'settled' || data.reviews.length > 0 || data.archive !== undefined))
+}
 /** 医生视角的病案首页进度：退回只算针对当前修订且来源未变的那次。 */
 export function inpatientRecordPhase(data: z.infer<typeof inpatientRecordSchema>): InpatientRecordPhase {
   if (data.archive) return 'archived'
-  if (!data.revision) return 'none'
+  if (!data.revision || !inpatientRecordSubmitted(data)) return 'none'
   if (data.revision.sourcesHash !== data.sourcesHash) return 'stale'
   if (data.reviewCurrent) return 'approved'
   const last = data.reviews.at(-1)
@@ -106,6 +111,9 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
   const stayDays = snapshot?.stay.admittedAt && snapshot?.stay.departedAt
     ? Math.max(1, Math.floor((Date.parse(snapshot.stay.departedAt) - Date.parse(snapshot.stay.admittedAt)) / 86_400_000) + 1)
     : undefined
+  const settled = admission.financialStatus === 'settled'
+  const formalSubmitted = data ? inpatientRecordSubmitted(data) : false
+  const coderReviewable = coder && !archived && settled && formalSubmitted
   const coreFields = snapshot && data ? <div className="clinmesh-inpatient-preparation gap-3">
     <div className="text-xs font-semibold text-foreground">{t('住院病案首页核心字段集', 'Inpatient record core fields')}</div>
     <RecordSection label={t('患者基本信息', 'Patient information')}>
@@ -160,7 +168,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
     {data.revision || data.reviews.length > 0 || archived || coder ? <RecordSection label={t('审核与归档记录', 'Review and archive history')}>
       <div className="flex flex-col gap-2">
         {data.revision ? <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-muted-foreground">{t(`第 ${data.revision.revision} 次提交`, `Submission #${data.revision.revision}`)}</span>
+          <span className="text-muted-foreground">{formalSubmitted ? t(`第 ${data.revision.revision} 次提交`, `Submission #${data.revision.revision}`) : t('在院已保存主操作（待结算后提交首页）', 'Primary procedure saved in stay (awaiting settlement submission)')}</span>
           <span className="text-xs tabular-nums text-muted-foreground">{timestamp(data.revision.recordedAt)}</span>
         </div> : null}
         {data.reviews.length === 0 && !data.revision ? <p className="text-sm text-muted-foreground">{t('暂无编码审核记录', 'No coding review yet')}</p> : data.reviews.map(review => <div key={review.id} className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
@@ -169,7 +177,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
           <span className="text-xs tabular-nums text-muted-foreground">{timestamp(review.recordedAt)}{review.reason ? ` · ${review.reason}` : ''}</span>
         </div>)}
         {archived ? <p className="text-sm text-muted-foreground">{t('归档', 'Archived')} <span className="tabular-nums">{timestamp(data.archive!.recordedAt)}</span></p> : null}
-        {coder && !archived && data.revision && !data.reviewCurrent ? <Field className="pt-1">
+        {coderReviewable && !data.reviewCurrent ? <Field className="pt-1">
           <FieldLabel htmlFor="inpatient-record-return-reason">{t('编码审核说明', 'Coding review note')}</FieldLabel>
           <Textarea id="inpatient-record-return-reason" disabled={write.blocked || privateDraft.failure === 'read'} rows={2} value={reason} maxLength={2000} placeholder={t('退回医生修订时必填；审核通过选填', 'Required when returning to physician; optional when approving')} onChange={event => setReason(event.currentTarget.value)} />
         </Field> : null}
@@ -178,11 +186,13 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
   </div> : null
   const phase = data ? inpatientRecordPhase(data) : 'none'
   const operations = snapshot?.clinical.operations ?? []
-  const editable = phase === 'none' || phase === 'returned' || phase === 'stale'
+  const canSubmitRecord = phase === 'none' || phase === 'returned' || phase === 'stale'
   const previousMain = snapshot?.clinical.mainProcedureExecutionId ?? null
   const selectedMain = draft?.main ?? (previousMain && operations.some(item => item.id === previousMain) ? previousMain : null)
-  const settled = admission.financialStatus === 'settled'
   const canSavePrimary = !settled && !archived && (admission.status === 'admitted' || admission.status === 'discharge-pending')
+  const showInStayPrimary = canSavePrimary && operations.length > 0
+  const staleDraft = Boolean(draft && data && (draft.hash !== data.sourcesHash || draft.revision !== (data.revision?.revision ?? 0)))
+  const submittingRecord = write.mutation.isPending && write.mutation.variables?.operation === 'inpatient.record.submit' && write.mutation.variables.input.admissionId === admission.id
   const open = (stage: Stage) => !archived && onOpenStage ? () => onOpenStage(stage) : undefined
   if (doctor) {
     const entries = snapshot?.clinical.diagnosis.entries ?? [], primaries = entries.filter(entry => entry.role === 'primary')
@@ -205,13 +215,13 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
         go: { label: t('看费用', 'Open charges'), stage: 'fees' as const } },
     ]
     const history = data ? [
-      ...data.revision ? [{ at: data.revision.recordedAt, text: t(`第 ${data.revision.revision} 次提交首页`, `You submitted the record (#${data.revision.revision})`) }] : [],
+      ...data.revision ? [{ at: data.revision.recordedAt, text: formalSubmitted ? t(`第 ${data.revision.revision} 次提交首页`, `You submitted the record (#${data.revision.revision})`) : t('在院已保存主操作依据', 'Primary procedure saved in stay') }] : [],
       ...data.reviews.map(review => ({ at: review.recordedAt, text: review.outcome === 'approved' ? t('病案人员编码审核通过', 'Medical records approved coding') : `${t('病案人员退回：', 'Returned by medical records: ')}${review.reason ?? ''}` })),
       ...data.archive ? [{ at: data.archive.recordedAt, text: t('病案人员归档', 'Archived by medical records') }] : [],
     ].sort((a, b) => a.at.localeCompare(b.at)) : []
-    const mainPicker = operations.length > 0 && (editable || canSavePrimary) ? <>
+    const mainPicker = showInStayPrimary || (operations.length > 0 && canSubmitRecord) ? <>
       <div role="radiogroup" aria-label={t('本次主操作', 'Primary procedure')} className="flex flex-col gap-1.5">{operations.map(item => <label key={item.id} className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-muted">
-        <input type="radio" name={`inpatient-record-main-${admission.id}`} aria-label={`${item.actualProcedure.coding.code} ${item.actualProcedure.coding.display}`} value={item.id} checked={selectedMain === item.id} disabled={blocked}
+        <input type="radio" name={`inpatient-record-main-${admission.id}`} aria-label={`${item.actualProcedure.coding.code} ${item.actualProcedure.coding.display}`} value={item.id} checked={selectedMain === item.id} disabled={blocked || staleDraft}
           onChange={() => setDraft(current => ({ main: item.id, revision: current?.revision ?? expected!.expectedRevision, hash: current?.hash ?? expected!.expectedSourcesHash }))} />
         <span className="font-medium">{item.actualProcedure.coding.code} {item.actualProcedure.coding.display}</span>
         <span className="ml-auto text-xs tabular-nums text-muted-foreground">{formatShanghaiMinute(item.performedAt).slice(5)}{item.performedBy ? ` · ${item.performedBy}` : ''}</span></label>)}</div>
@@ -239,7 +249,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
         {entries.length === 0 ? <span className="text-sm text-muted-foreground">{t('暂无正式诊断', 'No formal diagnosis')}</span> : entries.map(entry => <Kv key={entry.conditionId} label={entry.role === 'primary' ? t('主诊断', 'Primary') : t('次诊断', 'Secondary')}>
           {entry.coding.code} {entry.coding.display} · {t('入院病情：', 'On admission: ')}{inpatientAdmissionConditionLabel(entry.admissionCondition, locale)}{entry.coding.releaseId ? '' : ` · ${t('来源待核对', 'source needs review')}`}</Kv>)}
       </div></RecordSection>
-      <RecordSection label={operations.length > 0 && editable ? t('实际操作 · 确认本次主操作', 'Performed procedures · confirm primary') : t('实际操作', 'Performed procedures')} subtitle={t('ICD-9-CM-3 临床版 3.0', 'ICD-9-CM-3 clinical edition 3.0')} link={!archived ? { label: t('去手术', 'Open surgery'), onClick: open('surgery') } : undefined}><div className="flex flex-col gap-2">
+      <RecordSection label={operations.length > 0 && canSubmitRecord ? t('实际操作 · 确认本次主操作', 'Performed procedures · confirm primary') : t('实际操作', 'Performed procedures')} subtitle={t('ICD-9-CM-3 临床版 3.0', 'ICD-9-CM-3 clinical edition 3.0')} link={!archived ? { label: t('去手术', 'Open surgery'), onClick: open('surgery') } : undefined}><div className="flex flex-col gap-2">
         {mainPicker}
       </div></RecordSection>
       <RecordSection label={t('病案费用', 'Record fees')} link={!archived ? { label: t('逐笔明细在「费用」页签', 'Itemised charges are under Charges'), onClick: open('fees') } : undefined}>
@@ -250,17 +260,20 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
         </div>
       </RecordSection>
     </div> : null
-    const submitBlocked = blocked || !settled || (operations.length > 0 && !selectedMain)
+    const savePrimaryBlocked = blocked || staleDraft || !selectedMain || selectedMain === previousMain
+    const submitBlocked = blocked || staleDraft || !settled || (operations.length > 0 && !selectedMain)
     const submitLabel = phase === 'none' ? t('提交病案首页', 'Submit record') : t('重新提交病案首页', 'Resubmit record')
     const submitReason = admission.status === 'registered' ? t('患者待入科，接诊后再提交。', 'Receive the patient before submitting.')
       : !settled ? t('出院结算后才能提交', 'Submit after discharge settlement')
-        : operations.length > 0 && !selectedMain ? t('还差：确认本次主操作', 'Confirm the primary procedure')
-          : t('提交后交病案人员编码审核', 'Medical records reviews coding next')
+        : staleDraft ? t('来源已变化，请放弃原选择后重新核对提交', 'Sources changed; discard selection and review before submitting')
+          : operations.length > 0 && !selectedMain ? t('还差：确认本次主操作', 'Confirm the primary procedure')
+            : t('提交后交病案人员编码审核', 'Medical records reviews coding next')
     const submitAction = () => {
       if (!expected) return
       const command = { operation: 'inpatient.record.submit' as const, input: { ...expected, expectedRevision: draft?.revision ?? expected.expectedRevision, expectedSourcesHash: draft?.hash ?? expected.expectedSourcesHash, mainProcedureExecutionId: selectedMain } }
       if (privateDraft.prepare(command)) write.mutation.mutate(command)
     }
+    const discardDraftButton = staleDraft ? <Button variant="outline" disabled={blocked} onClick={() => setDraft(null)}>{t('放弃原主操作选择，重新审阅来源', 'Discard selection and review updated sources')}</Button> : null
     return <section aria-label={t('住院病案首页核心字段集', 'Inpatient record core fields')} className="flex min-w-0 flex-col gap-3">
       {draftFailure}
       <h3 className="sr-only">{t('住院病案首页核心字段集', 'Inpatient record core fields')}</h3>
@@ -273,12 +286,16 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
           <p className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-sm"><AlertCircleIcon aria-hidden="true" className="size-4 shrink-0" />{admission.status === 'departed'
             ? t('患者已离院，等收费员结算。结算后费用固定，再提交病案首页。下面是提交时要满足的条件。', 'The patient has departed and awaits settlement. Submit the record once charges are fixed. These are the submission conditions.')
             : t('患者在院中。可先确认诊断和主操作，更新 DRG 预分组；离院和结算后再核对完整病案首页并提交审核。', 'While the patient is in hospital, confirm diagnoses and the primary procedure for DRG pre-grouping. Review and submit the complete record after departure and settlement.')}</p>
-          {operations.length > 0 && canSavePrimary ? <section aria-label={t('在院主操作与预分组', 'Primary procedure for pre-grouping')} className="clinmesh-inpatient-preparation">
+          {showInStayPrimary ? <section aria-label={t('在院主操作与预分组', 'Primary procedure for pre-grouping')} className="clinmesh-inpatient-preparation">
             <h4 className="font-medium">{t('在院主操作与预分组', 'Primary procedure for pre-grouping')}</h4>
             {mainPicker}
+            {staleDraft ? <p role="status" className="text-xs text-warning">{t('来源或修订已变化，原选择未自动改写；请放弃原选择并核对当前操作后重新保存。', 'Sources or revision changed; discard the previous selection and review current procedures before saving.')}</p> : null}
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs text-muted-foreground">{t('保存后按当前实际操作更新预分组；出院结算后仍需核对并提交完整首页。', 'Saving updates pre-grouping from performed procedures. Review and submit the complete record after settlement.')}</p>
-              <Button disabled={blocked || !selectedMain || selectedMain === previousMain} onClick={submitAction}>{t('保存主操作，更新预分组', 'Save primary procedure and update grouping')}</Button>
+              <div className="flex flex-wrap items-center gap-2">
+                {discardDraftButton}
+                <Button data-unavailable={!submittingRecord && savePrimaryBlocked || undefined} disabled={savePrimaryBlocked} onClick={submitAction}>{t('保存主操作，更新预分组', 'Save primary procedure and update grouping')}</Button>
+              </div>
             </div>
           </section> : null}
           <section aria-label={t('提交首页前', 'Before submitting')} className="clinmesh-inpatient-preparation">
@@ -299,9 +316,9 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
         {settled ? <p className="text-xs text-muted-foreground">{t('核心字段集用于本系统审核归档，不能直接用于国家首页或医保清单上报。', 'The core field set supports review and archive here; it is not a national record or insurance reporting dataset.')}</p> : null}
         <InpatientPrimaryAction stage="record">{phase === 'archived'
           ? <WorkspaceActionBar tone="complete" reason={t('病案已归档，只读可查', 'Archived record is read only')} />
-          : editable || !settled ? <WorkspaceActionBar tone={submitBlocked ? 'blocked' : 'normal'} reason={submitReason}
-            action={<>{draft && (draft.hash !== data.sourcesHash || draft.revision !== (data.revision?.revision ?? 0)) ? <Button variant="outline" onClick={() => setDraft(null)}>{t('放弃原主操作选择，重新审阅来源', 'Discard selection and review updated sources')}</Button> : null}
-              <Button disabled={submitBlocked} onClick={submitAction}>{submitLabel}</Button></>} />
+          : canSubmitRecord || !settled ? <WorkspaceActionBar tone={submitBlocked ? 'blocked' : 'normal'} reason={submitReason}
+            busy={submittingRecord && !settled ? t('正在保存主操作', 'Saving primary procedure') : undefined}
+            action={<>{!showInStayPrimary ? discardDraftButton : null}<Button disabled={submitBlocked} onClick={submitAction}>{submitLabel}</Button></>} />
             : <WorkspaceActionBar showWithoutAction reason={phase === 'approved' ? t('编码审核通过，等病案人员归档', 'Coding approved; waiting for medical records to archive')
               : t('等病案人员编码审核；诊断、操作或费用变化后需要重新提交', 'Waiting for coding review; resubmit if diagnoses, procedures or charges change')} />}</InpatientPrimaryAction>
       </> : null}
@@ -316,13 +333,15 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
     {record.error ? <Alert variant="destructive"><AlertDescription>{t('病案读取失败：', 'Medical record failed to load: ')}{getWorkspaceErrorMessage(record.error, getWorkspaceMessages(locale))}<Button variant="outline" size="sm" onClick={() => void record.refetch()}>{t('重试病案', 'Retry medical record')}</Button></AlertDescription></Alert> : null}
     {snapshot && data ? <>
      {archived ? <InpatientPrimaryAction stage="record"><WorkspaceActionBar tone="complete" reason={t('病案已归档，只读可查', 'Archived record is read only')} /></InpatientPrimaryAction> : null}
-     {coder && !archived && data.revision && data.reviewCurrent && data.revision.sourcesHash === data.sourcesHash ? <p role="status" className="rounded-md border border-success/40 bg-success/10 px-3 py-2 text-xs text-success">✓ {t('编码审核已通过，核对无误后可归档病案；归档后病案与分组结果锁定为只读', 'Coding review passed; verify and archive the record. Once archived, the record and grouping result are locked as read-only')}</p> : null}
-     {data.revision && data.revision.sourcesHash !== data.sourcesHash ? <p role="status" className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm">{t('来源已变化，请医生重新审阅并提交首页修订', 'Sources changed; physician must review and resubmit')}</p> : null}
+     {coderReviewable && data.reviewCurrent && data.revision?.sourcesHash === data.sourcesHash ? <p role="status" className="rounded-md border border-success/40 bg-success/10 px-3 py-2 text-xs text-success">✓ {t('编码审核已通过，核对无误后可归档病案；归档后病案与分组结果锁定为只读', 'Coding review passed; verify and archive the record. Once archived, the record and grouping result are locked as read-only')}</p> : null}
+     {formalSubmitted && data.revision && data.revision.sourcesHash !== data.sourcesHash ? <p role="status" className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm">{t('来源已变化，请医生重新审阅并提交首页修订', 'Sources changed; physician must review and resubmit')}</p> : null}
      {coreFields}
-     {coder && !archived && data.revision ? <>
+     {coder && !archived ? !coderReviewable ? <InpatientPrimaryAction stage="record" priority={10}>
+       <WorkspaceActionBar showWithoutAction tone="blocked" reason={!settled ? t('患者尚未出院结算，等结算并提交病案首页后再审核。', 'Wait for discharge settlement and record submission before coding review.') : t('等住院医生核对并提交病案首页后再审核。', 'Wait for the inpatient doctor to review and submit the record before coding review.')} />
+     </InpatientPrimaryAction> : <>
         {!data.reviewCurrent ? <InpatientPrimaryAction stage="record" priority={10}>
-          <WorkspaceActionBar tone={blocked || data.revision.sourcesHash !== data.sourcesHash ? 'blocked' : 'normal'} reason={data.revision.sourcesHash !== data.sourcesHash ? t('等住院医生重新核对并提交首页。', 'Wait for the inpatient doctor to review and resubmit the record.') : t('核对诊断与操作编码后通过或退回', 'Review diagnosis and procedure coding, then approve or return')}
-            action={<><Button variant="outline" disabled={blocked || !reason.trim() || data.revision.sourcesHash !== data.sourcesHash} onClick={() => reviewRecord('returned')}>{t('退回医生修订', 'Return to physician')}</Button><Button disabled={blocked || data.revision.sourcesHash !== data.sourcesHash} onClick={() => reviewRecord('approved')}>{t('编码审核通过', 'Approve coding')}</Button></>} />
+          <WorkspaceActionBar tone={blocked || data.revision!.sourcesHash !== data.sourcesHash ? 'blocked' : 'normal'} reason={data.revision!.sourcesHash !== data.sourcesHash ? t('等住院医生重新核对并提交首页。', 'Wait for the inpatient doctor to review and resubmit the record.') : t('核对诊断与操作编码后通过或退回', 'Review diagnosis and procedure coding, then approve or return')}
+            action={<><Button variant="outline" disabled={blocked || !reason.trim() || data.revision!.sourcesHash !== data.sourcesHash} onClick={() => reviewRecord('returned')}>{t('退回医生修订', 'Return to physician')}</Button><Button disabled={blocked || data.revision!.sourcesHash !== data.sourcesHash} onClick={() => reviewRecord('approved')}>{t('编码审核通过', 'Approve coding')}</Button></>} />
         </InpatientPrimaryAction> : <InpatientPrimaryAction stage="record" priority={10}>
           <WorkspaceActionBar tone={blocked || admission.status !== 'cleared' || admission.financialStatus !== 'settled' ? 'blocked' : 'normal'}
             reason={admission.financialStatus !== 'settled' ? t('等收费员结算后归档。', 'Wait for cashier settlement before archiving.') : admission.status !== 'cleared' ? t('等病区护士清床后归档。', 'Wait for the ward nurse to clear the bed before archiving.') : t('编码审核已通过，可归档病案', 'Coding review passed; ready to archive')}
