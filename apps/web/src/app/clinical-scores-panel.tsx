@@ -26,6 +26,7 @@ interface RiskFormState {
   anginaEpisodes24h: string
   aspirinUsedLast7Days: '' | 'true' | 'false'
   cardiacArrestOnAdmission: '' | 'true' | 'false'
+  familyHistoryPrematureCad: '' | 'true' | 'false'
   killipClass: '' | KillipClass
   priorBleedingHistory: '' | PriorBleedingHistory
   smokingStatus: '' | SmokingStatus
@@ -38,6 +39,7 @@ function toRiskForm(record: ClinicalRiskAssessmentRecord | undefined): RiskFormS
     anginaEpisodes24h: v?.anginaEpisodes24h == null ? '' : String(v.anginaEpisodes24h),
     aspirinUsedLast7Days: v?.aspirinUsedLast7Days == null ? '' : String(v.aspirinUsedLast7Days) as 'true' | 'false',
     cardiacArrestOnAdmission: v?.cardiacArrestOnAdmission == null ? '' : String(v.cardiacArrestOnAdmission) as 'true' | 'false',
+    familyHistoryPrematureCad: v?.familyHistoryPrematureCad == null ? '' : String(v.familyHistoryPrematureCad) as 'true' | 'false',
     killipClass: v?.killipClass ?? '',
     priorBleedingHistory: v?.priorBleedingHistory ?? '',
     smokingStatus: v?.smokingStatus ?? '',
@@ -51,6 +53,7 @@ function parseRiskFields(form: RiskFormState): ClinicalRiskAssessmentFieldsInput
     anginaEpisodes24h: anginaTrim === '' ? null : Number(anginaTrim),
     aspirinUsedLast7Days: form.aspirinUsedLast7Days === '' ? null : form.aspirinUsedLast7Days === 'true',
     cardiacArrestOnAdmission: form.cardiacArrestOnAdmission === '' ? null : form.cardiacArrestOnAdmission === 'true',
+    familyHistoryPrematureCad: form.familyHistoryPrematureCad === '' ? null : form.familyHistoryPrematureCad === 'true',
     killipClass: form.killipClass === '' ? null : form.killipClass,
     priorBleedingHistory: form.priorBleedingHistory === '' ? null : form.priorBleedingHistory,
     smokingStatus: form.smokingStatus === '' ? null : form.smokingStatus,
@@ -204,6 +207,14 @@ function ClinicalScoresBody({
               <option value="never">{t('从不吸烟', 'Never')}</option>
               <option value="former">{t('既往戒烟', 'Former')}</option>
               <option value="current">{t('当前吸烟', 'Current')}</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span>{t('早发冠心病家族史', 'Premature CAD family history')}</span>
+            <select className={selectCls} disabled={!canEditRisk || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; setForm(s => ({ ...s, familyHistoryPrematureCad: v })) }} value={form.familyHistoryPrematureCad}>
+              <option value="">{t('未记录', 'Not recorded')}</option>
+              <option value="false">{t('阴性', 'Negative')}</option>
+              <option value="true">{t('阳性', 'Positive')}</option>
             </select>
           </label>
           <label className="flex flex-col gap-1">

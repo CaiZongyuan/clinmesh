@@ -32,6 +32,7 @@ export interface ClinicalScoreObjectiveFacts {
     source: ClinicalScoreSourceReference
   }>
   elevatedCardiacBiomarker?: SourcedFact<boolean>
+  familyHistoryPrematureCad?: SourcedFact<boolean>
   hdlCholesterol?: SourcedFact<UnitQuantityInput>
   heartRateBpm?: SourcedFact<number>
   hemoglobin?: SourcedFact<UnitQuantityInput>
@@ -674,6 +675,7 @@ export const MISSING_INPUT_LABELS: Record<ClinicalScoreMissingInput, { en: strin
   aspirinUsedLast7Days: { en: 'Aspirin in past 7d', zh: '近7天阿司匹林使用' },
   cardiacArrestOnAdmission: { en: 'Cardiac arrest on admission', zh: '入院心脏骤停' },
   elevatedCardiacBiomarker: { en: 'Cardiac troponin report', zh: '心肌损伤标志物报告' },
+  familyHistoryPrematureCad: { en: 'Family history of premature CAD', zh: '早发冠心病家族史' },
   hdlCholesterol: { en: 'HDL-C report', zh: '高密度脂蛋白胆固醇 (HDL-C)' },
   heartRateBpm: { en: 'Heart rate', zh: '心率/脉搏' },
   hemoglobin: { en: 'Hemoglobin report', zh: '血红蛋白 (Hb)' },
@@ -918,7 +920,15 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
       codeMatchesPrefixes(diagnosisCodes, DYSLIPIDEMIA_ICD10_PREFIXES)
       || (ldlMmol !== undefined && ldlMmol >= 3.4)
       || (tcMmol !== undefined && tcMmol >= 5.2)
-    const nonSmokingFactors = (hasHtn ? 1 : 0) + (hasDm ? 1 : 0) + (hasDyslipidemia ? 1 : 0)
+    const baseFactors = (hasHtn ? 1 : 0) + (hasDm ? 1 : 0) + (hasDyslipidemia ? 1 : 0)
+    const smokingFactor = facts.smokingStatus === undefined ? null : (facts.smokingStatus.value === 'current' ? 1 : 0)
+    const familyFactor = codeMatchesPrefixes(diagnosisCodes, ['Z82.4'])
+      ? 1
+      : facts.familyHistoryPrematureCad === undefined
+        ? null
+        : (facts.familyHistoryPrematureCad.value ? 1 : 0)
+    const minFactors = baseFactors + (smokingFactor ?? 0) + (familyFactor ?? 0)
+    const maxFactors = baseFactors + (smokingFactor ?? 1) + (familyFactor ?? 1)
     const knownCad =
       facts.knownCoronaryRevascularizationOrStenosisGe50 !== undefined
         ? facts.knownCoronaryRevascularizationOrStenosisGe50.value
@@ -926,7 +936,10 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
 
     const missing: ClinicalScoreMissingInput[] = []
     if (adultAge === undefined) missing.push('age')
-    if (nonSmokingFactors < 3 && facts.smokingStatus === undefined) missing.push('smokingStatus')
+    if (minFactors < 3 && maxFactors >= 3) {
+      if (smokingFactor === null) missing.push('smokingStatus')
+      if (familyFactor === null) missing.push('familyHistoryPrematureCad')
+    }
     if (facts.aspirinUsedLast7Days === undefined) missing.push('aspirinUsedLast7Days')
     if (facts.anginaEpisodes24h === undefined) missing.push('anginaEpisodes24h')
     if (facts.stSegmentDeviation === undefined) missing.push('stSegmentDeviation')
@@ -935,6 +948,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
       adultAge?.source,
       ...facts.confirmedDiagnoses.map(item => item.source),
       facts.antihypertensiveMedicationActive?.source,
+      facts.familyHistoryPrematureCad?.source,
       facts.knownCoronaryRevascularizationOrStenosisGe50?.source,
       facts.smokingStatus?.source,
       facts.aspirinUsedLast7Days?.source,
@@ -947,7 +961,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     if (missing.length > 0) {
       timiResult = buildIncomplete('timi-ua-nstemi', missing, sources)
     } else {
-      const cadRiskFactorCount = nonSmokingFactors + (facts.smokingStatus?.value === 'current' ? 1 : 0)
+      const cadRiskFactorCount = minFactors
       const calc = calculateTimiUaNstemi({
         ageYears: adultAge!.value,
         anginaEpisodes24h: facts.anginaEpisodes24h!.value,

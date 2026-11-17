@@ -54,6 +54,7 @@ const EMPTY_RISK_VALUES: ClinicalRiskAssessmentValues = Object.freeze({
   anginaEpisodes24h: null,
   aspirinUsedLast7Days: null,
   cardiacArrestOnAdmission: null,
+  familyHistoryPrematureCad: null,
   killipClass: null,
   priorBleedingHistory: null,
   smokingStatus: null,
@@ -168,6 +169,7 @@ function mergeRiskValues(
     anginaEpisodes24h: patch.anginaEpisodes24h === undefined ? previous.anginaEpisodes24h : patch.anginaEpisodes24h,
     aspirinUsedLast7Days: patch.aspirinUsedLast7Days === undefined ? previous.aspirinUsedLast7Days : patch.aspirinUsedLast7Days,
     cardiacArrestOnAdmission: patch.cardiacArrestOnAdmission === undefined ? previous.cardiacArrestOnAdmission : patch.cardiacArrestOnAdmission,
+    familyHistoryPrematureCad: patch.familyHistoryPrematureCad === undefined ? previous.familyHistoryPrematureCad : patch.familyHistoryPrematureCad,
     killipClass: patch.killipClass === undefined ? previous.killipClass : patch.killipClass,
     priorBleedingHistory: patch.priorBleedingHistory === undefined ? previous.priorBleedingHistory : patch.priorBleedingHistory,
     smokingStatus: patch.smokingStatus === undefined ? previous.smokingStatus : patch.smokingStatus,
@@ -242,6 +244,12 @@ function buildRiskObservationComponents(values: ClinicalRiskAssessmentValues) {
     components.push({
       code: { coding: [{ code: 'prior-bleeding-history', system: RISK_ASSESSMENT_SYSTEM }], text: '既往出血史' },
       valueCodeableConcept: { coding: [{ code: values.priorBleedingHistory, system: RISK_ASSESSMENT_SYSTEM }], text: values.priorBleedingHistory },
+    })
+  }
+  if (values.familyHistoryPrematureCad !== null) {
+    components.push({
+      code: { coding: [{ code: 'family-history-premature-cad', system: RISK_ASSESSMENT_SYSTEM }], text: '早发冠心病家族史' },
+      valueBoolean: values.familyHistoryPrematureCad,
     })
   }
   return components
@@ -972,6 +980,9 @@ export class ClinicalScoreService {
         : {}),
       ...(riskRef !== undefined && riskAssessment.values.priorBleedingHistory !== null
         ? { priorBleedingHistory: { source: riskRef, value: riskAssessment.values.priorBleedingHistory } }
+        : {}),
+      ...(riskRef !== undefined && riskAssessment.values.familyHistoryPrematureCad !== null
+        ? { familyHistoryPrematureCad: { source: riskRef, value: riskAssessment.values.familyHistoryPrematureCad } }
         : {}),
       antihypertensiveMedicationActive: onAntihypertensive,
       confirmedDiagnoses: history.confirmedDiagnoses,

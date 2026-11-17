@@ -195,6 +195,7 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       anginaEpisodes24h: null,
       aspirinUsedLast7Days: null,
       cardiacArrestOnAdmission: null,
+      familyHistoryPrematureCad: null,
       killipClass: null,
       priorBleedingHistory: null,
       smokingStatus: null,
@@ -327,6 +328,7 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       await putRisk(1, {
         anginaEpisodes24h: 2,
         aspirinUsedLast7Days: true,
+        familyHistoryPrematureCad: false,
         priorBleedingHistory: 'negative',
         smokingStatus: 'current',
       }),
