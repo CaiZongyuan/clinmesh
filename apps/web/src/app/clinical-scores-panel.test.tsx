@@ -347,4 +347,145 @@ describe('ClinicalScoresPanel disclosures', () => {
       }))
     })
   })
+
+  it('preserves dirty risk edits and base expectedRevision across background remote revisions so CAS conflicts are surfaced', async () => {
+    let remoteRevision = 1
+    let remoteKillip: 'I' | 'III' = 'I'
+    const putBodies: unknown[] = []
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      const method = init?.method ?? 'GET'
+      if (method === 'GET' && url.endsWith('/api/his/v1/doctor/cases/case-cas/clinical-scores')) {
+        return Response.json({
+          encounterId: 'enc-cas',
+          encounterVersion: '3',
+          evaluatedAt: '2026-10-25T10:00:00+08:00',
+          riskAssessment: {
+            effectiveStSegmentDeviation: null,
+            observationId: `obs-${remoteRevision}`,
+            observationVersion: String(remoteRevision),
+            provenanceId: `prov-${remoteRevision}`,
+            recordedAt: '2026-10-25T10:00:00+08:00',
+            recordedBy: 'actor-other',
+            revision: remoteRevision,
+            values: {
+              anginaEpisodes24h: null,
+              aspirinUsedLast7Days: null,
+              cardiacArrestOnAdmission: null,
+              familyHistoryPrematureCad: null,
+              killipClass: remoteKillip,
+              knownCoronaryStenosisGe50: null,
+              priorBleedingHistory: null,
+              smokingStatus: null,
+              stSegmentDeviation: null,
+            },
+          },
+          scores: (['ckd-epi-2021-egfr', 'cockcroft-gault-crcl', 'grace-acs', 'timi-ua-nstemi', 'precise-dapt', 'ascvd-ldl-target'] as const).map(id => ({
+            id,
+            missingInputs: ['serumCreatinine'],
+            sourceReferences: [],
+            status: 'incomplete' as const,
+            summaryEn: 'Missing serum creatinine',
+            summaryZh: '待补齐：血清肌酐',
+            tierCode: null,
+            tierLabelEn: null,
+            tierLabelZh: null,
+            titleEn: id,
+            titleZh: id,
+            unit: '分',
+            value: null,
+          })),
+          vitalSigns: null,
+        })
+      }
+      if (method === 'PUT' && url.endsWith('/api/his/v1/encounters/enc-cas/risk-assessment')) {
+        putBodies.push(JSON.parse(String(init?.body)))
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: 'REVISION_CONFLICT',
+              details: {},
+              message: '风险评估已被并发更新，请刷新后重试',
+              requestId: 'req-conflict',
+              retryable: false,
+            },
+          }),
+          { headers: { 'content-type': 'application/json' }, status: 409 },
+        )
+      }
+      throw new Error(`Unexpected fetch: ${method} ${url}`)
+    })
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <OutpatientClinicalScoresDisclosure
+          caseId="case-cas"
+          clinicalRevision="rev-1"
+          encounterId="enc-cas"
+          encounterVersion="3"
+          locale="zh-CN"
+          readOnly={false}
+          scope="scope-1"
+        />
+      </QueryClientProvider>,
+    )
+
+    const details = screen.getByText('专病风险评估与临床评分').closest('details')!
+    details.open = true
+    fireEvent(details, new Event('toggle'))
+    await waitFor(() => {
+      expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).value).toBe('I')
+    })
+
+    // Clinician edits Killip I -> II locally (dirty = true, baseRevision = 1)
+    fireEvent.change(screen.getByLabelText('Killip 分级'), { target: { value: 'II' } })
+    expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).value).toBe('II')
+
+    // Another clinician saves revision 2 (Killip III) and triggers background refetch
+    remoteRevision = 2
+    remoteKillip = 'III'
+    rerender(
+      <QueryClientProvider client={client}>
+        <OutpatientClinicalScoresDisclosure
+          caseId="case-cas"
+          clinicalRevision="rev-2"
+          encounterId="enc-cas"
+          encounterVersion="3"
+          locale="zh-CN"
+          readOnly={false}
+          scope="scope-1"
+        />
+      </QueryClientProvider>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(/远端已有更新记录 #2/)).toBeTruthy()
+    })
+    // Unsaved dirty draft Killip II is preserved rather than clobbered with III
+    expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).value).toBe('II')
+
+    // Clicking Save submits base expectedRevision: 1 so backend CAS surfaces 409 conflict
+    fireEvent.click(screen.getByRole('button', { name: '保存风险评估' }))
+    await waitFor(() => {
+      expect(putBodies).toHaveLength(1)
+    })
+    expect(putBodies[0]).toMatchObject({
+      input: {
+        expectedRevision: 1,
+        fields: expect.objectContaining({ killipClass: 'II' }),
+      },
+    })
+    await waitFor(() => {
+      expect(screen.getByText(/当前业务状态或前置条件不满足/)).toBeTruthy()
+    })
+
+    // Clinician can explicitly discard stale draft to sync remote #2 and clear the conflict alert
+    fireEvent.click(screen.getByRole('button', { name: '放弃草稿并同步' }))
+    expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).value).toBe('III')
+    await waitFor(() => {
+      expect(screen.queryByText(/当前业务状态或前置条件不满足/)).toBeNull()
+    })
+  })
 })

@@ -51,6 +51,16 @@ const ANTIHYPERTENSIVE_CLASSES = new Set([
 ])
 const ANTIHYPERTENSIVE_TEXT_PATTERN = /氨氯地平|硝苯地平|非洛地平|培哚普利|依那普利|贝那普利|雷米普利|缬沙坦|氯沙坦|厄贝沙坦|替米沙坦|奥美沙坦|沙库巴曲缬沙坦|美托洛尔|比索洛尔|卡维地洛|呋塞米|托拉塞米|螺内酯|氢氯噻嗪|吲达帕胺|amlodipine|nifedipine|perindopril|valsartan|losartan|irbesartan|telmisartan|metoprolol|bisoprolol|carvedilol|furosemide|spironolactone|hydrochlorothiazide|indapamide/i
 const PURE_ANTIHYPERTENSIVE_TEXT_PATTERN = /氨氯地平|硝苯地平|非洛地平|拉西地平|氢氯噻嗪|吲达帕胺|amlodipine|nifedipine|felodipine|lacidipine|hydrochlorothiazide|indapamide|chlorthalidone/i
+const LIPID_LOWERING_CLASSES = new Set([
+  'cholesterol-absorption-inhibitor',
+  'ezetimibe',
+  'fibrate',
+  'pcsk9-inhibitor',
+  'statin',
+])
+const LIPID_LOWERING_TEXT_PATTERN =
+  /他汀|阿托伐他汀|瑞舒伐他汀|辛伐他汀|匹伐他汀|普伐他汀|氟伐他汀|洛伐他汀|依折麦布|海博麦布|依洛尤单抗|阿利西尤单抗|英克司兰|血脂康|非诺贝特|吉非罗齐|苯扎贝特|statin|atorvastatin|rosuvastatin|simvastatin|pravastatin|pitavastatin|fluvastatin|lovastatin|ezetimibe|evolocumab|alirocumab|inclisiran|fenofibrate|gemfibrozil|bezafibrate/i
+const LIPID_WASHOUT_MS = 28 * 86_400_000
 
 const EMPTY_RISK_VALUES: ClinicalRiskAssessmentValues = Object.freeze({
   anginaEpisodes24h: null,
@@ -1212,6 +1222,12 @@ export class ClinicalScoreService {
       options.now,
       history.hypertensionConditionRefs,
     )
+    const lipidStratification = this.#extractPatientLipidStratification(
+      context,
+      options.patientId,
+      options.now,
+      labs.latestLipidObservationMs,
+    )
     const bedsideKnownStenosis =
       riskRef !== undefined && riskAssessment.values.knownCoronaryStenosisGe50 !== null
         ? { source: riskRef, value: riskAssessment.values.knownCoronaryStenosisGe50 }
@@ -1280,6 +1296,21 @@ export class ClinicalScoreService {
       ...(labs.totalCholesterol === undefined ? {} : { totalCholesterol: labs.totalCholesterol }),
       ...(labs.hdlCholesterol === undefined ? {} : { hdlCholesterol: labs.hdlCholesterol }),
       ...(labs.ldlCholesterol === undefined ? {} : { ldlCholesterol: labs.ldlCholesterol }),
+      ...(lipidStratification.lipidLoweringMedicationActive === undefined
+        ? {}
+        : { lipidLoweringMedicationActive: lipidStratification.lipidLoweringMedicationActive }),
+      ...(lipidStratification.pretreatmentTotalCholesterol === undefined
+        ? {}
+        : { pretreatmentTotalCholesterol: lipidStratification.pretreatmentTotalCholesterol }),
+      ...(lipidStratification.pretreatmentHdlCholesterol === undefined
+        ? {}
+        : { pretreatmentHdlCholesterol: lipidStratification.pretreatmentHdlCholesterol }),
+      ...(lipidStratification.pretreatmentLdlCholesterol === undefined
+        ? {}
+        : { pretreatmentLdlCholesterol: lipidStratification.pretreatmentLdlCholesterol }),
+      ...(lipidStratification.pretreatmentSameSpecimenTcHdl === undefined
+        ? {}
+        : { pretreatmentSameSpecimenTcHdl: lipidStratification.pretreatmentSameSpecimenTcHdl }),
       ...(riskRef !== undefined && riskAssessment.values.killipClass !== null
         ? { killipClass: { source: riskRef, value: riskAssessment.values.killipClass } }
         : {}),
@@ -2086,6 +2117,9 @@ export class ClinicalScoreService {
     const latestTc = sortChrono(tcHitsDesc).at(-1)
     const latestHdl = sortChrono(hdlHitsDesc).at(-1)
     const latestLdl = sortChrono(ldlHitsDesc).at(-1)
+    const latestLipidObservationMs = [latestLdl?.timestampMs, latestTc?.timestampMs, latestHdl?.timestampMs]
+      .filter((item): item is number => item !== undefined)
+      .reduce<number | undefined>((max, item) => (max === undefined || item > max ? item : max), undefined)
     const sameSpecimenTcHdl =
       latestTc !== undefined && latestHdl !== undefined
         ? latestTc.specimenKey === latestHdl.specimenKey
@@ -2104,6 +2138,7 @@ export class ClinicalScoreService {
       elevatedCardiacBiomarker,
       hdlCholesterol,
       hemoglobin,
+      latestLipidObservationMs,
       ldlCholesterol,
       sameSpecimenTcHdl,
       serumCreatinine,
@@ -2556,5 +2591,293 @@ export class ClinicalScoreService {
     return hasHypertensionIndication
       ? ANTIHYPERTENSIVE_TEXT_PATTERN.test(display)
       : PURE_ANTIHYPERTENSIVE_TEXT_PATTERN.test(display)
+  }
+
+  #extractPatientLipidStratification(
+    context: ActorContext,
+    patientId: string,
+    nowIso: string,
+    latestCurrentCaseLipidMs: number | undefined,
+  ): {
+    lipidLoweringMedicationActive?: { source: ClinicalScoreSourceReference; value: boolean }
+    pretreatmentHdlCholesterol?: { source: ClinicalScoreSourceReference; value: { unit: string; value: number } }
+    pretreatmentLdlCholesterol?: { source: ClinicalScoreSourceReference; value: { unit: string; value: number } }
+    pretreatmentSameSpecimenTcHdl?: boolean
+    pretreatmentTotalCholesterol?: { source: ClinicalScoreSourceReference; value: { unit: string; value: number } }
+  } {
+    const nowMs = Date.parse(nowIso)
+    const exposures: Array<{
+      endMs: number
+      source: ClinicalScoreSourceReference
+      startMs: number | undefined
+    }> = []
+    const seenMedicationRequestIds = new Set<string>()
+
+    const patientOrders = z.array(z.object({
+      catalog_item_id: z.string(),
+      display: z.string(),
+      order_id: z.string(),
+      signed_at: z.string(),
+      state: z.string(),
+      stopped_at: z.string().nullable(),
+      version: z.number(),
+    })).parse(
+      this.#database.driver.prepare(`
+        SELECT o.order_id, o.catalog_item_id, o.display, o.state, o.version, o.signed_at, o.stopped_at
+        FROM inpatient_order o
+        JOIN inpatient_admission a
+          ON a.workspace_id = o.workspace_id
+         AND a.epoch = o.epoch
+         AND a.admission_id = o.admission_id
+        WHERE o.workspace_id = ? AND o.epoch = ? AND a.patient_id = ?
+          AND o.kind = 'medication'
+      `).all(context.workspaceId, context.epoch, patientId),
+    )
+    for (const order of patientOrders) {
+      seenMedicationRequestIds.add(order.order_id)
+      if (!this.#isLipidLoweringMedication(context, order.catalog_item_id, order.display)) continue
+      const parsedStart = Date.parse(order.signed_at)
+      const startMs = Number.isFinite(parsedStart) ? parsedStart : undefined
+      const parsedStop = order.stopped_at ? Date.parse(order.stopped_at) : Number.NaN
+      const endMs =
+        (order.state === 'stopped' || order.state === 'completed') && Number.isFinite(parsedStop)
+          ? parsedStop + LIPID_WASHOUT_MS
+          : Number.POSITIVE_INFINITY
+      exposures.push({
+        endMs,
+        source: {
+          label: `降脂医嘱 ${order.display}`,
+          reference: `MedicationRequest/${order.order_id}`,
+          versionId: String(order.version),
+        },
+        startMs,
+      })
+    }
+
+    const withdrawnIds = new Set(
+      z.array(z.object({ medication_request_id: z.string() })).parse(
+        this.#database.driver.prepare(`
+          SELECT pi.medication_request_id
+          FROM prescription_item pi
+          JOIN prescription_withdrawal pw
+            ON pw.workspace_id = pi.workspace_id
+           AND pw.epoch = pi.epoch
+           AND pw.prescription_id = pi.prescription_id
+          WHERE pi.workspace_id = ? AND pi.epoch = ?
+        `).all(context.workspaceId, context.epoch),
+      ).map(row => row.medication_request_id),
+    )
+    const medParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
+    for (;;) {
+      const page = this.#fhir.search(context, 'MedicationRequest', medParams)
+      for (const raw of page.resources) {
+        const parsed = medicationRequestResourceSchema.safeParse(raw)
+        if (!parsed.success) continue
+        if (seenMedicationRequestIds.has(parsed.data.id) || withdrawnIds.has(parsed.data.id)) continue
+        const status = parsed.data.status ?? ''
+        if (['entered-in-error', 'cancelled', 'draft', 'unknown'].includes(status)) continue
+        const medRef = parsed.data.medication?.reference?.reference
+        const medId = medRef?.startsWith('Medication/') ? medRef.slice('Medication/'.length) : undefined
+        const display = [
+          parsed.data.medication?.reference?.display,
+          parsed.data.medication?.concept?.text,
+          ...(parsed.data.medication?.concept?.coding ?? []).map(item => item.display),
+        ].filter(Boolean).join(' ')
+        if (!this.#isLipidLoweringMedication(context, medId, display)) continue
+        const parsedStart = parsed.data.authoredOn ? Date.parse(parsed.data.authoredOn) : Number.NaN
+        const startMs = Number.isFinite(parsedStart) ? parsedStart : undefined
+        const boundsMs = resolveMedicationBoundsDurationMs(
+          parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration,
+        )
+        const endMs =
+          startMs !== undefined && typeof boundsMs === 'number'
+            ? startMs + boundsMs + LIPID_WASHOUT_MS
+            : Number.POSITIVE_INFINITY
+        exposures.push({
+          endMs,
+          source: {
+            label: `降脂处方 ${display || parsed.data.id}`,
+            reference: `MedicationRequest/${parsed.data.id}`,
+            versionId: parsed.data.meta?.versionId ?? '1',
+          },
+          startMs,
+        })
+      }
+      if (page.nextCursor === undefined) break
+      medParams.set('_cursor', page.nextCursor)
+    }
+
+    if (exposures.length === 0) {
+      return {}
+    }
+
+    const hasUndatedExposure = exposures.some(exp => exp.startMs === undefined)
+    const activeNowExposure = exposures.find(exp =>
+      exp.startMs === undefined
+      || ((!Number.isFinite(nowMs) || nowMs >= exp.startMs) && (!Number.isFinite(nowMs) || nowMs <= exp.endMs)),
+    )
+    const latestCaseTreatedExposure =
+      latestCurrentCaseLipidMs === undefined
+        ? undefined
+        : exposures.find(exp =>
+            exp.startMs === undefined
+            || (latestCurrentCaseLipidMs > exp.startMs && latestCurrentCaseLipidMs <= exp.endMs),
+          )
+    const relevantExposure = activeNowExposure ?? latestCaseTreatedExposure
+    if (relevantExposure === undefined) {
+      return {}
+    }
+
+    const isTreatedTimestamp = (tsMs: number | undefined): boolean => {
+      if (hasUndatedExposure || tsMs === undefined) return true
+      return exposures.some(exp => exp.startMs !== undefined && tsMs > exp.startMs && tsMs <= exp.endMs)
+    }
+
+    const supersededReports = new Set(
+      z.array(z.object({ revision_of_diagnostic_report_id: z.string() })).parse(
+        this.#database.driver.prepare(`
+          SELECT revision_of_diagnostic_report_id
+          FROM laboratory_report_revision
+          WHERE workspace_id = ? AND epoch = ?
+        `).all(context.workspaceId, context.epoch),
+      ).map(row => row.revision_of_diagnostic_report_id),
+    )
+    const excludedObsIds = new Set<string>()
+    const reportMetaByObsId = new Map<string, { issued: string | undefined; reportId: string }>()
+    const reportParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
+    for (;;) {
+      const page = this.#fhir.search(context, 'DiagnosticReport', reportParams)
+      for (const raw of page.resources) {
+        const parsed = diagnosticReportResourceSchema.safeParse(raw)
+        if (!parsed.success) continue
+        const isSupersededOrInvalid =
+          supersededReports.has(parsed.data.id)
+          || !['final', 'amended', 'corrected'].includes(parsed.data.status ?? '')
+        for (const ref of parsed.data.result ?? []) {
+          const obsId = ref.reference?.startsWith('Observation/') ? ref.reference.slice('Observation/'.length) : undefined
+          if (!obsId) continue
+          if (isSupersededOrInvalid) {
+            excludedObsIds.add(obsId)
+          } else {
+            reportMetaByObsId.set(obsId, { issued: parsed.data.issued, reportId: parsed.data.id })
+          }
+        }
+      }
+      if (page.nextCursor === undefined) break
+      reportParams.set('_cursor', page.nextCursor)
+    }
+
+    const untreatedTc: Array<{
+      seq: number
+      source: ClinicalScoreSourceReference
+      specimenKey: string
+      timestampMs: number
+      value: { unit: string; value: number }
+    }> = []
+    const untreatedHdl: Array<{
+      seq: number
+      source: ClinicalScoreSourceReference
+      specimenKey: string
+      timestampMs: number
+      value: { unit: string; value: number }
+    }> = []
+    const untreatedLdl: Array<{
+      seq: number
+      source: ClinicalScoreSourceReference
+      timestampMs: number
+      value: { unit: string; value: number }
+    }> = []
+    let seq = 0
+    const obsParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
+    for (;;) {
+      const page = this.#fhir.search(context, 'Observation', obsParams)
+      for (const raw of page.resources) {
+        const obs = observationResourceSchema.safeParse(raw)
+        if (!obs.success || excludedObsIds.has(obs.data.id)) continue
+        if (!['final', 'amended', 'corrected'].includes(obs.data.status ?? '')) continue
+        const unit = obs.data.valueQuantity?.code ?? obs.data.valueQuantity?.unit
+        const quantity = obs.data.valueQuantity?.value
+        if (quantity === undefined || unit === undefined) continue
+        const reportMeta = reportMetaByObsId.get(obs.data.id)
+        const rawTs = obs.data.effectiveDateTime ?? reportMeta?.issued
+        const tsMs = rawTs ? Date.parse(rawTs) : Number.NaN
+        const timestampMs = Number.isFinite(tsMs) ? tsMs : undefined
+        if (isTreatedTimestamp(timestampMs) || timestampMs === undefined) continue
+        const codes = new Set(
+          (obs.data.code?.coding ?? [])
+            .map(item => item.code?.trim())
+            .filter((item): item is string => Boolean(item)),
+        )
+        const display = [
+          obs.data.code?.text,
+          ...(obs.data.code?.coding ?? []).map(item => item.display),
+        ].filter((item): item is string => Boolean(item)).join(' ')
+        const source: ClinicalScoreSourceReference = {
+          label: `治疗前基线 ${obs.data.code?.coding?.[0]?.display ?? obs.data.code?.text ?? `检验 ${obs.data.id}`}`,
+          reference: `Observation/${obs.data.id}`,
+          versionId: obs.data.meta?.versionId ?? '1',
+        }
+        const specimenKey =
+          obs.data.specimen?.reference
+          ?? (reportMeta === undefined ? `Observation/${obs.data.id}` : `DiagnosticReport/${reportMeta.reportId}`)
+        if (codes.has('2000104A') || codes.has('2093-3') || codes.has('14647-2') || /^(?:总胆固醇|total cholesterol)/i.test(display)) {
+          untreatedTc.push({ seq: seq++, source, specimenKey, timestampMs, value: { unit, value: quantity } })
+        }
+        if (codes.has('2000304A') || codes.has('2085-9') || codes.has('14646-4') || /高密度脂蛋白胆固醇|HDL/i.test(display)) {
+          untreatedHdl.push({ seq: seq++, source, specimenKey, timestampMs, value: { unit, value: quantity } })
+        }
+        if (codes.has('2000404A') || codes.has('2089-1') || codes.has('13457-7') || codes.has('18262-6') || /低密度脂蛋白胆固醇|LDL/i.test(display)) {
+          untreatedLdl.push({ seq: seq++, source, timestampMs, value: { unit, value: quantity } })
+        }
+      }
+      if (page.nextCursor === undefined) break
+      obsParams.set('_cursor', page.nextCursor)
+    }
+
+    const sortAsc = <T extends { seq: number; timestampMs: number }>(arr: T[]) =>
+      [...arr].sort((a, b) => (a.timestampMs !== b.timestampMs ? a.timestampMs - b.timestampMs : a.seq - b.seq))
+    const preTc = sortAsc(untreatedTc).at(-1)
+    const preHdl = sortAsc(untreatedHdl).at(-1)
+    const preLdl = sortAsc(untreatedLdl).at(-1)
+    const pretreatmentSameSpecimenTcHdl =
+      preTc !== undefined && preHdl !== undefined ? preTc.specimenKey === preHdl.specimenKey : undefined
+
+    return {
+      lipidLoweringMedicationActive: { source: relevantExposure.source, value: true },
+      ...(preHdl === undefined ? {} : { pretreatmentHdlCholesterol: { source: preHdl.source, value: preHdl.value } }),
+      ...(preLdl === undefined ? {} : { pretreatmentLdlCholesterol: { source: preLdl.source, value: preLdl.value } }),
+      ...(pretreatmentSameSpecimenTcHdl === undefined ? {} : { pretreatmentSameSpecimenTcHdl }),
+      ...(preTc === undefined ? {} : { pretreatmentTotalCholesterol: { source: preTc.source, value: preTc.value } }),
+    }
+  }
+
+  #isLipidLoweringMedication(
+    context: RepositoryContext,
+    catalogItemId: string | undefined,
+    display: string,
+  ): boolean {
+    if (catalogItemId !== undefined) {
+      const safety = standardMedicationSafety(catalogItemId)
+      if (safety !== undefined) {
+        return safety.pharmacologyClasses.some(cls => LIPID_LOWERING_CLASSES.has(cls))
+      }
+      const row = z.object({ config_json: z.string() }).optional().parse(
+        this.#database.driver.prepare(`
+          SELECT config_json FROM outpatient_catalog
+          WHERE workspace_id = ? AND epoch = ? AND item_id = ?
+        `).get(context.workspaceId, context.epoch, catalogItemId),
+      )
+      if (row !== undefined) {
+        const parsed = z.object({
+          safety: z.object({
+            pharmacologyClasses: z.array(z.string()).optional(),
+          }).loose().optional(),
+        }).loose().safeParse(JSON.parse(row.config_json))
+        if (parsed.success && parsed.data.safety?.pharmacologyClasses !== undefined) {
+          return parsed.data.safety.pharmacologyClasses.some(cls => LIPID_LOWERING_CLASSES.has(cls))
+        }
+      }
+    }
+    return LIPID_LOWERING_TEXT_PATTERN.test(display)
   }
 }

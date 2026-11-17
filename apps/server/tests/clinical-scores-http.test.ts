@@ -825,5 +825,103 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
 
     const provenances = await fixture.read('doctor', `/fhir/R5/Provenance?target=Observation/${recordedRisk.data.riskAssessment.observationId}`, fhirBundleSchema)
     expect(provenances.entry?.length).toBe(1)
+
+    // Statin-treated patient preserves pretreatment baseline LDL-C >= 4.9 mmol/L for high-risk stratification while evaluating goal attainment on latest treated LDL-C (even without serum creatinine)
+    const lipidPatient = createPatientResponseSchema.parse(
+      await (
+        await fixture.request('registrar', '/api/his/v1/patients', {
+          birthDate: '1975-06-15',
+          gender: 'female',
+          identifier: `OP-LIPID-${randomUUID()}`,
+          name: '合成降脂基线分层患者',
+        }, randomUUID(), {})
+      ).json(),
+    ).data.patient
+    const lipidReg = registrationResponseSchema.parse(
+      await (
+        await fixture.request('registrar', '/api/his/v1/registrations/actions/register', {
+          departmentId: regCatalog.departments[0]!.id,
+          locationId: regCatalog.locations[0]!.id,
+          patientId: lipidPatient.id,
+          visitDate: regCatalog.virtualDate,
+          visitTypeId: regCatalog.visitTypes[0]!.id,
+        }, randomUUID(), { [`Patient/${lipidPatient.id}`]: lipidPatient.versionId })
+      ).json(),
+    ).data
+    const lipidTriage = triageResponseSchema.parse(
+      await (
+        await fixture.request('triage', `/api/his/v1/encounters/${lipidReg.encounterId}/actions/record-triage`, {
+          acuityCode: 'level-3',
+          bloodPressure: { diastolicMmHg: 78, systolicMmHg: 122 },
+          chiefComplaint: '血脂随访复查',
+          oxygenSaturationPct: 98,
+          pulseBpm: 72,
+          respirationBpm: 16,
+          temperatureC: 36.5,
+        }, randomUUID(), {
+          [`Encounter/${lipidReg.encounterId}`]: '1',
+          [`Task/${lipidReg.queueTaskId}`]: '1',
+        })
+      ).json(),
+    ).data
+    await fixture.request('doctor', `/api/his/v1/encounters/${lipidReg.encounterId}/actions/start-first-visit`, {}, randomUUID(), {
+      [`Encounter/${lipidReg.encounterId}`]: lipidTriage.encounterVersion,
+      [`Task/${lipidTriage.doctorTaskId}`]: '1',
+    })
+    const lipidCase = (await fixture.read('doctor', '/api/his/v1/doctor/queue', doctorQueueSchema))
+      .items.find(item => item.encounterId === lipidReg.encounterId)!
+
+    const preStatinLab = insertSyntheticLabReport(fixture, {
+      caseId: lipidCase.caseId,
+      encounterId: lipidReg.encounterId,
+      epoch: scenario.epoch,
+      issuedAt: '2026-07-01T09:00:00+08:00',
+      patientId: lipidPatient.id,
+      results: [
+        { code: '2000404A', display: '低密度脂蛋白胆固醇', high: 3.4, unit: 'mmol/L', value: 5.2 },
+      ],
+      workspaceId: scenario.workspaceId,
+    })
+    const statinMedReq = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authoredOn: '2026-07-02T10:00:00+08:00',
+      dosageInstruction: [{ timing: { repeat: { boundsDuration: { code: 'mo', system: 'http://unitsofmeasure.org', unit: 'mo', value: 3 } } } }],
+      id: uuidv7(),
+      intent: 'order',
+      medication: { concept: { text: '阿托伐他汀钙片 20mg' } },
+      resourceType: 'MedicationRequest',
+      status: 'active',
+      subject: { reference: `Patient/${lipidPatient.id}` },
+    })
+    const postStatinLab = insertSyntheticLabReport(fixture, {
+      caseId: lipidCase.caseId,
+      encounterId: lipidReg.encounterId,
+      epoch: scenario.epoch,
+      issuedAt: '2026-08-20T09:00:00+08:00',
+      patientId: lipidPatient.id,
+      results: [
+        { code: '2000404A', display: '低密度脂蛋白胆固醇', high: 3.4, unit: 'mmol/L', value: 2.1 },
+      ],
+      workspaceId: scenario.workspaceId,
+    })
+
+    const lipidScores = await fixture.read('doctor', `/api/his/v1/doctor/cases/${lipidCase.caseId}/clinical-scores`, clinicalScoreBundleSchema)
+    const lipidAscvd = lipidScores.scores.find(s => s.id === 'ascvd-ldl-target')!
+    expect(lipidAscvd).toMatchObject({
+      ldlGoalEvaluation: {
+        atGoal: true,
+        currentLdlMmolL: 2.1,
+        targetLdlMmolL: 2.6,
+      },
+      status: 'complete',
+      tierCode: 'high',
+      value: 2.6,
+    })
+    expect(lipidAscvd.sourceReferences).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reference: `Observation/${preStatinLab.obsIds[0]}` }),
+        expect.objectContaining({ reference: `Observation/${postStatinLab.obsIds[0]}` }),
+        expect.objectContaining({ reference: `MedicationRequest/${statinMedReq.id}` }),
+      ]),
+    )
   }, 120_000)
 })
