@@ -35,6 +35,10 @@ export async function runInpatientPrototypeMatrix(page: Page, browserApp: { orig
       await workspace.evaluate((element, width) => { (element as HTMLElement).style.width = `${width}px` }, width)
       await options.appearance(theme)
       await expect.poll(() => workspace.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+      // 患者头部常态一行；医生、护士有提醒行，药师常驻过敏提示。
+      const patient = workspace.locator('.clinmesh-card-patient')
+      if (width === 1101 && await patient.count() > 0) await expect.poll(() => patient.evaluate(element => element.getBoundingClientRect().height))
+        .toBeLessThanOrEqual(role === 'inpatient-doctor' ? 90 : role === 'ward-nurse' || role === 'pharmacist' ? 80 : 48)
       const buttons = workspace.locator('button:visible')
       expect(await buttons.evaluateAll(elements => elements.filter(element => element.scrollWidth - element.clientWidth > 1).map(element => element.textContent))).toEqual([])
       const path = info.outputPath(`${options.prefix}-${role}-${width}-${theme}.png`)

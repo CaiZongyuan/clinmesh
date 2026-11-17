@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { selectInpatientStage, chooseFollowMenu } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -22,7 +22,7 @@ export async function runMaterialEstimateJourney(page: Page, app: EstimateBrowse
   expect((await app.fixture.read('inpatient-doctor', `${stay.path}/drg/followup`, inpatientDrgFollowupSchema)).task).toBeNull()
   expect((await app.fixture.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)).reservations).toEqual([])
 
-  await page.getByRole('region', { name: '当前住院患者', exact: true }).getByRole('button', { name: /本次住院 AI 用量/ }).click()
+  await chooseFollowMenu(page, '本次住院 AI 用量')
   const usageDialog = page.getByRole('dialog', { name: '本次住院 AI 用量', exact: true })
   const usage = usageDialog.getByRole('region', { name: '本次住院AI用量', exact: true })
   await expect(usage.getByLabel('实际AI请求数', { exact: true })).toHaveText('2')

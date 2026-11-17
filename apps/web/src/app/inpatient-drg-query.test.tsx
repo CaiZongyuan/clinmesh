@@ -68,7 +68,7 @@ function fixture(role: SessionContext['actor']['roleCode'] = 'inpatient-doctor',
       {open ? <InpatientDrgPanel query={query} admission={admission} session={currentSession} locale="zh-CN" write={write} /> : null}</>
   }
   render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
-  return { reads, update: () => { amount = 200000 }, confirmMain: () => { pendingMainProcedure = false; mainConfirmed = true },
+  return { reads, update: (next = 200000) => { amount = next }, confirmMain: () => { pendingMainProcedure = false; mainConfirmed = true },
     failSimulation: () => { simulationFailed = true }, markCostsIncomplete: () => { costsIncomplete = true } }
 }
 
@@ -100,6 +100,13 @@ it('未访问手术页的冷入口保留服务端完整草稿费用，头部和D
   f.markCostsIncomplete()
   await user.click(screen.getByRole('button', { name: '刷新住院事实' }))
   await waitFor(() => expect(header().textContent).toContain('预计总费用暂不可用'))
+  expect(header().textContent).toContain('已用 ¥1,500.00 / ¥12,000.00')
+  expect(header().textContent).not.toMatch(/未超|接近|已超|还剩|做完预计/)
+  f.update(1250000)
+  await user.click(screen.getByRole('button', { name: '刷新住院事实' }))
+  await waitFor(() => expect(header().textContent).toContain('已用 ¥12,500.00 / ¥12,000.00'))
+  expect(header().textContent).toContain('已超')
+  expect(header().textContent).not.toMatch(/还剩|超出|做完预计/)
   expect(screen.queryByRole('region', { name: '做完计划手术后' })).toBeNull()
   expect(within(header()).queryByRole('img')).toBeNull()
 })
@@ -160,6 +167,8 @@ it('术后预计费用缺价或重新读取失败时不使用部分总额与旧�
   f.markCostsIncomplete()
   await user.click(screen.getByRole('button', { name: '刷新住院事实' }))
   await waitFor(() => expect(header().textContent).toContain('预计总费用暂不可用'))
+  expect(header().textContent).toContain('待确认主操作')
+  expect(header().textContent).toContain('已用 ¥1,500.00 / ¥12,000.00')
   expect(screen.queryByRole('img')).toBeNull()
   f.failSimulation()
   await user.click(screen.getByRole('button', { name: '刷新住院事实' }))

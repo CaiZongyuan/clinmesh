@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { openInpatientDrgTools, selectInpatientStage } from './inpatient-ui.ts'
+import { openInpatientDrgTools, selectInpatientStage, expectFollowing } from './inpatient-ui.ts'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgExplanationSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
@@ -49,7 +49,7 @@ export async function runDrgRecordChecksJourney(page: Page, app: PciBrowserApp,
   const panel = page.getByRole('region', { name: '分组核对', exact: true })
   await expect(panel).toContainText('实际 PCI')
   await expect(panel).toContainText('首页')
-  await expect(page.getByRole('region', { name: '当前住院患者', exact: true }).getByRole('button', { name: '助手自动跟进', exact: true })).toHaveAttribute('aria-pressed', 'false')
+  await expectFollowing(page, false)
   expect(app.modelCalls).toBe(requestsBefore)
 
   await expect(panel.getByRole('button', { name: '前往病案首页原记录', exact: true })).toHaveCount(0)

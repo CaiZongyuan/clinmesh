@@ -1,4 +1,4 @@
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { selectInpatientStage, chooseFollowMenu, expectFollowing } from './inpatient-ui.ts'
 import type { Page } from '@playwright/test'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinmesh/contracts/inpatient-drg-agent'
@@ -68,12 +68,11 @@ export async function runDrgReviewJourney(page: Page, app: PciBrowserApp, prepar
   expect((await app.fixture.request('inpatient-doctor', `${prepared.stay.path}/drg/review/todos/act`, {
     todoId: extraUseTodo.id, expectedTodoVersion: extraUseTodo.version, expectedFingerprint: reviewState.fingerprint!, action: 'in-progress', note: '术者正在核实额外一根导丝用途',
   })).status).toBe(200)
-  const toggle = page.getByRole('region', { name: '当前住院患者', exact: true }).getByRole('button', { name: '助手自动跟进', exact: true })
-  await toggle.click()
+  await chooseFollowMenu(page, '停止助手自动跟进')
   const stopDialog = page.getByRole('dialog', { name: '停止助手自动跟进', exact: true })
   await stopDialog.getByLabel('停止理由（必填）', { exact: true }).fill('合成停止本轮分析并保留未解决责任')
   await stopDialog.getByRole('button', { name: '确认停止', exact: true }).click()
-  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await expectFollowing(page, false)
   const updatedReview = await app.fixture.read('inpatient-doctor', `${prepared.stay.path}/drg/review`, inpatientDrgReviewSchema)
   expect((await app.fixture.request('inpatient-doctor', `${prepared.stay.path}/drg/review/handoff`, {
     expectedVersion: updatedReview.version, note: '额外导丝用途仍未解决，由当前住院医生继续负责',

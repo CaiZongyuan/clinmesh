@@ -8,7 +8,7 @@ import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpa
 import { modelUsageListSchema } from '@clinmesh/contracts/model-usage'
 import { expect, openPciAiPatient, type PciAiBrowserApp } from './inpatient-pci-ai.fixture.ts'
 import { preparePciAiReview, requestPciAiSurgery } from './inpatient-pci-ai.journey.ts'
-import { selectInpatientStage } from './inpatient-ui.ts'
+import { selectInpatientStage, chooseFollowMenu, expectFollowing } from './inpatient-ui.ts'
 import { waitForLayout } from './layout-stability.ts'
 
 const money = (fen: number) => new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(fen / 100)
@@ -157,9 +157,9 @@ export async function runSurgeryFlowJourney(page: Page, app: PciAiBrowserApp, in
   const { stay, planned, panel, stepOne, errors, catalog } = await preparePciAiReview(page, app), f = app.fixture
   const capture = await captureFactory(page, info, app.origin, process.env.CLINMESH_SURGERY_FLOW_CAPTURE === '1')
   try {
-    await page.getByRole('button', { name: '助手自动跟进', exact: true }).click()
+    await chooseFollowMenu(page, '开启助手自动跟进')
     await page.getByRole('dialog', { name: '开启助手自动跟进', exact: true }).getByRole('button', { name: '开启', exact: true }).click()
-    await expect(page.getByRole('button', { name: '助手自动跟进', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expectFollowing(page, true)
     await page.getByRole('button', { name: '申请手术', exact: true }).click()
     const request = page.getByRole('dialog', { name: '申请手术', exact: true })
     await expect(request.getByLabel('手术申请理由', { exact: true })).toHaveValue(/已确认冠状动脉/)
@@ -220,7 +220,7 @@ export async function runSurgeryFlowJourney(page: Page, app: PciAiBrowserApp, in
     expect(saved.materialHistory).toEqual([expect.objectContaining({ quantity: 1, note: expect.stringContaining('按计划') }), expect.objectContaining({ quantity: 1, note: '分支保护', reservationId: null })])
     const reservations = await f.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
     expect(reservations.reservations.find(item => item.requestId === planned.id && item.materialId === 'hospital-material-pci-guidewire')).toMatchObject({ consumedQuantity: 1, remainingQuantity: 0 })
-    await expect(page.locator('.clinmesh-inpatient-drg-progress-amount')).toContainText(`已用 ${money(agent.costs!.components.formalChargesFen)}`)
+    await expect(page.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组', exact: true })).toContainText(`已用 ${money(agent.costs!.components.formalChargesFen)}`)
     for (const id of ['hospital-material-pci-guiding-catheter', 'hospital-material-pci-balloon', 'hospital-material-pci-stent']) {
       const material = catalog.materials.find(item => item.id === id)
       if (!material || !('chargeDefinition' in material)) throw new Error(`Missing synthetic material ${id}`)
