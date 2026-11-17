@@ -803,11 +803,11 @@ it('门诊与住院同步读取注册 Guideline Topic 直接返回核验原文�
 
   // Unrelated troponins separated by >6h (e.g. 48h apart) do NOT satisfy acute dynamic 1-6h serial retesting
   const opScenario = await s.fixture.read('admin', '/api/sim/v1/scenario-runs/current', z.object({ epoch: z.string(), workspaceId: z.string() }))
-  const addOpTroponin = (issuedIso: string, value: number, interp: 'H' | 'N') => {
+  const addOpTroponin = (issuedIso: string, value: number, interp: 'H' | 'N', includeSamplingTime = true) => {
     const scope = { epoch: opScenario.epoch, workspaceId: opScenario.workspaceId } as const
     const obs = s.fixture.runtime.fhir.create(scope, {
       code: { coding: [{ code: '2100404B', display: '高敏心肌肌钙蛋白I', system: 'urn:clinmesh:wst:886-2026' }], text: '高敏心肌肌钙蛋白I' },
-      effectiveDateTime: issuedIso,
+      ...(includeSamplingTime ? { effectiveDateTime: issuedIso } : {}),
       encounter: { reference: `Encounter/${reg.encounterId}` },
       id: randomUUID(),
       interpretation: [{ coding: [{ code: interp }] }],
@@ -844,7 +844,17 @@ it('门诊与住院同步读取注册 Guideline Topic 直接返回核验原文�
   expect(wideGapBundle.items[0]!.patientIndicators.find(i => i.code === 'cardiac-troponin')?.status).toBe('missing')
   expect(wideGapBundle.items[0]!.missingPatientInputs.join('；')).toContain('1–6 小时')
 
-  // Adding a 2h repeat within the [1h, 6h] acute window completes serial troponin verification
+  // A report issued 1.5h later whose Observation/Specimen lacks sampling time must NOT complete serial troponin verification
+  addOpTroponin('2026-08-24T10:30:00+08:00', 0.02, 'N', false)
+  const untimedReportBundle = guidelineTopicBundleSchema.parse(
+    await (await s.fixture.request('doctor', `/api/his/v1/doctor/cases/${opCase.caseId}/guideline-topics?topicId=acute-chest-pain-acs`)).json(),
+  )
+  expect(untimedReportBundle.items[0]!.patientIndicators.find(i => i.code === 'cardiac-troponin')).toMatchObject({
+    status: 'missing',
+    valueText: expect.stringContaining('未标采样时间'),
+  })
+
+  // Adding a 2h repeat with explicit Observation sampling time within the [1h, 6h] acute window completes serial troponin verification
   addOpTroponin('2026-08-24T11:00:00+08:00', 0.02, 'N')
   const completedSerialBundle = guidelineTopicBundleSchema.parse(
     await (await s.fixture.request('doctor', `/api/his/v1/doctor/cases/${opCase.caseId}/guideline-topics?topicId=acute-chest-pain-acs`)).json(),

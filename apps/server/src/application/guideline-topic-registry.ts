@@ -1011,11 +1011,36 @@ export function extractSupplementaryIndicators(options: {
   }
 
   let hba1c: SupplementaryClinicalIndicators['hba1c']
+  const specimenTimeCache = new Map<string, string | undefined>()
+  const resolveSpecimenCollectedIso = (specimenRef: string | undefined): string | undefined => {
+    const specId = specimenRef?.startsWith('Specimen/') ? specimenRef.slice('Specimen/'.length) : undefined
+    if (!specId) return undefined
+    if (specimenTimeCache.has(specId)) return specimenTimeCache.get(specId)
+    let collectedIso: string | undefined
+    try {
+      const parsedSpec = z.object({
+        collection: z.object({
+          collectedDateTime: z.string().optional(),
+          collectedPeriod: z.object({ start: z.string().optional() }).loose().optional(),
+        }).loose().optional(),
+      }).loose().safeParse(fhir.read(context, 'Specimen', specId))
+      if (parsedSpec.success) {
+        collectedIso =
+          parsedSpec.data.collection?.collectedDateTime
+          ?? parsedSpec.data.collection?.collectedPeriod?.start
+      }
+    } catch {
+      collectedIso = undefined
+    }
+    specimenTimeCache.set(specId, collectedIso)
+    return collectedIso
+  }
   const troponinDesc: Array<{
     elevated: boolean
     itemText: string
     obsId: string
-    timestampMs: number | undefined
+    samplingTimestampMs: number | undefined
+    sortTimestampMs: number | undefined
     versionId: string
   }> = []
   const labReportRows = z.array(z.object({
@@ -1054,6 +1079,8 @@ export function extractSupplementaryIndicators(options: {
           text: z.string().optional(),
         }).loose().optional(),
         effectiveDateTime: z.string().optional(),
+        effectiveInstant: z.string().optional(),
+        effectivePeriod: z.object({ end: z.string().optional(), start: z.string().optional() }).loose().optional(),
         id: z.string(),
         interpretation: z.array(z.object({
           coding: z.array(z.object({ code: z.string().optional() }).loose()).optional(),
@@ -1063,6 +1090,7 @@ export function extractSupplementaryIndicators(options: {
         referenceRange: z.array(z.object({
           high: z.object({ value: z.number().finite().optional() }).loose().optional(),
         }).loose()).optional(),
+        specimen: z.object({ reference: z.string().optional() }).loose().optional(),
         status: z.string().optional(),
         valueBoolean: z.boolean().optional(),
         valueQuantity: z.object({ code: z.string().optional(), unit: z.string().optional(), value: z.number().finite().optional() }).loose().optional(),
@@ -1106,16 +1134,27 @@ export function extractSupplementaryIndicators(options: {
                   ? qty > high
                   : undefined
         if (elevated !== undefined) {
-          const rawTs = obs.data.effectiveDateTime ?? report.data.issued ?? row.report_time ?? undefined
-          const parsedMs = rawTs ? Date.parse(rawTs) : Number.NaN
-          const timeLabel = rawTs && rawTs.length >= 16 ? rawTs.slice(5, 16).replace('T', ' ') : '未标时间'
+          const samplingRawTs =
+            obs.data.effectiveDateTime
+            ?? obs.data.effectiveInstant
+            ?? obs.data.effectivePeriod?.start
+            ?? resolveSpecimenCollectedIso(obs.data.specimen?.reference)
+          const parsedSamplingMs = samplingRawTs ? Date.parse(samplingRawTs) : Number.NaN
+          const samplingTimestampMs = Number.isFinite(parsedSamplingMs) ? parsedSamplingMs : undefined
+          const fallbackReportTs = report.data.issued ?? row.report_time ?? undefined
+          const parsedSortMs = (samplingRawTs ?? fallbackReportTs) ? Date.parse((samplingRawTs ?? fallbackReportTs)!) : Number.NaN
+          const timeLabel =
+            samplingRawTs && samplingRawTs.length >= 16
+              ? samplingRawTs.slice(5, 16).replace('T', ' ')
+              : '未标采样时间'
           const valLabel = qty !== undefined ? (rawUnit ? `${qty} ${rawUnit}` : `${qty}`) : (elevated ? '阳性' : '阴性')
           const ver = obs.data.meta?.versionId ?? '1'
           troponinDesc.push({
             elevated,
             itemText: `${timeLabel} ${valLabel}(${elevated ? '升高' : '正常'}#v${ver})`,
             obsId: obs.data.id,
-            timestampMs: Number.isFinite(parsedMs) ? parsedMs : undefined,
+            samplingTimestampMs,
+            sortTimestampMs: Number.isFinite(parsedSortMs) ? parsedSortMs : undefined,
             versionId: ver,
           })
         }
@@ -1129,19 +1168,22 @@ export function extractSupplementaryIndicators(options: {
       .reverse()
       .map((item, seq) => ({ ...item, seq }))
       .sort((a, b) => {
-        if (a.timestampMs !== undefined && b.timestampMs !== undefined && a.timestampMs !== b.timestampMs) {
-          return a.timestampMs - b.timestampMs
+        if (a.sortTimestampMs !== undefined && b.sortTimestampMs !== undefined && a.sortTimestampMs !== b.sortTimestampMs) {
+          return a.sortTimestampMs - b.sortTimestampMs
         }
         return a.seq - b.seq
       })
     const anyElevated = chrono.some(item => item.elevated)
     const MIN_RETEST_MS = 60 * 60 * 1000
     const MAX_RETEST_MS = 6 * 60 * 60 * 1000
-    const timedObs = chrono.filter((item): item is (typeof chrono)[number] & { timestampMs: number } => item.timestampMs !== undefined)
+    const timedObs = chrono.filter(
+      (item): item is (typeof chrono)[number] & { samplingTimestampMs: number } =>
+        item.samplingTimestampMs !== undefined,
+    )
     const episodes: Array<typeof timedObs> = []
     for (const item of timedObs) {
       const currentEp = episodes.at(-1)
-      if (currentEp === undefined || item.timestampMs - currentEp.at(-1)!.timestampMs > MAX_RETEST_MS) {
+      if (currentEp === undefined || item.samplingTimestampMs - currentEp.at(-1)!.samplingTimestampMs > MAX_RETEST_MS) {
         episodes.push([item])
       } else {
         currentEp.push(item)
@@ -1150,14 +1192,16 @@ export function extractSupplementaryIndicators(options: {
     const episodeHasSerialWindow = (ep: typeof timedObs) =>
       ep.some((earlier, idx) =>
         ep.slice(idx + 1).some(later => {
-          const delta = later.timestampMs - earlier.timestampMs
+          const delta = later.samplingTimestampMs - earlier.samplingTimestampMs
           return delta >= MIN_RETEST_MS && delta <= MAX_RETEST_MS
         }),
       )
     const latestEpisode = episodes.at(-1)
     const hasCompletedEarlierEpisode = episodes.slice(0, -1).some(episodeHasSerialWindow)
+    const hasUntimedElevatedObservation = chrono.some(item => item.samplingTimestampMs === undefined && item.elevated)
     const hasValidRepeatInterval =
-      latestEpisode !== undefined
+      !hasUntimedElevatedObservation
+      && latestEpisode !== undefined
       && (
         episodeHasSerialWindow(latestEpisode)
         || (hasCompletedEarlierEpisode && !latestEpisode.some(item => item.elevated))
@@ -1167,7 +1211,7 @@ export function extractSupplementaryIndicators(options: {
       !serialComplete
       && latestEpisode !== undefined
       && latestEpisode.length >= 2
-      && latestEpisode.at(-1)!.timestampMs - latestEpisode[0]!.timestampMs < MIN_RETEST_MS
+      && latestEpisode.at(-1)!.samplingTimestampMs - latestEpisode[0]!.samplingTimestampMs < MIN_RETEST_MS
     const missingMessage = serialComplete
       ? null
       : chrono.length < 2
@@ -1189,7 +1233,7 @@ export function extractSupplementaryIndicators(options: {
         elevated: item.elevated,
         itemText: item.itemText,
         reference: `Observation/${item.obsId}`,
-        timestampMs: item.timestampMs ?? null,
+        timestampMs: item.samplingTimestampMs ?? null,
         versionId: item.versionId,
       })),
       serialComplete,
