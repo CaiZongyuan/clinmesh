@@ -982,5 +982,81 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       missingInputs: ['totalCholesterol', 'hdlCholesterol'],
       status: 'incomplete',
     })
+
+    // Lipid-only severe hypercholesterolemia (LDL-C >= 4.9 or TC >= 7.2) classifies as high risk (<2.6) without requiring serum creatinine
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 48,
+        confirmedDiagnosisCodes: [],
+        ldlCholesterol: { unit: 'mmol/L', value: 5.1 },
+      }),
+    ).toEqual({
+      ldlGoalEvaluation: {
+        atGoal: false,
+        currentLdlMmolL: 5.1,
+        targetLdlMmolL: 2.6,
+      },
+      status: 'complete',
+      tierCode: 'high',
+      tierLabelEn: 'High risk (<2.6 mmol/L)',
+      tierLabelZh: '高危（目标 <2.6 mmol/L）',
+      unit: 'mmol/L',
+      value: 2.6,
+    })
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 48,
+        confirmedDiagnosisCodes: [],
+        totalCholesterol: { unit: 'mmol/L', value: 7.4 },
+      }),
+    ).toMatchObject({
+      status: 'complete',
+      tierCode: 'high',
+      value: 2.6,
+    })
+
+    // Statin-treated patient uses pretreatment baseline LDL-C >= 4.9 for tier stratification and latest LDL-C for goal evaluation
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 52,
+        confirmedDiagnosisCodes: [],
+        egfrMlMin173m2: 92,
+        ldlCholesterol: { unit: 'mmol/L', value: 2.1 },
+        lipidLoweringTreated: true,
+        pretreatmentLdlCholesterol: { unit: 'mmol/L', value: 5.2 },
+      }),
+    ).toEqual({
+      ldlGoalEvaluation: {
+        atGoal: true,
+        currentLdlMmolL: 2.1,
+        targetLdlMmolL: 2.6,
+      },
+      status: 'complete',
+      tierCode: 'high',
+      tierLabelEn: 'High risk (<2.6 mmol/L)',
+      tierLabelZh: '高危（目标 <2.6 mmol/L）',
+      unit: 'mmol/L',
+      value: 2.6,
+    })
+
+    // Statin-treated primary-prevention patient with NO pretreatment baseline refuses to classify treated LDL-C < 4.9 into low risk
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 52,
+        confirmedDiagnosisCodes: [],
+        diastolicBpMmHg: 78,
+        egfrMlMin173m2: 92,
+        hdlCholesterol: { unit: 'mmol/L', value: 1.3 },
+        ldlCholesterol: { unit: 'mmol/L', value: 2.1 },
+        lipidLoweringTreated: true,
+        sex: 'female',
+        smokingStatus: 'never',
+        systolicBpMmHg: 122,
+        totalCholesterol: { unit: 'mmol/L', value: 3.9 },
+      }),
+    ).toEqual({
+      missingInputs: ['ldlCholesterol', 'hdlCholesterol'],
+      status: 'incomplete',
+    })
   })
 })

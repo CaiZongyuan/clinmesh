@@ -53,7 +53,12 @@ export interface ClinicalScoreObjectiveFacts {
   killipClass?: SourcedFact<KillipClass>
   knownCoronaryRevascularizationOrStenosisGe50?: SourcedFact<boolean>
   ldlCholesterol?: SourcedFact<UnitQuantityInput>
+  lipidLoweringMedicationActive?: SourcedFact<boolean>
   pciDaptIndication?: SourcedFact<boolean>
+  pretreatmentHdlCholesterol?: SourcedFact<UnitQuantityInput>
+  pretreatmentLdlCholesterol?: SourcedFact<UnitQuantityInput>
+  pretreatmentSameSpecimenTcHdl?: boolean
+  pretreatmentTotalCholesterol?: SourcedFact<UnitQuantityInput>
   priorBleedingHistory?: SourcedFact<PriorBleedingHistory>
   priorCoronaryRevascularization?: SourcedFact<boolean>
   sameSpecimenTcHdl?: boolean
@@ -531,6 +536,11 @@ export function calculateAscvdLdlTarget(input: {
   heightCm?: number
   knownCoronaryRevascularization?: boolean
   ldlCholesterol?: UnitQuantityInput
+  lipidLoweringTreated?: boolean
+  pretreatmentHdlCholesterol?: UnitQuantityInput
+  pretreatmentLdlCholesterol?: UnitQuantityInput
+  pretreatmentSameSpecimenTcHdl?: boolean
+  pretreatmentTotalCholesterol?: UnitQuantityInput
   priorCoronaryRevascularization?: boolean
   sameSpecimenTcHdl?: boolean
   severeAscvdEventCount?: number
@@ -566,6 +576,29 @@ export function calculateAscvdLdlTarget(input: {
     input.hdlCholesterol === undefined
       ? undefined
       : normalizeLipidMmolL(input.hdlCholesterol.value, input.hdlCholesterol.unit, 'hdl')
+  const preLdlMmolL =
+    input.pretreatmentLdlCholesterol === undefined
+      ? undefined
+      : normalizeLipidMmolL(input.pretreatmentLdlCholesterol.value, input.pretreatmentLdlCholesterol.unit, 'ldl')
+  const preTcMmolL =
+    input.pretreatmentTotalCholesterol === undefined
+      ? undefined
+      : normalizeLipidMmolL(input.pretreatmentTotalCholesterol.value, input.pretreatmentTotalCholesterol.unit, 'tc')
+  const preHdlMmolL =
+    input.pretreatmentHdlCholesterol === undefined
+      ? undefined
+      : normalizeLipidMmolL(input.pretreatmentHdlCholesterol.value, input.pretreatmentHdlCholesterol.unit, 'hdl')
+  const stratLdlMmolL = input.lipidLoweringTreated === true ? preLdlMmolL : (preLdlMmolL ?? ldlMmolL)
+  const stratTcMmolL = input.lipidLoweringTreated === true ? preTcMmolL : (preTcMmolL ?? tcMmolL)
+  const stratHdlMmolL = input.lipidLoweringTreated === true ? preHdlMmolL : (preHdlMmolL ?? hdlMmolL)
+  const stratSameSpecimenTcHdl =
+    input.lipidLoweringTreated === true
+      ? input.pretreatmentSameSpecimenTcHdl
+      : (input.pretreatmentSameSpecimenTcHdl ?? input.sameSpecimenTcHdl)
+  const hasSevereBaselineHypercholesterolemia =
+    codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['E78.01'])
+    || (stratLdlMmolL !== undefined && stratLdlMmolL >= 4.9)
+    || (ldlMmolL !== undefined && ldlMmolL >= 4.9)
   if (input.systolicBpMmHg !== undefined) validateSystolicBpMmHg(input.systolicBpMmHg)
   if (input.diastolicBpMmHg !== undefined) validateDiastolicBpMmHg(input.diastolicBpMmHg)
   if (
@@ -674,10 +707,10 @@ export function calculateAscvdLdlTarget(input: {
       }
     }
 
-    if (codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['E78.01']) || (ldlMmolL !== undefined && ldlMmolL >= 4.9)) {
+    if (hasSevereBaselineHypercholesterolemia) {
       minHighRiskFactors += 1
       maxHighRiskFactors += 1
-    } else if (ldlMmolL === undefined) {
+    } else if (stratLdlMmolL === undefined) {
       maxHighRiskFactors += 1
       upgradeMissing.push('ldlCholesterol')
     }
@@ -772,8 +805,16 @@ export function calculateAscvdLdlTarget(input: {
     }
   }
 
-  if (input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 < 30) {
-    if (ckdChronicity.lt30 === 'confirmed') {
+  const normalizedDxCodes = input.confirmedDiagnosisCodes.map(code => code.trim().toUpperCase()).filter(Boolean)
+  const hasCodedStage4To5Ckd = normalizedDxCodes.some(code => /^(?:N18\.[456]|Z99\.2|I12\.0|I13\.2)/.test(code))
+  const hasCodedStage3Ckd = normalizedDxCodes.some(code => code.startsWith('N18.3'))
+  const hasCodedGenericCkdOnly =
+    !hasCodedStage4To5Ckd
+    && !hasCodedStage3Ckd
+    && normalizedDxCodes.some(code => /^(?:N18(?:\.9|$)|E1[0-4]\.2|I12(?!\.0)|I13(?!\.2)|N03|Z94\.0)/.test(code))
+
+  if (hasCodedStage4To5Ckd || (input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 < 30)) {
+    if (hasCodedStage4To5Ckd || ckdChronicity.lt30 === 'confirmed') {
       const goal = evaluateGoal(1.8)
       return {
         ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
@@ -790,13 +831,15 @@ export function calculateAscvdLdlTarget(input: {
     }
   }
 
-  // 原发性重度高胆固醇血症或已确认慢性病程的 CKD 3 期（30 <= eGFR < 60）直接高危 (<2.6 mmol/L)
+  // 原发性重度高胆固醇血症或已确认慢性病程的 CKD 3 期（30 <= eGFR < 60）直接高危 (<2.6 mmol/L)；单纯血脂达重度高胆固醇标准时无须血肌酐即可判定高危（若存在未分期通用 CKD 诊断且缺肌酐则仍待肌酐排除 <30 极高危）
   if (
-    (ldlMmolL !== undefined && ldlMmolL >= 4.9)
+    hasSevereBaselineHypercholesterolemia
+    || (stratTcMmolL !== undefined && stratTcMmolL >= 7.2)
     || (tcMmolL !== undefined && tcMmolL >= 7.2)
+    || hasCodedStage3Ckd
     || (input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 < 60 && ckdChronicity.lt60 === 'confirmed')
   ) {
-    if (input.egfrMlMin173m2 === undefined) {
+    if (hasCodedGenericCkdOnly && input.egfrMlMin173m2 === undefined) {
       return { missingInputs: ['serumCreatinine'], status: 'incomplete' }
     }
     const goal = evaluateGoal(2.6)
@@ -811,7 +854,7 @@ export function calculateAscvdLdlTarget(input: {
     }
   }
 
-  // 3. 21 种组合一级预防矩阵 + <55 岁中危人群余生危险升级：严禁缺项默认阴性
+  // 3. 21 种组合一级预防矩阵 + <55 岁中危人群余生危险升级：基于降脂治疗前基线血脂分层，严禁缺项或已治疗血脂默认阴性
   const bpAlreadyHypertensive =
     hasConfirmedHtn
     || (input.systolicBpMmHg !== undefined && input.systolicBpMmHg >= 140)
@@ -823,8 +866,8 @@ export function calculateAscvdLdlTarget(input: {
     if (input.systolicBpMmHg === undefined) missing.push('systolicBpMmHg')
     if (input.diastolicBpMmHg === undefined) missing.push('diastolicBpMmHg')
   }
-  if (ldlMmolL === undefined && tcMmolL === undefined) missing.push('ldlCholesterol')
-  if (hdlMmolL === undefined) missing.push('hdlCholesterol')
+  if (stratLdlMmolL === undefined && stratTcMmolL === undefined) missing.push('ldlCholesterol')
+  if (stratHdlMmolL === undefined) missing.push('hdlCholesterol')
   if (input.smokingStatus === undefined) missing.push('smokingStatus')
   if (missing.length > 0) {
     if (input.egfrMlMin173m2 !== undefined && input.egfrMlMin173m2 < 60 && ckdChronicity.lt60 === 'unknown') {
@@ -838,10 +881,10 @@ export function calculateAscvdLdlTarget(input: {
   const riskFactors =
     (ageFactor ? 1 : 0)
     + (input.smokingStatus === 'current' ? 1 : 0)
-    + ((hdlMmolL ?? 99) < 1.0 ? 1 : 0)
+    + ((stratHdlMmolL ?? 99) < 1.0 ? 1 : 0)
 
-  const ldlBand = ldlMmolL === undefined ? -1 : ldlMmolL >= 3.4 ? 2 : ldlMmolL >= 2.4 ? 1 : 0
-  const tcBand = tcMmolL === undefined ? -1 : tcMmolL >= 5.2 ? 2 : tcMmolL >= 4.1 ? 1 : 0
+  const ldlBand = stratLdlMmolL === undefined ? -1 : stratLdlMmolL >= 3.4 ? 2 : stratLdlMmolL >= 2.4 ? 1 : 0
+  const tcBand = stratTcMmolL === undefined ? -1 : stratTcMmolL >= 5.2 ? 2 : stratTcMmolL >= 4.1 ? 1 : 0
   const band = Math.max(ldlBand, tcBand, 0)
 
   let primaryTier: 'low' | 'moderate' | 'high'
@@ -869,12 +912,12 @@ export function calculateAscvdLdlTarget(input: {
           ? 0
           : null
     const lifetimeNonHdlFactor: 1 | 0 | null =
-      tcMmolL === undefined || hdlMmolL === undefined || input.sameSpecimenTcHdl === false
+      stratTcMmolL === undefined || stratHdlMmolL === undefined || stratSameSpecimenTcHdl === false
         ? null
-        : tcMmolL - hdlMmolL >= 5.2 - 1e-9
+        : stratTcMmolL - stratHdlMmolL >= 5.2 - 1e-9
           ? 1
           : 0
-    const lifetimeHdlFactor: 1 | 0 = hdlMmolL! < 1.0 ? 1 : 0
+    const lifetimeHdlFactor: 1 | 0 = stratHdlMmolL! < 1.0 ? 1 : 0
     const bmi =
       input.weightKg !== undefined && input.heightCm !== undefined
         ? input.weightKg / ((input.heightCm / 100) ** 2)
@@ -904,7 +947,7 @@ export function calculateAscvdLdlTarget(input: {
       }
       if (lifetimeNonHdlFactor === null) {
         lifetimeMissing.push('totalCholesterol')
-        if (hdlMmolL === undefined || input.sameSpecimenTcHdl === false) {
+        if (stratHdlMmolL === undefined || stratSameSpecimenTcHdl === false) {
           lifetimeMissing.push('hdlCholesterol')
         }
       }
@@ -1128,6 +1171,18 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     normalizeLipidMmolL(q.value, q.unit, 'ldl')
     return q
   })
+  const preTcValid = safeParseFact(facts.pretreatmentTotalCholesterol, q => {
+    normalizeLipidMmolL(q.value, q.unit, 'tc')
+    return q
+  })
+  const preHdlValid = safeParseFact(facts.pretreatmentHdlCholesterol, q => {
+    normalizeLipidMmolL(q.value, q.unit, 'hdl')
+    return q
+  })
+  const preLdlValid = safeParseFact(facts.pretreatmentLdlCholesterol, q => {
+    normalizeLipidMmolL(q.value, q.unit, 'ldl')
+    return q
+  })
 
   // 1. CKD-EPI 2021 eGFR
   let egfrValue: number | undefined
@@ -1278,12 +1333,21 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     const hasDm = hasConfirmedDiabetesDiagnosis(diagnosisCodes)
     const ldlMmol = ldlValid === undefined ? undefined : normalizeLipidMmolL(ldlValid.value.value, ldlValid.value.unit, 'ldl')
     const tcMmol = tcValid === undefined ? undefined : normalizeLipidMmolL(tcValid.value.value, tcValid.value.unit, 'tc')
+    const preLdlMmol =
+      preLdlValid === undefined ? undefined : normalizeLipidMmolL(preLdlValid.value.value, preLdlValid.value.unit, 'ldl')
+    const preTcMmol =
+      preTcValid === undefined ? undefined : normalizeLipidMmolL(preTcValid.value.value, preTcValid.value.unit, 'tc')
+    const lipidTreated = facts.lipidLoweringMedicationActive?.value === true
+    const baselineLdlForTimi = lipidTreated ? preLdlMmol : (preLdlMmol ?? ldlMmol)
+    const baselineTcForTimi = lipidTreated ? preTcMmol : (preTcMmol ?? tcMmol)
     const dyslipidemiaFactor: 1 | 0 | null =
       codeMatchesPrefixes(diagnosisCodes, DYSLIPIDEMIA_ICD10_PREFIXES)
+      || (baselineLdlForTimi !== undefined && baselineLdlForTimi >= 3.4)
       || (ldlMmol !== undefined && ldlMmol >= 3.4)
+      || (baselineTcForTimi !== undefined && baselineTcForTimi >= 5.2)
       || (tcMmol !== undefined && tcMmol >= 5.2)
         ? 1
-        : ldlMmol !== undefined && tcMmol !== undefined
+        : baselineLdlForTimi !== undefined && baselineTcForTimi !== undefined
           ? 0
           : null
     const baseFactors = (hasHtn ? 1 : 0) + (hasDm ? 1 : 0)
@@ -1314,8 +1378,8 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     if (admissionAdultAge === undefined) missing.push('age')
     if (minFactors < 3 && maxFactors >= 3) {
       if (dyslipidemiaFactor === null) {
-        if (ldlMmol === undefined) missing.push('ldlCholesterol')
-        if (tcMmol === undefined) missing.push('totalCholesterol')
+        if (baselineLdlForTimi === undefined) missing.push('ldlCholesterol')
+        if (baselineTcForTimi === undefined) missing.push('totalCholesterol')
       }
       if (smokingFactor === null) missing.push('smokingStatus')
       if (familyFactor === null) missing.push('familyHistoryPrematureCad')
@@ -1337,6 +1401,9 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
       facts.anginaEpisodes24h?.source,
       facts.stSegmentDeviation?.source,
       facts.elevatedCardiacBiomarker?.source,
+      facts.lipidLoweringMedicationActive?.source,
+      preLdlValid?.source,
+      preTcValid?.source,
       ldlValid?.source,
       tcValid?.source,
     ]
@@ -1450,7 +1517,11 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
       heightCm?.source,
       weightKg?.source,
       facts.antihypertensiveMedicationActive?.source,
+      facts.lipidLoweringMedicationActive?.source,
       facts.smokingStatus?.source,
+      preLdlValid?.source,
+      preTcValid?.source,
+      preHdlValid?.source,
       ldlValid?.source,
       tcValid?.source,
       hdlValid?.source,
@@ -1481,6 +1552,15 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
           ? {}
           : { knownCoronaryRevascularization: facts.knownCoronaryRevascularizationOrStenosisGe50.value }),
         ...(ldlValid === undefined ? {} : { ldlCholesterol: ldlValid.value }),
+        ...(facts.lipidLoweringMedicationActive === undefined
+          ? {}
+          : { lipidLoweringTreated: facts.lipidLoweringMedicationActive.value }),
+        ...(preHdlValid === undefined ? {} : { pretreatmentHdlCholesterol: preHdlValid.value }),
+        ...(preLdlValid === undefined ? {} : { pretreatmentLdlCholesterol: preLdlValid.value }),
+        ...(facts.pretreatmentSameSpecimenTcHdl === undefined
+          ? {}
+          : { pretreatmentSameSpecimenTcHdl: facts.pretreatmentSameSpecimenTcHdl }),
+        ...(preTcValid === undefined ? {} : { pretreatmentTotalCholesterol: preTcValid.value }),
         ...(facts.priorCoronaryRevascularization === undefined
           ? {}
           : { priorCoronaryRevascularization: facts.priorCoronaryRevascularization.value }),

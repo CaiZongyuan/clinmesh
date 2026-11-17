@@ -73,6 +73,7 @@ function ClinicalScoresBody({
   identityKey,
   loading,
   locale,
+  onClearSaveError,
   onRetry,
   onSaveRisk,
   riskRecord,
@@ -84,6 +85,7 @@ function ClinicalScoresBody({
   identityKey: string
   loading: boolean
   locale: WorkspaceLocale
+  onClearSaveError?: () => void
   onRetry: () => void
   onSaveRisk: (expectedRevision: number, fields: ClinicalRiskAssessmentFieldsInput) => void
   riskRecord: ClinicalRiskAssessmentRecord | undefined
@@ -98,11 +100,13 @@ function ClinicalScoresBody({
     ? 'loading'
     : `${effectiveRecord.observationId ?? 'none'}:${effectiveRecord.revision}`
   const [draft, setDraft] = useState<{
+    baseRevision: number | undefined
     dirty: boolean
     form: RiskFormState
     identityKey: string
     recordSyncKey: string
   }>(() => ({
+    baseRevision: effectiveRecord?.revision,
     dirty: false,
     form: toRiskForm(effectiveRecord),
     identityKey,
@@ -110,16 +114,38 @@ function ClinicalScoresBody({
   }))
   useEffect(() => {
     setDraft(prev => {
+      const nextForm = toRiskForm(effectiveRecord)
       if (prev.identityKey !== identityKey) {
-        return { dirty: false, form: toRiskForm(effectiveRecord), identityKey, recordSyncKey }
+        return {
+          baseRevision: effectiveRecord?.revision,
+          dirty: false,
+          form: nextForm,
+          identityKey,
+          recordSyncKey,
+        }
       }
-      if (prev.recordSyncKey !== recordSyncKey && (!prev.dirty || prev.recordSyncKey === 'loading' || recordSyncKey !== 'loading')) {
-        return { dirty: false, form: toRiskForm(effectiveRecord), identityKey, recordSyncKey }
+      if (effectiveRecord !== undefined && prev.recordSyncKey !== recordSyncKey) {
+        const matchesRemote =
+          JSON.stringify(parseRiskFields(prev.form)) === JSON.stringify(parseRiskFields(nextForm))
+        if (!prev.dirty || prev.baseRevision === undefined || matchesRemote) {
+          return {
+            baseRevision: effectiveRecord.revision,
+            dirty: false,
+            form: nextForm,
+            identityKey,
+            recordSyncKey,
+          }
+        }
       }
       return prev
     })
   }, [identityKey, recordSyncKey, effectiveRecord])
   const form = draft.form
+  const hasRemoteRevisionAdvance =
+    draft.dirty
+    && draft.baseRevision !== undefined
+    && effectiveRecord !== undefined
+    && draft.baseRevision !== effectiveRecord.revision
   const updateForm = (updater: (prev: RiskFormState) => RiskFormState) => {
     setDraft(prev => ({ ...prev, dirty: true, form: updater(prev.form) }))
   }
@@ -177,7 +203,7 @@ function ClinicalScoresBody({
         onSubmit={event => {
           event.preventDefault()
           if (!canEditEffective || savingRisk || anginaInvalid) return
-          onSaveRisk(effectiveRecord.revision, parseRiskFields(form))
+          onSaveRisk(draft.baseRevision ?? effectiveRecord.revision, parseRiskFields(form))
         }}
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -188,6 +214,35 @@ function ClinicalScoresBody({
               : t('尚未记录（未填项保持未记录）', 'Not recorded (blank stays unrecorded)')}
           </span>
         </div>
+        {hasRemoteRevisionAdvance ? (
+          <Alert>
+            <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                {t(
+                  `远端已有更新记录 #${effectiveRecord.revision}（当前草稿基于 #${draft.baseRevision}）；直接保存将执行并发版本校验，或放弃草稿同步最新记录。`,
+                  `Remote record advanced to #${effectiveRecord.revision} (draft based on #${draft.baseRevision}); saving checks version conflict, or discard draft to sync.`,
+                )}
+              </span>
+              <Button
+                onClick={() => {
+                  onClearSaveError?.()
+                  setDraft({
+                    baseRevision: effectiveRecord.revision,
+                    dirty: false,
+                    form: toRiskForm(effectiveRecord),
+                    identityKey,
+                    recordSyncKey,
+                  })
+                }}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {t('放弃草稿并同步', 'Discard draft & sync')}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
         {effectiveRecord?.effectiveStSegmentDeviation?.source === 'ecg-report' ? (
           <p className="text-muted-foreground">
             {t('ST 段状态当前优先采用已签发 12 导联心电图报告：', 'ST-segment status resolved from issued 12-lead ECG report: ')}
@@ -339,6 +394,7 @@ export function OutpatientClinicalScoresDisclosure({
         identityKey={`${caseId}:${encounterId}`}
         loading={scores.isFetching}
         locale={locale}
+        onClearSaveError={() => saveRisk.reset()}
         onRetry={() => { void scores.refetch() }}
         onSaveRisk={(expectedRevision, fields) => saveRisk.mutate({ expectedRevision, fields })}
         riskRecord={scores.data?.riskAssessment}
@@ -487,10 +543,11 @@ export function InpatientVitalsAndScoresDisclosure({
         <ClinicalScoresBody
           bundle={scores.data}
           canEditRisk={canEdit}
-          error={scores.error}
+          error={scores.error ?? (write.mutation.variables?.operation === 'inpatient.risk-assessment.record' ? (write.mutation.error ?? null) : null)}
           identityKey={admissionId}
           loading={scores.isFetching}
           locale={locale}
+          onClearSaveError={() => write.mutation.reset?.()}
           onRetry={() => { void scores.refetch() }}
           onSaveRisk={(expectedRevision, fields) => {
             void write.mutation.mutateAsync({
