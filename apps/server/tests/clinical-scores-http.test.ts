@@ -265,6 +265,7 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       caseId: stay.admissionId,
       encounterId: stay.admissionId,
       epoch: scenario.epoch,
+      issuedAt: recordedVitals.data.latestVitalSigns!.recordedAt,
       patientId: stay.patientId,
       results: [
         { code: '2100404B', display: '高敏心肌肌钙蛋白I', high: 0.04, interpretationCode: 'H', unit: 'ng/mL', value: 0.36 },
@@ -1023,6 +1024,26 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       subject: { reference: `Patient/${tempOrderPatient.id}` },
       whenHandedOver: '2026-01-05T10:30:00+08:00',
     })
+    // External active MedicationRequest with no request-level boundsDuration but finite MedicationDispense.daysSupply=30d from 2025 expires after 30d + 28d washout instead of staying active forever
+    const externalSuppliedReq = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authoredOn: '2025-06-01T09:00:00+08:00',
+      id: uuidv7(),
+      intent: 'order',
+      medication: { concept: { text: '匹伐他汀钙片 2mg' } },
+      resourceType: 'MedicationRequest',
+      status: 'active',
+      subject: { reference: `Patient/${tempOrderPatient.id}` },
+    })
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authorizingPrescription: [{ reference: `MedicationRequest/${externalSuppliedReq.id}` }],
+      daysSupply: { code: 'd', system: 'http://unitsofmeasure.org', unit: 'd', value: 30 },
+      id: uuidv7(),
+      medication: { concept: { text: '匹伐他汀钙片 2mg' } },
+      resourceType: 'MedicationDispense',
+      status: 'completed',
+      subject: { reference: `Patient/${tempOrderPatient.id}` },
+      whenHandedOver: '2025-06-01T09:30:00+08:00',
+    })
 
     // Same-specimen TC=6.5 + HDL=1.1 (non-HDL=5.4 >= 5.2), followed by a newer standalone TC-only=5.3 before active statin
     const pairedPanel = insertSyntheticLabReport(fixture, {
@@ -1079,10 +1100,11 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       ]),
     )
 
-    // Outpatient statin authored BEFORE blood draw (2026-08-01T08:30) but dispensed AFTER blood draw (2026-08-06T10:00) anchors exposure start to MedicationDispense.whenHandedOver so the 2026-08-01 specimen stays pretreatment baseline
+    // Outpatient statin with planned effectiveDosePeriod.start BEFORE blood draw (2026-08-01T08:30) but actual MedicationDispense.whenHandedOver AFTER blood draw (2026-08-06T10:00) anchors exposure start to actual dispense so the 2026-08-01 specimen stays pretreatment baseline
     const preDrawAuthoredStatin = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
       authoredOn: '2026-08-01T08:30:00+08:00',
-      dosageInstruction: [{ timing: { repeat: { boundsDuration: { code: 'mo', system: 'http://unitsofmeasure.org', unit: 'mo', value: 3 } } } }],
+      dosageInstruction: [{ timing: { repeat: { boundsDuration: { code: 'mo', system: 'http://unitsofmeasure.org', unit: 'mo', value: 3 }, boundsPeriod: { start: '2026-08-01T08:30:00+08:00' } } } }],
+      effectiveDosePeriod: { start: '2026-08-01T08:30:00+08:00' },
       id: uuidv7(),
       intent: 'order',
       medication: { concept: { text: '瑞舒伐他汀钙片 10mg' } },
@@ -1464,6 +1486,18 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       ],
       workspaceId: scenario.workspaceId,
     })
+    // Troponin obtained within 24h of admission (2026-08-24T11:30) but AFTER inpatient treatment/execution is excluded from presentation GRACE/TIMI scoring
+    insertSyntheticLabReport(fixture, {
+      caseId: outOfOrderStay.admissionId,
+      encounterId: outOfOrderStay.admissionId,
+      epoch: scenario.epoch,
+      issuedAt: '2026-08-24T11:30:00+08:00',
+      patientId: outOfOrderStay.patientId,
+      results: [
+        { code: '2100404B', display: '高敏心肌肌钙蛋白I', high: 0.04, interpretationCode: 'H', unit: 'ng/mL', value: 1.25 },
+      ],
+      workspaceId: scenario.workspaceId,
+    })
     fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
       clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
       code: { coding: [{ code: 'I21.4', display: '急性心内膜下心肌梗死' }], text: '急性心内膜下心肌梗死' },
@@ -1529,7 +1563,11 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     expect(lateFirstVitalsScores.scores.find(s => s.id === 'ckd-epi-2021-egfr')?.status).toBe('complete')
     expect(lateFirstVitalsScores.scores.find(s => s.id === 'cockcroft-gault-crcl')?.status).toBe('complete')
     expect(lateFirstVitalsScores.scores.find(s => s.id === 'grace-acs')).toMatchObject({
-      missingInputs: expect.arrayContaining(['heartRateBpm', 'systolicBpMmHg', 'serumCreatinine']),
+      missingInputs: expect.arrayContaining(['heartRateBpm', 'systolicBpMmHg', 'serumCreatinine', 'elevatedCardiacBiomarker']),
+      status: 'incomplete',
+    })
+    expect(lateFirstVitalsScores.scores.find(s => s.id === 'timi-ua-nstemi')).toMatchObject({
+      missingInputs: expect.arrayContaining(['elevatedCardiacBiomarker']),
       status: 'incomplete',
     })
     const preciseAfterDispense = lateFirstVitalsScores.scores.find(s => s.id === 'precise-dapt')!

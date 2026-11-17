@@ -2547,19 +2547,7 @@ export class ClinicalScoreService {
 
     const initialTroponin = troponinChronological[0]
     let elevatedCardiacBiomarker: ClinicalScoreObjectiveFacts['elevatedCardiacBiomarker']
-    if (
-      initialTroponin !== undefined
-      && (
-        inpatientTimingGate === undefined
-        || (
-          initialTroponin.timestampMs !== undefined
-          && (
-            inpatientTimingGate.admissionAnchorMs === undefined
-            || initialTroponin.timestampMs - inpatientTimingGate.admissionAnchorMs <= ADMISSION_LAB_MAX_DELAY_MS
-          )
-        )
-      )
-    ) {
+    if (initialTroponin !== undefined && qualifiesAsInpatientAdmissionLab(initialTroponin.timestampMs)) {
       if (initialTroponin.elevated) {
         elevatedCardiacBiomarker = { source: initialTroponin.source, value: true }
       } else {
@@ -2569,6 +2557,7 @@ export class ClinicalScoreService {
             : troponinChronological.find(
                 item =>
                   item.elevated
+                  && qualifiesAsInpatientAdmissionLab(item.timestampMs)
                   && item.timestampMs !== undefined
                   && item.timestampMs - initialTroponin.timestampMs! <= 6 * 60 * 60 * 1000,
               )
@@ -3329,9 +3318,13 @@ export class ClinicalScoreService {
         ].filter(Boolean).join(' ')
         if (!this.#isLipidLoweringMedication(context, medId, display)) continue
         const localPrescription = localPrescriptionByMedReqId.get(parsed.data.id)
-        let earliestDispenseMs: number | undefined
+        const isCurrentEncounter = parsed.data.encounter?.reference === `Encounter/${encounterId}`
+        const enforceStrictCutoff = !isCurrentEncounter || !isArchivedCutoff
+        let earliestAnyDispenseMs: number | undefined
         let dispenseAnchorMs: number | undefined
         let dispenseSupplyEndMs: number | undefined
+        let validDispenseCount = 0
+        let hasUnsuppliedDispense = false
         const dispenseParams = new URLSearchParams({
           _count: '50',
           prescription: `MedicationRequest/${parsed.data.id}`,
@@ -3340,13 +3333,22 @@ export class ClinicalScoreService {
           const dispPage = this.#fhir.search(context, 'MedicationDispense', dispenseParams)
           for (const rawDisp of dispPage.resources) {
             const disp = medicationDispenseResourceSchema.safeParse(rawDisp)
-            if (!disp.success || ['entered-in-error', 'cancelled', 'declined'].includes(disp.data.status ?? '')) continue
+            const dispStatus = disp.success ? (disp.data.status ?? '') : ''
+            if (!disp.success || ['entered-in-error', 'cancelled', 'declined', 'preparation', 'unknown', ''].includes(dispStatus)) continue
             const handedIso = disp.data.whenHandedOver ?? disp.data.whenPrepared
-            const handedMs = handedIso ? Date.parse(handedIso) : Number.NaN
-            if (Number.isFinite(handedMs)) {
-              if (earliestDispenseMs === undefined || handedMs < earliestDispenseMs) {
-                earliestDispenseMs = handedMs
+            const handedMs = parseResourceTimestampMs(handedIso)
+            if (handedMs !== undefined && (earliestAnyDispenseMs === undefined || handedMs < earliestAnyDispenseMs)) {
+              earliestAnyDispenseMs = handedMs
+            }
+            if (Number.isFinite(nowMs)) {
+              if (handedMs === undefined) {
+                if (!isCurrentEncounter && isArchivedCutoff) continue
+              } else if (enforceStrictCutoff && handedMs > nowMs) {
+                continue
               }
+            }
+            validDispenseCount += 1
+            if (handedMs !== undefined) {
               if (dispenseAnchorMs === undefined || handedMs > dispenseAnchorMs) {
                 dispenseAnchorMs = handedMs
               }
@@ -3356,27 +3358,84 @@ export class ClinicalScoreService {
                 if (dispenseSupplyEndMs === undefined || candidateEnd > dispenseSupplyEndMs) {
                   dispenseSupplyEndMs = candidateEnd
                 }
+              } else {
+                hasUnsuppliedDispense = true
               }
+            } else {
+              hasUnsuppliedDispense = true
             }
           }
           if (dispPage.nextCursor === undefined) break
           dispenseParams.set('_cursor', dispPage.nextCursor)
         }
+
+        let earliestAnyAdminMs: number | undefined
+        let validAdminCount = 0
+        let latestAdminMs: number | undefined
+        const adminParams = new URLSearchParams({
+          _count: '50',
+          request: `MedicationRequest/${parsed.data.id}`,
+        })
+        for (;;) {
+          const adminPage = this.#fhir.search(context, 'MedicationAdministration', adminParams)
+          for (const rawAdmin of adminPage.resources) {
+            const admin = medicationAdministrationResourceSchema.safeParse(rawAdmin)
+            const adminStatus = admin.success ? (admin.data.status ?? '') : ''
+            if (!admin.success || ['entered-in-error', 'not-done', 'unknown', ''].includes(adminStatus)) continue
+            const adminStartIso =
+              admin.data.occurencePeriod?.start
+              ?? admin.data.occurrencePeriod?.start
+              ?? admin.data.effectivePeriod?.start
+              ?? admin.data.occurenceDateTime
+              ?? admin.data.occurrenceDateTime
+              ?? admin.data.effectiveDateTime
+              ?? admin.data.recorded
+            const adminEndIso =
+              admin.data.occurencePeriod?.end
+              ?? admin.data.occurrencePeriod?.end
+              ?? admin.data.effectivePeriod?.end
+              ?? adminStartIso
+            const adminStartMs = parseResourceTimestampMs(adminStartIso)
+            const adminEndMs = parseResourceTimestampMs(adminEndIso)
+            if (adminStartMs !== undefined && (earliestAnyAdminMs === undefined || adminStartMs < earliestAnyAdminMs)) {
+              earliestAnyAdminMs = adminStartMs
+            }
+            if (Number.isFinite(nowMs)) {
+              if (adminStartMs === undefined) {
+                if (!isCurrentEncounter && isArchivedCutoff) continue
+              } else if (enforceStrictCutoff && adminStartMs > nowMs) {
+                continue
+              }
+            }
+            validAdminCount += 1
+            const effectiveLatest = adminEndMs ?? adminStartMs
+            if (effectiveLatest !== undefined && (latestAdminMs === undefined || effectiveLatest > latestAdminMs)) {
+              latestAdminMs = effectiveLatest
+            }
+          }
+          if (adminPage.nextCursor === undefined) break
+          adminParams.set('_cursor', adminPage.nextCursor)
+        }
+
         // A local outpatient prescription has not begun lowering serum lipids until dispensed by pharmacy
-        if (localPrescription !== undefined && earliestDispenseMs === undefined && localPrescription.prescriptionStatus !== 'dispensed') {
+        if (localPrescription !== undefined && validDispenseCount === 0 && validAdminCount === 0 && localPrescription.prescriptionStatus !== 'dispensed') {
           continue
         }
+        const actualDeliveryStartMs =
+          earliestAnyDispenseMs !== undefined && earliestAnyAdminMs !== undefined
+            ? Math.min(earliestAnyDispenseMs, earliestAnyAdminMs)
+            : (earliestAnyDispenseMs ?? earliestAnyAdminMs)
         const explicitStartMs = parseResourceTimestampMs(
           parsed.data.effectiveDosePeriod?.start
           ?? parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsPeriod?.start,
         )
         const startMs =
-          explicitStartMs
-          ?? earliestDispenseMs
+          actualDeliveryStartMs
+          ?? explicitStartMs
           ?? parseResourceTimestampMs(parsed.data.authoredOn)
           ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
         if (
-          parsed.data.encounter?.reference !== `Encounter/${encounterId}`
+          !isCurrentEncounter
           && Number.isFinite(nowMs)
           && (startMs === undefined ? isArchivedCutoff : startMs > nowMs)
         ) {
@@ -3391,47 +3450,21 @@ export class ClinicalScoreService {
           parsed.data.effectiveDosePeriod?.end
           ?? parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsPeriod?.end
         const parsedExplicitEnd = explicitPeriodEndIso ? Date.parse(explicitPeriodEndIso) : Number.NaN
+        const finiteDispenseSupplyEndMs =
+          validDispenseCount > 0 && !hasUnsuppliedDispense ? dispenseSupplyEndMs : undefined
 
         let endMs = Number.POSITIVE_INFINITY
         if (Number.isFinite(parsedExplicitEnd)) {
-          endMs = parsedExplicitEnd + LIPID_WASHOUT_MS
+          endMs = Math.max(parsedExplicitEnd, finiteDispenseSupplyEndMs ?? 0) + LIPID_WASHOUT_MS
         } else if (typeof boundsMs === 'number' && (startMs !== undefined || dispenseAnchorMs !== undefined)) {
           const anchor = Math.max(startMs ?? 0, dispenseAnchorMs ?? 0)
           endMs = anchor + boundsMs + LIPID_WASHOUT_MS
-        } else if (dispenseSupplyEndMs !== undefined && (status === 'completed' || status === 'stopped')) {
-          endMs = dispenseSupplyEndMs + LIPID_WASHOUT_MS
+        } else if (finiteDispenseSupplyEndMs !== undefined) {
+          endMs = finiteDispenseSupplyEndMs + LIPID_WASHOUT_MS
         } else if (status === 'completed' || status === 'stopped') {
           let completionEvidenceMs = parsed.data.statusChanged ? Date.parse(parsed.data.statusChanged) : Number.NaN
-          if (!Number.isFinite(completionEvidenceMs)) {
-            let latestAdminMs: number | undefined
-            const adminParams = new URLSearchParams({
-              _count: '50',
-              request: `MedicationRequest/${parsed.data.id}`,
-            })
-            for (;;) {
-              const adminPage = this.#fhir.search(context, 'MedicationAdministration', adminParams)
-              for (const rawAdmin of adminPage.resources) {
-                const admin = medicationAdministrationResourceSchema.safeParse(rawAdmin)
-                if (!admin.success || ['entered-in-error', 'not-done'].includes(admin.data.status ?? '')) continue
-                const adminEndIso =
-                  admin.data.occurencePeriod?.end
-                  ?? admin.data.occurrencePeriod?.end
-                  ?? admin.data.effectivePeriod?.end
-                  ?? admin.data.occurenceDateTime
-                  ?? admin.data.occurrenceDateTime
-                  ?? admin.data.effectiveDateTime
-                  ?? admin.data.recorded
-                const adminMs = adminEndIso ? Date.parse(adminEndIso) : Number.NaN
-                if (Number.isFinite(adminMs) && (latestAdminMs === undefined || adminMs > latestAdminMs)) {
-                  latestAdminMs = adminMs
-                }
-              }
-              if (adminPage.nextCursor === undefined) break
-              adminParams.set('_cursor', adminPage.nextCursor)
-            }
-            if (latestAdminMs !== undefined) {
-              completionEvidenceMs = latestAdminMs
-            }
+          if (!Number.isFinite(completionEvidenceMs) && latestAdminMs !== undefined) {
+            completionEvidenceMs = latestAdminMs
           }
           if (Number.isFinite(completionEvidenceMs)) {
             endMs = completionEvidenceMs + LIPID_WASHOUT_MS
