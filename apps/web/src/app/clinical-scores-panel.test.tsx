@@ -162,6 +162,7 @@ describe('ClinicalScoresPanel disclosures', () => {
           cardiacArrestOnAdmission: null,
           familyHistoryPrematureCad: null,
           killipClass: 'II',
+          knownCoronaryStenosisGe50: null,
           priorBleedingHistory: null,
           smokingStatus: 'current',
           stSegmentDeviation: null,

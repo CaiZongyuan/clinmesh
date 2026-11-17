@@ -307,6 +307,21 @@ describe('six deterministic clinical score formulas', () => {
       value: 1.4,
     })
 
+    // Older patient (70yo man) whose CAD began prematurely (onset age 50 < 55) + diabetes meets 1 severe event + 2 high-risk factors -> ultra-high (<1.4)
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 70,
+        cadOnsetAgeYears: 50,
+        confirmedDiagnosisCodes: ['I21.4', 'E11.9'],
+        ldlCholesterol: { unit: 'mmol/L', value: 2.0 },
+        sex: 'male',
+      }),
+    ).toMatchObject({
+      status: 'complete',
+      tierCode: 'ultra-high',
+      value: 1.4,
+    })
+
     // Stable CAD with preserved eGFR -> very-high (<1.8 mmol/L)
     const stableCad = calculateAscvdLdlTarget({
       ageYears: 64,
@@ -502,6 +517,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       heartRateBpm: { source: vitalSrc, value: 92 },
       hemoglobin: { source: labSrc, value: { unit: 'g/L', value: 132 } },
       killipClass: { source: riskSrc, value: 'II' },
+      knownCoronaryRevascularizationOrStenosisGe50: { source: riskSrc, value: false },
       ldlCholesterol: { source: labSrc, value: { unit: 'mmol/L', value: 2.35 } },
       priorBleedingHistory: { source: riskSrc, value: 'negative' },
       serumCreatinine: { source: labSrc, value: { unit: 'umol/L', value: 112 } },
@@ -616,12 +632,28 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       aspirinUsedLast7Days: { source: src, value: false },
       confirmedDiagnoses: [{ code: 'E11.9', source: src }],
       elevatedCardiacBiomarker: { source: src, value: false },
+      knownCoronaryRevascularizationOrStenosisGe50: { source: src, value: false },
       smokingStatus: { source: src, value: 'current' },
       stSegmentDeviation: { source: src, value: false },
       systolicBpMmHg: { source: src, value: 158 },
     })
     expect(transientHighSbpUnknownFamily.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({
       missingInputs: ['familyHistoryPrematureCad'],
+      status: 'incomplete',
+    })
+
+    // Unknown coronary stenosis history (without prior MI/stent/CABG or angiography) keeps TIMI incomplete
+    const unknownStenosis = evaluateClinicalScores({
+      ageYears: { source: src, value: 58 },
+      anginaEpisodes24h: { source: src, value: 1 },
+      aspirinUsedLast7Days: { source: src, value: false },
+      confirmedDiagnoses: [],
+      elevatedCardiacBiomarker: { source: src, value: false },
+      smokingStatus: { source: src, value: 'never' },
+      stSegmentDeviation: { source: src, value: false },
+    })
+    expect(unknownStenosis.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({
+      missingInputs: ['knownCoronaryStenosisGe50'],
       status: 'incomplete',
     })
 
@@ -632,6 +664,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       confirmedDiagnoses: [{ code: 'E11.9', source: src }],
       elevatedCardiacBiomarker: { source: src, value: false },
       familyHistoryPrematureCad: { source: src, value: false },
+      knownCoronaryRevascularizationOrStenosisGe50: { source: src, value: false },
       smokingStatus: { source: src, value: 'current' },
       stSegmentDeviation: { source: src, value: false },
       systolicBpMmHg: { source: src, value: 158 },
@@ -646,6 +679,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       confirmedDiagnoses: [{ code: 'I10', source: src }, { code: 'E11.9', source: src }],
       elevatedCardiacBiomarker: { source: src, value: false },
       familyHistoryPrematureCad: { source: src, value: true },
+      knownCoronaryRevascularizationOrStenosisGe50: { source: src, value: false },
       smokingStatus: { source: src, value: 'never' },
       stSegmentDeviation: { source: src, value: false },
       systolicBpMmHg: { source: src, value: 126 },
@@ -660,6 +694,7 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       aspirinUsedLast7Days: { source: src, value: false },
       confirmedDiagnoses: [{ code: 'E11.9', source: src }],
       elevatedCardiacBiomarker: { source: src, value: false },
+      knownCoronaryRevascularizationOrStenosisGe50: { source: src, value: false },
       smokingStatus: { source: src, value: 'current' },
       stSegmentDeviation: { source: src, value: false },
       systolicBpMmHg: { source: src, value: 126 },

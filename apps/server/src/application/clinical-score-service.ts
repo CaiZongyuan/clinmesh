@@ -57,6 +57,7 @@ const EMPTY_RISK_VALUES: ClinicalRiskAssessmentValues = Object.freeze({
   cardiacArrestOnAdmission: null,
   familyHistoryPrematureCad: null,
   killipClass: null,
+  knownCoronaryStenosisGe50: null,
   priorBleedingHistory: null,
   smokingStatus: null,
   stSegmentDeviation: null,
@@ -133,6 +134,9 @@ const conditionResourceSchema = z.object({
   encounter: z.object({ reference: z.string().optional() }).loose().optional(),
   id: z.string().min(1),
   meta: z.object({ versionId: z.string().optional() }).loose().optional(),
+  onsetDateTime: z.string().optional(),
+  onsetPeriod: z.object({ start: z.string().optional() }).loose().optional(),
+  recordedDate: z.string().optional(),
   verificationStatus: z.object({ coding: z.array(codingItemSchema).optional() }).loose().optional(),
 }).loose()
 
@@ -140,6 +144,8 @@ const procedureResourceSchema = z.object({
   code: z.object({ coding: z.array(codingItemSchema).optional(), text: z.string().optional() }).loose().optional(),
   id: z.string().min(1),
   meta: z.object({ versionId: z.string().optional() }).loose().optional(),
+  performedDateTime: z.string().optional(),
+  performedPeriod: z.object({ start: z.string().optional() }).loose().optional(),
   status: z.string().optional(),
 }).loose()
 
@@ -189,6 +195,7 @@ function mergeRiskValues(
     cardiacArrestOnAdmission: patch.cardiacArrestOnAdmission === undefined ? previous.cardiacArrestOnAdmission : patch.cardiacArrestOnAdmission,
     familyHistoryPrematureCad: patch.familyHistoryPrematureCad === undefined ? previous.familyHistoryPrematureCad : patch.familyHistoryPrematureCad,
     killipClass: patch.killipClass === undefined ? previous.killipClass : patch.killipClass,
+    knownCoronaryStenosisGe50: patch.knownCoronaryStenosisGe50 === undefined ? previous.knownCoronaryStenosisGe50 : patch.knownCoronaryStenosisGe50,
     priorBleedingHistory: patch.priorBleedingHistory === undefined ? previous.priorBleedingHistory : patch.priorBleedingHistory,
     smokingStatus: patch.smokingStatus === undefined ? previous.smokingStatus : patch.smokingStatus,
     stSegmentDeviation: patch.stSegmentDeviation === undefined ? previous.stSegmentDeviation : patch.stSegmentDeviation,
@@ -268,6 +275,12 @@ function buildRiskObservationComponents(values: ClinicalRiskAssessmentValues) {
     components.push({
       code: { coding: [{ code: 'family-history-premature-cad', system: RISK_ASSESSMENT_SYSTEM }], text: '早发冠心病家族史' },
       valueBoolean: values.familyHistoryPrematureCad,
+    })
+  }
+  if (values.knownCoronaryStenosisGe50 !== null) {
+    components.push({
+      code: { coding: [{ code: 'known-coronary-stenosis-ge50', system: RISK_ASSESSMENT_SYSTEM }], text: '已知冠脉狭窄 ≥50%' },
+      valueBoolean: values.knownCoronaryStenosisGe50,
     })
   }
   return components
@@ -946,8 +959,9 @@ export class ClinicalScoreService {
           versionId: options.vitalSummary.observationVersion,
         }
 
+    const birthDateStr = typeof patient.birthDate === 'string' ? patient.birthDate : undefined
     const labs = this.#extractLaboratoryAnalytes(context, options.caseId, options.legacyDiagnosticReportId)
-    const history = this.#extractClinicalHistoryFlags(context, options.patientId, options.inpatient, options.caseId)
+    const history = this.#extractClinicalHistoryFlags(context, options.patientId, birthDateStr, options.inpatient, options.caseId)
     const onAntihypertensive = this.#extractAntihypertensiveFlag(
       context,
       options.patientId,
@@ -1010,10 +1024,18 @@ export class ClinicalScoreService {
         ? { familyHistoryPrematureCad: { source: riskRef, value: riskAssessment.values.familyHistoryPrematureCad } }
         : {}),
       antihypertensiveMedicationActive: onAntihypertensive,
+      ...(history.cadOnsetAgeYears === undefined ? {} : { cadOnsetAgeYears: history.cadOnsetAgeYears }),
       confirmedDiagnoses: history.confirmedDiagnoses,
-      ...(history.knownCoronaryRevascularizationOrStenosisGe50 === undefined
+      ...((history.knownCoronaryRevascularizationOrStenosisGe50
+        ?? (riskRef !== undefined && riskAssessment.values.knownCoronaryStenosisGe50 !== null
+          ? { source: riskRef, value: riskAssessment.values.knownCoronaryStenosisGe50 }
+          : undefined)) === undefined
         ? {}
-        : { knownCoronaryRevascularizationOrStenosisGe50: history.knownCoronaryRevascularizationOrStenosisGe50 }),
+        : {
+            knownCoronaryRevascularizationOrStenosisGe50:
+              history.knownCoronaryRevascularizationOrStenosisGe50
+              ?? { source: riskRef!, value: riskAssessment.values.knownCoronaryStenosisGe50! },
+          }),
       ...(history.priorCoronaryRevascularization === undefined
         ? {}
         : { priorCoronaryRevascularization: history.priorCoronaryRevascularization }),
@@ -1189,15 +1211,25 @@ export class ClinicalScoreService {
   #extractClinicalHistoryFlags(
     context: ActorContext,
     patientId: string,
+    patientBirthDate: string | undefined,
     inpatient: InpatientService | undefined,
     caseId: string,
   ) {
     const confirmedDiagnoses: ClinicalScoreObjectiveFacts['confirmedDiagnoses'] = []
     let knownCad: ClinicalScoreObjectiveFacts['knownCoronaryRevascularizationOrStenosisGe50']
     let priorCoronaryRevascularization: ClinicalScoreObjectiveFacts['priorCoronaryRevascularization']
+    let cadOnsetAgeYears: ClinicalScoreObjectiveFacts['cadOnsetAgeYears']
     const severeEventKeys = new Set<string>()
     const hypertensionConditionRefs = new Set<string>()
     let firstSevereEventRef: ClinicalScoreSourceReference | undefined
+    const recordCadEventDate = (rawIso: string | undefined, ref: ClinicalScoreSourceReference) => {
+      if (!rawIso || !patientBirthDate) return
+      const dateStr = rawIso.slice(0, 10)
+      const eventAge = completedAgeYears(patientBirthDate, dateStr)
+      if (eventAge !== undefined && (cadOnsetAgeYears === undefined || eventAge < cadOnsetAgeYears.value)) {
+        cadOnsetAgeYears = { source: ref, value: eventAge }
+      }
+    }
 
     const conditionParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
     for (;;) {
@@ -1244,6 +1276,12 @@ export class ClinicalScoreService {
         for (const code of conditionEffectiveCodes) {
           confirmedDiagnoses.push({ code, source: ref })
           if (/^I1[0-5]/i.test(code)) hypertensionConditionRefs.add(ref.reference)
+        }
+        if (conditionEffectiveCodes.some(code => /^(?:I2[0-5]|Z95\.[15]|Z98\.61)/i.test(code))) {
+          recordCadEventDate(
+            parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start ?? parsed.data.recordedDate,
+            ref,
+          )
         }
         const isAcuteAcs = conditionEffectiveCodes.some(code => /^(?:I20\.0|I2[1-4])/i.test(code))
         const isPriorMi = conditionEffectiveCodes.some(code => /^I25\.2/i.test(code))
@@ -1294,6 +1332,7 @@ export class ClinicalScoreService {
             reference: `Procedure/${parsed.data.id}`,
             versionId: parsed.data.meta?.versionId ?? '1',
           }
+          recordCadEventDate(parsed.data.performedDateTime ?? parsed.data.performedPeriod?.start, ref)
           priorCoronaryRevascularization ??= { source: ref, value: true }
           knownCad ??= { source: ref, value: true }
         }
@@ -1305,11 +1344,15 @@ export class ClinicalScoreService {
     if (inpatient !== undefined) {
       for (const report of inpatient.angiography.reports(context, caseId)) {
         if (!['final', 'partial'].includes(report.status)) continue
+        let reportVersionId = String(report.version)
+        try {
+          reportVersionId = this.#fhir.read(context, 'DiagnosticReport', report.id).meta?.versionId ?? reportVersionId
+        } catch { /* fallback to report.version */ }
         if (report.vessels.some(vessel => vessel.stenosisPercent >= 50)) {
           const ref: ClinicalScoreSourceReference = {
             label: '冠状动脉造影报告（狭窄≥50%）',
-            reference: `Procedure/${report.procedureId}`,
-            versionId: String(report.version),
+            reference: `DiagnosticReport/${report.id}`,
+            versionId: reportVersionId,
           }
           knownCad = { source: ref, value: true }
           break
@@ -1318,8 +1361,8 @@ export class ClinicalScoreService {
           knownCad = {
             source: {
               label: '冠状动脉造影报告（狭窄<50%）',
-              reference: `Procedure/${report.procedureId}`,
-              versionId: String(report.version),
+              reference: `DiagnosticReport/${report.id}`,
+              versionId: reportVersionId,
             },
             value: false,
           }
@@ -1328,6 +1371,7 @@ export class ClinicalScoreService {
     }
 
     return {
+      cadOnsetAgeYears,
       confirmedDiagnoses,
       hypertensionConditionRefs,
       knownCoronaryRevascularizationOrStenosisGe50: knownCad,

@@ -16,6 +16,7 @@ export const clinicalRiskAssessmentValuesSchema = z.object({
   cardiacArrestOnAdmission: z.boolean().nullable(),
   familyHistoryPrematureCad: z.boolean().nullable().default(null),
   killipClass: killipClassSchema.nullable(),
+  knownCoronaryStenosisGe50: z.boolean().nullable().default(null),
   priorBleedingHistory: priorBleedingHistorySchema.nullable(),
   smokingStatus: smokingStatusSchema.nullable(),
   stSegmentDeviation: z.boolean().nullable(),
@@ -28,6 +29,7 @@ export const clinicalRiskAssessmentFieldsInputSchema = z.object({
   cardiacArrestOnAdmission: z.boolean().nullable().optional(),
   familyHistoryPrematureCad: z.boolean().nullable().optional(),
   killipClass: killipClassSchema.nullable().optional(),
+  knownCoronaryStenosisGe50: z.boolean().nullable().optional(),
   priorBleedingHistory: priorBleedingHistorySchema.nullable().optional(),
   smokingStatus: smokingStatusSchema.nullable().optional(),
   stSegmentDeviation: z.boolean().nullable().optional(),
@@ -157,6 +159,7 @@ export const clinicalScoreMissingInputSchema = z.enum([
   'aspirinUsedLast7Days',
   'smokingStatus',
   'familyHistoryPrematureCad',
+  'knownCoronaryStenosisGe50',
   'priorBleedingHistory',
 ])
 export type ClinicalScoreMissingInput = z.infer<typeof clinicalScoreMissingInputSchema>
