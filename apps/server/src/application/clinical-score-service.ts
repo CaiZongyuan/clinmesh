@@ -128,6 +128,7 @@ const observationResourceSchema = z.object({
 }).loose()
 
 const diagnosticReportResourceSchema = z.object({
+  effectiveDateTime: z.string().optional(),
   id: z.string().min(1),
   issued: z.string().optional(),
   meta: z.object({ versionId: z.string().optional() }).loose().optional(),
@@ -1444,11 +1445,26 @@ export class ClinicalScoreService {
               AND rev.epoch = r.epoch
               AND rev.revision_of_diagnostic_report_id = c.diagnostic_report_id
           )
+        ORDER BY julianday(COALESCE(c.issued_at, r.authored_at)) ASC, c.diagnostic_report_id ASC
       `).all(context.workspaceId, context.epoch, caseId),
     )
+    const sortedPresentationEcgs = ecgRows
+      .map((row, seq) => {
+        const report = diagnosticReportResourceSchema.safeParse(this.#fhir.read(context, 'DiagnosticReport', row.diagnostic_report_id))
+        const effStr = report.success
+          ? (report.data.effectiveDateTime ?? report.data.issued ?? row.issued_at ?? row.authored_at ?? undefined)
+          : (row.issued_at ?? row.authored_at ?? undefined)
+        const tsMs = effStr ? Date.parse(effStr) : Number.NaN
+        return { report, row, seq, timestampMs: Number.isFinite(tsMs) ? tsMs : undefined }
+      })
+      .sort((a, b) => {
+        if (a.timestampMs !== undefined && b.timestampMs !== undefined && a.timestampMs !== b.timestampMs) {
+          return a.timestampMs - b.timestampMs
+        }
+        return a.seq - b.seq
+      })
     let hasExplicitNonStElevationEcg = false
-    for (const row of ecgRows) {
-      const report = diagnosticReportResourceSchema.safeParse(this.#fhir.read(context, 'DiagnosticReport', row.diagnostic_report_id))
+    for (const { report, row } of sortedPresentationEcgs) {
       if (!report.success || !['final', 'amended', 'corrected'].includes(report.data.status ?? '')) continue
       const content = investigationResultContentSchema.safeParse(JSON.parse(row.content_json))
       if (!content.success) continue
@@ -1457,26 +1473,28 @@ export class ClinicalScoreService {
         ...content.data.results.map(item => typeof item.value === 'string' ? item.value : ''),
       ].filter(Boolean).join('；')
       if (hasPositiveStElevationText(combinedText)) {
-        stemiSource ??= {
-          label: '12 导联心电图 ST 段抬高',
+        stemiSource = {
+          label: '首份 12 导联心电图 ST 段抬高',
           reference: `DiagnosticReport/${row.diagnostic_report_id}`,
           versionId: report.data.meta?.versionId ?? '1',
         }
-        continue
+      } else {
+        const hasCompleteLeadStAssessment = ['st-t-anterior', 'st-t-inferior', 'st-t-lateral'].every(leadCode => {
+          const entry = content.data.results.find(item => item.code === leadCode)
+          return (
+            entry !== undefined
+            && typeof entry.value === 'string'
+            && (isExplicitNormalStLead(entry.value, entry.interpretation) || hasPositiveStDeviationText(entry.value))
+          )
+        })
+        const hasExplicitNoStElevationConclusion =
+          /(?:无|未见|否认)(?:明显)?\s*ST\s*段?\s*(?:抬高|上抬)|\bno\s+ST[- ]?(?:segment\s*)?elevation\b/i.test(combinedText)
+        if (hasCompleteLeadStAssessment || hasExplicitNoStElevationConclusion) {
+          hasExplicitNonStElevationEcg = true
+        }
       }
-      const hasCompleteLeadStAssessment = ['st-t-anterior', 'st-t-inferior', 'st-t-lateral'].every(leadCode => {
-        const entry = content.data.results.find(item => item.code === leadCode)
-        return (
-          entry !== undefined
-          && typeof entry.value === 'string'
-          && (isExplicitNormalStLead(entry.value, entry.interpretation) || hasPositiveStDeviationText(entry.value))
-        )
-      })
-      const hasExplicitNoStElevationConclusion =
-        /(?:无|未见|否认)(?:明显)?\s*ST\s*段?\s*(?:抬高|上抬)|\bno\s+ST[- ]?(?:segment\s*)?elevation\b/i.test(combinedText)
-      if (hasCompleteLeadStAssessment || hasExplicitNoStElevationConclusion) {
-        hasExplicitNonStElevationEcg = true
-      }
+      // Restrict STEMI/non-ST-elevation ECG subtype evaluation strictly to the earliest valid presentation 12-lead ECG
+      break
     }
 
     // 2. Check current Encounter Condition resources (confirmed or working provisional)
@@ -2186,8 +2204,6 @@ export class ClinicalScoreService {
     let priorCoronaryRevascularization: ClinicalScoreObjectiveFacts['priorCoronaryRevascularization']
     let cadOnsetAgeYears: ClinicalScoreObjectiveFacts['cadOnsetAgeYears']
     let hasUndatedCadRecord = false
-    const coronaryIdentKeys = new Set<string>()
-    const strokeIdentKeys = new Set<string>()
     const coronaryEpisodeDays: string[] = []
     const strokeEpisodeDays: string[] = []
     let hasAnyCoronarySevereEvent = false
@@ -2303,7 +2319,6 @@ export class ClinicalScoreService {
         const isStroke = conditionEffectiveCodes.some(code => /^I63/i.test(code))
         const onsetRaw = parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start
         const onsetDay = onsetRaw && /^\d{4}-\d{2}-\d{2}/.test(onsetRaw) ? onsetRaw.slice(0, 10) : undefined
-        const identVal = parsed.data.identifier?.find(item => item.value?.trim())?.value?.trim()
         const recordedDay =
           parsed.data.recordedDate && /^\d{4}-\d{2}-\d{2}/.test(parsed.data.recordedDate)
             ? parsed.data.recordedDate.slice(0, 10)
@@ -2312,7 +2327,6 @@ export class ClinicalScoreService {
         if (isAcuteAcs || isPriorMi) {
           hasAnyCoronarySevereEvent = true
           if (conditionEffectiveCodes.some(code => /^I22/i.test(code))) hasSubsequentMiCode = true
-          if (identVal) coronaryIdentKeys.add(identVal)
           if (onsetDay !== undefined) {
             coronaryEpisodeDays.push(onsetDay)
           } else if (isAcuteAcs && isActiveClinStatus && recordedDay !== undefined) {
@@ -2328,7 +2342,6 @@ export class ClinicalScoreService {
         }
         if (isStroke) {
           hasAnyStrokeEvent = true
-          if (identVal) strokeIdentKeys.add(identVal)
           if (onsetDay !== undefined) {
             strokeEpisodeDays.push(onsetDay)
           } else if (isActiveClinStatus && recordedDay !== undefined) {
@@ -2427,7 +2440,6 @@ export class ClinicalScoreService {
 
     let coronarySevereCount = Math.max(
       countClusteredEventDays(coronaryEpisodeDays),
-      coronaryIdentKeys.size,
       hasAnyCoronarySevereEvent ? 1 : 0,
     )
     if (hasSubsequentMiCode) {
@@ -2443,7 +2455,6 @@ export class ClinicalScoreService {
     }
     let strokeSevereCount = Math.max(
       countClusteredEventDays(strokeEpisodeDays),
-      strokeIdentKeys.size,
       hasAnyStrokeEvent ? 1 : 0,
     )
     if (

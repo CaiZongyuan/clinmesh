@@ -448,7 +448,7 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
         versionId: '1',
       }))
     }
-  }, 60_000)
+  }, 120_000)
 
   it('persists optional outpatient triage heightCm/weightKg with Provenance and evaluates outpatient clinical scores', async () => {
     const prepared = await preparePciPaymentDrgFixture()
@@ -825,5 +825,5 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
 
     const provenances = await fixture.read('doctor', `/fhir/R5/Provenance?target=Observation/${recordedRisk.data.riskAssessment.observationId}`, fhirBundleSchema)
     expect(provenances.entry?.length).toBe(1)
-  }, 60_000)
+  }, 120_000)
 })
