@@ -69,6 +69,7 @@ const rowSchema = z.object({
   basis_fingerprint: z.string(),
   trigger: z.enum(['automatic', 'manual']),
   cancelled: z.union([z.literal(0), z.literal(1)]),
+  frozen_readable: z.union([z.literal(0), z.literal(1)]),
   status: z.enum(['queued', 'running', 'succeeded', 'no-evidence', 'blocked', 'unknown', 'rejected', 'failed', 'stale']),
   error_code: z.string().nullable(),
   result_json: z.string().nullable(),
@@ -428,7 +429,7 @@ export class InpatientGuidelineAdvice {
       && canonicalJsonHash(persistedBasis.data.guidelines) === canonicalJsonHash(basis.input.guidelines)
       && canonicalJsonHash(persistedBasis.data.topic) === canonicalJsonHash(basis.input.topic)
     const unchanged = row?.basis_fingerprint === basis.fingerprint
-    const readableSnapshot = unchanged || (isLifecycleFrozen && frozenEvidenceIntact)
+    const readableSnapshot = unchanged || (isLifecycleFrozen && row?.frozen_readable === 1 && frozenEvidenceIntact)
     let status: Advice['status'] = row?.status ?? 'idle'
     if (row && (!unchanged || !authorized)) status = 'stale'
     if (isLifecycleFrozen) status = 'frozen'
@@ -630,6 +631,33 @@ export class InpatientGuidelineAdvice {
       return
     }
     this.#create(context, admissionId, 'pci-stent', requestId, 1, 'automatic', transaction)
+  }
+
+  /** Captures which admission-level advice rows were current right before transitioning from admitted to discharge-pending. */
+  captureDischargeFreeze(context: ActorContext, admissionId: string) {
+    const topics = z.array(z.object({ topic_id: guidelineTopicIdSchema })).parse(
+      this.owner.database.driver.prepare(`
+        SELECT DISTINCT topic_id FROM inpatient_guideline_advice
+        WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id IS NULL
+      `).all(context.workspaceId, context.epoch, admissionId),
+    )
+    for (const { topic_id: topicId } of topics) {
+      const row = this.#row(context, admissionId, topicId, null)
+      if (!row) continue
+      const liveState = this.#state(context, admissionId, topicId, null)
+      const readable = liveState.status === 'succeeded' || liveState.status === 'incomplete' ? 1 : 0
+      this.owner.database.driver.prepare(`
+        UPDATE inpatient_guideline_advice SET frozen_readable=?
+        WHERE workspace_id=? AND epoch=? AND task_id=? AND version=?
+      `).run(readable, context.workspaceId, context.epoch, row.task_id, row.version)
+    }
+  }
+
+  clearDischargeFreeze(context: ActorContext, admissionId: string) {
+    this.owner.database.driver.prepare(`
+      UPDATE inpatient_guideline_advice SET frozen_readable=0
+      WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id IS NULL
+    `).run(context.workspaceId, context.epoch, admissionId)
   }
 
   /** The caller owns the already-authorized material-estimate cancellation transaction. */

@@ -11,6 +11,7 @@ CREATE TABLE inpatient_guideline_advice_next (
   basis_fingerprint TEXT NOT NULL,
   trigger TEXT NOT NULL CHECK(trigger IN ('automatic', 'manual')),
   cancelled INTEGER NOT NULL DEFAULT 0 CHECK(cancelled IN (0, 1)),
+  frozen_readable INTEGER NOT NULL DEFAULT 0 CHECK(frozen_readable IN (0, 1)),
   status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'succeeded', 'no-evidence', 'blocked', 'unknown', 'rejected', 'failed', 'stale')),
   error_code TEXT,
   result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),

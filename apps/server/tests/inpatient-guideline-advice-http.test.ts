@@ -1057,6 +1057,17 @@ it('无 PCI 手术申请的内科住院可按专题完成术前水化、FFR > 0.
     inpatientGuidelineAdviceListSchema,
   )
   expect(hydrationByMedicalRecords).toEqual(hydrationAfterDepart)
+  const staleDaptAfterDepart = await s.fixture.read(
+    'inpatient-doctor',
+    `${medicalStay.path}/guideline-advice?topicId=cad-dapt-and-secondary-prevention`,
+    inpatientGuidelineAdviceListSchema,
+  )
+  expect(staleDaptAfterDepart.advice[0]).toMatchObject({
+    requestId: null,
+    result: null,
+    status: 'frozen',
+    topicId: 'cad-dapt-and-secondary-prevention',
+  })
   expect(hydrationAfterDepart.advice[0]).toMatchObject({
     requestId: null,
     status: 'frozen',
