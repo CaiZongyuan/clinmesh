@@ -257,11 +257,12 @@ function ClinicalScoresBody({
             </select>
           </label>
           <label className="flex flex-col gap-1">
-            <span>{t('既往出血史', 'Prior bleeding')}</span>
+            <span>{t('既往自发性出血史', 'Prior spontaneous bleeding')}</span>
             <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | PriorBleedingHistory; updateForm(s => ({ ...s, priorBleedingHistory: v })) }} value={form.priorBleedingHistory}>
               <option value="">{t('未记录', 'Not recorded')}</option>
-              <option value="negative">{t('阴性', 'Negative')}</option>
-              <option value="positive">{t('阳性', 'Positive')}</option>
+              <option value="negative">{t('无出血史', 'None')}</option>
+              <option value="non-spontaneous">{t('仅外伤/手术出血', 'Traumatic/operative only')}</option>
+              <option value="spontaneous">{t('有自发性出血（需住院/输血）', 'Spontaneous (hospitalized/transfused)')}</option>
             </select>
           </label>
           {canEditRisk ? (

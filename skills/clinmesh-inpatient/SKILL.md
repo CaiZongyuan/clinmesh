@@ -110,7 +110,7 @@ clinmesh inpatient reverse-charge --input @reversal.json --idempotency-key <key>
 
 `inpatient.order.issue` version 7 accepts `QD | BID | TID | QN | PRN | ONCE`. ONCE 仅用于 `duration=temporary`；长期 QD/BID/TID/QN 分别按上海 08:00、08:00/20:00、08:00/14:00/20:00、22:00 排程。声明 `safety` 的药品按 ICD-10 前缀适应证、药理互斥及单次／单日极量审方，PRN 按每日最多四次校验，实际任务也受业务日四次及单日数量上限限制。按 `error.reason` 修正本次选择：`MEDICATION_COMBINATION_NOT_ALLOWED` 更换互斥药理类别，`MEDICATION_DIAGNOSIS_NOT_ALLOWED` 核对已确认诊断，`MEDICATION_ALLERGY_CONFLICT` 更换过敏冲突药品，`MEDICATION_DOSAGE_NOT_ALLOWED` 调整剂量／频次／数量，`MEDICATION_ONCE_REQUIRES_TEMPORARY` 改为临时或其他合法频次。保留原输入，重新读取权威目录和版本，不换身份绕过。病区护士或住院医生可用 `record-vital-signs`（`expectedRevision` 初次为 `0`，冲突返回 `INPATIENT_VITAL_SIGNS_CONFLICT`）录入心率、血压、呼吸、体温、血氧及可选体重身高，或用 `record-risk-assessment`（冲突返回 `INPATIENT_RISK_ASSESSMENT_CONFLICT`）录入床旁专病风险事实（`killipClass`、`cardiacArrestOnAdmission`、`anginaEpisodes24h`、`stSegmentDeviation`、`aspirinUsedLast7Days`、`smokingStatus`、`familyHistoryPrematureCad`、`knownCoronaryStenosisGe50`、`priorBleedingHistory`；未传字段保持原值或未记录）；`clinical-scores` 仅按已落库客观记录返回六项确定性算子与缺项 `missingInputs`。
 
-`vital-signs.json` 与 `inpatient-risk-assessment.json` 合成示例：
+`vital-signs.json` 与 `inpatient-risk-assessment.json` 合成示例（`priorBleedingHistory` 取 `"spontaneous" | "non-spontaneous" | "negative"`，仅自发性出血计入 PRECISE-DAPT 出血史，外伤或手术出血填 `"non-spontaneous"`）：
 
 ```json
 {

@@ -7,7 +7,7 @@ export type KillipClass = z.infer<typeof killipClassSchema>
 export const smokingStatusSchema = z.enum(['current', 'former', 'never'])
 export type SmokingStatus = z.infer<typeof smokingStatusSchema>
 
-export const priorBleedingHistorySchema = z.enum(['positive', 'negative'])
+export const priorBleedingHistorySchema = z.enum(['spontaneous', 'non-spontaneous', 'negative'])
 export type PriorBleedingHistory = z.infer<typeof priorBleedingHistorySchema>
 
 export const clinicalRiskAssessmentValuesSchema = z.object({
