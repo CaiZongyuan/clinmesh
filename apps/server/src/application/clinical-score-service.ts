@@ -2779,10 +2779,6 @@ export class ClinicalScoreService {
     const patientOrders = z.array(z.object({
       catalog_item_id: z.string(),
       display: z.string(),
-      earliest_administration_id: z.string().nullable(),
-      earliest_completed_scheduled_for: z.string().nullable(),
-      latest_administration_id: z.string().nullable(),
-      latest_completed_scheduled_for: z.string().nullable(),
       order_id: z.string(),
       signed_at: z.string(),
       state: z.string(),
@@ -2790,41 +2786,7 @@ export class ClinicalScoreService {
       version: z.number(),
     })).parse(
       this.#database.driver.prepare(`
-        SELECT o.order_id, o.catalog_item_id, o.display, o.state, o.version, o.signed_at, o.stopped_at,
-               (SELECT e.scheduled_for
-                  FROM inpatient_execution e
-                 WHERE e.workspace_id = o.workspace_id
-                   AND e.epoch = o.epoch
-                   AND e.order_id = o.order_id
-                   AND e.status = 'completed'
-                 ORDER BY julianday(e.scheduled_for) ASC, e.execution_id ASC
-                 LIMIT 1) AS earliest_completed_scheduled_for,
-               (SELECT e.administration_id
-                  FROM inpatient_execution e
-                 WHERE e.workspace_id = o.workspace_id
-                   AND e.epoch = o.epoch
-                   AND e.order_id = o.order_id
-                   AND e.status = 'completed'
-                   AND e.administration_id IS NOT NULL
-                 ORDER BY julianday(e.scheduled_for) ASC, e.execution_id ASC
-                 LIMIT 1) AS earliest_administration_id,
-               (SELECT e.scheduled_for
-                  FROM inpatient_execution e
-                 WHERE e.workspace_id = o.workspace_id
-                   AND e.epoch = o.epoch
-                   AND e.order_id = o.order_id
-                   AND e.status = 'completed'
-                 ORDER BY julianday(e.scheduled_for) DESC, e.execution_id DESC
-                 LIMIT 1) AS latest_completed_scheduled_for,
-               (SELECT e.administration_id
-                  FROM inpatient_execution e
-                 WHERE e.workspace_id = o.workspace_id
-                   AND e.epoch = o.epoch
-                   AND e.order_id = o.order_id
-                   AND e.status = 'completed'
-                   AND e.administration_id IS NOT NULL
-                 ORDER BY julianday(e.scheduled_for) DESC, e.execution_id DESC
-                 LIMIT 1) AS latest_administration_id
+        SELECT o.order_id, o.catalog_item_id, o.display, o.state, o.version, o.signed_at, o.stopped_at
         FROM inpatient_order o
         JOIN inpatient_admission a
           ON a.workspace_id = o.workspace_id
@@ -2834,29 +2796,40 @@ export class ClinicalScoreService {
           AND o.kind = 'medication'
       `).all(context.workspaceId, context.epoch, patientId),
     )
+    const completedExecStmt = this.#database.driver.prepare(`
+      SELECT scheduled_for, administration_id
+      FROM inpatient_execution
+      WHERE workspace_id = ? AND epoch = ? AND order_id = ? AND status = 'completed'
+    `)
     for (const order of patientOrders) {
       seenMedicationRequestIds.add(order.order_id)
       if (!this.#isLipidLoweringMedication(context, order.catalog_item_id, order.display)) continue
+      const completedExecs = z.array(z.object({
+        administration_id: z.string().nullable(),
+        scheduled_for: z.string(),
+      })).parse(completedExecStmt.all(context.workspaceId, context.epoch, order.order_id))
       // An inpatient medication order does not lower serum lipids until at least one dose has been administered
-      if (order.earliest_completed_scheduled_for === null && order.earliest_administration_id === null) {
+      if (completedExecs.length === 0) {
         continue
       }
-      const firstSchedMs =
-        order.earliest_completed_scheduled_for !== null
-          ? Date.parse(order.earliest_completed_scheduled_for)
-          : Number.NaN
-      const startMs =
-        readAdminTimestampMs(order.earliest_administration_id, false)
-        ?? (Number.isFinite(firstSchedMs) ? firstSchedMs : undefined)
-      let terminalMs = order.stopped_at ? Date.parse(order.stopped_at) : Number.NaN
-      if (!Number.isFinite(terminalMs) && order.state === 'completed') {
-        const lastAdminMs = readAdminTimestampMs(order.latest_administration_id, true)
-        if (lastAdminMs !== undefined) {
-          terminalMs = lastAdminMs
-        } else if (order.latest_completed_scheduled_for !== null) {
-          terminalMs = Date.parse(order.latest_completed_scheduled_for)
+      let startMs: number | undefined
+      let maxDoseEndMs: number | undefined
+      for (const exec of completedExecs) {
+        const schedMs = Date.parse(exec.scheduled_for)
+        const fallbackSched = Number.isFinite(schedMs) ? schedMs : undefined
+        const doseStart = readAdminTimestampMs(exec.administration_id, false) ?? fallbackSched
+        const doseEnd = readAdminTimestampMs(exec.administration_id, true) ?? fallbackSched
+        if (doseStart !== undefined && (startMs === undefined || doseStart < startMs)) {
+          startMs = doseStart
+        }
+        if (doseEnd !== undefined && (maxDoseEndMs === undefined || doseEnd > maxDoseEndMs)) {
+          maxDoseEndMs = doseEnd
         }
       }
+      const parsedStop = order.stopped_at ? Date.parse(order.stopped_at) : Number.NaN
+      const terminalMs = Number.isFinite(parsedStop)
+        ? (maxDoseEndMs !== undefined && maxDoseEndMs > parsedStop ? maxDoseEndMs : parsedStop)
+        : (order.state === 'completed' && maxDoseEndMs !== undefined ? maxDoseEndMs : Number.NaN)
       const endMs =
         (order.state === 'stopped' || order.state === 'completed') && Number.isFinite(terminalMs)
           ? terminalMs + LIPID_WASHOUT_MS

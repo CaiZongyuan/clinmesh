@@ -1413,14 +1413,11 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
           ? true
           : undefined
 
-    const hasStemiDx = codeMatchesPrefixes(diagnosisCodes, STEMI_ICD10_PREFIXES)
     const uaNstemiApplicable =
-      !hasStemiDx
-      && (
-        facts.uaNstemiPresentation !== undefined
-          ? facts.uaNstemiPresentation.value
-          : codeMatchesPrefixes(diagnosisCodes, UA_NSTEMI_ICD10_PREFIXES)
-      )
+      facts.uaNstemiPresentation !== undefined
+        ? facts.uaNstemiPresentation.value
+        : !codeMatchesPrefixes(diagnosisCodes, STEMI_ICD10_PREFIXES)
+          && codeMatchesPrefixes(diagnosisCodes, UA_NSTEMI_ICD10_PREFIXES)
     const missing: ClinicalScoreMissingInput[] = []
     if (!uaNstemiApplicable) missing.push('uaNstemiPresentation')
     if (admissionAdultAge === undefined) missing.push('age')

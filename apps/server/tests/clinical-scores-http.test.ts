@@ -1233,5 +1233,76 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       tierCode: 'high',
       value: 2.6,
     })
+
+    // Out-of-order overdue execution administration (08:00 scheduled administered at 22:00 after 20:00 scheduled administered at 21:00)
+    // selects 21:00 as actual earliest dose so a 21:30 lipid specimen is NOT misclassified as pre-exposure baseline
+    const outOfOrderStay = await fixture.admitSyntheticCase(['I10.x09'], 'bed-general-1')
+    const outOfOrderId = uuidv7()
+    fixture.runtime.database.driver.prepare(`
+      INSERT INTO inpatient_order (
+        workspace_id, epoch, order_id, admission_id, kind, duration, catalog_item_id, catalog_version,
+        display, dose_text, dose_quantity, unit, frequency_code, price_fen, state, organization_id, signed_at, signed_by
+      ) VALUES (?, ?, ?, ?, 'medication', 'long', 'medication-pci-atorvastatin', 1, '阿托伐他汀钙片', '20 mg', 1, '片', 'BID', 70, 'verified', 'hospital-synthetic-renhe', '2026-08-24T07:30:00+08:00', 'actor-test')
+    `).run(scenario.workspaceId, scenario.epoch, outOfOrderId, outOfOrderStay.admissionId)
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authoredOn: '2026-08-24T07:30:00+08:00',
+      encounter: { reference: `Encounter/${outOfOrderStay.admissionId}` },
+      id: outOfOrderId,
+      intent: 'order',
+      medication: { concept: { text: '阿托伐他汀钙片' } },
+      resourceType: 'MedicationRequest',
+      status: 'active',
+      subject: { reference: `Patient/${outOfOrderStay.patientId}` },
+    })
+    const lateMorningAdmin = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      encounter: { reference: `Encounter/${outOfOrderStay.admissionId}` },
+      id: uuidv7(),
+      medication: { reference: { reference: 'Medication/medication-pci-atorvastatin' } },
+      occurenceDateTime: '2026-08-24T22:00:00+08:00',
+      recorded: '2026-08-24T22:00:00+08:00',
+      request: { reference: `MedicationRequest/${outOfOrderId}` },
+      resourceType: 'MedicationAdministration',
+      status: 'completed',
+      subject: { reference: `Patient/${outOfOrderStay.patientId}` },
+    })
+    const earlierEveningAdmin = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      encounter: { reference: `Encounter/${outOfOrderStay.admissionId}` },
+      id: uuidv7(),
+      medication: { reference: { reference: 'Medication/medication-pci-atorvastatin' } },
+      occurenceDateTime: '2026-08-24T21:00:00+08:00',
+      recorded: '2026-08-24T21:00:00+08:00',
+      request: { reference: `MedicationRequest/${outOfOrderId}` },
+      resourceType: 'MedicationAdministration',
+      status: 'completed',
+      subject: { reference: `Patient/${outOfOrderStay.patientId}` },
+    })
+    fixture.runtime.database.driver.prepare(`
+      INSERT INTO inpatient_execution (workspace_id, epoch, execution_id, order_id, scheduled_for, status, version, administration_id)
+      VALUES (?, ?, ?, ?, '2026-08-24T08:00:00+08:00', 'completed', 2, ?),
+             (?, ?, ?, ?, '2026-08-24T20:00:00+08:00', 'completed', 2, ?)
+    `).run(
+      scenario.workspaceId, scenario.epoch, uuidv7(), outOfOrderId, lateMorningAdmin.id,
+      scenario.workspaceId, scenario.epoch, uuidv7(), outOfOrderId, earlierEveningAdmin.id,
+    )
+    // Specimen at 21:30 is AFTER the 21:00 dose -> treated (no untreated baseline -> incomplete rather than low-risk)
+    insertSyntheticLabReport(fixture, {
+      caseId: outOfOrderStay.admissionId,
+      encounterId: outOfOrderStay.admissionId,
+      epoch: scenario.epoch,
+      issuedAt: '2026-08-24T21:30:00+08:00',
+      patientId: outOfOrderStay.patientId,
+      results: [
+        { code: '1700404A', display: '血清肌酐', high: 84, unit: 'umol/L', value: 65 },
+        { code: '2000104A', display: '总胆固醇', high: 5.2, unit: 'mmol/L', value: 3.8 },
+        { code: '2000304A', display: '高密度脂蛋白胆固醇', high: 1.8, unit: 'mmol/L', value: 1.3 },
+        { code: '2000404A', display: '低密度脂蛋白胆固醇', high: 3.4, unit: 'mmol/L', value: 2.0 },
+      ],
+      workspaceId: scenario.workspaceId,
+    })
+    const outOfOrderScores = await fixture.read('inpatient-doctor', `${outOfOrderStay.path}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(outOfOrderScores.scores.find(s => s.id === 'ascvd-ldl-target')).toMatchObject({
+      missingInputs: expect.arrayContaining(['ldlCholesterol']),
+      status: 'incomplete',
+    })
   }, 120_000)
 })
