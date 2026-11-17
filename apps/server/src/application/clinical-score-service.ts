@@ -109,6 +109,7 @@ const observationResourceSchema = z.object({
     text: z.string().optional(),
   }).loose().optional(),
   effectiveDateTime: z.string().optional(),
+  encounter: z.object({ reference: z.string().optional() }).loose().optional(),
   id: z.string().min(1),
   interpretation: z.array(z.object({
     coding: z.array(codingItemSchema).optional(),
@@ -226,6 +227,7 @@ const medicationRequestResourceSchema = z.object({
     }).loose().optional(),
   }).loose()).optional(),
   effectiveDosePeriod: z.object({ end: z.string().optional(), start: z.string().optional() }).loose().optional(),
+  encounter: z.object({ reference: z.string().optional() }).loose().optional(),
   id: z.string().min(1),
   medication: z.object({
     concept: z.object({ coding: z.array(codingItemSchema).optional(), text: z.string().optional() }).loose().optional(),
@@ -355,9 +357,29 @@ function extractEncounterStartIso(rawEncounter: unknown): string | undefined {
   const parsed = z.object({
     actualPeriod: z.object({ start: z.string().optional() }).loose().optional(),
     period: z.object({ start: z.string().optional() }).loose().optional(),
+    plannedStartDate: z.string().optional(),
   }).loose().safeParse(rawEncounter)
   if (!parsed.success) return undefined
-  return parsed.data.actualPeriod?.start ?? parsed.data.period?.start
+  return parsed.data.actualPeriod?.start ?? parsed.data.period?.start ?? parsed.data.plannedStartDate
+}
+
+function extractEncounterEndIso(rawEncounter: unknown): string | undefined {
+  const parsed = z.object({
+    actualPeriod: z.object({ end: z.string().optional() }).loose().optional(),
+    period: z.object({ end: z.string().optional() }).loose().optional(),
+  }).loose().safeParse(rawEncounter)
+  if (!parsed.success) return undefined
+  return parsed.data.actualPeriod?.end ?? parsed.data.period?.end
+}
+
+function normalizeCutoffIso(iso: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T23:59:59.999+08:00` : iso
+}
+
+function parseResourceTimestampMs(iso: string | undefined): number | undefined {
+  if (!iso) return undefined
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? Date.parse(`${iso}T00:00:00+08:00`) : Date.parse(iso)
+  return Number.isFinite(parsed) ? parsed : undefined
 }
 
 function hasPositiveStDeviationText(text: string): boolean {
@@ -804,8 +826,9 @@ export class ClinicalScoreService {
     return bundle
   }
 
-  outpatientSnapshot(context: ActorContext, caseId: string): ClinicalScoreBundle {
+  outpatientSnapshot(context: ActorContext, caseId: string, referenceCutoffIso?: string): ClinicalScoreBundle {
     this.#outpatientContext.requireDoctorCase(context, caseId)
+    this.#outpatientContext.assertCaseResponsibility(context, caseId)
     const row = z.object({
       case_id: z.string(),
       diagnostic_report_id: z.string().nullable(),
@@ -814,13 +837,19 @@ export class ClinicalScoreService {
       triage_observation_id: z.string().nullable(),
       triage_observation_version: z.string().nullable(),
       triage_recorded_at: z.string().nullable(),
+      visit_date: z.string().nullable(),
       vital_json: z.string().nullable(),
     }).optional().parse(
       this.#database.driver.prepare(`
         SELECT outpatient_case.case_id, outpatient_case.patient_id, outpatient_case.encounter_id,
-          outpatient_case.diagnostic_report_id, triage.vital_json, triage.recorded_at AS triage_recorded_at,
+          outpatient_case.diagnostic_report_id, registration.visit_date,
+          triage.vital_json, triage.recorded_at AS triage_recorded_at,
           triage.observation_id AS triage_observation_id, triage.observation_version AS triage_observation_version
         FROM outpatient_case
+        LEFT JOIN registration
+          ON registration.workspace_id = outpatient_case.workspace_id
+         AND registration.epoch = outpatient_case.epoch
+         AND registration.registration_id = outpatient_case.registration_id
         LEFT JOIN triage_record AS triage
           ON triage.workspace_id = outpatient_case.workspace_id
          AND triage.epoch = outpatient_case.epoch
@@ -830,7 +859,12 @@ export class ClinicalScoreService {
     )
     if (row === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case was not found')
     const encounter = this.#fhir.read(context, 'Encounter', row.encounter_id)
-    const now = this.#outpatientContext.virtualTime(context)
+    const virtualNow = this.#outpatientContext.virtualTime(context)
+    const derivedCutoffIso =
+      encounter.status === 'completed'
+        ? (extractEncounterEndIso(encounter) ?? (row.visit_date ? `${row.visit_date}T23:59:59.999+08:00` : virtualNow))
+        : virtualNow
+    const now = normalizeCutoffIso(referenceCutoffIso ?? derivedCutoffIso)
     let vitalSummary: ClinicalScoreVitalSummary | null = null
     if (row.vital_json !== null && row.triage_recorded_at !== null) {
       const triage = triageRecordContentSchema.parse(JSON.parse(row.vital_json))
@@ -860,6 +894,7 @@ export class ClinicalScoreService {
       caseId: row.case_id,
       encounterId: row.encounter_id,
       encounterVersion: encounter.meta?.versionId ?? '1',
+      evaluatedAt: virtualNow,
       inpatient: undefined,
       legacyDiagnosticReportId: row.diagnostic_report_id,
       now,
@@ -869,11 +904,21 @@ export class ClinicalScoreService {
     })
   }
 
-  inpatientSnapshot(inpatient: InpatientService, context: ActorContext, admissionId: string): ClinicalScoreBundle {
+  inpatientSnapshot(
+    inpatient: InpatientService,
+    context: ActorContext,
+    admissionId: string,
+    referenceTimeIso?: string,
+  ): ClinicalScoreBundle {
     inpatient.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     const binding = inpatient.readAdmissionBinding(context, admissionId)
     const encounter = this.#fhir.read(context, 'Encounter', admissionId)
-    const now = inpatient.virtualTime(context)
+    const virtualNow = inpatient.virtualTime(context)
+    const departedAt =
+      binding.status === 'departed'
+        ? (inpatient.discharge.activeDeparture(context, admissionId)?.virtualTime ?? extractEncounterEndIso(encounter))
+        : undefined
+    const now = normalizeCutoffIso(referenceTimeIso ?? departedAt ?? virtualNow)
     const initialVitals = this.initialInpatientVitalSigns(context, admissionId)
     const latestVitals = this.latestInpatientVitalSigns(context, admissionId)
     const toVitalSummary = (v: InpatientVitalSignsRecord | undefined): ClinicalScoreVitalSummary | null =>
@@ -908,6 +953,7 @@ export class ClinicalScoreService {
       latestWeightVitalSummary,
       encounterId: admissionId,
       encounterVersion: encounter.meta?.versionId ?? '1',
+      evaluatedAt: virtualNow,
       inpatient,
       legacyDiagnosticReportId: null,
       now,
@@ -1152,6 +1198,24 @@ export class ClinicalScoreService {
     return null
   }
 
+  #resolveExternalEncounterStartMs(
+    context: RepositoryContext,
+    encRef: string | undefined,
+    cache: Map<string, number | undefined>,
+  ): number | undefined {
+    const encId = encRef?.startsWith('Encounter/') ? encRef.slice('Encounter/'.length) : undefined
+    if (!encId) return undefined
+    if (cache.has(encId)) return cache.get(encId)
+    let startMs: number | undefined
+    try {
+      startMs = parseResourceTimestampMs(extractEncounterStartIso(this.#fhir.read(context, 'Encounter', encId)))
+    } catch {
+      startMs = undefined
+    }
+    cache.set(encId, startMs)
+    return startMs
+  }
+
   #evaluateSnapshot(
     context: ActorContext,
     options: {
@@ -1160,6 +1224,7 @@ export class ClinicalScoreService {
       caseId: string
       encounterId: string
       encounterVersion: string
+      evaluatedAt: string
       inpatient: InpatientService | undefined
       latestHeightVitalSummary?: ClinicalScoreVitalSummary | null
       latestWeightVitalSummary?: ClinicalScoreVitalSummary | null
@@ -1235,6 +1300,7 @@ export class ClinicalScoreService {
           }
 
     const birthDateStr = typeof patient.birthDate === 'string' ? patient.birthDate : undefined
+    const cutoffMs = Date.parse(options.now)
     const labs = this.#extractLaboratoryAnalytes(context, options.caseId, options.legacyDiagnosticReportId)
     let ckdChronicity: {
       ckdLt30Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
@@ -1252,10 +1318,27 @@ export class ClinicalScoreService {
         currentEgfr = undefined
       }
       if (currentEgfr !== undefined && currentEgfr < 60) {
-        ckdChronicity = this.#extractPatientEgfrChronicity(context, options.patientId, birthDateStr, age, sex)
+        ckdChronicity = this.#extractPatientEgfrChronicity(
+          context,
+          options.patientId,
+          options.encounterId,
+          birthDateStr,
+          age,
+          sex,
+          cutoffMs,
+        )
       }
     }
-    const history = this.#extractClinicalHistoryFlags(context, options.patientId, birthDateStr, sex, options.inpatient, options.caseId)
+    const history = this.#extractClinicalHistoryFlags(
+      context,
+      options.patientId,
+      options.encounterId,
+      birthDateStr,
+      sex,
+      options.inpatient,
+      options.caseId,
+      cutoffMs,
+    )
     const encounterApplicability = this.#extractEncounterScoreApplicability(
       context,
       options.patientId,
@@ -1267,6 +1350,7 @@ export class ClinicalScoreService {
     const onAntihypertensive = this.#extractAntihypertensiveFlag(
       context,
       options.patientId,
+      options.encounterId,
       options.inpatient,
       options.caseId,
       options.now,
@@ -1275,6 +1359,8 @@ export class ClinicalScoreService {
     const lipidStratification = this.#extractPatientLipidStratification(
       context,
       options.patientId,
+      options.encounterId,
+      options.caseId,
       options.now,
       labs.latestLipidObservationMs,
     )
@@ -1425,7 +1511,7 @@ export class ClinicalScoreService {
     return {
       encounterId: options.encounterId,
       encounterVersion: options.encounterVersion,
-      evaluatedAt: options.now,
+      evaluatedAt: options.evaluatedAt,
       riskAssessment,
       scores: evaluateClinicalScores(facts),
       vitalSigns: options.vitalSummary,
@@ -1587,6 +1673,8 @@ export class ClinicalScoreService {
         : (uaNstemiSource ?? (genericAcsSource !== undefined && hasExplicitNonStElevationEcg ? genericAcsSource : undefined))
 
     // 3. Check PCI / coronary stenting + DAPT indication for PRECISE-DAPT
+    const nowMs = Date.parse(nowIso)
+    const encounterTimeCache = new Map<string, number | undefined>()
     let pciStentEncounterSource: ClinicalScoreSourceReference | undefined
     let priorCoronaryStentSource: ClinicalScoreSourceReference | undefined
     let hasActiveP2y12 = false
@@ -1668,6 +1756,10 @@ export class ClinicalScoreService {
             if (parsed.data.encounter?.reference === `Encounter/${encounterId}`) {
               pciStentEncounterSource ??= ref
             } else if (parsed.data.status === 'completed') {
+              const procTsMs =
+                parseResourceTimestampMs(parsed.data.performedDateTime ?? parsed.data.performedPeriod?.start)
+                ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
+              if (Number.isFinite(nowMs) && procTsMs !== undefined && procTsMs > nowMs) continue
               priorCoronaryStentSource ??= ref
             }
           }
@@ -1684,6 +1776,12 @@ export class ClinicalScoreService {
         for (const raw of page.resources) {
           const parsed = conditionResourceSchema.safeParse(raw)
           if (!parsed.success || parsed.data.verificationStatus?.coding?.[0]?.code !== 'confirmed') continue
+          if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs)) {
+            const condTsMs =
+              parseResourceTimestampMs(parsed.data.recordedDate ?? parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start)
+              ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
+            if (condTsMs !== undefined && condTsMs > nowMs) continue
+          }
           const codes = (parsed.data.code?.coding ?? []).map(c => c.code?.trim().toUpperCase() ?? '')
           const text = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
           if (
@@ -1704,7 +1802,6 @@ export class ClinicalScoreService {
     }
 
     if (pciStentEncounterSource === undefined && priorCoronaryStentSource !== undefined && (!hasActiveP2y12 || !hasActiveAspirin)) {
-      const nowMs = Date.parse(nowIso)
       const withdrawnIds = new Set(
         z.array(z.object({ medication_request_id: z.string() })).parse(
           this.#database.driver.prepare(`
@@ -1724,6 +1821,12 @@ export class ClinicalScoreService {
         for (const raw of page.resources) {
           const parsed = medicationRequestResourceSchema.safeParse(raw)
           if (!parsed.success || parsed.data.status !== 'active' || withdrawnIds.has(parsed.data.id)) continue
+          if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs)) {
+            const medTsMs =
+              parseResourceTimestampMs(parsed.data.authoredOn)
+              ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
+            if (medTsMs !== undefined && medTsMs > nowMs) continue
+          }
           const daptBoundsMs = resolveMedicationBoundsDurationMs(
             parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration,
           )
@@ -1775,9 +1878,11 @@ export class ClinicalScoreService {
   #extractPatientEgfrChronicity(
     context: RepositoryContext,
     patientId: string,
+    encounterId: string,
     birthDateStr: string | undefined,
     fallbackAgeYears: number,
     sex: 'male' | 'female',
+    cutoffMs: number,
   ): {
     ckdLt30Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
     ckdLt60Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
@@ -1843,8 +1948,9 @@ export class ClinicalScoreService {
           continue
         }
         const rawTs = obs.data.effectiveDateTime ?? reportIssuedByObsId.get(obs.data.id)
-        const tsMs = rawTs ? Date.parse(rawTs) : Number.NaN
+        const tsMs = parseResourceTimestampMs(rawTs) ?? Number.NaN
         if (!Number.isFinite(tsMs)) continue
+        if (obs.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(cutoffMs) && tsMs > cutoffMs) continue
         const obsAge =
           rawTs && birthDateStr
             ? (completedAgeYears(birthDateStr, rawTs.slice(0, 10)) ?? fallbackAgeYears)
@@ -2239,11 +2345,14 @@ export class ClinicalScoreService {
   #extractClinicalHistoryFlags(
     context: ActorContext,
     patientId: string,
+    encounterId: string,
     patientBirthDate: string | undefined,
     patientSex: 'male' | 'female' | undefined,
     inpatient: InpatientService | undefined,
     caseId: string,
+    cutoffMs: number,
   ) {
+    const encounterTimeCache = new Map<string, number | undefined>()
     const confirmedDiagnoses: ClinicalScoreObjectiveFacts['confirmedDiagnoses'] = []
     let knownCad: ClinicalScoreObjectiveFacts['knownCoronaryRevascularizationOrStenosisGe50']
     let priorCoronaryRevascularization: ClinicalScoreObjectiveFacts['priorCoronaryRevascularization']
@@ -2298,6 +2407,12 @@ export class ClinicalScoreService {
         const verStatus = parsed.data.verificationStatus?.coding?.[0]?.code
         const clinStatus = parsed.data.clinicalStatus?.coding?.[0]?.code
         if (verStatus !== 'confirmed') continue
+        if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(cutoffMs)) {
+          const condTsMs =
+            parseResourceTimestampMs(parsed.data.recordedDate ?? parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start)
+            ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
+          if (condTsMs !== undefined && condTsMs > cutoffMs) continue
+        }
         const codes = [...new Set((parsed.data.code?.coding ?? []).map(item => item.code?.trim() ?? '').filter(Boolean))]
         const text = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(item => item.display)].filter(Boolean).join(' ')
         const isHistoricalAscvdOrRevasc =
@@ -2429,6 +2544,12 @@ export class ClinicalScoreService {
       for (const raw of page.resources) {
         const parsed = procedureResourceSchema.safeParse(raw)
         if (!parsed.success || parsed.data.status !== 'completed') continue
+        if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(cutoffMs)) {
+          const procTsMs =
+            parseResourceTimestampMs(parsed.data.performedDateTime ?? parsed.data.performedPeriod?.start)
+            ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
+          if (procTsMs !== undefined && procTsMs > cutoffMs) continue
+        }
         const codes = (parsed.data.code?.coding ?? []).map(item => item.code ?? '').filter(Boolean)
         const text = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(item => item.display)].filter(Boolean).join(' ')
         if (
@@ -2528,6 +2649,7 @@ export class ClinicalScoreService {
   #extractAntihypertensiveFlag(
     context: ActorContext,
     patientId: string,
+    encounterId: string,
     inpatient: InpatientService | undefined,
     caseId: string,
     nowIso: string,
@@ -2562,6 +2684,7 @@ export class ClinicalScoreService {
     }
 
     const nowMs = Date.parse(nowIso)
+    const encounterTimeCache = new Map<string, number | undefined>()
     const withdrawnIds = new Set(
       z.array(z.object({ medication_request_id: z.string() })).parse(
         this.#database.driver.prepare(`
@@ -2583,6 +2706,12 @@ export class ClinicalScoreService {
         const parsed = medicationRequestResourceSchema.safeParse(raw)
         if (!parsed.success || parsed.data.status !== 'active') continue
         if (withdrawnIds.has(parsed.data.id)) continue
+        if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs)) {
+          const medTsMs =
+            parseResourceTimestampMs(parsed.data.authoredOn)
+            ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
+          if (medTsMs !== undefined && medTsMs > nowMs) continue
+        }
         const htnBoundsMs = resolveMedicationBoundsDurationMs(
           parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration,
         )
@@ -2667,6 +2796,8 @@ export class ClinicalScoreService {
   #extractPatientLipidStratification(
     context: ActorContext,
     patientId: string,
+    encounterId: string,
+    caseId: string,
     nowIso: string,
     latestCurrentCaseLipidMs: number | undefined,
   ): {
@@ -2679,6 +2810,7 @@ export class ClinicalScoreService {
     pretreatmentTotalCholesterol?: { source: ClinicalScoreSourceReference; value: { unit: string; value: number } }
   } {
     const nowMs = Date.parse(nowIso)
+    const encounterTimeCache = new Map<string, number | undefined>()
     const exposures: Array<{
       endMs: number
       source: ClinicalScoreSourceReference
@@ -2720,6 +2852,7 @@ export class ClinicalScoreService {
     }
 
     const patientOrders = z.array(z.object({
+      admission_id: z.string(),
       catalog_item_id: z.string(),
       display: z.string(),
       order_id: z.string(),
@@ -2729,7 +2862,7 @@ export class ClinicalScoreService {
       version: z.number(),
     })).parse(
       this.#database.driver.prepare(`
-        SELECT o.order_id, o.catalog_item_id, o.display, o.state, o.version, o.signed_at, o.stopped_at
+        SELECT o.admission_id, o.order_id, o.catalog_item_id, o.display, o.state, o.version, o.signed_at, o.stopped_at
         FROM inpatient_order o
         JOIN inpatient_admission a
           ON a.workspace_id = o.workspace_id
@@ -2768,6 +2901,9 @@ export class ClinicalScoreService {
         if (doseEnd !== undefined && (maxDoseEndMs === undefined || doseEnd > maxDoseEndMs)) {
           maxDoseEndMs = doseEnd
         }
+      }
+      if (order.admission_id !== caseId && Number.isFinite(nowMs) && startMs !== undefined && startMs > nowMs) {
+        continue
       }
       const parsedStop = order.stopped_at ? Date.parse(order.stopped_at) : Number.NaN
       const terminalMs = maxDoseEndMs !== undefined ? maxDoseEndMs : parsedStop
@@ -2820,8 +2956,12 @@ export class ClinicalScoreService {
           parsed.data.effectiveDosePeriod?.start
           ?? parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsPeriod?.start
           ?? parsed.data.authoredOn
-        const parsedStart = rawStartIso ? Date.parse(rawStartIso) : Number.NaN
-        const startMs = Number.isFinite(parsedStart) ? parsedStart : undefined
+        const startMs =
+          parseResourceTimestampMs(rawStartIso)
+          ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
+        if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs) && startMs !== undefined && startMs > nowMs) {
+          continue
+        }
         const boundsMs = resolveMedicationBoundsDurationMs(
           parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
           ?? parsed.data.dispenseRequest?.expectedSupplyDuration,
@@ -3013,8 +3153,10 @@ export class ClinicalScoreService {
         if (quantity === undefined || unit === undefined) continue
         const reportMeta = reportMetaByObsId.get(obs.data.id)
         const rawTs = obs.data.effectiveDateTime ?? reportMeta?.issued
-        const tsMs = rawTs ? Date.parse(rawTs) : Number.NaN
-        const timestampMs = Number.isFinite(tsMs) ? tsMs : undefined
+        const timestampMs = parseResourceTimestampMs(rawTs)
+        if (obs.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs) && timestampMs !== undefined && timestampMs > nowMs) {
+          continue
+        }
         if (isTreatedTimestamp(timestampMs) || timestampMs === undefined) continue
         const codes = new Set(
           (obs.data.code?.coding ?? [])

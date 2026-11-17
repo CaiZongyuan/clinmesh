@@ -629,8 +629,24 @@ export function calculateAscvdLdlTarget(input: {
   const evaluateGoal = (target: number): LdlGoalEvaluation | undefined => {
     if (ldlMmolL === undefined) return undefined
     const currentLdlMmolL = roundTwoDecimals(ldlMmolL)
+    if (currentLdlMmolL >= target) {
+      return {
+        atGoal: false,
+        currentLdlMmolL,
+        targetLdlMmolL: target,
+      }
+    }
+    if (target <= 1.8) {
+      if (preLdlMmolL === undefined) return undefined
+      const achievedMoreThanHalfReduction = (preLdlMmolL - ldlMmolL) / preLdlMmolL > 0.5 + 1e-12
+      return {
+        atGoal: achievedMoreThanHalfReduction,
+        currentLdlMmolL,
+        targetLdlMmolL: target,
+      }
+    }
     return {
-      atGoal: currentLdlMmolL < target,
+      atGoal: true,
       currentLdlMmolL,
       targetLdlMmolL: target,
     }
@@ -1646,18 +1662,30 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
         ascvdResult = buildIncomplete('ascvd-ldl-target', normalizedMissing, sources)
       } else {
         const meta = SCORE_METADATA['ascvd-ldl-target']
+        const currentLdlRounded =
+          ldlValid === undefined
+            ? undefined
+            : roundTwoDecimals(normalizeLipidMmolL(ldlValid.value.value, ldlValid.value.unit, 'ldl'))
         const goalNoteZh =
           calc.ldlGoalEvaluation === undefined
-            ? ''
+            ? currentLdlRounded !== undefined && calc.value <= 1.8
+              ? `（当前 LDL-C ${currentLdlRounded} mmol/L，需治疗前基线确认 >50% 降幅）`
+              : ''
             : calc.ldlGoalEvaluation.atGoal
               ? `（当前 LDL-C ${calc.ldlGoalEvaluation.currentLdlMmolL} mmol/L，已达标）`
-              : `（当前 LDL-C ${calc.ldlGoalEvaluation.currentLdlMmolL} mmol/L，未达标）`
+              : calc.ldlGoalEvaluation.currentLdlMmolL < calc.ldlGoalEvaluation.targetLdlMmolL
+                ? `（当前 LDL-C ${calc.ldlGoalEvaluation.currentLdlMmolL} mmol/L，未达标：较基线降幅不足 50%）`
+                : `（当前 LDL-C ${calc.ldlGoalEvaluation.currentLdlMmolL} mmol/L，未达标）`
         const goalNoteEn =
           calc.ldlGoalEvaluation === undefined
-            ? ''
+            ? currentLdlRounded !== undefined && calc.value <= 1.8
+              ? ` (Current LDL-C ${currentLdlRounded} mmol/L, baseline needed to confirm >50% reduction)`
+              : ''
             : calc.ldlGoalEvaluation.atGoal
               ? ` (Current LDL-C ${calc.ldlGoalEvaluation.currentLdlMmolL} mmol/L, at goal)`
-              : ` (Current LDL-C ${calc.ldlGoalEvaluation.currentLdlMmolL} mmol/L, above goal)`
+              : calc.ldlGoalEvaluation.currentLdlMmolL < calc.ldlGoalEvaluation.targetLdlMmolL
+                ? ` (Current LDL-C ${calc.ldlGoalEvaluation.currentLdlMmolL} mmol/L, not at goal: <=50% reduction from baseline)`
+                : ` (Current LDL-C ${calc.ldlGoalEvaluation.currentLdlMmolL} mmol/L, above goal)`
         ascvdResult = {
           id: 'ascvd-ldl-target',
           ...(calc.ldlGoalEvaluation === undefined ? {} : { ldlGoalEvaluation: calc.ldlGoalEvaluation }),

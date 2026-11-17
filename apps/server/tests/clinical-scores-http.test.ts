@@ -1387,5 +1387,49 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       tierCode: 'high',
       value: 2.6,
     })
+
+    // Non-responsible outpatient doctor cannot read another doctor's outpatient clinical scores (returns 403)
+    const prevResp = fixture.runtime.database.driver.prepare(`
+      SELECT practitioner_role_id FROM outpatient_case_responsibility
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(scenario.workspaceId, scenario.epoch, lipidCase.caseId) as { practitioner_role_id: string }
+    fixture.runtime.database.driver.prepare(`
+      UPDATE outpatient_case_responsibility SET practitioner_role_id = 'practitioner-role-administrator'
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).run(scenario.workspaceId, scenario.epoch, lipidCase.caseId)
+    const crossDoctorRead = await fixture.request('doctor', `/api/his/v1/doctor/cases/${lipidCase.caseId}/clinical-scores`)
+    expect(crossDoctorRead.status).toBe(403)
+    fixture.runtime.database.driver.prepare(`
+      UPDATE outpatient_case_responsibility SET practitioner_role_id = ?
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).run(prevResp.practitioner_role_id, scenario.workspaceId, scenario.epoch, lipidCase.caseId)
+
+    // Completed outpatient encounter evaluates longitudinal Conditions at its actualPeriod.end cutoff rather than leaking future visit diagnoses
+    const currentLipidEnc = fixture.runtime.fhir.read({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, 'Encounter', lipidReg.encounterId)
+    fixture.runtime.fhir.update(
+      { epoch: scenario.epoch, workspaceId: scenario.workspaceId },
+      {
+        ...currentLipidEnc,
+        actualPeriod: { end: '2026-08-24T13:00:00+08:00', start: '2026-08-24T09:00:00+08:00' },
+        status: 'completed',
+      },
+      currentLipidEnc.meta?.versionId ?? '1',
+    )
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
+      code: { coding: [{ code: 'I21.0', display: '急性前壁心肌梗死' }], text: '急性前壁心肌梗死' },
+      id: uuidv7(),
+      recordedDate: '2026-09-15T10:00:00+08:00',
+      resourceType: 'Condition',
+      subject: { reference: `Patient/${lipidPatient.id}` },
+      verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
+    })
+    const archivedLipidScores = await fixture.read('doctor', `/api/his/v1/doctor/cases/${lipidCase.caseId}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(archivedLipidScores.scores.find(s => s.id === 'ascvd-ldl-target')).toMatchObject({
+      ldlGoalEvaluation: { atGoal: true, currentLdlMmolL: 2.1, targetLdlMmolL: 2.6 },
+      status: 'complete',
+      tierCode: 'high',
+      value: 2.6,
+    })
   }, 120_000)
 })
