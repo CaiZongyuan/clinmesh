@@ -365,6 +365,24 @@ describe('six deterministic clinical score formulas', () => {
       value: 2.6,
     })
 
+    // 2023 Chinese lipid guideline middle LDL-C band starts at 2.4 mmol/L (2.4–<3.4): hypertensive 50yo male (1 factor) + LDL-C 2.5 -> moderate (<2.6)
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 50,
+        confirmedDiagnosisCodes: ['I10'],
+        egfrMlMin173m2: 88,
+        hdlCholesterol: { unit: 'mmol/L', value: 1.2 },
+        ldlCholesterol: { unit: 'mmol/L', value: 2.5 },
+        sex: 'male',
+        smokingStatus: 'never',
+        systolicBpMmHg: 144,
+      }),
+    ).toMatchObject({
+      status: 'complete',
+      tierCode: 'moderate',
+      value: 2.6,
+    })
+
     // 21-cell matrix: non-hypertensive 50yo male smoker with HDL-C 0.8 (3 factors) + LDL-C 4.0 (band 2) -> moderate (<2.6 mmol/L)
     const primaryModerateNoHtn = calculateAscvdLdlTarget({
       ageYears: 50,
