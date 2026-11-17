@@ -493,7 +493,7 @@ function resolveCkdChronicityStates(
   const hasAkiDx = normalized.some(code => code.startsWith('N17'))
 
   let lt60: 'confirmed' | 'excluded' | 'unknown'
-  if (hasStage4To5Dx || hasStage3Dx || (hasGenericCkdDx && !hasAkiDx && explicitLt60 !== 'excluded')) {
+  if (hasStage4To5Dx || hasStage3Dx || (hasGenericCkdDx && explicitLt60 !== 'excluded')) {
     lt60 = 'confirmed'
   } else if (explicitLt60 === 'confirmed') {
     lt60 = 'confirmed'

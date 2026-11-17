@@ -1262,7 +1262,6 @@ export class ClinicalScoreService {
       options.caseId,
       options.inpatient,
       options.now,
-      riskAssessment.values.aspirinUsedLast7Days === true,
     )
     const onAntihypertensive = this.#extractAntihypertensiveFlag(
       context,
@@ -1406,7 +1405,6 @@ export class ClinicalScoreService {
     caseId: string,
     inpatient: InpatientService | undefined,
     nowIso: string,
-    aspirinUsedLast7Days: boolean,
   ): {
     acsPresentation: { source?: ClinicalScoreSourceReference; value: boolean }
     pciDaptIndication: { source?: ClinicalScoreSourceReference; value: boolean }
@@ -1558,7 +1556,7 @@ export class ClinicalScoreService {
     let pciStentEncounterSource: ClinicalScoreSourceReference | undefined
     let priorCoronaryStentSource: ClinicalScoreSourceReference | undefined
     let hasActiveP2y12 = false
-    let hasActiveAspirin = aspirinUsedLast7Days
+    let hasActiveAspirin = false
     let activeP2y12Source: ClinicalScoreSourceReference | undefined
 
     const matchesCoronaryStent = (codes: readonly string[], text: string) =>
