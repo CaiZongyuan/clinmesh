@@ -956,12 +956,14 @@ export class ClinicalScoreService {
     values: ClinicalRiskAssessmentValues,
     bedsideObservation: { observationId: string; observationVersion: string } | null,
   ): EffectiveStSegmentDeviation | null {
-    const ecgRow = z.object({
+    const ecgRows = z.array(z.object({
+      authored_at: z.string().nullable(),
       content_json: z.string(),
       diagnostic_report_id: z.string(),
-    }).optional().parse(
+      issued_at: z.string().nullable(),
+    })).parse(
       this.#database.driver.prepare(`
-        SELECT c.diagnostic_report_id, c.content_json
+        SELECT c.diagnostic_report_id, c.content_json, c.issued_at, r.authored_at
         FROM examination_report_content c
         JOIN laboratory_request r
           ON r.workspace_id = c.workspace_id
@@ -975,34 +977,54 @@ export class ClinicalScoreService {
         WHERE c.workspace_id = ? AND c.epoch = ? AND c.case_id = ?
           AND d.exam_code = 'ecg-12-lead'
           AND r.status IN ('reported', 'acknowledged')
-        ORDER BY julianday(c.issued_at) DESC, c.diagnostic_report_id DESC
-        LIMIT 1
-      `).get(context.workspaceId, context.epoch, caseId),
+        ORDER BY julianday(COALESCE(c.issued_at, r.authored_at)) ASC, c.diagnostic_report_id ASC
+      `).all(context.workspaceId, context.epoch, caseId),
     )
 
-    if (ecgRow !== undefined) {
-      const content = investigationResultContentSchema.safeParse(JSON.parse(ecgRow.content_json))
-      if (content.success) {
+    const ecgCandidates = ecgRows
+      .map((ecgRow, seq) => {
         const report = this.#fhir.read(context, 'DiagnosticReport', ecgRow.diagnostic_report_id)
-        const versionId = report.meta?.versionId ?? '1'
-        const leads = content.data.results.filter(item => ['st-t-anterior', 'st-t-inferior', 'st-t-lateral'].includes(item.code))
-        const hasPositiveLead = leads.some(lead => typeof lead.value === 'string' && hasPositiveStDeviationText(lead.value))
-          || hasPositiveStDeviationText(content.data.conclusion)
-        if (hasPositiveLead) {
-          return {
-            source: 'ecg-report',
-            sourceReference: `DiagnosticReport/${ecgRow.diagnostic_report_id}`,
-            value: true,
-            versionId,
-          }
+        const effStr = typeof report.effectiveDateTime === 'string'
+          ? report.effectiveDateTime
+          : typeof report.issued === 'string'
+            ? report.issued
+            : (ecgRow.issued_at ?? ecgRow.authored_at ?? undefined)
+        const tsMs = effStr ? Date.parse(effStr) : Number.NaN
+        return {
+          ecgRow,
+          report,
+          seq,
+          timestampMs: Number.isFinite(tsMs) ? tsMs : undefined,
         }
-        if (leads.length === 3 && leads.every(lead => isExplicitNormalStLead(lead.value, lead.interpretation))) {
-          return {
-            source: 'ecg-report',
-            sourceReference: `DiagnosticReport/${ecgRow.diagnostic_report_id}`,
-            value: false,
-            versionId,
-          }
+      })
+      .sort((a, b) => {
+        if (a.timestampMs !== undefined && b.timestampMs !== undefined && a.timestampMs !== b.timestampMs) {
+          return a.timestampMs - b.timestampMs
+        }
+        return a.seq - b.seq
+      })
+
+    for (const { ecgRow, report } of ecgCandidates) {
+      const content = investigationResultContentSchema.safeParse(JSON.parse(ecgRow.content_json))
+      if (!content.success) continue
+      const versionId = report.meta?.versionId ?? '1'
+      const leads = content.data.results.filter(item => ['st-t-anterior', 'st-t-inferior', 'st-t-lateral'].includes(item.code))
+      const hasPositiveLead = leads.some(lead => typeof lead.value === 'string' && hasPositiveStDeviationText(lead.value))
+        || hasPositiveStDeviationText(content.data.conclusion)
+      if (hasPositiveLead) {
+        return {
+          source: 'ecg-report',
+          sourceReference: `DiagnosticReport/${ecgRow.diagnostic_report_id}`,
+          value: true,
+          versionId,
+        }
+      }
+      if (leads.length === 3 && leads.every(lead => isExplicitNormalStLead(lead.value, lead.interpretation))) {
+        return {
+          source: 'ecg-report',
+          sourceReference: `DiagnosticReport/${ecgRow.diagnostic_report_id}`,
+          value: false,
+          versionId,
         }
       }
     }
@@ -1248,9 +1270,21 @@ export class ClinicalScoreService {
       timestampMs: number | undefined
       value: { unit: string; value: number }
     }> = []
-    let totalCholesterol: ClinicalScoreObjectiveFacts['totalCholesterol']
-    let hdlCholesterol: ClinicalScoreObjectiveFacts['hdlCholesterol']
-    let ldlCholesterol: ClinicalScoreObjectiveFacts['ldlCholesterol']
+    const tcHitsDesc: Array<{
+      source: ClinicalScoreSourceReference
+      timestampMs: number | undefined
+      value: { unit: string; value: number }
+    }> = []
+    const hdlHitsDesc: Array<{
+      source: ClinicalScoreSourceReference
+      timestampMs: number | undefined
+      value: { unit: string; value: number }
+    }> = []
+    const ldlHitsDesc: Array<{
+      source: ClinicalScoreSourceReference
+      timestampMs: number | undefined
+      value: { unit: string; value: number }
+    }> = []
 
     for (const { reportId, reportTime } of reportEntries) {
       const rawReport = this.#fhir.read(context, 'DiagnosticReport', reportId)
@@ -1336,28 +1370,43 @@ export class ClinicalScoreService {
           })
         }
         if (
-          totalCholesterol === undefined
-          && quantity !== undefined
+          quantity !== undefined
           && unit !== undefined
           && (codes.has('2000104A') || codes.has('2093-3') || codes.has('14647-2') || /^(?:总胆固醇|total cholesterol)/i.test(display))
         ) {
-          totalCholesterol = { source, value: { unit, value: quantity } }
+          const rawTcTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
+          const parsedTcMs = rawTcTs ? Date.parse(rawTcTs) : Number.NaN
+          tcHitsDesc.push({
+            source,
+            timestampMs: Number.isFinite(parsedTcMs) ? parsedTcMs : undefined,
+            value: { unit, value: quantity },
+          })
         }
         if (
-          hdlCholesterol === undefined
-          && quantity !== undefined
+          quantity !== undefined
           && unit !== undefined
           && (codes.has('2000304A') || codes.has('2085-9') || codes.has('14646-4') || /高密度脂蛋白胆固醇|HDL/i.test(display))
         ) {
-          hdlCholesterol = { source, value: { unit, value: quantity } }
+          const rawHdlTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
+          const parsedHdlMs = rawHdlTs ? Date.parse(rawHdlTs) : Number.NaN
+          hdlHitsDesc.push({
+            source,
+            timestampMs: Number.isFinite(parsedHdlMs) ? parsedHdlMs : undefined,
+            value: { unit, value: quantity },
+          })
         }
         if (
-          ldlCholesterol === undefined
-          && quantity !== undefined
+          quantity !== undefined
           && unit !== undefined
           && (codes.has('2000404A') || codes.has('2089-1') || codes.has('13457-7') || codes.has('18262-6') || /低密度脂蛋白胆固醇|LDL/i.test(display))
         ) {
-          ldlCholesterol = { source, value: { unit, value: quantity } }
+          const rawLdlTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
+          const parsedLdlMs = rawLdlTs ? Date.parse(rawLdlTs) : Number.NaN
+          ldlHitsDesc.push({
+            source,
+            timestampMs: Number.isFinite(parsedLdlMs) ? parsedLdlMs : undefined,
+            value: { unit, value: quantity },
+          })
         }
       }
     }
@@ -1432,6 +1481,15 @@ export class ClinicalScoreService {
       initialHb === undefined ? undefined : { source: initialHb.source, value: initialHb.value }
     const hemoglobin: ClinicalScoreObjectiveFacts['hemoglobin'] =
       latestHb === undefined ? undefined : { source: latestHb.source, value: latestHb.value }
+    const latestTc = sortChrono(tcHitsDesc).at(-1)
+    const latestHdl = sortChrono(hdlHitsDesc).at(-1)
+    const latestLdl = sortChrono(ldlHitsDesc).at(-1)
+    const totalCholesterol: ClinicalScoreObjectiveFacts['totalCholesterol'] =
+      latestTc === undefined ? undefined : { source: latestTc.source, value: latestTc.value }
+    const hdlCholesterol: ClinicalScoreObjectiveFacts['hdlCholesterol'] =
+      latestHdl === undefined ? undefined : { source: latestHdl.source, value: latestHdl.value }
+    const ldlCholesterol: ClinicalScoreObjectiveFacts['ldlCholesterol'] =
+      latestLdl === undefined ? undefined : { source: latestLdl.source, value: latestLdl.value }
 
     return {
       admissionSerumCreatinine,
