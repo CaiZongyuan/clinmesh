@@ -160,6 +160,7 @@ describe('ClinicalScoresPanel disclosures', () => {
           anginaEpisodes24h: null,
           aspirinUsedLast7Days: null,
           cardiacArrestOnAdmission: null,
+          familyHistoryPrematureCad: null,
           killipClass: 'II',
           priorBleedingHistory: null,
           smokingStatus: 'current',

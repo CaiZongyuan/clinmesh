@@ -461,8 +461,8 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       tierCode: 'low-moderate',
     })
 
-    // Single elevated SBP (158 mmHg) with DM + current smoking (2 CAD factors) does NOT add the >=3 CAD risk factor point
-    const transientHighSbp = evaluateClinicalScores({
+    // Single elevated SBP (158 mmHg) with DM + current smoking (2 CAD factors) stays incomplete until familyHistoryPrematureCad is known, and resolves to 0 when negative vs 1 when positive
+    const transientHighSbpUnknownFamily = evaluateClinicalScores({
       ageYears: { source: src, value: 58 },
       anginaEpisodes24h: { source: src, value: 1 },
       aspirinUsedLast7Days: { source: src, value: false },
@@ -472,7 +472,37 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       stSegmentDeviation: { source: src, value: false },
       systolicBpMmHg: { source: src, value: 158 },
     })
-    expect(transientHighSbp.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 0 })
+    expect(transientHighSbpUnknownFamily.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({
+      missingInputs: ['familyHistoryPrematureCad'],
+      status: 'incomplete',
+    })
+
+    const transientHighSbpNegativeFamily = evaluateClinicalScores({
+      ageYears: { source: src, value: 58 },
+      anginaEpisodes24h: { source: src, value: 1 },
+      aspirinUsedLast7Days: { source: src, value: false },
+      confirmedDiagnoses: [{ code: 'E11.9', source: src }],
+      elevatedCardiacBiomarker: { source: src, value: false },
+      familyHistoryPrematureCad: { source: src, value: false },
+      smokingStatus: { source: src, value: 'current' },
+      stSegmentDeviation: { source: src, value: false },
+      systolicBpMmHg: { source: src, value: 158 },
+    })
+    expect(transientHighSbpNegativeFamily.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 0 })
+
+    // Hypertension + diabetes + positive family history of premature CAD (even in a never-smoker) counts as 3 CAD risk factors (+1 pt)
+    const positiveFamilyAsThirdFactor = evaluateClinicalScores({
+      ageYears: { source: src, value: 58 },
+      anginaEpisodes24h: { source: src, value: 1 },
+      aspirinUsedLast7Days: { source: src, value: false },
+      confirmedDiagnoses: [{ code: 'I10', source: src }, { code: 'E11.9', source: src }],
+      elevatedCardiacBiomarker: { source: src, value: false },
+      familyHistoryPrematureCad: { source: src, value: true },
+      smokingStatus: { source: src, value: 'never' },
+      stSegmentDeviation: { source: src, value: false },
+      systolicBpMmHg: { source: src, value: 126 },
+    })
+    expect(positiveFamilyAsThirdFactor.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 1 })
 
     // Confirmed hypertension diagnosis (I10) or active antihypertensive therapy DOES count as the 3rd CAD risk factor
     const confirmedHtn = evaluateClinicalScores({
