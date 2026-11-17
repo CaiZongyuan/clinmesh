@@ -22,6 +22,7 @@ export interface SourcedFact<T> {
 }
 
 export interface ClinicalScoreObjectiveFacts {
+  admissionAgeYears?: SourcedFact<number>
   admissionHeartRateBpm?: SourcedFact<number>
   admissionSerumCreatinine?: SourcedFact<UnitQuantityInput>
   admissionSystolicBpMmHg?: SourcedFact<number>
@@ -904,6 +905,7 @@ function safeParseFact<T, R>(fact: SourcedFact<T> | undefined, parse: (value: T)
 /** 从已确认客观临床指标集合确定性计算全部 6 项临床算子，严禁默认正常值或默认阴性凑分。 */
 export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): ClinicalScoreResult[] {
   const adultAge = safeParseFact(facts.ageYears, validateAdultAgeYears)
+  const admissionAdultAge = safeParseFact(facts.admissionAgeYears ?? facts.ageYears, validateAdultAgeYears)
   const sex = facts.sex
   const weightKg = safeParseFact(facts.weightKg, validateWeightKg)
   const admissionHeartRateBpm = safeParseFact(facts.admissionHeartRateBpm ?? facts.heartRateBpm, validateHeartRateBpm)
@@ -1021,11 +1023,11 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     }
   }
 
-  // 3. GRACE ACS (uses presenting/admission heart rate, systolic BP, and initial serum creatinine)
+  // 3. GRACE ACS (uses presenting/admission age, heart rate, systolic BP, and initial serum creatinine)
   let graceResult: ClinicalScoreResult
   {
     const missing: ClinicalScoreMissingInput[] = []
-    if (adultAge === undefined) missing.push('age')
+    if (admissionAdultAge === undefined) missing.push('age')
     if (admissionHeartRateBpm === undefined) missing.push('heartRateBpm')
     if (admissionSystolicBpMmHg === undefined) missing.push('systolicBpMmHg')
     if (admissionScrValid === undefined) missing.push('serumCreatinine')
@@ -1034,7 +1036,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     if (facts.stSegmentDeviation === undefined) missing.push('stSegmentDeviation')
     if (facts.elevatedCardiacBiomarker === undefined) missing.push('elevatedCardiacBiomarker')
     const sources = [
-      adultAge?.source,
+      admissionAdultAge?.source,
       admissionHeartRateBpm?.source,
       admissionSystolicBpMmHg?.source,
       admissionScrValid?.source,
@@ -1047,7 +1049,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
       graceResult = buildIncomplete('grace-acs', missing, sources)
     } else {
       const calc = calculateGraceAcs({
-        ageYears: adultAge!.value,
+        ageYears: admissionAdultAge!.value,
         cardiacArrestOnAdmission: facts.cardiacArrestOnAdmission!.value,
         elevatedCardiacBiomarker: facts.elevatedCardiacBiomarker!.value,
         heartRateBpm: admissionHeartRateBpm!.value,
@@ -1091,9 +1093,8 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
       || (tcMmol !== undefined && tcMmol >= 5.2)
     const baseFactors = (hasHtn ? 1 : 0) + (hasDm ? 1 : 0) + (hasDyslipidemia ? 1 : 0)
     const smokingFactor = facts.smokingStatus === undefined ? null : (facts.smokingStatus.value === 'current' ? 1 : 0)
-    const familyFactor = codeMatchesPrefixes(diagnosisCodes, ['Z82.4'])
-      ? 1
-      : facts.familyHistoryPrematureCad === undefined
+    const familyFactor =
+      facts.familyHistoryPrematureCad === undefined
         ? null
         : (facts.familyHistoryPrematureCad.value ? 1 : 0)
     const minFactors = baseFactors + (smokingFactor ?? 0) + (familyFactor ?? 0)
@@ -1106,7 +1107,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
           : undefined
 
     const missing: ClinicalScoreMissingInput[] = []
-    if (adultAge === undefined) missing.push('age')
+    if (admissionAdultAge === undefined) missing.push('age')
     if (minFactors < 3 && maxFactors >= 3) {
       if (smokingFactor === null) missing.push('smokingStatus')
       if (familyFactor === null) missing.push('familyHistoryPrematureCad')
@@ -1117,7 +1118,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     if (facts.stSegmentDeviation === undefined) missing.push('stSegmentDeviation')
     if (facts.elevatedCardiacBiomarker === undefined) missing.push('elevatedCardiacBiomarker')
     const sources = [
-      adultAge?.source,
+      admissionAdultAge?.source,
       ...facts.confirmedDiagnoses.map(item => item.source),
       facts.antihypertensiveMedicationActive?.source,
       facts.familyHistoryPrematureCad?.source,
@@ -1135,7 +1136,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     } else {
       const cadRiskFactorCount = minFactors
       const calc = calculateTimiUaNstemi({
-        ageYears: adultAge!.value,
+        ageYears: admissionAdultAge!.value,
         anginaEpisodes24h: facts.anginaEpisodes24h!.value,
         aspirinUsedLast7Days: facts.aspirinUsedLast7Days!.value,
         cadRiskFactorCount,

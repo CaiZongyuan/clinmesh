@@ -722,6 +722,21 @@ describe('evaluateClinicalScores bundle evaluation', () => {
     })
     expect(transientHighSbpNegativeFamily.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 0 })
 
+    // Generic Z82.4 family history coding does NOT override an explicit negative familyHistoryPrematureCad: false
+    const genericZ824NegativePremature = evaluateClinicalScores({
+      ageYears: { source: src, value: 58 },
+      anginaEpisodes24h: { source: src, value: 1 },
+      aspirinUsedLast7Days: { source: src, value: false },
+      confirmedDiagnoses: [{ code: 'I10', source: src }, { code: 'E11.9', source: src }, { code: 'Z82.4', source: src }],
+      elevatedCardiacBiomarker: { source: src, value: false },
+      familyHistoryPrematureCad: { source: src, value: false },
+      knownCoronaryRevascularizationOrStenosisGe50: { source: src, value: false },
+      smokingStatus: { source: src, value: 'never' },
+      stSegmentDeviation: { source: src, value: false },
+      systolicBpMmHg: { source: src, value: 126 },
+    })
+    expect(genericZ824NegativePremature.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 0 })
+
     // Hypertension + diabetes + positive family history of premature CAD (even in a never-smoker) counts as 3 CAD risk factors (+1 pt)
     const positiveFamilyAsThirdFactor = evaluateClinicalScores({
       ageYears: { source: src, value: 58 },

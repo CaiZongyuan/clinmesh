@@ -584,7 +584,7 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     const normalEcgId = insertSyntheticEcgReport(fixture, {
       anteriorText: '无 ST 段抬高或压低',
       caseId: caseItem.caseId,
-      conclusion: '窦性心律，未见 ST 段抬高或 ST 段压低。',
+      conclusion: '窦性心律，未见 ST 段抬高或 ST 段压低但 T 波轻度平低。',
       encounterId,
       epoch: scenario.epoch,
       interpretation: 'normal',
