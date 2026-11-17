@@ -632,6 +632,10 @@ function clampNullableText(value: string | null | undefined, maxLen: number): st
   return trimmed.length > maxLen ? `${trimmed.slice(0, maxLen - 1)}…` : trimmed
 }
 
+export function clampTopicMissingList(items: readonly string[]): string[] {
+  return clampStringList(items, 24, 2000, '项待补齐资料或指南来源')
+}
+
 function clampStringList(items: readonly string[], maxItems: number, maxLen: number, overflowLabel: string): string[] {
   const cleaned = items
     .map(item => clampNullableText(item, maxLen))

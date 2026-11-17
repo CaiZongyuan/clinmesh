@@ -26,6 +26,7 @@ import type { ActorContext, CommandTransaction } from './command-executor.ts'
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 import {
   buildSynchronousTopicBundle,
+  clampTopicMissingList,
   collectPciSelectionMissingItems,
   evaluateTopicPatientIndicators,
   extractSupplementaryIndicators,
@@ -300,7 +301,7 @@ export class InpatientGuidelineAdvice {
       const input: BasisInput = {
         topic: sourceRead.topic,
         guidelines: sourceRead.guidelines,
-        missing: [...new Set([...missing, ...sourceRead.missing])],
+        missing: clampTopicMissingList([...new Set([...missing, ...sourceRead.missing])]),
         sourceStatus: sourceRead.sourceStatus,
         dependencyFingerprint: canonicalJsonHash({
           candidates: selection.candidates,
@@ -349,7 +350,11 @@ export class InpatientGuidelineAdvice {
     const angiographyReports = this.owner.angiography.reports(context, admissionId)
       .filter(report => report.status === 'final' || report.status === 'partial')
     const activeMedicationOrders = orders
-      .filter(order => order.kind === 'medication' && (order.state === 'signed' || order.state === 'verified'))
+      .filter(
+        order =>
+          order.kind === 'medication'
+          && (order.state === 'signed' || order.state === 'verified' || order.state === 'stop-requested'),
+      )
       .map(order => ({
         catalogItemId: order.catalogItemId,
         display: order.display,
@@ -363,7 +368,7 @@ export class InpatientGuidelineAdvice {
     const input: BasisInput = {
       topic: sourceRead.topic,
       guidelines: sourceRead.guidelines,
-      missing: [...new Set([...missingPatientInputs, ...sourceRead.missing])],
+      missing: clampTopicMissingList([...new Set([...missingPatientInputs, ...sourceRead.missing])]),
       sourceStatus: sourceRead.sourceStatus,
       dependencyFingerprint: canonicalJsonHash({
         activeMedicationOrders,
