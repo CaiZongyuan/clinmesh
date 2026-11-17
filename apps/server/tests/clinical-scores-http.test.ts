@@ -51,7 +51,7 @@ function insertSyntheticLabReport(
   },
 ) {
   const scope = { workspaceId: options.workspaceId, epoch: options.epoch } as const
-  const now = options.issuedAt ?? '2026-10-25T09:30:00+08:00'
+  const now = options.issuedAt ?? '2026-08-24T09:30:00+08:00'
   const obsIds: string[] = []
   for (const item of options.results) {
     const obs = fixture.runtime.fhir.create(scope, {
@@ -126,7 +126,7 @@ function insertSyntheticEcgReport(
   },
 ) {
   const scope = { workspaceId: options.workspaceId, epoch: options.epoch } as const
-  const now = '2026-10-25T09:45:00+08:00'
+  const now = '2026-08-24T09:45:00+08:00'
   const report = fixture.runtime.fhir.create(scope, {
     resourceType: 'DiagnosticReport',
     id: uuidv7(),
@@ -1429,11 +1429,41 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       value: 2.6,
     })
 
-    // First nursing vitals recorded on hospital day 3 (>6h after admitted_at) do NOT masquerade as GRACE admission HR/SBP
+    // Actual nursing vitals (with weightKg=70) & first creatinine recorded on hospital day 3 (2026-08-27, >24h after 2026-08-24 admission):
+    // current eGFR & CrCl succeed, while GRACE & PRECISE-DAPT reject delayed vitals/weight/creatinine WITHOUT falling back to current values!
+    fixture.runtime.database.driver.prepare(`
+      DELETE FROM laboratory_request WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).run(scenario.workspaceId, scenario.epoch, outOfOrderStay.admissionId)
+    const outOfOrderClinical = await fixture.read('ward-nurse', `${outOfOrderStay.path}/clinical`, inpatientFullClinicalSchema)
+    const day3VitalsRes = await fixture.request('ward-nurse', `${outOfOrderStay.path}/vital-signs`, {
+      bloodPressure: { diastolicMmHg: 76, systolicMmHg: 128 },
+      encounterVersion: outOfOrderClinical.encounterVersion,
+      expectedRevision: 0,
+      heightCm: 170,
+      oxygenSaturationPct: 98,
+      pulseBpm: 82,
+      respirationBpm: 18,
+      temperatureC: 36.6,
+      weightKg: 70,
+    }, randomUUID())
+    expect(day3VitalsRes.status).toBe(200)
     fixture.runtime.database.driver.prepare(`
       UPDATE inpatient_vital_signs SET recorded_at = '2026-08-27T09:00:00+08:00'
       WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
     `).run(scenario.workspaceId, scenario.epoch, outOfOrderStay.admissionId)
+    insertSyntheticLabReport(fixture, {
+      caseId: outOfOrderStay.admissionId,
+      encounterId: outOfOrderStay.admissionId,
+      epoch: scenario.epoch,
+      issuedAt: '2026-08-27T09:30:00+08:00',
+      patientId: outOfOrderStay.patientId,
+      results: [
+        { code: '1700404A', display: '血清肌酐', high: 84, unit: 'umol/L', value: 88.4 },
+        { code: '0100101A', display: '白细胞计数', unit: '10*9/L', value: 7.5 },
+        { code: '0100401A', display: '血红蛋白', unit: 'g/L', value: 138 },
+      ],
+      workspaceId: scenario.workspaceId,
+    })
     fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
       clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
       code: { coding: [{ code: 'I21.4', display: '急性心内膜下心肌梗死' }], text: '急性心内膜下心肌梗死' },
@@ -1444,9 +1474,37 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       subject: { reference: `Patient/${outOfOrderStay.patientId}` },
       verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
     })
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
+      code: { coding: [{ code: 'Z95.5', display: '冠状动脉支架置入术后状态' }], text: '冠状动脉支架置入术后状态' },
+      id: uuidv7(),
+      recordedDate: '2026-08-01T09:00:00+08:00',
+      resourceType: 'Condition',
+      subject: { reference: `Patient/${outOfOrderStay.patientId}` },
+      verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
+    })
+    for (const medText of ['阿司匹林肠溶片 100mg', '替格瑞洛片 90mg']) {
+      fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+        authoredOn: '2026-08-10T09:00:00+08:00',
+        dosageInstruction: [{ timing: { repeat: { boundsDuration: { code: 'mo', system: 'http://unitsofmeasure.org', unit: 'mo', value: 6 } } } }],
+        id: uuidv7(),
+        intent: 'order',
+        medication: { concept: { text: medText } },
+        resourceType: 'MedicationRequest',
+        status: 'active',
+        subject: { reference: `Patient/${outOfOrderStay.patientId}` },
+      })
+    }
     const lateFirstVitalsScores = await fixture.read('inpatient-doctor', `${outOfOrderStay.path}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(lateFirstVitalsScores.vitalSigns).not.toBeNull()
+    expect(lateFirstVitalsScores.scores.find(s => s.id === 'ckd-epi-2021-egfr')?.status).toBe('complete')
+    expect(lateFirstVitalsScores.scores.find(s => s.id === 'cockcroft-gault-crcl')?.status).toBe('complete')
     expect(lateFirstVitalsScores.scores.find(s => s.id === 'grace-acs')).toMatchObject({
-      missingInputs: expect.arrayContaining(['heartRateBpm', 'systolicBpMmHg']),
+      missingInputs: expect.arrayContaining(['heartRateBpm', 'systolicBpMmHg', 'serumCreatinine']),
+      status: 'incomplete',
+    })
+    expect(lateFirstVitalsScores.scores.find(s => s.id === 'precise-dapt')).toMatchObject({
+      missingInputs: expect.arrayContaining(['weightKg', 'serumCreatinine', 'wbc', 'hemoglobin']),
       status: 'incomplete',
     })
 

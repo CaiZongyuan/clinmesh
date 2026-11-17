@@ -860,8 +860,9 @@ export class ClinicalScoreService {
     if (row === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case was not found')
     const encounter = this.#fhir.read(context, 'Encounter', row.encounter_id)
     const virtualNow = this.#outpatientContext.virtualTime(context)
+    const isArchivedCutoff = encounter.status === 'completed'
     const derivedCutoffIso =
-      encounter.status === 'completed'
+      isArchivedCutoff
         ? (extractEncounterEndIso(encounter) ?? (row.visit_date ? `${row.visit_date}T23:59:59.999+08:00` : virtualNow))
         : virtualNow
     const now = normalizeCutoffIso(referenceCutoffIso ?? derivedCutoffIso)
@@ -896,6 +897,8 @@ export class ClinicalScoreService {
       encounterVersion: encounter.meta?.versionId ?? '1',
       evaluatedAt: virtualNow,
       inpatient: undefined,
+      inpatientTimingGate: undefined,
+      isArchivedCutoff,
       legacyDiagnosticReportId: row.diagnostic_report_id,
       now,
       patientId: row.patient_id,
@@ -914,10 +917,10 @@ export class ClinicalScoreService {
     const binding = inpatient.readAdmissionBinding(context, admissionId)
     const encounter = this.#fhir.read(context, 'Encounter', admissionId)
     const virtualNow = inpatient.virtualTime(context)
-    const departedAt =
-      binding.status === 'departed'
-        ? (inpatient.discharge.activeDeparture(context, admissionId)?.virtualTime ?? extractEncounterEndIso(encounter))
-        : undefined
+    const departureIso = inpatient.discharge.activeDeparture(context, admissionId)?.virtualTime
+    const isArchivedCutoff =
+      departureIso !== undefined || binding.status === 'departed' || binding.status === 'cleared'
+    const departedAt = isArchivedCutoff ? (departureIso ?? extractEncounterEndIso(encounter)) : undefined
     const now = normalizeCutoffIso(referenceTimeIso ?? departedAt ?? virtualNow)
     const admTiming = z.object({
       admitted_at: z.string().nullable(),
@@ -931,24 +934,89 @@ export class ClinicalScoreService {
     )
     const admissionAnchorIso = admTiming?.admitted_at ?? extractEncounterStartIso(encounter) ?? admTiming?.registered_at
     const admissionAnchorMs = parseResourceTimestampMs(admissionAnchorIso)
+
+    const surgeryExecRows = z.array(z.object({ performed_at: z.string() })).parse(
+      this.#database.driver.prepare(`
+        SELECT performed_at FROM inpatient_surgery_execution
+        WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
+      `).all(context.workspaceId, context.epoch, admissionId),
+    )
+    let earliestSurgeryMs: number | undefined
+    for (const row of surgeryExecRows) {
+      const ms = parseResourceTimestampMs(row.performed_at)
+      if (ms !== undefined && (earliestSurgeryMs === undefined || ms < earliestSurgeryMs)) {
+        earliestSurgeryMs = ms
+      }
+    }
+
+    const medExecRows = z.array(z.object({
+      administration_id: z.string().nullable(),
+      scheduled_for: z.string(),
+    })).parse(
+      this.#database.driver.prepare(`
+        SELECT e.scheduled_for, e.administration_id
+        FROM inpatient_execution e
+        JOIN inpatient_order o
+          ON o.workspace_id = e.workspace_id
+         AND o.epoch = e.epoch
+         AND o.order_id = e.order_id
+        WHERE e.workspace_id = ? AND e.epoch = ? AND o.admission_id = ?
+          AND o.kind = 'medication' AND e.status = 'completed'
+      `).all(context.workspaceId, context.epoch, admissionId),
+    )
+    let earliestMedExecMs: number | undefined
+    for (const exec of medExecRows) {
+      let adminMs: number | undefined
+      if (exec.administration_id !== null) {
+        try {
+          const admin = medicationAdministrationResourceSchema.safeParse(
+            this.#fhir.read(context, 'MedicationAdministration', exec.administration_id),
+          )
+          if (admin.success) {
+            adminMs = parseResourceTimestampMs(
+              admin.data.occurencePeriod?.start
+              ?? admin.data.occurrencePeriod?.start
+              ?? admin.data.effectivePeriod?.start
+              ?? admin.data.occurenceDateTime
+              ?? admin.data.occurrenceDateTime
+              ?? admin.data.effectiveDateTime
+              ?? admin.data.recorded,
+            )
+          }
+        } catch {
+          adminMs = undefined
+        }
+      }
+      const candidateMs = adminMs ?? parseResourceTimestampMs(exec.scheduled_for)
+      if (candidateMs !== undefined && (earliestMedExecMs === undefined || candidateMs < earliestMedExecMs)) {
+        earliestMedExecMs = candidateMs
+      }
+    }
+
+    const ADMISSION_VITALS_MAX_DELAY_MS = 6 * 60 * 60 * 1000
+    const BASELINE_MAX_DELAY_MS = 24 * 60 * 60 * 1000
     const initialVitals = this.initialInpatientVitalSigns(context, admissionId)
     const latestVitals = this.latestInpatientVitalSigns(context, admissionId)
-    const ADMISSION_VITALS_MAX_DELAY_MS = 6 * 60 * 60 * 1000
     const initialVitalsRecordedMs = parseResourceTimestampMs(initialVitals?.recordedAt)
-    const qualifiesAsAdmissionVitals = (() => {
-      if (initialVitals === undefined || initialVitalsRecordedMs === undefined) return false
-      if (admissionAnchorMs !== undefined && initialVitalsRecordedMs - admissionAnchorMs > ADMISSION_VITALS_MAX_DELAY_MS) {
-        return false
-      }
-      const priorCompletedSurgery = this.#database.driver.prepare(`
-        SELECT 1 FROM inpatient_surgery_execution
-        WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
-          AND julianday(performed_at) < julianday(?)
-        LIMIT 1
-      `).get(context.workspaceId, context.epoch, admissionId, initialVitals.recordedAt)
-      if (priorCompletedSurgery !== undefined) return false
-      return true
-    })()
+    const qualifiesAsAdmissionVitals =
+      initialVitals !== undefined
+      && initialVitalsRecordedMs !== undefined
+      && (admissionAnchorMs === undefined || initialVitalsRecordedMs - admissionAnchorMs <= ADMISSION_VITALS_MAX_DELAY_MS)
+      && (earliestSurgeryMs === undefined || initialVitalsRecordedMs <= earliestSurgeryMs)
+      && (earliestMedExecMs === undefined || initialVitalsRecordedMs <= earliestMedExecMs)
+
+    const initialWeightedVitals = this.initialInpatientVitalSignsWithWeight(context, admissionId)
+    const initialWeightRecordedMs = parseResourceTimestampMs(initialWeightedVitals?.recordedAt)
+    const qualifiesAsBaselineWeight =
+      initialWeightedVitals !== undefined
+      && initialWeightRecordedMs !== undefined
+      && (
+        earliestSurgeryMs !== undefined
+          ? initialWeightRecordedMs <= earliestSurgeryMs
+          : (admissionAnchorMs === undefined || initialWeightRecordedMs - admissionAnchorMs <= BASELINE_MAX_DELAY_MS)
+      )
+      && (earliestMedExecMs === undefined || initialWeightRecordedMs <= earliestMedExecMs)
+
     const toVitalSummary = (v: InpatientVitalSignsRecord | undefined): ClinicalScoreVitalSummary | null =>
       v === undefined
         ? null
@@ -964,11 +1032,10 @@ export class ClinicalScoreService {
             temperatureC: v.temperatureC,
             ...(v.weightKg === undefined ? {} : { weightKg: v.weightKg }),
           }
-    const initialWeightedVitals = this.initialInpatientVitalSignsWithWeight(context, admissionId)
     const latestHeightVitals = this.latestInpatientVitalSignsWithHeight(context, admissionId)
     const latestWeightVitals = this.latestInpatientVitalSignsWithWeight(context, admissionId)
     const admissionVitalSummary = qualifiesAsAdmissionVitals ? toVitalSummary(initialVitals) : null
-    const baselineWeightVitalSummary = toVitalSummary(initialWeightedVitals)
+    const baselineWeightVitalSummary = qualifiesAsBaselineWeight ? toVitalSummary(initialWeightedVitals) : null
     const latestHeightVitalSummary = toVitalSummary(latestHeightVitals)
     const latestWeightVitalSummary = toVitalSummary(latestWeightVitals)
     const vitalSummary = toVitalSummary(latestVitals)
@@ -983,6 +1050,12 @@ export class ClinicalScoreService {
       encounterVersion: encounter.meta?.versionId ?? '1',
       evaluatedAt: virtualNow,
       inpatient,
+      inpatientTimingGate: {
+        admissionAnchorMs,
+        earliestMedExecMs,
+        earliestSurgeryMs,
+      },
+      isArchivedCutoff,
       legacyDiagnosticReportId: null,
       now,
       patientId: binding.patientId,
@@ -1292,6 +1365,14 @@ export class ClinicalScoreService {
       encounterVersion: string
       evaluatedAt: string
       inpatient: InpatientService | undefined
+      inpatientTimingGate:
+        | {
+            admissionAnchorMs: number | undefined
+            earliestMedExecMs: number | undefined
+            earliestSurgeryMs: number | undefined
+          }
+        | undefined
+      isArchivedCutoff: boolean
       latestHeightVitalSummary?: ClinicalScoreVitalSummary | null
       latestWeightVitalSummary?: ClinicalScoreVitalSummary | null
       legacyDiagnosticReportId: string | null
@@ -1367,7 +1448,12 @@ export class ClinicalScoreService {
 
     const birthDateStr = typeof patient.birthDate === 'string' ? patient.birthDate : undefined
     const cutoffMs = Date.parse(options.now)
-    const labs = this.#extractLaboratoryAnalytes(context, options.caseId, options.legacyDiagnosticReportId)
+    const labs = this.#extractLaboratoryAnalytes(
+      context,
+      options.caseId,
+      options.legacyDiagnosticReportId,
+      options.inpatientTimingGate,
+    )
     let ckdChronicity: {
       ckdLt30Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
       ckdLt60Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
@@ -1404,6 +1490,7 @@ export class ClinicalScoreService {
       options.inpatient,
       options.caseId,
       cutoffMs,
+      options.isArchivedCutoff,
     )
     const encounterApplicability = this.#extractEncounterScoreApplicability(
       context,
@@ -1412,6 +1499,7 @@ export class ClinicalScoreService {
       options.caseId,
       options.inpatient,
       options.now,
+      options.isArchivedCutoff,
     )
     const onAntihypertensive = this.#extractAntihypertensiveFlag(
       context,
@@ -1421,6 +1509,7 @@ export class ClinicalScoreService {
       options.caseId,
       options.now,
       history.hypertensionConditionRefs,
+      options.isArchivedCutoff,
     )
     const lipidStratification = this.#extractPatientLipidStratification(
       context,
@@ -1429,6 +1518,7 @@ export class ClinicalScoreService {
       options.caseId,
       options.now,
       labs.latestLipidObservationMs,
+      options.isArchivedCutoff,
     )
     const bedsideKnownStenosis =
       riskRef !== undefined && riskAssessment.values.knownCoronaryStenosisGe50 !== null
@@ -1449,14 +1539,16 @@ export class ClinicalScoreService {
       ...(admissionAge === undefined ? {} : { admissionAgeYears: { source: patientRef, value: admissionAge } }),
       ...(age === undefined ? {} : { ageYears: { source: patientRef, value: age } }),
       ...(sex === undefined ? {} : { sex: { source: patientRef, value: sex } }),
-      ...(effectiveAdmissionVital === null || admissionVitalRef === undefined
-        ? {}
-        : {
-            admissionHeartRateBpm: { source: admissionVitalRef, value: effectiveAdmissionVital.pulseBpm },
-            ...(effectiveAdmissionVital.bloodPressure.systolicMmHg > effectiveAdmissionVital.bloodPressure.diastolicMmHg
-              ? { admissionSystolicBpMmHg: { source: admissionVitalRef, value: effectiveAdmissionVital.bloodPressure.systolicMmHg } }
-              : {}),
-          }),
+      admissionHeartRateBpm:
+        effectiveAdmissionVital === null || admissionVitalRef === undefined
+          ? null
+          : { source: admissionVitalRef, value: effectiveAdmissionVital.pulseBpm },
+      admissionSystolicBpMmHg:
+        effectiveAdmissionVital === null
+        || admissionVitalRef === undefined
+        || effectiveAdmissionVital.bloodPressure.systolicMmHg <= effectiveAdmissionVital.bloodPressure.diastolicMmHg
+          ? null
+          : { source: admissionVitalRef, value: effectiveAdmissionVital.bloodPressure.systolicMmHg },
       ...(options.vitalSummary === null || vitalRef === undefined
         ? {}
         : {
@@ -1478,22 +1570,19 @@ export class ClinicalScoreService {
         || effectiveLatestWeightVital.weightKg === undefined
         ? {}
         : { weightKg: { source: latestWeightRef, value: effectiveLatestWeightVital.weightKg } }),
-      ...(effectiveBaselineWeightVital === null
+      baselineWeightKg:
+        effectiveBaselineWeightVital === null
         || baselineWeightRef === undefined
         || effectiveBaselineWeightVital.weightKg === undefined
-        ? {}
-        : { baselineWeightKg: { source: baselineWeightRef, value: effectiveBaselineWeightVital.weightKg } }),
-      ...(labs.admissionSerumCreatinine === undefined
-        ? {}
-        : {
-            admissionSerumCreatinine: labs.admissionSerumCreatinine,
-            baselineSerumCreatinine: labs.admissionSerumCreatinine,
-          }),
+          ? null
+          : { source: baselineWeightRef, value: effectiveBaselineWeightVital.weightKg },
+      admissionSerumCreatinine: labs.admissionSerumCreatinine,
+      baselineSerumCreatinine: labs.baselineSerumCreatinine,
       ...(labs.serumCreatinine === undefined ? {} : { serumCreatinine: labs.serumCreatinine }),
       ...(labs.elevatedCardiacBiomarker === undefined ? {} : { elevatedCardiacBiomarker: labs.elevatedCardiacBiomarker }),
-      ...(labs.baselineWbc === undefined ? {} : { baselineWbc: labs.baselineWbc }),
+      baselineWbc: labs.baselineWbc,
       ...(labs.wbc === undefined ? {} : { wbc: labs.wbc }),
-      ...(labs.baselineHemoglobin === undefined ? {} : { baselineHemoglobin: labs.baselineHemoglobin }),
+      baselineHemoglobin: labs.baselineHemoglobin,
       ...(labs.hemoglobin === undefined ? {} : { hemoglobin: labs.hemoglobin }),
       ...(labs.totalCholesterol === undefined ? {} : { totalCholesterol: labs.totalCholesterol }),
       ...(labs.hdlCholesterol === undefined ? {} : { hdlCholesterol: labs.hdlCholesterol }),
@@ -1591,6 +1680,7 @@ export class ClinicalScoreService {
     caseId: string,
     inpatient: InpatientService | undefined,
     nowIso: string,
+    isArchivedCutoff: boolean,
   ): {
     acsPresentation: { source?: ClinicalScoreSourceReference; value: boolean }
     pciDaptIndication: { source?: ClinicalScoreSourceReference; value: boolean }
@@ -1825,7 +1915,7 @@ export class ClinicalScoreService {
               const procTsMs =
                 parseResourceTimestampMs(parsed.data.performedDateTime ?? parsed.data.performedPeriod?.start)
                 ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-              if (Number.isFinite(nowMs) && procTsMs !== undefined && procTsMs > nowMs) continue
+              if (Number.isFinite(nowMs) && (procTsMs === undefined ? isArchivedCutoff : procTsMs > nowMs)) continue
               priorCoronaryStentSource ??= ref
             }
           }
@@ -1846,7 +1936,7 @@ export class ClinicalScoreService {
             const condTsMs =
               parseResourceTimestampMs(parsed.data.recordedDate ?? parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start)
               ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-            if (condTsMs !== undefined && condTsMs > nowMs) continue
+            if (condTsMs === undefined ? isArchivedCutoff : condTsMs > nowMs) continue
           }
           const codes = (parsed.data.code?.coding ?? []).map(c => c.code?.trim().toUpperCase() ?? '')
           const text = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
@@ -1892,7 +1982,7 @@ export class ClinicalScoreService {
             const medTsMs =
               parseResourceTimestampMs(parsed.data.authoredOn)
               ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-            if (medTsMs !== undefined && medTsMs > nowMs) continue
+            if (medTsMs === undefined ? isArchivedCutoff : medTsMs > nowMs) continue
           }
           const rawDaptBoundsMs = resolveMedicationBoundsDurationMs(
             parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
@@ -2088,6 +2178,13 @@ export class ClinicalScoreService {
     context: RepositoryContext,
     caseId: string,
     legacyDiagnosticReportId: string | null,
+    inpatientTimingGate?:
+      | {
+          admissionAnchorMs: number | undefined
+          earliestMedExecMs: number | undefined
+          earliestSurgeryMs: number | undefined
+        }
+      | undefined,
   ) {
     const rows = z.array(z.object({
       diagnostic_report_id: z.string(),
@@ -2290,9 +2387,56 @@ export class ClinicalScoreService {
         }
         return a.seq - b.seq
       })
+    const ADMISSION_LAB_MAX_DELAY_MS = 24 * 60 * 60 * 1000
+    const qualifiesAsInpatientAdmissionLab = (timestampMs: number | undefined): boolean => {
+      if (inpatientTimingGate === undefined) return true
+      if (timestampMs === undefined) return false
+      if (
+        inpatientTimingGate.admissionAnchorMs !== undefined
+        && timestampMs - inpatientTimingGate.admissionAnchorMs > ADMISSION_LAB_MAX_DELAY_MS
+      ) {
+        return false
+      }
+      if (inpatientTimingGate.earliestSurgeryMs !== undefined && timestampMs > inpatientTimingGate.earliestSurgeryMs) {
+        return false
+      }
+      if (inpatientTimingGate.earliestMedExecMs !== undefined && timestampMs > inpatientTimingGate.earliestMedExecMs) {
+        return false
+      }
+      return true
+    }
+    const qualifiesAsInpatientBaselineLab = (timestampMs: number | undefined): boolean => {
+      if (inpatientTimingGate === undefined) return true
+      if (timestampMs === undefined) return false
+      if (inpatientTimingGate.earliestSurgeryMs !== undefined) {
+        if (timestampMs > inpatientTimingGate.earliestSurgeryMs) return false
+      } else if (
+        inpatientTimingGate.admissionAnchorMs !== undefined
+        && timestampMs - inpatientTimingGate.admissionAnchorMs > ADMISSION_LAB_MAX_DELAY_MS
+      ) {
+        return false
+      }
+      if (inpatientTimingGate.earliestMedExecMs !== undefined && timestampMs > inpatientTimingGate.earliestMedExecMs) {
+        return false
+      }
+      return true
+    }
+
     const initialTroponin = troponinChronological[0]
     let elevatedCardiacBiomarker: ClinicalScoreObjectiveFacts['elevatedCardiacBiomarker']
-    if (initialTroponin !== undefined) {
+    if (
+      initialTroponin !== undefined
+      && (
+        inpatientTimingGate === undefined
+        || (
+          initialTroponin.timestampMs !== undefined
+          && (
+            inpatientTimingGate.admissionAnchorMs === undefined
+            || initialTroponin.timestampMs - inpatientTimingGate.admissionAnchorMs <= ADMISSION_LAB_MAX_DELAY_MS
+          )
+        )
+      )
+    ) {
       if (initialTroponin.elevated) {
         elevatedCardiacBiomarker = { source: initialTroponin.source, value: true }
       } else {
@@ -2323,7 +2467,13 @@ export class ClinicalScoreService {
     const initialScr = creatinineChronological[0]
     const latestScr = creatinineChronological.at(-1)
     const admissionSerumCreatinine: ClinicalScoreObjectiveFacts['admissionSerumCreatinine'] =
-      initialScr === undefined ? undefined : { source: initialScr.source, value: initialScr.value }
+      initialScr !== undefined && qualifiesAsInpatientAdmissionLab(initialScr.timestampMs)
+        ? { source: initialScr.source, value: initialScr.value }
+        : null
+    const baselineSerumCreatinine: ClinicalScoreObjectiveFacts['baselineSerumCreatinine'] =
+      initialScr !== undefined && qualifiesAsInpatientBaselineLab(initialScr.timestampMs)
+        ? { source: initialScr.source, value: initialScr.value }
+        : null
     const serumCreatinine: ClinicalScoreObjectiveFacts['serumCreatinine'] =
       latestScr === undefined ? undefined : { source: latestScr.source, value: latestScr.value }
 
@@ -2344,11 +2494,15 @@ export class ClinicalScoreService {
     const initialHb = hbChronological[0]
     const latestHb = hbChronological.at(-1)
     const baselineWbc: ClinicalScoreObjectiveFacts['baselineWbc'] =
-      initialWbc === undefined ? undefined : { source: initialWbc.source, value: initialWbc.value }
+      initialWbc !== undefined && qualifiesAsInpatientBaselineLab(initialWbc.timestampMs)
+        ? { source: initialWbc.source, value: initialWbc.value }
+        : null
     const wbc: ClinicalScoreObjectiveFacts['wbc'] =
       latestWbc === undefined ? undefined : { source: latestWbc.source, value: latestWbc.value }
     const baselineHemoglobin: ClinicalScoreObjectiveFacts['baselineHemoglobin'] =
-      initialHb === undefined ? undefined : { source: initialHb.source, value: initialHb.value }
+      initialHb !== undefined && qualifiesAsInpatientBaselineLab(initialHb.timestampMs)
+        ? { source: initialHb.source, value: initialHb.value }
+        : null
     const hemoglobin: ClinicalScoreObjectiveFacts['hemoglobin'] =
       latestHb === undefined ? undefined : { source: latestHb.source, value: latestHb.value }
     const tcChrono = sortChrono(tcHitsDesc)
@@ -2378,6 +2532,7 @@ export class ClinicalScoreService {
     return {
       admissionSerumCreatinine,
       baselineHemoglobin,
+      baselineSerumCreatinine,
       baselineWbc,
       elevatedCardiacBiomarker,
       hdlCholesterol,
@@ -2420,6 +2575,7 @@ export class ClinicalScoreService {
     inpatient: InpatientService | undefined,
     caseId: string,
     cutoffMs: number,
+    isArchivedCutoff: boolean,
   ) {
     const encounterTimeCache = new Map<string, number | undefined>()
     const confirmedDiagnoses: ClinicalScoreObjectiveFacts['confirmedDiagnoses'] = []
@@ -2480,7 +2636,7 @@ export class ClinicalScoreService {
           const condTsMs =
             parseResourceTimestampMs(parsed.data.recordedDate ?? parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start)
             ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-          if (condTsMs !== undefined && condTsMs > cutoffMs) continue
+          if (condTsMs === undefined ? isArchivedCutoff : condTsMs > cutoffMs) continue
         }
         const codes = [...new Set((parsed.data.code?.coding ?? []).map(item => item.code?.trim() ?? '').filter(Boolean))]
         const text = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(item => item.display)].filter(Boolean).join(' ')
@@ -2617,7 +2773,7 @@ export class ClinicalScoreService {
           const procTsMs =
             parseResourceTimestampMs(parsed.data.performedDateTime ?? parsed.data.performedPeriod?.start)
             ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-          if (procTsMs !== undefined && procTsMs > cutoffMs) continue
+          if (procTsMs === undefined ? isArchivedCutoff : procTsMs > cutoffMs) continue
         }
         const codes = (parsed.data.code?.coding ?? []).map(item => item.code ?? '').filter(Boolean)
         const text = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(item => item.display)].filter(Boolean).join(' ')
@@ -2723,6 +2879,7 @@ export class ClinicalScoreService {
     caseId: string,
     nowIso: string,
     hypertensionConditionRefs: ReadonlySet<string>,
+    isArchivedCutoff: boolean,
   ): { source?: ClinicalScoreSourceReference; value: boolean } {
     if (inpatient !== undefined) {
       const activeOrders = z.array(z.object({
@@ -2780,7 +2937,7 @@ export class ClinicalScoreService {
           const medTsMs =
             parseResourceTimestampMs(parsed.data.authoredOn)
             ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-          if (medTsMs !== undefined && medTsMs > nowMs) continue
+          if (medTsMs === undefined ? isArchivedCutoff : medTsMs > nowMs) continue
         }
         const rawHtnBoundsMs = resolveMedicationBoundsDurationMs(
           parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
@@ -2872,6 +3029,7 @@ export class ClinicalScoreService {
     caseId: string,
     nowIso: string,
     latestCurrentCaseLipidMs: number | undefined,
+    isArchivedCutoff: boolean,
   ): {
     lipidLoweringMedicationActive?: { source: ClinicalScoreSourceReference; value: boolean }
     pretreatmentHdlCholesterol?: { source: ClinicalScoreSourceReference; value: { unit: string; value: number } }
@@ -3072,7 +3230,11 @@ export class ClinicalScoreService {
           ?? earliestDispenseMs
           ?? parseResourceTimestampMs(parsed.data.authoredOn)
           ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-        if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs) && startMs !== undefined && startMs > nowMs) {
+        if (
+          parsed.data.encounter?.reference !== `Encounter/${encounterId}`
+          && Number.isFinite(nowMs)
+          && (startMs === undefined ? isArchivedCutoff : startMs > nowMs)
+        ) {
           continue
         }
         const rawBoundsMs = resolveMedicationBoundsDurationMs(
