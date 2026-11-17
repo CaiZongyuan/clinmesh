@@ -487,7 +487,7 @@ export function calculateAscvdLdlTarget(input: {
       ? undefined
       : normalizeLipidMmolL(input.hdlCholesterol.value, input.hdlCholesterol.unit, 'hdl')
   if (input.systolicBpMmHg !== undefined) validateSystolicBpMmHg(input.systolicBpMmHg)
-  if (input.egfrMlMin173m2 !== undefined) assertFiniteRange(input.egfrMlMin173m2, 1, 250, 'egfrMlMin173m2')
+  if (input.egfrMlMin173m2 !== undefined) assertFiniteRange(input.egfrMlMin173m2, 0, 500, 'egfrMlMin173m2')
 
   const evaluateGoal = (target: number): LdlGoalEvaluation | undefined =>
     ldlMmolL === undefined
@@ -663,6 +663,9 @@ export function calculateAscvdLdlTarget(input: {
     else if (riskFactors === 1) primaryTier = band >= 1 ? 'moderate' : 'low'
     else if (riskFactors === 2) primaryTier = band === 0 ? 'moderate' : 'high'
     else primaryTier = 'high'
+  }
+  if (hasDiabetes && primaryTier === 'low') {
+    primaryTier = 'moderate'
   }
 
   if (primaryTier === 'high') {
