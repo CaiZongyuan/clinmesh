@@ -114,6 +114,22 @@ const supplementaryIndicatorsSchema = z.object({
     targetSite: z.string().nullable(),
     versionId: z.string(),
   }).strict().nullable(),
+  troponinSeries: z.object({
+    anyElevated: z.boolean(),
+    count: z.number().int().positive(),
+    latestReference: z.string(),
+    missingMessage: z.string().nullable(),
+    observations: z.array(z.object({
+      elevated: z.boolean(),
+      itemText: z.string(),
+      reference: z.string(),
+      timestampMs: z.number().finite().nullable(),
+      versionId: z.string(),
+    }).strict()),
+    serialComplete: z.boolean(),
+    summaryText: z.string(),
+    versionId: z.string(),
+  }).strict().nullable().optional(),
   tteLvef: z.object({
     lvefPct: z.number().finite(),
     sourceReference: z.string(),
@@ -327,6 +343,7 @@ export class InpatientGuidelineAdvice {
       ecgSummary: supplementary.ecgSummary ?? null,
       hba1c: supplementary.hba1c ?? null,
       pciPlanSummary: supplementary.pciPlanSummary ?? null,
+      troponinSeries: supplementary.troponinSeries ?? null,
       tteLvef: supplementary.tteLvef ?? null,
     }
     const angiographyReports = this.owner.angiography.reports(context, admissionId)

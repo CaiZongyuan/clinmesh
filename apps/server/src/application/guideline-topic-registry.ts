@@ -582,6 +582,13 @@ interface SupplementaryClinicalIndicators {
     count: number
     latestReference: string
     missingMessage: string | null
+    observations: Array<{
+      elevated: boolean
+      itemText: string
+      reference: string
+      timestampMs: number | null
+      versionId: string
+    }>
     serialComplete: boolean
     summaryText: string
     versionId: string
@@ -1106,6 +1113,13 @@ export function extractSupplementaryIndicators(options: {
       count: chrono.length,
       latestReference: `Observation/${latest.obsId}`,
       missingMessage,
+      observations: chrono.map(item => ({
+        elevated: item.elevated,
+        itemText: item.itemText,
+        reference: `Observation/${item.obsId}`,
+        timestampMs: item.timestampMs ?? null,
+        versionId: item.versionId,
+      })),
       serialComplete,
       summaryText: chrono.map(item => item.itemText).join(' → ').slice(0, 240),
       versionId: `n${chrono.length}.${latest.versionId}`.slice(0, 64),
