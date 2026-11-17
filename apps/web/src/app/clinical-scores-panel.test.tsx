@@ -3,7 +3,11 @@ import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { InpatientVitalsAndScoresDisclosure, OutpatientClinicalScoresDisclosure } from './clinical-scores-panel.tsx'
+import {
+  buildOutpatientClinicalScoreRevision,
+  InpatientVitalsAndScoresDisclosure,
+  OutpatientClinicalScoresDisclosure,
+} from './clinical-scores-panel.tsx'
 import { PatientVitals } from './doctor/patient-summary.tsx'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { getWorkspaceMessages } from './workspace-i18n.ts'
@@ -577,5 +581,33 @@ describe('ClinicalScoresPanel disclosures', () => {
     // Nurse can explicitly discard draft to sync remote #2
     fireEvent.click(screen.getByRole('button', { name: '放弃体征草稿并同步' }))
     expect((screen.getByLabelText('心率 (次/分)') as HTMLInputElement).value).toBe('84')
+  })
+
+  it('advances outpatient clinical score revision when a 12-lead ECG examination report arrives even if base revision is unchanged', () => {
+    const beforeReport = buildOutpatientClinicalScoreRevision({
+      examinationRequests: {
+        requests: [
+          {
+            id: 'exam-1',
+            report: undefined,
+            status: 'requested',
+            version: 1,
+          } as unknown as NonNullable<DoctorCaseDetail['examinationRequests']>['requests'][number],
+        ],
+      } as unknown as DoctorCaseDetail['examinationRequests'],
+    }, 'rev-static')
+    const afterReport = buildOutpatientClinicalScoreRevision({
+      examinationRequests: {
+        requests: [
+          {
+            id: 'exam-1',
+            report: { diagnosticReportId: 'dr-ecg-1', diagnosticReportVersion: '1' },
+            status: 'reported',
+            version: 2,
+          } as unknown as NonNullable<DoctorCaseDetail['examinationRequests']>['requests'][number],
+        ],
+      } as unknown as DoctorCaseDetail['examinationRequests'],
+    }, 'rev-static')
+    expect(afterReport).not.toBe(beforeReport)
   })
 })

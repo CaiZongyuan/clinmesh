@@ -2743,9 +2743,44 @@ export class ClinicalScoreService {
     }> = []
     const seenMedicationRequestIds = new Set<string>()
 
+    const readAdminTimestampMs = (adminId: string | null, preferEnd: boolean): number | undefined => {
+      if (adminId === null) return undefined
+      try {
+        const admin = medicationAdministrationResourceSchema.safeParse(
+          this.#fhir.read(context, 'MedicationAdministration', adminId),
+        )
+        if (!admin.success) return undefined
+        const adminIso = preferEnd
+          ? (
+              admin.data.occurencePeriod?.end
+              ?? admin.data.occurrencePeriod?.end
+              ?? admin.data.effectivePeriod?.end
+              ?? admin.data.occurenceDateTime
+              ?? admin.data.occurrenceDateTime
+              ?? admin.data.effectiveDateTime
+              ?? admin.data.recorded
+            )
+          : (
+              admin.data.occurencePeriod?.start
+              ?? admin.data.occurrencePeriod?.start
+              ?? admin.data.effectivePeriod?.start
+              ?? admin.data.occurenceDateTime
+              ?? admin.data.occurrenceDateTime
+              ?? admin.data.effectiveDateTime
+              ?? admin.data.recorded
+            )
+        const parsed = adminIso ? Date.parse(adminIso) : Number.NaN
+        return Number.isFinite(parsed) ? parsed : undefined
+      } catch {
+        return undefined
+      }
+    }
+
     const patientOrders = z.array(z.object({
       catalog_item_id: z.string(),
       display: z.string(),
+      earliest_administration_id: z.string().nullable(),
+      earliest_completed_scheduled_for: z.string().nullable(),
       latest_administration_id: z.string().nullable(),
       latest_completed_scheduled_for: z.string().nullable(),
       order_id: z.string(),
@@ -2756,6 +2791,23 @@ export class ClinicalScoreService {
     })).parse(
       this.#database.driver.prepare(`
         SELECT o.order_id, o.catalog_item_id, o.display, o.state, o.version, o.signed_at, o.stopped_at,
+               (SELECT e.scheduled_for
+                  FROM inpatient_execution e
+                 WHERE e.workspace_id = o.workspace_id
+                   AND e.epoch = o.epoch
+                   AND e.order_id = o.order_id
+                   AND e.status = 'completed'
+                 ORDER BY julianday(e.scheduled_for) ASC, e.execution_id ASC
+                 LIMIT 1) AS earliest_completed_scheduled_for,
+               (SELECT e.administration_id
+                  FROM inpatient_execution e
+                 WHERE e.workspace_id = o.workspace_id
+                   AND e.epoch = o.epoch
+                   AND e.order_id = o.order_id
+                   AND e.status = 'completed'
+                   AND e.administration_id IS NOT NULL
+                 ORDER BY julianday(e.scheduled_for) ASC, e.execution_id ASC
+                 LIMIT 1) AS earliest_administration_id,
                (SELECT e.scheduled_for
                   FROM inpatient_execution e
                  WHERE e.workspace_id = o.workspace_id
@@ -2785,32 +2837,29 @@ export class ClinicalScoreService {
     for (const order of patientOrders) {
       seenMedicationRequestIds.add(order.order_id)
       if (!this.#isLipidLoweringMedication(context, order.catalog_item_id, order.display)) continue
-      const parsedStart = Date.parse(order.signed_at)
-      const startMs = Number.isFinite(parsedStart) ? parsedStart : undefined
+      // An inpatient medication order does not lower serum lipids until at least one dose has been administered
+      if (order.earliest_completed_scheduled_for === null && order.earliest_administration_id === null) {
+        continue
+      }
+      const firstSchedMs =
+        order.earliest_completed_scheduled_for !== null
+          ? Date.parse(order.earliest_completed_scheduled_for)
+          : Number.NaN
+      const startMs =
+        readAdminTimestampMs(order.earliest_administration_id, false)
+        ?? (Number.isFinite(firstSchedMs) ? firstSchedMs : undefined)
       let terminalMs = order.stopped_at ? Date.parse(order.stopped_at) : Number.NaN
       if (!Number.isFinite(terminalMs) && order.state === 'completed') {
-        if (order.latest_administration_id !== null) {
-          try {
-            const admin = medicationAdministrationResourceSchema.safeParse(
-              this.#fhir.read(context, 'MedicationAdministration', order.latest_administration_id),
-            )
-            const adminIso = admin.success
-              ? (admin.data.occurenceDateTime ?? admin.data.occurrenceDateTime ?? admin.data.effectiveDateTime ?? admin.data.recorded)
-              : undefined
-            if (adminIso !== undefined) terminalMs = Date.parse(adminIso)
-          } catch {
-            // fallback to execution scheduled_for / signed_at below
-          }
-        }
-        if (!Number.isFinite(terminalMs) && order.latest_completed_scheduled_for !== null) {
+        const lastAdminMs = readAdminTimestampMs(order.latest_administration_id, true)
+        if (lastAdminMs !== undefined) {
+          terminalMs = lastAdminMs
+        } else if (order.latest_completed_scheduled_for !== null) {
           terminalMs = Date.parse(order.latest_completed_scheduled_for)
         }
       }
       const endMs =
         (order.state === 'stopped' || order.state === 'completed') && Number.isFinite(terminalMs)
-          ? (order.state === 'stopped' && order.latest_completed_scheduled_for === null
-              ? terminalMs
-              : terminalMs + LIPID_WASHOUT_MS)
+          ? terminalMs + LIPID_WASHOUT_MS
           : Number.POSITIVE_INFINITY
       exposures.push({
         endMs,
