@@ -35,6 +35,8 @@ describe('clinical-scores unit conversions and physiological bounds', () => {
     expect(normalizeWbc10e9L(8.5, '10*9/L')).toBeCloseTo(8.5, 4)
     expect(normalizeWbc10e9L(12.2, '10^9/L')).toBeCloseTo(12.2, 4)
     expect(normalizeWbc10e9L(11000, '/uL')).toBeCloseTo(11.0, 4)
+    expect(normalizeWbc10e9L(6000, '/mm3')).toBeCloseTo(6.0, 4)
+    expect(normalizeWbc10e9L(6.0, '10^3/mm3')).toBeCloseTo(6.0, 4)
     expect(() => normalizeWbc10e9L(0.01, '10*9/L')).toThrow(RangeError)
     expect(() => normalizeWbc10e9L(500, '10*9/L')).toThrow(RangeError)
   })

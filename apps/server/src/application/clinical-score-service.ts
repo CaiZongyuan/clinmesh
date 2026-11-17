@@ -919,8 +919,36 @@ export class ClinicalScoreService {
         ? (inpatient.discharge.activeDeparture(context, admissionId)?.virtualTime ?? extractEncounterEndIso(encounter))
         : undefined
     const now = normalizeCutoffIso(referenceTimeIso ?? departedAt ?? virtualNow)
+    const admTiming = z.object({
+      admitted_at: z.string().nullable(),
+      registered_at: z.string(),
+    }).optional().parse(
+      this.#database.driver.prepare(`
+        SELECT admitted_at, registered_at
+        FROM inpatient_admission
+        WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
+      `).get(context.workspaceId, context.epoch, admissionId),
+    )
+    const admissionAnchorIso = admTiming?.admitted_at ?? extractEncounterStartIso(encounter) ?? admTiming?.registered_at
+    const admissionAnchorMs = parseResourceTimestampMs(admissionAnchorIso)
     const initialVitals = this.initialInpatientVitalSigns(context, admissionId)
     const latestVitals = this.latestInpatientVitalSigns(context, admissionId)
+    const ADMISSION_VITALS_MAX_DELAY_MS = 6 * 60 * 60 * 1000
+    const initialVitalsRecordedMs = parseResourceTimestampMs(initialVitals?.recordedAt)
+    const qualifiesAsAdmissionVitals = (() => {
+      if (initialVitals === undefined || initialVitalsRecordedMs === undefined) return false
+      if (admissionAnchorMs !== undefined && initialVitalsRecordedMs - admissionAnchorMs > ADMISSION_VITALS_MAX_DELAY_MS) {
+        return false
+      }
+      const priorCompletedSurgery = this.#database.driver.prepare(`
+        SELECT 1 FROM inpatient_surgery_execution
+        WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
+          AND julianday(performed_at) < julianday(?)
+        LIMIT 1
+      `).get(context.workspaceId, context.epoch, admissionId, initialVitals.recordedAt)
+      if (priorCompletedSurgery !== undefined) return false
+      return true
+    })()
     const toVitalSummary = (v: InpatientVitalSignsRecord | undefined): ClinicalScoreVitalSummary | null =>
       v === undefined
         ? null
@@ -939,7 +967,7 @@ export class ClinicalScoreService {
     const initialWeightedVitals = this.initialInpatientVitalSignsWithWeight(context, admissionId)
     const latestHeightVitals = this.latestInpatientVitalSignsWithHeight(context, admissionId)
     const latestWeightVitals = this.latestInpatientVitalSignsWithWeight(context, admissionId)
-    const admissionVitalSummary = toVitalSummary(initialVitals)
+    const admissionVitalSummary = qualifiesAsAdmissionVitals ? toVitalSummary(initialVitals) : null
     const baselineWeightVitalSummary = toVitalSummary(initialWeightedVitals)
     const latestHeightVitalSummary = toVitalSummary(latestHeightVitals)
     const latestWeightVitalSummary = toVitalSummary(latestWeightVitals)
@@ -1201,19 +1229,37 @@ export class ClinicalScoreService {
   #readPrescriptionCourseDurationByMedicationRequestId(
     context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
   ): Map<string, number> {
+    const map = new Map<string, number>()
+    for (const [id, meta] of this.#readLocalPrescriptionMetaByMedicationRequestId(context)) {
+      map.set(id, meta.courseDurationMs)
+    }
+    return map
+  }
+
+  #readLocalPrescriptionMetaByMedicationRequestId(
+    context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
+  ): Map<string, { courseDurationMs: number; prescriptionStatus: string }> {
     const rows = z.array(z.object({
       course_days: z.number().int().positive(),
       medication_request_id: z.string(),
+      status: z.string(),
     })).parse(
       this.#database.driver.prepare(`
-        SELECT medication_request_id, course_days
-        FROM prescription_item
-        WHERE workspace_id = ? AND epoch = ?
+        SELECT pi.medication_request_id, pi.course_days, p.status
+        FROM prescription_item pi
+        JOIN prescription p
+          ON p.workspace_id = pi.workspace_id
+         AND p.epoch = pi.epoch
+         AND p.prescription_id = pi.prescription_id
+        WHERE pi.workspace_id = ? AND pi.epoch = ?
       `).all(context.workspaceId, context.epoch),
     )
-    const map = new Map<string, number>()
+    const map = new Map<string, { courseDurationMs: number; prescriptionStatus: string }>()
     for (const row of rows) {
-      map.set(row.medication_request_id, row.course_days * 86_400_000)
+      map.set(row.medication_request_id, {
+        courseDurationMs: row.course_days * 86_400_000,
+        prescriptionStatus: row.status,
+      })
     }
     return map
   }
@@ -2948,7 +2994,7 @@ export class ClinicalScoreService {
       })
     }
 
-    const courseDurationByMedReqId = this.#readPrescriptionCourseDurationByMedicationRequestId(context)
+    const localPrescriptionByMedReqId = this.#readLocalPrescriptionMetaByMedicationRequestId(context)
     const withdrawnIds = new Set(
       z.array(z.object({ medication_request_id: z.string() })).parse(
         this.#database.driver.prepare(`
@@ -2979,26 +3025,8 @@ export class ClinicalScoreService {
           ...(parsed.data.medication?.concept?.coding ?? []).map(item => item.display),
         ].filter(Boolean).join(' ')
         if (!this.#isLipidLoweringMedication(context, medId, display)) continue
-        const rawStartIso =
-          parsed.data.effectiveDosePeriod?.start
-          ?? parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsPeriod?.start
-          ?? parsed.data.authoredOn
-        const startMs =
-          parseResourceTimestampMs(rawStartIso)
-          ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
-        if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs) && startMs !== undefined && startMs > nowMs) {
-          continue
-        }
-        const rawBoundsMs = resolveMedicationBoundsDurationMs(
-          parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
-          ?? parsed.data.dispenseRequest?.expectedSupplyDuration,
-        )
-        const boundsMs = rawBoundsMs === undefined ? courseDurationByMedReqId.get(parsed.data.id) : rawBoundsMs
-        const explicitPeriodEndIso =
-          parsed.data.effectiveDosePeriod?.end
-          ?? parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsPeriod?.end
-        const parsedExplicitEnd = explicitPeriodEndIso ? Date.parse(explicitPeriodEndIso) : Number.NaN
-
+        const localPrescription = localPrescriptionByMedReqId.get(parsed.data.id)
+        let earliestDispenseMs: number | undefined
         let dispenseAnchorMs: number | undefined
         let dispenseSupplyEndMs: number | undefined
         const dispenseParams = new URLSearchParams({
@@ -3013,6 +3041,9 @@ export class ClinicalScoreService {
             const handedIso = disp.data.whenHandedOver ?? disp.data.whenPrepared
             const handedMs = handedIso ? Date.parse(handedIso) : Number.NaN
             if (Number.isFinite(handedMs)) {
+              if (earliestDispenseMs === undefined || handedMs < earliestDispenseMs) {
+                earliestDispenseMs = handedMs
+              }
               if (dispenseAnchorMs === undefined || handedMs > dispenseAnchorMs) {
                 dispenseAnchorMs = handedMs
               }
@@ -3028,6 +3059,31 @@ export class ClinicalScoreService {
           if (dispPage.nextCursor === undefined) break
           dispenseParams.set('_cursor', dispPage.nextCursor)
         }
+        // A local outpatient prescription has not begun lowering serum lipids until dispensed by pharmacy
+        if (localPrescription !== undefined && earliestDispenseMs === undefined && localPrescription.prescriptionStatus !== 'dispensed') {
+          continue
+        }
+        const explicitStartMs = parseResourceTimestampMs(
+          parsed.data.effectiveDosePeriod?.start
+          ?? parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsPeriod?.start,
+        )
+        const startMs =
+          explicitStartMs
+          ?? earliestDispenseMs
+          ?? parseResourceTimestampMs(parsed.data.authoredOn)
+          ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
+        if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs) && startMs !== undefined && startMs > nowMs) {
+          continue
+        }
+        const rawBoundsMs = resolveMedicationBoundsDurationMs(
+          parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
+          ?? parsed.data.dispenseRequest?.expectedSupplyDuration,
+        )
+        const boundsMs = rawBoundsMs === undefined ? localPrescription?.courseDurationMs : rawBoundsMs
+        const explicitPeriodEndIso =
+          parsed.data.effectiveDosePeriod?.end
+          ?? parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsPeriod?.end
+        const parsedExplicitEnd = explicitPeriodEndIso ? Date.parse(explicitPeriodEndIso) : Number.NaN
 
         let endMs = Number.POSITIVE_INFINITY
         if (Number.isFinite(parsedExplicitEnd)) {

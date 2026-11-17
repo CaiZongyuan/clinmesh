@@ -992,7 +992,7 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       status: 'completed',
       subject: { reference: `Patient/${tempOrderPatient.id}` },
     })
-    // Combined clinical-sign flow MedicationRequest (status='active', no FHIR boundsDuration, stored course_days=14 in prescription_item) from Jan 2026 expires after 14d + 28d washout instead of staying active forever
+    // Combined clinical-sign flow MedicationRequest (status='active', no FHIR boundsDuration, stored course_days=14 in prescription_item) dispensed in Jan 2026 expires after 14d + 28d washout instead of staying active forever
     const signedShortMedReq = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
       authoredOn: '2026-01-05T10:00:00+08:00',
       dosageInstruction: [{ text: '20mg QD' }],
@@ -1007,13 +1007,22 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     fixture.runtime.database.driver.prepare(`
       INSERT INTO prescription (
         workspace_id, epoch, prescription_id, case_id, prescription_number, status, version, authored_by, authored_at
-      ) VALUES (?, ?, ?, ?, ?, 'signed', 1, 'actor-test', '2026-01-05T10:00:00+08:00')
+      ) VALUES (?, ?, ?, ?, ?, 'dispensed', 1, 'actor-test', '2026-01-05T10:00:00+08:00')
     `).run(scenario.workspaceId, scenario.epoch, signedShortPrescriptionId, tempCase.caseId, `RX-SHORT-${randomUUID().slice(0, 8)}`)
     fixture.runtime.database.driver.prepare(`
       INSERT INTO prescription_item (
         workspace_id, epoch, prescription_id, medication_request_id, medication_id, medication_snapshot_json, quantity, dose_text, frequency_code, course_days
       ) VALUES (?, ?, ?, ?, 'medication-atorvastatin', '{}', 2, '20mg', 'QD', 14)
     `).run(scenario.workspaceId, scenario.epoch, signedShortPrescriptionId, signedShortMedReq.id)
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authorizingPrescription: [{ reference: `MedicationRequest/${signedShortMedReq.id}` }],
+      id: uuidv7(),
+      medication: { concept: { text: '阿托伐他汀钙片 20mg' } },
+      resourceType: 'MedicationDispense',
+      status: 'completed',
+      subject: { reference: `Patient/${tempOrderPatient.id}` },
+      whenHandedOver: '2026-01-05T10:30:00+08:00',
+    })
 
     // Same-specimen TC=6.5 + HDL=1.1 (non-HDL=5.4 >= 5.2), followed by a newer standalone TC-only=5.3 before active statin
     const pairedPanel = insertSyntheticLabReport(fixture, {
@@ -1070,9 +1079,9 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       ]),
     )
 
-    // Starting an active statin on 2026-08-06 followed by on-treatment LDL-C = 2.0 on 2026-08-20 still uses the 2026-08-01 pretreatment same-specimen pair for <55 non-HDL-C
-    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
-      authoredOn: '2026-08-06T10:00:00+08:00',
+    // Outpatient statin authored BEFORE blood draw (2026-08-01T08:30) but dispensed AFTER blood draw (2026-08-06T10:00) anchors exposure start to MedicationDispense.whenHandedOver so the 2026-08-01 specimen stays pretreatment baseline
+    const preDrawAuthoredStatin = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authoredOn: '2026-08-01T08:30:00+08:00',
       dosageInstruction: [{ timing: { repeat: { boundsDuration: { code: 'mo', system: 'http://unitsofmeasure.org', unit: 'mo', value: 3 } } } }],
       id: uuidv7(),
       intent: 'order',
@@ -1080,6 +1089,15 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       resourceType: 'MedicationRequest',
       status: 'active',
       subject: { reference: `Patient/${tempOrderPatient.id}` },
+    })
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authorizingPrescription: [{ reference: `MedicationRequest/${preDrawAuthoredStatin.id}` }],
+      id: uuidv7(),
+      medication: { concept: { text: '瑞舒伐他汀钙片 10mg' } },
+      resourceType: 'MedicationDispense',
+      status: 'completed',
+      subject: { reference: `Patient/${tempOrderPatient.id}` },
+      whenHandedOver: '2026-08-06T10:00:00+08:00',
     })
     insertSyntheticLabReport(fixture, {
       caseId: tempCase.caseId,
@@ -1409,6 +1427,27 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       status: 'complete',
       tierCode: 'high',
       value: 2.6,
+    })
+
+    // First nursing vitals recorded on hospital day 3 (>6h after admitted_at) do NOT masquerade as GRACE admission HR/SBP
+    fixture.runtime.database.driver.prepare(`
+      UPDATE inpatient_vital_signs SET recorded_at = '2026-08-27T09:00:00+08:00'
+      WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
+    `).run(scenario.workspaceId, scenario.epoch, outOfOrderStay.admissionId)
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
+      code: { coding: [{ code: 'I21.4', display: '急性心内膜下心肌梗死' }], text: '急性心内膜下心肌梗死' },
+      encounter: { reference: `Encounter/${outOfOrderStay.admissionId}` },
+      id: uuidv7(),
+      recordedDate: '2026-08-24T09:00:00+08:00',
+      resourceType: 'Condition',
+      subject: { reference: `Patient/${outOfOrderStay.patientId}` },
+      verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
+    })
+    const lateFirstVitalsScores = await fixture.read('inpatient-doctor', `${outOfOrderStay.path}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(lateFirstVitalsScores.scores.find(s => s.id === 'grace-acs')).toMatchObject({
+      missingInputs: expect.arrayContaining(['heartRateBpm', 'systolicBpMmHg']),
+      status: 'incomplete',
     })
 
     // Non-responsible outpatient doctor cannot read another doctor's outpatient clinical scores (returns 403)

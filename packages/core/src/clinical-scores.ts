@@ -167,9 +167,9 @@ export function normalizeWbc10e9L(value: number, rawUnit: string): number {
   }
   const normalizedUnit = rawUnit.trim().replace(/^[×x]/iu, '').replace(/[μµ]/gu, 'u').toLowerCase()
   const count10e9L =
-    ['10*9/l', '10^9/l', 'g/l', '/nl', '10*3/ul', '10^3/ul', '/mm3', 'k/ul'].includes(normalizedUnit)
+    ['10*9/l', '10^9/l', 'g/l', '/nl', '10*3/ul', '10^3/ul', '10*3/mm3', '10^3/mm3', 'k/ul', 'k/mm3'].includes(normalizedUnit)
       ? value
-      : normalizedUnit === '/ul'
+      : ['/ul', '/mm3', '/mm^3'].includes(normalizedUnit)
         ? value / 1000
         : undefined
   if (count10e9L === undefined) {
