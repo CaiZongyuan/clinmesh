@@ -710,12 +710,32 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       confirmedDiagnoses: [{ code: 'E11.9', source: src }],
       elevatedCardiacBiomarker: { source: src, value: false },
       knownCoronaryRevascularizationOrStenosisGe50: { source: src, value: false },
+      ldlCholesterol: { source: src, value: { unit: 'mmol/L', value: 2.2 } },
       smokingStatus: { source: src, value: 'current' },
       stSegmentDeviation: { source: src, value: false },
       systolicBpMmHg: { source: src, value: 158 },
+      totalCholesterol: { source: src, value: { unit: 'mmol/L', value: 4.1 } },
     })
     expect(transientHighSbpUnknownFamily.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({
       missingInputs: ['familyHistoryPrematureCad'],
+      status: 'incomplete',
+    })
+
+    // Two known CAD factors (I10 + E11.9) with unmeasured lipids stays incomplete on TIMI because dyslipidemia could be the 3rd factor
+    const unmeasuredLipidsTwoFactors = evaluateClinicalScores({
+      ageYears: { source: src, value: 58 },
+      anginaEpisodes24h: { source: src, value: 1 },
+      aspirinUsedLast7Days: { source: src, value: false },
+      confirmedDiagnoses: [{ code: 'I10', source: src }, { code: 'E11.9', source: src }],
+      elevatedCardiacBiomarker: { source: src, value: false },
+      familyHistoryPrematureCad: { source: src, value: false },
+      knownCoronaryRevascularizationOrStenosisGe50: { source: src, value: false },
+      smokingStatus: { source: src, value: 'never' },
+      stSegmentDeviation: { source: src, value: false },
+      systolicBpMmHg: { source: src, value: 126 },
+    })
+    expect(unmeasuredLipidsTwoFactors.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({
+      missingInputs: ['ldlCholesterol', 'totalCholesterol'],
       status: 'incomplete',
     })
 
@@ -742,9 +762,11 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       elevatedCardiacBiomarker: { source: src, value: false },
       familyHistoryPrematureCad: { source: src, value: false },
       knownCoronaryRevascularizationOrStenosisGe50: { source: src, value: false },
+      ldlCholesterol: { source: src, value: { unit: 'mmol/L', value: 2.2 } },
       smokingStatus: { source: src, value: 'current' },
       stSegmentDeviation: { source: src, value: false },
       systolicBpMmHg: { source: src, value: 158 },
+      totalCholesterol: { source: src, value: { unit: 'mmol/L', value: 4.1 } },
     })
     expect(transientHighSbpNegativeFamily.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 0 })
 
@@ -757,9 +779,11 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       elevatedCardiacBiomarker: { source: src, value: false },
       familyHistoryPrematureCad: { source: src, value: false },
       knownCoronaryRevascularizationOrStenosisGe50: { source: src, value: false },
+      ldlCholesterol: { source: src, value: { unit: 'mmol/L', value: 2.2 } },
       smokingStatus: { source: src, value: 'never' },
       stSegmentDeviation: { source: src, value: false },
       systolicBpMmHg: { source: src, value: 126 },
+      totalCholesterol: { source: src, value: { unit: 'mmol/L', value: 4.1 } },
     })
     expect(genericZ824NegativePremature.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({ status: 'complete', value: 0 })
 
