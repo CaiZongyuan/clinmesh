@@ -861,6 +861,13 @@ it('门诊与住院同步读取注册 Guideline Topic 直接返回核验原文�
   )
   expect(completedSerialBundle.items[0]!.patientIndicators.find(i => i.code === 'cardiac-troponin')?.status).toBe('present')
 
+  // A subsequent isolated normal troponin >6h later starts a new incomplete episode rather than inheriting the earlier pair
+  addOpTroponin('2026-08-25T09:00:00+08:00', 0.01, 'N')
+  const newIsolatedEpisodeBundle = guidelineTopicBundleSchema.parse(
+    await (await s.fixture.request('doctor', `/api/his/v1/doctor/cases/${opCase.caseId}/guideline-topics?topicId=acute-chest-pain-acs`)).json(),
+  )
+  expect(newIsolatedEpisodeBundle.items[0]!.patientIndicators.find(i => i.code === 'cardiac-troponin')?.status).toBe('missing')
+
   const chestPainDoc = fullTopicDocuments().find(d => d.source.id === 'coronary-31-2019')!
   s.writer.importDocument({
     passages: [],

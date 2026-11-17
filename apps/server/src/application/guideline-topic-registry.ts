@@ -1197,15 +1197,13 @@ export function extractSupplementaryIndicators(options: {
         }),
       )
     const latestEpisode = episodes.at(-1)
-    const hasCompletedEarlierEpisode = episodes.slice(0, -1).some(episodeHasSerialWindow)
+    const latestObs = chrono.at(-1)
     const hasUntimedElevatedObservation = chrono.some(item => item.samplingTimestampMs === undefined && item.elevated)
     const hasValidRepeatInterval =
       !hasUntimedElevatedObservation
+      && latestObs?.samplingTimestampMs !== undefined
       && latestEpisode !== undefined
-      && (
-        episodeHasSerialWindow(latestEpisode)
-        || (hasCompletedEarlierEpisode && !latestEpisode.some(item => item.elevated))
-      )
+      && episodeHasSerialWindow(latestEpisode)
     const serialComplete = hasValidRepeatInterval
     const hasSubHourOnly =
       !serialComplete
