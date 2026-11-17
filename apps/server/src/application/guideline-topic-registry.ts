@@ -491,10 +491,21 @@ export function readGuidelineTopicSource(
   }
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^$${}()|[\]\\]/g, ch => `\\${ch}`)
+}
+
+function matchesGuidelineTopicTerm(textCorpus: string, lowerCorpus: string, term: string): boolean {
+  if (/^[A-Za-z0-9._-]+$/.test(term)) {
+    return new RegExp(`(?:^|[^A-Za-z0-9])${escapeRegExp(term)}(?=$|[^A-Za-z0-9])`, 'i').test(textCorpus)
+  }
+  return lowerCorpus.includes(term.toLowerCase())
+}
+
 export function matchApplicableGuidelineTopicIds(textCorpus: string): GuidelineTopicId[] {
   const lower = textCorpus.toLowerCase()
   return TOPICS_LIST
-    .filter(topic => topic.matchTerms.some(term => lower.includes(term.toLowerCase())))
+    .filter(topic => topic.matchTerms.some(term => matchesGuidelineTopicTerm(textCorpus, lower, term)))
     .map(topic => topic.id)
 }
 

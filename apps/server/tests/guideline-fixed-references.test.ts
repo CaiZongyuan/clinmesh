@@ -8,6 +8,7 @@ import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
 import {
   computeGuidelineTopicFingerprint,
   getGuidelineTopicDefinition,
+  matchApplicableGuidelineTopicIds,
   normalizeGuidelineFragmentText,
   readGuidelineTopicSource,
   summarizeCoronaryAngiographyVessels,
@@ -254,6 +255,8 @@ it('六个注册 Guideline Topic 均通过精确 SHA-256、物理页码、软连
   const acsDef = getGuidelineTopicDefinition('acute-chest-pain-acs')
   const { fingerprint: baseFp, ...acsSpec } = acsDef
   expect(computeGuidelineTopicFingerprint(acsSpec)).toBe(baseFp)
+  expect(matchApplicableGuidelineTopicIds('{"speaker":"doctor","text":"description of sacral pain"}')).toEqual([])
+  expect(matchApplicableGuidelineTopicIds('拟行 OCT 指导 DES 支架置入')).toContain('pci-stent')
   expect(computeGuidelineTopicFingerprint({ ...acsSpec, generationRule: `${acsSpec.generationRule}（附加条款）` })).not.toBe(baseFp)
   expect(
     computeGuidelineTopicFingerprint({
