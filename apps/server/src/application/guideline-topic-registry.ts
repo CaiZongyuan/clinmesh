@@ -946,12 +946,16 @@ export function extractSupplementaryIndicators(options: {
     const reports = inpatient.service.angiography.reports(inpatient.actor, caseId)
     const latest = reports.find(item => item.status === 'final' || item.status === 'partial')
     if (latest !== undefined && latest.vessels.length > 0) {
+      let reportVersionId = String(latest.version)
+      try {
+        reportVersionId = fhir.read(context, 'DiagnosticReport', latest.id).meta?.versionId ?? reportVersionId
+      } catch { /* fallback to latest.version */ }
       const { missingFfrMessages, summaryText } = summarizeCoronaryAngiographyVessels(latest.vessels)
       angiographySummary = {
         missingFfrMessages,
-        sourceReference: `Procedure/${latest.procedureId}`,
+        sourceReference: `DiagnosticReport/${latest.id}`,
         summaryText,
-        versionId: String(latest.version),
+        versionId: reportVersionId,
       }
     }
     const pciCandidates = inpatient.service.surgery.read(inpatient.actor, caseId).requests
