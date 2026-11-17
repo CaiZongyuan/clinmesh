@@ -169,11 +169,28 @@ const procedureResourceSchema = z.object({
   status: z.string().optional(),
 }).loose()
 
+const durationQuantitySchema = z.object({
+  code: z.string().optional(),
+  unit: z.string().optional(),
+  value: z.number().finite().positive().optional(),
+}).loose()
+
 const medicationAdministrationResourceSchema = z.object({
   effectiveDateTime: z.string().optional(),
+  effectivePeriod: z.object({ end: z.string().optional(), start: z.string().optional() }).loose().optional(),
   occurenceDateTime: z.string().optional(),
+  occurencePeriod: z.object({ end: z.string().optional(), start: z.string().optional() }).loose().optional(),
   occurrenceDateTime: z.string().optional(),
+  occurrencePeriod: z.object({ end: z.string().optional(), start: z.string().optional() }).loose().optional(),
   recorded: z.string().optional(),
+  status: z.string().optional(),
+}).loose()
+
+const medicationDispenseResourceSchema = z.object({
+  daysSupply: durationQuantitySchema.optional(),
+  status: z.string().optional(),
+  whenHandedOver: z.string().optional(),
+  whenPrepared: z.string().optional(),
 }).loose()
 
 function findLatestSameSpecimenTcHdlPair<
@@ -199,17 +216,19 @@ function findLatestSameSpecimenTcHdlPair<
 
 const medicationRequestResourceSchema = z.object({
   authoredOn: z.string().optional(),
+  dispenseRequest: z.object({
+    expectedSupplyDuration: durationQuantitySchema.optional(),
+    validityPeriod: z.object({ end: z.string().optional(), start: z.string().optional() }).loose().optional(),
+  }).loose().optional(),
   dosageInstruction: z.array(z.object({
     timing: z.object({
       repeat: z.object({
-        boundsDuration: z.object({
-          code: z.string().optional(),
-          unit: z.string().optional(),
-          value: z.number().finite().positive().optional(),
-        }).loose().optional(),
+        boundsDuration: durationQuantitySchema.optional(),
+        boundsPeriod: z.object({ end: z.string().optional(), start: z.string().optional() }).loose().optional(),
       }).loose().optional(),
     }).loose().optional(),
   }).loose()).optional(),
+  effectiveDosePeriod: z.object({ end: z.string().optional(), start: z.string().optional() }).loose().optional(),
   id: z.string().min(1),
   medication: z.object({
     concept: z.object({ coding: z.array(codingItemSchema).optional(), text: z.string().optional() }).loose().optional(),
@@ -221,6 +240,7 @@ const medicationRequestResourceSchema = z.object({
     reference: z.object({ reference: z.string().optional() }).loose().optional(),
   }).loose()).optional(),
   status: z.string().optional(),
+  statusChanged: z.string().optional(),
 }).loose()
 
 function completedAgeYears(birthDate: string | undefined, referenceDate: string): number | undefined {
@@ -2785,9 +2805,6 @@ export class ClinicalScoreService {
         if (!Number.isFinite(terminalMs) && order.latest_completed_scheduled_for !== null) {
           terminalMs = Date.parse(order.latest_completed_scheduled_for)
         }
-        if (!Number.isFinite(terminalMs) && startMs !== undefined) {
-          terminalMs = startMs
-        }
       }
       const endMs =
         (order.state === 'stopped' || order.state === 'completed') && Number.isFinite(terminalMs)
@@ -2836,17 +2853,96 @@ export class ClinicalScoreService {
           ...(parsed.data.medication?.concept?.coding ?? []).map(item => item.display),
         ].filter(Boolean).join(' ')
         if (!this.#isLipidLoweringMedication(context, medId, display)) continue
-        const parsedStart = parsed.data.authoredOn ? Date.parse(parsed.data.authoredOn) : Number.NaN
+        const rawStartIso =
+          parsed.data.effectiveDosePeriod?.start
+          ?? parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsPeriod?.start
+          ?? parsed.data.authoredOn
+        const parsedStart = rawStartIso ? Date.parse(rawStartIso) : Number.NaN
         const startMs = Number.isFinite(parsedStart) ? parsedStart : undefined
         const boundsMs = resolveMedicationBoundsDurationMs(
-          parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration,
+          parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
+          ?? parsed.data.dispenseRequest?.expectedSupplyDuration,
         )
-        const endMs =
-          startMs !== undefined && typeof boundsMs === 'number'
-            ? startMs + boundsMs + LIPID_WASHOUT_MS
-            : (status === 'completed' || status === 'stopped') && startMs !== undefined
-              ? startMs + LIPID_WASHOUT_MS
-              : Number.POSITIVE_INFINITY
+        const explicitPeriodEndIso =
+          parsed.data.effectiveDosePeriod?.end
+          ?? parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsPeriod?.end
+        const parsedExplicitEnd = explicitPeriodEndIso ? Date.parse(explicitPeriodEndIso) : Number.NaN
+
+        let dispenseAnchorMs: number | undefined
+        let dispenseSupplyEndMs: number | undefined
+        const dispenseParams = new URLSearchParams({
+          _count: '50',
+          prescription: `MedicationRequest/${parsed.data.id}`,
+        })
+        for (;;) {
+          const dispPage = this.#fhir.search(context, 'MedicationDispense', dispenseParams)
+          for (const rawDisp of dispPage.resources) {
+            const disp = medicationDispenseResourceSchema.safeParse(rawDisp)
+            if (!disp.success || ['entered-in-error', 'cancelled', 'declined'].includes(disp.data.status ?? '')) continue
+            const handedIso = disp.data.whenHandedOver ?? disp.data.whenPrepared
+            const handedMs = handedIso ? Date.parse(handedIso) : Number.NaN
+            if (Number.isFinite(handedMs)) {
+              if (dispenseAnchorMs === undefined || handedMs > dispenseAnchorMs) {
+                dispenseAnchorMs = handedMs
+              }
+              const supplyMs = resolveMedicationBoundsDurationMs(disp.data.daysSupply)
+              if (typeof supplyMs === 'number') {
+                const candidateEnd = handedMs + supplyMs
+                if (dispenseSupplyEndMs === undefined || candidateEnd > dispenseSupplyEndMs) {
+                  dispenseSupplyEndMs = candidateEnd
+                }
+              }
+            }
+          }
+          if (dispPage.nextCursor === undefined) break
+          dispenseParams.set('_cursor', dispPage.nextCursor)
+        }
+
+        let endMs = Number.POSITIVE_INFINITY
+        if (Number.isFinite(parsedExplicitEnd)) {
+          endMs = parsedExplicitEnd + LIPID_WASHOUT_MS
+        } else if (typeof boundsMs === 'number' && (startMs !== undefined || dispenseAnchorMs !== undefined)) {
+          const anchor = Math.max(startMs ?? 0, dispenseAnchorMs ?? 0)
+          endMs = anchor + boundsMs + LIPID_WASHOUT_MS
+        } else if (dispenseSupplyEndMs !== undefined && (status === 'completed' || status === 'stopped')) {
+          endMs = dispenseSupplyEndMs + LIPID_WASHOUT_MS
+        } else if (status === 'completed' || status === 'stopped') {
+          let completionEvidenceMs = parsed.data.statusChanged ? Date.parse(parsed.data.statusChanged) : Number.NaN
+          if (!Number.isFinite(completionEvidenceMs)) {
+            let latestAdminMs: number | undefined
+            const adminParams = new URLSearchParams({
+              _count: '50',
+              request: `MedicationRequest/${parsed.data.id}`,
+            })
+            for (;;) {
+              const adminPage = this.#fhir.search(context, 'MedicationAdministration', adminParams)
+              for (const rawAdmin of adminPage.resources) {
+                const admin = medicationAdministrationResourceSchema.safeParse(rawAdmin)
+                if (!admin.success || ['entered-in-error', 'not-done'].includes(admin.data.status ?? '')) continue
+                const adminEndIso =
+                  admin.data.occurencePeriod?.end
+                  ?? admin.data.occurrencePeriod?.end
+                  ?? admin.data.effectivePeriod?.end
+                  ?? admin.data.occurenceDateTime
+                  ?? admin.data.occurrenceDateTime
+                  ?? admin.data.effectiveDateTime
+                  ?? admin.data.recorded
+                const adminMs = adminEndIso ? Date.parse(adminEndIso) : Number.NaN
+                if (Number.isFinite(adminMs) && (latestAdminMs === undefined || adminMs > latestAdminMs)) {
+                  latestAdminMs = adminMs
+                }
+              }
+              if (adminPage.nextCursor === undefined) break
+              adminParams.set('_cursor', adminPage.nextCursor)
+            }
+            if (latestAdminMs !== undefined) {
+              completionEvidenceMs = latestAdminMs
+            }
+          }
+          if (Number.isFinite(completionEvidenceMs)) {
+            endMs = completionEvidenceMs + LIPID_WASHOUT_MS
+          }
+        }
         exposures.push({
           endMs,
           source: {

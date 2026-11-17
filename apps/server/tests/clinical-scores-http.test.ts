@@ -972,13 +972,23 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     const tempCase = (await fixture.read('doctor', '/api/his/v1/doctor/queue', doctorQueueSchema))
       .items.find(item => item.encounterId === tempReg.encounterId)!
 
-    // Historical completed single-dose MedicationRequest from 6 months ago (>28d washout) does NOT block current untreated lipid panel
-    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+    // Historical completed MedicationRequest with explicit MedicationAdministration completion evidence from 6 months ago (>28d washout) does NOT block current untreated lipid panel
+    const completedMedReq = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
       authoredOn: '2026-01-10T10:00:00+08:00',
       id: uuidv7(),
       intent: 'order',
       medication: { concept: { text: '阿托伐他汀钙片 20mg' } },
       resourceType: 'MedicationRequest',
+      status: 'completed',
+      subject: { reference: `Patient/${tempOrderPatient.id}` },
+    })
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      id: uuidv7(),
+      medication: { concept: { text: '阿托伐他汀钙片 20mg' } },
+      occurenceDateTime: '2026-01-25T10:00:00+08:00',
+      recorded: '2026-01-25T10:00:00+08:00',
+      request: { reference: `MedicationRequest/${completedMedReq.id}` },
+      resourceType: 'MedicationAdministration',
       status: 'completed',
       subject: { reference: `Patient/${tempOrderPatient.id}` },
     })
@@ -1065,6 +1075,96 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       status: 'complete',
       tierCode: 'high',
       value: 2.6,
+    })
+
+    // Conversely, a completed MedicationRequest with NO boundsDuration and NO completion evidence keeps end unknown rather than washing out 28d after authoredOn
+    const unknownEndPatient = createPatientResponseSchema.parse(
+      await (
+        await fixture.request('registrar', '/api/his/v1/patients', {
+          birthDate: '1976-04-10',
+          gender: 'female',
+          identifier: `OP-UNKNOWN-END-${randomUUID()}`,
+          name: '合成无终止证据他汀患者',
+        }, randomUUID(), {})
+      ).json(),
+    ).data.patient
+    const unknownEndReg = registrationResponseSchema.parse(
+      await (
+        await fixture.request('registrar', '/api/his/v1/registrations/actions/register', {
+          departmentId: regCatalog.departments[0]!.id,
+          locationId: regCatalog.locations[0]!.id,
+          patientId: unknownEndPatient.id,
+          visitDate: regCatalog.virtualDate,
+          visitTypeId: regCatalog.visitTypes[0]!.id,
+        }, randomUUID(), { [`Patient/${unknownEndPatient.id}`]: unknownEndPatient.versionId })
+      ).json(),
+    ).data
+    const unknownEndTriage = triageResponseSchema.parse(
+      await (
+        await fixture.request('triage', `/api/his/v1/encounters/${unknownEndReg.encounterId}/actions/record-triage`, {
+          acuityCode: 'level-3',
+          bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
+          chiefComplaint: '既往他汀疗程不明随访',
+          oxygenSaturationPct: 98,
+          pulseBpm: 70,
+          respirationBpm: 16,
+          temperatureC: 36.5,
+        }, randomUUID(), {
+          [`Encounter/${unknownEndReg.encounterId}`]: '1',
+          [`Task/${unknownEndReg.queueTaskId}`]: '1',
+        })
+      ).json(),
+    ).data
+    await fixture.request('doctor', `/api/his/v1/encounters/${unknownEndReg.encounterId}/actions/start-first-visit`, {}, randomUUID(), {
+      [`Encounter/${unknownEndReg.encounterId}`]: unknownEndTriage.encounterVersion,
+      [`Task/${unknownEndTriage.doctorTaskId}`]: '1',
+    })
+    const unknownEndCase = (await fixture.read('doctor', '/api/his/v1/doctor/queue', doctorQueueSchema))
+      .items.find(item => item.encounterId === unknownEndReg.encounterId)!
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authoredOn: '2026-01-01T09:00:00+08:00',
+      id: uuidv7(),
+      intent: 'order',
+      medication: { concept: { text: '阿托伐他汀钙片 20mg' } },
+      resourceType: 'MedicationRequest',
+      status: 'completed',
+      subject: { reference: `Patient/${unknownEndPatient.id}` },
+    })
+    // Lipid panel drawn on March 15 (during a 90-day course whose end was unrecorded): must NOT be treated as untreated baseline
+    insertSyntheticLabReport(fixture, {
+      caseId: unknownEndCase.caseId,
+      encounterId: unknownEndReg.encounterId,
+      epoch: scenario.epoch,
+      issuedAt: '2026-03-15T09:00:00+08:00',
+      patientId: unknownEndPatient.id,
+      results: [
+        { code: '1700404A', display: '血清肌酐', high: 84, unit: 'umol/L', value: 62 },
+        { code: '2000104A', display: '总胆固醇', high: 5.2, unit: 'mmol/L', value: 3.9 },
+        { code: '2000304A', display: '高密度脂蛋白胆固醇', high: 1.8, unit: 'mmol/L', value: 1.3 },
+        { code: '2000404A', display: '低密度脂蛋白胆固醇', high: 3.4, unit: 'mmol/L', value: 2.1 },
+      ],
+      workspaceId: scenario.workspaceId,
+    })
+    await fixture.runtime.app.request(`http://localhost/api/his/v1/encounters/${unknownEndReg.encounterId}/risk-assessment`, {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${unknownEndReg.encounterId}`]: String(Number(unknownEndTriage.encounterVersion) + 1) },
+        input: {
+          expectedRevision: 0,
+          fields: { smokingStatus: 'never' },
+        },
+      }),
+      headers: {
+        'content-type': 'application/json',
+        cookie: await fixture.login('doctor'),
+        'idempotency-key': randomUUID(),
+        origin: 'http://localhost',
+      },
+      method: 'PUT',
+    })
+    const unknownEndScores = await fixture.read('doctor', `/api/his/v1/doctor/cases/${unknownEndCase.caseId}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(unknownEndScores.scores.find(s => s.id === 'ascvd-ldl-target')).toMatchObject({
+      missingInputs: expect.arrayContaining(['ldlCholesterol']),
+      status: 'incomplete',
     })
   }, 120_000)
 })
