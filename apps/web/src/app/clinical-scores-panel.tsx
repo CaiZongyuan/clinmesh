@@ -93,11 +93,36 @@ function ClinicalScoresBody({
   const t = (cn: string, en: string) => (zh ? cn : en)
   const messages = getWorkspaceMessages(locale)
   const effectiveRecord = bundle?.riskAssessment ?? riskRecord
-  const resetKey = `${identityKey}:${bundle?.encounterId ?? ''}:${effectiveRecord?.observationId ?? 'none'}:${effectiveRecord?.revision ?? 0}`
-  const [form, setForm] = useState<RiskFormState>(() => toRiskForm(effectiveRecord))
+  const canEditEffective = canEditRisk && effectiveRecord !== undefined
+  const recordSyncKey = effectiveRecord === undefined
+    ? 'loading'
+    : `${effectiveRecord.observationId ?? 'none'}:${effectiveRecord.revision}`
+  const [draft, setDraft] = useState<{
+    dirty: boolean
+    form: RiskFormState
+    identityKey: string
+    recordSyncKey: string
+  }>(() => ({
+    dirty: false,
+    form: toRiskForm(effectiveRecord),
+    identityKey,
+    recordSyncKey,
+  }))
   useEffect(() => {
-    setForm(toRiskForm(effectiveRecord))
-  }, [resetKey])
+    setDraft(prev => {
+      if (prev.identityKey !== identityKey) {
+        return { dirty: false, form: toRiskForm(effectiveRecord), identityKey, recordSyncKey }
+      }
+      if (prev.recordSyncKey !== recordSyncKey && (!prev.dirty || prev.recordSyncKey === 'loading' || recordSyncKey !== 'loading')) {
+        return { dirty: false, form: toRiskForm(effectiveRecord), identityKey, recordSyncKey }
+      }
+      return prev
+    })
+  }, [identityKey, recordSyncKey, effectiveRecord])
+  const form = draft.form
+  const updateForm = (updater: (prev: RiskFormState) => RiskFormState) => {
+    setDraft(prev => ({ ...prev, dirty: true, form: updater(prev.form) }))
+  }
 
   const anginaInvalid = form.anginaEpisodes24h.trim() !== ''
     && (!Number.isInteger(Number(form.anginaEpisodes24h)) || Number(form.anginaEpisodes24h) < 0 || Number(form.anginaEpisodes24h) > 100)
@@ -151,8 +176,8 @@ function ClinicalScoresBody({
         className="flex flex-col gap-2 rounded-md border p-2.5"
         onSubmit={event => {
           event.preventDefault()
-          if (!canEditRisk || savingRisk || anginaInvalid) return
-          onSaveRisk(effectiveRecord?.revision ?? 0, parseRiskFields(form))
+          if (!canEditEffective || savingRisk || anginaInvalid) return
+          onSaveRisk(effectiveRecord.revision, parseRiskFields(form))
         }}
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -173,14 +198,14 @@ function ClinicalScoresBody({
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <label className="flex flex-col gap-1">
             <span>{t('Killip 分级', 'Killip class')}</span>
-            <select className={selectCls} disabled={!canEditRisk || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | KillipClass; setForm(s => ({ ...s, killipClass: v })) }} value={form.killipClass}>
+            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | KillipClass; updateForm(s => ({ ...s, killipClass: v })) }} value={form.killipClass}>
               <option value="">{t('未记录', 'Not recorded')}</option>
               {(['I', 'II', 'III', 'IV'] as const).map(item => <option key={item} value={item}>{`Killip ${item}`}</option>)}
             </select>
           </label>
           <label className="flex flex-col gap-1">
             <span>{t('入院心脏骤停', 'Cardiac arrest')}</span>
-            <select className={selectCls} disabled={!canEditRisk || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; setForm(s => ({ ...s, cardiacArrestOnAdmission: v })) }} value={form.cardiacArrestOnAdmission}>
+            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; updateForm(s => ({ ...s, cardiacArrestOnAdmission: v })) }} value={form.cardiacArrestOnAdmission}>
               <option value="">{t('未记录', 'Not recorded')}</option>
               <option value="false">{t('无', 'No')}</option>
               <option value="true">{t('有', 'Yes')}</option>
@@ -188,11 +213,11 @@ function ClinicalScoresBody({
           </label>
           <label className="flex flex-col gap-1">
             <span>{t('24h 心绞痛次数', '24h angina count')}</span>
-            <Input className="h-8 text-xs" disabled={!canEditRisk || savingRisk} max={100} min={0} onChange={e => { const v = e.currentTarget.value; setForm(s => ({ ...s, anginaEpisodes24h: v })) }} placeholder={t('未记录', 'Not recorded')} step={1} type="number" value={form.anginaEpisodes24h} />
+            <Input className="h-8 text-xs" disabled={!canEditEffective || savingRisk} max={100} min={0} onChange={e => { const v = e.currentTarget.value; updateForm(s => ({ ...s, anginaEpisodes24h: v })) }} placeholder={t('未记录', 'Not recorded')} step={1} type="number" value={form.anginaEpisodes24h} />
           </label>
           <label className="flex flex-col gap-1">
             <span>{t('床旁 ST 段偏移', 'Bedside ST deviation')}</span>
-            <select className={selectCls} disabled={!canEditRisk || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; setForm(s => ({ ...s, stSegmentDeviation: v })) }} value={form.stSegmentDeviation}>
+            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; updateForm(s => ({ ...s, stSegmentDeviation: v })) }} value={form.stSegmentDeviation}>
               <option value="">{t('未记录', 'Not recorded')}</option>
               <option value="false">{t('无偏移', 'Absent')}</option>
               <option value="true">{t('有偏移', 'Present')}</option>
@@ -200,7 +225,7 @@ function ClinicalScoresBody({
           </label>
           <label className="flex flex-col gap-1">
             <span>{t('近 7 天阿司匹林', 'Aspirin in 7d')}</span>
-            <select className={selectCls} disabled={!canEditRisk || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; setForm(s => ({ ...s, aspirinUsedLast7Days: v })) }} value={form.aspirinUsedLast7Days}>
+            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; updateForm(s => ({ ...s, aspirinUsedLast7Days: v })) }} value={form.aspirinUsedLast7Days}>
               <option value="">{t('未记录', 'Not recorded')}</option>
               <option value="false">{t('未使用', 'No')}</option>
               <option value="true">{t('已使用', 'Yes')}</option>
@@ -208,7 +233,7 @@ function ClinicalScoresBody({
           </label>
           <label className="flex flex-col gap-1">
             <span>{t('吸烟状态', 'Smoking status')}</span>
-            <select className={selectCls} disabled={!canEditRisk || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | SmokingStatus; setForm(s => ({ ...s, smokingStatus: v })) }} value={form.smokingStatus}>
+            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | SmokingStatus; updateForm(s => ({ ...s, smokingStatus: v })) }} value={form.smokingStatus}>
               <option value="">{t('未记录', 'Not recorded')}</option>
               <option value="never">{t('从不吸烟', 'Never')}</option>
               <option value="former">{t('既往戒烟', 'Former')}</option>
@@ -217,7 +242,7 @@ function ClinicalScoresBody({
           </label>
           <label className="flex flex-col gap-1">
             <span>{t('早发冠心病家族史', 'Premature CAD family history')}</span>
-            <select className={selectCls} disabled={!canEditRisk || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; setForm(s => ({ ...s, familyHistoryPrematureCad: v })) }} value={form.familyHistoryPrematureCad}>
+            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; updateForm(s => ({ ...s, familyHistoryPrematureCad: v })) }} value={form.familyHistoryPrematureCad}>
               <option value="">{t('未记录', 'Not recorded')}</option>
               <option value="false">{t('阴性', 'Negative')}</option>
               <option value="true">{t('阳性', 'Positive')}</option>
@@ -225,7 +250,7 @@ function ClinicalScoresBody({
           </label>
           <label className="flex flex-col gap-1">
             <span>{t('已知冠脉狭窄 ≥50%', 'Known CAD stenosis ≥50%')}</span>
-            <select className={selectCls} disabled={!canEditRisk || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; setForm(s => ({ ...s, knownCoronaryStenosisGe50: v })) }} value={form.knownCoronaryStenosisGe50}>
+            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; updateForm(s => ({ ...s, knownCoronaryStenosisGe50: v })) }} value={form.knownCoronaryStenosisGe50}>
               <option value="">{t('未记录', 'Not recorded')}</option>
               <option value="false">{t('无 / <50%', 'No / <50%')}</option>
               <option value="true">{t('有 (≥50%)', 'Yes (≥50%)')}</option>
@@ -233,7 +258,7 @@ function ClinicalScoresBody({
           </label>
           <label className="flex flex-col gap-1">
             <span>{t('既往出血史', 'Prior bleeding')}</span>
-            <select className={selectCls} disabled={!canEditRisk || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | PriorBleedingHistory; setForm(s => ({ ...s, priorBleedingHistory: v })) }} value={form.priorBleedingHistory}>
+            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | PriorBleedingHistory; updateForm(s => ({ ...s, priorBleedingHistory: v })) }} value={form.priorBleedingHistory}>
               <option value="">{t('未记录', 'Not recorded')}</option>
               <option value="negative">{t('阴性', 'Negative')}</option>
               <option value="positive">{t('阳性', 'Positive')}</option>
@@ -241,7 +266,7 @@ function ClinicalScoresBody({
           </label>
           {canEditRisk ? (
             <div className="flex items-end">
-              <Button className="w-full" disabled={savingRisk || anginaInvalid} size="sm" type="submit" variant="outline">
+              <Button className="w-full" disabled={!canEditEffective || savingRisk || anginaInvalid} size="sm" type="submit" variant="outline">
                 {savingRisk ? t('保存中…', 'Saving…') : t('保存风险评估', 'Save risk assessment')}
               </Button>
             </div>

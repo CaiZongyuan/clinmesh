@@ -36,6 +36,7 @@ function insertSyntheticLabReport(
     caseId: string
     encounterId: string
     epoch: string
+    issuedAt?: string
     patientId: string
     results: Array<{
       code: string
@@ -50,7 +51,7 @@ function insertSyntheticLabReport(
   },
 ) {
   const scope = { workspaceId: options.workspaceId, epoch: options.epoch } as const
-  const now = '2026-10-25T09:30:00+08:00'
+  const now = options.issuedAt ?? '2026-10-25T09:30:00+08:00'
   const obsIds: string[] = []
   for (const item of options.results) {
     const obs = fixture.runtime.fhir.create(scope, {
@@ -359,6 +360,23 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     if (grace.status === 'complete') {
       expect(grace.sourceReferences).toContainEqual(expect.objectContaining({ reference: `DiagnosticReport/${ecgReportId}`, versionId: '1' }))
     }
+
+    // Later normal convalescent troponin report must NOT erase the initially elevated admission troponin in GRACE or TIMI
+    const timiBeforeFollowupTn = completedScores.scores.find(item => item.id === 'timi-ua-nstemi')!
+    insertSyntheticLabReport(fixture, {
+      caseId: stay.admissionId,
+      encounterId: stay.admissionId,
+      epoch: scenario.epoch,
+      issuedAt: '2026-10-29T09:30:00+08:00',
+      patientId: stay.patientId,
+      results: [
+        { code: '2100404B', display: '高敏心肌肌钙蛋白I', high: 0.04, interpretationCode: 'N', unit: 'ng/mL', value: 0.01 },
+      ],
+      workspaceId: scenario.workspaceId,
+    })
+    const afterFollowupNormalTn = await fixture.read('inpatient-doctor', `${stay.path}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(afterFollowupNormalTn.scores.find(item => item.id === 'grace-acs')?.value).toBe(grace.value)
+    expect(afterFollowupNormalTn.scores.find(item => item.id === 'timi-ua-nstemi')?.value).toBe(timiBeforeFollowupTn.value)
     const ascvd = completedScores.scores.find(item => item.id === 'ascvd-ldl-target')!
     expect(ascvd).toMatchObject({
       status: 'complete',
