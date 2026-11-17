@@ -556,6 +556,24 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     })
     expect(afterNegatedEcg.scores.find(item => item.id === 'ascvd-ldl-target')?.tierCode).not.toBe('ultra-high')
 
+    // Subsequent non-triage vital-signs Observation on the same Encounter must NOT hijack triage Observation provenance
+    const triageObsRef = triaged.effects.find(effect => effect.reference.startsWith('Observation/'))!.reference
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      category: [{ coding: [{ code: 'vital-signs', display: 'Vital Signs', system: 'http://terminology.hl7.org/CodeSystem/observation-category' }] }],
+      code: { text: 'Follow-up clinic vital signs' },
+      effectiveDateTime: '2026-11-17T12:00:00+08:00',
+      encounter: { reference: `Encounter/${encounterId}` },
+      id: uuidv7(),
+      resourceType: 'Observation',
+      status: 'final',
+      subject: { reference: `Patient/${patientId}` },
+    })
+    const afterLaterVitalObs = await fixture.read('doctor', `/api/his/v1/doctor/cases/${caseItem.caseId}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(`Observation/${afterLaterVitalObs.vitalSigns?.observationId}`).toBe(triageObsRef)
+    expect(afterLaterVitalObs.scores.find(item => item.id === 'cockcroft-gault-crcl')?.sourceReferences).toContainEqual(
+      expect.objectContaining({ reference: triageObsRef }),
+    )
+
     const provenances = await fixture.read('doctor', `/fhir/R5/Provenance?target=Observation/${recordedRisk.data.riskAssessment.observationId}`, fhirBundleSchema)
     expect(provenances.entry?.length).toBe(1)
   }, 60_000)

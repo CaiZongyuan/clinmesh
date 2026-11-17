@@ -1826,8 +1826,9 @@ export class WorkflowService
       this.#database.driver.prepare(`
         INSERT INTO triage_record (
           workspace_id, epoch, triage_id, case_id, encounter_id, version,
-          acuity_code, chief_complaint, vital_json, recorded_at
-        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+          acuity_code, chief_complaint, vital_json, recorded_at,
+          observation_id, observation_version
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
@@ -1838,6 +1839,8 @@ export class WorkflowService
         input.triage.chiefComplaint,
         JSON.stringify(input.triage),
         now,
+        observation.id,
+        observation.meta?.versionId ?? '1',
       )
       this.#database.driver.prepare(`
         UPDATE outpatient_case

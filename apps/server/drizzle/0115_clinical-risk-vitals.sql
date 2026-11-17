@@ -29,3 +29,6 @@ CREATE TABLE clinical_risk_assessment (
   FOREIGN KEY (workspace_id, epoch, case_id)
     REFERENCES clinical_request_context (workspace_id, epoch, case_id) ON DELETE RESTRICT
 ) STRICT;
+
+ALTER TABLE triage_record ADD COLUMN observation_id TEXT;
+ALTER TABLE triage_record ADD COLUMN observation_version TEXT;
