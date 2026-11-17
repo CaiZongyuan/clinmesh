@@ -108,12 +108,20 @@ describe('six deterministic clinical score formulas', () => {
     expect(female.value).toBe(61.2)
     expect(female.tierCode).toBe('mild')
 
+    expect(
+      calculateCockcroftGaultCrCl({
+        ageYears: 68,
+        serumCreatinine: { unit: 'mg/dL', value: 1.0 },
+        sex: 'male',
+        weightKg: 18,
+      }).value,
+    ).toBe(18)
     expect(() =>
       calculateCockcroftGaultCrCl({
         ageYears: 68,
         serumCreatinine: { unit: 'mg/dL', value: 1.0 },
         sex: 'male',
-        weightKg: 5,
+        weightKg: 0.5,
       }),
     ).toThrow(RangeError)
   })

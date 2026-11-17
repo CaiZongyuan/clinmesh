@@ -300,6 +300,14 @@ describe('ClinicalScoresPanel disclosures', () => {
 
     const vitalsDetails = screen.getByText('护理生命体征').closest('details')!
     vitalsDetails.open = true
+    // First save is disabled until required vital measurements are explicitly entered (never prefilled with fabricated normals)
+    expect((screen.getByRole('button', { name: '记录生命体征' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('体温 (°C)'), { target: { value: '36.8' } })
+    fireEvent.change(screen.getByLabelText('心率 (次/分)'), { target: { value: '76' } })
+    fireEvent.change(screen.getByLabelText('呼吸 (次/分)'), { target: { value: '18' } })
+    fireEvent.change(screen.getByLabelText('血氧 (%)'), { target: { value: '98' } })
+    fireEvent.change(screen.getByLabelText('收缩压 (mmHg)'), { target: { value: '126' } })
+    fireEvent.change(screen.getByLabelText('舒张压 (mmHg)'), { target: { value: '78' } })
     fireEvent.change(screen.getByLabelText('体重 (kg，选填)'), { target: { value: '75' } })
     fireEvent.change(screen.getByLabelText('身高 (cm，选填)'), { target: { value: '176' } })
     fireEvent.click(screen.getByRole('button', { name: '记录生命体征' }))
