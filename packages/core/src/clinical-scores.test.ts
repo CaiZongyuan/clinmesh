@@ -226,6 +226,35 @@ describe('six deterministic clinical score formulas', () => {
     })
     expect(highBleed.value).toBeGreaterThanOrEqual(25)
     expect(highBleed.tierCode).toBe('high')
+
+    // Published PRECISE-DAPT hemoglobin scale: >=12 g/dL -> 0 pts, <=10 g/dL -> full 15 pts
+    expect(
+      calculatePreciseDapt({
+        ageYears: 50,
+        creatinineClearanceMlMin: 100,
+        hemoglobin: { unit: 'g/dL', value: 12 },
+        priorBleedingHistory: 'negative',
+        wbc: { unit: '10*9/L', value: 5 },
+      }).value,
+    ).toBe(0)
+    expect(
+      calculatePreciseDapt({
+        ageYears: 50,
+        creatinineClearanceMlMin: 100,
+        hemoglobin: { unit: 'g/dL', value: 10 },
+        priorBleedingHistory: 'negative',
+        wbc: { unit: '10*9/L', value: 5 },
+      }).value,
+    ).toBe(15)
+    expect(
+      calculatePreciseDapt({
+        ageYears: 60,
+        creatinineClearanceMlMin: 72,
+        hemoglobin: { unit: 'g/dL', value: 10 },
+        priorBleedingHistory: 'negative',
+        wbc: { unit: '10*9/L', value: 9 },
+      }),
+    ).toMatchObject({ tierCode: 'high' })
   })
 
   it('stratifies ASCVD LDL-C target for secondary prevention, DM+CKD, and primary prevention smoking requirement', () => {

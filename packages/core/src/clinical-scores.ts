@@ -389,7 +389,7 @@ export function calculatePreciseDapt(input: {
   const hbGdl = normalizeHemoglobinGdl(input.hemoglobin.value, input.hemoglobin.unit)
   const wbc10e9L = normalizeWbc10e9L(input.wbc.value, input.wbc.unit)
 
-  const hbPoints = (12 - clamp(hbGdl, 5, 12)) * (15 / 7)
+  const hbPoints = (12 - clamp(hbGdl, 10, 12)) * 7.5
   const agePoints = (clamp(age, 50, 90) - 50) * (19 / 40)
   const wbcPoints = clamp(wbc10e9L, 5, 20) - 5
   const renalPoints = (100 - clamp(crCl, 0, 100)) * 0.25
