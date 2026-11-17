@@ -567,6 +567,30 @@ describe('six deterministic clinical score formulas', () => {
       value: 2.6,
     })
 
+    // Confirmed generic CKD (N18.9) with superimposed AKI (N17.9) and eGFR 42 preserves established CKD high-risk tier (<2.6), without inferring stage 4 very-high on eGFR 22
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 52,
+        confirmedDiagnosisCodes: ['N18.9', 'N17.9'],
+        egfrMlMin173m2: 42,
+      }),
+    ).toMatchObject({
+      status: 'complete',
+      tierCode: 'high',
+      value: 2.6,
+    })
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 52,
+        confirmedDiagnosisCodes: ['N18.9', 'N17.9'],
+        egfrMlMin173m2: 22,
+      }),
+    ).toMatchObject({
+      status: 'complete',
+      tierCode: 'high',
+      value: 2.6,
+    })
+
     // Single low eGFR caused by AKI (N17.9) without CKD diagnosis does NOT classify patient into CKD very-high/high tiers
     expect(
       calculateAscvdLdlTarget({
