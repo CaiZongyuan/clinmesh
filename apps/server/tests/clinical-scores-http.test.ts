@@ -261,7 +261,7 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     await fixture.executeAngiography(stay)
     await fixture.runtime.dispatcher.dispatchOnce({ kinds: ['inpatient.angiography.report'] })
     await fixture.completePciLaboratories(stay)
-    insertSyntheticLabReport(fixture, {
+    const admissionCardiacReport = insertSyntheticLabReport(fixture, {
       caseId: stay.admissionId,
       encounterId: stay.admissionId,
       epoch: scenario.epoch,
@@ -474,6 +474,81 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
         versionId: '1',
       }))
     }
+
+    // 7. Correcting an admission lab report days after angiography/medications overwrites replacement Observation.effectiveDateTime to correction time,
+    // yet GRACE & TIMI preserve the root specimen acquisition time via laboratory_report_revision while referencing the corrected Observation
+    const lateCorrectionTime = '2026-11-01T10:00:00+08:00'
+    const correctedTnObs = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      code: { coding: [{ code: '2100404B', display: '高敏心肌肌钙蛋白I', system: 'urn:clinmesh:wst:886-2026' }], text: '高敏心肌肌钙蛋白I' },
+      effectiveDateTime: lateCorrectionTime,
+      encounter: { reference: `Encounter/${stay.admissionId}` },
+      id: uuidv7(),
+      interpretation: [{ coding: [{ code: 'H' }] }],
+      issued: lateCorrectionTime,
+      referenceRange: [{ high: { value: 0.04 } }],
+      resourceType: 'Observation',
+      status: 'final',
+      subject: { reference: `Patient/${stay.patientId}` },
+      valueQuantity: { code: 'ng/mL', system: 'http://unitsofmeasure.org', unit: 'ng/mL', value: 0.42 },
+    })
+    const correctedLdlObs = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      code: { coding: [{ code: '2000404A', display: '低密度脂蛋白胆固醇', system: 'urn:clinmesh:wst:886-2026' }], text: '低密度脂蛋白胆固醇' },
+      effectiveDateTime: lateCorrectionTime,
+      encounter: { reference: `Encounter/${stay.admissionId}` },
+      id: uuidv7(),
+      issued: lateCorrectionTime,
+      referenceRange: [{ high: { value: 3.4 } }],
+      resourceType: 'Observation',
+      status: 'final',
+      subject: { reference: `Patient/${stay.patientId}` },
+      valueQuantity: { code: 'mmol/L', system: 'http://unitsofmeasure.org', unit: 'mmol/L', value: 2.25 },
+    })
+    const correctedDr = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      code: { text: '合成心内专科检验报告（已更正）' },
+      conclusion: '肌钙蛋白复核更正。',
+      effectiveDateTime: lateCorrectionTime,
+      encounter: { reference: `Encounter/${stay.admissionId}` },
+      id: uuidv7(),
+      issued: lateCorrectionTime,
+      resourceType: 'DiagnosticReport',
+      result: [{ reference: `Observation/${correctedTnObs.id}` }, { reference: `Observation/${correctedLdlObs.id}` }],
+      status: 'final',
+      subject: { reference: `Patient/${stay.patientId}` },
+    })
+    fixture.runtime.database.driver.prepare(`
+      INSERT INTO laboratory_report_revision (
+        workspace_id, epoch, revision_id, request_id, diagnostic_report_id,
+        revision_of_diagnostic_report_id, provenance_id, reason, corrected_by, corrected_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, '复核仪器定标偏差', 'actor-test', ?)
+    `).run(
+      scenario.workspaceId,
+      scenario.epoch,
+      uuidv7(),
+      admissionCardiacReport.requestId,
+      correctedDr.id,
+      admissionCardiacReport.reportId,
+      uuidv7(),
+      lateCorrectionTime,
+    )
+    fixture.runtime.database.driver.prepare(`
+      UPDATE laboratory_request
+      SET diagnostic_report_id = ?, reported_at = ?, version = version + 1
+      WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+    `).run(correctedDr.id, lateCorrectionTime, scenario.workspaceId, scenario.epoch, admissionCardiacReport.requestId)
+
+    const scoresAfterLateCorrection = await fixture.read('inpatient-doctor', `${stay.path}/clinical-scores`, clinicalScoreBundleSchema)
+    const graceAfterCorrection = scoresAfterLateCorrection.scores.find(item => item.id === 'grace-acs')!
+    expect(graceAfterCorrection.status).toBe('complete')
+    expect(graceAfterCorrection.value).toBe(grace.value)
+    expect(graceAfterCorrection.sourceReferences).toContainEqual(expect.objectContaining({
+      reference: `Observation/${correctedTnObs.id}`,
+      versionId: '1',
+    }))
+    expect(scoresAfterLateCorrection.scores.find(item => item.id === 'timi-ua-nstemi')?.status).toBe('complete')
+    expect(scoresAfterLateCorrection.scores.find(item => item.id === 'ascvd-ldl-target')).toMatchObject({
+      ldlGoalEvaluation: { atGoal: false, currentLdlMmolL: 2.25 },
+      status: 'complete',
+    })
   }, 120_000)
 
   it('persists optional outpatient triage heightCm/weightKg with Provenance and evaluates outpatient clinical scores', async () => {

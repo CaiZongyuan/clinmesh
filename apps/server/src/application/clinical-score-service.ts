@@ -1207,12 +1207,131 @@ export class ClinicalScoreService {
     return triageTitleFallback
   }
 
+  #buildReportRevisionIndex(context: RepositoryContext) {
+    const revRows = z.array(z.object({
+      diagnostic_report_id: z.string(),
+      revision_of_diagnostic_report_id: z.string(),
+    })).parse(
+      this.#database.driver.prepare(`
+        SELECT diagnostic_report_id, revision_of_diagnostic_report_id
+        FROM laboratory_report_revision
+        WHERE workspace_id = ? AND epoch = ?
+      `).all(context.workspaceId, context.epoch),
+    )
+    const supersededReports = new Set<string>()
+    const parentByReportId = new Map<string, string>()
+    for (const row of revRows) {
+      supersededReports.add(row.revision_of_diagnostic_report_id)
+      parentByReportId.set(row.diagnostic_report_id, row.revision_of_diagnostic_report_id)
+    }
+
+    const rootMetaCache = new Map<string, {
+      obsIsoByCode: Map<string, string>
+      obsIsoByIndex: Array<string | undefined>
+      reportIso: string | undefined
+      rootReportId: string
+    }>()
+
+    const resolveRootMeta = (reportId: string) => {
+      if (!parentByReportId.has(reportId)) return undefined
+      const cached = rootMetaCache.get(reportId)
+      if (cached !== undefined) return cached
+      let currentId = reportId
+      const seen = new Set<string>()
+      while (parentByReportId.has(currentId) && !seen.has(currentId)) {
+        seen.add(currentId)
+        currentId = parentByReportId.get(currentId)!
+      }
+      const rootReportId = currentId
+      let reportIso: string | undefined
+      const obsIsoByIndex: Array<string | undefined> = []
+      const obsIsoByCode = new Map<string, string>()
+      try {
+        const rootReport = diagnosticReportResourceSchema.safeParse(
+          this.#fhir.read(context, 'DiagnosticReport', rootReportId),
+        )
+        if (rootReport.success) {
+          reportIso = rootReport.data.effectiveDateTime ?? rootReport.data.issued
+          for (const [idx, ref] of (rootReport.data.result ?? []).entries()) {
+            const obsId = ref.reference?.startsWith('Observation/') ? ref.reference.slice('Observation/'.length) : undefined
+            if (!obsId) continue
+            try {
+              const rootObs = observationResourceSchema.safeParse(this.#fhir.read(context, 'Observation', obsId))
+              if (rootObs.success) {
+                const iso = rootObs.data.effectiveDateTime ?? reportIso
+                obsIsoByIndex[idx] = iso
+                if (iso !== undefined) {
+                  for (const coding of rootObs.data.code?.coding ?? []) {
+                    if (coding.code?.trim()) {
+                      obsIsoByCode.set(coding.code.trim(), iso)
+                    }
+                  }
+                }
+              }
+            } catch { /* ignore unreadable historical observation */ }
+          }
+        }
+      } catch { /* ignore unreadable historical report */ }
+      if (reportIso === undefined) {
+        const examRow = z.object({ issued_at: z.string().nullable() }).optional().parse(
+          this.#database.driver.prepare(`
+            SELECT issued_at FROM examination_report_content
+            WHERE workspace_id = ? AND epoch = ? AND diagnostic_report_id = ?
+          `).get(context.workspaceId, context.epoch, rootReportId),
+        )
+        reportIso = examRow?.issued_at ?? undefined
+      }
+      const entry = { obsIsoByCode, obsIsoByIndex, reportIso, rootReportId }
+      rootMetaCache.set(reportId, entry)
+      return entry
+    }
+
+    const resolveObservationOriginalIso = (
+      reportId: string | undefined,
+      resultIndex: number | undefined,
+      obs: z.infer<typeof observationResourceSchema>,
+      fallbackReportIso: string | undefined,
+    ): string | undefined => {
+      if (reportId !== undefined) {
+        const rootMeta = resolveRootMeta(reportId)
+        if (rootMeta !== undefined) {
+          for (const coding of obs.code?.coding ?? []) {
+            const c = coding.code?.trim()
+            if (c && rootMeta.obsIsoByCode.has(c)) {
+              return rootMeta.obsIsoByCode.get(c)
+            }
+          }
+          if (resultIndex !== undefined && rootMeta.obsIsoByIndex[resultIndex] !== undefined) {
+            return rootMeta.obsIsoByIndex[resultIndex]
+          }
+          if (rootMeta.reportIso !== undefined) {
+            return rootMeta.reportIso
+          }
+        }
+      }
+      return obs.effectiveDateTime ?? fallbackReportIso
+    }
+
+    const resolveReportOriginalIso = (reportId: string, fallbackIso: string | undefined): string | undefined => {
+      const rootMeta = resolveRootMeta(reportId)
+      return rootMeta?.reportIso ?? fallbackIso
+    }
+
+    return {
+      resolveObservationOriginalIso,
+      resolveReportOriginalIso,
+      resolveRootMeta,
+      supersededReports,
+    }
+  }
+
   #resolveEffectiveStDeviation(
     context: RepositoryContext,
     caseId: string,
     values: ClinicalRiskAssessmentValues,
     bedsideObservation: { observationId: string; observationVersion: string } | null,
   ): EffectiveStSegmentDeviation | null {
+    const revisionIndex = this.#buildReportRevisionIndex(context)
     const ecgRows = z.array(z.object({
       authored_at: z.string().nullable(),
       content_json: z.string(),
@@ -1241,11 +1360,12 @@ export class ClinicalScoreService {
     const ecgCandidates = ecgRows
       .map((ecgRow, seq) => {
         const report = this.#fhir.read(context, 'DiagnosticReport', ecgRow.diagnostic_report_id)
-        const effStr = typeof report.effectiveDateTime === 'string'
+        const fallbackEffStr = typeof report.effectiveDateTime === 'string'
           ? report.effectiveDateTime
           : typeof report.issued === 'string'
             ? report.issued
             : (ecgRow.issued_at ?? ecgRow.authored_at ?? undefined)
+        const effStr = revisionIndex.resolveReportOriginalIso(ecgRow.diagnostic_report_id, fallbackEffStr)
         const tsMs = effStr ? Date.parse(effStr) : Number.NaN
         return {
           ecgRow,
@@ -1818,12 +1938,14 @@ export class ClinicalScoreService {
         ORDER BY julianday(COALESCE(c.issued_at, r.authored_at)) ASC, c.diagnostic_report_id ASC
       `).all(context.workspaceId, context.epoch, caseId),
     )
+    const revisionIndex = this.#buildReportRevisionIndex(context)
     const sortedPresentationEcgs = ecgRows
       .map((row, seq) => {
         const report = diagnosticReportResourceSchema.safeParse(this.#fhir.read(context, 'DiagnosticReport', row.diagnostic_report_id))
-        const effStr = report.success
+        const fallbackEffStr = report.success
           ? (report.data.effectiveDateTime ?? report.data.issued ?? row.issued_at ?? row.authored_at ?? undefined)
           : (row.issued_at ?? row.authored_at ?? undefined)
+        const effStr = revisionIndex.resolveReportOriginalIso(row.diagnostic_report_id, fallbackEffStr)
         const tsMs = effStr ? Date.parse(effStr) : Number.NaN
         return { report, row, seq, timestampMs: Number.isFinite(tsMs) ? tsMs : undefined }
       })
@@ -2168,17 +2290,9 @@ export class ClinicalScoreService {
     ckdLt30Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
     ckdLt60Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
   } {
-    const supersededReports = new Set(
-      z.array(z.object({ revision_of_diagnostic_report_id: z.string() })).parse(
-        this.#database.driver.prepare(`
-          SELECT revision_of_diagnostic_report_id
-          FROM laboratory_report_revision
-          WHERE workspace_id = ? AND epoch = ?
-        `).all(context.workspaceId, context.epoch),
-      ).map(row => row.revision_of_diagnostic_report_id),
-    )
+    const revisionIndex = this.#buildReportRevisionIndex(context)
     const excludedObsIds = new Set<string>()
-    const reportIssuedByObsId = new Map<string, string>()
+    const reportMetaByObsId = new Map<string, { fallbackIso: string | undefined; reportId: string; resultIndex: number }>()
     const reportParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
     for (;;) {
       const page = this.#fhir.search(context, 'DiagnosticReport', reportParams)
@@ -2186,15 +2300,19 @@ export class ClinicalScoreService {
         const parsed = diagnosticReportResourceSchema.safeParse(raw)
         if (!parsed.success) continue
         const isSupersededOrInvalid =
-          supersededReports.has(parsed.data.id)
+          revisionIndex.supersededReports.has(parsed.data.id)
           || !['final', 'amended', 'corrected'].includes(parsed.data.status ?? '')
-        for (const ref of parsed.data.result ?? []) {
+        for (const [resultIndex, ref] of (parsed.data.result ?? []).entries()) {
           const obsId = ref.reference?.startsWith('Observation/') ? ref.reference.slice('Observation/'.length) : undefined
           if (!obsId) continue
           if (isSupersededOrInvalid) {
             excludedObsIds.add(obsId)
-          } else if (parsed.data.issued) {
-            reportIssuedByObsId.set(obsId, parsed.data.issued)
+          } else {
+            reportMetaByObsId.set(obsId, {
+              fallbackIso: parsed.data.effectiveDateTime ?? parsed.data.issued,
+              reportId: parsed.data.id,
+              resultIndex,
+            })
           }
         }
       }
@@ -2228,7 +2346,13 @@ export class ClinicalScoreService {
         ) {
           continue
         }
-        const rawTs = obs.data.effectiveDateTime ?? reportIssuedByObsId.get(obs.data.id)
+        const reportMeta = reportMetaByObsId.get(obs.data.id)
+        const rawTs = revisionIndex.resolveObservationOriginalIso(
+          reportMeta?.reportId,
+          reportMeta?.resultIndex,
+          obs.data,
+          reportMeta?.fallbackIso,
+        )
         const tsMs = parseResourceTimestampMs(rawTs) ?? Number.NaN
         if (!Number.isFinite(tsMs)) continue
         if (obs.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(cutoffMs) && tsMs > cutoffMs) continue
@@ -2371,11 +2495,14 @@ export class ClinicalScoreService {
       value: { unit: string; value: number }
     }> = []
 
+    const revisionIndex = this.#buildReportRevisionIndex(context)
     for (const { reportId, reportTime } of reportEntries) {
       const rawReport = this.#fhir.read(context, 'DiagnosticReport', reportId)
       const report = diagnosticReportResourceSchema.safeParse(rawReport)
       if (!report.success || !['final', 'amended', 'corrected'].includes(report.data.status ?? '')) continue
-      for (const ref of report.data.result ?? []) {
+      const rootReportId = revisionIndex.resolveRootMeta(reportId)?.rootReportId ?? reportId
+      const fallbackReportIso = report.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
+      for (const [resultIndex, ref] of (report.data.result ?? []).entries()) {
         const obsId = ref.reference?.startsWith('Observation/') ? ref.reference.slice('Observation/'.length) : undefined
         if (!obsId) continue
         const obs = observationResourceSchema.safeParse(this.#fhir.read(context, 'Observation', obsId))
@@ -2397,17 +2524,23 @@ export class ClinicalScoreService {
           reference: `Observation/${obs.data.id}`,
           versionId: obs.data.meta?.versionId ?? '1',
         }
+        const rawObsIso = revisionIndex.resolveObservationOriginalIso(
+          reportId,
+          resultIndex,
+          obs.data,
+          fallbackReportIso,
+        )
+        const obsTimestampMs = parseResourceTimestampMs(rawObsIso)
+        const specimenKey = obs.data.specimen?.reference ?? `DiagnosticReport/${rootReportId}`
 
         if (
           quantity !== undefined
           && unit !== undefined
           && (codes.has('1700404A') || codes.has('2160-0') || codes.has('14682-9') || /^(?:血?肌酐|血清肌酐)/i.test(display))
         ) {
-          const rawScrTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
-          const parsedScrMs = rawScrTs ? Date.parse(rawScrTs) : Number.NaN
           creatinineHitsDesc.push({
             source,
-            timestampMs: Number.isFinite(parsedScrMs) ? parsedScrMs : undefined,
+            timestampMs: obsTimestampMs,
             value: { unit, value: quantity },
           })
         }
@@ -2419,12 +2552,10 @@ export class ClinicalScoreService {
         ) {
           const elevated = this.#evaluateTroponinElevation(obs.data)
           if (elevated !== undefined) {
-            const rawTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
-            const parsedMs = rawTs ? Date.parse(rawTs) : Number.NaN
             troponinHitsDesc.push({
               elevated,
               source,
-              timestampMs: Number.isFinite(parsedMs) ? parsedMs : undefined,
+              timestampMs: obsTimestampMs,
             })
           }
         }
@@ -2433,11 +2564,9 @@ export class ClinicalScoreService {
           && unit !== undefined
           && (codes.has('0100101A') || codes.has('6690-2') || codes.has('26464-8') || /白细胞计数/i.test(display))
         ) {
-          const rawWbcTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
-          const parsedWbcMs = rawWbcTs ? Date.parse(rawWbcTs) : Number.NaN
           wbcHitsDesc.push({
             source,
-            timestampMs: Number.isFinite(parsedWbcMs) ? parsedWbcMs : undefined,
+            timestampMs: obsTimestampMs,
             value: { unit, value: quantity },
           })
         }
@@ -2446,11 +2575,9 @@ export class ClinicalScoreService {
           && unit !== undefined
           && (codes.has('0100401A') || codes.has('718-7') || /^(?:血红蛋白|hemoglobin)$/i.test(display.trim()))
         ) {
-          const rawHbTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
-          const parsedHbMs = rawHbTs ? Date.parse(rawHbTs) : Number.NaN
           hemoglobinHitsDesc.push({
             source,
-            timestampMs: Number.isFinite(parsedHbMs) ? parsedHbMs : undefined,
+            timestampMs: obsTimestampMs,
             value: { unit, value: quantity },
           })
         }
@@ -2459,13 +2586,10 @@ export class ClinicalScoreService {
           && unit !== undefined
           && (codes.has('2000104A') || codes.has('2093-3') || codes.has('14647-2') || /^(?:总胆固醇|total cholesterol)/i.test(display))
         ) {
-          const rawTcTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
-          const parsedTcMs = rawTcTs ? Date.parse(rawTcTs) : Number.NaN
-          const specimenKey = obs.data.specimen?.reference ?? `DiagnosticReport/${reportId}`
           tcHitsDesc.push({
             source,
             specimenKey,
-            timestampMs: Number.isFinite(parsedTcMs) ? parsedTcMs : undefined,
+            timestampMs: obsTimestampMs,
             value: { unit, value: quantity },
           })
         }
@@ -2474,13 +2598,10 @@ export class ClinicalScoreService {
           && unit !== undefined
           && (codes.has('2000304A') || codes.has('2085-9') || codes.has('14646-4') || /高密度脂蛋白胆固醇|HDL/i.test(display))
         ) {
-          const rawHdlTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
-          const parsedHdlMs = rawHdlTs ? Date.parse(rawHdlTs) : Number.NaN
-          const specimenKey = obs.data.specimen?.reference ?? `DiagnosticReport/${reportId}`
           hdlHitsDesc.push({
             source,
             specimenKey,
-            timestampMs: Number.isFinite(parsedHdlMs) ? parsedHdlMs : undefined,
+            timestampMs: obsTimestampMs,
             value: { unit, value: quantity },
           })
         }
@@ -2489,11 +2610,9 @@ export class ClinicalScoreService {
           && unit !== undefined
           && (codes.has('2000404A') || codes.has('2089-1') || codes.has('13457-7') || codes.has('18262-6') || /低密度脂蛋白胆固醇|LDL/i.test(display))
         ) {
-          const rawLdlTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
-          const parsedLdlMs = rawLdlTs ? Date.parse(rawLdlTs) : Number.NaN
           ldlHitsDesc.push({
             source,
-            timestampMs: Number.isFinite(parsedLdlMs) ? parsedLdlMs : undefined,
+            timestampMs: obsTimestampMs,
             value: { unit, value: quantity },
           })
         }
@@ -3512,17 +3631,14 @@ export class ClinicalScoreService {
       return exposures.some(exp => exp.startMs !== undefined && tsMs > exp.startMs && tsMs <= exp.endMs)
     }
 
-    const supersededReports = new Set(
-      z.array(z.object({ revision_of_diagnostic_report_id: z.string() })).parse(
-        this.#database.driver.prepare(`
-          SELECT revision_of_diagnostic_report_id
-          FROM laboratory_report_revision
-          WHERE workspace_id = ? AND epoch = ?
-        `).all(context.workspaceId, context.epoch),
-      ).map(row => row.revision_of_diagnostic_report_id),
-    )
+    const revisionIndex = this.#buildReportRevisionIndex(context)
     const excludedObsIds = new Set<string>()
-    const reportMetaByObsId = new Map<string, { issued: string | undefined; reportId: string }>()
+    const reportMetaByObsId = new Map<string, {
+      fallbackIso: string | undefined
+      reportId: string
+      resultIndex: number
+      rootReportId: string
+    }>()
     const reportParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
     for (;;) {
       const page = this.#fhir.search(context, 'DiagnosticReport', reportParams)
@@ -3530,15 +3646,21 @@ export class ClinicalScoreService {
         const parsed = diagnosticReportResourceSchema.safeParse(raw)
         if (!parsed.success) continue
         const isSupersededOrInvalid =
-          supersededReports.has(parsed.data.id)
+          revisionIndex.supersededReports.has(parsed.data.id)
           || !['final', 'amended', 'corrected'].includes(parsed.data.status ?? '')
-        for (const ref of parsed.data.result ?? []) {
+        const rootReportId = revisionIndex.resolveRootMeta(parsed.data.id)?.rootReportId ?? parsed.data.id
+        for (const [resultIndex, ref] of (parsed.data.result ?? []).entries()) {
           const obsId = ref.reference?.startsWith('Observation/') ? ref.reference.slice('Observation/'.length) : undefined
           if (!obsId) continue
           if (isSupersededOrInvalid) {
             excludedObsIds.add(obsId)
           } else {
-            reportMetaByObsId.set(obsId, { issued: parsed.data.issued, reportId: parsed.data.id })
+            reportMetaByObsId.set(obsId, {
+              fallbackIso: parsed.data.effectiveDateTime ?? parsed.data.issued,
+              reportId: parsed.data.id,
+              resultIndex,
+              rootReportId,
+            })
           }
         }
       }
@@ -3578,7 +3700,12 @@ export class ClinicalScoreService {
         const quantity = obs.data.valueQuantity?.value
         if (quantity === undefined || unit === undefined) continue
         const reportMeta = reportMetaByObsId.get(obs.data.id)
-        const rawTs = obs.data.effectiveDateTime ?? reportMeta?.issued
+        const rawTs = revisionIndex.resolveObservationOriginalIso(
+          reportMeta?.reportId,
+          reportMeta?.resultIndex,
+          obs.data,
+          reportMeta?.fallbackIso,
+        )
         const timestampMs = parseResourceTimestampMs(rawTs)
         if (obs.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs) && timestampMs !== undefined && timestampMs > nowMs) {
           continue
@@ -3600,7 +3727,7 @@ export class ClinicalScoreService {
         }
         const specimenKey =
           obs.data.specimen?.reference
-          ?? (reportMeta === undefined ? `Observation/${obs.data.id}` : `DiagnosticReport/${reportMeta.reportId}`)
+          ?? (reportMeta === undefined ? `Observation/${obs.data.id}` : `DiagnosticReport/${reportMeta.rootReportId}`)
         if (codes.has('2000104A') || codes.has('2093-3') || codes.has('14647-2') || /^(?:总胆固醇|total cholesterol)/i.test(display)) {
           untreatedTc.push({ seq: seq++, source, specimenKey, timestampMs, value: { unit, value: quantity } })
         }
