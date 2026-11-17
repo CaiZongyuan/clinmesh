@@ -748,7 +748,9 @@ export function evaluateTopicPatientIndicators(
       const plan = supplementary.pciPlanSummary
       const findMeas = (kind: 'lesion-length' | 'proximal-reference-diameter' | 'distal-reference-diameter') => {
         const m = plan.measurements.find(item => item.kind === kind)
-        return m?.value != null ? `${m.value}${m.unit ?? 'mm'}` : null
+        if (m?.value == null) return null
+        const unit = m.unit?.trim()
+        return unit ? `${m.value}${unit}` : `${m.value}（缺单位）`
       }
       const lenStr = findMeas('lesion-length')
       const proxStr = findMeas('proximal-reference-diameter')
