@@ -293,10 +293,35 @@ export class DoctorRecommendationsService {
     }
     let fullTextPassages = 0
     let fullTextBytes = 0
-    for (const item of [
-      ...topicReads.flatMap(result => result.guidelines),
-      ...retrieved?.guidelines ?? [],
-    ]) {
+    const admittedTopicResults: typeof topicReads = []
+    for (const result of topicReads) {
+      const staged: Array<{ bytes: number; item: GuidelineEvidence; locatorKey: string; textKey: string }> = []
+      const localLocators = new Set<string>()
+      const localTexts = new Set<string>()
+      let stagedBytes = 0
+      for (const item of result.guidelines) {
+        const locatorKey = `${item.sourceHash}:${item.locator}`
+        const textKey = normalizeGuidelineFragmentText(item.text)
+        if (seenLocators.has(locatorKey) || seenTexts.has(textKey) || localLocators.has(locatorKey) || localTexts.has(textKey)) {
+          continue
+        }
+        const bytes = Buffer.byteLength(JSON.stringify(item), 'utf8')
+        localLocators.add(locatorKey)
+        localTexts.add(textKey)
+        stagedBytes += bytes
+        staged.push({ bytes, item, locatorKey, textKey })
+      }
+      if (fullTextPassages + staged.length > 8 || fullTextBytes + stagedBytes > 48 * 1024) continue
+      admittedTopicResults.push(result)
+      for (const entry of staged) {
+        seenLocators.add(entry.locatorKey)
+        seenTexts.add(entry.textKey)
+        fullTextPassages += 1
+        fullTextBytes += entry.bytes
+        dedupeGuidelines.push(entry.item)
+      }
+    }
+    for (const item of retrieved?.guidelines ?? []) {
       const locatorKey = `${item.sourceHash}:${item.locator}`
       const textKey = normalizeGuidelineFragmentText(item.text)
       if (seenLocators.has(locatorKey) || seenTexts.has(textKey)) continue
@@ -309,9 +334,9 @@ export class DoctorRecommendationsService {
       dedupeGuidelines.push(item)
     }
     const guidelines = dedupeGuidelines
-    const topicRevSuffix = topicReads.length === 0
+    const topicRevSuffix = admittedTopicResults.length === 0
       ? ''
-      : `:${topicReads.map(result => `${result.definition.id}@${result.definition.fingerprint.slice(0, 12)}`).join(',')}`
+      : `:${admittedTopicResults.map(result => `${result.definition.id}@${result.definition.fingerprint.slice(0, 12)}`).join(',')}`
     let catalogs: DoctorRecommendationCatalogs
     if (kind === 'diagnosis') {
       const queries = new Set([...groups.map(group => group.terms[0]!), ...retrieved?.diagnosisQueries ?? []])

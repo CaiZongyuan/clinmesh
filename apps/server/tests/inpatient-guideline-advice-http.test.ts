@@ -1041,6 +1041,12 @@ it('无 PCI 手术申请的内科住院可按专题完成术前水化、FFR > 0.
     `${medicalStay.path}/guideline-advice?topicId=contrast-kidney-hydration`,
     inpatientGuidelineAdviceListSchema,
   )
+  const hydrationByMedicalRecords = await s.fixture.read(
+    'medical-records',
+    `${medicalStay.path}/guideline-advice?topicId=contrast-kidney-hydration`,
+    inpatientGuidelineAdviceListSchema,
+  )
+  expect(hydrationByMedicalRecords).toEqual(hydrationAfterDepart)
   expect(hydrationAfterDepart.advice[0]).toMatchObject({
     requestId: null,
     status: 'frozen',

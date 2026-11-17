@@ -261,7 +261,7 @@ export class InpatientGuidelineAdvice {
         clinicalFacts: {
           request: { id: request.id, plannedProcedure: request.plannedProcedure, plannedFor: request.plannedFor },
           diagnosis: this.owner.orders.diagnosis(context, admissionId),
-          investigations: this.owner.investigations.read(context, admissionId),
+          investigations: this.owner.investigations.readSnapshot(context, admissionId),
           measurements,
           targetSite: parameters?.targetSite ?? null,
         },
@@ -316,7 +316,7 @@ export class InpatientGuidelineAdvice {
       clinicalFacts: {
         request: null,
         diagnosis: clinical.diagnosis,
-        investigations: this.owner.investigations.read(context, admissionId),
+        investigations: this.owner.investigations.readSnapshot(context, admissionId),
         angiographyReports,
         scores: scores.scores,
         riskAssessment: scores.riskAssessment,

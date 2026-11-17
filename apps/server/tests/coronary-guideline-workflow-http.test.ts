@@ -269,6 +269,8 @@ it('门诊诊疗建议复用共享 Guideline Topic 注册表，对派生副本�
     expect(fullTextGuidelines.some(g => g.sourceHash === getGuidelineTopicDefinition('acute-chest-pain-acs').references[0]!.sha256)).toBe(true)
     const p2Matches = fullTextGuidelines.filter(g => g.text.includes('10 min 内行标准 12 导联'))
     expect(p2Matches).toHaveLength(1)
+    // Atomic topic budget: 3-page pci-stent cannot fit in remaining 2 slots after 6 slots, so no partial pci-stent passage is admitted
+    expect(fullTextGuidelines.some(g => g.sourceHash === getGuidelineTopicDefinition('pci-stent').references[2]!.sha256)).toBe(false)
   } finally {
     await runtime.close()
     await rm(directory, { recursive: true, force: true })
