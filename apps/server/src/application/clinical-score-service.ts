@@ -112,6 +112,7 @@ const observationResourceSchema = z.object({
     high: z.object({ value: z.number().finite().optional() }).loose().optional(),
     low: z.object({ value: z.number().finite().optional() }).loose().optional(),
   }).loose()).optional(),
+  specimen: z.object({ reference: z.string().optional() }).loose().optional(),
   status: z.string().optional(),
   valueBoolean: z.boolean().optional(),
   valueCodeableConcept: z.object({
@@ -149,6 +150,7 @@ const conditionResourceSchema = z.object({
 
 const procedureResourceSchema = z.object({
   code: z.object({ coding: z.array(codingItemSchema).optional(), text: z.string().optional() }).loose().optional(),
+  encounter: z.object({ reference: z.string().optional() }).loose().optional(),
   id: z.string().min(1),
   meta: z.object({ versionId: z.string().optional() }).loose().optional(),
   performedDateTime: z.string().optional(),
@@ -310,6 +312,29 @@ function hasPositiveStDeviationText(text: string): boolean {
     for (const stMatch of trimmed.matchAll(positivePattern)) {
       const idx = stMatch.index ?? 0
       const prefix = trimmed.slice(0, idx)
+      const negMatches = [...prefix.matchAll(/(?:无|未见|否认|排除|\bno\b|\bwithout\b)/gi)]
+      const lastNeg = negMatches.at(-1)
+      if (lastNeg !== undefined) {
+        const between = prefix.slice(lastNeg.index ?? 0)
+        if (!/(?:但|而|可见|伴|提示|呈|\bbut\b|\bwith\b)/i.test(between)) {
+          continue
+        }
+      }
+      return true
+    }
+  }
+  return false
+}
+
+function hasPositiveStElevationText(text: string): boolean {
+  const positivePattern = /ST\s*段?\s*(?:抬高|上抬|弓背向上)|ST[- ]?(?:segment\s*)?elevation/gi
+  for (const clause of text.split(/[，。；,;！!\r\n]+/)) {
+    const trimmed = clause.trim()
+    if (!trimmed) continue
+    for (const stMatch of trimmed.matchAll(positivePattern)) {
+      const idx = stMatch.index ?? 0
+      const prefix = trimmed.slice(0, idx)
+      if (/(?:非|non[- ]?)\s*$/i.test(prefix)) continue
       const negMatches = [...prefix.matchAll(/(?:无|未见|否认|排除|\bno\b|\bwithout\b)/gi)]
       const lastNeg = negMatches.at(-1)
       if (lastNeg !== undefined) {
@@ -1171,6 +1196,15 @@ export class ClinicalScoreService {
       }
     }
     const history = this.#extractClinicalHistoryFlags(context, options.patientId, birthDateStr, sex, options.inpatient, options.caseId)
+    const encounterApplicability = this.#extractEncounterScoreApplicability(
+      context,
+      options.patientId,
+      options.encounterId,
+      options.caseId,
+      options.inpatient,
+      options.now,
+      riskAssessment.values.aspirinUsedLast7Days === true,
+    )
     const onAntihypertensive = this.#extractAntihypertensiveFlag(
       context,
       options.patientId,
@@ -1191,6 +1225,10 @@ export class ClinicalScoreService {
           : (history.knownCoronaryRevascularizationOrStenosisGe50 ?? bedsideKnownStenosis)
 
     const facts: ClinicalScoreObjectiveFacts = {
+      acsPresentation: encounterApplicability.acsPresentation,
+      pciDaptIndication: encounterApplicability.pciDaptIndication,
+      uaNstemiPresentation: encounterApplicability.uaNstemiPresentation,
+      ...(labs.sameSpecimenTcHdl === undefined ? {} : { sameSpecimenTcHdl: labs.sameSpecimenTcHdl }),
       ...(admissionAge === undefined ? {} : { admissionAgeYears: { source: patientRef, value: admissionAge } }),
       ...(age === undefined ? {} : { ageYears: { source: patientRef, value: age } }),
       ...(sex === undefined ? {} : { sex: { source: patientRef, value: sex } }),
@@ -1198,14 +1236,20 @@ export class ClinicalScoreService {
         ? {}
         : {
             admissionHeartRateBpm: { source: admissionVitalRef, value: effectiveAdmissionVital.pulseBpm },
-            admissionSystolicBpMmHg: { source: admissionVitalRef, value: effectiveAdmissionVital.bloodPressure.systolicMmHg },
+            ...(effectiveAdmissionVital.bloodPressure.systolicMmHg > effectiveAdmissionVital.bloodPressure.diastolicMmHg
+              ? { admissionSystolicBpMmHg: { source: admissionVitalRef, value: effectiveAdmissionVital.bloodPressure.systolicMmHg } }
+              : {}),
           }),
       ...(options.vitalSummary === null || vitalRef === undefined
         ? {}
         : {
-            diastolicBpMmHg: { source: vitalRef, value: options.vitalSummary.bloodPressure.diastolicMmHg },
             heartRateBpm: { source: vitalRef, value: options.vitalSummary.pulseBpm },
-            systolicBpMmHg: { source: vitalRef, value: options.vitalSummary.bloodPressure.systolicMmHg },
+            ...(options.vitalSummary.bloodPressure.systolicMmHg > options.vitalSummary.bloodPressure.diastolicMmHg
+              ? {
+                  diastolicBpMmHg: { source: vitalRef, value: options.vitalSummary.bloodPressure.diastolicMmHg },
+                  systolicBpMmHg: { source: vitalRef, value: options.vitalSummary.bloodPressure.systolicMmHg },
+                }
+              : {}),
           }),
       ...(effectiveLatestHeightVital == null
         || latestHeightRef === undefined
@@ -1293,6 +1337,318 @@ export class ClinicalScoreService {
       riskAssessment,
       scores: evaluateClinicalScores(facts),
       vitalSigns: options.vitalSummary,
+    }
+  }
+
+  #extractEncounterScoreApplicability(
+    context: ActorContext,
+    patientId: string,
+    encounterId: string,
+    caseId: string,
+    inpatient: InpatientService | undefined,
+    nowIso: string,
+    aspirinUsedLast7Days: boolean,
+  ): {
+    acsPresentation: { source?: ClinicalScoreSourceReference; value: boolean }
+    pciDaptIndication: { source?: ClinicalScoreSourceReference; value: boolean }
+    uaNstemiPresentation: { source?: ClinicalScoreSourceReference; value: boolean }
+  } {
+    let acsSource: ClinicalScoreSourceReference | undefined
+    let uaNstemiSource: ClinicalScoreSourceReference | undefined
+    let stemiSource: ClinicalScoreSourceReference | undefined
+    let genericAcsSource: ClinicalScoreSourceReference | undefined
+
+    // 1. Check presentation 12-lead ECG for acute ST-segment elevation
+    const ecgRows = z.array(z.object({
+      authored_at: z.string().nullable(),
+      content_json: z.string(),
+      diagnostic_report_id: z.string(),
+      issued_at: z.string().nullable(),
+    })).parse(
+      this.#database.driver.prepare(`
+        SELECT c.diagnostic_report_id, c.content_json, c.issued_at, r.authored_at
+        FROM examination_report_content c
+        JOIN laboratory_request r
+          ON r.workspace_id = c.workspace_id
+         AND r.epoch = c.epoch
+         AND r.request_id = c.request_id
+         AND r.diagnostic_report_id = c.diagnostic_report_id
+        JOIN examination_request_detail d
+          ON d.workspace_id = c.workspace_id
+         AND d.epoch = c.epoch
+         AND d.request_id = c.request_id
+        WHERE c.workspace_id = ? AND c.epoch = ? AND c.case_id = ?
+          AND d.exam_code = 'ecg-12-lead'
+          AND r.status IN ('reported', 'acknowledged')
+          AND NOT EXISTS (
+            SELECT 1 FROM laboratory_report_revision rev
+            WHERE rev.workspace_id = r.workspace_id
+              AND rev.epoch = r.epoch
+              AND rev.revision_of_diagnostic_report_id = c.diagnostic_report_id
+          )
+      `).all(context.workspaceId, context.epoch, caseId),
+    )
+    let hasIssuedEcg = false
+    for (const row of ecgRows) {
+      const report = diagnosticReportResourceSchema.safeParse(this.#fhir.read(context, 'DiagnosticReport', row.diagnostic_report_id))
+      if (!report.success || !['final', 'amended', 'corrected'].includes(report.data.status ?? '')) continue
+      const content = investigationResultContentSchema.safeParse(JSON.parse(row.content_json))
+      if (!content.success) continue
+      hasIssuedEcg = true
+      const combinedText = [
+        content.data.conclusion,
+        ...content.data.results.map(item => typeof item.value === 'string' ? item.value : ''),
+      ].filter(Boolean).join('；')
+      if (hasPositiveStElevationText(combinedText)) {
+        stemiSource ??= {
+          label: '12 导联心电图 ST 段抬高',
+          reference: `DiagnosticReport/${row.diagnostic_report_id}`,
+          versionId: report.data.meta?.versionId ?? '1',
+        }
+      }
+    }
+
+    // 2. Check current Encounter Condition resources (confirmed or working provisional)
+    const encCondParams = new URLSearchParams({ _count: '100', encounter: `Encounter/${encounterId}` })
+    for (;;) {
+      const page = this.#fhir.search(context, 'Condition', encCondParams)
+      for (const raw of page.resources) {
+        const parsed = conditionResourceSchema.safeParse(raw)
+        if (!parsed.success) continue
+        const verStatus = parsed.data.verificationStatus?.coding?.[0]?.code
+        const clinStatus = parsed.data.clinicalStatus?.coding?.[0]?.code
+        if (verStatus === 'entered-in-error' || verStatus === 'refuted') continue
+        if (clinStatus === 'inactive' || clinStatus === 'resolved') continue
+        const codes = (parsed.data.code?.coding ?? []).map(c => c.code?.trim().toUpperCase() ?? '').filter(Boolean)
+        const text = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
+        const ref: ClinicalScoreSourceReference = {
+          label: parsed.data.code?.coding?.[0]?.display ?? parsed.data.code?.text ?? `诊断 ${parsed.data.id}`,
+          reference: `Condition/${parsed.data.id}`,
+          versionId: parsed.data.meta?.versionId ?? '1',
+        }
+        const isStemi =
+          codes.some(code => /^(?:I21\.[0123]|I22\.[0189])/.test(code))
+          || (
+            /ST\s*段?抬高型心肌梗死|急性透壁.*心肌梗死|\bSTEMI\b/i.test(text)
+            && !/非\s*ST\s*段?抬高|non[- ]?ST/i.test(text)
+            && !/(?:无|否认|排除)\s*(?:ST|急性|STEMI)/i.test(text)
+          )
+        const isUaNstemi =
+          codes.some(code => /^(?:I20\.0|I21\.4|I22\.2|I24\.[089])/.test(code))
+          || (
+            /不稳定型心绞痛|非\s*ST\s*段?抬高|心内膜下心肌梗死|\bNSTEMI\b|\bUA\b/i.test(text)
+            && !/(?:无|否认|排除)\s*(?:不稳定|非\s*ST|心内膜下|NSTEMI|UA)/i.test(text)
+          )
+        const isGenericAcs =
+          codes.some(code => /^(?:I21(?:\.9|$)|I22$|I23|I24\.1|394659003|22298006)/.test(code))
+          || (
+            /急性冠脉综合征|急性心肌梗死|acute coronary syndrome/i.test(text)
+            && !/(?:无|否认|排除)\s*(?:急性冠脉|急性心肌梗死|acute coronary)/i.test(text)
+          )
+        if (isStemi) {
+          stemiSource ??= ref
+          acsSource ??= ref
+        } else if (isUaNstemi) {
+          uaNstemiSource ??= ref
+          acsSource ??= ref
+        } else if (isGenericAcs) {
+          genericAcsSource ??= ref
+          acsSource ??= ref
+        }
+      }
+      if (page.nextCursor === undefined) break
+      encCondParams.set('_cursor', page.nextCursor)
+    }
+
+    const effectiveUaNstemiSource =
+      stemiSource !== undefined
+        ? undefined
+        : (uaNstemiSource ?? (genericAcsSource !== undefined && hasIssuedEcg ? genericAcsSource : undefined))
+
+    // 3. Check PCI / coronary stenting + DAPT indication for PRECISE-DAPT
+    let pciStentEncounterSource: ClinicalScoreSourceReference | undefined
+    let priorCoronaryStentSource: ClinicalScoreSourceReference | undefined
+    let hasActiveP2y12 = false
+    let hasActiveAspirin = aspirinUsedLast7Days
+    let activeP2y12Source: ClinicalScoreSourceReference | undefined
+
+    const matchesCoronaryStent = (codes: readonly string[], text: string) =>
+      codes.some(code => /^(?:36\.0[67]|00\.66)/.test(code))
+      || (
+        /冠脉支架|冠状动脉.*支架|药物洗脱支架|经皮冠状动脉介入|\bPCI\b|coronary stent/i.test(text)
+        && !/(?:无|否认|排除)/i.test(text)
+      )
+
+    if (inpatient !== undefined) {
+      const surgery = inpatient.surgery.read(context, caseId)
+      for (const req of surgery.requests) {
+        if (req.status === 'cancelled') continue
+        if (matchesCoronaryStent([req.plannedProcedure.coding.code], req.plannedProcedure.coding.display)) {
+          pciStentEncounterSource ??= {
+            label: req.plannedProcedure.coding.display,
+            reference: `ServiceRequest/${req.id}`,
+            versionId: String(req.version),
+          }
+        }
+      }
+      for (const exec of surgery.executions) {
+        if (matchesCoronaryStent([exec.actualProcedure.coding.code], exec.actualProcedure.coding.display)) {
+          pciStentEncounterSource ??= {
+            label: exec.actualProcedure.coding.display,
+            reference: `Procedure/${exec.id}`,
+            versionId: '1',
+          }
+        }
+      }
+      const activeOrders = z.array(z.object({
+        catalog_item_id: z.string(),
+        display: z.string(),
+        order_id: z.string(),
+        version: z.number(),
+      })).parse(
+        this.#database.driver.prepare(`
+          SELECT order_id, catalog_item_id, display, version
+          FROM inpatient_order
+          WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
+            AND kind = 'medication' AND state IN ('signed', 'verified', 'stop-requested')
+        `).all(context.workspaceId, context.epoch, caseId),
+      )
+      for (const order of activeOrders) {
+        const hay = `${order.catalog_item_id} ${order.display}`
+        if (/氯吡格雷|替格瑞洛|普拉格雷|clopidogrel|ticagrelor|prasugrel/i.test(hay)) {
+          hasActiveP2y12 = true
+          activeP2y12Source ??= {
+            label: `在用医嘱 ${order.display}`,
+            reference: `MedicationRequest/${order.order_id}`,
+            versionId: String(order.version),
+          }
+        }
+        if (/阿司匹林|aspirin/i.test(hay)) {
+          hasActiveAspirin = true
+        }
+      }
+    }
+
+    if (pciStentEncounterSource === undefined) {
+      const procParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
+      for (;;) {
+        const page = this.#fhir.search(context, 'Procedure', procParams)
+        for (const raw of page.resources) {
+          const parsed = procedureResourceSchema.safeParse(raw)
+          if (!parsed.success || !['completed', 'in-progress'].includes(parsed.data.status ?? '')) continue
+          const codes = (parsed.data.code?.coding ?? []).map(c => c.code ?? '').filter(Boolean)
+          const text = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
+          if (matchesCoronaryStent(codes, text)) {
+            const ref: ClinicalScoreSourceReference = {
+              label: parsed.data.code?.coding?.[0]?.display ?? parsed.data.code?.text ?? `操作 ${parsed.data.id}`,
+              reference: `Procedure/${parsed.data.id}`,
+              versionId: parsed.data.meta?.versionId ?? '1',
+            }
+            if (parsed.data.encounter?.reference === `Encounter/${encounterId}`) {
+              pciStentEncounterSource ??= ref
+            } else if (parsed.data.status === 'completed') {
+              priorCoronaryStentSource ??= ref
+            }
+          }
+        }
+        if (page.nextCursor === undefined) break
+        procParams.set('_cursor', page.nextCursor)
+      }
+    }
+
+    if (pciStentEncounterSource === undefined && priorCoronaryStentSource === undefined) {
+      const stentCondParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
+      for (;;) {
+        const page = this.#fhir.search(context, 'Condition', stentCondParams)
+        for (const raw of page.resources) {
+          const parsed = conditionResourceSchema.safeParse(raw)
+          if (!parsed.success || parsed.data.verificationStatus?.coding?.[0]?.code !== 'confirmed') continue
+          const codes = (parsed.data.code?.coding ?? []).map(c => c.code?.trim().toUpperCase() ?? '')
+          const text = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
+          if (
+            codes.some(code => code.startsWith('Z95.5') || code.startsWith('Z98.61'))
+            || (/冠脉支架置入术后|支架植入术后|PCI术后|coronary stent/i.test(text) && !/(?:无|否认|排除)/i.test(text))
+          ) {
+            priorCoronaryStentSource = {
+              label: parsed.data.code?.coding?.[0]?.display ?? parsed.data.code?.text ?? `诊断 ${parsed.data.id}`,
+              reference: `Condition/${parsed.data.id}`,
+              versionId: parsed.data.meta?.versionId ?? '1',
+            }
+            break
+          }
+        }
+        if (priorCoronaryStentSource !== undefined || page.nextCursor === undefined) break
+        stentCondParams.set('_cursor', page.nextCursor)
+      }
+    }
+
+    if (pciStentEncounterSource === undefined && priorCoronaryStentSource !== undefined && (!hasActiveP2y12 || !hasActiveAspirin)) {
+      const nowMs = Date.parse(nowIso)
+      const withdrawnIds = new Set(
+        z.array(z.object({ medication_request_id: z.string() })).parse(
+          this.#database.driver.prepare(`
+            SELECT pi.medication_request_id
+            FROM prescription_item pi
+            JOIN prescription_withdrawal pw
+              ON pw.workspace_id = pi.workspace_id
+             AND pw.epoch = pi.epoch
+             AND pw.prescription_id = pi.prescription_id
+            WHERE pi.workspace_id = ? AND pi.epoch = ?
+          `).all(context.workspaceId, context.epoch),
+        ).map(row => row.medication_request_id),
+      )
+      const medParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
+      for (;;) {
+        const page = this.#fhir.search(context, 'MedicationRequest', medParams)
+        for (const raw of page.resources) {
+          const parsed = medicationRequestResourceSchema.safeParse(raw)
+          if (!parsed.success || parsed.data.status !== 'active' || withdrawnIds.has(parsed.data.id)) continue
+          if (parsed.data.authoredOn !== undefined && Number.isFinite(nowMs)) {
+            const authoredMs = Date.parse(parsed.data.authoredOn)
+            const bounds = parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsDuration
+            if (Number.isFinite(authoredMs) && bounds?.value !== undefined) {
+              const unit = (bounds.code ?? bounds.unit ?? 'd').toLowerCase()
+              const mult = unit.startsWith('h') ? 3_600_000 : unit.startsWith('w') ? 7 * 86_400_000 : 86_400_000
+              if (authoredMs + bounds.value * mult < nowMs) continue
+            }
+          }
+          const display = [
+            parsed.data.medication?.reference?.display,
+            parsed.data.medication?.concept?.text,
+            ...(parsed.data.medication?.concept?.coding ?? []).map(c => c.display),
+          ].filter(Boolean).join(' ')
+          if (/氯吡格雷|替格瑞洛|普拉格雷|clopidogrel|ticagrelor|prasugrel/i.test(display)) {
+            hasActiveP2y12 = true
+            activeP2y12Source ??= {
+              label: `在用处方 ${display || parsed.data.id}`,
+              reference: `MedicationRequest/${parsed.data.id}`,
+              versionId: parsed.data.meta?.versionId ?? '1',
+            }
+          }
+          if (/阿司匹林|aspirin/i.test(display)) {
+            hasActiveAspirin = true
+          }
+        }
+        if ((hasActiveP2y12 && hasActiveAspirin) || page.nextCursor === undefined) break
+        medParams.set('_cursor', page.nextCursor)
+      }
+    }
+
+    const pciDaptSource =
+      pciStentEncounterSource
+      ?? (priorCoronaryStentSource !== undefined && hasActiveP2y12 && hasActiveAspirin
+        ? (activeP2y12Source ?? priorCoronaryStentSource)
+        : undefined)
+
+    return {
+      acsPresentation: acsSource === undefined ? { value: false } : { source: acsSource, value: true },
+      pciDaptIndication: pciDaptSource === undefined ? { value: false } : { source: pciDaptSource, value: true },
+      uaNstemiPresentation:
+        effectiveUaNstemiSource !== undefined
+          ? { source: effectiveUaNstemiSource, value: true }
+          : stemiSource !== undefined
+            ? { source: stemiSource, value: false }
+            : { value: false },
     }
   }
 
@@ -1485,11 +1841,13 @@ export class ClinicalScoreService {
     }> = []
     const tcHitsDesc: Array<{
       source: ClinicalScoreSourceReference
+      specimenKey: string
       timestampMs: number | undefined
       value: { unit: string; value: number }
     }> = []
     const hdlHitsDesc: Array<{
       source: ClinicalScoreSourceReference
+      specimenKey: string
       timestampMs: number | undefined
       value: { unit: string; value: number }
     }> = []
@@ -1589,8 +1947,10 @@ export class ClinicalScoreService {
         ) {
           const rawTcTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
           const parsedTcMs = rawTcTs ? Date.parse(rawTcTs) : Number.NaN
+          const specimenKey = obs.data.specimen?.reference ?? `DiagnosticReport/${reportId}`
           tcHitsDesc.push({
             source,
+            specimenKey,
             timestampMs: Number.isFinite(parsedTcMs) ? parsedTcMs : undefined,
             value: { unit, value: quantity },
           })
@@ -1602,8 +1962,10 @@ export class ClinicalScoreService {
         ) {
           const rawHdlTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
           const parsedHdlMs = rawHdlTs ? Date.parse(rawHdlTs) : Number.NaN
+          const specimenKey = obs.data.specimen?.reference ?? `DiagnosticReport/${reportId}`
           hdlHitsDesc.push({
             source,
+            specimenKey,
             timestampMs: Number.isFinite(parsedHdlMs) ? parsedHdlMs : undefined,
             value: { unit, value: quantity },
           })
@@ -1697,6 +2059,10 @@ export class ClinicalScoreService {
     const latestTc = sortChrono(tcHitsDesc).at(-1)
     const latestHdl = sortChrono(hdlHitsDesc).at(-1)
     const latestLdl = sortChrono(ldlHitsDesc).at(-1)
+    const sameSpecimenTcHdl =
+      latestTc !== undefined && latestHdl !== undefined
+        ? latestTc.specimenKey === latestHdl.specimenKey
+        : undefined
     const totalCholesterol: ClinicalScoreObjectiveFacts['totalCholesterol'] =
       latestTc === undefined ? undefined : { source: latestTc.source, value: latestTc.value }
     const hdlCholesterol: ClinicalScoreObjectiveFacts['hdlCholesterol'] =
@@ -1712,6 +2078,7 @@ export class ClinicalScoreService {
       hdlCholesterol,
       hemoglobin,
       ldlCholesterol,
+      sameSpecimenTcHdl,
       serumCreatinine,
       totalCholesterol,
       wbc,

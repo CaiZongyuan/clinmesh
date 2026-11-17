@@ -114,11 +114,16 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
   const vitalValues = { temperatureC, pulseBpm, respirationBpm, systolicMmHg, diastolicMmHg, oxygenSaturationPct }
   const weightInvalid = weightKg.trim() !== '' && !validVital(weightKg, optionalVitalRanges.weightKg)
   const heightInvalid = heightCm.trim() !== '' && !validVital(heightCm, optionalVitalRanges.heightCm)
+  const bpOrderInvalid =
+    validVital(systolicMmHg, vitalRanges.systolicMmHg)
+    && validVital(diastolicMmHg, vitalRanges.diastolicMmHg)
+    && Number(systolicMmHg) <= Number(diastolicMmHg)
   const missingFields = [
     ...(chiefComplaint.trim() === '' ? [messages.chiefComplaint] : []),
     ...(Object.keys(vitalRanges) as VitalKey[])
       .filter(key => !validVital(vitalValues[key], vitalRanges[key]))
       .map(key => messages[key]),
+    ...(bpOrderInvalid ? [locale === 'zh-CN' ? '收缩压须高于舒张压' : 'Systolic BP must exceed diastolic BP'] : []),
     ...(weightInvalid ? [locale === 'zh-CN' ? '体重' : 'Weight'] : []),
     ...(heightInvalid ? [locale === 'zh-CN' ? '身高' : 'Height'] : []),
     ...(acuityCode === '' ? [messages.acuity] : []),

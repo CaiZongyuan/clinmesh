@@ -352,6 +352,30 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       versionId: '1',
     })
 
+    // Stable CAD (I25.103) alone without UA/NSTEMI encounter presentation keeps GRACE and TIMI incomplete while PRECISE-DAPT completes under planned 36.0700 PCI stenting
+    const stableCadScores = await fixture.read('inpatient-doctor', `${stay.path}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(stableCadScores.scores.find(s => s.id === 'precise-dapt')?.status).toBe('complete')
+    expect(stableCadScores.scores.find(s => s.id === 'timi-ua-nstemi')).toMatchObject({
+      missingInputs: ['uaNstemiPresentation'],
+      status: 'incomplete',
+    })
+    expect(stableCadScores.scores.find(s => s.id === 'grace-acs')).toMatchObject({
+      missingInputs: ['acsPresentation'],
+      status: 'incomplete',
+    })
+
+    // Confirming NSTEMI (I21.4) on this inpatient encounter activates GRACE and TIMI UA/NSTEMI -> all 6 scores complete!
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
+      code: { coding: [{ code: 'I21.4', display: '急性非ST段抬高型心肌梗死' }], text: '急性非ST段抬高型心肌梗死' },
+      encounter: { reference: `Encounter/${stay.admissionId}` },
+      id: uuidv7(),
+      recordedDate: '2026-10-25T09:50:00+08:00',
+      resourceType: 'Condition',
+      subject: { reference: `Patient/${stay.patientId}` },
+      verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
+    })
+
     // 5. All 6 scores now evaluate to 'complete' with deterministic values and exact versioned sourceReferences
     const completedScores = await fixture.read('inpatient-doctor', `${stay.path}/clinical-scores`, clinicalScoreBundleSchema)
     expect(completedScores.scores.every(score => score.status === 'complete')).toBe(true)
@@ -457,6 +481,21 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     )
     const encounterId = registered.data.encounterId
 
+    // Inverted blood pressure (80/120 mmHg) is rejected at triage recording with 400
+    const invertedBpRes = await fixture.request('triage', `/api/his/v1/encounters/${encounterId}/actions/record-triage`, {
+      acuityCode: 'level-2',
+      bloodPressure: { diastolicMmHg: 120, systolicMmHg: 80 },
+      chiefComplaint: '发作性胸骨后闷痛 2 天',
+      oxygenSaturationPct: 98,
+      pulseBpm: 94,
+      respirationBpm: 20,
+      temperatureC: 36.6,
+    }, randomUUID(), {
+      [`Encounter/${encounterId}`]: '1',
+      [`Task/${registered.data.queueTaskId}`]: '1',
+    })
+    expect(invertedBpRes.status).toBe(400)
+
     // Triage records weightKg=64.5 and heightCm=162
     const triaged = await parsePciResponse(
       triageResponseSchema,
@@ -553,8 +592,23 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     const recordedRisk = await parsePciResponse(outpatientRiskAssessmentResponseSchema, riskRes)
     expect(recordedRisk.data.riskAssessment.revision).toBe(1)
 
+    // Undifferentiated outpatient without UA/NSTEMI diagnosis or PCI/DAPT completes general renal/ASCVD scores while withholding GRACE, TIMI, and PRECISE-DAPT
     const afterRisk = await fixture.read('doctor', `/api/his/v1/doctor/cases/${caseItem.caseId}/clinical-scores`, clinicalScoreBundleSchema)
-    expect(afterRisk.scores.every(item => item.status === 'complete')).toBe(true)
+    expect(afterRisk.scores.find(item => item.id === 'ckd-epi-2021-egfr')?.status).toBe('complete')
+    expect(afterRisk.scores.find(item => item.id === 'cockcroft-gault-crcl')?.status).toBe('complete')
+    expect(afterRisk.scores.find(item => item.id === 'ascvd-ldl-target')?.status).toBe('complete')
+    expect(afterRisk.scores.find(item => item.id === 'grace-acs')).toMatchObject({
+      missingInputs: ['acsPresentation'],
+      status: 'incomplete',
+    })
+    expect(afterRisk.scores.find(item => item.id === 'timi-ua-nstemi')).toMatchObject({
+      missingInputs: ['uaNstemiPresentation'],
+      status: 'incomplete',
+    })
+    expect(afterRisk.scores.find(item => item.id === 'precise-dapt')).toMatchObject({
+      missingInputs: ['pciDaptIndication'],
+      status: 'incomplete',
+    })
 
     // Unconfirmed 'provisional' Condition must NOT be treated as confirmed ASCVD secondary prevention
     fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
@@ -601,6 +655,9 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       versionId: '1',
     })
     expect(afterNegatedEcg.scores.find(item => item.id === 'ascvd-ldl-target')?.tierCode).not.toBe('ultra-high')
+    expect(afterNegatedEcg.scores.find(item => item.id === 'grace-acs')?.status).toBe('complete')
+    expect(afterNegatedEcg.scores.find(item => item.id === 'timi-ua-nstemi')?.status).toBe('complete')
+    expect(afterNegatedEcg.scores.find(item => item.id === 'precise-dapt')?.status).toBe('incomplete')
 
     // Same historical stroke copied across two Condition records (same onset or carried forward without new onset) counts as 1 event -> very-high (<1.8), NOT ultra-high
     for (const copyIdx of [1, 2]) {
