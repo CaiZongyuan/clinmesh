@@ -31,7 +31,7 @@ import {
 import { advanceVirtualTimeResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientAngiographyReportSchema } from '@clinmesh/contracts/inpatient-angiography'
 import { inpatientFullCatalogSchema, inpatientFullClinicalResponseSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
-import { inpatientDischargeResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { inpatientDischargeResponseSchema, inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientMaterialEstimateResponseSchema, inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientPciSelectionResponseSchema, inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -1401,10 +1401,28 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
       override: { reasonCode: 'documented-contraindication' },
     })
 
-    // --- 4. Post-discharge `inpatient.record.submit` direct gate when CAD diagnosis is added after discharge ---
+    // --- 4. Post-discharge `inpatient.record.submit` direct gate after settlement + bed clear (`cleared`) when CAD diagnosis is added ---
     const nonCadStay = await fixture.admitSyntheticCase(['I10.x09'], 'bed-general-2')
-    // Non-CAD discharge succeeds without override
+    // Non-CAD discharge, settlement, and bed clear succeed without override
     await fixture.depart(nonCadStay)
+    const nonCadPreview = await fixture.read('cashier', `${nonCadStay.path}/discharge/preview`, inpatientSettlementPreviewSchema)
+    const nonCadSettled = (await parsePciResponse(
+      inpatientSettlementResponseSchema,
+      await fixture.request('cashier', `${nonCadStay.path}/discharge/settle`, {
+        encounterVersion: nonCadPreview.encounterVersion,
+        fingerprint: nonCadPreview.fingerprint,
+        expectedChargesFen: nonCadPreview.chargesFen,
+        expectedBalanceFen: nonCadPreview.balanceFen,
+      }),
+    )).data
+    const nonCadCleared = await parsePciResponse(
+      inpatientDischargeResponseSchema,
+      await fixture.request('ward-nurse', `${nonCadStay.path}/discharge/clear`, {
+        encounterVersion: nonCadSettled.encounterVersion,
+        reason: '结算后办理清床',
+      }),
+    )
+    expect(nonCadCleared.data.admission.status).toBe('cleared')
     // Doctor corrects diagnosis to CAD (`I25.103`) in the post-discharge unarchived window
     const nonCadClin = await fixture.read('inpatient-doctor', `${nonCadStay.path}/clinical`, inpatientFullClinicalSchema)
     await parsePciResponse(

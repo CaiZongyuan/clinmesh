@@ -123,8 +123,9 @@ export class InpatientRecords {
       if ((operations.length === 0 && input.mainProcedureExecutionId !== null) || (operations.length > 0 && !operations.some(item => item.id === input.mainProcedureExecutionId)))
         throw new InpatientError('INPATIENT_RECORD_MAIN_PROCEDURE_REQUIRED', '请明确选择本次实际实施的主操作；无操作时明确为空')
       const now = this.owner.virtualTime(context)
-      const latestIssue = admission.status !== 'departed' ? undefined : this.owner.discharge.events(context, input.admissionId).filter(event => event.kind === 'issue').at(-1)
-      const quality = admission.status !== 'departed'
+      const departed = admission.status === 'departed' || admission.status === 'cleared'
+      const latestIssue = !departed ? undefined : this.owner.discharge.events(context, input.admissionId).filter(event => event.kind === 'issue').at(-1)
+      const quality = !departed
         ? { effects: [] }
         : this.owner.workflow.clinicalQuality.enforce(context, {
             check: this.owner.workflow.clinicalQuality.inpatientDischarge(

@@ -218,7 +218,8 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
   }
   async function confirmMainProcedure(stay: { path: string }, executionId: string | null) {
     const current = await read('inpatient-doctor', stay.path, inpatientDetailSchema)
-    const quality = current.admission.status !== 'departed'
+    const departed = current.admission.status === 'departed' || current.admission.status === 'cleared'
+    const quality = !departed
       ? undefined
       : await read('inpatient-doctor', `${stay.path}/clinical-quality?gate=inpatient-discharge`, clinicalQualityCheckSchema)
     const record = await read('inpatient-doctor', `${stay.path}/record`, inpatientRecordSchema)
