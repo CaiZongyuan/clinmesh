@@ -3,10 +3,11 @@ import {
   inpatientVitalSignsInputSchema,
   outpatientRiskAssessmentInputSchema,
 } from '@clinmesh/contracts/clinical-scores'
+import { guidelineTopicQuerySchema } from '@clinmesh/contracts/guideline-topics'
 import { inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgExplainInputSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionSaveInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
-import { inpatientGuidelineAdviceRequestInputSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
+import { inpatientGuidelineAdviceRequestBodySchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { inpatientDrgAgentConfirmInputSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { inpatientMaterialEstimateRequestInputSchema, inpatientMaterialEstimateSaveInputSchema, inpatientMaterialEstimateConfirmInputSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientDrgFollowupStartInputSchema, inpatientDrgFollowupStopInputSchema } from '@clinmesh/contracts/inpatient-drg-followup'
@@ -1474,8 +1475,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/guideline-advice', async context => {
-      try { return context.json(inpatient.guidelineAdvice.list(await actor(context), context.req.param('admissionId'))) }
-      catch (error) { return apiErrorResponse(context, error) }
+      try {
+        const query = guidelineTopicQuerySchema.parse(context.req.query())
+        return context.json(inpatient.guidelineAdvice.list(await actor(context), context.req.param('admissionId'), query.topicId))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/guideline-topics', async context => {
+      try {
+        const query = guidelineTopicQuerySchema.parse(context.req.query())
+        return context.json(inpatient.guidelineAdvice.readTopics(await actor(context), context.req.param('admissionId'), query.topicId))
+      } catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId', async context => {
       try { return context.json(inpatient.guidelineAdvice.read(await actor(context), context.req.param('admissionId'), context.req.param('requestId'))) }
@@ -1484,7 +1493,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.post('/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/request', async context => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
-        const body = z.object({ input: inpatientGuidelineAdviceRequestInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const body = z.object({ input: inpatientGuidelineAdviceRequestBodySchema }).strict().parse(await context.req.json())
         return context.json(inpatient.guidelineAdvice.request(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') },
           z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch (error) { return apiErrorResponse(context, error) }
@@ -2380,6 +2389,18 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(workflow.clinicalScores.readOutpatientClinicalScores(
           await actor(context),
           context.req.param('caseId'),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/doctor/cases/:caseId/guideline-topics', async (context) => {
+      try {
+        const query = guidelineTopicQuerySchema.parse(context.req.query())
+        return context.json(workflow.clinicalScores.readOutpatientGuidelineTopics(
+          await actor(context),
+          context.req.param('caseId'),
+          query.topicId,
         ))
       } catch (error) {
         return apiErrorResponse(context, error)

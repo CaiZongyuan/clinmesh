@@ -3,9 +3,12 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
+import { guidelineTopicIds } from '@clinmesh/contracts/guideline-topics'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { confirmDoctorPreparationResponseSchema, doctorRecommendationStateSchema,
   generateDoctorRecommendationsResponseSchema, type DoctorPreparationSelection, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
+import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
+import { getGuidelineTopicDefinition } from '../src/application/guideline-topic-registry.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
 import { pciDataPackage } from '../src/application/scenario-data/pci-data.ts'
@@ -119,6 +122,155 @@ it('本地冠心病PDF只用纳入页生成三类建议，医生确认后关闭�
     expect(retained.diagnosis?.confirmation).toEqual(final.diagnosis?.confirmation)
     expect(retained.laboratoryRequests?.requests).toEqual(final.laboratoryRequests?.requests)
     expect(retained.medicationConclusion?.prescription).toEqual(final.medicationConclusion?.prescription)
+  } finally {
+    await runtime.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+it('门诊诊疗建议复用共享 Guideline Topic 注册表，对派生副本按正文去重并严格遵守 8 段／48 KiB 预算', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'clinmesh-coronary-topics-'))
+  const data = await createCoronaryData(directory)
+  const writer = new GuidelineCorpus({ databasePath: data.guidelineDatabasePath })
+  try {
+    const bySource = new Map<string, { pages: Map<number, string[]>; sha256: string; specialty: 'cardiology' | 'endocrinology'; title: string; version: string }>()
+    for (const topicId of guidelineTopicIds) {
+      const def = getGuidelineTopicDefinition(topicId)
+      for (const ref of def.references) {
+        let entry = bySource.get(ref.sourceId)
+        if (!entry) {
+          entry = { pages: new Map(), sha256: ref.sha256, specialty: def.specialty, title: ref.title, version: ref.version }
+          bySource.set(ref.sourceId, entry)
+        }
+        const list = entry.pages.get(ref.page) ?? []
+        for (const frag of ref.fragments) if (!list.includes(frag)) list.push(frag)
+        entry.pages.set(ref.page, list)
+      }
+    }
+    const topicDocs: GuidelineDocument[] = [...bySource.entries()].map(([sourceId, entry]) => ({
+      passages: [...entry.pages.entries()].sort(([a], [b]) => a - b).map(([page, fragments]) => ({
+        locator: `PDF 物理第 ${page} 页`,
+        text: `${fragments.join('。 ')}（合成专题注册表测试段落 ${sourceId}#${page}）`,
+      })),
+      source: {
+        documentType: 'guideline',
+        format: 'pdf',
+        id: sourceId,
+        license: { id: 'CC0', url: 'https://example.test/license', usage: 'open' },
+        population: 'adult',
+        publisher: '合成专题核验机构',
+        scope: '仅供合成回归',
+        sha256: entry.sha256,
+        specialty: entry.specialty,
+        status: 'active',
+        title: entry.title,
+        topics: [],
+        url: `https://example.test/${sourceId}`,
+        version: entry.version,
+      },
+    }))
+    // Also import a local-evaluation-* derived copy with a distinct sha256 but identical text to coronary-31-2019 p2
+    const acsDoc = topicDocs.find(d => d.source.id === 'coronary-31-2019')!
+    writer.importDocuments([
+      ...topicDocs,
+      {
+        passages: [acsDoc.passages[0]!],
+        source: {
+          ...acsDoc.source,
+          derivedFromSourceId: 'coronary-31-2019',
+          id: 'local-evaluation-acs-copy',
+          sha256: 'd'.repeat(64),
+        },
+      },
+    ])
+  } finally {
+    writer.close()
+  }
+
+  const { provider } = createCoronaryProvider()
+  const runtime = await createClinMeshRuntime({
+    activeReferenceReleaseId: coronaryReferenceRelease,
+    authBaseUrl: 'http://localhost',
+    authSecret: 'synthetic-coronary-auth-secret-at-least-32',
+    chatCompletionsProvider: provider,
+    cursorSecret: 'synthetic-coronary-cursor-secret-at-least-32',
+    databasePath: join(directory, 'hospital.sqlite'),
+    demoPassword: 'Synthetic-Demo-Password-2026!',
+    guidelineDatabasePath: data.guidelineDatabasePath,
+    guidelineLocalEvaluation: true,
+    imagingAssetDirectory: join(directory, 'imaging'),
+    imagingCatalogDirectory: join(directory, 'imaging-catalog'),
+    migrationMode: 'apply',
+    pathologyAssetDirectory: join(directory, 'pathology'),
+    pathologyCatalogDirectory: join(directory, 'pathology-catalog'),
+    patientPersonaModel: 'synthetic-coronary',
+    referenceDatabasePath: data.referenceDatabasePath,
+    syntheaProvider: new CoronarySyntheaProvider(),
+    trustedOrigins: ['http://localhost'],
+  })
+  try {
+    const started = await startCoronaryCase(runtime)
+    const cookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+    const headers = () => ({ cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() })
+    const claim = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/start-first-visit`, {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1' },
+        input: {},
+      }),
+      headers: headers(),
+      method: 'POST',
+    })
+    expect(claim.status).toBe(200)
+    const current = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.outpatientCaseId}`,
+      { headers: { cookie } },
+    )).json())
+    // Document matches ALL 6 Guideline Topics simultaneously to verify 8-passage / 48 KiB budget enforcement
+    const multiTopicDoc = {
+      ...coronaryDocument,
+      chiefComplaint: '急性胸痛 NSTE-ACS 血运重建 FFR 支架选型 对比剂水化 双抗二级预防 2型糖尿病合并慢性肾脏病达格列净',
+    }
+    const saved = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`, {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${started.encounterId}`]: current.encounter.versionId },
+        input: { document: multiTopicDoc, expectedDraftVersion: current.clinicalDocument?.draft?.version ?? 0 },
+      }),
+      headers: headers(),
+      method: 'PUT',
+    })
+    expect(saved.status).toBe(200)
+
+    const idleState = doctorRecommendationStateSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.outpatientCaseId}/recommendations/diagnosis`,
+      { headers: { cookie } },
+    )).json())
+    const genRes = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.outpatientCaseId}/recommendations/diagnosis/actions/generate`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${idleState.encounterId}`]: idleState.encounterVersion },
+          input: { expectedInputFingerprint: idleState.inputFingerprint, refresh: true },
+        }),
+        headers: headers(),
+        method: 'POST',
+      },
+    )
+    expect(genRes.status).toBe(200)
+    await runtime.dispatchPending()
+    const state = doctorRecommendationStateSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.outpatientCaseId}/recommendations/diagnosis`,
+      { headers: { cookie } },
+    )).json())
+    const fullTextGuidelines = state.guidelines.filter(g => g.locator.startsWith('PDF 物理第'))
+    expect(fullTextGuidelines.length).toBeLessThanOrEqual(8)
+    const totalBytes = fullTextGuidelines.reduce((sum, g) => sum + Buffer.byteLength(JSON.stringify(g), 'utf8'), 0)
+    expect(totalBytes).toBeLessThanOrEqual(48 * 1024)
+    // Reused acute-chest-pain-acs topic passages first and deduplicated local-evaluation-acs-copy
+    expect(fullTextGuidelines.some(g => g.sourceHash === getGuidelineTopicDefinition('acute-chest-pain-acs').references[0]!.sha256)).toBe(true)
+    const p2Matches = fullTextGuidelines.filter(g => g.text.includes('10 min 内行标准 12 导联'))
+    expect(p2Matches).toHaveLength(1)
+    // Atomic topic budget: 3-page pci-stent cannot fit in remaining 2 slots after 6 slots, so no partial pci-stent passage is admitted
+    expect(fullTextGuidelines.some(g => g.sourceHash === getGuidelineTopicDefinition('pci-stent').references[2]!.sha256)).toBe(false)
   } finally {
     await runtime.close()
     await rm(directory, { recursive: true, force: true })

@@ -231,12 +231,13 @@ clinmesh doctor completed-cases get --case-id <case-id>
 
 负责门诊医生可按 [住院工作流](../clinmesh-inpatient/SKILL.md)开住院证，交登记员转收。
 
-## Clinical risk assessment and deterministic clinical scores
+## Clinical risk assessment, deterministic clinical scores, and guideline topics
 
-门诊医生可按当前 `Encounter` 版本与 `expectedRevision` 显式录入受审计 `Clinical Risk Assessment`（`killipClass`、`cardiacArrestOnAdmission`、`anginaEpisodes24h`、`stSegmentDeviation`、`aspirinUsedLast7Days`、`smokingStatus`、`familyHistoryPrematureCad`、`knownCoronaryStenosisGe50`、`priorBleedingHistory`）；未传字段保留既有值或未记录语义，不推断默认阴性。仅当前病例责任医生可调用 `doctor case clinical-scores get`（非责任医生返回 `ROLE_NOT_ALLOWED`）从当前就诊已落库客观记录计算六项确定性算子（`ckd-epi-2021-egfr`、`cockcroft-gault-crcl`、`grace-acs`、`timi-ua-nstemi`、`precise-dapt`、`ascvd-ldl-target`），缺项返回 `status: 'incomplete'` 与具体 `missingInputs`。
+门诊医生可按当前 `Encounter` 版本与 `expectedRevision` 显式录入受审计 `Clinical Risk Assessment`（`killipClass`、`cardiacArrestOnAdmission`、`anginaEpisodes24h`、`stSegmentDeviation`、`aspirinUsedLast7Days`、`smokingStatus`、`familyHistoryPrematureCad`、`knownCoronaryStenosisGe50`、`priorBleedingHistory`）；未传字段保留既有值或未记录语义，不推断默认阴性。仅当前病例责任医生可调用 `doctor case clinical-scores get` 与 `doctor case guideline-topics get`（非责任医生返回 `ROLE_NOT_ALLOWED`）：前者从当前就诊已落库客观记录计算六项确定性算子（`ckd-epi-2021-egfr`、`cockcroft-gault-crcl`、`grace-acs`、`timi-ua-nstemi`、`precise-dapt`、`ascvd-ldl-target`），缺项返回 `status: 'incomplete'` 与具体 `missingInputs`；后者同步读取已注册 `Guideline Topic`（`acute-chest-pain-acs`、`coronary-revascularization-indication`、`pci-stent`、`contrast-kidney-hydration`、`cad-dapt-and-secondary-prevention`、`t2dm-renal-medication`）经 SHA-256、物理页码与片段完整性核验的原文段落、限定语及当前患者客观指标与缺项，不发起模型请求，来源缺失、撤回、页码片段残缺、人群隔离或超出 48 KiB 预算时返回 `status: 'unavailable'` 与原因。
 
 ```bash
 clinmesh doctor case clinical-scores get --case-id <case-id>
+clinmesh doctor case guideline-topics get --case-id <case-id> --topic-id acute-chest-pain-acs
 clinmesh encounter risk-assessment record --input @risk-assessment.json --idempotency-key <key>
 clinmesh command receipt get --operation-id encounter.risk-assessment.record --idempotency-key <key>
 ```

@@ -87,6 +87,7 @@ import { readOutpatientInsuranceSource } from './outpatient-insurance.ts'
 import { OutpatientInvestigationBilling } from './outpatient-investigation-billing.ts'
 import { OutpatientLaboratoryService } from './outpatient-laboratory-service.ts'
 import { OutpatientPrescriptionService } from './outpatient-prescription-service.ts'
+import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
 import { ClinicalScoreService, buildVitalObservationComponents } from './clinical-score-service.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
 import {
@@ -321,6 +322,7 @@ export class WorkflowService
       qualityModelAvailable?: boolean
       qualityContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
       consultationRecordingContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
+      guidelines?: GuidelineCorpus
       investigation?: InvestigationCapabilityResolver
       now?: () => Date
       referenceData?: ReferenceDataService
@@ -354,6 +356,7 @@ export class WorkflowService
       commands,
       database,
       fhir,
+      ...(options.guidelines === undefined ? {} : { guidelines: options.guidelines }),
       outpatientContext: this.#context,
     })
     this.insurance = new InsuranceService(database, commands, {

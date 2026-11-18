@@ -34,10 +34,18 @@ export class InpatientInvestigations {
   read(context: ActorContext, admissionId: string) {
     this.owner.assertRole(context,['inpatient-doctor','ward-nurse'])
     this.owner.admissionBinding(context,admissionId)
+    return this.readSnapshot(context, admissionId)
+  }
+  readSnapshot(context: ActorContext, admissionId: string) {
+    this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
+    const binding = this.owner.readAdmissionBinding(context, admissionId)
+    const scoped: ActorContext = context.roleCode === 'medical-records'
+      ? { ...context, roleCode: 'inpatient-doctor', organizationId: binding.row.organization_id, locationId: binding.row.ward_id }
+      : context
     const sent = z.array(z.object({request_id:z.string(),sent_at:z.string(),sent_by:z.string()})).parse(this.owner.database.driver.prepare(
       'SELECT request_id,sent_at,sent_by FROM inpatient_investigation WHERE workspace_id=? AND epoch=? AND admission_id=? AND sent_at IS NOT NULL ORDER BY julianday(sent_at),request_id').all(context.workspaceId,context.epoch,admissionId))
-    return inpatientInvestigationsSchema.parse({admissionId,laboratoryRequests:this.workflow.inpatientLaboratoryRequests(context,admissionId),imagingRequests:this.workflow.imaging.state(context,admissionId).requests,
-      examinationRequests:this.workflow.examination.state(context,admissionId).requests,
+    return inpatientInvestigationsSchema.parse({admissionId,laboratoryRequests:this.workflow.inpatientLaboratoryRequests(scoped,admissionId),imagingRequests:this.workflow.imaging.state(scoped,admissionId).requests,
+      examinationRequests:this.workflow.examination.state(scoped,admissionId).requests,
       sent:sent.map(row=>({requestId:row.request_id,sentAt:row.sent_at,sentBy:row.sent_by}))})
   }
   catalog(context: ActorContext, ready: ReadonlySet<ImagingExamCode>) {

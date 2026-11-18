@@ -14,6 +14,7 @@ import {
   type InpatientVitalSignsRecord,
   type OutpatientRiskAssessmentInput,
 } from '@clinmesh/contracts/clinical-scores'
+import type { GuidelineTopicBundle, GuidelineTopicId } from '@clinmesh/contracts/guideline-topics'
 import { inpatientFullClinicalResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { investigationResultContentSchema } from '@clinmesh/contracts/scenario'
 import {
@@ -25,6 +26,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository, RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
+import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
 import {
   type ActorContext,
   type CommandEffect,
@@ -32,6 +34,7 @@ import {
   type CommandTransaction,
   provenanceAgents,
 } from './command-executor.ts'
+import { buildSynchronousTopicBundle } from './guideline-topic-registry.ts'
 import { businessDate } from './inpatient-orders.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { triageRecordContentSchema, type OutpatientWorkflowContext } from './outpatient-workflow-context.ts'
@@ -497,17 +500,20 @@ export class ClinicalScoreService {
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
   readonly #fhir: FhirRepository
+  readonly #guidelines: GuidelineCorpus | undefined
   readonly #outpatientContext: OutpatientWorkflowContext
 
   constructor(options: {
     commands: CommandExecutor
     database: ClinMeshDatabase
     fhir: FhirRepository
+    guidelines?: GuidelineCorpus
     outpatientContext: OutpatientWorkflowContext
   }) {
     this.#commands = options.commands
     this.#database = options.database
     this.#fhir = options.fhir
+    this.#guidelines = options.guidelines
     this.#outpatientContext = options.outpatientContext
   }
 
@@ -826,7 +832,69 @@ export class ClinicalScoreService {
     return bundle
   }
 
-  outpatientSnapshot(context: ActorContext, caseId: string, referenceCutoffIso?: string): ClinicalScoreBundle {
+  readOutpatientGuidelineTopics(
+    context: ActorContext,
+    caseId: string,
+    topicId?: GuidelineTopicId,
+  ): GuidelineTopicBundle {
+    const auditInput = topicId === undefined ? { caseId } : { caseId, topicId }
+    let bundle: GuidelineTopicBundle
+    try {
+      this.#outpatientContext.requireDoctorCase(context, caseId)
+      this.#outpatientContext.assertCaseResponsibility(context, caseId)
+      const caseRow = z.object({
+        encounter_id: z.string(),
+        patient_id: z.string(),
+        visit_date: z.string().nullable(),
+      }).parse(
+        this.#database.driver.prepare(`
+          SELECT c.patient_id, c.encounter_id, r.visit_date
+          FROM outpatient_case c
+          LEFT JOIN registration r
+            ON r.workspace_id = c.workspace_id
+           AND r.epoch = c.epoch
+           AND r.registration_id = c.registration_id
+          WHERE c.workspace_id = ? AND c.epoch = ? AND c.case_id = ?
+        `).get(context.workspaceId, context.epoch, caseId),
+      )
+      const patient = this.#fhir.read(context, 'Patient', caseRow.patient_id)
+      const rawEncounter = this.#fhir.read(context, 'Encounter', caseRow.encounter_id)
+      const now = this.#outpatientContext.virtualTime(context)
+      const encCompleted = rawEncounter.status === 'completed'
+      const referenceCutoffIso = encCompleted
+        ? (extractEncounterEndIso(rawEncounter) ?? (caseRow.visit_date ? `${caseRow.visit_date}T23:59:59.999+08:00` : now))
+        : now
+      const scores = this.outpatientSnapshot(context, caseId, referenceCutoffIso, encCompleted)
+      bundle = buildSynchronousTopicBundle({
+        caseId,
+        context,
+        corpus: this.#guidelines,
+        database: this.#database,
+        encounterId: caseRow.encounter_id,
+        evaluatedAt: now,
+        fhir: this.#fhir,
+        isArchivedCutoff: encCompleted,
+        patientBirthDate: typeof patient.birthDate === 'string' ? patient.birthDate : undefined,
+        patientId: caseRow.patient_id,
+        populationReferenceIso: encCompleted ? referenceCutoffIso : (caseRow.visit_date ?? now),
+        referenceCutoffIso,
+        scores,
+        topicId,
+      })
+    } catch (error) {
+      try { this.#commands.auditRead(context, 'doctor.case.guideline-topics.read', auditInput, 'failed') } catch { /* preserve original error */ }
+      throw error
+    }
+    this.#commands.auditRead(context, 'doctor.case.guideline-topics.read', auditInput, 'success')
+    return bundle
+  }
+
+  outpatientSnapshot(
+    context: ActorContext,
+    caseId: string,
+    referenceCutoffIso?: string,
+    archivedCutoffOverride?: boolean,
+  ): ClinicalScoreBundle {
     this.#outpatientContext.requireDoctorCase(context, caseId)
     this.#outpatientContext.assertCaseResponsibility(context, caseId)
     const row = z.object({
@@ -860,7 +928,7 @@ export class ClinicalScoreService {
     if (row === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case was not found')
     const encounter = this.#fhir.read(context, 'Encounter', row.encounter_id)
     const virtualNow = this.#outpatientContext.virtualTime(context)
-    const isArchivedCutoff = encounter.status === 'completed'
+    const isArchivedCutoff = archivedCutoffOverride ?? (encounter.status === 'completed')
     const derivedCutoffIso =
       isArchivedCutoff
         ? (extractEncounterEndIso(encounter) ?? (row.visit_date ? `${row.visit_date}T23:59:59.999+08:00` : virtualNow))
@@ -912,6 +980,7 @@ export class ClinicalScoreService {
     context: ActorContext,
     admissionId: string,
     referenceTimeIso?: string,
+    archivedCutoffOverride?: boolean,
   ): ClinicalScoreBundle {
     inpatient.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     const binding = inpatient.readAdmissionBinding(context, admissionId)
@@ -919,7 +988,8 @@ export class ClinicalScoreService {
     const virtualNow = inpatient.virtualTime(context)
     const departureIso = inpatient.discharge.activeDeparture(context, admissionId)?.virtualTime
     const isArchivedCutoff =
-      departureIso !== undefined || binding.status === 'departed' || binding.status === 'cleared'
+      archivedCutoffOverride
+      ?? (departureIso !== undefined || binding.status === 'departed' || binding.status === 'cleared')
     const departedAt = isArchivedCutoff ? (departureIso ?? extractEncounterEndIso(encounter)) : undefined
     const now = normalizeCutoffIso(referenceTimeIso ?? departedAt ?? virtualNow)
     const admTiming = z.object({

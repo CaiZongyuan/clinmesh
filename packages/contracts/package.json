@@ -44,7 +44,8 @@
     "./inpatient-drg-payer": "./src/inpatient-drg-payer.ts",
     "./scenario": "./src/scenario.ts",
     "./medication-safety": "./src/medication-safety.ts",
-    "./clinical-scores": "./src/clinical-scores.ts"
+    "./clinical-scores": "./src/clinical-scores.ts",
+    "./guideline-topics": "./src/guideline-topics.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

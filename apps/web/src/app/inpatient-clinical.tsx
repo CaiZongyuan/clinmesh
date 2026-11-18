@@ -28,6 +28,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { inpatientAdmissionConditionLabel, inpatientFrequencyLabel } from './inpatient-labels.ts'
 import { formatShanghaiMinute } from './workspace-format.ts'
 import { buildInpatientClinicalScoreRevision, InpatientVitalsAndScoresDisclosure } from './clinical-scores-panel.tsx'
+import { InpatientGuidelineAdvicePanel } from './inpatient-guideline-advice.tsx'
 import { InpatientVerification } from './inpatient-verification.tsx'
 import { InpatientStopOrders } from './inpatient-stop-orders.tsx'
 import { InpatientExecutionBatch } from './inpatient-execution-batch.tsx'
@@ -47,6 +48,7 @@ export function InpatientClinical({ admission, investigations, session, locale, 
   const messages = getWorkspaceMessages(locale)
   const [composing, setComposing] = useState(false)
   const [editingDiagnosis, setEditingDiagnosis] = useState(false)
+  const [guidelineOpen, setGuidelineOpen] = useState(false)
   const [scoresOpen, setScoresOpen] = useState(false)
   const pollScoresInputs = scoresOpen && active && view === 'orders' && admission.recordStatus !== 'archived'
   const clinical = useQuery({
@@ -111,6 +113,7 @@ export function InpatientClinical({ admission, investigations, session, locale, 
       <AgentReviewAnchor id={inpatientOrderAnchor(admission.id, order.id)} />
     </InpatientItemRow>}} /> : null}
     {data ? <InpatientVitalsAndScoresDisclosure key={`vitals:${admission.id}`} active={active} admissionId={admission.id} archived={admission.recordStatus === 'archived'} canEdit={(doctor || nurse) && !write.blocked && admission.recordStatus !== 'archived' && (admission.status === 'admitted' || admission.status === 'discharge-pending')} clinicalRevision={buildInpatientClinicalScoreRevision({ chargesCount: data.charges.length, diagnosisRevision: data.diagnosis.revision, executions: data.executions, investigations: effectiveInvestigations, orders: data.orders, surgeries: surgery.data })} encounterVersion={data.encounterVersion} latestVitalSigns={data.latestVitalSigns} locale={locale} onScoresOpenChange={setScoresOpen} riskAssessment={data.riskAssessment} scope={scope} write={write} /> : null}
+    {data && !nurse ? <details className="clinmesh-inpatient-disclosure" onToggle={event => { const open = event.currentTarget.open; setGuidelineOpen(open) }}><summary>{t('循证指南专题与参考意见', 'Clinical guideline topics & advice')}</summary><div className="pt-2"><InpatientGuidelineAdvicePanel key={`topic-advice:${admission.id}`} admission={admission} session={session} locale={locale} write={write} canReassess={doctor && !write.blocked && admission.status === 'admitted' && admission.recordStatus !== 'archived'} enableTopicPicker active={active && guidelineOpen} /></div></details> : null}
     {!doctor && data && data.executions.length > 0 ? <details open className="clinmesh-inpatient-disclosure"><summary>{t('执行记录', 'Execution records')} <span className="tabular-nums">{data.executions.length}</span></summary><div>
     {data?.executions.map(execution=>{
       const order=data.orders.find(order=>order.id===execution.orderId)!
