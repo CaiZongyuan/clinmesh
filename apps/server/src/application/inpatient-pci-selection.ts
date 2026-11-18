@@ -137,8 +137,17 @@ export class InpatientPciSelection {
       expectedVersions: {}, dataSchema: inpatientPciSelectionSchema,
       authorize: () => { this.owner.assertRole(context, ['inpatient-doctor']); this.owner.admissionBinding(context, input.admissionId) },
     }, () => {
+      const admission = this.owner.orders.assertAdmitted(context, input.admissionId)
       const effects: CommandEffect[] = []
       const confirmation = this.confirmInTransaction(context, input, effects)
+      const quality = this.owner.workflow.clinicalQuality.enforce(context, {
+        check: this.owner.workflow.clinicalQuality.inpatientPciPlan(this.owner, context, admission.id),
+        operation: 'inpatient.pci-selection.confirm',
+        override: input.clinicalOverride,
+        patientId: admission.patientId,
+        subjectReference: `Encounter/${admission.id}`,
+      })
+      effects.push(...quality.effects)
       const draft = this.drafts(context, input.admissionId).find(item => item.requestId === input.parameters.requestId)
       if (draft) {
         this.owner.database.driver.prepare('UPDATE inpatient_pci_selection_draft SET draft_json=? WHERE workspace_id=? AND epoch=? AND request_id=?')
@@ -146,12 +155,26 @@ export class InpatientPciSelection {
             confirmedSelectionVersion: confirmation.version }), context.workspaceId, context.epoch, draft.requestId)
         effects.push({ kind: 'updated', reference: `InpatientPciSelectionDraft/${draft.requestId}`, versionId: String(draft.version + 1) })
       }
-      return { data: this.read(context, input.admissionId), effects }
+      return {
+        data: this.read(context, input.admissionId),
+        effects,
+        ...(quality.receipt === undefined ? {} : { clinicalQuality: quality.receipt }),
+      }
     })
   }
 
   confirmDraftInTransaction(context: ActorContext, admissionId: string, requestId: string, materialIds: string[], effects: CommandEffect[]) {
     const selected = this.read(context, admissionId, requestId)
+    if (selected.confirmation === null) {
+      const admission = this.owner.admissionBinding(context, admissionId)
+      this.owner.workflow.clinicalQuality.enforce(context, {
+        check: this.owner.workflow.clinicalQuality.inpatientPciPlan(this.owner, context, admissionId),
+        operation: 'inpatient.pci-selection.confirm',
+        override: undefined,
+        patientId: admission.patientId,
+        subjectReference: `Encounter/${admissionId}`,
+      })
+    }
     const draft = selected.drafts?.find(item => item.requestId === requestId
       && (selected.confirmation === null || item.confirmedSelectionVersion === selected.confirmation.version || item.edited && item.confirmedSelectionVersion === null))
     if (!draft) {

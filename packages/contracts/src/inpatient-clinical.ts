@@ -1,5 +1,6 @@
 import { clinicalRiskAssessmentRecordSchema, inpatientVitalSignsRecordSchema } from './clinical-scores.ts'
 import { medicationSafetyRuleSchema } from './medication-safety.ts'
+import { clinicalOverrideInputSchema } from './clinical-quality.ts'
 import { referenceConceptSnapshotSchema } from './reference-data.ts'
 import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
@@ -21,7 +22,7 @@ const inpatientClinicalCatalogSchema = z.object({ diagnoses: z.array(coding) }).
 const inpatientClinicalSchema = z.object({ admissionId: id, encounterVersion: version, diagnosis: inpatientDiagnosisSchema }).strict()
 
 export const inpatientOrderIssueInputSchema = z.object({ admissionId: id, encounterVersion: version, surgeryExecutionId: id.optional(),
-  expectedDrgFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  expectedDrgFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), clinicalOverride: clinicalOverrideInputSchema.optional(),
   duration: z.enum(['long','temporary']), selection: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('medication'), catalogItemId: id, catalogVersion: z.number().int().positive(), doseText: z.string().trim().min(1).max(120),
       frequencyCode: z.enum(['QD','BID','TID','QN','PRN','ONCE']), doseQuantity: z.number().int().positive().max(100) }).strict(),

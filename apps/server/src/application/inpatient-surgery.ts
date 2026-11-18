@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
+import { pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientSurgeryCatalogSchema, inpatientProcedureItemSchema, inpatientMaterialItemSchema, inpatientSurgeryCompletionReviewInputSchema,
   inpatientSurgerySchema, inpatientSurgeryRequestSchema, inpatientSurgeryExecutionSchema, inpatientSurgeryMaterialHistorySchema,
   inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema,
@@ -100,6 +101,15 @@ export class InpatientSurgery {
       const admission = this.owner.orders.assertAdmitted(context, input.admissionId), now = this.owner.virtualTime(context)
       if (Date.parse(input.plannedFor) < Date.parse(now)) throw new InpatientError('INPATIENT_SURGERY_TIME_CONFLICT', '计划手术时间不能早于当前虚拟时间')
       const item = this.procedure(context, input.procedureId, input.catalogVersion), id = uuidv7()
+      const quality = pciSelectionProcedureCodes.includes(item.coding.code)
+        ? this.owner.workflow.clinicalQuality.enforce(context, {
+            check: this.owner.workflow.clinicalQuality.inpatientPciPlan(this.owner, context, admission.id),
+            operation: 'inpatient.surgery.request',
+            override: input.clinicalOverride,
+            patientId: admission.patientId,
+            subjectReference: `Encounter/${admission.id}`,
+          })
+        : { effects: [] }
       this.owner.database.driver.prepare(`INSERT INTO inpatient_surgery_request(workspace_id,epoch,request_id,admission_id,status,planned_procedure_json,planned_for,reason,requested_at,requested_by,organization_id)
         VALUES(?,?,?,?,'requested',?,?,?,?,?,?)`).run(context.workspaceId, context.epoch, id, admission.id, JSON.stringify(item), input.plannedFor, input.reason, now, context.actorId, admission.organizationId)
       this.owner.fhir.create(context, { resourceType: 'ServiceRequest', id, status: 'active', intent: 'order', code: { concept: { coding: [clinicalCoding(item.coding)], text: item.coding.display } },
@@ -107,7 +117,11 @@ export class InpatientSurgery {
         occurrenceDateTime: input.plannedFor, requester: { reference: `PractitionerRole/${context.practitionerRoleId}` }, note: [{ text: input.reason }] })
       this.owner.pciSelection.prepareDraft(context, admission.id, id)
       this.owner.materialEstimates.automatic(context, admission.id, id, transaction)
-      return { data: this.read(context, admission.id), effects: [{ kind: 'created' as const, reference: `ServiceRequest/${id}`, versionId: '1' }] }
+      return {
+        data: this.read(context, admission.id),
+        effects: [{ kind: 'created' as const, reference: `ServiceRequest/${id}`, versionId: '1' }, ...quality.effects],
+        ...(quality.receipt === undefined ? {} : { clinicalQuality: quality.receipt }),
+      }
     })
   }
   prepare(context: ActorContext, raw: unknown, idempotencyKey: string, action: 'check-preop' | 'confirm-consent' | 'cancel') {

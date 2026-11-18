@@ -1,3 +1,4 @@
+import { clinicalQualityCheckSchema } from '@clinmesh/contracts/clinical-quality'
 import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 
@@ -27,7 +28,13 @@ export function subscribeIssueDraftSettlement(key: string, reload: () => void): 
   return () => window.removeEventListener(settledEvent, listener)
 }
 
-export const issueDraftFailureSchema = z.object({ status: z.number().int(), code: z.string(), message: z.string().optional(), reason: z.string().optional() }).strict()
+export const issueDraftFailureSchema = z.object({
+  status: z.number().int(),
+  code: z.string(),
+  message: z.string().optional(),
+  reason: z.string().optional(),
+  clinicalQuality: clinicalQualityCheckSchema.optional(),
+}).strict()
 
 export type IssueDraftOutcome =
   | { response: unknown; discardUnread: boolean }

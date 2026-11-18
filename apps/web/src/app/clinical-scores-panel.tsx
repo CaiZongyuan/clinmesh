@@ -35,37 +35,43 @@ interface RiskFormState {
   stSegmentDeviation: '' | 'true' | 'false'
 }
 
+const boolKeys = ['aspirinUsedLast7Days', 'cardiacArrestOnAdmission', 'familyHistoryPrematureCad', 'knownCoronaryStenosisGe50', 'stSegmentDeviation'] as const
+
 function toRiskForm(record: ClinicalRiskAssessmentRecord | undefined): RiskFormState {
   const v = record?.values
-  return {
+  const out = {
     anginaEpisodes24h: v?.anginaEpisodes24h == null ? '' : String(v.anginaEpisodes24h),
-    aspirinUsedLast7Days: v?.aspirinUsedLast7Days == null ? '' : String(v.aspirinUsedLast7Days) as 'true' | 'false',
-    cardiacArrestOnAdmission: v?.cardiacArrestOnAdmission == null ? '' : String(v.cardiacArrestOnAdmission) as 'true' | 'false',
-    familyHistoryPrematureCad: v?.familyHistoryPrematureCad == null ? '' : String(v.familyHistoryPrematureCad) as 'true' | 'false',
+    aspirinUsedLast7Days: '', cardiacArrestOnAdmission: '', familyHistoryPrematureCad: '', knownCoronaryStenosisGe50: '', stSegmentDeviation: '',
     killipClass: v?.killipClass ?? '',
-    knownCoronaryStenosisGe50: v?.knownCoronaryStenosisGe50 == null ? '' : String(v.knownCoronaryStenosisGe50) as 'true' | 'false',
     priorBleedingHistory: v?.priorBleedingHistory ?? '',
     smokingStatus: v?.smokingStatus ?? '',
-    stSegmentDeviation: v?.stSegmentDeviation == null ? '' : String(v.stSegmentDeviation) as 'true' | 'false',
-  }
+  } as RiskFormState
+  for (const k of boolKeys) out[k] = v?.[k] == null ? '' : String(v[k]) as 'true' | 'false'
+  return out
 }
 
 function parseRiskFields(form: RiskFormState): ClinicalRiskAssessmentFieldsInput {
   const anginaTrim = form.anginaEpisodes24h.trim()
-  return {
+  const out: Record<string, unknown> = {
     anginaEpisodes24h: anginaTrim === '' ? null : Number(anginaTrim),
-    aspirinUsedLast7Days: form.aspirinUsedLast7Days === '' ? null : form.aspirinUsedLast7Days === 'true',
-    cardiacArrestOnAdmission: form.cardiacArrestOnAdmission === '' ? null : form.cardiacArrestOnAdmission === 'true',
-    familyHistoryPrematureCad: form.familyHistoryPrematureCad === '' ? null : form.familyHistoryPrematureCad === 'true',
-    killipClass: form.killipClass === '' ? null : form.killipClass,
-    knownCoronaryStenosisGe50: form.knownCoronaryStenosisGe50 === '' ? null : form.knownCoronaryStenosisGe50 === 'true',
-    priorBleedingHistory: form.priorBleedingHistory === '' ? null : form.priorBleedingHistory,
-    smokingStatus: form.smokingStatus === '' ? null : form.smokingStatus,
-    stSegmentDeviation: form.stSegmentDeviation === '' ? null : form.stSegmentDeviation === 'true',
+    killipClass: form.killipClass || null,
+    priorBleedingHistory: form.priorBleedingHistory || null,
+    smokingStatus: form.smokingStatus || null,
   }
+  for (const k of boolKeys) out[k] = form[k] === '' ? null : form[k] === 'true'
+  return out as ClinicalRiskAssessmentFieldsInput
 }
 
 const selectCls = 'h-8 rounded-md border border-input bg-background px-2 text-xs'
+
+function RemoteAdvanceAlert({ current, base, isVitals, zh, onSync }: { current: number; base: number | undefined; isVitals?: boolean; zh: boolean; onSync: () => void }) {
+  return <Alert><AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+    <span>{zh
+      ? `远端已有更新${isVitals ? '生命体征' : '记录'} #${current}（当前草稿基于 #${base}）；直接${isVitals ? '记录' : '保存'}将执行并发版本校验，或放弃草稿同步最新记录。`
+      : `Remote ${isVitals ? 'vital signs' : 'record'} advanced to #${current} (draft based on #${base}); saving checks version conflict, or discard draft to sync.`}</span>
+    <Button onClick={onSync} size="sm" type="button" variant="outline">{zh ? (isVitals ? '放弃体征草稿并同步' : '放弃草稿并同步') : (isVitals ? 'Discard vitals draft & sync' : 'Discard draft & sync')}</Button>
+  </AlertDescription></Alert>
+}
 
 function ClinicalScoresBody({
   bundle,
@@ -100,43 +106,21 @@ function ClinicalScoresBody({
   const recordSyncKey = effectiveRecord === undefined
     ? 'loading'
     : `${effectiveRecord.observationId ?? 'none'}:${effectiveRecord.revision}`
-  const [draft, setDraft] = useState<{
-    baseRevision: number | undefined
-    dirty: boolean
-    form: RiskFormState
-    identityKey: string
-    recordSyncKey: string
-  }>(() => ({
-    baseRevision: effectiveRecord?.revision,
+  const mkRiskDraft = (rec = effectiveRecord) => ({
+    baseRevision: rec?.revision,
     dirty: false,
-    form: toRiskForm(effectiveRecord),
+    form: toRiskForm(rec),
     identityKey,
     recordSyncKey,
-  }))
+  })
+  const [draft, setDraft] = useState(mkRiskDraft)
   useEffect(() => {
     setDraft(prev => {
-      const nextForm = toRiskForm(effectiveRecord)
-      if (prev.identityKey !== identityKey) {
-        return {
-          baseRevision: effectiveRecord?.revision,
-          dirty: false,
-          form: nextForm,
-          identityKey,
-          recordSyncKey,
-        }
-      }
+      if (prev.identityKey !== identityKey) return mkRiskDraft()
       if (effectiveRecord !== undefined && prev.recordSyncKey !== recordSyncKey) {
-        const matchesRemote =
-          JSON.stringify(parseRiskFields(prev.form)) === JSON.stringify(parseRiskFields(nextForm))
-        if (!prev.dirty || prev.baseRevision === undefined || matchesRemote) {
-          return {
-            baseRevision: effectiveRecord.revision,
-            dirty: false,
-            form: nextForm,
-            identityKey,
-            recordSyncKey,
-          }
-        }
+        const next = mkRiskDraft(effectiveRecord)
+        const matchesRemote = JSON.stringify(parseRiskFields(prev.form)) === JSON.stringify(parseRiskFields(next.form))
+        if (!prev.dirty || prev.baseRevision === undefined || matchesRemote) return next
       }
       return prev
     })
@@ -215,35 +199,10 @@ function ClinicalScoresBody({
               : t('尚未记录（未填项保持未记录）', 'Not recorded (blank stays unrecorded)')}
           </span>
         </div>
-        {hasRemoteRevisionAdvance ? (
-          <Alert>
-            <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
-              <span>
-                {t(
-                  `远端已有更新记录 #${effectiveRecord.revision}（当前草稿基于 #${draft.baseRevision}）；直接保存将执行并发版本校验，或放弃草稿同步最新记录。`,
-                  `Remote record advanced to #${effectiveRecord.revision} (draft based on #${draft.baseRevision}); saving checks version conflict, or discard draft to sync.`,
-                )}
-              </span>
-              <Button
-                onClick={() => {
-                  onClearSaveError?.()
-                  setDraft({
-                    baseRevision: effectiveRecord.revision,
-                    dirty: false,
-                    form: toRiskForm(effectiveRecord),
-                    identityKey,
-                    recordSyncKey,
-                  })
-                }}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                {t('放弃草稿并同步', 'Discard draft & sync')}
-              </Button>
-            </AlertDescription>
-          </Alert>
-        ) : null}
+        {hasRemoteRevisionAdvance ? <RemoteAdvanceAlert base={draft.baseRevision} current={effectiveRecord.revision} zh={zh} onSync={() => {
+          onClearSaveError?.()
+          setDraft(mkRiskDraft(effectiveRecord))
+        }} /> : null}
         {effectiveRecord?.effectiveStSegmentDeviation?.source === 'ecg-report' ? (
           <p className="text-muted-foreground">
             {t('ST 段状态当前采用首份已签发 12 导联心电图报告：', 'ST-segment status resolved from initial issued 12-lead ECG report: ')}
@@ -252,75 +211,30 @@ function ClinicalScoresBody({
           </p>
         ) : null}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <label className="flex flex-col gap-1">
-            <span>{t('Killip 分级', 'Killip class')}</span>
-            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | KillipClass; updateForm(s => ({ ...s, killipClass: v })) }} value={form.killipClass}>
-              <option value="">{t('未记录', 'Not recorded')}</option>
-              {(['I', 'II', 'III', 'IV'] as const).map(item => <option key={item} value={item}>{`Killip ${item}`}</option>)}
-            </select>
-          </label>
-          <label className="flex flex-col gap-1">
-            <span>{t('入院心脏骤停', 'Cardiac arrest')}</span>
-            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; updateForm(s => ({ ...s, cardiacArrestOnAdmission: v })) }} value={form.cardiacArrestOnAdmission}>
-              <option value="">{t('未记录', 'Not recorded')}</option>
-              <option value="false">{t('无', 'No')}</option>
-              <option value="true">{t('有', 'Yes')}</option>
-            </select>
-          </label>
-          <label className="flex flex-col gap-1">
-            <span>{t('24h 心绞痛次数', '24h angina count')}</span>
-            <Input className="h-8 text-xs" disabled={!canEditEffective || savingRisk} max={100} min={0} onChange={e => { const v = e.currentTarget.value; updateForm(s => ({ ...s, anginaEpisodes24h: v })) }} placeholder={t('未记录', 'Not recorded')} step={1} type="number" value={form.anginaEpisodes24h} />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span>{t('床旁 ST 段偏移', 'Bedside ST deviation')}</span>
-            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; updateForm(s => ({ ...s, stSegmentDeviation: v })) }} value={form.stSegmentDeviation}>
-              <option value="">{t('未记录', 'Not recorded')}</option>
-              <option value="false">{t('无偏移', 'Absent')}</option>
-              <option value="true">{t('有偏移', 'Present')}</option>
-            </select>
-          </label>
-          <label className="flex flex-col gap-1">
-            <span>{t('近 7 天阿司匹林', 'Aspirin in 7d')}</span>
-            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; updateForm(s => ({ ...s, aspirinUsedLast7Days: v })) }} value={form.aspirinUsedLast7Days}>
-              <option value="">{t('未记录', 'Not recorded')}</option>
-              <option value="false">{t('未使用', 'No')}</option>
-              <option value="true">{t('已使用', 'Yes')}</option>
-            </select>
-          </label>
-          <label className="flex flex-col gap-1">
-            <span>{t('吸烟状态', 'Smoking status')}</span>
-            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | SmokingStatus; updateForm(s => ({ ...s, smokingStatus: v })) }} value={form.smokingStatus}>
-              <option value="">{t('未记录', 'Not recorded')}</option>
-              <option value="never">{t('从不吸烟', 'Never')}</option>
-              <option value="former">{t('既往戒烟', 'Former')}</option>
-              <option value="current">{t('当前吸烟', 'Current')}</option>
-            </select>
-          </label>
-          <label className="flex flex-col gap-1">
-            <span>{t('早发冠心病家族史', 'Premature CAD family history')}</span>
-            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; updateForm(s => ({ ...s, familyHistoryPrematureCad: v })) }} value={form.familyHistoryPrematureCad}>
-              <option value="">{t('未记录', 'Not recorded')}</option>
-              <option value="false">{t('阴性', 'Negative')}</option>
-              <option value="true">{t('阳性', 'Positive')}</option>
-            </select>
-          </label>
-          <label className="flex flex-col gap-1">
-            <span>{t('已知冠脉狭窄 ≥50%', 'Known CAD stenosis ≥50%')}</span>
-            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | 'true' | 'false'; updateForm(s => ({ ...s, knownCoronaryStenosisGe50: v })) }} value={form.knownCoronaryStenosisGe50}>
-              <option value="">{t('未记录', 'Not recorded')}</option>
-              <option value="false">{t('无 / <50%', 'No / <50%')}</option>
-              <option value="true">{t('有 (≥50%)', 'Yes (≥50%)')}</option>
-            </select>
-          </label>
-          <label className="flex flex-col gap-1">
-            <span>{t('既往自发性出血史', 'Prior spontaneous bleeding')}</span>
-            <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value as '' | PriorBleedingHistory; updateForm(s => ({ ...s, priorBleedingHistory: v })) }} value={form.priorBleedingHistory}>
-              <option value="">{t('未记录', 'Not recorded')}</option>
-              <option value="negative">{t('无出血史', 'None')}</option>
-              <option value="non-spontaneous">{t('仅外伤/手术出血', 'Traumatic/operative only')}</option>
-              <option value="spontaneous">{t('有自发性出血（需医疗救治/干预）', 'Spontaneous (requiring medical attention)')}</option>
-            </select>
-          </label>
+          {([
+            ['killipClass', t('Killip 分级', 'Killip class'), [['I', 'Killip I'], ['II', 'Killip II'], ['III', 'Killip III'], ['IV', 'Killip IV']]],
+            ['cardiacArrestOnAdmission', t('入院心脏骤停', 'Cardiac arrest'), [['false', t('无', 'No')], ['true', t('有', 'Yes')]]],
+            null,
+            ['stSegmentDeviation', t('床旁 ST 段偏移', 'Bedside ST deviation'), [['false', t('无偏移', 'Absent')], ['true', t('有偏移', 'Present')]]],
+            ['aspirinUsedLast7Days', t('近 7 天阿司匹林', 'Aspirin in 7d'), [['false', t('未使用', 'No')], ['true', t('已使用', 'Yes')]]],
+            ['smokingStatus', t('吸烟状态', 'Smoking status'), [['never', t('从不吸烟', 'Never')], ['former', t('既往戒烟', 'Former')], ['current', t('当前吸烟', 'Current')]]],
+            ['familyHistoryPrematureCad', t('早发冠心病家族史', 'Premature CAD family history'), [['false', t('阴性', 'Negative')], ['true', t('阳性', 'Positive')]]],
+            ['knownCoronaryStenosisGe50', t('已知冠脉狭窄 ≥50%', 'Known CAD stenosis ≥50%'), [['false', t('无 / <50%', 'No / <50%')], ['true', t('有 (≥50%)', 'Yes (≥50%)')]]],
+            ['priorBleedingHistory', t('既往自发性出血史', 'Prior spontaneous bleeding'), [['negative', t('无出血史', 'None')], ['non-spontaneous', t('仅外伤/手术出血', 'Traumatic/operative only')], ['spontaneous', t('有自发性出血（需医疗救治/干预）', 'Spontaneous (requiring medical attention)')]]],
+          ] as const).map(entry => entry === null ? (
+            <label className="flex flex-col gap-1" key="anginaEpisodes24h">
+              <span>{t('24h 心绞痛次数', '24h angina count')}</span>
+              <Input className="h-8 text-xs" disabled={!canEditEffective || savingRisk} max={100} min={0} onChange={e => { const v = e.currentTarget.value; updateForm(s => ({ ...s, anginaEpisodes24h: v })) }} placeholder={t('未记录', 'Not recorded')} step={1} type="number" value={form.anginaEpisodes24h} />
+            </label>
+          ) : (
+            <label className="flex flex-col gap-1" key={entry[0]}>
+              <span>{entry[1]}</span>
+              <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value; updateForm(s => ({ ...s, [entry[0]]: v } as RiskFormState)) }} value={form[entry[0]]}>
+                <option value="">{t('未记录', 'Not recorded')}</option>
+                {entry[2].map(([val, text]) => <option key={val} value={val}>{text}</option>)}
+              </select>
+            </label>
+          ))}
           {canEditRisk ? (
             <div className="flex items-end">
               <Button className="w-full" disabled={!canEditEffective || savingRisk || anginaInvalid} size="sm" type="submit" variant="outline">
@@ -341,12 +255,10 @@ export function buildOutpatientClinicalScoreRevision(
   >>,
   baseRevision?: string,
 ): string {
-  const examKey = (detail.examinationRequests?.requests ?? [])
-    .map(r => `${r.id}:${r.version}:${r.status}:${r.report?.diagnosticReportId ?? ''}:${r.report?.diagnosticReportVersion ?? ''}`)
-    .join(',')
-  const labKey = (detail.laboratoryRequests?.requests ?? [])
-    .map(r => `${r.id}:${r.version}:${r.status}:${r.report?.diagnosticReportId ?? ''}:${r.report?.diagnosticReportVersion ?? ''}`)
-    .join(',')
+  const reqKey = (items: ReadonlyArray<{ id: string; version: number; status: string; report?: { diagnosticReportId: string; diagnosticReportVersion: string } | undefined }> | undefined) =>
+    (items ?? []).map(r => `${r.id}:${r.version}:${r.status}:${r.report?.diagnosticReportId ?? ''}:${r.report?.diagnosticReportVersion ?? ''}`).join(',')
+  const examKey = reqKey(detail.examinationRequests?.requests)
+  const labKey = reqKey(detail.laboratoryRequests?.requests)
   const rxKey = JSON.stringify(detail.medicationConclusion ?? null)
   const dxKey = (detail.diagnosis?.confirmation?.entries ?? [])
     .map(d => `${d.conditionId}:${d.conditionVersion}:${d.code}`)
@@ -430,47 +342,28 @@ export function OutpatientClinicalScoresDisclosure({
   )
 }
 
-interface VitalsFormState {
-  diastolicMmHg: string
-  heightCm: string
-  oxygenSaturationPct: string
-  pulseBpm: string
-  respirationBpm: string
-  systolicMmHg: string
-  temperatureC: string
-  weightKg: string
-}
+const vitalsKeys = ['diastolicMmHg', 'heightCm', 'oxygenSaturationPct', 'pulseBpm', 'respirationBpm', 'systolicMmHg', 'temperatureC', 'weightKg'] as const
+type VitalsFormState = Record<(typeof vitalsKeys)[number], string>
 
 function toVitalsForm(record: InpatientVitalSignsRecord | undefined): VitalsFormState {
-  return {
-    diastolicMmHg: record === undefined ? '' : String(record.bloodPressure.diastolicMmHg),
-    heightCm: record?.heightCm === undefined ? '' : String(record.heightCm),
-    oxygenSaturationPct: record === undefined ? '' : String(record.oxygenSaturationPct),
-    pulseBpm: record === undefined ? '' : String(record.pulseBpm),
-    respirationBpm: record === undefined ? '' : String(record.respirationBpm),
-    systolicMmHg: record === undefined ? '' : String(record.bloodPressure.systolicMmHg),
-    temperatureC: record === undefined ? '' : String(record.temperatureC),
-    weightKg: record?.weightKg === undefined ? '' : String(record.weightKg),
+  const src: Record<string, unknown> = record === undefined ? {} : {
+    ...record,
+    diastolicMmHg: record.bloodPressure.diastolicMmHg,
+    systolicMmHg: record.bloodPressure.systolicMmHg,
   }
+  const out = {} as VitalsFormState
+  for (const k of vitalsKeys) out[k] = src[k] === undefined ? '' : String(src[k])
+  return out
 }
 
 function normalizeVitalsFormForCompare(form: VitalsFormState) {
-  const numOrNull = (raw: string) => {
-    const trimmed = raw.trim()
-    if (trimmed === '') return null
+  const out: Record<string, number | string | null> = {}
+  for (const k of vitalsKeys) {
+    const trimmed = form[k].trim()
     const parsed = Number(trimmed)
-    return Number.isFinite(parsed) ? parsed : trimmed
+    out[k] = trimmed === '' ? null : Number.isFinite(parsed) ? parsed : trimmed
   }
-  return {
-    diastolicMmHg: numOrNull(form.diastolicMmHg),
-    heightCm: numOrNull(form.heightCm),
-    oxygenSaturationPct: numOrNull(form.oxygenSaturationPct),
-    pulseBpm: numOrNull(form.pulseBpm),
-    respirationBpm: numOrNull(form.respirationBpm),
-    systolicMmHg: numOrNull(form.systolicMmHg),
-    temperatureC: numOrNull(form.temperatureC),
-    weightKg: numOrNull(form.weightKg),
-  }
+  return out
 }
 
 type InpatientInvestigationSummaryItem = {
@@ -559,46 +452,24 @@ export function InpatientVitalsAndScoresDisclosure({
     latestVitalSigns === undefined
       ? 'none:0'
       : `${latestVitalSigns.observationId}:${latestVitalSigns.revision}`
-  const [vitalsDraft, setVitalsDraft] = useState<{
-    admissionId: string
-    baseRevision: number
-    dirty: boolean
-    form: VitalsFormState
-    vitalsSyncKey: string
-  }>(() => ({
+  const mkVitalsDraft = () => ({
     admissionId,
     baseRevision: latestVitalSigns?.revision ?? 0,
     dirty: false,
     form: toVitalsForm(latestVitalSigns),
     vitalsSyncKey,
-  }))
+  })
+  const [vitalsDraft, setVitalsDraft] = useState(mkVitalsDraft)
 
   useEffect(() => {
     setVitalsDraft(prev => {
-      const nextForm = toVitalsForm(latestVitalSigns)
-      const nextRevision = latestVitalSigns?.revision ?? 0
-      if (prev.admissionId !== admissionId) {
-        return {
-          admissionId,
-          baseRevision: nextRevision,
-          dirty: false,
-          form: nextForm,
-          vitalsSyncKey,
-        }
-      }
+      const next = mkVitalsDraft()
+      if (prev.admissionId !== admissionId) return next
       if (prev.vitalsSyncKey !== vitalsSyncKey) {
         const matchesRemote =
           JSON.stringify(normalizeVitalsFormForCompare(prev.form))
-          === JSON.stringify(normalizeVitalsFormForCompare(nextForm))
-        if (!prev.dirty || matchesRemote) {
-          return {
-            admissionId,
-            baseRevision: nextRevision,
-            dirty: false,
-            form: nextForm,
-            vitalsSyncKey,
-          }
-        }
+          === JSON.stringify(normalizeVitalsFormForCompare(next.form))
+        if (!prev.dirty || matchesRemote) return next
       }
       return prev
     })
@@ -670,45 +541,22 @@ export function InpatientVitalsAndScoresDisclosure({
             }).then(() => queryClient.invalidateQueries({ queryKey: [...scope, admissionId, 'clinical-scores'] })).catch(() => undefined)
           }}
         >
-          {hasVitalsRemoteAdvance ? (
-            <div className="col-span-2 sm:col-span-4">
-              <Alert>
-                <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
-                  <span>
-                    {t(
-                      `远端已有更新生命体征 #${latestVitalSigns?.revision ?? 0}（当前草稿基于 #${vitalsDraft.baseRevision}）；直接记录将执行并发版本校验，或放弃草稿同步最新记录。`,
-                      `Remote vital signs advanced to #${latestVitalSigns?.revision ?? 0} (draft based on #${vitalsDraft.baseRevision}); saving checks version conflict, or discard draft to sync.`,
-                    )}
-                  </span>
-                  <Button
-                    onClick={() => {
-                      write.mutation.reset?.()
-                      setVitalsDraft({
-                        admissionId,
-                        baseRevision: latestVitalSigns?.revision ?? 0,
-                        dirty: false,
-                        form: toVitalsForm(latestVitalSigns),
-                        vitalsSyncKey,
-                      })
-                    }}
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                  >
-                    {t('放弃体征草稿并同步', 'Discard vitals draft & sync')}
-                  </Button>
-                </AlertDescription>
-              </Alert>
-            </div>
-          ) : null}
-          <label className="flex flex-col gap-1"><span>{t('体温 (°C)', 'Temp (°C)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={45} min={30} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, temperatureC: v })) }} step={0.1} type="number" value={vitals.temperatureC} /></label>
-          <label className="flex flex-col gap-1"><span>{t('心率 (次/分)', 'Pulse (bpm)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={300} min={20} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, pulseBpm: v })) }} step={1} type="number" value={vitals.pulseBpm} /></label>
-          <label className="flex flex-col gap-1"><span>{t('呼吸 (次/分)', 'Resp (/min)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={80} min={4} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, respirationBpm: v })) }} step={1} type="number" value={vitals.respirationBpm} /></label>
-          <label className="flex flex-col gap-1"><span>{t('血氧 (%)', 'SpO₂ (%)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={100} min={40} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, oxygenSaturationPct: v })) }} step={0.1} type="number" value={vitals.oxygenSaturationPct} /></label>
-          <label className="flex flex-col gap-1"><span>{t('收缩压 (mmHg)', 'Systolic (mmHg)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={300} min={40} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, systolicMmHg: v })) }} step={1} type="number" value={vitals.systolicMmHg} /></label>
-          <label className="flex flex-col gap-1"><span>{t('舒张压 (mmHg)', 'Diastolic (mmHg)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={200} min={20} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, diastolicMmHg: v })) }} step={1} type="number" value={vitals.diastolicMmHg} /></label>
-          <label className="flex flex-col gap-1"><span>{t('体重 (kg，选填)', 'Weight (kg)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={400} min={1} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, weightKg: v })) }} placeholder={t('未记录', 'Optional')} step={0.1} type="number" value={vitals.weightKg} /></label>
-          <label className="flex flex-col gap-1"><span>{t('身高 (cm，选填)', 'Height (cm)')}</span><Input className="h-8 text-xs" disabled={!canEdit} max={260} min={30} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, heightCm: v })) }} placeholder={t('未记录', 'Optional')} step={0.1} type="number" value={vitals.heightCm} /></label>
+          {hasVitalsRemoteAdvance ? <div className="col-span-2 sm:col-span-4"><RemoteAdvanceAlert base={vitalsDraft.baseRevision} current={latestVitalSigns?.revision ?? 0} isVitals zh={zh} onSync={() => {
+            write.mutation.reset?.()
+            setVitalsDraft(mkVitalsDraft())
+          }} /></div> : null}
+          {([
+            ['temperatureC', t('体温 (°C)', 'Temp (°C)'), 30, 45, 0.1, false],
+            ['pulseBpm', t('心率 (次/分)', 'Pulse (bpm)'), 20, 300, 1, false],
+            ['respirationBpm', t('呼吸 (次/分)', 'Resp (/min)'), 4, 80, 1, false],
+            ['oxygenSaturationPct', t('血氧 (%)', 'SpO₂ (%)'), 40, 100, 0.1, false],
+            ['systolicMmHg', t('收缩压 (mmHg)', 'Systolic (mmHg)'), 40, 300, 1, false],
+            ['diastolicMmHg', t('舒张压 (mmHg)', 'Diastolic (mmHg)'), 20, 200, 1, false],
+            ['weightKg', t('体重 (kg，选填)', 'Weight (kg)'), 1, 400, 0.1, true],
+            ['heightCm', t('身高 (cm，选填)', 'Height (cm)'), 30, 260, 0.1, true],
+          ] as const).map(([key, label, min, max, step, opt]) => (
+            <label className="flex flex-col gap-1" key={key}><span>{label}</span><Input className="h-8 text-xs" disabled={!canEdit} max={max} min={min} onChange={e => { const v = e.currentTarget.value; updateVitals(s => ({ ...s, [key]: v })) }} placeholder={opt ? t('未记录', 'Optional') : undefined} step={step} type="number" value={vitals[key]} /></label>
+          ))}
           {canEdit ? (
             <div className="col-span-2 flex justify-end sm:col-span-4">
               <Button disabled={!vitalsValid || write.blocked} size="sm" type="submit" variant="outline">{t('记录生命体征', 'Record vital signs')}</Button>

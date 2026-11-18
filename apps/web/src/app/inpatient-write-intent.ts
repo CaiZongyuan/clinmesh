@@ -13,7 +13,7 @@ import { inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inp
 import { inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgPayerReviewCreateInputSchema } from '@clinmesh/contracts/inpatient-drg-payer'
 import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPreviewInputSchema, inpatientFinancialRefundConfirmInputSchema, inpatientFinancialRefundRecoverInputSchema, inpatientFinancialPaymentPreviewInputSchema } from '@clinmesh/contracts/inpatient-finance'
-import { inpatientDischargeInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema,
+import { inpatientDischargeInputSchema, inpatientDischargeIssueInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema,
   inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema,
   inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -115,7 +115,7 @@ const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('inpatient.execution.administer'), input: inpatientExecutionActionInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.execution.complete'), input: inpatientExecutionActionInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.charge.reverse'), input: inpatientChargeReverseInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.discharge.issue'), input: inpatientDischargeInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.discharge.issue'), input: inpatientDischargeIssueInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.discharge.depart'), input: inpatientDepartInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.discharge.recall'), input: inpatientDischargeInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.discharge.clear'), input: inpatientDischargeInputSchema }).strict(),
@@ -153,7 +153,7 @@ const intentChangedEvent = 'clinmesh.inpatient-intent.changed'
 /** 只表示实际 Command 请求的确定拒绝；回执读取失败仍须恢复原尝试。 */
 export class InpatientCommandRejection extends ApiClientError {
   readonly commandRejected = true
-  constructor(error: ApiClientError) { super(error.status, error.code, error.message, error.conflict, error.correlationId, error.reason) }
+  constructor(error: ApiClientError) { super(error.status, error.code, error.message, error.conflict, error.correlationId, { reason: error.reason, clinicalQuality: error.clinicalQuality }) }
 }
 /** 已证明原收款成功，但原范围私稿尚未完成可靠清理。 */
 export class CollectedMultiChargeDraftUnreadable extends ApiClientError {
@@ -403,7 +403,10 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
             ...(error.conflict === undefined ? {} : { conflict: error.conflict }), ...(error.reason === undefined ? {} : { reason: error.reason }) }) } catch { throw storageError() }
           try { settleExecutionAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, status: error.status }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
           settleIssue({ failure: { status: error.status, code: error.code, ...(error.reason === undefined ? {} : { reason: error.reason }),
-            ...(intent.command.operation === 'inpatient.order.issue' && error.code === 'CATALOG_CONFLICT' ? { message: error.message } : {}) } })
+            ...(error.clinicalQuality === undefined ? {} : { clinicalQuality: error.clinicalQuality }),
+            ...(intent.command.operation === 'inpatient.order.issue'
+              && (error.code === 'CATALOG_CONFLICT' || error.clinicalQuality !== undefined)
+              ? { message: error.message } : {}) } })
           clear()
           throw new InpatientCommandRejection(error)
         }

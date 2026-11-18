@@ -155,33 +155,58 @@ export class InpatientOrders {
       const selection = input.selection, catalog = this.catalog(context)
       if (selection.kind === 'medication' && selection.frequencyCode === 'ONCE' && input.duration !== 'temporary') throw new InpatientError('CATALOG_CONFLICT', 'ONCE 仅允许用于临时医嘱', 409, 'MEDICATION_ONCE_REQUIRES_TEMPORARY')
       let itemId: string, display: string, catalogVersion: number, unit: string, price: number, doseText = '', frequency: 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' = 'QD', quantity: number
+      let quality: ReturnType<InpatientService['workflow']['clinicalQuality']['enforce']> = { effects: [] }
       if (selection.kind === 'medication') {
         const item = catalog.medications.find(item => item.id === selection.catalogItemId)
         if (item === undefined || item.version !== selection.catalogVersion) throw new InpatientError('CATALOG_CONFLICT', '住院药品目录或版本无效')
-        const config = medicationConfigSchema.parse(JSON.parse(z.object({ config_json: z.string() }).parse(this.owner.database.driver.prepare(
-          'SELECT config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').get(context.workspaceId, context.epoch, item.id)).config_json))
+        const catalogRow = z.object({ code: z.string(), config_json: z.string() }).parse(this.owner.database.driver.prepare(
+          'SELECT code, config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').get(context.workspaceId, context.epoch, item.id))
+        const config = medicationConfigSchema.parse(JSON.parse(catalogRow.config_json))
         const dose = resolveInpatientDose({ unit: config.unit, doses: config.inpatientDoses,
           ...(config.inpatientDoseBasis ? { doseBasis: config.inpatientDoseBasis } : {}),
           ...(config.inpatientMaxDoseQuantity ? { maxDoseQuantity: config.inpatientMaxDoseQuantity } : {}) }, selection.doseText)
-        const strength = /^(\d+(?:\.\d+)?)\s*(mg|g|mL|IU)/.exec(config.product.strength)
-        const basis = config.inpatientDoseBasis ?? (strength ? { amount: Number(strength[1]), unit: strength[2]! } : undefined)
-        const safetyDose = config.safety?.doseLimits.unit === config.unit ? `${selection.doseQuantity} ${config.unit}`
-          : selection.doseText.trim().endsWith(config.unit) && basis ? `${selection.doseQuantity * basis.amount} ${basis.unit}` : selection.doseText
+        const safetyDose = this.owner.workflow.clinicalQuality.inpatientSafetyDose(catalogRow.config_json, selection.doseText, selection.doseQuantity) ?? selection.doseText
+        const active = this.facts(context, admission.id).orders.filter(order => order.kind === 'medication' && !['stopped','completed'].includes(order.state))
+        const activeQuality = active.map(other => ({ catalogItemId: other.catalogItemId, display: other.display, pharmacologyClasses: this.owner.workflow.clinicalQuality.medicationClasses(context, other.catalogItemId) }))
+        const candidate = {
+          catalogItemId: item.id,
+          code: catalogRow.code,
+          display: item.display,
+          pharmacologyClasses: config.safety?.pharmacologyClasses ?? this.owner.workflow.clinicalQuality.medicationClasses(context, item.id),
+          doseLimits: config.safety?.doseLimits,
+          doseText: safetyDose,
+          frequencyCode: selection.frequencyCode,
+        }
+        const redLineCheck = () => {
+          const check = this.owner.workflow.clinicalQuality.inpatientOrder(this.owner, context, admission.id, admission.patientId, candidate, activeQuality, { skipRenal: true })
+          return check.redLines.length > 0 ? check : undefined
+        }
         if (!config.availableScopes.includes('inpatient') || !config.allowedFrequencyCodes.includes(selection.frequencyCode)
-          || !('quantity' in dose) || dose.quantity !== selection.doseQuantity || (config.safety && medicationDoseConflict(config.safety.doseLimits, safetyDose, selection.frequencyCode) !== undefined)) throw new InpatientError('CATALOG_CONFLICT', '剂量、单位、频次或每次数量不符合住院目录', 409, 'MEDICATION_DOSAGE_NOT_ALLOWED')
+          || !('quantity' in dose) || dose.quantity !== selection.doseQuantity || (config.safety && medicationDoseConflict(config.safety.doseLimits, safetyDose, selection.frequencyCode) !== undefined)) {
+          throw new InpatientError('CATALOG_CONFLICT', '剂量、单位、频次或每次数量不符合住院目录', 409, 'MEDICATION_DOSAGE_NOT_ALLOWED', redLineCheck())
+        }
         const diagnoses = this.diagnosis(context, admission.id).entries
         if (!(config.safety ? medicationIndicationMatches(config.safety.indicationPrefixes, diagnoses.map(entry => entry.coding.code)) : diagnoses.some(entry => entry.coding.sourceLocator === 'operational:diagnosis_catalog'
           ? config.allowedDiagnosisCatalogItemIds.includes(entry.coding.id)
           : config.inpatientIndications.some(indication => indication.id === entry.coding.id && indication.system === entry.coding.system && indication.version === entry.coding.version && indication.code === entry.coding.code && indication.sourceLocator === entry.coding.sourceLocator)))) throw new InpatientError('CATALOG_CONFLICT', '本次住院确诊不符合药品适应症', 409, 'MEDICATION_DIAGNOSIS_NOT_ALLOWED')
         const allergies = this.owner.fhir.search(context, 'AllergyIntolerance', new URLSearchParams({ patient: `Patient/${admission.patientId}`, _count: '100' })).resources
-        const code = z.object({ code: z.string() }).parse(this.owner.database.driver.prepare('SELECT code FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').get(context.workspaceId, context.epoch, item.id)).code
         if (allergies.some(allergy => { const value = allergySchema.parse(allergy); return value.category?.includes('medication') && value.clinicalStatus?.coding?.some(c => c.code === 'active')
-          && value.verificationStatus?.coding?.some(c => c.code === 'confirmed') && value.code?.coding?.some(c => c.code === code) })) throw new InpatientError('CATALOG_CONFLICT', '药品与已确认的有效药物过敏冲突', 409, 'MEDICATION_ALLERGY_CONFLICT')
-        const active = this.facts(context, admission.id).orders.filter(order => order.kind === 'medication' && !['stopped','completed'].includes(order.state))
+          && value.verificationStatus?.coding?.some(c => c.code === 'confirmed') && value.code?.coding?.some(c => c.code === catalogRow.code) })) {
+          throw new InpatientError('CATALOG_CONFLICT', '药品与已确认的有效药物过敏冲突', 409, 'MEDICATION_ALLERGY_CONFLICT', redLineCheck())
+        }
         for (const other of active) {
           const otherConfig = medicationConfigSchema.parse(JSON.parse(z.object({ config_json: z.string() }).parse(this.owner.database.driver.prepare('SELECT config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').get(context.workspaceId, context.epoch, other.catalogItemId)).config_json))
-          if (other.catalogItemId === item.id || (config.safety && otherConfig.safety ? medicationCombinationConflict(config.safety.pharmacologyClasses, otherConfig.safety.pharmacologyClasses) : !config.allowedCombinationIds.includes(other.catalogItemId) || !otherConfig.allowedCombinationIds.includes(item.id))) throw new InpatientError('CATALOG_CONFLICT', '现有有效药品医嘱不允许此药品组合', 409, 'MEDICATION_COMBINATION_NOT_ALLOWED')
+          if (other.catalogItemId === item.id || (config.safety && otherConfig.safety ? medicationCombinationConflict(config.safety.pharmacologyClasses, otherConfig.safety.pharmacologyClasses) : !config.allowedCombinationIds.includes(other.catalogItemId) || !otherConfig.allowedCombinationIds.includes(item.id))) {
+            throw new InpatientError('CATALOG_CONFLICT', '现有有效药品医嘱不允许此药品组合', 409, 'MEDICATION_COMBINATION_NOT_ALLOWED', redLineCheck())
+          }
         }
+        quality = this.owner.workflow.clinicalQuality.enforce(context, {
+          check: this.owner.workflow.clinicalQuality.inpatientOrder(this.owner, context, admission.id, admission.patientId, candidate, activeQuality),
+          operation: 'inpatient.order.issue',
+          override: input.clinicalOverride,
+          patientId: admission.patientId,
+          subjectReference: `Encounter/${admission.id}`,
+        })
         itemId = item.id
         display = item.display
         catalogVersion = item.version
@@ -212,7 +237,11 @@ export class InpatientOrders {
           ? { supportingInformation: [{ reference: `Procedure/${input.surgeryExecutionId}` }] }
           : { supportingInfo: [{ reference: { reference: `Procedure/${input.surgeryExecutionId}` } }] }),
         subject: { reference: `Patient/${admission.patientId}` }, encounter: { reference: `Encounter/${admission.id}` }, authoredOn: now, requester: { reference: `PractitionerRole/${context.practitionerRoleId}` } })
-      return { data: this.read(context, admission.id), effects: [{ kind: 'created' as const, reference: `${request.resourceType}/${id}`, versionId: '1' }] }
+      return {
+        data: this.read(context, admission.id),
+        effects: [{ kind: 'created' as const, reference: `${request.resourceType}/${id}`, versionId: '1' }, ...quality.effects],
+        ...(quality.receipt === undefined ? {} : { clinicalQuality: quality.receipt }),
+      }
     })
   }
   action(context: ActorContext, raw: unknown, idempotencyKey: string, action: 'verify' | 'request-stop' | 'verify-stop') {

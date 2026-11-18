@@ -75,6 +75,7 @@ it('0111非空升级保留原款、零金额分配、旧退款预览和回执并
       '0114_outpatient-follow-up-source.sql',
       '0115_clinical-risk-vitals.sql',
       '0116_guideline-topic-advice.sql',
+      '0117_clinical-quality-override.sql',
     ])
     preservedTables.forEach((table, index) => expect(database.driver.prepare(`SELECT * FROM ${table}`).all()).toEqual(originalRows[index]))
     expect(database.driver.prepare('SELECT * FROM outpatient_refund_preview ORDER BY preview_id').all())

@@ -1,4 +1,4 @@
-import { agentToolInputSchemas, doctorCaseSectionSchema } from '@clinmesh/contracts/agent'
+import { agentToolInputSchemas, clinicalOverrideToolParameters, doctorCaseSectionSchema } from '@clinmesh/contracts/agent'
 import {
   doctorQueueViewStatusGroups
 } from '@clinmesh/contracts/his'
@@ -258,15 +258,21 @@ export function doctorWorkspaceAgentActions({
       },
     },
     'outpatient.encounter.complete.propose': {
-      description: 'Open human review before completing the selected Encounter.',
+      description: 'Open human review before completing the selected Encounter; optionally prefill clinicalOverride for non-red-line quality alerts.',
       enabled: detail.data?.encounter.status === 'in-progress',
-      parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-      execute: (_raw: unknown, signal: AbortSignal) => {
+      parameters: clinicalOverrideToolParameters,
+      execute: (raw: unknown, signal: AbortSignal) => {
+        const { clinicalOverride } = agentToolInputSchemas['outpatient.encounter.complete.propose'].parse(raw ?? {})
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
         return agentReview.request({
+          allowClinicalOverride: true,
+          clinicalOverride,
           confirmLabel: locale => getWorkspaceMessages(locale).encounterCompleted,
           description: current.patient.name,
-          onConfirm: () => completeCaseEncounter.mutateAsync({ caseId: current.caseId }),
+          onConfirm: (_acknowledged, override) => completeCaseEncounter.mutateAsync({
+            caseId: current.caseId,
+            clinicalOverride: override,
+          }),
           signal,
           title: locale => getWorkspaceMessages(locale).encounterCompleted,
         })

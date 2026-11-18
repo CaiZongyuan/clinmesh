@@ -87,8 +87,11 @@ async function pendingBidDispenses() {
     encounterVersion: s.admission.versionId, expectedRevision: 0,
     entries: [{ catalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia', role: 'primary', admissionCondition: '1' }],
   })).json()).data
-  const issued = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: diagnosed.encounterVersion, duration: 'long',
-    selection: { kind: 'medication', catalogItemId: 'medication-metformin', catalogVersion: 1, doseText: '0.5 g', doseQuantity: 1, frequencyCode: 'BID' } })
+  const issued = await s.request(s.doctor, `${s.path}/orders/issue`, {
+    clinicalOverride: { reasonCode: 'result-pending-follow-up', note: '入院首日同步开立肾功能检验待回报', acknowledgedAlerts: ['RENAL_CREATININE_MISSING'] },
+    encounterVersion: diagnosed.encounterVersion, duration: 'long',
+    selection: { kind: 'medication', catalogItemId: 'medication-metformin', catalogVersion: 1, doseText: '0.5 g', doseQuantity: 1, frequencyCode: 'BID' },
+  })
   expect(issued.status, await issued.clone().text()).toBe(200)
   const order = inpatientFullClinicalResponseSchema.parse(await issued.json()).data.orders[0]!
   expect((await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })).status).toBe(200)
@@ -196,8 +199,10 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       { kind: 'medication', catalogItemId: 'medication-metformin', catalogVersion: 1, frequencyCode: 'BID', doseText: '0.5 g', doseQuantity: 1 },
       { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 1 },
     ]) {
-      const issued = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: clinical.encounterVersion, duration: 'long',
-        selection })
+      const issued = await s.request(s.doctor, `${s.path}/orders/issue`, {
+        ...(selection.kind === 'medication' ? { clinicalOverride: { reasonCode: 'result-pending-follow-up', note: '入院首日同步开立肾功能检验待回报', acknowledgedAlerts: ['RENAL_CREATININE_MISSING'] } } : {}),
+        encounterVersion: clinical.encounterVersion, duration: 'long', selection,
+      })
       expect(issued.status, await issued.clone().text()).toBe(200)
       clinical = inpatientFullClinicalResponseSchema.parse(await issued.json()).data
     }
@@ -527,7 +532,10 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       expect(invalid.status).toBe(selection.frequencyCode === 'Q4H' ? 400 : 409)
       expect((await invalid.json()).error.code).toBe(selection.frequencyCode === 'Q4H' ? 'INVALID_INPUT' : 'CATALOG_CONFLICT')
     }
-    const response = await s.request(s.doctor, `${s.path}/orders/issue`, issue)
+    const response = await s.request(s.doctor, `${s.path}/orders/issue`, {
+      ...issue,
+      clinicalOverride: { reasonCode: 'result-pending-follow-up', note: '入院首日同步开立肾功能检验待回报', acknowledgedAlerts: ['RENAL_CREATININE_MISSING'] },
+    })
     expect(response.status).toBe(200)
     const initial = (await response.json()).data
     const order = initial.orders[0]
@@ -1175,8 +1183,11 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     const diagnosed = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, {
       encounterVersion: s.admission.versionId, expectedRevision: 0, entries: [{ catalogItemId: diagnosis, role: 'primary', admissionCondition: '1' }],
     })).json()).data
-    const issued = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: diagnosed.encounterVersion, duration: frequencyCode === 'ONCE' ? 'temporary' : 'long',
-      selection: { kind: 'medication', catalogItemId: id, catalogVersion: 1, doseText, doseQuantity: 1, frequencyCode } })
+    const issued = await s.request(s.doctor, `${s.path}/orders/issue`, {
+      ...(id === 'medication-metformin' ? { clinicalOverride: { reasonCode: 'result-pending-follow-up', note: '入院首日同步开立肾功能检验待回报', acknowledgedAlerts: ['RENAL_CREATININE_MISSING'] } } : {}),
+      encounterVersion: diagnosed.encounterVersion, duration: frequencyCode === 'ONCE' ? 'temporary' : 'long',
+      selection: { kind: 'medication', catalogItemId: id, catalogVersion: 1, doseText, doseQuantity: 1, frequencyCode },
+    })
     expect(issued.status, await issued.clone().text()).toBe(200)
     const order = inpatientFullClinicalResponseSchema.parse(await issued.json()).data.orders[0]!
     const verified = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })).json()).data

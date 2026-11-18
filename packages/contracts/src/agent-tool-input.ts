@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { clinicalOverrideInputSchema, clinicalOverrideReasonSchema, clinicalQualityAlertCodeSchema } from './clinical-quality.ts'
 import { doctorCaseHistoryInputSchema, doctorCaseHistoryDetailInputSchema } from './doctor-history.ts'
 import { inpatientOrderActionInputSchema } from './inpatient-clinical.ts'
 import { inpatientInvestigationAcknowledgeInputSchema } from './inpatient-investigations.ts'
@@ -36,6 +37,25 @@ export const inpatientStageSchema = z.enum(['admission', 'orders', 'investigatio
 export type InpatientStage = z.infer<typeof inpatientStageSchema>
 
 const emptyInputSchema = z.object({}).strict()
+const clinicalOverrideProposalInputSchema = z.object({
+  clinicalOverride: clinicalOverrideInputSchema.optional(),
+}).strict()
+export const clinicalOverrideToolParameters = {
+  type: 'object' as const,
+  properties: {
+    clinicalOverride: {
+      type: 'object',
+      properties: {
+        reasonCode: { type: 'string', enum: [...clinicalOverrideReasonSchema.options] },
+        note: { type: 'string', minLength: 4, maxLength: 500 },
+        acknowledgedAlerts: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'string', enum: [...clinicalQualityAlertCodeSchema.options] } },
+      },
+      required: ['reasonCode', 'note', 'acknowledgedAlerts'],
+      additionalProperties: false,
+    },
+  },
+  additionalProperties: false,
+}
 const boundedIdSchema = z.string().trim().min(1).max(128)
 const boundedCodeSchema = z.string().trim().min(1).max(128)
 const diagnosisInputSchema = diagnosisDraftContentSchema
@@ -200,12 +220,12 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.pathology.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),
   'outpatient.pathology.retry.propose': z.object({ requestId: boundedIdSchema }).strict(),
   'outpatient.pathology.correct.propose': pathologyReportCorrectionInputSchema,
-  'outpatient.prescription.issue.propose': emptyInputSchema,
+  'outpatient.prescription.issue.propose': clinicalOverrideProposalInputSchema,
   'outpatient.prescription.withdraw.propose': emptyInputSchema,
   'outpatient.medication.none.propose': emptyInputSchema,
   'outpatient.record.sign.propose': emptyInputSchema,
   'outpatient.record.revise.propose': clinicalDocumentRevisionInputSchema,
-  'outpatient.encounter.complete.propose': emptyInputSchema,
+  'outpatient.encounter.complete.propose': clinicalOverrideProposalInputSchema,
   'billing.queue.read': emptyInputSchema,
   'billing.case.read': z.object({ page: z.number().int().positive().optional() }).strict(),
   'billing.item.select': z.object({ chargeItemId: boundedIdSchema }).strict(),

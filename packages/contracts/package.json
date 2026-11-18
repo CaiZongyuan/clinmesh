@@ -45,6 +45,7 @@
     "./scenario": "./src/scenario.ts",
     "./medication-safety": "./src/medication-safety.ts",
     "./clinical-scores": "./src/clinical-scores.ts",
+    "./clinical-quality": "./src/clinical-quality.ts",
     "./guideline-topics": "./src/guideline-topics.ts"
   },
   "scripts": {

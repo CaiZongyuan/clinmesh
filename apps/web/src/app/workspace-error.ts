@@ -151,6 +151,12 @@ export function getWorkspaceErrorMessage(
 ): string {
   if (!(error instanceof ApiClientError)) return fallback
   if (error.reason === 'CLINICAL_HISTORY_REQUIRED') return messages.clinicalHistoryRequiredError
+  if (error.code === 'CLINICAL_QUALITY_RED_LINE' || error.code === 'CLINICAL_QUALITY_ALERT') {
+    const red = error.code === 'CLINICAL_QUALITY_RED_LINE'
+    return messages === getWorkspaceMessages('zh-CN')
+      ? error.message || (red ? '触发药事安全红线，不可越权放行。' : '存在临床质控警示，请补齐依据或登记原因后重新提交。')
+      : red ? 'Medication safety red-line block; adjust or remove the blocked item.' : 'Clinical quality alert requires workup/orders or an override reason.'
+  }
   const byReason = prescriptionIssueReasonMessage(error.reason, messages)
   if (byReason !== null) return byReason
   if (error.status === 401 || error.code === 'AUTHENTICATION_REQUIRED') {

@@ -89,6 +89,7 @@ import { OutpatientLaboratoryService } from './outpatient-laboratory-service.ts'
 import { OutpatientPrescriptionService } from './outpatient-prescription-service.ts'
 import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
 import { ClinicalScoreService, buildVitalObservationComponents } from './clinical-score-service.ts'
+import { ClinicalQualityService } from './clinical-quality-service.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
 import {
   casePresentation,
@@ -312,6 +313,7 @@ export class WorkflowService
   readonly consultationRecording: ConsultationRecordingService
   readonly qualityControl: ClinicalDocumentQualityControl
   readonly clinicalScores: ClinicalScoreService
+  readonly clinicalQuality: ClinicalQualityService
 
   constructor(
     database: ClinMeshDatabase,
@@ -359,6 +361,7 @@ export class WorkflowService
       ...(options.guidelines === undefined ? {} : { guidelines: options.guidelines }),
       outpatientContext: this.#context,
     })
+    this.clinicalQuality = new ClinicalQualityService({ commands, database, fhir, outpatientContext: this.#context, scores: this.clinicalScores })
     this.insurance = new InsuranceService(database, commands, {
       now: this.#now,
       readSource: (context, target) => {
@@ -476,6 +479,7 @@ export class WorkflowService
     this.#prescriptions = new OutpatientPrescriptionService({
       context: this.#context,
       host: {
+        clinicalQuality: this.clinicalQuality,
         completeScenarioIfReady: (context, now) => (
           this.#completeScenarioIfReady(context, now ?? this.#context.virtualTime(context))
         ),
@@ -492,6 +496,7 @@ export class WorkflowService
     this.#clinicalDocuments = new OutpatientClinicalDocumentService({
       context: this.#context,
       host: {
+        clinicalQuality: this.clinicalQuality,
         consultationRecording: this.consultationRecording,
         qualityControl: this.qualityControl,
         assertMedicationAllergies: (context, patientId, medications) => (

@@ -35,10 +35,17 @@ import { InpatientExecutionBatch } from './inpatient-execution-batch.tsx'
 
 type Write = ReturnType<typeof useInpatientWriteIntent>
 
-/** 开立被业务规则拒绝（如适应症不符）时取服务端原因就地显示；全局提示不再改写为「目录或业务规则已变化」。 */
-export function isInpatientOrderRejection(mutation: Write['mutation']): boolean {
-  const error = mutation.error
-  return mutation.variables?.operation === 'inpatient.order.issue' && error instanceof ApiClientError && error.code === 'CATALOG_CONFLICT'
+const inlineQualityOps = new Set([
+  'inpatient.order.issue', 'inpatient.surgery.request', 'inpatient.pci-selection.confirm',
+  'inpatient.discharge.issue', 'inpatient.record.submit',
+])
+
+/** 就地处理的医嘱目录拒绝或事中临床质控拦截；全局提示不再重复弹出。 */
+export function isHandledInpatientRejection(mutation: Write['mutation']): boolean {
+  const error = mutation.error, op = mutation.variables?.operation
+  if (!(error instanceof ApiClientError) || !op) return false
+  return (op === 'inpatient.order.issue' && error.code === 'CATALOG_CONFLICT')
+    || (error.clinicalQuality !== undefined && inlineQualityOps.has(op))
 }
 
 export function InpatientClinical({ admission, investigations, session, locale, write, view = 'orders', active = true }: { view?: 'orders' | 'fees'; active?: boolean; admission: InpatientAdmission; investigations?: z.infer<typeof inpatientInvestigationsSchema> | undefined; session: SessionContext; locale: WorkspaceLocale; write: Write }): React.JSX.Element {

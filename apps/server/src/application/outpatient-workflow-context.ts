@@ -1,3 +1,4 @@
+import type { ClinicalOverrideInput, ClinicalQualityReceipt } from '@clinmesh/contracts/clinical-quality'
 import { medicationSafetyRuleSchema } from '@clinmesh/contracts/medication-safety'
 import { createHmac } from 'node:crypto'
 import type { DoctorCaseHistoryDetail } from '@clinmesh/contracts/agent'
@@ -673,6 +674,7 @@ export interface OutpatientPrescriptionTransactionPort {
   applyIssuePrescription(
     transaction: CommandTransaction,
     input: {
+      clinicalOverride?: ClinicalOverrideInput | undefined
       context: ActorContext
       encounterId: string
       expectedDraftVersion: number
@@ -680,6 +682,7 @@ export interface OutpatientPrescriptionTransactionPort {
       idempotencyKey: string
     },
   ): {
+    clinicalQuality?: ClinicalQualityReceipt
     data: z.infer<typeof issuePrescriptionResponseSchema.shape.data>
     effects: CommandEffect[]
   }

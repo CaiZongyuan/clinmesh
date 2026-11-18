@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { clinicalOverrideInputSchema } from './clinical-quality.ts'
 import { commandResponseSchema, saveDiagnosisDraftRequestSchema, prescriptionDraftItemSchema } from './his.ts'
 import { referenceConceptSnapshotSchema } from './reference-data.ts'
 import { outpatientInvestigationPriceSchema } from './investigation-billing.ts'
@@ -231,6 +232,7 @@ export const doctorManualInvestigationDraftSchema = z.discriminatedUnion('kind',
 export const confirmDoctorPreparationRequestSchema = z.object({
   expectedVersions: saveDiagnosisDraftRequestSchema.shape.expectedVersions,
   input: z.object({
+    clinicalOverride: clinicalOverrideInputSchema.optional(),
     generation: z.number().int().positive().optional(),
     inputFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     expectedDraftVersion: z.number().int().nonnegative(),
@@ -239,6 +241,9 @@ export const confirmDoctorPreparationRequestSchema = z.object({
   }).strict().superRefine((input, context) => {
     if (new Set(input.selections.map(selection => selection.kind)).size !== 1) {
       context.addIssue({ code: 'custom', path: ['selections'], message: 'Confirm one recommendation kind at a time' })
+    }
+    if (input.clinicalOverride !== undefined && input.selections[0]?.kind !== 'prescription') {
+      context.addIssue({ code: 'custom', path: ['clinicalOverride'], message: 'Clinical override is supported only for prescription confirmation' })
     }
     if (input.selections.some(selection => selection.source === 'agent')
       && (input.generation === undefined || input.inputFingerprint === undefined)) {

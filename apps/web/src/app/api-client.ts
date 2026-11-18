@@ -3,6 +3,7 @@ import {
   outpatientRiskAssessmentResponseSchema,
   type ClinicalRiskAssessmentFieldsInput,
 } from '@clinmesh/contracts/clinical-scores'
+import { type ClinicalOverrideInput, type ClinicalQualityCheck } from '@clinmesh/contracts/clinical-quality'
 import { clearOrderDrafts } from './inpatient-order-drafts.ts'
 import { clearInvestigationDrafts as clearInpatientInvestigationDrafts } from './inpatient-investigation-drafts.ts'
 import { clearInpatientOrderDrafts } from './inpatient-order-batch.ts'
@@ -249,6 +250,7 @@ export function subscribeRecordingUpdates(caseId: string, onChange: () => void,
 }
 
 export class ApiClientError extends Error {
+  readonly clinicalQuality: ClinicalQualityCheck | undefined
   readonly code: string
   readonly conflict: ApiConflict | undefined
   readonly correlationId: string | undefined
@@ -262,14 +264,16 @@ export class ApiClientError extends Error {
     message: string,
     conflict?: ApiConflict,
     correlationId?: string,
-    reason?: string,
+    reasonOrDetails?: string | { reason?: string | undefined; clinicalQuality?: ClinicalQualityCheck | undefined },
   ) {
     super(message)
+    const details = typeof reasonOrDetails === 'string' ? { reason: reasonOrDetails } : reasonOrDetails
     this.name = 'ApiClientError'
+    this.clinicalQuality = details?.clinicalQuality
     this.code = code
     this.conflict = conflict
     this.correlationId = correlationId
-    this.reason = reason
+    this.reason = details?.reason
     this.status = status
   }
 }
@@ -351,7 +355,7 @@ async function parseResponse<Schema extends z.ZodType>(
       parsed.success ? parsed.data.error.message : `Request failed with status ${response.status}`,
       parsed.success ? parsed.data.error.conflict : undefined,
       parsed.success ? parsed.data.error.correlationId ?? correlationId : correlationId,
-      parsed.success ? parsed.data.error.reason : undefined,
+      parsed.success ? { reason: parsed.data.error.reason, clinicalQuality: parsed.data.error.clinicalQuality } : undefined,
     )
   }
   const parsed = schema.safeParse(body)
@@ -1490,12 +1494,18 @@ export async function generateDoctorRecommendations(state: DoctorRecommendationS
 export async function confirmDoctorPreparation(state: {
   caseId: string; kind: DoctorRecommendationKind; encounterId: string; encounterVersion: string
   generation?: number | undefined; inputFingerprint?: string | undefined
-}, expectedDraftVersion: number, selections: DoctorPreparationSelection[], idempotencyKey: string, resolveExistingDraft = false) {
+}, expectedDraftVersion: number, selections: DoctorPreparationSelection[], idempotencyKey: string, resolveExistingDraft = false, clinicalOverride?: ClinicalOverrideInput) {
   const proof = selections.some(selection => selection.source === 'agent')
     ? { generation: state.generation, inputFingerprint: state.inputFingerprint } : {}
   const body = confirmDoctorPreparationRequestSchema.parse({
     expectedVersions: { [`Encounter/${state.encounterId}`]: state.encounterVersion },
-    input: { ...proof, expectedDraftVersion, selections, ...(resolveExistingDraft ? { resolveExistingDraft: true } : {}) },
+    input: {
+      ...proof,
+      expectedDraftVersion,
+      selections,
+      ...(resolveExistingDraft ? { resolveExistingDraft: true } : {}),
+      ...(clinicalOverride === undefined ? {} : { clinicalOverride }),
+    },
   })
   const response = await apiMutation(
     `/api/his/v1/doctor/cases/${encodeURIComponent(state.caseId)}/recommendations/${state.kind}/actions/confirm`,
@@ -1534,6 +1544,7 @@ export function getEncounterCompletion(encounterId: string, signal?: AbortSignal
 }
 
 export function completeEncounter(input: {
+  clinicalOverride?: ClinicalOverrideInput | undefined
   encounterId: string
   encounterVersion: string
 }, idempotencyKey: string) {
@@ -1542,7 +1553,7 @@ export function completeEncounter(input: {
     encounterCompletionResponseSchema,
     {
       expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
-      input: {},
+      input: input.clinicalOverride === undefined ? {} : { clinicalOverride: input.clinicalOverride },
     },
     { idempotencyKey },
   )
@@ -1621,6 +1632,7 @@ export function deletePrescriptionDraft(input: {
 }
 
 export function issuePrescription(input: {
+  clinicalOverride?: ClinicalOverrideInput | undefined
   encounterId: string
   encounterVersion: string
   expectedDraftVersion: number
@@ -1630,7 +1642,10 @@ export function issuePrescription(input: {
     issuePrescriptionResponseSchema,
     {
       expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
-      input: { expectedDraftVersion: input.expectedDraftVersion },
+      input: {
+        expectedDraftVersion: input.expectedDraftVersion,
+        ...(input.clinicalOverride === undefined ? {} : { clinicalOverride: input.clinicalOverride }),
+      },
     },
     { idempotencyKey },
   )
