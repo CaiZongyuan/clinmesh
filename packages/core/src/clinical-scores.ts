@@ -752,7 +752,10 @@ export function calculateAscvdLdlTarget(input: {
       upgradeMissing.push('ldlCholesterol')
     }
 
-    if (input.egfrMlMin173m2 !== undefined) {
+    if (hasCodedStage3To4Ckd && (input.egfrMlMin173m2 === undefined || input.egfrMlMin173m2 >= 15)) {
+      minHighRiskFactors += 1
+      maxHighRiskFactors += 1
+    } else if (input.egfrMlMin173m2 !== undefined) {
       if (input.egfrMlMin173m2 >= 15 && input.egfrMlMin173m2 < 60) {
         if (ckdChronicity.lt60 === 'confirmed') {
           minHighRiskFactors += 1
@@ -762,9 +765,6 @@ export function calculateAscvdLdlTarget(input: {
           upgradeMissing.push('ckdChronicity')
         }
       }
-    } else if (hasCodedStage3To4Ckd) {
-      minHighRiskFactors += 1
-      maxHighRiskFactors += 1
     } else if (!hasCodedStage5OrDialysisCkd) {
       maxHighRiskFactors += 1
       upgradeMissing.push('serumCreatinine')

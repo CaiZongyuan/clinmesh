@@ -1735,5 +1735,42 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       tierCode: 'high',
       value: 2.6,
     })
+
+    // On a completed encounter (cutoff 2026-08-24T13:00), same-encounter DAPT prescriptions handed over only AFTER the encounter ended (14:30) do NOT retrospectively activate PRECISE-DAPT
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
+      code: { coding: [{ code: 'Z95.5', display: '冠状动脉支架置入术后状态' }], text: '冠状动脉支架置入术后状态' },
+      id: uuidv7(),
+      onsetDateTime: '2025-05-01T09:00:00+08:00',
+      recordedDate: '2026-08-01T09:00:00+08:00',
+      resourceType: 'Condition',
+      subject: { reference: `Patient/${lipidPatient.id}` },
+      verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
+    })
+    for (const medText of ['阿司匹林肠溶片 100mg', '替格瑞洛片 90mg']) {
+      const postCutoffReq = fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+        authoredOn: '2026-08-24T12:50:00+08:00',
+        dosageInstruction: [{ timing: { repeat: { boundsDuration: { code: 'mo', system: 'http://unitsofmeasure.org', unit: 'mo', value: 6 } } } }],
+        encounter: { reference: `Encounter/${lipidReg.encounterId}` },
+        id: uuidv7(),
+        intent: 'order',
+        medication: { concept: { text: medText } },
+        resourceType: 'MedicationRequest',
+        status: 'active',
+        subject: { reference: `Patient/${lipidPatient.id}` },
+      })
+      fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+        authorizingPrescription: [{ reference: `MedicationRequest/${postCutoffReq.id}` }],
+        encounter: { reference: `Encounter/${lipidReg.encounterId}` },
+        id: uuidv7(),
+        resourceType: 'MedicationDispense',
+        status: 'completed',
+        subject: { reference: `Patient/${lipidPatient.id}` },
+        whenHandedOver: '2026-08-24T14:30:00+08:00',
+        whenPrepared: '2026-08-24T14:20:00+08:00',
+      })
+    }
+    const archivedPostHandoverScores = await fixture.read('doctor', `/api/his/v1/doctor/cases/${lipidCase.caseId}/clinical-scores`, clinicalScoreBundleSchema)
+    expect(archivedPostHandoverScores.scores.find(s => s.id === 'precise-dapt')?.missingInputs).toContain('pciDaptIndication')
   }, 120_000)
 })

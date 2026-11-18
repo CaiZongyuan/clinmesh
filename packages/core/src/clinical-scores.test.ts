@@ -1224,5 +1224,23 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       tierCode: 'high',
       value: 2.6,
     })
+
+    // Confirmed stage 3–4 CKD (N18.3/N18.4) still counts as an ASCVD high-risk factor even when current eGFR is >= 60
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 62,
+        cadOnsetAgeYears: 60,
+        confirmedDiagnosisCodes: ['I21.4', 'N18.3'],
+        egfrMlMin173m2: 68,
+        ldlCholesterol: { unit: 'mmol/L', value: 1.6 },
+        severeAscvdEventCount: 1,
+        sex: 'male',
+        smokingStatus: 'current',
+      }),
+    ).toMatchObject({
+      status: 'complete',
+      tierCode: 'ultra-high',
+      value: 1.4,
+    })
   })
 })

@@ -1422,7 +1422,6 @@ export class ClinicalScoreService {
   #readMedicationDeliveryEvidence(
     context: ActorContext,
     medicationRequestId: string,
-    isCurrentEncounter: boolean,
     cutoffMs: number,
     isArchivedCutoff: boolean,
   ): {
@@ -1436,7 +1435,6 @@ export class ClinicalScoreService {
     let earliestEvidenceMs: number | undefined
     let hasOpenEndedEvidence = false
     const supplyWindows: Array<{ endMs: number; startMs: number }> = []
-    const enforceStrictCutoff = !isCurrentEncounter || !isArchivedCutoff
 
     const dispenseParams = new URLSearchParams({
       _count: '50',
@@ -1452,11 +1450,7 @@ export class ClinicalScoreService {
         const handedIso = disp.data.whenHandedOver ?? disp.data.whenPrepared
         const handedMs = parseResourceTimestampMs(handedIso)
         if (Number.isFinite(cutoffMs)) {
-          if (handedMs === undefined) {
-            if (!isCurrentEncounter && isArchivedCutoff) continue
-          } else if (enforceStrictCutoff && handedMs > cutoffMs) {
-            continue
-          }
+          if (handedMs === undefined ? isArchivedCutoff : handedMs > cutoffMs) continue
         }
         hasEvidence = true
         if (handedMs !== undefined) {
@@ -1498,11 +1492,7 @@ export class ClinicalScoreService {
           ?? admin.data.recorded
         const adminStartMs = parseResourceTimestampMs(adminStartIso)
         if (Number.isFinite(cutoffMs)) {
-          if (adminStartMs === undefined) {
-            if (!isCurrentEncounter && isArchivedCutoff) continue
-          } else if (enforceStrictCutoff && adminStartMs > cutoffMs) {
-            continue
-          }
+          if (adminStartMs === undefined ? isArchivedCutoff : adminStartMs > cutoffMs) continue
         }
         hasEvidence = true
         hasOpenEndedEvidence = true
@@ -1516,7 +1506,7 @@ export class ClinicalScoreService {
 
     const hasActiveSupplyAtCutoff =
       !Number.isFinite(cutoffMs)
-      || supplyWindows.some(w => (!enforceStrictCutoff || cutoffMs >= w.startMs) && cutoffMs <= w.endMs)
+      || supplyWindows.some(w => cutoffMs >= w.startMs && cutoffMs <= w.endMs)
 
     return {
       earliestEvidenceMs,
@@ -2228,15 +2218,13 @@ export class ClinicalScoreService {
           const delivery = this.#readMedicationDeliveryEvidence(
             context,
             parsed.data.id,
-            isCurrentEncounter,
             nowMs,
             isArchivedCutoff,
           )
-          // Ongoing outpatient DAPT requires actual dispense handover or administration evidence
+          // Ongoing outpatient DAPT requires actual dispense handover or administration evidence at or before the encounter cutoff
           if (!delivery.hasEvidence) continue
           const daptBoundsMs = rawDaptBoundsMs ?? localPrescriptionByMedReqId.get(parsed.data.id)?.courseDurationMs
-          const enforceExpiry = !isCurrentEncounter || !isArchivedCutoff
-          if (enforceExpiry && Number.isFinite(nowMs)) {
+          if (Number.isFinite(nowMs)) {
             if (daptBoundsMs !== undefined) {
               const anchorMs = delivery.earliestEvidenceMs ?? parseResourceTimestampMs(parsed.data.authoredOn)
               const inCourseWindow = anchorMs !== undefined && nowMs >= anchorMs && nowMs <= anchorMs + daptBoundsMs
@@ -3210,15 +3198,13 @@ export class ClinicalScoreService {
         const delivery = this.#readMedicationDeliveryEvidence(
           context,
           parsed.data.id,
-          isCurrentEncounter,
           nowMs,
           isArchivedCutoff,
         )
         // Local outpatient prescriptions are marked active on sign before pharmacy handover
         if (localMeta !== undefined && !delivery.hasEvidence) continue
         const htnBoundsMs = rawHtnBoundsMs ?? localMeta?.courseDurationMs
-        const enforceExpiry = !isCurrentEncounter || !isArchivedCutoff
-        if (enforceExpiry && Number.isFinite(nowMs)) {
+        if (Number.isFinite(nowMs)) {
           if (htnBoundsMs !== undefined) {
             const anchorMs = delivery.earliestEvidenceMs ?? parseResourceTimestampMs(parsed.data.authoredOn)
             const inCourseWindow = anchorMs !== undefined && nowMs >= anchorMs && nowMs <= anchorMs + htnBoundsMs
@@ -3447,7 +3433,6 @@ export class ClinicalScoreService {
         if (!this.#isLipidLoweringMedication(context, medId, display)) continue
         const localPrescription = localPrescriptionByMedReqId.get(parsed.data.id)
         const isCurrentEncounter = parsed.data.encounter?.reference === `Encounter/${encounterId}`
-        const enforceStrictCutoff = !isCurrentEncounter || !isArchivedCutoff
         let earliestAnyDispenseMs: number | undefined
         let validDispenseCount = 0
         let hasUntimedDispense = false
@@ -3469,11 +3454,7 @@ export class ClinicalScoreService {
               earliestAnyDispenseMs = handedMs
             }
             if (Number.isFinite(nowMs)) {
-              if (handedMs === undefined) {
-                if (!isCurrentEncounter && isArchivedCutoff) continue
-              } else if (enforceStrictCutoff && handedMs > nowMs) {
-                continue
-              }
+              if (handedMs === undefined ? isArchivedCutoff : handedMs > nowMs) continue
             }
             validDispenseCount += 1
             if (handedMs !== undefined) {
@@ -3523,11 +3504,7 @@ export class ClinicalScoreService {
               earliestAnyAdminMs = adminStartMs
             }
             if (Number.isFinite(nowMs)) {
-              if (adminStartMs === undefined) {
-                if (!isCurrentEncounter && isArchivedCutoff) continue
-              } else if (enforceStrictCutoff && adminStartMs > nowMs) {
-                continue
-              }
+              if (adminStartMs === undefined ? isArchivedCutoff : adminStartMs > nowMs) continue
             }
             validAdminCount += 1
             const effectiveLatest = adminEndMs ?? adminStartMs
@@ -3539,8 +3516,13 @@ export class ClinicalScoreService {
           adminParams.set('_cursor', adminPage.nextCursor)
         }
 
-        // A local outpatient prescription has not begun lowering serum lipids until dispensed by pharmacy
-        if (localPrescription !== undefined && validDispenseCount === 0 && validAdminCount === 0 && localPrescription.prescriptionStatus !== 'dispensed') {
+        // A local outpatient prescription has not begun lowering serum lipids until dispensed at or before the evaluation cutoff
+        if (
+          localPrescription !== undefined
+          && validDispenseCount === 0
+          && validAdminCount === 0
+          && (earliestAnyDispenseMs !== undefined || earliestAnyAdminMs !== undefined || localPrescription.prescriptionStatus !== 'dispensed')
+        ) {
           continue
         }
         const actualDeliveryStartMs =
