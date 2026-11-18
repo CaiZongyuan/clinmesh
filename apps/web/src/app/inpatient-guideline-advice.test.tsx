@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { notifyManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { SessionContext } from '@clinmesh/contracts/his'
+import type { GuidelineTopicId } from '@clinmesh/contracts/guideline-topics'
 import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientGuidelineAdviceSchema, inpatientGuidelineAdviceListSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { InpatientGuidelineAdvicePanel } from './inpatient-guideline-advice.tsx'
@@ -542,4 +543,64 @@ it('无手术单专题选择支持同步零AI读取原文与客观指标、unava
   await userEvent.setup().selectOptions(screen.getByLabelText('指南专题'), 't2dm-renal-medication')
   await screen.findByText('本专题原文暂不可用')
   expect(screen.getByText(/未完整保留本专题所需条款与限定语/)).toBeDefined()
+})
+
+it('专题选择器在仅存在已取消历史PCI计划时保留住院级 pci-stent 意见（requestId: null）供访问与重评', async () => {
+  const cancelledPlanAdvice = inpatientGuidelineAdviceSchema.parse({
+    ...ready,
+    message: '手术计划已取消，指南参考意见停止准备。',
+    result: null,
+    status: 'cancelled',
+  })
+  const admissionLevelPciAdvice = inpatientGuidelineAdviceSchema.parse({
+    ...ready,
+    fingerprint: '9'.repeat(64),
+    message: '住院级 PCI 选型条件意见已准备。',
+    requestId: null,
+    result: { ...ready.result!, fingerprint: '9'.repeat(64) },
+    topicId: 'pci-stent',
+    version: 2,
+  })
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url, 'http://localhost')
+    if (url.pathname.endsWith('/guideline-topics')) {
+      const topicId = (url.searchParams.get('topicId') ?? 'contrast-kidney-hydration') as GuidelineTopicId
+      return Response.json({
+        encounterId: admission.id,
+        evaluatedAt: '2026-08-24T10:00:00+08:00',
+        items: [{
+          degradedReason: null,
+          guidelines: [],
+          limitations: [],
+          missingPatientInputs: [],
+          missingSources: [],
+          navigation: '导航说明',
+          patientIndicators: [],
+          population: 'adult',
+          status: 'available',
+          topic: {
+            fingerprint: 'a'.repeat(64),
+            id: topicId,
+            specialty: topicId === 't2dm-renal-medication' ? 'endocrinology' : 'cardiology',
+            titleEn: topicId,
+            titleZh: topicId,
+            version: '2026-11-17.r1',
+          },
+        }],
+      })
+    }
+    if (url.pathname.endsWith('/guideline-advice')) {
+      return Response.json({
+        admissionId: admission.id,
+        advice: [admissionLevelPciAdvice, cancelledPlanAdvice],
+      })
+    }
+    throw new Error(`Unexpected request ${url}`)
+  }))
+
+  mount({ enableTopicPicker: true, requestId: undefined })
+  await userEvent.setup().selectOptions(await screen.findByLabelText('指南专题'), 'pci-stent')
+  await screen.findByText('住院级 PCI 选型条件意见已准备。')
+  expect(screen.queryByText('手术计划已取消，指南参考意见停止准备。')).toBeNull()
+  expect(screen.getByText(ready.result!.conclusions[0]!.text)).toBeDefined()
 })

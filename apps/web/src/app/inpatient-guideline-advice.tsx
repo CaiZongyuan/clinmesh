@@ -221,9 +221,18 @@ export function InpatientGuidelineAdvicePanel({
   if (!active) return null
   const data = query.error === null && query.data?.admissionId === admission.id ? query.data : undefined
   const topicCandidates = data?.advice.filter(item => item.admissionId === admission.id && item.topicId === selectedTopic)
-  const surgeryBoundPci = selectedTopic === 'pci-stent' ? topicCandidates?.filter(item => item.requestId !== null) : undefined
+  const activeSurgeryBoundPci = selectedTopic === 'pci-stent'
+    ? topicCandidates?.filter(item => item.requestId !== null && item.status !== 'cancelled')
+    : undefined
+  const admissionLevelCandidates = topicCandidates?.filter(item => item.requestId === null)
   const advice = enableTopicPicker
-    ? (surgeryBoundPci && surgeryBoundPci.length > 0 ? surgeryBoundPci : topicCandidates?.filter(item => item.requestId === null))
+    ? (
+        activeSurgeryBoundPci && activeSurgeryBoundPci.length > 0
+          ? activeSurgeryBoundPci
+          : (admissionLevelCandidates && admissionLevelCandidates.length > 0
+              ? admissionLevelCandidates
+              : topicCandidates)
+      )
     : data?.advice.filter(item =>
         item.admissionId === admission.id
         && item.requestId !== null

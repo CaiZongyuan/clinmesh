@@ -324,7 +324,7 @@ const TOPICS_LIST: readonly GuidelineTopicDefinition[] = [
     specialty: 'endocrinology',
     version: '2026-11-17.r1',
     conclusionKinds: ['renal-stage-contraindications', 'cardiorenal-agent-selection', 'glycemic-monitoring-and-adjustment'],
-    matchTerms: ['2型糖尿病', '糖尿病肾病', '慢性肾脏病', '二甲双胍', '达格列净', '利格列汀', 'SGLT-2i', 'E11', 'N18'],
+    matchTerms: ['2型糖尿病', '2 型糖尿病', '二型糖尿病', '糖尿病肾病', 'E11', '44054006', 'T2DM', 'type 2 diabetes'],
     navigation: '适用于 2 型糖尿病合并心血管疾病或慢性肾脏病（CKD）患者按 eGFR 分期核对降糖药物禁忌与调整：重度肾功能不全（eGFR < 30 mL/min/1.73m²，CKD 4–5 期）及急性/失代偿心力衰竭禁用二甲双胍以防乳酸酸中毒，CKD 3b 期（44–30）慎用减量，核对 SGLT-2i/GLP-1RA 适用条件及 CKD 3b–5 期利格列汀或胰岛素替代策略。以下仅为操作性导航，结论必须引用同时回读的原文。',
     limitations: [
       '固定引用 2021 糖尿病患者合并心血管疾病诊治专家共识与心血管病合并糖代谢异常专家共识，作为跨病种慢病肾功用药核对依据。',
@@ -504,10 +504,26 @@ function matchesGuidelineTopicTerm(textCorpus: string, lowerCorpus: string, term
   return lowerCorpus.includes(term.toLowerCase())
 }
 
+function hasNonNegatedT2dmSignal(textCorpus: string): boolean {
+  const scrubbed = textCorpus.replace(
+    /(?:无|否认|排除|非)\s*(?:2\s*型糖尿病|二型糖尿病|糖尿病肾病|糖尿病|t2dm|type\s*2\s*diabetes)/gi,
+    ' ',
+  )
+  return (
+    /(?:^|[^A-Za-z0-9])(?:E11(?:\.[0-9A-Za-z]+)?|44054006|T2DM)(?=$|[^A-Za-z0-9])/i.test(scrubbed)
+    || /2\s*型糖尿病|二型糖尿病|糖尿病肾病|type\s*2\s*diabetes/i.test(scrubbed)
+  )
+}
+
 export function matchApplicableGuidelineTopicIds(textCorpus: string): GuidelineTopicId[] {
   const lower = textCorpus.toLowerCase()
   return TOPICS_LIST
-    .filter(topic => topic.matchTerms.some(term => matchesGuidelineTopicTerm(textCorpus, lower, term)))
+    .filter(topic => {
+      if (topic.id === 't2dm-renal-medication') {
+        return hasNonNegatedT2dmSignal(textCorpus)
+      }
+      return topic.matchTerms.some(term => matchesGuidelineTopicTerm(textCorpus, lower, term))
+    })
     .map(topic => topic.id)
 }
 

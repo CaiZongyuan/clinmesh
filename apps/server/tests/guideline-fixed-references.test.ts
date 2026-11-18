@@ -256,6 +256,8 @@ it('六个注册 Guideline Topic 均通过精确 SHA-256、物理页码、软连
   const { fingerprint: baseFp, ...acsSpec } = acsDef
   expect(computeGuidelineTopicFingerprint(acsSpec)).toBe(baseFp)
   expect(matchApplicableGuidelineTopicIds('{"speaker":"doctor","text":"description of sacral pain"}')).toEqual([])
+  expect(matchApplicableGuidelineTopicIds('慢性肾脏病3期 N18.3 长期服用达格列净 SGLT-2i（否认2型糖尿病）')).toEqual([])
+  expect(matchApplicableGuidelineTopicIds('2型糖尿病 E11.2 合并慢性肾脏病 N18.3')).toContain('t2dm-renal-medication')
   expect(matchApplicableGuidelineTopicIds('拟行 OCT 指导 DES 支架置入')).toContain('pci-stent')
   expect(computeGuidelineTopicFingerprint({ ...acsSpec, generationRule: `${acsSpec.generationRule}（附加条款）` })).not.toBe(baseFp)
   expect(
