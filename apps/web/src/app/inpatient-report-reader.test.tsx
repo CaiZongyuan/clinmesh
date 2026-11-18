@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { examinationFixture } from './doctor/examination.test-support.ts'
 import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
@@ -63,7 +64,9 @@ function server(count = 3) {
       if (controls.reject.includes(id)) return Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: `Unsafe original key ${key}`,
         conflict: { owner: 'laboratory-report', resource: 'DiagnosticReport/report-1', currentStatus: 'superseded', currentVersion: '2', expectedVersion: '1' } } }, { status: 409 })
       if (receipts.has(key)) return Response.json(receipts.get(key))
-      current = inpatientInvestigationsSchema.parse({ ...current, laboratoryRequests: current.laboratoryRequests.map(item => item.id !== id ? item
+      const examination = current.examinationRequests.some(request => request.id === id)
+      const requests = examination ? current.examinationRequests : current.laboratoryRequests
+      current = inpatientInvestigationsSchema.parse({ ...current, [examination ? 'examinationRequests' : 'laboratoryRequests']: requests.map(item => item.id !== id ? item
         : { ...item, version: item.version + 1, status: 'acknowledged', report: { ...item.report, acknowledgement: { id: `ack-${id}`, acknowledgedAt: '2026-10-10T11:00:00+08:00', acknowledgedBy: session.actor.practitionerId } } }) })
       const response = inpatientInvestigationResponseSchema.parse({ auditId: `audit-${id}`, requestId: `command-${id}`, effects: [], warnings: [], data: current })
       receipts.set(key, response)
@@ -100,6 +103,24 @@ beforeEach(() => {
   vi.stubGlobal('ImageData', class { constructor(readonly data: Uint8ClampedArray, readonly width: number, readonly height: number) {} })
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+it('住院ECG与TTE连续阅读纯文本指标后逐项确认已阅', async () => {
+  const api = server(0), user = userEvent.setup(); api.controls.loseSecond = false
+  api.update({ ...api.get(), examinationRequests: [examinationFixture(), examinationFixture(true)] })
+  mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读住院报告' }))
+  for (const request of api.get().examinationRequests) {
+    const choice = screen.getByRole('checkbox', { name: `选择已阅：${request.service.name}` })
+    expect(choice.getAttribute('aria-disabled')).toBe('true')
+    await user.click(screen.getByRole('button', { name: `打开报告：${request.service.name}` }))
+    expect(choice.getAttribute('aria-disabled')).not.toBe('true')
+    await user.click(choice)
+  }
+  await confirmSelected(user)
+  await waitFor(() => expect(api.get().examinationRequests.every(request => request.status === 'acknowledged')).toBe(true))
+  expect(api.posts.map(post => post.id)).toEqual(['ecg', 'tte'])
+  expect(vi.mocked(fetch).mock.calls.some(([path]) => String(path).includes('imaging-studies'))).toBe(false)
+})
 
 it('仅实际打开的住院报告可选择，切报告保留本轮资格并逐项确认两份，原任务与报告版本不变', async () => {
   const api = server(), user = userEvent.setup(); mount()

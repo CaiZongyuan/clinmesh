@@ -6,6 +6,14 @@
 
 ## SQLite、迁移与持久回执
 
+- 本院分诊生命体征保存在组合 Observation 的 `component` 中；只扫描顶层 code/value 会漏掉正式异常脉搏。检查正常基线的门禁须同时覆盖来源单值、可见历史和正式组合指标，以公开分诊输入验证实际物化形态，见[功能检查合同](../architecture/clinical-workflows.md#无像素功能检查)与 `apps/server/tests/examination-lifecycle.test.ts`。
+
+- 推荐证据的字节预算回归要准备真实规模的集合：两周住院的多份复查报告会使整个 `reports` 数组超限，即使每份报告都很短。保留完整成员、来源标识和顺序后分包，并核对全部临床事实可重建、每包字节数及总输入预算；只验证空摘要或单份报告无法捕获整次历史被丢弃的问题。当前边界见[推荐证据打包](../architecture/clinical-workflows.md#门诊闭环)，回归见 `apps/server/tests/doctor-recommendation-evidence.test.ts`。
+
+- 投影住院手术历史时，`inpatient_surgery_execution.actual_procedure_json` 是本院目录快照，其 `coding` 是单个 Coding；FHIR `CodeableConcept.coding` 才是数组。用 owning `inpatientProcedureItemSchema` 校验持久快照后挑选临床字段，避免仅用空住院 fixture 通过而真实 PCI 摘要报 `INVALID_INPUT`；端到端回归见 `apps/server/tests/outpatient-post-discharge-http.test.ts`。
+
+- 造影领域报告的 `conclusion` 只保存来源中的独立总结，可能为空；正式 FHIR `DiagnosticReport.conclusion` 还会汇总 QCA 与血管所见。跨业务摘要沿关联的 `report_id` 读取正式报告结论，并核对同患者、Encounter、Workspace/Epoch 与可用签发状态，不能仅取内部可空字段，也不能在摘要里重新组装造影报告。上述院后复诊 HTTP 回归按公开 FHIR 原结论逐字核对。
+
 - 开发启动返回 `PAYMENT_CUTOVER_REQUIRED` 时，先按 Server 环境解析规则定位实际业务库，用只读连接核对旧资金表和 `0103_payment-collection-cutover.sql` 的应用状态；这是共享收款切换守卫，重跑普通迁移不能消除旧资金。处理按[显式开发切换步骤](../deployment.md#共享收款的一次性开发切换)，先确认可舍弃旧就诊运行链，不删除整库或绕过守卫；保留范围由[存储合同](../architecture/storage.md#共享收款的一次性开发切换)拥有。
 
 - 重建运行世代但保留来源、配置等跨 Epoch owner 时，同时保留其按 Workspace 绑定的幂等回执与 effects；只保留资产行会让同 body／key 在新世代重新派发，可能再次安装场景或覆盖原来源。回归通过原 owner 入口重放，核对世代、身份与内容均未新增或改写；保留边界归[开发切换合同](../architecture/storage.md#共享收款的一次性开发切换)。
@@ -57,6 +65,8 @@
 - 新增持久错误白名单时，用同一幂等键对照首次失败、重放及公开状态，覆盖模型派发前的确定性业务错误；仅覆盖 Provider 错误会漏掉错误分类被兜底改写。患者回答的档案缺失与旧版档案回归见 [问诊 HTTP 测试](../../apps/server/tests/consultation-dialogue-http.test.ts)，当前合同由[临床流程](../architecture/clinical-workflows.md#81-门诊闭环)拥有。
 
 - 构造旧版本 SQLite fixture 时，只复制当时已有的 outbox 事件类型以及旧版能表达的岗位、成员和会话关联，同时排除后来新增的环境 FHIR current/history/Search 投影；不能丢弃新任务投影却保留其事件，否则会先触发旧 CHECK、外键、重复 seed 或幂等键冲突，无法验证真正的业务记录升级。新增后台事件的调用者测试显式处理已知事件，保留原业务顺序与未知事件断言；回归见[开发库准备](../../apps/server/tests/development-database-prepare.test.ts)与[存量记录升级](../../apps/server/tests/consultation-auto-record-http.test.ts)。
+
+- SQLite 表重建前须合并所有后续迁移新增的索引，尤其是作为下游复合外键父键的 UNIQUE 索引；只复制初始建表 SQL 会使 `foreign_key_check` 在空库也报 `foreign key mismatch`。回归须包含非空父子行并检查外键，参见[医嘱频次迁移回归](../../apps/server/tests/inpatient-orders-http.test.ts)。
 
 - 同一张 SQLite 表在并行分支分别迁移时，整合须保留已执行 SQL 的文件名和校验和，并验证两条非空升级路径；来源外键、字段 CHECK、rowid 顺序和任务身份都需一起核对。合并后的字段并集不能只改 TypeScript。
 

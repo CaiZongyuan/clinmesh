@@ -1,7 +1,13 @@
+import {
+  inpatientRiskAssessmentInputSchema,
+  inpatientVitalSignsInputSchema,
+  outpatientRiskAssessmentInputSchema,
+} from '@clinmesh/contracts/clinical-scores'
+import { guidelineTopicQuerySchema } from '@clinmesh/contracts/guideline-topics'
 import { inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgExplainInputSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionSaveInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
-import { inpatientGuidelineAdviceRequestInputSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
+import { inpatientGuidelineAdviceRequestBodySchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { inpatientDrgAgentConfirmInputSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { inpatientMaterialEstimateRequestInputSchema, inpatientMaterialEstimateSaveInputSchema, inpatientMaterialEstimateConfirmInputSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientDrgFollowupStartInputSchema, inpatientDrgFollowupStopInputSchema } from '@clinmesh/contracts/inpatient-drg-followup'
@@ -42,19 +48,25 @@ import {
   multiChargePaymentRecoverInputSchema,
   paymentSimulatorRuleSchema,
   doctorQueueViewSchema,
+  acknowledgeExaminationReportRequestSchema,
   acknowledgeImagingReportRequestSchema,
   acknowledgePathologyReportRequestSchema,
   acknowledgeLaboratoryReportRequestSchema,
+  cancelExaminationRequestRequestSchema,
   cancelImagingRequestRequestSchema,
   cancelPathologyRequestRequestSchema,
   correctImagingReportRequestSchema,
   correctPathologyReportRequestSchema,
+  deleteExaminationRequestDraftRequestSchema,
   deleteImagingRequestDraftRequestSchema,
   deletePathologyRequestDraftRequestSchema,
+  issueExaminationRequestRequestSchema,
   issueImagingRequestRequestSchema,
   issuePathologyRequestRequestSchema,
+  retryExaminationRequestRequestSchema,
   retryImagingRequestRequestSchema,
   retryPathologyRequestRequestSchema,
+  saveExaminationRequestDraftRequestSchema,
   saveImagingRequestDraftRequestSchema,
   savePathologyRequestDraftRequestSchema,
   cancelLaboratoryRequestRequestSchema,
@@ -710,6 +722,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
             session = await identity.resolveSessionContext(context.req.raw.headers)
             agentIntegration.verifyDoctorQuery({ actor: session.actor, request, userAccountId: session.user.id })
             return context.json({ ...workflow.doctorCaseDetail(session.actor, query.caseId),
+              examinationServices: workflow.examination.serviceCatalog(session.actor).items,
               imagingServices: readyExamCodes === undefined ? null : workflow.imaging.serviceCatalog(session.actor, readyExamCodes).items,
               pathologyServices: offering === undefined ? null : workflow.pathology.serviceCatalog(session.actor, offering.readyExamCodes, offering.sourceProcedures).items,
               queue: null,
@@ -1462,8 +1475,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/guideline-advice', async context => {
-      try { return context.json(inpatient.guidelineAdvice.list(await actor(context), context.req.param('admissionId'))) }
-      catch (error) { return apiErrorResponse(context, error) }
+      try {
+        const query = guidelineTopicQuerySchema.parse(context.req.query())
+        return context.json(inpatient.guidelineAdvice.list(await actor(context), context.req.param('admissionId'), query.topicId))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/guideline-topics', async context => {
+      try {
+        const query = guidelineTopicQuerySchema.parse(context.req.query())
+        return context.json(inpatient.guidelineAdvice.readTopics(await actor(context), context.req.param('admissionId'), query.topicId))
+      } catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId', async context => {
       try { return context.json(inpatient.guidelineAdvice.read(await actor(context), context.req.param('admissionId'), context.req.param('requestId'))) }
@@ -1472,7 +1493,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.post('/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/request', async context => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
-        const body = z.object({ input: inpatientGuidelineAdviceRequestInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const body = z.object({ input: inpatientGuidelineAdviceRequestBodySchema }).strict().parse(await context.req.json())
         return context.json(inpatient.guidelineAdvice.request(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') },
           z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch (error) { return apiErrorResponse(context, error) }
@@ -1821,6 +1842,36 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.get('/api/his/v1/inpatient/admissions/:admissionId/clinical', async context => {
       try { return context.json(inpatient.orders.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/vital-signs', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: z.record(z.string(), z.unknown()) }).strict().parse(await context.req.json())
+        const input = inpatientVitalSignsInputSchema.parse({ ...body.input, admissionId: context.req.param('admissionId') })
+        return context.json(inpatient.recordVitalSigns(
+          await actor(context),
+          input,
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key')),
+        ))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.put('/api/his/v1/inpatient/admissions/:admissionId/risk-assessment', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientRiskAssessmentInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const input = { ...body.input, admissionId: context.req.param('admissionId') }
+        return context.json(inpatient.recordRiskAssessment(
+          await actor(context),
+          input,
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key')),
+        ))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/clinical-scores', async context => {
+      try {
+        z.object({}).strict().parse(context.req.query())
+        return context.json(inpatient.readClinicalScores(await actor(context), context.req.param('admissionId')))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/diagnoses/confirm', async context => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -2142,12 +2193,17 @@ export function createApp(options: CreateAppOptions = {}): Hono {
             bloodPressure: z.object({
               diastolicMmHg: z.number().int().min(30).max(180),
               systolicMmHg: z.number().int().min(50).max(260),
+            }).refine(value => value.systolicMmHg > value.diastolicMmHg, {
+              message: 'Systolic blood pressure must exceed diastolic blood pressure',
+              path: ['systolicMmHg'],
             }),
             chiefComplaint: z.string().trim().min(2).max(500),
+            heightCm: z.number().finite().min(30).max(260).optional(),
             oxygenSaturationPct: z.number().min(50).max(100),
             pulseBpm: z.number().int().min(20).max(250),
             respirationBpm: z.number().int().min(5).max(80),
             temperatureC: z.number().min(30).max(45),
+            weightKg: z.number().finite().min(1).max(400).optional(),
           }),
         }).parse(await context.req.json())
         return context.json(workflow.recordTriage({
@@ -2177,6 +2233,21 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       } catch (error) {
         return apiErrorResponse(context, error)
       }
+    })
+    app.get('/api/his/v1/doctor/cases/:caseId/history', async context => {
+      try {
+        const input = doctorCaseHistoryInputSchema.extend({
+          page: z.coerce.number().int().positive().default(1),
+          pageSize: z.coerce.number().int().positive().max(20).default(10),
+        }).parse(context.req.query())
+        return context.json(workflow.doctorCaseHistory(await actor(context), context.req.param('caseId'), input))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/doctor/cases/:caseId/history/detail', async context => {
+      try {
+        return context.json(workflow.doctorCaseHistoryDetail(await actor(context), context.req.param('caseId'),
+          doctorCaseHistoryDetailInputSchema.parse(context.req.query())))
+      } catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/doctor/completed-cases', async (context) => {
       try {
@@ -2308,6 +2379,47 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           await actor(context),
           context.req.param('caseId'),
         ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/doctor/cases/:caseId/clinical-scores', async (context) => {
+      try {
+        z.object({}).strict().parse(context.req.query())
+        return context.json(workflow.clinicalScores.readOutpatientClinicalScores(
+          await actor(context),
+          context.req.param('caseId'),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/doctor/cases/:caseId/guideline-topics', async (context) => {
+      try {
+        const query = guidelineTopicQuerySchema.parse(context.req.query())
+        return context.json(workflow.clinicalScores.readOutpatientGuidelineTopics(
+          await actor(context),
+          context.req.param('caseId'),
+          query.topicId,
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.put('/api/his/v1/encounters/:encounterId/risk-assessment', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: outpatientRiskAssessmentInputSchema,
+        }).strict().parse(await context.req.json())
+        return context.json(workflow.clinicalScores.recordOutpatientRiskAssessment({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          payload: body.input,
+        }))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
@@ -2871,6 +2983,115 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }
       },
     )
+    app.get('/api/his/v1/doctor/cases/:caseId/examination-services', async (context) => {
+      try {
+        const context_ = await actor(context)
+        workflow.doctorCaseDetail(context_, context.req.param('caseId'))
+        return context.json(workflow.examination.serviceCatalog(context_, new Set(['ecg-12-lead', 'tte'] as const)))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.put('/api/his/v1/encounters/:encounterId/examination-request/draft', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = saveExaminationRequestDraftRequestSchema.parse(await context.req.json())
+        return context.json(workflow.examination.saveDraft({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          indication: body.input.indication,
+          serviceId: body.input.serviceId,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.delete('/api/his/v1/encounters/:encounterId/examination-request/draft', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = deleteExaminationRequestDraftRequestSchema.parse(await context.req.json())
+        return context.json(workflow.examination.deleteDraft({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/examination-request/actions/issue', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = issueExaminationRequestRequestSchema.parse(await context.req.json())
+        return context.json(workflow.examination.issue({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          readyExamCodes: new Set(['ecg-12-lead', 'tte'] as const),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/examination-requests/:requestId/actions/cancel', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = cancelExaminationRequestRequestSchema.parse(await context.req.json())
+        return context.json(workflow.examination.cancel({
+          context: await actor(context),
+          expectedRequestVersion: body.input.expectedRequestVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          reasonCode: body.input.reasonCode,
+          requestId: context.req.param('requestId'),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/examination-requests/:requestId/actions/retry', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = retryExaminationRequestRequestSchema.parse(await context.req.json())
+        return context.json(workflow.examination.retry({
+          context: await actor(context),
+          expectedRequestVersion: body.input.expectedRequestVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          requestId: context.req.param('requestId'),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post(
+      '/api/his/v1/examination-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge',
+      async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = acknowledgeExaminationReportRequestSchema.parse(await context.req.json())
+          const context_ = await actor(context)
+          const requestId = context.req.param('requestId')
+          return context.json(workflow.examination.acknowledge({
+            context: context_,
+            diagnosticReportId: context.req.param('diagnosticReportId'),
+            expectedRequestVersion: body.input.expectedRequestVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+            requestId,
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      },
+    )
     if (options.imaging !== undefined) {
       const { library, reader, results } = options.imaging
       // 阅片器的读取通道：描述与像素块都只面向责任医生，响应不进入任何共享缓存。
@@ -3296,7 +3517,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.get('/api/his/v1/billing/queue', async (context) => {
       try {
         const query = z.object({
-          category: z.enum(['laboratory', 'imaging', 'pathology', 'medication']),
+          category: z.enum(['laboratory', 'imaging', 'pathology', 'examination', 'medication']),
           page: z.coerce.number().int().min(1).default(1),
           pageSize: z.coerce.number().int().min(1).max(100).default(20),
           status: z.enum(['ambiguous', 'declined', 'paid', 'pending']).default('pending'),
@@ -3422,7 +3643,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           expectedVersions: z.record(z.string(), z.string()),
           input: z.object({
             caseId: z.string().min(1),
-            category: z.enum(['laboratory', 'imaging', 'pathology', 'medication']),
+            category: z.enum(['laboratory', 'imaging', 'pathology', 'examination', 'medication']),
             chargeItemId: z.string().min(1).optional(),
             simulatorRule: paymentSimulatorRuleSchema,
             tenders: paymentTendersSchema.optional(),

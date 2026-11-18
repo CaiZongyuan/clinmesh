@@ -10,6 +10,7 @@ import { canonicalJsonHash } from '../src/application/scenario-data/canonical-js
 import { compileSyntheaIndexCase } from '../src/application/scenario-data/synthea-index-case.ts'
 import { createSyntheticPatientProfiles } from '../src/application/scenario-data/synthetic-patient-profile.ts'
 import { SyntheticCaseRepository } from '../src/infrastructure/sqlite/synthetic-case-repository.ts'
+import { PathologyPreparationRepository } from '../src/infrastructure/sqlite/pathology-preparation-repository.ts'
 import { SyntheticPatientProfileRepository } from '../src/infrastructure/sqlite/synthetic-patient-profile-repository.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 
@@ -189,6 +190,73 @@ describe('current doctor case authorized history', () => {
         entryId, source: 'local-completed',
       })).toThrow('authorized history')
     }
+  })
+
+  it('includes discharged inpatient summaries for the current patient while preserving the outpatient completed library', async () => {
+    const runtime = await setup()
+    createCase(runtime, 'current', 'patient-current')
+    createCase(runtime, 'older', 'patient-current', { completedAt: '2026-08-20T10:00:00+08:00' })
+    createCase(runtime, 'other-current', 'patient-other')
+    for (const [id, patientId, status, encounterStatus] of [
+      ['departed', 'patient-current', 'departed', 'discharged'],
+      ['cleared', 'patient-current', 'cleared', 'completed'],
+      ['still-admitted', 'patient-current', 'admitted', 'in-progress'],
+      ['other-patient', 'patient-other', 'departed', 'discharged'],
+    ] as const) {
+      runtime.fhir.create(doctor, { resourceType: 'Encounter', id: `inpatient-${id}`, status: encounterStatus,
+        subject: { reference: `Patient/${patientId}` },
+        actualPeriod: { start: recordedAt, ...(status === 'admitted' ? {} : { end: '2026-08-24T10:00:00+08:00' }) } })
+      runtime.database.driver.prepare(`INSERT INTO inpatient_admission
+        (workspace_id,epoch,admission_id,patient_id,inpatient_number,admission_route,ward_id,organization_id,status,registered_at,admitted_at)
+        VALUES(?,?,?,?,?,'direct','ward-general','organization-inpatient-medicine',?,?,?)`)
+        .run(doctor.workspaceId, doctor.epoch, `inpatient-${id}`, patientId, `SYN-${id}`, status, recordedAt, recordedAt)
+    }
+    runtime.database.driver.prepare(`INSERT INTO clinical_request_context(workspace_id,epoch,case_id,admission_id,patient_id,encounter_id)
+      VALUES(?,?,?,?,?,?)`).run(doctor.workspaceId, doctor.epoch, 'inpatient-departed', 'inpatient-departed', 'patient-current', 'inpatient-departed')
+    runtime.database.driver.prepare(`INSERT INTO laboratory_request(
+      workspace_id,epoch,request_id,case_id,request_kind,catalog_item_id,indication_code,reference_json,service_snapshot_json,service_request_id,execution_task_id,diagnostic_report_id,status,version,authored_by,authored_at
+    ) VALUES(?,?,?,?,'laboratory','lab-cbc','clinical-evaluation','{}','{}','sr-rev','task-rev','report-latest','reported',2,?,?)`)
+      .run(doctor.workspaceId, doctor.epoch, 'req-rev', 'inpatient-departed', doctor.actorId, recordedAt)
+    for (const [reportId, obsId, conclusion, valueBoolean, valueInteger] of [
+      ['report-superseded', 'obs-superseded', '更正前旧报告结论', true, undefined],
+      ['report-latest', 'obs-latest', '更正后正式报告结论', false, 3],
+    ] as const) {
+      runtime.fhir.create(doctor, {
+        resourceType: 'Observation', id: obsId, status: 'final',
+        subject: { reference: 'Patient/patient-current' }, encounter: { reference: 'Encounter/inpatient-departed' },
+        code: { text: valueInteger === undefined ? '定性筛查' : '受累支数' },
+        ...(valueInteger === undefined ? { valueBoolean } : { valueInteger }),
+      })
+      runtime.fhir.create(doctor, {
+        resourceType: 'DiagnosticReport', id: reportId, status: 'final',
+        subject: { reference: 'Patient/patient-current' }, encounter: { reference: 'Encounter/inpatient-departed' },
+        code: { text: '住院复查报告' }, conclusion, result: [{ reference: `Observation/${obsId}` }],
+      })
+    }
+    runtime.database.driver.prepare(`INSERT INTO laboratory_report_revision(
+      workspace_id,epoch,revision_id,request_id,diagnostic_report_id,revision_of_diagnostic_report_id,provenance_id,reason,corrected_by,corrected_at
+    ) VALUES(?,?,'rev-1','req-rev','report-latest','report-superseded','prov-1','标本复核更正',?,?)`)
+      .run(doctor.workspaceId, doctor.epoch, doctor.actorId, recordedAt)
+    const history = runtime.workflow.doctorCaseHistory(doctor, 'current', { page: 1, pageSize: 20, source: 'local-completed' })
+    expect(history.items.map(item => item.entryId)).toEqual(['inpatient:inpatient-cleared', 'inpatient:inpatient-departed', 'older'])
+    const detail = runtime.workflow.doctorCaseHistoryDetail(doctor, 'current', { entryId: 'inpatient:inpatient-departed', source: 'local-completed' })
+    expect(detail).toMatchObject({ source: 'local-completed', title: '本院住院诊疗摘要', clinicalDate: '2026-08-24T10:00:00+08:00',
+      record: { kind: 'inpatient', admissionId: 'inpatient-departed', admittedAt: recordedAt, dischargedAt: '2026-08-24T10:00:00+08:00',
+        diagnoses: [], procedures: [], medications: [],
+        reports: [{ title: '住院复查报告', conclusion: '更正后正式报告结论', findings: ['受累支数：3'] }] } })
+    expect(JSON.stringify(detail)).not.toContain('更正前旧报告结论')
+    expect(runtime.workflow.doctorCompletedCases(doctor, { patientId: 'patient-current', page: 1, pageSize: 20 }).total).toBe(1)
+    for (const entryId of ['inpatient:inpatient-still-admitted', 'inpatient:inpatient-other-patient']) {
+      expect(() => runtime.workflow.doctorCaseHistoryDetail(doctor, 'current', { entryId, source: 'local-completed' })).toThrow('authorized history')
+    }
+    expect(runtime.workflow.doctorRecommendationHistory(doctor, 'current')).toContainEqual(detail)
+    const sourceCaseId = materializeHistory(runtime)
+    createCase(runtime, 'follow-up', 'patient-current')
+    runtime.database.driver.prepare(`INSERT INTO outpatient_case_source(workspace_id,epoch,outpatient_case_id,source_case_id)
+      VALUES(?,?,'follow-up',?)`).run(doctor.workspaceId, doctor.epoch, sourceCaseId)
+    const pathologyRepo = new PathologyPreparationRepository(runtime.database)
+    expect(pathologyRepo.materializedCase(doctor.workspaceId, doctor.epoch, { outpatientCaseId: 'follow-up' })).toBe(sourceCaseId)
+    expect(pathologyRepo.materializedCase(doctor.workspaceId, doctor.epoch, { encounterId: 'encounter-follow-up' })).toBe(sourceCaseId)
   })
 
   it('reads paged visible materialized history without exposing raw resources or hidden truth', async () => {

@@ -29,6 +29,7 @@
     "./inpatient-investigations": "./src/inpatient-investigations.ts",
     "./inpatient-transfer": "./src/inpatient-transfer.ts",
     "./his-operations": "./src/his-operations.ts",
+    "./his-operations-runtime": "./src/his-operations-runtime.ts",
     "./imaging": "./src/imaging.ts",
     "./pathology": "./src/pathology.ts",
     "./reference-data": "./src/reference-data.ts",
@@ -41,8 +42,10 @@
     "./inpatient-drg-agent": "./src/inpatient-drg-agent.ts",
     "./inpatient-drg-simulation": "./src/inpatient-drg-simulation.ts",
     "./inpatient-drg-payer": "./src/inpatient-drg-payer.ts",
-    "./agent": "./src/agent.ts",
-    "./scenario": "./src/scenario.ts"
+    "./scenario": "./src/scenario.ts",
+    "./medication-safety": "./src/medication-safety.ts",
+    "./clinical-scores": "./src/clinical-scores.ts",
+    "./guideline-topics": "./src/guideline-topics.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

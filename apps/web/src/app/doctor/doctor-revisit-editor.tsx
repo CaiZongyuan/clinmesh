@@ -2,6 +2,7 @@ import {
   type ClinicalCatalog,
   type DoctorCaseDetail
 } from '@clinmesh/contracts/his'
+import { medicationFrequencySchema } from '@clinmesh/contracts/medication-safety'
 import { Button } from '@clinmesh/ui/components/button'
 import { FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
@@ -9,6 +10,7 @@ import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ClipboardPenIcon, PlusIcon, Trash2Icon } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
+import { inpatientFrequencyLabel } from '../inpatient-labels.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { type MedicationDraftLine } from './doctor-case-support.tsx'
@@ -122,7 +124,12 @@ export function RevisitEditor({ catalog, detail, locale, messages, onSave, pendi
           const suffix = index === 0 ? '' : ` ${index + 1}`
           const selectedMedication = medicationById.get(line.catalogItemId)
           const doseItems = selectedMedication?.allowedDoseTexts.map(value => ({ label: value, value })) ?? []
-          const frequencyItems = selectedMedication?.allowedFrequencyCodes.map(value => ({ label: value, value })) ?? []
+          const frequencyItems = selectedMedication?.allowedFrequencyCodes.map(value => ({
+            label: medicationFrequencySchema.safeParse(value).success
+              ? inpatientFrequencyLabel(medicationFrequencySchema.parse(value), locale, false)
+              : value,
+            value,
+          })) ?? []
           return (
             <div className="grid grid-cols-1 gap-3 border-b pb-4 @min-[1024px]/case-content:grid-cols-[minmax(12rem,1.5fr)_minmax(7rem,0.8fr)_minmax(7rem,0.8fr)_6rem_auto]" key={line.key}>
               <Field>
@@ -145,7 +152,11 @@ export function RevisitEditor({ catalog, detail, locale, messages, onSave, pendi
               </Field>
               <Field>
                 <FieldLabel htmlFor={`dose-${index}`}>{messages.dose}{suffix}</FieldLabel>
-                <WorkspaceSelect id={`dose-${index}`} items={doseItems} onValueChange={value => updateMedication(index, { doseText: value ?? '' })} value={line.doseText} />
+                {selectedMedication?.safety ? (
+                  <Input id={`dose-${index}`} maxLength={120} onChange={event => updateMedication(index, { doseText: event.currentTarget.value })} required value={line.doseText} />
+                ) : (
+                  <WorkspaceSelect id={`dose-${index}`} items={doseItems} onValueChange={value => updateMedication(index, { doseText: value ?? '' })} value={line.doseText} />
+                )}
               </Field>
               <Field>
                 <FieldLabel htmlFor={`frequency-${index}`}>{messages.frequency}{suffix}</FieldLabel>

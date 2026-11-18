@@ -43,6 +43,8 @@ export class InpatientDischarge {
       const departure = action === 'recall' ? this.events(context, input.admissionId).filter(event => event.kind === 'depart').at(-1) : undefined
       if (action === 'recall' && (departure === undefined || departure.bedId !== admission.bedId)) throw new InpatientError('INPATIENT_RECALL_WINDOW_CLOSED', '原床未保留，不能召回')
       if (action === 'depart') this.assertOrdersFinished(context, input.admissionId)
+      if (action === 'issue') this.owner.guidelineAdvice.captureDischargeFreeze(context, input.admissionId)
+      if (action === 'recall') this.owner.guidelineAdvice.clearDischargeFreeze(context, input.admissionId)
       const changed = this.owner.database.driver.prepare("UPDATE inpatient_admission SET status=? WHERE workspace_id=? AND epoch=? AND admission_id=? AND status=? AND financial_status=?")
         .run(to, context.workspaceId, context.epoch, input.admissionId, from, action === 'clear' ? 'settled' : 'open')
       if (changed.changes !== 1) throw new InpatientError('INPATIENT_STATE_CONFLICT', '住院状态已变化')

@@ -294,15 +294,39 @@ describe('ClinMesh DSH Agent contracts', () => {
     )).toThrow()
   })
 
-  it('opens an imaging study only through the laboratory section', () => {
+  it('opens an imaging study or functional examination report only through the laboratory section', () => {
     expect(parseAgentToolInput('outpatient.section.select', {
       imagingRequestId: 'imaging-request-1',
       section: 'laboratory',
     })).toEqual({ imagingRequestId: 'imaging-request-1', section: 'laboratory' })
+    expect(parseAgentToolInput('outpatient.section.select', {
+      examinationRequestId: 'examination-request-1',
+      section: 'laboratory',
+    })).toEqual({ examinationRequestId: 'examination-request-1', section: 'laboratory' })
     expect(() => parseAgentToolInput('outpatient.section.select', {
       imagingRequestId: 'imaging-request-1',
       section: 'record',
     })).toThrow()
+    expect(() => parseAgentToolInput('outpatient.section.select', {
+      examinationRequestId: 'examination-request-1',
+      section: 'record',
+    })).toThrow()
+  })
+
+  it('publishes narrow functional examination Tools inside the 32-Tool laboratory budget', () => {
+    const labTools = agentToolsForContext('outpatient-doctor', 'consultation', 'laboratory')
+    expect(labTools).toHaveLength(31)
+    const examinationTools = labTools.filter(tool => tool.operationId.startsWith('outpatient.examination.'))
+    expect(examinationTools.map(tool => [tool.operationId, tool.mode])).toEqual([
+      ['outpatient.examination.draft.set', 'draft'],
+      ['outpatient.examination.issue.propose', 'proposal'],
+      ['outpatient.examination.cancel.propose', 'proposal'],
+      ['outpatient.examination.retry.propose', 'proposal'],
+    ])
+    expect(parseAgentToolInput('outpatient.examination.draft.set', {
+      indication: '心悸待查',
+      serviceId: 'examination-ecg-12-lead',
+    })).toEqual({ indication: '心悸待查', serviceId: 'examination-ecg-12-lead' })
   })
 
   it('keeps imaging Tools narrow: no pixels, asset identity, or free-text report rewrite', () => {

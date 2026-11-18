@@ -8,6 +8,9 @@ function getConflictOwner(
 ): string {
   switch (owner) {
     case 'clinical-document': return messages.conflictOwner_clinicalDocument
+    case 'examination-report': return messages.conflictOwner_examinationReport
+    case 'examination-request': return messages.conflictOwner_examinationRequest
+    case 'examination-request-draft': return messages.conflictOwner_examinationRequestDraft
     case 'imaging-report': return messages.conflictOwner_imagingReport
     case 'imaging-request': return messages.conflictOwner_imagingRequest
     case 'imaging-request-draft': return messages.conflictOwner_imagingRequestDraft
@@ -110,6 +113,7 @@ const PRESCRIPTION_REASON_MESSAGE_KEYS: Record<PrescriptionConflictReason, keyof
   PRESCRIPTION_ALLERGY_CONFLICT: 'prescriptionIssueReason_allergyConflict',
   PRESCRIPTION_DIAGNOSIS_UNCONFIRMED: 'prescriptionIssueReason_diagnosisUnconfirmed',
   PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED: 'prescriptionIssueReason_diagnosisNotAllowed',
+  PRESCRIPTION_COMBINATION_NOT_ALLOWED: 'prescriptionIssueReason_combinationNotAllowed',
   PRESCRIPTION_DOSAGE_NOT_ALLOWED: 'prescriptionIssueReason_dosageNotAllowed',
   PRESCRIPTION_MIXED_CATALOG_SOURCES: 'prescriptionIssueReason_mixedCatalogSources',
 }
@@ -273,6 +277,15 @@ export function getBatchFailureMessage(
   error: { code: string; message?: string | undefined; status?: number | undefined; reason?: string | undefined } | undefined,
   locale: WorkspaceLocale,
 ): string {
+  const medicationReasons: Record<string, [string, string]> = {
+    MEDICATION_ONCE_REQUIRES_TEMPORARY: ['ONCE 仅允许用于临时医嘱', 'ONCE requires a temporary order.'],
+    MEDICATION_DOSAGE_NOT_ALLOWED: ['剂量、频次或每次数量超出药品安全范围', 'The dose, frequency or quantity exceeds the medication safety limits.'],
+    MEDICATION_DIAGNOSIS_NOT_ALLOWED: ['当前确诊不符合药品适应证', 'The current diagnoses do not match the medication indications.'],
+    MEDICATION_ALLERGY_CONFLICT: ['药品与已确认的药物过敏冲突', 'The medication conflicts with a confirmed allergy.'],
+    MEDICATION_COMBINATION_NOT_ALLOWED: ['药品组合存在药理类别互斥，请调整医嘱', 'The medications have mutually exclusive pharmacology classes. Adjust the orders.'],
+  }
+  const medicationReason = error?.reason ? medicationReasons[error.reason] : undefined
+  if (medicationReason) return medicationReason[locale === 'zh-CN' ? 0 : 1]
   if (error?.code === 'INPATIENT_RESERVATION_CONFLICT') {
     if (error.reason === 'RESERVATION_NOT_RELEASABLE') return locale === 'zh-CN'
       ? '此项已不处于预留状态，无法释放。请核对当前状态。'

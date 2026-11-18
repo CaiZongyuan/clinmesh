@@ -6,6 +6,8 @@ import {
   type DoctorCaseHistoryInput,
 } from '@clinmesh/contracts/agent'
 import type { FhirResource } from '@clinmesh/contracts/fhir'
+import { inpatientHistoryDetail, inpatientHistoryItems, isInpatientHistoryEntry } from './doctor-inpatient-history.ts'
+import { outpatientCaseSource, uniquePatientCaseSource } from './outpatient-case-source.ts'
 import {
   billingCaseSchema,
   commandResponseSchema,
@@ -77,6 +79,7 @@ import {
   doctorVisibleHistoryDetail,
   doctorVisibleHistoryDetails,
 } from './doctor-case-history.ts'
+import { ExaminationRequestService } from './examination-request-service.ts'
 import { ImagingRequestService } from './imaging-request-service.ts'
 import { InsuranceError, InsuranceService, type InsuranceSource, type InsuranceTarget } from './insurance-service.ts'
 import { OutpatientClinicalDocumentService } from './outpatient-clinical-document-service.ts'
@@ -84,6 +87,8 @@ import { readOutpatientInsuranceSource } from './outpatient-insurance.ts'
 import { OutpatientInvestigationBilling } from './outpatient-investigation-billing.ts'
 import { OutpatientLaboratoryService } from './outpatient-laboratory-service.ts'
 import { OutpatientPrescriptionService } from './outpatient-prescription-service.ts'
+import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
+import { ClinicalScoreService, buildVitalObservationComponents } from './clinical-score-service.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
 import {
   casePresentation,
@@ -154,6 +159,7 @@ const draftDeletionTraceRowSchema = z.object({
   effect_json: z.string(),
   operation: z.enum([
     'encounter.delete-prescription-draft',
+    'examination-request.delete-draft',
     'imaging-request.delete-draft',
     'laboratory-request.delete-draft',
     'pathology-request.delete-draft',
@@ -299,11 +305,13 @@ export class WorkflowService
   readonly #laboratory: OutpatientLaboratoryService
   readonly #clinicalDocuments: OutpatientClinicalDocumentService
   /** 放射申请适配器；与检验共用申请内核。 */
+  readonly examination: ExaminationRequestService
   readonly imaging: ImagingRequestService
   /** 病理会诊申请适配器；与检验、放射共用申请内核。 */
   readonly pathology: PathologyRequestService
   readonly consultationRecording: ConsultationRecordingService
   readonly qualityControl: ClinicalDocumentQualityControl
+  readonly clinicalScores: ClinicalScoreService
 
   constructor(
     database: ClinMeshDatabase,
@@ -314,6 +322,7 @@ export class WorkflowService
       qualityModelAvailable?: boolean
       qualityContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
       consultationRecordingContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
+      guidelines?: GuidelineCorpus
       investigation?: InvestigationCapabilityResolver
       now?: () => Date
       referenceData?: ReferenceDataService
@@ -342,6 +351,13 @@ export class WorkflowService
       ...(options.referenceData === undefined ? {} : { referenceData: options.referenceData }),
       requests: this.#requests,
       tokenSecret: options.tokenSecret,
+    })
+    this.clinicalScores = new ClinicalScoreService({
+      commands,
+      database,
+      fhir,
+      ...(options.guidelines === undefined ? {} : { guidelines: options.guidelines }),
+      outpatientContext: this.#context,
     })
     this.insurance = new InsuranceService(database, commands, {
       now: this.#now,
@@ -382,7 +398,7 @@ export class WorkflowService
             charge_item_id: z.string(),
             current_amount_fen: z.number(),
             charge_version: z.number(),
-            category: z.enum(['laboratory', 'medication']),
+            category: z.enum(['laboratory', 'examination', 'medication']),
             case_id: z.string(),
             case_status: paymentPreviewRowSchema.shape.case_status,
             patient_id: z.string(),
@@ -454,6 +470,7 @@ export class WorkflowService
         this.#recordPublishedReport(transaction, context, caseId, reportReference),
       virtualTime: (context: ActorContext) => this.#context.virtualTime(context),
     }
+    this.examination = new ExaminationRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.imaging = new ImagingRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.pathology = new PathologyRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.#prescriptions = new OutpatientPrescriptionService({
@@ -480,12 +497,13 @@ export class WorkflowService
         assertMedicationAllergies: (context, patientId, medications) => (
           this.#prescriptions.assertMedicationAllergies(context, patientId, medications)
         ),
-        assertMedicationCatalogRules: medications => (
-          this.#prescriptions.assertMedicationCatalogRules(medications)
+        assertMedicationCatalogRules: (medications, diagnosisCodes) => (
+          this.#prescriptions.assertMedicationCatalogRules(medications, undefined, diagnosisCodes)
         ),
         openRequestStatuses: (context, caseId) => this.#requests.openRequestStatuses(context, caseId),
         pendingInvestigationDraftTarget: (context, caseId) => {
           if (this.#laboratory.hasDraft(context, caseId)) return 'laboratory'
+          if (this.examination.hasDraft(context, caseId)) return 'examination'
           if (this.imaging.hasDraft(context, caseId)) return 'imaging'
           if (this.pathology.hasDraft(context, caseId)) return 'pathology'
           return undefined
@@ -622,6 +640,7 @@ export class WorkflowService
         WHERE workspace_id = ? AND epoch = ? AND active = 1
           AND json_type(config_json, '$.imagingService') IS NULL
           AND json_type(config_json, '$.pathologyService') IS NULL
+          AND json_type(config_json, '$.examinationService') IS NULL
           AND (
             ? IS NULL
             OR instr(lower(code), lower(?)) > 0
@@ -636,6 +655,7 @@ export class WorkflowService
       WHERE workspace_id = ? AND epoch = ? AND active = 1
         AND json_type(config_json, '$.imagingService') IS NULL
           AND json_type(config_json, '$.pathologyService') IS NULL
+          AND json_type(config_json, '$.examinationService') IS NULL
         AND (
           ? IS NULL
           OR instr(lower(code), lower(?)) > 0
@@ -701,6 +721,7 @@ export class WorkflowService
         WHERE workspace_id = ? AND epoch = ? AND service_id = ? AND active = 1
           AND json_type(config_json, '$.imagingService') IS NULL
           AND json_type(config_json, '$.pathologyService') IS NULL
+          AND json_type(config_json, '$.examinationService') IS NULL
       `).get(input.context.workspaceId, input.context.epoch, input.serviceId))
       if (service === undefined) throw new WorkflowError('CATALOG_CONFLICT', 'The Hospital Service is unavailable')
       const config = serviceCatalogConfigSchema.parse(JSON.parse(service.config_json) as unknown)
@@ -1341,7 +1362,7 @@ export class WorkflowService
     const patient = this.applyMaterializeSyntheticPatient(input)
     const now = this.#context.virtualTime(input.context)
     const registered = this.#registerPatient(input.transaction, input.context, {
-      createConsultation: true,
+      materializingSyntheticCase: true,
       departmentId: input.departmentId,
       locationId: input.locationId,
       patientId: patient.id,
@@ -1395,7 +1416,7 @@ export class WorkflowService
     transaction: CommandTransaction,
     context: ActorContext,
     registration: {
-      createConsultation?: boolean
+      materializingSyntheticCase?: boolean
       departmentId: string
       locationId: string
       patientId: string
@@ -1416,6 +1437,8 @@ export class WorkflowService
     if (this.#context.activeCaseByPatient(context, patient.id) !== undefined) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The patient already has an active outpatient case')
     }
+    const source = registration.materializingSyntheticCase === true
+      ? undefined : uniquePatientCaseSource(this.#database, context, patient.id)
     const caseId = uuidv7()
     const registrationId = uuidv7()
     const encounterId = uuidv7()
@@ -1494,7 +1517,9 @@ export class WorkflowService
     )
     this.#database.driver.prepare(`INSERT INTO clinical_request_context(workspace_id,epoch,case_id,outpatient_case_id,patient_id,encounter_id)
       VALUES(?,?,?,?,?,?)`).run(context.workspaceId,context.epoch,caseId,caseId,patient.id,encounterId)
-    if (registration.createConsultation === true) this.#createConsultation(context, caseId)
+    if (source !== undefined) this.#database.driver.prepare(`INSERT INTO outpatient_case_source
+      (workspace_id,epoch,outpatient_case_id,source_case_id) VALUES(?,?,?,?)`).run(context.workspaceId,context.epoch,caseId,source.case_id)
+    if (registration.materializingSyntheticCase === true || source !== undefined) this.#createConsultation(context, caseId)
     this.#database.driver.prepare(`
       INSERT INTO registration (
         workspace_id, epoch, registration_id, case_id, registration_number,
@@ -1707,10 +1732,12 @@ export class WorkflowService
       acuityCode: 'level-1' | 'level-2' | 'level-3' | 'level-4'
       bloodPressure: { diastolicMmHg: number; systolicMmHg: number }
       chiefComplaint: string
+      heightCm?: number | undefined
       oxygenSaturationPct: number
       pulseBpm: number
       respirationBpm: number
       temperatureC: number
+      weightKg?: number | undefined
     }
   }): CommandResponse<{
     doctorTaskId: string
@@ -1768,15 +1795,16 @@ export class WorkflowService
         encounter: { reference: `Encounter/${outpatientCase.encounter_id}` },
         effectiveDateTime: now,
         performer: [{ reference: `Practitioner/${input.context.practitionerId}` }],
-        component: [
-          { code: { coding: [{ code: '8310-5', system: 'http://loinc.org' }] }, valueQuantity: { code: 'Cel', system: 'http://unitsofmeasure.org', unit: '°C', value: input.triage.temperatureC } },
-          { code: { coding: [{ code: '8867-4', system: 'http://loinc.org' }] }, valueQuantity: { code: '/min', system: 'http://unitsofmeasure.org', unit: '/min', value: input.triage.pulseBpm } },
-          { code: { coding: [{ code: '9279-1', system: 'http://loinc.org' }] }, valueQuantity: { code: '/min', system: 'http://unitsofmeasure.org', unit: '/min', value: input.triage.respirationBpm } },
-          { code: { coding: [{ code: '8480-6', system: 'http://loinc.org' }] }, valueQuantity: { code: 'mm[Hg]', system: 'http://unitsofmeasure.org', unit: 'mmHg', value: input.triage.bloodPressure.systolicMmHg } },
-          { code: { coding: [{ code: '8462-4', system: 'http://loinc.org' }] }, valueQuantity: { code: 'mm[Hg]', system: 'http://unitsofmeasure.org', unit: 'mmHg', value: input.triage.bloodPressure.diastolicMmHg } },
-          { code: { coding: [{ code: '59408-5', system: 'http://loinc.org' }] }, valueQuantity: { code: '%', system: 'http://unitsofmeasure.org', unit: '%', value: input.triage.oxygenSaturationPct } },
-        ],
+        component: buildVitalObservationComponents(input.triage),
         note: [{ text: input.triage.chiefComplaint }],
+      })
+      const triageProvenance = transaction.fhir.createImmutable(input.context, {
+        resourceType: 'Provenance',
+        id: uuidv7(),
+        target: [{ reference: `Observation/${observationId}` }],
+        recorded: now,
+        activity: { text: 'Outpatient triage vital signs recording' },
+        agent: provenanceAgents(input.context, 'Triage nurse'),
       })
       const updatedEncounter = transaction.fhir.update(input.context, {
         ...encounter,
@@ -1801,8 +1829,9 @@ export class WorkflowService
       this.#database.driver.prepare(`
         INSERT INTO triage_record (
           workspace_id, epoch, triage_id, case_id, encounter_id, version,
-          acuity_code, chief_complaint, vital_json, recorded_at
-        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+          acuity_code, chief_complaint, vital_json, recorded_at,
+          observation_id, observation_version
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
@@ -1813,6 +1842,8 @@ export class WorkflowService
         input.triage.chiefComplaint,
         JSON.stringify(input.triage),
         now,
+        observation.id,
+        observation.meta?.versionId ?? '1',
       )
       this.#database.driver.prepare(`
         UPDATE outpatient_case
@@ -1839,6 +1870,7 @@ export class WorkflowService
         },
         effects: [
           { kind: 'created' as const, resource: observation },
+          { kind: 'created' as const, resource: triageProvenance },
           { kind: 'updated' as const, resource: updatedEncounter },
           { kind: 'updated' as const, resource: completedTriageTask },
           { kind: 'created' as const, resource: doctorTask },
@@ -2025,18 +2057,29 @@ export class WorkflowService
     if (input.source === 'visible-source') {
       return doctorVisibleHistory(this.#database, context, currentCaseId, patientId, input)
     }
-    const history = this.doctorCompletedCases(context, { ...input, patientId })
+    const outpatient = z.array(z.object({ case_id: z.string(), completed_at: z.string() })).parse(this.#database.driver.prepare(`
+      SELECT history.case_id, json_extract(encounter.content_json,'$.actualPeriod.end') AS completed_at
+      FROM outpatient_case history JOIN outpatient_case_responsibility responsibility
+        ON responsibility.workspace_id=history.workspace_id AND responsibility.epoch=history.epoch
+        AND responsibility.case_id=history.case_id AND responsibility.practitioner_role_id=?
+      JOIN fhir_resource encounter ON encounter.workspace_id=history.workspace_id AND encounter.epoch=history.epoch
+        AND encounter.resource_type='Encounter' AND encounter.resource_id=history.encounter_id AND encounter.deleted=0
+      WHERE history.workspace_id=? AND history.epoch=? AND history.patient_id=?
+        AND json_extract(encounter.content_json,'$.status')='completed'
+        AND json_extract(encounter.content_json,'$.actualPeriod.end') IS NOT NULL
+    `).all(context.practitionerRoleId, context.workspaceId, context.epoch, patientId))
+    const items = [...outpatient.map(item => ({
+      clinicalDate: item.completed_at, entryId: item.case_id, resourceType: 'Encounter', source: input.source,
+      title: '本院完诊记录',
+    })), ...inpatientHistoryItems(this.#database, context, patientId)]
+      .sort((left, right) => Date.parse(right.clinicalDate) - Date.parse(left.clinicalDate) || left.entryId.localeCompare(right.entryId))
     return doctorCaseHistorySchema.parse({
-      ...history,
-      availability: history.total === 0 ? 'no-data' : 'available',
+      page: input.page, pageSize: input.pageSize, total: items.length,
+      availability: items.length === 0 ? 'no-data' : 'available',
       coverage: 'current-patient-responsible-doctor',
-      items: history.items.map(item => ({
-        clinicalDate: item.completedAt,
-        entryId: item.caseId,
-        resourceType: 'Encounter',
-        source: input.source,
-        title: item.primaryDiagnosis?.display ?? '本院完诊记录',
-      })),
+      items: items.slice((input.page - 1) * input.pageSize, input.page * input.pageSize).map(item => item.resourceType === 'Encounter'
+        ? { ...item, title: this.#completedCaseDiagnosis(context, item.entryId)?.entries.find(entry => entry.role === 'primary')?.display ?? item.title }
+        : item),
       source: input.source,
     })
   }
@@ -2046,6 +2089,9 @@ export class WorkflowService
     if (input.source === 'visible-source') {
       return doctorVisibleHistoryDetail(this.#database, context, currentCaseId, patientId, input.entryId)
     }
+    if (isInpatientHistoryEntry(input.entryId)) return doctorCompletedHistoryDetailSchema.parse(
+      inpatientHistoryDetail(this.#database, context, patientId, input.entryId),
+    )
     if (!doctorHistoryEntryAllowed(this.#database, context, currentCaseId, input)) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The authorized history entry was not found')
     }
@@ -2060,9 +2106,9 @@ export class WorkflowService
     const patientId = this.#doctorHistoryPatient(context, currentCaseId)
     const history: DoctorCaseHistoryDetail[] = doctorVisibleHistoryDetails(this.#database, context, currentCaseId, patientId)
     for (let page = 1; ; page += 1) {
-      const completed = this.doctorCompletedCases(context, { patientId, page, pageSize: 20 })
+      const completed = this.doctorCaseHistory(context, currentCaseId, { source: 'local-completed', page, pageSize: 20 })
       for (const item of completed.items) history.push(this.doctorCaseHistoryDetail(context, currentCaseId, {
-        source: 'local-completed', entryId: item.caseId,
+        source: 'local-completed', entryId: item.entryId,
       }))
       if (page * completed.pageSize >= completed.total) break
     }
@@ -2166,6 +2212,7 @@ export class WorkflowService
         versionId: encounter.meta.versionId,
       },
       imagingRequests: this.imaging.state(context, caseId).requests,
+      examinationRequests: this.examination.state(context, caseId).requests,
       laboratoryRequests,
       pathologyRequests: this.pathology.state(context, caseId).requests,
       ...(medicationConclusion === undefined ? {} : { medicationConclusion }),
@@ -2328,6 +2375,7 @@ export class WorkflowService
         status: encounter.status,
         versionId: encounter.meta?.versionId,
       },
+      ...(consultation === undefined ? {} : { examinationRequests: this.examination.state(context, row.case_id) }),
       ...(consultation === undefined ? {} : { imagingRequests: this.imaging.state(context, row.case_id) }),
       ...(consultation === undefined ? {} : { pathologyRequests: this.pathology.state(context, row.case_id) }),
       ...(laboratoryRequests === undefined ? {} : { laboratoryRequests }),
@@ -3201,7 +3249,7 @@ export class WorkflowService
     if (row === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The billing case is unavailable')
     const ledger = this.#payments
     const charges = z.array(z.object({
-      amountFen: z.number(), category: z.enum(['registration', 'laboratory', 'imaging', 'pathology', 'medication']),
+      amountFen: z.number(), category: z.enum(['registration', 'laboratory', 'imaging', 'pathology', 'examination', 'medication']),
       chargeItemId: z.string(), chargeVersion: z.number(), descriptionEn: z.string(), descriptionZh: z.string(), status: z.string(),
       sourceReference: z.string(),
     })).parse(this.#database.driver.prepare(`
@@ -3236,7 +3284,7 @@ export class WorkflowService
   }
 
   billingQueue(input: {
-    category: 'laboratory' | 'imaging' | 'pathology' | 'medication'
+    category: 'laboratory' | 'imaging' | 'pathology' | 'examination' | 'medication'
     context: ActorContext
     page: number
     pageSize: number
@@ -3556,7 +3604,7 @@ export class WorkflowService
     })
   }
 
-  #readPaymentCharge(context: ActorContext, caseId: string, category: 'laboratory' | 'imaging' | 'pathology' | 'medication', chargeItemId: string) {
+  #readPaymentCharge(context: ActorContext, caseId: string, category: 'laboratory' | 'imaging' | 'pathology' | 'examination' | 'medication', chargeItemId: string) {
     return paymentChargeRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT charge.charge_id, charge.charge_item_id, charge.total_fen - COALESCE((SELECT SUM(adjustment.amount_fen)
         FROM financial_charge_adjustment adjustment WHERE adjustment.workspace_id=charge.workspace_id AND adjustment.epoch=charge.epoch
@@ -3573,7 +3621,7 @@ export class WorkflowService
   }
 
   previewPayment(input: {
-    category: 'laboratory' | 'imaging' | 'pathology' | 'medication'
+    category: 'laboratory' | 'imaging' | 'pathology' | 'examination' | 'medication'
     chargeItemId?: string | undefined
     caseId: string
     context: ActorContext
@@ -3846,7 +3894,7 @@ export class WorkflowService
 
   #assertCollectionWorkflow(
     context: ActorContext,
-    category: 'laboratory' | 'imaging' | 'pathology' | 'medication',
+    category: 'laboratory' | 'imaging' | 'pathology' | 'examination' | 'medication',
     charge: Pick<z.infer<typeof paymentChargeRowSchema>, 'charge_item_id' | 'case_status' | 'encounter_id' | 'prescription_status' | 'withdrawal_id'>,
   ): void {
     const investigation = this.#outpatientBilling.readByCharge(context, charge.charge_item_id)
@@ -3858,7 +3906,7 @@ export class WorkflowService
     if ((category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment' && !compensated)
       || (category === 'medication' && (this.#fhir.read(context, 'Encounter', charge.encounter_id).status !== 'completed'
         || (charge.prescription_status !== 'signed' && !compensated) || charge.withdrawal_id !== null))
-      || category === 'imaging' || category === 'pathology') {
+      || category === 'imaging' || category === 'pathology' || category === 'examination') {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The clinical workflow is not ready for this payment')
     }
   }
@@ -4128,7 +4176,8 @@ export class WorkflowService
     const report = z.object({ status: z.enum(['final', 'amended', 'corrected']),
       category: z.array(z.object({ coding: z.array(z.object({ code: z.string().optional() })).optional() })).optional(),
       encounter: z.object({ reference: z.string() }), subject: z.object({ reference: z.string() }),
-      conclusion: z.string().optional(), code: z.object({ text: z.string().optional() }).optional(),
+      conclusion: z.string().optional(),
+      code: z.object({ text: z.string().optional(), coding: z.array(z.object({ system: z.string().optional() })).optional() }).optional(),
       result: z.array(z.object({ reference: z.string() })).optional(), issued: z.string(),
     }).parse(transaction.fhir.vread(context, 'DiagnosticReport', parsed[1]!, parsed[2]!))
     const outpatientCase = z.object({ encounter_id: z.string(), patient_id: z.string() }).parse(
@@ -4154,9 +4203,11 @@ export class WorkflowService
       return `${name}：${value}。`
     })
     const categories = report.category?.flatMap(category => category.coding?.map(coding => coding.code) ?? []) ?? []
+    const isExamination = report.code?.coding?.some(coding => coding.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service') === true
     const published = categories.includes('RAD') ? this.imaging.publishedReportText(context, caseId, parsed[1]!)
-      : categories.includes('SP') ? this.pathology.publishedReportText(context, caseId, parsed[1]!) : undefined
-    const messageText = [report.code?.text, published?.text ?? report.conclusion, ...observations].filter(Boolean).join('\n')
+      : categories.includes('SP') ? this.pathology.publishedReportText(context, caseId, parsed[1]!)
+        : isExamination ? this.examination.publishedReportText(context, caseId, parsed[1]!) : undefined
+    const messageText = [report.code?.text, ...(published !== undefined ? [published.text] : [report.conclusion, ...observations])].filter(Boolean).join('\n')
     if (report.conclusion === undefined && observations.length === 0) throw new Error('The published report contains no recordable facts')
     this.consultationRecording.enqueueReport(context, transaction, { caseId, encounterId: outpatientCase.encounter_id,
       messageText, recordedAt: report.issued, reportReference,
@@ -4204,6 +4255,8 @@ export class WorkflowService
     syntheticCaseId: string
   } | undefined {
     this.#context.assertRole(context, ['outpatient-doctor'])
+    const source = outpatientCaseSource(this.#database, context, caseId)
+    if (source === undefined) return undefined
     const row = z.object({
       content_json: z.string(),
       revision: z.number().int().positive(),
@@ -4215,8 +4268,8 @@ export class WorkflowService
         ON brief.workspace_id = materialization.workspace_id
        AND brief.case_id = materialization.case_id
        AND brief.revision = materialization.brief_revision
-      WHERE materialization.workspace_id = ? AND materialization.outpatient_case_id = ?
-    `).get(context.workspaceId, caseId))
+      WHERE materialization.workspace_id = ? AND materialization.epoch = ? AND materialization.case_id = ?
+    `).get(context.workspaceId, context.epoch, source.case_id))
     if (row === undefined) return undefined
     return {
       content: patientPersonaRevisionContentSchema.parse(JSON.parse(row.content_json) as unknown),
@@ -4284,6 +4337,7 @@ export class WorkflowService
       | 'completedAt'
       | 'consultation'
       | 'diagnosis'
+      | 'examinationRequests'
       | 'imagingRequests'
       | 'laboratoryRequests'
       | 'medicationConclusion'
@@ -4471,6 +4525,45 @@ export class WorkflowService
         }
       }
     }
+    for (const request of input.examinationRequests) {
+      const row = z.object({
+        authored_at: z.iso.datetime({ offset: true }),
+        cancelled_at: z.iso.datetime({ offset: true }).nullable(),
+      }).strict().parse(this.#database.driver.prepare(`
+        SELECT authored_at, cancelled_at FROM laboratory_request
+        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+      `).get(context.workspaceId, context.epoch, request.id))
+      events.push({
+        kind: 'examination-request-issued',
+        occurredAt: row.authored_at,
+        reference: `ServiceRequest/${request.serviceRequestId}`,
+        relatedReferences: [`ExaminationRequest/${request.id}`, `Task/${request.taskId}`],
+      })
+      if (row.cancelled_at !== null) {
+        events.push({
+          kind: 'examination-request-cancelled',
+          occurredAt: row.cancelled_at,
+          reference: `ExaminationRequest/${request.id}`,
+          relatedReferences: [`ServiceRequest/${request.serviceRequestId}`, `Task/${request.taskId}`],
+        })
+      }
+      for (const report of [...request.previousReports, ...(request.report === undefined ? [] : [request.report])]) {
+        events.push({
+          kind: 'examination-report-issued',
+          occurredAt: report.issuedAt,
+          reference: `DiagnosticReport/${report.diagnosticReportId}`,
+          relatedReferences: [`ServiceRequest/${request.serviceRequestId}`],
+        })
+        if (report.acknowledgement !== undefined) {
+          events.push({
+            kind: 'examination-report-acknowledged',
+            occurredAt: report.acknowledgement.acknowledgedAt,
+            reference: `ReportAcknowledgement/${report.acknowledgement.id}`,
+            relatedReferences: [`DiagnosticReport/${report.diagnosticReportId}`],
+          })
+        }
+      }
+    }
     if (input.diagnosis !== undefined) {
       const legacyCondition = input.diagnosis.id.startsWith('legacy-')
         ? input.diagnosis.entries[0]
@@ -4539,6 +4632,7 @@ export class WorkflowService
         AND outcome = 'success'
         AND operation IN (
           'encounter.delete-prescription-draft',
+          'examination-request.delete-draft',
           'imaging-request.delete-draft',
           'laboratory-request.delete-draft',
           'pathology-request.delete-draft'
@@ -4552,6 +4646,7 @@ export class WorkflowService
     return rows.flatMap(row => {
       const draft = {
         'encounter.delete-prescription-draft': ['PrescriptionDraft', 'prescription-draft-deleted'],
+        'examination-request.delete-draft': ['ExaminationRequestDraft', 'examination-request-draft-deleted'],
         'imaging-request.delete-draft': ['ImagingRequestDraft', 'imaging-request-draft-deleted'],
         'laboratory-request.delete-draft': ['LaboratoryRequestDraft', 'laboratory-request-draft-deleted'],
         'pathology-request.delete-draft': ['PathologyRequestDraft', 'pathology-request-draft-deleted'],

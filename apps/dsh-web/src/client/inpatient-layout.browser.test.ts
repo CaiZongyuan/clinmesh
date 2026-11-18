@@ -28,8 +28,15 @@ for (const version of ['18', '19']) {
         host.style.width = `${width}px`
         host.shadowRoot!.querySelector('main')!.classList.toggle('dark', theme === 'dark')
       }, { width, theme })
-      const head = await patient.getByRole('heading').boundingBox(), number = await patient.locator('[data-inpatient-number]').boundingBox()
-      expect(number!.y).toBeGreaterThan(head!.y + head!.height)
+      // 头部只有一行：「住院信息」按钮与姓名同行，编号收在菜单里。
+      const head = await patient.getByRole('heading').boundingBox(), infoButton = await patient.getByRole('button', { name: '住院信息', exact: true }).boundingBox()
+      expect(infoButton!.y).toBeLessThan(head!.y + head!.height)
+      expect((await patient.boundingBox())!.height).toBeLessThanOrEqual(48)
+      await patient.getByRole('button', { name: '住院信息', exact: true }).click()
+      await expect(page.getByRole('menuitem', { name: '复制住院号 ZY-2026-synthetic-long-admission-0001', exact: true })).toBeVisible()
+      await expect(page.getByRole('menu')).toContainText('累计费用¥50.00')
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('menu')).toHaveCount(0)
       await expect(page.getByRole('button', { name: '确认医嘱', exact: true })).toBeInViewport()
       await expect(page.getByRole('button', { name: '确认医嘱', exact: true })).toHaveCSS('border-top-style', 'dashed')
       await expect.poll(() => page.locator('main').evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)

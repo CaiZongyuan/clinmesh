@@ -2,6 +2,7 @@ import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@clinmesh/ui/components/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@clinmesh/ui/components/dropdown-menu'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
@@ -41,8 +42,13 @@ function FollowupHeader({ admission, session, write }: { admission: InpatientAdm
     }
   }
   return <section aria-label="当前住院患者">
-    <button type="button" aria-pressed={active} onClick={() => { setReason(''); setDialog(active ? 'stop' : 'start') }}>助手自动跟进</button>
-    <Button type="button" variant="link" size="sm" onClick={() => setUsageOpen(true)}>本次住院 AI 用量</Button>
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button type="button" variant="outline" size="sm" aria-label={`助手自动跟进：${active ? '正在跟进' : '未跟进'}`} />}>{active ? '正在跟进' : '未跟进'}</DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-auto min-w-48">
+        <DropdownMenuItem onClick={() => { setReason(''); setDialog(active ? 'stop' : 'start') }}>{active ? '停止助手自动跟进' : '开启助手自动跟进'}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setUsageOpen(true)}>本次住院 AI 用量</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
     <Dialog open={usageOpen} onOpenChange={setUsageOpen}>
       <DialogContent className="sm:max-w-[760px]">
         <DialogHeader>

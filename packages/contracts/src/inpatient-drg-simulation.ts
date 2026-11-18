@@ -13,7 +13,7 @@ export const inpatientDrgSimulationInputSchema = z.object({
   /** 仅指定假想实施后的主计划；不代替首页的实际主操作选择。 */
   primarySurgeryRequestId: id.optional(),
   medications: z.array(z.object({ catalogItemId: id, catalogVersion: z.number().int().positive(),
-    doseText: z.string().trim().min(1).max(120), frequencyCode: z.enum(['QD', 'BID', 'PRN']),
+    doseText: z.string().trim().min(1).max(120), frequencyCode: z.enum(['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE']),
     doseQuantity: z.number().int().positive().max(100) }).strict()).max(20).default([]),
   services: z.array(z.object({ serviceId: id, serviceVersion: z.number().int().positive(),
     quantity: z.number().int().positive().max(100) }).strict()).max(20).default([]),
@@ -29,7 +29,7 @@ export const inpatientDrgPaymentReferenceSchema = z.object({
 /** 推演条目：正式收费带净额，未记费承诺/预留/草稿为目录推算；estimatedFen=null 表示缺价，不以零值填充。
  *  kind 覆盖共享账务全部收费类别（含床位/检验/检查），formal 条目按费用来源如实透传。 */
 export const inpatientDrgSimulationItemSchema = z.object({
-  kind: z.enum(['bed', 'medication', 'service', 'surgery', 'material', 'laboratory', 'imaging']),
+  kind: z.enum(['bed', 'medication', 'service', 'surgery', 'material', 'laboratory', 'imaging', 'examination']),
   id,
   display: z.string().min(1).max(500),
   quantity: z.number().int().positive(),

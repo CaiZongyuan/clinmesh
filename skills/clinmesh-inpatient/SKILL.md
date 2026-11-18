@@ -89,6 +89,9 @@ clinmesh inpatient catalog-search --kind medication --source hospital --page 1 -
 clinmesh inpatient catalog-search --kind laboratory --source reference --query 血常规 --page 1 --page-size 20
 clinmesh inpatient clinical-catalog
 clinmesh inpatient clinical --admission-id <admission-id>
+clinmesh inpatient record-vital-signs --input @vital-signs.json --idempotency-key <key>
+clinmesh inpatient record-risk-assessment --input @inpatient-risk-assessment.json --idempotency-key <key>
+clinmesh inpatient clinical-scores --admission-id <admission-id>
 clinmesh inpatient confirm-diagnosis --input @diagnoses.json --idempotency-key <key>
 clinmesh inpatient issue-order --input @order.json --idempotency-key <key>
 clinmesh inpatient verify-order --input @verification.json --idempotency-key <key>
@@ -105,6 +108,52 @@ clinmesh inpatient reverse-charge --input @reversal.json --idempotency-key <key>
 
 每个文件使用受信读取结果的 `admissionId`。诊断确认传 `encounterVersion`、`expectedRevision` 与恰好一个 primary 的 `entries`；每项必须显式选择 `admissionCondition`（`1`有、`2`临床未确定、`3`情况不明、`4`无），输入顺序保存在正式确认中，不根据备注或日期推断病情；签发传当前 `encounterVersion`、`duration` 和受控 `selection`。药品选择含目录 ID/版本、医生本次填写的 `doseText`、`frequencyCode`、每次 `doseQuantity`；数量以目录 `unit` 计，质量单位按明确的 `doseBasis` 换算为整数制剂数量，并受 `maxDoseQuantity` 约束。`doses` 是常用建议，未填写本次剂量由医嘱表单提示。单位或含量不明确时先补资料；合成本院适应症、组合、过敏、剂量和频次不满足时不得换 ID 绕过。
 
+`inpatient.order.issue` version 7 accepts `QD | BID | TID | QN | PRN | ONCE`. ONCE 仅用于 `duration=temporary`；长期 QD/BID/TID/QN 分别按上海 08:00、08:00/20:00、08:00/14:00/20:00、22:00 排程。声明 `safety` 的药品按 ICD-10 前缀适应证、药理互斥及单次／单日极量审方，PRN 按每日最多四次校验，实际任务也受业务日四次及单日数量上限限制。按 `error.reason` 修正本次选择：`MEDICATION_COMBINATION_NOT_ALLOWED` 更换互斥药理类别，`MEDICATION_DIAGNOSIS_NOT_ALLOWED` 核对已确认诊断，`MEDICATION_ALLERGY_CONFLICT` 更换过敏冲突药品，`MEDICATION_DOSAGE_NOT_ALLOWED` 调整剂量／频次／数量，`MEDICATION_ONCE_REQUIRES_TEMPORARY` 改为临时或其他合法频次。保留原输入，重新读取权威目录和版本，不换身份绕过。病区护士或住院医生可用 `record-vital-signs`（`expectedRevision` 初次为 `0`，冲突返回 `INPATIENT_VITAL_SIGNS_CONFLICT`）录入心率、血压、呼吸、体温、血氧及可选体重身高，或用 `record-risk-assessment`（冲突返回 `INPATIENT_RISK_ASSESSMENT_CONFLICT`）录入床旁专病风险事实（`killipClass`、`cardiacArrestOnAdmission`、`anginaEpisodes24h`、`stSegmentDeviation`、`aspirinUsedLast7Days`、`smokingStatus`、`familyHistoryPrematureCad`、`knownCoronaryStenosisGe50`、`priorBleedingHistory`；未传字段保持原值或未记录）；`clinical-scores` 仅按已落库客观记录返回六项确定性算子与缺项 `missingInputs`。
+
+`vital-signs.json` 与 `inpatient-risk-assessment.json` 合成示例（`priorBleedingHistory` 取 `"spontaneous" | "non-spontaneous" | "negative"`，仅自发性出血计入 PRECISE-DAPT 出血史，外伤或手术出血填 `"non-spontaneous"`）：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "encounterVersion": "1",
+  "expectedRevision": 0,
+  "temperatureC": 36.8,
+  "pulseBpm": 82,
+  "respirationBpm": 18,
+  "oxygenSaturationPct": 98,
+  "bloodPressure": { "systolicMmHg": 132, "diastolicMmHg": 80 },
+  "weightKg": 72,
+  "heightCm": 170
+}
+```
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "encounterVersion": "1",
+  "expectedRevision": 0,
+  "fields": {
+    "killipClass": "II",
+    "cardiacArrestOnAdmission": false,
+    "familyHistoryPrematureCad": false,
+    "knownCoronaryStenosisGe50": false,
+    "priorBleedingHistory": "negative",
+    "smokingStatus": "former"
+  }
+}
+```
+
+`order.json` 合成示例；实际使用本次受信目录和住院版本：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "encounterVersion": "1",
+  "duration": "temporary",
+  "selection": { "kind": "medication", "catalogItemId": "medication-amlodipine", "catalogVersion": 1, "doseText": "5 mg", "doseQuantity": 1, "frequencyCode": "ONCE" }
+}
+```
+
 `diagnoses.json` 合成示例；医生须按本次患者实际判断明确填写入院病情，并以受信读取的住院和版本替换示例值：
 
 ```json
@@ -120,7 +169,7 @@ clinmesh inpatient reverse-charge --input @reversal.json --idempotency-key <key>
 }
 ```
 
-校对及停嘱传 `orderId`、`expectedOrderVersion`；医生申请停嘱还需 `reason`。本院虚拟班次 QD 为上海时间08:00，BID为08:00与20:00；首日只生成护士校对时尚未过去的时点。临时医嘱一次执行，PRN仅由护士按已校对医嘱和理由显式请求，时钟推进不自动执行PRN。班次是本院仿真策略，不代表全国统一用药时间。
+校对及停嘱传 `orderId`、`expectedOrderVersion`；医生申请停嘱还需 `reason`。首日只生成护士校对时尚未过去的班次时点；临时医嘱一次执行，PRN仅由护士按已校对医嘱和理由显式请求，时钟推进不自动执行PRN。班次是本院仿真策略，不代表全国统一用药时间。
 
 医生停嘱与护士核停分别选择和确认；共同理由允许逐项覆盖，确认前核对每项最终理由。`clinical`、`pharmacy-read` 及医嘱相关回执的 `stopReason` 仅返回该医嘱停嘱事务明确标记的理由；历史缺失时回查原记录，不把任意 `note` 当作停嘱理由。旧回执可以缺失该字段，恢复先查原 receipt，不为补理由重新申请停嘱。页面集中操作最多20条，逐项沿用原 Command 与幂等键；结果不明暂停后续，恢复原项后重新审阅余项，不提供跨岗或混合动作批次。
 
@@ -178,17 +227,21 @@ clinmesh command receipt get --operation-id inpatient.pci-selection.save --idemp
 }
 ```
 
-## PCI 指南参考意见
+## 循证指南专题与住院指南参考意见
 
-保存有效 PCI 计划时，同一次单次准备会分别准备指南参考意见与耗材清单；缺少报告、测量、具体产品或数量不阻断有原文依据的条件性类别说明。先读取本计划的 `version/fingerprint/status`；资料、目录或依据变化后由医生显式重评，导航、刷新与成功结果复用不派发新请求。
+`inpatient guideline-topics` 同步读取本次住院在任一已注册 `Guideline Topic`（`acute-chest-pain-acs`、`coronary-revascularization-indication`、`pci-stent`、`contrast-kidney-hydration`、`cad-dapt-and-secondary-prevention`、`t2dm-renal-medication`）下经 SHA-256、物理页码与片段完整性核验的原文段落、限定语及当前患者客观指标与缺项，零模型请求；来源不可用、人群隔离、片段残缺或超出 48 KiB 预算时明确降级为 `unavailable` 并给出 `degradedReason`。
+
+保存有效 PCI 计划时，同一次单次准备仍自动按 `pci-stent` 绑定该 `requestId` 准备指南参考意见与耗材清单；无 PCI 手术申请的内科住院阶段（如术前对比剂肾损伤预防与水化、`FFR > 0.80` 药物保守治疗指征评估、出院双联抗血小板与二级预防、2 型糖尿病合并慢性肾病用药）可传 `--topic-id` 先读取当前 `version/fingerprint/status`，再以 `requestId: null` 与显式 `topicId` 调用 `request-guideline-advice`。导航、刷新与成功结果复用不派发新请求。
 
 ```bash
+clinmesh inpatient guideline-topics --admission-id <admission-id> --topic-id contrast-kidney-hydration
 clinmesh inpatient guideline-advice --admission-id <admission-id>
+clinmesh inpatient guideline-advice --admission-id <admission-id> --topic-id contrast-kidney-hydration
 clinmesh inpatient request-guideline-advice --input @guideline-advice.json --idempotency-key <key>
 clinmesh command receipt get --operation-id inpatient.guideline-advice.request --idempotency-key <key>
 ```
 
-`guideline-advice.json` 的合成形状；提交前使用本次受信读取的计划身份、版本和指纹：
+`guideline-advice.json` 绑定有效 PCI 计划的合成形状；提交前使用本次受信读取的计划身份、版本和指纹：
 
 ```json
 {
@@ -196,6 +249,18 @@ clinmesh command receipt get --operation-id inpatient.guideline-advice.request -
   "requestId": "synthetic-pci-request",
   "expectedVersion": 1,
   "expectedFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+`guideline-topic-advice.json` 无手术申请单时按专题评估的合成形状（`requestId` 设为 `null` 并显式指定 `topicId`）：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "topicId": "contrast-kidney-hydration",
+  "requestId": null,
+  "expectedVersion": 0,
+  "expectedFingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 }
 ```
 
@@ -433,6 +498,27 @@ clinmesh inpatient acknowledge-investigation --input @report-acknowledgement.jso
 }
 ```
 
+无像素 ECG/TTE 使用 `selection.kind=examination`、当前目录的 `serviceId` 和 `indication`，与放射使用不同申请类型。护士送检后发布文字和结构化结果，不要求素材或影像阅读器；必须通过同一 `acknowledge-investigation` 命令确认当前报告版本，出院门禁照常汇总。作者定义病例缺少完整精确真值、普通 Synthea 成人病例存在心血管阳性冲突时保留明确失败，不生成正常报告。
+
+`inpatient-examination.json` 使用相同开立命令，替换为当前住院和目录版本：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "encounterVersion": "2",
+  "catalogVersion": 1,
+  "selection": {
+    "kind": "examination",
+    "serviceId": "examination-tte",
+    "indication": "评估心脏结构及左室收缩功能"
+  }
+}
+```
+
+```bash
+clinmesh inpatient issue-investigation --input @inpatient-examination.json --idempotency-key <key>
+```
+
 检验选择为 `kind=laboratory`、`catalogItemId` 和目录允许的 `indicationCode`。医生开立后保持待送检，病区护士校对并送检才进入原 LIS/RIS 申请内核。操作文件传 `admissionId/requestId/expectedRequestVersion/serviceRequestVersion/taskVersion`；已阅另传当前 `diagnosticReportId/diagnosticReportVersion`，影像须当前可读取。检验目录定量定义含可选 `criticalMinimum`/`criticalMaximum` 危急值上下限，定量检验结果（及更正后重算结果）含独立于 `interpretation` 的可选布尔 `critical` 危急值标记。仅未送检或明确生成失败的申请可取消；已送检在途申请继续完成。来源不相容或不支持的检验不可重试，须取消。报告更正保留原报告和已阅事实，不再次收执行费。
 
 ```bash
@@ -518,7 +604,7 @@ clinmesh command receipt get --operation-id inpatient.discharge.settle --idempot
 结算后的费用补计、冲减及原款收退款使用[后续财务更正](#结算清床及归档后的财务更正)，不通过普通临床写入或解档处理。
 
 1. 用 `record` 读取四组核心字段、当前 `sourcesHash` 与首页 `revision`。诊断来自正式诊断确认，操作只来自本次实际执行；有实际操作时主管医生显式选 `mainProcedureExecutionId`，无操作时明确 `null`。需要补充出区后诊断时仍用 `confirm-diagnosis`，可在清床后未归档窗口纠正，其他医嘱、库存和资金动作不因此恢复。
-2. 主管医生提交首页修订；病案人员核编码来源，针对同一修订与来源审核通过或附原因退回。临床版2022诊断保留完整编码、固定Release和来源定位；院内备用编码可提交待审稿，但须通过正式诊断入口更正后才可批准。临床版来源不证明医保等价或原始工作簿权威身份独立核验，操作3.0为有界摘录。
+2. 主管医生在院可先显式保存主操作供预分组使用，离院结算后重新核对并提交正式首页修订；患者离院后病案人员核编码来源，针对同一修订与来源审核通过或附原因退回（未离院病例审核通过或退回均返回 `INPATIENT_RECORD_INCOMPLETE`）。临床版2022诊断保留完整编码、固定Release和来源定位；院内备用编码可提交待审稿，但须通过正式诊断入口更正后才可批准。临床版来源不证明医保等价或原始工作簿权威身份独立核验，操作3.0为有界摘录。
 3. 归档要求已结算、已清床、核心字段完整、唯一主诊断、本次有效实际主操作、当前审核通过、无在途事项且账目资金一致。归档读取固定快照；归档后普通写入及报告更正拒绝，既有原receipt无写重放仍可用。当前Epoch内Scenario完成后人类会话仍可读归档；已失效Agent Grant不因此恢复。
 
 ```bash
@@ -561,7 +647,7 @@ clinmesh command receipt get --operation-id inpatient.record.archive --idempoten
 }
 ```
 
-`INPATIENT_RECORD_STALE` 表示来源或修订变化，旧审核已失效；重新审阅事实，由医生提交新首页再审核。`INPATIENT_RECORD_CODING_UNSUPPORTED` 要求使用正式诊断确认更正固定编码。`INPATIENT_RECORD_ARCHIVED` 表示当前病案只读。结果未知先查同operation原receipt，保留原输入、修订/hash和幂等键；不能自动刷新hash或换key重做。
+`INPATIENT_RECORD_STALE` 表示来源或修订变化，旧审核已失效；重新审阅事实，由医生提交新首页再审核。`INPATIENT_RECORD_INCOMPLETE` 表示患者尚未离院或首页核心字段、唯一主诊断不完整，不能通过或提前退回在院主操作快照。`INPATIENT_RECORD_CODING_UNSUPPORTED` 要求使用正式诊断确认更正固定编码。`INPATIENT_RECORD_ARCHIVED` 表示当前病案只读。结果未知先查同operation原receipt，保留原输入、修订/hash和幂等键；不能自动刷新hash或换key重做。
 
 ## 结算、清床及归档后的财务更正
 

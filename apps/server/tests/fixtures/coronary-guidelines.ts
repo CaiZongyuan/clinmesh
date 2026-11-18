@@ -104,7 +104,7 @@ export function createCoronaryProvider() {
         assert.ok(item.caseEvidenceIds.every(id => payload.caseEvidence.some(fact => fact.id === id)))
       }
       output = { items: payload.items.map(item => ({ id: item.id, guidelineSupported: true, caseSupported: true, applicable: true, qualifiersPreserved: true,
-        ...(item.kind === 'prescription' ? { prescriptionFields: { doseText: true, frequencyCode: true, courseDays: true, quantity: true } } : {}),
+        ...(item.kind === 'prescription' ? { prescriptionFields: { doseText: false, frequencyCode: true, courseDays: true, quantity: false } } : {}),
       })) }
     } else if (input.schemaName === 'doctor_recommendations') {
       const payload = z.object({ kind: doctorRecommendationKindSchema, guidelines: z.array(guidelineEvidenceSchema), caseEvidence: z.array(doctorCaseEvidenceSchema),

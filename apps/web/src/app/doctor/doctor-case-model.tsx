@@ -210,6 +210,7 @@ export function useDoctorCaseModel({
         query.state.data?.laboratoryRequests?.reportingSupported === true
         && query.state.data.laboratoryRequests.requests.some(isAwaitingResult)
       )
+      || query.state.data?.examinationRequests?.requests.some(isAwaitingResult) === true
       || query.state.data?.imagingRequests?.requests.some(isAwaitingResult) === true
       || query.state.data?.pathologyRequests?.requests.some(isAwaitingResult) === true
       || query.state.data?.consultation?.replyAttempt?.status === 'executing'
@@ -231,7 +232,7 @@ export function useDoctorCaseModel({
     const view = investigationSelection?.caseId === activeCaseId ? investigationSelection : undefined
     const groups = caseInvestigationRequests(detail.data)
     const selected: InvestigationView['selected'] = {}
-    for (const category of ['laboratory', 'imaging', 'pathology'] as const) {
+    for (const category of ['laboratory', 'imaging', 'pathology', 'examination'] as const) {
       const requests = groups[category]
       const request = requests.find(item => item.id === view?.selected[category]) ?? requests[0]
       if (request !== undefined) selected[category] = request.id
@@ -276,6 +277,7 @@ export function useDoctorCaseModel({
     turns: detail.data.consultation?.turns, clinicalDocument: detail.data.clinicalDocument,
     drafts: detail.data.drafts, diagnosis: detail.data.diagnosis, medicationConclusion: detail.data.medicationConclusion,
     report: detail.data.report, laboratoryRequests: detail.data.laboratoryRequests,
+    examinationRequests: detail.data.examinationRequests,
     imagingRequests: detail.data.imagingRequests, pathologyRequests: detail.data.pathologyRequests,
   }, catalog.data])
   const recommendationInput = useRef({ identity: recommendationIdentity, revision: 0 })

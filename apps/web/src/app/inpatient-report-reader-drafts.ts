@@ -6,7 +6,7 @@ import { createDraftDiscard, hasUnknownDraftAttempt } from './draft-discard.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(), patientId: z.string().min(1), admissionId: z.string().min(1) }).strict()
-const snapshotSchema = z.object({ kind: z.enum(['laboratory', 'imaging']), input: inpatientInvestigationAcknowledgeInputSchema,
+const snapshotSchema = z.object({ kind: z.enum(['laboratory', 'imaging', 'examination']), input: inpatientInvestigationAcknowledgeInputSchema,
   serviceRequestId: z.string().min(1), taskId: z.string().min(1), title: z.string().min(1), issuedAt: z.iso.datetime({ offset: true }), revisionNumber: z.number().int().positive() }).strict()
 const rowSchema = z.object({ revision: z.uuid(), snapshot: snapshotSchema, selected: z.boolean() }).strict()
 const commandSchema = z.object({ operation: z.literal('inpatient.investigation.acknowledge'), input: inpatientInvestigationAcknowledgeInputSchema }).strict()
@@ -27,7 +27,7 @@ export type ReportRow = z.infer<typeof rowSchema>
 export type ReportSnapshot = z.infer<typeof snapshotSchema>
 export type ReportFailure = z.infer<typeof failureSchema>
 type Facts = z.infer<typeof inpatientInvestigationsSchema>
-export type ReportRecord = { kind: 'laboratory' | 'imaging'; title: string; request: Facts['laboratoryRequests'][number] | Facts['imagingRequests'][number] }
+export type ReportRecord = { kind: 'laboratory' | 'imaging' | 'examination'; title: string; request: Facts['laboratoryRequests'][number] | Facts['imagingRequests'][number] | Facts['examinationRequests'][number] }
 const prefix = 'clinmesh.inpatient-report-reader:v1:', changedEvent = 'clinmesh.inpatient-report-reader.changed'
 const discard = createDraftDiscard(prefix, () => window.dispatchEvent(new CustomEvent(changedEvent)), (key, raw) => {
   const draft = draftSchema.parse(JSON.parse(raw))
@@ -46,6 +46,7 @@ export function reportDraftKey(scope: Scope) { return `${prefix}${encodeURICompo
 export function reportRecords(facts: Facts, locale: string): ReportRecord[] {
   return [...facts.laboratoryRequests.map(request => ({ kind: 'laboratory' as const, request,
     title: (locale === 'zh-CN' ? request.laboratoryService?.nameZh : request.laboratoryService?.nameEn ?? request.laboratoryService?.nameZh) ?? request.referenceConcept?.display ?? request.catalogItemId })),
+  ...facts.examinationRequests.map(request => ({ kind: 'examination' as const, request, title: request.service.name })),
   ...facts.imagingRequests.map(request => ({ kind: 'imaging' as const, request, title: request.service.name }))]
 }
 export function reportSnapshot(record: ReportRecord, admissionId: string): ReportSnapshot | undefined {
@@ -185,7 +186,7 @@ export function settleInpatientReportAttempt(raw: unknown, key: string, session:
     if (!item || item.status === 'rejected') continue
     if (!failure) {
       const result = inpatientInvestigationResponseSchema.parse(response), original = item.row.snapshot
-      const current = (original.kind === 'laboratory' ? result.data.laboratoryRequests : result.data.imagingRequests).find(request => request.id === command.data.input.requestId)
+      const current = (original.kind === 'laboratory' ? result.data.laboratoryRequests : original.kind === 'examination' ? result.data.examinationRequests : result.data.imagingRequests).find(request => request.id === command.data.input.requestId)
       const report = current?.report, acknowledgement = report?.acknowledgement
       if (result.data.admissionId !== scope.data.admissionId || current?.status !== 'acknowledged' || current.version !== original.input.expectedRequestVersion + 1
         || current.serviceRequestId !== original.serviceRequestId || current.serviceRequestVersion !== original.input.serviceRequestVersion || current.taskId !== original.taskId || current.taskVersion !== original.input.taskVersion

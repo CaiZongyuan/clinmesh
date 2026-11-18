@@ -20,7 +20,7 @@ export function assertInpatientRequestScope(database: ClinMeshDatabase, context:
 
 /** LIS/RIS 报告事务的费用适配；修订不经过首次完成入口。 */
 export function recordInpatientInvestigationCharge(database: ClinMeshDatabase, transaction: CommandTransaction, context: ActorContext, requestId: string, now: string): InpatientEffects {
-  const row = z.object({ admission_id: z.string(), organization_id: z.string(), financial_status: z.string(), status: z.string(), request_kind: z.enum(['laboratory', 'imaging']), price_fen: z.number().int().nonnegative().safe(), charge_definition_json: z.string() }).optional()
+  const row = z.object({ admission_id: z.string(), organization_id: z.string(), financial_status: z.string(), status: z.string(), request_kind: z.enum(['laboratory', 'imaging', 'examination']), price_fen: z.number().int().nonnegative().safe(), charge_definition_json: z.string() }).optional()
     .parse(database.driver.prepare(`SELECT i.admission_id,a.organization_id,a.financial_status,a.status,r.request_kind,i.price_fen,i.charge_definition_json FROM inpatient_investigation i
       JOIN inpatient_admission a ON a.workspace_id=i.workspace_id AND a.epoch=i.epoch AND a.admission_id=i.admission_id
       JOIN laboratory_request r ON r.workspace_id=i.workspace_id AND r.epoch=i.epoch AND r.request_id=i.request_id

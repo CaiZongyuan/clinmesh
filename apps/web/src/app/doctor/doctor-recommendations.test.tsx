@@ -1810,6 +1810,24 @@ it('keeps local-completed history records inspectable behind a per-entry disclos
   expect(within(dialog).getByText(/2026年9月1日/)).toBeTruthy()
 })
 
+it('renders required inpatient history evidence as readable clinical fields', async () => {
+  const text = JSON.stringify({ source: 'local-completed', resourceType: 'InpatientEncounter', entries: [{
+    entryId: 'inpatient:admission', clinicalDate: '2026-09-01T10:00:00+08:00', title: '本院住院诊疗摘要', record: {
+      kind: 'inpatient', admissionId: 'admission', admittedAt: '2026-08-25T10:00:00+08:00', dischargedAt: '2026-09-01T10:00:00+08:00',
+      diagnoses: [{ code: 'I25.1', display: '冠状动脉粥样硬化性心脏病', role: 'primary' }], procedures: [],
+      medications: [{ display: '阿司匹林', doseText: '100 mg', frequencyCode: 'QD', state: 'stopped' }], reports: [],
+    },
+  }] })
+  const current = state({ caseEvidence: [{ id: 'patient-statement-fever', kind: 'history', label: '本院住院诊疗摘要', text }] })
+  stubRequests(() => current); mount(props())
+  await screen.findByText('发热，未特指')
+  await details()
+  const dialog = screen.getByRole('dialog')
+  expect(within(dialog).getByText('正式住院诊断')).toBeTruthy()
+  expect(within(dialog).getByText(/阿司匹林 · 100 mg · QD · 已停用/)).toBeTruthy()
+  expect(dialog.textContent).not.toContain('admissionId')
+})
+
 it('collapses unrecognized JSON evidence behind a raw-data disclosure', async () => {
   const current = state({ caseEvidence: [{ id: 'patient-statement-fever', kind: 'presentation', label: '当前主诉与体征',
     text: JSON.stringify({ presentation: { summary: '发热三天。' }, triage: { acuityCode: 'level-3' } }) }] })

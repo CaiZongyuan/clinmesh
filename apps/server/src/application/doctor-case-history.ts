@@ -8,6 +8,8 @@ import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
 import type { ActorContext } from './command-executor.ts'
 import { WorkflowError } from './workflow-error.ts'
+import { outpatientCaseSource } from './outpatient-case-source.ts'
+import { inpatientHistoryItems, isInpatientHistoryEntry } from './doctor-inpatient-history.ts'
 
 export function doctorHistoryEntryAllowed(database: ClinMeshDatabase, context: ActorContext, currentCaseId: string,
   input: { source: 'local-completed' | 'visible-source'; entryId: string }): boolean {
@@ -27,6 +29,8 @@ export function doctorHistoryEntryAllowed(database: ClinMeshDatabase, context: A
       WHERE workspace_id = ? AND case_id = ? AND source_reference = ?
     `).get(context.workspaceId, caseId, input.entryId) !== undefined
   }
+  if (isInpatientHistoryEntry(input.entryId)) return inpatientHistoryItems(database, context, current.patient_id)
+    .some(item => item.entryId === input.entryId)
   return database.driver.prepare(`
     SELECT 1 FROM outpatient_case AS history
     JOIN outpatient_case_responsibility AS responsibility
@@ -42,23 +46,7 @@ export function doctorHistoryEntryAllowed(database: ClinMeshDatabase, context: A
 }
 
 function materializedCase(database: ClinMeshDatabase, context: ActorContext, currentCaseId: string, patientId: string) {
-  return z.object({ case_id: z.string().min(1) }).optional().parse(database.driver.prepare(`
-    SELECT materialization.case_id FROM synthetic_case_materialization AS materialization
-    JOIN synthetic_patient_materialization AS patient
-      ON patient.workspace_id = materialization.workspace_id AND patient.epoch = materialization.epoch
-     AND patient.profile_id = materialization.profile_id AND patient.profile_revision = materialization.profile_revision
-     AND patient.patient_id = materialization.patient_id
-    JOIN synthetic_case_instance AS source
-      ON source.workspace_id = materialization.workspace_id AND source.case_id = materialization.case_id
-     AND source.profile_id = materialization.profile_id AND source.profile_revision = materialization.profile_revision
-     AND source.status != 'retired'
-    JOIN outpatient_case AS current
-      ON current.workspace_id = materialization.workspace_id AND current.epoch = materialization.epoch
-     AND current.case_id = materialization.outpatient_case_id AND current.encounter_id = materialization.encounter_id
-     AND current.patient_id = materialization.patient_id
-    WHERE materialization.workspace_id = ? AND materialization.epoch = ?
-      AND materialization.outpatient_case_id = ? AND materialization.patient_id = ?
-  `).get(context.workspaceId, context.epoch, currentCaseId, patientId))?.case_id
+  return outpatientCaseSource(database, context, currentCaseId, patientId)?.case_id
 }
 
 export function doctorVisibleHistory(database: ClinMeshDatabase, context: ActorContext, currentCaseId: string, patientId: string,

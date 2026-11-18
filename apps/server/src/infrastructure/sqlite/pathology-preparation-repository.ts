@@ -122,13 +122,28 @@ export class PathologyPreparationRepository {
     epoch: string,
     key: { encounterId: string } | { outpatientCaseId: string },
   ): string | undefined {
-    const [column, value] = 'encounterId' in key
-      ? ['encounter_id', key.encounterId] as const
-      : ['outpatient_case_id', key.outpatientCaseId] as const
+    const [directColumn, outpatientColumn, value] = 'encounterId' in key
+      ? ['encounter_id', 'encounter_id', key.encounterId] as const
+      : ['outpatient_case_id', 'case_id', key.outpatientCaseId] as const
     return z.object({ case_id: z.string().min(1) }).strict().optional().parse(this.#database.driver.prepare(`
-      SELECT case_id FROM synthetic_case_materialization
-      WHERE workspace_id = ? AND epoch = ? AND ${column} = ?
-    `).get(workspaceId, epoch, value))?.case_id
+      SELECT m.case_id FROM synthetic_case_materialization m
+      WHERE m.workspace_id = ? AND m.epoch = ?
+        AND (
+          m.${directColumn} = ?
+          OR EXISTS (
+            SELECT 1 FROM outpatient_case current
+            JOIN outpatient_case_source binding
+              ON binding.workspace_id = current.workspace_id
+             AND binding.epoch = current.epoch
+             AND binding.outpatient_case_id = current.case_id
+            WHERE current.workspace_id = m.workspace_id
+              AND current.epoch = m.epoch
+              AND current.patient_id = m.patient_id
+              AND binding.source_case_id = m.case_id
+              AND current.${outpatientColumn} = ?
+          )
+        )
+    `).get(workspaceId, epoch, value, value))?.case_id
   }
 
   append(preparation: Omit<PathologyCasePreparation, 'revision'>, workspaceId: string, actorId: string): PathologyCasePreparation {

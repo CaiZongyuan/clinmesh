@@ -10,7 +10,7 @@ export type InpatientEffects = Array<{ kind: 'created' | 'updated'; reference: s
 /** 调用者持有 Command 事务；费用与 FHIR 投影一起提交。 */
 export class InpatientBilling {
   constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository) {}
-  record(context: ActorContext, input: { admissionId: string; organizationId: string; kind: 'bed' | 'medication' | 'service' | 'surgery' | 'material' | 'laboratory' | 'imaging'; sourceId: string;
+  record(context: ActorContext, input: { admissionId: string; organizationId: string; kind: 'bed' | 'medication' | 'service' | 'surgery' | 'material' | 'laboratory' | 'imaging' | 'examination'; sourceId: string;
     serviceDate: string; amountFen: number; virtualTime: string; label: string }, effects: InpatientEffects): boolean {
     assertInpatientRecordWritable(this.database,context,input.admissionId)
     const amount = z.number().int().nonnegative().safe().parse(input.amountFen)

@@ -30,8 +30,14 @@ export async function compactLazyCjsClient(client: string): Promise<string> {
   }
   const body = client.slice(prefix.length, -suffix.length)
   const result = await minify(body, {
-    ecma: 2023, compress: { defaults: false, booleans: true }, mangle: false,
-    keep_fnames: true, keep_classnames: true, format: { comments: 'some', ascii_only: false },
+    ecma: 2023,
+    compress: {
+      defaults: false, booleans: true, join_vars: true, properties: true,
+      sequences: true, comparisons: true, if_return: true, arrows: true, computed_props: true,
+      unused: true, collapse_vars: true, passes: 2,
+    },
+    mangle: false, keep_fnames: true, keep_classnames: true,
+    format: { comments: 'some', ascii_only: false, shorthand: true },
   })
   if (result.code === undefined) throw new Error('Missing compacted ClinMesh DSH client')
   return prefix + result.code.trimEnd() + '\n' + suffix

@@ -62,9 +62,7 @@ test('住院头部仅摘要两项真实检验，仍提示后续异常并可进�
   await page.goto(`${browserApp.origin}/inpatient`)
   await page.getByRole('button', { name: `查看${admission.patientName}`, exact: true }).click()
   const summary = page.getByRole('region', { name: '检查检验结果', exact: true })
-  await expect(summary.locator('span[title]')).toHaveCount(2)
-  await expect(summary).toContainText('1 项异常')
-  await summary.getByRole('button', { name: /查看检验结果（4项）/ }).click()
+  await summary.getByRole('button', { name: '检验 1 项异常 / 共 4 项', exact: true }).click()
   const reports = page.getByRole('tabpanel', { name: '检查检验', exact: true })
   await expect(reports.getByRole('article')).toHaveCount(4)
   await expect(reports).toContainText('11.2')
@@ -77,8 +75,7 @@ test('住院头部仅摘要两项真实检验，仍提示后续异常并可进�
   await page.getByRole('button', { name: '刷新', exact: true }).click()
   await closeQueue(page)
   await expect(summary.getByRole('alert')).toContainText('检验结果读取失败')
-  await expect(summary.locator('span[title]')).toHaveCount(0)
-  await expect(summary.getByRole('button', { name: /查看检验结果/ })).toHaveCount(0)
+  await expect(summary.getByRole('button', { name: /^检验/ })).toHaveCount(0)
 })
 
 test('住院检验丢回执恢复、护士送检和转科三方交接通过真实入口',async({page,browserApp,source},info)=>{

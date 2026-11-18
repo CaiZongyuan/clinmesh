@@ -12,7 +12,7 @@ import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
 import { syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot } from '../src/application/scenario-data/medical-service-snapshot.ts'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, rm, writeFile, mkdir, readdir, copyFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, mkdir, readdir, copyFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -521,11 +521,11 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     expect(diagnosis.status).toBe(200)
     issue.encounterVersion = (await diagnosis.json()).data.encounterVersion
     for (const selection of [{ ...issue.selection, catalogItemId: 'missing' }, { ...issue.selection, doseText: '500 g' },
-      { ...issue.selection, frequencyCode: 'TID' }, { ...issue.selection, doseQuantity: 60 }, { ...issue.selection, catalogVersion: 999 },
+      { ...issue.selection, frequencyCode: 'Q4H' }, { ...issue.selection, doseQuantity: 60 }, { ...issue.selection, catalogVersion: 999 },
       { ...issue.selection, catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD' }]) {
       const invalid = await s.request(s.doctor, `${s.path}/orders/issue`, { ...issue, selection })
-      expect(invalid.status).toBe(selection.frequencyCode === 'TID' ? 400 : 409)
-      expect((await invalid.json()).error.code).toBe(selection.frequencyCode === 'TID' ? 'INVALID_INPUT' : 'CATALOG_CONFLICT')
+      expect(invalid.status).toBe(selection.frequencyCode === 'Q4H' ? 400 : 409)
+      expect((await invalid.json()).error.code).toBe(selection.frequencyCode === 'Q4H' ? 'INVALID_INPUT' : 'CATALOG_CONFLICT')
     }
     const response = await s.request(s.doctor, `${s.path}/orders/issue`, issue)
     expect(response.status).toBe(200)
@@ -859,13 +859,54 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     const unchanged=await s.request(s.admin,'/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time',{expectedVirtualTime:clock.virtualTime,targetVirtualTime:new Date(clock.virtualTime).toISOString()})
     expect(unchanged.status).toBe(200)
     expect((await s.request(s.nurse,`${s.path}/executions/request-prn`,input)).status).toBe(409)
-
-    expect((await s.request(s.admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { expectedVirtualTime: clock.virtualTime, targetVirtualTime: '2026-08-25T01:00:00.000Z' })).status).toBe(200)
-    expect((await (await s.request(s.doctor, `${s.path}/clinical`)).json()).executions).toHaveLength(1)
+    let virtualTime = clock.virtualTime
+    for (const hour of [10, 11, 12, 13]) {
+      const targetVirtualTime = `2026-08-24T${hour}:00:00+08:00`
+      expect((await s.request(s.admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { expectedVirtualTime: virtualTime, targetVirtualTime })).status).toBe(200)
+      virtualTime = scenarioStateSchema.parse(await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json()).virtualTime
+      const response = await s.request(s.nurse, `${s.path}/executions/request-prn`, input)
+      expect(response.status).toBe(hour === 13 ? 409 : 200)
+      if (hour === 13) expect((await response.json()).error.reason).toBe('MEDICATION_DOSAGE_NOT_ALLOWED')
+    }
+    expect((await s.request(s.admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { expectedVirtualTime: virtualTime, targetVirtualTime: '2026-08-25T01:00:00.000Z' })).status).toBe(200)
+    expect((await (await s.request(s.doctor, `${s.path}/clinical`)).json()).executions).toHaveLength(4)
     const stop = await s.request(s.doctor, `${s.path}/orders/request-stop`, { ...input, reason: '调整治疗' })
     expect(stop.status).toBe(200)
     input.expectedOrderVersion = (await stop.json()).data.orders[0].version
     expect((await s.request(s.nurse, `${s.path}/executions/request-prn`, input)).status).toBe(409)
+  })
+
+  it('同日停嘱重开PRN药品时跨医嘱累计有效执行次数与给药总量', async () => {
+    const s = await setup()
+    const diagnosed = await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, { encounterVersion: s.admission.versionId, expectedRevision: 0,
+      entries: [{ catalogItemId: 'diagnosis-fever', role: 'primary', admissionCondition: '1' }] })).json()
+    const firstIssued = await (await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: diagnosed.data.encounterVersion, duration: 'long',
+      selection: { kind: 'medication', catalogItemId: 'medication-acetaminophen', catalogVersion: 1, doseText: '0.5 g', doseQuantity: 1, frequencyCode: 'PRN' } })).json()
+    const firstOrder = firstIssued.data.orders[0]
+    const firstVerified = await (await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: firstOrder.id, expectedOrderVersion: firstOrder.version })).json()
+    const firstRequested = await (await s.request(s.nurse, `${s.path}/executions/request-prn`, { orderId: firstOrder.id, expectedOrderVersion: firstVerified.data.orders[0].version, reason: '首次高热' })).json()
+    const firstExecution = firstRequested.data.executions[0]
+    const catalog = await (await s.request(s.doctor, '/api/his/v1/inpatient/clinical-catalog')).json()
+    const lot = catalog.medications.find((m: { id: string }) => m.id === 'medication-acetaminophen').lots[0]
+    const dispensed = await (await s.request(s.pharmacist, `${s.path}/executions/dispense`, { executionId: firstExecution.id, expectedExecutionVersion: firstExecution.version, lotSelections: [{ lotId: lot.id, expectedVersion: lot.version, quantity: 1 }] })).json()
+    expect((await s.request(s.nurse, `${s.path}/executions/administer`, { executionId: firstExecution.id, expectedExecutionVersion: dispensed.data.executions[0].version })).status).toBe(200)
+    let virtualTime = scenarioStateSchema.parse(await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json()).virtualTime
+    expect((await s.request(s.admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { expectedVirtualTime: virtualTime, targetVirtualTime: '2026-08-24T10:00:00+08:00' })).status).toBe(200)
+    expect((await s.request(s.nurse, `${s.path}/executions/request-prn`, { orderId: firstOrder.id, expectedOrderVersion: firstVerified.data.orders[0].version, reason: '停嘱前待取消任务' })).status).toBe(200)
+    const stopRequested = await (await s.request(s.doctor, `${s.path}/orders/request-stop`, { orderId: firstOrder.id, expectedOrderVersion: firstVerified.data.orders[0].version, reason: '重开医嘱' })).json()
+    const stopped = await (await s.request(s.nurse, `${s.path}/orders/verify-stop`, { orderId: firstOrder.id, expectedOrderVersion: stopRequested.data.orders[0].version })).json()
+    const secondIssued = await (await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: stopped.data.encounterVersion, duration: 'long',
+      selection: { kind: 'medication', catalogItemId: 'medication-acetaminophen', catalogVersion: 1, doseText: '0.5 g', doseQuantity: 1, frequencyCode: 'PRN' } })).json()
+    const secondOrder = secondIssued.data.orders.find((o: { id: string }) => o.id !== firstOrder.id)
+    const secondVerified = await (await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: secondOrder.id, expectedOrderVersion: secondOrder.version })).json()
+    virtualTime = scenarioStateSchema.parse(await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json()).virtualTime
+    for (const hour of [11, 12, 13, 14]) {
+      expect((await s.request(s.admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { expectedVirtualTime: virtualTime, targetVirtualTime: `2026-08-24T${hour}:00:00+08:00` })).status).toBe(200)
+      virtualTime = scenarioStateSchema.parse(await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json()).virtualTime
+      const response = await s.request(s.nurse, `${s.path}/executions/request-prn`, { orderId: secondOrder.id, expectedOrderVersion: secondVerified.data.orders.find((o: { id: string }) => o.id === secondOrder.id).version, reason: '复测高热' })
+      expect(response.status).toBe(hour === 14 ? 409 : 200)
+      if (hour === 14) expect((await response.json()).error.reason).toBe('MEDICATION_DOSAGE_NOT_ALLOWED')
+    }
   })
 
   it('临床详情严格排除登记员和管理员，读取岗位与Catalog一致', async () => {
@@ -986,6 +1027,39 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
 
   })
 
+  it('频次表重建保留非空医嘱、执行与引用索引，并开放六种频次约束', async () => {
+    const s = await setup()
+    const diagnosed = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, {
+      encounterVersion: s.admission.versionId, expectedRevision: 0,
+      entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary', admissionCondition: '1' }],
+    })).json()).data
+    const issued = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/orders/issue`, {
+      encounterVersion: diagnosed.encounterVersion, duration: 'temporary',
+      selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' },
+    })).json()).data.orders[0]!
+    expect((await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: issued.id, expectedOrderVersion: issued.version })).status).toBe(200)
+    await s.runtime.close()
+    const database = openClinMeshDatabase({ databasePath: s.databasePath, busyTimeoutMs: 5000 })
+    try {
+      const orders = database.driver.prepare('SELECT * FROM inpatient_order').all()
+      const executions = database.driver.prepare('SELECT * FROM inpatient_execution').all()
+      // 还原同一表在 0112 前的三个频次约束，保留真实业务行和下游外键。
+      database.driver.pragma('foreign_keys=OFF')
+      const rebuild = await readFile('drizzle/0112_medication-frequency.sql', 'utf8')
+      database.driver.exec(rebuild.replace("'QD','BID','TID','QN','PRN','ONCE'", "'QD','BID','PRN'"))
+      database.driver.prepare('DELETE FROM schema_migration WHERE migration_id=?').run('0112_medication-frequency.sql')
+      database.driver.pragma('foreign_keys=ON')
+      expect(() => database.driver.prepare("UPDATE inpatient_order SET frequency_code='TID'").run()).toThrow(/CHECK/)
+      expect(applyMigrations(database, 'drizzle').applied).toEqual(['0112_medication-frequency.sql'])
+      expect(database.driver.prepare('SELECT * FROM inpatient_order').all()).toEqual(orders)
+      expect(database.driver.prepare('SELECT * FROM inpatient_execution').all()).toEqual(executions)
+      for (const frequency of ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE']) expect(() => database.driver.prepare('UPDATE inpatient_order SET frequency_code=?').run(frequency)).not.toThrow()
+      expect(() => database.driver.prepare("UPDATE inpatient_order SET frequency_code='Q4H'").run()).toThrow(/CHECK/)
+      expect(database.driver.pragma('foreign_key_check')).toEqual([])
+      expect(database.driver.prepare("SELECT name FROM sqlite_schema WHERE type='index' AND name='inpatient_order_admission_identity'").get()).toBeDefined()
+    } finally { database.close() }
+  })
+
   it('从77旧库升级保留非空门诊库存移动和床费及FHIR历史，来源XOR和原外键继续有效',async()=>{
     const s=await setup(),outpatient=await paidOutpatient(s),lotId='lot-amlodipine-synthetic-001'
     const clock=await(await s.request(s.admin,'/api/sim/v1/scenario-runs/current')).json()
@@ -1052,6 +1126,67 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     } finally {legacy.close()}
   })
 
+  it('心血管跨类联合医嘱可校对，药理互斥、极量和长期 ONCE 返回结构化拒绝', async () => {
+    const s = await setup()
+    const diagnosed = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, {
+      encounterVersion: s.admission.versionId, expectedRevision: 0,
+      entries: [{ catalogItemId: 'diagnosis-coronary-heart-disease', role: 'primary', admissionCondition: '1' },
+        { catalogItemId: 'diagnosis-hypertension', role: 'secondary', admissionCondition: '1' }],
+    })).json()).data
+    const issue = async (id: string, doseText: string, quantity: number, frequencyCode = 'QD', duration = 'long') => s.request(s.doctor, `${s.path}/orders/issue`, {
+      encounterVersion: diagnosed.encounterVersion, duration, selection: { kind: 'medication', catalogItemId: id, catalogVersion: 1, doseText, doseQuantity: quantity, frequencyCode },
+    })
+    for (const [id, doseText, quantity, frequency] of [
+      ['medication-pci-aspirin', '100 mg', 1, 'QD'], ['medication-pci-clopidogrel', '1片', 1, 'QD'],
+      ['medication-pci-atorvastatin', '2片', 2, 'QN'], ['medication-metoprolol', '47.5 mg', 1, 'QD'], ['medication-perindopril', '4 mg', 1, 'QD'],
+    ] as const) {
+      const response = await issue(id, doseText, quantity, frequency)
+      expect(response.status, await response.clone().text()).toBe(200)
+      const order = inpatientFullClinicalResponseSchema.parse(await response.json()).data.orders.find(item => item.catalogItemId === id)!
+      expect((await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })).status).toBe(200)
+    }
+    for (const [id, dose, quantity, frequency, reason] of [
+      ['medication-ticagrelor', '90 mg', 1, 'BID', 'MEDICATION_COMBINATION_NOT_ALLOWED'],
+      ['medication-rosuvastatin', '10 mg', 1, 'QN', 'MEDICATION_COMBINATION_NOT_ALLOWED'],
+      ['medication-valsartan', '80 mg', 1, 'QD', 'MEDICATION_COMBINATION_NOT_ALLOWED'],
+      ['medication-amlodipine', '15 mg', 3, 'QD', 'MEDICATION_DOSAGE_NOT_ALLOWED'],
+      ['medication-amlodipine', '10 mg', 2, 'BID', 'MEDICATION_DOSAGE_NOT_ALLOWED'],
+      ['medication-amoxicillin', '500 mg', 1, 'TID', 'MEDICATION_DIAGNOSIS_NOT_ALLOWED'],
+      ['medication-pci-heparin', '1 mL', 1, 'ONCE', 'MEDICATION_ONCE_REQUIRES_TEMPORARY'],
+    ] as const) {
+      const rejected = await issue(id, dose, quantity, frequency)
+      expect(rejected.status).toBe(409)
+      expect(await rejected.json()).toMatchObject({ error: { reason } })
+    }
+    const clinical = inpatientFullClinicalSchema.parse(await (await s.request(s.doctor, `${s.path}/clinical`)).json())
+    expect(clinical.orders).toHaveLength(5)
+    expect(clinical.executions.find(item => item.orderId === clinical.orders.find(order => order.catalogItemId === 'medication-pci-atorvastatin')!.id)?.scheduledFor).toBe('2026-08-24T14:00:00.000Z')
+    const heparin = await issue('medication-pci-heparin', '6250 IU', 1, 'PRN')
+    expect(heparin.status, await heparin.clone().text()).toBe(200)
+    expect(inpatientFullClinicalResponseSchema.parse(await heparin.json()).data.orders.find(item => item.catalogItemId === 'medication-pci-heparin')).toMatchObject({ doseText: '6250 IU', doseQuantity: 1, unit: 'mL' })
+  })
+
+  it.each([
+    ['TID', 'medication-metformin', '0.5 g', 'diagnosis-type-2-diabetes-hyperglycemia', ['2026-08-24T06:00:00.000Z', '2026-08-24T12:00:00.000Z']],
+    ['QN', 'medication-pci-atorvastatin', '10 mg', 'diagnosis-coronary-heart-disease', ['2026-08-24T14:00:00.000Z']],
+    ['ONCE', 'medication-amlodipine', '5 mg', 'diagnosis-hypertension', ['2026-08-24T09:00:00+08:00']],
+  ] as const)('%s 频次按声明时点排程且临时 ONCE 只生成一次', async (frequencyCode, id, doseText, diagnosis, scheduled) => {
+    const s = await setup()
+    const diagnosed = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, {
+      encounterVersion: s.admission.versionId, expectedRevision: 0, entries: [{ catalogItemId: diagnosis, role: 'primary', admissionCondition: '1' }],
+    })).json()).data
+    const issued = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: diagnosed.encounterVersion, duration: frequencyCode === 'ONCE' ? 'temporary' : 'long',
+      selection: { kind: 'medication', catalogItemId: id, catalogVersion: 1, doseText, doseQuantity: 1, frequencyCode } })
+    expect(issued.status, await issued.clone().text()).toBe(200)
+    const order = inpatientFullClinicalResponseSchema.parse(await issued.json()).data.orders[0]!
+    const verified = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })).json()).data
+    expect(verified.executions.map(item => item.scheduledFor)).toEqual(scheduled)
+    const clock = scenarioStateSchema.parse(await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json())
+    expect((await s.request(s.admin, `/api/sim/v1/scenario-runs/${clock.scenarioRunId}/actions/advance-time`, { expectedVirtualTime: clock.virtualTime, targetVirtualTime: '2026-08-25T01:00:00.000Z' })).status).toBe(200)
+    const clinical = inpatientFullClinicalSchema.parse(await (await s.request(s.doctor, `${s.path}/clinical`)).json())
+    expect(clinical.executions).toHaveLength(frequencyCode === 'TID' ? 5 : frequencyCode === 'QN' ? 2 : 1)
+  })
+
   it('住院服务私有计费定义不会污染门诊服务目录响应合同',async()=>{
     const s=await setup()
     const response=await s.request(s.admin,'/api/his/v1/catalogs/services?page=1&pageSize=100')
@@ -1059,6 +1194,7 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     const catalog=serviceCatalogSearchSchema.parse(await response.json())
     expect(catalog.items.find(item=>item.id==='hospital-service-diabetes-education')).toMatchObject({chargeDefinition:{priceFen:3000}})
     expect(JSON.stringify(catalog)).not.toContain('inpatientBillingTrigger')
+    expect(catalog.items.some(item => item.id.startsWith('examination-'))).toBe(false)
   })
 
 })

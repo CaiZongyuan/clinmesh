@@ -97,12 +97,17 @@ const triageDraftInputSchema = z.object({
   acuityCode: z.enum(['level-1', 'level-2', 'level-3', 'level-4']),
   chiefComplaint: z.string().trim().min(1).max(500),
   diastolicMmHg: z.number().finite().min(30).max(180),
+  heightCm: z.number().finite().min(30).max(260).optional(),
   oxygenSaturationPct: z.number().finite().min(50).max(100),
   pulseBpm: z.number().finite().min(20).max(250),
   respirationBpm: z.number().finite().min(5).max(80),
   systolicMmHg: z.number().finite().min(50).max(260),
   temperatureC: z.number().finite().min(30).max(45),
-}).strict()
+  weightKg: z.number().finite().min(1).max(400).optional(),
+}).strict().refine(value => value.systolicMmHg > value.diastolicMmHg, {
+  message: 'Systolic blood pressure must exceed diastolic blood pressure',
+  path: ['systolicMmHg'],
+})
 
 export const agentToolInputSchemas = Object.freeze({
   'ui.context.read': emptyInputSchema,
@@ -149,12 +154,17 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.history.read': doctorCaseHistoryDetailInputSchema,
   'outpatient.case.select': z.object({ caseId: boundedIdSchema }).strict(),
   'outpatient.section.select': z.object({
+    /** 同时定位这条功能检查申请的结构化文字报告；只与 `laboratory` 栏目一起使用。 */
+    examinationRequestId: boundedIdSchema.optional(),
     /** 同时展开这条放射申请的影像；只与 `laboratory` 栏目一起使用。Agent 不读取像素。 */
     imagingRequestId: boundedIdSchema.optional(),
     /** 同时展开这条病理会诊申请的切片；只与 `laboratory` 栏目一起使用。Agent 不读取像素。 */
     pathologyRequestId: boundedIdSchema.optional(),
     section: doctorCaseSectionSchema,
   }).strict().refine(
+    input => input.examinationRequestId === undefined || input.section === 'laboratory',
+    { message: 'Functional reports open in the laboratory section', path: ['examinationRequestId'] },
+  ).refine(
     input => input.imagingRequestId === undefined || input.section === 'laboratory',
     { message: 'Imaging studies open in the laboratory section', path: ['imagingRequestId'] },
   ).refine(
@@ -176,6 +186,10 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.laboratory.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),
   'outpatient.report.acknowledge.propose': z.object({ requestId: boundedIdSchema }).strict(),
   'outpatient.report.correct.propose': reportCorrectionInputSchema,
+  'outpatient.examination.draft.set': imagingDraftInputSchema,
+  'outpatient.examination.issue.propose': emptyInputSchema,
+  'outpatient.examination.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),
+  'outpatient.examination.retry.propose': z.object({ requestId: boundedIdSchema }).strict(),
   'outpatient.imaging.draft.set': imagingDraftInputSchema,
   'outpatient.imaging.issue.propose': emptyInputSchema,
   'outpatient.imaging.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),

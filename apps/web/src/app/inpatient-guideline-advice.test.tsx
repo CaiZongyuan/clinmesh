@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { notifyManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { SessionContext } from '@clinmesh/contracts/his'
+import type { GuidelineTopicId } from '@clinmesh/contracts/guideline-topics'
 import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientGuidelineAdviceSchema, inpatientGuidelineAdviceListSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { InpatientGuidelineAdvicePanel } from './inpatient-guideline-advice.tsx'
@@ -240,15 +241,15 @@ it('英文历史只读保留三类依据，冻结、归档和非医生岗位均�
   expect(screen.queryByRole('button', { name: '按当前依据重新评估指南' })).toBeNull()
 })
 
-type ViewProps = { stay?: typeof admission; currentSession?: SessionContext; requestId?: string; active?: boolean; canReassess?: boolean; locale?: WorkspaceLocale }
+type ViewProps = { stay?: typeof admission; currentSession?: SessionContext; requestId?: string | null | undefined; active?: boolean; canReassess?: boolean; locale?: WorkspaceLocale; enableTopicPicker?: boolean }
 function mount(initial: ViewProps = { requestId: 'surgery-1' }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
-  function Harness({ stay = admission, currentSession = session, requestId, active = true, canReassess = true, locale = 'zh-CN' }: ViewProps) {
+  function Harness({ stay = admission, currentSession = session, requestId, active = true, canReassess = true, locale = 'zh-CN', enableTopicPicker = false }: ViewProps) {
     const write = useInpatientWriteIntent(currentSession, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
     return <><InpatientWriteRecovery write={write} locale={locale} />
       <InpatientGuidelineAdvicePanel admission={stay} session={currentSession} locale={locale} write={write} active={active} canReassess={canReassess}
-        {...(requestId === undefined ? {} : { requestId })} /></>
+        enableTopicPicker={enableTopicPicker} {...(requestId === undefined ? {} : { requestId })} /></>
   }
   const view = render(<QueryClientProvider client={client}><Harness {...initial} /></QueryClientProvider>)
   return { client, unmount: view.unmount, rerender: (props: ViewProps) => view.rerender(<QueryClientProvider client={client}><Harness {...props} /></QueryClientProvider>) }
@@ -341,4 +342,265 @@ it('结果未知只核查原请求及真实指南用量，不显示旧意见或�
   expect(requests.filter(item => item.pathname.endsWith('/guideline-advice'))).toHaveLength(2)
   expect(methods.every(method => method === 'GET')).toBe(true)
   expect(screen.queryByText(/本次跟进/)).toBeNull()
+})
+
+it('无手术单专题选择支持同步零AI读取原文与客观指标、unavailable降级提示及按专题提交 requestId:null 重评', async () => {
+  const posts: Array<{ path: string; input: unknown }> = []
+  let hydrationAdvice = inpatientGuidelineAdviceSchema.parse({
+    admissionId: admission.id,
+    topicId: 'contrast-kidney-hydration',
+    requestId: null,
+    taskId: null,
+    version: 0,
+    fingerprint: '1'.repeat(64),
+    status: 'idle',
+    message: '尚未准备本专题的指南参考意见。',
+    missing: ['缺少术前血肌酐与 eGFR 危险分层依据。'],
+    failureCode: null,
+    result: null,
+  })
+  const revascAdvice = inpatientGuidelineAdviceSchema.parse({
+    admissionId: admission.id,
+    topicId: 'coronary-revascularization-indication',
+    requestId: null,
+    taskId: 'revasc-task-1',
+    version: 1,
+    fingerprint: '2'.repeat(64),
+    status: 'incomplete',
+    message: '指南参考意见已准备；患者资料仍有缺项，仅供有条件核对。',
+    missing: ['缺少经胸超声心动图左室射血分数（LVEF）记录。'],
+    failureCode: null,
+    result: {
+      id: 'revasc-result-1',
+      fingerprint: '2'.repeat(64),
+      model: 'synthetic-guideline-model',
+      createdAt: '2026-08-24T10:00:00+08:00',
+      topic: { id: 'coronary-revascularization-indication', version: '2026-11-17.r1', fingerprint: '3'.repeat(64) },
+      guidelines: [{
+        id: 'coronary-10-2021-p14',
+        title: '2021 ACC/AHA/SCAI 冠脉血运重建指南',
+        publisher: 'ACC/AHA/SCAI',
+        documentType: 'guideline',
+        version: '2021',
+        url: 'https://example.test/revasc',
+        scope: '仅供合成测试',
+        sourceHash: '9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e',
+        locator: 'PDF 物理第 14 页',
+        text: 'FFR ≤0.80 or iFR ≤0.89 is useful for clinical decision-making; PCI should not be performed in patients without ischemia.',
+      }],
+      conclusions: [
+        {
+          kind: 'functional-ischemia-evaluation',
+          applicability: 'conditional',
+          text: '造影记录 FFR 0.86 > 0.80，未达功能性缺血介入界值。',
+          citations: [{ evidenceId: 'coronary-10-2021-p14', quote: 'FFR ≤0.80 or iFR ≤0.89 is useful for clinical decision-making' }],
+        },
+        {
+          kind: 'revascularization-vs-gdmt',
+          applicability: 'conditional',
+          text: '无缺血证据时不宜行 PCI，宜优先强化药物保守治疗。',
+          citations: [{ evidenceId: 'coronary-10-2021-p14', quote: 'PCI should not be performed in patients without ischemia.' }],
+        },
+        {
+          kind: 'modality-and-anatomy-scope',
+          applicability: 'conditional',
+          text: '解剖范围与左室收缩功能仍待结合心超核对。',
+          citations: [{ evidenceId: 'coronary-10-2021-p14', quote: 'FFR ≤0.80 or iFR ≤0.89 is useful for clinical decision-making' }],
+        },
+      ],
+      limitations: ['固定 2021/2018 版来源，未涵盖急诊心源性休克等全部复杂解剖分支。'],
+    },
+  })
+
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname === '/api/auth/context') return Response.json(session)
+    if (url.pathname.endsWith('/guideline-topics')) {
+      const topicId = url.searchParams.get('topicId') ?? 'contrast-kidney-hydration'
+      if (topicId === 't2dm-renal-medication') {
+        return Response.json({
+          encounterId: admission.id,
+          evaluatedAt: '2026-08-24T10:00:00+08:00',
+          items: [{
+            topic: {
+              id: 't2dm-renal-medication',
+              version: '2026-11-17.r1',
+              fingerprint: '4'.repeat(64),
+              specialty: 'endocrinology',
+              titleZh: '2 型糖尿病合并慢性肾脏病降糖与心肾保护用药',
+              titleEn: 'T2DM & CKD medication',
+            },
+            status: 'unavailable',
+            population: 'adult',
+            navigation: '导航说明',
+            degradedReason: '指南物理第7页未完整保留本专题所需条款与限定语，停止使用专题。',
+            guidelines: [],
+            limitations: ['仅覆盖成人 2 型糖尿病合并 CKD。'],
+            patientIndicators: [],
+            missingPatientInputs: ['缺少近期糖化血红蛋白（HbA1c）检验记录。'],
+            missingSources: ['指南物理第7页未完整保留本专题所需条款与限定语，停止使用专题。'],
+          }],
+        })
+      }
+      return Response.json({
+        encounterId: admission.id,
+        evaluatedAt: '2026-08-24T10:00:00+08:00',
+        items: [{
+          topic: {
+            id: topicId,
+            version: '2026-11-17.r1',
+            fingerprint: '5'.repeat(64),
+            specialty: 'cardiology',
+            titleZh: topicId === 'coronary-revascularization-indication' ? '冠脉血运重建指征与功能学缺血评估' : '对比剂急性肾损伤预防与围术期水化',
+            titleEn: topicId,
+          },
+          status: 'available',
+          population: 'adult',
+          navigation: '导航说明',
+          degradedReason: null,
+          guidelines: [{
+            id: `${topicId}-p1`,
+            title: '合成核验指南原文',
+            publisher: '合成发布机构',
+            documentType: 'guideline',
+            version: '2021',
+            url: 'https://example.test/guideline',
+            scope: '仅供合成测试',
+            sourceHash: '6'.repeat(64),
+            locator: 'PDF 物理第 4 页',
+            text: '肾功能不全或高危患者，推荐水化预防；24小时最大剂量不超过500 ml。',
+          }],
+          limitations: ['重度左心衰竭患者水化须由临床医生个体化控制容量。'],
+          patientIndicators: [{
+            code: 'coronary-angiography',
+            labelZh: '冠脉造影解剖狭窄与功能学评估',
+            labelEn: 'Coronary angiography & FFR/iFR',
+            status: 'present',
+            valueText: '最高狭窄 65% · 最低 FFR 0.86（> 0.80 保守治疗范围）',
+            sourceReference: 'Procedure/proc-1',
+            versionId: '2',
+          }],
+          missingPatientInputs: ['缺少术前血肌酐与 eGFR 危险分层依据。'],
+          missingSources: [],
+        }],
+      })
+    }
+    if (url.pathname.endsWith('/guideline-advice')) {
+      const topicId = url.searchParams.get('topicId')
+      if (topicId === 'coronary-revascularization-indication') {
+        return Response.json({ admissionId: admission.id, advice: [revascAdvice] })
+      }
+      if (topicId === 'pci-stent') {
+        return Response.json({
+          admissionId: admission.id,
+          advice: [
+            { ...hydrationAdvice, topicId: 'pci-stent' as const },
+            ready,
+          ],
+        })
+      }
+      return Response.json({
+        admissionId: admission.id,
+        advice: [{ ...hydrationAdvice, topicId: (topicId ?? 'contrast-kidney-hydration') as typeof hydrationAdvice.topicId }],
+      })
+    }
+    if (url.pathname.endsWith('/guideline-advice/request')) {
+      posts.push({ path: url.pathname, input: JSON.parse(String(init?.body)).input })
+      hydrationAdvice = { ...hydrationAdvice, version: 1, status: 'queued', message: '正在准备指南参考意见。' }
+      return Response.json({ data: hydrationAdvice, requestId: 'cmd-1', auditId: 'aud-1', effects: [], warnings: [] })
+    }
+    throw new Error(`Unexpected request ${url}`)
+  }))
+
+  mount({ enableTopicPicker: true, requestId: undefined })
+  await screen.findByText('原文已核验 · 零AI调用')
+  expect(screen.getByText(/最低 FFR 0.86/)).toBeDefined()
+  await userEvent.setup().click(screen.getByText(/查看经核验指南原文段落/))
+  expect(screen.getByText(/24小时最大剂量不超过500 ml/)).toBeDefined()
+
+  await userEvent.setup().click(screen.getByRole('button', { name: '按当前依据重新评估指南' }))
+  await screen.findByText('正在准备指南参考意见。')
+  expect(posts).toEqual([{
+    path: `/api/his/v1/inpatient/admissions/${admission.id}/guideline-advice/request`,
+    input: {
+      topicId: 'contrast-kidney-hydration',
+      requestId: null,
+      expectedVersion: 0,
+      expectedFingerprint: '1'.repeat(64),
+    },
+  }])
+
+  // Switch to FFR > 0.80 conservative revascularization topic
+  await userEvent.setup().selectOptions(screen.getByLabelText('指南专题'), 'coronary-revascularization-indication')
+  await screen.findByText('造影记录 FFR 0.86 > 0.80，未达功能性缺血介入界值。')
+  expect(screen.getByText('血运重建与药物保守治疗指征')).toBeDefined()
+
+  // Switch to pci-stent when a surgery-bound PCI plan exists -> displays the surgery-bound PCI advice
+  await userEvent.setup().selectOptions(screen.getByLabelText('指南专题'), 'pci-stent')
+  await screen.findByText(ready.result!.conclusions[0]!.text)
+
+  // Switch to unavailable degraded topic
+  await userEvent.setup().selectOptions(screen.getByLabelText('指南专题'), 't2dm-renal-medication')
+  await screen.findByText('本专题原文暂不可用')
+  expect(screen.getByText(/未完整保留本专题所需条款与限定语/)).toBeDefined()
+})
+
+it('专题选择器在仅存在已取消历史PCI计划时保留住院级 pci-stent 意见（requestId: null）供访问与重评', async () => {
+  const cancelledPlanAdvice = inpatientGuidelineAdviceSchema.parse({
+    ...ready,
+    message: '手术计划已取消，指南参考意见停止准备。',
+    result: null,
+    status: 'cancelled',
+  })
+  const admissionLevelPciAdvice = inpatientGuidelineAdviceSchema.parse({
+    ...ready,
+    fingerprint: '9'.repeat(64),
+    message: '住院级 PCI 选型条件意见已准备。',
+    requestId: null,
+    result: { ...ready.result!, fingerprint: '9'.repeat(64) },
+    topicId: 'pci-stent',
+    version: 2,
+  })
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url, 'http://localhost')
+    if (url.pathname.endsWith('/guideline-topics')) {
+      const topicId = (url.searchParams.get('topicId') ?? 'contrast-kidney-hydration') as GuidelineTopicId
+      return Response.json({
+        encounterId: admission.id,
+        evaluatedAt: '2026-08-24T10:00:00+08:00',
+        items: [{
+          degradedReason: null,
+          guidelines: [],
+          limitations: [],
+          missingPatientInputs: [],
+          missingSources: [],
+          navigation: '导航说明',
+          patientIndicators: [],
+          population: 'adult',
+          status: 'available',
+          topic: {
+            fingerprint: 'a'.repeat(64),
+            id: topicId,
+            specialty: topicId === 't2dm-renal-medication' ? 'endocrinology' : 'cardiology',
+            titleEn: topicId,
+            titleZh: topicId,
+            version: '2026-11-17.r1',
+          },
+        }],
+      })
+    }
+    if (url.pathname.endsWith('/guideline-advice')) {
+      return Response.json({
+        admissionId: admission.id,
+        advice: [admissionLevelPciAdvice, cancelledPlanAdvice],
+      })
+    }
+    throw new Error(`Unexpected request ${url}`)
+  }))
+
+  mount({ enableTopicPicker: true, requestId: undefined })
+  await userEvent.setup().selectOptions(await screen.findByLabelText('指南专题'), 'pci-stent')
+  await screen.findByText('住院级 PCI 选型条件意见已准备。')
+  expect(screen.queryByText('手术计划已取消，指南参考意见停止准备。')).toBeNull()
+  expect(screen.getByText(ready.result!.conclusions[0]!.text)).toBeDefined()
 })

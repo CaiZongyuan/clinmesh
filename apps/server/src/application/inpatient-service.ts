@@ -15,6 +15,7 @@ import type { ReferenceDataService } from './reference-data-service.ts'
 import { InpatientBilling } from './inpatient-billing.ts'
 import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.ts'
 import { InpatientInsuranceAdjustments } from './inpatient-insurance-adjustments.ts'
+import type { InpatientRiskAssessmentInput, InpatientVitalSignsInput } from '@clinmesh/contracts/clinical-scores'
 import { InpatientOrders } from './inpatient-orders.ts'
 import { InpatientCatalogSearch } from './inpatient-catalog-search.ts'
 import { InpatientPciSelection } from './inpatient-pci-selection.ts'
@@ -106,6 +107,15 @@ export class InpatientService {
     this.surgeryRequestReasons = new InpatientSurgeryRequestReason(this, estimateContextStatus)
     this.drgExplanations = new InpatientDrgExplanation(this, estimateContextStatus)
     this.intraoperativeReviews = new InpatientIntraoperativeReview(this)
+  }
+  recordVitalSigns(context: ActorContext, input: InpatientVitalSignsInput, idempotencyKey: string) {
+    return this.workflow.clinicalScores.recordInpatientVitalSigns(this, context, input, idempotencyKey)
+  }
+  recordRiskAssessment(context: ActorContext, input: InpatientRiskAssessmentInput, idempotencyKey: string) {
+    return this.workflow.clinicalScores.recordInpatientRiskAssessment(this, context, input, idempotencyKey)
+  }
+  readClinicalScores(context: ActorContext, admissionId: string) {
+    return this.workflow.clinicalScores.readInpatientClinicalScores(this, context, admissionId)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)

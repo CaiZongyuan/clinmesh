@@ -18,6 +18,7 @@ const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionConte
   patientId: z.string().min(1), admissionId: z.string().min(1), action: z.enum(['cancel', 'retry']) }).strict()
 const snapshotSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('laboratory'), request: inpatientInvestigationsSchema.shape.laboratoryRequests.element, sent: z.boolean() }).strict(),
+  z.object({ kind: z.literal('examination'), request: inpatientInvestigationsSchema.shape.examinationRequests.unwrap().element, sent: z.boolean() }).strict(),
   z.object({ kind: z.literal('imaging'), request: inpatientInvestigationsSchema.shape.imagingRequests.element, sent: z.boolean() }).strict(),
 ])
 const rowSchema = z.object({ revision: z.uuid(), selected: z.boolean(), snapshot: snapshotSchema }).strict()
@@ -44,9 +45,10 @@ const commandFor = (scope: Scope, snapshot: InvestigationActionSnapshot) => comm
 export function investigationActionEntries(facts: InvestigationActionFacts): InvestigationActionSnapshot[] {
   const sent = (id: string) => facts.sent.some(item => item.requestId === id)
   return [...facts.laboratoryRequests.map(request => ({ kind: 'laboratory' as const, request, sent: sent(request.id) })),
+    ...facts.examinationRequests.map(request => ({ kind: 'examination' as const, request, sent: sent(request.id) })),
     ...facts.imagingRequests.map(request => ({ kind: 'imaging' as const, request, sent: sent(request.id) }))]
 }
-export const investigationActionName = (snapshot: InvestigationActionSnapshot) => snapshot.kind === 'imaging' ? snapshot.request.service.name
+export const investigationActionName = (snapshot: InvestigationActionSnapshot) => snapshot.kind !== 'laboratory' ? snapshot.request.service.name
   : snapshot.request.laboratoryService?.nameZh ?? snapshot.request.referenceConcept?.display ?? snapshot.request.catalogItemId
 export function investigationActionUnavailable(snapshot: InvestigationActionSnapshot, action: InvestigationAction): boolean {
   return action === 'cancel' ? !((snapshot.request.status === 'issued' && !snapshot.sent) || snapshot.request.status === 'generation-failed')
@@ -179,7 +181,7 @@ export function settleInpatientInvestigationActionAttempt(raw: unknown, key: str
     if (!record || !item || item.status === 'success' || item.status === 'failed') continue
     if (!error) {
       const result = inpatientInvestigationResponseSchema.parse(response), original = item.row.snapshot.request
-      const current = (item.row.snapshot.kind === 'laboratory' ? result.data.laboratoryRequests : result.data.imagingRequests).find(entry => entry.id === original.id)
+      const current = (item.row.snapshot.kind === 'laboratory' ? result.data.laboratoryRequests : item.row.snapshot.kind === 'examination' ? result.data.examinationRequests : result.data.imagingRequests).find(entry => entry.id === original.id)
       const taskVersion = String(BigInt(original.taskVersion) + 1n), serviceVersion = scope.data.action === 'cancel'
         ? String(BigInt(original.serviceRequestVersion) + 1n) : original.serviceRequestVersion
       if (result.data.admissionId !== scope.data.admissionId || current?.status !== (scope.data.action === 'cancel' ? 'cancelled' : 'in-progress')

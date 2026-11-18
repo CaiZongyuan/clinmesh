@@ -8,6 +8,8 @@ import {
   type SetDoctorConsiderationDispositionRequest,
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
+import { doctorInpatientHistoryRecordSchema } from '@clinmesh/contracts/agent'
+import { InpatientHistorySummary } from './doctor-history-panel.tsx'
 import type { PathologySourceProcedure } from '@clinmesh/contracts/pathology'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
@@ -83,7 +85,7 @@ function complete(item: PreparationDraft) {
 }
 function frequencyLabel(code: string | null, zh: boolean) {
   const messages = getWorkspaceMessages(zh ? 'zh-CN' : 'en-US')
-  const labels: Record<string, string> = { QD: messages.frequency_QD, BID: messages.frequency_BID, PRN: messages.frequency_PRN }
+  const labels: Record<string, string> = { QD: messages.frequency_QD, BID: messages.frequency_BID, TID: messages.frequency_TID, QN: messages.frequency_QN, ONCE: messages.frequency_ONCE, PRN: messages.frequency_PRN }
   return code === null || code.trim() === '' ? messages.recommendationFieldPending : labels[code] ?? code
 }
 function indicationLabel(code: string, zh: boolean) {
@@ -129,12 +131,13 @@ function EvidenceContent({ source, locale }: { source: DoctorCaseEvidence; local
       {(parsed as { entries: unknown[] }).entries.map((entry, index) => {
         const item = entry as { entryId?: unknown; clinicalDate?: unknown; title?: unknown; fieldPath?: unknown; record?: unknown }
         const record = typeof item.record === 'object' && item.record !== null ? item.record as Record<string, unknown> : undefined
+        const inpatient = doctorInpatientHistoryRecordSchema.safeParse(record)
         const date = typeof item.clinicalDate === 'string' ? item.clinicalDate : typeof record?.completedAt === 'string' ? record.completedAt : undefined
         const key = `${typeof item.entryId === 'string' ? item.entryId : index}:${typeof item.fieldPath === 'string' ? item.fieldPath : ''}`
         const title = [typeof item.title === 'string' && item.title.length > 0 ? item.title : undefined,
           typeof item.fieldPath === 'string' ? item.fieldPath : undefined].find(value => value !== undefined) ?? (typeof item.entryId === 'string' ? item.entryId : `${index + 1}`)
         return <li key={key}>{date === undefined ? null : <span className="text-muted-foreground">{formatClinicalDateTime(date, locale)} · </span>}<span>{title}</span>
-          {record === undefined ? null : <details><summary className="cursor-pointer text-xs text-muted-foreground">{zh ? '查看完整记录' : 'View full record'}</summary>
+          {record === undefined ? null : inpatient.success ? <InpatientHistorySummary record={inpatient.data} locale={locale} /> : <details><summary className="cursor-pointer text-xs text-muted-foreground">{zh ? '查看完整记录' : 'View full record'}</summary>
             <p className="font-mono text-xs whitespace-pre-wrap break-all">{JSON.stringify(record, null, 2)}</p></details>}
         </li>
       })}
@@ -654,7 +657,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         {editingFields.map(([field, label]) => {
             const value = field === 'doseText' && activeEditing.value.kind === 'prescription' ? activeEditing.value.doseText : field === 'frequencyCode' && activeEditing.value.kind === 'prescription' ? activeEditing.value.frequencyCode : field === 'courseDays' && activeEditing.value.kind === 'prescription' ? activeEditing.value.courseDays : field === 'quantity' && activeEditing.value.kind === 'prescription' ? activeEditing.value.quantity : field === 'indicationCode' && activeEditing.value.kind === 'laboratory' ? activeEditing.value.indicationCode : field === 'indication' && activeEditing.value.kind === 'imaging' ? activeEditing.value.indication : activeEditing.value.kind === 'pathology' ? activeEditing.value.purpose : ''
             return <Field key={field}><FieldLabel htmlFor={`prepared-${field}`}>{label}</FieldLabel>{field === 'frequencyCode' && activeEditing.value.kind === 'prescription' && activeEditing.value.referenceProduct === undefined
-              ? <WorkspaceSelect id={`prepared-${field}`} value={activeEditing.value.frequencyCode} placeholder={zh ? '请选择频次' : 'Choose frequency'} items={[...new Set(['QD', 'BID', 'PRN', ...activeEditing.value.frequencyCode ? [activeEditing.value.frequencyCode] : []])].map(code => ({ value: code, label: frequencyLabel(code, zh) }))}
+              ? <WorkspaceSelect id={`prepared-${field}`} value={activeEditing.value.frequencyCode} placeholder={zh ? '请选择频次' : 'Choose frequency'} items={[...new Set(['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE', ...activeEditing.value.frequencyCode ? [activeEditing.value.frequencyCode] : []])].map(code => ({ value: code, label: frequencyLabel(code, zh) }))}
                 onValueChange={code => { setEditDirty(true);setEditing(previous => previous?.value.kind === 'prescription' ? { ...previous, value: { ...previous.value, frequencyCode: code } } : previous) }} />
               : field === 'indicationCode' && activeEditing.value.kind === 'laboratory'
                 ? <WorkspaceSelect id={`prepared-${field}`} value={activeEditing.value.indicationCode} items={[...new Set(['clinical-evaluation', 'fever', activeEditing.value.indicationCode])].map(code => ({ value: code, label: indicationLabel(code, zh) }))}

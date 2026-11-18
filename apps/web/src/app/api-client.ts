@@ -1,3 +1,8 @@
+import {
+  clinicalScoreBundleSchema,
+  outpatientRiskAssessmentResponseSchema,
+  type ClinicalRiskAssessmentFieldsInput,
+} from '@clinmesh/contracts/clinical-scores'
 import { clearOrderDrafts } from './inpatient-order-drafts.ts'
 import { clearInvestigationDrafts as clearInpatientInvestigationDrafts } from './inpatient-investigation-drafts.ts'
 import { clearInpatientOrderDrafts } from './inpatient-order-batch.ts'
@@ -15,6 +20,13 @@ import { clearSurgeryDrafts } from './inpatient-surgery-draft.ts'
 import { clearReservationDrafts } from './inpatient-reservation-batch.ts'
 import { clearCorrectionDrafts } from './inpatient-correction-batch.ts'
 import {
+  acknowledgeExaminationReportResponseSchema,
+  caseExaminationServiceCatalogSchema,
+  examinationRequestActionResponseSchema,
+  examinationRequestDraftResponseSchema,
+  issueExaminationRequestResponseSchema,
+  type ExaminationRequest,
+  type ExaminationReport,
   acknowledgeImagingReportResponseSchema,
   caseImagingServiceCatalogSchema,
   correctImagingReportResponseSchema,
@@ -730,6 +742,108 @@ export function getImagingStudyBlock(studyId: string, blockPath: string, signal?
   return apiGetBinary(`/api/his/v1/imaging-studies/${encodeURIComponent(studyId)}/${blockPath}`, signal)
 }
 
+export function getCaseExaminationServices(caseId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/examination-services`,
+    caseExaminationServiceCatalogSchema,
+    signal,
+  )
+}
+
+export function saveExaminationRequestDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+  indication: string
+  serviceId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/examination-request/draft`,
+    examinationRequestDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {
+        expectedDraftVersion: input.expectedDraftVersion,
+        indication: input.indication,
+        serviceId: input.serviceId,
+      },
+    },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function deleteExaminationRequestDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/examination-request/draft`,
+    examinationRequestDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey, method: 'DELETE' },
+  )
+}
+
+export function issueExaminationRequest(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/examination-request/actions/issue`,
+    issueExaminationRequestResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+/** 取消与重试都按申请当前的 ServiceRequest、Task 与申请版本提交。 */
+export function cancelExaminationRequest(request: ExaminationRequest, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/examination-requests/${encodeURIComponent(request.id)}/actions/cancel`,
+    examinationRequestActionResponseSchema,
+    {
+      expectedVersions: {
+        [`ServiceRequest/${request.serviceRequestId}`]: request.serviceRequestVersion,
+        [`Task/${request.taskId}`]: request.taskVersion,
+      },
+      input: { expectedRequestVersion: request.version, reasonCode: 'no-longer-needed' },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function retryExaminationRequest(request: ExaminationRequest, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/examination-requests/${encodeURIComponent(request.id)}/actions/retry`,
+    examinationRequestActionResponseSchema,
+    {
+      expectedVersions: { [`Task/${request.taskId}`]: request.taskVersion },
+      input: { expectedRequestVersion: request.version },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function acknowledgeExaminationReport(request: ExaminationRequest, report: ExaminationReport, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/examination-requests/${encodeURIComponent(request.id)}/reports/${encodeURIComponent(report.diagnosticReportId)}/actions/acknowledge`,
+    acknowledgeExaminationReportResponseSchema,
+    {
+      expectedVersions: { [`DiagnosticReport/${report.diagnosticReportId}`]: report.diagnosticReportVersion },
+      input: { expectedRequestVersion: request.version },
+    },
+    { idempotencyKey },
+  )
+}
+
 export function getCaseImagingServices(caseId: string, signal?: AbortSignal) {
   return apiGet(
     `/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/imaging-services`,
@@ -1199,12 +1313,14 @@ export function recordTriage(input: {
   chiefComplaint: string
   encounterId: string
   encounterVersion: string
+  heightCm?: number | undefined
   oxygenSaturationPct: number
   pulseBpm: number
   respirationBpm: number
   taskId: string
   taskVersion: string
   temperatureC: number
+  weightKg?: number | undefined
 }, idempotencyKey: string) {
   return apiMutation(
     `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/actions/record-triage`,
@@ -1218,13 +1334,36 @@ export function recordTriage(input: {
         acuityCode: input.acuityCode,
         bloodPressure: input.bloodPressure,
         chiefComplaint: input.chiefComplaint,
+        ...(input.heightCm === undefined ? {} : { heightCm: input.heightCm }),
         oxygenSaturationPct: input.oxygenSaturationPct,
         pulseBpm: input.pulseBpm,
         respirationBpm: input.respirationBpm,
         temperatureC: input.temperatureC,
+        ...(input.weightKg === undefined ? {} : { weightKg: input.weightKg }),
       },
     },
     { idempotencyKey },
+  )
+}
+
+export function getOutpatientClinicalScores(caseId: string, signal?: AbortSignal) {
+  return apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/clinical-scores`, clinicalScoreBundleSchema, signal)
+}
+
+export function recordOutpatientRiskAssessment(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedRevision: number
+  fields: ClinicalRiskAssessmentFieldsInput
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/risk-assessment`,
+    outpatientRiskAssessmentResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedRevision: input.expectedRevision, fields: input.fields },
+    },
+    { idempotencyKey, method: 'PUT' },
   )
 }
 
@@ -1270,6 +1409,16 @@ export function getDoctorCompletedCase(caseId: string, signal?: AbortSignal) {
     doctorCompletedCaseDetailSchema,
     signal,
   )
+}
+
+export function getDoctorCaseHistory(caseId: string, page: number, signal?: AbortSignal) {
+  const query = new URLSearchParams({ source: 'local-completed', page: String(page), pageSize: '10' })
+  return apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/history?${query}`, doctorCaseHistorySchema, signal)
+}
+
+export function getDoctorCaseHistoryDetail(caseId: string, entryId: string, signal?: AbortSignal) {
+  const query = new URLSearchParams({ source: 'local-completed', entryId })
+  return apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/history/detail?${query}`, doctorCaseHistoryDetailSchema, signal)
 }
 
 export function sendConsultationMessage(input: {
@@ -1953,7 +2102,7 @@ export function signClinicalDocument(input: {
 }
 
 export function getBillingQueue(
-  category: 'laboratory' | 'imaging' | 'pathology' | 'medication',
+  category: 'laboratory' | 'imaging' | 'pathology' | 'examination' | 'medication',
   status: 'ambiguous' | 'declined' | 'paid' | 'pending',
   signal?: AbortSignal,
   page = 1,
@@ -1964,7 +2113,7 @@ export function getBillingQueue(
 
 export function previewPayment(input: {
   caseId: string
-  category: 'laboratory' | 'imaging' | 'pathology' | 'medication'
+  category: 'laboratory' | 'imaging' | 'pathology' | 'examination' | 'medication'
   chargeItemId: string
   chargeVersion: number
   simulatorRule: z.infer<typeof paymentSimulatorRuleSchema>

@@ -822,6 +822,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
           <Input id="registration-visit-date" readOnly className="h-7 w-32 border-0 bg-transparent px-0 text-right font-mono text-sm font-medium text-foreground shadow-none tabular-nums focus-visible:ring-0" value={catalog.data.virtualDate} />
         </Field>
       </FieldGroup>}
+      {selection?.kind === 'patient' && !registrationComplete ? <p className="text-sm text-muted-foreground">{text('使用该患者身份发起新的门诊就诊。已出院患者可在此办理院后门诊复诊，无需重新建档。', 'Start a new outpatient visit with this patient identity. Discharged patients can register a follow-up here without creating another patient record.')}</p> : null}
       {submitRegistration.isError ? <Alert variant="destructive"><AlertTitle>{getWorkspaceErrorTitle(submitRegistration.error, messages, messages.operationFailed)}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(submitRegistration.error, messages)}</AlertDescription></Alert> : null}
     </WorkspaceCard>
   </section>

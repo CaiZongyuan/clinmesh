@@ -19,15 +19,15 @@ const time = '2026-08-24T09:00:00+08:00'
 let fixtureSequence = 0
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); sessionStorage.clear() })
 
-function fixture(mode: 'receive' | 'draft' | 'clock' | 'usage' | 'follow-stop' = 'receive', archived = false) {
+function fixture(mode: 'receive' | 'draft' | 'clock' | 'usage' | 'follow-stop' | 'registered-doctor' = 'receive', archived = false) {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
-  const doctor = mode === 'draft' || mode === 'usage' || mode === 'follow-stop'
+  const doctor = mode === 'draft' || mode === 'usage' || mode === 'follow-stop' || mode === 'registered-doctor'
   const session: SessionContext = { actor: { actorId: 'feedback-actor', workspaceId: 'feedback-workspace', epoch: `feedback-epoch-${++fixtureSequence}`,
     scenarioRunId: 'feedback-run', practitionerRoleId: doctor ? 'feedback-doctor-role' : 'feedback-nurse-role', roleCode: doctor ? 'inpatient-doctor' : 'ward-nurse' },
     user: { id: 'feedback-user', name: '合成工作人员', email: 'feedback@example.test' }, availableRoles: [] }
   const admissions = ['A', 'B'].map(suffix => inpatientAdmissionSchema.parse({ id: `admission-${suffix}`, patientId: `patient-${suffix}`,
     patientName: `合成患者 ${suffix}`, inpatientNumber: `ZY-${suffix}`, admissionRoute: 'direct', wardId: 'feedback-ward', organizationId: 'feedback-hospital',
-    status: doctor ? 'admitted' : 'registered', financialStatus: 'open', recordStatus: archived ? 'archived' : 'open', registeredAt: time, depositFen: 0, chargesFen: 0, outstandingFen: 0, versionId: '1' }))
+    status: doctor && mode !== 'registered-doctor' ? 'admitted' : 'registered', financialStatus: 'open', recordStatus: archived ? 'archived' : 'open', registeredAt: time, depositFen: 0, chargesFen: 0, outstandingFen: 0, versionId: '1' }))
   const catalog = inpatientCatalogSchema.parse({ wards: [{ id: 'feedback-ward', name: '合成病区', organizationId: 'feedback-hospital' }],
     beds: [{ id: 'feedback-bed', wardId: 'feedback-ward', roomId: 'feedback-room', name: '合成床位', dailyPriceFen: 1000 }] })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } })
@@ -162,11 +162,11 @@ it('不带 admissionId 的全局时钟命令保持当前页面的完成反馈合
 
 it.each([false, true])('医生在归档=%s时仍能打开本次住院累计用量，状态不伪装成正常跟进', async archived => {
   const f = fixture('usage', archived)
-  const usageButton = screen.getByRole('button', { name: '本次住院 AI 用量' })
   expect(f.requested.some(url => url.pathname === '/api/model-usage/overview')).toBe(false)
-  await screen.findByText(archived ? '已归档，停止临床分析' : '权限已失效，待交接')
-  if (archived) expect(screen.queryByRole('button', { name: '助手自动跟进' })).toBeNull()
-  await f.user.click(usageButton)
+  await f.user.click(await screen.findByRole('button', { name: `助手自动跟进：${archived ? '已归档，停止临床分析' : '权限已失效，待交接'}` }))
+  const usageItem = await screen.findByRole('menuitem', { name: '本次住院 AI 用量' })
+  if (archived) expect(screen.queryByRole('menuitem', { name: /助手自动跟进/ })).toBeNull()
+  await f.user.click(usageItem)
   const dialog = await screen.findByRole('dialog', { name: '本次住院 AI 用量' })
   expect((await within(dialog).findByLabelText('实际AI请求数')).textContent).toBe('3')
   const overview = f.requested.filter(url => url.pathname === '/api/model-usage/overview')
@@ -179,9 +179,8 @@ it.each([false, true])('医生在归档=%s时仍能打开本次住院累计用�
 
 it('停止跟进提交期间保护关闭，失败后保留理由与弹窗内错误', async () => {
   const f = fixture('follow-stop')
-  const toggle = screen.getByRole('button', { name: '助手自动跟进' })
-  await vi.waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('true'))
-  await f.user.click(toggle)
+  await f.user.click(await screen.findByRole('button', { name: '助手自动跟进：正在跟进' }))
+  await f.user.click(await screen.findByRole('menuitem', { name: '停止助手自动跟进' }))
   const dialog = screen.getByRole('dialog', { name: '停止助手自动跟进' })
   await f.user.type(within(dialog).getByLabelText('停止理由（必填）'), '准备交接给下一班医生')
   await f.user.click(within(dialog).getByRole('button', { name: '确认停止' }))
@@ -193,5 +192,16 @@ it('停止跟进提交期间保护关闭，失败后保留理由与弹窗内错�
   await vi.waitFor(() => expect(screen.getByLabelText('写操作状态').textContent).toBe('error'))
   expect(within(dialog).getByRole('alert')).toBeTruthy()
   expect((within(dialog).getByLabelText('停止理由（必填）') as HTMLInputElement).value).toBe('准备交接给下一班医生')
-  expect(toggle.getAttribute('aria-pressed')).toBe('true')
+  expect(screen.getByRole('button', { name: '助手自动跟进：正在跟进', hidden: true })).toBeTruthy()
+})
+
+it('医生查看待入科患者时不请求跟进状态，按钮显示未跟进且开启项禁用', async () => {
+  const f = fixture('registered-doctor')
+  const banner = screen.getByRole('region', { name: '当前住院患者' })
+  expect(within(banner).getByRole('button', { name: '助手自动跟进：未跟进' })).toBeTruthy()
+  expect(banner.textContent).not.toContain('正在读取跟进状态')
+  await f.user.click(within(banner).getByRole('button', { name: '助手自动跟进：未跟进' }))
+  expect((await screen.findByRole('menuitem', { name: '开启助手自动跟进' })).getAttribute('aria-disabled')).toBe('true')
+  expect(screen.getByRole('menuitem', { name: '本次住院 AI 用量' }).getAttribute('aria-disabled')).not.toBe('true')
+  expect(f.requested.some(url => url.pathname.endsWith('/drg/followup'))).toBe(false)
 })

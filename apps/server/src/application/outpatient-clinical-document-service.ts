@@ -208,12 +208,12 @@ export interface OutpatientClinicalDocumentHost {
     patientId: string,
     medications: Array<{ code: string; name_en?: string; name_zh?: string }>,
   ): void
-  assertMedicationCatalogRules(medications: MedicationRuleSelection[]): void
+  assertMedicationCatalogRules(medications: MedicationRuleSelection[], diagnosisCodes?: readonly string[]): void
   openRequestStatuses(context: ActorContext, caseId: string): ClinicalRequestStatus[]
   pendingInvestigationDraftTarget(
     context: ActorContext,
     caseId: string,
-  ): 'laboratory' | 'imaging' | 'pathology' | undefined
+  ): 'laboratory' | 'imaging' | 'pathology' | 'examination' | undefined
   medicationCompletionStatus(
     context: ActorContext,
     caseId: string,
@@ -359,6 +359,11 @@ export class OutpatientClinicalDocumentService {
     const requiredReportsAcknowledged = this.#host
       .openRequestStatuses(context, outpatientCase.case_id)
       .every(status => status === 'acknowledged')
+    const pendingReport = z.object({ request_kind: z.enum(['laboratory', 'imaging', 'pathology', 'examination']) }).optional().parse(
+      this.#context.database.driver.prepare(`SELECT request_kind FROM laboratory_request
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status NOT IN ('cancelled', 'acknowledged')
+        ORDER BY authored_at, request_id LIMIT 1`).get(context.workspaceId, context.epoch, outpatientCase.case_id),
+    )
     const medicationStatus = this.#host.medicationCompletionStatus(
       context,
       outpatientCase.case_id,
@@ -417,7 +422,7 @@ export class OutpatientClinicalDocumentService {
         statusText: requiredReportsAcknowledged
           ? '必要报告已全部确认已阅'
           : '待确认必要报告已阅',
-        target: 'laboratory' as const,
+        target: pendingReport?.request_kind ?? 'laboratory',
       },
       {
         code: 'medication-conclusion-recorded' as const,
@@ -622,9 +627,11 @@ export class OutpatientClinicalDocumentService {
       this.#host.assertMedicationCatalogRules(medicationCatalog.map(medication => ({
         catalogItemId: medication.catalogItemId,
         configJson: medication.catalog.config_json,
+        courseDays: medication.courseDays,
         doseText: medication.doseText,
         frequencyCode: medication.frequencyCode,
-      })))
+        quantity: medication.quantity,
+      })), [input.draft.diagnosis.code])
       this.#host.assertMedicationAllergies(
         input.context,
         outpatientCase.patient_id,
@@ -996,7 +1003,7 @@ export class OutpatientClinicalDocumentService {
       }
       const medications = this.#context.database.driver.prepare(`
         SELECT item.medication_request_id, item.medication_id, item.quantity,
-          item.dose_text, item.frequency_code, catalog.code, catalog.config_json,
+          item.dose_text, item.frequency_code, item.course_days, catalog.code, catalog.config_json,
           catalog.name_zh, catalog.name_en, catalog.price_fen
         FROM prescription_item AS item
         JOIN outpatient_catalog AS catalog
@@ -1009,6 +1016,7 @@ export class OutpatientClinicalDocumentService {
       `).all(input.context.workspaceId, input.context.epoch, prescription?.prescription_id) as Array<{
         code: string
         config_json: string
+        course_days: number
         dose_text: string
         frequency_code: string
         medication_id: string
@@ -1019,19 +1027,21 @@ export class OutpatientClinicalDocumentService {
         quantity: number
       }>
       if (medications.length === 0) throw new WorkflowError('CATALOG_CONFLICT', 'The prescription has no active medication')
-      this.#host.assertMedicationCatalogRules(medications.map(medication => ({
-        catalogItemId: medication.medication_id,
-        configJson: medication.config_json,
-        doseText: medication.dose_text,
-        frequencyCode: medication.frequency_code,
-      })))
-      this.#host.assertMedicationAllergies(input.context, outpatientCase.patient_id, medications)
       const revisit = revisitDraftContentSchema.parse(draftMap.get('revisit')?.content_json === undefined
         ? undefined
         : JSON.parse(draftMap.get('revisit')?.content_json ?? ''))
       const document = documentDraftContentSchema.parse(draftMap.get('document')?.content_json === undefined
         ? undefined
         : JSON.parse(draftMap.get('document')?.content_json ?? ''))
+      this.#host.assertMedicationCatalogRules(medications.map(medication => ({
+        catalogItemId: medication.medication_id,
+        configJson: medication.config_json,
+        courseDays: medication.course_days,
+        doseText: medication.dose_text,
+        frequencyCode: medication.frequency_code,
+        quantity: medication.quantity,
+      })), [revisit.diagnosis.code])
+      this.#host.assertMedicationAllergies(input.context, outpatientCase.patient_id, medications)
       const medicationTotalFen = medications.reduce(
         (total, medication) => total + medication.price_fen * medication.quantity,
         0,
@@ -1208,7 +1218,7 @@ export class OutpatientClinicalDocumentService {
       )
       const medicationRows = this.#context.database.driver.prepare(`
         SELECT item.medication_request_id, item.medication_id, item.quantity,
-          item.dose_text, item.frequency_code, catalog.name_zh, catalog.name_en,
+          item.dose_text, item.frequency_code, item.course_days, catalog.name_zh, catalog.name_en,
           catalog.code, catalog.config_json, catalog.price_fen
         FROM prescription_item AS item
         JOIN outpatient_catalog AS catalog
@@ -1220,6 +1230,7 @@ export class OutpatientClinicalDocumentService {
         WHERE item.workspace_id = ? AND item.epoch = ? AND item.prescription_id = ?
         ORDER BY item.medication_request_id
       `).all(input.context.workspaceId, input.context.epoch, preview.prescription_id) as Array<{
+        course_days: number
         dose_text: string
         code: string
         config_json: string
@@ -1234,9 +1245,11 @@ export class OutpatientClinicalDocumentService {
       this.#host.assertMedicationCatalogRules(medicationRows.map(medication => ({
         catalogItemId: medication.medication_id,
         configJson: medication.config_json,
+        courseDays: medication.course_days,
         doseText: medication.dose_text,
         frequencyCode: medication.frequency_code,
-      })))
+        quantity: medication.quantity,
+      })), [revisitDraft.diagnosis.code])
       const medicationTotalFen = medicationRows.reduce(
         (total, medication) => total + medication.price_fen * medication.quantity,
         0,
