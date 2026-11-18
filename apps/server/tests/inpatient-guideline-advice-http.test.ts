@@ -1169,7 +1169,7 @@ it('无 PCI 手术申请的内科住院可按专题完成术前水化、FFR > 0.
     result: null,
   })
 
-  // Re-evaluate hydration after vitals, then depart -> status transitions to 'frozen' WITH read-only result preserved!
+  // Re-evaluate hydration after vitals, verify active confirmed medication AllergyIntolerance invalidates basis & enters clinicalFacts, then depart!
   const hydrationRefresh = await s.fixture.request('inpatient-doctor', `${medicalStay.path}/guideline-advice/request`, {
     expectedFingerprint: hydrationAfterVitals.advice[0]!.fingerprint,
     expectedVersion: 1,
@@ -1178,6 +1178,91 @@ it('无 PCI 手术申请的内科住院可按专题完成术前水化、FFR > 0.
   })
   expect(hydrationRefresh.status).toBe(200)
   await s.fixture.runtime.dispatchPending()
+
+  const activeScenario = await s.fixture.read('admin', '/api/sim/v1/scenario-runs/current', z.object({ epoch: z.string(), workspaceId: z.string() }))
+  const allergyId = randomUUID()
+  const createdAllergy = s.fixture.runtime.fhir.create({ epoch: activeScenario.epoch, workspaceId: activeScenario.workspaceId }, {
+    category: ['medication'],
+    clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical' }] },
+    code: { coding: [{ code: 'clopidogrel', display: '氯吡格雷' }], text: '氯吡格雷' },
+    id: allergyId,
+    patient: { reference: `Patient/${medicalStay.patientId}` },
+    recordedDate: '2026-08-24T11:30:00+08:00',
+    resourceType: 'AllergyIntolerance',
+    verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-verification' }] },
+  })
+  const hydrationAfterAllergyAdd = await s.fixture.read(
+    'inpatient-doctor',
+    `${medicalStay.path}/guideline-advice?topicId=contrast-kidney-hydration`,
+    inpatientGuidelineAdviceListSchema,
+  )
+  expect(hydrationAfterAllergyAdd.advice[0]).toMatchObject({
+    requestId: null,
+    result: null,
+    status: 'stale',
+    topicId: 'contrast-kidney-hydration',
+  })
+  const hydrationRefreshWithAllergy = await s.fixture.request('inpatient-doctor', `${medicalStay.path}/guideline-advice/request`, {
+    expectedFingerprint: hydrationAfterAllergyAdd.advice[0]!.fingerprint,
+    expectedVersion: 2,
+    requestId: null,
+    topicId: 'contrast-kidney-hydration',
+  })
+  expect(hydrationRefreshWithAllergy.status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  expect(modelInput.parse(s.calls.at(-2)!.input).clinicalFacts).toMatchObject({
+    medicationAllergies: [
+      expect.objectContaining({
+        codes: ['clopidogrel'],
+        criticality: null,
+        display: '氯吡格雷',
+        id: allergyId,
+        versionId: '1',
+      }),
+    ],
+  })
+
+  s.fixture.runtime.fhir.update(
+    { epoch: activeScenario.epoch, workspaceId: activeScenario.workspaceId },
+    {
+      ...createdAllergy,
+      criticality: 'high',
+      reaction: [{ description: '严重皮疹伴支气管痉挛' }],
+    },
+    createdAllergy.meta!.versionId!,
+  )
+  const hydrationAfterAllergyUpdate = await s.fixture.read(
+    'inpatient-doctor',
+    `${medicalStay.path}/guideline-advice?topicId=contrast-kidney-hydration`,
+    inpatientGuidelineAdviceListSchema,
+  )
+  expect(hydrationAfterAllergyUpdate.advice[0]).toMatchObject({
+    requestId: null,
+    result: null,
+    status: 'stale',
+    topicId: 'contrast-kidney-hydration',
+  })
+  const hydrationFinalRefresh = await s.fixture.request('inpatient-doctor', `${medicalStay.path}/guideline-advice/request`, {
+    expectedFingerprint: hydrationAfterAllergyUpdate.advice[0]!.fingerprint,
+    expectedVersion: 3,
+    requestId: null,
+    topicId: 'contrast-kidney-hydration',
+  })
+  expect(hydrationFinalRefresh.status).toBe(200)
+  await s.fixture.runtime.dispatchPending()
+  expect(modelInput.parse(s.calls.at(-2)!.input).clinicalFacts).toMatchObject({
+    medicationAllergies: [
+      expect.objectContaining({
+        codes: ['clopidogrel'],
+        criticality: 'high',
+        display: '氯吡格雷',
+        id: allergyId,
+        reactionText: '严重皮疹伴支气管痉挛',
+        versionId: '2',
+      }),
+    ],
+  })
+
   await s.fixture.depart(medicalStay)
   const hydrationAfterDepart = await s.fixture.read(
     'inpatient-doctor',
@@ -1205,7 +1290,7 @@ it('无 PCI 手术申请的内科住院可按专题完成术前水化、FFR > 0.
     requestId: null,
     status: 'frozen',
     topicId: 'contrast-kidney-hydration',
-    version: 2,
+    version: 4,
     result: {
       conclusions: [
         { kind: 'renal-risk-stratification' },

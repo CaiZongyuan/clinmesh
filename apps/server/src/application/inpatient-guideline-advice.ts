@@ -159,6 +159,16 @@ const supplementaryIndicatorsSchema = z.object({
   }).strict().nullable(),
 }).strict()
 
+const medicationAllergyFactSchema = z.object({
+  id: z.string(),
+  versionId: z.string(),
+  codes: z.array(z.string()),
+  display: z.string(),
+  criticality: z.string().nullable(),
+  reactionText: z.string().nullable(),
+  noteText: z.string().nullable(),
+}).strict()
+
 const admissionTopicFactsSchema = z.object({
   request: z.null(),
   diagnosis: inpatientDiagnosisSchema,
@@ -176,6 +186,7 @@ const admissionTopicFactsSchema = z.object({
     duration: true,
     state: true,
   })),
+  medicationAllergies: z.array(medicationAllergyFactSchema).optional(),
   latestVitalSigns: inpatientVitalSignsRecordSchema.nullable(),
 }).strict()
 
@@ -394,6 +405,13 @@ export class InpatientGuidelineAdvice {
         id: order.id,
         state: order.state,
       }))
+    const medicationAllergies = this.#medicationAllergies(
+      context,
+      admissionId,
+      binding.patientId,
+      referenceIso,
+      isArchivedCutoff,
+    )
 
     const input: BasisInput = {
       topic: sourceRead.topic,
@@ -404,6 +422,7 @@ export class InpatientGuidelineAdvice {
         activeMedicationOrders,
         angiographyReports: angiographyReports.map(r => ({ id: r.id, version: r.version })),
         diagnosisRevision: diagnosis.revision,
+        medicationAllergies,
         population,
         scores: scores.scores,
         supplementaryIndicators,
@@ -418,6 +437,7 @@ export class InpatientGuidelineAdvice {
         riskAssessment: scores.riskAssessment,
         supplementaryIndicators,
         activeMedicationOrders,
+        medicationAllergies,
         latestVitalSigns,
       },
     }
@@ -428,6 +448,121 @@ export class InpatientGuidelineAdvice {
       input,
       requestStatus: null as 'requested' | 'cancelled' | null,
     }
+  }
+
+  #medicationAllergies(
+    context: ActorContext,
+    admissionId: string,
+    patientId: string,
+    referenceIso: string,
+    isArchivedCutoff: boolean,
+  ): Array<z.infer<typeof medicationAllergyFactSchema>> {
+    const cutoffMs = /^\d{4}-\d{2}-\d{2}$/.test(referenceIso)
+      ? Date.parse(`${referenceIso}T23:59:59.999+08:00`)
+      : Date.parse(referenceIso)
+    const parseTs = (iso: string | undefined): number | undefined => {
+      if (!iso) return undefined
+      const ms = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? Date.parse(`${iso}T00:00:00+08:00`) : Date.parse(iso)
+      return Number.isFinite(ms) ? ms : undefined
+    }
+    const encounterStartCache = new Map<string, number | undefined>()
+    const resolveExternalEncounterStartMs = (encRef: string | undefined): number | undefined => {
+      const encId = encRef?.startsWith('Encounter/') ? encRef.slice('Encounter/'.length) : undefined
+      if (!encId) return undefined
+      if (encounterStartCache.has(encId)) return encounterStartCache.get(encId)
+      let startMs: number | undefined
+      try {
+        const enc = z.object({
+          actualPeriod: z.object({ start: z.string().optional() }).loose().optional(),
+          plannedStartDate: z.string().optional(),
+        }).loose().safeParse(this.owner.fhir.read(context, 'Encounter', encId))
+        if (enc.success) startMs = parseTs(enc.data.actualPeriod?.start ?? enc.data.plannedStartDate)
+      } catch {
+        startMs = undefined
+      }
+      encounterStartCache.set(encId, startMs)
+      return startMs
+    }
+
+    const items: Array<z.infer<typeof medicationAllergyFactSchema>> = []
+    const params = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
+    for (;;) {
+      const page = this.owner.fhir.search(context, 'AllergyIntolerance', params)
+      for (const raw of page.resources) {
+        const parsed = z.object({
+          category: z.array(z.string()).optional(),
+          clinicalStatus: z.object({ coding: z.array(z.object({ code: z.string().optional() }).loose()).optional() }).loose().optional(),
+          code: z.object({
+            coding: z.array(z.object({ code: z.string().optional(), display: z.string().optional() }).loose()).optional(),
+            text: z.string().optional(),
+          }).loose().optional(),
+          criticality: z.string().optional(),
+          encounter: z.object({ reference: z.string().optional() }).loose().optional(),
+          id: z.string().min(1),
+          meta: z.object({ versionId: z.string().optional() }).loose().optional(),
+          note: z.array(z.object({ text: z.string().optional() }).loose()).optional(),
+          onsetDateTime: z.string().optional(),
+          onsetPeriod: z.object({ start: z.string().optional() }).loose().optional(),
+          reaction: z.array(z.object({
+            description: z.string().optional(),
+            manifestation: z.array(z.object({
+              coding: z.array(z.object({ display: z.string().optional() }).loose()).optional(),
+              concept: z.object({
+                coding: z.array(z.object({ display: z.string().optional() }).loose()).optional(),
+                text: z.string().optional(),
+              }).loose().optional(),
+              text: z.string().optional(),
+            }).loose()).optional(),
+          }).loose()).optional(),
+          recordedDate: z.string().optional(),
+          verificationStatus: z.object({ coding: z.array(z.object({ code: z.string().optional() }).loose()).optional() }).loose().optional(),
+        }).loose().safeParse(raw)
+        if (!parsed.success) continue
+        const value = parsed.data
+        if (
+          !value.category?.includes('medication')
+          || !value.clinicalStatus?.coding?.some(item => item.code === 'active')
+          || !value.verificationStatus?.coding?.some(item => item.code === 'confirmed')
+        ) {
+          continue
+        }
+        const isCurrentEnc = value.encounter?.reference === `Encounter/${admissionId}`
+        if (!isCurrentEnc && Number.isFinite(cutoffMs)) {
+          const tsMs =
+            parseTs(value.recordedDate ?? value.onsetDateTime ?? value.onsetPeriod?.start)
+            ?? resolveExternalEncounterStartMs(value.encounter?.reference)
+          if (tsMs === undefined ? isArchivedCutoff : tsMs > cutoffMs) continue
+        }
+        const coding = value.code?.coding ?? []
+        const codes = [...new Set(coding.map(c => c.code?.trim() ?? '').filter(Boolean))].sort((a, b) => a.localeCompare(b))
+        const display = (value.code?.text ?? coding[0]?.display ?? coding[0]?.code ?? '药物过敏').trim().slice(0, 240)
+        const criticality = value.criticality?.trim() ? value.criticality.trim().slice(0, 64) : null
+        const reactionParts = (value.reaction ?? []).flatMap(r => [
+          ...(r.manifestation ?? []).flatMap(m => [
+            m.text,
+            m.concept?.text,
+            ...(m.coding ?? []).map(c => c.display),
+            ...(m.concept?.coding ?? []).map(c => c.display),
+          ]),
+          r.description,
+        ]).map(s => s?.trim() ?? '').filter(Boolean)
+        const reactionText = reactionParts.length > 0 ? [...new Set(reactionParts)].join('；').slice(0, 240) : null
+        const noteParts = (value.note ?? []).map(n => n.text?.trim() ?? '').filter(Boolean)
+        const noteText = noteParts.length > 0 ? noteParts.join('；').slice(0, 240) : null
+        items.push({
+          codes,
+          criticality,
+          display,
+          id: value.id,
+          noteText,
+          reactionText,
+          versionId: value.meta?.versionId ?? '1',
+        })
+      }
+      if (page.nextCursor === undefined) break
+      params.set('_cursor', page.nextCursor)
+    }
+    return items.sort((a, b) => a.id.localeCompare(b.id))
   }
 
   #state(
