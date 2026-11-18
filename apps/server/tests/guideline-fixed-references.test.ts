@@ -261,6 +261,13 @@ it('六个注册 Guideline Topic 均通过精确 SHA-256、物理页码、软连
   expect(matchApplicableGuidelineTopicIds('急性胸痛：无；ACS（已排除）；ACS 已排除；2 型糖尿病：否认；未行支架选型；未使用对比剂；否认双抗用药史')).toEqual([])
   expect(matchApplicableGuidelineTopicIds('Patient denies acute chest pain; ACS and NSTEMI ruled out; STEMI was excluded; no history of T2DM')).toEqual([])
   expect(matchApplicableGuidelineTopicIds('Presenting with STEMI but T2DM ruled out')).toEqual(['acute-chest-pain-acs'])
+  const largeHistoryStart = performance.now()
+  expect(
+    matchApplicableGuidelineTopicIds(
+      `${'KEEP.'.repeat(50_000)}\n${'history token '.repeat(2_000)} ACS and NSTEMI ruled out`,
+    ),
+  ).toEqual([])
+  expect(performance.now() - largeHistoryStart).toBeLessThan(200)
   expect(
     matchApplicableGuidelineTopicIds(
       JSON.stringify({

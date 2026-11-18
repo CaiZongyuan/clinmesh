@@ -558,29 +558,44 @@ function scrubInactiveJsonEvidenceLines(textCorpus: string): string {
 }
 
 function scrubNegatedTopicClause(clause: string): string {
-  // 1. Scrub term followed by bare negated status parenthetical, e.g. "ACS（已排除）", "T2DM (ruled out)", "急性胸痛（无）"
-  let scrubbed = clause.replace(
-    /(?:2\s*型糖尿病|[A-Za-z0-9._/-]+(?:\s+(?!and\b|but\b|with\b)[A-Za-z0-9._/-]+){0,4}|[^\s，,。；;！!？?"{}[\]但惟（()）]{1,32})\s*[（(]\s*(?:无|否|否认|阴性|未见|(?:已\s*)?(?:排除|除外)|(?:暂\s*)?不考虑|no|none|negative|absent|denied|ruled\s+out|excluded)\s*[）)]/gi,
-    ' ',
-  )
-  // 2. Scrub colon/label status negations before prefix negations consume trailing cues (e.g. "急性胸痛：无", "2 型糖尿病：否认", "ACS: negative")
-  scrubbed = scrubbed.replace(
-    /(?:2\s*型糖尿病|[A-Za-z0-9._/-]+(?:\s+[A-Za-z0-9._/-]+){0,4}|[\u4e00-\u9fff0-9A-Za-z._/-]{1,24})\s*[:：]\s*(?:无|否|否认|阴性|未见|(?:已\s*)?(?:排除|除外)|(?:暂\s*)?不考虑|no|none|negative|absent|denied|ruled\s+out|excluded)(?=$|\s)/gi,
-    ' ',
-  )
-  // 3. Scrub clause-end or passive suffix rule-out negations (e.g. "ACS 已排除", "急性冠脉综合征除外", "NSTEMI was ruled out", "ACS ruled out")
-  scrubbed = scrubbed.replace(
-    /(?:2\s*型糖尿病|[^\s，,。；;！!？?"{}[\]但惟]){1,32}\s*(?<![不未难待没能法以尚]\s*)(?:已\s*)?(?:排除|除外)\s*$/gi,
-    ' ',
-  )
-  scrubbed = scrubbed.replace(
-    /[A-Za-z0-9._/-]+(?:\s+(?!but\b|while\b|however\b|yet\b|though\b|although\b)[A-Za-z0-9._/-]+){0,6}\s+(?:(?:was|is|were|has\s+been|have\s+been)\s+(?<!\b(?:not|never|cannot|can't|could\s+not)\s+)(?:ruled\s+out|excluded)\b|(?<!\b(?:not|never|cannot|can't|could\s+not)\s+)(?:ruled\s+out|excluded)\s*$)/gi,
-    ' ',
-  )
-  // 4. Scrub self-contained negated parentheticals, e.g. "（否认2型糖尿病）"
-  scrubbed = scrubbed.replace(NEGATED_PARENTHETICAL_RE, ' ')
-  // 5. Narrowly scrub "无/未见/没有/否认 ... 禁忌(证)/过敏(史)" without consuming following positive context
-  scrubbed = scrubbed.replace(/(?:无|未见|没有|否认)\s*.*?(?:禁忌证?|过敏史?)/gi, ' ')
+  let scrubbed = clause
+  const hasParen = /[（(]/.test(scrubbed)
+  if (hasParen) {
+    // 1. Scrub term followed by bare negated status parenthetical, e.g. "ACS（已排除）", "T2DM (ruled out)", "急性胸痛（无）"
+    scrubbed = scrubbed.replace(
+      /(?:2\s*型糖尿病|(?<![A-Za-z0-9._/-])[A-Za-z0-9._/-]{1,48}(?:\s+(?!and\b|but\b|with\b)[A-Za-z0-9._/-]{1,48}){0,4}|[^\s，,。；;！!？?"{}[\]但惟（()）]{1,32})\s*[（(]\s*(?:无|否|否认|阴性|未见|(?:已\s*)?(?:排除|除外)|(?:暂\s*)?不考虑|no|none|negative|absent|denied|ruled\s+out|excluded)\s*[）)]/gi,
+      ' ',
+    )
+  }
+  if (/[:：]/.test(scrubbed)) {
+    // 2. Scrub colon/label status negations before prefix negations consume trailing cues (e.g. "急性胸痛：无", "2 型糖尿病：否认", "ACS: negative")
+    scrubbed = scrubbed.replace(
+      /(?:2\s*型糖尿病|(?<![A-Za-z0-9._/-])[A-Za-z0-9._/-]{1,48}(?:\s+[A-Za-z0-9._/-]{1,48}){0,4}|[\u4e00-\u9fff0-9A-Za-z._/-]{1,24})\s*[:：]\s*(?:无|否|否认|阴性|未见|(?:已\s*)?(?:排除|除外)|(?:暂\s*)?不考虑|no|none|negative|absent|denied|ruled\s+out|excluded)(?=$|\s)/gi,
+      ' ',
+    )
+  }
+  if (/(?:排除|除外)\s*$/.test(scrubbed)) {
+    // 3a. Scrub Chinese clause-end suffix rule-out negations (e.g. "ACS 已排除", "急性冠脉综合征除外")
+    scrubbed = scrubbed.replace(
+      /(?:2\s*型糖尿病|[^\s，,。；;！!？?"{}[\]但惟]){1,32}\s*(?<![不未难待没能法以尚]\s*)(?:已\s*)?(?:排除|除外)\s*$/gi,
+      ' ',
+    )
+  }
+  if (/\b(?:ruled\s+out|excluded)\b/i.test(scrubbed)) {
+    // 3b. Scrub English passive or clause-end suffix rule-out negations (e.g. "NSTEMI was ruled out", "ACS and NSTEMI ruled out")
+    scrubbed = scrubbed.replace(
+      /(?<![A-Za-z0-9._/-])[A-Za-z0-9._/-]{1,48}(?:\s+(?!but\b|while\b|however\b|yet\b|though\b|although\b)[A-Za-z0-9._/-]{1,48}){0,6}\s+(?:(?:was|is|were|has\s+been|have\s+been)\s+(?<!\b(?:not|never|cannot|can't|could\s+not)\s+)(?:ruled\s+out|excluded)\b|(?<!\b(?:not|never|cannot|can't|could\s+not)\s+)(?:ruled\s+out|excluded)\s*$)/gi,
+      ' ',
+    )
+  }
+  if (hasParen) {
+    // 4. Scrub self-contained negated parentheticals, e.g. "（否认2型糖尿病）"
+    scrubbed = scrubbed.replace(NEGATED_PARENTHETICAL_RE, ' ')
+  }
+  if (/(?:无|未见|没有|否认)/.test(scrubbed) && /(?:禁忌|过敏)/.test(scrubbed)) {
+    // 5. Narrowly scrub "无/未见/没有/否认 ... 禁忌(证)/过敏(史)" without consuming following positive context
+    scrubbed = scrubbed.replace(/(?:无|未见|没有|否认)\s*.*?(?:禁忌证?|过敏史?)/gi, ' ')
+  }
   // 6. Scrub Chinese prefix negations up to any positive transition or end of clause
   scrubbed = scrubbed.replace(
     new RegExp(
@@ -604,6 +619,20 @@ export function scrubNegatedGuidelineTopicCorpus(textCorpus: string): string {
     .join('\n')
 }
 
+const CANDIDATE_TOPIC_SIGNAL_RE = new RegExp(
+  [
+    '2\\s*型糖尿病',
+    ...TOPICS_LIST.flatMap(topic =>
+      topic.matchTerms.map(term =>
+        /^[A-Za-z0-9._-]+$/.test(term)
+          ? `(?:^|[^A-Za-z0-9])${escapeRegExp(term)}(?=$|[^A-Za-z0-9])`
+          : escapeRegExp(term),
+      ),
+    ),
+  ].join('|'),
+  'i',
+)
+
 function matchesGuidelineTopicTerm(textCorpus: string, lowerCorpus: string, term: string): boolean {
   if (/^[A-Za-z0-9._-]+$/.test(term)) {
     return new RegExp(`(?:^|[^A-Za-z0-9])${escapeRegExp(term)}(?=$|[^A-Za-z0-9])`, 'i').test(textCorpus)
@@ -619,7 +648,13 @@ function hasNonNegatedT2dmSignal(scrubbedCorpus: string): boolean {
 }
 
 export function matchApplicableGuidelineTopicIds(textCorpus: string): GuidelineTopicId[] {
-  const scrubbed = scrubNegatedGuidelineTopicCorpus(textCorpus)
+  if (!CANDIDATE_TOPIC_SIGNAL_RE.test(textCorpus)) return []
+  const relevantLines = textCorpus
+    .split(/\r?\n/)
+    .filter(line => CANDIDATE_TOPIC_SIGNAL_RE.test(line))
+    .join('\n')
+  if (relevantLines.length === 0) return []
+  const scrubbed = scrubNegatedGuidelineTopicCorpus(relevantLines)
   const lower = scrubbed.toLowerCase()
   return TOPICS_LIST
     .filter(topic => {
