@@ -766,6 +766,7 @@ export interface MedicationComposerFields {
   courseDays: number | null
   doseText: string
   frequencyCode: string
+  instructions?: string | undefined
   quantity: number | null
 }
 
@@ -819,7 +820,7 @@ export function MedicationComposerDialog({
   const selected: MedicationCatalogSelection | undefined = draft?.referenceProduct !== undefined
     ? { kind: 'reference', product: draft.referenceProduct }
     : localMedication === undefined ? undefined : { kind: 'local', medication: localMedication }
-  const doseText = draft?.fields.doseText ?? '', frequencyCode = draft?.fields.frequencyCode ?? ''
+  const doseText = draft?.fields.doseText ?? '', frequencyCode = draft?.fields.frequencyCode ?? '', instructions = draft?.fields.instructions ?? ''
   const courseDays = draft?.fields.courseDays ?? null, quantity = draft?.fields.quantity ?? null
   const changeField = <Field extends keyof MedicationComposerFields>(field: Field, value: MedicationComposerFields[Field]) => {
     if (!disabled) composer.save(previous => previous === null ? null : { ...previous, fields: { ...previous.fields, [field]: value } })
@@ -828,6 +829,7 @@ export function MedicationComposerDialog({
   const setFrequencyCode = (value: string) => changeField('frequencyCode', value)
   const setCourseDays = (value: number | null) => changeField('courseDays', value)
   const setQuantity = (value: number | null) => changeField('quantity', value)
+  const setInstructions = (value: string) => changeField('instructions', value || undefined)
   // latest-ref：打开瞬间读取当时的编辑目标，避免把易变 target 写进重置副作用的依赖。
   const targetRef = useRef(target)
   targetRef.current = target
@@ -876,10 +878,10 @@ export function MedicationComposerDialog({
       || (selectedMedication !== undefined && !medicationQuantityAllowed(selectedMedication, quantityResult.data, courseDays ?? 1, frequencyCode))) invalidFields.add('quantity')
   }
   const fieldsValid = selected !== undefined && !composer.failed && invalidFields.size === 0 && !(atCapacity && target === undefined)
-  const invalidLabels = [...invalidFields].map(field => ({ doseText: messages.dose, frequencyCode: messages.frequency, courseDays: messages.course, quantity: messages.quantity })[field]).join(locale === 'zh-CN' ? '、' : ', ')
+  const invalidLabels = [...invalidFields].flatMap(field => field === 'instructions' ? [] : [({ doseText: messages.dose, frequencyCode: messages.frequency, courseDays: messages.course, quantity: messages.quantity })[field]]).join(locale === 'zh-CN' ? '、' : ', ')
   const confirm = () => {
     if (selected === undefined || disabled || !fieldsValid) return
-    if (!onConfirm(selected, { courseDays, doseText: doseText.trim(), frequencyCode: frequencyCode.trim(), quantity })) return
+    if (!onConfirm(selected, { courseDays, doseText: doseText.trim(), frequencyCode: frequencyCode.trim(), ...(instructions.trim() ? { instructions: instructions.trim() } : {}), quantity })) return
     composer.save(() => null)
     if (target !== undefined) onOpenChange(false)
   }
@@ -934,6 +936,10 @@ export function MedicationComposerDialog({
                     : <WorkspaceSelect id="medication-composer-quantity" items={selectedMedication.allowedQuantities.map(value => ({ label: String(value), value: String(value) }))}
                       onValueChange={value => { if (value !== null) { if (Number(value) !== quantity) markEdited('medication-composer-quantity'); setQuantity(Number(value)) } }}
                       placeholder={messages.choose} value={quantity === null ? null : String(quantity)} />}
+                </Field>
+                <Field className="col-span-2">
+                  <FieldLabel htmlFor="medication-composer-instructions">{locale === 'zh-CN' ? '给药说明' : 'Instructions'}</FieldLabel>
+                  <Input id="medication-composer-instructions" maxLength={240} onChange={event => setInstructions(event.currentTarget.value)} value={instructions} />
                 </Field>
               </FieldGroup>
               </fieldset>{invalidFields.size === 0 ? null : <FieldError>{messages.medicationFieldsError}</FieldError>}

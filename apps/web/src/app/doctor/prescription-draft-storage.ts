@@ -2,8 +2,8 @@ import { prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import { ensureInvestigationDraftsCleared, investigationDraftPrefix, useStoredInvestigationValue } from './investigation-draft-storage.ts'
 
-const fieldsSchema = prescriptionDraftItemSchema.pick({ courseDays: true, doseText: true, frequencyCode: true, quantity: true }).extend({
-  courseDays: z.number().finite().nullable(), doseText: z.string().max(120), frequencyCode: z.string().max(32), quantity: z.number().finite().nullable(),
+const fieldsSchema = prescriptionDraftItemSchema.pick({ courseDays: true, doseText: true, frequencyCode: true, instructions: true, quantity: true }).extend({
+  courseDays: z.number().finite().nullable(), doseText: z.string().max(120), frequencyCode: z.string().max(32), instructions: z.string().max(500).optional(), quantity: z.number().finite().nullable(),
 })
 const lineSchema = prescriptionDraftItemSchema.extend({ ...fieldsSchema.shape, key: z.string().min(1) })
 const draftSchema = z.object({ version: z.literal(1), items: z.array(lineSchema).max(8), dirty: z.boolean(),
@@ -38,8 +38,8 @@ function composerStorageSchema(items: PrescriptionDraftLine[]) {
 export function prescriptionEditorsChanged(items: PrescriptionDraftLine[], editors: Record<string, MedicationComposerDraft>) {
   return Object.entries(editors).some(([key, editor]) => {
     const item = items.find(item => item.key === key)
-    return item !== undefined && JSON.stringify([item.catalogItemId, item.doseText.trim(), item.frequencyCode.trim(), item.courseDays, item.quantity, item.referenceProduct ?? null])
-      !== JSON.stringify([editor.catalogItemId, editor.fields.doseText.trim(), editor.fields.frequencyCode.trim(), editor.fields.courseDays, editor.fields.quantity, editor.referenceProduct ?? null])
+    return item !== undefined && JSON.stringify([item.catalogItemId, item.doseText.trim(), item.frequencyCode.trim(), item.courseDays, item.quantity, item.instructions?.trim() ?? '', item.referenceProduct ?? null])
+      !== JSON.stringify([editor.catalogItemId, editor.fields.doseText.trim(), editor.fields.frequencyCode.trim(), editor.fields.courseDays, editor.fields.quantity, editor.fields.instructions?.trim() ?? '', editor.referenceProduct ?? null])
   })
 }
 export function hasPendingPrescriptionEdits(scope: string, fallbackItems: PrescriptionDraftLine[]) {

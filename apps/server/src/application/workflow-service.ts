@@ -89,6 +89,7 @@ import { OutpatientLaboratoryService } from './outpatient-laboratory-service.ts'
 import { OutpatientPrescriptionService } from './outpatient-prescription-service.ts'
 import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
 import { ClinicalScoreService, buildVitalObservationComponents } from './clinical-score-service.ts'
+import { OrderSetDraftService } from './order-set-draft-service.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
 import {
   casePresentation,
@@ -312,6 +313,8 @@ export class WorkflowService
   readonly consultationRecording: ConsultationRecordingService
   readonly qualityControl: ClinicalDocumentQualityControl
   readonly clinicalScores: ClinicalScoreService
+  /** 专病组套只读草稿预装配；不写入任何正式业务事实。 */
+  readonly orderSets: OrderSetDraftService
 
   constructor(
     database: ClinMeshDatabase,
@@ -471,6 +474,9 @@ export class WorkflowService
       virtualTime: (context: ActorContext) => this.#context.virtualTime(context),
     }
     this.examination = new ExaminationRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
+    this.orderSets = new OrderSetDraftService({
+      clinicalScores: this.clinicalScores, commands, database, examination: this.examination, fhir, outpatientContext: this.#context,
+    })
     this.imaging = new ImagingRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.pathology = new PathologyRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.#prescriptions = new OutpatientPrescriptionService({
