@@ -865,6 +865,7 @@ export class DoctorRecommendationsService {
         const items = selections.flatMap(selection => selection.kind !== 'prescription' ? [] : [{
           catalogItemId: selection.catalogItemId, doseText: selection.doseText, frequencyCode: selection.frequencyCode,
           courseDays: selection.courseDays, quantity: selection.quantity,
+          ...(selection.instructions === undefined ? {} : { instructions: selection.instructions }),
         }])
         const saved = this.options.workflow.applySavePrescriptionDraft(transaction, { ...base, expectedDraftVersion: draftVersion, items })
         const issued = this.options.workflow.applyIssuePrescription(transaction, { ...base, expectedDraftVersion: saved.data.draftVersion })

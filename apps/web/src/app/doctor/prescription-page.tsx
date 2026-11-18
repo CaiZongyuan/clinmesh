@@ -209,7 +209,10 @@ export function PrescriptionPage({
   const currentItems = useRef(items)
   currentItems.current = items
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
-  const submittedItems = items.map(({ key: _key, ...item }) => item)
+  const submittedItems = items.map(({ key: _key, instructions, ...item }) => ({
+    ...item,
+    ...(instructions?.trim() ? { instructions: instructions.trim() } : {}),
+  }))
   const draftValidation = prescriptionDraftContentSchema.safeParse({ items: submittedItems })
   useRegisterAgentForm({
     viewId: 'consultation', selectionId: detail.caseId, name: 'prescription',
@@ -312,6 +315,7 @@ export function PrescriptionPage({
       const line: PrescriptionDraftLine = {
         catalogItemId: value.catalogItemId, key: previous?.key ?? globalThis.crypto.randomUUID(),
         courseDays: value.courseDays, doseText: value.doseText ?? '', frequencyCode: value.frequencyCode ?? '', quantity: value.quantity,
+        ...(value.instructions?.trim() ? { instructions: value.instructions.trim() } : {}),
         ...(value.referenceProduct === undefined ? {} : { referenceProduct: value.referenceProduct }),
       }
       return previous === undefined ? [...current, line] : current.map(item => item.key === previous.key ? line : item)
@@ -361,7 +365,8 @@ export function PrescriptionPage({
   const consumePreparedItems = (values: PreparationDraft[]) => {
     const remaining = items.filter(item => !values.some(value => value.kind === 'prescription'
       && value.catalogItemId === item.catalogItemId && value.doseText === item.doseText
-      && value.frequencyCode === item.frequencyCode && value.courseDays === item.courseDays && value.quantity === item.quantity))
+      && value.frequencyCode === item.frequencyCode && value.courseDays === item.courseDays && value.quantity === item.quantity
+      && (value.instructions?.trim() ?? '') === (item.instructions?.trim() ?? '')))
     if (remaining.length === items.length) return
     if (!setItems(remaining)) return false
     setDirty(remaining.length > 0)
@@ -574,10 +579,17 @@ export function PrescriptionPage({
   const composerTarget = useMemo<MedicationComposerTarget | undefined>(() => {
     const item = composerEditIndex === undefined ? undefined : items[composerEditIndex]
     if (item === undefined) return undefined
+    const fields: MedicationComposerFields = {
+      courseDays: item.courseDays,
+      doseText: item.doseText,
+      frequencyCode: item.frequencyCode,
+      ...(item.instructions ? { instructions: item.instructions } : {}),
+      quantity: item.quantity,
+    }
     if (item.referenceProduct !== undefined) {
       return {
         key: item.key,
-        fields: { courseDays: item.courseDays, doseText: item.doseText, frequencyCode: item.frequencyCode, quantity: item.quantity },
+        fields,
         selection: { kind: 'reference', product: item.referenceProduct },
       }
     }
@@ -585,7 +597,7 @@ export function PrescriptionPage({
     if (medication === undefined) return undefined
     return {
       key: item.key,
-      fields: { courseDays: item.courseDays, doseText: item.doseText, frequencyCode: item.frequencyCode, quantity: item.quantity },
+      fields,
       selection: { kind: 'local', medication },
     }
   }, [catalogById, composerEditIndex, items])
@@ -617,7 +629,7 @@ export function PrescriptionPage({
                 if (!next.some(r => r.catalogItemId === c.catalogItemId)) {
                   const entry = catalogById.get(c.catalogItemId)
                   if (next.length >= 8 || (entry && !canCombineWithCurrentItems(entry, undefined, next))) continue
-                  next.push({ catalogItemId: c.catalogItemId, courseDays: c.outpatient.courseDays, doseText: c.doseText, frequencyCode: c.frequencyCode, key: globalThis.crypto.randomUUID(), quantity: c.outpatient.quantity })
+                  next.push({ catalogItemId: c.catalogItemId, courseDays: c.outpatient.courseDays, doseText: c.doseText, frequencyCode: c.frequencyCode, ...(c.instructionsZh ? { instructions: c.instructionsZh } : {}), key: globalThis.crypto.randomUUID(), quantity: c.outpatient.quantity })
                   addedCount += 1
                 }
                 if (i.disposition === 'needs-review') { review.add(c.catalogItemId); reviewCount += 1 }
@@ -876,6 +888,7 @@ export function PrescriptionPage({
                 ?? item.catalogItemId,
               value: { source: 'manual', kind: 'prescription', catalogItemId: item.catalogItemId,
                 doseText: item.doseText || null, frequencyCode: item.frequencyCode || null, courseDays: item.courseDays, quantity: item.quantity,
+                ...(item.instructions?.trim() ? { instructions: item.instructions.trim() } : {}),
                 ...(item.referenceProduct === undefined ? {} : { referenceProduct: item.referenceProduct }) },
             } satisfies ManualPreparedItem))}
             manualUnavailableReason={manualPreparedUnavailableReason}
@@ -934,7 +947,7 @@ export function PrescriptionPage({
                             )}
                           </TableCell>
                           <TableCell className="whitespace-normal break-words text-xs text-muted-foreground">
-                            {item.doseText} · {item.frequencyCode} · {item.courseDays} {messages.days}
+                            {item.doseText} · {item.frequencyCode} · {item.courseDays} {messages.days}{item.instructions ? ` · ${item.instructions}` : ''}
                           </TableCell>
                           <TableCell className="tabular-nums">{item.quantity}</TableCell>
                         </TableRow>

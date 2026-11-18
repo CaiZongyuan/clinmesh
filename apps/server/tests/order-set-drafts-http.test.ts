@@ -182,6 +182,8 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
       testItem('1400605A', '钾测定', '血清、血浆', 'mmol/L', 2, [rangeRule(3.5, 5.3)]),
       testItem('1400705A', '总钙测定', '血清、血浆', 'mmol/L', 2, [rangeRule(2.11, 2.52)]),
       testItem('1100301A', '糖化血红蛋白测定', '全血', '%', 1, [rangeRule(4.0, 6.0)]),
+      testItem('0500103A', '凝血酶原时间测定', '血浆', 's', 1, [rangeRule(11, 14)]),
+      testItem('0500203A', '活化部分凝血活酶时间测定', '血浆', 's', 1, [rangeRule(25, 37)]),
       testItem('0501703A', 'D-二聚体测定', '血浆', 'mg/L', 2, [upperRule(0.5, 0.05)]),
     ]
     const panels = [
@@ -191,7 +193,7 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
       panelItem('CN-LAB-RENAL', '肾功能组合', '血清、血浆', ['1700204A', '1700304A', '1700404A', '1101204A']),
       panelItem('CN-LAB-ELECTROLYTES', '电解质组合', '血清、血浆', ['1400205A', '1400305A', '1400404A', '1400505A', '1400605A', '1400705A']),
       panelItem('CN-LAB-HBA1C', '糖化血红蛋白组合', '全血', ['1100301A']),
-      panelItem('CN-LAB-COAGULATION', '凝血筛查组合', '血浆', ['0501703A']),
+      panelItem('CN-LAB-COAGULATION', '凝血筛查组合', '血浆', ['0500103A', '0500203A']),
     ]
     const diagnosisConcepts = [
       { code: 'I25.103', display: '冠状动脉粥样硬化性心脏病', row: 12670 },
@@ -684,11 +686,13 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
             courseDays: item.candidate.outpatient.courseDays,
             doseText: item.candidate.doseText,
             frequencyCode: item.candidate.frequencyCode,
+            ...(item.candidate.instructionsZh ? { instructions: item.candidate.instructionsZh } : {}),
             quantity: item.candidate.outpatient.quantity,
           }]
         : [],
     )
     expect(prescriptionItems).toHaveLength(6)
+    expect(prescriptionItems.find(item => item.catalogItemId === 'medication-nitroglycerin')?.instructions).toBe('心绞痛发作时舌下含服，5 分钟不缓解可重复，最多 3 次')
     const savedRx = prescriptionDraftResponseSchema.parse(await (await postJson(
       `/api/his/v1/encounters/${visit.encounterId}/prescription/draft`,
       cookies.doctor,
@@ -707,7 +711,11 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
       },
     )
     expect(issuedRx.status, await issuedRx.clone().text()).toBe(200)
-    expect(issuePrescriptionResponseSchema.parse(await issuedRx.json()).data.prescription.items).toHaveLength(6)
+    const issuedRxData = issuePrescriptionResponseSchema.parse(await issuedRx.json()).data
+    expect(issuedRxData.prescription.items).toHaveLength(6)
+    expect(issuedRxData.prescription.items.find(item => item.catalogItemId === 'medication-nitroglycerin')?.instructions).toBe('心绞痛发作时舌下含服，5 分钟不缓解可重复，最多 3 次')
+    const caseAfterRx = await (await current().app.request(`/api/his/v1/doctor/cases/${visit.outpatientCaseId}`, { headers: { cookie: cookies.doctor } })).json() as { medicationConclusion?: { prescription?: { items: Array<{ catalogItemId: string; instructions?: string }> } } }
+    expect(caseAfterRx.medicationConclusion?.prescription?.items.find(item => item.catalogItemId === 'medication-nitroglycerin')?.instructions).toBe('心绞痛发作时舌下含服，5 分钟不缓解可重复，最多 3 次')
 
     // 3. Contraindicated outpatient: bradycardia + hypotension + severe renal impairment + aspirin & clopidogrel allergies
     const contraindicatedVisit = await startOutpatientVisit({ pulseBpm: 46, systolicMmHg: 84, weightKg: 65 })
@@ -952,6 +960,7 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
     }
 
     if (salineCandidate.kind === 'medication' && salineCandidate.inpatient !== null) {
+      expect(salineCandidate.instructionsZh).toContain('1 mL/kg/h')
       const salineOrder = await postJson(`${admissionPath}/orders/issue`, cookies.inpatientDoctor, {
         input: {
           duration: salineCandidate.inpatient.duration,
@@ -962,12 +971,15 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
             doseQuantity: salineCandidate.inpatient.doseQuantity,
             doseText: salineCandidate.doseText,
             frequencyCode: salineCandidate.frequencyCode,
+            ...(salineCandidate.instructionsZh ? { instructions: salineCandidate.instructionsZh } : {}),
             kind: 'medication',
           },
         },
       })
       expect(salineOrder.status, await salineOrder.clone().text()).toBe(200)
-      encounterVersion = inpatientFullClinicalResponseSchema.parse(await salineOrder.json()).data.encounterVersion
+      const salineOrderData = inpatientFullClinicalResponseSchema.parse(await salineOrder.json()).data
+      expect(salineOrderData.orders.find(order => order.catalogItemId === salineCandidate.catalogItemId)?.instructions).toContain('1 mL/kg/h')
+      encounterVersion = salineOrderData.encounterVersion
     }
 
     // 4. Subsequent nursing vitals showing bradycardia/hypotension + severe renal impairment + atorvastatin allergy

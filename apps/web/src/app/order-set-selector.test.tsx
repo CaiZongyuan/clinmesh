@@ -426,7 +426,7 @@ describe('OrderSetSelectorBar outpatient & inpatient draft hydration', () => {
               doseText: '4 mg',
               frequencyCode: 'QD',
               inpatient: null,
-              instructionsZh: null,
+              instructionsZh: '早餐前口服，监测血压与血钾',
               kind: 'medication',
               outpatient: { courseDays: 7, quantity: 7 },
             },
@@ -568,8 +568,9 @@ describe('OrderSetSelectorBar outpatient & inpatient draft hydration', () => {
     expect(actions.saveDraft.onSubmit).toHaveBeenLastCalledWith(expect.arrayContaining([
       expect.objectContaining({ catalogItemId: 'medication-pci-aspirin' }),
       expect.objectContaining({ catalogItemId: 'medication-pci-clopidogrel' }),
-      expect.objectContaining({ catalogItemId: 'medication-perindopril' }),
+      expect.objectContaining({ catalogItemId: 'medication-perindopril', instructions: '早餐前口服，监测血压与血钾' }),
     ]))
+    expect(within(pendingPanel).getByText(/早餐前口服，监测血压与血钾/)).toBeTruthy()
     expect(actions.issue.onSubmit).not.toHaveBeenCalled()
 
     // Re-apply after clopidogrel allergy + missing eGFR: clopidogrel is purged from draft and perindopril becomes unchecked
@@ -896,6 +897,7 @@ describe('OrderSetSelectorBar outpatient & inpatient draft hydration', () => {
     const salineSection = await orderDialog.findByRole('region', { name: '待开：0.9%氯化钠注射液' })
     expect(within(salineSection).getByRole('checkbox', { name: '选择待开0.9%氯化钠注射液' }).getAttribute('aria-checked')).toBe('true')
     expect((within(salineSection).getByRole('textbox', { name: '每次剂量' }) as HTMLInputElement).value).toBe('1000 mL')
+    expect((within(salineSection).getByRole('textbox', { name: '给药说明' }) as HTMLInputElement).value).toBe('静脉滴注，按 1 mL/kg/h 调整滴速')
     expect(within(salineSection).getByRole('button', { name: '临时' }).getAttribute('aria-pressed')).toBe('true')
     expect(orderDialog.getByText(/同时向「开立住院检查」待开清单加入 1 项/)).toBeTruthy()
 

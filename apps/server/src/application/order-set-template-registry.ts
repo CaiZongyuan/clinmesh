@@ -179,7 +179,7 @@ const definitions: Array<Omit<OrderSetTemplate, 'fingerprint'>> = [
       {
         key: 'coagulation',
         kind: 'laboratory',
-        options: [lab(panel, 'CN-LAB-COAGULATION'), lab(wst, '0501703A'), lab(loinc, '6301-6')],
+        options: [lab(panel, 'CN-LAB-COAGULATION'), lab(wst, '0500103A'), lab(wst, '0500203A'), lab(loinc, '6301-6')],
         rationaleZh: '介入及抗凝前评估凝血功能。',
         rules: [],
         scopes: inpatientOnly,

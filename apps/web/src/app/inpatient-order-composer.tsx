@@ -149,13 +149,16 @@ export function InpatientOrderComposer(props: Props) {
                   const idx = rows.findIndex(r => r.pick.kind === 'medication' && r.pick.item.id === c.catalogItemId)
                   if (idx !== -1) {
                     const cur = rows[idx]!
-                    if (!cur.attempt && rev && cur.selected) { rows[idx] = { ...cur, selected: false }; changed = true }
+                    if (!cur.attempt && (rev && cur.selected || !cur.instructions && c.instructionsZh)) {
+                      rows[idx] = { ...cur, ...(rev ? { selected: false } : {}), ...(!cur.instructions && c.instructionsZh ? { instructions: c.instructionsZh } : {}) }
+                      changed = true
+                    }
                     if (rev) reviewCount += 1
                     continue
                   }
                   const med = medications.find(m => m.id === c.catalogItemId)
                   if (!med || rows.length >= orderBatchLimit) continue
-                  rows.push({ doseText: c.doseText, duration: c.inpatient.duration, frequencyCode: c.frequencyCode, id: newIdempotencyKey(), pick: { item: med, kind: 'medication' }, selected: !rev })
+                  rows.push({ doseText: c.doseText, duration: c.inpatient.duration, frequencyCode: c.frequencyCode, ...(c.instructionsZh ? { instructions: c.instructionsZh } : {}), id: newIdempotencyKey(), pick: { item: med, kind: 'medication' }, selected: !rev })
                   if (rev) reviewCount += 1
                   addedCount += 1
                   changed = true
@@ -193,6 +196,7 @@ export function InpatientOrderComposer(props: Props) {
                 {row.pick.kind === 'medication' ? <>
                   <Field><FieldLabel htmlFor={`${formId}-${row.id}-dose`}>{t('每次剂量', 'Dose per execution')}</FieldLabel><Input id={`${formId}-${row.id}-dose`} disabled={locked} value={row.doseText} maxLength={120} aria-invalid={dose !== undefined && 'reason' in dose} onChange={event => edit({ doseText: event.currentTarget.value })} />{dose && 'quantity' in dose ? <span className="text-xs text-muted-foreground">= {dose.quantity} {row.pick.item.unit}</span> : <p className="text-xs text-destructive">{dose && 'reason' in dose ? doseError(dose.reason, locale) : ''}</p>}</Field>
                   <Field><FieldLabel htmlFor={`${formId}-${row.id}-frequency`}>{t('医嘱频次', 'Order frequency')}</FieldLabel><WorkspaceSelect id={`${formId}-${row.id}-frequency`} disabled={locked} value={row.frequencyCode ?? null} items={row.pick.item.frequencyCodes.map(code => ({ value: code, disabled: row.duration === 'long' && code === 'ONCE', label: inpatientFrequencyLabel(code, locale) }))} onValueChange={value => edit({ frequencyCode: value ?? undefined })} /></Field>
+                  <Field><FieldLabel htmlFor={`${formId}-${row.id}-inst`}>{t('给药说明', 'Instructions')}</FieldLabel><Input id={`${formId}-${row.id}-inst`} disabled={locked} value={row.instructions ?? ''} maxLength={240} onChange={event => edit({ instructions: event.currentTarget.value || undefined })} /></Field>
                 </> : <p className="text-xs text-muted-foreground">{t('每次 1 次 · 频次不适用', 'One per execution · frequency not applicable')}</p>}
                 <Field><FieldLabel htmlFor={`${formId}-${row.id}-surgery`}>{t('术后医嘱关联手术', 'Postoperative procedure')}</FieldLabel><WorkspaceSelect id={`${formId}-${row.id}-surgery`} disabled={locked || !surgeries.length} value={row.surgeryExecutionId ?? ''} items={[{ value: '', label: t('不关联（普通医嘱）', 'None (regular order)') }, ...surgeries.map(item => ({ value: item.id, label: `${item.actualProcedure.coding.code} · ${item.actualProcedure.coding.display}` }))]} onValueChange={value => edit({ surgeryExecutionId: value || undefined })} /></Field>
                 <Button size="sm" variant="outline" disabled={locked || !orderSelection(row)} onClick={() => update(row.id, { estimate: row.estimate ? undefined : { generation: newIdempotencyKey(), stale: false } })}>{row.estimate ? t('收起费用预计', 'Hide estimate') : t('费用预计', 'Estimate charges')}</Button>
