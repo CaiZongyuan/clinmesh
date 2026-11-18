@@ -10,6 +10,13 @@ import {
   inpatientGuidelineTopicsInputSchema,
   outpatientGuidelineTopicsInputSchema,
 } from './guideline-topics.ts'
+import {
+  inpatientOrderSetDraftsInputSchema,
+  orderSetDraftBundleSchema,
+  orderSetTemplateListQuerySchema,
+  orderSetTemplateListSchema,
+  outpatientOrderSetDraftsInputSchema,
+} from './order-set-templates.ts'
 import { inpatientDrgRecordChecksSchema, inpatientDrgReviewSchema, inpatientDrgReviewResponseSchema, inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from './inpatient-drg-review.ts'
 import { inpatientDrgExplanationSchema, inpatientDrgExplainInputSchema, inpatientDrgExplanationResponseSchema } from './inpatient-drg-explanation.ts'
 import { inpatientGuidelineAdviceListSchema, inpatientGuidelineAdviceReadQuerySchema, inpatientGuidelineAdviceRequestInputSchema, inpatientGuidelineAdviceResponseSchema } from './inpatient-guideline-advice.ts'
@@ -1246,6 +1253,15 @@ const rawOperationRuntimeDefinitions = [
   {
     http: {
       method: 'GET',
+      path: '/api/his/v1/catalogs/order-set-templates',
+    },
+    id: 'catalog.order-set-templates.list',
+    input: orderSetTemplateListQuerySchema,
+    output: orderSetTemplateListSchema,
+  },
+  {
+    http: {
+      method: 'GET',
       path: '/api/his/v1/patients',
     },
     id: 'patient.search',
@@ -1374,6 +1390,12 @@ const rawOperationRuntimeDefinitions = [
     id: 'doctor.case.guideline-topics.read',
     input: outpatientGuidelineTopicsInputSchema,
     output: guidelineTopicBundleSchema,
+  },
+  {
+    http: { method: 'GET', path: '/api/his/v1/doctor/cases/:caseId/order-set-drafts' },
+    id: 'doctor.case.order-set-drafts.read',
+    input: outpatientOrderSetDraftsInputSchema,
+    output: orderSetDraftBundleSchema,
   },
   {
     http: { method: 'PUT', path: '/api/his/v1/encounters/:encounterId/risk-assessment' },
@@ -2613,6 +2635,12 @@ const rawOperationRuntimeDefinitions = [
     http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/clinical-scores' },
     input: z.object({ admissionId: z.string().min(1) }).strict(),
     output: clinicalScoreBundleSchema,
+  },
+  {
+    id: 'inpatient.order-set-drafts.read',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/order-set-drafts' },
+    input: inpatientOrderSetDraftsInputSchema,
+    output: orderSetDraftBundleSchema,
   },
   {
     id: 'inpatient.diagnosis.confirm',

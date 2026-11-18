@@ -4,6 +4,7 @@ import {
   outpatientRiskAssessmentInputSchema,
 } from '@clinmesh/contracts/clinical-scores'
 import { guidelineTopicQuerySchema } from '@clinmesh/contracts/guideline-topics'
+import { orderSetDraftQuerySchema, orderSetTemplateListQuerySchema } from '@clinmesh/contracts/order-set-templates'
 import { inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgExplainInputSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionSaveInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -1872,6 +1873,12 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(inpatient.readClinicalScores(await actor(context), context.req.param('admissionId')))
       } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/order-set-drafts', async context => {
+      try {
+        const query = orderSetDraftQuerySchema.parse(context.req.query())
+        return context.json(inpatient.workflow.orderSets.readInpatient(inpatient, await actor(context), context.req.param('admissionId'), query.templateId))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/diagnoses/confirm', async context => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -2056,6 +2063,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           pageSize: query.pageSize,
           ...(query.query === undefined ? {} : { query: query.query }),
         }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/catalogs/order-set-templates', async (context) => {
+      try {
+        const query = orderSetTemplateListQuerySchema.parse(context.req.query())
+        return context.json(workflow.orderSets.listTemplates(await actor(context), query.scope))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
@@ -2402,6 +2417,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           context.req.param('caseId'),
           query.topicId,
         ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/doctor/cases/:caseId/order-set-drafts', async (context) => {
+      try {
+        const query = orderSetDraftQuerySchema.parse(context.req.query())
+        return context.json(workflow.orderSets.readOutpatient(await actor(context), context.req.param('caseId'), query.templateId))
       } catch (error) {
         return apiErrorResponse(context, error)
       }

@@ -767,7 +767,7 @@ export function CaseDetail({
                   selectedReportId={investigationView.reportId}
                 /></fieldset>
               </DoctorDraftScope></TabsContent>
-              <TabsContent keepMounted value="examination"><ExaminationPage detail={detail} locale={locale} readOnly={clinicalReadOnly} active={investigationView.category === 'examination'} elementId={encounterCompletionTargetElementIds.examination} actionContext={investigationActionContext} selectedRequestId={investigationView.selected.examination} onSelectRequest={id => onSelectInvestigationRequest('examination', id)} key={`examination:${detail.caseId}:${agentDraftHydrationRevisions.examination ?? 0}`} /></TabsContent>
+              <TabsContent keepMounted value="examination"><ExaminationPage detail={detail} locale={locale} readOnly={clinicalReadOnly} active={investigationView.category === 'examination'} elementId={encounterCompletionTargetElementIds.examination} actionContext={investigationActionContext} recommendationScope={recommendationScope} selectedRequestId={investigationView.selected.examination} onSelectRequest={id => onSelectInvestigationRequest('examination', id)} key={`examination:${detail.caseId}:${agentDraftHydrationRevisions.examination ?? 0}`} /></TabsContent>
               <TabsContent keepMounted value="pathology"><DoctorDraftScope caseId={detail.caseId} kind="pathology" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['pathology'] ?? 0} locale={locale}>
                 <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('pathology') === true}><PathologyPage
                   actionContext={investigationActionContext}

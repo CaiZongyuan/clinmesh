@@ -18,8 +18,9 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { ApiClientError, newIdempotencyKey } from './api-client.ts'
 import { InpatientCommandRejection, OriginalContinuationUnreadable } from './inpatient-write-intent.ts'
 import { subscribeIssueDraftSettlement } from './inpatient-issue-draft-settlement.ts'
+import { OrderSetSelectorBar } from './order-set-selector.tsx'
 import { getBatchFailureMessage } from './workspace-error.ts'
-import { investigationBatchLimit, investigationDraftSchema, readInvestigationDraft, saveInvestigationDraft, type InvestigationAttempt, type InvestigationDraft, type InvestigationDraftRow } from './inpatient-investigation-drafts.ts'
+import { applyOrderSetInvestigations, investigationBatchLimit, investigationDraftSchema, readInvestigationDraft, saveInvestigationDraft, type InvestigationAttempt, type InvestigationDraft, type InvestigationDraftRow } from './inpatient-investigation-drafts.ts'
 
 type CatalogItem = z.infer<typeof inpatientInvestigationCatalogSchema>['items'][number]
 const emptyDraft = (): InvestigationDraft => ({ rows: [], successes: [] })
@@ -136,6 +137,21 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
           <div className="flex items-center justify-between gap-2 p-2 text-xs"><Button size="sm" variant="outline" disabled={catalogPage === 1} onClick={() => setPage(catalogPage - 1)}>{t('上一页', 'Previous')}</Button><span>{catalogPage} / {Math.max(1, Math.ceil(available.length / pageSize))}</span><Button size="sm" variant="outline" disabled={catalogPage * pageSize >= available.length} onClick={() => setPage(catalogPage + 1)}>{t('下一页', 'Next')}</Button></div>
         </div>}>
           <div className="flex min-w-0 flex-col gap-3">
+            <OrderSetSelectorBar
+              disabled={locked || loading || error !== undefined}
+              excludeKinds={['medication']}
+              itemKinds={['laboratory', 'examination']}
+              locale={locale}
+              onApply={d => {
+                const { added, changed, firstKind, next, removed, review } = applyOrderSetInvestigations(current.current.rows, d, items)
+                if (changed && !save({ ...current.current, rows: next })) {
+                  return { addedCount: 0, error: t('待开清单无法保存或读取，已停止开立。', 'Pending items could not be saved.'), reviewCount: 0 }
+                }
+                if (firstKind && !next.some(r => r.item.kind === kind)) { setKind(firstKind); setDraftPage(1) }
+                return { addedCount: added, removedCount: removed, reviewCount: review }
+              }}
+              target={{ admissionId, scope: 'inpatient' }}
+            />
             <p className="text-sm font-medium">{t(`待开 ${draft.rows.length} 项 · 本类已选 ${selected.length} 项`, `${draft.rows.length} draft items · ${selected.length} selected in this category`)}</p>
             <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={locked || loading || error !== undefined} onClick={() => save({ ...current.current, rows: current.current.rows.map(row => visibleRows.some(item => item.id === row.id) && !row.attempt && problem(row) === undefined ? { ...row, selected: true } : row) })}>{t('全选本页可办理项目', 'Select eligible items on this page')}</Button>
               <Button size="sm" variant="outline" disabled={locked} onClick={() => save({ ...current.current, rows: current.current.rows.map(row => row.item.kind === kind ? { ...row, selected: false } : row) })}>{t('清空选择', 'Clear selection')}</Button>

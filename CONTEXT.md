@@ -289,8 +289,8 @@ _Avoid_: Reference catalog availability, Laboratory Request status, generated re
 _Avoid_: Order set template, prescription, execution plan
 
 **Order Set Template**:
-可复用但尚未下达的临床请求模板。
-_Avoid_: Clinical Request, Request Orchestration
+版本固定的专病临床请求组合定义，可结合患者当前有效过敏、肾功能指标与结构化生命体征筛选候选、剔除禁忌项并标注缺项待核实原因，产出待医生核对确认的医嘱或检查建议草稿。它不代表已下达的正式请求，调用本身也不产生收费、已签发申请或已生效处方与医嘱。
+_Avoid_: Clinical Request, Request Orchestration, automatic order execution
 
 **Prescription**:
 按处方号和业务规则归组、用于审核、收费与调剂的一组药品请求。

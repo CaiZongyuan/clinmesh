@@ -37,6 +37,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
+import { orderSetExcludedIds, OrderSetSelectorBar } from '../order-set-selector.tsx'
 import {
   getPrescriptionIssueErrorMessage,
   getWorkspaceErrorMessage,
@@ -59,7 +60,7 @@ import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDr
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { useAutosave } from './use-autosave.ts'
 import { prescriptionEditorsChanged, usePrescriptionComposerDraft, usePrescriptionDraft, type PrescriptionDraftLine } from './prescription-draft-storage.ts'
-import { useInvestigationConfirmationIntent, useInvestigationPreferences } from './investigation-draft-storage.ts'
+import { syncOrderSetPrefs, useInvestigationConfirmationIntent, useInvestigationPreferences } from './investigation-draft-storage.ts'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -244,7 +245,8 @@ export function PrescriptionPage({
   const canCombineWithCurrentItems = (
     candidate: PrescriptionMedicationCatalogItem,
     ignoredIndex?: number,
-  ) => items.every((item, index) => {
+    list: readonly PrescriptionDraftLine[] = items,
+  ) => list.every((item, index) => {
     if (index === ignoredIndex || item.catalogItemId === candidate.id) return true
     const selected = catalogById.get(item.catalogItemId)
     return selected?.safety && candidate.safety ? !medicationCombinationConflict(selected.safety.pharmacologyClasses, candidate.safety.pharmacologyClasses) : selected?.allowedCombinationIds.includes(candidate.id) === true
@@ -594,6 +596,49 @@ export function PrescriptionPage({
         : 'This encounter has an active prescription. Withdraw it according to its status before adjusting. Unissued items remain below.'}</p> : null}
       {canEditDraft ? (
         <>
+          <OrderSetSelectorBar
+            disabled={!canEditDraft || pending}
+            itemKinds={['medication']}
+            locale={locale}
+            onApply={draft => {
+              if (currentItems.current.some(r => r.referenceProduct !== undefined)) {
+                return { addedCount: 0, error: messages.prescriptionIssueReason_mixedCatalogSources, reviewCount: 0 }
+              }
+              const ex = orderSetExcludedIds(draft, 'medication')
+              const next = currentItems.current.filter(r => !ex.has(r.catalogItemId))
+              const removedCount = currentItems.current.length - next.length
+              const ready = new Set<string>()
+              const review = new Set<string>()
+              let addedCount = 0
+              let reviewCount = 0
+              for (const i of draft.items) {
+                const c = i.candidate
+                if (c?.kind !== 'medication' || !c.outpatient) continue
+                if (!next.some(r => r.catalogItemId === c.catalogItemId)) {
+                  const entry = catalogById.get(c.catalogItemId)
+                  if (next.length >= 8 || (entry && !canCombineWithCurrentItems(entry, undefined, next))) continue
+                  next.push({ catalogItemId: c.catalogItemId, courseDays: c.outpatient.courseDays, doseText: c.doseText, frequencyCode: c.frequencyCode, key: globalThis.crypto.randomUUID(), quantity: c.outpatient.quantity })
+                  addedCount += 1
+                }
+                if (i.disposition === 'needs-review') { review.add(c.catalogItemId); reviewCount += 1 }
+                else ready.add(c.catalogItemId)
+              }
+              if (addedCount > 0 || removedCount > 0) {
+                if (!setItems(next)) {
+                  return { addedCount: 0, error: locale === 'zh-CN' ? '处方待开清单保存失败，请检查浏览器存储后重试。' : 'Could not save prescription draft.', reviewCount: 0 }
+                }
+                if (!next.length && state?.draft !== undefined) {
+                  draftDeletionRef.current = { revision: currentRevision, clearComposer: false }
+                  actions.deleteDraft.onSubmit()
+                } else {
+                  setDirty(next.length > 0)
+                }
+              }
+              syncOrderSetPrefs(preferences, 'prescription', ready, review)
+              return { addedCount, removedCount, reviewCount }
+            }}
+            target={{ caseId: detail.caseId, scope: 'outpatient' }}
+          />
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Button data-agent-catalog-trigger="medication" className="data-disabled:pointer-events-none data-disabled:opacity-50" disabled={pending || !canAddMedication} focusableWhenDisabled={actions.saveDraft.pending}
               onClick={() => { setComposerEditIndex(undefined); setComposerOpen(true) }} size="sm" type="button" variant="outline">

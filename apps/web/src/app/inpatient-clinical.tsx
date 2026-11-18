@@ -131,7 +131,7 @@ export function InpatientClinical({ admission, investigations, session, locale, 
       <InpatientPrimaryAction stage="orders" priority={-10}><WorkspaceActionBar summary={t('在弹窗中连续添加并核对医嘱；开立后交病区护士校对。', 'Add and review orders in the composer; ward nurse verification follows.')}
         action={<Button disabled={admission.status !== 'admitted' || admission.recordStatus === 'archived'} onClick={() => setComposing(true)}>{t('开立医嘱', 'Issue order')}</Button>} /></InpatientPrimaryAction>
       {data ? <InpatientOrderComposer key={orderDraftKey(session, admission)} open={composing && active} onOpenChange={setComposing} active={active} session={session} admission={admission} encounterVersion={data.encounterVersion} diagnosed={diagnosed}
-        services={catalog.data?.services ?? []} surgeries={surgery.data?.executions ?? []} locale={locale} write={write} loading={catalog.isPending} catalogError={catalog.error} onReload={() => void catalog.refetch()} /> : null}
+        medications={catalog.data?.medications ?? []} services={catalog.data?.services ?? []} surgeries={surgery.data?.executions ?? []} locale={locale} write={write} loading={catalog.isPending} catalogError={catalog.error} onReload={() => void catalog.refetch()} /> : null}
     </section> : null}
   </section>
 }

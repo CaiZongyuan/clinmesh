@@ -160,6 +160,11 @@ describe('HIS operation catalog', () => {
         id: 'catalog.services.search',
         roles: ['administrator', 'outpatient-doctor'],
       },
+      {
+        cliPath: 'catalog order-set-templates list',
+        id: 'catalog.order-set-templates.list',
+        roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
+      },
     ])
   })
 
@@ -798,9 +803,9 @@ describe('HIS operation catalog', () => {
     expect(counts).toEqual({
       'clinmesh-administrator': 4,
       'clinmesh-billing': 18,
-      'clinmesh-doctor': 67,
+      'clinmesh-doctor': 69,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 117,
+      'clinmesh-inpatient': 118,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 8,
       'clinmesh-shared': 1,
@@ -910,4 +915,24 @@ it('publishes shared guideline-topics queries and surgery-optional inpatient gui
       expectedFingerprint: 'b'.repeat(64),
     },
   })
+})
+
+it('publishes narrow read-only order set template and draft operations without raw override inputs', () => {
+  const templates = getHisOperation('catalog.order-set-templates.list')
+  expect(templates.roles).toEqual(['administrator', 'outpatient-doctor', 'inpatient-doctor'])
+  expect(templates.risk).toBe('read')
+  expect(templates.input.safeParse({ scope: 'outpatient' }).success).toBe(true)
+  expect(templates.input.safeParse({ scope: 'pharmacy' }).success).toBe(false)
+
+  const outpatientDrafts = getHisOperation('doctor.case.order-set-drafts.read')
+  expect(outpatientDrafts.roles).toEqual(['outpatient-doctor'])
+  expect(outpatientDrafts.risk).toBe('read')
+  expect(outpatientDrafts.input.safeParse({ caseId: 'case-1', templateId: 'chest-pain-stat-workup' }).success).toBe(true)
+  expect(outpatientDrafts.input.safeParse({ caseId: 'case-1', egfrOverride: 90 }).success).toBe(false)
+
+  const inpatientDrafts = getHisOperation('inpatient.order-set-drafts.read')
+  expect(inpatientDrafts.roles).toEqual(['inpatient-doctor'])
+  expect(inpatientDrafts.risk).toBe('read')
+  expect(inpatientDrafts.input.safeParse({ admissionId: 'admission-1', templateId: 'cin-perioperative-hydration' }).success).toBe(true)
+  expect(inpatientDrafts.input.safeParse({ admissionId: 'admission-1', pulseBpm: 80 }).success).toBe(false)
 })

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { z } from 'zod'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
-import type { inpatientServiceSchema } from '@clinmesh/contracts/inpatient-clinical'
+import type { inpatientMedicationSchema, inpatientServiceSchema } from '@clinmesh/contracts/inpatient-clinical'
 import type { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
@@ -17,8 +17,10 @@ import { InpatientOrderPicker, type InpatientOrderPick } from './inpatient-order
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { ApiClientError, newIdempotencyKey } from './api-client.ts'
+import { applyOrderSetInvestigations, investigationDraftKey, readInvestigationDraft, saveInvestigationDraft } from './inpatient-investigation-drafts.ts'
 import { InpatientCommandRejection, OriginalContinuationUnreadable, type useInpatientWriteIntent } from './inpatient-write-intent.ts'
-import { subscribeIssueDraftSettlement } from './inpatient-issue-draft-settlement.ts'
+import { notifyIssueDraftSettled, subscribeIssueDraftSettlement } from './inpatient-issue-draft-settlement.ts'
+import { orderSetExcludedIds, OrderSetSelectorBar } from './order-set-selector.tsx'
 import { getBatchFailureMessage, getWorkspaceErrorMessage } from './workspace-error.ts'
 import { inpatientFrequencyLabel } from './inpatient-labels.ts'
 import { orderBatchLimit, orderDose, orderDraftKey, orderDraftSchema, orderSelection, readOrderDraft, saveOrderDraft, type OrderAttempt, type OrderDraft, type OrderDraftRow } from './inpatient-order-drafts.ts'
@@ -27,14 +29,14 @@ import { InpatientOrderRowEstimate } from './inpatient-order-row-estimate.tsx'
 const emptyDraft = (): OrderDraft => ({ rows: [], successes: [] })
 type Props = {
   open: boolean; onOpenChange(open: boolean): void; active: boolean; session: SessionContext; admission: InpatientAdmission
-  encounterVersion: string; diagnosed: boolean; services: Array<z.infer<typeof inpatientServiceSchema>>
+  encounterVersion: string; diagnosed: boolean; medications?: Array<z.infer<typeof inpatientMedicationSchema>> | undefined; services: Array<z.infer<typeof inpatientServiceSchema>>
   surgeries: z.infer<typeof inpatientSurgerySchema>['executions']; locale: WorkspaceLocale
   write: ReturnType<typeof useInpatientWriteIntent>; loading: boolean; catalogError: Error | null; onReload(): void
 }
 
 /** 仅编排同次住院的单项开立；原 Command 独占临床校验、回执与审计。 */
 export function InpatientOrderComposer(props: Props) {
-  const { open, onOpenChange, session, admission, encounterVersion, diagnosed, services, surgeries, locale, write, loading, catalogError, onReload } = props
+  const { open, onOpenChange, session, admission, encounterVersion, diagnosed, medications = [], services, surgeries, locale, write, loading, catalogError, onReload } = props
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en, messages = getWorkspaceMessages(locale), formId = useId()
   const [loaded] = useState(() => {
     try {
@@ -129,6 +131,56 @@ export function InpatientOrderComposer(props: Props) {
         <DialogHeader><DialogTitle>{t('开立医嘱', 'Issue order')}</DialogTitle><DialogDescription>{t(`连续添加药品和护理治疗，逐条核对后集中开立；最多 ${orderBatchLimit} 项，关闭后保留。开立后仍须护士校对，不代表已经执行。`, `Add and review medications and nursing items, then issue together. Keep up to ${orderBatchLimit} drafts after closing. Nurse verification and actual execution remain separate.`)}</DialogDescription></DialogHeader>
         <OrderComposerLayout locale={locale} catalog={<InpatientOrderPicker id={`${formId}-item`} inline session={session} locale={locale} services={services} diagnosed={diagnosed} disabled={locked} picked={null} onPick={add} />}>
           <div className="flex min-w-0 flex-col gap-3">
+            <OrderSetSelectorBar
+              disabled={locked || loading || !!catalogError}
+              itemKinds={['medication']}
+              locale={locale}
+              onApply={draft => {
+                const ex = orderSetExcludedIds(draft, 'medication')
+                const rows = current.current.rows.filter(r => r.attempt !== undefined || r.pick.kind !== 'medication' || !ex.has(r.pick.item.id))
+                const removedCount = current.current.rows.length - rows.length
+                let addedCount = 0
+                let reviewCount = 0
+                let changed = removedCount > 0
+                for (const i of draft.items) {
+                  const c = i.candidate
+                  if (c?.kind !== 'medication' || !c.inpatient) continue
+                  const rev = i.disposition === 'needs-review'
+                  const idx = rows.findIndex(r => r.pick.kind === 'medication' && r.pick.item.id === c.catalogItemId)
+                  if (idx !== -1) {
+                    const cur = rows[idx]!
+                    if (!cur.attempt && rev && cur.selected) { rows[idx] = { ...cur, selected: false }; changed = true }
+                    if (rev) reviewCount += 1
+                    continue
+                  }
+                  const med = medications.find(m => m.id === c.catalogItemId)
+                  if (!med || rows.length >= orderBatchLimit) continue
+                  rows.push({ doseText: c.doseText, duration: c.inpatient.duration, frequencyCode: c.frequencyCode, id: newIdempotencyKey(), pick: { item: med, kind: 'medication' }, selected: !rev })
+                  if (rev) reviewCount += 1
+                  addedCount += 1
+                  changed = true
+                }
+                if (changed && !save({ ...current.current, rows })) {
+                  return { addedCount: 0, error: t('待开清单无法保存或读取，已停止开立。', 'Pending orders could not be saved.'), reviewCount: 0 }
+                }
+                let synced = 0
+                let syncedRm = 0
+                try {
+                  const k = investigationDraftKey(session, admission)
+                  const d = readInvestigationDraft(k)
+                  const inv = applyOrderSetInvestigations(d.rows, draft)
+                  synced = inv.added; syncedRm = inv.removed
+                  if (inv.changed) { saveInvestigationDraft(k, { ...d, rows: inv.next }); notifyIssueDraftSettled(k) }
+                } catch { /* keep medication rows when investigation session storage is unavailable */ }
+                return {
+                  addedCount,
+                  ...(synced > 0 ? { extraNote: t(`同时向「开立住院检查」待开清单加入 ${synced} 项`, `Also added ${synced} items to inpatient investigations`) } : {}),
+                  removedCount: removedCount + syncedRm,
+                  reviewCount,
+                }
+              }}
+              target={{ admissionId: admission.id, scope: 'inpatient' }}
+            />
             <p className="text-sm font-medium">{t(`待开 ${draft.rows.length} 项 · 已选 ${selected.length} 项`, `${draft.rows.length} draft items · ${selected.length} selected`)}</p>
             <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={locked} onClick={() => save({ ...current.current, rows: current.current.rows.map(row => !row.attempt && !problem(row) ? { ...row, selected: true } : row) })}>{t('全选本页可办理项目', 'Select eligible items on this page')}</Button><Button size="sm" variant="outline" disabled={locked} onClick={() => save({ ...current.current, rows: current.current.rows.map(row => ({ ...row, selected: false })) })}>{t('清空选择', 'Clear selection')}</Button><Button size="sm" variant="outline" disabled={running || draft.rows.some(row => row.attempt)} onClick={() => setConfirmClear(true)}>{t('清空待开清单', 'Discard drafts')}</Button></div>
             <p className="text-xs text-muted-foreground">{t(`完整已选清单：${selected.map(row => row.pick.item.display).join('、') || '未选择'}`, `All selected: ${selected.map(row => row.pick.item.display).join(', ') || 'None'}`)}</p>

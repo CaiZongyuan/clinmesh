@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { inpatientInvestigationResponseSchema, inpatientInvestigationCatalogSchema, inpatientInvestigationIssueInputSchema } from '@clinmesh/contracts/inpatient-investigations'
+import type { OrderSetDraft } from '@clinmesh/contracts/order-set-templates'
 import { createDraftDiscard } from './draft-discard.ts'
 import { issueDraftFailureSchema, issueDraftKeys, notifyIssueDraftSettled, readIssueDraftForSettlement, type IssueDraftOutcome } from './inpatient-issue-draft-settlement.ts'
 
@@ -39,6 +40,49 @@ export function readInvestigationDraft(key: string): InvestigationDraft {
 export function saveInvestigationDraft(key: string, draft: InvestigationDraft) {
   discard.ensureCleared()
   sessionStorage.setItem(key, JSON.stringify(draft))
+}
+
+export function applyOrderSetInvestigations(
+  rows: readonly InvestigationDraftRow[],
+  draft: OrderSetDraft,
+  items?: readonly InvestigationDraftRow['item'][],
+) {
+  const ex = new Set(draft.items.flatMap(e =>
+    (e.kind === 'laboratory' || e.kind === 'examination') && e.disposition === 'excluded' && e.matchedCatalogId !== null
+      ? [`${e.kind}:${e.matchedCatalogId}`] : []))
+  const next = rows.filter(r => r.attempt !== undefined || !ex.has(`${r.item.kind}:${r.item.id}`))
+  const removed = rows.length - next.length
+  let added = 0
+  let review = 0
+  let changed = removed > 0
+  let firstKind: 'laboratory' | 'examination' | undefined
+  for (const e of draft.items) {
+    const c = e.candidate
+    if (c?.kind !== 'laboratory' && c?.kind !== 'examination') continue
+    const id = c.kind === 'laboratory' ? c.catalogItemId : c.serviceId
+    const rev = e.disposition === 'needs-review'
+    const idx = next.findIndex(r => r.item.kind === c.kind && r.item.id === id)
+    if (idx !== -1) {
+      const cur = next[idx]!
+      if (!cur.attempt && rev && cur.selected) { next[idx] = { ...cur, selected: false }; changed = true }
+      if (rev) review += 1
+      continue
+    }
+    if (next.length >= investigationBatchLimit) continue
+    const item = items?.find(o => o.kind === c.kind && o.id === id) ?? {
+      available: true, display: c.display, id, indicationCodes: c.kind === 'laboratory' ? c.indicationCodes : [],
+      kind: c.kind, priceFen: c.priceFen, version: c.catalogVersion,
+    }
+    next.push({
+      id: globalThis.crypto.randomUUID(), indication: c.kind === 'examination' ? c.indication : '',
+      indicationCode: c.kind === 'laboratory' ? c.indicationCode : '', item, selected: !rev,
+    })
+    firstKind ??= c.kind
+    if (rev) review += 1
+    added += 1
+    changed = true
+  }
+  return { added, changed, firstKind, next, removed, review }
 }
 
 /** 先持久消费原行，再由共享 writer 解除原意图；同键重读可安全重复。 */
