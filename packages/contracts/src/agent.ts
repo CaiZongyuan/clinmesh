@@ -7,7 +7,7 @@ import {
   type DoctorCaseSection,
   type InpatientStage,
 } from './agent-tool-input.ts'
-import { hisOperationIdSchema } from './his-operations.ts'
+import { hisOperationIdSchema } from './his-operations-runtime.ts'
 import { commandResponseSchema, doctorCaseDetailSchema, doctorQueueSchema, roleCodeSchema,
   caseExaminationServiceCatalogSchema, caseImagingServiceCatalogSchema, casePathologyServiceCatalogSchema } from './his.ts'
 

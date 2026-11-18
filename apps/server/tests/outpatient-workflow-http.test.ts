@@ -11531,7 +11531,7 @@ describe('outpatient workflow HTTP contract', () => {
     for (const [resourceType, total] of [
       ['Composition', 2],
       ['Bundle', 2],
-      ['Provenance', 2],
+      ['Provenance', 3],
     ] as const) {
       const response = await runtime.app.request(
         `/fhir/R5/${resourceType}?_total=accurate`,

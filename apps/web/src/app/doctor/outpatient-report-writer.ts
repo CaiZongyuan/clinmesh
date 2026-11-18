@@ -1,4 +1,4 @@
-import { commandReceiptLookupSchema, getHisOperation } from '@clinmesh/contracts/his-operations'
+import { commandReceiptLookupSchema, getHisOperation } from '@clinmesh/contracts/his-operations-runtime'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import { ApiClientError, apiGet, apiMutation, getDoctorCase, getSession, newIdempotencyKey } from '../api-client.ts'

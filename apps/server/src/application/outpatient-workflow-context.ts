@@ -314,10 +314,12 @@ export const triageRecordContentSchema = z.object({
     systolicMmHg: z.number(),
   }),
   chiefComplaint: z.string(),
+  heightCm: z.number().finite().min(30).max(260).optional(),
   oxygenSaturationPct: z.number(),
   pulseBpm: z.number(),
   respirationBpm: z.number(),
   temperatureC: z.number(),
+  weightKg: z.number().finite().min(1).max(400).optional(),
 })
 
 export const countRowSchema = z.object({ count: z.number().int().nonnegative() }).strict()
@@ -555,10 +557,12 @@ function presentationFromTriage(value: z.infer<typeof triageRecordContentSchema>
     summary: value.chiefComplaint,
     vitalSigns: {
       bloodPressure: value.bloodPressure,
+      ...(value.heightCm === undefined ? {} : { heightCm: value.heightCm }),
       oxygenSaturationPct: value.oxygenSaturationPct,
       pulseBpm: value.pulseBpm,
       respirationBpm: value.respirationBpm,
       temperatureC: value.temperatureC,
+      ...(value.weightKg === undefined ? {} : { weightKg: value.weightKg }),
     },
   })
 }

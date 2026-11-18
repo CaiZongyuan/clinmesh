@@ -1,5 +1,5 @@
 import { apiConflictSchema, apiErrorSchema, sessionContextSchema, type DoctorCaseDetail } from '@clinmesh/contracts/his'
-import { getHisOperation } from '@clinmesh/contracts/his-operations'
+import { getHisOperation } from '@clinmesh/contracts/his-operations-runtime'
 import { z } from 'zod'
 import { createDraftDiscard } from '../draft-discard.ts'
 import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'

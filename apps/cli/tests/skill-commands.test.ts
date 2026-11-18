@@ -553,10 +553,10 @@ it('停嘱理由投影的读取与全部医嘱回执保持版本和 Skill 示例
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   for (const [id, version] of [
-    ['inpatient.pharmacy.read', 2], ['inpatient.clinical.read', 3], ['inpatient.diagnosis.confirm', 2],
-    ['inpatient.order.issue', 6], ['inpatient.order.verify', 2], ['inpatient.order.request-stop', 2],
-    ['inpatient.order.verify-stop', 2], ['inpatient.execution.dispense', 2], ['inpatient.execution.administer', 2],
-    ['inpatient.execution.complete', 2], ['inpatient.execution.request-prn', 3],
+    ['inpatient.pharmacy.read', 2], ['inpatient.clinical.read', 4], ['inpatient.diagnosis.confirm', 3],
+    ['inpatient.order.issue', 7], ['inpatient.order.verify', 3], ['inpatient.order.request-stop', 3],
+    ['inpatient.order.verify-stop', 3], ['inpatient.execution.dispense', 2], ['inpatient.execution.administer', 3],
+    ['inpatient.execution.complete', 3], ['inpatient.execution.request-prn', 4],
   ] as const) {
     const operation = getHisOperation(id)
     expect(operation.version).toBe(version)
@@ -629,7 +629,7 @@ it('keeps consultation recovery examples aligned with durable attempt semantics'
     }
     expect(operation.input.safeParse({ encounterId: 'synthetic', arbitraryPayload: {} }).success).toBe(false)
   }
-  expect(getHisOperation('doctor.case.get').version).toBe(18)
+  expect(getHisOperation('doctor.case.get').version).toBe(19)
   expect(getHisOperation('doctor.case.get').summary).toContain('consultation.replyAttempt')
   expect(skill).toContain('consultation.replyAttempt')
   expect(skill).toContain('same ask/retry key')
@@ -849,7 +849,7 @@ describe('ClinMesh CLI Agent Skills', () => {
       expect(getHisOperation(id).summary).toContain('CLINICAL_HISTORY_REQUIRED')
     }
     const read = getHisOperation('doctor.case.get')
-    expect(read.version).toBe(18)
+    expect(read.version).toBe(19)
     expect(read.summary).toContain('clinicalHistory.requiredFields')
     expect(read.summary).toContain('twelve-field')
     const completed = getHisOperation('doctor.completed-cases.get')
@@ -880,7 +880,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(operation.summary).toContain('MODEL_OUTCOME_UNKNOWN')
     expect(skill).toContain('`MODEL_OUTCOME_UNKNOWN` stops automatic resending')
     const read = getHisOperation('doctor.case.get')
-    expect(read.version).toBe(18)
+    expect(read.version).toBe(19)
     expect(read.summary).toContain('sourceResults')
     expect(read.summary).toContain('legacy verification counts are zero and issues empty')
     expect(skill).toContain('Retry actual recording failures')
@@ -922,7 +922,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 18 : 3)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 19 : 4)
       expect(operation.summary).toContain('presentation')
       expect(operation.summary).toContain('registrationNumber')
       const line = commandLines(doctorSkill).find(line => line.startsWith(id === 'doctor.case.get' ? 'clinmesh doctor case get ' : 'clinmesh doctor queue list'))!
@@ -1053,7 +1053,7 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
   const executionExample = skill.match(/`surgery-execution\.json`[^]*?```json\n([^]*?)\n```/)
   expect(executionExample).toBeDefined()
   expect(getHisOperation('inpatient.surgery.execute').input.parse(JSON.parse(executionExample![1]!))).toMatchObject({ expectedRequestVersion: 3, materials: [{ quantity: 2 }] })
-  expect(getHisOperation('inpatient.order.issue').version).toBe(6)
+  expect(getHisOperation('inpatient.order.issue').version).toBe(7)
   expect(skill).toContain('surgeryExecutionId')
   expect(skill).toContain('inpatient.surgery.execute')
   expect(getHisOperation('inpatient.surgery.catalog').version).toBe(2)
@@ -1118,13 +1118,13 @@ it('药物频次、审方拒绝与CLI Skill的当前合同保持一致', async (
   const match = skill.match(/`order\.json`[^]*?```json\n([^]*?)\n```/)!
   const example = JSON.parse(match[1]!)
   const operation = getHisOperation('inpatient.order.issue')
-  expect(operation.version).toBe(6)
+  expect(operation.version).toBe(7)
   for (const frequencyCode of ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE']) {
     expect(operation.input.safeParse({ ...example, selection: { ...example.selection, frequencyCode } }).success).toBe(true)
   }
   expect(operation.input.safeParse({ ...example, selection: { ...example.selection, frequencyCode: 'Q4H' } }).success).toBe(false)
   for (const reason of ['MEDICATION_COMBINATION_NOT_ALLOWED', 'MEDICATION_DIAGNOSIS_NOT_ALLOWED', 'MEDICATION_ALLERGY_CONFLICT', 'MEDICATION_DOSAGE_NOT_ALLOWED', 'MEDICATION_ONCE_REQUIRES_TEMPORARY']) expect(skill).toContain(reason)
-  expect(getHisOperation('inpatient.execution.request-prn').version).toBe(3)
+  expect(getHisOperation('inpatient.execution.request-prn').version).toBe(4)
   for (const id of ['encounter.prescription.draft.set', 'encounter.prescription.issue'] as const) expect(getHisOperation(id).version).toBe(2)
 })
 
@@ -1183,4 +1183,35 @@ it('功能检查示例绑定当前草稿和报告版本，不接受报告正文�
     expect(operation.input.safeParse({ ...input, assetId: 'private-asset' }).success).toBe(false)
     expect(operation.input.safeParse({ ...input, expectedRequestVersion: undefined, expectedDraftVersion: undefined }).success).toBe(false)
   }
+})
+
+it('keeps clinical risk assessment, nursing vitals, and deterministic clinical score Skill examples aligned with contracts', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const doctorSkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+  const inpatientSkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+
+  for (const [skill, path, id] of [
+    [doctorSkill, 'doctor case clinical-scores get', 'doctor.case.clinical-scores.read'],
+    [doctorSkill, 'encounter risk-assessment record', 'encounter.risk-assessment.record'],
+    [inpatientSkill, 'inpatient record-vital-signs', 'inpatient.vital-signs.record'],
+    [inpatientSkill, 'inpatient record-risk-assessment', 'inpatient.risk-assessment.record'],
+    [inpatientSkill, 'inpatient clinical-scores', 'inpatient.clinical-scores.read'],
+  ] as const) {
+    const line = commandLines(skill).find(item => item.startsWith(`clinmesh ${path} `))
+    expect(line, path).toBeDefined()
+    expect(inspectExample(program, line!).operation?.id).toBe(id)
+  }
+
+  expect(getHisOperation('inpatient.vital-signs.record').summary).toContain('INPATIENT_VITAL_SIGNS_CONFLICT')
+  expect(getHisOperation('inpatient.risk-assessment.record').summary).toContain('INPATIENT_RISK_ASSESSMENT_CONFLICT')
+  expect(inpatientSkill).toContain('INPATIENT_VITAL_SIGNS_CONFLICT')
+  expect(inpatientSkill).toContain('INPATIENT_RISK_ASSESSMENT_CONFLICT')
+
+  const doctorJson = JSON.parse(doctorSkill.slice(doctorSkill.indexOf('`risk-assessment.json`')).match(/```json\n([^]*?)\n```/)![1]!)
+  expect(getHisOperation('encounter.risk-assessment.record').input.safeParse(doctorJson).success).toBe(true)
+
+  const inpatientTail = inpatientSkill.slice(inpatientSkill.indexOf('`vital-signs.json`'))
+  const inpatientBlocks = [...inpatientTail.matchAll(/```json\n([^]*?)\n```/g)].map(match => JSON.parse(match[1]!))
+  expect(getHisOperation('inpatient.vital-signs.record').input.safeParse(inpatientBlocks[0]).success).toBe(true)
+  expect(getHisOperation('inpatient.risk-assessment.record').input.safeParse(inpatientBlocks[1]).success).toBe(true)
 })
