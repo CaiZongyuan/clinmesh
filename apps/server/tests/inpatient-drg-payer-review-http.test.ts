@@ -84,10 +84,16 @@ async function confirmPrimary(s: Awaited<ReturnType<typeof setup>>) {
     entries: [{ catalogItemId: 'nhsa-diagnosis:nhc-icd10-clinical@2022.r4:I10.x09', role: 'primary', admissionCondition: '1', note: '核定验证诊断' }] })
 }
 
+const pciDischargeOverride = {
+  acknowledgedAlerts: ['DISCHARGE_ANTIPLATELET_MISSING', 'DISCHARGE_STATIN_MISSING'] as const,
+  note: '合成医保办核定验证无二级预防长期医嘱',
+  reasonCode: 'documented-contraindication' as const,
+}
+
 /** 出科到可归档：签离→出科→结算→清床；首页提交、审核与归档由用例按主操作需求自行衔接。 */
-async function finish(s: Awaited<ReturnType<typeof setup>>) {
+async function finish(s: Awaited<ReturnType<typeof setup>>, withPciOverride = false) {
   const admission = (await (await s.request(s.doctor, s.path)).json()).admission
-  const issued = await (await s.request(s.doctor, `${s.path}/discharge/issue`, { encounterVersion: admission.versionId, reason: '治疗完成' })).json()
+  const issued = await (await s.request(s.doctor, `${s.path}/discharge/issue`, { encounterVersion: admission.versionId, reason: '治疗完成', ...(withPciOverride ? { clinicalOverride: pciDischargeOverride } : {}) })).json()
   expect((await s.request(s.nurse, `${s.path}/discharge/depart`, { encounterVersion: issued.data.admission.versionId, reason: '已核对', departureMethod: 'home' })).status).toBe(200)
   const p = await (await s.request(s.cashier, `${s.path}/discharge/preview`)).json()
   const settled = await (await s.request(s.cashier, `${s.path}/discharge/settle`, { encounterVersion: p.encounterVersion, fingerprint: p.fingerprint,
@@ -96,11 +102,11 @@ async function finish(s: Awaited<ReturnType<typeof setup>>) {
 }
 
 /** 提交首页并经病案审核通过后归档，返回归档时的来源哈希。 */
-async function submitReviewArchive(s: Awaited<ReturnType<typeof setup>>, mainProcedureExecutionId: string | null) {
+async function submitReviewArchive(s: Awaited<ReturnType<typeof setup>>, mainProcedureExecutionId: string | null, withPciOverride = false) {
   const coder = await s.login('medical-records')
   const submitted = await (await s.request(s.doctor, `${s.path}/record`)).json()
   expect((await s.request(s.doctor, `${s.path}/record/submit`, { expectedRevision: submitted.revision?.revision ?? 0,
-    expectedSourcesHash: submitted.sourcesHash, mainProcedureExecutionId })).status).toBe(200)
+    expectedSourcesHash: submitted.sourcesHash, mainProcedureExecutionId, ...(withPciOverride ? { clinicalOverride: pciDischargeOverride } : {}) })).status).toBe(200)
   const reviewed = await (await s.request(s.doctor, `${s.path}/record`)).json()
   expect((await s.request(coder, `${s.path}/record/review`, { expectedRevision: 1, expectedSourcesHash: reviewed.sourcesHash,
     outcome: 'approved', reason: '合成编码审核通过' })).status).toBe(200)
@@ -220,8 +226,8 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
       expectedRequestVersion: (await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests[0].version,
       procedureId: procedure.id, catalogVersion: procedure.version, note: '合成实际实施完成', materials: [] })).status).toBe(200)
     const execution = (await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).executions[0]
-    await finish(s)
-    await submitReviewArchive(s, execution.id)
+    await finish(s, true)
+    await submitReviewArchive(s, execution.id, true)
     const missingVersion = (await (await s.request(s.doctor, s.path)).json()).admission.versionId
     // RA25 不在合成参数覆盖范围：核定按参数缺口明确报告，不产生记录。
     const missing = await s.request(s.insurance, `${s.path}/drg/payer-review`, { encounterVersion: missingVersion, expectedFingerprint: '0'.repeat(64), reason: '参数缺口验证' })

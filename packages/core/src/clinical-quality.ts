@@ -79,7 +79,7 @@ export function classDuplicationFindings(candidates: readonly QualityMedication[
     const others = [...candidates.slice(0, index), ...active]
     const conflict = others.find(other => other.catalogItemId === medication.catalogItemId
       || medicationCombinationConflict(medication.pharmacologyClasses, other.pharmacologyClasses))
-    if (conflict) findings.push(redLine('MEDICATION_CLASS_DUPLICATION', `${medication.display}与${conflict.display}属于互斥的同药理类别，不能叠加开立。`, [], medication.catalogItemId))
+    if (conflict) findings.push(redLine('MEDICATION_CLASS_DUPLICATION', `药品组合存在药理类别互斥：${medication.display}与${conflict.display}不能叠加开立。`, [], medication.catalogItemId))
   })
   return findings
 }

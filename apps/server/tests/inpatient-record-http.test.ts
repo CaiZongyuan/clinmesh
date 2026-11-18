@@ -115,10 +115,15 @@ describe('住院病案首页公共 HTTP', () => {
     const executionResponse = await s.request(s.doctor, `${s.path}/surgeries/execute`, executionInput, key)
     expect(executionResponse.status).toBe(200)
     const executionReceipt = await executionResponse.json(), execution = executionReceipt.data.executions[0]
-    await finish(s)
+    const pciDischargeOverride = {
+      acknowledgedAlerts: ['DISCHARGE_ANTIPLATELET_MISSING', 'DISCHARGE_STATIN_MISSING'] as const,
+      note: '合成旧病区手术费用与病案归档核验',
+      reasonCode: 'documented-contraindication' as const,
+    }
+    await finish(s, false, pciDischargeOverride)
     expect((await confirm(s)).status).toBe(200)
     const record = await (await s.request(s.doctor, `${s.path}/record`)).json()
-    expect((await s.request(s.doctor, `${s.path}/record/submit`, { expectedRevision: 0, expectedSourcesHash: record.sourcesHash, mainProcedureExecutionId: execution.id })).status).toBe(200)
+    expect((await s.request(s.doctor, `${s.path}/record/submit`, { expectedRevision: 0, expectedSourcesHash: record.sourcesHash, mainProcedureExecutionId: execution.id, clinicalOverride: pciDischargeOverride })).status).toBe(200)
     const coder = await s.login('medical-records'), expected = { expectedRevision: 1, expectedSourcesHash: record.sourcesHash }
     expect((await s.request(coder, `${s.path}/record/review`, { ...expected, outcome: 'approved' })).status).toBe(200)
     expect((await s.request(coder, `${s.path}/record/archive`, expected)).status).toBe(200)
@@ -363,8 +368,8 @@ async function confirm(s: Awaited<ReturnType<typeof setup>>, note = '本次正�
   const clinical = await (await s.request(s.doctor, `${s.path}/clinical`)).json()
   return s.request(s.doctor, `${s.path}/diagnoses/confirm`, { encounterVersion: clinical.encounterVersion, expectedRevision: clinical.diagnosis.revision, entries: [{ catalogItemId: 'nhsa-diagnosis:nhc-icd10-clinical@2022.r4:I10.x09', role: 'primary', admissionCondition: '1', note }] })
 }
-async function finish(s: Awaited<ReturnType<typeof setup>>, withInsurance = false) {
-  const issued = await (await s.request(s.doctor, `${s.path}/discharge/issue`, { encounterVersion: s.admission.versionId, reason: '治疗完成' })).json()
+async function finish(s: Awaited<ReturnType<typeof setup>>, withInsurance = false, clinicalOverride?: unknown) {
+  const issued = await (await s.request(s.doctor, `${s.path}/discharge/issue`, { encounterVersion: s.admission.versionId, reason: '治疗完成', ...(clinicalOverride === undefined ? {} : { clinicalOverride }) })).json()
   expect(issued.data).toBeDefined()
   expect((await s.request(s.nurse, `${s.path}/discharge/depart`, { encounterVersion: issued.data.admission.versionId, reason: '已核对', departureMethod: 'home' })).status).toBe(200)
   if (withInsurance) {
