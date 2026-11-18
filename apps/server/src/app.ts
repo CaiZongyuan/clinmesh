@@ -1886,9 +1886,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/clinical-quality', async context => {
       try {
+        const rawQuery = context.req.query()
+        z.object({ admissionId: z.never().optional() }).loose().parse(rawQuery)
         const input = inpatientClinicalQualityInputSchema.parse({
+          ...rawQuery,
           admissionId: context.req.param('admissionId'),
-          ...context.req.query(),
         })
         return context.json(inpatient.readClinicalQuality(await actor(context), input))
       } catch (error) { return apiErrorResponse(context, error) }
@@ -2447,9 +2449,10 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     app.get('/api/his/v1/encounters/:encounterId/clinical-quality', async (context) => {
       try {
+        const query = outpatientClinicalQualityInputSchema.omit({ encounterId: true }).parse(context.req.query())
         const input = outpatientClinicalQualityInputSchema.parse({
+          ...query,
           encounterId: context.req.param('encounterId'),
-          ...context.req.query(),
         })
         return context.json(workflow.clinicalQuality.readOutpatient(await actor(context), input))
       } catch (error) {

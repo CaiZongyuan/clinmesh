@@ -873,6 +873,7 @@ export class DoctorRecommendationsService {
           ...base,
           expectedDraftVersion: saved.data.draftVersion,
           clinicalOverride: request.input.clinicalOverride,
+          operation: 'doctor.recommendations.confirm',
         })
         draftVersion = issued.data.draftVersion
         recordIds.push(issued.data.prescription.id)

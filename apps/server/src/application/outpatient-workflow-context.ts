@@ -680,6 +680,7 @@ export interface OutpatientPrescriptionTransactionPort {
       expectedDraftVersion: number
       expectedVersions: Record<string, string>
       idempotencyKey: string
+      operation?: 'encounter.issue-prescription' | 'doctor.recommendations.confirm' | undefined
     },
   ): {
     clinicalQuality?: ClinicalQualityReceipt

@@ -170,7 +170,7 @@ export class InpatientPciSelection {
     const selected = this.read(context, admissionId, requestId)
     const draft = selected.drafts?.find(item => item.requestId === requestId
       && (selected.confirmation === null || item.confirmedSelectionVersion === selected.confirmation.version || item.edited && item.confirmedSelectionVersion === null))
-    if (selected.confirmation === null) {
+    if (selected.confirmation === null || draft?.confirmedSelectionVersion === null) {
       const admission = this.owner.admissionBinding(context, admissionId)
       this.owner.workflow.clinicalQuality.enforce(context, {
         check: this.owner.workflow.clinicalQuality.inpatientPciPlan(this.owner, context, admissionId, {

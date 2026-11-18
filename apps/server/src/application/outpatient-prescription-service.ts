@@ -535,6 +535,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
     expectedDraftVersion: number
     expectedVersions: Record<string, string>
     idempotencyKey: string
+    operation?: 'encounter.issue-prescription' | 'doctor.recommendations.confirm' | undefined
   }) {
     this.#context.assertRole(input.context, ['outpatient-doctor'])
     this.assertPrescriptionConclusionSupported(input.context)
@@ -623,7 +624,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         diagnosisCodes: confirmedCodes,
         medications: medications.filter(medication => !medication.external).map(medication => this.#qualityMedication(input.context, medication)),
       }),
-      operation: 'encounter.issue-prescription',
+      operation: input.operation ?? 'encounter.issue-prescription',
       override: input.clinicalOverride,
       patientId: outpatientCase.patient_id,
       subjectReference: `Encounter/${input.encounterId}`,

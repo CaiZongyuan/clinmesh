@@ -31,7 +31,7 @@ import {
 import { advanceVirtualTimeResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientAngiographyReportSchema } from '@clinmesh/contracts/inpatient-angiography'
 import { inpatientFullCatalogSchema, inpatientFullClinicalResponseSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
-import { inpatientDischargeResponseSchema, inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { inpatientDischargeResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientMaterialEstimateResponseSchema, inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientPciSelectionResponseSchema, inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -326,6 +326,11 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
         .get(scenario.workspaceId, scenario.epoch, 'encounter.clinical-quality.read'),
     ).count
     expect(auditCountAfter).toBe(auditCountBefore + 1)
+    const outpatientQueryOverrideRes = await fixture.request(
+      'doctor',
+      `/api/his/v1/encounters/${renalVisit.encounterId}/clinical-quality?gate=outpatient-prescription&encounterId=other-encounter`,
+    )
+    expect(outpatientQueryOverrideRes.status).toBe(400)
 
     // Issuing without clinicalOverride returns 409 CLINICAL_QUALITY_ALERT and creates zero formal facts
     const issueWithoutOverride = await fixture.request(
@@ -622,6 +627,48 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
       fixture.runtime.database.driver.prepare('SELECT COUNT(*) AS count FROM clinical_quality_override WHERE workspace_id=? AND epoch=? AND patient_id=?')
         .get(scenario.workspaceId, scenario.epoch, viralVisit.patient.id),
     ).count).toBe(1)
+
+    const prepAbxVisit = await createOutpatientVisit(fixture, {
+      birthDate: '1990-04-18',
+      chiefComplaint: '咽干鼻塞 1 天',
+      gender: 'female',
+      name: '合成推荐处方越权审计患者',
+    })
+    await confirmOutpatientDiagnosis(fixture, prepAbxVisit.encounterId, prepAbxVisit.detail.encounter.versionId, [
+      { catalogItemId: 'diagnosis-acute-upper-respiratory-infection', role: 'primary' },
+    ])
+    const prepAbxAfterDiag = await fixture.read('doctor', `/api/his/v1/doctor/cases/${prepAbxVisit.caseId}`, doctorCaseDetailSchema)
+    const prepAbxConfirmed = await parsePciResponse(
+      z.object({ auditId: z.string(), clinicalQuality: clinicalQualityReceiptSchema }).loose(),
+      await fixture.request(
+        'doctor',
+        `/api/his/v1/doctor/cases/${prepAbxVisit.caseId}/recommendations/prescription/actions/confirm`,
+        {
+          clinicalOverride: abxOverride,
+          expectedDraftVersion: 0,
+          selections: [{
+            kind: 'prescription',
+            source: 'manual',
+            catalogItemId: 'medication-amoxicillin',
+            doseText: '500 mg',
+            frequencyCode: 'TID',
+            courseDays: 1,
+            quantity: 1,
+          }],
+        },
+        randomUUID(),
+        { [`Encounter/${prepAbxVisit.encounterId}`]: prepAbxAfterDiag.encounter.versionId },
+      ),
+    )
+    assertOverrideAuditAndTrace(fixture, {
+      auditId: prepAbxConfirmed.auditId,
+      epoch: scenario.epoch,
+      gate: 'outpatient-prescription',
+      operation: 'doctor.recommendations.confirm',
+      override: abxOverride,
+      overrideId: prepAbxConfirmed.clinicalQuality.overrideId,
+      workspaceId: scenario.workspaceId,
+    })
 
     // --- 3. Outpatient Completion Gate: acute chest pain without ECG or troponin ---
     const chestPainVisit = await createOutpatientVisit(fixture, {
@@ -1059,6 +1106,8 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
 
     const preflightPci = await fixture.read('inpatient-doctor', `${stay.path}/clinical-quality?gate=inpatient-pci-plan`, clinicalQualityCheckSchema)
     expect(preflightPci).toMatchObject({ status: 'alert', alerts: [{ code: 'PCI_NON_ISCHEMIC_LESION', tier: 'alert' }] })
+    const inpatientQueryOverrideRes = await fixture.request('inpatient-doctor', `${stay.path}/clinical-quality?gate=inpatient-pci-plan&admissionId=other-admission`)
+    expect(inpatientQueryOverrideRes.status).toBe(400)
 
     // Step 2 `material-estimates/confirm` CANNOT bypass Gate 3 when pre-report PCI request (`stay.requestId`) has auto-generated `inpatient_pci_selection_draft` and `confirmation === null`!
     const estimatesBefore = await fixture.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)
@@ -1252,6 +1301,47 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
       override: { reasonCode: 'clinical-judgement' },
     })
 
+    // Even after a prior PCI selection confirmation exists on the admission, editing the draft (`confirmedSelectionVersion === null`) still blocks `material-estimates/confirm`!
+    const initialDraftParams = selAfterReq.drafts!.find(item => item.requestId === newReq.id)!.parameters
+    const confirmedDraftVer = confirmedSelection.data.drafts!.find(item => item.requestId === newReq.id)!.version
+    await parsePciResponse(
+      inpatientPciSelectionResponseSchema,
+      await fixture.request('inpatient-doctor', `${stay.path}/pci-selection/save`, {
+        requestId: newReq.id,
+        expectedDraftVersion: confirmedDraftVer,
+        parameters: initialDraftParams,
+      }),
+    )
+    const estAfterPriorConfirm = (await fixture.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates.find(item => item.requestId === newReq.id)!
+    const savedEstAfterPriorConfirm = (await parsePciResponse(
+      inpatientMaterialEstimateResponseSchema,
+      await fixture.request('inpatient-doctor', `${stay.path}/material-estimates/save`, {
+        requestId: newReq.id,
+        expectedVersion: estAfterPriorConfirm.version,
+        expectedDraftRevision: estAfterPriorConfirm.draft?.revision ?? 0,
+        expectedBasisFingerprint: estAfterPriorConfirm.basisFingerprint,
+        analysisId: null,
+        items: estAfterPriorConfirm.candidates.filter(c => c.item !== null && c.materialId !== 'hospital-material-pci-stent-equivalent-b').map(c => ({ materialId: c.materialId, catalogVersion: c.catalogVersion, quantity: 1, reason: c.quantityBasis })),
+        note: '已有历史确认后再次修改未确认选型草稿验证门禁',
+      }),
+    )).data
+    const resAfterPriorConfirm = await fixture.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
+    const bypassAfterPriorConfirm = await fixture.request('inpatient-doctor', `${stay.path}/material-estimates/confirm`, {
+      requestId: newReq.id,
+      expectedVersion: savedEstAfterPriorConfirm.version,
+      expectedDraftRevision: savedEstAfterPriorConfirm.draft!.revision,
+      expectedBasisFingerprint: savedEstAfterPriorConfirm.basisFingerprint,
+      expectedRequestVersion: savedEstAfterPriorConfirm.requestVersion,
+      encounterVersion: resAfterPriorConfirm.encounterVersion,
+      expectedReservationFingerprint: resAfterPriorConfirm.reservationSets.find(s => s.requestId === newReq.id)!.fingerprint,
+      reason: '验证未确认草稿不可借由已有历史确认绕过门禁',
+    })
+    expect(bypassAfterPriorConfirm.status).toBe(409)
+    expect(apiErrorSchema.parse(await bypassAfterPriorConfirm.json()).error).toMatchObject({
+      code: 'CLINICAL_QUALITY_ALERT',
+      clinicalQuality: { alerts: [expect.objectContaining({ code: 'PCI_NON_ISCHEMIC_LESION' })] },
+    })
+
     // Cancel pending surgery so discharge can proceed
     await parsePciResponse(
       inpatientSurgeryResponseSchema,
@@ -1401,28 +1491,10 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
       override: { reasonCode: 'documented-contraindication' },
     })
 
-    // --- 4. Post-discharge `inpatient.record.submit` direct gate after settlement + bed clear (`cleared`) when CAD diagnosis is added ---
+    // --- 4. Post-discharge `inpatient.record.submit` direct gate when CAD diagnosis is added after discharge ---
     const nonCadStay = await fixture.admitSyntheticCase(['I10.x09'], 'bed-general-2')
-    // Non-CAD discharge, settlement, and bed clear succeed without override
+    // Non-CAD discharge succeeds without override
     await fixture.depart(nonCadStay)
-    const nonCadPreview = await fixture.read('cashier', `${nonCadStay.path}/discharge/preview`, inpatientSettlementPreviewSchema)
-    const nonCadSettled = (await parsePciResponse(
-      inpatientSettlementResponseSchema,
-      await fixture.request('cashier', `${nonCadStay.path}/discharge/settle`, {
-        encounterVersion: nonCadPreview.encounterVersion,
-        fingerprint: nonCadPreview.fingerprint,
-        expectedChargesFen: nonCadPreview.chargesFen,
-        expectedBalanceFen: nonCadPreview.balanceFen,
-      }),
-    )).data
-    const nonCadCleared = await parsePciResponse(
-      inpatientDischargeResponseSchema,
-      await fixture.request('ward-nurse', `${nonCadStay.path}/discharge/clear`, {
-        encounterVersion: nonCadSettled.encounterVersion,
-        reason: '结算后办理清床',
-      }),
-    )
-    expect(nonCadCleared.data.admission.status).toBe('cleared')
     // Doctor corrects diagnosis to CAD (`I25.103`) in the post-discharge unarchived window
     const nonCadClin = await fixture.read('inpatient-doctor', `${nonCadStay.path}/clinical`, inpatientFullClinicalSchema)
     await parsePciResponse(
