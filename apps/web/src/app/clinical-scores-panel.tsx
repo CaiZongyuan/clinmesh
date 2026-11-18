@@ -318,7 +318,7 @@ function ClinicalScoresBody({
               <option value="">{t('未记录', 'Not recorded')}</option>
               <option value="negative">{t('无出血史', 'None')}</option>
               <option value="non-spontaneous">{t('仅外伤/手术出血', 'Traumatic/operative only')}</option>
-              <option value="spontaneous">{t('有自发性出血（需住院/输血）', 'Spontaneous (hospitalized/transfused)')}</option>
+              <option value="spontaneous">{t('有自发性出血（需医疗救治/干预）', 'Spontaneous (requiring medical attention)')}</option>
             </select>
           </label>
           {canEditRisk ? (
