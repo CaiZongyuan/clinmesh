@@ -708,6 +708,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         authoredOn: authoredAt,
         requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
         dosageInstruction: [{
+          ...(medication.instructions === undefined ? {} : { patientInstruction: medication.instructions }),
           text: `${medication.doseText} ${medication.frequencyCode} for ${medication.courseDays} days`,
           timing: {
             repeat: {
@@ -751,6 +752,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         display: medication.catalog.name_zh,
         doseText: medication.doseText,
         frequencyCode: medication.frequencyCode,
+        ...(medication.instructions === undefined ? {} : { instructions: medication.instructions }),
         medicationRequestId: medicationRequest.id,
         medicationRequestVersion: medicationRequest.meta?.versionId ?? '1',
         quantity: medication.quantity,
@@ -2301,6 +2303,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       const referenceProduct = referenceMedicationProductSchema.safeParse(
         JSON.parse(item.medication_snapshot_json) as unknown,
       )
+      const instructions = request.dosageInstruction?.[0]?.patientInstruction
       return {
         catalogItemId: item.medication_id,
         courseDays: item.course_days,
@@ -2310,6 +2313,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
           ?? item.medication_id,
         doseText: item.dose_text,
         frequencyCode: item.frequency_code,
+        ...(instructions === undefined ? {} : { instructions }),
         medicationRequestId: item.medication_request_id,
         medicationRequestVersion: resource.meta?.versionId ?? '1',
         quantity: item.quantity,

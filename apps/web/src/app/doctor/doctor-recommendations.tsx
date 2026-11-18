@@ -77,7 +77,7 @@ function selection(item: DoctorRecommendationSuggestion): PreparationDraft {
 }
 function clinicalValue(item: PreparationDraft) {
   if (item.kind === 'diagnosis') return JSON.stringify([identity(item), item.role, item.note ?? ''])
-  if (item.kind === 'prescription') return JSON.stringify([identity(item), item.doseText, item.frequencyCode, item.courseDays, item.quantity])
+  if (item.kind === 'prescription') return JSON.stringify([identity(item), item.doseText, item.frequencyCode, item.courseDays, item.quantity, item.instructions ?? ''])
   if (item.kind === 'laboratory') return JSON.stringify([identity(item), item.indicationCode, serviceReviewSignature(item.reviewedService)])
   if (item.kind === 'imaging') return JSON.stringify([identity(item), item.indication, serviceReviewSignature(item.reviewedService)])
   return JSON.stringify([identity(item), item.sourceProcedureReference, item.purpose, serviceReviewSignature(item.reviewedService)])
@@ -97,7 +97,7 @@ function indicationLabel(code: string, zh: boolean) {
 }
 function summary(item: PreparationDraft, zh: boolean) {
   if (item.kind === 'diagnosis') return item.role === null ? zh ? '主次待确认' : 'Choose the diagnosis role' : item.role === 'primary' ? zh ? '主诊断' : 'Primary' : zh ? '次诊断' : 'Secondary'
-  if (item.kind === 'prescription') return complete(item) ? `${item.doseText} · ${frequencyLabel(item.frequencyCode, zh)} · ${item.courseDays} ${zh ? '天' : 'days'} · ${item.quantity}` : zh ? '用法用量待补充' : 'Complete the prescription fields'
+  if (item.kind === 'prescription') return complete(item) ? `${item.doseText} · ${frequencyLabel(item.frequencyCode, zh)} · ${item.courseDays} ${zh ? '天' : 'days'} · ${item.quantity}${item.instructions ? ` · ${item.instructions}` : ''}` : zh ? '用法用量待补充' : 'Complete the prescription fields'
   if (item.kind === 'laboratory') return indicationLabel(item.indicationCode, zh)
   return item.kind === 'imaging' ? item.indication : item.purpose
 }
@@ -633,6 +633,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         if ('courseDays' in candidate) candidate.courseDays = Number(values.get('courseDays'))
         if ('quantity' in candidate) candidate.quantity = Number(values.get('quantity'))
         if ('note' in candidate && typeof candidate.note === 'string' && candidate.note.trim() === '') delete candidate.note
+        if ('instructions' in candidate && typeof candidate.instructions === 'string' && candidate.instructions.trim() === '') delete candidate.instructions
         const result = doctorPreparationSelectionSchema.safeParse(candidate)
         if (!result.success || !complete(result.data)) { setEditError(true);return }
         commit()
@@ -668,6 +669,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
                   onValueChange={code => { setEditDirty(true);if (code !== null) setEditing(previous => previous?.value.kind === 'laboratory' ? { ...previous, value: { ...previous.value, indicationCode: code } } : previous) }} />
                 : <Input value={activeEditing.fields?.[field] ?? value ?? ''} onChange={event => changeEditingField(field, event.currentTarget.value)} id={`prepared-${field}`} min={1} name={field} required type={field === 'quantity' || field === 'courseDays' ? 'number' : 'text'} />}</Field>
           })}
+        {activeEditing.value.kind === 'prescription' ? <Field><FieldLabel htmlFor="prepared-instructions">{zh ? '给药说明' : 'Instructions'}</FieldLabel><Input value={activeEditing.fields?.instructions ?? activeEditing.value.instructions ?? ''} onChange={event => changeEditingField('instructions', event.currentTarget.value)} id="prepared-instructions" maxLength={240} name="instructions" /></Field> : null}
         {editError ? <p role="alert">{zh ? '请补齐有效的项目信息。' : 'Complete the item with valid values.'}</p> : null}
         {editSwitchBlocked ? <p role="alert">{zh ? '请先保留当前调整，再查看其他待开具项目。' : 'Keep the current edits before opening another pending item.'}</p> : null}
       </FieldGroup><DialogFooter><Button disabled={disabled || submitting} type="submit">{zh ? '保留本次调整' : 'Keep edits'}</Button></DialogFooter></form>}</DoctorDraftEditorScope>)

@@ -123,8 +123,12 @@ export class InpatientOrders {
     const request = this.owner.fhir.read(context, row.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', row.order_id)
     const stopReason = z.array(z.object({ id: z.string().optional(), text: z.string() })).parse(request.note ?? [])
       .find(note => note.id === 'clinmesh-stop-reason')?.text
+    const instructions = row.kind === 'medication'
+      ? z.array(z.object({ patientInstruction: z.string().trim().min(1).max(500).optional() }).loose()).parse(request.dosageInstruction ?? [])[0]?.patientInstruction
+      : undefined
     return inpatientOrderSchema.parse({ id: row.order_id, admissionId: row.admission_id, kind: row.kind, duration: row.duration, catalogItemId: row.catalog_item_id,
       catalogVersion: row.catalog_version, display: row.display, doseText: row.dose_text, doseQuantity: row.dose_quantity, unit: row.unit, frequencyCode: row.frequency_code,
+      ...(instructions === undefined ? {} : { instructions }),
       state: row.state, version: row.version, requestVersion: request.meta!.versionId,
       ...(postoperative === undefined ? {} : { surgeryExecutionId: postoperative.surgery_execution_id }),
       ...(stopReason === undefined ? {} : { stopReason }),
@@ -231,7 +235,7 @@ export class InpatientOrders {
       if (input.surgeryExecutionId !== undefined) this.owner.database.driver.prepare('INSERT INTO inpatient_postoperative_order VALUES(?,?,?,?,?)')
         .run(context.workspaceId, context.epoch, admission.id, id, input.surgeryExecutionId)
       const request = this.owner.fhir.create(context, { resourceType: selection.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', id, status: 'active', intent: 'order',
-        ...(selection.kind === 'medication' ? { medication: { reference: { reference: `Medication/${itemId}`, display } }, dosageInstruction: [{ text: `${doseText} ${frequency}；每次${quantity}${unit}` }] }
+        ...(selection.kind === 'medication' ? { medication: { reference: { reference: `Medication/${itemId}`, display } }, dosageInstruction: [{ text: `${doseText} ${frequency}；每次${quantity}${unit}`, ...(selection.instructions === undefined ? {} : { patientInstruction: selection.instructions }) }] }
           : { code: { concept: { text: display } }, quantityQuantity: { value: quantity, unit } }),
         ...(input.surgeryExecutionId === undefined ? {} : selection.kind === 'medication'
           ? { supportingInformation: [{ reference: `Procedure/${input.surgeryExecutionId}` }] }

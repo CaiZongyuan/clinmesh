@@ -274,6 +274,9 @@ export const paymentPreviewRowSchema = paymentWorkflowRowSchema.extend({
 })
 
 export const issuedMedicationRequestSchema = z.object({
+  dosageInstruction: z.array(z.object({
+    patientInstruction: z.string().trim().min(1).max(500).optional(),
+  }).loose()).optional(),
   medication: z.object({
     reference: z.object({
       display: z.string().min(1).optional(),

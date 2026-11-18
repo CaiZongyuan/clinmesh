@@ -4,6 +4,10 @@ import {
   type ClinicalRiskAssessmentFieldsInput,
 } from '@clinmesh/contracts/clinical-scores'
 import { type ClinicalOverrideInput, type ClinicalQualityCheck } from '@clinmesh/contracts/clinical-quality'
+import {
+  orderSetDraftBundleSchema,
+  type OrderSetTemplateId,
+} from '@clinmesh/contracts/order-set-templates'
 import { clearOrderDrafts } from './inpatient-order-drafts.ts'
 import { clearInvestigationDrafts as clearInpatientInvestigationDrafts } from './inpatient-investigation-drafts.ts'
 import { clearInpatientOrderDrafts } from './inpatient-order-batch.ts'
@@ -1352,6 +1356,17 @@ export function recordTriage(input: {
 
 export function getOutpatientClinicalScores(caseId: string, signal?: AbortSignal) {
   return apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/clinical-scores`, clinicalScoreBundleSchema, signal)
+}
+
+export function getOrderSetDrafts(
+  target: { caseId: string; scope: 'outpatient' } | { admissionId: string; scope: 'inpatient' },
+  templateId?: OrderSetTemplateId,
+  signal?: AbortSignal,
+) {
+  const base = target.scope === 'outpatient'
+    ? `/api/his/v1/doctor/cases/${encodeURIComponent(target.caseId)}`
+    : `/api/his/v1/inpatient/admissions/${encodeURIComponent(target.admissionId)}`
+  return apiGet(`${base}/order-set-drafts${templateId ? `?templateId=${templateId}` : ''}`, orderSetDraftBundleSchema, signal)
 }
 
 export function recordOutpatientRiskAssessment(input: {

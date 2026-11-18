@@ -656,6 +656,7 @@ export const prescriptionDraftItemSchema = z.object({
   courseDays: z.number().int().min(1).max(30),
   doseText: z.string().trim().min(1).max(120),
   frequencyCode: z.string().trim().min(1).max(32),
+  instructions: z.string().trim().min(1).max(500).optional(),
   referenceProduct: referenceMedicationProductSchema.optional(),
   quantity: z.number().int().min(1).max(1_000),
 }).strict()

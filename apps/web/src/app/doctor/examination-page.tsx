@@ -34,8 +34,16 @@ import {
   newIdempotencyKey,
   saveExaminationRequestDraft,
 } from '../api-client.ts'
+import { OrderSetSelectorBar } from '../order-set-selector.tsx'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
+import {
+  applyOrderSetLabDrafts,
+  syncOrderSetExamDraft,
+  useInvestigationPreferences,
+  useManualInvestigationDrafts,
+  useOrderSetExamDraft,
+} from './investigation-draft-storage.ts'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 import { InvestigationBilling, InvestigationPrice } from './investigation-billing.tsx'
 import { OutpatientInvestigationActions } from './outpatient-investigation-actions.tsx'
@@ -48,6 +56,7 @@ export function ExaminationPage({
   active,
   elementId,
   actionContext,
+  recommendationScope,
   selectedRequestId,
   onSelectRequest,
 }: {
@@ -57,26 +66,36 @@ export function ExaminationPage({
   active: boolean
   elementId: string
   actionContext: OutpatientInvestigationActionContext | undefined
+  recommendationScope?: string | undefined
   selectedRequestId?: string | undefined
   onSelectRequest: (id: string) => void
 }) {
   const zh = locale === 'zh-CN',
     state = detail.examinationRequests,
+    draftVersion = state?.draftVersion ?? 0,
     messages = getWorkspaceMessages(locale)
-  const [serviceId, setServiceId] = useState(state?.draft?.service.id ?? 'examination-ecg-12-lead'),
-    [indication, setIndication] = useState(state?.draft?.indication ?? '')
+  const unsavedExam = useOrderSetExamDraft(detail.caseId, detail.encounter.id)
+  const override = unsavedExam.value?.baseDraftVersion === draftVersion ? unsavedExam.value : null
+  const labDraftScope = JSON.stringify([recommendationScope, detail.caseId, detail.encounter.id, 'laboratory'])
+  const labDrafts = useManualInvestigationDrafts(labDraftScope)
+  const labPreferences = useInvestigationPreferences(labDraftScope)
+  const [serviceId, setServiceId] = useState(override?.serviceId ?? state?.draft?.service.id ?? 'examination-ecg-12-lead'),
+    [indication, setIndication] = useState(override?.indication ?? state?.draft?.indication ?? '')
   const previousCaseIdRef = useRef(detail.caseId)
   useEffect(() => {
     const caseChanged = previousCaseIdRef.current !== detail.caseId
     previousCaseIdRef.current = detail.caseId
-    if (state?.draft !== undefined) {
+    if (override !== null) {
+      setServiceId(override.serviceId)
+      setIndication(override.indication)
+    } else if (state?.draft !== undefined) {
       setServiceId(state.draft.service.id)
       setIndication(state.draft.indication)
     } else if (caseChanged) {
       setServiceId('examination-ecg-12-lead')
       setIndication('')
     }
-  }, [detail.caseId, state?.draft?.indication, state?.draft?.service.id, state?.draftVersion])
+  }, [detail.caseId, override, state?.draft?.indication, state?.draft?.service.id, state?.draftVersion])
   const draftInput = agentToolInputSchemas['outpatient.examination.draft.set'].safeParse({ serviceId, indication })
   useRegisterAgentForm({
     name: 'examination',
@@ -109,6 +128,7 @@ export function ExaminationPage({
           : deleteExaminationRequestDraft(input, newIdempotencyKey())
     },
     onSuccess: (_result, action) => {
+      unsavedExam.save(() => null)
       if (action === 'issue') setIndication('')
     },
     onSettled: () => actionContext?.onChanged(),
@@ -141,6 +161,27 @@ export function ExaminationPage({
         onSelectRequest={onSelectRequest}
         entry={
           <FieldGroup>
+            {readOnly ? null : (
+              <OrderSetSelectorBar
+                disabled={readOnly || mutation.isPending}
+                excludeKinds={['medication']}
+                itemKinds={['examination']}
+                locale={locale}
+                onApply={draft => {
+                  const examItem = draft.items.find(item => item.candidate?.kind === 'examination')
+                  const { exam, removed } = syncOrderSetExamDraft(draft, unsavedExam, draftVersion)
+                  if (exam) { setServiceId(exam.serviceId); setIndication(exam.indication) }
+                  const lab = applyOrderSetLabDrafts(draft, labDrafts, labPreferences)
+                  return {
+                    addedCount: exam ? 1 : 0,
+                    ...(lab.added > 0 ? { extraNote: zh ? `同时向「检验」待开清单加入 ${lab.added} 项` : `Also added ${lab.added} items to Laboratory pending list` } : {}),
+                    removedCount: removed + lab.removed,
+                    reviewCount: (examItem?.disposition === 'needs-review' ? 1 : 0) + lab.review,
+                  }
+                }}
+                target={{ caseId: detail.caseId, scope: 'outpatient' }}
+              />
+            )}
             <Field>
               <FieldLabel>{zh ? '功能检查项目' : 'Functional examination'}</FieldLabel>
               <Select

@@ -160,6 +160,11 @@ describe('HIS operation catalog', () => {
         id: 'catalog.services.search',
         roles: ['administrator', 'outpatient-doctor'],
       },
+      {
+        cliPath: 'catalog order-set-templates list',
+        id: 'catalog.order-set-templates.list',
+        roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
+      },
     ])
   })
 
@@ -798,9 +803,9 @@ describe('HIS operation catalog', () => {
     expect(counts).toEqual({
       'clinmesh-administrator': 4,
       'clinmesh-billing': 18,
-      'clinmesh-doctor': 68,
+      'clinmesh-doctor': 70,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 118,
+      'clinmesh-inpatient': 119,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 8,
       'clinmesh-shared': 1,
@@ -952,9 +957,29 @@ it('publishes read-only clinical quality preflight queries and clinicalOverride 
   expect(dischargeIssue.http.encodeBody?.({ admissionId: 'adm-1', encounterVersion: '3', reason: '好转出院', clinicalOverride }))
     .toEqual({ input: { encounterVersion: '3', reason: '好转出院', clinicalOverride } })
 
-  expect(getHisOperation('encounter.prescription.issue').version).toBe(3)
-  expect(getHisOperation('inpatient.order.issue').version).toBe(8)
+  expect(getHisOperation('encounter.prescription.issue').version).toBe(4)
+  expect(getHisOperation('inpatient.order.issue').version).toBe(9)
   expect(getHisOperation('inpatient.surgery.request').version).toBe(3)
   expect(getHisOperation('inpatient.pci-selection.confirm').version).toBe(3)
   expect(getHisOperation('inpatient.record.submit').version).toBe(3)
+})
+
+it('publishes narrow read-only order set template and draft operations without raw override inputs', () => {
+  const templates = getHisOperation('catalog.order-set-templates.list')
+  expect(templates.roles).toEqual(['administrator', 'outpatient-doctor', 'inpatient-doctor'])
+  expect(templates.risk).toBe('read')
+  expect(templates.input.safeParse({ scope: 'outpatient' }).success).toBe(true)
+  expect(templates.input.safeParse({ scope: 'pharmacy' }).success).toBe(false)
+
+  const outpatientDrafts = getHisOperation('doctor.case.order-set-drafts.read')
+  expect(outpatientDrafts.roles).toEqual(['outpatient-doctor'])
+  expect(outpatientDrafts.risk).toBe('read')
+  expect(outpatientDrafts.input.safeParse({ caseId: 'case-1', templateId: 'chest-pain-stat-workup' }).success).toBe(true)
+  expect(outpatientDrafts.input.safeParse({ caseId: 'case-1', egfrOverride: 90 }).success).toBe(false)
+
+  const inpatientDrafts = getHisOperation('inpatient.order-set-drafts.read')
+  expect(inpatientDrafts.roles).toEqual(['inpatient-doctor'])
+  expect(inpatientDrafts.risk).toBe('read')
+  expect(inpatientDrafts.input.safeParse({ admissionId: 'admission-1', templateId: 'cin-perioperative-hydration' }).success).toBe(true)
+  expect(inpatientDrafts.input.safeParse({ admissionId: 'admission-1', pulseBpm: 80 }).success).toBe(false)
 })
