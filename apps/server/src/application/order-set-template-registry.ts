@@ -22,9 +22,9 @@ const medication = (
   medicationKey: string,
   doseText: string,
   frequencyCode: 'QD' | 'BID' | 'QN' | 'PRN' | 'ONCE',
-  extra: { inpatientDuration?: 'long' | 'temporary'; instructionsZh?: string; prnQuantity?: number; rules?: OrderSetScreeningRule[] } = {},
+  extra: { courseDays?: number; inpatientDuration?: 'long' | 'temporary'; instructionsZh?: string; prnQuantity?: number; rules?: OrderSetScreeningRule[] } = {},
 ): OrderSetTemplateOption => ({
-  courseDays: 7,
+  courseDays: extra.courseDays ?? (frequencyCode === 'ONCE' ? 1 : 30),
   doseText,
   frequencyCode,
   inpatientDuration: extra.inpatientDuration ?? 'long',
@@ -136,7 +136,7 @@ const definitions: Array<Omit<OrderSetTemplate, 'fingerprint'>> = [
       {
         key: 'cbc',
         kind: 'laboratory',
-        options: [lab(panel, 'CN-LAB-CBC-5DIFF'), lab(panel, 'CN-LAB-CBC'), lab(loinc, '718-7')],
+        options: [lab(panel, 'CN-LAB-CBC-5DIFF'), lab(panel, 'CN-LAB-CBC')],
         rationaleZh: '血红蛋白与血小板是抗栓出血风险（PRECISE-DAPT）与介入前评估的必要基线。',
         rules: [],
         scopes: inpatientOnly,
@@ -199,7 +199,11 @@ const definitions: Array<Omit<OrderSetTemplate, 'fingerprint'>> = [
       {
         key: 'isotonic-saline-hydration',
         kind: 'medication',
-        options: [medication('sodium-chloride', '1000 mL', 'ONCE', { inpatientDuration: 'temporary', instructionsZh: '静脉滴注，按 1 mL/kg/h 调整滴速，覆盖造影前 3–12 h 至术后 6–24 h' })],
+        options: [medication('sodium-chloride', '1000 mL', 'ONCE', {
+          courseDays: 1,
+          inpatientDuration: 'temporary',
+          instructionsZh: '静脉滴注，常规按 1 mL/kg/h 调整滴速（合并心力衰竭或 LVEF ≤ 35% 时减至 0.5 mL/kg/h），覆盖造影前 3–12 h 至术后 6–24 h',
+        })],
         rationaleZh: '等渗盐水静脉水化是对比剂相关急性肾损伤高危患者的预防措施。',
         rules: [
           rule('egfr', 'at-least', 60, 'caution', 'eGFR ≥ 60 不属于对比剂肾损高危，水化应按临床评估决定'),

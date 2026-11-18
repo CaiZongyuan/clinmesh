@@ -692,7 +692,12 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
         : [],
     )
     expect(prescriptionItems).toHaveLength(6)
-    expect(prescriptionItems.find(item => item.catalogItemId === 'medication-nitroglycerin')?.instructions).toBe('心绞痛发作时舌下含服，5 分钟不缓解可重复，最多 3 次')
+    expect(prescriptionItems.find(item => item.catalogItemId === 'medication-pci-aspirin')).toMatchObject({ courseDays: 30, quantity: 30 })
+    expect(prescriptionItems.find(item => item.catalogItemId === 'medication-nitroglycerin')).toMatchObject({
+      courseDays: 30,
+      instructions: '心绞痛发作时舌下含服，5 分钟不缓解可重复，最多 3 次',
+      quantity: 10,
+    })
     const savedRx = prescriptionDraftResponseSchema.parse(await (await postJson(
       `/api/his/v1/encounters/${visit.encounterId}/prescription/draft`,
       cookies.doctor,
@@ -981,6 +986,24 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
       expect(salineOrderData.orders.find(order => order.catalogItemId === salineCandidate.catalogItemId)?.instructions).toContain('1 mL/kg/h')
       encounterVersion = salineOrderData.encounterVersion
     }
+
+    // 3b. Heart failure / Killip II triggers reduced 0.5 mL/kg/h hydration regimen and needs-review caution
+    expect((await postJson(`${admissionPath}/risk-assessment`, cookies.inpatientDoctor, {
+      input: {
+        encounterVersion,
+        expectedRevision: 0,
+        fields: { killipClass: 'II' },
+      },
+    }, 'PUT')).status).toBe(200)
+    const hfHydration = orderSetDraftBundleSchema.parse(await (await current().app.request(
+      `${admissionPath}/order-set-drafts?templateId=cin-perioperative-hydration`,
+      { headers: { cookie: cookies.inpatientDoctor } },
+    )).json()).drafts[0]!
+    expect(hfHydration.items.find(item => item.key === 'isotonic-saline-hydration')).toMatchObject({
+      candidate: { instructionsZh: expect.stringContaining('0.5 mL/kg/h 减量') },
+      disposition: 'needs-review',
+      reasons: [expect.objectContaining({ code: 'heart-failure-or-reduced-lvef', severity: 'caution' })],
+    })
 
     // 4. Subsequent nursing vitals showing bradycardia/hypotension + severe renal impairment + atorvastatin allergy
     expect((await postJson(`${admissionPath}/vital-signs`, cookies.nurse, {

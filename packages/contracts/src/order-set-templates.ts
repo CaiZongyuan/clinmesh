@@ -95,6 +95,7 @@ const reasonCode = z.enum([
   'systolic-below-threshold',
   'egfr-below-threshold',
   'egfr-at-or-above-threshold',
+  'heart-failure-or-reduced-lvef',
   'vital-signs-missing',
   'egfr-missing',
   'weight-missing',

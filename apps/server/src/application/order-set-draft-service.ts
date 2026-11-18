@@ -70,6 +70,8 @@ function unavailable(code: 'catalog-unavailable' | 'catalog-rule-mismatch' | 'ca
   return { unavailable: { code, messageZh, observedValue: null, severity: 'unavailable', sourceReference: null, threshold: null } }
 }
 
+const reducedHydrationInstructionsZh = '静脉滴注，合并心力衰竭或 LVEF ≤ 35% 按 0.5 mL/kg/h 减量调整滴速，覆盖造影前 3–12 h 至术后 6–24 h'
+
 function candidateCatalogId(candidate: OrderSetCandidate): string {
   return candidate.kind === 'examination' ? candidate.serviceId : candidate.catalogItemId
 }
@@ -160,7 +162,7 @@ export class OrderSetDraftService {
       )
       const bundle = this.#bundle(templates, 'inpatient', facts, this.#inpatientCatalog(inpatient, context), {
         admissionId, encounterVersion: scores.encounterVersion, scope: 'inpatient',
-      }, inpatient.virtualTime(context))
+      }, inpatient.virtualTime(context), this.#hydrationCautions(inpatient, context, admissionId, scores))
       inpatient.commands.auditRead(context, 'inpatient.order-set-drafts.read', auditInput, 'success')
       return bundle
     } catch (error) {
@@ -221,6 +223,53 @@ export class OrderSetDraftService {
     }
   }
 
+  #hydrationCautions(
+    inpatient: InpatientService,
+    context: ActorContext,
+    admissionId: string,
+    scores: ClinicalScoreBundle,
+  ): OrderSetReason[] {
+    const reasons: OrderSetReason[] = []
+    const hfDx = inpatient.orders.diagnosis(context, admissionId).entries.find(entry => entry.coding.code.startsWith('I50'))
+    if (hfDx !== undefined) {
+      reasons.push({
+        code: 'heart-failure-or-reduced-lvef',
+        messageZh: `已确认心力衰竭诊断（${hfDx.coding.display} ${hfDx.coding.code}）：围术期水化滴速须减至 0.5 mL/kg/h 并严密监测心功能与容量负荷。`,
+        observedValue: null,
+        severity: 'caution',
+        sourceReference: `Condition/${hfDx.conditionId}`,
+        threshold: null,
+      })
+    }
+    const killip = scores.riskAssessment?.values.killipClass ?? null
+    if (killip !== null && killip !== 'I') {
+      reasons.push({
+        code: 'heart-failure-or-reduced-lvef',
+        messageZh: `住院风险评估提示 Killip ${killip} 级心功能不全：围术期水化滴速须减至 0.5 mL/kg/h 并核对容量状态后再开立。`,
+        observedValue: null,
+        severity: 'caution',
+        sourceReference: `Observation/${scores.riskAssessment!.observationId}`,
+        threshold: null,
+      })
+    }
+    const latestTte = this.#examination.state(context, admissionId).requests
+      .filter(req => req.service.examCode === 'tte' && (req.status === 'reported' || req.status === 'acknowledged') && req.report !== undefined)
+      .toSorted((left, right) => Date.parse(right.report!.issuedAt) - Date.parse(left.report!.issuedAt))[0]?.report
+    const lvef = latestTte?.results.find(item => item.code === 'lvef' && typeof item.value === 'number')
+    if (latestTte !== undefined && lvef !== undefined && typeof lvef.value === 'number' && lvef.value <= 35) {
+      const value = Math.round(lvef.value * 10) / 10
+      reasons.push({
+        code: 'heart-failure-or-reduced-lvef',
+        messageZh: `经胸超声心动图 LVEF ${value}% ≤ 35%：围术期水化滴速须减至 0.5 mL/kg/h 并严密监测容量负荷。`,
+        observedValue: value,
+        severity: 'caution',
+        sourceReference: `DiagnosticReport/${latestTte.diagnosticReportId}`,
+        threshold: 35,
+      })
+    }
+    return reasons
+  }
+
   #bundle(
     templates: OrderSetTemplate[],
     scope: OrderSetScope,
@@ -228,6 +277,7 @@ export class OrderSetDraftService {
     catalog: CatalogResolver,
     target: OrderSetDraftBundle['target'],
     evaluatedAt: string,
+    hydrationCautions: readonly OrderSetReason[] = [],
   ): OrderSetDraftBundle {
     const vitals = facts.vitalSigns.status === 'present' ? facts.vitalSigns : undefined
     const screening: OrderSetScreeningFacts = {
@@ -240,7 +290,7 @@ export class OrderSetDraftService {
     }
     const drafts = templates.map((template): OrderSetDraft => {
       const items = template.items.filter(item => item.scopes.includes(scope))
-        .map(item => evaluateItem(item, screening, facts, catalog))
+        .map(item => evaluateItem(item, screening, facts, catalog, item.key === 'isotonic-saline-hydration' ? hydrationCautions : []))
       const count = (disposition: OrderSetDraftItem['disposition']) => items.filter(item => item.disposition === disposition).length
       const { items: _templateItems, ...templateSummary } = template
       return {
@@ -396,9 +446,15 @@ function dedupe(reasons: OrderSetReason[]): OrderSetReason[] {
 }
 
 /** 依序尝试同一临床目的的目录编码候选；一旦命中已启用条目则按患者客观禁忌筛选，不在过敏或体征禁用时跨药自动改选。 */
-function evaluateItem(item: OrderSetTemplateItem, facts: OrderSetScreeningFacts, patient: OrderSetPatientFacts, catalog: CatalogResolver): OrderSetDraftItem {
+function evaluateItem(
+  item: OrderSetTemplateItem,
+  facts: OrderSetScreeningFacts,
+  patient: OrderSetPatientFacts,
+  catalog: CatalogResolver,
+  extraReasons: readonly OrderSetReason[] = [],
+): OrderSetDraftItem {
   const base = { key: item.key, kind: item.kind, titleZh: item.titleZh }
-  const itemReasons = screenOrderSetRules(item.rules, facts)
+  const itemReasons = [...screenOrderSetRules(item.rules, facts), ...extraReasons]
   const unavailableReasons: OrderSetReason[] = []
   for (const option of item.options) {
     const resolution = option.kind === 'laboratory' ? catalog.laboratory(option)
@@ -420,7 +476,10 @@ function evaluateItem(item: OrderSetTemplateItem, facts: OrderSetScreeningFacts,
     if (disposition === 'excluded') {
       return { ...base, candidate: null, disposition: 'excluded', matchedCatalogId, reasons: finalReasons }
     }
-    return { ...base, candidate: resolution.candidate, disposition, matchedCatalogId, reasons: finalReasons }
+    const candidate = resolution.candidate.kind === 'medication' && item.key === 'isotonic-saline-hydration' && extraReasons.length > 0
+      ? { ...resolution.candidate, instructionsZh: reducedHydrationInstructionsZh }
+      : resolution.candidate
+    return { ...base, candidate, disposition, matchedCatalogId, reasons: finalReasons }
   }
   return { ...base, candidate: null, disposition: 'unavailable', matchedCatalogId: null, reasons: dedupe(unavailableReasons) }
 }
