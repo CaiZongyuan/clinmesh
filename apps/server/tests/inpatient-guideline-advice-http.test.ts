@@ -1100,6 +1100,40 @@ it('无 PCI 手术申请的内科住院可按专题完成术前水化、FFR > 0.
     status: 'missing',
   })
 
+  // Active FHIR R5 ServiceRequest with CodeableReference (code.concept.coding/text) populates contrast-procedure-indication
+  const ctaScenario = await s.fixture.read('admin', '/api/sim/v1/scenario-runs/current', z.object({ epoch: z.string(), workspaceId: z.string() }))
+  const ctaSrId = randomUUID()
+  const createdCtaSr = s.fixture.runtime.fhir.create({ epoch: ctaScenario.epoch, workspaceId: ctaScenario.workspaceId }, {
+    code: {
+      concept: {
+        coding: [{ code: 'IMG-CTA-COR', display: '冠状动脉 CT 血管造影', system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/imaging-service' }],
+        text: '冠状动脉 CT 血管造影',
+      },
+    },
+    encounter: { reference: `Encounter/${medicalStay.admissionId}` },
+    id: ctaSrId,
+    intent: 'order',
+    resourceType: 'ServiceRequest',
+    status: 'active',
+    subject: { reference: `Patient/${medicalStay.patientId}` },
+  })
+  const ctaHydrationTopics = await s.fixture.read(
+    'inpatient-doctor',
+    `${medicalStay.path}/guideline-topics?topicId=contrast-kidney-hydration`,
+    guidelineTopicBundleSchema,
+  )
+  expect(ctaHydrationTopics.items[0]!.patientIndicators.find(i => i.code === 'contrast-procedure-indication')).toMatchObject({
+    sourceReference: `ServiceRequest/${ctaSrId}`,
+    status: 'present',
+    valueText: '冠状动脉 CT 血管造影',
+    versionId: '1',
+  })
+  s.fixture.runtime.fhir.update(
+    { epoch: ctaScenario.epoch, workspaceId: ctaScenario.workspaceId },
+    { ...createdCtaSr, status: 'completed' },
+    createdCtaSr.meta!.versionId!,
+  )
+
   const revascBefore = await s.fixture.read(
     'inpatient-doctor',
     `${medicalStay.path}/guideline-advice?topicId=coronary-revascularization-indication`,

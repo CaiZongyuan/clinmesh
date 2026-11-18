@@ -1568,29 +1568,44 @@ export function extractSupplementaryIndicators(options: {
 
   // Check encounter ServiceRequest for genuinely pending (status === 'active') planned contrast imaging / angiography
   if (contrastProcedureEligibility === undefined) {
+    const codeableConceptSchema = z.object({
+      coding: z.array(z.object({ code: z.string().optional(), display: z.string().optional() }).loose()).optional(),
+      text: z.string().optional(),
+    }).loose()
     const srParams = new URLSearchParams({ _count: '100', encounter: `Encounter/${effectiveEncounterId}` })
     for (;;) {
       const page = fhir.search(context, 'ServiceRequest', srParams)
       for (const raw of page.resources) {
         const parsed = z.object({
-          code: z.object({
-            coding: z.array(z.object({ code: z.string().optional(), display: z.string().optional() }).loose()).optional(),
-            text: z.string().optional(),
-          }).loose().optional(),
+          code: codeableConceptSchema.extend({
+            concept: codeableConceptSchema.optional(),
+          }).optional(),
           id: z.string().min(1),
           meta: z.object({ versionId: z.string().optional() }).loose().optional(),
           status: z.string().optional(),
         }).loose().safeParse(raw)
         if (!parsed.success || parsed.data.status !== 'active' || nonPendingSurgeryRequestIds.has(parsed.data.id)) continue
-        const display = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
-        const codes = (parsed.data.code?.coding ?? []).map(c => c.code ?? '')
+        const concept = parsed.data.code?.concept ?? parsed.data.code
+        const codings = [
+          ...(parsed.data.code?.concept?.coding ?? []),
+          ...(parsed.data.code?.coding ?? []),
+        ]
+        const display = [
+          parsed.data.code?.concept?.text,
+          parsed.data.code?.text,
+          ...codings.map(c => c.display),
+        ].filter(Boolean).join(' ')
+        const codes = codings.map(c => c.code ?? '')
         if (
           codes.some(c => /^(?:88\.5[567]|36\.0[67]|00\.66)/i.test(c))
-          || (/冠脉造影|冠状动脉造影|冠脉CTA|增强CT|\bPCI\b|angiography|contrast/i.test(display) && !/(?:无|非)增强/i.test(display))
+          || (
+            /(?:冠脉|冠状动脉)\s*(?:造影|CTA|CT\s*血管)|增强\s*CT|CT\s*增强|\bCTA\b|\bDSA\b|\bPCI\b|angiography|contrast/i.test(display)
+            && !/(?:无|非|不)\s*增强|without\s+contrast|non[-\s]?contrast/i.test(display)
+          )
         ) {
           contrastProcedureEligibility = {
             sourceReference: `ServiceRequest/${parsed.data.id}`,
-            valueText: (parsed.data.code?.coding?.[0]?.display ?? parsed.data.code?.text ?? '含碘对比剂检查/手术').trim().slice(0, 240),
+            valueText: (concept?.coding?.[0]?.display ?? concept?.text ?? codings[0]?.display ?? '含碘对比剂检查/手术').trim().slice(0, 240),
             versionId: parsed.data.meta?.versionId ?? '1',
           }
           break
