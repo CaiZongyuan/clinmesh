@@ -217,7 +217,7 @@ const TOPICS_LIST: readonly GuidelineTopicDefinition[] = [
     specialty: 'cardiology',
     version: '2026-11-17.r1',
     conclusionKinds: ['renal-risk-stratification', 'hydration-and-volume-balance', 'contrast-dose-control'],
-    matchTerms: ['对比剂', '造影剂', '水化', 'PCAKI', '对比剂肾病', '碘海醇', '碘克沙醇', 'contrast media'],
+    matchTerms: ['对比剂', '造影剂', 'PCAKI', '对比剂肾病', '碘海醇', '碘克沙醇', 'contrast media'],
     navigation: '适用于拟行或已行含碘对比剂冠脉造影/PCI 患者核对术前血肌酐与 eGFR 危险分层、0.9% 氯化钠围术期水化与左心功能不全防容量负荷过重限制、对比剂剂量/eGFR 比值 ≤ 3.7 控制，以及超低/零对比剂技术须严格限定适应证且有术前影像与 IVUS 条件。以下仅为操作性导航，结论必须引用同时回读的原文。',
     limitations: [
       '固定引用 2021 经动脉心血管介入诊治中含碘对比剂相关不良反应防治中国专家共识（第 4 页经受控勘误剥离图内乱码并保留原文正文）。',
@@ -633,6 +633,9 @@ const CANDIDATE_TOPIC_SIGNAL_RE = new RegExp(
   'i',
 )
 
+const CORONARY_CONTEXT_SIGNAL_RE =
+  /(?:^|[^A-Za-z0-9])(?:I2[0-5](?:\.[0-9A-Za-z]+)?|Z95\.[15]|Z98\.61|53741008|22298006|ACS|NSTE-?ACS|NSTEMI|STEMI|CCS|PCI|CABG|FFR|iFR|IVUS|DES|PRECISE-DAPT)(?=$|[^A-Za-z0-9])|冠心病|冠状动脉|冠脉|心绞痛|心肌梗死|心梗|急性胸痛|胸骨后压榨|药物洗脱支架|血管内超声|血流储备分数|心血管介入|经动脉|动脉造影|coronary|myocardial\s+infarction|angina/i
+
 function matchesGuidelineTopicTerm(textCorpus: string, lowerCorpus: string, term: string): boolean {
   if (/^[A-Za-z0-9._-]+$/.test(term)) {
     return new RegExp(`(?:^|[^A-Za-z0-9])${escapeRegExp(term)}(?=$|[^A-Za-z0-9])`, 'i').test(textCorpus)
@@ -647,21 +650,38 @@ function hasNonNegatedT2dmSignal(scrubbedCorpus: string): boolean {
   )
 }
 
+function hasNonNegatedCoronarySignal(scrubbedCorpus: string): boolean {
+  return CORONARY_CONTEXT_SIGNAL_RE.test(scrubbedCorpus)
+}
+
 export function matchApplicableGuidelineTopicIds(textCorpus: string): GuidelineTopicId[] {
   if (!CANDIDATE_TOPIC_SIGNAL_RE.test(textCorpus)) return []
   const relevantLines = textCorpus
     .split(/\r?\n/)
-    .filter(line => CANDIDATE_TOPIC_SIGNAL_RE.test(line))
+    .filter(line => CANDIDATE_TOPIC_SIGNAL_RE.test(line) || CORONARY_CONTEXT_SIGNAL_RE.test(line))
     .join('\n')
   if (relevantLines.length === 0) return []
   const scrubbed = scrubNegatedGuidelineTopicCorpus(relevantLines)
   const lower = scrubbed.toLowerCase()
+  const hasCoronaryContext = hasNonNegatedCoronarySignal(scrubbed)
   return TOPICS_LIST
     .filter(topic => {
       if (topic.id === 't2dm-renal-medication') {
         return hasNonNegatedT2dmSignal(scrubbed)
       }
-      return topic.matchTerms.some(term => matchesGuidelineTopicTerm(scrubbed, lower, term))
+      const termMatched = topic.matchTerms.some(term => matchesGuidelineTopicTerm(scrubbed, lower, term))
+      if (!termMatched) return false
+      if (
+        topic.id === 'cad-dapt-and-secondary-prevention'
+        || topic.id === 'pci-stent'
+        || topic.id === 'coronary-revascularization-indication'
+      ) {
+        return hasCoronaryContext
+      }
+      if (topic.id === 'contrast-kidney-hydration') {
+        return hasCoronaryContext || /PCAKI|对比剂肾病/i.test(scrubbed)
+      }
+      return true
     })
     .map(topic => topic.id)
 }

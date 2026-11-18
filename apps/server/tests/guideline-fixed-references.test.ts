@@ -292,6 +292,13 @@ it('六个注册 Guideline Topic 均通过精确 SHA-256、物理页码、软连
   ])
   expect(matchApplicableGuidelineTopicIds('2型糖尿病 E11.2 合并慢性肾脏病 N18.3')).toContain('t2dm-renal-medication')
   expect(matchApplicableGuidelineTopicIds('拟行 OCT 指导 DES 支架置入')).toContain('pci-stent')
+  expect(matchApplicableGuidelineTopicIds('脑梗死二级预防长期口服氯吡格雷及依折麦布（否认冠心病）')).toEqual([])
+  expect(matchApplicableGuidelineTopicIds('短暂性脑缺血发作 TIA 短程双抗 DAPT 21天')).toEqual([])
+  expect(matchApplicableGuidelineTopicIds('糖尿病黄斑水肿拟行眼底 OCT 检查')).toEqual([])
+  expect(matchApplicableGuidelineTopicIds('顺铂化疗前后静脉水化治疗')).toEqual([])
+  expect(
+    matchApplicableGuidelineTopicIds('{"entries":[{"code":"I25.103","display":"冠状动脉粥样硬化性心脏病"}]}\n长期口服氯吡格雷及依折麦布二级预防'),
+  ).toEqual(['cad-dapt-and-secondary-prevention'])
   expect(computeGuidelineTopicFingerprint({ ...acsSpec, generationRule: `${acsSpec.generationRule}（附加条款）` })).not.toBe(baseFp)
   expect(
     computeGuidelineTopicFingerprint({
