@@ -1357,6 +1357,19 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
         reason: '召回复评后带禁忌说明开出院医嘱',
       }),
     )
+    expect(issuedDischarge2.data.admission.status).toBe('discharge-pending')
+    // Pre-departure `discharge-pending` primary-procedure snapshot save does NOT re-trigger the post-departure discharge gate
+    const pendingRecord = await fixture.read('inpatient-doctor', `${stay.path}/record`, inpatientRecordSchema)
+    const savedInPending = await parsePciResponse(
+      inpatientRecordResponseSchema,
+      await fixture.request('inpatient-doctor', `${stay.path}/record/submit`, {
+        expectedRevision: pendingRecord.revision?.revision ?? 0,
+        expectedSourcesHash: pendingRecord.sourcesHash,
+        mainProcedureExecutionId: angioExec2.id,
+      }),
+    )
+    expect(savedInPending.clinicalQuality).toBeUndefined()
+
     const departed2 = await parsePciResponse(
       inpatientDischargeResponseSchema,
       await fixture.request('ward-nurse', `${stay.path}/discharge/depart`, {
@@ -1382,7 +1395,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
         mainProcedureExecutionId: angioExec.id,
       }),
     )
-    expect(submittedRecord.data.revision?.revision).toBe(2)
+    expect(submittedRecord.data.revision?.revision).toBe(3)
     expect(clinicalQualityReceiptSchema.parse(submittedRecord.clinicalQuality)).toMatchObject({
       gate: 'inpatient-discharge',
       override: { reasonCode: 'documented-contraindication' },
