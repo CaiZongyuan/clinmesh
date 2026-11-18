@@ -497,6 +497,113 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^$${}()|[\]\\]/g, ch => `\\${ch}`)
 }
 
+const POSITIVE_TOPIC_TRANSITION_ZH =
+  '(?:但|惟|不过|却|而(?=\\s*(?:有|见|呈|出现|存在|考虑|诊断|确诊|拟))|现(?:有|因|诉|考虑|诊断|确诊)|目前(?:有|考虑|诊断|确诊)|拟(?:行|予|用|诊))'
+
+const NEGATED_PARENTHETICAL_RE =
+  /[（(]\s*(?:(?<!不\s*)否认|(?<![不未难待没能法以尚]\s*)(?:已\s*)?(?:排除|除外)|(?:暂\s*)?(?:不考虑|不行|不予)|(?:也\s*)?不是|不存在|无需|不需要|没有(?![想料法办])|未(?:见|发现|出现|提示|行|使用|予|服用|用|检出|合并|伴)|无(?![论故意妨关创菌限价])|(?<!\b(?:cannot|can't|could\s+not|not|never|unable\s+to)\s+)\b(?:no|without|denies|denied|ruled\s+out|rules\s+out|exclud(?:ed|es|ing)|negative\s+for|free\s+of)\b)[^）)]*[）)]/gi
+
+function isNegatedOrInactiveEvidenceRecord(record: Record<string, unknown>): boolean {
+  const status = typeof record.status === 'string' ? record.status.trim().toLowerCase() : ''
+  if (status === 'cancelled' || status === 'entered-in-error' || status === 'revoked') return true
+  const verificationStatus = record.verificationStatus
+  if (verificationStatus !== null && typeof verificationStatus === 'object') {
+    const coding = (verificationStatus as { coding?: unknown }).coding
+    if (Array.isArray(coding)) {
+      for (const item of coding) {
+        const code =
+          item !== null && typeof item === 'object' && typeof (item as { code?: unknown }).code === 'string'
+            ? (item as { code: string }).code.trim().toLowerCase()
+            : ''
+        if (code === 'refuted' || code === 'entered-in-error') return true
+      }
+    }
+  }
+  return false
+}
+
+function scrubInactiveJsonEvidenceLines(textCorpus: string): string {
+  return textCorpus
+    .split(/\r?\n/)
+    .map(line => {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return line
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(trimmed)
+      } catch {
+        return line
+      }
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return line
+      const obj = parsed as Record<string, unknown>
+      if (isNegatedOrInactiveEvidenceRecord(obj)) return ''
+      if (Array.isArray(obj.entries)) {
+        const activeEntries = obj.entries.filter(entry => {
+          if (entry === null || typeof entry !== 'object') return true
+          const e = entry as Record<string, unknown>
+          if (isNegatedOrInactiveEvidenceRecord(e)) return false
+          if (e.clinical !== null && typeof e.clinical === 'object' && !Array.isArray(e.clinical)) {
+            if (isNegatedOrInactiveEvidenceRecord(e.clinical as Record<string, unknown>)) return false
+          }
+          return true
+        })
+        if (activeEntries.length === 0) return ''
+        if (activeEntries.length !== obj.entries.length) {
+          return JSON.stringify({ ...obj, entries: activeEntries })
+        }
+      }
+      return line
+    })
+    .join('\n')
+}
+
+function scrubNegatedTopicClause(clause: string): string {
+  // 1. Scrub term followed by bare negated status parenthetical, e.g. "ACS（已排除）", "T2DM (ruled out)", "急性胸痛（无）"
+  let scrubbed = clause.replace(
+    /(?:2\s*型糖尿病|[A-Za-z0-9._/-]+(?:\s+(?!and\b|but\b|with\b)[A-Za-z0-9._/-]+){0,4}|[^\s，,。；;！!？?"{}[\]但惟（()）]{1,32})\s*[（(]\s*(?:无|否|否认|阴性|未见|(?:已\s*)?(?:排除|除外)|(?:暂\s*)?不考虑|no|none|negative|absent|denied|ruled\s+out|excluded)\s*[）)]/gi,
+    ' ',
+  )
+  // 2. Scrub colon/label status negations before prefix negations consume trailing cues (e.g. "急性胸痛：无", "2 型糖尿病：否认", "ACS: negative")
+  scrubbed = scrubbed.replace(
+    /(?:2\s*型糖尿病|[A-Za-z0-9._/-]+(?:\s+[A-Za-z0-9._/-]+){0,4}|[\u4e00-\u9fff0-9A-Za-z._/-]{1,24})\s*[:：]\s*(?:无|否|否认|阴性|未见|(?:已\s*)?(?:排除|除外)|(?:暂\s*)?不考虑|no|none|negative|absent|denied|ruled\s+out|excluded)(?=$|\s)/gi,
+    ' ',
+  )
+  // 3. Scrub clause-end or passive suffix rule-out negations (e.g. "ACS 已排除", "急性冠脉综合征除外", "NSTEMI was ruled out", "ACS ruled out")
+  scrubbed = scrubbed.replace(
+    /(?:2\s*型糖尿病|[^\s，,。；;！!？?"{}[\]但惟]){1,32}\s*(?<![不未难待没能法以尚]\s*)(?:已\s*)?(?:排除|除外)\s*$/gi,
+    ' ',
+  )
+  scrubbed = scrubbed.replace(
+    /[A-Za-z0-9._/-]+(?:\s+(?!but\b|while\b|however\b|yet\b|though\b|although\b)[A-Za-z0-9._/-]+){0,6}\s+(?:(?:was|is|were|has\s+been|have\s+been)\s+(?<!\b(?:not|never|cannot|can't|could\s+not)\s+)(?:ruled\s+out|excluded)\b|(?<!\b(?:not|never|cannot|can't|could\s+not)\s+)(?:ruled\s+out|excluded)\s*$)/gi,
+    ' ',
+  )
+  // 4. Scrub self-contained negated parentheticals, e.g. "（否认2型糖尿病）"
+  scrubbed = scrubbed.replace(NEGATED_PARENTHETICAL_RE, ' ')
+  // 5. Narrowly scrub "无/未见/没有/否认 ... 禁忌(证)/过敏(史)" without consuming following positive context
+  scrubbed = scrubbed.replace(/(?:无|未见|没有|否认)\s*.*?(?:禁忌证?|过敏史?)/gi, ' ')
+  // 6. Scrub Chinese prefix negations up to any positive transition or end of clause
+  scrubbed = scrubbed.replace(
+    new RegExp(
+      `(?:(?<!不\\s*)否认|(?<![不未难待没能法以尚]\\s*)(?:已\\s*)?(?:排除|除外)|(?:暂\\s*)?(?:不考虑|不行|不予)|(?:也\\s*)?不是|不存在|无需|不需要|没有(?![想料法办])|未(?:见|发现|出现|提示|行|使用|予|服用|用|检出|合并|伴)|无(?![论故意妨关创菌限价])|非(?![常洲典法但要]|\\s*ST\\s*段抬高|左主干|急诊|靶血管|阻塞)).*?(?=${POSITIVE_TOPIC_TRANSITION_ZH}|$)`,
+      'gi',
+    ),
+    ' ',
+  )
+  // 7. Scrub English prefix negations up to any positive transition or end of clause
+  scrubbed = scrubbed.replace(
+    /(?<!\b(?:cannot|can't|could\s+not|not|never|unable\s+to|fail(?:ed)?\s+to)\s+)\b(?:no(?:\s+(?:evidence|history|signs?|symptoms?|indication)\s+of)?|without|denies|denied|ruled\s+out|rules\s+out|exclud(?:ed|es|ing)|negative\s+for|free\s+of)\b.*?(?=\b(?:but|however|yet|though|although|presenting\s+with|now\s+with|admitted\s+for|admitted\s+with)\b|$)/gi,
+    ' ',
+  )
+  return scrubbed
+}
+
+export function scrubNegatedGuidelineTopicCorpus(textCorpus: string): string {
+  return scrubInactiveJsonEvidenceLines(textCorpus)
+    .split(/[，,。；;！!？?\r\n"{}[\]]+/)
+    .map(scrubNegatedTopicClause)
+    .join('\n')
+}
+
 function matchesGuidelineTopicTerm(textCorpus: string, lowerCorpus: string, term: string): boolean {
   if (/^[A-Za-z0-9._-]+$/.test(term)) {
     return new RegExp(`(?:^|[^A-Za-z0-9])${escapeRegExp(term)}(?=$|[^A-Za-z0-9])`, 'i').test(textCorpus)
@@ -504,25 +611,22 @@ function matchesGuidelineTopicTerm(textCorpus: string, lowerCorpus: string, term
   return lowerCorpus.includes(term.toLowerCase())
 }
 
-function hasNonNegatedT2dmSignal(textCorpus: string): boolean {
-  const scrubbed = textCorpus.replace(
-    /(?:无|否认|排除|非)\s*(?:2\s*型糖尿病|二型糖尿病|糖尿病肾病|糖尿病|t2dm|type\s*2\s*diabetes)/gi,
-    ' ',
-  )
+function hasNonNegatedT2dmSignal(scrubbedCorpus: string): boolean {
   return (
-    /(?:^|[^A-Za-z0-9])(?:E11(?:\.[0-9A-Za-z]+)?|44054006|T2DM)(?=$|[^A-Za-z0-9])/i.test(scrubbed)
-    || /2\s*型糖尿病|二型糖尿病|糖尿病肾病|type\s*2\s*diabetes/i.test(scrubbed)
+    /(?:^|[^A-Za-z0-9])(?:E11(?:\.[0-9A-Za-z]+)?|44054006|T2DM)(?=$|[^A-Za-z0-9])/i.test(scrubbedCorpus)
+    || /2\s*型糖尿病|二型糖尿病|糖尿病肾病|type\s*2\s*diabetes/i.test(scrubbedCorpus)
   )
 }
 
 export function matchApplicableGuidelineTopicIds(textCorpus: string): GuidelineTopicId[] {
-  const lower = textCorpus.toLowerCase()
+  const scrubbed = scrubNegatedGuidelineTopicCorpus(textCorpus)
+  const lower = scrubbed.toLowerCase()
   return TOPICS_LIST
     .filter(topic => {
       if (topic.id === 't2dm-renal-medication') {
-        return hasNonNegatedT2dmSignal(textCorpus)
+        return hasNonNegatedT2dmSignal(scrubbed)
       }
-      return topic.matchTerms.some(term => matchesGuidelineTopicTerm(textCorpus, lower, term))
+      return topic.matchTerms.some(term => matchesGuidelineTopicTerm(scrubbed, lower, term))
     })
     .map(topic => topic.id)
 }
@@ -1356,10 +1460,8 @@ export function extractSupplementaryIndicators(options: {
     if (triageRow !== undefined) {
       const parsedTriage = z.object({ chiefComplaint: z.string().optional() }).loose().safeParse(JSON.parse(triageRow.vital_json))
       const cc = parsedTriage.success ? (parsedTriage.data.chiefComplaint ?? '') : ''
-      if (
-        /胸痛|胸闷痛|心前区|胸骨后|心绞痛|急性冠脉|chest\s*pain|angina|acute\s*coronary/i.test(cc)
-        && !/(?:无|否认|排除)\s*(?:胸痛|胸闷|心绞痛|chest\s*pain)/i.test(cc)
-      ) {
+      const scrubbedCc = scrubNegatedGuidelineTopicCorpus(cc)
+      if (/胸痛|胸闷痛|心前区|胸骨后|心绞痛|急性冠脉|\bACS\b|\bNSTEMI\b|\bSTEMI\b|chest\s*pain|angina|acute\s*coronary/i.test(scrubbedCc)) {
         acsEligibility = {
           sourceReference: triageRow.observation_id ? `Observation/${triageRow.observation_id}` : `Encounter/${effectiveEncounterId}`,
           valueText: cc.trim().slice(0, 240),
@@ -1486,12 +1588,10 @@ export function extractSupplementaryIndicators(options: {
         if (ver === 'entered-in-error' || ver === 'refuted' || clin === 'inactive' || clin === 'resolved') continue
         const codes = (parsed.data.code?.coding ?? []).map(c => c.code?.trim().toUpperCase() ?? '')
         const display = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
+        const scrubbedDisplay = scrubNegatedGuidelineTopicCorpus(display)
         if (
           codes.some(c => /^(?:I20\.0|I2[1234]|R07)/.test(c))
-          || (
-            /急性冠脉|不稳定型心绞痛|心肌梗死|急性胸痛|胸痛|\bACS\b|\bNSTEMI\b|\bSTEMI\b|acute coronary|chest pain/i.test(display)
-            && !/(?:无|否认|排除)\s*(?:胸痛|急性冠脉|心绞痛|心肌梗死)/i.test(display)
-          )
+          || /急性冠脉|不稳定型心绞痛|心肌梗死|急性胸痛|胸痛|\bACS\b|\bNSTEMI\b|\bSTEMI\b|acute\s*coronary|chest\s*pain/i.test(scrubbedDisplay)
         ) {
           acsEligibility = {
             sourceReference: `Condition/${parsed.data.id}`,
@@ -1539,12 +1639,10 @@ export function extractSupplementaryIndicators(options: {
         const clinCode = parsed.data.clinicalStatus?.coding?.[0]?.code
         const codes = (parsed.data.code?.coding ?? []).map(c => c.code?.trim() ?? '').filter(Boolean)
         const display = [parsed.data.code?.text, ...(parsed.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
+        const scrubbedDisplay = scrubNegatedGuidelineTopicCorpus(display)
         const isCadCondition =
           codes.some(code => /^(?:I2[0-5]|Z95\.[15]|Z98\.61)/i.test(code) || code === '53741008' || code === '22298006')
-          || (
-            /冠心病|冠状动脉粥样硬化|心绞痛|心肌梗死|急性冠脉|冠脉支架|冠脉搭桥|coronary artery disease|myocardial infarction|angina/i.test(display)
-            && !/(?:无|否认|排除|非)\s*(?:冠心病|冠状动脉|心绞痛|心肌梗死|急性冠脉|coronary|angina)/i.test(display)
-          )
+          || /冠心病|冠状动脉粥样硬化|心绞痛|心肌梗死|急性冠脉|冠脉支架|冠脉搭桥|coronary artery disease|myocardial infarction|angina/i.test(scrubbedDisplay)
         if (cadEligibility === undefined && isCadCondition && (clinCode !== 'inactive' || codes.some(c => /^(?:I25\.2|Z95\.[15]|Z98\.61)/i.test(c)))) {
           cadEligibility = {
             sourceReference: `Condition/${parsed.data.id}`,
@@ -1557,10 +1655,7 @@ export function extractSupplementaryIndicators(options: {
           t2dmDiagnosis === undefined
           && (
             codes.some(code => /^E11/i.test(code) || code === '44054006')
-            || (
-              /2\s*型糖尿病|二型糖尿病|type\s*2\s*diabetes/i.test(display)
-              && !/(?:无|否认|排除|非)\s*(?:2\s*型|二型|type\s*2)/i.test(display)
-            )
+            || /2\s*型糖尿病|二型糖尿病|type\s*2\s*diabetes/i.test(scrubbedDisplay)
           )
         ) {
           t2dmDiagnosis = {

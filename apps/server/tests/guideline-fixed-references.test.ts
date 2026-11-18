@@ -257,6 +257,32 @@ it('六个注册 Guideline Topic 均通过精确 SHA-256、物理页码、软连
   expect(computeGuidelineTopicFingerprint(acsSpec)).toBe(baseFp)
   expect(matchApplicableGuidelineTopicIds('{"speaker":"doctor","text":"description of sacral pain"}')).toEqual([])
   expect(matchApplicableGuidelineTopicIds('慢性肾脏病3期 N18.3 长期服用达格列净 SGLT-2i（否认2型糖尿病）')).toEqual([])
+  expect(matchApplicableGuidelineTopicIds('患者主诉咽痛咳嗽，否认急性胸痛，已排除 ACS、NSTEMI 及 STEMI')).toEqual([])
+  expect(matchApplicableGuidelineTopicIds('急性胸痛：无；ACS（已排除）；ACS 已排除；2 型糖尿病：否认；未行支架选型；未使用对比剂；否认双抗用药史')).toEqual([])
+  expect(matchApplicableGuidelineTopicIds('Patient denies acute chest pain; ACS and NSTEMI ruled out; STEMI was excluded; no history of T2DM')).toEqual([])
+  expect(matchApplicableGuidelineTopicIds('Presenting with STEMI but T2DM ruled out')).toEqual(['acute-chest-pain-acs'])
+  expect(
+    matchApplicableGuidelineTopicIds(
+      JSON.stringify({
+        entries: [
+          {
+            clinical: {
+              code: { text: '急性冠脉综合征 ACS I21' },
+              verificationStatus: { coding: [{ code: 'refuted' }] },
+            },
+            entryId: 'cond-refuted',
+          },
+        ],
+        resourceType: 'Condition',
+        source: 'visible-source',
+      }),
+    ),
+  ).toEqual([])
+  expect(matchApplicableGuidelineTopicIds('单次肌钙蛋白阴性不能排除 NSTE-ACS')).toContain('acute-chest-pain-acs')
+  expect(matchApplicableGuidelineTopicIds('非ST段抬高型急性冠脉综合征')).toContain('acute-chest-pain-acs')
+  expect(matchApplicableGuidelineTopicIds('既往无造影剂过敏史，否认2型糖尿病，现因突发急性胸痛拟诊 NSTEMI')).toEqual([
+    'acute-chest-pain-acs',
+  ])
   expect(matchApplicableGuidelineTopicIds('2型糖尿病 E11.2 合并慢性肾脏病 N18.3')).toContain('t2dm-renal-medication')
   expect(matchApplicableGuidelineTopicIds('拟行 OCT 指导 DES 支架置入')).toContain('pci-stent')
   expect(computeGuidelineTopicFingerprint({ ...acsSpec, generationRule: `${acsSpec.generationRule}（附加条款）` })).not.toBe(baseFp)
