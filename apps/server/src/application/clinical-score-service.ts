@@ -1427,15 +1427,15 @@ export class ClinicalScoreService {
     isArchivedCutoff: boolean,
   ): {
     earliestEvidenceMs: number | undefined
-    finiteSupplyEndMs: number | undefined
+    hasActiveSupplyAtCutoff: boolean
     hasEvidence: boolean
-    supplyEndMs: number | undefined
+    hasOpenEndedEvidence: boolean
+    supplyWindows: ReadonlyArray<{ endMs: number; startMs: number }>
   } {
     let hasEvidence = false
     let earliestEvidenceMs: number | undefined
-    let supplyEndMs: number | undefined
-    let validDispenseCount = 0
-    let hasUnsuppliedDispense = false
+    let hasOpenEndedEvidence = false
+    const supplyWindows: Array<{ endMs: number; startMs: number }> = []
     const enforceStrictCutoff = !isCurrentEncounter || !isArchivedCutoff
 
     const dispenseParams = new URLSearchParams({
@@ -1459,22 +1459,18 @@ export class ClinicalScoreService {
           }
         }
         hasEvidence = true
-        validDispenseCount += 1
         if (handedMs !== undefined) {
           if (earliestEvidenceMs === undefined || handedMs < earliestEvidenceMs) {
             earliestEvidenceMs = handedMs
           }
           const supplyMs = resolveMedicationBoundsDurationMs(disp.data.daysSupply)
           if (typeof supplyMs === 'number') {
-            const candidateEnd = handedMs + supplyMs
-            if (supplyEndMs === undefined || candidateEnd > supplyEndMs) {
-              supplyEndMs = candidateEnd
-            }
+            supplyWindows.push({ endMs: handedMs + supplyMs, startMs: handedMs })
           } else {
-            hasUnsuppliedDispense = true
+            hasOpenEndedEvidence = true
           }
         } else {
-          hasUnsuppliedDispense = true
+          hasOpenEndedEvidence = true
         }
       }
       if (dispPage.nextCursor === undefined) break
@@ -1509,6 +1505,7 @@ export class ClinicalScoreService {
           }
         }
         hasEvidence = true
+        hasOpenEndedEvidence = true
         if (adminStartMs !== undefined && (earliestEvidenceMs === undefined || adminStartMs < earliestEvidenceMs)) {
           earliestEvidenceMs = adminStartMs
         }
@@ -1517,11 +1514,16 @@ export class ClinicalScoreService {
       adminParams.set('_cursor', adminPage.nextCursor)
     }
 
+    const hasActiveSupplyAtCutoff =
+      !Number.isFinite(cutoffMs)
+      || supplyWindows.some(w => (!enforceStrictCutoff || cutoffMs >= w.startMs) && cutoffMs <= w.endMs)
+
     return {
       earliestEvidenceMs,
-      finiteSupplyEndMs: validDispenseCount > 0 && !hasUnsuppliedDispense ? supplyEndMs : undefined,
+      hasActiveSupplyAtCutoff,
       hasEvidence,
-      supplyEndMs,
+      hasOpenEndedEvidence,
+      supplyWindows,
     }
   }
 
@@ -2237,9 +2239,9 @@ export class ClinicalScoreService {
           if (enforceExpiry && Number.isFinite(nowMs)) {
             if (daptBoundsMs !== undefined) {
               const anchorMs = delivery.earliestEvidenceMs ?? parseResourceTimestampMs(parsed.data.authoredOn)
-              const courseEndMs = anchorMs === undefined ? undefined : Math.max(anchorMs + daptBoundsMs, delivery.supplyEndMs ?? 0)
-              if (courseEndMs === undefined || courseEndMs < nowMs) continue
-            } else if (delivery.finiteSupplyEndMs !== undefined && delivery.finiteSupplyEndMs < nowMs) {
+              const inCourseWindow = anchorMs !== undefined && nowMs >= anchorMs && nowMs <= anchorMs + daptBoundsMs
+              if (!inCourseWindow && !delivery.hasActiveSupplyAtCutoff) continue
+            } else if (!delivery.hasOpenEndedEvidence && !delivery.hasActiveSupplyAtCutoff) {
               continue
             }
           }
@@ -3219,9 +3221,9 @@ export class ClinicalScoreService {
         if (enforceExpiry && Number.isFinite(nowMs)) {
           if (htnBoundsMs !== undefined) {
             const anchorMs = delivery.earliestEvidenceMs ?? parseResourceTimestampMs(parsed.data.authoredOn)
-            const courseEndMs = anchorMs === undefined ? undefined : Math.max(anchorMs + htnBoundsMs, delivery.supplyEndMs ?? 0)
-            if (courseEndMs === undefined || courseEndMs < nowMs) continue
-          } else if (delivery.finiteSupplyEndMs !== undefined && delivery.finiteSupplyEndMs < nowMs) {
+            const inCourseWindow = anchorMs !== undefined && nowMs >= anchorMs && nowMs <= anchorMs + htnBoundsMs
+            if (!inCourseWindow && !delivery.hasActiveSupplyAtCutoff) continue
+          } else if (!delivery.hasOpenEndedEvidence && !delivery.hasActiveSupplyAtCutoff) {
             continue
           }
         }
@@ -3447,9 +3449,10 @@ export class ClinicalScoreService {
         const isCurrentEncounter = parsed.data.encounter?.reference === `Encounter/${encounterId}`
         const enforceStrictCutoff = !isCurrentEncounter || !isArchivedCutoff
         let earliestAnyDispenseMs: number | undefined
-        let dispenseSupplyEndMs: number | undefined
         let validDispenseCount = 0
-        let hasUnsuppliedDispense = false
+        let hasUntimedDispense = false
+        const dispenseWindows: Array<{ endMs: number; startMs: number }> = []
+        const unsuppliedDispenseStarts: number[] = []
         const dispenseParams = new URLSearchParams({
           _count: '50',
           prescription: `MedicationRequest/${parsed.data.id}`,
@@ -3476,15 +3479,12 @@ export class ClinicalScoreService {
             if (handedMs !== undefined) {
               const supplyMs = resolveMedicationBoundsDurationMs(disp.data.daysSupply)
               if (typeof supplyMs === 'number') {
-                const candidateEnd = handedMs + supplyMs
-                if (dispenseSupplyEndMs === undefined || candidateEnd > dispenseSupplyEndMs) {
-                  dispenseSupplyEndMs = candidateEnd
-                }
+                dispenseWindows.push({ endMs: handedMs + supplyMs + LIPID_WASHOUT_MS, startMs: handedMs })
               } else {
-                hasUnsuppliedDispense = true
+                unsuppliedDispenseStarts.push(handedMs)
               }
             } else {
-              hasUnsuppliedDispense = true
+              hasUntimedDispense = true
             }
           }
           if (dispPage.nextCursor === undefined) break
@@ -3572,34 +3572,45 @@ export class ClinicalScoreService {
           parsed.data.effectiveDosePeriod?.end
           ?? parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsPeriod?.end
         const parsedExplicitEnd = explicitPeriodEndIso ? Date.parse(explicitPeriodEndIso) : Number.NaN
-        const finiteDispenseSupplyEndMs =
-          validDispenseCount > 0 && !hasUnsuppliedDispense ? dispenseSupplyEndMs : undefined
+        const source: ClinicalScoreSourceReference = {
+          label: `降脂处方 ${display || parsed.data.id}`,
+          reference: `MedicationRequest/${parsed.data.id}`,
+          versionId: parsed.data.meta?.versionId ?? '1',
+        }
 
-        let endMs = Number.POSITIVE_INFINITY
+        for (const w of dispenseWindows) {
+          exposures.push({ endMs: w.endMs, source, startMs: w.startMs })
+        }
+
+        const allDeliveriesCoveredBySupplyWindows =
+          validDispenseCount > 0
+          && unsuppliedDispenseStarts.length === 0
+          && !hasUntimedDispense
+          && validAdminCount === 0
+
         if (Number.isFinite(parsedExplicitEnd)) {
-          endMs = Math.max(parsedExplicitEnd, dispenseSupplyEndMs ?? 0) + LIPID_WASHOUT_MS
+          exposures.push({ endMs: parsedExplicitEnd + LIPID_WASHOUT_MS, source, startMs })
         } else if (typeof boundsMs === 'number' && startMs !== undefined) {
-          endMs = Math.max(startMs + boundsMs, dispenseSupplyEndMs ?? 0) + LIPID_WASHOUT_MS
-        } else if (finiteDispenseSupplyEndMs !== undefined) {
-          endMs = finiteDispenseSupplyEndMs + LIPID_WASHOUT_MS
-        } else if (status === 'completed' || status === 'stopped') {
-          let completionEvidenceMs = parsed.data.statusChanged ? Date.parse(parsed.data.statusChanged) : Number.NaN
-          if (!Number.isFinite(completionEvidenceMs) && latestAdminMs !== undefined) {
-            completionEvidenceMs = latestAdminMs
+          exposures.push({ endMs: startMs + boundsMs + LIPID_WASHOUT_MS, source, startMs })
+        } else if (!allDeliveriesCoveredBySupplyWindows) {
+          let fallbackEndMs = Number.POSITIVE_INFINITY
+          if (status === 'completed' || status === 'stopped') {
+            let completionEvidenceMs = parsed.data.statusChanged ? Date.parse(parsed.data.statusChanged) : Number.NaN
+            if (!Number.isFinite(completionEvidenceMs) && latestAdminMs !== undefined) {
+              completionEvidenceMs = latestAdminMs
+            }
+            if (Number.isFinite(completionEvidenceMs)) {
+              fallbackEndMs = completionEvidenceMs + LIPID_WASHOUT_MS
+            }
           }
-          if (Number.isFinite(completionEvidenceMs)) {
-            endMs = completionEvidenceMs + LIPID_WASHOUT_MS
+          if (unsuppliedDispenseStarts.length > 0 && !hasUntimedDispense && validAdminCount === 0) {
+            for (const uStart of unsuppliedDispenseStarts) {
+              exposures.push({ endMs: fallbackEndMs, source, startMs: uStart })
+            }
+          } else {
+            exposures.push({ endMs: fallbackEndMs, source, startMs })
           }
         }
-        exposures.push({
-          endMs,
-          source: {
-            label: `降脂处方 ${display || parsed.data.id}`,
-            reference: `MedicationRequest/${parsed.data.id}`,
-            versionId: parsed.data.meta?.versionId ?? '1',
-          },
-          startMs,
-        })
       }
       if (page.nextCursor === undefined) break
       medParams.set('_cursor', page.nextCursor)

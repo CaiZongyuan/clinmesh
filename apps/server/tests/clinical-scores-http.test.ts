@@ -1225,6 +1225,17 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
       subject: { reference: `Patient/${tempOrderPatient.id}` },
       whenHandedOver: '2026-08-06T10:00:00+08:00',
     })
+    // Second 30d refill on externalSuppliedReq handed over on 2026-08-10 (after its 2025-06-01 30d supply washed out) keeps separate dispense intervals rather than bridging 2025-06..2026-10 across the 2026-08-01 baseline specimen
+    fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
+      authorizingPrescription: [{ reference: `MedicationRequest/${externalSuppliedReq.id}` }],
+      daysSupply: { code: 'd', system: 'http://unitsofmeasure.org', unit: 'd', value: 30 },
+      id: uuidv7(),
+      medication: { concept: { text: '匹伐他汀钙片 2mg' } },
+      resourceType: 'MedicationDispense',
+      status: 'completed',
+      subject: { reference: `Patient/${tempOrderPatient.id}` },
+      whenHandedOver: '2026-08-10T10:00:00+08:00',
+    })
     insertSyntheticLabReport(fixture, {
       caseId: tempCase.caseId,
       encounterId: tempReg.encounterId,
