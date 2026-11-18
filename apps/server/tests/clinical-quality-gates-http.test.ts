@@ -1092,7 +1092,59 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
       clinicalQuality: { alerts: [expect.objectContaining({ code: 'PCI_NON_ISCHEMIC_LESION' })] },
     })
 
-    // Because preparePciAdmission created a pre-report PCI request (`stay.requestId`), confirming PCI selection right now WITHOUT override hits 409!
+    // Even if a newer ischemic angiography report exists on the same admission, confirming `stay.requestId` evaluates its bound `scheduledAngio.report_id` (FFR 0.86)!
+    const angioProc = stay.catalog.procedures.find(item => item.coding.code === '88.5500')!
+    const admBefore2 = await fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)
+    const req2Resp = await parsePciResponse(inpatientSurgeryResponseSchema, await fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, {
+      encounterVersion: admBefore2.admission.versionId,
+      procedureId: angioProc.id,
+      catalogVersion: angioProc.version,
+      plannedFor: '2026-08-24T15:30:00+08:00',
+      reason: '复查冠脉造影',
+    }))
+    const angioReq2Id = req2Resp.data.requests.find(item => item.plannedProcedure.id === angioProc.id && item.status === 'requested')!.id
+    for (const [role, action] of [['ward-nurse', 'check-preop'], ['inpatient-doctor', 'confirm-consent']] as const) {
+      const surg = await fixture.read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)
+      await parsePciResponse(inpatientSurgeryResponseSchema, await fixture.request(role, `${stay.path}/surgeries/${action}`, {
+        requestId: angioReq2Id,
+        expectedRequestVersion: surg.requests.find(item => item.id === angioReq2Id)!.version,
+        note: '复查造影术前准备',
+      }))
+    }
+    await fixture.dispensePciMedications(stay, 'intraoperative')
+    const surgReady2 = await fixture.read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)
+    const angioExec2 = (await parsePciResponse(inpatientSurgeryResponseSchema, await fixture.request('inpatient-doctor', `${stay.path}/surgeries/execute`, {
+      requestId: angioReq2Id,
+      expectedRequestVersion: surgReady2.requests.find(item => item.id === angioReq2Id)!.version,
+      procedureId: angioProc.id,
+      catalogVersion: angioProc.version,
+      note: '复查冠脉造影执行',
+      materials: [],
+    }))).data.executions.find(item => item.requestId === angioReq2Id)!
+    await fixture.runtime.dispatchPending()
+    const scheduledAngio2 = z.object({ report_id: z.string() }).parse(
+      fixture.runtime.database.driver
+        .prepare('SELECT report_id FROM inpatient_angiography_report WHERE workspace_id=? AND epoch=? AND admission_id=? AND procedure_id=?')
+        .get(scenario.workspaceId, scenario.epoch, stay.admissionId, angioExec2.id),
+    )
+    const newerIschemicReport = inpatientAngiographyReportSchema.parse({
+      ...nonIschemicReport,
+      id: scheduledAngio2.report_id,
+      procedureId: angioExec2.id,
+      issuedAt: '2026-08-24T11:30:00+08:00',
+      vessels: [{
+        vessel: 'RCA',
+        segment: '右冠中段',
+        stenosisPercent: 85,
+        timiFlow: 3,
+        lesionCharacteristics: '缺血病变',
+        ffr: 0.72,
+      }],
+    })
+    fixture.runtime.database.driver
+      .prepare('UPDATE inpatient_angiography_report SET report_json=? WHERE workspace_id=? AND epoch=? AND admission_id=? AND procedure_id=?')
+      .run(JSON.stringify(newerIschemicReport), scenario.workspaceId, scenario.epoch, stay.admissionId, angioExec2.id)
+
     const selBefore = await fixture.read('inpatient-doctor', `${stay.path}/pci-selection`, inpatientPciSelectionSchema)
     const confirmPciBlocked = await fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, {
       expectedVersion: selBefore.confirmation?.version ?? 0,
@@ -1108,8 +1160,16 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
     expect(confirmPciBlocked.status).toBe(409)
     expect(apiErrorSchema.parse(await confirmPciBlocked.json()).error).toMatchObject({
       code: 'CLINICAL_QUALITY_ALERT',
-      clinicalQuality: { alerts: [expect.objectContaining({ code: 'PCI_NON_ISCHEMIC_LESION' })] },
+      clinicalQuality: {
+        alerts: [expect.objectContaining({
+          code: 'PCI_NON_ISCHEMIC_LESION',
+          evidence: [expect.objectContaining({ reference: `DiagnosticReport/${scheduledAngio.report_id}` })],
+        })],
+      },
     })
+    fixture.runtime.database.driver
+      .prepare('DELETE FROM inpatient_angiography_report WHERE workspace_id=? AND epoch=? AND report_id=?')
+      .run(scenario.workspaceId, scenario.epoch, scheduledAngio2.report_id)
 
     // Cancel the initial request, then verify `inpatient.surgery.request` for PCI (`36.0700`) is also gated and carries over to `pci-selection.confirm`
     const surgeriesBefore = await fixture.read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)
@@ -1381,5 +1441,100 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
       gate: 'inpatient-discharge',
       override: { reasonCode: 'patient-informed-refusal' },
     })
+
+    // --- 5. Same-timestamp virtual clock ordering: stopping statin BEFORE discharge.issue blocks discharge, whereas stopping AFTER discharge.issue for depart passes record.submit ---
+    const sameTsStay = await fixture.admitSyntheticCase(['I25.103'], 'bed-general-3')
+    const aspirin = catalog.medications.find(item => item.id === 'medication-pci-aspirin')!
+    let sameTsClin = await fixture.read('inpatient-doctor', `${sameTsStay.path}/clinical`, inpatientFullClinicalSchema)
+    for (const [med, doseText, doseQuantity, freq] of [[aspirin, '100 mg', 1, 'QD'], [atorvastatin, '20 mg', 2, 'QN']] as const) {
+      sameTsClin = (await parsePciResponse(
+        inpatientFullClinicalResponseSchema,
+        await fixture.request('inpatient-doctor', `${sameTsStay.path}/orders/issue`, {
+          encounterVersion: sameTsClin.encounterVersion,
+          duration: 'long',
+          selection: { kind: 'medication', catalogItemId: med.id, catalogVersion: med.version, doseText, doseQuantity, frequencyCode: freq },
+        }),
+      )).data
+    }
+    const statinBeforeIssue = sameTsClin.orders.find(item => item.catalogItemId === atorvastatin.id)!
+    const stopStatinBefore = await parsePciResponse(
+      inpatientFullClinicalResponseSchema,
+      await fixture.request('inpatient-doctor', `${sameTsStay.path}/orders/request-stop`, {
+        orderId: statinBeforeIssue.id,
+        expectedOrderVersion: statinBeforeIssue.version,
+        reason: '出院前同虚拟时刻停他汀验证',
+      }),
+    )
+    await parsePciResponse(
+      inpatientFullClinicalResponseSchema,
+      await fixture.request('ward-nurse', `${sameTsStay.path}/orders/verify-stop`, {
+        orderId: statinBeforeIssue.id,
+        expectedOrderVersion: stopStatinBefore.data.orders.find(item => item.id === statinBeforeIssue.id)!.version,
+      }),
+    )
+    const sameTsAdm1 = (await fixture.read('inpatient-doctor', sameTsStay.path, z.object({ admission: z.object({ versionId: z.string() }) }))).admission
+    const issueMissingStatin = await fixture.request('inpatient-doctor', `${sameTsStay.path}/discharge/issue`, {
+      encounterVersion: sameTsAdm1.versionId,
+      reason: '同虚拟时刻停他汀后拟出院',
+    })
+    expect(issueMissingStatin.status).toBe(409)
+    expect(apiErrorSchema.parse(await issueMissingStatin.json()).error).toMatchObject({
+      code: 'CLINICAL_QUALITY_ALERT',
+      clinicalQuality: { alerts: [{ code: 'DISCHARGE_STATIN_MISSING' }] },
+    })
+
+    // Re-issue long-term statin -> discharge.issue passes WITHOUT override, then stop orders at the SAME virtual clock to depart -> record.submit ALSO passes WITHOUT override!
+    sameTsClin = (await parsePciResponse(
+      inpatientFullClinicalResponseSchema,
+      await fixture.request('inpatient-doctor', `${sameTsStay.path}/orders/issue`, {
+        encounterVersion: sameTsAdm1.versionId,
+        duration: 'long',
+        selection: { kind: 'medication', catalogItemId: atorvastatin.id, catalogVersion: atorvastatin.version, doseText: '20 mg', doseQuantity: 2, frequencyCode: 'QN' },
+      }),
+    )).data
+    const sameTsIssued = await parsePciResponse(
+      inpatientDischargeResponseSchema,
+      await fixture.request('inpatient-doctor', `${sameTsStay.path}/discharge/issue`, {
+        encounterVersion: sameTsClin.encounterVersion,
+        reason: '补齐他汀后开立出院医嘱',
+      }),
+    )
+    expect(sameTsIssued.clinicalQuality).toBeUndefined()
+    for (const activeOrder of sameTsClin.orders.filter(item => item.state !== 'stopped')) {
+      const stopReq = await parsePciResponse(
+        inpatientFullClinicalResponseSchema,
+        await fixture.request('inpatient-doctor', `${sameTsStay.path}/orders/request-stop`, {
+          orderId: activeOrder.id,
+          expectedOrderVersion: activeOrder.version,
+          reason: '出院医嘱开立后办理出区停嘱',
+        }),
+      )
+      await parsePciResponse(
+        inpatientFullClinicalResponseSchema,
+        await fixture.request('ward-nurse', `${sameTsStay.path}/orders/verify-stop`, {
+          orderId: activeOrder.id,
+          expectedOrderVersion: stopReq.data.orders.find(item => item.id === activeOrder.id)!.version,
+        }),
+      )
+    }
+    const sameTsAdm2 = (await fixture.read('inpatient-doctor', sameTsStay.path, z.object({ admission: z.object({ versionId: z.string() }) }))).admission
+    await parsePciResponse(
+      inpatientDischargeResponseSchema,
+      await fixture.request('ward-nurse', `${sameTsStay.path}/discharge/depart`, {
+        encounterVersion: sameTsAdm2.versionId,
+        reason: '完成停嘱后办理出区',
+        departureMethod: 'home',
+      }),
+    )
+    const sameTsRecord = await fixture.read('inpatient-doctor', `${sameTsStay.path}/record`, inpatientRecordSchema)
+    const sameTsSubmitted = await parsePciResponse(
+      inpatientRecordResponseSchema,
+      await fixture.request('inpatient-doctor', `${sameTsStay.path}/record/submit`, {
+        expectedRevision: sameTsRecord.revision?.revision ?? 0,
+        expectedSourcesHash: sameTsRecord.sourcesHash,
+        mainProcedureExecutionId: null,
+      }),
+    )
+    expect(sameTsSubmitted.clinicalQuality).toBeUndefined()
   }, 120_000)
 })

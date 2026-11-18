@@ -133,6 +133,7 @@ export class InpatientRecords {
               input.admissionId,
               admission.patientId,
               latestIssue?.virtualTime ?? now,
+              latestIssue?.id,
             ),
             operation: 'inpatient.record.submit',
             override: input.clinicalOverride,

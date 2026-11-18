@@ -148,20 +148,65 @@ export class ClinicalQualityService {
     })
   }
 
-  inpatientPciPlan(inpatient: InpatientService, context: ActorContext, admissionId: string): ClinicalQualityCheck {
-    const report = inpatient.angiography.reports(context, admissionId).find(item => item.status === 'final' || item.status === 'partial')
+  inpatientPciPlan(
+    inpatient: InpatientService,
+    context: ActorContext,
+    admissionId: string,
+    options?: { requestId?: string | undefined; reportReferences?: readonly string[] | undefined },
+  ): ClinicalQualityCheck {
+    const reports = inpatient.angiography.reports(context, admissionId).filter(item => item.status === 'final' || item.status === 'partial')
+    const draft = options?.requestId === undefined
+      ? undefined
+      : inpatient.pciSelection.drafts(context, admissionId).find(item => item.requestId === options.requestId)
+    const refIds = (options?.reportReferences ?? []).flatMap(ref => ref.startsWith('DiagnosticReport/') ? [ref.slice('DiagnosticReport/'.length)] : [])
+    const report = (draft === undefined
+      ? undefined
+      : reports.find(item => item.id === draft.reportId && item.version === draft.reportVersion)
+        ?? reports.find(item => item.id === draft.reportId))
+      ?? (refIds.length > 0 ? reports.find(item => refIds.includes(item.id)) : undefined)
+      ?? reports[0]
     return this.#result(context, 'inpatient-pci-plan', [], report === undefined ? [] : nonIschemicPciFindings(report.vessels,
       { label: '冠脉造影功能学报告', reference: `DiagnosticReport/${report.id}`, versionId: String(report.version) }))
   }
 
-  /** 截止时点为出院医嘱开立时刻：病案提交时按最近一次出院医嘱回看当时在用的长期医嘱。 */
-  inpatientDischarge(inpatient: InpatientService, context: ActorContext, admissionId: string, patientId: string, cutoff: string): ClinicalQualityCheck {
+  /** 截止时点为出院医嘱开立时刻：签离前排除已停医嘱；离院后结合 action_trace 序列区分签离前已停与签离后按出区要求停嘱。 */
+  inpatientDischarge(
+    inpatient: InpatientService,
+    context: ActorContext,
+    admissionId: string,
+    patientId: string,
+    cutoff: string,
+    issueEventId?: string,
+  ): ClinicalQualityCheck {
     const indicators = extractSupplementaryIndicators({ caseId: admissionId, context, database: this.#database, encounterId: admissionId, fhir: this.#fhir,
       inpatient: { actor: context, service: inpatient }, patientId })
-    const orders = z.array(z.object({ catalog_item_id: z.string() })).parse(this.#database.driver.prepare(`SELECT DISTINCT catalog_item_id FROM inpatient_order
-      WHERE workspace_id=? AND epoch=? AND admission_id=? AND kind='medication' AND duration='long' AND julianday(signed_at) <= julianday(?)
-        AND (stopped_at IS NULL OR julianday(stopped_at) >= julianday(?))`).all(context.workspaceId, context.epoch, admissionId, cutoff, cutoff))
-    const longTermClasses = orders.flatMap(order => this.medicationClasses(context, order.catalog_item_id))
+    const rows = z.array(z.object({ order_id: z.string(), catalog_item_id: z.string(), stopped_at: z.string().nullable() })).parse(
+      issueEventId === undefined
+        ? this.#database.driver.prepare(`SELECT order_id, catalog_item_id, stopped_at FROM inpatient_order
+            WHERE workspace_id=? AND epoch=? AND admission_id=? AND kind='medication' AND duration='long'
+              AND julianday(signed_at) <= julianday(?) AND stopped_at IS NULL`).all(context.workspaceId, context.epoch, admissionId, cutoff)
+        : this.#database.driver.prepare(`SELECT order_id, catalog_item_id, stopped_at FROM inpatient_order
+            WHERE workspace_id=? AND epoch=? AND admission_id=? AND kind='medication' AND duration='long'
+              AND julianday(signed_at) <= julianday(?) AND (stopped_at IS NULL OR julianday(stopped_at) >= julianday(?))`).all(context.workspaceId, context.epoch, admissionId, cutoff, cutoff),
+    )
+    const issueSeq = issueEventId === undefined ? null : z.object({ seq: z.number().nullable() }).parse(this.#database.driver.prepare(`
+      SELECT MAX(sequence) AS seq FROM action_trace
+      WHERE workspace_id=? AND epoch=? AND operation='inpatient.discharge.issue' AND outcome='success' AND instr(effect_json, ?) > 0
+    `).get(context.workspaceId, context.epoch, `"InpatientDischargeEvent/${issueEventId}"`)).seq
+    const cutoffMs = Date.parse(cutoff)
+    const orders = rows.filter((row) => {
+      if (row.stopped_at === null) return true
+      if (issueEventId === undefined) return false
+      if (Date.parse(row.stopped_at) > cutoffMs) return true
+      if (issueSeq === null) return false
+      const stopSeq = z.object({ seq: z.number().nullable() }).parse(this.#database.driver.prepare(`
+        SELECT MAX(sequence) AS seq FROM action_trace
+        WHERE workspace_id=? AND epoch=? AND operation='inpatient.order.request-stop' AND outcome='success' AND instr(effect_json, ?) > 0
+      `).get(context.workspaceId, context.epoch, `"MedicationRequest/${row.order_id}"`)).seq
+      return stopSeq !== null && stopSeq > issueSeq
+    })
+    const longTermClasses = [...new Set(orders.map(order => order.catalog_item_id))]
+      .flatMap(catalogItemId => this.medicationClasses(context, catalogItemId))
       .filter(item => (secondaryPreventionClasses as readonly string[]).includes(item))
     return this.#result(context, 'inpatient-discharge', [], dischargeSecondaryPreventionFindings({ cad: evidence('冠心病/PCI 依据', indicators.cadEligibility), longTermClasses }))
   }
@@ -214,7 +259,7 @@ export class ClinicalQualityService {
       if (input.gate === 'inpatient-pci-plan') return this.inpatientPciPlan(inpatient, context, admission.id)
       if (input.gate === 'inpatient-discharge') {
         const latestIssue = admission.status === 'admitted' ? undefined : inpatient.discharge.events(context, admission.id).filter(event => event.kind === 'issue').at(-1)
-        return this.inpatientDischarge(inpatient, context, admission.id, admission.patientId, latestIssue?.virtualTime ?? inpatient.virtualTime(context))
+        return this.inpatientDischarge(inpatient, context, admission.id, admission.patientId, latestIssue?.virtualTime ?? inpatient.virtualTime(context), latestIssue?.id)
       }
       const item = z.object({ code: z.string(), name_zh: z.string(), config_json: z.string() }).optional().parse(this.#database.driver.prepare(
         "SELECT code, name_zh, config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=? AND kind='medication' AND active=1").get(context.workspaceId, context.epoch, input.catalogItemId))

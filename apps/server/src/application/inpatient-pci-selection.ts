@@ -141,7 +141,10 @@ export class InpatientPciSelection {
       const effects: CommandEffect[] = []
       const confirmation = this.confirmInTransaction(context, input, effects)
       const quality = this.owner.workflow.clinicalQuality.enforce(context, {
-        check: this.owner.workflow.clinicalQuality.inpatientPciPlan(this.owner, context, admission.id),
+        check: this.owner.workflow.clinicalQuality.inpatientPciPlan(this.owner, context, admission.id, {
+          requestId: input.parameters.requestId,
+          reportReferences: confirmation.parameters.measurements.map(item => item.source.reference),
+        }),
         operation: 'inpatient.pci-selection.confirm',
         override: input.clinicalOverride,
         patientId: admission.patientId,
@@ -165,18 +168,21 @@ export class InpatientPciSelection {
 
   confirmDraftInTransaction(context: ActorContext, admissionId: string, requestId: string, materialIds: string[], effects: CommandEffect[]) {
     const selected = this.read(context, admissionId, requestId)
+    const draft = selected.drafts?.find(item => item.requestId === requestId
+      && (selected.confirmation === null || item.confirmedSelectionVersion === selected.confirmation.version || item.edited && item.confirmedSelectionVersion === null))
     if (selected.confirmation === null) {
       const admission = this.owner.admissionBinding(context, admissionId)
       this.owner.workflow.clinicalQuality.enforce(context, {
-        check: this.owner.workflow.clinicalQuality.inpatientPciPlan(this.owner, context, admissionId),
+        check: this.owner.workflow.clinicalQuality.inpatientPciPlan(this.owner, context, admissionId, {
+          requestId,
+          reportReferences: draft?.parameters.measurements.map(item => item.source.reference),
+        }),
         operation: 'inpatient.pci-selection.confirm',
         override: undefined,
         patientId: admission.patientId,
         subjectReference: `Encounter/${admissionId}`,
       })
     }
-    const draft = selected.drafts?.find(item => item.requestId === requestId
-      && (selected.confirmation === null || item.confirmedSelectionVersion === selected.confirmation.version || item.edited && item.confirmedSelectionVersion === null))
     if (!draft) {
       const confirmed = selected.confirmation
       if (!confirmed || confirmed.parameters.approvedMaterialIds.length === materialIds.length && materialIds.every(id => confirmed.parameters.approvedMaterialIds.includes(id))) return confirmed
