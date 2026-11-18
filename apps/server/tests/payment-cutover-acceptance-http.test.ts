@@ -172,10 +172,7 @@ it('非空旧库显式切换后，从原岗位重建两端资金并联合核对 
     await parsePciResponse(inpatientDischargeResponseSchema, await s.request('ward-nurse', `${stay.path}/discharge/clear`, {
       encounterVersion: settled.encounterVersion, reason: '合成查询原款确认后清床',
     }))
-    const draft = await s.read('inpatient-doctor', `${stay.path}/record`, inpatientRecordSchema)
-    await parsePciResponse(inpatientRecordResponseSchema, await s.request('inpatient-doctor', `${stay.path}/record/submit`, {
-      expectedRevision: draft.revision?.revision ?? 0, expectedSourcesHash: draft.sourcesHash, mainProcedureExecutionId: execution.id,
-    }))
+    await s.confirmMainProcedure(stay, execution.id)
     const submitted = await s.read('medical-records', `${stay.path}/record`, inpatientRecordSchema)
     await parsePciResponse(inpatientRecordResponseSchema, await s.request('medical-records', `${stay.path}/record/review`, {
       expectedRevision: submitted.revision!.revision, expectedSourcesHash: submitted.sourcesHash, outcome: 'approved', reason: '合成切换后 PCI 病案核对',

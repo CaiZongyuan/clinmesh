@@ -51,6 +51,7 @@ clinmesh encounter diagnosis draft set --input @diagnosis.json --idempotency-key
 clinmesh encounter diagnosis draft set --input @diagnosis-discard.json --idempotency-key <key>
 clinmesh encounter diagnosis confirm --input @diagnosis-confirm.json --idempotency-key <key>
 clinmesh encounter prescription draft set --input @prescription.json --idempotency-key <key>
+clinmesh encounter clinical-quality get --encounter-id <encounter-id> --gate outpatient-prescription
 clinmesh encounter prescription issue --input @prescription-issue.json --idempotency-key <key>
 clinmesh encounter medication-conclusion confirm-none --input @no-medication.json --idempotency-key <key>
 clinmesh prescription withdraw --input @withdrawal.json --idempotency-key <key>
@@ -217,6 +218,7 @@ clinmesh encounter clinical-document sign commit --input @document-sign.json --i
 clinmesh encounter clinical-document sign cancel --input @document-cancel.json --idempotency-key <cancel-intent-key>
 clinmesh clinical-document revise --input @document-revision.json --idempotency-key <key>
 clinmesh encounter completion preview --encounter-id <encounter-id>
+clinmesh encounter clinical-quality get --encounter-id <encounter-id> --gate outpatient-completion
 clinmesh encounter complete --input @completion.json --idempotency-key <key>
 ```
 
@@ -261,6 +263,27 @@ clinmesh command receipt get --operation-id encounter.risk-assessment.record --i
     "familyHistoryPrematureCad": false,
     "knownCoronaryStenosisGe50": false,
     "priorBleedingHistory": "negative"
+  }
+}
+```
+
+## Two-tier clinical quality gates and Clinical Override
+
+`encounter clinical-quality get` runs a read-only preflight check against formal clinical facts (`--gate outpatient-prescription` or `--gate outpatient-completion`) without mutating Encounter state. `encounter prescription issue` (version 4) and `encounter complete` (version 2) enforce the same two-tier rules atomically inside the Command transaction:
+
+- **Tier 1 safety red lines (`CLINICAL_QUALITY_RED_LINE`, HTTP 409)**: proven `ckd-epi-2021-egfr < 30` with metformin/dapagliflozin (`RENAL_CONTRAINDICATED_MEDICATION`), confirmed allergy conflict (`MEDICATION_ALLERGY_CONFLICT`), exceeding single/daily maximum dose (`MEDICATION_DOSE_LIMIT_EXCEEDED`), or mutually exclusive pharmacology classes (`MEDICATION_CLASS_DUPLICATION`). Red lines reject even when `clinicalOverride` is supplied; adjust or remove the offending medication first.
+- **Tier 2 pathway/guideline alerts (`CLINICAL_QUALITY_ALERT`, HTTP 409)**: acute chest pain without signed ECG or troponin before completion (`CHEST_PAIN_WORKUP_INCOMPLETE`), high-risk renally cleared medication (`biguanide`/`sglt2`/`mra`) without recent serum creatinine (`RENAL_CREATININE_MISSING`, strictly distinct from proven `eGFR < 30`), or antibacterial medication on viral-only respiratory diagnoses without bacterial indication (`ANTIBIOTIC_WITHOUT_BACTERIAL_INDICATION`). Resolve the clinical gap first, or submit a controlled `clinicalOverride` (`reasonCode`, `note` >= 4 chars, `acknowledgedAlerts` covering all current alert codes) with a new idempotency key; same-key replay returns the recorded receipt and `clinicalQuality` summary.
+
+`completion-override.json` synthetic example:
+
+```json
+{
+  "encounterId": "<encounter-id>",
+  "encounterVersion": "4",
+  "clinicalOverride": {
+    "reasonCode": "external-result-verified",
+    "note": "已核对外院急诊心电图与肌钙蛋白阴性原件并记入病历",
+    "acknowledgedAlerts": ["CHEST_PAIN_WORKUP_INCOMPLETE"]
   }
 }
 ```

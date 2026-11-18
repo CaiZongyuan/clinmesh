@@ -310,6 +310,17 @@ Web 与 DSH Surface 在原耗材弹窗提供补登记和更正，提交前显示
 
 缺少报告、单位、测量、具体候选或客观指标时仍可给出 `conditional` 条件性参考，但不能把患者适用性表达为已确认，也不能产生具体产品、规格、默认数量、医嘱、预留或收费。生成与独立核验使用相同的固定患者资料和完整原文，结论必须带实际原句及来源定位，并保留人群（按上海日历整岁解析，儿科或 `all-only` 患者访问成人专题以 `population-mismatch` 扣留并返回 `no-evidence`，零模型请求）、条件、例外与推荐强度；核验拒绝不发布。来源失效立即隐藏旧意见与原文，幂等回执重放也不恢复。模型派发、格式修复、未知恢复、用量控制与实际请求计量继续复用通用执行边界；未知请求不自动重发。设计取舍见[指南参考意见决策](../decisions/implemented/architecture/2026-11-02-inpatient-pci-guideline-advice.md)与[共享指南专题注册表与手术单解耦决策](../decisions/implemented/architecture/2026-11-17-shared-guideline-topic-registry.md)，公开 HTTP、迁移升级与原文回读合同由 `inpatient-guideline-advice-http.test.ts` 和 `guideline-fixed-references.test.ts` 验证。
 
+#### 双层事中临床质控与 Clinical Override
+
+门诊与住院在四个临床责任关口共用一套基于正式临床事实与确定性 `ckd-epi-2021-egfr` 算子的零模型事中临床质控纯引擎，并通过 `encounter.clinical-quality.read` 与 `inpatient.clinical-quality.read` 暴露无副作用只读预检：
+
+1. **处方与住院医嘱签发关口**（`encounter.issue-prescription`、门诊处方准备确认与 `inpatient.order.issue`）：复用声明式 `medication-safety` 规则与近期肾功能客观记录，区分绝对红线与缺依据条件警示；对既有 `WORKFLOW_CONFLICT`／`CATALOG_CONFLICT` 药事拒绝同步附带 `error.clinicalQuality`（`status: "blocked"`）。
+2. **门诊完诊关口**（`encounter.complete`）：核对急性胸痛主诉或诊断是否已完成已签发 12 导联心电图及心肌损伤标志物评估（`CHEST_PAIN_WORKUP_INCOMPLETE`）。
+3. **冠脉介入计划与选型确认关口**（PCI 术式 `inpatient.surgery.request` 与 `inpatient.pci-selection.confirm`）：核对最新已签发冠脉造影报告是否存在功能学非缺血临界病变（`FFR > 0.80`）仍拟行介入（`PCI_NON_ISCHEMIC_LESION`）；造影前已申请 PCI 计划且造影自动生成选型草稿时，耗材确认前必须先经 `inpatient.pci-selection.confirm` 完成质控核对或登记越权。
+4. **住院出院医嘱与离院后病案提交关口**（`inpatient.discharge.issue` 与离院后 `inpatient.record.submit`）：对冠心病或本次住院已实施 PCI 病例，按出院医嘱开立截止时点核对是否存在长期抗血小板（`DISCHARGE_ANTIPLATELET_MISSING`）与他汀（`DISCHARGE_STATIN_MISSING`）医嘱；在院期间保存主操作预分组快照不触发出院质控，各正式写命令在命中未覆盖警示时各自独立拦截并留存本次越权记录。
+
+两层规则严格分离：**第一层药事与生理安全红线**（`CLINICAL_QUALITY_RED_LINE`，含已证实 `ckd-epi-2021-egfr < 30` 拟开二甲双胍或达格列净 `RENAL_CONTRAINDICATED_MEDICATION`、明确过敏冲突 `MEDICATION_ALLERGY_CONFLICT`、超出单次或单日极量 `MEDICATION_DOSE_LIMIT_EXCEEDED`、同药理类别互斥叠加 `MEDICATION_CLASS_DUPLICATION`）即使请求携带 `clinicalOverride` 也一律以 `409` 硬性拒绝且不产生任何正式事实；**第二层临床路径与指南偏离**（`CLINICAL_QUALITY_ALERT`，另含开立双胍／SGLT2i／MRA 时缺少近期血肌酐 `RENAL_CREATININE_MISSING`，以及单纯病毒性呼吸道感染无细菌指征开立抗菌药 `ANTIBIOTIC_WITHOUT_BACTERIAL_INDICATION`）在未附有效 `clinicalOverride` 时返回结构化 `409` 警示，明确区分“已证实 `eGFR < 30`”的硬阻断与“尚无近期血肌酐记录”的条件警示。医生或经授权 Agent 以新幂等键提交覆盖当前全部警示代码的受控枚举 `reasonCode`（禁忌／高出血风险、外院或床旁结果已核实、已同步开单并安排随访、患者知情拒绝、专科个体化判断、急危重症优先处置）与医学说明 `note` 后，共享 Command 在同一 SQLite 事务内原子写入业务事实、`clinical_quality_override` 记录、Command 回执 `clinicalQuality` 摘要、`AuditEvent` 实体详情与 `Action Trace` 的 `ClinicalQualityOverride/<id>` 引用，并支持原幂等键无写重放。门诊 DSH 提案（`outpatient.prescription.issue.propose`、`outpatient.encounter.complete.propose`）在 `AgentReviewProvider` 确认条内支持预填审阅或遇到 `409 CLINICAL_QUALITY_ALERT` 时原位补充越权说明而无需二次消耗提案审批门禁。架构取舍见[双层事中临床质控决策](../decisions/implemented/architecture/2026-11-18-two-tier-clinical-quality-gates.md)。
+
 #### 住院出院与结算
 
 InpatientDischarge在共享Command事务中执行五个分立动作：医生issue进入discharge-pending，护士depart记录实际出区及明确离院方式，收费员settle结清，护士clear释放床位，符合窗口时医生recall召回。离院方式是本院仿真枚举home/transfer/against-advice/death/other，不宣称国家上报代码；病案读取原出区事件，不重新填报覆盖。医生和护士均按当前科室、病区授权，administrator不办理业务。

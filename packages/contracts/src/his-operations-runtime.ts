@@ -1,4 +1,10 @@
 import {
+  clinicalOverrideInputSchema,
+  clinicalQualityCheckSchema,
+  inpatientClinicalQualityInputSchema,
+  outpatientClinicalQualityInputSchema,
+} from './clinical-quality.ts'
+import {
   clinicalScoreBundleSchema,
   inpatientRiskAssessmentInputSchema,
   inpatientVitalSignsInputSchema,
@@ -32,7 +38,7 @@ import { chargeAdjustmentInputSchema, chargeAdjustmentResponseSchema, refundCase
   refundConfirmInputSchema, refundRecoverInputSchema, refundResponseSchema } from './refunds.ts'
 import { inpatientRecordSchema, inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema, inpatientRecordResponseSchema } from './inpatient-record.ts'
 import { inpatientFinancialSchema, inpatientFinancialResponseSchema, inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPreviewInputSchema, inpatientFinancialRefundPreviewResponseSchema, inpatientFinancialRefundConfirmInputSchema, inpatientFinancialRefundRecoverInputSchema, inpatientFinancialPaymentPreviewInputSchema } from './inpatient-finance.ts'
-import { inpatientDischargeInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema, inpatientDischargeResponseSchema, inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema, inpatientDischargeEventsSchema,
+import { inpatientDischargeInputSchema, inpatientDischargeIssueInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema, inpatientDischargeResponseSchema, inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema, inpatientDischargeEventsSchema,
   inpatientPaymentsSchema, inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema, inpatientPaymentResponseSchema, inpatientPaymentPreviewResponseSchema,
   inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema, inpatientRefundPreviewResponseSchema } from './inpatient-discharge.ts'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, inpatientSurgeryResponseSchema, inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema, inpatientSurgeryCompletionReviewInputSchema, inpatientSurgeryCompletionPreviewSchema } from './inpatient-surgery.ts'
@@ -348,6 +354,7 @@ const consultationRetryInputSchema = z.object({
 }).strict()
 
 const completeEncounterInputSchema = z.object({
+  clinicalOverride: clinicalOverrideInputSchema.optional(),
   encounterId: z.string().min(1),
   encounterVersion: z.string().regex(/^\d+$/),
 }).strict()
@@ -790,8 +797,8 @@ const bodyEncoders = {
     return commandBody({}, input)
   },
   'encounter.complete': (rawInput: unknown) => {
-    const { encounterId, encounterVersion } = completeEncounterInputSchema.parse(rawInput)
-    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, {})
+    const { encounterId, encounterVersion, ...input } = completeEncounterInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
   },
   'encounter.diagnosis.confirm': (rawInput: unknown) => {
     const { encounterId, encounterVersion, ...input } = confirmDiagnosisOperationInputSchema.parse(rawInput)
@@ -1461,6 +1468,15 @@ const rawOperationRuntimeDefinitions = [
     id: 'encounter.consultation.reply.retry',
     input: consultationRetryInputSchema,
     output: retryConsultationReplyResponseSchema,
+  },
+  {
+    http: {
+      method: 'GET',
+      path: '/api/his/v1/encounters/:encounterId/clinical-quality',
+    },
+    id: 'encounter.clinical-quality.read',
+    input: outpatientClinicalQualityInputSchema,
+    output: clinicalQualityCheckSchema,
   },
   {
     http: {
@@ -2154,12 +2170,7 @@ const rawOperationRuntimeDefinitions = [
   admOp('inpatient.refund.preview', '/refunds/preview', inpatientRefundInputSchema, inpatientRefundPreviewResponseSchema),
   admOp('inpatient.refund.confirm', '/refunds/confirm', inpatientRefundConfirmInputSchema, refundResponseSchema),
   admOp('inpatient.refund.recover', '/refunds/recover', inpatientRefundRecoverInputSchema, refundResponseSchema),
-  {
-    id: 'inpatient.discharge.issue',
-    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/discharge/issue', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDischargeInputSchema.parse(raw); return { input } } },
-    input: inpatientDischargeInputSchema,
-    output: inpatientDischargeResponseSchema,
-  },
+  admOp('inpatient.discharge.issue', '/discharge/issue', inpatientDischargeIssueInputSchema, inpatientDischargeResponseSchema),
   admOp('inpatient.discharge.depart', '/discharge/depart', inpatientDepartInputSchema, inpatientDischargeResponseSchema),
   admOp('inpatient.discharge.recall', '/discharge/recall', inpatientDischargeInputSchema, inpatientDischargeResponseSchema),
   admOp('inpatient.discharge.clear', '/discharge/clear', inpatientDischargeInputSchema, inpatientDischargeResponseSchema),
@@ -2220,18 +2231,8 @@ const rawOperationRuntimeDefinitions = [
     input: emptyInputSchema,
     output: inpatientPharmacyListSchema,
   },
-  {
-    id: 'inpatient.pharmacy.read',
-    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/pharmacy' },
-    input: z.object({ admissionId: z.string().min(1) }).strict(),
-    output: inpatientPharmacySchema,
-  },
-  {
-    id: 'inpatient.charges.read',
-    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/charges' },
-    input: z.object({ admissionId: z.string().min(1) }).strict(),
-    output: inpatientChargesSchema,
-  },
+  admQuery('inpatient.pharmacy.read', '/pharmacy', inpatientPharmacySchema),
+  admQuery('inpatient.charges.read', '/charges', inpatientChargesSchema),
   {
     id: 'inpatient.pci-data.read',
     http: { method: 'GET', path: '/api/his/v1/inpatient/pci-data' },
@@ -2269,96 +2270,27 @@ const rawOperationRuntimeDefinitions = [
     input: emptyInputSchema,
     output: inpatientFullCatalogSchema,
   },
-  {
-    id: 'inpatient.clinical.read',
-    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/clinical' },
-    input: z.object({ admissionId: z.string().min(1) }).strict(),
-    output: inpatientFullClinicalSchema,
-  },
-  {
-    id: 'inpatient.vital-signs.record',
-    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/vital-signs', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientVitalSignsInputSchema.parse(raw); return { input } } },
-    input: inpatientVitalSignsInputSchema,
-    output: inpatientFullClinicalResponseSchema,
-  },
+  admQuery('inpatient.clinical.read', '/clinical', inpatientFullClinicalSchema),
+  admOp('inpatient.vital-signs.record', '/vital-signs', inpatientVitalSignsInputSchema, inpatientFullClinicalResponseSchema),
   {
     id: 'inpatient.risk-assessment.record',
     http: { method: 'PUT', path: '/api/his/v1/inpatient/admissions/:admissionId/risk-assessment', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientRiskAssessmentInputSchema.parse(raw); return { input } } },
     input: inpatientRiskAssessmentInputSchema,
     output: inpatientFullClinicalResponseSchema,
   },
-  {
-    id: 'inpatient.clinical-scores.read',
-    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/clinical-scores' },
-    input: z.object({ admissionId: z.string().min(1) }).strict(),
-    output: clinicalScoreBundleSchema,
-  },
-  {
-    id: 'inpatient.order-set-drafts.read',
-    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/order-set-drafts' },
-    input: inpatientOrderSetDraftsInputSchema,
-    output: orderSetDraftBundleSchema,
-  },
-  {
-    id: 'inpatient.diagnosis.confirm',
-    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/diagnoses/confirm', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientDiagnosisConfirmInputSchema.parse(raw); return { input } } },
-    input: inpatientDiagnosisConfirmInputSchema,
-    output: inpatientFullClinicalResponseSchema,
-  },
-  {
-    id: 'inpatient.order.issue',
-    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/orders/issue', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientOrderIssueInputSchema.parse(raw); return { input } } },
-    input: inpatientOrderIssueInputSchema,
-    output: inpatientFullClinicalResponseSchema,
-  },
-  {
-    id: 'inpatient.order.verify',
-    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/orders/verify', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientOrderActionInputSchema.parse(raw); return { input } } },
-    input: inpatientOrderActionInputSchema,
-    output: inpatientFullClinicalResponseSchema,
-  },
-  {
-    id: 'inpatient.order.request-stop',
-    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/orders/request-stop', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientOrderReasonInputSchema.parse(raw); return { input } } },
-    input: inpatientOrderReasonInputSchema,
-    output: inpatientFullClinicalResponseSchema,
-  },
-  {
-    id: 'inpatient.order.verify-stop',
-    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/orders/verify-stop', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientOrderActionInputSchema.parse(raw); return { input } } },
-    input: inpatientOrderActionInputSchema,
-    output: inpatientFullClinicalResponseSchema,
-  },
-  {
-    id:'inpatient.execution.dispense',
-    http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/executions/dispense',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientDispenseInputSchema.parse(raw);return {input}}},
-    input:inpatientDispenseInputSchema,
-    output:inpatientPharmacyResponseSchema,
-  },
-  {
-    id:'inpatient.execution.administer',
-    http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/executions/administer',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientExecutionActionInputSchema.parse(raw);return {input}}},
-    input:inpatientExecutionActionInputSchema,
-    output:inpatientFullClinicalResponseSchema,
-  },
-  {
-    id:'inpatient.execution.complete',
-    http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/executions/complete',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientExecutionActionInputSchema.parse(raw);return {input}}},
-    input:inpatientExecutionActionInputSchema,
-    output:inpatientFullClinicalResponseSchema,
-  },
-  {
-    id:'inpatient.charge.reverse',
-    http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/charges/reverse',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientChargeReverseInputSchema.parse(raw);return {input}}},
-    input:inpatientChargeReverseInputSchema,
-    output:inpatientChargesResponseSchema,
-  },
-  {
-    id:'inpatient.execution.request-prn',
-    http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/executions/request-prn',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientOrderReasonInputSchema.parse(raw);return {input}}},
-    input:inpatientOrderReasonInputSchema,
-    output:inpatientFullClinicalResponseSchema,
-  },
+  admQuery('inpatient.clinical-scores.read', '/clinical-scores', clinicalScoreBundleSchema),
+  admQuery('inpatient.clinical-quality.read', '/clinical-quality', clinicalQualityCheckSchema, inpatientClinicalQualityInputSchema),
+  admQuery('inpatient.order-set-drafts.read', '/order-set-drafts', orderSetDraftBundleSchema, inpatientOrderSetDraftsInputSchema),
+  admOp('inpatient.diagnosis.confirm', '/diagnoses/confirm', inpatientDiagnosisConfirmInputSchema, inpatientFullClinicalResponseSchema),
+  admOp('inpatient.order.issue', '/orders/issue', inpatientOrderIssueInputSchema, inpatientFullClinicalResponseSchema),
+  admOp('inpatient.order.verify', '/orders/verify', inpatientOrderActionInputSchema, inpatientFullClinicalResponseSchema),
+  admOp('inpatient.order.request-stop', '/orders/request-stop', inpatientOrderReasonInputSchema, inpatientFullClinicalResponseSchema),
+  admOp('inpatient.order.verify-stop', '/orders/verify-stop', inpatientOrderActionInputSchema, inpatientFullClinicalResponseSchema),
+  admOp('inpatient.execution.dispense', '/executions/dispense', inpatientDispenseInputSchema, inpatientPharmacyResponseSchema),
+  admOp('inpatient.execution.administer', '/executions/administer', inpatientExecutionActionInputSchema, inpatientFullClinicalResponseSchema),
+  admOp('inpatient.execution.complete', '/executions/complete', inpatientExecutionActionInputSchema, inpatientFullClinicalResponseSchema),
+  admOp('inpatient.charge.reverse', '/charges/reverse', inpatientChargeReverseInputSchema, inpatientChargesResponseSchema),
+  admOp('inpatient.execution.request-prn', '/executions/request-prn', inpatientOrderReasonInputSchema, inpatientFullClinicalResponseSchema),
   {
     id: 'inpatient.catalog',
     http: { method: 'GET', path: '/api/his/v1/inpatient/catalog' },
@@ -2371,36 +2303,16 @@ const rawOperationRuntimeDefinitions = [
     input: emptyInputSchema,
     output: inpatientListSchema,
   },
-  {
-    id: 'inpatient.admission.read',
-    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId' },
-    input: z.object({ admissionId: z.string().min(1) }).strict(),
-    output: inpatientDetailSchema,
-  },
+  admQuery('inpatient.admission.read', '', inpatientDetailSchema),
   {
     id: 'inpatient.admission.register',
     http: { method: 'POST', path: '/api/his/v1/inpatient/admissions', encodeBody: raw => ({ input: inpatientRegistrationInputSchema.parse(raw) }) },
     input: inpatientRegistrationInputSchema,
     output: inpatientCommandResponseSchema,
   },
-  {
-    id: 'inpatient.admission.receive',
-    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/receive', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientBedInputSchema.parse(raw); return { input } } },
-    input: inpatientBedInputSchema,
-    output: inpatientCommandResponseSchema,
-  },
-  {
-    id: 'inpatient.admission.move-bed',
-    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/move-bed', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientBedInputSchema.parse(raw); return { input } } },
-    input: inpatientBedInputSchema,
-    output: inpatientCommandResponseSchema,
-  },
-  {
-    id: 'inpatient.admission.swap-bed',
-    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/swap-bed', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientSwapInputSchema.parse(raw); return { input } } },
-    input: inpatientSwapInputSchema,
-    output: inpatientSwapResponseSchema,
-  },
+  admOp('inpatient.admission.receive', '/receive', inpatientBedInputSchema, inpatientCommandResponseSchema),
+  admOp('inpatient.admission.move-bed', '/move-bed', inpatientBedInputSchema, inpatientCommandResponseSchema),
+  admOp('inpatient.admission.swap-bed', '/swap-bed', inpatientSwapInputSchema, inpatientSwapResponseSchema),
   {
     id: 'inpatient.referral.list',
     http: { method: 'GET', path: '/api/his/v1/inpatient/referrals' },

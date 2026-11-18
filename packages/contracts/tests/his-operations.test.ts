@@ -803,9 +803,9 @@ describe('HIS operation catalog', () => {
     expect(counts).toEqual({
       'clinmesh-administrator': 4,
       'clinmesh-billing': 18,
-      'clinmesh-doctor': 69,
+      'clinmesh-doctor': 70,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 118,
+      'clinmesh-inpatient': 119,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 8,
       'clinmesh-shared': 1,
@@ -915,6 +915,53 @@ it('publishes shared guideline-topics queries and surgery-optional inpatient gui
       expectedFingerprint: 'b'.repeat(64),
     },
   })
+})
+
+it('publishes read-only clinical quality preflight queries and clinicalOverride inputs across the seven gated commands', () => {
+  const outpatientRead = getHisOperation('encounter.clinical-quality.read')
+  expect(outpatientRead).toMatchObject({
+    cliPath: ['encounter', 'clinical-quality', 'get'],
+    http: { method: 'GET', path: '/api/his/v1/encounters/:encounterId/clinical-quality' },
+    risk: 'read',
+    roles: ['outpatient-doctor'],
+    skill: 'clinmesh-doctor',
+    version: 1,
+  })
+  expect(outpatientRead.input.parse({ encounterId: 'encounter-1', gate: 'outpatient-prescription' }))
+    .toEqual({ encounterId: 'encounter-1', gate: 'outpatient-prescription' })
+
+  const inpatientRead = getHisOperation('inpatient.clinical-quality.read')
+  expect(inpatientRead).toMatchObject({
+    cliPath: ['inpatient', 'clinical-quality'],
+    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/clinical-quality' },
+    risk: 'read',
+    roles: ['inpatient-doctor'],
+    skill: 'clinmesh-inpatient',
+    version: 1,
+  })
+  expect(inpatientRead.input.safeParse({ admissionId: 'admission-1', gate: 'inpatient-order' }).success).toBe(false)
+  expect(inpatientRead.input.safeParse({ admissionId: 'admission-1', gate: 'inpatient-order', catalogItemId: 'med-1', doseText: '500mg', frequencyCode: 'BID' }).success).toBe(true)
+
+  const clinicalOverride = {
+    reasonCode: 'documented-contraindication' as const,
+    note: '活动性消化道出血，暂缓抗血小板治疗',
+    acknowledgedAlerts: ['DISCHARGE_ANTIPLATELET_MISSING' as const],
+  }
+  const complete = getHisOperation('encounter.complete')
+  expect(complete.version).toBe(2)
+  expect(complete.http.encodeBody?.({ encounterId: 'enc-1', encounterVersion: '4', clinicalOverride }))
+    .toEqual({ expectedVersions: { 'Encounter/enc-1': '4' }, input: { clinicalOverride } })
+
+  const dischargeIssue = getHisOperation('inpatient.discharge.issue')
+  expect(dischargeIssue.version).toBe(2)
+  expect(dischargeIssue.http.encodeBody?.({ admissionId: 'adm-1', encounterVersion: '3', reason: '好转出院', clinicalOverride }))
+    .toEqual({ input: { encounterVersion: '3', reason: '好转出院', clinicalOverride } })
+
+  expect(getHisOperation('encounter.prescription.issue').version).toBe(4)
+  expect(getHisOperation('inpatient.order.issue').version).toBe(9)
+  expect(getHisOperation('inpatient.surgery.request').version).toBe(3)
+  expect(getHisOperation('inpatient.pci-selection.confirm').version).toBe(3)
+  expect(getHisOperation('inpatient.record.submit').version).toBe(3)
 })
 
 it('publishes narrow read-only order set template and draft operations without raw override inputs', () => {

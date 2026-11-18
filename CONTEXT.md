@@ -226,6 +226,14 @@ _Avoid_: Model prediction, manual calculator override, diagnosis
 经人工核对来源身份、版本、原件哈希、物理页码、关键原文与限定语完整性及适用范围的临床循证专题导航单元，同时关联对应场景需要核对的患者客观指标与缺项。它用于定位并校验现行指南库原文，自身导航文字不构成临床结论证据。
 _Avoid_: Free-text search query, unverified summary, standalone clinical rule
 
+**Clinical Quality Alert**:
+在处方／医嘱签发、门诊完诊、冠脉介入计划与出院病案等临床责任节点，依据已确认正式临床事实与确定性生理指标发现的临床路径或指南偏离警示。它不同于绝对禁止越权的药事与生理安全红线，允许负责医生优先补齐诊疗依据或提交受审计的 Clinical Override，但不替代文书完备性校对或 DRG 支付参考。
+_Avoid_: Hard safety red-line block, document quality issue, DRG payment warning
+
+**Clinical Override**:
+负责医生针对特定 Clinical Quality Alert 选择受控临床原因并填写医学依据后，随原业务意图一并留存的正式越权决策记录。它与被确认的警示条目一同进入审计与回放链，但不能绕过药事与生理安全红线。
+_Avoid_: Silent bypass, unreasoned force flag, red-line exemption
+
 **Report Acknowledgement**:
 负责医生确认已查看一份已签发诊断报告的业务事实。它不改变报告内容或签发状态。
 _Avoid_: Report status, report approval, read receipt

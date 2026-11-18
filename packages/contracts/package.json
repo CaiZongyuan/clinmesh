@@ -46,6 +46,7 @@
     "./medication-safety": "./src/medication-safety.ts",
     "./order-set-templates": "./src/order-set-templates.ts",
     "./clinical-scores": "./src/clinical-scores.ts",
+    "./clinical-quality": "./src/clinical-quality.ts",
     "./guideline-topics": "./src/guideline-topics.ts"
   },
   "scripts": {

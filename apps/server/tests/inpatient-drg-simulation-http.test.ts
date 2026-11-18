@@ -86,10 +86,16 @@ async function confirmPrimary(s: Awaited<ReturnType<typeof setup>>) {
     entries: [{ catalogItemId: 'nhsa-diagnosis:nhc-icd10-clinical@2022.r4:I10.x09', role: 'primary', admissionCondition: '1', note: '推演验证诊断' }] })
 }
 
+const pciDischargeOverride = {
+  acknowledgedAlerts: ['DISCHARGE_ANTIPLATELET_MISSING', 'DISCHARGE_STATIN_MISSING'] as const,
+  note: '合成 DRG 预留替换验证无二级预防长期医嘱',
+  reasonCode: 'documented-contraindication' as const,
+}
+
 /** 出科到可提交首页：签离→出科→结算→清床。 */
-async function finish(s: Awaited<ReturnType<typeof setup>>) {
+async function finish(s: Awaited<ReturnType<typeof setup>>, withPciOverride = false) {
   const admission = (await (await s.request(s.doctor, s.path)).json()).admission
-  const issued = await (await s.request(s.doctor, `${s.path}/discharge/issue`, { encounterVersion: admission.versionId, reason: '治疗完成' })).json()
+  const issued = await (await s.request(s.doctor, `${s.path}/discharge/issue`, { encounterVersion: admission.versionId, reason: '治疗完成', ...(withPciOverride ? { clinicalOverride: pciDischargeOverride } : {}) })).json()
   expect((await s.request(s.nurse, `${s.path}/discharge/depart`, { encounterVersion: issued.data.admission.versionId, reason: '已核对', departureMethod: 'home' })).status).toBe(200)
   const p = await (await s.request(s.cashier, `${s.path}/discharge/preview`)).json()
   const settled = await (await s.request(s.cashier, `${s.path}/discharge/settle`, { encounterVersion: p.encounterVersion, fingerprint: p.fingerprint,
@@ -332,10 +338,10 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     expect(executed.status).toBe(200)
     const execution = (await executed.json()).data.executions[0]
     // 首页修订显式确认主操作后，正式分组才切换到手术口径。
-    await finish(s)
+    await finish(s, true)
     const record = await (await s.request(s.doctor, `${s.path}/record`)).json()
     expect((await s.request(s.doctor, `${s.path}/record/submit`, { expectedRevision: 0, expectedSourcesHash: record.sourcesHash,
-      mainProcedureExecutionId: execution.id })).status).toBe(200)
+      mainProcedureExecutionId: execution.id, clinicalOverride: pciDischargeOverride })).status).toBe(200)
     const replaced = (await (await s.request(s.doctor, `${s.path}/drg/reservations`)).json()).reservations[0]
     expect(replaced).toMatchObject({ status: 'replaced', replacedByMaterialUseId: expect.any(String) })
     simulated = await (await s.request(s.doctor, `${s.path}/drg/simulation`, {})).json()

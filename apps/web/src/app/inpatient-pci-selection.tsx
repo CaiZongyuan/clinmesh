@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -10,6 +11,7 @@ import { Checkbox } from '@clinmesh/ui/components/checkbox'
 import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { apiGet } from './api-client.ts'
+import { InpatientClinicalQualityBanner } from './clinical-quality-banner.tsx'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
@@ -55,7 +57,7 @@ function SelectionContent(props: Props) {
         {candidate.missing.map(reason => <p key={reason}>{reason}</p>)}
         <p>{candidate.item ? `${formatFen(candidate.item.chargeDefinition.priceFen, locale)}/${candidate.item.chargeDefinition.unit}` : t('无可用院内收费价', 'No available hospital price')} · {t('预计数量：', 'Planned quantity: ')}{candidate.expectedQuantity ?? t('未知', 'Unknown')} · {t('预计收费：', 'Estimated charge: ')}{candidate.expectedAmountFen === null ? t('未知', 'Unknown') : formatFen(candidate.expectedAmountFen, locale)}</p>
         <details><summary>{t('查看合成适用、兼容与数量依据', 'Review synthetic applicability, compatibility and quantity evidence')}</summary>
-          <p>{candidate.evidence.scope}</p><p>{candidate.evidence.applicability}</p><p>{candidate.evidence.compatibility}</p><p>{candidate.evidence.quantityBasis}</p><p>{candidate.evidence.id} · {candidate.evidence.version} · {candidate.evidence.sourceLocator}</p>
+          {[candidate.evidence.scope, candidate.evidence.applicability, candidate.evidence.compatibility, candidate.evidence.quantityBasis, `${candidate.evidence.id} · ${candidate.evidence.version} · ${candidate.evidence.sourceLocator}`].map((v, i) => <p key={i}>{v}</p>)}
           {candidate.item?.reference ? <p>{t('原价格来源（不证明临床适用）：', 'Original price source (does not establish clinical applicability): ')}{candidate.item.reference.sourceId} · {candidate.item.reference.sourceLocator} · {candidate.item.reference.enterprise} · {candidate.item.reference.registrationNumber ?? t('注册证未知', 'Unknown registration')} · {candidate.item.reference.specification ?? t('原规格未知', 'Unknown source specification')} · {candidate.item.reference.unit ?? t('原单位未知', 'Unknown source unit')} · {candidate.item.reference.applicability}</p> : null}
         </details>
       </article>)}
@@ -77,17 +79,31 @@ function SelectionEditor({ admission, session, locale, write, selection, plans, 
   const contextVersion = latestContext.current.version
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const blocked = write.blocked || !plansReady || !active
-  return <form onSubmit={event => {
-    event.preventDefault()
+  const submit = (clinicalOverride?: ClinicalOverrideInput) => {
     if (blocked) return
     const parsed = inpatientPciSelectionParametersSchema.safeParse(draft)
     setInvalid(!parsed.success)
-    if (parsed.success) write.mutation.mutate({ operation: 'inpatient.pci-selection.confirm', input: { admissionId: admission.id, expectedVersion: selection.confirmation?.version ?? 0, parameters: parsed.data },
-      isCurrent: () => alive.current && active && latestContext.current.version === contextVersion })
+    if (parsed.success) {
+      write.mutation.mutate({
+        operation: 'inpatient.pci-selection.confirm',
+        input: {
+          admissionId: admission.id,
+          expectedVersion: selection.confirmation?.version ?? 0,
+          parameters: parsed.data,
+          ...(clinicalOverride === undefined ? {} : { clinicalOverride }),
+        },
+        isCurrent: () => alive.current && active && latestContext.current.version === contextVersion,
+      })
+    }
+  }
+  return <form onSubmit={event => {
+    event.preventDefault()
+    submit()
   }}><FieldSet disabled={blocked}><FieldLegend>{t('医生手工确认 PCI 参数', 'Doctor confirmation of PCI parameters')}</FieldLegend><FieldGroup>
     <Field><FieldLabel htmlFor="pci-request">{t('关联 PCI 手术计划', 'Linked PCI surgery plan')}</FieldLabel><WorkspaceSelect id="pci-request" value={plans.some(plan => plan.id === draft.requestId) ? draft.requestId! : ''} items={[{ value: '', label: t('未关联手术计划', 'No linked surgery plan') }, ...plans.map(plan => ({ value: plan.id, label: plan.label }))]} onValueChange={value => { const next = { ...draft }; delete next.requestId; if (value) next.requestId = value; setDraft(next) }} />{draft.requestId && !plans.some(plan => plan.id === draft.requestId) ? <p>{t('原关联计划已无法选用，请重新关联有效 PCI 计划或清空关联。', 'The original linked plan is unavailable. Select an active PCI plan or clear the link.')}</p> : null}</Field>
-    <Field data-invalid={invalid && !draft.treatmentPlan.trim()}><FieldLabel htmlFor="pci-treatment">{t('治疗方向与术式', 'Treatment direction and procedure')}</FieldLabel><Input id="pci-treatment" aria-invalid={invalid && !draft.treatmentPlan.trim()} required maxLength={2000} value={draft.treatmentPlan} onChange={event => setDraft({ ...draft, treatmentPlan: event.currentTarget.value })} /></Field>
-    <Field data-invalid={invalid && !draft.targetSite.trim()}><FieldLabel htmlFor="pci-site">{t('靶病变部位', 'Target lesion site')}</FieldLabel><Input id="pci-site" aria-invalid={invalid && !draft.targetSite.trim()} required maxLength={2000} value={draft.targetSite} onChange={event => setDraft({ ...draft, targetSite: event.currentTarget.value })} /></Field>
+    {([['pci-treatment', 'treatmentPlan', t('治疗方向与术式', 'Treatment direction and procedure')], ['pci-site', 'targetSite', t('靶病变部位', 'Target lesion site')]] as const).map(([id, key, label]) => (
+      <Field key={id} data-invalid={invalid && !draft[key].trim()}><FieldLabel htmlFor={id}>{label}</FieldLabel><Input id={id} aria-invalid={invalid && !draft[key].trim()} required maxLength={2000} value={draft[key]} onChange={e => setDraft({ ...draft, [key]: e.currentTarget.value })} /></Field>
+    ))}
     {measurementLabels.map(([kind, cn, en]) => {
       const current = draft.measurements.find(item => item.kind === kind) ?? { kind, object: 'unknown' as const, site: '', value: null, unit: null, method: '', source: { reference: '', version: '', note: '', synthetic: true } }
       const update = (patch: Partial<typeof current>) => setDraft({ ...draft, measurements: [...draft.measurements.filter(item => item.kind !== kind), { ...current, ...patch }] })
@@ -112,6 +128,7 @@ function SelectionEditor({ admission, session, locale, write, selection, plans, 
     </FieldGroup></FieldSet>
     <FieldSet><FieldLegend>{t('医生认可的具体仿真候选', 'Specific estimate candidates accepted by the doctor')}</FieldLegend><FieldGroup>{selection.candidates.map(candidate => <Field key={candidate.materialId} orientation="horizontal"><Checkbox id={`pci-approved-${candidate.materialId}`} disabled={candidate.item === null} checked={draft.approvedMaterialIds.includes(candidate.materialId)} onCheckedChange={checked => setDraft({ ...draft, approvedMaterialIds: checked ? [...draft.approvedMaterialIds, candidate.materialId] : draft.approvedMaterialIds.filter(id => id !== candidate.materialId) })} /><FieldLabel htmlFor={`pci-approved-${candidate.materialId}`}>{candidate.evidence.specification}</FieldLabel></Field>)}</FieldGroup></FieldSet>
     {invalid ? <Alert variant="destructive"><AlertDescription>{t('请核对已录入测量的对象、部位、单位、方法、完整来源和数量依据；尚未取得的整项测量可以留空。', 'Check the measurement object, site, unit, method, full source and quantity basis. Measurements not yet obtained may stay empty.')}</AlertDescription></Alert> : null}
+    <InpatientClinicalQualityBanner admissionId={admission.id} locale={locale} onSubmitOverride={override => submit(override)} operation="inpatient.pci-selection.confirm" pending={blocked} write={write} />
     <Button type="submit" disabled={blocked}>{t('确认 PCI 参数', 'Confirm PCI parameters')}</Button>
   </FieldGroup></FieldSet></form>
 }

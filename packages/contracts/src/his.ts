@@ -1,4 +1,5 @@
 import { medicationSafetyRuleSchema } from './medication-safety.ts'
+import { clinicalOverrideInputSchema, clinicalQualityCheckSchema, clinicalQualityReceiptSchema } from './clinical-quality.ts'
 import { z } from 'zod'
 import { outpatientInvestigationBillingSchema, outpatientInvestigationPriceSchema } from './investigation-billing.ts'
 export { outpatientInvestigationBillingSchema, outpatientInvestigationPriceSchema } from './investigation-billing.ts'
@@ -81,6 +82,8 @@ export const apiErrorSchema = z.object({
     correlationId: correlationIdSchema.optional(),
     message: z.string().min(1),
     reason: z.string().min(1).max(64).optional(),
+    /** 事中临床质控拒绝详情：CLINICAL_QUALITY_RED_LINE 不可越权，CLINICAL_QUALITY_ALERT 可附 Clinical Override 重提。 */
+    clinicalQuality: clinicalQualityCheckSchema.optional(),
   }),
 })
 
@@ -177,6 +180,7 @@ const commandEffectSchema = z.object({
 export function commandResponseSchema<Schema extends z.ZodType>(data: Schema) {
   return z.object({
     auditId: z.string().min(1),
+    clinicalQuality: clinicalQualityReceiptSchema.optional(),
     data,
     effects: z.array(commandEffectSchema),
     requestId: z.string().min(1),
@@ -727,6 +731,7 @@ const completedCasePrescriptionSchema = issuedPrescriptionSchema.extend({
 export const issuePrescriptionRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
+    clinicalOverride: clinicalOverrideInputSchema.optional(),
     expectedDraftVersion: z.number().int().positive(),
   }).strict(),
 }).strict()
@@ -1014,7 +1019,7 @@ export const completeEncounterRequestSchema = z.object({
   ).refine(versions => Object.keys(versions).length === 1, {
     message: 'Exactly one Encounter expected version is required',
   }),
-  input: z.object({}).strict(),
+  input: z.object({ clinicalOverride: clinicalOverrideInputSchema.optional() }).strict(),
 }).strict()
 
 export const encounterCompletionResponseSchema = commandResponseSchema(z.object({

@@ -1,4 +1,5 @@
 import { inpatientDischargeEventsSchema, inpatientSettlementPreviewSchema, inpatientPaymentsSchema, type inpatientDepartureMethodSchema } from '@clinmesh/contracts/inpatient-discharge'
+import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.tsx'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -12,6 +13,7 @@ import { Input } from '@clinmesh/ui/components/input'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useState } from 'react'
 import { apiGet } from './api-client.ts'
+import { InpatientClinicalQualityBanner } from './clinical-quality-banner.tsx'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
@@ -84,8 +86,22 @@ export function InpatientDischarge({ admission, session, locale, write, activity
     : noteMissing ? noteMissing
       : nurse && admission.status === 'discharge-pending' && method === null ? t('还差：选择离院方式。', 'Select the departure method.')
         : nurse && admission.status === 'departed' && admission.financialStatus !== 'settled' ? t('等收费员结算后再清床。', 'Wait for cashier settlement before clearing the bed.') : undefined
-  const action = (operation: 'inpatient.discharge.issue' | 'inpatient.discharge.clear') => write.mutation.mutate({ operation,
-    input: { admissionId: admission.id, encounterVersion: admission.versionId, reason: effectiveReason } })
+  const action = (operation: 'inpatient.discharge.issue' | 'inpatient.discharge.clear', clinicalOverride?: ClinicalOverrideInput) => (
+    operation === 'inpatient.discharge.issue'
+      ? write.mutation.mutate({
+          operation,
+          input: {
+            admissionId: admission.id,
+            encounterVersion: admission.versionId,
+            reason: effectiveReason,
+            ...(clinicalOverride === undefined ? {} : { clinicalOverride }),
+          },
+        })
+      : write.mutation.mutate({
+          operation,
+          input: { admissionId: admission.id, encounterVersion: admission.versionId, reason: effectiveReason },
+        })
+  )
   const canRecall = doctor && admission.status === 'departed' && admission.financialStatus === 'open' && !!admission.bedId
   const kinds = { issue:t('出院医嘱','Discharge order'),depart:t('实际离院','Departure'),recall:t('召回','Recall'),clear:t('清床','Bed cleared') }
   const latest = (kind: 'issue' | 'depart') => events.data?.events.filter(event => event.kind === kind).at(-1)
@@ -112,9 +128,9 @@ export function InpatientDischarge({ admission, session, locale, write, activity
     ...(pendingAdministrations + pendingServices ? [{ key: 'execution', done: false, title: t('完成或取消执行', 'Complete or cancel executions'), detail: t(`${pendingAdministrations + pendingServices} 次`, `${pendingAdministrations + pendingServices}`), owner: t('病区护士', 'Ward nurse') }] : []),
     { key: 'depart', done: false, title: t('核对医嘱、选择离院方式、办理离院', 'Verify orders, choose departure method, record departure'), detail: t('护士在病区工作台办理', 'Recorded by the ward nurse'), owner: t('病区护士', 'Ward nurse') },
   ]
-  const noteField = <Field><div className="flex items-baseline gap-1"><FieldLabel htmlFor="inpatient-discharge-reason">{t('出院处理说明','Discharge note')}</FieldLabel><span aria-hidden="true" className="text-xs text-muted-foreground">{t('必填', 'Required')}</span></div>
-    <Textarea id="inpatient-discharge-reason" aria-required="true" value={reason} placeholder={t('例如：治疗完成，带药出院，一周后门诊复诊', 'For example: treatment complete, discharged with medication, clinic follow-up in one week')} onChange={event => setReason(event.currentTarget.value)} />
-    <FieldDescription>{t('写入出院办理记录，病区护士办理离院时能看到。', 'Saved to the discharge history and shown to the ward nurse at departure.')}</FieldDescription></Field>
+  const requiredArea = (id: string, label: string, val: string, setVal: (v: string) => void, ph: string, desc: string) => <Field><div className="flex items-baseline gap-1"><FieldLabel htmlFor={id}>{label}</FieldLabel><span aria-hidden="true" className="text-xs text-muted-foreground">{t('必填', 'Required')}</span></div>
+    <Textarea id={id} aria-required="true" value={val} placeholder={ph} onChange={e => setVal(e.currentTarget.value)} /><FieldDescription>{desc}</FieldDescription></Field>
+  const noteField = requiredArea('inpatient-discharge-reason', t('出院处理说明','Discharge note'), reason, setReason, t('例如：治疗完成，带药出院，一周后门诊复诊', 'For example: treatment complete, discharged with medication, clinic follow-up in one week'), t('写入出院办理记录，病区护士办理离院时能看到。', 'Saved to the discharge history and shown to the ward nurse at departure.'))
   const doctorHistory = events.data?.events.length ? <section aria-label={t('出院办理记录', 'Discharge history')} className="clinmesh-inpatient-preparation"><h4 className="font-medium">{t('出院办理记录', 'Discharge history')}</h4>
     <ul className="clinmesh-inpatient-preparation-list">{events.data.events.map(event => <li key={event.id} className="text-sm"><time className="tabular-nums text-muted-foreground" dateTime={event.virtualTime}>{formatShanghaiMinute(event.virtualTime).slice(5)}</time>
       <div><strong>{kinds[event.kind]}{event.departureMethod ? ` · ${methods[event.departureMethod]}` : ''}</strong></div><span>{event.reason}</span></li>)}</ul></section> : null
@@ -127,6 +143,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
         {issueBlocked ? <p className="text-sm text-muted-foreground">{t('先处理以上申请，再开出院医嘱；开出院医嘱不会自动取消手术。', 'Resolve these requests before ordering discharge. A discharge order does not automatically cancel surgery.')}</p> : null}
       </DischargeChecklist>
       <FieldSet disabled={write.blocked}><FieldGroup>{noteField}
+        <InpatientClinicalQualityBanner admissionId={admission.id} locale={locale} onSubmitOverride={override => action('inpatient.discharge.issue', override)} operation="inpatient.discharge.issue" pending={blocked || issueBlocked} write={write} />
         <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={issueBlocked ? t('请先完成或取消未收口的手术、检查检验或转科申请。', 'Complete or cancel outstanding surgery, investigation or transfer requests first.') : noteMissing ?? t('开立后由病区护士办理出院', 'The ward nurse records departure next')} tone={blocked || issueBlocked ? 'blocked' : 'normal'} action={<Button disabled={blocked || issueBlocked} onClick={() => action('inpatient.discharge.issue')}>{t('开出院医嘱','Issue discharge order')}</Button>} /></InpatientPrimaryAction>
       </FieldGroup></FieldSet>
     </> : null}
@@ -151,10 +168,12 @@ export function InpatientDischarge({ admission, session, locale, write, activity
           <Badge variant="outline">{admission.status === 'cleared' ? t('已结算 · 已清床', 'Settled · bed cleared') : admission.financialStatus === 'settled' ? t('已结算 · 待清床', 'Settled · awaiting bed clearance') : t('已离院 · 待结算', 'Departed · awaiting settlement')}</Badge>
         </div>
         <dl className="grid gap-3 text-sm sm:grid-cols-4">
-          <div><dt className="text-muted-foreground">{t('出院医嘱', 'Discharge order')}</dt><dd className="tabular-nums">{latest('issue') ? formatShanghaiMinute(latest('issue')!.virtualTime).slice(5) : '—'}</dd></div>
-          <div><dt className="text-muted-foreground">{t('实际离院', 'Departed')}</dt><dd className="tabular-nums">{latest('depart') ? formatShanghaiMinute(latest('depart')!.virtualTime).slice(5) : '—'}</dd></div>
-          <div><dt className="text-muted-foreground">{t('离院方式', 'Departure method')}</dt><dd>{latest('depart')?.departureMethod ? methods[latest('depart')!.departureMethod!] : '—'}</dd></div>
-          <div><dt className="text-muted-foreground">{t('结算', 'Settlement')}</dt><dd>{admission.financialStatus === 'settled' ? t('已结算', 'Settled') : t('等收费员', 'Awaiting cashier')}</dd></div>
+          {[
+            [t('出院医嘱', 'Discharge order'), latest('issue') ? formatShanghaiMinute(latest('issue')!.virtualTime).slice(5) : '—', 'tabular-nums'],
+            [t('实际离院', 'Departed'), latest('depart') ? formatShanghaiMinute(latest('depart')!.virtualTime).slice(5) : '—', 'tabular-nums'],
+            [t('离院方式', 'Departure method'), latest('depart')?.departureMethod ? methods[latest('depart')!.departureMethod!] : '—', ''],
+            [t('结算', 'Settlement'), admission.financialStatus === 'settled' ? t('已结算', 'Settled') : t('等收费员', 'Awaiting cashier'), ''],
+          ].map(([dt, dd, cls]) => <div key={dt}><dt className="text-muted-foreground">{dt}</dt><dd className={cls || undefined}>{dd}</dd></div>)}
         </dl>
         {admission.financialStatus === 'settled' ? <p className="text-xs text-muted-foreground">{t('收费员已结算，召回窗口已关闭；如需修正费用请由收费员发起财务更正。', 'Settlement is complete, so recall is closed.')}</p> : null}
       </section>
@@ -175,9 +194,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
           {canRecall && !recallOpen ? <Button variant="outline" size="sm" disabled={write.blocked} onClick={() => setRecallOpen(true)}>{t('召回住院','Recall admission')}</Button> : null}</div>
         <p className="text-sm text-muted-foreground">{canRecall ? t('患者离院后、收费员结算前，原床还保留，可以召回继续住院。结算后不能召回。', 'Before settlement, while the original bed is held, the patient can be recalled. Recall closes at settlement.')
           : t('原床未保留，不能召回。', 'The original bed is no longer held, so recall is unavailable.')}</p>
-        {canRecall && recallOpen ? <FieldSet disabled={write.blocked}><Field><div className="flex items-baseline gap-1"><FieldLabel htmlFor="inpatient-recall-reason">{t('召回理由','Recall reason')}</FieldLabel><span aria-hidden="true" className="text-xs text-muted-foreground">{t('必填', 'Required')}</span></div>
-          <Textarea id="inpatient-recall-reason" aria-required="true" value={recallReason} placeholder={t('例如：离院后胸痛复发，返回病区观察', 'For example: chest pain recurred after departure')} onChange={event => setRecallReason(event.currentTarget.value)} />
-          <FieldDescription>{t('召回后患者回到原床「在院」状态，出院医嘱需要重新开立。', 'The patient returns to the original bed as admitted; discharge must be ordered again.')}</FieldDescription></Field>
+        {canRecall && recallOpen ? <FieldSet disabled={write.blocked}>{requiredArea('inpatient-recall-reason', t('召回理由','Recall reason'), recallReason, setRecallReason, t('例如：离院后胸痛复发，返回病区观察', 'For example: chest pain recurred after departure'), t('召回后患者回到原床「在院」状态，出院医嘱需要重新开立。', 'The patient returns to the original bed as admitted; discharge must be ordered again.'))}
           <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar tone={recallReason.trim() ? 'normal' : 'blocked'} reason={recallReason.trim() ? t('召回后患者回到原床，出院医嘱需要重新开立', 'The patient returns to the original bed') : t('还差：召回理由', 'Enter a recall reason')}
             action={<><Button variant="outline" onClick={() => setRecallOpen(false)}>{t('取消', 'Cancel')}</Button><Button variant="destructive" disabled={write.blocked || !recallReason.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.discharge.recall', input: { admissionId: admission.id, encounterVersion: admission.versionId, reason: recallReason } })}>{t('确认召回住院', 'Confirm recall')}</Button></>} /></InpatientPrimaryAction>
         </FieldSet> : <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar showWithoutAction reason={t('患者已离院，等收费员结算', 'Patient has departed; waiting for cashier settlement')} /></InpatientPrimaryAction>}
@@ -202,11 +219,15 @@ export function InpatientDischarge({ admission, session, locale, write, activity
           <Badge variant="warning">{t(`${nurseBlockerCount} 项未收口`, `${nurseBlockerCount} outstanding`)}</Badge>
         </div>
         <ul className="clinmesh-inpatient-preparation-list">
-          {needsDischargeOrder ? <li data-complete={false}><CircleIcon aria-hidden="true" /><div><strong>{t('住院医生：先开出院医嘱', 'Inpatient doctor: order discharge first')}</strong></div><div className="clinmesh-inpatient-preparation-owner"><span>{t('住院医生', 'Inpatient doctor')}</span></div></li> : null}
-          {pendingOrders > 0 ? <li data-complete={false}><CircleIcon aria-hidden="true" /><div><strong>{t(`住院医生申请停嘱，病区护士核对：${pendingOrders} 条医嘱`, `Inpatient doctor requests stops, ward nurse verifies: ${pendingOrders} orders`)}</strong></div><div className="clinmesh-inpatient-preparation-owner"><span>{t('住院医生 · 你', 'Inpatient doctor · You')}</span>{onOpenStage ? <Button variant="link" size="sm" onClick={() => onOpenStage('orders')}>{t('去诊断医嘱', 'Open orders')}</Button> : null}</div></li> : null}
-          {pendingAdministrations > 0 ? <li data-complete={false}><CircleIcon aria-hidden="true" /><div><strong>{t(`病区护士完成或取消给药：${pendingAdministrations} 次`, `Ward nurse completes or cancels: ${pendingAdministrations} administrations`)}</strong></div><div className="clinmesh-inpatient-preparation-owner"><span>{t('你', 'You')}</span>{onOpenStage ? <Button variant="link" size="sm" onClick={() => onOpenStage('orders')}>{t('去诊断医嘱', 'Open orders')}</Button> : null}</div></li> : null}
-          {pendingServices > 0 ? <li data-complete={false}><CircleIcon aria-hidden="true" /><div><strong>{t(`病区护士完成或取消执行：${pendingServices} 次`, `Ward nurse completes or cancels: ${pendingServices} services`)}</strong></div><div className="clinmesh-inpatient-preparation-owner"><span>{t('你', 'You')}</span>{onOpenStage ? <Button variant="link" size="sm" onClick={() => onOpenStage('orders')}>{t('去诊断医嘱', 'Open orders')}</Button> : null}</div></li> : null}
-          {activity?.clinical === undefined ? <li data-complete={false}><CircleIcon aria-hidden="true" /><div><strong>{t('病区护士：先读取医嘱资料', 'Ward nurse: load clinical orders first')}</strong></div><div className="clinmesh-inpatient-preparation-owner"><span>{t('你', 'You')}</span></div></li> : null}
+          {[
+            needsDischargeOrder && [t('住院医生：先开出院医嘱', 'Inpatient doctor: order discharge first'), t('住院医生', 'Inpatient doctor'), false],
+            pendingOrders > 0 && [t(`住院医生申请停嘱，病区护士核对：${pendingOrders} 条医嘱`, `Inpatient doctor requests stops, ward nurse verifies: ${pendingOrders} orders`), t('住院医生 · 你', 'Inpatient doctor · You'), true],
+            pendingAdministrations > 0 && [t(`病区护士完成或取消给药：${pendingAdministrations} 次`, `Ward nurse completes or cancels: ${pendingAdministrations} administrations`), t('你', 'You'), true],
+            pendingServices > 0 && [t(`病区护士完成或取消执行：${pendingServices} 次`, `Ward nurse completes or cancels: ${pendingServices} services`), t('你', 'You'), true],
+            activity?.clinical === undefined && [t('病区护士：先读取医嘱资料', 'Ward nurse: load clinical orders first'), t('你', 'You'), false],
+          ].filter((x): x is [string, string, boolean] => Boolean(x)).map(([title, owner, canGo]) => (
+            <li key={title} data-complete={false}><CircleIcon aria-hidden="true" /><div><strong>{title}</strong></div><div className="clinmesh-inpatient-preparation-owner"><span>{owner}</span>{canGo && onOpenStage ? <Button variant="link" size="sm" onClick={() => onOpenStage('orders')}>{t('去诊断医嘱', 'Open orders')}</Button> : null}</div></li>
+          ))}
         </ul>
       </section>
     </> : null}
@@ -244,13 +265,12 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const client = useQueryClient()
   const { workspaceId, epoch, practitionerRoleId } = session.actor
-  const insuranceChanged = useCallback(() => client.invalidateQueries({
-    queryKey: ['inpatient', workspaceId, epoch, practitionerRoleId],
-  }), [client, workspaceId, epoch, practitionerRoleId])
-  const funds = useQuery({ queryKey: ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId,admission.id,'payments'],
+  const scope = ['inpatient', workspaceId, epoch, practitionerRoleId]
+  const insuranceChanged = useCallback(() => client.invalidateQueries({ queryKey: scope }), [client, workspaceId, epoch, practitionerRoleId])
+  const funds = useQuery({ queryKey: [...scope, admission.id, 'payments'],
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/payments`, inpatientPaymentsSchema, signal) })
   // 收费员显式获取预览；后台失效或账目刷新不能替换已经看过的金额与指纹。
-  const preview = useQuery({ queryKey: ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId,admission.id,'settlement-preview'], enabled: false,
+  const preview = useQuery({ queryKey: [...scope, admission.id, 'settlement-preview'], enabled: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/discharge/preview`, inpatientSettlementPreviewSchema, signal) })
   const data = preview.data
   const [dismissedAt, setDismissedAt] = useState(0)
@@ -286,10 +306,12 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
       {(funds.data?.refundedFen ?? 0) > 0 ? <span>{t(`· 应退 ${formatFen(funds.data!.refundedFen, locale)}`, `· Refunded ${formatFen(funds.data!.refundedFen, locale)}`)}</span> : null}
     </div>
     <dl aria-label={t('出院结算单摘要', 'Settlement summary')} className="grid gap-3 rounded-md border bg-muted/20 p-3 text-sm sm:grid-cols-4">
-      <div><dt className="text-xs text-muted-foreground">{t('费用合计', 'Total charges')}</dt><dd className="mt-0.5 font-semibold tabular-nums">{formatFen(admission.chargesFen, locale)}</dd></div>
-      <div><dt className="text-xs text-muted-foreground">{t('已交预交金', 'Deposits')}</dt><dd className="mt-0.5 font-semibold tabular-nums">{formatFen(admission.depositFen, locale)}</dd></div>
-      <div><dt className="text-xs text-muted-foreground">{t('已收出院补交', 'Supplement collected')}</dt><dd className="mt-0.5 font-semibold tabular-nums">{formatFen(funds.data?.payments.filter(payment => payment.kind === 'supplement' && payment.outcome === 'success').reduce((sum, payment) => sum + payment.amountFen, 0) ?? 0, locale)}</dd></div>
-      <div><dt className="text-xs text-muted-foreground">{t('结算结果', 'Settlement result')}</dt><dd className="mt-0.5 font-semibold text-emerald-700 dark:text-emerald-400">{(funds.data?.refundedFen ?? 0) > 0 ? t(`已退还 ${formatFen(funds.data!.refundedFen, locale)}`, `Refunded ${formatFen(funds.data!.refundedFen, locale)}`) : t('无需补退', 'No balance due')}</dd></div>
+      {[
+        [t('费用合计', 'Total charges'), formatFen(admission.chargesFen, locale), 'tabular-nums'],
+        [t('已交预交金', 'Deposits'), formatFen(admission.depositFen, locale), 'tabular-nums'],
+        [t('已收出院补交', 'Supplement collected'), formatFen(funds.data?.payments.filter(p => p.kind === 'supplement' && p.outcome === 'success').reduce((s, p) => s + p.amountFen, 0) ?? 0, locale), 'tabular-nums'],
+        [t('结算结果', 'Settlement result'), (funds.data?.refundedFen ?? 0) > 0 ? t(`已退还 ${formatFen(funds.data!.refundedFen, locale)}`, `Refunded ${formatFen(funds.data!.refundedFen, locale)}`) : t('无需补退', 'No balance due'), 'text-emerald-700 dark:text-emerald-400'],
+      ].map(([dt, dd, cls]) => <div key={dt}><dt className="text-xs text-muted-foreground">{dt}</dt><dd className={`mt-0.5 font-semibold ${cls}`}>{dd}</dd></div>)}
     </dl>
     <InpatientFinancialAdjustments key={admission.id} admission={admission} session={session} locale={locale} write={write} />
   </div>
@@ -310,9 +332,7 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
       <p>{t('本次结算金额已固定；账目变化后请重新预览。','This preview is fixed. Refresh it explicitly after ledger changes.')}</p>
       <p data-testid="settlement-net">{t('预览费用合计：','Preview net charges: ')}{formatFen(data.chargesFen,locale)}</p>
       <dl className="grid gap-3 sm:grid-cols-3">
-        <div><dt>{t('医保统筹支付', 'Fund pays')}</dt><dd>{formatFen(data.insurance?.fundFen ?? 0, locale)}</dd></div>
-        <div><dt>{t('个人账户支付', 'Personal account pays')}</dt><dd>{formatFen(data.insurance?.accountFen ?? 0, locale)}</dd></div>
-        <div><dt>{t('个人自付', 'Patient cash due')}</dt><dd>{formatFen(data.insurance?.patientFen ?? data.chargesFen, locale)}</dd></div>
+        {([[t('医保统筹支付', 'Fund pays'), data.insurance?.fundFen ?? 0], [t('个人账户支付', 'Personal account pays'), data.insurance?.accountFen ?? 0], [t('个人自付', 'Patient cash due'), data.insurance?.patientFen ?? data.chargesFen]] as const).map(([dt, v]) => <div key={dt}><dt>{dt}</dt><dd>{formatFen(v, locale)}</dd></div>)}
       </dl>
       <p>{t('原预交金：','Original deposit: ')}{formatFen(data.depositFen,locale)}</p>
       <p data-testid="settlement-refund">{displayBalanceFen < 0 ? t('应退：','Refund: ') : displayBalanceFen > 0 ? t('应补缴：','Supplement: ') : t('无需补退：','No balance: ')}{formatFen(Math.abs(displayBalanceFen),locale)}</p>

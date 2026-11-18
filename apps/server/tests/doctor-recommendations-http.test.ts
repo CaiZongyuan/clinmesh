@@ -2631,7 +2631,8 @@ it('双药处方任一行拒绝整单回滚，修正后整体开具并读取重�
     { kind: 'prescription', source: 'manual', catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 },
     { kind: 'prescription', source: 'manual', catalogItemId: 'medication-metformin', doseText: '0.5 g', frequencyCode: 'BID', courseDays: 30, quantity: 60 },
   ]
-  const body = { expectedVersions: { [`Encounter/${before.encounter.id}`]: before.encounter.versionId }, input: { expectedDraftVersion: 0, selections } }
+  const body = { expectedVersions: { [`Encounter/${before.encounter.id}`]: before.encounter.versionId }, input: { expectedDraftVersion: 0, selections,
+    clinicalOverride: { reasonCode: 'result-pending-follow-up', note: '已同步安排肾功能复查并告知随访', acknowledgedAlerts: ['RENAL_CREATININE_MISSING'] } } }
   const rejected = await confirmPreparation(fixture, 'prescription', { ...body, input: { ...body.input,
     selections: [selections[0], { ...selections[1], doseText: 'unsupported dose' }],
   } })

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { replaceEqualDeep } from '@tanstack/react-query'
 import { z } from 'zod'
 import { confirmDoctorPreparationResponseSchema, doctorManualInvestigationDraftSchema, doctorPreparationSelectionSchema, doctorRecommendationKindSchema, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
+import { clinicalOverrideInputSchema } from '@clinmesh/contracts/clinical-quality'
 import { diagnosisDraftEntrySchema, prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
 import type { OrderSetDraft } from '@clinmesh/contracts/order-set-templates'
 import type { ManualPreparedItem } from './doctor-recommendations.tsx'
@@ -158,9 +159,11 @@ const confirmationIntentSchema = z.object({
   }).strict(),
   selections: z.array(doctorPreparationSelectionSchema).min(1).max(8), draftVersion: z.number().int().nonnegative(),
   resolveExistingDraft: z.boolean(), key: z.string().min(8).max(128),
+  clinicalOverride: clinicalOverrideInputSchema.optional(),
   rows: z.array(z.object({ label: z.string().min(1).max(500), key: z.string(), signature: z.string() }).strict()).min(1).max(8),
   result: confirmDoctorPreparationResponseSchema.shape.data.optional(),
 }).strict().refine(intent => intent.selections.length === intent.rows.length && intent.selections.every(item => item.kind === intent.state.kind)
+  && (intent.clinicalOverride === undefined || intent.state.kind === 'prescription')
   && (!intent.selections.some(item => item.source === 'agent') || intent.state.generation !== undefined && intent.state.inputFingerprint !== undefined)
   && (intent.result === undefined || intent.result.kind === intent.state.kind && (intent.result.caseId === undefined || intent.result.caseId === intent.state.caseId)))
 export type InvestigationConfirmationIntent = z.infer<typeof confirmationIntentSchema>

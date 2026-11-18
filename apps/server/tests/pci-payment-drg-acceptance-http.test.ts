@@ -231,9 +231,7 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     await parsePciResponse(inpatientDischargeResponseSchema, await s.request('ward-nurse', `${path}/discharge/clear`, {
       encounterVersion: firstSettlement.encounterVersion, reason: '原资金确定后清床' }))
 
-    const draft = await s.read('inpatient-doctor', `${path}/record`, inpatientRecordSchema)
-    await parsePciResponse(inpatientRecordResponseSchema, await s.request('inpatient-doctor', `${path}/record/submit`, {
-      expectedRevision: 2, expectedSourcesHash: draft.sourcesHash, mainProcedureExecutionId: execution.id }))
+    await s.confirmMainProcedure(stay, execution.id)
     const submitted = await s.read('medical-records', `${path}/record`, inpatientRecordSchema)
     expect(submitted.snapshot.clinical.mainProcedureExecutionId).toBe(execution.id)
     const selected = await parsePciResponse(inpatientDrgSimulationSchema, await s.request('inpatient-doctor', `${path}/drg/simulation`, {}))

@@ -1,3 +1,5 @@
+import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
+import type { ClinicalQualityService } from './clinical-quality-service.ts'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
 import {
   cancelClinicalDocumentSignResponseSchema,
@@ -201,6 +203,7 @@ function legacyClinicalDocumentFromComposition(resource: FhirResource) {
 }
 
 export interface OutpatientClinicalDocumentHost {
+  readonly clinicalQuality: ClinicalQualityService
   readonly consultationRecording: ConsultationRecordingService
   readonly qualityControl: ClinicalDocumentQualityControl
   assertMedicationAllergies(
@@ -464,6 +467,7 @@ export class OutpatientClinicalDocumentService {
   }
 
   completeEncounter(input: {
+    clinicalOverride?: ClinicalOverrideInput | undefined
     context: ActorContext
     encounterId: string
     expectedVersions: Record<string, string>
@@ -485,7 +489,7 @@ export class OutpatientClinicalDocumentService {
       dataSchema: encounterCompletionResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
-      input: { encounterId: input.encounterId },
+      input: { encounterId: input.encounterId, ...(input.clinicalOverride === undefined ? {} : { clinicalOverride: input.clinicalOverride }) },
       operation: 'encounter.complete',
     }, transaction => {
       this.#context.assertExpectedVersions(input.expectedVersions, [expectedReference])
@@ -501,6 +505,14 @@ export class OutpatientClinicalDocumentService {
             : `完诊条件未满足：${missing.join('；')}`,
         )
       }
+      const outpatientCase = this.#context.caseByEncounter(input.context, input.encounterId)
+      const quality = this.#host.clinicalQuality.enforce(input.context, {
+        check: this.#host.clinicalQuality.outpatientCompletion(input.context, { caseId: outpatientCase.case_id, encounterId: input.encounterId }),
+        operation: 'encounter.complete',
+        override: input.clinicalOverride,
+        patientId: outpatientCase.patient_id,
+        subjectReference: expectedReference,
+      })
       const encounter = encounterCompletionResourceSchema.parse(
         transaction.fhir.read(input.context, 'Encounter', input.encounterId),
       )
@@ -526,7 +538,8 @@ export class OutpatientClinicalDocumentService {
           kind: 'updated' as const,
           reference: `Encounter/${input.encounterId}`,
           versionId: completedEncounter.meta.versionId,
-        }],
+        }, ...quality.effects],
+        ...(quality.receipt === undefined ? {} : { clinicalQuality: quality.receipt }),
       }
     })
   }

@@ -336,10 +336,7 @@ it.each(['queued', 'succeeded'] as const)('已有 %s 解释的病例归档后可
   await parsePciResponse(inpatientDischargeResponseSchema, await s.fixture.request('ward-nurse', `${s.stay.path}/discharge/clear`, {
     encounterVersion: settled.data.encounterVersion, reason: '合成核对归档清床',
   }))
-  const record = await s.fixture.read('inpatient-doctor', `${s.stay.path}/record`, inpatientRecordSchema)
-  const submitted = await parsePciResponse(inpatientRecordResponseSchema, await s.fixture.request('inpatient-doctor', `${s.stay.path}/record/submit`, {
-    expectedRevision: 0, expectedSourcesHash: record.sourcesHash, mainProcedureExecutionId: null,
-  }))
+  const submitted = await s.fixture.confirmMainProcedure(s.stay, null)
   const approved = await parsePciResponse(inpatientRecordResponseSchema, await s.fixture.request('medical-records', `${s.stay.path}/record/review`, {
     expectedRevision: submitted.data.revision!.revision, expectedSourcesHash: submitted.data.sourcesHash, outcome: 'approved',
   }))

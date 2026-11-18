@@ -36,7 +36,7 @@ import { doctorRecordAgentActions } from './doctor-agent-record.tsx'
 import { doctorWorkspaceAgentActions } from './doctor-agent-workspace.tsx'
 import { CaseDetail } from './doctor-case-detail.tsx'
 import { useDoctorCaseModel } from './doctor-case-model.tsx'
-import { type CompletedCaseCorrectionNavigation, type DoctorCaseControllerProps, type DoctorWorkspaceProps, ErrorAlert, emptyDoctorAgentDraftHydrationRevisions, usesStructuredClinicalDocument } from './doctor-case-support.tsx'
+import { type CompletedCaseCorrectionNavigation, type DoctorCaseControllerProps, type DoctorWorkspaceProps, type EncounterCompletionAction, ErrorAlert, emptyDoctorAgentDraftHydrationRevisions, usesStructuredClinicalDocument } from './doctor-case-support.tsx'
 import { DoctorCompletionActionBar } from './doctor-completion-action.tsx'
 import { DoctorDraftMarksProvider } from './doctor-draft-fields.tsx'
 import { DoctorPreparationProvider } from './doctor-preparation-state.tsx'
@@ -220,12 +220,12 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
   }
   const consulting = !detailUnavailable && detail.data !== undefined && detail.data.consultation !== undefined
     && detail.data.encounter.status === 'in-progress' && detail.data.status !== 'awaiting-doctor'
-  const completionAction = {
+  const completionAction: EncounterCompletionAction = {
     error: completeCaseEncounter.variables?.caseId === activeCaseId ? completeCaseEncounter.error : null,
-    onSubmit: () => {
+    onSubmit: clinicalOverride => {
       if (activeCaseId === undefined) return
       const name = detail.data?.patient.name ?? ''
-      completeCaseEncounter.mutate({ caseId: activeCaseId }, { onSuccess: () => announceHandoff(
+      completeCaseEncounter.mutate({ caseId: activeCaseId, clinicalOverride }, { onSuccess: () => announceHandoff(
         `${locale === 'zh-CN' ? '已完诊' : 'Encounter completed'} · ${name}`, locale === 'zh-CN' ? '已交给收费处缴费' : 'Handed to the cashier for payment') })
     },
     pending: completeCaseEncounter.isPending && completeCaseEncounter.variables?.caseId === activeCaseId,
@@ -841,7 +841,10 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
                   error: issueCasePrescription.variables?.caseId === detail.data.caseId
                     ? issueCasePrescription.error
                     : null,
-                  onSubmit: () => issueCasePrescription.mutate({ caseId: detail.data.caseId }),
+                  onSubmit: clinicalOverride => issueCasePrescription.mutate({
+                    caseId: detail.data.caseId,
+                    clinicalOverride,
+                  }),
                   pending: issueCasePrescription.isPending
                     && issueCasePrescription.variables?.caseId === detail.data.caseId,
                 },

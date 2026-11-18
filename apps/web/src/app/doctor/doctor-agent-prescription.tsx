@@ -1,3 +1,4 @@
+import { agentToolInputSchemas, clinicalOverrideToolParameters } from '@clinmesh/contracts/agent'
 import {
   prescriptionDraftContentSchema, type DoctorCaseDetail
 } from '@clinmesh/contracts/his'
@@ -89,10 +90,11 @@ export function doctorPrescriptionAgentActions({
       },
     },
     'outpatient.prescription.issue.propose': {
-      description: 'Open human review before issuing the current prescription draft.',
+      description: 'Open human review before issuing the current prescription draft; optionally prefill clinicalOverride for non-red-line quality alerts.',
       enabled: detail.data?.medicationConclusion?.draft !== undefined,
-      parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-      execute: (_raw: unknown, signal: AbortSignal) => {
+      parameters: clinicalOverrideToolParameters,
+      execute: (raw: unknown, signal: AbortSignal) => {
+        const { clinicalOverride } = agentToolInputSchemas['outpatient.prescription.issue.propose'].parse(raw ?? {})
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
         const state = current.medicationConclusion
         if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
@@ -100,11 +102,16 @@ export function doctorPrescriptionAgentActions({
         requireSavedEditors(current, scope)
         const itemCount = state.draft.items.length
         return agentReview.request({
+          allowClinicalOverride: true,
+          clinicalOverride,
           confirmLabel: locale => getWorkspaceMessages(locale).issuePrescription,
           description: locale => `${current.patient.name} · ${itemCount} ${locale === 'zh-CN' ? '项药品' : 'medication items'}`,
-          onConfirm: () => {
-            requireSavedEditors(current, scope)
-            return issueCasePrescription.mutateAsync({ caseId: current.caseId })
+          onConfirm: (_acknowledged, override) => {
+            requireSavedEditors(detail.data ?? current, scope)
+            return issueCasePrescription.mutateAsync({
+              caseId: current.caseId,
+              clinicalOverride: override,
+            })
           },
           signal,
           title: locale => getWorkspaceMessages(locale).issuePrescription,

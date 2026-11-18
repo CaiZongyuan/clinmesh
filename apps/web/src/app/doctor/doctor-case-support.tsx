@@ -1,4 +1,5 @@
 import { type DoctorCaseSection } from '@clinmesh/contracts/agent'
+import { type ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import {
   clinicalDocumentAgentFactSchema,
   clinicalDocumentContentSchema,
@@ -61,7 +62,7 @@ export const emptyDoctorAgentDraftHydrationRevisions: DoctorAgentDraftHydrationR
 
 export interface EncounterCompletionAction {
   error: Error | null
-  onSubmit: () => void
+  onSubmit: (clinicalOverride?: ClinicalOverrideInput) => void
   pending: boolean
   success: boolean
 }

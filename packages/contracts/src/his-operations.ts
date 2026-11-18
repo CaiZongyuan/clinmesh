@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { clinicalQualityCheckSchema } from './clinical-quality.ts'
 import { correlationIdSchema, roleCodeSchema } from './his.ts'
 import {
   clinicalDocumentOperationIds,
@@ -43,6 +44,7 @@ export const hisOperationSkillSchema = z.enum([
 ])
 
 export const hisOperationErrorSchema = z.object({
+  clinicalQuality: clinicalQualityCheckSchema.optional(),
   code: z.string().min(1),
   conflict: z.unknown().optional(),
   correlationId: correlationIdSchema.optional(),
@@ -616,6 +618,19 @@ const operationCliMetadataList = [
     version: 5,
   },
   {
+    cliPath: ['encounter', 'clinical-quality', 'get'],
+    id: 'encounter.clinical-quality.read',
+    mode: 'query',
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'none',
+    },
+    risk: 'read',
+    roles: ['outpatient-doctor'],
+    summary: '按当前就诊已落库事实只读预检门诊处方或完诊双层事中临床质控（药事安全红线与可登记越权的临床路径警示）',
+    version: 1,
+  },
+  {
     cliPath: ['encounter', 'completion', 'preview'],
     id: 'encounter.completion.preview',
     mode: 'preview',
@@ -638,8 +653,8 @@ const operationCliMetadataList = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Complete clinical responsibility for an Encounter',
-    version: 1,
+    summary: 'Complete clinical responsibility for an Encounter; enforces acute chest pain ECG/troponin clinical quality checks (CLINICAL_QUALITY_ALERT unless covered by clinicalOverride)',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'diagnosis', 'draft', 'set'],
@@ -703,8 +718,8 @@ const operationCliMetadataList = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Issue the current single-source prescription draft with optional administration instructions and shared indication, allergy, pharmacology and daily-dose checks; hospital pharmacy items create ChargeItems while national reference items issue an external electronic prescription without hospital billing or pharmacy tasks',
-    version: 3,
+    summary: 'Issue the current single-source prescription draft with optional administration instructions, shared indication, allergy, pharmacology, daily-dose and two-tier clinical quality checks (eGFR<30 biguanide/SGLT2 red line vs missing creatinine or viral antibiotic CLINICAL_QUALITY_ALERT with clinicalOverride); hospital pharmacy items create ChargeItems while national reference items issue an external electronic prescription without hospital billing or pharmacy tasks',
+    version: 4,
   },
   {
     cliPath: ['encounter', 'medication-conclusion', 'confirm-none'],
@@ -1549,8 +1564,8 @@ const operationCliMetadataList = [
     requirements:{expectedVersions:true,idempotency:'required'},
     risk:'write',
     roles:['inpatient-doctor'],
-    summary:'主管医生显式确认本次实际主操作并保存当前来源修订（在院供预分组使用，离院结算后核对提交正式首页）',
-    version:2,
+    summary:'主管医生显式确认本次实际主操作并保存当前来源修订（在院供预分组使用，离院结算后核对提交正式首页并校验冠心病/PCI 二级预防质控警示或 clinicalOverride）',
+    version:3,
   },
   {
     cliPath:['inpatient','review-record'],
@@ -1949,8 +1964,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '开出院医嘱进入待出院，保留床位与未结算状态',
-    version: 1,
+    summary: '开出院医嘱进入待出院，保留床位与未结算状态；校验冠心病/PCI 抗血小板与他汀长期医嘱质控警示（CLINICAL_QUALITY_ALERT 或附 clinicalOverride）',
+    version: 2,
   },
   {
     cliPath: ['inpatient','depart'],
@@ -2009,8 +2024,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '医生按预期版本确认本次住院 PCI 参数与依据；不生成模型建议',
-    version: 2,
+    summary: '医生按预期版本确认本次住院 PCI 参数与依据；非缺血临界病变（FFR>0.80）返回 CLINICAL_QUALITY_ALERT 或附 clinicalOverride；不生成模型建议',
+    version: 3,
   },
   {
     cliPath: ['inpatient', 'save-pci-selection'],
@@ -2049,8 +2064,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '申请手术；保存计划，不代表实际实施',
-    version: 2,
+    summary: '申请手术；PCI 计划校验非缺血临界病变质控警示（CLINICAL_QUALITY_ALERT 或附 clinicalOverride）；保存计划，不代表实际实施',
+    version: 3,
   },
   {
     cliPath: ['inpatient','check-surgery-preop'],
@@ -2423,6 +2438,16 @@ const operationCliMetadataList = [
     version: 1,
   },
   {
+    cliPath: ['inpatient', 'clinical-quality'],
+    id: 'inpatient.clinical-quality.read',
+    mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read',
+    roles: ['inpatient-doctor'],
+    summary: '按本次住院已落库事实只读预检药嘱、PCI 计划或出院双层事中临床质控',
+    version: 1,
+  },
+  {
     cliPath: ['inpatient', 'order-set-drafts'],
     id: 'inpatient.order-set-drafts.read',
     mode: 'query',
@@ -2449,8 +2474,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '签发住院医嘱（含可选给药说明instructions）；QD/BID/TID/QN/PRN/ONCE，ONCE仅限临时；重验单位换算、单次/单日极量、ICD前缀适应证、药理互斥、过敏、责任、版本及可选DRG指纹，返回MEDICATION_*拒绝原因；医嘱含可选停嘱理由stopReason',
-    version: 8,
+    summary: '签发住院医嘱（含可选给药说明instructions）；QD/BID/TID/QN/PRN/ONCE，ONCE仅限临时；重验单位换算、单次/单日极量、ICD前缀适应证、药理互斥、过敏、责任、版本、可选DRG指纹及双层事中临床质控（eGFR<30红线与缺肌酐/病毒抗菌药CLINICAL_QUALITY_ALERT或clinicalOverride），返回MEDICATION_*拒绝原因；医嘱含可选停嘱理由stopReason',
+    version: 9,
   },
   {
     cliPath: ['inpatient', 'verify-order'],
@@ -2696,6 +2721,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   [clinicalDocumentOperationIds.previewSign]: 'clinmesh-doctor',
   [clinicalDocumentOperationIds.cancelSign]: 'clinmesh-doctor',
   [clinicalDocumentOperationIds.sign]: 'clinmesh-doctor',
+  'encounter.clinical-quality.read': 'clinmesh-doctor',
   'encounter.complete': 'clinmesh-doctor',
   'encounter.completion.preview': 'clinmesh-doctor',
   'encounter.consultation.ask': 'clinmesh-doctor',

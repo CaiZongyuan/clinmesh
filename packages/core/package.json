@@ -14,7 +14,8 @@
     "./references": "./src/references.ts",
     "./medication-safety": "./src/medication-safety.ts",
     "./order-set-screening": "./src/order-set-screening.ts",
-    "./clinical-scores": "./src/clinical-scores.ts"
+    "./clinical-scores": "./src/clinical-scores.ts",
+    "./clinical-quality": "./src/clinical-quality.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -11,7 +11,16 @@ import {
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
+import {
+  clinicalOverrideInputSchema,
+  type ClinicalOverrideInput,
+  type ClinicalOverrideReason,
+  type ClinicalQualityAlertCode,
+  type ClinicalQualityCheck,
+} from '@clinmesh/contracts/clinical-quality'
+import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
+import { ClinicalOverrideFields, extractClinicalQualityError, QualityFindingList } from './clinical-quality-banner.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
@@ -35,12 +44,14 @@ interface AgentReviewDecisionGateRef {
 }
 
 export interface AgentReviewRequest {
+  allowClinicalOverride?: boolean | undefined
   anchor?: string
+  clinicalOverride?: ClinicalOverrideInput | undefined
   content?: ReactNode | ((locale: WorkspaceLocale) => ReactNode)
   confirmationLabel?: ReviewText
   confirmLabel: ReviewText
   description: ReviewText
-  onConfirm(acknowledged: boolean): unknown | Promise<unknown>
+  onConfirm(acknowledged: boolean, clinicalOverride?: ClinicalOverrideInput): unknown | Promise<unknown>
   signal: AbortSignal
   title: ReviewText
 }
@@ -52,6 +63,8 @@ function reviewText(text: ReviewText | undefined, locale: WorkspaceLocale): stri
 }
 
 interface PendingReview extends AgentReviewRequest {
+  approvedError?: Error | undefined
+  decisionApproved: boolean
   returnFocus: HTMLElement | null
   decisionGate: AgentReviewDecisionGateRef
   restoreFocus: boolean
@@ -80,11 +93,19 @@ const unavailableReviewController: AgentReviewController = {
   ),
 }
 
+const emptyOverride: {
+  alert?: ClinicalQualityCheck | undefined
+  codes: ClinicalQualityAlertCode[]
+  note: string
+  reason: ClinicalOverrideReason | null
+} = { codes: [], note: '', reason: null }
+
 export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: ReactNode; locale?: WorkspaceLocale }): React.JSX.Element {
   const [pending, setPending] = useState<PendingReview>()
   const pendingRef = useRef(pending)
   const [confirming, setConfirming] = useState(false)
   const [acknowledged, setAcknowledged] = useState(false)
+  const [override, setOverride] = useState(emptyOverride)
   const [anchors, setAnchors] = useState<Record<string, HTMLElement>>({})
   const [outlet, setOutlet] = useState<HTMLElement | null>(null)
   const confirmButton = useRef<HTMLButtonElement>(null)
@@ -144,10 +165,16 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
         )
       }
       setAcknowledged(false)
+      setOverride({
+        codes: input.clinicalOverride ? [...input.clinicalOverride.acknowledgedAlerts] : [],
+        note: input.clinicalOverride?.note ?? '',
+        reason: input.clinicalOverride?.reasonCode ?? null,
+      })
       const decisionGate: AgentReviewDecisionGateRef = {}
       return reviewTask(new Promise((resolve, reject) => {
         const review: PendingReview = {
           ...input,
+          decisionApproved: false,
           returnFocus: activeElement(),
           restoreFocus: true,
           decisionGate,
@@ -181,9 +208,26 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
     },
   }), [])
 
+  const overrideActive = pending !== undefined && (pending.clinicalOverride !== undefined || override.alert !== undefined)
+  const parsedOverride = overrideActive
+    ? clinicalOverrideInputSchema.safeParse({
+        acknowledgedAlerts: override.codes,
+        note: override.note,
+        reasonCode: override.reason,
+      })
+    : undefined
+
   const reject = async (): Promise<void> => {
     const review = pendingRef.current
     if (review === undefined || review.phase !== 'pending') return
+    if (review.decisionApproved) {
+      review.phase = 'settled'
+      pendingRef.current = undefined
+      setPending(undefined)
+      setOverride(emptyOverride)
+      review.reject(review.approvedError ?? new Error('ClinMesh Agent review clinical quality alert was not overridden'))
+      return
+    }
     review.phase = 'gating'
     setConfirming(true)
     try {
@@ -192,12 +236,14 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
       review.phase = 'settled'
       pendingRef.current = undefined
       setPending(undefined)
+      setOverride(emptyOverride)
       review.resolve({ approved: false })
     } catch (error) {
       if (review.phase === 'settled') return
       review.phase = 'settled'
       pendingRef.current = undefined
       setPending(undefined)
+      setOverride(emptyOverride)
       review.reject(error instanceof Error ? error : new Error('ClinMesh review decision failed'))
     } finally {
       setConfirming(false)
@@ -207,26 +253,44 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
     const review = pendingRef.current
     if (review === undefined || review.phase !== 'pending') return
     if (review.confirmationLabel !== undefined && !acknowledged) return
-    review.phase = 'gating'
+    if (overrideActive && !parsedOverride?.success) return
     setConfirming(true)
     try {
-      await requireDecisionGate(review)('approved')
-      if (review.phase !== 'gating') return
+      if (!review.decisionApproved) {
+        review.phase = 'gating'
+        await requireDecisionGate(review)('approved')
+        if (review.phase !== 'gating') return
+        review.decisionApproved = true
+      }
       if (review.signal.aborted) throw new Error('ClinMesh Agent review was cancelled')
       review.phase = 'executing'
-      const data = await review.onConfirm(acknowledged)
+      const data = await review.onConfirm(acknowledged, parsedOverride?.success ? parsedOverride.data : undefined)
       review.phase = 'settled'
       pendingRef.current = undefined
       setPending(undefined)
+      setOverride(emptyOverride)
       review.resolve({
         approved: true,
         ...(data === undefined ? {} : { data }),
       })
     } catch (error) {
       if (review.phase === 'settled') return
+      const extracted = review.allowClinicalOverride === true ? extractClinicalQualityError(error) : undefined
+      if (
+        extracted !== undefined
+        && extracted.code === 'CLINICAL_QUALITY_ALERT'
+        && extracted.check.redLines.length === 0
+        && extracted.check.alerts.length > 0
+      ) {
+        review.approvedError = error instanceof Error ? error : new Error(extracted.message)
+        review.phase = 'pending'
+        setOverride(prev => ({ ...prev, alert: extracted.check, codes: [...new Set(extracted.check.alerts.map(item => item.code))] }))
+        return
+      }
       review.phase = 'settled'
       pendingRef.current = undefined
       setPending(undefined)
+      setOverride(emptyOverride)
       review.reject(error instanceof Error ? error : new Error('ClinMesh review action failed'))
     } finally {
       setConfirming(false)
@@ -250,13 +314,21 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
     {pending.content === undefined ? null : <div className="max-h-[40vh] overflow-y-auto">
       {typeof pending.content === 'function' ? pending.content(locale) : pending.content}
     </div>}
+    {!overrideActive ? null : <div aria-label={locale === 'zh-CN' ? '临床质控确认说明' : 'Clinical quality override review'} className="flex min-w-0 flex-col gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-sm" data-agent-review-clinical-override="">
+      {override.alert ? <QualityFindingList items={override.alert.alerts} /> : <div className="flex flex-wrap items-center gap-1.5 text-xs">
+        <span className="font-medium">{locale === 'zh-CN' ? '智能体附带临床越权说明（请核对后确认）：' : 'Agent proposed clinical override (review before confirming):'}</span>
+        {override.codes.map(c => <Badge key={c} variant="outline">{c}</Badge>)}
+      </div>}
+      <ClinicalOverrideFields disabled={confirming} id={reviewId} locale={locale} note={override.note} reason={override.reason} setNote={note => setOverride(p => ({ ...p, note }))} setReason={reason => setOverride(p => ({ ...p, reason }))} />
+    </div>}
     {pending.confirmationLabel === undefined ? null : <Field orientation="horizontal">
       <Checkbox id={`${reviewId}-confirmation`} disabled={confirming} checked={acknowledged} onCheckedChange={setAcknowledged} />
       <FieldLabel htmlFor={`${reviewId}-confirmation`}>{reviewText(pending.confirmationLabel, locale)}</FieldLabel>
     </Field>}
     <div className="flex flex-wrap items-center justify-end gap-2">
       <Button disabled={confirming} variant="outline" onClick={() => void reject()}>{locale === 'zh-CN' ? '不采用' : 'Do not use'}</Button>
-      <Button ref={confirmButton} disabled={confirming} aria-disabled={pending.confirmationLabel !== undefined && !acknowledged}
+      <Button ref={confirmButton} disabled={confirming || (overrideActive && !parsedOverride?.success)}
+        aria-disabled={pending.confirmationLabel !== undefined && !acknowledged}
         onClick={() => void confirm()}>{reviewText(pending.confirmLabel, locale)}</Button>
     </div>
   </section>

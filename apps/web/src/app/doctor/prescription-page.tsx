@@ -1,4 +1,5 @@
 import { medicationCombinationConflict, medicationRegimenDoseAllowed, medicationQuantityAllowed } from '@clinmesh/core/medication-safety'
+import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import type {
   ClinicalCatalog,
@@ -37,6 +38,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
+import { ClinicalQualityBanner, extractClinicalQualityError } from '../clinical-quality-banner.tsx'
 import { orderSetExcludedIds, OrderSetSelectorBar } from '../order-set-selector.tsx'
 import {
   getPrescriptionIssueErrorMessage,
@@ -86,7 +88,7 @@ export interface PrescriptionPageActions {
   }
   issue: {
     error: Error | null
-    onSubmit: () => void
+    onSubmit: (clinicalOverride?: ClinicalOverrideInput) => void
     pending: boolean
   }
   saveDraft: {
@@ -974,7 +976,9 @@ export function PrescriptionPage({
       )}
 
       {/* 结论方式控制位于左主列顶部（见 conclusionModeControl）；页脚只保留需要整页可见的错误提示。 */}
-      {actions.saveDraft.error === null ? null : (
+      {actions.saveDraft.error === null ? null : extractClinicalQualityError(actions.saveDraft.error) ? (
+        <ClinicalQualityBanner error={actions.saveDraft.error} locale={locale} />
+      ) : (
         <ErrorAlert
           message={getWorkspaceErrorMessage(actions.saveDraft.error, messages)}
           title={getWorkspaceErrorTitle(actions.saveDraft.error, messages, messages.operationFailed)}
@@ -989,7 +993,14 @@ export function PrescriptionPage({
 
       {/* 开具拒绝独立于编辑权限渲染：并发无药结论或既有处方会让刷新后的 canEditDraft 翻 false，
           若留在编辑块内，竞态场景下医生只看到状态变化而丢失新承诺的可操作拦截文案。 */}
-      {actions.issue.error === null ? null : (
+      {actions.issue.error === null ? null : extractClinicalQualityError(actions.issue.error) ? (
+        <ClinicalQualityBanner
+          error={actions.issue.error}
+          locale={locale}
+          onSubmitOverride={override => actions.issue.onSubmit(override)}
+          pending={!canEditDraft || operationPending || recoveryPending}
+        />
+      ) : (
         <ErrorAlert
           message={getPrescriptionIssueErrorMessage(actions.issue.error, messages)}
           title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)}

@@ -193,7 +193,7 @@ test('提交中主操作不可编辑，修订被其他请求推进后原选择�
   const version = (await (await page.request.get(`${browserApp.origin}${path}`)).json()).admission.versionId
   const catalog = (await (await page.request.get(`${browserApp.origin}/api/his/v1/inpatient/surgery-catalog`)).json())
   const requests: Array<{ id: string; version: number; procedureId: string }> = []
-  for (const procedure of catalog.procedures.slice(0, 2)) {
+  for (const procedure of catalog.procedures.slice(3, 5)) {
     const requested = await post(`${path}/surgeries/request`, { encounterVersion: version, procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: '2026-08-24T09:00:00+08:00', reason: '合成主操作选择示教' })
     expect(requested.status()).toBe(200)
     const current = (await requested.json()).data.requests.find((request: { status: string; plannedProcedure: { id: string } }) => request.status === 'requested' && request.plannedProcedure.id === procedure.id)

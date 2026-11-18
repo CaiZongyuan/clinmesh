@@ -471,4 +471,19 @@ describe('ClinMesh DSH Agent contracts', () => {
       runAs: 'actor-administrator',
     }).success).toBe(false)
   })
+
+  it('accepts optional bounded clinicalOverride on outpatient prescription and completion proposal tools', () => {
+    expect(parseAgentToolInput('outpatient.prescription.issue.propose', {})).toEqual({})
+    expect(parseAgentToolInput('outpatient.encounter.complete.propose', {})).toEqual({})
+    const clinicalOverride = {
+      reasonCode: 'result-pending-follow-up' as const,
+      note: '首诊已同步开立血肌酐检查并告知复诊随访',
+      acknowledgedAlerts: ['RENAL_CREATININE_MISSING' as const],
+    }
+    expect(parseAgentToolInput('outpatient.prescription.issue.propose', { clinicalOverride })).toEqual({ clinicalOverride })
+    expect(parseAgentToolInput('outpatient.encounter.complete.propose', { clinicalOverride })).toEqual({ clinicalOverride })
+    expect(() => parseAgentToolInput('outpatient.prescription.issue.propose', {
+      clinicalOverride: { ...clinicalOverride, note: '短' },
+    })).toThrow()
+  })
 })

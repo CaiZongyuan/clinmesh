@@ -16,6 +16,7 @@ export * from './doctor-history.ts'
 export {
   agentToolInputSchemas,
   agentViewIdSchema,
+  clinicalOverrideToolParameters,
   doctorCaseSectionSchema,
   inpatientStageSchema,
   isAgentOperationId,

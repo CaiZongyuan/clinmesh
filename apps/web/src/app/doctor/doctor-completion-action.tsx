@@ -2,6 +2,7 @@ import type { EncounterCompletionPreview, EncounterCompletionTarget } from '@cli
 import { Button } from '@clinmesh/ui/components/button'
 import { useEffect, useRef } from 'react'
 import { WorkspaceActionBar } from '../workspace-card-layout.tsx'
+import { ClinicalQualityBanner } from '../clinical-quality-banner.tsx'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import type { WorkspaceLocale, WorkspaceMessages } from '../workspace-i18n.ts'
 import { encounterCompletionItemLabel, encounterCompletionTargetSectionLabel } from './completion-checklist.tsx'
@@ -22,7 +23,8 @@ export function DoctorCompletionActionBar({ action, basisCurrent, locale, messag
   const first = incomplete[0]
   const canComplete = basisCurrent && preview.canComplete
   useEffect(() => { if (canComplete) confirm.current?.focus() }, [canComplete])
-  return <section aria-label={zh ? '完诊操作' : 'Encounter completion action'}>
+  return <section aria-label={zh ? '完诊操作' : 'Encounter completion action'} className="flex flex-col gap-2">
+    <ClinicalQualityBanner error={action.error} locale={locale} onSubmitOverride={override => action.onSubmit(override)} pending={!canComplete || action.pending} />
     <WorkspaceActionBar tone="confirm" busy={canComplete && action.pending ? messages.completingEncounter : undefined}
       summary={`${zh ? '完诊' : 'Complete'} ${preview.items.length - incomplete.length}/${preview.items.length}`}
       reason={action.error !== null ? getWorkspaceErrorMessage(action.error, messages)
@@ -32,7 +34,7 @@ export function DoctorCompletionActionBar({ action, basisCurrent, locale, messag
               : <span className="truncate font-medium text-warning">{`⚠ ${zh ? `还差 ${incomplete.length} 项才能完诊：` : 'Required: '}${incomplete.map(item => encounterCompletionItemLabel(item.code, locale)).join(zh ? '、' : ', ')}`}</span>}
       action={canComplete ? <>
         <Button disabled={action.pending} onClick={onBack} size="sm" type="button" variant="outline">{zh ? '返回' : 'Back'}</Button>
-        <Button ref={confirm} disabled={action.pending} onClick={action.onSubmit} size="sm" type="button">
+        <Button ref={confirm} disabled={action.pending} onClick={() => action.onSubmit()} size="sm" type="button">
           {messages.confirmEncounterCompletion}
         </Button>
       </> : first === undefined ? <Button onClick={onBack} size="sm" type="button" variant="outline">{zh ? '返回核对' : 'Review again'}</Button> : <>

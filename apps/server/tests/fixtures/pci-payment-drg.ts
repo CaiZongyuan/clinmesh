@@ -4,6 +4,7 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { clinicalQualityCheckSchema } from '@clinmesh/contracts/clinical-quality'
 import { commandResponseSchema, createPatientResponseSchema, scenarioStateSchema } from '@clinmesh/contracts/his'
 import { inpatientCommandResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientFullCatalogSchema, inpatientFullClinicalResponseSchema,
@@ -215,10 +216,27 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     return (await parsePciResponse(inpatientSurgeryResponseSchema, await request('inpatient-doctor', `${stay.path}/surgeries/execute`,
       await pciExecutionInput(stay)))).data.executions.find(item => item.requestId === stay.requestId)!
   }
-  async function confirmMainProcedure(stay: { path: string }, executionId: string) {
+  async function confirmMainProcedure(stay: { path: string }, executionId: string | null) {
+    const current = await read('inpatient-doctor', stay.path, inpatientDetailSchema)
+    const departed = current.admission.status === 'departed' || current.admission.status === 'cleared'
+    const quality = !departed
+      ? undefined
+      : await read('inpatient-doctor', `${stay.path}/clinical-quality?gate=inpatient-discharge`, clinicalQualityCheckSchema)
     const record = await read('inpatient-doctor', `${stay.path}/record`, inpatientRecordSchema)
     return parsePciResponse(inpatientRecordResponseSchema, await request('inpatient-doctor', `${stay.path}/record/submit`, {
-      expectedRevision: record.revision?.revision ?? 0, expectedSourcesHash: record.sourcesHash, mainProcedureExecutionId: executionId }))
+      expectedRevision: record.revision?.revision ?? 0,
+      expectedSourcesHash: record.sourcesHash,
+      mainProcedureExecutionId: executionId,
+      ...(quality === undefined || quality.alerts.length === 0
+        ? {}
+        : {
+            clinicalOverride: {
+              reasonCode: 'clinical-judgement',
+              note: '合成验收已执行院内抗栓与他汀临时医嘱，离院带药另由随访门诊衔接',
+              acknowledgedAlerts: quality.alerts.map(alert => alert.code),
+            },
+          }),
+    }))
   }
   async function executeAngiography(stay: Awaited<ReturnType<typeof preparePciAdmission>>) {
     const procedure = stay.catalog.procedures.find(item => item.coding.code === '88.5500')!
@@ -301,8 +319,20 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
   }
   async function depart(stay: { path: string }) {
     const current = await read('inpatient-doctor', stay.path, inpatientDetailSchema)
+    const quality = await read('inpatient-doctor', `${stay.path}/clinical-quality?gate=inpatient-discharge`, clinicalQualityCheckSchema)
     const issued = (await parsePciResponse(inpatientDischargeResponseSchema, await request('inpatient-doctor', `${stay.path}/discharge/issue`, {
-      encounterVersion: current.admission.versionId, reason: '合成PCI临床治疗完成' }))).data.admission
+      encounterVersion: current.admission.versionId,
+      reason: '合成PCI临床治疗完成',
+      ...(quality.alerts.length === 0
+        ? {}
+        : {
+            clinicalOverride: {
+              reasonCode: 'clinical-judgement',
+              note: '合成验收已执行院内抗栓与他汀临时医嘱，离院带药另由随访门诊衔接',
+              acknowledgedAlerts: quality.alerts.map(alert => alert.code),
+            },
+          }),
+    }))).data.admission
     return (await parsePciResponse(inpatientDischargeResponseSchema, await request('ward-nurse', `${stay.path}/discharge/depart`, {
       encounterVersion: issued.versionId, reason: '合成PCI出区核对', departureMethod: 'home' }))).data.admission
   }

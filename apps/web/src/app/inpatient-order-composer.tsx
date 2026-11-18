@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { z } from 'zod'
+import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { inpatientMedicationSchema, inpatientServiceSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -17,6 +18,7 @@ import { InpatientOrderPicker, type InpatientOrderPick } from './inpatient-order
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { ApiClientError, newIdempotencyKey } from './api-client.ts'
+import { ClinicalQualityBanner } from './clinical-quality-banner.tsx'
 import { applyOrderSetInvestigations, investigationDraftKey, readInvestigationDraft, saveInvestigationDraft } from './inpatient-investigation-drafts.ts'
 import { InpatientCommandRejection, OriginalContinuationUnreadable, type useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { notifyIssueDraftSettled, subscribeIssueDraftSettlement } from './inpatient-issue-draft-settlement.ts'
@@ -87,13 +89,13 @@ export function InpatientOrderComposer(props: Props) {
       doseText: pick.kind === 'medication' ? pick.item.doses[0]?.doseText ?? '' : '',
       ...(pick.kind === 'medication' && pick.item.frequencyCodes[0] ? { frequencyCode: pick.item.frequencyCodes[0] } : {}) }] }); setNotice('')
   }
-  const run = async (recover?: OrderDraftRow) => {
-    if (busy.current || storageError || !isCurrent() || (recover === undefined && (locked || loading || catalogError || selected.length === 0 || selected.some(problem)))) return
+  const run = async (recover?: OrderDraftRow, overrideForRow?: { rowId: string; clinicalOverride: ClinicalOverrideInput }) => {
+    if (busy.current || storageError || !isCurrent() || (overrideForRow !== undefined && locked) || (recover === undefined && overrideForRow === undefined && (locked || loading || catalogError || selected.length === 0 || selected.some(problem)))) return
     const revision = lifecycle.current.revision
     const currentView = () => isCurrent() && lifecycle.current.revision === revision
     busy.current = true; setRunning(true); setNotice('')
     try {
-      for (const id of recover ? [recover.id] : selected.map(row => row.id)) {
+      for (const id of overrideForRow ? [overrideForRow.rowId] : recover ? [recover.id] : selected.map(row => row.id)) {
         if (!currentView()) break
         const row = current.current.rows.find(item => item.id === id)
         if (!row || (!recover && problem(row))) break
@@ -101,7 +103,8 @@ export function InpatientOrderComposer(props: Props) {
         if (!selection) break
         const attempt: OrderAttempt = row.attempt ?? { idempotencyKey: newIdempotencyKey(), input: { admissionId: admission.id, encounterVersion,
           duration: row.duration, selection, ...(row.surgeryExecutionId ? { surgeryExecutionId: row.surgeryExecutionId } : {}),
-          ...(row.estimate?.fingerprint ? { expectedDrgFingerprint: row.estimate.fingerprint } : {}) } }
+          ...(row.estimate?.fingerprint ? { expectedDrgFingerprint: row.estimate.fingerprint } : {}),
+          ...(overrideForRow?.rowId === row.id ? { clinicalOverride: overrideForRow.clinicalOverride } : {}) } }
         const beforeAttempt = current.current
         if (!update(row.id, { attempt, error: undefined })) {
           current.current = beforeAttempt; setDraft(beforeAttempt)
@@ -115,7 +118,8 @@ export function InpatientOrderComposer(props: Props) {
             || cause instanceof ApiClientError && cause.code === 'INPATIENT_INTENT_STORAGE_UNAVAILABLE') break
           const definite = cause instanceof InpatientCommandRejection
           const error = cause instanceof ApiClientError ? { status: cause.status, code: cause.code, ...(cause.reason === undefined ? {} : { reason: cause.reason }),
-            ...(cause.code === 'CATALOG_CONFLICT' ? { message: cause.message } : {}) } : { status: 0, code: '' }
+            ...(cause.clinicalQuality === undefined ? {} : { clinicalQuality: cause.clinicalQuality }),
+            ...(cause.code === 'CATALOG_CONFLICT' || cause.code === 'CLINICAL_QUALITY_ALERT' || cause.code === 'CLINICAL_QUALITY_RED_LINE' ? { message: cause.message } : {}) } : { status: 0, code: '' }
           if (!definite) {
             update(row.id, { attempt, error })
             break
@@ -202,7 +206,15 @@ export function InpatientOrderComposer(props: Props) {
                 <Button size="sm" variant="outline" disabled={locked || !orderSelection(row)} onClick={() => update(row.id, { estimate: row.estimate ? undefined : { generation: newIdempotencyKey(), stale: false } })}>{row.estimate ? t('收起费用预计', 'Hide estimate') : t('费用预计', 'Estimate charges')}</Button>
                 {row.estimate ? <InpatientOrderRowEstimate row={row} session={session} admissionId={admission.id} locale={locale} enabled={!locked && props.active} onUpdate={update} onReady={estimateReady} /> : null}
                 {problem(row) ? <p className="text-xs text-destructive">{problem(row)}</p> : null}
-                {row.error ? <p role="alert" className="text-xs text-destructive">{typeof row.error === 'string' && locale === 'zh-CN' ? row.error : <>
+                {row.error && typeof row.error !== 'string' && row.error.clinicalQuality !== undefined && !row.attempt ? (
+                  <ClinicalQualityBanner
+                    check={row.error.clinicalQuality}
+                    code={row.error.code}
+                    locale={locale}
+                    onSubmitOverride={override => { void run(undefined, { rowId: row.id, clinicalOverride: override }) }}
+                    pending={locked || Boolean(problem(row))}
+                  />
+                ) : row.error ? <p role="alert" className="text-xs text-destructive">{typeof row.error === 'string' && locale === 'zh-CN' ? row.error : <>
                   {locale === 'en-US' && row.pick.kind === 'medication' && typeof row.error !== 'string' && row.error.code === 'CATALOG_CONFLICT' && !row.error.reason
                     ? 'The medication could not be ordered. Check the indication, allergy information, dose and current catalog.'
                     : getBatchFailureMessage(typeof row.error === 'string' ? undefined : row.error, locale)} · {row.attempt

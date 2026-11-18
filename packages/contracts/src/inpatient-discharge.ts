@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { clinicalOverrideInputSchema } from './clinical-quality.ts'
 import { commandResponseSchema, paymentTendersSchema, paymentSimulatorRuleSchema } from './his.ts'
 import { inpatientDetailSchema, inpatientAdmissionSchema, inpatientDepartureMethodSchema } from './inpatient.ts'
 import { inpatientChargeSchema } from './inpatient-clinical.ts'
@@ -30,6 +31,8 @@ export const inpatientRefundRecoverInputSchema = z.object({ admissionId: id, ref
 export const inpatientRefundPreviewResponseSchema = commandResponseSchema(z.object({ admissionId: id, previewId: id, commitToken: z.string(), sourceId: id,
   sourceKind: refundSourceKindSchema, amountFen: refundAttemptSchema.shape.amountFen, expectedOutcome: outcome, expiresAt: z.string() }).strict())
 export const inpatientDischargeInputSchema = z.object({ admissionId: id, encounterVersion: z.string().regex(/^\d+$/), reason: z.string().trim().min(1).max(2000) }).strict()
+/** 出院医嘱开立额外接受受控 Clinical Override；出区、召回与清床不经过事中临床质控。 */
+export const inpatientDischargeIssueInputSchema = inpatientDischargeInputSchema.extend({ clinicalOverride: clinicalOverrideInputSchema.optional() })
 const transaction = z.object({ id, virtualTime: z.iso.datetime({ offset: true }) })
 const financialTransaction = z.discriminatedUnion('kind', [
   transaction.extend({ kind: z.literal('deposit'), amountFen: fen.positive() }).strict(),
