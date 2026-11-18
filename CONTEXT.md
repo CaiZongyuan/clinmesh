@@ -215,7 +215,7 @@ _Avoid_: Diagnosis Confirmation, prior diagnosis, Condition history
 _Avoid_: Diagnosis Draft, immutable editing lock, prior diagnosis
 
 **Clinical Risk Assessment**:
-一次门诊或住院 Encounter 中受审计记录的床旁专病风险结构化评估，包括 Killip 心功能分级、入院心脏骤停、24 小时心绞痛发作次数、床旁 ST 段偏移确认、近 7 天阿司匹林使用、明确吸烟状态和既往自发性出血史（区分需住院或输血的自发性出血与外伤／手术等非自发性出血）。未录入项保持“未记录”语义，不推断默认阴性；存在已签发 12 导联心电图报告的明确 ST 段结论时优先以其为客观依据。
+一次门诊或住院 Encounter 中受审计记录的床旁专病风险结构化评估，包括 Killip 心功能分级、入院心脏骤停、24 小时心绞痛发作次数、床旁 ST 段偏移确认、近 7 天阿司匹林使用、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50% 和既往自发性出血史（区分需医疗救治或干预的自发性出血与外伤／手术等非自发性出血）。未录入项保持“未记录”语义，不推断默认阴性；首份已签发 12 导联心电图报告存在明确 ST 段结论时优先以其为客观依据。
 _Avoid_: Free-text risk note, default negative history, Clinical Score
 
 **Clinical Score**:

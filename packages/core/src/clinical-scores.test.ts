@@ -37,6 +37,43 @@ describe('clinical-scores unit conversions and physiological bounds', () => {
     expect(normalizeWbc10e9L(11000, '/uL')).toBeCloseTo(11.0, 4)
     expect(normalizeWbc10e9L(6000, '/mm3')).toBeCloseTo(6.0, 4)
     expect(normalizeWbc10e9L(6.0, '10^3/mm3')).toBeCloseTo(6.0, 4)
+
+    const strictMissingAdmission = evaluateClinicalScores({
+      acsPresentation: { value: true },
+      admissionHeartRateBpm: null,
+      admissionSerumCreatinine: null,
+      admissionSystolicBpMmHg: null,
+      ageYears: { value: 66 },
+      baselineHemoglobin: null,
+      baselineSerumCreatinine: null,
+      baselineWbc: null,
+      baselineWeightKg: null,
+      cardiacArrestOnAdmission: { value: false },
+      confirmedDiagnoses: [],
+      diastolicBpMmHg: { value: 76 },
+      elevatedCardiacBiomarker: { value: true },
+      heartRateBpm: { value: 82 },
+      hemoglobin: { value: { unit: 'g/L', value: 138 } },
+      killipClass: { value: 'I' },
+      pciDaptIndication: { value: true },
+      priorBleedingHistory: { value: 'negative' },
+      serumCreatinine: { value: { unit: 'umol/L', value: 88.4 } },
+      sex: { value: 'male' },
+      stSegmentDeviation: { value: true },
+      systolicBpMmHg: { value: 128 },
+      wbc: { value: { unit: '10*9/L', value: 7.2 } },
+      weightKg: { value: 72 },
+    })
+    expect(strictMissingAdmission.find(s => s.id === 'ckd-epi-2021-egfr')?.status).toBe('complete')
+    expect(strictMissingAdmission.find(s => s.id === 'cockcroft-gault-crcl')?.status).toBe('complete')
+    expect(strictMissingAdmission.find(s => s.id === 'grace-acs')).toMatchObject({
+      missingInputs: ['heartRateBpm', 'systolicBpMmHg', 'serumCreatinine'],
+      status: 'incomplete',
+    })
+    expect(strictMissingAdmission.find(s => s.id === 'precise-dapt')).toMatchObject({
+      missingInputs: ['weightKg', 'serumCreatinine', 'hemoglobin', 'wbc'],
+      status: 'incomplete',
+    })
     expect(() => normalizeWbc10e9L(0.01, '10*9/L')).toThrow(RangeError)
     expect(() => normalizeWbc10e9L(500, '10*9/L')).toThrow(RangeError)
   })
@@ -1186,6 +1223,24 @@ describe('evaluateClinicalScores bundle evaluation', () => {
       status: 'complete',
       tierCode: 'high',
       value: 2.6,
+    })
+
+    // Confirmed stage 3–4 CKD (N18.3/N18.4) still counts as an ASCVD high-risk factor even when current eGFR is >= 60
+    expect(
+      calculateAscvdLdlTarget({
+        ageYears: 62,
+        cadOnsetAgeYears: 60,
+        confirmedDiagnosisCodes: ['I21.4', 'N18.3'],
+        egfrMlMin173m2: 68,
+        ldlCholesterol: { unit: 'mmol/L', value: 1.6 },
+        severeAscvdEventCount: 1,
+        sex: 'male',
+        smokingStatus: 'current',
+      }),
+    ).toMatchObject({
+      status: 'complete',
+      tierCode: 'ultra-high',
+      value: 1.4,
     })
   })
 })

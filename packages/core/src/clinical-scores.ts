@@ -23,18 +23,18 @@ export interface SourcedFact<T> {
 
 export interface ClinicalScoreObjectiveFacts {
   acsPresentation?: SourcedFact<boolean>
-  admissionAgeYears?: SourcedFact<number>
-  admissionHeartRateBpm?: SourcedFact<number>
-  admissionSerumCreatinine?: SourcedFact<UnitQuantityInput>
-  admissionSystolicBpMmHg?: SourcedFact<number>
+  admissionAgeYears?: SourcedFact<number> | null
+  admissionHeartRateBpm?: SourcedFact<number> | null
+  admissionSerumCreatinine?: SourcedFact<UnitQuantityInput> | null
+  admissionSystolicBpMmHg?: SourcedFact<number> | null
   ageYears?: SourcedFact<number>
   anginaEpisodes24h?: SourcedFact<number>
   antihypertensiveMedicationActive?: SourcedFact<boolean>
   aspirinUsedLast7Days?: SourcedFact<boolean>
-  baselineHemoglobin?: SourcedFact<UnitQuantityInput>
-  baselineSerumCreatinine?: SourcedFact<UnitQuantityInput>
-  baselineWbc?: SourcedFact<UnitQuantityInput>
-  baselineWeightKg?: SourcedFact<number>
+  baselineHemoglobin?: SourcedFact<UnitQuantityInput> | null
+  baselineSerumCreatinine?: SourcedFact<UnitQuantityInput> | null
+  baselineWbc?: SourcedFact<UnitQuantityInput> | null
+  baselineWeightKg?: SourcedFact<number> | null
   cadOnsetAgeYears?: SourcedFact<number>
   cardiacArrestOnAdmission?: SourcedFact<boolean>
   ckdLt30Chronicity?: SourcedFact<'confirmed' | 'excluded'>
@@ -752,7 +752,10 @@ export function calculateAscvdLdlTarget(input: {
       upgradeMissing.push('ldlCholesterol')
     }
 
-    if (input.egfrMlMin173m2 !== undefined) {
+    if (hasCodedStage3To4Ckd && (input.egfrMlMin173m2 === undefined || input.egfrMlMin173m2 >= 15)) {
+      minHighRiskFactors += 1
+      maxHighRiskFactors += 1
+    } else if (input.egfrMlMin173m2 !== undefined) {
       if (input.egfrMlMin173m2 >= 15 && input.egfrMlMin173m2 < 60) {
         if (ckdChronicity.lt60 === 'confirmed') {
           minHighRiskFactors += 1
@@ -762,9 +765,6 @@ export function calculateAscvdLdlTarget(input: {
           upgradeMissing.push('ckdChronicity')
         }
       }
-    } else if (hasCodedStage3To4Ckd) {
-      minHighRiskFactors += 1
-      maxHighRiskFactors += 1
     } else if (!hasCodedStage5OrDialysisCkd) {
       maxHighRiskFactors += 1
       upgradeMissing.push('serumCreatinine')
@@ -1185,15 +1185,32 @@ function safeParseFact<T, R>(fact: SourcedFact<T> | undefined, parse: (value: T)
   }
 }
 
+function resolveExplicitOrFallback<T>(
+  explicit: SourcedFact<T> | null | undefined,
+  fallback: SourcedFact<T> | undefined,
+): SourcedFact<T> | undefined {
+  if (explicit === null) return undefined
+  return explicit ?? fallback
+}
+
 /** 从已确认客观临床指标集合确定性计算全部 6 项临床算子，严禁默认正常值或默认阴性凑分。 */
 export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): ClinicalScoreResult[] {
   const adultAge = safeParseFact(facts.ageYears, validateAdultAgeYears)
-  const admissionAdultAge = safeParseFact(facts.admissionAgeYears ?? facts.ageYears, validateAdultAgeYears)
+  const admissionAdultAge = safeParseFact(
+    resolveExplicitOrFallback(facts.admissionAgeYears, facts.ageYears),
+    validateAdultAgeYears,
+  )
   const sex = facts.sex
   const heightCm = safeParseFact(facts.heightCm, validateHeightCm)
   const weightKg = safeParseFact(facts.weightKg, validateWeightKg)
-  const baselineWeightKg = safeParseFact(facts.baselineWeightKg ?? facts.weightKg, validateWeightKg)
-  const admissionHeartRateBpm = safeParseFact(facts.admissionHeartRateBpm ?? facts.heartRateBpm, validateHeartRateBpm)
+  const baselineWeightKg = safeParseFact(
+    resolveExplicitOrFallback(facts.baselineWeightKg, facts.weightKg),
+    validateWeightKg,
+  )
+  const admissionHeartRateBpm = safeParseFact(
+    resolveExplicitOrFallback(facts.admissionHeartRateBpm, facts.heartRateBpm),
+    validateHeartRateBpm,
+  )
   const rawSystolicBp = safeParseFact(facts.systolicBpMmHg, validateSystolicBpMmHg)
   const rawDiastolicBp = safeParseFact(facts.diastolicBpMmHg, validateDiastolicBpMmHg)
   const bpOrderValid =
@@ -1201,29 +1218,32 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
   const systolicBpMmHg = bpOrderValid ? rawSystolicBp : undefined
   const diastolicBpMmHg = bpOrderValid ? rawDiastolicBp : undefined
   const admissionSystolicBpMmHg = safeParseFact(
-    facts.admissionSystolicBpMmHg ?? systolicBpMmHg,
+    resolveExplicitOrFallback(facts.admissionSystolicBpMmHg, systolicBpMmHg),
     validateSystolicBpMmHg,
   )
   const scrValid = safeParseFact(facts.serumCreatinine, q => {
     normalizeCreatinineMgDl(q.value, q.unit)
     return q
   })
-  const admissionScrValid = safeParseFact(facts.admissionSerumCreatinine ?? facts.serumCreatinine, q => {
+  const effectiveAdmissionScr = resolveExplicitOrFallback(facts.admissionSerumCreatinine, facts.serumCreatinine)
+  const admissionScrValid = safeParseFact(effectiveAdmissionScr, q => {
     normalizeCreatinineMgDl(q.value, q.unit)
     return q
   })
   const baselineScrValid = safeParseFact(
-    facts.baselineSerumCreatinine ?? facts.admissionSerumCreatinine ?? facts.serumCreatinine,
+    facts.baselineSerumCreatinine === null
+      ? undefined
+      : (facts.baselineSerumCreatinine ?? effectiveAdmissionScr),
     q => {
       normalizeCreatinineMgDl(q.value, q.unit)
       return q
     },
   )
-  const hbValid = safeParseFact(facts.baselineHemoglobin ?? facts.hemoglobin, q => {
+  const hbValid = safeParseFact(resolveExplicitOrFallback(facts.baselineHemoglobin, facts.hemoglobin), q => {
     normalizeHemoglobinGdl(q.value, q.unit)
     return q
   })
-  const wbcValid = safeParseFact(facts.baselineWbc ?? facts.wbc, q => {
+  const wbcValid = safeParseFact(resolveExplicitOrFallback(facts.baselineWbc, facts.wbc), q => {
     normalizeWbc10e9L(q.value, q.unit)
     return q
   })

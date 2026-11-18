@@ -46,20 +46,32 @@ export function InpatientClinical({ admission, investigations, session, locale, 
   const doctor = session.actor.roleCode === 'inpatient-doctor', nurse = session.actor.roleCode === 'ward-nurse'
   const scope = ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId]
   const messages = getWorkspaceMessages(locale)
-  const clinical = useQuery({ queryKey: [...scope,admission.id,'clinical'], queryFn: ({signal}) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/clinical`,inpatientFullClinicalSchema,signal) })
-  const scenario = useQuery({ queryKey: ['scenario', 'virtual-time'], enabled: nurse,
-    queryFn: ({ signal }) => apiGet('/api/sim/v1/scenario-runs/current', scenarioStateSchema, signal), retry: false })
-  const catalog = useQuery({ queryKey: [...scope,'clinical-catalog'], enabled: (doctor || nurse) && view === 'orders', queryFn: ({signal}) => apiGet('/api/his/v1/inpatient/clinical-catalog',inpatientFullCatalogSchema,signal) })
   const [composing, setComposing] = useState(false)
   const [editingDiagnosis, setEditingDiagnosis] = useState(false)
   const [guidelineOpen, setGuidelineOpen] = useState(false)
   const [scoresOpen, setScoresOpen] = useState(false)
-  const surgery = useQuery({ queryKey: [...scope,admission.id,'surgeries'], enabled: doctor && view === 'orders', queryFn: ({signal}) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`,inpatientSurgerySchema,signal) })
+  const pollScoresInputs = scoresOpen && active && view === 'orders' && admission.recordStatus !== 'archived'
+  const clinical = useQuery({
+    queryKey: [...scope, admission.id, 'clinical'],
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/clinical`, inpatientFullClinicalSchema, signal),
+    refetchInterval: pollScoresInputs ? 3_000 : false,
+    refetchIntervalInBackground: false,
+  })
+  const scenario = useQuery({ queryKey: ['scenario', 'virtual-time'], enabled: nurse,
+    queryFn: ({ signal }) => apiGet('/api/sim/v1/scenario-runs/current', scenarioStateSchema, signal), retry: false })
+  const catalog = useQuery({ queryKey: [...scope,'clinical-catalog'], enabled: (doctor || nurse) && view === 'orders', queryFn: ({signal}) => apiGet('/api/his/v1/inpatient/clinical-catalog',inpatientFullCatalogSchema,signal) })
+  const surgery = useQuery({
+    queryKey: [...scope, admission.id, 'surgeries'],
+    enabled: (doctor || (nurse && scoresOpen)) && view === 'orders',
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal),
+    refetchInterval: pollScoresInputs ? 3_000 : false,
+    refetchIntervalInBackground: false,
+  })
   const investigationsQuery = useQuery({
     queryKey: [...scope, admission.id, 'investigations'],
-    enabled: (doctor || nurse) && view === 'orders' && scoresOpen && admission.recordStatus !== 'archived',
+    enabled: (doctor || nurse) && pollScoresInputs,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/investigations`, inpatientInvestigationsSchema, signal),
-    refetchInterval: scoresOpen && active && admission.recordStatus !== 'archived' ? 3_000 : false,
+    refetchInterval: pollScoresInputs ? 3_000 : false,
     refetchIntervalInBackground: false,
   })
   const effectiveInvestigations = investigationsQuery.data ?? investigations
@@ -100,7 +112,7 @@ export function InpatientClinical({ admission, investigations, session, locale, 
       </>}>
       <AgentReviewAnchor id={inpatientOrderAnchor(admission.id, order.id)} />
     </InpatientItemRow>}} /> : null}
-    {data ? <InpatientVitalsAndScoresDisclosure key={`vitals:${admission.id}`} admissionId={admission.id} canEdit={(doctor || nurse) && !write.blocked && admission.recordStatus !== 'archived' && (admission.status === 'admitted' || admission.status === 'discharge-pending')} clinicalRevision={buildInpatientClinicalScoreRevision({ chargesCount: data.charges.length, diagnosisRevision: data.diagnosis.revision, executions: data.executions, investigations: effectiveInvestigations, orders: data.orders, surgeries: surgery.data })} encounterVersion={data.encounterVersion} latestVitalSigns={data.latestVitalSigns} locale={locale} onScoresOpenChange={setScoresOpen} riskAssessment={data.riskAssessment} scope={scope} write={write} /> : null}
+    {data ? <InpatientVitalsAndScoresDisclosure key={`vitals:${admission.id}`} active={active} admissionId={admission.id} archived={admission.recordStatus === 'archived'} canEdit={(doctor || nurse) && !write.blocked && admission.recordStatus !== 'archived' && (admission.status === 'admitted' || admission.status === 'discharge-pending')} clinicalRevision={buildInpatientClinicalScoreRevision({ chargesCount: data.charges.length, diagnosisRevision: data.diagnosis.revision, executions: data.executions, investigations: effectiveInvestigations, orders: data.orders, surgeries: surgery.data })} encounterVersion={data.encounterVersion} latestVitalSigns={data.latestVitalSigns} locale={locale} onScoresOpenChange={setScoresOpen} riskAssessment={data.riskAssessment} scope={scope} write={write} /> : null}
     {data && !nurse ? <details className="clinmesh-inpatient-disclosure" onToggle={event => { const open = event.currentTarget.open; setGuidelineOpen(open) }}><summary>{t('循证指南专题与参考意见', 'Clinical guideline topics & advice')}</summary><div className="pt-2"><InpatientGuidelineAdvicePanel key={`topic-advice:${admission.id}`} admission={admission} session={session} locale={locale} write={write} canReassess={doctor && !write.blocked && admission.status === 'admitted' && admission.recordStatus !== 'archived'} enableTopicPicker active={active && guidelineOpen} /></div></details> : null}
     {!doctor && data && data.executions.length > 0 ? <details open className="clinmesh-inpatient-disclosure"><summary>{t('执行记录', 'Execution records')} <span className="tabular-nums">{data.executions.length}</span></summary><div>
     {data?.executions.map(execution=>{

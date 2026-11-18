@@ -820,6 +820,18 @@ export class ClinicalScoreService {
     return bundle
   }
 
+  readInpatientClinicalScores(inpatient: InpatientService, context: ActorContext, admissionId: string): ClinicalScoreBundle {
+    let bundle: ClinicalScoreBundle
+    try {
+      bundle = this.inpatientSnapshot(inpatient, context, admissionId)
+    } catch (error) {
+      try { inpatient.commands.auditRead(context, 'inpatient.clinical-scores.read', { admissionId }, 'failed') } catch { /* preserve original error */ }
+      throw error
+    }
+    inpatient.commands.auditRead(context, 'inpatient.clinical-scores.read', { admissionId }, 'success')
+    return bundle
+  }
+
   readOutpatientGuidelineTopics(
     context: ActorContext,
     caseId: string,
@@ -877,23 +889,11 @@ export class ClinicalScoreService {
     return bundle
   }
 
-  readInpatientClinicalScores(inpatient: InpatientService, context: ActorContext, admissionId: string): ClinicalScoreBundle {
-    let bundle: ClinicalScoreBundle
-    try {
-      bundle = this.inpatientSnapshot(inpatient, context, admissionId)
-    } catch (error) {
-      try { inpatient.commands.auditRead(context, 'inpatient.clinical-scores.read', { admissionId }, 'failed') } catch { /* preserve original error */ }
-      throw error
-    }
-    inpatient.commands.auditRead(context, 'inpatient.clinical-scores.read', { admissionId }, 'success')
-    return bundle
-  }
-
   outpatientSnapshot(
     context: ActorContext,
     caseId: string,
     referenceCutoffIso?: string,
-    isArchivedCutoffOverride?: boolean,
+    archivedCutoffOverride?: boolean,
   ): ClinicalScoreBundle {
     this.#outpatientContext.requireDoctorCase(context, caseId)
     this.#outpatientContext.assertCaseResponsibility(context, caseId)
@@ -928,7 +928,7 @@ export class ClinicalScoreService {
     if (row === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case was not found')
     const encounter = this.#fhir.read(context, 'Encounter', row.encounter_id)
     const virtualNow = this.#outpatientContext.virtualTime(context)
-    const isArchivedCutoff = isArchivedCutoffOverride ?? (encounter.status === 'completed')
+    const isArchivedCutoff = archivedCutoffOverride ?? (encounter.status === 'completed')
     const derivedCutoffIso =
       isArchivedCutoff
         ? (extractEncounterEndIso(encounter) ?? (row.visit_date ? `${row.visit_date}T23:59:59.999+08:00` : virtualNow))
@@ -965,6 +965,7 @@ export class ClinicalScoreService {
       encounterVersion: encounter.meta?.versionId ?? '1',
       evaluatedAt: virtualNow,
       inpatient: undefined,
+      inpatientTimingGate: undefined,
       isArchivedCutoff,
       legacyDiagnosticReportId: row.diagnostic_report_id,
       now,
@@ -979,7 +980,7 @@ export class ClinicalScoreService {
     context: ActorContext,
     admissionId: string,
     referenceTimeIso?: string,
-    isArchivedCutoffOverride?: boolean,
+    archivedCutoffOverride?: boolean,
   ): ClinicalScoreBundle {
     inpatient.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     const binding = inpatient.readAdmissionBinding(context, admissionId)
@@ -987,7 +988,7 @@ export class ClinicalScoreService {
     const virtualNow = inpatient.virtualTime(context)
     const departureIso = inpatient.discharge.activeDeparture(context, admissionId)?.virtualTime
     const isArchivedCutoff =
-      isArchivedCutoffOverride
+      archivedCutoffOverride
       ?? (departureIso !== undefined || binding.status === 'departed' || binding.status === 'cleared')
     const departedAt = isArchivedCutoff ? (departureIso ?? extractEncounterEndIso(encounter)) : undefined
     const now = normalizeCutoffIso(referenceTimeIso ?? departedAt ?? virtualNow)
@@ -1003,24 +1004,89 @@ export class ClinicalScoreService {
     )
     const admissionAnchorIso = admTiming?.admitted_at ?? extractEncounterStartIso(encounter) ?? admTiming?.registered_at
     const admissionAnchorMs = parseResourceTimestampMs(admissionAnchorIso)
+
+    const surgeryExecRows = z.array(z.object({ performed_at: z.string() })).parse(
+      this.#database.driver.prepare(`
+        SELECT performed_at FROM inpatient_surgery_execution
+        WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
+      `).all(context.workspaceId, context.epoch, admissionId),
+    )
+    let earliestSurgeryMs: number | undefined
+    for (const row of surgeryExecRows) {
+      const ms = parseResourceTimestampMs(row.performed_at)
+      if (ms !== undefined && (earliestSurgeryMs === undefined || ms < earliestSurgeryMs)) {
+        earliestSurgeryMs = ms
+      }
+    }
+
+    const medExecRows = z.array(z.object({
+      administration_id: z.string().nullable(),
+      scheduled_for: z.string(),
+    })).parse(
+      this.#database.driver.prepare(`
+        SELECT e.scheduled_for, e.administration_id
+        FROM inpatient_execution e
+        JOIN inpatient_order o
+          ON o.workspace_id = e.workspace_id
+         AND o.epoch = e.epoch
+         AND o.order_id = e.order_id
+        WHERE e.workspace_id = ? AND e.epoch = ? AND o.admission_id = ?
+          AND o.kind = 'medication' AND e.status = 'completed'
+      `).all(context.workspaceId, context.epoch, admissionId),
+    )
+    let earliestMedExecMs: number | undefined
+    for (const exec of medExecRows) {
+      let adminMs: number | undefined
+      if (exec.administration_id !== null) {
+        try {
+          const admin = medicationAdministrationResourceSchema.safeParse(
+            this.#fhir.read(context, 'MedicationAdministration', exec.administration_id),
+          )
+          if (admin.success) {
+            adminMs = parseResourceTimestampMs(
+              admin.data.occurencePeriod?.start
+              ?? admin.data.occurrencePeriod?.start
+              ?? admin.data.effectivePeriod?.start
+              ?? admin.data.occurenceDateTime
+              ?? admin.data.occurrenceDateTime
+              ?? admin.data.effectiveDateTime
+              ?? admin.data.recorded,
+            )
+          }
+        } catch {
+          adminMs = undefined
+        }
+      }
+      const candidateMs = adminMs ?? parseResourceTimestampMs(exec.scheduled_for)
+      if (candidateMs !== undefined && (earliestMedExecMs === undefined || candidateMs < earliestMedExecMs)) {
+        earliestMedExecMs = candidateMs
+      }
+    }
+
+    const ADMISSION_VITALS_MAX_DELAY_MS = 6 * 60 * 60 * 1000
+    const BASELINE_MAX_DELAY_MS = 24 * 60 * 60 * 1000
     const initialVitals = this.initialInpatientVitalSigns(context, admissionId)
     const latestVitals = this.latestInpatientVitalSigns(context, admissionId)
-    const ADMISSION_VITALS_MAX_DELAY_MS = 6 * 60 * 60 * 1000
     const initialVitalsRecordedMs = parseResourceTimestampMs(initialVitals?.recordedAt)
-    const qualifiesAsAdmissionVitals = (() => {
-      if (initialVitals === undefined || initialVitalsRecordedMs === undefined) return false
-      if (admissionAnchorMs !== undefined && initialVitalsRecordedMs - admissionAnchorMs > ADMISSION_VITALS_MAX_DELAY_MS) {
-        return false
-      }
-      const priorCompletedSurgery = this.#database.driver.prepare(`
-        SELECT 1 FROM inpatient_surgery_execution
-        WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
-          AND julianday(performed_at) < julianday(?)
-        LIMIT 1
-      `).get(context.workspaceId, context.epoch, admissionId, initialVitals.recordedAt)
-      if (priorCompletedSurgery !== undefined) return false
-      return true
-    })()
+    const qualifiesAsAdmissionVitals =
+      initialVitals !== undefined
+      && initialVitalsRecordedMs !== undefined
+      && (admissionAnchorMs === undefined || initialVitalsRecordedMs - admissionAnchorMs <= ADMISSION_VITALS_MAX_DELAY_MS)
+      && (earliestSurgeryMs === undefined || initialVitalsRecordedMs <= earliestSurgeryMs)
+      && (earliestMedExecMs === undefined || initialVitalsRecordedMs <= earliestMedExecMs)
+
+    const initialWeightedVitals = this.initialInpatientVitalSignsWithWeight(context, admissionId)
+    const initialWeightRecordedMs = parseResourceTimestampMs(initialWeightedVitals?.recordedAt)
+    const qualifiesAsBaselineWeight =
+      initialWeightedVitals !== undefined
+      && initialWeightRecordedMs !== undefined
+      && (
+        earliestSurgeryMs !== undefined
+          ? initialWeightRecordedMs <= earliestSurgeryMs
+          : (admissionAnchorMs === undefined || initialWeightRecordedMs - admissionAnchorMs <= BASELINE_MAX_DELAY_MS)
+      )
+      && (earliestMedExecMs === undefined || initialWeightRecordedMs <= earliestMedExecMs)
+
     const toVitalSummary = (v: InpatientVitalSignsRecord | undefined): ClinicalScoreVitalSummary | null =>
       v === undefined
         ? null
@@ -1036,11 +1102,10 @@ export class ClinicalScoreService {
             temperatureC: v.temperatureC,
             ...(v.weightKg === undefined ? {} : { weightKg: v.weightKg }),
           }
-    const initialWeightedVitals = this.initialInpatientVitalSignsWithWeight(context, admissionId)
     const latestHeightVitals = this.latestInpatientVitalSignsWithHeight(context, admissionId)
     const latestWeightVitals = this.latestInpatientVitalSignsWithWeight(context, admissionId)
     const admissionVitalSummary = qualifiesAsAdmissionVitals ? toVitalSummary(initialVitals) : null
-    const baselineWeightVitalSummary = toVitalSummary(initialWeightedVitals)
+    const baselineWeightVitalSummary = qualifiesAsBaselineWeight ? toVitalSummary(initialWeightedVitals) : null
     const latestHeightVitalSummary = toVitalSummary(latestHeightVitals)
     const latestWeightVitalSummary = toVitalSummary(latestWeightVitals)
     const vitalSummary = toVitalSummary(latestVitals)
@@ -1055,6 +1120,11 @@ export class ClinicalScoreService {
       encounterVersion: encounter.meta?.versionId ?? '1',
       evaluatedAt: virtualNow,
       inpatient,
+      inpatientTimingGate: {
+        admissionAnchorMs,
+        earliestMedExecMs,
+        earliestSurgeryMs,
+      },
       isArchivedCutoff,
       legacyDiagnosticReportId: null,
       now,
@@ -1207,12 +1277,131 @@ export class ClinicalScoreService {
     return triageTitleFallback
   }
 
+  #buildReportRevisionIndex(context: RepositoryContext) {
+    const revRows = z.array(z.object({
+      diagnostic_report_id: z.string(),
+      revision_of_diagnostic_report_id: z.string(),
+    })).parse(
+      this.#database.driver.prepare(`
+        SELECT diagnostic_report_id, revision_of_diagnostic_report_id
+        FROM laboratory_report_revision
+        WHERE workspace_id = ? AND epoch = ?
+      `).all(context.workspaceId, context.epoch),
+    )
+    const supersededReports = new Set<string>()
+    const parentByReportId = new Map<string, string>()
+    for (const row of revRows) {
+      supersededReports.add(row.revision_of_diagnostic_report_id)
+      parentByReportId.set(row.diagnostic_report_id, row.revision_of_diagnostic_report_id)
+    }
+
+    const rootMetaCache = new Map<string, {
+      obsIsoByCode: Map<string, string>
+      obsIsoByIndex: Array<string | undefined>
+      reportIso: string | undefined
+      rootReportId: string
+    }>()
+
+    const resolveRootMeta = (reportId: string) => {
+      if (!parentByReportId.has(reportId)) return undefined
+      const cached = rootMetaCache.get(reportId)
+      if (cached !== undefined) return cached
+      let currentId = reportId
+      const seen = new Set<string>()
+      while (parentByReportId.has(currentId) && !seen.has(currentId)) {
+        seen.add(currentId)
+        currentId = parentByReportId.get(currentId)!
+      }
+      const rootReportId = currentId
+      let reportIso: string | undefined
+      const obsIsoByIndex: Array<string | undefined> = []
+      const obsIsoByCode = new Map<string, string>()
+      try {
+        const rootReport = diagnosticReportResourceSchema.safeParse(
+          this.#fhir.read(context, 'DiagnosticReport', rootReportId),
+        )
+        if (rootReport.success) {
+          reportIso = rootReport.data.effectiveDateTime ?? rootReport.data.issued
+          for (const [idx, ref] of (rootReport.data.result ?? []).entries()) {
+            const obsId = ref.reference?.startsWith('Observation/') ? ref.reference.slice('Observation/'.length) : undefined
+            if (!obsId) continue
+            try {
+              const rootObs = observationResourceSchema.safeParse(this.#fhir.read(context, 'Observation', obsId))
+              if (rootObs.success) {
+                const iso = rootObs.data.effectiveDateTime ?? reportIso
+                obsIsoByIndex[idx] = iso
+                if (iso !== undefined) {
+                  for (const coding of rootObs.data.code?.coding ?? []) {
+                    if (coding.code?.trim()) {
+                      obsIsoByCode.set(coding.code.trim(), iso)
+                    }
+                  }
+                }
+              }
+            } catch { /* ignore unreadable historical observation */ }
+          }
+        }
+      } catch { /* ignore unreadable historical report */ }
+      if (reportIso === undefined) {
+        const examRow = z.object({ issued_at: z.string().nullable() }).optional().parse(
+          this.#database.driver.prepare(`
+            SELECT issued_at FROM examination_report_content
+            WHERE workspace_id = ? AND epoch = ? AND diagnostic_report_id = ?
+          `).get(context.workspaceId, context.epoch, rootReportId),
+        )
+        reportIso = examRow?.issued_at ?? undefined
+      }
+      const entry = { obsIsoByCode, obsIsoByIndex, reportIso, rootReportId }
+      rootMetaCache.set(reportId, entry)
+      return entry
+    }
+
+    const resolveObservationOriginalIso = (
+      reportId: string | undefined,
+      resultIndex: number | undefined,
+      obs: z.infer<typeof observationResourceSchema>,
+      fallbackReportIso: string | undefined,
+    ): string | undefined => {
+      if (reportId !== undefined) {
+        const rootMeta = resolveRootMeta(reportId)
+        if (rootMeta !== undefined) {
+          for (const coding of obs.code?.coding ?? []) {
+            const c = coding.code?.trim()
+            if (c && rootMeta.obsIsoByCode.has(c)) {
+              return rootMeta.obsIsoByCode.get(c)
+            }
+          }
+          if (resultIndex !== undefined && rootMeta.obsIsoByIndex[resultIndex] !== undefined) {
+            return rootMeta.obsIsoByIndex[resultIndex]
+          }
+          if (rootMeta.reportIso !== undefined) {
+            return rootMeta.reportIso
+          }
+        }
+      }
+      return obs.effectiveDateTime ?? fallbackReportIso
+    }
+
+    const resolveReportOriginalIso = (reportId: string, fallbackIso: string | undefined): string | undefined => {
+      const rootMeta = resolveRootMeta(reportId)
+      return rootMeta?.reportIso ?? fallbackIso
+    }
+
+    return {
+      resolveObservationOriginalIso,
+      resolveReportOriginalIso,
+      resolveRootMeta,
+      supersededReports,
+    }
+  }
+
   #resolveEffectiveStDeviation(
     context: RepositoryContext,
     caseId: string,
     values: ClinicalRiskAssessmentValues,
     bedsideObservation: { observationId: string; observationVersion: string } | null,
   ): EffectiveStSegmentDeviation | null {
+    const revisionIndex = this.#buildReportRevisionIndex(context)
     const ecgRows = z.array(z.object({
       authored_at: z.string().nullable(),
       content_json: z.string(),
@@ -1241,11 +1430,12 @@ export class ClinicalScoreService {
     const ecgCandidates = ecgRows
       .map((ecgRow, seq) => {
         const report = this.#fhir.read(context, 'DiagnosticReport', ecgRow.diagnostic_report_id)
-        const effStr = typeof report.effectiveDateTime === 'string'
+        const fallbackEffStr = typeof report.effectiveDateTime === 'string'
           ? report.effectiveDateTime
           : typeof report.issued === 'string'
             ? report.issued
             : (ecgRow.issued_at ?? ecgRow.authored_at ?? undefined)
+        const effStr = revisionIndex.resolveReportOriginalIso(ecgRow.diagnostic_report_id, fallbackEffStr)
         const tsMs = effStr ? Date.parse(effStr) : Number.NaN
         return {
           ecgRow,
@@ -1299,14 +1489,102 @@ export class ClinicalScoreService {
     return null
   }
 
-  #readPrescriptionCourseDurationByMedicationRequestId(
-    context: Pick<RepositoryContext, 'workspaceId' | 'epoch'>,
-  ): Map<string, number> {
-    const map = new Map<string, number>()
-    for (const [id, meta] of this.#readLocalPrescriptionMetaByMedicationRequestId(context)) {
-      map.set(id, meta.courseDurationMs)
+  #readMedicationDeliveryEvidence(
+    context: ActorContext,
+    medicationRequestId: string,
+    cutoffMs: number,
+    isArchivedCutoff: boolean,
+  ): {
+    earliestEvidenceMs: number | undefined
+    hasActiveSupplyAtCutoff: boolean
+    hasEvidence: boolean
+    hasOpenEndedEvidence: boolean
+    supplyWindows: ReadonlyArray<{ endMs: number; startMs: number }>
+  } {
+    let hasEvidence = false
+    let earliestEvidenceMs: number | undefined
+    let hasOpenEndedEvidence = false
+    const supplyWindows: Array<{ endMs: number; startMs: number }> = []
+
+    const dispenseParams = new URLSearchParams({
+      _count: '50',
+      prescription: `MedicationRequest/${medicationRequestId}`,
+    })
+    for (;;) {
+      const dispPage = this.#fhir.search(context, 'MedicationDispense', dispenseParams)
+      for (const rawDisp of dispPage.resources) {
+        const disp = medicationDispenseResourceSchema.safeParse(rawDisp)
+        if (!disp.success) continue
+        const status = disp.data.status ?? ''
+        if (['entered-in-error', 'cancelled', 'declined', 'preparation', 'unknown', ''].includes(status)) continue
+        const handedIso = disp.data.whenHandedOver ?? disp.data.whenPrepared
+        const handedMs = parseResourceTimestampMs(handedIso)
+        if (Number.isFinite(cutoffMs)) {
+          if (handedMs === undefined ? isArchivedCutoff : handedMs > cutoffMs) continue
+        }
+        hasEvidence = true
+        if (handedMs !== undefined) {
+          if (earliestEvidenceMs === undefined || handedMs < earliestEvidenceMs) {
+            earliestEvidenceMs = handedMs
+          }
+          const supplyMs = resolveMedicationBoundsDurationMs(disp.data.daysSupply)
+          if (typeof supplyMs === 'number') {
+            supplyWindows.push({ endMs: handedMs + supplyMs, startMs: handedMs })
+          } else {
+            hasOpenEndedEvidence = true
+          }
+        } else {
+          hasOpenEndedEvidence = true
+        }
+      }
+      if (dispPage.nextCursor === undefined) break
+      dispenseParams.set('_cursor', dispPage.nextCursor)
     }
-    return map
+
+    const adminParams = new URLSearchParams({
+      _count: '50',
+      request: `MedicationRequest/${medicationRequestId}`,
+    })
+    for (;;) {
+      const adminPage = this.#fhir.search(context, 'MedicationAdministration', adminParams)
+      for (const rawAdmin of adminPage.resources) {
+        const admin = medicationAdministrationResourceSchema.safeParse(rawAdmin)
+        if (!admin.success) continue
+        const status = admin.data.status ?? ''
+        if (['entered-in-error', 'not-done', 'unknown', ''].includes(status)) continue
+        const adminStartIso =
+          admin.data.occurencePeriod?.start
+          ?? admin.data.occurrencePeriod?.start
+          ?? admin.data.effectivePeriod?.start
+          ?? admin.data.occurenceDateTime
+          ?? admin.data.occurrenceDateTime
+          ?? admin.data.effectiveDateTime
+          ?? admin.data.recorded
+        const adminStartMs = parseResourceTimestampMs(adminStartIso)
+        if (Number.isFinite(cutoffMs)) {
+          if (adminStartMs === undefined ? isArchivedCutoff : adminStartMs > cutoffMs) continue
+        }
+        hasEvidence = true
+        hasOpenEndedEvidence = true
+        if (adminStartMs !== undefined && (earliestEvidenceMs === undefined || adminStartMs < earliestEvidenceMs)) {
+          earliestEvidenceMs = adminStartMs
+        }
+      }
+      if (adminPage.nextCursor === undefined) break
+      adminParams.set('_cursor', adminPage.nextCursor)
+    }
+
+    const hasActiveSupplyAtCutoff =
+      !Number.isFinite(cutoffMs)
+      || supplyWindows.some(w => cutoffMs >= w.startMs && cutoffMs <= w.endMs)
+
+    return {
+      earliestEvidenceMs,
+      hasActiveSupplyAtCutoff,
+      hasEvidence,
+      hasOpenEndedEvidence,
+      supplyWindows,
+    }
   }
 
   #readLocalPrescriptionMetaByMedicationRequestId(
@@ -1365,6 +1643,13 @@ export class ClinicalScoreService {
       encounterVersion: string
       evaluatedAt: string
       inpatient: InpatientService | undefined
+      inpatientTimingGate:
+        | {
+            admissionAnchorMs: number | undefined
+            earliestMedExecMs: number | undefined
+            earliestSurgeryMs: number | undefined
+          }
+        | undefined
       isArchivedCutoff: boolean
       latestHeightVitalSummary?: ClinicalScoreVitalSummary | null
       latestWeightVitalSummary?: ClinicalScoreVitalSummary | null
@@ -1441,7 +1726,12 @@ export class ClinicalScoreService {
 
     const birthDateStr = typeof patient.birthDate === 'string' ? patient.birthDate : undefined
     const cutoffMs = Date.parse(options.now)
-    const labs = this.#extractLaboratoryAnalytes(context, options.caseId, options.legacyDiagnosticReportId)
+    const labs = this.#extractLaboratoryAnalytes(
+      context,
+      options.caseId,
+      options.legacyDiagnosticReportId,
+      options.inpatientTimingGate,
+    )
     let ckdChronicity: {
       ckdLt30Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
       ckdLt60Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
@@ -1527,14 +1817,16 @@ export class ClinicalScoreService {
       ...(admissionAge === undefined ? {} : { admissionAgeYears: { source: patientRef, value: admissionAge } }),
       ...(age === undefined ? {} : { ageYears: { source: patientRef, value: age } }),
       ...(sex === undefined ? {} : { sex: { source: patientRef, value: sex } }),
-      ...(effectiveAdmissionVital === null || admissionVitalRef === undefined
-        ? {}
-        : {
-            admissionHeartRateBpm: { source: admissionVitalRef, value: effectiveAdmissionVital.pulseBpm },
-            ...(effectiveAdmissionVital.bloodPressure.systolicMmHg > effectiveAdmissionVital.bloodPressure.diastolicMmHg
-              ? { admissionSystolicBpMmHg: { source: admissionVitalRef, value: effectiveAdmissionVital.bloodPressure.systolicMmHg } }
-              : {}),
-          }),
+      admissionHeartRateBpm:
+        effectiveAdmissionVital === null || admissionVitalRef === undefined
+          ? null
+          : { source: admissionVitalRef, value: effectiveAdmissionVital.pulseBpm },
+      admissionSystolicBpMmHg:
+        effectiveAdmissionVital === null
+        || admissionVitalRef === undefined
+        || effectiveAdmissionVital.bloodPressure.systolicMmHg <= effectiveAdmissionVital.bloodPressure.diastolicMmHg
+          ? null
+          : { source: admissionVitalRef, value: effectiveAdmissionVital.bloodPressure.systolicMmHg },
       ...(options.vitalSummary === null || vitalRef === undefined
         ? {}
         : {
@@ -1556,22 +1848,19 @@ export class ClinicalScoreService {
         || effectiveLatestWeightVital.weightKg === undefined
         ? {}
         : { weightKg: { source: latestWeightRef, value: effectiveLatestWeightVital.weightKg } }),
-      ...(effectiveBaselineWeightVital === null
+      baselineWeightKg:
+        effectiveBaselineWeightVital === null
         || baselineWeightRef === undefined
         || effectiveBaselineWeightVital.weightKg === undefined
-        ? {}
-        : { baselineWeightKg: { source: baselineWeightRef, value: effectiveBaselineWeightVital.weightKg } }),
-      ...(labs.admissionSerumCreatinine === undefined
-        ? {}
-        : {
-            admissionSerumCreatinine: labs.admissionSerumCreatinine,
-            baselineSerumCreatinine: labs.admissionSerumCreatinine,
-          }),
+          ? null
+          : { source: baselineWeightRef, value: effectiveBaselineWeightVital.weightKg },
+      admissionSerumCreatinine: labs.admissionSerumCreatinine,
+      baselineSerumCreatinine: labs.baselineSerumCreatinine,
       ...(labs.serumCreatinine === undefined ? {} : { serumCreatinine: labs.serumCreatinine }),
       ...(labs.elevatedCardiacBiomarker === undefined ? {} : { elevatedCardiacBiomarker: labs.elevatedCardiacBiomarker }),
-      ...(labs.baselineWbc === undefined ? {} : { baselineWbc: labs.baselineWbc }),
+      baselineWbc: labs.baselineWbc,
       ...(labs.wbc === undefined ? {} : { wbc: labs.wbc }),
-      ...(labs.baselineHemoglobin === undefined ? {} : { baselineHemoglobin: labs.baselineHemoglobin }),
+      baselineHemoglobin: labs.baselineHemoglobin,
       ...(labs.hemoglobin === undefined ? {} : { hemoglobin: labs.hemoglobin }),
       ...(labs.totalCholesterol === undefined ? {} : { totalCholesterol: labs.totalCholesterol }),
       ...(labs.hdlCholesterol === undefined ? {} : { hdlCholesterol: labs.hdlCholesterol }),
@@ -1711,12 +2000,14 @@ export class ClinicalScoreService {
         ORDER BY julianday(COALESCE(c.issued_at, r.authored_at)) ASC, c.diagnostic_report_id ASC
       `).all(context.workspaceId, context.epoch, caseId),
     )
+    const revisionIndex = this.#buildReportRevisionIndex(context)
     const sortedPresentationEcgs = ecgRows
       .map((row, seq) => {
         const report = diagnosticReportResourceSchema.safeParse(this.#fhir.read(context, 'DiagnosticReport', row.diagnostic_report_id))
-        const effStr = report.success
+        const fallbackEffStr = report.success
           ? (report.data.effectiveDateTime ?? report.data.issued ?? row.issued_at ?? row.authored_at ?? undefined)
           : (row.issued_at ?? row.authored_at ?? undefined)
+        const effStr = revisionIndex.resolveReportOriginalIso(row.diagnostic_report_id, fallbackEffStr)
         const tsMs = effStr ? Date.parse(effStr) : Number.NaN
         return { report, row, seq, timestampMs: Number.isFinite(tsMs) ? tsMs : undefined }
       })
@@ -1861,10 +2152,17 @@ export class ClinicalScoreService {
         version: z.number(),
       })).parse(
         this.#database.driver.prepare(`
-          SELECT order_id, catalog_item_id, display, version
-          FROM inpatient_order
-          WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
-            AND kind = 'medication' AND state IN ('signed', 'verified', 'stop-requested')
+          SELECT o.order_id, o.catalog_item_id, o.display, o.version
+          FROM inpatient_order o
+          WHERE o.workspace_id = ? AND o.epoch = ? AND o.admission_id = ?
+            AND o.kind = 'medication' AND o.state IN ('signed', 'verified', 'stop-requested')
+            AND EXISTS (
+              SELECT 1 FROM inpatient_execution e
+              WHERE e.workspace_id = o.workspace_id
+                AND e.epoch = o.epoch
+                AND e.order_id = o.order_id
+                AND e.status = 'completed'
+            )
         `).all(context.workspaceId, context.epoch, caseId),
       )
       for (const order of activeOrders) {
@@ -1947,7 +2245,7 @@ export class ClinicalScoreService {
     }
 
     if (pciStentEncounterSource === undefined && priorCoronaryStentSource !== undefined && (!hasActiveP2y12 || !hasActiveAspirin)) {
-      const courseDurationByMedReqId = this.#readPrescriptionCourseDurationByMedicationRequestId(context)
+      const localPrescriptionByMedReqId = this.#readLocalPrescriptionMetaByMedicationRequestId(context)
       const withdrawnIds = new Set(
         z.array(z.object({ medication_request_id: z.string() })).parse(
           this.#database.driver.prepare(`
@@ -1967,7 +2265,16 @@ export class ClinicalScoreService {
         for (const raw of page.resources) {
           const parsed = medicationRequestResourceSchema.safeParse(raw)
           if (!parsed.success || parsed.data.status !== 'active' || withdrawnIds.has(parsed.data.id)) continue
-          if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs)) {
+          const display = [
+            parsed.data.medication?.reference?.display,
+            parsed.data.medication?.concept?.text,
+            ...(parsed.data.medication?.concept?.coding ?? []).map(c => c.display),
+          ].filter(Boolean).join(' ')
+          const isP2y12 = /氯吡格雷|替格瑞洛|普拉格雷|clopidogrel|ticagrelor|prasugrel/i.test(display)
+          const isAspirin = /阿司匹林|aspirin/i.test(display)
+          if (!isP2y12 && !isAspirin) continue
+          const isCurrentEncounter = parsed.data.encounter?.reference === `Encounter/${encounterId}`
+          if (!isCurrentEncounter && Number.isFinite(nowMs)) {
             const medTsMs =
               parseResourceTimestampMs(parsed.data.authoredOn)
               ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
@@ -1978,17 +2285,25 @@ export class ClinicalScoreService {
             ?? parsed.data.dispenseRequest?.expectedSupplyDuration,
           )
           if (rawDaptBoundsMs === 'invalid') continue
-          const daptBoundsMs = rawDaptBoundsMs ?? courseDurationByMedReqId.get(parsed.data.id)
-          if (parsed.data.authoredOn !== undefined && Number.isFinite(nowMs) && daptBoundsMs !== undefined) {
-            const authoredMs = Date.parse(parsed.data.authoredOn)
-            if (!Number.isFinite(authoredMs) || authoredMs + daptBoundsMs < nowMs) continue
+          const delivery = this.#readMedicationDeliveryEvidence(
+            context,
+            parsed.data.id,
+            nowMs,
+            isArchivedCutoff,
+          )
+          // Ongoing outpatient DAPT requires actual dispense handover or administration evidence at or before the encounter cutoff
+          if (!delivery.hasEvidence) continue
+          const daptBoundsMs = rawDaptBoundsMs ?? localPrescriptionByMedReqId.get(parsed.data.id)?.courseDurationMs
+          if (Number.isFinite(nowMs)) {
+            if (daptBoundsMs !== undefined) {
+              const anchorMs = delivery.earliestEvidenceMs ?? parseResourceTimestampMs(parsed.data.authoredOn)
+              const inCourseWindow = anchorMs !== undefined && nowMs >= anchorMs && nowMs <= anchorMs + daptBoundsMs
+              if (!inCourseWindow && !delivery.hasActiveSupplyAtCutoff) continue
+            } else if (!delivery.hasOpenEndedEvidence && !delivery.hasActiveSupplyAtCutoff) {
+              continue
+            }
           }
-          const display = [
-            parsed.data.medication?.reference?.display,
-            parsed.data.medication?.concept?.text,
-            ...(parsed.data.medication?.concept?.coding ?? []).map(c => c.display),
-          ].filter(Boolean).join(' ')
-          if (/氯吡格雷|替格瑞洛|普拉格雷|clopidogrel|ticagrelor|prasugrel/i.test(display)) {
+          if (isP2y12) {
             hasActiveP2y12 = true
             activeP2y12Source ??= {
               label: `在用处方 ${display || parsed.data.id}`,
@@ -1996,7 +2311,7 @@ export class ClinicalScoreService {
               versionId: parsed.data.meta?.versionId ?? '1',
             }
           }
-          if (/阿司匹林|aspirin/i.test(display)) {
+          if (isAspirin) {
             hasActiveAspirin = true
           }
         }
@@ -2035,17 +2350,9 @@ export class ClinicalScoreService {
     ckdLt30Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
     ckdLt60Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
   } {
-    const supersededReports = new Set(
-      z.array(z.object({ revision_of_diagnostic_report_id: z.string() })).parse(
-        this.#database.driver.prepare(`
-          SELECT revision_of_diagnostic_report_id
-          FROM laboratory_report_revision
-          WHERE workspace_id = ? AND epoch = ?
-        `).all(context.workspaceId, context.epoch),
-      ).map(row => row.revision_of_diagnostic_report_id),
-    )
+    const revisionIndex = this.#buildReportRevisionIndex(context)
     const excludedObsIds = new Set<string>()
-    const reportIssuedByObsId = new Map<string, string>()
+    const reportMetaByObsId = new Map<string, { fallbackIso: string | undefined; reportId: string; resultIndex: number }>()
     const reportParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
     for (;;) {
       const page = this.#fhir.search(context, 'DiagnosticReport', reportParams)
@@ -2053,15 +2360,19 @@ export class ClinicalScoreService {
         const parsed = diagnosticReportResourceSchema.safeParse(raw)
         if (!parsed.success) continue
         const isSupersededOrInvalid =
-          supersededReports.has(parsed.data.id)
+          revisionIndex.supersededReports.has(parsed.data.id)
           || !['final', 'amended', 'corrected'].includes(parsed.data.status ?? '')
-        for (const ref of parsed.data.result ?? []) {
+        for (const [resultIndex, ref] of (parsed.data.result ?? []).entries()) {
           const obsId = ref.reference?.startsWith('Observation/') ? ref.reference.slice('Observation/'.length) : undefined
           if (!obsId) continue
           if (isSupersededOrInvalid) {
             excludedObsIds.add(obsId)
-          } else if (parsed.data.issued) {
-            reportIssuedByObsId.set(obsId, parsed.data.issued)
+          } else {
+            reportMetaByObsId.set(obsId, {
+              fallbackIso: parsed.data.effectiveDateTime ?? parsed.data.issued,
+              reportId: parsed.data.id,
+              resultIndex,
+            })
           }
         }
       }
@@ -2095,7 +2406,13 @@ export class ClinicalScoreService {
         ) {
           continue
         }
-        const rawTs = obs.data.effectiveDateTime ?? reportIssuedByObsId.get(obs.data.id)
+        const reportMeta = reportMetaByObsId.get(obs.data.id)
+        const rawTs = revisionIndex.resolveObservationOriginalIso(
+          reportMeta?.reportId,
+          reportMeta?.resultIndex,
+          obs.data,
+          reportMeta?.fallbackIso,
+        )
         const tsMs = parseResourceTimestampMs(rawTs) ?? Number.NaN
         if (!Number.isFinite(tsMs)) continue
         if (obs.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(cutoffMs) && tsMs > cutoffMs) continue
@@ -2167,6 +2484,13 @@ export class ClinicalScoreService {
     context: RepositoryContext,
     caseId: string,
     legacyDiagnosticReportId: string | null,
+    inpatientTimingGate?:
+      | {
+          admissionAnchorMs: number | undefined
+          earliestMedExecMs: number | undefined
+          earliestSurgeryMs: number | undefined
+        }
+      | undefined,
   ) {
     const rows = z.array(z.object({
       diagnostic_report_id: z.string(),
@@ -2231,11 +2555,14 @@ export class ClinicalScoreService {
       value: { unit: string; value: number }
     }> = []
 
+    const revisionIndex = this.#buildReportRevisionIndex(context)
     for (const { reportId, reportTime } of reportEntries) {
       const rawReport = this.#fhir.read(context, 'DiagnosticReport', reportId)
       const report = diagnosticReportResourceSchema.safeParse(rawReport)
       if (!report.success || !['final', 'amended', 'corrected'].includes(report.data.status ?? '')) continue
-      for (const ref of report.data.result ?? []) {
+      const rootReportId = revisionIndex.resolveRootMeta(reportId)?.rootReportId ?? reportId
+      const fallbackReportIso = report.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
+      for (const [resultIndex, ref] of (report.data.result ?? []).entries()) {
         const obsId = ref.reference?.startsWith('Observation/') ? ref.reference.slice('Observation/'.length) : undefined
         if (!obsId) continue
         const obs = observationResourceSchema.safeParse(this.#fhir.read(context, 'Observation', obsId))
@@ -2257,17 +2584,23 @@ export class ClinicalScoreService {
           reference: `Observation/${obs.data.id}`,
           versionId: obs.data.meta?.versionId ?? '1',
         }
+        const rawObsIso = revisionIndex.resolveObservationOriginalIso(
+          reportId,
+          resultIndex,
+          obs.data,
+          fallbackReportIso,
+        )
+        const obsTimestampMs = parseResourceTimestampMs(rawObsIso)
+        const specimenKey = obs.data.specimen?.reference ?? `DiagnosticReport/${rootReportId}`
 
         if (
           quantity !== undefined
           && unit !== undefined
           && (codes.has('1700404A') || codes.has('2160-0') || codes.has('14682-9') || /^(?:血?肌酐|血清肌酐)/i.test(display))
         ) {
-          const rawScrTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
-          const parsedScrMs = rawScrTs ? Date.parse(rawScrTs) : Number.NaN
           creatinineHitsDesc.push({
             source,
-            timestampMs: Number.isFinite(parsedScrMs) ? parsedScrMs : undefined,
+            timestampMs: obsTimestampMs,
             value: { unit, value: quantity },
           })
         }
@@ -2279,12 +2612,10 @@ export class ClinicalScoreService {
         ) {
           const elevated = this.#evaluateTroponinElevation(obs.data)
           if (elevated !== undefined) {
-            const rawTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
-            const parsedMs = rawTs ? Date.parse(rawTs) : Number.NaN
             troponinHitsDesc.push({
               elevated,
               source,
-              timestampMs: Number.isFinite(parsedMs) ? parsedMs : undefined,
+              timestampMs: obsTimestampMs,
             })
           }
         }
@@ -2293,11 +2624,9 @@ export class ClinicalScoreService {
           && unit !== undefined
           && (codes.has('0100101A') || codes.has('6690-2') || codes.has('26464-8') || /白细胞计数/i.test(display))
         ) {
-          const rawWbcTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
-          const parsedWbcMs = rawWbcTs ? Date.parse(rawWbcTs) : Number.NaN
           wbcHitsDesc.push({
             source,
-            timestampMs: Number.isFinite(parsedWbcMs) ? parsedWbcMs : undefined,
+            timestampMs: obsTimestampMs,
             value: { unit, value: quantity },
           })
         }
@@ -2306,11 +2635,9 @@ export class ClinicalScoreService {
           && unit !== undefined
           && (codes.has('0100401A') || codes.has('718-7') || /^(?:血红蛋白|hemoglobin)$/i.test(display.trim()))
         ) {
-          const rawHbTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
-          const parsedHbMs = rawHbTs ? Date.parse(rawHbTs) : Number.NaN
           hemoglobinHitsDesc.push({
             source,
-            timestampMs: Number.isFinite(parsedHbMs) ? parsedHbMs : undefined,
+            timestampMs: obsTimestampMs,
             value: { unit, value: quantity },
           })
         }
@@ -2319,13 +2646,10 @@ export class ClinicalScoreService {
           && unit !== undefined
           && (codes.has('2000104A') || codes.has('2093-3') || codes.has('14647-2') || /^(?:总胆固醇|total cholesterol)/i.test(display))
         ) {
-          const rawTcTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
-          const parsedTcMs = rawTcTs ? Date.parse(rawTcTs) : Number.NaN
-          const specimenKey = obs.data.specimen?.reference ?? `DiagnosticReport/${reportId}`
           tcHitsDesc.push({
             source,
             specimenKey,
-            timestampMs: Number.isFinite(parsedTcMs) ? parsedTcMs : undefined,
+            timestampMs: obsTimestampMs,
             value: { unit, value: quantity },
           })
         }
@@ -2334,13 +2658,10 @@ export class ClinicalScoreService {
           && unit !== undefined
           && (codes.has('2000304A') || codes.has('2085-9') || codes.has('14646-4') || /高密度脂蛋白胆固醇|HDL/i.test(display))
         ) {
-          const rawHdlTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
-          const parsedHdlMs = rawHdlTs ? Date.parse(rawHdlTs) : Number.NaN
-          const specimenKey = obs.data.specimen?.reference ?? `DiagnosticReport/${reportId}`
           hdlHitsDesc.push({
             source,
             specimenKey,
-            timestampMs: Number.isFinite(parsedHdlMs) ? parsedHdlMs : undefined,
+            timestampMs: obsTimestampMs,
             value: { unit, value: quantity },
           })
         }
@@ -2349,11 +2670,9 @@ export class ClinicalScoreService {
           && unit !== undefined
           && (codes.has('2000404A') || codes.has('2089-1') || codes.has('13457-7') || codes.has('18262-6') || /低密度脂蛋白胆固醇|LDL/i.test(display))
         ) {
-          const rawLdlTs = obs.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
-          const parsedLdlMs = rawLdlTs ? Date.parse(rawLdlTs) : Number.NaN
           ldlHitsDesc.push({
             source,
-            timestampMs: Number.isFinite(parsedLdlMs) ? parsedLdlMs : undefined,
+            timestampMs: obsTimestampMs,
             value: { unit, value: quantity },
           })
         }
@@ -2369,9 +2688,44 @@ export class ClinicalScoreService {
         }
         return a.seq - b.seq
       })
+    const ADMISSION_LAB_MAX_DELAY_MS = 24 * 60 * 60 * 1000
+    const qualifiesAsInpatientAdmissionLab = (timestampMs: number | undefined): boolean => {
+      if (inpatientTimingGate === undefined) return true
+      if (timestampMs === undefined) return false
+      if (
+        inpatientTimingGate.admissionAnchorMs !== undefined
+        && timestampMs - inpatientTimingGate.admissionAnchorMs > ADMISSION_LAB_MAX_DELAY_MS
+      ) {
+        return false
+      }
+      if (inpatientTimingGate.earliestSurgeryMs !== undefined && timestampMs > inpatientTimingGate.earliestSurgeryMs) {
+        return false
+      }
+      if (inpatientTimingGate.earliestMedExecMs !== undefined && timestampMs > inpatientTimingGate.earliestMedExecMs) {
+        return false
+      }
+      return true
+    }
+    const qualifiesAsInpatientBaselineLab = (timestampMs: number | undefined): boolean => {
+      if (inpatientTimingGate === undefined) return true
+      if (timestampMs === undefined) return false
+      if (inpatientTimingGate.earliestSurgeryMs !== undefined) {
+        if (timestampMs > inpatientTimingGate.earliestSurgeryMs) return false
+      } else if (
+        inpatientTimingGate.admissionAnchorMs !== undefined
+        && timestampMs - inpatientTimingGate.admissionAnchorMs > ADMISSION_LAB_MAX_DELAY_MS
+      ) {
+        return false
+      }
+      if (inpatientTimingGate.earliestMedExecMs !== undefined && timestampMs > inpatientTimingGate.earliestMedExecMs) {
+        return false
+      }
+      return true
+    }
+
     const initialTroponin = troponinChronological[0]
     let elevatedCardiacBiomarker: ClinicalScoreObjectiveFacts['elevatedCardiacBiomarker']
-    if (initialTroponin !== undefined) {
+    if (initialTroponin !== undefined && qualifiesAsInpatientAdmissionLab(initialTroponin.timestampMs)) {
       if (initialTroponin.elevated) {
         elevatedCardiacBiomarker = { source: initialTroponin.source, value: true }
       } else {
@@ -2381,6 +2735,7 @@ export class ClinicalScoreService {
             : troponinChronological.find(
                 item =>
                   item.elevated
+                  && qualifiesAsInpatientAdmissionLab(item.timestampMs)
                   && item.timestampMs !== undefined
                   && item.timestampMs - initialTroponin.timestampMs! <= 6 * 60 * 60 * 1000,
               )
@@ -2402,7 +2757,13 @@ export class ClinicalScoreService {
     const initialScr = creatinineChronological[0]
     const latestScr = creatinineChronological.at(-1)
     const admissionSerumCreatinine: ClinicalScoreObjectiveFacts['admissionSerumCreatinine'] =
-      initialScr === undefined ? undefined : { source: initialScr.source, value: initialScr.value }
+      initialScr !== undefined && qualifiesAsInpatientAdmissionLab(initialScr.timestampMs)
+        ? { source: initialScr.source, value: initialScr.value }
+        : null
+    const baselineSerumCreatinine: ClinicalScoreObjectiveFacts['baselineSerumCreatinine'] =
+      initialScr !== undefined && qualifiesAsInpatientBaselineLab(initialScr.timestampMs)
+        ? { source: initialScr.source, value: initialScr.value }
+        : null
     const serumCreatinine: ClinicalScoreObjectiveFacts['serumCreatinine'] =
       latestScr === undefined ? undefined : { source: latestScr.source, value: latestScr.value }
 
@@ -2423,11 +2784,15 @@ export class ClinicalScoreService {
     const initialHb = hbChronological[0]
     const latestHb = hbChronological.at(-1)
     const baselineWbc: ClinicalScoreObjectiveFacts['baselineWbc'] =
-      initialWbc === undefined ? undefined : { source: initialWbc.source, value: initialWbc.value }
+      initialWbc !== undefined && qualifiesAsInpatientBaselineLab(initialWbc.timestampMs)
+        ? { source: initialWbc.source, value: initialWbc.value }
+        : null
     const wbc: ClinicalScoreObjectiveFacts['wbc'] =
       latestWbc === undefined ? undefined : { source: latestWbc.source, value: latestWbc.value }
     const baselineHemoglobin: ClinicalScoreObjectiveFacts['baselineHemoglobin'] =
-      initialHb === undefined ? undefined : { source: initialHb.source, value: initialHb.value }
+      initialHb !== undefined && qualifiesAsInpatientBaselineLab(initialHb.timestampMs)
+        ? { source: initialHb.source, value: initialHb.value }
+        : null
     const hemoglobin: ClinicalScoreObjectiveFacts['hemoglobin'] =
       latestHb === undefined ? undefined : { source: latestHb.source, value: latestHb.value }
     const tcChrono = sortChrono(tcHitsDesc)
@@ -2457,6 +2822,7 @@ export class ClinicalScoreService {
     return {
       admissionSerumCreatinine,
       baselineHemoglobin,
+      baselineSerumCreatinine,
       baselineWbc,
       elevatedCardiacBiomarker,
       hdlCholesterol,
@@ -2619,7 +2985,7 @@ export class ClinicalScoreService {
         }
         if (conditionEffectiveCodes.some(code => /^(?:I2[0-5]|Z95\.[15]|Z98\.61)/i.test(code))) {
           recordCadEventDate(
-            parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start ?? parsed.data.recordedDate,
+            parsed.data.onsetDateTime ?? parsed.data.onsetPeriod?.start,
             ref,
           )
         }
@@ -2710,7 +3076,14 @@ export class ClinicalScoreService {
             reference: `Procedure/${parsed.data.id}`,
             versionId: parsed.data.meta?.versionId ?? '1',
           }
-          recordCadEventDate(parsed.data.performedDateTime ?? parsed.data.performedPeriod?.start, ref)
+          const procIso = parsed.data.performedDateTime ?? parsed.data.performedPeriod?.start
+          const procPrematureCutoff = patientSex === 'female' ? 65 : 55
+          if (procIso && patientBirthDate) {
+            const procAge = completedAgeYears(patientBirthDate, procIso.slice(0, 10))
+            if (procAge !== undefined && procAge < procPrematureCutoff && (cadOnsetAgeYears === undefined || procAge < cadOnsetAgeYears.value)) {
+              cadOnsetAgeYears = { source: ref, value: procAge }
+            }
+          }
           priorCoronaryRevascularization ??= { source: ref, value: true }
           knownCad ??= { source: ref, value: true }
         }
@@ -2813,10 +3186,17 @@ export class ClinicalScoreService {
         version: z.number(),
       })).parse(
         this.#database.driver.prepare(`
-          SELECT order_id, catalog_item_id, display, version
-          FROM inpatient_order
-          WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
-            AND kind = 'medication' AND state IN ('signed', 'verified', 'stop-requested')
+          SELECT o.order_id, o.catalog_item_id, o.display, o.version
+          FROM inpatient_order o
+          WHERE o.workspace_id = ? AND o.epoch = ? AND o.admission_id = ?
+            AND o.kind = 'medication' AND o.state IN ('signed', 'verified', 'stop-requested')
+            AND EXISTS (
+              SELECT 1 FROM inpatient_execution e
+              WHERE e.workspace_id = o.workspace_id
+                AND e.epoch = o.epoch
+                AND e.order_id = o.order_id
+                AND e.status = 'completed'
+            )
         `).all(context.workspaceId, context.epoch, caseId),
       )
       for (const order of activeOrders) {
@@ -2835,7 +3215,7 @@ export class ClinicalScoreService {
 
     const nowMs = Date.parse(nowIso)
     const encounterTimeCache = new Map<string, number | undefined>()
-    const courseDurationByMedReqId = this.#readPrescriptionCourseDurationByMedicationRequestId(context)
+    const localPrescriptionByMedReqId = this.#readLocalPrescriptionMetaByMedicationRequestId(context)
     const withdrawnIds = new Set(
       z.array(z.object({ medication_request_id: z.string() })).parse(
         this.#database.driver.prepare(`
@@ -2857,7 +3237,8 @@ export class ClinicalScoreService {
         const parsed = medicationRequestResourceSchema.safeParse(raw)
         if (!parsed.success || parsed.data.status !== 'active') continue
         if (withdrawnIds.has(parsed.data.id)) continue
-        if (parsed.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs)) {
+        const isCurrentEncounter = parsed.data.encounter?.reference === `Encounter/${encounterId}`
+        if (!isCurrentEncounter && Number.isFinite(nowMs)) {
           const medTsMs =
             parseResourceTimestampMs(parsed.data.authoredOn)
             ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
@@ -2868,11 +3249,6 @@ export class ClinicalScoreService {
           ?? parsed.data.dispenseRequest?.expectedSupplyDuration,
         )
         if (rawHtnBoundsMs === 'invalid') continue
-        const htnBoundsMs = rawHtnBoundsMs ?? courseDurationByMedReqId.get(parsed.data.id)
-        if (parsed.data.authoredOn !== undefined && Number.isFinite(nowMs) && htnBoundsMs !== undefined) {
-          const authoredMs = Date.parse(parsed.data.authoredOn)
-          if (!Number.isFinite(authoredMs) || authoredMs + htnBoundsMs < nowMs) continue
-        }
         const hasExplicitHtnReason = (parsed.data.reason ?? []).some(reason => {
           const ref = reason.reference?.reference
           if (ref !== undefined && hypertensionConditionRefs.has(ref)) return true
@@ -2887,15 +3263,33 @@ export class ClinicalScoreService {
           parsed.data.medication?.concept?.text,
           ...(parsed.data.medication?.concept?.coding ?? []).map(item => item.display),
         ].filter(Boolean).join(' ')
-        if (this.#isAntihypertensiveForHypertension(context, medId, display, hasExplicitHtnReason)) {
-          return {
-            source: {
-              label: `在用处方 ${display || parsed.data.id}`,
-              reference: `MedicationRequest/${parsed.data.id}`,
-              versionId: parsed.data.meta?.versionId ?? '1',
-            },
-            value: true,
+        if (!this.#isAntihypertensiveForHypertension(context, medId, display, hasExplicitHtnReason)) continue
+        const localMeta = localPrescriptionByMedReqId.get(parsed.data.id)
+        const delivery = this.#readMedicationDeliveryEvidence(
+          context,
+          parsed.data.id,
+          nowMs,
+          isArchivedCutoff,
+        )
+        // Local outpatient prescriptions are marked active on sign before pharmacy handover
+        if (localMeta !== undefined && !delivery.hasEvidence) continue
+        const htnBoundsMs = rawHtnBoundsMs ?? localMeta?.courseDurationMs
+        if (Number.isFinite(nowMs)) {
+          if (htnBoundsMs !== undefined) {
+            const anchorMs = delivery.earliestEvidenceMs ?? parseResourceTimestampMs(parsed.data.authoredOn)
+            const inCourseWindow = anchorMs !== undefined && nowMs >= anchorMs && nowMs <= anchorMs + htnBoundsMs
+            if (!inCourseWindow && !delivery.hasActiveSupplyAtCutoff) continue
+          } else if (!delivery.hasOpenEndedEvidence && !delivery.hasActiveSupplyAtCutoff) {
+            continue
           }
+        }
+        return {
+          source: {
+            label: `在用处方 ${display || parsed.data.id}`,
+            reference: `MedicationRequest/${parsed.data.id}`,
+            versionId: parsed.data.meta?.versionId ?? '1',
+          },
+          value: true,
         }
       }
       if (page.nextCursor === undefined) break
@@ -3108,9 +3502,12 @@ export class ClinicalScoreService {
         ].filter(Boolean).join(' ')
         if (!this.#isLipidLoweringMedication(context, medId, display)) continue
         const localPrescription = localPrescriptionByMedReqId.get(parsed.data.id)
-        let earliestDispenseMs: number | undefined
-        let dispenseAnchorMs: number | undefined
-        let dispenseSupplyEndMs: number | undefined
+        const isCurrentEncounter = parsed.data.encounter?.reference === `Encounter/${encounterId}`
+        let earliestAnyDispenseMs: number | undefined
+        let validDispenseCount = 0
+        let hasUntimedDispense = false
+        const dispenseWindows: Array<{ endMs: number; startMs: number }> = []
+        const unsuppliedDispenseStarts: number[] = []
         const dispenseParams = new URLSearchParams({
           _count: '50',
           prescription: `MedicationRequest/${parsed.data.id}`,
@@ -3119,43 +3516,100 @@ export class ClinicalScoreService {
           const dispPage = this.#fhir.search(context, 'MedicationDispense', dispenseParams)
           for (const rawDisp of dispPage.resources) {
             const disp = medicationDispenseResourceSchema.safeParse(rawDisp)
-            if (!disp.success || ['entered-in-error', 'cancelled', 'declined'].includes(disp.data.status ?? '')) continue
+            const dispStatus = disp.success ? (disp.data.status ?? '') : ''
+            if (!disp.success || ['entered-in-error', 'cancelled', 'declined', 'preparation', 'unknown', ''].includes(dispStatus)) continue
             const handedIso = disp.data.whenHandedOver ?? disp.data.whenPrepared
-            const handedMs = handedIso ? Date.parse(handedIso) : Number.NaN
-            if (Number.isFinite(handedMs)) {
-              if (earliestDispenseMs === undefined || handedMs < earliestDispenseMs) {
-                earliestDispenseMs = handedMs
-              }
-              if (dispenseAnchorMs === undefined || handedMs > dispenseAnchorMs) {
-                dispenseAnchorMs = handedMs
-              }
+            const handedMs = parseResourceTimestampMs(handedIso)
+            if (handedMs !== undefined && (earliestAnyDispenseMs === undefined || handedMs < earliestAnyDispenseMs)) {
+              earliestAnyDispenseMs = handedMs
+            }
+            if (Number.isFinite(nowMs)) {
+              if (handedMs === undefined ? isArchivedCutoff : handedMs > nowMs) continue
+            }
+            validDispenseCount += 1
+            if (handedMs !== undefined) {
               const supplyMs = resolveMedicationBoundsDurationMs(disp.data.daysSupply)
               if (typeof supplyMs === 'number') {
-                const candidateEnd = handedMs + supplyMs
-                if (dispenseSupplyEndMs === undefined || candidateEnd > dispenseSupplyEndMs) {
-                  dispenseSupplyEndMs = candidateEnd
-                }
+                dispenseWindows.push({ endMs: handedMs + supplyMs + LIPID_WASHOUT_MS, startMs: handedMs })
+              } else {
+                unsuppliedDispenseStarts.push(handedMs)
               }
+            } else {
+              hasUntimedDispense = true
             }
           }
           if (dispPage.nextCursor === undefined) break
           dispenseParams.set('_cursor', dispPage.nextCursor)
         }
-        // A local outpatient prescription has not begun lowering serum lipids until dispensed by pharmacy
-        if (localPrescription !== undefined && earliestDispenseMs === undefined && localPrescription.prescriptionStatus !== 'dispensed') {
+
+        let earliestAnyAdminMs: number | undefined
+        let validAdminCount = 0
+        let latestAdminMs: number | undefined
+        const adminParams = new URLSearchParams({
+          _count: '50',
+          request: `MedicationRequest/${parsed.data.id}`,
+        })
+        for (;;) {
+          const adminPage = this.#fhir.search(context, 'MedicationAdministration', adminParams)
+          for (const rawAdmin of adminPage.resources) {
+            const admin = medicationAdministrationResourceSchema.safeParse(rawAdmin)
+            const adminStatus = admin.success ? (admin.data.status ?? '') : ''
+            if (!admin.success || ['entered-in-error', 'not-done', 'unknown', ''].includes(adminStatus)) continue
+            const adminStartIso =
+              admin.data.occurencePeriod?.start
+              ?? admin.data.occurrencePeriod?.start
+              ?? admin.data.effectivePeriod?.start
+              ?? admin.data.occurenceDateTime
+              ?? admin.data.occurrenceDateTime
+              ?? admin.data.effectiveDateTime
+              ?? admin.data.recorded
+            const adminEndIso =
+              admin.data.occurencePeriod?.end
+              ?? admin.data.occurrencePeriod?.end
+              ?? admin.data.effectivePeriod?.end
+              ?? adminStartIso
+            const adminStartMs = parseResourceTimestampMs(adminStartIso)
+            const adminEndMs = parseResourceTimestampMs(adminEndIso)
+            if (adminStartMs !== undefined && (earliestAnyAdminMs === undefined || adminStartMs < earliestAnyAdminMs)) {
+              earliestAnyAdminMs = adminStartMs
+            }
+            if (Number.isFinite(nowMs)) {
+              if (adminStartMs === undefined ? isArchivedCutoff : adminStartMs > nowMs) continue
+            }
+            validAdminCount += 1
+            const effectiveLatest = adminEndMs ?? adminStartMs
+            if (effectiveLatest !== undefined && (latestAdminMs === undefined || effectiveLatest > latestAdminMs)) {
+              latestAdminMs = effectiveLatest
+            }
+          }
+          if (adminPage.nextCursor === undefined) break
+          adminParams.set('_cursor', adminPage.nextCursor)
+        }
+
+        // A local outpatient prescription has not begun lowering serum lipids until dispensed at or before the evaluation cutoff
+        if (
+          localPrescription !== undefined
+          && validDispenseCount === 0
+          && validAdminCount === 0
+          && (earliestAnyDispenseMs !== undefined || earliestAnyAdminMs !== undefined || localPrescription.prescriptionStatus !== 'dispensed')
+        ) {
           continue
         }
+        const actualDeliveryStartMs =
+          earliestAnyDispenseMs !== undefined && earliestAnyAdminMs !== undefined
+            ? Math.min(earliestAnyDispenseMs, earliestAnyAdminMs)
+            : (earliestAnyDispenseMs ?? earliestAnyAdminMs)
         const explicitStartMs = parseResourceTimestampMs(
           parsed.data.effectiveDosePeriod?.start
           ?? parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsPeriod?.start,
         )
         const startMs =
-          explicitStartMs
-          ?? earliestDispenseMs
+          actualDeliveryStartMs
+          ?? explicitStartMs
           ?? parseResourceTimestampMs(parsed.data.authoredOn)
           ?? this.#resolveExternalEncounterStartMs(context, parsed.data.encounter?.reference, encounterTimeCache)
         if (
-          parsed.data.encounter?.reference !== `Encounter/${encounterId}`
+          !isCurrentEncounter
           && Number.isFinite(nowMs)
           && (startMs === undefined ? isArchivedCutoff : startMs > nowMs)
         ) {
@@ -3170,61 +3624,45 @@ export class ClinicalScoreService {
           parsed.data.effectiveDosePeriod?.end
           ?? parsed.data.dosageInstruction?.[0]?.timing?.repeat?.boundsPeriod?.end
         const parsedExplicitEnd = explicitPeriodEndIso ? Date.parse(explicitPeriodEndIso) : Number.NaN
+        const source: ClinicalScoreSourceReference = {
+          label: `降脂处方 ${display || parsed.data.id}`,
+          reference: `MedicationRequest/${parsed.data.id}`,
+          versionId: parsed.data.meta?.versionId ?? '1',
+        }
 
-        let endMs = Number.POSITIVE_INFINITY
+        for (const w of dispenseWindows) {
+          exposures.push({ endMs: w.endMs, source, startMs: w.startMs })
+        }
+
+        const allDeliveriesCoveredBySupplyWindows =
+          validDispenseCount > 0
+          && unsuppliedDispenseStarts.length === 0
+          && !hasUntimedDispense
+          && validAdminCount === 0
+
         if (Number.isFinite(parsedExplicitEnd)) {
-          endMs = parsedExplicitEnd + LIPID_WASHOUT_MS
-        } else if (typeof boundsMs === 'number' && (startMs !== undefined || dispenseAnchorMs !== undefined)) {
-          const anchor = Math.max(startMs ?? 0, dispenseAnchorMs ?? 0)
-          endMs = anchor + boundsMs + LIPID_WASHOUT_MS
-        } else if (dispenseSupplyEndMs !== undefined && (status === 'completed' || status === 'stopped')) {
-          endMs = dispenseSupplyEndMs + LIPID_WASHOUT_MS
-        } else if (status === 'completed' || status === 'stopped') {
-          let completionEvidenceMs = parsed.data.statusChanged ? Date.parse(parsed.data.statusChanged) : Number.NaN
-          if (!Number.isFinite(completionEvidenceMs)) {
-            let latestAdminMs: number | undefined
-            const adminParams = new URLSearchParams({
-              _count: '50',
-              request: `MedicationRequest/${parsed.data.id}`,
-            })
-            for (;;) {
-              const adminPage = this.#fhir.search(context, 'MedicationAdministration', adminParams)
-              for (const rawAdmin of adminPage.resources) {
-                const admin = medicationAdministrationResourceSchema.safeParse(rawAdmin)
-                if (!admin.success || ['entered-in-error', 'not-done'].includes(admin.data.status ?? '')) continue
-                const adminEndIso =
-                  admin.data.occurencePeriod?.end
-                  ?? admin.data.occurrencePeriod?.end
-                  ?? admin.data.effectivePeriod?.end
-                  ?? admin.data.occurenceDateTime
-                  ?? admin.data.occurrenceDateTime
-                  ?? admin.data.effectiveDateTime
-                  ?? admin.data.recorded
-                const adminMs = adminEndIso ? Date.parse(adminEndIso) : Number.NaN
-                if (Number.isFinite(adminMs) && (latestAdminMs === undefined || adminMs > latestAdminMs)) {
-                  latestAdminMs = adminMs
-                }
-              }
-              if (adminPage.nextCursor === undefined) break
-              adminParams.set('_cursor', adminPage.nextCursor)
-            }
-            if (latestAdminMs !== undefined) {
+          exposures.push({ endMs: parsedExplicitEnd + LIPID_WASHOUT_MS, source, startMs })
+        } else if (typeof boundsMs === 'number' && startMs !== undefined) {
+          exposures.push({ endMs: startMs + boundsMs + LIPID_WASHOUT_MS, source, startMs })
+        } else if (!allDeliveriesCoveredBySupplyWindows) {
+          let fallbackEndMs = Number.POSITIVE_INFINITY
+          if (status === 'completed' || status === 'stopped') {
+            let completionEvidenceMs = parsed.data.statusChanged ? Date.parse(parsed.data.statusChanged) : Number.NaN
+            if (!Number.isFinite(completionEvidenceMs) && latestAdminMs !== undefined) {
               completionEvidenceMs = latestAdminMs
             }
+            if (Number.isFinite(completionEvidenceMs)) {
+              fallbackEndMs = completionEvidenceMs + LIPID_WASHOUT_MS
+            }
           }
-          if (Number.isFinite(completionEvidenceMs)) {
-            endMs = completionEvidenceMs + LIPID_WASHOUT_MS
+          if (unsuppliedDispenseStarts.length > 0 && !hasUntimedDispense && validAdminCount === 0) {
+            for (const uStart of unsuppliedDispenseStarts) {
+              exposures.push({ endMs: fallbackEndMs, source, startMs: uStart })
+            }
+          } else {
+            exposures.push({ endMs: fallbackEndMs, source, startMs })
           }
         }
-        exposures.push({
-          endMs,
-          source: {
-            label: `降脂处方 ${display || parsed.data.id}`,
-            reference: `MedicationRequest/${parsed.data.id}`,
-            versionId: parsed.data.meta?.versionId ?? '1',
-          },
-          startMs,
-        })
       }
       if (page.nextCursor === undefined) break
       medParams.set('_cursor', page.nextCursor)
@@ -3256,17 +3694,14 @@ export class ClinicalScoreService {
       return exposures.some(exp => exp.startMs !== undefined && tsMs > exp.startMs && tsMs <= exp.endMs)
     }
 
-    const supersededReports = new Set(
-      z.array(z.object({ revision_of_diagnostic_report_id: z.string() })).parse(
-        this.#database.driver.prepare(`
-          SELECT revision_of_diagnostic_report_id
-          FROM laboratory_report_revision
-          WHERE workspace_id = ? AND epoch = ?
-        `).all(context.workspaceId, context.epoch),
-      ).map(row => row.revision_of_diagnostic_report_id),
-    )
+    const revisionIndex = this.#buildReportRevisionIndex(context)
     const excludedObsIds = new Set<string>()
-    const reportMetaByObsId = new Map<string, { issued: string | undefined; reportId: string }>()
+    const reportMetaByObsId = new Map<string, {
+      fallbackIso: string | undefined
+      reportId: string
+      resultIndex: number
+      rootReportId: string
+    }>()
     const reportParams = new URLSearchParams({ _count: '100', patient: `Patient/${patientId}` })
     for (;;) {
       const page = this.#fhir.search(context, 'DiagnosticReport', reportParams)
@@ -3274,15 +3709,21 @@ export class ClinicalScoreService {
         const parsed = diagnosticReportResourceSchema.safeParse(raw)
         if (!parsed.success) continue
         const isSupersededOrInvalid =
-          supersededReports.has(parsed.data.id)
+          revisionIndex.supersededReports.has(parsed.data.id)
           || !['final', 'amended', 'corrected'].includes(parsed.data.status ?? '')
-        for (const ref of parsed.data.result ?? []) {
+        const rootReportId = revisionIndex.resolveRootMeta(parsed.data.id)?.rootReportId ?? parsed.data.id
+        for (const [resultIndex, ref] of (parsed.data.result ?? []).entries()) {
           const obsId = ref.reference?.startsWith('Observation/') ? ref.reference.slice('Observation/'.length) : undefined
           if (!obsId) continue
           if (isSupersededOrInvalid) {
             excludedObsIds.add(obsId)
           } else {
-            reportMetaByObsId.set(obsId, { issued: parsed.data.issued, reportId: parsed.data.id })
+            reportMetaByObsId.set(obsId, {
+              fallbackIso: parsed.data.effectiveDateTime ?? parsed.data.issued,
+              reportId: parsed.data.id,
+              resultIndex,
+              rootReportId,
+            })
           }
         }
       }
@@ -3322,7 +3763,12 @@ export class ClinicalScoreService {
         const quantity = obs.data.valueQuantity?.value
         if (quantity === undefined || unit === undefined) continue
         const reportMeta = reportMetaByObsId.get(obs.data.id)
-        const rawTs = obs.data.effectiveDateTime ?? reportMeta?.issued
+        const rawTs = revisionIndex.resolveObservationOriginalIso(
+          reportMeta?.reportId,
+          reportMeta?.resultIndex,
+          obs.data,
+          reportMeta?.fallbackIso,
+        )
         const timestampMs = parseResourceTimestampMs(rawTs)
         if (obs.data.encounter?.reference !== `Encounter/${encounterId}` && Number.isFinite(nowMs) && timestampMs !== undefined && timestampMs > nowMs) {
           continue
@@ -3344,7 +3790,7 @@ export class ClinicalScoreService {
         }
         const specimenKey =
           obs.data.specimen?.reference
-          ?? (reportMeta === undefined ? `Observation/${obs.data.id}` : `DiagnosticReport/${reportMeta.reportId}`)
+          ?? (reportMeta === undefined ? `Observation/${obs.data.id}` : `DiagnosticReport/${reportMeta.rootReportId}`)
         if (codes.has('2000104A') || codes.has('2093-3') || codes.has('14647-2') || /^(?:总胆固醇|total cholesterol)/i.test(display)) {
           untreatedTc.push({ seq: seq++, source, specimenKey, timestampMs, value: { unit, value: quantity } })
         }

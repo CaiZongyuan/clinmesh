@@ -339,6 +339,7 @@ describe('ClinicalScoresPanel disclosures', () => {
       expect(screen.getAllByText('待补齐：血清肌酐')).toHaveLength(6)
     })
 
+    expect(screen.getByRole('option', { name: '有自发性出血（需医疗救治/干预）' })).toBeTruthy()
     fireEvent.change(screen.getByLabelText('既往自发性出血史'), { target: { value: 'spontaneous' } })
     fireEvent.click(screen.getByRole('button', { name: '保存风险评估' }))
     await waitFor(() => {
@@ -651,6 +652,20 @@ describe('ClinicalScoresPanel disclosures', () => {
       },
     })
     expect(revAfterReport).not.toBe(revBeforeReport)
+    const revBeforeSurgeryExec = buildInpatientClinicalScoreRevision({
+      ...baseInput,
+      surgeries: { executions: [], inProgress: [], requests: [{ id: 'sreq-1', status: 'ready', version: 1 }] },
+    })
+    const revDuringSurgery = buildInpatientClinicalScoreRevision({
+      ...baseInput,
+      surgeries: { executions: [], inProgress: [{ id: 'sexec-1', requestId: 'sreq-1' }], requests: [{ id: 'sreq-1', status: 'ready', version: 1 }] },
+    })
+    const revAfterSurgeryExec = buildInpatientClinicalScoreRevision({
+      ...baseInput,
+      surgeries: { executions: [{ id: 'sexec-1' }], inProgress: [], requests: [{ id: 'sreq-1', status: 'completed', version: 2 }] },
+    })
+    expect(revDuringSurgery).not.toBe(revBeforeSurgeryExec)
+    expect(revAfterSurgeryExec).not.toBe(revDuringSurgery)
 
     let scoreReads = 0
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
