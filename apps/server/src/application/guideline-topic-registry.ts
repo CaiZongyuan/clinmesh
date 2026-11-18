@@ -372,6 +372,21 @@ const TOPICS_BY_ID: ReadonlyMap<GuidelineTopicId, GuidelineTopicDefinition> = ne
   TOPICS_LIST.map(topic => [topic.id, topic]),
 )
 
+const LEGACY_PCI_STENT_2026_11_02_R1_DEFINITION_FINGERPRINT = TOPICS_BY_ID.get('pci-stent')!.fingerprint
+
+export function legacyPciStentTopicFingerprintIfUnchanged(definition: GuidelineTopicDefinition): string | null {
+  if (definition.id !== 'pci-stent' || definition.fingerprint !== LEGACY_PCI_STENT_2026_11_02_R1_DEFINITION_FINGERPRINT) {
+    return null
+  }
+  return canonicalJsonHash({
+    id: definition.id,
+    limitations: definition.limitations,
+    navigation: definition.navigation,
+    references: definition.references,
+    version: definition.version,
+  })
+}
+
 export function listGuidelineTopicDefinitions(): readonly GuidelineTopicDefinition[] {
   return TOPICS_LIST
 }

@@ -28,7 +28,8 @@ import { agentClientSchema, agentCapabilityGrantSchema, revokedAgentCapabilityGr
 import { pciAgentParameters, pciAgentGeneration, pciAgentVerification } from './fixtures/inpatient-drg-agent.ts'
 import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
-import { getGuidelineTopicDefinition } from '../src/application/guideline-topic-registry.ts'
+import { getGuidelineTopicDefinition, legacyPciStentTopicFingerprintIfUnchanged } from '../src/application/guideline-topic-registry.ts'
+import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
 import { setHospitalPatientBirthDate } from './fixtures/guideline-corpus.ts'
@@ -347,8 +348,47 @@ it('计划取消阻止晚到结果，已完成手术保留有效意见只读且�
   const completed = await setup()
   await completed.fixture.runtime.dispatchPending()
   const original = await completed.read()
+  // Simulate a pre-0116 migrated pci-stent row stored with the legacy topic fingerprint and frozen_readable = 0
+  const pciDef = getGuidelineTopicDefinition('pci-stent')
+  const legacyTopicFp = legacyPciStentTopicFingerprintIfUnchanged(pciDef)!
+  expect(legacyTopicFp).not.toBe(pciDef.fingerprint)
+  const storedRow = z.object({ basis_json: z.string(), result_json: z.string() }).parse(
+    completed.fixture.runtime.database.driver.prepare(
+      'SELECT basis_json, result_json FROM inpatient_guideline_advice WHERE admission_id = ? AND request_id = ? ORDER BY version DESC LIMIT 1',
+    ).get(completed.stay.admissionId, completed.stay.requestId),
+  )
+  const selection = await completed.fixture.read('inpatient-doctor', `${completed.stay.path}/pci-selection`, inpatientPciSelectionSchema)
+  const parameters = selection.drafts?.find(item => item.requestId === completed.stay.requestId)?.parameters
+  const legacyBasis = {
+    ...(JSON.parse(storedRow.basis_json) as Record<string, unknown>),
+    dependencyFingerprint: canonicalJsonHash({
+      candidates: selection.candidates,
+      parameters,
+      population: 'adult',
+      topic: legacyTopicFp,
+    }),
+  }
+  const legacyBasisFp = canonicalJsonHash(legacyBasis)
+  const legacyResult = {
+    ...(JSON.parse(storedRow.result_json) as Record<string, unknown>),
+    fingerprint: legacyBasisFp,
+    topic: { fingerprint: legacyTopicFp, id: 'pci-stent', version: pciDef.version },
+  }
+  completed.fixture.runtime.database.driver.prepare(
+    'UPDATE inpatient_guideline_advice SET basis_json = ?, basis_fingerprint = ?, result_json = ?, frozen_readable = 0 WHERE admission_id = ? AND request_id = ?',
+  ).run(JSON.stringify(legacyBasis), legacyBasisFp, JSON.stringify(legacyResult), completed.stay.admissionId, completed.stay.requestId)
+  const activeLegacyRead = await completed.read()
+  expect(activeLegacyRead).toMatchObject({
+    fingerprint: legacyBasisFp,
+    result: { fingerprint: legacyBasisFp, id: original.result!.id },
+    status: original.status,
+  })
   await completed.fixture.executePci(completed.stay)
-  expect(await completed.read()).toMatchObject({ status: 'frozen', result: original.result })
+  expect(await completed.read()).toMatchObject({
+    fingerprint: legacyBasisFp,
+    result: { conclusions: original.result!.conclusions, fingerprint: legacyBasisFp, id: original.result!.id },
+    status: 'frozen',
+  })
   expect((await completed.reprepare()).status).toBe(409)
   await completed.fixture.runtime.dispatchPending()
   expect(completed.calls).toHaveLength(2)

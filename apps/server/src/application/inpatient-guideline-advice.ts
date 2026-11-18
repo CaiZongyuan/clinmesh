@@ -31,6 +31,7 @@ import {
   evaluateTopicPatientIndicators,
   extractSupplementaryIndicators,
   getGuidelineTopicDefinition,
+  legacyPciStentTopicFingerprintIfUnchanged,
   readGuidelineTopicSource,
 } from './guideline-topic-registry.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
@@ -350,12 +351,26 @@ export class InpatientGuidelineAdvice {
           targetSite: parameters?.targetSite ?? null,
         },
       }
+      const legacyTopicFingerprint = legacyPciStentTopicFingerprintIfUnchanged(definition)
+      const legacyFingerprint =
+        legacyTopicFingerprint === null
+          ? null
+          : canonicalJsonHash({
+              ...input,
+              dependencyFingerprint: canonicalJsonHash({
+                candidates: selection.candidates,
+                parameters,
+                population,
+                topic: legacyTopicFingerprint,
+              }),
+            })
       return {
         binding,
         fingerprint: canonicalJsonHash(input),
         frozen: surgery.inProgress.some(item => item.requestId === requestId)
           || surgery.executions.some(item => item.requestId === requestId),
         input,
+        legacyFingerprint,
         requestStatus: request.status,
       }
     }
@@ -446,6 +461,7 @@ export class InpatientGuidelineAdvice {
       fingerprint: canonicalJsonHash(input),
       frozen: binding.status !== 'admitted',
       input,
+      legacyFingerprint: null as string | null,
       requestStatus: null as 'requested' | 'cancelled' | null,
     }
   }
@@ -592,7 +608,12 @@ export class InpatientGuidelineAdvice {
       persistedBasis?.success === true
       && canonicalJsonHash(persistedBasis.data.guidelines) === canonicalJsonHash(basis.input.guidelines)
       && canonicalJsonHash(persistedBasis.data.topic) === canonicalJsonHash(basis.input.topic)
-    const unchanged = row?.basis_fingerprint === basis.fingerprint
+    const unchanged =
+      row !== undefined
+      && (
+        row.basis_fingerprint === basis.fingerprint
+        || (basis.legacyFingerprint !== null && row.basis_fingerprint === basis.legacyFingerprint)
+      )
     const readableSnapshot = unchanged || (isLifecycleFrozen && row?.frozen_readable === 1 && frozenEvidenceIntact)
     let status: Advice['status'] = row?.status ?? 'idle'
     if (row && (!unchanged || !authorized)) status = 'stale'
@@ -619,7 +640,7 @@ export class InpatientGuidelineAdvice {
         ? clampTopicMissingList(persistedBasis.data.missing)
         : basis.input.missing
     const effectiveFingerprint =
-      isLifecycleFrozen && result !== null && row !== undefined
+      row !== undefined && (unchanged || (isLifecycleFrozen && result !== null))
         ? row.basis_fingerprint
         : basis.fingerprint
 
@@ -921,7 +942,10 @@ export class InpatientGuidelineAdvice {
       if (
         latest?.version !== row.version
         || latest.cancelled === 1
-        || basis.fingerprint !== row.basis_fingerprint
+        || (
+          basis.fingerprint !== row.basis_fingerprint
+          && (basis.legacyFingerprint === null || basis.legacyFingerprint !== row.basis_fingerprint)
+        )
         || basis.input.sourceStatus !== 'available'
         || basis.requestStatus === 'cancelled'
         || basis.frozen
