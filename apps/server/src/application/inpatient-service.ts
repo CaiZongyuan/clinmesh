@@ -471,7 +471,8 @@ export class InpatientService {
           .all(context.workspaceId, context.epoch, time))
         for (const bed of beds) {
           if (this.billing.record(context, { admissionId: bed.admission_id, organizationId: bed.organization_id, kind: 'bed', sourceId: bed.admission_id,
-            serviceDate: date, amountFen: bed.daily_price_fen, virtualTime: time, label: '住院床位费' }, effects)) count += 1
+            serviceDate: date, amountFen: bed.daily_price_fen, virtualTime: time, label: '住院床位费',
+            coverageJson: JSON.stringify({ code: `synthetic-inpatient-bed:${bed.bed_id}`, version: '1', included: true, priorSelfPayBps: 0 }) }, effects)) count += 1
         }
       }
       this.orders.applyDueExecutions(context, current, new Date(targetMs).toISOString(), effects)

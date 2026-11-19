@@ -49,6 +49,7 @@ function installedMedicationConfigJson(
     defaultQuantity: medication.workflow.defaultQuantity,
     dose: medication.defaultDose,
     frequency: medication.defaultFrequency,
+    ...(medication.insuranceCoverage === undefined ? {} : { insuranceCoverage: medication.insuranceCoverage }),
     ...('product' in medication
       ? {
           availableScopes: medication.availableScopes,
@@ -82,6 +83,7 @@ function installedServiceConfigJson(
     chargeDefinition: service.chargeDefinition,
     componentServiceIds: service.componentServiceIds,
     executingDepartmentId: service.executingDepartmentId,
+    ...(service.insuranceCoverage === undefined ? {} : { insuranceCoverage: service.insuranceCoverage }),
     nationalService: service.nationalService,
     reportTemplate: service.reportTemplate,
     requestCatalogItemIds: service.requestCatalogItemIds,
@@ -695,19 +697,19 @@ export class ScenarioService {
             ] as const)
         : []),
       legacyVisitCatalog,
-      ['lab-fever-panel', 'laboratory', 'FEVER-PANEL', '发热检验组合', 'Fever laboratory panel', 6800, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}'],
-      ['lab-cbc', 'laboratory', 'CBC', '血常规', 'Complete blood count', 2500, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}'],
-      ['lab-crp', 'laboratory', 'CRP', 'C 反应蛋白', 'C-reactive protein', 4300, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}'],
+      ['lab-fever-panel', 'laboratory', 'FEVER-PANEL', '发热检验组合', 'Fever laboratory panel', 6800, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[],"insuranceCoverage":{"included":true,"priorSelfPayBps":1000}}'],
+      ['lab-cbc', 'laboratory', 'CBC', '血常规', 'Complete blood count', 2500, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[],"insuranceCoverage":{"included":true,"priorSelfPayBps":1000}}'],
+      ['lab-crp', 'laboratory', 'CRP', 'C 反应蛋白', 'C-reactive protein', 4300, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[],"insuranceCoverage":{"included":true,"priorSelfPayBps":1000}}'],
       ['medication-oseltamivir', 'medication', 'OSELTAMIVIR', '磷酸奥司他韦胶囊', 'Oseltamivir phosphate capsules', 760, supportsPrescriptionConclusion
-        ? '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"],"allowedCourseDays":[5],"allowedDiagnosisCatalogItemIds":["diagnosis-influenza"],"allowedQuantities":[10],"defaultCourseDays":5,"defaultQuantity":10}'
-        : '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"]}'],
+        ? '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"],"allowedCourseDays":[5],"allowedDiagnosisCatalogItemIds":["diagnosis-influenza"],"allowedQuantities":[10],"defaultCourseDays":5,"defaultQuantity":10,"insuranceCoverage":{"included":true,"priorSelfPayBps":2000}}'
+        : '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"],"insuranceCoverage":{"included":true,"priorSelfPayBps":2000}}'],
       ['medication-acetaminophen', 'medication', 'ACETAMINOPHEN', '对乙酰氨基酚片', 'Acetaminophen tablets', 120, supportsPrescriptionConclusion
         ? installedMedicationConfigJson(
             hospitalAcetaminophen,
             hospitalDiagnosisIdByCode,
             ['medication-oseltamivir'],
           )
-        : '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"]}'],
+        : '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"],"insuranceCoverage":{"included":true,"priorSelfPayBps":0}}'],
       ...(supportsPrescriptionConclusion
         ? hospitalBaseline.catalog.medications
             .filter(medication => medication.id !== 'medication-acetaminophen')

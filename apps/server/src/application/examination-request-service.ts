@@ -34,6 +34,7 @@ import {
 } from './command-executor.ts'
 import { WorkflowError } from './workflow-error.ts'
 import { OutpatientInvestigationBilling, serviceOutpatientPrice } from './outpatient-investigation-billing.ts'
+import { CLASS_A_COVERAGE, CLASS_B_10_COVERAGE, freezeCatalogCoverageJson } from './catalog-insurance-coverage.ts'
 
 export const examinationRequestPolicy: ClinicalRequestPolicy = {
   dedupPrefix: 'examination-request',
@@ -63,6 +64,7 @@ export const examinationServiceBaseline: ExaminationServiceSnapshot[] = [
     bodySite: '心脏',
     method: '静息十二导联心电图',
     applicability: '成人心血管疾病评估与随访',
+    insuranceCoverage: CLASS_A_COVERAGE,
     reportSections: ['technique', 'findings', 'impression'],
     outpatientBilling: serviceOutpatientPrice('examination', 'examination-ecg-12-lead'),
     version: 1,
@@ -77,6 +79,7 @@ export const examinationServiceBaseline: ExaminationServiceSnapshot[] = [
     bodySite: '心脏',
     method: '经胸超声心动图',
     applicability: '成人心脏结构和功能评估',
+    insuranceCoverage: CLASS_B_10_COVERAGE,
     reportSections: ['technique', 'findings', 'impression'],
     outpatientBilling: serviceOutpatientPrice('examination', 'examination-tte'),
     version: 1,
@@ -213,7 +216,7 @@ export class ExaminationRequestService {
           service.name,
           service.name,
           service.version,
-          JSON.stringify({ examinationService: service }),
+          JSON.stringify({ examinationService: service, insuranceCoverage: service.insuranceCoverage }),
         )
         this.#database.driver
           .prepare(
@@ -222,6 +225,19 @@ export class ExaminationRequestService {
           WHERE workspace_id=? AND epoch=? AND service_id=? AND json_type(config_json,'$.examinationService.outpatientBilling') IS NULL`,
           )
           .run(JSON.stringify(service.outpatientBilling), current.workspaceId, current.epoch, service.id)
+        this.#database.driver
+          .prepare(
+            `UPDATE hospital_service_catalog
+          SET config_json=json_set(config_json,'$.examinationService.insuranceCoverage',json(?),'$.insuranceCoverage',json(?))
+          WHERE workspace_id=? AND epoch=? AND service_id=? AND json_type(config_json,'$.examinationService.insuranceCoverage') IS NULL`,
+          )
+          .run(
+            JSON.stringify(service.insuranceCoverage),
+            JSON.stringify(service.insuranceCoverage),
+            current.workspaceId,
+            current.epoch,
+            service.id,
+          )
         const priceFen = service.examCode === 'ecg-12-lead' ? 3000 : 18000
         this.#database.driver
           .prepare(
@@ -593,6 +609,11 @@ export class ExaminationRequestService {
             descriptionZh: service.name,
             descriptionEn: service.name,
             price: service.outpatientBilling,
+            coverageJson: freezeCatalogCoverageJson(
+              `synthetic-op-examination:ServiceRequest/${serviceRequest.id!}`,
+              `item-v${service.version}`,
+              service.insuranceCoverage,
+            ),
             now,
           })
         : undefined

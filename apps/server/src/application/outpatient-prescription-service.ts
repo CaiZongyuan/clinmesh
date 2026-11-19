@@ -56,6 +56,7 @@ import {
   type OutpatientWorkflowContext,
 } from './outpatient-workflow-context.ts'
 import type { ClinicalQualityService } from './clinical-quality-service.ts'
+import { freezeCatalogCoverageJson, readConfigInsuranceCoverage } from './catalog-insurance-coverage.ts'
 import { WorkflowError } from './workflow-error.ts'
 
 export interface OutpatientPrescriptionHost {
@@ -667,8 +668,8 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       INSERT INTO prescription_item (
         workspace_id, epoch, prescription_id, medication_request_id,
         medication_id, medication_snapshot_json, quantity, dose_text,
-        frequency_code, course_days
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        frequency_code, course_days, unit_price_fen, coverage_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     const issuedItems = medications.map((medication) => {
       const medicationResourceId = medication.external ? uuidv7() : medication.catalogItemId
@@ -745,6 +746,14 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         medication.doseText,
         medication.frequencyCode,
         medication.courseDays,
+        medication.external ? 0 : medication.catalog.price_fen,
+        medication.external
+          ? null
+          : freezeCatalogCoverageJson(
+              `synthetic-med:${medication.catalogItemId}`,
+              `item-v${medication.catalog.version}`,
+              readConfigInsuranceCoverage(medication.catalog.config_json),
+            ),
       )
       return {
         catalogItemId: medication.catalogItemId,

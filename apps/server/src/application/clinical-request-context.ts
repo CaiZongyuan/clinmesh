@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
+import { frozenCatalogCoverageSchema } from './catalog-insurance-coverage.ts'
 import type { ActorContext, CommandTransaction } from './command-executor.ts'
 import { InpatientBilling, type InpatientEffects } from './inpatient-billing.ts'
 import { WorkflowError } from './workflow-error.ts'
@@ -28,10 +29,11 @@ export function recordInpatientInvestigationCharge(database: ClinMeshDatabase, t
   const effects: InpatientEffects = []
   if (row === undefined) return effects
   if(row.financial_status!=='open' || !['admitted','discharge-pending'].includes(row.status)) throw new WorkflowError('WORKFLOW_CONFLICT','住院已出区或结算，不能追加检查费用')
-  const definition = z.object({ display: z.string().min(1), trigger: z.literal('execution-completed'), priceFen: z.number().int().nonnegative().safe() }).parse(JSON.parse(row.charge_definition_json))
+  const definition = z.object({ display: z.string().min(1), trigger: z.literal('execution-completed'), priceFen: z.number().int().nonnegative().safe(), insuranceCoverage: frozenCatalogCoverageSchema.optional() }).parse(JSON.parse(row.charge_definition_json))
   if (definition.priceFen !== row.price_fen) throw new WorkflowError('WORKFLOW_CONFLICT', '住院检查冻结价目不一致')
   new InpatientBilling(database, transaction.fhir).record(context, { admissionId: row.admission_id, organizationId: row.organization_id,
     kind: row.request_kind, sourceId: requestId, serviceDate: new Date(Date.parse(now) + 8 * 3_600_000).toISOString().slice(0, 10),
-    amountFen: row.price_fen, virtualTime: now, label: definition.display }, effects)
+    amountFen: row.price_fen, virtualTime: now, label: definition.display,
+    ...(definition.insuranceCoverage === undefined ? {} : { coverageJson: JSON.stringify(definition.insuranceCoverage) }) }, effects)
   return effects
 }

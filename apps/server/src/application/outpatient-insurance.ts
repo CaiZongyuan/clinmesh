@@ -4,7 +4,9 @@ import {
   type InsuranceSource,
   type InsuranceTarget,
 } from '@clinmesh/contracts/insurance'
+import { adjustChargeItemsToTotal } from '@clinmesh/core/insurance'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
+import { parseFrozenCoverageJson } from './catalog-insurance-coverage.ts'
 import type { ActorContext } from './command-executor.ts'
 import { InsuranceError } from './insurance-service.ts'
 
@@ -16,6 +18,28 @@ const syntheticCoverage = {
   pathology: { sourcePrefix: 'ServiceRequest/', included: false, priorSelfPayBps: 0 },
   medication: { sourcePrefix: 'Prescription/', included: true, priorSelfPayBps: 2000 },
 } as const
+
+const prescriptionItemRowSchema = z.object({
+  medication_request_id: z.string(),
+  medication_id: z.string(),
+  medication_snapshot_json: z.string(),
+  quantity: z.number().int().positive(),
+  unit_price_fen: z.number().int().nonnegative().nullable(),
+  coverage_json: z.string().nullable(),
+})
+
+function prescriptionItemLabel(snapshotJson: string, fallbackId: string): string {
+  try {
+    const parsed = z.object({
+      genericName: z.string().min(1).optional(),
+      display: z.string().min(1).optional(),
+    }).safeParse(JSON.parse(snapshotJson))
+    if (parsed.success) return parsed.data.genericName ?? parsed.data.display ?? fallbackId
+  } catch {
+    /* Fall back to medication_id when snapshot lacks display fields. */
+  }
+  return fallbackId
+}
 
 export function readOutpatientInsuranceAllocations(
   database: ClinMeshDatabase,
@@ -45,7 +69,7 @@ export function readOutpatientInsuranceAllocations(
   )
 }
 
-/** 明确合成的普通门诊目录 v1：挂号目录外，检验先行10%，药品先行20%。 */
+/** 优先读取原费用/处方明细冻结的品规级甲乙丙快照；仅历史 NULL 行回退分类合成规则。 */
 export function readOutpatientInsuranceSource(
   database: ClinMeshDatabase,
   context: ActorContext,
@@ -68,8 +92,9 @@ export function readOutpatientInsuranceSource(
         version: z.number().int(),
         amount_fen: z.number().int().nonnegative(),
         description_zh: z.string(),
-        category: z.enum(['registration', 'laboratory', 'imaging', 'pathology', 'examination', 'medication']),
+        category: z.string().min(1),
         source_reference: z.string(),
+        coverage_json: z.string().nullable(),
       }),
     )
     .parse(
@@ -97,6 +122,12 @@ export function readOutpatientInsuranceSource(
         .all(context.workspaceId, context.epoch, target.id),
     )
   const allocated = readOutpatientInsuranceAllocations(database, context, target.id)
+  const selectPrescriptionItems = database.driver.prepare(
+    `SELECT medication_request_id, medication_id, medication_snapshot_json, quantity, unit_price_fen, coverage_json
+       FROM prescription_item
+       WHERE workspace_id=? AND epoch=? AND prescription_id=?
+       ORDER BY rowid`,
+  )
   return {
     target,
     patientId: patient.patient_id,
@@ -105,22 +136,102 @@ export function readOutpatientInsuranceSource(
     charges: charges
       .filter((charge) => !allocated.has(`ChargeItem/${charge.charge_item_id}`))
       .map((charge) => {
-        const coverage = syntheticCoverage[charge.category]
-        if (!charge.source_reference.startsWith(coverage.sourcePrefix))
+        const legacy = Object.hasOwn(syntheticCoverage, charge.category)
+          ? syntheticCoverage[charge.category as keyof typeof syntheticCoverage]
+          : undefined
+        if (legacy === undefined) {
+          throw new InsuranceError(
+            'INSURANCE_COVERAGE_UNAVAILABLE',
+            '原费用缺少合成医保目录映射，不可按零值结算',
+            409,
+          )
+        }
+        if (!charge.source_reference.startsWith(legacy.sourcePrefix))
           throw new InsuranceError(
             'INSURANCE_COVERAGE_MISSING',
             '原费用缺少合成目录映射，不可按零值结算',
           )
+        const outerCode = `synthetic-op-${charge.category}:${charge.source_reference}`
+        if (charge.category === 'medication') {
+          const prescriptionId = charge.source_reference.slice('Prescription/'.length)
+          const itemRows = z.array(prescriptionItemRowSchema).parse(
+            selectPrescriptionItems.all(context.workspaceId, context.epoch, prescriptionId),
+          )
+          const hasFrozenItemData = itemRows.some(
+            (row) => row.unit_price_fen !== null || row.coverage_json !== null,
+          )
+          if (hasFrozenItemData) {
+            const rawItems = itemRows.map((row) => {
+              const resolved = parseFrozenCoverageJson(row.coverage_json)
+              if (row.unit_price_fen === null || resolved.status !== 'valid') {
+                throw new InsuranceError(
+                  'INSURANCE_COVERAGE_UNAVAILABLE',
+                  '处方明细缺少合成医保目录映射，不可按零值结算',
+                  409,
+                )
+              }
+              return {
+                id: row.medication_request_id,
+                label: prescriptionItemLabel(row.medication_snapshot_json, row.medication_id),
+                quantity: row.quantity,
+                amountFen: row.unit_price_fen * row.quantity,
+                coverage: resolved.coverage,
+              }
+            })
+            const adjustedItems = adjustChargeItemsToTotal(rawItems, charge.amount_fen)
+            const first = adjustedItems[0]!
+            const single = adjustedItems.length === 1
+            const anyIncluded = adjustedItems.some((item) => item.coverage.included)
+            const uniform = adjustedItems.every(
+              (item) =>
+                item.coverage.included === first.coverage.included &&
+                item.coverage.priorSelfPayBps === first.coverage.priorSelfPayBps,
+            )
+            return {
+              reference: `ChargeItem/${charge.charge_item_id}`,
+              label: charge.description_zh,
+              version: String(charge.version),
+              amountFen: charge.amount_fen,
+              coverage: {
+                code: outerCode,
+                version: single ? first.coverage.version : 'synthetic-op-directory-v2',
+                included: anyIncluded,
+                priorSelfPayBps: uniform ? first.coverage.priorSelfPayBps : 0,
+              },
+              items: adjustedItems,
+            }
+          }
+        }
+        const resolved = parseFrozenCoverageJson(charge.coverage_json)
+        if (resolved.status === 'invalid') {
+          throw new InsuranceError(
+            'INSURANCE_COVERAGE_UNAVAILABLE',
+            '原费用缺少合成医保目录映射，不可按零值结算',
+            409,
+          )
+        }
+        if (resolved.status === 'valid') {
+          return {
+            reference: `ChargeItem/${charge.charge_item_id}`,
+            label: charge.description_zh,
+            version: String(charge.version),
+            amountFen: charge.amount_fen,
+            coverage: {
+              ...resolved.coverage,
+              code: outerCode,
+            },
+          }
+        }
         return {
           reference: `ChargeItem/${charge.charge_item_id}`,
           label: charge.description_zh,
           version: String(charge.version),
           amountFen: charge.amount_fen,
           coverage: {
-            code: `synthetic-op-${charge.category}:${charge.source_reference}`,
+            code: outerCode,
             version: 'synthetic-op-directory-v1',
-            included: coverage.included,
-            priorSelfPayBps: coverage.priorSelfPayBps,
+            included: legacy.included,
+            priorSelfPayBps: legacy.priorSelfPayBps,
           },
         }
       }),

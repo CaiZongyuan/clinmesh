@@ -390,7 +390,8 @@ export class InpatientSurgery {
     const actual = inpatientProcedureItemSchema.parse(JSON.parse(execution.actual_procedure_json)), now = this.owner.virtualTime(context)
     this.owner.billing.record(context, { admissionId: execution.admission_id, organizationId: execution.organization_id,
       kind: 'surgery', sourceId: execution.execution_id, amountFen: actual.chargeDefinition.priceFen,
-      serviceDate: businessDate(now), virtualTime: now, label: actual.coding.display }, effects)
+      serviceDate: businessDate(now), virtualTime: now, label: actual.coding.display,
+      coverageJson: JSON.stringify({ code: `synthetic-inpatient-surgery:${actual.id}`, version: `item-v${actual.version}`, included: true, priorSelfPayBps: 0 }) }, effects)
   }
   private finish(context: ActorContext, request: z.infer<typeof requestRowSchema>, execution: z.infer<typeof executionRowSchema>, note: string, effects: InpatientEffects, transaction: CommandTransaction) {
     const now = this.owner.virtualTime(context)
@@ -458,7 +459,8 @@ export class InpatientSurgery {
       effects.push({ kind: 'updated', reference: `InpatientMaterialReservation/${reservation.reservation_id}`, versionId: String(reservation.version + 1) })
     }
     this.owner.billing.record(context, { admissionId: execution.admission_id, organizationId: execution.organization_id,
-      kind: 'material', sourceId: id, serviceDate: businessDate(now), virtualTime: now, amountFen, label: item.display }, effects)
+      kind: 'material', sourceId: id, serviceDate: businessDate(now), virtualTime: now, amountFen, label: item.display,
+      coverageJson: JSON.stringify({ code: `synthetic-inpatient-material:${item.id}`, version: `item-v${item.version}`, included: false, priorSelfPayBps: 0 }) }, effects)
     effects.push({ kind: 'created', reference: `InpatientSurgeryMaterial/${id}`, versionId: '1' })
     return id
   }

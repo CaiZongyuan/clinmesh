@@ -398,13 +398,16 @@ export class WorkflowService
           return
         }
         for (const charge of source.charges) {
-          if (charge.coverage.included === false) continue
+          const anyIncluded = charge.items !== undefined && charge.items.length > 0
+            ? charge.items.some(item => item.coverage.included)
+            : charge.coverage.included
+          if (!anyIncluded) continue
           const facts = z.object({
             charge_id: z.string(),
             charge_item_id: z.string(),
             current_amount_fen: z.number(),
             charge_version: z.number(),
-            category: z.enum(['laboratory', 'examination', 'medication']),
+            category: z.enum(['laboratory', 'imaging', 'pathology', 'examination', 'medication']),
             case_id: z.string(),
             case_status: paymentPreviewRowSchema.shape.case_status,
             patient_id: z.string(),
