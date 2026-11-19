@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { insuranceBalanceSchema, insuranceCancelInputSchema, insuranceConfirmInputSchema, insurancePlans, insurancePreviewInputSchema, insurancePreviewSchema, insuranceResponseSchema, insuranceSettlementSchema, insuranceSourceSchema, insuranceStateSchema, type InsuranceSource, type InsuranceTarget } from '@clinmesh/contracts/insurance'
+import { allocateInsuranceBenefits, InsuranceItemSumMismatchError } from '@clinmesh/core/insurance'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { ActorContext, CommandEffect, CommandExecutor, CommandTransaction } from './command-executor.ts'
 import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
@@ -105,20 +106,15 @@ export class InsuranceService {
     if(!this.database.driver.inTransaction)throw new InsuranceError('INSURANCE_TRANSACTION_REQUIRED','待遇预览必须处于 Command 事务')
     const balance=this.balance(context,source.patientId,year)
     if(balance.planCode!==undefined&&balance.planCode!==planCode)throw new InsuranceError('INSURANCE_PLAN_CONFLICT','原年度合成方案不可切换')
-      const plan=insurancePlans[planCode], parameters=plan[source.target.kind]
-      let deductible=Math.max(0,parameters.deductibleFen-(source.target.kind==='outpatient'?balance.outpatientEligibleFen:balance.inpatientEligibleFen))
-      let cap=Math.max(0,parameters.capFen-(source.target.kind==='outpatient'?balance.outpatientFundFen:balance.inpatientFundFen))
-      let account=balance.planCode===undefined?plan.initialAccountFen:balance.accountFen
-      const allocations=source.charges.map(charge=>{
-        const outsideFen=charge.coverage.included?0:charge.amountFen
-        const priorSelfPayFen=charge.coverage.included?Number(BigInt(charge.amountFen)*BigInt(charge.coverage.priorSelfPayBps)/10000n):0
-        const eligibleFen=charge.amountFen-outsideFen-priorSelfPayFen, deductibleFen=Math.min(eligibleFen,deductible)
-        deductible-=deductibleFen
-        const fundFen=Math.min(cap,Number(BigInt(eligibleFen-deductibleFen)*BigInt(parameters.ratioBps)/10000n));cap-=fundFen
-        // 目录外费用由患者承担，个人账户仅抵扣目录内个人负担。
-        const accountFen=Math.min(account,charge.amountFen-outsideFen-fundFen);account-=accountFen
-        return {reference:charge.reference,amountFen:charge.amountFen,outsideFen,priorSelfPayFen,eligibleFen,deductibleFen,fundFen,accountFen,patientFen:charge.amountFen-fundFen-accountFen}
-      })
+      let allocations
+      try {
+        allocations=allocateInsuranceBenefits({source,planCode,balance})
+      } catch (error) {
+        if (error instanceof InsuranceItemSumMismatchError) {
+          throw new InsuranceError('INSURANCE_SOURCE_INVALID','费用明细合计与原费用不一致',409)
+        }
+        throw error
+      }
       const sum=(field:'amountFen'|'fundFen'|'accountFen'|'patientFen'|'eligibleFen'|'deductibleFen')=>allocations.reduce((value,row)=>value+row[field],0)
       const previewId=randomUUID(),commitToken=randomUUID()+randomUUID(),now=this.options.now?.()??new Date()
       const settlement=insuranceSettlementSchema.parse({id:randomUUID(),target:source.target,planCode:planCode,year:balance.year,source,sourceFingerprint:hash(source),allocations,totalFen:sum('amountFen'),fundFen:sum('fundFen'),accountFen:sum('accountFen'),patientFen:sum('patientFen'),eligibleFen:sum('eligibleFen'),deductibleFen:sum('deductibleFen'),balanceVersion:balance.version,createdAt:now.toISOString()})

@@ -36,6 +36,7 @@ import {
 } from './command-executor.ts'
 import { WorkflowError } from './workflow-error.ts'
 import { OutpatientInvestigationBilling, serviceOutpatientPrice } from './outpatient-investigation-billing.ts'
+import { CLASS_C_COVERAGE, freezeCatalogCoverageJson } from './catalog-insurance-coverage.ts'
 
 export const pathologyRequestPolicy: ClinicalRequestPolicy = {
   dedupPrefix: 'pathology-request',
@@ -62,6 +63,7 @@ export const pathologyServiceBaseline: PathologyServiceSnapshot[] = [
     department: '病理科',
     examCode: 'breast-slide-consultation',
     id: 'pathology-breast-slide-consultation',
+    insuranceCoverage: CLASS_C_COVERAGE,
     outpatientBilling: serviceOutpatientPrice('pathology', 'pathology-breast-slide-consultation'),
     name: '乳腺切片病理会诊',
     reportSections: ['specimen', 'microscopy', 'diagnosis', 'immunohistochemistry', 'note'],
@@ -229,6 +231,10 @@ export class PathologyRequestService {
           SET config_json=json_set(config_json,'$.pathologyService.outpatientBilling',json(?))
           WHERE workspace_id=? AND epoch=? AND service_id=? AND json_type(config_json,'$.pathologyService.outpatientBilling') IS NULL`)
           .run(JSON.stringify(service.outpatientBilling), current.workspaceId, current.epoch, service.id)
+        this.#database.driver.prepare(`UPDATE hospital_service_catalog
+          SET config_json=json_set(config_json,'$.pathologyService.insuranceCoverage',json(?))
+          WHERE workspace_id=? AND epoch=? AND service_id=? AND json_type(config_json,'$.pathologyService.insuranceCoverage') IS NULL`)
+          .run(JSON.stringify(service.insuranceCoverage), current.workspaceId, current.epoch, service.id)
       }
     }
   }
@@ -586,7 +592,13 @@ export class PathologyRequestService {
     this.#updateDraft(input.context, outpatientCase.case_id, draft.version, { now })
     const billing = new OutpatientInvestigationBilling(this.#database).issue(transaction, input.context, {
       requestId, serviceRequestId: serviceRequest.id!, caseId: outpatientCase.case_id, category: 'pathology',
-      descriptionZh: service.name, descriptionEn: service.name, price: service.outpatientBilling, now,
+      descriptionZh: service.name, descriptionEn: service.name, price: service.outpatientBilling,
+      coverageJson: freezeCatalogCoverageJson(
+        `synthetic-op-pathology:ServiceRequest/${serviceRequest.id!}`,
+        `item-v${service.version}`,
+        service.insuranceCoverage,
+      ),
+      now,
     })
     return {
       data: {

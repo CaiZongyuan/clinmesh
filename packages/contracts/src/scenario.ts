@@ -1,4 +1,5 @@
 import { medicationSafetyRuleSchema } from './medication-safety.ts'
+import { catalogInsuranceCoverageSchema } from './investigation-billing.ts'
 import { z } from 'zod'
 import {
   referenceConceptSnapshotSchema,
@@ -287,6 +288,7 @@ const scenarioLegacyMedicationCatalogItemSchema = scenarioCatalogItemBaseSchema.
   defaultFrequency: z.string().min(1),
   defaultRoute: z.string().min(1),
   dosageForm: z.string().min(1),
+  insuranceCoverage: catalogInsuranceCoverageSchema.optional(),
   restriction: z.string().min(1).nullable(),
   unit: z.string().min(1),
   workflow: scenarioMedicationWorkflowSchema,
@@ -362,6 +364,7 @@ export const scenarioHospitalServiceCatalogItemSchema = scenarioCatalogItemBaseS
   }).strict(),
   componentServiceIds: z.array(z.string().min(1)),
   executingDepartmentId: z.string().min(1),
+  insuranceCoverage: catalogInsuranceCoverageSchema.optional(),
   nationalService: z.object({
     code: z.string().min(1),
     display: z.string().min(1),

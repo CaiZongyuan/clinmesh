@@ -1051,15 +1051,25 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     try {
       const orders = database.driver.prepare('SELECT * FROM inpatient_order').all()
       const executions = database.driver.prepare('SELECT * FROM inpatient_execution').all()
-      // 还原同一表在 0112 前的三个频次约束，保留真实业务行和下游外键。
+      // 还原同一表在 0112 前的三个频次约束，并回退后续新增列以验证顺序迁移。
       database.driver.pragma('foreign_keys=OFF')
+      database.driver.exec(`
+        ALTER TABLE prescription_item DROP COLUMN unit_price_fen;
+        ALTER TABLE prescription_item DROP COLUMN coverage_json;
+        ALTER TABLE charge_record DROP COLUMN coverage_json;
+        ALTER TABLE inpatient_order DROP COLUMN coverage_json;
+        ALTER TABLE inpatient_charge DROP COLUMN coverage_json;
+        ALTER TABLE laboratory_service_publication_job DROP COLUMN coverage_overrides_json;
+      `)
       const rebuild = await readFile('drizzle/0112_medication-frequency.sql', 'utf8')
       database.driver.exec(rebuild.replace("'QD','BID','TID','QN','PRN','ONCE'", "'QD','BID','PRN'"))
-      database.driver.prepare('DELETE FROM schema_migration WHERE migration_id=?').run('0112_medication-frequency.sql')
+      database.driver.prepare('DELETE FROM schema_migration WHERE migration_id IN (?,?)').run('0112_medication-frequency.sql', '0118_item-insurance-coverage.sql')
       database.driver.pragma('foreign_keys=ON')
       expect(() => database.driver.prepare("UPDATE inpatient_order SET frequency_code='TID'").run()).toThrow(/CHECK/)
-      expect(applyMigrations(database, 'drizzle').applied).toEqual(['0112_medication-frequency.sql'])
-      expect(database.driver.prepare('SELECT * FROM inpatient_order').all()).toEqual(orders)
+      expect(applyMigrations(database, 'drizzle').applied).toEqual(['0112_medication-frequency.sql', '0118_item-insurance-coverage.sql'])
+      expect(database.driver.prepare('SELECT * FROM inpatient_order').all()).toEqual(
+        (orders as Array<Record<string, unknown>>).map(row => ({ ...row, coverage_json: null })),
+      )
       expect(database.driver.prepare('SELECT * FROM inpatient_execution').all()).toEqual(executions)
       for (const frequency of ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE']) expect(() => database.driver.prepare('UPDATE inpatient_order SET frequency_code=?').run(frequency)).not.toThrow()
       expect(() => database.driver.prepare("UPDATE inpatient_order SET frequency_code='Q4H'").run()).toThrow(/CHECK/)

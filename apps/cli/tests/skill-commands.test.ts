@@ -326,6 +326,17 @@ it('固定 PCI 来源与直接住院示例使用窄合同并各自恢复原回�
     expect(inspectExample(program, commandLines(skill!).find(line => line.startsWith(prefix!))!).operation?.id).toBe(id)
     expect(skill).toContain(`--operation-id ${id}`)
   }
+  const publish = getHisOperation('admin.laboratory-services.publish')
+  expect(publish.version).toBe(3)
+  expect(publish.skill).toBe('clinmesh-administrator')
+  expect(inspectExample(program, commandLines(admin).find(line => line.startsWith('clinmesh admin laboratory-services publish '))!).operation?.id).toBe(publish.id)
+  expect(publish.input.safeParse({
+    entries: [{ conceptId: 'wst-886:2026:2100404B', expectedVersion: 1, insuranceCoverage: { included: true, priorSelfPayBps: 1500 } }],
+  }).success).toBe(true)
+  expect(publish.input.safeParse({
+    entries: [{ conceptId: 'wst-886:2026:2100404B', expectedVersion: 1, insuranceCoverage: { included: false, priorSelfPayBps: 1000 } }],
+  }).success).toBe(false)
+  for (const term of ['admin.laboratory-services.publish', 'insuranceCoverage', 'priorSelfPayBps']) expect(admin).toContain(term)
 })
 
 it('住院退款示例及Catalog保留单笔一千万元上限', async () => {
@@ -432,7 +443,7 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     ['clinmesh refund confirm ', 'refund.confirm', 1],
     ['clinmesh refund recover ', 'refund.recover', 2],
     ['clinmesh insurance get ', 'insurance.get', 1],
-    ['clinmesh insurance preview ', 'insurance.preview', 1],
+    ['clinmesh insurance preview ', 'insurance.preview', 2],
     ['clinmesh insurance confirm ', 'insurance.confirm', 1],
     ['clinmesh insurance cancel ', 'insurance.cancel', 1],
   ] as const) {
@@ -451,7 +462,7 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     'Recovery queries the channel without collecting again', 'only a fully paid charge',
     'Registration charges remain unpaid and read-only']) expect(skill).toContain(term)
   for (const term of ['expectedBalanceVersion', 'annualBalances', 'INSURANCE_PREVIEW_STALE', 'not payment tenders',
-    'calendar year', 'preserves later transactions and clinical progress', 'INSURANCE_FUNDS_CONFLICT', 'completed Encounter']) expect(skill).toContain(term)
+    'calendar year', 'preserves later transactions and clinical progress', 'INSURANCE_FUNDS_CONFLICT', 'INSURANCE_COVERAGE_UNAVAILABLE', 'completed Encounter']) expect(skill).toContain(term)
   for (const id of ['insurance.preview', 'insurance.confirm']) expect(getHisOperation(id).summary).toContain('INSURANCE_FUNDS_CONFLICT')
   for (const term of ['current-Epoch human cashier', 'completed Scenario Run', 'closed Run and completed Agent Grant are rejected']) expect(skill).toContain(term)
   for (const term of ['current-Epoch human cashier', 'active/completed Scenario Run', 'closed Run and completed Agent Grant are rejected']) expect(getHisOperation('refund.recover').summary).toContain(term)

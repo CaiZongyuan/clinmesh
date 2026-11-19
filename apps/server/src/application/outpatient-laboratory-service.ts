@@ -47,6 +47,7 @@ import {
 } from './outpatient-workflow-context.ts'
 import { hasLaboratoryCriticalBounds, isLaboratoryValueCritical } from './laboratory-adult-reference.ts'
 import { WorkflowError } from './workflow-error.ts'
+import { freezeCatalogCoverageJson, readConfigInsuranceCoverage } from './catalog-insurance-coverage.ts'
 
 const laboratoryServiceConfigSchema = z.object({
   laboratoryService: laboratoryServiceSnapshotSchema,
@@ -897,11 +898,18 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
         'The laboratory request draft version has changed',
       )
     }
+    const laboratoryCoverage = laboratoryService?.insuranceCoverage
+      ?? readConfigInsuranceCoverage('config_json' in catalog ? catalog.config_json : undefined, 'laboratoryService')
     const charge = inpatientRequestOwner(this.#context.database, input.context, outpatientCase.case_id) === undefined
       ? this.#context.outpatientBilling.issue(transaction, input.context, {
           requestId, serviceRequestId, caseId: outpatientCase.case_id, category: 'laboratory',
           descriptionZh: catalog.name_zh, descriptionEn: catalog.name_en, now,
           price,
+          coverageJson: freezeCatalogCoverageJson(
+            `synthetic-op-laboratory:ServiceRequest/${serviceRequestId}`,
+            `item-v${laboratoryService?.version ?? catalog.version}`,
+            laboratoryCoverage,
+          ),
         })
       : undefined
     return {
@@ -1991,8 +1999,8 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
         INSERT INTO charge_record (
           workspace_id, epoch, charge_id, case_id, account_id, charge_item_id,
           category, source_reference, description_zh, description_en,
-          quantity, unit_price_fen, total_fen, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'laboratory', ?, ?, ?, 1, ?, ?, 'billable', ?)
+          quantity, unit_price_fen, total_fen, status, created_at, coverage_json
+        ) VALUES (?, ?, ?, ?, ?, ?, 'laboratory', ?, ?, ?, 1, ?, ?, 'billable', ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
@@ -2006,6 +2014,11 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
         catalog.price_fen,
         catalog.price_fen,
         now,
+        freezeCatalogCoverageJson(
+          `synthetic-op-laboratory:ServiceRequest/${serviceRequestId}`,
+          `item-v${catalog.version}`,
+          readConfigInsuranceCoverage(catalog.config_json),
+        ),
       )
       this.#context.database.driver.prepare(`
         UPDATE outpatient_case

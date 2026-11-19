@@ -807,6 +807,7 @@ function useSyntheticLaboratoryCatalog(runtime: Awaited<ReturnType<typeof create
   update.run(JSON.stringify({
     allowedIndicationCodes: ['fever', 'clinical-evaluation'],
     contraindicatedAllergyCodes: [],
+    insuranceCoverage: { included: true, priorSelfPayBps: 1000 },
     referenceConcept: {
       code: '6690-2',
       display: '白细胞计数',
@@ -826,6 +827,7 @@ function useSyntheticLaboratoryCatalog(runtime: Awaited<ReturnType<typeof create
   update.run(JSON.stringify({
     allowedIndicationCodes: ['fever', 'clinical-evaluation'],
     contraindicatedAllergyCodes: [],
+    insuranceCoverage: { included: true, priorSelfPayBps: 1000 },
     referenceConcept: {
       code: '1988-5',
       display: 'C 反应蛋白',

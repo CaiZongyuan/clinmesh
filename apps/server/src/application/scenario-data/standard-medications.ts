@@ -1,8 +1,38 @@
+import type { CatalogInsuranceCoverage } from '@clinmesh/contracts/insurance'
 import type { ScenarioProductMedicationCatalogItem } from '@clinmesh/contracts/scenario'
 import type { MedicationSafetyRule } from '@clinmesh/contracts/medication-safety'
 import { medicationCombinationConflict } from '@clinmesh/core/medication-safety'
+import {
+  CLASS_A_COVERAGE,
+  CLASS_B_10_COVERAGE,
+  CLASS_B_15_COVERAGE,
+  CLASS_B_20_COVERAGE,
+  CLASS_C_COVERAGE,
+} from '../catalog-insurance-coverage.ts'
 import { canonicalJsonHash } from './canonical-json.ts'
 import { pciDataPackage } from './pci-data.ts'
+
+const standardMedicationCoverage: Readonly<Record<string, CatalogInsuranceCoverage>> = {
+  aspirin: CLASS_B_10_COVERAGE,
+  clopidogrel: CLASS_B_10_COVERAGE,
+  ticagrelor: CLASS_B_15_COVERAGE,
+  atorvastatin: CLASS_B_10_COVERAGE,
+  rosuvastatin: CLASS_B_10_COVERAGE,
+  ezetimibe: CLASS_C_COVERAGE,
+  perindopril: CLASS_A_COVERAGE,
+  valsartan: CLASS_B_10_COVERAGE,
+  'sacubitril-valsartan': CLASS_B_15_COVERAGE,
+  metoprolol: CLASS_A_COVERAGE,
+  nitroglycerin: CLASS_A_COVERAGE,
+  heparin: CLASS_B_10_COVERAGE,
+  enoxaparin: CLASS_B_10_COVERAGE,
+  'sodium-chloride': CLASS_A_COVERAGE,
+  furosemide: CLASS_A_COVERAGE,
+  spironolactone: CLASS_A_COVERAGE,
+  dapagliflozin: CLASS_B_15_COVERAGE,
+  oseltamivir: CLASS_B_20_COVERAGE,
+  amoxicillin: CLASS_A_COVERAGE,
+}
 
 // 名称、剂量与价格是固定合成目录规则，不能当作临床处方建议。
 const definitions = [
@@ -71,7 +101,7 @@ export function standardMedicationCatalog(): ScenarioProductMedicationCatalogIte
     const { sourceLocator: _locator, status: _status, ...snapshot } = { ...product, sourceLocator: '', status: 'active' }
     return { id, code: suffix.toUpperCase(), name, priceFen, active: true, status: 'active' as const, organizationId: 'hospital-synthetic-renhe',
       availableScopes: ['outpatient', 'inpatient'], category, defaultDose: doseText, defaultFrequency: frequency, defaultRoute: pci?.hospitalSupplement.route ?? (oral ? '口服' : '注射'),
-      dosageForm: snapshot.dosageForm, unit, restriction: '固定合成药事规则，仅用于仿真。', product: { ...snapshot, system: 'urn:clinmesh:reference:nhsa-medication-product' },
+      dosageForm: snapshot.dosageForm, insuranceCoverage: standardMedicationCoverage[suffix]!, unit, restriction: '固定合成药事规则，仅用于仿真。', product: { ...snapshot, system: 'urn:clinmesh:reference:nhsa-medication-product' },
       drugConcept: { code: `CM-DRUG-${suffix.toUpperCase()}`, conceptId: `drug-concept-${suffix}`, display: name, kind: 'drug-concept' as const,
         system: 'urn:clinmesh:reference:drug-concept' as const, version: 'clinmesh-synthetic-medications-2026-11-13' },
       regulatoryVerification: { evidenceUrl: 'https://www.nmpa.gov.cn/datasearch/home-index.html', result: 'synthetic-match' as const,

@@ -706,7 +706,7 @@ clinmesh command receipt get --operation-id inpatient.financial.payment.confirm 
 
 ### 后续患者医保更正
 
-首次结算含医保时，每次只办理一个未完成财务更正。追加费用调整后，读取 `financial-adjustments.insurance`，核对 `original` 首次待遇、当前 `active`、原年度 `balance` 和 `cycles` 的原待遇／补偿／新待遇引用。先补偿当前有效待遇，再按更正后权威费用、原年度及原方案预览并确认；不能通过普通 `insurance cancel/confirm` 绕开首次封账。
+首次结算含医保时，每次只办理一个未完成财务更正。住院医嘱、检查与计费在开立与入账时冻结品规级甲/乙/丙合成医保快照，后续目录调整不影响既有费用和已结算分摊。追加费用调整后，读取 `financial-adjustments.insurance`，核对 `original` 首次待遇、当前 `active`、原年度 `balance` 和 `cycles` 的原待遇／补偿／新待遇引用。先补偿当前有效待遇，再按更正后权威费用、首次冻结覆盖属性、原年度及原方案预览并确认；不能通过普通 `insurance cancel/confirm` 绕开首次封账。
 
 ```bash
 clinmesh inpatient financial-insurance cancel --input @insurance-compensation.json --idempotency-key <key>

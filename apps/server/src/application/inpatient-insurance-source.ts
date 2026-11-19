@@ -1,10 +1,11 @@
 import { z } from 'zod'
 import type { ActorContext } from './command-executor.ts'
-import type { InsuranceSource } from '@clinmesh/contracts/insurance'
+import type { InsuranceCoverage, InsuranceSource } from '@clinmesh/contracts/insurance'
+import { parseFrozenCoverageJson } from './catalog-insurance-coverage.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 
-// These are synthetic coverage rules, independent of prices and hospital DRG payment.
+// Legacy category fallback rules for pre-0118 rows or direct billing.record fixtures where coverage_json IS NULL.
 const coverageRules: Record<string, { included: boolean; priorSelfPayBps: number }> = {
   bed: { included: true, priorSelfPayBps: 0 },
   service: { included: true, priorSelfPayBps: 0 },
@@ -23,15 +24,30 @@ export class InpatientInsuranceSource {
   read(context: ActorContext, target: { kind: 'inpatient'; id: string }): InsuranceSource {
     const { row } = this.owner.readAdmissionBinding(context, target.id)
     const { charges } = this.owner.orders.chargeFacts(context, target.id)
+    const coverageRows = z.array(z.object({ charge_id: z.string(), coverage_json: z.string().nullable() })).parse(
+      this.owner.database.driver
+        .prepare('SELECT charge_id, coverage_json FROM inpatient_charge WHERE workspace_id=? AND epoch=? AND admission_id=?')
+        .all(context.workspaceId, context.epoch, target.id),
+    )
+    const coverageByChargeId = new Map(coverageRows.map((item) => [item.charge_id, item.coverage_json]))
     return {
       target,
       patientId: row.patient_id,
       accountId: target.id,
       encounterId: target.id,
       charges: charges.filter(charge => charge.reversalOf === undefined).map(charge => {
-        const rule = coverageRules[charge.kind]
-        if (rule === undefined) {
+        const resolved = parseFrozenCoverageJson(coverageByChargeId.get(charge.id) ?? null)
+        let coverage: InsuranceCoverage
+        if (resolved.status === 'valid') {
+          coverage = resolved.coverage
+        } else if (resolved.status === 'invalid') {
           throw new InpatientError('INSURANCE_COVERAGE_UNAVAILABLE', '该住院费用尚未配置合成医保覆盖规则')
+        } else {
+          const rule = coverageRules[charge.kind]
+          if (rule === undefined) {
+            throw new InpatientError('INSURANCE_COVERAGE_UNAVAILABLE', '该住院费用尚未配置合成医保覆盖规则')
+          }
+          coverage = { code: `synthetic-inpatient-${charge.kind}`, version: '1', ...rule }
         }
         const reversals = charges.filter(item => item.reversalOf === charge.id)
         const amountFen = z.number().int().nonnegative().safe().parse(
@@ -42,7 +58,7 @@ export class InpatientInsuranceSource {
           label: charge.label,
           version: canonicalJsonHash({ charge, reversals }),
           amountFen,
-          coverage: { code: `synthetic-inpatient-${charge.kind}`, version: '1', ...rule },
+          coverage,
         }
       }),
     }
