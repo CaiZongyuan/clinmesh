@@ -30,6 +30,7 @@ import {
   type CompiledSyntheaIndexCase,
 } from './synthea-index-case.ts'
 import { canonicalJsonHash } from './canonical-json.ts'
+import { AuthoredCasePackService } from './authored-case-pack-service.ts'
 import { PciCaseSource } from './pci-case-source.ts'
 import type { PatientPersonaRepository } from '../../infrastructure/sqlite/patient-persona-repository.ts'
 
@@ -99,6 +100,12 @@ const sourceBundleSchema = z.object({
 export class ScenarioDataService {
   preparePciCaseSource(...args: Parameters<PciCaseSource['prepare']>) {
     return new PciCaseSource(this.#commands, this.#profiles, this.#cases, this.#personas).prepare(...args)
+  }
+  readAuthoredCasePack(...args: Parameters<AuthoredCasePackService['read']>) {
+    return new AuthoredCasePackService(this.#commands, this.#profiles, this.#cases, this.#personas).read(...args)
+  }
+  prepareAuthoredCasePack(...args: Parameters<AuthoredCasePackService['prepare']>) {
+    return new AuthoredCasePackService(this.#commands, this.#profiles, this.#cases, this.#personas).prepare(...args)
   }
   readonly #cases: SyntheticCaseRepository
   readonly #commands: CommandExecutor

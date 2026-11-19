@@ -8,7 +8,31 @@ import { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case
 import { SyntheticPatientProfileRepository } from '../infrastructure/sqlite/synthetic-patient-profile-repository.ts'
 import { InvestigationGenerationError } from './investigation-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
+import {
+  buildTruthStagePriority,
+  EXAMINATION_CONCLUSION_SYSTEM,
+  EXAMINATION_ECG_SYSTEM,
+  EXAMINATION_EXAM_CODE_EXTENSION_URL,
+  EXAMINATION_SERVICE_SYSTEM,
+  EXAMINATION_TTE_SYSTEM,
+  readExtensionCode,
+  readTruthStage,
+  selectStageBucket,
+  type CaseTruthStage,
+} from './scenario-data/truth-stage.ts'
 import type { ExaminationResult } from './examination-request-service.ts'
+
+const examinationServiceSystem = EXAMINATION_SERVICE_SYSTEM
+const examinationMetricSystems: Record<'ecg-12-lead' | 'tte', readonly string[]> = {
+  'ecg-12-lead': [EXAMINATION_SERVICE_SYSTEM, EXAMINATION_ECG_SYSTEM],
+  tte: [EXAMINATION_SERVICE_SYSTEM, EXAMINATION_TTE_SYSTEM],
+}
+const allExaminationMetricSystems = new Set<string>([
+  EXAMINATION_SERVICE_SYSTEM,
+  EXAMINATION_ECG_SYSTEM,
+  EXAMINATION_TTE_SYSTEM,
+])
+const examinationConclusionSystem = EXAMINATION_CONCLUSION_SYSTEM
 
 type Definition = {
   code: string
@@ -86,6 +110,7 @@ function semanticEvidence(resources: z.infer<typeof resourceSchema>[]) {
         valueCodeableConcept: item.valueCodeableConcept,
         component: item.component,
         interpretation: item.interpretation,
+        ...(item.extension === undefined ? {} : { extension: item.extension }),
       }),
     )
     .sort((a, b) => canonicalJsonHash(a).localeCompare(canonicalJsonHash(b)))
@@ -165,7 +190,7 @@ function incompatibleBaselineMeasurement(resource: z.infer<typeof resourceSchema
   const finalized = finalizedObservation(resource)
   return [resource, ...resource.component ?? []].some(measurement => {
     const definition = Object.values(definitions).flat().find(item => measurement.code?.coding?.some(coding =>
-      coding.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service' && coding.code === item.code
+      coding.system !== undefined && allExaminationMetricSystems.has(coding.system) && coding.code === item.code
       || coding.system === 'http://loinc.org' && item.sourceCodes?.includes(coding.code),
     ))
     if (definition === undefined) return false
@@ -188,6 +213,43 @@ function incompatibleBaselineMeasurement(resource: z.infer<typeof resourceSchema
   })
 }
 
+function matchesExamMetric(
+  measurement: z.infer<typeof measurementSchema>,
+  examCode: 'ecg-12-lead' | 'tte',
+  definition: Definition,
+  allowLoinc: boolean,
+): boolean {
+  const systems = examinationMetricSystems[examCode]
+  return measurement.code?.coding?.some(
+    (coding) =>
+      (coding.system !== undefined && systems.includes(coding.system) && coding.code === definition.code)
+      || (allowLoinc && coding.system === 'http://loinc.org' && definition.sourceCodes?.includes(coding.code)),
+  ) === true
+}
+
+function matchesExamConclusion(
+  resource: z.infer<typeof resourceSchema>,
+  examCode: 'ecg-12-lead' | 'tte',
+): boolean {
+  const examCodeExt = readExtensionCode(resource, EXAMINATION_EXAM_CODE_EXTENSION_URL)
+  const codings = resource.code?.coding ?? []
+  const examSpecificSystem = examCode === 'ecg-12-lead' ? EXAMINATION_ECG_SYSTEM : EXAMINATION_TTE_SYSTEM
+  return codings.some((coding) => {
+    if (coding.system === examinationConclusionSystem) {
+      if (coding.code === examCode) return examCodeExt === undefined || examCodeExt === examCode
+      if (coding.code === 'conclusion') return examCodeExt === undefined || examCodeExt === examCode
+      return false
+    }
+    if (coding.system === examSpecificSystem && coding.code === 'conclusion') {
+      return examCodeExt === undefined || examCodeExt === examCode
+    }
+    if (coding.system === examinationServiceSystem && coding.code === 'conclusion') {
+      return examCodeExt === examCode
+    }
+    return false
+  })
+}
+
 /** Simulator-only boundary: private truth is consumed here and only validated result values leave it. */
 export class ExaminationResultResolver {
   constructor(private readonly database: ClinMeshDatabase) {}
@@ -195,7 +257,9 @@ export class ExaminationResultResolver {
   resolve(workspaceId: string, epoch: string, requestId: string): ExaminationResult {
     const row = z
       .object({
+        admission_id: z.string().nullable(),
         case_id: z.string(),
+        is_revisit: z.number().int().min(0).max(1),
         service_snapshot_json: z.string(),
         result_snapshot_id: z.string().nullable(),
         synthetic_case_id: z.string().nullable(),
@@ -210,8 +274,15 @@ export class ExaminationResultResolver {
         this.database.driver
           .prepare(
             `
-      SELECT r.case_id,r.service_snapshot_json,r.result_snapshot_id,r.authored_at,s.synthetic_case_id,s.synthetic_case_revision,s.profile_id,s.profile_revision,c.patient_id
-      FROM laboratory_request r JOIN clinical_request_source s USING(workspace_id,epoch,case_id) JOIN clinical_request_context c USING(workspace_id,epoch,case_id)
+      SELECT r.case_id,r.service_snapshot_json,r.result_snapshot_id,r.authored_at,
+        s.synthetic_case_id,s.synthetic_case_revision,s.profile_id,s.profile_revision,
+        c.admission_id,c.patient_id,
+        CASE WHEN revisit.source_case_id IS NOT NULL THEN 1 ELSE 0 END AS is_revisit
+      FROM laboratory_request r
+      JOIN clinical_request_source s USING(workspace_id,epoch,case_id)
+      JOIN clinical_request_context c USING(workspace_id,epoch,case_id)
+      LEFT JOIN outpatient_case_source revisit
+        ON revisit.workspace_id=c.workspace_id AND revisit.epoch=c.epoch AND revisit.outpatient_case_id=c.outpatient_case_id
       WHERE r.workspace_id=? AND r.epoch=? AND r.request_id=? AND r.request_kind='examination'
     `,
           )
@@ -264,6 +335,53 @@ export class ExaminationResultResolver {
       )
       .map((item) => resourceSchema.parse(JSON.parse(item.resource_json)))
       .filter((item) => !(item.code?.coding ?? []).some((coding) => coding.system?.endsWith('/examination-service')))
+    const hasPriorSigned = this.database.driver
+      .prepare(
+        `SELECT 1 FROM examination_report_content c
+      JOIN laboratory_request r ON r.workspace_id=c.workspace_id AND r.epoch=c.epoch AND r.request_id=c.request_id
+      JOIN examination_request_detail d ON d.workspace_id=c.workspace_id AND d.epoch=c.epoch AND d.request_id=c.request_id
+      WHERE c.workspace_id=? AND c.epoch=? AND c.case_id=? AND d.exam_code=?
+        AND r.status IN ('reported','acknowledged') AND c.request_id!=?
+      LIMIT 1`,
+      )
+      .get(workspaceId, epoch, row.case_id, service.examCode, requestId) !== undefined
+    const stagePriority = buildTruthStagePriority({
+      isInpatient: row.admission_id !== null,
+      isRepeat: hasPriorSigned,
+      isRevisit: row.is_revisit === 1,
+    })
+    const requested = definitions[service.examCode]
+    const finalizedHidden = hidden.filter(finalizedObservation)
+    const allTaggedMeasurements = finalizedHidden.flatMap((item) => {
+      const parentStage = readTruthStage(item)
+      return [
+        { measurement: item as z.infer<typeof measurementSchema>, stage: parentStage },
+        ...(item.component ?? []).map((component) => ({
+          measurement: component,
+          stage: readTruthStage(component) ?? parentStage,
+        })),
+      ]
+    })
+    const isSpecificExamMeasurement = (measurement: z.infer<typeof measurementSchema>) =>
+      requested.some((definition) =>
+        matchesExamMetric(
+          measurement,
+          service.examCode,
+          definition,
+          !(service.examCode === 'ecg-12-lead' && definition.code === 'ventricular-rate'),
+        ),
+      )
+    const examSpecificBucket = selectStageBucket(
+      allTaggedMeasurements.filter((entry) => isSpecificExamMeasurement(entry.measurement)),
+      (entry) => entry.stage,
+      stagePriority,
+    )
+    const selectedMetricStage: CaseTruthStage | undefined = examSpecificBucket?.stage
+    const conclusionCandidates = finalizedHidden
+      .filter((item) => matchesExamConclusion(item, service.examCode))
+      .map((item) => ({ resource: item, stage: readTruthStage(item) }))
+    const conclusionBucket = selectStageBucket(conclusionCandidates, (entry) => entry.stage, stagePriority)
+    const resolvedStage = selectedMetricStage ?? conclusionBucket?.stage
     const inputHash = canonicalJsonHash({
       policy: 'functional-examination-v1',
       service,
@@ -273,24 +391,19 @@ export class ExaminationResultResolver {
       hidden: semanticEvidence(hidden),
       history: semanticEvidence(history),
       evidence: semanticEvidence(formal),
+      ...(resolvedStage === undefined ? {} : { truthStage: resolvedStage }),
     })
     const existing = snapshots.getByEvidence(workspaceId, row.synthetic_case_id, service.id, inputHash)
     if (existing !== undefined) return { snapshotId: existing.snapshotId, content: existing.content }
-    const requested = definitions[service.examCode]
-    const validHiddenMeasurements = hidden
-      .filter(finalizedObservation)
-      .flatMap((item) => [item, ...(item.component ?? [])])
-    const hasEcgSpecificTruth = validHiddenMeasurements.some((measurement) =>
-      measurement.code?.coding?.some(
-        (coding) =>
-          (coding.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service' &&
-            requested.some((definition) => definition.code === coding.code)) ||
-          (coding.system === 'http://loinc.org' &&
-            requested.some(
-              (definition) => definition.code !== 'ventricular-rate' && definition.sourceCodes?.includes(coding.code),
-            )),
-      ),
-    )
+    const stageMeasurements =
+      examSpecificBucket === undefined
+        ? allTaggedMeasurements
+            .filter((entry) => entry.stage === undefined)
+            .map((entry) => entry.measurement)
+        : allTaggedMeasurements
+            .filter((entry) => entry.stage === selectedMetricStage)
+            .map((entry) => entry.measurement)
+    const hasEcgSpecificTruth = examSpecificBucket !== undefined
     const normalizeExactUnit = (definition: Definition, rawUnit: string | undefined) =>
       definition.unit === '/min' && rawUnit !== undefined && ['/min', '{beats}/min', 'min-1', 'bpm', 'beats/min'].includes(rawUnit)
         ? '/min'
@@ -299,23 +412,14 @@ export class ExaminationResultResolver {
       // A routine heart-rate vital alone does not declare a partial ECG panel.
       if (service.examCode === 'ecg-12-lead' && definition.code === 'ventricular-rate' && !hasEcgSpecificTruth)
         return undefined
-      const directMatches = validHiddenMeasurements.filter((measurement) =>
-        measurement.code?.coding?.some(
-          (coding) =>
-            coding.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service' &&
-            coding.code === definition.code,
-        ),
+      const directMatches = stageMeasurements.filter((measurement) =>
+        matchesExamMetric(measurement, service.examCode, definition, false),
       )
       const matches =
         definition.code === 'ventricular-rate' && directMatches.length > 0
           ? directMatches
-          : validHiddenMeasurements.filter((measurement) =>
-              measurement.code?.coding?.some(
-                (coding) =>
-                  (coding.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service' &&
-                    coding.code === definition.code) ||
-                  (coding.system === 'http://loinc.org' && definition.sourceCodes?.includes(coding.code)),
-              ),
+          : stageMeasurements.filter((measurement) =>
+              matchesExamMetric(measurement, service.examCode, definition, true),
             )
       const values = matches.map((item) => {
         if (typeof definition.value !== 'number') return { value: item.valueString }
@@ -349,6 +453,26 @@ export class ExaminationResultResolver {
         'INVESTIGATION_TRUTH_INCOMPATIBLE',
         '功能检查精确真值不完整，不能补造正常指标',
       )
+    let exactConclusion: string | undefined
+    if (conclusionBucket !== undefined) {
+      const texts = conclusionBucket.items.map((entry) => {
+        const parsed = z.string().trim().min(1).max(1000).safeParse(entry.resource.valueString)
+        if (!parsed.success) {
+          throw new InvestigationGenerationError(
+            'INVESTIGATION_TRUTH_INCOMPATIBLE',
+            '功能检查精确结论缺少有效文本内容',
+          )
+        }
+        return parsed.data
+      })
+      if (new Set(texts).size > 1) {
+        throw new InvestigationGenerationError(
+          'INVESTIGATION_TRUTH_INCOMPATIBLE',
+          '功能检查精确结论存在冲突，不能选择性签发报告',
+        )
+      }
+      exactConclusion = texts[0]
+    }
     if (!hasExact) {
       if (profile.source.providerId !== 'synthea')
         throw new InvestigationGenerationError(
@@ -376,7 +500,7 @@ export class ExaminationResultResolver {
     }
     const content: InvestigationResultContent = investigationResultContentSchema.parse({
       conclusion: hasExact
-        ? '功能检查结果见结构化指标，请结合临床判断。'
+        ? (exactConclusion ?? '功能检查结果见结构化指标，请结合临床判断。')
         : service.examCode === 'ecg-12-lead'
           ? '窦性心律，未见明显 ST-T 异常（确定性合成成人基线）。'
           : '心脏结构及左室收缩、舒张功能未见明显异常（确定性合成成人基线）。',

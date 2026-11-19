@@ -530,6 +530,13 @@ export class WorkflowService
   }
 
   commandReceipt(context: ActorContext, operationId: string, idempotencyKey: string) {
+    if (operationId === 'synthetic-case.authored-pack.prepare') {
+      if (context.roleCode !== 'administrator') {
+        throw new WorkflowError('ROLE_NOT_ALLOWED', '只有管理员可以查询专病病例包准备回执')
+      }
+      const receipt = this.#commands.readReceipt(context, operationId, idempotencyKey)
+      return { ...receipt, operationId }
+    }
     const operation = getHisOperation(operationId)
     try {
       const receipt = this.#commands.readReceipt(context, operation.commandOperation ?? operation.id, idempotencyKey)

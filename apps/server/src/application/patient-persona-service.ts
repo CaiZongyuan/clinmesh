@@ -178,7 +178,7 @@ export function hasHiddenDiagnosisLeak(
   })
 }
 
-function personaLeaksDiagnosis(
+export function personaLeaksDiagnosis(
   content: PatientPersonaContent,
   hiddenResources: PersonaResource[],
   visibleResources: PersonaResource[],

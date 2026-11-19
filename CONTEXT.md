@@ -80,6 +80,10 @@ _Avoid_: Clinical Record, answer key endpoint, Visible Source History
 绑定一个不可变 Profile Revision、Case Truth、病例类型和可见历史清单的合成病例实例。普通业务只能开始一次；管理员可在新 Epoch 中重放同一不可变 revision。
 _Avoid_: Synthetic Patient Profile, local Encounter, Scenario Dataset
 
+**Authored Case Pack**:
+一组版本固定、可按统一编译边界生成多个 `Synthetic Patient Profile`、`Synthetic Case Instance`、`Visible Source History`、结构化分阶段 `Case Truth` 与模板 `Patient Persona` 的作者合成病例集合。准备只建立病例来源与就绪状态，不产生本院诊断、检查检验报告、医嘱、手术或费用。
+_Avoid_: Seed script, fixture dump, runtime clinical record, Synthea batch
+
 **Patient Persona**:
 扮演患者所依据的版本固定档案，包含性格、表达方式、健康素养、症状体验、主诉、开场陈述和自知病史。它描述患者知道的自身情况，不直接命名尚未获知的本次疾病。
 _Avoid_: Case Truth, diagnosis note, chat transcript
