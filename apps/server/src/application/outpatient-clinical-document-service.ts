@@ -59,6 +59,7 @@ import {
   type OutpatientWorkflowContext,
 } from './outpatient-workflow-context.ts'
 import { WorkflowError } from './workflow-error.ts'
+import { freezeCatalogCoverageJson, readConfigInsuranceCoverage } from './catalog-insurance-coverage.ts'
 
 const clinicalDocumentSectionSystem = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/clinical-document-section'
 const clinicalDocumentBundleIdentifierSystem = 'https://caizongyuan.github.io/clinmesh/fhir/identifier/clinical-document-bundle'
@@ -1232,7 +1233,7 @@ export class OutpatientClinicalDocumentService {
       const medicationRows = this.#context.database.driver.prepare(`
         SELECT item.medication_request_id, item.medication_id, item.quantity,
           item.dose_text, item.frequency_code, item.course_days, catalog.name_zh, catalog.name_en,
-          catalog.code, catalog.config_json, catalog.price_fen
+          catalog.code, catalog.config_json, catalog.price_fen, catalog.version
         FROM prescription_item AS item
         JOIN outpatient_catalog AS catalog
           ON catalog.workspace_id = item.workspace_id
@@ -1254,6 +1255,7 @@ export class OutpatientClinicalDocumentService {
         name_zh: string
         price_fen: number
         quantity: number
+        version: number
       }>
       this.#host.assertMedicationCatalogRules(medicationRows.map(medication => ({
         catalogItemId: medication.medication_id,
@@ -1293,6 +1295,25 @@ export class OutpatientClinicalDocumentService {
         SET status = 'signed', version = version + 1, signed_at = ?
         WHERE workspace_id = ? AND epoch = ? AND prescription_id = ? AND status = 'draft'
       `).run(now, input.context.workspaceId, input.context.epoch, preview.prescription_id)
+      const freezeItemCoverage = this.#context.database.driver.prepare(`
+        UPDATE prescription_item
+        SET unit_price_fen = ?, coverage_json = ?
+        WHERE workspace_id = ? AND epoch = ? AND prescription_id = ? AND medication_request_id = ?
+      `)
+      for (const medication of medicationRows) {
+        freezeItemCoverage.run(
+          medication.price_fen,
+          freezeCatalogCoverageJson(
+            `synthetic-med:${medication.medication_id}`,
+            `item-v${medication.version}`,
+            readConfigInsuranceCoverage(medication.config_json),
+          ),
+          input.context.workspaceId,
+          input.context.epoch,
+          preview.prescription_id,
+          medication.medication_request_id,
+        )
+      }
       const chargeItemId = uuidv7()
       const chargeId = uuidv7()
       const chargeItem = transaction.fhir.create(input.context, {

@@ -16,7 +16,7 @@ clinmesh admin laboratory-services publish --input @publication.json --idempoten
 clinmesh admin laboratory-services job get --job-id <job-id>
 ```
 
-Publication completion requires a `succeeded` job and `published` candidate state. `queued` and `running` jobs remain in progress. On `failed`, read the structured error and current candidate version before forming a new intent; a retry uses a new idempotency key and the returned version. `laboratory-cn` panels and tests use their frozen Dataset definition without a Catalog Enrichment provider. LOINC candidates still require valid Catalog Enrichment before they become doctor-visible.
+Publication completion requires a `succeeded` job and `published` candidate state. `queued` and `running` jobs remain in progress. On `failed`, read the structured error and current candidate version before forming a new intent; a retry uses a new idempotency key and the returned version. `laboratory-cn` panels and tests use their frozen Dataset definition without a Catalog Enrichment provider and default routine labs to Class A (`priorSelfPayBps: 0`) and specialty biomarkers to Class B (`priorSelfPayBps: 1000`); each entry in `admin.laboratory-services.publish` accepts an optional `insuranceCoverage` override (`{ included, priorSelfPayBps }`). LOINC candidates still require valid Catalog Enrichment before they become doctor-visible.
 
 Reference Candidate files are operator-supplied local inputs. This workflow does not upload, publish, or expose those artifacts.
 

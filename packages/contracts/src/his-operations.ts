@@ -225,8 +225,8 @@ const operationCliMetadataList = [
     },
     risk: 'write',
     roles: ['administrator'],
-    summary: '发布显式选定的检验配置批次，支持 laboratory-cn 单项与组合',
-    version: 2,
+    summary: '发布显式选定的检验配置批次，支持 laboratory-cn 单项与组合及可选品规级合成医保覆盖 insuranceCoverage',
+    version: 3,
   },
   {
     cliPath: ['admin', 'laboratory-services', 'job', 'get'],
@@ -1278,8 +1278,8 @@ const operationCliMetadataList = [
     requirements:{expectedVersions:false,idempotency:'required'},
     risk:'write',
     roles:['cashier'],
-    summary:'Preview fixed synthetic employee/resident benefits bound to charge and patient annual balance versions; INSURANCE_FUNDS_CONFLICT: medication benefits require a completed Encounter before preview/confirm',
-    version:1,
+    summary:'Preview synthetic employee/resident benefits with item-level A/B/C coverage & prescription breakdown; INSURANCE_FUNDS_CONFLICT: medication requires completed Encounter',
+    version:2,
   },
   {
     cliPath:['insurance','confirm'],

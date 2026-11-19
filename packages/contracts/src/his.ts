@@ -1,9 +1,10 @@
 import { medicationSafetyRuleSchema } from './medication-safety.ts'
 import { clinicalOverrideInputSchema, clinicalQualityCheckSchema, clinicalQualityReceiptSchema } from './clinical-quality.ts'
 import { z } from 'zod'
-import { outpatientInvestigationBillingSchema, outpatientInvestigationPriceSchema } from './investigation-billing.ts'
-export { outpatientInvestigationBillingSchema, outpatientInvestigationPriceSchema } from './investigation-billing.ts'
-export type { OutpatientInvestigationBilling, OutpatientInvestigationPrice } from './investigation-billing.ts'
+import { catalogInsuranceCoverageSchema, outpatientInvestigationBillingSchema, outpatientInvestigationPriceSchema } from './investigation-billing.ts'
+export { catalogInsuranceCoverageSchema, outpatientInvestigationBillingSchema, outpatientInvestigationPriceSchema } from './investigation-billing.ts'
+export type { CatalogInsuranceCoverage, OutpatientInvestigationBilling, OutpatientInvestigationPrice } from './investigation-billing.ts'
+const optCoverage = catalogInsuranceCoverageSchema.optional()
 import { fhirResourceSchema } from './fhir.ts'
 import { imagingExamCodeSchema, pathologyExamCodeSchema } from './imaging.ts'
 import { pathologySourceProcedureSchema } from './pathology.ts'
@@ -268,6 +269,7 @@ export const serviceCatalogSearchSchema = z.object({
     componentServiceIds: z.array(z.string().min(1)),
     executingDepartmentId: z.string().min(1),
     id: z.string().min(1),
+    insuranceCoverage: optCoverage,
     nameEn: z.string().min(1),
     nameZh: z.string().min(1),
     nationalService: z.object({
@@ -462,6 +464,7 @@ const laboratoryServiceResultDefinitionSchema = z.object({
 })
 
 export const laboratoryServiceSnapshotSchema = z.object({
+  insuranceCoverage: optCoverage,
   outpatientBilling: outpatientInvestigationPriceSchema.optional(),
   allowedIndicationCodes: z.array(z.string().min(1).max(64)).min(1),
   componentServiceIds: z.array(z.string().min(1).max(512)),
@@ -574,6 +577,7 @@ export const publishLaboratoryServicesRequestSchema = z.object({
     entries: z.array(z.object({
       conceptId: referenceDataItemIdSchema,
       expectedVersion: z.number().int().nonnegative(),
+      insuranceCoverage: optCoverage,
     }).strict()).min(1).max(50),
   }).strict(),
 }).strict()
@@ -1845,6 +1849,7 @@ export const laboratoryRequestStateSchema = z.object({
 
 /** 开立时冻结的放射服务定义：部位、检查方式、执行科室、适用范围与报告结构。 */
 export const imagingServiceSnapshotSchema = z.object({
+  insuranceCoverage: optCoverage,
   outpatientBilling: outpatientInvestigationPriceSchema.optional(),
   applicability: z.string().min(1),
   bodySite: z.string().min(1),
@@ -2015,6 +2020,7 @@ export type ExaminationServiceSnapshot = z.infer<typeof examinationServiceSnapsh
 
 /** 开立时冻结的病理会诊服务定义：部位、标本类型、染色、执行科室、适用范围与报告结构。 */
 export const pathologyServiceSnapshotSchema = z.object({
+  insuranceCoverage: optCoverage,
   outpatientBilling: outpatientInvestigationPriceSchema.optional(),
   applicability: z.string().min(1),
   bodySite: z.string().min(1),

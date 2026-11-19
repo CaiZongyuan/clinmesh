@@ -133,7 +133,8 @@ export class OutpatientInvestigationBilling {
 
   issue(transaction: CommandTransaction, context: ActorContext, input: {
     requestId: string; serviceRequestId: string; caseId: string; category: InvestigationCategory
-    descriptionZh: string; descriptionEn: string; price: OutpatientInvestigationPrice | undefined; now: string
+    descriptionZh: string; descriptionEn: string; price: OutpatientInvestigationPrice | undefined
+    coverageJson?: string | null | undefined; now: string
   }) {
     const price = input.price
     const virtualDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(input.now))
@@ -152,10 +153,11 @@ export class OutpatientInvestigationBilling {
     })
     this.database.driver.prepare(`INSERT INTO charge_record (
       workspace_id,epoch,charge_id,case_id,account_id,charge_item_id,category,source_reference,
-      description_zh,description_en,quantity,unit_price_fen,total_fen,status,created_at
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?,'billable',?)`).run(
+      description_zh,description_en,quantity,unit_price_fen,total_fen,status,created_at,coverage_json
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?,'billable',?,?)`).run(
       context.workspaceId, context.epoch, uuidv7(), input.caseId, owner.account_id, chargeItem.id, input.category,
       `ServiceRequest/${input.serviceRequestId}`, input.descriptionZh, input.descriptionEn, price.priceFen, price.priceFen, input.now,
+      input.coverageJson ?? null,
     )
     this.database.driver.prepare(`INSERT INTO outpatient_investigation_billing
       (workspace_id,epoch,request_id,case_id,payment_policy,charge_item_id,price_json)

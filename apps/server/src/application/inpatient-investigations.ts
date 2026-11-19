@@ -8,6 +8,7 @@ import { imagingRequestPolicy } from './imaging-request-service.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { InpatientInvestigationsWorkflowPort } from './outpatient-workflow-context.ts'
 import { inpatientInvestigationBillingSchema, inpatientLaboratoryConfiguration } from './inpatient-laboratory-config.ts'
+import { buildFrozenCatalogCoverage, readConfigInsuranceCoverage } from './catalog-insurance-coverage.ts'
 
 const requestSchema = z.object({ request_id: z.string(), case_id: z.string(), request_kind: z.enum(['laboratory','imaging','examination']), authored_by: z.string(),
   service_request_id: z.string(), execution_task_id: z.string(), diagnostic_report_id: z.string().nullable(),
@@ -103,8 +104,18 @@ export class InpatientInvestigations {
       const definition=input.selection.kind==='laboratory' ? inpatientLaboratoryConfiguration(config).chargeDefinition
         : z.object({inpatientInvestigationBilling:inpatientInvestigationBillingSchema}).parse(config).inpatientInvestigationBilling
       if(definition===undefined||definition.priceFen!==available.priceFen)throw new InpatientError('INPATIENT_INVESTIGATION_CATALOG_CONFLICT','检查冻结收费定义不一致')
+      const coverage = input.selection.kind === 'imaging'
+        ? readConfigInsuranceCoverage(stored.config_json, 'inpatientInvestigationBilling') ?? readConfigInsuranceCoverage(stored.config_json, 'imagingService')
+        : input.selection.kind === 'examination'
+          ? readConfigInsuranceCoverage(stored.config_json, 'examinationService')
+          : readConfigInsuranceCoverage(stored.config_json, 'laboratoryService')
+      const insuranceCoverage = buildFrozenCatalogCoverage(
+        `synthetic-inpatient-${input.selection.kind}:${available.id}`,
+        `item-v${available.version}`,
+        coverage,
+      )
       this.owner.database.driver.prepare(`INSERT INTO inpatient_investigation(workspace_id,epoch,request_id,admission_id,price_fen,charge_definition_json) VALUES(?,?,?,?,?,?)`)
-        .run(context.workspaceId,context.epoch,requestId,input.admissionId,available.priceFen,JSON.stringify({...definition,display:available.display,trigger:'execution-completed',serviceId:available.id,catalogVersion:available.version}))
+        .run(context.workspaceId,context.epoch,requestId,input.admissionId,available.priceFen,JSON.stringify({...definition,display:available.display,trigger:'execution-completed',serviceId:available.id,catalogVersion:available.version,insuranceCoverage}))
       return {data:this.read(context,input.admissionId),effects}
     })
   }

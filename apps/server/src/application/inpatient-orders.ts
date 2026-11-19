@@ -6,6 +6,7 @@ import type { ActorContext } from './command-executor.ts'
 import { resolveInpatientDose } from '@clinmesh/core/inpatient-dose'
 import { inpatientMedicationConfigSchema as medicationConfigSchema, inpatientMedicationMissingFields } from './inpatient-medication-config.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
+import { freezeCatalogCoverageJson, readConfigInsuranceCoverage } from './catalog-insurance-coverage.ts'
 import type { RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 
 export class InpatientOrders {
@@ -158,7 +159,7 @@ export class InpatientOrders {
         this.owner.drg.assertOrderReview(context, input.admissionId, input.selection, input.expectedDrgFingerprint)
       const selection = input.selection, catalog = this.catalog(context)
       if (selection.kind === 'medication' && selection.frequencyCode === 'ONCE' && input.duration !== 'temporary') throw new InpatientError('CATALOG_CONFLICT', 'ONCE 仅允许用于临时医嘱', 409, 'MEDICATION_ONCE_REQUIRES_TEMPORARY')
-      let itemId: string, display: string, catalogVersion: number, unit: string, price: number, doseText = '', frequency: 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' = 'QD', quantity: number
+      let itemId: string, display: string, catalogVersion: number, unit: string, price: number, doseText = '', frequency: 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' = 'QD', quantity: number, coverageJson: string
       let quality: ReturnType<InpatientService['workflow']['clinicalQuality']['enforce']> = { effects: [] }
       if (selection.kind === 'medication') {
         const item = catalog.medications.find(item => item.id === selection.catalogItemId)
@@ -219,19 +220,31 @@ export class InpatientOrders {
         doseText = selection.doseText
         frequency = selection.frequencyCode
         quantity = selection.doseQuantity
+        coverageJson = freezeCatalogCoverageJson(
+          `synthetic-inpatient-medication:${item.id}`,
+          `item-v${item.version}`,
+          readConfigInsuranceCoverage(catalogRow.config_json),
+        )
       } else {
         const item = catalog.services.find(item => item.id === selection.serviceId)
         if (item === undefined || item.version !== selection.serviceVersion) throw new InpatientError('CATALOG_CONFLICT', '住院服务目录或版本无效')
+        const serviceRow = z.object({ config_json: z.string() }).parse(this.owner.database.driver.prepare(
+          'SELECT config_json FROM hospital_service_catalog WHERE workspace_id=? AND epoch=? AND service_id=?').get(context.workspaceId, context.epoch, item.id))
         itemId = item.id
         display = item.display
         catalogVersion = item.version
         unit = item.unit
         price = item.priceFen
         quantity = selection.quantity
+        coverageJson = freezeCatalogCoverageJson(
+          `synthetic-inpatient-service:${item.id}`,
+          `item-v${item.version}`,
+          readConfigInsuranceCoverage(serviceRow.config_json),
+        )
       }
       const id = uuidv7(), now = this.owner.virtualTime(context)
-      this.owner.database.driver.prepare(`INSERT INTO inpatient_order(workspace_id,epoch,order_id,admission_id,kind,duration,catalog_item_id,catalog_version,display,dose_text,dose_quantity,unit,frequency_code,price_fen,state,organization_id,signed_at,signed_by)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'signed',?,?,?)`).run(context.workspaceId, context.epoch, id, admission.id, selection.kind, input.duration, itemId, catalogVersion, display, doseText, quantity, unit, frequency, price, admission.organizationId, now, context.actorId)
+      this.owner.database.driver.prepare(`INSERT INTO inpatient_order(workspace_id,epoch,order_id,admission_id,kind,duration,catalog_item_id,catalog_version,display,dose_text,dose_quantity,unit,frequency_code,price_fen,state,organization_id,signed_at,signed_by,coverage_json)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'signed',?,?,?,?)`).run(context.workspaceId, context.epoch, id, admission.id, selection.kind, input.duration, itemId, catalogVersion, display, doseText, quantity, unit, frequency, price, admission.organizationId, now, context.actorId, coverageJson)
       if (input.surgeryExecutionId !== undefined) this.owner.database.driver.prepare('INSERT INTO inpatient_postoperative_order VALUES(?,?,?,?,?)')
         .run(context.workspaceId, context.epoch, admission.id, id, input.surgeryExecutionId)
       const request = this.owner.fhir.create(context, { resourceType: selection.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', id, status: 'active', intent: 'order',
@@ -345,7 +358,7 @@ export class InpatientOrders {
         this.owner.database.driver.prepare('INSERT INTO inventory_movement(workspace_id,epoch,movement_id,inpatient_dispense_id,lot_id,quantity,occurred_at) VALUES(?,?,?,?,?,?,?)')
           .run(context.workspaceId, context.epoch, movementId, id, selection.lotId, selection.quantity, now)
         effects.push({ kind: 'created', reference: `MedicationDispense/${id}`, versionId: '1' }, { kind: 'created', reference: `InventoryMovement/${movementId}`, versionId: '1' }, { kind: 'updated', reference: `InventoryItem/${selection.lotId}`, versionId: String(selection.expectedVersion + 1) })
-        this.owner.billing.record(context, { admissionId: admission.id, organizationId: admission.organizationId, kind: 'medication', sourceId: id, serviceDate: businessDate(now), amountFen: order.price_fen * selection.quantity, virtualTime: now, label: `${order.display} ${selection.quantity}${order.unit}` }, effects)
+        this.owner.billing.record(context, { admissionId: admission.id, organizationId: admission.organizationId, kind: 'medication', sourceId: id, serviceDate: businessDate(now), amountFen: order.price_fen * selection.quantity, virtualTime: now, label: `${order.display} ${selection.quantity}${order.unit}`, coverageJson: order.coverage_json }, effects)
       }
       this.updateExecution(context, execution, 'dispensed', effects)
       return { data: this.pharmacy(context, admission.id), effects }
@@ -380,7 +393,7 @@ export class InpatientOrders {
       if (order.kind !== 'service' || order.state !== 'verified' || execution.status !== 'pending' || execution.version !== input.expectedExecutionVersion || Date.parse(execution.scheduled_for) > Date.parse(now)) throw new InpatientError('INPATIENT_EXECUTION_CONFLICT', '服务须引用已校对且到期的有效执行单')
       const effects: Effects = []
       this.updateExecution(context, execution, 'completed', effects)
-      this.owner.billing.record(context, { admissionId: admission.id, organizationId: admission.organizationId, kind: 'service', sourceId: execution.execution_id, serviceDate: businessDate(now), amountFen: order.price_fen * order.dose_quantity, virtualTime: now, label: order.display }, effects)
+      this.owner.billing.record(context, { admissionId: admission.id, organizationId: admission.organizationId, kind: 'service', sourceId: execution.execution_id, serviceDate: businessDate(now), amountFen: order.price_fen * order.dose_quantity, virtualTime: now, label: order.display, coverageJson: order.coverage_json }, effects)
       this.completeTemporaryOrder(context, order, effects)
       return { data: this.read(context, admission.id), effects }
     })
@@ -512,7 +525,7 @@ const allergySchema = z.object({ category: z.array(z.string()).optional(), clini
   verificationStatus: z.object({ coding: z.array(z.object({ code: z.string() })).optional() }).optional(), code: z.object({ coding: z.array(z.object({ code: z.string() })).optional() }).optional() })
 const orderRowSchema = z.object({ order_id: z.string(), admission_id: z.string(), kind: z.enum(['medication','service']), duration: z.enum(['long','temporary']), catalog_item_id: z.string(), catalog_version: z.number(),
  display: z.string(), dose_text: z.string(), dose_quantity: z.number(), unit: z.string(), frequency_code: z.enum(['QD','BID','TID','QN','PRN','ONCE']), price_fen: z.number(), state: inpatientOrderSchema.shape.state,
- version: z.number(), organization_id: z.string(), signed_at: z.string(), signed_by: z.string(), verified_at: z.string().nullable(), stopped_at: z.string().nullable() })
+ version: z.number(), organization_id: z.string(), signed_at: z.string(), signed_by: z.string(), verified_at: z.string().nullable(), stopped_at: z.string().nullable(), coverage_json: z.string().nullable() })
 const executionRowSchema = z.object({ execution_id: z.string(), order_id: z.string(), scheduled_for: z.string(), status: inpatientExecutionSchema.shape.status, version: z.number(), administration_id: z.string().nullable(), reason: z.string().nullable() })
 type OrderRow = z.infer<typeof orderRowSchema>
 type ExecutionRow = z.infer<typeof executionRowSchema>

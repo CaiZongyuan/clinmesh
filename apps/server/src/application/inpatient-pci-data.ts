@@ -8,6 +8,7 @@ import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { pciDataPackage } from './scenario-data/pci-data.ts'
 import { storeMaterialSnapshot } from './scenario-data/cardiovascular-materials.ts'
+import { CLASS_A_COVERAGE, CLASS_B_10_COVERAGE } from './catalog-insurance-coverage.ts'
 
 const catalogRow = z.object({ item_id: z.string(), version: z.number(), active: z.number(), price_fen: z.number(), config_json: z.string() })
 const serviceRow = z.object({ service_id: z.string(), version: z.number(), config_json: z.string() })
@@ -112,6 +113,7 @@ export class InpatientPciData {
         ...(old.availableScopes === undefined ? { availableScopes: ['outpatient', 'inpatient'] } : {}),
         ...(old.laboratoryService === undefined ? { laboratoryService: definition } : {}),
         ...(old.inpatientInvestigationBilling === undefined || old.inpatientInvestigationBilling === null ? { inpatientInvestigationBilling: billing } : {}),
+        ...(old.insuranceCoverage === undefined ? { insuranceCoverage: CLASS_A_COVERAGE } : {}),
         ...(old.pciDataSupplement === undefined ? { pciDataSupplement: { synthetic: true, packageId: pciDataPackage.id, version: pciDataPackage.version, referenceRanges: 'synthetic-hospital' } } : {}),
       }
       if (current === undefined) {
@@ -146,6 +148,7 @@ export class InpatientPciData {
         allowedCombinationIds: [...identities.values()].filter(id => id !== itemId),
         allowedDiagnosisCatalogItemIds: [pciDataPackage.diagnosis.id], inpatientIndications: [pciDataPackage.diagnosis], inpatientBillingTrigger: 'dispense',
         allowedCourseDays: [1], defaultCourseDays: 1, allowedQuantities: [supplement.suggestedQuantity], defaultQuantity: supplement.suggestedQuantity,
+        insuranceCoverage: CLASS_B_10_COVERAGE,
         pciDataSupplement: { packageId: pciDataPackage.id, version: pciDataPackage.version, ...supplement },
       }
       const old = current === undefined ? {} : z.record(z.string(), z.json()).parse(JSON.parse(current.config_json))
