@@ -530,7 +530,7 @@ export class WorkflowService
   }
 
   commandReceipt(context: ActorContext, operationId: string, idempotencyKey: string) {
-    const operation = getHisOperation(operationId)
+    const operation = getHisOperation(operationId === 'synthetic-case.authored-pack.prepare' ? 'admin.authored-case-pack.prepare' : operationId)
     try {
       const receipt = this.#commands.readReceipt(context, operation.commandOperation ?? operation.id, idempotencyKey)
       return { ...receipt, operationId }

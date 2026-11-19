@@ -180,7 +180,12 @@ function load(key: string, expectedBinding: z.infer<typeof bindingSchema>) {
   try {
     const value = sessionStorage.getItem(key)
     if (value === null) return { key, intent: null, error: null }
-    const intent = intentSchema.parse(JSON.parse(value))
+    const raw: unknown = JSON.parse(value)
+    if (typeof raw === 'object' && raw !== null && 'command' in raw && typeof raw.command === 'object' && raw.command !== null
+      && 'operation' in raw.command && raw.command.operation === 'synthetic-case.authored-pack.prepare') {
+      raw.command.operation = 'admin.authored-case-pack.prepare'
+    }
+    const intent = intentSchema.parse(raw)
     if (JSON.stringify(intent.binding) !== JSON.stringify(expectedBinding)) throw storageError()
     return { key, intent, error: null }
   } catch { return { key, intent: null, error: storageError() } }

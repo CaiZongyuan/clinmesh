@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
+import { inpatientIntentBindingSchema, inpatientIntentKey } from './inpatient-intent-storage.ts'
 import { PciPreparation } from './pci-preparation.tsx'
 
 const session: SessionContext = {
@@ -149,5 +150,37 @@ it('recovers a lost authored case pack prepare receipt without sending another p
   await user.click(screen.getByRole('button', { name: '恢复原准备操作' }))
   expect(await screen.findByText(/心血管与慢病专病合成病例包：1\/1 已就绪/)).toBeTruthy()
   expect(posts).toBe(1)
+  client.clear()
+})
+
+it('migrates legacy synthetic-case.authored-pack.prepare sessionStorage intents without storageFailure', async () => {
+  const legacyKey = '019a0000-0000-7000-8000-000000000042'
+  const expectedBinding = inpatientIntentBindingSchema.parse({ accountId: session.user.id, actor: session.actor })
+  sessionStorage.setItem(inpatientIntentKey(expectedBinding), JSON.stringify({
+    version: 1,
+    binding: expectedBinding,
+    idempotencyKey: legacyKey,
+    command: { operation: 'synthetic-case.authored-pack.prepare', input: { expectedEpoch: 'epoch-1' } },
+  }))
+  const packReceipt = { auditId: 'audit-pack', requestId: 'req-pack', effects: [], warnings: [], data: authoredPackReady }
+  vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+    const path = String(url)
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path === '/api/his/v1/inpatient/pci-data') return Response.json({ error: { code: 'REFERENCE_RELEASE_NOT_FOUND', message: '资料未就绪' } }, { status: 409 })
+    if (path === '/api/sim/v1/synthetic-cases/authored-pack') return Response.json(authoredPackPending)
+    if (path.startsWith('/api/his/v1/command-receipts?')) {
+      const params = new URL(path, 'http://clinmesh.test').searchParams
+      expect(params.get('idempotencyKey')).toBe(legacyKey)
+      expect(params.get('operationId')).toBe('admin.authored-case-pack.prepare')
+      return Response.json({ status: 'completed', operationId: 'admin.authored-case-pack.prepare', idempotencyKey: legacyKey, response: packReceipt })
+    }
+    throw new Error(path)
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(<QueryClientProvider client={client}><PciPreparation locale="zh-CN" session={session} onSourcePrepared={async () => {}} /></QueryClientProvider>)
+  expect(await screen.findByRole('button', { name: '恢复原准备操作' })).toBeTruthy()
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '恢复原准备操作' }))
+  expect(await screen.findByText(/心血管与慢病专病合成病例包：1\/1 已就绪/)).toBeTruthy()
   client.clear()
 })
