@@ -1074,9 +1074,35 @@ export class OutpatientWorkflowContext {
 
   activeCaseByPatient(context: ActorContext, patientId: string) {
     return activeOutpatientCaseRowSchema.optional().parse(this.database.driver.prepare(`
-      SELECT case_id, registration_id, encounter_id, initial_task_id, doctor_task_id, status
-      FROM outpatient_case
-      WHERE workspace_id = ? AND epoch = ? AND patient_id = ? AND status != 'completed'
+      SELECT c.case_id, c.registration_id, c.encounter_id, c.initial_task_id, c.doctor_task_id, c.status
+      FROM outpatient_case AS c
+      LEFT JOIN fhir_resource AS encounter
+        ON encounter.workspace_id = c.workspace_id
+       AND encounter.epoch = c.epoch
+       AND encounter.resource_type = 'Encounter'
+       AND encounter.resource_id = c.encounter_id
+       AND encounter.deleted = 0
+      WHERE c.workspace_id = ? AND c.epoch = ? AND c.patient_id = ? AND c.status != 'completed'
+        AND NOT (
+          json_extract(encounter.content_json, '$.status') = 'completed'
+          AND c.status NOT IN ('awaiting-medication-payment', 'awaiting-dispense')
+          AND EXISTS (
+            SELECT 1 FROM no_medication_conclusion AS n
+            WHERE n.workspace_id = c.workspace_id AND n.epoch = c.epoch AND n.case_id = c.case_id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM prescription AS p
+            LEFT JOIN prescription_withdrawal AS w
+              ON w.workspace_id = p.workspace_id AND w.epoch = p.epoch AND w.prescription_id = p.prescription_id
+            WHERE p.workspace_id = c.workspace_id AND p.epoch = c.epoch AND p.case_id = c.case_id
+              AND w.withdrawal_id IS NULL AND p.status != 'dispensed'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM charge_record AS ch
+            WHERE ch.workspace_id = c.workspace_id AND ch.epoch = c.epoch AND ch.case_id = c.case_id
+              AND ch.category != 'registration' AND ch.status = 'billable'
+          )
+        )
     `).get(context.workspaceId, context.epoch, patientId))
   }
 

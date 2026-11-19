@@ -21,7 +21,7 @@ Status: implemented
      - 门诊首诊：首次优先 `initial -> 未标记`，同门诊已有同编码终态报告/检验时优先 `repeat -> initial -> 未标记`。
    - 为避免住院多项检查超出 `#formalEvidence` 的 `LIMIT 20` 截断，`InvestigationService` 使用独立的无上限当前就诊终态检验编码查询判定复测，严格按包含阶段上下文的 `inputHash` 命中快照（不跨阶段回退最新快照），并补充肌酐 `umol/L -> mg/dL` 换算以同时兼容 `laboratory-cn` 与 `pci-data`。
    - `ExaminationResultResolver` 同时接受 `urn:clinmesh:examination:ecg` / `tte` 体系与按 `urn:clinmesh:examination:exam-code` 区分的 `urn:clinmesh:examination:conclusion` 精确结论；所选阶段写入 `inputHash`，在保持 `clinmesh-authored` 零正常兜底与同阶段冲突拦截的前提下，实现首诊、复测、随访快照分离及 Epoch 重放复用。
-   - 无用药门诊在 `encounter.complete` 且确认无未结处方或待缴费项时将 `outpatient_case.status` 推进为 `completed`，既允许后续出院门诊随访再次挂号，又保持未缴费/未发药处方病例对重复挂号的拦截。
+   - 在保持 `encounter.complete` 不改写 `outpatient_case.status` 或 `Scenario Run` 合同的前提下，`activeCaseByPatient` 对已记录无需用药结论、FHIR `Encounter.status = 'completed'` 且无未结处方或待缴临床费用的门诊就诊不再视为活动阻塞，既允许转住院出院后再次门诊随访挂号，又保持未缴费/未发药处方病例对重复挂号的拦截。
 
 3. **五例心血管与慢病专病合成病例包及紧凑管理入口**：
    - 在 `apps/server/src/application/scenario-data/cardiorenal-authored-case-pack.ts` 交付五例合成病例，完整对齐 `@clinmesh/core` 临床评分、医嘱组套与事中临床质控红线/警示边界；所有病例定义与 Persona 文本仅保存在 `apps/server/`，不进入 `packages/contracts/`。
