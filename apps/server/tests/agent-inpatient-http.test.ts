@@ -101,6 +101,15 @@ it('住院上下文绑定当前住院、环节和岗位，拒绝自报患者资�
     selection: { kind: 'inpatient-admission', id: s.admission.id, version: s.admission.versionId } })
   expect(binding.snapshot.allowedOperationIds).toContain('inpatient.stage.select')
   expect(binding.snapshot.allowedOperationIds).not.toContain('inpatient.report.acknowledge.propose')
+  const mrRecordResponse = await s.context('medical-records', 'record')
+  expect(mrRecordResponse.status).toBe(201)
+  const mrRecordBinding = agentPageContextBindingSchema.parse(await mrRecordResponse.json())
+  expect(mrRecordBinding.snapshot.allowedOperationIds).toEqual(expect.arrayContaining([
+    'inpatient.angiography-reports.read',
+    'inpatient.clinical-scores.read',
+    'inpatient.guideline-topics.read',
+  ]))
+  expect(mrRecordBinding.snapshot.allowedOperationIds).not.toContain('inpatient.clinical-quality.read')
   expect((await s.context('ward-nurse', 'orders', { patientName: '自报患者' })).status).toBe(400)
   expect((await s.context('ward-nurse', 'orders', {
     selection: { kind: 'inpatient-admission', id: s.admission.id, version: '999' },

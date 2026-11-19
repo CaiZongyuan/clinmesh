@@ -756,6 +756,7 @@ describe('HIS operation catalog', () => {
     expect(Object.fromEntries(writes
       .filter(candidate => candidate.commandOperation !== candidate.id)
       .map(candidate => [candidate.id, candidate.commandOperation]))).toEqual({
+      'admin.authored-case-pack.prepare': 'synthetic-case.authored-pack.prepare',
       'admin.laboratory-services.publish': 'laboratory-service-publication.create',
       'admin.pci-case.prepare': 'synthetic-case.pci-source.prepare',
       [clinicalDocumentOperationIds.draftSet]: clinicalDocumentOperationIds.saveDraft,
@@ -801,11 +802,11 @@ describe('HIS operation catalog', () => {
     }
 
     expect(counts).toEqual({
-      'clinmesh-administrator': 4,
+      'clinmesh-administrator': 6,
       'clinmesh-billing': 18,
       'clinmesh-doctor': 70,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 119,
+      'clinmesh-inpatient': 120,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 8,
       'clinmesh-shared': 1,
@@ -982,4 +983,47 @@ it('publishes narrow read-only order set template and draft operations without r
   expect(inpatientDrafts.risk).toBe('read')
   expect(inpatientDrafts.input.safeParse({ admissionId: 'admission-1', templateId: 'cin-perioperative-hydration' }).success).toBe(true)
   expect(inpatientDrafts.input.safeParse({ admissionId: 'admission-1', pulseBpm: 80 }).success).toBe(false)
+
+  const angiography = getHisOperation('inpatient.angiography-reports.read')
+  expect(angiography).toMatchObject({
+    cliPath: ['inpatient', 'angiography-reports'],
+    handlerOwner: 'InpatientService',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/angiography-reports' },
+    mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read',
+    roles: ['inpatient-doctor', 'ward-nurse', 'medical-records'],
+    skill: 'clinmesh-inpatient',
+    version: 1,
+  })
+  expect(angiography.input.parse({ admissionId: 'adm-1' })).toEqual({ admissionId: 'adm-1' })
+
+  const packRead = getHisOperation('admin.authored-case-pack.read')
+  expect(packRead).toMatchObject({
+    cliPath: ['admin', 'authored-case-pack', 'get'],
+    handlerOwner: 'ScenarioDataService',
+    http: { method: 'GET', path: '/api/sim/v1/synthetic-cases/authored-pack' },
+    mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read',
+    roles: ['administrator'],
+    skill: 'clinmesh-administrator',
+    version: 1,
+  })
+
+  const packPrepare = getHisOperation('admin.authored-case-pack.prepare')
+  expect(packPrepare).toMatchObject({
+    cliPath: ['admin', 'authored-case-pack', 'prepare'],
+    commandOperation: 'synthetic-case.authored-pack.prepare',
+    handlerOwner: 'ScenarioDataService',
+    http: { method: 'POST', path: '/api/sim/v1/synthetic-cases/authored-pack/prepare' },
+    mode: 'command',
+    requirements: { expectedVersions: true, idempotency: 'required' },
+    risk: 'write',
+    roles: ['administrator'],
+    skill: 'clinmesh-administrator',
+    version: 1,
+  })
+  expect(packPrepare.http.encodeBody?.({ expectedEpoch: 'epoch-1' })).toEqual({ input: { expectedEpoch: 'epoch-1' } })
+  expect(packPrepare.input.safeParse({ expectedEpoch: 'epoch-1', rawBundle: {} }).success).toBe(false)
 })

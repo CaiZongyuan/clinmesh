@@ -479,4 +479,60 @@ describe('ClinMesh Surface Agent tools', () => {
     await expect(authorized[1]!.execute(bound, new AbortController().signal)).rejects.toThrow('receipt unavailable')
     expect(feedback.mock.calls.map(([event]) => event.phase)).toEqual(['executing', 'unconfirmed'])
   })
+
+  it('routes specialist outpatient decision read tools through queryDoctor without dynamic binding parameters', async () => {
+    const ops = [
+      ['outpatient.clinical-scores.read', 'clinmesh_read_clinical_scores', {}, {}],
+      ['outpatient.guideline-topics.read', 'clinmesh_read_guideline_topics', { topicId: { type: 'string' } }, { topicId: 'acute-chest-pain-acs' }],
+      ['outpatient.clinical-quality.read', 'clinmesh_read_clinical_quality', { gate: { type: 'string' } }, { gate: 'outpatient-completion' }],
+      ['outpatient.order-set-drafts.read', 'clinmesh_read_order_set_drafts', { templateId: { type: 'string' } }, { templateId: 'chest-pain-stat-workup' }],
+    ] as const
+    const doctor: AgentPageContextBinding = {
+      ...binding,
+      snapshot: {
+        ...binding.snapshot,
+        actor: { actorId: 'doctor', practitionerRoleId: 'doctor-role', roleCode: 'outpatient-doctor' },
+        allowedOperationIds: ops.map(([op]) => op),
+        claim: { ...binding.snapshot.claim, activeSection: 'diagnosis', selection: { id: 'case-1', kind: 'case', version: '1' }, viewId: 'consultation' },
+      },
+    }
+    const queryDoctor = vi.fn(async (req: { input: unknown }) => ({ echoed: req.input }))
+    const frame = {
+      actions: Object.fromEntries(ops.map(([op, , properties]) => [op, {
+        description: `Read ${op}`,
+        execute: vi.fn(),
+        parameters: { additionalProperties: false, properties, type: 'object' as const },
+      }])),
+      binding: doctor,
+      readState: () => ({}),
+    }
+    const tools = buildSurfaceAgentTools({
+      ...frame,
+      authorize: async req => ({ callId: 'call', context: doctor.snapshot, dshSessionId: 'dsh-session-1', operationId: req.operationId, receiptToken: 'receipt', status: 'authorized' }),
+      complete: async () => ({}),
+      definitions: ops.map(([operationId, toolName]) => ({
+        mode: 'query' as const,
+        operationId,
+        risk: 'read-only' as const,
+        roleCodes: ['outpatient-doctor'] as const,
+        sections: ['diagnosis', 'prescription'] as const,
+        toolName,
+        viewIds: ['consultation'] as const,
+      })),
+      issueProof: async () => 'proof',
+      queryDoctor,
+      resolveFrame: () => frame,
+      review: async () => ({}),
+    })
+    expect(tools).toHaveLength(4)
+    for (const [index, [, toolName, , input]] of ops.entries()) {
+      const tool = tools[index]!
+      expect(tool.name).toBe(toolName)
+      expect(tool.parameters).not.toHaveProperty('properties.scopeKey')
+      expect(tool.parameters).not.toHaveProperty('properties.pageRevision')
+      const out = JSON.parse(await tool.execute(input, new AbortController().signal))
+      expect(out).toEqual({ data: { echoed: input }, ok: true })
+    }
+    expect(queryDoctor).toHaveBeenCalledTimes(4)
+  })
 })

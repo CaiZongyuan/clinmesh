@@ -132,8 +132,8 @@ it('recovers a lost authored case pack prepare receipt without sending another p
     if (path.startsWith('/api/his/v1/command-receipts?')) {
       const params = new URL(path, 'http://clinmesh.test').searchParams
       expect(params.get('idempotencyKey')).toBe(originalKey)
-      expect(params.get('operationId')).toBe('synthetic-case.authored-pack.prepare')
-      return Response.json({ status: 'completed', operationId: 'synthetic-case.authored-pack.prepare', idempotencyKey: originalKey, response: packReceipt })
+      expect(params.get('operationId')).toBe('admin.authored-case-pack.prepare')
+      return Response.json({ status: 'completed', operationId: 'admin.authored-case-pack.prepare', idempotencyKey: originalKey, response: packReceipt })
     }
     throw new Error(path)
   }))

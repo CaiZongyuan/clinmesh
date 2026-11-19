@@ -39,13 +39,13 @@ export function PciPreparation({ locale, session, onSourcePrepared }: {
       await onSourcePrepared(prepared.data.profileId)
     } else if (command.operation === 'inpatient.pci-data.prepare') {
       await client.invalidateQueries({ queryKey: catalogKey })
-    } else if (command.operation === 'synthetic-case.authored-pack.prepare') {
+    } else if (command.operation === 'admin.authored-case-pack.prepare') {
       client.setQueryData(packKey, authoredCasePackPrepareResponseSchema.parse(response).data)
       await client.invalidateQueries({ queryKey: ['synthetic-patient-profiles'] })
     }
   })
   const error = write.storageFailure ?? write.mutation.error
-  const prepare = (operation: 'admin.pci-case.prepare' | 'inpatient.pci-data.prepare' | 'synthetic-case.authored-pack.prepare') =>
+  const prepare = (operation: 'admin.pci-case.prepare' | 'inpatient.pci-data.prepare' | 'admin.authored-case-pack.prepare') =>
     write.mutation.mutate({ operation, input: { expectedEpoch: session.actor.epoch } })
   const installed = catalog.data?.installed
   const definition = catalog.data?.package
@@ -53,7 +53,7 @@ export function PciPreparation({ locale, session, onSourcePrepared }: {
   const pendingOp = write.pending?.command.operation
   const pendingPreparation = pendingOp === 'admin.pci-case.prepare'
     || pendingOp === 'inpatient.pci-data.prepare'
-    || pendingOp === 'synthetic-case.authored-pack.prepare'
+    || pendingOp === 'admin.authored-case-pack.prepare'
   const ready = installed !== undefined && definition !== undefined && conflicts.length === 0
     && installed.medications.length === definition.medications.length
     && installed.laboratories.length === definition.laboratories.length
@@ -67,7 +67,7 @@ export function PciPreparation({ locale, session, onSourcePrepared }: {
     <div className="flex flex-wrap gap-2">
       <Button disabled={write.blocked} onClick={() => prepare('inpatient.pci-data.prepare')} type="button" variant="outline">{zh ? '准备 PCI 目录' : 'Prepare catalog'}</Button>
       <Button disabled={write.blocked} onClick={() => prepare('admin.pci-case.prepare')} type="button" variant="outline">{zh ? '准备固定 PCI 病例' : 'Prepare PCI case'}</Button>
-      <Button disabled={write.blocked} onClick={() => prepare('synthetic-case.authored-pack.prepare')} type="button" variant="outline">{zh ? `准备专病病例包（${packCount} 例）` : `Prepare pack (${packCount})`}</Button>
+      <Button disabled={write.blocked} onClick={() => prepare('admin.authored-case-pack.prepare')} type="button" variant="outline">{zh ? `准备专病病例包（${packCount} 例）` : `Prepare pack (${packCount})`}</Button>
       <Button disabled={catalog.isFetching || pack.isFetching} onClick={() => { void catalog.refetch(); void pack.refetch() }} type="button" variant="ghost">{zh ? '刷新准备状态' : 'Refresh'}</Button>
     </div>
     {write.mutation.isPending ? <p role="status" className="text-sm">{zh ? '正在准备，请稍候…' : 'Preparing…'}</p> : null}

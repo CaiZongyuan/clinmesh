@@ -2368,6 +2368,36 @@ const operationCliMetadataList = [
     version: 1,
   },
   {
+    cliPath: ['admin', 'authored-case-pack', 'get'],
+    id: 'admin.authored-case-pack.read',
+    mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read',
+    roles: ['administrator'],
+    summary: '读取五例专病合成病例包的准备就绪状态、推荐入口与病例身份；不暴露 Case Truth',
+    version: 1,
+  },
+  {
+    cliPath: ['admin', 'authored-case-pack', 'prepare'],
+    id: 'admin.authored-case-pack.prepare',
+    mode: 'command',
+    requirements: { expectedVersions: true, idempotency: 'required' },
+    risk: 'write',
+    roles: ['administrator'],
+    summary: '幂等准备五例专病合成病例包及有效患者档案，首次自动选用模板 Persona，保留人工修订与消费绑定；排队旧生成任务标为 PERSONA_JOB_SUPERSEDED，运行中生成返回 AUTHORED_CASE_PACK_PERSONA_RUNNING (409)，世代冲突返回 AUTHORED_CASE_PACK_EPOCH_CONFLICT (409)；不调用模型、启动就诊或产生诊疗及费用',
+    version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'angiography-reports'],
+    id: 'inpatient.angiography-reports.read',
+    mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read',
+    roles: ['inpatient-doctor', 'ward-nurse', 'medical-records'],
+    summary: '读取本次住院正式冠脉造影报告、多支节段生理学所见与可选 QCA 测量；不暴露仿真来源真值',
+    version: 1,
+  },
+  {
     cliPath: ['registration', 'synthetic-case', 'start-inpatient'],
     id: 'registration.synthetic-case.start-inpatient',
     mode: 'command',
@@ -2683,6 +2713,7 @@ const commandOperationAliases: Readonly<Record<string, string>> = {
   'registration.synthetic-case.start': 'synthetic-case.start-outpatient-visit',
   'registration.synthetic-case.start-inpatient': 'synthetic-case.start-inpatient-visit',
   'admin.pci-case.prepare': 'synthetic-case.pci-source.prepare',
+  'admin.authored-case-pack.prepare': 'synthetic-case.authored-pack.prepare',
   'service.complete': 'hospital-service.complete',
   'service.order': 'hospital-service.order',
   'triage.record': 'encounter.record-triage',
@@ -2796,6 +2827,8 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'registration.synthetic-case.start': 'clinmesh-registration',
   'registration.synthetic-case.start-inpatient': 'clinmesh-registration',
   'admin.pci-case.prepare': 'clinmesh-administrator',
+  'admin.authored-case-pack.read': 'clinmesh-administrator',
+  'admin.authored-case-pack.prepare': 'clinmesh-administrator',
   'service.complete': 'clinmesh-doctor',
   'service.order': 'clinmesh-doctor',
   'triage.queue.list': 'clinmesh-triage',
@@ -2805,7 +2838,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
 function handlerOwnerFor(
   operation: HisOperationRuntimeDefinition,
 ): z.infer<typeof hisOperationHandlerOwnerSchema> {
-  if (operation.id === 'admin.pci-case.prepare') return 'ScenarioDataService'
+  if (operation.id === 'admin.pci-case.prepare' || operation.id.startsWith('admin.authored-case-pack.')) return 'ScenarioDataService'
   if (operation.id.startsWith('inpatient.')) return 'InpatientService'
   if (operation.http.path === '/fhir/R5/metadata') return 'FhirCapabilities'
   if (operation.http.path.startsWith('/fhir/R5/')) return 'FhirRepository'
@@ -2865,10 +2898,6 @@ export const excludedHisRoutes = [
     reason: '负责医生首次签署前人工核实临床初诊或随访；Agent 仅读取规则结果，不授予分类写入。' },
   { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId',
     reason: '住院医生页面读取原计划的只读指南参考意见，不授予临床写入。' },
-  {
-    method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/angiography-reports',
-    reason: '住院页面只读正式造影报告与测量；不读取仿真来源，不增加独立 CLI 或 Agent Grant 操作。',
-  },
   {
     method: 'POST',
     path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm',

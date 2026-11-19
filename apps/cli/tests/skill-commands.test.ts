@@ -337,6 +337,21 @@ it('固定 PCI 来源与直接住院示例使用窄合同并各自恢复原回�
     entries: [{ conceptId: 'wst-886:2026:2100404B', expectedVersion: 1, insuranceCoverage: { included: false, priorSelfPayBps: 1000 } }],
   }).success).toBe(false)
   for (const term of ['admin.laboratory-services.publish', 'insuranceCoverage', 'priorSelfPayBps']) expect(admin).toContain(term)
+
+  const packRead = getHisOperation('admin.authored-case-pack.read')
+  const packPrepare = getHisOperation('admin.authored-case-pack.prepare')
+  expect(inspectExample(program, commandLines(admin).find(line => line === 'clinmesh admin authored-case-pack get')!).operation?.id).toBe(packRead.id)
+  expect(inspectExample(program, commandLines(admin).find(line => line.startsWith('clinmesh admin authored-case-pack prepare '))!).operation?.id).toBe(packPrepare.id)
+  for (const term of [
+    '--operation-id admin.authored-case-pack.prepare',
+    'AUTHORED_CASE_PACK_EPOCH_CONFLICT',
+    'AUTHORED_CASE_PACK_PERSONA_RUNNING',
+    'PERSONA_JOB_SUPERSEDED',
+  ]) expect(admin).toContain(term)
+
+  const inpatient = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  expect(inspectExample(program, commandLines(inpatient).find(line => line.startsWith('clinmesh inpatient angiography-reports '))!).operation?.id)
+    .toBe('inpatient.angiography-reports.read')
 })
 
 it('住院退款示例及Catalog保留单笔一千万元上限', async () => {

@@ -40,6 +40,7 @@ export class AuthoredCasePackService {
 
   read(context: ActorContext) {
     if (context.roleCode !== 'administrator') {
+      try { this.commands.auditRead(context, 'admin.authored-case-pack.read', {}, 'failed') } catch { /* preserve original error */ }
       throw new AuthoredCasePackError('ROLE_NOT_ALLOWED', '只有管理员可以查看专病病例包准备状态', 403)
     }
     const now = new Date().toISOString()
@@ -61,7 +62,7 @@ export class AuthoredCasePackService {
         titleEn: compiledCase.definition.titleEn,
       }
     })
-    return authoredCasePackSummarySchema.parse({
+    const summary = authoredCasePackSummarySchema.parse({
       cases: entries,
       name: this.pack.name,
       nameEn: this.pack.nameEn,
@@ -70,6 +71,8 @@ export class AuthoredCasePackService {
       readyCount: entries.filter(item => isCaseReady(item.case?.status)).length,
       totalCount: entries.length,
     })
+    this.commands.auditRead(context, 'admin.authored-case-pack.read', {}, 'success')
+    return summary
   }
 
   prepare(

@@ -7,6 +7,7 @@ import type { z } from 'zod'
 import type { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import type { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { z as schema } from 'zod'
+import { getHisOperation } from '@clinmesh/contracts/his-operations-runtime'
 import { inpatientSettlementPreviewSchema } from '@clinmesh/contracts/inpatient-discharge'
 import type { paymentSimulatorRuleSchema } from '@clinmesh/contracts/his'
 import { apiGet } from './api-client.ts'
@@ -86,13 +87,35 @@ export function useInpatientAgentTools(input: Input) {
     clinical: input.clinical, investigations: input.investigations, payment })
   useEffect(() => () => review.cancel('当前岗位或患者资料已变化，请重新准备。'), [review, revision, namespace])
   const t = (cn: string, en: string) => input.locale === 'zh-CN' ? cn : en
-  const current = () => {
+  const readCurrent = () => {
     const frame = latest.current
     if (frame.admission.id !== input.admission.id || frame.admission.versionId !== input.admission.versionId
-      || frame.stage !== input.stage || sessionNamespace(frame.session) !== namespace
-      || frame.write.blocked) throw new Error(t('当前岗位或患者资料已变化，请重新准备。', 'The current role or patient details changed. Prepare the action again.'))
+      || frame.stage !== input.stage || sessionNamespace(frame.session) !== namespace) {
+      throw new Error(t('当前岗位或患者资料已变化，请重新准备。', 'The current role or patient details changed. Prepare the action again.'))
+    }
     return frame
   }
+  const current = () => {
+    const frame = readCurrent()
+    if (frame.write.blocked) throw new Error(t('当前岗位或患者资料已变化，请重新准备。', 'The current role or patient details changed. Prepare the action again.'))
+    return frame
+  }
+  const role = input.session.actor.roleCode
+  const queryAction = (operation: AgentOperationId, sub: string, roles: readonly string[], stages: readonly InpatientStage[], description: string): SurfaceAgentPageAction => ({
+    description,
+    parameters: parameters(operation),
+    enabled: roles.includes(role) && stages.includes(input.stage),
+    execute(raw, signal) {
+      const parsed = parseAgentToolInput(operation, raw) as Record<string, unknown>
+      const frame = readCurrent()
+      if (!roles.includes(frame.session.actor.roleCode) || !stages.includes(frame.stage)) {
+        throw new Error(t('当前岗位或环节不能读取该资料。', 'This role or stage cannot read this resource.'))
+      }
+      const qs = new URLSearchParams(Object.entries(parsed).flatMap(([k, v]) => v === undefined ? [] : [[k, String(v)]])).toString()
+      return apiGet(`/api/his/v1/inpatient/admissions/${encodeURIComponent(frame.admission.id)}${sub}${qs ? `?${qs}` : ''}`, getHisOperation(operation).output, signal)
+    },
+  })
+  const clinicalRoles = ['inpatient-doctor', 'ward-nurse', 'medical-records'] as const
   useRegisterAgentPage({
     label: t('住院工作台', 'Inpatient workspace'),
     claim: { version: 1, viewId: 'inpatient', viewRevision: revision, activeSection: input.stage,
@@ -105,6 +128,16 @@ export function useInpatientAgentTools(input: Input) {
       ...(input.session.actor.roleCode === 'ward-nurse' || input.session.actor.roleCode === 'inpatient-doctor'
         ? { clinical: input.clinical, investigations: input.investigations } : {}) }),
     actions: {
+      'inpatient.angiography-reports.read': queryAction('inpatient.angiography-reports.read', '/angiography-reports', clinicalRoles, ['investigations', 'surgery', 'record'],
+        'Read formal coronary angiography reports, multivessel physiology findings, and QCA measurements for the current inpatient.'),
+      'inpatient.clinical-scores.read': queryAction('inpatient.clinical-scores.read', '/clinical-scores', clinicalRoles, ['admission', 'orders', 'surgery', 'discharge', 'record'],
+        'Read deterministic clinical scores and missing inputs for the current inpatient.'),
+      'inpatient.guideline-topics.read': queryAction('inpatient.guideline-topics.read', '/guideline-topics', clinicalRoles, ['orders', 'surgery', 'discharge', 'record'],
+        'Read verified guideline topic excerpts, limitations, and patient indicator gaps for the current inpatient.'),
+      'inpatient.clinical-quality.read': queryAction('inpatient.clinical-quality.read', '/clinical-quality', ['inpatient-doctor'], ['orders', 'surgery', 'discharge', 'record'],
+        'Run read-only two-tier clinical quality preflight (inpatient-order, inpatient-pci-plan, or inpatient-discharge).'),
+      'inpatient.order-set-drafts.read': queryAction('inpatient.order-set-drafts.read', '/order-set-drafts', ['inpatient-doctor'], ['orders', 'investigations'],
+        'Read version-bound inpatient order-set candidate drafts screened against allergies, eGFR, and nursing vitals.'),
       'inpatient.report.acknowledge.propose': {
         description: 'Prepare acknowledgement of the current inpatient report. Imaging requires an image actually displayed for the doctor.',
         parameters: parameters('inpatient.report.acknowledge.propose'),

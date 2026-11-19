@@ -594,4 +594,81 @@ describe('Agent Capability Grant HTTP authentication', () => {
     `).run('workspace-demo')
     expect((await requestWith(policyGrant.token)).status).toBe(401)
   })
+
+  it('authorizes admin.authored-case-pack.read and prepare via Bearer Agent Capability Grant and enforces allowlists', async () => {
+    const { password, runtime } = await createRuntime()
+    const cookie = await signIn(runtime, password)
+    const headers = {
+      'content-type': 'application/json',
+      cookie,
+      origin: 'http://localhost',
+    }
+    const client = agentClientSchema.parse(await (await runtime.app.request('/api/agent/v1/clients', {
+      body: JSON.stringify({ name: 'Authored pack admin agent' }),
+      headers: { ...headers, 'idempotency-key': 'authored-pack-agent-client-1' },
+      method: 'POST',
+    })).json())
+    const readOnlyGrant = agentCapabilityGrantSchema.parse(await (await runtime.app.request('/api/agent/v1/grants', {
+      body: JSON.stringify({
+        agentClientId: client.agentClientId,
+        operationIds: ['admin.authored-case-pack.read'],
+        practitionerRoleId: 'practitioner-role-administrator',
+        ttlSeconds: 3600,
+      }),
+      headers: { ...headers, 'idempotency-key': 'authored-pack-read-grant-1' },
+      method: 'POST',
+    })).json())
+    const fullGrant = agentCapabilityGrantSchema.parse(await (await runtime.app.request('/api/agent/v1/grants', {
+      body: JSON.stringify({
+        agentClientId: client.agentClientId,
+        operationIds: ['admin.authored-case-pack.read', 'admin.authored-case-pack.prepare', 'command.receipt.get'],
+        practitionerRoleId: 'practitioner-role-administrator',
+        ttlSeconds: 3600,
+      }),
+      headers: { ...headers, 'idempotency-key': 'authored-pack-full-grant-1' },
+      method: 'POST',
+    })).json())
+
+    const readRes = await runtime.app.request('/api/sim/v1/synthetic-cases/authored-pack', {
+      headers: { authorization: `Bearer ${readOnlyGrant.token}` },
+    })
+    expect(readRes.status).toBe(200)
+    expect(await readRes.json()).toMatchObject({ readyCount: 0, totalCount: 5 })
+
+    const deniedPrepare = await runtime.app.request('/api/sim/v1/synthetic-cases/authored-pack/prepare', {
+      body: JSON.stringify({ input: { expectedEpoch: 'epoch-1' } }),
+      headers: {
+        authorization: `Bearer ${readOnlyGrant.token}`,
+        'content-type': 'application/json',
+        'idempotency-key': 'authored-pack-denied-prepare-1',
+      },
+      method: 'POST',
+    })
+    expect(deniedPrepare.status).toBe(403)
+    expect(await parseApiError(deniedPrepare)).toMatchObject({ error: { code: 'OPERATION_NOT_ALLOWED' } })
+
+    const prepareKey = 'authored-pack-grant-prepare-1'
+    const prepareRes = await runtime.app.request('/api/sim/v1/synthetic-cases/authored-pack/prepare', {
+      body: JSON.stringify({ input: { expectedEpoch: 'epoch-1' } }),
+      headers: {
+        authorization: `Bearer ${fullGrant.token}`,
+        'content-type': 'application/json',
+        'idempotency-key': prepareKey,
+      },
+      method: 'POST',
+    })
+    expect(prepareRes.status).toBe(200)
+    expect((await prepareRes.json()).data).toMatchObject({ readyCount: 5, totalCount: 5 })
+
+    const receiptRes = await runtime.app.request(
+      `/api/his/v1/command-receipts?operationId=admin.authored-case-pack.prepare&idempotencyKey=${prepareKey}`,
+      { headers: { authorization: `Bearer ${fullGrant.token}` } },
+    )
+    expect(receiptRes.status).toBe(200)
+    expect(await receiptRes.json()).toMatchObject({
+      idempotencyKey: prepareKey,
+      operationId: 'admin.authored-case-pack.prepare',
+      status: 'completed',
+    })
+  })
 })
