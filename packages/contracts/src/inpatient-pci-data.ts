@@ -5,6 +5,8 @@ import { referenceConceptSnapshotSchema, referenceMedicationProductSchema } from
 import { inpatientMaterialItemSchema, inpatientProcedureItemSchema } from './inpatient-surgery.ts'
 
 const id = z.string().min(1).max(128)
+const text = z.string().min(1)
+const hash = z.string().regex(/^[a-f0-9]{64}$/)
 const amount = z.number().int().positive().safe()
 const synthetic = z.literal(true)
 
@@ -14,20 +16,20 @@ export const inpatientPciMedicationDataSchema = z.object({
   referenceReleaseId: id,
   hospitalSupplement: z.object({
     synthetic,
-    unit: z.string().min(1),
+    unit: text,
     priceFen: amount,
-    doseBasis: z.object({ amount: z.number().positive().finite(), unit: z.string().min(1) }).strict(),
+    doseBasis: z.object({ amount: z.number().positive().finite(), unit: text }).strict(),
     maxDoseQuantity: amount,
-    suggestedDoseText: z.string().min(1),
+    suggestedDoseText: text,
     suggestedQuantity: amount,
     frequencyCodes: z.array(z.enum(['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE'])).min(1),
-    route: z.string().min(1),
+    route: text,
     initialStock: amount,
-    note: z.string().min(1),
+    note: text,
   }).strict(),
   sourceQuotation: z.object({
     recordId: id,
-    sourceLocator: z.string().min(1),
+    sourceLocator: text,
     priceFen: amount,
     unit: z.null(),
     basis: z.literal('denominator_unverified'),
@@ -41,15 +43,15 @@ export const inpatientPciDataPackageSchema = z.object({
   synthetic,
   caseDraft: z.object({
     id,
-    name: z.string().min(1),
+    name: text,
     birthDate: z.iso.date(),
     gender: z.literal('male'),
-    chiefComplaint: z.string().min(1),
-    history: z.string().min(1),
+    chiefComplaint: text,
+    history: text,
     baselineObservations: z.array(z.object({
       coding: referenceConceptSnapshotSchema,
       value: z.number().finite(),
-      unit: z.string().min(1),
+      unit: text,
     }).strict()),
     plannedStentCount: z.literal(1),
     intendedUse: z.literal('authoring-only'),
@@ -59,12 +61,12 @@ export const inpatientPciDataPackageSchema = z.object({
   groupingTarget: z.object({
     code: z.literal('FM39'),
     status: z.literal('target-only'),
-    note: z.string().min(1),
+    note: text,
   }).strict(),
   medications: z.array(inpatientPciMedicationDataSchema),
   materials: z.array(z.object({
     item: inpatientMaterialItemSchema,
-    hospitalSupplement: z.object({ synthetic, specification: z.string().min(1), note: z.string().min(1) }).strict(),
+    hospitalSupplement: z.object({ synthetic, specification: text, note: text }).strict(),
   }).strict()),
   laboratories: z.array(laboratoryServiceSnapshotSchema),
   paymentParameters: z.object({
@@ -73,14 +75,14 @@ export const inpatientPciDataPackageSchema = z.object({
     synthetic,
     baseRateFen: amount,
     weightsBp: z.object({ FM39: amount }).strict(),
-    note: z.string().min(1),
+    note: text,
   }).strict(),
-  note: z.string().min(1),
+  note: text,
 }).strict()
 
 export const inpatientPciDataSchema = z.object({
   package: inpatientPciDataPackageSchema,
-  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  contentHash: hash,
   installed: z.object({
     medications: z.array(z.object({
       definitionId: id,
@@ -102,11 +104,23 @@ export const inpatientPciDataPrepareRequestSchema = z.object({
   input: z.object({ expectedEpoch: id }).strict(),
 }).strict()
 export const inpatientPciDataResponseSchema = commandResponseSchema(inpatientPciDataSchema)
-export const pciCaseSourcePrepareRequestSchema = z.object({ input: z.object({ expectedEpoch: id }).strict() }).strict()
+export const pciCaseSourcePrepareRequestSchema = inpatientPciDataPrepareRequestSchema
 export const pciCaseSourceSchema = z.object({
-  case: syntheticCaseInstanceSchema, profileId: id, sourceHash: z.string().regex(/^[a-f0-9]{64}$/), packageVersion: id,
+  case: syntheticCaseInstanceSchema, profileId: id, sourceHash: hash, packageVersion: id,
 }).strict()
 export const pciCaseSourceResponseSchema = commandResponseSchema(pciCaseSourceSchema)
+export const authoredCasePackPrepareRequestSchema = inpatientPciDataPrepareRequestSchema
+export const authoredCasePackEntrySchema = z.object({
+  draftId: id, title: text, titleEn: text,
+  recommendedEntry: z.enum(['outpatient', 'inpatient']), profileId: id,
+  sourceHash: hash, case: syntheticCaseInstanceSchema.nullable(),
+}).strict()
+export const authoredCasePackSummarySchema = z.object({
+  packageId: id, packageVersion: id, name: text, nameEn: text,
+  readyCount: z.number().int().nonnegative(), totalCount: z.number().int().positive(),
+  cases: z.array(authoredCasePackEntrySchema).min(1),
+}).strict()
+export const authoredCasePackPrepareResponseSchema = commandResponseSchema(authoredCasePackSummarySchema)
 export const startSyntheticInpatientCaseRequestSchema = z.object({
   activeBriefRevision: z.number().int().positive(), expectedCaseRevision: z.number().int().positive(),
   expectedEpoch: id, wardId: id,

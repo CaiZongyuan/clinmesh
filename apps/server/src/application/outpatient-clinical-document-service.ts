@@ -527,6 +527,33 @@ export class OutpatientClinicalDocumentService {
           },
         }, encounter.meta.versionId),
       )
+      const medicationStatus = this.#host.medicationCompletionStatus(input.context, outpatientCase.case_id)
+      const hasOpenPrescription = this.#context.database.driver.prepare(`
+        SELECT 1 FROM prescription p
+        LEFT JOIN prescription_withdrawal w
+          ON w.workspace_id = p.workspace_id AND w.epoch = p.epoch AND w.prescription_id = p.prescription_id
+        WHERE p.workspace_id = ? AND p.epoch = ? AND p.case_id = ?
+          AND w.withdrawal_id IS NULL AND p.status != 'dispensed'
+        LIMIT 1
+      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id) !== undefined
+      const hasPendingCharge = this.#context.database.driver.prepare(`
+        SELECT 1 FROM charge_record
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+          AND category != 'registration' AND status = 'billable'
+        LIMIT 1
+      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id) !== undefined
+      if (
+        medicationStatus.hasNoMedicationConclusion
+        && !medicationStatus.hasIssuedPrescription
+        && !hasOpenPrescription
+        && !hasPendingCharge
+      ) {
+        this.#context.database.driver.prepare(`
+          UPDATE outpatient_case
+          SET status = 'completed', version = version + 1, updated_at = ?
+          WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status != 'completed'
+        `).run(completedAt, input.context.workspaceId, input.context.epoch, outpatientCase.case_id)
+      }
       return {
         data: {
           completedAt,

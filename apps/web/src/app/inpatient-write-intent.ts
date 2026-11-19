@@ -21,7 +21,7 @@ import { inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInpu
 import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientDiagnosisConfirmInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientChargeReverseInputSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { z } from 'zod'
-import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
+import { authoredCasePackPrepareRequestSchema, authoredCasePackPrepareResponseSchema, inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { multiChargePaymentResponseSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { commandReceiptLookupSchema, getHisOperation, multiChargePaymentPreviewOperationInputSchema, multiChargePaymentConfirmOperationInputSchema,
   multiChargePaymentRecoverOperationInputSchema, refundAllocationPreviewOperationInputSchema } from '@clinmesh/contracts/his-operations-runtime'
@@ -48,31 +48,33 @@ import { inpatientIntentBindingSchema as bindingSchema, inpatientIntentKey, inpa
 import { completeInpatientReviewDraft } from './inpatient-review-draft.ts'
 import { completeInpatientReviewQueue, InpatientReviewStorageUnreadable } from './inpatient-review-queue.ts'
 
+const cmd = <O extends string, I extends z.ZodTypeAny>(operation: O, input: I) => z.object({ operation: z.literal(operation), input }).strict()
 const commandSchema = z.discriminatedUnion('operation', [
   outpatientStartCommandSchema,
   z.object({ operation: z.literal('payment.multi-charge.preview'), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentPreviewOperationInputSchema }).strict(),
   z.object({ operation: z.literal('payment.multi-charge.confirm'), caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentConfirmOperationInputSchema }).strict(),
   z.object({ operation: z.literal('payment.multi-charge.recover'), caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentRecoverOperationInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.record-checks.explain'), input: inpatientDrgExplainInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.guideline-advice.request'), input: inpatientGuidelineAdviceRequestInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.agent.confirm'), input: inpatientDrgAgentConfirmInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.material-estimate.request'), input: inpatientMaterialEstimateRequestInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.material-estimate.cancel'), input: inpatientMaterialEstimateRequestInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.material-estimate.save'), input: inpatientMaterialEstimateSaveInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.material-estimate.confirm'), input: inpatientMaterialEstimateConfirmInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.review.todo.act'), input: inpatientDrgReviewTodoActionInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.review.handoff'), input: inpatientDrgReviewHandoffInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.pci-selection.confirm'), input: inpatientPciSelectionConfirmInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.pci-selection.save'), input: inpatientPciSelectionSaveInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.followup.start'), input: inpatientDrgFollowupStartInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.followup.stop'), input: inpatientDrgFollowupStopInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.pci-data.prepare'), input: inpatientPciDataPrepareRequestSchema.shape.input }).strict(),
-  z.object({ operation: z.literal('admin.pci-case.prepare'), input: pciCaseSourcePrepareRequestSchema.shape.input }).strict(),
-  z.object({ operation: z.literal('registration.synthetic-case.start-inpatient'), input: startSyntheticInpatientCaseRequestSchema.extend({ caseId: z.string().min(1).max(128) }).strict() }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.reservation.create'), input: inpatientMaterialReservationCreateInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.reservation.release'), input: inpatientMaterialReservationReleaseInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.payer.review'), input: inpatientDrgPayerReviewCreateInputSchema }).strict(),
-  z.object({ operation: z.literal('billing.charge.adjust'), input: chargeAdjustmentInputSchema.extend({ caseId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict() }).strict(),
+  cmd('inpatient.drg.record-checks.explain', inpatientDrgExplainInputSchema),
+  cmd('inpatient.guideline-advice.request', inpatientGuidelineAdviceRequestInputSchema),
+  cmd('inpatient.drg.agent.confirm', inpatientDrgAgentConfirmInputSchema),
+  cmd('inpatient.material-estimate.request', inpatientMaterialEstimateRequestInputSchema),
+  cmd('inpatient.material-estimate.cancel', inpatientMaterialEstimateRequestInputSchema),
+  cmd('inpatient.material-estimate.save', inpatientMaterialEstimateSaveInputSchema),
+  cmd('inpatient.material-estimate.confirm', inpatientMaterialEstimateConfirmInputSchema),
+  cmd('inpatient.drg.review.todo.act', inpatientDrgReviewTodoActionInputSchema),
+  cmd('inpatient.drg.review.handoff', inpatientDrgReviewHandoffInputSchema),
+  cmd('inpatient.pci-selection.confirm', inpatientPciSelectionConfirmInputSchema),
+  cmd('inpatient.pci-selection.save', inpatientPciSelectionSaveInputSchema),
+  cmd('inpatient.drg.followup.start', inpatientDrgFollowupStartInputSchema),
+  cmd('inpatient.drg.followup.stop', inpatientDrgFollowupStopInputSchema),
+  cmd('inpatient.pci-data.prepare', inpatientPciDataPrepareRequestSchema.shape.input),
+  cmd('admin.pci-case.prepare', pciCaseSourcePrepareRequestSchema.shape.input),
+  cmd('synthetic-case.authored-pack.prepare', authoredCasePackPrepareRequestSchema.shape.input),
+  cmd('registration.synthetic-case.start-inpatient', startSyntheticInpatientCaseRequestSchema.extend({ caseId: z.string().min(1).max(128) }).strict()),
+  cmd('inpatient.drg.reservation.create', inpatientMaterialReservationCreateInputSchema),
+  cmd('inpatient.drg.reservation.release', inpatientMaterialReservationReleaseInputSchema),
+  cmd('inpatient.drg.payer.review', inpatientDrgPayerReviewCreateInputSchema),
+  cmd('billing.charge.adjust', chargeAdjustmentInputSchema.extend({ caseId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict()),
   z.object({ operation: z.literal('refund.preview'), caseId: z.string().min(1), input: refundPreviewInputSchema.extend({ chargeItemId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict() }).strict(),
   z.object({ operation: z.literal('refund.allocation.preview'), caseId: z.string().min(1), input: refundAllocationPreviewOperationInputSchema }).strict(),
   z.object({ operation: z.literal('refund.confirm'), caseId: z.string().min(1), input: refundConfirmInputSchema.extend({ previewId: z.string().min(1), chargeItemId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict() }).strict(),
@@ -321,20 +323,22 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         clear()
         return result
       }
-      const operation = intent.command.operation === 'scenario.advance-time' ? undefined : getHisOperation(intent.command.operation)
+      const isAuthoredPack = intent.command.operation === 'synthetic-case.authored-pack.prepare'
+      const operation = intent.command.operation === 'scenario.advance-time' || isAuthoredPack ? undefined : getHisOperation(intent.command.operation)
+      const receiptOpId = operation?.id ?? (isAuthoredPack ? 'synthetic-case.authored-pack.prepare' : undefined)
       let sent = false
       try {
-        if ((current.intent !== null || raw?.recoverOriginal) && operation !== undefined) {
-          const query = new URLSearchParams({ operationId: operation.id, idempotencyKey: intent.idempotencyKey })
+        if ((current.intent !== null || raw?.recoverOriginal) && receiptOpId !== undefined) {
+          const query = new URLSearchParams({ operationId: receiptOpId, idempotencyKey: intent.idempotencyKey })
           try {
             const receipt = await apiGet(`/api/his/v1/command-receipts?${query}`, commandReceiptLookupSchema)
-            const matches = receipt.operationId === operation.id && receipt.idempotencyKey === intent.idempotencyKey
+            const matches = receipt.operationId === receiptOpId && receipt.idempotencyKey === intent.idempotencyKey
             if (!matches && intent.command.operation === 'registration.synthetic-case.start') throw new ApiClientError(0, 'UNEXPECTED_RESPONSE', 'Original command receipt changed')
             if (!matches || receipt.status !== 'completed') {
               throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'The original command is pending')
             }
             if (!isCurrent()) throw new ApiClientError(409, 'INPATIENT_INTENT_CONTEXT_CHANGED', 'The inpatient context changed')
-            const response = operation.output.parse(receipt.response)
+            const response = (operation ? operation.output : authoredCasePackPrepareResponseSchema).parse(receipt.response)
             await assertCurrent()
             return complete(response, true)
           } catch (error) {
@@ -372,6 +376,9 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         if (intent.command.operation === 'scenario.advance-time') {
           response = await apiMutation(`/api/sim/v1/scenario-runs/${intent.binding.actor.scenarioRunId}/actions/advance-time`,
             advanceVirtualTimeResponseSchema, { input: intent.command.input }, { idempotencyKey: intent.idempotencyKey })
+        } else if (isAuthoredPack) {
+          response = await apiMutation('/api/sim/v1/synthetic-cases/authored-pack/prepare',
+            authoredCasePackPrepareResponseSchema, { input: intent.command.input }, { idempotencyKey: intent.idempotencyKey })
         } else {
           const definition = getHisOperation(intent.command.operation)
           const input = intent.command.input

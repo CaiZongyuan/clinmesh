@@ -30,7 +30,7 @@ import { inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationIssu
 import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgSimulationInputSchema, inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema, inpatientMaterialReservationBatchInputSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgPayerReviewCreateInputSchema } from '@clinmesh/contracts/inpatient-drg-payer'
-import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
+import { authoredCasePackPrepareRequestSchema, inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { InpatientError, type InpatientService } from './application/inpatient-service.ts'
 import { inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, advanceVirtualTimeInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { randomUUID } from 'node:crypto'
@@ -157,6 +157,7 @@ import {
 } from './application/imaging-preparation-service.ts'
 import type { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
 import { SyntheticCaseVisitError } from './application/synthetic-case-visit-service.ts'
+import { AuthoredCasePackError } from './application/scenario-data/authored-case-pack-service.ts'
 import { PciCaseSourceError } from './application/scenario-data/pci-case-source.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
 import { WorkflowError } from './application/workflow-service.ts'
@@ -299,6 +300,7 @@ function apiErrorResponse(
     || error instanceof PathologyPreparationError
     || error instanceof ImagingStudyReadError
     || error instanceof SyntheticCaseVisitError
+    || error instanceof AuthoredCasePackError
     || error instanceof PciCaseSourceError
     || error instanceof ReferenceDataError
     || error instanceof ScenarioDataError
@@ -978,6 +980,22 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         const body = pciCaseSourcePrepareRequestSchema.parse(await context.req.json())
         const actor = await identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
         return context.json(scenarioData.preparePciCaseSource(actor, body.input,
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/sim/v1/synthetic-cases/authored-pack', async context => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        context.header('cache-control', 'private, no-store')
+        return context.json(scenarioData.readAuthoredCasePack(session.actor))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/sim/v1/synthetic-cases/authored-pack/prepare', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = authoredCasePackPrepareRequestSchema.parse(await context.req.json())
+        const actor = await identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+        return context.json(scenarioData.prepareAuthoredCasePack(actor, body.input,
           z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch (error) { return apiErrorResponse(context, error) }
     })
