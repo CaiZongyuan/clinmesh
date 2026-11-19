@@ -1,9 +1,15 @@
 import {
+  inpatientClinicalQualityInputSchema,
+  outpatientClinicalQualityInputSchema,
+} from '@clinmesh/contracts/clinical-quality'
+import { ClinicalQualityError, ClinicalQualityReadError } from './application/clinical-quality-service.ts'
+import {
   inpatientRiskAssessmentInputSchema,
   inpatientVitalSignsInputSchema,
   outpatientRiskAssessmentInputSchema,
 } from '@clinmesh/contracts/clinical-scores'
 import { guidelineTopicQuerySchema } from '@clinmesh/contracts/guideline-topics'
+import { orderSetDraftQuerySchema, orderSetTemplateListQuerySchema } from '@clinmesh/contracts/order-set-templates'
 import { inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgExplainInputSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionSaveInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -15,7 +21,7 @@ import { insuranceTargetSchema, insurancePreviewInputSchema, insuranceConfirmInp
 import { InsuranceError } from './application/insurance-service.ts'
 import { inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPreviewInputSchema, inpatientFinancialRefundConfirmInputSchema, inpatientFinancialRefundRecoverInputSchema, inpatientFinancialPaymentPreviewInputSchema, inpatientFinancialInsuranceCancelInputSchema, inpatientFinancialInsurancePreviewInputSchema, inpatientFinancialInsuranceConfirmInputSchema } from '@clinmesh/contracts/inpatient-finance'
-import { inpatientDischargeInputSchema, inpatientSettleInputSchema, inpatientDepartInputSchema,
+import { inpatientDischargeInputSchema, inpatientDischargeIssueInputSchema, inpatientSettleInputSchema, inpatientDepartInputSchema,
   inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema,
   inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema, inpatientSurgeryCompletionReviewInputSchema, inpatientSurgeryCompletionPreviewSchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -24,7 +30,7 @@ import { inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationIssu
 import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgSimulationInputSchema, inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema, inpatientMaterialReservationBatchInputSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgPayerReviewCreateInputSchema } from '@clinmesh/contracts/inpatient-drg-payer'
-import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
+import { authoredCasePackPrepareRequestSchema, inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { InpatientError, type InpatientService } from './application/inpatient-service.ts'
 import { inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, advanceVirtualTimeInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { randomUUID } from 'node:crypto'
@@ -151,6 +157,7 @@ import {
 } from './application/imaging-preparation-service.ts'
 import type { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
 import { SyntheticCaseVisitError } from './application/synthetic-case-visit-service.ts'
+import { AuthoredCasePackError } from './application/scenario-data/authored-case-pack-service.ts'
 import { PciCaseSourceError } from './application/scenario-data/pci-case-source.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
 import { WorkflowError } from './application/workflow-service.ts'
@@ -250,9 +257,11 @@ function apiErrorBody(
   message: string,
   conflict?: unknown,
   reason?: string,
+  clinicalQuality?: unknown,
 ) {
   return {
     error: {
+      ...(clinicalQuality === undefined ? {} : { clinicalQuality }),
       code,
       ...(conflict === undefined ? {} : { conflict }),
       correlationId: requestCorrelationId(context),
@@ -274,8 +283,12 @@ function apiErrorResponse(
   if (error instanceof SyntaxError || error instanceof z.ZodError) {
     return invalidInputResponse(context, invalidInputMessage)
   }
+  if (error instanceof ClinicalQualityError) {
+    return context.json(apiErrorBody(context, error.code, error.message, undefined, undefined, error.check), error.status)
+  }
     if (
       error instanceof IdentityError
+      || error instanceof ClinicalQualityReadError
       || error instanceof ModelUsagePolicyError
       || error instanceof InsuranceError
       || error instanceof InpatientError
@@ -287,6 +300,7 @@ function apiErrorResponse(
     || error instanceof PathologyPreparationError
     || error instanceof ImagingStudyReadError
     || error instanceof SyntheticCaseVisitError
+    || error instanceof AuthoredCasePackError
     || error instanceof PciCaseSourceError
     || error instanceof ReferenceDataError
     || error instanceof ScenarioDataError
@@ -301,6 +315,7 @@ function apiErrorResponse(
       error.message,
       error instanceof WorkflowError ? error.conflict : undefined,
       error instanceof WorkflowError || error instanceof InpatientError ? error.reason : undefined,
+      error instanceof WorkflowError || error instanceof InpatientError ? error.clinicalQuality : undefined,
     ), error.status)
   }
   if (
@@ -732,6 +747,17 @@ export function createApp(options: CreateAppOptions = {}): Hono {
             session.actor, query.caseId, doctorCaseHistoryInputSchema.parse(query.input)))
           if (query.operationId === 'outpatient.history.read') return context.json(workflow.doctorCaseHistoryDetail(
             session.actor, query.caseId, doctorCaseHistoryDetailInputSchema.parse(query.input)))
+          if (query.operationId === 'outpatient.clinical-scores.read') return context.json(workflow.clinicalScores.readOutpatientClinicalScores(
+            session.actor, query.caseId))
+          if (query.operationId === 'outpatient.guideline-topics.read') return context.json(workflow.clinicalScores.readOutpatientGuidelineTopics(
+            session.actor, query.caseId, guidelineTopicQuerySchema.parse(query.input).topicId))
+          if (query.operationId === 'outpatient.clinical-quality.read') {
+            const detail = workflow.doctorCaseDetail(session.actor, query.caseId)
+            const { gate } = outpatientClinicalQualityInputSchema.omit({ encounterId: true }).parse(query.input)
+            return context.json(workflow.clinicalQuality.readOutpatient(session.actor, { encounterId: detail.encounter.id, gate }))
+          }
+          if (query.operationId === 'outpatient.order-set-drafts.read') return context.json(workflow.orderSets.readOutpatient(
+            session.actor, query.caseId, orderSetDraftQuerySchema.parse(query.input).templateId))
           throw new AgentIntegrationError('AGENT_OPERATION_NOT_ALLOWED', 'The doctor query is not available', 403)
         } catch (error) { return apiErrorResponse(context, error) }
       })
@@ -965,6 +991,22 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         const body = pciCaseSourcePrepareRequestSchema.parse(await context.req.json())
         const actor = await identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
         return context.json(scenarioData.preparePciCaseSource(actor, body.input,
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/sim/v1/synthetic-cases/authored-pack', async context => {
+      try {
+        const actor = await identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+        context.header('cache-control', 'private, no-store')
+        return context.json(scenarioData.readAuthoredCasePack(actor))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/sim/v1/synthetic-cases/authored-pack/prepare', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = authoredCasePackPrepareRequestSchema.parse(await context.req.json())
+        const actor = await identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+        return context.json(scenarioData.prepareAuthoredCasePack(actor, body.input,
           z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch (error) { return apiErrorResponse(context, error) }
     })
@@ -1591,7 +1633,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const dischargeAction = (action: 'issue' | 'depart' | 'recall' | 'clear') => async (context: Context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
-        const schema = action === 'depart' ? inpatientDepartInputSchema : inpatientDischargeInputSchema
+        const schema = action === 'depart' ? inpatientDepartInputSchema : action === 'issue' ? inpatientDischargeIssueInputSchema : inpatientDischargeInputSchema
         const body = z.object({ input: schema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
         return context.json(inpatient.discharge.action(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key')), action))
       } catch (error) { return apiErrorResponse(context, error) }
@@ -1872,6 +1914,23 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(inpatient.readClinicalScores(await actor(context), context.req.param('admissionId')))
       } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/clinical-quality', async context => {
+      try {
+        const rawQuery = context.req.query()
+        z.object({ admissionId: z.never().optional() }).loose().parse(rawQuery)
+        const input = inpatientClinicalQualityInputSchema.parse({
+          ...rawQuery,
+          admissionId: context.req.param('admissionId'),
+        })
+        return context.json(inpatient.readClinicalQuality(await actor(context), input))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/order-set-drafts', async context => {
+      try {
+        const query = orderSetDraftQuerySchema.parse(context.req.query())
+        return context.json(inpatient.workflow.orderSets.readInpatient(inpatient, await actor(context), context.req.param('admissionId'), query.templateId))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/diagnoses/confirm', async context => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -2056,6 +2115,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           pageSize: query.pageSize,
           ...(query.query === undefined ? {} : { query: query.query }),
         }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/catalogs/order-set-templates', async (context) => {
+      try {
+        const query = orderSetTemplateListQuerySchema.parse(context.req.query())
+        return context.json(workflow.orderSets.listTemplates(await actor(context), query.scope))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
@@ -2406,6 +2473,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.get('/api/his/v1/doctor/cases/:caseId/order-set-drafts', async (context) => {
+      try {
+        const query = orderSetDraftQuerySchema.parse(context.req.query())
+        return context.json(workflow.orderSets.readOutpatient(await actor(context), context.req.param('caseId'), query.templateId))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
     app.put('/api/his/v1/encounters/:encounterId/risk-assessment', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -2420,6 +2495,18 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           idempotencyKey: idempotencyKey(context),
           payload: body.input,
         }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/encounters/:encounterId/clinical-quality', async (context) => {
+      try {
+        const query = outpatientClinicalQualityInputSchema.omit({ encounterId: true }).parse(context.req.query())
+        const input = outpatientClinicalQualityInputSchema.parse({
+          ...query,
+          encounterId: context.req.param('encounterId'),
+        })
+        return context.json(workflow.clinicalQuality.readOutpatient(await actor(context), input))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
@@ -2439,6 +2526,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         identity.assertTrustedMutation(context.req.raw.headers)
         const body = completeEncounterRequestSchema.parse(await context.req.json())
         return context.json(workflow.completeEncounter({
+          clinicalOverride: body.input.clinicalOverride,
           context: await actor(context),
           encounterId: context.req.param('encounterId'),
           expectedVersions: body.expectedVersions,
@@ -2558,6 +2646,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         identity.assertTrustedMutation(context.req.raw.headers)
         const body = issuePrescriptionRequestSchema.parse(await context.req.json())
         return context.json(workflow.issuePrescription({
+          clinicalOverride: body.input.clinicalOverride,
           context: await actor(context),
           encounterId: context.req.param('encounterId'),
           expectedDraftVersion: body.input.expectedDraftVersion,

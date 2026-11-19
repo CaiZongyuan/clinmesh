@@ -1,4 +1,5 @@
 import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
+import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import type { inpatientCatalogSchema } from '@clinmesh/contracts/inpatient'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -12,6 +13,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { AlertCircleIcon, CheckCircle2Icon, CircleIcon } from 'lucide-react'
 import { apiGet } from './api-client.ts'
+import { InpatientClinicalQualityBanner } from './clinical-quality-banner.tsx'
 import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
@@ -140,17 +142,16 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
     <RecordSection label={t('住院过程', 'Hospital stay')}>
       <div className="grid gap-3 sm:grid-cols-3">
         <div><InpatientNumber locale={locale} number={snapshot.stay.inpatientNumber} /></div>
-        <Kv label={t('住院次数', 'Admission count')}>{snapshot.patient.admissionCount}</Kv>
-        <Kv label={t('实际入科', 'Received at')}>{timestamp(snapshot.stay.admittedAt)}</Kv>
-        <Kv label={t('入院病区', 'Initial ward')}>{wardName(snapshot.stay.initialWardId)}{bedName ? ` · ${bedName}` : ''}</Kv>
-        <Kv label={t('实际离院', 'Departed at')}>{timestamp(snapshot.stay.departedAt)}</Kv>
-        <Kv label={t('住院天数', 'Length of stay')}>{stayDays !== undefined ? t(`${stayDays} 天`, `${stayDays} days`) : '—'}</Kv>
-        <Kv label={t('离院方式 / 出院病区', 'Departure method / discharge ward')}>{departureLabel} · {wardName(snapshot.stay.dischargeWardId)}{bedName ? ` · ${bedName}` : ''}</Kv>
-        <Kv label={doctor ? t('转科', 'Transfers') : t('转科记录', 'Transfers')}>
-          {snapshot.stay.transfers.length === 0 ? t('无', 'None')
-            : snapshot.stay.transfers.map(item => `${wardName(item.sourceWardId)} → ${wardName(item.targetWardId)}${doctor ? '' : ` · ${timestamp(item.receivedAt)}`}`).join('；')}
-        </Kv>
-        {doctor ? <Kv label={t('离院后 31 天内再住院计划', '31-day readmission plan')}>{t('无', 'None')}</Kv> : null}
+        {[
+          [t('住院次数', 'Admission count'), snapshot.patient.admissionCount],
+          [t('实际入科', 'Received at'), timestamp(snapshot.stay.admittedAt)],
+          [t('入院病区', 'Initial ward'), `${wardName(snapshot.stay.initialWardId)}${bedName ? ` · ${bedName}` : ''}`],
+          [t('实际离院', 'Departed at'), timestamp(snapshot.stay.departedAt)],
+          [t('住院天数', 'Length of stay'), stayDays !== undefined ? t(`${stayDays} 天`, `${stayDays} days`) : '—'],
+          [t('离院方式 / 出院病区', 'Departure method / discharge ward'), `${departureLabel} · ${wardName(snapshot.stay.dischargeWardId)}${bedName ? ` · ${bedName}` : ''}`],
+          [doctor ? t('转科', 'Transfers') : t('转科记录', 'Transfers'), snapshot.stay.transfers.length === 0 ? t('无', 'None') : snapshot.stay.transfers.map(item => `${wardName(item.sourceWardId)} → ${wardName(item.targetWardId)}${doctor ? '' : ` · ${timestamp(item.receivedAt)}`}`).join('；')],
+          ...(doctor ? [[t('离院后 31 天内再住院计划', '31-day readmission plan'), t('无', 'None')] as const] : []),
+        ].map(([k, v]) => <Kv key={String(k)} label={String(k)}>{v}</Kv>)}
       </div>
     </RecordSection>
   </> : null
@@ -214,9 +215,18 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
         : staleDraft ? t('来源已变化，请放弃原选择后重新核对提交', 'Sources changed; discard selection and review before submitting')
           : operations.length > 0 && !selectedMain ? t('还差：确认本次主操作', 'Confirm the primary procedure')
             : t('提交后交病案人员编码审核', 'Medical records reviews coding next')
-    const submitAction = () => {
+    const submitAction = (clinicalOverride?: ClinicalOverrideInput) => {
       if (!expected) return
-      const command = { operation: 'inpatient.record.submit' as const, input: { ...expected, expectedRevision: draft?.revision ?? expected.expectedRevision, expectedSourcesHash: draft?.hash ?? expected.expectedSourcesHash, mainProcedureExecutionId: selectedMain } }
+      const command = {
+        operation: 'inpatient.record.submit' as const,
+        input: {
+          ...expected,
+          expectedRevision: draft?.revision ?? expected.expectedRevision,
+          expectedSourcesHash: draft?.hash ?? expected.expectedSourcesHash,
+          mainProcedureExecutionId: selectedMain,
+          ...(clinicalOverride === undefined ? {} : { clinicalOverride }),
+        },
+      }
       if (privateDraft.prepare(command)) write.mutation.mutate(command)
     }
     const discardDraftButton = staleDraft ? <Button variant="outline" disabled={blocked} onClick={() => setDraft(null)}>{t('放弃原主操作选择，重新审阅来源', 'Discard selection and review updated sources')}</Button> : null
@@ -225,8 +235,10 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
       {draftFailure}
       {recordLoadState}
       {snapshot && data ? <>
-        {phase === 'returned' && lastReview ? <div role="status" className="flex flex-col gap-1 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm"><b className="text-warning">{t('病案人员退回', 'Returned by medical records')} · {timestamp(lastReview.recordedAt)}</b><span>{lastReview.reason}</span></div>
-          : phase === 'stale' ? <div role="status" className="flex flex-col gap-1 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm"><b className="text-warning">{t('提交后来源有变化', 'Sources changed after submission')}</b><span>{t('诊断、操作或费用在提交后有变化。病案人员只能审核最新内容，请核对后重新提交。', 'Diagnoses, procedures or charges changed after submission. Medical records can only review the latest content, so review and resubmit.')}</span></div> : null}
+        {(phase === 'returned' && lastReview) || phase === 'stale' ? <div role="status" className="flex flex-col gap-1 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+          <b className="text-warning">{phase === 'returned' && lastReview ? `${t('病案人员退回', 'Returned by medical records')} · ${timestamp(lastReview.recordedAt)}` : t('提交后来源有变化', 'Sources changed after submission')}</b>
+          <span>{phase === 'returned' && lastReview ? lastReview.reason : t('诊断、操作或费用在提交后有变化。病案人员只能审核最新内容，请核对后重新提交。', 'Diagnoses, procedures or charges changed after submission. Medical records can only review the latest content, so review and resubmit.')}</span>
+        </div> : null}
         {!settled ? <>
           <p className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-sm"><AlertCircleIcon aria-hidden="true" className="size-4 shrink-0" />{admission.status === 'departed'
             ? t('患者已离院，等收费员结算。结算后费用固定，再提交病案首页。下面是提交时要满足的条件。', 'The patient has departed and awaits settlement. Submit the record once charges are fixed. These are the submission conditions.')
@@ -239,7 +251,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
               <p className="text-xs text-muted-foreground">{t('保存后按当前实际操作更新预分组；出院结算后仍需核对并提交完整首页。', 'Saving updates pre-grouping from performed procedures. Review and submit the complete record after settlement.')}</p>
               <div className="flex flex-wrap items-center gap-2">
                 {discardDraftButton}
-                <Button data-unavailable={!submittingRecord && savePrimaryBlocked || undefined} disabled={savePrimaryBlocked} onClick={submitAction}>{t('保存主操作，更新预分组', 'Save primary procedure and update grouping')}</Button>
+                <Button data-unavailable={!submittingRecord && savePrimaryBlocked || undefined} disabled={savePrimaryBlocked} onClick={() => submitAction()}>{t('保存主操作，更新预分组', 'Save primary procedure and update grouping')}</Button>
               </div>
             </div>
           </section> : null}
@@ -259,11 +271,12 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
           <ul className="clinmesh-inpatient-preparation-list">{history.map(item => <li key={`${item.at}-${item.text}`} className="!grid-cols-[auto_minmax(0,1fr)]"><time className="tabular-nums text-muted-foreground" dateTime={item.at}>{timestamp(item.at)}</time><span>{item.text}</span></li>)}</ul></section> : null}
         {!settled && data.revision ? <p className="text-sm text-muted-foreground">{t(`主操作依据已保存 · ${savedAt}`, `Primary procedure saved · ${savedAt}`)}</p> : null}
         {settled ? <p className="text-xs text-muted-foreground">{t('核心字段集用于本系统审核归档，不能直接用于国家首页或医保清单上报。', 'The core field set supports review and archive here; it is not a national record or insurance reporting dataset.')}</p> : null}
+        <InpatientClinicalQualityBanner admissionId={admission.id} locale={locale} match={settled} onSubmitOverride={override => submitAction(override)} operation="inpatient.record.submit" pending={submitBlocked} write={write} />
         <InpatientPrimaryAction stage="record">{phase === 'archived'
           ? <WorkspaceActionBar tone="complete" reason={t('病案已归档，只读可查', 'Archived record is read only')} />
           : canSubmitRecord || !settled ? <WorkspaceActionBar tone={submitBlocked ? 'blocked' : 'normal'} reason={submitReason}
             busy={submittingRecord && !settled ? t('正在保存主操作', 'Saving primary procedure') : undefined}
-            action={<>{!showInStayPrimary ? discardDraftButton : null}<Button disabled={submitBlocked} onClick={submitAction}>{submitLabel}</Button></>} />
+            action={<>{!showInStayPrimary ? discardDraftButton : null}<Button disabled={submitBlocked} onClick={() => submitAction()}>{submitLabel}</Button></>} />
             : <WorkspaceActionBar showWithoutAction reason={phase === 'approved' ? t('编码审核通过，等病案人员归档', 'Coding approved; waiting for medical records to archive')
               : t('等病案人员编码审核；诊断、操作或费用变化后需要重新提交', 'Waiting for coding review; resubmit if diagnoses, procedures or charges change')} />}</InpatientPrimaryAction>
       </> : null}

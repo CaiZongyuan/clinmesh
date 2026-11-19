@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
+import { clinicalOverrideInputSchema } from './clinical-quality.ts'
 import { inpatientDiagnosisSchema } from './inpatient-clinical.ts'
 import { inpatientSurgeryExecutionSchema } from './inpatient-surgery.ts'
 import { inpatientSettlementPreviewSchema, inpatientDischargeEventsSchema } from './inpatient-discharge.ts'
@@ -21,7 +22,8 @@ export const inpatientRecordReviewSchema = z.object({ id, revision: z.number().i
 export const inpatientRecordArchiveSchema = z.object({ id, revision: z.number().int().positive(), reviewId: id, sourcesHash: hash, snapshot: inpatientRecordSnapshotSchema, ...actor }).strict()
 export const inpatientRecordSchema = z.object({ admissionId: id, recordNumber: z.string().nullable(), sourcesHash: hash, snapshot: inpatientRecordSnapshotSchema,
   revision: inpatientRecordRevisionSchema.optional(), reviews: z.array(inpatientRecordReviewSchema), archive: inpatientRecordArchiveSchema.optional(), reviewCurrent: z.boolean() }).strict()
-export const inpatientRecordSubmitInputSchema = z.object({ admissionId: id, expectedRevision: z.number().int().nonnegative(), expectedSourcesHash: hash, mainProcedureExecutionId: id.nullable() }).strict()
+export const inpatientRecordSubmitInputSchema = z.object({ admissionId: id, expectedRevision: z.number().int().nonnegative(), expectedSourcesHash: hash, mainProcedureExecutionId: id.nullable(),
+  clinicalOverride: clinicalOverrideInputSchema.optional() }).strict()
 export const inpatientRecordReviewInputSchema = z.object({ admissionId: id, expectedRevision: z.number().int().positive(), expectedSourcesHash: hash, outcome: z.enum(['approved', 'returned']), reason: z.string().trim().min(1).max(2000).optional() }).strict().refine(value => value.outcome !== 'returned' || value.reason !== undefined, '退回需要原因')
 export const inpatientRecordArchiveInputSchema = z.object({ admissionId: id, expectedRevision: z.number().int().positive(), expectedSourcesHash: hash }).strict()
 export const inpatientRecordResponseSchema = commandResponseSchema(inpatientRecordSchema)

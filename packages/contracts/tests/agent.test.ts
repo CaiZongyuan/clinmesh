@@ -12,6 +12,8 @@ import {
   agentToolsForContext,
   agentViewsForRole,
   doctorCaseSectionSchema,
+  inpatientStageSchema,
+  isDoctorReadOperation,
   parseAgentToolInput,
 } from '../src/agent.ts'
 
@@ -174,7 +176,7 @@ describe('ClinMesh DSH Agent contracts', () => {
   })
 
   it('publishes only narrow, role-scoped tools within the broker limit', () => {
-    const sections = [undefined, ...doctorCaseSectionSchema.options]
+    const sections = [undefined, ...new Set([...doctorCaseSectionSchema.options, ...inpatientStageSchema.options])]
     for (const roleCode of agentHumanRoleCodeSchema.options) {
       for (const viewId of agentViewsForRole(roleCode)) {
         for (const activeSection of sections) {
@@ -187,17 +189,17 @@ describe('ClinMesh DSH Agent contracts', () => {
             expect(tool.toolName).not.toBe('clinmesh_execute_action')
             expect(tool.roleCodes).toContain(roleCode)
             expect(tool.viewIds).toContain(viewId)
-            if (tool.section !== undefined) expect(tool.section).toBe(activeSection)
+            if (tool.sections !== undefined) expect(tool.sections).toContain(activeSection)
           }
         }
       }
     }
   })
 
-  it('publishes each doctor section Tool only in its own section and cross-section Tools in every section', () => {
+  it('publishes each doctor section Tool only in its own sections and cross-section Tools in every section', () => {
     const doctorTools = agentToolCatalog.filter(tool => tool.roleCodes.includes('outpatient-doctor')
       && tool.viewIds.includes('consultation'))
-    const crossSection = doctorTools.filter(tool => tool.section === undefined)
+    const crossSection = doctorTools.filter(tool => tool.sections === undefined)
       .map(tool => tool.operationId)
     expect(crossSection).toEqual([
       'ui.context.read',
@@ -213,7 +215,7 @@ describe('ClinMesh DSH Agent contracts', () => {
       'outpatient.visit.start.propose',
       'outpatient.encounter.complete.propose',
     ])
-    expect(doctorTools.filter(tool => tool.section !== undefined).every(tool => (
+    expect(doctorTools.filter(tool => tool.sections !== undefined).every(tool => (
       tool.operationId.startsWith('outpatient.')
     ))).toBe(true)
     for (const section of doctorCaseSectionSchema.options) {
@@ -221,19 +223,61 @@ describe('ClinMesh DSH Agent contracts', () => {
         .map(tool => tool.operationId)
       expect(published).toEqual(expect.arrayContaining(crossSection))
       expect(published).toEqual(doctorTools
-        .filter(tool => tool.section === undefined || tool.section === section)
+        .filter(tool => tool.sections === undefined || tool.sections.includes(section))
         .map(tool => tool.operationId))
     }
     expect(agentToolsForContext('outpatient-doctor', 'consultation').map(tool => tool.operationId))
       .toEqual(crossSection)
-    expect(agentToolsForContext('outpatient-doctor', 'consultation', 'laboratory')
-      .map(tool => tool.operationId)).toEqual(expect.arrayContaining([
+    const labTools = agentToolsForContext('outpatient-doctor', 'consultation', 'laboratory')
+      .map(tool => tool.operationId)
+    expect(labTools).toHaveLength(31)
+    expect(labTools).toEqual(expect.arrayContaining([
       'outpatient.laboratory.draft.set',
       'outpatient.report.acknowledge.propose',
       'outpatient.imaging.issue.propose',
     ]))
+    for (const op of [
+      'outpatient.clinical-scores.read',
+      'outpatient.guideline-topics.read',
+      'outpatient.clinical-quality.read',
+      'outpatient.order-set-drafts.read',
+    ] as const) {
+      expect(labTools).not.toContain(op)
+      expect(isDoctorReadOperation(op)).toBe(true)
+    }
+    expect(agentToolsForContext('outpatient-doctor', 'consultation', 'diagnosis').map(tool => tool.operationId))
+      .toEqual(expect.arrayContaining([
+        'outpatient.clinical-scores.read',
+        'outpatient.guideline-topics.read',
+        'outpatient.clinical-quality.read',
+        'outpatient.order-set-drafts.read',
+      ]))
+    expect(agentToolsForContext('outpatient-doctor', 'consultation', 'record').map(tool => tool.operationId))
+      .toContain('outpatient.clinical-quality.read')
     expect(agentToolsForContext('outpatient-doctor', 'consultation', 'record')
       .map(tool => tool.operationId)).not.toContain('outpatient.report.acknowledge.propose')
+    expect(agentToolsForContext('inpatient-doctor', 'inpatient', 'surgery').map(tool => tool.operationId))
+      .toEqual(expect.arrayContaining([
+        'inpatient.angiography-reports.read',
+        'inpatient.clinical-scores.read',
+        'inpatient.guideline-topics.read',
+        'inpatient.clinical-quality.read',
+      ]))
+    expect(agentToolsForContext('inpatient-doctor', 'inpatient', 'orders').map(tool => tool.operationId))
+      .toContain('inpatient.order-set-drafts.read')
+    expect(agentToolsForContext('medical-records', 'inpatient', 'record').map(tool => tool.operationId))
+      .toEqual(expect.arrayContaining([
+        'inpatient.angiography-reports.read',
+        'inpatient.clinical-scores.read',
+        'inpatient.guideline-topics.read',
+      ]))
+    expect(parseAgentToolInput('outpatient.order-set-drafts.read', {})).toEqual({})
+    expect(parseAgentToolInput('outpatient.order-set-drafts.read', { templateId: 'chest-pain-stat-workup' }))
+      .toEqual({ templateId: 'chest-pain-stat-workup' })
+    expect(() => parseAgentToolInput('outpatient.order-set-drafts.read', { templateId: 'cin-perioperative-hydration' }))
+      .toThrow()
+    expect(() => parseAgentToolInput('outpatient.order-set-drafts.read', { templateId: 'cad-admission-baseline' }))
+      .toThrow()
   })
 
   it('publishes registrar Synthetic Case search, selection, and human-review actions', () => {
@@ -470,5 +514,20 @@ describe('ClinMesh DSH Agent contracts', () => {
       ...proof,
       runAs: 'actor-administrator',
     }).success).toBe(false)
+  })
+
+  it('accepts optional bounded clinicalOverride on outpatient prescription and completion proposal tools', () => {
+    expect(parseAgentToolInput('outpatient.prescription.issue.propose', {})).toEqual({})
+    expect(parseAgentToolInput('outpatient.encounter.complete.propose', {})).toEqual({})
+    const clinicalOverride = {
+      reasonCode: 'result-pending-follow-up' as const,
+      note: '首诊已同步开立血肌酐检查并告知复诊随访',
+      acknowledgedAlerts: ['RENAL_CREATININE_MISSING' as const],
+    }
+    expect(parseAgentToolInput('outpatient.prescription.issue.propose', { clinicalOverride })).toEqual({ clinicalOverride })
+    expect(parseAgentToolInput('outpatient.encounter.complete.propose', { clinicalOverride })).toEqual({ clinicalOverride })
+    expect(() => parseAgentToolInput('outpatient.prescription.issue.propose', {
+      clinicalOverride: { ...clinicalOverride, note: '短' },
+    })).toThrow()
   })
 })

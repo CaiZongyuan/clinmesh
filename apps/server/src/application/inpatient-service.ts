@@ -37,6 +37,7 @@ import {
   inpatientCatalogSchema, inpatientReferralSchema, inpatientReferralInputSchema,
   inpatientReferralListSchema, inpatientReferralResponseSchema,
 } from '@clinmesh/contracts/inpatient'
+import type { ClinicalQualityCheck } from '@clinmesh/contracts/clinical-quality'
 import type { DrgRules } from '@clinmesh/contracts/drg'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
@@ -44,7 +45,13 @@ import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-reposito
 import { type ActorContext, type CommandTransaction, CommandExecutor } from './command-executor.ts'
 
 export class InpatientError extends Error {
-  constructor(readonly code: string, message: string, readonly status: 400 | 403 | 404 | 409 = 409, readonly reason?: string) { super(message) }
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status: 400 | 403 | 404 | 409 = 409,
+    readonly reason?: string,
+    readonly clinicalQuality?: ClinicalQualityCheck,
+  ) { super(message) }
 }
 const rowSchema = z.object({ admission_id: z.string(), patient_id: z.string(), inpatient_number: z.string(),
   admission_route: inpatientAdmissionSchema.shape.admissionRoute, referral_id: z.string().nullable(),
@@ -116,6 +123,9 @@ export class InpatientService {
   }
   readClinicalScores(context: ActorContext, admissionId: string) {
     return this.workflow.clinicalScores.readInpatientClinicalScores(this, context, admissionId)
+  }
+  readClinicalQuality(context: ActorContext, input: Parameters<WorkflowService['clinicalQuality']['readInpatient']>[2]) {
+    return this.workflow.clinicalQuality.readInpatient(this, context, input)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)
@@ -461,7 +471,8 @@ export class InpatientService {
           .all(context.workspaceId, context.epoch, time))
         for (const bed of beds) {
           if (this.billing.record(context, { admissionId: bed.admission_id, organizationId: bed.organization_id, kind: 'bed', sourceId: bed.admission_id,
-            serviceDate: date, amountFen: bed.daily_price_fen, virtualTime: time, label: '住院床位费' }, effects)) count += 1
+            serviceDate: date, amountFen: bed.daily_price_fen, virtualTime: time, label: '住院床位费',
+            coverageJson: JSON.stringify({ code: `synthetic-inpatient-bed:${bed.bed_id}`, version: '1', included: true, priorSelfPayBps: 0 }) }, effects)) count += 1
         }
       }
       this.orders.applyDueExecutions(context, current, new Date(targetMs).toISOString(), effects)

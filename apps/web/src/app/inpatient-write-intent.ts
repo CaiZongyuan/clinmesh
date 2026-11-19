@@ -13,7 +13,7 @@ import { inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inp
 import { inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgPayerReviewCreateInputSchema } from '@clinmesh/contracts/inpatient-drg-payer'
 import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPreviewInputSchema, inpatientFinancialRefundConfirmInputSchema, inpatientFinancialRefundRecoverInputSchema, inpatientFinancialPaymentPreviewInputSchema } from '@clinmesh/contracts/inpatient-finance'
-import { inpatientDischargeInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema,
+import { inpatientDischargeInputSchema, inpatientDischargeIssueInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema,
   inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema,
   inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -21,7 +21,7 @@ import { inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInpu
 import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientDiagnosisConfirmInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientChargeReverseInputSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { z } from 'zod'
-import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
+import { authoredCasePackPrepareRequestSchema, inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { multiChargePaymentResponseSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { commandReceiptLookupSchema, getHisOperation, multiChargePaymentPreviewOperationInputSchema, multiChargePaymentConfirmOperationInputSchema,
   multiChargePaymentRecoverOperationInputSchema, refundAllocationPreviewOperationInputSchema } from '@clinmesh/contracts/his-operations-runtime'
@@ -48,98 +48,100 @@ import { inpatientIntentBindingSchema as bindingSchema, inpatientIntentKey, inpa
 import { completeInpatientReviewDraft } from './inpatient-review-draft.ts'
 import { completeInpatientReviewQueue, InpatientReviewStorageUnreadable } from './inpatient-review-queue.ts'
 
+const cmd = <O extends string, I extends z.ZodTypeAny>(operation: O, input: I) => z.object({ operation: z.literal(operation), input }).strict()
 const commandSchema = z.discriminatedUnion('operation', [
   outpatientStartCommandSchema,
   z.object({ operation: z.literal('payment.multi-charge.preview'), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentPreviewOperationInputSchema }).strict(),
   z.object({ operation: z.literal('payment.multi-charge.confirm'), caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentConfirmOperationInputSchema }).strict(),
   z.object({ operation: z.literal('payment.multi-charge.recover'), caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentRecoverOperationInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.record-checks.explain'), input: inpatientDrgExplainInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.guideline-advice.request'), input: inpatientGuidelineAdviceRequestInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.agent.confirm'), input: inpatientDrgAgentConfirmInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.material-estimate.request'), input: inpatientMaterialEstimateRequestInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.material-estimate.cancel'), input: inpatientMaterialEstimateRequestInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.material-estimate.save'), input: inpatientMaterialEstimateSaveInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.material-estimate.confirm'), input: inpatientMaterialEstimateConfirmInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.review.todo.act'), input: inpatientDrgReviewTodoActionInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.review.handoff'), input: inpatientDrgReviewHandoffInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.pci-selection.confirm'), input: inpatientPciSelectionConfirmInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.pci-selection.save'), input: inpatientPciSelectionSaveInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.followup.start'), input: inpatientDrgFollowupStartInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.followup.stop'), input: inpatientDrgFollowupStopInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.pci-data.prepare'), input: inpatientPciDataPrepareRequestSchema.shape.input }).strict(),
-  z.object({ operation: z.literal('admin.pci-case.prepare'), input: pciCaseSourcePrepareRequestSchema.shape.input }).strict(),
-  z.object({ operation: z.literal('registration.synthetic-case.start-inpatient'), input: startSyntheticInpatientCaseRequestSchema.extend({ caseId: z.string().min(1).max(128) }).strict() }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.reservation.create'), input: inpatientMaterialReservationCreateInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.reservation.release'), input: inpatientMaterialReservationReleaseInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.drg.payer.review'), input: inpatientDrgPayerReviewCreateInputSchema }).strict(),
-  z.object({ operation: z.literal('billing.charge.adjust'), input: chargeAdjustmentInputSchema.extend({ caseId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict() }).strict(),
+  cmd('inpatient.drg.record-checks.explain', inpatientDrgExplainInputSchema),
+  cmd('inpatient.guideline-advice.request', inpatientGuidelineAdviceRequestInputSchema),
+  cmd('inpatient.drg.agent.confirm', inpatientDrgAgentConfirmInputSchema),
+  cmd('inpatient.material-estimate.request', inpatientMaterialEstimateRequestInputSchema),
+  cmd('inpatient.material-estimate.cancel', inpatientMaterialEstimateRequestInputSchema),
+  cmd('inpatient.material-estimate.save', inpatientMaterialEstimateSaveInputSchema),
+  cmd('inpatient.material-estimate.confirm', inpatientMaterialEstimateConfirmInputSchema),
+  cmd('inpatient.drg.review.todo.act', inpatientDrgReviewTodoActionInputSchema),
+  cmd('inpatient.drg.review.handoff', inpatientDrgReviewHandoffInputSchema),
+  cmd('inpatient.pci-selection.confirm', inpatientPciSelectionConfirmInputSchema),
+  cmd('inpatient.pci-selection.save', inpatientPciSelectionSaveInputSchema),
+  cmd('inpatient.drg.followup.start', inpatientDrgFollowupStartInputSchema),
+  cmd('inpatient.drg.followup.stop', inpatientDrgFollowupStopInputSchema),
+  cmd('inpatient.pci-data.prepare', inpatientPciDataPrepareRequestSchema.shape.input),
+  cmd('admin.pci-case.prepare', pciCaseSourcePrepareRequestSchema.shape.input),
+  cmd('admin.authored-case-pack.prepare', authoredCasePackPrepareRequestSchema.shape.input),
+  cmd('registration.synthetic-case.start-inpatient', startSyntheticInpatientCaseRequestSchema.extend({ caseId: z.string().min(1).max(128) }).strict()),
+  cmd('inpatient.drg.reservation.create', inpatientMaterialReservationCreateInputSchema),
+  cmd('inpatient.drg.reservation.release', inpatientMaterialReservationReleaseInputSchema),
+  cmd('inpatient.drg.payer.review', inpatientDrgPayerReviewCreateInputSchema),
+  cmd('billing.charge.adjust', chargeAdjustmentInputSchema.extend({ caseId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict()),
   z.object({ operation: z.literal('refund.preview'), caseId: z.string().min(1), input: refundPreviewInputSchema.extend({ chargeItemId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict() }).strict(),
   z.object({ operation: z.literal('refund.allocation.preview'), caseId: z.string().min(1), input: refundAllocationPreviewOperationInputSchema }).strict(),
   z.object({ operation: z.literal('refund.confirm'), caseId: z.string().min(1), input: refundConfirmInputSchema.extend({ previewId: z.string().min(1), chargeItemId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict() }).strict(),
   z.object({ operation: z.literal('refund.recover'), caseId: z.string().min(1), input: refundRecoverInputSchema.extend({ refundId: z.string().min(1), chargeItemId: z.string().min(1), chargeVersion: z.number().int().positive() }).strict() }).strict(),
-  z.object({ operation: z.literal('inpatient.financial.insurance.cancel'), input: inpatientFinancialInsuranceCancelInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.financial.insurance.preview'), input: inpatientFinancialInsurancePreviewInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.financial.insurance.confirm'), input: inpatientFinancialInsuranceConfirmInputSchema }).strict(),
-  z.object({operation:z.literal('insurance.confirm'),input:insuranceTargetSchema.extend({previewId:z.string().min(1),commitToken:z.string().min(16).max(256)})}).strict(),
-  z.object({operation:z.literal('insurance.cancel'),input:insuranceTargetSchema.extend({settlementId:z.string().min(1),expectedBalanceVersion:z.number().int().nonnegative()})}).strict(),
-  z.object({ operation: z.literal('inpatient.financial.adjust'), input: inpatientFinancialAdjustmentInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.financial.refund.preview'), input: inpatientFinancialRefundPreviewInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.financial.refund.confirm'), input: inpatientFinancialRefundConfirmInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.financial.refund.recover'), input: inpatientFinancialRefundRecoverInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.financial.payment.preview'), input: inpatientFinancialPaymentPreviewInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.financial.payment.confirm'), input: inpatientPaymentConfirmInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.financial.payment.recover'), input: inpatientPaymentRecoverInputSchema }).strict(),
-  z.object({operation:z.literal('inpatient.payment.preview'),input:inpatientPaymentInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.payment.confirm'),input:inpatientPaymentConfirmInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.payment.recover'),input:inpatientPaymentRecoverInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.refund.preview'),input:inpatientRefundInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.refund.confirm'),input:inpatientRefundConfirmInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.refund.recover'),input:inpatientRefundRecoverInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.record.submit'),input:inpatientRecordSubmitInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.record.review'),input:inpatientRecordReviewInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.record.archive'),input:inpatientRecordArchiveInputSchema}).strict(),
-  z.object({ operation: z.literal('inpatient.admission.register'), input: inpatientRegistrationInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.admission.receive'), input: inpatientBedInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.admission.move-bed'), input: inpatientBedInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.admission.swap-bed'), input: inpatientSwapInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.referral.issue'), input: inpatientReferralInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.diagnosis.confirm'), input: inpatientDiagnosisConfirmInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.vital-signs.record'), input: inpatientVitalSignsInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.risk-assessment.record'), input: inpatientRiskAssessmentInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.order.issue'), input: inpatientOrderIssueInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.order.verify'), input: inpatientOrderActionInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.order.request-stop'), input: inpatientOrderReasonInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.order.verify-stop'), input: inpatientOrderActionInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.execution.request-prn'), input: inpatientOrderReasonInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.execution.dispense'), input: inpatientDispenseInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.execution.administer'), input: inpatientExecutionActionInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.execution.complete'), input: inpatientExecutionActionInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.charge.reverse'), input: inpatientChargeReverseInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.discharge.issue'), input: inpatientDischargeInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.discharge.depart'), input: inpatientDepartInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.discharge.recall'), input: inpatientDischargeInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.discharge.clear'), input: inpatientDischargeInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.discharge.settle'), input: inpatientSettleInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.surgery.request'), input: inpatientSurgeryRequestInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.surgery.check-preop'), input: inpatientSurgeryActionInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.surgery.confirm-consent'), input: inpatientSurgeryActionInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.surgery.cancel'), input: inpatientSurgeryActionInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.surgery.start'), input: inpatientSurgeryStartInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.surgery.record-material'), input: inpatientSurgeryRecordMaterialInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.surgery.supplement-material'), input: inpatientSurgerySupplementMaterialInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.surgery.correct-material'), input: inpatientSurgeryCorrectMaterialInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.surgery.complete'), input: inpatientSurgeryCompleteInputSchema }).strict(),
-  z.object({ operation: z.literal('inpatient.surgery.execute'), input: inpatientSurgeryExecuteInputSchema }).strict(),
-  z.object({operation:z.literal('inpatient.investigation.issue'),input:inpatientInvestigationIssueInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.investigation.send'),input:inpatientInvestigationActionInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.investigation.cancel'),input:inpatientInvestigationActionInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.investigation.retry'),input:inpatientInvestigationActionInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.investigation.acknowledge'),input:inpatientInvestigationAcknowledgeInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.transfer.request'),input:inpatientTransferRequestInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.transfer.handover'),input:inpatientTransferActionInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.transfer.receive'),input:inpatientTransferReceiveInputSchema}).strict(),
-  z.object({operation:z.literal('inpatient.transfer.cancel'),input:inpatientTransferActionInputSchema}).strict(),
-  z.object({ operation: z.literal('scenario.advance-time'), input: advanceVirtualTimeInputSchema }).strict(),
+  cmd('inpatient.financial.insurance.cancel', inpatientFinancialInsuranceCancelInputSchema),
+  cmd('inpatient.financial.insurance.preview', inpatientFinancialInsurancePreviewInputSchema),
+  cmd('inpatient.financial.insurance.confirm', inpatientFinancialInsuranceConfirmInputSchema),
+  cmd('insurance.confirm', insuranceTargetSchema.extend({ previewId: z.string().min(1), commitToken: z.string().min(16).max(256) })),
+  cmd('insurance.cancel', insuranceTargetSchema.extend({ settlementId: z.string().min(1), expectedBalanceVersion: z.number().int().nonnegative() })),
+  cmd('inpatient.financial.adjust', inpatientFinancialAdjustmentInputSchema),
+  cmd('inpatient.financial.refund.preview', inpatientFinancialRefundPreviewInputSchema),
+  cmd('inpatient.financial.refund.confirm', inpatientFinancialRefundConfirmInputSchema),
+  cmd('inpatient.financial.refund.recover', inpatientFinancialRefundRecoverInputSchema),
+  cmd('inpatient.financial.payment.preview', inpatientFinancialPaymentPreviewInputSchema),
+  cmd('inpatient.financial.payment.confirm', inpatientPaymentConfirmInputSchema),
+  cmd('inpatient.financial.payment.recover', inpatientPaymentRecoverInputSchema),
+  cmd('inpatient.payment.preview', inpatientPaymentInputSchema),
+  cmd('inpatient.payment.confirm', inpatientPaymentConfirmInputSchema),
+  cmd('inpatient.payment.recover', inpatientPaymentRecoverInputSchema),
+  cmd('inpatient.refund.preview', inpatientRefundInputSchema),
+  cmd('inpatient.refund.confirm', inpatientRefundConfirmInputSchema),
+  cmd('inpatient.refund.recover', inpatientRefundRecoverInputSchema),
+  cmd('inpatient.record.submit', inpatientRecordSubmitInputSchema),
+  cmd('inpatient.record.review', inpatientRecordReviewInputSchema),
+  cmd('inpatient.record.archive', inpatientRecordArchiveInputSchema),
+  cmd('inpatient.admission.register', inpatientRegistrationInputSchema),
+  cmd('inpatient.admission.receive', inpatientBedInputSchema),
+  cmd('inpatient.admission.move-bed', inpatientBedInputSchema),
+  cmd('inpatient.admission.swap-bed', inpatientSwapInputSchema),
+  cmd('inpatient.referral.issue', inpatientReferralInputSchema),
+  cmd('inpatient.diagnosis.confirm', inpatientDiagnosisConfirmInputSchema),
+  cmd('inpatient.vital-signs.record', inpatientVitalSignsInputSchema),
+  cmd('inpatient.risk-assessment.record', inpatientRiskAssessmentInputSchema),
+  cmd('inpatient.order.issue', inpatientOrderIssueInputSchema),
+  cmd('inpatient.order.verify', inpatientOrderActionInputSchema),
+  cmd('inpatient.order.request-stop', inpatientOrderReasonInputSchema),
+  cmd('inpatient.order.verify-stop', inpatientOrderActionInputSchema),
+  cmd('inpatient.execution.request-prn', inpatientOrderReasonInputSchema),
+  cmd('inpatient.execution.dispense', inpatientDispenseInputSchema),
+  cmd('inpatient.execution.administer', inpatientExecutionActionInputSchema),
+  cmd('inpatient.execution.complete', inpatientExecutionActionInputSchema),
+  cmd('inpatient.charge.reverse', inpatientChargeReverseInputSchema),
+  cmd('inpatient.discharge.issue', inpatientDischargeIssueInputSchema),
+  cmd('inpatient.discharge.depart', inpatientDepartInputSchema),
+  cmd('inpatient.discharge.recall', inpatientDischargeInputSchema),
+  cmd('inpatient.discharge.clear', inpatientDischargeInputSchema),
+  cmd('inpatient.discharge.settle', inpatientSettleInputSchema),
+  cmd('inpatient.surgery.request', inpatientSurgeryRequestInputSchema),
+  cmd('inpatient.surgery.check-preop', inpatientSurgeryActionInputSchema),
+  cmd('inpatient.surgery.confirm-consent', inpatientSurgeryActionInputSchema),
+  cmd('inpatient.surgery.cancel', inpatientSurgeryActionInputSchema),
+  cmd('inpatient.surgery.start', inpatientSurgeryStartInputSchema),
+  cmd('inpatient.surgery.record-material', inpatientSurgeryRecordMaterialInputSchema),
+  cmd('inpatient.surgery.supplement-material', inpatientSurgerySupplementMaterialInputSchema),
+  cmd('inpatient.surgery.correct-material', inpatientSurgeryCorrectMaterialInputSchema),
+  cmd('inpatient.surgery.complete', inpatientSurgeryCompleteInputSchema),
+  cmd('inpatient.surgery.execute', inpatientSurgeryExecuteInputSchema),
+  cmd('inpatient.investigation.issue', inpatientInvestigationIssueInputSchema),
+  cmd('inpatient.investigation.send', inpatientInvestigationActionInputSchema),
+  cmd('inpatient.investigation.cancel', inpatientInvestigationActionInputSchema),
+  cmd('inpatient.investigation.retry', inpatientInvestigationActionInputSchema),
+  cmd('inpatient.investigation.acknowledge', inpatientInvestigationAcknowledgeInputSchema),
+  cmd('inpatient.transfer.request', inpatientTransferRequestInputSchema),
+  cmd('inpatient.transfer.handover', inpatientTransferActionInputSchema),
+  cmd('inpatient.transfer.receive', inpatientTransferReceiveInputSchema),
+  cmd('inpatient.transfer.cancel', inpatientTransferActionInputSchema),
+  cmd('scenario.advance-time', advanceVirtualTimeInputSchema),
 ])
 const intentSchema = z.object({ version: z.literal(1), binding: bindingSchema,
   idempotencyKey: z.uuid(), command: commandSchema }).strict().refine(intent =>
@@ -153,7 +155,7 @@ const intentChangedEvent = 'clinmesh.inpatient-intent.changed'
 /** 只表示实际 Command 请求的确定拒绝；回执读取失败仍须恢复原尝试。 */
 export class InpatientCommandRejection extends ApiClientError {
   readonly commandRejected = true
-  constructor(error: ApiClientError) { super(error.status, error.code, error.message, error.conflict, error.correlationId, error.reason) }
+  constructor(error: ApiClientError) { super(error.status, error.code, error.message, error.conflict, error.correlationId, { reason: error.reason, clinicalQuality: error.clinicalQuality }) }
 }
 /** 已证明原收款成功，但原范围私稿尚未完成可靠清理。 */
 export class CollectedMultiChargeDraftUnreadable extends ApiClientError {
@@ -178,7 +180,12 @@ function load(key: string, expectedBinding: z.infer<typeof bindingSchema>) {
   try {
     const value = sessionStorage.getItem(key)
     if (value === null) return { key, intent: null, error: null }
-    const intent = intentSchema.parse(JSON.parse(value))
+    const raw: unknown = JSON.parse(value)
+    if (typeof raw === 'object' && raw !== null && 'command' in raw && typeof raw.command === 'object' && raw.command !== null
+      && 'operation' in raw.command && raw.command.operation === 'synthetic-case.authored-pack.prepare') {
+      raw.command.operation = 'admin.authored-case-pack.prepare'
+    }
+    const intent = intentSchema.parse(raw)
     if (JSON.stringify(intent.binding) !== JSON.stringify(expectedBinding)) throw storageError()
     return { key, intent, error: null }
   } catch { return { key, intent: null, error: storageError() } }
@@ -285,12 +292,15 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           if (error instanceof ReservationDraftUnreadable || error instanceof SurgeryDraftUnreadable) throw new OriginalContinuationUnreadable(intent.idempotencyKey)
           throw storageError()
         }
-        try { settleInpatientOrderAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
-        try { settleInvestigationSendAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
-        try { settleDispenseAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
-        try { settleInpatientInvestigationActionAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
-        try { settleInpatientReportAttempt(intent.command, intent.idempotencyKey, session, undefined, response) } catch { throw storageError() }
-        try { settleExecutionAttempt(intent.command, intent.idempotencyKey, session, undefined, current.intent !== null || raw?.recoverOriginal === true, response) } catch { throw storageError() }
+        const recovered = current.intent !== null || raw?.recoverOriginal === true
+        try {
+          settleInpatientOrderAttempt(command, intent.idempotencyKey, session, undefined, recovered, response)
+          settleInvestigationSendAttempt(command, intent.idempotencyKey, session, undefined, recovered, response)
+          settleDispenseAttempt(command, intent.idempotencyKey, session, undefined, recovered, response)
+          settleInpatientInvestigationActionAttempt(command, intent.idempotencyKey, session, undefined, recovered, response)
+          settleInpatientReportAttempt(command, intent.idempotencyKey, session, undefined, response)
+          settleExecutionAttempt(command, intent.idempotencyKey, session, undefined, recovered, response)
+        } catch { throw storageError() }
         settleIssue({ response, discardUnread: receiptProven && raw?.discardUnreadContinuationDraft === true })
         if ((command.operation === 'payment.multi-charge.confirm' || command.operation === 'payment.multi-charge.recover')
           && multiChargePaymentResponseSchema.parse(response).data.outcome === 'success') {
@@ -403,7 +413,10 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
             ...(error.conflict === undefined ? {} : { conflict: error.conflict }), ...(error.reason === undefined ? {} : { reason: error.reason }) }) } catch { throw storageError() }
           try { settleExecutionAttempt(intent.command, intent.idempotencyKey, session, { code: error.code, status: error.status }, current.intent !== null || raw?.recoverOriginal === true) } catch { throw storageError() }
           settleIssue({ failure: { status: error.status, code: error.code, ...(error.reason === undefined ? {} : { reason: error.reason }),
-            ...(intent.command.operation === 'inpatient.order.issue' && error.code === 'CATALOG_CONFLICT' ? { message: error.message } : {}) } })
+            ...(error.clinicalQuality === undefined ? {} : { clinicalQuality: error.clinicalQuality }),
+            ...(intent.command.operation === 'inpatient.order.issue'
+              && (error.code === 'CATALOG_CONFLICT' || error.clinicalQuality !== undefined)
+              ? { message: error.message } : {}) } })
           clear()
           throw new InpatientCommandRejection(error)
         }

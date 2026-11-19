@@ -576,8 +576,16 @@ function narrowOperations(
   if (claim.viewId === 'inpatient') {
     const operations: AgentOperationId[] = []
     if (selection.kind === 'inpatient-admission') {
-      operations.push('inpatient.stage.select')
-      if (selection.record_status !== 'archived') operations.push('inpatient.report.acknowledge.propose')
+      operations.push(
+        'inpatient.stage.select',
+        'inpatient.angiography-reports.read',
+        'inpatient.clinical-scores.read',
+        'inpatient.guideline-topics.read',
+        'inpatient.clinical-quality.read',
+      )
+      if (selection.record_status !== 'archived') {
+        operations.push('inpatient.report.acknowledge.propose', 'inpatient.order-set-drafts.read')
+      }
       if (selection.status === 'admitted' && selection.record_status !== 'archived') {
         operations.push('inpatient.order.verify.propose')
       }
@@ -599,7 +607,14 @@ function narrowOperations(
       'outpatient.section.select',
     ]
     if (selection.practitioner_role_id === practitionerRoleId) {
-      operations.push('outpatient.history.search', 'outpatient.history.read')
+      operations.push(
+        'outpatient.history.search',
+        'outpatient.history.read',
+        'outpatient.clinical-scores.read',
+        'outpatient.guideline-topics.read',
+        'outpatient.clinical-quality.read',
+        'outpatient.order-set-drafts.read',
+      )
     }
     if (selection.status === 'awaiting-doctor' || selection.status === 'awaiting-revisit') {
       operations.push('outpatient.visit.start.propose')
@@ -758,6 +773,13 @@ function inputMatchesCurrentResources(
   if (operationId === 'outpatient.history.read') {
     return claim.selection?.kind === 'case'
       && doctorHistoryEntryAllowed(database, actor, claim.selection.id, input as DoctorCaseHistoryDetailInput)
+  }
+  if (operationId === 'inpatient.clinical-quality.read') {
+    return claim.selection?.kind === 'inpatient-admission'
+      && (value.gate !== 'inpatient-order' || exists(`
+        SELECT 1 FROM outpatient_catalog WHERE workspace_id = ? AND epoch = ?
+          AND item_id = ? AND kind = 'medication' AND active = 1
+      `, ...scope, value.catalogItemId))
   }
   if (operationId === 'ui.navigate') {
     const roleCode = agentHumanRoleCodeSchema.safeParse(actor.roleCode)

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
+import { clinicalQualityReceiptSchema, type ClinicalQualityReceipt } from '@clinmesh/contracts/clinical-quality'
 import { isSupportedResourceType } from '../fhir/capabilities.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import {
@@ -72,6 +73,8 @@ export interface CommandEffect {
 }
 
 export interface CommandHandlerResult<Data> {
+  /** 本次放行的非红线临床质控警示与越权理由；写入回执、AuditEvent 与 Action Trace 引用。 */
+  clinicalQuality?: ClinicalQualityReceipt | undefined
   data: Data
   effects: CommandEffect[]
   warnings?: string[]
@@ -125,6 +128,7 @@ const virtualTimeRowSchema = z.object({
 
 const storedCommandResponseSchema = z.object({
   auditId: z.string().min(1),
+  clinicalQuality: clinicalQualityReceiptSchema.optional(),
   data: z.unknown(),
   effects: z.array(z.object({
     kind: z.enum(['created', 'updated']),
@@ -360,6 +364,8 @@ export class CommandExecutor {
         now,
         'success',
         result.effects,
+        'E',
+        result.clinicalQuality,
       )
       const traceId = this.#appendTrace(
         context,
@@ -486,6 +492,7 @@ export class CommandExecutor {
     outcome: 'failed' | 'success',
     effects: CommandEffect[],
     action: 'E' | 'R' = 'E',
+    clinicalQuality?: ClinicalQualityReceipt,
   ): void {
     const head = this.#database.driver.prepare(`
       SELECT sequence, hash FROM audit_head WHERE workspace_id = ? AND epoch = ?
@@ -576,6 +583,9 @@ export class CommandExecutor {
         },
       },
       entity: effects.map(effect => ({
+        ...(clinicalQuality !== undefined && effect.reference === `ClinicalQualityOverride/${clinicalQuality.overrideId}`
+          ? { detail: clinicalQualityAuditDetails(clinicalQuality) }
+          : {}),
         role: { text: effect.kind },
         what: isSupportedResourceType(effect.reference.split('/', 1)[0] ?? '')
           ? { reference: effect.reference }
@@ -650,4 +660,13 @@ export class CommandExecutor {
       })
     }
   }
+}
+
+function clinicalQualityAuditDetails(receipt: ClinicalQualityReceipt) {
+  return [
+    { type: { text: 'clinical-quality-gate' }, valueString: receipt.gate },
+    { type: { text: 'clinical-override-reason' }, valueString: receipt.override.reasonCode },
+    { type: { text: 'clinical-override-note' }, valueString: receipt.override.note },
+    ...receipt.alerts.map(alert => ({ type: { text: 'clinical-quality-alert' }, valueString: `${alert.code}: ${alert.message}` })),
+  ]
 }

@@ -127,7 +127,7 @@
 | `pharmacy.dispense.propose` | 当前处方满足调剂前提 | 人工审阅发药 |
 | `scenario.reset.propose` | 管理员场景页面 | 人工审阅重置；新 Epoch 清理旧反馈 |
 
-只读操作包括 `ui.context.read`、`triage.queue.read`、`outpatient.case.read`、`outpatient.history.search/read`、`billing.queue.read`、`billing.case.read`、`pharmacy.queue.read`、`scenario.status.read`、`scenario.providers.read` 和 `scenario.generation.status.read`（管理员重置仅提供需人类在工作台二次确认的 `scenario.reset.propose`，不开放直接执行重置或触发患者生成的无审阅写 Tool）。它们读取授权范围内的页面或服务端结果，不显示执行边框，也不复制 Case Truth。收款及原尝试恢复的详细规则见[收费与支付](architecture/clinical-workflows.md#85-收费支付与退款)。
+只读操作包括 `ui.context.read`、`triage.queue.read`、`outpatient.case.read`、`outpatient.history.search/read`、`outpatient.clinical-scores.read`、`outpatient.guideline-topics.read`、`outpatient.clinical-quality.read`、`outpatient.order-set-drafts.read`、`inpatient.angiography-reports.read`、`inpatient.clinical-scores.read`、`inpatient.guideline-topics.read`、`inpatient.clinical-quality.read`、`inpatient.order-set-drafts.read`、`billing.queue.read`、`billing.case.read`、`pharmacy.queue.read`、`scenario.status.read`、`scenario.providers.read` 和 `scenario.generation.status.read`（管理员重置仅提供需人类在工作台二次确认的 `scenario.reset.propose`，不开放直接执行重置或触发患者生成的无审阅写 Tool）。它们读取授权范围内的页面或服务端结果，不显示执行边框，也不复制 Case Truth。收款及原尝试恢复的详细规则见[收费与支付](architecture/clinical-workflows.md#85-收费支付与退款)。
 
 医生页面的 `clinmesh_read_current_context` 在 `data.pageState.queue` 返回已加载的医生队列页；`clinmesh_read_doctor_context` 保留当前病例详情字段，并在 `data.queue` 返回当前 frame 已加载的同一队列页。`queue.items` 包含可用于切换的 `caseId`、患者身份和病例状态，`page`、`pageSize`、`total` 描述分页。该队列包含待诊与在诊病例，不等同于当前标签筛选后的列表；`queueCount` 保留为总数，不能据此推断已返回全部条目。队列尚未加载时 `queue` 为 `null`，空队列的 `items` 为 `[]`。选择工具只接受这份已加载队列中的病例，不提供任意患者查询、按姓名全库搜索或跨页选择；同名时应结合队列返回的身份字段消歧。
 
@@ -139,18 +139,18 @@
 
 ## 医生诊疗栏目与 Tool 发布
 
-DSH browser Tool broker 每次注册最多接受 32 个 Tool。医生“接诊”页按当前诊疗栏目发布 Tool：跨栏目 Tool 始终发布，栏目 Tool 只在所属栏目为当前栏目时发布。栏目枚举与每个 Tool 的栏目归属只定义在 [Tool Catalog](../packages/contracts/src/agent.ts)；Server 签发 Page Context 时按受信 claim 中的当前栏目收窄 `allowedOperationIds`，Surface 用同一份归属注册 Tool，非当前栏目的 Tool 调用以 `AGENT_OPERATION_NOT_ALLOWED` 拒绝。当前栏目属于 page scope，切换栏目后页面重签 Page Context 并重新注册 Tool；`outpatient.section.select` 返回后，等待工具定义更新再调用目标栏目的 Tool。
+DSH browser Tool broker 每次注册最多接受 32 个 Tool。医生“接诊”页按当前诊疗栏目发布 Tool：跨栏目 Tool 始终发布，单栏目或多栏目（`sections`）Tool 只在当前栏目命中其归属集合时发布。栏目枚举与每个 Tool 的栏目归属只定义在 [Tool Catalog](../packages/contracts/src/agent.ts)；Server 签发 Page Context 时按受信 claim 中的当前栏目收窄 `allowedOperationIds`，Surface 用同一份归属注册 Tool，非当前栏目的 Tool 调用以 `AGENT_OPERATION_NOT_ALLOWED` 拒绝。当前栏目属于 page scope，切换栏目后页面重签 Page Context 并重新注册 Tool；`outpatient.section.select` 返回后，等待工具定义更新再调用目标栏目的 Tool。
 
 | 栏目 | Tool |
 | --- | --- |
 | 跨栏目 | `ui.context.read`、`ui.navigate`、`ui.panel.focus`、`outpatient.case.read`、`outpatient.history.search/read`、`outpatient.case.select`、`outpatient.section.select`、`outpatient.visit.start.propose`、`outpatient.first-visit.draft.set`、`outpatient.revisit.draft.set`、`outpatient.encounter.complete.propose` |
 | `consultation`（问诊记录） | `outpatient.consultation.ask`、`outpatient.consultation.reply.retry` |
-| `record`（病历记录） | `outpatient.record.draft.set`、`outpatient.preview.request`、`outpatient.record.sign.propose`、`outpatient.record.revise.propose` |
-| `diagnosis`（诊断） | `outpatient.diagnosis.draft.set`、`outpatient.diagnosis.confirm.propose` |
-| `prescription`（处方） | `outpatient.prescription.draft.set`、`outpatient.prescription.issue.propose`、`outpatient.prescription.withdraw.propose`、`outpatient.medication.none.propose` |
+| `record`（病历记录） | `outpatient.record.draft.set`、`outpatient.preview.request`、`outpatient.record.sign.propose`、`outpatient.record.revise.propose`、`outpatient.clinical-quality.read` |
+| `diagnosis`（诊断） | `outpatient.diagnosis.draft.set`、`outpatient.diagnosis.confirm.propose`、`outpatient.clinical-scores.read`、`outpatient.guideline-topics.read`、`outpatient.clinical-quality.read`、`outpatient.order-set-drafts.read` |
+| `prescription`（处方） | `outpatient.prescription.draft.set`、`outpatient.prescription.issue.propose`、`outpatient.prescription.withdraw.propose`、`outpatient.medication.none.propose`、`outpatient.clinical-scores.read`、`outpatient.guideline-topics.read`、`outpatient.clinical-quality.read`、`outpatient.order-set-drafts.read` |
 | `laboratory`（检验，含功能检查、放射检查与病理会诊） | `outpatient.laboratory.draft.set`、`outpatient.laboratory.issue.propose`、`outpatient.laboratory.cancel.propose`、`outpatient.report.acknowledge.propose`、`outpatient.report.correct.propose`、`outpatient.examination.draft.set`、`outpatient.examination.issue.propose`、`outpatient.examination.cancel.propose`、`outpatient.examination.retry.propose`、`outpatient.imaging.draft.set`、`outpatient.imaging.issue.propose`、`outpatient.imaging.cancel.propose`、`outpatient.imaging.retry.propose`、`outpatient.imaging.correct.propose`、`outpatient.pathology.draft.set`、`outpatient.pathology.issue.propose`、`outpatient.pathology.cancel.propose`、`outpatient.pathology.retry.propose`、`outpatient.pathology.correct.propose` |
 
-开始就诊和完成就诊位于病例页头，不属于任何栏目。兼容初诊与复诊草稿的表单不只对应一个栏目，也跨栏目发布；它们仍按病例状态收窄，结构化诊疗流程中不占名额。兼容复诊流程的签署预览与签署同样在“病历记录”栏目发布。栏目 Tool 在所属栏目内的前提、输入、提案与授权语义不变。合同测试逐一断言每个岗位、视图与栏目发布的 Tool 不超过 32 个；功能检查、放射与病理的已阅并入 `outpatient.report.acknowledge.propose`，导航定位与阅片并入 `outpatient.section.select`；“检验检查”栏目共发布 31 个 Tool。
+开始就诊和完成就诊位于病例页头，不属于任何栏目。兼容初诊与复诊草稿的表单不只对应一个栏目，也跨栏目发布；它们仍按病例状态收窄，结构化诊疗流程中不占名额。兼容复诊流程的签署预览与签署同样在“病历记录”栏目发布。专病临床评分、指南专题、事中质控预检与医嘱组套预筛只挂载于决策与收尾栏目，不进入“检验检查”栏目。栏目 Tool 在所属栏目内的前提、输入、提案与授权语义不变。合同测试逐一断言每个岗位、视图与栏目／阶段发布的 Tool 不超过 32 个；功能检查、放射与病理的已阅并入 `outpatient.report.acknowledge.propose`，导航定位与阅片并入 `outpatient.section.select`；“检验检查”栏目保持发布 31 个 Tool。住院工作台同样按 `sections` 阶段集合仅发布阶段导航、报告已阅／医嘱校对／财务预览提案与窄专病只读查询（`inpatient.angiography-reports.read` 挂载于 `investigations`／`surgery`／`record`，`inpatient.clinical-scores.read` 挂载于 `admission`／`orders`／`surgery`／`discharge`／`record`，`inpatient.guideline-topics.read` 挂载于 `orders`／`surgery`／`discharge`／`record`，`inpatient.clinical-quality.read` 挂载于住院医生 `orders`／`surgery`／`discharge`／`record`，`inpatient.order-set-drafts.read` 挂载于住院医生 `orders`／`investigations`），不新增住院端 DSH 写 Tool；边界取舍见[同源专病临床内核与像素暂缓边界](decisions/implemented/architecture/2026-11-19-shared-specialist-clinical-kernel-and-pixel-deferral.md)。
 
 ## 上游能力与接入限制
 

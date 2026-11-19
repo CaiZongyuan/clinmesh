@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { replaceEqualDeep } from '@tanstack/react-query'
 import { z } from 'zod'
 import { confirmDoctorPreparationResponseSchema, doctorManualInvestigationDraftSchema, doctorPreparationSelectionSchema, doctorRecommendationKindSchema, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
+import { clinicalOverrideInputSchema } from '@clinmesh/contracts/clinical-quality'
 import { diagnosisDraftEntrySchema, prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
+import type { OrderSetDraft } from '@clinmesh/contracts/order-set-templates'
 import type { ManualPreparedItem } from './doctor-recommendations.tsx'
 import type { DraftPreferences } from './doctor-preparation-state.tsx'
 import { createDraftDiscard } from '../draft-discard.ts'
@@ -64,6 +66,70 @@ export function useManualInvestigationDrafts(scope: string, kind: 'laboratory' |
     })) }
 }
 
+const examFormSchema = z.object({
+  baseDraftVersion: z.number().int().nonnegative(),
+  indication: z.string().min(1).max(500),
+  serviceId: z.string().min(1).max(512),
+}).nullable()
+
+export function useOrderSetExamDraft(caseId: string, encounterId: string) {
+  return useStoredInvestigationValue(`${investigationDraftPrefix}examination-form:${JSON.stringify([caseId, encounterId])}`, examFormSchema, null)
+}
+
+export function syncOrderSetExamDraft(draft: OrderSetDraft, store: ReturnType<typeof useOrderSetExamDraft>, baseDraftVersion: number) {
+  const exam = draft.items.find(i => i.candidate?.kind === 'examination')?.candidate
+  if (exam?.kind === 'examination') {
+    const saved = store.save(() => ({ baseDraftVersion, indication: exam.indication, serviceId: exam.serviceId }))
+    return { exam: saved ? exam : undefined, removed: 0 }
+  }
+  const removed = store.value !== null && draft.items.some(i => i.kind === 'examination' && i.disposition === 'excluded') && store.save(() => null) ? 1 : 0
+  return { exam: undefined, removed }
+}
+
+export function syncOrderSetPrefs(
+  prefs: { save: (update: (previous: DraftPreferences) => unknown) => boolean },
+  kind: 'laboratory' | 'prescription',
+  readyIds: ReadonlySet<string>,
+  reviewIds: ReadonlySet<string>,
+) {
+  if (!readyIds.size && !reviewIds.size) return
+  const keyOf = (id: string) => JSON.stringify([kind, id])
+  const clear = new Set([...readyIds, ...reviewIds].map(keyOf))
+  prefs.save(prev => ({ ...prev, unselected: [...prev.unselected.filter(k => !clear.has(k)), ...[...reviewIds].map(keyOf)] }))
+}
+
+export function applyOrderSetLabDrafts(
+  draft: OrderSetDraft,
+  drafts: { save: (update: (previous: ManualPreparedItem[]) => ManualPreparedItem[]) => boolean },
+  prefs: { save: (update: (previous: DraftPreferences) => unknown) => boolean },
+) {
+  const ex = new Set(draft.items.flatMap(i => i.kind === 'laboratory' && i.disposition === 'excluded' && i.matchedCatalogId !== null ? [i.matchedCatalogId] : []))
+  if (!ex.size && !draft.items.some(i => i.candidate?.kind === 'laboratory')) return { added: 0, removed: 0, review: 0, saved: true }
+  let added = 0
+  let removed = 0
+  let review = 0
+  const readySet = new Set<string>()
+  const revSet = new Set<string>()
+  const saved = drafts.save(prev => {
+    const next = prev.filter(r => r.value.kind !== 'laboratory' || !ex.has(r.value.catalogItemId))
+    removed = prev.length - next.length
+    for (const i of draft.items) {
+      const c = i.candidate
+      if (c?.kind !== 'laboratory') continue
+      if (!next.some(r => r.value.kind === 'laboratory' && r.value.catalogItemId === c.catalogItemId)) {
+        if (next.length >= 8) continue
+        next.push({ label: c.display, value: { catalogItemId: c.catalogItemId, indicationCode: c.indicationCode, kind: 'laboratory', reviewedService: { id: c.catalogItemId, outpatientBilling: c.outpatientBilling, version: c.catalogVersion }, source: 'manual' } })
+        added += 1
+      }
+      if (i.disposition === 'needs-review') { revSet.add(c.catalogItemId); review += 1 }
+      else readySet.add(c.catalogItemId)
+    }
+    return next
+  })
+  if (saved) syncOrderSetPrefs(prefs, 'laboratory', readySet, revSet)
+  return { added, removed, review, saved }
+}
+
 const investigationSelectionSchema = doctorPreparationSelectionSchema.refine(item => item.kind !== 'diagnosis' && item.kind !== 'prescription')
 const prescriptionDraftSchema = prescriptionDraftItemSchema.extend({
   kind: z.literal('prescription'), source: z.enum(['manual', 'agent']), suggestionId: z.string().min(1).optional(),
@@ -93,9 +159,11 @@ const confirmationIntentSchema = z.object({
   }).strict(),
   selections: z.array(doctorPreparationSelectionSchema).min(1).max(8), draftVersion: z.number().int().nonnegative(),
   resolveExistingDraft: z.boolean(), key: z.string().min(8).max(128),
+  clinicalOverride: clinicalOverrideInputSchema.optional(),
   rows: z.array(z.object({ label: z.string().min(1).max(500), key: z.string(), signature: z.string() }).strict()).min(1).max(8),
   result: confirmDoctorPreparationResponseSchema.shape.data.optional(),
 }).strict().refine(intent => intent.selections.length === intent.rows.length && intent.selections.every(item => item.kind === intent.state.kind)
+  && (intent.clinicalOverride === undefined || intent.state.kind === 'prescription')
   && (!intent.selections.some(item => item.source === 'agent') || intent.state.generation !== undefined && intent.state.inputFingerprint !== undefined)
   && (intent.result === undefined || intent.result.kind === intent.state.kind && (intent.result.caseId === undefined || intent.result.caseId === intent.state.caseId)))
 export type InvestigationConfirmationIntent = z.infer<typeof confirmationIntentSchema>

@@ -1,4 +1,5 @@
 import { medicationCombinationConflict, medicationRegimenDoseAllowed, medicationQuantityAllowed } from '@clinmesh/core/medication-safety'
+import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import type {
   ClinicalCatalog,
@@ -37,6 +38,8 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
+import { ClinicalQualityBanner, extractClinicalQualityError } from '../clinical-quality-banner.tsx'
+import { orderSetExcludedIds, OrderSetSelectorBar } from '../order-set-selector.tsx'
 import {
   getPrescriptionIssueErrorMessage,
   getWorkspaceErrorMessage,
@@ -59,7 +62,7 @@ import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDr
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import { useAutosave } from './use-autosave.ts'
 import { prescriptionEditorsChanged, usePrescriptionComposerDraft, usePrescriptionDraft, type PrescriptionDraftLine } from './prescription-draft-storage.ts'
-import { useInvestigationConfirmationIntent, useInvestigationPreferences } from './investigation-draft-storage.ts'
+import { syncOrderSetPrefs, useInvestigationConfirmationIntent, useInvestigationPreferences } from './investigation-draft-storage.ts'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -85,7 +88,7 @@ export interface PrescriptionPageActions {
   }
   issue: {
     error: Error | null
-    onSubmit: () => void
+    onSubmit: (clinicalOverride?: ClinicalOverrideInput) => void
     pending: boolean
   }
   saveDraft: {
@@ -208,7 +211,10 @@ export function PrescriptionPage({
   const currentItems = useRef(items)
   currentItems.current = items
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
-  const submittedItems = items.map(({ key: _key, ...item }) => item)
+  const submittedItems = items.map(({ key: _key, instructions, ...item }) => ({
+    ...item,
+    ...(instructions?.trim() ? { instructions: instructions.trim() } : {}),
+  }))
   const draftValidation = prescriptionDraftContentSchema.safeParse({ items: submittedItems })
   useRegisterAgentForm({
     viewId: 'consultation', selectionId: detail.caseId, name: 'prescription',
@@ -244,7 +250,8 @@ export function PrescriptionPage({
   const canCombineWithCurrentItems = (
     candidate: PrescriptionMedicationCatalogItem,
     ignoredIndex?: number,
-  ) => items.every((item, index) => {
+    list: readonly PrescriptionDraftLine[] = items,
+  ) => list.every((item, index) => {
     if (index === ignoredIndex || item.catalogItemId === candidate.id) return true
     const selected = catalogById.get(item.catalogItemId)
     return selected?.safety && candidate.safety ? !medicationCombinationConflict(selected.safety.pharmacologyClasses, candidate.safety.pharmacologyClasses) : selected?.allowedCombinationIds.includes(candidate.id) === true
@@ -310,6 +317,7 @@ export function PrescriptionPage({
       const line: PrescriptionDraftLine = {
         catalogItemId: value.catalogItemId, key: previous?.key ?? globalThis.crypto.randomUUID(),
         courseDays: value.courseDays, doseText: value.doseText ?? '', frequencyCode: value.frequencyCode ?? '', quantity: value.quantity,
+        ...(value.instructions?.trim() ? { instructions: value.instructions.trim() } : {}),
         ...(value.referenceProduct === undefined ? {} : { referenceProduct: value.referenceProduct }),
       }
       return previous === undefined ? [...current, line] : current.map(item => item.key === previous.key ? line : item)
@@ -359,7 +367,8 @@ export function PrescriptionPage({
   const consumePreparedItems = (values: PreparationDraft[]) => {
     const remaining = items.filter(item => !values.some(value => value.kind === 'prescription'
       && value.catalogItemId === item.catalogItemId && value.doseText === item.doseText
-      && value.frequencyCode === item.frequencyCode && value.courseDays === item.courseDays && value.quantity === item.quantity))
+      && value.frequencyCode === item.frequencyCode && value.courseDays === item.courseDays && value.quantity === item.quantity
+      && (value.instructions?.trim() ?? '') === (item.instructions?.trim() ?? '')))
     if (remaining.length === items.length) return
     if (!setItems(remaining)) return false
     setDirty(remaining.length > 0)
@@ -572,10 +581,17 @@ export function PrescriptionPage({
   const composerTarget = useMemo<MedicationComposerTarget | undefined>(() => {
     const item = composerEditIndex === undefined ? undefined : items[composerEditIndex]
     if (item === undefined) return undefined
+    const fields: MedicationComposerFields = {
+      courseDays: item.courseDays,
+      doseText: item.doseText,
+      frequencyCode: item.frequencyCode,
+      ...(item.instructions ? { instructions: item.instructions } : {}),
+      quantity: item.quantity,
+    }
     if (item.referenceProduct !== undefined) {
       return {
         key: item.key,
-        fields: { courseDays: item.courseDays, doseText: item.doseText, frequencyCode: item.frequencyCode, quantity: item.quantity },
+        fields,
         selection: { kind: 'reference', product: item.referenceProduct },
       }
     }
@@ -583,7 +599,7 @@ export function PrescriptionPage({
     if (medication === undefined) return undefined
     return {
       key: item.key,
-      fields: { courseDays: item.courseDays, doseText: item.doseText, frequencyCode: item.frequencyCode, quantity: item.quantity },
+      fields,
       selection: { kind: 'local', medication },
     }
   }, [catalogById, composerEditIndex, items])
@@ -594,6 +610,49 @@ export function PrescriptionPage({
         : 'This encounter has an active prescription. Withdraw it according to its status before adjusting. Unissued items remain below.'}</p> : null}
       {canEditDraft ? (
         <>
+          <OrderSetSelectorBar
+            disabled={!canEditDraft || pending}
+            itemKinds={['medication']}
+            locale={locale}
+            onApply={draft => {
+              if (currentItems.current.some(r => r.referenceProduct !== undefined)) {
+                return { addedCount: 0, error: messages.prescriptionIssueReason_mixedCatalogSources, reviewCount: 0 }
+              }
+              const ex = orderSetExcludedIds(draft, 'medication')
+              const next = currentItems.current.filter(r => !ex.has(r.catalogItemId))
+              const removedCount = currentItems.current.length - next.length
+              const ready = new Set<string>()
+              const review = new Set<string>()
+              let addedCount = 0
+              let reviewCount = 0
+              for (const i of draft.items) {
+                const c = i.candidate
+                if (c?.kind !== 'medication' || !c.outpatient) continue
+                if (!next.some(r => r.catalogItemId === c.catalogItemId)) {
+                  const entry = catalogById.get(c.catalogItemId)
+                  if (next.length >= 8 || (entry && !canCombineWithCurrentItems(entry, undefined, next))) continue
+                  next.push({ catalogItemId: c.catalogItemId, courseDays: c.outpatient.courseDays, doseText: c.doseText, frequencyCode: c.frequencyCode, ...(c.instructionsZh ? { instructions: c.instructionsZh } : {}), key: globalThis.crypto.randomUUID(), quantity: c.outpatient.quantity })
+                  addedCount += 1
+                }
+                if (i.disposition === 'needs-review') { review.add(c.catalogItemId); reviewCount += 1 }
+                else ready.add(c.catalogItemId)
+              }
+              if (addedCount > 0 || removedCount > 0) {
+                if (!setItems(next)) {
+                  return { addedCount: 0, error: locale === 'zh-CN' ? '处方待开清单保存失败，请检查浏览器存储后重试。' : 'Could not save prescription draft.', reviewCount: 0 }
+                }
+                if (!next.length && state?.draft !== undefined) {
+                  draftDeletionRef.current = { revision: currentRevision, clearComposer: false }
+                  actions.deleteDraft.onSubmit()
+                } else {
+                  setDirty(next.length > 0)
+                }
+              }
+              syncOrderSetPrefs(preferences, 'prescription', ready, review)
+              return { addedCount, removedCount, reviewCount }
+            }}
+            target={{ caseId: detail.caseId, scope: 'outpatient' }}
+          />
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Button data-agent-catalog-trigger="medication" className="data-disabled:pointer-events-none data-disabled:opacity-50" disabled={pending || !canAddMedication} focusableWhenDisabled={actions.saveDraft.pending}
               onClick={() => { setComposerEditIndex(undefined); setComposerOpen(true) }} size="sm" type="button" variant="outline">
@@ -831,6 +890,7 @@ export function PrescriptionPage({
                 ?? item.catalogItemId,
               value: { source: 'manual', kind: 'prescription', catalogItemId: item.catalogItemId,
                 doseText: item.doseText || null, frequencyCode: item.frequencyCode || null, courseDays: item.courseDays, quantity: item.quantity,
+                ...(item.instructions?.trim() ? { instructions: item.instructions.trim() } : {}),
                 ...(item.referenceProduct === undefined ? {} : { referenceProduct: item.referenceProduct }) },
             } satisfies ManualPreparedItem))}
             manualUnavailableReason={manualPreparedUnavailableReason}
@@ -889,7 +949,7 @@ export function PrescriptionPage({
                             )}
                           </TableCell>
                           <TableCell className="whitespace-normal break-words text-xs text-muted-foreground">
-                            {item.doseText} · {item.frequencyCode} · {item.courseDays} {messages.days}
+                            {item.doseText} · {item.frequencyCode} · {item.courseDays} {messages.days}{item.instructions ? ` · ${item.instructions}` : ''}
                           </TableCell>
                           <TableCell className="tabular-nums">{item.quantity}</TableCell>
                         </TableRow>
@@ -916,7 +976,9 @@ export function PrescriptionPage({
       )}
 
       {/* 结论方式控制位于左主列顶部（见 conclusionModeControl）；页脚只保留需要整页可见的错误提示。 */}
-      {actions.saveDraft.error === null ? null : (
+      {actions.saveDraft.error === null ? null : extractClinicalQualityError(actions.saveDraft.error) ? (
+        <ClinicalQualityBanner error={actions.saveDraft.error} locale={locale} />
+      ) : (
         <ErrorAlert
           message={getWorkspaceErrorMessage(actions.saveDraft.error, messages)}
           title={getWorkspaceErrorTitle(actions.saveDraft.error, messages, messages.operationFailed)}
@@ -931,7 +993,14 @@ export function PrescriptionPage({
 
       {/* 开具拒绝独立于编辑权限渲染：并发无药结论或既有处方会让刷新后的 canEditDraft 翻 false，
           若留在编辑块内，竞态场景下医生只看到状态变化而丢失新承诺的可操作拦截文案。 */}
-      {actions.issue.error === null ? null : (
+      {actions.issue.error === null ? null : extractClinicalQualityError(actions.issue.error) ? (
+        <ClinicalQualityBanner
+          error={actions.issue.error}
+          locale={locale}
+          onSubmitOverride={override => actions.issue.onSubmit(override)}
+          pending={!canEditDraft || operationPending || recoveryPending}
+        />
+      ) : (
         <ErrorAlert
           message={getPrescriptionIssueErrorMessage(actions.issue.error, messages)}
           title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)}

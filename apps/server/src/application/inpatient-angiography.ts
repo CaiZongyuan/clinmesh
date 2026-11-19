@@ -218,9 +218,21 @@ function formatDiagnosticReportConclusion(result: InpatientAngiographyReport, ha
 export class InpatientAngiography {
   constructor(readonly owner: InpatientService) {}
   list(context: ActorContext, admissionId: string) {
-    this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
-    this.owner.readAdmissionBinding(context, admissionId)
-    return inpatientAngiographyReportsSchema.parse({ admissionId, reports: this.reports(context, admissionId) })
+    let result: z.infer<typeof inpatientAngiographyReportsSchema>
+    try {
+      this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
+      this.owner.readAdmissionBinding(context, admissionId)
+      result = inpatientAngiographyReportsSchema.parse({ admissionId, reports: this.reports(context, admissionId) })
+    } catch (error) {
+      if (!this.owner.database.driver.inTransaction) {
+        try { this.owner.commands.auditRead(context, 'inpatient.angiography-reports.read', { admissionId }, 'failed') } catch { /* preserve original error */ }
+      }
+      throw error
+    }
+    if (!this.owner.database.driver.inTransaction) {
+      this.owner.commands.auditRead(context, 'inpatient.angiography-reports.read', { admissionId }, 'success')
+    }
+    return result
   }
   reports(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, admissionId: string) {
     return z.array(rowSchema).parse(this.owner.database.driver.prepare(`SELECT report_json FROM inpatient_angiography_report

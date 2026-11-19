@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { clinicalOverrideInputSchema } from './clinical-quality.ts'
 import { commandResponseSchema } from './his.ts'
 import { inpatientMaterialReservationSchema } from './inpatient-drg-simulation.ts'
 
@@ -33,7 +34,7 @@ const unavailableMaterial = inpatientMaterialItemSchema.omit({ chargeDefinition:
 export const inpatientSurgeryCatalogSchema = z.object({ procedures: z.array(inpatientProcedureItemSchema),
   materials: z.array(z.union([inpatientMaterialItemSchema, unavailableMaterial])) }).strict()
 export const inpatientSurgeryRequestInputSchema = z.object({ admissionId: id, encounterVersion: z.string().regex(/^\d+$/),
-  procedureId: id, catalogVersion: version, plannedFor: z.iso.datetime({ offset: true }), reason: note }).strict()
+  procedureId: id, catalogVersion: version, plannedFor: z.iso.datetime({ offset: true }), reason: note, clinicalOverride: clinicalOverrideInputSchema.optional() }).strict()
 export const inpatientSurgeryActionInputSchema = z.object({ admissionId: id, requestId: id, expectedRequestVersion: version, note }).strict()
 export const inpatientSurgeryExecuteInputSchema = inpatientSurgeryActionInputSchema.omit({ note: true }).extend({ procedureId: id, catalogVersion: version, note,
   materials: z.array(z.object({ materialId: id, catalogVersion: version, quantity: z.number().int().positive().max(1000),

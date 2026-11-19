@@ -10,10 +10,13 @@ import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceMessages } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { InpatientConfirmation } from './inpatient-confirmation.tsx'
+import { coverageTierLabel, formatTierMeta } from './insurance-panel.tsx'
 
 export function InpatientFinancialInsurance({ bill, locale, write, fetching }: { bill: z.infer<typeof inpatientFinancialSchema>;
   locale: WorkspaceLocale; write?: ReturnType<typeof useInpatientWriteIntent> | undefined; fetching: boolean }) {
-  const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
+  const zh = locale === 'zh-CN'
+  const t = (cn: string, en: string) => zh ? cn : en
+  const f = (n: number) => formatFen(n, locale)
   const [cancel, setCancel] = useState<{ input: z.infer<typeof inpatientFinancialInsuranceCancelInputSchema>; settlement: z.infer<typeof insuranceSettlementSchema> }>()
   const [review, setReview] = useState<z.infer<typeof insurancePreviewResponseSchema>['data']>()
   const result = write?.mutation.data
@@ -28,12 +31,20 @@ export function InpatientFinancialInsurance({ bill, locale, write, fetching }: {
   const latest = bill.adjustments.at(-1), cycle = insurance.cycles.find(row => row.adjustmentId === latest?.adjustmentId)
   const busy = !write || write.blocked || fetching || bill.reservedFen + bill.reservedCollectFen > 0
   const error = write?.mutation.error ? getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale)) : undefined
-  const detail = (value: typeof insurance.original): React.JSX.Element => <span className="font-mono">{t('基金', 'Fund')} {formatFen(value.fundFen, locale)} · {t('账户', 'Account')} {formatFen(value.accountFen, locale)} · {t('患者', 'Patient')} {formatFen(value.patientFen, locale)}</span>
+  const detail = (value: typeof insurance.original): React.JSX.Element => <span className="font-mono">{t('基金', 'Fund')} {f(value.fundFen)} · {t('账户', 'Account')} {f(value.accountFen)} · {t('患者', 'Patient')} {f(value.patientFen)}</span>
+  const tiers = (value: typeof insurance.original): React.JSX.Element => <ul className="space-y-0.5 text-xs text-muted-foreground">{value.source.charges.map(c => {
+    const a = value.allocations.find(x => x.reference === c.reference)
+    return <li key={c.reference}>{c.label} · {coverageTierLabel(c.coverage, zh, a?.items ?? c.items)} · {f(c.amountFen)}{a ? formatTierMeta(a, locale) : ''}</li>
+  })}</ul>
   return <section aria-label={t('后续医保更正', 'Later insurance correction')} className="flex flex-col gap-3 border-t border-border pt-3">
     <h4>{t('后续医保更正', 'Later insurance correction')}</h4>
     <p>{t('首次固定待遇', 'First fixed benefits')} · {detail(insurance.original)}</p>
-    <p><span className="font-mono">{insurance.original.year}</span> · {t('原年度账户余额', 'Original year account balance')} <span className="font-mono">{formatFen(insurance.balance.accountFen, locale)}</span> · {t('年度统筹累计', 'Annual fund total')} <span className="font-mono">{formatFen(insurance.balance.fundFen, locale)}</span></p>
-    {insurance.active ? <p data-testid="financial-insurance-active">{t('当前待遇', 'Current benefits')} · {detail(insurance.active)}</p> : null}
+    {tiers(insurance.original)}
+    <p><span className="font-mono">{insurance.original.year}</span> · {t('原年度账户余额', 'Original year account balance')} <span className="font-mono">{f(insurance.balance.accountFen)}</span> · {t('年度统筹累计', 'Annual fund total')} <span className="font-mono">{f(insurance.balance.fundFen)}</span></p>
+    {insurance.active ? <>
+      <p data-testid="financial-insurance-active">{t('当前待遇', 'Current benefits')} · {detail(insurance.active)}</p>
+      {insurance.active.id !== insurance.original.id ? tiers(insurance.active) : null}
+    </> : null}
     {!insurance.ready ? <Alert><AlertDescription>{t('请先补偿原待遇并确认更正后的医保分摊，再按患者现金差额收退。', 'Compensate original benefits and confirm the revised allocation before collecting or refunding the patient cash difference.')}</AlertDescription></Alert> : null}
     {insurance.cycles.map(row => <p className="break-all font-mono text-xs" key={row.adjustmentId}>{t('原待遇', 'Original')} {row.originalSettlementId} · {t('补偿', 'Compensation')} {row.compensationId} · {t('新待遇', 'Replacement')} {row.replacementSettlementId ?? t('待确认', 'Pending')}</p>)}
     {write && latest && !insurance.ready ? <>
@@ -56,6 +67,7 @@ export function InpatientFinancialInsurance({ bill, locale, write, fetching }: {
       onCancel={() => setReview(undefined)} onConfirm={() => { if (latest) write?.mutation.mutate({ operation: 'inpatient.financial.insurance.confirm',
         input: { admissionId: bill.admissionId, adjustmentId: latest.adjustmentId, previewId: review.previewId, commitToken: review.commitToken } }) }}>
       <p data-testid="financial-insurance-review"><span className="font-mono">{review.settlement.year}</span> · {detail(review.settlement)}</p>
+      {tiers(review.settlement)}
       {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
     </InpatientConfirmation> : null}
   </section>

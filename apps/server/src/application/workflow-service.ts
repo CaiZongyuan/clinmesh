@@ -89,6 +89,8 @@ import { OutpatientLaboratoryService } from './outpatient-laboratory-service.ts'
 import { OutpatientPrescriptionService } from './outpatient-prescription-service.ts'
 import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
 import { ClinicalScoreService, buildVitalObservationComponents } from './clinical-score-service.ts'
+import { ClinicalQualityService } from './clinical-quality-service.ts'
+import { OrderSetDraftService } from './order-set-draft-service.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
 import {
   casePresentation,
@@ -312,6 +314,9 @@ export class WorkflowService
   readonly consultationRecording: ConsultationRecordingService
   readonly qualityControl: ClinicalDocumentQualityControl
   readonly clinicalScores: ClinicalScoreService
+  readonly clinicalQuality: ClinicalQualityService
+  /** 专病组套只读草稿预装配；不写入任何正式业务事实。 */
+  readonly orderSets: OrderSetDraftService
 
   constructor(
     database: ClinMeshDatabase,
@@ -359,6 +364,7 @@ export class WorkflowService
       ...(options.guidelines === undefined ? {} : { guidelines: options.guidelines }),
       outpatientContext: this.#context,
     })
+    this.clinicalQuality = new ClinicalQualityService({ commands, database, fhir, outpatientContext: this.#context, scores: this.clinicalScores })
     this.insurance = new InsuranceService(database, commands, {
       now: this.#now,
       readSource: (context, target) => {
@@ -392,13 +398,16 @@ export class WorkflowService
           return
         }
         for (const charge of source.charges) {
-          if (charge.coverage.included === false) continue
+          const anyIncluded = charge.items !== undefined && charge.items.length > 0
+            ? charge.items.some(item => item.coverage.included)
+            : charge.coverage.included
+          if (!anyIncluded) continue
           const facts = z.object({
             charge_id: z.string(),
             charge_item_id: z.string(),
             current_amount_fen: z.number(),
             charge_version: z.number(),
-            category: z.enum(['laboratory', 'examination', 'medication']),
+            category: z.enum(['laboratory', 'imaging', 'pathology', 'examination', 'medication']),
             case_id: z.string(),
             case_status: paymentPreviewRowSchema.shape.case_status,
             patient_id: z.string(),
@@ -471,11 +480,15 @@ export class WorkflowService
       virtualTime: (context: ActorContext) => this.#context.virtualTime(context),
     }
     this.examination = new ExaminationRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
+    this.orderSets = new OrderSetDraftService({
+      clinicalScores: this.clinicalScores, commands, database, examination: this.examination, fhir, outpatientContext: this.#context,
+    })
     this.imaging = new ImagingRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.pathology = new PathologyRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.#prescriptions = new OutpatientPrescriptionService({
       context: this.#context,
       host: {
+        clinicalQuality: this.clinicalQuality,
         completeScenarioIfReady: (context, now) => (
           this.#completeScenarioIfReady(context, now ?? this.#context.virtualTime(context))
         ),
@@ -492,6 +505,7 @@ export class WorkflowService
     this.#clinicalDocuments = new OutpatientClinicalDocumentService({
       context: this.#context,
       host: {
+        clinicalQuality: this.clinicalQuality,
         consultationRecording: this.consultationRecording,
         qualityControl: this.qualityControl,
         assertMedicationAllergies: (context, patientId, medications) => (
@@ -516,7 +530,7 @@ export class WorkflowService
   }
 
   commandReceipt(context: ActorContext, operationId: string, idempotencyKey: string) {
-    const operation = getHisOperation(operationId)
+    const operation = getHisOperation(operationId === 'synthetic-case.authored-pack.prepare' ? 'admin.authored-case-pack.prepare' : operationId)
     try {
       const receipt = this.#commands.readReceipt(context, operation.commandOperation ?? operation.id, idempotencyKey)
       return { ...receipt, operationId }

@@ -70,7 +70,8 @@ export async function prepareDispenseBatchPatient(page: Page, app: { origin: str
     const selected = catalog.medications.find(item => item.id === medication.id)!
     const response = await post(`${path}/orders/issue`, { encounterVersion: (await clinical()).encounterVersion, duration: options.sameLot ? 'long' : 'temporary',
       selection: { kind: 'medication', catalogItemId: selected.id, catalogVersion: selected.version,
-        doseText: medication.doseText, doseQuantity: medication.doseQuantity, frequencyCode: options.sameLot ? 'BID' : 'QD' } })
+        doseText: medication.doseText, doseQuantity: medication.doseQuantity, frequencyCode: options.sameLot ? 'BID' : 'QD' },
+      ...(medication.id === 'medication-metformin' ? { clinicalOverride: { acknowledgedAlerts: ['RENAL_CREATININE_MISSING'], reasonCode: 'external-result-verified', note: '合成集中发药准备已核对外院血肌酐正常' } } : {}) })
     expect(response.status(), response.ok() ? undefined : await response.text()).toBe(200)
     orders.push(inpatientFullClinicalResponseSchema.parse(await response.json()).data.orders.find(item => item.catalogItemId === selected.id)!)
   }

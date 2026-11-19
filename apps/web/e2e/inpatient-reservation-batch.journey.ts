@@ -60,9 +60,20 @@ export async function runReservationBatchJourney(page: Page, s: Patient, open: (
   { damageReleaseDraft = false }: { damageReleaseDraft?: boolean } = {}) {
   const read = async () => inpatientMaterialReservationListSchema.parse(await (await s.api.get(`${s.path}/drg/reservations`)).json())
   const auditCount = async (operation: string) => {
-    const bundle = fhirBundleSchema.parse(await (await s.api.get('/fhir/R5/AuditEvent?_total=accurate&_count=100')).json())
-    expect(bundle.entry).toHaveLength(bundle.total!)
-    return bundle.entry!.map(entry => z.object({ code: z.object({ text: z.string() }),
+    const entries = []
+    let total: number | undefined
+    let next: string | undefined = '/fhir/R5/AuditEvent?_total=accurate&_count=100'
+    for (let pageNumber = 0; next !== undefined && pageNumber < 10; pageNumber += 1) {
+      const bundle = fhirBundleSchema.parse(await (await s.api.get(next)).json())
+      total ??= bundle.total
+      entries.push(...(bundle.entry ?? []))
+      const link = bundle.link?.find(item => item.relation === 'next')?.url
+      const url = link === undefined ? undefined : new URL(link)
+      next = url === undefined ? undefined : `${url.pathname}${url.search}`
+    }
+    expect(next).toBeUndefined()
+    expect(entries).toHaveLength(total!)
+    return entries.map(entry => z.object({ code: z.object({ text: z.string() }),
       outcome: z.object({ code: z.object({ code: z.string() }) }) }).loose().parse(entry.resource))
       .filter(event => event.code.text === operation && event.outcome.code.code === '0').length
   }

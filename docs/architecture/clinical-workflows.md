@@ -209,6 +209,8 @@ Admission request
 
 门诊与住院共用确定性临床算子内核与受审计结构化风险输入：门诊分诊生命体征（`triage.record`）支持可选 `weightKg` 与 `heightCm` 并同步生成 `Provenance`；住院提供护理生命体征录入命令（`inpatient.vital-signs.record`）及 `inpatient.clinical.read` 最新体征投影；门诊（`encounter.risk-assessment.record`）与住院（`inpatient.risk-assessment.record`）共用 `clinical_risk_assessment` 单调修订表、FHIR `Observation` 与 `Provenance` 记录 `Killip` 分级、入院心脏骤停、24h 心绞痛次数、床旁 ST 段偏移确认、近 7 天阿司匹林使用、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50% 及既往出血史（区分需医疗救治或干预的自发性出血与外伤／手术等非自发性出血），未填字段保持 `null`（未记录），其中有效 ST 段结论严格锁定首份已签发 12 导联心电图报告（首份报告无明确 ST 段结论时回退床旁评估，不以晚发复查心电图替代首诊表现）。只读评分接口（限当前接诊责任医生的 `doctor.case.clinical-scores.read` 与住院可读岗位的 `inpatient.clinical-scores.read`）拒绝调用方传入未落库数值覆盖，仅按当前就诊或归档截止时点（已完成门诊或已出区住院截断晚于本次就诊的跨次记录）已确认客观记录抽取参数并调用 `@clinmesh/core/clinical-scores` 计算 `ckd-epi-2021-egfr`、`cockcroft-gault-crcl`、`grace-acs`、`timi-ua-nstemi`、`precise-dapt` 与 `ascvd-ldl-target` 六项算子（支持肌酐 `umol/L` 与 `mg/dL`、血红蛋白 `g/L` 与 `g/dL`、血脂 `mmol/L` 与 `mg/dL` 双轨单位换算），缺项统一返回 `status: 'incomplete'` 与具体 `missingInputs`，取舍见[确定性临床风险算子决策](../decisions/implemented/architecture/2026-11-17-deterministic-clinical-risk-scores.md)。
 
+门诊与住院共用版本固定的心血管专病 `Order Set Template` 注册表与零正式副作用草稿预装配服务：首批提供胸痛首诊急查（`chest-pain-stat-workup`：常规 12 导联心电图、高敏心肌肌钙蛋白 I、D-二聚体、肾功能与电解质）、冠心病入院基线评估（`cad-admission-baseline`：心电图、经胸超声心动图及五分类血常规、肾功能、电解质、血脂、糖化血红蛋白、高敏心肌肌钙蛋白 I、NT-proBNP 与凝血功能）、对比剂肾损高危围术期水化（`cin-perioperative-hydration`：0.9% 氯化钠围术期临时静脉水化与血肌酐复查）和冠心病／PCI 二级预防标准用药（`cad-pci-secondary-prevention`：阿司匹林、氯吡格雷、阿托伐他汀、美托洛尔、培哚普利与按需硝酸甘油），通过 `catalog.order-set-templates.list` 查询带内容 SHA-256 指纹与版本号的完整定义。预装配读取（门诊限当前责任医生的 `doctor.case.order-set-drafts.read`，住院限负责住院医生的 `inpatient.order-set-drafts.read`；跨适用范围请求返回 `ORDER_SET_SCOPE_NOT_APPLICABLE`）结合当前患者有效确认药物过敏、`ckd-epi-2021-egfr` 以及最新结构化生命体征（门诊取 `triage_record` 分诊体征，住院取最新护理生命体征中的心率、收缩压及最近一次已记录体重），由 `@clinmesh/core/order-set-screening` 纯函数判定 `ready`、`needs-review`、`excluded` 或 `unavailable`：命中有效确认药物过敏（`allergy-contraindication`，携带过敏原编码与显示名）、严重心动过缓／低血压或严重肾损禁用阈值时直接剔除候选并返回 `matchedCatalogId`、客观观测值与来源引用（不跨药自动改选），缺少体征、体重或肾功能输入时一律标为 `needs-review`（`pending-verification`）而不静默假定正常，住院检查目录同时区分未开展（`catalog-unavailable`）与未声明价目（`catalog-unpriced`）。预装配查询不写入任何正式收费、已签发医技申请、已签发处方或住院医嘱；门诊检验／功能检查／处方页与住院医嘱／检查开立弹窗顶部提供轻量内联「套用专病组套」入口（住院检查开立器仅展示纯检验／检查组套，含药物组套由住院开医嘱器承载并同步写入关联检查草稿），按需拉取预筛结果灌入既有客户端待开清单（`needs-review` 条目默认取消勾选，病情变化重套用时自动移除新剔除项并取消勾选新待核实项，门诊处方草稿同步标记待保存），由医生核对后走既有正式 Command 完成签发，设计取舍见[专病医嘱组套与禁忌预筛决策](../decisions/implemented/architecture/2026-11-18-cardiology-order-set-templates.md)。
+
 转科以独立 Task 保存 requested、handed-over、completed、cancelled，依次由当前医生申请、原护士交接、目标护士接收；目标 incoming 清单仅授权目标病区并提供接收必要字段，普通详情仍由当前责任科室拥有。原科医嘱须停嘱并核停，未执行计划须明确取消，未送检申请须送检或取消，未实施手术须完成或取消；已送检的在途检查继续完成，由新科接管。接收在同一 Command 事务再次核验 Task 与 Encounter 版本、全部阻塞和目标空床，结束原占用、创建新占用并切换 Admission 与 FHIR 科室/位置历史。既往发药、库存与费用保留，新执行及床日费使用当前科室。设计取舍见[Agent Note](../decisions/implemented/architecture/2026-10-21-inpatient-investigations-and-transfer.md)。
 
 #### 住院报告连续阅读与集中已阅
@@ -251,7 +253,7 @@ Web 与 DSH Surface 在原耗材弹窗提供补登记和更正，提交前显示
 
 #### PCI 参数与候选依据
 
-诊断性冠脉造影 `88.5500/88.5600` 完成时，同一 Command 为本院 Procedure 留下一项持久报告任务。仿真 worker 读取本次病例固定的 Case Truth 冠脉造影资源，按规则确定性生成正式 `DiagnosticReport`、可选支架选型 QCA 测量以及多支冠脉节段所见（`LM`/`LAD`/`LCX`/`RCA` 节段、狭窄比例、TIMI 0–3 级血流、病变特征、可选 `FFR`/`iFR` 生理学评估）与整体结论；纯诊断性多支造影伴阴性 FFR 且无支架选型 QCA 时仍生成完整 `final` 报告且不要求实施 PCI，多支所见缺少总体结论、字段重复或数值缺失／越界时降级为 `partial` 并记录缺项；纯旧 QCA 来源不额外要求多支总体结论，完全无造影来源时保持 `unavailable`，不从最新作者底稿补齐，不调用模型。`angiography-reports` 仅向有权读取本次住院的医生、护士和病案岗位返回本院报告身份、版本、靶部位、QCA 测量、多支节段与生理学所见、结论、合成标识和状态（存量无 `vessels`/`conclusion` 快照按空数组与 `null` 兼容回读），不返回私有来源身份或原件；手术页仅在存在冠脉造影或 PCI 相关计划／执行时按需查询，并在已完成造影详情及 PCI 选型依据折叠区紧凑展示。同一 Procedure 的任务及报告按 Workspace/Epoch 去重，重启复用原结果；核心检验与多支造影扩展取舍见[心血管核心检验与多支冠脉造影决策](../decisions/implemented/feature/2026-11-12-cardiology-default-labs-and-multivessel-angiography.md)。
+诊断性冠脉造影 `88.5500/88.5600` 完成时，同一 Command 为本院 Procedure 留下一项持久报告任务。仿真 worker 读取本次病例固定的 Case Truth 冠脉造影资源，按规则确定性生成正式 `DiagnosticReport`、可选支架选型 QCA 测量以及多支冠脉节段所见（`LM`/`LAD`/`LCX`/`RCA` 节段、狭窄比例、TIMI 0–3 级血流、病变特征、可选 `FFR`/`iFR` 生理学评估）与整体结论；纯诊断性多支造影伴阴性 FFR 且无支架选型 QCA 时仍生成完整 `final` 报告且不要求实施 PCI，多支所见缺少总体结论、字段重复或数值缺失／越界时降级为 `partial` 并记录缺项；纯旧 QCA 来源不额外要求多支总体结论，完全无造影来源时保持 `unavailable`，不从最新作者底稿补齐，不调用模型。`angiography-reports` 同时登记为 `hisOperationCatalog` 标准只读操作 `inpatient.angiography-reports.read`（`clinmesh inpatient angiography-reports`）及住院 DSH Surface 的 `investigations`／`surgery` 阶段窄只读工具，仅向有权读取本次住院的医生、护士和病案岗位返回本院报告身份、版本、靶部位、QCA 测量、多支节段与生理学所见、结论、合成标识和状态（存量无 `vessels`/`conclusion` 快照按空数组与 `null` 兼容回读），不返回私有来源身份、原件或造影电影像素；手术页仅在存在冠脉造影或 PCI 相关计划／执行时按需查询，并在已完成造影详情及 PCI 选型依据折叠区紧凑展示。同一 Procedure 的任务及报告按 Workspace/Epoch 去重，重启复用原结果；核心检验与多支造影扩展取舍见[心血管核心检验与多支冠脉造影决策](../decisions/implemented/feature/2026-11-12-cardiology-default-labs-and-multivessel-angiography.md)，同源专病临床内核与造影／功能检查像素暂缓边界见[同源专病临床内核与像素暂缓边界](../decisions/implemented/architecture/2026-11-19-shared-specialist-clinical-kernel-and-pixel-deferral.md)。
 
 保存 PCI 计划时，`pciSelection` 从已有正式报告逐字段复制测量及靶部位到与申请绑定的 `drafts`；报告晚到时补出尚无确认和草稿的计划。每条未修改测量的来源引用本院 `DiagnosticReport` 身份和版本，每类预计数量引用明确的有限合成方案。保存及确认时，服务端逐项对照原报告的测量对象、部位、数值、单位和方法：一致时使用报告的可信来源，任一内容修改则将该测量标为人工修订，原报告绑定仍独立保留，不信任客户端继续声称修改值出自原报告。草稿读取不产生写入；医生通过页面 `pci-selection/save` 携 `expectedDraftVersion` 保存修改，版本冲突或手术已开始时拒绝。任何已有草稿与医生确认不被后来的报告覆盖；无报告继续使用手填确认。
 
@@ -308,6 +310,17 @@ Web 与 DSH Surface 在原耗材弹窗提供补登记和更正，提交前显示
 
 缺少报告、单位、测量、具体候选或客观指标时仍可给出 `conditional` 条件性参考，但不能把患者适用性表达为已确认，也不能产生具体产品、规格、默认数量、医嘱、预留或收费。生成与独立核验使用相同的固定患者资料和完整原文，结论必须带实际原句及来源定位，并保留人群（按上海日历整岁解析，儿科或 `all-only` 患者访问成人专题以 `population-mismatch` 扣留并返回 `no-evidence`，零模型请求）、条件、例外与推荐强度；核验拒绝不发布。来源失效立即隐藏旧意见与原文，幂等回执重放也不恢复。模型派发、格式修复、未知恢复、用量控制与实际请求计量继续复用通用执行边界；未知请求不自动重发。设计取舍见[指南参考意见决策](../decisions/implemented/architecture/2026-11-02-inpatient-pci-guideline-advice.md)与[共享指南专题注册表与手术单解耦决策](../decisions/implemented/architecture/2026-11-17-shared-guideline-topic-registry.md)，公开 HTTP、迁移升级与原文回读合同由 `inpatient-guideline-advice-http.test.ts` 和 `guideline-fixed-references.test.ts` 验证。
 
+#### 双层事中临床质控与 Clinical Override
+
+门诊与住院在四个临床责任关口共用一套基于正式临床事实与确定性 `ckd-epi-2021-egfr` 算子的零模型事中临床质控纯引擎，并通过 `encounter.clinical-quality.read` 与 `inpatient.clinical-quality.read` 暴露无副作用只读预检：
+
+1. **处方与住院医嘱签发关口**（`encounter.issue-prescription`、门诊处方准备确认与 `inpatient.order.issue`）：复用声明式 `medication-safety` 规则与近期肾功能客观记录，区分绝对红线与缺依据条件警示；对既有 `WORKFLOW_CONFLICT`／`CATALOG_CONFLICT` 药事拒绝同步附带 `error.clinicalQuality`（`status: "blocked"`）。
+2. **门诊完诊关口**（`encounter.complete`）：核对急性胸痛主诉或诊断是否已完成已签发 12 导联心电图及心肌损伤标志物评估（`CHEST_PAIN_WORKUP_INCOMPLETE`）。
+3. **冠脉介入计划与选型确认关口**（PCI 术式 `inpatient.surgery.request` 与 `inpatient.pci-selection.confirm`）：核对最新已签发冠脉造影报告是否存在功能学非缺血临界病变（`FFR > 0.80`）仍拟行介入（`PCI_NON_ISCHEMIC_LESION`）；造影前已申请 PCI 计划且造影自动生成选型草稿时，耗材确认前必须先经 `inpatient.pci-selection.confirm` 完成质控核对或登记越权。
+4. **住院出院医嘱与离院后病案提交关口**（`inpatient.discharge.issue` 与离院后 `inpatient.record.submit`）：对冠心病或本次住院已实施 PCI 病例，按出院医嘱开立截止时点核对是否存在长期抗血小板（`DISCHARGE_ANTIPLATELET_MISSING`）与他汀（`DISCHARGE_STATIN_MISSING`）医嘱；在院期间保存主操作预分组快照不触发出院质控，各正式写命令在命中未覆盖警示时各自独立拦截并留存本次越权记录。
+
+两层规则严格分离：**第一层药事与生理安全红线**（`CLINICAL_QUALITY_RED_LINE`，含已证实 `ckd-epi-2021-egfr < 30` 拟开二甲双胍或达格列净 `RENAL_CONTRAINDICATED_MEDICATION`、明确过敏冲突 `MEDICATION_ALLERGY_CONFLICT`、超出单次或单日极量 `MEDICATION_DOSE_LIMIT_EXCEEDED`、同药理类别互斥叠加 `MEDICATION_CLASS_DUPLICATION`）即使请求携带 `clinicalOverride` 也一律以 `409` 硬性拒绝且不产生任何正式事实；**第二层临床路径与指南偏离**（`CLINICAL_QUALITY_ALERT`，另含开立双胍／SGLT2i／MRA 时缺少近期血肌酐 `RENAL_CREATININE_MISSING`，以及单纯病毒性呼吸道感染无细菌指征开立抗菌药 `ANTIBIOTIC_WITHOUT_BACTERIAL_INDICATION`）在未附有效 `clinicalOverride` 时返回结构化 `409` 警示，明确区分“已证实 `eGFR < 30`”的硬阻断与“尚无近期血肌酐记录”的条件警示。医生或经授权 Agent 以新幂等键提交覆盖当前全部警示代码的受控枚举 `reasonCode`（禁忌／高出血风险、外院或床旁结果已核实、已同步开单并安排随访、患者知情拒绝、专科个体化判断、急危重症优先处置）与医学说明 `note` 后，共享 Command 在同一 SQLite 事务内原子写入业务事实、`clinical_quality_override` 记录、Command 回执 `clinicalQuality` 摘要、`AuditEvent` 实体详情与 `Action Trace` 的 `ClinicalQualityOverride/<id>` 引用，并支持原幂等键无写重放。门诊 DSH 提案（`outpatient.prescription.issue.propose`、`outpatient.encounter.complete.propose`）在 `AgentReviewProvider` 确认条内支持预填审阅或遇到 `409 CLINICAL_QUALITY_ALERT` 时原位补充越权说明而无需二次消耗提案审批门禁。架构取舍见[双层事中临床质控决策](../decisions/implemented/architecture/2026-11-18-two-tier-clinical-quality-gates.md)。
+
 #### 住院出院与结算
 
 InpatientDischarge在共享Command事务中执行五个分立动作：医生issue进入discharge-pending，护士depart记录实际出区及明确离院方式，收费员settle结清，护士clear释放床位，符合窗口时医生recall召回。离院方式是本院仿真枚举home/transfer/against-advice/death/other，不宣称国家上报代码；病案读取原出区事件，不重新填报覆盖。医生和护士均按当前科室、病区授权，administrator不办理业务。
@@ -332,7 +345,7 @@ InpatientPayments拥有首次封账前的追加预交金、出区补缴和退款
 
 #### 住院医保与首次冻结账
 
-普通住院医保读取同一本正式住院费用账，以原费用及其冲正的净额生成逐项来源版本；床日、服务、检验、手术为目录内，药品和影像采用 10% 合成先行自付，材料为目录外。这些覆盖参数仅供仿真，与医院价格及 DRG 支付参数分开。收费员仅在已出区、首次财务尚未完成且未归档时确认或撤销本次待遇；未知收退款须先查询原尝试，不能在金额尚未确定时改变分摊。
+普通住院医保读取同一本正式住院费用账，以原费用及其冲正的净额生成逐项来源版本，并优先读取医嘱、检查与入账时冻结在 `inpatient_order` / `inpatient_charge` 的品规级甲/乙/丙合成医保属性（甲类 0%、乙类品规比例、丙类目录外）；仅历史未冻结行或直接计费测试夹具回退类别规则（床日、服务、检验、手术目录内 0%，药品、功能检查与影像 10%，材料目录外），缺失映射拒绝计算（`INSURANCE_COVERAGE_UNAVAILABLE`）。这些覆盖参数仅供仿真，与医院价格及 DRG 支付参数分开，目录后续修改不影响既有账目、结算或归档哈希。收费员仅在已出区、首次财务尚未完成且未归档时确认或撤销本次待遇；未知收退款须先查询原尝试，不能在金额尚未确定时改变分摊。
 
 首次结算预览保存原医保结算及逐项分摊，患者负担为总费用减基金及个人账户，预交金与补收退款只抵扣患者负担。原待遇的费用来源失效时，原资金记录仍可读取并查询未知结果；未封账的资金余额暂按已确认的原待遇计算，不能用于新增收退款或封账。收费员须先查明未知资金，再撤销原待遇并重新预览，才能按新分摊继续收退及结算；年度余额变化只影响尚未确认的预览，不改写已经确认的待遇。结算指纹包含本次待遇与资金事实，撤销、重结算或资金恢复后旧预览不可继续确认。
 
@@ -562,7 +575,7 @@ requested -> reserved -> prepared -> dispensed
 | 合成职工 v1 | 1000 分 | 70% | 100000 分 | 2000 分 |
 | 合成居民 v1 | 2000 分 | 50% | 50000 分 | 0 分 |
 
-普通门诊合成目录把挂号、放射和病理标为目录外，检验先行自付 10%，药品先行自付 20%。原费用的类别和来源必须有明确映射；缺映射拒绝预览，不以零待遇代替。已取消的独立申请退出新的待遇来源。先扣目录外和先行自付，再抵年度剩余起付线，对剩余目录内费用按比例及封顶分配基金，个人账户抵扣目录内个人负担，余额由患者承担。逐项结果保存原费用引用、版本、目录版本及各金额，供页面解释和审计。
+普通门诊合成目录在药品与医技目录维护品规级甲/乙/丙合成属性（甲类 `included=true, priorSelfPayBps=0`；乙类 `included=true, priorSelfPayBps=1..9999`；丙类 `included=false, priorSelfPayBps=0`），开立处方或检查时分别冻结到 `prescription_item` 与 `charge_record`；挂号、门诊放射和病理保持目录外，仅历史未冻结行回退旧类别规则（检验 10%、药品 20%）。原费用或处方明细缺失映射时以 `INSURANCE_COVERAGE_UNAVAILABLE` 拒绝预览，不以零待遇代替。混合处方先在明细级以整数分截断计算每条药品的 `outsideFen`、`priorSelfPayFen` 与 `eligibleFen` 并汇总到对应 `ChargeItem`（收费员冲减净额时按最大余数确定性比例回填明细合计），再统一扣减年度剩余起付线、按比例及封顶分配基金、个人账户仅抵扣目录内个人负担，余额由患者承担；`allocations[].items` 保留明细拆分供页面展示与审计。目录后续变更不影响已开立费用和既有结算。已取消的独立申请退出新的待遇来源。决策理由见[品规级甲乙丙医保属性与混合处方明细结算](../decisions/implemented/architecture/2026-11-19-item-insurance-coverage-and-mixed-prescriptions.md)。
 
 门诊待遇、患者收款与临床放行采用原费用减去已记录冲减的净额。药品待遇预览与确认要求 Encounter 已完诊，否则以 `INSURANCE_FUNDS_CONFLICT` 拒绝；个人账户全额覆盖也遵守该门禁，原待遇撤销补偿继续开放。有效医保分配关联的费用须先撤销待遇，再办理冲减，保留原费用、待遇和现金历史。未知收款或退款未查明前，阻断待遇变化、再次收款及费用冲减；原尝试恢复入口继续开放。
 

@@ -82,6 +82,10 @@ const requestable = new Set<InpatientGuidelineAdvice['status']>([
 type ViewFrame = { scope: string; active: boolean; canReassess: boolean }
 type RequestAttempt = { frame: ViewFrame; itemKey: string }
 
+function ErrAlert({ title, desc }: { title: string; desc: React.ReactNode }) {
+  return <Alert variant="destructive"><AlertTitle>{title}</AlertTitle><AlertDescription>{desc}</AlertDescription></Alert>
+}
+
 function adviceItemKey(item: Pick<InpatientGuidelineAdvice, 'topicId' | 'requestId'>): string {
   return item.requestId !== null ? item.requestId : `topic:${item.topicId}`
 }
@@ -142,26 +146,18 @@ export function InpatientGuidelineAdvicePanel({
     }
   }, [])
 
-  const advicePath = enableTopicPicker
-    ? `/api/his/v1/inpatient/admissions/${admission.id}/guideline-advice?topicId=${encodeURIComponent(selectedTopic)}`
-    : `/api/his/v1/inpatient/admissions/${admission.id}/guideline-advice`
+  const basePath = `/api/his/v1/inpatient/admissions/${admission.id}`, baseKey = [...inpatientScopeKey(session), admission.id]
   const query = useQuery({
-    queryKey: enableTopicPicker
-      ? [...inpatientScopeKey(session), admission.id, 'guideline-advice', selectedTopic]
-      : [...inpatientScopeKey(session), admission.id, 'guideline-advice'],
-    queryFn: ({ signal }) => apiGet(advicePath, inpatientGuidelineAdviceListSchema, signal),
+    queryKey: enableTopicPicker ? [...baseKey, 'guideline-advice', selectedTopic] : [...baseKey, 'guideline-advice'],
+    queryFn: ({ signal }) => apiGet(`${basePath}/guideline-advice${enableTopicPicker ? `?topicId=${encodeURIComponent(selectedTopic)}` : ''}`, inpatientGuidelineAdviceListSchema, signal),
     enabled: active,
     refetchInterval: active ? 3_000 : false,
     refetchIntervalInBackground: false,
     retry: false,
   })
   const topicReadQuery = useQuery({
-    queryKey: [...inpatientScopeKey(session), admission.id, 'guideline-topics', selectedTopic],
-    queryFn: ({ signal }) => apiGet(
-      `/api/his/v1/inpatient/admissions/${admission.id}/guideline-topics?topicId=${encodeURIComponent(selectedTopic)}`,
-      guidelineTopicBundleSchema,
-      signal,
-    ),
+    queryKey: [...baseKey, 'guideline-topics', selectedTopic],
+    queryFn: ({ signal }) => apiGet(`${basePath}/guideline-topics?topicId=${encodeURIComponent(selectedTopic)}`, guidelineTopicBundleSchema, signal),
     enabled: active && enableTopicPicker,
     retry: false,
   })
@@ -169,44 +165,27 @@ export function InpatientGuidelineAdvicePanel({
   const doctor = session.actor.roleCode === 'inpatient-doctor'
   const mutable = admission.status === 'admitted' && admission.recordStatus !== 'archived'
   const reevaluate = async (advice: InpatientGuidelineAdvice) => {
-    if (!active || !canReassess || !doctor || !mutable || write.blocked || !requestable.has(advice.status) || inFlight.current?.frame === frame) {
-      return
-    }
-    const itemKey = adviceItemKey(advice)
-    const attempt: RequestAttempt = { frame, itemKey }
+    if (!active || !canReassess || !doctor || !mutable || write.blocked || !requestable.has(advice.status) || inFlight.current?.frame === frame) return
+    const itemKey = adviceItemKey(advice), attempt: RequestAttempt = { frame, itemKey }
     inFlight.current = attempt
     setRequesting(attempt)
     setChanged(null)
     try {
       const fresh = await query.refetch()
       const current = fresh.error === null && fresh.data?.admissionId === admission.id
-        ? fresh.data.advice.find(item =>
-            item.admissionId === admission.id
-            && item.requestId === advice.requestId
-            && (advice.requestId !== null || item.topicId === advice.topicId))
+        ? fresh.data.advice.find(item => item.admissionId === admission.id && item.requestId === advice.requestId && (advice.requestId !== null || item.topicId === advice.topicId))
         : undefined
       if (!mounted.current || live.current !== frame || !frame.active || !current) return
-      if (current.version !== advice.version || current.fingerprint !== advice.fingerprint) {
-        setChanged(attempt)
-        return
-      }
+      if (current.version !== advice.version || current.fingerprint !== advice.fingerprint) { setChanged(attempt); return }
       if (!requestable.has(current.status)) return
       await write.mutation.mutateAsync({
         operation: 'inpatient.guideline-advice.request',
-        input: current.requestId !== null
-          ? {
-              admissionId: admission.id,
-              requestId: current.requestId,
-              expectedVersion: current.version,
-              expectedFingerprint: current.fingerprint,
-            }
-          : {
-              admissionId: admission.id,
-              topicId: current.topicId,
-              requestId: null,
-              expectedVersion: current.version,
-              expectedFingerprint: current.fingerprint,
-            },
+        input: {
+          admissionId: admission.id,
+          expectedVersion: current.version,
+          expectedFingerprint: current.fingerprint,
+          ...(current.requestId === null ? { requestId: null, topicId: current.topicId } : { requestId: current.requestId }),
+        },
         isCurrent: () => mounted.current && live.current === frame && frame.active && frame.canReassess,
       })
       if (mounted.current && live.current === frame) await query.refetch()
@@ -304,14 +283,7 @@ export function InpatientGuidelineAdvicePanel({
           <Skeleton className="h-12 w-full" />
         </div>
       ) : null}
-      {query.error ? (
-        <Alert variant="destructive">
-          <AlertTitle>{t('指南参考意见读取失败', 'Could not read guideline advice')}</AlertTitle>
-          <AlertDescription>
-            {t('旧意见与原文暂不展示，请刷新核查当前状态。', 'Previous advice and quotations are hidden. Refresh to check the current state.')}
-          </AlertDescription>
-        </Alert>
-      ) : null}
+      {query.error ? <ErrAlert title={t('指南参考意见读取失败', 'Could not read guideline advice')} desc={t('旧意见与原文暂不展示，请刷新核查当前状态。', 'Previous advice and quotations are hidden. Refresh to check the current state.')} /> : null}
       {!enableTopicPicker && advice?.length === 0 ? (
         <Empty>
           <EmptyHeader>
@@ -339,12 +311,7 @@ export function InpatientGuidelineAdvicePanel({
                 {t('指南资料已更新，请核对当前内容后再次重评。', 'The guideline sources or version changed. Review the current content before requesting again.')}
               </p>
             ) : null}
-            {requestError ? (
-              <Alert variant="destructive">
-                <AlertTitle>{t('指南重评尚未完成', 'Guideline reassessment is incomplete')}</AlertTitle>
-                <AlertDescription>{getWorkspaceErrorMessage(requestError, getWorkspaceMessages(locale))}</AlertDescription>
-              </Alert>
-            ) : null}
+            {requestError ? <ErrAlert title={t('指南重评尚未完成', 'Guideline reassessment is incomplete')} desc={getWorkspaceErrorMessage(requestError, getWorkspaceMessages(locale))} /> : null}
             {canReassess && doctor && mutable && requestable.has(item.status) ? (
               <Button
                 variant="outline"
@@ -403,6 +370,10 @@ export function InpatientGuidelineAdvicePanel({
   )
 }
 
+function BulletList({ items, cls = 'space-y-0.5 text-muted-foreground', label }: { items: readonly string[]; cls?: string; label?: string }) {
+  return <ul aria-label={label} className={`list-disc pl-4 ${cls}`}>{items.map(item => <li key={item}>{item}</li>)}</ul>
+}
+
 export function SynchronousGuidelineTopicCard({
   error,
   loading,
@@ -422,14 +393,7 @@ export function SynchronousGuidelineTopicCard({
       </div>
     )
   }
-  if (error) {
-    return (
-      <Alert variant="destructive">
-        <AlertTitle>{t('同步专题依据读取失败', 'Could not read synchronous guideline passages')}</AlertTitle>
-        <AlertDescription>{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}</AlertDescription>
-      </Alert>
-    )
-  }
+  if (error) return <ErrAlert title={t('同步专题依据读取失败', 'Could not read synchronous guideline passages')} desc={getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))} />
   if (!read) return null
 
   return (
@@ -467,9 +431,7 @@ export function SynchronousGuidelineTopicCard({
       {read.missingPatientInputs.length > 0 ? (
         <div className="flex flex-col gap-1">
           <span className="font-medium text-muted-foreground">{t('患者资料待补充项', 'Missing patient inputs')}</span>
-          <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
-            {read.missingPatientInputs.map(item => <li key={item}>{item}</li>)}
-          </ul>
+          <BulletList items={read.missingPatientInputs} />
         </div>
       ) : null}
       {read.guidelines.length > 0 ? (
@@ -488,9 +450,7 @@ export function SynchronousGuidelineTopicCard({
           </div>
         </details>
       ) : null}
-      <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
-        {read.limitations.map(item => <li key={item}>{item}</li>)}
-      </ul>
+      <BulletList items={read.limitations} />
     </div>
   )
 }
@@ -504,11 +464,7 @@ function GuidelineAdvice({ advice, locale }: { advice: InpatientGuidelineAdvice;
       {advice.missing.length > 0 ? (
         <Alert>
           <AlertTitle>{t('资料与依据待核对', 'Facts and evidence need review')}</AlertTitle>
-          <AlertDescription>
-            <ul className="list-disc space-y-1 pl-4">
-              {advice.missing.map(item => <li key={item}>{item}</li>)}
-            </ul>
-          </AlertDescription>
+          <AlertDescription><BulletList cls="space-y-1" items={advice.missing} /></AlertDescription>
         </Alert>
       ) : null}
       {result ? (
@@ -561,9 +517,7 @@ function GuidelineAdvice({ advice, locale }: { advice: InpatientGuidelineAdvice;
               )
             })}
           </div>
-          <ul aria-label={t('指南范围与限制', 'Guideline scope and limitations')} className="list-disc space-y-1 pl-4 text-sm text-muted-foreground">
-            {result.limitations.map(item => <li key={item}>{item}</li>)}
-          </ul>
+          <BulletList cls="space-y-1 text-sm text-muted-foreground" items={result.limitations} label={t('指南范围与限制', 'Guideline scope and limitations')} />
         </>
       ) : null}
     </article>

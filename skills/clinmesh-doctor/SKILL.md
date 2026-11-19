@@ -44,13 +44,14 @@ clinmesh reference laboratory search --query 血红蛋白 --page 1 --page-size 2
 
 ## Clinical conclusions
 
-Diagnosis and medication conclusions are independent. Save a controlled diagnosis draft and confirm it only when exactly one entry is primary. When a diagnosis is already confirmed, saving and confirming a new draft creates a new revision; re-read the case before downstream medication or completion decisions. Then either issue a valid prescription or explicitly confirm no medication. Keep every outpatient prescription single-source: choose outpatient hospital pharmacy items from `catalog clinical get` (billed and dispensed in-hospital) or national reference products from `reference medications search` (external electronic prescription: satisfies Encounter completion and supports withdrawal without creating hospital charges or pharmacy tasks); mixing both sources returns `CATALOG_CONFLICT` with `reason: PRESCRIPTION_MIXED_CATALOG_SOURCES`. Inspect error `reason` on prescription rejection and recover at the blocking step (`PRESCRIPTION_DIAGNOSIS_UNCONFIRMED`, `PRESCRIPTION_COMBINATION_NOT_ALLOWED`, `PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED`, `PRESCRIPTION_ALLERGY_CONFLICT`, `PRESCRIPTION_DOSAGE_NOT_ALLOWED`, `PRESCRIPTION_ALREADY_ISSUED`, `PRESCRIPTION_NO_MEDICATION_RECORDED`, `PRESCRIPTION_DRAFT_STALE`, `PRESCRIPTION_ENCOUNTER_NOT_ACTIVE`); see [medication workflow reference](references/clinical-workflows.md#medication). A signed, undispensed prescription may be withdrawn through its own command. Active insurance allocations block withdrawal with `WORKFLOW_CONFLICT`, including zero fund and personal-account benefits that still affect annual deductible accrual. Have the cashier cancel the original insurance settlement through `clinmesh insurance cancel` in the billing skill, then reread current prescription and MedicationRequest versions before withdrawal.
+Diagnosis and medication conclusions are independent. Save a controlled diagnosis draft and confirm it only when exactly one entry is primary. When a diagnosis is already confirmed, saving and confirming a new draft creates a new revision; re-read the case before downstream medication or completion decisions. Then either issue a valid prescription or explicitly confirm no medication. Keep every outpatient prescription single-source: choose outpatient hospital pharmacy items from `catalog clinical get` (billed and dispensed in-hospital) or national reference products from `reference medications search` (external electronic prescription: satisfies Encounter completion and supports withdrawal without creating hospital charges or pharmacy tasks); mixing both sources returns `CATALOG_CONFLICT` with `reason: PRESCRIPTION_MIXED_CATALOG_SOURCES`. Prescription draft and issued items accept optional `instructions` (e.g. PRN nitroglycerin sublingual repeat limits from `order-set-drafts` `instructionsZh`). Inspect error `reason` on prescription rejection and recover at the blocking step (`PRESCRIPTION_DIAGNOSIS_UNCONFIRMED`, `PRESCRIPTION_COMBINATION_NOT_ALLOWED`, `PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED`, `PRESCRIPTION_ALLERGY_CONFLICT`, `PRESCRIPTION_DOSAGE_NOT_ALLOWED`, `PRESCRIPTION_ALREADY_ISSUED`, `PRESCRIPTION_NO_MEDICATION_RECORDED`, `PRESCRIPTION_DRAFT_STALE`, `PRESCRIPTION_ENCOUNTER_NOT_ACTIVE`); see [medication workflow reference](references/clinical-workflows.md#medication). A signed, undispensed prescription may be withdrawn through its own command. Active insurance allocations block withdrawal with `WORKFLOW_CONFLICT`, including zero fund and personal-account benefits that still affect annual deductible accrual. Have the cashier cancel the original insurance settlement through `clinmesh insurance cancel` in the billing skill, then reread current prescription and MedicationRequest versions before withdrawal.
 
 ```bash
 clinmesh encounter diagnosis draft set --input @diagnosis.json --idempotency-key <key>
 clinmesh encounter diagnosis draft set --input @diagnosis-discard.json --idempotency-key <key>
 clinmesh encounter diagnosis confirm --input @diagnosis-confirm.json --idempotency-key <key>
 clinmesh encounter prescription draft set --input @prescription.json --idempotency-key <key>
+clinmesh encounter clinical-quality get --encounter-id <encounter-id> --gate outpatient-prescription
 clinmesh encounter prescription issue --input @prescription-issue.json --idempotency-key <key>
 clinmesh encounter medication-conclusion confirm-none --input @no-medication.json --idempotency-key <key>
 clinmesh prescription withdraw --input @withdrawal.json --idempotency-key <key>
@@ -217,6 +218,7 @@ clinmesh encounter clinical-document sign commit --input @document-sign.json --i
 clinmesh encounter clinical-document sign cancel --input @document-cancel.json --idempotency-key <cancel-intent-key>
 clinmesh clinical-document revise --input @document-revision.json --idempotency-key <key>
 clinmesh encounter completion preview --encounter-id <encounter-id>
+clinmesh encounter clinical-quality get --encounter-id <encounter-id> --gate outpatient-completion
 clinmesh encounter complete --input @completion.json --idempotency-key <key>
 ```
 
@@ -231,13 +233,15 @@ clinmesh doctor completed-cases get --case-id <case-id>
 
 负责门诊医生可按 [住院工作流](../clinmesh-inpatient/SKILL.md)开住院证，交登记员转收。
 
-## Clinical risk assessment, deterministic clinical scores, and guideline topics
+## Clinical risk assessment, deterministic clinical scores, guideline topics, and order set templates
 
-门诊医生可按当前 `Encounter` 版本与 `expectedRevision` 显式录入受审计 `Clinical Risk Assessment`（`killipClass`、`cardiacArrestOnAdmission`、`anginaEpisodes24h`、`stSegmentDeviation`、`aspirinUsedLast7Days`、`smokingStatus`、`familyHistoryPrematureCad`、`knownCoronaryStenosisGe50`、`priorBleedingHistory`）；未传字段保留既有值或未记录语义，不推断默认阴性。仅当前病例责任医生可调用 `doctor case clinical-scores get` 与 `doctor case guideline-topics get`（非责任医生返回 `ROLE_NOT_ALLOWED`）：前者从当前就诊已落库客观记录计算六项确定性算子（`ckd-epi-2021-egfr`、`cockcroft-gault-crcl`、`grace-acs`、`timi-ua-nstemi`、`precise-dapt`、`ascvd-ldl-target`），缺项返回 `status: 'incomplete'` 与具体 `missingInputs`；后者同步读取已注册 `Guideline Topic`（`acute-chest-pain-acs`、`coronary-revascularization-indication`、`pci-stent`、`contrast-kidney-hydration`、`cad-dapt-and-secondary-prevention`、`t2dm-renal-medication`）经 SHA-256、物理页码与片段完整性核验的原文段落、限定语及当前患者客观指标与缺项，不发起模型请求，来源缺失、撤回、页码片段残缺、人群隔离或超出 48 KiB 预算时返回 `status: 'unavailable'` 与原因。
+门诊医生可按当前 `Encounter` 版本与 `expectedRevision` 显式录入受审计 `Clinical Risk Assessment`（`killipClass`、`cardiacArrestOnAdmission`、`anginaEpisodes24h`、`stSegmentDeviation`、`aspirinUsedLast7Days`、`smokingStatus`、`familyHistoryPrematureCad`、`knownCoronaryStenosisGe50`、`priorBleedingHistory`）；未传字段保留既有值或未记录语义，不推断默认阴性。仅当前病例责任医生可调用 `doctor case clinical-scores get`、`doctor case guideline-topics get` 与 `doctor case order-set-drafts get`（非责任医生返回 `ROLE_NOT_ALLOWED`）：前者从当前就诊已落库客观记录计算六项确定性算子（`ckd-epi-2021-egfr`、`cockcroft-gault-crcl`、`grace-acs`、`timi-ua-nstemi`、`precise-dapt`、`ascvd-ldl-target`），缺项返回 `status: 'incomplete'` 与具体 `missingInputs`；次者同步读取已注册 `Guideline Topic`（`acute-chest-pain-acs`、`coronary-revascularization-indication`、`pci-stent`、`contrast-kidney-hydration`、`cad-dapt-and-secondary-prevention`、`t2dm-renal-medication`）经 SHA-256、物理页码与片段完整性核验的原文段落、限定语及当前患者客观指标与缺项，不发起模型请求，来源缺失、撤回、页码片段残缺、人群隔离或超出 48 KiB 预算时返回 `status: 'unavailable'` 与原因；`catalog order-set-templates list` 查询四套带版本指纹的 `Order Set Template`（`chest-pain-stat-workup`、`cad-admission-baseline`、`cin-perioperative-hydration`、`cad-pci-secondary-prevention`），`doctor case order-set-drafts get` 按患者有效确认药物过敏、`ckd-epi-2021-egfr` 与分诊结构化体征预筛门诊适用组套（传入仅限住院的模板返回 `WORKFLOW_CONFLICT` 与 `reason: ORDER_SET_SCOPE_NOT_APPLICABLE`），缺少体征或肾功输入时标为 `needs-review`（`pending-verification`）而不按正常值处理，调用本身零正式副作用，返回的 `ready`／经核实的候选沿既有检验、功能检查和处方草稿与签发命令完成开立。
 
 ```bash
+clinmesh catalog order-set-templates list --scope outpatient
 clinmesh doctor case clinical-scores get --case-id <case-id>
 clinmesh doctor case guideline-topics get --case-id <case-id> --topic-id acute-chest-pain-acs
+clinmesh doctor case order-set-drafts get --case-id <case-id> --template-id chest-pain-stat-workup
 clinmesh encounter risk-assessment record --input @risk-assessment.json --idempotency-key <key>
 clinmesh command receipt get --operation-id encounter.risk-assessment.record --idempotency-key <key>
 ```
@@ -259,6 +263,27 @@ clinmesh command receipt get --operation-id encounter.risk-assessment.record --i
     "familyHistoryPrematureCad": false,
     "knownCoronaryStenosisGe50": false,
     "priorBleedingHistory": "negative"
+  }
+}
+```
+
+## Two-tier clinical quality gates and Clinical Override
+
+`encounter clinical-quality get` runs a read-only preflight check against formal clinical facts (`--gate outpatient-prescription` or `--gate outpatient-completion`) without mutating Encounter state. `encounter prescription issue` (version 4) and `encounter complete` (version 2) enforce the same two-tier rules atomically inside the Command transaction:
+
+- **Tier 1 safety red lines (`CLINICAL_QUALITY_RED_LINE`, HTTP 409)**: proven `ckd-epi-2021-egfr < 30` with metformin/dapagliflozin (`RENAL_CONTRAINDICATED_MEDICATION`), confirmed allergy conflict (`MEDICATION_ALLERGY_CONFLICT`), exceeding single/daily maximum dose (`MEDICATION_DOSE_LIMIT_EXCEEDED`), or mutually exclusive pharmacology classes (`MEDICATION_CLASS_DUPLICATION`). Red lines reject even when `clinicalOverride` is supplied; adjust or remove the offending medication first.
+- **Tier 2 pathway/guideline alerts (`CLINICAL_QUALITY_ALERT`, HTTP 409)**: acute chest pain without signed ECG or troponin before completion (`CHEST_PAIN_WORKUP_INCOMPLETE`), high-risk renally cleared medication (`biguanide`/`sglt2`/`mra`) without recent serum creatinine (`RENAL_CREATININE_MISSING`, strictly distinct from proven `eGFR < 30`), or antibacterial medication on viral-only respiratory diagnoses without bacterial indication (`ANTIBIOTIC_WITHOUT_BACTERIAL_INDICATION`). Resolve the clinical gap first, or submit a controlled `clinicalOverride` (`reasonCode`, `note` >= 4 chars, `acknowledgedAlerts` covering all current alert codes) with a new idempotency key; same-key replay returns the recorded receipt and `clinicalQuality` summary.
+
+`completion-override.json` synthetic example:
+
+```json
+{
+  "encounterId": "<encounter-id>",
+  "encounterVersion": "4",
+  "clinicalOverride": {
+    "reasonCode": "external-result-verified",
+    "note": "已核对外院急诊心电图与肌钙蛋白阴性原件并记入病历",
+    "acknowledgedAlerts": ["CHEST_PAIN_WORKUP_INCOMPLETE"]
   }
 }
 ```

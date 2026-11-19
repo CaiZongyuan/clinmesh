@@ -122,10 +122,33 @@ export class InpatientRecords {
       const operations = current.snapshot.clinical.operations
       if ((operations.length === 0 && input.mainProcedureExecutionId !== null) || (operations.length > 0 && !operations.some(item => item.id === input.mainProcedureExecutionId)))
         throw new InpatientError('INPATIENT_RECORD_MAIN_PROCEDURE_REQUIRED', '请明确选择本次实际实施的主操作；无操作时明确为空')
+      const now = this.owner.virtualTime(context)
+      const departed = admission.status === 'departed' || admission.status === 'cleared'
+      const latestIssue = !departed ? undefined : this.owner.discharge.events(context, input.admissionId).filter(event => event.kind === 'issue').at(-1)
+      const quality = !departed
+        ? { effects: [] }
+        : this.owner.workflow.clinicalQuality.enforce(context, {
+            check: this.owner.workflow.clinicalQuality.inpatientDischarge(
+              this.owner,
+              context,
+              input.admissionId,
+              admission.patientId,
+              latestIssue?.virtualTime ?? now,
+              latestIssue?.id,
+            ),
+            operation: 'inpatient.record.submit',
+            override: input.clinicalOverride,
+            patientId: admission.patientId,
+            subjectReference: `Encounter/${input.admissionId}`,
+          })
       const revision = input.expectedRevision + 1
-      this.owner.database.driver.prepare('INSERT INTO inpatient_record_revision VALUES(?,?,?,?,?,?,?,?,?,?)').run(context.workspaceId, context.epoch, input.admissionId, revision, current.sourcesHash, JSON.stringify(current.snapshot), JSON.stringify(current.sources), context.actorId, context.practitionerRoleId, this.owner.virtualTime(context))
+      this.owner.database.driver.prepare('INSERT INTO inpatient_record_revision VALUES(?,?,?,?,?,?,?,?,?,?)').run(context.workspaceId, context.epoch, input.admissionId, revision, current.sourcesHash, JSON.stringify(current.snapshot), JSON.stringify(current.sources), context.actorId, context.practitionerRoleId, now)
       this.owner.database.driver.prepare("UPDATE inpatient_admission SET record_status='open' WHERE workspace_id=? AND epoch=? AND admission_id=?").run(context.workspaceId, context.epoch, input.admissionId)
-      return { data: this.#read(context, input.admissionId), effects: [{ kind: 'created' as const, reference: `InpatientRecordRevision/${input.admissionId}.${revision}`, versionId: '1' }] }
+      return {
+        data: this.#read(context, input.admissionId),
+        effects: [{ kind: 'created' as const, reference: `InpatientRecordRevision/${input.admissionId}.${revision}`, versionId: '1' }, ...quality.effects],
+        ...(quality.receipt === undefined ? {} : { clinicalQuality: quality.receipt }),
+      }
     })
   }
   #validate(snapshot: z.infer<typeof inpatientRecordSnapshotSchema>) {

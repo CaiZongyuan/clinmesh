@@ -2,6 +2,10 @@ import {
   laboratoryServicePublicationJobSchema,
   type LaboratoryServicePublicationJob,
 } from '@clinmesh/contracts/his'
+import {
+  catalogInsuranceCoverageSchema,
+  type CatalogInsuranceCoverage,
+} from '@clinmesh/contracts/insurance'
 import { z } from 'zod'
 import type { ActorContext } from '../../application/command-executor.ts'
 import type { ClinMeshDatabase } from './database.ts'
@@ -23,6 +27,7 @@ const actorContextSchema = z.object({
 const jobRowSchema = z.object({
   actor_context_json: z.string(),
   concept_ids_json: z.string(),
+  coverage_overrides_json: z.string().nullable(),
   created_at: z.iso.datetime({ offset: true }),
   created_by_actor_id: z.string().min(1),
   epoch: z.string().min(1),
@@ -50,6 +55,7 @@ const candidateRowSchema = z.object({
 
 const selectJob = `
   SELECT workspace_id, epoch, job_id, reference_release_id, concept_ids_json,
+    coverage_overrides_json,
     status, model_id, actor_context_json, created_by_actor_id,
     published_service_ids_json, error_code, error_message,
     created_at, started_at, finished_at, updated_at
@@ -76,6 +82,7 @@ function parseActorContext(value: string): ActorContext {
 
 export interface ClaimedLaboratoryServicePublicationJob extends LaboratoryServicePublicationJob {
   actorContext: ActorContext
+  coverageOverrides?: Readonly<Record<string, CatalogInsuranceCoverage>> | undefined
   epoch: string
   model: string
   status: 'running'
@@ -107,23 +114,28 @@ export class LaboratoryServicePublicationRepository {
 
   create(
     job: LaboratoryServicePublicationJob,
-    entries: readonly { conceptId: string; expectedVersion: number }[],
+    entries: readonly { conceptId: string; expectedVersion: number; insuranceCoverage?: CatalogInsuranceCoverage | undefined }[],
     context: ActorContext,
     model: string,
   ): void {
     const parsed = laboratoryServicePublicationJobSchema.parse(job)
+    const overrides = Object.fromEntries(
+      entries.flatMap(entry => entry.insuranceCoverage === undefined ? [] : [[entry.conceptId, entry.insuranceCoverage]]),
+    )
     this.#database.driver.prepare(`
       INSERT INTO laboratory_service_publication_job (
         workspace_id, epoch, job_id, reference_release_id, concept_ids_json,
+        coverage_overrides_json,
         status, model_id, actor_context_json, created_by_actor_id,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
     `).run(
       parsed.workspaceId,
       context.epoch,
       parsed.jobId,
       parsed.referenceReleaseId,
       JSON.stringify(parsed.conceptIds),
+      Object.keys(overrides).length === 0 ? null : JSON.stringify(overrides),
       model,
       JSON.stringify(actorContextSchema.parse(context)),
       context.actorId,
@@ -245,9 +257,13 @@ export class LaboratoryServicePublicationRepository {
         status: 'running',
         updated_at: now,
       })
+      const coverageOverrides = candidate.coverage_overrides_json === null
+        ? undefined
+        : z.record(z.string(), catalogInsuranceCoverageSchema).parse(JSON.parse(candidate.coverage_overrides_json))
       return {
         ...job,
         actorContext: parseActorContext(candidate.actor_context_json),
+        ...(coverageOverrides === undefined ? {} : { coverageOverrides }),
         epoch: candidate.epoch,
         model: candidate.model_id,
         status: 'running' as const,

@@ -1,5 +1,12 @@
 import { z } from 'zod'
 
+/** 院内目录品规级合成医保属性（甲：included=true,bps=0；乙：included=true,bps=1..9999；丙：included=false,bps=0）。 */
+export const catalogInsuranceCoverageSchema = z.object({
+  included: z.boolean(),
+  priorSelfPayBps: z.number().int().min(0).max(9999),
+}).strict().refine(v => v.included || v.priorSelfPayBps === 0)
+export type CatalogInsuranceCoverage = z.infer<typeof catalogInsuranceCoverageSchema>
+
 /** 一次门诊检查开立时冻结的本院价目；来源及用途与住院计费独立。 */
 export const outpatientInvestigationPriceSchema = z.object({
   currency: z.literal('CNY'),

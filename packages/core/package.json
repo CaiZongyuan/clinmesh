@@ -13,7 +13,10 @@
     "./platform": "./src/platform.ts",
     "./references": "./src/references.ts",
     "./medication-safety": "./src/medication-safety.ts",
-    "./clinical-scores": "./src/clinical-scores.ts"
+    "./order-set-screening": "./src/order-set-screening.ts",
+    "./clinical-scores": "./src/clinical-scores.ts",
+    "./clinical-quality": "./src/clinical-quality.ts",
+    "./insurance": "./src/insurance.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

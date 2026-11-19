@@ -1,7 +1,9 @@
-import { agentToolInputSchemas, doctorCaseSectionSchema } from '@clinmesh/contracts/agent'
+import { agentToolInputSchemas, clinicalOverrideToolParameters, doctorCaseSectionSchema } from '@clinmesh/contracts/agent'
+import { guidelineTopicIds } from '@clinmesh/contracts/guideline-topics'
 import {
   doctorQueueViewStatusGroups
 } from '@clinmesh/contracts/his'
+import { outpatientOrderSetTemplateIds } from '@clinmesh/contracts/order-set-templates'
 import {
   newIdempotencyKey,
   previewStructuredClinicalDocumentSign
@@ -49,34 +51,45 @@ export function doctorWorkspaceAgentActions({
   saveRevisit,
   previewSign,
 }: Context) {
+  const doctorQueryError = () => { throw new Error('Doctor reads require an authorized Query receipt') }
+  const canReadCase = activeCaseId !== undefined && detail.data !== undefined
+  const objParams = (properties: Record<string, unknown> = {}, required?: readonly string[]) => ({
+    type: 'object' as const, properties, ...(required ? { required } : {}), additionalProperties: false,
+  })
+  const docRead = (description: string, properties: Record<string, unknown> = {}, required?: readonly string[]) => ({
+    enabled: canReadCase, description, parameters: objParams(properties, required), execute: doctorQueryError,
+  })
   return {
     'outpatient.case.read': {
       description: 'Read current case, queue.items (waiting + active; use each caseId to select a patient), imagingServices with availability, and pathologyServices with availability and the sourceProcedures that can be sent for slide consultation (each null when its catalog cannot be read).',
       enabled: activeCaseId !== undefined,
-      parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-      execute: () => { throw new Error('Doctor reads require an authorized Query receipt') },
+      parameters: objParams(),
+      execute: doctorQueryError,
     },
-    'outpatient.history.search': {
-      enabled: activeCaseId !== undefined && detail.data !== undefined,
-      description: 'Read one page of authorized local completed records or materialized Visible Source History for the current patient; reports source, time, coverage and missing materialization. Does not navigate.',
-      parameters: {
-        type: 'object' as const, properties: {
-          source: { type: 'string', enum: ['local-completed', 'visible-source'] },
-          page: { type: 'integer', minimum: 1 }, pageSize: { type: 'integer', minimum: 1, maximum: 20 },
-        }, required: ['source'], additionalProperties: false
-      },
-      execute: () => { throw new Error('Doctor reads require an authorized Query receipt') },
-    },
-    'outpatient.history.read': {
-      enabled: activeCaseId !== undefined && detail.data !== undefined,
-      description: 'Read clinical details of one entry from the current patient authorized history index; use its source and entryId. Hidden simulation inputs, raw resources and pixels are excluded.',
-      parameters: {
-        type: 'object' as const, properties: {
-          source: { type: 'string', enum: ['local-completed', 'visible-source'] }, entryId: { type: 'string', maxLength: 512 },
-        }, required: ['source', 'entryId'], additionalProperties: false
-      },
-      execute: () => { throw new Error('Doctor reads require an authorized Query receipt') },
-    },
+    'outpatient.history.search': docRead(
+      'Read one page of authorized local completed records or materialized Visible Source History for the current patient; reports source, time, coverage and missing materialization. Does not navigate.',
+      { source: { type: 'string', enum: ['local-completed', 'visible-source'] }, page: { type: 'integer', minimum: 1 }, pageSize: { type: 'integer', minimum: 1, maximum: 20 } },
+      ['source'],
+    ),
+    'outpatient.history.read': docRead(
+      'Read clinical details of one entry from the current patient authorized history index; use its source and entryId. Hidden simulation inputs, raw resources and pixels are excluded.',
+      { source: { type: 'string', enum: ['local-completed', 'visible-source'] }, entryId: { type: 'string', maxLength: 512 } },
+      ['source', 'entryId'],
+    ),
+    'outpatient.clinical-scores.read': docRead('Read deterministic clinical scores (eGFR, CrCl, GRACE, TIMI, PRECISE-DAPT, ASCVD LDL-C) and missing inputs for the current case.'),
+    'outpatient.guideline-topics.read': docRead(
+      'Read verified guideline topic excerpts, limitations, and current patient indicator gaps without model calls.',
+      { topicId: { type: 'string', enum: guidelineTopicIds } },
+    ),
+    'outpatient.clinical-quality.read': docRead(
+      'Run read-only two-tier clinical quality preflight (red lines and alerts) for outpatient-prescription or outpatient-completion.',
+      { gate: { type: 'string', enum: ['outpatient-prescription', 'outpatient-completion'] } },
+      ['gate'],
+    ),
+    'outpatient.order-set-drafts.read': docRead(
+      'Read version-bound outpatient order-set candidate drafts screened against allergies, eGFR, and triage vitals without issuing orders.',
+      { templateId: { type: 'string', enum: outpatientOrderSetTemplateIds } },
+    ),
     'outpatient.case.select': {
       description: 'Select caseId from loaded queue.items; switch to its waiting or active tab.',
       enabled: (queue.data?.items.length ?? 0) > 0,
@@ -258,15 +271,21 @@ export function doctorWorkspaceAgentActions({
       },
     },
     'outpatient.encounter.complete.propose': {
-      description: 'Open human review before completing the selected Encounter.',
+      description: 'Open human review before completing the selected Encounter; optionally prefill clinicalOverride for non-red-line quality alerts.',
       enabled: detail.data?.encounter.status === 'in-progress',
-      parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-      execute: (_raw: unknown, signal: AbortSignal) => {
+      parameters: clinicalOverrideToolParameters,
+      execute: (raw: unknown, signal: AbortSignal) => {
+        const { clinicalOverride } = agentToolInputSchemas['outpatient.encounter.complete.propose'].parse(raw ?? {})
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
         return agentReview.request({
+          allowClinicalOverride: true,
+          clinicalOverride,
           confirmLabel: locale => getWorkspaceMessages(locale).encounterCompleted,
           description: current.patient.name,
-          onConfirm: () => completeCaseEncounter.mutateAsync({ caseId: current.caseId }),
+          onConfirm: (_acknowledged, override) => completeCaseEncounter.mutateAsync({
+            caseId: current.caseId,
+            clinicalOverride: override,
+          }),
           signal,
           title: locale => getWorkspaceMessages(locale).encounterCompleted,
         })

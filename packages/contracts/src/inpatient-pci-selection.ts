@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
+import { clinicalOverrideInputSchema } from './clinical-quality.ts'
 import { inpatientMaterialItemSchema } from './inpatient-surgery.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
@@ -21,6 +22,7 @@ export const inpatientPciSelectionParametersSchema = z.object({
 }).strict()
 export const inpatientPciSelectionConfirmInputSchema = z.object({
   admissionId: id, expectedVersion: z.number().int().nonnegative(), parameters: inpatientPciSelectionParametersSchema,
+  clinicalOverride: clinicalOverrideInputSchema.optional(),
 }).strict()
 export const inpatientPciSelectionConfirmationSchema = z.object({
   id, version: z.number().int().positive(), parameters: inpatientPciSelectionParametersSchema,

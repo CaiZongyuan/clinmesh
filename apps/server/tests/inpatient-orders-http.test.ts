@@ -87,8 +87,11 @@ async function pendingBidDispenses() {
     encounterVersion: s.admission.versionId, expectedRevision: 0,
     entries: [{ catalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia', role: 'primary', admissionCondition: '1' }],
   })).json()).data
-  const issued = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: diagnosed.encounterVersion, duration: 'long',
-    selection: { kind: 'medication', catalogItemId: 'medication-metformin', catalogVersion: 1, doseText: '0.5 g', doseQuantity: 1, frequencyCode: 'BID' } })
+  const issued = await s.request(s.doctor, `${s.path}/orders/issue`, {
+    clinicalOverride: { reasonCode: 'result-pending-follow-up', note: '入院首日同步开立肾功能检验待回报', acknowledgedAlerts: ['RENAL_CREATININE_MISSING'] },
+    encounterVersion: diagnosed.encounterVersion, duration: 'long',
+    selection: { kind: 'medication', catalogItemId: 'medication-metformin', catalogVersion: 1, doseText: '0.5 g', doseQuantity: 1, frequencyCode: 'BID' },
+  })
   expect(issued.status, await issued.clone().text()).toBe(200)
   const order = inpatientFullClinicalResponseSchema.parse(await issued.json()).data.orders[0]!
   expect((await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })).status).toBe(200)
@@ -196,8 +199,10 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       { kind: 'medication', catalogItemId: 'medication-metformin', catalogVersion: 1, frequencyCode: 'BID', doseText: '0.5 g', doseQuantity: 1 },
       { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 1 },
     ]) {
-      const issued = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: clinical.encounterVersion, duration: 'long',
-        selection })
+      const issued = await s.request(s.doctor, `${s.path}/orders/issue`, {
+        ...(selection.kind === 'medication' ? { clinicalOverride: { reasonCode: 'result-pending-follow-up', note: '入院首日同步开立肾功能检验待回报', acknowledgedAlerts: ['RENAL_CREATININE_MISSING'] } } : {}),
+        encounterVersion: clinical.encounterVersion, duration: 'long', selection,
+      })
       expect(issued.status, await issued.clone().text()).toBe(200)
       clinical = inpatientFullClinicalResponseSchema.parse(await issued.json()).data
     }
@@ -527,7 +532,10 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       expect(invalid.status).toBe(selection.frequencyCode === 'Q4H' ? 400 : 409)
       expect((await invalid.json()).error.code).toBe(selection.frequencyCode === 'Q4H' ? 'INVALID_INPUT' : 'CATALOG_CONFLICT')
     }
-    const response = await s.request(s.doctor, `${s.path}/orders/issue`, issue)
+    const response = await s.request(s.doctor, `${s.path}/orders/issue`, {
+      ...issue,
+      clinicalOverride: { reasonCode: 'result-pending-follow-up', note: '入院首日同步开立肾功能检验待回报', acknowledgedAlerts: ['RENAL_CREATININE_MISSING'] },
+    })
     expect(response.status).toBe(200)
     const initial = (await response.json()).data
     const order = initial.orders[0]
@@ -1043,15 +1051,25 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     try {
       const orders = database.driver.prepare('SELECT * FROM inpatient_order').all()
       const executions = database.driver.prepare('SELECT * FROM inpatient_execution').all()
-      // 还原同一表在 0112 前的三个频次约束，保留真实业务行和下游外键。
+      // 还原同一表在 0112 前的三个频次约束，并回退后续新增列以验证顺序迁移。
       database.driver.pragma('foreign_keys=OFF')
+      database.driver.exec(`
+        ALTER TABLE prescription_item DROP COLUMN unit_price_fen;
+        ALTER TABLE prescription_item DROP COLUMN coverage_json;
+        ALTER TABLE charge_record DROP COLUMN coverage_json;
+        ALTER TABLE inpatient_order DROP COLUMN coverage_json;
+        ALTER TABLE inpatient_charge DROP COLUMN coverage_json;
+        ALTER TABLE laboratory_service_publication_job DROP COLUMN coverage_overrides_json;
+      `)
       const rebuild = await readFile('drizzle/0112_medication-frequency.sql', 'utf8')
       database.driver.exec(rebuild.replace("'QD','BID','TID','QN','PRN','ONCE'", "'QD','BID','PRN'"))
-      database.driver.prepare('DELETE FROM schema_migration WHERE migration_id=?').run('0112_medication-frequency.sql')
+      database.driver.prepare('DELETE FROM schema_migration WHERE migration_id IN (?,?)').run('0112_medication-frequency.sql', '0118_item-insurance-coverage.sql')
       database.driver.pragma('foreign_keys=ON')
       expect(() => database.driver.prepare("UPDATE inpatient_order SET frequency_code='TID'").run()).toThrow(/CHECK/)
-      expect(applyMigrations(database, 'drizzle').applied).toEqual(['0112_medication-frequency.sql'])
-      expect(database.driver.prepare('SELECT * FROM inpatient_order').all()).toEqual(orders)
+      expect(applyMigrations(database, 'drizzle').applied).toEqual(['0112_medication-frequency.sql', '0118_item-insurance-coverage.sql'])
+      expect(database.driver.prepare('SELECT * FROM inpatient_order').all()).toEqual(
+        (orders as Array<Record<string, unknown>>).map(row => ({ ...row, coverage_json: null })),
+      )
       expect(database.driver.prepare('SELECT * FROM inpatient_execution').all()).toEqual(executions)
       for (const frequency of ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE']) expect(() => database.driver.prepare('UPDATE inpatient_order SET frequency_code=?').run(frequency)).not.toThrow()
       expect(() => database.driver.prepare("UPDATE inpatient_order SET frequency_code='Q4H'").run()).toThrow(/CHECK/)
@@ -1175,8 +1193,11 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     const diagnosed = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, {
       encounterVersion: s.admission.versionId, expectedRevision: 0, entries: [{ catalogItemId: diagnosis, role: 'primary', admissionCondition: '1' }],
     })).json()).data
-    const issued = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: diagnosed.encounterVersion, duration: frequencyCode === 'ONCE' ? 'temporary' : 'long',
-      selection: { kind: 'medication', catalogItemId: id, catalogVersion: 1, doseText, doseQuantity: 1, frequencyCode } })
+    const issued = await s.request(s.doctor, `${s.path}/orders/issue`, {
+      ...(id === 'medication-metformin' ? { clinicalOverride: { reasonCode: 'result-pending-follow-up', note: '入院首日同步开立肾功能检验待回报', acknowledgedAlerts: ['RENAL_CREATININE_MISSING'] } } : {}),
+      encounterVersion: diagnosed.encounterVersion, duration: frequencyCode === 'ONCE' ? 'temporary' : 'long',
+      selection: { kind: 'medication', catalogItemId: id, catalogVersion: 1, doseText, doseQuantity: 1, frequencyCode },
+    })
     expect(issued.status, await issued.clone().text()).toBe(200)
     const order = inpatientFullClinicalResponseSchema.parse(await issued.json()).data.orders[0]!
     const verified = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })).json()).data

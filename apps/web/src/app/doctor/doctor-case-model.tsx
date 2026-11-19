@@ -1,4 +1,5 @@
 import { doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
+import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import {
   doctorQueueViewStatusGroups,
   type ClinicalDocumentContent,
@@ -471,7 +472,7 @@ export function useDoctorCaseModel({
     })
   }
   const completeCaseEncounter = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
+    mutationFn: ({ caseId, clinicalOverride }: { caseId: string; clinicalOverride?: ClinicalOverrideInput | undefined }) => {
       const current = detail.data
       const preview = completion.data
       if (
@@ -482,6 +483,7 @@ export function useDoctorCaseModel({
         throw new Error(messages.encounterCompletionUnavailable)
       }
       return completeEncounter({
+        clinicalOverride,
         encounterId: preview.encounterId,
         encounterVersion: preview.encounterVersion,
       }, newIdempotencyKey())
@@ -964,13 +966,14 @@ export function useDoctorCaseModel({
     },
   })
   const issueCasePrescription = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
+    mutationFn: ({ caseId, clinicalOverride }: { caseId: string; clinicalOverride?: ClinicalOverrideInput | undefined }) => {
       const current = detail.data
       const state = current?.medicationConclusion
       if (current?.caseId !== caseId || state?.draft === undefined) {
         throw new Error(messages.consultationUnavailable)
       }
       return issuePrescription({
+        clinicalOverride,
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
         expectedDraftVersion: state.draftVersion,

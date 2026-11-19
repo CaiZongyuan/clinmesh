@@ -36,6 +36,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { AgentReviewAnchor } from '../agent-review.tsx'
 import { laboratoryGenerationErrorMessage } from '../laboratory-generation-error.ts'
+import { OrderSetSelectorBar } from '../order-set-selector.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { formatLaboratoryPrice } from '../workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
@@ -55,7 +56,13 @@ import { InvestigationRequestWorkspace } from './investigation-request-workspace
 import { OutpatientInvestigationActions } from './outpatient-investigation-actions.tsx'
 import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 import { InvestigationServiceDetails } from './investigation-service-details.tsx'
-import { useInvestigationPreferences, useManualInvestigationDrafts } from './investigation-draft-storage.ts'
+import {
+  applyOrderSetLabDrafts,
+  syncOrderSetExamDraft,
+  useInvestigationPreferences,
+  useManualInvestigationDrafts,
+  useOrderSetExamDraft,
+} from './investigation-draft-storage.ts'
 
 export interface LaboratoryPageActions {
   correct: {
@@ -344,6 +351,7 @@ export function LaboratoryPage({
             actions={actions}
             caseId={detail.caseId}
             encounter={detail.encounter}
+            examDraftVersion={detail.examinationRequests?.draftVersion ?? 0}
             catalog={laboratoryCatalog}
             indicationCode={indicationCode}
             key={`laboratory-request:${detail.caseId}`}
@@ -374,6 +382,7 @@ function LaboratoryRequestEditor({
   actions,
   caseId,
   encounter,
+  examDraftVersion,
   catalog,
   indicationCode,
   laboratoryItemId,
@@ -396,6 +405,7 @@ function LaboratoryRequestEditor({
   actions: LaboratoryPageActions
   caseId: string
   encounter: DoctorCaseDetail['encounter']
+  examDraftVersion: number
   catalog: ClinicalCatalog['laboratory']
   indicationCode: string
   laboratoryItemId: string
@@ -437,6 +447,7 @@ function LaboratoryRequestEditor({
   const draftScope = JSON.stringify([recommendationScope, caseId, encounter.id, 'laboratory'])
   const manualDrafts = useManualInvestigationDrafts(draftScope)
   const draftPreferences = useInvestigationPreferences(draftScope)
+  const unsavedExam = useOrderSetExamDraft(caseId, encounter.id)
   const selectedItem = catalogById.get(laboratoryItemId)
   const selectedConcept = selectedReference?.catalogItemId === laboratoryItemId ? selectedReference : undefined
   const selectedDraft = state?.draft?.catalogItemId === laboratoryItemId ? state.draft : undefined
@@ -519,6 +530,25 @@ function LaboratoryRequestEditor({
   }
   const editor = <section aria-labelledby={requestHeadingId} className="flex min-w-0 flex-col gap-2">
     <h3 className="sr-only" id={requestHeadingId}>{messages.laboratoryOrder}</h3>
+    <OrderSetSelectorBar
+      disabled={readOnly || manualDrafts.failed || submitting}
+      itemKinds={['laboratory', 'examination']}
+      locale={locale}
+      onApply={draft => {
+        const lab = applyOrderSetLabDrafts(draft, manualDrafts, draftPreferences)
+        if (!lab.saved) {
+          return { addedCount: 0, error: locale === 'zh-CN' ? '待开清单保存失败，请检查浏览器存储后重试。' : 'Could not save pending tests.', reviewCount: 0 }
+        }
+        const { exam, removed } = syncOrderSetExamDraft(draft, unsavedExam, examDraftVersion)
+        return {
+          addedCount: lab.added,
+          ...(exam ? { extraNote: locale === 'zh-CN' ? `已同步预填功能检查「${exam.display}」` : `Pre-filled functional examination "${exam.display}"` } : {}),
+          removedCount: lab.removed + removed,
+          reviewCount: lab.review,
+        }
+      }}
+      target={{ caseId, scope: 'outpatient' }}
+    />
     {manualDrafts.rows.length === 0 ? <p className="text-xs text-muted-foreground">{messages.laboratoryItemEmpty}</p> : null}
     <div className="flex flex-wrap items-center gap-2">
       <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '同类待开项目最多 8 项，关闭、切患者和刷新后保留。' : 'Keep up to eight tests after closing, switching patients or reloading.'}</p>

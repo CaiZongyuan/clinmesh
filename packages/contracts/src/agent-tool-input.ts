@@ -1,7 +1,11 @@
 import { z } from 'zod'
+import { clinicalOverrideInputSchema, clinicalOverrideReasonSchema, clinicalQualityAlertCodeSchema, outpatientClinicalQualityInputSchema } from './clinical-quality.ts'
 import { doctorCaseHistoryInputSchema, doctorCaseHistoryDetailInputSchema } from './doctor-history.ts'
+import { guidelineTopicQuerySchema } from './guideline-topics.ts'
 import { inpatientOrderActionInputSchema } from './inpatient-clinical.ts'
 import { inpatientInvestigationAcknowledgeInputSchema } from './inpatient-investigations.ts'
+import { medicationFrequencySchema } from './medication-safety.ts'
+import { orderSetDraftQuerySchema, outpatientOrderSetTemplateIds } from './order-set-templates.ts'
 import {
   clinicalDocumentContentSchema,
   clinicalDocumentDraftContentSchema,
@@ -36,8 +40,39 @@ export const inpatientStageSchema = z.enum(['admission', 'orders', 'investigatio
 export type InpatientStage = z.infer<typeof inpatientStageSchema>
 
 const emptyInputSchema = z.object({}).strict()
+const clinicalOverrideProposalInputSchema = z.object({
+  clinicalOverride: clinicalOverrideInputSchema.optional(),
+}).strict()
+export const clinicalOverrideToolParameters = {
+  type: 'object' as const,
+  properties: {
+    clinicalOverride: {
+      type: 'object',
+      properties: {
+        reasonCode: { type: 'string', enum: [...clinicalOverrideReasonSchema.options] },
+        note: { type: 'string', minLength: 4, maxLength: 500 },
+        acknowledgedAlerts: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'string', enum: [...clinicalQualityAlertCodeSchema.options] } },
+      },
+      required: ['reasonCode', 'note', 'acknowledgedAlerts'],
+      additionalProperties: false,
+    },
+  },
+  additionalProperties: false,
+}
 const boundedIdSchema = z.string().trim().min(1).max(128)
 const boundedCodeSchema = z.string().trim().min(1).max(128)
+const caseIdInputSchema = z.object({ caseId: boundedIdSchema }).strict()
+const requestIdInputSchema = z.object({ requestId: boundedIdSchema }).strict()
+const searchQueryInputSchema = z.object({ query: z.string().trim().min(1).max(100) }).strict()
+const inpatientClinicalQualityToolInputSchema = z.object({
+  catalogItemId: boundedIdSchema.optional(),
+  doseText: z.string().trim().min(1).max(120).optional(),
+  frequencyCode: medicationFrequencySchema.optional(),
+  gate: z.enum(['inpatient-order', 'inpatient-pci-plan', 'inpatient-discharge']),
+}).strict().refine(v => v.gate !== 'inpatient-order' || v.catalogItemId !== undefined, {
+  message: 'The inpatient order gate requires a candidate catalogItemId',
+  path: ['catalogItemId'],
+})
 const diagnosisInputSchema = diagnosisDraftContentSchema
 const firstVisitDraftInputSchema = z.object({
   assessment: z.string().trim().min(1).max(2_000),
@@ -114,6 +149,11 @@ export const agentToolInputSchemas = Object.freeze({
   'ui.navigate': z.object({ destination: agentViewIdSchema }).strict(),
   'ui.panel.focus': emptyInputSchema,
   'inpatient.stage.select': z.object({ stage: inpatientStageSchema }).strict(),
+  'inpatient.angiography-reports.read': emptyInputSchema,
+  'inpatient.clinical-scores.read': emptyInputSchema,
+  'inpatient.guideline-topics.read': guidelineTopicQuerySchema,
+  'inpatient.clinical-quality.read': inpatientClinicalQualityToolInputSchema,
+  'inpatient.order-set-drafts.read': orderSetDraftQuerySchema,
   'inpatient.order.verify.propose': inpatientOrderActionInputSchema.omit({ admissionId: true }),
   'inpatient.report.acknowledge.propose': inpatientInvestigationAcknowledgeInputSchema.omit({ admissionId: true }),
   'inpatient.payment.draft.set': z.object({ tenders: paymentTendersSchema }).strict(),
@@ -123,9 +163,7 @@ export const agentToolInputSchemas = Object.freeze({
   'scenario.providers.read': emptyInputSchema,
   'scenario.generation.status.read': emptyInputSchema,
   'scenario.reset.propose': emptyInputSchema,
-  'registration.patient.search': z.object({
-    query: z.string().trim().min(1).max(100),
-  }).strict(),
+  'registration.patient.search': searchQueryInputSchema,
   'registration.patient.select': z.object({ patientId: boundedIdSchema }).strict(),
   'registration.patient.draft.set': z.object({
     birthDate: z.iso.date(),
@@ -140,19 +178,21 @@ export const agentToolInputSchemas = Object.freeze({
   }).strict(),
   'registration.patient.create.propose': emptyInputSchema,
   'registration.outpatient.propose': emptyInputSchema,
-  'registration.synthetic-case.search': z.object({
-    query: z.string().trim().min(1).max(100),
-  }).strict(),
-  'registration.synthetic-case.select': z.object({ caseId: boundedIdSchema }).strict(),
+  'registration.synthetic-case.search': searchQueryInputSchema,
+  'registration.synthetic-case.select': caseIdInputSchema,
   'registration.synthetic-case.start.propose': emptyInputSchema,
   'triage.queue.read': emptyInputSchema,
-  'triage.case.select': z.object({ caseId: boundedIdSchema }).strict(),
+  'triage.case.select': caseIdInputSchema,
   'triage.draft.set': triageDraftInputSchema,
   'triage.record.propose': emptyInputSchema,
   'outpatient.case.read': emptyInputSchema,
   'outpatient.history.search': doctorCaseHistoryInputSchema,
   'outpatient.history.read': doctorCaseHistoryDetailInputSchema,
-  'outpatient.case.select': z.object({ caseId: boundedIdSchema }).strict(),
+  'outpatient.clinical-scores.read': emptyInputSchema,
+  'outpatient.guideline-topics.read': guidelineTopicQuerySchema,
+  'outpatient.clinical-quality.read': outpatientClinicalQualityInputSchema.omit({ encounterId: true }),
+  'outpatient.order-set-drafts.read': z.object({ templateId: z.enum(outpatientOrderSetTemplateIds).optional() }).strict(),
+  'outpatient.case.select': caseIdInputSchema,
   'outpatient.section.select': z.object({
     /** 同时定位这条功能检查申请的结构化文字报告；只与 `laboratory` 栏目一起使用。 */
     examinationRequestId: boundedIdSchema.optional(),
@@ -183,29 +223,29 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.visit.start.propose': emptyInputSchema,
   'outpatient.diagnosis.confirm.propose': diagnosisInputSchema,
   'outpatient.laboratory.issue.propose': emptyInputSchema,
-  'outpatient.laboratory.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),
-  'outpatient.report.acknowledge.propose': z.object({ requestId: boundedIdSchema }).strict(),
+  'outpatient.laboratory.cancel.propose': requestIdInputSchema,
+  'outpatient.report.acknowledge.propose': requestIdInputSchema,
   'outpatient.report.correct.propose': reportCorrectionInputSchema,
   'outpatient.examination.draft.set': imagingDraftInputSchema,
   'outpatient.examination.issue.propose': emptyInputSchema,
-  'outpatient.examination.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),
-  'outpatient.examination.retry.propose': z.object({ requestId: boundedIdSchema }).strict(),
+  'outpatient.examination.cancel.propose': requestIdInputSchema,
+  'outpatient.examination.retry.propose': requestIdInputSchema,
   'outpatient.imaging.draft.set': imagingDraftInputSchema,
   'outpatient.imaging.issue.propose': emptyInputSchema,
-  'outpatient.imaging.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),
-  'outpatient.imaging.retry.propose': z.object({ requestId: boundedIdSchema }).strict(),
+  'outpatient.imaging.cancel.propose': requestIdInputSchema,
+  'outpatient.imaging.retry.propose': requestIdInputSchema,
   'outpatient.imaging.correct.propose': imagingReportCorrectionInputSchema,
   'outpatient.pathology.draft.set': pathologyDraftInputSchema,
   'outpatient.pathology.issue.propose': emptyInputSchema,
-  'outpatient.pathology.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),
-  'outpatient.pathology.retry.propose': z.object({ requestId: boundedIdSchema }).strict(),
+  'outpatient.pathology.cancel.propose': requestIdInputSchema,
+  'outpatient.pathology.retry.propose': requestIdInputSchema,
   'outpatient.pathology.correct.propose': pathologyReportCorrectionInputSchema,
-  'outpatient.prescription.issue.propose': emptyInputSchema,
+  'outpatient.prescription.issue.propose': clinicalOverrideProposalInputSchema,
   'outpatient.prescription.withdraw.propose': emptyInputSchema,
   'outpatient.medication.none.propose': emptyInputSchema,
   'outpatient.record.sign.propose': emptyInputSchema,
   'outpatient.record.revise.propose': clinicalDocumentRevisionInputSchema,
-  'outpatient.encounter.complete.propose': emptyInputSchema,
+  'outpatient.encounter.complete.propose': clinicalOverrideProposalInputSchema,
   'billing.queue.read': emptyInputSchema,
   'billing.case.read': z.object({ page: z.number().int().positive().optional() }).strict(),
   'billing.item.select': z.object({ chargeItemId: boundedIdSchema }).strict(),

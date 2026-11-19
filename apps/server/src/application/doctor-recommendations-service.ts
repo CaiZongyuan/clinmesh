@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { ClinicalQualityReceipt } from '@clinmesh/contracts/clinical-quality'
 import type { ModelTaskRecovery } from './model-task-recovery.ts'
 import {
   considerationLabelKey, doctorCaseEvidenceSchema, doctorConsiderationDispositionStatusSchema, doctorRecommendationGenerationSchema,
@@ -837,6 +838,7 @@ export class DoctorRecommendationsService {
       const effects: CommandEffect[] = []
       const recordIds: string[] = []
       const results: DoctorPreparationItemResult[] = []
+      let clinicalQuality: ClinicalQualityReceipt | undefined
       let encounterVersion = detail.encounter.versionId
       if (kind === 'diagnosis') {
         const entries = selections.flatMap(selection => {
@@ -865,12 +867,19 @@ export class DoctorRecommendationsService {
         const items = selections.flatMap(selection => selection.kind !== 'prescription' ? [] : [{
           catalogItemId: selection.catalogItemId, doseText: selection.doseText, frequencyCode: selection.frequencyCode,
           courseDays: selection.courseDays, quantity: selection.quantity,
+          ...(selection.instructions === undefined ? {} : { instructions: selection.instructions }),
         }])
         const saved = this.options.workflow.applySavePrescriptionDraft(transaction, { ...base, expectedDraftVersion: draftVersion, items })
-        const issued = this.options.workflow.applyIssuePrescription(transaction, { ...base, expectedDraftVersion: saved.data.draftVersion })
+        const issued = this.options.workflow.applyIssuePrescription(transaction, {
+          ...base,
+          expectedDraftVersion: saved.data.draftVersion,
+          clinicalOverride: request.input.clinicalOverride,
+          operation: 'doctor.recommendations.confirm',
+        })
         draftVersion = issued.data.draftVersion
         recordIds.push(issued.data.prescription.id)
         effects.push(...issued.effects)
+        clinicalQuality = issued.clinicalQuality
       } else {
         const currentDraft = kind === 'laboratory' ? detail.laboratoryRequests?.draft
           : kind === 'imaging' ? detail.imagingRequests?.draft : detail.pathologyRequests?.draft
@@ -940,7 +949,11 @@ export class DoctorRecommendationsService {
           }
         }
       }
-      return { data: { caseId, kind, draftVersion, encounterVersion, recordIds, ...(results.length === 0 ? {} : { results }) }, effects }
+      return {
+        data: { caseId, kind, draftVersion, encounterVersion, recordIds, ...(results.length === 0 ? {} : { results }) },
+        effects,
+        ...(clinicalQuality === undefined ? {} : { clinicalQuality }),
+      }
     })
   }
 

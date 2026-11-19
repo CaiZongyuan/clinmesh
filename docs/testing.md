@@ -48,6 +48,8 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 `pci-preparation.spec.ts` 单独拥有从空患者库开始的岗位交接：管理员分别从页面准备 PCI 目录和来源、创建并选择手工 Persona，登记员从就绪病例直接入院，护士在原工作台接诊。病例和住院不通过 HTTP 前置写入，公开查询核对来源／Profile／Persona 关系、唯一住院、零门诊登记和零费用，并验证准备、Persona 选择及入院的丢回执恢复。`pci-preparation.browser.test.ts` 覆盖同一共享表单的 React 18/19 ShadowRoot 选择、取消、冲突刷新与回执恢复；已有后端测试继续拥有权限、一次消费和业务不变量矩阵，所有模型边界使用合成环境。
 
+心肾专病临床内核与五例 `Authored Case Pack` 的端到端联合不变量由 `specialist-five-cases-journey-http.test.ts` 通过公开 HTTP、真实临时 SQLite、单岗位 `Agent Capability Grant`（经 `hisOperationCatalog` 调用）与 DSH Surface Page Context／`doctor-queries`／proposal 链路拥有：在零真实模型调用下依次走通病例① NSTEMI 门诊胸痛未完善检查 `409` 警示、ECG 与连续 `hs-cTnI` 复测、转住院 GRACE/TIMI 评分与指南专题、多支冠脉造影（`inpatient.angiography-reports.read`）及单支架 PCI、出院后门诊随访读取 `local-completed` 住院摘要与复查 `LDL-C`／`PRECISE-DAPT`，病例② 择期缺血性 `FFR = 0.72` 单支架 PCI 与随访，病例③ 临界病变阴性 `FFR = 0.86` 触发 `409 PCI_NON_ISCHEMIC_LESION` 拦截后转保守 GDMT 出院随访，病例④ CKD G3b（`eGFR = 36.1`）套用 `cin-perioperative-hydration` 围术期水化护肾 PCI 与术后复测肌酐，以及病例⑤ 64 岁女性 T2DM 合并 CKD G4（`eGFR = 26.0`）二甲双胍／达格列净药事红线不可越权拦截、甲／乙／丙混合处方开具与逐行 `outsideFen`/`priorSelfPayFen`/`fundFen`/`accountFen` 医保结算发药，并全程断言公开 DTO、Page Context、DSH Tool 输出、CLI 输出、历史详情与问诊载荷零 `Case Truth` 泄漏。`specialist-clinical-kernel.spec.ts` 从真实 Web 生产构建最小回归覆盖五例病例包准备、护理生命体征、专病风险评估与临床评分、同步指南专题、专病组套套用、`409` 临床质控越权留痕与收费台混合甲乙丙医保明细。
+
 `inpatient-drg-review.spec.ts` 与 React 18/19 的 `inpatient-drg.browser.test.ts` 共用归档切换旅程：医生先读取推演并切到其他页签，由独立认证会话完成归档，再刷新并返回原页签；断言冻结分组可读、旧在院分组及费用表消失，刷新冻结结果后仍保持该边界。
 
 住院 Agent 的同次住院联合验收在场景局部 `beforeEach` 准备参考资料、runtime、合成病例和已确认参数，沿用默认 10 秒 hook 预算；从主动开启跟进到三阶段模型、术中更正、结算、归档交接及重启，仍在一个 15 秒业务测试中使用同一患者、runtime 和数据库。准备失败与业务停滞分别报告，全部公开接口、计量及历史保留断言继续执行，清理仍由原 `afterEach` 负责。

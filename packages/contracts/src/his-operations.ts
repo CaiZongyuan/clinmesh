@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { clinicalQualityCheckSchema } from './clinical-quality.ts'
 import { correlationIdSchema, roleCodeSchema } from './his.ts'
 import {
   clinicalDocumentOperationIds,
@@ -43,6 +44,7 @@ export const hisOperationSkillSchema = z.enum([
 ])
 
 export const hisOperationErrorSchema = z.object({
+  clinicalQuality: clinicalQualityCheckSchema.optional(),
   code: z.string().min(1),
   conflict: z.unknown().optional(),
   correlationId: correlationIdSchema.optional(),
@@ -223,8 +225,8 @@ const operationCliMetadataList = [
     },
     risk: 'write',
     roles: ['administrator'],
-    summary: '发布显式选定的检验配置批次，支持 laboratory-cn 单项与组合',
-    version: 2,
+    summary: '发布显式选定的检验配置批次，支持 laboratory-cn 单项与组合及可选品规级合成医保覆盖 insuranceCoverage',
+    version: 3,
   },
   {
     cliPath: ['admin', 'laboratory-services', 'job', 'get'],
@@ -315,6 +317,19 @@ const operationCliMetadataList = [
     risk: 'read',
     roles: ['administrator', 'outpatient-doctor'],
     summary: 'Search the active hospital service catalog',
+    version: 1,
+  },
+  {
+    cliPath: ['catalog', 'order-set-templates', 'list'],
+    id: 'catalog.order-set-templates.list',
+    mode: 'query',
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'none',
+    },
+    risk: 'read',
+    roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
+    summary: '读取带版本指纹的四套专病组套模板定义及声明式禁忌筛选规则；不修改业务事实',
     version: 1,
   },
   {
@@ -477,8 +492,8 @@ const operationCliMetadataList = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read one completed outpatient case and its clinical timeline, including examinationRequests and functional examination timeline events alongside optional menstrualHistory and obstetricHistory in signed documents; missing historical sections remain unrecorded; quantitative laboratory report results expose optional critical flags alongside interpretation',
-    version: 4,
+    summary: 'Read one completed outpatient case and its clinical timeline, including examinationRequests and functional examination timeline events alongside optional menstrualHistory and obstetricHistory in signed documents; missing historical sections remain unrecorded; quantitative laboratory report results expose optional critical flags alongside interpretation; prescription items expose optional administration instructions',
+    version: 5,
   },
   {
     cliPath: ['doctor', 'case', 'get'],
@@ -490,8 +505,8 @@ const operationCliMetadataList = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case with its current Registration registrationNumber (null when unrecorded), incomplete draft, examinationRequests and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; consultation.replyAttempt exposes executing, blocked, succeeded, failed or unknown with the original deadline and safe error code, including MODEL_CONTROL_BLOCKED, CONSULTATION_CASE_NOT_FOUND and CONSULTATION_PERSONA_OUTDATED; a blocked reply retains the saved question and resumes only while valid within its original deadline, while unknown requests require an explicit clinician retry; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists and exposes optional vitalSigns.weightKg and heightCm; clinicalHistory.requiredFields, reason and showByDefault expose the shared menstrualHistory and obstetricHistory policy with the clinician-confirmed visitKind, which Agents may read but cannot change; qualityControl binds current twelve-field content and saved evidence to nonblocking completion and verification prompts; laboratory service definitions and quantitative report results expose optional criticalMinimum/criticalMaximum bounds and critical flags',
-    version: 19,
+    summary: 'Read the active doctor case with its current Registration registrationNumber (null when unrecorded), incomplete draft, examinationRequests and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; consultation.replyAttempt exposes executing, blocked, succeeded, failed or unknown with the original deadline and safe error code, including MODEL_CONTROL_BLOCKED, CONSULTATION_CASE_NOT_FOUND and CONSULTATION_PERSONA_OUTDATED; a blocked reply retains the saved question and resumes only while valid within its original deadline, while unknown requests require an explicit clinician retry; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists and exposes optional vitalSigns.weightKg and heightCm; clinicalHistory.requiredFields, reason and showByDefault expose the shared menstrualHistory and obstetricHistory policy with the clinician-confirmed visitKind, which Agents may read but cannot change; qualityControl binds current twelve-field content and saved evidence to nonblocking completion and verification prompts; laboratory service definitions and quantitative report results expose optional criticalMinimum/criticalMaximum bounds and critical flags; prescription draft and issued items expose optional administration instructions',
+    version: 20,
   },
   {
     cliPath: ['doctor', 'case', 'clinical-scores', 'get'],
@@ -511,6 +526,16 @@ const operationCliMetadataList = [
     risk: 'read',
     roles: ['outpatient-doctor'],
     summary: '同步读取通用指南专题经哈希与页码核验的原文、限定语及当前患者缺项清单；零模型调用',
+    version: 1,
+  },
+  {
+    cliPath: ['doctor', 'case', 'order-set-drafts', 'get'],
+    id: 'doctor.case.order-set-drafts.read',
+    mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read',
+    roles: ['outpatient-doctor'],
+    summary: '按过敏、eGFR 与分诊体征预筛专病组套并返回带版本绑定的门诊待确认草稿；不产生收费、申请或处方',
     version: 1,
   },
   {
@@ -593,6 +618,19 @@ const operationCliMetadataList = [
     version: 5,
   },
   {
+    cliPath: ['encounter', 'clinical-quality', 'get'],
+    id: 'encounter.clinical-quality.read',
+    mode: 'query',
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'none',
+    },
+    risk: 'read',
+    roles: ['outpatient-doctor'],
+    summary: '按当前就诊已落库事实只读预检门诊处方或完诊双层事中临床质控（药事安全红线与可登记越权的临床路径警示）',
+    version: 1,
+  },
+  {
     cliPath: ['encounter', 'completion', 'preview'],
     id: 'encounter.completion.preview',
     mode: 'preview',
@@ -615,8 +653,8 @@ const operationCliMetadataList = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Complete clinical responsibility for an Encounter',
-    version: 1,
+    summary: 'Complete clinical responsibility for an Encounter; enforces acute chest pain ECG/troponin clinical quality checks (CLINICAL_QUALITY_ALERT unless covered by clinicalOverride)',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'diagnosis', 'draft', 'set'],
@@ -654,8 +692,8 @@ const operationCliMetadataList = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save the version-protected single-source prescription draft (hospital pharmacy or national reference, never mixed); hospital medications use shared indication, pharmacology and daily-dose limits',
-    version: 2,
+    summary: 'Save the version-protected single-source prescription draft (hospital pharmacy or national reference, never mixed) with optional administration instructions; hospital medications use shared indication, pharmacology and daily-dose limits',
+    version: 3,
   },
   {
     cliPath: ['encounter', 'prescription', 'draft', 'delete'],
@@ -680,8 +718,8 @@ const operationCliMetadataList = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Issue the current single-source prescription draft with shared indication, allergy, pharmacology and daily-dose checks; hospital pharmacy items create ChargeItems while national reference items issue an external electronic prescription without hospital billing or pharmacy tasks',
-    version: 2,
+    summary: 'Issue the current single-source prescription draft with optional administration instructions, shared indication, allergy, pharmacology, daily-dose and two-tier clinical quality checks (eGFR<30 biguanide/SGLT2 red line vs missing creatinine or viral antibiotic CLINICAL_QUALITY_ALERT with clinicalOverride); hospital pharmacy items create ChargeItems while national reference items issue an external electronic prescription without hospital billing or pharmacy tasks',
+    version: 4,
   },
   {
     cliPath: ['encounter', 'medication-conclusion', 'confirm-none'],
@@ -1240,8 +1278,8 @@ const operationCliMetadataList = [
     requirements:{expectedVersions:false,idempotency:'required'},
     risk:'write',
     roles:['cashier'],
-    summary:'Preview fixed synthetic employee/resident benefits bound to charge and patient annual balance versions; INSURANCE_FUNDS_CONFLICT: medication benefits require a completed Encounter before preview/confirm',
-    version:1,
+    summary:'Preview synthetic employee/resident benefits with item-level A/B/C coverage & prescription breakdown; INSURANCE_FUNDS_CONFLICT: medication requires completed Encounter',
+    version:2,
   },
   {
     cliPath:['insurance','confirm'],
@@ -1526,8 +1564,8 @@ const operationCliMetadataList = [
     requirements:{expectedVersions:true,idempotency:'required'},
     risk:'write',
     roles:['inpatient-doctor'],
-    summary:'主管医生显式确认本次实际主操作并保存当前来源修订（在院供预分组使用，离院结算后核对提交正式首页）',
-    version:2,
+    summary:'主管医生显式确认本次实际主操作并保存当前来源修订（在院供预分组使用，离院结算后核对提交正式首页并校验冠心病/PCI 二级预防质控警示或 clinicalOverride）',
+    version:3,
   },
   {
     cliPath:['inpatient','review-record'],
@@ -1926,8 +1964,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '开出院医嘱进入待出院，保留床位与未结算状态',
-    version: 1,
+    summary: '开出院医嘱进入待出院，保留床位与未结算状态；校验冠心病/PCI 抗血小板与他汀长期医嘱质控警示（CLINICAL_QUALITY_ALERT 或附 clinicalOverride）',
+    version: 2,
   },
   {
     cliPath: ['inpatient','depart'],
@@ -1986,8 +2024,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '医生按预期版本确认本次住院 PCI 参数与依据；不生成模型建议',
-    version: 2,
+    summary: '医生按预期版本确认本次住院 PCI 参数与依据；非缺血临界病变（FFR>0.80）返回 CLINICAL_QUALITY_ALERT 或附 clinicalOverride；不生成模型建议',
+    version: 3,
   },
   {
     cliPath: ['inpatient', 'save-pci-selection'],
@@ -2026,8 +2064,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '申请手术；保存计划，不代表实际实施',
-    version: 2,
+    summary: '申请手术；PCI 计划校验非缺血临界病变质控警示（CLINICAL_QUALITY_ALERT 或附 clinicalOverride）；保存计划，不代表实际实施',
+    version: 3,
   },
   {
     cliPath: ['inpatient','check-surgery-preop'],
@@ -2286,8 +2324,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: false, idempotency: 'none' },
     risk: 'read',
     roles: ['pharmacist'],
-    summary: '读取本次住院药嘱、发药任务、批次与有效药物过敏风险；stopReason仅返回可归属停嘱理由，历史可缺失',
-    version: 2,
+    summary: '读取本次住院药嘱（含可选给药说明instructions）、发药任务、批次与有效药物过敏风险；stopReason仅返回可归属停嘱理由，历史可缺失',
+    version: 3,
   },
   {
     cliPath: ['inpatient', 'charges'],
@@ -2330,6 +2368,36 @@ const operationCliMetadataList = [
     version: 1,
   },
   {
+    cliPath: ['admin', 'authored-case-pack', 'get'],
+    id: 'admin.authored-case-pack.read',
+    mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read',
+    roles: ['administrator'],
+    summary: '读取五例专病合成病例包的准备就绪状态、推荐入口与病例身份；不暴露 Case Truth',
+    version: 1,
+  },
+  {
+    cliPath: ['admin', 'authored-case-pack', 'prepare'],
+    id: 'admin.authored-case-pack.prepare',
+    mode: 'command',
+    requirements: { expectedVersions: true, idempotency: 'required' },
+    risk: 'write',
+    roles: ['administrator'],
+    summary: '幂等准备五例专病合成病例包及有效患者档案，首次自动选用模板 Persona，保留人工修订与消费绑定；排队旧生成任务标为 PERSONA_JOB_SUPERSEDED，运行中生成返回 AUTHORED_CASE_PACK_PERSONA_RUNNING (409)，世代冲突返回 AUTHORED_CASE_PACK_EPOCH_CONFLICT (409)；不调用模型、启动就诊或产生诊疗及费用',
+    version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'angiography-reports'],
+    id: 'inpatient.angiography-reports.read',
+    mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read',
+    roles: ['inpatient-doctor', 'ward-nurse', 'medical-records'],
+    summary: '读取本次住院正式冠脉造影报告、多支节段生理学所见与可选 QCA 测量；不暴露仿真来源真值',
+    version: 1,
+  },
+  {
     cliPath: ['registration', 'synthetic-case', 'start-inpatient'],
     id: 'registration.synthetic-case.start-inpatient',
     mode: 'command',
@@ -2366,8 +2434,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: false, idempotency: 'none' },
     risk: 'read',
     roles: ['inpatient-doctor','ward-nurse','medical-records'],
-    summary: '读取本次住院诊断医嘱（支持六种给药频次）执行、费用及可选体征与风险评估；stopReason仅返回可归属停嘱理由，历史可缺失',
-    version: 4,
+    summary: '读取本次住院诊断医嘱（支持六种给药频次与可选给药说明instructions）执行、费用及可选体征与风险评估；stopReason仅返回可归属停嘱理由，历史可缺失',
+    version: 5,
   },
   {
     cliPath: ['inpatient', 'record-vital-signs'],
@@ -2377,7 +2445,7 @@ const operationCliMetadataList = [
     risk: 'write',
     roles: ['ward-nurse', 'inpatient-doctor'],
     summary: '按版本录入受审计住院护理生命体征及可选体重身高；修订冲突返回 INPATIENT_VITAL_SIGNS_CONFLICT',
-    version: 1,
+    version: 2,
   },
   {
     cliPath: ['inpatient', 'record-risk-assessment'],
@@ -2387,7 +2455,7 @@ const operationCliMetadataList = [
     risk: 'write',
     roles: ['inpatient-doctor', 'ward-nurse'],
     summary: '按版本录入受审计住院专病风险评估，未传项保持未记录；修订冲突返回 INPATIENT_RISK_ASSESSMENT_CONFLICT',
-    version: 1,
+    version: 2,
   },
   {
     cliPath: ['inpatient', 'clinical-scores'],
@@ -2400,14 +2468,34 @@ const operationCliMetadataList = [
     version: 1,
   },
   {
+    cliPath: ['inpatient', 'clinical-quality'],
+    id: 'inpatient.clinical-quality.read',
+    mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read',
+    roles: ['inpatient-doctor'],
+    summary: '按本次住院已落库事实只读预检药嘱、PCI 计划或出院双层事中临床质控',
+    version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'order-set-drafts'],
+    id: 'inpatient.order-set-drafts.read',
+    mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read',
+    roles: ['inpatient-doctor'],
+    summary: '按过敏、eGFR 与住院护理体征预筛专病组套并返回带版本绑定的待开立医嘱候选；不产生医嘱、申请或费用',
+    version: 1,
+  },
+  {
     cliPath: ['inpatient', 'confirm-diagnosis'],
     id: 'inpatient.diagnosis.confirm',
     mode: 'command',
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '确认本次住院主次诊断并生成正式Condition；医嘱含可选停嘱理由stopReason',
-    version: 3,
+    summary: '确认本次住院主次诊断并生成正式Condition；医嘱含可选停嘱理由stopReason与给药说明instructions',
+    version: 4,
   },
   {
     cliPath: ['inpatient', 'issue-order'],
@@ -2416,8 +2504,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '签发住院医嘱；QD/BID/TID/QN/PRN/ONCE，ONCE仅限临时；重验单位换算、单次/单日极量、ICD前缀适应证、药理互斥、过敏、责任、版本及可选DRG指纹，返回MEDICATION_*拒绝原因；医嘱含可选停嘱理由stopReason',
-    version: 7,
+    summary: '签发住院医嘱（含可选给药说明instructions）；QD/BID/TID/QN/PRN/ONCE，ONCE仅限临时；重验单位换算、单次/单日极量、ICD前缀适应证、药理互斥、过敏、责任、版本、可选DRG指纹及双层事中临床质控（eGFR<30红线与缺肌酐/病毒抗菌药CLINICAL_QUALITY_ALERT或clinicalOverride），返回MEDICATION_*拒绝原因；医嘱含可选停嘱理由stopReason',
+    version: 9,
   },
   {
     cliPath: ['inpatient', 'verify-order'],
@@ -2426,8 +2514,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['ward-nurse'],
-    summary: '住院医嘱verify；校验当前责任与版本；医嘱含可选停嘱理由stopReason',
-    version: 3,
+    summary: '住院医嘱verify；校验当前责任与版本；医嘱含可选停嘱理由stopReason与给药说明instructions',
+    version: 4,
   },
   {
     cliPath: ['inpatient', 'request-stop-order'],
@@ -2436,8 +2524,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '住院医嘱request-stop；校验当前责任与版本；医嘱含可选停嘱理由stopReason',
-    version: 3,
+    summary: '住院医嘱request-stop；校验当前责任与版本；医嘱含可选停嘱理由stopReason与给药说明instructions',
+    version: 4,
   },
   {
     cliPath: ['inpatient', 'verify-stop-order'],
@@ -2446,8 +2534,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['ward-nurse'],
-    summary: '住院医嘱verify-stop；校验当前责任与版本；医嘱含可选停嘱理由stopReason',
-    version: 3,
+    summary: '住院医嘱verify-stop；校验当前责任与版本；医嘱含可选停嘱理由stopReason与给药说明instructions',
+    version: 4,
   },
   {
     cliPath:['inpatient','dispense'],
@@ -2456,8 +2544,8 @@ const operationCliMetadataList = [
     requirements:{expectedVersions:true,idempotency:'required'},
     risk:'write',
     roles:['pharmacist'],
-    summary: '住院实际dispense；按执行单校验版本与责任；医嘱含可选停嘱理由stopReason',
-    version: 2,
+    summary: '住院实际dispense；按执行单校验版本与责任；医嘱含可选停嘱理由stopReason与给药说明instructions',
+    version: 3,
   },
   {
     cliPath:['inpatient','administer'],
@@ -2466,8 +2554,8 @@ const operationCliMetadataList = [
     requirements:{expectedVersions:true,idempotency:'required'},
     risk:'write',
     roles:['ward-nurse'],
-    summary: '住院实际administer；按执行单校验版本与责任；医嘱含可选停嘱理由stopReason',
-    version: 3,
+    summary: '住院实际administer；按执行单校验版本与责任；医嘱含可选停嘱理由stopReason与给药说明instructions',
+    version: 4,
   },
   {
     cliPath:['inpatient','complete-service'],
@@ -2476,8 +2564,8 @@ const operationCliMetadataList = [
     requirements:{expectedVersions:true,idempotency:'required'},
     risk:'write',
     roles:['ward-nurse'],
-    summary: '完成已校对的健康教育服务执行并按声明计费；不执行检查检验；医嘱含可选停嘱理由stopReason',
-    version: 3,
+    summary: '完成已校对的健康教育服务执行并按声明计费；不执行检查检验；医嘱含可选停嘱理由stopReason与给药说明instructions',
+    version: 4,
   },
   {
     cliPath:['inpatient','reverse-charge'],
@@ -2496,8 +2584,8 @@ const operationCliMetadataList = [
     requirements:{expectedVersions:true,idempotency:'required'},
     risk:'write',
     roles:['ward-nurse'],
-    summary: '护士按已校对PRN医嘱和显式理由请求任务；声明safety时上海业务日最多四次且受单日数量极量限制；医嘱含可选停嘱理由stopReason',
-    version: 4,
+    summary: '护士按已校对PRN医嘱和显式理由请求任务；声明safety时上海业务日最多四次且受单日数量极量限制；医嘱含可选停嘱理由stopReason与给药说明instructions',
+    version: 5,
   },
   {
     cliPath: ['inpatient', 'catalog'],
@@ -2625,6 +2713,7 @@ const commandOperationAliases: Readonly<Record<string, string>> = {
   'registration.synthetic-case.start': 'synthetic-case.start-outpatient-visit',
   'registration.synthetic-case.start-inpatient': 'synthetic-case.start-inpatient-visit',
   'admin.pci-case.prepare': 'synthetic-case.pci-source.prepare',
+  'admin.authored-case-pack.prepare': 'synthetic-case.authored-pack.prepare',
   'service.complete': 'hospital-service.complete',
   'service.order': 'hospital-service.order',
   'triage.record': 'encounter.record-triage',
@@ -2640,6 +2729,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'billing.case.get': 'clinmesh-billing',
   'billing.queue.list': 'clinmesh-billing',
   'catalog.clinical.read': 'clinmesh-doctor',
+  'catalog.order-set-templates.list': 'clinmesh-doctor',
   'catalog.registration.read': 'clinmesh-registration',
   'catalog.services.search': 'clinmesh-doctor',
   [clinicalDocumentOperationIds.revise]: 'clinmesh-doctor',
@@ -2647,6 +2737,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'doctor.case.get': 'clinmesh-doctor',
   'doctor.case.clinical-scores.read': 'clinmesh-doctor',
   'doctor.case.guideline-topics.read': 'clinmesh-doctor',
+  'doctor.case.order-set-drafts.read': 'clinmesh-doctor',
   'doctor.case.history.search': 'clinmesh-doctor',
   'doctor.case.history.read': 'clinmesh-doctor',
   'doctor.case.examination-services.list': 'clinmesh-doctor',
@@ -2661,6 +2752,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   [clinicalDocumentOperationIds.previewSign]: 'clinmesh-doctor',
   [clinicalDocumentOperationIds.cancelSign]: 'clinmesh-doctor',
   [clinicalDocumentOperationIds.sign]: 'clinmesh-doctor',
+  'encounter.clinical-quality.read': 'clinmesh-doctor',
   'encounter.complete': 'clinmesh-doctor',
   'encounter.completion.preview': 'clinmesh-doctor',
   'encounter.consultation.ask': 'clinmesh-doctor',
@@ -2735,6 +2827,8 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'registration.synthetic-case.start': 'clinmesh-registration',
   'registration.synthetic-case.start-inpatient': 'clinmesh-registration',
   'admin.pci-case.prepare': 'clinmesh-administrator',
+  'admin.authored-case-pack.read': 'clinmesh-administrator',
+  'admin.authored-case-pack.prepare': 'clinmesh-administrator',
   'service.complete': 'clinmesh-doctor',
   'service.order': 'clinmesh-doctor',
   'triage.queue.list': 'clinmesh-triage',
@@ -2744,7 +2838,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
 function handlerOwnerFor(
   operation: HisOperationRuntimeDefinition,
 ): z.infer<typeof hisOperationHandlerOwnerSchema> {
-  if (operation.id === 'admin.pci-case.prepare') return 'ScenarioDataService'
+  if (operation.id === 'admin.pci-case.prepare' || operation.id.startsWith('admin.authored-case-pack.')) return 'ScenarioDataService'
   if (operation.id.startsWith('inpatient.')) return 'InpatientService'
   if (operation.http.path === '/fhir/R5/metadata') return 'FhirCapabilities'
   if (operation.http.path.startsWith('/fhir/R5/')) return 'FhirRepository'
@@ -2804,10 +2898,6 @@ export const excludedHisRoutes = [
     reason: '负责医生首次签署前人工核实临床初诊或随访；Agent 仅读取规则结果，不授予分类写入。' },
   { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId',
     reason: '住院医生页面读取原计划的只读指南参考意见，不授予临床写入。' },
-  {
-    method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/angiography-reports',
-    reason: '住院页面只读正式造影报告与测量；不读取仿真来源，不增加独立 CLI 或 Agent Grant 操作。',
-  },
   {
     method: 'POST',
     path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm',

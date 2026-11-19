@@ -8,6 +8,7 @@ import {
   type SetDoctorConsiderationDispositionRequest,
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
+import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import { doctorInpatientHistoryRecordSchema } from '@clinmesh/contracts/agent'
 import { InpatientHistorySummary } from './doctor-history-panel.tsx'
 import type { PathologySourceProcedure } from '@clinmesh/contracts/pathology'
@@ -27,6 +28,7 @@ import { BookOpenIcon, PauseIcon, PlayIcon, RefreshCwIcon } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ApiClientError, confirmDoctorPreparation, getDoctorInvestigationConfirmation, newIdempotencyKey, setConsiderationDisposition } from '../api-client.ts'
+import { ClinicalQualityBanner, extractClinicalQualityError } from '../clinical-quality-banner.tsx'
 import { getPrescriptionIssueErrorMessage, getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
@@ -75,7 +77,7 @@ function selection(item: DoctorRecommendationSuggestion): PreparationDraft {
 }
 function clinicalValue(item: PreparationDraft) {
   if (item.kind === 'diagnosis') return JSON.stringify([identity(item), item.role, item.note ?? ''])
-  if (item.kind === 'prescription') return JSON.stringify([identity(item), item.doseText, item.frequencyCode, item.courseDays, item.quantity])
+  if (item.kind === 'prescription') return JSON.stringify([identity(item), item.doseText, item.frequencyCode, item.courseDays, item.quantity, item.instructions ?? ''])
   if (item.kind === 'laboratory') return JSON.stringify([identity(item), item.indicationCode, serviceReviewSignature(item.reviewedService)])
   if (item.kind === 'imaging') return JSON.stringify([identity(item), item.indication, serviceReviewSignature(item.reviewedService)])
   return JSON.stringify([identity(item), item.sourceProcedureReference, item.purpose, serviceReviewSignature(item.reviewedService)])
@@ -95,7 +97,7 @@ function indicationLabel(code: string, zh: boolean) {
 }
 function summary(item: PreparationDraft, zh: boolean) {
   if (item.kind === 'diagnosis') return item.role === null ? zh ? '主次待确认' : 'Choose the diagnosis role' : item.role === 'primary' ? zh ? '主诊断' : 'Primary' : zh ? '次诊断' : 'Secondary'
-  if (item.kind === 'prescription') return complete(item) ? `${item.doseText} · ${frequencyLabel(item.frequencyCode, zh)} · ${item.courseDays} ${zh ? '天' : 'days'} · ${item.quantity}` : zh ? '用法用量待补充' : 'Complete the prescription fields'
+  if (item.kind === 'prescription') return complete(item) ? `${item.doseText} · ${frequencyLabel(item.frequencyCode, zh)} · ${item.courseDays} ${zh ? '天' : 'days'} · ${item.quantity}${item.instructions ? ` · ${item.instructions}` : ''}` : zh ? '用法用量待补充' : 'Complete the prescription fields'
   if (item.kind === 'laboratory') return indicationLabel(item.indicationCode, zh)
   return item.kind === 'imaging' ? item.indication : item.purpose
 }
@@ -392,7 +394,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     : kind === 'laboratory' ? detail?.laboratoryRequests?.draftVersion ?? 0 : kind === 'imaging' ? detail?.imagingRequests?.draftVersion ?? 0 : detail?.pathologyRequests?.draftVersion ?? 0
   const draftVersion = expectedDraftVersion ?? currentDraftVersion
   const submissionKey = JSON.stringify([scope, kind])
-  type Submission = { state: Parameters<typeof confirmDoctorPreparation>[0]; selections: DoctorPreparationSelection[]; view: number; recordView: number; navigation: number; rows: typeof rows; draftVersion: number; resolveExistingDraft: boolean; submissionKey: string; token: string; scope: string | undefined; manualOwnership: number; manualItems: ManualPreparedItem[]; manualRowOwners: typeof manualRowOwners.current; original?: InvestigationConfirmationIntent; recovery?: boolean }
+  type Submission = { state: Parameters<typeof confirmDoctorPreparation>[0]; selections: DoctorPreparationSelection[]; view: number; recordView: number; navigation: number; rows: typeof rows; draftVersion: number; resolveExistingDraft: boolean; submissionKey: string; token: string; scope: string | undefined; manualOwnership: number; manualItems: ManualPreparedItem[]; manualRowOwners: typeof manualRowOwners.current; clinicalOverride?: ClinicalOverrideInput; original?: InvestigationConfirmationIntent; recovery?: boolean }
   const synchronization = useRef(new Map<string, 'owned' | 'applied'>())
   const recordVisible = (request: Submission, result: Awaited<ReturnType<typeof confirmDoctorPreparation>>) => client.getQueriesData<DoctorCaseDetail>({ predicate: query => query.queryKey[0] === 'doctor-case' && query.queryKey.includes(request.state.caseId) })
     .some(([key, clinical]) => {
@@ -439,13 +441,14 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     onMutate: request => { preparation?.setSubmitting(request.submissionKey, request.token, true) },
     onSettled: (_result, _error, request) => { preparation?.setSubmitting(request.submissionKey, request.token, false) },
     mutationFn: async (request: Submission) => {
-      const intent = JSON.stringify([request.scope, request.state.caseId, request.state.kind, request.state.inputFingerprint, request.state.generation, request.draftVersion, request.resolveExistingDraft, request.selections])
+      const intent = JSON.stringify([request.scope, request.state.caseId, request.state.kind, request.state.inputFingerprint, request.state.generation, request.draftVersion, request.resolveExistingDraft, request.selections, request.clinicalOverride ?? null])
       const key = independent ? newIdempotencyKey() : requestKeys.current.get(intent) ?? newIdempotencyKey();requestKeys.current.set(intent, key)
       const frozen = request.original ?? prepareInvestigationConfirmationIntent({ state: { caseId: request.state.caseId, kind: request.state.kind,
         encounterId: request.state.encounterId, encounterVersion: request.state.encounterVersion,
         ...(request.state.generation === undefined ? {} : { generation: request.state.generation }),
         ...(request.state.inputFingerprint === undefined ? {} : { inputFingerprint: request.state.inputFingerprint }) },
         selections: request.selections, draftVersion: request.draftVersion, resolveExistingDraft: request.resolveExistingDraft, key,
+        ...(request.clinicalOverride === undefined ? {} : { clinicalOverride: request.clinicalOverride }),
         rows: request.rows.map(({ label, key, signature }) => ({ label, key, signature })) })
       request.original = frozen
       if (!originalIntent.save(() => frozen)) throw new Error(zh ? '原开立操作无法保存，请恢复存储后再试。' : 'The original order could not be saved.')
@@ -467,10 +470,10 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       }
       if (request.recovery) await verifyContext()
       try {
-        return await confirmDoctorPreparation(frozen.state, frozen.draftVersion, frozen.selections, frozen.key, frozen.resolveExistingDraft)
+        return await confirmDoctorPreparation(frozen.state, frozen.draftVersion, frozen.selections, frozen.key, frozen.resolveExistingDraft, frozen.clinicalOverride)
       } catch (error) {
         // 只有原 POST 的确定拒绝才能释放意图；查询失败和网络错误都保留原 body/key。
-        if (error instanceof ApiClientError && error.status === 409 && ['EXPECTED_VERSION_CONFLICT', 'WORKFLOW_CONFLICT', 'CATALOG_CONFLICT', 'DIAGNOSIS_PRIMARY_REQUIRED'].includes(error.code)
+        if (error instanceof ApiClientError && error.status === 409 && ['EXPECTED_VERSION_CONFLICT', 'WORKFLOW_CONFLICT', 'CATALOG_CONFLICT', 'DIAGNOSIS_PRIMARY_REQUIRED', 'CLINICAL_QUALITY_ALERT', 'CLINICAL_QUALITY_RED_LINE'].includes(error.code)
           && mounted.current && recordView.current.token === request.recordView
           && (!request.recovery || restoreMissingInputs(request, request.rows))) originalIntent.save(() => null)
         throw error
@@ -530,6 +533,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       ...(!independent ? currentRows.current.find(current => current.key === row.key) : undefined),
       ...row, value: frozen.selections[index]!, owner: !independent ? currentEdits.current[row.key] : undefined,
     })),
+      ...(frozen.clinicalOverride === undefined ? {} : { clinicalOverride: frozen.clinicalOverride }),
       original: frozen, recovery: true, view, recordView: recordView.current.token, navigation: navigation.current.token,
       draftVersion: frozen.draftVersion, resolveExistingDraft: frozen.resolveExistingDraft, submissionKey,
       token: newIdempotencyKey(), scope, manualOwnership: manualOwnership.current.token, manualItems, manualRowOwners: manualRowOwners.current })
@@ -629,6 +633,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         if ('courseDays' in candidate) candidate.courseDays = Number(values.get('courseDays'))
         if ('quantity' in candidate) candidate.quantity = Number(values.get('quantity'))
         if ('note' in candidate && typeof candidate.note === 'string' && candidate.note.trim() === '') delete candidate.note
+        if ('instructions' in candidate && typeof candidate.instructions === 'string' && candidate.instructions.trim() === '') delete candidate.instructions
         const result = doctorPreparationSelectionSchema.safeParse(candidate)
         if (!result.success || !complete(result.data)) { setEditError(true);return }
         commit()
@@ -664,11 +669,32 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
                   onValueChange={code => { setEditDirty(true);if (code !== null) setEditing(previous => previous?.value.kind === 'laboratory' ? { ...previous, value: { ...previous.value, indicationCode: code } } : previous) }} />
                 : <Input value={activeEditing.fields?.[field] ?? value ?? ''} onChange={event => changeEditingField(field, event.currentTarget.value)} id={`prepared-${field}`} min={1} name={field} required type={field === 'quantity' || field === 'courseDays' ? 'number' : 'text'} />}</Field>
           })}
+        {activeEditing.value.kind === 'prescription' ? <Field><FieldLabel htmlFor="prepared-instructions">{zh ? '给药说明' : 'Instructions'}</FieldLabel><Input value={activeEditing.fields?.instructions ?? activeEditing.value.instructions ?? ''} onChange={event => changeEditingField('instructions', event.currentTarget.value)} id="prepared-instructions" maxLength={240} name="instructions" /></Field> : null}
         {editError ? <p role="alert">{zh ? '请补齐有效的项目信息。' : 'Complete the item with valid values.'}</p> : null}
         {editSwitchBlocked ? <p role="alert">{zh ? '请先保留当前调整，再查看其他待开具项目。' : 'Keep the current edits before opening another pending item.'}</p> : null}
       </FieldGroup><DialogFooter><Button disabled={disabled || submitting} type="submit">{zh ? '保留本次调整' : 'Keep edits'}</Button></DialogFooter></form>}</DoctorDraftEditorScope>)
   const confirmDisabled = inlineEditing && editDirty || !canConfirm || available.length === 0 || block !== undefined || available.some(row => needsReview(row.key) && (priceReviewChanged(row.value) || !(currentEncounter !== undefined && row.value.source === 'manual')))
-  const confirmationControls = (<CardFooter className="flex flex-wrap items-center justify-between gap-3">{inlineEditing && editDirty ? <p className="text-xs text-muted-foreground">{zh ? '有未保存调整，请保留后再开具。' : 'Keep the pending edits before confirming.'}</p> : null}<p className="text-xs text-muted-foreground">{zh ? `已选 ${available.length} 项` : `${available.length} selected`}</p><Button data-unavailable={confirmDisabled ? '' : undefined} disabled={confirmDisabled} onClick={() => { if (confirmationContext !== undefined) submission.mutate({ state: confirmationContext, selections: available.map(row => doctorPreparationSelectionSchema.parse(row.value)), view, recordView: recordView.current.token, navigation: navigation.current.token, rows: available, draftVersion, resolveExistingDraft, submissionKey, token: newIdempotencyKey(), scope, manualOwnership: manualOwnership.current.token, manualItems, manualRowOwners: manualRowOwners.current }) }} type="button" variant="outline">{kind === 'diagnosis' ? zh ? '确认选中诊断' : 'Confirm selected diagnoses' : kind === 'prescription' ? zh ? '开具处方' : 'Issue prescription' : zh ? '开具选中项目' : 'Issue selected orders'}（{available.length}）</Button></CardFooter>)
+  const submitSelection = (clinicalOverride?: ClinicalOverrideInput) => {
+    if (confirmationContext === undefined) return
+    submission.mutate({
+      state: confirmationContext,
+      selections: available.map(row => doctorPreparationSelectionSchema.parse(row.value)),
+      view,
+      recordView: recordView.current.token,
+      navigation: navigation.current.token,
+      rows: available,
+      draftVersion,
+      resolveExistingDraft,
+      submissionKey,
+      token: newIdempotencyKey(),
+      scope,
+      manualOwnership: manualOwnership.current.token,
+      manualItems,
+      manualRowOwners: manualRowOwners.current,
+      ...(clinicalOverride === undefined ? {} : { clinicalOverride }),
+    })
+  }
+  const confirmationControls = (<CardFooter className="flex flex-wrap items-center justify-between gap-3">{inlineEditing && editDirty ? <p className="text-xs text-muted-foreground">{zh ? '有未保存调整，请保留后再开具。' : 'Keep the pending edits before confirming.'}</p> : null}<p className="text-xs text-muted-foreground">{zh ? `已选 ${available.length} 项` : `${available.length} selected`}</p><Button data-unavailable={confirmDisabled ? '' : undefined} disabled={confirmDisabled} onClick={() => submitSelection()} type="button" variant="outline">{kind === 'diagnosis' ? zh ? '确认选中诊断' : 'Confirm selected diagnoses' : kind === 'prescription' ? zh ? '开具处方' : 'Issue prescription' : zh ? '开具选中项目' : 'Issue selected orders'}（{available.length}）</Button></CardFooter>)
   if (!enabled) return null
   const toolLabels = {
     refresh: refreshRecords ? (zh ? '刷新记录' : 'Refresh records') : state?.status === 'failed' ? (zh ? '重新生成' : 'Regenerate') : (zh ? '刷新' : 'Refresh'),
@@ -708,7 +734,16 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
           <Button disabled={submitting || originalIntent.failed} onClick={recoverOriginal} type="button" variant="outline">{kind === 'diagnosis' ? zh ? '恢复原确认' : 'Recover original confirmation' : zh ? '恢复原开立' : 'Recover original orders'}</Button>
         </AlertDescription></Alert>}
         {statusLine === undefined ? null : <p className="text-sm font-medium" role="status">{statusLine}</p>}
-        {submissionError === null ? null : <Alert variant="destructive"><AlertDescription>{submissionMessage}</AlertDescription></Alert>}
+        {submissionError === null ? null : kind === 'prescription' && extractClinicalQualityError(submissionError) !== undefined ? (
+          <ClinicalQualityBanner
+            error={submissionError}
+            locale={locale}
+            onSubmitOverride={override => submitSelection(override)}
+            pending={confirmDisabled}
+          />
+        ) : (
+          <Alert variant="destructive"><AlertDescription>{submissionMessage}</AlertDescription></Alert>
+        )}
         {itemResults === undefined ? null : <section aria-label={zh ? '本次开立结果' : 'Order results'} className="flex flex-col gap-1 text-sm" role="status">
           <p>{zh ? `成功 ${itemResults.filter(item => item.status === 'succeeded').length} 项，失败 ${itemResults.filter(item => item.status === 'failed').length} 项。失败输入已保留。` : `${itemResults.filter(item => item.status === 'succeeded').length} succeeded; ${itemResults.filter(item => item.status === 'failed').length} failed. Failed inputs are preserved.`}</p>
           {itemResults.map(item => <p key={item.selectionIndex}>{submission.variables?.rows[item.selectionIndex]?.label} · {item.status === 'succeeded' ? zh ? '已开立' : 'Issued' : <>{zh ? '失败：' : 'Failed: '}{getWorkspaceErrorMessage(new ApiClientError(409, item.code, item.message, undefined, undefined, item.reason), workspaceMessages)}</>}</p>)}

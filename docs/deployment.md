@@ -218,7 +218,7 @@ CLINMESH_AI_INVESTIGATION_MODEL=provider/investigation-model
 CLINMESH_AI_CONSULTATION_MODEL=provider/consultation-model
 ```
 
-laboratory-cn 默认自动启用，不需要 Catalog Enrichment。只有显式配置包含 LOINC 的 Reference Release，并通过 CLI 发布该来源服务时，才需要 `CLINMESH_AI_CATALOG_ENRICHMENT_MODEL`。未配置基础变量时，"生成患者档案"返回 `PROVIDER_NOT_AVAILABLE`，且没有档案就无法把合成病例开始为门诊就诊（`BRIEF_NOT_READY`）。
+laboratory-cn 默认自动启用，不需要 Catalog Enrichment。只有显式配置包含 LOINC 的 Reference Release，并通过 CLI 发布该来源服务时，才需要 `CLINMESH_AI_CATALOG_ENRICHMENT_MODEL`。未配置基础变量时，动态 Synthea 病例的"生成患者档案"返回 `PROVIDER_NOT_AVAILABLE`，且没有档案就无法把该病例开始为门诊就诊（`BRIEF_NOT_READY`）；固定 PCI 病例与五例心肾专病 `Authored Case Pack`（Web“模拟数据 → PCI 演示准备”或 `clinmesh admin authored-case-pack prepare`）使用确定性版本化模板 `clinmesh-authored-template` 与结构化分阶段 `Case Truth`，无需配置外部 AI Provider 即可准备并跑通门诊／住院临床评分、同步指南专题、医嘱组套预筛、双层事中质控与品规级医保结算。
 
 未配置 consultation 模型时，已有服务仍可启动；自由问诊返回 `CONSULTATION_REPLY_UNAVAILABLE`，保留医生发言并可在模型恢复后重试。每轮问诊最多等待约 30 秒。
 

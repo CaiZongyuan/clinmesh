@@ -1,4 +1,6 @@
 import { enableStandardMedicationRules, standardMedicationCatalog } from './standard-medications.ts'
+import type { CatalogInsuranceCoverage } from '@clinmesh/contracts/insurance'
+import { CLASS_A_COVERAGE, CLASS_B_10_COVERAGE, CLASS_C_COVERAGE } from '../catalog-insurance-coverage.ts'
 import {
   type ScenarioHospitalServiceCatalogItem,
   type ScenarioInvestigationCatalogItem,
@@ -109,6 +111,7 @@ function hospitalService(input: {
   nationalService: ReferenceMedicalService
   componentServiceIds?: string[]
   executingDepartmentId?: string
+  insuranceCoverage: CatalogInsuranceCoverage
   priceFen: number
   reportTemplate: string
   requestCatalogItemIds: string[]
@@ -141,6 +144,7 @@ function hospitalService(input: {
     },
     componentServiceIds: input.componentServiceIds ?? [],
     executingDepartmentId: input.executingDepartmentId ?? 'department-laboratory',
+    insuranceCoverage: input.insuranceCoverage,
     nationalService: {
       code: input.nationalService.code,
       display: input.nationalService.display,
@@ -268,6 +272,7 @@ export function createHospitalBaseline(
     ['MCV', '平均红细胞体积服务', 'lab-mcv', '平均红细胞体积 {value} fL。'],
     ['HCT', '红细胞压积服务', 'lab-hematocrit', '红细胞压积 {value} L/L。'],
   ] as const).map(([code, name, requestCatalogItemId, reportTemplate]) => hospitalService({
+    insuranceCoverage: CLASS_A_COVERAGE,
     itemId: `hospital-service-${code.toLowerCase()}`,
     localCode: `HOSP-SVC-${code}`,
     name,
@@ -573,6 +578,7 @@ export function createHospitalBaseline(
         defaultFrequency: 'PRN',
         defaultRoute: '口服',
         dosageForm: '片剂',
+        insuranceCoverage: CLASS_A_COVERAGE,
         drugConcept: {
           code: 'CM-DRUG-ACETAMINOPHEN-500MG-ORAL-TABLET',
           conceptId: 'drug-concept-acetaminophen-500mg-oral-tablet',
@@ -603,6 +609,7 @@ export function createHospitalBaseline(
         defaultFrequency: 'BID',
         defaultRoute: '口服',
         dosageForm: '片剂',
+        insuranceCoverage: CLASS_A_COVERAGE,
         drugConcept: {
           code: 'CM-DRUG-METFORMIN-HCL-500MG-ORAL-TABLET',
           conceptId: 'drug-concept-metformin-hcl-500mg-oral-tablet',
@@ -633,6 +640,7 @@ export function createHospitalBaseline(
         defaultFrequency: 'QD',
         defaultRoute: '口服',
         dosageForm: '片剂',
+        insuranceCoverage: CLASS_A_COVERAGE,
         drugConcept: {
           code: 'CM-DRUG-AMLODIPINE-5MG-ORAL-TABLET',
           conceptId: 'drug-concept-amlodipine-5mg-oral-tablet',
@@ -658,6 +666,7 @@ export function createHospitalBaseline(
       }],
       services: [hospitalService({
         componentServiceIds: cbcComponentServices.map(service => service.id),
+        insuranceCoverage: CLASS_A_COVERAGE,
         itemId: 'hospital-service-cbc',
         localCode: 'HOSP-SVC-CBC',
         name: '血常规服务',
@@ -668,6 +677,7 @@ export function createHospitalBaseline(
         tatMinutes: 20,
         valueSetEntries,
       }), ...cbcComponentServices, hospitalService({
+        insuranceCoverage: CLASS_B_10_COVERAGE,
         itemId: 'hospital-service-hba1c',
         localCode: 'HOSP-SVC-HBA1C',
         name: '糖化血红蛋白服务',
@@ -679,6 +689,7 @@ export function createHospitalBaseline(
         valueSetEntries,
       }), hospitalService({
         executingDepartmentId: 'department-general-medicine',
+        insuranceCoverage: CLASS_B_10_COVERAGE,
         itemId: 'hospital-service-fundus',
         localCode: 'HOSP-SVC-FUNDUS',
         name: '眼底检查服务',
@@ -690,6 +701,7 @@ export function createHospitalBaseline(
         valueSetEntries,
       }), hospitalService({
         executingDepartmentId: 'department-general-medicine',
+        insuranceCoverage: CLASS_C_COVERAGE,
         itemId: 'hospital-service-diabetes-education',
         localCode: 'HOSP-SVC-DIABETES-EDUCATION',
         name: '糖尿病健康教育',

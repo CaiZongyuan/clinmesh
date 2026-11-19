@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
-import { inpatientDischargeInputSchema, inpatientDischargeResponseSchema, inpatientSettlementPreviewSchema,
+import { inpatientDischargeInputSchema, inpatientDischargeIssueInputSchema, inpatientDischargeResponseSchema, inpatientSettlementPreviewSchema,
   inpatientSettleInputSchema, inpatientSettlementResponseSchema, inpatientDepartInputSchema, inpatientDischargeEventsSchema } from '@clinmesh/contracts/inpatient-discharge'
 import type { ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
@@ -28,7 +28,10 @@ export class InpatientDischarge {
     return events.filter(event => event.kind === 'depart' && !reversed.has(event.id)).at(-1)
   }
   action(context: ActorContext, raw: unknown, idempotencyKey: string, action: 'issue' | 'depart' | 'recall' | 'clear') {
-    const input = (action === 'depart' ? inpatientDepartInputSchema : inpatientDischargeInputSchema).parse(raw)
+    const issueInput = action === 'issue' ? inpatientDischargeIssueInputSchema.parse(raw) : undefined
+    const input = action === 'depart'
+      ? inpatientDepartInputSchema.parse(raw)
+      : issueInput ?? inpatientDischargeInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: `inpatient.discharge.${action}`,
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientDischargeResponseSchema.shape.data,
       authorize: () => this.owner.assertRole(context, ['depart','clear'].includes(action) ? ['ward-nurse'] : ['inpatient-doctor']) }, () => {
@@ -43,12 +46,21 @@ export class InpatientDischarge {
       const departure = action === 'recall' ? this.events(context, input.admissionId).filter(event => event.kind === 'depart').at(-1) : undefined
       if (action === 'recall' && (departure === undefined || departure.bedId !== admission.bedId)) throw new InpatientError('INPATIENT_RECALL_WINDOW_CLOSED', '原床未保留，不能召回')
       if (action === 'depart') this.assertOrdersFinished(context, input.admissionId)
+      const id = uuidv7(), now = this.owner.virtualTime(context)
+      const quality = action === 'issue'
+        ? this.owner.workflow.clinicalQuality.enforce(context, {
+            check: this.owner.workflow.clinicalQuality.inpatientDischarge(this.owner, context, input.admissionId, admission.patientId, now),
+            operation: 'inpatient.discharge.issue',
+            override: issueInput?.clinicalOverride,
+            patientId: admission.patientId,
+            subjectReference: `Encounter/${input.admissionId}`,
+          })
+        : { effects: [] }
       if (action === 'issue') this.owner.guidelineAdvice.captureDischargeFreeze(context, input.admissionId)
       if (action === 'recall') this.owner.guidelineAdvice.clearDischargeFreeze(context, input.admissionId)
       const changed = this.owner.database.driver.prepare("UPDATE inpatient_admission SET status=? WHERE workspace_id=? AND epoch=? AND admission_id=? AND status=? AND financial_status=?")
         .run(to, context.workspaceId, context.epoch, input.admissionId, from, action === 'clear' ? 'settled' : 'open')
       if (changed.changes !== 1) throw new InpatientError('INPATIENT_STATE_CONFLICT', '住院状态已变化')
-      const id = uuidv7(), now = this.owner.virtualTime(context)
       if (action === 'clear') this.owner.database.driver.prepare('UPDATE inpatient_bed_occupancy SET ended_at=? WHERE workspace_id=? AND epoch=? AND admission_id=? AND ended_at IS NULL').run(now, context.workspaceId, context.epoch, input.admissionId)
       this.owner.database.driver.prepare('INSERT INTO inpatient_discharge_event VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
         .run(context.workspaceId, context.epoch, id, input.admissionId, action, input.reason, admission.bedId,
@@ -63,10 +75,15 @@ export class InpatientDischarge {
         location: action === 'depart' ? locations.map(location => location.status === 'active' ? { ...location, status: 'completed', period: { ...location.period, end: now } } : location)
           : action === 'recall' ? [...locations, { location: { reference: `Location/${admission.bedId}` }, status: 'active', period: { start: now } }] : locations,
       }, input.encounterVersion)
-      return { data: this.owner.detail(context, input.admissionId), effects: [
-        { kind: 'updated' as const, reference: `Encounter/${input.admissionId}`, versionId: encounter.meta!.versionId! },
-        { kind: 'created' as const, reference: `InpatientDischargeEvent/${id}`, versionId: '1' },
-      ] }
+      return {
+        data: this.owner.detail(context, input.admissionId),
+        effects: [
+          { kind: 'updated' as const, reference: `Encounter/${input.admissionId}`, versionId: encounter.meta!.versionId! },
+          { kind: 'created' as const, reference: `InpatientDischargeEvent/${id}`, versionId: '1' },
+          ...quality.effects,
+        ],
+        ...(quality.receipt === undefined ? {} : { clinicalQuality: quality.receipt }),
+      }
     })
   }
   #assertNoPending(context: ActorContext, admissionId: string) {

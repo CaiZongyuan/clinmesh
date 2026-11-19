@@ -26,6 +26,12 @@ import {
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { resolveObservationMapping, syntheticInvestigationReferenceRange } from './scenario-data/reference-coding-package.ts'
 import {
+  buildTruthStagePriority,
+  readTruthStage,
+  selectStageBucket,
+  type CaseTruthStage,
+} from './scenario-data/truth-stage.ts'
+import {
   AdultReferenceApplicabilityError,
   adultReferenceGenerationPolicyVersion,
   adultReferenceRange,
@@ -90,10 +96,13 @@ const serviceAgentOutputSchema = z.object({
 }).strict()
 
 const requestRowSchema = z.object({
+  admission_id: z.string().min(1).nullable(),
   clinical_case_id: z.string().min(1),
   authored_at: z.iso.datetime({ offset: true }),
   catalog_item_id: z.string().min(1),
   encounter_id: z.string().min(1),
+  is_revisit: z.number().int().min(0).max(1),
+  outpatient_case_id: z.string().min(1).nullable(),
   patient_id: z.string().min(1),
   profile_id: z.string().min(1).nullable(),
   profile_revision: z.number().int().positive().nullable(),
@@ -112,6 +121,8 @@ const materializedRequestRowSchema = requestRowSchema.extend({
 })
 
 const caseMaterializationRowSchema = z.object({
+  admission_id: z.string().min(1).nullable(),
+  is_revisit: z.number().int().min(0).max(1),
   synthetic_case_id: z.string().min(1),
 }).strict()
 
@@ -244,7 +255,10 @@ const analyteUnitConversions: ReadonlyArray<{
 }> = [
   {
     codings: analyteCodings(['2160-0', '14682-9'], ['1700404A']),
-    conversions: [{ convert: value => value * 88.4, from: 'mg/dL', to: 'umol/L' }],
+    conversions: [
+      { convert: value => value * 88.4, from: 'mg/dL', to: 'umol/L' },
+      { convert: value => Number((value / 88.4).toFixed(2)), from: 'umol/L', to: 'mg/dL' },
+    ],
   },
   {
     codings: analyteCodings(['2093-3', '14647-2', '2085-9', '14646-4', '2089-1', '13457-7', '18262-6'], ['2000104A', '2000304A', '2000404A']),
@@ -481,33 +495,49 @@ function evidence(resources: Resource[]) {
     })
 }
 
+function codingKey(coding: { code: string; system: string }): string {
+  return `${coding.system}|${coding.code}`
+}
+
+function hasPriorCoding(
+  priorCodings: ReadonlySet<string>,
+  codings: ReadonlyArray<{ code: string; system: string }>,
+): boolean {
+  return codings.some(coding => priorCodings.has(codingKey(coding)))
+}
+
+function selectExactObservation(
+  hiddenResources: Resource[],
+  codings: ReadonlyArray<{ code: string; system: string }>,
+  stagePriority: readonly (CaseTruthStage | undefined)[],
+): { observation: Resource; stage: CaseTruthStage | undefined } | undefined {
+  const matches = hiddenResources
+    .filter(resource => resource.resourceType === 'Observation')
+    .filter(resource => conceptCodings(resource).some(coding => codings.some(candidate => (
+      coding.system === candidate.system && coding.code === candidate.code
+    ))))
+  const bucket = selectStageBucket(matches, readTruthStage, stagePriority)
+  if (bucket === undefined) return undefined
+  const observation = bucket.items.toSorted((left, right) => (
+    clinicalTimestamp(right) - clinicalTimestamp(left) || left.id.localeCompare(right.id)
+  ))[0]
+  return observation === undefined ? undefined : { observation, stage: bucket.stage }
+}
+
 function exactObservation(
   hiddenResources: Resource[],
   requestedConcept: RequestedConcept,
-): Resource | undefined {
-  return hiddenResources
-    .filter(resource => resource.resourceType === 'Observation')
-    .filter(resource => conceptCodings(resource).some(coding => (
-      coding.system === requestedConcept.system && coding.code === requestedConcept.code
-    )))
-    .toSorted((left, right) => (
-      clinicalTimestamp(right) - clinicalTimestamp(left) || left.id.localeCompare(right.id)
-    ))[0]
+  stagePriority: readonly (CaseTruthStage | undefined)[] = ['initial', undefined],
+): { observation: Resource; stage: CaseTruthStage | undefined } | undefined {
+  return selectExactObservation(hiddenResources, [requestedConcept], stagePriority)
 }
 
 function exactObservationForDefinition(
   hiddenResources: Resource[],
   definition: ServiceResultDefinition,
-): Resource | undefined {
-  const codings = [definition.referenceConcept, ...definition.alternateCodings]
-  return hiddenResources
-    .filter(resource => resource.resourceType === 'Observation')
-    .filter(resource => conceptCodings(resource).some(coding => codings.some(candidate => (
-      coding.system === candidate.system && coding.code === candidate.code
-    ))))
-    .toSorted((left, right) => (
-      clinicalTimestamp(right) - clinicalTimestamp(left) || left.id.localeCompare(right.id)
-    ))[0]
+  stagePriority: readonly (CaseTruthStage | undefined)[] = ['initial', undefined],
+): { observation: Resource; stage: CaseTruthStage | undefined } | undefined {
+  return selectExactObservation(hiddenResources, [definition.referenceConcept, ...definition.alternateCodings], stagePriority)
 }
 
 function agentLaboratoryMetadata(
@@ -569,8 +599,15 @@ export class InvestigationService {
   ): InvestigationGenerationCapability {
     const materialization = caseMaterializationRowSchema.optional().parse(
       this.#database.driver.prepare(`
-        SELECT synthetic_case_id FROM clinical_request_source
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND synthetic_case_id IS NOT NULL
+        SELECT source.admission_id, source.synthetic_case_id,
+          CASE WHEN revisit.source_case_id IS NOT NULL THEN 1 ELSE 0 END AS is_revisit
+        FROM clinical_request_source AS source
+        LEFT JOIN outpatient_case_source AS revisit
+          ON revisit.workspace_id = source.workspace_id
+         AND revisit.epoch = source.epoch
+         AND revisit.outpatient_case_id = source.outpatient_case_id
+        WHERE source.workspace_id = ? AND source.epoch = ? AND source.case_id = ?
+          AND source.synthetic_case_id IS NOT NULL
       `).get(workspaceId, epoch, outpatientCaseId),
     )
     if (materialization === undefined) {
@@ -578,13 +615,19 @@ export class InvestigationService {
     }
     const truth = this.#cases.getTruthForSimulator(workspaceId, materialization.synthetic_case_id)
     if (truth === undefined) return { reason: 'no-case-source', supported: false }
+    const stagePriority = buildTruthStagePriority({
+      isInpatient: materialization.admission_id !== null,
+      isRepeat: false,
+      isRevisit: materialization.is_revisit === 1,
+    })
     const exact = exactObservation(
       truth.hiddenResources.map(item => investigationResourceSchema.parse(item.resource)),
       concept,
+      stagePriority,
     )
     if (exact !== undefined) {
       try {
-        this.#contentFromExactObservation(concept, exact)
+        this.#contentFromExactObservation(concept, exact.observation)
         const syntheticCase = this.#cases.get(workspaceId, materialization.synthetic_case_id)
         const profile = syntheticCase === undefined ? undefined : this.#profiles.getRevision(workspaceId, syntheticCase.profileId, syntheticCase.profileRevision)
         return { source: profile?.source.providerId === 'clinmesh-authored' ? 'case-truth-exact' : 'synthea-exact', supported: true }
@@ -619,11 +662,15 @@ export class InvestigationService {
     const row = requestRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT request.authored_at, request.catalog_item_id, request.reference_json,
         request.result_snapshot_id, request.service_snapshot_json,
-        source.case_id AS clinical_case_id, source.encounter_id, source.patient_id, source.synthetic_case_id,
-        source.synthetic_case_revision, source.profile_id, source.profile_revision
+        source.admission_id, source.case_id AS clinical_case_id, source.encounter_id,
+        source.outpatient_case_id, source.patient_id, source.synthetic_case_id,
+        source.synthetic_case_revision, source.profile_id, source.profile_revision,
+        CASE WHEN revisit.source_case_id IS NOT NULL THEN 1 ELSE 0 END AS is_revisit
       FROM laboratory_request AS request
       JOIN clinical_request_source source ON source.workspace_id=request.workspace_id
         AND source.epoch=request.epoch AND source.case_id=request.case_id
+      LEFT JOIN outpatient_case_source revisit ON revisit.workspace_id=source.workspace_id
+        AND revisit.epoch=source.epoch AND revisit.outpatient_case_id=source.outpatient_case_id
       WHERE request.workspace_id = ? AND request.epoch = ? AND request.request_id = ?
         AND request.request_kind = 'laboratory'
     `).get(workspaceId, epoch, requestId))
@@ -653,12 +700,6 @@ export class InvestigationService {
         signal,
       )
     }
-    const existing = this.#results.getByCaseItem(
-      workspaceId,
-      materializedRow.synthetic_case_id,
-      materializedRow.catalog_item_id,
-    )
-    if (existing !== undefined) return existing
     this.#assertRequestCurrent(workspaceId, epoch, requestId)
     const requestedConcept = referenceConceptSnapshotSchema.parse(JSON.parse(materializedRow.reference_json))
     const syntheticCase = this.#cases.get(workspaceId, materializedRow.synthetic_case_id)
@@ -674,23 +715,41 @@ export class InvestigationService {
     const hiddenResources = truth.hiddenResources.map(item => (
       investigationResourceSchema.parse(item.resource)
     ))
-    const exact = exactObservation(hiddenResources, requestedConcept)
+    const priorCodings = this.#priorEncounterObservationCodings(workspaceId, epoch, materializedRow.encounter_id)
+    const isRepeat = hasPriorCoding(priorCodings, [requestedConcept])
+    const stagePriority = buildTruthStagePriority({
+      isInpatient: materializedRow.admission_id !== null,
+      isRepeat,
+      isRevisit: materializedRow.is_revisit === 1,
+    })
+    const exactMatch = exactObservation(hiddenResources, requestedConcept, stagePriority)
     const baseInput = {
       caseRevision: materializedRow.synthetic_case_revision,
       demographics: {
         birthDate: profile.demographics.birthDate,
         gender: profile.demographics.gender,
       },
+      ...(materializedRow.is_revisit === 1 ? { isRevisit: true } : {}),
+      ...(isRepeat ? { isRepeat: true } : {}),
       requestedConcept,
       sourceHash: syntheticCase.sourceHash,
+      ...(exactMatch?.stage === undefined ? {} : { truthStage: exactMatch.stage }),
     }
-    if (exact !== undefined) {
-      const content = this.#contentFromExactObservation(requestedConcept, exact)
+    const exactInputHash = canonicalJsonHash(baseInput)
+    const existingByEvidence = this.#results.getByEvidence(
+      workspaceId,
+      materializedRow.synthetic_case_id,
+      materializedRow.catalog_item_id,
+      exactInputHash,
+    )
+    if (existingByEvidence !== undefined) return existingByEvidence
+    if (exactMatch !== undefined) {
+      const content = this.#contentFromExactObservation(requestedConcept, exactMatch.observation)
       return this.#freeze({
         caseId: materializedRow.synthetic_case_id,
         catalogItemId: materializedRow.catalog_item_id,
         content,
-        inputHash: canonicalJsonHash(baseInput),
+        inputHash: exactInputHash,
         model: null,
         promptHash: null,
         promptVersion: null,
@@ -720,6 +779,13 @@ export class InvestigationService {
       }),
     }
     const inputHash = canonicalJsonHash(payload)
+    const existingAgentSnapshot = this.#results.getByEvidence(
+      workspaceId,
+      materializedRow.synthetic_case_id,
+      materializedRow.catalog_item_id,
+      inputHash,
+    )
+    if (existingAgentSnapshot !== undefined) return existingAgentSnapshot
     const validateInterpretation = (output: z.infer<typeof agentOutputSchema>) => {
       if (output.interpretation !== interpretationFor(output.value, referenceRange)) {
         throw new InvestigationGenerationError(
@@ -817,18 +883,29 @@ export class InvestigationService {
         throw new InvestigationGenerationError('INVESTIGATION_OUTPUT_INVALID', error.message)
       }
     }
+    const priorCodings = this.#priorEncounterObservationCodings(workspaceId, epoch, row.encounter_id)
     const exactResults = new Map<string, InvestigationResultContent['results'][number]>()
+    const selectedTruthStages: Array<[string, CaseTruthStage]> = []
     for (const definition of service.reportDefinition.results) {
-      const exact = exactObservationForDefinition(hiddenResources, definition)
-      if (exact === undefined) continue
+      const definitionCodings = [definition.referenceConcept, ...definition.alternateCodings]
+      const stagePriority = buildTruthStagePriority({
+        isInpatient: row.admission_id !== null,
+        isRepeat: hasPriorCoding(priorCodings, definitionCodings),
+        isRevisit: row.is_revisit === 1,
+      })
+      const exactMatch = exactObservationForDefinition(hiddenResources, definition, stagePriority)
+      if (exactMatch === undefined) continue
       const exactResult = this.#contentFromServiceObservation(
         definition,
-        exact,
+        exactMatch.observation,
         adultRules.get(definition.referenceConcept.id),
       )
       exactResults.set(definition.referenceConcept.code, service.sourceDataset === undefined
         ? exactResult
         : { ...exactResult, source: 'case-truth-exact' })
+      if (exactMatch.stage !== undefined) {
+        selectedTruthStages.push([definition.referenceConcept.code, exactMatch.stage])
+      }
     }
     const formalEvidence = this.#formalEvidence(
       workspaceId,
@@ -850,6 +927,7 @@ export class InvestigationService {
       formalEvidence,
       requestedService: service,
       selectedAdultRules: [...adultRules.entries()],
+      ...(selectedTruthStages.length === 0 ? {} : { selectedTruthStages }),
       sourceHash: syntheticCase.sourceHash,
     }
     const agentMissing = missing.filter(
@@ -1124,6 +1202,31 @@ export class InvestigationService {
         generated,
       )] as const
     }))
+  }
+
+  #priorEncounterObservationCodings(
+    workspaceId: string,
+    epoch: string,
+    encounterId: string,
+  ): Set<string> {
+    const rows = z.array(z.object({ content_json: z.string() }).strict()).parse(
+      this.#database.driver.prepare(`
+        SELECT content_json
+        FROM fhir_resource
+        WHERE workspace_id = ? AND epoch = ? AND deleted = 0
+          AND resource_type = 'Observation'
+          AND json_extract(content_json, '$.encounter.reference') = ?
+          AND json_extract(content_json, '$.status') IN ('final', 'amended', 'corrected')
+      `).all(workspaceId, epoch, `Encounter/${encounterId}`),
+    )
+    const codings = new Set<string>()
+    for (const row of rows) {
+      const resource = investigationResourceSchema.parse(JSON.parse(row.content_json))
+      for (const coding of conceptCodings(resource)) {
+        codings.add(codingKey(coding))
+      }
+    }
+    return codings
   }
 
   #formalEvidence(

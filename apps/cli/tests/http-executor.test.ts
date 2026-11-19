@@ -309,4 +309,43 @@ describe('HIS HTTP operation executor', () => {
       },
     })
   })
+
+  it('preserves structured clinicalQuality payloads on 409 clinical quality responses', async () => {
+    const clinicalQuality = {
+      evaluatedAt: '2026-11-18T10:00:00+08:00',
+      gate: 'outpatient-completion' as const,
+      redLines: [],
+      alerts: [{
+        code: 'CHEST_PAIN_WORKUP_INCOMPLETE' as const,
+        tier: 'alert' as const,
+        message: '急性胸痛尚未完成心电图或心肌损伤标志物评估',
+        evidence: [{ label: '主诊断 R07.400', reference: 'Condition/cond-1' }],
+      }],
+    }
+    const execute = createHttpExecutor({
+      baseUrl: 'http://127.0.0.1:51868',
+      credential: { kind: 'agent', token: 'cma_synthetic_task_token' },
+      fetch: vi.fn().mockResolvedValue(Response.json({
+        error: {
+          code: 'CLINICAL_QUALITY_ALERT',
+          message: clinicalQuality.alerts[0]!.message,
+          clinicalQuality,
+        },
+      }, { status: 409 })),
+    })
+
+    await expect(execute('encounter.complete', {
+      encounterId: 'encounter-1',
+      encounterVersion: '4',
+    }, { idempotencyKey: 'complete-quality-alert-1' })).rejects.toMatchObject({
+      exitCode: 5,
+      problem: {
+        code: 'CLINICAL_QUALITY_ALERT',
+        clinicalQuality,
+        outcome: 'definitely_not_sent',
+        retryable: false,
+        type: 'conflict',
+      },
+    })
+  })
 })

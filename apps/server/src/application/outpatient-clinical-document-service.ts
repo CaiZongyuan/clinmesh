@@ -1,3 +1,5 @@
+import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
+import type { ClinicalQualityService } from './clinical-quality-service.ts'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
 import {
   cancelClinicalDocumentSignResponseSchema,
@@ -57,6 +59,7 @@ import {
   type OutpatientWorkflowContext,
 } from './outpatient-workflow-context.ts'
 import { WorkflowError } from './workflow-error.ts'
+import { freezeCatalogCoverageJson, readConfigInsuranceCoverage } from './catalog-insurance-coverage.ts'
 
 const clinicalDocumentSectionSystem = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/clinical-document-section'
 const clinicalDocumentBundleIdentifierSystem = 'https://caizongyuan.github.io/clinmesh/fhir/identifier/clinical-document-bundle'
@@ -201,6 +204,7 @@ function legacyClinicalDocumentFromComposition(resource: FhirResource) {
 }
 
 export interface OutpatientClinicalDocumentHost {
+  readonly clinicalQuality: ClinicalQualityService
   readonly consultationRecording: ConsultationRecordingService
   readonly qualityControl: ClinicalDocumentQualityControl
   assertMedicationAllergies(
@@ -464,6 +468,7 @@ export class OutpatientClinicalDocumentService {
   }
 
   completeEncounter(input: {
+    clinicalOverride?: ClinicalOverrideInput | undefined
     context: ActorContext
     encounterId: string
     expectedVersions: Record<string, string>
@@ -485,7 +490,7 @@ export class OutpatientClinicalDocumentService {
       dataSchema: encounterCompletionResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
-      input: { encounterId: input.encounterId },
+      input: { encounterId: input.encounterId, ...(input.clinicalOverride === undefined ? {} : { clinicalOverride: input.clinicalOverride }) },
       operation: 'encounter.complete',
     }, transaction => {
       this.#context.assertExpectedVersions(input.expectedVersions, [expectedReference])
@@ -501,6 +506,14 @@ export class OutpatientClinicalDocumentService {
             : `完诊条件未满足：${missing.join('；')}`,
         )
       }
+      const outpatientCase = this.#context.caseByEncounter(input.context, input.encounterId)
+      const quality = this.#host.clinicalQuality.enforce(input.context, {
+        check: this.#host.clinicalQuality.outpatientCompletion(input.context, { caseId: outpatientCase.case_id, encounterId: input.encounterId }),
+        operation: 'encounter.complete',
+        override: input.clinicalOverride,
+        patientId: outpatientCase.patient_id,
+        subjectReference: expectedReference,
+      })
       const encounter = encounterCompletionResourceSchema.parse(
         transaction.fhir.read(input.context, 'Encounter', input.encounterId),
       )
@@ -526,7 +539,8 @@ export class OutpatientClinicalDocumentService {
           kind: 'updated' as const,
           reference: `Encounter/${input.encounterId}`,
           versionId: completedEncounter.meta.versionId,
-        }],
+        }, ...quality.effects],
+        ...(quality.receipt === undefined ? {} : { clinicalQuality: quality.receipt }),
       }
     })
   }
@@ -1219,7 +1233,7 @@ export class OutpatientClinicalDocumentService {
       const medicationRows = this.#context.database.driver.prepare(`
         SELECT item.medication_request_id, item.medication_id, item.quantity,
           item.dose_text, item.frequency_code, item.course_days, catalog.name_zh, catalog.name_en,
-          catalog.code, catalog.config_json, catalog.price_fen
+          catalog.code, catalog.config_json, catalog.price_fen, catalog.version
         FROM prescription_item AS item
         JOIN outpatient_catalog AS catalog
           ON catalog.workspace_id = item.workspace_id
@@ -1241,6 +1255,7 @@ export class OutpatientClinicalDocumentService {
         name_zh: string
         price_fen: number
         quantity: number
+        version: number
       }>
       this.#host.assertMedicationCatalogRules(medicationRows.map(medication => ({
         catalogItemId: medication.medication_id,
@@ -1280,6 +1295,25 @@ export class OutpatientClinicalDocumentService {
         SET status = 'signed', version = version + 1, signed_at = ?
         WHERE workspace_id = ? AND epoch = ? AND prescription_id = ? AND status = 'draft'
       `).run(now, input.context.workspaceId, input.context.epoch, preview.prescription_id)
+      const freezeItemCoverage = this.#context.database.driver.prepare(`
+        UPDATE prescription_item
+        SET unit_price_fen = ?, coverage_json = ?
+        WHERE workspace_id = ? AND epoch = ? AND prescription_id = ? AND medication_request_id = ?
+      `)
+      for (const medication of medicationRows) {
+        freezeItemCoverage.run(
+          medication.price_fen,
+          freezeCatalogCoverageJson(
+            `synthetic-med:${medication.medication_id}`,
+            `item-v${medication.version}`,
+            readConfigInsuranceCoverage(medication.config_json),
+          ),
+          input.context.workspaceId,
+          input.context.epoch,
+          preview.prescription_id,
+          medication.medication_request_id,
+        )
+      }
       const chargeItemId = uuidv7()
       const chargeId = uuidv7()
       const chargeItem = transaction.fhir.create(input.context, {

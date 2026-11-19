@@ -1,3 +1,4 @@
+import type { ClinicalQualityCheck } from '@clinmesh/contracts/clinical-quality'
 import { getHisOperation } from '@clinmesh/contracts/his-operations'
 import { apiErrorSchema, correlationIdSchema } from '@clinmesh/contracts/his'
 import { operationOutcomeSchema } from '@clinmesh/contracts/fhir'
@@ -25,6 +26,7 @@ export interface HttpExecutionContext {
 export class HttpOperationError extends Error {
   readonly exitCode: number
   readonly problem: {
+    clinicalQuality?: ClinicalQualityCheck
     code: string
     conflict?: unknown
     correlationId?: string
@@ -32,6 +34,7 @@ export class HttpOperationError extends Error {
     message: string
     operationId: string
     outcome: 'ambiguous' | 'definitely_not_sent'
+    reason?: string
     retryable: boolean
     type: string
   }
@@ -163,10 +166,13 @@ function httpResponseError(
           ? { exitCode: 5, type: 'conflict' }
           : { exitCode: 1, type: 'api' }
   return new HttpOperationError(classification.exitCode, {
+    ...(parsed.success && parsed.data.error.clinicalQuality !== undefined
+      ? { clinicalQuality: parsed.data.error.clinicalQuality }
+      : {}),
     code: serverError.code,
     ...(correlationId === undefined ? {} : { correlationId }),
-    ...('conflict' in serverError && serverError.conflict !== undefined
-      ? { conflict: serverError.conflict }
+    ...(parsed.success && parsed.data.error.conflict !== undefined
+      ? { conflict: parsed.data.error.conflict }
       : {}),
     ...(execution?.idempotencyKey === undefined
       ? {}
@@ -174,8 +180,8 @@ function httpResponseError(
     message: serverError.message,
     operationId,
     outcome: 'definitely_not_sent',
-    ...('reason' in serverError && serverError.reason !== undefined
-      ? { reason: serverError.reason }
+    ...(parsed.success && parsed.data.error.reason !== undefined
+      ? { reason: parsed.data.error.reason }
       : {}),
     retryable: response.status === 429,
     type: classification.type,

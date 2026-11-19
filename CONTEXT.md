@@ -80,6 +80,10 @@ _Avoid_: Clinical Record, answer key endpoint, Visible Source History
 绑定一个不可变 Profile Revision、Case Truth、病例类型和可见历史清单的合成病例实例。普通业务只能开始一次；管理员可在新 Epoch 中重放同一不可变 revision。
 _Avoid_: Synthetic Patient Profile, local Encounter, Scenario Dataset
 
+**Authored Case Pack**:
+一组版本固定、可按统一编译边界生成多个 `Synthetic Patient Profile`、`Synthetic Case Instance`、`Visible Source History`、结构化分阶段 `Case Truth` 与模板 `Patient Persona` 的作者合成病例集合。准备只建立病例来源与就绪状态，不产生本院诊断、检查检验报告、医嘱、手术或费用。
+_Avoid_: Seed script, fixture dump, runtime clinical record, Synthea batch
+
 **Patient Persona**:
 扮演患者所依据的版本固定档案，包含性格、表达方式、健康素养、症状体验、主诉、开场陈述和自知病史。它描述患者知道的自身情况，不直接命名尚未获知的本次疾病。
 _Avoid_: Case Truth, diagnosis note, chat transcript
@@ -226,6 +230,14 @@ _Avoid_: Model prediction, manual calculator override, diagnosis
 经人工核对来源身份、版本、原件哈希、物理页码、关键原文与限定语完整性及适用范围的临床循证专题导航单元，同时关联对应场景需要核对的患者客观指标与缺项。它用于定位并校验现行指南库原文，自身导航文字不构成临床结论证据。
 _Avoid_: Free-text search query, unverified summary, standalone clinical rule
 
+**Clinical Quality Alert**:
+在处方／医嘱签发、门诊完诊、冠脉介入计划与出院病案等临床责任节点，依据已确认正式临床事实与确定性生理指标发现的临床路径或指南偏离警示。它不同于绝对禁止越权的药事与生理安全红线，允许负责医生优先补齐诊疗依据或提交受审计的 Clinical Override，但不替代文书完备性校对或 DRG 支付参考。
+_Avoid_: Hard safety red-line block, document quality issue, DRG payment warning
+
+**Clinical Override**:
+负责医生针对特定 Clinical Quality Alert 选择受控临床原因并填写医学依据后，随原业务意图一并留存的正式越权决策记录。它与被确认的警示条目一同进入审计与回放链，但不能绕过药事与生理安全红线。
+_Avoid_: Silent bypass, unreasoned force flag, red-line exemption
+
 **Report Acknowledgement**:
 负责医生确认已查看一份已签发诊断报告的业务事实。它不改变报告内容或签发状态。
 _Avoid_: Report status, report approval, read receipt
@@ -280,6 +292,10 @@ _Avoid_: Prescription, template, execution record
 对一项本院放射服务提出的 Clinical Request，记录冻结的服务定义和检查指征。它与检验申请共用申请生命周期，但拥有独立的草稿、操作和报告结构。
 _Avoid_: Laboratory request, imaging order set, study
 
+**Functional Examination**:
+对常规十二导联心电图、经胸超声心动图等床旁或功能科室检查提出的 Clinical Request，记录冻结的 Hospital Service 定义与检查指征，由本院功能检查结果签发结构化定量指标、文字所见与诊断印象，不依赖波形或超声影像文件，并纳入 Report Acknowledgement 与完诊门禁。
+_Avoid_: Imaging Request, Laboratory test, raw waveform file, echocardiogram video
+
 **Investigation Generation Capability**:
 一个具体病例与检验项目组合能否从 Case Truth 或已配置的受限生成器产生结构化结果的能力事实。它不等同于项目存在于全局 Reference 目录。
 _Avoid_: Reference catalog availability, Laboratory Request status, generated result
@@ -289,8 +305,8 @@ _Avoid_: Reference catalog availability, Laboratory Request status, generated re
 _Avoid_: Order set template, prescription, execution plan
 
 **Order Set Template**:
-可复用但尚未下达的临床请求模板。
-_Avoid_: Clinical Request, Request Orchestration
+版本固定的专病临床请求组合定义，可结合患者当前有效过敏、肾功能指标与结构化生命体征筛选候选、剔除禁忌项并标注缺项待核实原因，产出待医生核对确认的医嘱或检查建议草稿。它不代表已下达的正式请求，调用本身也不产生收费、已签发申请或已生效处方与医嘱。
+_Avoid_: Clinical Request, Request Orchestration, automatic order execution
 
 **Prescription**:
 按处方号和业务规则归组、用于审核、收费与调剂的一组药品请求。

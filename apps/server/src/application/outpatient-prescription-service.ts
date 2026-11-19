@@ -1,3 +1,4 @@
+import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import { medicationCombinationConflict, medicationRegimenDoseAllowed, medicationQuantityAllowed, medicationIndicationMatches } from '@clinmesh/core/medication-safety'
 import {
   confirmNoMedicationResponseSchema,
@@ -54,9 +55,12 @@ import {
   type OutpatientPrescriptionTransactionPort,
   type OutpatientWorkflowContext,
 } from './outpatient-workflow-context.ts'
+import type { ClinicalQualityService } from './clinical-quality-service.ts'
+import { freezeCatalogCoverageJson, readConfigInsuranceCoverage } from './catalog-insurance-coverage.ts'
 import { WorkflowError } from './workflow-error.ts'
 
 export interface OutpatientPrescriptionHost {
+  readonly clinicalQuality: ClinicalQualityService
   completeScenarioIfReady(
     context: ActorContext,
     now?: string,
@@ -313,6 +317,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       input.context,
       input.items,
       false,
+      outpatientCase.patient_id,
     )
     const current = prescriptionDraftStateRowSchema.optional().parse(
       this.#context.database.driver.prepare(`
@@ -503,6 +508,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
   }
 
   issuePrescription(input: {
+    clinicalOverride?: ClinicalOverrideInput | undefined
     context: ActorContext
     encounterId: string
     expectedDraftVersion: number
@@ -517,17 +523,20 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       input: {
         encounterId: input.encounterId,
         expectedDraftVersion: input.expectedDraftVersion,
+        ...(input.clinicalOverride === undefined ? {} : { clinicalOverride: input.clinicalOverride }),
       },
       operation: 'encounter.issue-prescription',
     }, transaction => this.applyIssuePrescription(transaction, input))
   }
 
   applyIssuePrescription(transaction: CommandTransaction, input: {
+    clinicalOverride?: ClinicalOverrideInput | undefined
     context: ActorContext
     encounterId: string
     expectedDraftVersion: number
     expectedVersions: Record<string, string>
     idempotencyKey: string
+    operation?: 'encounter.issue-prescription' | 'doctor.recommendations.confirm' | undefined
   }) {
     this.#context.assertRole(input.context, ['outpatient-doctor'])
     this.assertPrescriptionConclusionSupported(input.context)
@@ -578,6 +587,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       input.context,
       draft.items,
       true,
+      outpatientCase.patient_id,
     )
     this.assertMedicationAllergies(
       input.context,
@@ -608,6 +618,18 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         )
       }
     }
+    const quality = this.#host.clinicalQuality.enforce(input.context, {
+      check: this.#host.clinicalQuality.outpatientPrescription(input.context, {
+        caseId: outpatientCase.case_id,
+        patientId: outpatientCase.patient_id,
+        diagnosisCodes: confirmedCodes,
+        medications: medications.filter(medication => !medication.external).map(medication => this.#qualityMedication(input.context, medication)),
+      }),
+      operation: input.operation ?? 'encounter.issue-prescription',
+      override: input.clinicalOverride,
+      patientId: outpatientCase.patient_id,
+      subjectReference: `Encounter/${input.encounterId}`,
+    })
     const prescriptionId = uuidv7()
     const authoredAt = this.#context.virtualTime(input.context)
     const prescriptionCount = countRowSchema.parse(this.#context.database.driver.prepare(`
@@ -646,8 +668,8 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       INSERT INTO prescription_item (
         workspace_id, epoch, prescription_id, medication_request_id,
         medication_id, medication_snapshot_json, quantity, dose_text,
-        frequency_code, course_days
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        frequency_code, course_days, unit_price_fen, coverage_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     const issuedItems = medications.map((medication) => {
       const medicationResourceId = medication.external ? uuidv7() : medication.catalogItemId
@@ -687,6 +709,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         authoredOn: authoredAt,
         requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
         dosageInstruction: [{
+          ...(medication.instructions === undefined ? {} : { patientInstruction: medication.instructions }),
           text: `${medication.doseText} ${medication.frequencyCode} for ${medication.courseDays} days`,
           timing: {
             repeat: {
@@ -723,6 +746,14 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         medication.doseText,
         medication.frequencyCode,
         medication.courseDays,
+        medication.external ? 0 : medication.catalog.price_fen,
+        medication.external
+          ? null
+          : freezeCatalogCoverageJson(
+              `synthetic-med:${medication.catalogItemId}`,
+              `item-v${medication.catalog.version}`,
+              readConfigInsuranceCoverage(medication.catalog.config_json),
+            ),
       )
       return {
         catalogItemId: medication.catalogItemId,
@@ -730,6 +761,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         display: medication.catalog.name_zh,
         doseText: medication.doseText,
         frequencyCode: medication.frequencyCode,
+        ...(medication.instructions === undefined ? {} : { instructions: medication.instructions }),
         medicationRequestId: medicationRequest.id,
         medicationRequestVersion: medicationRequest.meta?.versionId ?? '1',
         quantity: medication.quantity,
@@ -852,7 +884,9 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
           reference: `PrescriptionDraft/${outpatientCase.case_id}`,
           versionId: String(draftVersion),
         },
+        ...quality.effects,
       ],
+      ...(quality.receipt === undefined ? {} : { clinicalQuality: quality.receipt }),
     }
   }
 
@@ -1950,17 +1984,27 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
   assertMedicationAllergies(
     context: ActorContext,
     patientId: string,
-    medications: Array<{ code: string; name_en?: string; name_zh?: string }>,
+    medications: Array<{ code: string; item_id?: string; name_en?: string; name_zh?: string }>,
     reason?: string,
   ): void {
     const allergyCodes = this.#context.patientAllergyCodes(context, patientId)
     const contraindicated = medications.find(medication => allergyCodes.has(medication.code))
     if (contraindicated !== undefined) {
+      const check = this.#host.clinicalQuality.outpatientPrescription(context, {
+        patientId,
+        medications: medications.map(item => ({
+          catalogItemId: item.item_id ?? item.code,
+          code: item.code,
+          display: item.name_zh ?? item.name_en ?? item.code,
+          pharmacologyClasses: [],
+        })),
+      })
       throw new WorkflowError(
         'WORKFLOW_CONFLICT',
         `Medication ${contraindicated.name_en ?? contraindicated.name_zh ?? contraindicated.code} conflicts with an active allergy`,
         undefined,
         reason,
+        check.redLines.length > 0 ? check : undefined,
       )
     }
   }
@@ -2070,10 +2114,27 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
     })
   }
 
+  #qualityMedication(
+    context: ActorContext,
+    medication: PrescriptionDraftItem & { catalog: CatalogRow },
+  ) {
+    const safety = this.#host.clinicalQuality.medicationSafety(context, medication.catalogItemId)
+    return {
+      catalogItemId: medication.catalogItemId,
+      code: medication.catalog.code,
+      display: medication.catalog.name_zh,
+      doseLimits: safety?.doseLimits,
+      doseText: medication.doseText,
+      frequencyCode: medication.frequencyCode,
+      pharmacologyClasses: [...(safety?.pharmacologyClasses ?? [])],
+    }
+  }
+
   #validatedPrescriptionDraftMedications(
     context: ActorContext,
     items: PrescriptionDraftItem[],
     trustPersistedSnapshots: boolean,
+    patientId?: string,
   ): Array<PrescriptionDraftItem & { catalog: CatalogRow; external: boolean }> {
     const medications: Array<PrescriptionDraftItem & { catalog: CatalogRow; external: boolean }> = items.map((item) => {
       const { referenceProduct: untrustedProduct, ...draftItem } = item
@@ -2101,8 +2162,21 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         external: false as const,
       }
     })
+    const localMedications = medications.filter(medication => !medication.external)
+    const attachRedLines = (error: unknown): never => {
+      if (error instanceof WorkflowError) {
+        const check = this.#host.clinicalQuality.outpatientPrescription(context, {
+          patientId,
+          medications: localMedications.map(medication => this.#qualityMedication(context, medication)),
+        })
+        if (check.redLines.length > 0) {
+          throw new WorkflowError(error.code, error.message, error.conflict, error.reason, check)
+        }
+      }
+      throw error
+    }
     if (new Set(medications.map(item => item.catalogItemId)).size !== medications.length) {
-      throw new WorkflowError('WORKFLOW_CONFLICT', 'A medication can appear only once in a prescription')
+      return attachRedLines(new WorkflowError('WORKFLOW_CONFLICT', 'A medication can appear only once in a prescription'))
     }
     if (medications.some(item => item.external) && medications.some(item => !item.external)) {
       throw new WorkflowError(
@@ -2112,16 +2186,19 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         'PRESCRIPTION_MIXED_CATALOG_SOURCES',
       )
     }
-    const localMedications = medications.filter(medication => !medication.external)
-    this.assertMedicationCatalogRules(
-      localMedications.map(medication => ({
-        catalogItemId: medication.catalogItemId,
-        configJson: medication.catalog.config_json,
-        doseText: medication.doseText,
-        frequencyCode: medication.frequencyCode,
-      })),
-      'PRESCRIPTION_DOSAGE_NOT_ALLOWED',
-    )
+    try {
+      this.assertMedicationCatalogRules(
+        localMedications.map(medication => ({
+          catalogItemId: medication.catalogItemId,
+          configJson: medication.catalog.config_json,
+          doseText: medication.doseText,
+          frequencyCode: medication.frequencyCode,
+        })),
+        'PRESCRIPTION_DOSAGE_NOT_ALLOWED',
+      )
+    } catch (error) {
+      return attachRedLines(error)
+    }
     for (const medication of localMedications) {
       const rawConfig = JSON.parse(medication.catalog.config_json ?? '{}') as unknown
       if (!isOutpatientMedicationConfig(rawConfig)) {
@@ -2235,6 +2312,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       const referenceProduct = referenceMedicationProductSchema.safeParse(
         JSON.parse(item.medication_snapshot_json) as unknown,
       )
+      const instructions = request.dosageInstruction?.[0]?.patientInstruction
       return {
         catalogItemId: item.medication_id,
         courseDays: item.course_days,
@@ -2244,6 +2322,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
           ?? item.medication_id,
         doseText: item.dose_text,
         frequencyCode: item.frequency_code,
+        ...(instructions === undefined ? {} : { instructions }),
         medicationRequestId: item.medication_request_id,
         medicationRequestVersion: resource.meta?.versionId ?? '1',
         quantity: item.quantity,

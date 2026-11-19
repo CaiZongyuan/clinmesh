@@ -8,6 +8,8 @@ import {
   type LaboratoryServicePublicationJob,
   type LaboratoryServiceSnapshot,
 } from '@clinmesh/contracts/his'
+import type { CatalogInsuranceCoverage } from '@clinmesh/contracts/insurance'
+import { defaultSyntheticLaboratoryCoverage } from './catalog-insurance-coverage.ts'
 import { investigationCodeableValueSchema } from '@clinmesh/contracts/scenario'
 import {
   referenceConceptSnapshotSchema,
@@ -484,6 +486,36 @@ export class LaboratoryServicePublisher {
     }
     this.#ensureOutpatientPrices()
     this.ensureInpatientPrices()
+    this.#ensureInsuranceCoverage()
+  }
+
+  #ensureInsuranceCoverage(): void {
+    const rows = z.array(z.object({
+      code: z.string(),
+      epoch: z.string(),
+      service_id: z.string(),
+      workspace_id: z.string(),
+    })).parse(this.#database.driver.prepare(`
+      SELECT h.workspace_id, h.epoch, h.service_id,
+        json_extract(h.config_json, '$.laboratoryService.referenceConcept.code') AS code
+      FROM hospital_service_catalog h JOIN workspace w
+        ON w.workspace_id = h.workspace_id AND w.active_epoch = h.epoch
+      WHERE h.active = 1 AND json_type(h.config_json, '$.laboratoryService') = 'object'
+        AND json_type(h.config_json, '$.laboratoryService.insuranceCoverage') IS NULL
+        AND json_type(h.config_json, '$.insuranceCoverage') IS NULL
+    `).all())
+    if (rows.length === 0) return
+    const update = this.#database.driver.prepare(`
+      UPDATE hospital_service_catalog
+      SET config_json = json_set(config_json, '$.laboratoryService.insuranceCoverage', json(?), '$.insuranceCoverage', json(?))
+      WHERE workspace_id = ? AND epoch = ? AND service_id = ?
+    `)
+    this.#database.driver.transaction(() => {
+      for (const row of rows) {
+        const json = JSON.stringify(defaultSyntheticLaboratoryCoverage(row.code))
+        update.run(json, json, row.workspace_id, row.epoch, row.service_id)
+      }
+    })()
   }
 
   #ensureOutpatientPrices(): void {
@@ -688,7 +720,7 @@ export class LaboratoryServicePublisher {
 
   async enqueue(input: {
     context: ActorContext
-    entries: readonly { conceptId: string; expectedVersion: number }[]
+    entries: readonly { conceptId: string; expectedVersion: number; insuranceCoverage?: CatalogInsuranceCoverage | undefined }[]
     idempotencyKey: string
   }) {
     this.#assertAdministrator(input.context)
@@ -1353,7 +1385,7 @@ export class LaboratoryServicePublisher {
 
   #publish(
     drafts: Array<{ draft: ServiceDraft; rootConceptId?: string }>,
-    job: Pick<ClaimedLaboratoryServicePublicationJob, 'workspaceId' | 'epoch'>,
+    job: Pick<ClaimedLaboratoryServicePublicationJob, 'workspaceId' | 'epoch' | 'coverageOverrides'>,
   ) {
     const serviceIds: string[] = []
     const rootServiceIds = new Map<string, string>()
@@ -1378,11 +1410,14 @@ export class LaboratoryServicePublisher {
         lookup.get(job.workspaceId, job.epoch, item.draft.id),
       )
       const version = (current?.version ?? 0) + 1
-      const snapshot = laboratoryServiceSnapshotSchema.parse({ ...item.draft, version })
+      const overrideCoverage = item.rootConceptId === undefined ? undefined : job.coverageOverrides?.[item.rootConceptId]
+      const insuranceCoverage = overrideCoverage ?? item.draft.insuranceCoverage ?? defaultSyntheticLaboratoryCoverage(item.draft.referenceConcept.code)
+      const snapshot = laboratoryServiceSnapshotSchema.parse({ ...item.draft, insuranceCoverage, version })
       snapshot.outpatientBilling = laboratoryOutpatientPrice(snapshot)
       const config = JSON.stringify({
         availableScopes: ['outpatient', 'inpatient'],
         inpatientInvestigationBilling: inpatientLaboratoryBilling(snapshot,true),
+        insuranceCoverage,
         billingUnit: {
           code: 'ITEM',
           display: '项目',

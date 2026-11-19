@@ -35,10 +35,17 @@ import { InpatientExecutionBatch } from './inpatient-execution-batch.tsx'
 
 type Write = ReturnType<typeof useInpatientWriteIntent>
 
-/** 开立被业务规则拒绝（如适应症不符）时取服务端原因就地显示；全局提示不再改写为「目录或业务规则已变化」。 */
-export function isInpatientOrderRejection(mutation: Write['mutation']): boolean {
-  const error = mutation.error
-  return mutation.variables?.operation === 'inpatient.order.issue' && error instanceof ApiClientError && error.code === 'CATALOG_CONFLICT'
+const inlineQualityOps = new Set([
+  'inpatient.order.issue', 'inpatient.surgery.request', 'inpatient.pci-selection.confirm',
+  'inpatient.discharge.issue', 'inpatient.record.submit',
+])
+
+/** 就地处理的医嘱目录拒绝或事中临床质控拦截；全局提示不再重复弹出。 */
+export function isHandledInpatientRejection(mutation: Write['mutation']): boolean {
+  const error = mutation.error, op = mutation.variables?.operation
+  if (!(error instanceof ApiClientError) || !op) return false
+  return (op === 'inpatient.order.issue' && error.code === 'CATALOG_CONFLICT')
+    || (error.clinicalQuality !== undefined && inlineQualityOps.has(op))
 }
 
 export function InpatientClinical({ admission, investigations, session, locale, write, view = 'orders', active = true }: { view?: 'orders' | 'fees'; active?: boolean; admission: InpatientAdmission; investigations?: z.infer<typeof inpatientInvestigationsSchema> | undefined; session: SessionContext; locale: WorkspaceLocale; write: Write }): React.JSX.Element {
@@ -97,7 +104,7 @@ export function InpatientClinical({ admission, investigations, session, locale, 
         ? t('已校对 · 等药师发药', 'Verified · awaiting pharmacist')
         : t('已校对', 'Verified')
       return <InpatientItemRow key={order.id} title={order.display} badge={<Badge variant="outline">{order.duration==='long'?t('长期','Long'):t('临时','Temporary')}</Badge>}
-      metadata={<>{order.kind === 'medication' ? <><span>{t('每次 ','Per dose ')}{order.doseText}{order.doseText.replace(/\s/g, '') === `${order.doseQuantity}${order.unit}` ? null : `（${order.doseQuantity}${order.unit}）`}</span><span>{inpatientFrequencyLabel(order.frequencyCode, locale)}</span></> : <span>{t('每次 ','Per execution ')}{order.doseQuantity}{order.unit}</span>}{orderExecutions.length > 0 ? <span className="tabular-nums">{t(`已执行 ${completedExecutions}/${orderExecutions.length} 次`, `Executed ${completedExecutions}/${orderExecutions.length}`)}</span> : null}{order.surgeryExecutionId ? <span>{t('术后医嘱 · ','Postoperative order · ')}{surgery.data?.executions.find(item=>item.id===order.surgeryExecutionId)?.actualProcedure.coding.display ?? t('已关联手术', 'Linked procedure')}</span> : null}</>}
+      metadata={<>{order.kind === 'medication' ? <><span>{t('每次 ','Per dose ')}{order.doseText}{order.doseText.replace(/\s/g, '') === `${order.doseQuantity}${order.unit}` ? null : `（${order.doseQuantity}${order.unit}）`}</span><span>{inpatientFrequencyLabel(order.frequencyCode, locale)}{order.instructions ? ` · ${order.instructions}` : ''}</span></> : <span>{t('每次 ','Per execution ')}{order.doseQuantity}{order.unit}</span>}{orderExecutions.length > 0 ? <span className="tabular-nums">{t(`已执行 ${completedExecutions}/${orderExecutions.length} 次`, `Executed ${completedExecutions}/${orderExecutions.length}`)}</span> : null}{order.surgeryExecutionId ? <span>{t('术后医嘱 · ','Postoperative order · ')}{surgery.data?.executions.find(item=>item.id===order.surgeryExecutionId)?.actualProcedure.coding.display ?? t('已关联手术', 'Linked procedure')}</span> : null}</>}
       complete={order.state === 'stopped' || order.state === 'completed'} actions={<>{selection}<Badge variant="outline">{{signed:t('待校对','Awaiting verification'),verified:verifiedLabel,'stop-requested':t('待停嘱核对','Stop requested'),stopped:t('已停止','Stopped'),completed:t('已结束','Finished')}[order.state]}</Badge>
         {doctor ? <Dialog key={`${scope.join(':')}:${admission.id}:${order.id}`}>
           <DialogTrigger render={<Button variant="outline" size="sm" />}>{t(`执行记录 (${orderExecutions.length})`, `Execution records (${orderExecutions.length})`)}</DialogTrigger>
@@ -131,7 +138,7 @@ export function InpatientClinical({ admission, investigations, session, locale, 
       <InpatientPrimaryAction stage="orders" priority={-10}><WorkspaceActionBar summary={t('在弹窗中连续添加并核对医嘱；开立后交病区护士校对。', 'Add and review orders in the composer; ward nurse verification follows.')}
         action={<Button disabled={admission.status !== 'admitted' || admission.recordStatus === 'archived'} onClick={() => setComposing(true)}>{t('开立医嘱', 'Issue order')}</Button>} /></InpatientPrimaryAction>
       {data ? <InpatientOrderComposer key={orderDraftKey(session, admission)} open={composing && active} onOpenChange={setComposing} active={active} session={session} admission={admission} encounterVersion={data.encounterVersion} diagnosed={diagnosed}
-        services={catalog.data?.services ?? []} surgeries={surgery.data?.executions ?? []} locale={locale} write={write} loading={catalog.isPending} catalogError={catalog.error} onReload={() => void catalog.refetch()} /> : null}
+        medications={catalog.data?.medications ?? []} services={catalog.data?.services ?? []} surgeries={surgery.data?.executions ?? []} locale={locale} write={write} loading={catalog.isPending} catalogError={catalog.error} onReload={() => void catalog.refetch()} /> : null}
     </section> : null}
   </section>
 }

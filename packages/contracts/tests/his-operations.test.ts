@@ -160,6 +160,11 @@ describe('HIS operation catalog', () => {
         id: 'catalog.services.search',
         roles: ['administrator', 'outpatient-doctor'],
       },
+      {
+        cliPath: 'catalog order-set-templates list',
+        id: 'catalog.order-set-templates.list',
+        roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
+      },
     ])
   })
 
@@ -751,6 +756,7 @@ describe('HIS operation catalog', () => {
     expect(Object.fromEntries(writes
       .filter(candidate => candidate.commandOperation !== candidate.id)
       .map(candidate => [candidate.id, candidate.commandOperation]))).toEqual({
+      'admin.authored-case-pack.prepare': 'synthetic-case.authored-pack.prepare',
       'admin.laboratory-services.publish': 'laboratory-service-publication.create',
       'admin.pci-case.prepare': 'synthetic-case.pci-source.prepare',
       [clinicalDocumentOperationIds.draftSet]: clinicalDocumentOperationIds.saveDraft,
@@ -796,11 +802,11 @@ describe('HIS operation catalog', () => {
     }
 
     expect(counts).toEqual({
-      'clinmesh-administrator': 4,
+      'clinmesh-administrator': 6,
       'clinmesh-billing': 18,
-      'clinmesh-doctor': 67,
+      'clinmesh-doctor': 70,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 117,
+      'clinmesh-inpatient': 120,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 8,
       'clinmesh-shared': 1,
@@ -910,4 +916,114 @@ it('publishes shared guideline-topics queries and surgery-optional inpatient gui
       expectedFingerprint: 'b'.repeat(64),
     },
   })
+})
+
+it('publishes read-only clinical quality preflight queries and clinicalOverride inputs across the seven gated commands', () => {
+  const outpatientRead = getHisOperation('encounter.clinical-quality.read')
+  expect(outpatientRead).toMatchObject({
+    cliPath: ['encounter', 'clinical-quality', 'get'],
+    http: { method: 'GET', path: '/api/his/v1/encounters/:encounterId/clinical-quality' },
+    risk: 'read',
+    roles: ['outpatient-doctor'],
+    skill: 'clinmesh-doctor',
+    version: 1,
+  })
+  expect(outpatientRead.input.parse({ encounterId: 'encounter-1', gate: 'outpatient-prescription' }))
+    .toEqual({ encounterId: 'encounter-1', gate: 'outpatient-prescription' })
+
+  const inpatientRead = getHisOperation('inpatient.clinical-quality.read')
+  expect(inpatientRead).toMatchObject({
+    cliPath: ['inpatient', 'clinical-quality'],
+    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/clinical-quality' },
+    risk: 'read',
+    roles: ['inpatient-doctor'],
+    skill: 'clinmesh-inpatient',
+    version: 1,
+  })
+  expect(inpatientRead.input.safeParse({ admissionId: 'admission-1', gate: 'inpatient-order' }).success).toBe(false)
+  expect(inpatientRead.input.safeParse({ admissionId: 'admission-1', gate: 'inpatient-order', catalogItemId: 'med-1', doseText: '500mg', frequencyCode: 'BID' }).success).toBe(true)
+
+  const clinicalOverride = {
+    reasonCode: 'documented-contraindication' as const,
+    note: '活动性消化道出血，暂缓抗血小板治疗',
+    acknowledgedAlerts: ['DISCHARGE_ANTIPLATELET_MISSING' as const],
+  }
+  const complete = getHisOperation('encounter.complete')
+  expect(complete.version).toBe(2)
+  expect(complete.http.encodeBody?.({ encounterId: 'enc-1', encounterVersion: '4', clinicalOverride }))
+    .toEqual({ expectedVersions: { 'Encounter/enc-1': '4' }, input: { clinicalOverride } })
+
+  const dischargeIssue = getHisOperation('inpatient.discharge.issue')
+  expect(dischargeIssue.version).toBe(2)
+  expect(dischargeIssue.http.encodeBody?.({ admissionId: 'adm-1', encounterVersion: '3', reason: '好转出院', clinicalOverride }))
+    .toEqual({ input: { encounterVersion: '3', reason: '好转出院', clinicalOverride } })
+
+  expect(getHisOperation('encounter.prescription.issue').version).toBe(4)
+  expect(getHisOperation('inpatient.order.issue').version).toBe(9)
+  expect(getHisOperation('inpatient.surgery.request').version).toBe(3)
+  expect(getHisOperation('inpatient.pci-selection.confirm').version).toBe(3)
+  expect(getHisOperation('inpatient.record.submit').version).toBe(3)
+})
+
+it('publishes narrow read-only order set template and draft operations without raw override inputs', () => {
+  const templates = getHisOperation('catalog.order-set-templates.list')
+  expect(templates.roles).toEqual(['administrator', 'outpatient-doctor', 'inpatient-doctor'])
+  expect(templates.risk).toBe('read')
+  expect(templates.input.safeParse({ scope: 'outpatient' }).success).toBe(true)
+  expect(templates.input.safeParse({ scope: 'pharmacy' }).success).toBe(false)
+
+  const outpatientDrafts = getHisOperation('doctor.case.order-set-drafts.read')
+  expect(outpatientDrafts.roles).toEqual(['outpatient-doctor'])
+  expect(outpatientDrafts.risk).toBe('read')
+  expect(outpatientDrafts.input.safeParse({ caseId: 'case-1', templateId: 'chest-pain-stat-workup' }).success).toBe(true)
+  expect(outpatientDrafts.input.safeParse({ caseId: 'case-1', egfrOverride: 90 }).success).toBe(false)
+
+  const inpatientDrafts = getHisOperation('inpatient.order-set-drafts.read')
+  expect(inpatientDrafts.roles).toEqual(['inpatient-doctor'])
+  expect(inpatientDrafts.risk).toBe('read')
+  expect(inpatientDrafts.input.safeParse({ admissionId: 'admission-1', templateId: 'cin-perioperative-hydration' }).success).toBe(true)
+  expect(inpatientDrafts.input.safeParse({ admissionId: 'admission-1', pulseBpm: 80 }).success).toBe(false)
+
+  const angiography = getHisOperation('inpatient.angiography-reports.read')
+  expect(angiography).toMatchObject({
+    cliPath: ['inpatient', 'angiography-reports'],
+    handlerOwner: 'InpatientService',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/angiography-reports' },
+    mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read',
+    roles: ['inpatient-doctor', 'ward-nurse', 'medical-records'],
+    skill: 'clinmesh-inpatient',
+    version: 1,
+  })
+  expect(angiography.input.parse({ admissionId: 'adm-1' })).toEqual({ admissionId: 'adm-1' })
+
+  const packRead = getHisOperation('admin.authored-case-pack.read')
+  expect(packRead).toMatchObject({
+    cliPath: ['admin', 'authored-case-pack', 'get'],
+    handlerOwner: 'ScenarioDataService',
+    http: { method: 'GET', path: '/api/sim/v1/synthetic-cases/authored-pack' },
+    mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read',
+    roles: ['administrator'],
+    skill: 'clinmesh-administrator',
+    version: 1,
+  })
+
+  const packPrepare = getHisOperation('admin.authored-case-pack.prepare')
+  expect(packPrepare).toMatchObject({
+    cliPath: ['admin', 'authored-case-pack', 'prepare'],
+    commandOperation: 'synthetic-case.authored-pack.prepare',
+    handlerOwner: 'ScenarioDataService',
+    http: { method: 'POST', path: '/api/sim/v1/synthetic-cases/authored-pack/prepare' },
+    mode: 'command',
+    requirements: { expectedVersions: true, idempotency: 'required' },
+    risk: 'write',
+    roles: ['administrator'],
+    skill: 'clinmesh-administrator',
+    version: 1,
+  })
+  expect(packPrepare.http.encodeBody?.({ expectedEpoch: 'epoch-1' })).toEqual({ input: { expectedEpoch: 'epoch-1' } })
+  expect(packPrepare.input.safeParse({ expectedEpoch: 'epoch-1', rawBundle: {} }).success).toBe(false)
 })
