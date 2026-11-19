@@ -106,6 +106,23 @@ describe('AuthoredCasePackCompiler', () => {
 
     expect(() => compileAuthoredCase({
       ...baseCase,
+      visibleHistory: [{
+        ...baseCase.visibleHistory[0]!,
+        observations: [{
+          ...baseCase.laboratories[0]!,
+          effectiveDateTime: baseCase.indexDateTime,
+          id: 'obs-after-index',
+        }],
+      }],
+    })).toThrowError(/VISIBLE_HISTORY_AFTER_INDEX|must precede indexDateTime/)
+
+    expect(() => compileAuthoredCase({
+      ...baseCase,
+      laboratories: [baseCase.laboratories[0]!, baseCase.laboratories[0]!],
+    })).toThrowError(/DUPLICATE_RESOURCE_ID|duplicate FHIR resource identifier/)
+
+    expect(() => compileAuthoredCase({
+      ...baseCase,
       ecgs: [baseCase.ecgs[0]!, baseCase.ecgs[0]!],
     })).toThrowError(/duplicate ECG entries/)
   })

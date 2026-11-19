@@ -507,6 +507,14 @@ export function compileAuthoredCase(rawDefinition: AuthoredCaseDefinitionInput):
         `Case ${definition.id} visible history event ${event.id} must precede indexDateTime`,
       )
     }
+    for (const obs of event.observations) {
+      if (obs.effectiveDateTime !== undefined && Date.parse(obs.effectiveDateTime) >= indexTimeMs) {
+        throw new AuthoredCasePackCompileError(
+          'VISIBLE_HISTORY_AFTER_INDEX',
+          `Case ${definition.id} visible history observation ${obs.id} in event ${event.id} must precede indexDateTime`,
+        )
+      }
+    }
   }
 
   const patientRef = `urn:uuid:${definition.patient.id}`
@@ -674,6 +682,20 @@ export function compileAuthoredCase(rawDefinition: AuthoredCaseDefinitionInput):
       fallbackTime: definition.indexDateTime,
       patientRef,
     }))
+  }
+
+  const seenUrls = new Set<string>()
+  const seenResourceKeys = new Set<string>()
+  for (const item of entries) {
+    const resourceKey = `${String(item.resource.resourceType)}/${String(item.resource.id)}`
+    if (seenUrls.has(item.fullUrl) || seenResourceKeys.has(resourceKey)) {
+      throw new AuthoredCasePackCompileError(
+        'DUPLICATE_RESOURCE_ID',
+        `Case ${definition.id} generated duplicate FHIR resource identifier ${resourceKey} (${item.fullUrl})`,
+      )
+    }
+    seenUrls.add(item.fullUrl)
+    seenResourceKeys.add(resourceKey)
   }
 
   const raw = { entry: entries, resourceType: 'Bundle' as const, type: 'collection' as const }
