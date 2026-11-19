@@ -700,9 +700,9 @@ export class ScenarioService {
       ['lab-fever-panel', 'laboratory', 'FEVER-PANEL', '发热检验组合', 'Fever laboratory panel', 6800, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[],"insuranceCoverage":{"included":true,"priorSelfPayBps":1000}}'],
       ['lab-cbc', 'laboratory', 'CBC', '血常规', 'Complete blood count', 2500, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[],"insuranceCoverage":{"included":true,"priorSelfPayBps":1000}}'],
       ['lab-crp', 'laboratory', 'CRP', 'C 反应蛋白', 'C-reactive protein', 4300, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[],"insuranceCoverage":{"included":true,"priorSelfPayBps":1000}}'],
-      ['medication-oseltamivir', 'medication', 'OSELTAMIVIR', '磷酸奥司他韦胶囊', 'Oseltamivir phosphate capsules', 760, supportsPrescriptionConclusion
-        ? '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"],"allowedCourseDays":[5],"allowedDiagnosisCatalogItemIds":["diagnosis-influenza"],"allowedQuantities":[10],"defaultCourseDays":5,"defaultQuantity":10,"insuranceCoverage":{"included":true,"priorSelfPayBps":2000}}'
-        : '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"],"insuranceCoverage":{"included":true,"priorSelfPayBps":2000}}'],
+      ...(supportsPrescriptionConclusion
+        ? []
+        : [['medication-oseltamivir', 'medication', 'OSELTAMIVIR', '磷酸奥司他韦胶囊', 'Oseltamivir phosphate capsules', 760, '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"],"insuranceCoverage":{"included":true,"priorSelfPayBps":2000}}'] as const]),
       ['medication-acetaminophen', 'medication', 'ACETAMINOPHEN', '对乙酰氨基酚片', 'Acetaminophen tablets', 120, supportsPrescriptionConclusion
         ? installedMedicationConfigJson(
             hospitalAcetaminophen,
@@ -718,7 +718,7 @@ export class ScenarioService {
               'medication',
               medication.code,
               medication.name,
-              medication.name,
+              medication.id === 'medication-oseltamivir' ? 'Oseltamivir phosphate capsules' : medication.name,
               medication.priceFen,
               installedMedicationConfigJson(medication, hospitalDiagnosisIdByCode),
             ] as const)

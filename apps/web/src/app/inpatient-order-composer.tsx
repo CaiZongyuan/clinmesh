@@ -13,6 +13,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, Di
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
+import { formatMedicationSpec } from './doctor/catalog-picker-dialogs.tsx'
 import { OrderComposerFooter, OrderComposerLayout } from './doctor/order-composer-layout.tsx'
 import { InpatientOrderPicker, type InpatientOrderPick } from './inpatient-order-picker.tsx'
 import { WorkspaceSelect } from './workspace-select.tsx'
@@ -194,8 +195,26 @@ export function InpatientOrderComposer(props: Props) {
             {draft.rows.map(row => {
               const dose = orderDose(row)
               const edit = (patch: Partial<OrderDraftRow>) => update(row.id, { ...patch, estimate: undefined, error: undefined })
+              const catalogMedication = row.pick.kind === 'medication' ? medications.find(item => item.id === row.pick.item.id) : undefined
+              const medicationSpec = row.pick.kind === 'medication'
+                ? formatMedicationSpec(
+                    row.pick.item.strength ?? catalogMedication?.strength,
+                    row.pick.item.packageDescription ?? catalogMedication?.packageDescription,
+                  )
+                : ''
               return <section key={row.id} aria-label={t(`待开：${row.pick.item.display}`, `Draft: ${row.pick.item.display}`)} className="flex min-w-0 flex-col gap-2 rounded-md border p-3">
                 <div className="flex items-start gap-2"><Checkbox aria-label={t(`选择待开${row.pick.item.display}`, `Select draft ${row.pick.item.display}`)} checked={row.selected} disabled={locked} onCheckedChange={selected => update(row.id, { selected })} /><strong className="min-w-0 flex-1 text-sm wrap-anywhere">{row.pick.item.display}</strong><Button size="sm" variant="ghost" disabled={locked} onClick={() => save({ ...current.current, rows: current.current.rows.filter(item => item.id !== row.id) })}>{t('移除项目', 'Remove item')}</Button></div>
+                {row.pick.kind === 'medication' ? (
+                  <p className="break-words text-xs text-muted-foreground" data-order-check-summary="">
+                    {[
+                      medicationSpec || undefined,
+                      row.duration === 'long' ? t('长期', 'Long') : t('临时', 'Temporary'),
+                      row.doseText ? `${t('每次 ', 'Per dose ')}${row.doseText}` : t('剂量待填', 'Dose pending'),
+                      row.frequencyCode ? inpatientFrequencyLabel(row.frequencyCode, locale, false) : t('频次待选', 'Frequency pending'),
+                      dose && 'quantity' in dose ? `${dose.quantity} ${row.pick.item.unit}` : undefined,
+                    ].filter(Boolean).join(' · ')}
+                  </p>
+                ) : null}
                 <Field><FieldLabel>{t('医嘱时效', 'Order duration')}</FieldLabel><ToggleGroup aria-label={t('医嘱时效', 'Order duration')} disabled={locked} value={[row.duration]} variant="outline" onValueChange={values => { if (values[0] === 'long' || values[0] === 'temporary') edit({ duration: values[0], ...(values[0] === 'long' && row.frequencyCode === 'ONCE' ? { frequencyCode: row.pick.kind === 'medication' ? row.pick.item.frequencyCodes.find(code => code !== 'ONCE') : undefined } : {}) }) }}><ToggleGroupItem value="long">{t('长期', 'Long')}</ToggleGroupItem><ToggleGroupItem value="temporary">{t('临时', 'Temporary')}</ToggleGroupItem></ToggleGroup></Field>
                 {row.pick.kind === 'medication' ? <>
                   <Field><FieldLabel htmlFor={`${formId}-${row.id}-dose`}>{t('每次剂量', 'Dose per execution')}</FieldLabel><Input id={`${formId}-${row.id}-dose`} disabled={locked} value={row.doseText} maxLength={120} aria-invalid={dose !== undefined && 'reason' in dose} onChange={event => edit({ doseText: event.currentTarget.value })} />{dose && 'quantity' in dose ? <span className="text-xs text-muted-foreground">= {dose.quantity} {row.pick.item.unit}</span> : <p className="text-xs text-destructive">{dose && 'reason' in dose ? doseError(dose.reason, locale) : ''}</p>}</Field>

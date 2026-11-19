@@ -434,3 +434,23 @@ it('确定拒绝保留失败项目的原选择，其余独立申请继续送检�
   expect(api.facts().sent.map(item => item.requestId)).toEqual(['request-2'])
   expect(screen.queryByRole('button', { name: '恢复原送检' })).toBeNull()
 })
+
+it('集中送检列表与核对弹窗将 clinical-assessment 映射为中文临床评估而不裸露内部编码', async () => {
+  const assessmentItem = {
+    ...laboratory(1, '合成入院肌酐'),
+    indicationCode: 'clinical-assessment',
+    laboratoryService: { ...laboratory(1, '合成入院肌酐').laboratoryService, allowedIndicationCodes: ['clinical-assessment'] },
+  }
+  server([assessmentItem])
+  mount()
+  const user = userEvent.setup()
+  await screen.findByRole('checkbox', { name: '选择送检：合成入院肌酐' })
+  const section = screen.getByRole('region', { name: '集中送检' })
+  expect(section.textContent).toContain('临床评估')
+  expect(section.textContent).not.toContain('clinical-assessment')
+  await user.click(screen.getByRole('checkbox', { name: '选择送检：合成入院肌酐' }))
+  await user.click(screen.getByRole('button', { name: '集中送检' }))
+  const reviewDialog = screen.getByRole('dialog', { name: '集中送检核对' })
+  expect(reviewDialog.textContent).toContain('临床评估')
+  expect(reviewDialog.textContent).not.toContain('clinical-assessment')
+})

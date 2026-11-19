@@ -1,3 +1,4 @@
+import { formatMedicationFrequency } from '@clinmesh/core/medication-safety'
 import {
   considerationLabelKey, doctorPreparationSelectionSchema, type DoctorCaseEvidence, type DoctorPreparationSelection, type DoctorRecommendationConsideration,
   type DoctorRecommendationKind,
@@ -32,6 +33,7 @@ import { ClinicalQualityBanner, extractClinicalQualityError } from '../clinical-
 import { getPrescriptionIssueErrorMessage, getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
+import { indicationLabel as laboratoryIndicationLabel } from './laboratory-page.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { DoctorDraftEditorScope, DoctorDraftItem, DoctorDraftField as Field, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { useOrderDetails } from './doctor-order-workspace.tsx'
@@ -67,10 +69,14 @@ const serviceReviewSignature = (service: DoctorReviewedInvestigationService | un
 }
 function selection(item: DoctorRecommendationSuggestion): PreparationDraft {
   const source = { source: 'agent' as const, suggestionId: item.id }
-  if (item.kind === 'diagnosis') return { ...source, kind: item.kind, catalogItemId: item.catalogItemId, role: item.role ?? null,
-    ...(item.referenceConcept === undefined ? {} : { referenceConcept: item.referenceConcept }) }
-  if (item.kind === 'prescription') return { ...source, kind: item.kind, catalogItemId: item.catalogItemId,
-    doseText: item.doseText, frequencyCode: item.frequencyCode, courseDays: item.courseDays, quantity: item.quantity }
+  if (item.kind === 'diagnosis') return {
+    ...source, kind: item.kind, catalogItemId: item.catalogItemId, role: item.role ?? null,
+    ...(item.referenceConcept === undefined ? {} : { referenceConcept: item.referenceConcept })
+  }
+  if (item.kind === 'prescription') return {
+    ...source, kind: item.kind, catalogItemId: item.catalogItemId,
+    doseText: item.doseText, frequencyCode: item.frequencyCode, courseDays: item.courseDays, quantity: item.quantity
+  }
   if (item.kind === 'laboratory') return { ...source, kind: item.kind, catalogItemId: item.catalogItemId, indicationCode: item.indicationCode }
   if (item.kind === 'imaging') return { ...source, kind: item.kind, serviceId: item.serviceId, indication: item.indication }
   return { ...source, kind: item.kind, serviceId: item.serviceId, sourceProcedureReference: item.sourceProcedureReference, purpose: item.purpose }
@@ -87,13 +93,14 @@ function complete(item: PreparationDraft) {
 }
 function frequencyLabel(code: string | null, zh: boolean) {
   const messages = getWorkspaceMessages(zh ? 'zh-CN' : 'en-US')
-  const labels: Record<string, string> = { QD: messages.frequency_QD, BID: messages.frequency_BID, TID: messages.frequency_TID, QN: messages.frequency_QN, ONCE: messages.frequency_ONCE, PRN: messages.frequency_PRN }
-  return code === null || code.trim() === '' ? messages.recommendationFieldPending : labels[code] ?? code
+  return code === null || code.trim() === ''
+    ? messages.recommendationFieldPending
+    : formatMedicationFrequency(code, zh ? 'zh-CN' : 'en-US')
 }
 function indicationLabel(code: string, zh: boolean) {
   const messages = getWorkspaceMessages(zh ? 'zh-CN' : 'en-US')
-  const labels: Record<string, string> = { fever: messages.indication_fever, 'clinical-evaluation': messages.indication_clinicalEvaluation }
-  return labels[code] ?? messages.recommendationFieldPending
+  const mapped = laboratoryIndicationLabel(code, messages)
+  return mapped === code ? messages.recommendationFieldPending : mapped
 }
 function summary(item: PreparationDraft, zh: boolean) {
   if (item.kind === 'diagnosis') return item.role === null ? zh ? '主次待确认' : 'Choose the diagnosis role' : item.role === 'primary' ? zh ? '主诊断' : 'Primary' : zh ? '次诊断' : 'Secondary'
@@ -137,7 +144,7 @@ function EvidenceContent({ source, locale }: { source: DoctorCaseEvidence; local
         const date = typeof item.clinicalDate === 'string' ? item.clinicalDate : typeof record?.completedAt === 'string' ? record.completedAt : undefined
         const key = `${typeof item.entryId === 'string' ? item.entryId : index}:${typeof item.fieldPath === 'string' ? item.fieldPath : ''}`
         const title = [typeof item.title === 'string' && item.title.length > 0 ? item.title : undefined,
-          typeof item.fieldPath === 'string' ? item.fieldPath : undefined].find(value => value !== undefined) ?? (typeof item.entryId === 'string' ? item.entryId : `${index + 1}`)
+        typeof item.fieldPath === 'string' ? item.fieldPath : undefined].find(value => value !== undefined) ?? (typeof item.entryId === 'string' ? item.entryId : `${index + 1}`)
         return <li key={key}>{date === undefined ? null : <span className="text-muted-foreground">{formatClinicalDateTime(date, locale)} · </span>}<span>{title}</span>
           {record === undefined ? null : inpatient.success ? <InpatientHistorySummary record={inpatient.data} locale={locale} /> : <details><summary className="cursor-pointer text-xs text-muted-foreground">{zh ? '查看完整记录' : 'View full record'}</summary>
             <p className="font-mono text-xs whitespace-pre-wrap break-all">{JSON.stringify(record, null, 2)}</p></details>}
@@ -198,16 +205,20 @@ export function DoctorRecommendationDetails({ job, locale = 'zh-CN' }: { job: Do
       if (state === undefined) throw new Error(zh ? '当前病例建议状态不可用。' : 'The recommendation state is unavailable.')
       return setConsiderationDisposition({ caseId: state.caseId, kind: state.kind }, input.label, input.status)
     },
-    onSuccess: () => { void client.invalidateQueries({ predicate: query =>
-      query.queryKey[0] === 'doctor-recommendations' && query.queryKey.includes(state?.caseId) && query.queryKey.includes(state?.kind) }) },
+    onSuccess: () => {
+      void client.invalidateQueries({
+        predicate: query =>
+          query.queryKey[0] === 'doctor-recommendations' && query.queryKey.includes(state?.caseId) && query.queryKey.includes(state?.kind)
+      })
+    },
   })
   return <div className="flex min-w-0 flex-col gap-4 text-sm">
     <p role="status">{job.paused ? zh ? '自动准备已暂停；已启动的核对仍可完成。' : 'Automatic preparation is paused; work already started may finish.'
       : recovery !== undefined ? recovery
-      : job.error !== null || state?.status === 'failed' ? zh ? '更新失败，医生草稿已保留。' : 'Update failed. Your draft is preserved.'
-      : job.pending ? zh ? '正在按最新资料核对。' : 'Checking the latest information.'
-      : state?.stale ? zh ? '资料有变化，旧自动项目等待重新核对。' : 'Information changed; previous automatic items need another check.'
-      : zh ? '仅使用当前医生可见资料，正式提交由医生确认。' : 'Uses information visible to this doctor. The doctor confirms all formal actions.'}</p>
+        : job.error !== null || state?.status === 'failed' ? zh ? '更新失败，医生草稿已保留。' : 'Update failed. Your draft is preserved.'
+          : job.pending ? zh ? '正在按最新资料核对。' : 'Checking the latest information.'
+            : state?.stale ? zh ? '资料有变化，旧自动项目等待重新核对。' : 'Information changed; previous automatic items need another check.'
+              : zh ? '仅使用当前医生可见资料，正式提交由医生确认。' : 'Uses information visible to this doctor. The doctor confirms all formal actions.'}</p>
     {state === undefined ? null : <section aria-label={zh ? '准备记录' : 'Preparation record'} className="flex flex-col gap-2">
       <h4 className="font-medium">{state.generation === 0 ? zh ? '尚未开始准备' : 'Preparation has not started' : zh ? `第 ${state.generation} 轮准备` : `Preparation ${state.generation}`}</h4>
       {state.stale ? <p>{zh ? '资料或目录已更新，本轮结果等待重新核对。' : 'Information or catalog changed; this result needs another check.'}</p> : null}
@@ -328,8 +339,10 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   }).map(row => identity(row.value)))
   const baseRows: PreparedRow[] = [
     ...manualItems.map(row => ({ ...row, key: identity(row.value), signature: JSON.stringify([state?.inputFingerprint, clinicalValue(row.value), manualOwnership.current.token]) })),
-    ...(visible?.items ?? []).filter(item => !manualKeys.has(identity(item))).map(item => ({ key: identity(item), label: item.label,
-      item, value: preparedSelection(item), signature: evidenceSignature(visible!, item) })),
+    ...(visible?.items ?? []).filter(item => !manualKeys.has(identity(item))).map(item => ({
+      key: identity(item), label: item.label,
+      item, value: preparedSelection(item), signature: evidenceSignature(visible!, item)
+    })),
   ]
   const deletedFormEdits = Object.entries(preferences.edits).filter(([key, edit]) => !restoringForm && edit.formOwned && !manualKeys.has(key))
   const changedFormItems = restoringForm || onManualChange === undefined ? [] : manualItems.filter(item => {
@@ -349,8 +362,10 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       }
       for (const item of changedFormItems) {
         const key = identity(item.value)
-        edits[key] = { ...edits[key], label: item.label, selection: item.value,
-          fingerprint: edits[key]?.fingerprint ?? state?.inputFingerprint ?? '', formOwned: true }
+        edits[key] = {
+          ...edits[key], label: item.label, selection: item.value,
+          fingerprint: edits[key]?.fingerprint ?? state?.inputFingerprint ?? '', formOwned: true
+        }
       }
       return { ...previous, edits, removed }
     })
@@ -418,9 +433,11 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   }
   const refreshCatalogs = (request: Submission) => Promise.all([
     client.invalidateQueries({ queryKey: ['doctor-recommendations', request.scope, request.state.caseId, request.state.kind] }),
-    client.invalidateQueries({ predicate: query => query.queryKey[0] === `doctor-case-${request.state.kind}-services`
-      && query.queryKey[1] === request.state.caseId || request.state.kind === 'laboratory' && query.queryKey[0] === 'reference-catalog'
-      && query.queryKey.includes('laboratory') && query.queryKey.includes(request.state.caseId) }),
+    client.invalidateQueries({
+      predicate: query => query.queryKey[0] === `doctor-case-${request.state.kind}-services`
+        && query.queryKey[1] === request.state.caseId || request.state.kind === 'laboratory' && query.queryKey[0] === 'reference-catalog'
+        && query.queryKey.includes('laboratory') && query.queryKey.includes(request.state.caseId)
+    }),
   ])
   const restoreMissingInputs = (request: Submission, candidates: typeof rows) => {
     for (const row of candidates) {
@@ -430,9 +447,13 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       const formOwned = row.value.source === 'manual' && changeManual !== undefined
       // 诊断和处方在原意图释放前禁止修改表单；先持久保留输入，再由恢复 effect 回填。
       if (formOwned && independent && changeManual?.({ label: row.label, value: row.value }) !== true) return false
-      if (!update(previous => ({ ...previous, edits: { ...previous.edits, [row.key]: {
-        label: row.label, selection: row.value, fingerprint: request.state.inputFingerprint ?? '', formOwned,
-      } } }))) return false
+      if (!update(previous => ({
+        ...previous, edits: {
+          ...previous.edits, [row.key]: {
+            label: row.label, selection: row.value, fingerprint: request.state.inputFingerprint ?? '', formOwned,
+          }
+        }
+      }))) return false
       if (formOwned && !independent) restoredForm.current = undefined
     }
     return true
@@ -442,14 +463,18 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     onSettled: (_result, _error, request) => { preparation?.setSubmitting(request.submissionKey, request.token, false) },
     mutationFn: async (request: Submission) => {
       const intent = JSON.stringify([request.scope, request.state.caseId, request.state.kind, request.state.inputFingerprint, request.state.generation, request.draftVersion, request.resolveExistingDraft, request.selections, request.clinicalOverride ?? null])
-      const key = independent ? newIdempotencyKey() : requestKeys.current.get(intent) ?? newIdempotencyKey();requestKeys.current.set(intent, key)
-      const frozen = request.original ?? prepareInvestigationConfirmationIntent({ state: { caseId: request.state.caseId, kind: request.state.kind,
-        encounterId: request.state.encounterId, encounterVersion: request.state.encounterVersion,
-        ...(request.state.generation === undefined ? {} : { generation: request.state.generation }),
-        ...(request.state.inputFingerprint === undefined ? {} : { inputFingerprint: request.state.inputFingerprint }) },
+      const key = independent ? newIdempotencyKey() : requestKeys.current.get(intent) ?? newIdempotencyKey(); requestKeys.current.set(intent, key)
+      const frozen = request.original ?? prepareInvestigationConfirmationIntent({
+        state: {
+          caseId: request.state.caseId, kind: request.state.kind,
+          encounterId: request.state.encounterId, encounterVersion: request.state.encounterVersion,
+          ...(request.state.generation === undefined ? {} : { generation: request.state.generation }),
+          ...(request.state.inputFingerprint === undefined ? {} : { inputFingerprint: request.state.inputFingerprint })
+        },
         selections: request.selections, draftVersion: request.draftVersion, resolveExistingDraft: request.resolveExistingDraft, key,
         ...(request.clinicalOverride === undefined ? {} : { clinicalOverride: request.clinicalOverride }),
-        rows: request.rows.map(({ label, key, signature }) => ({ label, key, signature })) })
+        rows: request.rows.map(({ label, key, signature }) => ({ label, key, signature }))
+      })
       request.original = frozen
       if (!originalIntent.save(() => frozen)) throw new Error(zh ? '原开立操作无法保存，请恢复存储后再试。' : 'The original order could not be saved.')
       if (frozen.result !== undefined) return frozen.result
@@ -499,12 +524,16 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       })
       if (unchanged.length === request.rows.length) synchronization.current.set(request.token, 'owned')
       if (unchanged.length > 0 && !update(previous => {
-        return { ...previous, completed: { ...previous.completed, ...Object.fromEntries(unchanged.map(row => {
-          const current = currentRows.current.find(current => current.key === row.key)
-          const automatic = visible?.items.find(item => identity(item) === row.key)
-          return [row.key, [row.signature, ...current === undefined ? [] : [current.signature], ...automatic === undefined ? [] : [evidenceSignature(visible!, automatic)]]]
-        })) },
-          edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => !unchanged.some(row => row.key === key))) }
+        return {
+          ...previous, completed: {
+            ...previous.completed, ...Object.fromEntries(unchanged.map(row => {
+              const current = currentRows.current.find(current => current.key === row.key)
+              const automatic = visible?.items.find(item => identity(item) === row.key)
+              return [row.key, [row.signature, ...current === undefined ? [] : [current.signature], ...automatic === undefined ? [] : [evidenceSignature(visible!, automatic)]]]
+            }))
+          },
+          edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => !unchanged.some(row => row.key === key)))
+        }
       })) return
       if (ownsRecord && onConfirmed?.(unchanged.map(row => row.value), result) === false) return
       if (ownsRecord && request.recovery
@@ -529,14 +558,16 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   const recoverOriginal = () => {
     const frozen = originalIntent.value
     if (frozen === null) return
-    submission.mutate({ state: frozen.state, selections: frozen.selections, rows: frozen.rows.map((row, index) => ({
-      ...(!independent ? currentRows.current.find(current => current.key === row.key) : undefined),
-      ...row, value: frozen.selections[index]!, owner: !independent ? currentEdits.current[row.key] : undefined,
-    })),
+    submission.mutate({
+      state: frozen.state, selections: frozen.selections, rows: frozen.rows.map((row, index) => ({
+        ...(!independent ? currentRows.current.find(current => current.key === row.key) : undefined),
+        ...row, value: frozen.selections[index]!, owner: !independent ? currentEdits.current[row.key] : undefined,
+      })),
       ...(frozen.clinicalOverride === undefined ? {} : { clinicalOverride: frozen.clinicalOverride }),
       original: frozen, recovery: true, view, recordView: recordView.current.token, navigation: navigation.current.token,
       draftVersion: frozen.draftVersion, resolveExistingDraft: frozen.resolveExistingDraft, submissionKey,
-      token: newIdempotencyKey(), scope, manualOwnership: manualOwnership.current.token, manualItems, manualRowOwners: manualRowOwners.current })
+      token: newIdempotencyKey(), scope, manualOwnership: manualOwnership.current.token, manualItems, manualRowOwners: manualRowOwners.current
+    })
   }
   const appliedReceipts = useRef(new Set<string>())
   useEffect(() => {
@@ -591,9 +622,11 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   useEffect(() => {
     if (!inlineEditing || editDirty || activeEditing === undefined || editingRow === undefined) return
     if (activeEditing.sourceValue === JSON.stringify(editingRow.value) && activeEditing.fingerprint === (state?.inputFingerprint ?? '')) return
-    const next = { key: editingRow.key, label: editingRow.label,
+    const next = {
+      key: editingRow.key, label: editingRow.label,
       value: activeEditing.sourceValue === JSON.stringify(editingRow.value) ? activeEditing.value : { ...editingRow.value },
-      sourceValue: JSON.stringify(editingRow.value), fingerprint: state?.inputFingerprint ?? '', view: navigation.current.token }
+      sourceValue: JSON.stringify(editingRow.value), fingerprint: state?.inputFingerprint ?? '', view: navigation.current.token
+    }
     if (JSON.stringify(activeEditing) !== JSON.stringify(next)) setEditing(next)
   }, [activeEditing, editDirty, editingRow, inlineEditing, state?.inputFingerprint])
   useEffect(() => {
@@ -624,55 +657,55 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     setEditing(previous => previous === undefined ? undefined : { ...previous, fields: { ...previous.fields, [field]: value } })
   }
   const editingFields: Array<[string, string]> = activeEditing?.value.kind === 'prescription' ? [['doseText', zh ? '每次剂量' : 'Dose'], ['frequencyCode', zh ? '频次' : 'Frequency'], ['courseDays', zh ? '疗程（天）' : 'Days'], ['quantity', zh ? '数量' : 'Quantity']]
-          : activeEditing?.value.kind === 'laboratory' ? [['indicationCode', zh ? '检查目的' : 'Indication']]
-          : activeEditing?.value.kind === 'imaging' ? [['indication', zh ? '检查目的' : 'Indication']]
-          : activeEditing?.value.kind === 'pathology' ? [['purpose', zh ? '会诊目的' : 'Purpose']] : []
+    : activeEditing?.value.kind === 'laboratory' ? [['indicationCode', zh ? '检查目的' : 'Indication']]
+      : activeEditing?.value.kind === 'imaging' ? [['indication', zh ? '检查目的' : 'Indication']]
+        : activeEditing?.value.kind === 'pathology' ? [['purpose', zh ? '会诊目的' : 'Purpose']] : []
   const adjustmentForm = (activeEditing === undefined ? null : <DoctorDraftEditorScope id={activeEditing.value.source === 'manual' ? draftItemId(activeEditing.value) : undefined} open>{commit => <form className="p-0" key={activeEditing.key} onSubmit={event => {
-        event.preventDefault();if (activeEditing.view !== navigation.current.token || disabled || submitting) return;const values = new FormData(event.currentTarget), { suggestionId: _id, ...base } = activeEditing.value
-        const candidate = { ...(independent ? activeEditing.value : { ...base, source: 'manual' }), ...Object.fromEntries(values) }
-        if ('courseDays' in candidate) candidate.courseDays = Number(values.get('courseDays'))
-        if ('quantity' in candidate) candidate.quantity = Number(values.get('quantity'))
-        if ('note' in candidate && typeof candidate.note === 'string' && candidate.note.trim() === '') delete candidate.note
-        if ('instructions' in candidate && typeof candidate.instructions === 'string' && candidate.instructions.trim() === '') delete candidate.instructions
-        const result = doctorPreparationSelectionSchema.safeParse(candidate)
-        if (!result.success || !complete(result.data)) { setEditError(true);return }
-        commit()
-        dismissDraftItem(draftItemId(result.data))
-        const formOwned = result.data.source === 'manual' && (onManualChange?.({ label: activeEditing.label, value: result.data }) === true || manualKeys.has(activeEditing.key))
-        update(previous => {
-          const { [activeEditing.key]: _removed, ...removed } = previous.removed
-          return { ...previous, removed, edits: { ...previous.edits, [activeEditing.key]: { label: activeEditing.label, selection: result.data, fingerprint: activeEditing.fingerprint, reviewedFingerprint: activeEditing.fingerprint, formOwned } }, unselected: previous.unselected.filter(key => key !== activeEditing.key) }
-        })
-        setEditDirty(false)
-        setEditSwitchBlocked(false)
-        if (inlineEditing) setEditing(previous => previous === undefined ? undefined : { ...previous, value: result.data })
-        else setEditing(undefined)
-      }}><FieldGroup className="max-h-[55svh] overflow-y-auto px-4 py-3">
-        {itemDetails?.(activeEditing.value)}
-        {manualEditingChanged ? <p className="text-sm">{zh ? '左侧填写已更新，当前调整已保留，请核对后再保留。' : 'The manual fields changed. Your pending edits are preserved; review them before keeping them.'}</p> : null}
-        {needsReview(activeEditing.key) ? <p className="text-sm">{zh ? '新资料已到达，请核对后决定保留、修改或移除。' : 'New information arrived. Review this item before keeping it.'}</p> : null}
-        {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel>{zh ? '诊断类别' : 'Diagnosis role'}</FieldLabel><ToggleGroup value={activeEditing.value.role === null ? [] : [activeEditing.value.role]} onValueChange={values => { setEditDirty(true);const role = values[0];if (role === 'primary' || role === 'secondary') setEditing(previous => previous?.value.kind === 'diagnosis' ? { ...previous, value: { ...previous.value, role } } : previous) }}><ToggleGroupItem value="primary">{zh ? '主诊断' : 'Primary'}</ToggleGroupItem><ToggleGroupItem value="secondary">{zh ? '次诊断' : 'Secondary'}</ToggleGroupItem></ToggleGroup></Field> : null}
-        {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel htmlFor="prepared-note">{zh ? '备注' : 'Note'}</FieldLabel><Textarea value={activeEditing.fields?.note ?? activeEditing.value.note ?? ''} onChange={event => changeEditingField('note', event.currentTarget.value)} id="prepared-note" maxLength={500} name="note" /></Field> : null}
-        {activeEditing.value.kind === 'pathology' && activeEditing.value.source === 'manual' && pathologySourcesFor !== undefined ? <Field>
-          <FieldLabel htmlFor="prepared-source-procedure">{zh ? '送检的既往手术' : 'Source procedure'}</FieldLabel>
-          <WorkspaceSelect id="prepared-source-procedure" value={activeEditing.value.sourceProcedureReference}
-            items={pathologySourcesFor(activeEditing.value).map(procedure => ({ value: procedure.sourceReference, label: `${procedure.display ?? procedure.code} · ${procedure.performedAt.slice(0, 10)}` }))}
-            onValueChange={sourceProcedureReference => { setEditDirty(true); if (sourceProcedureReference !== null) setEditing(previous => previous?.value.kind === 'pathology' && previous.value.source === 'manual' ? { ...previous, value: { ...previous.value, sourceProcedureReference } } : previous) }} />
-        </Field> : null}
-        {editingFields.map(([field, label]) => {
-            const value = field === 'doseText' && activeEditing.value.kind === 'prescription' ? activeEditing.value.doseText : field === 'frequencyCode' && activeEditing.value.kind === 'prescription' ? activeEditing.value.frequencyCode : field === 'courseDays' && activeEditing.value.kind === 'prescription' ? activeEditing.value.courseDays : field === 'quantity' && activeEditing.value.kind === 'prescription' ? activeEditing.value.quantity : field === 'indicationCode' && activeEditing.value.kind === 'laboratory' ? activeEditing.value.indicationCode : field === 'indication' && activeEditing.value.kind === 'imaging' ? activeEditing.value.indication : activeEditing.value.kind === 'pathology' ? activeEditing.value.purpose : ''
-            return <Field key={field}><FieldLabel htmlFor={`prepared-${field}`}>{label}</FieldLabel>{field === 'frequencyCode' && activeEditing.value.kind === 'prescription' && activeEditing.value.referenceProduct === undefined
-              ? <WorkspaceSelect id={`prepared-${field}`} value={activeEditing.value.frequencyCode} placeholder={zh ? '请选择频次' : 'Choose frequency'} items={[...new Set(['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE', ...activeEditing.value.frequencyCode ? [activeEditing.value.frequencyCode] : []])].map(code => ({ value: code, label: frequencyLabel(code, zh) }))}
-                onValueChange={code => { setEditDirty(true);setEditing(previous => previous?.value.kind === 'prescription' ? { ...previous, value: { ...previous.value, frequencyCode: code } } : previous) }} />
-              : field === 'indicationCode' && activeEditing.value.kind === 'laboratory'
-                ? <WorkspaceSelect id={`prepared-${field}`} value={activeEditing.value.indicationCode} items={[...new Set(['clinical-evaluation', 'fever', activeEditing.value.indicationCode])].map(code => ({ value: code, label: indicationLabel(code, zh) }))}
-                  onValueChange={code => { setEditDirty(true);if (code !== null) setEditing(previous => previous?.value.kind === 'laboratory' ? { ...previous, value: { ...previous.value, indicationCode: code } } : previous) }} />
-                : <Input value={activeEditing.fields?.[field] ?? value ?? ''} onChange={event => changeEditingField(field, event.currentTarget.value)} id={`prepared-${field}`} min={1} name={field} required type={field === 'quantity' || field === 'courseDays' ? 'number' : 'text'} />}</Field>
-          })}
-        {activeEditing.value.kind === 'prescription' ? <Field><FieldLabel htmlFor="prepared-instructions">{zh ? '给药说明' : 'Instructions'}</FieldLabel><Input value={activeEditing.fields?.instructions ?? activeEditing.value.instructions ?? ''} onChange={event => changeEditingField('instructions', event.currentTarget.value)} id="prepared-instructions" maxLength={240} name="instructions" /></Field> : null}
-        {editError ? <p role="alert">{zh ? '请补齐有效的项目信息。' : 'Complete the item with valid values.'}</p> : null}
-        {editSwitchBlocked ? <p role="alert">{zh ? '请先保留当前调整，再查看其他待开具项目。' : 'Keep the current edits before opening another pending item.'}</p> : null}
-      </FieldGroup><DialogFooter><Button disabled={disabled || submitting} type="submit">{zh ? '保留本次调整' : 'Keep edits'}</Button></DialogFooter></form>}</DoctorDraftEditorScope>)
+    event.preventDefault(); if (activeEditing.view !== navigation.current.token || disabled || submitting) return; const values = new FormData(event.currentTarget), { suggestionId: _id, ...base } = activeEditing.value
+    const candidate = { ...(independent ? activeEditing.value : { ...base, source: 'manual' }), ...Object.fromEntries(values) }
+    if ('courseDays' in candidate) candidate.courseDays = Number(values.get('courseDays'))
+    if ('quantity' in candidate) candidate.quantity = Number(values.get('quantity'))
+    if ('note' in candidate && typeof candidate.note === 'string' && candidate.note.trim() === '') delete candidate.note
+    if ('instructions' in candidate && typeof candidate.instructions === 'string' && candidate.instructions.trim() === '') delete candidate.instructions
+    const result = doctorPreparationSelectionSchema.safeParse(candidate)
+    if (!result.success || !complete(result.data)) { setEditError(true); return }
+    commit()
+    dismissDraftItem(draftItemId(result.data))
+    const formOwned = result.data.source === 'manual' && (onManualChange?.({ label: activeEditing.label, value: result.data }) === true || manualKeys.has(activeEditing.key))
+    update(previous => {
+      const { [activeEditing.key]: _removed, ...removed } = previous.removed
+      return { ...previous, removed, edits: { ...previous.edits, [activeEditing.key]: { label: activeEditing.label, selection: result.data, fingerprint: activeEditing.fingerprint, reviewedFingerprint: activeEditing.fingerprint, formOwned } }, unselected: previous.unselected.filter(key => key !== activeEditing.key) }
+    })
+    setEditDirty(false)
+    setEditSwitchBlocked(false)
+    if (inlineEditing) setEditing(previous => previous === undefined ? undefined : { ...previous, value: result.data })
+    else setEditing(undefined)
+  }}><FieldGroup className="max-h-[55svh] overflow-y-auto px-4 py-3">
+      {itemDetails?.(activeEditing.value)}
+      {manualEditingChanged ? <p className="text-sm">{zh ? '左侧填写已更新，当前调整已保留，请核对后再保留。' : 'The manual fields changed. Your pending edits are preserved; review them before keeping them.'}</p> : null}
+      {needsReview(activeEditing.key) ? <p className="text-sm">{zh ? '新资料已到达，请核对后决定保留、修改或移除。' : 'New information arrived. Review this item before keeping it.'}</p> : null}
+      {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel>{zh ? '诊断类别' : 'Diagnosis role'}</FieldLabel><ToggleGroup value={activeEditing.value.role === null ? [] : [activeEditing.value.role]} onValueChange={values => { setEditDirty(true); const role = values[0]; if (role === 'primary' || role === 'secondary') setEditing(previous => previous?.value.kind === 'diagnosis' ? { ...previous, value: { ...previous.value, role } } : previous) }}><ToggleGroupItem value="primary">{zh ? '主诊断' : 'Primary'}</ToggleGroupItem><ToggleGroupItem value="secondary">{zh ? '次诊断' : 'Secondary'}</ToggleGroupItem></ToggleGroup></Field> : null}
+      {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel htmlFor="prepared-note">{zh ? '备注' : 'Note'}</FieldLabel><Textarea value={activeEditing.fields?.note ?? activeEditing.value.note ?? ''} onChange={event => changeEditingField('note', event.currentTarget.value)} id="prepared-note" maxLength={500} name="note" /></Field> : null}
+      {activeEditing.value.kind === 'pathology' && activeEditing.value.source === 'manual' && pathologySourcesFor !== undefined ? <Field>
+        <FieldLabel htmlFor="prepared-source-procedure">{zh ? '送检的既往手术' : 'Source procedure'}</FieldLabel>
+        <WorkspaceSelect id="prepared-source-procedure" value={activeEditing.value.sourceProcedureReference}
+          items={pathologySourcesFor(activeEditing.value).map(procedure => ({ value: procedure.sourceReference, label: `${procedure.display ?? procedure.code} · ${procedure.performedAt.slice(0, 10)}` }))}
+          onValueChange={sourceProcedureReference => { setEditDirty(true); if (sourceProcedureReference !== null) setEditing(previous => previous?.value.kind === 'pathology' && previous.value.source === 'manual' ? { ...previous, value: { ...previous.value, sourceProcedureReference } } : previous) }} />
+      </Field> : null}
+      {editingFields.map(([field, label]) => {
+        const value = field === 'doseText' && activeEditing.value.kind === 'prescription' ? activeEditing.value.doseText : field === 'frequencyCode' && activeEditing.value.kind === 'prescription' ? activeEditing.value.frequencyCode : field === 'courseDays' && activeEditing.value.kind === 'prescription' ? activeEditing.value.courseDays : field === 'quantity' && activeEditing.value.kind === 'prescription' ? activeEditing.value.quantity : field === 'indicationCode' && activeEditing.value.kind === 'laboratory' ? activeEditing.value.indicationCode : field === 'indication' && activeEditing.value.kind === 'imaging' ? activeEditing.value.indication : activeEditing.value.kind === 'pathology' ? activeEditing.value.purpose : ''
+        return <Field key={field}><FieldLabel htmlFor={`prepared-${field}`}>{label}</FieldLabel>{field === 'frequencyCode' && activeEditing.value.kind === 'prescription' && activeEditing.value.referenceProduct === undefined
+          ? <WorkspaceSelect id={`prepared-${field}`} value={activeEditing.value.frequencyCode} placeholder={zh ? '请选择频次' : 'Choose frequency'} items={[...new Set(['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE', ...activeEditing.value.frequencyCode ? [activeEditing.value.frequencyCode] : []])].map(code => ({ value: code, label: frequencyLabel(code, zh) }))}
+            onValueChange={code => { setEditDirty(true); setEditing(previous => previous?.value.kind === 'prescription' ? { ...previous, value: { ...previous.value, frequencyCode: code } } : previous) }} />
+          : field === 'indicationCode' && activeEditing.value.kind === 'laboratory'
+            ? <WorkspaceSelect id={`prepared-${field}`} value={activeEditing.value.indicationCode} items={[...new Set(['clinical-evaluation', 'fever', activeEditing.value.indicationCode])].map(code => ({ value: code, label: indicationLabel(code, zh) }))}
+              onValueChange={code => { setEditDirty(true); if (code !== null) setEditing(previous => previous?.value.kind === 'laboratory' ? { ...previous, value: { ...previous.value, indicationCode: code } } : previous) }} />
+            : <Input value={activeEditing.fields?.[field] ?? value ?? ''} onChange={event => changeEditingField(field, event.currentTarget.value)} id={`prepared-${field}`} min={1} name={field} required type={field === 'quantity' || field === 'courseDays' ? 'number' : 'text'} />}</Field>
+      })}
+      {activeEditing.value.kind === 'prescription' ? <Field><FieldLabel htmlFor="prepared-instructions">{zh ? '给药说明' : 'Instructions'}</FieldLabel><Input value={activeEditing.fields?.instructions ?? activeEditing.value.instructions ?? ''} onChange={event => changeEditingField('instructions', event.currentTarget.value)} id="prepared-instructions" maxLength={240} name="instructions" /></Field> : null}
+      {editError ? <p role="alert">{zh ? '请补齐有效的项目信息。' : 'Complete the item with valid values.'}</p> : null}
+      {editSwitchBlocked ? <p role="alert">{zh ? '请先保留当前调整，再查看其他待开具项目。' : 'Keep the current edits before opening another pending item.'}</p> : null}
+    </FieldGroup><DialogFooter><Button disabled={disabled || submitting} type="submit">{zh ? '保留本次调整' : 'Keep edits'}</Button></DialogFooter></form>}</DoctorDraftEditorScope>)
   const confirmDisabled = inlineEditing && editDirty || !canConfirm || available.length === 0 || block !== undefined || available.some(row => needsReview(row.key) && (priceReviewChanged(row.value) || !(currentEncounter !== undefined && row.value.source === 'manual')))
   const submitSelection = (clinicalOverride?: ClinicalOverrideInput) => {
     if (confirmationContext === undefined) return
@@ -704,14 +737,14 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   const isDegraded = recoveryMessage(state, zh) !== undefined || failed
   const statusLine = completedIntent ? zh ? `已完成${kind === 'diagnosis' ? '确认' : '开具'}，${recordsUpdated ? '记录已更新。' : '记录暂未刷新，请刷新查看。'}` : recordsUpdated ? 'Confirmed; records are up to date.' : 'Confirmed; refresh the records to see the result.' : job.paused ? zh ? '自动准备已暂停' : 'Preparation paused' : pending ? zh ? '正在按最新资料更新，旧自动项目暂不可开具。' : 'Updating; previous automatic items cannot be submitted yet.'
     : recoveryMessage(state, zh) !== undefined ? recoveryMessage(state, zh)
-    : failed ? zh ? '更新或提交未完成，草稿已保留。' : 'Update or submission failed. Your draft is preserved.'
-    : state?.stale ? zh ? '资料有变化，等待重新核对。' : 'Information changed; another check is needed.'
-    : state?.status === 'ready' && job.ready ? rows.length === 0
-      ? state.considerations?.length ? zh ? '本轮仅有待核实思路，见“依据与说明”。' : 'Only considerations are available; see the details.'
-        : zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'
-      : undefined
-    : state?.status === 'missing-evidence' ? zh ? '暂无可直接开具的项目，可查看说明。' : 'No executable items; see the details.'
-    : zh ? '尚未完成核对。' : 'Checks are not complete.'
+      : failed ? zh ? '更新或提交未完成，草稿已保留。' : 'Update or submission failed. Your draft is preserved.'
+        : state?.stale ? zh ? '资料有变化，等待重新核对。' : 'Information changed; another check is needed.'
+          : state?.status === 'ready' && job.ready ? rows.length === 0
+            ? state.considerations?.length ? zh ? '本轮仅有待核实思路，见“依据与说明”。' : 'Only considerations are available; see the details.'
+              : zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'
+            : undefined
+            : state?.status === 'missing-evidence' ? zh ? '暂无可直接开具的项目，可查看说明。' : 'No executable items; see the details.'
+              : zh ? '尚未完成核对。' : 'Checks are not complete.'
   const compactSettled = itemResults === undefined && originalIntent.value === null && rows.length === 0 && (issuedCatalogItemIds?.size ?? 0) > 0 && !isDegraded && !pending && !job.paused && !state?.considerations?.length && submissionError === null
   return <>
     <Card aria-label={doctorRecommendationKindTitles[kind][zh ? 0 : 1]} role="region" size="sm" className={isDegraded ? 'min-w-0 border-dashed border-warning/60 bg-warning/10' : 'min-w-0 border-info/40 bg-info/10'} data-agent-phase={job.pending ? 'working' : 'ready'}>
@@ -719,7 +752,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         {manualControls}
         {state?.recovery?.canContinue ? <Button disabled={pending || job.paused || state.stale} onClick={job.continueOriginal} size="sm" type="button" variant="outline">{zh ? '继续原任务' : 'Continue original task'}</Button> : null}
         <Button aria-label={toolLabels.refresh} className="h-7 gap-1 px-2 text-xs" disabled={refreshRecords ? false : pending || job.paused || state === undefined} onClick={() => {
-          if (refreshRecords) { void synchronize(submission.data, submission.variables);return }
+          if (refreshRecords) { void synchronize(submission.data, submission.variables); return }
           if (!succeeded) submission.reset()
           job.refresh()
         }} size="sm" title={toolLabels.refresh} type="button" variant="outline"><RefreshCwIcon data-icon="inline-start" /><span>{toolLabels.refresh}</span></Button>
@@ -758,38 +791,44 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
               const eligible = new Set(rows.filter(row => complete(row.value) && !needsReview(row.key)
                 && (row.value.source === 'manual' || automaticReady)
                 && (row.value.source === 'manual' ? manualUnavailableReason?.(row.value, visible) : rowUnavailable(row)) === undefined).map(row => row.key))
-              return { ...previous, unselected: previous.unselected.filter(key => !eligible.has(key)),
-                removed: Object.fromEntries(Object.entries(previous.removed).filter(([key]) => !eligible.has(key))) }
+              return {
+                ...previous, unselected: previous.unselected.filter(key => !eligible.has(key)),
+                removed: Object.fromEntries(Object.entries(previous.removed).filter(([key]) => !eligible.has(key)))
+              }
             })} size="sm" type="button" variant="ghost">{zh ? '全选可办理项目' : 'Select all eligible items'}</Button>
-            <Button disabled={submitting} onClick={() => update(previous => ({ ...previous,
-              unselected: [...new Set([...previous.unselected, ...rows.map(row => row.key)])] }))} size="sm" type="button" variant="ghost">{zh ? '清空选择' : 'Clear selection'}</Button>
+            <Button disabled={submitting} onClick={() => update(previous => ({
+              ...previous,
+              unselected: [...new Set([...previous.unselected, ...rows.map(row => row.key)])]
+            }))} size="sm" type="button" variant="ghost">{zh ? '清空选择' : 'Clear selection'}</Button>
           </div>
           {rows.map(row => {
             const unavail = rowUnavailable(row)
             const rowBadge = needsReview(row.key) ? (zh ? '请核对新资料' : 'Review new information') : !complete(row.value) ? (zh ? '待补充' : 'Incomplete') : row.value.source === 'manual' ? (zh ? '已填写' : 'Entered') : !automaticReady ? (zh ? '待更新' : 'Updating') : undefined
             const rowPadding = row.value.source === 'manual' ? 'px-2.5 py-2 pr-14' : 'px-2.5 py-2'
             return <DoctorDraftItem key={row.key} id={draftItemId(row.value)} enabled={row.value.source === 'manual'}><div role="group" aria-label={row.label} className={unavail !== undefined ? `flex min-w-0 flex-wrap items-center gap-2 rounded-md border bg-card ${rowPadding} opacity-60` : `flex min-w-0 flex-wrap items-center gap-2 rounded-md border bg-card ${rowPadding}`}>
-            <Checkbox aria-label={`${zh ? '选择' : 'Select '}${row.label}`} checked={!preferences.unselected.includes(row.key) && preferences.removed[row.key] === undefined && complete(row.value)} disabled={!complete(row.value)} onCheckedChange={checked => update(previous => {
-              const { [row.key]: _removed, ...removed } = previous.removed
-              return { ...previous, removed: checked ? removed : previous.removed, unselected: checked ? previous.unselected.filter(key => key !== row.key) : [...previous.unselected.filter(key => key !== row.key), row.key] }
-            })} />
-            <div className="min-w-0 basis-[calc(100%-1.75rem)] flex-1">{inlineEditing ? <Button aria-label={`${zh ? '查看待开具' : 'View pending'} ${row.label}`} className="h-auto max-w-full justify-start whitespace-normal p-0 text-left font-medium" data-agent-diagnosis-entry={row.value.source === 'manual' && kind === 'diagnosis' ? '' : undefined} data-agent-medication-name={row.value.source === 'manual' && kind === 'prescription' ? '' : undefined} onClick={() => openEditor(row)} type="button" variant="ghost">{row.label}</Button> : <p className="break-words font-medium" data-agent-diagnosis-entry={row.value.source === 'manual' && kind === 'diagnosis' ? '' : undefined} data-agent-medication-name={row.value.source === 'manual' && kind === 'prescription' ? '' : undefined}>{row.label}</p>}<p className="break-words text-xs text-muted-foreground">{summary(row.value, zh)}</p>{itemDetails?.(row.value)}{unavail === undefined ? null : <p className="break-words text-xs text-muted-foreground">{unavail}</p>}{preferences.removed[row.key] !== undefined ? <p className="text-xs text-muted-foreground">{zh ? '已移除项目的依据或方案有变化，请核对。' : 'The evidence or plan for this removed item changed. Review it.'}</p> : conflicts.has(row.key) && needsReview(row.key) ? <p className="text-xs text-muted-foreground">{zh ? '新建议与医生填写内容不同，请核对。' : 'The new suggestion differs from your entry. Review this item.'}</p> : null}</div>
-            {rowBadge === undefined ? null : <Badge variant="secondary">{rowBadge}</Badge>}
-            {row.value.source === 'manual' && manualKeys.has(row.key) && onManualEdit !== undefined ? <Button aria-label={`${zh ? (kind === 'diagnosis' ? '编辑诊断' : '编辑药品') : (kind === 'diagnosis' ? 'Edit diagnosis' : 'Edit medication')} ${row.label}`} disabled={disabled || submission.isPending} onClick={() => onManualEdit(row.value)} size="sm" type="button" variant="ghost">{zh ? (kind === 'diagnosis' ? '编辑诊断' : '编辑药品') : (kind === 'diagnosis' ? 'Edit diagnosis' : 'Edit medication')}</Button> : null}
-            <Button onClick={() => openEditor(row)} size="sm" type="button" variant="ghost">{needsReview(row.key) ? zh ? '核对' : 'Review' : zh ? '调整' : 'Edit'}</Button>
-            <Button aria-label={`${zh ? '移除' : 'Remove '}${row.label}`} disabled={submission.isPending} onClick={() => {
-              if (row.value.source === 'manual' && manualKeys.has(row.key) && onManualRemove !== undefined) {
-                onManualRemove(row.value)
-                const automatic = visible?.items.find(item => identity(item) === row.key)
-                update(previous => ({ ...previous,
-                  removed: automatic === undefined ? previous.removed : { ...previous.removed, [row.key]: removalSignature({ key: row.key, label: automatic.label, value: preparedSelection(automatic), item: automatic, signature: evidenceSignature(visible!, automatic) }) },
-                  edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => key !== row.key)),
-                }))
-                return
-              }
-              update(previous => ({ ...previous, removed: { ...previous.removed, [row.key]: removalSignature(baseRows.find(base => base.key === row.key) ?? row) }, edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => key !== row.key)) }))
-            }} size="sm" type="button" variant="ghost">{zh ? '移除' : 'Remove'}</Button>
-          </div></DoctorDraftItem>})}
+              <Checkbox aria-label={`${zh ? '选择' : 'Select '}${row.label}`} checked={!preferences.unselected.includes(row.key) && preferences.removed[row.key] === undefined && complete(row.value)} disabled={!complete(row.value)} onCheckedChange={checked => update(previous => {
+                const { [row.key]: _removed, ...removed } = previous.removed
+                return { ...previous, removed: checked ? removed : previous.removed, unselected: checked ? previous.unselected.filter(key => key !== row.key) : [...previous.unselected.filter(key => key !== row.key), row.key] }
+              })} />
+              <div className="min-w-0 basis-[calc(100%-1.75rem)] flex-1">{inlineEditing ? <Button aria-label={`${zh ? '查看待开具' : 'View pending'} ${row.label}`} className="h-auto max-w-full justify-start whitespace-normal p-0 text-left font-medium" data-agent-diagnosis-entry={row.value.source === 'manual' && kind === 'diagnosis' ? '' : undefined} data-agent-medication-name={row.value.source === 'manual' && kind === 'prescription' ? '' : undefined} onClick={() => openEditor(row)} type="button" variant="ghost">{row.label}</Button> : <p className="break-words font-medium" data-agent-diagnosis-entry={row.value.source === 'manual' && kind === 'diagnosis' ? '' : undefined} data-agent-medication-name={row.value.source === 'manual' && kind === 'prescription' ? '' : undefined}>{row.label}</p>}<p className="break-words text-xs text-muted-foreground">{summary(row.value, zh)}</p>{itemDetails?.(row.value)}{unavail === undefined ? null : <p className="break-words text-xs text-muted-foreground">{unavail}</p>}{preferences.removed[row.key] !== undefined ? <p className="text-xs text-muted-foreground">{zh ? '已移除项目的依据或方案有变化，请核对。' : 'The evidence or plan for this removed item changed. Review it.'}</p> : conflicts.has(row.key) && needsReview(row.key) ? <p className="text-xs text-muted-foreground">{zh ? '新建议与医生填写内容不同，请核对。' : 'The new suggestion differs from your entry. Review this item.'}</p> : null}</div>
+              {rowBadge === undefined ? null : <Badge variant="secondary">{rowBadge}</Badge>}
+              {row.value.source === 'manual' && manualKeys.has(row.key) && onManualEdit !== undefined ? <Button aria-label={`${zh ? (kind === 'diagnosis' ? '编辑诊断' : '编辑药品') : (kind === 'diagnosis' ? 'Edit diagnosis' : 'Edit medication')} ${row.label}`} disabled={disabled || submission.isPending} onClick={() => onManualEdit(row.value)} size="sm" type="button" variant="ghost">{zh ? (kind === 'diagnosis' ? '编辑诊断' : '编辑药品') : (kind === 'diagnosis' ? 'Edit diagnosis' : 'Edit medication')}</Button> : null}
+              <Button onClick={() => openEditor(row)} size="sm" type="button" variant="ghost">{needsReview(row.key) ? zh ? '核对' : 'Review' : zh ? '调整' : 'Edit'}</Button>
+              <Button aria-label={`${zh ? '移除' : 'Remove '}${row.label}`} disabled={submission.isPending} onClick={() => {
+                if (row.value.source === 'manual' && manualKeys.has(row.key) && onManualRemove !== undefined) {
+                  onManualRemove(row.value)
+                  const automatic = visible?.items.find(item => identity(item) === row.key)
+                  update(previous => ({
+                    ...previous,
+                    removed: automatic === undefined ? previous.removed : { ...previous.removed, [row.key]: removalSignature({ key: row.key, label: automatic.label, value: preparedSelection(automatic), item: automatic, signature: evidenceSignature(visible!, automatic) }) },
+                    edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => key !== row.key)),
+                  }))
+                  return
+                }
+                update(previous => ({ ...previous, removed: { ...previous.removed, [row.key]: removalSignature(baseRows.find(base => base.key === row.key) ?? row) }, edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => key !== row.key)) }))
+              }} size="sm" type="button" variant="ghost">{zh ? '移除' : 'Remove'}</Button>
+            </div></DoctorDraftItem>
+          })}
         </div>}
         {!rolesValid && available.length > 0 ? <p className="text-xs text-muted-foreground">{zh ? '请核对主次诊断，保留一条主诊断。' : 'Review the diagnosis roles and keep one primary diagnosis.'}</p> : null}
         {block === undefined || rows.some(row => rowUnavailable(row) === block) ? null : <p className="text-xs text-muted-foreground">{block}</p>}

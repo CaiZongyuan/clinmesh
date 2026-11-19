@@ -62,8 +62,8 @@ function ActionList({ admission, session, locale, write, data, refresh, loading,
     : getWorkspaceErrorMessage(new ApiClientError(0, error?.code ?? '', ''), getWorkspaceMessages(locale))
   const details = (snapshot: InvestigationActionSnapshot) => <div className="flex flex-col gap-1 text-xs text-muted-foreground">
     <span>{snapshot.kind === 'laboratory' ? t('检验', 'Laboratory') : t('检查', 'Imaging')} · {state(snapshot)}</span>
-    <span>{t('申请指征：', 'Indication: ')}{snapshot.kind === 'laboratory' ? snapshot.request.indicationCode === 'clinical-assessment' ? t('临床评估', 'Clinical assessment')
-      : indicationLabel(snapshot.request.indicationCode, getWorkspaceMessages(locale)) : snapshot.request.indication}</span>
+    <span>{t('申请指征：', 'Indication: ')}{snapshot.kind === 'laboratory'
+      ? indicationLabel(snapshot.request.indicationCode, getWorkspaceMessages(locale)) : snapshot.request.indication}</span>
     {snapshot.request.generationError ? <span>{snapshot.kind === 'laboratory' ? laboratoryGenerationErrorMessage(snapshot.request.generationError.code, locale)
       : t('本次检查未取得结果，未生成报告；请核查后重试或取消申请。', 'No result or report was produced. Review the request, then retry or cancel it.')}</span> : null}
     {cancel ? <span>{t('取消理由：不再需要', 'Cancellation reason: no longer needed')}</span> : null}

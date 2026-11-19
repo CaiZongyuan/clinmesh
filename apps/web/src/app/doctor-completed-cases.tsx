@@ -1,3 +1,4 @@
+import { formatMedicationFrequency } from '@clinmesh/core/medication-safety'
 import {
   type ClinicalCatalog,
   type DoctorCompletedCaseDetail,
@@ -32,6 +33,7 @@ import {
   getDoctorCompletedCases,
   type DoctorCompletedCaseFilters,
 } from './api-client.ts'
+import { resolveMedicationDisplayMeta } from './doctor/catalog-picker-dialogs.tsx'
 import { ExaminationReportText } from './doctor/examination-report-text.tsx'
 import { ImagingRequestList, useImagingViewState } from './doctor/imaging-page.tsx'
 import { PathologyRequestList } from './doctor/pathology-page.tsx'
@@ -216,77 +218,77 @@ export function DoctorCompletedCaseLibrary({
   return (
     <DoctorWorkspaceLayout locale={locale} flowState={detail.data === undefined || detail.isError ? {} : { consultation: 'completed' }}
       selectedCaseId={selectedCaseId} queueLabel={messages.consultationQueue} detailLabel={messages.completedCaseDetail} queue={showDetail => (
-      <aside aria-label={messages.consultationQueue} className="flex min-w-0 flex-col gap-3 p-2">
-        {navigation}
+        <aside aria-label={messages.consultationQueue} className="flex min-w-0 flex-col gap-3 p-2">
+          {navigation}
 
-        <section aria-labelledby="completed-case-list-heading" className="flex min-w-0 flex-col gap-3">
-          <div className="sr-only">
-            <h2 className="text-base font-semibold" id="completed-case-list-heading">
-              {messages.doctorCompletedCases}
-            </h2>
-            <Badge variant="secondary">{cases.data?.total ?? 0}</Badge>
-          </div>
-          {catalog.isError ? (
-            <CompletedCaseError
-              error={catalog.error}
-              fallbackTitle={messages.completedCasesUnavailable}
-              messages={messages}
-            />
-          ) : null}
-          {cases.isPending ? <Skeleton className="h-52 w-full" /> : cases.isError ? (
-            <CompletedCaseError
-              error={cases.error}
-              fallbackTitle={messages.completedCasesUnavailable}
-              messages={messages}
-            />
-          ) : cases.data.items.length === 0 ? (
-            <Empty className="min-h-52 border">
-              <EmptyHeader>
-                <EmptyMedia variant="icon"><LibraryBigIcon aria-hidden="true" /></EmptyMedia>
-                <EmptyTitle>{messages.noCompletedCases}</EmptyTitle>
-                <EmptyDescription>{messages.noCompletedCasesDescription}</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ) : (
-            <ul className="flex flex-col gap-1.5" data-workspace-queue-items>
-              {cases.data.items.map(item => (
-                <li key={item.caseId}>
-                  <Button
-                    aria-label={messages.viewCompletedCase + ' ' + item.patient.name}
-                    aria-pressed={selectedCaseId === item.caseId}
-                    className="h-auto w-full flex-col items-stretch gap-1 whitespace-normal rounded-lg border px-2.5 py-2 text-left"
-                    onClick={() => { setSelectedCaseId(item.caseId); showDetail() }}
-                    type="button"
-                    variant={selectedCaseId === item.caseId ? 'secondary' : 'ghost'}
-                  >
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="break-words font-semibold text-sm">{item.patient.name}</span>
-                      <Badge className="shrink-0 px-1.5 py-0 text-[10px]" variant="secondary">{messages.encounterCompleted}</Badge>
-                    </span>
-                    <span className="truncate text-xs text-muted-foreground">{item.primaryDiagnosis?.display ?? '-'}</span>
-                    <span className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground tabular-nums">
-                      <span>{item.patient.identifier}</span>
-                      <span>{formatDateTime(item.completedAt, locale)}</span>
-                    </span>
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {cases.data === undefined || cases.data.total === 0 ? null : (
-            <PaginationControls
-              messages={messages}
-              onPageChange={(nextPage) => {
-                setPage(nextPage)
-                setSelectedCaseId(undefined)
-              }}
-              page={cases.data.page}
-              pageSize={cases.data.pageSize}
-              total={cases.data.total}
-            />
-          )}
-        </section>
-      </aside>
+          <section aria-labelledby="completed-case-list-heading" className="flex min-w-0 flex-col gap-3">
+            <div className="sr-only">
+              <h2 className="text-base font-semibold" id="completed-case-list-heading">
+                {messages.doctorCompletedCases}
+              </h2>
+              <Badge variant="secondary">{cases.data?.total ?? 0}</Badge>
+            </div>
+            {catalog.isError ? (
+              <CompletedCaseError
+                error={catalog.error}
+                fallbackTitle={messages.completedCasesUnavailable}
+                messages={messages}
+              />
+            ) : null}
+            {cases.isPending ? <Skeleton className="h-52 w-full" /> : cases.isError ? (
+              <CompletedCaseError
+                error={cases.error}
+                fallbackTitle={messages.completedCasesUnavailable}
+                messages={messages}
+              />
+            ) : cases.data.items.length === 0 ? (
+              <Empty className="min-h-52 border">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon"><LibraryBigIcon aria-hidden="true" /></EmptyMedia>
+                  <EmptyTitle>{messages.noCompletedCases}</EmptyTitle>
+                  <EmptyDescription>{messages.noCompletedCasesDescription}</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : (
+              <ul className="flex flex-col gap-1.5" data-workspace-queue-items>
+                {cases.data.items.map(item => (
+                  <li key={item.caseId}>
+                    <Button
+                      aria-label={messages.viewCompletedCase + ' ' + item.patient.name}
+                      aria-pressed={selectedCaseId === item.caseId}
+                      className="h-auto w-full flex-col items-stretch gap-1 whitespace-normal rounded-lg border px-2.5 py-2 text-left"
+                      onClick={() => { setSelectedCaseId(item.caseId); showDetail() }}
+                      type="button"
+                      variant={selectedCaseId === item.caseId ? 'secondary' : 'ghost'}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="break-words font-semibold text-sm">{item.patient.name}</span>
+                        <Badge className="shrink-0 px-1.5 py-0 text-[10px]" variant="secondary">{messages.encounterCompleted}</Badge>
+                      </span>
+                      <span className="truncate text-xs text-muted-foreground">{item.primaryDiagnosis?.display ?? '-'}</span>
+                      <span className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground tabular-nums">
+                        <span>{item.patient.identifier}</span>
+                        <span>{formatDateTime(item.completedAt, locale)}</span>
+                      </span>
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {cases.data === undefined || cases.data.total === 0 ? null : (
+              <PaginationControls
+                messages={messages}
+                onPageChange={(nextPage) => {
+                  setPage(nextPage)
+                  setSelectedCaseId(undefined)
+                }}
+                page={cases.data.page}
+                pageSize={cases.data.pageSize}
+                total={cases.data.total}
+              />
+            )}
+          </section>
+        </aside>
       )}>
       {detail.isError || detail.data === undefined ? null : <WorkspaceHeaderPatient>{detail.data.patient.name}</WorkspaceHeaderPatient>}
       <section aria-labelledby="completed-case-detail-heading" className="flex h-full min-h-0 min-w-0 flex-col gap-4 overflow-y-auto overscroll-contain p-4">
@@ -636,7 +638,7 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
       </CompletedCaseSection>
 
       <CompletedCaseSection heading={messages.medicationConclusion}>
-        <MedicationConclusion detail={detail} locale={locale} />
+        <MedicationConclusion catalog={catalog} detail={detail} locale={locale} />
       </CompletedCaseSection>
 
       <section aria-label={messages.completedCaseTimeline} className="flex min-w-0 flex-col gap-4">
@@ -649,14 +651,14 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
             <li className="relative min-w-0" data-timeline-reference={event.reference} key={`${event.reference}:${event.kind}:${index}`}>
               <span className="absolute top-1.5 -left-[1.56rem] size-2 rounded-full bg-primary" />
               <div className="flex min-w-0 flex-col gap-1.5">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <span className="text-sm font-medium">{messages[timelineMessageKeys[event.kind]]}</span>
-                    <time className="text-xs text-muted-foreground" dateTime={event.occurredAt}>
-                      {formatDateTime(event.occurredAt, locale)}
-                    </time>
-                  </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-sm font-medium">{messages[timelineMessageKeys[event.kind]]}</span>
+                  <time className="text-xs text-muted-foreground" dateTime={event.occurredAt}>
+                    {formatDateTime(event.occurredAt, locale)}
+                  </time>
                 </div>
-              </li>
+              </div>
+            </li>
           ))}
         </ol>
       </section>
@@ -695,21 +697,21 @@ function ClinicalDocumentFacts({ content, messages }: {
 }): React.JSX.Element {
   const facts: Array<[label: string, value: string | undefined]> = 'plan' in content
     ? [
-        [messages.assessment, content.assessment],
-        [messages.clinicalPlan, content.plan],
-      ]
+      [messages.assessment, content.assessment],
+      [messages.clinicalPlan, content.plan],
+    ]
     : [
-        [messages.chiefComplaint, content.chiefComplaint],
-        [messages.historyOfPresentIllness, content.historyOfPresentIllness],
-        [messages.familyHistory, content.familyHistory],
-        [messages.allergyHistory, content.allergyHistory],
-        [messages.menstrualHistory, content.menstrualHistory],
-        [messages.obstetricHistory, content.obstetricHistory],
-        [messages.physicalExamination, content.physicalExamination],
-        [messages.assessment, content.assessment],
-        [messages.disposition, content.disposition],
-        [messages.followUp, content.followUp],
-      ]
+      [messages.chiefComplaint, content.chiefComplaint],
+      [messages.historyOfPresentIllness, content.historyOfPresentIllness],
+      [messages.familyHistory, content.familyHistory],
+      [messages.allergyHistory, content.allergyHistory],
+      [messages.menstrualHistory, content.menstrualHistory],
+      [messages.obstetricHistory, content.obstetricHistory],
+      [messages.physicalExamination, content.physicalExamination],
+      [messages.assessment, content.assessment],
+      [messages.disposition, content.disposition],
+      [messages.followUp, content.followUp],
+    ]
   return (
     <dl className="grid gap-x-5 gap-y-3 sm:grid-cols-2">
       {facts.map(([label, value]) => value === undefined ? null : (
@@ -796,7 +798,8 @@ function LaboratoryReportView({ current, locale, report }: {
   )
 }
 
-function MedicationConclusion({ detail, locale }: {
+function MedicationConclusion({ catalog, detail, locale }: {
+  catalog: ClinicalCatalog | undefined
   detail: DoctorCompletedCaseDetail
   locale: WorkspaceLocale
 }): React.JSX.Element {
@@ -808,7 +811,7 @@ function MedicationConclusion({ detail, locale }: {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       {conclusion.prescription === undefined ? null : (
-        <PrescriptionHistory locale={locale} prescription={conclusion.prescription} />
+        <PrescriptionHistory catalog={catalog} locale={locale} prescription={conclusion.prescription} />
       )}
       {conclusion.noMedication === undefined ? null : (
         <div className="flex flex-wrap items-center gap-2 border-t pt-4 text-sm">
@@ -822,11 +825,13 @@ function MedicationConclusion({ detail, locale }: {
   )
 }
 
-function PrescriptionHistory({ locale, prescription }: {
+function PrescriptionHistory({ catalog, locale, prescription }: {
+  catalog: ClinicalCatalog | undefined
   locale: WorkspaceLocale
   prescription: CompletedPrescription
 }): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  const catalogById = new Map((catalog?.medications ?? []).map(item => [item.id, item]))
   return (
     <div className="flex min-w-0 flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -834,6 +839,7 @@ function PrescriptionHistory({ locale, prescription }: {
         <Badge variant="outline">{messages[prescriptionStatusMessageKeys[prescription.status]]}</Badge>
         <span className="text-xs text-muted-foreground">
           {messages.authoredAt} {formatDateTime(prescription.authoredAt, locale)}
+          {prescription.authoredByName === undefined ? null : ` · ${locale === 'zh-CN' ? '开方医生' : 'Prescribed by'} ${prescription.authoredByName}`}
         </span>
       </div>
       {prescription.withdrawal === undefined ? null : (
@@ -846,6 +852,7 @@ function PrescriptionHistory({ locale, prescription }: {
           <TableHeader>
             <TableRow>
               <TableHead>{messages.medication}</TableHead>
+              <TableHead>{locale === 'zh-CN' ? '规格与包装' : 'Strength & package'}</TableHead>
               <TableHead>{messages.dose}</TableHead>
               <TableHead>{messages.frequency}</TableHead>
               <TableHead>{messages.course}</TableHead>
@@ -853,15 +860,21 @@ function PrescriptionHistory({ locale, prescription }: {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {prescription.items.map(item => (
-              <TableRow key={item.medicationRequestId}>
-                <TableCell className="whitespace-normal break-words">{item.display}</TableCell>
-                <TableCell>{item.doseText}</TableCell>
-                <TableCell>{item.frequencyCode}</TableCell>
-                <TableCell>{item.courseDays} {messages.days}</TableCell>
-                <TableCell>{item.quantity}</TableCell>
-              </TableRow>
-            ))}
+            {prescription.items.map(item => {
+              const { packageDescription, specText, unit } = resolveMedicationDisplayMeta(item, catalogById.get(item.catalogItemId))
+              return (
+                <TableRow key={item.medicationRequestId}>
+                  <TableCell className="whitespace-normal break-words">{item.display}</TableCell>
+                  <TableCell className="whitespace-normal break-words text-xs text-muted-foreground">
+                    {specText ? <span title={packageDescription}>{specText}</span> : '—'}
+                  </TableCell>
+                  <TableCell>{item.doseText}</TableCell>
+                  <TableCell>{formatMedicationFrequency(item.frequencyCode, locale)}</TableCell>
+                  <TableCell>{item.courseDays} {messages.days}</TableCell>
+                  <TableCell>{unit ? `${item.quantity} ${unit}` : item.quantity}</TableCell>
+                </TableRow>
+              )
+            })}
           </TableBody>
         </Table>
       </div>

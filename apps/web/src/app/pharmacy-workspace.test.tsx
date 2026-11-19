@@ -67,6 +67,7 @@ it('retains the successful dispense receipt and blocks stale cached writes or ne
   const { rerender } = render(<QueryClientProvider client={client}><AgentPageRegistryProvider><PharmacyWorkspace locale="zh-CN" session={session} /><PharmacyWriteState /></AgentPageRegistryProvider></QueryClientProvider>)
   const user = userEvent.setup()
   const action = within(await screen.findByRole('region', { name: '当前操作' }))
+  expect(screen.getByText('一片 · 每日两次（BID）')).toBeTruthy()
   await user.click(await action.findByRole('button', { name: '审阅发药' }))
   await user.click(action.getByRole('button', { name: '确认发药' }))
   await screen.findByRole('button', { name: '重试发药队列' })

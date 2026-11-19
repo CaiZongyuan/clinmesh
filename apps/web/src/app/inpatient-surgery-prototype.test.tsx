@@ -82,7 +82,7 @@ it.each(['request', 'correction', 'estimate', 'reservations'] as const)('%s 弹�
   if (kind === 'request') {
     within(dialog).getByRole('combobox', { name: '计划术式' }).focus(); await user.keyboard('{Enter}')
     await user.click(await screen.findByRole('option', { name: '51.2300 · 腹腔镜下胆囊切除术' }))
-    await user.type(within(dialog).getByLabelText('计划手术时间（上海时间）'), '2026-11-03T10:00')
+    await user.type(within(dialog).getByLabelText('计划手术时间'), '2026-11-03T10:00')
     await user.type(within(dialog).getByRole('textbox', { name: '手术申请理由' }), '合成申请失败未提交输入')
     await user.click(within(dialog).getByRole('button', { name: '提交手术申请' }))
   } else if (kind === 'correction') {
@@ -478,7 +478,8 @@ it.each(['success', 'unknown', 'changed-session'])('申请弹窗在%s时保护�
   procedureSelect.focus()
   await user.keyboard('{Enter}')
   await user.click(await screen.findByRole('option', { name: '51.2300 · 腹腔镜下胆囊切除术' }))
-  const planned = screen.getByLabelText('计划手术时间（上海时间）')
+  const planned = screen.getByLabelText('计划手术时间')
+  expect(document.body.textContent).not.toContain('（上海时间）')
   await user.type(planned, '2026-11-03T10:00')
   await user.type(screen.getByRole('textbox', { name: '手术申请理由' }), '保留原手术申请未提交输入')
   await user.click(screen.getByRole('button', { name: '提交手术申请' }))
@@ -490,6 +491,7 @@ it.each(['success', 'unknown', 'changed-session'])('申请弹窗在%s时保护�
   if (outcome === 'success' || outcome === 'changed-session') {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '申请手术' })).toBeNull())
     expect(await screen.findByRole('region', { name: '当前手术计划' })).toBeDefined()
+    expect(screen.getByRole('region', { name: '当前手术计划' }).textContent).not.toContain('（上海时间）')
     await waitFor(() => expect(screen.getByRole('button', { name: '申请手术' }).hasAttribute('disabled')).toBe(false))
     await user.click(screen.getByRole('button', { name: '申请手术' }))
   } else {

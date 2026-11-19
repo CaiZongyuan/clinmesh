@@ -706,6 +706,9 @@ export const issuedPrescriptionItemSchema = prescriptionDraftItemSchema.extend({
   display: z.string().min(1),
   medicationRequestId: z.string().min(1),
   medicationRequestVersion: z.string().regex(/^\d+$/),
+  packageDescription: z.string().min(1).optional(),
+  strength: z.string().min(1).optional(),
+  unit: z.string().min(1).optional(),
 }).strict()
 
 export const prescriptionWithdrawalSchema = z.object({
@@ -719,6 +722,7 @@ export const prescriptionWithdrawalSchema = z.object({
 
 export const issuedPrescriptionSchema = z.object({
   authoredAt: z.iso.datetime({ offset: true }),
+  authoredByName: z.string().min(1).optional(),
   authoredByPractitionerRoleId: z.string().min(1),
   id: z.string().min(1),
   items: z.array(issuedPrescriptionItemSchema).min(1).max(8),

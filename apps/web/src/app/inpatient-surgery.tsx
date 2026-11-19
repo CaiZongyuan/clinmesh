@@ -217,7 +217,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
               ) : null}
               <FieldSet disabled={blocked}><FieldGroup className="grid gap-3 md:grid-cols-2">
                 <Field><FieldLabel htmlFor={`${formId}-plan`}>{t('计划术式', 'Planned procedure')}</FieldLabel><WorkspaceSelect id={`${formId}-plan`} value={procedureId} items={(catalog.data?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))} onValueChange={setProcedureId} /></Field>
-                <Field><FieldLabel htmlFor={`${formId}-time`}>{t('计划手术时间（上海时间）', 'Planned surgery time (Shanghai)')}</FieldLabel><Input id={`${formId}-time`} type="datetime-local" value={plannedFor} onChange={event => setPlannedFor(event.currentTarget.value)} required /></Field>
+                <Field><FieldLabel htmlFor={`${formId}-time`}>{t('计划手术时间', 'Planned surgery time')}</FieldLabel><Input id={`${formId}-time`} type="datetime-local" value={plannedFor} onChange={event => setPlannedFor(event.currentTarget.value)} required /></Field>
                 <div className="md:col-span-2"><SurgeryRequestReason key={requestOwnerKey} admissionId={admission.id} session={session} open={requestOpen && active} locale={locale} value={reason} onChange={setReason} id={`${formId}-reason`} disabled={blocked} /></div>
               </FieldGroup></FieldSet>
             </div>
@@ -908,7 +908,7 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
       <div className="flex flex-wrap items-center gap-2"><h4 className="font-semibold">{row.plannedProcedure.coding.display}</h4><span className="font-mono text-xs text-muted-foreground">{row.plannedProcedure.coding.code}</span><span className="flex-1" /><Badge variant="outline">{status}</Badge>
         {doctor && active && focused ? <Button variant="ghost" size="sm" aria-expanded={panel === 'cancel'} disabled={blocked} onClick={() => setPanel(panel === 'cancel' ? null : 'cancel')}>{t('取消申请', 'Cancel request')}</Button> : null}</div>
       <dl className="grid gap-3 text-sm @lg:grid-cols-3">{[
-        [t('计划手术时间（上海时间）', 'Planned surgery time (Shanghai)'), formatShanghaiMinute(row.plannedFor).slice(5), 'tabular-nums'],
+        [t('计划手术时间', 'Planned surgery time'), formatShanghaiMinute(row.plannedFor).slice(5), 'tabular-nums'],
         nurse ? [t('申请医生', 'Requesting doctor'), t('住院医生', 'Inpatient doctor'), '']
           : planned.length > 0 ? [t('预计耗材', 'Estimated materials'), `${formatFen(plannedFen, locale)} · ${t('已预留', 'Reserved')}`, 'tabular-nums']
             : ready && pciSelectionProcedureCodes.includes(row.plannedProcedure.coding.code) ? [t('术前准备', 'Preop preparation'), t('同意书、术前核对已完成', 'Consent & preop check complete'), ''] : null,

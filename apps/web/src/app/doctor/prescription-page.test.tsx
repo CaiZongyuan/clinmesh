@@ -364,7 +364,7 @@ describe('PrescriptionPage', () => {
     }} />)
     expect(panel.getByRole('checkbox', { name: '选择合成对乙酰氨基酚' })).toBeTruthy()
     expect(panel.getByRole('button', { name: '编辑药品 合成对乙酰氨基酚' })).toBeTruthy()
-    expect(panel.getByText('500 mg · 需要时用 · 3 天 · 6')).toBeTruthy()
+    expect(panel.getByText('500 mg · 必要时（PRN） · 3 天 · 6')).toBeTruthy()
     expect(screen.getByText(mounted.props.messages.operationFailed)).toBeTruthy()
     await user.click(panel.getByRole('button', { name: /^移除/ }))
     expect(mounted.props.actions.deleteDraft.onSubmit).toHaveBeenCalledTimes(2)
@@ -1173,13 +1173,13 @@ describe('PrescriptionPage', () => {
     await user.click(panel.getByRole('button', { name: /^编辑药品 合成对乙酰氨基酚/ }))
     let dialog = within(screen.getByRole('dialog', { name: '编辑药品' }))
     expect(within(dialog.getByRole('combobox', { name: '剂量' })).getByText('500 mg')).toBeTruthy()
-    expect(within(dialog.getByRole('combobox', { name: '频次' })).getByText('按需')).toBeTruthy()
+    expect(within(dialog.getByRole('combobox', { name: '频次' })).getByText('必要时（PRN）')).toBeTruthy()
     await user.click(dialog.getByRole('button', { name: '取消' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     // 第二条保留自己的 BID · 5 天 · 10。
     await user.click(panel.getByRole('button', { name: /^编辑药品 合成第二药品/ }))
     dialog = within(screen.getByRole('dialog', { name: '编辑药品' }))
-    expect(within(dialog.getByRole('combobox', { name: '频次' })).getByText('每日两次')).toBeTruthy()
+    expect(within(dialog.getByRole('combobox', { name: '频次' })).getByText('每日两次（BID）')).toBeTruthy()
     await user.click(dialog.getByRole('button', { name: '取消' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(panel.getAllByRole('button', { name: /^编辑药品 / })).toHaveLength(2)
@@ -1624,9 +1624,79 @@ describe('处方页签布局整理', () => {
     await user.click(addButton)
     await user.click(dialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(within(screen.getByRole('region', { name: '待开具处方' })).getByText('47.5 mg · 每日一次 · 14 天 · 14')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '待开具处方' })).getByText('47.5 mg · 每日一次（QD） · 14 天 · 14')).toBeTruthy()
     await waitFor(() => expect(mounted.props.actions.saveDraft.onSubmit).toHaveBeenCalledWith([
       { catalogItemId: 'medication-metoprolol', doseText: '47.5 mg', frequencyCode: 'QD', courseDays: 14, quantity: 14 },
     ]))
+  })
+
+  it('待开具双入口与已开具本院处方完整展示药学二次查对要素与开方医生姓名', async () => {
+    const oseltamivir: Medication = {
+      ...medication,
+      allowedCourseDays: [5],
+      allowedDoseTexts: ['75 mg'],
+      allowedFrequencyCodes: ['BID'],
+      allowedQuantities: [10],
+      defaultCourseDays: 5,
+      defaultDoseText: '75 mg',
+      defaultFrequencyCode: 'BID',
+      defaultQuantity: 10,
+      dosageForm: '胶囊剂',
+      id: 'medication-oseltamivir',
+      nameEn: 'Oseltamivir phosphate capsules',
+      nameZh: '磷酸奥司他韦胶囊',
+      packageDescription: '10粒/盒',
+      priceFen: 760,
+      strength: '75 mg',
+      unit: '粒',
+    }
+    const mounted = renderPage({ catalog: [oseltamivir] })
+    const user = userEvent.setup()
+    const dialog = await openComposer(user)
+    await user.click(dialog.getByRole('button', { name: '选择 磷酸奥司他韦胶囊' }))
+    await user.click(dialog.getByRole('button', { name: '加入处方' }))
+
+    const pendingInDialog = within(dialog.getByRole('region', { name: '处方待开清单' }))
+    expect(pendingInDialog.getByRole('button', { name: '编辑待开药品 磷酸奥司他韦胶囊' })).toBeTruthy()
+    expect(pendingInDialog.getByText('75 mg · 10粒/盒 · 单次 75 mg · 每日两次（BID） · 5 天 · 10 粒')).toBeTruthy()
+
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    const pendingPanel = within(screen.getByRole('region', { name: '待开具处方' }))
+    expect(pendingPanel.getByText('75 mg · 每日两次（BID） · 5 天 · 10')).toBeTruthy()
+    expect(pendingPanel.getByText('75 mg · 10粒/盒 · 发药总量 10 粒')).toBeTruthy()
+
+    mounted.rerender(<PrescriptionPage {...mounted.props} catalog={[oseltamivir]} detail={{
+      ...detail,
+      medicationConclusion: {
+        draftVersion: 2,
+        prescription: {
+          ...issuedPrescription,
+          authoredByName: '合成门诊医生',
+          items: [{
+            catalogItemId: oseltamivir.id,
+            courseDays: 5,
+            display: oseltamivir.nameZh,
+            doseText: '75 mg',
+            frequencyCode: 'BID',
+            medicationRequestId: 'request-oseltamivir',
+            medicationRequestVersion: '1',
+            packageDescription: '10粒/盒',
+            quantity: 10,
+            strength: '75 mg',
+            unit: '粒',
+          }],
+        },
+      },
+    }} />)
+    const statusRow = document.querySelector('[data-prescription-status]') as HTMLElement
+    expect(statusRow.textContent).toContain('开方医生 合成门诊医生')
+    expect(screen.getByRole('list', { name: '处方进度' })).toBeTruthy()
+    const issuedTable = within(screen.getByRole('region', { name: '药品列表' }))
+    expect(issuedTable.getByText('75 mg · 10粒/盒')).toBeTruthy()
+    expect(issuedTable.getByText('75 mg · 每日两次（BID） · 5 天')).toBeTruthy()
+    expect(issuedTable.getByText('10 粒')).toBeTruthy()
+    expect(issuedTable.queryByText('—')).toBeNull()
   })
 })

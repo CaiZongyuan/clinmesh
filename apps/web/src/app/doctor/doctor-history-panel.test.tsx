@@ -29,7 +29,7 @@ it('lets the responsible doctor open a dated inpatient summary with diagnoses, p
   fireEvent.click(history)
   await screen.findByText(/冠状动脉粥样硬化性心脏病/)
   expect(screen.getByText(/冠状动脉支架置入术/)).toBeTruthy()
-  expect(screen.getByText(/阿司匹林 · 100 mg · QD · 已停用/)).toBeTruthy()
+  expect(screen.getByText(/阿司匹林 · 100 mg · 每日一次（QD） · 已停用/)).toBeTruthy()
   expect(screen.getByText('LVEF：60 %')).toBeTruthy()
   expect(screen.getByText('左室收缩功能正常')).toBeTruthy()
   await waitFor(() => expect(calls).toEqual(['/api/his/v1/doctor/cases/follow-up/history', '/api/his/v1/doctor/cases/follow-up/history/detail']))

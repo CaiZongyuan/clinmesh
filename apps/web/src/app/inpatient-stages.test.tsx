@@ -24,7 +24,7 @@ async function selectStage(user: ReturnType<typeof userEvent.setup>, name: strin
 }
 beforeEach(() => {
   sessionStorage.clear()
-  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  vi.stubGlobal('ResizeObserver', class { observe() { } unobserve() { } disconnect() { } })
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
@@ -94,8 +94,14 @@ it('开立被业务规则拒绝时只在开立区显示服务端原因，不再�
     if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [admission] })
     if (path.endsWith('/clinical-catalog')) return Response.json({ diagnoses: [], medications: [medication], services: [] })
     if (path.includes('/inpatient/catalog-search?')) return Response.json({ kind: 'medication', source: 'hospital', page: 1, pageSize: 50, total: 1, items: [{ id: medication.id, display: medication.display, status: 'available', missingFields: [], catalogItemId: medication.id, catalogVersion: 1, medication }] })
-    if (path.endsWith('/clinical')) return Response.json({ admissionId: admission.id, encounterVersion: '2', diagnosis: { revision: 1, entries: [{ conditionId: 'condition-1', role: 'primary', admissionCondition: '1', ordinal: 1,
-      coding: { id: 'diagnosis-1', code: 'J18.9', display: '合成肺炎', system: 'https://example.test/icd', version: '1', sourceLocator: 'synthetic-fixture' } }] }, orders: [], executions: [], dispenses: [], charges: [], chargesFen: 5000 })
+    if (path.endsWith('/clinical')) return Response.json({
+      admissionId: admission.id, encounterVersion: '2', diagnosis: {
+        revision: 1, entries: [{
+          conditionId: 'condition-1', role: 'primary', admissionCondition: '1', ordinal: 1,
+          coding: { id: 'diagnosis-1', code: 'J18.9', display: '合成肺炎', system: 'https://example.test/icd', version: '1', sourceLocator: 'synthetic-fixture' }
+        }]
+      }, orders: [], executions: [], dispenses: [], charges: [], chargesFen: 5000
+    })
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: scenarioState.virtualTime, requests: [], executions: [] })
     if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] })
     if (path.endsWith('/Patient/patient-1')) return Response.json({ resourceType: 'Patient', id: admission.patientId, gender: 'female' })
@@ -148,10 +154,12 @@ it('药师选中患者后保留窄住院上下文，显示发药后交接给护�
   const pharmacyAdmission = { admissionId: admission.id, patientId: admission.patientId, patientName: admission.patientName, inpatientNumber: admission.inpatientNumber, wardId: admission.wardId, status: 'admitted' }
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path.endsWith('/pharmacy/admissions')) return Response.json({ items: [pharmacyAdmission] })
-    if (path.endsWith('/pharmacy')) return detailsUnavailable ? Response.json({ error: { code: 'UNAVAILABLE', message: '合成药房读取失败' } }, { status: 503 }) : Response.json({ admission: pharmacyAdmission,
+    if (path.endsWith('/pharmacy')) return detailsUnavailable ? Response.json({ error: { code: 'UNAVAILABLE', message: '合成药房读取失败' } }, { status: 503 }) : Response.json({
+      admission: pharmacyAdmission,
       orders: [{ id: 'order-1', admissionId: admission.id, kind: 'medication', duration: 'long', catalogItemId: 'med-1', catalogVersion: 1, display: '合成氨氯地平', doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: 'verified', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
       executions: [{ id: 'execution-1', orderId: 'order-1', scheduledFor: scenarioState.virtualTime, status: 'pending', version: 1 }], dispenses: [],
-      medications: [{ id: 'med-1', display: '合成氨氯地平', unit: '片', lots: [{ id: 'lot-internal-1', version: 1, quantityOnHand: 10, expiresOn: '2026-08-30' }] }], medicationAllergies })
+      medications: [{ id: 'med-1', display: '合成氨氯地平', unit: '片', lots: [{ id: 'lot-internal-1', version: 1, quantityOnHand: 10, expiresOn: '2026-08-30' }] }], medicationAllergies
+    })
     throw new Error(`Unexpected pharmacy read ${path}`)
   }))
   const { InpatientPharmacy } = await import('./inpatient-pharmacy.tsx')
@@ -192,8 +200,10 @@ it('登记员只显示登记入口和流程，不提供其他岗位空壳或读�
     paths.push(path)
     if (path.endsWith('/inpatient/catalog')) return Response.json(catalog)
     if (path.endsWith('/inpatient/transfer-catalog')) return Response.json({ wards: [{ id: 'ward-general', name: '住院病区', organizationId: 'organization-inpatient' }], beds: [] })
-    if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [{ ...admission, status: 'registered', bedId: undefined },
-      { ...admission, id: 'admission-0', patientName: '合成昨日患者', status: 'registered', bedId: undefined, registeredAt: '2026-08-23T09:00:00+08:00' }] })
+    if (path.endsWith('/inpatient/admissions')) return Response.json({
+      items: [{ ...admission, status: 'registered', bedId: undefined },
+      { ...admission, id: 'admission-0', patientName: '合成昨日患者', status: 'registered', bedId: undefined, registeredAt: '2026-08-23T09:00:00+08:00' }]
+    })
     if (path.endsWith('/inpatient/referrals')) return Response.json({ items: [] })
     if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
     throw new Error(`Unexpected registrar read ${path}`)
@@ -236,15 +246,21 @@ it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带
   let selectionFailed = false
   let guidePublished = false
   const fingerprint = 'a'.repeat(64)
-  const parameters = { requestId: 'pci-plan', treatmentPlan: '合成 PCI 方案', targetSite: '前降支',
+  const parameters = {
+    requestId: 'pci-plan', treatmentPlan: '合成 PCI 方案', targetSite: '前降支',
     measurements: ['lesion-length', 'proximal-reference-diameter', 'distal-reference-diameter'].map((kind, index) => ({
       kind, object: index === 0 ? 'lesion' : 'reference-lumen', site: '前降支', value: index === 0 ? 12 : 3,
       unit: 'mm', method: '合成造影测量', source: { reference: 'DiagnosticReport/report-1', version: '1', note: '本院正式合成报告', synthetic: true },
-    })), plannedQuantities: [], approvedMaterialIds: [] }
-  const plannedProcedure = { id: 'pci-procedure', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0',
-    code: '36.0700', display: '冠状动脉支架植入', category: '介入治疗', releaseId: 'clinmesh-surgery-subset-2026-10-20',
-    sourceUrl: 'https://synthetic.clinmesh.local/procedures', sourceSha256: 'b'.repeat(64), sourceLocator: 'synthetic:procedure' },
-    chargeDefinition: { id: 'pci-charge', priceFen: 100000, unit: '次', synthetic: true, trigger: 'execution' } }
+    })), plannedQuantities: [], approvedMaterialIds: []
+  }
+  const plannedProcedure = {
+    id: 'pci-procedure', version: 1, coding: {
+      system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0',
+      code: '36.0700', display: '冠状动脉支架植入', category: '介入治疗', releaseId: 'clinmesh-surgery-subset-2026-10-20',
+      sourceUrl: 'https://synthetic.clinmesh.local/procedures', sourceSha256: 'b'.repeat(64), sourceLocator: 'synthetic:procedure'
+    },
+    chargeDefinition: { id: 'pci-charge', priceFen: 100000, unit: '次', synthetic: true, trigger: 'execution' }
+  }
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     requests.push(`${init?.method ?? 'GET'} ${path}`)
     if (path.endsWith('/inpatient/catalog')) return Response.json(catalog)
@@ -252,27 +268,49 @@ it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带
     if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [admission] })
     if (path.endsWith('/clinical-catalog')) return Response.json({ diagnoses: [], medications: [], services: [] })
     if (path.endsWith('/clinical')) return Response.json({ admissionId: admission.id, encounterVersion: '2', diagnosis: { revision: 0, entries: [] }, orders: [], executions: [], dispenses: [], charges: [], chargesFen: 5000 })
-    if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: scenarioState.virtualTime,
-      requests: [{ id: 'pci-plan', admissionId: admission.id, version: 1, status: 'requested', plannedProcedure, plannedFor: scenarioState.virtualTime,
-        requestedAt: scenarioState.virtualTime, requestedBy: session.actor.actorId, organizationId: 'organization-inpatient', reason: '合成支架治疗计划' }], executions: [], inProgress: [] })
+    if (path.endsWith('/surgeries')) return Response.json({
+      admissionId: admission.id, encounterVersion: '2', virtualTime: scenarioState.virtualTime,
+      requests: [{
+        id: 'pci-plan', admissionId: admission.id, version: 1, status: 'requested', plannedProcedure, plannedFor: scenarioState.virtualTime,
+        requestedAt: scenarioState.virtualTime, requestedBy: session.actor.actorId, organizationId: 'organization-inpatient', reason: '合成支架治疗计划'
+      }], executions: [], inProgress: []
+    })
     if (path.endsWith('/pci-selection') && selectionFailed) return Response.json({ error: { code: 'SYNTHETIC_RAW_CODE', message: 'SYNTHETIC_RAW_CODE' } }, { status: 503 })
-    if (path.endsWith('/pci-selection')) return Response.json({ admissionId: admission.id,
-      confirmation: manualConfirmed ? { id: 'manual-selection', version: 1, parameters, confirmedBy: '合成医生',
-        practitionerRoleId: session.actor.practitionerRoleId, confirmedAt: scenarioState.virtualTime } : null, history: [], candidates: [],
+    if (path.endsWith('/pci-selection')) return Response.json({
+      admissionId: admission.id,
+      confirmation: manualConfirmed ? {
+        id: 'manual-selection', version: 1, parameters, confirmedBy: '合成医生',
+        practitionerRoleId: session.actor.practitionerRoleId, confirmedAt: scenarioState.virtualTime
+      } : null, history: [], candidates: [],
       evidencePackage: { id: 'synthetic-pci', version: 'r1', synthetic: true, limitation: '有限合成方案' },
-      drafts: manualConfirmed ? [] : [{ requestId: 'pci-plan', version: 1, reportId: 'report-1', reportVersion: 1, edited: false, parameters, confirmedSelectionVersion: null }] })
-    if (path.endsWith('/material-estimates')) return Response.json({ admissionId: admission.id, estimates: [{ id: 'estimate-1', admissionId: admission.id,
-      requestId: 'pci-plan', version: 1, requestVersion: 1, status: 'queued', basisFingerprint: fingerprint, failureCode: null, missing: [],
-      candidates: [], analysis: null, draft: null, candidateItems: [], costs: null }], unprepared: [] })
-    if (path.endsWith('/guideline-advice')) return Response.json({ admissionId: admission.id, advice: [{ admissionId: admission.id, requestId: 'pci-plan',
-      taskId: 'guide-task', version: 1, fingerprint, status: guidePublished ? 'incomplete' : 'unknown', message: '原指南请求状态。',
-      missing: guidePublished ? ['缺少管径测量。'] : [], failureCode: guidePublished ? null : 'SYNTHETIC_RAW_CODE',
-      result: guidePublished ? { id: 'guide-result', fingerprint, model: 'synthetic-model', createdAt: scenarioState.virtualTime,
-        topic: { id: 'pci-stent', version: 'r1', fingerprint }, guidelines: [{ id: 'guide-source', title: '合成指南', publisher: '合成机构',
-          documentType: 'guideline', version: '2021', url: 'https://synthetic.clinmesh.local/guideline', locator: 'PDF 物理第 1 页',
-          scope: '合成界面合同', sourceHash: fingerprint, text: '合成条件原句。' }],
-        conclusions: ['stent-category', 'imaging-guidance', 'measurement-requirements'].map(kind => ({ kind, applicability: 'conditional',
-          text: '资料有缺项，仍可核对有条件的类别说明。', citations: [{ evidenceId: 'guide-source', quote: '合成条件原句。' }] })), limitations: ['具体尺寸仍待测量。'] } : null }] })
+      drafts: manualConfirmed ? [] : [{ requestId: 'pci-plan', version: 1, reportId: 'report-1', reportVersion: 1, edited: false, parameters, confirmedSelectionVersion: null }]
+    })
+    if (path.endsWith('/material-estimates')) return Response.json({
+      admissionId: admission.id, estimates: [{
+        id: 'estimate-1', admissionId: admission.id,
+        requestId: 'pci-plan', version: 1, requestVersion: 1, status: 'queued', basisFingerprint: fingerprint, failureCode: null, missing: [],
+        candidates: [], analysis: null, draft: null, candidateItems: [], costs: null
+      }], unprepared: []
+    })
+    if (path.endsWith('/guideline-advice')) return Response.json({
+      admissionId: admission.id, advice: [{
+        admissionId: admission.id, requestId: 'pci-plan',
+        taskId: 'guide-task', version: 1, fingerprint, status: guidePublished ? 'incomplete' : 'unknown', message: '原指南请求状态。',
+        missing: guidePublished ? ['缺少管径测量。'] : [], failureCode: guidePublished ? null : 'SYNTHETIC_RAW_CODE',
+        result: guidePublished ? {
+          id: 'guide-result', fingerprint, model: 'synthetic-model', createdAt: scenarioState.virtualTime,
+          topic: { id: 'pci-stent', version: 'r1', fingerprint }, guidelines: [{
+            id: 'guide-source', title: '合成指南', publisher: '合成机构',
+            documentType: 'guideline', version: '2021', url: 'https://synthetic.clinmesh.local/guideline', locator: 'PDF 物理第 1 页',
+            scope: '合成界面合同', sourceHash: fingerprint, text: '合成条件原句。'
+          }],
+          conclusions: ['stent-category', 'imaging-guidance', 'measurement-requirements'].map(kind => ({
+            kind, applicability: 'conditional',
+            text: '资料有缺项，仍可核对有条件的类别说明。', citations: [{ evidenceId: 'guide-source', quote: '合成条件原句。' }]
+          })), limitations: ['具体尺寸仍待测量。']
+        } : null
+      }]
+    })
     if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], sent: [] })
     if (path.endsWith('/Patient/patient-1')) return Response.json({ resourceType: 'Patient', id: admission.patientId, gender: 'female' })
     if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
@@ -362,7 +400,8 @@ it.each(['refund', 'deposit'] as const)('未知%s尚未查明时不把未发生�
     if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [{ ...admission, status: 'departed', outstandingFen: null }] })
     if (path.endsWith('/Patient/patient-1')) return Response.json({ resourceType: 'Patient', id: admission.patientId, gender: 'female' })
     if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
-    if (path.endsWith('/payments')) return Response.json({ admissionId: admission.id, depositFen: 100000, supplementFen: 0, pendingCount: 1, refundedFen: 0, remainingFen: -95000, sources: [],
+    if (path.endsWith('/payments')) return Response.json({
+      admissionId: admission.id, depositFen: 100000, supplementFen: 0, pendingCount: 1, refundedFen: 0, remainingFen: -95000, sources: [],
       payments: pendingKind === 'deposit' ? [{ paymentId: 'unknown-deposit', admissionId: admission.id, kind: 'deposit', amountFen: 1000, tenders: [{ method: 'cash', amountFen: 1000 }], initialOutcome: 'ambiguous', outcome: 'ambiguous', correlationId: 'synthetic-correlation', createdAt: scenarioState.virtualTime, resolvedAt: null, version: 1 }] : [],
       refunds: pendingKind === 'refund' ? [{ refundId: 'unknown-refund', sourceKind: 'inpatient-deposit', sourceId: 'original-deposit', basisId: 'original-basis', ownerKind: 'inpatient', ownerId: admission.id, amountFen: 1000, initialOutcome: 'ambiguous', outcome: 'ambiguous', correlationId: 'synthetic-correlation', createdAt: scenarioState.virtualTime, resolvedAt: null, version: 1 }] : [],
     })
@@ -427,7 +466,8 @@ it('分次补交已有成功收款但仍有余额时保留当前补交步骤', a
     if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [{ ...admission, status: 'departed', depositFen: 0, chargesFen: 10000, outstandingFen: 5000 }] })
     if (path.endsWith('/Patient/patient-1')) return Response.json({ resourceType: 'Patient', id: admission.patientId, gender: 'female' })
     if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
-    if (path.endsWith('/payments')) return Response.json({ admissionId: admission.id, depositFen: 0, supplementFen: 5000, pendingCount: 0, refundedFen: 0, remainingFen: 5000, sources: [], refunds: [],
+    if (path.endsWith('/payments')) return Response.json({
+      admissionId: admission.id, depositFen: 0, supplementFen: 5000, pendingCount: 0, refundedFen: 0, remainingFen: 5000, sources: [], refunds: [],
       payments: [{ paymentId: 'partial-supplement', admissionId: admission.id, kind: 'supplement', amountFen: 5000, tenders: [{ method: 'cash', amountFen: 5000 }], initialOutcome: 'success', outcome: 'success', correlationId: 'synthetic-correlation', createdAt: scenarioState.virtualTime, resolvedAt: scenarioState.virtualTime, version: 1 }],
     })
     return Response.json({ error: { code: 'UNAVAILABLE', message: '合成非本次读取' } }, { status: 503 })
@@ -441,7 +481,8 @@ it('分次补交已有成功收款但仍有余额时保留当前补交步骤', a
 
 it('已结算患者头部读取当前更正账，失败可重试且未知资金不显示确定金额', async () => {
   let state: 'error' | 'unknown' | 'refund' | 'collect' = 'error'
-  const financial = () => ({ admissionId: admission.id, status: 'cleared', recordStatus: 'open', firstSettlement: { id: 'first-settlement', fingerprint: 'a'.repeat(64), chargesFen: 5000, depositFen: 5000, balanceFen: 0, settledAt: scenarioState.virtualTime },
+  const financial = () => ({
+    admissionId: admission.id, status: 'cleared', recordStatus: 'open', firstSettlement: { id: 'first-settlement', fingerprint: 'a'.repeat(64), chargesFen: 5000, depositFen: 5000, balanceFen: 0, settledAt: scenarioState.virtualTime },
     charges: [], adjustments: [], sources: [], refunds: [], payments: [], frozenChargesFen: 5000, currentChargesFen: state === 'collect' ? 6000 : 3000, frozenFundsFen: 5000, currentFundsFen: 5000,
     remainingRefundFen: state === 'collect' ? 0 : 2000, remainingCollectFen: state === 'collect' ? 1000 : 0, reservedFen: state === 'unknown' ? 1000 : 0, reservedCollectFen: 0, fingerprint: 'b'.repeat(64),
   })
@@ -480,10 +521,12 @@ it('药房只读取当前患者页的窄详情，用户翻页后才读取下一�
     if (item) {
       detailReads.push(item.admissionId)
       const suffix = item.admissionId.split('-').at(-1)
-      return Response.json({ admission: item,
+      return Response.json({
+        admission: item,
         orders: [{ id: `paged-order-${suffix}`, admissionId: item.admissionId, kind: 'medication', duration: 'temporary', catalogItemId: `paged-med-${suffix}`, catalogVersion: 1, display: `分页药品${suffix}`, doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: 'verified', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
         executions: [{ id: `paged-execution-${suffix}`, orderId: `paged-order-${suffix}`, scheduledFor: scenarioState.virtualTime, status: 'pending', version: 1 }], dispenses: [],
-        medications: [{ id: `paged-med-${suffix}`, display: `分页药品${suffix}`, unit: '片', lots: [{ id: `paged-lot-${suffix}`, version: 1, quantityOnHand: 10, expiresOn: '2030-12-31' }] }], medicationAllergies: [] })
+        medications: [{ id: `paged-med-${suffix}`, display: `分页药品${suffix}`, unit: '片', lots: [{ id: `paged-lot-${suffix}`, version: 1, quantityOnHand: 10, expiresOn: '2030-12-31' }] }], medicationAllergies: []
+      })
     }
     if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
     throw new Error(`Unexpected pharmacy read ${path}`)
@@ -491,7 +534,7 @@ it('药房只读取当前患者页的窄详情，用户翻页后才读取下一�
   const { InpatientPharmacy } = await import('./inpatient-pharmacy.tsx')
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><InpatientPharmacy session={{ ...session, actor: { ...session.actor, roleCode: 'pharmacist' } }} locale="zh-CN" /></QueryClientProvider>)
   const firstRow = await screen.findByRole('button', { name: '查看合成分页患者1 · 分页药品1 · 2026-08-24 15:00' })
-  expect(firstRow.textContent).toContain('5 mg · 每日一次 · 1片')
+  expect(firstRow.textContent).toContain('5 mg · 每日一次（QD） · 1片')
   expect(detailReads).toHaveLength(10)
   expect(detailReads).not.toContain('paged-admission-11')
   expect(screen.getByText('药品计数仅限本页患者')).toBeDefined()
@@ -524,18 +567,22 @@ it.each(['admitted', 'departed', 'cleared'] as const)('本页发药完成后显�
     const number = item.admissionId.split('-').at(-1)
     const pending = number === '11' && !secondDispensed || number === '1' && !firstDispensed
     const status = pending ? 'pending' : item.status === 'admitted' && (number === '1' || number === '11') ? 'dispensed' : 'completed'
-    return { admission: item,
+    return {
+      admission: item,
       orders: [{ id: `continue-order-${number}`, admissionId: item.admissionId, kind: 'medication', duration: 'temporary', catalogItemId: `continue-med-${number}`, catalogVersion: 1, display: `连续药品${number}`, doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: item.status === 'admitted' && (number === '1' || number === '11') ? 'verified' : 'completed', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
       executions: [{ id: `continue-execution-${number}`, orderId: `continue-order-${number}`, scheduledFor: scenarioState.virtualTime, status, version: status === 'pending' ? 1 : 2 }],
       dispenses: pending ? [] : [{ id: `continue-dispense-${number}`, executionId: `continue-execution-${number}`, lotId: `continue-lot-${number}`, quantity: 1, dispensedAt: scenarioState.virtualTime, dispensedBy: 'synthetic-pharmacist' }],
-      medications: [{ id: `continue-med-${number}`, display: `连续药品${number}`, unit: '片', lots: [{ id: `continue-lot-${number}`, version: pending ? 1 : 2, quantityOnHand: pending ? 10 : 9, expiresOn: '2030-12-31' }] }], medicationAllergies: [] }
+      medications: [{ id: `continue-med-${number}`, display: `连续药品${number}`, unit: '片', lots: [{ id: `continue-lot-${number}`, version: pending ? 1 : 2, quantityOnHand: pending ? 10 : 9, expiresOn: '2030-12-31' }] }], medicationAllergies: []
+    }
   }
-  const completedResponse = (number: 1 | 11) => ({ auditId: 'synthetic-audit', requestId: 'synthetic-request', warnings: [],
+  const completedResponse = (number: 1 | 11) => ({
+    auditId: 'synthetic-audit', requestId: 'synthetic-request', warnings: [],
     effects: [
       { kind: 'created', reference: `MedicationDispense/continue-dispense-${number}`, versionId: '1' },
       { kind: 'created', reference: `InventoryMovement/continue-movement-${number}`, versionId: '1' },
       { kind: 'updated', reference: `InventoryItem/continue-lot-${number}`, versionId: '2' },
-    ], data: details(indexed[number - 1]!) })
+    ], data: details(indexed[number - 1]!)
+  })
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path.endsWith('/api/auth/context')) return Response.json(pharmacist)
     if (path.endsWith('/pharmacy/admissions')) return Response.json({ items: indexed })
@@ -618,11 +665,13 @@ it('待发先筛在院患者再分页，已发历史使用独立页码且按用�
     if (item) {
       reads.push(item.admissionId)
       const number = item.admissionId.split('-').at(-1), admitted = item.status === 'admitted'
-      return Response.json({ admission: item,
+      return Response.json({
+        admission: item,
         orders: [{ id: `status-order-${number}`, admissionId: item.admissionId, kind: 'medication', duration: 'temporary', catalogItemId: `status-med-${number}`, catalogVersion: 1, display: `状态药品${number}`, doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: admitted ? 'verified' : 'completed', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
         executions: [{ id: `status-execution-${number}`, orderId: `status-order-${number}`, scheduledFor: scenarioState.virtualTime, status: admitted ? 'pending' : 'completed', version: 1 }],
         dispenses: admitted ? [] : [{ id: `status-dispense-${number}`, executionId: `status-execution-${number}`, lotId: `status-lot-${number}`, quantity: 1, dispensedAt: scenarioState.virtualTime, dispensedBy: 'synthetic-pharmacist' }],
-        medications: [{ id: `status-med-${number}`, display: `状态药品${number}`, unit: '片', lots: [{ id: `status-lot-${number}`, version: 1, quantityOnHand: 10, expiresOn: '2030-12-31' }] }], medicationAllergies: [] })
+        medications: [{ id: `status-med-${number}`, display: `状态药品${number}`, unit: '片', lots: [{ id: `status-lot-${number}`, version: 1, quantityOnHand: 10, expiresOn: '2030-12-31' }] }], medicationAllergies: []
+      })
     }
     if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
     throw new Error(`Unexpected pharmacy read ${path}`)

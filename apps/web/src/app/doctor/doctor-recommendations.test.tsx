@@ -1824,7 +1824,7 @@ it('renders required inpatient history evidence as readable clinical fields', as
   await details()
   const dialog = screen.getByRole('dialog')
   expect(within(dialog).getByText('正式住院诊断')).toBeTruthy()
-  expect(within(dialog).getByText(/阿司匹林 · 100 mg · QD · 已停用/)).toBeTruthy()
+  expect(within(dialog).getByText(/阿司匹林 · 100 mg · 每日一次（QD） · 已停用/)).toBeTruthy()
   expect(dialog.textContent).not.toContain('admissionId')
 })
 

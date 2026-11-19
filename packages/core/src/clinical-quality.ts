@@ -4,7 +4,7 @@ import type {
   ClinicalQualityRedLine,
 } from '@clinmesh/contracts/clinical-quality'
 import { medicationFrequencySchema, type MedicationSafetyRule } from '@clinmesh/contracts/medication-safety'
-import { medicationCombinationConflict, medicationDoseConflict } from './medication-safety.ts'
+import { formatMedicationFrequency, medicationCombinationConflict, medicationDoseConflict } from './medication-safety.ts'
 
 /** 事中临床质控的无 I/O 规则；服务端负责从正式临床事实取数。阈值与药品类别均为本院合成规则，不构成处方建议。 */
 export interface QualityEvidence { label: string; reference: string; versionId?: string }
@@ -66,7 +66,7 @@ export function doseLimitFindings(medications: readonly QualityMedication[]): Cl
         : conflict === 'single-dose' ? `超出单次剂量范围（${medication.doseLimits.minimumSingleDose}–${medication.doseLimits.maximumSingleDose}${medication.doseLimits.unit}）`
         : '剂量单位或频次超出受控范围'
       findings.push(redLine('MEDICATION_DOSE_LIMIT_EXCEEDED',
-        `${medication.display}给药方案（${medication.doseText} ${medication.frequencyCode}）${reason}，禁止开立。`, [], medication.catalogItemId))
+        `${medication.display}给药方案（${medication.doseText} ${formatMedicationFrequency(medication.frequencyCode, 'zh-CN')}）${reason}，禁止开立。`, [], medication.catalogItemId))
     }
   }
   return findings

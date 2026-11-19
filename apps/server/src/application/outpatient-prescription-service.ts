@@ -39,10 +39,12 @@ import {
   medicationCatalogConfigRowSchema,
   medicationPresentationSchema,
   noMedicationConclusionRowSchema,
+  parseCatalogMedicationPresentation,
   parseStoredFhirResource,
   patientSummary,
   prescriptionDispenseWorkflowRowSchema,
   prescriptionDispensingRowSchema,
+  resolvePractitionerRoleDisplayName,
   prescriptionDraftStateRowSchema,
   prescriptionMedicationCatalogConfigSchema,
   prescriptionWithdrawalLookupRowSchema,
@@ -728,6 +730,9 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
           value: prescriptionNumber,
         },
       })
+      const localPresentation = medication.referenceProduct !== undefined
+        ? undefined
+        : parseCatalogMedicationPresentation(medication.catalog.config_json)
       insertItem.run(
         input.context.workspaceId,
         input.context.epoch,
@@ -738,8 +743,11 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
           code: medication.catalog.code,
           display: medication.catalog.name_zh,
           id: medication.catalogItemId,
+          ...(localPresentation?.packageDescription === undefined ? {} : { packageDescription: localPresentation.packageDescription }),
           sourceLocator: 'operational:outpatient_catalog',
+          ...(localPresentation?.strength === undefined ? {} : { strength: localPresentation.strength }),
           system: 'urn:clinmesh:operational:medication',
+          ...(localPresentation?.unit === undefined ? {} : { unit: localPresentation.unit }),
           version: String(medication.catalog.version),
         }),
         medication.quantity,
@@ -750,10 +758,10 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         medication.external
           ? null
           : freezeCatalogCoverageJson(
-              `synthetic-med:${medication.catalogItemId}`,
-              `item-v${medication.catalog.version}`,
-              readConfigInsuranceCoverage(medication.catalog.config_json),
-            ),
+            `synthetic-med:${medication.catalogItemId}`,
+            `item-v${medication.catalog.version}`,
+            readConfigInsuranceCoverage(medication.catalog.config_json),
+          ),
       )
       return {
         catalogItemId: medication.catalogItemId,
@@ -764,10 +772,18 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         ...(medication.instructions === undefined ? {} : { instructions: medication.instructions }),
         medicationRequestId: medicationRequest.id,
         medicationRequestVersion: medicationRequest.meta?.versionId ?? '1',
+        ...(medication.referenceProduct !== undefined
+          ? {
+            packageDescription: medication.referenceProduct.packageDescription,
+            referenceProduct: medication.referenceProduct,
+            strength: medication.referenceProduct.strength,
+          }
+          : {
+            ...(localPresentation?.packageDescription === undefined ? {} : { packageDescription: localPresentation.packageDescription }),
+            ...(localPresentation?.strength === undefined ? {} : { strength: localPresentation.strength }),
+            ...(localPresentation?.unit === undefined ? {} : { unit: localPresentation.unit }),
+          }),
         quantity: medication.quantity,
-        ...(medication.referenceProduct === undefined
-          ? {}
-          : { referenceProduct: medication.referenceProduct }),
       }
     })
     const isExternalPrescription = medications.every(medication => medication.external)
@@ -856,8 +872,14 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
     if (updateDraft.changes !== 1) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft version has changed', undefined, 'PRESCRIPTION_DRAFT_STALE')
     }
+    const authoredByName = resolvePractitionerRoleDisplayName(
+      this.#context.database,
+      input.context,
+      input.context.practitionerRoleId,
+    )
     const prescription = issuedPrescriptionSchema.parse({
       authoredAt,
+      ...(authoredByName === undefined ? {} : { authoredByName }),
       authoredByPractitionerRoleId: input.context.practitionerRoleId,
       id: prescriptionId,
       items: issuedItems,
@@ -2303,15 +2325,32 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription requester is inconsistent')
       }
       const catalog = z.object({
+        config_json: z.string(),
         name_en: z.string().min(1),
         name_zh: z.string().min(1),
       }).strict().optional().parse(this.#context.database.driver.prepare(`
-        SELECT name_zh, name_en FROM outpatient_catalog
+        SELECT name_zh, name_en, config_json FROM outpatient_catalog
         WHERE workspace_id = ? AND epoch = ? AND item_id = ? AND kind = 'medication'
       `).get(context.workspaceId, context.epoch, item.medication_id))
-      const referenceProduct = referenceMedicationProductSchema.safeParse(
-        JSON.parse(item.medication_snapshot_json) as unknown,
-      )
+      const rawSnapshot = JSON.parse(item.medication_snapshot_json) as unknown
+      const referenceProduct = referenceMedicationProductSchema.safeParse(rawSnapshot)
+      const operationalSnapshot = z.object({
+        packageDescription: z.string().trim().min(1).optional(),
+        strength: z.string().trim().min(1).optional(),
+        unit: z.string().trim().min(1).optional(),
+      }).safeParse(rawSnapshot)
+      const catalogFallback = catalog === undefined
+        ? undefined
+        : parseCatalogMedicationPresentation(catalog.config_json)
+      const strength = referenceProduct.success
+        ? referenceProduct.data.strength
+        : (operationalSnapshot.success ? operationalSnapshot.data.strength : undefined) ?? catalogFallback?.strength
+      const packageDescription = referenceProduct.success
+        ? referenceProduct.data.packageDescription
+        : (operationalSnapshot.success ? operationalSnapshot.data.packageDescription : undefined) ?? catalogFallback?.packageDescription
+      const unit = referenceProduct.success
+        ? undefined
+        : (operationalSnapshot.success ? operationalSnapshot.data.unit : undefined) ?? catalogFallback?.unit
       const instructions = request.dosageInstruction?.[0]?.patientInstruction
       return {
         catalogItemId: item.medication_id,
@@ -2325,15 +2364,24 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         ...(instructions === undefined ? {} : { instructions }),
         medicationRequestId: item.medication_request_id,
         medicationRequestVersion: resource.meta?.versionId ?? '1',
+        ...(packageDescription === undefined ? {} : { packageDescription }),
         quantity: item.quantity,
         ...(referenceProduct.success ? { referenceProduct: referenceProduct.data } : {}),
+        ...(strength === undefined ? {} : { strength }),
+        ...(unit === undefined ? {} : { unit }),
       }
     })
     if (authoredByPractitionerRoleId === undefined) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription requester is incomplete')
     }
+    const authoredByName = resolvePractitionerRoleDisplayName(
+      this.#context.database,
+      context,
+      authoredByPractitionerRoleId,
+    )
     return issuedPrescriptionSchema.parse({
       authoredAt: prescription.authored_at,
+      ...(authoredByName === undefined ? {} : { authoredByName }),
       authoredByPractitionerRoleId,
       id: prescription.prescription_id,
       items,

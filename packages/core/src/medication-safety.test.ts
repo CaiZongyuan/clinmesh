@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { medicationCombinationConflict, medicationDoseConflict, medicationIndicationMatches, medicationQuantityAllowed, medicationScheduledHours } from './medication-safety.ts'
+import { formatMedicationFrequency, medicationCombinationConflict, medicationDoseConflict, medicationIndicationMatches, medicationQuantityAllowed, medicationScheduledHours } from './medication-safety.ts'
 
 describe('共享药事安全规则', () => {
   it('允许跨类联合并拒绝 ACEI/ARB、ACEI/ARNI、双 P2Y12 和双他汀', () => {
@@ -38,5 +38,20 @@ describe('共享药事安全规则', () => {
     expect(medicationScheduledHours('QN')).toEqual([22])
     expect(medicationScheduledHours('PRN')).toEqual([])
     expect(medicationScheduledHours('ONCE')).toEqual([])
+  })
+  it('将标准频次编码统一格式化为中英文带括号缩写文本，并在需要时保留执行时点', () => {
+    expect(formatMedicationFrequency('QD', 'zh-CN')).toBe('每日一次（QD）')
+    expect(formatMedicationFrequency('BID', 'zh-CN')).toBe('每日两次（BID）')
+    expect(formatMedicationFrequency('TID', 'zh-CN')).toBe('每日三次（TID）')
+    expect(formatMedicationFrequency('QN', 'zh-CN')).toBe('每晚一次（QN）')
+    expect(formatMedicationFrequency('PRN', 'zh-CN')).toBe('必要时（PRN）')
+    expect(formatMedicationFrequency('ONCE', 'zh-CN')).toBe('仅一次（ONCE）')
+    expect(formatMedicationFrequency('bid', 'zh-CN')).toBe('每日两次（BID）')
+    expect(formatMedicationFrequency('BID', 'zh-CN', { withTime: true })).toBe('每日两次（BID） · 08:00、20:00')
+    expect(formatMedicationFrequency('PRN', 'zh-CN', { withTime: true })).toBe('必要时（PRN）')
+    expect(formatMedicationFrequency('BID', 'en-US')).toBe('Twice daily (BID)')
+    expect(formatMedicationFrequency('PRN', 'en-US')).toBe('As needed (PRN)')
+    expect(formatMedicationFrequency('TID', 'en-US', { withTime: true })).toBe('Three times daily (TID) · 08:00, 14:00, 20:00')
+    expect(formatMedicationFrequency('自定义外延频次', 'zh-CN')).toBe('自定义外延频次')
   })
 })

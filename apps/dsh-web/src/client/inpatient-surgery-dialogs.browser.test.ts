@@ -104,7 +104,7 @@ for (const version of ['18', '19']) test.describe(`Surgery dialogs React ${versi
     const request = page.getByRole('dialog', { name: '申请手术', exact: true })
     await request.getByLabel('计划术式', { exact: true }).click()
     await page.getByRole('option', { name: /51.2300/ }).click()
-    await request.getByLabel('计划手术时间（上海时间）', { exact: true }).fill('2026-11-09T14:00')
+    await request.getByLabel('计划手术时间', { exact: true }).fill('2026-11-09T14:00')
     await request.getByLabel('手术申请理由', { exact: true }).fill('保留合成申请草稿')
     let release!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })

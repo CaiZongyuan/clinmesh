@@ -20,21 +20,33 @@ const session: SessionContext = {
   actor: { actorId: 'actor-doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'scenario-run-1', practitionerId: 'doctor-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor' },
   user: { id: 'user-doctor', name: '住院医生', email: 'inpatient-doctor@demo.clinmesh.local' }, availableRoles: [],
 }
-const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-0001', admissionRoute: 'direct', wardId: 'ward-general',
-  organizationId: 'organization-inpatient', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '2' })
+const admission = inpatientAdmissionSchema.parse({
+  id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-0001', admissionRoute: 'direct', wardId: 'ward-general',
+  organizationId: 'organization-inpatient', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '2'
+})
 const diagnosis = { id: 'diagnosis-1', code: 'I25.1', display: '合成冠心病诊断', system: 'https://example.test/icd', version: '1', sourceLocator: 'synthetic-fixture' }
 const hypertension = { id: 'nhsa-diagnosis:nhc-icd10-clinical@2022.r4:I10.x09', code: 'I10.x09', display: '合成高血压', domain: 'diagnosis', sourceLocator: 'synthetic-fixture', status: 'active', system: 'https://example.test/nhc-icd10', version: '2022.r4' }
-const medication = { id: 'medication-2', display: '合成降压药', version: 1, priceFen: 1500, unit: '片', doseBasis: { amount: 5, unit: 'mg' }, doses: [{ doseText: '5 mg', quantity: 1 }], frequencyCodes: ['QD'], lots: [] }
-const simulation = { admissionId: 'admission-1', evaluatedAt: '2026-08-24T09:00:00+08:00', fingerprint: 'a'.repeat(64), rulesId: 'synthetic-rules', rulesVersion: '1',
+const medication = { id: 'medication-2', display: '合成降压药', version: 1, priceFen: 1500, unit: '片', strength: '5 mg', packageDescription: '30片/盒', doseBasis: { amount: 5, unit: 'mg' }, doses: [{ doseText: '5 mg', quantity: 1 }], frequencyCodes: ['QD'], lots: [] }
+const simulation = {
+  admissionId: 'admission-1', evaluatedAt: '2026-08-24T09:00:00+08:00', fingerprint: 'a'.repeat(64), rulesId: 'synthetic-rules', rulesVersion: '1',
   formal: { chargesFen: 5000, items: [] }, committed: { items: [] }, reserved: { items: [] }, draft: { items: [{ kind: 'medication', id: 'medication-2', display: '合成降压药', quantity: 1, estimatedFen: 1500 }], missing: [] },
   coverage: { coveredFen: 5000, estimatedTotalFen: 6500, coveredRatioBp: 7692, note: '合成' }, grouping: { formal: { status: 'grouped', drgCode: 'FR59', mdcCode: 'MDCF', adrgCode: 'FR5', steps: [], reason: null }, projected: null, note: '合成' },
-  paymentReference: null, incompleteness: { costMissing: true, paymentReferenceMissing: true } }
-const clinical = inpatientFullClinicalSchema.parse({ admissionId: admission.id, encounterVersion: '2', diagnosis: { revision: 1, entries: [{ conditionId: 'condition-1', role: 'primary', admissionCondition: '1', ordinal: 1, coding: diagnosis }] },
+  paymentReference: null, incompleteness: { costMissing: true, paymentReferenceMissing: true }
+}
+const clinical = inpatientFullClinicalSchema.parse({
+  admissionId: admission.id, encounterVersion: '2', diagnosis: { revision: 1, entries: [{ conditionId: 'condition-1', role: 'primary', admissionCondition: '1', ordinal: 1, coding: diagnosis }] },
   orders: [{ id: 'order-1', admissionId: admission.id, kind: 'medication', duration: 'long', catalogItemId: 'medication-1', catalogVersion: 1, display: '合成抗血小板药', doseText: '1片', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: 'verified', version: 1, requestVersion: '1', signedAt: '2026-08-24T09:00:00+08:00', signedBy: 'doctor-1', organizationId: 'organization-inpatient' }],
-  executions: [{ id: 'execution-1', orderId: 'order-1', scheduledFor: '2026-08-24T09:00:00+08:00', status: 'completed', version: 1 }], dispenses: [], charges: [], chargesFen: 0 })
-const investigations = inpatientInvestigationsSchema.parse({ admissionId: admission.id, sent: [], imagingRequests: [], laboratoryRequests: [{ id: 'request-1', catalogItemId: 'laboratory-1', indicationCode: 'screening', serviceRequestId: 'service-request-1', serviceRequestVersion: '1', taskId: 'task-1', taskVersion: '1', status: 'reported', version: 1,
-  referenceConcept: { ...diagnosis, id: 'laboratory-1', display: '合成肌钙蛋白' }, report: { diagnosticReportId: 'report-1', diagnosticReportVersion: '1', issuedAt: '2026-08-24T09:40:00+08:00', revisionNumber: 1, specimenId: 'specimen-1', status: 'final', conclusion: '合成报告结论',
-    results: [{ code: 'troponin', display: '肌钙蛋白 I', value: 0.02, interpretation: 'normal', observationId: 'observation-1', referenceRange: { high: 0.04, text: '0–0.04' }, unit: { code: 'ng/mL', display: 'ng/mL', system: 'http://unitsofmeasure.org' } }] } }] })
+  executions: [{ id: 'execution-1', orderId: 'order-1', scheduledFor: '2026-08-24T09:00:00+08:00', status: 'completed', version: 1 }], dispenses: [], charges: [], chargesFen: 0
+})
+const investigations = inpatientInvestigationsSchema.parse({
+  admissionId: admission.id, sent: [], imagingRequests: [], laboratoryRequests: [{
+    id: 'request-1', catalogItemId: 'laboratory-1', indicationCode: 'screening', serviceRequestId: 'service-request-1', serviceRequestVersion: '1', taskId: 'task-1', taskVersion: '1', status: 'reported', version: 1,
+    referenceConcept: { ...diagnosis, id: 'laboratory-1', display: '合成肌钙蛋白' }, report: {
+      diagnosticReportId: 'report-1', diagnosticReportVersion: '1', issuedAt: '2026-08-24T09:40:00+08:00', revisionNumber: 1, specimenId: 'specimen-1', status: 'final', conclusion: '合成报告结论',
+      results: [{ code: 'troponin', display: '肌钙蛋白 I', value: 0.02, interpretation: 'normal', observationId: 'observation-1', referenceRange: { high: 0.04, text: '0–0.04' }, unit: { code: 'ng/mL', display: 'ng/mL', system: 'http://unitsofmeasure.org' } }]
+    }
+  }]
+})
 
 function mount(page: 'orders' | 'investigations', { investigationFacts = investigations, imagingAvailable = false, activeSession = session, clinicalFacts = clinical, rejectIssue = false, catalogItems = [] as unknown[], onSimulation, onClinicalRead, preserveDrafts = false }: {
   investigationFacts?: typeof investigations; imagingAvailable?: boolean; activeSession?: SessionContext; clinicalFacts?: typeof clinical; rejectIssue?: boolean; catalogItems?: unknown[]; onSimulation?: () => Promise<void>; onClinicalRead?: () => Promise<void>; preserveDrafts?: boolean
@@ -69,9 +81,11 @@ function mount(page: 'orders' | 'investigations', { investigationFacts = investi
     }
     if (path.endsWith('/clinical')) { await onClinicalRead?.(); return Response.json(clinicalFacts) }
     if (path.endsWith('/clinical-catalog')) return Response.json({ diagnoses: [diagnosis, { ...diagnosis, id: 'diagnosis-local', display: '合成院内诊断' }], medications: [medication], services: [{ id: 'service-1', display: '合成健康教育', version: 1, priceFen: 1000, unit: '次' }] })
-    if (path.includes('/inpatient/catalog-search?')) return Response.json({ kind: 'medication', source: 'hospital', page: 1, pageSize: 50, total: 2, items: [
-      { id: medication.id, display: medication.display, status: 'available', missingFields: [], catalogItemId: medication.id, catalogVersion: 1, medication },
-      { id: 'medication-missing', display: '合成缺价药', status: 'incomplete', missingFields: ['price'] }] })
+    if (path.includes('/inpatient/catalog-search?')) return Response.json({
+      kind: 'medication', source: 'hospital', page: 1, pageSize: 50, total: 2, items: [
+        { id: medication.id, display: medication.display, status: 'available', missingFields: [], catalogItemId: medication.id, catalogVersion: 1, medication },
+        { id: 'medication-missing', display: '合成缺价药', status: 'incomplete', missingFields: ['price'] }]
+    })
     if (path.includes('/reference-catalogs/diagnoses?')) return Response.json({ page: 1, pageSize: 20, total: 1, releaseId: 'synthetic-release', items: [hypertension] })
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: '2026-08-24T09:00:00+08:00', requests: [], executions: [] })
     if (path.endsWith('/scenario-runs/current')) return Response.json({ clinicalReview: null, epoch: 'epoch-1', initialStateHash: 'hash-1', kind: 'candidate', scenarioId: 'scenario-1', scenarioRunId: 'scenario-run-1', seed: 1, status: 'active', virtualTime: '2026-08-24T15:00:00+08:00', workspaceId: 'workspace-demo' })
@@ -81,11 +95,13 @@ function mount(page: 'orders' | 'investigations', { investigationFacts = investi
     throw new Error(`Unexpected read ${path}`)
   }))
   const mounted = render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>)
-  return { ...mounted, writes,
+  return {
+    ...mounted, writes,
     changeActive: (active: boolean) => mounted.rerender(<QueryClientProvider client={client}><Subject active={active} /></QueryClientProvider>),
     changeAdmission: (currentAdmission: typeof admission, next: typeof investigationFacts) => { investigationFacts = next; mounted.rerender(<QueryClientProvider client={client}><Subject currentAdmission={currentAdmission} /></QueryClientProvider>) },
     refreshInvestigations: async (next: typeof investigationFacts) => { investigationFacts = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) },
-    refreshClinical: async (next: typeof clinicalFacts) => { clinicalFacts = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) } }
+    refreshClinical: async (next: typeof clinicalFacts) => { clinicalFacts = next; await client.invalidateQueries({ queryKey: ['inpatient'] }) }
+  }
 }
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
@@ -124,8 +140,10 @@ it.each(['verification', 'request-stop', 'verify-stop'] as const)('退出清理�
   const doctor = action === 'request-stop', verifying = action === 'verification'
   const activeSession: SessionContext = doctor ? session : { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
   const state = verifying ? 'signed' : doctor ? 'verified' : 'stop-requested'
-  const clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [clinical.orders[0], { ...clinical.orders[0], id: 'order-2', display: '合成第二医嘱' }]
-    .map(order => ({ ...order, state, ...(!doctor && !verifying ? { stopReason: '合成正式停嘱理由' } : {}) })), executions: [] })
+  const clinicalFacts = inpatientFullClinicalSchema.parse({
+    ...clinical, orders: [clinical.orders[0], { ...clinical.orders[0], id: 'order-2', display: '合成第二医嘱' }]
+      .map(order => ({ ...order, state, ...(!doctor && !verifying ? { stopReason: '合成正式停嘱理由' } : {}) })), executions: []
+  })
   const options = { activeSession, clinicalFacts, preserveDrafts: true }
   const original = mount('orders', { ...options, preserveDrafts: false }), user = userEvent.setup()
   const selection = verifying ? '选择校对' : doctor ? '选择停嘱' : '选择核停'
@@ -167,14 +185,20 @@ it.each(['verification', 'request-stop', 'verify-stop'] as const)('退出清理�
 it.each(['verification', 'request-stop', 'verify-stop'] as const)('%s确认前核对请求阻止用户关闭，读取失败后可退出且不发送命令', async action => {
   const doctor = action === 'request-stop', verifying = action === 'verification'
   const activeSession: SessionContext = doctor ? session : { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
-  const clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [{ ...clinical.orders[0],
-    state: verifying ? 'signed' : doctor ? 'verified' : 'stop-requested', ...(!doctor && !verifying ? { stopReason: '合成疗程已满' } : {}) }], executions: [] })
+  const clinicalFacts = inpatientFullClinicalSchema.parse({
+    ...clinical, orders: [{
+      ...clinical.orders[0],
+      state: verifying ? 'signed' : doctor ? 'verified' : 'stop-requested', ...(!doctor && !verifying ? { stopReason: '合成疗程已满' } : {})
+    }], executions: []
+  })
   let reads = 0, releaseRead: () => void = () => undefined
   const held = new Promise<void>(resolve => { releaseRead = resolve })
-  const { writes } = mount('orders', { activeSession, clinicalFacts, onClinicalRead: async () => {
-    reads += 1
-    if (reads === 3) { await held; throw new TypeError('合成核对读取失败') }
-  } })
+  const { writes } = mount('orders', {
+    activeSession, clinicalFacts, onClinicalRead: async () => {
+      reads += 1
+      if (reads === 3) { await held; throw new TypeError('合成核对读取失败') }
+    }
+  })
   const user = userEvent.setup(), title = verifying ? '集中核对新医嘱' : doctor ? '集中申请停嘱' : '集中核对停嘱'
   const selection = verifying ? '选择校对' : doctor ? '选择停嘱' : '选择核停'
   await user.click(await screen.findByRole('checkbox', { name: `${selection}：合成抗血小板药` }))
@@ -232,14 +256,16 @@ it('医生集中停嘱预览逐项最终理由，显式空覆盖必须修正或�
 
 it('护士独立集中核停，展示正式与历史缺失理由及待执行、已发待给任务影响', async () => {
   const nurse: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
-  const facts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [
-    { ...clinical.orders[0], state: 'stop-requested', stopReason: '合成疗程已满' },
-    { ...clinical.orders[0], id: 'legacy-stop', display: '合成历史停嘱', state: 'stop-requested' },
-    { ...clinical.orders[0], id: 'new-order', display: '合成新医嘱', state: 'signed' },
-  ], executions: [
-    { ...clinical.executions[0], status: 'pending' },
-    { ...clinical.executions[0], id: 'dispensed-task', status: 'dispensed' },
-  ] })
+  const facts = inpatientFullClinicalSchema.parse({
+    ...clinical, orders: [
+      { ...clinical.orders[0], state: 'stop-requested', stopReason: '合成疗程已满' },
+      { ...clinical.orders[0], id: 'legacy-stop', display: '合成历史停嘱', state: 'stop-requested' },
+      { ...clinical.orders[0], id: 'new-order', display: '合成新医嘱', state: 'signed' },
+    ], executions: [
+      { ...clinical.executions[0], status: 'pending' },
+      { ...clinical.executions[0], id: 'dispensed-task', status: 'dispensed' },
+    ]
+  })
   const { writes } = mount('orders', { activeSession: nurse, clinicalFacts: facts }), user = userEvent.setup()
   const orders = await screen.findByRole('region', { name: '住院医嘱' })
   expect(within(orders).queryByRole('checkbox', { name: '选择核停：合成新医嘱' })).toBeNull()
@@ -303,9 +329,11 @@ it.each(['dispensed', 'new-task'] as const)('核停确认前执行任务%s变化
   await user.click(screen.getByRole('button', { name: '集中核对停嘱 (1)' }))
   let dialog = screen.getByRole('dialog', { name: '集中核对停嘱' })
   expect(dialog.textContent).toContain('待执行 1 次、已发药待给药 0 次')
-  const changed = inpatientFullClinicalSchema.parse({ ...facts, executions: change === 'dispensed'
-    ? [{ ...facts.executions[0], status: 'dispensed', version: 2 }]
-    : [...facts.executions, { ...facts.executions[0], id: 'new-task', scheduledFor: '2026-08-25T09:00:00+08:00' }] })
+  const changed = inpatientFullClinicalSchema.parse({
+    ...facts, executions: change === 'dispensed'
+      ? [{ ...facts.executions[0], status: 'dispensed', version: 2 }]
+      : [...facts.executions, { ...facts.executions[0], id: 'new-task', scheduledFor: '2026-08-25T09:00:00+08:00' }]
+  })
   await mounted.refreshClinical(changed)
   await user.click(within(dialog).getByRole('button', { name: '确认核对 1 条停嘱' }))
   await waitFor(() => expect(screen.queryByRole('dialog', { name: '集中核对停嘱' })).toBeNull())
@@ -363,10 +391,16 @@ it('诊断摘要先于医嘱和开立表单，诊断两栏弹窗只查国家临�
   expect(within(dialog).getByRole('status').textContent).toBe('主诊断：合成高血压')
   await user.click(within(dialog).getByRole('button', { name: '确认住院诊断' }))
   await waitFor(() => expect(writes).toHaveLength(1))
-  expect(writes[0]).toMatchObject({ path: expect.stringContaining('/diagnoses/confirm'), body: { input: { expectedRevision: 1, entries: [
-    { catalogItemId: hypertension.id, role: 'primary', admissionCondition: '2', note: '合成待复查' },
-    { catalogItemId: diagnosis.id, role: 'secondary', admissionCondition: '1' },
-  ] } } })
+  expect(writes[0]).toMatchObject({
+    path: expect.stringContaining('/diagnoses/confirm'), body: {
+      input: {
+        expectedRevision: 1, entries: [
+          { catalogItemId: hypertension.id, role: 'primary', admissionCondition: '2', note: '合成待复查' },
+          { catalogItemId: diagnosis.id, role: 'secondary', admissionCondition: '1' },
+        ]
+      }
+    }
+  })
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
 }, 15_000)
 
@@ -399,11 +433,12 @@ it('每条医嘱的费用预计保留单项依据，等待重新预计时不能�
   const dialog = screen.getByRole('dialog', { name: '开立医嘱' })
   expect(within(dialog).queryByRole('textbox', { name: '每次剂量' })).toBeNull()
   const suggestions = await within(dialog).findByRole('region', { name: '医嘱项目候选' })
-  expect((await within(suggestions).findByRole('button', { name: '选择合成降压药' })).textContent).toContain('每次 5 mg · 每日一次 · ¥15.00/片')
+  expect((await within(suggestions).findByRole('button', { name: '选择合成降压药' })).textContent).toContain('5 mg · 30片/盒 · 每次 5 mg · 每日一次（QD） · ¥15.00/片')
   await user.click(within(suggestions).getByRole('button', { name: /另有 1 项暂不能开立/ }))
   expect(suggestions.textContent).toContain('合成缺价药暂不能开立：缺院内价格')
   await user.click(within(suggestions).getByRole('button', { name: '选择合成降压药' }))
   const row = within(dialog).getByRole('region', { name: '待开：合成降压药' })
+  expect(row.querySelector('[data-order-check-summary]')?.textContent).toBe('5 mg · 30片/盒 · 长期 · 每次 5 mg · 每日一次（QD） · 1 片')
   expect((within(row).getByRole('textbox', { name: '每次剂量' }) as HTMLInputElement).value).toBe('5 mg')
   expect(within(row).getByText('= 1 片')).toBeDefined()
   await user.click(within(row).getByRole('button', { name: '费用预计' }))
@@ -439,8 +474,7 @@ it('医嘱条目频次显示中文，批量停嘱关闭重开保留共同理由�
   mount('orders')
   const user = userEvent.setup(), bar = screen.getByRole('complementary', { name: '底部操作' })
   const row = (await within(await screen.findByRole('region', { name: '住院医嘱' })).findByText('合成抗血小板药')).closest('article')!
-  expect(row.textContent).toContain('每日一次 · 08:00')
-  expect(row.textContent).not.toContain('QD')
+  expect(row.textContent).toContain('每日一次（QD） · 08:00')
   await user.click(within(row).getByRole('checkbox', { name: '选择停嘱：合成抗血小板药' }))
   expect(within(bar).getByText('还差：逐项停嘱理由')).toBeDefined()
   const primary = within(bar).getByRole('button', { name: '集中申请停嘱 (1)' })
@@ -482,6 +516,7 @@ it('待阅检验直接展示完整结果表，开立窗口按需打开', async (
 it('开立窗口按类别折叠不可开立项，检验单项适应证只读且检查单独保留指征', async () => {
   const catalogItems = [
     { id: 'lab-single', kind: 'laboratory', display: '合成血常规', version: 1, priceFen: 2000, available: true, indicationCodes: ['fever'] },
+    { id: 'lab-assessment', kind: 'laboratory', display: '合成肌酐测定', version: 1, priceFen: 1200, available: true, indicationCodes: ['clinical-assessment'] },
     { id: 'lab-unpriced', kind: 'laboratory', display: '合成未定价检验', version: 1, available: false, unavailableReason: 'unpriced', indicationCodes: ['fever'] },
     { id: 'ct-chest', kind: 'imaging', display: '合成胸部CT', version: 3, priceFen: 30000, available: true, indicationCodes: [] },
   ]
@@ -503,6 +538,11 @@ it('开立窗口按类别折叠不可开立项，检验单项适应证只读且�
   await user.type(within(dialog).getByRole('textbox', { name: '检查指征' }), '合成胸痛待查')
   expect(within(dialog).getByRole('button', { name: '开立所选检查（1）' }).hasAttribute('disabled')).toBe(false)
   await user.click(within(dialog).getByRole('button', { name: '检验' }))
+  await user.click(within(dialog).getByRole('button', { name: '选择合成肌酐测定' }))
+  const assessmentRow = within(dialog).getByRole('region', { name: '待开：合成肌酐测定' })
+  expect(within(assessmentRow).getByText('临床评估')).toBeDefined()
+  expect(assessmentRow.textContent).not.toContain('clinical-assessment')
+  await user.click(within(assessmentRow).getByRole('button', { name: '移除项目' }))
   await user.click(within(dialog).getByRole('button', { name: '选择合成血常规' }))
   expect(within(dialog).queryByRole('combobox', { name: '检验适应证' })).toBeNull()
   expect(within(dialog).getByText('发热')).toBeDefined()
@@ -537,8 +577,12 @@ it('连续阅读窗口明确打开并选择检验报告，核对后集中确认�
 
 it('已阅报告只留摘要，全文与既往修订在同一弹窗回看并归还焦点', async () => {
   const current = investigations.laboratoryRequests[0]!
-  const facts = inpatientInvestigationsSchema.parse({ ...investigations, laboratoryRequests: [{ ...current, status: 'acknowledged', report: { ...current.report!, acknowledgement: { id: 'ack-1', acknowledgedAt: '2026-08-24T10:00:00+08:00', acknowledgedBy: 'doctor-1' } },
-    previousReports: [{ ...current.report!, diagnosticReportId: 'old-report', conclusion: '合成既往报告结论' }] }] })
+  const facts = inpatientInvestigationsSchema.parse({
+    ...investigations, laboratoryRequests: [{
+      ...current, status: 'acknowledged', report: { ...current.report!, acknowledgement: { id: 'ack-1', acknowledgedAt: '2026-08-24T10:00:00+08:00', acknowledgedBy: 'doctor-1' } },
+      previousReports: [{ ...current.report!, diagnosticReportId: 'old-report', conclusion: '合成既往报告结论' }]
+    }]
+  })
   const mounted = mount('investigations', { investigationFacts: facts })
   const user = userEvent.setup()
   const trigger = await screen.findByRole('button', { name: '查看全文' })
@@ -561,8 +605,10 @@ it('已阅报告只留摘要，全文与既往修订在同一弹窗回看并归�
 })
 
 it('医生按医嘱查执行记录，护士仍在主页面执行', async () => {
-  const data = inpatientFullClinicalSchema.parse({ ...clinical, orders: [...clinical.orders, { ...clinical.orders[0]!, id: 'order-2', display: '合成第二医嘱' }],
-    executions: [...clinical.executions, { ...clinical.executions[0]!, id: 'execution-2', orderId: 'order-2', status: 'pending' }] })
+  const data = inpatientFullClinicalSchema.parse({
+    ...clinical, orders: [...clinical.orders, { ...clinical.orders[0]!, id: 'order-2', display: '合成第二医嘱' }],
+    executions: [...clinical.executions, { ...clinical.executions[0]!, id: 'execution-2', orderId: 'order-2', status: 'pending' }]
+  })
   const mounted = mount('orders', { clinicalFacts: data })
   const user = userEvent.setup()
   const orders = await screen.findByRole('region', { name: '住院医嘱' })
@@ -582,9 +628,13 @@ it('医生按医嘱查执行记录，护士仍在主页面执行', async () => {
 })
 
 it.each([true, false])('报告直接展示与连续阅读均保留影像首帧门禁 %s', async available => {
-  const imaging = inpatientInvestigationsSchema.parse({ admissionId: admission.id, sent: [], laboratoryRequests: [], imagingRequests: [{ id: 'image-request-1', indication: '合成检查指征', serviceRequestId: 'service-request-1', serviceRequestVersion: '1', taskId: 'task-1', taskVersion: '1', status: 'reported', version: 1,
-    service: { id: 'service-1', name: '合成胸部CT', code: 'CT-1', version: 1, applicability: '合成适用范围', bodySite: '胸部', department: '放射科', examCode: 'chest-ct-plain', method: '平扫', modality: 'CT', reportSections: ['findings', 'impression', 'technique'] },
-    report: { diagnosticReportId: 'report-1', diagnosticReportVersion: '1', examinedAt: '2026-08-24T09:30:00+08:00', issuedAt: '2026-08-24T09:40:00+08:00', revisionNumber: 1, status: 'final', studyId: 'study-1', findings: '合成所见', impression: '合成印象', technique: '合成检查技术' } }] })
+  const imaging = inpatientInvestigationsSchema.parse({
+    admissionId: admission.id, sent: [], laboratoryRequests: [], imagingRequests: [{
+      id: 'image-request-1', indication: '合成检查指征', serviceRequestId: 'service-request-1', serviceRequestVersion: '1', taskId: 'task-1', taskVersion: '1', status: 'reported', version: 1,
+      service: { id: 'service-1', name: '合成胸部CT', code: 'CT-1', version: 1, applicability: '合成适用范围', bodySite: '胸部', department: '放射科', examCode: 'chest-ct-plain', method: '平扫', modality: 'CT', reportSections: ['findings', 'impression', 'technique'] },
+      report: { diagnosticReportId: 'report-1', diagnosticReportVersion: '1', examinedAt: '2026-08-24T09:30:00+08:00', issuedAt: '2026-08-24T09:40:00+08:00', revisionNumber: 1, status: 'final', studyId: 'study-1', findings: '合成所见', impression: '合成印象', technique: '合成检查技术' }
+    }]
+  })
   const mounted = mount('investigations', { investigationFacts: imaging, imagingAvailable: available })
   const user = userEvent.setup()
   await screen.findByText('合成所见')
@@ -719,10 +769,12 @@ it('校对选择关闭和刷新保留，版本变化先阻止确认并要求逐�
 
 it('新医嘱校对完成后底栏交回独立核停动作，不能混入已选批次', async () => {
   const nurse: SessionContext = { ...session, actor: { ...session.actor, roleCode: 'ward-nurse' } }
-  const clinicalFacts = inpatientFullClinicalSchema.parse({ ...clinical, orders: [
-    { ...clinical.orders[0], id: 'new-order', state: 'signed' },
-    { ...clinical.orders[0], id: 'stop-order', display: '合成待停药', state: 'stop-requested' },
-  ], executions: [] })
+  const clinicalFacts = inpatientFullClinicalSchema.parse({
+    ...clinical, orders: [
+      { ...clinical.orders[0], id: 'new-order', state: 'signed' },
+      { ...clinical.orders[0], id: 'stop-order', display: '合成待停药', state: 'stop-requested' },
+    ], executions: []
+  })
   const { writes } = mount('orders', { activeSession: nurse, clinicalFacts }), user = userEvent.setup()
   const bar = screen.getByRole('complementary', { name: '底部操作' })
   await user.click(await screen.findByRole('checkbox', { name: '选择校对：合成抗血小板药' }))
