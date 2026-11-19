@@ -14,8 +14,13 @@ description: ClinMesh 住院登记、诊断、医嘱校对执行、发药给药�
 | 工具 | 当前岗位与动作 |
 | --- | --- |
 | `clinmesh_select_inpatient_stage` | 切换当前岗位可读的住院环节 |
+| `clinmesh_read_inpatient_angiography_reports` | 住院医生、病区护士或病案在检查检验、手术或病案环节只读正式冠脉造影报告与多支生理学所见 |
+| `clinmesh_read_inpatient_clinical_scores` | 住院医生、病区护士或病案在入院、医嘱、手术、出院或病案环节只读确定性临床评分与缺项 |
+| `clinmesh_read_inpatient_guideline_topics` | 住院医生、病区护士或病案在医嘱、手术、出院或病案环节只读已核验指南专题原文与指标缺项 |
+| `clinmesh_read_inpatient_clinical_quality` | 住院医生在医嘱、手术、出院或病案环节只读预检双层事中临床质控 |
+| `clinmesh_read_inpatient_order_set_drafts` | 住院医生在医嘱或检查检验环节只读按过敏、eGFR 与护理体征预筛的组套候选草稿 |
 | `clinmesh_prepare_verify_inpatient_order` | 病区护士在医嘱行准备校对，等本人确认 |
-| `clinmesh_prepare_acknowledge_inpatient_report` | 住院医生准备当前报告已阅，等本人确认；影像须先实际显示 |
+| `clinmesh_prepare_acknowledge_inpatient_report` | 住院医生准备当前报告已阅（含检验、功能检查与影像），等本人确认；影像须先实际显示 |
 | `clinmesh_fill_inpatient_payment_draft` | 收费员填写出院补交，金额为整数分，最多三种不重复收款方式 |
 | `clinmesh_preview_inpatient_payment` | 收费员预览当前出院补交，不收款 |
 | `clinmesh_preview_inpatient_settlement` | 收费员预览结算，不结算 |
@@ -393,6 +398,7 @@ clinmesh command receipt get --operation-id inpatient.drg.agent.confirm --idempo
 ```bash
 clinmesh inpatient surgery-catalog
 clinmesh inpatient surgeries --admission-id <admission-id>
+clinmesh inpatient angiography-reports --admission-id <admission-id>
 clinmesh inpatient request-surgery --input @surgery-request.json --idempotency-key <key>
 clinmesh inpatient check-surgery-preop --input @surgery-preparation.json --idempotency-key <key>
 clinmesh inpatient confirm-surgery-consent --input @surgery-preparation.json --idempotency-key <key>

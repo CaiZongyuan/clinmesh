@@ -1,6 +1,6 @@
 ---
 name: clinmesh-administrator
-description: ClinMesh administrator CLI workflows for laboratory publication and fixed PCI patient preparation. Use for Laboratory Service configuration, source or panel filtering, publication status, retries, job inspection, and preparing the fixed synthetic PCI patient with an active Persona; use scenario-data workflows for dynamic synthetic patient generation.
+description: ClinMesh administrator CLI workflows for laboratory publication, fixed PCI patient preparation, and specialist Authored Case Pack preparation. Use for Laboratory Service configuration, source or panel filtering, publication status, retries, job inspection, and preparing the fixed synthetic PCI patient or 5-case cardiorenal Authored Case Pack with active Personas; use scenario-data workflows for dynamic synthetic patient generation.
 ---
 
 # ClinMesh Administrator
@@ -34,3 +34,13 @@ clinmesh command receipt get --operation-id admin.pci-case.prepare --idempotency
 准备返回 `409 PCI_SOURCE_PERSONA_RUNNING` 时，等待原档案生成任务全部结束，再用原输入和幂等键恢复准备，取得当前病例修订后交接。历史未选用病例仅有排队任务时，准备会原子终止这些旧任务并将其标为 `failed / PERSONA_JOB_SUPERSEDED`，避免准备后重新调用模型或改变修订；已有有效选用病例的显式生成任务继续原流程，仍有排队或运行中任务时等待完成再准备。已消费病例保持原绑定。
 
 保留患者库重置会按原病例及选用修订把已开始的直接住院重放到默认病区待接诊。清空患者库后重新准备将返回新的 Profile 修订和 Case 身份，并自动完成该新病例的固定 Persona 选用；读取本次返回值再交给登记员。旧轮次病例与审计保持不变，详细边界见[仿真合同](../../docs/architecture/simulation.md#103-场景定义)。
+
+五例心血管与慢病专病合成病例包（`Authored Case Pack`）使用同一受控边界查询与幂等准备。`authored-case-pack get` 只读返回病例包版本、就绪计数、每例推荐入口（`outpatient` 或 `inpatient`）及当前 `Synthetic Case Instance` 状态，不暴露 `Case Truth`；`authored-case-pack prepare` 在单事务内幂等建立或恢复 5 例 `Synthetic Patient Profile`、分阶段 `Case Truth` 与 `clinmesh-authored-template` 患者档案并自动选用，零模型调用、不启动就诊或产生诊疗费用。
+
+```bash
+clinmesh admin authored-case-pack get
+clinmesh admin authored-case-pack prepare --expected-epoch <epoch> --idempotency-key <key>
+clinmesh command receipt get --operation-id admin.authored-case-pack.prepare --idempotency-key <key>
+```
+
+传输结果未知时保留原键与原输入先查询 `admin.authored-case-pack.prepare` 回执。`AUTHORED_CASE_PACK_EPOCH_CONFLICT` 表示受信上下文的 `epoch` 已变化，刷新上下文核对当前轮次后再决定新意图；`AUTHORED_CASE_PACK_PERSONA_RUNNING`（409）表示仍有运行中或已选修订病例的排队生成任务，待原任务全部结束后沿原键与原输入恢复；历史未选用病例仅有排队任务时，准备会原子终止这些旧任务并记为 `failed / PERSONA_JOB_SUPERSEDED`，已人工修订或已消费病例保持原选用与绑定。

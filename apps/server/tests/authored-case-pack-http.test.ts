@@ -609,12 +609,12 @@ it('幂等准备五例专病病例包，保持角色/世代/人工修订/兼容�
   const first = await s.preparePack('epoch-1', key)
   expect(first.data).toMatchObject({ readyCount: 5, totalCount: 5 })
   expect(first.effects.length).toBeGreaterThan(0)
-  const receiptRes = await s.get('admin', `/api/his/v1/command-receipts?operationId=synthetic-case.authored-pack.prepare&idempotencyKey=${encodeURIComponent(key)}`)
+  const receiptRes = await s.get('admin', `/api/his/v1/command-receipts?operationId=admin.authored-case-pack.prepare&idempotencyKey=${encodeURIComponent(key)}`)
   expect(receiptRes.status, await receiptRes.clone().text()).toBe(200)
   expect(commandReceiptLookupSchema.parse(await receiptRes.json())).toMatchObject({
-    idempotencyKey: key, operationId: 'synthetic-case.authored-pack.prepare', status: 'completed',
+    idempotencyKey: key, operationId: 'admin.authored-case-pack.prepare', status: 'completed',
   })
-  expect((await s.get('doctor', `/api/his/v1/command-receipts?operationId=synthetic-case.authored-pack.prepare&idempotencyKey=${encodeURIComponent(key)}`)).status).toBe(403)
+  expect((await s.get('doctor', `/api/his/v1/command-receipts?operationId=admin.authored-case-pack.prepare&idempotencyKey=${encodeURIComponent(key)}`)).status).toBe(404)
   for (const item of first.data.cases) {
     expect(item.case).toMatchObject({ activeBriefRevision: 1, revision: 2, status: 'brief-ready' })
     const revisions = patientPersonaRevisionListSchema.parse(

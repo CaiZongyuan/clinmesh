@@ -25,7 +25,7 @@ Status: implemented
 
 3. **五例心血管与慢病专病合成病例包及紧凑管理入口**：
    - 在 `apps/server/src/application/scenario-data/cardiorenal-authored-case-pack.ts` 交付五例合成病例，完整对齐 `@clinmesh/core` 临床评分、医嘱组套与事中临床质控红线/警示边界；所有病例定义与 Persona 文本仅保存在 `apps/server/`，不进入 `packages/contracts/`。
-   - 在 `apps/web/src/app/pci-preparation.tsx` 原位扩展紧凑的专病病例包就绪面板与一键准备按钮（经由 `useInpatientWriteIntent` 与 `synthetic-case.authored-pack.prepare` 持久写意图及 `/api/his/v1/command-receipts` 恢复回执，仅使用 React 18.3.1 / 19.2 共有 API），确保 `apps/dsh-web/lib/client.js` 严格维持在 5,000,000 字节上限之下。
+   - 在 `apps/web/src/app/pci-preparation.tsx` 原位扩展紧凑的专病病例包就绪面板与一键准备按钮（经由 `useInpatientWriteIntent` 与 `admin.authored-case-pack.prepare` 持久写意图及 `/api/his/v1/command-receipts` 恢复回执，服务端统一映射持久回执名 `synthetic-case.authored-pack.prepare`，仅使用 React 18.3.1 / 19.2 共有 API），确保 `apps/dsh-web/lib/client.js` 严格维持在 5,000,000 字节上限之下。
 
 ## Alternatives considered
 
@@ -36,5 +36,5 @@ Status: implemented
 ## Consequences
 
 - 管理员可在单一入口幂等准备全部五例心血管与慢病专病病例，并在不调用任何外部模型的情况下完成门诊首诊、复测、住院造影/PCI 决策、肾功能红线拦截及出院后门诊随访全链路验证。
-- 临床接口、可见病史、FHIR Search 与管理摘要均保持零 `Case Truth` 泄漏；后续 CLI Operation Catalog 暴露由 P13 (#475) 统一登记。
+- 临床接口、可见病史、FHIR Search 与管理摘要均保持零 `Case Truth` 泄漏；CLI Operation Catalog 与 DSH 只读工具接入见 [同源专病临床内核与像素暂缓边界](2026-11-19-shared-specialist-clinical-kernel-and-pixel-deferral.md)。
 - 当前领域词汇归 [领域词汇](../../../../CONTEXT.md)，架构规则归 [仿真、病例与素材](../../../architecture/simulation.md#103-场景定义)。

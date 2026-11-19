@@ -9,6 +9,10 @@ export const orderSetTemplateIds = [
   'cin-perioperative-hydration',
   'cad-pci-secondary-prevention',
 ] as const
+export const outpatientOrderSetTemplateIds = [
+  'chest-pain-stat-workup',
+  'cad-pci-secondary-prevention',
+] as const
 export const orderSetTemplateIdSchema = z.enum(orderSetTemplateIds)
 export type OrderSetTemplateId = z.infer<typeof orderSetTemplateIdSchema>
 

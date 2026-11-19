@@ -3,7 +3,8 @@ import {
   outpatientRiskAssessmentResponseSchema,
   type ClinicalRiskAssessmentFieldsInput,
 } from '@clinmesh/contracts/clinical-scores'
-import { type ClinicalOverrideInput, type ClinicalQualityCheck } from '@clinmesh/contracts/clinical-quality'
+import { clinicalQualityCheckSchema, type ClinicalOverrideInput, type ClinicalQualityCheck } from '@clinmesh/contracts/clinical-quality'
+import { guidelineTopicBundleSchema } from '@clinmesh/contracts/guideline-topics'
 import {
   orderSetDraftBundleSchema,
   type OrderSetTemplateId,
@@ -487,7 +488,9 @@ export function recordDoctorSupplement(request: z.infer<typeof doctorRecordingSo
 
 export function queryAgentDoctor(request: z.infer<typeof agentDoctorQueryRequestSchema>, signal?: AbortSignal) {
   return apiMutation('/api/agent/v1/doctor-queries', z.union([agentDoctorCaseReadSchema,
-    doctorCaseHistorySchema, doctorCaseHistoryDetailSchema, z.object({ context: agentPageContextSnapshotSchema }).strict()]), agentDoctorQueryRequestSchema.parse(request),
+    doctorCaseHistorySchema, doctorCaseHistoryDetailSchema, clinicalScoreBundleSchema,
+    guidelineTopicBundleSchema, clinicalQualityCheckSchema, orderSetDraftBundleSchema,
+    z.object({ context: agentPageContextSnapshotSchema }).strict()]), agentDoctorQueryRequestSchema.parse(request),
     signal === undefined ? {} : { signal })
 }
 

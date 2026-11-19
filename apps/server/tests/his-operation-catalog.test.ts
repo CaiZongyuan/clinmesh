@@ -27,10 +27,11 @@ describe('HIS operation route coverage', () => {
     ))
     const excludedRoutes = excludedHisRoutes.map(route => routeKey(route.method, route.path))
 
-    expect(operations).toHaveLength(224)
+    expect(operations).toHaveLength(225)
     expect(canonicalRoutes).toEqual(expect.arrayContaining([
       'GET /api/his/v1/encounters/:encounterId/clinical-quality',
       'GET /api/his/v1/inpatient/admissions/:admissionId/clinical-quality',
+      'GET /api/his/v1/inpatient/admissions/:admissionId/angiography-reports',
       'POST /api/his/v1/payments/actions/preview-multi-charge',
       'GET /api/his/v1/catalogs/order-set-templates',
       'GET /api/his/v1/doctor/cases/:caseId/order-set-drafts',
@@ -51,12 +52,11 @@ describe('HIS operation route coverage', () => {
       'GET /api/his/v1/inpatient/admissions/:admissionId/guideline-advice',
       'POST /api/his/v1/inpatient/admissions/:admissionId/guideline-advice/request',
     ]))
-    expect(excludedHisRoutes).toHaveLength(21)
+    expect(excludedHisRoutes).toHaveLength(20)
     expect(excludedRoutes).toEqual(expect.arrayContaining([
       'GET /api/his/v1/doctor/cases/:caseId/recommendations/:kind/confirmations/:idempotencyKey',
       'POST /api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm',
       'GET /api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId',
-      'GET /api/his/v1/inpatient/admissions/:admissionId/angiography-reports',
       'GET /api/his/v1/inpatient/admissions/:admissionId/surgeries/request-reason',
       'POST /api/his/v1/inpatient/admissions/:admissionId/surgeries/request-reason',
     ]))

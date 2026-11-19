@@ -34,7 +34,7 @@ export function inpatientCompletionLabel(command: CompletedCommand, locale: Work
     case 'inpatient.drg.followup.stop': return t('已停止助手自动跟进', 'Assistant follow-up stopped')
     case 'inpatient.pci-data.prepare': return t('已准备 PCI 目录', 'PCI catalog prepared')
     case 'admin.pci-case.prepare': return t('已准备合成 PCI 病例', 'Synthetic PCI case prepared')
-    case 'synthetic-case.authored-pack.prepare': return t('已准备专病病例包', 'Case pack prepared')
+    case 'admin.authored-case-pack.prepare': return t('已准备专病病例包', 'Case pack prepared')
     case 'inpatient.drg.reservation.create': return t('已新增耗材预留', 'Material reservation created')
     case 'inpatient.drg.reservation.release': return t('已释放未用预留', 'Unused reservation released')
     case 'inpatient.drg.payer.review': return t('已提交 DRG 模拟核定', 'Simulated DRG assessment submitted')

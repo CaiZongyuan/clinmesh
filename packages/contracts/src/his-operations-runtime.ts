@@ -54,7 +54,8 @@ import { inpatientDrgPregroupResultSchema } from './inpatient-drg.ts'
 import { inpatientDrgSimulationSchema, inpatientDrgSimulationInputSchema, inpatientMaterialReservationListSchema,
   inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema, inpatientMaterialReservationBatchInputSchema } from './inpatient-drg-simulation.ts'
 import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewCreateInputSchema, inpatientDrgPayerReviewPreviewSchema } from './inpatient-drg-payer.ts'
-import { inpatientPciDataSchema, inpatientPciDataPrepareRequestSchema, inpatientPciDataResponseSchema, pciCaseSourcePrepareRequestSchema, pciCaseSourceResponseSchema, startSyntheticInpatientCaseRequestSchema, startSyntheticInpatientCaseResponseSchema } from './inpatient-pci-data.ts'
+import { inpatientPciDataSchema, inpatientPciDataPrepareRequestSchema, inpatientPciDataResponseSchema, pciCaseSourcePrepareRequestSchema, pciCaseSourceResponseSchema, authoredCasePackPrepareRequestSchema, authoredCasePackPrepareResponseSchema, authoredCasePackSummarySchema, startSyntheticInpatientCaseRequestSchema, startSyntheticInpatientCaseResponseSchema } from './inpatient-pci-data.ts'
+import { inpatientAngiographyReportsSchema } from './inpatient-angiography.ts'
 import { doctorCaseHistoryInputSchema, doctorCaseHistoryDetailInputSchema, doctorCaseHistorySchema, doctorCaseHistoryDetailSchema } from './doctor-history.ts'
 import { z } from 'zod'
 
@@ -71,6 +72,13 @@ const admOp = <S extends z.ZodType<{ admissionId: string }>, O extends z.ZodType
 const admQuery = <O extends z.ZodTypeAny>(id: string, sub: string, output: O, input: z.ZodTypeAny = admIdInput) => ({
   id, http: admGet(sub), input, output,
 })
+const hisOp = <I extends z.ZodTypeAny, O extends z.ZodTypeAny>(
+  id: string,
+  method: 'DELETE' | 'GET' | 'POST' | 'PUT',
+  path: string,
+  input: I,
+  output: O,
+) => ({ id, http: { method, path }, input, output })
 
 const inpatientDrgSimulationRequestSchema = z.object({ admissionId: z.string().min(1), draft: inpatientDrgSimulationInputSchema.optional() }).strict()
 import {
@@ -1608,312 +1616,40 @@ const rawOperationRuntimeDefinitions = [
     input: reviseClinicalDocumentOperationInputSchema,
     output: clinicalDocumentRevisionResponseSchema,
   },
-  {
-    http: {
-      method: 'PUT',
-      path: '/api/his/v1/encounters/:encounterId/laboratory-request/draft',
-    },
-    id: 'encounter.laboratory-request.draft.set',
-    input: saveLaboratoryRequestDraftOperationInputSchema,
-    output: laboratoryRequestDraftResponseSchema,
-  },
-  {
-    http: {
-      method: 'DELETE',
-      path: '/api/his/v1/encounters/:encounterId/laboratory-request/draft',
-    },
-    id: 'encounter.laboratory-request.draft.delete',
-    input: deleteLaboratoryRequestDraftOperationInputSchema,
-    output: laboratoryRequestDraftResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/encounters/:encounterId/laboratory-request/actions/issue',
-    },
-    id: 'encounter.laboratory-request.issue',
-    input: issueLaboratoryRequestOperationInputSchema,
-    output: issueLaboratoryRequestResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/laboratory-requests/:requestId/actions/cancel',
-    },
-    id: 'laboratory-request.cancel',
-    input: cancelLaboratoryRequestOperationInputSchema,
-    output: laboratoryRequestActionResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/laboratory-requests/:requestId/actions/retry-generation',
-    },
-    id: 'laboratory-request.retry-generation',
-    input: retryLaboratoryResultGenerationOperationInputSchema,
-    output: laboratoryRequestActionResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/laboratory-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge',
-    },
-    id: 'laboratory-report.acknowledge',
-    input: acknowledgeLaboratoryReportOperationInputSchema,
-    output: acknowledgeLaboratoryReportResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/laboratory-requests/:requestId/reports/:diagnosticReportId/actions/correct',
-    },
-    id: 'laboratory-report.correct',
-    input: correctLaboratoryReportOperationInputSchema,
-    output: correctLaboratoryReportResponseSchema,
-  },
-  {
-    http: {
-      method: 'GET',
-      path: '/api/his/v1/doctor/cases/:caseId/examination-services',
-    },
-    id: 'doctor.case.examination-services.list',
-    input: caseIdInputSchema,
-    output: caseExaminationServiceCatalogSchema,
-  },
-  {
-    http: {
-      method: 'PUT',
-      path: '/api/his/v1/encounters/:encounterId/examination-request/draft',
-    },
-    id: 'encounter.examination-request.draft.set',
-    input: saveExaminationRequestDraftOperationInputSchema,
-    output: examinationRequestDraftResponseSchema,
-  },
-  {
-    http: {
-      method: 'DELETE',
-      path: '/api/his/v1/encounters/:encounterId/examination-request/draft',
-    },
-    id: 'encounter.examination-request.draft.delete',
-    input: deleteExaminationRequestDraftOperationInputSchema,
-    output: examinationRequestDraftResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/encounters/:encounterId/examination-request/actions/issue',
-    },
-    id: 'encounter.examination-request.issue',
-    input: issueExaminationRequestOperationInputSchema,
-    output: issueExaminationRequestResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/examination-requests/:requestId/actions/cancel',
-    },
-    id: 'examination-request.cancel',
-    input: cancelExaminationRequestOperationInputSchema,
-    output: examinationRequestActionResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/examination-requests/:requestId/actions/retry',
-    },
-    id: 'examination-request.retry',
-    input: retryExaminationRequestOperationInputSchema,
-    output: examinationRequestActionResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/examination-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge',
-    },
-    id: 'examination-report.acknowledge',
-    input: acknowledgeExaminationReportOperationInputSchema,
-    output: acknowledgeExaminationReportResponseSchema,
-  },
-  {
-    http: {
-      method: 'GET',
-      path: '/api/his/v1/doctor/cases/:caseId/imaging-services',
-    },
-    id: 'doctor.case.imaging-services.list',
-    input: caseIdInputSchema,
-    output: caseImagingServiceCatalogSchema,
-  },
-  {
-    http: {
-      method: 'PUT',
-      path: '/api/his/v1/encounters/:encounterId/imaging-request/draft',
-    },
-    id: 'encounter.imaging-request.draft.set',
-    input: saveImagingRequestDraftOperationInputSchema,
-    output: imagingRequestDraftResponseSchema,
-  },
-  {
-    http: {
-      method: 'DELETE',
-      path: '/api/his/v1/encounters/:encounterId/imaging-request/draft',
-    },
-    id: 'encounter.imaging-request.draft.delete',
-    input: deleteImagingRequestDraftOperationInputSchema,
-    output: imagingRequestDraftResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/encounters/:encounterId/imaging-request/actions/issue',
-    },
-    id: 'encounter.imaging-request.issue',
-    input: issueImagingRequestOperationInputSchema,
-    output: issueImagingRequestResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/imaging-requests/:requestId/actions/cancel',
-    },
-    id: 'imaging-request.cancel',
-    input: cancelImagingRequestOperationInputSchema,
-    output: imagingRequestActionResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/imaging-requests/:requestId/actions/retry',
-    },
-    id: 'imaging-request.retry',
-    input: retryImagingRequestOperationInputSchema,
-    output: imagingRequestActionResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/imaging-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge',
-    },
-    id: 'imaging-report.acknowledge',
-    input: acknowledgeImagingReportOperationInputSchema,
-    output: acknowledgeImagingReportResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/imaging-requests/:requestId/reports/:diagnosticReportId/actions/correct',
-    },
-    id: 'imaging-report.correct',
-    input: correctImagingReportOperationInputSchema,
-    output: correctImagingReportResponseSchema,
-  },
-  {
-    http: {
-      method: 'GET',
-      path: '/api/his/v1/doctor/cases/:caseId/pathology-services',
-    },
-    id: 'doctor.case.pathology-services.list',
-    input: caseIdInputSchema,
-    output: casePathologyServiceCatalogSchema,
-  },
-  {
-    http: {
-      method: 'PUT',
-      path: '/api/his/v1/encounters/:encounterId/pathology-request/draft',
-    },
-    id: 'encounter.pathology-request.draft.set',
-    input: savePathologyRequestDraftOperationInputSchema,
-    output: pathologyRequestDraftResponseSchema,
-  },
-  {
-    http: {
-      method: 'DELETE',
-      path: '/api/his/v1/encounters/:encounterId/pathology-request/draft',
-    },
-    id: 'encounter.pathology-request.draft.delete',
-    input: deletePathologyRequestDraftOperationInputSchema,
-    output: pathologyRequestDraftResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/encounters/:encounterId/pathology-request/actions/issue',
-    },
-    id: 'encounter.pathology-request.issue',
-    input: issuePathologyRequestOperationInputSchema,
-    output: issuePathologyRequestResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/pathology-requests/:requestId/actions/cancel',
-    },
-    id: 'pathology-request.cancel',
-    input: cancelPathologyRequestOperationInputSchema,
-    output: pathologyRequestActionResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/pathology-requests/:requestId/actions/retry',
-    },
-    id: 'pathology-request.retry',
-    input: retryPathologyRequestOperationInputSchema,
-    output: pathologyRequestActionResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/pathology-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge',
-    },
-    id: 'pathology-report.acknowledge',
-    input: acknowledgePathologyReportOperationInputSchema,
-    output: acknowledgePathologyReportResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/pathology-requests/:requestId/reports/:diagnosticReportId/actions/correct',
-    },
-    id: 'pathology-report.correct',
-    input: correctPathologyReportOperationInputSchema,
-    output: correctPathologyReportResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/encounters/:encounterId/services/:serviceId/actions/order',
-    },
-    id: 'service.order',
-    input: orderHospitalServiceOperationInputSchema,
-    output: orderHospitalServiceResponseSchema,
-  },
-  {
-    http: {
-      method: 'POST',
-      path: '/api/his/v1/service-requests/:serviceRequestId/actions/complete',
-    },
-    id: 'service.complete',
-    input: completeHospitalServiceOperationInputSchema,
-    output: completeHospitalServiceResponseSchema,
-  },
-  {
-    http: {
-      method: 'GET',
-      path: '/api/his/v1/billing/queue',
-    },
-    id: 'billing.queue.list',
-    input: billingQueueInputSchema,
-    output: billingQueueSchema,
-  },
-  {
-    http: {
-      method: 'GET',
-      path: '/api/his/v1/billing/cases/:caseId',
-    },
-    id: 'billing.case.get',
-    input: billingCaseInputSchema,
-    output: billingCaseSchema,
-  },
+  hisOp('encounter.laboratory-request.draft.set', 'PUT', '/api/his/v1/encounters/:encounterId/laboratory-request/draft', saveLaboratoryRequestDraftOperationInputSchema, laboratoryRequestDraftResponseSchema),
+  hisOp('encounter.laboratory-request.draft.delete', 'DELETE', '/api/his/v1/encounters/:encounterId/laboratory-request/draft', deleteLaboratoryRequestDraftOperationInputSchema, laboratoryRequestDraftResponseSchema),
+  hisOp('encounter.laboratory-request.issue', 'POST', '/api/his/v1/encounters/:encounterId/laboratory-request/actions/issue', issueLaboratoryRequestOperationInputSchema, issueLaboratoryRequestResponseSchema),
+  hisOp('laboratory-request.cancel', 'POST', '/api/his/v1/laboratory-requests/:requestId/actions/cancel', cancelLaboratoryRequestOperationInputSchema, laboratoryRequestActionResponseSchema),
+  hisOp('laboratory-request.retry-generation', 'POST', '/api/his/v1/laboratory-requests/:requestId/actions/retry-generation', retryLaboratoryResultGenerationOperationInputSchema, laboratoryRequestActionResponseSchema),
+  hisOp('laboratory-report.acknowledge', 'POST', '/api/his/v1/laboratory-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge', acknowledgeLaboratoryReportOperationInputSchema, acknowledgeLaboratoryReportResponseSchema),
+  hisOp('laboratory-report.correct', 'POST', '/api/his/v1/laboratory-requests/:requestId/reports/:diagnosticReportId/actions/correct', correctLaboratoryReportOperationInputSchema, correctLaboratoryReportResponseSchema),
+  hisOp('doctor.case.examination-services.list', 'GET', '/api/his/v1/doctor/cases/:caseId/examination-services', caseIdInputSchema, caseExaminationServiceCatalogSchema),
+  hisOp('encounter.examination-request.draft.set', 'PUT', '/api/his/v1/encounters/:encounterId/examination-request/draft', saveExaminationRequestDraftOperationInputSchema, examinationRequestDraftResponseSchema),
+  hisOp('encounter.examination-request.draft.delete', 'DELETE', '/api/his/v1/encounters/:encounterId/examination-request/draft', deleteExaminationRequestDraftOperationInputSchema, examinationRequestDraftResponseSchema),
+  hisOp('encounter.examination-request.issue', 'POST', '/api/his/v1/encounters/:encounterId/examination-request/actions/issue', issueExaminationRequestOperationInputSchema, issueExaminationRequestResponseSchema),
+  hisOp('examination-request.cancel', 'POST', '/api/his/v1/examination-requests/:requestId/actions/cancel', cancelExaminationRequestOperationInputSchema, examinationRequestActionResponseSchema),
+  hisOp('examination-request.retry', 'POST', '/api/his/v1/examination-requests/:requestId/actions/retry', retryExaminationRequestOperationInputSchema, examinationRequestActionResponseSchema),
+  hisOp('examination-report.acknowledge', 'POST', '/api/his/v1/examination-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge', acknowledgeExaminationReportOperationInputSchema, acknowledgeExaminationReportResponseSchema),
+  hisOp('doctor.case.imaging-services.list', 'GET', '/api/his/v1/doctor/cases/:caseId/imaging-services', caseIdInputSchema, caseImagingServiceCatalogSchema),
+  hisOp('encounter.imaging-request.draft.set', 'PUT', '/api/his/v1/encounters/:encounterId/imaging-request/draft', saveImagingRequestDraftOperationInputSchema, imagingRequestDraftResponseSchema),
+  hisOp('encounter.imaging-request.draft.delete', 'DELETE', '/api/his/v1/encounters/:encounterId/imaging-request/draft', deleteImagingRequestDraftOperationInputSchema, imagingRequestDraftResponseSchema),
+  hisOp('encounter.imaging-request.issue', 'POST', '/api/his/v1/encounters/:encounterId/imaging-request/actions/issue', issueImagingRequestOperationInputSchema, issueImagingRequestResponseSchema),
+  hisOp('imaging-request.cancel', 'POST', '/api/his/v1/imaging-requests/:requestId/actions/cancel', cancelImagingRequestOperationInputSchema, imagingRequestActionResponseSchema),
+  hisOp('imaging-request.retry', 'POST', '/api/his/v1/imaging-requests/:requestId/actions/retry', retryImagingRequestOperationInputSchema, imagingRequestActionResponseSchema),
+  hisOp('imaging-report.acknowledge', 'POST', '/api/his/v1/imaging-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge', acknowledgeImagingReportOperationInputSchema, acknowledgeImagingReportResponseSchema),
+  hisOp('imaging-report.correct', 'POST', '/api/his/v1/imaging-requests/:requestId/reports/:diagnosticReportId/actions/correct', correctImagingReportOperationInputSchema, correctImagingReportResponseSchema),
+  hisOp('doctor.case.pathology-services.list', 'GET', '/api/his/v1/doctor/cases/:caseId/pathology-services', caseIdInputSchema, casePathologyServiceCatalogSchema),
+  hisOp('encounter.pathology-request.draft.set', 'PUT', '/api/his/v1/encounters/:encounterId/pathology-request/draft', savePathologyRequestDraftOperationInputSchema, pathologyRequestDraftResponseSchema),
+  hisOp('encounter.pathology-request.draft.delete', 'DELETE', '/api/his/v1/encounters/:encounterId/pathology-request/draft', deletePathologyRequestDraftOperationInputSchema, pathologyRequestDraftResponseSchema),
+  hisOp('encounter.pathology-request.issue', 'POST', '/api/his/v1/encounters/:encounterId/pathology-request/actions/issue', issuePathologyRequestOperationInputSchema, issuePathologyRequestResponseSchema),
+  hisOp('pathology-request.cancel', 'POST', '/api/his/v1/pathology-requests/:requestId/actions/cancel', cancelPathologyRequestOperationInputSchema, pathologyRequestActionResponseSchema),
+  hisOp('pathology-request.retry', 'POST', '/api/his/v1/pathology-requests/:requestId/actions/retry', retryPathologyRequestOperationInputSchema, pathologyRequestActionResponseSchema),
+  hisOp('pathology-report.acknowledge', 'POST', '/api/his/v1/pathology-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge', acknowledgePathologyReportOperationInputSchema, acknowledgePathologyReportResponseSchema),
+  hisOp('pathology-report.correct', 'POST', '/api/his/v1/pathology-requests/:requestId/reports/:diagnosticReportId/actions/correct', correctPathologyReportOperationInputSchema, correctPathologyReportResponseSchema),
+  hisOp('service.order', 'POST', '/api/his/v1/encounters/:encounterId/services/:serviceId/actions/order', orderHospitalServiceOperationInputSchema, orderHospitalServiceResponseSchema),
+  hisOp('service.complete', 'POST', '/api/his/v1/service-requests/:serviceRequestId/actions/complete', completeHospitalServiceOperationInputSchema, completeHospitalServiceResponseSchema),
+  hisOp('billing.queue.list', 'GET', '/api/his/v1/billing/queue', billingQueueInputSchema, billingQueueSchema),
+  hisOp('billing.case.get', 'GET', '/api/his/v1/billing/cases/:caseId', billingCaseInputSchema, billingCaseSchema),
   {
     id:'insurance.get',
     http:{method:'GET',path:'/api/his/v1/insurance/:kind/:id'},
@@ -2176,6 +1912,7 @@ const rawOperationRuntimeDefinitions = [
   admOp('inpatient.discharge.clear', '/discharge/clear', inpatientDischargeInputSchema, inpatientDischargeResponseSchema),
   admOp('inpatient.discharge.settle', '/discharge/settle', inpatientSettleInputSchema, inpatientSettlementResponseSchema),
   admQuery('inpatient.pci-selection.read', '/pci-selection', inpatientPciSelectionSchema),
+  admQuery('inpatient.angiography-reports.read', '/angiography-reports', inpatientAngiographyReportsSchema),
   admOp('inpatient.pci-selection.confirm', '/pci-selection/confirm', inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionResponseSchema),
   admOp('inpatient.pci-selection.save', '/pci-selection/save', inpatientPciSelectionSaveInputSchema, inpatientPciSelectionResponseSchema),
   {
@@ -2250,6 +1987,18 @@ const rawOperationRuntimeDefinitions = [
     http: { method: 'POST', path: '/api/sim/v1/synthetic-cases/pci/prepare', encodeBody: raw => ({ input: pciCaseSourcePrepareRequestSchema.shape.input.parse(raw) }) },
     input: pciCaseSourcePrepareRequestSchema.shape.input,
     output: pciCaseSourceResponseSchema,
+  },
+  {
+    id: 'admin.authored-case-pack.read',
+    http: { method: 'GET', path: '/api/sim/v1/synthetic-cases/authored-pack' },
+    input: emptyInputSchema,
+    output: authoredCasePackSummarySchema,
+  },
+  {
+    id: 'admin.authored-case-pack.prepare',
+    http: { method: 'POST', path: '/api/sim/v1/synthetic-cases/authored-pack/prepare', encodeBody: raw => ({ input: authoredCasePackPrepareRequestSchema.shape.input.parse(raw) }) },
+    input: authoredCasePackPrepareRequestSchema.shape.input,
+    output: authoredCasePackPrepareResponseSchema,
   },
   {
     id: 'registration.synthetic-case.start-inpatient',

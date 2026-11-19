@@ -747,6 +747,17 @@ export function createApp(options: CreateAppOptions = {}): Hono {
             session.actor, query.caseId, doctorCaseHistoryInputSchema.parse(query.input)))
           if (query.operationId === 'outpatient.history.read') return context.json(workflow.doctorCaseHistoryDetail(
             session.actor, query.caseId, doctorCaseHistoryDetailInputSchema.parse(query.input)))
+          if (query.operationId === 'outpatient.clinical-scores.read') return context.json(workflow.clinicalScores.readOutpatientClinicalScores(
+            session.actor, query.caseId))
+          if (query.operationId === 'outpatient.guideline-topics.read') return context.json(workflow.clinicalScores.readOutpatientGuidelineTopics(
+            session.actor, query.caseId, guidelineTopicQuerySchema.parse(query.input).topicId))
+          if (query.operationId === 'outpatient.clinical-quality.read') {
+            const detail = workflow.doctorCaseDetail(session.actor, query.caseId)
+            const { gate } = outpatientClinicalQualityInputSchema.omit({ encounterId: true }).parse(query.input)
+            return context.json(workflow.clinicalQuality.readOutpatient(session.actor, { encounterId: detail.encounter.id, gate }))
+          }
+          if (query.operationId === 'outpatient.order-set-drafts.read') return context.json(workflow.orderSets.readOutpatient(
+            session.actor, query.caseId, orderSetDraftQuerySchema.parse(query.input).templateId))
           throw new AgentIntegrationError('AGENT_OPERATION_NOT_ALLOWED', 'The doctor query is not available', 403)
         } catch (error) { return apiErrorResponse(context, error) }
       })
@@ -985,9 +996,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     app.get('/api/sim/v1/synthetic-cases/authored-pack', async context => {
       try {
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const actor = await identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
         context.header('cache-control', 'private, no-store')
-        return context.json(scenarioData.readAuthoredCasePack(session.actor))
+        return context.json(scenarioData.readAuthoredCasePack(actor))
       } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/sim/v1/synthetic-cases/authored-pack/prepare', async context => {

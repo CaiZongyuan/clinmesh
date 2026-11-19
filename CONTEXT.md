@@ -292,6 +292,10 @@ _Avoid_: Prescription, template, execution record
 对一项本院放射服务提出的 Clinical Request，记录冻结的服务定义和检查指征。它与检验申请共用申请生命周期，但拥有独立的草稿、操作和报告结构。
 _Avoid_: Laboratory request, imaging order set, study
 
+**Functional Examination**:
+对常规十二导联心电图、经胸超声心动图等床旁或功能科室检查提出的 Clinical Request，记录冻结的 Hospital Service 定义与检查指征，由本院功能检查结果签发结构化定量指标、文字所见与诊断印象，不依赖波形或超声影像文件，并纳入 Report Acknowledgement 与完诊门禁。
+_Avoid_: Imaging Request, Laboratory test, raw waveform file, echocardiogram video
+
 **Investigation Generation Capability**:
 一个具体病例与检验项目组合能否从 Case Truth 或已配置的受限生成器产生结构化结果的能力事实。它不等同于项目存在于全局 Reference 目录。
 _Avoid_: Reference catalog availability, Laboratory Request status, generated result

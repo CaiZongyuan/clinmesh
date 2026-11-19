@@ -309,8 +309,8 @@ export interface AgentToolDefinition {
   operationId: AgentOperationId
   risk: AgentOperationRisk
   roleCodes: readonly AgentHumanRoleCode[]
-  /** 只在该诊疗栏目为当前栏目时发布；缺省表示在所属 view 的每个栏目都发布。 */
-  section?: DoctorCaseSection | InpatientStage
+  /** 只在这些诊疗栏目或住院环节之一为当前栏目时发布；缺省表示在所属 view 的每个栏目都发布。 */
+  sections?: readonly (DoctorCaseSection | InpatientStage)[]
   toolName: string
   viewIds: readonly AgentViewId[]
 }
@@ -322,6 +322,7 @@ function defineAgentTool(definition: AgentToolDefinition): AgentToolDefinition {
   return Object.freeze({
     ...definition,
     roleCodes: Object.freeze([...definition.roleCodes]),
+    ...(definition.sections === undefined ? {} : { sections: Object.freeze([...definition.sections]) }),
     viewIds: Object.freeze([...definition.viewIds]),
   })
 }
@@ -330,17 +331,22 @@ function tool(
   operationId: AgentOperationId,
   toolName: string,
   mode: AgentOperationMode,
-  risk: AgentOperationRisk,
   roleCodes: readonly AgentHumanRoleCode[],
   viewIds: readonly AgentViewId[],
-  section?: DoctorCaseSection | InpatientStage,
+  sectionOrSections?: DoctorCaseSection | InpatientStage | readonly (DoctorCaseSection | InpatientStage)[],
 ): AgentToolDefinition {
+  const risk: AgentOperationRisk = mode === 'proposal' ? 'human-review' : mode === 'draft' ? 'draft-only' : mode === 'ui' ? 'ui-only' : 'read-only'
+  const sections = sectionOrSections === undefined
+    ? undefined
+    : typeof sectionOrSections === 'string'
+      ? [sectionOrSections]
+      : sectionOrSections
   return defineAgentTool({
     mode,
     operationId,
     risk,
     roleCodes,
-    ...(section === undefined ? {} : { section }),
+    ...(sections === undefined ? {} : { sections }),
     toolName,
     viewIds,
   })
@@ -352,6 +358,15 @@ const registrar = ['registrar'] as const
 const triage = ['triage-nurse'] as const
 const cashier = ['cashier'] as const
 const pharmacist = ['pharmacist'] as const
+const ipDoc = ['inpatient-doctor'] as const
+const ipClinical = ['inpatient-doctor', 'ward-nurse', 'medical-records'] as const
+const consultationView = ['consultation'] as const
+const inpatientView = ['inpatient'] as const
+const registrationView = ['registration'] as const
+const triageView = ['triage'] as const
+const billingView = ['billing'] as const
+const pharmacyView = ['pharmacy'] as const
+const scenarioView = ['scenarioData'] as const
 
 const sharedAgentViews = ['settingsGeneral', 'uiComponents'] as const
 const agentRoleViews: Readonly<Record<AgentHumanRoleCode, readonly AgentViewId[]>> = Object.freeze({
@@ -371,95 +386,104 @@ export function agentViewsForRole(roleCode: AgentHumanRoleCode): readonly AgentV
 }
 
 export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
-  tool('ui.context.read', 'clinmesh_read_current_context', 'query', 'read-only', allRoles, allViews),
-  tool('ui.navigate', 'clinmesh_navigate', 'ui', 'ui-only', allRoles, allViews),
-  tool('ui.panel.focus', 'clinmesh_focus_panel', 'ui', 'ui-only', allRoles, allViews),
-  tool('inpatient.stage.select', 'clinmesh_select_inpatient_stage', 'ui', 'ui-only', ['inpatient-doctor', 'ward-nurse', 'cashier', 'medical-records'], ['inpatient']),
-  tool('inpatient.order.verify.propose', 'clinmesh_prepare_verify_inpatient_order', 'proposal', 'human-review', ['ward-nurse'], ['inpatient'], 'orders'),
-  tool('inpatient.report.acknowledge.propose', 'clinmesh_prepare_acknowledge_inpatient_report', 'proposal', 'human-review', ['inpatient-doctor'], ['inpatient'], 'investigations'),
-  tool('inpatient.payment.draft.set', 'clinmesh_fill_inpatient_payment_draft', 'draft', 'draft-only', cashier, ['inpatient'], 'discharge'),
-  tool('inpatient.payment.preview', 'clinmesh_preview_inpatient_payment', 'preview', 'read-only', cashier, ['inpatient'], 'discharge'),
-  tool('inpatient.settlement.preview', 'clinmesh_preview_inpatient_settlement', 'preview', 'read-only', cashier, ['inpatient'], 'discharge'),
+  tool('ui.context.read', 'clinmesh_read_current_context', 'query', allRoles, allViews),
+  tool('ui.navigate', 'clinmesh_navigate', 'ui', allRoles, allViews),
+  tool('ui.panel.focus', 'clinmesh_focus_panel', 'ui', allRoles, allViews),
+  tool('inpatient.stage.select', 'clinmesh_select_inpatient_stage', 'ui', ['inpatient-doctor', 'ward-nurse', 'cashier', 'medical-records'], inpatientView),
+  tool('inpatient.angiography-reports.read', 'clinmesh_read_inpatient_angiography_reports', 'query', ipClinical, inpatientView, ['investigations', 'surgery', 'record']),
+  tool('inpatient.clinical-scores.read', 'clinmesh_read_inpatient_clinical_scores', 'query', ipClinical, inpatientView, ['admission', 'orders', 'surgery', 'discharge', 'record']),
+  tool('inpatient.guideline-topics.read', 'clinmesh_read_inpatient_guideline_topics', 'query', ipClinical, inpatientView, ['orders', 'surgery', 'discharge', 'record']),
+  tool('inpatient.clinical-quality.read', 'clinmesh_read_inpatient_clinical_quality', 'query', ipDoc, inpatientView, ['orders', 'surgery', 'discharge', 'record']),
+  tool('inpatient.order-set-drafts.read', 'clinmesh_read_inpatient_order_set_drafts', 'query', ipDoc, inpatientView, ['orders', 'investigations']),
+  tool('inpatient.order.verify.propose', 'clinmesh_prepare_verify_inpatient_order', 'proposal', ['ward-nurse'], inpatientView, 'orders'),
+  tool('inpatient.report.acknowledge.propose', 'clinmesh_prepare_acknowledge_inpatient_report', 'proposal', ipDoc, inpatientView, 'investigations'),
+  tool('inpatient.payment.draft.set', 'clinmesh_fill_inpatient_payment_draft', 'draft', cashier, inpatientView, 'discharge'),
+  tool('inpatient.payment.preview', 'clinmesh_preview_inpatient_payment', 'preview', cashier, inpatientView, 'discharge'),
+  tool('inpatient.settlement.preview', 'clinmesh_preview_inpatient_settlement', 'preview', cashier, inpatientView, 'discharge'),
 
-  tool('scenario.status.read', 'clinmesh_read_scenario_status', 'query', 'read-only', administrator, ['scenarioData']),
-  tool('scenario.providers.read', 'clinmesh_read_scenario_providers', 'query', 'read-only', administrator, ['scenarioData']),
-  tool('scenario.generation.status.read', 'clinmesh_read_generation_status', 'query', 'read-only', administrator, ['scenarioData']),
-  tool('scenario.reset.propose', 'clinmesh_prepare_scenario_reset', 'proposal', 'human-review', administrator, ['scenarioData']),
+  tool('scenario.status.read', 'clinmesh_read_scenario_status', 'query', administrator, scenarioView),
+  tool('scenario.providers.read', 'clinmesh_read_scenario_providers', 'query', administrator, scenarioView),
+  tool('scenario.generation.status.read', 'clinmesh_read_generation_status', 'query', administrator, scenarioView),
+  tool('scenario.reset.propose', 'clinmesh_prepare_scenario_reset', 'proposal', administrator, scenarioView),
 
-  tool('registration.patient.search', 'clinmesh_search_patients', 'query', 'read-only', registrar, ['registration']),
-  tool('registration.patient.select', 'clinmesh_select_registration_patient', 'ui', 'ui-only', registrar, ['registration']),
-  tool('registration.patient.draft.set', 'clinmesh_fill_patient_draft', 'draft', 'draft-only', registrar, ['registration']),
-  tool('registration.draft.set', 'clinmesh_fill_registration_draft', 'draft', 'draft-only', registrar, ['registration']),
-  tool('registration.patient.create.propose', 'clinmesh_prepare_create_patient', 'proposal', 'human-review', registrar, ['registration']),
-  tool('registration.outpatient.propose', 'clinmesh_prepare_register_outpatient', 'proposal', 'human-review', registrar, ['registration']),
-  tool('registration.synthetic-case.search', 'clinmesh_search_registration_cases', 'query', 'read-only', registrar, ['registration']),
-  tool('registration.synthetic-case.select', 'clinmesh_select_registration_case', 'ui', 'ui-only', registrar, ['registration']),
-  tool('registration.synthetic-case.start.propose', 'clinmesh_prepare_start_registration_case', 'proposal', 'human-review', registrar, ['registration']),
+  tool('registration.patient.search', 'clinmesh_search_patients', 'query', registrar, registrationView),
+  tool('registration.patient.select', 'clinmesh_select_registration_patient', 'ui', registrar, registrationView),
+  tool('registration.patient.draft.set', 'clinmesh_fill_patient_draft', 'draft', registrar, registrationView),
+  tool('registration.draft.set', 'clinmesh_fill_registration_draft', 'draft', registrar, registrationView),
+  tool('registration.patient.create.propose', 'clinmesh_prepare_create_patient', 'proposal', registrar, registrationView),
+  tool('registration.outpatient.propose', 'clinmesh_prepare_register_outpatient', 'proposal', registrar, registrationView),
+  tool('registration.synthetic-case.search', 'clinmesh_search_registration_cases', 'query', registrar, registrationView),
+  tool('registration.synthetic-case.select', 'clinmesh_select_registration_case', 'ui', registrar, registrationView),
+  tool('registration.synthetic-case.start.propose', 'clinmesh_prepare_start_registration_case', 'proposal', registrar, registrationView),
 
-  tool('triage.queue.read', 'clinmesh_read_triage_queue', 'query', 'read-only', triage, ['triage']),
-  tool('triage.case.select', 'clinmesh_select_triage_case', 'ui', 'ui-only', triage, ['triage']),
-  tool('triage.draft.set', 'clinmesh_fill_triage_draft', 'draft', 'draft-only', triage, ['triage']),
-  tool('triage.record.propose', 'clinmesh_prepare_record_triage', 'proposal', 'human-review', triage, ['triage']),
+  tool('triage.queue.read', 'clinmesh_read_triage_queue', 'query', triage, triageView),
+  tool('triage.case.select', 'clinmesh_select_triage_case', 'ui', triage, triageView),
+  tool('triage.draft.set', 'clinmesh_fill_triage_draft', 'draft', triage, triageView),
+  tool('triage.record.propose', 'clinmesh_prepare_record_triage', 'proposal', triage, triageView),
 
-  tool('outpatient.case.read', 'clinmesh_read_doctor_context', 'query', 'read-only', doctor, ['consultation']),
-  tool('outpatient.history.search', 'clinmesh_search_doctor_history', 'query', 'read-only', doctor, ['consultation']),
-  tool('outpatient.history.read', 'clinmesh_read_doctor_history', 'query', 'read-only', doctor, ['consultation']),
-  tool('outpatient.case.select', 'clinmesh_select_doctor_case', 'ui', 'ui-only', doctor, ['consultation']),
-  tool('outpatient.section.select', 'clinmesh_select_doctor_section', 'ui', 'ui-only', doctor, ['consultation']),
-  tool('outpatient.consultation.ask', 'clinmesh_ask_virtual_patient', 'draft', 'draft-only', doctor, ['consultation'], 'consultation'),
-  tool('outpatient.consultation.reply.retry', 'clinmesh_retry_patient_reply', 'draft', 'draft-only', doctor, ['consultation'], 'consultation'),
-  tool('outpatient.first-visit.draft.set', 'clinmesh_fill_first_visit_draft', 'draft', 'draft-only', doctor, ['consultation']),
-  tool('outpatient.diagnosis.draft.set', 'clinmesh_fill_diagnosis_draft', 'draft', 'draft-only', doctor, ['consultation'], 'diagnosis'),
-  tool('outpatient.laboratory.draft.set', 'clinmesh_fill_laboratory_draft', 'draft', 'draft-only', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.prescription.draft.set', 'clinmesh_fill_prescription_draft', 'draft', 'draft-only', doctor, ['consultation'], 'prescription'),
-  tool('outpatient.record.draft.set', 'clinmesh_fill_clinical_document_draft', 'draft', 'draft-only', doctor, ['consultation'], 'record'),
-  tool('outpatient.revisit.draft.set', 'clinmesh_fill_revisit_draft', 'draft', 'draft-only', doctor, ['consultation']),
-  tool('outpatient.preview.request', 'clinmesh_request_preview', 'preview', 'read-only', doctor, ['consultation'], 'record'),
-  tool('outpatient.visit.start.propose', 'clinmesh_prepare_start_visit', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.diagnosis.confirm.propose', 'clinmesh_prepare_confirm_diagnosis', 'proposal', 'human-review', doctor, ['consultation'], 'diagnosis'),
-  tool('outpatient.laboratory.issue.propose', 'clinmesh_prepare_issue_laboratory', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.laboratory.cancel.propose', 'clinmesh_prepare_cancel_laboratory', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.report.acknowledge.propose', 'clinmesh_prepare_acknowledge_report', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.report.correct.propose', 'clinmesh_prepare_correct_report', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.examination.draft.set', 'clinmesh_fill_examination_draft', 'draft', 'draft-only', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.examination.issue.propose', 'clinmesh_prepare_issue_examination', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.examination.cancel.propose', 'clinmesh_prepare_cancel_examination', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.examination.retry.propose', 'clinmesh_prepare_retry_examination', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.imaging.draft.set', 'clinmesh_fill_imaging_draft', 'draft', 'draft-only', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.imaging.issue.propose', 'clinmesh_prepare_issue_imaging', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.imaging.cancel.propose', 'clinmesh_prepare_cancel_imaging', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.imaging.retry.propose', 'clinmesh_prepare_retry_imaging', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.imaging.correct.propose', 'clinmesh_prepare_correct_imaging_report', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.pathology.draft.set', 'clinmesh_fill_pathology_draft', 'draft', 'draft-only', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.pathology.issue.propose', 'clinmesh_prepare_issue_pathology', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.pathology.cancel.propose', 'clinmesh_prepare_cancel_pathology', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.pathology.retry.propose', 'clinmesh_prepare_retry_pathology', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.pathology.correct.propose', 'clinmesh_prepare_correct_pathology_report', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
-  tool('outpatient.prescription.issue.propose', 'clinmesh_prepare_issue_prescription', 'proposal', 'human-review', doctor, ['consultation'], 'prescription'),
-  tool('outpatient.prescription.withdraw.propose', 'clinmesh_prepare_withdraw_prescription', 'proposal', 'human-review', doctor, ['consultation'], 'prescription'),
-  tool('outpatient.medication.none.propose', 'clinmesh_prepare_no_medication', 'proposal', 'human-review', doctor, ['consultation'], 'prescription'),
-  tool('outpatient.record.sign.propose', 'clinmesh_prepare_sign_document', 'proposal', 'human-review', doctor, ['consultation'], 'record'),
-  tool('outpatient.record.revise.propose', 'clinmesh_prepare_revise_document', 'proposal', 'human-review', doctor, ['consultation'], 'record'),
-  tool('outpatient.encounter.complete.propose', 'clinmesh_prepare_complete_encounter', 'proposal', 'human-review', doctor, ['consultation']),
+  tool('outpatient.case.read', 'clinmesh_read_doctor_context', 'query', doctor, consultationView),
+  tool('outpatient.history.search', 'clinmesh_search_doctor_history', 'query', doctor, consultationView),
+  tool('outpatient.history.read', 'clinmesh_read_doctor_history', 'query', doctor, consultationView),
+  tool('outpatient.clinical-scores.read', 'clinmesh_read_clinical_scores', 'query', doctor, consultationView, ['diagnosis', 'prescription']),
+  tool('outpatient.guideline-topics.read', 'clinmesh_read_guideline_topics', 'query', doctor, consultationView, ['diagnosis', 'prescription']),
+  tool('outpatient.clinical-quality.read', 'clinmesh_read_clinical_quality', 'query', doctor, consultationView, ['diagnosis', 'prescription', 'record']),
+  tool('outpatient.order-set-drafts.read', 'clinmesh_read_order_set_drafts', 'query', doctor, consultationView, ['diagnosis', 'prescription']),
+  tool('outpatient.case.select', 'clinmesh_select_doctor_case', 'ui', doctor, consultationView),
+  tool('outpatient.section.select', 'clinmesh_select_doctor_section', 'ui', doctor, consultationView),
+  tool('outpatient.consultation.ask', 'clinmesh_ask_virtual_patient', 'draft', doctor, consultationView, 'consultation'),
+  tool('outpatient.consultation.reply.retry', 'clinmesh_retry_patient_reply', 'draft', doctor, consultationView, 'consultation'),
+  tool('outpatient.first-visit.draft.set', 'clinmesh_fill_first_visit_draft', 'draft', doctor, consultationView),
+  tool('outpatient.diagnosis.draft.set', 'clinmesh_fill_diagnosis_draft', 'draft', doctor, consultationView, 'diagnosis'),
+  tool('outpatient.laboratory.draft.set', 'clinmesh_fill_laboratory_draft', 'draft', doctor, consultationView, 'laboratory'),
+  tool('outpatient.prescription.draft.set', 'clinmesh_fill_prescription_draft', 'draft', doctor, consultationView, 'prescription'),
+  tool('outpatient.record.draft.set', 'clinmesh_fill_clinical_document_draft', 'draft', doctor, consultationView, 'record'),
+  tool('outpatient.revisit.draft.set', 'clinmesh_fill_revisit_draft', 'draft', doctor, consultationView),
+  tool('outpatient.preview.request', 'clinmesh_request_preview', 'preview', doctor, consultationView, 'record'),
+  tool('outpatient.visit.start.propose', 'clinmesh_prepare_start_visit', 'proposal', doctor, consultationView),
+  tool('outpatient.diagnosis.confirm.propose', 'clinmesh_prepare_confirm_diagnosis', 'proposal', doctor, consultationView, 'diagnosis'),
+  tool('outpatient.laboratory.issue.propose', 'clinmesh_prepare_issue_laboratory', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.laboratory.cancel.propose', 'clinmesh_prepare_cancel_laboratory', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.report.acknowledge.propose', 'clinmesh_prepare_acknowledge_report', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.report.correct.propose', 'clinmesh_prepare_correct_report', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.examination.draft.set', 'clinmesh_fill_examination_draft', 'draft', doctor, consultationView, 'laboratory'),
+  tool('outpatient.examination.issue.propose', 'clinmesh_prepare_issue_examination', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.examination.cancel.propose', 'clinmesh_prepare_cancel_examination', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.examination.retry.propose', 'clinmesh_prepare_retry_examination', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.imaging.draft.set', 'clinmesh_fill_imaging_draft', 'draft', doctor, consultationView, 'laboratory'),
+  tool('outpatient.imaging.issue.propose', 'clinmesh_prepare_issue_imaging', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.imaging.cancel.propose', 'clinmesh_prepare_cancel_imaging', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.imaging.retry.propose', 'clinmesh_prepare_retry_imaging', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.imaging.correct.propose', 'clinmesh_prepare_correct_imaging_report', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.pathology.draft.set', 'clinmesh_fill_pathology_draft', 'draft', doctor, consultationView, 'laboratory'),
+  tool('outpatient.pathology.issue.propose', 'clinmesh_prepare_issue_pathology', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.pathology.cancel.propose', 'clinmesh_prepare_cancel_pathology', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.pathology.retry.propose', 'clinmesh_prepare_retry_pathology', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.pathology.correct.propose', 'clinmesh_prepare_correct_pathology_report', 'proposal', doctor, consultationView, 'laboratory'),
+  tool('outpatient.prescription.issue.propose', 'clinmesh_prepare_issue_prescription', 'proposal', doctor, consultationView, 'prescription'),
+  tool('outpatient.prescription.withdraw.propose', 'clinmesh_prepare_withdraw_prescription', 'proposal', doctor, consultationView, 'prescription'),
+  tool('outpatient.medication.none.propose', 'clinmesh_prepare_no_medication', 'proposal', doctor, consultationView, 'prescription'),
+  tool('outpatient.record.sign.propose', 'clinmesh_prepare_sign_document', 'proposal', doctor, consultationView, 'record'),
+  tool('outpatient.record.revise.propose', 'clinmesh_prepare_revise_document', 'proposal', doctor, consultationView, 'record'),
+  tool('outpatient.encounter.complete.propose', 'clinmesh_prepare_complete_encounter', 'proposal', doctor, consultationView),
 
-  tool('billing.queue.read', 'clinmesh_read_billing_queue', 'query', 'read-only', cashier, ['billing']),
-  tool('billing.case.read', 'clinmesh_read_billing_case', 'query', 'read-only', cashier, ['billing']),
-  tool('billing.item.select', 'clinmesh_select_billing_item', 'ui', 'ui-only', cashier, ['billing']),
-  tool('billing.payment.preview', 'clinmesh_preview_payment', 'preview', 'read-only', cashier, ['billing']),
-  tool('billing.payment.confirm.propose', 'clinmesh_prepare_confirm_payment', 'proposal', 'human-review', cashier, ['billing']),
-  tool('billing.payment.recover.propose', 'clinmesh_prepare_recover_payment', 'proposal', 'human-review', cashier, ['billing']),
+  tool('billing.queue.read', 'clinmesh_read_billing_queue', 'query', cashier, billingView),
+  tool('billing.case.read', 'clinmesh_read_billing_case', 'query', cashier, billingView),
+  tool('billing.item.select', 'clinmesh_select_billing_item', 'ui', cashier, billingView),
+  tool('billing.payment.preview', 'clinmesh_preview_payment', 'preview', cashier, billingView),
+  tool('billing.payment.confirm.propose', 'clinmesh_prepare_confirm_payment', 'proposal', cashier, billingView),
+  tool('billing.payment.recover.propose', 'clinmesh_prepare_recover_payment', 'proposal', cashier, billingView),
 
-  tool('pharmacy.queue.read', 'clinmesh_read_pharmacy_queue', 'query', 'read-only', pharmacist, ['pharmacy']),
-  tool('pharmacy.prescription.select', 'clinmesh_select_pharmacy_prescription', 'ui', 'ui-only', pharmacist, ['pharmacy']),
-  tool('pharmacy.review.draft.set', 'clinmesh_fill_pharmacy_review', 'draft', 'draft-only', pharmacist, ['pharmacy']),
-  tool('pharmacy.dispense.draft.set', 'clinmesh_fill_dispense_draft', 'draft', 'draft-only', pharmacist, ['pharmacy']),
-  tool('pharmacy.review.propose', 'clinmesh_prepare_review_prescription', 'proposal', 'human-review', pharmacist, ['pharmacy']),
-  tool('pharmacy.dispense.propose', 'clinmesh_prepare_dispense', 'proposal', 'human-review', pharmacist, ['pharmacy']),
+  tool('pharmacy.queue.read', 'clinmesh_read_pharmacy_queue', 'query', pharmacist, pharmacyView),
+  tool('pharmacy.prescription.select', 'clinmesh_select_pharmacy_prescription', 'ui', pharmacist, pharmacyView),
+  tool('pharmacy.review.draft.set', 'clinmesh_fill_pharmacy_review', 'draft', pharmacist, pharmacyView),
+  tool('pharmacy.dispense.draft.set', 'clinmesh_fill_dispense_draft', 'draft', pharmacist, pharmacyView),
+  tool('pharmacy.review.propose', 'clinmesh_prepare_review_prescription', 'proposal', pharmacist, pharmacyView),
+  tool('pharmacy.dispense.propose', 'clinmesh_prepare_dispense', 'proposal', pharmacist, pharmacyView),
 ])
 
 /**
  * 当前岗位、view 与栏目可发布的 Tool；Server 签发 Page Context 与 Surface 注册都使用它。
- * 带栏目的 Tool 只在 `activeSection` 等于其栏目时发布，未声明栏目的 Tool 在每个栏目都发布。
+ * 带栏目的 Tool 只在 `activeSection` 命中其 `sections` 时发布，未声明栏目的 Tool 在每个栏目都发布。
  */
 export function agentToolsForContext(
   roleCode: AgentHumanRoleCode,
@@ -469,13 +493,15 @@ export function agentToolsForContext(
   return agentToolCatalog.filter(definition => (
     definition.roleCodes.includes(roleCode)
     && definition.viewIds.includes(viewId)
-    && (definition.section === undefined || definition.section === activeSection)
+    && (definition.sections === undefined || (activeSection !== undefined && (definition.sections as readonly string[]).includes(activeSection)))
   ))
 }
 
 export function isDoctorReadOperation(operationId: string): boolean {
   return operationId === 'ui.context.read' || operationId === 'outpatient.case.read'
     || operationId === 'outpatient.history.search' || operationId === 'outpatient.history.read'
+    || operationId === 'outpatient.clinical-scores.read' || operationId === 'outpatient.guideline-topics.read'
+    || operationId === 'outpatient.clinical-quality.read' || operationId === 'outpatient.order-set-drafts.read'
 }
 
 export function usesDoctorReadBinding(snapshot: AgentPageContextSnapshot, operationId: string): boolean {
