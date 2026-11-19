@@ -80,10 +80,25 @@ async function reviewAppearanceMatrix(page: Page, dialog: Locator, trigger: Loca
     await expect(heading).toBeVisible(); await expect(confirm).toBeEnabled(); await expect(close).toBeEnabled()
     const scroller = dialog.locator('.overflow-y-auto').first()
     const before = await heading.boundingBox(), footer = await confirm.boundingBox()
+    const lastArticle = dialog.getByRole('article').last()
     await scroller.evaluate(element => { element.scrollTop = element.scrollHeight })
     await waitForLayout(dialog)
-    const last = await dialog.getByRole('article').last().boundingBox(), bounds = await scroller.boundingBox()
-    expect(last!.y).toBeGreaterThanOrEqual(bounds!.y - 1)
+    const last = await lastArticle.boundingBox(), bounds = await scroller.boundingBox()
+    if (last!.height <= bounds!.height) {
+      expect(last!.y).toBeGreaterThanOrEqual(bounds!.y - 1)
+    } else {
+      // 单条长理由卡片在大字号与1.25倍缩放下高于滚动视口时，分别通过 scrollTop 验证首尾均可达且头尾固定。
+      expect(last!.y + last!.height).toBeGreaterThan(bounds!.y + 1)
+      await scroller.evaluate((element, delta) => { element.scrollTop = Math.max(0, element.scrollTop + delta) }, (last!.y - bounds!.y) / zoom)
+      await waitForLayout(dialog)
+      const topAligned = await lastArticle.boundingBox()
+      expect(topAligned!.y).toBeGreaterThanOrEqual(bounds!.y - 1)
+      expect(topAligned!.y).toBeLessThan(bounds!.y + bounds!.height)
+      expect((await heading.boundingBox())!.y).toBeCloseTo(before!.y, 1)
+      expect((await confirm.boundingBox())!.y).toBeCloseTo(footer!.y, 1)
+      await scroller.evaluate(element => { element.scrollTop = element.scrollHeight })
+      await waitForLayout(dialog)
+    }
     expect(last!.y + last!.height).toBeLessThanOrEqual(bounds!.y + bounds!.height + 1)
     expect((await heading.boundingBox())!.y).toBeCloseTo(before!.y, 1)
     expect((await confirm.boundingBox())!.y).toBeCloseTo(footer!.y, 1)
