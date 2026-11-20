@@ -21,4 +21,4 @@ Status: implemented
 
 ## Consequences
 
-新 Epoch 无需先执行固定 PCI 数据准备即可在门诊与住院开立核心心血管代谢检验、经成人参考基线或 Case Truth 零模型生成报告并标识危急值，同时完整支持多支冠脉造影与阴性 FFR 不行 PCI 的临床闭环；存量检验快照、PCI 选型草稿预填、耗材预计及性能基线保持兼容。当前业务合同见[临床业务流程](../../../architecture/clinical-workflows.md#pci-参数与候选依据)。
+新 Epoch 无需先执行固定 PCI 数据准备即可在门诊与住院开立核心心血管代谢检验、经成人参考基线或 Case Truth 零模型生成报告并标识危急值，同时完整支持多支冠脉造影与阴性 FFR 不行 PCI 的临床闭环；存量检验快照、PCI 选型草稿预填、耗材预计及性能基线保持兼容。当前业务合同见[检验、检查与报告](../../../architecture/examinations-and-reports.md)及[住院与手术流程](../../../architecture/inpatient-workflows.md)。

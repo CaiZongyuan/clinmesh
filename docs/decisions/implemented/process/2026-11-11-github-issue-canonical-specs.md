@@ -10,7 +10,7 @@ Status: implemented
 
 以 GitHub Issue 正文作为项目唯一正式需求规格（canonical implementation specification），维护与标签边界分别由 [GitHub issue tracker](../../../agents/issue-tracker.md) 与 [Triage labels](../../../agents/triage-labels.md) 拥有，不再维护仓库内平行的需求规格目录或四段式薄追踪模板：
 
-单切片需求直接使用 1 张携带 `spec` 标签的规格 Issue（模板见 [功能规格模板](../../../../.github/ISSUE_TEMPLATE/feature-spec.md)）。多切片需求采用“1 张父规格 Issue + N 张单一职责自包含纵向子票”结构，通过 GitHub 原生 `sub-issues` 与 `blocked_by` 关联，使每张子票单凭自身正文即可明确验收边界与测试 seam，并保持 `label:spec` 与正式规格的一对一映射。本决定取代此前将正式需求迁入仓库规格目录的过渡安排，并更新 [Traceable Agent development workflow](2026-08-21-traceable-agent-development-workflow.md) 的归属引用。
+单切片需求直接使用 1 张携带 `spec` 标签的规格 Issue（模板见 [功能规格模板](../../../../.github/ISSUE_TEMPLATE/feature-spec.md)）。多切片需求采用“1 张父规格 Issue + N 张单一职责自包含纵向子票”结构，通过 GitHub 原生 `sub-issues` 与 `blocked_by` 关联，使每张子票单凭自身正文即可明确验收边界与测试 seam，并保持 `label:spec` 与正式规格的一对一映射。本决定取代此前将正式需求迁入仓库规格目录的过渡安排，并与 [主 Agent 统筹的 worktree 开发](2026-10-16-primary-agent-worktree-development.md) 的可追溯工程工作流对齐。
 
 ## Alternatives considered
 

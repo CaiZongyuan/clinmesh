@@ -1,44 +1,26 @@
-# Agent Note: dev:dsh 一键 DSH Web 原生入口
+# Agent Note: 一键 DSH／局域网开发编排、数据源非阻塞门控与 Windows 进程树生命周期
 
 Status: implemented
 
 ## Problem
 
-DSH Web 原生入口的搭建与启动散落在部署指南约二十条手工命令中：dshvm 沙箱、宿主锁文件恢复、AG-UI clone/build、Surface runtime 构建、Profile 组装、bridge secret 与双终端启动各自独立。版本事实存在于 `dsh-upstreams.lock.json` 却无程序化消费，目录迁移后 Profile `link:` 指向旧绝对路径只能人工排查。开发入口与 `pnpm dev:lan` 的体验差距使 DSH 模式进入成本远高于 standalone Web。
+DSH Web 原生开发涉及 dshvm 槽位、宿主锁恢复、AG-UI 检出构建、Surface 编译、Profile 链接、桥接密钥与双进程协同，散落二十余条手工命令且仓库目录迁移后 Profile `link:` 极易悬空；`pnpm dev:lan` 若不感知参考库与 Synthea Provider 状态会让开发者登录后才发现目录缺失，而强阻塞又会在未装 Docker 时卡死普通 HIS 开发。在 Windows 11 环境下还存在三类平台陷阱：`.cmd` 入口转义、无管理员权限下的目录链接与退出后残留孤儿 watcher 进程；父进程残留 `NODE_PATH` 会让 DSH 误加载旧 worktree 插件；经 Turborepo 包装常驻 `tsx watch`（`dev:server`）会因 IPC 管道中继随机死锁进程树并过滤 `CLINMESH_AI_*` 环境变量。
 
 ## Decision
 
-`scripts/dev-dsh.ts` 提供两条命令：`pnpm dsh:setup` 幂等供给运行时，`pnpm dev:dsh` 复用同一 ensure 后由共享的 `scripts/development-processes.ts` 同时拉起 ClinMesh Server 与 DSH Web，任一退出全停并报因。核心规则：
+通过 `scripts/dev-dsh.ts`、`scripts/dev-lan.ts`、`scripts/development-processes.ts` 与直连 `dev:server` 统一跨平台一键开发体验，操作说明见[部署指南](../../../deployment.md)：
 
-- 版本单一来源：DSH、dshvm 版本与 AG-UI commit 只读 `dsh-upstreams.lock.json`（复用 `dsh-upstreams.ts` 的 `parseLock`），脚本零硬编码，升级上游只改 lock。
-- 沙箱固定在仓库内 `.data/dsh-runtime/`（`CLINMESH_DSH_SANDBOX` 可覆盖到仓库外）：dshvm 槽位、隔离 DSH_HOME、AG-UI checkout 与 Web Profile 持久化，按探测结果跳过已完成步骤。
-- 幂等探测而非时间戳：宿主与 Profile 依赖以"模板内容一致且依赖目录存在"判定；React Surface 与 AG-UI 以 `build-stamps.json` 记录已构建 commit，commit 变化才重建；ClinMesh DSH artifact 的输入是整个仓库，每次启动重建，不静默使用旧产物。
-- Profile 三个 `link:` 插件每次启动 `readlink` 重验，指向漂移即重建且不触发 Profile 重装——目录迁移坑从人工修复变为自动治愈。
-- `CLINMESH_DSH_BRIDGE_SECRET` 缺失时生成 32 bytes 随机值追加 `.env`，已有值不覆盖，此后脚本与手工直启同源；trusted origins 自动注入 `127.0.0.1:51868/51888/3080` 并跟随 `CLINMESH_PORT`。
-- fail-fast：与 CI 一致的 Bun `1.4.2`、submodule 与 `.env` 是前置检查，缺失时不启动任何进程；网络步骤（npm/dshvm/bun 安装、clone）失败自动重试一次，仍失败抛出带修复指引的 `DevDshEnsureError`；运行期进程不自动重启，避免掩盖真实崩溃。
-- Server 以 `pnpm --filter @clinmesh/server dev` 直启绕过 Turborepo，`CLINMESH_AI_*` 直接生效；数据源就绪复用 `dev-lan.ts` 的 `ensureDataSourcesReady`，口径与 [dev:lan 数据源就绪门控](2026-09-15-dev-lan-data-source-gating.md) 一致。直启前由 `createDshDevelopmentPlan` 把 `CLINMESH_DATABASE_PATH`、`CLINMESH_REFERENCE_DATABASE_PATH` 与 `CLINMESH_WEB_ROOT` 按 `.env` 所在目录绝对化：Server 自身对 `.env` 相对路径执行同一规则，但进程环境里的原始相对值会覆盖该结果并按进程工作目录（apps/server）解析——Turborepo 的环境过滤恰好滤掉这些变量，因此该陷阱只暴露给直启路径。
-- dshvm 的 `use` 每次启动无条件执行：`which <version>` 只回答槽位位置，不证明 active 选择，而 `exec web` 依赖 active 状态；`use` 幂等且廉价，执行后再用 `which` 断言槽位正确。
-- 启动前探测 `3080` 端口，被占用即失败：DSH 遇端口占用会静默改用其他端口，而 trusted origins 与登录 CSRF 校验绑定 `3080`，静默漂移会产生难以定位的登录失败。
-- 启动输出分"DSH 运行时 / 数据源 / 启动"三节：探测命令（bun 版本、git rev-parse、dshvm use/which）静默执行、失败时回显输出尾部；子进程日志经共享进程模块以 `[Server]`/`[DSH]` 前缀转发。`awaitDshReadiness` 轮询 Server 健康与 Host 日志捕获的 `dsh web: <url>` 行，两者齐备打印就绪横幅——DSH Web 的真实入口是带本次启动 token 的地址，无 token 访问返回 authentication required，横幅地址可直接打开。
-
-进程组管理从 `dev-lan.ts` 抽取为共享 `development-processes.ts`（`DevelopmentProcess.command` 可选，默认 pnpm），dev:lan 行为不变，其活体监督测试继续拥有同退语义。CI 候选验收（`dsh-upstreams-verify.ts`）保持独立的临时目录流程：两者序列事实同源于部署指南，但验收需要全量执行并回写锁与 manifests，开发需要幂等跳过且绝不写仓库文件，不共享组装代码。
+1. **锁文件驱动的 `dsh:setup`／`dev:dsh` 幂等沙箱与同退编排**：脚本唯一从 `dsh-upstreams.lock.json` 读取 DSH、dshvm 与 AG-UI 精确版本，在 `.data/dsh-runtime/`（可由 `CLINMESH_DSH_SANDBOX` 覆盖）维护隔离沙箱：按模板与 `build-stamps.json` 跳过未变依赖，每次启动重验并自愈 Profile 三个插件链接、无条件执行幂等 `dshvm use`、重建全仓输入的 ClinMesh DSH 产物、自动补齐缺失的 32 字节 `CLINMESH_DSH_BRIDGE_SECRET` 并预探测 `3080` 端口防静默漂移；`development-processes.ts` 并行拉起 Server 与 DSH Host，捕获带启动 token 的 `dsh web: <url>` 打印就绪横幅，任一进程退出即全停报因（不自动重启掩盖崩溃，与全量回写的 CI `dsh-upstreams-verify.ts` 保持职责解耦）。
+2. **数据源非阻塞就绪门控（`ensureDataSourcesReady`）**：`dev:lan` 与 `dev:dsh` 启动前统一探测数据源——`CLINMESH_REFERENCE_DATABASE_PATH` 缺失或落后于 `reference-data.lock.json` 时自动同步，未配置则提示内置合成夹具限制；`CLINMESH_SYNTHEA_PROVIDER_URL` 指向本机受管环回端口且未响应时静默预检 `docker --version` 后自动执行等价 `synthea:up`，Docker 缺失或远端不可达仅打印降级警告而不阻塞普通 HIS 启动。
+3. **Windows 跨平台链接、环境隔离与 Job Object 原子清理**：命令调用经 `cross-spawn` 保持 argv 转义安全（禁开 `shell: true`）；Windows 插件目录采用免管理员权限的 `junction`（`lstat` 检测悬空链接）；拉起 DSH Host 子进程前显式清空 `NODE_PATH` 防止跨 worktree 旧包遮蔽 Profile 插件；Windows 进程组由 PowerShell 辅助器通过 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 在 `CreateProcess` 瞬间原子挂入带 `KILL_ON_JOB_CLOSE` 的内核 Job Object，确保异常中断或父命令提前退出时彻底清理整棵后代进程树。
+4. **`dev:server` 绕过 Turborepo 直连 pnpm**：根 `pnpm dev:server` 与 `dev:dsh` 的 Server 分支统一采用 `pnpm --filter @clinmesh/server dev` 直启（直启前将 `.env` 中的相对数据库与静态资源路径按 `.env` 所在目录绝对化），彻底消除 Windows 下 Turbo 管道冻结及 strict env 对 `CLINMESH_AI_*` 变量的过滤。
 
 ## Alternatives considered
 
-**扩展 dev:lan 加 DSH 开关。** 两种模式的进程面、origins 与前置完全不同，开关组合翻倍路径，且局域网场景不需要 DSH。
-
-**每次全量重建全部构建。** 正确性最高，但 bun install 与 AG-UI 构建在秒到分钟级，热启动劣化；外部输入是锁定 commit，stamp 已保证重建等价。
-
-**以 mtime 判断 ClinMesh artifact 新鲜度。** 输入是整个仓库，漏判任一文件即静默旧产物；每次重建的成本可接受。
-
-**运行期进程自动重启。** 掩盖 Server panic 与 Host 崩溃，违背可观测性；ensure 幂等使人工重跑成本极低。
-
-**沙箱放仓库外兄弟目录（原手工路径）。** 生命周期与仓库脱钩正是迁移 link 坑的根因；收进 `.data/` 并由脚本每次重验后问题类别消失。代价是删除仓库丢失 DSH 内手工配置，但 lock 纪律下沙箱可重建。
-
-**与 `dsh-upstreams-verify.ts` 共享组装原语。** 两者控制流差异（全量线性回写 vs 探测跳过只读）大于序列相似性，强行抽象产生双向耦合。
+- **把 DSH 开关塞进 `dev:lan`、按文件 mtime 跳过 ClinMesh 产物重建，或运行期崩溃自动重启**：耦合局域网与宿主两套截然不同的前置面，漏检跨包改动导致静默旧包，或吞掉真实崩溃现场。
+- **数据源未就绪时直接中止 `dev:lan`**：违背 Synthea Provider 可选架构边界，使无 Docker 环境无法调试常规门诊住院流程。
+- **Windows 下开启 `shell: true` 或退出时仅调 `taskkill /T`**：破坏特殊字符路径安全性，且父进程已退出时无法凭失效 PID 回收孙代 watcher。
 
 ## Consequences
 
-DSH Web 原生入口的进入成本收敛为 `pnpm dsh:setup` + `pnpm dev:dsh`；Windows 命令、目录链接和进程生命周期由 [Windows DSH 开发入口](2026-09-16-windows-dsh-development.md) 拥有。`scripts/dev-dsh.spec.ts` 以注入文件系统与命令执行覆盖冷/热运行、link 自愈、stamp 重建、secret 生成与重试边界，真实适配器测试另行覆盖命令执行和目录链接；进程同退语义由开发进程的活体监督测试覆盖。AG-UI 的 GitHub clone 仍是网络依赖，重试一次后失败即停止。仓库迁移目录后无需人工修复 Profile 链接。
-
-Issue: https://github.com/CaiZongyuan/clinmesh/issues/102
+Windows PowerShell、macOS 与 Linux 开发者均可通过单条 `pnpm dev:dsh`、`pnpm dev:lan` 或 `pnpm dev:server` 获得一致的数据源准备、插件链接自愈、环境变量透传与无残留进程回收体验。

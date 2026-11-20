@@ -8,7 +8,7 @@ Status: implemented
 
 ## Decision
 
-关闭保护归共享 [Dialog](../../../../packages/ui/src/components/dialog.tsx) 与 [AlertDialog](../../../../packages/ui/src/components/alert-dialog.tsx)，页面只提供该弹窗所属操作的 `pending`。`Dialog` 兼容无需写入的普通内容，保留可选参数；`AlertDialog` 要求调用方显式声明状态，避免新增确认窗口在接入异步动作时无意继承“可关闭”。交互、可访问状态及受控关闭的详细合同由[临床 UI](../../../ui/design.md#可访问性与验证)拥有。
+关闭保护归共享 [Dialog](../../../../packages/ui/src/components/dialog.tsx) 与 [AlertDialog](../../../../packages/ui/src/components/alert-dialog.tsx)，页面只提供该弹窗所属操作的 `pending`。`Dialog` 兼容无需写入的普通内容，保留可选参数；`AlertDialog` 要求调用方显式声明状态，避免新增确认窗口在接入异步动作时无意继承“可关闭”。交互、可访问状态及受控关闭的详细合同由[临床 UI](../../../ui/design.md)拥有。
 
 共享组件只保护用户发起的关闭，不阻止业务 owner 主动收起受控窗口，也不延长已经失效的身份或患者上下文。请求结束后，失败与结果未知允许退出审阅；关闭不被解释为撤销已发出的操作。原意图、幂等标识与回执恢复继续由各业务 owner 负责，共享 UI 不决定操作结果或重新提交。
 
@@ -23,4 +23,4 @@ Status: implemented
 
 共享组件负责完整的用户关闭路径，调用方仍须准确传入所属操作的状态，并让用于关闭窗口的取消、返回和关闭按钮使用共享 `DialogClose` 或 `AlertDialogCancel`，避免直接更新受控状态绕过保护；新增 `AlertDialog` 时需要明确作出这一选择。业务错误与恢复保持原归属，UI 保护不代替权限、版本、幂等或重复提交校验。
 
-关闭合同按[测试策略](../../../testing.md#用户界面验证)覆盖 React 18/19 与 ShadowRoot，验证提交中取消、Escape、外部点击和右上角关闭均无效，内容呈现忙态；请求结束后重新可关闭，受控主动收起与上下文卸载不受阻。真实岗位回归使用受控延迟请求观察提交和失败两个边界，并回读原业务结果；共享 primitive 的通过不能代替页面正确绑定 `pending` 的验证，也不证明原生 Mobile 行为。
+关闭合同按[测试策略](../../../testing.md)覆盖 React 18/19 与 ShadowRoot，验证提交中取消、Escape、外部点击和右上角关闭均无效，内容呈现忙态；请求结束后重新可关闭，受控主动收起与上下文卸载不受阻。真实岗位回归使用受控延迟请求观察提交和失败两个边界，并回读原业务结果；共享 primitive 的通过不能代替页面正确绑定 `pending` 的验证，也不证明原生 Mobile 行为。
