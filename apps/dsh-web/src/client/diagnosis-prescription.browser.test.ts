@@ -1165,7 +1165,16 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await expect(dialog.locator('[data-agent-medication-name]')).toHaveCount(1)
     await expect(dialog.locator('[data-agent-medication-name]').first()).toHaveText('合成第二药品')
     await expect(dialog.locator('[data-agent-medication-package]').first()).toBeVisible()
-    await dialog.locator('[data-order-catalog]').getByRole('button', { name: '说明书', exact: true }).first().click()
+    const refCatalogResults = dialog.locator('[data-catalog-results]')
+    const refInsertTrigger = dialog.locator('[data-order-catalog]').getByRole('button', { name: '说明书', exact: true }).first()
+    const refBounds = await refCatalogResults.evaluate(element => ({
+      clientWidth: element.clientWidth,
+      right: element.getBoundingClientRect().right,
+      scrollWidth: element.scrollWidth,
+    }))
+    expect(refBounds.scrollWidth).toBeLessThanOrEqual(refBounds.clientWidth + 1)
+    expect(await refInsertTrigger.evaluate(element => element.getBoundingClientRect().right)).toBeLessThanOrEqual(refBounds.right + 1)
+    await refInsertTrigger.click()
     const insertSheet = page.getByRole('dialog', { name: '药品说明书摘要', exact: true })
     await expect(insertSheet).toBeVisible()
     expect(await insertSheet.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)

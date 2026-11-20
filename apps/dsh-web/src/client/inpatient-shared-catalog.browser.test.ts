@@ -69,8 +69,18 @@ for (const version of ['18', '19']) test.describe(`住院共享目录 React ${ve
     await page.getByRole('button', { name: '开立医嘱', exact: true }).click()
     const composer = page.getByRole('dialog', { name: '开立医嘱', exact: true })
     await composer.getByLabel('医嘱项目', { exact: true }).fill('氨氯地平')
-    const option = composer.getByRole('region', { name: '医嘱项目候选', exact: true }).getByRole('button', { name: /苯磺酸氨氯地平片/ })
+    const suggestions = composer.getByRole('region', { name: '医嘱项目候选', exact: true })
+    const option = suggestions.getByRole('button', { name: /苯磺酸氨氯地平片/ })
     expect(await option.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
+    const candidateInsertTrigger = suggestions.getByRole('button', { name: '说明书', exact: true }).first()
+    const suggestionBounds = await suggestions.evaluate(element => ({
+      clientWidth: element.clientWidth,
+      right: element.getBoundingClientRect().right,
+      scrollWidth: element.scrollWidth,
+    }))
+    const triggerRight = await candidateInsertTrigger.evaluate(element => element.getBoundingClientRect().right)
+    expect(suggestionBounds.scrollWidth).toBeLessThanOrEqual(suggestionBounds.clientWidth + 1)
+    expect(triggerRight).toBeLessThanOrEqual(suggestionBounds.right + 1)
     await option.click()
     const dose = composer.getByRole('textbox', { name: '每次剂量', exact: true })
     await dose.fill('3片')
