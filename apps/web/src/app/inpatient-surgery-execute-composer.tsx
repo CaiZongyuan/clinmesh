@@ -1,7 +1,10 @@
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientMaterialReservation } from '@clinmesh/contracts/inpatient-drg-simulation'
+import type { InpatientMaterialPlanBasis } from '@clinmesh/contracts/inpatient-material-plan'
 import type { inpatientSurgeryCatalogSchema, inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { evaluateExecuteNoteRequirement, isSamePlannedProcedure } from '@clinmesh/core/inpatient-surgery-notes'
+import { ApiClientError } from './api-client.ts'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
 import { Button } from '@clinmesh/ui/components/button'
@@ -28,8 +31,9 @@ const draftSchema = z.object({ procedureId: z.string(), procedureVersion: z.numb
 }).strict()
 type Discard = { kind: 'clear' } | { kind: 'remove'; id: string; display: string }
 
-export function SurgeryExecuteComposer({ admission, session, request, catalog, reservations, dataReady, onRetry, locale, write, open, focused, onOpenChange, returnFocus }: {
+export function SurgeryExecuteComposer({ admission, session, request, catalog, reservations, planBasis, dataReady, onRetry, locale, write, open, focused, onOpenChange, returnFocus }: {
   admission: InpatientAdmission; session: SessionContext; request: Request; catalog: Catalog | undefined; reservations: InpatientMaterialReservation[];
+  planBasis?: InpatientMaterialPlanBasis | undefined;
   locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; open: boolean; focused: boolean;
   dataReady: boolean; onRetry: () => void;
   onOpenChange: (open: boolean) => void; returnFocus: RefObject<HTMLButtonElement | null>;
@@ -38,7 +42,7 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
   const scope = surgeryDraftScope({ session, patientId: admission.patientId, admissionId: admission.id, requestId: request.id, action: 'execute' })
   const draft = useSurgeryDraft({ scope, schema: draftSchema, initial: { procedureId: request.plannedProcedure.id, procedureVersion: request.plannedProcedure.version, note: '', rows: [] } })
   const value = draft.value
-  const [search, setSearch] = useState(''), [page, setPage] = useState(0)
+  const [search, setSearch] = useState(''), [page, setPage] = useState(0), [noteOpen, setNoteOpen] = useState(false)
   const [discard, setDiscard] = useState<Discard | null>(null), [attemptOwner, setAttemptOwner] = useState<string | null>(null)
   const owner = JSON.stringify(scope), current = useRef({ owner, focused, open })
   current.current = { owner, focused, open }
@@ -46,7 +50,7 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const previousOwner = useRef(owner)
   useLayoutEffect(() => {
-    if (!focused || previousOwner.current !== owner) { if (open) onOpenChange(false); setDiscard(null); setSearch(''); setPage(0) }
+    if (!focused || previousOwner.current !== owner) { if (open) onOpenChange(false); setDiscard(null); setSearch(''); setPage(0); setNoteOpen(false) }
     previousOwner.current = owner
   }, [focused, owner, open, onOpenChange])
   const blocked = write.blocked || admission.status !== 'admitted' || admission.recordStatus === 'archived' || request.status !== 'ready' || !focused
@@ -68,12 +72,26 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
       : row.reservationId && (!reservation || !eligibleReservation(reservation, row.materialId, row.catalogVersion) || quantity !== reservation.quantity) ? t('关联预留已变化、目录依据不符或已部分使用，请取消关联后重新核对', 'The linked reservation changed, uses a different catalog version or was partially used; unlink and review it') : null
     return { row, item, quantity, problem }
   })
-  const valid = dataReady && procedureValid && catalog !== undefined && rows.every(row => row.problem === null) && !!value.note.trim() && !draft.failed
+  const activePlanReservations = reservations.filter(item => item.requestId === request.id && item.status === 'reserved')
+  const positiveRows = rows.filter(row => row.problem === null && row.quantity > 0)
+  const notePolicy = actual ? evaluateExecuteNoteRequirement({
+    actual,
+    planned: request.plannedProcedure,
+    materials: positiveRows.map(({ row, quantity }) => ({ materialId: row.materialId, catalogVersion: row.catalogVersion, quantity, reservationId: row.reservationId })),
+    activeRequestReservations: activePlanReservations.map(item => ({ id: item.id, quantity: item.quantity })),
+    planBasis,
+  }) : { noteRequired: false, procedureChanged: false }
+  const serverNoteRequired = attemptOwner === owner && write.mutation.error instanceof ApiClientError && write.mutation.error.code === 'INPATIENT_SURGERY_NOTE_REQUIRED'
+  const procedureChanged = notePolicy.procedureChanged
+  const noteRequired = notePolicy.noteRequired || serverNoteRequired
+  const trimmedNote = value.note.trim()
+  const showNote = noteRequired || noteOpen || trimmedNote.length > 0
+  const valid = dataReady && procedureValid && catalog !== undefined && rows.every(row => row.problem === null) && (!noteRequired || !!trimmedNote) && !draft.failed
   const updateRow = (id: string, update: Partial<(typeof value.rows)[number]>) => draft.save({ ...value, rows: value.rows.map(row => row.materialId === id ? { ...row, ...update } : row) })
   const submit = () => {
     if (blocked || !valid || !actual) return
     const command = { operation: 'inpatient.surgery.execute' as const, input: { admissionId: admission.id, requestId: request.id, expectedRequestVersion: request.version,
-      procedureId: actual.id, catalogVersion: actual.version, note: value.note.trim(), materials: rows.filter(row => row.quantity > 0).map(({ row, quantity }) => ({
+      procedureId: actual.id, catalogVersion: actual.version, ...(trimmedNote ? { note: trimmedNote } : {}), materials: rows.filter(row => row.quantity > 0).map(({ row, quantity }) => ({
         materialId: row.materialId, catalogVersion: row.catalogVersion, quantity, ...(row.reservationId ? { reservationId: row.reservationId } : {}),
       })) } }
     if (!draft.prepareSubmission(command)) return
@@ -92,7 +110,7 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
             <Field data-invalid={!procedureValid || undefined}><FieldLabel htmlFor={`execute-procedure-${request.id}`}>{t('实际术式', 'Performed procedure')}</FieldLabel>
               <WorkspaceSelect id={`execute-procedure-${request.id}`} value={value.procedureId} items={(catalog?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))}
                 onValueChange={id => { const item = catalog?.procedures.find(item => item.id === id); if (item) draft.save({ ...value, procedureId: item.id, procedureVersion: item.version }) }} />
-              <FieldDescription>{procedureValid ? actual.coding.code === request.plannedProcedure.coding.code ? t('默认与计划术式相同', 'Defaults to the planned procedure') : t(`与计划不同（计划：${request.plannedProcedure.coding.display}）；DRG 预分组按实际术式重算`, `Differs from the planned procedure; DRG uses the performed procedure`) : t('实际术式目录未加载或已变化，请重新选择并核对', 'Procedure catalog is unavailable or changed; review and select again')}</FieldDescription>
+              <FieldDescription>{procedureValid ? isSamePlannedProcedure(actual, request.plannedProcedure) ? t('默认与计划术式相同', 'Defaults to the planned procedure') : t(`与计划不同（计划：${request.plannedProcedure.coding.display}）；DRG 预分组按实际术式重算`, `Differs from the planned procedure; DRG uses the performed procedure`) : t('实际术式目录未加载或已变化，请重新选择并核对', 'Procedure catalog is unavailable or changed; review and select again')}</FieldDescription>
               {actual && !procedureValid ? <Button type="button" variant="outline" onClick={() => draft.save({ ...value, procedureVersion: actual.version })}>{t('重新核对术式', 'Review procedure again')}</Button> : null}
             </Field>
             {!dataReady ? <Alert><AlertDescription>{t('手术资料正在加载或读取失败，暂不能提交；已有输入保留。', 'Surgery data is loading or unavailable. Submission is blocked and input is retained.')}<Button type="button" variant="outline" size="sm" onClick={onRetry}>{t('重试手术资料', 'Retry surgery records')}</Button></AlertDescription></Alert> : null}
@@ -125,10 +143,11 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
                 </Field>)}</FieldGroup>
               </section>
             </div>
-            <Field><FieldLabel htmlFor={`execute-note-${request.id}`}>{t('补录依据', 'Record basis')}</FieldLabel><Input id={`execute-note-${request.id}`} maxLength={2000} value={value.note} onChange={event => draft.save({ ...value, note: event.currentTarget.value })} /></Field>
+            {showNote ? <Field data-invalid={noteRequired && !trimmedNote || undefined}><FieldLabel htmlFor={`execute-note-${request.id}`}>{t('补录依据', 'Record basis')}</FieldLabel><Input id={`execute-note-${request.id}`} maxLength={2000} placeholder={noteRequired ? (procedureChanged ? t('实际术式偏离原计划，请填写变更原因', 'Explain why the performed procedure differs from the plan') : t('存在计划外耗材或未按本台预留完整消耗，请说明依据', 'Explain unplanned materials or unconsumed plan reservations')) : undefined} value={value.note} onChange={event => draft.save({ ...value, note: event.currentTarget.value })} /></Field>
+              : <Button type="button" variant="ghost" size="sm" className="self-start" disabled={blocked} onClick={() => setNoteOpen(true)}>{t('添加备注', 'Add note')}</Button>}
           </FieldGroup></FieldSet>
         </div>
-        <OrderComposerFooter hint={valid ? t('已核实整台清单，提交后计入耗材与术式费并完成手术', 'Submit the reviewed list to post fees and complete surgery') : t('请补齐依据并修正清单中标明的问题；整台手术一次提交', 'Complete the basis and resolve marked issues; the entire surgery is submitted once')}>
+        <OrderComposerFooter hint={valid ? t('已核实整台清单，提交后计入耗材与术式费并完成手术', 'Submit the reviewed list to post fees and complete surgery') : noteRequired && !trimmedNote ? t('请填写补录依据并修正清单中标明的问题；整台手术一次提交', 'Complete the basis and resolve marked issues; the entire surgery is submitted once') : t('请修正清单中标明的问题；整台手术一次提交', 'Resolve marked issues; the entire surgery is submitted once')}>
           <DialogClose render={<Button type="button" variant="outline" />}>{t('取消', 'Cancel')}</DialogClose><Button type="submit" disabled={blocked || !valid}>{t('记录实际手术', 'Record performed surgery')}</Button>
         </OrderComposerFooter>
       </form>

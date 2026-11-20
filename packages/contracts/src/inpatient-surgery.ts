@@ -6,6 +6,7 @@ import { inpatientMaterialReservationSchema } from './inpatient-drg-simulation.t
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const version = z.number().int().positive()
 const note = z.string().trim().min(1).max(2000)
+const optionalNote = z.string().trim().max(2000).optional()
 export const inpatientProcedureCodingSchema = z.object({ system: z.literal('urn:clinmesh:classification:icd-9-cm-3-clinical'),
   version: z.literal('3.0'), code: z.string().min(1), display: z.string().min(1), category: z.enum(['手术','介入治疗','诊断性操作']),
   releaseId: z.literal('clinmesh-surgery-subset-2026-10-20'), sourceUrl: z.url(), sourceSha256: z.string().length(64), sourceLocator: z.string().min(1),
@@ -35,22 +36,24 @@ export const inpatientSurgeryCatalogSchema = z.object({ procedures: z.array(inpa
   materials: z.array(z.union([inpatientMaterialItemSchema, unavailableMaterial])) }).strict()
 export const inpatientSurgeryRequestInputSchema = z.object({ admissionId: id, encounterVersion: z.string().regex(/^\d+$/),
   procedureId: id, catalogVersion: version, plannedFor: z.iso.datetime({ offset: true }), reason: note, clinicalOverride: clinicalOverrideInputSchema.optional() }).strict()
-export const inpatientSurgeryActionInputSchema = z.object({ admissionId: id, requestId: id, expectedRequestVersion: version, note }).strict()
-export const inpatientSurgeryExecuteInputSchema = inpatientSurgeryActionInputSchema.omit({ note: true }).extend({ procedureId: id, catalogVersion: version, note,
+const surgeryActionBaseSchema = z.object({ admissionId: id, requestId: id, expectedRequestVersion: version }).strict()
+export const inpatientSurgeryActionInputSchema = surgeryActionBaseSchema.extend({ note }).strict()
+export const inpatientSurgeryExecuteInputSchema = surgeryActionBaseSchema.extend({ procedureId: id, catalogVersion: version, note: optionalNote,
   materials: z.array(z.object({ materialId: id, catalogVersion: version, quantity: z.number().int().positive().max(1000),
     /** 预留替换：引用本住院预留中的耗材记录，执行时一次性转为实际使用，不重复计费。 */
     reservationId: id.optional() }).strict()).max(20)
     .refine(items => new Set(items.map(item => item.materialId)).size === items.length, '耗材不得重复')
     .refine(items => { const ids = items.map(item => item.reservationId).filter(value => value !== undefined); return new Set(ids).size === ids.length }, '耗材预留不得重复引用'),
 })
-export const inpatientSurgeryStartInputSchema = inpatientSurgeryActionInputSchema.extend({ procedureId: id, catalogVersion: version }).strict()
+export const inpatientSurgeryStartInputSchema = surgeryActionBaseSchema.extend({ note: optionalNote, procedureId: id, catalogVersion: version }).strict()
 export const inpatientSurgeryMaterialSelectionSchema = z.object({ materialId: id, catalogVersion: version,
   quantity: z.number().int().positive().max(1000), reservationId: id.optional(), expectedReservationVersion: version.optional() }).strict()
   .refine(input => input.reservationId === undefined ? input.expectedReservationVersion === undefined : input.expectedReservationVersion !== undefined,
     '引用预留须提供其当前版本')
-export const inpatientSurgeryRecordMaterialInputSchema = inpatientSurgeryActionInputSchema.extend({ executionId: id,
+export const inpatientSurgeryRecordMaterialInputSchema = surgeryActionBaseSchema.extend({ note: optionalNote, executionId: id,
   material: inpatientSurgeryMaterialSelectionSchema }).strict()
-export const inpatientSurgerySupplementMaterialInputSchema = inpatientSurgeryRecordMaterialInputSchema.extend({
+export const inpatientSurgerySupplementMaterialInputSchema = surgeryActionBaseSchema.extend({
+  note, executionId: id, material: inpatientSurgeryMaterialSelectionSchema,
   expectedCharge: charge.pick({ id: true, priceFen: true, unit: true }),
 }).strict()
 export const inpatientSurgeryCorrectMaterialInputSchema = inpatientSurgeryActionInputSchema.extend({ executionId: id, materialUseId: id,
@@ -64,8 +67,8 @@ const reconciliation = {
   finalMaterials: z.array(inpatientSurgeryFinalMaterialSchema).max(100),
   releaseReservations: z.array(z.object({ reservationId: id, expectedReservationVersion: version }).strict()).max(100),
 }
-export const inpatientSurgeryCompletionReviewInputSchema = inpatientSurgeryActionInputSchema.extend({ executionId: id, ...reconciliation }).strict()
-export const inpatientSurgeryCompleteInputSchema = inpatientSurgeryActionInputSchema.extend({ executionId: id,
+export const inpatientSurgeryCompletionReviewInputSchema = surgeryActionBaseSchema.extend({ note: optionalNote, executionId: id, ...reconciliation }).strict()
+export const inpatientSurgeryCompleteInputSchema = surgeryActionBaseSchema.extend({ note: optionalNote, executionId: id,
   reconciliation: z.object({ ...reconciliation, expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
 }).strict()
 const preparation = z.object({ actorId: z.string().min(1), practitionerRoleId: id, recordedAt: z.iso.datetime({ offset: true }), note }).strict()

@@ -180,7 +180,7 @@ export async function runSurgeryMaterialsJourney(page: Page, s: Patient, open: (
   const startDialog = page.getByRole('dialog', { name: '开始手术', exact: true })
   await startDialog.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: '00.6600 · 经皮冠状动脉腔内血管成形术[PTCA]', exact: true }).click()
-  await startDialog.getByLabel('开始说明', { exact: true }).fill('合成开始术中逐笔记录')
+  await expect(startDialog.getByLabel('开始说明', { exact: true })).toHaveCount(0)
   await startDialog.getByRole('button', { name: '开始手术', exact: true }).click()
   const panel = page.getByRole('region', { name: '本台耗材', exact: true })
   await expect(panel).toContainText('手术进行中')

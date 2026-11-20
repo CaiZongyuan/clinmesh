@@ -14,6 +14,7 @@ import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
 import { Input } from '@clinmesh/ui/components/input'
 import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
+import { evaluateCompletionNoteRequirement, isSamePlannedProcedure, resolveMaterialPlanBasis } from '@clinmesh/core/inpatient-surgery-notes'
 import { completionQuantities, completionReviewNote } from './inpatient-surgery-notes.ts'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { apiGet, ApiClientError, apiMutation, getSession } from './api-client.ts'
@@ -60,13 +61,12 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
   const scopeKey = JSON.stringify(scope)
   const draft = useSurgeryDraft({ scope, schema: completionDraftSchema, initial: initialCompletionDraft(execution, reservations, request.id) })
   const { rows, releases } = draft.value
-  const [editing, setEditing] = useState(false)
+  const [editing, setEditing] = useState(false), [noteOpen, setNoteOpen] = useState(false), [latchedServerNoteRequired, setLatchedServerNoteRequired] = useState(false)
   const attemptedPreview = useRef('')
   const estimates = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'material-estimates'],
     enabled: active !== false, retry: false, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/material-estimates`, inpatientMaterialEstimatesSchema, signal) })
   const planBasis = estimates.data?.estimates.find(item => item.requestId === request.id)?.planBasis
-  const plan = planBasis?.history.find(item => item.reference === planBasis.effectiveReference)
-  const note = draft.value.noteSource === 'rule' ? completionReviewNote(rows, plan, execution, releases, locale, reservations) : draft.value.note
+  const { plan } = resolveMaterialPlanBasis(planBasis)
   const setRows = (change: (previous: CompletionDraftRow[]) => CompletionDraftRow[], discard = false) => draft.save({ ...draft.value, rows: change(rows) }, { keepCurrentOnFailure: discard })
   const [clearOpen, setClearOpen] = useState(false), [clearFailed, setClearFailed] = useState(false)
   const current = useRef({ scopeKey, active, dataReady }), mounted = useRef(true)
@@ -74,12 +74,36 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const isCurrent = () => mounted.current && current.current.scopeKey === scopeKey && current.current.active !== false
   const originalReservations = reservations.filter(item => item.requestId === request.id && item.status !== 'released')
+  const requestReservationIds = new Set(reservations.filter(item => item.requestId === request.id).map(item => item.id))
+  const quantities = completionQuantities(rows, plan)
+  const hasUnusedReservation = originalReservations.some(item => item.releaseReason == null && (remainingAfterCompletion(item, rows) ?? 0) > 0)
+  const completionNotePolicy = evaluateCompletionNoteRequirement({
+    finalMaterials: rows.map(row => {
+      const numericQuantity = validFinalQuantity(row.quantity) ? Number(row.quantity) : row.previousQuantity
+      return {
+        materialId: row.materialId,
+        catalogVersion: row.catalogVersion,
+        quantity: numericQuantity,
+        deltaQuantity: numericQuantity - row.previousQuantity,
+        reservationId: row.reservationId ?? null,
+      }
+    }),
+    requestReservationIds,
+    hasUnusedReservation,
+    planBasis,
+    samePlannedProcedure: isSamePlannedProcedure(execution.actualProcedure, request.plannedProcedure),
+  })
+  const noteRequired = completionNotePolicy.noteRequired || latchedServerNoteRequired
+  const hasExplainedPlanExcess = !noteRequired && completionNotePolicy.hasExplainedExtraUse
+  const note = draft.value.noteSource === 'doctor' ? draft.value.note : hasExplainedPlanExcess ? completionReviewNote(rows, plan, execution, releases, locale, reservations) : ''
+  const trimmedNote = note.trim()
+  const showNote = noteRequired || hasExplainedPlanExcess || editing || noteOpen || draft.value.note.trim().length > 0
   const finalMaterials = rows.map(({ materialId, catalogVersion, quantity, materialUseIds, reservationId, expectedReservationVersion }) => ({
     materialId, catalogVersion, quantity: Number(quantity), materialUseIds,
     ...(reservationId ? { reservationId, expectedReservationVersion } : {}),
   }))
   const input = { admissionId: execution.admissionId, requestId: request.id, expectedRequestVersion: request.version, executionId: execution.id,
-    note: note.trim(), finalMaterials, releaseReservations: releases.map(({ reservationId, expectedReservationVersion }) => ({ reservationId, expectedReservationVersion })) }
+    ...(trimmedNote ? { note: trimmedNote } : {}), finalMaterials, releaseReservations: releases.map(({ reservationId, expectedReservationVersion }) => ({ reservationId, expectedReservationVersion })) }
   const basis = JSON.stringify({ scope, execution, catalog, reservations })
   const preview = useMutation({ retry: false, mutationFn: async ({ input }: { input: z.infer<typeof inpatientSurgeryCompletionReviewInputSchema>; basis: string }) => {
     const fresh = await getSession()
@@ -94,6 +118,9 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
   const failedReview = reviewError !== null && failedCommand?.operation === 'inpatient.surgery.complete'
     && failedCommand.input.reconciliation?.expectedFingerprint === preview.data?.fingerprint
   const error = preview.error ?? completeError
+  if (error instanceof ApiClientError && error.code === 'INPATIENT_SURGERY_NOTE_REQUIRED' && !latchedServerNoteRequired) {
+    setLatchedServerNoteRequired(true)
+  }
   const reviewed = !failedReview && preview.isSuccess && preview.variables.basis === basis && JSON.stringify(preview.variables.input) === JSON.stringify(input)
   const [refreshCount, setRefreshCount] = useState(0)
   const refreshSnapshot = useRef(() => {})
@@ -104,7 +131,7 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
     releases: releases.map(row => ({ ...row, expectedReservationVersion: reservations.find(item => item.id === row.reservationId)?.version ?? row.expectedReservationVersion })) })
   }
   useEffect(() => { if (refreshCount > 0) refreshSnapshot.current() }, [refreshCount])
-  const refreshBasis = useMutation({ retry: false, mutationFn: refresh, onSuccess: () => { attemptedPreview.current = ''; preview.reset(); if (isCurrent()) setRefreshCount(value => value + 1) } })
+  const refreshBasis = useMutation({ retry: false, mutationFn: refresh, onSuccess: () => { attemptedPreview.current = ''; preview.reset(); setLatchedServerNoteRequired(false); if (isCurrent()) setRefreshCount(value => value + 1) } })
   const rowProblem = (row: CompletionDraftRow) => {
     if (!validFinalQuantity(row.quantity)) return t('最终总量须为0至1000的整数', 'Final quantity must be an integer from 0 to 1000')
     const currentMaterial = catalog?.materials.find(item => item.id === row.materialId && item.version === row.catalogVersion)
@@ -129,30 +156,31 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
       : unreviewedUses.length > 0 ? t(`新增实际使用：${unreviewedUses.map(use => use.item.display).join('、')}。未提交输入已保留，请重新带入当前用量后核实。`, `New recorded use: ${unreviewedUses.map(use => use.item.display).join(', ')}. Your draft is retained; reload current quantities and review.`)
         : rows.map(rowProblem).find(problem => problem !== null)
         ?? (invalidRelease ? t(`已选释放的 ${invalidRelease.display} 已无合法余量或依据变化，请取消选择或刷新核实`, `Selected release ${invalidRelease.display} changed or has no eligible remainder; deselect it or refresh sources`) : null)
-  const valid = note.trim().length > 0 && validation == null
+  const valid = (!noteRequired || trimmedNote.length > 0) && validation == null
   const editingBlocked = write.blocked || refreshBasis.isPending || draft.failed || active === false
   const blocked = editingBlocked || preview.isPending
   const materialList = <SurgeryFinalMaterialList rows={rows} catalog={catalog} reservations={reservations} requestId={request.id}
     locale={locale} disabled={editingBlocked} rowProblem={rowProblem} onChange={setRows} />
-  const hint = validation ?? (!note.trim() ? t('还差：核实说明', 'Enter the review note') : reviewed ? t('确认后补登差额并计入术式费，手术结束', 'Confirmation posts the differences and procedure fee and completes surgery') : t('正在核对差额，完成后可确认', 'Checking differences before confirmation'))
+  const hint = validation ?? (noteRequired && !trimmedNote ? t('还差：核实说明', 'Enter the review note') : reviewed ? t('确认后补登差额并计入术式费，手术结束', 'Confirmation posts the differences and procedure fee and completes surgery') : t('正在核对差额，完成后可确认', 'Checking differences before confirmation'))
   const confirm = () => {
     if (!isCurrent() || blocked || !valid || !reviewed || !preview.data) return
     const command = { operation: 'inpatient.surgery.complete' as const, input: {
-      admissionId: input.admissionId, requestId: input.requestId, executionId: input.executionId, expectedRequestVersion: input.expectedRequestVersion, note: input.note,
+      admissionId: input.admissionId, requestId: input.requestId, executionId: input.executionId, expectedRequestVersion: input.expectedRequestVersion,
+      ...(input.note ? { note: input.note } : {}),
       reconciliation: { finalMaterials: input.finalMaterials, releaseReservations: input.releaseReservations, expectedFingerprint: preview.data.fingerprint },
     } }
     if (draft.prepareSubmission(command)) write.mutation.mutate({ ...command, isCurrent: () => isCurrent() && current.current.dataReady })
   }
   const previewKey = JSON.stringify({ input, basis })
   useEffect(() => {
-    if (!valid || blocked || reviewed || attemptedPreview.current === previewKey) return
+    if (!valid || blocked || estimates.isPending || reviewed || attemptedPreview.current === previewKey) return
     const timer = setTimeout(() => {
       if (!isCurrent()) return
       attemptedPreview.current = previewKey
       preview.mutate({ input, basis })
     }, 250)
     return () => clearTimeout(timer)
-  }, [previewKey, valid, blocked, reviewed])
+  }, [previewKey, valid, blocked, estimates.isPending, reviewed])
   const actions = <>
     <Button type="button" variant="outline" disabled={write.mutation.isPending} onClick={onClose}>{t('取消', 'Cancel')}</Button>
     <Button type="button" disabled={blocked || !valid || !reviewed} onClick={confirm}>{t('确认完成手术', 'Complete surgery')}</Button>
@@ -162,7 +190,7 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
     <FieldSet disabled={editingBlocked}><FieldGroup>
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><span>{t('已登记量默认作为最终用量', 'Recorded quantities are the default final quantities')}</span><Button type="button" variant="link" size="sm" disabled={editingBlocked} onClick={() => setEditing(value => !value)}>{editing ? t('收起数量编辑', 'Hide quantity editor') : t('有出入，改数量', 'Edit quantities if needed')}</Button></div>
       {!editing ? <Table><TableHeader><TableRow><TableHead>{t('耗材', 'Material')}</TableHead><TableHead>{t('计划', 'Planned')}</TableHead><TableHead>{t('最终用量', 'Final quantity')}</TableHead><TableHead>{t('与计划的差异', 'Difference from plan')}</TableHead></TableRow></TableHeader><TableBody>
-        {completionQuantities(rows, plan).map(row => <TableRow key={row.key}><TableCell className="whitespace-normal">{row.display}</TableCell><TableCell>{row.planned ?? t('待核实', 'Unverified')} {row.unit}</TableCell><TableCell>{row.quantity} {row.unit}</TableCell><TableCell className={row.difference ? 'text-warning' : undefined}>{row.difference === null ? t('待核实', 'Unverified') : row.difference === 0 ? t('一致', 'Matches') : row.difference > 0 ? t(`多用 ${row.difference}`, `${row.difference} extra`) : t(`未用 ${-row.difference}`, `${-row.difference} unused`)}</TableCell></TableRow>)}
+        {quantities.map(row => <TableRow key={row.key}><TableCell className="whitespace-normal">{row.display}</TableCell><TableCell>{row.planned ?? t('待核实', 'Unverified')} {row.unit}</TableCell><TableCell>{row.quantity} {row.unit}</TableCell><TableCell className={row.difference ? 'text-warning' : undefined}>{row.difference === null ? t('待核实', 'Unverified') : row.difference === 0 ? t('一致', 'Matches') : row.difference > 0 ? t(`多用 ${row.difference}`, `${row.difference} extra`) : t(`未用 ${-row.difference}`, `${-row.difference} unused`)}</TableCell></TableRow>)}
       </TableBody></Table> : <>
       {materialList}
       <SurgeryReleasePicker reservations={originalReservations} rows={rows} selected={releases} locale={locale} disabled={editingBlocked} onChange={next => draft.save({ ...draft.value, releases: next }, { keepCurrentOnFailure: next.length < releases.length })} />
@@ -183,7 +211,8 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
       {preview.data.retainedReservations.map(item => <p key={item.id} className="flex gap-3"><span className="flex-1">{t('保留预留', 'Keep reservation')} · {item.materialDisplay}</span><b>—</b></p>)}
 </div></details> : null}
       </section> : null}
-      <Field><FieldLabel htmlFor={`final-note-${execution.id}`}>{t('核实说明', 'Review note')}</FieldLabel><Input id={`final-note-${execution.id}`} maxLength={2000} value={note} onChange={event => draft.save({ ...draft.value, note: event.target.value, noteSource: 'doctor' })} /></Field>
+      {showNote ? <Field data-invalid={noteRequired && !trimmedNote || undefined}><FieldLabel htmlFor={`final-note-${execution.id}`}>{t('核实说明', 'Review note')}</FieldLabel><Input id={`final-note-${execution.id}`} maxLength={2000} placeholder={noteRequired ? t('存在数量增减差额或未用预留处置，请说明核实原因', 'Explain quantity differences or unused reservation handling') : undefined} value={note} onChange={event => draft.save({ ...draft.value, note: event.target.value, noteSource: 'doctor' })} /></Field>
+        : <Button type="button" variant="ghost" size="sm" className="self-start" disabled={editingBlocked} onClick={() => setNoteOpen(true)}>{t('添加备注', 'Add note')}</Button>}
     </FieldGroup></FieldSet>
     {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('未提交输入无法保存，已阻止提交。请检查浏览器存储后重试，已填内容仍保留。', 'The draft could not be saved, so submission is blocked. Check browser storage and retry; entered values are retained.')}
       <Button type="button" size="sm" variant="outline" disabled={write.blocked} onClick={() => draft.save(draft.value)}>{t('重试保存核实输入', 'Retry saving review draft')}</Button>
@@ -200,7 +229,7 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
       <AlertDialogDescription>{t('将丢弃未提交的最终数量、新增耗材、核实说明及释放选择，重新带入当前已登记用量；不会删除已保存记录。', 'Discard unsaved final quantities, added materials, review note and release selections, then reload recorded use. Saved records remain.')}</AlertDialogDescription>
       </AlertDialogHeader>{clearFailed ? <Alert variant="destructive"><AlertDescription>{t('清空未提交输入失败，原内容仍保留。请检查浏览器存储后重试。', 'The draft could not be cleared. Its contents are retained. Check browser storage and retry.')}</AlertDescription></Alert> : null}
       <AlertDialogFooter><AlertDialogCancel>{t('保留未提交输入', 'Keep draft')}</AlertDialogCancel>
-      <Button type="button" variant="destructive" disabled={write.blocked} onClick={() => { if (!isCurrent()) return; if (draft.clear()) { attemptedPreview.current = ''; preview.reset(); setClearOpen(false) } else setClearFailed(true) }}>{t('确认丢弃并重新带入', 'Discard and reload')}</Button>
+      <Button type="button" variant="destructive" disabled={write.blocked} onClick={() => { if (!isCurrent()) return; if (draft.clear()) { attemptedPreview.current = ''; preview.reset(); setLatchedServerNoteRequired(false); setClearOpen(false) } else setClearFailed(true) }}>{t('确认丢弃并重新带入', 'Discard and reload')}</Button>
     </AlertDialogFooter></AlertDialogContent></AlertDialog>
     {preview.error ? <Button type="button" variant="outline" disabled={blocked || !valid} onClick={() => preview.mutate({ input, basis })}>{t('重试核对差额', 'Retry difference review')}</Button> : null}
     {preview.data && !reviewed ? <Alert><AlertDescription>{t('正在按当前输入与依据重新核对差额。', 'Rechecking differences against current inputs and sources.')}</AlertDescription></Alert> : null}

@@ -966,8 +966,46 @@ it('publishes read-only clinical quality preflight queries and clinicalOverride 
   expect(getHisOperation('inpatient.clinical.catalog').version).toBe(3)
   expect(getHisOperation('inpatient.order.issue').version).toBe(9)
   expect(getHisOperation('inpatient.surgery.request').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.start').version).toBe(2)
+  expect(getHisOperation('inpatient.surgery.record-material').version).toBe(2)
+  expect(getHisOperation('inpatient.surgery.preview-completion').version).toBe(2)
+  expect(getHisOperation('inpatient.surgery.complete').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.execute').version).toBe(3)
   expect(getHisOperation('inpatient.pci-selection.confirm').version).toBe(3)
   expect(getHisOperation('inpatient.record.submit').version).toBe(3)
+})
+
+it('accepts omitted routine surgery notes on the five routine operations while keeping legal and correction notes mandatory', () => {
+  const start = getHisOperation('inpatient.surgery.start')
+  expect(start.input.parse({ admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 2, procedureId: 'proc-1', catalogVersion: 1 }))
+    .toEqual({ admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 2, procedureId: 'proc-1', catalogVersion: 1 })
+  expect(start.input.safeParse({ admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 2, procedureId: 'proc-1', catalogVersion: 1, note: 'x'.repeat(2001) }).success).toBe(false)
+
+  const execute = getHisOperation('inpatient.surgery.execute')
+  expect(execute.input.parse({ admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 2, procedureId: 'proc-1', catalogVersion: 1, materials: [] }))
+    .toEqual({ admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 2, procedureId: 'proc-1', catalogVersion: 1, materials: [] })
+
+  const record = getHisOperation('inpatient.surgery.record-material')
+  expect(record.input.parse({ admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 3, executionId: 'exec-1', material: { materialId: 'mat-1', catalogVersion: 1, quantity: 1, reservationId: 'res-1', expectedReservationVersion: 1 } }))
+    .toMatchObject({ executionId: 'exec-1', material: { reservationId: 'res-1', expectedReservationVersion: 1 } })
+
+  const preview = getHisOperation('inpatient.surgery.preview-completion')
+  expect(preview.input.parse({ admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 4, executionId: 'exec-1', finalMaterials: [], releaseReservations: [] }))
+    .toEqual({ admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 4, executionId: 'exec-1', finalMaterials: [], releaseReservations: [] })
+
+  const complete = getHisOperation('inpatient.surgery.complete')
+  expect(complete.input.parse({ admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 4, executionId: 'exec-1' }))
+    .toEqual({ admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 4, executionId: 'exec-1' })
+
+  for (const [id, payload] of [
+    ['inpatient.surgery.check-preop', { admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 1 }],
+    ['inpatient.surgery.confirm-consent', { admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 1 }],
+    ['inpatient.surgery.cancel', { admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 1 }],
+    ['inpatient.surgery.supplement-material', { admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 4, executionId: 'exec-1', material: { materialId: 'mat-1', catalogVersion: 1, quantity: 1 }, expectedCharge: { id: 'chg-1', priceFen: 100, unit: '根' } }],
+    ['inpatient.surgery.correct-material', { admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 4, executionId: 'exec-1', materialUseId: 'use-1' }],
+  ] as const) {
+    expect(getHisOperation(id).input.safeParse(payload).success, id).toBe(false)
+  }
 })
 
 it('publishes narrow read-only order set template and draft operations without raw override inputs', () => {

@@ -1,7 +1,9 @@
 import { z } from 'zod'
 import { inpatientSurgeryCompletionPreviewSchema, type inpatientSurgeryCompletionReviewInputSchema,
-  type inpatientSurgeryExecutionSchema, type inpatientSurgeryCatalogSchema, type inpatientMaterialItemSchema } from '@clinmesh/contracts/inpatient-surgery'
+  type inpatientSurgeryExecutionSchema, type inpatientSurgeryCatalogSchema, type inpatientMaterialItemSchema, type inpatientProcedureItemSchema } from '@clinmesh/contracts/inpatient-surgery'
 import type { InpatientMaterialReservationList } from '@clinmesh/contracts/inpatient-drg-simulation'
+import type { InpatientMaterialPlanBasis } from '@clinmesh/contracts/inpatient-material-plan'
+import { evaluateCompletionNoteRequirement, isSamePlannedProcedure } from '@clinmesh/core/inpatient-surgery-notes'
 import { InpatientError } from './inpatient-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import type { ActorContext } from './command-executor.ts'
@@ -20,9 +22,11 @@ export function materialReductions(uses: Array<{ id: string; quantity: number }>
 
 /** 只规划原事件的增量和追加更正；写入仍由原手术 Command 负责。 */
 export function planSurgeryCompletion(input: z.infer<typeof inpatientSurgeryCompletionReviewInputSchema>,
-  execution: z.infer<typeof inpatientSurgeryExecutionSchema>, catalog: z.infer<typeof inpatientSurgeryCatalogSchema>,
+  execution: z.infer<typeof inpatientSurgeryExecutionSchema>, plannedProcedure: z.infer<typeof inpatientProcedureItemSchema>,
+  catalog: z.infer<typeof inpatientSurgeryCatalogSchema>,
   reservations: InpatientMaterialReservationList, reservationItems: Record<string, z.infer<typeof inpatientMaterialItemSchema>>,
-  charges: MaterialChargeBasis, context: Pick<ActorContext, 'workspaceId' | 'epoch' | 'actorId' | 'practitionerRoleId'>) {
+  charges: MaterialChargeBasis, context: Pick<ActorContext, 'workspaceId' | 'epoch' | 'actorId' | 'practitionerRoleId'>,
+  planBasis?: InpatientMaterialPlanBasis) {
   const conflict = (message: string): never => { throw new InpatientError('INPATIENT_SURGERY_REVIEW_CONFLICT', message) }
   const seen = new Set<string>(), releases = new Set<string>(), reviewedReservationItems = new Set<string>()
   const reservationDeltas = new Map<string, number>()
@@ -90,14 +94,35 @@ export function planSurgeryCompletion(input: z.infer<typeof inpatientSurgeryComp
   }
   const materialDeltaFen = materials.reduce((sum, row) => sum + row.deltaFen, 0)
   const procedureAmountFen = execution.actualProcedure.chargeDefinition.priceFen
-  return inpatientSurgeryCompletionPreviewSchema.parse({
-    fingerprint: canonicalJsonHash({ input, execution, catalog, reservations, reservationItems, charges, context }),
-    materials, materialDeltaFen, procedureAmountFen, totalDeltaFen: materialDeltaFen + procedureAmountFen,
-    retainedReservations: reservations.reservations.flatMap(item => {
-      if (item.requestId !== input.requestId || item.status === 'released' || item.releaseReason != null || releases.has(item.id)) return []
-      const consumedQuantity = item.consumedQuantity + (reservationDeltas.get(item.id) ?? 0)
-      const remainingQuantity = item.quantity - consumedQuantity
-      return remainingQuantity > 0 ? [{ ...item, status: 'reserved' as const, consumedQuantity, remainingQuantity }] : []
-    }),
+  const retainedReservations = reservations.reservations.flatMap(item => {
+    if (item.requestId !== input.requestId || item.status === 'released' || item.releaseReason != null || releases.has(item.id)) return []
+    const consumedQuantity = item.consumedQuantity + (reservationDeltas.get(item.id) ?? 0)
+    const remainingQuantity = item.quantity - consumedQuantity
+    return remainingQuantity > 0 ? [{ ...item, status: 'reserved' as const, consumedQuantity, remainingQuantity }] : []
   })
+  const hasReleasedRemainder = input.releaseReservations.some(selected => {
+    const item = reservations.reservations.find(candidate => candidate.id === selected.reservationId)!
+    return item.quantity - item.consumedQuantity - (reservationDeltas.get(item.id) ?? 0) > 0
+  })
+  const requestReservationIds = new Set(reservations.reservations.filter(item => item.requestId === input.requestId).map(item => item.id))
+  const notePolicy = evaluateCompletionNoteRequirement({
+    finalMaterials: materials.map(row => ({
+      materialId: row.item.id, catalogVersion: row.item.version, quantity: row.quantity, deltaQuantity: row.deltaQuantity, reservationId: row.reservationId,
+    })),
+    requestReservationIds,
+    hasUnusedReservation: retainedReservations.length > 0 || hasReleasedRemainder,
+    planBasis,
+    samePlannedProcedure: isSamePlannedProcedure(execution.actualProcedure, plannedProcedure),
+  })
+  const explicitNote = input.note?.trim() || undefined
+  if (notePolicy.noteRequired && !explicitNote) {
+    throw new InpatientError('INPATIENT_SURGERY_NOTE_REQUIRED', '最终耗材存在数量增减差额、未消耗预留或未核实的术前清单差异，请填写核实说明', 400)
+  }
+  const resolvedNote = explicitNote ?? notePolicy.defaultNote
+  const preview = inpatientSurgeryCompletionPreviewSchema.parse({
+    fingerprint: canonicalJsonHash({ input: { ...input, note: resolvedNote }, execution, catalog, reservations, reservationItems, charges, context }),
+    materials, materialDeltaFen, procedureAmountFen, totalDeltaFen: materialDeltaFen + procedureAmountFen,
+    retainedReservations,
+  })
+  return { preview, resolvedNote }
 }

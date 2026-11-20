@@ -413,10 +413,39 @@ it('可开始阶段在操作栏提供整台补录次级入口，开始手术弹�
   await user.click(start)
   const dialog = await screen.findByRole('dialog', { name: '开始手术' })
   expect(within(dialog).getByRole('combobox', { name: '实际术式' }).textContent).toContain('腹腔镜下胆囊切除术')
+  expect(within(dialog).queryByRole('textbox', { name: '开始说明' })).toBeNull()
+  expect(within(dialog).getByRole('button', { name: '开始手术' }).hasAttribute('disabled')).toBe(false)
+  await user.click(within(dialog).getByRole('button', { name: '添加备注' }))
   await user.type(within(dialog).getByRole('textbox', { name: '开始说明' }), '第二台实际开始依据')
   await user.click(within(dialog).getByRole('button', { name: '开始手术' }))
   await waitFor(() => expect(posts).toHaveLength(1))
   expect(posts).toEqual([{ path: '/api/his/v1/inpatient/admissions/admission-1/surgeries/start', body: { input: { requestId: 'request-2', expectedRequestVersion: 7, note: '第二台实际开始依据', procedureId: 'procedure-1', catalogVersion: 1 } } }])
+})
+
+it('整台补录在术式一致且完整关联本台预留时默认折叠补录依据，存在遗留预留或计划外耗材时自动展开并必填', async () => {
+  const ready = inpatientSurgeryRequestSchema.parse({ ...plan, status: 'ready', preopCheck: { actorId: 'nurse', practitionerRoleId: 'role-nurse', recordedAt: time, note: '术前核对已完成' } })
+  const planReservation = { id: 'res-plan-1', admissionId: admission.id, requestId: ready.id, materialId: material.id, materialDisplay: material.display, catalogVersion: 1, quantity: 2, consumedQuantity: 0, remainingQuantity: 2, unit: '枚', priceFen: 2000, status: 'reserved' as const, reason: '术前双钛夹预留', createdAt: time, version: 1 }
+  const { posts } = mount([ready], session, [], undefined, [planReservation])
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '整台补录' }))
+  const dialog = await screen.findByRole('dialog', { name: '整台补录' })
+  // 尚有本台预留未消耗时，自动展开补录依据并阻止无原因提交
+  expect(within(dialog).getByRole('textbox', { name: '补录依据' })).toBeDefined()
+  expect(within(dialog).getByRole('button', { name: '记录实际手术' }).hasAttribute('disabled')).toBe(true)
+  await user.click(within(dialog).getByRole('button', { name: '添加 合成钛夹' }))
+  within(dialog).getByRole('combobox', { name: '替换治疗预留' }).focus()
+  await user.keyboard('{Enter}')
+  await user.click(await screen.findByRole('option', { name: /合成钛夹 × 2 · 术前双钛夹预留/ }))
+  // 完整关联本台全部预留且术式一致时，自动收起未手填的补录依据并允许直接提交
+  expect(within(dialog).queryByRole('textbox', { name: '补录依据' })).toBeNull()
+  expect(within(dialog).getByRole('button', { name: '添加备注' })).toBeDefined()
+  expect(within(dialog).getByRole('button', { name: '记录实际手术' }).hasAttribute('disabled')).toBe(false)
+  await user.click(within(dialog).getByRole('button', { name: '记录实际手术' }))
+  await waitFor(() => expect(posts).toHaveLength(1))
+  expect(posts[0]).toEqual({ path: '/api/his/v1/inpatient/admissions/admission-1/surgeries/execute', body: { input: {
+    requestId: ready.id, expectedRequestVersion: 3, procedureId: procedure.id, catalogVersion: 1,
+    materials: [{ materialId: material.id, catalogVersion: 1, quantity: 2, reservationId: 'res-plan-1' }],
+  } } })
 })
 
 it('护士仍可核对当前计划，但不出现医生开始、整台补录或新增申请入口', async () => {
@@ -925,6 +954,9 @@ it('开始手术使用模态弹窗，取消归还焦点且发送期间阻止Esca
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: '开始手术' })))
   await user.click(screen.getByRole('button', { name: '开始手术' }))
   dialog = screen.getByRole('dialog', { name: '开始手术' })
+  expect(within(dialog).queryByRole('textbox', { name: '开始说明' })).toBeNull()
+  expect(within(dialog).getByRole('button', { name: '开始手术' }).hasAttribute('disabled')).toBe(false)
+  await user.click(within(dialog).getByRole('button', { name: '添加备注' }))
   await user.click(within(dialog).getByRole('button', { name: '术前准备已完成，按计划开始手术' }))
   await user.click(within(dialog).getByRole('button', { name: '开始手术' }))
   try {
