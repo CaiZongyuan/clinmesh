@@ -1,6 +1,6 @@
 # 影像检查使用指南
 
-本文面向第一次接触放射检查功能的管理员、医生和开发者，说明胸片与胸部 CT 平扫从准备到阅片的完整用法，以及界面上每种状态的含义。设计边界见 [申请与报告合同](architecture/clinical-workflows.md#87-检验检查与报告修订)及[素材与病例准备合同](architecture/simulation.md#107-影像素材与病例影像准备)，素材来源与许可见 [影像素材清单](../imaging-assets/README.md)。
+本文面向第一次接触放射检查功能的管理员、医生和开发者，说明胸片与胸部 CT 平扫从准备到阅片的完整用法，以及界面上每种状态的含义。设计边界见 [申请与报告合同](architecture/examinations-and-reports.md)及[素材与病例准备合同](architecture/simulation.md#107-影像素材与病例影像准备)，素材来源与许可见 [影像素材清单](../imaging-assets/README.md)。
 
 ## 功能概览
 
@@ -20,7 +20,7 @@
 
 住院工作台的“检查检验与报告”使用同一套已发布素材和病例准备。医生选择可开展的胸片或胸部 CT 平扫并填写指征后，申请保持“待送检”；当前病区护士点击“校对并送检”才进入 RIS 执行。报告、检查记录和费用归本次住院，医生展开“查看影像”，影像实际显示且当前可读取后可确认已阅。像素不可用时保留报告，不能确认已阅。
 
-手工建档且没有固定合成病例来源的住院患者不能生成检查结果。转科后原科室不再拥有读取或操作权限；已送检申请继续报告，由新科室接管，不绑定到来源门诊。目录中的未计价不等于免费，住院收费及交接合同见[住院临床流程](architecture/clinical-workflows.md#82-住院闭环后续)。
+手工建档且没有固定合成病例来源的住院患者不能生成检查结果。转科后原科室不再拥有读取或操作权限；已送检申请继续报告，由新科室接管，不绑定到来源门诊。目录中的未计价不等于免费，住院收费及交接合同见[住院与手术流程](architecture/inpatient-workflows.md)。
 
 ## 部署者：安装素材
 
@@ -119,7 +119,7 @@ Provider 不支持定向生成时，“定向病例”不显示，生成行为�
 6. 影像本轮成功显示且当前可读后，选择这份报告并集中核对、确认已阅。关闭、重开或刷新后须重新查看，恢复选择不代表影像已显示；确认后这份报告不再阻塞完诊。
 7. 需要把结论写进病历时点“摘要插入病历”。摘要追加到病历“辅助检查”，写明报告版本与签发时间，随病历签署一并保存；同一版报告重复插入只会提示，不会写两遍。
 
-医生看不到素材编号、来源信息或匹配原因。同一服务同时只能有一条进行中的申请。门诊放射采用明确标注来源的合成价格和合成医保目录外映射，不能把演示金额当成真实医院报价；价目、取消及退款的完整合同见[门诊原申请收费](architecture/clinical-workflows.md#门诊独立检查的应收与执行门禁)。
+医生看不到素材编号、来源信息或匹配原因。同一服务同时只能有一条进行中的申请。门诊放射采用明确标注来源的合成价格和合成医保目录外映射，不能把演示金额当成真实医院报价；价目、取消及退款的完整合同见[门诊原申请收费](architecture/examinations-and-reports.md#门诊独立检查的应收与执行门禁)。
 
 ### 申请状态
 
@@ -192,7 +192,7 @@ clinmesh imaging-report correct --input @imaging-correction.json --idempotency-k
 ## 延伸阅读
 
 - [影像素材清单](../imaging-assets/README.md)：素材来源、许可与署名、逐素材核对记录、覆盖矩阵、新增素材的步骤。
-- [申请与报告](architecture/clinical-workflows.md#87-检验检查与报告修订)、[像素存放边界](architecture/storage.md#98-文书与附件边界)与[素材、病例准备及读取边界](architecture/simulation.md#107-影像素材与病例影像准备)。
+- [申请与报告](architecture/examinations-and-reports.md)、[像素存放边界](architecture/storage.md#98-文书与附件边界)与[素材、病例准备及读取边界](architecture/simulation.md#107-影像素材与病例影像准备)。
 - [前端架构的阅片器](frontend-architecture.md#阅片器)：外壳与渲染引擎。
 - [领域词汇](../CONTEXT.md)：Imaging Asset、Imaging Preparation、Imaging Binding、Imaging Study 等术语。
 - [测试策略的影像合同](testing.md#影像合同)。

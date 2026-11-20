@@ -30,6 +30,4 @@ Status: implemented
 
 ## Consequences
 
-迁移和恢复宁可拒绝发行，也不把证据不足解释为安全重置；已有数据可保留用于后续核验。原业务查询权限仍以 Workspace/Epoch 隔离，共用发号器不扩大读取范围。旧备份恢复需要保留最新发行权威，完全丢失最新证据时无法自动恢复发号。
-
-[历史迁移测试](../../../../apps/server/tests/registration-number-migration.test.ts)覆盖多作用域、日期、历史重复号、保留初始历史与必要证据缺失；[恢复测试](../../../../apps/server/tests/registration-number-recovery.test.ts)覆盖旧备份与最新高水位合并、原写者停用、身份不符、丢失计数器及退休后的持久化失败。[数据库生命周期测试](../../../../apps/server/tests/database-lifecycle.test.ts)继续验证显式迁移、备份一致性、损坏候选、CLI 和真实 file-backed SQLite 合同。
+迁移和恢复宁可拒绝发行，也不把证据不足解释为安全重置；已有数据可保留用于后续核验。原业务查询权限仍以 Workspace/Epoch 隔离，共用发号器不扩大读取范围。旧备份恢复需要保留最新发行权威，完全丢失最新证据时无法自动恢复发号；历史迁移、旧备份与最新高水位合并、原写者退休及数据库生命周期均由服务端集成测试覆盖。

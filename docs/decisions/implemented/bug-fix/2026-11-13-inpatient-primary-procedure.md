@@ -8,7 +8,7 @@ Status: implemented
 
 ## Decision
 
-在院页面（`admitted` 或 `discharge-pending` 且未结算、未归档）提供独立的主操作保存入口，复用现有 `inpatient.record.submit` 追加当前来源快照与显式选择，并结束[手术流程指引与术后费用预计](../architecture/2026-11-13-surgery-flow-assistance.md)中的待确认过渡。该 Command 继续沿用预期修订、来源指纹、幂等、审计和私稿恢复，不新增主操作存储或写协议；来源或修订冲突时在同区禁用重复保存并要求显式放弃原选择后重审。在院保存形成的未离院、未结算修订不视作正式病案首页提交，服务端编码审核（通过与退回）均拒绝未离院病例，病案岗位界面与连续审核队列亦保持锁定，完整首页仍等待出院结算后核对提交。本决策调整[住院岗位结构与步骤融合](../architecture/2026-11-03-inpatient-prototype-composition.md)中“在院期间等待出院后选择主操作”的约定：仅尚无已完成手术时保留 `等手术完成` 中性态，手术完成后即提示前往病案页保存。当前行为由[住院与手术流程](../../../architecture/inpatient-workflows.md)拥有。
+在院页面（`admitted` 或 `discharge-pending` 且未结算、未归档）提供独立的主操作保存入口，复用现有 `inpatient.record.submit` 追加当前来源快照与显式选择，并结束[手术流程指引与术后费用预计](../architecture/2026-11-13-surgery-flow-assistance.md)中的待确认过渡。该 Command 继续沿用预期修订、来源指纹、幂等、审计和私稿恢复，不新增主操作存储或写协议；来源或修订冲突时在同区禁用重复保存并要求显式放弃原选择后重审。在院保存形成的未离院、未结算修订不视作正式病案首页提交，服务端编码审核（通过与退回）均拒绝未离院病例，病案岗位界面与连续审核队列亦保持锁定，完整首页仍等待出院结算后核对提交；与[住院岗位结构与步骤融合](../architecture/2026-11-03-inpatient-prototype-composition.md)一致，仅尚无已完成手术时保留 `等手术完成` 中性态，手术完成后即提示前往病案页保存。当前行为由[住院与手术流程](../../../architecture/inpatient-workflows.md)拥有。
 
 ## Alternatives considered
 

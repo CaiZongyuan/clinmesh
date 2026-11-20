@@ -37,7 +37,7 @@ pnpm check
 - TypeScript 使用 ESM 和 strict mode。运行时边界、网络响应、工具 JSON 与持久化数据必须做 schema 校验；同进程已类型化的私有调用不重复校验。
 - FHIR 固定为 R5 `5.0.0`，只声明实际实现的资源、SearchParameter 和 Operation；复杂业务状态变化统一走共享 Command 模块，HTTP、FHIR Operation、前端与 Agent tools 不复制状态机。
 - TanStack Query 拥有服务端状态，Zustand 只保存客户端视图状态，禁止同一接口结果双写。
-- Web/Desktop 共享 `contracts -> core -> ui/views`（`contracts`/`core` 禁读 DOM、存储、环境变量或平台 API，`ui` 不依赖 `core`，`views` 不导入路由或宿主框架）；Mobile 仅复用 `contracts` 与 `core` 纯函数。DSH Surface 共享代码只使用 React 18.3.1 与 19.2 共有 API（需稳定回调时用 latest-ref，禁 `useEffectEvent`），对话框纳入双版本浏览器合同测试，见 [React API 面约束](docs/decisions/implemented/bug-fix/2026-09-16-dsh-surface-react-api-surface.md)。
+- 前端与共享包遵循 [packages/AGENTS.md](packages/AGENTS.md)、[apps/web/AGENTS.md](apps/web/AGENTS.md)、[apps/dsh-web/AGENTS.md](apps/dsh-web/AGENTS.md) 与 [apps/mobile/AGENTS.md](apps/mobile/AGENTS.md) 的依赖方向与双版本 React 18.3.1 / 19.2 约束（稳定回调用 latest-ref，禁 `useEffectEvent`）。
 - Agent tools 使用窄 schema、受信 context binding、幂等键、预期版本和完整审计，禁止提供任意 URL、SQL、Bundle 或任意 method/path/body 写工具。Agent-facing CLI 的 `cliPath`、schema、错误或恢复合同变化时，同一 diff 同步 owning Operation Catalog、对应 `clinmesh-*` Skill 与命令示例漂移测试。
 - 演示数据必须全为合成数据，严禁提交真实患者信息、医保/支付凭证或密钥。唯一例外是 [影像素材清单](imaging-assets/README.md) 与 [病理切片素材清单](pathology-assets/README.md) 登记的去标识公开像素（像素与源文件不入 Git、日志、模型输入或 SQLite，展示保留署名；Agent 不读取含影像或切片的像素及截图，仅用文字快照与聚合量，无影像界面与原型图可正常读取）。
 - 开发与验收默认使用合成 Provider、受控模型流和临时数据库。压测或真实模型运行须获用户针对当次运行的明确许可；失败后停止并保留诊断，不自行重试、改参或扩载。

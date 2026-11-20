@@ -12,7 +12,7 @@ Status: implemented
 
 共享 Agent Notes 迁入 `docs/decisions/`，保留原格式、生命周期、决策关系及理由；项目模板放在 `docs/` 与 `.github/ISSUE_TEMPLATE/` 并从 [模板索引](../../../templates/README.md)导航。GitHub PR 使用官方支持的 `docs/pull_request_template.md`，正式需求规格与子票规则由 [Issue 规则](../../../agents/issue-tracker.md)拥有（见 [恢复 GitHub Issue 为正式需求规格](2026-11-11-github-issue-canonical-specs.md)）。共享规则、校验与入站引用使用新路径，不依赖本机目录。
 
-本决定调整 [主 Agent 统筹的 worktree 开发](2026-10-16-primary-agent-worktree-development.md)中早期按任务选择开发 skills 的仓库存放方式，停止跟踪个人开发 skills 源码并保留其按任务选择、简化边界与文档归属理由。同步范围由 [Agent 工程开发](../../../agent-development.md)拥有，正式需求及验收见 [PR #232](https://github.com/CaiZongyuan/clinmesh/pull/232)。
+个人开发 skills 保持本机管理而不纳入 Git，按任务选择与简化边界见 [主 Agent 统筹的 worktree 开发](2026-10-16-primary-agent-worktree-development.md)；同步范围由 [Agent 工程开发](../../../agent-development.md)拥有，正式需求及验收见 [PR #232](https://github.com/CaiZongyuan/clinmesh/pull/232)。
 
 ## Alternatives considered
 

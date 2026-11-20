@@ -11,7 +11,7 @@ Status: implemented
 建立门诊与住院同源复用的确定性 `Guideline Topic` 注册表、可空手术单关联与受治理的只读参考意见机制，详细合同见[临床决策支持与质控](../../../architecture/clinical-decision-support.md)，专题取证对照见[住院指南专题研究](../../../research/2026-11-02-llm-wiki-for-inpatient-guidelines.md)：
 
 1. **共享六专题注册表与零模型同步原文核对**：注册 `acute-chest-pain-acs`、`coronary-revascularization-indication`、`pci-stent`、`contrast-kidney-hydration`、`cad-dapt-and-secondary-prevention` 与 `t2dm-renal-medication` 六个经人工核对的专题，每个专题锁定来源 ID、版本、原件 SHA-256、物理页码、关键限定语片段与 `8 段／48 KiB` 硬预算。`doctor.case.guideline-topics.read` 与 `inpatient.guideline-topics.read` 以零模型请求同步返回专题原文、当前患者[确定性临床算子](2026-11-17-deterministic-clinical-risk-scores.md)与客观指标对照及缺项清单；来源缺失、撤回、[人群隔离不匹配](2026-10-16-free-guideline-corpus.md)、片段残缺或超预算时一律失败闭合返回 `unavailable`，绝不截断安全限定语。门诊建议检索优先合并匹配专题的核验段落并去重。
-2. **表重建解耦手术单强绑，兼容 PCI 计划与内科双路径**：迁移 `0116_guideline-topic-advice.sql` 为 `inpatient_guideline_advice` 增加必填 `topic_id`（存量回填 `'pci-stent'`），将 `request_id` 改为可空并保留非空时的手术申请复合外键与两条部分唯一版本索引，同时支持绑定 PCI 计划的自动准备（`requestId` 非空，取消计划准备时先行终止在途指南步骤以停止额外计费）与无手术单的内科按专题显式评估（`requestId = null`）。
+2. **表结构解耦手术单强绑，兼容 PCI 计划与内科双路径**：`inpatient_guideline_advice` 包含必填 `topic_id`（历史 PCI 记录默认对齐 `'pci-stent'`），将 `request_id` 设为可空并保留非空时的手术申请复合外键与两条部分唯一版本索引，同时支持绑定 PCI 计划的自动准备（`requestId` 非空，取消计划准备时先行终止在途指南步骤以停止额外计费）与无手术单的内科按专题显式评估（`requestId = null`）。
 3. **只读参考意见与具体耗材确认严格分离及回执脱敏**：缺少患者测量或院内目录规格不阻断有合法原文支持的类别与缺项说明，但参考意见绝不伪造目录产品 ID、默认一件数量或把“意见就绪”标为“耗材预留可确认”（具体选型与整批预留继续由[单次耗材预计决策](2026-10-28-single-material-estimate.md)独立把关）。指南评估 Command 的持久幂等回执仅保存任务、版本与状态，`result` 恒置空；正文与原文统一经实时核验来源可用性的读取接口返回，防止来源撤回后借历史回执重放泄露受限文本。
 
 ## Alternatives considered

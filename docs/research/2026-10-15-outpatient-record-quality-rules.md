@@ -1,6 +1,6 @@
 # 通用门诊病历缺项的官方依据与适用边界
 
-> 证据范围：《病历书写基本规范》（卫医政发〔2010〕11号）公开全文逐条核验；现行门诊病历质控规则与统一质控合同归[临床业务流程](../architecture/clinical-workflows.md#81-门诊闭环)与[统一病历质控决策](../decisions/implemented/architecture/2026-10-19-recording-quality-consolidation.md)。
+> 证据范围：《病历书写基本规范》（卫医政发〔2010〕11号）公开全文逐条核验；现行门诊病历质控规则与统一质控合同归[门诊业务流程](../architecture/outpatient-workflows.md)与[统一病历质控决策](../decisions/implemented/architecture/2026-10-19-recording-quality-consolidation.md)。
 
 ## 范围与证据
 

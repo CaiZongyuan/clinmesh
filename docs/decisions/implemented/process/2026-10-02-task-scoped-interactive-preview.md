@@ -12,7 +12,7 @@ Status: implemented
 
 Web application 移除常驻开发预览路由和源码树，不维护第二套医院界面与内存业务模型。真实 `/components` 与设置中的组件目录继续展示产品实际 primitives；支付、临床文书和完诊的业务预览继续由既有 owner 驱动。
 
-本决策取代[共用卡片工作台](../architecture/2026-10-30-workspace-card-composition.md)早期工作台中继续保留开发预览入口的约定，保留其生产模块与业务边界。已选定的设计以正式组件、[设计合同](../../../ui/design.md)和 owning Agent Notes 为准；通用 Matt `prototype` skill 保持上游内容。
+生产模块与卡片工作台边界见[共用卡片工作台](../architecture/2026-10-30-workspace-card-composition.md)；已选定的设计以正式组件、[设计合同](../../../ui/design.md)和 owning Agent Notes 为准，通用 Matt `prototype` skill 保持上游内容。
 
 ## Alternatives considered
 

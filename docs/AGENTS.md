@@ -1,6 +1,6 @@
 # AGENTS.md — Documentation
 
-本文规定 `docs/` 的内容归属、生命周期与写作检查。编写 skills 或 `AGENTS.md` 时使用 `writing-for-agents`；Agent Note 规则见 [`docs/decisions/README.md`](decisions/README.md)。
+本文规定 `docs/` 的内容归属、生命周期与写作检查；Agent Note 规则见 [`docs/decisions/README.md`](decisions/README.md)。
 
 ## 内容归属
 
@@ -28,7 +28,7 @@
 - **禁止缓存代码环境（Environment Cache）**：具体测试文件名列表、完整路由清单、Tool 明细大表、合成价目分值与锁文件哈希由代码、schema 与 lockfile 权威拥有，文档只保留架构不变量、状态边界与失败语义。
 - **单一当前状态**：文档只描述已实现的当前状态，删除未落地的早期设想、评审轮次、实现流水与已完成的一次性迁移故事；历史修订由 Git 保存，不建 `completed/` 或 `archived/` 副本。
 - **按分支渐进披露**：单文件混入多个独立修改域且过长时按任务边界拆分；移动、合并或删除章节前核对全库入站引用、标题 `#anchor`、源码报错文案引用与 `apps/docs/docs.ts` 公开清单（参见[文档发布](agent-development.md#文档发布)）。
-- **格式与链接**：一个自然段使用一条物理行，代码块、表格和列表按 Markdown 结构换行，文件以单个 LF 换行结束。仓库内链接使用实际存在的相对路径；公开页面中的本机 `localhost` 地址写成反引号代码 span，提及本地只读 `references/` 时不建 Markdown 链接，不编辑 `apps/docs/.generated`。
+- **格式与链接**：一个自然段使用一条物理行，代码块、表格和列表按 Markdown 结构换行。仓库内链接使用实际存在的相对路径；公开页面中的本机 `localhost` 地址写成反引号代码 span，提及本地只读 `references/` 时不建 Markdown 链接，不编辑 `apps/docs/.generated`。
 
 ## Verification
 

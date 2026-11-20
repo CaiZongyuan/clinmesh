@@ -56,7 +56,7 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 ### 标识符
 
 - 在线新建的 FHIR logical id 使用 UUIDv7 文本；确定性 scenario fixture 使用预分配 ID 或 `scenario version/seed + logical key` 派生的 UUIDv5，对外只暴露 FHIR logical id。
-- 患者号、门诊号、住院号、病案号存于对应主体的业务列或 `Identifier`（含稳定 `system` URI、用途与分配机构），不充当数据库主键；患者合并保留源 `Patient` 并以 `link` 表达，禁止改写历史 ID。
+- 患者号、门诊号、住院号、病案号存于对应主体的业务列或 `Identifier`（含稳定 `system` URI、用途与分配机构），不充当数据库主键，禁止改写历史 ID。
 
 #### 门诊号发行状态
 

@@ -11,7 +11,7 @@ Status: implemented
 ## Decision
 
 1. **纯函数双层评估引擎与只读预检分离**：在 `@clinmesh/contracts/clinical-quality` 与 `@clinmesh/core/clinical-quality` 定义零模型调用的确定性双层质控契约与纯函数，复用 `ckd-epi-2021-egfr` 与声明式 `medication-safety` 规则；通过只读预检操作供页面与 Agent 事前读取，正式门禁统一挂载在四个临床责任关口的既有共享 Command 写事务内（挂载点与质控代码见[临床决策支持与质控](../../../architecture/clinical-decision-support.md)），不新增旁路状态机或独立越权审批单，且禁止跨命令静默豁免后续受控写动作的审计留痕。
-2. **红线硬阻断与路径警示受控越权严格分层**：第一层药事与生理安全红线即使附带 `clinicalOverride` 也一律以 `409` 硬性拒绝（既有药事冲突码保持向后兼容并同步携带 `error.clinicalQuality` 阻断明细），零正式事实落库；第二层临床路径与指南偏离严格区分“已证实 `eGFR < 30`”硬阻断与“尚无近期血肌酐记录”条件警示，未附覆盖当前全部警示代码的合规 `clinicalOverride`（受控枚举 `reasonCode` 与医学说明 `note`）时返回 `409` 结构化警示，合规越权则在同一事务原子提交业务事实、写入 `0117_clinical-quality-override.sql` 建立的 `clinical_quality_override` 表，并在 Command 回执、`AuditEvent` 实体详情及 `Action Trace`（`ClinicalQualityOverride/<id>`）完整留痕，原幂等键重放直接返回已保存回执。
+2. **红线硬阻断与路径警示受控越权严格分层**：第一层药事与生理安全红线即使附带 `clinicalOverride` 也一律以 `409` 硬性拒绝（既有药事冲突码保持向后兼容并同步携带 `error.clinicalQuality` 阻断明细），零正式事实落库；第二层临床路径与指南偏离严格区分“已证实 `eGFR < 30`”硬阻断与“尚无近期血肌酐记录”条件警示，未附覆盖当前全部警示代码的合规 `clinicalOverride`（受控枚举 `reasonCode` 与医学说明 `note`）时返回 `409` 结构化警示，合规越权则在同一事务原子提交业务事实、写入 `clinical_quality_override` 表，并在 Command 回执、`AuditEvent` 实体详情及 `Action Trace`（`ClinicalQualityOverride/<id>`）完整留痕，原幂等键重放直接返回已保存回执。
 3. **紧凑原位交互与 DSH 提案无死锁透传**：四个 Web 关口统一以紧凑内联警示条渲染结构化 `409` 原因、受控原因枚举下拉、医学说明输入与重提按钮（红线仅显示不可越权原因），并在确定性 `409` 拒绝后释放冻结写意图以允许新幂等键附带 `clinicalOverride` 重提；门诊处方与完诊 DSH `.propose` 提案在现有 `AgentReviewProvider` 确认条内支持透传预填或遇到 `409 CLINICAL_QUALITY_ALERT` 时保留已通过的单次提案审批门禁并原位补充 `clinicalOverride`，保持全岗位各上下文 `agentToolsForContext <= 32`。
 
 ## Alternatives considered

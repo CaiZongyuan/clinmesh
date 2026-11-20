@@ -12,7 +12,7 @@ Status: implemented
 
 1. **构建与交互预算分离及宿主环境隔离**：Vitest 负责纯函数、组件与适配器单测；Playwright 按 React 版本分组在 `beforeAll` 复用编译产物，Web E2E 每 worker 执行一次独立 120 秒预算的生产构建（构建期间临时切换环境并在 `finally` 恢复 `test`，阻断 `production` 污染 Better Auth 合成账号初始化），单条交互用例保留紧凑的 30 秒／60 秒预算与 10 秒单动作上限，每例独占隔离 `BrowserContext`、随机端口 Hono 实例与临时文件 SQLite。Agent 柔光保持与淡出测试采用可控步进 `Date` 逻辑时钟配合真实渲染帧，消除调度抖动且不篡改产品动效时长。
 2. **字号与有限动画最终态等待边界**：涉及几何矩形、滚动或同排对齐断言的测试（如外观矩阵、手术与护士集中办理旅程）在采样前先经过真实渲染帧，循环读取目标子树尚未结束的有限动画（排除无限旋转加载指示器），等待其完成或取消后再重读以覆盖取消瞬间派生的替代动画，并等待 `transition-all` 标签实际计算字号稳定后再触发真实指针点击，绝不靠放宽像素容差、插入固定 `sleep` 或关闭产品动画迁就测试。
-3. **共享组合旅程与隔离 DSH 原生 Smoke**：抽取共享可见旅程（如 `consultation-recording-journey.ts`）串联直接记录、刷新恢复、局部手改保护、暂停补录与签署准备冻结，既在生产 Web E2E 中运行，又在锁定 DSH 的隔离 Profile 原生 smoke 中注入合成 `LlmAdapter` 验证真实 Session、`PageContext` lease、草稿 action 与 `.propose` 人工批准到 `CommandReceipt`／`AuditEvent`／`ActionTrace` 的全链贯通（`--live` 实模样本仅在获当次显式许可时独立运行，绝不进入常规 CI）。
+3. **共享组合旅程与隔离 DSH 原生 Smoke**：抽取跨宿主共享可见旅程串联直接记录、刷新恢复、局部手改保护、暂停补录与签署准备冻结，既在生产 Web E2E 中运行，又在锁定 DSH 的隔离 Profile 原生 smoke 中注入合成 `LlmAdapter` 验证真实 Session、`PageContext` lease、草稿 action 与 `.propose` 人工批准到 `CommandReceipt`／`AuditEvent`／`ActionTrace` 的全链贯通（`--live` 实模样本仅在获当次显式许可时独立运行，绝不进入常规 CI）。
 4. **CI `list` + `github` 双报告器**：CI 环境同时启用 Playwright 内置 `list` 与 `github` reporter（本地保持 `list`），在不改变零自动重试与超时门禁的前提下将失败文件、行号与断言直接发布为 GitHub Check 注释。
 
 ## Alternatives considered

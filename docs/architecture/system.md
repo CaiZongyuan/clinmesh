@@ -63,7 +63,7 @@ React SPA (standalone Web / DSH React Surface)
 - Desktop、React Native Mobile、离线写入和多端产品行为对齐（当前仅保留工程壳与跨端包边界）。
 - 自建自治 Agent runtime、模型 runner、独立 AG-UI Gateway、MCP、OAuth/SMART Agent 凭证、Evaluation Spec 和评分基础设施；DSH 原生 Session/browser Tool 桥接与私有 Capability Grant CLI 是已实现边界。
 - Cloudflare Worker、D1、R2、Queues、PostgreSQL、Supabase、多数据库 adapter、跨库事务或多实例并发写入。
-- 全国各省真实医保平台接口协议；完整 LIS、RIS/PACS、DICOM 归档、DICOMweb、手术麻醉、输血、院感、ICU、消毒供应或财务 ERP（胸片、胸部 CT 平扫阅片闭环与乳腺切片病理会诊为已实现窄范围，见[检验检查与报告修订](clinical-workflows.md#检验检查与报告修订)与[影像素材与病例影像准备](simulation.md#影像素材与病例影像准备)）。
+- 全国各省真实医保平台接口协议；完整 LIS、RIS/PACS、DICOM 归档、DICOMweb、手术麻醉、输血、院感、ICU、消毒供应或财务 ERP（胸片、胸部 CT 平扫阅片闭环与乳腺切片病理会诊为已实现窄范围，见[检验、检查与报告](examinations-and-reports.md)与[影像素材与病例影像准备](simulation.md#影像素材与病例影像准备)）。
 - 完整 FHIR R5 资源全集、完整 Search、通用 FHIR 写入、自定义 FHIR Operation、Bulk Data 或正式合规认证。
 - 临床图片、PDF、扫描件或其他 Binary 附件存储；签署文书仅保存受验证的结构化 FHIR JSON（影像与病理像素不属于附件，见[文书与附件边界](storage.md#文书与附件边界)）。
 
@@ -110,7 +110,7 @@ standalone Web、DSH Surface 和 CLI 最终调用相同的 Query 与 Command han
 | --- | --- | --- |
 | `fhir-native` | Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense、MedicationAdministration | 只由 Case 物化或业务 Command 创建和更新；FHIR API 只读 |
 | `fhir-native-immutable` | 已签署的 Composition、document Bundle、Provenance | 业务 Command 只创建新资源；更正创建显式修订关系，不覆盖已签实例 |
-| `domain-native` | Workspace Actor、Agent Client/Grant、Synthetic Patient Profile/Case/Persona、Investigation Result Snapshot、Consultation、Registration、[住院事实](clinical-workflows.md#住院闭环)、Diagnosis Draft/Confirmation、Prescription、收退款与医保待遇账、库存账、临床草稿、模型执行与用量账本、Scenario Run、Action Trace、audit_log | 只通过 `/api/agent/v1`、`/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
+| `domain-native` | Workspace Actor、Agent Client/Grant、Synthetic Patient Profile/Case/Persona、Investigation Result Snapshot、Consultation、Registration、[住院事实](inpatient-workflows.md)、Diagnosis Draft/Confirmation、Prescription、收退款与医保待遇账、库存账、临床草稿、模型执行与用量账本、Scenario Run、Action Trace、audit_log | 只通过 `/api/agent/v1`、`/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
 | `domain-projection` | AuditEvent、InventoryItem、ImagingStudy、Procedure | 从领域事实同事务生成；FHIR API 只读 |
 | `simulation-private` | Index Encounter、Case Truth、隐藏来源资源和生成模型输入 | 仿真解析器内部可读；管理员仅在受控核对边界只读 Case Truth，生成模型输入不公开；普通 HIS、FHIR、来源历史和岗位 Agent 不可读取 |
 
