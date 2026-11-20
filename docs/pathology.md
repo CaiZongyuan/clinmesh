@@ -147,5 +147,5 @@ clinmesh pathology-report correct --input @pathology-correction.json --idempoten
 ## 延伸阅读
 
 - [病理切片素材清单](../pathology-assets/README.md)：来源、许可与署名、摄取规则、逐张切片的记录和适配条目。
-- [申请生命周期](architecture/clinical-workflows.md#87-检验检查与报告修订)及[素材、病例准备与读取边界](architecture/simulation.md#107-影像素材与病例影像准备)。
-- [Agent Note：乳腺切片病理会诊闭环](decisions/implemented/architecture/2026-10-03-breast-slide-consultation-loop.md)：会诊入口与本院活检的取舍。
+- [申请生命周期](architecture/examinations-and-reports.md)及[素材、病例准备与读取边界](architecture/simulation.md#107-影像素材与病例影像准备)。
+- [Agent Note：病理切片摄取、匹配与会诊闭环](decisions/implemented/architecture/2026-10-02-pathology-slide-ingest.md)：会诊入口、切片包与本院活检的取舍。
