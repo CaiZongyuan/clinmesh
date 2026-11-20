@@ -1,33 +1,27 @@
-# Agent Note: Operation Catalog 驱动的 Agent 原生 HIS CLI
+# Agent Note: Operation Catalog 驱动的 Agent 原生 HIS CLI 与运行时错误关联
 
 Status: implemented
 
 ## Problem
 
-ClinMesh 的 HIS 与 FHIR 接口已经拥有多岗位业务能力，但直接调用者仍需理解 HTTP path、body wrapper、Better Auth cookie、幂等 header 和资源版本。把 route 机械改名为子命令会在 CLI、服务端授权和 Agent 指引之间建立多份易漂移合同，也会诱导通用 HTTP、FHIR write 或数据库逃生入口。实现合同由 [GitHub issue 61](https://github.com/CaiZongyuan/clinmesh/issues/61) 追踪。
+ClinMesh 的多岗位 HIS 与 FHIR 接口若由调用方手工拼接 HTTP 路径、Better Auth Cookie、幂等头和预期版本，或机械包装路由生成 CLI 与技能文档，极易出现服务端授权、CLI 参数与运行时指引三处漂移，并诱发通用 HTTP、FHIR Bundle 或 SQL 逃生口。同时，未知服务端异常、客户端网络／协议超时与渲染崩溃若缺少不暴露敏感原文的统一关联标识和明确未知结果边界，会使人类页面与 Agent CLI 无法安全对账恢复。
 
 ## Decision
 
-`packages/contracts` 中导出的 `hisOperationCatalog` 是 CLI/Capability Grant 直接 HIS 操作面的唯一合同 owner。每项 operation 显式拥有稳定 ID、版本、`cliPath`、mode、输入/输出/错误 schema、HTTP adapter、handler owner、identity、岗位、风险、幂等、expected version 与 preview token 要求；CLI 命令树、离线 discovery、服务端 Agent route matching、Grant Catalog hash 和 Skill 示例验证都投影这份合同。DSH 页面 Tools 使用独立的 `agentToolCatalog`，只在当前人类 Session 内投影 UI action 和 proposal，不进入 Capability Grant allowlist。管理员通过独立 operations 搜索 Reference candidates、创建 Laboratory Service publication job 并读取状态；医生病例级目录只返回已发布 Hospital Service，不暴露 Investigation Generation Capability，也不能用全局概念 ID 绕过。既有 Command receipt 使用不同持久 operation 名称时，Catalog 保存 adapter 名称，使 Agent 始终用公开 operation ID 恢复而不改写历史 receipt。
+以单一声明式目录统合 CLI 操作面、短期单岗位授权与跨层错误恢复，详细合同见[Agent 集成](../../../architecture/agent-integration.md)与[安全与可靠性](../../../architecture/security-and-reliability.md)：
 
-`apps/cli` 发布 `clinmesh` 可执行入口。Human mode 使用本地 Better Auth profile，高风险 write 需要 `--yes`；Agent mode 只接受 runner 注入的短期 `cma_` token，不回退到 human profile。Agent Client 是稳定非人类 Actor，并与 Human Membership 一样投影到 `workspace_actor`；Agent Capability Grant 把它绑定到一个 Workspace、Epoch、Scenario Run、单一 Practitioner Role、operation allowlist、Catalog hash、policy version 和期限。Grant 与 allowlist 使用 Workspace/Epoch 复合键和关系行持久化，operation ID 在 contracts 边界按 Catalog 验证，不保存 JSON 授权集合。Human 控制面要求当前选中的 Acting Practitioner Role 是 administrator，不能只凭账户拥有该岗位。控制面 mutation 复用 CommandExecutor 的幂等、审计和 Action Trace；Grant 原 token 只返回一次，receipt 脱敏且不能重放。控制面结果未知时先检查当前状态；Grant 创建结果未知时撤销可能已经创建的 Grant，再用新幂等键签发替代 Grant。服务端只保存 token SHA-256；撤销、过期、Client 禁用、Epoch reset、Scenario Run 关闭、岗位停用或版本变化都会使 Grant 失效。
-
-CLI 默认输出版本化 JSON，human mode 可选择 table。所有 write 显式携带 idempotency key，连接丢失或 write 5xx 不自动重试，而是返回 ambiguous 并通过 Command receipt 对账。Command receipt 持久化 Acting Practitioner Role，公开查询必须匹配原 Actor、岗位、Workspace 和 Epoch；无法从历史 Audit Event 可靠回填岗位的旧 receipt 保持不可见。复杂输入只从 workspace 内文件或 stdin 进入窄 schema。CLI 不提供通用 invoke、任意 URL、method/path/body、SQL、JSON Patch、FHIR write 或 Bundle write。
-
-生成 Synthetic Case 开始或 replay 时，活动 Patient Brief 的问诊主题被确定性物化为 case-scoped Consultation Question Rules；首次问诊同时接管医生责任。独立处方开具原子创建 MedicationRequest 与药品 ChargeItem/Charge Record，只有 Encounter 完成后才能支付并移交药房。这两条桥接保证同一病例不依赖 legacy first-visit 或组合签署入口即可完成 CLI 跨岗位闭环。
-
-根 `skills/` 的八个 model-invoked `clinmesh-*` Skills 按共享恢复、管理员、挂号、分诊、医生、收费、药房和 FHIR 拆分，供项目启动后的运行时 Agent 操作 HIS。Skills 解释业务意图、状态前置、岗位交接和反例，精确 flags 与 schema 仍由 Catalog discovery 拥有；临床 Skills 不包含 Agent Client/Grant 管理命令。
+1. **`hisOperationCatalog` 单一操作面与 `clinmesh` CLI**：`packages/contracts` 导出的 `hisOperationCatalog` 唯一定义直接 HIS 操作的稳定 ID、版本、`cliPath`、输入／输出／错误 schema、HTTP 映射、岗位风险、幂等与版本前置要求；CLI 命令树、离线 discovery、服务端 Agent 路由匹配、Grant 目录哈希与根 `skills/clinmesh-*` 示例漂移测试共享同一投影（历史回执使用不同内部名称时经 `commandOperationAliases` 兼容映射，DSH 页面工具则由独立的 `agentToolCatalog` 管理）。
+2. **双模式身份与单岗位短期 `Agent Capability Grant`**：`apps/cli` 在 Human 模式使用本地认证会话并对高风险写入要求 `--yes`；Agent 模式仅接受运行器注入的短期 `cma_` 令牌，绝不回退人类配置。管理员在显式选定 administrator 行动岗位后，通过受审计 Command 为非人类 `Agent Client` 签发绑定单一 Workspace、Epoch、Scenario Run、单一 `PractitionerRole`、操作白名单与目录哈希的 Grant（原令牌仅返回一次，数据库只存 SHA-256，任一上下文或版本变化即失效）。CLI 拒绝提供任意 URL、method/path/body、SQL、JSON Patch 或 FHIR 写入口。
+3. **服务端生成 `correlationId` 与脱敏异常报告**：Server 为每个请求独立生成 UUID 并通过 `X-Correlation-Id`（及 HIS JSON `error.correlationId`）返回，不信任客户端传入的同名请求头；FHIR 保持标准 R5 `OperationOutcome`。未知 HTTP 异常与后台 outbox 派发异常统一由受控 runtime reporter 向结构化 stderr 记录 `correlationId`、HTTP 方法、路由模板与有限错误类别，绝不向响应或日志输出原始异常消息、堆栈、请求正文或凭证。
+4. **客户端错误归一化与未知写结果对账**：Web HTTP 适配器以 30 秒总期限覆盖请求与响应体读取，将超时、断网、取消、非 JSON 与 schema 失配统一转为受控 `ApiClientError`，根 Error Boundary 提供本地化子树重挂恢复。CLI 与 Web 对写入 `5xx`、断连或响应丢失一律保持 `ambiguous` 语义、禁止自动换键重试，调用方必须按原 Actor、原岗位与原幂等键查询 `command.receipt.get` 对账。
 
 ## Alternatives considered
 
-**为每个 HTTP route 手写 CLI 和 Skill。** 这种方式能快速包装少量 endpoint，但 path/body、岗位和示例会形成多个 owner，兼容 route 也会被误当成新能力。
-
-**提供 raw HTTP、FHIR Bundle 或通用 operation invoke。** 这种方式覆盖面大，却把 URL、method/body 和资源编排权交给模型，绕开业务意图、最小权限和可审计命令边界。
-
-**让 Agent 复用 human profile 或多岗位 token。** 这种方式减少控制面对象，但 task 可以意外继承长期 cookie 或在流程中自选岗位，无法把一次授权限制到单一责任上下文。
-
-**修改全部既有 Command operation 名称以匹配 Catalog。** 这会破坏跨版本 idempotency receipt 与审计标识。显式 adapter 保留历史持久语义，同时给 CLI 一个稳定公开 ID。
+- **为每个 HTTP 路由手写 CLI 子命令或提供通用 HTTP／FHIR Bundle 写工具**：前者制造多份易漂移的权限与参数定义，后者将资源编排和越权组合交给模型，破坏窄命令审计边界。
+- **允许 Agent 复用长期人类会话或跨岗位多角色令牌**：使单次任务意外继承宽泛权限或自行切换医院责任岗位。
+- **直接信任客户端 `X-Request-Id` 或在错误响应／日志中透传原始异常栈**：允许伪造日志关联，并可能把患者文本、查询参数或外部 Provider 密钥写入响应与标准错误流。
+- **对所有超时和 `5xx` 统一自动重试**：读请求虽可重试，但写请求可能已在服务端提交，自动重发会破坏未知结果对账纪律。
 
 ## Consequences
 
-新增或修改 Agent-facing operation 时必须同时更新 Catalog、真实 handler mapping、对应 Skill 和漂移测试；route coverage 会拒绝未分类的 HIS route。Agent runner 需要按岗位签发多个短期 Grant，并负责把原 token 安全注入进程环境。CLI 能覆盖当前完整 canonical HIS，但不等于交付模型 runner、嵌入式助手、MCP、OAuth/SMART、Evaluation Spec 或评分系统；这些表面只能在后续复用同一 Catalog 和服务端授权边界。
+任何 Agent 可见操作的路径、schema 或错误恢复语义变更，均在同一提交内由目录版本、服务端路由覆盖检查与 `clinmesh-*` Skill 漂移测试同步约束。调用方凭 `correlationId` 即可在不暴露业务正文的前提下关联服务端故障日志；HTTP `correlationId`、Command `requestId` 与 outbox `correlationId` 保持各自职责，不冒充分布式全链路追踪系统。

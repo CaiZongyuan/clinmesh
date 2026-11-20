@@ -18,7 +18,7 @@ Status: implemented
 
 归档核对复用 DRG owner 的预分组冻结读取，以独立 `frozenGrouping` 保留原病组、规则身份和支付参考，不将归档结果伪装为实时推演。冻结读取在当前规则和实时首页快照事务之前分流，既不随规则升级重算，也可参与外层一致快照查询。该投影不参与未归档依据指纹或解释持久输入，保持旧有效解释及模型步骤身份；兼容读取默认值不能改变外部模型请求的恢复哈希。旧归档无冻结结果时保留明确缺项，原解释与用量仍可只读核查。
 
-既有后台自动复查、材料差异待办及归档交接继续保留；本决策补充[事实复查与责任交接](2026-10-27-inpatient-drg-review-handoff.md)的页面读取路径，与[固定准备决策](2026-10-28-fixed-pci-persona-readiness.md)、[单次预计决策](2026-10-28-single-material-estimate.md)和[最终用量核实决策](2026-10-30-surgery-final-material-reconciliation.md)共同覆盖本轮住院 AI 辅助简化。当前合同见[直接分组记录核对](../../../architecture/clinical-workflows.md#直接分组记录核对)，验收见 [PCI 住院 AI 辅助需求（Issue #344）](https://github.com/CaiZongyuan/clinmesh/issues/344)。
+既有后台自动复查、材料差异待办及归档交接继续保留；本决策补充[手术流程指引与术后复查交接](2026-11-13-surgery-flow-assistance.md)的页面读取路径，与[多病例准备与 Persona 就绪](2026-11-19-authored-case-pack-compiler.md)、[单次预计决策](2026-10-28-single-material-estimate.md)和[最终用量核实决策](2026-10-30-surgery-final-material-reconciliation.md)共同覆盖住院 AI 辅助闭环。当前合同见[住院与手术流程](../../../architecture/inpatient-workflows.md)，验收见 [PCI 住院 AI 辅助需求（Issue #344）](https://github.com/CaiZongyuan/clinmesh/issues/344)。
 
 ## Alternatives considered
 

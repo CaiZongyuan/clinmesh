@@ -1,159 +1,66 @@
 # DSH 页面操作与视觉反馈
 
-本文说明 DSH ClinMesh 工作台实际接入的页面控制、业务操作及反馈。可执行工具名称、岗位与页面范围由 [Tool Catalog](../packages/contracts/src/agent.ts) 定义，输入约束由 [Tool 输入 schema](../packages/contracts/src/agent-tool-input.ts) 定义；本文不复制参数 schema。
+本文说明 DSH ClinMesh 工作台实际接入的页面控制、业务操作、栏目发布边界及视觉反馈时序。可执行工具名称、岗位／页面／栏目归属由 [`agentToolCatalog`](../packages/contracts/src/agent.ts) 唯一权威定义，输入参数约束由 [`agent-tool-input.ts`](../packages/contracts/src/agent-tool-input.ts) 定义；本文不复制逐项 schema 或完整工具清单。
 
 ## 业务会话
 
-新建医院业务会话使用“ClinMesh 医院助手”（`clinmesh-assistant`）；若已保存其他默认 preset，在 DSH 设置中选择该 preset 后新建会话。既有会话保留其已挂载的 Agent 组合，开发排障使用 `standard`。装配与授权边界见 [系统架构](architecture/agent-integration.md#7-agent-适配器与能力边界)。
+新建医院业务会话使用“ClinMesh 医院助手”（`clinmesh-assistant` preset；开发排障使用 `standard`），装配与授权边界见[Agent 接入与能力边界](architecture/agent-integration.md#7-agent-适配器与能力边界)。每个用户回合先按当前发布的工具 schema 读取授权页面，核对岗位、患者与目标资源，再调用 `clinmesh_*` Tools 并重读业务状态确认结果；意图冲突或缺必要临床输入时通过 `ask_user_question` 向人类澄清，正式业务动作一律交工作台人工审阅，人工拒绝后不重复提交。
 
-医院助手先读取当前授权页面，确认岗位、患者和目标资源，再调用当前发布的 `clinmesh_*` Tools，并通过重新读取业务状态核对结果。真实身份或任务意图冲突、缺少无法通过工具取得的必要信息时使用 `ask_user_question` 向工作台用户澄清。向虚拟患者问诊使用 `clinmesh_ask_virtual_patient`；不在问诊栏目时先用 `clinmesh_select_doctor_section` 切到 `consultation`，再读取实际工具目录继续。正式业务动作通过工作台人工审阅，人工拒绝后不重复提交。
-
-每个用户回合重新按当前工具 schema 读取页面，不从历史调用复制绑定。用户指定另一患者时，先核对当前选择与目标；读取失败只能说明状态尚未确认，不能据此断言患者没有问诊记录、页面仍是上一病例，或把队列摘要当作最新病例详情。
-
-问诊超时后先读取问诊轮次：患者已有回复则继续；最后一轮仍是医生问题且页面开放重试时，调用 `clinmesh_retry_patient_reply`，避免重复发送同一医生问题。无法确认操作结果时停止自动重试，请求人类核对。内部 Persona 与数据库查询属于开发排障，业务会话只使用授权工具返回的可见事实。
+向虚拟患者提问使用 `clinmesh_ask_virtual_patient`（不在问诊栏目时先调 `clinmesh_select_doctor_section` 切到 `consultation` 并等待工具目录更新）；问诊超时后先重读轮次，仅当末轮仍为未答医生提问且页面开放重试时调用 `clinmesh_retry_patient_reply`，结果不明时停止自动重试并交人类核对。读取失败不得推断患者无历史记录，业务会话也不得查询内部 Persona 或数据库。
 
 ## Tool 绑定与恢复
 
-医生已选病例时，`clinmesh_read_current_context`、`clinmesh_read_doctor_context` 和授权历史纯查询只提交业务参数，由系统核对原任务与当前病例。其余页面 Tool 在 JSON 中显式传入当前工具 schema 的 `scopeKey`、`pageRevision` 的 `const` 值；`const` 只限制取值，不会自动填入。短期 `contextId` 由执行桥接管理，读取不消耗 Page Context，无须让写入成为新回合的第一次调用。只续签或改变加载状态不会改变模型绑定值；同病例栏目、问诊与草稿更新可继续纯查询；换岗位、会话或病例后旧任务暂停，切回也不会自行恢复。精确操作按最新工具定义绑定，不从历史对话复制绑定。具体绑定合同见 [系统架构](architecture/agent-integration.md#72-page-context)。
+医生已选病例时，`clinmesh_read_current_context`、`clinmesh_read_doctor_context` 与授权历史纯查询仅提交业务参数并由服务端核对当前任务与病例；其余页面 Tool 必须在 JSON 中显式传入当前工具 schema 中 `scopeKey`、`pageRevision` 的 `const` 值（`const` 仅作校验，不会自动注入）。短期 `contextId` 由执行桥接托管，只读调用不消耗 Page Context；换岗位、会话或病例后旧任务自动暂停且切回不自恢复。
 
-绑定诊断发生在页面业务动作执行前，不代替业务结果核对：
-
-| 诊断 | 含义与恢复 |
+| 诊断码 | 含义与恢复动作 |
 | --- | --- |
-| `CLINMESH_BINDING_ARGUMENTS_INVALID` | 调用缺少或包含无效绑定字段；按错误列出的字段补齐当前 schema 的值后重试。 |
-| `CLINMESH_HOST_SESSION_REQUIRED` | 宿主未关联 DSH Agent 会话；从打开 ClinMesh 工作台的会话调用，补参数不能恢复会话关联。 |
-| `CLINMESH_BINDING_MISMATCH` | 原调用尚未执行；绑定可比较时列出不匹配的 `scopeKey`、`pageRevision`，定义不可用时说明绑定状态，不据此断言患者已切换。Host 按真实只读 schema 提供恢复调用：医生已选病例的无参数读取使用 `{}`，其他页面使用读取定义中的有效绑定。先读取并核对患者、岗位与原任务，再原样使用最新写 Tool 的 `const` 生成新调用，不重新拼装 `pageRevision` 或自动重放原写入。 |
-| `AGENT_CONTEXT_EXPIRED` / `AGENT_CONTEXT_INVALID` / `AGENT_CONTEXT_STALE` | 服务端授权拒绝过期、无效或资源已变化的上下文；等待页面更新工具定义，按当前绑定读取状态后决定是否重试。工具持续未更新时重新打开工作台。 |
-| `AGENT_OPERATION_NOT_ALLOWED` | 调用的 Tool、Session、scope 或语义 revision 与当前授权不一致；等待当前工具定义并读取页面状态，重新判断该动作是否仍适用，不自动沿用旧意图。 |
+| `CLINMESH_BINDING_ARGUMENTS_INVALID` | 缺失或错填绑定字段；按诊断列出的当前 schema `const` 补齐后重试。 |
+| `CLINMESH_HOST_SESSION_REQUIRED` | 未关联打开 ClinMesh 工作台的 DSH 会话；须从绑定工作台的会话发起，补参数无效。 |
+| `CLINMESH_BINDING_MISMATCH` | 原调用尚未执行；先用只读 Tool（医生已选病例传 `{}`，其余页传当前读取绑定）核对患者、岗位与原任务，再用最新写 Tool 的 `const` 重新构造调用，严禁自动重放原写请求。 |
+| `AGENT_CONTEXT_EXPIRED` / `AGENT_CONTEXT_INVALID` / `AGENT_CONTEXT_STALE` | 服务端拒绝过期、无效或资源版本已变的上下文；等待页面刷新工具定义并重读状态后再决定是否重试，持续未更新时重开工作台。 |
+| `AGENT_OPERATION_NOT_ALLOWED` | 调用超出当前 Session、scope 或诊疗栏目授权；等待最新工具目录并重读页面状态，不沿用旧意图。 |
 
-同一回合的页面动作完成后，Host 与页面通过明确交接确认新目录，再启动下一模型请求；连接状态 active 本身不能证明完整目录已更新。同步失败会停止当前回合并保留原业务结果，用户无需为栏目切换手动刷新。宿主和页面不会自动补入缺失绑定，也不会自动重放写入。网络中断、执行失败或回执失败仍按下述结果确认规则处理，不能套用绑定拒绝的“尚未执行”结论。
+同一回合页面动作完成后，Host 与页面显式交接确认新工具目录就绪后才发起下一模型请求；网络中断或执行后回执失败仍按正式 Command 回执流程核对，不能套用绑定拒绝的“尚未执行”结论，绑定合同见 [Page Context](architecture/agent-integration.md#72-page-context)。
 
 ## 读取与编辑边界
 
-原生 DSH Session 经 React Surface 与 browser-tools 调用当前授权岗位、页面和病例的窄 Tools。连接状态 active 只表示通道可用，不表示模型正在思考或操作；读取不会触发目标流光。模型 transcript 由 DSH 拥有，ClinMesh 不显示推测的模型活动。
+原生 DSH Session 经 React Surface 与 browser-tools 调用窄 Tools；通道 `active` 仅表示连接可用，只读查询不触发界面流光，ClinMesh 也不渲染推测的模型思考状态。`ui.context.read` 仅返回当前页面注册的状态与已挂载同病例表单的编辑值（如挂号草稿、分诊体征、医生病历／检查／诊断／处方表单、药房审核与批次数量），离开表单即移除，不暴露任意 DOM、跨患者数据或 `Case Truth`。
 
-`ui.context.read` 显式返回页面注册的状态与当前挂载表单的结构化值。挂号包含患者和挂号草稿，分诊包含主诉、分级与生命体征，医生包含当前病历、检验选择以及已挂载的初诊、诊断、处方或复诊表单，药房包含审核意见、批次与数量。未保存输入以当前编辑值返回；局部表单仅在所属页面和所选病例一致时纳入结果，离开表单后移除。它不是自动实时同步，不提供任意 DOM、跨患者读取或 Case Truth。
-
-发布给模型的 Tool 描述约定：填写或保存草稿前先读取当前页面内容，包括未保存输入，再结合用户指令判断是否询问覆盖。该约定不提供程序强制的覆盖授权、独占编辑、并发编辑保护或自动合并。人工始终可以编辑；Agent 保存与人工编辑仍可能互相覆盖。正式医院 Command 继续要求应用内人工审阅，聊天中的同意不能替代该审阅。
+填写或保存草稿前，模型须先读取含未保存人工输入在内的当前页面值以决定是否询问覆盖；该约定不提供独占锁或并发自动合并，人工编辑始终可用。正式医院 Command 必须经应用内人工审阅框确认，聊天文字同意不能替代审阅。
 
 ## 反馈时序
 
-输入通过校验且取得服务器授权后，页面动作开始执行时才发出执行反馈。Agent 的非 proposal 动作执行期间，临床工作区边缘显示环绕柔光，可见目标使用淡边框和蓝色菱形标记；快速动作直接进入完成反馈，不延迟业务，不模拟逐字输入。最后一项执行结束时立即停止柔光的持续绘制。成功结果确认后，静态柔光和目标标记保持约 1.5 秒，再用约 600 毫秒淡出；淡出开始约 800 毫秒后释放 Canvas，文字完成提示保留约 4 秒。开始与完成被 React 合并渲染的快速动作也绘制一帧静态结果；静态保留期间尺寸变化时重绘以保持边缘贴合，不恢复持续动画。连续成功动作从最后一次完成重新计算柔光停留时间，同一目标的标记也重新计时；并发动作各自结束，仍在执行的动作保留强调。失败或结果未确认不触发成功停留。草稿动作明确显示“草稿已更新，尚未正式提交”。
+输入校验与服务端授权通过后，非 proposal 页面动作执行期间在临床工作区边缘渲染蓝色环绕柔光，并为可见目标绘制淡边框与菱形标记（快速动作合并渲染时仍保留一帧静态结果，不人为延迟业务或模拟逐字打字）。最后一项动作完成时立即停止持续绘制，静态柔光与目标标记保持约 1.5 秒后用约 600 毫秒淡出，随后释放 Canvas、文字完成提示保留约 4 秒；减少动态效果偏好或 WebGL2 不可用时自动降级为无 Canvas 静态边缘。草稿保存明确提示“草稿已更新，尚未正式提交”，普通反馈不抢焦点、不滚动页面、不锁定人工输入。
 
-普通反馈不移动焦点或滚动页面，也不锁定输入。明确导航或聚焦保留动作本身的视线移动；导航完成强调目标工作区标题。医生分区切换标记在按视口和滚动容器裁剪后，四边向内缩 4px，避免底边与窗口边缘重合；字段标记保持贴合控件。页头显示紧凑状态摘要，详情按需展开并合并相同动作名称、状态和说明；进行中、待人工确认、人工提交中和需查看的数量分别保留，单项完成不会遮住其他待确认事项。目标未挂载或在滚动区域外时仍显示状态。柔光与标记不接收点击。减少动态效果偏好不创建动画 Canvas，使用静态边缘和文字；WebGL2 不可用时同样降级为静态边缘。完成提示仍按同一时限清理。
-
-病历草稿工具仍提交完整病历，但高光只覆盖本次输入与当前病例页面值不同的字段。比较在执行开始时进行，包含尚未保存的人工输入；本次字段集合保留到动作结束，保存后的表单刷新不会使完成高光消失。多个字段变化时同时突出，无字段变化或病历表单未挂载时只显示动作状态。该比较不阻止覆盖，也不提供执行期间的并发编辑保护。
-
-问诊反馈覆盖消息滚动区域、发送中的消息和患者输入提示，以及执行期间新出现的文本消息气泡，不包住标题、输入框或发送按钮；执行开始前已渲染的消息不单独高亮。诊疗标签切换完成后强调目标内容区。诊断与处方草稿反馈同时覆盖相应目录入口；目录已打开时，边框在弹窗内部绘制，并暂停强调被弹窗遮住的页面目标。反馈不主动打开目录，直接保存草稿仍使用既有动作路径。
-
-所有 `.propose` 动作从准备开始就只显示静态状态；返回 `awaiting-human-review` 后，Tool 调用已经返回，但审阅仍可独立等待。人工审阅框、批准后的审批与提交、拒绝及其结果不触发柔光或目标动效。等待时显示“待人工确认”，批准和拒绝仍按真实结果更新状态。另一个独立 Agent 动作的执行反馈按自身生命周期结束。打开预览、填写草稿和打开审阅框均不代表正式业务提交成功。
-
-明确业务拒绝立即停止流光并显示原因。Abort、网络中断、超时、服务端错误、无法解析的响应或执行后回执失败显示结果尚未确认；视觉清理不表示请求已经取消、保存已经撤销或业务未发生。需要通过当前状态和既有 Command 恢复流程核对结果。
-
-切换页面、病例、岗位、Workspace/Epoch、DSH Session，或 Surface 通道失活会清理旧目标。旧调用的晚到结果不能在新上下文重新点亮；主动导航和选择只允许对应动作的完成反馈转到其明确指定目标，病例详情加载期间仍以界面已选病例限定反馈。同一 Surface 与 Session 内重新注册工具时的短暂 `connecting` 不提前清理反馈。表单内容变化不会单独清除普通动作反馈；既有人工审阅仍按其页面版本与上下文合同失效。
+局部高亮遵循精确业务范围：病历草稿仅高亮本次输入与执行前页面值（含未保存手改）实际不同的字段；问诊反馈覆盖消息滚动区与执行期新增气泡；诊断与处方草稿同步覆盖已打开的目录弹窗内部并暂停被遮挡背景目标。所有 `.propose` 动作从发起即保持纯静态，返回 `awaiting-human-review` 后审阅框独立等待人工批准或拒绝，全程不触发流光。业务拒绝立即停止流光并展示原因；网络中断、超时或回执丢失提示“结果尚未确认”，视觉清理不代表请求已撤销。切换页面、病例、岗位、Workspace/Epoch 或 DSH Session 立即清理旧目标，防止迟到结果跨上下文点亮。
 
 ## 当前操作
 
-以下可见动作均先经过 Tool 输入校验、当前 Page Context 授权和页面可用性检查。填写列举的字段同时反馈；复杂结构替换强调对应行或业务区域。所有 `.propose` 动作采用上节的静态独立审阅时序。
+可执行操作按工作区与岗位严格收窄，完整 operation 列表、前提与目标字段映射以 [`agentToolCatalog`](../packages/contracts/src/agent.ts) 为唯一事实源：
 
-| Operation | 额外前提 | 目标与实际效果 |
-| --- | --- | --- |
-| `ui.navigate` | 目标工作区在当前岗位允许列表内 | 切换工作区；收费员的 `billing`／`inpatient` 同步门诊／住院队列模式；完成时强调目标页标题 |
-| `inpatient.stage.select` | 当前岗位可访问目标阶段 | 选择住院环节；只读或未发生环节从“更多”访问 |
-| `inpatient.order.verify.propose` | 病区护士、当前医嘱允许校对 | 在医嘱行准备校对，由护士核对并确认 |
-| `inpatient.report.acknowledge.propose` | 住院医生、当前报告已实际显示且版本一致 | 在报告行准备已阅，由医生逐份确认 |
-| `inpatient.payment.draft.set` | 收费员、出院结算阶段 | 填写补交金额及组合方式，保留助手来源，不收款 |
-| `inpatient.payment.preview` | 当前资金草稿有效 | 生成原收款预览，不提交资金 Command |
-| `inpatient.settlement.preview` | 当前患者允许生成结算预览 | 生成结算预览，实际收款与结算仍由人类确认 |
-| `ui.panel.focus` | 当前工作区面板存在 | 聚焦面板并强调页面标题 |
-| `registration.synthetic-case.search` | 挂号页面 | 更新待诊病例搜索与列表；强调搜索框 |
-| `registration.synthetic-case.select` | 病例在当前结果页中 | 选择目标病例行 |
-| `registration.patient.search` | 挂号页面 | 更新患者搜索与列表；强调搜索框 |
-| `registration.patient.select` | 患者在当前结果页中 | 选择目标患者行 |
-| `registration.patient.draft.set` | 挂号页面 | 填写姓名、标识、出生日期与性别；不建档 |
-| `registration.draft.set` | 挂号目录可用且选择有效 | 填写科室、地点与就诊类型；不挂号 |
-| `registration.patient.create.propose` | 患者草稿必填内容完整 | 人工审阅创建患者档案 |
-| `registration.outpatient.propose` | 已选患者及有效挂号目录项 | 人工审阅门诊挂号 |
-| `registration.synthetic-case.start.propose` | 已选合成病例及有效挂号目录项 | 人工审阅开始病例 |
-| `triage.case.select` | 病例在当前分诊队列页中 | 选择目标病例行 |
-| `triage.draft.set` | 已选分诊病例 | 同时填写并强调主诉、分级及生命体征；不提交分诊 |
-| `triage.record.propose` | 已选病例且主诉非空 | 人工审阅分诊评估 |
-| `outpatient.case.select` | 病例在读取结果的 `queue.items` 中 | 选择目标病例，并切到其所属的待诊或在诊分组 |
-| `outpatient.section.select` | 当前病例有相应可见诊疗页；`examinationRequestId`、`imagingRequestId` 与 `pathologyRequestId` 只能与“检验检查”页同用，且对应的功能检查、放射申请或病理会诊申请已有报告 | 选择目标诊疗标签并按该栏目重新发布 Tool；带 `examinationRequestId` 时定位该功能检查报告，带 `imagingRequestId` 或 `pathologyRequestId` 时同时为人类展开该申请的影像或切片；完成时强调目标内容区 |
-| `outpatient.consultation.ask` | 当前病例允许问诊 | 发送问题，等待患者回答；强调问诊记录区 |
-| `outpatient.consultation.reply.retry` | 当前回复可重试 | 重试患者回答；强调问诊记录区 |
-| `outpatient.first-visit.draft.set` | 初诊草稿阶段 | 保存现病史和评估草稿；强调两个字段 |
-| `outpatient.diagnosis.draft.set` | 独立诊疗流程且就诊进行中 | 保存诊断草稿；强调诊断行、添加或更换入口，以及已打开的疾病目录 |
-| `outpatient.laboratory.draft.set` | 独立诊疗流程且就诊进行中 | 保存检验项目与指征；不下达申请 |
-| `outpatient.examination.draft.set` | 独立诊疗流程且就诊进行中 | 保存功能检查项目与检查指征；不签发申请 |
-| `outpatient.imaging.draft.set` | 独立诊疗流程且就诊进行中 | 保存放射检查项目与检查指征；不签发申请 |
-| `outpatient.pathology.draft.set` | 独立诊疗流程且就诊进行中 | 保存病理会诊项目、送检的既往手术（取自读取结果 `pathologyServices` 的 `sourceProcedures`）与会诊目的；不签发申请 |
-| `outpatient.prescription.draft.set` | 当前尚无正式用药结论 | 保存处方条目；强调药品名称、剂量、频次、疗程、数量、目录入口及处方区域；药品目录打开时覆盖目录和包装控件 |
-| `outpatient.revisit.draft.set` | 兼容复诊草稿阶段 | 保存诊断、评估、计划与用药草稿 |
-| `outpatient.record.draft.set` | 独立诊疗流程且就诊进行中 | 保存结构化病历并保留 Agent 新增内容归属供来源质控；同时强调本次病历字段 |
-| `outpatient.preview.request` | 已有可预览草稿 | 生成签署预览；强调病历区域 |
-| `outpatient.visit.start.propose` | 病例可开始接诊 | 人工审阅开始接诊 |
-| `outpatient.diagnosis.confirm.propose` | 诊断满足当前确认条件 | 人工审阅诊断确认 |
-| `outpatient.laboratory.issue.propose` | 已有检验草稿 | 人工审阅开立检验申请 |
-| `outpatient.laboratory.cancel.propose` | 申请可撤销 | 人工审阅撤销申请 |
-| `outpatient.report.acknowledge.propose` | 有已签发的检验、功能检查、放射或病理会诊报告；放射报告的影像、病理会诊的切片须已在人类面前成功显示 | 人工审阅报告已阅确认 |
-| `outpatient.report.correct.propose` | 当前检验报告允许更正 | 人工审阅检验报告更正 |
-| `outpatient.examination.issue.propose` | 已有功能检查申请草稿 | 人工审阅签发功能检查申请 |
-| `outpatient.examination.cancel.propose` | 功能检查申请已开具或未取得结果 | 人工审阅取消功能检查申请 |
-| `outpatient.examination.retry.propose` | 功能检查申请未取得结果且非确定性不兼容 | 人工审阅重试功能检查 |
-| `outpatient.imaging.issue.propose` | 已有放射申请草稿 | 人工审阅签发放射申请 |
-| `outpatient.imaging.cancel.propose` | 放射申请已开具或未取得结果 | 人工审阅取消放射申请 |
-| `outpatient.imaging.retry.propose` | 放射申请未取得结果 | 人工审阅重试放射检查 |
-| `outpatient.imaging.correct.propose` | 放射申请已有报告，且当前账号兼有管理员岗位 | 人工审阅按另一份已复核的报告内容修订重新签发 |
-| `outpatient.pathology.issue.propose` | 已有病理会诊申请草稿 | 人工审阅签发病理会诊申请 |
-| `outpatient.pathology.cancel.propose` | 病理会诊申请已开立或未取得结果 | 人工审阅取消病理会诊申请 |
-| `outpatient.pathology.retry.propose` | 病理会诊申请未取得结果 | 人工审阅重试病理会诊 |
-| `outpatient.pathology.correct.propose` | 病理会诊申请已有报告，且当前账号兼有管理员岗位 | 人工审阅按同一切片另一份已复核的报告内容修订重新签发 |
-| `outpatient.prescription.issue.propose` | 已有可开立处方草稿 | 人工审阅开立处方 |
-| `outpatient.prescription.withdraw.propose` | 当前处方可撤回 | 人工审阅撤回处方 |
-| `outpatient.medication.none.propose` | 尚无正式用药结论 | 人工审阅无需用药结论 |
-| `outpatient.record.sign.propose` | 已有可签署草稿 | 生成预览，展示病历质控摘要并人工审阅签署；新增质控提示不阻断签署 |
-| `outpatient.record.revise.propose` | 存在已签署文书 | 人工审阅文书更正 |
-| `outpatient.encounter.complete.propose` | 就诊进行中；提交时重验完成条件 | 人工审阅完成就诊 |
-| `billing.item.select` | 费用在当前收费队列页中，且无支付请求进行中 | 选择目标费用记录 |
-| `billing.case.read` | 已选当前作用域费用 | 读取完整账单余额及一页原支付尝试，可用 `page` 显示历史页；挂号应收只读，分页协议见 [Command 协议](architecture/fhir-and-commands.md#66-预览与提交) |
-| `billing.payment.preview` | 已选可收款的检验或药品费用，状态为 billable 或 declined | 按当前分次金额和组合方式生成缴费预览；强调缴费详情区 |
-| `billing.payment.confirm.propose` | 已有当前检验或药品费用的有效预览 | 人工审阅本次金额及方式后缴费；页面展示成功、拒付或未知 |
-| `billing.payment.recover.propose` | 当前检验或药品应收为 ambiguous，且原未知尝试可用 | 人工审阅查询原支付结果；不新增收款，未查明前禁止再次收取 |
-| `pharmacy.prescription.select` | 处方在当前药房队列页中 | 选择目标处方行 |
-| `pharmacy.review.draft.set` | 已选处方 | 填写审核意见；不完成审核 |
-| `pharmacy.dispense.draft.set` | 已选处方且批次属于其药品 | 填写批次和数量；不发药 |
-| `pharmacy.review.propose` | 已选待审核处方且意见非空 | 人工审阅处方审核 |
-| `pharmacy.dispense.propose` | 当前处方满足调剂前提 | 人工审阅发药 |
-| `scenario.reset.propose` | 管理员场景页面 | 人工审阅重置；新 Epoch 清理旧反馈 |
+| 工作区／岗位 | 只读查询能力 | 页面导航与草稿能力 | 人工审阅提案（`.propose`） |
+| --- | --- | --- | --- |
+| 通用壳层 | `ui.context.read` 读取当前页与已挂载表单 | `ui.navigate` 切换授权工作区、`ui.panel.focus` 聚焦面板 | — |
+| 挂号（`registrar`） | 页面上下文读取当前患者与合成病例页 | 搜索并选中患者或待诊合成病例，填写建档与挂号草稿 | 创建患者档案、普通门诊挂号、开始合成病例就诊 |
+| 分诊（`triage-nurse`） | `triage.queue.read` 读取分诊队列 | 选中队列病例，同时填写主诉、分级与生命体征草稿 | 提交分诊评估 |
+| 门诊医生（`outpatient-doctor`） | 病例与已加载队列页、`local-completed`/`visible-source` 历史检索与详情、临床风险评分、指南专题、事中质控预检、专病医嘱组套预筛 | 选队列病例、切换诊疗栏目（含展开检查报告／阅片器）、受控虚拟患者提问与补答重试、保存病历／诊断／内外延处方／检验／功能检查／放射／病理草稿、签署预览 | 开始接诊、确认诊断、签发／取消／重试各类检查申请、报告已阅与受控更正、开立／撤回处方与无需用药、签署／修订病历、完成就诊 |
+| 收费（`cashier`） | `billing.queue.read` 与 `billing.case.read`（含按页原款历史，见[预览与提交](architecture/fhir-and-commands.md#66-预览与提交)） | 选中待收费用、生成门诊分次／组合缴费预览，填写住院补交草稿并生成收款／结算预览 | 确认门诊缴费、查询恢复 `ambiguous` 原支付结果（规则见[收费、结算与医保](architecture/billing-and-insurance.md)） |
+| 药房（`pharmacist`） | `pharmacy.queue.read` 读取处方队列 | 选中处方、填写审核意见及同药品批次与发药数量草稿 | 提交处方审核、执行发药 |
+| 住院各岗位 | 住院医生与护士按阶段读取多支冠脉造影、临床评分、指南专题、事中质控与医嘱组套预筛 | `inpatient.stage.select` 切换授权住院阶段（不开放住院端 DSH 临床草稿写 Tool） | 病区护士 `inpatient.order.verify.propose` 医嘱校对、住院医生 `inpatient.report.acknowledge.propose` 报告已阅 |
+| 仿真管理（`administrator`） | 读取场景状态、Provider 健康与生成任务状态 | —（不开放直接触发患者生成或无审阅重置的写 Tool） | `scenario.reset.propose` 二次确认重置新 Epoch |
 
-只读操作包括 `ui.context.read`、`triage.queue.read`、`outpatient.case.read`、`outpatient.history.search/read`、`outpatient.clinical-scores.read`、`outpatient.guideline-topics.read`、`outpatient.clinical-quality.read`、`outpatient.order-set-drafts.read`、`inpatient.angiography-reports.read`、`inpatient.clinical-scores.read`、`inpatient.guideline-topics.read`、`inpatient.clinical-quality.read`、`inpatient.order-set-drafts.read`、`billing.queue.read`、`billing.case.read`、`pharmacy.queue.read`、`scenario.status.read`、`scenario.providers.read` 和 `scenario.generation.status.read`（管理员重置仅提供需人类在工作台二次确认的 `scenario.reset.propose`，不开放直接执行重置或触发患者生成的无审阅写 Tool）。它们读取授权范围内的页面或服务端结果，不显示执行边框，也不复制 Case Truth。收款及原尝试恢复的详细规则见[收费与支付](architecture/clinical-workflows.md#85-收费支付与退款)。
+关键运行时约束：
 
-医生页面的 `clinmesh_read_current_context` 在 `data.pageState.queue` 返回已加载的医生队列页；`clinmesh_read_doctor_context` 保留当前病例详情字段，并在 `data.queue` 返回当前 frame 已加载的同一队列页。`queue.items` 包含可用于切换的 `caseId`、患者身份和病例状态，`page`、`pageSize`、`total` 描述分页。该队列包含待诊与在诊病例，不等同于当前标签筛选后的列表；`queueCount` 保留为总数，不能据此推断已返回全部条目。队列尚未加载时 `queue` 为 `null`，空队列的 `items` 为 `[]`。选择工具只接受这份已加载队列中的病例，不提供任意患者查询、按姓名全库搜索或跨页选择；同名时应结合队列返回的身份字段消歧。
-
-`clinmesh_search_doctor_history` 按 `source`（`local-completed` 或 `visible-source`）、`page` 和 `pageSize` 读取当前患者授权历史，返回来源、时间、覆盖范围与分页。`no-data` 表示允许范围内无记录，`no-materialization` 表示没有合法来源物化关联；查询失败不能当作没有资料。`clinmesh_read_doctor_history` 只接受索引中的 `source` 与 `entryId`，未记录字段标明 `not-recorded`，不开放任意病例或仿真隐藏输入。`local-completed` 同时包含门诊完诊记录和 `record.kind = 'inpatient'` 的已出院住院临床摘要；历史停嘱状态保留，不能作为当前处方，详细范围见[临床业务流程](architecture/clinical-workflows.md#门诊闭环)。
-
-医生在右侧「ClinMesh 医院助手」聊天中明确交代“替我问清起病时间”等任务后，系统核实真实输入与代问意图，助手可在本任务范围内连续追问；问题与患者回答显示在左侧问诊记录。左侧输入框用于医生直接提问。普通讨论病例、请助手拟问题或发现缺项只提示医生，不授予代问许可。进展和叫停沿用原生会话；完成、取消、病例或授权身份变化后许可结束，结果不明时不自动重复。当前医院工具任务支持不超过 2000 字符且无附件的纯文字输入；完整授权与失败合同见 [Execution proof 与调用记录](architecture/agent-integration.md#74-execution-proof-与调用记录)。正式诊疗动作保留工作台人工审阅。
-
-放射检查沿用同一边界：`clinmesh_read_doctor_context` 在 `imagingRequests` 返回当前病例的放射草稿、申请和报告文字，在 `imagingServices` 返回本院放射服务及其是否已开展。Agent 通过报告参与诊疗，不读取像素或渲染结果；这些返回值不含素材标识、来源 UID、匹配依据或病例与素材的对应关系。导航阅片只是替人类展开阅片器，已阅提案在影像成功显示之前会被拒绝。放射更正提案只指定申请、报告内容修订号和原因，不接受改写的报告正文。
+- **队列与历史读取边界**：医生队列选择仅接受当前已加载页 `queue.items` 中的病例，不开放全库按名搜索或跨页盲选；`clinmesh_search_doctor_history`／`clinmesh_read_doctor_history` 仅访问 `local-completed`（含门诊完诊与已出院 `inpatient` 临床摘要，见[门诊业务流程](architecture/outpatient-workflows.md)）和 `visible-source`，明确区分 `no-data`、`no-materialization` 与查询失败。
+- **医生授权代问**：仅当医生在右侧「ClinMesh 医院助手」聊天明确下达代问任务（`<= 2000` 纯文本字符、无附件）并通过服务端输入许可校验后，助手才可在本任务与当前病例连续追问虚拟患者；切换病例、取消或失权即刻终止许可，详见 [Execution proof 与调用记录](architecture/agent-integration.md#74-execution-proof-与调用记录)。
+- **零像素阅片门禁**：Agent 仅读取检查报告文字，返回载荷不含素材 ID、来源 UID 或像素；`outpatient.section.select` 携带申请 ID 仅替人类展开阅片器，放射影像或病理切片未在人类视口成功渲染前，已阅 `.propose` 一律被拒绝。
 
 ## 医生诊疗栏目与 Tool 发布
 
-DSH browser Tool broker 每次注册最多接受 32 个 Tool。医生“接诊”页按当前诊疗栏目发布 Tool：跨栏目 Tool 始终发布，单栏目或多栏目（`sections`）Tool 只在当前栏目命中其归属集合时发布。栏目枚举与每个 Tool 的栏目归属只定义在 [Tool Catalog](../packages/contracts/src/agent.ts)；Server 签发 Page Context 时按受信 claim 中的当前栏目收窄 `allowedOperationIds`，Surface 用同一份归属注册 Tool，非当前栏目的 Tool 调用以 `AGENT_OPERATION_NOT_ALLOWED` 拒绝。当前栏目属于 page scope，切换栏目后页面重签 Page Context 并重新注册 Tool；`outpatient.section.select` 返回后，等待工具定义更新再调用目标栏目的 Tool。
+DSH browser Tool broker 单次注册上限固定为 32 个 Tool。门诊医生“接诊”页将跨栏目 Tool（上下文与历史读取、工作区／病例／栏目切换、开始接诊、兼容初复诊草稿、完诊提案）与绑定 `sections` 集合的栏目专属 Tool 组合发布：`consultation` 发布问诊与重试，`record` 发布结构化病历草稿、预览、签署／修订与质控读取，`diagnosis` 与 `prescription` 分别发布诊断或处方操作并共享临床评分、指南专题、质控预检与组套预筛只读查询，`laboratory` 集中承载检验、功能检查、放射与病理草稿及生命周期提案（将三类报告已阅收敛进 `outpatient.report.acknowledge.propose`、定位阅片收敛进 `outpatient.section.select`，保持不超过 32 个上限）。
 
-| 栏目 | Tool |
-| --- | --- |
-| 跨栏目 | `ui.context.read`、`ui.navigate`、`ui.panel.focus`、`outpatient.case.read`、`outpatient.history.search/read`、`outpatient.case.select`、`outpatient.section.select`、`outpatient.visit.start.propose`、`outpatient.first-visit.draft.set`、`outpatient.revisit.draft.set`、`outpatient.encounter.complete.propose` |
-| `consultation`（问诊记录） | `outpatient.consultation.ask`、`outpatient.consultation.reply.retry` |
-| `record`（病历记录） | `outpatient.record.draft.set`、`outpatient.preview.request`、`outpatient.record.sign.propose`、`outpatient.record.revise.propose`、`outpatient.clinical-quality.read` |
-| `diagnosis`（诊断） | `outpatient.diagnosis.draft.set`、`outpatient.diagnosis.confirm.propose`、`outpatient.clinical-scores.read`、`outpatient.guideline-topics.read`、`outpatient.clinical-quality.read`、`outpatient.order-set-drafts.read` |
-| `prescription`（处方） | `outpatient.prescription.draft.set`、`outpatient.prescription.issue.propose`、`outpatient.prescription.withdraw.propose`、`outpatient.medication.none.propose`、`outpatient.clinical-scores.read`、`outpatient.guideline-topics.read`、`outpatient.clinical-quality.read`、`outpatient.order-set-drafts.read` |
-| `laboratory`（检验，含功能检查、放射检查与病理会诊） | `outpatient.laboratory.draft.set`、`outpatient.laboratory.issue.propose`、`outpatient.laboratory.cancel.propose`、`outpatient.report.acknowledge.propose`、`outpatient.report.correct.propose`、`outpatient.examination.draft.set`、`outpatient.examination.issue.propose`、`outpatient.examination.cancel.propose`、`outpatient.examination.retry.propose`、`outpatient.imaging.draft.set`、`outpatient.imaging.issue.propose`、`outpatient.imaging.cancel.propose`、`outpatient.imaging.retry.propose`、`outpatient.imaging.correct.propose`、`outpatient.pathology.draft.set`、`outpatient.pathology.issue.propose`、`outpatient.pathology.cancel.propose`、`outpatient.pathology.retry.propose`、`outpatient.pathology.correct.propose` |
-
-开始就诊和完成就诊位于病例页头，不属于任何栏目。兼容初诊与复诊草稿的表单不只对应一个栏目，也跨栏目发布；它们仍按病例状态收窄，结构化诊疗流程中不占名额。兼容复诊流程的签署预览与签署同样在“病历记录”栏目发布。专病临床评分、指南专题、事中质控预检与医嘱组套预筛只挂载于决策与收尾栏目，不进入“检验检查”栏目。栏目 Tool 在所属栏目内的前提、输入、提案与授权语义不变。合同测试逐一断言每个岗位、视图与栏目／阶段发布的 Tool 不超过 32 个；功能检查、放射与病理的已阅并入 `outpatient.report.acknowledge.propose`，导航定位与阅片并入 `outpatient.section.select`；“检验检查”栏目保持发布 31 个 Tool。住院工作台同样按 `sections` 阶段集合仅发布阶段导航、报告已阅／医嘱校对／财务预览提案与窄专病只读查询（`inpatient.angiography-reports.read` 挂载于 `investigations`／`surgery`／`record`，`inpatient.clinical-scores.read` 挂载于 `admission`／`orders`／`surgery`／`discharge`／`record`，`inpatient.guideline-topics.read` 挂载于 `orders`／`surgery`／`discharge`／`record`，`inpatient.clinical-quality.read` 挂载于住院医生 `orders`／`surgery`／`discharge`／`record`，`inpatient.order-set-drafts.read` 挂载于住院医生 `orders`／`investigations`），不新增住院端 DSH 写 Tool；边界取舍见[同源专病临床内核与像素暂缓边界](decisions/implemented/architecture/2026-11-19-shared-specialist-clinical-kernel-and-pixel-deferral.md)。
+Server 签发 Page Context 时按受信当前栏目收窄 `allowedOperationIds`，Surface 据同一 [`agentToolCatalog`](../packages/contracts/src/agent.ts) 注册工具；切换栏目会重签 Page Context 并刷新工具列表，跨栏目越界调用返回 `AGENT_OPERATION_NOT_ALLOWED`。住院工作台同样按 `sections` 阶段集合仅挂载阶段导航、护士校对／医生已阅／收费预览及专病只读查询，不新增住院端 DSH 写 Tool，合同测试逐岗位、逐视图与逐栏目强制断言注册数 `<= 32`，详见[同源专病临床内核与像素暂缓边界](decisions/implemented/architecture/2026-11-19-shared-specialist-clinical-kernel-and-pixel-deferral.md)。
 
 ## 上游能力与接入限制
 
-[React Surface](../vendor/dsh-react-surface/docs/ag-ui.md) 提供 Session-scoped capability lease、原生 Tool 注册和会话集成；ClinMesh 使用该 lease 与 browser-tools 的授权链路，不把 capability active 当成执行事件。上游 AG-UI 还支持 Gateway 与模型事件流，但当前 ClinMesh 未接入 Gateway，也不从模型 thinking、token 流或 transcript 推断字段动画。反馈只覆盖本表实际接入的页面动作，不是任意网页自动化或桌面控制。
-
-standalone Web 保留相同人工编辑与业务 Command 流程，不发布 DSH Session Tools。反馈状态仅存在于当前客户端，不保存为医院事实、字段来源标记或可回放的编辑差异。编辑与事件边界见 [Agent 操作反馈与编辑控制边界](decisions/implemented/architecture/2026-09-20-agent-action-feedback.md)，当前视觉决策见 [Agent 环绕柔光与静态人工审阅](decisions/implemented/architecture/2026-10-07-agent-workspace-glow.md)。
+[React Surface](../vendor/dsh-react-surface/docs/ag-ui.md) 提供 Session-scoped capability lease 与 browser-tools 注册链路；ClinMesh 尚未接入 AG-UI Gateway，也不从模型 token／thinking 流推断界面动画。standalone Web 保持纯人工编辑与相同 Command 链路，不发布 DSH Tools；所有视觉反馈仅存于当前浏览器内存，不落库为医院事实，设计取舍见[Agent 操作反馈与环绕柔光决策](decisions/implemented/architecture/2026-09-20-agent-action-feedback.md)。

@@ -1,125 +1,52 @@
 # 测试策略
 
-本文定义 ClinMesh 的测试层级和检查归属。命令以根目录 `package.json` 为准。
+本文定义 ClinMesh 的测试层级、检查选择、浏览器验证与各领域合同矩阵。可执行脚本名称以根目录 `package.json` 为准。
 
 ## 层级
 
 ### Unit
 
-`pnpm test:unit` 通过 Turborepo 运行各包的 Vitest 测试并运行根脚本测试；`pnpm test` 同时包含浏览器合同与 Web E2E。Unit test 覆盖：
+`pnpm test:unit` 通过 Turborepo 运行各包 Vitest 测试并运行根脚本测试；`pnpm test` 同时包含浏览器合同与 Web E2E。单元测试覆盖边界、拒绝路径与核心不变量，不以行覆盖率数字代替行为断言：
 
-- Zod schema、FHIR reference 和错误分类。
-- 状态转换、金额/定点数量、权限和场景纯函数。
-- Query key、cache updater 和无平台 API client。
-- 文档投影的 link rewriting 和路径安全。
-- Agent Page Context、Tool catalog、岗位 view、execution proof 和结果 schema。
-
-测试应覆盖边界、拒绝路径和不变量，不以行覆盖率数字代替行为断言。
+- Zod schema、FHIR 引用格式与错误分类。
+- 临床状态转换、确定性风险算子、定点金额／数量、权限与药事安全纯函数。
+- TanStack Query key、cache updater 与无平台依赖的 API client。
+- 文档投影重写、路径安全与 Agent Page Context／Tool catalog／岗位 view／execution proof／结果 schema。
 
 ### Adapter
 
-HTTP、FHIR、SQLite、文件持久卷、Electron IPC、浏览器存储、DSH Host proxy/proof bridge 和移动安全存储属于 adapter。测试通过公开 interface 驱动真实 adapter，mock 只停在网络、时钟或平台进程等昂贵/非确定输入。
+HTTP、FHIR、SQLite、文件持久卷、Electron IPC、浏览器 `sessionStorage`、DSH Host proxy/proof bridge 与移动安全存储均属于 adapter。测试通过公开接口驱动真实 adapter，mock 仅停留在外部网络、时钟或独立进程边界：
 
-Server route 测试必须解析响应 schema。SQLite 正确性 Spike 使用真实临时数据库文件验证事务回滚、外键、WAL 写竞争、幂等竞争、expected-version 条件写、outbox 重启恢复、备份还原和 Epoch reset。
-
-运行时错误测试按 owner 分层：Server HTTP adapter 注入未知 HIS/FHIR 异常并断言结构化响应、correlation ID 和脱敏日志；Web HTTP adapter mock network 与 response stream，断言 timeout、cancellation、非 JSON 和 schema mismatch 分类；Web composition 让子树抛出渲染异常，断言 Error Boundary fallback 和重新挂载；CLI process/HTTP adapter 断言 correlation ID 不改变退出码、retryable 或 ambiguous 语义。
-
-Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/Skill 分类，Identity HTTP test 拥有 Grant hash、岗位、allowlist 与失效矩阵，CLI process test 拥有 argv/stdin/stdout/stderr/exit，HIS 场景测试拥有业务状态机，Skill test 把示例交给真实命令 parser，ambiguous test 在响应丢失后通过公开 receipt 观察唯一 Effect。上层不复制 Server 已有 Command 输入矩阵。
-
-财务命令风险分级变化通过 CLI process/HTTP adapter 验证：human 缺少 `--yes` 时返回 `confirmation_required/definitely_not_sent`，不消费 stdin、不发送请求；显式确认后保留原输入与幂等键。Agent mode 无此人工标志仍可按 Grant 发起请求；读取和预览保留无需确认的路径。Skill 示例同时交给真实 parser 检查标志与 Catalog 版本。
-
-支付与 DRG 的联合不变量由 `pci-payment-drg-acceptance-http.test.ts` 拥有：从固定作者 Case Truth 与手工 Persona 直接入院，同一次合成冠心病住院执行九项检验、五种药的六次执行、造影和支架、四类材料预留替换，再完成医保待遇及组合资金、未知结果门禁和恢复、清床归档、核定差异、后续更正与医保补偿、退款重启恢复。术前、术中和关联 PCI 的术后用药分别核对，金额由固定单价、数量及合成待遇逐项取整独立推导；断言原费用、首次结算、归档、分组、核定和临床状态不被后续调整改写。心衰和肺炎通过独立 HTTP 入院与预分组保留兼容。默认 CI 使用自编有限规则程序；设置 `CLINMESH_TEST_DRG_RULES_DIRECTORY` 为本地物化的完整 v2 包目录时，同一旅程强制核对固定 Manifest SHA-256 并使用完整条件程序。完整来源的独立条件对照见[固定来源核验](research/2026-10-25-drg-condition-verification.md)，不等于全部可能输入或地方正式结算一致性。
-
-`inpatient-drg-review.spec.ts` 和 `inpatient-drg.spec.ts` 验证医生草稿迟到隔离、异步事实变化主动过期并锁定已开确认、服务端过期重验、取消、实际手术显式引用预留、医保办原回执恢复及缺规则入口；`inpatient-drg.browser.test.ts` 验证 React 18/19 ShadowRoot 下的医嘱、预留和核定审阅。业务拒绝、权限、幂等与读取审计矩阵留在 Server HTTP 测试，CLI Skill 示例检查保留完整 Command envelope，不在浏览器复制同一矩阵。
-
-跨患者连续办理由 `cross-patient-record-queue.spec.ts`、`inpatient-insurance-queue.spec.ts` 和 `cross-patient-library-queue.spec.ts` 经真实岗位入口与公开业务回读验证：每份成功仍停当前、点击具名下一位仅导航、再次明确确认，以及已展示目标失格时不自动替换。医保保留十加二分页与读取失败边界；患者库 fixture 只准备不同的合成来源及手工激活 Persona，开始动作留给真实页面。`cross-patient-queue.journey.ts` 同时供 Web 和 React 18/19 Surface 使用；Surface 夹具硬性核对本树新建 CSS 已载入。`patient-library-start-recovery-http.test.ts` 验证管理员开始后重启 Server，原身份按原 Operation/键读取同一回执及重放，重复新键拒绝且不产生第二份登记，其他 Actor 不能取得原回执。组件与写意图测试继续覆盖未发稿隔离、存储受限、迟到响应和原回执完成，视频绑定最终提交而不代替这些断言。
-
-`inpatient-drg-dependencies-http.test.ts` 通过实际诊断修订、护士执行、LIS 计费、四类临时目录价格输入及有效合成规则包重启，验证持最新就诊版本的旧审阅仍被拒绝、无额外医嘱或费用，重新推演可恢复。`inpatient-drg-dependencies.spec.ts` 验证真实 Web 的患者切换迟到隔离，以及价目变化和真实规则包重启后已开确认锁定、人工重算后恢复；没有公开价目维护 Command 时，仅在临时库设置测试输入，结果仍从公开接口和页面核对。成本当前只验证缺项展示，不把没有可变输入 owner 的成本变化记为通过。`inpatient-drg-review-concurrency-http.test.ts` 使用同进程两个 runtime 和独立 SQLite 连接，验证同审阅的不同键竞争、同键并发、丢弃响应后的回执恢复及执行／重启重放不重复；这属于有界功能回归，不代表多进程或负载验证。
-
-完整临床目录验收另成对设置 `CLINMESH_TEST_REFERENCE_DATABASE`（关闭、已 checkpoint 或通过 SQLite backup 得到的参考库快照绝对路径）和 `CLINMESH_TEST_REFERENCE_RELEASE_ID=clinmesh-cn-health-2026-09-15.r1`。fixture 仅复制参考快照到临时目录，通过管理员公开 Release 接口核对 published 身份和固定 contentHash，不修改来源库。这两项与 `CLINMESH_TEST_DRG_RULES_DIRECTORY` 同时提供后，运行 `pnpm --filter @clinmesh/server exec vitest run tests/pci-payment-drg-acceptance-http.test.ts` 和 `pnpm exec playwright test apps/web/e2e/inpatient-pci.spec.ts --project=web --workers=1 --repeat-each=2`；不读取开发 `.env` 或使用已有业务库。完整参考库约 26.9 万药品，一次初始化实测约 20 秒；显式完整库的初始化 hook 和包含同库重启的联合旅程分别使用 60 秒上限，默认 CI 的 hook 10 秒、用例 15 秒保持不变。
-
-`inpatient-pci.spec.ts` 通过生产 Web 从空患者库开始，由管理员页面准备目录、固定来源和首个手工 Persona，登记员直接入院，护士接诊，再由各岗位页面完成诊断、九检开立／送检／报告已阅、术前与术中药品执行、造影、PCI 与四项材料预留替换。环境维护可安装参考资料和规则，后台 worker 可处理页面产生的检查申请；本次要求展示的病例、临床和资金写入不以后台预置替代。公开 HTTP 只读核对来源关系、逐项账本和时序，后半程复用 PCI 术后关联用药、未知组合收款门禁及原尝试恢复、清床归档、医保办两种核定差额、归档后更正及原款退款。重复执行使用独立临时库，每轮都证明后续账务不会覆盖首次结算、归档、冻结分组或临床状态；操作步骤与金额由[PCI 演示手册](pci-demo.md)拥有。
-
-`inpatient-pci.browser.test.ts` 在 React 18/19 ShadowRoot 中使用生产 `InpatientWorkspace` 和真实 HTTP，复用手术、术后用药与未知资金恢复至更正退款的共享旅程；固定来源、直接入院、九检、术前／术中药品与造影仍由公开 HTTP fixture 准备。它证明共享交互与接线，不声称 Surface 从零完成全部岗位，也不代替原生 DSH Session 或 Tool proposal 验收。实际完整包、临床 Release、受信审核和正常启动与重启证据见[部署核验](research/2026-10-27-pci-drg-demo-enablement.md)，本次最终集成的运行结果见 [Issue #321](https://github.com/CaiZongyuan/clinmesh/issues/321) 关联的交付证据；默认自编小规则通过不替代完整规则验收。分层取舍见[Agent Note](decisions/implemented/testing/2026-10-27-pci-from-zero-journey.md)。
-
-`inpatient-pci-ai.spec.ts` 与 `inpatient-pci-ai.browser.test.ts` 共用真实页面旅程：固定来源与合成住院初始化由公开 HTTP 准备，造影请求与实施、首页主操作、PCI 计划、报告参数审阅、一次确认、逐笔用量及术后差异导航从工作台办理。受控 Provider 分别核对造影预计、PCI 预计与指南的生成／核验及实际用量；造影报告生成及按计划登记断言零模型请求增量；偏离登记核对生成和独立核验各一次，并用实际任务用途区分申请理由与耗材分析。指南夹具保存已逐字核对的 2021 血运重建指南物理 35／36 页与 CVIT 测量共识物理 6 页的有限原句，测试包装与实际发布来源及许可明确区分。跨岗位切换先等待当前手术表单恢复可编辑，再登录下一岗位，不能用后端已出现确认或术前核对事实代替浏览器已接收 Command 回执。受控回归在真实确认已落库后暂停 HTTP 回执，观测真实登录 API 的调用入口，验证交接保持等待，放行后再完成护士核对与医生知情同意且无待恢复操作。保存并发旅程暂停真实写请求，核对继续输入、回执元数据推进与后续确认，不以“请求已发出”代替保存成功；无报告和缺单位从真实资料状态验证有条件意见。上述证据不代表真实模型的医学质量评估。
-
-`inpatient-surgery-flow.spec.ts` 与 React 18/19 的 `inpatient-surgery-flow.browser.test.ts` 共用十阶段动作、公开事实和业务闭环验收，覆盖申请理由、指引一致、按行登记及偏离核对、默认完成、批量确认与下一台隔离。常规旅程在实际 DSH 具名宿主下覆盖受影响的术中和完成弹窗两阶段的 1600/1280、浅深八种组合；完整十阶段四十种布局矩阵通过 `CLINMESH_SURGERY_FLOW_FULL_MATRIX=1` 显式运行，几何结果与安全截图绑定源码快照单独保留，后续只重验被修改阶段。矩阵与业务闭环各自提供证据，超时不视为闭环成功；不为反复截图占用普通业务旅程时限。`inpatient-equivalent-materials.spec.ts` 及同名双 React 合同独立验证接近阈值时采用、换回、确认预留与术中选择，金额经公开费用回读核对，模型使用合成边界。
-
-`pci-preparation.spec.ts` 单独拥有从空患者库开始的岗位交接：管理员分别从页面准备 PCI 目录和来源、创建并选择手工 Persona，登记员从就绪病例直接入院，护士在原工作台接诊。病例和住院不通过 HTTP 前置写入，公开查询核对来源／Profile／Persona 关系、唯一住院、零门诊登记和零费用，并验证准备、Persona 选择及入院的丢回执恢复。`pci-preparation.browser.test.ts` 覆盖同一共享表单的 React 18/19 ShadowRoot 选择、取消、冲突刷新与回执恢复；已有后端测试继续拥有权限、一次消费和业务不变量矩阵，所有模型边界使用合成环境。
-
-心肾专病临床内核与五例 `Authored Case Pack` 的端到端联合不变量由 `specialist-five-cases-journey-http.test.ts` 通过公开 HTTP、真实临时 SQLite、单岗位 `Agent Capability Grant`（经 `hisOperationCatalog` 调用）与 DSH Surface Page Context／`doctor-queries`／proposal 链路拥有：在零真实模型调用下依次走通病例① NSTEMI 门诊胸痛未完善检查 `409` 警示、ECG 与连续 `hs-cTnI` 复测、转住院 GRACE/TIMI 评分与指南专题、多支冠脉造影（`inpatient.angiography-reports.read`）及单支架 PCI、出院后门诊随访读取 `local-completed` 住院摘要与复查 `LDL-C`／`PRECISE-DAPT`，病例② 择期缺血性 `FFR = 0.72` 单支架 PCI 与随访，病例③ 临界病变阴性 `FFR = 0.86` 触发 `409 PCI_NON_ISCHEMIC_LESION` 拦截后转保守 GDMT 出院随访，病例④ CKD G3b（`eGFR = 36.1`）套用 `cin-perioperative-hydration` 围术期水化护肾 PCI 与术后复测肌酐，以及病例⑤ 64 岁女性 T2DM 合并 CKD G4（`eGFR = 26.0`）二甲双胍／达格列净药事红线不可越权拦截、甲／乙／丙混合处方开具与逐行 `outsideFen`/`priorSelfPayFen`/`fundFen`/`accountFen` 医保结算发药，并全程断言公开 DTO、Page Context、DSH Tool 输出、CLI 输出、历史详情与问诊载荷零 `Case Truth` 泄漏。`specialist-clinical-kernel.spec.ts` 从真实 Web 生产构建最小回归覆盖五例病例包准备、护理生命体征、专病风险评估与临床评分、同步指南专题、专病组套套用、`409` 临床质控越权留痕与收费台混合甲乙丙医保明细。
-
-`inpatient-drg-review.spec.ts` 与 React 18/19 的 `inpatient-drg.browser.test.ts` 共用归档切换旅程：医生先读取推演并切到其他页签，由独立认证会话完成归档，再刷新并返回原页签；断言冻结分组可读、旧在院分组及费用表消失，刷新冻结结果后仍保持该边界。
-
-住院 Agent 的同次住院联合验收在场景局部 `beforeEach` 准备参考资料、runtime、合成病例和已确认参数，沿用默认 10 秒 hook 预算；从主动开启跟进到三阶段模型、术中更正、结算、归档交接及重启，仍在一个 15 秒业务测试中使用同一患者、runtime 和数据库。准备失败与业务停滞分别报告，全部公开接口、计量及历史保留断言继续执行，清理仍由原 `afterEach` 负责。
-
-护士实际执行集中办理通过原给药、健康教育和 PRN 公开 HTTP 与临时 SQLite 验证每项唯一事实、费用归属、原键重放和服务重启恢复；PRN 断言只创建本次 pending Task，不产生 MedicationAdministration 或给药费用。组件 seam 验证三动作隔离、逐项事实核实、理由覆盖、完整身份、持久草稿、版本变化、存储阻写、成功结算原修订和真实退出清理。真实 Web 与 React18/19 ShadowRoot 共用护士岗位旅程，验证两项实际办理、第二项已提交后丢响应停止第三项、刷新只查询原回执及余项重新核对，并覆盖长中文、窄容器、缩放、焦点与末尾确认可达；不在浏览器重复服务端全部状态矩阵。
+- **Server HTTP 与 SQLite 持久化边界**：路由测试严格解析响应 schema；SQLite 合同使用真实临时文件验证 `BEGIN IMMEDIATE` 事务回滚、`(workspace_id, epoch)` 复合外键、WAL 锁竞争、幂等键与 `expectedVersions` 条件写、outbox 租约回收与重启恢复、在线备份还原合并门诊号高水位，以及非空旧库前向迁移保真与归属歧义原子回滚。
+- **跨层异常与脱敏边界**：Server 注入未知 HIS/FHIR 异常断言结构化响应、`X-Correlation-Id` 与脱敏日志；Web HTTP adapter 覆盖超时、取消、非 JSON 与 schema 失配分类；Web composition 让子树抛出渲染异常断言 Error Boundary 恢复；CLI 子进程断言 correlation ID 不改变退出码、`retryable` 或 `ambiguous_outcome` 恢复语义。
+- **Agent CLI 六重互补 seam**：Catalog 映射拥有 operation/route/schema/Skill 分类，Identity HTTP 拥有 Grant 哈希／单岗位 allowlist／过期矩阵，CLI 子进程拥有 `argv/stdin/stdout/stderr/exit`（含人工财务命令缺少 `--yes` 返回 `confirmation_required/definitely_not_sent` 不发请求，而 Agent Grant 不受人工确认标志阻塞），HIS 场景套件拥有业务状态机，Skill 套件将命令示例交给真实 parser 校验标志与版本，ambiguous 套件在写响应丢失后凭原 `operationId + idempotencyKey` 查询公开 receipt 证明唯一 Effect。
+- **跨岗位临床、专病内核与支付 DRG 联合 HTTP 合同**：从固定 PCI 来源及五例心肾专病 `Authored Case Pack` 出发，在真实临时 SQLite、单岗位 Grant 与 DSH Page Context／`doctor-queries`／proposal 链路上零实模走通门诊独立检查预付费放行、多费用合并收款与逐分配原款退款、品规级甲乙丙混合处方医保结算、双层事中质控 `409` 越权留痕、住院医嘱发药与护士集中给药／健康教育／PRN（PRN 仅生成待办 Task 不直接计费给药）、多支造影与手术耗材预留／核实／更正、未知收款门禁恢复、病案归档冻结、CHS-DRG 预分组／术后核查／医保办核定及结算后财务与医保补偿，全程断言零 `Case Truth` 泄漏且后续账务更正不改写原费用、首次结算、冻结分组或临床状态。默认 CI 使用自编有限规则包（hook 10 秒、用例 15 秒）；显式提供 `CLINMESH_TEST_REFERENCE_DATABASE`、`CLINMESH_TEST_REFERENCE_RELEASE_ID` 与 `CLINMESH_TEST_DRG_RULES_DIRECTORY` 时复制约 26.9 万药品完整参考库快照与完整 v2 条件程序联跑（60 秒预算），对照依据见[DRG 条件核验](research/2026-10-25-drg-condition-verification.md)、[PCI 部署核验](research/2026-10-27-pci-drg-demo-enablement.md)及[从零旅程分层决策](decisions/implemented/testing/2026-10-27-pci-from-zero-journey.md)。
 
 ### Application composition
 
-`inpatient-drg-record-checks-http.test.ts` 沿公开读取验证无需活动跟进的三类分组核对、缺规则、编码不兼容、支付缺参、稳定指纹和只读岗位边界；固定 PCI 黄金旅程补充首页造影与实际 PCI 的来源核对，以及显式更换主操作前后的独立病组。`inpatient-drg-explanation-http.test.ts` 以受控 Provider 验证展开才派发、生成和独立核验、首次计量、有效结果复用、依据变化、权限及未知恢复，模型失败时规则仍可读。真实页面和 React 18/19 Surface 共用 `inpatient-drg-record-checks.journey.ts`，核对自动提醒、按需展开、失败与返回原记录；原术后复查、待办与归档交接旅程继续保留。
-
-跨端壳与共享视图边界在 `packages/views` 测试，当前临床业务视图、Web 路由和平台 wiring 在 `apps/web` 测试。DSH composition 额外覆盖可注入 API base、Memory Router、ShadowRoot Portal、Page Context 续签、稳定 page scope、detached review 和 artifact contract。Desktop 或 Mobile 进入实际开发后在对应 app 增加平台证据。一个产品行为只有一个完整矩阵归属，其他层保留 wiring、可访问性和真实入口验证，不重复纯函数矩阵。
-
-Mobile 只共享产品语义，不共享 DOM 测试。移动测试覆盖 Expo Router wiring、AppState/NetInfo、SecureStore、QueryClient 和原生交互。
+跨端工程壳与共享视图边界在 `packages/views` 验证，临床工作台、路由接线、持久写意图与批量私稿隔离在 `apps/web` 验证；DSH composition 额外覆盖可注入 API base、Memory Router、ShadowRoot Portal、Page Context 续签、稳定 page scope、32 Tool 上限、detached review、按需展开分组解释（模型失败时规则仍可读）及单文件 artifact 体积预算。同一产品行为只在一个最低可行层维护完整输入矩阵：Server 持有权限、并发、计算与错误矩阵，组件与 React 18/19 双版本浏览器合同持有 ShadowRoot 挂载、迟到响应隔离与可访问交互，Mobile 独立验证 Expo Router、AppState/NetInfo、SecureStore、QueryClient 与原生交互。
 
 ### End-to-end
 
-当前主诉的输入与语义回归由 `clinical-document-quality-http.test.ts` 验证分诊原文和派生摘要去重、来源身份与时间、缺失保存时间、文书版本上下文、同文保存复用，以及正常整理和真实胸痛冲突的成对候选及独立复核。页头组件覆盖工作稿、清空和最新签署修订；`doctor-document-quality.spec.ts` 覆盖真实保存冲突不丢稿、空主诉保存刷新与共享签署旅程，`doctor-document-quality-reuse.spec.ts` 验证真实病例切换时工作稿隔离与恢复；`document-quality.browser.test.ts` 覆盖 React 18/19 ShadowRoot 中的即时主诉投影。原生 `smoke-dsh-consultation.ts --quality-only` 验证主诉清空保存、宿主刷新后重开 Surface、真实病例切换及未保存工作稿恢复，再执行编辑与签署的共享旅程。合成模型仅证明来源及双阶段接线，真实模型偶发误报的完整根因与临床准确率不由此推断。
+E2E 从真实入口驱动并仅通过外部可观察事实（重读业务／FHIR 接口、SQLite 投影、页面状态与审计链）断言成功，不以 Agent 自报成功为准：
 
-E2E 从真实入口执行，并从外部观察结果：重新读取资源、数据库投影、页面或审计事件，不以 Agent 自己声称成功作为断言。DSH Web 验收从统一 launcher 打开 Surface，要求原生 Session 实际调用 browser Tool，并覆盖一个草稿 action 和一个 proposal → 人工批准 → Command Effect；Tool call、proposal、review、request、audit 和 trace 必须可关联。
-
-`pnpm test:e2e` 使用 Playwright 从 standalone Web 的生产构建运行登录、岗位切换、窄屏外观设置和问诊自动记录旅程。每个测试使用独立的真实 Hono listener、临时 file-backed SQLite 和浏览器 context；Web 构建由同一 worker 复用。端口由系统分配，账户、密码、Auth secret 与数据库均由 fixture 创建并清理，不读取开发 `.env`、已有会话、真实影像或模型配置。页面断言与受 schema 验证的 HTTP 会话查询共同证明保存和刷新后的状态；此集合不替代原生 DSH Session 验收。
-
-门诊收款的完整余额、组合方式、拒付/未知、原尝试查询、并发幂等、权限、重启及检验/药房全额放行矩阵由 `outpatient-workflow-http.test.ts` 通过公开 HTTP 与文件 SQLite 验证；`payment-ledger-migration.test.ts` 验证历史事实保留、零价兼容及归属歧义时原子回滚。`billing-payments.spec.ts` 从真实收费入口验证分次、组合、未知刷新与原支付恢复，React 18/19 的 `billing-payments.browser.test.ts` 复用生产收费组件和真实 HTTP，覆盖 ShadowRoot 审阅、焦点、键盘取消及窄宽度；浏览器并发合同另在网络边界延迟响应，验证进行中选择保护和迟到回调隔离。
-
-门诊独立检查从真实草稿与正式开立入口生成原应收，不能通过插入费用或旧兼容检验开单替代。`outpatient-investigation-boundaries-http.test.ts` 通过公开医生、收费与 FHIR 查询证明缺价开立原子回滚、服务与价目变化重审、开立后原价持久化、两笔同类及跨类别精确付款和跨岗拒绝；`outpatient-investigation-lifecycle-http.test.ts` 分别直接调用受理与开始 Command，证明未收齐拒绝受理、缺少首次放行快照拒绝执行。影像与病理临床 HTTP 回归经收费员公共收款入口补齐前置条件，再验证报告、已阅、重试、取消和修订。`outpatient-investigation-insurance-http.test.ts` 拥有同类原费用的医保全额覆盖、受理前后撤销待遇、有效分配阻止取消及撤销后的冲减矩阵。`outpatient-workflow-http.test.ts` 继续拥有分次组合资金、未知查询、取消冲减及原交易退款的时序矩阵，并从完诊和发药入口证明退款责任未结清时 Run 保持 active，退款确认或恢复后仅完成一次。`outpatient-investigation-billing-migration.test.ts` 使用非空旧库验证原费用、旧预览分配、资金、三类历史计费策略、外键保护和歧义回滚。
-
-独立检查的浏览器旅程从医生“检验检查 → 添加 → 加入申请 → 开具选中项目”开始，覆盖检验、放射与病理的价格审阅，再切收费员处理原费用，返回医生观察原申请执行。standalone Web 与 DSH Surface 分别验证真实接线；分次组合支付、未知刷新后原尝试恢复和取消后原交易退款保留在用户旅程，完整金额与竞争矩阵归 Server。React 18/19 与 ShadowRoot 合同覆盖共享审阅、缺价禁用、价目变化后重新审阅及资金状态，单独挂载收费组件不能替代 DSH 医生入口。CLI/Agent 仅验证原 ChargeItem 目标、受信绑定、岗位、人工审阅及 receipt，复用同一业务矩阵。全部使用合成 Provider、受控资金结果和临时文件 SQLite；放射与病理只观察文字、报告引用和聚合统计。
-
-四项病历质控的完整输入矩阵由 `clinical-document-quality-http.test.ts` 通过公开 HTTP、真实 SQLite 和 DSH Provider 网络边界验证，包含辅助检查或可选字段伪缺项的拒绝、分诊记录与患者自述的语境核对、来源不能核验的解释、说明变更与旧缓存失效；大量既往资料不进入实时输入，本次来源仍完整检查，本次正文实际超限仍返回不完整。`doctor-document-quality.spec.ts` 与共享旅程验证未保存编辑不写入草稿、待补充仅在详情展示及逐条依据入口隐藏、两类问题的具体影响与处理建议、直接修改后重新检查、无逐条确认或保留写请求及签署汇总；`document-quality.browser.test.ts` 覆盖 React 18/19 ShadowRoot、键盘、文字边界和迟到响应，组件测试保留旧处理记录的只读展示。`pnpm exec tsx scripts/smoke-dsh-consultation.ts --quality-only` 从原生 DSH 入口运行同一旅程并验证实际 Agent 草稿 Tool 和模型 schema 白名单；默认仅使用合成模型；加 `--live` 后在新合成病例中通过当前配置的真实模型核对未保存、保存及第二客户端的同输入复用，分别记录持久任务和实际模型调用数量。真实样本不代表临床准确性；入口及证据字段见[部署教程](deployment.md#问诊自动记录原生验收)。
-
-问诊组合旅程由 `apps/web/e2e/consultation-recording-journey.ts` 同时驱动 CI Web 与原生 Surface，覆盖生成后正文直接更新、无来源入口及独立核对提示、局部人工保护、未保存编辑、患者更正与矛盾记录、暂停补录、失败重试、签署准备冻结、取消恢复和人工签署。自动记录的 Web 与 React 18/19 ShadowRoot 回归还验证失败文字不常驻、重复错误合并为按需说明、原文保存和恢复入口。HTTP/SQLite 测试继续拥有完整业务输入矩阵。`pnpm smoke:consultation:native` 使用锁定的真实宿主与合成 `LlmAdapter`，额外执行真实 Session browser Tool 草稿保存与签署 proposal，并关联 Command 回执、审计和 Trace；`pnpm smoke:consultation:live` 再为一个新合成病例调用真实模型。后者验证成功输出及逐字来源约束，不代表医学语义质量评估。两种 smoke 均显式运行，不进入常规 CI；前置配置见[部署教程](deployment.md#问诊自动记录原生验收)，分层取舍见[组合验收决策](decisions/implemented/testing/2026-10-10-native-consultation-recording-journey.md)。
-
-句子编号协议由 Server 的 `recording-sentence-references.test.ts` 验证确定性句界、原文位置、快照隔离、旧协议与序列化字节；`dsh-model-integration.test.ts` 通过真实 Provider 和宿主 handler 验证新输出 schema、格式修复、否定核验、旧 SQLite 在途快照与重复消费。自动记录不再执行逐片段核对；`doctor-recording-source-http.test.ts` 与 `consultation-auto-record-http.test.ts` 验证多片段、补录、重试、重启和重复消费的独立核对调用为零，旧状态及 outbox 安全退役；质控 HTTP 合同持有旧事实保留、更正/冲突及拒绝事实无新依据重现的语义检查。状态机旧 fixture 的测试适配不能代替这条传输边界。输入预算在初次请求及格式修复的实际序列化边界验证，不运行压测或真实模型。
-
-检验目录与诊断处方的 React 18/19 浏览器合同按版本在 `beforeAll` 中构建生产 fixture，同一版本的测试串行复用产物；构建与交互分别受原有时限约束，原因见[浏览器回归决策](decisions/implemented/testing/2026-10-02-playwright-frontend-tests.md)。
-
-CLI E2E 先构建真实 bin，再启动 Node listener 与 file-backed SQLite，并从独立 `clinmesh` 子进程执行 human login 和 Agent operation。主场景从生成 Synthetic Case 与 Brief 的受控 setup 开始，由不同单岗位 Grant 依次完成挂号、分诊、问诊、检查与报告确认、诊断、处方、病历签署、完诊、药品支付、处方审核和发药。响应丢失场景必须先证明 Server 已提交，再用原 operation ID/idempotency key 查询 receipt，并通过正式 query 证明 Effect 没有重复。
-
-指南建议由 `doctor-recommendations-http.test.ts` 从真实 DSH Provider 的网络边界验证引用、语义否定、字段缺证、动态目录、授权、迟到结果与恢复，并验证无指南的病例思路、仅缺指南时的只读降级、不同核验失败原因及模型顶层泛化缺项不发布；公开 HTTP 和真实 SQLite 保持真实。`doctor-recommendations.spec.ts` 与共享旅程从真实 Web 核对后台准备、折叠说明及诊断、处方、检验清单直接确认与开具，处方缺项保持待补充，正式操作前保留医生选择和手改；共享旅程同时验证只读诊断和检查思路、分类说明、实际病例引用及没有采纳入口。两组 DSH 浏览器合同同时覆盖 React 18/19 的五种建议、来源类型、ShadowRoot、Portal、焦点及窄宽度。`pnpm smoke:recommendations:native` 复用锁定的原生宿主与合成外部模型运行同一旅程，`pnpm smoke:recommendations:live` 再读取新合成病例，使用显式配置的真实模型验证建议响应与实际提供的引用，且不采纳或创建临床事实。真实模型样本不代表全病种医学质量或药学安全评估；这两个显式 smoke 不进入 CI。
-
-免费全文检索的 `guideline-corpus.test.ts` 使用真实临时 SQLite 验证跨主题召回、原文保留、许可、撤回、重复导入和独立 writer 更新；`import-guideline-source.test.ts` 在网络边界提供合成官方响应，验证重定向、预算、哈希、缓存和真实合成 PDF 页提取；`guideline-sync.test.ts` 覆盖同步、只读查询与失败更新。`doctor-guideline-corpus-http.test.ts` 经公开 HTTP 验证新增糖尿病主题的原文同时进入生成和独立核验，来源更新导致旧建议失效，撤回和替代也阻止固定引文复用。共享 Web／原生 DSH 旅程先通过真实病历 UI 引入合成糖尿病资料，核对导入正文的来源引用，恢复原病例后继续待确认清单、编辑保护与医生正式确认流程；合成模型证明接线合同，不代表实模或临床质量。
-
-本地资料的 `guideline-local-sync.test.ts` 验证显式文件哈希、物理页范围、幂等、完整清单移除、失败后的范围收紧及出版链接校验。`coronary-guideline-workflow-http.test.ts` 从合成两页 PDF 的 p1 导入开始，通过真实参考库和 PCI 目录准备、三类建议及医生确认，证明原文进入生成与核验、p2 不进入模型、处方字段缺依据保持空值及关闭模式保留正式事实。`coronary-guideline-workflow.spec.ts` 从真实 Web 登录接诊验证同一链路的依据详情、人工补全处方与刷新保留；所有模型均为受控响应，不以其通过推断临床准确性。
-
-大病例回归使用 596 条合成历史与超过单次预算的检验目录，验证授权批量读取、完整诊断分页、全部历史批次覆盖、单条原文选择与重打包、短句柄到真实来源的追溯、旧安全信息、跨建议种类复用、输入变更失效、失败不发布和核验完整候选分批；筛选阶段的紧凑索引与瘦身目录、字节预算打包和已选记录收敛轮由同套件持有（见[临床业务流程](architecture/clinical-workflows.md#81-门诊闭环)）。限流回归组合真实模型桥与 Provider，验证有界等待、初次生成与格式修复共享原始截止时间、预算耗尽后不再调用、共享一次限流重试、取消和建议 outbox 不叠加重试。SQL 数量、模型请求数、实际字节与并发边界作为稳定性能合同，公开 HTTP 耗时单独记录；不以裸 SQL 下界代替整条读取链，也不固定真实模型墙钟时间。输入组织和恢复边界见[分批读取决策](decisions/implemented/architecture/2026-10-15-recommendation-context-budget.md)、[记录级筛选决策](decisions/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)与[信封瘦身决策](decisions/implemented/architecture/2026-10-20-recommendation-envelope-slimming.md)。
-
-核心病例轨迹见[场景测试](#144-场景测试)。每次运行固定 app build、数据库 schema、Operation Catalog hash、Workspace policy version、Synthea commit、localization profile、生成参数与 Case Revision；未来实际发布 IG 时再把对应版本加入固定输入。
+- **Standalone Web 生产构建旅程（`pnpm test:e2e`）**：每个用例启动独立真实 Hono listener、临时 file-backed SQLite 与隔离浏览器 context（系统分配端口，不读取开发 `.env`、既有会话或真实模型），覆盖登录与岗位切换、空患者库起管理员准备到跨岗位门诊／住院 PCI 闭环、实时自动病历整理（确定性句号引用且零逐片段独立核对请求）与四项文书质控、免费与本地指南导入及同步专题／可执行建议确认（大病例 596 条历史分批筛选与字节预算收敛、初次生成与格式修复共享原始截止时间且不叠加重试）、独立检查开立计费到阅片已阅、跨患者连续办理具名队列（点击下一位仅导航不自动提交），以及跨岗位交接（须等待当前表单恢复可编辑并收到浏览器 Command 回执，不能仅凭后端落库提前切岗）和未知资金／丢回执刷新恢复。
+- **CLI 真实子进程旅程**：先构建真实 CLI bin，再启动 Node listener 与文件 SQLite，由不同单岗位 Capability Grant 子进程串联完整门诊与住院关键路径，并验证响应丢失后凭原 `operationId + idempotencyKey` 查询 receipt 无重复 Effect。
+- **DSH 原生宿主显式验收**：通过锁定宿主与合成 `LlmAdapter` 运行 `smoke:consultation:native`／`smoke:recommendations:native`，验证真实原生 Session 调用 browser Tool 保存草稿、发起 `.propose` 经人工批准落库并串联 Tool call、proposal、review、request、Audit 与 Action Trace；加 `:live` 的实模自检不进入常规 CI，前置配置见[部署指南](deployment.md#问诊自动记录原生验收)，浏览器与原生分层取舍见[前端浏览器回归决策](decisions/implemented/testing/2026-10-02-playwright-frontend-tests.md)与[诊疗建议架构决策](decisions/implemented/architecture/2026-10-13-doctor-guideline-recommendations.md)。
 
 ## 测试设计
 
-每个新增或修改的测试必须对应一个目标回归，并能在该回归出现时失败。先选择拥有行为语义的最低层级，再为上层保留 wiring、平台集成、可访问性和长用户旅程；上层不重复下层的完整输入矩阵。
+每个新增或修改的测试必须对应一个明确的目标回归，并能在该回归出现时失败。先选择拥有行为语义的最低层级，再为上层保留接线、平台集成、可访问性和长用户旅程；上层不重复下层的完整输入矩阵：
 
 - 通过公开 interface 驱动行为，断言可观察结果、拒绝路径或不变量，不复述实现步骤。
 - 只在网络、时钟、平台进程、真实支付或其他昂贵、非确定边界使用 mock；同进程 owner 尽量使用真实实现。
-- 一个测试覆盖一个清晰行为分支。只有共享 setup 能显著降低理解成本时才合并场景。
-- Coverage 用于发现未执行路径，不代替场景正确性；不得降低 threshold、缩窄 source scope 或使用空测试通过选项隐藏缺口。
-- 只被无生产消费者 API 使用的测试不是保留该 API 的理由。删除或收窄行为前先确认是否存在公开 contract 或 Agent Note。
-- 浏览器层只证明浏览器、平台载体和长用户旅程；资源语义、Command 状态机和错误矩阵由更低层 owner 证明。
+- 一个测试覆盖一个清晰行为分支；只有共享 setup 能显著降低理解成本时才合并场景。
+- Coverage 用于发现未执行路径，不代替场景正确性；不得降低 threshold、缩窄 source scope 或为迁就旧测试将原型已改 UI 退回旧样。
+- 只被无生产消费者 API 使用的测试不是保留该 API 的理由；删除或收窄行为前先确认公开合同或 Agent Note。
 
 ## 可观察测试证据
 
-写测试或运行检查前，Agent 向用户说明：
-
-- 要证明的验收行为及目标回归。
-- 测试文件、测试层级和关键断言。
-- 为什么选择这些测试，以及为什么不需要更宽的集合。
-
-运行时说明实际命令。长命令开始后持续提供简短阶段状态，不用无边界日志或内部推理代替进度。已经通过且未被后续修改失效的检查不因 commit、review 或 push 重复执行。
-
-完成后报告每条实际命令的结果和耗时，列出新增或修改的测试用例，并明确未运行的检查及原因。失败证据保留原始命令、失败测试和关键错误；环境差异必须被验证，不能靠推测归因。
+写测试或运行检查前，Agent 先向用户说明目标验收行为与回归、测试层级与关键断言，以及无需扩大运行集合的原因。长命令运行期间提供简短阶段状态，已经通过且未被后续修改波及的检查不因 commit、review 或 push 重复执行。完成后报告每条实际命令的结果和耗时、新增或修改用例，以及未运行检查的原因；失败时保留原始命令、失败用例和关键错误，禁止凭推测归因环境差异。
 
 ## 检查命令
 
@@ -129,72 +56,36 @@ pnpm check:mobile       # Expo typecheck + dependency compatibility
 pnpm lint
 pnpm test
 pnpm test:unit          # Vitest 单元、组件、adapter 与脚本测试
-pnpm test:browser       # Playwright Web/DSH 浏览器合同
+pnpm test:browser       # Playwright Web/DSH React 18 & 19 浏览器合同
 pnpm test:e2e           # Playwright standalone Web 真实入口旅程
 pnpm doc-sync
 pnpm check              # 非 Mobile 主检查集合
 ```
 
-开发期间先运行目标包检查，例如：
-
-```sh
-pnpm --filter @clinmesh/core test
-pnpm --filter @clinmesh/cli test
-pnpm --filter @clinmesh/server typecheck
-pnpm --filter @clinmesh/dsh-web test
-pnpm --filter @clinmesh/dsh-web build
-pnpm docs:check
-```
+开发期间优先运行窄目标包检查（如 `pnpm --filter @clinmesh/core test`、`pnpm --filter @clinmesh/cli test`、`pnpm --filter @clinmesh/server typecheck`、`pnpm --filter @clinmesh/dsh-web build`、`pnpm docs:check`）；跨包接口、构建配置、文档投影或发布 workflow 变化时运行 `pnpm check`，触及 Mobile 或其共享 `contracts`/`core` 入口时运行 `pnpm check:mobile`。
 
 ## GitHub CI 的检查选择与并行
 
-主 CI 沿用 PR 创建、更新、重新打开及 `main`/`master` push 触发。`plan` 用本次事件的 base/head 校验实际候选合并提交，并从第一父提交到候选结果读取完整净改动；checkout 保留两层历史。无法核验事件、提交或完整差异时选择全量。主线 push 固定全量。
+PR 与主线 push 由 [`scripts/ci.ts`](../scripts/ci.ts) 校验候选合并提交并按完整净改动分流（主线 push 及影响范围无法精确识别的改动固定选择 `full` 全量）：
 
-| PR 改动 | 检查范围 |
+| PR 净改动范围 | 执行计划 |
 | --- | --- |
-| 只有根 README 或 docs 下普通 Markdown | `doc-sync`；Agent 规则、`docs/agents/` 工程 skills 配置和运行时 Skills/提示词不在此范围 |
-| 只有已修改的独立测试入口，可包含普通文档 | 逐文件运行全部用例（入口缺失或发现零个用例时失败）、所属包 typecheck、定向 lint；Web E2E 追加浏览器 tsconfig，文档变化追加 `doc-sync` |
-| 明确的普通 Web 页面、DSH 显示组件、共享 UI/views 源码 | 全局类型/lint/边界、短性能预算、文档和构建；UI/views、Web、DSH、Desktop 组件测试；完整 Playwright `contracts` 与 `web` |
-| 其他、关键边界、服务端影响范围过广或无法识别 | 全量，覆盖原 `pnpm check` 与 `pnpm check:mobile` 的完整集合 |
+| 仅根 `README.md` 或 `docs/` 普通说明文档（不含 `AGENTS.md`、`docs/agents/` 与运行时 `skills/`） | `docs`：仅运行 `doc-sync` |
+| 仅修改已有独立测试入口（可含普通文档，不含新增／删除／重命名或共享 fixture） | 定向运行该入口全部用例（零用例即失败）、所属包 `typecheck` 与定向 `lint`（含文档追加 `doc-sync`） |
+| 明确的普通前端展示与共享 `ui`/`views` 源码（排除鉴权、API/Agent/Proof、写意图恢复等协议边界） | `frontend`：全局类型／lint／边界／短性能／文档／构建、前端组件测试，以及完整 Playwright `contracts` 与 `web` |
+| 服务端代码、跨包协议、配置或混合改动 | `full`：完整覆盖 `pnpm check` 与 `pnpm check:mobile` |
 
-具体路径、状态和混合改动的选择以 [CI 入口](../scripts/ci.ts)为准。新增、删除、重命名测试、共享 fixture/setup、导出或被静态引用的测试入口回退全量。普通前端路径也排除鉴权、API/Agent/Proof、恢复、受信写意图、宿主设置等混合协议边界；不能把整个 Web 或 DSH 包都视为普通显示代码。未建立可靠窄影响集合的 Server 代码保持全量。
-
-前端选择省略整套 Server Vitest 和 CLI 单元集合，但保留两个完整 Playwright 项目中使用真实 Server、临时 SQLite 的入口验证。上层构建通过 Vite 动态加载 UI，HTTP 消费者也不等同于包依赖，因此不依赖静态导入图自动删减浏览器或 E2E。
-
-选中的 `checks`、`unit`、`browser`、`e2e` 在独立 runner 上并行，固定同一 `github.sha`。`full` 与 `frontend` 计划中，`unit` 与 `browser` 的完整集合再按 `1/2`、`2/2` 拆为矩阵分片：`unit` 向 turbo 各包测试与 `test:scripts` 传递 Vitest `--shard`，`browser` 向 Playwright `contracts` 传递 `--shard`；定向测试、`checks` 与 `e2e` 不分片。Vitest 按文件路径哈希与文件数切分，Playwright 在 `fullyParallel` 下按用例切分，均不按耗时均衡。每个非文档执行组在安装依赖后显式准备 DSH 生成样式，不能假定其他 runner 的 typecheck 产物可见。基础组包含适用的类型、lint、边界、性能预算、文档、构建和 Mobile；测试组及每个分片保留原 worker、断言和超时。浏览器组各自准备 Chromium，所有数据与端口继续由既有 fixture 隔离。
-
-完整与前端计划中的浏览器及 E2E 按两个互斥阶段执行：先用 `--grep-invert=@surgery-flow` 运行普通集合，再用 `--grep=@surgery-flow` 单独运行手术全程。浏览器普通集合保留两片，隔离阶段只在 `1/2` runner 上无分片运行 React 18／19 两例；Web 在普通集合结束后无分片运行一例。两阶段都须成功，隔离阶段不允许零测试通过；默认两个 worker、零重试与原时限均保留，Surface 两例继续在同文件内顺序执行并各用独立 fixture。定向逐文件模式已经隔离文件，沿用原命令。理由见[手术全程调度隔离](decisions/implemented/testing/2026-11-14-surgery-flow-ci-isolation.md)。
-
-同一 PR 内，每个检查组或分片在执行前计算检查输入指纹，并以指纹作为精确缓存键恢复成功记录；记录的指纹、检查组与分片一致时复用并在日志及运行汇总列出来源运行链接，否则先列出未复用原因再执行，全部命令成功后才写入记录并保存；记录写入失败只放弃本次复用，不改变已通过的结果。指纹包含 PR 编号、检查组、分片、实际命令、runner 系统/架构/镜像版本、Node 版本和候选提交的完整 Git 树（路径、模式、对象及子模块引用）；pnpm 与 Bun 版本由树中的 `packageManager` 与 CI 准备步骤锁定。`checks` 使用完整树。测试组排除普通说明文档，对其他测试组专属且独立的已有测试文件只保留路径与模式；这些被排除内容仍会被仓库根的 Tailwind 自动扫描读取，因此改为纳入同一 Tailwind 扫描器提取的候选 class。新增、删除、重命名、导出或被引用的测试文件、共享 fixture 与源码变化因此使相关测试组失效。主线 push、非 PR 事件、runner 身份缺失、checkout 与事件提交不一致或工作区已修改时不复用；缓存或记录缺失、损坏、不匹配以及缓存服务故障都回退为正常执行。PR 运行执行 PR 自身的 CI 脚本，该机制防范实现错误与输入漂移，不承担抵御恶意 PR 的职责，也不需要 `contents: read` 以外的权限。
-
-最终 `verify` 始终汇总计划及四组结果；矩阵组的结果由全部分片汇总。计划失败、必需组或任一分片失败/取消/意外跳过、结果缺失或未知状态均失败；只有计划明确排除的组允许跳过。计划与汇总入口仅依赖 Node 内建能力，不需要先安装业务依赖；执行组调用已有 pnpm/Vitest/Playwright 命令，文件名与分片经验证后作为 argv 传递。
-
-选择、分片、复用、真实 Git/进程边界及汇总回归由 `scripts/ci.spec.ts`、`scripts/ci-cli.spec.ts` 持有，CI 脚本与测试纳入 `tsconfig.ci.json`。设计理由见 [CI 分流与并行决策](decisions/implemented/testing/2026-10-25-selective-parallel-ci.md)与[分片及成功复用决策](decisions/implemented/testing/2026-11-04-ci-shard-success-reuse.md)。`verify` 输出与仓库分支保护是不同能力，强制拦截合并仍需管理员单独启用规则。
-
-跨包 interface、workspace 配置、构建、文档投影或发布 workflow 变化运行 `pnpm check`。只有 Mobile 文件、共享给 Mobile 的 contract/core 入口或 Expo 配置变化时才运行 `pnpm check:mobile`。
+`checks`、`unit`（`1/2`、`2/2` 分片）、`browser`（`1/2`、`2/2` 分片）与 `e2e` 在独立 runner 并行执行；浏览器与 E2E 按互斥两阶段先运行 `--grep-invert=@surgery-flow` 常规集合，再无分片独立运行 `@surgery-flow` 手术全程。同一 PR 内各执行组与分片按包含 Git 树、Tailwind 扫描候选类与运行环境的精确输入指纹恢复成功记录，最终由仅依赖 Node 内建能力的 `verify` 汇总全部分片状态（设计理由见[选择性并行 CI 与分片复用决策](decisions/implemented/testing/2026-10-25-selective-parallel-ci.md)）。
 
 ## 测试数据
 
-- 只使用合成患者、机构、临床、医保和支付数据。
-- Fixture 的稳定 logical id 使用预分配 ID 或确定性 UUID。
-- 真实提交时间、request ID、lease 和 duration 不进入 canonical state hash。
-- 测试自行创建和清理 workspace/epoch；旧 callback 不得写入新 epoch。
-- 敏感字段不出现在 snapshot、异常信息和 CI artifact。
-- 常规测试只使用 fake Synthea 和 fake Chat Completions provider，必须在没有模型 API key、没有外网和没有付费调用时通过。真实 provider 只进入显式 live smoke。
+- 只使用合成患者、机构、临床、医保和支付数据；敏感字段不得出现在 snapshot、异常信息和 CI 产物中。
+- Fixture 的稳定 logical id 使用预分配 ID 或确定性 UUIDv5；真实提交时间、`requestId`、租约和耗时不进入 canonical state hash。
+- 每个用例自行创建和清理 Workspace/Epoch，旧世代 callback 不得写入新 Epoch；常规测试仅使用合成 Provider，必须在无 API key、无外网和零付费调用条件下通过。
 
 ## 用户界面验证
 
-用户界面修改默认使用 Playwright 在 standalone Web 与受影响的 DSH Surface 真实入口验证；`agent-browser` 按探索或现有会话接管需要选用。布局需要覆盖长中文文本、窄宽度、缩放和空/错误/加载状态；DSH `workspace` 在缩放和原生右栏开关时保持左右分屏，并验证手动全屏往返恢复侧栏及分栏偏好、保留病例和草稿。容器缩放与动画卸载使用真实浏览器帧和有界状态等待；比较最终几何时先等待有限动画完成或正常取消，并核对替代动画，保留原尺寸与位置断言，见[布局动画采样边界](decisions/implemented/testing/2026-11-15-browser-layout-animation-boundary.md)。用户要求演示时再录制绑定精确 commit 的原生 WebM，成片使用 3–4 倍速、步骤字幕和真实点击高亮，在临床文字仍可读的前提下压缩体积。WebM 不替代自动回归测试。Desktop 进入实际开发后再增加真实 renderer 证据。
-
-`playwright.config.ts` 的 `contracts` project 拥有 `*.browser.test.ts`，Vitest 排除这些文件；`web` project 拥有 `apps/web/e2e/*.spec.ts`。合同保留现有 Vite/Tailwind 生产构建、React 18/19、ShadowRoot、布局和合成 canvas 断言。Playwright 在 worker 内复用 Chromium，每个测试有独立 context/page；默认两 worker、零重试，runner 限时等待 fixture 的结果信号，不用 Chrome DOM 导出取得结果。字号合同断言 standalone computed font-size、布局尺寸、Desktop 默认 token、Surface 字号和宿主隔离。
-
-门诊合并收款与多费用预览由 `outpatient-multi-charge-collection-http.test.ts`、`outpatient-multi-charge-preview-http.test.ts` 通过公开 HTTP 与临时 SQLite 核对零收款冻结预览、整笔唯一原款与完整分配、旧单项确认拒绝新预览、跨 runtime 重启回执恢复及逐分配原款退款额度；`multi-charge-payment.spec.ts` 与同名 React 18/19 浏览器合同从医生真实开立跨类别原申请到收费员合并收退款核对文字工作区，禁止请求影像或切片像素。
-
-诊断处方外观矩阵在字号属性更新后继续等待标签的实际 `font-size` 到达目标值，再通过真实指针切换标签并确认 `aria-selected=true`。React 18/19 回归延长 fixture 中的 CSS 过渡，覆盖窄转宽与字号同时变化时属性已提交而文字仍在移动的窗口；不增加交互时限或自动重试。
-
-Playwright 的 Node 宿主固定使用 `NODE_ENV=test`，避免同一 worker 中的 Vite 构建改变后续服务端模块的生产默认值。浏览器合同显式定义生产 bundle；Web E2E 仅在 Vite 构建期间切换到 `production`，无论构建成功或失败都先恢复宿主环境，再启动真实 HTTP fixture。认证的 origin 与 CSRF 校验继续保持开启。
-
-首次安装依赖后安装与锁定 Playwright 版本匹配的 Chromium；新检出单跑浏览器合同前生成 Surface 样式模块，CI 的 prepare 阶段执行同一步骤。CI 同时安装系统依赖：
+UI 修改默认使用 Playwright 在 standalone Web 与受影响的 DSH Surface 真实入口验证（`agent-browser` 按探索或接管会话需要选用）。`playwright.config.ts` 的 `contracts` 项目覆盖 React 18.3.1／19.2 双版本生产 bundle、ShadowRoot Portal、三档语义字号、深浅主题、长中文文本及 `1600/1280` 与 `< 800px` 窄容器（完整十阶段四十组合手术几何矩阵通过 `CLINMESH_SURGERY_FLOW_FULL_MATRIX=1` 显式运行）；`web` 项目在 Vite 构建期切换 `production` 后立即恢复宿主 `NODE_ENV=test`，保持真实 Origin 与 CSRF 校验开启。比较最终几何或触发指针操作前须等待真实浏览器帧及有限 CSS 过渡完成，见[前端浏览器回归与动画采样决策](decisions/implemented/testing/2026-10-02-playwright-frontend-tests.md)。
 
 ```sh
 pnpm exec playwright install chromium
@@ -205,17 +96,11 @@ pnpm test:browser --grep 'React 18'
 pnpm test:e2e --workers=1
 ```
 
-默认从 Playwright browser cache 解析可执行文件，不依赖系统 Chrome；需要指定浏览器时使用 `CHROME_PATH`。常规回归关闭 trace、截图和视频，生成目录不进入 Git。真实影像验证只读取文字树和 canvas 聚合统计，不保存或读取像素截图；独立的合成影像合同允许读取已知 fixture 像素。
-
-录制只使用合成医院场景和隔离的 workspace、epoch 与客户端状态。画面不得包含真实患者信息、医保或支付凭证、平台密钥、无关浏览器标签或通知。
-
-Mobile 功能先列出与 Web/Desktop 必须一致的语义，再验证移动端允许不同的导航和控件。运行 `pnpm check:mobile` 和相关移动测试，并报告真实设备或模拟器证据缺口；不能用一张 Web 截图证明移动端正确。
+默认从 Playwright browser cache 解析浏览器（可用 `CHROME_PATH` 覆盖）；常规回归关闭 trace、截图和视频且生成目录不入库。真实去标识影像与切片验证只读取文字树和 canvas 聚合统计，严禁读取像素截图；用户要求演示录屏时在合成隔离场景录制绑定精确 commit 的 3–4 倍速原生 WebM，不替代自动化回归。
 
 ## 性能合同
 
-短性能门禁属于 `pnpm check`。它在隔离的 file-backed SQLite 上运行 Reference Release 导入、独立 Reference SQLite 的疾病/药品/检验全文搜索、本院服务目录 HTTP 查询、普通与重 Command、测试专用 Trace 对照和内置 Scenario install/reset。门禁只 gate statement/query/write、rows written、数据库增长、Trace rows/bytes、错误和索引计划。Trace bytes 是 `action_trace` 全部持久化 TEXT 字段的 UTF-8 字节数，不代表 SQLite page allocation。P50/P95/P99、transaction time 和吞吐始终进入结果，但不作为跨机器 PR hard gate。SQLite 当前不提供可靠 rows-read，因此结果 schema 明确不声明该指标。
-
-Scenario install/reset 的存储采样在工作负载前后分别完成 `wal_checkpoint(TRUNCATE)`，再合计主文件、WAL 与 SHM 的字节数，比较 checkpoint 后的持久分配增长。两次 checkpoint 均在 SQL 计数与延迟采样之外；这一指标不表示操作期间的 WAL 峰值，避免将初始化数据的延迟刷盘计入场景增长。存储预算以 `apps/server/performance-baselines.json` 为准。CLI 在预算断言前输出完整结果并写入可选的 `--output` 文件；超限仍以非零状态退出，存储错误同时报告实际增长与预算字节数。
+`pnpm check` 内置短性能门禁（`pnpm perf:ci`，预算以 `apps/server/performance-baselines.json` 为准）：在隔离文件 SQLite 上运行 Reference 导入、疾病／药品／检验全文搜索、本院服务查询、轻重 Command、Action Trace 对照与 Scenario install/reset（前后执行 `wal_checkpoint(TRUNCATE)` 测量持久分配增长），仅对 SQL 语句／写入次数、写入行数、数据库增长、Trace 行数／UTF-8 字节数、错误和索引计划设硬门禁；P50/P95/P99 与吞吐随结果输出但不作跨机器 PR 硬门禁。影像帧块与病理瓦片读取由 HTTP 与 DSH 代理合同约束固定只读 SQL 语句数、单块 `<= 2 MiB` 透传、零写入与零审计开销。扩展基准命令如下，取舍见[SQLite 性能工作负载与稳定门禁分离](decisions/implemented/testing/2026-08-28-sqlite-performance-contract.md)：
 
 ```sh
 pnpm perf:ci
@@ -224,80 +109,58 @@ pnpm perf:saturation
 pnpm perf:full-import -- --manifest /absolute/path/to/release.json
 ```
 
-影像像素读取的预算由 Server HTTP 合同测试持有：读取检查描述和每个像素块各自不超过固定的只读语句数，零写入、零 Audit Event、零 Action Trace，单块不超过 2 MiB，预算不随 CT 层数增长。病理切片的每个瓦片请求遵守同一预算，不随层级或瓦片数增长。DSH 通道由代理合同测试覆盖整块 2 MiB 像素的原样透传与缓存策略。首帧延迟、翻片耗时和切片瓦片吞吐属于跨机器不稳定的时间指标，按上面的原则只在真实入口验证中记录，不作为 hard gate。
-
-`trajectory` 使用共享 application interfaces 从内置虚拟患者完成问诊、检验、诊断、处方、文书和完诊；Synthetic Case generation、历史、Brief、direct start、Investigation snapshot 与新 Epoch no-AI replay 由下述 Server HTTP 集成合同覆盖。`saturation` 以独立 Worker/SQLite sandbox 覆盖 1、5、10、25 actors，并报告 load runner 自身的 busy/retry；`full-import` 只读取调用者已合法取得的 manifest 和 artifact。所有 profile 只使用合成运行状态，不提供关闭 Audit Event 或 Action Trace 的运行开关。详细取舍见 [SQLite 性能工作负载与稳定门禁分离](decisions/implemented/testing/2026-08-28-sqlite-performance-contract.md)。
-
 ## 影像合同
 
-常规测试使用完全合成的 DICOM、患者与 Provider，不访问真实数据集、模型或公网；真实素材只出现在显式的真实入口验证中。
-
-- 素材流水线测试从公开入口覆盖清单校验、逐文件哈希、不支持的传输语法与方向、单块 2 MiB 上限、原子安装、离线修复、标注导出，以及报告自动核对与复核签署的发布门禁。
-- 病理切片素材流水线测试使用测试内生成的小型 RGB 金字塔 DICOM（JPEG、来源形态的 RGB JPEG 与 JPEG 2000 瓦片、缩略图、标签图和宏观图），从同一公开入口覆盖：丢弃非组织实例、20 倍上限与 40 倍降采样、10 倍层级生成、JPEG 原样复制、JPEG 2000 转码与重建的字节确定性、打包偏移索引、UID 不符与不支持的压缩、颜色、几何的拒绝、原子安装与离线修复，以及安装文件、清单和命令输出不含来源头部的患者标识。报告自动核对与复核签署用结构化字段和报告文本的正反例覆盖，并核对仓库清单中每张切片的草稿都通过自动核对；IDC 来源客户端用模拟存储桶覆盖分段下载、ETag 绑定和重试。
-- 病例影像准备的 Server HTTP 测试覆盖阳性、阴性、未覆盖疾病、冲突手术史、人口学不符、同一病例单一适配条目、不可变修订和病例开始后的绑定冻结；本次就诊的疾病按 Synthea 的真实导出形态带有就诊之后的缓解时间。管理员接口的身份负例与临床角色不可见性在同一 seam 验证。
-- 放射申请的 Server HTTP 测试从开单走到已阅和完诊门禁，并覆盖取消竞争、未取得结果后的重试与取消、报告更正、检验操作作用于放射申请的稳定冲突、临床读模型不含素材标识，以及患者模型载荷只含检查名称与时间。
-- 病理病例准备的 Server HTTP 测试覆盖受体、淋巴结与 T 类别全部一致才就绪、冲突与未知的优先级、来源手术须早于本次就诊、病例开始后的绑定冻结、已发布报告改动后以同一修订号重新签署时未开始病例的重新评估，以及一个素材包清单无效时另一个素材包的定向生成条目照常可选。
-- 病理会诊的 Server HTTP 测试从开单走到已阅和完诊门禁，并覆盖没有相符切片与其他故障三次后的未取得结果、重试与取消、报告更正、检验与放射操作作用于病理申请的稳定冲突、临床读模型不含素材标识，以及患者模型只知道会诊已受理。
-- 影像读取边界测试覆盖无权限、跨病例、跨 Epoch、越界位置和素材缺失，并持有像素读取的数据库预算。
-- Agent 测试覆盖放射 Tool 随病例状态发布、输入与当前病例资源的绑定、检验与放射 Tool 互不串用，以及影像未显示时拒绝已阅提案。
-- 显示规则的纯函数测试用已知合成像素验证 HU、窗宽窗位、反相、方向、层面顺序和比例；React 18/19 双版本浏览器合同测试读取少量真实渲染输出像素。DSH 代理合同测试覆盖整块像素的原样透传。
+常规测试使用完全合成的 DICOM 与小型合成 RGB 金字塔切片（含 JPEG／JPEG 2000 瓦片及非组织层），零公网访问覆盖：素材包清单与逐文件哈希、20 倍上限与 10 倍层级生成、单块 `<= 2 MiB` 打包偏移索引、患者头信息剥离、原子安装与离线 `repair`、零像素输入的报告草稿自动一致性核对与人工复核签署发布门禁；病例影像与病理准备的阳性／阴性／冲突手术史／五项受体事实匹配及开始后绑定冻结；放射与病理申请开立、预付费放行、重试、取消、修订、跨类别冲突拦截、只读像素权限边界，以及影像／切片未在人类视口成功显示前拒绝 DSH 已阅提案。
 
 ## 合成病例合同
 
-- Transformation 测试覆盖 Index Encounter 合格性、确定性最后选择、new-problem/follow-up/preventive 推断、时间与引用闭包、Visible Source History 投影，以及当前隐藏资源泄漏阻断。
-- Server HTTP 集成测试提交 generation request，等待异步任务并通过公开管理员 API观察 Profile、Case、provenance 与有界 translation warning；同时证明缺译保留来源 display 而结构错误仍失败、最多十次 Index Case 重试、失败不留部分资产、来源历史可分页/查看详情且猜测隐藏引用仍不可读取。
-- Brief 测试覆盖异步状态、严格 schema、诊断泄漏拒绝、成功 revision 不可变、失败不覆盖成功、显式选择和无活动 Brief 禁止开始。客户端不能覆盖 provider URL、model、header、key 或 body，日志和 DTO 不含凭证。
-- Direct start 测试证明一个 Case 正常流程只能开始一次，并原子创建本院 R5 Patient、Registration、Encounter 和 Queue Task；来源 R4 历史与全局 Reference rows 不得写入本院 R5/operational store。
-- 管理员 Laboratory Service 测试覆盖 orderable Reference 候选分页、expected candidate version、50 项批次上限、fake enrichment、panel 闭包、原子发布、失败状态和幂等 job；医生目录测试只接受 active、doctor-orderable Hospital Service，并覆盖无 capability 文案、明确选择、自动保存与正式开立。
-- Investigation 测试覆盖单项和完整 panel 的精确 Observation 命中、partial panel 只生成缺失叶子、数量与定性 strict output、单位/范围/闭包拒绝、outbox 三次自动尝试、首个成功 snapshot 冻结和复查新 evidence hash；连续失败不创建临床资源。
-- Reset/replay 测试在新 Epoch 重新物化同一 Case Revision，复用 Brief、Case Truth 与 evidence hash 相同的 Investigation Result Snapshot，断言 provider 调用计数不增加、旧 callback 不能写入新 Epoch。
-- Docker smoke 使用固定 Synthea commit、全部模块模式、中国 profile/localization provenance、非 root、只读文件系统和有界资源，从真实 HTTP 入口完成多患者 generation，并验证全部 Bundle 成功以及 translation warning 按 ordinal 关联，再继续覆盖 history、Brief、direct start、诊断、检查与 LIS 结果。
-- OpenAI-compatible live smoke 是开发者显式运行的单个合成 Brief 检查，读取本机启动配置，不进入 `pnpm test`、`pnpm check` 或 CI，且不输出 prompt、响应正文、API key 或 provider header。
+- Transformation 套件覆盖 Index Encounter 合格性与确定性最后选择、`new-problem`/`follow-up`/`preventive` 推断、Visible Source History 与私有 `Case Truth` 闭包隔离及缺译 warning。
+- 异步生成与 Persona 套件覆盖最多十次重试、失败零残留、严格 schema、隐藏诊断泄漏出口拒绝、不可变修订、显式激活门禁及零凭证日志。
+- Direct start、Investigation 与 Epoch replay 套件证明单病例一次性消费原子创建本院 R5 运行资源（不写入来源 R4 历史）、检验服务发布、分阶段（`initial`/`inpatient`/`repeat`/`follow-up`）`Investigation Result Snapshot` 按 `inputHash` 冻结复用，以及新 Epoch 零外部 Provider 调用重放与迟到旧世代 callback 拦截。
 
 <a id="14-测试策略"></a>
 
 ## 领域与协议合同矩阵
 
-模型用量、计价与保留期由公开 HTTP、真实临时 SQLite 与受控外部 Provider 边界共同持有（`model-usage-control.test.ts`、`model-usage-http.test.ts`、`model-usage-host.test.ts`、`model-usage-cost-control.test.ts`、`model-usage-retention.test.ts`）：验证双层停用、原子请求预占、独立累计起点、派发前记账、Host 独立识别一次性许可与超期未知结算、调用时单价／汇率快照、缺少硬 Token 上界时的 `MODEL_METERING_UNAVAILABLE` 阻断、管理员核对补算，以及受控时钟下默认 90 天／自定义天数／永久保留对未决请求与长期汇总的保护。Web 与 React 18/19 Surface 从真实设置入口验证总览、三项额度、只读价表、核对补算和保留期边界；常规验证不调用真实模型，也不运行压测，执行许可由[根工程规则](../AGENTS.md)拥有。
-
 ### 应用与 Web 矩阵
 
-- Hono 与真实临时 SQLite 的场景测试覆盖认证、角色、Scenario、门诊与住院闭环、签署／修订、支付三结局、LIS、发药和 Epoch 隔离。
-- Command 与 Repository 聚焦测试覆盖幂等、expected version、事务回滚、审计链、outbox lease/retry/ambiguous 和 SQLite 生命周期。
-- React 组件测试覆盖认证缓存隔离、岗位 wiring、加载/空/错误/冲突/无权限状态、分页、支付拒绝重试、长中文文本和 locale/theme 控件。
-- DSH adapter 测试覆盖 proxy 限制、Cookie/Origin、proof 防重放、单文件 artifact、Page Context 续签、动态 Tool schema、detached review 和 ShadowRoot/Memory Router composition。
+- Hono 与真实临时 SQLite 场景测试覆盖认证、角色 RBAC、门诊与住院闭环、文书签署／修订、共享收款与原款退费三结局、医保待遇、LIS、药房发药及 Epoch 隔离。
+- 模型用量、计价与保留期套件在受控 Provider 与受控时钟下验证双层停用、原子请求预占、独立累计起点、Host 独立代问一次性准入与 30 秒超期未知收束、单价／汇率快照、缺少硬 Token 上界时的 `MODEL_METERING_UNAVAILABLE` 阻断、管理员 `reconcile`/`reprice`，以及默认 90 天保留期对未决请求的保护与 `model_usage_daily` 长期汇总归并。
+- React 组件测试覆盖认证缓存隔离、岗位接线、加载／空／错误／冲突／无权限状态、分页与长中文文本。
+- DSH adapter 测试覆盖 loopback proxy 限制、Cookie/Origin、execution proof 防重放、单文件 artifact、Page Context 续签、动态 Tool schema、detached review 与 ShadowRoot/Memory Router composition。
 
 ### FHIR 合约测试
 
-- CapabilityStatement 与实际 resource ownership、interaction 和 SearchParameter registry 一致。
-- HTTP 黑盒测试覆盖 read、vread、instance history、白名单 search、完整 `self`/`next` link、`_total=none|accurate` 和弱 ETag。
-- 两个 Workspace/Epoch 的 current、history、total 和签名 cursor 互不泄漏，cursor 不能跨 query、resource type、Workspace 或 Epoch 重放。
-- 未知资源、未知参数、坏 cursor 和 generic `PUT` 返回稳定 OperationOutcome。
-- 当前没有官方 R5 Profile Validator、OperationDefinition、create/update、If-Match、tombstone 或 `Prefer` 合约测试，因为服务器不宣告这些能力。
+- `CapabilityStatement` 与实际资源所有权、interaction 和 SearchParameter 注册表一致。
+- HTTP 黑盒测试覆盖 `read`、`vread`、`_history`、白名单 Search、完整同源 `self`/`next` link、`_total=none|accurate` 和弱 `ETag`。
+- 跨 Workspace/Epoch 的 current、history、total 和签名 cursor 互不泄漏，cursor 禁止跨查询、资源类型或世代重放。
+- 未知资源、未知参数、损坏 cursor 和 generic `PUT` 返回稳定 `OperationOutcome`。
+- 当前不设官方 R5 Profile Validator、OperationDefinition、通用 create/update、`If-Match`、tombstone 或 `Prefer` 合约测试，因为服务器不宣告这些能力。
 
 ### Repository 合同测试
 
-Repository contract suite 运行于真实临时 SQLite 文件；未来增加数据库 adapter 时，同一套外部行为测试必须同时运行于新旧 adapter，不能用 mock 声称可迁移：
+Repository 合同套件运行于真实临时 SQLite 文件（未来新增数据库 adapter 时必须同时通过同一套外部行为测试）：
 
-- 当前资源 + 历史 + Search 索引原子更新与索引重建。
-- transaction/约束失败整体回滚、条件 update 零行识别和错误分类。
-- idempotency key 并发首请求、完成重放和不同 payload 冲突。
-- Workspace/Epoch 复合 foreign key、Registration、Prescription 和库存条件写。
-- outbox lease 竞争、过期回收、重复消费、retryable failure、ambiguous 和 Epoch abandon。
-- audit head 并发推进不分叉，审计与关键业务同事务提交。
-- reset 与晚到 callback 并发时旧 epoch 不得影响新数据。
+- 当前资源 + 历史 + Search 索引原子更新与 `reindex` 重建。
+- 事务或约束失败整体回滚、条件 update 零行识别和稳定错误分类。
+- 幂等键并发首请求、完成无写重放和不同 payload 冲突。
+- `(workspace_id, epoch)` 复合外键、挂号发号、处方和库存条件扣减。
+- outbox 租约竞争、过期回收、重复消费、retryable failure、`ambiguous` 和 Epoch `abandoned`。
+- `audit_head` 并发推进不分叉，审计与关键业务同事务提交。
+- Epoch reset 与迟到 callback 并发时旧世代结果绝不污染新数据。
 
 <a id="144-场景测试"></a>
 
 ### 场景测试
 
-每个业务能力必须以可执行场景验收，而不是以类、页面或表存在验收。门诊轨迹从 generation、Visible Source History、Brief、direct start、分诊、首诊、Investigation、复诊、处方与文书签署、Encounter 完诊、支付到发药和 Scenario Run 完成；住院轨迹覆盖入院登记、分床、诊断医嘱、检查送检与已阅、手术耗材、出院结算、病案归档与 DRG 核定。自动化故障矩阵覆盖无合格 Index Encounter、Brief 泄漏拒绝、重复开始、模型失败、过敏拦截、旧版本冲突、支付拒绝/ambiguous、LIS 重试、未支付处方禁止发药、已签文书禁止覆盖、部分发药和 reset 后晚到结果隔离。
+每个业务能力均以可执行跨岗位场景验收：门诊轨迹覆盖病例准备、Visible Source History、Persona、direct start、分诊、首诊问诊、检查报告已阅、诊断、内外延处方与文书签署、完诊、收费与发药结案；住院轨迹覆盖住院证／直接入院、分床、诊断医嘱、检查送检与集中已阅、手术耗材预留与核实、出院结算清床、病案归档冻结与医保办 DRG 核定；故障矩阵覆盖无合格 Index Encounter、隐藏诊断泄漏拒绝、重复开始、模型失败、过敏与药事红线拦截、乐观锁冲突、支付拒绝／`ambiguous`、未支付禁发药、已签文书禁覆盖及 reset 隔离。
 
 ### Agent 安全测试
 
-- Page Context 严格 schema、岗位/view 不匹配、Hidden Fact/任意字段拒绝和 Epoch reset 失效。
-- execution proof 篡改、过期、Tool/operation/scope 不匹配、call replay 和重复 completion。
-- 动态岗位/view Tool 目录、32 Tool 上限、岗位导航收窄、DSH JSON Schema 子集和 context 到期注销。
-- 草稿 action 更新 context 但保持 page lease；proposal 立即返回 pending，明确批准关联 Command/Audit/Trace，取消或 scope 变化不产生 Effect。
-- 固定 loopback proxy、Cookie/Origin、body/response/timeout 限制和非 loopback 拒绝。
-- Catalog、Identity、CLI process 与 Skill 四个互补 seam 共同验证 CLI/Operation 映射、Grant hash 与单岗位 allowlist、响应丢失后的回执恢复及 Skill 命令示例存在性；模型内容安全在引入新嵌入式 runner 时单独补齐运行时测试。
+- Page Context 严格白名单 schema、岗位／栏目不匹配拒绝、隐藏事实零暴露和 Epoch reset 失效。
+- execution proof 签名篡改、过期、Tool／operation／scope 不匹配、重放拦截和重复完成拒绝。
+- 动态岗位／视图 Tool 目录、单页 32 Tool 硬上限、DSH JSON Schema 子集和到期注销。
+- 草稿动作更新 context 但维持 lease；`.propose` 立即返回 pending，明确人工批准串联 Command/Audit/Trace，取消或 scope 变化零业务副作用。
+- 固定 loopback proxy、Cookie/Origin、请求与响应体积／超时限制及非 loopback 拒绝。
+- Catalog、Identity、CLI 子进程与 Skill 四重互补 seam 验证 CLI/Operation 映射、Grant 单岗位 allowlist、丢响应回执恢复与 Skill 命令示例真实性。

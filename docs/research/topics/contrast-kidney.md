@@ -1,6 +1,6 @@
 # 对比剂与肾功能风险：实验专题
 
-本页是人工整理、尚未接入产品的证据导航。适用于计划使用含碘对比剂的介入诊治风险取证；不输出固定对比剂剂量、水化速度或补液总量。
+本页保留人工整理的离线取证实验夹具（供 `apps/server/research/guideline-topic-evaluation.ts` 复现对照；产品运行时已基于同构设计上线共享指南专题注册表，见 [`clinical-decision-support.md`](../../architecture/clinical-decision-support.md)）。适用于计划使用含碘对比剂的介入诊治风险取证；不输出固定对比剂剂量、水化速度或补液总量。
 
 ```json
 {

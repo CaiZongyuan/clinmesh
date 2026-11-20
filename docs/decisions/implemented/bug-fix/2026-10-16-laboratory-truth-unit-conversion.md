@@ -16,7 +16,7 @@ Investigation 在精确真值进入结果闭包前执行受控换算。冻结服
 
 失败申请的取消继续经过既有 Command、责任医生、expected version 和审计。医生页面及 Surface action、DSH operation 可见性和目标校验均接受 `generation-failed`，可以与可恢复错误的重试同时显示；进行中申请仍不可取消。CLI Catalog 版本和医生运行时 Skill 同步描述该恢复合同。
 
-此决定扩展[可信成人检验基线](../architecture/2026-09-02-trusted-laboratory-baseline.md)的单位兼容规则，并局部取代[服务发布](../architecture/2026-09-01-laboratory-service-publication.md)中所有失败均开启三次尝试窗口的恢复描述。
+此决定与[完整检验参考库与本院服务发布](../architecture/2026-09-01-laboratory-service-publication.md)的成人检验基线单位规则协同，明确将单位与真值不兼容归入确定性失败，仅对可恢复执行错误开启三次尝试窗口。
 
 ## Alternatives considered
 

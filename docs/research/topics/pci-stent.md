@@ -1,6 +1,6 @@
 # PCI 支架类别与尺寸核对：实验专题
 
-本页是人工整理、尚未接入产品的证据导航。适用于医生已经提出 PCI 计划、需要核对材料类别或尺寸依据的取证实验；不判断患者是否应接受 PCI，不提供具体品牌、型号或固定件数。
+本页保留人工整理的离线取证实验夹具（供 `apps/server/research/guideline-topic-evaluation.ts` 复现对照；产品运行时已基于同构设计上线共享指南专题注册表，见 [`clinical-decision-support.md`](../../architecture/clinical-decision-support.md)）。适用于医生已提出 PCI 计划、核对材料类别或尺寸依据的取证实验；不判断患者是否应接受 PCI，不提供具体品牌、型号或固定件数。
 
 ```json
 {

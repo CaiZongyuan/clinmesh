@@ -1,99 +1,23 @@
 # GitHub 与交付排障
 
-处理 GitHub 连接、权限、PR 操作、分支清理、媒体可达性或升级自动化时查阅。授权边界与交付流程由[Agent 工程开发](../agent-development.md#实施与交付)拥有，升级运行方式由[部署指南](../deployment.md#dsh-持续升级)拥有。
+处理 GitHub 连接、Actions 日志、PR 操作、分支合并清理或媒体与升级自动化时查阅；授权与提交规范见 [`docs/agent-development.md`](../agent-development.md#实施与交付)。其他主题见[工程记忆入口](memory.md)。
 
-其他操作经验见[工程记忆入口](memory.md)。
+<a id="连接权限与-pr-操作"></a>
 
 ## 连接、权限与 PR 操作
 
-- Windows `gh` 的 GraphQL／REST 请求出现 EOF 或 TLS 握手超时时，可仅对当前进程设置 `GODEBUG=http2client=0` 作为诊断选项；本机曾据此完成 PR 更新及回读，但连接仍可能间歇失败，不能据此推断握手根因。需要换用 HTTP/1.1 `curl` 时沿本节认证头标准输入的边界执行；写入结果始终用远端正文、状态及完整提交 SHA 核实。
-
-- GitHub POST 在请求体已发出后报 EOF 或 HTTP/2 错误，不能据此判断写入失败。先回读目标正文或评论，以精确内容及标识确认结果，再决定是否补发，避免重复任务或评论。依赖同一回执文件的发布步骤必须等前一步进程实际结束，不能把返回运行中 session 当作完成后继续写入。
-
-- WSL 的 Git HTTPS 推送持续无输出、Windows `gh` 仍能访问 GitHub 时，先回读远端分支，再终止原推送。可用 Windows Git 指向同一仓库主工作区的 `.git`，将已核对的完整提交 SHA 普通推送到原目标分支；通过进程局部 `credential.helper=!gh auth git-credential` 提供凭证，不输出 token 或修改全局配置。此路径只发布已有对象，不操作工作树或索引；完成后核对远端 SHA，必要时定向 fetch 该分支并设置目标 worktree 的 upstream。
-
-- Git HTTPS push 报 `curl 16/52`、`SSL_ERROR_SYSCALL` 或 sideband 断连时，即使末尾出现 `Everything up-to-date` 也先用 `git ls-remote` 核对完整目标 SHA。确认远端未推进后，可在单次命令中使用 `git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push`；本机曾在仅切换 HTTP/1.1 仍失败时用此组合完成普通推送。它是已验证的连接排障选项，不据此推断 TLS 根因；保留原分支目标、不 force、不改全局配置，成功后再回读 PR head。
-
-- Actions 日志经 Azure Blob 下载时，网络错误可能把带签名的临时 URL 写入 stderr；捕获错误时只报告状态码或异常类型，不输出完整下载链接。`gh run view --log` 遇到下载 EOF 时，可通过 GitHub job logs API 取得 302，在内存中校验 HTTPS 与 Blob 主机后下载；GitHub Authorization 只发送到 GitHub，不转发到下载地址，日志保存到被忽略的 `.data/`。
-
-- 单个 job 的 Azure Blob 下载持续 TLS 失败时，先核对整个 run 是否结束；结束后可尝试 `gh run view <run-id> --log-failed` 的完整归档入口。曾出现单 job 下载不可用、已结束 run 的归档可读的情况；以实际取得的完整失败报告定位根因，不将前几条 annotations 当作全部失败。
-
-- PowerShell 会把原生命令 stderr 包装成带换行的错误记录；事后仅用单行 URL 正则脱敏可能漏出下一行的签名参数。下载 Actions 日志失败时只输出退出码、状态或异常类型；可能含签名或凭证的原始 stderr 只在内存处理，仅保存不含这些敏感信息的诊断摘要。
-
-- 整轮 Actions 仍在运行时，`gh run view --job <job-id> --log` 可能拒绝读取已经完成的 job 日志。先确认该 job 的步骤已完成，再用 `gh api repos/<owner>/<repo>/actions/jobs/<job-id>/logs` 单独读取；不为取得日志而重跑任务，下载错误仍按上述签名地址保护规则处理。
-
-- 旧版 `gh pr edit` 可能因 GraphQL 请求已退役的 `projectCards` 字段而失败。已有 PR 正文更新授权时，使用 `gh api --method PATCH repos/<owner>/<repo>/pulls/<number> --input <json-file>` 的 REST 入口，JSON 保留实际换行；写入后核对正文、draft 和 head，不把工具兼容问题变成新的内容审批或安装流程。
-
-- Windows PowerShell 生成 GitHub JSON 请求文件时，使用 `[System.IO.File]::ReadAllText` 读取正文，再将 `{ body: string }` 序列化并以无 BOM UTF-8 写入。`Get-Content -Raw` 的字符串可能携带扩展属性，使 `ConvertTo-Json` 把正文变成含 `value` 和文件元数据的对象；发送前回读 JSON，核对 `body` 仍为字符串，发送后比较远端正文与原文件。
-
-- 排查 FlClash／TUN 环境的 GitHub 连接时，`198.18.0.0/15` 可能是正常的 Fake-IP；仅清除命令行代理环境变量不能证明绕过了 TUN。分别比较国内与境外 HTTPS、代理 CONNECT 和 TLS 握手阶段，再判断节点、分流或系统拦截，不把握手前失败归为 GitHub 账号权限问题。
-
-- HTTP 代理 CONNECT 已建立后仍持续 TLS 中断时，可对同一本地混合代理比较 `socks5h`，并为 Git 临时指定 `http.proxy` 和 `http.version=HTTP/1.1`；以真实 `ls-remote`／push 验证，保留命令局部设置，不改全局代理。单次 curl HEAD 成功不表示 Git 或 gh API 已恢复；改用 curl API 时，认证头经进程标准输入传入，不将凭证放入命令参数、文件或日志，也不关闭 TLS 校验。
-
-- TUN下HTTPS握手持续失败时，先区分实际规则组选中节点与未使用的GLOBAL选择，分别做小范围只读连接探测。代理配置中的控制管道名可能与当前运行实例不同，读取控制API前核对活跃管道；凭证只在内存使用。任务临时切换现有可用路径时，保存原选择，在子进程结束的finally中恢复并回读，不修改持久订阅或全局默认配置，也不把一次恢复推断为TLS根因。
-
-- 域名请求在代理 CONNECT 成功后仍中断 TLS，而同一 HTTPS URL 经当次核验的 GitHub API 地址能够完成证书校验并返回正常结果时，可对单次 `curl` 使用 `--connect-to api.github.com:443:<当次核实的GitHub地址>:443`。URL、HTTP Host 和 TLS 证书校验仍绑定 `api.github.com`，凭证沿本节标准输入边界提供，不发送到其他域名；回读正文、审查提交和状态确认真实操作结果。地址只用于当次连接排障，不固化为 DNS 配置或长期常量，也不据此推断 Fake-IP 或代理规则的根因。
-
-- PR 从 draft 转为 ready 会触发仓库的异步 Codex 审查。合并前核对最新提交对应的 review summary、审查评论与完成反应；审查运行中先等待结果，处理 findings 后沿用已有合并授权。推送修复后若摘要仍指向旧提交，核对是否触发新一轮审查；已有 Ready 授权时可通过 draft → ready 状态事件重新触发，并确认审查绑定新提交。CI 与自动审查的状态分别核对。
-
-- 关联 issue 用 `Ref`/`Refs #N` 只建立引用，GitHub 自动关闭只识别 `Closes`/`Fixes`/`Resolves` 关键词；本仓库 squash merge 的提交说明是"PR 标题 + 各条提交正文"，不含 PR 正文，所以正文里的关闭关键词在 squash 下也不生效。交付型 PR（issue 范围随本次交付完成）的正文统一写 `Closes #N`；合并后发现 issue 仍 OPEN 时核对提交说明后手动关闭并附原因，不重复推送只改关键词的空提交。
-
-- 本仓库 `ci.yml` 的 `push` 触发仅限 `main`/`master`；feature 分支的 CI 由 PR 的 `pull_request` 事件触发。push 后 `gh run list` 为空时先核对分支是否在 push 触发列表、PR 是否已创建（PR 不存在时无 run 属预期），再怀疑 GitHub 偶发丢失 push 事件；确认事件丢失才推送空提交重新触发，不把"推送完成"当作"CI 已启动"。
-
-- 发布前核对自动 CI 的实际命令和 profile：`checks` 包含常规合成性能门禁 `perf:ci`（运行边界见[测试策略](../testing.md#性能合同)），实际并发压测与真实模型运行仍须取得[根规则](../../AGENTS.md)要求的当次明确许可。合入依据须包含待合入快照的完整 CI 结果，自动代码审查和历史本地证据不替代该结果。
-
-- CI annotations 可能只列出部分失败，不能据此前几项判断完整修复范围。先读取失败步骤的全部测试报告，按文件与根因汇总；`gh run view --log` 无内容时可用 `gh api repos/<owner>/<repo>/actions/runs/<run>/logs` 下载 ZIP，检查失败步骤日志。不要输出下载重定向中的临时签名地址，修复后覆盖同根因的全部替身与合同。
-
-- 扩展 Agent-facing DTO 后，沿 schema 的消费者核对读取操作的 Catalog 版本与摘要；只更新保存、签署等写操作会漏掉共享响应 schema 自动带出的字段。Catalog 升版时用 operation ID 同时扫描共享合同和 CLI 的版本断言，并检查字段数量等旧描述；病例详情和预留释放的回归分别见 `apps/cli/tests/skill-commands.test.ts` 和 `packages/contracts/tests/his-operations.test.ts`。
-
-- run/job 级 `status` 由服务端异步收尾，可能滞后步骤级结果数十分钟；判定 CI 实际完成看步骤列表（`Complete job` 的 `completed_at` 与结论）。轮询终态用 run id 直接查 `actions/runs/<id>`；`head_sha` 过滤必须传完整 40 位 SHA，缩写 SHA 会静默返回空结果。重跑单个已结束 job 也须等待整轮 workflow run 结束；其他 job 仍在运行时，重跑 API 会返回 `403`（workflow run already running）。
-
-- Actions 的 `pull-requests:write` 不等于仓库允许机器人创建 PR；出现明确的创建权限错误时先核对仓库设置，不反复重试。没有管理员权限时，可按[持续升级故障恢复](../deployment.md#dsh-持续升级)验证已有候选 PR 的更新与验收，并单独保留首次创建权限限制。
-
-- `gh pr merge` 成功时可能没有标准输出。只用一次 `gh pr view --json state,mergeCommit` 确认结果，不因空输出重复合并或重跑检查。
-
-- 已合并 PR 的正文仍可补充更清晰的演示链接，但不得改写 merge commit 或 force-push 源分支。更新后只核对 PR 状态、head SHA 和新链接，不重跑产品测试。
+- **TLS / HTTP2 断连与推送核实**：Windows/WSL 在代理或 TUN（`198.18.0.0/15` Fake-IP）下遇 `gh` EOF 或 Git `curl 16/52`、`SSL_ERROR_SYSCALL` 时，POST/push 报错后先回读远端正文或 `git ls-remote` 核对完整 SHA（防止请求已生效却重复创建或误信末尾 `Everything up-to-date`）。确认远端未推进后，单次命令可局部使用 `GODEBUG=http2client=0`（`gh`）或 `git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push`（WSL 推送卡死而 Windows `gh` 正常时，可用 Windows Git 指向同一 `.git` 配合局部 `credential.helper=!gh auth git-credential` 只推送已核对提交对象），不改全局代理或关闭 TLS 校验。
+- **PowerShell 构造 GitHub REST 请求**：旧版 `gh pr edit` 若报 `projectCards` GraphQL 错误，改用 `gh api --method PATCH repos/<owner>/<repo>/pulls/<n> --input <file>`；JSON 请求体在 PowerShell 中必须用 `[System.IO.File]::ReadAllText` 读取并以无 BOM UTF-8 序列化（避免 `Get-Content -Raw` 附带扩展属性把 `body` 序列化为对象），写入后回读远端正文核实。
+- **Actions 状态查询与日志脱敏**：`ci.yml` 的 `push` 仅触发 `main`/`master`，工作分支须创建 PR 且无合并冲突（`CONFLICTING` 时工作流完全静默）才会触发 `pull_request` CI。查询 check runs 或按 `head_sha` 过滤必须传完整 40 位 SHA（禁传 `HEAD` 或短 SHA），以 `Complete job` 步骤完成态判定终态，重跑单 job 须等整轮 run 结束。下载 Actions 日志报错时**严禁输出含 Azure Blob 临时签名 URL 的原始 stderr**（PowerShell 换行会截断单行正则脱敏），仅在内存校验重定向主机并将日志存入 `.data/`（单 job 下载失败可在整轮结束后试 `gh run view <id> --log-failed` 或下载 run logs ZIP）。
+- **关闭关键词与自动审查**：本仓 squash merge 提交说明不含 PR 正文，交付型 PR 正文写 `Closes #<ticket>`，合并后仍核对 Issue 是否已自动关闭（未关则手动附原因关闭，不补空提交）；`gh pr merge` 无输出属正常，用一次 `gh pr view --json state,mergeCommit` 确认。PR 转 ready 会触发异步 Codex 审查，合并前核对最新 SHA 的审查结果与 CI 全绿（含 `perf:ci`）；若 Codex 配额耗尽仅回上限提示，在已有 findings 清零且 CI 全绿时可按已有授权完成合并。
 
 ## 范围、合并与分支清理
 
-- 共享 `remote.origin.fetch` 含已删除分支的精确 refspec 时，裸 `git fetch origin` 会因远端引用不存在而中止。先核对实际远端 refs，再显式 fetch 本次需要的 `main` 或任务分支；不为单个任务改写所有 worktree 共用的 remote 配置。
-
-- 两个并行 PR 各自 cherry-pick 同一补丁不会形成共同祖先，继续修改相邻行后仍可能发生合并冲突。需要共同测试基线时，将不含业务改动的测试和共享文档提交放在共同已批准基线上，再普通 merge 到各分支；核对实际树差异，确保没有引入另一票的业务源码。
-
-- 拆分增量任务前，同时核对原 Issue 全文、原生依赖和相关 PR 的固定提交；Issue 仍开放不代表实现尚未提出。已有未合并实现应作为候选复用基线，新票记录代码集成前置，不把新增量反向设为原票阻塞，也不追溯扩大原验收范围。
-
-- 继续已有集成分支时，最终验证前先 fetch 同名远端分支并比较完整提交集合；本地 `origin/<branch>` 只是上次同步的快照。普通 push 被拒为非快进时，先保留并集成远端新增提交，复查合并差异并重跑受影响检查，再正常 push，不用 force 覆盖既有修复。
-
-- GitHub 的 PR ref 或 commit API 能访问某个支持 SHA，不代表从上游仓库普通 clone 后可检出；该对象可能只在贡献者 fork 的分支上。验收必须用声明的 source 新建 clone 并执行精确 checkout，不能复用含额外对象的本地仓库作为公开来源证据。
-
-- PR 审查的 three-dot diff 以 merge-base 确定改动范围，合并冲突则以当前远端目标分支 tip 判断。PR 元数据中的 base SHA 与远端分支 tip 不一致时，用 `git ls-remote` 或远端 ref API 核对并 fetch 最新目标分支，再以 `git merge-tree --write-tree <target-tip> <head>` 验证；不能把旧 base 与 head 合并成功当作当前可合并的证据。
-
-- 有合并冲突的 PR（`mergeable: CONFLICTING`、`mergeStateStatus: DIRTY`）不会运行任何 `pull_request` 工作流，表象是推送后 CI 完全静默。先核对 PR mergeable 状态再排查工作流配置、配额或 draft 属性；消除冲突（集成目标分支并推送）后工作流即恢复。查询提交的 check runs 必须传完整 commit SHA：`gh api repos/.../commits/HEAD/...` 的 HEAD 由服务端解析为默认分支而非 PR head，会产生误读；本地猜 SHA 也会得到无意义的空结果。
-
-- 分支范围以当前 canonical issue 正文为准；不能仅凭分支名或提交主题判定串票。整理旧分支前先核对 issue 全文、关联 PR 状态和远端提交，避免拆散已经批准的一次集成交付。
-
-- 本地 main 落后且子模块显示 `M` 时，先比较 main 记录、子模块实际 HEAD、远端 main 记录，并检查子模块内部是否干净。实际 HEAD 已与远端一致时，这是版本指针差异，不能称为用户源码改动；可快进 main 后在当前目录开分支，不应仅因此创建额外 worktree。
-
-- PR 使用 squash merge 后，旧 feature branch 与 `main` 的 SHA 历史会显示分叉，即使交付内容已经进入 `main`。清理时先检查 PR 和 tree 内容，让本地 `main` 对齐 `origin/main`，只移植 squash 后新增的提交；不要再次 merge 整条旧 feature 历史。并行 PR 的分支间三方合并干净，不保证先 squash 后的目标分支仍可合并；每合入一票都针对实际新 `main` 重新预检，并检查共享 helper 是否被自动合并为重复定义。
-
-- 删除非 main 分支前先枚举本地 branches、remote heads 和占用它们的 worktrees。Assets 分支是已发布 PR 媒体的 owner，删除会使历史链接失效；用户仍明确要求只保留 `main` 时按要求删除并报告影响，不把媒体二进制转存到 `main`。
-
-- PR 交付在主工作目录切分支完成、事后切回 `main`，后续任务容易在 `main` 上直接 commit。提交前必须 `git branch --show-current` 确认分支，push 前核对目标分支输出；误提交本地 main 时用 `git reset --mixed HEAD~1` 撤下（保留工作区改动与他人 WIP），再落到工作分支提交推送。
+- **定向 Fetch 与基线预检**：共享 `remote.origin.fetch` 含已删远端分支时裸 `git fetch origin` 会报错，统一显式 `git fetch origin main` 或目标分支；继续集成分支或评估合并冲突前先 fetch 最新目标分支 tip 并用 `git merge-tree --write-tree <target-tip> <head>` 预检，squash 合并多票时每合入一票都重新对齐最新 `origin/main` 并检查自动合并是否产生重复 helper。
+- **误提交保护与特殊分支**：提交前始终用 `git branch --show-current` 确认不在 `main`（误提交本地 `main` 时用 `git reset --mixed HEAD~1` 保全工作区改动后切工作分支）；子模块显示 `M` 时先比对远端 `main` 记录与子模块实际干净状态，仅指针落后时快进即可；`assets` 分支承载历史 PR 媒体，非用户明确要求不得删除。
+- **Catalog 升版联动**：扩展 Agent-facing DTO 时同步排查读取操作的 Catalog 版本与摘要（共享响应 schema 会自动带出新字段），推送前先在本机跑 `contracts` 与 `cli` 的计数及示例漂移测试，避免单 job 顺序校验多轮往返。
 
 ## 媒体可达性与升级自动化
 
-- Windows PowerShell 通过文本管道向 `git mktree` 传入多行时，末尾 CRLF 可能成为最后一个媒体文件名的一部分，导致 GitHub Raw 返回 404。改用 Node 或 Python 的字节 stdin 配合 `git mktree -z`，以 NUL 分隔条目；发布后回读远端 Git tree 核对精确文件名，并确认媒体请求返回 HTTP 200。
-
-- 用户希望跳过上游版本时直接在升级 PR 上使用标签并关闭，避免每次修改配置和合并 main；操作与精确匹配合同由[持续升级指南](../deployment.md#dsh-持续升级)拥有。仅关闭 PR 或写评论不表达自动化可识别的跳过决定；验收从真实发现 CLI 证明该版无候选且无验收 HEAD，同时保留后续版本发现，不为跳过一版停用整个工作流。
-
-- GitHub PR API 在来源 fork 已删除时可合法返回 `head.repo: null`；过滤外部 PR 时先跳过该值，再验证非空仓库对象，避免无关历史记录阻断全部上游发现。覆盖相应公开 adapter 回归；候选内容仍按 PR 的精确 HEAD 读取，不能改用可能已复用的分支名。
-
-- GitHub Raw 可能把包含 VP8/VP9 视频流的 `.webm` 响应标为 `audio/webm`。不要只按该 header 判定文件损坏；同时核对 HTTP 状态、字节数、校验和以及媒体流的 codec、尺寸和时长。
-
-- 上游自动更新中，无新版本与活动候选有效是两件事；撤销检查需覆盖旧候选，不能只检查 main 基线或 tarball 是否仍可下载。失效状态绑定精确 HEAD，并防止并发验收写回成功。
-
-- 自动发布的目标基线从目标分支精确提交读取，不能沿用 workflow_dispatch 所选分支的本地锁。活动候选失效检查放在新版本发现前；回归需覆盖真实 CLI 的提前抛错路径，单独测试发布函数不足以证明旧状态能失效。
-
-- npm 撤销需区分包仍存在但版本缺失与整包直接 404；候选失效检查覆盖两者。权威 404 的判断限定到固定官方 registry 且禁止重定向，不能把权限错误、服务故障或通用 HTTP 404 当作撤销。
-
-- Codex 审查配额用尽时 `@codex review` 只回复用量上限提示，不产生新审查；已有审查 findings 逐条修复、回归测试与 CI 全绿时，可在已有合并授权下合并并 resolve threads，不阻塞等待配额恢复补审。`verify` 单 job 顺序跑各层且断言首败即抛，一轮只暴露最前一层失败；推送 catalog 或迁移类改动前先在本机运行受影响层（contracts 与 cli 的计数与漂移测试、性能断言），避免多轮 CI 串行暴露。
+- **媒体树写入与响应头**：Windows 下向 `git mktree` 写文件名禁用 PowerShell 文本管道（末尾 CRLF 会拼入文件名致 404），改用 Node 字节流配 `git mktree -z` 并在发布后核对 HTTP 200；GitHub Raw 将 `.webm` 标为 `audio/webm` 属预期，以字节数、SHA-256 与 ffprobe 流信息为准。
+- **上游升级跳过与撤销核验**：跳过某个上游版本须在升级 PR 打上 `跳过此版本` 标签后关闭（仅关闭或评论无效），跳过最高版本后仍须核对完整 `changes` 中是否还有高于基线的较早候选，仅 `no-update` 且 `changes` 为空才算无候选；自动升级从目标分支精确提交读取锁并优先检查活动候选是否已被上游撤销（区分版本缺失与官方源权威 404），外部来源 PR 过滤先跳过 `head.repo: null`。

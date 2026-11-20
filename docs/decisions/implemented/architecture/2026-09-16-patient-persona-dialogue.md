@@ -8,13 +8,13 @@ Status: implemented
 
 ## Decision
 
-Patient Persona 是唯一的版本化患者扮演档案，取代[医生核心临床业务流](../feature/2026-08-24-doctor-clinical-core-workflow.md)中的受控问题问答，复用已有生成任务、修订链与 Brief 模型配置槽。病例开始绑定所选修订；管理员编辑产生新修订，诊断泄漏警告允许明确强制保存。存量 Brief 内容保留用于历史回看。
+Patient Persona 是唯一的版本化患者扮演档案，取代[门诊就诊闭环与完诊门禁](../feature/2026-08-25-encounter-completion-policy.md)早期的受控问题问答，复用已有生成任务、修订链与 Brief 模型配置槽。病例开始绑定所选修订；管理员编辑产生新修订，诊断泄漏警告允许明确强制保存。存量 Brief 内容保留用于历史回看。
 
 自由问诊由服务端独立 consultation 模型完成。模型输入包含档案、对话与患者可知事实；Case Truth 只供独立出口检查使用。出口命中隐藏诊断术语时重生成一次，再命中使用安全应答。整轮共享 30 秒期限，失败保留医生发言。
 
 共享 Command 分别拥有医生发言、患者回答与公开请求完成回执。医生发言先提交，模型调用在事务外执行，回答追加使用绑定医生轮次的稳定幂等键。未回答时禁止新发言；报告卡片独立追加，不参与文本回答的配对与版本前置条件。完整回执使用公开请求的原幂等键；未完成生成的已接受请求可查询为 executing 并通过病例详情恢复。
 
-对话原文冻结，复诊延续原线程，完诊只读。报告卡片引用 DiagnosticReport 历史版本。存量选择题记录迁移为带 legacy 来源的轮次，来源枚举预留 ASR 与外部同步。Canonical hash 排除对话原文及回执中的同一文本，备份仍保留全文。详细接口由[系统架构](../../../../docs/architecture/clinical-workflows.md#81-门诊闭环)拥有。
+对话原文冻结，复诊延续原线程，完诊只读。报告卡片引用 DiagnosticReport 历史版本。存量选择题记录迁移为带 legacy 来源的轮次，来源枚举预留 ASR 与外部同步。Canonical hash 排除对话原文及回执中的同一文本，备份仍保留全文。详细接口由[门诊业务流程](../../../architecture/outpatient-workflows.md)拥有。
 
 ## Alternatives considered
 

@@ -25,7 +25,7 @@ DSH Web -- React Surface --> apps/web application/runtime
         -- /clinmesh-api --> fixed loopback Hono
 ```
 
-当前工程具备可持久运行的单实例 Web 发布和 DSH 原生 React Surface adapter：同一个 Hono 服务提供 Web 静态资源、SPA fallback、健康检查、会话认证、岗位业务 API、Agent Page Context 和 FHIR R5 只读接口。挂号员、分诊护士、门诊医生、收费员和药师通过共享 Command 推进普通门诊 Encounter；登记员、住院医生与病区护士完成住院建档入科、医嘱执行、检查送检、手术、转科及出院结算清床，病案人员审核并归档医生提交的病案首页，能力边界见[临床业务流程](docs/architecture/clinical-workflows.md#82-住院闭环)。SQLite 保存 FHIR current/history、业务事实、审计、Action Trace、outbox 和 Agent Tool/proposal/review 关联。管理员从中文化 Synthea 纵向病历生成患者，查看可见来源历史，生成 Patient Brief，再将不可变 Synthetic Case Instance 直接开始为普通 HIS 就诊；新 Epoch reset 重放同一病例 revision。
+当前工程具备可持久运行的单实例 Web 发布和 DSH 原生 React Surface adapter：同一个 Hono 服务提供 Web 静态资源、SPA fallback、健康检查、会话认证、岗位业务 API、Agent Page Context 和 FHIR R5 只读接口。挂号员、分诊护士、门诊医生、收费员和药师通过共享 Command 推进普通门诊 Encounter；登记员、住院医生与病区护士完成住院建档入科、医嘱执行、检查送检、手术、转科及出院结算清床，病案人员审核并归档医生提交的病案首页，能力边界见[住院与手术流程](docs/architecture/inpatient-workflows.md)。SQLite 保存 FHIR current/history、业务事实、审计、Action Trace、outbox 和 Agent Tool/proposal/review 关联。管理员从中文化 Synthea 纵向病历生成患者，查看可见来源历史，生成 Patient Brief，再将不可变 Synthetic Case Instance 直接开始为普通 HIS 就诊；新 Epoch reset 重放同一病例 revision。
 
 DSH 拥有原生模型 Session 与 transcript；ClinMesh Agent Tools 只能读取当前受信页面上下文、导航、编辑草稿和准备人工审阅。正式挂号、分诊、临床、支付和药房 Command 的最终 Actor 始终是点击原生审阅框的登录人类。
 
@@ -145,7 +145,7 @@ pnpm --filter @clinmesh/dsh-web build
 - [项目介绍与架构概览](docs/overview.md)：新同事入门，先读这一篇。
 - [文档入口](docs/index.md)：按运行使用、当前合同、工程协作和研究导航。
 - [部署指南](docs/deployment.md)、[Agent 操作与反馈](docs/agent-capabilities.md)、[影像检查](docs/imaging.md)与[病理切片会诊](docs/pathology.md)：真实运行与岗位操作。
-- [系统架构](docs/architecture.md)、[跨端前端架构](docs/frontend-architecture.md)、[临床 UI 合同](docs/ui/design.md)与[领域词汇](CONTEXT.md)：当前边界与统一语言。
+- [系统架构](docs/architecture.md)（含[门诊](docs/architecture/outpatient-workflows.md)、[住院与手术](docs/architecture/inpatient-workflows.md)、[处方医嘱与药事](docs/architecture/orders-and-pharmacy.md)、[检验检查与报告](docs/architecture/examinations-and-reports.md)、[收费结算与医保](docs/architecture/billing-and-insurance.md)与[临床决策支持与质控](docs/architecture/clinical-decision-support.md)）、[跨端前端架构](docs/frontend-architecture.md)、[临床 UI 合同](docs/ui/design.md)与[领域词汇](CONTEXT.md)：当前边界与统一语言。
 - [Agent 工程开发](docs/agent-development.md)、[测试策略](docs/testing.md)与[文档规则](docs/AGENTS.md)：协作与验证。
 - [Issue 规格规则](docs/agents/issue-tracker.md)、[Agent Notes](docs/decisions/README.md)、[工程记忆](docs/memory/memory.md)与[研究索引](docs/research/README.md)：需求规格、决策、操作经验和外部证据。
 
