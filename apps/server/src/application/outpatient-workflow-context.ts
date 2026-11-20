@@ -153,7 +153,7 @@ const medicationScopeConfigSchema = z.object({
 }).strip()
 
 export const medicationPresentationSchema = z.object({
-  packageInsert: medicationPackageInsertSchema.optional(),
+  packageInsert: medicationPackageInsertSchema.optional().catch(undefined),
   product: z.object({
     dosageForm: z.string().trim().min(1).optional(),
     packageDescription: z.string().trim().min(1).optional(),

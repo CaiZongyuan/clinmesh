@@ -4,7 +4,7 @@ import type { InpatientCatalogMissingField } from '@clinmesh/contracts/inpatient
 
 export const inpatientMedicationConfigSchema = z.object({
   safety: medicationSafetyRuleSchema.optional(),
-  packageInsert: medicationPackageInsertSchema.optional(),
+  packageInsert: medicationPackageInsertSchema.optional().catch(undefined),
   availableScopes: z.array(z.string()), unit: z.string().trim().min(1),
   product: z.object({ id: z.string().min(1), system: z.string().min(1), version: z.string().min(1),
     strength: z.string().min(1), dosageForm: z.string().min(1), packageDescription: z.string().min(1) }),
@@ -24,7 +24,6 @@ export function inpatientMedicationMissingFields(raw: unknown, priceFen: number)
   const fields = new Set<InpatientCatalogMissingField>()
   if (!result.success) for (const issue of result.error.issues) {
     const key = issue.path[0]
-    if (key === 'packageInsert') continue
     fields.add(key === 'product' ? issue.path[1] === 'strength' ? 'strength' : 'product'
       : key === 'unit' ? 'unit' : key === 'availableScopes' ? 'inpatient-scope'
         : key === 'allowedFrequencyCodes' ? 'frequency' : key === 'inpatientBillingTrigger' ? 'billing'

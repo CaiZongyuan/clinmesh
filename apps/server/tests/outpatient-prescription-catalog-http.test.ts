@@ -1130,5 +1130,31 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
     expect(unconfiguredAmlodipine?.status).toBe('available')
     expect(unconfiguredAmlodipine?.missingFields).toEqual([])
     expect(unconfiguredAmlodipine?.medication?.packageInsert).toBeUndefined()
+
+    // Malformed optional packageInsert degrades to undefined without failing outpatient or inpatient catalog reads
+    runtime.database.driver.prepare(`
+      UPDATE outpatient_catalog
+      SET config_json = json_set(config_json, '$.packageInsert', json('{"genericName":""}'))
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND item_id = 'medication-amlodipine'
+    `).run()
+    const degradedOutpatient = clinicalCatalogSchema.parse(
+      await (await runtime.app.request('/api/his/v1/catalogs/clinical', { headers: { cookie: doctor } })).json(),
+    )
+    const degradedOutpatientAmlodipine = degradedOutpatient.medications.find(item => item.id === 'medication-amlodipine')
+    expect(degradedOutpatientAmlodipine?.packageInsert).toBeUndefined()
+    expect(degradedOutpatientAmlodipine?.strength).toBe('5 mg')
+    expect(degradedOutpatientAmlodipine?.packageDescription).toBeDefined()
+    const degradedInpatientCatalog = inpatientFullCatalogSchema.parse(
+      await (await runtime.app.request('/api/his/v1/inpatient/clinical-catalog', { headers: { cookie: inpatientDoctor } })).json(),
+    )
+    expect(degradedInpatientCatalog.medications.find(item => item.id === 'medication-amlodipine')?.packageInsert).toBeUndefined()
+    const degradedInpatientSearch = inpatientCatalogSearchSchema.parse(
+      await (await runtime.app.request('/api/his/v1/inpatient/catalog-search?kind=medication&source=hospital&query=氨氯地平&page=1&pageSize=20', {
+        headers: { cookie: inpatientDoctor },
+      })).json(),
+    )
+    expect(degradedInpatientSearch.items.find(item => item.id === 'medication-amlodipine')?.status).toBe('available')
+    expect(degradedInpatientSearch.items.find(item => item.id === 'medication-amlodipine')?.medication?.packageInsert).toBeUndefined()
   })
 })

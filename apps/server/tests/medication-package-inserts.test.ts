@@ -11,7 +11,7 @@ import {
 } from '../src/application/scenario-data/medical-service-snapshot.ts'
 import { standardMedicationSafety } from '../src/application/scenario-data/standard-medications.ts'
 import { standardMedicationPackageInsert } from '../src/application/scenario-data/medication-package-inserts.ts'
-import { inpatientMedicationMissingFields } from '../src/application/inpatient-medication-config.ts'
+import { inpatientMedicationConfigSchema, inpatientMedicationMissingFields } from '../src/application/inpatient-medication-config.ts'
 
 describe('synthetic medication package inserts and clinical rule alignment', () => {
   const baseline = createHospitalBaseline(
@@ -98,8 +98,8 @@ describe('synthetic medication package inserts and clinical rule alignment', () 
     expect(saline.precautions).toContain('0.5 mL/kg/h')
   })
 
-  it('never treats missing packageInsert as an inpatient catalog missing field', () => {
-    expect(inpatientMedicationMissingFields({
+  it('never treats missing or malformed packageInsert as an inpatient catalog missing field or parse error', () => {
+    const baseConfig = {
       availableScopes: ['outpatient', 'inpatient'],
       unit: '片',
       product: {
@@ -117,6 +117,12 @@ describe('synthetic medication package inserts and clinical rule alignment', () 
       allowedCombinationIds: [],
       inpatientBillingTrigger: 'dispense',
       safety: standardMedicationSafety('medication-amlodipine'),
-    }, 1500)).toEqual([])
+    }
+    expect(inpatientMedicationMissingFields(baseConfig, 1500)).toEqual([])
+    for (const invalidInsert of [null, { genericName: '' }, 'invalid']) {
+      const malformed = { ...baseConfig, packageInsert: invalidInsert }
+      expect(inpatientMedicationMissingFields(malformed, 1500)).toEqual([])
+      expect(inpatientMedicationConfigSchema.parse(malformed).packageInsert).toBeUndefined()
+    }
   })
 })
