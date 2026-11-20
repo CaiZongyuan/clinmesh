@@ -12,7 +12,7 @@ Status: implemented
 
 跨类联合采用默认允许、显式互斥的规则。数量极量与用法剂量分别校验，避免用固定总片数假定疗程。PRN 按最多每日四次审方，实际任务另受业务日次数与数量上限约束；计划本身不形成给药事实。ONCE 只用于临时医嘱。未声明新规则的旧配置继续按[住院医嘱计划与给药决策](2026-10-21-inpatient-orders-and-administration.md)及[共享目录与 PCI 前置决策](2026-10-25-inpatient-shared-catalog-data.md)的原合同执行，不静默覆盖自定义院内规则。
 
-Hospital Baseline 持有默认常备目录及初始批次，PCI 准备按具体产品身份复用并只补缺，继续保留原库存与价格。当前药品目录、频次、执行和拒绝原因由[临床流程合同](../../../architecture/clinical-workflows.md#声明式药事规则)拥有。
+Hospital Baseline 持有默认常备目录及初始批次，PCI 准备按具体产品身份复用并只补缺，继续保留原库存与价格。当前药品目录、频次、执行和拒绝原因由[临床流程合同](../../../architecture/clinical-workflows.md#声明式药事规则)拥有，开方端只读合成说明书摘要的目录边界与就地回填由[合成药品说明书摘要决策](2026-11-20-synthetic-medication-package-insert.md)拥有。
 
 ## Alternatives considered
 

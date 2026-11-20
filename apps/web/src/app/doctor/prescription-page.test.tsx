@@ -1699,4 +1699,178 @@ describe('处方页签布局整理', () => {
     expect(issuedTable.getByText('10 粒')).toBeTruthy()
     expect(issuedTable.queryByText('—')).toBeNull()
   })
+
+  it('门诊选药弹窗、待开清单与国家参考目录支持只读查阅合成说明书摘要及空态，切换或关闭抽屉不丢失草稿', async () => {
+    const metoprolol: Medication = {
+      ...medication,
+      id: 'medication-metoprolol',
+      nameEn: 'Metoprolol succinate extended-release tablets',
+      nameZh: '琥珀酸美托洛尔缓释片',
+      dosageForm: '片剂',
+      strength: '47.5 mg',
+      packageDescription: '7片/盒',
+      unit: '片',
+      priceFen: 80,
+      allowedCombinationIds: ['medication-plain', 'medication-amlodipine'],
+      allowedDoseTexts: ['47.5 mg'],
+      allowedFrequencyCodes: ['QD'],
+      allowedCourseDays: [7, 14, 30],
+      allowedQuantities: [1],
+      defaultCourseDays: 14,
+      defaultDoseText: '47.5 mg',
+      defaultFrequencyCode: 'QD',
+      defaultQuantity: 1,
+      safety: {
+        pharmacologyClasses: ['beta-blocker'],
+        indicationPrefixes: ['I10', 'I20', 'I25'],
+        doseLimits: { unit: 'mg', minimumSingleDose: 23.75, maximumSingleDose: 190, maximumDailyDose: 190 },
+        maximumDailyQuantity: 4,
+      },
+      packageInsert: {
+        genericName: '琥珀酸美托洛尔缓释片',
+        specificationAndForm: '片剂 · 47.5 mg · 7片/盒',
+        indicationsSummary: '用于高血压、冠心病心绞痛及慢性稳定性心力衰竭。',
+        dosageAndAdministration: '口服，常规每次 47.5 mg，每日一次（QD），单日最大剂量 190 mg。',
+        contraindications: '显著心动过缓（心率 < 50 次/分）或低血压（收缩压 < 90 mmHg）禁用。',
+        precautions: '心率 < 60 次/分或收缩压 < 100 mmHg 时谨慎起始并复测生命体征。',
+        adverseReactions: '常见窦性心动过缓、头晕与疲乏。',
+        disclaimer: '合成教学参考，非真实上市产品法定说明书',
+      },
+    }
+    const amlodipine: Medication = {
+      ...medication,
+      id: 'medication-amlodipine',
+      nameEn: 'Amlodipine besylate tablets',
+      nameZh: '苯磺酸氨氯地平片',
+      dosageForm: '片剂',
+      strength: '5 mg',
+      packageDescription: '7片/盒',
+      unit: '片',
+      priceFen: 500,
+      allowedCombinationIds: ['medication-metoprolol', 'medication-plain'],
+      allowedDoseTexts: ['5 mg'],
+      allowedFrequencyCodes: ['QD'],
+      allowedCourseDays: [7, 14, 30],
+      allowedQuantities: [1, 2],
+      defaultCourseDays: 14,
+      defaultDoseText: '5 mg',
+      defaultFrequencyCode: 'QD',
+      defaultQuantity: 2,
+      safety: {
+        pharmacologyClasses: ['ccb'],
+        indicationPrefixes: ['I10', 'I20', 'I25'],
+        doseLimits: { unit: 'mg', minimumSingleDose: 2.5, maximumSingleDose: 10, maximumDailyDose: 10 },
+        maximumDailyQuantity: 2,
+      },
+      packageInsert: {
+        genericName: '苯磺酸氨氯地平片',
+        specificationAndForm: '片剂 · 5 mg · 7片/盒',
+        indicationsSummary: '用于高血压及慢性稳定性心绞痛。',
+        dosageAndAdministration: '口服，常规每次 5 mg，每日一次（QD），单日最大剂量不超过 10 mg。',
+        contraindications: '对二氢吡啶类钙通道阻滞剂过敏或重度低血压禁用。',
+        precautions: '老年或肝功能不全患者谨慎加量，注意监测下肢水肿。',
+        adverseReactions: '常见踝部水肿、头痛与潮红。',
+        disclaimer: '合成教学参考，非真实上市产品法定说明书',
+      },
+    }
+    const plainLocal: Medication = {
+      ...medication,
+      id: 'medication-plain',
+      nameEn: 'Plain synthetic tablet',
+      nameZh: '无说明书合成片',
+      allowedCombinationIds: ['medication-metoprolol', 'medication-amlodipine'],
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(recommendationState([{
+      ...recommendation,
+      id: 'recommendation-amlodipine',
+      catalogItemId: amlodipine.id,
+      label: amlodipine.nameZh,
+      doseText: '5 mg',
+      frequencyCode: 'QD',
+      courseDays: 14,
+      quantity: 14,
+    }]))))
+    renderPage({
+      catalog: [metoprolol, amlodipine, plainLocal],
+      referenceSearch: {
+        data: { items: [referenceProduct], page: 1, pageSize: 20, releaseId: 'synthetic', total: 1 },
+        error: null,
+        isError: false,
+        isFetching: false,
+        isPending: false,
+        onSearch: vi.fn(),
+      },
+    })
+    const user = userEvent.setup()
+    const dialog = await openComposer(user)
+    expect(document.querySelectorAll('button button')).toHaveLength(0)
+
+    await user.click(dialog.getByRole('button', { name: '选择 琥珀酸美托洛尔缓释片' }))
+    const doseInput = dialog.getByRole('textbox', { name: '剂量' }) as HTMLInputElement
+    const quantityInput = dialog.getByRole('spinbutton', { name: '数量' }) as HTMLInputElement
+    const instructionsInput = dialog.getByRole('textbox', { name: '给药说明' }) as HTMLInputElement
+    await user.clear(doseInput)
+    await user.type(doseInput, '95 mg')
+    await user.clear(quantityInput)
+    await user.type(quantityInput, '14')
+    await user.type(instructionsInput, '餐后整片吞服')
+
+    const detailsSection = within(dialog.getByRole('region', { name: '用药信息' }))
+    await user.click(detailsSection.getByRole('button', { name: '说明书' }))
+    const insertDialog = within(await screen.findByRole('dialog', { name: '药品说明书摘要' }))
+    expect(insertDialog.getByText('合成教学参考，非真实上市产品法定说明书')).toBeTruthy()
+    expect(insertDialog.getByText(/心率 < 50 次\/分/)).toBeTruthy()
+
+    // 遮罩关闭：仅关闭说明书抽屉，保持底层选药弹窗与未加入草稿不丢
+    const overlay = document.querySelector('[data-slot="sheet-overlay"]') as HTMLElement | null
+    expect(overlay).not.toBeNull()
+    await user.click(overlay!)
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '药品说明书摘要' })).toBeNull())
+    expect(screen.getByRole('dialog', { name: '选择药品' })).toBeTruthy()
+    expect((dialog.getByRole('textbox', { name: '剂量' }) as HTMLInputElement).value).toBe('95 mg')
+    expect((dialog.getByRole('spinbutton', { name: '数量' }) as HTMLInputElement).value).toBe('14')
+    expect((dialog.getByRole('textbox', { name: '给药说明' }) as HTMLInputElement).value).toBe('餐后整片吞服')
+
+    const plainCandidateRow = dialog.getByRole('button', { name: '选择 无说明书合成片' }).closest('li')!
+    await user.click(within(plainCandidateRow).getByRole('button', { name: '说明书' }))
+    const plainSheet = within(await screen.findByRole('dialog', { name: '药品说明书摘要' }))
+    expect(plainSheet.getByText('暂无院内说明书摘要')).toBeTruthy()
+    await user.click(plainSheet.getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '药品说明书摘要' })).toBeNull())
+    expect(screen.getByRole('dialog', { name: '选择药品' })).toBeTruthy()
+    expect((dialog.getByRole('textbox', { name: '剂量' }) as HTMLInputElement).value).toBe('95 mg')
+
+    await user.click(dialog.getByRole('tab', { name: '国家参考目录' }))
+    const refCandidateRow = (await dialog.findByRole('button', { name: /^选择 合成参考药品/ })).closest('li')!
+    await user.click(within(refCandidateRow).getByRole('button', { name: '说明书' }))
+    expect(within(await screen.findByRole('dialog', { name: '药品说明书摘要' })).getByText('暂无院内说明书摘要')).toBeTruthy()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '药品说明书摘要' })).toBeNull())
+
+    await user.click(dialog.getByRole('tab', { name: '本院药房' }))
+    await user.click(dialog.getByRole('button', { name: '加入处方' }))
+    const pendingInDialog = within(dialog.getByRole('region', { name: '处方待开清单' }))
+    await user.click(pendingInDialog.getByRole('button', { name: '说明书' }))
+    expect(within(await screen.findByRole('dialog', { name: '药品说明书摘要' })).getByText(/单日最大剂量 190 mg/)).toBeTruthy()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '药品说明书摘要' })).toBeNull())
+
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '选择药品' })).toBeNull())
+
+    const pendingPanel = within(screen.getByRole('region', { name: '待开具处方' }))
+    await pendingPanel.findByRole('checkbox', { name: '选择苯磺酸氨氯地平片' })
+    const insertButtons = pendingPanel.getAllByRole('button', { name: '说明书' })
+    expect(insertButtons).toHaveLength(2)
+    await user.click(insertButtons[0]!)
+    expect(within(await screen.findByRole('dialog', { name: '药品说明书摘要' })).getByText(/单日最大剂量 190 mg/)).toBeTruthy()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '药品说明书摘要' })).toBeNull())
+
+    await user.click(insertButtons[1]!)
+    expect(within(await screen.findByRole('dialog', { name: '药品说明书摘要' })).getByText(/单日最大剂量不超过 10 mg/)).toBeTruthy()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '药品说明书摘要' })).toBeNull())
+    expect(pendingPanel.getByText('95 mg · 每日一次（QD） · 14 天 · 14 · 餐后整片吞服')).toBeTruthy()
+  })
 })

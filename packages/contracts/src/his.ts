@@ -1,4 +1,4 @@
-import { medicationSafetyRuleSchema } from './medication-safety.ts'
+import { medicationPackageInsertSchema, medicationSafetyRuleSchema } from './medication-safety.ts'
 import { clinicalOverrideInputSchema, clinicalQualityCheckSchema, clinicalQualityReceiptSchema } from './clinical-quality.ts'
 import { z } from 'zod'
 import { catalogInsuranceCoverageSchema, outpatientInvestigationBillingSchema, outpatientInvestigationPriceSchema } from './investigation-billing.ts'
@@ -222,6 +222,7 @@ const legacyMedicationCatalogItemSchema = catalogItemSchema.extend({
   defaultFrequencyCode: z.string().min(1),
   dosageForm: z.string().min(1).optional(),
   packageDescription: z.string().min(1).optional(),
+  packageInsert: medicationPackageInsertSchema.optional(),
   strength: z.string().min(1).optional(),
   unit: z.string().min(1).optional(),
 }).strict()

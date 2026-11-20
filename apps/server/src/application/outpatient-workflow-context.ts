@@ -1,5 +1,5 @@
 import type { ClinicalOverrideInput, ClinicalQualityReceipt } from '@clinmesh/contracts/clinical-quality'
-import { medicationSafetyRuleSchema } from '@clinmesh/contracts/medication-safety'
+import { medicationPackageInsertSchema, medicationSafetyRuleSchema } from '@clinmesh/contracts/medication-safety'
 import { createHmac } from 'node:crypto'
 import type { DoctorCaseHistoryDetail } from '@clinmesh/contracts/agent'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
@@ -153,6 +153,7 @@ const medicationScopeConfigSchema = z.object({
 }).strip()
 
 export const medicationPresentationSchema = z.object({
+  packageInsert: medicationPackageInsertSchema.optional().catch(undefined),
   product: z.object({
     dosageForm: z.string().trim().min(1).optional(),
     packageDescription: z.string().trim().min(1).optional(),
@@ -711,10 +712,10 @@ export const recommendationMedicationPresentationSchema = scenarioProductMedicat
   regulatoryVerification: true,
 }).partial().strip()
 
-export type DoctorRecommendationMedicationCatalogItem = Extract<
+export type DoctorRecommendationMedicationCatalogItem = Omit<Extract<
   ClinicalCatalog,
   { prescriptionConclusionSupported: true }
->['medications'][number] & z.infer<typeof recommendationMedicationPresentationSchema>
+>['medications'][number], 'packageInsert'> & z.infer<typeof recommendationMedicationPresentationSchema>
 
 export interface OutpatientPrescriptionTransactionPort {
   applySavePrescriptionDraft(

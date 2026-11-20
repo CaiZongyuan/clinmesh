@@ -122,6 +122,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       ...(presentation.product?.packageDescription === undefined
         ? {}
         : { packageDescription: presentation.product.packageDescription }),
+      ...(presentation.packageInsert === undefined ? {} : { packageInsert: presentation.packageInsert }),
       strength: presentation.product?.strength ?? dose,
       ...(presentation.unit === undefined || presentation.unit === null ? {} : { unit: presentation.unit }),
     })
@@ -176,7 +177,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         ORDER BY item_id
       `).all(context.workspaceId, context.epoch),
     )
-    return catalog.medications.flatMap(medication => {
+    return catalog.medications.flatMap(({ packageInsert: _packageInsert, ...medication }) => {
       const row = presentations.find(item => item.item_id === medication.id)!
       const presentation = recommendationMedicationPresentationSchema.parse(JSON.parse(row.config_json))
       return presentation.availableScopes !== undefined && !presentation.availableScopes.includes('outpatient')

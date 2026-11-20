@@ -1011,4 +1011,150 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
     expect(noMedRes.status).toBe(200)
     expect(confirmNoMedicationResponseSchema.parse(await noMedRes.json()).data.noMedication.version).toBe(1)
   })
+
+  it('exposes synthetic packageInsert summaries across outpatient and inpatient catalogs, backfills existing epochs without bumping version, and keeps unconfigured items orderable', async () => {
+    const { password, runtime } = await setupRuntime()
+    const doctor = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
+    const inpatientDoctor = await signIn(runtime, 'inpatient-doctor@demo.clinmesh.local', password)
+    const admin = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+
+    const outpatientCatalog = clinicalCatalogSchema.parse(
+      await (await runtime.app.request('/api/his/v1/catalogs/clinical', { headers: { cookie: doctor } })).json(),
+    )
+    expect(outpatientCatalog.medications).toHaveLength(22)
+    expect(outpatientCatalog.medications.every(item => item.packageInsert !== undefined)).toBe(true)
+
+    const doctorContext = z.object({ actor: z.any() }).parse(
+      await (await runtime.app.request('/api/auth/context', { headers: { cookie: doctor } })).json(),
+    )
+    const recommendationMedications = runtime.workflow.doctorRecommendationMedications(doctorContext.actor)
+    expect(recommendationMedications).toHaveLength(22)
+    expect(recommendationMedications.every(item => !('packageInsert' in item))).toBe(true)
+
+    const prepareRes = await runtime.app.request('/api/his/v1/inpatient/pci-data/prepare', {
+      body: JSON.stringify({ input: { expectedEpoch: 'epoch-1' } }),
+      headers: commandHeaders(admin),
+      method: 'POST',
+    })
+    expect(prepareRes.status).toBe(200)
+
+    const inpatientCatalog = inpatientFullCatalogSchema.parse(
+      await (await runtime.app.request('/api/his/v1/inpatient/clinical-catalog', { headers: { cookie: inpatientDoctor } })).json(),
+    )
+    const iohexol = inpatientCatalog.medications.find(item => item.id === 'medication-pci-iohexol')
+    expect(iohexol?.packageInsert?.genericName).toBe('碘海醇注射液')
+
+    // Simulate pre-upgrade PCI rows missing packageInsert and verify prepare-pci-data backfills in-place without bumping version
+    runtime.database.driver.prepare(`
+      UPDATE outpatient_catalog
+      SET config_json = json_remove(config_json, '$.packageInsert')
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND item_id IN ('medication-atorvastatin', 'medication-pci-iohexol')
+    `).run()
+    const pciBeforeVersions = z.array(z.object({ item_id: z.string(), version: z.number() })).parse(
+      runtime.database.driver.prepare(`
+        SELECT item_id, version FROM outpatient_catalog
+        WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+          AND item_id IN ('medication-atorvastatin', 'medication-pci-iohexol')
+        ORDER BY item_id
+      `).all(),
+    )
+    const rePrepareRes = await runtime.app.request('/api/his/v1/inpatient/pci-data/prepare', {
+      body: JSON.stringify({ input: { expectedEpoch: 'epoch-1' } }),
+      headers: commandHeaders(admin),
+      method: 'POST',
+    })
+    expect(rePrepareRes.status).toBe(200)
+    expect(z.object({ effects: z.array(z.object({ kind: z.string(), reference: z.string() })) }).parse(await rePrepareRes.json()).effects).toEqual([])
+    const pciAfterVersions = z.array(z.object({ item_id: z.string(), version: z.number() })).parse(
+      runtime.database.driver.prepare(`
+        SELECT item_id, version FROM outpatient_catalog
+        WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+          AND item_id IN ('medication-atorvastatin', 'medication-pci-iohexol')
+        ORDER BY item_id
+      `).all(),
+    )
+    expect(pciAfterVersions).toEqual(pciBeforeVersions)
+
+    // Simulate pre-upgrade active epoch rows missing packageInsert and verify seedInpatientEnvironment via ensureInitialEpoch preserves version
+    runtime.database.driver.prepare(`
+      UPDATE outpatient_catalog
+      SET config_json = json_remove(config_json, '$.packageInsert')
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND item_id IN ('medication-metformin', 'medication-pci-iohexol')
+    `).run()
+    const beforeVersions = z.array(z.object({ item_id: z.string(), version: z.number() })).parse(
+      runtime.database.driver.prepare(`
+        SELECT item_id, version FROM outpatient_catalog
+        WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+          AND item_id IN ('medication-metformin', 'medication-pci-iohexol')
+        ORDER BY item_id
+      `).all(),
+    )
+    runtime.scenario.ensureInitialEpoch({
+      epoch: 'epoch-1',
+      scenarioRunId: 'scenario-run-1',
+      workspaceId: 'workspace-demo',
+    })
+    const afterVersions = z.array(z.object({ item_id: z.string(), version: z.number() })).parse(
+      runtime.database.driver.prepare(`
+        SELECT item_id, version FROM outpatient_catalog
+        WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+          AND item_id IN ('medication-metformin', 'medication-pci-iohexol')
+        ORDER BY item_id
+      `).all(),
+    )
+    expect(afterVersions).toEqual(beforeVersions)
+
+    const searchAfterBackfill = inpatientCatalogSearchSchema.parse(
+      await (await runtime.app.request('/api/his/v1/inpatient/catalog-search?kind=medication&source=hospital&page=1&pageSize=50', {
+        headers: { cookie: inpatientDoctor },
+      })).json(),
+    )
+    expect(searchAfterBackfill.items.find(item => item.id === 'medication-metformin')?.medication?.packageInsert?.contraindications).toContain('eGFR < 30')
+    expect(searchAfterBackfill.items.find(item => item.id === 'medication-pci-iohexol')?.medication?.packageInsert?.genericName).toBe('碘海醇注射液')
+
+    // Custom hospital medication without packageInsert stays available with zero missingFields
+    runtime.database.driver.prepare(`
+      UPDATE outpatient_catalog
+      SET config_json = json_remove(config_json, '$.packageInsert')
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND item_id = 'medication-amlodipine'
+    `).run()
+    const unconfiguredSearch = inpatientCatalogSearchSchema.parse(
+      await (await runtime.app.request('/api/his/v1/inpatient/catalog-search?kind=medication&source=hospital&query=氨氯地平&page=1&pageSize=20', {
+        headers: { cookie: inpatientDoctor },
+      })).json(),
+    )
+    const unconfiguredAmlodipine = unconfiguredSearch.items.find(item => item.id === 'medication-amlodipine')
+    expect(unconfiguredAmlodipine?.status).toBe('available')
+    expect(unconfiguredAmlodipine?.missingFields).toEqual([])
+    expect(unconfiguredAmlodipine?.medication?.packageInsert).toBeUndefined()
+
+    // Malformed optional packageInsert degrades to undefined without failing outpatient or inpatient catalog reads
+    runtime.database.driver.prepare(`
+      UPDATE outpatient_catalog
+      SET config_json = json_set(config_json, '$.packageInsert', json('{"genericName":""}'))
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND item_id = 'medication-amlodipine'
+    `).run()
+    const degradedOutpatient = clinicalCatalogSchema.parse(
+      await (await runtime.app.request('/api/his/v1/catalogs/clinical', { headers: { cookie: doctor } })).json(),
+    )
+    const degradedOutpatientAmlodipine = degradedOutpatient.medications.find(item => item.id === 'medication-amlodipine')
+    expect(degradedOutpatientAmlodipine?.packageInsert).toBeUndefined()
+    expect(degradedOutpatientAmlodipine?.strength).toBe('5 mg')
+    expect(degradedOutpatientAmlodipine?.packageDescription).toBeDefined()
+    const degradedInpatientCatalog = inpatientFullCatalogSchema.parse(
+      await (await runtime.app.request('/api/his/v1/inpatient/clinical-catalog', { headers: { cookie: inpatientDoctor } })).json(),
+    )
+    expect(degradedInpatientCatalog.medications.find(item => item.id === 'medication-amlodipine')?.packageInsert).toBeUndefined()
+    const degradedInpatientSearch = inpatientCatalogSearchSchema.parse(
+      await (await runtime.app.request('/api/his/v1/inpatient/catalog-search?kind=medication&source=hospital&query=氨氯地平&page=1&pageSize=20', {
+        headers: { cookie: inpatientDoctor },
+      })).json(),
+    )
+    expect(degradedInpatientSearch.items.find(item => item.id === 'medication-amlodipine')?.status).toBe('available')
+    expect(degradedInpatientSearch.items.find(item => item.id === 'medication-amlodipine')?.medication?.packageInsert).toBeUndefined()
+  })
 })

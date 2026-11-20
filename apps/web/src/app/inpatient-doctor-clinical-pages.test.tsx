@@ -9,6 +9,7 @@ import { inpatientInvestigationAcknowledgeInputSchema, inpatientInvestigationsSc
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
+import { orderDraftKey } from './inpatient-order-drafts.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientActionOutlet, InpatientActionProvider } from './inpatient-workspace-actions.tsx'
 import { signOut } from './api-client.ts'
@@ -48,8 +49,8 @@ const investigations = inpatientInvestigationsSchema.parse({
   }]
 })
 
-function mount(page: 'orders' | 'investigations', { investigationFacts = investigations, imagingAvailable = false, activeSession = session, clinicalFacts = clinical, rejectIssue = false, catalogItems = [] as unknown[], onSimulation, onClinicalRead, preserveDrafts = false }: {
-  investigationFacts?: typeof investigations; imagingAvailable?: boolean; activeSession?: SessionContext; clinicalFacts?: typeof clinical; rejectIssue?: boolean; catalogItems?: unknown[]; onSimulation?: () => Promise<void>; onClinicalRead?: () => Promise<void>; preserveDrafts?: boolean
+function mount(page: 'orders' | 'investigations', { investigationFacts = investigations, imagingAvailable = false, activeSession = session, clinicalFacts = clinical, rejectIssue = false, catalogItems = [] as unknown[], medicationsCatalog = [medication] as Array<typeof medication & Record<string, unknown>>, onSimulation, onClinicalRead, preserveDrafts = false }: {
+  investigationFacts?: typeof investigations; imagingAvailable?: boolean; activeSession?: SessionContext; clinicalFacts?: typeof clinical; rejectIssue?: boolean; catalogItems?: unknown[]; medicationsCatalog?: Array<typeof medication & Record<string, unknown>>; onSimulation?: () => Promise<void>; onClinicalRead?: () => Promise<void>; preserveDrafts?: boolean
 } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   const writes: Array<{ path: string; body: unknown }> = []
@@ -80,12 +81,13 @@ function mount(page: 'orders' | 'investigations', { investigationFacts = investi
       return Response.json({ auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: path.includes('/investigations') ? investigationFacts : clinicalFacts })
     }
     if (path.endsWith('/clinical')) { await onClinicalRead?.(); return Response.json(clinicalFacts) }
-    if (path.endsWith('/clinical-catalog')) return Response.json({ diagnoses: [diagnosis, { ...diagnosis, id: 'diagnosis-local', display: '合成院内诊断' }], medications: [medication], services: [{ id: 'service-1', display: '合成健康教育', version: 1, priceFen: 1000, unit: '次' }] })
+    if (path.endsWith('/clinical-catalog')) return Response.json({ diagnoses: [diagnosis, { ...diagnosis, id: 'diagnosis-local', display: '合成院内诊断' }], medications: medicationsCatalog, services: [{ id: 'service-1', display: '合成健康教育', version: 1, priceFen: 1000, unit: '次' }] })
     if (path.includes('/inpatient/catalog-search?')) return Response.json({
-      kind: 'medication', source: 'hospital', page: 1, pageSize: 50, total: 2, items: [
-        { id: medication.id, display: medication.display, status: 'available', missingFields: [], catalogItemId: medication.id, catalogVersion: 1, medication },
+      kind: 'medication', source: 'hospital', page: 1, pageSize: 50, total: medicationsCatalog.length + 1, items: [
+        ...medicationsCatalog.map((item, index) => ({ id: item.id, display: item.display, status: 'available', missingFields: [], catalogItemId: item.id, catalogVersion: index + 1, medication: item })),
         { id: 'medication-missing', display: '合成缺价药', status: 'incomplete', missingFields: ['price'] }]
     })
+    if (path.includes('/order-set-templates') || path.includes('/order-set-drafts')) return Response.json({ items: [] })
     if (path.includes('/reference-catalogs/diagnoses?')) return Response.json({ page: 1, pageSize: 20, total: 1, releaseId: 'synthetic-release', items: [hypertension] })
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: '2026-08-24T09:00:00+08:00', requests: [], executions: [] })
     if (path.endsWith('/scenario-runs/current')) return Response.json({ clinicalReview: null, epoch: 'epoch-1', initialStateHash: 'hash-1', kind: 'candidate', scenarioId: 'scenario-1', scenarioRunId: 'scenario-run-1', seed: 1, status: 'active', virtualTime: '2026-08-24T15:00:00+08:00', workspaceId: 'workspace-demo' })
@@ -807,4 +809,83 @@ it('核对读取期间切到其他页签，返回后保留选择并可再次集�
   await user.click(review)
   expect(await screen.findByRole('dialog', { name: '集中核对新医嘱' })).toBeDefined()
   expect(mounted.writes).toHaveLength(0)
+})
+
+it('住院开立医嘱器仅对药品提供说明书抽屉（含旧浏览器草稿回退与缺省空态），关闭抽屉不关闭开嘱窗或丢失草稿', async () => {
+  const medicationWithInsert = {
+    ...medication,
+    maxDoseQuantity: 2,
+    packageInsert: {
+      genericName: '合成降压药',
+      specificationAndForm: '片剂 · 5 mg · 30片/盒',
+      indicationsSummary: '用于高血压及冠心病心绞痛控制。',
+      dosageAndAdministration: '口服，常规每次 5 mg，每日一次（QD），单日最大剂量 10 mg。',
+      contraindications: '二氢吡啶类钙通道阻滞剂过敏或重度低血压禁用。',
+      precautions: '起始及加量期监测血压、心率与下肢水肿。',
+      adverseReactions: '常见踝部水肿、头痛与潮红。',
+      disclaimer: '合成教学参考，非真实上市产品法定说明书',
+    },
+  }
+  const unconfiguredMedication = {
+    ...medication,
+    id: 'medication-unconfigured',
+    display: '无摘要合成片',
+  }
+  sessionStorage.clear()
+  sessionStorage.setItem(orderDraftKey(session, admission), JSON.stringify({
+    rows: [{
+      id: '019a0000-0000-7000-8000-000000000001',
+      pick: { kind: 'medication', item: { ...medication, maxDoseQuantity: 2 } },
+      selected: true,
+      duration: 'long',
+      doseText: '10 mg',
+      frequencyCode: 'QD',
+      instructions: '清晨餐后整片吞服',
+    }],
+    successes: [],
+  }))
+
+  mount('orders', {
+    medicationsCatalog: [medicationWithInsert, unconfiguredMedication],
+    preserveDrafts: true,
+  })
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '开立医嘱' }))
+  const composer = screen.getByRole('dialog', { name: '开立医嘱' })
+  const suggestions = await within(composer).findByRole('region', { name: '医嘱项目候选' })
+  await within(suggestions).findByRole('button', { name: '选择合成降压药' })
+  expect(composer.querySelectorAll('button button')).toHaveLength(0)
+
+  const serviceLi = within(suggestions).getByRole('button', { name: '选择合成健康教育' }).closest('li')!
+  expect(within(serviceLi).queryByRole('button', { name: '说明书' })).toBeNull()
+
+  const draftRow = within(composer).getByRole('region', { name: '待开：合成降压药' })
+  await user.click(within(draftRow).getByRole('button', { name: '说明书' }))
+  const sheet = within(await screen.findByRole('dialog', { name: '药品说明书摘要' }))
+  expect(sheet.getByText('合成教学参考，非真实上市产品法定说明书')).toBeTruthy()
+  expect(sheet.getByText(/单日最大剂量 10 mg/)).toBeTruthy()
+
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '药品说明书摘要' })).toBeNull())
+  expect(screen.getByRole('dialog', { name: '开立医嘱' })).toBeTruthy()
+
+  // 遮罩关闭：仅收起说明书抽屉，保持底层开医嘱弹窗与草稿完好
+  await user.click(within(draftRow).getByRole('button', { name: '说明书' }))
+  await screen.findByRole('dialog', { name: '药品说明书摘要' })
+  const overlay = document.querySelector('[data-slot="sheet-overlay"]') as HTMLElement | null
+  expect(overlay).not.toBeNull()
+  await user.click(overlay!)
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '药品说明书摘要' })).toBeNull())
+  expect(screen.getByRole('dialog', { name: '开立医嘱' })).toBeTruthy()
+
+  const unconfiguredLi = within(suggestions).getByRole('button', { name: '选择无摘要合成片' }).closest('li')!
+  await user.click(within(unconfiguredLi).getByRole('button', { name: '说明书' }))
+  const emptySheet = within(await screen.findByRole('dialog', { name: '药品说明书摘要' }))
+  expect(emptySheet.getByText('暂无院内说明书摘要')).toBeTruthy()
+
+  await user.click(emptySheet.getByRole('button', { name: 'Close' }))
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '药品说明书摘要' })).toBeNull())
+  expect(screen.getByRole('dialog', { name: '开立医嘱' })).toBeTruthy()
+  expect((within(draftRow).getByRole('textbox', { name: '每次剂量' }) as HTMLInputElement).value).toBe('10 mg')
+  expect((within(draftRow).getByRole('textbox', { name: '给药说明' }) as HTMLInputElement).value).toBe('清晨餐后整片吞服')
 })
