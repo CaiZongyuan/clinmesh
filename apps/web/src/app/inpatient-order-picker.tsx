@@ -14,15 +14,20 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
 import { inpatientFrequencyLabel } from './inpatient-labels.ts'
+import {
+  MedicationInsertTriggerButton,
+  type MedicationPackageInsertTarget,
+} from './medication-package-insert-sheet.tsx'
 
 export type InpatientOrderPick =
   | { kind: 'medication'; item: z.infer<typeof inpatientMedicationSchema> }
   | { kind: 'service'; item: z.infer<typeof inpatientServiceSchema> }
 
 /** 医嘱项目搜索框：药品按院内目录服务端检索（含暂不能开立项及原因），护理与治疗项目取住院目录。建议列表只在输入或查询后出现。 */
-export function InpatientOrderPicker({ id, session, locale, services, diagnosed, disabled, picked, onPick, inline = false }: {
+export function InpatientOrderPicker({ id, session, locale, services, diagnosed, disabled, picked, onPick, onOpenInsert, inline = false }: {
   inline?: boolean; id: string; session: SessionContext; locale: WorkspaceLocale; services: Array<z.infer<typeof inpatientServiceSchema>>
   diagnosed: boolean; disabled: boolean; picked: InpatientOrderPick | null; onPick(pick: InpatientOrderPick | null): void
+  onOpenInsert?: ((target: MedicationPackageInsertTarget) => void) | undefined
 }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const [text, setText] = useState(''), [open, setOpen] = useState(false), [showUnavailable, setShowUnavailable] = useState(false)
@@ -53,11 +58,19 @@ export function InpatientOrderPicker({ id, session, locale, services, diagnosed,
       {medications.error ? <div role="alert" className="flex flex-wrap items-center gap-2 p-3 text-sm text-destructive">{t('药品目录查询失败：', 'Medication search failed: ')}{getWorkspaceErrorMessage(medications.error, getWorkspaceMessages(locale))}
         <Button type="button" size="sm" variant="outline" onClick={() => void medications.refetch()}>{t('重试目录查询', 'Retry catalog query')}</Button></div> : null}
       <ul className="divide-y">
-        {available.map(item => <li key={item.id}><OrderCatalogCandidate label={t(`选择${item.display}`, `Select ${item.display}`)} disabled={disabled || !diagnosed} onSelect={() => pick({ kind: 'medication', item })}>
-          <strong>{item.display}</strong><span className="text-xs text-muted-foreground">{t('药品', 'Medication')}</span>
-          <span className="text-xs text-muted-foreground tabular-nums">{[formatMedicationSpec(item.strength, item.packageDescription) || undefined, item.doses[0] ? `${t('每次 ', 'Per dose ')}${item.doses[0].doseText}` : undefined, item.frequencyCodes[0] ? inpatientFrequencyLabel(item.frequencyCodes[0], locale, false) : undefined, `${formatFen(item.priceFen, locale)}/${item.unit}`].filter(Boolean).join(' · ')}</span>
-          {diagnosed ? null : <span className="ms-auto text-xs text-warning">{t('先确认诊断', 'Confirm diagnosis first')}</span>}
-        </OrderCatalogCandidate></li>)}
+        {available.map(item => {
+          const specText = formatMedicationSpec(item.strength, item.packageDescription)
+          return <li key={item.id}><OrderCatalogCandidate
+            action={onOpenInsert === undefined ? undefined : <MedicationInsertTriggerButton className="mt-1" locale={locale} onOpen={() => onOpenInsert({ title: item.display, subtitle: specText || undefined, packageInsert: item.packageInsert })} />}
+            label={t(`选择${item.display}`, `Select ${item.display}`)}
+            disabled={disabled || !diagnosed}
+            onSelect={() => pick({ kind: 'medication', item })}
+          >
+            <strong>{item.display}</strong><span className="text-xs text-muted-foreground">{t('药品', 'Medication')}</span>
+            <span className="text-xs text-muted-foreground tabular-nums">{[specText || undefined, item.doses[0] ? `${t('每次 ', 'Per dose ')}${item.doses[0].doseText}` : undefined, item.frequencyCodes[0] ? inpatientFrequencyLabel(item.frequencyCodes[0], locale, false) : undefined, `${formatFen(item.priceFen, locale)}/${item.unit}`].filter(Boolean).join(' · ')}</span>
+            {diagnosed ? null : <span className="ms-auto text-xs text-warning">{t('先确认诊断', 'Confirm diagnosis first')}</span>}
+          </OrderCatalogCandidate></li>
+        })}
         {matchedServices.map(item => <li key={item.id}><OrderCatalogCandidate label={t(`选择${item.display}`, `Select ${item.display}`)} disabled={disabled} onSelect={() => pick({ kind: 'service', item })}>
           <strong>{item.display}</strong><span className="text-xs text-muted-foreground">{t('护理', 'Nursing')}</span>
           <span className="text-xs text-muted-foreground tabular-nums">{formatFen(item.priceFen, locale)}/{item.unit}</span>

@@ -1,5 +1,5 @@
 import { clinicalRiskAssessmentRecordSchema, inpatientVitalSignsRecordSchema } from './clinical-scores.ts'
-import { medicationSafetyRuleSchema } from './medication-safety.ts'
+import { medicationPackageInsertSchema, medicationSafetyRuleSchema } from './medication-safety.ts'
 import { clinicalOverrideInputSchema } from './clinical-quality.ts'
 import { referenceConceptSnapshotSchema } from './reference-data.ts'
 import { z } from 'zod'
@@ -54,7 +54,7 @@ export const inpatientChargeSchema = z.object({ id, label: z.string().min(1), ki
   virtualTime: z.iso.datetime({ offset: true }), version: z.number().int().positive(), reversalOf: id.optional(), reason: z.string().optional() }).strict()
 export const inpatientMedicationSchema = z.object({
   safety: medicationSafetyRuleSchema.optional(), id, display: z.string(), version: z.number().int().positive(), priceFen: z.number().int().nonnegative(), unit: z.string(),
-  strength: z.string().min(1).optional(), packageDescription: z.string().min(1).optional(),
+  strength: z.string().min(1).optional(), packageDescription: z.string().min(1).optional(), packageInsert: medicationPackageInsertSchema.optional(),
   doseBasis: z.object({ amount: z.number().positive(), unit: z.string().min(1) }).strict().optional(), maxDoseQuantity: z.number().int().positive().optional(),
   doses: z.array(z.object({ doseText: z.string(), quantity: z.number().int().positive() }).strict()), frequencyCodes: z.array(z.enum(['QD','BID','TID','QN','PRN','ONCE'])),
   lots: z.array(z.object({ id, version: z.number().int().positive(), quantityOnHand: z.number().int().nonnegative(), expiresOn: z.string() }).strict()),

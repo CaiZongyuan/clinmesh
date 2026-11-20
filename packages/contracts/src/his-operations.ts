@@ -303,8 +303,8 @@ const operationCliMetadataList = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active clinical catalog including shared medication safety rules and six frequency codes',
-    version: 2,
+    summary: 'Read the active clinical catalog including shared medication safety rules, six frequency codes, and optional read-only synthetic medication packageInsert summaries',
+    version: 3,
   },
   {
     cliPath: ['catalog', 'services', 'search'],
@@ -2414,8 +2414,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: false, idempotency: 'none' },
     risk: 'read',
     roles: ['inpatient-doctor'],
-    summary: '按院内或参考来源分页检索住院药品及检验候选，返回具体缺项，仅完整映射提供可开立身份及可选含量与包装规格',
-    version: 2,
+    summary: '按院内或参考来源分页检索住院药品及检验候选，返回具体缺项，仅完整映射提供可开立身份及可选含量、包装规格与只读合成说明书摘要',
+    version: 3,
   },
   {
     cliPath: ['inpatient', 'clinical-catalog'],
@@ -2424,8 +2424,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: false, idempotency: 'none' },
     risk: 'read',
     roles: ['inpatient-doctor','ward-nurse'],
-    summary: '读取住院实际可用临床目录（含声明式药事安全规则、六种频次及可选药品含量与包装规格）',
-    version: 3,
+    summary: '读取住院实际可用临床目录（含声明式药事安全规则、六种频次及可选药品含量、包装规格与只读合成说明书摘要）',
+    version: 4,
   },
   {
     cliPath: ['inpatient', 'clinical'],

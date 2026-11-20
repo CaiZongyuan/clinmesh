@@ -10,6 +10,7 @@ import {
   CLASS_C_COVERAGE,
 } from '../catalog-insurance-coverage.ts'
 import { canonicalJsonHash } from './canonical-json.ts'
+import { standardMedicationPackageInsert } from './medication-package-inserts.ts'
 import { pciDataPackage } from './pci-data.ts'
 
 const standardMedicationCoverage: Readonly<Record<string, CatalogInsuranceCoverage>> = {
@@ -124,10 +125,11 @@ export function standardMedicationCatalog(): ScenarioProductMedicationCatalogIte
       manufacturer: '仁和仿真制药厂', packageDescription: standardPackageDescriptions[suffix] ?? `10${unit}/盒`, strength: `${basis.amount} ${basis.unit}`
     }
     const { sourceLocator: _locator, status: _status, ...snapshot } = { ...product, sourceLocator: '', status: 'active' }
+    const packageInsert = standardMedicationPackageInsert(id)
     return {
       id, code: suffix.toUpperCase(), name, priceFen, active: true, status: 'active' as const, organizationId: 'hospital-synthetic-renhe',
       availableScopes: ['outpatient', 'inpatient'], category, defaultDose: doseText, defaultFrequency: frequency, defaultRoute: pci?.hospitalSupplement.route ?? (oral ? '口服' : '注射'),
-      dosageForm: snapshot.dosageForm, insuranceCoverage: standardMedicationCoverage[suffix]!, unit, restriction: '固定合成药事规则，仅用于仿真。', product: { ...snapshot, system: 'urn:clinmesh:reference:nhsa-medication-product' },
+      dosageForm: snapshot.dosageForm, insuranceCoverage: standardMedicationCoverage[suffix]!, ...(packageInsert ? { packageInsert } : {}), unit, restriction: '固定合成药事规则，仅用于仿真。', product: { ...snapshot, system: 'urn:clinmesh:reference:nhsa-medication-product' },
       drugConcept: {
         code: `CM-DRUG-${suffix.toUpperCase()}`, conceptId: `drug-concept-${suffix}`, display: name, kind: 'drug-concept' as const,
         system: 'urn:clinmesh:reference:drug-concept' as const, version: 'clinmesh-synthetic-medications-2026-11-13'
@@ -151,9 +153,10 @@ export function standardMedicationCatalog(): ScenarioProductMedicationCatalogIte
 export function enableStandardMedicationRules(medications: ScenarioProductMedicationCatalogItem[]): ScenarioProductMedicationCatalogItem[] {
   return medications.map(medication => {
     const safety = standardMedicationSafety(medication.id)
-    if (!safety) return medication
+    const packageInsert = medication.packageInsert ?? standardMedicationPackageInsert(medication.id)
+    if (!safety) return packageInsert ? { ...medication, packageInsert } : medication
     return {
-      ...medication, availableScopes: ['outpatient', 'inpatient'], workflow: {
+      ...medication, ...(packageInsert ? { packageInsert } : {}), availableScopes: ['outpatient', 'inpatient'], workflow: {
         ...medication.workflow, safety,
         allowedCourseDays: Array.from({ length: 30 }, (_, i) => i + 1), allowedQuantities: medication.workflow.allowedQuantities,
         allowedFrequencyCodes: ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE'],

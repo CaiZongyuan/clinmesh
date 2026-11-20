@@ -1,4 +1,4 @@
-import { medicationSafetyRuleSchema } from './medication-safety.ts'
+import { medicationPackageInsertSchema, medicationSafetyRuleSchema } from './medication-safety.ts'
 import { catalogInsuranceCoverageSchema } from './investigation-billing.ts'
 import { z } from 'zod'
 import {
@@ -289,6 +289,7 @@ const scenarioLegacyMedicationCatalogItemSchema = scenarioCatalogItemBaseSchema.
   defaultRoute: z.string().min(1),
   dosageForm: z.string().min(1),
   insuranceCoverage: catalogInsuranceCoverageSchema.optional(),
+  packageInsert: medicationPackageInsertSchema.optional(),
   restriction: z.string().min(1).nullable(),
   unit: z.string().min(1),
   workflow: scenarioMedicationWorkflowSchema,

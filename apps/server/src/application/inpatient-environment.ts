@@ -1,12 +1,36 @@
 import { z } from 'zod'
 import { syntheticInpatientSurgeryCatalog } from './scenario-data/inpatient-surgery-catalog.ts'
 import { storeMaterialSnapshot } from './scenario-data/cardiovascular-materials.ts'
+import { standardMedicationPackageInsert } from './scenario-data/medication-package-inserts.ts'
 import type { createHospitalBaseline } from './scenario-data/hospital-baseline.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository, RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 import { syntheticAccounts } from './identity-service.ts'
 
-export function seedInpatientEnvironment(database: ClinMeshDatabase, fhir: FhirRepository, context: RepositoryContext, medications: ReturnType<typeof createHospitalBaseline>['catalog']['medications']) {
+export function backfillMedicationPackageInserts(database: ClinMeshDatabase, context: RepositoryContext) {
+  const missing = z.array(z.object({ item_id: z.string() })).parse(database.driver.prepare(`
+    SELECT item_id FROM outpatient_catalog
+    WHERE workspace_id=? AND epoch=? AND kind='medication' AND json_type(config_json,'$.packageInsert') IS NULL
+  `).all(context.workspaceId, context.epoch))
+  if (missing.length === 0) return
+  const update = database.driver.prepare(`
+    UPDATE outpatient_catalog SET config_json=json_set(config_json,'$.packageInsert',json(?))
+    WHERE workspace_id=? AND epoch=? AND item_id=? AND kind='medication' AND json_type(config_json,'$.packageInsert') IS NULL
+  `)
+  for (const { item_id } of missing) {
+    const packageInsert = standardMedicationPackageInsert(item_id)
+    if (packageInsert) update.run(JSON.stringify(packageInsert), context.workspaceId, context.epoch, item_id)
+  }
+}
+
+export function seedInpatientEnvironment(
+  database: ClinMeshDatabase,
+  fhir: FhirRepository,
+  context: RepositoryContext,
+  medications: ReturnType<typeof createHospitalBaseline>['catalog']['medications'],
+  options?: { skipPackageInsertBackfill?: boolean },
+) {
+  if (!options?.skipPackageInsertBackfill) backfillMedicationPackageInserts(database, context)
   const existingSurgeryItems = new Set(z.array(z.object({ item_id: z.string() })).parse(database.driver.prepare(
     'SELECT item_id FROM inpatient_surgery_catalog WHERE workspace_id=? AND epoch=?').all(context.workspaceId, context.epoch)).map(row => row.item_id))
   for (const [kind, items] of [['procedure', syntheticInpatientSurgeryCatalog.procedures], ['material', syntheticInpatientSurgeryCatalog.materials.map(storeMaterialSnapshot)]] as const) {
