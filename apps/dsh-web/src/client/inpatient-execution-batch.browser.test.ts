@@ -84,12 +84,20 @@ async function reviewAppearanceMatrix(page: Page, dialog: Locator, trigger: Loca
     await scroller.evaluate(element => { element.scrollTop = element.scrollHeight })
     await waitForLayout(dialog)
     const last = await lastArticle.boundingBox(), bounds = await scroller.boundingBox()
-    if (last!.height <= bounds!.height) {
+    const innerAvailableFromTop = await scroller.evaluate((element, currentZoom) => {
+      const style = getComputedStyle(element)
+      return element.getBoundingClientRect().height - (parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)) * currentZoom
+    }, zoom)
+    // 滚动容器带 p-4 内边距；仅当末张卡片高度不超过容器内容区高度时，置底滚动才能同时露出卡片顶边。
+    if (last!.height <= innerAvailableFromTop) {
       expect(last!.y).toBeGreaterThanOrEqual(bounds!.y - 1)
     } else {
-      // 单条长理由卡片在大字号与1.25倍缩放下高于滚动视口时，分别通过 scrollTop 验证首尾均可达且头尾固定。
       expect(last!.y + last!.height).toBeGreaterThan(bounds!.y + 1)
-      await scroller.evaluate((element, delta) => { element.scrollTop = Math.max(0, element.scrollTop + delta) }, (last!.y - bounds!.y) / zoom)
+      const articleHandle = await lastArticle.elementHandle()
+      await scroller.evaluate((container, article) => {
+        if (!(container instanceof HTMLElement) || !(article instanceof HTMLElement)) return
+        container.scrollTop = Math.max(0, article.offsetTop - container.offsetTop)
+      }, articleHandle)
       await waitForLayout(dialog)
       const topAligned = await lastArticle.boundingBox()
       expect(topAligned!.y).toBeGreaterThanOrEqual(bounds!.y - 1)
