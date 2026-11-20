@@ -1,47 +1,26 @@
-# Agent Note: 完整检验参考库与本院服务发布
+# Agent Note: 检验参考库同步、本院服务默认启用与可信成人基线
 
 Status: implemented
 
 ## Problem
 
-完整 LOINC Reference Release、医院实际开展的 Laboratory Service、医生一次 Clinical Request 和 LIS 执行报告具有不同身份、生命周期和可见性。此前病例级目录直接在全局 Reference Concept 上投影 Investigation Generation Capability，使医生看到“当前病例不可生成”，也允许运行时模型配置决定项目能否开立。`laboratory-cn` 的 18 条精选概念与临时白细胞来源同时承担参考术语、本院目录和模拟器 profile，无法消费 `loinc-zh-cn@2.83.r1` 的完整单位、标本和 panel 关系。
-
-本决策由 [issue #66](https://github.com/CaiZongyuan/clinmesh/issues/66) 实施，并局部取代[医生核心临床业务流](../feature/2026-08-24-doctor-clinical-core-workflow.md)、[医生临床目录选择与草稿确认](../feature/2026-08-31-doctor-clinical-catalog-dialogs.md)、[医生草稿自动保存与诊断确认修订](./2026-08-31-doctor-draft-autosave-and-diagnosis-revision.md)和 [Synthea 来源病例与跨 Epoch 重放](./2026-08-30-synthea-case-source-and-replay.md)中的精选数值目录、病例级 capability、永久失败恢复分支与按病例项目永久复用 snapshot 决策。
-
-`laboratory-cn` 的可信数据集发布与 Adult Reference Baseline 是本决策的扩展路径，由[可信成人检验基线](./2026-09-02-trusted-laboratory-baseline.md)拥有。
+临床检验标准术语库（`laboratory-cn` WS/T 886-2026 及可选完整 `loinc-zh-cn`）、本院实际开展的检验服务（`Hospital Laboratory Service`）、医生单次检验申请与 LIS 签发报告具有不同身份与生命周期。若直接把参考概念当成医嘱目录或按病例投影“是否可生成结果”，会缺失标本、单位、panel 闭包与医院计价边界并向医生泄漏底层 Case Truth 与模型状态；若新环境每次都要求管理员手工逐项发布基础检验，或把缺失／冲突真值一律静默兜底为正常值，则会抬高开箱门槛并掩盖数据不兼容错误。
 
 ## Decision
 
-默认启用与可选清空患者库由[默认检验服务与统一模拟数据管理](2026-09-15-default-laboratory-and-data-reset.md)定义；本文保留其余来源、版本和重放约束。
+建立离线参考库同步、本院服务自动启用与可信成人基线三层机制，当前业务与仿真合同见[检验、检查与报告](../../../architecture/examinations-and-reports.md)及[仿真、病例与素材](../../../architecture/simulation.md)：
 
-Reference SQLite 接受既有 Dataset Schema v1 和 `loinc-zh-cn` Schema v2。Schema v2 importer 校验 Candidate manifest、SQLite artifact、四张 canonical 表及其记录数，把 LOINC 主表、单位、SYSTEM 标本关系和 panel 成员边原子发布为不可变 Reference Release。Class Type 1 概念属于 laboratory domain；生命体征、临床观察、问卷和量表属于 `other`，不会进入 Laboratory Service 候选。
-
-现有 operational `hospital_service_catalog` 继续作为唯一 Hospital Service owner。管理员从 active、Class Type 1、Order/Both 候选中选择最多 50 个根概念，创建有 expected candidate version 和幂等键的 publication job。Catalog Enrichment 使用独立模型配置和 strict output，在后台补齐本院名称、合成价格、TAT、参考范围、定性值和报告定义；panel 根与 dependency-only 成员在一个 Command transaction 中发布。失败 job 保存结构化错误并保持既有服务不变，未成功候选不进入医生目录。
-
-每次 Workspace Epoch transition 把已发布的 Laboratory Service root/component rows 以相同 ID 和版本物化到新 Epoch，Clinical Request 和报告仍按新业务运行重新创建。Publication job 固定来源 Reference Release；停机中断把 running job 退回 queued，重启后不会改读新的当前 Release。
-
-医生病例目录只返回 active、doctor-orderable Laboratory Service。选择器展示根 LOINC、报告结构、标本和 TAT，不返回 Case Truth、模型或 generation capability。草稿冻结 Hospital Service、根 Reference coding 和完整 report definition；开立重新校验 service ID 与版本。Reference Concept ID 不能替代 Hospital Service ID。旧 `outpatient_catalog` 单项路径只作为既有兼容调用保留，不在新医生目录公开。
-
-Investigation 按冻结 report definition 的叶子闭包执行。每个叶子先按精确 LOINC coding 读取 Case Truth；完整 panel 全部命中时不调用模型，partial panel 只生成缺失叶子。Agent 输入加入当前正式诊断和已有正式检验，并继续限制 Visible History 与私有证据各 20 项；输出必须保持结果全集、值类型、单位、参考范围和判读一致。outbox 对可恢复错误最多自动尝试三次，连续失败后进入 `generation-failed`，且不创建 Specimen、Observation 或 DiagnosticReport。人工重试不重新解释病例级 generation capability，而是为同一冻结申请开启新的三次尝试窗口；确定性错误的首次失败与重试限制由[真值单位换算与失败恢复](../bug-fix/2026-10-16-laboratory-truth-unit-conversion.md)拥有。
-
-Investigation Result Snapshot 的唯一键是 `workspace + case + Hospital Service + input/evidence hash`。hash 固定 Case revision、服务/报告版本、申请前正式证据与私有来源输入。同一 request 通过持久 snapshot ID 幂等复用；Reset 后相同初始证据复用旧 snapshot；完成报告或诊断变化后的复查形成新 hash 和新 snapshot。
+1. **双 Schema 离线参考库与默认自动启用**：`cn-health` 仅作为开发／运维期数据同步工具（`pnpm reference:sync`），经版本锁、Manifest、哈希与关系不变量校验后原子写入独立只读 Reference SQLite（支持既有 Dataset Schema v1、`laboratory-cn` discriminated 原子项／panel 定义及 `loinc-zh-cn` Schema v2 的 11.2 万概念、单位、标本与 panel 边）。启动与新 Epoch 初始化时，系统通过受信内部上下文在 `hospital_service_catalog` 幂等启用 `laboratory-cn` 全部活动单项与组合（普通组合标本取成员交集，“混合标本”保留成员各自标本；心血管核心检验默认合成定价与危急值阈值扩展见[心血管核心检验默认定价基线](../feature/2026-11-12-cardiology-default-labs-and-multivessel-angiography.md)）。管理员仍可通过 CLI 显式选择最多 50 个 `loinc-zh-cn` Class Type 1 候选运行异步 Catalog Enrichment 发布任务；医生目录仅展示已启用的 doctor-orderable 本院服务，绝不暴露生成能力或 Case Truth。
+2. **精确真值优先、可信成人基线与证据哈希快照**：检验执行按申请开立时冻结的报告叶子闭包运行。每个叶子优先匹配精确 LOINC／WS/T `Case Truth`（受控单位换算与确定性兼容错误见[检验真值单位换算](../bug-fix/2026-10-16-laboratory-truth-unit-conversion.md)）；缺失叶子若服务具备完整 `Adult Reference Baseline` 且患者按虚拟时间属适用成人，则用独立于临床参考上下限的双侧 `simulation bounds` 与固定 SHA-256 确定性生成缺项（无需外部模型），否则才调用 Investigation Agent（可恢复错误最多自动尝试三次，失败进入 `generation-failed` 且不落盘残缺报告）。结果冻结为以 `workspace + case + Hospital Service + input/evidence hash` 唯一标识的 `Investigation Result Snapshot`：跨 Epoch 重放相同初始证据时零模型复用，新增正式诊断或已完成报告后的复查则因证据哈希变化生成新快照。
+3. **统一模拟数据重置与患者库逻辑归档**：管理员唯一首页收敛为模拟数据管理，重置操作经二次确认显式区分“仅重置诊疗进度（创建新 Epoch、沿用已启用检验目录并重放已开始病例）”与“同时清空患者库（对 Profile 标记 `archived_at` 并退役未开始 Case，运行中生成任务阻断清空，完整保留历史临床、报告快照与审计外键）”。
 
 ## Alternatives considered
 
-**把完整 LOINC 直接作为医生目录。** 实现最短，但把标准术语误表示为医院开展项目，缺少本院编码、科室、价格、TAT、报告定义和 panel 开立边界。
-
-**继续按病例投影生成 capability。** 可以在开立前避免运行时失败，却把模拟器、Case Truth 和模型配置泄漏给医生，并让所有患者看到不同的医院目录。
-
-**为检验另建一套本院服务表。** 可以避开既有通用 Service schema，但会建立第二个 Hospital Service owner，并重复科室、价格、TAT、组合和版本语义。
-
-**医生首次选择时懒执行 enrichment。** 可以减少提前配置，却把高延迟和模型失败放进临床路径，也使同一服务定义随患者或请求漂移。
-
-**继续按病例和项目永久复用第一个 snapshot。** Reset 简单，但复查无法响应新增诊断或既有报告；evidence hash 同时保留重放确定性和复查新结果。
+- **在运行时请求中调用 `cn-health` 或把完整 LOINC 直接作为开单目录**：引入运行时外部网络／子进程耦合，并丢失医院编码、价格、周转时间与组合闭包控制。
+- **按病例向医生目录投影结果生成能力，或让模型推测成人参考区间**：前者向临床端泄漏隐藏真值与模型配置，后者用不稳定模型输出覆盖权威卫生行业标准数值与双侧模拟分布。
+- **任意缺失或不兼容真值统一回退正常值，或按病例与项目永久复用首份快照**：吞掉单位／年龄冲突，且使后续复查无法反映病情与诊断变化。
+- **清空患者库时物理删除 Profile 与历史快照**：破坏既有 Epoch 已签发报告、Provenance 与来源档案之间的可追溯完整性。
 
 ## Consequences
 
-完整 LOINC 只增加 Reference SQLite 的不可变事实，不复制到 operational SQLite。真实 `loinc-zh-cn@2.83.r1` 导入产生 112,405 个概念、45,207 条单位、112,405 条标本关系和 95,705 条 panel 边；69,651 个 Class Type 1 概念进入 laboratory domain，43,465 个 active Order/Both 概念可作为发布候选。Candidate 标记为不可公开 Registry 发布，ClinMesh 只消费调用方合法取得的本地 artifact。
-
-管理员增加一个异步配置工作面和 `clinmesh-administrator` CLI workflow。医生只能开立已经通过 enrichment 与闭包校验的服务，因此运行时 provider 不可用会形成系统执行异常，而不会改变医生目录或生成默认正常值。
-
-Hospital Service 重新发布不会改写旧申请；每个申请和报告从冻结 snapshot 读取。panel 一次开立产生一个 ServiceRequest、一个 Specimen、每个叶子一个 Observation 和一个 DiagnosticReport。独立检验继续不创建 ChargeItem；收费与退款语义仍由后续独立决策拥有。
+全新环境同步锁定参考库后即可离线开箱使用完整 `laboratory-cn` 单项与组合检验，成人病例在无外部 AI Provider 时也能保留精确阳性异常并确定性补齐其余常规指标；服务重发不会篡改历史申请已冻结的报告定义与参考范围。首期成人基线不覆盖儿童、妊娠或仪器方法学差异，非兼容真值继续显式失败供医生取消或排查。

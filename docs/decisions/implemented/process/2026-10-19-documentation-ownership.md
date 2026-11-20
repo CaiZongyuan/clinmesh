@@ -10,7 +10,7 @@ Status: implemented
 
 保留 `docs/architecture.md` 与 `docs/memory/memory.md` 两个入口，详细架构按事实职责拆分，低频经验按操作场景拆分。架构中的外部参考进入研究目录，测试要求回到测试 owner。公开入口 route 保留，新增详细 owner 经现有 manifest 发布。
 
-文档归属由 [docs/AGENTS.md](../../../../docs/AGENTS.md)统一说明；正式需求与拆票由 [GitHub Issue](../../../agents/issue-tracker.md) 拥有（见 [恢复 GitHub Issue 为正式需求规格与自包含子票](2026-11-11-github-issue-canonical-specs.md)），当前合同与实现描述已交付行为，本目录保留决策理由（按子票拆分的同构恢复记录合并回共同基准 Note），不再在仓库内保留平行的需求规格目录。工程记忆入口拥有稳定协作偏好，场景主题保留可操作经验和来源。
+文档归属由 [docs/AGENTS.md](../../../AGENTS.md)统一说明；正式需求与拆票由 [GitHub Issue](../../../agents/issue-tracker.md) 拥有（见 [恢复 GitHub Issue 为正式需求规格与自包含子票](2026-11-11-github-issue-canonical-specs.md)），当前合同与实现描述已交付行为，本目录保留决策理由，不再在仓库内保留平行的需求规格目录。工程记忆入口拥有稳定协作偏好，场景主题保留可操作经验和来源。后续针对临床流程单文件膨胀、工程记忆累积、决策演进链与外部调研语料的进一步收敛见 [精简全库文档体系、拆分临床合同与收敛历史决策语料](2026-11-20-documentation-context-consolidation.md)。
 
 公开文档站（`apps/docs/docs.ts`）统一发布现行架构与演示手册（含 `drg-reference-storage.md` 与 `pci-demo.md`），退役与现行架构冲突的首期 `demo-architecture.md` 并将其备份／恢复边界并入存储、仿真与部署 owner。VitePress 标题锚点与 `scripts/verify-docs.ts` 共用同一套 GFM 兼容的 `slugifyHeading` 实现，避免数字编号章节产生 `#_1-4-...` 漂移；文档校验同时检查相对路径与 `#anchor` 片段，Agent Note 校验禁止空生命周期子目录、非模板二级标题及指向本仓库 `docs/` 的 GitHub 分支／提交 URL。
 

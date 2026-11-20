@@ -21,4 +21,4 @@ Status: implemented
 
 ## Consequences
 
-门诊混合处方与住院品规级费用均支持甲/乙/丙精确整数分结算与审计溯源，目录后续调整不改变既有费用快照、历史结算与归档哈希，历史预迁移数据和 PCI 黄金账本精确兼容。详细合同由[医保模拟](../../../architecture/clinical-workflows.md#86-医保模拟)与[住院医保与首次冻结账](../../../architecture/clinical-workflows.md#住院医保与首次冻结账)拥有。
+门诊混合处方与住院品规级费用均支持甲/乙/丙精确整数分结算与审计溯源，目录后续调整不改变既有费用快照、历史结算与归档哈希，历史预迁移数据和 PCI 黄金账本精确兼容。详细合同由[收费、结算与医保](../../../architecture/billing-and-insurance.md)拥有。
