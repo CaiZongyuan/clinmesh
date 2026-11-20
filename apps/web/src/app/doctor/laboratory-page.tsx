@@ -1019,7 +1019,7 @@ function laboratoryResultName(
 
 export function indicationLabel(code: string, messages: ReturnType<typeof getWorkspaceMessages>): string {
   if (code === 'fever') return messages.indication_fever
-  if (code === 'clinical-evaluation') return messages.indication_clinicalEvaluation
+  if (code === 'clinical-evaluation' || code === 'clinical-assessment') return messages.indication_clinicalEvaluation
   return code
 }
 

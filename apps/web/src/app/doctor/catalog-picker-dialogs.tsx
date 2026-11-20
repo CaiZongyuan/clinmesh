@@ -1,6 +1,4 @@
-import { inpatientFrequencyLabel } from '../inpatient-labels.ts'
-import { medicationRegimenDoseAllowed, medicationQuantityAllowed } from '@clinmesh/core/medication-safety'
-import { medicationFrequencySchema } from '@clinmesh/contracts/medication-safety'
+import { formatMedicationFrequency, medicationRegimenDoseAllowed, medicationQuantityAllowed } from '@clinmesh/core/medication-safety'
 import { OrderComposerLayout, OrderComposerFooter, OrderComposerSearch, OrderCatalogCandidate } from './order-composer-layout.tsx'
 import type {
   CaseLaboratoryCatalogSearch,
@@ -788,7 +786,7 @@ function formatLocalMedicationPresentation(item: PrescriptionMedication, locale:
   return {
     packageSummary,
     priceText,
-    specText: [strength, packageSummary].filter(Boolean).join(' · '),
+    specText: formatMedicationSpec(strength, item.packageDescription),
     strength,
   }
 }
@@ -919,7 +917,7 @@ export function MedicationComposerDialog({
                 <Field data-invalid={invalidFields.has('frequencyCode')}>
                   <FieldLabel htmlFor="medication-composer-frequency">{messages.frequency}</FieldLabel>
                   {selectedMedication === undefined ? <Input aria-invalid={invalidFields.has('frequencyCode')} id="medication-composer-frequency" maxLength={32} onChange={event => setFrequencyCode(event.currentTarget.value)} value={frequencyCode} />
-                    : <WorkspaceSelect id="medication-composer-frequency" items={selectedMedication.allowedFrequencyCodes.map(value => ({ label: medicationFrequencySchema.safeParse(value).success ? inpatientFrequencyLabel(medicationFrequencySchema.parse(value), locale, false) : value, value }))}
+                    : <WorkspaceSelect id="medication-composer-frequency" items={selectedMedication.allowedFrequencyCodes.map(value => ({ label: formatMedicationFrequency(value, locale), value }))}
                       onValueChange={value => { if (value !== null) { if (value !== frequencyCode) markEdited('medication-composer-frequency'); setFrequencyCode(value) } }}
                       placeholder={messages.choose} value={frequencyCode || null} />}
                 </Field>
@@ -1171,6 +1169,32 @@ export function medicationPackageSummary(packageDescription: string): string {
   const last = segments[segments.length - 1]
   if (segments.length > 1 && last !== undefined && last.length <= PACKAGE_SUMMARY_MAX_CHARS) return last
   return packageDescription.length <= PACKAGE_SUMMARY_MAX_CHARS ? packageDescription : `${packageDescription.slice(0, PACKAGE_SUMMARY_MAX_CHARS)}…`
+}
+
+export function formatMedicationSpec(strength: string | undefined, packageDescription: string | undefined): string {
+  return [
+    strength,
+    packageDescription === undefined ? undefined : medicationPackageSummary(packageDescription),
+  ].filter(Boolean).join(' · ')
+}
+
+export function resolveMedicationDisplayMeta(
+  item: {
+    packageDescription?: string | undefined
+    referenceProduct?: ReferenceMedicationProduct | undefined
+    strength?: string | undefined
+    unit?: string | undefined
+  },
+  catalogEntry?: {
+    packageDescription?: string | undefined
+    strength?: string | undefined
+    unit?: string | undefined
+  },
+) {
+  const strength = item.referenceProduct?.strength ?? item.strength ?? catalogEntry?.strength
+  const packageDescription = item.referenceProduct?.packageDescription ?? item.packageDescription ?? catalogEntry?.packageDescription
+  const unit = item.unit ?? (item.referenceProduct === undefined ? catalogEntry?.unit : undefined)
+  return { packageDescription, specText: formatMedicationSpec(strength, packageDescription), unit }
 }
 
 function medicationProductGroupKey(product: ReferenceMedicationProduct): string {

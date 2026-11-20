@@ -202,7 +202,7 @@ test('住院医生减负实机同病例对比', async ({ page, pciApp: app }) =>
     if (before) await page.locator('summary').filter({ hasText: '新增手术申请' }).click()
     else await page.getByRole('button', { name: /申请手术/ }).first().click()
     const form = before ? workspace : page.getByRole('dialog', { name: /申请手术/ })
-    await form.getByLabel('计划手术时间（上海时间）', { exact: true }).fill('2026-08-25T09:00')
+    await form.getByLabel('计划手术时间', { exact: true }).fill('2026-08-25T09:00')
     await form.getByLabel('手术申请理由', { exact: true }).fill('合成演示：拟行进一步介入治疗')
     if (before) {
       await shoot('05-new-surgery', width)

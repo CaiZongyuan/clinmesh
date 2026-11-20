@@ -161,6 +161,63 @@ export const medicationPresentationSchema = z.object({
   unit: z.string().trim().min(1).nullable().optional(),
 }).strip()
 
+export function parseCatalogMedicationPresentation(configJson: string | undefined) {
+  const rawConfig = JSON.parse(configJson ?? '{}') as unknown
+  const presentation = medicationPresentationSchema.safeParse(rawConfig)
+  const baseConfig = z.object({ dose: z.string().trim().min(1).optional() }).safeParse(rawConfig)
+  const dose = baseConfig.success ? baseConfig.data.dose : undefined
+  return {
+    dosageForm: presentation.success ? presentation.data.product?.dosageForm : undefined,
+    packageDescription: presentation.success ? presentation.data.product?.packageDescription : undefined,
+    strength: presentation.success ? (presentation.data.product?.strength ?? dose) : dose,
+    unit: presentation.success ? (presentation.data.unit ?? undefined) : undefined,
+  }
+}
+
+export function resolvePractitionerRoleDisplayName(
+  database: ClinMeshDatabase,
+  context: { epoch: string; workspaceId: string },
+  practitionerRoleId: string,
+): string | undefined {
+  const roleRow = z.object({ content_json: z.string() }).optional().parse(
+    database.driver.prepare(`
+      SELECT content_json FROM fhir_resource
+      WHERE workspace_id = ? AND epoch = ? AND resource_type = 'PractitionerRole'
+        AND resource_id = ? AND deleted = 0
+    `).get(context.workspaceId, context.epoch, practitionerRoleId),
+  )
+  if (roleRow === undefined) return undefined
+  const pracRef = z.object({
+    practitioner: z.object({
+      display: z.string().trim().min(1).optional(),
+      reference: z.string().optional(),
+    }).optional(),
+  }).safeParse(JSON.parse(roleRow.content_json) as unknown).data?.practitioner
+  if (pracRef?.display) return pracRef.display
+  const pracId = pracRef?.reference?.startsWith('Practitioner/')
+    ? pracRef.reference.slice('Practitioner/'.length)
+    : undefined
+  if (pracId === undefined) return undefined
+  const pracRow = z.object({ content_json: z.string() }).optional().parse(
+    database.driver.prepare(`
+      SELECT content_json FROM fhir_resource
+      WHERE workspace_id = ? AND epoch = ? AND resource_type = 'Practitioner'
+        AND resource_id = ? AND deleted = 0
+    `).get(context.workspaceId, context.epoch, pracId),
+  )
+  if (pracRow === undefined) return undefined
+  const name = z.object({
+    name: z.array(z.object({
+      family: z.string().trim().min(1).optional(),
+      given: z.array(z.string().trim().min(1)).optional(),
+      text: z.string().trim().min(1).optional(),
+    })).optional(),
+  }).safeParse(JSON.parse(pracRow.content_json) as unknown).data?.name?.[0]
+  if (name?.text) return name.text
+  const joined = `${name?.family ?? ''}${(name?.given ?? []).join('')}`.trim()
+  return joined || undefined
+}
+
 const outpatientCaseStatusRowSchema = z.enum([
   'awaiting-triage',
   'awaiting-doctor',

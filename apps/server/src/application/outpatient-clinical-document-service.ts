@@ -48,6 +48,7 @@ import {
   firstVisitDraftContentSchema,
   localFhirReferences,
   medicationCourseDefaultsSchema,
+  parseCatalogMedicationPresentation,
   practitionerRoleIdRowSchema,
   provenanceReasonSchema,
   revisitDraftContentSchema,
@@ -624,6 +625,7 @@ export class OutpatientClinicalDocumentService {
         const config = medicationCourseDefaultsSchema.parse(
           JSON.parse(catalog.config_json ?? '{}'),
         )
+        const presentation = parseCatalogMedicationPresentation(catalog.config_json)
         return {
           ...medication,
           catalog,
@@ -632,8 +634,11 @@ export class OutpatientClinicalDocumentService {
             code: catalog.code,
             display: catalog.name_zh,
             id: catalog.item_id,
+            ...(presentation.packageDescription === undefined ? {} : { packageDescription: presentation.packageDescription }),
             sourceLocator: 'operational:outpatient_catalog',
+            ...(presentation.strength === undefined ? {} : { strength: presentation.strength }),
             system: 'urn:clinmesh:operational:medication',
+            ...(presentation.unit === undefined ? {} : { unit: presentation.unit }),
             version: String(catalog.version),
           }),
         }

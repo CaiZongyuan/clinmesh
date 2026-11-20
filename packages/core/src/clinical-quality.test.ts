@@ -45,7 +45,12 @@ describe('clinical quality rules', () => {
     expect(doseLimitFindings([{ ...metformin, doseLimits: limits, doseText: '1500mg', frequencyCode: 'QD' }]))
       .toEqual([expect.objectContaining({ code: 'MEDICATION_DOSE_LIMIT_EXCEEDED', tier: 'red-line', catalogItemId: 'medication-metformin' })])
     expect(doseLimitFindings([{ ...metformin, doseLimits: limits, doseText: '1000mg', frequencyCode: 'TID' }]))
-      .toEqual([expect.objectContaining({ code: 'MEDICATION_DOSE_LIMIT_EXCEEDED', tier: 'red-line', catalogItemId: 'medication-metformin' })])
+      .toEqual([expect.objectContaining({
+        code: 'MEDICATION_DOSE_LIMIT_EXCEEDED',
+        tier: 'red-line',
+        catalogItemId: 'medication-metformin',
+        message: expect.stringContaining('每日三次（TID）'),
+      })])
   })
 
   it('warns about antibiotics only when every confirmed diagnosis is a simple viral infection', () => {

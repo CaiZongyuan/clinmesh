@@ -25,6 +25,7 @@ import {
   withdrawPrescriptionResponseSchema,
 } from '@clinmesh/contracts/his'
 import { confirmDoctorPreparationResponseSchema } from '@clinmesh/contracts/doctor-recommendations'
+import { inpatientCatalogSearchSchema, inpatientFullCatalogSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { referenceMedicationCatalogSearchSchema } from '@clinmesh/contracts/reference-data'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
@@ -235,10 +236,13 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
     expect(catalog.prescriptionConclusionSupported).toBe(true)
     expect(catalog.medications).toEqual(expect.arrayContaining([
       expect.objectContaining({
+        dosageForm: '胶囊剂',
         id: 'medication-oseltamivir',
         nameZh: '磷酸奥司他韦胶囊',
+        packageDescription: '10粒/盒',
         priceFen: 760,
         strength: '75 mg',
+        unit: '粒',
       }),
       expect.objectContaining({
         dosageForm: '片剂',
@@ -248,7 +252,147 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
         priceFen: 120,
         strength: '500 mg',
       }),
+      expect.objectContaining({
+        id: 'medication-sodium-chloride',
+        nameZh: '0.9%氯化钠注射液',
+        packageDescription: '1瓶/盒',
+        strength: '500 mL',
+        unit: '瓶',
+      }),
     ]))
+    for (const item of catalog.medications) {
+      expect(item.strength, item.id).toBeTruthy()
+      expect(item.packageDescription, item.id).toBeTruthy()
+      expect(item.packageDescription, item.id).not.toContain('合成单')
+    }
+
+    const inpatientDoctor = await signIn(runtime, 'inpatient-doctor@demo.clinmesh.local', password)
+    const inpatientCatalog = inpatientFullCatalogSchema.parse(
+      await (await runtime.app.request('/api/his/v1/inpatient/clinical-catalog', { headers: { cookie: inpatientDoctor } })).json(),
+    )
+    expect(inpatientCatalog.medications).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'medication-oseltamivir',
+        packageDescription: '10粒/盒',
+        strength: '75 mg',
+        unit: '粒',
+      }),
+    ]))
+    for (const item of inpatientCatalog.medications) {
+      expect(item.strength, item.id).toBeTruthy()
+      expect(item.packageDescription, item.id).toBeTruthy()
+      expect(item.packageDescription, item.id).not.toContain('合成单')
+    }
+    const searchRes = await runtime.app.request('/api/his/v1/inpatient/catalog-search?kind=medication&source=hospital&query=奥司他韦&page=1&pageSize=20', {
+      headers: { cookie: inpatientDoctor },
+    })
+    const search = inpatientCatalogSearchSchema.parse(await searchRes.json())
+    expect(search.items[0]?.medication).toMatchObject({
+      id: 'medication-oseltamivir',
+      packageDescription: '10粒/盒',
+      strength: '75 mg',
+    })
+  })
+
+  it('persists hospital prescription specification snapshots and resolves prescription_authorship doctor name with legacy fallbacks', async () => {
+    const { password, runtime } = await setupRuntime()
+    const visit = await startActiveVisit(runtime, password)
+    const encounterVersion = await confirmDiagnosis(
+      runtime,
+      visit.doctor,
+      visit.encounterId,
+      visit.encounterVersion,
+      'diagnosis-influenza',
+    )
+    const draftRes = await runtime.app.request(
+      `/api/his/v1/encounters/${visit.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [visit.encounterRef]: encounterVersion },
+          input: {
+            expectedDraftVersion: 0,
+            items: [{
+              catalogItemId: 'medication-oseltamivir',
+              courseDays: 5,
+              doseText: '75 mg',
+              frequencyCode: 'BID',
+              quantity: 10,
+            }],
+          },
+        }),
+        headers: commandHeaders(visit.doctor),
+        method: 'PUT',
+      },
+    )
+    expect(draftRes.status).toBe(200)
+    const draft = prescriptionDraftResponseSchema.parse(await draftRes.json()).data
+
+    const issueRes = await runtime.app.request(
+      `/api/his/v1/encounters/${visit.encounterId}/prescription/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [visit.encounterRef]: encounterVersion },
+          input: { expectedDraftVersion: draft.draftVersion },
+        }),
+        headers: commandHeaders(visit.doctor),
+        method: 'POST',
+      },
+    )
+    expect(issueRes.status).toBe(200)
+    const issued = issuePrescriptionResponseSchema.parse(await issueRes.json()).data.prescription
+    expect(issued).toMatchObject({
+      authoredByName: '合成门诊医生',
+      authoredByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+      items: [{
+        catalogItemId: 'medication-oseltamivir',
+        display: '磷酸奥司他韦胶囊',
+        packageDescription: '10粒/盒',
+        strength: '75 mg',
+        unit: '粒',
+      }],
+    })
+    expect(issued.items[0]?.referenceProduct).toBeUndefined()
+
+    // Snapshot takes priority even if current catalog packageDescription changes afterwards
+    runtime.database.driver.prepare(`
+      UPDATE outpatient_catalog
+      SET config_json = json_set(config_json, '$.product.packageDescription', '99粒/瓶')
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND item_id = 'medication-oseltamivir'
+    `).run()
+    const detailFromSnapshot = doctorCaseDetailSchema.parse(
+      await (await runtime.app.request(`/api/his/v1/doctor/cases/${visit.caseId}`, { headers: { cookie: visit.doctor } })).json(),
+    )
+    expect(detailFromSnapshot.medicationConclusion?.prescription).toMatchObject({
+      authoredByName: '合成门诊医生',
+      items: [{
+        catalogItemId: 'medication-oseltamivir',
+        packageDescription: '10粒/盒',
+        strength: '75 mg',
+        unit: '粒',
+      }],
+    })
+
+    // Legacy snapshot without strength/packageDescription safely falls back to current catalog without throwing
+    runtime.database.driver.prepare(`
+      UPDATE prescription_item
+      SET medication_snapshot_json = ?
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND prescription_id = ?
+    `).run(JSON.stringify({
+      code: 'OSELTAMIVIR',
+      display: '磷酸奥司他韦胶囊',
+      id: 'medication-oseltamivir',
+      sourceLocator: 'operational:outpatient_catalog',
+      system: 'urn:clinmesh:operational:medication',
+      version: '1',
+    }), issued.id)
+    const detailLegacyFallback = doctorCaseDetailSchema.parse(
+      await (await runtime.app.request(`/api/his/v1/doctor/cases/${visit.caseId}`, { headers: { cookie: visit.doctor } })).json(),
+    )
+    expect(detailLegacyFallback.medicationConclusion?.prescription?.items[0]).toMatchObject({
+      packageDescription: '99粒/瓶',
+      strength: '75 mg',
+      unit: '粒',
+    })
   })
 
   it('rejects mixing hospital pharmacy and national reference medications across draft save, direct issue, and recommendation confirm', async () => {

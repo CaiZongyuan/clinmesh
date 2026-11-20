@@ -116,7 +116,7 @@ test('出院患者从既有档案办理独立门诊问诊并读取有日期和�
   await expect(history.getByText(/冠状动脉支架/)).toBeVisible()
   const stopped = history.getByRole('listitem').filter({ hasText: stoppedMedication }).filter({ hasText: '已停用' })
   await expect(stopped).toHaveCount(1)
-  await expect(stopped).toContainText('100 mg · QD · 已停用')
+  await expect(stopped).toContainText('100 mg · 每日一次（QD） · 已停用')
   const record = doctorCaseHistoryDetailSchema.parse(await (await page.request.get(`${app.origin}/api/his/v1/doctor/cases/${outpatient.caseId}/history/detail?source=local-completed&entryId=${encodeURIComponent(`inpatient:${stay.admissionId}`)}`)).json())
   expect(record).toMatchObject({ source: 'local-completed', record: { kind: 'inpatient', admissionId: stay.admissionId,
     medications: expect.arrayContaining([expect.objectContaining({ display: stoppedMedication, state: 'stopped' })]) } })

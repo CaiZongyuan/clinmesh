@@ -1,3 +1,4 @@
+import { resolvePractitionerRoleDisplayName } from './outpatient-workflow-context.ts'
 import { InpatientSurgeryRequestReason } from './inpatient-surgery-request-reason.ts'
 import { InpatientIntraoperativeReview } from './inpatient-intraoperative-review.ts'
 import { InpatientDrgReview } from './inpatient-drg-review.ts'
@@ -283,15 +284,7 @@ export class InpatientService {
         .get(context.workspaceId, context.epoch, row.referral_id))
       const requesterRef = srRow ? z.object({ requester: z.object({ reference: z.string().optional() }).optional() }).safeParse(JSON.parse(srRow.content_json)).data?.requester?.reference : undefined
       const roleId = requesterRef?.startsWith('PractitionerRole/') ? requesterRef.slice('PractitionerRole/'.length) : undefined
-      const roleRow = roleId ? z.object({ content_json: z.string() }).optional().parse(this.database.driver.prepare(
-        `SELECT content_json FROM fhir_resource WHERE workspace_id=? AND epoch=? AND resource_type='PractitionerRole' AND resource_id=?`)
-        .get(context.workspaceId, context.epoch, roleId)) : undefined
-      const pracRef = roleRow ? z.object({ practitioner: z.object({ reference: z.string().optional(), display: z.string().optional() }).optional() }).safeParse(JSON.parse(roleRow.content_json)).data?.practitioner : undefined
-      const pracId = pracRef?.reference?.startsWith('Practitioner/') ? pracRef.reference.slice('Practitioner/'.length) : undefined
-      const pracRow = pracId ? z.object({ content_json: z.string() }).optional().parse(this.database.driver.prepare(
-        `SELECT content_json FROM fhir_resource WHERE workspace_id=? AND epoch=? AND resource_type='Practitioner' AND resource_id=?`)
-        .get(context.workspaceId, context.epoch, pracId)) : undefined
-      const issuingDoctorName = pracRef?.display ?? (pracRow ? z.object({ name: z.array(z.object({ text: z.string().optional() })).optional() }).safeParse(JSON.parse(pracRow.content_json)).data?.name?.[0]?.text : undefined)
+      const issuingDoctorName = roleId ? resolvePractitionerRoleDisplayName(this.database, context, roleId) : undefined
       return { id: row.referral_id, patientId: row.patient_id, patientName: names?.[0]?.text ?? row.patient_id,
         ...(patientGender === undefined ? {} : { patientGender }),
         ...(patientBirthDate === undefined ? {} : { patientBirthDate }),

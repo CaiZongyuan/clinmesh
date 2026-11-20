@@ -129,7 +129,7 @@ export async function runRecommendationJourney({ page, read, collectLaboratory }
   // 弹窗合同下草稿值在入口草稿卡片呈现，且不提供独立的正式开具入口。
   const medicationEntry = page.getByRole('button', { name: /^编辑药品 / })
   await expect(medicationEntry).toBeVisible()
-  await expect(prescription).toContainText('5 mg · 每日一次 · 30 天 · 30')
+  await expect(prescription).toContainText('5 mg · 每日一次（QD） · 30 天 · 30')
   await expect(page.getByRole('button', { name: '正式开具处方', exact: true })).toHaveCount(0)
   await expect.poll(async () => (await read()).medicationConclusion?.draft?.items).toEqual([{
     catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30,
@@ -162,8 +162,10 @@ export async function runRecommendationJourney({ page, read, collectLaboratory }
   expect((await read()).laboratoryRequests?.requests).toHaveLength(1)
   expect((await read()).diagnosis?.confirmation?.revisionNumber).toBe(1)
   expect((await read()).medicationConclusion?.prescription?.items).toHaveLength(1)
-  return { caseReasoningViewed: true, caseReasoningNotExecutable: true, classifiedNoticesViewed: true,
+  return {
+    caseReasoningViewed: true, caseReasoningNotExecutable: true, classifiedNoticesViewed: true,
     rejectedReasoningWithheld: true, importedGuidelineViewed: true, importedSourceHash: syntheticGuidelineDocument.source.sha256,
     importedGuidelineNotConfirmed: true, diagnosisConfirmed: true, prescriptionIssued: true,
-    laboratoryIssued: true, missingPrescriptionFieldsPreserved: true, manualEditsPreserved: true, noDuplicateOrders: true }
+    laboratoryIssued: true, missingPrescriptionFieldsPreserved: true, manualEditsPreserved: true, noDuplicateOrders: true
+  }
 }

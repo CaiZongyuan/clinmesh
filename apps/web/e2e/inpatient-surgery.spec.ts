@@ -24,8 +24,10 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
     headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() }, data: { expectedVersions: {}, input: { name: '合成手术患者', gender: 'female', birthDate: '1980-01-01', identifier: `SYN-${randomUUID()}` } },
   })).json()).data.patient
   const session = sessionContextSchema.parse(await (await page.request.get(`${browserApp.origin}/api/auth/context`)).json())
-  const admission = inpatientCommandResponseSchema.parse(await (await request('/api/his/v1/inpatient/admissions', { expectedEpoch: session.actor.epoch,
-    patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100000 })).json()).data.admission
+  const admission = inpatientCommandResponseSchema.parse(await (await request('/api/his/v1/inpatient/admissions', {
+    expectedEpoch: session.actor.epoch,
+    patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100000
+  })).json()).data.admission
   const path = `/api/his/v1/inpatient/admissions/${admission.id}`
   await login('ward-nurse')
   expect((await request(`${path}/receive`, { encounterVersion: admission.versionId, bedId: 'bed-general-1' })).status()).toBe(200)
@@ -34,10 +36,12 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
   await page.getByRole('button', { name: '申请手术', exact: true }).first().click()
   await page.getByLabel('计划术式', { exact: true }).click()
   await page.getByRole('option', { name: /47.0100 · 腹腔镜下阑尾切除术/ }).click()
-  await page.getByLabel('计划手术时间（上海时间）', { exact: true }).fill('2026-08-25T09:00')
+  await page.getByLabel('计划手术时间', { exact: true }).fill('2026-08-25T09:00')
   await page.getByLabel('手术申请理由', { exact: true }).fill('合成示教申请')
   await page.getByRole('button', { name: '提交手术申请', exact: true }).click()
   await expect(page.getByRole('region', { name: '当前手术计划', exact: true })).toContainText('腹腔镜下阑尾切除术')
+  await expect(page.getByRole('region', { name: '当前手术计划', exact: true })).toContainText('计划手术时间')
+  await expect(page.getByRole('region', { name: '当前手术计划', exact: true })).not.toContainText('（上海时间）')
   await expect(page.getByRole('region', { name: '当前手术计划', exact: true })).toContainText('待准备')
   await page.getByRole('button', { name: '确认已签', exact: true }).click()
   await page.getByLabel('签署说明', { exact: true }).fill('确认已签署合成同意书')

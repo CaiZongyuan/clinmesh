@@ -655,7 +655,7 @@ it('keeps consultation recovery examples aligned with durable attempt semantics'
     }
     expect(operation.input.safeParse({ encounterId: 'synthetic', arbitraryPayload: {} }).success).toBe(false)
   }
-  expect(getHisOperation('doctor.case.get').version).toBe(20)
+  expect(getHisOperation('doctor.case.get').version).toBe(21)
   expect(getHisOperation('doctor.case.get').summary).toContain('consultation.replyAttempt')
   expect(skill).toContain('consultation.replyAttempt')
   expect(skill).toContain('same ask/retry key')
@@ -875,11 +875,11 @@ describe('ClinMesh CLI Agent Skills', () => {
       expect(getHisOperation(id).summary).toContain('CLINICAL_HISTORY_REQUIRED')
     }
     const read = getHisOperation('doctor.case.get')
-    expect(read.version).toBe(20)
+    expect(read.version).toBe(21)
     expect(read.summary).toContain('clinicalHistory.requiredFields')
     expect(read.summary).toContain('twelve-field')
     const completed = getHisOperation('doctor.completed-cases.get')
-    expect(completed.version).toBe(5)
+    expect(completed.version).toBe(6)
     for (const field of ['menstrualHistory', 'obstetricHistory']) expect(completed.summary).toContain(field)
     expect(skill).toContain('clinicalHistory.requiredFields')
     expect(skill).toContain('普通门诊可留空；适用女性专科初诊要求两项')
@@ -906,7 +906,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(operation.summary).toContain('MODEL_OUTCOME_UNKNOWN')
     expect(skill).toContain('`MODEL_OUTCOME_UNKNOWN` stops automatic resending')
     const read = getHisOperation('doctor.case.get')
-    expect(read.version).toBe(20)
+    expect(read.version).toBe(21)
     expect(read.summary).toContain('sourceResults')
     expect(read.summary).toContain('legacy verification counts are zero and issues empty')
     expect(skill).toContain('Retry actual recording failures')
@@ -948,7 +948,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 20 : 4)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 21 : 4)
       expect(operation.summary).toContain('presentation')
       expect(operation.summary).toContain('registrationNumber')
       const line = commandLines(doctorSkill).find(line => line.startsWith(id === 'doctor.case.get' ? 'clinmesh doctor case get ' : 'clinmesh doctor queue list'))!
@@ -1152,7 +1152,7 @@ it('药物频次、审方拒绝与CLI Skill的当前合同保持一致', async (
   for (const reason of ['MEDICATION_COMBINATION_NOT_ALLOWED', 'MEDICATION_DIAGNOSIS_NOT_ALLOWED', 'MEDICATION_ALLERGY_CONFLICT', 'MEDICATION_DOSAGE_NOT_ALLOWED', 'MEDICATION_ONCE_REQUIRES_TEMPORARY']) expect(skill).toContain(reason)
   expect(getHisOperation('inpatient.execution.request-prn').version).toBe(5)
   expect(getHisOperation('encounter.prescription.draft.set').version).toBe(3)
-  expect(getHisOperation('encounter.prescription.issue').version).toBe(4)
+  expect(getHisOperation('encounter.prescription.issue').version).toBe(5)
 })
 
 it('门诊处方操作、错误reason与clinmesh-doctor单源外延处方说明保持一致', async () => {

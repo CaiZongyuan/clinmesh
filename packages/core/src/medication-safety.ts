@@ -14,6 +14,30 @@ export function medicationScheduledHours(frequency: MedicationFrequency): readon
   return { QD: [8], BID: [8, 20], TID: [8, 14, 20], QN: [22], PRN: [], ONCE: [] }[frequency]
 }
 
+const frequencyDisplayCatalog: Readonly<Record<string, readonly [zh: string, en: string, time: string]>> = {
+  QD: ['每日一次', 'Once daily', '08:00'],
+  BID: ['每日两次', 'Twice daily', '08:00、20:00'],
+  TID: ['每日三次', 'Three times daily', '08:00、14:00、20:00'],
+  QN: ['每晚一次', 'Every night', '22:00'],
+  PRN: ['必要时', 'As needed', ''],
+  ONCE: ['仅一次', 'Once only', ''],
+}
+
+/** 统一展示给药频次（中文全角括号、英文半角括号），可选附加住院执行时点；未知自定义频次原样保留。 */
+export function formatMedicationFrequency(
+  code: string,
+  locale: 'zh-CN' | 'en-US' = 'zh-CN',
+  options?: { withTime?: boolean },
+): string {
+  const normalized = code.trim().toUpperCase()
+  const entry = frequencyDisplayCatalog[normalized]
+  if (entry === undefined) return code
+  const [zh, en, time] = entry
+  const base = locale === 'zh-CN' ? `${zh}（${normalized}）` : `${en} (${normalized})`
+  if (!options?.withTime || !time) return base
+  return `${base} · ${locale === 'zh-CN' ? time : time.replaceAll('、', ', ')}`
+}
+
 /** PRN 按每日最多四次的保守上界审方；执行仍须单独记录每次给药。 */
 export function medicationDailyFrequency(frequency: MedicationFrequency): number {
   return frequency === 'PRN' ? 4 : frequency === 'ONCE' ? 1 : medicationScheduledHours(frequency).length

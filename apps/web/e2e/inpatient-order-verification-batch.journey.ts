@@ -110,7 +110,7 @@ export async function runOrderVerificationBatchJourney(page: Page, s: Patient, o
   await expect(dialog).toContainText(s.medication.display)
   await expect(dialog).toContainText('0.5 g')
   await expect(dialog).toContainText(s.education.display)
-  await expect(dialog).toContainText('按需')
+  await expect(dialog).toContainText('必要时（PRN）')
   await expect(dialog).toContainText('长期')
   await expect(dialog).toContainText('临时')
   await step('集中核对每项药品或服务、剂量、频次和长期临时，明确确认三条新医嘱')

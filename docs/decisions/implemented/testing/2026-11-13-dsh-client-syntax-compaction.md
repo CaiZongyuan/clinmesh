@@ -23,6 +23,6 @@ Status: implemented
 
 ## Consequences
 
-压缩器的语义合同覆盖延迟宿主导入、多行字符串、正则、Unicode、许可证、求值顺序、短路、异常与 finally 副作用、可观察函数／类名称、内建字面量与同名局部变量、重复压缩稳定性和不匹配 wrapper 的拒绝。原 5 MB、外部模块、宿主 React 与 Tool 描述/schema 校验继续生效，真实 lazy-CJS 浏览器合同在宿主 React 18/19 的 ShadowRoot 中验证实际产物。
+压缩器的语义合同覆盖延迟宿主导入、多行字符串、正则、Unicode、许可证、求值顺序、短路、异常与 finally 副作用、可观察函数／类名称、内建字面量与同名局部变量、重复压缩稳定性和不匹配 wrapper 的拒绝。[体积预算门禁](2026-11-19-dsh-client-size-budget-5500k.md)、外部模块、宿主 React 与 Tool 描述/schema 校验继续生效，真实 lazy-CJS 浏览器合同在宿主 React 18/19 的 ShadowRoot 中验证实际产物。
 
 语法优化比单纯空白打印有更大的语义影响范围。升级 Terser、Bun 或 Surface builder 后必须运行这些合同，并比较完整构建后的字节数；不能用第三方入口文件大小或局部转换结果代替最终产物。浏览器合同证明受测入口，不代表覆盖所有业务分支，相关业务回归仍由原测试层拥有。

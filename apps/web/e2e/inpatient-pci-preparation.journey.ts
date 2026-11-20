@@ -203,7 +203,7 @@ async function requestSurgery(page: Page, procedure: { coding: { code: string; d
   await page.getByRole('button', { name: '申请手术', exact: true }).first().click()
   await page.getByLabel('计划术式', { exact: true }).click()
   await page.getByRole('option', { name: `${procedure.coding.code} · ${procedure.coding.display}`, exact: true }).click()
-  await page.getByLabel('计划手术时间（上海时间）', { exact: true }).fill('2026-08-24T15:00')
+  await page.getByLabel('计划手术时间', { exact: true }).fill('2026-08-24T15:00')
   await page.getByLabel('手术申请理由', { exact: true }).fill(reason)
   await page.getByRole('button', { name: '提交手术申请', exact: true }).click()
   await expect(page.getByRole('region', { name: '住院手术', exact: true })).toContainText(reason)
@@ -226,7 +226,7 @@ export async function executePciMedicationThroughPages(page: Page, app: PciBrows
     await page.getByRole('group', { name: '医嘱时效', exact: true }).getByRole('button', { name: '临时', exact: true }).click()
     if (['heparin', 'iohexol'].includes(suffix)) {
       await page.getByLabel('医嘱频次', { exact: true }).click()
-      await page.getByRole('option', { name: '按需', exact: true }).click()
+      await page.getByRole('option', { name: '必要时（PRN）', exact: true }).click()
     }
     if (surgeryExecutionId) {
       await page.getByLabel('术后医嘱关联手术', { exact: true }).click()

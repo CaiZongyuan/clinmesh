@@ -80,10 +80,33 @@ async function reviewAppearanceMatrix(page: Page, dialog: Locator, trigger: Loca
     await expect(heading).toBeVisible(); await expect(confirm).toBeEnabled(); await expect(close).toBeEnabled()
     const scroller = dialog.locator('.overflow-y-auto').first()
     const before = await heading.boundingBox(), footer = await confirm.boundingBox()
+    const lastArticle = dialog.getByRole('article').last()
     await scroller.evaluate(element => { element.scrollTop = element.scrollHeight })
     await waitForLayout(dialog)
-    const last = await dialog.getByRole('article').last().boundingBox(), bounds = await scroller.boundingBox()
-    expect(last!.y).toBeGreaterThanOrEqual(bounds!.y - 1)
+    const last = await lastArticle.boundingBox(), bounds = await scroller.boundingBox()
+    const innerAvailableFromTop = await scroller.evaluate((element, currentZoom) => {
+      const style = getComputedStyle(element)
+      return element.getBoundingClientRect().height - (parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)) * currentZoom
+    }, zoom)
+    // 滚动容器带 p-4 内边距；仅当末张卡片高度不超过容器内容区高度时，置底滚动才能同时露出卡片顶边。
+    if (last!.height <= innerAvailableFromTop) {
+      expect(last!.y).toBeGreaterThanOrEqual(bounds!.y - 1)
+    } else {
+      expect(last!.y + last!.height).toBeGreaterThan(bounds!.y + 1)
+      const articleHandle = await lastArticle.elementHandle()
+      await scroller.evaluate((container, article) => {
+        if (!(container instanceof HTMLElement) || !(article instanceof HTMLElement)) return
+        container.scrollTop = Math.max(0, article.offsetTop - container.offsetTop)
+      }, articleHandle)
+      await waitForLayout(dialog)
+      const topAligned = await lastArticle.boundingBox()
+      expect(topAligned!.y).toBeGreaterThanOrEqual(bounds!.y - 1)
+      expect(topAligned!.y).toBeLessThan(bounds!.y + bounds!.height)
+      expect((await heading.boundingBox())!.y).toBeCloseTo(before!.y, 1)
+      expect((await confirm.boundingBox())!.y).toBeCloseTo(footer!.y, 1)
+      await scroller.evaluate(element => { element.scrollTop = element.scrollHeight })
+      await waitForLayout(dialog)
+    }
     expect(last!.y + last!.height).toBeLessThanOrEqual(bounds!.y + bounds!.height + 1)
     expect((await heading.boundingBox())!.y).toBeCloseTo(before!.y, 1)
     expect((await confirm.boundingBox())!.y).toBeCloseTo(footer!.y, 1)

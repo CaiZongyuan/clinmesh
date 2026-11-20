@@ -958,7 +958,12 @@ it('publishes read-only clinical quality preflight queries and clinicalOverride 
   expect(dischargeIssue.http.encodeBody?.({ admissionId: 'adm-1', encounterVersion: '3', reason: '好转出院', clinicalOverride }))
     .toEqual({ input: { encounterVersion: '3', reason: '好转出院', clinicalOverride } })
 
-  expect(getHisOperation('encounter.prescription.issue').version).toBe(4)
+  expect(getHisOperation('encounter.prescription.issue').version).toBe(5)
+  expect(getHisOperation('doctor.case.get').version).toBe(21)
+  expect(getHisOperation('doctor.completed-cases.get').version).toBe(6)
+  expect(getHisOperation('doctor.case.history.read').version).toBe(2)
+  expect(getHisOperation('inpatient.catalog.search').version).toBe(2)
+  expect(getHisOperation('inpatient.clinical.catalog').version).toBe(3)
   expect(getHisOperation('inpatient.order.issue').version).toBe(9)
   expect(getHisOperation('inpatient.surgery.request').version).toBe(3)
   expect(getHisOperation('inpatient.pci-selection.confirm').version).toBe(3)

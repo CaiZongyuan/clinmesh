@@ -81,7 +81,7 @@ export async function requestAngiography(page: Page) {
   await page.getByRole('button', { name: '申请手术', exact: true }).first().click()
   await page.getByLabel('计划术式', { exact: true }).click()
   await page.getByRole('option', { name: /88.5600/ }).click()
-  await page.getByLabel('计划手术时间（上海时间）', { exact: true }).fill('2026-08-24T15:00')
+  await page.getByLabel('计划手术时间', { exact: true }).fill('2026-08-24T15:00')
   await page.getByLabel('手术申请理由', { exact: true }).fill('医生已确认合成双根导管造影方向')
   await page.getByRole('button', { name: '提交手术申请', exact: true }).click()
 }

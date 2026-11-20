@@ -8,6 +8,7 @@ import { SearchIcon } from 'lucide-react'
 import { useState } from 'react'
 import { apiGet } from './api-client.ts'
 import { missingFieldLabel } from './inpatient-catalog-picker.tsx'
+import { formatMedicationSpec } from './doctor/catalog-picker-dialogs.tsx'
 import { OrderCatalogCandidate } from './doctor/order-composer-layout.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
@@ -27,8 +28,10 @@ export function InpatientOrderPicker({ id, session, locale, services, diagnosed,
   const [text, setText] = useState(''), [open, setOpen] = useState(false), [showUnavailable, setShowUnavailable] = useState(false)
   const [page, setPage] = useState(1)
   const query = text.trim(), visible = inline || open && picked === null
-  const medications = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, 'catalog-search', 'medication', 'hospital', query, page],
-    enabled: visible, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/catalog-search?${new URLSearchParams({ kind: 'medication', source: 'hospital', query, page: String(page), pageSize: '20' })}`, inpatientCatalogSearchSchema, signal) })
+  const medications = useQuery({
+    queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, 'catalog-search', 'medication', 'hospital', query, page],
+    enabled: visible, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/catalog-search?${new URLSearchParams({ kind: 'medication', source: 'hospital', query, page: String(page), pageSize: '20' })}`, inpatientCatalogSearchSchema, signal)
+  })
   const available = medications.data?.items.flatMap(item => item.status === 'available' && item.medication ? [item.medication] : []) ?? []
   const unavailable = medications.data?.items.filter(item => item.status !== 'available') ?? []
   const matchedServices = services.filter(item => item.display.toLowerCase().includes(query.toLowerCase()))
@@ -52,7 +55,7 @@ export function InpatientOrderPicker({ id, session, locale, services, diagnosed,
       <ul className="divide-y">
         {available.map(item => <li key={item.id}><OrderCatalogCandidate label={t(`选择${item.display}`, `Select ${item.display}`)} disabled={disabled || !diagnosed} onSelect={() => pick({ kind: 'medication', item })}>
           <strong>{item.display}</strong><span className="text-xs text-muted-foreground">{t('药品', 'Medication')}</span>
-          <span className="text-xs text-muted-foreground tabular-nums">{[item.doses[0] ? `${t('每次 ', 'Per dose ')}${item.doses[0].doseText}` : undefined, item.frequencyCodes[0] ? inpatientFrequencyLabel(item.frequencyCodes[0], locale, false) : undefined, `${formatFen(item.priceFen, locale)}/${item.unit}`].filter(Boolean).join(' · ')}</span>
+          <span className="text-xs text-muted-foreground tabular-nums">{[formatMedicationSpec(item.strength, item.packageDescription) || undefined, item.doses[0] ? `${t('每次 ', 'Per dose ')}${item.doses[0].doseText}` : undefined, item.frequencyCodes[0] ? inpatientFrequencyLabel(item.frequencyCodes[0], locale, false) : undefined, `${formatFen(item.priceFen, locale)}/${item.unit}`].filter(Boolean).join(' · ')}</span>
           {diagnosed ? null : <span className="ms-auto text-xs text-warning">{t('先确认诊断', 'Confirm diagnosis first')}</span>}
         </OrderCatalogCandidate></li>)}
         {matchedServices.map(item => <li key={item.id}><OrderCatalogCandidate label={t(`选择${item.display}`, `Select ${item.display}`)} disabled={disabled} onSelect={() => pick({ kind: 'service', item })}>

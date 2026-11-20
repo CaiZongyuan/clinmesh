@@ -46,7 +46,7 @@ Status: implemented
 
 ## Consequences
 
-引擎验收时的完整 DSH 产物为 3,995,150 字节。当前上限与体积余量见[DSH 客户端产物体积预算](../testing/2026-10-07-dsh-client-size-budget.md)。后续向 Surface 增加依赖或大段代码前先看 `verify-artifact.ts` 的结果；余量不足时优先考虑把本引擎换成轻量实现。
+引擎验收时的完整 DSH 产物为 3,995,150 字节。当前上限与体积余量见[DSH 客户端产物体积预算](../testing/2026-11-19-dsh-client-size-budget-5500k.md)。后续向 Surface 增加依赖或大段代码前先看 `verify-artifact.ts` 的结果；余量不足时优先考虑把本引擎换成轻量实现。
 
 OpenSeadragon 随 Surface 一起加载和初始化，不阅片的页面也承担这部分解析开销。它在模块初始化时探测 canvas 支持，jsdom 下的 Web 测试会因此打印 `getContext` 未实现的提示，不影响结果。产物中包含 OpenSeadragon 的图像转换 Worker 源码，当前配置不会启动它。
 
