@@ -81,8 +81,7 @@ Medplum 5.1.30 是 TypeScript、Express、PostgreSQL、Redis、BullMQ 和对象�
 - [跨端前端架构](../frontend-architecture.md)
 - [Agent 工程开发](../agent-development.md)
 - [Node.js 与 SQLite Web 基础设施决策](../decisions/implemented/architecture/2026-08-23-node-sqlite-web-foundation.md)
-- [多岗位发热门诊首期闭环决策](../decisions/implemented/feature/2026-08-23-outpatient-fever-first-release.md)
-- [结构化临床文书独立生命周期决策](../decisions/implemented/feature/2026-08-25-structured-clinical-document-lifecycle.md)
+- [Encounter 完诊门禁与临床生命周期决策](../decisions/implemented/feature/2026-08-25-encounter-completion-policy.md)
 - [DSH 原生 ClinMesh React Surface 决策](../decisions/implemented/architecture/2026-08-30-dsh-native-clinmesh-surface.md)
 - OpenHIS 研究输入：`references/openhis-itai-pro/`
 - Medplum 研究输入：`references/medplum/`

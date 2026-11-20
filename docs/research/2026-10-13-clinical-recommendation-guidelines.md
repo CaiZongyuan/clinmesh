@@ -1,223 +1,50 @@
-# 医生诊疗建议的权威指南库与证据接入
+# 医生诊疗建议的权威指南来源、国内官方许可与冠心病资料核验
 
-## 范围与结论
+本文汇总临床指南的外部获取渠道、21 份国内官方 PDF 的法定使用依据与独立附表边界，以及 32 份冠心病指南资料包的门诊/住院适用性核验。本文只保存外部来源身份、许可边界与原文核验事实；现行指南库、专题注册表与推荐运行合同归 [`clinical-decision-support.md`](../architecture/clinical-decision-support.md) 与 [`deployment.md`](../deployment.md#免费指南全文同步)。
 
-综合来源与接入路径复核日期：2026-10-16。单篇临床条款与本院目录的原始核验日期：2026-10-13，代码基线：`8beb06f55c360986e25801b5e4438a7f184eb5a1`；其中的历史目录样本不代表当前运行目录。本文为 #179–#181 提供来源与接入研究，不定义已实施能力，不替代[基于权威指南与当前病例的诊疗建议需求（Issue #179）](https://github.com/CaiZongyuan/clinmesh/issues/179)，也不决定最终病种覆盖范围；整体产品范围见 [医生 Agent 临床助手需求（Issue #175）](https://github.com/CaiZongyuan/clinmesh/issues/175)。
+## 一、跨专科外部来源与获取边界（2026-10-16 核验）
 
-存在可以复用的第一方现成库：[中华医学知识库](https://seleguide.yiigle.com/webs/Knowledge)及其[精选指南库](https://seleguide.yiigle.com/webs/zhinan)已经提供按学科和疾病浏览的指南共识目录，当前可见 2026 年条目；基层常见疾病诊疗和合理用药集锦可作为具体专题入口，不需要从零建立全量指南索引。其官方还列有面向第三方平台的云资源 SDK 产品，存在商谈现成服务的入口。但目录公开、文章可试读、机构订阅、全文机器处理授权是不同能力。此次核查没有取得允许匿名批量内置全文的授权、公开应用 API 或该 SDK 的公开调用文档；知识库详情样本要求登录，文章样本出现试读终止提示，版权声明明确限制未经授权的转载、摘编和镜像。因此可以复用现成目录来发现指南，或向官方核对已有服务的接入条件，不能把“现成权威库”解释为“免费可直接接入的全文数据服务”。
-
-国家卫生健康委的公开诊疗方案、指南附件和卫生行业标准可补充确定来源的必要条款；国家标准平台可核对标准类别、版本和状态。研究实际取得三个国家卫生健康委域名下的公开 PDF，并提取了文字核对下述短引文；原文件只放在临时研究目录，没有提交全文、图像或抓取脚本。公开下载本身不构成全库商业复制、镜像或模型训练许可。
-
-## 扩大跨专科覆盖的获取路径
-
-目标是尽量增加不同病种和专科的可追溯指南，不限于某个病例、避孕主题或当前代码中的七条短引文。现成综合库、官方出版物与跨发布者索引能够扩大来源；完整正文、机器接口、模型推理使用和持续更新的取得方式需要分别核实。以下事实在 2026-10-16 实际读取第一方页面核对，没有采购、联系供应商或采集全库。
-
-| 来源 | 可核实的覆盖与取得方式 | 当前接入条件 |
+| 来源 | 可核实的覆盖与取得方式 | 许可与机器接入边界 |
 | --- | --- | --- |
-| [中华医学知识库／精选指南库](https://seleguide.yiigle.com/webs/zhinan) | 内外妇儿、全科、急诊、精神、影像、检验、病理等跨专科目录，含 2026 年条目；官方明确提供面向第三方的云资源 SDK 产品 | 优先核对完整指南、结构化条款或 SDK 的机构合作；未取得开发文档、报价及模型使用许可，详见下文国内来源 |
-| [医脉通临床指南](https://guide.medlive.cn/) | 国内外多发布者、多专科的现成指南目录和阅读服务，含部分站内免费阅读条目 | 适合比较跨来源覆盖；未核验到公开全库指南 API，个人阅读会员的机器权益未知 |
-| [国家卫生健康委官方发布资料](https://www.gov.cn/zhengce/zhengceku/202507/content_7031426.htm) | 可按专题取得公开指南原文，例如一份 2025 年官方附件包含 86 个罕见病病种指南 | 可以扩大已有少量条款的来源；不是已核实的统一全病种 API，需保留逐份版本、来源与使用条件 |
-| [WHO Guidelines](https://www.who.int/publications/who-guidelines) 与 [IRIS](https://iris.who.int/) | 跨疾病的已发布指南、主题浏览与单篇 PDF 下载；IRIS 同时包含非指南出版物 | 可作为国际补充；多数 WHO 出版物按非商业开放许可使用，商业用途需另行许可，不能将计划发布清单当现行全文 |
-| [NICE syndication API](https://www.nice.org.uk/reusing-our-content/nice-syndication-api) | 有正式机器分发接口，可提供当前已发布的指南等内容及 JSON/XML/HTML 格式 | 中国场景和面向用户的 AI 服务需要许可；须申请测试或服务授权，中国单区价格尚未取得 |
-| [GIN 国际指南库](https://guidelines.ebmportal.com/) | 跨发布者的指南链接索引及开发登记，支持发现更多国家和专科来源 | 用于发现原发布者；不提供各来源正文的统一复用授权，未核验全库导出或机器接口 |
-
-建议采用多源组合：中国综合库与官方国内资料优先，国际来源补充缺口；先建立跨专科来源清单，按取得的权限接入完整版本和更新，再按病例检索相关原文章节供生成与核验使用。无需将取得的正文再次缩减为少量固定摘句，也无需在每次模型请求中塞入整库。当前免费阶段的正式需求见下文规格，已取得的原文通过显式同步进入本地检索；没有自动发现或自动判断最新版本的服务。
-
-覆盖应区分“已发现目录”“已取得正文”“允许模型使用”“当前有效且可检索”几种状态；同一指南的不同版本与重复转载不能当作额外有效覆盖。不以未经核实的全库篇数、论文总量或未来计划数量证明完整性。
-
-### 医脉通与药品数据补充
-
-本次匿名浏览[医脉通临床指南](https://guide.medlive.cn/)实际取得内外妇儿、肿瘤、血液、精神、重症、影像、检验、罕见病及移植等科室目录，并看到国内学会和 NCCN、AARC、EAES/SAGES 等国外机构资料。条目存在指南、共识等不同类型，不能统一改标为国家指南。[会员入口](https://guide.medlive.cn/payment)需要登录，本轮未取得会员或机构价格、全量导出、机器 API、原文转授权及模型使用权益；未发现公开接口文档不等于断言没有私有合作服务。
-
-[丁香园开放平台](https://open.dxy.cn/)提供实际公开的[中国药品说明书查询 API 文档](https://open.dxy.cn/doc/1401.html)和[国内批准适应症查询文档](https://open.dxy.cn/doc/1501.html)，页面提供参数与 JSON 返回结构并要求询价；可以作为处方证据的补充来源，尚未实际申请或调用。其[疾病知识接口文档](https://open.dxy.cn/doc/2201.html)明确定位为面向大众的疾病科普，不能当作完整临床指南库。
-
-### WHO 综合来源与数字化专题
-
-[WHO 指南总入口](https://www.who.int/publications/who-guidelines)本次可读的已发布条目覆盖疟疾、HIV、感染预防、宫颈癌预防、儿童肥胖等领域；同页另列 2026–2027 计划，不能把计划视为已取得的现行指南。IRIS 提供 WHO 科学技术出版物和其他文件的免费数字访问、主题与类型浏览；本轮核实单篇下载，没有核实稳定的全量指南检索 API、分页和更新合同。
-
-[WHO 版权规则](https://www.who.int/about/policies/publishing/copyright)说明多数出版物采用 CC BY-NC-SA 3.0 IGO，允许符合署名、非商业和相同或相近许可要求的复制、翻译及改编；商业用途需取得许可，出版物中的第三方内容还可能有独立权利人。没有核验到全部 WHO 内容的统一 AI 或模型训练许可，不能因 PDF 公开下载就承诺任意用途。
-
-单篇可获取性样本为 [MEC 第六版](https://www.who.int/publications/i/item/9789240115583)及 [SPR 第四版](https://www.who.int/publications/i/item/9789240115606)，官网均标示 2025-11-03，分别为 218 页与 108 页；对应官方 PDF 字节实际获取成功。该样本只验证下载路径，未逐条提取或临床核验全文，不限定综合来源的病种范围。
-
-[WHO SMART Guidelines](https://www.who.int/teams/digital-health-and-innovation/smart-guidelines)是特定专题的数字适配包、算法和实现规格。当前官网列出已提供的产前保健、HIV、计划生育、结核、儿童健康、免疫等九个领域，并将开发中专题另列。它不能替代 WHO 全部指南的机器查询接口；本轮未核验各实现包的 FHIR 版本及代码许可，不能宣称可直接接入 ClinMesh R5。
-
-### NICE 正式 API 与国际使用
-
-[NICE 当前发布目录](https://www.nice.org.uk/guidance/published)本次显示 2,443 项 guidance、advice、quality standards 等混合资料，不能写成 2,443 本临床指南。实际读取的[成人高血压推荐正文](https://www.nice.org.uk/guidance/ng136/chapter/Recommendations)包含诊断、风险评估、治疗监测和转诊等编号推荐，页面标示更新日期 2026-02-26；这说明其内容范围远超单一药物或避孕主题。
-
-[NICE API 官方说明](https://www.nice.org.uk/reusing-our-content/nice-syndication-api)面向机构和公司，需经许可及安全认证后发放 API key，可分发当前已发布指南、质量标准和公众资料，排除旧版本、撤回或开发中内容；CKS 和 BNF 使用各自提供者及 API。面向内外终端用户的 AI 系统须在申请中说明用途并通过 API 取得内容，禁止用于训练、微调或模型权重。
-
-官网当前国际测试许可为最多六个月 £550，全球服务许可为每年 £60,000，特定国家或地区单独报价；本轮没有取得中国许可报价，不能将全球价格视为中国单区费用。测试授权与对外服务授权不同，尚未申请或试调用。[国际使用规则](https://www.nice.org.uk/reusing-our-content/use-of-our-content-internationally)明确限制网页抓取，英国外除个人研究学习外需要书面许可及费用；[英国开放内容许可](https://www.nice.org.uk/reusing-our-content/nice-uk-open-content-licence)也排除 AI 用途，不能作为中国模型服务的直接授权。
-
-### 跨来源索引与本轮边界
-
-[GIN 官方介绍](https://g-i-n.net/international-guidelines-library)及[实际库首页](https://guidelines.ebmportal.com/)说明它包含会员组织发布或认可的指南链接，以及计划和开发中的登记。适合找到更多原发布者、语言和国家的资料；全文、版本及复用权仍回到原来源核实。
-
-国家卫生健康委的 [86 个罕见病指南通知](https://www.gov.cn/zhengce/zhengceku/202507/content_7031426.htm)及其[官方 PDF 附件](https://www.gov.cn/zhengce/zhengceku/202507/P020250710595668350272.pdf)本次均核到；范围读取返回 HTTP 206、`application/pdf` 和 PDF 文件头，后续首批采集已完整下载、校验哈希并提取正文，未完成整册医学审校。该合集扩大病种来源，但不能替代全部常见门诊病种的覆盖。
-
-CDC 官方候选页面在本环境多种读取方式下连接关闭，本轮未将其版本或使用许可列为已核实事实。中华医学会服务、协议与版权页曾在直接 HTTP 读取时重定向循环，最后以实际浏览器成功读取；医脉通目录同样经实际浏览器核验。国际指南还需结合中国适用人群、药品许可、院内目录和版本评估，不能将国际推荐直接标为符合国内规范。本轮没有取得任何“免费、无限制、覆盖所有最新病种”的统一全文数据服务。
-
-## 免费路线的首批原文与正文核验
-
-本阶段已确认只使用免费来源，跨病种与跨专科目标保持；增量需求和已确认的运行时接入见 [免费指南交付（PR #221）](https://github.com/CaiZongyuan/clinmesh/pull/221)。下列内容是 2026-10-16 实际获取并导入的原文。运行时、同步入口与失效机制由[系统架构](../architecture/clinical-workflows.md#81-门诊闭环)和[部署指南](../deployment.md#免费指南全文同步)拥有。
-
-21 份国内资料的文件性质、法定使用依据和独立附表条件见[逐份用途核验](2026-10-26-domestic-guideline-use-rights.md)。当前 `unverified` 表示项目尚未确认可执行的内容与用途范围，不能解释为法律已统一禁止模型使用，也不能仅因没有 AI 专用许可就作出禁止结论。
-
-国内官方原文保存了 21 份 PDF：86 个罕见病指南合集一份、儿童血液病与恶性肿瘤的 16 份分型规范、肥胖症指南，以及此前三份引文对应的流感方案、高血压卫生行业标准、乳腺癌指南。WHO 保存五份官方全文文本。合计 26 个原文文件、25,501,548 字节，逐文件校验了 SHA-256 和长度；没有提交全文。原文件、来源清单及校验结果保存在本地 `.data/guidelines/free/2026-10-16/`。PDF 份数、指南数和病种数分别统计，不将 26 个文件表述成 26 个病种；实际同步得到 1,255 段原文，5 份 WHO 来源的 116 段在已核实的非商业科研场景通过检索，部署默认可用数量及用途声明见[部署指南](../deployment.md#免费指南全文同步)；21 份国内全文暂为用途未核实，保留入库但不送入模型。该限制不改变此前已核短引文的使用依据；已知撤回或替代则同时停止短引文和全文。
-
-### 国内免费来源增量
-
-| 官方来源 | 已核实的范围与格式 | 本次取得状态 |
-| --- | --- | --- |
-| [86 个罕见病指南（2025）](https://www.gov.cn/zhengce/zhengceku/202507/content_7031426.htm) | 通知明确 86 个病种，一个 [PDF 合集](https://www.gov.cn/zhengce/zhengceku/202507/P020250710595668350272.pdf) | 已完整下载，15,611,195 字节 |
-| [儿童血液病与恶性肿瘤规范（2019）](https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm) | 通知明确 10 个病种，因分型列出 16 份 PDF；包括再障、免疫性血小板减少、血友病、淋巴瘤和多种儿童肿瘤 | 已从通知真实链接取得全部 16 份 PDF；未将 16 份文件计作 16 个病种 |
-| [肥胖症指南（2024）](https://www.gov.cn/zhengce/zhengceku/202410/content_6981734.htm) | 官方 [PDF](https://www.gov.cn/zhengce/zhengceku/202410/P020241020715873679737.pdf)，内分泌／代谢方向 | 已完整下载，1,057,558 字节 |
-| [儿童肺炎支原体肺炎指南（2023）](https://www.gov.cn/zhengce/zhengceku/2023-02/16/content_5741770.htm) | 官方附件是 OLE DOC，不是 PDF | 已验证匿名响应及 DOC 文件头；尚未完整下载或解析 |
-| [手足口病指南（2018）](https://www.gov.cn/zhengce/zhengceku/2018-12/31/content_5435156.htm) | 官方 DOC，儿科／感染方向 | 已验证匿名响应及 DOC 文件头；尚未完整下载或解析 |
-| [非新生儿破伤风规范（2024）](https://www.gov.cn/zhengce/zhengceku/202410/content_6982262.htm) | 官方 PDF，诊疗规范 | 已验证匿名响应及 PDF 文件头；尚未完整下载或解析 |
-
-国内 PDF 已用 PDF.js 按物理页提取并入库，但全文模型用途尚未核实，未进入检索。2019、2018 等资料仅按真实版本登记，尚未完成替代关系与临床现行性核对；已下载不能解释为已证明最新。[中国政府网网站声明](https://www.gov.cn/home/2014-02/23/content_5046258.htm)也区分免费访问与转载权利；本批记录的是公开获取事实，不作全文任意分发或所有模型用途的统一许可声明。
-
-### WHO IRIS 官方全文文本层
-
-IRIS 单篇资料可以同时具有 `ORIGINAL`、`LICENSE` 和 `TEXT` bundle。本次从官网 PDF 链接，沿响应返回的 bitstream、bundle、item 和 bundles 链接发现 `TEXT` 中的 `.pdf.txt`，实际读取了五份完整 `text/plain` 响应；不是模型改写摘要，也没有假设所有 PDF 都提供此层。它提供一条可直接获取官方正文的免费路径，无需先安装本地 PDF 解析器。
-
-| 资料与官方页 | 官方全文文本 | 版本及实际获取字节 |
-| --- | --- | --- |
-| [成人高血压药物治疗](https://www.who.int/publications/i/item/9789240033986) | [IRIS TEXT](https://iris.who.int/server/api/core/bitstreams/26e99f3f-08ac-45c5-86f8-350af8cd548c/content) | 2021，159,667 字节；治疗启动、药物类别、联合治疗、目标与随访 |
-| [糖尿病二、三线药物与胰岛素选择](https://www.who.int/publications/i/item/9789241550284) | [IRIS TEXT](https://iris.who.int/server/api/core/bitstreams/3f0d5b5d-dff2-489b-8d37-da35562f898a/content) | 2018，171,405 字节；非妊娠成人，不将其标为完整现行糖尿病治疗库 |
-| [mhGAP 精神、神经及物质使用障碍指南](https://www.who.int/publications/i/item/9789240084278) | [IRIS TEXT](https://iris.who.int/server/api/core/bitstreams/ae7d9ad1-615e-4cd9-8e9d-f980db77ca29/content) | 第三版 2023，510,598 字节；多种精神、神经及物质使用障碍 |
-| [WHO PEN 初级医疗基本非传染病干预包](https://www.who.int/publications/i/item/9789240009226) | [IRIS TEXT](https://iris.who.int/server/api/core/bitstreams/14021c81-cbf9-49c9-b3cf-bca2fa5de0cb/content) | 2020，100,342 字节；心血管、糖尿病、哮喘与 COPD；保留干预包身份 |
-| [体力活动与久坐指南](https://www.who.int/publications/i/item/9789240015128) | [IRIS TEXT](https://iris.who.int/server/api/core/bitstreams/718570db-809d-4fa8-aff5-a3fe11654d02/content) | 2020，355,205 字节；儿童、成人、老年及其他特定人群 |
-
-五篇单篇许可元数据及版权正文均为 CC BY-NC-SA 3.0 IGO，合计 1,297,217 字节；按真实版本保留原始文本和哈希。官方文本层包含版权、目录、推荐正文和末尾附录，但属于自动提取层，尚未逐字对照 PDF 核验多栏、表格、数学符号及脚注。可以保留实际章节和推荐编号；不能仅凭文本中的页码字符承诺逐句精确印刷页定位。五篇已按其非商业许可用于当前科研检索，商业用途仍须另行核对；临床现行性、表格和脚注阅读顺序尚未完成全面医学审校。
-
-## 四类资料的身份不能混用
-
-| 类别 | 可核验的身份 | 对本任务的影响 |
-| --- | --- | --- |
-| 国家标准 | [国家标准全文公开系统](https://openstd.samr.gov.cn/bzgk/std/)分别列出 `GB` 强制性国家标准、`GB/T` 推荐性国家标准和 `GB/Z` 指导性技术文件 | 应记录标准号、类别、发布日期、实施日期和当前状态，不能把所有指南标成国家标准 |
-| 卫生行业标准 | [全国标准信息公共服务平台的 WS/T 872—2025 条目](https://std.samr.gov.cn/hb/search/stdHBDetailed?id=3FDA4B0B7F8A90F4E06397BE0A0AC65C)明确标注“行业标准-WS 卫生”“推荐性”“现行”；正文前言同样写明推荐性标准 | 它由国家卫生健康委发布，仍是卫生行业标准，不能改称 `GB` 国家标准 |
-| 官方诊疗方案、指南或规范 | [流感 2025 年版发布通知](https://www.gov.cn/zhengce/zhengceku/202501/content_7000939.htm)列出发布机关、发文字号和成文日期，要求各级各类医疗机构参照执行；附件题名为“诊疗方案” | 官方发布与临床适用性具有明确来源，但不因发布机关是国家部门就自动变成国家标准 |
-| 学会指南、专家共识及实践版 | [基层指南目录](https://www.medjournals.cn/clinic/getClinicList.do?subjectId=116)说明由中华医学会受国家卫生健康委基层卫生司委托组织编制；[2020–2022 目录](https://www.medjournals.cn/clinic/getClinicList.do?subjectId=120)也收录专家共识 | 委托编制说明来源与组织关系，不能证明其属于强制国家标准。逐篇保存指南、共识、实践版、解读等类型，版本互不替代 |
-
-“符合国家要求”需要按具体内容核对适用的现行要求、资料版本、患者群体和诊疗场景；本次研究不能据此为整个模型输出作符合性认证。标准平台收录范围也不等同于完整临床建议覆盖范围。
-
-## 可直接复用的第一方目录
-
-### 中华医学知识库与精选指南库
-
-[中华医学期刊网首页](https://www.yiigle.com/index)公开链接“精选指南”，说明为“精选中华医学会系列杂志发表的指南共识，并分学科按疾病浏览”。该链接进入[中华医学知识库](https://seleguide.yiigle.com/webs/Knowledge)，其[精选指南库](https://seleguide.yiigle.com/webs/zhinan)是比历史专题汇编更适合作为发现入口的现成产品。
-
-匿名浏览器可以核对指南名称、作者、年份、刊载期刊和学科目录，覆盖内科、外科、妇产、儿科、急诊、全科、精神、病理、影像、检验等专业，实际可见 2026 年资料。条目包括指南、专家共识、操作规范、指南解读和更正；作者也包括地方学会及其他协会，不能把全库逐篇都标为“中华医学会指南”。应分别核实文章发布者、文献类型和适用范围，当前年份条目存在也不保证某一病种已采用最新有效修订。
-
-匿名打开的[2026 年指南详情样本](https://seleguide.yiigle.com/webs/zhinan/getperinfo.html?id=8550&data_type=10)实际跳转登录；[购买知识库入口](https://seleguide.yiigle.com/webs/commondata/buyInfo)同样要求登录。本轮没有核对到价格、购买后具体权益或完整机器调用合同。由此确认的是现成动态目录和付费服务入口，不是匿名公开全文服务。
-
-正式接入优先核对官方现有知识库及云资源 SDK 的服务范围与授权。[用户协议](https://www.medjournals.cn/help/helpcenter.do?to=webagreement)第 5.3 条限制通过所提供界面以外的方式获取服务，第 5.5 条限制再制作、复制和拷贝服务，均保留单独协议明确许可的例外。这与下列版权声明一起说明：不能仅凭个人或机构能够登录阅读，就自行改用网页抓取或建设全文镜像。
-
-### 中华医学会杂志社基层系列
-
-| 入口 | 核查结果 | 适合承担的角色 |
-| --- | --- | --- |
-| [指南集锦栏目](https://www.medjournals.cn/clinic/list.do) | 第一方现成专题索引；内容含指南、共识、解读等，不能按栏目整体认定证据类型 | 寻找已有专题，避免重新搜集和维护一套竞争目录 |
-| [基层常见疾病诊疗指南集锦，subjectId=116](https://www.medjournals.cn/clinic/getClinicList.do?subjectId=116) | 页面整理者刘红霞，整理日期 2022-06-07；说明《中华全科医师杂志》陆续刊出 50 种指南，按神经、呼吸、心血管、消化、内分泌、风湿等领域组织，每个指南包含完整版和实践版 | #179 的检查思路与 #180 的候选诊断依据；每篇仍需核对适用范围和后续修订 |
-| [基层常见疾病诊疗指南集锦（2020–2022），subjectId=120](https://www.medjournals.cn/clinic/getClinicList.do?subjectId=120) | 页面整理者刘红霞，整理日期 2023-11-09；说明覆盖 2020 年 1 月至 2022 年 5 月发表资料，含“基层 2 型糖尿病胰岛素应用专家共识”等 | 补充目录覆盖，保留各篇真实类型，不将共识改标为指南 |
-| [基层常见疾病合理用药指南，subjectId=121](https://www.medjournals.cn/clinic/getClinicList.do?subjectId=121) | 页面整理者刘红霞，整理日期 2024-07-02；可见 28 篇文章链接，涵盖心血管、呼吸、内分泌、风湿；页面说明为国家卫生健康委基层卫生司委托中华医学会编制的合理用药系列 | #181 的用药证据候选库，与诊疗系列配合；需取得具体文章及相应使用权限 |
-
-汇编时间不是每篇指南的修订年份。例如 subjectId=121 的文章主要发表于 2020–2021 年，不能将它们标为“2024 年新版指南”；subjectId=116 中标题写“2018”的指南也可能在 2019 年正式刊出。应分别记录题名中的版本年、期刊发表日期、DOI 和目录整理日期。
-
-匿名浏览器核对的单篇样本为[《急性上呼吸道感染基层诊疗指南（实践版·2018）》](https://rs.yiigle.com/cmaid/1148032)，DOI `10.3760/cma.j.issn.1671-7368.2019.05.006`，页面发表日期 2019-05-04。摘要和首节可读，随后出现“试读结束”，要求机构账户或个人账户取得全文阅读权限。目录中的[成人社区获得性肺炎实践版](https://rs.yiigle.com/cmaid/1116949)、[急性上呼吸道感染合理用药指南](https://rs.yiigle.com/cmaid/1216781)和[成人社区获得性肺炎合理用药指南](https://rs.yiigle.com/cmaid/1235462)可作为后续核验入口，本研究不把未取得的正文当作已审阅证据。
-
-[版权声明](https://www.medjournals.cn/help/helpcenter.do?to=copyright)明确表示中华医学会及《中华医学杂志》社有限责任公司拥有相关期刊版权，未经授权不得转载、摘编，并禁止在非其所属服务器上镜像。研究核查到的[机构服务](https://www.medjournals.cn/organization/organization.do)是中华医学会系列全文论文数据库服务，页面介绍 180 余种期刊、超过 100 万篇论文及近五年文章 HTML 阅读能力。这个服务说明存在机构合作路径，但没有证明普通阅读订阅同时包含批量抓取、模型上下文、检索库复制、全文 API 或再分发许可；需由内容权利方确认具体集成范围。本次没有联系权利方或代用户签订服务。
-
-[官方“关于我们”](https://www.medjournals.cn/help/helpcenter.do?to=aboutUs)明确介绍面向机构、个人和第三方平台的知识服务产品，包含“中华医学知识库”和“中华医学期刊云资源服务系统（SDK）”。因此整体库的正式接入可以优先核对官方现成 SDK 的服务范围、调用方式和许可，不需要先造抓取器。本轮没有取得该产品的公开开发文档、服务价格、账号条件或模型处理授权，不能把产品名称本身当作已经可调用的能力。
-
-### 国家卫生健康委发布源与标准平台
-
-| 入口 | 实际核验能力 | 获取与复用边界 |
-| --- | --- | --- |
-| [国家卫生健康委规范性文件目录](https://www.nhc.gov.cn/wjw/gfxwjj/list.shtml)及各业务司发布栏目 | 是官方发布源候选；本环境目录和多个通知 HTML 返回 HTTP 412，未据此声称已核验统一指南库的完整范围 | 可从已核实通知的附件取得单篇文件；不绕过访问限制，不把搜索摘要当原文 |
-| [中国政府网的流感通知](https://www.gov.cn/zhengce/zhengceku/202501/content_7000939.htm)和[86 个罕见病指南通知](https://www.gov.cn/zhengce/zhengceku/202507/content_7031426.htm) | 实际读取官方政策文件正文；后者为国卫办医政函〔2025〕252 号，成文于 2025-06-17，明确按病种制定 86 份指南，可在国家卫生健康委医政司栏目下载 | 证明存在官方主题合集与附件发布路径；罕见病合集不是常见门诊全部病种的通用库。两份通知也不构成已核实的全库机器 API |
-| [全国标准信息公共服务平台](https://std.samr.gov.cn/)与[国家标准全文公开系统](https://openstd.samr.gov.cn/bzgk/std/) | 可以按标准类别查题录、发布日期、实施日期和当前状态；系统说明非采标标准存在在线阅读和下载，部分采标推荐性标准仅提供题录 | 可核对版本与状态，不能承诺所有标准都有公开全文，不能用技术标准库替代临床指南库 |
-| [WS/T 872—2025 题录](https://std.samr.gov.cn/hb/search/stdHBDetailed?id=3FDA4B0B7F8A90F4E06397BE0A0AC65C)及[行业标准文件入口](https://hbba.sacinfo.org.cn/portal/online/b297206f9ba6eb0958ca0f5e630a665e582a2d145c9d9ae6a8522a563cc38b3a) | 匿名浏览器实际核对为现行推荐性卫生行业标准，发布日期 2025-09-19，实施日期 2026-03-01；文件入口提供在线预览及下载链接 | 可作为单个标准的确定来源。网页文件下载入口不等于已公布稳定应用 API 或全库内容授权 |
-| [卫生健康标准网](https://wsbz.nhc.gov.cn/wsbzw/BzcxAction.do?dispatch=standardLibrary) | 是卫生健康标准专项入口；本环境返回 HTTP 502 | 保留入口，当前不能依赖其可用性完成运行时检索或宣称本轮已取得全量标准数据 |
-
-本次所查第一方页面没有确认可直接嵌入 ClinMesh 的匿名全病种全文 API、完整机器数据包或开放再分发许可。这是本轮调查的能力边界，不是断言这些机构永远不提供授权服务。第三方聚合站可以帮助发现标题，仍需回到实际发布者；指南登记记录也不能代替已发布正文、质量审查或使用授权。
-
-## 已取得并核对的官方附件
-
-| 资料 | 标识、日期和发布源 | 临床适用范围与本轮缺口 |
-| --- | --- | --- |
-| [流行性感冒诊疗方案（2025 年版）原文](https://www.nhc.gov.cn/ylyjs/zcwj/202501/f8fcecca59a048bebc4a71847ce57594/files/1741764832851_94226.pdf) | [官方通知](https://www.gov.cn/zhengce/zhengceku/202501/content_7000939.htm)：国家卫生健康委办公厅、国家中医药局综合司；国卫办医急函〔2025〕26 号；成文日期 2025-01-20 | 适用于各级各类医疗机构的流感诊疗，有诊断、病原学检查、重症评估和治疗内容；不能直接推广为所有发热或上呼吸道感染用药依据 |
-| [WS/T 872—2025 原文](https://www.nhc.gov.cn/fzs/c100048/202509/2f3f7cce449145f8b361e70b3ed4ae9a/files/WS%20T%20872%E2%80%942025-20250930105429913.pdf) | 国家卫生健康委发布；发布日期 2025-09-19，实施日期 2026-03-01，类别和状态已由[标准平台](https://std.samr.gov.cn/hb/search/stdHBDetailed?id=3FDA4B0B7F8A90F4E06397BE0A0AC65C)交叉核对 | 适用于乡镇卫生院、社区卫生服务中心（站）、村卫生室等对成人高血压患者的管理；诊断阈值与具体药物治疗参见《国家基层高血压防治管理指南》，本文不能据此单独产生氨氯地平完整处方 |
-| [乳腺癌诊疗指南（2022 年版）原文](https://www.nhc.gov.cn/yzygj/c100068/202204/0c1f7d3aca0545abbeb02030ce255930/files/1732863054702_65919.pdf) | 国家卫生健康委官方域名附件；首文实际题名为“乳腺癌诊疗指南（2022 年版）”，不是搜索结果显示的“2011 年版”；[对应发布通知入口](https://www.nhc.gov.cn/yzygj/c100068/202204/0c1f7d3aca0545abbeb02030ce255930.shtml) HTML 未能读取，具体成文日暂未核实 | 含筛查、诊断、病理、治疗等；提供病理依据的背景，不能据此新增本院未开展的乳腺超声、钼靶、MRI、活检或肿瘤用药，也不能证明每名既往乳腺手术患者都需要切片会诊 |
-
-取得文件的 SHA-256 分别为：流感 `d19f8cba72af08fd11fe17c0d6c3614c9aaac8d8c77fa803e7e9b999abea1125`；高血压标准 `4c099a4a656b72d6524c7acd05359da10b4dd861def402b80acd94a307d410d6`；乳腺指南 `9d3b51f20abe6b80fa2f6273d371c36e14554bfecceb84a274ffe60195c8ffae`。哈希用于明确本轮读取版本，不代替临床审阅、现行性判断或使用许可。
-
-### 与建议生成直接相关的少量条款
-
-以下短引文只说明原文可支持的判断范围，不作为当前患者的诊疗结论；引用页码为文件印刷页码。
-
-- 流感方案，第五节“病原学相关检查”，第 5 页：“抗原检测阳性支持诊断，阴性不能排除流感。”模型不能将阴性抗原结果直接改写为排除诊断。
-- 流感方案，第六节“诊断”，第 5 页：“主要结合流行病学史、临床表现和病原学检查进行诊断。”发热单一症状不足以据此正式确诊。
-- 流感方案，第十节“治疗”，第 9 页：“避免盲目或不恰当使用抗菌药物。”同页支持高热时应用解热药物，但没有为本院对乙酰氨基酚给出完整剂量、频次、疗程和数量。
-- 流感方案，第十节“抗病毒治疗”，第 10 页：奥司他韦成人每次 75 mg、每日 2 次、疗程 5 天，且“肾功能不全者要根据肾功能调整剂量”。这是年龄、体重、剂型和肾功能需要纳入适用性核对的实际例子；奥司他韦不在当前本院三药目录，不能通过该条款新增目录外处方。
-- WS/T 872—2025，第 7 节，第 2 页：“符合高血压诊断的患者，应进行首次评估，询问病史、进行体格检查和血尿常规、生化及心电图检测。”检查建议必须区分初次评估、既往已完成检查和随访场景，再映射本院可选项目。
-- WS/T 872—2025，第 8.2 节，第 3 页：“在生活方式干预的基础上，根据患者个体情况合理选择降压药物，逐步调定”。本标准未单独规定本院氨氯地平的默认 30 天、30 片，应补充具体药物指南与产品说明书依据。
-- 乳腺癌指南，第三节“组织病理学诊断”，第 11 页：“病理学诊断是乳腺癌确诊和治疗的依据。”这不授权模型把影像印象当最终病理诊断，也不授权读取病理切片像素或隐藏病例真值。
-
-### 药品上市许可持有人说明书
-
-[晖致中国产品信息](https://www.viatris.cn/products/product-information)提供[苯磺酸氨氯地平片（络活喜）说明书](https://www.viatris.cn/-/media/project/viatris-sites/product-document/02norvasc.pdf)，本轮取得文件的 SHA-256 为 `6421355efdba7552efc1d814295f8dcff186dfbb44805af6d78c6673199e5689`。文件记载核准日期 2007-03-09，首页日期列表最后一项为 2026-01-19；未把该项推定为网页发布日期，证据版本标记本轮核验日期。上市许可持有人和生产企业为晖致制药（大连）有限公司，5 mg 产品批准文号为国药准字 H10950224。该资料属于药品说明书，不能标成临床指南或国家标准。
-
-印刷第 3 页“用法用量—成人”完整条款为：“通常本品治疗高血压的起始剂量为5 mg，每日一次，最大剂量为10 mg，每日一次。”并限定：“身材小、虚弱、老年、或伴肝功能不全患者，起始剂量为2.5 mg，每日一次；此剂量也可为本品联合其它抗高血压药物治疗的剂量。”实际使用时必须共同核对这些限定人群及既有用药，不能仅因本院目录允许 `5 mg` 就建议该剂量。说明书没有固定 30 天疗程或 30 片数量；其 5 mg 盒装为 7、14、28 片，另有 500 片瓶装，与本院合成 5 mg / 30 片盒不能认定为同一产品，禁止据此猜测包装换算。
-
-[默克中国格华止产品介绍](https://www.merckgroup.com.cn/cn-zh/expertise/general-medicine/general-medicine-treatments/glucovance.html/)可核对普通片名称与适应方向，但未取得该产品的剂量、频次、疗程和数量条款，不能用缓释片方案替代普通片。对乙酰氨基酚中国产品用法正文与国家基层糖尿病完整指南也未取得可核对的第一方文本；这两药本轮不增加用法证据。
-
-## 三个建议页面的覆盖与不足
-
-诊疗目录中的呼吸、心血管和内分泌内容可以为发热/呼吸道症状、高血压、糖尿病提供候选来源；合理用药目录提供药物方向的补充。但仅发现目录不能证明已取得每一篇全文，更不能证明已核对三种本院药的全部剂量与患者条件。氨氯地平剂量与频次有上述说明书条款，疗程与数量仍缺依据；二甲双胍和对乙酰氨基酚仍缺完整用药条款及临床适用条件的第一方核验。
-
-本院当前三药及其仿真默认剂量、频次、疗程和数量由[医院基线](../../apps/server/src/application/scenario-data/hospital-baseline.ts:567)拥有。目录中的 `allowedDoseTexts`、`allowedFrequencyCodes`、`allowedCourseDays`、`allowedQuantities` 是系统可接受输入，不能反过来充当临床指南证据。应先证明具体患者与药物方案的临床适用性，再判断能否映射本院实际药品、强度、剂型、给药途径、单位和数量；不匹配时提示医生，不能把方案硬改成目录默认值。
-
-| 方向 | 接入前需补充核对的证据与病例信息 | 缺少时的边界 |
-| --- | --- | --- |
-| 发热/呼吸道症状与对乙酰氨基酚 | 区分普通上感、疑似流感和重症；年龄、体温及病程、肝功能/相关病史、同时服用的含同成分药物；具体产品说明书对给药间隔和最大剂量的规定 | 流感方案只能支持限定的对症治疗方向；本轮资料不足以证明“0.5 g、PRN、3 天、6 片”完整方案对该患者成立 |
-| 糖尿病与二甲双胍 | 适用的诊疗与合理用药文章及产品说明书；当前糖尿病确认情况、既有治疗、血糖/HbA1c、肾功能、相关合并症与急性病情、耐受情况 | 不把本院“0.5 g、BID、30 天、60 片”配置当临床用药指南；缺少内容权限或必要资料时标为待医生补充 |
-| 高血压与氨氯地平 | 高血压具体治疗指南及产品说明书；重复血压、既有降压方案、控制情况、外周水肿和相关合并症、妊娠/哺乳等适用边界 | WS/T 872—2025 支持成人基层评估和管理，晖致说明书支持限定人群的剂量与频次；不能据此填入固定疗程或数量 |
-| 乳腺病理会诊 | 当前医生可见的既往乳腺手术、真实可送检的 `sourceProcedureReference`、已有病理报告及会诊目的；具体会诊适应性证据 | 原文提供病理诊断地位的背景，不应凭“有指南”就强行推荐会诊或新增未开展检查 |
-
-上述信息清单是本任务接入研究建议，不是本次新建立的临床禁忌证规则。具体阈值、剂量、调整方法与特殊人群规则仍需对应已取得、版本明确且可使用的原始条款。本院未开展项目、目录外药物、没有适用指南的病情及必要信息不足均应保持可见缺口，不让模型补造。
-
-## 同机 Bio Discovery X 项目参照
-
-只读核查的项目为 `/home/houyu/bio-discovery-x`，本地 HEAD `9b73fb190baeea918484982274018b5f0ee7f61b`；缓存 `origin/main` 为 `39d552c1d337da4e71d15739661ffb6371e489d2`，多 11 个提交，下面涉及的 bundled skills 与快照没有差异。它是通用 Agent 研究工作台，可以借鉴来源、核验和知识加工方法；没有发现已经交付的中华医学会指南全文接入或中国临床指南数据库。
-
-| 实际能力 | 第一方源码或 owner 合同 | 对 ClinMesh 的可复用边界 |
-| --- | --- | --- |
-| 区分文献事实、模型推断、研究假设和实验结果，并记录来源 | [`PLAT_BIOMED_INSTRUCTION`](https://github.com/CaiZongyuan/bio-discovery-x/blob/9b73fb190baeea918484982274018b5f0ee7f61b/apps/daemon/src/orchestrator/instruction-content.ts#L9)将研究执行交给 Runtime，禁止自动产生个体诊疗结论 | 可借鉴证据与推断分开的输入/输出要求；通用 Runtime 的搜索或 MCP 能力不等于已经取得中国指南数据，也不需要把该平台搬进 ClinMesh |
-| 生物医学文献书目核验 | [`verification_policy.md`](https://github.com/CaiZongyuan/bio-discovery-x/blob/9b73fb190baeea918484982274018b5f0ee7f61b/apps/daemon/resources/bundled-skills/biomedical-reference-verifier/references/verification_policy.md#L5)规定 Crossref 主核验、PubMed/OpenAlex 佐证；[`verify_references.py`](https://github.com/CaiZongyuan/bio-discovery-x/blob/9b73fb190baeea918484982274018b5f0ee7f61b/apps/daemon/resources/bundled-skills/biomedical-reference-verifier/scripts/verify_references.py#L770)实际调用 Crossref Works、NCBI EFetch/ESearch 和 OpenAlex；[`CanonicalRecord`](https://github.com/CaiZongyuan/bio-discovery-x/blob/9b73fb190baeea918484982274018b5f0ee7f61b/apps/daemon/resources/bundled-skills/biomedical-reference-verifier/scripts/verifier_models.py#L10)保存书目字段 | 可校验 DOI、题名、年份等并保留原始来源与远端规范记录；题名相似度或 DOI 存在不证明某段指南支持具体检查、药物或剂量，该核验器没有读取临床正文来验证条款 |
-| 将已取得的文档整理为可追溯知识资产 | [`knowledge-schema.md`](https://github.com/CaiZongyuan/bio-discovery-x/blob/9b73fb190baeea918484982274018b5f0ee7f61b/apps/daemon/resources/bundled-skills/knowledge-asset-craftsman/references/knowledge-schema.md#L3)要求来源路径、版本、hash、span、证据与适用范围；[`doc_reader.py`](https://github.com/CaiZongyuan/bio-discovery-x/blob/9b73fb190baeea918484982274018b5f0ee7f61b/apps/daemon/resources/bundled-skills/knowledge-asset-craftsman/scripts/doc_reader.py#L37)读 TXT/DOCX 及表格，[`generate_markdown.py`](https://github.com/CaiZongyuan/bio-discovery-x/blob/9b73fb190baeea918484982274018b5f0ee7f61b/apps/daemon/resources/bundled-skills/knowledge-asset-craftsman/scripts/generate_markdown.py#L15)从 JSONL 生成 Markdown，[`validate_dual_view.py`](https://github.com/CaiZongyuan/bio-discovery-x/blob/9b73fb190baeea918484982274018b5f0ee7f61b/apps/daemon/resources/bundled-skills/knowledge-asset-craftsman/scripts/validate_dual_view.py#L47)核对投影一致 | 可借鉴来源登记和单一事实源，不需要重写通用知识平台；实际生成脚本只强制基本字段与格式，双视图相等不等于条款逐字有来源、临床适用性已经核验。该 skill 没有自带全量指南库或 RAG 服务 |
-| 回答中的引用链接展示 | [引用链接规格](https://github.com/CaiZongyuan/bio-discovery-x/blob/9b73fb190baeea918484982274018b5f0ee7f61b/docs/spec/2026-09-08-conversation-citation-links.md#L7)明确显示回答写出的链接不代表 Runtime 已检索或验证；[`markdown-citations.ts`](https://github.com/CaiZongyuan/bio-discovery-x/blob/9b73fb190baeea918484982274018b5f0ee7f61b/packages/ui/src/components/markdown/markdown-citations.ts#L29)处理 HTTP URL、Markdown 标注与去重展示 | 临床建议也应区分“给出了出处链接”“实际读取条款”“验证条款支持当前建议”三层，不能只用可点击引用图标证明医学依据 |
-
-Craftsman 的来源登记规范与脚本强制校验需要分开：`generate_markdown.py` 实际强制的七个基本字段是 `id`、`question`、`retrieval_text`、`answer_text`、`module`、`status`、`version`，并检查唯一 ID；它没有强制验证 `source_id`、来源版本、hash、span、evidence 或适用范围。引用核验器的规范记录也只有书目信息，不含指南正文、内容许可或患者适用性判断。因此两项 skill 都不能直接当作现成的临床处方证据校验器。
-
-当前专用 `search-pubmed` 已从首期技能交付中退出，见[技能 owner](https://github.com/CaiZongyuan/bio-discovery-x/blob/9b73fb190baeea918484982274018b5f0ee7f61b/docs/architecture/current/agents-skills-and-evolution.md#L155)；不能把残留上游 ZIP 当作现役全文检索功能。引用核验器仍使用 PubMed 核验书目信息，这是另一项能力。跨运行复用结果也须显式传入既有结果产物，不能把进程内缓存描述为已经交付的永久知识库。
-
-因此可以复用的思路是可信发布源、保留原始资料身份、书目核验、带版本和定位的知识加工，以及明确区分可见链接与真正依据。现成官方指南库的内容取得和机器集成许可仍需独立解决，Bio 的工具代码许可不转移文献或中华医学会内容版权。本次没有复制或执行 Bio 脚本，没有修改其仓库，没有恢复其已退出的技能，也未运行 Bio 测试。
-
-## 最小可落地接入建议
-
-1. 复用中华医学知识库的精选指南库及现成基层专题来选择证据来源，保存题名、DOI、原文 URL 和版本，避免自建全病种聚合平台。整体库接入优先核对官方已有知识库与云资源 SDK 的服务和授权；需要正文时先确认内容使用权限，机构阅读权限与机器集成权限分开核对。
-2. 首期使用经核对且有使用依据的必要条款和简短事实说明，配合国家卫生健康委官方公开材料及标准状态。按患者实际场景挑选，不批量镜像期刊全文，不新增抓取服务、向量库或指南下载依赖。
-3. 每份证据清单至少记录发布者、资料类型、题名、版本/DOI/标准号、发布日期与实施日期（如有）、适用人群与场景、原文 URL、章/节/页定位、读取日期、内容哈希、使用依据及状态。来源未取得、日期未核实、授权未知等分别显式标注；不以模型声称“最新版”补齐字段。
-4. 将经过挑选的证据、授权病例资料和本院目录共同输入既有 DSH 辅助模型。模型只能引用本次实际提供的证据 ID 和定位；服务端验证其属于输入清单。原文链接用于核对，不能把“已提供 URL”当作模型实际读过正文。
-5. 区分临床依据和执行映射：诊断候选、检查理由和每个处方字段需要对应证据与患者信息，生成引用必须指向真实提供的条款，不能只检查引用 ID 存在。没有对应依据、资料不足或本院无法匹配时，明确缺项；建议及采纳只进入可编辑草稿，正式动作继续由医生确认。
-
-模型不得自行制造 DOI、指南名、年份、页码、引用原文、疾病诊断概率或“符合国家标准”的通过结论。旧版本已废止或被替代时，不能仍作为当前默认依据；具体修订只更新明确版本的条目，不在后台静默改变已展示结果的引用。上述是接入建议，正式实施合同仍由 owning spec 和对应代码维护。
-
-## 已核实与尚未解决
-
-已核实的事实包括中华医学知识库与精选指南库的动态目录和登录边界、三个第一方基层系列目录、单篇实际试读限制、中华医学会版权与机构服务边界、官方已有云资源 SDK 产品、国家标准平台分类和全文公开限制、WS/T 872—2025 的现行状态、三个官方附件中上列文字条款，以及晖致中国氨氯地平说明书中的成人剂量和限定人群。可以复用现成目录和可追溯原文入口；不能由此推断已拥有其全部正文的机器处理许可。
-
-仍未解决的是中华医学会具体集成授权与服务方式、各选定病种和产品用药证据的覆盖、后续修订的更新责任，以及个别国家卫生健康委通知的准确成文日期。本次未证明存在免费全量指南 API，未建立全病种库，未核验模型医学质量，未运行业务测试。官方 HTML 的 HTTP 412、卫生健康标准网的 HTTP 502 和文章试读限制均保留为实际访问边界，不用第三方转载替代已经核验的发布者身份。
+| [中华医学知识库／精选指南库](https://seleguide.yiigle.com/webs/zhinan) 与 [基层集锦（subjectId=116/120/121）](https://www.medjournals.cn/clinic/list.do) | 覆盖内外妇儿、急诊、全科、病理、影像、检验等专科目录（可见 2026 年条目）；官方提供面向第三方的云资源 SDK 产品 | 匿名仅可读目录与首节试读，[用户协议](https://www.medjournals.cn/help/helpcenter.do?to=webagreement)与[版权声明](https://www.medjournals.cn/help/helpcenter.do?to=copyright)禁止非授权抓取、摘编与镜像；整体接入须商谈官方 SDK 授权 |
+| [医脉通临床指南](https://guide.medlive.cn/) 与 [丁香园开放平台](https://open.dxy.cn/) | 医脉通提供国内外多学会指南目录；丁香园公开[中国药品说明书 API](https://open.dxy.cn/doc/1401.html) 与[批准适应症 API](https://open.dxy.cn/doc/1501.html) 结构 | 医脉通无公开全库机器 API；丁香园接口需商务询价，其疾病科普接口不能充当临床指南库 |
+| [国家卫生健康委官方通知附件](https://www.gov.cn/zhengce/zhengceku/202507/content_7031426.htm) 与 [全国标准信息公共服务平台](https://std.samr.gov.cn/) | 可逐篇取得公开 PDF 附件与核对 `GB` / `GB/T` / `WS/T` 标准现行状态 | 公开下载不等同全库再分发或训练授权；国家标准、推荐性卫生行业标准（`WS/T`）、官方诊疗方案与学会共识四类身份严禁混标 |
+| [WHO Guidelines](https://www.who.int/publications/who-guidelines) 与 [IRIS](https://iris.who.int/) | 单篇包含 `ORIGINAL`、`LICENSE` 与官方 `.pdf.txt` 全文文本层 | [WHO 版权政策](https://www.who.int/about/policies/publishing/copyright)多数采用 `CC BY-NC-SA 3.0 IGO`（允许署名非商业科研使用，商业用途与第三方内容另核）；首批已核验并导入成人高血压（2021）、糖尿病二三线用药（2018）、mhGAP（2023）、WHO PEN（2020）、体力活动（2020）共 5 份 `1,297,217` 字节文本 |
+| [NICE Syndication API](https://www.nice.org.uk/reusing-our-content/nice-syndication-api) 与 [GIN 国际指南库](https://guidelines.ebmportal.com/) | NICE 提供已发布指南的正式 JSON/XML API；GIN 提供跨国指南索引 | NICE 国际商业与面向终端用户的 AI 调用须单独付费签约（禁训练/微调），[英国开放许可](https://www.nice.org.uk/reusing-our-content/nice-uk-open-content-licence)排除 AI 用途；GIN 不提供正文统一授权 |
+
+首批核验的公开官方单篇原文及药品说明书基线身份：
+- [流行性感冒诊疗方案（2025 年版）](https://www.gov.cn/zhengce/zhengceku/202501/content_7000939.htm)（国卫办医急函〔2025〕26 号，SHA-256 `d19f8cba72af08fd11fe17c0d6c3614c9aaac8d8c77fa803e7e9b999abea1125`）：明确抗原阴性不能排除流感、避免盲目使用抗菌药物、奥司他韦需按肾功能调量。
+- [WS/T 872—2025 高血压患者健康管理服务规范](https://std.samr.gov.cn/hb/search/stdHBDetailed?id=3FDA4B0B7F8A90F4E06397BE0A0AC65C)（现行推荐性卫生行业标准，SHA-256 `4c099a4a656b72d6524c7acd05359da10b4dd861def402b80acd94a307d410d6`）：规范基层首次评估与随访，不单独规定具体药物固定疗程与盒装数量。
+- [乳腺癌诊疗指南（2022 年版）](https://www.nhc.gov.cn/yzygj/c100068/202204/0c1f7d3aca0545abbeb02030ce255930/files/1732863054702_65919.pdf)（SHA-256 `9d3b51f20abe6b80fa2f6273d371c36e14554bfecceb84a274ffe60195c8ffae`）：确立组织病理学确诊地位。
+- [苯磺酸氨氯地平片（络活喜）说明书](https://www.viatris.cn/-/media/project/viatris-sites/product-document/02norvasc.pdf)（国药准字 H10950224，SHA-256 `6421355efdba7552efc1d814295f8dcff186dfbb44805af6d78c6673199e5689`）：成人高血压起始 5 mg QD（身材小、虚弱、老年或肝功能不全起始 2.5 mg QD），不等于本院合成 30 片包装规格。
+
+<a id="国内官方指南使用依据核验"></a>
+
+## 二、21 份国内官方指南的使用依据与独立附表核验（2026-10-26 核验）
+
+针对[指南注册表](../../apps/server/reference-data/guideline-sources.json)中 21 份国内官方 PDF（共 1,139 个物理页），逐份结合[《著作权法》（2020 修正）](https://www.gov.cn/guoqing/2021-10/29/content_5647633.htm)第 5/19/24/59 条、[《政府信息公开条例》](https://www.gov.cn/zhengce/content/2019-04/15/content_5382991.htm)、[中国政府网声明](https://www.gov.cn/home/2014-02/23/content_5046258.htm)及[《生成式人工智能服务管理暂行办法》](https://www.cac.gov.cn/2023-07/13/c_1690898327029107.htm)核验：
+
+- **软件状态 `unverified` 的准确含义**：代表项目尚未将整份 PDF 放行至默认对外模型检索，**不代表法律已禁止模型推理引用**，也不能将“无 AI 专用许可证”等同于禁用；同时必须区分“行政印发通知主体”与“附件内引入的第三方受保护图表/评价量表”。
+- **5 份综合与慢病/肿瘤国内官方资料（735 页）**：
+  - **流感诊疗方案（2025，18 页）**与**[肥胖症诊疗指南（2024，79 页，国卫办医政函〔2024〕382 号）](https://www.gov.cn/zhengce/zhengceku/202410/content_6981734.htm)**：有明确行政印发通知（“请参照执行/组织实施”），提取文本未见外部连续转载附表（肥胖指南仅提及 PHQ-9/GAD-7/SF-36 名称而未转载量表全文）。
+  - **[86 个罕见病病种诊疗指南（2025，517 页，国卫办医政函〔2025〕252 号）](https://www.gov.cn/zhengce/zhengceku/202507/content_7031426.htm)**：物理第 358–359 页（图 59-1 改编自 *Am J Perinatol*）与第 419–420 页（图 70-1 改编自 *JACC*）含外部期刊改编图，须与行政主体分开对待。
+  - **乳腺癌诊疗指南（2022，113 页）**：物理第 69–79 页含 BI-RADS 分级（[ACR BI-RADS](https://www.acr.org/Clinical-Resources/Reporting-and-Data-Systems/Bi-Rads) 对软件集成设独立许可）、第 86–90 页含 AJCC 第 8 版 pTNM 分期表（[ACS/AJCC](https://www.facs.org/quality-programs/cancer-programs/american-joint-committee-on-cancer/) 明示第三方 AI/LLM 集成需书面授权），外部附表不能随封面统一放行。
+  - **WS/T 872—2025（8 页）**：推荐性卫生行业标准，与行政公文通知分别判断。
+- **[儿童血液病、恶性肿瘤相关 10 个病种诊疗规范（2019 年版，国卫办医函〔2019〕716 号）](https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm)（16 份 PDF，404 页）**：
+  - 10 个病种因淋巴瘤与肉瘤分型拆为 16 个附件（无独立儿童 ALL/AML 文件）。尾码 `01–04`（再障、ITP、血友病、噬血细胞综合征）未命中外部连续附表；尾码 `10`（骨肉瘤 p.30 起）、`11`（尤文肉瘤 p.20 起）、`13`（非横纹肌肉瘤软组织肉瘤 p.24 起）含连续 **RECIST 1.1** 中文附表（[EORTC/RECIST](https://recist.eortc.org/) 限定非商业署名忠实摘录）；尾码 `05–06`、`09–16` 引用 **CTCAE 5.0** 毒副反应表。
+
+<a id="冠心病指南资料包与住院适用性核验"></a>
+
+## 三、冠心病指南资料包与住院 PCI 适用性核验（2026-10-26 / 2026-11-02 核验）
+
+本地冠心病指南资料包共 **32 份 PDF（870 个物理页，2015–2023 年，19 英 13 中）及 1 份 XLSX 题录表**，通过 `clinmesh-guidelines-2026-10-26-v1`（`coronary-*` 32 个来源，其中 `coronary-27-2016` 经离线 OCR 补齐并保留人工待校对边界；2021/2023 ESC 文件含个人教育及非商业限制，按部署用途策略隔离）接入受控评估。
+
+| 核心来源 ID | 文献与核对物理页 | 可支撑的临床与质控边界 | 不能推导出的结论 |
+| --- | --- | --- | --- |
+| `coronary-32-2018` / `coronary-10-2021` | 2018 中国稳定性冠心病指南（p.1–4, 7–9）；[2021 ACC/AHA/SCAI 血运重建指南](https://doi.org/10.1161/CIR.0000000000001038)（p.11, 14, 35–36） | 择期 PCI 症状与缺血依据；稳定中度狭窄 `FFR > 0.80` 或 `iFR > 0.89` 不应行 PCI（反过度介入依据）；DES 优于 BMS 类别讨论；左主干/复杂病变 IVUS 指导与 OCT 左主干开口例外 | 不能直接映射为本院具体支架品牌型号或固定件数 |
+| `coronary-15-2021` / `coronary-27-2016` | [2021 CVIT 血管内超声共识](https://doi.org/10.1007/s12928-021-00824-0)（p.2–6）；2016 中国 PCI 指南（p.4–6） | 近远端参考段、管腔与外弹力膜（EEM）区分；仅电动回撤或纵向成像可测病变长度（手动回撤不可测长）；支架偏小与覆盖不全风险 | 不能反推本院合成演示的 `3.0×18 mm` 为指南强制尺寸 |
+| `coronary-20-2021` | [2021 含碘对比剂不良反应防治中国专家共识](https://doi.org/10.3760/cma.j.cn112148-20210315-00024)（p.2–6） | 术前 eGFR 评估、CKD 高危获益风险权衡与肾内科会诊、心衰容量限制，以及零/超低对比剂需术前影像+IVUS+经验术者的严格条件 | 物理第 4 页原提取含控制字符被质量隔离，不输出固定水化速度或剂量 |
+| `coronary-24-2021` / 2023 ESC ACS | [2021 中国冠心病 DAPT 共识](https://doi.org/10.3760/cma.j.cn112148-20210125-00088)（p.3–5, 9–10）；2023 ESC ACS（p.19–23, 64–67） | 缺血与出血双风险评估（植入当日不套用满 12 个月无事件者的 DAPT 延长评分）；CCS 与 ACS 疗程及 LDL-C 目标值（`<1.8` vs `<1.4 mmol/L`）按人群与年份区分 | 严禁跨人群拼接成无版本全局常量；SCORE2 不适用于已确诊 CVD 患者 |
+| `coronary-02-2021` / `coronary-12-2021` | 2021 ESC/EAPCI 围术期心肌损伤共识（p.2, 4, 10–11）；[2021 ACC PCI 当日出院路径](https://doi.org/10.1016/j.jacc.2020.11.013)（p.4, 8, 10–11） | 区分单纯术后 cTn 升高与伴缺血证据的 type 4a MI（防病案误编码 MI）；出院前双抗落实、穿刺点观察与随访交代 | 当日出院路径排除 STEMI/NSTEMI，不作为所有 PCI 患者的自动出院标准；临床指南不决定院内收费或 DRG 标准 |
+
+实际只读检索探针（8 组固定临床查询）表明：底层 `GuidelineCorpus.search` 虽能稳定返回 ≤8 段、≤48 KiB 的带哈希原文，但纯全文泛搜易被目录页或同词高频文献挤占关键页（如漏召回血运重建 p.35 DES/BMS 条款与 CVIT p.6 测长限制），因此住院与专病场景需要叠加绑定原文哈希与物理页的专题导航层，详见 [LLM-Wiki 主题知识层评估](2026-11-02-llm-wiki-for-inpatient-guidelines.md)。
