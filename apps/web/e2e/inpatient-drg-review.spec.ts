@@ -182,7 +182,7 @@ test('实际手术显式引用治疗预留并替换，正式费用与预留不�
   await page.getByRole('option', { name: `${material.display} × 2 · 合成明确替换预留`, exact: true }).click()
   await expect(batchDialog.getByLabel(`${material.display}实际用量`, { exact: true })).toHaveValue('2')
   await expect(batchDialog.getByLabel(`${material.display}实际用量`, { exact: true })).toBeDisabled()
-  await batchDialog.getByLabel('补录依据', { exact: true }).fill('合成实际用量替换同一预留')
+  await expect(batchDialog.getByLabel('补录依据', { exact: true })).toHaveCount(0)
   await batchDialog.getByRole('button', { name: '记录实际手术', exact: true }).click()
   const done = page.getByRole('region', { name: '最终耗材', exact: true })
   await expect(done).toContainText(procedure.coding.code)

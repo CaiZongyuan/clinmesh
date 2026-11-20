@@ -29,13 +29,12 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const time = (value: string) => new Date(value).toLocaleTimeString(locale, { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' })
   const [materialId, setMaterialId] = useState<string | null>(null), [quantity, setQuantity] = useState('1'), [note, setNote] = useState('')
-  const [extra, setExtra] = useState(false)
   const [supplementReservationId, setSupplementReservationId] = useState<string | null>(null)
   const successfulCommand = write.mutation.data?.command
   useEffect(() => {
     if (successfulCommand?.operation !== 'inpatient.surgery.record-material' && successfulCommand?.operation !== 'inpatient.surgery.supplement-material') return
     if (successfulCommand.input.admissionId !== admission.id || successfulCommand.input.requestId !== request.id || successfulCommand.input.executionId !== execution.id) return
-    { setMaterialId(null); setQuantity('1'); setNote(''); setExtra(false); setSupplementReservationId(null) }
+    { setMaterialId(null); setQuantity('1'); setNote(''); setSupplementReservationId(null) }
   }, [successfulCommand, admission.id, request.id, execution.id])
   const [search, setSearch] = useState(''), [page, setPage] = useState(1), [selectionError, setSelectionError] = useState('')
   const scope = correctionDraftScope({ session, patientId: admission.patientId, admissionId: admission.id, requestId: request.id, executionId: execution.id })
@@ -58,16 +57,14 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
       ...(reservation ? { reservationId: reservation.id, expectedReservationVersion: reservation.version } : {}) } }
   }
   const material = materials.find(item => item.id === materialId)
-  const left = usable(materialId, material?.version)[0]
   const supplementReservations = usable(materialId, material?.version).filter(item => item.unit === material?.chargeDefinition.unit)
   const supplementReservationUnavailable = supplement && supplementReservationId !== null && !supplementReservations.some(item => item.id === supplementReservationId)
-  const entry = supplementReservationUnavailable ? null : selection(materialId, quantity, supplement ? supplementReservationId : extra ? null : undefined)
+  const entry = supplementReservationUnavailable ? null : selection(materialId, quantity, supplementReservationId)
   const entryCharge = entry ? { ...entry.material.chargeDefinition, priceFen: entry.reservation?.priceFen ?? entry.material.chargeDefinition.priceFen } : null
   const overReserved = entry?.reservation !== undefined && entry.amount > remaining(entry.reservation)
-  const register = () => { if (entry && entryCharge && !overReserved && note.trim()) write.mutation.mutate(supplement
-    ? { operation: 'inpatient.surgery.supplement-material', input: { ...common, note: note.trim(), material: entry.input,
-      expectedCharge: { id: entryCharge.id, priceFen: entryCharge.priceFen, unit: entryCharge.unit } } }
-    : { operation: 'inpatient.surgery.record-material', input: { ...common, note: note.trim(), material: entry.input } }) }
+  const register = () => { if (entry && entryCharge && !overReserved && note.trim()) write.mutation.mutate(
+    { operation: 'inpatient.surgery.supplement-material', input: { ...common, note: note.trim(), material: entry.input,
+      expectedCharge: { id: entryCharge.id, priceFen: entryCharge.priceFen, unit: entryCharge.unit } } }) }
   const filtered = execution.materialHistory.filter(use => `${use.item.display} ${use.note}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
   const pages = Math.max(1, Math.ceil(filtered.length / 10)), shownPage = Math.min(page, pages)
   const visible = filtered.slice((shownPage - 1) * 10, shownPage * 10)
@@ -130,18 +127,18 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
       <span>{t('已登记耗材 ', 'Recorded materials ')}<b className="font-semibold text-foreground tabular-nums">{formatFen(live, locale)}</b></span>
       {running ? <span>{t('术式费 ', 'Procedure fee ')}<b className="font-semibold text-foreground tabular-nums">{formatFen(execution.actualProcedure.chargeDefinition.priceFen, locale)}</b>{t(' 在完成手术时计入', ' is posted at completion')}</span> : null}
     </div>
-    {supplement && writable ? <section aria-label={supplement ? t('补登记耗材', 'Add omitted material') : t('登记本笔使用', 'Record a material entry')} className="flex min-w-0 flex-col gap-2 border-t pt-3">
-      <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{supplement ? t('补登记耗材', 'Add omitted material') : t('登记本笔使用', 'Record a material entry')}</h4></div>
+    {supplement && writable ? <section aria-label={t('补登记耗材', 'Add omitted material')} className="flex min-w-0 flex-col gap-2 border-t pt-3">
+      <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{t('补登记耗材', 'Add omitted material')}</h4></div>
       <FieldGroup className="grid gap-3 @lg:grid-cols-[minmax(0,2fr)_6rem_minmax(0,1.6fr)_auto] @lg:items-end">
         <Field><FieldLabel htmlFor={`surgery-entry-material-${execution.id}`}>{t('耗材', 'Material')}</FieldLabel><WorkspaceSelect id={`surgery-entry-material-${execution.id}`} value={materialId} disabled={write.blocked} items={materials.map(item => {
           const rem = usable(item.id, item.version).reduce((sum, r) => sum + remaining(r), 0)
           return { value: item.id, label: rem > 0 ? `${item.display} · ${formatFen(item.chargeDefinition.priceFen, locale)}/${item.chargeDefinition.unit} · ${t('剩余预留 ', 'reserved ')}${rem}` : item.display }
-        })} onValueChange={id => { setMaterialId(id); setExtra(false); setSupplementReservationId(null) }} /></Field>
+        })} onValueChange={id => { setMaterialId(id); setSupplementReservationId(null) }} /></Field>
         <Field><FieldLabel htmlFor={`surgery-entry-quantity-${execution.id}`}>{t('数量', 'Quantity')}</FieldLabel><Input id={`surgery-entry-quantity-${execution.id}`} type="number" min="1" max="1000" step="1" disabled={write.blocked} value={quantity} onChange={event => setQuantity(event.target.value)} /></Field>
-        <Field><FieldLabel htmlFor={`surgery-entry-note-${execution.id}`}>{supplement ? t('补登记依据', 'Addendum basis') : t('依据', 'Basis')}</FieldLabel><Input id={`surgery-entry-note-${execution.id}`} maxLength={2000} placeholder={supplement ? t('说明漏记的实际使用及核实依据', 'Describe the omitted use and verification basis') : t('例如：前降支近段植入', 'e.g. implanted in proximal LAD')} disabled={write.blocked} value={note} onChange={event => setNote(event.target.value)} /></Field>
-        <Button variant="outline" data-unavailable={!write.mutation.isPending && (write.blocked || !entry || overReserved || !note.trim()) || undefined} disabled={write.blocked || !entry || overReserved || !note.trim()} onClick={register}>{supplement ? t('确认补登记', 'Confirm addendum') : t('登记这笔', 'Record entry')}</Button>
+        <Field><FieldLabel htmlFor={`surgery-entry-note-${execution.id}`}>{t('补登记依据', 'Addendum basis')}</FieldLabel><Input id={`surgery-entry-note-${execution.id}`} maxLength={2000} placeholder={t('说明漏记的实际使用及核实依据', 'Describe the omitted use and verification basis')} disabled={write.blocked} value={note} onChange={event => setNote(event.target.value)} /></Field>
+        <Button variant="outline" data-unavailable={!write.mutation.isPending && (write.blocked || !entry || overReserved || !note.trim()) || undefined} disabled={write.blocked || !entry || overReserved || !note.trim()} onClick={register}>{t('确认补登记', 'Confirm addendum')}</Button>
       </FieldGroup>
-      {supplement && material ? <Field><FieldLabel htmlFor={`surgery-addendum-reservation-${execution.id}`}>{t('预留处理', 'Reservation handling')}</FieldLabel>
+      {material ? <Field><FieldLabel htmlFor={`surgery-addendum-reservation-${execution.id}`}>{t('预留处理', 'Reservation handling')}</FieldLabel>
         <WorkspaceSelect id={`surgery-addendum-reservation-${execution.id}`} value={supplementReservationId ?? 'additional'} disabled={write.blocked}
           items={[{ value: 'additional', label: t('额外使用，不消耗预留', 'Additional use without reservation') }, ...supplementReservations.map(item => ({ value: item.id,
             label: `${item.requestId ? t('本计划预留', 'Plan reservation') : t('住院通用预留', 'Admission reservation')} · ${formatShanghaiMinute(item.createdAt)} · ${remaining(item)} ${item.unit ?? material.chargeDefinition.unit} · ${formatFen(item.priceFen, locale)}/${item.unit ?? material.chargeDefinition.unit}` }))]}
@@ -150,15 +147,7 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
         {supplementReservationUnavailable ? <FieldDescription className="text-destructive">{t('原选预留已变化，请重新核对预留处理。', 'The selected reservation changed. Review reservation handling again.')}</FieldDescription> : null}
       </Field> : null}
       {entry && entryCharge ? <p className="text-sm tabular-nums">{entry.material.display} · {entry.amount} {entryCharge.unit} × {formatFen(entryCharge.priceFen, locale)}/{entryCharge.unit} · <strong>{t('本笔新增费用 ', 'New charge ')}{formatFen(entryCharge.priceFen * entry.amount, locale)}</strong></p> : null}
-      {material ? <FieldDescription className="flex flex-wrap items-center gap-2">
-        {running ? <span>{formatFen(material.chargeDefinition.priceFen, locale)}/{material.chargeDefinition.unit}</span> : null}
-        {left && running ? <><span>· {t('本计划还预留', 'Reserved for this plan')} {remaining(left)} {material.chargeDefinition.unit}：</span>
-          <span role="group" aria-label={t('本笔是否消耗预留', 'Consume reservation')} className="inline-flex gap-1">
-            <Button size="sm" variant={extra ? 'ghost' : 'secondary'} aria-pressed={!extra} onClick={() => setExtra(false)}>{t('消耗预留', 'Consume reservation')}</Button>
-            <Button size="sm" variant={extra ? 'secondary' : 'ghost'} aria-pressed={extra} onClick={() => setExtra(true)}>{t('额外使用，不消耗预留', 'Additional use without reservation')}</Button></span></>
-          : !left && planned.some(item => item.materialId === material.id) ? <span>· {t('本计划预留已用完或已释放，这笔记为额外使用。', 'Reservation used up or released; this entry is additional use.')}</span> : null}
-        {overReserved ? <span className="text-destructive">{t('超过剩余预留，可改为额外使用。', 'Exceeds the remaining reservation; record as additional use instead.')}</span> : null}
-      </FieldDescription> : null}
+      {material && overReserved ? <FieldDescription className="text-destructive">{t('超过剩余预留，可改为额外使用。', 'Exceeds the remaining reservation; record as additional use instead.')}</FieldDescription> : null}
     </section> : !running && readOnlyReason ? <FieldDescription>{readOnlyReason}</FieldDescription> : null}
     {execution.materialHistory.length > 0 ? <details className="clinmesh-inpatient-disclosure"><summary>{t('登记与更正记录', 'Entry and correction history')}（{execution.materialHistory.length}）</summary>
       <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">{execution.materialHistory.map(use => <p key={use.id}>{formatShanghaiMinute(use.recordedAt)} · {use.recordingKind === 'postoperative-addendum' ? `${t('术后补登记', 'Postoperative addendum')} · ` : ''}{use.recordedBy === session.actor.actorId ? session.user.name : use.recordedBy} · {use.item.display} × {use.quantity} · {use.note}{use.correction ? ` · ${t('已更正：', 'Corrected: ')}${use.correction.note}` : ''}</p>)}</div></details> : null}

@@ -14,6 +14,7 @@ const time = '2026-11-13T09:00:00+08:00'
 const session: SessionContext = { actor: { actorId: 'doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor' }, user: { id: 'doctor', name: '住院医生', email: 'doctor@demo.clinmesh.local' }, availableRoles: [] }
 const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-001', admissionRoute: 'direct', wardId: 'ward-1', organizationId: 'org-1', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: time, depositFen: 0, chargesFen: 0, versionId: '1' })
 const procedure = { id: 'procedure-1', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '88.5500', display: '用单根导管的冠状动脉造影术', category: '诊断性操作', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.com/synthetic', sourceSha256: 'a'.repeat(64), sourceLocator: 'synthetic' }, chargeDefinition: { id: 'procedure-price', priceFen: 10000, unit: '次', synthetic: true, trigger: 'execution' } }
+const otherProcedure = { ...procedure, id: 'procedure-2', coding: { ...procedure.coding, code: '36.0700', display: '药物洗脱冠状动脉支架置入术', category: '介入治疗' as const } }
 const material = { id: 'material-1', version: 1, display: '合成造影导管', chargeDefinition: { id: 'material-price', priceFen: 2000, unit: '根', synthetic: true, trigger: 'execution' } }
 const plan = { id: 'request-1', admissionId: admission.id, version: 3, status: 'ready', plannedProcedure: procedure, plannedFor: time, reason: '合成冠脉造影计划', requestedAt: time, requestedBy: 'doctor', organizationId: 'org-1', consentConfirmation: { actorId: 'doctor', practitionerRoleId: 'role-doctor', recordedAt: time, note: '已核实同意书' }, preopCheck: { actorId: 'nurse', practitionerRoleId: 'role-nurse', recordedAt: time, note: '已核对' } }
 const clients: QueryClient[] = []
@@ -26,7 +27,7 @@ function mount({ consent = true, stale = true, pci = false, changed = false } = 
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path.endsWith('/api/auth/context')) return Response.json(session)
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '1', virtualTime: time, requests: [{ ...plan, plannedProcedure: pci ? { ...procedure, coding: { ...procedure.coding, code: '36.0700' } } : procedure, status: consent ? 'ready' : 'requested', consentConfirmation: consent ? plan.consentConfirmation : undefined }], executions: [], inProgress: [] })
-    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material] })
+    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure, otherProcedure], materials: [material] })
     if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: admission.id, encounterVersion: '1', reservationSets: [], reservations: [{ id: 'reservation-1', admissionId: admission.id, requestId: plan.id, materialId: material.id, materialDisplay: material.display, quantity: 1, catalogVersion: 1, consumedQuantity: 0, priceFen: 2000, status: 'reserved', reason: '按造影方案', createdAt: time }] })
     if (path.endsWith('/pci-selection')) return Response.json({ admissionId: admission.id, confirmation: null, history: [], evidencePackage: { id: 'synthetic-evidence', version: '1', synthetic: true, limitation: '仅合成验证' }, candidates: [], drafts: [{ requestId: plan.id, version: 1, reportId: 'report-1', reportVersion: 1, edited: changed, confirmedSelectionVersion: changed ? null : 1, parameters: { requestId: plan.id, treatmentPlan: '支架置入', targetSite: 'LAD', measurements: [], plannedQuantities: [], approvedMaterialIds: [] } }] })
     if (path.endsWith('/material-estimates')) return Response.json({ admissionId: admission.id, estimates: [estimate], unprepared: [] })
@@ -65,14 +66,24 @@ it('预留后真实修改 PCI 选型仍提示再次核对手术耗材', async ()
   expect(within(screen.getByRole('region', { name: '当前操作' })).getByRole('button', { name: '确认手术耗材' })).toBeDefined()
 })
 
-it('开始说明可点选，清空后禁止开始', async () => {
+it('按计划术式开始默认折叠备注并可直接提交，改换实际术式自动展开并强制填写原因', async () => {
   mount()
   const user = userEvent.setup()
   await user.click(await screen.findByRole('button', { name: '开始手术' }))
   const dialog = await screen.findByRole('dialog', { name: '开始手术' })
+  expect(within(dialog).queryByRole('textbox', { name: '开始说明' })).toBeNull()
+  expect(within(dialog).getByRole('button', { name: '开始手术' }).hasAttribute('disabled')).toBe(false)
+  await user.click(within(dialog).getByRole('button', { name: '添加备注' }))
   await user.click(within(dialog).getByRole('button', { name: '术前准备已完成，按计划开始手术' }))
   const input = within(dialog).getByRole('textbox', { name: '开始说明' })
   expect(input).toHaveProperty('value', '术前准备已完成，按计划开始手术')
   await user.clear(input)
+  expect(within(dialog).getByRole('button', { name: '开始手术' }).hasAttribute('disabled')).toBe(false)
+  within(dialog).getByRole('combobox', { name: '实际术式' }).focus()
+  await user.keyboard('{Enter}')
+  await user.click(await screen.findByRole('option', { name: '36.0700 · 药物洗脱冠状动脉支架置入术' }))
+  expect(within(dialog).getByRole('textbox', { name: '开始说明' })).toBeDefined()
   expect(within(dialog).getByRole('button', { name: '开始手术' }).hasAttribute('disabled')).toBe(true)
+  await user.type(within(dialog).getByRole('textbox', { name: '开始说明' }), '造影发现重度狭窄改为支架置入')
+  expect(within(dialog).getByRole('button', { name: '开始手术' }).hasAttribute('disabled')).toBe(false)
 })

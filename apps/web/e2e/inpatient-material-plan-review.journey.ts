@@ -50,7 +50,7 @@ export async function runMaterialPlanReviewJourney(page: Page, app: PciBrowserAp
   const startDialog = page.getByRole('dialog', { name: '开始手术', exact: true })
   await startDialog.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${stay.procedure.coding.code} · ${stay.procedure.coding.display}`, exact: true }).click()
-  await startDialog.getByLabel('开始说明', { exact: true }).fill('仅确认一次清单后按实际完成合成 PCI')
+  await expect(startDialog.getByLabel('开始说明', { exact: true })).toHaveCount(0)
   await startDialog.getByRole('button', { name: '开始手术', exact: true }).click()
   const entries = page.getByRole('region', { name: '本台耗材', exact: true })
   await expect(entries).toContainText('手术进行中')

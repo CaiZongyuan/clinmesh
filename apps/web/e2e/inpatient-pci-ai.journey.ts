@@ -150,7 +150,7 @@ export async function runPciAiJourney(page: Page, app: PciAiBrowserApp) {
   const startDialog = page.getByRole('dialog', { name: '开始手术', exact: true })
   await startDialog.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${pci.coding.code} · ${pci.coding.display}`, exact: true }).click()
-  await startDialog.getByLabel('开始说明', { exact: true }).fill('开始合成PCI手术')
+  await expect(startDialog.getByLabel('开始说明', { exact: true })).toHaveCount(0)
   await startDialog.getByRole('button', { name: '开始手术', exact: true }).click()
   const live = page.getByRole('region', { name: '本台耗材', exact: true })
   const wire = catalog.materials.find(item => item.id === 'hospital-material-pci-guidewire')!
@@ -249,7 +249,7 @@ export async function runPciAiFrozenJourney(page: Page, app: PciAiBrowserApp) {
   const startDialog = page.getByRole('dialog', { name: '开始手术', exact: true })
   await startDialog.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: `${planned.plannedProcedure.coding.code} · ${planned.plannedProcedure.coding.display}`, exact: true }).click()
-  await startDialog.getByLabel('开始说明', { exact: true }).fill('开始手术验证术前确认只读')
+  await expect(startDialog.getByLabel('开始说明', { exact: true })).toHaveCount(0)
   const started = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === `${stay.path}/surgeries/start`)
   await startDialog.getByRole('button', { name: '开始手术', exact: true }).click()
   expect((await started).status()).toBe(200)

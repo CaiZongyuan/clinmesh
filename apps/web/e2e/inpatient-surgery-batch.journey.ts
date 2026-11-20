@@ -201,7 +201,7 @@ export async function runSurgeryBatchJourney(page: Page, s: Patient, open: () =>
   const start = page.getByRole('dialog', { name: '开始手术', exact: true })
   await start.getByLabel('实际术式', { exact: true }).click()
   await page.getByRole('option', { name: '00.6600 · 经皮冠状动脉腔内血管成形术[PTCA]', exact: true }).click()
-  await start.getByLabel('开始说明', { exact: true }).fill('合成第二台开始，按实际逐笔登记')
+  await expect(start.getByLabel('开始说明', { exact: true })).toHaveCount(0)
   const started = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith(`${s.path}/surgeries/start`))
   await start.getByRole('button', { name: '开始手术', exact: true }).click()
   expect((await started).status()).toBe(200)

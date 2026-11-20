@@ -24,11 +24,18 @@ export function completionReviewNote(rows: CompletionDraftRow[], plan: Inpatient
   const changed = rows.some(row => Number(row.quantity) !== row.previousQuantity)
   const lead = changed ? zh ? '最终用量已按逐项核实调整' : 'Final quantities adjusted after item review'
     : zh ? '最终用量按术中已登记量核实' : 'Final quantities verified against recorded use'
-  if (!plan) return `${lead}${zh ? '；未取得可核验的术前计划，计划差异待核实。' : '; no verifiable preoperative plan is available; plan differences need review.'}`
+  const history = retainedMaterialHistory(materialHistoryInOriginalOrder(execution.materialHistory), rows)
+  if (!plan) {
+    const extraDetails = history
+      .filter(use => !use.reservationId || !reservations.some(item => item.id === use.reservationId && item.requestId === execution.requestId))
+      .map(use => `${use.item.display} ${use.quantity} ${use.item.chargeDefinition.unit}${use.note.trim() ? `，${use.note.trim()}` : ''}`)
+    return extraDetails.length > 0
+      ? `${lead}；${extraDetails.join('；')}。`.slice(0, 2000)
+      : `${lead}${zh ? '；未取得可核验的术前计划，计划差异待核实。' : '; no verifiable preoperative plan is available; plan differences need review.'}`
+  }
   const differences = completionQuantities(rows, plan).filter(row => row.difference !== 0)
   if (differences.length === 0) return changed ? `${lead}${zh ? '，与术前计划一致。' : '; consistent with the preoperative plan.'}`
     : zh ? '最终用量与术中登记、术前计划一致。' : 'Final quantities match recorded use and the preoperative plan.'
-  const history = retainedMaterialHistory(materialHistoryInOriginalOrder(execution.materialHistory), rows)
   const details = differences.map(row => {
     const notes = excessUseNotes(history.filter(use => `${use.item.id}@${use.item.version}` === row.key), row.planned ?? 0)
     return row.difference! > 0 ? `${row.display}${zh ? '多用' : ' extra '}${row.difference} ${row.unit}${notes.length ? `，${notes.join('；')}` : ''}`

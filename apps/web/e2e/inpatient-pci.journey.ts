@@ -68,7 +68,7 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
     await replacement.click()
     await page.getByRole('option', { name: `${reservation.materialDisplay} × ${reservation.quantity} · ${reservation.reason}`, exact: true }).click()
   }
-  await batch.getByLabel('补录依据', { exact: true }).fill('合成PCI知情同意已签署并完成支架植入')
+  await expect(batch.getByLabel('补录依据', { exact: true })).toHaveCount(0)
   let executionPosts = 0
   page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith(`${stay.path}/surgeries/execute`)) executionPosts++ })
   await batch.getByRole('button', { name: '记录实际手术', exact: true }).click()

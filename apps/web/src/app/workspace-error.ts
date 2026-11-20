@@ -201,6 +201,7 @@ export function getWorkspaceErrorMessage(
     INPATIENT_SURGERY_NOT_READY: messages.inpatientSurgeryNotReadyDescription,
     INPATIENT_SURGERY_EXECUTION_REQUIRED: messages.inpatientSurgeryExecutionRequiredDescription,
     INPATIENT_SURGERY_TIME_CONFLICT: messages.inpatientSurgeryTimeDescription,
+    INPATIENT_SURGERY_NOTE_REQUIRED: messages === getWorkspaceMessages('zh-CN') ? (error.message || messages.inpatientSurgeryNoteRequiredDescription) : messages.inpatientSurgeryNoteRequiredDescription,
     INPATIENT_DISCHARGE_PENDING_ORDERS: messages.inpatientDischargeOrdersDescription,
     INPATIENT_SETTLEMENT_PREVIEW_STALE: messages.inpatientSettlementStaleDescription,
     INPATIENT_SETTLEMENT_FUNDS_CONFLICT: messages.inpatientSettlementStaleDescription,

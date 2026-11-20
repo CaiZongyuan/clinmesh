@@ -24,7 +24,8 @@ import { cn } from '@clinmesh/ui/lib/utils'
 import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { apiGet } from './api-client.ts'
+import { isSamePlannedProcedure } from '@clinmesh/core/inpatient-surgery-notes'
+import { ApiClientError, apiGet } from './api-client.ts'
 import { extractClinicalQualityError, InpatientClinicalQualityBanner } from './clinical-quality-banner.tsx'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
@@ -143,7 +144,14 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/${subpath}`, schema, signal),
   })
   const selection = preopQuery('pci-selection', inpatientPciSelectionSchema)
-  const estimates = preopQuery('material-estimates', inpatientMaterialEstimatesSchema, true)
+  const estimates = useQuery({
+    queryKey: [...scope, admission.id, 'material-estimates'],
+    enabled: active && doctor && pendingPlans.length > 0 && (running.length === 0 || otherPlansOpen),
+    retry: false,
+    refetchInterval: pollActive ? 3_000 : false,
+    refetchIntervalInBackground: false,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/material-estimates`, inpatientMaterialEstimatesSchema, signal),
+  })
   const guidelines = preopQuery('guideline-advice', inpatientGuidelineAdviceListSchema)
   const completedExecutions = surgery.data?.executions ?? []
   const hasCoronaryProcedure = Boolean(
@@ -194,6 +202,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     {pendingPlans.length > 1 ? <Field><FieldLabel htmlFor="current-surgery-plan">{t('当前计划', 'Current plan')}</FieldLabel><WorkspaceSelect id="current-surgery-plan" value={selectedPlan?.id ?? null} disabled={write.blocked}
       items={pendingPlans.map(row => ({ value: row.id, label: `${row.plannedProcedure.coding.display} · ${row.reason}` }))} onValueChange={setSelectedRequestId} /></Field> : null}
     {pendingPlans.map(row => <div key={row.id} hidden={row.id !== selectedPlan?.id || running.length > 0 && !otherPlansOpen}><SurgeryRequest key={`${requestOwnerKey}:${row.id}`} row={row} catalog={catalog.data} reservations={reservationRows}
+      planBasis={estimates.data?.estimates.find(item => item.requestId === row.id)?.planBasis}
       dataReady={materialDataReady} onRetry={() => { void refresh() }}
       admission={admission} session={session} locale={locale} write={write} preparationSlot={isPci || showStepTwo ? preparationSlot : null} preparation={row.id === selectedPlan?.id ? preparation : undefined} focused={active && row.id === selectedPlan?.id && (running.length === 0 || otherPlansOpen)} /></div>)}
   </>
@@ -802,16 +811,20 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
   </section>
 }
 
-function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admission, session, locale, write, focused, preparation, preparationSlot }: Props & { preparationSlot?: HTMLDivElement | null; preparation?: ReturnType<typeof surgeryPreparation> | undefined; row: Request; catalog: Catalog | undefined; reservations: InpatientMaterialReservation[]; focused: boolean; dataReady: boolean; onRetry: () => void }): React.JSX.Element {
+function SurgeryRequest({ row, catalog, reservations, planBasis, dataReady, onRetry, admission, session, locale, write, focused, preparation, preparationSlot }: Props & { preparationSlot?: HTMLDivElement | null; preparation?: ReturnType<typeof surgeryPreparation> | undefined; row: Request; catalog: Catalog | undefined; reservations: InpatientMaterialReservation[]; planBasis?: z.infer<typeof inpatientMaterialEstimatesSchema>['estimates'][number]['planBasis'] | undefined; focused: boolean; dataReady: boolean; onRetry: () => void }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const doctor = session.actor.roleCode === 'inpatient-doctor', nurse = session.actor.roleCode === 'ward-nurse'
   const [panel, setPanel] = useState<'consent' | 'cancel' | 'start' | 'batch' | null>(null)
   const [consentNote, setConsentNote] = useState(''), [preopNote, setPreopNote] = useState(''), [cancelNote, setCancelNote] = useState('')
-  const [startNote, setStartNote] = useState('')
+  const [startNote, setStartNote] = useState(''), [startNoteOpen, setStartNoteOpen] = useState(false)
   const [actualId, setActualId] = useState<string | null>(null)
   const batchTrigger = useRef<HTMLButtonElement | null>(null), startTrigger = useRef<HTMLButtonElement | null>(null)
   useLayoutEffect(() => { if (!focused) setPanel(current => current === 'start' || current === 'batch' ? null : current) }, [focused])
   const actual = catalog?.procedures.find(item => item.id === (actualId ?? row.plannedProcedure.id))
+  const startServerNoteRequired = write.mutation.error instanceof ApiClientError && write.mutation.error.code === 'INPATIENT_SURGERY_NOTE_REQUIRED'
+    && write.mutation.variables?.operation === 'inpatient.surgery.start' && write.mutation.variables.input.requestId === row.id
+  const startDeviated = Boolean(actual && !isSamePlannedProcedure(actual, row.plannedProcedure)) || startServerNoteRequired
+  const showStartNote = startDeviated || startNoteOpen || startNote.trim().length > 0
   const active = ['requested', 'ready'].includes(row.status), ready = row.status === 'ready', blocked = write.blocked || admission.status !== 'admitted'
   const common = { admissionId: admission.id, requestId: row.id, expectedRequestVersion: row.version }
   const close = { onSuccess: () => setPanel(null) }
@@ -819,10 +832,11 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
   const planned = reservations.filter(item => item.requestId === row.id && item.status === 'reserved')
   const plannedFen = planned.reduce((sum, item) => sum + item.priceFen * (item.remainingQuantity ?? item.quantity - item.consumedQuantity), 0)
   const start = () => {
-    if (actual && startNote.trim()) {
+    const trimmed = startNote.trim()
+    if (actual && (!startDeviated || trimmed)) {
       write.mutation.mutate({
         operation: 'inpatient.surgery.start',
-        input: { ...common, note: startNote.trim(), procedureId: actual.id, catalogVersion: actual.version },
+        input: { ...common, ...(trimmed ? { note: trimmed } : {}), procedureId: actual.id, catalogVersion: actual.version },
       }, close)
     }
   }
@@ -852,7 +866,7 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
         busy: undefined,
         reason: missing.length > 0 ? `${t('还差：', 'Still needed: ')}${missing.join(t('、', ', '))}` : t('开始后逐笔登记耗材；术式费在完成手术时计入', 'Record materials one by one after starting; the procedure fee is posted at completion'),
         action: <>{ready ? <Button ref={batchTrigger} variant="outline" disabled={blocked} onClick={() => setPanel('batch')}>{t('整台补录', 'Record entire surgery')}</Button> : null}
-          <Button ref={startTrigger} disabled={blocked || !ready} onClick={() => { setActualId(null); setPanel('start') }}>{t('开始手术', 'Start surgery')}</Button></>,
+          <Button ref={startTrigger} disabled={blocked || !ready} onClick={() => { setActualId(null); setStartNoteOpen(false); setPanel('start') }}>{t('开始手术', 'Start surgery')}</Button></>,
       }
   const nextStep = preparation?.step ?? (!row.consentConfirmation ? 'consent' : !row.preopCheck ? 'nurse' : 'start')
   if (panel === null && nextStep !== 'start') {
@@ -861,7 +875,7 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
   }
   const procedureItems = (catalog?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))
   const actualField = <Field><FieldLabel htmlFor={`surgery-actual-${row.id}`}>{t('实际术式', 'Performed procedure')}</FieldLabel><WorkspaceSelect id={`surgery-actual-${row.id}`} value={actual?.id ?? null} items={procedureItems} onValueChange={setActualId} />
-    <FieldDescription>{actual && actual.coding.code !== row.plannedProcedure.coding.code ? `${t('与计划不同（计划：', 'Differs from plan (')}${row.plannedProcedure.coding.display}${t('）；DRG 预分组按实际术式重算', '); DRG is recalculated with the performed procedure')}` : t('默认与计划术式相同', 'Defaults to the planned procedure')}</FieldDescription></Field>
+    <FieldDescription>{actual && !isSamePlannedProcedure(actual, row.plannedProcedure) ? `${t('与计划不同（计划：', 'Differs from plan (')}${row.plannedProcedure.coding.display}${t('）；DRG 预分组按实际术式重算', '); DRG is recalculated with the performed procedure')}` : t('默认与计划术式相同', 'Defaults to the planned procedure')}</FieldDescription></Field>
   const preopBusy = pending('inpatient.surgery.check-preop')
   const preopBtn = (cls?: string) => <Button className={cls} aria-busy={preopBusy || undefined} data-busy={preopBusy || undefined} data-unavailable={!write.mutation.isPending && (blocked || !preopNote.trim()) || undefined} disabled={blocked || !preopNote.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.check-preop', input: { ...common, note: preopNote.trim() } })}>{preopBusy ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{preopBusy ? t('正在术前核对', 'Recording preoperative checks') : t('术前核对', 'Record preoperative checks')}</Button>
   const presetBtns = (items: Array<[string, string]>, pick: (v: string) => void) => <div className="flex flex-wrap gap-2">{items.map(([cn, en]) => { const v = t(cn, en); return <Button key={v} type="button" variant="outline" size="sm" disabled={blocked} onClick={() => pick(v)}>{v}</Button> })}</div>
@@ -892,16 +906,17 @@ function SurgeryRequest({ row, catalog, reservations, dataReady, onRetry, admiss
         <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4">
           {write.mutation.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
           <FieldSet disabled={blocked}><FieldGroup>{actualField}
-            <Field><FieldLabel htmlFor={`surgery-start-${row.id}`}>{t('开始说明', 'Start note')}</FieldLabel>{presetBtns([["术前准备已完成，按计划开始手术", "Preoperative preparation complete; start as planned"], ["核对患者、术式及部位无误，开始手术", "Patient, procedure and site verified; start surgery"]], setStartNote)}<Input id={`surgery-start-${row.id}`} maxLength={2000} value={startNote} onChange={event => setStartNote(event.currentTarget.value)} /></Field>
+            {showStartNote ? <Field data-invalid={startDeviated && !startNote.trim() || undefined}><FieldLabel htmlFor={`surgery-start-${row.id}`}>{t('开始说明', 'Start note')}</FieldLabel>{!startDeviated ? presetBtns([["术前准备已完成，按计划开始手术", "Preoperative preparation complete; start as planned"], ["核对患者、术式及部位无误，开始手术", "Patient, procedure and site verified; start surgery"]], setStartNote) : null}<Input id={`surgery-start-${row.id}`} maxLength={2000} placeholder={startDeviated ? t('请说明偏离原计划术式的变更原因', 'Explain why the performed procedure differs from the plan') : undefined} value={startNote} onChange={event => setStartNote(event.currentTarget.value)} /></Field>
+              : <Button type="button" variant="ghost" size="sm" className="self-start" disabled={blocked} onClick={() => setStartNoteOpen(true)}>{t('添加备注', 'Add note')}</Button>}
           </FieldGroup></FieldSet>
         </div>
-        <OrderComposerFooter hint={startNote.trim() ? undefined : t('还差：开始说明', 'Enter the start note')}>
+        <OrderComposerFooter hint={startDeviated && !startNote.trim() ? t('还差：术式变更原因', 'Enter the procedure change reason') : undefined}>
           <Button type="button" variant="outline" disabled={write.mutation.isPending} onClick={() => setPanel(null)}>{t('取消', 'Cancel')}</Button>
-          <Button type="submit" aria-busy={pending('inpatient.surgery.start') || undefined} disabled={blocked || !ready || !actual || !startNote.trim()}>{pending('inpatient.surgery.start') ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{t('开始手术', 'Start surgery')}</Button>
+          <Button type="submit" aria-busy={pending('inpatient.surgery.start') || undefined} disabled={blocked || !ready || !actual || (startDeviated && !startNote.trim())}>{pending('inpatient.surgery.start') ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{t('开始手术', 'Start surgery')}</Button>
         </OrderComposerFooter>
       </form>
     </DialogContent></Dialog> : null}
-    {doctor && active ? <SurgeryExecuteComposer admission={admission} session={session} request={row} catalog={catalog} reservations={reservations} locale={locale} write={write}
+    {doctor && active ? <SurgeryExecuteComposer admission={admission} session={session} request={row} catalog={catalog} reservations={reservations} planBasis={planBasis} locale={locale} write={write}
       dataReady={dataReady} onRetry={onRetry} open={panel === 'batch'} focused={focused} onOpenChange={open => setPanel(open ? 'batch' : null)} returnFocus={batchTrigger} /> : null}</div>
   return <article role="region" aria-label={focused ? t('当前手术计划', 'Current surgery plan') : t('手术计划记录', 'Surgery plan record')} className="flex min-w-0 flex-col gap-4">
     <div className="clinmesh-inpatient-summary flex flex-col gap-3">

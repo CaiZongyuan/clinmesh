@@ -129,7 +129,7 @@ it('预览只核实同一整台意图，完成成功后消费原未提交输入�
   await user.clear(screen.getByRole('textbox', { name: '核实说明' })); await user.type(screen.getByRole('textbox', { name: '核实说明' }), '两材集中核实')
   await waitFor(() => expect(screen.getByRole<HTMLButtonElement>('button', { name: '确认完成手术' }).disabled).toBe(false))
   await user.click(await screen.findByRole('button', { name: '确认完成手术' }))
-  await waitFor(() => expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('最终用量按术中已登记量核实；未取得可核验的术前计划，计划差异待核实。'))
+  await waitFor(() => expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe(''))
   expect(requests.filter(value => value.path.endsWith('/complete'))).toHaveLength(1)
   expect(requests.find(value => value.path.endsWith('/complete'))!.input).toMatchObject({ reconciliation: { finalMaterials: [
     { materialId: 'material-1', quantity: 1 }, { materialId: 'material-2', quantity: 1 },
@@ -190,9 +190,11 @@ it('患者与岗位隔离未提交输入，清空未提交输入必须明确确�
   await user.click(screen.getByRole('button', { name: '有出入，改数量' }))
   await user.clear(screen.getByRole('textbox', { name: '核实说明' })); await user.type(screen.getByRole('textbox', { name: '核实说明' }), '原患者人工核实')
   view.update({ admission: { ...admission, id: 'admission-2', patientId: 'patient-2' }, execution: { ...execution, id: 'execution-2', admissionId: 'admission-2' }, request: { ...request, id: 'request-2', admissionId: 'admission-2' } })
-  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('最终用量按术中已登记量核实；未取得可核验的术前计划，计划差异待核实。')
+  expect(screen.queryByRole('textbox', { name: '核实说明' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: '添加备注' }))
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('')
   view.update({ session: { ...session, actor: { ...session.actor, practitionerRoleId: 'role-other' } } })
-  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('最终用量按术中已登记量核实；未取得可核验的术前计划，计划差异待核实。')
+  expect(screen.queryByRole('textbox', { name: '核实说明' })).toBeNull()
   view.update({})
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('原患者人工核实')
   await user.click(screen.getByRole('button', { name: '清空输入并重新带入当前用量' }))
@@ -204,7 +206,9 @@ it('患者与岗位隔离未提交输入，清空未提交输入必须明确确�
   expect(screen.getByRole('alertdialog').textContent).toContain('清空未提交输入失败，原内容仍保留')
   storage.mockRestore()
   await user.click(screen.getByRole('button', { name: '确认丢弃并重新带入' }))
-  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('最终用量按术中已登记量核实；未取得可核验的术前计划，计划差异待核实。')
+  expect(screen.queryByRole('textbox', { name: '核实说明' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: '添加备注' }))
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('')
 })
 
 it('fresh Session 与当前视图变化阻止已点击的旧核实意图发送', async () => {
@@ -271,8 +275,8 @@ it('同一预留跨冻结行按合计最终量判断全选，清空释放选择�
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('合计核实两个冻结来源')
 })
 
-it('打开即以已登记量显示差额和规则说明，无须手点预览即可完成', async () => {
-  const inputs: unknown[] = []
+it('零差额默认折叠核实说明且无需输入即可完成，现场改量或存在未用预留时自动展开并拦截无原因提交', async () => {
+  const inputs: Array<Record<string, unknown>> = []
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/auth/context') return Response.json(session)
     if (path.endsWith('/preview-completion')) {
@@ -285,11 +289,83 @@ it('打开即以已登记量显示差额和规则说明，无须手点预览即�
   await user.click(screen.getByRole('button', { name: '核实最终耗材并完成手术' }))
   const summary = await screen.findByRole('region', { name: '本次差额' })
   expect(summary.textContent).toContain('¥100.00')
-  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('最终用量按术中已登记量核实；未取得可核验的术前计划，计划差异待核实。')
+  expect(screen.queryByRole('textbox', { name: '核实说明' })).toBeNull()
   await waitFor(() => expect(screen.getByRole<HTMLButtonElement>('button', { name: '确认完成手术' }).disabled).toBe(false))
   expect(inputs).toHaveLength(1)
-  await user.clear(screen.getByRole('textbox', { name: '核实说明' }))
+  expect(inputs[0]).not.toHaveProperty('note')
+  await user.click(screen.getByRole('button', { name: '添加备注' }))
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('')
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: '确认完成手术' }).disabled).toBe(false)
+  await user.click(screen.getByRole('button', { name: '有出入，改数量' }))
+  await user.click(screen.getByRole('button', { name: '新增最终耗材' }))
+  await user.click(screen.getByRole('button', { name: '加入导丝' }))
+  await user.click(screen.getByRole('button', { name: '完成选择' }))
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('')
   expect(screen.getByRole<HTMLButtonElement>('button', { name: '确认完成手术' }).disabled).toBe(true)
+  await user.type(screen.getByRole('textbox', { name: '核实说明' }), '完术补记一根导丝')
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>('button', { name: '确认完成手术' }).disabled).toBe(false))
+})
+
+it('术中已说明原因的额外使用在零差额完术时自动带入多用说明且不阻塞确认，存在未用预留时自动展开空说明并必填', async () => {
+  const wire = catalog.materials[0]!
+  const plannedReservation = inpatientMaterialReservationSchema.parse({ id: 'reservation-plan-1', admissionId: admission.id, requestId: request.id,
+    version: 2, materialId: wire.id, materialDisplay: wire.display, catalogVersion: 1, quantity: 1, consumedQuantity: 1,
+    remainingQuantity: 0, unit: '根', priceFen: 10000, reason: '术前导丝预留', status: 'replaced', createdAt: '2026-11-03T00:00:00Z' })
+  const plannedUse = { id: 'planned-use', item: wire, quantity: 1, amountFen: 10000, recordedAt: '2026-11-03T00:00:00Z', recordedBy: 'doctor', practitionerRoleId: 'role-doctor', note: '按计划使用预留耗材（导丝×1根）', reservationId: plannedReservation.id, chargeId: 'charge-plan', correction: null }
+  const extraUse = { id: 'extra-use', item: wire, quantity: 1, amountFen: 10000, recordedAt: '2026-11-03T00:05:00Z', recordedBy: 'doctor', practitionerRoleId: 'role-doctor', note: '分支保护', reservationId: null, chargeId: 'charge-extra', correction: null }
+  const explainedExecution = inpatientSurgeryExecutionSchema.parse({ ...execution, materials: [{ id: 'planned-use', item: wire, quantity: 1, amountFen: 10000 }, { id: 'extra-use', item: wire, quantity: 1, amountFen: 10000 }], materialHistory: [plannedUse, extraUse] })
+  const estimate = { id: 'estimate-1', admissionId: admission.id, requestId: request.id, version: 1, requestVersion: 1, status: 'succeeded', basisFingerprint: 'a'.repeat(64), failureCode: null, missing: [], candidates: [], analysis: null, draft: null, candidateItems: [], planBasis: {
+    requestId: request.id, status: 'confirmed', effectiveReference: 'InpatientMaterialPlan/plan-1',
+    history: [{ reference: 'InpatientMaterialPlan/plan-1', requestId: request.id, source: 'material-estimate', sourceId: 'estimate-1', sourceVersion: 1, basisFingerprint: 'a'.repeat(64),
+      sources: { requestId: request.id, evidencePackageId: 'synthetic-evidence', evidencePackageVersion: '1', materialEvidence: [] }, confirmedBy: 'doctor', confirmedAt: '2026-11-03T00:00:00Z', supersedes: null, reservationIds: [plannedReservation.id],
+      items: [{ materialId: wire.id, catalogVersion: 1, display: wire.display, specification: '合成规格', quantity: 1, unit: '根', unitPriceFen: 10000, estimatedFen: 10000, reason: '按计划', quantityBasis: '合成单病变', evidenceIds: ['wire-evidence'] }] }],
+  } }
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.endsWith('/material-estimates')) return Response.json({ admissionId: admission.id, estimates: [estimate], unprepared: [] })
+    if (path.endsWith('/preview-completion')) return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000 })
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成资料未准备' } }, { status: 503 })
+  }))
+  const user = userEvent.setup()
+  const view = mount({ execution: explainedExecution, reservations: [plannedReservation] })
+  await user.click(screen.getByRole('button', { name: '核实最终耗材并完成手术' }))
+  await waitFor(() => expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toContain('分支保护'))
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>('button', { name: '确认完成手术' }).disabled).toBe(false))
+  const unusedReservation = inpatientMaterialReservationSchema.parse({ ...plannedReservation, id: 'reservation-unused', materialId: 'material-2', materialDisplay: '球囊', consumedQuantity: 0, remainingQuantity: 1, status: 'reserved', reason: '术前球囊预留' })
+  view.update({ execution: explainedExecution, reservations: [plannedReservation, unusedReservation] })
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe('')
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: '确认完成手术' }).disabled).toBe(true)
+})
+
+it('无术前确认清单但术中已登记计划外耗材时完术自动带出原登记原因，服务端要求说明时自动展开输入框并锁定必填', async () => {
+  const wire = catalog.materials[0]!
+  const unreservedUse = { id: 'unreserved-use', item: wire, quantity: 1, amountFen: 10000, recordedAt: '2026-11-03T00:05:00Z', recordedBy: 'doctor', practitionerRoleId: 'role-doctor', note: '术中临时止血使用', reservationId: null, chargeId: 'charge-extra', correction: null }
+  const unreservedExecution = inpatientSurgeryExecutionSchema.parse({ ...execution, materials: [{ id: 'unreserved-use', item: wire, quantity: 1, amountFen: 10000 }], materialHistory: [unreservedUse] })
+  mount({ execution: unreservedExecution })
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '核实最终耗材并完成手术' }))
+  await waitFor(() => expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toContain('术中临时止血使用'))
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>('button', { name: '确认完成手术' }).disabled).toBe(false))
+  cleanup()
+
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.endsWith('/material-estimates')) return Response.json({ admissionId: admission.id, estimates: [], unprepared: [] })
+    if (path.endsWith('/preview-completion')) {
+      const body = JSON.parse(String(init?.body))
+      if (!body.input.note) {
+        return Response.json({ error: { code: 'INPATIENT_SURGERY_NOTE_REQUIRED', message: '存在历史确认差异，请填写核实说明' } }, { status: 400 })
+      }
+      return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000 })
+    }
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成资料未准备' } }, { status: 503 })
+  }))
+  mount()
+  await user.click(screen.getByRole('button', { name: '核实最终耗材并完成手术' }))
+  await waitFor(() => expect(screen.getByRole<HTMLInputElement>('textbox', { name: '核实说明' }).value).toBe(''))
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: '确认完成手术' }).disabled).toBe(true)
+  await user.type(screen.getByRole('textbox', { name: '核实说明' }), '补充历史确认差异说明')
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>('button', { name: '确认完成手术' }).disabled).toBe(false))
 })
 
 it('资料未变化时刷新核实依据仍重新自动预览并恢复完成入口', async () => {

@@ -43,10 +43,11 @@ export function IntraoperativeMaterialRows({ admissionId, session, locale, execu
   const items = catalog?.materials.filter(item => 'chargeDefinition' in item) ?? []
   const ids = [...new Set([...(plan?.items.map(item => item.materialId) ?? own.map(item => item.materialId)), ...execution.materials.map(use => use.item.id)])]
   const blocked = !editable || write.blocked || !dataReady
-  const register = (material: z.infer<typeof inpatientSurgeryMaterialSelectionSchema>, note: string, clear: () => void) => {
-    if (blocked || !note.trim()) return
+  const register = (material: z.infer<typeof inpatientSurgeryMaterialSelectionSchema>, note: string | undefined, clear: () => void) => {
+    const trimmed = note?.trim()
+    if (blocked || (material.reservationId === undefined && !trimmed)) return
     write.mutation.mutate({ operation: 'inpatient.surgery.record-material', input: { admissionId, requestId: execution.requestId,
-      expectedRequestVersion: requestVersion, executionId: execution.id, material, note: note.trim().slice(0, 2000) } }, { onSuccess: clear })
+      expectedRequestVersion: requestVersion, executionId: execution.id, material, ...(trimmed ? { note: trimmed.slice(0, 2000) } : {}) } }, { onSuccess: clear })
   }
   const reviewLine = (use: Execution['materialHistory'][number], fallbackDeviation: boolean) => {
     const review = data?.intraoperativeReviews.find(item => item.materialUseId === use.id)
@@ -95,7 +96,7 @@ export function IntraoperativeMaterialRows({ admissionId, session, locale, execu
               <TableCell className="text-right tabular-nums">{used ? formatFen(execution.materials.filter(use => use.item.id === id).reduce((sum, use) => sum + use.amountFen, 0), locale) : '—'}</TableCell>
               <TableCell className="whitespace-normal text-right"><div className="flex flex-wrap justify-end gap-1">
                 {material && plannedEntry > 0 ? <Button size="sm" disabled={blocked} aria-label={`${t('用', 'Use')} ${plannedEntry} ${unit} ${display}`} onClick={() => register({ materialId: material.id, catalogVersion: material.version, quantity: plannedEntry,
-                  reservationId: reservation!.id, expectedReservationVersion: reservation!.version }, `${t('按计划', 'As planned')} · ${basis}`, () => undefined)}>{t('用', 'Use')} {plannedEntry} {unit}</Button>
+                  reservationId: reservation!.id, expectedReservationVersion: reservation!.version }, basis.trim() ? `${t('按计划', 'As planned')} · ${basis.trim()}` : undefined, () => undefined)}>{t('用', 'Use')} {plannedEntry} {unit}</Button>
                   : material && extraId !== id ? <Button variant="link" size="sm" disabled={blocked} aria-label={`${t('再用', 'Use another')} 1 ${unit} ${display}`} onClick={() => { setExtraId(id); setExtraNote('') }}>{t('再用', 'Use another')} 1 {unit}</Button> : null}
                 {uses.length ? <Button variant="ghost" size="sm" disabled={!editable} aria-label={`${t('更正', 'Correct')} ${display} × ${uses[0]!.quantity}`} onClick={() => onCorrect(uses)}>{t('更正', 'Correct')}</Button> : null}
               </div></TableCell></TableRow>

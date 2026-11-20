@@ -1379,6 +1379,310 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     expect((await s.request(s.nurse, `${s.path}/executions/administer`, { executionId: execution.id, expectedExecutionVersion: execution.version })).status).toBe(409)
   })
 
+  it('常规无差异手术路径免填文字依据并保留留痕、指纹与回执，术式变更、通用预留与差额仍强制原因', async () => {
+    const s = await setup()
+    const prep = async (procedureId: string, reason: string) => {
+      const current = inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json())
+      const created = inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/request`, {
+        encounterVersion: current.encounterVersion, procedureId, catalogVersion: 1, plannedFor: '2026-08-25T02:00:00.000Z', reason,
+      })).json()).data.requests.find(item => item.reason === reason)!
+      expect((await s.request(s.nurse, `${s.path}/surgeries/check-preop`, { requestId: created.id, expectedRequestVersion: created.version, note: '合成术前核对' })).status).toBe(200)
+      expect((await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, { requestId: created.id, expectedRequestVersion: created.version + 1, note: '合成同意确认' })).status).toBe(200)
+      return inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests.find(item => item.id === created.id)!
+    }
+
+    // 1. 整台记录（execute）：术式偏离、遗留本台预留、含无本台预留耗材均拒绝空说明；术式一致且整笔消耗本台全部预留免填通过
+    const batchReq = await prep('hospital-surgery-4', '合成整台免填与拦截测试')
+    expect((await s.request(s.doctor, `${s.path}/drg/reservations`, {
+      encounterVersion: s.admission.versionId, requestId: batchReq.id, materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 2, reason: '合成整台双支架预留',
+    })).status).toBe(200)
+    expect((await s.request(s.doctor, `${s.path}/drg/reservations`, {
+      encounterVersion: s.admission.versionId, materialId: 'hospital-material-balloon', catalogVersion: 1, quantity: 1, reason: '合成住院通用球囊预留',
+    })).status).toBe(200)
+    const allReservations = inpatientMaterialReservationListSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/reservations`)).json()).reservations
+    const batchRes = allReservations.find(item => item.requestId === batchReq.id)!
+    const generalRes = allReservations.find(item => item.requestId === undefined)!
+
+    for (const badExecute of [
+      { requestId: batchReq.id, expectedRequestVersion: batchReq.version, procedureId: 'hospital-surgery-1', catalogVersion: 1,
+        materials: [{ materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 2, reservationId: batchRes.id }] },
+      { requestId: batchReq.id, expectedRequestVersion: batchReq.version, procedureId: 'hospital-surgery-4', catalogVersion: 1, materials: [] },
+      { requestId: batchReq.id, expectedRequestVersion: batchReq.version, procedureId: 'hospital-surgery-4', catalogVersion: 1,
+        materials: [{ materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 2, reservationId: batchRes.id },
+          { materialId: 'hospital-material-balloon', catalogVersion: 1, quantity: 1, reservationId: generalRes.id }] },
+      { requestId: batchReq.id, expectedRequestVersion: batchReq.version, procedureId: 'hospital-surgery-4', catalogVersion: 1,
+        materials: [{ materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 2, reservationId: batchRes.id },
+          { materialId: 'hospital-material-suture', catalogVersion: 1, quantity: 1 }] },
+    ]) {
+      const rejected = await s.request(s.doctor, `${s.path}/surgeries/execute`, badExecute)
+      expect(rejected.status).toBe(400)
+      expect(apiErrorSchema.parse(await rejected.json()).error.code).toBe('INPATIENT_SURGERY_NOTE_REQUIRED')
+    }
+
+    const execKey = randomUUID()
+    const execOk = await s.request(s.doctor, `${s.path}/surgeries/execute`, {
+      requestId: batchReq.id, expectedRequestVersion: batchReq.version, procedureId: 'hospital-surgery-4', catalogVersion: 1,
+      materials: [{ materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 2, reservationId: batchRes.id }],
+    }, execKey)
+    expect(execOk.status, await execOk.clone().text()).toBe(200)
+    const execReceipt = inpatientSurgeryResponseSchema.parse(await execOk.json())
+    const execRecord = execReceipt.data.executions.find(item => item.requestId === batchReq.id)!
+    expect(execRecord.note.length).toBeGreaterThan(0)
+    expect(execRecord.materialHistory[0]!.note).toContain('合成整台双支架预留')
+    expect(commandReceiptLookupSchema.parse(await (await s.request(s.doctor,
+      `/api/his/v1/command-receipts?operationId=inpatient.surgery.execute&idempotencyKey=${execKey}`)).json()).response).toEqual(execReceipt)
+
+    // 2. 逐笔路径（start / record-material / preview-completion / complete）
+    const stepReq = await prep('hospital-surgery-1', '合成逐笔常规与偏差测试')
+    expect((await s.request(s.doctor, `${s.path}/drg/reservations`, {
+      encounterVersion: (await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).encounterVersion,
+      requestId: stepReq.id, materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1, reason: '合成术前单支架预留',
+    })).status).toBe(200)
+    const stepRes = inpatientMaterialReservationListSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/reservations`)).json())
+      .reservations.find(item => item.requestId === stepReq.id)!
+
+    const badStart = await s.request(s.doctor, `${s.path}/surgeries/start`, {
+      requestId: stepReq.id, expectedRequestVersion: stepReq.version, procedureId: 'hospital-surgery-4', catalogVersion: 1, note: '   ',
+    })
+    expect(badStart.status).toBe(400)
+    expect(apiErrorSchema.parse(await badStart.json()).error.code).toBe('INPATIENT_SURGERY_NOTE_REQUIRED')
+
+    const startOk = await s.request(s.doctor, `${s.path}/surgeries/start`, {
+      requestId: stepReq.id, expectedRequestVersion: stepReq.version, procedureId: 'hospital-surgery-1', catalogVersion: 1,
+    })
+    expect(startOk.status, await startOk.clone().text()).toBe(200)
+    let stepState = inpatientSurgeryResponseSchema.parse(await startOk.json()).data
+    const running = stepState.inProgress.find(item => item.requestId === stepReq.id)!
+    expect(running.note.length).toBeGreaterThan(0)
+
+    // 未绑定预留或仅绑定住院通用预留时，省略说明须拒绝
+    for (const badMaterial of [
+      { materialId: 'hospital-material-suture', catalogVersion: 1, quantity: 1 },
+      { materialId: 'hospital-material-balloon', catalogVersion: 1, quantity: 1, reservationId: generalRes.id, expectedReservationVersion: generalRes.version },
+    ]) {
+      const rejected = await s.request(s.doctor, `${s.path}/surgeries/record-material`, {
+        requestId: stepReq.id, expectedRequestVersion: stepState.requests.find(r => r.id === stepReq.id)!.version,
+        executionId: running.id, material: badMaterial,
+      })
+      expect(rejected.status).toBe(400)
+      expect(apiErrorSchema.parse(await rejected.json()).error.code).toBe('INPATIENT_SURGERY_NOTE_REQUIRED')
+    }
+
+    // 还有未消耗本台预留时，不填说明预览或旧版直接完成均须拒绝
+    const prematurePreview = await s.request(s.doctor, `${s.path}/surgeries/preview-completion`, {
+      requestId: stepReq.id, expectedRequestVersion: stepState.requests.find(r => r.id === stepReq.id)!.version,
+      executionId: running.id, finalMaterials: [], releaseReservations: [],
+    })
+    expect(prematurePreview.status).toBe(400)
+    expect(apiErrorSchema.parse(await prematurePreview.json()).error.code).toBe('INPATIENT_SURGERY_NOTE_REQUIRED')
+    const prematureLegacyComplete = await s.request(s.doctor, `${s.path}/surgeries/complete`, {
+      requestId: stepReq.id, expectedRequestVersion: stepState.requests.find(r => r.id === stepReq.id)!.version, executionId: running.id,
+    })
+    expect(prematureLegacyComplete.status).toBe(400)
+    expect(apiErrorSchema.parse(await prematureLegacyComplete.json()).error.code).toBe('INPATIENT_SURGERY_NOTE_REQUIRED')
+
+    // 绑定本台有效预留免填登记成功，且术中已显式说明的额外耗材在完术零差额时无需二次手填说明
+    const recPlanned = await s.request(s.doctor, `${s.path}/surgeries/record-material`, {
+      requestId: stepReq.id, expectedRequestVersion: stepState.requests.find(r => r.id === stepReq.id)!.version,
+      executionId: running.id, material: { materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1, reservationId: stepRes.id, expectedReservationVersion: stepRes.version },
+    })
+    expect(recPlanned.status, await recPlanned.clone().text()).toBe(200)
+    stepState = inpatientSurgeryResponseSchema.parse(await recPlanned.json()).data
+    expect(stepState.inProgress[0]!.materialHistory[0]!.note).toContain('合成术前单支架预留')
+
+    const recExtra = await s.request(s.doctor, `${s.path}/surgeries/record-material`, {
+      requestId: stepReq.id, expectedRequestVersion: stepState.requests.find(r => r.id === stepReq.id)!.version,
+      executionId: running.id, note: '分支保护加用缝线', material: { materialId: 'hospital-material-suture', catalogVersion: 1, quantity: 1 },
+    })
+    expect(recExtra.status).toBe(200)
+    stepState = inpatientSurgeryResponseSchema.parse(await recExtra.json()).data
+    const uses = stepState.inProgress[0]!.materialHistory
+
+    // 完术现场改量（deltaQuantity !== 0）而未填说明须拒绝
+    const deltaWithoutNote = await s.request(s.doctor, `${s.path}/surgeries/preview-completion`, {
+      requestId: stepReq.id, expectedRequestVersion: stepState.requests.find(r => r.id === stepReq.id)!.version,
+      executionId: running.id, finalMaterials: [
+        { materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1, materialUseIds: [uses[0]!.id], reservationId: stepRes.id, expectedReservationVersion: stepRes.version + 1 },
+        { materialId: 'hospital-material-suture', catalogVersion: 1, quantity: 2, materialUseIds: [uses[1]!.id] },
+      ], releaseReservations: [],
+    })
+    expect(deltaWithoutNote.status).toBe(400)
+    expect(apiErrorSchema.parse(await deltaWithoutNote.json()).error.code).toBe('INPATIENT_SURGERY_NOTE_REQUIRED')
+
+    // 完术零净差额且无未消耗本台预留：省略 note 预览与空白 note 完成指纹一致并成功
+    const finalMaterials = [
+      { materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1, materialUseIds: [uses[0]!.id], reservationId: stepRes.id, expectedReservationVersion: stepRes.version + 1 },
+      { materialId: 'hospital-material-suture', catalogVersion: 1, quantity: 1, materialUseIds: [uses[1]!.id] },
+    ]
+    const preview = await previewCompletion(s, {
+      requestId: stepReq.id, expectedRequestVersion: stepState.requests.find(r => r.id === stepReq.id)!.version,
+      executionId: running.id, finalMaterials, releaseReservations: [],
+    })
+    expect(preview.materialDeltaFen).toBe(0)
+    const completeKey = randomUUID()
+    const completed = await s.request(s.doctor, `${s.path}/surgeries/complete`, {
+      requestId: stepReq.id, expectedRequestVersion: stepState.requests.find(r => r.id === stepReq.id)!.version,
+      executionId: running.id, note: '   ', reconciliation: { finalMaterials, releaseReservations: [], expectedFingerprint: preview.fingerprint },
+    }, completeKey)
+    expect(completed.status, await completed.clone().text()).toBe(200)
+    const completeReceipt = inpatientSurgeryResponseSchema.parse(await completed.json())
+    const finished = completeReceipt.data.executions.find(item => item.id === running.id)!
+    expect(finished.note).toBe('最终用量按术中已登记量核实，偏离原因已在术中登记')
+    const procedureResource = fhirResourceSchema.parse(await (await s.request(s.doctor, `/fhir/R5/Procedure/${running.id}`)).json())
+    expect(z.object({ status: z.literal('completed'), note: z.array(z.object({ text: z.string().min(1) })).min(2) }).loose().parse(procedureResource).status).toBe('completed')
+
+    // 术后补登记与更正继续保持必填原因门禁
+    const latestReqVersion = completeReceipt.data.requests.find(r => r.id === stepReq.id)!.version
+    expect((await s.request(s.doctor, `${s.path}/surgeries/supplement-material`, {
+      requestId: stepReq.id, expectedRequestVersion: latestReqVersion, executionId: running.id,
+      material: { materialId: 'hospital-material-suture', catalogVersion: 1, quantity: 1 },
+      expectedCharge: { id: 'hospital-charge-material-suture', priceFen: 2000, unit: '包' },
+    })).status).toBe(400)
+    expect((await s.request(s.doctor, `${s.path}/surgeries/correct-material`, {
+      requestId: stepReq.id, expectedRequestVersion: latestReqVersion, executionId: running.id, materialUseId: uses[1]!.id,
+    })).status).toBe(400)
+  })
+
+  it('纯零耗材完术、术式变更开始后完术留痕保留与已确认术前清单少用及多用分支校验', async () => {
+    const s = await setup()
+    const makeReady = async (reason: string, procedureId = 'hospital-surgery-4') => {
+      const current = inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json())
+      const created = inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/request`, {
+        encounterVersion: current.encounterVersion, procedureId, catalogVersion: 1,
+        plannedFor: '2026-08-25T02:00:00.000Z', reason,
+      })).json()).data.requests.find(row => row.reason === reason)!
+      expect((await s.request(s.nurse, `${s.path}/surgeries/check-preop`, { requestId: created.id, expectedRequestVersion: created.version, note: '术前核对完成' })).status).toBe(200)
+      const checked = inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests.find(row => row.id === created.id)!
+      const consented = inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
+        requestId: created.id, expectedRequestVersion: checked.version, note: '已签署手术同意书',
+      })).json()).data
+      return consented.requests.find(row => row.id === created.id)!
+    }
+
+    // 1. 纯零耗材手术：start / preview-completion / complete 全程省略 note
+    const zeroReq = await makeReady('纯零耗材免填核实')
+    const zeroStarted = inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/start`, {
+      requestId: zeroReq.id, expectedRequestVersion: zeroReq.version, procedureId: 'hospital-surgery-4', catalogVersion: 1,
+    })).json()).data
+    const zeroRunning = zeroStarted.inProgress.find(item => item.requestId === zeroReq.id)!
+    const zeroPreview = await previewCompletion(s, {
+      requestId: zeroReq.id, expectedRequestVersion: zeroStarted.requests.find(r => r.id === zeroReq.id)!.version,
+      executionId: zeroRunning.id, finalMaterials: [], releaseReservations: [],
+    })
+    const zeroDoneResp = await s.request(s.doctor, `${s.path}/surgeries/complete`, {
+      requestId: zeroReq.id, expectedRequestVersion: zeroStarted.requests.find(r => r.id === zeroReq.id)!.version,
+      executionId: zeroRunning.id, reconciliation: { finalMaterials: [], releaseReservations: [], expectedFingerprint: zeroPreview.fingerprint },
+    })
+    expect(zeroDoneResp.status, await zeroDoneResp.clone().text()).toBe(200)
+    const zeroDone = inpatientSurgeryResponseSchema.parse(await zeroDoneResp.json()).data.executions.find(item => item.id === zeroRunning.id)!
+    expect(zeroDone.note).toBe('最终耗材经核实无差额，按计划完成手术')
+
+    // 2. start 偏离术式填写了变更原因，complete 免填时保留开始原因且不误标“按计划完成手术”
+    const deviatedReq = await makeReady('术式变更开始后零耗材完术')
+    const deviatedStarted = inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/start`, {
+      requestId: deviatedReq.id, expectedRequestVersion: deviatedReq.version, procedureId: 'hospital-surgery-5', catalogVersion: 1,
+      note: '术中探查改行胆囊切除',
+    })).json()).data
+    const deviatedRunning = deviatedStarted.inProgress.find(item => item.requestId === deviatedReq.id)!
+    const deviatedPreview = await previewCompletion(s, {
+      requestId: deviatedReq.id, expectedRequestVersion: deviatedStarted.requests.find(r => r.id === deviatedReq.id)!.version,
+      executionId: deviatedRunning.id, finalMaterials: [], releaseReservations: [],
+    })
+    const deviatedDoneResp = await s.request(s.doctor, `${s.path}/surgeries/complete`, {
+      requestId: deviatedReq.id, expectedRequestVersion: deviatedStarted.requests.find(r => r.id === deviatedReq.id)!.version,
+      executionId: deviatedRunning.id, reconciliation: { finalMaterials: [], releaseReservations: [], expectedFingerprint: deviatedPreview.fingerprint },
+    })
+    expect(deviatedDoneResp.status, await deviatedDoneResp.clone().text()).toBe(200)
+    const deviatedDone = inpatientSurgeryResponseSchema.parse(await deviatedDoneResp.json()).data.executions.find(item => item.id === deviatedRunning.id)!
+    expect(deviatedDone.note).toBe('术中探查改行胆囊切除；最终耗材经核实无差额，按术中调整术式完成手术')
+    const deviatedProcedure = fhirResourceSchema.parse(await (await s.request(s.doctor, `/fhir/R5/Procedure/${deviatedRunning.id}`)).json())
+    expect(z.object({ note: z.array(z.object({ text: z.string() })) }).loose().parse(deviatedProcedure).note.map(n => n.text))
+      .toEqual(['术中探查改行胆囊切除', '最终耗材经核实无差额，按术中调整术式完成手术'])
+
+    // 3. 已确认 InpatientMaterialPlan：覆盖 execute 缺项拦截、complete 少用拦截与术中已解释多用免填
+    const planReq = await makeReady('确认术前耗材清单分支', 'hospital-surgery-8')
+    const encounterVersion = inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).encounterVersion
+    const stentResResp = await s.request(s.doctor, `${s.path}/drg/reservations`, {
+      encounterVersion, requestId: planReq.id, materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1, reason: '清单支架预留',
+    })
+    expect(stentResResp.status).toBe(200)
+    const stentRes = inpatientMaterialReservationListSchema.parse((await stentResResp.json()).data).reservations.find(item => item.requestId === planReq.id)!
+    const authCtx = z.object({ actor: z.object({ workspaceId: z.string(), epoch: z.string() }) }).loose()
+      .parse(await (await s.request(s.doctor, '/api/auth/context')).json()).actor
+    const estimateTaskId = z.object({ task_id: z.string() }).parse(
+      s.runtime.database.driver.prepare('SELECT task_id FROM inpatient_material_estimate WHERE workspace_id=? AND epoch=? AND request_id=?')
+        .get(authCtx.workspaceId, authCtx.epoch, planReq.id),
+    ).task_id
+    const planSnapshot = {
+      reference: 'InpatientMaterialPlan/plan-confirm-1',
+      requestId: planReq.id,
+      source: 'material-estimate',
+      sourceId: estimateTaskId,
+      sourceVersion: 1,
+      basisFingerprint: 'a'.repeat(64),
+      sources: { requestId: planReq.id, evidencePackageId: 'synthetic-pkg', evidencePackageVersion: '1', materialEvidence: [] },
+      confirmedBy: 'doctor',
+      confirmedAt: '2026-08-25T01:30:00+08:00',
+      supersedes: null,
+      reservationIds: [stentRes.id],
+      items: [
+        { materialId: 'hospital-material-stent', catalogVersion: 1, display: '合成演示冠脉支架', specification: '合成规格', quantity: 1, unit: '个', unitPriceFen: 80000, estimatedFen: 80000, reason: '按计划', quantityBasis: '单支病变', evidenceIds: ['ev-stent'] },
+        { materialId: 'hospital-material-suture', catalogVersion: 1, display: '合成演示缝合材料', specification: '合成规格', quantity: 1, unit: '包', unitPriceFen: 2000, estimatedFen: 2000, reason: '按计划', quantityBasis: '创口缝合', evidenceIds: ['ev-suture'] },
+      ],
+    }
+    s.runtime.database.driver.prepare('INSERT INTO inpatient_material_plan_confirmation VALUES(?,?,?,?,?,?,?,?)')
+      .run(authCtx.workspaceId, authCtx.epoch, s.admission.id, planReq.id, 'plan-confirm-1', estimateTaskId, 1, JSON.stringify(planSnapshot))
+
+    // 虽然活动预留仅有 stent×1 且已完整关联，但少于已确认清单中的 suture×1，execute 省略 note 须拒绝
+    const executeMissingPlanItem = await s.request(s.doctor, `${s.path}/surgeries/execute`, {
+      requestId: planReq.id, expectedRequestVersion: planReq.version, procedureId: 'hospital-surgery-8', catalogVersion: 1,
+      materials: [{ materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1, reservationId: stentRes.id }],
+    })
+    expect(executeMissingPlanItem.status).toBe(400)
+    expect(apiErrorSchema.parse(await executeMissingPlanItem.json()).error.code).toBe('INPATIENT_SURGERY_NOTE_REQUIRED')
+
+    // 开始手术并仅登记 stent×1（少于确认清单中的 suture×1），preview-completion 与旧式 complete 省略 note 均须拒绝
+    let planState = inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/start`, {
+      requestId: planReq.id, expectedRequestVersion: planReq.version, procedureId: 'hospital-surgery-8', catalogVersion: 1,
+    })).json()).data
+    const planExec = planState.inProgress.find(item => item.requestId === planReq.id)!
+    planState = inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/record-material`, {
+      requestId: planReq.id, expectedRequestVersion: planState.requests.find(r => r.id === planReq.id)!.version, executionId: planExec.id,
+      material: { materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1, reservationId: stentRes.id, expectedReservationVersion: stentRes.version },
+    })).json()).data
+    const stentUse = planState.inProgress.find(item => item.id === planExec.id)!.materials[0]!
+    expect((await s.request(s.doctor, `${s.path}/surgeries/preview-completion`, {
+      requestId: planReq.id, expectedRequestVersion: planState.requests.find(r => r.id === planReq.id)!.version, executionId: planExec.id,
+      finalMaterials: [{ materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1, materialUseIds: [stentUse.id], reservationId: stentRes.id, expectedReservationVersion: stentRes.version + 1 }],
+      releaseReservations: [],
+    })).status).toBe(400)
+    expect((await s.request(s.doctor, `${s.path}/surgeries/complete`, {
+      requestId: planReq.id, expectedRequestVersion: planState.requests.find(r => r.id === planReq.id)!.version, executionId: planExec.id,
+    })).status).toBe(400)
+
+    // 术中再登记 suture×2（附带超计划原因），完术 deltaQuantity===0 省略 note 放行并写入“偏离原因已在术中登记”
+    planState = inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/record-material`, {
+      requestId: planReq.id, expectedRequestVersion: planState.requests.find(r => r.id === planReq.id)!.version, executionId: planExec.id,
+      note: '术中创面渗血加缝一包', material: { materialId: 'hospital-material-suture', catalogVersion: 1, quantity: 2 },
+    })).json()).data
+    const planUses = planState.inProgress.find(item => item.id === planExec.id)!.materials
+    const planFinalMaterials = [
+      { materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1, materialUseIds: [planUses[0]!.id], reservationId: stentRes.id, expectedReservationVersion: stentRes.version + 1 },
+      { materialId: 'hospital-material-suture', catalogVersion: 1, quantity: 2, materialUseIds: [planUses[1]!.id] },
+    ]
+    const planPreview = await previewCompletion(s, {
+      requestId: planReq.id, expectedRequestVersion: planState.requests.find(r => r.id === planReq.id)!.version,
+      executionId: planExec.id, finalMaterials: planFinalMaterials, releaseReservations: [],
+    })
+    const planCompletedResp = await s.request(s.doctor, `${s.path}/surgeries/complete`, {
+      requestId: planReq.id, expectedRequestVersion: planState.requests.find(r => r.id === planReq.id)!.version,
+      executionId: planExec.id, reconciliation: { finalMaterials: planFinalMaterials, releaseReservations: [], expectedFingerprint: planPreview.fingerprint },
+    })
+    expect(planCompletedResp.status, await planCompletedResp.clone().text()).toBe(200)
+    const planCompleted = inpatientSurgeryResponseSchema.parse(await planCompletedResp.json()).data.executions.find(item => item.id === planExec.id)!
+    expect(planCompleted.note).toBe('最终用量按术中已登记量核实，偏离原因已在术中登记')
+  })
+
 })
 
 async function readySurgery(s: Awaited<ReturnType<typeof setup>>, complete = true) {
