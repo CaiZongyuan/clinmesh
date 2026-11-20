@@ -10,7 +10,7 @@
 
 首期使用 Better Auth 管理合成 User Account、登录凭证、浏览器 cookie session 和会话撤销，禁用公开注册。运行时为已实现的医院岗位及管理员幂等创建预置合成账户，入口见[部署账号](../deployment.md)。Better Auth 不拥有 Workspace Membership、Practitioner Role、地点或 Scenario 权限。
 
-每个受保护请求先验证浏览器会话，再由 ClinMesh Identity & Access 模块重新解析 active Workspace Membership、选择的 Practitioner Role、active Epoch、组织和地点，形成受信 Actor context。岗位切换通过服务端动作保存当前 session 的角色选择；后续业务 Command 以该 Actor context 写入审计。cookie 或请求体中的角色、Workspace 和 Epoch 不能替代数据库事实。
+每个受保护请求先验证浏览器会话，再由 ClinMesh Identity & Access 模块重新解析 active Workspace Membership、选择的 Practitioner Role、active Epoch、组织和地点，形成受信 Actor context。浏览器写请求（POST/PUT/PATCH/DELETE）统一经 `assertTrustedMutation` 校验可信同源或 `CLINMESH_TRUSTED_ORIGINS` 白名单 Origin，防止跨站伪造；岗位切换通过服务端动作保存当前 session 的角色选择，后续业务 Command 以该 Actor context 写入审计。cookie 或请求体中的角色、Workspace 和 Epoch 不能替代数据库事实。
 
 可选岗位和显式岗位切换要求当前 Workspace/Epoch 存在未删除的 FHIR PractitionerRole，并同时满足原 Membership 授权与有效岗位绑定。旧 Epoch 的岗位资源、Workspace 级绑定和原回执继续保留；reset 或重新安装场景不使尚未安装于新 Epoch 的旧岗位重新成为可选职责。显式选择缺少当前有效资源的岗位返回 `ROLE_NOT_ALLOWED`，不保存该选择；新 Agent Grant 只能绑定管理员当前可选的岗位。Location 名称仅是可选显示元数据，按当前 Workspace/Epoch LEFT JOIN 读取，位置不存在或已删除不会移除仍有效的岗位或改变 Actor 权限。
 
@@ -31,36 +31,13 @@ AND route/command role allowlist
 AND workflow state and target references
 ```
 
-新增业务写入默认要求 active Scenario Run；当前 Workspace/Epoch 内的人类收费会话可在 completed Run 通过[结算后的财务更正](clinical-workflows.md#结算后的财务更正)执行窄财务 Command，也可按[门诊退款合同](clinical-workflows.md#85-收费支付与退款)查询恢复已有退款；门诊新冲减、新退款仍要求 active Run，closed Run 拒绝新写。当前 Epoch 的人类会话可在 Run 完成后读取住院归档及其工作台依赖查询，保留原岗位、科室、病区授权和各岗位字段隔离，具体只读入口见[病案归档合同](clinical-workflows.md#病案首页与归档)。Agent Capability Grant 仍要求 active Run，不因这些人类会话例外放宽。既有 Command receipt 依照[幂等合同](fhir-and-commands.md#65-idempotency)无写重放，不重新执行业务状态变更。
+新增业务写入默认要求 active Scenario Run；当前 Workspace/Epoch 内的人类收费会话可在 completed Run 执行结算后窄财务更正或查询恢复已有退款，但门诊新冲减、新退款仍要求 active Run，closed Run 拒绝新写，见[收费、结算与医保](billing-and-insurance.md)。当前 Epoch 的人类会话可在 Run 完成后读取住院归档及其工作台依赖查询，保留原岗位、科室、病区授权和各岗位字段隔离，见[住院与手术流程](inpatient-workflows.md)。Agent Capability Grant 仍要求 active Run，不因这些人类会话例外放宽。既有 Command receipt 依照[幂等合同](fhir-and-commands.md#65-idempotency)无写重放，不重新执行业务状态变更。
 
 当前没有 SMART/resource scope、标准 Patient compartment 或通用字段策略引擎。Agent Capability Grant 是 ClinMesh task authority，不等同于通用 delegation grant；未来引入标准 scope 或字段策略时只能继续收窄以上权限。
 
-```text
-workspace membership
-AND role permission
-AND SMART/resource scope
-AND organization/location context
-AND patient/encounter compartment
-AND scenario policy
-AND delegation constraint
-AND field policy
-```
+典型角色包括 `registrar`、`outpatient-doctor`、`triage-nurse`、`pharmacist`、`cashier`、`inpatient-doctor`、`ward-nurse`、`medical-records`、`medical-insurance`、`administrator` 与 `lis-system`（及放射、病理受控系统执行者）。
 
-典型角色：
-
-- registrar
-- outpatient-doctor
-- triage-nurse
-- pharmacist
-- cashier
-- inpatient-doctor
-- ward-nurse
-- medical-records
-- medical-insurance
-- administrator
-- lis-system（以及放射、病理受控系统执行者）
-
-只有 `administrator` 能 reset Scenario 或管理 Agent Client/Grant。`lis-system` 及放射、病理受控系统执行者不具有交互式登录或任意患者搜索能力；允许的检查结果 Command 只能由受控 outbox context 调用，报告更正还可由窄 HTTP adapter 在验证 administrator 后由服务端绑定对应系统 context。请求正文不能声明系统角色或提交任意 FHIR 内容。DSH Agent 代表当前已登录人类岗位，任务 Agent 通过一个 Grant 承担现有单一 Practitioner Role；两者都不新增医院岗位代码。住院医生、病区护士、病案人员与医保办按[住院合同](clinical-workflows.md#82-住院闭环)与[DRG 核定合同](clinical-workflows.md#drg-评估与医保办核定)参与当前闭环；完整库存、财务交账和独立审计员等尚未实现的岗位不进入 seed、导航或授权矩阵。
+只有 `administrator` 能 reset Scenario 或管理 Agent Client/Grant。`lis-system` 及放射、病理受控系统执行者不具有交互式登录或任意患者搜索能力；允许的检查结果 Command 只能由受控 outbox context 调用，报告更正还可由窄 HTTP adapter 在验证 administrator 后由服务端绑定对应系统 context。请求正文不能声明系统角色或提交任意 FHIR 内容。DSH Agent 代表当前已登录人类岗位，任务 Agent 通过一个 Grant 承担现有单一 Practitioner Role；两者都不新增医院岗位代码。住院医生、病区护士、病案人员与医保办按[住院与手术流程](inpatient-workflows.md)参与当前闭环；完整库存、财务交账和独立审计员等尚未实现的岗位不进入 seed、导航或授权矩阵。
 
 查询授权必须下推 SQL。不能先查 100 个患者，再在 JavaScript 中删掉 90 个；否则 total、排序、include 和时间差都可能泄漏信息。
 
@@ -74,18 +51,9 @@ AND field policy
 
 ### Provenance、AuditEvent 和日志
 
-Audit Event、Provenance、Action Trace 和应用日志职责分开：
+Audit Event、Provenance、Action Trace 和应用日志职责分开：Provenance 记录某个资源版本由谁、代表谁、通过什么活动生成；AuditEvent 记录谁在何时访问或操作了什么及结果；Action Trace 记录某个 Scenario Run 的观察、Command 尝试、结果和 Effect 顺序，用于重放与过程分析；应用日志用于排障和性能，不承载完整医疗审计。
 
-- Provenance：某个资源版本由谁、代表谁、通过什么活动生成。
-- AuditEvent：谁在何时访问或操作了什么，结果如何。
-- Action Trace：某个 Scenario Run 的观察、Command 尝试、结果和 Effect 顺序，用于重放与过程分析。
-- 应用日志：排障和性能，不承载完整医疗审计。
-
-`audit_log` 是权威 append-only 事件表，FHIR AuditEvent 是只读投影。当前日志包含：
-
-- Workspace/Epoch、sequence、previous hash、current hash
-- real timestamp、Actor、Practitioner、Practitioner Role 和 role code
-- Scenario Run ID、operation、success/failed outcome 和规范化 request hash
+`audit_log` 是权威 append-only 事件表，FHIR AuditEvent 是只读投影。当前日志包含 Workspace/Epoch、sequence、previous hash、current hash、real timestamp、Actor、Practitioner、Practitioner Role、role code、Scenario Run ID、operation、success/failed outcome 和规范化 request hash。
 
 Command Effect 引用和版本保存在 `command_effect` 与 Action Trace；AuditEvent 投影把 Effect 映射为 entity。门诊退款账、住院首次资金账及后续财务差异读取通过同一审计链记录成功与进入业务授权边界后的拒绝，只保存查询引用的 hash，不保存账目正文；读取审计不参与业务账目指纹或金额计算。其他普通读取，以及 duration、request ID、organization/location 字段、客户端、delegator 或错误码当前不进入审计，也没有审计查询 UI。新增这些能力前不能宣称完整医疗审计覆盖。
 
@@ -101,31 +69,21 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 
 ### 请求约束
 
-- 所有列表分页。
-- `_count` 和所有查询 limit 有硬上限。
+- 所有列表分页；`_count` 和所有查询 limit 有硬上限。
 - Bundle、transaction、operation 输入限制 entry 数和总字节数。
-- 首期不接收 Binary 或附件。影像像素只读，按帧或不超过 2 MiB 的块读取。
+- 首期不接收 Binary 或附件；影像像素只读，按帧或不超过 2 MiB 的块读取。
 - 报表使用预定义 SQL 和小结果集，不接受客户端提交任意聚合表达式。
 - Command 的事务持续时间和数据库 statement 数设置预算，超出时拆短 Command 或移出首期。
 
 ### 一致性
 
 - 单个 Command 的完整 dependency set、业务事实、FHIR current/history/search、Audit Event、Action Trace、receipt 和 outbox 在一个 SQLite 事务中强一致。
-- 外部模拟器通过 outbox 最终一致。
-- 核心 FHIR 投影与领域状态同事务强一致。
-- Search 索引与当前资源同事务强一致。
+- 外部模拟器通过 outbox 最终一致；核心 FHIR 投影与领域状态、Search 索引与当前资源同事务强一致。
 - 同一 SQLite 实例提供提交后的 read-after-write；Web Query 在 mutation 成功后精确失效并重新读取服务端事实。
 
 ### 失败语义
 
-稳定区分：
-
-- validation：输入或 profile 错误，不重试。
-- authorization：权限不足，不重试。
-- conflict：版本或状态冲突，重新读取后决定。
-- transient：数据库忙或模拟器临时失败，可有界重试。
-- ambiguous：外部结果未知，先查询/对账，禁止直接重做。
-- invariant：违反医疗/财务/库存规则，不重试，需改变业务动作。
+稳定区分六类失败：`validation`（输入或 profile 错误，不重试）、`authorization`（权限不足，不重试）、`conflict`（版本或状态冲突，重新读取后决定）、`transient`（数据库忙或模拟器临时失败，可有界重试）、`ambiguous`（外部结果未知，先查询/对账，禁止直接重做）和 `invariant`（违反医疗/财务/库存规则，不重试，需改变业务动作）。
 
 ### 可观测性
 
@@ -133,26 +91,12 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 
 成功 Command 响应返回 `requestId` 和 `auditId`，持久表通过 Workspace/Epoch、Scenario Run、idempotency key、Audit ID、Action Trace ID 和 outbox event ID 建立关联。Agent proposal 再通过 DSH Session/call ID、proposal ID、review decision 和同一 `requestId` 串联 Tool、Command、Audit 与 Trace。CLI 在结构化错误中保留服务端 correlation ID，但该 ID 不表示 Command 已经提交，写操作的恢复仍以 idempotency key、ambiguous outcome 和 receipt 为准。`/api/health` 只报告服务状态与 FHIR 版本。
 
-首期没有生产 metrics exporter、分布式 trace、成功 request log 或管理仪表盘，因此不宣称在线采集 API latency、SQLite busy/transaction duration、Search 规模或 outbox backlog 指标。独立 performance runner 可以在临时 sandbox 重复执行固定工作负载并输出分位数、SQL/存储和 Trace 指标，但不改变生产请求或持久化路径。运行诊断仍依赖 database CLI、correlation ID、结构化错误、失败日志和持久审计/outbox 状态；任何后续日志或指标都不得把患者姓名、身份信息、完整临床正文、token 或自由文本作为标签。
+首期没有生产 metrics exporter、分布式 trace、成功 request log 或管理仪表盘，因此不宣称在线采集 API latency、SQLite busy/transaction duration、Search 规模或 outbox backlog 指标。独立 performance runner 可以在临时 sandbox 重复执行固定工作负载并输出分位数、SQL/存储和 Trace 指标，但不改变生产请求或持久化路径。任何后续日志或指标都不得把患者姓名、身份信息、完整临床正文、token 或自由文本作为标签。
 
 ### 模型用量查询
 
-总览接口的 `totals`、每日 `trend` 与功能 `features` 同时返回 `knownInputTokens`、`knownOutputTokens`、`unknownInputTokenRequests` 和 `unknownOutputTokenRequests`；日期、功能、Provider、模型、结果与病例筛选共同作用于这些指标。设置页分别展示已知输入和输出，分项不完整时保留提示；没有已知数量且存在缺失时显示未知，完整的零计数显示为零。计量与历史汇总口径由[明细保留与长期汇总](storage.md#明细保留与长期汇总)拥有。
+已认证成员跨 Epoch 可读本 Workspace 的模型用量总览、统一价表与保留期设置，但不接受客户端指定 Workspace、Epoch 或角色，普通成员的部署政策字段固定为 `null`。请求明细与病例／任务／阶段下钻在 SQL 中强制校验当前责任关系：门诊医生限活动 Epoch `outpatient_case_responsibility` 病例，住院医生与病区护士限活动 Epoch 当前责任科室与病区的住院检验、DRG 建议及核验，病案人员仅限当前 Epoch 有真实住院归属的 DRG 建议与核验明细，行政人设与目录补全仅管理员可读；单纯管理员汇总权限不授予 DRG 病例或任务下钻，无权或不存在的请求／病例统一返回 404。
 
-ClinMesh 设置中的模型用量页通过已认证 Session 读取 `/api/model-usage/overview`、`/api/model-usage/requests` 与单次请求详情。当前 Workspace 成员可读跨 Epoch 汇总；明细及计数共用服务端 SQL 授权条件，管理员可读本 Workspace 既有功能的历史记录；新增住院 DRG 耗材建议与核验明细仍须具有当前病例读取岗位。门诊医生只读活动 Epoch 内有 `outpatient_case_responsibility` 责任关系的临床请求；住院医生和病区护士只读活动 Epoch 内当前责任科室与病区匹配的住院检验生成、DRG 耗材建议及独立核验请求，转科或岗位切换后按当前住院归属重新授权。病案岗位可读取当前 Epoch 内有真实住院归属的 DRG 建议与核验明细，此权限不扩展至既有检验或其他模型功能。其他岗位不能借相同 Actor、猜测尝试 ID 或汇总下钻读取临床明细；行政人设和目录补全明细仅管理员可读。查询不接受客户端指定 Workspace、Epoch 或角色；无权和不存在的单次请求都返回 404。
+策略更新（开关、三项额度、自动重试、保留天数）及留存明细的 `reconcile`／`reprice` 仅向当前有效管理员开放，要求 `assertTrustedMutation` 可信 Origin、幂等键与 `expectedVersion`／`expectedRevision`，经共享 Command 同事务写审计与回执；DRG 明细核对与补算须同时具备管理员资格与当前住院读取岗位，每次回放旧回执前重新校验当前资格与病例范围，依据不得含患者正文或凭证，且 Workspace 无法放宽部署总上限（见[部署指南](../deployment.md#模型用量)）。
 
-用量总览与列表接受 `taskId`、`stage` 筛选；任一字段存在时必须同时提交 `caseId`，任务查询仅归集 DRG 耗材建议与核验，总览与明细均按当前住院的医生、护士或病案读取范围授权；单纯管理员汇总权限不授予病例下钻。无权与不存在的病例统一返回 404，不显示零消费。任务筛选只匹配服务端记录的任务身份，阶段筛选只匹配实际调用步骤，不以同一患者、相同模型或功能推定归属。任务总览另返回完整账本的 `stages` 阶段累计，包含仍留存明细及长期汇总，不从当前明细分页推断阶段有无调用。未提供病例、任务或阶段筛选的工作区汇总继续沿用原有成员权限；旧功能的病例汇总维持既有合同，DRG 的病例筛选与任务筛选使用同等授权，不能通过省略任务筛选读取无权病例的新 DRG 用量。任务停止或页面关闭不清零已发生用量，明细是否仍可查由留存合同决定。
-
-监控覆盖 Server 直接模型调用、经 DSH bridge 的调用和 Host 独立医生代问识别，不覆盖整个 DSH 原生聊天或其他插件。部署与 Workspace 默认启用，请求、Token、人民币额度分别无限，保留既有有界自动重试。成员通过 `/api/model-usage/control` 读取自身 Workspace 政策、各维度余量、生效开关与重试状态、控制拒绝和待办状态；普通成员的 `deployment` 为 `null`，不公开部署总上限及跨工作区累计量。当前选中管理员岗位可只读部署政策，并通过该路径的 `PUT` 修改本 Workspace 的开关、三项累计额度与自动重试；省略 `tokens` 或 `cny` 保留原值，显式 `null` 才切为无限。总览 `policy` 只投影自身 Workspace 上限。更新要求可信 Origin、幂等键和 `expectedVersion`，通过共享 Command 同事务写入审计和回执；请求不能指定其他 Workspace 或部署政策。部署维护者通过[部署配置](../deployment.md#模型用量)管理总限制，Workspace 无法放宽。
-
-三类实际派发均在准入前提供版本化计量边界；全部适用维度原子通过才发出外部请求。剩余量不足返回对应维度、剩余量与所需预占量；缺少可信边界或计价时返回 `MODEL_METERING_UNAVAILABLE`，不可核算的需要量为 `null`。不自动降低输出上限、截断输入或改变推理策略。目前三个入口都能限制请求次数；直接调用没有硬输出 Token 上限，DSH SDK 也未公开绑定实际 wire adapter 的可信计量保证，因此有限 Token 与非零金额保护会拒绝这些入口的新派发。明确全零人民币价表能给出金额上界零，仍须同时满足其他有限维度。SDK `contextWindow`、`maxTokens` 配置及字符启发式不能作为计量保证，具体原因与版本随尝试记录；能力与配置见[部署说明](../deployment.md#模型用量)。取消、失联、超时和崩溃不释放未知维度，不因期限到期恢复额度；持久累计、部分结算与原始证据见[存储合同](storage.md#910-模型调用账本)。
-
-所有当前 Workspace 成员可通过 `GET /api/model-usage/pricing` 查看部署统一价表与汇率，界面及 Workspace 接口均不提供价表写权限。费用是配置口径下的估算，总览分别显示已知金额、未知请求数与未决预占，不把已知部分当作完整账单。管理员可向 `/api/model-usage/requests/:attemptId/reconcile` 提交 `expectedRevision`、受限依据标识 `evidence` 及已核实的 `totalTokens`、`cny` 中至少一项；仅当请求已结束、派发未知、两项有效消费均已知且没有既有核对修订时，可只提交依据确认一次请求消费，或向同一请求的 `/reprice` 提交 `expectedRevision` 与 `evidence` 显式补算。两种 POST 均要求可信 Origin、幂等键、当前有效成员和本 Workspace 的管理员资格。HTTP adapter 通过既有身份入口核验该资格，保留当前选中的 Actor 与岗位，让服务继续校验目标明细的读取权限；请求正文不能声明管理资格。DRG 核对与补算由同时具有管理员资格及当前住院读取岗位的成员执行，纯管理员汇总岗位不能代替病例权限，普通临床岗位不能代替管理员资格。旧功能仍可由当前管理员处理本工作区及旧 Epoch 的授权明细。每次请求都在回放旧回执之前重新核验管理资格与病例范围，撤权、转科或岗位切换不能借旧回执绕过。依据不得包含患者正文、凭证或自由格式账单正文。服务端校验修订版本、可处理状态及尚未知维度，同事务保存审计与回执；核对与补算不修改原始服务商用量、不覆盖调用时快照、不触发未知请求重发。
-
-当前 Workspace 成员可通过 `GET /api/model-usage/retention` 读取本工作区的 `days`、`version`、`compactedRequests` 和 `lastCompactedAt`；后两项分别表示已清理明细数量及最后一次实际清理时间。当前选中的管理员岗位可通过同一路径 `PUT` 提交正安全整数或 `null` 的 `days` 及 `expectedVersion`，要求可信 Origin、幂等键、当前有效成员和共享 Command 审计；普通成员不能修改，客户端不能指定其他 Workspace、Epoch 或部署策略。清理继续使用服务端 Workspace 隔离，跨 Epoch 汇总权限及留存明细的病例责任授权不变。已清理请求仅参与汇总，详情返回 404，旧核对／补算回执也不能重新返回完整明细；独立必要审计不开放为明细查询或恢复入口。保留期限、未结算保护及事务合同见[明细保留与长期汇总](storage.md#明细保留与长期汇总)，界面操作见[部署说明](../deployment.md#模型用量)。
-
-Host 自发识别先由 SDK 准备并绑定模型配置，再通过 `/api/model-usage/host/doctor-delegation/admit` 取得一次性准入，最后派发该准备句柄的 stream。接口拒绝浏览器 Origin，要求 Host bridge 凭证和已签发的医生输入来源证明；Workspace、Epoch、Actor、岗位、任务与病例从 Server 持久 Page Context 恢复，重新校验活动成员、岗位、病例权限与任务连续性。先查同 client 的最新绑定，再核对原身份，不能按旧身份过滤并忽略后续身份或岗位切换。同病例内容、栏目更新或续签保留原任务，切走再返回不恢复旧许可。模型路由来自受信 Host 的实际请求配置；请求不能声明功能、身份、病例、输出上限或任意生成正文。同一任务在账本事务中只能准入一次，账本故障或无有效准入响应时 stream 次数为零。
-
-准入响应中的回执仅能向 `/api/model-usage/host/doctor-delegation/observe` 为该尝试上报窄用量和终态，或通过 `/api/model-usage/host/doctor-delegation/status` 查询是否应取消原尝试，不能授权新生成或修改其他入口的记录。结算不依赖仍有效的临床岗位或输入许可期限，避免任务失权后丢失已发生的消耗；回执与 bridge 凭证不进入账本、日志或监控。Host 的用量帧和终态写入同一 Server 账本，Host 不维护独立余额或持久账本，也不因取消、失联、结算失败或 Server 重启自动重发未知请求。
-
-明确被控制拒绝的 Host 准入可在原期限内等待；`/api/model-usage/host/doctor-delegation/wait` 使用同样的 Host 凭证和原输入许可，仅维护或结束待办租约，每次维持重新验证上下文。该接口不建立模型尝试或放宽原期限；租约过期不释放任何已派发预占。Host 每 250 毫秒查询原尝试取消状态，查询失败时也尽力取消并保留未知结果。
+Host 独立医生代问准入（`/api/model-usage/host/doctor-delegation/*`）拒绝浏览器 Origin，要求 Host bridge 凭证与已签发医生输入来源证明；服务端从持久 Page Context 先查同 client 最新绑定再核对活动成员、岗位、病例权限与任务连续性，单任务在账本事务中只能准入一次，无有效准入则零次流式派发。准入回执仅能上报该尝试的窄用量／终态或查询取消状态（结算不依赖仍有效的临床岗位，失联或重启不自动重发未知请求），被控制拒绝时 `/wait` 仅在原期限内维持待办租约。逐次记账、计量预占、核对补算与保留期压缩的状态机见[模型调用账本](storage.md#模型调用账本)与[明细保留与长期汇总](storage.md#明细保留与长期汇总)。

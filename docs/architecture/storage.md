@@ -1,203 +1,91 @@
 # 存储与事务
 
-本文拥有 FHIR 与领域存储、标识符、SQLite 事务、outbox、附件、数据库运维与迁移，以及浏览器未提交私稿与回执恢复存储边界。系统总入口见[系统架构](../architecture.md)，业务验证要求见[测试策略](../testing.md)。
+本文拥有 FHIR 与领域存储、标识符、SQLite 事务、outbox、附件、数据库运维与迁移，以及模型调用账本和浏览器未提交私稿存储边界。系统总入口见[系统架构](../architecture.md)，业务验证要求见[测试策略](../testing.md)。
 
 ## 数据架构
 
 ### FHIR Resource Store
 
-当前使用统一 current/history 表，而不是按资源类型拆表。
+当前使用统一 current/history 表，不按资源类型拆表：
 
 ```text
-fhir_resource
-  workspace_id
-  epoch
-  resource_type
-  resource_id
-  version_id
-  last_updated
-  deleted
-  owner_kind
-  content_json
-  content_hash
-
-fhir_history
-  workspace_id
-  epoch
-  resource_type
-  resource_id
-  version_id
-  last_updated
-  deleted
-  content_json
-  content_hash
-```
-
-主键：
-
-- `fhir_resource(workspace_id, epoch, resource_type, resource_id)`
-- `fhir_history(workspace_id, epoch, resource_type, resource_id, version_id)`
-
-当前写时 Search 索引只有：
-
-```text
+fhir_resource(workspace_id, epoch, resource_type, resource_id, version_id, last_updated, deleted, owner_kind, content_json, content_hash)
+fhir_history(workspace_id, epoch, resource_type, resource_id, version_id, last_updated, deleted, content_json, content_hash)
 fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalized, exact)
 ```
 
-它承载当前注册的 Patient `name`、Patient `identifier` 和 [FHIR Search 最小实现](fhir-and-commands.md#55-fhir-search-最小实现)列出的 reference SearchParameter；reference 与 string/token 参数复用同一张表，不另建 reference index。每次资源变更在同一事务删除该资源旧索引并插入完整新索引；数据库 CLI 的 `reindex` 重建索引并验证完整性。运行时不执行任意 FHIRPath，也没有尚未使用的 date/quantity 或 compartment 索引表。
-
-当前 FHIR 授权上下文由已认证 session 或 Agent Capability Grant 解析出的 Workspace/Epoch 隔离。标准 Patient compartment、Encounter care-team 和字段级策略尚未发布为 FHIR 能力；增加这些能力时必须在 SQL 查询中应用，不能查询后过滤。
+`fhir_resource` 主键为 `(workspace_id, epoch, resource_type, resource_id)`，`fhir_history` 主键追加 `version_id`。写时 Search 索引仅有 `fhir_sp_string`，统一承载 Patient `name`/`identifier` 及[FHIR Search 最小实现](fhir-and-commands.md#55-fhir-search-最小实现)登记的本地相对引用参数；每次资源变更在同一事务整组删除旧索引并插入新索引，数据库 CLI `reindex` 可完整重建并验证。运行时不执行任意 FHIRPath，FHIR 授权隔离必须下推 SQL 查询。
 
 ### 领域表
 
-当前领域表按职责组织如下：
+所有租户运行事实表的表结构、主键、唯一键、外键和岗位队列索引均以 `(workspace_id, epoch, ...)` 开头（删除默认 `RESTRICT`）；新增 FHIR-native 辅助索引必须可由权威资源重建，无法重建的事实必须明确成为 domain aggregate，禁止 FHIR JSON 与领域表双向拥有。各领域表边界如下：
 
-- 身份与岗位：Better Auth 的 user/session/account，加 Workspace Actor、Human Membership、Agent Client/Capability Grant、Practitioner Role binding 和当前 session context。
-- 门诊：Consultation、append-only Consultation Record、目录、outpatient case、Registration、分诊记录、临床草稿、诊断草稿状态与确认分组、检查申请草稿状态、正式检查申请、处方草稿状态、Prescription 与处方项目、无需用药结论和处方撤回事实。
-- 住院：独立 Admission、住院证、病区与床位目录、带时间段的床位占用、预交金、逐项费用及关联冲正、诊断确认与编码快照、医嘱、校对、执行计划和实际发药关联，出院/出区/召回/清床事件、不可覆盖的结算预览快照与关联原预交金的补退款交易，独立手术申请、两个准备确认、唯一实际实施、耗材使用和术后医嘱引用，以及按 Workspace/Epoch/Patient 持久分配的病案号与 `inpatient_record_revision`、`inpatient_record_review`、`inpatient_record_archive` 三张 append-only 病案表（归档快照独立于当前 Patient 和活动目录，见[病案首页与归档](clinical-workflows.md#病案首页与归档)）。运行事实均绑定 Workspace/Epoch，住院合成来源以可空复合外键固定；院内手术与耗材目录由 Scenario 补缺式安装，临床分类身份与收费定义分别冻结。
-- 跨门诊与住院的检查上下文：临床申请通过 `clinical_request_context` 绑定门诊 case XOR 住院 admission，Workspace/Epoch 复合外键保证唯一真实 owner（旧申请 wire 字段 `case_id` 与原 ID 保持兼容）；新门诊登记和住院登记在原 Command 事务创建 context，`clinical_request_source` 只读投影合成病例来源，详见[住院检查与转科决策](../decisions/implemented/architecture/2026-10-21-inpatient-investigations-and-transfer.md)。
-- 账务：门诊 Charge Record、Payment Preview、Outpatient Payment Allocation、Financial Charge Adjustment，以及两端共享的 Collection Transaction、Collection Tender、append-only Collection Resolution、Refund Transaction、Refund Tender 和 Refund Resolution。门诊和住院各自保存业务预览与费用或用途分配，共同内核保存唯一收款事实。金额以整数分保存；患者医保由下述独立待遇账保存，收费员交账尚未实现。住院结算快照、补缴及关联原入金的退款流程见[住院出院与结算](clinical-workflows.md#住院出院与结算)。
-- 库存与发药：Inventory Lot、append-only Inventory Movement 和 Dispense。库存余额始终归 Inventory Lot；每次库存移动恰好关联门诊处方或住院实际发药单，不能同时关联两种来源，旧门诊来源和外键保留。当前不实现预占、追溯码、盘点或调拨。
-- 文书：结构化 Clinical Document Draft、结构化与兼容 Clinical Sign Preview、Signed Clinical Document 关联和修订父链；签署的 Composition、document Bundle 和 Provenance 正文仍由 FHIR store 权威保存。
-- 模型执行：患者回答尝试及请求意图关联、建议稳定阶段计划、单元成功步骤与累计请求计数；这些是私有执行状态，不是临床结论。
-- 平台与仿真：Workspace/Epoch、Scenario Run/State、Synthetic Profile/Case、Patient Persona、Investigation Result Snapshot、私有 Case Truth、Command Receipt/Effect、Audit、Action Trace、Outbox、Agent Page Context、Tool call、proposal 和 review decision。
-
-所有适用表、主键、唯一键、外键和岗位队列索引包含 `workspace_id + epoch`。岗位枚举扩展使用前向迁移保真重建 SQLite CHECK 约束；关闭外键的表重建仅在该迁移事务周边执行，提交前检查全部外键，失败恢复保护并保留原岗位、Membership 和 Session 引用。启动时在当前活动 Epoch 幂等补齐住院环境，不要求清空或 reset。
-
-新增 FHIR-native 辅助索引时必须可由权威资源重建；新增无法重建的事实时必须明确成为 domain aggregate，不能同时由 FHIR JSON 和领域表双向拥有。
-
-住院医保后续更正由 `inpatient_insurance_adjustment` 关联财务调整、原待遇、补偿与替代待遇，复合外键固定同一 Workspace/Epoch。每个财务调整只有一个医保更正链，每个有效待遇只补偿一次；预览关联表绑定本次调整与受信 Actor 的不可变审阅预览。年度与账户权威继续来自共享 `insurance_event`，不新增可编辑余额。首次结算及病案保存原医保结果，后续分摊和现金状态归当前财务读模型，流程见[住院医保](clinical-workflows.md#住院医保与首次冻结账)。
-
-住院手术实施保存进行／完成状态，同一申请只有一个实际实例；旧实施前向迁移为已完成。材料原事实继续保存在 `inpatient_surgery_material`，`inpatient_surgery_material_record` 补充记录人、时间、说明和预留来源；其 `recording_kind` 区分原登记 `initial` 与术后补登记 `postoperative-addendum`，历史数据前向迁移默认为 `initial`。`inpatient_surgery_material_correction` 以唯一原使用引用追加更正及原费用／冲正关联。最终总量核实复用这些事实和原费用，不新建账本。预留原数量不改写，已消耗量、版本及释放说明由手术与预留 Command 原子维护；显式关闭选择保存在 `release_reason`，完全消耗的 replaced 项也保留该选择，使更正退回量仍保持关闭。业务合同见[住院手术](clinical-workflows.md#住院手术最小闭环)。
-
-住院术后核查由 `inpatient_drg_review_revision` 保存按依据指纹去重的不可变结果，`inpatient_drg_review` 保存当前修订、核查来源版本与交接，`inpatient_drg_review_todo` 保存按手术／问题身份去重的当前处置，`inpatient_drg_review_action` 追加人工理由及处理历史。复合外键绑定同一 Workspace/Epoch、住院、快照和待办；`task_id` 保留来源标识供去重及历史追溯，不强制关联跟进表，因此没有跟进任务也可保存独立核查。当前指针可重新引用既有相同依据快照，原结果不覆盖。临床、费用和用量事实仍归原 owner，完整行为见[术后核查](clinical-workflows.md#术后核查与责任交接)。
+- **身份与平台仿真**：Better Auth 账户会话、Workspace Actor／Membership、Agent Client／Grant、岗位绑定与当前 session context；Workspace/Epoch、Scenario Run/State、跨 Epoch 不可变的 Synthetic Profile/Case/Persona/Investigation Snapshot、私有 Case Truth、Command Receipt/Effect、Audit、Action Trace、Outbox 及 Agent Page Context／Tool call／proposal／review。
+- **门诊与文书**：Consultation、append-only Consultation Record、目录、挂号与门诊 case、分诊、各诊疗草稿、诊断确认分组、检查申请草稿与正式申请、Prescription／外延处方／无需用药／撤回，以及结构化病历草稿、签署预览和修订父链（已签 `Composition`、`Bundle`、`Provenance` 正文由 FHIR store 权威保存）。
+- **住院、手术与病案**：Admission、住院证、病区床位与时间段占用、诊断编码快照、长期／临时医嘱与校对／给药关联、出院／召回／清床事件、不可覆盖结算快照；手术申请、两项准备确认、唯一实际实施、`inpatient_surgery_material`、`inpatient_surgery_material_record`（`recording_kind` 区分 `initial` 与 `postoperative-addendum`）、`inpatient_surgery_material_correction`（唯一引用原使用并关联费用／冲正）及耗材预留消耗与 `release_reason`（完全消耗的 replaced 项仍保留关闭选择）；按依据指纹去重的 `inpatient_drg_review_revision`、`inpatient_drg_review`、`inpatient_drg_review_todo`（`task_id` 仅作来源去重标识，不强绑跟进任务）与 `inpatient_drg_review_action`；按 Workspace/Epoch/Patient 持久分配的病案号与 `inpatient_record_revision`、`inpatient_record_review`、`inpatient_record_archive` 三张 append-only 病案表（归档快照独立于活动 Patient 与目录，见[住院与手术流程](inpatient-workflows.md)与[住院闭环模型决策](../decisions/implemented/architecture/2026-10-21-inpatient-closed-loop-model.md)）。
+- **跨门诊与住院的检查上下文**：`clinical_request_context` 以复合外键严格绑定门诊 case XOR 住院 admission，保证检查申请拥有唯一真实 owner（兼容保留 `case_id` wire 字段），`clinical_request_source` 只读投影合成病例来源。
+- **库存与发药**：`InventoryLot`、append-only `InventoryMovement` 与 `Dispense`；库存余额归 `InventoryLot`，每次库存移动恰好关联门诊处方或住院实际发药单之一，不实现预占、追溯码、盘点或调拨。
 
 #### 门诊独立检查计费策略
 
-`outpatient_investigation_billing` 以 Workspace/Epoch/request 为主键，复合外键关联原申请、门诊 case 与唯一原 ChargeItem。`payment_policy` 明确区分 `prepaid-v1` 与 `legacy-unbilled`；前者保存开立时不可变的 `price_json`，后者不补建费用。首次受理在临床状态变更的同一事务保存 `released_at` 与 `release_json`，快照包含原费用身份、版本、金额及确定收款和医保覆盖依据；二者必须同时存在。存储 JSON 在读取边界验证，缺失或不完整的预付费记录不能解释为历史豁免。申请与财务状态的完整规则由[临床工作流](clinical-workflows.md#门诊独立检查的应收与执行门禁)拥有。
-
-检验草稿的完整服务快照和 `laboratory_request_state.draft_price_json` 分别冻结服务与当前门诊价格，兼容本地目录也保存价格快照；放射和病理价目随各自服务草稿冻结。开立重读并比较当前版本，价格失效要求重新审阅。正式价格归原申请计费记录，不从变化后的活动目录重算。
-
-非空旧库升级保留原费用、分配、支付尝试及申请，已有门诊独立申请写入 `legacy-unbilled`；住院 owner 不取得门诊计费策略。类别 CHECK 扩展到放射和病理时保真重建原表及索引，并验证完整外键。旧已消费预览按原支付分配锁定 ChargeItem；尚未消费的旧预览只有在原病例与类别唯一匹配时才能回填，缺失或歧义使升级整体回滚，不能选择首行或绑定后来新增的同类申请。
+`outpatient_investigation_billing` 以 `(workspace_id, epoch, request_id)` 为主键，复合外键关联原申请、门诊 case 与唯一原 `ChargeItem`；`payment_policy` 区分 `prepaid-v1`（冻结开立时不可变 `price_json`）与历史升级兼容的 `legacy-unbilled`（住院不取得门诊计费策略）。检验、放射与病理草稿分别冻结服务与当前价格，开立时校验目录版本；首次受理在同一事务同时保存 `released_at` 与 `release_json`（记录原费用身份、版本、金额及实收／医保覆盖依据），读取边界严格校验 JSON，缺失或不完整记录绝不解释为历史豁免，业务门禁见[检验、检查与报告](examinations-and-reports.md)。
 
 #### 门诊收款记录
 
-支付历史先通过 Workspace/Epoch、case、创建时间及 payment ID 的复合索引按整笔原款分页，再批量读取当前页全部费用分配及支付方式，不在分配 JOIN 后分页。恢复 Command 按受信作用域及原 payment ID 查询单条尝试、完整原分配、原方式与追加结果，不加载整次就诊历史或其他原款方式，事务内读取次数不随历史条数增长。
+门诊与住院共用 `PaymentCollection` 交易表（`collection_transaction`、`collection_tender` 与唯一追加确定结果的 `collection_resolution`）及 `RefundLedger` 原款退款表（`refund_transaction`、`refund_tender`、`refund_resolution`），所有金额以整数分保存且拒绝业务 Command 事务外写入：
 
-`payment_preview` 保存原 `charge_item_id` 及其复合外键、冻结金额、组合方式 JSON、费用版本、真实时间期限和岗位上下文摘要；缺少岗位绑定的预览须重新预览。`PaymentCollection` 在既有业务 Command 事务内创建尝试、固定付款方式及查询原尝试，拒绝事务外写入。`collection_transaction` 保存不可覆盖的原始 outcome、correlation ID、预览、用途及冻结查询计划；包含 Workspace/Epoch 的复合外键绑定 `clinical_request_context` 中的原就诊、Patient 和 Encounter，业务 owner 在创建时校验门诊或住院身份与用途一致。`collection_tender` 按顺序保存方式金额，`collection_resolution` 以原 payment ID 唯一保存确定查询结果，原未知 outcome 不被改写。
-
-`multi_charge_payment_preview` 单独保存同次门诊的多费用冻结预览，以 Workspace/Epoch/preview 为主键，复合外键绑定原 `outpatient_case`；Patient、Encounter、完整 Actor、精确预期版本集合、逐项账务快照、组合方式、token 摘要及真实期限随预览固定。预览操作不写入旧 `payment_preview` 或任何收款、费用分配表，旧确认路径不能把它解释为单项预览；专用合并确认消费该冻结记录。新增迁移不重写历史资金迁移或原收款事实；行为边界由[收费与支付](clinical-workflows.md#85-收费支付与退款)拥有。
-
-门诊 `PaymentLedger` 只拥有费用分配和账单投影。`outpatient_payment_allocation` 以 Workspace/Epoch/payment/charge 为主键，以复合外键关联原交易与原 Charge Record 的同一就诊。旧单项和零元分配原样保留，合并原款为每项冻结费用保存一行，分配合计由 Command 事务校验等于原款金额。确认沿用全部冻结费用，查询恢复沿用全部原分配；账单按有效成功结果汇总实收，不持久保存第二套可编辑余额。收款、分配、方式、预览消费、费用/FHIR 版本、回执、审计与临床 outbox 在同一个 Command 事务提交。查询恢复使用支付版本及全部原分配的 ChargeItem expected versions；重复请求复用 Command 回执，不创建第二条收款或重复放行。业务放行规则见[收费与支付](clinical-workflows.md#85-收费支付与退款)，职责取舍见[收款事实与门诊分配决策](../decisions/implemented/architecture/2026-10-29-payment-collection-outpatient.md)。
-
-`0103_payment-collection-cutover.sql` 移除旧 `payment_transaction`、`payment_allocation`、`payment_tender`、`payment_resolution`、`refund_preview`、`inpatient_payment_attempt`、`inpatient_payment_resolution` 和 `inpatient_settlement_supplement_refund`。门诊和住院共同收款只使用新交易表，既有业务预览、费用或住院用途分配及新原款退款投影继续保留；不提供旧交易读取适配或双写。旧资金存在时普通升级拒绝，维护者须按[一次性开发切换](#共享收款的一次性开发切换)处理，正常启动和岗位动作不清空运行数据。
-
-住院登记现金预交金、收费员追加预交金、首次及后续补收均调用同一 `PaymentCollection`，原款、方式和查询结果只保存于共同交易表。`inpatient_payment_allocation` 仅关联原住院、原预览及可空的后续更正 ID；复合外键阻止交易、预览或更正改绑另一住院。登记款没有独立收款预览，仍通过资金来源 ID 及首次结算交易 ID 回查共同原款；不加入公开独立尝试列表，保留既有默认现金结清与登记金额政策。成功预交金以共同 payment ID 唯一入账 `inpatient_deposit`，补收按业务用途进入首次结算或后续更正；原款退款仍由 `RefundLedger` 核对方式及余额。首次补缴的反向结算投影 `inpatient_collection_supplement_refund` 同时引用新原款分配及原退款，避免新链依赖旧尝试表。决策见[住院接入共同交易](../decisions/implemented/architecture/2026-10-29-payment-collection-inpatient.md)。
-
-`refund_transaction` 通过 `source_kind + source_id` 引用既有原款，`basis_id` 绑定业务 owner 提供的退费依据，`owner_kind + owner_id` 绑定就诊。门诊 `outpatient_refund_preview` 以复合外键关联原 `collection_transaction`，并非空保存指定原分配的 charge ID；追加迁移由旧唯一分配回填，保留已有 token、版本、期限和消费状态。原款方式由公共内核读取后传给既有退款 owner。原款成功状态、归属与依据额度由 owner 在同一 Command 事务验证；退款账不复制原款或增加第二套余额。`RefundLedger` 按成功结果扣除可退余额、按未知结果预占余额，追加的 `refund_resolution` 只保存确定结果。`refund_tender` 固定本次退款对原款方式的反向分配；成功和未知退款共同占用对应方式余额，拒付释放。依据额度同时扣除跨原款成功及未知退款；同原款与同费用依据的聚合另保护该原分配额度，整笔原款金额与方式不按费用重复计算；原款余额版本包含尝试和结果记录，防止竞争确认。门诊冲减保存原费用引用、原因与当时业务状态，原费用与支付行保留；所有反向资金、版本、回执与审计一起提交或回滚。
-
-住院后续财务更正保存在 `inpatient_financial_adjustment`，关联本次原费用及首次结算，按补计或冲减追加；原 ChargeItem、结算 JSON 及病案归档不改写。后续退款预览独立保存受信上下文、token hash、当前账目指纹和过期时间；退款仍进入共享 `refund_transaction`，使用更正 ID 作为依据。收款预览和住院分配的 `adjustment_id` 区分首次与后续，成功和未知资金从共同不可覆盖的交易及追加结果计算，不另持久化一套余额。首次资金及归档来源只包含首次链，当前财务差异由[财务更正 owner](clinical-workflows.md#结算后的财务更正)计算。
+- **单项与多费用合并收款**：`payment_preview` 保存单项费用预览；`multi_charge_payment_preview` 独立保存同次门诊的多费用冻结预览（绑定 `outpatient_case`、预期版本集合、逐项快照、组合方式、token 摘要与真实期限），旧单项确认路径不能消费合并预览。`outpatient_payment_allocation` 以 `(workspace_id, epoch, payment_id, charge_id)` 为主键关联原交易与同一就诊 Charge Record，合并原款为每项冻结费用写一行且合计等于原款金额；账单历史先按 `(workspace_id, epoch, case_id, created_at, payment_id)` 复合索引按整笔原款分页，再批量读取当前页分配与方式，恢复 Command 仅按单笔原 payment ID 定向查询，事务读取量不随历史增长，见[收费、结算与医保](billing-and-insurance.md)与[门诊多费用合并收款决策](../decisions/implemented/architecture/2026-11-10-outpatient-multi-charge-collection.md)。
+- **住院预交金、首次结算与后续财务更正**：住院登记现金预交金、追加预交金、首次结算补收与结算后补收均写入共同交易表，`inpatient_payment_allocation` 绑定原住院、原预览及可空的 `adjustment_id`；成功预交金唯一入账 `inpatient_deposit`，首次补缴反向投影 `inpatient_collection_supplement_refund` 关联新原款分配与原退款；结算后补计／冲减追加于 `inpatient_financial_adjustment`，绝不改写原 `ChargeItem`、首次结算 JSON 或病案归档，见[住院资金与首次结算决策](../decisions/implemented/architecture/2026-10-22-inpatient-funding-and-first-settlement.md)。
+- **原款逐分配退款**：`refund_transaction` 通过 `source_kind + source_id`、`basis_id` 与 `owner_kind + owner_id` 绑定原款、退费依据和就诊；`outpatient_refund_preview` 非空绑定原 `collection_transaction` 与指定分配 `charge_id`。`RefundLedger` 按成功退款扣减、按未知退款预占原款各方式余额与该费用分配额度，防止并发超退。
 
 #### 患者医保待遇记录
 
-`insurance_preview` 保存受信岗位摘要、token 摘要、真实时间期限及冻结费用、目录和年度账户预览。`insurance_event` 保存 Workspace/Epoch、Patient、年度、目标及不可覆盖的待遇快照和有符号影响；`reverses_id` 唯一引用原结算，撤销只追加逆向事件。账户余额、普通门诊和住院年度累计均由事件计算，不保存可编辑第二余额。原费用和现金支付表继续分别拥有应收与实收，待遇规则和失败边界见[医保模拟](clinical-workflows.md#86-医保模拟)。
+`insurance_preview` 保存受信岗位摘要、token 摘要、真实期限及冻结费用、目录和年度账户预览。`insurance_event` 保存 Workspace/Epoch、Patient、年度、目标及不可覆盖的待遇快照和有符号影响（`reverses_id` 唯一引用原结算实现逆向撤销），账户余额与门诊／住院年度累计全部由事件计算，不保存第二套可编辑余额。住院结算后医保更正由 `inpatient_insurance_adjustment` 复合外键关联财务调整、原待遇、补偿与替代待遇（每个财务调整最多一条更正链，每个有效待遇最多补偿一次），详见[收费、结算与医保](billing-and-insurance.md)。
 
 #### 模型执行恢复
 
-`consultation_reply_attempt` 保存受信 Workspace/Epoch、Encounter、待回答医生轮次、固定期限和执行终态；局部唯一索引保证每个医生轮次只有一个 `executing` 尝试。`consultation_reply_intent` 按 Actor、operation 与幂等键持久关联该尝试，各调用者仍独立授权和完成原 Command 回执。控制阻塞在同一短事务内保存 `MODEL_CONTROL_BLOCKED` 标记和 `model_reply_wait` 的原期限及受信恢复输入，并投影为 `blocked`；仅明确未派发且仍有效时自动接续。恢复输入保存失败时回滚阻塞写入，再尽力以同一事务撤销已有待办并将尝试结束为 `unknown`；启动时，缺少匹配待办的遗留阻塞尝试与其他遗留执行一并转为 `unknown`，仅允许医生明确的新补答意图继续。缺少派发证据的旧未答轮次迁移为未知，不自动补答。读取时已保存患者回答优先于尝试状态，响应丢失不触发重复推理。
-
-`doctor_recommendation_execution`、`doctor_recommendation_execution_plan`、`doctor_recommendation_execution_unit` 与 `doctor_recommendation_execution_continue` 分别保存绑定及累计额外次数、稳定阶段计划、批次依赖及成功结果、人工继续意图。四表以 Workspace/Epoch 开头的复合主键、外键隔离，删除使用 `RESTRICT`。执行键由 Workspace/Epoch、Actor/context、病例、建议类型与 generation 身份派生，完整绑定另含输入指纹、模型和策略；持久 JSON、键与完整绑定在运行时验证，计划与单元哈希不允许恢复时改组。筛选成功步骤只有完整来源上下文、请求与受信作用域均相同时可跨任务复用，生成和核验只属于原执行。
-
-每次外部派发前用短事务原子预占单元次数和 generation 额外次数，Provider 内部限流重发和格式修复也经过同一边界；网络请求在事务外。次数与 outbox 调度 attempt 独立持久化，重新领取及重启不清零。预占后未保存完整结果的崩溃窗口保留占用并转为未知。恢复先校验固定依赖及成功步骤，再处理未完成单元；私有候选在全部必要核验结束前不投影为可采纳结果。
-
-人工继续意图只为一个未知、失败或因 `MODEL_RETRY_DISABLED` 等待的单元持久保存一次 `resume_available` 授权，优先选择未知单元；同一意图重放不再次授权，已有未消费授权时不开放新的继续操作。每次实际请求准入均在事务内重新读取该授权，通过双层停用、额度、权限与原次数包络检查后，与请求次数预占原子消费。授权只豁免本次请求的自动重试开关，不重置预算、不改变 `blocked_kind`，也不自动开放其他失败单元或后续内部重试。准入拒绝保留未消费授权，重启可接续；技术失败终止当前继续意图并清除剩余授权，派发前失败不增加请求次数。派发后的崩溃仍转为未知，必须有新的人工意图才能再试。
-
-其他模型业务的 `model_task_step` 按 Workspace/Epoch、原任务与完整步骤输入指纹保存请求包络、被拒绝的实际请求种类、私有成功结果和未知状态。结构化输出的领域拒绝还保存最后一步的固定安全分类 `invalid_code`，与控制拒绝码 `blocked_code` 独立持久；同一步骤的结构化尝试预算耗尽时，预算拒绝按该分类经既有 `validationIssues` 通道回放，业务服务只把自身白名单标记还原为原失败分类。结果持久成功前仍保留派发中状态，崩溃不推断可重发；这些私有业务结果不进入用量账本。`model_task_wait` 关联控制阻塞的原 outbox 事件，恢复后复用成功步骤并重新验证业务有效性与权限，仍使用原并发通道。建议沿用既有执行单元及 `blocked_kind`，不另建一套成功结果缓存。
-
-Token、金额或计量条件拒绝时，准入边界在同一同步事务内采集双层政策与已用、预占、未知占用的稳定快照，随私有异常传给调度器；条件不变时保持等待，政策更新、结算或核对改变快照后才重新准入。快照只在当前进程保存，最多保留 4096 项，淘汰或重启允许一次安全重评，未知结果仍由持久步骤阻止重发。账本不可写不缓存为额度阻塞，存储恢复后可重新检查；单工作区快照读取失败保持该项等待，继续扫描其他工作区。建议的人工继续或新代次在同一 Command 中清除被替代事件的等待记录并创建新事件；事件及审计仍保留。
-
-runtime 初始化配置缺失使用同一等待记录及有界调度提示缓存，以 `runtime-restart` 区分于动态额度状态：当前恢复实例不因周期 pump 或额度变化唤醒该项，重建实例后检查新配置。未被配置阻塞的其他事件和额度等待继续按原条件恢复，不新增持久队列或重试预算。
-
-`model_host_wait` 仅保存已验证的 Host 任务 claims、原期限与短存活租约，不保存许可签名、医生正文或模型尝试。待办计数重新校验原页面连续性与当前授权，排除已准入、失权、过期、切走或失联的任务；该表只提供可观察状态，不授予或调度派发。Host 保持原 30 秒期限，通过认证心跳维持 1 秒租约，结束或成功准入清除。
-
-上述记录不创建 FHIR 临床资源、不替换 Command Receipt 或审计，也不保存平台密钥。面向合成病例的恢复数据遵循既有数据边界；公开状态只返回安全错误码、阶段和次数。行为与人工恢复条件见[临床业务流程](clinical-workflows.md#81-门诊闭环)，取舍见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
+- **自由问诊回复**：`consultation_reply_attempt` 通过局部唯一索引保证每个医生轮次只有一个 `executing` 尝试，`consultation_reply_intent` 按 Actor／operation／幂等键关联调用者回执；控制阻塞同事务保存 `MODEL_CONTROL_BLOCKED` 与 `model_reply_wait` 恢复输入，启动时将缺少匹配待办的遗留阻塞与崩溃尝试统一转为 `unknown`（仅允许医生显式发起新补答），读取时已保存患者回答始终优先于尝试状态。
+- **诊疗建议与通用模型步骤**：`doctor_recommendation_execution`（含 `_plan`、`_unit`、`_continue`）与通用 `model_task_step`／`model_task_wait` 以 `(workspace_id, epoch, ...)` 复合键隔离保存完整输入指纹、每次外部派发前短事务原子预占的单元／额外次数、结构化输出安全分类 `invalid_code` 与控制拒绝码 `blocked_code`。派发后崩溃窗口保留占用并落为未知，禁止自动重发；人工继续意图仅为一个未知、失败或 `MODEL_RETRY_DISABLED` 单元持久保存单次 `resume_available` 授权并在准入事务内与请求预占原子消费，不重置预算。动态额度拒绝在进程内缓存最多 4096 项政策快照（配置缺失以 `runtime-restart` 区分，重启前不因周期轮询唤醒），政策变更、核对结算或淘汰重启后安全重评；`model_host_wait` 仅保存已验证 Host 任务 claims 与 1 秒心跳租约供状态观测。详见[临床决策支持与质控](clinical-decision-support.md)与[模型请求控制与恢复决策](../decisions/implemented/architecture/2026-10-21-model-request-control-recovery.md)。
 
 ### FHIR 投影
 
-当前 `domain-projection` 包含 AuditEvent、InventoryItem、ImagingStudy 和 Procedure 四类资源，分别使用稳定 logical id 与拥有它们的审计、库存、影像检查或手术实施事实关联，不维护额外 `domain_resource_link` 表。
-
-规则：
-
-- 领域写入与 FHIR 投影、Search 索引、历史版本在同一数据库原子提交。
-- 投影失败时整个 command 失败，不能接受“稍后最终一致”作为默认。
-- 投影资源 `owner_kind=domain-projection`，FHIR generic PUT/PATCH/DELETE 被拒绝。
-- 外部异步事件只处理模拟系统调用，不负责修复核心投影一致性。
-
-新增投影时必须在能力注册表声明 owner，并记录权威事实、稳定引用、唯一写 Command、事务边界、重建方式和一致性检查。没有实现的 Slot、床位、Invoice、电子票据、医保和完整 Account 余额投影不属于当前能力。
+当前 `domain-projection` 包含 `AuditEvent`、`InventoryItem`、`ImagingStudy` 和 `Procedure` 四类资源，以稳定 logical id 直接关联审计、库存、影像检查或手术实施事实（不另建 `domain_resource_link` 表），与领域写入、Search 索引、历史版本在同一 SQLite 事务原子提交；投影失败则整笔 Command 回滚，HTTP FHIR generic 写请求一律拒绝。
 
 <a id="94-标识符"></a>
 
 ### 标识符
 
-- 在线新建的 FHIR logical id 使用 UUIDv7 文本；scenario fixture 的稳定 ID 使用预分配 ID 或由 scenario version + logical key 派生的 UUIDv5。二者都满足 FHIR id 长度和字符要求。
-- 业务号放对应主体的 `Identifier`，不把患者号、就诊号或处方号当数据库主键。
-- 每个 identifier 有稳定 `system` URI、用途、分配机构和有效期。
-- 患者合并保留源 Patient，并通过 link/状态表达；禁止改写所有历史 ID。
-- 场景 fixture 使用稳定逻辑 key，运行时 ID 可由 scenario seed + logical key 确定性生成。
+- 在线新建的 FHIR logical id 使用 UUIDv7 文本；确定性 scenario fixture 使用预分配 ID 或 `scenario version/seed + logical key` 派生的 UUIDv5，对外只暴露 FHIR logical id。
+- 患者号、门诊号、住院号、病案号存于对应主体的业务列或 `Identifier`（含稳定 `system` URI、用途与分配机构），不充当数据库主键；患者合并保留源 `Patient` 并以 `link` 表达，禁止改写历史 ID。
 
 #### 门诊号发行状态
 
-门诊号标识本次就诊，保存在 Registration 和 Encounter.identifier，患者级标识保持独立。新号格式为 `CM-OP-YYYYMMDD-流水号`，业务日期使用已校验的就诊日期；流水至少六位，超过六位自然增长，以日期和数值流水排序。普通挂号、合成病例开始及 reset 后的重放都经过同一个发号边界，在原 Command 写事务内提交发行状态、Registration、Encounter 与回执；同键重放不再发行。
-
-`registration_number_counter(visit_date, high_water)` 按日期保存全数据库共用的已提交发行高水位，作用域不含 Workspace/Epoch，业务删除和产品内 reset 不清理它。`registration_number_authority` 保存单例发行权威 ID、active/retired 状态以及全部日期计数器的规范化 SHA-256 摘要；每次分配都在写锁内验证完整状态并原子更新摘要。缺失日期只有在完整计数器清单仍匹配时才是首次使用；缺行、损坏、已退休权威和安全整数容量耗尽均拒绝发行，不从现存业务行重建。
-
-迁移必须先证明历史完整性，再跨全部 Workspace/Epoch 汇总按日高水位。证明包含每个 Epoch 的完整审计链与头、每条审计的初始 AuditEvent 投影、正常挂号及合成病例开始的初始 Encounter 号码，并反查现存挂号和全部有号 Encounter 历史。当前最大存量号只是下界，不能独立作为迁移依据。旧版成功 reset 未保存完整重放发行清单，或必要历史证据已删除、损坏、无法关联时，迁移返回 `REGISTRATION_NUMBER_HISTORY_UNVERIFIED` 并回滚该迁移，保留原数据及旧号；不会把未确认历史视为零。跨作用域已有重复号保留原值，新发行从已证实的全局高水位继续。
-
-发行状态随一致备份保存并纳入 canonical state hash。受控恢复要求保留可信最新发行权威库；恢复在停用旧权威后，将备份和最新权威的每日期高水位取大值，再启用一个恢复目标。缺少最新权威、身份不一致或状态无法验证时拒绝恢复发号；退休后的失败也不自动重新启用旧库。操作入口与恢复失败处理见[数据库运维](#database-operations)，证明边界与替代方案见[发行完整性决策](../decisions/implemented/architecture/2026-10-20-registration-numbering-integrity.md)。摘要用于检测发行状态的意外缺失和损坏，不抵抗管理员同时篡改事实与校验值；应用不自动识别任意文件复制或保证独立克隆双写后的全历史唯一。
+门诊号格式为 `CM-OP-YYYYMMDD-流水号`（至少六位，超六位自然增长），在普通挂号、合成病例开始及 Epoch 重放的同一 Command 写事务内分配并提交（同键重放不再发行）。`registration_number_counter(visit_date, high_water)` 跨全部 Workspace/Epoch 保存全库按日已提交高水位，业务删除与 Epoch reset 不清理它；单例 `registration_number_authority` 保存权威 ID、`active`/`retired` 状态与全量计数器规范化 SHA-256 摘要，缺行、摘要损坏、已退休权威或安全整数容量耗尽均拒绝发号，绝不从现存业务行猜测重建。历史库迁移须先校验完整审计链、初始 `AuditEvent` 投影与全部历史 Encounter 号码后才汇总高水位，证据不足返回 `REGISTRATION_NUMBER_HISTORY_UNVERIFIED` 并回滚迁移，见[门诊号发行完整性决策](../decisions/implemented/architecture/2026-10-20-registration-numbering-integrity.md)。
 
 ### SQLite 类型规则
 
-- 主键：`TEXT` UUIDv7；确定性 fixture 可使用 UUIDv5。对外引用只暴露 FHIR logical id，不暴露 workspace 复合键。
-- UTC 时间：ISO 8601 `TEXT`；显示层转换 `Asia/Shanghai`。
-- 虚拟业务时间与真实提交时间分列。
-- 布尔：`INTEGER CHECK(value IN (0,1))`。
-- 枚举：`TEXT CHECK(...)` 或术语外键。
-- RMB 金额：整数分 `INTEGER`；更高精度医保金额使用定点整数和 scale。
-- 数量：基准单位定点整数，不使用 JavaScript 浮点累加余额。
-- JSON：`TEXT CHECK(json_valid(...))`，只用于 FHIR 正文、外部快照和不可检索文档内容。
-- 关系集合：关联表，不使用逗号串。
-- 所有 Workspace/Epoch 运行事实表的主键和唯一键以 `(workspace_id, epoch, ...)` 开头；运行事实之间使用 `(workspace_id, epoch, target_id)` 复合外键，禁止只引用裸 ID，删除默认 `RESTRICT`。跨 Epoch 的不可变 Profile/Case 资产遵循[Workspace 隔离](simulation.md#101-workspace-隔离)。
-- registry 声明的 reference Search 路径在写入时解析目标、验证 Workspace/Epoch，并写入包含隔离键的 `fhir_sp_string`。
-- migrations 固定并记录最低 SQLite 版本；依赖 JSON 函数、`RETURNING` 或其他版本相关能力前，以真实 file-backed 数据库测试证明目标运行时支持。
+- 主键：`TEXT` UUIDv7（fixture 可用 UUIDv5）；UTC 时间：`TEXT` ISO 8601（显示层转 `Asia/Shanghai`），虚拟业务时间与真实提交时间分列。
+- 布尔：`INTEGER CHECK(value IN (0,1))`；枚举：`TEXT CHECK(...)` 或术语外键；人民币金额：整数分 `INTEGER`（高精度医保与模型计价使用定点安全整数）；数量：基准单位定点整数，禁止浮点累加余额。
+- JSON：`TEXT CHECK(json_valid(...))`，只用于 FHIR 正文、冻结快照和不可检索文档；集合关系使用关联表；所有运行事实表使用 `(workspace_id, epoch, ...)` 复合主键与复合外键。
 
 <a id="96-sqlite-事务"></a>
 
 ### SQLite 事务
 
-SQLite 连接启用 foreign keys、WAL 和有界 `busy_timeout`。首期只允许一个服务端进程写入数据库；Command 使用短 `BEGIN IMMEDIATE` 事务，在获得 write lock 后读取依赖并提交完整 write plan。请求不得在事务中等待浏览器、调用外部模拟器或执行不受界限的计算。
+SQLite 连接启用 `foreign_keys`、WAL 和 5 秒有界 `busy_timeout`，首期单进程单 writer。每个同步业务 Command 预算小于 1 秒，禁止在事务内等待浏览器或发起网络调用：
 
-每个 Command 流程：
-
-1. 认证、workspace 和权限检查。
+1. 认证、Workspace 与权限检查。
 2. 网络 schema 与业务规则校验。
-3. 查询 idempotency receipt。
-4. 开启 `BEGIN IMMEDIATE` 并重新读取 active Epoch、receipt、资源版本和所有并发敏感依赖。
-5. 应用服务读取并校验命令依赖，生成确定性 Effect。
-6. 通过复合 foreign key、unique/check constraint、expected-version 条件更新和余额下限约束保护不变量。
-7. 在一个事务写入当前资源、历史、Search 索引、领域事实、outbox、Audit Event、Action Trace 和 receipt。
-8. 提交后唤醒 dispatcher；外部模拟或通知始终在事务之外执行。
-
-数据库约束是并发正确性的最终保护：幂等 receipt key 唯一，库存以带 version 和 `quantity_on_hand >= delta` 的条件更新扣减，Workspace 内关系使用含 Epoch 的复合 foreign key。任何条件更新零行、约束错误或审计写入失败都使事务回滚，并被转换为稳定的 conflict、invariant 或 transient 错误。
-
-SQLite 连接以五秒 `busy_timeout` 提供有界锁等待；CommandExecutor 当前不在应用层叠加事务重试。已经发出外部副作用或得到 ambiguous outcome 的操作不能通过重跑整个 Command 解决。持续竞争无法满足交互延迟时需要重新评估数据库和部署方案。
-
-同步业务 Command 的真实 SQLite 合约要求单次事务持续时间小于一秒。五秒 `busy_timeout` 是锁等待上界，不是允许业务事务占用 writer 五秒；网络调用、dispatcher 处理和预览后的人工等待都必须留在事务外。
+3. 初查 idempotency receipt。
+4. 开启 `BEGIN IMMEDIATE` 取得写锁，重读 active Epoch、receipt、资源版本与所有并发敏感依赖。
+5. 应用服务校验依赖并生成确定性 Effect。
+6. 通过复合外键、唯一／检查约束、expected-version 条件更新和库存 `quantity_on_hand >= delta` 下限保护不变量。
+7. 同事务原子写入当前资源、历史、Search 索引、领域事实、outbox、Audit Event、Action Trace 和 receipt。
+8. 提交后在事务外唤醒 dispatcher（CommandExecutor 不叠加应用层事务重试，外部结果未知必须走对账恢复）。
 
 <a id="97-outbox"></a>
 
 ### Outbox
-
-`outbox_event` 状态：
 
 ```text
 queued -> claimed -> completed
@@ -206,37 +94,26 @@ queued -> claimed -> completed
 queued/claimed    -> abandoned
 ```
 
-每个事件具有 event ID、Workspace/Epoch、Scenario Run、kind、dedup key、correlation ID、attempt、next attempt、`lease_owner/lease_version/leased_until` 和 payload hash。lease 以真实时间通过短事务条件抢占，支持过期回收、固定有界延迟和最大尝试；达到最大尝试后保持 `failed`，当前没有人工 dead-letter 管理 API。
-
-模型控制拒绝使用独立的 `model-blocked` 完成语义，事件持久为等待中的 `failed`，返还本次 claim 的调度 attempt，并关联 `model_task_wait`；它不消耗技术重试机会。控制恢复后只唤醒原事件，业务服务仍负责当前性校验。已派发结果未知使用 `ambiguous`，不会随控制恢复重新领取。
-
-- 服务启动时扫描可恢复事件；Command 提交后只负责唤醒同进程 dispatcher，内存通知丢失不会丢事件。
-- dispatcher 在外部调用前持久化 claim、lease 和 correlation ID，在提交结果前重新验证 Workspace/Epoch 仍 active。
-- LIS consumer 按 event ID 幂等；独立检查申请由开具、受理和开工 Command 依次产生受理、执行和报告 outbox，报告 consumer 对不同 event ID 的重复投递也按申请关联去重。支付 Command 只有全部未决资金已收敛、累计成功实收与有效医保分配覆盖净应收时才产生兼容检验报告或药房 outbox；医保撤销后的补收不重复放行。支付结果未知保持 `ambiguous`，不直接退回 queued。
-- dispatcher 崩溃后由过期 lease 恢复；当前没有公开人工重放入口。
-- 不承诺 exactly-once；使用 at-least-once delivery、幂等 consumer 和 ambiguous outcome 对账。
+每个 `outbox_event` 携带 event ID、Workspace/Epoch、Scenario Run、kind、dedup key、correlation ID、attempt、next attempt、`lease_owner/lease_version/leased_until` 和 payload hash。模型控制拒绝使用独立的 `model-blocked` 完成语义将事件置为关联 `model_task_wait` 的等待态并归还调度 attempt，不消耗技术重试机会；已派发结果未知保持 `ambiguous`，不随控制恢复重领。dispatcher 在外部调用前持久化 lease，提交结果前重验 active Epoch，采用 at-least-once 投递加幂等 consumer（检查报告按申请关联去重，支付仅在未决资金全部收敛且净应收完全覆盖时放行下游），崩溃后由过期 lease 回收。
 
 <a id="98-文书与附件边界"></a>
 
 ### 文书与附件边界
 
-首期只保存通过运行时 envelope 与业务规则验证的结构化 FHIR JSON。已签署 document Bundle、Composition、Provenance 和 Clinical Document Revision 与其他 FHIR 资源一起进入 current/history store，不写本地散落文件。病历修订创建新的 logical resource 和明确 `replaces` 关系；同一病例的唯一根约束和最新版本检查禁止分叉或第二个签署根。
-
-首期不提供 Binary、图片、PDF、扫描件、OCR、报告附件或对象存储。未来加入附件时必须另行设计内容校验、授权、版本不可变性、备份恢复和对象生命周期，不能把 SQLite 文件路径直接写入 FHIR 资源。
-
-影像检查的像素不是附件，也不进入 SQLite、Git、日志或模型输入。像素保存在数据库之外的本地素材目录，由影像读取边界按本院检查标识读取；FHIR 正文、临床读模型和阅片描述都不包含文件路径。数据库只保存本院检查与素材的私有对应关系和报告内容，见 [10.7 节](simulation.md#107-影像素材与病例影像准备)。
+已签署临床文书 `Bundle`、`Composition`、`Provenance` 作为结构化 FHIR JSON 存入 current/history store，修订创建新 logical resource 并声明 `replaces`，唯一根约束阻止分叉。首期不提供 Binary、PDF、扫描件等附件存储；放射与病理像素保存在数据库外的本地素材目录，经只读阅片边界按检查标识访问，绝不进入 SQLite、FHIR 正文、日志或模型输入，见[影像素材与病例影像准备](simulation.md#107-影像素材与病例影像准备)。
 
 <a id="99-数据库迁移边界"></a>
 
 ### 数据库迁移与运维
 
-首期只有 SQLite Repository adapter。Drizzle schema 和迁移以 SQLite 为真实目标，不维护 D1 或 PostgreSQL 方言的虚假兼容层。Workspace 级 Profile、Case、Brief 和 Investigation Snapshot 使用稳定逻辑 key 和显式 revision，不依赖本地自增 ID。
+Drizzle schema 与迁移以真实 file-backed SQLite 为唯一目标（未来引入 PostgreSQL、D1 或 Supabase 须新建真实 Repository adapter、双端合同测试与显式数据迁移，不维护虚假方言兼容层）。已应用迁移按完整文件名与 LF 归一化校验和识别；岗位枚举或类别 CHECK 扩展在单次迁移事务周边保真重建表，并在提交前验证全量 `foreign_key_check`。
 
 <a id="database-operations"></a>
+<a id="共享收款的一次性开发切换"></a>
 
 #### 数据库运维与备份恢复
 
-Server 启动只校验当前 operational SQLite 的 schema 版本和完整性，不隐式执行未应用的迁移；开发入口通过 `db:prepare` 显式迁移并幂等 seed 合成工作区与账户。迁移文件 checksum 计算前将 CRLF 归一化为 LF，保证 Windows 与 Linux checkout 识别同一迁移身份。
+Server 启动只校验当前 operational SQLite 的 schema 版本与完整性，不隐式执行迁移；开发入口通过 `db:prepare` 显式迁移并幂等 seed（生产升级步骤见[部署指南](../deployment.md#生产构建与-nodejs-直跑)）：
 
 ```sh
 pnpm --filter @clinmesh/server db:migrate
@@ -246,99 +123,26 @@ pnpm --filter @clinmesh/server db:backup --output ./.data/clinmesh-backup.sqlite
 pnpm --filter @clinmesh/server db:restore --authority-database ./.data/clinmesh.sqlite --backup ./.data/clinmesh-backup.sqlite --destination ./.data/clinmesh-restored.sqlite
 ```
 
-- **备份与校验**：`db:backup` 使用 SQLite 一致在线备份 API 生成新目标文件（不能仅在连接活跃时直接复制主 `.sqlite` 文件），并校验源与备份的 schema version、`PRAGMA integrity_check`、`foreign_key_check` 及 canonical state hash。已有旧版业务库运行 `db:migrate` 前会自动在同目录生成并校验升级前备份（若历史资金结构需一次性开发切换，则拒绝普通迁移并返回 `PAYMENT_CUTOVER_REQUIRED`）。运维步骤见[部署指南](../deployment.md#生产构建与-nodejs-直跑)。
-- **受控恢复与发行高水位合并**：`db:restore` 不覆盖现有文件，要求先停止使用旧权威库的 Server，并显式传入可信最新发行权威库 `--authority-database`。恢复先校验权威库和备份库的发号状态完整性，将旧权威标为 `retired` 后，把两库的按日门诊号高水位逐日取最大值写入新目标库，再校验新目标库的 schema、完整性与重算后的 canonical state hash。因候选库合并了较新的按日高水位，恢复结果的 canonical state hash 可能与旧备份不同；缺少最新权威、两库权威身份不一致或历史无法验证时返回 `REGISTRATION_NUMBER_RECOVERY_UNVERIFIED` 并拒绝恢复，已退休的旧库不会自动重新启用，禁止直接用旧备份文件替换当前业务库或双开克隆实例。
-- **Canonical state hash 口径**：覆盖业务与 FHIR 规范状态、审计链与门诊号发行状态；排除可重建的 `fhir_sp_string` 搜索索引、迁移与运行时元数据、FHIR `meta.lastUpdated`、自引用哈希列，以及允许重放措辞差异的问诊自由回答原文与对应回执消息文本（见[确定性与故障注入](simulation.md#104-确定性与故障注入)）。
-
-独立指南全文库使用自己的 schema version 3，将导入来源与共享正文分开保存。来源 ID、元数据、摘要及 `guideline_source_restriction` 保留各导入入口的身份、用途和维护限制；正文身份由格式、原件 SHA-256、版本及完整有序的定位和原文共同确定。完全一致的正文及 FTS 只保存一份，多条来源指向同一正文；节选、修订或不同版本拥有独立正文。导入先应用既有限制，再在同一事务更新来源、正文关联、索引和限制，仅回收已经没有来源引用的正文；清空或移除一条来源不会删掉其他来源共用的正文。完整性核对仍逐来源重建原文与元数据并验证原摘要，不能因正文已存在跳过来源登记或验证。
-
-固定包导入叠加后续撤回、替代、正文核验及用途收紧后计算摘要，限制不随正文修复、正文去重或换包清除。发布事务还包含全库来源状态读取，包外来源解析失败也回滚本次更新；显式恢复仅清除已复核指定来源的限制，不清除其他共用正文来源的限制。来源数保留导入记录口径，独立正文数和段落数按共享正文身份去重；包锁继续描述固定快照，运行库统计使用全库限制判断后再按统计范围汇总。安装与重新启用操作见[部署指南](../deployment.md#免费指南全文同步)，去重取舍见[共享正文决定](../decisions/implemented/architecture/2026-10-27-guideline-shared-bodies.md)。
-
-version 1、2 在停用访问指南库的进程并保留一致备份后，通过可写准备入口原位事务升级；运行时只读连接要求 version 3。迁移保留旧来源、原摘要及限制，发现旧数据不完整时保留不可信标记和修复入口，不通过重算摘要将损坏内容认定为正确；已核验重导仅修复目标来源。准备器的只读检查仅在临时副本升级，正式旧库仍报告待准备；普通准备才迁移正式库。schema 升级后重启新读端，回滚旧代码须恢复对应旧 schema 的指南库一致快照；不迁移业务库或 Reference 库。version 3 运行中的只读连接继续观察独立 writer 的普通事务更新。
-
-`GuidelineCorpus.search` 在单个实例内按原始检索文本复用完整结果，最多保留最近使用的 64 条。每次检索先在读取事务内检查 SQLite `data_version` 与本连接 `total_changes()`；任一变化都清空旧结果，使独立导入、来源限制、正文修改及完整性损坏标记在下一次检索生效。未命中仍执行完整来源与正文核对，返回的 revision 和建议输入指纹沿用原合同；调用者修改返回值不会改变缓存。缓存不持久化、不跨实例共享，取舍见[检索复用决定](../decisions/implemented/bug-fix/2026-11-03-guideline-search-reuse.md)。
-
-来源元数据的可选 `derivedFromSourceId` 保存派生记录的原来源稳定 ID，参与来源摘要、依据身份和检索 revision；关联本身不表示正文相同。导入事务保留缺省重导未提供的既有关联；旧本地来源仅在同字节或既有前缀关系能唯一确定原来源时补齐关联，保留原正文与限制。多个候选要求维护者明确登记，不按标题或网址猜测。关联不能自指或成环；父链缺项允许先入库，但补齐前整条派生链不参与检索或可用统计，补齐后再按各来源实际状态判断。撤回、替代及正文未核验只沿祖先向下传播，派生记录停用不反向停用原指南或其他独立派生记录；旧同字节和前缀判断只用于尚无显式关联的本地来源。只读核对发现待补关联时返回未就绪，正式库由普通准备补齐。旧来源正文损坏但元数据可解析时，仅保守补齐可唯一确认的历史父关系，保留原摘要、正文与不可信标记，不阻断健康原件重导；显式修复副本仍继承该关系，不能绕过已换哈希原件的停用。损坏正文不能借补关联重新登记为正确内容。
-
-Operational schema 的目标版本由迁移目录计算，按完整迁移文件名及校验和识别已应用迁移，数字前缀不作为唯一身份。`0069_inpatient-admission.sql` 与 `0069_registration-numbering.sql`、`0070_inpatient-orders.sql` 与 `0070_doctor-recommendation-consolidation-stage.sql` 均保留原文件及已落库身份。从门诊发号版与住院分支升级的历史兼容合同保留原 FHIR current/history、领域事实、回执及已应用迁移记录，资金历史保真回归固定到共享收款开发切换前版本；准确升级清单由迁移目录拥有。发号历史证据不足仍按[发行状态](#门诊号发行状态)拒绝迁移，不能用住院兼容绕过。理由见[迁移身份兼容决策](../decisions/implemented/bug-fix/2026-10-21-inpatient-main-migration-identity.md)。
-
-#### 共享收款的一次性开发切换
-
-`db payment-cutover` 只为本次[共享收款模型](#门诊收款记录)舍弃旧合成历史交易及完整关联运行链。普通 `migrate` 遇到旧收款表非空、没有共同原款的预交金或退款时返回 `PAYMENT_CUTOVER_REQUIRED`，不隐式清理。已经执行 0103 的库拒绝再次切换；0103 前已经产生 `collection_transaction` 的库也拒绝舍弃新资金。旧表为空且资金引用有效的新模型库可普通升级，保留成功交易、未决尝试、退款和回执。本次例外不适用于后续升级。
-
-切换按显式表清单处理所有 Workspace 的旧运行链，出现未登记表立即失败。来源生成、Persona 或检验目录发布任务仍为 queued/running 时拒绝切换；维护者须先让来源任务结束并停止所有服务写入。保留与舍弃范围如下：
-
-| 范围 | 切换结果 |
-| --- | --- |
-| Profile、Profile Revision、Case、Case Truth、可见来源病史及来源资源、Persona Revision、可复用检查结果、已结束的来源任务和影像／病理来源绑定元数据 | 保留原身份及内容；不处理独立素材文件或像素 |
-| 账号、认证配置、Workspace 成员关系、岗位分配、模型绑定及医院目录、病区、床位和仿真配置 | 保留原行，并将当前 Epoch 配置复制到新 Epoch |
-| 门诊号发行权威与全部按日高水位、模型用量明细和长期汇总、额度及未决消费预占、用量修订审计 | 保留；不退休发行权威，不重置额度或累计 |
-| 保留来源、配置、场景安装及模型用量等持久 owner 的 Command 回执及 effects | 随原事实保留幂等身份；重放不能重新安装或覆盖保留资产 |
-| 独立审计链、Action Trace、原 AuditEvent FHIR current/history 及索引 | 保留原行；审计可继续引用本次明确舍弃的合成运行事实 |
-| 独立 Reference SQLite、Guideline SQLite 及其限制 | 不打开或修改 |
-| 本院 Patient／Encounter 物化、门诊及住院临床进度、请求与正式报告、处方、费用、收退款、预交金、待遇、首次结算、后续调整、病案冻结、运行授权、后台待办、outbox 及这些运行事实的回执和 effects | 舍弃；来源检查快照与本次就诊正式报告分别处理，不留下缺少资金依据的已放行或已冻结进度 |
-
-各 Workspace 的原 Epoch 及 Scenario Run 身份保留为关闭的壳，新 Epoch 成为该 Workspace 的活动世代。医院环境的 Organization、Practitioner、PractitionerRole、Location、Medication FHIR 快照随配置复制；Patient 和临床事实通过岗位重新物化。Case 的来源及内容不变；原 started/completed Case 按是否有活动 Brief 恢复到 brief-ready/brief-pending，并递增 revision、更新生命周期时间。旧运行意图、旧预览、运行回执及迟到业务结果不能借新世代重新执行；保留 owner 的幂等结果仍按其原合同重放，跨 Epoch 保留的模型用量证据仍按其 owner 结算，不授权重新派发。
-
-当前 Epoch 的库存批次在切换时按现存数量加回被舍弃 `inventory_movement` 的耗用，形成新 Epoch 的初始库存及 InventoryItem 投影，再由重建的岗位流程重新扣减。它是与旧运行链一起重建的库存基线，不要求库存运行行与切换前逐字节相同，也不重新导入或覆盖医院目录。
-
-CLI 先用 SQLite backup API 在新路径生成并验证一致备份，再以备份的 canonical state hash 核对获得写锁后的源状态。待执行 schema 迁移、旧运行清理、世代切换及 0103 结构收口在一个 `BEGIN IMMEDIATE` 事务内执行；外键只在这个显式维护事务外暂时关闭，提交前核对完整外键与数据库完整性，退出时恢复外键保护。任意失败使本次事务整体回滚，保留原库及诊断备份；不把外部渠道副作用解释为可随 SQLite 回滚。
-
-成功输出包括 `preMigrationBackup`、`applied`、`schemaVersion` 和 `cutover`；后者列出每个 Workspace 的 `fromEpoch/toEpoch`、保留表的原行数量与内容 SHA-256，以及舍弃运行表的原行数量。保留校验在复制新配置行前完成；Case 的摘要排除允许变化的生命周期状态、revision 和更新时间，其余身份及内容参与校验。报告不输出患者正文、模型正文或凭证。明确的命令、重建步骤和失败恢复见[部署指南](../deployment.md#共享收款的一次性开发切换)，取舍见[开发切换决策](../decisions/implemented/architecture/2026-10-30-payment-collection-development-cutover.md)。
-
-未来选择 D1、PostgreSQL 或 Supabase 时必须：
-
-- 新增目标数据库的真实 Repository adapter 与双端 contract tests。
-- 设计并演练 schema、FHIR history、领域事实、审计和 outbox 的显式迁移。
-- 验证 canonical state hash、引用完整性、金额和数量守恒、history/version 与 active Epoch。
-- 单独定义目标运行时的事务、并发、备份、恢复和部署约束。
-
-Repository 边界降低业务代码耦合，但不承诺直接复制 `.sqlite` 文件或零成本切换。
+- **备份与校验**：`db:backup` 使用 SQLite 在线备份 API 生成新文件（禁止连接活跃时直接复制 `.sqlite` 主文件），校验 schema version、`integrity_check`、`foreign_key_check` 及 canonical state hash（口径见[确定性与故障注入](simulation.md#104-确定性与故障注入)）；非空库运行 `db:migrate` 前自动生成升级前备份（若残留已退役历史资金表则以 `PAYMENT_CUTOVER_REQUIRED` 拒绝普通迁移）。
+- **受控恢复与门诊号高水位合并**：`db:restore` 不覆盖现有文件，要求先停止旧库 Server 并显式传入最新权威库 `--authority-database`；校验两库发号完整性后将旧权威标为 `retired`，逐日取两库门诊号高水位最大值写入新目标库 `--destination` 并重算 canonical state hash。缺少最新权威或身份失配返回 `REGISTRATION_NUMBER_RECOVERY_UNVERIFIED` 且已退休旧库不自动重启用，禁止用旧备份直接覆盖业务库或双开克隆实例。
+- **独立指南全文库（schema v3）**：`.data/clinmesh-guidelines.sqlite` 独立于业务库与 Reference 库，将来源元数据、`derivedFromSourceId` 派生链及 `guideline_source_restriction` 维护限制与按原件 SHA-256 及完整定位去重的共享正文分开保存；撤回、替代与用途收紧优先于固定包且沿派生链向下传播，单实例最多 64 条检索缓存通过 SQLite `data_version` 与 `total_changes()` 即时失效。安装、升级与回滚备份见[部署指南](../deployment.md#免费指南全文同步)、[临床决策支持与质控](clinical-decision-support.md)及[免费指南全文库决策](../decisions/implemented/architecture/2026-10-16-free-guideline-corpus.md)。
 
 <a id="910-模型调用账本"></a>
 
 ### 模型调用账本
 
-`model_usage_attempt` 保存 Server 直接 Provider、DSH bridge 与 Host 独立医生代问识别的逐次尝试，按 Workspace 长期归属并记录原 Epoch，不随 Epoch 重置清空。每次实际生成、格式纠错和限流重发先持久创建 UUID 尝试；桥接沿用该身份，Host 的同一次 stream 不重复创建记录。Host 自发识别固定记为 `doctor_delegation`，医生输入任务 ID 的首次准入与记录创建在同一事务中完成，重放不再返回可派发许可。账本创建与已有建议单元次数预占同事务提交，外部请求在事务后派发；即使额度无限，账本写入失败也停止请求。
+`model_usage_attempt` 按 Workspace 跨 Epoch 持久保存 Server 直接 Provider、DSH bridge 与 Host 独立医生代问识别（`doctor_delegation`）的逐次尝试。每次实际生成、格式纠错（`format-repair`）和限流重发（`rate-limit-retry`）在网络派发前，于同一短事务内原子创建 UUID 尝试、校验建议单元或任务包络并写入 `model_usage_request_reservation`／`model_usage_dimension_reservation` 预占，账本写入失败立即停止请求。记录仅保存任务、阶段、多来源关联、请求／实际模型、推理策略、可知输出上限、UTC 时间、结果、服务商请求 ID 与归一化 Token 元数据（OpenAI 与 DSH 缓存计入输入子集、推理计入输出子集，`raw` 保留原始分项，未知记 `null`、缺价记 `price-not-configured`，禁存提示词、临床或模型正文与凭证；日期趋势按 `Asia/Shanghai` 汇总）。
 
-记录仅包含任务、阶段、病例、明确来源及触发/支持关系、实际 Provider/模型、推理策略、可知输出上限、时间、结果、服务商请求 ID 和经过映射的 Token 元数据。合批保存多个来源，不把全部消耗归给首项；患者人设的合成病例来源与本院门诊病例授权标识分开。提示词、临床正文、模型正文、原始错误和凭证不进入账本。OpenAI 的输入包含缓存、输出包含推理；DSH SDK 的未缓存输入与缓存读取/写入先合并为输入，推理仍是输出子集，不能再加到总量。窄 `raw` 计数保留服务商原始分项，包含 DSH 未缓存输入及独立缓存读写；缺少完整输入时仍保留可信分项，已知 Token 汇总只累计可信下界，并同时显示未知请求数。日期筛选、趋势和显示使用 `Asia/Shanghai`，持久时间仍使用 UTC。
+DSH 用量帧到达后以短事务保存可信量、实际配置与已派发证据，多帧快照按已报告分项合并且新帧可信归一化计数不被旧原始分项覆盖；Host 代问期限固定 30 秒，超期在途记录在读取、准入或上报时持久转为未知且不释放消耗。已保存成功、失败或取消终态不可改写，迟到可信用量只补齐未知计数与费用，矛盾报告整体忽略。
 
-未知用量使用 `null`，缺价费用使用 `price-not-configured`，不转换为零。派发证据区分已派发、确认未派发和未知：已准入后可确认未派发的拒绝保留可查询明细，但不计入实际请求；无法证明未派发时保守计入。DSH bridge 与 Host 自发识别均先由 SDK 准备并锁定模型配置；bridge 的 SDK 预检拒绝记为确认未派发，Host 自发识别的预检失败不创建尝试。桥接用量帧和终态返回准备后的推理策略及输出上限，包括 SDK 应用的默认值；旧帧省略这些元数据时保留已有记录。DSH 用量帧到达后以短事务持久保存可信量、实际配置和已派发证据，请求保持在途且不设置结束时间；取消、断流和启动恢复均保留已观察的计数与配置，启动只将前一 writer 留下的在途尝试转为未知，不据此自动重新派发。多帧快照按已报告分项覆盖，省略项保留已知值；DSH 输入、缓存及总量随合并后的分项重算，旧总量仅作为原始证据保留。新帧的可信归一化计数不会被旧原始分项覆盖，全未知帧不改变已有计数及其可信状态。终态重复送达幂等；已知实际模型不会随当前路由设置改变。
-
-建议任务的手动重新生成或继续意图随受信 outbox 事件持久化，后续请求标记为手动触发并关联该事件；继续保留原任务及批次身份，不能仅因存在旧任务就推断用户发起了继续。外层格式纠错与限流重发分别沿用 `format-repair`、`rate-limit-retry` 分类，不重新标记为首次尝试。权限与查询范围见[模型用量查询](security-and-reliability.md#模型用量查询)；决策见[逐次计量决策](../decisions/implemented/architecture/2026-10-21-server-model-usage-ledger.md)。
-
-Host 独立识别的期限固定为 30 秒，Host 在该期限内停止识别；Server 依据持久化开始时间，在用量读取、Host 准入或上报时将超期在途记录持久转为未知，覆盖 Host 完全失联而无法发送终态的情况。进度上报只更新用量证据，不延长期限或把未知状态改回在途。超期不释放消耗、不删除去重身份，也不授予新派发；迟到的可信终态仍可结算原尝试。
-
-已保存成功、失败或取消终态的状态、结束时间和模型等元数据不再改写。迟到可信用量只可补齐未知计数和费用，原已知计数、原始分项及费用必须保持一致；矛盾报告整体忽略。成功回执丢失后的未知报告不降级终态，补齐消费也不授权重发。
-
-`model_usage_control` 持久保存部署及各 Workspace 的开关、请求上限、自动重试和版本；`model_usage_dimension` 保存各层 Token 与人民币维度的上限、独立累计起点和已结算量。每层的每个维度首次设为有限时建立起点，只将此后派发计入该维度额度；起点之前的明细仍进入监控。调整上限、切换无限、重启与 Epoch reset 都不重置起点或累计，无限期间仍持续累计。`model_usage_request_reservation` 与 `model_usage_dimension_reservation` 将每次尝试绑定到已建立起点的适用层，和尝试创建、建议单元或任务包络检查原子提交；网络等待在事务外。全部维度同时通过才能派发，拒绝事件不冒充实际调用。
-
-尝试的 `priceSnapshot` 在准入时冻结 Provider、请求路由、单价版本、原币种、各计量项单价与人民币汇率版本；匹配键是受信派发前的 Provider 与 `requestedModel` 精确值，DSH 使用完整固定路由，响应 `actualModel` 不替换快照。`cost` 保留调用时依据及原币、人民币估算，缺价、缺汇率、缺用量与明确零价格分别表示。单价按每百万 Token 配置；输入包含缓存，输出包含推理，计价按互不重复的分项拆分。中间乘除使用整数运算，持久金额为百万分之一货币单位的安全整数；配置最多六位小数，缩放后的值和累计不得超过 `Number.MAX_SAFE_INTEGER`。预占向上取整，结算按实际分项四舍五入到百万分之一；人民币从未舍入原币计算后只舍入一次。详细配置见[模型用量部署](../deployment.md#模型用量)。
-
-`reservationBoundary` 保存每次派发的适配器入口、边界版本、包含缓存的输入上界、包含推理的输出上界及不可核算原因。有限 Token 须有可信总量上界，有限人民币须有完整计价与可信金额上界；缓存与推理按可能的最高单价保守预占。可确认未派发才整体释放；已派发或无法证明未派发的取消、超时、断流、进程退出与期限到期都保留未知维度的占用。可信用量或管理员核对可幂等结算对应维度，只释放该维度可确认的剩余预占；部分核对不释放其他维度。启动恢复与 Host 超期收束在同一事务内将未完成结果标为未知，并按持久用量证据结算已知维度；结算不推断业务成功或授权重发，写入失败则状态与额度一起回滚。启动同时补结已经标为未知但仍有预占的记录，保留原结束时间、原始用量和计价依据。Host 收到完整正常结束帧并成功保存终态后，请求记为成功；后续业务 JSON、schema 或委托依据校验失败仍拒绝业务结果，不回写为请求未知。结果仍未知的尝试可继续接收可信累计用量或迟到终态，已结算维度按新旧有效计量差额原子调整，不重复累计，人工修订仍参与有效计量投影。后续证据令某维度重新不可核算时，扣回该维度旧结算量并恢复未知预占，完整证据或核对到达后再结算；成功、失败或取消终态继续遵循前述不可覆盖规则。此前在无限期间留下的未知记录不会单独阻止无限模式的后续调用，切为有限后不能忽略同一起点之后的未决消费。
-
-管理员核对与缺价／缺汇率补算作为独立 `corrections` 修订保存序号、当前管理员、时间、依据及所补维度；通过共享 Command 同事务写入审计、回执、有效计量与额度结算。原始服务商 `usage`、调用时 `priceSnapshot` 与 `cost` 保留，`accounting`、`effectiveCost` 投影叠加有效修订。核对数值只接受尚未知的 Token 总量或人民币金额，可先核对一项再处理另一项；请求已结束、派发未知、两项有效消费均已知且尚无核对修订时，允许仅提交依据追加数值均为空的核对修订，不重复累计已有消费；派发未知的已结束请求经显式核对且两项有效消费均已知后，将请求预占保守转为一次已用请求，包括核对为零消费的情况，不恢复请求额度，也不改写原始派发与结果状态。部分核对继续保留未决请求预占。补算只适用于仍留存、原本缺价或缺汇率且尚无有效人民币金额的请求。缺汇率补算沿用原单价，只补新汇率依据；已有完整调用时快照不按当前价表重算。重复提交不重复累计，核对或补算也不授予模型重新派发机会。计价与核对取舍见[计价控制决策](../decisions/implemented/architecture/2026-10-21-model-usage-pricing-control.md)，待办恢复沿用[双层准入与恢复](../decisions/implemented/architecture/2026-10-21-model-request-control-recovery.md)。
+`model_usage_control` 与 `model_usage_dimension` 保存部署与 Workspace 双层开关、自动重试及请求／Token／人民币上限；任一维度首次设为有限时建立跨重启与 Epoch reset 存续的独立累计起点。`priceSnapshot` 按派发前 `Provider + requestedModel` 冻结单价与汇率版本，金额以百万分之一货币单位的安全整数精确运算（预占向上取整，结算四舍五入且人民币只舍入一次）。`reservationBoundary` 核验可信总量与金额上界：确认未派发（如 bridge SDK 预检拒绝）整体释放；已派发或无法证明未派发的取消、超时、断流与进程退出保留未知维度占用。结果仍未知时后续证据按新旧有效计量差额原子调整（重新不可核算时扣回旧结算量并恢复未知预占）。管理员 `reconcile`／`reprice` 作为独立 `corrections` 修订经共享 Command 同事务写审计、回执与额度结算，不覆盖原始 `usage`/`priceSnapshot`（缺汇率补算沿用原单价只补新汇率；派发未知的已结束请求在两项有效消费均已知时允许提交空数值核对修订将请求预占保守转为一次已用请求）。配置与查询授权见[部署指南](../deployment.md#模型用量)、[模型用量查询](security-and-reliability.md#模型用量查询)及[模型用量记账与控制决策](../decisions/implemented/architecture/2026-10-21-model-usage-accounting-control.md)。
 
 #### 明细保留与长期汇总
 
-`model_usage_retention` 按 Workspace 保存明细保留天数、设置版本、已清理明细数量及最后一次实际清理时间；默认 90 天，正安全整数表示天数，`null` 表示永久。保留设置、长期汇总和累计额度均跨 Epoch 保存。到期以真实 UTC `started_at` 加保留天数计算，恰好到期即符合时间条件；一天为 24 小时，不使用仿真时间或上海自然日零点作为清理边界。Server 启动、每小时、当前 Workspace 的总览／列表／详情读取及保存保留设置时执行清理。
-
-清理只选择已经结束、消费可结算的记录。在途、派发未知且未完成全部消费核对、实际 Token 总量未知、费用因用量未知而无法确认，或任一层任一维度仍有 `reserved` 的明细继续保留；取消、失联、超时和重启不使它们提前过期。已明确未派发的记录可清理；已知实际消费但仅缺价或缺汇率，且没有未决预占的记录也可清理，其未知费用统计继续保留。派发未知的请求经管理员显式核对、Token 与人民币均已知且全部预占已结算后，也可按期清理，长期汇总仍保留结果未知计数。未知明细及必要计价依据可能超过设置天数，取得可信用量或管理员核对后才重新参与到期判定。
-
-同一个 SQLite 事务先将候选明细的有效计量合并到 `model_usage_daily`，再删除候选的已结算预占关联和逐次明细。日汇总按 `Asia/Shanghai` 日期、Workspace、Epoch、病例、任务、阶段、功能、Provider、请求模型、实际模型和结果共同分组，保留请求数、已知 Token 总量、已知输入及输出 Token、各分项不完整请求数、未知请求与未知 Token 计数、已知人民币微单位及缺价请求数。总览将长期汇总与仍留存明细合并后应用原有筛选；请求模型和实际模型仍分别参与模型匹配。金额未知与零费用保持不同，已知部分不代表完整总额。事务回滚不留下半份汇总，重复清理不重复累计；清理不修改 `model_usage_control`、`model_usage_dimension` 的累计量、预占量或独立起点。
-
-长期汇总保留服务端派发时的任务身份和阶段，使同一次住院内不同跟进任务及各围术期步骤的累计保持独立；汇总不保存请求正文、来源明细或模型生成内容。升级前已清理的日汇总无法恢复任务与阶段，保留原病例与消费数据，并以空身份表达无法归属；这些旧数据不进入某个指定任务或阶段的累计。
-
-输入与输出分别累计可信下界，缓存输入和推理输出仍只作为对应分项的子集。各分项的归一化完整计数为 `null` 时，该次已派发或派发未知请求计入对应分项不完整数；确认未派发的尝试不增加该计数。人工核对总 Token 不推导输入／输出比例，因此有效总量可能大于已知分项之和。升级前已清理的旧日汇总保留原总量，将两个分项标为未知，缺失请求数取原请求数；仍存在的明细按已有证据计算，后续清理在同一日汇总中继续累加已知分项和缺失数。
-
-有核对或补算修订的到期记录，将原始 `status`、`dispatch`、必要原始 `usage`、`cost`、`priceSnapshot` 与 `corrections` 保存在独立 `model_usage_correction_audit`，不保留完整任务、来源或临床上下文。相关 Command 回执的完整明细响应替换为过期标记，原审计与幂等身份继续保留；修订入口在回执重放前确认明细仍留存，旧幂等键不能恢复已清理明细。长期汇总和必要审计不是逐次明细备份，不提供历史恢复、逐次核对或补算接口；之后延长天数或改为永久也不会恢复已删除记录。查询与设置权限见[模型用量查询](security-and-reliability.md#模型用量查询)，取舍见[明细保留决策](../decisions/implemented/architecture/2026-10-21-model-usage-retention.md)。
+`model_usage_retention` 按 Workspace 保存明细保留天数（默认 `90` 天，按真实 UTC `started_at` 满 24 小时计算，`null` 为永久），在启动、每小时、工作区查询及保存设置时触发清理。仍在途、派发未知且未完成消费核对、实际 Token 未知或任一维度仍有 `reserved` 预占的记录强制保留，不因超期提前过期。同一 SQLite 事务先将到期可结算明细按 `Asia/Shanghai` 日期、Workspace、Epoch、病例、任务、阶段、功能、请求／实际模型和结果归并入 `model_usage_daily`（保留请求数、已知输入／输出下界、分项缺失数、未知计数、已知人民币微单位及缺价数，不修改控制层累计起点与余额），再删除逐次明细与已结算预占；带核对／补算修订的到期记录另将最小 `status/dispatch/usage/cost/priceSnapshot/corrections` 证据留存于 `model_usage_correction_audit` 并将原 Command 回执明细替换为过期标记，已清理明细不可恢复。
 
 ## 浏览器未提交私稿
 
-门诊与住院集中办理窗口的未提交私稿、勾选集合和待恢复写意图保存在经结构校验的 `sessionStorage`，按账号、完整 Actor 上下文（含 Workspace/Epoch 与岗位）、Patient 及本次就诊（Encounter 或 Admission，必要时再细化到申请类别、手术计划/执行或具体动作）严格隔离。关闭弹窗、切换页签、切换患者或刷新页面后可恢复私稿；存储读取失败或写入被拒时原位报错并阻止提交新写请求。分页上限、三类提交原子性、发送前载荷冻结与 `command-receipts` 未知回执恢复流程见[连续办理私稿与逐项原回执恢复](clinical-workflows.md#连续办理私稿与逐项原回执恢复)，设计取舍见[临床连续办理私稿与逐项原回执恢复决策](../decisions/implemented/architecture/2026-11-10-clinical-batch-draft-and-receipt-recovery.md)。
+门诊与住院集中办理窗口的未提交私稿、勾选集合和待恢复写意图保存在经结构校验的 `sessionStorage`，按账号、完整 Actor 上下文（含 Workspace/Epoch 与岗位）、Patient、本次就诊（Encounter 或 Admission）及具体动作子域严格隔离；关闭弹窗、切换页签／患者或刷新后可恢复，存储读取失败或写入被拒时原位报错并阻止提交新写请求，批量原子性与 `command-receipts` 恢复流程见[连续办理私稿与逐项原回执恢复](clinical-workflows.md#连续办理私稿与逐项原回执恢复)及[连续办理私稿决策](../decisions/implemented/architecture/2026-11-10-clinical-batch-draft-and-receipt-recovery.md)。
 
-退出登录先将整个私稿命名空间标为待清理，再删除或裁剪未提交私稿；全部处理且移除清理标记后才解除阻断。删除、保存、枚举或访问存储失败不改变已完成的服务端退出结果，也不能使退出作废的未发送输入在重新登录后恢复。各 owner 的读取、保存、原回执消费和结算扫描须先完成补清理；失败只返回空输入及存储失败状态，容错展示与诊断、处方回填也不能绕过。清理标记不含临床内容，可写时随 `sessionStorage` 保留，存储完全拒绝访问时以内存标记阻止当前会话恢复。
-
-清理只覆盖既有私稿前缀，不删除独立保存的已发送写入意图或门诊 confirmation 原请求，也不更改服务端回执。清单与原意图共用记录时，保留未知原尝试的 scope、命令、幂等键、原行与对应结果，移除未发送余项；门诊已结算的 intent 可清除。住院药房额外保留同库存批次的先前成功证明，以验证原命令的库存版本和余量。其余批量记录仅保留未知原行，清除共用原因并要求重新核对；报告显示资格不随记录恢复。无法验证记录时保留原文并阻止读取，避免误删原意图。补清理可重复执行且不触发清理通知递归，存储恢复后才允许正常新建私稿。取舍见[退出清理恢复决策](../decisions/implemented/bug-fix/2026-11-10-inpatient-draft-discard-recovery.md)。
-
-住院医嘱和检查开立的原行在共享写入层收到成功响应或查到原成功回执时持久结算，结算完成才清除岗位级意图；全局恢复不依赖原弹窗挂载。明确拒绝保留输入并解除该行的待恢复状态。原范围草稿不可读时保留原文，用户可重读；仅在原成功回执可核对且只存在唯一原范围记录时，允许明确确认丢弃。医嘱校对、核停及护理执行按冻结命令的动作过滤草稿键后再读取，其他动作的不可读草稿保留原文，不影响匹配动作结算。
+退出登录先将私稿命名空间标为不含临床正文的待清理状态（存储完全拒绝访问时以内存标记阻断），裁剪或删除全部未提交私稿并移除标记后才解除读取阻断，防止已退出会话的未发送输入在重新登录后恢复；同时完整保留已发送未决写意图的 scope、命令、幂等键、原行与住院药房同库存批次先前成功证明供原回执核对（报告显示资格与批量共用原因不随记录恢复，无法验证的损坏记录保留原文并阻止读取以免误删原意图），详见[住院命令意图与私稿清理恢复决策](../decisions/implemented/bug-fix/2026-10-20-inpatient-command-intent-recovery.md)。住院医嘱与检查开立在共享写入层收到成功响应或查得原成功回执时持久结算，全局恢复不依赖原弹窗挂载。
