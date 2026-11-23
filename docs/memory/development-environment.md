@@ -18,6 +18,7 @@
 
 ## 进程、容器与服务启动
 
+- **局域网 HTTP 与随机标识**：后台健康和登录 HTTP 成功不代表工作台可渲染；非 localhost 的普通 HTTP 页面没有 `crypto.randomUUID`。启动局域网入口后用真实浏览器走到登录后的工作台；客户端标识统一使用 Web 的 `createRandomUuid`（加密随机字节后备），不通过关闭浏览器安全策略解决。
 - **环境变量继承与工作目录**：根启动器通过 `pnpm --filter` 进入 `apps/server` 前须用 `resolveServerEnvironmentPaths` 将 `.env`、数据库与 DRG 规则等相对路径解析为绝对路径；切换 worktree 时调用方已导出的 `CLINMESH_*_PATH` 会覆盖 `.env`，启动时须显式覆盖并核对子进程实际环境，隔离实例同时覆盖 `CLINMESH_PUBLIC_ORIGIN` 与 `CLINMESH_TRUSTED_ORIGINS`。常驻 `dev:server` 直连 `pnpm --filter` 绕开 Turbo（防 Windows 进程树冻结及 strict env 过滤 `CLINMESH_AI_*`）；POSIX 多服务启动使用独立进程组转发信号，进程存活断言轮询等待僵尸进程彻底 `ESRCH`。
 - **Docker 构建与只读 SQLite**：生产镜像构建阶段保留 `python3`/`make`/`g++` 供 `better-sqlite3` 回退编译；将已写入 SQLite 封入只读镜像前必须 `PRAGMA wal_checkpoint(TRUNCATE)` 并切回 `journal_mode=DELETE`（否则只读文件系统因无法建 `-shm` 报错）；`pnpm deploy --prod --legacy` 局部关闭 `auto-install-peers`。跨架构兼容性以锁定 digest 的 manifest/config `os`/`architecture` 为准。
 

@@ -11,6 +11,21 @@ async function signIn(page: Page, origin: string, email: string, password: strin
   await page.getByRole('button', { name: '登录', exact: true }).click()
 }
 
+test('局域网 HTTP 缺少 randomUUID 时仍可登录并准备病理病例', async ({ page, browserApp }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(globalThis.crypto, 'randomUUID', { configurable: true, value: undefined })
+  })
+  await signIn(page, browserApp.origin, 'admin@demo.clinmesh.local', browserApp.password, '/scenario-data')
+  await expect(page.getByRole('heading', { name: '模拟数据', exact: true })).toBeVisible()
+  await page.getByText('病理覆盖清单', { exact: true }).click()
+  const preparation = page.getByRole('region', { name: '病理病例包准备', exact: true })
+  await preparation.getByRole('button', { name: '准备病理病例包（2 例）', exact: true }).click()
+  await expect(preparation).toContainText('2/2 例已就绪')
+  await page.reload()
+  await expect(page.getByRole('heading', { name: '模拟数据', exact: true })).toBeVisible()
+  await expect(page.getByText('工作台发生错误', { exact: true })).toHaveCount(0)
+})
+
 test('a registrar signs in from a deep link, retains the session on reload and signs out', async ({ page, browserApp }) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))

@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { IntraoperativeMaterialRows } from './inpatient-surgery-intraoperative.tsx'
 import type { z } from 'zod'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -72,9 +73,9 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
   const addCorrections = (uses: typeof execution.materialHistory) => {
     const toAdd = uses.filter(use => !use.correction && !corrections.value.rows.some(row => row.id === use.id))
     if (corrections.value.rows.length + toAdd.length > 20) { setSelectionError(t('每次最多20笔，原输入已保留，请减少选择。', 'Up to 20 entries. Input is kept; reduce the selection.')); return }
-    const added: CorrectionRow[] = toAdd.map(original => ({ id: original.id, revision: crypto.randomUUID(), binding: { admissionId: admission.id, requestId: request.id, executionId: execution.id },
+    const added: CorrectionRow[] = toAdd.map(original => ({ id: original.id, revision: createRandomUuid(), binding: { admissionId: admission.id, requestId: request.id, executionId: execution.id },
       original, selected: true, mode: 'void', material: materials.find(item => item.id === original.item.id) ?? original.item, quantity: String(original.quantity), reservation: null, reason: '' }))
-    corrections.save({ ...corrections.value, rows: [...corrections.value.rows.map(row => uses.some(use => use.id === row.id) ? { ...row, selected: true, revision: crypto.randomUUID() } : row), ...added] })
+    corrections.save({ ...corrections.value, rows: [...corrections.value.rows.map(row => uses.some(use => use.id === row.id) ? { ...row, selected: true, revision: createRandomUuid() } : row), ...added] })
     setSelectionError('')
   }
   const planned = reservations.filter(item => item.requestId === request.id)

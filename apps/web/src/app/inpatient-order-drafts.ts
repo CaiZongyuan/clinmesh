@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { medicationDailyFrequency } from '@clinmesh/core/medication-safety'
 import { z } from 'zod'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -90,7 +91,7 @@ export function settleIssuedOrder(input: unknown, idempotencyKey: string, sessio
       rows: draft.rows.map(item => item.id === row.id ? { ...item, attempt: undefined, error: outcome.failure, ...(item.estimate ? { estimate: { ...item.estimate, stale: true } } : {}) } : item),
     } : {
       rows: draft.rows.filter(item => item.id !== row.id)
-        .map(item => item.estimate ? { ...item, estimate: { ...item.estimate, generation: crypto.randomUUID(), stale: true } } : item),
+        .map(item => item.estimate ? { ...item, estimate: { ...item.estimate, generation: createRandomUuid(), stale: true } } : item),
       successes: [...draft.successes, { id: row.id, display: row.pick.item.display }].slice(-orderBatchLimit),
     })
     discard.ensureCleared()

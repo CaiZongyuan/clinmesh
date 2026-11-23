@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { inpatientDispenseInputSchema, inpatientPharmacyResponseSchema, inpatientPharmacySchema } from '@clinmesh/contracts/inpatient-clinical'
 import { useEffect, useRef, useState } from 'react'
@@ -149,7 +150,7 @@ export function useDispenseDrafts({ scope, session, write, refresh }: { scope: S
               ? { ...entry, status: 'failed', error: { code: 'DISPENSE_REVIEW_CHANGED', message: '医嘱、执行单、过敏或库存已变化，请重新核对；该项未发送。' } } : entry) })) return
             continue
           }
-          item = { ...item, status: 'unknown', idempotencyKey: crypto.randomUUID(), command: { operation: 'inpatient.execution.dispense', input: {
+          item = { ...item, status: 'unknown', idempotencyKey: createRandomUuid(), command: { operation: 'inpatient.execution.dispense', input: {
             admissionId: scope.admissionId, executionId: snapshot.execution.id, expectedExecutionVersion: snapshot.execution.version,
             lotSelections: [{ lotId: snapshot.lot.id, expectedVersion: snapshot.lot.version, quantity: snapshot.order.doseQuantity }],
           } } }
@@ -169,12 +170,12 @@ export function useDispenseDrafts({ scope, session, write, refresh }: { scope: S
     select(snapshots: DispenseSnapshot[], selected: boolean) {
       const rows = [...latest.current.record.rows]
       for (const snapshot of snapshots) {
-        const index = rows.findIndex(row => row.snapshot.execution.id === snapshot.execution.id), row = { revision: crypto.randomUUID(), selected, snapshot }
+        const index = rows.findIndex(row => row.snapshot.execution.id === snapshot.execution.id), row = { revision: createRandomUuid(), selected, snapshot }
         if (index < 0) { if (selected) rows.push(row) } else rows[index] = row
       }
       return rows.length <= 20 && changeRows(rows)
     },
-    deselectAll: () => changeRows(latest.current.record.rows.map(row => ({ ...row, selected: false, revision: crypto.randomUUID() }))),
+    deselectAll: () => changeRows(latest.current.record.rows.map(row => ({ ...row, selected: false, revision: createRandomUuid() }))),
     remove: (id: string) => changeRows(latest.current.record.rows.filter(row => row.snapshot.execution.id !== id)),
     clear() {
       if (!isOwner() || running.current || writer.current.blocked || latest.current.record.items.some(item => item.status === 'unknown')) return false

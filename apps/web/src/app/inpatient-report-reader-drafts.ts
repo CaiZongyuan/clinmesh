@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { apiConflictSchema, apiErrorSchema, sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { inpatientInvestigationAcknowledgeInputSchema, inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { useEffect, useRef, useState } from 'react'
@@ -136,7 +137,7 @@ export function useInpatientReportDrafts({ scope, session, write, refresh, readO
           if (!sameReport(row, record) || record?.request.status !== 'reported') {
             save({ ...current, items: current.items.map(item => item.row.revision === row.revision ? { ...item, status: 'rejected', failure: changedFailure(row, record) } : item) }); continue
           }
-          item = { ...item, status: 'unknown', command: { operation: 'inpatient.investigation.acknowledge', input: row.snapshot.input }, key: crypto.randomUUID() }
+          item = { ...item, status: 'unknown', command: { operation: 'inpatient.investigation.acknowledge', input: row.snapshot.input }, key: createRandomUuid() }
           save({ ...current, items: current.items.map(entry => entry.row.revision === row.revision ? item! : entry) })
         }
         if (!item.command || !item.key) return

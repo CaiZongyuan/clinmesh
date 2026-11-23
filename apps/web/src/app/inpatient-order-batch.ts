@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { inpatientFullClinicalResponseSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientOrderSchema, type InpatientOrder } from '@clinmesh/contracts/inpatient-clinical'
 import { useEffect, useRef, useState } from 'react'
@@ -147,19 +148,19 @@ export function useInpatientOrderBatch({ scope, session, write }: { scope: Scope
       for (const order of orders) {
         if (!orderBatchEligible(order, scope.action) || order.admissionId !== scope.admissionId) return false
         const index = rows.findIndex(row => row.id === order.id)
-        if (index < 0) { if (selected) rows.push({ id: order.id, revision: crypto.randomUUID(), selected, order }) }
-        else rows[index] = { ...rows[index]!, revision: crypto.randomUUID(), selected, order }
+        if (index < 0) { if (selected) rows.push({ id: order.id, revision: createRandomUuid(), selected, order }) }
+        else rows[index] = { ...rows[index]!, revision: createRandomUuid(), selected, order }
       }
       if (rows.length > 20) return false
       return changeRows(rows)
     },
-    setCommonReason: (reason: string) => changeRows(latest.current.record.rows.map(row => row.reasonOverride === undefined ? { ...row, revision: crypto.randomUUID() } : row), reason),
+    setCommonReason: (reason: string) => changeRows(latest.current.record.rows.map(row => row.reasonOverride === undefined ? { ...row, revision: createRandomUuid() } : row), reason),
     setReasonOverride: (id: string, reason: string | undefined) => changeRows(latest.current.record.rows.map(row => {
       if (row.id !== id) return row
       const { reasonOverride: _previous, ...rest } = row
-      return { ...rest, revision: crypto.randomUUID(), ...(reason === undefined ? {} : { reasonOverride: reason }) }
+      return { ...rest, revision: createRandomUuid(), ...(reason === undefined ? {} : { reasonOverride: reason }) }
     })),
-    deselectAll: () => changeRows(latest.current.record.rows.map(row => ({ ...row, selected: false, revision: crypto.randomUUID() }))),
+    deselectAll: () => changeRows(latest.current.record.rows.map(row => ({ ...row, selected: false, revision: createRandomUuid() }))),
     remove: (id: string) => changeRows(latest.current.record.rows.filter(row => row.id !== id)),
     clear() {
       if (!isOwner() || running.current || latest.current.record.items.some(item => item.status === 'unknown')) return false
@@ -174,7 +175,7 @@ export function useInpatientOrderBatch({ scope, session, write }: { scope: Scope
       if (!rows.length || rows.length > 20 || rows.some(row => !orders.some(order => signature(order) === signature(row.order)))
         || scope.action === 'request-stop' && rows.some(row => !(row.reasonOverride ?? latest.current.record.commonReason).trim())) return false
       const items = rows.map(row => ({ row: scope.action === 'request-stop' ? { ...row, reasonOverride: (row.reasonOverride ?? latest.current.record.commonReason).trim() } : row, command: commandSchema.parse({ operation: `inpatient.order.${scope.action}`, input: {
-        admissionId: scope.admissionId, orderId: row.id, expectedOrderVersion: row.order.version, ...(scope.action === 'request-stop' ? { reason: row.reasonOverride ?? latest.current.record.commonReason } : {}) } }), idempotencyKey: crypto.randomUUID(), status: 'ready' as const }))
+        admissionId: scope.admissionId, orderId: row.id, expectedOrderVersion: row.order.version, ...(scope.action === 'request-stop' ? { reason: row.reasonOverride ?? latest.current.record.commonReason } : {}) } }), idempotencyKey: createRandomUuid(), status: 'ready' as const }))
       return persist({ ...latest.current.record, items, reviewRequired: false }, true)
     },
     start: (guard: () => boolean) => run(false, guard),

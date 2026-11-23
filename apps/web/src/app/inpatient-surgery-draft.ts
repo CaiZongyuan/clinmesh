@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { inpatientSurgeryCompleteInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { useEffect, useRef, useState } from 'react'
@@ -41,7 +42,7 @@ function matches(scope: Scope, command: z.infer<typeof commandSchema>) {
 export function useSurgeryDraft<T>({ scope, schema, initial }: { scope: Scope; schema: z.ZodType<T>; initial: T }) {
   const key = storageKey(scope)
   const read = () => {
-    const empty: Envelope = { version: 1, scope, revision: crypto.randomUUID(), value: initial, submission: null }
+    const empty: Envelope = { version: 1, scope, revision: createRandomUuid(), value: initial, submission: null }
     try {
       const raw = discard.read(key)
       const record = raw === null ? empty : envelopeSchema.parse(JSON.parse(raw))
@@ -92,7 +93,7 @@ export function useSurgeryDraft<T>({ scope, schema, initial }: { scope: Scope; s
         const failed = { ...current.current, value: options?.keepCurrentOnFailure ? current.current.value : next, failed: true }
         current.current = failed; setStored(failed); return false
       }
-      return persist({ ...current.current.record, revision: crypto.randomUUID(), value: parsed.data }, parsed.data, options?.keepCurrentOnFailure)
+      return persist({ ...current.current.record, revision: createRandomUuid(), value: parsed.data }, parsed.data, options?.keepCurrentOnFailure)
     },
     clear() {
       if (!mounted.current || owner.current !== key) return false

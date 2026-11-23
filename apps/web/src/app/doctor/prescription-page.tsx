@@ -1,3 +1,4 @@
+import { createRandomUuid } from '../random-uuid.ts'
 import { formatMedicationFrequency, medicationCombinationConflict, medicationRegimenDoseAllowed, medicationQuantityAllowed } from '@clinmesh/core/medication-safety'
 import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
@@ -134,7 +135,7 @@ function createPrescriptionDraftLine(
 
 function createReferencePrescriptionDraftLine(
   product: ReferenceMedicationProduct,
-  key: string = globalThis.crypto.randomUUID(),
+  key: string = createRandomUuid(),
 ): PrescriptionDraftLine {
   return {
     catalogItemId: product.id,
@@ -283,7 +284,7 @@ export function PrescriptionPage({
   }
   const medicationLine = (
     selection: MedicationCatalogSelection,
-    key: string = globalThis.crypto.randomUUID(),
+    key: string = createRandomUuid(),
   ) => selection.kind === 'reference'
       ? createReferencePrescriptionDraftLine(selection.product, key)
       : createPrescriptionDraftLine(selection.medication, key)
@@ -328,7 +329,7 @@ export function PrescriptionPage({
     if (!setItems(current => {
       const previous = current.find(item => item.catalogItemId === value.catalogItemId)
       const line: PrescriptionDraftLine = {
-        catalogItemId: value.catalogItemId, key: previous?.key ?? globalThis.crypto.randomUUID(),
+        catalogItemId: value.catalogItemId, key: previous?.key ?? createRandomUuid(),
         courseDays: value.courseDays, doseText: value.doseText ?? '', frequencyCode: value.frequencyCode ?? '', quantity: value.quantity,
         ...(value.instructions?.trim() ? { instructions: value.instructions.trim() } : {}),
         ...(value.referenceProduct === undefined ? {} : { referenceProduct: value.referenceProduct }),
@@ -644,7 +645,7 @@ export function PrescriptionPage({
                 if (!next.some(r => r.catalogItemId === c.catalogItemId)) {
                   const entry = catalogById.get(c.catalogItemId)
                   if (next.length >= 8 || (entry && !canCombineWithCurrentItems(entry, undefined, next))) continue
-                  next.push({ catalogItemId: c.catalogItemId, courseDays: c.outpatient.courseDays, doseText: c.doseText, frequencyCode: c.frequencyCode, ...(c.instructionsZh ? { instructions: c.instructionsZh } : {}), key: globalThis.crypto.randomUUID(), quantity: c.outpatient.quantity })
+                  next.push({ catalogItemId: c.catalogItemId, courseDays: c.outpatient.courseDays, doseText: c.doseText, frequencyCode: c.frequencyCode, ...(c.instructionsZh ? { instructions: c.instructionsZh } : {}), key: createRandomUuid(), quantity: c.outpatient.quantity })
                   addedCount += 1
                 }
                 if (i.disposition === 'needs-review') { review.add(c.catalogItemId); reviewCount += 1 }

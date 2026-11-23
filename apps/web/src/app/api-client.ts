@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import {
   clinicalScoreBundleSchema,
   outpatientRiskAssessmentResponseSchema,
@@ -1239,7 +1240,7 @@ export function updateSyntheticPatientProfile(input: {
 }
 
 export function newIdempotencyKey(): string {
-  return globalThis.crypto.randomUUID()
+  return createRandomUuid()
 }
 
 export function getRegistrationCatalog(signal?: AbortSignal) {

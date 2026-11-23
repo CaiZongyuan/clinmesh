@@ -1,3 +1,4 @@
+import { createRandomUuid } from '../random-uuid.ts'
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import type { ClinicalCatalog, DiagnosisDraftEntry, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
@@ -137,7 +138,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   const addEntry = (selection: DiagnosisCatalogSelection, role: DiagnosisDraftEntry['role'], note: string) => {
     if (pending || readOnly) return false
     if (currentEntriesRef.current.length >= 8 || currentEntriesRef.current.some(entry => entry.catalogItemId === selection.catalogItemId)) return false
-    const key = globalThis.crypto.randomUUID()
+    const key = createRandomUuid()
     return saveEntries(current => {
       const next = [...current, {
         catalogItemId: selection.catalogItemId,
@@ -198,7 +199,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     return saveEntries(current => {
       const previous = current.find(entry => entry.catalogItemId === value.catalogItemId)
       const line: DiagnosisDraftLine = {
-        catalogItemId: value.catalogItemId, key: previous?.key ?? globalThis.crypto.randomUUID(),
+        catalogItemId: value.catalogItemId, key: previous?.key ?? createRandomUuid(),
         note: value.note ?? '', role,
         ...(previous?.snapshotCode === undefined ? {} : { snapshotCode: previous.snapshotCode }),
         snapshotDisplay: previous?.snapshotDisplay ?? label,

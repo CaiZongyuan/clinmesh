@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from '@clinmesh/ui/components/toast'
@@ -105,10 +106,10 @@ export function useSurfaceAgentPublisher(input: {
     message: getWorkspaceMessages(preferences.locale).doctorSupplementSaveUnconfirmed })
   sourceFeedback.current = { identity: doctorTaskIdentity,
     message: getWorkspaceMessages(preferences.locale).doctorSupplementSaveUnconfirmed }
-  const [storedTaskEpoch, setTaskEpoch] = useState(() => ({ identity: doctorTaskIdentity, epoch: crypto.randomUUID() }))
+  const [storedTaskEpoch, setTaskEpoch] = useState(() => ({ identity: doctorTaskIdentity, epoch: createRandomUuid() }))
   let taskEpoch = storedTaskEpoch
   if (storedTaskEpoch.identity !== doctorTaskIdentity) {
-    taskEpoch = { identity: doctorTaskIdentity, epoch: crypto.randomUUID() }
+    taskEpoch = { identity: doctorTaskIdentity, epoch: createRandomUuid() }
     setTaskEpoch(taskEpoch)
   }
   const page = useMemo(() => input.session.actor.roleCode !== 'outpatient-doctor' ? rawPage : {
@@ -124,7 +125,7 @@ export function useSurfaceAgentPublisher(input: {
       selection: page.feedbackSelectionId ?? page.claim.selection?.id ?? '',
       section: page.claim.activeSection ?? '',
     })
-  const [pageContextClientId] = useState(() => `clinmesh-surface-${crypto.randomUUID()}`)
+  const [pageContextClientId] = useState(() => `clinmesh-surface-${createRandomUuid()}`)
   const pageContextRevision = useRef(0)
   const [binding, setBinding] = useState<AgentPageContextBinding>()
   const [surfaceLeaseGeneration, setSurfaceLeaseGeneration] = useState(0)

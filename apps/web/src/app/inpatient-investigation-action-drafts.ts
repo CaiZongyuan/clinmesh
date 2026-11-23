@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { inpatientInvestigationActionInputSchema, inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { useEffect, useRef, useState } from 'react'
@@ -127,7 +128,7 @@ export function useInvestigationActionDrafts({ scope, session, write, refresh }:
               ? { ...entry, status: 'failed', error: { code: 'INVESTIGATION_REVIEW_CHANGED', message: '申请内容或状态已变化，请重新核对；该项未发送。' } } : entry) })) return
             continue
           }
-          item = { ...item, status: 'unknown', idempotencyKey: crypto.randomUUID(), command: commandFor(scope, item.row.snapshot) }
+          item = { ...item, status: 'unknown', idempotencyKey: createRandomUuid(), command: commandFor(scope, item.row.snapshot) }
           if (!persist({ ...record, items: record.items.map(entry => entry.row.revision === item!.row.revision ? item! : entry) })) return
         }
         if (!item.command || !item.idempotencyKey) return
@@ -144,12 +145,12 @@ export function useInvestigationActionDrafts({ scope, session, write, refresh }:
     select(snapshots: InvestigationActionSnapshot[], selected: boolean) {
       const rows = [...latest.current.record.rows]
       for (const snapshot of snapshots) {
-        const index = rows.findIndex(row => row.snapshot.request.id === snapshot.request.id), row = { revision: crypto.randomUUID(), selected, snapshot }
+        const index = rows.findIndex(row => row.snapshot.request.id === snapshot.request.id), row = { revision: createRandomUuid(), selected, snapshot }
         if (index < 0) { if (selected) rows.push(row) } else rows[index] = row
       }
       return rows.length <= 20 && changeRows(rows)
     },
-    deselectAll: () => changeRows(latest.current.record.rows.map(row => ({ ...row, selected: false, revision: crypto.randomUUID() }))),
+    deselectAll: () => changeRows(latest.current.record.rows.map(row => ({ ...row, selected: false, revision: createRandomUuid() }))),
     remove: (id: string) => changeRows(latest.current.record.rows.filter(row => row.snapshot.request.id !== id)),
     clear() {
       if (!isOwner() || running.current || writer.current.blocked || latest.current.record.items.some(item => item.status === 'unknown')) return false
