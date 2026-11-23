@@ -53,7 +53,7 @@ React SPA (standalone Web / DSH React Surface)
 - 对外提供版本明确、能力可发现、错误可解析的只读 FHIR R5 JSON API，以及带受信 Actor context、状态机校验、幂等、expected version、历史版本和审计的共享业务 Command。
 - 为 Agent 提供可发现、schema 驱动、可恢复且按单岗位授权的 HIS CLI 与动态页面窄 Tools。
 - 在单个 Node.js 进程中使用 file-backed SQLite，支持有序迁移、受控备份恢复、持久 outbox、隔离运行、Epoch 重置与确定性重放。
-- 所有业务数据均为虚构或合成数据，不连接真实医保、支付、短信、邮件、LIS、PACS 或电子票据平台；公开授权、已去标识的放射与病理素材是唯一像素例外，且不进入 Git、SQLite、日志或模型输入。
+- 所有业务数据均为虚构或合成数据，不连接真实医保、支付、短信、邮件、LIS、PACS 或电子票据平台；公开授权、已去标识的放射与病理素材是唯一像素例外，且不进入 Git、SQLite、日志或 ClinMesh 通用模型输入。外部专用病理视觉模型只在 PathJX 受控边界内处理像素，见[可插拔病理阅片](pathology-reading.md)。
 
 <a id="14-明确不做"></a>
 
@@ -63,7 +63,7 @@ React SPA (standalone Web / DSH React Surface)
 - Desktop、React Native Mobile、离线写入和多端产品行为对齐（当前仅保留工程壳与跨端包边界）。
 - 自建自治 Agent runtime、模型 runner、独立 AG-UI Gateway、MCP、OAuth/SMART Agent 凭证、Evaluation Spec 和评分基础设施；DSH 原生 Session/browser Tool 桥接与私有 Capability Grant CLI 是已实现边界。
 - Cloudflare Worker、D1、R2、Queues、PostgreSQL、Supabase、多数据库 adapter、跨库事务或多实例并发写入。
-- 全国各省真实医保平台接口协议；完整 LIS、RIS/PACS、DICOM 归档、DICOMweb、手术麻醉、输血、院感、ICU、消毒供应或财务 ERP（胸片、胸部 CT 平扫阅片闭环与乳腺切片病理会诊为已实现窄范围，见[检验、检查与报告](examinations-and-reports.md)与[影像素材与病例影像准备](simulation.md#影像素材与病例影像准备)）。
+- 全国各省真实医保平台接口协议；完整 LIS、RIS/PACS、DICOM 归档、DICOMweb、手术麻醉、输血、院感、ICU、消毒供应或财务 ERP（胸片、胸部 CT 平扫阅片闭环与乳腺、结直肠及甲状腺既往切片会诊为已实现窄范围，见[检验、检查与报告](examinations-and-reports.md)与[影像素材与病例影像准备](simulation.md#影像素材与病例影像准备)）。
 - 完整 FHIR R5 资源全集、完整 Search、通用 FHIR 写入、自定义 FHIR Operation、Bulk Data 或正式合规认证。
 - 临床图片、PDF、扫描件或其他 Binary 附件存储；签署文书仅保存受验证的结构化 FHIR JSON（影像与病理像素不属于附件，见[文书与附件边界](storage.md#文书与附件边界)）。
 
@@ -180,7 +180,7 @@ operational SQLite 启用 `foreign_keys = ON`、`journal_mode = WAL` 和 `busy_t
 
 ### 业务与前端覆盖
 
-- **门诊闭环**：管理员生成或准备合成病例与 Patient Persona 后，经挂号、分诊、自由问诊与实时病历整理、独立检验/胸片与胸部 CT/乳腺切片病理会诊开立与预付费放行、报告已阅与更正、主次诊断线性确认、本院药房或外延处方（及无需用药结论/未调剂撤回）、结构化病历签署修订、七项门禁完诊、合并或分次收退款与合成医保待遇，最终在药房发药及取消检查退款责任结清后完成 Scenario Run。
+- **门诊闭环**：管理员生成或准备合成病例与 Patient Persona 后，经挂号、分诊、自由问诊与实时病历整理、独立检验/胸片与胸部 CT/乳腺、结直肠与甲状腺切片病理会诊开立与预付费放行、报告已阅与更正、主次诊断线性确认、本院药房或外延处方（及无需用药结论/未调剂撤回）、结构化病历签署修订、七项门禁完诊、合并或分次收退款与合成医保待遇，最终在药房发药及取消检查退款责任结清后完成 Scenario Run。
 - **住院闭环**：支持门诊住院证转收与直接入院（含固定 PCI 黄金病例准备）、护士接诊分床与转床互换、住院主次诊断与入院病情、长期/临时/PRN 医嘱与集中校对停嘱、住院药房集中发药与护士实测给药/宣教、住院检查检验送检与连续阅片、三方转科、冠脉造影与 PCI 耗材预计/逐笔登记/补录更正/完成核实、出院医嘱与出区召回、首次冻结结算与医保待遇、清床、病案首页提交审核归档、CHS-DRG 3.0 条件分组推演、医保办模拟核定及结算/归档后关联财务与医保更正。
 - **Web 与 DSH Surface**：十岗位工作台共用响应式卡片架构、中英文文案目录与 `TanStack Query`（服务端状态）/ `Zustand`（纯视图状态）分工；独立 Web 支持 `system/light/dark` 主题与三档语义字号，DSH Surface 挂载于 ShadowRoot + Memory Router，跟随宿主主题并按当前岗位与页面分区动态发布窄 Tools，正式业务写入统一走 ClinMesh 原生人工审阅框。
 

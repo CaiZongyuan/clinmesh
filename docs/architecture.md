@@ -14,6 +14,7 @@ ClinMesh 是面向 Agent 的中国公立医院仿真 HIS，当前交付 standalo
 | 修改住院登记入科、转科、PCI 与手术耗材核实、术后核查、出院清床、病案归档或院内 DRG 核定 | [住院与手术流程](architecture/inpatient-workflows.md) |
 | 修改门诊内外延处方、住院长期与临时医嘱、药事安全规则、药房发药或护士校对与给药执行 | [处方、医嘱与药事](architecture/orders-and-pharmacy.md) |
 | 修改检验申请与送检、门诊独立检查门禁、心电/超声功能检查、放射阅片、病理会诊或报告已阅与修订 | [检验、检查与报告](architecture/examinations-and-reports.md) |
+| 修改 PathJX 受限阅片、单片绑定、授权回调、修订检查点或恢复 | [可插拔病理阅片](architecture/pathology-reading.md) |
 | 修改收费账单、共享收款、多费用合并收退、住院预交金与首次冻结结算、患者医保待遇或结算后财务更正 | [收费、结算与医保](architecture/billing-and-insurance.md) |
 | 修改专病风险评估与确定性算子、心血管医嘱组套、免费指南全文与专题、诊疗建议或双层事中临床质控 | [临床决策支持与质控](architecture/clinical-decision-support.md) |
 | 修改 CHS-DRG 条件提取、规则包、分组计算或独立对照 | [DRG 条件分组](architecture/drg-grouping.md) |
