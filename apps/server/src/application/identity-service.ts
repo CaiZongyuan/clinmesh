@@ -142,8 +142,6 @@ const selectedRoleRowSchema = z.object({
   practitioner_role_id: z.string().min(1),
 })
 
-const membershipGrantRowSchema = selectedRoleRowSchema.pick({ membership_id: true })
-
 type ResolvedSessionContext = Omit<SessionContext, 'actor'> & { actor: ActorContext }
 
 export class IdentityError extends Error {
@@ -249,19 +247,16 @@ export class IdentityService {
   /** 外部阅片授权持续绑定原人类登录及所选岗位，注销或切换岗位后不能靠旧授权续签。 */
   humanSessionCurrent(sessionId: string, context: ActorContext): boolean {
     if (context.agentGrantId !== undefined || this.modelTaskContextStatus(context) !== 'active') return false
-    return this.#database.driver.prepare(`SELECT 1 FROM session
-      JOIN workspace_membership AS membership ON membership.user_id=session.user_id
-      JOIN membership_practitioner_role AS granted ON granted.membership_id=membership.membership_id
-      LEFT JOIN auth_session_context AS selected ON selected.session_id=session.id
-      WHERE session.id=? AND session.expires_at>? AND session.user_id=membership.user_id
-        AND granted.practitioner_role_id=? AND membership.actor_id=? AND membership.workspace_id=? AND membership.status='active'
-        AND (selected.practitioner_role_id=granted.practitioner_role_id OR (selected.session_id IS NULL AND granted.practitioner_role_id=(
-          SELECT candidate.practitioner_role_id FROM membership_practitioner_role AS candidate
-          JOIN workspace_membership AS member ON member.membership_id=candidate.membership_id
-          JOIN practitioner_role_binding AS role ON role.workspace_id=candidate.workspace_id AND role.practitioner_role_id=candidate.practitioner_role_id
-          WHERE member.user_id=session.user_id AND member.status='active' AND role.active=1
-          ORDER BY member.workspace_id,candidate.practitioner_role_id LIMIT 1)))`)
-      .get(sessionId, this.#now().getTime(), context.practitionerRoleId ?? '', context.actorId, context.workspaceId) !== undefined
+    const session = z.object({ user_id: z.string() }).optional().parse(this.#database.driver.prepare(
+      'SELECT user_id FROM session WHERE id=? AND expires_at>?').get(sessionId, this.#now().getTime()))
+    if (session === undefined) return false
+    const roles = this.#currentHumanRoles(session.user_id)
+    const current = this.#selectedRole(sessionId, roles) ?? roles[0]
+    return current !== undefined && current.workspace_id === context.workspaceId && current.epoch === context.epoch
+      && current.actor_id === context.actorId && current.practitioner_role_id === context.practitionerRoleId
+      && current.practitioner_id === context.practitionerId && current.role_code === context.roleCode
+      && current.organization_id === context.organizationId && current.location_id === context.locationId
+      && current.scenario_run_id === context.scenarioRunId
   }
 
   #doctorTaskContextStatus(context: ActorContext, operations: readonly string[], doctorOnly = true): 'active' | 'inactive' | 'superseded' {
@@ -835,31 +830,8 @@ export class IdentityService {
     if (authSession === null) {
       throw new IdentityError('AUTHENTICATION_REQUIRED', 'A valid session is required')
     }
-    const grant = membershipGrantRowSchema.optional().parse(
-      this.#database.driver.prepare(`
-        SELECT membership.membership_id
-        FROM workspace_membership AS membership
-        JOIN membership_practitioner_role AS granted
-          ON granted.membership_id = membership.membership_id
-         AND granted.workspace_id = membership.workspace_id
-        JOIN practitioner_role_binding AS role
-          ON role.workspace_id = granted.workspace_id
-         AND role.practitioner_role_id = granted.practitioner_role_id
-        JOIN workspace ON workspace.workspace_id = membership.workspace_id
-        JOIN fhir_resource AS current_role
-          ON current_role.workspace_id = role.workspace_id
-         AND current_role.epoch = workspace.active_epoch
-         AND current_role.resource_type = 'PractitionerRole'
-         AND current_role.resource_id = role.practitioner_role_id
-         AND current_role.deleted = 0
-        WHERE membership.user_id = ?
-          AND membership.status = 'active'
-          AND granted.practitioner_role_id = ?
-          AND role.active = 1
-        ORDER BY membership.workspace_id
-        LIMIT 1
-      `).get(authSession.user.id, practitionerRoleId),
-    )
+    const grant = this.#currentHumanRoles(authSession.user.id)
+      .find(role => role.practitioner_role_id === practitionerRoleId)
     if (grant === undefined) {
       throw new IdentityError('ROLE_NOT_ALLOWED', 'The Practitioner Role is not granted to this account')
     }
@@ -880,54 +852,7 @@ export class IdentityService {
     if (authSession === null) {
       throw new IdentityError('AUTHENTICATION_REQUIRED', 'A valid session is required')
     }
-    const roles = z.array(roleRowSchema).parse(this.#database.driver.prepare(`
-      SELECT
-        membership.actor_id,
-        membership.membership_id,
-        membership.workspace_id,
-        workspace.active_epoch AS epoch,
-        role.practitioner_role_id,
-        role.practitioner_id,
-        json_extract(practitioner.content_json, '$.name[0].text') AS practitioner_name,
-        role.role_code,
-        role.organization_id,
-        role.location_id,
-        json_extract(location.content_json, '$.name') AS location_name,
-        run.scenario_run_id
-      FROM workspace_membership AS membership
-      JOIN workspace ON workspace.workspace_id = membership.workspace_id
-      JOIN membership_practitioner_role AS granted
-        ON granted.membership_id = membership.membership_id
-       AND granted.workspace_id = membership.workspace_id
-      JOIN practitioner_role_binding AS role
-        ON role.workspace_id = granted.workspace_id
-       AND role.practitioner_role_id = granted.practitioner_role_id
-      JOIN fhir_resource AS current_role
-        ON current_role.workspace_id = role.workspace_id
-       AND current_role.epoch = workspace.active_epoch
-       AND current_role.resource_type = 'PractitionerRole'
-       AND current_role.resource_id = role.practitioner_role_id
-       AND current_role.deleted = 0
-      JOIN fhir_resource AS practitioner
-        ON practitioner.workspace_id = role.workspace_id
-       AND practitioner.epoch = workspace.active_epoch
-       AND practitioner.resource_type = 'Practitioner'
-       AND practitioner.resource_id = role.practitioner_id
-       AND practitioner.deleted = 0
-      LEFT JOIN fhir_resource AS location
-        ON location.workspace_id = role.workspace_id
-       AND location.epoch = workspace.active_epoch
-       AND location.resource_type = 'Location'
-       AND location.resource_id = role.location_id
-       AND location.deleted = 0
-      JOIN scenario_run AS run
-        ON run.workspace_id = workspace.workspace_id
-       AND run.epoch = workspace.active_epoch
-      WHERE membership.user_id = ?
-        AND membership.status = 'active'
-        AND role.active = 1
-      ORDER BY membership.workspace_id, role.practitioner_role_id
-    `).all(authSession.user.id))
+    const roles = this.#currentHumanRoles(authSession.user.id)
     const selectedRole = this.#selectedRole(authSession.session.id, roles) ?? roles[0]
     if (selectedRole === undefined) {
       throw new IdentityError('ROLE_NOT_ALLOWED', 'The account has no active Workspace role')
@@ -1032,6 +957,58 @@ export class IdentityService {
       throw new IdentityError('ROLE_NOT_ALLOWED', 'The selected Practitioner Role must be administrator')
     }
     return session
+  }
+
+  #currentHumanRoles(userId: string): RoleRow[] {
+    return z.array(roleRowSchema).parse(this.#database.driver.prepare(`
+      SELECT
+        membership.actor_id,
+        membership.membership_id,
+        membership.workspace_id,
+        workspace.active_epoch AS epoch,
+        role.practitioner_role_id,
+        role.practitioner_id,
+        json_extract(practitioner.content_json, '$.name[0].text') AS practitioner_name,
+        role.role_code,
+        role.organization_id,
+        role.location_id,
+        json_extract(location.content_json, '$.name') AS location_name,
+        run.scenario_run_id
+      FROM workspace_membership AS membership
+      JOIN workspace ON workspace.workspace_id = membership.workspace_id
+      JOIN membership_practitioner_role AS granted
+        ON granted.membership_id = membership.membership_id
+       AND granted.workspace_id = membership.workspace_id
+      JOIN practitioner_role_binding AS role
+        ON role.workspace_id = granted.workspace_id
+       AND role.practitioner_role_id = granted.practitioner_role_id
+      JOIN fhir_resource AS current_role
+        ON current_role.workspace_id = role.workspace_id
+       AND current_role.epoch = workspace.active_epoch
+       AND current_role.resource_type = 'PractitionerRole'
+       AND current_role.resource_id = role.practitioner_role_id
+       AND current_role.deleted = 0
+       AND json_extract(current_role.content_json, '$.active') = 1
+      JOIN fhir_resource AS practitioner
+        ON practitioner.workspace_id = role.workspace_id
+       AND practitioner.epoch = workspace.active_epoch
+       AND practitioner.resource_type = 'Practitioner'
+       AND practitioner.resource_id = role.practitioner_id
+       AND practitioner.deleted = 0
+      LEFT JOIN fhir_resource AS location
+        ON location.workspace_id = role.workspace_id
+       AND location.epoch = workspace.active_epoch
+       AND location.resource_type = 'Location'
+       AND location.resource_id = role.location_id
+       AND location.deleted = 0
+      JOIN scenario_run AS run
+        ON run.workspace_id = workspace.workspace_id
+       AND run.epoch = workspace.active_epoch
+      WHERE membership.user_id = ?
+        AND membership.status = 'active'
+        AND role.active = 1
+      ORDER BY membership.workspace_id, role.practitioner_role_id
+    `).all(userId))
   }
 
   #selectedRole(sessionId: string, roles: RoleRow[]): RoleRow | undefined {

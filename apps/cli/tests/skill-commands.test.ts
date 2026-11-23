@@ -36,6 +36,21 @@ it('病理会诊目录示例使用三器官服务与可见来源标本合同', a
   expect(skill).toContain('一份会诊固定一张 H&E 切片')
 })
 
+it('外部病理已阅沿用原CLI路径并声明当前人类显示会话和恢复步骤', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+  const line = commandLines(skill).find(line => line.startsWith('clinmesh pathology-report acknowledge '))!
+  const operation = inspectExample(program, line).operation!
+  expect(operation.id).toBe('pathology-report.acknowledge')
+  expect(operation.version).toBe(2)
+  expect(operation.summary).toContain('requires-human-current-session')
+  expect(operation.summary).toContain('独立 Agent Grant')
+  expect(skill).toContain('requires-human-current-session')
+  expect(skill).toContain('未取得有效显示资格')
+  expect(skill).toContain('由医生在当前人类登录的工作台重新打开并实际显示切片')
+  expect(skill).toContain('独立 Agent Grant 不能冒充人类显示会话')
+})
+
 it('诊断清空示例绑定当前版本和幂等键，仅丢弃未确认草稿', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')

@@ -151,7 +151,11 @@ clinmesh imaging-report correct --input @imaging-correction.json --idempotency-k
 
 病理切片会诊首期包括三类独立服务：既往乳腺手术切片、既往肠镜活检或息肉切除石蜡 H&E 切片、既往甲状腺手术标本石蜡 H&E 切片。患者携带既往标本，由本院病理科出具会诊报告；不实现本院取材、制片、冰冻切片、细胞学、免疫组化或分子检测。它与检验、放射申请共用同一套状态，但使用各自的草稿和操作；检验和放射操作不能作用于病理申请。先读取当前病例的会诊服务目录：`available: false` 表示本院当前未开展，与病例病情无关；`sourceProcedures` 是该病例可见既往病史中可以送检的手术，来源字段含 `specimenType` 表示送检标本类型。草稿包含服务、`sourceProcedureReference`（取自 `sourceProcedures` 的 `sourceReference`）和会诊目的；所选手术不在清单内时以 `PATHOLOGY_SOURCE_PROCEDURE_UNAVAILABLE` 拒绝。同一服务同时只能有一条进行中的会诊。首期一份会诊固定一张 H&E 切片和一份当前报告，按一次会诊计费。
 
-申请受理表示已收片，开始表示阅片中。状态为 `generation-failed` 时本次会诊没有取得结果，不会有报告：`PATHOLOGY_RESULT_UNAVAILABLE` 表示该病例没有可用切片，`PATHOLOGY_RESULT_FAILED` 表示系统连续执行失败；两者都可按当前申请版本重试或取消。报告包含标本信息（所选既往手术、切片数量、染色）、镜下所见、病理诊断、既有免疫组化结果和备注，CLI 不提供切片像素；需要阅片时由医生在工作台打开切片。确认已阅返回 `IMAGING_STUDY_UNAVAILABLE` 时切片暂不可读，报告仍可读取。CLI 的确认已阅表示医生已阅读报告，不代表切片曾在人面前显示。报告更正需要管理员 Grant，只能选择同一切片另一份已核对的报告内容，更正后当前报告需要重新确认。
+申请受理表示已收片，开始表示阅片中。状态为 `generation-failed` 时本次会诊没有取得结果，不会有报告：`PATHOLOGY_RESULT_UNAVAILABLE` 表示该病例没有可用切片，`PATHOLOGY_RESULT_FAILED` 表示系统连续执行失败；两者都可按当前申请版本重试或取消。报告包含标本信息（所选既往手术、切片数量、染色）、镜下所见、病理诊断、既有免疫组化结果和备注，CLI 不提供切片像素；需要阅片时由医生在工作台打开切片。
+
+乳腺本地会诊的 CLI 确认表示医生已阅读报告；切片不可读时以 `IMAGING_STUDY_UNAVAILABLE` 拒绝。结直肠与甲状腺外部会诊为 `requires-human-current-session`：当前人类登录、岗位、病例责任和报告仍须有效，且该医生的有效会话已实际显示原片。外部会诊的 `IMAGING_STUDY_UNAVAILABLE` 也可能表示未取得有效显示资格；由医生在当前人类登录的工作台重新打开并实际显示切片，满足资格后确认。独立 Agent Grant 不能冒充人类显示会话，服务凭据也不能取得这项资格。文字报告始终可读；确认结果未知时仍按原操作键查询 Command 回执。
+
+报告更正需要管理员 Grant，只能选择同一切片另一份已核对的报告内容，更正后当前报告需要重新确认。
 
 ```bash
 clinmesh doctor case pathology-services list --case-id <case-id>
