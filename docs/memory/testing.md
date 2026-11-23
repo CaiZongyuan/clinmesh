@@ -2,6 +2,8 @@
 
 - Node 26 默认提供原生 `sessionStorage`，Vitest 的 jsdom 环境可能保留它，而 `Storage.prototype` 来自 jsdom，导致故障 spy 没拦截实际存储、`getItem.call` 报实例不符及键枚举次序变化。先用 `NODE_OPTIONS=--no-experimental-webstorage` 运行原测试，确认使用同一 jsdom 存储；不要为这种宿主差异放松未知意图、草稿保留或存储阻写断言。可用报告阅读的“坏稿遮蔽”“原文读取失败”“write-failure”三个案例定位，见[报告阅读回归](../../apps/web/src/app/doctor/outpatient-report-reader.test.tsx)。
 
+- 多核机器上全包 Vitest 默认并发可能使原本通过的 5 秒组件旅程超时；先用原断言和 `--maxWorkers=2` 核对，不扩大超时或删除断言。Turborepo 严格环境会过滤未声明的 `VITEST_MAX_WORKERS` 等变量，单纯在 `pnpm check` 前设置变量未必生效；单包直接传 CLI 参数，全包合成测试可显式使用 `turbo run test --env-mode=loose --concurrency=1` 并传入 `VITEST_MAX_WORKERS=2`，核对实际子进程数后再记录并发限制。Node 26 下临时脚本按 `import.meta.url` 判断入口时，macOS `/var` 与 `/private/var` 的路径别名还可能使脚本零输出退出；CI CLI 隔离测试可设置 `TMPDIR=/private/tmp`，保留原命令与输出断言。
+
 选择验证范围、定位资源争用，或处理替身、时钟和异步断言时查阅。本文保存会影响证据有效性的操作经验；测试层级、必需检查和真实入口要求由[测试策略](../testing.md)拥有。业务专属回归另见[临床数据与模型任务排障](clinical-data.md)，宿主专属回归见[DSH 集成排障](dsh-integration.md)。
 
 其他操作经验见[工程记忆入口](memory.md)。
