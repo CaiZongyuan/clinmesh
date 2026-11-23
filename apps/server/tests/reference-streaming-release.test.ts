@@ -1128,10 +1128,25 @@ describe('streaming reference release import and verification', () => {
       createLoincV2CandidateFixture(join(root, 'cand-loinc')),
     ])
 
-    const ucumXml = '<root version="2.2"><!-- synthetic comment --><unit Code="mmol/L"><name>millimole per liter</name><printSymbol>mmol/L</printSymbol></unit></root>\n'
+    const ucumXml = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<root version="2.2" revision="synthetic">',
+      '  <!-- synthetic comment -->',
+      '  <prefix Code="m" CodeUC="M"><name>milli</name><printSymbol>m</printSymbol><value value="1e-3"/></prefix>',
+      '  <base-unit Code="g" CodeUC="G" dim="M"><name>gram</name><printSymbol>g</printSymbol><property>mass</property></base-unit>',
+      '  <unit Code="mmol/L" isMetric="yes" class="clinical">',
+      '    <name>millimole per liter</name>',
+      '    <printSymbol>mmol/L</printSymbol>',
+      '    <property>amount-of-substance concentration</property>',
+      '    <value Unit="mol/L" UNIT="MOL/L" value="1e-3">0.001</value>',
+      '  </unit>',
+      '  <prefix Code="u" CodeUC="U"><name>micro</name><printSymbol>u</printSymbol><value value="1e-6"/></prefix>',
+      '</root>',
+      '',
+    ].join('\n')
     const servicesCsv = 'SERVICE_CODE,SERVICE_NAME,CATEGORY_CODE,BILLING_UNIT_CODE,STATUS\nSVC-B,合成服务B,LABORATORY,ITEM,ACTIVE\nSVC-a,合成服务a,LABORATORY,ITEM,INACTIVE\n'
     const valueSetsCsv = 'VALUE_SET_URI,SYSTEM,CODE,DISPLAY,STATUS\nhttps://example.test/vs,https://example.test/cs,VS-†,剑号条目,ACTIVE\nhttps://example.test/vs,https://example.test/cs,VS-01,普通条目,ACTIVE\n'
-    // Deliberately place laboratoryDefinitions BEFORE concepts in clinmesh-reference-v1 JSON to exercise 2-pass streaming!
+    // Deliberately place laboratoryDefinitions BEFORE concepts in clinmesh-reference-v1 JSON.
     const customV1Json = `{\n  "laboratoryDefinitions": [\n    {\n      "kind": "loinc",\n      "conceptId": "custom:lab:1",\n      "component": "Custom",\n      "property": "MCnc",\n      "timeAspect": "Pt",\n      "system": "Ser",\n      "scaleType": "Qn",\n      "methodType": null,\n      "classCode": "CHEM",\n      "classType": 1,\n      "orderObservation": "Both",\n      "panelType": null,\n      "sourceLocator": "custom:def:1"\n    }\n  ],\n  "schemaVersion": "1",\n  "concepts": [\n    {\n      "id": "custom:lab:1",\n      "domain": "laboratory",\n      "system": "https://example.test/custom-lab",\n      "version": "2026",\n      "code": "CL-†1",\n      "display": "自定义流式检验概念",\n      "status": "active",\n      "sourceLocator": "custom:concept:1"\n    }\n  ]\n}\n`
 
     await writeFile(join(root, 'ucum.xml'), ucumXml)
@@ -1295,6 +1310,178 @@ describe('streaming reference release import and verification', () => {
       })
     } finally {
       readonlyDb.close()
+    }
+  })
+
+  it('supports cross-source laboratory concept references regardless of manifest source order and rejects missing concepts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'clinmesh-ref-cross-source-fk-'))
+    temporaryDirectories.push(root)
+    const databasePath = join(root, 'reference.sqlite')
+
+    // Source 1 (listed FIRST in manifest) emits laboratory relationships referencing a member concept supplied by Source 2 (listed LATER).
+    const relationsFirstJson = JSON.stringify({
+      concepts: [{
+        code: 'PANEL-01',
+        display: '合成跨源检验组合',
+        domain: 'laboratory',
+        id: 'cross:panel:1',
+        sourceLocator: 'relations-first.json:concept[1]',
+        status: 'active',
+        system: 'https://example.test/cross-lab',
+        version: '2026',
+      }],
+      laboratoryDefinitions: [{
+        classCode: 'CHEM',
+        classType: 1,
+        component: 'CrossMember',
+        conceptId: 'loinc:2.83:90001-1',
+        kind: 'loinc',
+        methodType: null,
+        orderObservation: 'Observation',
+        panelType: null,
+        property: 'MCnc',
+        scaleType: 'Qn',
+        sourceLocator: 'relations-first.json:def[1]',
+        system: 'Ser',
+        timeAspect: 'Pt',
+      }],
+      laboratoryPanelMembers: [{
+        memberConceptId: 'loinc:2.83:90001-1',
+        memberOrder: 1,
+        panelConceptId: 'cross:panel:1',
+        relationship: 'contains',
+        sourceLocator: 'relations-first.json:panelMember[1]',
+      }],
+      laboratorySpecimens: [{
+        conceptId: 'loinc:2.83:90001-1',
+        display: '血清',
+        linkType: 'Primary',
+        partName: 'Ser',
+        partNumber: 'LP7567-3',
+        sourceLocator: 'relations-first.json:specimen[1]',
+      }],
+      laboratoryUnits: [{
+        code: 'mmol/L',
+        conceptId: 'loinc:2.83:90001-1',
+        kind: 'example',
+        ordinal: 1,
+        sourceLocator: 'relations-first.json:unit[1]',
+      }],
+      schemaVersion: '1',
+    })
+    const loincCsv = [
+      'LOINC_NUM,LONG_COMMON_NAME,STATUS',
+      '90001-1,Synthetic cross-source laboratory member,ACTIVE',
+      '',
+    ].join('\n')
+    const ucumWithSiblingsXml = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<root version="2.2">',
+      '  <prefix Code="k" note="a > b"><name>kilo</name><printSymbol>k</printSymbol><value value="1e3"/></prefix>',
+      '  <base-unit Code="m" dim="L"><name>meter</name><printSymbol>m</printSymbol><property><![CDATA[length > 0]]></property></base-unit>',
+      '  <unit Code="mmol/L"><name>millimole per liter</name><printSymbol>mmol/L</printSymbol></unit>',
+      '</root>',
+      '',
+    ].join('\n')
+
+    await writeFile(join(root, 'relations-first.json'), relationsFirstJson)
+    await writeFile(join(root, 'loinc.csv'), loincCsv)
+    await writeFile(join(root, 'ucum-siblings.xml'), ucumWithSiblingsXml)
+
+    const orphanManifestPath = join(root, 'orphan-manifest.json')
+    await writeFile(orphanManifestPath, JSON.stringify({
+      createdAt: '2026-09-15T00:00:00.000Z',
+      releaseId: 'orphan-cross-source-release',
+      schemaVersion: '1',
+      sources: [{
+        acquisitionMethod: 'bundled-fixture',
+        artifactFormat: 'clinmesh-reference-v1',
+        artifactPath: 'relations-first.json',
+        checksum: sha256(relationsFirstJson),
+        licenseId: 'CC0-1.0',
+        retrievedAt: '2026-09-15T00:00:00.000Z',
+        sourceId: 'source-1-relations',
+        sourceUrl: 'https://example.test/relations',
+        upstreamVersion: '2026',
+      }],
+    }))
+
+    const validManifestPath = join(root, 'valid-cross-source-manifest.json')
+    await writeFile(validManifestPath, JSON.stringify({
+      createdAt: '2026-09-15T00:00:00.000Z',
+      releaseId: 'valid-cross-source-release',
+      schemaVersion: '1',
+      sources: [
+        {
+          acquisitionMethod: 'bundled-fixture',
+          artifactFormat: 'clinmesh-reference-v1',
+          artifactPath: 'relations-first.json',
+          checksum: sha256(relationsFirstJson),
+          licenseId: 'CC0-1.0',
+          retrievedAt: '2026-09-15T00:00:00.000Z',
+          sourceId: 'source-1-relations',
+          sourceUrl: 'https://example.test/relations',
+          upstreamVersion: '2026',
+        },
+        {
+          acquisitionMethod: 'documented-api',
+          artifactFormat: 'loinc-csv',
+          artifactPath: 'loinc.csv',
+          checksum: sha256(loincCsv),
+          licenseId: 'LicenseRef-LOINC',
+          retrievedAt: '2026-09-15T00:00:00.000Z',
+          sourceId: 'source-2-loinc',
+          sourceUrl: 'https://example.test/loinc',
+          upstreamVersion: '2.83',
+        },
+        {
+          acquisitionMethod: 'generated',
+          artifactFormat: 'ucum-xml',
+          artifactPath: 'ucum-siblings.xml',
+          checksum: sha256(ucumWithSiblingsXml),
+          licenseId: 'UCUM',
+          retrievedAt: '2026-09-15T00:00:00.000Z',
+          sourceId: 'source-3-ucum',
+          sourceUrl: 'https://example.test/ucum',
+          upstreamVersion: '2.2',
+        },
+      ],
+    }))
+
+    const database = openReferenceDatabase({ busyTimeoutMs: 5_000, databasePath })
+    try {
+      applyReferenceMigrations(database)
+
+      // Missing concept_id across all sources must fail cleanly and drop all temp staging tables.
+      expect(() => importReferenceDataRelease(database, orphanManifestPath))
+        .toThrow(/FOREIGN KEY constraint failed/)
+      expect(database.driver.prepare(
+        "SELECT name FROM sqlite_temp_schema WHERE type = 'table' AND name LIKE 'staging_%'",
+      ).all()).toEqual([])
+      expect(listReferenceDataReleases(database).items).toHaveLength(0)
+
+      // Cross-source concept_id supplied by a later source in manifest.sources must succeed.
+      const imported = importReferenceDataRelease(database, validManifestPath)
+      expect(imported).toMatchObject({
+        conceptCount: 3,
+        created: true,
+        laboratoryDefinitionCount: 1,
+        laboratoryPanelMemberCount: 1,
+        laboratorySpecimenCount: 1,
+        laboratoryUnitCount: 1,
+        sourceCount: 3,
+      })
+      expect(importReferenceDataRelease(database, validManifestPath)).toEqual({
+        ...imported,
+        created: false,
+      })
+      expect(verifyReferenceDatabase(database)).toEqual({
+        integrity: 'ok',
+        releaseCount: 1,
+        schemaVersion: 11,
+      })
+    } finally {
+      database.close()
     }
   })
 })

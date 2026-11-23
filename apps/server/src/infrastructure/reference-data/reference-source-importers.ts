@@ -316,6 +316,129 @@ function stageCsvArtifact<ParsedRecord>(input: {
   return { acceptedCount: count, recordCount: count }
 }
 
+function findXmlTagClose(source: string, startIndex: number): number {
+  let quote = ''
+  for (let index = startIndex; index < source.length; index += 1) {
+    const ch = source[index]!
+    if (quote !== '') {
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === '"' || ch === '\'') {
+      quote = ch
+      continue
+    }
+    if (ch === '>') return index
+  }
+  return -1
+}
+
+function scanNextXmlChildElement(
+  source: string,
+  isFinal: boolean,
+): { elementXml: string; nextIndex: number; tagName: string } | 'end-of-root' | 'need-more' {
+  if (source.startsWith('</root')) {
+    const closeEnd = findXmlTagClose(source, 0)
+    if (closeEnd === -1) {
+      if (isFinal) throw new Error('Unclosed </root> tag in UCUM source')
+      return 'need-more'
+    }
+    if (!/^<\/root\s*>$/.test(source.slice(0, closeEnd + 1))) {
+      throw new Error('Unexpected closing tag in UCUM source')
+    }
+    return 'end-of-root'
+  }
+
+  const rootOpenEnd = findXmlTagClose(source, 0)
+  if (rootOpenEnd === -1) {
+    if (isFinal) throw new Error('Unclosed XML element tag in UCUM source')
+    return 'need-more'
+  }
+  const openTag = source.slice(0, rootOpenEnd + 1)
+  const openMatch = /^<([A-Za-z_][\w.:-]*)(?=[\s/>])/.exec(openTag)
+  if (openMatch === null) {
+    throw new Error('Malformed XML child element in UCUM source')
+  }
+  const rootTagName = openMatch[1]!
+  if (source[rootOpenEnd - 1] === '/') {
+    return {
+      elementXml: openTag,
+      nextIndex: rootOpenEnd + 1,
+      tagName: rootTagName,
+    }
+  }
+
+  const stack = [rootTagName]
+  let cursor = rootOpenEnd + 1
+  while (stack.length > 0) {
+    const lt = source.indexOf('<', cursor)
+    if (lt === -1) {
+      if (isFinal) throw new Error(`Unclosed <${stack[stack.length - 1]}> element in UCUM source`)
+      return 'need-more'
+    }
+    if (source.startsWith('<!--', lt)) {
+      const end = source.indexOf('-->', lt + 4)
+      if (end === -1) {
+        if (isFinal) throw new Error('Unclosed XML comment in UCUM source')
+        return 'need-more'
+      }
+      cursor = end + 3
+      continue
+    }
+    if (source.startsWith('<![CDATA[', lt)) {
+      const end = source.indexOf(']]>', lt + 9)
+      if (end === -1) {
+        if (isFinal) throw new Error('Unclosed CDATA section in UCUM source')
+        return 'need-more'
+      }
+      cursor = end + 3
+      continue
+    }
+    if (source.startsWith('<?', lt)) {
+      const end = source.indexOf('?>', lt + 2)
+      if (end === -1) {
+        if (isFinal) throw new Error('Unclosed XML processing instruction in UCUM source')
+        return 'need-more'
+      }
+      cursor = end + 2
+      continue
+    }
+    if (lt + 1 >= source.length) {
+      if (isFinal) throw new Error('Truncated XML tag in UCUM source')
+      return 'need-more'
+    }
+    const tagEnd = findXmlTagClose(source, lt)
+    if (tagEnd === -1) {
+      if (isFinal) throw new Error('Unclosed XML tag in UCUM source')
+      return 'need-more'
+    }
+    const rawTag = source.slice(lt, tagEnd + 1)
+    if (rawTag.startsWith('</')) {
+      const closeMatch = /^<\/([A-Za-z_][\w.:-]*)\s*>$/.exec(rawTag)
+      const expected = stack.pop()
+      if (closeMatch === null || closeMatch[1] !== expected) {
+        throw new Error('Mismatched XML closing tag in UCUM source')
+      }
+      cursor = tagEnd + 1
+      continue
+    }
+    const childMatch = /^<([A-Za-z_][\w.:-]*)(?=[\s/>])/.exec(rawTag)
+    if (childMatch === null) {
+      throw new Error('Malformed nested XML tag in UCUM source')
+    }
+    if (source[tagEnd - 1] !== '/') {
+      stack.push(childMatch[1]!)
+    }
+    cursor = tagEnd + 1
+  }
+
+  return {
+    elementXml: source.slice(0, cursor),
+    nextIndex: cursor,
+    tagName: rootTagName,
+  }
+}
+
 function streamUcumXmlUnits(
   artifactPath: string,
   version: string,
@@ -332,12 +455,16 @@ function streamUcumXmlUnits(
   const readBuffer = Buffer.allocUnsafe(fileStreamChunkBytes)
   let buffer = ''
   let checkedRoot = false
+  let reachedRootEnd = false
   let firstChunk = true
   let unitCount = 0
 
   const stripLeadingPrologAndComments = (isFinal: boolean): boolean => {
     while (true) {
       buffer = buffer.trimStart()
+      if (!isFinal && buffer.length > 0 && ('<?'.startsWith(buffer) || '<!--'.startsWith(buffer))) {
+        return false
+      }
       if (buffer.startsWith('<?')) {
         const end = buffer.indexOf('?>')
         if (end === -1) {
@@ -363,14 +490,25 @@ function streamUcumXmlUnits(
   const processAvailable = (isFinal: boolean): void => {
     if (!checkedRoot) {
       if (!stripLeadingPrologAndComments(isFinal)) return
-      const rootMatch = /^<root(?:\s[^>]*?)?>/.exec(buffer)
-      if (rootMatch === null) {
+      if (buffer.length === 0) {
+        if (isFinal) throw new Error('UCUM XML root element is missing or invalid')
+        return
+      }
+      if (!isFinal && '<root'.startsWith(buffer)) return
+      if (!buffer.startsWith('<root')) {
+        throw new Error('UCUM XML root element is missing or invalid')
+      }
+      const rootClose = findXmlTagClose(buffer, 0)
+      if (rootClose === -1) {
         if (isFinal || buffer.length > fileStreamChunkBytes) {
           throw new Error('UCUM XML root element is missing or invalid')
         }
         return
       }
-      const rootOpeningTag = rootMatch[0]
+      const rootOpeningTag = buffer.slice(0, rootClose + 1)
+      if (!/^<root(?=[\s/>])/.test(rootOpeningTag)) {
+        throw new Error('UCUM XML root element is missing or invalid')
+      }
       if (rootOpeningTag.endsWith('/>')) {
         throw new Error('UCUM XML root element must contain unit records')
       }
@@ -379,33 +517,25 @@ function streamUcumXmlUnits(
       checkedRoot = true
     }
 
-    while (true) {
+    while (!reachedRootEnd) {
       if (!stripLeadingPrologAndComments(isFinal)) return
-      if (buffer.startsWith('<unit') && (buffer.length === 5 || /[\s/>]/.test(buffer[5]!))) {
-        const openEnd = buffer.indexOf('>')
-        if (openEnd === -1) {
-          if (isFinal) throw new Error('Unclosed <unit> tag in UCUM source')
-          return
-        }
-        let unitXml: string
-        if (buffer[openEnd - 1] === '/') {
-          unitXml = buffer.slice(0, openEnd + 1)
-          buffer = buffer.slice(openEnd + 1)
-        } else {
-          const closeIndex = buffer.indexOf('</unit>', openEnd + 1)
-          if (closeIndex === -1) {
-            if (isFinal) throw new Error('Unclosed </unit> element in UCUM source')
-            return
-          }
-          unitXml = buffer.slice(0, closeIndex + '</unit>'.length)
-          buffer = buffer.slice(closeIndex + '</unit>'.length)
-        }
-        const parsedUnit = ucumSingleUnitElementSchema.parse(xmlElementParser.parse(unitXml))
+      if (buffer.length === 0) return
+      const scanned = scanNextXmlChildElement(buffer, isFinal)
+      if (scanned === 'need-more') return
+      if (scanned === 'end-of-root') {
+        const rootEnd = findXmlTagClose(buffer, 0)
+        buffer = buffer.slice(rootEnd + 1)
+        reachedRootEnd = true
+        return
+      }
+      buffer = buffer.slice(scanned.nextIndex)
+      if (scanned.tagName === 'unit') {
+        const parsedUnit = ucumSingleUnitElementSchema.parse(xmlElementParser.parse(scanned.elementXml))
         sink.stageConcept(mapUcumUnit(parsedUnit.unit, unitCount, version))
         unitCount += 1
-        continue
+      } else {
+        xmlElementParser.parse(scanned.elementXml)
       }
-      break
     }
   }
 
@@ -422,7 +552,7 @@ function streamUcumXmlUnits(
     }
     buffer += decoder.end()
     processAvailable(true)
-    if (!checkedRoot || unitCount === 0 || buffer.trim() !== '</root>') {
+    if (!checkedRoot || !reachedRootEnd || unitCount === 0 || !stripLeadingPrologAndComments(true) || buffer.length > 0) {
       throw new Error('UCUM XML document structure is invalid')
     }
   } finally {
@@ -606,20 +736,14 @@ class StreamingJsonFileScanner {
     return JSON.parse(this.#scanRawJsonToken(false))
   }
 
-  streamArrayElements(onElement?: (element: unknown) => void): number {
+  streamArrayElements(onElement: (element: unknown) => void): void {
     this.expectChar('[')
     if (this.peekChar() === ']') {
       this.#position += 1
-      return 0
+      return
     }
-    let elementCount = 0
     while (true) {
-      if (onElement === undefined) {
-        JSON.parse(this.#scanRawJsonToken(false))
-      } else {
-        onElement(this.readValue())
-      }
-      elementCount += 1
+      onElement(this.readValue())
       const separator = this.peekChar()
       if (separator === ',') {
         this.#position += 1
@@ -627,14 +751,10 @@ class StreamingJsonFileScanner {
       }
       if (separator === ']') {
         this.#position += 1
-        return elementCount
+        return
       }
       throw new SyntaxError('Expected "," or "]" in clinmesh-reference-v1 JSON array')
     }
-  }
-
-  skipValue(): void {
-    this.#scanRawJsonToken(true)
   }
 }
 
@@ -643,116 +763,90 @@ function stageClinmeshJsonArtifact(
   sink: ReferenceStagingSink,
 ): { acceptedCount: number; recordCount: number } {
   let count = 0
-  let hasSecondaryItems = false
-
-  const firstPass = new StreamingJsonFileScanner(artifactPath)
+  const scanner = new StreamingJsonFileScanner(artifactPath)
   try {
     const seenKeys = new Set<string>()
-    firstPass.expectChar('{')
-    if (firstPass.peekChar() !== '}') {
+    scanner.expectChar('{')
+    if (scanner.peekChar() !== '}') {
       while (true) {
-        const key = firstPass.readString()
+        const key = scanner.readString()
         if (!clinmeshJsonAllowedKeys.has(key) || seenKeys.has(key)) {
           throw new Error(`Unsupported or duplicate clinmesh-reference-v1 property: ${key}`)
         }
         seenKeys.add(key)
-        firstPass.expectChar(':')
-        if (key === 'schemaVersion') {
-          clinmeshSchemaVersionSchema.parse(firstPass.readValue())
-        } else if (key === 'concepts') {
-          firstPass.streamArrayElements((item) => {
-            sink.stageConcept(referenceConceptSchema.parse(item))
-            count += 1
-          })
-        } else {
-          if (firstPass.streamArrayElements() > 0) {
-            hasSecondaryItems = true
-          }
+        scanner.expectChar(':')
+        switch (key) {
+          case 'schemaVersion':
+            clinmeshSchemaVersionSchema.parse(scanner.readValue())
+            break
+          case 'concepts':
+            scanner.streamArrayElements((item) => {
+              sink.stageConcept(referenceConceptSchema.parse(item))
+              count += 1
+            })
+            break
+          case 'laboratoryDefinitions':
+            scanner.streamArrayElements((item) => {
+              const definition = referenceLaboratoryDefinitionSchema.parse(item)
+              sink.stageLaboratoryDefinition(definition)
+              if (definition.kind === 'laboratory-cn-test') {
+                count += definition.adultReferenceRules.length
+              }
+            })
+            break
+          case 'laboratoryUnits':
+            scanner.streamArrayElements((item) => {
+              sink.stageLaboratoryUnit(referenceLaboratoryUnitSchema.parse(item))
+              count += 1
+            })
+            break
+          case 'laboratorySpecimens':
+            scanner.streamArrayElements((item) => {
+              sink.stageLaboratorySpecimen(referenceLaboratorySpecimenSchema.parse(item))
+              count += 1
+            })
+            break
+          case 'laboratoryPanelMembers':
+            scanner.streamArrayElements((item) => {
+              sink.stageLaboratoryPanelMember(referenceLaboratoryPanelMemberSchema.parse(item))
+              count += 1
+            })
+            break
+          case 'medicationProducts':
+            scanner.streamArrayElements((item) => {
+              sink.stageMedicationProduct(referenceMedicationProductSchema.parse(item))
+              count += 1
+            })
+            break
+          case 'services':
+            scanner.streamArrayElements((item) => {
+              sink.stageMedicalService(referenceMedicalServiceSchema.parse(item))
+              count += 1
+            })
+            break
+          case 'valueSetEntries':
+            scanner.streamArrayElements((item) => {
+              sink.stageValueSetEntry(referenceValueSetEntrySchema.parse(item))
+              count += 1
+            })
+            break
         }
-        const next = firstPass.peekChar()
+        const next = scanner.peekChar()
         if (next === ',') {
-          firstPass.expectChar(',')
+          scanner.expectChar(',')
           continue
         }
         if (next === '}') break
         throw new SyntaxError('Expected "," or "}" in clinmesh-reference-v1 JSON object')
       }
     }
-    firstPass.expectChar('}')
-    firstPass.assertEof()
+    scanner.expectChar('}')
+    scanner.assertEof()
     if (!seenKeys.has('schemaVersion') || !seenKeys.has('concepts')) {
       throw new Error('clinmesh-reference-v1 requires schemaVersion and concepts')
     }
   } finally {
-    firstPass.close()
-  }
-
-  sink.flush()
-  if (!hasSecondaryItems) {
-    return { acceptedCount: count, recordCount: count }
-  }
-
-  const secondPass = new StreamingJsonFileScanner(artifactPath)
-  try {
-    secondPass.expectChar('{')
-    while (secondPass.peekChar() !== '}') {
-      const key = secondPass.readString()
-      secondPass.expectChar(':')
-      switch (key) {
-        case 'laboratoryDefinitions':
-          secondPass.streamArrayElements((item) => {
-            const definition = referenceLaboratoryDefinitionSchema.parse(item)
-            sink.stageLaboratoryDefinition(definition)
-            if (definition.kind === 'laboratory-cn-test') {
-              count += definition.adultReferenceRules.length
-            }
-          })
-          break
-        case 'laboratoryUnits':
-          secondPass.streamArrayElements((item) => {
-            sink.stageLaboratoryUnit(referenceLaboratoryUnitSchema.parse(item))
-            count += 1
-          })
-          break
-        case 'laboratorySpecimens':
-          secondPass.streamArrayElements((item) => {
-            sink.stageLaboratorySpecimen(referenceLaboratorySpecimenSchema.parse(item))
-            count += 1
-          })
-          break
-        case 'laboratoryPanelMembers':
-          secondPass.streamArrayElements((item) => {
-            sink.stageLaboratoryPanelMember(referenceLaboratoryPanelMemberSchema.parse(item))
-            count += 1
-          })
-          break
-        case 'medicationProducts':
-          secondPass.streamArrayElements((item) => {
-            sink.stageMedicationProduct(referenceMedicationProductSchema.parse(item))
-            count += 1
-          })
-          break
-        case 'services':
-          secondPass.streamArrayElements((item) => {
-            sink.stageMedicalService(referenceMedicalServiceSchema.parse(item))
-            count += 1
-          })
-          break
-        case 'valueSetEntries':
-          secondPass.streamArrayElements((item) => {
-            sink.stageValueSetEntry(referenceValueSetEntrySchema.parse(item))
-            count += 1
-          })
-          break
-        default:
-          secondPass.skipValue()
-          break
-      }
-      if (secondPass.peekChar() === ',') secondPass.expectChar(',')
-    }
-    secondPass.expectChar('}')
-  } finally {
-    secondPass.close()
+    scanner.close()
   }
 
   sink.flush()

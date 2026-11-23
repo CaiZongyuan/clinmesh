@@ -1160,14 +1160,14 @@ const createTempStagingTablesSql = `
   ) STRICT;
 
   CREATE TEMP TABLE staging_laboratory_definition (
-    concept_id TEXT PRIMARY KEY REFERENCES staging_concept (concept_id) ON DELETE RESTRICT,
+    concept_id TEXT PRIMARY KEY,
     definition_json TEXT NOT NULL CHECK (json_valid(definition_json)),
     source_id TEXT NOT NULL REFERENCES staging_source_manifest (source_id) ON DELETE RESTRICT,
     source_locator TEXT NOT NULL
   ) STRICT;
 
   CREATE TEMP TABLE staging_laboratory_unit (
-    concept_id TEXT NOT NULL REFERENCES staging_concept (concept_id) ON DELETE RESTRICT,
+    concept_id TEXT NOT NULL,
     code TEXT NOT NULL,
     kind TEXT NOT NULL CHECK (kind = 'example'),
     ordinal INTEGER NOT NULL CHECK (ordinal >= 1),
@@ -1177,7 +1177,7 @@ const createTempStagingTablesSql = `
   ) STRICT;
 
   CREATE TEMP TABLE staging_laboratory_specimen (
-    concept_id TEXT NOT NULL REFERENCES staging_concept (concept_id) ON DELETE RESTRICT,
+    concept_id TEXT NOT NULL,
     part_number TEXT NOT NULL,
     part_name TEXT NOT NULL,
     display TEXT NOT NULL,
@@ -1188,8 +1188,8 @@ const createTempStagingTablesSql = `
   ) STRICT;
 
   CREATE TEMP TABLE staging_laboratory_panel_member (
-    panel_concept_id TEXT NOT NULL REFERENCES staging_concept (concept_id) ON DELETE RESTRICT,
-    member_concept_id TEXT NOT NULL REFERENCES staging_concept (concept_id) ON DELETE RESTRICT,
+    panel_concept_id TEXT NOT NULL,
+    member_concept_id TEXT NOT NULL,
     member_order INTEGER NOT NULL CHECK (member_order >= 0),
     relationship TEXT NOT NULL CHECK (relationship = 'contains'),
     source_id TEXT NOT NULL REFERENCES staging_source_manifest (source_id) ON DELETE RESTRICT,
@@ -1589,6 +1589,7 @@ const existingReleaseHashRowSchema = z.object({
 
 const stagingCountsRowSchema = z.object({
   concept_count: z.number().int().nonnegative(),
+  has_orphan_laboratory_concept: z.union([z.literal(0), z.literal(1)]),
   laboratory_definition_count: z.number().int().nonnegative(),
   laboratory_panel_member_count: z.number().int().nonnegative(),
   laboratory_specimen_count: z.number().int().nonnegative(),
@@ -1723,6 +1724,20 @@ export function importReferenceDataRelease(
     const counts = stagingCountsRowSchema.parse(database.driver.prepare(`
       SELECT
         (SELECT COUNT(*) FROM temp.staging_concept) AS concept_count,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM temp.staging_laboratory_definition d
+          WHERE NOT EXISTS (SELECT 1 FROM temp.staging_concept c WHERE c.concept_id = d.concept_id)
+        ) OR EXISTS (
+          SELECT 1 FROM temp.staging_laboratory_unit u
+          WHERE NOT EXISTS (SELECT 1 FROM temp.staging_concept c WHERE c.concept_id = u.concept_id)
+        ) OR EXISTS (
+          SELECT 1 FROM temp.staging_laboratory_specimen s
+          WHERE NOT EXISTS (SELECT 1 FROM temp.staging_concept c WHERE c.concept_id = s.concept_id)
+        ) OR EXISTS (
+          SELECT 1 FROM temp.staging_laboratory_panel_member pm
+          WHERE NOT EXISTS (SELECT 1 FROM temp.staging_concept c WHERE c.concept_id = pm.panel_concept_id)
+             OR NOT EXISTS (SELECT 1 FROM temp.staging_concept c WHERE c.concept_id = pm.member_concept_id)
+        ) THEN 1 ELSE 0 END AS has_orphan_laboratory_concept,
         (SELECT COUNT(*) FROM temp.staging_laboratory_definition) AS laboratory_definition_count,
         (SELECT COUNT(*) FROM temp.staging_laboratory_panel_member) AS laboratory_panel_member_count,
         (SELECT COUNT(*) FROM temp.staging_laboratory_specimen) AS laboratory_specimen_count,
@@ -1731,6 +1746,9 @@ export function importReferenceDataRelease(
         (SELECT COUNT(*) FROM temp.staging_medical_service) AS service_count,
         (SELECT COUNT(*) FROM temp.staging_value_set_entry) AS value_set_entry_count
     `).get())
+    if (counts.has_orphan_laboratory_concept === 1) {
+      throw new Error('FOREIGN KEY constraint failed: reference laboratory concept is missing')
+    }
 
     const hash = computeStreamingReleaseContentHash({
       concepts: streamStagedRows({
