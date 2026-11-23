@@ -50,7 +50,7 @@ function prescriptionState(overrides: Partial<DoctorRecommendationState> = {}): 
   if (first.kind !== 'diagnosis') throw new Error('Expected diagnosis fixture')
   const { role: _role, referenceConcept: _referenceConcept, ...common } = first
   return state({ kind: 'prescription', items: [{ ...common, kind: 'prescription', id: 'prescription-1', catalogItemId: 'medication-1', label: '合成药品',
-    doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }], ...overrides })
+    doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 }], ...overrides })
 }
 function manualDiagnosisItems() {
   return [
@@ -338,7 +338,7 @@ describe('prepared clinical confirmation', () => {
   it('整张双药处方丢响应后刷新只读原回执并禁止新开具', async () => {
     const manualItems = ['medication-one', 'medication-two'].map(catalogItemId => ({ label: catalogItemId, value: {
       source: 'manual' as const, kind: 'prescription' as const, catalogItemId,
-      doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30,
+      doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO' as const, courseDays: 30, quantity: 30,
     } }))
     const calls = stubRequests(() => prescriptionState({ items: [] }), () => { throw new TypeError('Synthetic lost prescription response') },
       undefined, undefined, () => receipt('prescription'))
@@ -363,7 +363,7 @@ describe('prepared clinical confirmation', () => {
     stubRequests(() => prescriptionState({ items: [] }), () => { throw new TypeError('Synthetic lost prescription response') },
       undefined, undefined, () => delayed.response)
     const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'manual-medication',
-      doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3 }
+      doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO' as const, courseDays: 3, quantity: 3 }
     const onConfirmed = vi.fn(), initial = props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' },
       manualItems: [{ label: '医生药品', value }], onConfirmed })
     const mounted = mount(initial), user = userEvent.setup()
@@ -386,7 +386,7 @@ describe('prepared clinical confirmation', () => {
     }, undefined, undefined, () => Response.json({ error: { code: absent ? 'COMMAND_RECEIPT_NOT_FOUND' : 'UNAVAILABLE', message: 'Synthetic receipt read' } }, { status: absent ? 404 : 503 }))
     const manualItems = ['medication-one', 'medication-two'].map(catalogItemId => ({ label: catalogItemId, value: {
       source: 'manual' as const, kind: 'prescription' as const, catalogItemId,
-      doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3,
+      doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO' as const, courseDays: 3, quantity: 3,
     } }))
     const onConfirmed = vi.fn(), initial = props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems, onConfirmed })
     const mounted = mount(initial), user = userEvent.setup()
@@ -413,7 +413,7 @@ describe('prepared clinical confirmation', () => {
     const calls = stubRequests(() => prescriptionState({ items: [] }))
     const manualItems = ['medication-one', 'medication-two'].map(catalogItemId => ({ label: catalogItemId, value: {
       source: 'manual' as const, kind: 'prescription' as const, catalogItemId,
-      doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3,
+      doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO' as const, courseDays: 3, quantity: 3,
     } }))
     mount(props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems }))
     await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
@@ -432,7 +432,7 @@ describe('prepared clinical confirmation', () => {
       ? Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: 'Synthetic invalid prescription' } }, { status: 409 }) : receipt('prescription'))
     const manualItems = ['medication-one', 'medication-two'].map(catalogItemId => ({ label: catalogItemId, value: {
       source: 'manual' as const, kind: 'prescription' as const, catalogItemId,
-      doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3,
+      doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO' as const, courseDays: 3, quantity: 3,
     } }))
     const initial = props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems }), mounted = mount(initial), user = userEvent.setup()
     await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
@@ -548,7 +548,7 @@ describe('prepared clinical confirmation', () => {
   it('处方清空选择保留所有药品，再全选只勾选当前可办理行', async () => {
     stubRequests(() => prescriptionState({ items: [] }))
     const complete = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'complete-medication',
-      doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3 }
+      doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO' as const, courseDays: 3, quantity: 3 }
     mount(props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [
       { label: '完整药品', value: complete }, { label: '未完成药品', value: { ...complete, catalogItemId: 'incomplete-medication', doseText: null } },
       { label: '不可办理药品', value: { ...complete, catalogItemId: 'unavailable-medication' } },
@@ -849,7 +849,7 @@ describe('prepared clinical confirmation', () => {
     await user.click(confirmButton())
     await waitFor(() => expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(1))
     expect(confirmDoctorPreparationRequestSchema.parse(calls.find(call => call.path.endsWith('/actions/confirm'))!.body).input.selections).toEqual([
-      { source: 'manual', kind: 'prescription', catalogItemId: 'medication-1', doseText: '10 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 },
+      { source: 'manual', kind: 'prescription', catalogItemId: 'medication-1', doseText: '10 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 },
     ])
     expect(await screen.findByRole('region', { name: '正式详情' })).toBeTruthy()
   })
@@ -920,7 +920,7 @@ describe('prepared clinical confirmation', () => {
   })
   it('keeps a form-deleted adjusted item removed when its automatic copy remains and the case is revisited', async () => {
     stubRequests(() => prescriptionState())
-    const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'medication-1', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }
+    const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'medication-1', doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO' as const, courseDays: 30, quantity: 30 }
     const initial = props({ kind: 'prescription', onManualChange: () => true, manualItems: [{ label: '合成药品', value }] })
     const mounted = mount(initial, true)
     await screen.findByRole('checkbox', { name: '选择合成药品' })
@@ -1065,7 +1065,7 @@ describe('prepared clinical confirmation', () => {
   it('consumes only unchanged submitted manual rows when a different unselected row changes', async () => {
     const delayed = deferredResponse()
     stubRequests(() => prescriptionState({ items: [] }), () => delayed.response)
-    const selected = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'medication-selected', doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3 }
+    const selected = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'medication-selected', doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO' as const, courseDays: 3, quantity: 3 }
     const unselected = { ...selected, catalogItemId: 'medication-unselected' }
     const onConfirmed = vi.fn()
     const original = props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, onConfirmed, manualItems: [
@@ -1087,7 +1087,7 @@ describe('prepared clinical confirmation', () => {
   it('keeps a submitted manual row that was edited and then restored before success', async () => {
     const delayed = deferredResponse()
     stubRequests(() => prescriptionState({ items: [] }), () => delayed.response)
-    const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'manual-medication', doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3 }
+    const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'manual-medication', doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO' as const, courseDays: 3, quantity: 3 }
     const onConfirmed = vi.fn()
     const original = props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [{ label: '医生药品', value }], onConfirmed })
     const mounted = mount(original)
@@ -1129,7 +1129,7 @@ describe('prepared clinical confirmation', () => {
   })
   it('does not reveal the old automatic copy after a confirmed manual item is removed from its form', async () => {
     const current = prescriptionState(); stubRequests(() => current)
-    const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'medication-1', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }
+    const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'medication-1', doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO' as const, courseDays: 30, quantity: 30 }
     const initial = props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [{ label: '合成药品', value }], onManualChange: vi.fn(), onConfirmed: vi.fn() })
     const mounted = mount(initial)
     await screen.findByText('合成药品'); await userEvent.setup().click(confirmButton())
@@ -1202,14 +1202,14 @@ describe('prepared clinical confirmation', () => {
     const onManualChange = vi.fn(), onManualRemove = vi.fn()
     const initial = props({ kind: 'prescription', onManualChange, onManualRemove,
       manualControls: <button type="button">添加药品</button>,
-      manualItems: [{ label: '合成药品', value: { source: 'manual', kind: 'prescription', catalogItemId: 'medication-1', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 } }] })
+      manualItems: [{ label: '合成药品', value: { source: 'manual', kind: 'prescription', catalogItemId: 'medication-1', doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 } }] })
     const mounted = mount(initial)
     await screen.findByText('合成药品')
     const user = userEvent.setup(); await edit()
     fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '10 mg' } })
     await user.click(screen.getByRole('button', { name: '保留本次调整' }))
     expect(onManualChange).toHaveBeenCalledWith({ label: '合成药品', value: expect.objectContaining({ source: 'manual', doseText: '10 mg' }) })
-    mounted.rerenderPanel({ ...initial, manualItems: [{ label: '合成药品', value: { ...initial.manualItems![0]!.value, kind: 'prescription', source: 'manual', catalogItemId: 'medication-1', doseText: '20 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 } }] })
+    mounted.rerenderPanel({ ...initial, manualItems: [{ label: '合成药品', value: { ...initial.manualItems![0]!.value, kind: 'prescription', source: 'manual', catalogItemId: 'medication-1', doseText: '20 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 } }] })
     expect(screen.getByText(/20 mg/)).toBeTruthy()
     expect(within(screen.getByRole('region', { name: '待开具处方' })).getByRole('button', { name: '添加药品' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '移除合成药品' }))
@@ -1249,7 +1249,7 @@ describe('prepared clinical confirmation', () => {
   })
   it('preserves a manual item with the same clinical identity and asks the doctor to review a conflicting new proposal', async () => {
     const current = prescriptionState(); stubRequests(() => current)
-    mount(props({ kind: 'prescription', manualItems: [{ label: '医生手改药品', value: { source: 'manual', kind: 'prescription', catalogItemId: 'medication-1', doseText: '10 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 } }] }))
+    mount(props({ kind: 'prescription', manualItems: [{ label: '医生手改药品', value: { source: 'manual', kind: 'prescription', catalogItemId: 'medication-1', doseText: '10 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 } }] }))
     await screen.findByText('医生手改药品')
     expect(screen.queryByText('合成药品')).toBeNull()
     expect(screen.getByText(/10 mg/)).toBeTruthy()
@@ -1334,11 +1334,11 @@ it('lets a national-catalog pending prescription keep a newly typed frequency th
   const calls = stubRequests(() => prescriptionState({ items: [] }))
   mount(props({ kind: 'prescription', manualItems: [{ label: '合成国家目录药品', value: {
     source: 'manual', kind: 'prescription', catalogItemId: 'national-medication', doseText: '每次一片',
-    frequencyCode: '每晚睡前一次', courseDays: 3, quantity: 3,
+    frequencyCode: '每晚睡前一次', routeCode: 'PO', courseDays: 3, quantity: 3,
     referenceProduct: { id: 'national-medication', code: 'SYN-NATIONAL', genericName: '合成国家目录药品',
       approvalNumber: '合成批准号', brandName: '合成商品', dosageForm: '片剂', manufacturer: '合成制药厂',
       packageDescription: '10片/盒', sourceLocator: 'synthetic:reference', status: 'active', strength: '10 mg',
-      system: 'urn:synthetic:medication', version: '1' },
+      system: 'urn:synthetic:medication', version: '1', defaultRouteCode: 'PO', allowedRouteCodes: ['PO'] },
   } }] }))
   const user = userEvent.setup()
   await user.click(await screen.findByRole('button', { name: '调整' }))
@@ -1350,20 +1350,20 @@ it('lets a national-catalog pending prescription keep a newly typed frequency th
   const dose = dialog.getByRole('textbox', { name: '每次剂量' })
   await user.clear(dose); await user.type(dose, '每次半片')
   await user.click(dialog.getByRole('button', { name: '保留本次调整' }))
-  expect(await screen.findByText(/每次半片 · 每周二、四晚饭后一次/)).toBeTruthy()
+  expect(await screen.findByText(/每次半片 · 每周二、四晚饭后一次 · 口服（po）/)).toBeTruthy()
   await user.click(confirmButton())
   await waitFor(() => expect(calls.some(call => call.path.endsWith('/actions/confirm'))).toBe(true))
   const input = confirmDoctorPreparationRequestSchema.parse(calls.find(call => call.path.endsWith('/actions/confirm'))!.body).input
-  expect(input.selections[0]).toMatchObject({ doseText: '每次半片', frequencyCode: '每周二、四晚饭后一次', referenceProduct: { id: 'national-medication' } })
+  expect(input.selections[0]).toMatchObject({ doseText: '每次半片', frequencyCode: '每周二、四晚饭后一次', routeCode: 'PO', referenceProduct: { id: 'national-medication' } })
 })
 
 it('shows a doctor-authored free-text frequency without replacing it with a verification warning', async () => {
   stubRequests(() => prescriptionState())
   mount(props({ kind: 'prescription', manualItems: [{ label: '医生填写的药品', value: {
     source: 'manual', kind: 'prescription', catalogItemId: 'medication-free-text', doseText: '一片',
-    frequencyCode: '每晚睡前一次', courseDays: 3, quantity: 3,
+    frequencyCode: '每晚睡前一次', routeCode: 'PO', courseDays: 3, quantity: 3,
   } }] }))
-  expect(await screen.findByText(/一片 · 每晚睡前一次 · 3 天 · 3/)).toBeTruthy()
+  expect(await screen.findByText(/一片 · 每晚睡前一次 · 口服（po） · 3 天 · 3/)).toBeTruthy()
   expect(screen.queryByText(/频次待核对/)).toBeNull()
 })
 
@@ -1386,7 +1386,7 @@ it('uses clinical labels for frequency and laboratory purpose while retaining pr
   expect(screen.queryByText('clinical-evaluation')).toBeNull()
 })
 
-it.each(['doseText', 'frequencyCode', 'courseDays', 'quantity'] as const)('keeps an absent prescription %s empty and unavailable instead of inventing a value', async field => {
+it.each(['doseText', 'frequencyCode', 'routeCode', 'courseDays', 'quantity'] as const)('keeps an absent prescription %s empty and unavailable instead of inventing a value', async field => {
   const original = prescriptionState()
   const current = prescriptionState({ items: original.items.map(item => ({ ...item, [field]: null })) })
   const calls = stubRequests(() => current); mount(props({ kind: 'prescription' }))
@@ -1502,7 +1502,7 @@ it('preserves manual items, edits and cancelled choices when a removed automatic
   if (first.kind !== 'prescription') throw new Error('Expected prescription fixture')
   let current = prescriptionState({ items: [first, { ...first, id: 'cancelled', catalogItemId: 'cancelled-medication', label: '取消选择药品' }] })
   stubRequests(() => current)
-  const manualValue = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'manual-removed', doseText: '10 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }
+  const manualValue = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'manual-removed', doseText: '10 mg', frequencyCode: 'QD', routeCode: 'PO' as const, courseDays: 30, quantity: 30 }
   const mounted = mount(props({ kind: 'prescription', manualItems: [{ label: '移除人工药品', value: manualValue }, { label: '保留人工药品', value: { ...manualValue, catalogItemId: 'manual-kept' } }] }))
   const user = userEvent.setup(); await screen.findByText('合成药品')
   await user.click(selectionCheckbox('取消选择药品'))
@@ -1815,7 +1815,7 @@ it('renders required inpatient history evidence as readable clinical fields', as
     entryId: 'inpatient:admission', clinicalDate: '2026-09-01T10:00:00+08:00', title: '本院住院诊疗摘要', record: {
       kind: 'inpatient', admissionId: 'admission', admittedAt: '2026-08-25T10:00:00+08:00', dischargedAt: '2026-09-01T10:00:00+08:00',
       diagnoses: [{ code: 'I25.1', display: '冠状动脉粥样硬化性心脏病', role: 'primary' }], procedures: [],
-      medications: [{ display: '阿司匹林', doseText: '100 mg', frequencyCode: 'QD', state: 'stopped' }], reports: [],
+      medications: [{ display: '阿司匹林', doseText: '100 mg', frequencyCode: 'QD', routeCode: 'PO', state: 'stopped' }], reports: [],
     },
   }] })
   const current = state({ caseEvidence: [{ id: 'patient-statement-fever', kind: 'history', label: '本院住院诊疗摘要', text }] })
@@ -1824,7 +1824,7 @@ it('renders required inpatient history evidence as readable clinical fields', as
   await details()
   const dialog = screen.getByRole('dialog')
   expect(within(dialog).getByText('正式住院诊断')).toBeTruthy()
-  expect(within(dialog).getByText(/阿司匹林 · 100 mg · 每日一次（QD） · 已停用/)).toBeTruthy()
+  expect(within(dialog).getByText(/阿司匹林 · 100 mg · 每日一次（QD） · 口服（po） · 已停用/)).toBeTruthy()
   expect(dialog.textContent).not.toContain('admissionId')
 })
 
@@ -1842,7 +1842,7 @@ it('collapses unrecognized JSON evidence behind a raw-data disclosure', async ()
 
 it('keeps a new manualItems edit visible while the confirmed case refresh is still pending', async () => {
   const read = deferredResponse(); const current = prescriptionState()
-  stubRequests(() => current); const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'manual-medication', doseText: '10 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }
+  stubRequests(() => current); const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'manual-medication', doseText: '10 mg', frequencyCode: 'QD', routeCode: 'PO' as const, courseDays: 30, quantity: 30 }
   const initial = props({ kind: 'prescription', manualItems: [{ label: '人工处方', value }] })
   const mounted = mount(initial)
   let first = true
@@ -1947,4 +1947,28 @@ it('can issue a retained unselected manual item after new preparation without re
     expect(confirmations[1]!.input).toMatchObject({ expectedDraftVersion: 2, generation: 2, inputFingerprint: 'b'.repeat(64), selections: [{ kind: 'laboratory', catalogItemId: 'lab-B', indicationCode: 'clinical-evaluation', source: 'agent', suggestionId: 'suggestion-B', reviewedService: { id: 'lab-B', version: 1 } }] })
     expect(issued).toEqual(['A', 'B'])
   } finally { unsubscribe() }
+})
+
+it('lets the physician complete an absent recommendation routeCode from allowedRoutesFor before confirmation', async () => {
+  const original = prescriptionState()
+  const current = prescriptionState({ items: original.items.map(item => ({ ...item, catalogItemId: 'medication-nitroglycerin', label: '硝酸甘油片', routeCode: null })) })
+  const calls = stubRequests(() => current)
+  mount(props({
+    kind: 'prescription',
+    allowedRoutesFor: catalogItemId => catalogItemId === 'medication-nitroglycerin' ? ['SL', 'PO'] : ['PO'],
+  }))
+  const user = userEvent.setup()
+  await screen.findByText('硝酸甘油片')
+  expect(confirmButton()).toHaveProperty('disabled', true)
+  const form = await edit()
+  act(() => form.getByRole('combobox', { name: '给药途径' }).focus())
+  await user.keyboard('{Enter}')
+  await user.click(await screen.findByRole('option', { name: '舌下含服（sl）' }))
+  await user.click(form.getByRole('button', { name: '保留本次调整' }))
+  expect(await screen.findByText(/舌下含服（sl）/)).toBeTruthy()
+  expect(confirmButton()).toHaveProperty('disabled', false)
+  await user.click(confirmButton())
+  await waitFor(() => expect(calls.some(call => call.path.endsWith('/actions/confirm'))).toBe(true))
+  const submitted = confirmDoctorPreparationRequestSchema.parse(calls.find(call => call.path.endsWith('/actions/confirm'))!.body).input
+  expect(submitted.selections[0]).toMatchObject({ catalogItemId: 'medication-nitroglycerin', routeCode: 'SL' })
 })

@@ -1,10 +1,11 @@
-import { medicationCombinationConflict, medicationDoseConflict, medicationIndicationMatches, medicationScheduledHours } from '@clinmesh/core/medication-safety'
-import { inpatientPharmacyListSchema, inpatientPharmacySchema, inpatientPharmacyResponseSchema, inpatientChargesSchema, inpatientChargesResponseSchema, inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientDiagnosisConfirmInputSchema, inpatientDiagnosisSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientOrderSchema, inpatientExecutionSchema, inpatientDispenseSchema, inpatientChargeSchema, type InpatientOrder } from '@clinmesh/contracts/inpatient-clinical'
+import { medicationRouteSchema, type MedicationRoute } from '@clinmesh/contracts/medication-safety'
+import { medicationCombinationConflict, medicationDoseConflict, medicationIndicationMatches, medicationRouteAllowed, medicationRouteConcept, medicationScheduledHours } from '@clinmesh/core/medication-safety'
+import { inpatientPharmacyListSchema, inpatientPharmacySchema, inpatientPharmacyResponseSchema, inpatientChargesSchema, inpatientChargesResponseSchema, inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientDiagnosisConfirmInputSchema, inpatientDiagnosisSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientMedicationOrderSchema, inpatientOrderSchema, inpatientExecutionSchema, inpatientDispenseSchema, inpatientChargeSchema, type InpatientOrder } from '@clinmesh/contracts/inpatient-clinical'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import type { ActorContext } from './command-executor.ts'
 import { resolveInpatientDose } from '@clinmesh/core/inpatient-dose'
-import { inpatientMedicationConfigSchema as medicationConfigSchema, inpatientMedicationMissingFields } from './inpatient-medication-config.ts'
+import { inpatientMedicationConfigSchema as medicationConfigSchema, inpatientMedicationMissingFields, resolveCatalogMedicationRoutes } from './inpatient-medication-config.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { freezeCatalogCoverageJson, readConfigInsuranceCoverage } from './catalog-insurance-coverage.ts'
 import type { RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
@@ -37,7 +38,8 @@ export class InpatientOrders {
     return medications.flatMap(row => {
       const config = this.#parseMedicationConfig(row.price_fen, row.config_json)
       if (config === null) return []
-      return [{ id: row.item_id, display: row.name_zh, version: row.version, priceFen: row.price_fen, unit: config.unit, strength: config.product.strength, packageDescription: config.product.packageDescription, ...(config.packageInsert ? { packageInsert: config.packageInsert } : {}), ...(config.safety ? { safety: config.safety } : {}), doses: [...config.inpatientDoses],
+      const routes = resolveCatalogMedicationRoutes(config, row.name_zh)
+      return [{ id: row.item_id, display: row.name_zh, version: row.version, priceFen: row.price_fen, unit: config.unit, strength: config.product.strength, packageDescription: config.product.packageDescription, ...(config.packageInsert ? { packageInsert: config.packageInsert } : {}), ...routes, ...(config.safety ? { safety: config.safety } : {}), doses: [...config.inpatientDoses],
         ...(config.inpatientDoseBasis ? { doseBasis: { ...config.inpatientDoseBasis } } : {}),
         maxDoseQuantity: Math.min(config.inpatientMaxDoseQuantity ?? Math.max(...config.inpatientDoses.map(dose => dose.quantity)), config.safety && config.inpatientDoseBasis?.unit === config.safety.doseLimits.unit ? Math.floor(config.safety.doseLimits.maximumSingleDose / config.inpatientDoseBasis.amount) : 100),
         frequencyCodes: config.allowedFrequencyCodes.filter((code): code is 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' => ['QD','BID','TID','QN','PRN','ONCE'].includes(code)),
@@ -129,6 +131,7 @@ export class InpatientOrders {
       : undefined
     return inpatientOrderSchema.parse({ id: row.order_id, admissionId: row.admission_id, kind: row.kind, duration: row.duration, catalogItemId: row.catalog_item_id,
       catalogVersion: row.catalog_version, display: row.display, doseText: row.dose_text, doseQuantity: row.dose_quantity, unit: row.unit, frequencyCode: row.frequency_code,
+      ...(row.kind === 'medication' ? { routeCode: medicationRouteSchema.parse(row.route_code) } : {}),
       ...(instructions === undefined ? {} : { instructions }),
       state: row.state, version: row.version, requestVersion: request.meta!.versionId,
       ...(postoperative === undefined ? {} : { surgeryExecutionId: postoperative.surgery_execution_id }),
@@ -159,7 +162,7 @@ export class InpatientOrders {
         this.owner.drg.assertOrderReview(context, input.admissionId, input.selection, input.expectedDrgFingerprint)
       const selection = input.selection, catalog = this.catalog(context)
       if (selection.kind === 'medication' && selection.frequencyCode === 'ONCE' && input.duration !== 'temporary') throw new InpatientError('CATALOG_CONFLICT', 'ONCE 仅允许用于临时医嘱', 409, 'MEDICATION_ONCE_REQUIRES_TEMPORARY')
-      let itemId: string, display: string, catalogVersion: number, unit: string, price: number, doseText = '', frequency: 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' = 'QD', quantity: number, coverageJson: string
+      let itemId: string, display: string, catalogVersion: number, unit: string, price: number, doseText = '', frequency: 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' = 'QD', routeCode: MedicationRoute | null = null, quantity: number, coverageJson: string
       let quality: ReturnType<InpatientService['workflow']['clinicalQuality']['enforce']> = { effects: [] }
       if (selection.kind === 'medication') {
         const item = catalog.medications.find(item => item.id === selection.catalogItemId)
@@ -167,6 +170,7 @@ export class InpatientOrders {
         const catalogRow = z.object({ code: z.string(), config_json: z.string() }).parse(this.owner.database.driver.prepare(
           'SELECT code, config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=?').get(context.workspaceId, context.epoch, item.id))
         const config = medicationConfigSchema.parse(JSON.parse(catalogRow.config_json))
+        const routes = resolveCatalogMedicationRoutes(config, item.display)
         const dose = resolveInpatientDose({ unit: config.unit, doses: config.inpatientDoses,
           ...(config.inpatientDoseBasis ? { doseBasis: config.inpatientDoseBasis } : {}),
           ...(config.inpatientMaxDoseQuantity ? { maxDoseQuantity: config.inpatientMaxDoseQuantity } : {}) }, selection.doseText)
@@ -185,6 +189,9 @@ export class InpatientOrders {
         const redLineCheck = () => {
           const check = this.owner.workflow.clinicalQuality.inpatientOrder(this.owner, context, admission.id, admission.patientId, candidate, activeQuality, { skipRenal: true })
           return check.redLines.length > 0 ? check : undefined
+        }
+        if (!medicationRouteAllowed(routes.allowedRouteCodes, selection.routeCode)) {
+          throw new InpatientError('CATALOG_CONFLICT', '给药途径不符合住院药品目录允许范围', 409, 'MEDICATION_ROUTE_NOT_ALLOWED', redLineCheck())
         }
         if (!config.availableScopes.includes('inpatient') || !config.allowedFrequencyCodes.includes(selection.frequencyCode)
           || !('quantity' in dose) || dose.quantity !== selection.doseQuantity || (config.safety && medicationDoseConflict(config.safety.doseLimits, safetyDose, selection.frequencyCode) !== undefined)) {
@@ -219,6 +226,7 @@ export class InpatientOrders {
         price = item.priceFen
         doseText = selection.doseText
         frequency = selection.frequencyCode
+        routeCode = selection.routeCode
         quantity = selection.doseQuantity
         coverageJson = freezeCatalogCoverageJson(
           `synthetic-inpatient-medication:${item.id}`,
@@ -243,12 +251,12 @@ export class InpatientOrders {
         )
       }
       const id = uuidv7(), now = this.owner.virtualTime(context)
-      this.owner.database.driver.prepare(`INSERT INTO inpatient_order(workspace_id,epoch,order_id,admission_id,kind,duration,catalog_item_id,catalog_version,display,dose_text,dose_quantity,unit,frequency_code,price_fen,state,organization_id,signed_at,signed_by,coverage_json)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'signed',?,?,?,?)`).run(context.workspaceId, context.epoch, id, admission.id, selection.kind, input.duration, itemId, catalogVersion, display, doseText, quantity, unit, frequency, price, admission.organizationId, now, context.actorId, coverageJson)
+      this.owner.database.driver.prepare(`INSERT INTO inpatient_order(workspace_id,epoch,order_id,admission_id,kind,duration,catalog_item_id,catalog_version,display,dose_text,dose_quantity,unit,frequency_code,route_code,price_fen,state,organization_id,signed_at,signed_by,coverage_json)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'signed',?,?,?,?)`).run(context.workspaceId, context.epoch, id, admission.id, selection.kind, input.duration, itemId, catalogVersion, display, doseText, quantity, unit, frequency, routeCode, price, admission.organizationId, now, context.actorId, coverageJson)
       if (input.surgeryExecutionId !== undefined) this.owner.database.driver.prepare('INSERT INTO inpatient_postoperative_order VALUES(?,?,?,?,?)')
         .run(context.workspaceId, context.epoch, admission.id, id, input.surgeryExecutionId)
       const request = this.owner.fhir.create(context, { resourceType: selection.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', id, status: 'active', intent: 'order',
-        ...(selection.kind === 'medication' ? { medication: { reference: { reference: `Medication/${itemId}`, display } }, dosageInstruction: [{ text: `${doseText} ${frequency}；每次${quantity}${unit}`, ...(selection.instructions === undefined ? {} : { patientInstruction: selection.instructions }) }] }
+        ...(selection.kind === 'medication' ? { medication: { reference: { reference: `Medication/${itemId}`, display } }, dosageInstruction: [{ route: medicationRouteConcept(selection.routeCode), text: `${doseText} ${frequency}；每次${quantity}${unit}`, ...(selection.instructions === undefined ? {} : { patientInstruction: selection.instructions }) }] }
           : { code: { concept: { text: display } }, quantityQuantity: { value: quantity, unit } }),
         ...(input.surgeryExecutionId === undefined ? {} : selection.kind === 'medication'
           ? { supportingInformation: [{ reference: `Procedure/${input.surgeryExecutionId}` }] }
@@ -377,7 +385,7 @@ export class InpatientOrders {
       this.owner.fhir.create(context, { resourceType: 'MedicationAdministration', id, status: 'completed', medication: { reference: { reference: `Medication/${order.catalog_item_id}` } },
         subject: { reference: `Patient/${admission.patientId}` }, encounter: { reference: `Encounter/${admission.id}` }, request: { reference: `MedicationRequest/${order.order_id}` },
         partOf: supplies.map(supply => ({ reference: `MedicationDispense/${supply.id}` })), occurenceDateTime: now, recorded: now,
-        performer: [{ actor: { reference: { reference: `PractitionerRole/${context.practitionerRoleId}` } } }], dosage: { text: order.dose_text, dose: { value: order.dose_quantity, unit: order.unit } } })
+        performer: [{ actor: { reference: { reference: `PractitionerRole/${context.practitionerRoleId}` } } }], dosage: { route: medicationRouteConcept(medicationRouteSchema.parse(order.route_code)), text: order.dose_text, dose: { value: order.dose_quantity, unit: order.unit } } })
       effects.push({ kind: 'created', reference: `MedicationAdministration/${id}`, versionId: '1' })
       this.updateExecution(context, execution, 'completed', effects, id)
       this.completeTemporaryOrder(context, order, effects)
@@ -524,7 +532,7 @@ const serviceConfigSchema = z.object({ billingUnit: z.object({ display: z.string
 const allergySchema = z.object({ category: z.array(z.string()).optional(), clinicalStatus: z.object({ coding: z.array(z.object({ code: z.string() })).optional() }).optional(),
   verificationStatus: z.object({ coding: z.array(z.object({ code: z.string() })).optional() }).optional(), code: z.object({ coding: z.array(z.object({ code: z.string() })).optional() }).optional() })
 const orderRowSchema = z.object({ order_id: z.string(), admission_id: z.string(), kind: z.enum(['medication','service']), duration: z.enum(['long','temporary']), catalog_item_id: z.string(), catalog_version: z.number(),
- display: z.string(), dose_text: z.string(), dose_quantity: z.number(), unit: z.string(), frequency_code: z.enum(['QD','BID','TID','QN','PRN','ONCE']), price_fen: z.number(), state: inpatientOrderSchema.shape.state,
+ display: z.string(), dose_text: z.string(), dose_quantity: z.number(), unit: z.string(), frequency_code: z.enum(['QD','BID','TID','QN','PRN','ONCE']), route_code: medicationRouteSchema.nullable(), price_fen: z.number(), state: inpatientMedicationOrderSchema.shape.state,
  version: z.number(), organization_id: z.string(), signed_at: z.string(), signed_by: z.string(), verified_at: z.string().nullable(), stopped_at: z.string().nullable(), coverage_json: z.string().nullable() })
 const executionRowSchema = z.object({ execution_id: z.string(), order_id: z.string(), scheduled_for: z.string(), status: inpatientExecutionSchema.shape.status, version: z.number(), administration_id: z.string().nullable(), reason: z.string().nullable() })
 type OrderRow = z.infer<typeof orderRowSchema>

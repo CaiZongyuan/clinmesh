@@ -334,7 +334,9 @@ describe('Reference Data HTTP contract', () => {
     expect(referenceMedicationCatalogSearchSchema.parse(await medicationsResponse.json()))
       .toMatchObject({
         items: [expect.objectContaining({
+          allowedRouteCodes: ['PO'],
           code: 'CM-NHSA-PRODUCT-ACETAMINOPHEN',
+          defaultRouteCode: 'PO',
           genericName: '对乙酰氨基酚片',
           status: 'active',
         })],
@@ -541,6 +543,7 @@ describe('Reference Data HTTP contract', () => {
               doseText: product.strength,
               frequencyCode: 'QD',
               quantity: 1,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -666,5 +669,44 @@ describe('Reference Data HTTP contract', () => {
       '8ed125b9d880f39ff0e7a503229e4bd1d69772ec86ee6c19808d6c68eca3954b',
       '36fc6be3ab504b8f48f1cacedaac2aaae42c648ee8cd2bb6cded99a130b05a13',
     ])
+  })
+
+  it('derives all eight controlled routes at the Reference medication read boundary without changing reference_medication_product schema', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-routes-'))
+    temporaryDirectories.push(directory)
+    const base = syntheticNhsaMedicationProductSnapshot[0]!
+    const products = [
+      { ...base, id: 'ref-po', code: 'REF-PO', genericName: '氨氯地平片', dosageForm: '片剂' },
+      { ...base, id: 'ref-sl', code: 'REF-SL', genericName: '硝酸甘油舌下片', dosageForm: '舌下片' },
+      { ...base, id: 'ref-inh', code: 'REF-INH', genericName: '布地奈德吸入气雾剂', dosageForm: '吸入气雾剂' },
+      { ...base, id: 'ref-top', code: 'REF-TOP', genericName: '莫匹罗星软膏', dosageForm: '软膏剂' },
+      { ...base, id: 'ref-ih', code: 'REF-IH', genericName: '依诺肝素钠注射液', dosageForm: '注射剂（预灌封）' },
+      { ...base, id: 'ref-im', code: 'REF-IM', genericName: '维生素B12肌注液', dosageForm: '肌内注射剂' },
+      { ...base, id: 'ref-ivgtt', code: 'REF-IVGTT', genericName: '0.9%氯化钠大容量注射液', dosageForm: '大容量注射液' },
+      { ...base, id: 'ref-iv', code: 'REF-IV', genericName: '肝素钠注射液', dosageForm: '小容量注射剂' },
+    ]
+    const referenceDatabasePath = await createReferenceDatabase(directory, products)
+    const refDb = openReferenceDatabase({ busyTimeoutMs: 5_000, databasePath: referenceDatabasePath, readonly: true })
+    const columns = (refDb.driver.prepare('PRAGMA table_info(reference_medication_product)').all() as Array<{ name: string }>).map(col => col.name)
+    refDb.close()
+    expect(columns).not.toContain('default_route_code')
+    expect(columns).not.toContain('allowed_route_codes')
+
+    const { password, runtime } = await createRuntime({ referenceDatabasePath })
+    const cookie = await signIn(runtime, password, 'doctor@demo.clinmesh.local')
+    const res = await runtime.app.request('/api/his/v1/reference-catalogs/medications?page=1&pageSize=20', {
+      headers: { cookie },
+    })
+    expect(res.status).toBe(200)
+    const searched = referenceMedicationCatalogSearchSchema.parse(await res.json())
+    const byId = new Map(searched.items.map(item => [item.id, item]))
+    expect(byId.get('ref-po')).toMatchObject({ defaultRouteCode: 'PO', allowedRouteCodes: ['PO'] })
+    expect(byId.get('ref-sl')).toMatchObject({ defaultRouteCode: 'SL', allowedRouteCodes: ['SL'] })
+    expect(byId.get('ref-inh')).toMatchObject({ defaultRouteCode: 'INH', allowedRouteCodes: ['INH'] })
+    expect(byId.get('ref-top')).toMatchObject({ defaultRouteCode: 'TOP', allowedRouteCodes: ['TOP'] })
+    expect(byId.get('ref-ih')).toMatchObject({ defaultRouteCode: 'IH', allowedRouteCodes: ['IH'] })
+    expect(byId.get('ref-im')).toMatchObject({ defaultRouteCode: 'IM', allowedRouteCodes: ['IM'] })
+    expect(byId.get('ref-ivgtt')).toMatchObject({ defaultRouteCode: 'IVGTT', allowedRouteCodes: ['IVGTT', 'IV'] })
+    expect(byId.get('ref-iv')).toMatchObject({ defaultRouteCode: 'IV', allowedRouteCodes: ['IV', 'IVGTT', 'IH'] })
   })
 })

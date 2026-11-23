@@ -504,6 +504,7 @@ async function issueMedication(s: Awaited<ReturnType<typeof setup>>) {
             doseText: '75 mg',
             frequencyCode: 'BID',
             quantity: 10,
+            routeCode: 'PO',
           },
         ],
         expectedDraftVersion: 0,

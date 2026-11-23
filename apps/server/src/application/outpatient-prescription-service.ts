@@ -1,5 +1,14 @@
 import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
-import { medicationCombinationConflict, medicationRegimenDoseAllowed, medicationQuantityAllowed, medicationIndicationMatches } from '@clinmesh/core/medication-safety'
+import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
+import {
+  deriveReferenceMedicationRoutes,
+  medicationCombinationConflict,
+  medicationIndicationMatches,
+  medicationQuantityAllowed,
+  medicationRegimenDoseAllowed,
+  medicationRouteAllowed,
+  medicationRouteConcept,
+} from '@clinmesh/core/medication-safety'
 import {
   confirmNoMedicationResponseSchema,
   dispenseResponseSchema,
@@ -17,7 +26,7 @@ import {
 } from '@clinmesh/contracts/his'
 import {
   referenceMedicationProductSchema,
-  type ReferenceMedicationProduct,
+  type ReferenceMedicationCatalogItem,
 } from '@clinmesh/contracts/reference-data'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
@@ -59,6 +68,7 @@ import {
 } from './outpatient-workflow-context.ts'
 import type { ClinicalQualityService } from './clinical-quality-service.ts'
 import { freezeCatalogCoverageJson, readConfigInsuranceCoverage } from './catalog-insurance-coverage.ts'
+import { resolveCatalogMedicationRoutes } from './inpatient-medication-config.ts'
 import { WorkflowError } from './workflow-error.ts'
 
 export interface OutpatientPrescriptionHost {
@@ -132,25 +142,31 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
     )
     if (!prescriptionConclusionSupported) {
       return {
-        medications: medications.map(({ config, presentation, row }) => ({
-          ...summary(row),
-          ...medicationMetadata(config.dose, presentation),
-          allowedCombinationIds: config.allowedCombinationIds,
-          ...(config.safety ? { safety: config.safety } : {}),
-          allowedDoseTexts: config.allowedDoseTexts,
-          allowedFrequencyCodes: config.allowedFrequencyCodes,
-          defaultDoseText: config.dose,
-          defaultFrequencyCode: config.frequency,
-        })),
+        medications: medications.map(({ config, presentation, row }) => {
+          const routes = resolveCatalogMedicationRoutes({ ...config, product: presentation.product }, row.name_zh)
+          return {
+            ...summary(row),
+            ...medicationMetadata(config.dose, presentation),
+            ...routes,
+            allowedCombinationIds: config.allowedCombinationIds,
+            ...(config.safety ? { safety: config.safety } : {}),
+            allowedDoseTexts: config.allowedDoseTexts,
+            allowedFrequencyCodes: config.allowedFrequencyCodes,
+            defaultDoseText: config.dose,
+            defaultFrequencyCode: config.frequency,
+          }
+        }),
         prescriptionConclusionSupported: false as const,
       }
     }
     return {
       medications: medications.map(({ presentation, rawConfig, row }) => {
         const config = prescriptionMedicationCatalogConfigSchema.parse(rawConfig)
+        const routes = resolveCatalogMedicationRoutes({ ...config, product: presentation.product }, row.name_zh)
         return {
           ...summary(row),
           ...medicationMetadata(config.dose, presentation),
+          ...routes,
           allowedCombinationIds: config.allowedCombinationIds,
           ...(config.safety ? { safety: config.safety } : {}),
           allowedCourseDays: config.allowedCourseDays,
@@ -671,8 +687,8 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       INSERT INTO prescription_item (
         workspace_id, epoch, prescription_id, medication_request_id,
         medication_id, medication_snapshot_json, quantity, dose_text,
-        frequency_code, course_days, unit_price_fen, coverage_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        frequency_code, route_code, course_days, unit_price_fen, coverage_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     const issuedItems = medications.map((medication) => {
       const medicationResourceId = medication.external ? uuidv7() : medication.catalogItemId
@@ -713,6 +729,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
         dosageInstruction: [{
           ...(medication.instructions === undefined ? {} : { patientInstruction: medication.instructions }),
+          route: medicationRouteConcept(medication.routeCode),
           text: `${medication.doseText} ${medication.frequencyCode} for ${medication.courseDays} days`,
           timing: {
             repeat: {
@@ -734,13 +751,30 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       const localPresentation = medication.referenceProduct !== undefined
         ? undefined
         : parseCatalogMedicationPresentation(medication.catalog.config_json)
+      const storedReferenceProduct = medication.referenceProduct === undefined
+        ? undefined
+        : referenceMedicationProductSchema.parse({
+            approvalNumber: medication.referenceProduct.approvalNumber,
+            brandName: medication.referenceProduct.brandName,
+            code: medication.referenceProduct.code,
+            dosageForm: medication.referenceProduct.dosageForm,
+            genericName: medication.referenceProduct.genericName,
+            id: medication.referenceProduct.id,
+            manufacturer: medication.referenceProduct.manufacturer,
+            packageDescription: medication.referenceProduct.packageDescription,
+            sourceLocator: medication.referenceProduct.sourceLocator,
+            status: medication.referenceProduct.status,
+            strength: medication.referenceProduct.strength,
+            system: medication.referenceProduct.system,
+            version: medication.referenceProduct.version,
+          })
       insertItem.run(
         input.context.workspaceId,
         input.context.epoch,
         prescriptionId,
         medicationRequest.id,
         medication.catalogItemId,
-        JSON.stringify(medication.referenceProduct ?? {
+        JSON.stringify(storedReferenceProduct ?? {
           code: medication.catalog.code,
           display: medication.catalog.name_zh,
           id: medication.catalogItemId,
@@ -754,6 +788,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         medication.quantity,
         medication.doseText,
         medication.frequencyCode,
+        medication.routeCode,
         medication.courseDays,
         medication.external ? 0 : medication.catalog.price_fen,
         medication.external
@@ -785,6 +820,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
             ...(localPresentation?.unit === undefined ? {} : { unit: localPresentation.unit }),
           }),
         quantity: medication.quantity,
+        routeCode: medication.routeCode,
       }
     })
     const isExternalPrescription = medications.every(medication => medication.external)
@@ -1392,7 +1428,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
     const selectItems = this.#context.database.driver.prepare(`
       SELECT item.medication_request_id, item.medication_id, item.quantity,
         item.dispensed_quantity,
-        item.dose_text, item.frequency_code, catalog.name_zh, catalog.name_en,
+        item.dose_text, item.frequency_code, item.route_code, catalog.name_zh, catalog.name_en,
         catalog.price_fen, medication_request.version_id AS medication_request_version
       FROM prescription_item AS item
       JOIN outpatient_catalog AS catalog
@@ -1431,6 +1467,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
           name_zh: string
           price_fen: number
           quantity: number
+          route_code: string
         }>).map(medication => ({
           doseText: medication.dose_text,
           frequencyCode: medication.frequency_code,
@@ -1442,6 +1479,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
           dispensedQuantity: medication.dispensed_quantity,
           quantity: medication.quantity,
           remainingQuantity: medication.quantity - medication.dispensed_quantity,
+          routeCode: medicationRouteSchema.parse(medication.route_code),
           unitPriceFen: medication.price_fen,
           lots: (selectLots.all(
             input.context.workspaceId,
@@ -2046,6 +2084,19 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         throw new WorkflowError('CATALOG_CONFLICT', `The medication ${medication.catalogItemId} is unavailable for outpatient care`)
       }
       const config = legacyMedicationCatalogConfigSchema.parse(rawConfig)
+      const presentation = medicationPresentationSchema.safeParse(rawConfig)
+      const routes = resolveCatalogMedicationRoutes(
+        { ...config, product: presentation.success ? presentation.data.product : undefined },
+        medication.nameZh ?? medication.catalogItemId,
+      )
+      if (!medicationRouteAllowed(routes.allowedRouteCodes, medication.routeCode)) {
+        throw new WorkflowError(
+          'CATALOG_CONFLICT',
+          `The route is not allowed for ${medication.catalogItemId}`,
+          undefined,
+          'PRESCRIPTION_ROUTE_NOT_ALLOWED',
+        )
+      }
       if (
         !medicationRegimenDoseAllowed(config, medication.doseText, medication.frequencyCode)
       ) {
@@ -2161,8 +2212,10 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
   ): Array<PrescriptionDraftItem & { catalog: CatalogRow; external: boolean }> {
     const medications: Array<PrescriptionDraftItem & { catalog: CatalogRow; external: boolean }> = items.map((item) => {
       const { referenceProduct: untrustedProduct, ...draftItem } = item
-      const referenceProduct: ReferenceMedicationProduct | undefined = trustPersistedSnapshots
-        ? untrustedProduct
+      const referenceProduct: ReferenceMedicationCatalogItem | undefined = trustPersistedSnapshots
+        ? untrustedProduct === undefined
+          ? undefined
+          : { ...untrustedProduct, ...deriveReferenceMedicationRoutes(untrustedProduct) }
         : this.#context.referenceData?.medicationById(context, item.catalogItemId)
       if (referenceProduct !== undefined) {
         return {
@@ -2209,6 +2262,17 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         'PRESCRIPTION_MIXED_CATALOG_SOURCES',
       )
     }
+    for (const medication of medications) {
+      if (!medication.external || medication.referenceProduct === undefined) continue
+      if (!medicationRouteAllowed(medication.referenceProduct.allowedRouteCodes, medication.routeCode)) {
+        throw new WorkflowError(
+          'CATALOG_CONFLICT',
+          `The route is not allowed for ${medication.catalogItemId}`,
+          undefined,
+          'PRESCRIPTION_ROUTE_NOT_ALLOWED',
+        )
+      }
+    }
     try {
       this.assertMedicationCatalogRules(
         localMedications.map(medication => ({
@@ -2216,6 +2280,8 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
           configJson: medication.catalog.config_json,
           doseText: medication.doseText,
           frequencyCode: medication.frequencyCode,
+          nameZh: medication.catalog.name_zh,
+          routeCode: medication.routeCode,
         })),
         'PRESCRIPTION_DOSAGE_NOT_ALLOWED',
       )
@@ -2305,7 +2371,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
     const items = z.array(issuedPrescriptionItemRowSchema).parse(
       this.#context.database.driver.prepare(`
         SELECT medication_request_id, medication_id, medication_snapshot_json, quantity, dose_text,
-          frequency_code, course_days
+          frequency_code, route_code, course_days
         FROM prescription_item
         WHERE workspace_id = ? AND epoch = ? AND prescription_id = ?
         ORDER BY medication_request_id
@@ -2367,7 +2433,15 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
         medicationRequestVersion: resource.meta?.versionId ?? '1',
         ...(packageDescription === undefined ? {} : { packageDescription }),
         quantity: item.quantity,
-        ...(referenceProduct.success ? { referenceProduct: referenceProduct.data } : {}),
+        ...(referenceProduct.success
+          ? {
+            referenceProduct: {
+              ...referenceProduct.data,
+              ...deriveReferenceMedicationRoutes(referenceProduct.data),
+            },
+          }
+          : {}),
+        routeCode: item.route_code,
         ...(strength === undefined ? {} : { strength }),
         ...(unit === undefined ? {} : { unit }),
       }

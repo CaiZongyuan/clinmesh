@@ -1368,7 +1368,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     expect(diagnosis.status).toBe(200)
     const medication = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: (await diagnosis.json()).data.encounterVersion,
       duration: 'temporary', surgeryExecutionId: state.executions[0].id, selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1,
-        doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' } })
+        doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD', routeCode: 'PO' } })
     expect(medication.status).toBe(200)
     const medicationOrder = (await medication.json()).data.orders.find((item: { kind: string }) => item.kind === 'medication')
     const medicationRequest = await (await s.request(s.doctor, `/fhir/R5/MedicationRequest/${medicationOrder.id}`)).json()

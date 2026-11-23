@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { inpatientAdmissionSchema, type InpatientAdmission } from '@clinmesh/contracts/inpatient'
-import { inpatientFullClinicalResponseSchema, inpatientFullClinicalSchema, inpatientOrderSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientFullClinicalResponseSchema, inpatientFullClinicalSchema, inpatientMedicationOrderSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { afterEach, expect, it, vi } from 'vitest'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
@@ -16,10 +16,10 @@ import { hideUnknownDraftAtLogout } from './inpatient-draft-test-support.ts'
 
 const session: SessionContext = { actor: { actorId: 'nurse', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-nurse', roleCode: 'ward-nurse' }, user: { id: 'nurse', name: '合成护士', email: 'nurse@demo.clinmesh.local' }, availableRoles: [] }
 const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-1', admissionRoute: 'direct', wardId: 'ward-general', organizationId: 'organization-inpatient', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '2' })
-const first = inpatientOrderSchema.parse({ id: 'order-1', admissionId: admission.id, kind: 'medication', duration: 'temporary', catalogItemId: 'medicine-1', catalogVersion: 1, display: '合成给药一', doseText: '5mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: 'verified', version: 2, requestVersion: '2', signedAt: '2026-08-24T09:00:00+08:00', signedBy: 'doctor-1', organizationId: 'organization-inpatient' })
+const first = inpatientMedicationOrderSchema.parse({ id: 'order-1', admissionId: admission.id, kind: 'medication', duration: 'temporary', catalogItemId: 'medicine-1', catalogVersion: 1, display: '合成给药一', doseText: '5mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', routeCode: 'PO', state: 'verified', version: 2, requestVersion: '2', signedAt: '2026-08-24T09:00:00+08:00', signedBy: 'doctor-1', organizationId: 'organization-inpatient' })
 const second = { ...first, id: 'order-2', display: '合成给药二' }
 const facts = inpatientFullClinicalSchema.parse({ admissionId: admission.id, encounterVersion: '2', diagnosis: { revision: 0, entries: [] }, orders: [first, second], executions: [first, second].map((order, index) => ({ id: `execution-${index + 1}`, orderId: order.id, scheduledFor: '2026-08-24T09:00:00+08:00', status: 'dispensed', version: 2 })), dispenses: [first, second].map((order, index) => ({ id: `dispense-${index + 1}`, executionId: `execution-${index + 1}`, lotId: 'lot-1', quantity: order.doseQuantity, dispensedAt: '2026-08-24T09:00:00+08:00', dispensedBy: 'pharmacist' })), charges: [], chargesFen: 0 })
-const education = inpatientFullClinicalSchema.parse({ ...facts, orders: [first, second].map(order => ({ ...order, kind: 'service', display: `合成教育${order.id}`, catalogItemId: 'service-education', doseText: '1次', unit: '次' })), executions: facts.executions.map(execution => ({ ...execution, status: 'pending', version: 1 })), dispenses: [] })
+const education = inpatientFullClinicalSchema.parse({ ...facts, orders: [first, second].map(({ routeCode: _routeCode, ...order }) => ({ ...order, kind: 'service', display: `合成教育${order.id}`, catalogItemId: 'service-education', doseText: '1次', unit: '次' })), executions: facts.executions.map(execution => ({ ...execution, status: 'pending', version: 1 })), dispenses: [] })
 const prn = inpatientFullClinicalSchema.parse({ ...facts, orders: [first, second].map(order => ({ ...order, duration: 'long', frequencyCode: 'PRN', display: `合成PRN${order.id}` })), executions: [], dispenses: [] })
 const clients: QueryClient[] = []
 function mount(initial = facts, options: { admission?: InpatientAdmission; recoveryOnly?: boolean; locale?: WorkspaceLocale; beforeRequest?: (path: string) => Promise<Response | undefined>; afterMutation?: (path: string, response: unknown) => void } = {}) {

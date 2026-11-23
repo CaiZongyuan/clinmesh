@@ -1,5 +1,6 @@
 import { type DoctorCaseSection } from '@clinmesh/contracts/agent'
 import { type ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
+import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
 import {
   clinicalDocumentAgentFactSchema,
   clinicalDocumentContentSchema,
@@ -133,6 +134,7 @@ export const revisitDraftInputSchema = z.object({
     doseText: z.string().trim().min(1).max(120),
     frequencyCode: z.string().trim().min(1).max(32),
     quantity: z.number().int().min(1).max(1_000),
+    routeCode: medicationRouteSchema,
   }).strict()).min(1).max(8),
 }).strict()
 
@@ -184,6 +186,7 @@ export interface MedicationDraftLine {
   frequencyCode: string
   key: string
   quantity: string
+  routeCode: string
 }
 
 export function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {

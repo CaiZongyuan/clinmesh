@@ -103,7 +103,7 @@ it('本地冠心病PDF只用纳入页生成三类建议，医生确认后关闭�
     const prescription = await generate('prescription')
     expect(prescription.items).toMatchObject([{ kind: 'prescription', catalogItemId: 'medication-pci-aspirin', doseText: null, quantity: null }])
     await confirm(prescription, [{ kind: 'prescription', source: 'manual', catalogItemId: 'medication-pci-aspirin',
-      doseText: '100 mg', frequencyCode: 'QD', courseDays: 1, quantity: 1 }])
+      doseText: '100 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 1, quantity: 1 }])
     for (const kind of ['diagnosis', 'laboratory', 'prescription']) {
       for (const stage of ['generation', 'verification']) {
         const calls = seen.filter(call => call.kind === kind && call.stage === stage)

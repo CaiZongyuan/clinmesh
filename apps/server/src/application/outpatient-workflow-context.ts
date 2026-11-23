@@ -1,5 +1,10 @@
 import type { ClinicalOverrideInput, ClinicalQualityReceipt } from '@clinmesh/contracts/clinical-quality'
-import { medicationPackageInsertSchema, medicationSafetyRuleSchema } from '@clinmesh/contracts/medication-safety'
+import {
+  medicationPackageInsertSchema,
+  medicationRouteSchema,
+  medicationSafetyRuleSchema,
+  type MedicationRoute,
+} from '@clinmesh/contracts/medication-safety'
 import { createHmac } from 'node:crypto'
 import type { DoctorCaseHistoryDetail } from '@clinmesh/contracts/agent'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
@@ -69,7 +74,9 @@ export interface MedicationRuleSelection {
   courseDays?: number
   doseText: string
   frequencyCode: string
+  nameZh?: string
   quantity?: number
+  routeCode: MedicationRoute
 }
 
 export interface InvestigationCapabilityResolver {
@@ -284,6 +291,7 @@ export const issuedPrescriptionItemRowSchema = z.object({
   medication_request_id: z.string().min(1),
   medication_snapshot_json: z.string(),
   quantity: z.number().int().positive(),
+  route_code: medicationRouteSchema,
 })
 
 const chargeStatusRowSchema = z.enum([
@@ -349,8 +357,11 @@ export const legacyMedicationCatalogConfigSchema = z.object({
   allowedCombinationIds: z.array(z.string().min(1)),
   allowedDoseTexts: z.array(z.string().min(1)).min(1),
   allowedFrequencyCodes: z.array(z.string().min(1)).min(1),
+  allowedRouteCodes: z.array(medicationRouteSchema).min(1).optional(),
+  defaultRouteCode: medicationRouteSchema.optional(),
   dose: z.string().min(1),
   frequency: z.string().min(1),
+  route: z.string().min(1).optional(),
 })
 
 export const prescriptionMedicationCatalogConfigSchema = legacyMedicationCatalogConfigSchema.extend({

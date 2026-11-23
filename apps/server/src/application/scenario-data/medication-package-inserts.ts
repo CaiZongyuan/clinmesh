@@ -138,7 +138,7 @@ const rawInserts: Readonly<Record<string, RawInsert>> = {
     genericName: '肝素钠注射液',
     specificationAndForm: '注射剂 · 2ml:12500单位（6250 IU/mL） · 10支/盒',
     indicationsSummary: '用于急性冠脉综合征、经皮冠状动脉介入治疗（PCI）术中抗凝，以及肺栓塞、深静脉血栓形成的防治（ICD-10：I20、I21、I25、I26、I80、I82）。',
-    dosageAndAdministration: '静脉注射、静脉滴注或导管内给药。院内仿真按整 mL 计量，常规单次 1 mL（6250 IU），必要时（PRN）按体重与凝血监测调整；单次受控范围 1–2 mL，单日最大剂量不超过 8 mL。',
+    dosageAndAdministration: '静脉注射、静脉滴注或皮下注射给药。院内仿真按整 mL 计量，常规单次 1 mL（6250 IU），必要时（PRN）按体重与凝血监测调整；单次受控范围 1–2 mL，单日最大剂量不超过 8 mL。',
     contraindications: '对肝素过敏、既往或现患肝素诱导的血小板减少症（HIT）、活动性不可控出血（含颅内出血、消化道活动性出血）及严重凝血功能障碍禁用；禁止与依诺肝素等低分子肝素无指征同步叠加开立。',
     precautions: '给药期间须密切监测活化部分凝血活酶时间（APTT）或术中活化凝血时间（ACT）、血小板计数及穿刺部位血肿；严重过量出血可用鱼精蛋白对症中和。',
     adverseReactions: '常见皮肤黏膜或穿刺点出血、血肿；偶见肝素诱导的血小板减少症（HIT）、一过性转氨酶升高、过敏反应及高钾血症。',

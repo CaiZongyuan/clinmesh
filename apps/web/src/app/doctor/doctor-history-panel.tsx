@@ -1,4 +1,4 @@
-import { formatMedicationFrequency } from '@clinmesh/core/medication-safety'
+import { formatMedicationFrequency, formatMedicationRoute } from '@clinmesh/core/medication-safety'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { z } from 'zod'
@@ -18,7 +18,7 @@ export function InpatientHistorySummary({ record, locale }: { record: z.infer<ty
     <section><h5 className="font-medium">{zh ? '已完成手术与冠脉造影' : 'Completed procedures and angiography'}</h5>
       {record.procedures.length === 0 ? <p className="text-muted-foreground">{zh ? '未记录' : 'Not recorded'}</p> : <ul>{record.procedures.map((item, index) => <li key={index}>{formatClinicalDateTime(item.performedAt, locale)} · {item.display}{item.conclusion ? ` · ${item.conclusion}` : ''}</li>)}</ul>}</section>
     <section><h5 className="font-medium">{zh ? '住院有效药物医嘱' : 'Valid inpatient medication orders'}</h5>
-      {record.medications.length === 0 ? <p className="text-muted-foreground">{zh ? '未记录' : 'Not recorded'}</p> : <ul>{record.medications.map((item, index) => <li key={index}>{item.display} · {item.doseText} · {formatMedicationFrequency(item.frequencyCode, locale)} · {zh ? ({ signed: '已下达', verified: '已核对', 'stop-requested': '待停嘱核对', stopped: '已停用', completed: '已完成' }[item.state] ?? item.state) : item.state}</li>)}</ul>}</section>
+      {record.medications.length === 0 ? <p className="text-muted-foreground">{zh ? '未记录' : 'Not recorded'}</p> : <ul>{record.medications.map((item, index) => <li key={index}>{item.display} · {item.doseText} · {formatMedicationFrequency(item.frequencyCode, locale)} · {formatMedicationRoute(item.routeCode, locale)} · {zh ? ({ signed: '已下达', verified: '已核对', 'stop-requested': '待停嘱核对', stopped: '已停用', completed: '已完成' }[item.state] ?? item.state) : item.state}</li>)}</ul>}</section>
     <section><h5 className="font-medium">{zh ? '已签发检验检查结论' : 'Issued investigation reports'}</h5>
       {record.reports.length === 0 ? <p className="text-muted-foreground">{zh ? '未记录' : 'Not recorded'}</p> : record.reports.map((item, index) => <div className="mt-2" key={index}><p className="font-medium">{item.title}{item.issuedAt ? ` · ${formatClinicalDateTime(item.issuedAt, locale)}` : ''}</p><p className="whitespace-pre-wrap">{item.conclusion}</p><ul>{item.findings.map((finding, i) => <li key={i}>{finding}</li>)}</ul></div>)}</section>
   </div>

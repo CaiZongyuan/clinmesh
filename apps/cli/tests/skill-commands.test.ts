@@ -590,10 +590,10 @@ it('停嘱理由投影的读取与全部医嘱回执保持版本和 Skill 示例
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   for (const [id, version] of [
-    ['inpatient.pharmacy.read', 3], ['inpatient.clinical.read', 5], ['inpatient.diagnosis.confirm', 4],
-    ['inpatient.order.issue', 9], ['inpatient.order.verify', 4], ['inpatient.order.request-stop', 4],
-    ['inpatient.order.verify-stop', 4], ['inpatient.execution.dispense', 3], ['inpatient.execution.administer', 4],
-    ['inpatient.execution.complete', 4], ['inpatient.execution.request-prn', 5],
+    ['inpatient.pharmacy.read', 4], ['inpatient.clinical.read', 6], ['inpatient.diagnosis.confirm', 5],
+    ['inpatient.order.issue', 10], ['inpatient.order.verify', 5], ['inpatient.order.request-stop', 5],
+    ['inpatient.order.verify-stop', 5], ['inpatient.execution.dispense', 4], ['inpatient.execution.administer', 5],
+    ['inpatient.execution.complete', 5], ['inpatient.execution.request-prn', 6],
   ] as const) {
     const operation = getHisOperation(id)
     expect(operation.version).toBe(version)
@@ -666,7 +666,7 @@ it('keeps consultation recovery examples aligned with durable attempt semantics'
     }
     expect(operation.input.safeParse({ encounterId: 'synthetic', arbitraryPayload: {} }).success).toBe(false)
   }
-  expect(getHisOperation('doctor.case.get').version).toBe(21)
+  expect(getHisOperation('doctor.case.get').version).toBe(22)
   expect(getHisOperation('doctor.case.get').summary).toContain('consultation.replyAttempt')
   expect(skill).toContain('consultation.replyAttempt')
   expect(skill).toContain('same ask/retry key')
@@ -801,7 +801,7 @@ it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
   for (const kind of ['diagnoses', 'medications', 'laboratory']) {
     const operation = getHisOperation(`reference.${kind}.search`)
     expect(operation.roles).toContain('inpatient-doctor')
-    expect(operation.version).toBe(kind === 'medications' ? 3 : 2)
+    expect(operation.version).toBe(kind === 'medications' ? 4 : 2)
     expect(referenceSkill).toContain(operation.id)
     const line = commandLines(referenceSkill).find(line => line.startsWith(`clinmesh reference ${kind} search `))!
     expect(inspectExample(program, line).operation?.id).toBe(operation.id)
@@ -886,11 +886,11 @@ describe('ClinMesh CLI Agent Skills', () => {
       expect(getHisOperation(id).summary).toContain('CLINICAL_HISTORY_REQUIRED')
     }
     const read = getHisOperation('doctor.case.get')
-    expect(read.version).toBe(21)
+    expect(read.version).toBe(22)
     expect(read.summary).toContain('clinicalHistory.requiredFields')
     expect(read.summary).toContain('twelve-field')
     const completed = getHisOperation('doctor.completed-cases.get')
-    expect(completed.version).toBe(6)
+    expect(completed.version).toBe(7)
     for (const field of ['menstrualHistory', 'obstetricHistory']) expect(completed.summary).toContain(field)
     expect(skill).toContain('clinicalHistory.requiredFields')
     expect(skill).toContain('普通门诊可留空；适用女性专科初诊要求两项')
@@ -917,7 +917,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(operation.summary).toContain('MODEL_OUTCOME_UNKNOWN')
     expect(skill).toContain('`MODEL_OUTCOME_UNKNOWN` stops automatic resending')
     const read = getHisOperation('doctor.case.get')
-    expect(read.version).toBe(21)
+    expect(read.version).toBe(22)
     expect(read.summary).toContain('sourceResults')
     expect(read.summary).toContain('legacy verification counts are zero and issues empty')
     expect(skill).toContain('Retry actual recording failures')
@@ -959,7 +959,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 21 : 4)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 22 : 4)
       expect(operation.summary).toContain('presentation')
       expect(operation.summary).toContain('registrationNumber')
       const line = commandLines(doctorSkill).find(line => line.startsWith(id === 'doctor.case.get' ? 'clinmesh doctor case get ' : 'clinmesh doctor queue list'))!
@@ -1093,7 +1093,7 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
   expect(executeOp.version).toBe(3)
   expect(executeOp.input.parse(JSON.parse(executionExample![1]!))).toMatchObject({ expectedRequestVersion: 3, materials: [{ quantity: 2 }] })
   expect(executeOp.input.safeParse({ ...JSON.parse(executionExample![1]!), note: undefined }).success).toBe(true)
-  expect(getHisOperation('inpatient.order.issue').version).toBe(9)
+  expect(getHisOperation('inpatient.order.issue').version).toBe(10)
   expect(skill).toContain('surgeryExecutionId')
   expect(skill).toContain('inpatient.surgery.execute')
   expect(getHisOperation('inpatient.surgery.catalog').version).toBe(2)
@@ -1158,28 +1158,34 @@ it('药物频次、审方拒绝与CLI Skill的当前合同保持一致', async (
   const match = skill.match(/`order\.json`[^]*?```json\n([^]*?)\n```/)!
   const example = JSON.parse(match[1]!)
   const operation = getHisOperation('inpatient.order.issue')
-  expect(operation.version).toBe(9)
+  expect(operation.version).toBe(10)
   for (const frequencyCode of ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE']) {
     expect(operation.input.safeParse({ ...example, selection: { ...example.selection, frequencyCode } }).success).toBe(true)
   }
+  for (const routeCode of ['PO', 'IVGTT', 'IV', 'IM', 'IH', 'SL', 'TOP', 'INH']) {
+    expect(operation.input.safeParse({ ...example, selection: { ...example.selection, routeCode } }).success).toBe(true)
+  }
   expect(operation.input.safeParse({ ...example, selection: { ...example.selection, frequencyCode: 'Q4H' } }).success).toBe(false)
-  for (const reason of ['MEDICATION_COMBINATION_NOT_ALLOWED', 'MEDICATION_DIAGNOSIS_NOT_ALLOWED', 'MEDICATION_ALLERGY_CONFLICT', 'MEDICATION_DOSAGE_NOT_ALLOWED', 'MEDICATION_ONCE_REQUIRES_TEMPORARY']) expect(skill).toContain(reason)
-  expect(getHisOperation('inpatient.execution.request-prn').version).toBe(5)
-  expect(getHisOperation('encounter.prescription.draft.set').version).toBe(3)
-  expect(getHisOperation('encounter.prescription.issue').version).toBe(5)
+  expect(operation.input.safeParse({ ...example, selection: { ...example.selection, routeCode: 'ORAL' } }).success).toBe(false)
+  for (const reason of ['MEDICATION_COMBINATION_NOT_ALLOWED', 'MEDICATION_DIAGNOSIS_NOT_ALLOWED', 'MEDICATION_ALLERGY_CONFLICT', 'MEDICATION_DOSAGE_NOT_ALLOWED', 'MEDICATION_ROUTE_NOT_ALLOWED', 'MEDICATION_ONCE_REQUIRES_TEMPORARY']) expect(skill).toContain(reason)
+  expect(getHisOperation('inpatient.execution.request-prn').version).toBe(6)
+  expect(getHisOperation('encounter.prescription.draft.set').version).toBe(4)
+  expect(getHisOperation('encounter.prescription.issue').version).toBe(6)
 })
 
 it('门诊处方操作、错误reason与clinmesh-doctor单源外延处方说明保持一致', async () => {
   const doctorSkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
   const workflowsRef = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/references/clinical-workflows.md'), 'utf8')
+  const pharmacySkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-pharmacy/SKILL.md'), 'utf8')
   expect(getHisOperation('encounter.prescription.draft.set').summary).toContain('single-source')
   expect(getHisOperation('encounter.prescription.issue').summary).toContain('external electronic prescription')
-  expect(getHisOperation('reference.medications.search').version).toBe(3)
+  expect(getHisOperation('reference.medications.search').version).toBe(4)
   expect(getHisOperation('reference.medications.search').input.safeParse({ query: '氯' }).success).toBe(true)
-  expect(doctorSkill).toContain('`reference.medications.search` version 3')
+  expect(doctorSkill).toContain('`reference.medications.search` version 4')
+  expect(pharmacySkill).toContain('routeCode')
   for (const reason of prescriptionConflictReasonSchema.options) {
     expect(hisOperationErrorSchema.parse({
-      code: reason === 'PRESCRIPTION_MIXED_CATALOG_SOURCES' || reason === 'PRESCRIPTION_DOSAGE_NOT_ALLOWED' ? 'CATALOG_CONFLICT' : 'WORKFLOW_CONFLICT',
+      code: reason === 'PRESCRIPTION_MIXED_CATALOG_SOURCES' || reason === 'PRESCRIPTION_DOSAGE_NOT_ALLOWED' || reason === 'PRESCRIPTION_ROUTE_NOT_ALLOWED' ? 'CATALOG_CONFLICT' : 'WORKFLOW_CONFLICT',
       message: 'Synthetic prescription conflict',
       operationId: 'encounter.prescription.issue',
       outcome: 'definitely_not_sent',
@@ -1279,9 +1285,9 @@ it('keeps clinical risk assessment, nursing vitals, and deterministic clinical s
     expect(inpatientSkill).toContain(code)
   }
 
-  expect(getHisOperation('catalog.clinical.read').version).toBe(3)
-  expect(getHisOperation('inpatient.catalog.search').version).toBe(3)
-  expect(getHisOperation('inpatient.clinical.catalog').version).toBe(4)
+  expect(getHisOperation('catalog.clinical.read').version).toBe(4)
+  expect(getHisOperation('inpatient.catalog.search').version).toBe(4)
+  expect(getHisOperation('inpatient.clinical.catalog').version).toBe(5)
   for (const skill of [doctorSkill, inpatientSkill]) {
     expect(skill).toContain('packageInsert')
     expect(skill).toContain('合成教学参考，非真实上市产品法定说明书')

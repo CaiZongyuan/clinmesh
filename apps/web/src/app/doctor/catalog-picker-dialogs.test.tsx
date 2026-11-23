@@ -3,14 +3,15 @@ import { act, cleanup, isInaccessible, render, screen, within, waitFor } from '@
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CaseLaboratoryCatalogSearch } from '@clinmesh/contracts/his'
-import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
+import type { ReferenceMedicationCatalogItem } from '@clinmesh/contracts/reference-data'
 import { DiagnosisCatalogDialog, DiagnosisCatalogPicker, LaboratoryCatalogDialog, LaboratoryCatalogPicker, MedicationCatalogDialog, MedicationCatalogPicker } from './catalog-picker-dialogs.tsx'
 
-const product: ReferenceMedicationProduct = {
+const product: ReferenceMedicationCatalogItem = {
   brandName: null, id: 'product-1', code: 'SYN-1', genericName: '合成测试片',
   dosageForm: '片剂', strength: '10 mg', manufacturer: '合成药厂',
   approvalNumber: '合成批准号', packageDescription: '10片/盒', status: 'active',
   system: 'urn:synthetic:medication', version: '1', sourceLocator: 'synthetic:test',
+  defaultRouteCode: 'PO', allowedRouteCodes: ['PO'],
 }
 const service: CaseLaboratoryCatalogSearch['items'][number] = {
   allowedIndicationCodes: ['clinical-evaluation'], componentServiceIds: [], doctorOrderable: true,
@@ -29,7 +30,7 @@ const service: CaseLaboratoryCatalogSearch['items'][number] = {
     }],
   }, specimen: { code: 'blood', display: '静脉血' }, serviceKind: 'laboratory', tatMinutes: 180, version: 1,
 }
-function mount(items: ReferenceMedicationProduct[], excludedIds = new Set<string>()) {
+function mount(items: ReferenceMedicationCatalogItem[], excludedIds = new Set<string>()) {
   const onSearch = vi.fn()
   const onSelect = vi.fn()
   render(<MedicationCatalogDialog

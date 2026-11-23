@@ -1,4 +1,5 @@
-import { formatMedicationFrequency, medicationCombinationConflict, medicationRegimenDoseAllowed, medicationQuantityAllowed } from '@clinmesh/core/medication-safety'
+import { deriveReferenceMedicationRoutes, formatMedicationFrequency, formatMedicationRoute, medicationCombinationConflict, medicationRegimenDoseAllowed, medicationQuantityAllowed, medicationRouteAllowed } from '@clinmesh/core/medication-safety'
+import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
 import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import type {
@@ -7,7 +8,7 @@ import type {
   PrescriptionDraftItem,
 } from '@clinmesh/contracts/his'
 import { prescriptionDraftContentSchema } from '@clinmesh/contracts/his'
-import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
+import type { ReferenceMedicationCatalogItem, ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
@@ -129,11 +130,12 @@ function createPrescriptionDraftLine(
     frequencyCode: medication.defaultFrequencyCode,
     key,
     quantity: medication.defaultQuantity,
+    routeCode: medication.defaultRouteCode,
   }
 }
 
 function createReferencePrescriptionDraftLine(
-  product: ReferenceMedicationProduct,
+  product: ReferenceMedicationCatalogItem,
   key: string = globalThis.crypto.randomUUID(),
 ): PrescriptionDraftLine {
   return {
@@ -144,6 +146,7 @@ function createReferencePrescriptionDraftLine(
     key,
     quantity: 1,
     referenceProduct: product,
+    routeCode: product.defaultRouteCode,
   }
 }
 
@@ -231,7 +234,7 @@ export function PrescriptionPage({
   const draftValidation = prescriptionDraftContentSchema.safeParse({ items: submittedItems })
   useRegisterAgentForm({
     viewId: 'consultation', selectionId: detail.caseId, name: 'prescription',
-    values: { mode, items: items.map(({ catalogItemId, courseDays, doseText, frequencyCode, quantity }) => ({ catalogItemId, courseDays, doseText, frequencyCode, quantity })) },
+    values: { mode, items: items.map(({ catalogItemId, courseDays, doseText, frequencyCode, quantity, routeCode }) => ({ catalogItemId, courseDays, doseText, frequencyCode, quantity, routeCode })) },
   })
   const currentRevision = JSON.stringify(draftValidation.success ? draftValidation.data.items : submittedItems)
   useEffect(() => {
@@ -278,6 +281,7 @@ export function PrescriptionPage({
     return medication !== undefined && canCombineWithCurrentItems(medication)
       && (suggestion.doseText === null || medicationRegimenDoseAllowed(medication, suggestion.doseText, suggestion.frequencyCode ?? medication.defaultFrequencyCode))
       && (suggestion.frequencyCode === null || medication.allowedFrequencyCodes.includes(suggestion.frequencyCode))
+      && (suggestion.routeCode === null || medicationRouteAllowed(medication.allowedRouteCodes, suggestion.routeCode))
       && (suggestion.courseDays === null || medication.allowedCourseDays.includes(suggestion.courseDays))
       && (suggestion.quantity === null || medicationQuantityAllowed(medication, suggestion.quantity, suggestion.courseDays ?? 30, suggestion.frequencyCode ?? medication.defaultFrequencyCode))
   }
@@ -327,11 +331,16 @@ export function PrescriptionPage({
     }
     if (!setItems(current => {
       const previous = current.find(item => item.catalogItemId === value.catalogItemId)
+      const resolvedReferenceProduct: ReferenceMedicationCatalogItem | undefined = value.referenceProduct === undefined
+        ? undefined
+        : value.referenceProduct.defaultRouteCode !== undefined && value.referenceProduct.allowedRouteCodes !== undefined
+          ? { ...value.referenceProduct, defaultRouteCode: value.referenceProduct.defaultRouteCode, allowedRouteCodes: value.referenceProduct.allowedRouteCodes }
+          : { ...value.referenceProduct, ...deriveReferenceMedicationRoutes(value.referenceProduct) }
       const line: PrescriptionDraftLine = {
         catalogItemId: value.catalogItemId, key: previous?.key ?? globalThis.crypto.randomUUID(),
-        courseDays: value.courseDays, doseText: value.doseText ?? '', frequencyCode: value.frequencyCode ?? '', quantity: value.quantity,
+        courseDays: value.courseDays, doseText: value.doseText ?? '', frequencyCode: value.frequencyCode ?? '', routeCode: value.routeCode ?? '', quantity: value.quantity,
         ...(value.instructions?.trim() ? { instructions: value.instructions.trim() } : {}),
-        ...(value.referenceProduct === undefined ? {} : { referenceProduct: value.referenceProduct }),
+        ...(resolvedReferenceProduct === undefined ? {} : { referenceProduct: resolvedReferenceProduct }),
       }
       return previous === undefined ? [...current, line] : current.map(item => item.key === previous.key ? line : item)
     })) return false
@@ -345,17 +354,24 @@ export function PrescriptionPage({
       return messages.recommendationRequestTargetUnavailable
     }
     const previousIndex = items.findIndex(item => item.catalogItemId === value.catalogItemId)
-    const isReference = value.referenceProduct !== undefined
+    const referenceProduct = value.referenceProduct
+    const isReference = referenceProduct !== undefined
     if (items.some((item, index) => index !== previousIndex && (item.referenceProduct !== undefined) !== isReference)) {
       return messages.prescriptionIssueReason_mixedCatalogSources
     }
-    if (isReference) return undefined
+    if (referenceProduct !== undefined) {
+      const allowedRoutes = referenceProduct.allowedRouteCodes ?? deriveReferenceMedicationRoutes(referenceProduct).allowedRouteCodes
+      return value.routeCode !== null && !medicationRouteAllowed(allowedRoutes, value.routeCode)
+        ? messages.recommendationRequestTargetUnavailable
+        : undefined
+    }
     const candidate = catalogById.get(value.catalogItemId)
     if (
       candidate === undefined
       || !canCombineWithCurrentItems(candidate, previousIndex === -1 ? undefined : previousIndex)
       || (value.doseText !== null && !medicationRegimenDoseAllowed(candidate, value.doseText, value.frequencyCode ?? candidate.defaultFrequencyCode))
       || (value.frequencyCode !== null && !candidate.allowedFrequencyCodes.includes(value.frequencyCode))
+      || (value.routeCode !== null && !medicationRouteAllowed(candidate.allowedRouteCodes, value.routeCode))
       || (value.courseDays !== null && !candidate.allowedCourseDays.includes(value.courseDays))
       || (value.quantity !== null && !medicationQuantityAllowed(candidate, value.quantity, value.courseDays ?? 30, value.frequencyCode ?? candidate.defaultFrequencyCode))
     ) {
@@ -380,7 +396,7 @@ export function PrescriptionPage({
   const consumePreparedItems = (values: PreparationDraft[]) => {
     const remaining = items.filter(item => !values.some(value => value.kind === 'prescription'
       && value.catalogItemId === item.catalogItemId && value.doseText === item.doseText
-      && value.frequencyCode === item.frequencyCode && value.courseDays === item.courseDays && value.quantity === item.quantity
+      && value.frequencyCode === item.frequencyCode && value.routeCode === item.routeCode && value.courseDays === item.courseDays && value.quantity === item.quantity
       && (value.instructions?.trim() ?? '') === (item.instructions?.trim() ?? '')))
     if (remaining.length === items.length) return
     if (!setItems(remaining)) return false
@@ -600,6 +616,7 @@ export function PrescriptionPage({
       frequencyCode: item.frequencyCode,
       ...(item.instructions ? { instructions: item.instructions } : {}),
       quantity: item.quantity,
+      routeCode: item.routeCode,
     }
     if (item.referenceProduct !== undefined) {
       return {
@@ -644,7 +661,7 @@ export function PrescriptionPage({
                 if (!next.some(r => r.catalogItemId === c.catalogItemId)) {
                   const entry = catalogById.get(c.catalogItemId)
                   if (next.length >= 8 || (entry && !canCombineWithCurrentItems(entry, undefined, next))) continue
-                  next.push({ catalogItemId: c.catalogItemId, courseDays: c.outpatient.courseDays, doseText: c.doseText, frequencyCode: c.frequencyCode, ...(c.instructionsZh ? { instructions: c.instructionsZh } : {}), key: globalThis.crypto.randomUUID(), quantity: c.outpatient.quantity })
+                  next.push({ catalogItemId: c.catalogItemId, courseDays: c.outpatient.courseDays, doseText: c.doseText, frequencyCode: c.frequencyCode, ...(c.instructionsZh ? { instructions: c.instructionsZh } : {}), key: globalThis.crypto.randomUUID(), quantity: c.outpatient.quantity, routeCode: c.routeCode })
                   addedCount += 1
                 }
                 if (i.disposition === 'needs-review') { review.add(c.catalogItemId); reviewCount += 1 }
@@ -710,10 +727,12 @@ export function PrescriptionPage({
                 const catalogEntry = catalogById.get(item.catalogItemId)
                 const label = item.referenceProduct?.genericName ?? catalogEntry?.[locale === 'zh-CN' ? 'nameZh' : 'nameEn'] ?? item.catalogItemId
                 const { specText, unit } = resolveMedicationDisplayMeta(item, catalogEntry)
+                const parsedRoute = medicationRouteSchema.safeParse(item.routeCode)
                 const checkSummary = [
                   specText || undefined,
                   item.doseText ? `${locale === 'zh-CN' ? '单次 ' : 'Dose '}${item.doseText}` : (locale === 'zh-CN' ? '剂量待填' : 'Dose pending'),
                   item.frequencyCode ? formatMedicationFrequency(item.frequencyCode, locale) : (locale === 'zh-CN' ? '频次待填' : 'Frequency pending'),
+                  parsedRoute.success ? formatMedicationRoute(parsedRoute.data, locale) : (item.routeCode ? item.routeCode : (locale === 'zh-CN' ? '给药途径待选' : 'Route pending')),
                   item.courseDays !== null ? `${item.courseDays} ${messages.days}` : (locale === 'zh-CN' ? '疗程待填' : 'Course pending'),
                   item.quantity !== null
                     ? (unit ? `${item.quantity} ${unit}` : `${messages.quantity} ${item.quantity}`)
@@ -893,6 +912,7 @@ export function PrescriptionPage({
         pending={
           <div className="min-w-0 @min-[800px]/order-workspace:sticky @min-[800px]/order-workspace:top-2">
             <DoctorRecommendationsPanel
+              allowedRoutesFor={catalogItemId => catalogById.get(catalogItemId)?.allowedRouteCodes}
               caseId={detail.caseId}
               enabled={!readOnly && noMedicationConclusion === undefined && mode === 'prescription'}
               disabled={!canEditDraft || pending}
@@ -927,17 +947,22 @@ export function PrescriptionPage({
                 const detailText = [specText || undefined, unitText].filter(Boolean).join(' · ')
                 return detailText ? <p className="break-words text-xs text-muted-foreground">{detailText}</p> : null
               }}
-              manualItems={unissuedManualItems.map(item => ({
-                label: item.referenceProduct?.genericName
-                  ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
-                  ?? item.catalogItemId,
-                value: {
-                  source: 'manual', kind: 'prescription', catalogItemId: item.catalogItemId,
-                  doseText: item.doseText || null, frequencyCode: item.frequencyCode || null, courseDays: item.courseDays, quantity: item.quantity,
-                  ...(item.instructions?.trim() ? { instructions: item.instructions.trim() } : {}),
-                  ...(item.referenceProduct === undefined ? {} : { referenceProduct: item.referenceProduct })
-                },
-              } satisfies ManualPreparedItem))}
+              manualItems={unissuedManualItems.map(item => {
+                const parsedRoute = medicationRouteSchema.safeParse(item.routeCode)
+                return {
+                  label: item.referenceProduct?.genericName
+                    ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
+                    ?? item.catalogItemId,
+                  value: {
+                    source: 'manual', kind: 'prescription', catalogItemId: item.catalogItemId,
+                    doseText: item.doseText || null, frequencyCode: item.frequencyCode || null,
+                    routeCode: parsedRoute.success ? parsedRoute.data : null,
+                    courseDays: item.courseDays, quantity: item.quantity,
+                    ...(item.instructions?.trim() ? { instructions: item.instructions.trim() } : {}),
+                    ...(item.referenceProduct === undefined ? {} : { referenceProduct: item.referenceProduct })
+                  },
+                } satisfies ManualPreparedItem
+              })}
               manualUnavailableReason={manualPreparedUnavailableReason}
               unavailableReason={suggestion => pendingEditorChanges ? pendingEditorMessage : isRecommendationAvailable(suggestion)
                 ? undefined
@@ -992,7 +1017,7 @@ export function PrescriptionPage({
                               {specText ? <span title={packageDescription}>{specText}</span> : '—'}
                             </TableCell>
                             <TableCell className="whitespace-normal break-words text-xs text-muted-foreground">
-                              {item.doseText} · {formatMedicationFrequency(item.frequencyCode, locale)} · {item.courseDays} {messages.days}{item.instructions ? ` · ${item.instructions}` : ''}
+                              {item.doseText} · {formatMedicationFrequency(item.frequencyCode, locale)} · {formatMedicationRoute(item.routeCode, locale)} · {item.courseDays} {messages.days}{item.instructions ? ` · ${item.instructions}` : ''}
                             </TableCell>
                             <TableCell className="tabular-nums">{unit ? `${item.quantity} ${unit}` : item.quantity}</TableCell>
                           </TableRow>

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { z } from 'zod'
+import { formatMedicationRoute } from '@clinmesh/core/medication-safety'
+import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
 import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
@@ -83,7 +85,7 @@ export function InpatientOrderComposer(props: Props) {
   const problem = (row: OrderDraftRow) => {
     if (row.pick.kind === 'medication' && !diagnosed) return t('请先确认住院诊断', 'Confirm inpatient diagnoses first')
     if (row.duration === 'long' && row.frequencyCode === 'ONCE') return t('ONCE 仅允许用于临时医嘱', 'ONCE requires a temporary order')
-    if (!orderSelection(row)) return t('请核对每次剂量和频次', 'Check the dose and frequency')
+    if (!orderSelection(row)) return t('请核对每次剂量、频次和给药途径', 'Check the dose, frequency and route')
     if (row.pick.kind === 'service' && !services.some(item => item.id === row.pick.item.id && item.version === row.pick.item.version)) return t('目录已变化，请移除后重新选择', 'Catalog changed; remove and select again')
     if (row.surgeryExecutionId && !surgeries.some(item => item.id === row.surgeryExecutionId)) return t('关联手术已变化，请重新核对', 'Review the linked procedure')
     if (row.estimate && (row.estimate.stale || !row.estimate.fingerprint || readyEstimates[row.id] !== row.estimate.fingerprint)) return t('请完成费用预计或重新预计', 'Complete or refresh the charge estimate')
@@ -95,6 +97,7 @@ export function InpatientOrderComposer(props: Props) {
     if (current.current.rows.length >= orderBatchLimit) { setNotice(t(`最多保留 ${orderBatchLimit} 项，请先办理或移除项目`, `Keep at most ${orderBatchLimit} items; process or remove an item first`)); return }
     save({ ...current.current, rows: [...current.current.rows, { id: newIdempotencyKey(), pick, duration: 'long', selected: true,
       doseText: pick.kind === 'medication' ? pick.item.doses[0]?.doseText ?? '' : '',
+      ...(pick.kind === 'medication' ? { routeCode: pick.item.defaultRouteCode } : {}),
       ...(pick.kind === 'medication' && pick.item.frequencyCodes[0] ? { frequencyCode: pick.item.frequencyCodes[0] } : {}) }] }); setNotice('')
   }
   const run = async (recover?: OrderDraftRow, overrideForRow?: { rowId: string; clinicalOverride: ClinicalOverrideInput }) => {
@@ -170,7 +173,7 @@ export function InpatientOrderComposer(props: Props) {
                   }
                   const med = medications.find(m => m.id === c.catalogItemId)
                   if (!med || rows.length >= orderBatchLimit) continue
-                  rows.push({ doseText: c.doseText, duration: c.inpatient.duration, frequencyCode: c.frequencyCode, ...(c.instructionsZh ? { instructions: c.instructionsZh } : {}), id: newIdempotencyKey(), pick: { item: med, kind: 'medication' }, selected: !rev })
+                  rows.push({ doseText: c.doseText, duration: c.inpatient.duration, frequencyCode: c.frequencyCode, routeCode: c.routeCode, ...(c.instructionsZh ? { instructions: c.instructionsZh } : {}), id: newIdempotencyKey(), pick: { item: med, kind: 'medication' }, selected: !rev })
                   if (rev) reviewCount += 1
                   addedCount += 1
                   changed = true
@@ -219,6 +222,7 @@ export function InpatientOrderComposer(props: Props) {
                       row.duration === 'long' ? t('长期', 'Long') : t('临时', 'Temporary'),
                       row.doseText ? `${t('每次 ', 'Per dose ')}${row.doseText}` : t('剂量待填', 'Dose pending'),
                       row.frequencyCode ? inpatientFrequencyLabel(row.frequencyCode, locale, false) : t('频次待选', 'Frequency pending'),
+                      row.routeCode ? formatMedicationRoute(row.routeCode, locale) : t('给药途径待选', 'Route pending'),
                       dose && 'quantity' in dose ? `${dose.quantity} ${row.pick.item.unit}` : undefined,
                     ].filter(Boolean).join(' · ')}
                   </p>
@@ -227,6 +231,7 @@ export function InpatientOrderComposer(props: Props) {
                 {row.pick.kind === 'medication' ? <>
                   <Field><FieldLabel htmlFor={`${formId}-${row.id}-dose`}>{t('每次剂量', 'Dose per execution')}</FieldLabel><Input id={`${formId}-${row.id}-dose`} disabled={locked} value={row.doseText} maxLength={120} aria-invalid={dose !== undefined && 'reason' in dose} onChange={event => edit({ doseText: event.currentTarget.value })} />{dose && 'quantity' in dose ? <span className="text-xs text-muted-foreground">= {dose.quantity} {row.pick.item.unit}</span> : <p className="text-xs text-destructive">{dose && 'reason' in dose ? doseError(dose.reason, locale) : ''}</p>}</Field>
                   <Field><FieldLabel htmlFor={`${formId}-${row.id}-frequency`}>{t('医嘱频次', 'Order frequency')}</FieldLabel><WorkspaceSelect id={`${formId}-${row.id}-frequency`} disabled={locked} value={row.frequencyCode ?? null} items={row.pick.item.frequencyCodes.map(code => ({ value: code, disabled: row.duration === 'long' && code === 'ONCE', label: inpatientFrequencyLabel(code, locale) }))} onValueChange={value => edit({ frequencyCode: value ?? undefined })} /></Field>
+                  <Field><FieldLabel htmlFor={`${formId}-${row.id}-route`}>{t('给药途径', 'Administration route')}</FieldLabel><WorkspaceSelect id={`${formId}-${row.id}-route`} disabled={locked} value={row.routeCode ?? null} items={row.pick.item.allowedRouteCodes.map(code => ({ value: code, label: formatMedicationRoute(code, locale) }))} onValueChange={value => { const parsed = medicationRouteSchema.safeParse(value); update(row.id, { routeCode: parsed.success ? parsed.data : undefined, error: undefined }) }} /></Field>
                   <Field><FieldLabel htmlFor={`${formId}-${row.id}-inst`}>{t('给药说明', 'Instructions')}</FieldLabel><Input id={`${formId}-${row.id}-inst`} disabled={locked} value={row.instructions ?? ''} maxLength={240} onChange={event => edit({ instructions: event.currentTarget.value || undefined })} /></Field>
                 </> : <p className="text-xs text-muted-foreground">{t('每次 1 次 · 频次不适用', 'One per execution · frequency not applicable')}</p>}
                 <Field><FieldLabel htmlFor={`${formId}-${row.id}-surgery`}>{t('术后医嘱关联手术', 'Postoperative procedure')}</FieldLabel><WorkspaceSelect id={`${formId}-${row.id}-surgery`} disabled={locked || !surgeries.length} value={row.surgeryExecutionId ?? ''} items={[{ value: '', label: t('不关联（普通医嘱）', 'None (regular order)') }, ...surgeries.map(item => ({ value: item.id, label: `${item.actualProcedure.coding.code} · ${item.actualProcedure.coding.display}` }))]} onValueChange={value => edit({ surgeryExecutionId: value || undefined })} /></Field>

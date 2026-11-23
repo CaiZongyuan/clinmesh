@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { medicationRouteSchema } from './medication-safety.ts'
 
 export {
   offlineReferenceInventoryListSchema, offlineReferenceInventorySchema,
@@ -449,9 +450,17 @@ export const referenceLaboratoryCatalogSearchSchema = z.object({
   }).strict()),
 }).strict()
 
+export const referenceMedicationCatalogItemSchema = referenceMedicationProductSchema.extend({
+  allowedRouteCodes: z.array(medicationRouteSchema).min(1),
+  defaultRouteCode: medicationRouteSchema,
+}).strict().refine(
+  item => item.allowedRouteCodes.includes(item.defaultRouteCode),
+  '默认给药途径须属于允许途径集合',
+)
+
 export const referenceMedicationCatalogSearchSchema = z.object({
   ...referenceCatalogPageShape,
-  items: z.array(referenceMedicationProductSchema),
+  items: z.array(referenceMedicationCatalogItemSchema),
 }).strict()
 
 export const referenceMappingPackageProvenanceSchema = z.object({
@@ -481,6 +490,7 @@ export type ReferenceLaboratorySourceDataset = z.infer<
   typeof referenceLaboratorySourceDatasetSchema
 >
 export type ReferenceLaboratoryUnit = z.infer<typeof referenceLaboratoryUnitSchema>
+export type ReferenceMedicationCatalogItem = z.infer<typeof referenceMedicationCatalogItemSchema>
 export type ReferenceMedicationProduct = z.infer<typeof referenceMedicationProductSchema>
 export type ReferenceMappingPackageProvenance = z.infer<typeof referenceMappingPackageProvenanceSchema>
 export type ReferenceMedicalService = z.infer<typeof referenceMedicalServiceSchema>

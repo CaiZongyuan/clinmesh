@@ -16,7 +16,7 @@ it('lets the responsible doctor open a dated inpatient summary with diagnoses, p
         kind: 'inpatient', admissionId: 'admission', admittedAt: '2026-08-20T10:00:00+08:00', dischargedAt: '2026-08-24T10:00:00+08:00',
         diagnoses: [{ code: 'I25.1', display: '冠状动脉粥样硬化性心脏病', role: 'primary' }],
         procedures: [{ code: '36.06', display: '冠状动脉支架置入术', performedAt: '2026-08-21T10:00:00+08:00', conclusion: '术后血流通畅' }],
-        medications: [{ display: '阿司匹林', doseText: '100 mg', frequencyCode: 'QD', state: 'stopped' }],
+        medications: [{ display: '阿司匹林', doseText: '100 mg', frequencyCode: 'QD', routeCode: 'PO', state: 'stopped' }],
         reports: [{ title: '超声心动图', conclusion: '左室收缩功能正常', findings: ['LVEF：60 %'] }],
       } })
     return Response.json({ source: 'local-completed', availability: 'available', coverage: 'current-patient-responsible-doctor',
@@ -29,7 +29,7 @@ it('lets the responsible doctor open a dated inpatient summary with diagnoses, p
   fireEvent.click(history)
   await screen.findByText(/冠状动脉粥样硬化性心脏病/)
   expect(screen.getByText(/冠状动脉支架置入术/)).toBeTruthy()
-  expect(screen.getByText(/阿司匹林 · 100 mg · 每日一次（QD） · 已停用/)).toBeTruthy()
+  expect(screen.getByText(/阿司匹林 · 100 mg · 每日一次（QD） · 口服（po） · 已停用/)).toBeTruthy()
   expect(screen.getByText('LVEF：60 %')).toBeTruthy()
   expect(screen.getByText('左室收缩功能正常')).toBeTruthy()
   await waitFor(() => expect(calls).toEqual(['/api/his/v1/doctor/cases/follow-up/history', '/api/his/v1/doctor/cases/follow-up/history/detail']))

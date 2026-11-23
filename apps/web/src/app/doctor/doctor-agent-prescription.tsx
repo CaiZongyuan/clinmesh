@@ -1,4 +1,5 @@
 import { agentToolInputSchemas, clinicalOverrideToolParameters } from '@clinmesh/contracts/agent'
+import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
 import {
   prescriptionDraftContentSchema, type DoctorCaseDetail
 } from '@clinmesh/contracts/his'
@@ -61,9 +62,10 @@ export function doctorPrescriptionAgentActions({
                 doseText: { type: 'string', maxLength: 120 },
                 frequencyCode: { type: 'string', maxLength: 32 },
                 quantity: { type: 'integer', minimum: 1, maximum: 1_000 },
+                routeCode: { type: 'string', enum: [...medicationRouteSchema.options] },
               },
               required: [
-                'catalogItemId', 'courseDays', 'doseText', 'frequencyCode', 'quantity',
+                'catalogItemId', 'courseDays', 'doseText', 'frequencyCode', 'quantity', 'routeCode',
               ],
               additionalProperties: false,
             },

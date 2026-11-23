@@ -1,10 +1,19 @@
-import { medicationPackageInsertSchema, medicationSafetyRuleSchema } from '@clinmesh/contracts/medication-safety'
+import { deriveReferenceMedicationRoutes } from '@clinmesh/core/medication-safety'
+import {
+  medicationPackageInsertSchema,
+  medicationRouteSchema,
+  medicationSafetyRuleSchema,
+  type MedicationRoute,
+} from '@clinmesh/contracts/medication-safety'
 import { z } from 'zod'
 import type { InpatientCatalogMissingField } from '@clinmesh/contracts/inpatient-clinical'
 
 export const inpatientMedicationConfigSchema = z.object({
   safety: medicationSafetyRuleSchema.optional(),
   packageInsert: medicationPackageInsertSchema.optional().catch(undefined),
+  defaultRouteCode: medicationRouteSchema.optional(),
+  allowedRouteCodes: z.array(medicationRouteSchema).min(1).optional(),
+  route: z.string().trim().min(1).optional(),
   availableScopes: z.array(z.string()), unit: z.string().trim().min(1),
   product: z.object({ id: z.string().min(1), system: z.string().min(1), version: z.string().min(1),
     strength: z.string().min(1), dosageForm: z.string().min(1), packageDescription: z.string().min(1) }),
@@ -16,6 +25,29 @@ export const inpatientMedicationConfigSchema = z.object({
   inpatientIndications: z.array(z.object({ id: z.string(), system: z.string(), version: z.string(), code: z.string(), sourceLocator: z.string() })).default([]),
   inpatientBillingTrigger: z.literal('dispense'),
 })
+
+export function resolveCatalogMedicationRoutes(
+  config: {
+    allowedRouteCodes?: readonly MedicationRoute[] | undefined
+    defaultRouteCode?: MedicationRoute | undefined
+    product?: { dosageForm?: string | undefined } | undefined
+    route?: string | undefined
+  },
+  genericName: string,
+): { defaultRouteCode: MedicationRoute; allowedRouteCodes: MedicationRoute[] } {
+  if (config.defaultRouteCode !== undefined && config.allowedRouteCodes !== undefined && config.allowedRouteCodes.length > 0) {
+    return {
+      defaultRouteCode: config.defaultRouteCode,
+      allowedRouteCodes: config.allowedRouteCodes.includes(config.defaultRouteCode)
+        ? [...config.allowedRouteCodes]
+        : [config.defaultRouteCode, ...config.allowedRouteCodes],
+    }
+  }
+  return deriveReferenceMedicationRoutes({
+    dosageForm: config.product?.dosageForm ?? config.route ?? '',
+    genericName,
+  })
+}
 
 export function inpatientMedicationMissingFields(raw: unknown, priceFen: number): InpatientCatalogMissingField[] {
   const record = z.record(z.string(), z.unknown()).safeParse(raw)

@@ -23,7 +23,7 @@ function pharmacyFacts() {
   return inpatientPharmacySchema.parse({ admission, medicationAllergies: [], dispenses: [],
     orders: names.map((display, index) => ({ id: `order-${index + 1}`, admissionId: admission.admissionId, kind: 'medication', duration: 'temporary',
       catalogItemId: `medication-${index + 1}`, catalogVersion: 1, display, doseText: ['100 mg', '75 mg', '20 mg'][index], doseQuantity: index === 2 ? 2 : 1,
-      unit: '片', frequencyCode: 'QD', state: 'verified', version: 2, requestVersion: '2', signedAt: '2026-08-24T07:00:00+08:00', signedBy: 'synthetic-doctor',
+      unit: '片', frequencyCode: 'QD', routeCode: 'PO', state: 'verified', version: 2, requestVersion: '2', signedAt: '2026-08-24T07:00:00+08:00', signedBy: 'synthetic-doctor',
       organizationId: 'organization-inpatient', verifiedAt: '2026-08-24T07:10:00+08:00' })),
     executions: names.map((_, index) => ({ id: `execution-${index + 1}`, orderId: `order-${index + 1}`, scheduledFor: scheduled[index], status: 'pending', version: 1 })),
     medications: names.map((display, index) => ({ id: `medication-${index + 1}`, display, unit: '片',

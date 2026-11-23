@@ -3,6 +3,10 @@ import { z } from 'zod'
 export const medicationFrequencySchema = z.enum(['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE'])
 export type MedicationFrequency = z.infer<typeof medicationFrequencySchema>
 
+export const medicationRouteCodes = ['PO', 'IVGTT', 'IV', 'IM', 'IH', 'SL', 'TOP', 'INH'] as const
+export const medicationRouteSchema = z.enum(medicationRouteCodes)
+export type MedicationRoute = z.infer<typeof medicationRouteSchema>
+
 /** 有界合成药事规则；剂量单位与目录计价/库存单位分别声明。 */
 export const medicationSafetyRuleSchema = z.object({
   maximumDailyQuantity: z.number().positive(),

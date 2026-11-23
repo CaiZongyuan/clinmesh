@@ -17,9 +17,12 @@ import {
   confirmNoMedicationResponseSchema,
   diagnosisDraftResponseSchema,
   doctorCaseDetailSchema,
+  doctorCompletedCaseDetailSchema,
   encounterCompletionPreviewSchema,
   encounterCompletionResponseSchema,
   issuePrescriptionResponseSchema,
+  paymentPreviewResponseSchema,
+  paymentResponseSchema,
   pharmacyQueueSchema,
   prescriptionDraftResponseSchema,
   withdrawPrescriptionResponseSchema,
@@ -200,11 +203,11 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
     const visit = await startActiveVisit(runtime, password)
     const encounterVersion = await confirmDiagnosis(runtime, visit.doctor, visit.encounterId, visit.encounterVersion, 'diagnosis-coronary-heart-disease')
     const regimen = [
-      { catalogItemId: 'medication-pci-aspirin', doseText: '100 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 },
-      { catalogItemId: 'medication-pci-clopidogrel', doseText: '75 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 },
-      { catalogItemId: 'medication-pci-atorvastatin', doseText: '20 mg', frequencyCode: 'QN', courseDays: 30, quantity: 60 },
-      { catalogItemId: 'medication-metoprolol', doseText: '47.5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 },
-      { catalogItemId: 'medication-perindopril', doseText: '4 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 },
+      { catalogItemId: 'medication-pci-aspirin', doseText: '100 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 },
+      { catalogItemId: 'medication-pci-clopidogrel', doseText: '75 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 },
+      { catalogItemId: 'medication-pci-atorvastatin', doseText: '20 mg', frequencyCode: 'QN', routeCode: 'PO', courseDays: 30, quantity: 60 },
+      { catalogItemId: 'medication-metoprolol', doseText: '47.5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 },
+      { catalogItemId: 'medication-perindopril', doseText: '4 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 },
     ]
     const save = (items: typeof regimen) => runtime.app.request(`/api/his/v1/encounters/${visit.encounterId}/prescription/draft`, {
       method: 'PUT', headers: commandHeaders(visit.doctor), body: JSON.stringify({ expectedVersions: { [visit.encounterRef]: encounterVersion }, input: { expectedDraftVersion: 0, items } }),
@@ -317,6 +320,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
               doseText: '75 mg',
               frequencyCode: 'BID',
               quantity: 10,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -412,6 +416,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
       doseText: '75 mg',
       frequencyCode: 'BID',
       quantity: 10,
+      routeCode: 'PO',
     }
     const referenceItem = {
       catalogItemId: referenceProduct.id,
@@ -419,6 +424,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
       doseText: referenceProduct.strength,
       frequencyCode: 'BID',
       quantity: 1,
+      routeCode: 'PO',
     }
 
     const draftMixed = await runtime.app.request(
@@ -465,7 +471,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
         workspace_id, epoch, case_id, version, draft_json, updated_by, updated_at
       ) VALUES ('workspace-demo', 'epoch-1', ?, 1, ?, 'actor-outpatient-doctor', '2026-08-24T09:00:00+08:00')
     `).run(visit.caseId, JSON.stringify({
-      items: [localItem, { ...referenceItem, referenceProduct }],
+      items: [localItem, { ...referenceItem, referenceProduct: { ...referenceProduct, defaultRouteCode: 'PO', allowedRouteCodes: ['PO'] } }],
     }))
 
     const issueMixed = await runtime.app.request(
@@ -515,6 +521,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
       doseText: '75 mg',
       frequencyCode: 'BID',
       quantity: 10,
+      routeCode: 'PO',
     }
 
     // 1. Unconfirmed primary diagnosis
@@ -564,6 +571,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
       doseText: '0.5 g',
       frequencyCode: 'PRN',
       quantity: 6,
+      routeCode: 'PO',
     }, 9)
     expect(staleDraft.status).toBe(409)
     expect(apiErrorSchema.parse(await staleDraft.json())).toMatchObject({
@@ -599,6 +607,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
       doseText: '0.5 g',
       frequencyCode: 'PRN',
       quantity: 6,
+      routeCode: 'PO',
     })
     expect(allergyConflict.status).toBe(409)
     expect(apiErrorSchema.parse(await allergyConflict.json())).toMatchObject({
@@ -652,6 +661,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
       doseText: '75 mg',
       frequencyCode: 'BID',
       quantity: 10,
+      routeCode: 'PO',
     }
     const noMedRes = await second.runtime.app.request(
       `/api/his/v1/encounters/${secondVisit.encounterId}/medication-conclusion/actions/confirm-no-medication`,
@@ -716,6 +726,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
               kind: 'prescription',
               quantity: 2,
               referenceProduct,
+              routeCode: 'PO',
               source: 'manual',
             }],
           },
@@ -830,6 +841,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
               doseText: referenceProduct.strength,
               frequencyCode: 'QD',
               quantity: 1,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -957,6 +969,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
               doseText: referenceProduct.strength,
               frequencyCode: 'BID',
               quantity: 1,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -1156,5 +1169,207 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
     )
     expect(degradedInpatientSearch.items.find(item => item.id === 'medication-amlodipine')?.status).toBe('available')
     expect(degradedInpatientSearch.items.find(item => item.id === 'medication-amlodipine')?.medication?.packageInsert).toBeUndefined()
+  })
+
+  it('validates hospital and external prescription routes, switches multi-route nitroglycerin SL/PO, and projects routeCode to FHIR, pharmacy queue, and completed cases', async () => {
+    const { password, runtime } = await setupRuntime()
+    const visit = await startActiveVisit(runtime, password, { includeBillingRoles: true })
+    await signClinicalDocument(runtime, visit.doctor, visit.encounterId, visit.encounterVersion)
+    const encounterVersion = await confirmDiagnosis(
+      runtime,
+      visit.doctor,
+      visit.encounterId,
+      visit.encounterVersion,
+      'diagnosis-coronary-heart-disease',
+    )
+    const referenceProduct = syntheticNhsaMedicationProductSnapshot[0]!
+
+    // 1. Disallowed route on hospital medication -> 409 PRESCRIPTION_ROUTE_NOT_ALLOWED, zero partial write
+    const badHospitalRoute = await runtime.app.request(
+      `/api/his/v1/encounters/${visit.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [visit.encounterRef]: encounterVersion },
+          input: {
+            expectedDraftVersion: 0,
+            items: [{
+              catalogItemId: 'medication-nitroglycerin',
+              courseDays: 30,
+              doseText: '0.5 mg',
+              frequencyCode: 'PRN',
+              quantity: 10,
+              routeCode: 'IV',
+            }],
+          },
+        }),
+        headers: commandHeaders(visit.doctor),
+        method: 'PUT',
+      },
+    )
+    expect(badHospitalRoute.status).toBe(409)
+    expect(apiErrorSchema.parse(await badHospitalRoute.json())).toMatchObject({
+      error: { code: 'CATALOG_CONFLICT', reason: 'PRESCRIPTION_ROUTE_NOT_ALLOWED' },
+    })
+
+    // 2. Disallowed route on national reference external medication -> 409 PRESCRIPTION_ROUTE_NOT_ALLOWED
+    const badExternalRoute = await runtime.app.request(
+      `/api/his/v1/encounters/${visit.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [visit.encounterRef]: encounterVersion },
+          input: {
+            expectedDraftVersion: 0,
+            items: [{
+              catalogItemId: referenceProduct.id,
+              courseDays: 3,
+              doseText: referenceProduct.strength,
+              frequencyCode: 'QD',
+              quantity: 1,
+              routeCode: 'IVGTT',
+            }],
+          },
+        }),
+        headers: commandHeaders(visit.doctor),
+        method: 'PUT',
+      },
+    )
+    expect(badExternalRoute.status).toBe(409)
+    expect(apiErrorSchema.parse(await badExternalRoute.json())).toMatchObject({
+      error: { code: 'CATALOG_CONFLICT', reason: 'PRESCRIPTION_ROUTE_NOT_ALLOWED' },
+    })
+    expect((await (await runtime.app.request(`/api/his/v1/doctor/cases/${visit.caseId}`, { headers: { cookie: visit.doctor } })).json()).medicationConclusion?.draft).toBeUndefined()
+
+    // 3. Multi-route nitroglycerin supports switching PO -> SL in draft and persists SL on formal issue
+    const draftPoRes = await runtime.app.request(
+      `/api/his/v1/encounters/${visit.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [visit.encounterRef]: encounterVersion },
+          input: {
+            expectedDraftVersion: 0,
+            items: [{
+              catalogItemId: 'medication-nitroglycerin',
+              courseDays: 30,
+              doseText: '0.5 mg',
+              frequencyCode: 'PRN',
+              quantity: 10,
+              routeCode: 'PO',
+            }],
+          },
+        }),
+        headers: commandHeaders(visit.doctor),
+        method: 'PUT',
+      },
+    )
+    expect(draftPoRes.status).toBe(200)
+    const draftPo = prescriptionDraftResponseSchema.parse(await draftPoRes.json()).data
+
+    const draftSlRes = await runtime.app.request(
+      `/api/his/v1/encounters/${visit.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [visit.encounterRef]: encounterVersion },
+          input: {
+            expectedDraftVersion: draftPo.draftVersion,
+            items: [{
+              catalogItemId: 'medication-nitroglycerin',
+              courseDays: 30,
+              doseText: '0.5 mg',
+              frequencyCode: 'PRN',
+              instructions: '心绞痛发作时舌下含服',
+              quantity: 10,
+              routeCode: 'SL',
+            }],
+          },
+        }),
+        headers: commandHeaders(visit.doctor),
+        method: 'PUT',
+      },
+    )
+    expect(draftSlRes.status).toBe(200)
+    const draftSl = prescriptionDraftResponseSchema.parse(await draftSlRes.json()).data
+
+    const issueRes = await runtime.app.request(
+      `/api/his/v1/encounters/${visit.encounterId}/prescription/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [visit.encounterRef]: encounterVersion },
+          input: { expectedDraftVersion: draftSl.draftVersion },
+        }),
+        headers: commandHeaders(visit.doctor),
+        method: 'POST',
+      },
+    )
+    expect(issueRes.status, await issueRes.clone().text()).toBe(200)
+    const issued = issuePrescriptionResponseSchema.parse(await issueRes.json()).data.prescription
+    expect(issued.items[0]).toMatchObject({ catalogItemId: 'medication-nitroglycerin', routeCode: 'SL' })
+
+    const medRequestRes = await runtime.app.request(
+      `/fhir/R5/MedicationRequest/${issued.items[0]!.medicationRequestId}`,
+      { headers: { cookie: visit.doctor } },
+    )
+    expect(medRequestRes.status).toBe(200)
+    expect(await medRequestRes.json()).toMatchObject({
+      dosageInstruction: [expect.objectContaining({
+        route: {
+          coding: [{
+            code: 'SL',
+            display: '舌下含服',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/medication-route',
+          }],
+          text: '舌下含服（sl）',
+        },
+      })],
+    })
+
+    const completeRes = await runtime.app.request(
+      `/api/his/v1/encounters/${visit.encounterId}/actions/complete`,
+      {
+        body: JSON.stringify({ expectedVersions: { [visit.encounterRef]: encounterVersion }, input: {} }),
+        headers: commandHeaders(visit.doctor),
+        method: 'POST',
+      },
+    )
+    expect(completeRes.status).toBe(200)
+
+    const completedCase = doctorCompletedCaseDetailSchema.parse(
+      await (await runtime.app.request(`/api/his/v1/doctor/completed-cases/${visit.caseId}`, { headers: { cookie: visit.doctor } })).json(),
+    )
+    expect(completedCase.medicationConclusion?.prescription?.items[0]).toMatchObject({ routeCode: 'SL' })
+
+    const bill = billingQueueSchema.parse(
+      await (await runtime.app.request('/api/his/v1/billing/queue?category=medication&status=pending&pageSize=20', {
+        headers: { cookie: visit.cashier },
+      })).json(),
+    ).items.find(item => item.caseId === visit.caseId)!
+    const payPreview = paymentPreviewResponseSchema.parse(
+      await (await runtime.app.request('/api/his/v1/payments/actions/preview', {
+        body: JSON.stringify({
+          expectedVersions: { [`ChargeItem/${bill.chargeItemId}`]: String(bill.chargeVersion) },
+          input: { caseId: visit.caseId, category: 'medication', simulatorRule: 'success' },
+        }),
+        headers: commandHeaders(visit.cashier),
+        method: 'POST',
+      })).json(),
+    ).data
+    paymentResponseSchema.parse(
+      await (await runtime.app.request(`/api/his/v1/payments/${payPreview.previewId}/actions/confirm`, {
+        body: JSON.stringify({
+          expectedVersions: { [`ChargeItem/${payPreview.chargeItemId}`]: String(payPreview.chargeVersion) },
+          input: { commitToken: payPreview.commitToken },
+        }),
+        headers: commandHeaders(visit.cashier),
+        method: 'POST',
+      })).json(),
+    )
+    const pharmacyQueue = pharmacyQueueSchema.parse(
+      await (await runtime.app.request('/api/his/v1/pharmacy/queue?status=pending&pageSize=20', {
+        headers: { cookie: visit.pharmacist },
+      })).json(),
+    )
+    expect(pharmacyQueue.items.find(item => item.prescriptionId === issued.id)?.medications[0]).toMatchObject({
+      medicationId: 'medication-nitroglycerin',
+      routeCode: 'SL',
+    })
   })
 })

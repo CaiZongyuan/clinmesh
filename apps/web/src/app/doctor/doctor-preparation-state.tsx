@@ -1,5 +1,6 @@
 import type { DoctorPreparationSelection, DoctorRecommendationKind, DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import type { DoctorCaseDetail, SessionContext } from '@clinmesh/contracts/his'
+import type { MedicationRoute } from '@clinmesh/contracts/medication-safety'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { generateDoctorRecommendations, getDoctorRecommendations, getSession } from '../api-client.ts'
@@ -101,7 +102,7 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
 
 export type DoctorPreparationJob = ReturnType<typeof useDoctorPreparationJob>
 type InvestigationPreparationDraft = { [Kind in 'laboratory' | 'imaging' | 'pathology']: Omit<Extract<DoctorPreparationSelection, { kind: Kind }>, 'reviewedService'> & { reviewedService?: Extract<DoctorPreparationSelection, { kind: Kind }>['reviewedService'] | undefined } }['laboratory' | 'imaging' | 'pathology']
-export type PreparationDraft = InvestigationPreparationDraft | (Omit<Extract<DoctorPreparationSelection, { kind: 'diagnosis' }>, 'role'> & { role: 'primary' | 'secondary' | null }) | (Omit<Extract<DoctorPreparationSelection, { kind: 'prescription' }>, 'doseText' | 'frequencyCode' | 'courseDays' | 'quantity'> & { doseText: string | null; frequencyCode: string | null; courseDays: number | null; quantity: number | null })
+export type PreparationDraft = InvestigationPreparationDraft | (Omit<Extract<DoctorPreparationSelection, { kind: 'diagnosis' }>, 'role'> & { role: 'primary' | 'secondary' | null }) | (Omit<Extract<DoctorPreparationSelection, { kind: 'prescription' }>, 'doseText' | 'frequencyCode' | 'routeCode' | 'courseDays' | 'quantity'> & { doseText: string | null; frequencyCode: string | null; routeCode: MedicationRoute | null; courseDays: number | null; quantity: number | null })
 export type PreparedEdit = { label: string; selection: PreparationDraft; fingerprint: string; reviewedFingerprint?: string | undefined; formOwned?: boolean | undefined }
 export type DraftPreferences = { edits: Record<string, PreparedEdit>; removed: Record<string, string>; unselected: string[]; completed: Record<string, string[]>; formRevision?: number | undefined }
 type PreparationContext = {

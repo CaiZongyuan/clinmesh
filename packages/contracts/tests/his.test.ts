@@ -327,10 +327,12 @@ describe('HIS contracts', () => {
       allowedDoseTexts: ['75 mg'],
       allowedFrequencyCodes: ['BID'],
       allowedQuantities: [10],
+      allowedRouteCodes: ['PO'],
       defaultCourseDays: 5,
       defaultDoseText: '75 mg',
       defaultFrequencyCode: 'BID',
       defaultQuantity: 10,
+      defaultRouteCode: 'PO',
       id: 'medication-oseltamivir',
       nameEn: 'Oseltamivir phosphate capsules',
       nameZh: '磷酸奥司他韦胶囊',
@@ -370,6 +372,7 @@ describe('HIS contracts', () => {
         doseText: '75 mg',
         frequencyCode: 'BID',
         quantity: 10,
+        routeCode: 'PO',
       }],
     }).success).toBe(true)
     expect(prescriptionDraftContentSchema.safeParse({
@@ -378,6 +381,7 @@ describe('HIS contracts', () => {
         doseText: '75 mg',
         frequencyCode: 'BID',
         quantity: 10,
+        routeCode: 'PO',
       }],
     }).success).toBe(false)
   })

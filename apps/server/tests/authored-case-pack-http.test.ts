@@ -1020,6 +1020,7 @@ it('病例⑤（64 岁女性 T2DM+高血压+CKD 4 期）门诊算出 eGFR=26.0 �
           doseText: med.doseText,
           frequencyCode: med.frequencyCode,
           quantity: med.quantity,
+          routeCode: 'PO',
         }],
       },
     }, 'PUT')
@@ -1052,6 +1053,7 @@ it('病例⑤（64 岁女性 T2DM+高血压+CKD 4 期）门诊算出 eGFR=26.0 �
         doseText: '5 mg',
         frequencyCode: 'QD',
         quantity: 30,
+        routeCode: 'PO',
       }],
     },
   }, 'PUT')

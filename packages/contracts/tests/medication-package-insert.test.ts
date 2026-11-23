@@ -47,10 +47,12 @@ describe('medicationPackageInsertSchema and read-only catalog contracts', () => 
       allowedDoseTexts: ['5 mg'],
       allowedFrequencyCodes: ['QD'],
       allowedQuantities: [30],
+      allowedRouteCodes: ['PO'],
       defaultCourseDays: 30,
       defaultDoseText: '5 mg',
       defaultFrequencyCode: 'QD',
       defaultQuantity: 30,
+      defaultRouteCode: 'PO',
     }
     expect(clinicalCatalogSchema.safeParse({
       diagnoses: [],
@@ -65,6 +67,8 @@ describe('medicationPackageInsertSchema and read-only catalog contracts', () => 
       version: 1,
       priceFen: 1500,
       unit: '片',
+      defaultRouteCode: 'PO',
+      allowedRouteCodes: ['PO'],
       doses: [{ doseText: '5 mg', quantity: 1 }],
       frequencyCodes: ['QD'],
       lots: [],
@@ -100,6 +104,7 @@ describe('medicationPackageInsertSchema and read-only catalog contracts', () => 
       medicationRequestId: 'med-req-1',
       medicationRequestVersion: '1',
       quantity: 30,
+      routeCode: 'PO',
       totalFen: 45000,
       unitPriceFen: 1500,
       packageInsert: sampleInsert,
@@ -117,6 +122,7 @@ describe('medicationPackageInsertSchema and read-only catalog contracts', () => 
       doseQuantity: 1,
       unit: '片',
       frequencyCode: 'QD',
+      routeCode: 'PO',
       state: 'signed',
       version: 1,
       requestVersion: '1',
@@ -128,8 +134,8 @@ describe('medicationPackageInsertSchema and read-only catalog contracts', () => 
   })
 
   it('bumps catalog read operation versions for optional packageInsert projection', () => {
-    expect(getHisOperation('catalog.clinical.read').version).toBe(3)
-    expect(getHisOperation('inpatient.catalog.search').version).toBe(3)
-    expect(getHisOperation('inpatient.clinical.catalog').version).toBe(4)
+    expect(getHisOperation('catalog.clinical.read').version).toBe(4)
+    expect(getHisOperation('inpatient.catalog.search').version).toBe(4)
+    expect(getHisOperation('inpatient.clinical.catalog').version).toBe(5)
   })
 })

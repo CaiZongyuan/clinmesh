@@ -1,5 +1,6 @@
 import { doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
 import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
+import type { MedicationRoute } from '@clinmesh/contracts/medication-safety'
 import {
   doctorQueueViewStatusGroups,
   type ClinicalDocumentContent,
@@ -1071,6 +1072,7 @@ export function useDoctorCaseModel({
         doseText: string
         frequencyCode: string
         quantity: number
+        routeCode: MedicationRoute
       }>
     }) => {
       if (detail.data?.caseId !== input.caseId) throw new Error(messages.consultationUnavailable)

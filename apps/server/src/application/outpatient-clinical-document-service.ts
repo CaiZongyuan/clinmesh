@@ -1,4 +1,6 @@
 import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
+import { medicationRouteSchema, type MedicationRoute } from '@clinmesh/contracts/medication-safety'
+import { medicationRouteConcept } from '@clinmesh/core/medication-safety'
 import type { ClinicalQualityService } from './clinical-quality-service.ts'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
 import {
@@ -317,7 +319,7 @@ export class OutpatientClinicalDocumentService {
     } | undefined
     if (prescription !== undefined) {
       const items = this.#context.database.driver.prepare(`
-        SELECT medication_request_id, medication_id, quantity, dose_text, frequency_code
+        SELECT medication_request_id, medication_id, quantity, dose_text, frequency_code, route_code
         FROM prescription_item
         WHERE workspace_id = ? AND epoch = ? AND prescription_id = ?
         ORDER BY medication_request_id
@@ -327,6 +329,7 @@ export class OutpatientClinicalDocumentService {
         medication_id: string
         medication_request_id: string
         quantity: number
+        route_code: string
       }>
       drafts.prescription = {
         id: prescription.prescription_id,
@@ -336,6 +339,7 @@ export class OutpatientClinicalDocumentService {
           medicationId: item.medication_id,
           medicationRequestId: item.medication_request_id,
           quantity: item.quantity,
+          routeCode: medicationRouteSchema.parse(item.route_code),
           versionId: this.#context.fhir.read(context, 'MedicationRequest', item.medication_request_id).meta?.versionId,
         })),
         number: prescription.prescription_number,
@@ -561,6 +565,7 @@ export class OutpatientClinicalDocumentService {
         doseText: string
         frequencyCode: string
         quantity: number
+        routeCode: MedicationRoute
       }>
     }
     encounterId: string
@@ -649,7 +654,9 @@ export class OutpatientClinicalDocumentService {
         courseDays: medication.courseDays,
         doseText: medication.doseText,
         frequencyCode: medication.frequencyCode,
+        nameZh: medication.catalog.name_zh,
         quantity: medication.quantity,
+        routeCode: medication.routeCode,
       })), [input.draft.diagnosis.code])
       this.#host.assertMedicationAllergies(
         input.context,
@@ -748,7 +755,10 @@ export class OutpatientClinicalDocumentService {
           encounter: { reference: `Encounter/${input.encounterId}` },
           authoredOn: now,
           requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
-          dosageInstruction: [{ text: `${medication.doseText} ${medication.frequencyCode}` }],
+          dosageInstruction: [{
+            route: medicationRouteConcept(medication.routeCode),
+            text: `${medication.doseText} ${medication.frequencyCode}`,
+          }],
           dispenseRequest: { quantity: { value: medication.quantity } },
           groupIdentifier: {
             system: 'https://caizongyuan.github.io/clinmesh/fhir/prescription-number',
@@ -766,8 +776,8 @@ export class OutpatientClinicalDocumentService {
             INSERT INTO prescription_item (
               workspace_id, epoch, prescription_id, medication_request_id,
               medication_id, medication_snapshot_json, quantity, dose_text,
-              frequency_code, course_days
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              frequency_code, route_code, course_days
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             input.context.workspaceId,
             input.context.epoch,
@@ -778,6 +788,7 @@ export class OutpatientClinicalDocumentService {
             medication.quantity,
             medication.doseText,
             medication.frequencyCode,
+            medication.routeCode,
             medication.courseDays,
           )
           medicationEffects.push({ kind: 'created', resource })
@@ -793,7 +804,7 @@ export class OutpatientClinicalDocumentService {
           this.#context.database.driver.prepare(`
             UPDATE prescription_item
             SET medication_id = ?, medication_snapshot_json = ?, quantity = ?,
-              dose_text = ?, frequency_code = ?, course_days = ?
+              dose_text = ?, frequency_code = ?, route_code = ?, course_days = ?
             WHERE workspace_id = ? AND epoch = ? AND prescription_id = ?
               AND medication_request_id = ?
           `).run(
@@ -802,6 +813,7 @@ export class OutpatientClinicalDocumentService {
             medication.quantity,
             medication.doseText,
             medication.frequencyCode,
+            medication.routeCode,
             medication.courseDays,
             input.context.workspaceId,
             input.context.epoch,
@@ -1022,7 +1034,7 @@ export class OutpatientClinicalDocumentService {
       }
       const medications = this.#context.database.driver.prepare(`
         SELECT item.medication_request_id, item.medication_id, item.quantity,
-          item.dose_text, item.frequency_code, item.course_days, catalog.code, catalog.config_json,
+          item.dose_text, item.frequency_code, item.route_code, item.course_days, catalog.code, catalog.config_json,
           catalog.name_zh, catalog.name_en, catalog.price_fen
         FROM prescription_item AS item
         JOIN outpatient_catalog AS catalog
@@ -1044,6 +1056,7 @@ export class OutpatientClinicalDocumentService {
         name_zh: string
         price_fen: number
         quantity: number
+        route_code: string
       }>
       if (medications.length === 0) throw new WorkflowError('CATALOG_CONFLICT', 'The prescription has no active medication')
       const revisit = revisitDraftContentSchema.parse(draftMap.get('revisit')?.content_json === undefined
@@ -1058,7 +1071,9 @@ export class OutpatientClinicalDocumentService {
         courseDays: medication.course_days,
         doseText: medication.dose_text,
         frequencyCode: medication.frequency_code,
+        nameZh: medication.name_zh,
         quantity: medication.quantity,
+        routeCode: medicationRouteSchema.parse(medication.route_code),
       })), [revisit.diagnosis.code])
       this.#host.assertMedicationAllergies(input.context, outpatientCase.patient_id, medications)
       const medicationTotalFen = medications.reduce(
@@ -1237,7 +1252,7 @@ export class OutpatientClinicalDocumentService {
       )
       const medicationRows = this.#context.database.driver.prepare(`
         SELECT item.medication_request_id, item.medication_id, item.quantity,
-          item.dose_text, item.frequency_code, item.course_days, catalog.name_zh, catalog.name_en,
+          item.dose_text, item.frequency_code, item.route_code, item.course_days, catalog.name_zh, catalog.name_en,
           catalog.code, catalog.config_json, catalog.price_fen, catalog.version
         FROM prescription_item AS item
         JOIN outpatient_catalog AS catalog
@@ -1260,6 +1275,7 @@ export class OutpatientClinicalDocumentService {
         name_zh: string
         price_fen: number
         quantity: number
+        route_code: string
         version: number
       }>
       this.#host.assertMedicationCatalogRules(medicationRows.map(medication => ({
@@ -1268,7 +1284,9 @@ export class OutpatientClinicalDocumentService {
         courseDays: medication.course_days,
         doseText: medication.dose_text,
         frequencyCode: medication.frequency_code,
+        nameZh: medication.name_zh,
         quantity: medication.quantity,
+        routeCode: medicationRouteSchema.parse(medication.route_code),
       })), [revisitDraft.diagnosis.code])
       const medicationTotalFen = medicationRows.reduce(
         (total, medication) => total + medication.price_fen * medication.quantity,

@@ -111,7 +111,7 @@ describe('HIS operation catalog', () => {
     })
     expect(operation.input.safeParse({ page: 1, pageSize: 20, query: '血' }).success).toBe(false)
     const medicationOperation = getHisOperation('reference.medications.search')
-    expect(medicationOperation.version).toBe(3)
+    expect(medicationOperation.version).toBe(4)
     expect(medicationOperation.input.parse({ page: 1, pageSize: 20, query: '氯' })).toEqual({
       page: 1,
       pageSize: 20,
@@ -958,13 +958,13 @@ it('publishes read-only clinical quality preflight queries and clinicalOverride 
   expect(dischargeIssue.http.encodeBody?.({ admissionId: 'adm-1', encounterVersion: '3', reason: '好转出院', clinicalOverride }))
     .toEqual({ input: { encounterVersion: '3', reason: '好转出院', clinicalOverride } })
 
-  expect(getHisOperation('encounter.prescription.issue').version).toBe(5)
-  expect(getHisOperation('doctor.case.get').version).toBe(21)
-  expect(getHisOperation('doctor.completed-cases.get').version).toBe(6)
-  expect(getHisOperation('doctor.case.history.read').version).toBe(2)
-  expect(getHisOperation('inpatient.catalog.search').version).toBe(3)
-  expect(getHisOperation('inpatient.clinical.catalog').version).toBe(4)
-  expect(getHisOperation('inpatient.order.issue').version).toBe(9)
+  expect(getHisOperation('encounter.prescription.issue').version).toBe(6)
+  expect(getHisOperation('doctor.case.get').version).toBe(22)
+  expect(getHisOperation('doctor.completed-cases.get').version).toBe(7)
+  expect(getHisOperation('doctor.case.history.read').version).toBe(3)
+  expect(getHisOperation('inpatient.catalog.search').version).toBe(4)
+  expect(getHisOperation('inpatient.clinical.catalog').version).toBe(5)
+  expect(getHisOperation('inpatient.order.issue').version).toBe(10)
   expect(getHisOperation('inpatient.surgery.request').version).toBe(3)
   expect(getHisOperation('inpatient.surgery.start').version).toBe(2)
   expect(getHisOperation('inpatient.surgery.record-material').version).toBe(2)

@@ -241,8 +241,16 @@ describe('固定 PCI 数据公开 Command 与目录回读', () => {
     expect(diagnosed.status).toBe(200)
     const clinical = inpatientFullClinicalResponseSchema.parse(await diagnosed.json()).data
     const medications = inpatientFullCatalogSchema.parse(await (await s.request(doctor.cookie, '/api/his/v1/inpatient/clinical-catalog')).json()).medications
+    expect(medications.find(item => item.id === 'medication-pci-iohexol')).toMatchObject({
+      defaultRouteCode: 'IV',
+      allowedRouteCodes: ['IV', 'IVGTT'],
+    })
+    expect(medications.find(item => item.id === 'medication-pci-heparin')).toMatchObject({
+      defaultRouteCode: 'IV',
+      allowedRouteCodes: ['IV', 'IVGTT', 'IH'],
+    })
     const issued = await s.request(doctor.cookie, `${path}/orders/issue`, { encounterVersion: clinical.encounterVersion, duration: 'temporary', selection: {
-      kind: 'medication', catalogItemId: 'medication-pci-clopidogrel', catalogVersion: medications.find(item => item.id === 'medication-pci-clopidogrel')!.version, doseText: '75 mg', doseQuantity: 1, frequencyCode: 'QD' } })
+      kind: 'medication', catalogItemId: 'medication-pci-clopidogrel', catalogVersion: medications.find(item => item.id === 'medication-pci-clopidogrel')!.version, doseText: '75 mg', doseQuantity: 1, frequencyCode: 'QD', routeCode: 'PO' } })
     expect(issued.status).toBe(200)
     const order = inpatientFullClinicalResponseSchema.parse(await issued.json()).data.orders[0]!
     const checked = await s.request(nurse.cookie, `${path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })

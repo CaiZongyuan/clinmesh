@@ -920,6 +920,7 @@ describe('clinmesh CLI process over real HTTP', () => {
           doseText: '75 mg',
           frequencyCode: 'BID',
           quantity: 10,
+          routeCode: 'PO',
         }],
       }),
       'encounter.prescription.draft.set',

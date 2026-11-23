@@ -8,6 +8,7 @@ import {
   inpatientVitalSignsInputSchema,
   outpatientRiskAssessmentInputSchema,
 } from '@clinmesh/contracts/clinical-scores'
+import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
 import { guidelineTopicQuerySchema } from '@clinmesh/contracts/guideline-topics'
 import { orderSetDraftQuerySchema, orderSetTemplateListQuerySchema } from '@clinmesh/contracts/order-set-templates'
 import { inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from '@clinmesh/contracts/inpatient-drg-review'
@@ -2852,6 +2853,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
               doseText: z.string().trim().min(1).max(120),
               frequencyCode: z.string().trim().min(1).max(32),
               quantity: z.number().int().min(1).max(1_000),
+              routeCode: medicationRouteSchema,
             })).min(1).max(8),
           }),
         }).parse(await context.req.json())

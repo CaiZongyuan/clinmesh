@@ -1,4 +1,4 @@
-import { formatMedicationFrequency } from '@clinmesh/core/medication-safety'
+import { formatMedicationFrequency, formatMedicationRoute } from '@clinmesh/core/medication-safety'
 import {
   type ClinicalCatalog,
   type DoctorCompletedCaseDetail,
@@ -855,6 +855,7 @@ function PrescriptionHistory({ catalog, locale, prescription }: {
               <TableHead>{locale === 'zh-CN' ? '规格与包装' : 'Strength & package'}</TableHead>
               <TableHead>{messages.dose}</TableHead>
               <TableHead>{messages.frequency}</TableHead>
+              <TableHead>{messages.route}</TableHead>
               <TableHead>{messages.course}</TableHead>
               <TableHead>{messages.quantity}</TableHead>
             </TableRow>
@@ -870,6 +871,7 @@ function PrescriptionHistory({ catalog, locale, prescription }: {
                   </TableCell>
                   <TableCell>{item.doseText}</TableCell>
                   <TableCell>{formatMedicationFrequency(item.frequencyCode, locale)}</TableCell>
+                  <TableCell>{formatMedicationRoute(item.routeCode, locale)}</TableCell>
                   <TableCell>{item.courseDays} {messages.days}</TableCell>
                   <TableCell>{unit ? `${item.quantity} ${unit}` : item.quantity}</TableCell>
                 </TableRow>

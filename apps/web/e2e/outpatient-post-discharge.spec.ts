@@ -30,7 +30,7 @@ async function prepareStoppedMedication(fixture: PciPaymentDrgFixture, path: str
   const current = await fixture.read('inpatient-doctor', path, inpatientDetailSchema)
   const issued = await parsePciResponse(inpatientFullClinicalResponseSchema, await fixture.request('inpatient-doctor', `${path}/orders/issue`, {
     encounterVersion: current.admission.versionId, duration: 'long', expectedDrgFingerprint: evaluation.fingerprint,
-    selection: { kind: 'medication', catalogItemId: medication.id, catalogVersion: medication.version, doseText: '100 mg', frequencyCode: 'QD', doseQuantity: 1 },
+    selection: { kind: 'medication', catalogItemId: medication.id, catalogVersion: medication.version, doseText: '100 mg', frequencyCode: 'QD', doseQuantity: 1, routeCode: medication.defaultRouteCode },
   }))
   const order = issued.data.orders.find(item => item.catalogItemId === medication.id && item.state === 'signed')!
   const verified = await parsePciResponse(inpatientFullClinicalResponseSchema, await fixture.request('ward-nurse', `${path}/orders/verify`, {
@@ -116,10 +116,10 @@ test('出院患者从既有档案办理独立门诊问诊并读取有日期和�
   await expect(history.getByText(/冠状动脉支架/)).toBeVisible()
   const stopped = history.getByRole('listitem').filter({ hasText: stoppedMedication }).filter({ hasText: '已停用' })
   await expect(stopped).toHaveCount(1)
-  await expect(stopped).toContainText('100 mg · 每日一次（QD） · 已停用')
+  await expect(stopped).toContainText('100 mg · 每日一次（QD） · 口服（po） · 已停用')
   const record = doctorCaseHistoryDetailSchema.parse(await (await page.request.get(`${app.origin}/api/his/v1/doctor/cases/${outpatient.caseId}/history/detail?source=local-completed&entryId=${encodeURIComponent(`inpatient:${stay.admissionId}`)}`)).json())
   expect(record).toMatchObject({ source: 'local-completed', record: { kind: 'inpatient', admissionId: stay.admissionId,
-    medications: expect.arrayContaining([expect.objectContaining({ display: stoppedMedication, state: 'stopped' })]) } })
+    medications: expect.arrayContaining([expect.objectContaining({ display: stoppedMedication, routeCode: 'PO', state: 'stopped' })]) } })
   await page.setViewportSize({ width: 826, height: 900 })
   const scroll = history.locator('div.overflow-auto')
   await expect.poll(() => scroll.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)

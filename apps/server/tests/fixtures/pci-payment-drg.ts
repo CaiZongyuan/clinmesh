@@ -269,7 +269,7 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     const { suffix, doseText, doseQuantity, frequencyCode, surgeryExecutionId } = input
     const catalog = await read('inpatient-doctor', '/api/his/v1/inpatient/clinical-catalog', inpatientFullCatalogSchema)
     const medication = catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!
-    const selection = { kind: 'medication', catalogItemId: medication.id, catalogVersion: medication.version, doseText, frequencyCode, doseQuantity }
+    const selection = { kind: 'medication', catalogItemId: medication.id, catalogVersion: medication.version, doseText, frequencyCode, routeCode: medication.defaultRouteCode, doseQuantity }
     const draft = { medications: [{ catalogItemId: medication.id, catalogVersion: medication.version, doseText, frequencyCode, doseQuantity }], services: [] }
     const evaluation = await parsePciResponse(inpatientDrgSimulationSchema, await request('inpatient-doctor', `${stay.path}/drg/simulation`, draft))
     const admission = await read('inpatient-doctor', stay.path, inpatientDetailSchema)

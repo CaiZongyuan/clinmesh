@@ -11,7 +11,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
-import { formatMedicationFrequency } from '@clinmesh/core/medication-safety'
+import { formatMedicationFrequency, formatMedicationRoute } from '@clinmesh/core/medication-safety'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CircleAlertIcon, CopyIcon, PackageCheckIcon, PillIcon } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
@@ -464,7 +464,7 @@ function PrescriptionDetails({
           value: option.id,
         }))
         return <TableRow key={medication.medicationRequestId}>
-          <TableCell><span className="font-medium">{name}</span><span className="mt-1 block text-xs text-muted-foreground">{medication.doseText} · {formatMedicationFrequency(medication.frequencyCode, locale)}</span><span className="mt-1 block text-xs text-muted-foreground tabular-nums">{messages.unitPrice} {formatFen(medication.unitPriceFen, locale)}</span></TableCell>
+          <TableCell><span className="font-medium">{name}</span><span className="mt-1 block text-xs text-muted-foreground">{medication.doseText} · {formatMedicationFrequency(medication.frequencyCode, locale)} · {formatMedicationRoute(medication.routeCode, locale)}</span><span className="mt-1 block text-xs text-muted-foreground tabular-nums">{messages.unitPrice} {formatFen(medication.unitPriceFen, locale)}</span></TableCell>
           <TableCell className="text-xs font-medium tabular-nums"><span className="sr-only">{messages.quantity} </span>{medication.quantity}</TableCell>
           <TableCell className="text-xs font-medium tabular-nums"><span className="sr-only">{messages.dispensedQuantity} </span>{medication.dispensedQuantity}</TableCell>
           <TableCell className="text-xs font-medium text-primary tabular-nums"><span className="sr-only">{messages.remainingQuantity} </span>{medication.remainingQuantity}</TableCell>

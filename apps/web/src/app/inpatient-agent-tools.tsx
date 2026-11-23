@@ -1,3 +1,4 @@
+import { formatMedicationRoute } from '@clinmesh/core/medication-safety'
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { agentToolInputSchemas, parseAgentToolInput, type AgentOperationId, type InpatientStage } from '@clinmesh/contracts/agent'
@@ -238,7 +239,7 @@ export function useInpatientAgentTools(input: Input) {
           const { order } = check()
           return review.request({ anchor: inpatientOrderAnchor(input.admission.id, order.id), signal,
             title: t('校对医嘱', 'Verify order'), confirmLabel: t('确认校对', 'Confirm verification'),
-            description: `${input.bedLabel} · ${input.admission.patientName} · ${order.display} · ${order.doseText}`,
+            description: `${input.bedLabel} · ${input.admission.patientName} · ${order.display} · ${order.doseText}${order.kind === 'medication' ? ` · ${formatMedicationRoute(order.routeCode, input.locale)}` : ''}`,
             onConfirm: async () => {
               const { frame } = check()
               const result = await frame.write.mutation.mutateAsync({ operation: 'inpatient.order.verify', input: { ...values, admissionId: frame.admission.id } })

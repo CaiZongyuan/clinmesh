@@ -7,7 +7,7 @@ import {
 } from '@clinmesh/contracts/clinical-scores'
 import { guidelineTopicIdSchema, type GuidelineTopicBundle, type GuidelineTopicId } from '@clinmesh/contracts/guideline-topics'
 import { inpatientAngiographyReportSchema } from '@clinmesh/contracts/inpatient-angiography'
-import { inpatientDiagnosisSchema, inpatientOrderSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientDiagnosisSchema, inpatientMedicationOrderSchema } from '@clinmesh/contracts/inpatient-clinical'
 import {
   inpatientGuidelineAdviceConclusionSchema,
   inpatientGuidelineAdviceEvidenceSchema,
@@ -178,7 +178,7 @@ const admissionTopicFactsSchema = z.object({
   scores: z.array(clinicalScoreResultSchema),
   riskAssessment: clinicalRiskAssessmentRecordSchema,
   supplementaryIndicators: supplementaryIndicatorsSchema,
-  activeMedicationOrders: z.array(inpatientOrderSchema.pick({
+  activeMedicationOrders: z.array(inpatientMedicationOrderSchema.pick({
     id: true,
     catalogItemId: true,
     display: true,

@@ -1,3 +1,4 @@
+import type { MedicationRoute } from '@clinmesh/contracts/medication-safety'
 import {
   orderSetTemplateSchema,
   type OrderSetScope,
@@ -22,7 +23,7 @@ const medication = (
   medicationKey: string,
   doseText: string,
   frequencyCode: 'QD' | 'BID' | 'QN' | 'PRN' | 'ONCE',
-  extra: { courseDays?: number; inpatientDuration?: 'long' | 'temporary'; instructionsZh?: string; prnQuantity?: number; rules?: OrderSetScreeningRule[] } = {},
+  extra: { courseDays?: number; inpatientDuration?: 'long' | 'temporary'; instructionsZh?: string; prnQuantity?: number; routeCode?: MedicationRoute; rules?: OrderSetScreeningRule[] } = {},
 ): OrderSetTemplateOption => ({
   courseDays: extra.courseDays ?? (frequencyCode === 'ONCE' ? 1 : 30),
   doseText,
@@ -32,6 +33,7 @@ const medication = (
   kind: 'medication',
   medicationKey,
   ...(extra.prnQuantity === undefined ? {} : { prnQuantity: extra.prnQuantity }),
+  routeCode: extra.routeCode ?? 'PO',
   rules: extra.rules ?? [],
 })
 const rule = (
@@ -203,6 +205,7 @@ const definitions: Array<Omit<OrderSetTemplate, 'fingerprint'>> = [
           courseDays: 1,
           inpatientDuration: 'temporary',
           instructionsZh: '静脉滴注，常规按 1 mL/kg/h 调整滴速（合并心力衰竭或 LVEF ≤ 35% 时减至 0.5 mL/kg/h），覆盖造影前 3–12 h 至术后 6–24 h',
+          routeCode: 'IVGTT',
         })],
         rationaleZh: '等渗盐水静脉水化是对比剂相关急性肾损伤高危患者的预防措施。',
         rules: [
@@ -290,7 +293,7 @@ const definitions: Array<Omit<OrderSetTemplate, 'fingerprint'>> = [
       {
         key: 'nitroglycerin-prn',
         kind: 'medication',
-        options: [medication('nitroglycerin', '0.5 mg', 'PRN', { instructionsZh: '心绞痛发作时舌下含服，5 分钟不缓解可重复，最多 3 次', prnQuantity: 10 })],
+        options: [medication('nitroglycerin', '0.5 mg', 'PRN', { instructionsZh: '心绞痛发作时舌下含服，5 分钟不缓解可重复，最多 3 次', prnQuantity: 10, routeCode: 'SL' })],
         rationaleZh: '硝酸甘油按需缓解心绞痛发作；低血压时禁用。',
         rules: [rule('systolicMmHg', 'below', 90, 'exclude', '收缩压 < 90 mmHg 时禁用硝酸酯类')],
         scopes: both,

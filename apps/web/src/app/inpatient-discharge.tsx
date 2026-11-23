@@ -1,3 +1,4 @@
+import { formatMedicationRoute } from '@clinmesh/core/medication-safety'
 import { inpatientDischargeEventsSchema, inpatientSettlementPreviewSchema, inpatientPaymentsSchema, type inpatientDepartureMethodSchema } from '@clinmesh/contracts/inpatient-discharge'
 import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.tsx'
@@ -114,7 +115,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
       ...(pendingInvestigations ? { owner: t('住院医生与医技科室', 'Doctor and investigation staff'), go: { label: t('去检查检验', 'Open investigations'), stage: 'investigations' as const } } : {}) },
     { key: 'transfer', done: pendingTransfers === 0, title: t('转科', 'Transfers'), detail: pendingTransfers === 0 ? t('无', 'None') : t(`${pendingTransfers} 项转科任务尚未接收或取消`, `${pendingTransfers} transfers remain unreceived or uncancelled`),
       ...(pendingTransfers ? { owner: t('转科相关岗位', 'Transfer staff'), go: { label: t('去转科交接', 'Open transfer'), stage: 'transfer' as const } } : {}) },
-    { key: 'orders', done: activity?.clinical !== undefined && pendingOrders === 0, title: t('在用医嘱', 'Active orders'), detail: known(activity?.clinical, pendingOrders, t('已全部停止或完成', 'All stopped or completed'), `${activeOrders.map(order => `${order.display} ${order.doseText} ${inpatientFrequencyLabel(order.frequencyCode, locale, false)} · ${order.duration === 'long' ? t('长期', 'long-term') : t('临时', 'temporary')}`).join(t('；', '; '))} ${t('未停', 'still active')}`),
+    { key: 'orders', done: activity?.clinical !== undefined && pendingOrders === 0, title: t('在用医嘱', 'Active orders'), detail: known(activity?.clinical, pendingOrders, t('已全部停止或完成', 'All stopped or completed'), `${activeOrders.map(order => `${order.display} ${order.doseText} ${inpatientFrequencyLabel(order.frequencyCode, locale, false)}${order.kind === 'medication' ? ` ${formatMedicationRoute(order.routeCode, locale)}` : ''} · ${order.duration === 'long' ? t('长期', 'long-term') : t('临时', 'temporary')}`).join(t('；', '; '))} ${t('未停', 'still active')}`),
       ...(doctorStops ? { owner: t('住院医生', 'Inpatient doctor'), go: { label: t('去停嘱', 'Request stops'), stage: 'orders' as const } } : {}) },
   ]
   const lastStoppedTime = activity?.clinical?.orders.map(order => order.verifiedAt ?? order.signedAt).filter((v): v is string => Boolean(v)).sort().at(-1) ?? latest('issue')?.virtualTime

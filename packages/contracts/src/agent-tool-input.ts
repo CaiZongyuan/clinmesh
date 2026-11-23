@@ -4,7 +4,7 @@ import { doctorCaseHistoryInputSchema, doctorCaseHistoryDetailInputSchema } from
 import { guidelineTopicQuerySchema } from './guideline-topics.ts'
 import { inpatientOrderActionInputSchema } from './inpatient-clinical.ts'
 import { inpatientInvestigationAcknowledgeInputSchema } from './inpatient-investigations.ts'
-import { medicationFrequencySchema } from './medication-safety.ts'
+import { medicationFrequencySchema, medicationRouteSchema } from './medication-safety.ts'
 import { orderSetDraftQuerySchema, outpatientOrderSetTemplateIds } from './order-set-templates.ts'
 import {
   clinicalDocumentContentSchema,
@@ -106,6 +106,7 @@ const revisitDraftInputSchema = z.object({
     doseText: z.string().trim().min(1).max(120),
     frequencyCode: z.string().trim().min(1).max(32),
     quantity: z.number().int().min(1).max(1_000),
+    routeCode: medicationRouteSchema,
   }).strict()).min(1).max(8),
 }).strict()
 const reportCorrectionInputSchema = z.object({

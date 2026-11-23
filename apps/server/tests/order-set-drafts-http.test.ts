@@ -688,15 +688,17 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
             frequencyCode: item.candidate.frequencyCode,
             ...(item.candidate.instructionsZh ? { instructions: item.candidate.instructionsZh } : {}),
             quantity: item.candidate.outpatient.quantity,
+            routeCode: item.candidate.routeCode,
           }]
         : [],
     )
     expect(prescriptionItems).toHaveLength(6)
-    expect(prescriptionItems.find(item => item.catalogItemId === 'medication-pci-aspirin')).toMatchObject({ courseDays: 30, quantity: 30 })
+    expect(prescriptionItems.find(item => item.catalogItemId === 'medication-pci-aspirin')).toMatchObject({ courseDays: 30, quantity: 30, routeCode: 'PO' })
     expect(prescriptionItems.find(item => item.catalogItemId === 'medication-nitroglycerin')).toMatchObject({
       courseDays: 30,
       instructions: '心绞痛发作时舌下含服，5 分钟不缓解可重复，最多 3 次',
       quantity: 10,
+      routeCode: 'SL',
     })
     const savedRx = prescriptionDraftResponseSchema.parse(await (await postJson(
       `/api/his/v1/encounters/${visit.encounterId}/prescription/draft`,
@@ -913,6 +915,7 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
       frequencyCode: 'ONCE',
       inpatient: { doseQuantity: 2, duration: 'temporary' },
       kind: 'medication',
+      routeCode: 'IVGTT',
     })
 
     // ACEI in secondary prevention receives a caution (needs-review) because 30 <= eGFR < 60, while other 5 drugs are ready
@@ -978,6 +981,7 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
             frequencyCode: salineCandidate.frequencyCode,
             ...(salineCandidate.instructionsZh ? { instructions: salineCandidate.instructionsZh } : {}),
             kind: 'medication',
+            routeCode: salineCandidate.routeCode,
           },
         },
       })

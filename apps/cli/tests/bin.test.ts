@@ -64,7 +64,7 @@ describe('clinmesh process entrypoint', () => {
       expect.objectContaining({ id: 'inpatient.surgery.preview-completion', version: 2 }),
       expect.objectContaining({ id: 'inpatient.surgery.complete', version: 3 }),
       expect.objectContaining({ id: 'inpatient.surgery.execute', version: 3 }),
-      expect.objectContaining({ id: 'inpatient.order.issue', version: 9 }),
+      expect.objectContaining({ id: 'inpatient.order.issue', version: 10 }),
       expect.objectContaining({id:'inpatient.investigation.catalog',version:2}),
       expect.objectContaining({id:'inpatient.investigation.read',version:3}),
       expect.objectContaining({id:'inpatient.transfer.catalog',version:1}),

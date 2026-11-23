@@ -1,6 +1,6 @@
 import { medicationCombinationConflict, medicationIndicationMatches } from '@clinmesh/core/medication-safety'
 import { medicationSafetyRuleSchema } from '@clinmesh/contracts/medication-safety'
-import { standardMedicationSafety } from './scenario-data/standard-medications.ts'
+import { standardMedicationRoutes, standardMedicationSafety } from './scenario-data/standard-medications.ts'
 import { standardMedicationPackageInsert } from './scenario-data/medication-package-inserts.ts'
 import { z } from 'zod'
 import { inpatientPciDataSchema, inpatientPciDataPrepareRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
@@ -141,9 +141,11 @@ export class InpatientPciData {
       const { sourceLocator: _sourceLocator, status: _status, ...productSnapshot } = definition.product
       const safety = standardMedicationSafety(itemId)
       const packageInsert = standardMedicationPackageInsert(itemId) ?? standardMedicationPackageInsert(definition.id)
+      const routes = standardMedicationRoutes(itemId) ?? standardMedicationRoutes(definition.id)
       const defaults = {
         ...(safety ? { safety } : {}),
         ...(packageInsert ? { packageInsert } : {}),
+        ...(routes ? routes : {}),
         product: productSnapshot, availableScopes: ['outpatient', 'inpatient'], unit: supplement.unit,
         dose: supplement.suggestedDoseText, frequency: supplement.frequencyCodes[0], route: supplement.route,
         inpatientDoses: [{ doseText: supplement.suggestedDoseText, quantity: supplement.suggestedQuantity }],

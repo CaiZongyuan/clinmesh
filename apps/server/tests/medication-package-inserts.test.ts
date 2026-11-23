@@ -9,7 +9,7 @@ import {
   syntheticNhcMedicalServiceSnapshot,
   syntheticWstValueSetSnapshot,
 } from '../src/application/scenario-data/medical-service-snapshot.ts'
-import { standardMedicationSafety } from '../src/application/scenario-data/standard-medications.ts'
+import { standardMedicationRoutes, standardMedicationSafety } from '../src/application/scenario-data/standard-medications.ts'
 import { standardMedicationPackageInsert } from '../src/application/scenario-data/medication-package-inserts.ts'
 import { inpatientMedicationConfigSchema, inpatientMedicationMissingFields } from '../src/application/inpatient-medication-config.ts'
 
@@ -124,5 +124,26 @@ describe('synthetic medication package inserts and clinical rule alignment', () 
       expect(inpatientMedicationMissingFields(malformed, 1500)).toEqual([])
       expect(inpatientMedicationConfigSchema.parse(malformed).packageInsert).toBeUndefined()
     }
+  })
+
+  it('declares controlled defaultRouteCode and allowedRouteCodes for all 22 baseline medications plus PCI iohexol', () => {
+    const expectedNonOral: Record<string, { defaultRouteCode: string; allowedRouteCodes: string[] }> = {
+      'medication-nitroglycerin': { defaultRouteCode: 'SL', allowedRouteCodes: ['SL', 'PO'] },
+      'medication-pci-heparin': { defaultRouteCode: 'IV', allowedRouteCodes: ['IV', 'IVGTT', 'IH'] },
+      'medication-enoxaparin': { defaultRouteCode: 'IH', allowedRouteCodes: ['IH'] },
+      'medication-sodium-chloride': { defaultRouteCode: 'IVGTT', allowedRouteCodes: ['IVGTT', 'IV'] },
+    }
+    for (const medication of baseline.catalog.medications) {
+      const expected = expectedNonOral[medication.id] ?? { defaultRouteCode: 'PO', allowedRouteCodes: ['PO'] }
+      expect({
+        defaultRouteCode: medication.workflow.defaultRouteCode,
+        allowedRouteCodes: medication.workflow.allowedRouteCodes,
+      }, medication.id).toEqual(expected)
+      expect(standardMedicationRoutes(medication.id), medication.id).toEqual(expected)
+    }
+    expect(standardMedicationRoutes('medication-pci-iohexol')).toEqual({
+      defaultRouteCode: 'IV',
+      allowedRouteCodes: ['IV', 'IVGTT'],
+    })
   })
 })

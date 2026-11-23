@@ -139,14 +139,14 @@ async function saveOutpatientPrescriptionDraft(
   fixture: PciPaymentDrgFixture,
   encounterId: string,
   encounterVersion: string,
-  items: Array<{ catalogItemId: string; courseDays: number; doseText: string; frequencyCode: string; quantity: number }>,
+  items: Array<{ catalogItemId: string; courseDays: number; doseText: string; frequencyCode: string; quantity: number; routeCode?: string }>,
   expectedDraftVersion = 0,
 ) {
   const cookie = await fixture.login('doctor')
   const draftRes = await fixture.runtime.app.request(`http://localhost/api/his/v1/encounters/${encounterId}/prescription/draft`, {
     body: JSON.stringify({
       expectedVersions: { [`Encounter/${encounterId}`]: encounterVersion },
-      input: { expectedDraftVersion, items },
+      input: { expectedDraftVersion, items: items.map(item => ({ routeCode: 'PO', ...item })) },
     }),
     headers: { 'content-type': 'application/json', cookie, 'idempotency-key': randomUUID(), origin: 'http://localhost' },
     method: 'PUT',
@@ -364,6 +364,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
           catalogItemId: 'medication-dapagliflozin',
           doseText: '10 mg',
           frequencyCode: 'QD',
+          routeCode: 'PO',
           courseDays: 7,
           quantity: 1,
         }],
@@ -426,6 +427,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
           catalogItemId: 'medication-dapagliflozin',
           doseText: '10 mg',
           frequencyCode: 'QD',
+          routeCode: 'PO',
           courseDays: 1,
           quantity: 1,
         }],
@@ -483,7 +485,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
         expectedVersions: { [`Encounter/${renalVisit.encounterId}`]: afterDiag.encounter.versionId },
         input: {
           expectedDraftVersion: statinAllergyDraft.data.draftVersion,
-          items: [{ catalogItemId: 'medication-rosuvastatin', courseDays: 1, doseText: '80 mg', frequencyCode: 'QN', quantity: 1 }],
+          items: [{ catalogItemId: 'medication-rosuvastatin', courseDays: 1, doseText: '80 mg', frequencyCode: 'QN', routeCode: 'PO', quantity: 1 }],
         },
       }),
       headers: { 'content-type': 'application/json', cookie: doctorCookie, 'idempotency-key': randomUUID(), origin: 'http://localhost' },
@@ -505,8 +507,8 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
         input: {
           expectedDraftVersion: statinAllergyDraft.data.draftVersion,
           items: [
-            { catalogItemId: 'medication-pci-clopidogrel', courseDays: 1, doseText: '75 mg', frequencyCode: 'QD', quantity: 1 },
-            { catalogItemId: 'medication-ticagrelor', courseDays: 1, doseText: '90 mg', frequencyCode: 'BID', quantity: 2 },
+            { catalogItemId: 'medication-pci-clopidogrel', courseDays: 1, doseText: '75 mg', frequencyCode: 'QD', routeCode: 'PO', quantity: 1 },
+            { catalogItemId: 'medication-ticagrelor', courseDays: 1, doseText: '90 mg', frequencyCode: 'BID', routeCode: 'PO', quantity: 2 },
           ],
         },
       }),
@@ -652,6 +654,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
             catalogItemId: 'medication-amoxicillin',
             doseText: '500 mg',
             frequencyCode: 'TID',
+            routeCode: 'PO',
             courseDays: 1,
             quantity: 1,
           }],
@@ -864,6 +867,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
         doseText: '20 mg',
         doseQuantity: 1,
         frequencyCode: 'ONCE',
+        routeCode: 'PO',
       },
     })
     expect(blockedOrderRes.status).toBe(409)
@@ -888,6 +892,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
           doseText: '20 mg',
           doseQuantity: 1,
           frequencyCode: 'ONCE',
+        routeCode: 'PO',
         },
       }, mraOrderKey),
     )
@@ -940,6 +945,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
         doseText: '10 mg',
         doseQuantity: 1,
         frequencyCode: 'ONCE',
+        routeCode: 'PO',
       },
     })
     expect(dapaOrderBlocked.status).toBe(409)
@@ -963,6 +969,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
           doseText: '20 mg',
           doseQuantity: 2,
           frequencyCode: 'ONCE',
+        routeCode: 'PO',
         },
       }),
     )
@@ -983,6 +990,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
         doseText: '10 mg',
         doseQuantity: 1,
         frequencyCode: 'ONCE',
+        routeCode: 'PO',
       },
     })
     expect(dupOrderBlocked.status).toBe(409)
@@ -1023,6 +1031,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
         doseText: '80 mg',
         doseQuantity: 8,
         frequencyCode: 'ONCE',
+        routeCode: 'PO',
       },
     })
     expect(doseOrderBlocked.status).toBe(409)
@@ -1055,6 +1064,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
         doseText: '10 mg',
         doseQuantity: 1,
         frequencyCode: 'ONCE',
+        routeCode: 'PO',
       },
     })
     expect(allergyOrderBlocked.status).toBe(409)
@@ -1555,7 +1565,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
         await fixture.request('inpatient-doctor', `${sameTsStay.path}/orders/issue`, {
           encounterVersion: sameTsClin.encounterVersion,
           duration: 'long',
-          selection: { kind: 'medication', catalogItemId: med.id, catalogVersion: med.version, doseText, doseQuantity, frequencyCode: freq },
+          selection: { kind: 'medication', catalogItemId: med.id, catalogVersion: med.version, doseText, doseQuantity, frequencyCode: freq, routeCode: 'PO' },
         }),
       )).data
     }
@@ -1592,7 +1602,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
       await fixture.request('inpatient-doctor', `${sameTsStay.path}/orders/issue`, {
         encounterVersion: sameTsAdm1.versionId,
         duration: 'long',
-        selection: { kind: 'medication', catalogItemId: atorvastatin.id, catalogVersion: atorvastatin.version, doseText: '20 mg', doseQuantity: 2, frequencyCode: 'QN' },
+        selection: { kind: 'medication', catalogItemId: atorvastatin.id, catalogVersion: atorvastatin.version, doseText: '20 mg', doseQuantity: 2, frequencyCode: 'QN', routeCode: 'PO' },
       }),
     )).data
     const sameTsIssued = await parsePciResponse(

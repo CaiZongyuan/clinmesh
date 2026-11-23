@@ -1,3 +1,4 @@
+import { formatMedicationRoute } from '@clinmesh/core/medication-safety'
 import { inpatientCatalogSearchSchema, type inpatientMedicationSchema, type inpatientServiceSchema } from '@clinmesh/contracts/inpatient-clinical'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { z } from 'zod'
@@ -67,7 +68,7 @@ export function InpatientOrderPicker({ id, session, locale, services, diagnosed,
             onSelect={() => pick({ kind: 'medication', item })}
           >
             <strong>{item.display}</strong><span className="text-xs text-muted-foreground">{t('药品', 'Medication')}</span>
-            <span className="text-xs text-muted-foreground tabular-nums">{[specText || undefined, item.doses[0] ? `${t('每次 ', 'Per dose ')}${item.doses[0].doseText}` : undefined, item.frequencyCodes[0] ? inpatientFrequencyLabel(item.frequencyCodes[0], locale, false) : undefined, `${formatFen(item.priceFen, locale)}/${item.unit}`].filter(Boolean).join(' · ')}</span>
+            <span className="text-xs text-muted-foreground tabular-nums">{[specText || undefined, item.doses[0] ? `${t('每次 ', 'Per dose ')}${item.doses[0].doseText}` : undefined, item.frequencyCodes[0] ? inpatientFrequencyLabel(item.frequencyCodes[0], locale, false) : undefined, formatMedicationRoute(item.defaultRouteCode, locale), `${formatFen(item.priceFen, locale)}/${item.unit}`].filter(Boolean).join(' · ')}</span>
             {diagnosed ? null : <span className="ms-auto text-xs text-warning">{t('先确认诊断', 'Confirm diagnosis first')}</span>}
           </OrderCatalogCandidate></li>
         })}

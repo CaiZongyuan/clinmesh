@@ -18,7 +18,7 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   expect((await subject.api.post(`${subject.path}/drg/reservations`, { encounterVersion: (await clinical()).encounterVersion,
     requestId: request.id, materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1, reason: '合成布局复核已确认耗材' })).status()).toBe(200)
   expect((await subject.api.post(`${subject.path}/orders/issue`, { encounterVersion: (await clinical()).encounterVersion, duration: 'temporary',
-    selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' } })).status()).toBe(200)
+    selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD', routeCode: 'PO' } })).status()).toBe(200)
   await subject.api.login('ward-nurse')
   const order = (await clinical()).orders[0]!
   expect((await subject.api.post(`${subject.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })).status()).toBe(200)

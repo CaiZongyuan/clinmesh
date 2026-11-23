@@ -1,3 +1,4 @@
+import { formatMedicationRoute } from '@clinmesh/core/medication-safety'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
@@ -49,7 +50,7 @@ export function InpatientDispenseBatch({ data, session, locale, loading, refresh
     return index < 0 ? t('原核对库存批次', 'Reviewed inventory lot') : t(`库存批次 ${index + 1}`, `Stock lot ${index + 1}`)
   }
   const details = (snapshot: DispenseSnapshot) => <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-    <span>{snapshot.order.doseText} · {snapshot.order.doseQuantity}{snapshot.order.unit} · {inpatientFrequencyLabel(snapshot.order.frequencyCode, locale, false)}</span>
+    <span>{snapshot.order.doseText} · {snapshot.order.doseQuantity}{snapshot.order.unit} · {inpatientFrequencyLabel(snapshot.order.frequencyCode, locale, false)} · {formatMedicationRoute(snapshot.order.routeCode, locale)}</span>
     <span>{t('执行时点：', 'Scheduled: ')}{formatShanghaiMinute(snapshot.execution.scheduledFor)}</span>
     <span>{lotLabel(snapshot)} · {t('库存 ', 'Stock ')}{snapshot.lot.quantityOnHand}{snapshot.order.unit} · {t('有效期 ', 'Expires ')}{snapshot.lot.expiresOn}</span>
     {virtualNow !== undefined && Date.parse(snapshot.lot.expiresOn) - virtualNow <= 30 * 86_400_000 ? <span>{t('临期批次', 'Near expiry')}</span> : null}

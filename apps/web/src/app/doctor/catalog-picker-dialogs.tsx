@@ -1,4 +1,5 @@
-import { formatMedicationFrequency, medicationRegimenDoseAllowed, medicationQuantityAllowed } from '@clinmesh/core/medication-safety'
+import { formatMedicationFrequency, formatMedicationRoute, medicationRegimenDoseAllowed, medicationQuantityAllowed } from '@clinmesh/core/medication-safety'
+import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
 import { OrderComposerLayout, OrderComposerFooter, OrderComposerSearch, OrderCatalogCandidate } from './order-composer-layout.tsx'
 import type {
   CaseLaboratoryCatalogSearch,
@@ -12,6 +13,7 @@ import type {
   ReferenceConcept,
   ReferenceConceptSnapshot,
   ReferenceDiagnosisCatalogSearch,
+  ReferenceMedicationCatalogItem,
   ReferenceMedicationCatalogSearch,
   ReferenceMedicationProduct,
 } from '@clinmesh/contracts/reference-data'
@@ -125,7 +127,7 @@ const copy = {
     medicationComposerDescription: 'Add medicines continuously and review each order. Finish selecting, then issue the whole prescription once.',
     medicationDescription: 'Current medication product catalog',
     medicationDetails: 'Medication order',
-    medicationFieldsError: 'Enter dose and frequency. Course must be 1–30 days and quantity an integer from 1–1000.',
+    medicationFieldsError: 'Enter dose, frequency, and route. Course must be 1–30 days and quantity an integer from 1–1000.',
     medicationPlaceholder: 'Generic name, brand, manufacturer, or code',
     medicationSearchInput: 'Search medication catalog',
     medicationSourceLabel: 'Medication catalog source',
@@ -137,6 +139,7 @@ const copy = {
     quantity: 'Quantity',
     replaceDiagnosis: 'Replace diagnosis',
     replaceMedication: 'Replace medication',
+    route: 'Route',
     searchDiagnosis: 'Search diagnosis catalog',
     searchLaboratory: 'Search laboratory catalog',
     searchMedication: 'Search medication catalog',
@@ -188,7 +191,7 @@ const copy = {
     medicationComposerDescription: '连续选择药品包装并逐药填写，完成选择后核对清单，一次开具整张处方。',
     medicationDescription: '当前药品产品目录',
     medicationDetails: '用药信息',
-    medicationFieldsError: '请填写剂量与频次，疗程为 1–30 天，数量为 1–1000 的整数。',
+    medicationFieldsError: '请填写剂量、频次与给药途径，疗程为 1–30 天，数量为 1–1000 的整数。',
     medicationPlaceholder: '通用名、商品名、厂家或编码',
     medicationSearchInput: '搜索药品目录',
     medicationSourceLabel: '药品目录来源',
@@ -200,6 +203,7 @@ const copy = {
     quantity: '数量',
     replaceDiagnosis: '更换诊断',
     replaceMedication: '更换药品',
+    route: '给药途径',
     searchDiagnosis: '执行疾病目录搜索',
     searchLaboratory: '执行检验目录搜索',
     searchMedication: '执行药品目录搜索',
@@ -771,6 +775,7 @@ export interface MedicationComposerFields {
   frequencyCode: string
   instructions?: string | undefined
   quantity: number | null
+  routeCode: string
 }
 
 export interface MedicationComposerTarget {
@@ -848,13 +853,14 @@ export function MedicationComposerDialog({
   const selected: MedicationCatalogSelection | undefined = draft?.referenceProduct !== undefined
     ? { kind: 'reference', product: draft.referenceProduct }
     : localMedication === undefined ? undefined : { kind: 'local', medication: localMedication }
-  const doseText = draft?.fields.doseText ?? '', frequencyCode = draft?.fields.frequencyCode ?? '', instructions = draft?.fields.instructions ?? ''
+  const doseText = draft?.fields.doseText ?? '', frequencyCode = draft?.fields.frequencyCode ?? '', routeCode = draft?.fields.routeCode ?? '', instructions = draft?.fields.instructions ?? ''
   const courseDays = draft?.fields.courseDays ?? null, quantity = draft?.fields.quantity ?? null
   const changeField = <Field extends keyof MedicationComposerFields>(field: Field, value: MedicationComposerFields[Field]) => {
     if (!disabled) composer.save(previous => previous === null ? null : { ...previous, fields: { ...previous.fields, [field]: value } })
   }
   const setDoseText = (value: string) => changeField('doseText', value)
   const setFrequencyCode = (value: string) => changeField('frequencyCode', value)
+  const setRouteCode = (value: string) => changeField('routeCode', value)
   const setCourseDays = (value: number | null) => changeField('courseDays', value)
   const setQuantity = (value: number | null) => changeField('quantity', value)
   const setInstructions = (value: string) => changeField('instructions', value || undefined)
@@ -877,14 +883,16 @@ export function MedicationComposerDialog({
   }, [editorIdentity, open])
   const selectedMedication = selected?.kind === 'local' ? selected.medication : undefined
   const selectedProduct = selected?.kind === 'reference' ? selected.product : undefined
+  const allowedRouteCodes = selectedMedication?.allowedRouteCodes ?? selectedProduct?.allowedRouteCodes ?? []
   const select = (selection: MedicationCatalogSelection | undefined) => {
     if (selection === undefined || disabled || atCapacity && target === undefined) return
-    // 换选药品时剂量/频次/疗程/数量的值域随药品变化，重置为该药品默认值；重复点选同一药品保留已填内容。
+    // 换选药品时剂量/频次/途径/疗程/数量的值域随药品变化，重置为该药品默认值；重复点选同一药品保留已填内容。
     if (selected === undefined || medicationComposerSelectionId(selected) !== medicationComposerSelectionId(selection)) {
       composer.save(() => ({ catalogItemId: medicationComposerSelectionId(selection),
         ...(selection.kind === 'reference' ? { referenceProduct: selection.product } : {}),
         fields: { doseText: selection.kind === 'local' ? selection.medication.defaultDoseText : '',
           frequencyCode: selection.kind === 'local' ? selection.medication.defaultFrequencyCode : '',
+          routeCode: selection.kind === 'local' ? selection.medication.defaultRouteCode : selection.product.defaultRouteCode,
           courseDays: selection.kind === 'local' ? selection.medication.defaultCourseDays : 3,
           quantity: selection.kind === 'local' ? selection.medication.defaultQuantity : 1 } }))
     }
@@ -898,6 +906,8 @@ export function MedicationComposerDialog({
     if (selectedMedication === undefined
       ? !prescriptionDraftItemSchema.shape.frequencyCode.safeParse(frequencyCode.trim()).success
       : !selectedMedication.allowedFrequencyCodes.includes(frequencyCode)) invalidFields.add('frequencyCode')
+    const routeResult = medicationRouteSchema.safeParse(routeCode.trim())
+    if (!routeResult.success || !allowedRouteCodes.includes(routeResult.data)) invalidFields.add('routeCode')
     const courseResult = prescriptionDraftItemSchema.shape.courseDays.safeParse(courseDays)
     if (!courseResult.success
       || (selectedMedication !== undefined && !selectedMedication.allowedCourseDays.includes(courseResult.data))) invalidFields.add('courseDays')
@@ -906,10 +916,10 @@ export function MedicationComposerDialog({
       || (selectedMedication !== undefined && !medicationQuantityAllowed(selectedMedication, quantityResult.data, courseDays ?? 1, frequencyCode))) invalidFields.add('quantity')
   }
   const fieldsValid = selected !== undefined && !composer.failed && invalidFields.size === 0 && !(atCapacity && target === undefined)
-  const invalidLabels = [...invalidFields].flatMap(field => field === 'instructions' ? [] : [({ doseText: messages.dose, frequencyCode: messages.frequency, courseDays: messages.course, quantity: messages.quantity })[field]]).join(locale === 'zh-CN' ? '、' : ', ')
+  const invalidLabels = [...invalidFields].flatMap(field => field === 'instructions' ? [] : [({ doseText: messages.dose, frequencyCode: messages.frequency, routeCode: messages.route, courseDays: messages.course, quantity: messages.quantity })[field]]).join(locale === 'zh-CN' ? '、' : ', ')
   const confirm = () => {
     if (selected === undefined || disabled || !fieldsValid) return
-    if (!onConfirm(selected, { courseDays, doseText: doseText.trim(), frequencyCode: frequencyCode.trim(), ...(instructions.trim() ? { instructions: instructions.trim() } : {}), quantity })) return
+    if (!onConfirm(selected, { courseDays, doseText: doseText.trim(), frequencyCode: frequencyCode.trim(), ...(instructions.trim() ? { instructions: instructions.trim() } : {}), quantity, routeCode: routeCode.trim() })) return
     composer.save(() => null)
     if (target !== undefined) onOpenChange(false)
   }
@@ -958,6 +968,12 @@ export function MedicationComposerDialog({
                     : <WorkspaceSelect id="medication-composer-frequency" items={selectedMedication.allowedFrequencyCodes.map(value => ({ label: formatMedicationFrequency(value, locale), value }))}
                       onValueChange={value => { if (value !== null) { if (value !== frequencyCode) markEdited('medication-composer-frequency'); setFrequencyCode(value) } }}
                       placeholder={messages.choose} value={frequencyCode || null} />}
+                </Field>
+                <Field data-invalid={invalidFields.has('routeCode')}>
+                  <FieldLabel htmlFor="medication-composer-route">{messages.route}</FieldLabel>
+                  <WorkspaceSelect id="medication-composer-route" items={allowedRouteCodes.map(value => ({ label: formatMedicationRoute(value, locale), value }))}
+                    onValueChange={value => { if (value !== null) { if (value !== routeCode) markEdited('medication-composer-route'); setRouteCode(value) } }}
+                    placeholder={messages.choose} value={routeCode || null} />
                 </Field>
                 <Field data-invalid={invalidFields.has('courseDays')}>
                   <FieldLabel htmlFor="medication-composer-course">{messages.course}</FieldLabel>
@@ -1193,11 +1209,11 @@ export function LaboratoryCatalogDialog({ locale, onSelect, search }: {
 
 export type MedicationCatalogSelection =
   | { kind: 'local'; medication: PrescriptionMedication }
-  | { kind: 'reference'; product: ReferenceMedicationProduct }
+  | { kind: 'reference'; product: ReferenceMedicationCatalogItem }
 
 interface MedicationProductGroup {
-  product: ReferenceMedicationProduct
-  variants: ReferenceMedicationProduct[]
+  product: ReferenceMedicationCatalogItem
+  variants: ReferenceMedicationCatalogItem[]
 }
 
 const PACKAGE_SUMMARY_MAX_CHARS = 24
@@ -1236,7 +1252,7 @@ export function resolveMedicationDisplayMeta(
   return { packageDescription, specText: formatMedicationSpec(strength, packageDescription), unit }
 }
 
-function medicationProductGroupKey(product: ReferenceMedicationProduct): string {
+function medicationProductGroupKey(product: ReferenceMedicationCatalogItem): string {
   return JSON.stringify([
     product.genericName,
     product.strength,
@@ -1246,7 +1262,7 @@ function medicationProductGroupKey(product: ReferenceMedicationProduct): string 
   ])
 }
 
-function groupMedicationProducts(products: ReferenceMedicationProduct[]): MedicationProductGroup[] {
+function groupMedicationProducts(products: ReferenceMedicationCatalogItem[]): MedicationProductGroup[] {
   const groups = new Map<string, MedicationProductGroup>()
   for (const product of products) {
     const key = medicationProductGroupKey(product)
@@ -1272,7 +1288,7 @@ function MedicationProductRow({ group, disabled = false, disabledReason, exclude
   onConfirm?: (selection: MedicationCatalogSelection) => void
 }) {
   const [packageId, setPackageId] = useState<string>()
-  const available = (item: ReferenceMedicationProduct) => item.status === 'active' && !excludedIds.has(item.id)
+  const available = (item: ReferenceMedicationCatalogItem) => item.status === 'active' && !excludedIds.has(item.id)
   const item = group.variants.find(variant => variant.id === packageId && available(variant))
     ?? group.variants.find(available)
     ?? group.product

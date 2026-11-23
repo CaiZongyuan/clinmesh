@@ -1059,6 +1059,7 @@ export async function runTrajectoryPerformanceProfile() {
         doseText: '5 mg',
         frequencyCode: 'QD',
         quantity: 30,
+        routeCode: 'PO',
       }],
     }))).data
     await measure(() => runtime.workflow.issuePrescription({

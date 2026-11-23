@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { clinicalScoreMissingInputSchema, clinicalScoreSourceReferenceSchema } from './clinical-scores.ts'
 import { outpatientInvestigationPriceSchema } from './investigation-billing.ts'
-import { medicationFrequencySchema } from './medication-safety.ts'
+import { medicationFrequencySchema, medicationRouteSchema } from './medication-safety.ts'
 
 export const orderSetTemplateIds = [
   'chest-pain-stat-workup',
@@ -58,6 +58,7 @@ const option = z.discriminatedUnion('kind', [
     kind: z.literal('medication'),
     medicationKey: slug,
     prnQuantity: posInt.max(1_000).optional(),
+    routeCode: medicationRouteSchema,
     rules: z.array(rule).max(8),
   }).refine(o => (o.frequencyCode === 'PRN') === (o.prnQuantity !== undefined) && (o.frequencyCode !== 'ONCE' || o.inpatientDuration === 'temporary')),
 ])
@@ -154,6 +155,7 @@ const candidate = z.discriminatedUnion('kind', [
     instructionsZh: text(500).nullable(),
     kind: z.literal('medication'),
     outpatient: strict({ courseDays: int.min(1).max(30), quantity: int.min(1).max(1_000) }).nullable(),
+    routeCode: medicationRouteSchema,
   }).refine(c => (c.inpatient === null) !== (c.outpatient === null)),
 ])
 export type OrderSetCandidate = z.infer<typeof candidate>

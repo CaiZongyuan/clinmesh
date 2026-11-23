@@ -65,10 +65,12 @@ describe('DoctorCompletedCaseLibrary prescription check elements', () => {
         allowedDoseTexts: ['0.2 g'],
         allowedFrequencyCodes: ['PRN'],
         allowedQuantities: [24],
+        allowedRouteCodes: ['PO'],
         defaultCourseDays: 3,
         defaultDoseText: '0.2 g',
         defaultFrequencyCode: 'PRN',
         defaultQuantity: 24,
+        defaultRouteCode: 'PO',
         dosageForm: '片剂',
         id: 'medication-ibuprofen',
         nameEn: 'Ibuprofen tablets',
@@ -122,6 +124,7 @@ describe('DoctorCompletedCaseLibrary prescription check elements', () => {
               medicationRequestVersion: '2',
               packageDescription: '10粒/盒',
               quantity: 10,
+              routeCode: 'PO',
               strength: '75 mg',
               unit: '粒',
             },
@@ -134,6 +137,7 @@ describe('DoctorCompletedCaseLibrary prescription check elements', () => {
               medicationRequestId: 'medication-request-legacy-2',
               medicationRequestVersion: '1',
               quantity: 24,
+              routeCode: 'PO',
             },
           ],
           number: 'RX-COMPLETED-CHECK-001',
@@ -178,11 +182,13 @@ describe('DoctorCompletedCaseLibrary prescription check elements', () => {
     await user.click(await screen.findByRole('button', { name: `查看病例 ${patient.name}` }))
     expect(await screen.findByText(/开方医生 合成门诊医生/)).toBeTruthy()
     expect(screen.getByRole('columnheader', { name: '规格与包装' })).toBeTruthy()
+    expect(screen.getByRole('columnheader', { name: '给药途径' })).toBeTruthy()
 
     const snapshotRow = screen.getByText('磷酸奥司他韦胶囊').closest('tr')
     expect(snapshotRow).toBeTruthy()
     expect(within(snapshotRow!).getByText('75 mg · 10粒/盒')).toBeTruthy()
     expect(within(snapshotRow!).getByText('每日两次（BID）')).toBeTruthy()
+    expect(within(snapshotRow!).getByText('口服（po）')).toBeTruthy()
     expect(within(snapshotRow!).getByText('10 粒')).toBeTruthy()
 
     const fallbackRow = screen.getByText('布洛芬片').closest('tr')

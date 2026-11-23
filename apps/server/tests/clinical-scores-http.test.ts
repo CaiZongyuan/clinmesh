@@ -1114,8 +1114,8 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     `).run(scenario.workspaceId, scenario.epoch, signedShortPrescriptionId, tempCase.caseId, `RX-SHORT-${randomUUID().slice(0, 8)}`)
     fixture.runtime.database.driver.prepare(`
       INSERT INTO prescription_item (
-        workspace_id, epoch, prescription_id, medication_request_id, medication_id, medication_snapshot_json, quantity, dose_text, frequency_code, course_days
-      ) VALUES (?, ?, ?, ?, 'medication-atorvastatin', '{}', 2, '20mg', 'QD', 14)
+        workspace_id, epoch, prescription_id, medication_request_id, medication_id, medication_snapshot_json, quantity, dose_text, frequency_code, route_code, course_days
+      ) VALUES (?, ?, ?, ?, 'medication-atorvastatin', '{}', 2, '20mg', 'QD', 'PO', 14)
     `).run(scenario.workspaceId, scenario.epoch, signedShortPrescriptionId, signedShortMedReq.id)
     for (const handedOver of ['2026-06-15T10:30:00+08:00', '2026-06-28T10:30:00+08:00']) {
       fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
@@ -1351,8 +1351,8 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     fixture.runtime.database.driver.prepare(`
       INSERT INTO inpatient_order (
         workspace_id, epoch, order_id, admission_id, kind, duration, catalog_item_id, catalog_version,
-        display, dose_text, dose_quantity, unit, frequency_code, price_fen, state, organization_id, signed_at, signed_by
-      ) VALUES (?, ?, ?, ?, 'medication', 'long', 'medication-pci-atorvastatin', 1, '阿托伐他汀钙片', '20 mg', 1, '片', 'QN', 70, 'signed', 'hospital-synthetic-renhe', '2026-08-24T09:00:00+08:00', 'actor-test')
+        display, dose_text, dose_quantity, unit, frequency_code, route_code, price_fen, state, organization_id, signed_at, signed_by
+      ) VALUES (?, ?, ?, ?, 'medication', 'long', 'medication-pci-atorvastatin', 1, '阿托伐他汀钙片', '20 mg', 1, '片', 'QN', 'PO', 70, 'signed', 'hospital-synthetic-renhe', '2026-08-24T09:00:00+08:00', 'actor-test')
     `).run(scenario.workspaceId, scenario.epoch, preDoseOrderId, preDoseStay.admissionId)
     fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
       authoredOn: '2026-08-24T09:00:00+08:00',
@@ -1419,8 +1419,8 @@ describe('Clinical Risk Assessment & Deterministic Clinical Scores HTTP', () => 
     fixture.runtime.database.driver.prepare(`
       INSERT INTO inpatient_order (
         workspace_id, epoch, order_id, admission_id, kind, duration, catalog_item_id, catalog_version,
-        display, dose_text, dose_quantity, unit, frequency_code, price_fen, state, organization_id, signed_at, signed_by
-      ) VALUES (?, ?, ?, ?, 'medication', 'long', 'medication-pci-atorvastatin', 1, '阿托伐他汀钙片', '20 mg', 1, '片', 'BID', 70, 'verified', 'hospital-synthetic-renhe', '2026-08-24T07:30:00+08:00', 'actor-test')
+        display, dose_text, dose_quantity, unit, frequency_code, route_code, price_fen, state, organization_id, signed_at, signed_by
+      ) VALUES (?, ?, ?, ?, 'medication', 'long', 'medication-pci-atorvastatin', 1, '阿托伐他汀钙片', '20 mg', 1, '片', 'BID', 'PO', 70, 'verified', 'hospital-synthetic-renhe', '2026-08-24T07:30:00+08:00', 'actor-test')
     `).run(scenario.workspaceId, scenario.epoch, outOfOrderId, outOfOrderStay.admissionId)
     fixture.runtime.fhir.create({ epoch: scenario.epoch, workspaceId: scenario.workspaceId }, {
       authoredOn: '2026-08-24T07:30:00+08:00',

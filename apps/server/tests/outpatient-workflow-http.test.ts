@@ -89,6 +89,7 @@ type RevisitMedicationDraft = {
   doseText: string
   frequencyCode: string
   quantity: number
+  routeCode: string
 }
 type RevisitDraftOptions = {
   diagnosis?: {
@@ -756,6 +757,7 @@ async function createCompletionReadyConsultation(
               doseText: '75 mg',
               frequencyCode: 'BID',
               quantity: 10,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -991,6 +993,7 @@ async function createIssuedIndependentPrescription(runtime: TestRuntime, passwor
       doseText: '75 mg',
       frequencyCode: 'BID',
       quantity: 10,
+      routeCode: 'PO',
     }],
   }
   const prescriptionDraftResponse = await runtime.app.request(
@@ -1202,6 +1205,7 @@ async function createRevisitDraftCase(
     doseText: '75 mg',
     frequencyCode: 'BID',
     quantity: 10,
+    routeCode: 'PO',
   }]
   const testCase = await createReportedCase(runtime, password)
   await runtime.app.request(
@@ -2984,6 +2988,7 @@ describe('outpatient workflow HTTP contract', () => {
               doseText: '75 mg',
               frequencyCode: 'BID',
               quantity: 10,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -8631,6 +8636,7 @@ describe('outpatient workflow HTTP contract', () => {
               doseText: '75 mg',
               frequencyCode: 'BID',
               quantity: 10,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -9359,6 +9365,7 @@ describe('outpatient workflow HTTP contract', () => {
               doseText: '75 mg',
               frequencyCode: 'BID',
               quantity: 10,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -9458,6 +9465,7 @@ describe('outpatient workflow HTTP contract', () => {
         doseText: '75 mg',
         frequencyCode: 'BID',
         quantity: 10,
+        routeCode: 'PO',
       }],
     }
 
@@ -9553,6 +9561,7 @@ describe('outpatient workflow HTTP contract', () => {
         doseText: '75 mg',
         frequencyCode: 'BID',
         quantity: 10,
+        routeCode: 'PO',
       }],
     }
     const savePrescriptionResponse = await runtime.app.request(
@@ -9609,6 +9618,14 @@ describe('outpatient workflow HTTP contract', () => {
       authoredOn: '2026-08-24T09:00:00+08:00',
       dispenseRequest: { quantity: { value: 10 } },
       dosageInstruction: [{
+        route: {
+          coding: [{
+            code: 'PO',
+            display: '口服',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/medication-route',
+          }],
+          text: '口服（po）',
+        },
         text: '75 mg BID for 5 days',
         timing: { repeat: { boundsDuration: { code: 'd', value: 5 } } },
       }],
@@ -9708,6 +9725,7 @@ describe('outpatient workflow HTTP contract', () => {
         doseText: '75 mg',
         frequencyCode: 'BID',
         quantity: 10,
+        routeCode: 'PO',
       }],
     }
     const prescriptionDraftResponse = await runtime.app.request(
@@ -9844,6 +9862,7 @@ describe('outpatient workflow HTTP contract', () => {
               doseText: '75 mg',
               frequencyCode: 'BID',
               quantity: 10,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -9943,6 +9962,7 @@ describe('outpatient workflow HTTP contract', () => {
               doseText: '0.5 g',
               frequencyCode: 'PRN',
               quantity: 6,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -10324,6 +10344,7 @@ describe('outpatient workflow HTTP contract', () => {
         doseText: '75 mg',
         frequencyCode: 'BID',
         quantity: 10,
+        routeCode: 'PO',
       }],
     }
     const independentResponse = await runtime.app.request(
@@ -10363,6 +10384,7 @@ describe('outpatient workflow HTTP contract', () => {
               doseText: '75 mg',
               frequencyCode: 'BID',
               quantity: 10,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -10423,6 +10445,7 @@ describe('outpatient workflow HTTP contract', () => {
               doseText: '0.5 g',
               frequencyCode: 'PRN',
               quantity: 6,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -10832,6 +10855,7 @@ describe('outpatient workflow HTTP contract', () => {
               doseText: '500 mg',
               frequencyCode: 'BID',
               quantity: 10,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -10855,6 +10879,7 @@ describe('outpatient workflow HTTP contract', () => {
               doseText: '100 mg',
               frequencyCode: 'QD',
               quantity: 1,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -10881,6 +10906,7 @@ describe('outpatient workflow HTTP contract', () => {
               doseText: '100 mg',
               frequencyCode: 'QD',
               quantity: 10,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -10917,6 +10943,7 @@ describe('outpatient workflow HTTP contract', () => {
               doseText: '75 mg',
               frequencyCode: 'BID',
               quantity: 10,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -11004,6 +11031,7 @@ describe('outpatient workflow HTTP contract', () => {
               doseText: '75 mg',
               frequencyCode: 'BID',
               quantity: 20,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -11150,6 +11178,7 @@ describe('outpatient workflow HTTP contract', () => {
               doseText: '75 mg',
               frequencyCode: 'BID',
               quantity: 10,
+              routeCode: 'PO',
             }],
           },
         }),
@@ -12172,6 +12201,7 @@ describe('outpatient workflow HTTP contract', () => {
         doseText: '0.5 g',
         frequencyCode: 'BID',
         quantity: 60,
+        routeCode: 'PO',
       },
       nameZh: '盐酸二甲双胍片',
       productCode: 'CM-NHSA-PRODUCT-METFORMIN',
@@ -12185,6 +12215,7 @@ describe('outpatient workflow HTTP contract', () => {
         doseText: '5 mg',
         frequencyCode: 'QD',
         quantity: 30,
+        routeCode: 'PO',
       },
       nameZh: '苯磺酸氨氯地平片',
       productCode: 'CM-NHSA-PRODUCT-AMLODIPINE',
@@ -12323,12 +12354,14 @@ describe('outpatient workflow HTTP contract', () => {
         doseText: '75 mg',
         frequencyCode: 'BID',
         quantity: 10,
+        routeCode: 'PO',
       },
       {
         catalogItemId: 'medication-acetaminophen',
         doseText: '0.5 g',
         frequencyCode: 'PRN',
         quantity: 6,
+        routeCode: 'PO',
       },
       ],
     })

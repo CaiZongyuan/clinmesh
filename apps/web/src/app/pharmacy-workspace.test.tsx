@@ -36,7 +36,7 @@ function recoveryPrescription(index = 1, reviewed = true) {
     medications: [{ doseText: '一片', dispensedQuantity: 0, frequencyCode: 'BID',
       lots: [{ expiresOn: '2027-12-31', id: `lot-${index}`, locationId: 'pharmacy', lotNumber: `SYN-RECOVERY-${index}`, quantityOnHand: 1000, version: 1 }],
       medicationId: 'medication', medicationRequestId: `medication-request-${index}`, medicationRequestVersion: '1',
-      nameEn: 'Synthetic medication', nameZh: '合成药品', quantity: 10, remainingQuantity: 10, unitPriceFen: 100 }],
+      nameEn: 'Synthetic medication', nameZh: '合成药品', quantity: 10, remainingQuantity: 10, routeCode: 'PO', unitPriceFen: 100 }],
     patient: { id: `patient-${index}`, identifier: `SYN-RECOVERY-${index}`, name: `恢复患者${index}`, synthetic: true, versionId: '1' },
     prescriptionId: `prescription-${index}`, prescriptionNumber: `CM-RX-RECOVERY-${index}`, prescriptionStatus: 'paid', prescriptionVersion: reviewed ? 2 : 1,
     ...(reviewed ? { review: { note: '合成审核已通过', reviewId: `review-${index}`, reviewedAt: '2026-11-03T09:00:00+08:00', reviewedBy: 'pharmacist' } } : {}),
@@ -67,7 +67,7 @@ it('retains the successful dispense receipt and blocks stale cached writes or ne
   const { rerender } = render(<QueryClientProvider client={client}><AgentPageRegistryProvider><PharmacyWorkspace locale="zh-CN" session={session} /><PharmacyWriteState /></AgentPageRegistryProvider></QueryClientProvider>)
   const user = userEvent.setup()
   const action = within(await screen.findByRole('region', { name: '当前操作' }))
-  expect(screen.getByText('一片 · 每日两次（BID）')).toBeTruthy()
+  expect(screen.getByText('一片 · 每日两次（BID） · 口服（po）')).toBeTruthy()
   await user.click(await action.findByRole('button', { name: '审阅发药' }))
   await user.click(action.getByRole('button', { name: '确认发药' }))
   await screen.findByRole('button', { name: '重试发药队列' })
@@ -209,7 +209,7 @@ it('keeps approved review evidence and allergy risks compact while dispensing co
     medications: [{ doseText: '一片', dispensedQuantity: 4, frequencyCode: 'BID',
       lots: [{ expiresOn: '2027-12-31', id: 'lot', locationId: 'pharmacy', lotNumber: 'SYN-LOT-APPROVED', quantityOnHand: 996, version: 2 }],
       medicationId: 'medication', medicationRequestId: 'medication-request', medicationRequestVersion: '1',
-      nameEn: 'Synthetic medication', nameZh: '合成药品', quantity: 10, remainingQuantity: 6, unitPriceFen: 100 }],
+      nameEn: 'Synthetic medication', nameZh: '合成药品', quantity: 10, remainingQuantity: 6, routeCode: 'PO', unitPriceFen: 100 }],
     patient: { id: 'patient', identifier: 'SYN-APPROVED', name: '合成审核患者', synthetic: true, versionId: '1' },
     prescriptionId: 'prescription', prescriptionNumber: 'CM-RX-APPROVED', prescriptionStatus: 'paid', prescriptionVersion: 3,
     review: { note: '已核对既往过敏和本次用药', reviewId: 'review', reviewedAt: '2026-11-03T09:00:00+08:00', reviewedBy: 'historical-pharmacist' },
@@ -245,7 +245,7 @@ it('keeps the last-page dispense result while offering the first remaining presc
     medications: [{ doseText: '一片', dispensedQuantity: 0, frequencyCode: 'BID',
       lots: [{ expiresOn: '2027-12-31', id: `lot-${index + 1}`, locationId: 'pharmacy', lotNumber: 'SYN-LOT', quantityOnHand: 1000, version: 1 }],
       medicationId: 'medication', medicationRequestId: `medication-request-${index + 1}`, medicationRequestVersion: '1',
-      nameEn: 'Synthetic medication', nameZh: '合成药品', quantity: 10, remainingQuantity: 10, unitPriceFen: 100 }],
+      nameEn: 'Synthetic medication', nameZh: '合成药品', quantity: 10, remainingQuantity: 10, routeCode: 'PO', unitPriceFen: 100 }],
     patient: { id: `patient-${index + 1}`, identifier: `SYN-PAGINATION-${index + 1}`, name: `分页患者${String(index + 1).padStart(2, '0')}`, synthetic: true, versionId: '1' },
     prescriptionId: `prescription-${index + 1}`, prescriptionNumber: `CM-RX-${index + 1}`, prescriptionStatus: 'paid', prescriptionVersion: 2,
     review: { note: '合成审核已通过', reviewId: `review-${index + 1}`, reviewedAt: '2026-11-03T09:00:00+08:00', reviewedBy: 'pharmacist' },

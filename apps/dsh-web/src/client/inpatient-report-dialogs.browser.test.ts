@@ -25,7 +25,7 @@ for (const version of ['18', '19']) test.describe(`报告与执行记录弹窗 R
     const subject = await createDrgBrowserPatient(page, browserApp, '合成报告阅读患者')
     const clinical = () => subject.api.get(`${subject.path}/clinical`).then(response => response.json()).then(value => inpatientFullClinicalSchema.parse(value))
     expect((await subject.api.post(`${subject.path}/orders/issue`, { encounterVersion: (await clinical()).encounterVersion, duration: 'temporary',
-      selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' } })).status()).toBe(200)
+      selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD', routeCode: 'PO' } })).status()).toBe(200)
     const order = (await clinical()).orders[0]!
     await subject.api.login('ward-nurse')
     expect((await subject.api.post(`${subject.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })).status()).toBe(200)

@@ -17,7 +17,7 @@ it.each(['empty', 'older'] as const)('restores unsaved form-owned edits after re
     generation: 1, status: 'ready', stale: false, items: [], guidelines: [], caseEvidence: [], missingInformation: [] })
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(state)))
   const item: ManualPreparedItem = { label: '医生原选药品', value: { source: 'manual', kind: 'prescription',
-    catalogItemId: 'synthetic-medication-a', doseText: '5 mg', frequencyCode: 'QD', courseDays: 7, quantity: 7 } }
+    catalogItemId: 'synthetic-medication-a', doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 7, quantity: 7 } }
   function ManualForm({ initial }: { initial: ManualPreparedItem[] }) {
     const [items, setItems] = useState(initial)
     return <><output aria-label="原表单剂量">{items.map(item => item.value.kind === 'prescription' ? item.value.doseText : '').join(',')}</output>
@@ -61,9 +61,9 @@ it.each(['remove', 'replace'] as const)('does not restore a cached row after the
     return Response.json(state)
   }))
   const item: ManualPreparedItem = { label: '医生原选药品', value: { source: 'manual', kind: 'prescription',
-    catalogItemId: 'synthetic-medication-a', doseText: '5 mg', frequencyCode: 'QD', courseDays: 7, quantity: 7 } }
+    catalogItemId: 'synthetic-medication-a', doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 7, quantity: 7 } }
   const replacement: ManualPreparedItem = { label: '医生更换药品', value: { ...item.value, kind: 'prescription', source: 'manual',
-    catalogItemId: 'synthetic-medication-b', doseText: '20 mg', frequencyCode: 'QD', courseDays: 7, quantity: 7 } }
+    catalogItemId: 'synthetic-medication-b', doseText: '20 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 7, quantity: 7 } }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
   const view = (manualItems: ManualPreparedItem[]) => <QueryClientProvider client={client}>
@@ -76,7 +76,7 @@ it.each(['remove', 'replace'] as const)('does not restore a cached row after the
   fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '10 mg' } })
   await user.click(screen.getByRole('button', { name: '保留本次调整' }))
   mounted.rerender(view([{ ...item, value: { ...item.value, kind: 'prescription', source: 'manual',
-    catalogItemId: 'synthetic-medication-a', doseText: '10 mg', frequencyCode: 'QD', courseDays: 7, quantity: 7 } }]))
+    catalogItemId: 'synthetic-medication-a', doseText: '10 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 7, quantity: 7 } }]))
   expect(screen.getByText(/10 mg/)).toBeTruthy()
   mounted.rerender(view(change === 'remove' ? [] : [replacement]))
   expect(screen.queryByRole('checkbox', { name: '选择医生原选药品' })).toBeNull()
