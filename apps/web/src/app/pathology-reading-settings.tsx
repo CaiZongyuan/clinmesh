@@ -36,17 +36,25 @@ function ScopedPathologyReadingSettings({ locale, session }: { locale: Workspace
     }
     return configurePathologyReading({ endpoint, viewerOrigin, instanceId, expectedVersion: saved?.version ?? 0, enabled: true }, newIdempotencyKey())
   },
-  onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: key }); await queryClient.invalidateQueries({ queryKey: ['administrator-pathology'] }) } })
+  onSuccess: async config => {
+    await queryClient.cancelQueries({ queryKey: key })
+    queryClient.setQueryData<Awaited<ReturnType<typeof getPathologyReadingStatus>>>(key, {
+      state: config.enabled ? 'offline' : 'disabled', config, capabilities: [],
+    })
+    await queryClient.invalidateQueries({ queryKey: key })
+    await queryClient.invalidateQueries({ queryKey: ['administrator-pathology'] })
+  } })
   return <details className="rounded-lg border p-3" onToggle={event => setOpen(event.currentTarget.open)}><summary className="cursor-pointer text-sm font-medium">{zh ? '病理阅片服务' : 'Pathology reading service'}
     {status.data ? ` · ${labels[status.data.state][zh ? 0 : 1]}` : ''}</summary>
     <div className="mt-3 space-y-3 text-sm">
-      {status.isError ? <p role="alert">{zh ? '无法读取阅片服务状态' : 'Unable to read the service status'}</p> : null}
+      {status.isError && !save.isSuccess ? <p role="alert">{zh ? '无法读取阅片服务状态' : 'Unable to read the service status'}</p> : null}
+      {save.isSuccess ? <p role="status">{zh ? '已保存' : 'Saved'}</p> : null}
       <label className="block">{zh ? '服务实例标识' : 'Service instance'}<Input value={instanceId} onChange={event => setInstanceId(event.target.value)} disabled={save.isPending} /></label>
       <label className="block">{zh ? '服务地址' : 'Service address'}<Input type="url" value={endpoint} onChange={event => setEndpoint(event.target.value)} disabled={save.isPending} /></label>
       <label className="block">{zh ? '阅片页面地址' : 'Viewer origin'}<Input type="url" value={viewerOrigin} onChange={event => setViewerOrigin(event.target.value)} disabled={save.isPending} /></label>
       <div className="flex flex-wrap gap-2"><Button size="sm" disabled={save.isPending || !endpoint || !viewerOrigin || !instanceId} onClick={() => save.mutate(true)}>{zh ? '保存并启用' : 'Save and enable'}</Button>
         <Button size="sm" variant="outline" disabled={save.isPending || !status.data?.config?.enabled} onClick={() => save.mutate(false)}>{zh ? '停用' : 'Disable'}</Button>
-        <Button size="sm" variant="outline" disabled={status.isFetching} onClick={() => void status.refetch()}>{zh ? '检查连接' : 'Check connection'}</Button></div>
+        <Button size="sm" variant="outline" disabled={status.isFetching} onClick={() => { save.reset(); void status.refetch() }}>{zh ? '检查连接' : 'Check connection'}</Button></div>
       {save.isError ? <p role="alert">{zh ? '配置未保存，请核对地址、部署授权和当前版本后重试。' : 'Configuration was not saved. Check the address, deployment authorization and current version.'}</p> : null}
       {status.data?.capabilities.map(capability => <article className="border-t pt-2" key={`${capability.taskCode}:${capability.modelVersion}`}>
         <p>{capability.taskCode} · {capability.modelVersion} · {capability.available ? (zh ? '可用' : 'Available') : (zh ? '不可用' : 'Unavailable')}</p>

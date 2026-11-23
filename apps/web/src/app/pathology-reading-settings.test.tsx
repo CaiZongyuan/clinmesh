@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { PathologyReadingSettings } from './pathology-reading-settings.tsx'
@@ -11,6 +11,37 @@ const session: SessionContext = { user: { id: 'synthetic-admin', email: 'admin@d
     scenarioRunId: 'run-1', workspaceId: 'workspace-demo' }, availableRoles: [] }
 const config = { version: 1, enabled: true, instanceId: 'saved-instance', endpoint: 'http://saved-service.invalid', viewerOrigin: 'http://saved-viewer.invalid' }
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+
+it('保存成功但状态刷新失败仍采用已提交配置与版本，能够停用并再次保存', async () => {
+  let reads = 0
+  const submissions: Array<{ expectedVersion: number; enabled: boolean }> = []
+  vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => {
+    if (String(input).endsWith('/status')) {
+      if (++reads === 1) return Response.json({ state: 'not-configured', config: null, capabilities: [] })
+      return Response.json({ error: { code: 'READING_UNAVAILABLE', message: 'Synthetic status read failure' } }, { status: 503 })
+    }
+    const body = JSON.parse(String(init?.body)) as { expectedVersion: number; enabled: boolean }
+    submissions.push(body)
+    return Response.json({ ...config, version: body.expectedVersion + 1, enabled: body.enabled })
+  }))
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }), user = userEvent.setup()
+  render(<QueryClientProvider client={cache}><PathologyReadingSettings locale="zh-CN" session={session} /></QueryClientProvider>)
+  await user.click(screen.getByText('病理阅片服务'))
+  await screen.findByText('病理阅片服务 · 未配置')
+  await user.type(screen.getByLabelText('服务实例标识'), config.instanceId)
+  await user.type(screen.getByLabelText('服务地址'), config.endpoint)
+  await user.type(screen.getByLabelText('阅片页面地址'), config.viewerOrigin)
+  await user.click(screen.getByRole('button', { name: '保存并启用' }))
+  await screen.findByText('已保存')
+  expect(screen.queryByText('无法读取阅片服务状态')).toBeNull()
+  const disable = screen.getByRole('button', { name: '停用' })
+  await waitFor(() => expect(disable).toHaveProperty('disabled', false))
+  await user.click(disable)
+  await waitFor(() => expect(screen.getByRole('button', { name: '保存并启用' })).toHaveProperty('disabled', false))
+  await user.click(screen.getByRole('button', { name: '保存并启用' }))
+  await waitFor(() => expect(submissions.map(value => [value.expectedVersion, value.enabled])).toEqual([[0, true], [1, false], [2, true]]))
+  cache.clear()
+})
 
 it('停用始终沿已保存的原实例和地址，不将未保存编辑悄悄写入配置', async () => {
   let submitted: unknown
