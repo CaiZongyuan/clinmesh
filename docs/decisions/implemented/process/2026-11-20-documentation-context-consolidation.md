@@ -13,12 +13,13 @@ Status: implemented
 1. **临床工作流六域拆分与路由锚点兼容**：将原 `docs/architecture/clinical-workflows.md` 按阅读与修改边界拆分为六份领域合同——[门诊业务流程](../../../architecture/outpatient-workflows.md)、[住院与手术流程](../../../architecture/inpatient-workflows.md)、[处方、医嘱与药事](../../../architecture/orders-and-pharmacy.md)、[检验、检查与报告](../../../architecture/examinations-and-reports.md)、[收费、结算与医保](../../../architecture/billing-and-insurance.md)及[临床决策支持与质控](../../../architecture/clinical-decision-support.md)，同步登记至 `apps/docs/docs.ts` 公开文档清单；`clinical-workflows.md` 收敛为临床总览路由与跨领域[连续办理私稿与逐项原回执恢复](../../../architecture/clinical-workflows.md)合同，并显式保留历史 `<a id="...">` 路由锚点以兼容运行时 `skills/clinmesh-*` 与外部链接。
 2. **剥离代码／测试盘点清单与去重 `docs/memory/`**：从架构合同、测试策略与工程记忆中移除可通过文件树或 `git grep` 即时获知的源码文件清单、迁移文件枚举与本机硬件／工具链探测缓存表；将 `docs/memory/` 去重压缩为高复用排障规则，并将非 ASCII 文件名统一重命名为 [`docs/memory/video-walkthrough.md`](../../../memory/video-walkthrough.md)。
 3. **同源决策演进链合并为 Keeper Notes 并迁移 `proposed` 积压**：将 `docs/decisions/` 中同一机制的多轮迭代、局部补丁及反转记录合并入 74 份自包含 `implemented` Keeper Notes，剔除行内 `>` 局部取代免责声明与时间线流水账，直接陈述当前已交付架构、仍有价值的否定保证与真实替代方案；遵循 [恢复 GitHub Issue 为正式需求规格](2026-11-11-github-issue-canonical-specs.md)，将长期滞留的 `proposed` 流式参考导入提案迁移至 [Issue #531](https://github.com/CaiZongyuan/clinmesh/issues/531) 并清空 `docs/decisions/proposed/`。
-4. **外部参考调研迁入本地 `references/` 并补齐 `apps/*/AGENTS.md`**：`docs/research/` 仅保留 16 份支撑现行医疗标准、数据许可、DRG 核验与指南取证的研究证据，其余外部参考系统拆解与未采用候选方案移入被 Git 忽略的本地只读 `references/archived-research/`（公开文档不建立指向 `references/` 的相对链接）；同时在 `apps/*/` 下补齐包级 `AGENTS.md`，使 Agent 按工作目录就近加载各应用端约束。
+4. **删除已吸收的外部参考调研并补齐 `apps/*/AGENTS.md`**：`docs/research/` 仅保留 16 份支撑现行医疗标准、数据许可、DRG 核验与指南取证的研究证据，其余结论已吸收的外部参考系统拆解与未采用候选方案直接删除，由 Git 历史保留原文，不在本地只读 `references/` 或任何 `archived/` 目录另存副本；同时在 `apps/*/` 下补齐包级 `AGENTS.md`，使 Agent 按工作目录就近加载各应用端约束。
 
 ## Alternatives considered
 
 - **仅在超大文档顶部补充目录索引而不拆分或删减**：无法减少单次文件读取体积，也无法降低 `git grep` 在 237 份历史子票决策与外部参考调研中的高比例噪声命中。
 - **新建 `docs/decisions/archived/` 或 `docs/research/archived/` 归档目录**：会在版本库中继续保留竞争性的第二套过时语料，Agent 搜索时仍会命中已废弃中间态，且违背 [Agent Notes 规则](../../README.md) 无归档生命周期的约定；Git 历史已完整保留演进过程。
+- **将移出的调研另存到本地 `references/archived-research/`**：`references/` 是根 `AGENTS.md` 约定的本地只读研究输入，写入副本会破坏该边界；副本只存在于单台开发机、无法随仓库协作，而 Git 历史已能按原路径完整恢复。
 - **删除全部历史 Agent Notes，仅保留当前架构文档**：会丢失架构文档不承载的“为何拒绝某诱人方案”（如为何不用通用钱包、为何不在 DSH 开放住院直写工具、为何不把 `coverage_json` 纳入住院费用哈希）等关键负向约束，导致未来维护者重蹈覆辙。
 - **破坏性删除 `clinical-workflows.md` 原有章节锚点**：会导致产品运行时 `skills/clinmesh-*` 及既有 Issue／PR 链接断链；保留轻量路由页与显式锚点可在零外部破坏的前提下让内部文档直连六份新领域 owner。
 

@@ -1,6 +1,6 @@
 # 研究索引
 
-研究记录保存外部法规标准、公开数据集与版权边界的一手核验结果。它们记录核验时的外部证据范围，不代表当前产品合同或实施授权；现行产品合同见 [系统架构](../architecture.md)，正式需求见 [Issue 规则](../agents/issue-tracker.md)，设计取舍见 [Agent Notes](../decisions/README.md)。早期外部系统源码拆解与已吸收的过渡调研归入本地只读 `references/` 目录，不纳入版本库。
+研究记录保存外部法规标准、公开数据集与版权边界的一手核验结果。它们记录核验时的外部证据范围，不代表当前产品合同或实施授权；现行产品合同见 [系统架构](../architecture.md)，正式需求见 [Issue 规则](../agents/issue-tracker.md)，设计取舍见 [Agent Notes](../decisions/README.md)。结论已吸收或未采用的外部系统拆解与过渡调研直接删除，由 Git 历史保留原文，不另存到本地只读 `references/`。
 
 ## 临床指南与循证质控
 

@@ -21,7 +21,7 @@
 | `docs/decisions/` | 具备长期指导价值的架构/流程/测试取舍；生命周期见 [Agent Notes](decisions/README.md) |
 | `docs/agents/` | 通用工程 skills 的仓库适配配置（Issue 与标签规则） |
 | `docs/memory/` | [工程记忆](memory/memory.md)拥有稳定协作偏好并按场景索引紧凑排障线索，不作为产品合同权威 |
-| `docs/research/`、`docs/postmortem/` | [研究索引](research/README.md)保存独有外部标准与数据核验（未采用外部拆解归本地 `references/`）；`postmortem/` 记录故障复盘 |
+| `docs/research/`、`docs/postmortem/` | [研究索引](research/README.md)保存独有外部标准与数据核验（结论已吸收或未采用的外部拆解直接删除，由 Git 历史保留，不写入只读 `references/`）；`postmortem/` 记录故障复盘 |
 
 ## 生命周期与写作规则
 
