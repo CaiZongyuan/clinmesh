@@ -1,51 +1,26 @@
-# Agent Note: Synthea 来源病例与跨 Epoch 重放
+# Agent Note: Synthea 中国本地化病例来源、真值隔离与跨 Epoch 重放
 
 Status: implemented
 
 ## Problem
 
-Synthea 的本地化 FHIR R4 Bundle、参与者待诊断的本次病例、本院实际产生的诊疗事实和中国临床参考目录具有不同生命周期与可见性。把它们编译为可安装 Dataset/Package 会让生成患者依赖三病种手写真值、术语映射和目录闭包，也会把外部病史误表示为本院 FHIR R5 活动。Reset 若重新调用 Synthea 或外部模型，又无法保证同一病例、患者表现和检查结果可重复。本决策由 [issue #52](https://github.com/CaiZongyuan/clinmesh/issues/52) 建立来源与重放边界，[issue #73](https://github.com/CaiZongyuan/clinmesh/issues/73) 建立管理员准备、挂号员消费和分诊接收的角色交接，并保留[可选 Synthea 生成 Provider](./2026-08-26-optional-synthea-provider.md)与[cn-health 数据和 Synthea 中国本地化](./2026-08-30-cn-health-synthea-localization.md)仍然有效的来源边界。
+Synthea 生成的纵向 FHIR R4 病史、患者本次待诊隐藏真值、本院实际诊疗产生的 FHIR R5 事实与中国国家临床参考目录具有截然不同的生命周期和可见性。若将 Java 生成器塞入主服务镜像或要求部署者手工配置宿主数据挂载与 UID/GID，会让可选生成能力阻塞日常 HIS 启动并破坏跨环境复现；若把完整 R4 Bundle 直接导入本院 FHIR R5 或按中文名模糊映射到国家目录，会伪造本院历史活动并静默篡改来源病史；若管理员缺少受控真值核对入口或重置时重新调用外部生成器与模型，则无法在不污染临床读取边界的前提下稳定复盘同一病例。
 
 ## Decision
 
-默认启用与可选清空患者库由[默认检验服务与统一模拟数据管理](2026-09-15-default-laboratory-and-data-reset.md)定义；本文保留其余来源、版本和重放约束。
+围绕固定来源、四层事实隔离与确定性重放建立合成患者管线，当前运行合同见[仿真、病例与素材](../../../architecture/simulation.md)与[部署指南](../../../deployment.md)：
 
-管理员只读核对例外由[管理员病例真值核对](2026-09-15-administrator-case-truth-inspection.md)定义；本文的普通临床读取限制和来源 owner 保持有效。
-
-系统为四类事实设置唯一 owner。`Synthetic Patient Profile` 保存合成身份、生成参数、本地化 provenance 和完整不可变 R4 Bundle；`Synthetic Case Instance` 与私有 Case Truth repository 保存确定性选出的 Index Encounter、隐藏资源清单、病例类型和 Visible Source History 清单；Operational SQLite 与 FHIR R5 repository 只保存 ClinMesh 本次就诊中由挂号、分诊、医生、LIS、收费和药房实际产生的本院事实；独立只读 Reference SQLite 保存一个系统级当前 Release，医生搜索全部疾病、药品和检验概念，业务事实只冻结被选择行当时的 coding/display snapshot。
-
-Index Encounter 是来源时间线上最后一个具有 Condition、Observation、MedicationRequest、Procedure 或明确 reason 的临床 Encounter。其关联资源属于 Case Truth，不能通过普通 HIS、FHIR、来源历史详情或普通 Agent DTO 返回；此前资源形成按临床时间排序的 Visible Source History，详情接口在可见清单上逐项授权。[来源历史日期聚合](https://github.com/CaiZongyuan/clinmesh/issues/75)读取合同按 `Asia/Shanghai` 业务日期分组和分页，一个日期组包含当天全部可见记录且不跨页拆分；Web 默认收起日期栏目，展开后按临床时间显示组内记录，桌面端右侧详情与所选记录行对齐，窄屏详情位于列表下方。Claim 与 ExplanationOfBenefit 不进入病例历史。来源 R4 资源不转换或复制为本院 R5 Encounter、Condition、医嘱、收费、库存或审计记录。
-
-`ScenarioGenerationJob` 只接受 Synthea，默认运行全部模块并允许使用 Provider `/health` 返回的模块清单做高级过滤。Provider provenance 同时固定中国身份依赖与 experimental-preview clinical-display catalog；任何翻译 gap 拒绝整份患者 Bundle，不允许生成英中混合病历。任务成功时在一个 Command 中创建 Profile 与 Case IDs；没有合格 Index Encounter 时使用派生 seed 有界重试十次，失败不留下部分 Profile、Case 或 truth。Web 由 Zustand 按 Workspace 和 Case 保留当前 Synthea 与 Patient Brief 任务标识，TanStack Query 拥有并轮询 Job DTO，页内导航后继续显示排队、运行、完成或失败状态。Dataset、Package、安装、Hospital Reference Selection、三病种 Case builder、Synthea 诊断/药品映射和 Scenario Catalog closure 不再是生产合同。
-
-其中 translation gap 的失败策略后来由 [Synthea 缺译告警与全量目录默认浏览](../bug-fix/2026-08-31-synthea-translation-warning-and-catalog-browse.md)局部取代；Profile/Case owner、原子提交和 Index Encounter 重试语义不变。
-
-Patient Brief 使用 Server 固定模型、prompt 和 strict Zod schema异步生成，成功结果形成不可变 Brief Revision；诊断泄漏或无效输出不会覆盖已有 revision。管理员选定成功 Brief 后，挂号员专用列表只返回 `brief-ready`、具有活动 Brief 且尚未开始的 Case，并从 Case 固定的 Profile Revision 投影挂号所需身份；该列表不返回 Case Truth、来源 Bundle、生成配置或来源历史详情。挂号员选择目录项后与管理员直接开始能力共用 `registration.synthetic-case.start` 和物化内核，原子创建新的 Patient、Registration、Encounter、Queue Task、Consultation question rules 和 Case materialization；来源历史不会随开始动作写入本院 FHIR。普通 Case 只能开始一次，Case revision、活动 Brief revision、状态条件更新和 materialization 唯一约束使并发开始只有一个成功。
-
-检验模拟先按请求的精确 LOINC coding 查找 Case Truth Observation，缺失时才调用 Investigation Agent。首次成功结果连同请求 coding、模型和 prompt provenance 保存为 workspace-global Investigation Result Snapshot；失败进入可重试状态且不生成正常兜底。管理员 Reset 关闭旧 Epoch、创建新 Epoch，并通过同一病例物化内核重建上一 Epoch 已开始的 Synthetic Case。新物化继续引用相同 Case revision、Profile revision、Brief revision、Case Truth 和 Investigation snapshot，但 Patient、Registration、Encounter 与 Queue Task 使用新 ID；Reset 和新 Epoch 下再次申请同一检验都不调用外部模型，也不改变 workspace-global Case 生命周期。
-
-Operational migration 是有意的开发期破坏性边界：存在旧 Dataset、Package、Profile、Case 或生成任务时要求先删除本地 operational database 后重建，不实现旧 Package 兼容读取。独立 Reference SQLite 不在该迁移范围内。
+1. **一键不可变镜像运行时与异步生成任务**：部署入口收敛为 `pnpm synthea:up`、`pnpm synthea:doctor` 与 `pnpm synthea:down`，通过 `compose.synthea-provider.yaml` 按不可变镜像 digest 运行非 root、只读文件系统的 `cn-health-synthea-localizer` 与 `clinmesh-synthea-provider`（无需本地挂载 Candidate、JDK 或 Docker socket）。`cn-health-data` 拥有中国合成身份（`100` 号段电话、`.test` 邮箱、`990000` 模拟证件号）与 `synthea-zh-cn` 临床显示投影，剔除 Claim/ExplanationOfBenefit 并附带完整 provenance 校验。Server 仅通过可选 `CLINMESH_SYNTHEA_PROVIDER_URL` 经持久 `ScenarioGenerationJob` 单并发 worker 异步调用 `/v1/generate`，重启自动将 `running` 任务退回 `queued`；无合格 Index Encounter 时换派生 seed 有界重试十次，全成功才在同一事务落盘 Profile 与 Case（按影像／病理适配条目的定向保留生成见[胸片与胸部 CT 阅片闭环](2026-10-01-chest-imaging-reading-loop.md)与[病理切片摄取](2026-10-02-pathology-slide-ingest.md)，多病例作者底稿编译器见[通用 Authored Case Pack 编译器](2026-11-19-authored-case-pack-compiler.md)）。
+2. **四类事实唯一归属与管理员只读真值核对**：`Synthetic Patient Profile` 保存合成身份与不可变中文 FHIR R4 Bundle；`Synthetic Case Instance` 与私有 `Case Truth` 仓库固定最后一个临床 Index Encounter 为隐藏答案，此前资源按 `Asia/Shanghai` 业务日期聚合为逐项白名单授权的 `Visible Source History`；Operational SQLite 与 FHIR R5 只记录本院挂号、分诊、医嘱、报告、收费与药房实际产生的事实；独立只读 Reference SQLite 保存系统当前临床目录 Release，业务写入冻结所选编码快照，不做 Synthea 到国家目录的自动编码映射。管理员模拟数据详情提供默认折叠、禁止 HTTP 缓存的专用只读真值核对区，普通临床接口、FHIR、CLI、Page Context 与患者问诊模型均严格隔离 `Case Truth`。
+3. **单次消费实体化、跨 Epoch 确定性重放与逻辑清空**：管理员选定无诊断泄漏的不可变 `Patient Persona`（原 Brief）修订后，挂号员窄列表仅暴露 `brief-ready` 待挂号身份摘要，与管理员直启共用 `registration.synthetic-case.start` 物化内核，单次原子创建本院 Patient、Registration、Encounter 与候诊队列。检验优先匹配精确 `Case Truth` Observation，缺失时才生成并冻结 workspace 级 `Investigation Result Snapshot`。管理员重置默认关闭旧 Epoch 并以相同 Case/Profile/Persona 修订和已冻结检查快照在新 Epoch 重放病例（生成新本院业务 ID，零外部模型或 Synthea 调用）；勾选“清空患者库”时执行 `archived_at` 逻辑归档并退役关联未开始 Case（运行中生成任务阻断清空），保留历史临床、快照与审计关联供追溯。
 
 ## Alternatives considered
 
-**把完整 R4 Bundle 导入本院 FHIR R5。** 这会让来源版本、机构、医务人员、账单和历史活动看似由本院产生，还会为同一事实建立来源 R4 与本院 R5 两个 owner，因此只保留只读来源详情和明确的新就诊事实。
-
-**保留 Dataset/Package 并自动把 Synthea 编码映射到中国目录。** 这种方式可以沿用安装和目录闭包，但翻译显示、来源编码和本院选码不是同一问题；模糊或手工映射会阻塞随机全模块患者并静默改变病例，因而生成与参考目录完全解耦。
-
-**Reset 时重新调用 Synthea、Brief 模型或 Investigation Agent。** 这可以减少 snapshot 持久化，但相同 seed 之外的服务版本、模型输出和网络状态仍会漂移，也会让演示重放产生不同患者表现或检验结果，因此 Reset 只复用不可变 revision 和 snapshot。
-
-**为管理员复制一套无门禁开始流程。** 这会让正常开始与重放的 Patient/Registration/Encounter/Task 结构逐渐分叉；当前实现只把一次性状态推进留在普通 Command，两条路径共享同一个物化内核。
-
-**让挂号员读取管理员患者库或从临时 Patient Identity 推导病例。** 前者会暴露来源 Bundle、生成配置和私有病例边界，后者无法恢复不可变 Case Truth、Patient Brief 与检验生成上下文；因此挂号员只读取窄的待挂号投影，临时患者继续进入不具备完整模拟病例能力的普通 HIS 流程。
+- **将 Java/Synthea 放入主镜像或由 Server 通过 Docker socket 拉起容器**：扩大主服务供应链、暴露宿主机控制面，并使生成器故障拖垮日常 HIS 岗位。
+- **将完整来源 R4 Bundle 导入本院 FHIR R5 或自动映射至国家目录**：混淆外院既往史与本院诊疗责任，且同名多规格映射会静默扭曲原始病史。
+- **把真值合并进来源历史，或仅在前端隐藏真值面板**：破坏临床可见历史白名单，无法阻止非管理员直接请求接口获取隐藏诊断。
+- **Reset 时重新运行 Synthea／模型，或清空患者库时物理删除历史行**：前者导致重放表现漂移，后者打断已签发报告、病例物化与跨 Epoch 审计链的外键追溯。
 
 ## Consequences
 
-患者生成只依赖可选 Synthea/localizer 服务，不依赖 Reference SQLite、映射文件或活动 Epoch；Provider 不可用只影响生成能力。患者库是管理员准备模拟数据、查看来源历史和管理 Brief 的入口；挂号员工作台消费 ready Case 的固定窄投影，成功后把同一业务事实交给分诊队列。管理员保留直接开始能力。
-
-Case Truth 的私有边界和 Visible Source History 的 allowlist 必须随新资源类型继续做负向测试。任何新 Agent 工具只能读取已授权历史或本院事实，不能接受任意来源 reference、Bundle、SQL 或 truth 查询。
-
-Reference Release 可以独立升级；既有诊断、处方和检验请求保留创建时的 coding、产品或 Hospital Service/report definition snapshot。Synthea 来源编码只用于显示原病历和精确 Investigation 结果复用，不声称已经映射为中国国家或本院编码。Snapshot 的复查复用规则由[完整检验参考库与本院服务发布](./2026-09-01-laboratory-service-publication.md)拥有。
-
-重放产生新的本院业务和 FHIR 标识，因此跨 Epoch 比较必须按 Case/Profile/Brief/snapshot revision 关联，而不能要求 operational ID 相同。Reset Command 的审计属于关闭中的旧 Epoch；新 Epoch FHIR 事实不作为旧 Epoch AuditEvent 的本地 FHIR reference effects 返回。
-
-普通测试使用注入式 Provider，不访问外部模型。可选 live smoke 只提交一份硬编码合成 Brief，终端不输出 prompt、模型正文、Authorization 或 API key；容器 smoke 使用固定 Synthea commit、本地化 provenance 和 all-module 请求。
+患者生成成为完全可选的离线可复现外设：未启动 Docker 或 Provider 时不影响既有病例、岗位流转与跨 Epoch 重放。升级 Synthea、localizer 或临床显示目录须发布新镜像并更新锁定 digest；`synthea-zh-cn` 保持实验预览声明，不冒充正式国家标准编码。所有新增临床或 Agent 读取入口均须维持对 `Case Truth` 的负向隔离测试。

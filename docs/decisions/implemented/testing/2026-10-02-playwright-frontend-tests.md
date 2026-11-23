@@ -1,42 +1,26 @@
-# Agent Note: Playwright 前端浏览器回归
+# Agent Note: Playwright 前端浏览器合同、有限动画稳定采样、原生组合验收与 CI 失败注释
 
 Status: implemented
 
 ## Problem
 
-前端浏览器合同同时使用逐例启动 Chrome 的 DOM 导出和手动启动 Playwright；字号、动画和布局验证依赖不同的浏览器发现、时钟和清理机制。日常真实入口验证依赖多次 `agent-browser` 命令，增加操作延迟，也难以直接复用为自动回归。
+前端测试若混用逐例冷启动 Chrome DOM 导出、Vitest 内手工拉起浏览器与高频 `agent-browser` 命令行交互，会导致浏览器发现、时钟控制与环境清理碎片化；若将约 22–30 秒的生产 Vite 冷构建塞进单条用例超时预算，或让构建期的 `NODE_ENV=production` 污染同一 worker 内的服务端 Better Auth 注册限流，会制造与顺序偶发相关的假失败；同时，主题、字号与宿主分栏切换会触发有限 CSS／Web Animations 过渡，仅等待两帧 `requestAnimationFrame` 会采到插值中间态，而简单 `Promise.all(finished)` 又会把合法取消并重开的替代动画误判为异常；此外 CI 日志下载受阻时纯控制台 `list` 输出无法直接在 GitHub Check 上定位失败断言，跨前后端与 DSH 宿主的自动记录链路也需要可复用的非付费确定性组合旅程。
 
 ## Decision
 
-参考 `agentic-axum-saas-demo` 的分层方式，Vitest 保留单元、组件与 adapter 测试；`@playwright/test` 统一拥有浏览器合同和 standalone Web E2E。浏览器合同沿用生产 Vite/Tailwind 构建及 React 18/19 fixtures，真实帧驱动状态等待，worker 复用 Chromium，测试隔离 context/page。配置与实际命令见[测试策略](../../../../docs/testing.md#用户界面验证)。
+由 `@playwright/test` 统一承载 React 18/19 ShadowRoot 浏览器合同与 standalone Web E2E，并配套构建预算隔离、有限动画收敛采样、CI 双报告器与原生宿主共享旅程，详细命令与分层规范见[测试策略](../../../testing.md)与[部署指南](../../../deployment.md)：
 
-Agent 操作反馈的保持与淡出合同以固定的 Date 时钟逐步推进，真实定时器、CSS 过渡、WebGL 绘制和布局帧继续运行。逻辑时间只按 fixture 请求的等待量推进，避免事件循环或 worker 调度延迟把保持阶段的采样推入淡出阶段；真实渲染延迟仍由布局、透明度与绘制断言观察。
-
-检验目录与诊断处方合同按 React 版本在 `beforeAll` 中构建 fixture，并以版本分组的默认执行模式复用产物，避免全局 `fullyParallel` 使同一 fixture 在多个 worker 重复冷构建。构建 hook 保持原有 30 秒时限，每条交互测试保留自身原有时限；冷构建曾占用约 22 秒，把它放在交互测试中会使完整外观矩阵和开具申请在总时限处中断。每条测试仍使用独立 page/context，保留全部断言，不依赖前一测试的业务状态。
-
-外观切换的准备边界同时覆盖 React 属性提交和真实 CSS 字号过渡。属性到位时，使用 `transition-all` 的标签仍可能改变文字尺寸与点击位置；等待实际字号到达目标后保留原指针交互，标签选中状态作为导航完成的独立证据。针对过渡窗口的回归只延长测试 fixture 的 CSS 时长，不改变产品动画；具体断言由[测试策略](../../../../docs/testing.md#用户界面验证)拥有。
-
-Web E2E 每 worker 构建一次 Web，生产构建 fixture 使用独立的 120 秒预算；复用它的浏览器合同默认保留每条交互的 30 秒时限，Web E2E 保留自身交互时限。生产构建在资源争用时可超过 30 秒，不能挤占状态、焦点与布局断言的时间。住院财务与医保更正按 React 版本在 `beforeAll` 构建共享 fixture，构建与交互分别计时。每测试创建真实 Hono listener、file-backed SQLite、合成账户和随机凭证；系统分配端口，fixture 完成后关闭 listener/runtime 并删除临时文件。登录、岗位切换和窄屏设置通过页面与正式 HTTP 会话查询验证，不读取开发配置或调用真实 provider。
-
-住院建议的生成与编辑确认、参数失效、丢回执后恢复分别使用独立测试。恢复场景必须串联真实 UI 提交、响应丢失、同会话刷新后的重新挂载和原键查询，才能证明持久意图跨页面生命周期可恢复；这一项 Surface 合同沿用住院术后核查旅程的显式 60 秒预算，其余两项 Surface 合同保持默认 30 秒，Web E2E 沿用自身预算，单个动作仍受 10 秒限制。该边界保留连续性和全部断言，为正常累计交互留出预算，单动作时限继续检测请求停滞。
-
-测试宿主与浏览器产物分别选择运行环境：宿主固定为 `test`，生产 Web 构建只在调用期间切换环境并在 `finally` 恢复，合同 bundle 显式定义生产模式。Vite 会在环境未设时写入 `production`；复用 worker 后，后加载的 Better Auth 会因此开启生产注册限流，使合成账户初始化依赖文件顺序。隔离构建环境可保留生产前端行为，也保持现有认证 origin 与 CSRF 校验。
-
-日常 UI 回归与真实入口验证默认使用 Playwright；`agent-browser` 用于按需探索或接管已有会话。常规自动测试不生成截图、视频或 trace；真实影像仍只允许文字与聚合统计。原生 DSH Session/browser Tool 验收独立保留。
+1. **构建与交互预算分离及宿主环境隔离**：Vitest 负责纯函数、组件与适配器单测；Playwright 按 React 版本分组在 `beforeAll` 复用编译产物，Web E2E 每 worker 执行一次独立 120 秒预算的生产构建（构建期间临时切换环境并在 `finally` 恢复 `test`，阻断 `production` 污染 Better Auth 合成账号初始化），单条交互用例保留紧凑的 30 秒／60 秒预算与 10 秒单动作上限，每例独占隔离 `BrowserContext`、随机端口 Hono 实例与临时文件 SQLite。Agent 柔光保持与淡出测试采用可控步进 `Date` 逻辑时钟配合真实渲染帧，消除调度抖动且不篡改产品动效时长。
+2. **字号与有限动画最终态等待边界**：涉及几何矩形、滚动或同排对齐断言的测试（如外观矩阵、手术与护士集中办理旅程）在采样前先经过真实渲染帧，循环读取目标子树尚未结束的有限动画（排除无限旋转加载指示器），等待其完成或取消后再重读以覆盖取消瞬间派生的替代动画，并等待 `transition-all` 标签实际计算字号稳定后再触发真实指针点击，绝不靠放宽像素容差、插入固定 `sleep` 或关闭产品动画迁就测试。
+3. **共享组合旅程与隔离 DSH 原生 Smoke**：抽取跨宿主共享可见旅程串联直接记录、刷新恢复、局部手改保护、暂停补录与签署准备冻结，既在生产 Web E2E 中运行，又在锁定 DSH 的隔离 Profile 原生 smoke 中注入合成 `LlmAdapter` 验证真实 Session、`PageContext` lease、草稿 action 与 `.propose` 人工批准到 `CommandReceipt`／`AuditEvent`／`ActionTrace` 的全链贯通（`--live` 实模样本仅在获当次显式许可时独立运行，绝不进入常规 CI）。
+4. **CI `list` + `github` 双报告器**：CI 环境同时启用 Playwright 内置 `list` 与 `github` reporter（本地保持 `list`），在不改变零自动重试与超时门禁的前提下将失败文件、行号与断言直接发布为 GitHub Check 注释。
 
 ## Alternatives considered
 
-- 保留 Chrome DOM 导出：每次启动独立浏览器，浏览器发现和虚拟时钟会继续干扰动画卸载与布局帧断言。
-- 在 Vitest 内逐例手动启动 Playwright：能够运行真实帧，但浏览器生命周期、隔离和筛选需要自行维护，不能使用统一的 runner fixture。
-- 把所有组件与状态机测试迁到 E2E：增加构建和浏览器成本，并重复较低层已有矩阵；只迁移浏览器行为，真实入口保留关键旅程。
-- 强制每次 UI 验证录屏：会把媒体成本加入普通迭代；用户需要演示时再录制绑定 commit 的 WebM。
-- 扩大检验目录交互测试的超时：会把 fixture 冷构建与浏览器行为混在同一预算中；分开准备与交互保留各自的超时信号。
-- 延长产品的动效保持时间或放宽透明度阈值以消除测试失败：改变了产品合同且没有消除真实时间采样的调度漂移。
-- 仅等待字号属性、固定等待一段时间或改用键盘绕过外观矩阵的点击：前两者不能证明实际排版完成，后者丢失同一窄转宽前态下的指针路径。
-- 调整生产认证限流或为合成注册增加等待：会让测试准备迁就构建造成的宿主环境污染，仍无法保证其他模块的默认行为与文件顺序无关。
+- **把全部状态机与权限拒绝矩阵搬进 Playwright E2E，或每次迭代强制生成录屏／截图**：徒增构建与浏览器耗时；常规自动回归不落盘媒体，真实影像与切片遵循零像素读取红线仅校验文字快照与像素聚合统计。
+- **调大交互用例总超时包纳冷构建，或用一次 `Promise.allSettled` 等待旧动画**：前者掩盖真正的交互卡死，后者漏掉旧动画取消后新启动的替代过渡动画。
+- **自行编写日志解析脚本发 GitHub 注释，或把付费真实模型接入 CI**：内置 `github` reporter 已原生支持精确注释，付费实模则会引入外网波动、密钥暴露与非确定性输出。
 
 ## Consequences
 
-`pnpm test` 与 `pnpm check` 包含 Vitest、Playwright 合同和 Web E2E；CI 安装锁定版本对应的 Chromium 与系统依赖。包级 Vitest 不再执行浏览器合同，独立运行方式见测试策略。失败不自动重试；更高并发可由命令显式选择，默认并发限制生产构建的资源争用。
-
-浏览器层只拥有 React 兼容、ShadowRoot、真实布局、渲染与用户入口集成；Command、FHIR、授权拒绝矩阵和门诊闭环由原有 owner 测试持有。生产构建 E2E 不证明已部署的 DSH 宿主原生 Session 正确。
+`pnpm test` 与 `pnpm check` 在无需外部模型密钥的前提下稳定覆盖双版本 React、ShadowRoot 门户、容器响应式与端到端持久化恢复；CI 检查页面可直接阅读浏览器失败定位，原生 DSH 宿主升级则通过隔离 smoke 提供真实桥接证据。

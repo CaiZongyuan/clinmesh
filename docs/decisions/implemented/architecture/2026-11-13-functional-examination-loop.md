@@ -8,7 +8,7 @@ Status: implemented
 
 ## Decision
 
-新增 examination 类型适配器，复用 ClinicalRequestKernel 的状态机、版本、幂等、审计和 outbox，保留独立的服务、草稿、命令与报告投影。门诊沿用原费用及确定资金放行，住院沿用护士送检与执行计费。charge_record 与 payment_preview 通过保留原记录的 SQLite 表重建扩展类别；医保来源显式识别 examination。当前合同和支持指标由[临床业务流程](../../../architecture/clinical-workflows.md#无像素功能检查)拥有。
+新增 examination 类型适配器，复用 ClinicalRequestKernel 的状态机、版本、幂等、审计和 outbox，保留独立的服务、草稿、命令与报告投影。门诊沿用原费用及确定资金放行，住院沿用护士送检与执行计费。charge_record 与 payment_preview 通过保留原记录的 SQLite 表重建扩展类别；医保来源显式识别 examination。当前合同和支持指标由[检验、检查与报告](../../../architecture/examinations-and-reports.md)拥有。
 
 报告以文字和结构化 Observation 表达，不创建影像素材或波形。精确真值完整时采用其结果；部分真值拒绝补齐。普通心率不是完整 ECG 面板的声明；所有已支持功能指标的正常范围、单位与解释规则同时用于排除历史及正式临床冲突，异常或不可判定值不能被正常基线覆盖。无精确真值时仅允许诊断、操作均可分类且无心血管阳性冲突的普通 Synthea 成人病例使用确定性正常基线；显示文字没有命中疾病词表不足以证明未知编码安全，冲突或不适用进入明确失败。结果按来源修订、冻结服务和临床证据冻结到现有 Investigation Result Snapshot，重试和相同证据重放复用已确定的结果。
 

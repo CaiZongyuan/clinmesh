@@ -21,16 +21,16 @@ ClinMesh 不是生产医院信息平台，也不是完整 FHIR Server。它不�
 
 ClinMesh 以“岗位”组织功能。每个岗位登录后进入自己的工作台，只能看到和操作本岗位授权范围内的事实；合成账号及入口见[部署指南](deployment.md)。
 
-| 业务线 | 主要岗位 | 当前能力 |
+| 业务线 | 主要岗位 | 当前能力与合同 owner |
 | --- | --- | --- |
-| 仿真病例 | 管理员 | 用中文化 Synthea 生成合成患者，查看来源病史，生成 Patient Brief，直接开始病例；新 Epoch 重置并重放同一病例 |
-| 普通门诊 | 挂号员、分诊护士、门诊医生、收费员、药师 | 一个 Encounter 贯穿挂号、分诊、问诊、检验、复诊、诊断、处方和结构化病历签署；收费后药房发药完成本次场景 |
-| 检验检查 | 门诊医生、住院医生、LIS（系统 Actor） | 检验申请、标本与结构化报告；胸片、胸部 CT 平扫阅片和乳腺切片病理会诊 |
-| 住院 | 登记员、病区护士、住院医生、病案人员 | 住院证、登记入科、床位、长期与临时医嘱、校对执行、发药给药、转科、手术、出院结算清床、病案首页审核归档 |
-| 收费与医保 | 收费员 | 费用预览、成功／拒绝／结果未知三种支付结果、退款，以及使用合成参数的门诊与住院医保待遇模拟 |
-| DRG | 住院医生、病案人员、医保办 | 按[运行时 DRG 规则启用](deployment.md#运行时-drg-规则启用)配置后，按 CHS-DRG 3.0 预分组和费用推演，归档时冻结分组，医保办以合成支付参数模拟核定；PCI 住院后台跟进与术后核查 |
+| 仿真病例 | 管理员 | 用中文化 Synthea 或专病病例包准备合成患者，查看来源病史，选用 Patient Persona，直接开始病例；新 Epoch 重置并重放同一病例，见[仿真、病例与素材](architecture/simulation.md) |
+| 普通门诊 | 挂号员、分诊护士、门诊医生、收费员、药师 | 一个 Encounter 贯穿挂号、分诊、问诊、检验检查、复诊、诊断、处方和结构化病历签署；收费后药房发药完成本次场景，见[门诊业务流程](architecture/outpatient-workflows.md)与[处方、医嘱与药事](architecture/orders-and-pharmacy.md) |
+| 检验检查 | 门诊医生、住院医生、LIS（系统 Actor） | 检验申请、标本与结构化报告；心电／超声功能检查、胸片与胸部 CT 平扫阅片及乳腺切片病理会诊，见[检验、检查与报告](architecture/examinations-and-reports.md) |
+| 住院与手术 | 登记员、病区护士、住院医生、病案人员 | 住院证、登记入科、床位、长期与临时医嘱、校对执行、发药给药、转科、PCI 与手术耗材核实、出院结算清床、病案首页审核归档，见[住院与手术流程](architecture/inpatient-workflows.md) |
+| 收费与医保 | 收费员 | 费用预览、成功／拒绝／结果未知三种支付结果、合并收款与逐分配退款，以及门诊与住院品规级医保待遇模拟，见[收费、结算与医保](architecture/billing-and-insurance.md) |
+| 临床决策与 DRG | 门诊医生、住院医生、病案人员、医保办 | 确定性风险算子、专病组套预筛、免费指南检索与事中双层质控见[临床决策支持与质控](architecture/clinical-decision-support.md)；按[运行时 DRG 规则启用](deployment.md#运行时-drg-规则启用)配置后支持 CHS-DRG 3.0 预分组、归档冻结与医保办核定，见[住院与手术流程](architecture/inpatient-workflows.md) |
 
-业务流程、状态机和每条线的限制见[临床业务流程](architecture/clinical-workflows.md)；固定 PCI 病例的完整跨岗位演示见 [PCI 黄金病例演示](pci-demo.md)。
+跨流程路由与批量私稿／回执恢复见[临床业务流程](architecture/clinical-workflows.md)；固定 PCI 病例的完整跨岗位演示见 [PCI 黄金病例演示](pci-demo.md)。
 
 ## 三种使用入口
 
@@ -97,7 +97,7 @@ Agent 是 ClinMesh 的一等用户，但不拥有第二套业务内核。两条 
 
 - **交互式 Agent** 运行在 DSH 中，DSH 拥有模型 Session 和 transcript。ClinMesh 只发布当前岗位和页面允许的 Tools；页面范围、资源版本或会话变化都会撤下旧 Tools 并关闭未决定的审阅。正式挂号、临床、支付和药房动作的最终 Actor 始终是点击审阅框的登录人类。详见 [Agent 接入与能力边界](architecture/agent-integration.md)，实际用法见 [Agent 操作与反馈](agent-capabilities.md)。
 - **任务 Agent** 通过 CLI 行动，只能使用 Grant 中的单一岗位；跨岗位流程由 runner 签发多个 Grant，不能在一个 token 内切换岗位。根目录 [`skills/`](../skills) 的运行时 Skills 按岗位说明意图路由和恢复方法，命令示例由测试保证与真实 Catalog 一致。详见 [Agent CLI 与 Operation Catalog](architecture/agent-integration.md#77-agent-cli-与-operation-catalog)。
-- **后台住院跟进** 是独立于页面的持久任务：住院医生主动开启后，任务每次工作前重新验证授权，失权或归档即停止新分析，模型用量按本次住院如实计量。详见[住院后台规则跟进](architecture/clinical-workflows.md#住院后台规则跟进)。
+- **后台住院跟进** 是独立于页面的持久任务：住院医生主动开启后，任务每次工作前重新验证授权，失权或归档即停止新分析，模型用量按本次住院如实计量。详见[住院与手术流程](architecture/inpatient-workflows.md)。
 
 病历、备注、术语和工具结果都视为不可信数据，不能改变 Tool 目录、岗位权限或 Command 状态机；Agent 结果不包含 prompt、密钥、reasoning 或仿真私有事实。
 
@@ -138,7 +138,7 @@ LIS      经持久 outbox 受理、执行并签发结构化报告
 医保办   读取冻结分组，预览并确认模拟核定
 ```
 
-门诊与住院的状态机、门禁与每条线的限制见[临床业务流程](architecture/clinical-workflows.md)；按岗位实际操作一遍，可跟随 [PCI 黄金病例演示](pci-demo.md)。
+详细状态机与门禁分别见[门诊业务流程](architecture/outpatient-workflows.md)、[住院与手术流程](architecture/inpatient-workflows.md)、[处方、医嘱与药事](architecture/orders-and-pharmacy.md)、[检验、检查与报告](architecture/examinations-and-reports.md)、[收费、结算与医保](architecture/billing-and-insurance.md)、[临床决策支持与质控](architecture/clinical-decision-support.md)及[临床业务流程](architecture/clinical-workflows.md)；按岗位实际操作一遍，可跟随 [PCI 黄金病例演示](pci-demo.md)。
 
 ### 系统内部处理流程
 
@@ -212,7 +212,7 @@ ClinMesh 默认由主 Agent 与开发者协作推进开发：先把需求说清�
 | 你要做的事 | 先读 |
 | --- | --- |
 | 任何业务或接口修改 | [系统架构导航](architecture.md)、[领域词汇](../CONTEXT.md) |
-| 后端业务流程 | [临床业务流程](architecture/clinical-workflows.md)、[FHIR 与 Command 合同](architecture/fhir-and-commands.md)、[存储与事务](architecture/storage.md) |
+| 后端业务流程 | [临床业务流程](architecture/clinical-workflows.md)、[门诊业务流程](architecture/outpatient-workflows.md)、[住院与手术流程](architecture/inpatient-workflows.md)、[处方、医嘱与药事](architecture/orders-and-pharmacy.md)、[检验、检查与报告](architecture/examinations-and-reports.md)、[收费、结算与医保](architecture/billing-and-insurance.md)、[临床决策支持与质控](architecture/clinical-decision-support.md)、[FHIR 与 Command 合同](architecture/fhir-and-commands.md)、[存储与事务](architecture/storage.md) |
 | 前端界面 | [跨端前端架构](frontend-architecture.md)、[临床 UI 设计合同](ui/design.md) |
 | Agent 能力 | [Agent 接入与能力边界](architecture/agent-integration.md)、[Agent 操作与反馈](agent-capabilities.md) |
 | 病例、仿真与 DRG | [仿真、病例与素材](architecture/simulation.md)、[DRG 条件分组](architecture/drg-grouping.md)、[DRG 离线资料储存合同](drg-reference-storage.md) |

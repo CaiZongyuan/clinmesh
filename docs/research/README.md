@@ -1,59 +1,27 @@
 # 研究索引
 
-研究记录保存外部标准、固定源码、探测结果与候选方案。它们保留核验时的范围和限制，不是当前产品行为或实施授权；当前合同从 [系统架构](../architecture.md) 进入，正式需求见 [Issue 规则](../agents/issue-tracker.md)，决策理由见 [Agent Notes](../decisions/README.md)。
+研究记录保存外部法规标准、公开数据集与版权边界的一手核验结果。它们记录核验时的外部证据范围，不代表当前产品合同或实施授权；现行产品合同见 [系统架构](../architecture.md)，正式需求见 [Issue 规则](../agents/issue-tracker.md)，设计取舍见 [Agent Notes](../decisions/README.md)。结论已吸收或未采用的外部系统拆解与过渡调研直接删除，由 Git 历史保留原文，不另存到本地只读 `references/`。
 
-新增研究注明来源和核验范围；已采纳的长期结论维护到对应 owner，研究只保留独有证据。没有确定去向的研究不因整理而删除。
+## 临床指南与循证质控
 
-## 业务、临床与数据
-
-- [门诊与住院的支付平台及业务边界](2026-10-29-his-outpatient-inpatient-payment-boundaries.md)
-- [UK Biobank Data Showcase 的用途与访问边界](2026-10-26-uk-biobank-data-showcase.md)
-- [OpenDRG 公开资料包核验](2026-10-21-opendrg-public-data-inventory.md)
-- [PCI 演示环境的完整 DRG 包核验](2026-10-27-pci-drg-demo-enablement.md)
-- [OpenHIS ITAI Pro 架构与业务研究](openhis-itai-pro-architecture.md)
-- [合成医院数据来源研究](synthetic-hospital-data-sources.md)
-- [虚拟患者与病例创作系统研究](virtual-patient-and-case-authoring-systems.md)
-- [参考数据映射与场景编译系统研究](reference-data-mapping-and-scenario-compilation-systems.md)
-- [紫荆 AI 医院线上虚拟诊室实机分析](tairex-virtual-clinic-analysis.md)
-- [HIS UI/UX 一手参考与 ClinMesh 原型建议](his-ui-ux-references.md)
-- [现代专业 UI 与临床可视化设计参考](modern-ui-design-references.md)
-- [UI 设计风格选型研究：全量重构候选方向](2026-10-22-ui-design-styles.md)
-- [医生 Agent 质控能力研究](2026-10-08-clinical-quality-control.md)
-- [医生诊疗建议的权威指南库与证据接入](2026-10-13-clinical-recommendation-guidelines.md)
-- [21 份国内官方指南的使用依据核验](2026-10-26-domestic-guideline-use-rights.md)
-- [冠心病指南资料包与 ClinMesh 的适配评估](2026-10-26-coronary-guideline-folder-assessment.md)
-- [冠心病单病例 DRG 质控：官方规则依据](2026-10-15-drg-official-evidence.md)
-- [CHS-DRG 3.0 完整条件核验](2026-10-25-drg-condition-verification.md)
-- [DRG 运营分析前置条件与建设路径](2026-10-20-drg-operations-prerequisites.md)
-- [PCI 耗材推荐所需临床输入与证据边界](2026-10-27-pci-material-recommendation-evidence.md)
-- [已接入冠心病指南用于住院 AI 的适用性](2026-11-02-inpatient-guideline-applicability.md)
-- [LLM-Wiki 主题知识层用于住院指南的评估](2026-11-02-llm-wiki-for-inpatient-guidelines.md)
-- [PCI 支架类别与尺寸专题索引](topics/pci-stent.md)
-- [对比剂急性肾损伤专题索引](topics/contrast-kidney.md)
-- [住院病案首页、编码目录与召回边界](2026-10-20-inpatient-record-coding-and-recall.md)
-- [本地冠心病指南的参考价值与采用边界](2026-10-26-coronary-guidelines-project-reference.md)
+- [医生诊疗建议的权威指南来源、国内官方许可与冠心病资料核验](2026-10-13-clinical-recommendation-guidelines.md)
+- [LLM-Wiki 主题知识层与住院指南取证评估](2026-11-02-llm-wiki-for-inpatient-guidelines.md)
+- [PCI 支架类别与尺寸核对（离线评估夹具）](topics/pci-stent.md)
+- [对比剂与肾功能风险（离线评估夹具）](topics/contrast-kidney.md)
 - [通用门诊病历缺项的官方依据与适用边界](2026-10-15-outpatient-record-quality-rules.md)
 
-## Agent 接入与协议
+## DRG、病案编码与支付边界
 
-- [dsh-our-free-model：模型来源、架构与使用边界](2026-10-26-dsh-our-free-model.md)
-- [LLM-Wiki 对 ClinMesh 指南知识层的参考价值](2026-10-26-llm-wiki-clinmesh-assessment.md)
-- [指南检索与 Agent 使用能力优化研究](2026-10-26-guideline-retrieval-agent-usability.md)
-- [Agent 模型调用链路、触发与停止条件审计](2026-10-19-agent-model-call-lifecycle.md)
-- [面向 Agent 的业务 CLI 参考研究](agent-friendly-cli-reference-analysis.md)
-- [Agent 运行时与评测融合研究](agent-runtime-and-evaluation-integration.md)
-- [DSH 插件能力与 ClinMesh 界面融合路线](dsh-plugin-integration-options.md)
-- [DSH 镜像 workspace 预设可行性研究](2026-10-20-dsh-mirror-preset-feasibility.md)
-- [DSH 宿主设计语言与 ClinMesh 整屏对齐](2026-10-29-dsh-host-design-language.md)
-- [嵌入式 HIS 助手与 DeepSeek Harness 融合研究](embedded-his-assistant-integration.md)
-- [医生助手只读绑定与安全恢复](2026-10-08-doctor-agent-binding-execution.md)
-- [医生 Agent 当前病例与历史资料读取研究](2026-10-08-doctor-agent-case-read.md)
-- [智能体平台的 Harness 边界](2026-10-18-agent-harness-boundaries.md)
+- [CHS-DRG 3.0 官方规则、OpenDRG 资料包与完整条件核验](2026-10-25-drg-condition-verification.md)
+- [PCI 演示环境完整 DRG 包与耗材证据边界核验](2026-10-27-pci-drg-demo-enablement.md)
+- [住院病案首页、编码目录与召回边界研究](2026-10-20-inpatient-record-coding-and-recall.md)
+- [中国 HIS 门诊与住院的支付共享边界](2026-10-29-his-outpatient-inpatient-payment-boundaries.md)
 
-## 工程与运行环境
+## 合成数据、模型来源与专病蓝图
 
-- [参考项目评估与采用边界](architecture-reference-decisions.md)
-- [ClinMesh 项目初始化参考分析](project-bootstrap-reference-analysis.md)
+- [合成医院数据来源、病例真值揭示与参考映射研究](synthetic-hospital-data-sources.md)
+- [UK Biobank Data Showcase 的用途与访问边界](2026-10-26-uk-biobank-data-showcase.md)
 - [Synthea 患者生成的 macOS 兼容性核验](2026-10-13-synthea-macos-compatibility.md)
-- [ClinMesh 的 Cloudflare 试用部署可行性](2026-10-26-cloudflare-trial-hosting.md)
-- [ClinMesh 迁移 Workers 与 D1 的方案评估](2026-10-26-workers-d1-migration-assessment.md)
+- [参考项目评估与采用边界](architecture-reference-decisions.md)
+- [dsh-our-free-model：模型来源、架构与使用边界](2026-10-26-dsh-our-free-model.md)
+- [专病智能体全景调研与建设蓝图](2026-11-10-disease-specific-agent-blueprint.md)

@@ -38,7 +38,8 @@ features:
 
 ## 当前合同
 
-- [系统架构](architecture.md)：按任务查找系统、FHIR/Command、Agent、临床、存储、仿真与安全 owner。
+- [系统架构](architecture.md)：按任务查找系统、FHIR/Command、Agent、存储、仿真与安全 owner。
+- [临床业务流程](architecture/clinical-workflows.md)：跨流程路由与集中办理私稿／回执恢复，分域进入[门诊业务流程](architecture/outpatient-workflows.md)、[住院与手术流程](architecture/inpatient-workflows.md)、[处方、医嘱与药事](architecture/orders-and-pharmacy.md)、[检验、检查与报告](architecture/examinations-and-reports.md)、[收费、结算与医保](architecture/billing-and-insurance.md)和[临床决策支持与质控](architecture/clinical-decision-support.md)。
 - [跨端前端架构](frontend-architecture.md)：Web、Desktop、Mobile 和共享包职责。
 - [临床 UI 设计合同](ui/design.md)：高信息密度 token、组件组合、响应式与真实组件目录。
 - [DRG 离线资料储存合同](drg-reference-storage.md)：精简物理储存、无损读取与维护命令。
