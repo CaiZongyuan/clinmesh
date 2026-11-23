@@ -1,9 +1,7 @@
-import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import {
-  referenceArtifactSchema,
-  referenceCodingIdentity,
+  referenceConceptSchema,
   referenceDataReleaseListSchema,
   referenceDataReleaseSummarySchema,
   referenceImportDiagnosticsSchema,
@@ -12,12 +10,13 @@ import {
   referenceLaboratoryPanelMemberSchema,
   referenceLaboratorySpecimenSchema,
   referenceLaboratoryUnitSchema,
+  referenceMedicalServiceSchema,
   referenceMedicationProductSchema,
-  type ReferenceArtifact,
+  referenceSourceManifestSchema,
+  referenceValueSetEntrySchema,
   type ReferenceConcept,
   type ReferenceDataReleaseList,
   type ReferenceDataReleaseSummary,
-  type ReferenceImportManifest,
   type ReferenceLaboratoryDefinition,
   type ReferenceLaboratoryPanelMember,
   type ReferenceLaboratoryRecord,
@@ -31,11 +30,18 @@ import {
 } from '@clinmesh/contracts/reference-data'
 import Database from 'better-sqlite3'
 import { z } from 'zod'
+import {
+  computeStreamingReleaseContentHash,
+} from '../reference-data/canonical-json-hasher.ts'
 import { matchesMigrationChecksum, migrationChecksum } from './migration-checksum.ts'
-import { parseReferenceSourceArtifact } from '../reference-data/reference-source-importers.ts'
+import {
+  stageTextReferenceSourceArtifact,
+  type ReferenceStagingSink,
+} from '../reference-data/reference-source-importers.ts'
 import { verifyOfflineInventories } from '../reference-data/offline-reference-inventory.ts'
 import {
-  parseCnHealthCandidateReferenceArtifact,
+  stageCnHealthCandidateReferenceArtifact,
+  streamFileSha256AndSize,
 } from '../reference-data/cn-health-candidate-importer.ts'
 import {
   instrumentSqliteDriver,
@@ -96,89 +102,6 @@ function defaultMigrationDirectory(): string {
   const packageDirectory = resolve(process.cwd(), 'reference-drizzle')
   if (existsSync(packageDirectory)) return packageDirectory
   return resolve(process.cwd(), 'apps/server/reference-drizzle')
-}
-
-function checksum(value: string | Buffer): string {
-  return createHash('sha256').update(value).digest('hex')
-}
-
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize)
-  if (typeof value !== 'object' || value === null) return value
-  return Object.fromEntries(Object.entries(value)
-    .toSorted(([left], [right]) => left.localeCompare(right))
-    .map(([key, entry]) => [key, canonicalize(entry)]))
-}
-
-function contentHash(input: {
-  concepts: Array<ReferenceConcept & { sourceId: string }>
-  laboratoryDefinitions: SourcedLaboratoryDefinition[]
-  laboratoryPanelMembers: SourcedLaboratoryPanelMember[]
-  laboratorySpecimens: SourcedLaboratorySpecimen[]
-  laboratoryUnits: SourcedLaboratoryUnit[]
-  medicationProducts: Array<ReferenceMedicationProduct & { sourceId: string }>
-  release: Pick<ReferenceImportManifest, 'createdAt' | 'releaseId' | 'schemaVersion'>
-  services: Array<ReferenceMedicalService & { sourceId: string }>
-  sources: ReferenceSourceManifest[]
-  valueSetEntries: Array<ReferenceValueSetEntry & { sourceId: string }>
-}): string {
-  const hashSources = input.sources.map(({ artifactFormat, ...source }) => (
-    artifactFormat === 'clinmesh-reference-v1'
-      ? source
-      : { ...source, artifactFormat }
-  ))
-  return checksum(JSON.stringify(canonicalize({
-    concepts: input.concepts.toSorted((left, right) => (
-      left.sourceId.localeCompare(right.sourceId) || left.id.localeCompare(right.id)
-    )),
-    createdAt: input.release.createdAt,
-    releaseId: input.release.releaseId,
-    schemaVersion: input.release.schemaVersion,
-    sources: hashSources.toSorted((left, right) => left.sourceId.localeCompare(right.sourceId)),
-    ...(input.medicationProducts.length === 0 ? {} : {
-      medicationProducts: input.medicationProducts.toSorted((left, right) => (
-        left.sourceId.localeCompare(right.sourceId) || left.id.localeCompare(right.id)
-      )),
-    }),
-    ...(input.laboratoryDefinitions.length === 0 ? {} : {
-      laboratoryDefinitions: input.laboratoryDefinitions.toSorted((left, right) => (
-        left.sourceId.localeCompare(right.sourceId) || left.conceptId.localeCompare(right.conceptId)
-      )),
-    }),
-    ...(input.laboratoryUnits.length === 0 ? {} : {
-      laboratoryUnits: input.laboratoryUnits.toSorted((left, right) => (
-        left.sourceId.localeCompare(right.sourceId)
-        || left.conceptId.localeCompare(right.conceptId)
-        || left.sourceLocator.localeCompare(right.sourceLocator)
-      )),
-    }),
-    ...(input.laboratorySpecimens.length === 0 ? {} : {
-      laboratorySpecimens: input.laboratorySpecimens.toSorted((left, right) => (
-        left.sourceId.localeCompare(right.sourceId)
-        || left.conceptId.localeCompare(right.conceptId)
-        || left.partNumber.localeCompare(right.partNumber)
-      )),
-    }),
-    ...(input.laboratoryPanelMembers.length === 0 ? {} : {
-      laboratoryPanelMembers: input.laboratoryPanelMembers.toSorted((left, right) => (
-        left.sourceId.localeCompare(right.sourceId)
-        || left.panelConceptId.localeCompare(right.panelConceptId)
-        || left.memberOrder - right.memberOrder
-        || left.memberConceptId.localeCompare(right.memberConceptId)
-        || left.sourceLocator.localeCompare(right.sourceLocator)
-      )),
-    }),
-    ...(input.services.length === 0 ? {} : {
-      services: input.services.toSorted((left, right) => (
-        left.sourceId.localeCompare(right.sourceId) || left.id.localeCompare(right.id)
-      )),
-    }),
-    ...(input.valueSetEntries.length === 0 ? {} : {
-      valueSetEntries: input.valueSetEntries.toSorted((left, right) => (
-        left.sourceId.localeCompare(right.sourceId) || left.id.localeCompare(right.id)
-      )),
-    }),
-  })))
 }
 
 export function openReferenceDatabase(options: {
@@ -276,47 +199,55 @@ export function verifyReferenceMigrations(
   return { applied: [], schemaVersion: rows.length }
 }
 
-function sourceRows(database: ReferenceDatabase, releaseId: string): ReferenceSourceManifest[] {
-  return z.array(z.object({
-    acquisition_method: z.string(),
-    artifact_format: z.string(),
-    candidate_provenance_json: z.string().nullable(),
-    checksum: z.string(),
-    license_id: z.string(),
-    import_diagnostics_json: z.string(),
-    materialization_json: z.string().nullable(),
-    published_at: z.string().nullable(),
-    record_count: z.number().int(),
-    retrieved_at: z.string(),
-    source_id: z.string(),
-    source_url: z.string(),
-    upstream_version: z.string(),
-  })).parse(database.driver.prepare(`
-    SELECT source_id, upstream_version, published_at, retrieved_at, source_url,
-      checksum, license_id, acquisition_method, artifact_format, record_count,
-      import_diagnostics_json, candidate_provenance_json, materialization_json
-    FROM reference_source_manifest
-    WHERE release_id = ?
-    ORDER BY source_id
-  `).all(releaseId)).map(row => ({
+const sourceManifestDatabaseRowSchema = z.object({
+  acquisition_method: z.string(),
+  artifact_format: z.string(),
+  candidate_provenance_json: z.string().nullable(),
+  checksum: z.string(),
+  import_diagnostics_json: z.string(),
+  license_id: z.string(),
+  materialization_json: z.string().nullable(),
+  published_at: z.string().nullable(),
+  record_count: z.number().int(),
+  retrieved_at: z.string(),
+  source_id: z.string(),
+  source_url: z.string(),
+  upstream_version: z.string(),
+})
+
+function mapSourceManifestRow(
+  row: z.infer<typeof sourceManifestDatabaseRowSchema>,
+): ReferenceSourceManifest {
+  return referenceSourceManifestSchema.parse({
     acquisitionMethod: row.acquisition_method,
     artifactFormat: row.artifact_format,
     ...(row.candidate_provenance_json === null
       ? {}
       : { candidate: JSON.parse(row.candidate_provenance_json) }),
     checksum: row.checksum,
+    importDiagnostics: referenceImportDiagnosticsSchema.parse(JSON.parse(row.import_diagnostics_json)),
     licenseId: row.license_id,
     ...(row.materialization_json === null
       ? {}
       : { materialization: JSON.parse(row.materialization_json) }),
     ...(row.published_at === null ? {} : { publishedAt: row.published_at }),
-    importDiagnostics: referenceImportDiagnosticsSchema.parse(JSON.parse(row.import_diagnostics_json)),
     recordCount: row.record_count,
     retrievedAt: row.retrieved_at,
     sourceId: row.source_id,
     sourceUrl: row.source_url,
     upstreamVersion: row.upstream_version,
-  })) as ReferenceSourceManifest[]
+  })
+}
+
+function sourceRows(database: ReferenceDatabase, releaseId: string): ReferenceSourceManifest[] {
+  return z.array(sourceManifestDatabaseRowSchema).parse(database.driver.prepare(`
+    SELECT source_id, upstream_version, published_at, retrieved_at, source_url,
+      checksum, license_id, acquisition_method, artifact_format, record_count,
+      import_diagnostics_json, candidate_provenance_json, materialization_json
+    FROM reference_source_manifest
+    WHERE release_id = ?
+    ORDER BY source_id
+  `).all(releaseId)).map(mapSourceManifestRow)
 }
 
 const conceptDatabaseRowSchema = z.object({
@@ -332,9 +263,11 @@ const conceptDatabaseRowSchema = z.object({
   system_version: z.string(),
 })
 
-function mapConceptRow(row: z.infer<typeof conceptDatabaseRowSchema>) {
+function mapConceptRow(
+  row: z.infer<typeof conceptDatabaseRowSchema>,
+): ReferenceConcept & { sourceId: string } {
   return {
-    ...referenceArtifactSchema.shape.concepts.element.parse({
+    ...referenceConceptSchema.parse({
       code: row.code,
       display: row.display,
       domain: row.domain,
@@ -351,18 +284,20 @@ function mapConceptRow(row: z.infer<typeof conceptDatabaseRowSchema>) {
   }
 }
 
-function conceptRows(
-  database: ReferenceDatabase,
-  releaseId: string,
-): Array<ReferenceConcept & { sourceId: string }> {
-  return z.array(conceptDatabaseRowSchema).parse(database.driver.prepare(`
-    SELECT concept_id, domain, system, system_version, code, display, status,
-      laboratory_metadata_json,
-      source_id, source_locator
-    FROM reference_concept
-    WHERE release_id = ?
-    ORDER BY source_id, concept_id
-  `).all(releaseId)).map(mapConceptRow)
+const laboratoryDefinitionDatabaseRowSchema = z.object({
+  concept_id: z.string(),
+  definition_json: z.string(),
+  source_id: z.string(),
+  source_locator: z.string(),
+}).strict()
+
+function mapLaboratoryDefinitionRow(
+  row: z.infer<typeof laboratoryDefinitionDatabaseRowSchema>,
+): SourcedLaboratoryDefinition {
+  return {
+    ...referenceLaboratoryDefinitionSchema.parse(JSON.parse(row.definition_json)),
+    sourceId: row.source_id,
+  }
 }
 
 function laboratoryDefinitionRows(
@@ -371,43 +306,28 @@ function laboratoryDefinitionRows(
   conceptId?: string,
 ): SourcedLaboratoryDefinition[] {
   const parameters = conceptId === undefined ? [releaseId] : [releaseId, conceptId]
-  return z.array(z.object({
-    concept_id: z.string(),
-    definition_json: z.string(),
-    source_id: z.string(),
-    source_locator: z.string(),
-  }).strict()).parse(database.driver.prepare(`
+  return z.array(laboratoryDefinitionDatabaseRowSchema).parse(database.driver.prepare(`
     SELECT concept_id, definition_json, source_id, source_locator
     FROM reference_laboratory_definition
     WHERE release_id = ?
       ${conceptId === undefined ? '' : 'AND concept_id = ?'}
     ORDER BY source_id, concept_id
-  `).all(...parameters)).map(row => ({
-    ...referenceLaboratoryDefinitionSchema.parse(JSON.parse(row.definition_json)),
-    sourceId: row.source_id,
-  }))
+  `).all(...parameters)).map(mapLaboratoryDefinitionRow)
 }
 
-function laboratoryUnitRows(
-  database: ReferenceDatabase,
-  releaseId: string,
-  conceptId?: string,
-): SourcedLaboratoryUnit[] {
-  const parameters = conceptId === undefined ? [releaseId] : [releaseId, conceptId]
-  return z.array(z.object({
-    code: z.string(),
-    concept_id: z.string(),
-    kind: z.string(),
-    ordinal: z.number().int(),
-    source_id: z.string(),
-    source_locator: z.string(),
-  }).strict()).parse(database.driver.prepare(`
-    SELECT concept_id, code, kind, ordinal, source_id, source_locator
-    FROM reference_laboratory_unit
-    WHERE release_id = ?
-      ${conceptId === undefined ? '' : 'AND concept_id = ?'}
-    ORDER BY source_id, concept_id, ordinal, code, source_locator
-  `).all(...parameters)).map(row => ({
+const laboratoryUnitDatabaseRowSchema = z.object({
+  code: z.string(),
+  concept_id: z.string(),
+  kind: z.string(),
+  ordinal: z.number().int(),
+  source_id: z.string(),
+  source_locator: z.string(),
+}).strict()
+
+function mapLaboratoryUnitRow(
+  row: z.infer<typeof laboratoryUnitDatabaseRowSchema>,
+): SourcedLaboratoryUnit {
+  return {
     ...referenceLaboratoryUnitSchema.parse({
       code: row.code,
       conceptId: row.concept_id,
@@ -416,31 +336,38 @@ function laboratoryUnitRows(
       sourceLocator: row.source_locator,
     }),
     sourceId: row.source_id,
-  }))
+  }
 }
 
-function laboratorySpecimenRows(
+function laboratoryUnitRows(
   database: ReferenceDatabase,
   releaseId: string,
   conceptId?: string,
-): SourcedLaboratorySpecimen[] {
+): SourcedLaboratoryUnit[] {
   const parameters = conceptId === undefined ? [releaseId] : [releaseId, conceptId]
-  return z.array(z.object({
-    concept_id: z.string(),
-    display: z.string(),
-    link_type: z.string(),
-    part_name: z.string(),
-    part_number: z.string(),
-    source_id: z.string(),
-    source_locator: z.string(),
-  }).strict()).parse(database.driver.prepare(`
-    SELECT concept_id, part_number, part_name, display, link_type,
-      source_id, source_locator
-    FROM reference_laboratory_specimen
+  return z.array(laboratoryUnitDatabaseRowSchema).parse(database.driver.prepare(`
+    SELECT concept_id, code, kind, ordinal, source_id, source_locator
+    FROM reference_laboratory_unit
     WHERE release_id = ?
       ${conceptId === undefined ? '' : 'AND concept_id = ?'}
-    ORDER BY source_id, concept_id, part_number, link_type
-  `).all(...parameters)).map(row => ({
+    ORDER BY source_id, concept_id, ordinal, code, source_locator
+  `).all(...parameters)).map(mapLaboratoryUnitRow)
+}
+
+const laboratorySpecimenDatabaseRowSchema = z.object({
+  concept_id: z.string(),
+  display: z.string(),
+  link_type: z.string(),
+  part_name: z.string(),
+  part_number: z.string(),
+  source_id: z.string(),
+  source_locator: z.string(),
+}).strict()
+
+function mapLaboratorySpecimenRow(
+  row: z.infer<typeof laboratorySpecimenDatabaseRowSchema>,
+): SourcedLaboratorySpecimen {
+  return {
     ...referenceLaboratorySpecimenSchema.parse({
       conceptId: row.concept_id,
       display: row.display,
@@ -450,30 +377,38 @@ function laboratorySpecimenRows(
       sourceLocator: row.source_locator,
     }),
     sourceId: row.source_id,
-  }))
+  }
 }
 
-function laboratoryPanelMemberRows(
+function laboratorySpecimenRows(
   database: ReferenceDatabase,
   releaseId: string,
-  panelConceptId?: string,
-): SourcedLaboratoryPanelMember[] {
-  const parameters = panelConceptId === undefined ? [releaseId] : [releaseId, panelConceptId]
-  return z.array(z.object({
-    member_concept_id: z.string(),
-    member_order: z.number().int(),
-    panel_concept_id: z.string(),
-    relationship: z.string(),
-    source_id: z.string(),
-    source_locator: z.string(),
-  }).strict()).parse(database.driver.prepare(`
-    SELECT panel_concept_id, member_concept_id, member_order, relationship,
+  conceptId?: string,
+): SourcedLaboratorySpecimen[] {
+  const parameters = conceptId === undefined ? [releaseId] : [releaseId, conceptId]
+  return z.array(laboratorySpecimenDatabaseRowSchema).parse(database.driver.prepare(`
+    SELECT concept_id, part_number, part_name, display, link_type,
       source_id, source_locator
-    FROM reference_laboratory_panel_member
+    FROM reference_laboratory_specimen
     WHERE release_id = ?
-      ${panelConceptId === undefined ? '' : 'AND panel_concept_id = ?'}
-    ORDER BY source_id, panel_concept_id, member_order, member_concept_id, source_locator
-  `).all(...parameters)).map(row => ({
+      ${conceptId === undefined ? '' : 'AND concept_id = ?'}
+    ORDER BY source_id, concept_id, part_number, link_type
+  `).all(...parameters)).map(mapLaboratorySpecimenRow)
+}
+
+const laboratoryPanelMemberDatabaseRowSchema = z.object({
+  member_concept_id: z.string(),
+  member_order: z.number().int(),
+  panel_concept_id: z.string(),
+  relationship: z.string(),
+  source_id: z.string(),
+  source_locator: z.string(),
+}).strict()
+
+function mapLaboratoryPanelMemberRow(
+  row: z.infer<typeof laboratoryPanelMemberDatabaseRowSchema>,
+): SourcedLaboratoryPanelMember {
+  return {
     ...referenceLaboratoryPanelMemberSchema.parse({
       memberConceptId: row.member_concept_id,
       memberOrder: row.member_order,
@@ -482,7 +417,23 @@ function laboratoryPanelMemberRows(
       sourceLocator: row.source_locator,
     }),
     sourceId: row.source_id,
-  }))
+  }
+}
+
+function laboratoryPanelMemberRows(
+  database: ReferenceDatabase,
+  releaseId: string,
+  panelConceptId?: string,
+): SourcedLaboratoryPanelMember[] {
+  const parameters = panelConceptId === undefined ? [releaseId] : [releaseId, panelConceptId]
+  return z.array(laboratoryPanelMemberDatabaseRowSchema).parse(database.driver.prepare(`
+    SELECT panel_concept_id, member_concept_id, member_order, relationship,
+      source_id, source_locator
+    FROM reference_laboratory_panel_member
+    WHERE release_id = ?
+      ${panelConceptId === undefined ? '' : 'AND panel_concept_id = ?'}
+    ORDER BY source_id, panel_concept_id, member_order, member_concept_id, source_locator
+  `).all(...parameters)).map(mapLaboratoryPanelMemberRow)
 }
 
 const medicationProductDatabaseRowSchema = z.object({
@@ -502,7 +453,9 @@ const medicationProductDatabaseRowSchema = z.object({
   system_version: z.string(),
 })
 
-function mapMedicationProductRow(row: z.infer<typeof medicationProductDatabaseRowSchema>) {
+function mapMedicationProductRow(
+  row: z.infer<typeof medicationProductDatabaseRowSchema>,
+): ReferenceMedicationProduct & { sourceId: string } {
   return {
     ...referenceMedicationProductSchema.parse({
       approvalNumber: row.approval_number,
@@ -534,77 +487,95 @@ function medicationProductRows(
     FROM reference_medication_product
     WHERE release_id = ?
     ORDER BY source_id, product_id
-  `).all(releaseId)).map(mapMedicationProductRow) as Array<
-    ReferenceMedicationProduct & { sourceId: string }
-  >
+  `).all(releaseId)).map(mapMedicationProductRow)
+}
+
+const medicalServiceDatabaseRowSchema = z.object({
+  billing_unit_code: z.string(),
+  category_code: z.string(),
+  code: z.string(),
+  display: z.string(),
+  service_id: z.string(),
+  source_id: z.string(),
+  source_locator: z.string(),
+  status: z.string(),
+  system: z.string(),
+  system_version: z.string(),
+})
+
+function mapMedicalServiceRow(
+  row: z.infer<typeof medicalServiceDatabaseRowSchema>,
+): ReferenceMedicalService & { sourceId: string } {
+  return {
+    ...referenceMedicalServiceSchema.parse({
+      billingUnitCode: row.billing_unit_code,
+      categoryCode: row.category_code,
+      code: row.code,
+      display: row.display,
+      id: row.service_id,
+      sourceLocator: row.source_locator,
+      status: row.status,
+      system: row.system,
+      version: row.system_version,
+    }),
+    sourceId: row.source_id,
+  }
 }
 
 function medicalServiceRows(
   database: ReferenceDatabase,
   releaseId: string,
 ): Array<ReferenceMedicalService & { sourceId: string }> {
-  return z.array(z.object({
-    billing_unit_code: z.string(),
-    category_code: z.string(),
-    code: z.string(),
-    display: z.string(),
-    service_id: z.string(),
-    source_id: z.string(),
-    source_locator: z.string(),
-    status: z.string(),
-    system: z.string(),
-    system_version: z.string(),
-  })).parse(database.driver.prepare(`
+  return z.array(medicalServiceDatabaseRowSchema).parse(database.driver.prepare(`
     SELECT service_id, system, system_version, code, display, category_code,
       billing_unit_code, status, source_id, source_locator
     FROM reference_medical_service
     WHERE release_id = ?
     ORDER BY source_id, service_id
-  `).all(releaseId)).map(row => ({
-    billingUnitCode: row.billing_unit_code,
-    categoryCode: row.category_code,
-    code: row.code,
-    display: row.display,
-    id: row.service_id,
+  `).all(releaseId)).map(mapMedicalServiceRow)
+}
+
+const valueSetEntryDatabaseRowSchema = z.object({
+  code: z.string(),
+  display: z.string(),
+  entry_id: z.string(),
+  source_id: z.string(),
+  source_locator: z.string(),
+  status: z.string(),
+  system: z.string(),
+  system_version: z.string(),
+  value_set: z.string(),
+})
+
+function mapValueSetEntryRow(
+  row: z.infer<typeof valueSetEntryDatabaseRowSchema>,
+): ReferenceValueSetEntry & { sourceId: string } {
+  return {
+    ...referenceValueSetEntrySchema.parse({
+      code: row.code,
+      display: row.display,
+      id: row.entry_id,
+      sourceLocator: row.source_locator,
+      status: row.status,
+      system: row.system,
+      valueSet: row.value_set,
+      version: row.system_version,
+    }),
     sourceId: row.source_id,
-    sourceLocator: row.source_locator,
-    status: row.status,
-    system: row.system,
-    version: row.system_version,
-  })) as Array<ReferenceMedicalService & { sourceId: string }>
+  }
 }
 
 function valueSetEntryRows(
   database: ReferenceDatabase,
   releaseId: string,
 ): Array<ReferenceValueSetEntry & { sourceId: string }> {
-  return z.array(z.object({
-    code: z.string(),
-    display: z.string(),
-    entry_id: z.string(),
-    source_id: z.string(),
-    source_locator: z.string(),
-    status: z.string(),
-    system: z.string(),
-    system_version: z.string(),
-    value_set: z.string(),
-  })).parse(database.driver.prepare(`
+  return z.array(valueSetEntryDatabaseRowSchema).parse(database.driver.prepare(`
     SELECT entry_id, value_set, system, system_version, code, display,
       status, source_id, source_locator
     FROM reference_value_set_entry
     WHERE release_id = ?
     ORDER BY source_id, entry_id
-  `).all(releaseId)).map(row => ({
-    code: row.code,
-    display: row.display,
-    id: row.entry_id,
-    sourceId: row.source_id,
-    sourceLocator: row.source_locator,
-    status: row.status,
-    system: row.system,
-    valueSet: row.value_set,
-    version: row.system_version,
-  })) as Array<ReferenceValueSetEntry & { sourceId: string }>
+  `).all(releaseId)).map(mapValueSetEntryRow)
 }
 
 export function listReferenceMedicationProducts(
@@ -1076,23 +1047,25 @@ export function getReferenceMedicationProductById(
   return product
 }
 
+const releaseDatabaseRowSchema = z.object({
+  concept_count: z.number().int(),
+  content_hash: z.string(),
+  created_at: z.string(),
+  laboratory_definition_count: z.number().int(),
+  laboratory_panel_member_count: z.number().int(),
+  laboratory_specimen_count: z.number().int(),
+  laboratory_unit_count: z.number().int(),
+  medication_product_count: z.number().int(),
+  release_id: z.string(),
+  schema_version: z.string(),
+  service_count: z.number().int(),
+  source_count: z.number().int(),
+  status: z.string(),
+  value_set_entry_count: z.number().int(),
+})
+
 function readReferenceDataReleases(database: ReferenceDatabase): ReferenceDataReleaseList {
-  const rows = z.array(z.object({
-    concept_count: z.number().int(),
-    content_hash: z.string(),
-    created_at: z.string(),
-    laboratory_definition_count: z.number().int(),
-    laboratory_panel_member_count: z.number().int(),
-    laboratory_specimen_count: z.number().int(),
-    laboratory_unit_count: z.number().int(),
-    release_id: z.string(),
-    medication_product_count: z.number().int(),
-    service_count: z.number().int(),
-    schema_version: z.string(),
-    source_count: z.number().int(),
-    status: z.string(),
-    value_set_entry_count: z.number().int(),
-  })).parse(database.driver.prepare(`
+  const rows = z.array(releaseDatabaseRowSchema).parse(database.driver.prepare(`
     SELECT release_id, schema_version, status, created_at, content_hash,
       source_count, concept_count, medication_product_count, service_count,
       value_set_entry_count, laboratory_definition_count, laboratory_unit_count,
@@ -1126,238 +1099,313 @@ export function listReferenceDataReleases(database: ReferenceDatabase): Referenc
   return readReferenceDataReleases(database)
 }
 
-function laboratoryAdultRuleCount(artifact: ReferenceArtifact): number {
-  return artifact.laboratoryDefinitions.reduce((count, definition) => (
-    definition.kind === 'laboratory-cn-test'
-      ? count + definition.adultReferenceRules.length
-      : count
-  ), 0)
+const stagingBatchRowLimit = 500
+
+const dropTempStagingTablesSql = `
+  DROP TABLE IF EXISTS temp.staging_laboratory_panel_member;
+  DROP TABLE IF EXISTS temp.staging_laboratory_specimen;
+  DROP TABLE IF EXISTS temp.staging_laboratory_unit;
+  DROP TABLE IF EXISTS temp.staging_laboratory_definition;
+  DROP TABLE IF EXISTS temp.staging_value_set_entry;
+  DROP TABLE IF EXISTS temp.staging_medical_service;
+  DROP TABLE IF EXISTS temp.staging_medication_product;
+  DROP TABLE IF EXISTS temp.staging_concept;
+  DROP TABLE IF EXISTS temp.staging_source_manifest;
+`
+
+const createTempStagingTablesSql = `
+  ${dropTempStagingTablesSql}
+
+  CREATE TEMP TABLE staging_source_manifest (
+    source_id TEXT PRIMARY KEY,
+    upstream_version TEXT NOT NULL,
+    published_at TEXT,
+    retrieved_at TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    checksum TEXT NOT NULL CHECK (length(checksum) = 64),
+    license_id TEXT NOT NULL,
+    acquisition_method TEXT NOT NULL CHECK (
+      acquisition_method IN ('bundled-fixture', 'documented-api', 'generated', 'manual-download')
+    ),
+    artifact_format TEXT NOT NULL CHECK (
+      artifact_format IN (
+        'cn-health-candidate', 'clinmesh-reference-v1', 'loinc-csv',
+        'nhc-medical-service-csv', 'nhsa-diagnosis-csv',
+        'nhsa-medication-product-csv', 'ucum-xml', 'wst-value-set-csv'
+      )
+    ),
+    record_count INTEGER NOT NULL CHECK (record_count >= 0),
+    import_diagnostics_json TEXT NOT NULL CHECK (json_valid(import_diagnostics_json)),
+    candidate_provenance_json TEXT
+      CHECK (candidate_provenance_json IS NULL OR json_valid(candidate_provenance_json)),
+    materialization_json TEXT
+      CHECK (materialization_json IS NULL OR json_valid(materialization_json))
+  ) STRICT;
+
+  CREATE TEMP TABLE staging_concept (
+    concept_id TEXT PRIMARY KEY,
+    domain TEXT NOT NULL CHECK (
+      domain IN ('diagnosis', 'laboratory', 'medication', 'service', 'unit', 'other')
+    ),
+    system TEXT NOT NULL,
+    system_version TEXT NOT NULL,
+    code TEXT NOT NULL,
+    display TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'inactive')),
+    source_id TEXT NOT NULL REFERENCES staging_source_manifest (source_id) ON DELETE RESTRICT,
+    source_locator TEXT NOT NULL,
+    laboratory_metadata_json TEXT
+      CHECK (laboratory_metadata_json IS NULL OR json_valid(laboratory_metadata_json)),
+    UNIQUE (system, system_version, code)
+  ) STRICT;
+
+  CREATE TEMP TABLE staging_laboratory_definition (
+    concept_id TEXT PRIMARY KEY REFERENCES staging_concept (concept_id) ON DELETE RESTRICT,
+    definition_json TEXT NOT NULL CHECK (json_valid(definition_json)),
+    source_id TEXT NOT NULL REFERENCES staging_source_manifest (source_id) ON DELETE RESTRICT,
+    source_locator TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TEMP TABLE staging_laboratory_unit (
+    concept_id TEXT NOT NULL REFERENCES staging_concept (concept_id) ON DELETE RESTRICT,
+    code TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind = 'example'),
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 1),
+    source_id TEXT NOT NULL REFERENCES staging_source_manifest (source_id) ON DELETE RESTRICT,
+    source_locator TEXT NOT NULL,
+    PRIMARY KEY (concept_id, source_locator)
+  ) STRICT;
+
+  CREATE TEMP TABLE staging_laboratory_specimen (
+    concept_id TEXT NOT NULL REFERENCES staging_concept (concept_id) ON DELETE RESTRICT,
+    part_number TEXT NOT NULL,
+    part_name TEXT NOT NULL,
+    display TEXT NOT NULL,
+    link_type TEXT NOT NULL CHECK (link_type = 'Primary'),
+    source_id TEXT NOT NULL REFERENCES staging_source_manifest (source_id) ON DELETE RESTRICT,
+    source_locator TEXT NOT NULL,
+    PRIMARY KEY (concept_id, part_number, link_type)
+  ) STRICT;
+
+  CREATE TEMP TABLE staging_laboratory_panel_member (
+    panel_concept_id TEXT NOT NULL REFERENCES staging_concept (concept_id) ON DELETE RESTRICT,
+    member_concept_id TEXT NOT NULL REFERENCES staging_concept (concept_id) ON DELETE RESTRICT,
+    member_order INTEGER NOT NULL CHECK (member_order >= 0),
+    relationship TEXT NOT NULL CHECK (relationship = 'contains'),
+    source_id TEXT NOT NULL REFERENCES staging_source_manifest (source_id) ON DELETE RESTRICT,
+    source_locator TEXT NOT NULL,
+    PRIMARY KEY (panel_concept_id, member_concept_id, source_locator),
+    CHECK (panel_concept_id <> member_concept_id)
+  ) STRICT;
+
+  CREATE TEMP TABLE staging_medication_product (
+    product_id TEXT PRIMARY KEY,
+    system TEXT NOT NULL,
+    system_version TEXT NOT NULL,
+    code TEXT NOT NULL,
+    generic_name TEXT NOT NULL,
+    brand_name TEXT,
+    dosage_form TEXT NOT NULL,
+    strength TEXT NOT NULL,
+    package_description TEXT NOT NULL,
+    manufacturer TEXT NOT NULL,
+    approval_number TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'inactive')),
+    source_id TEXT NOT NULL REFERENCES staging_source_manifest (source_id) ON DELETE RESTRICT,
+    source_locator TEXT NOT NULL,
+    UNIQUE (system, system_version, code)
+  ) STRICT;
+
+  CREATE TEMP TABLE staging_medical_service (
+    service_id TEXT PRIMARY KEY,
+    system TEXT NOT NULL,
+    system_version TEXT NOT NULL,
+    code TEXT NOT NULL,
+    display TEXT NOT NULL,
+    category_code TEXT NOT NULL,
+    billing_unit_code TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'inactive')),
+    source_id TEXT NOT NULL REFERENCES staging_source_manifest (source_id) ON DELETE RESTRICT,
+    source_locator TEXT NOT NULL,
+    UNIQUE (system, system_version, code)
+  ) STRICT;
+
+  CREATE TEMP TABLE staging_value_set_entry (
+    entry_id TEXT PRIMARY KEY,
+    value_set TEXT NOT NULL,
+    system TEXT NOT NULL,
+    system_version TEXT NOT NULL,
+    code TEXT NOT NULL,
+    display TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'inactive')),
+    source_id TEXT NOT NULL REFERENCES staging_source_manifest (source_id) ON DELETE RESTRICT,
+    source_locator TEXT NOT NULL,
+    UNIQUE (system, system_version, code)
+  ) STRICT;
+`
+
+const stagingConstraintMessages: ReadonlyArray<readonly [string, string]> = [
+  ['staging_source_manifest.source_id', 'Reference source ID was repeated'],
+  ['staging_concept.concept_id', 'Reference concept ID was repeated'],
+  ['staging_concept.system', 'Reference coding was repeated'],
+  ['staging_medication_product.product_id', 'Reference medication product ID was repeated'],
+  ['staging_medication_product.system', 'Reference medication product coding was repeated'],
+  ['staging_medical_service.service_id', 'Reference medical service ID was repeated'],
+  ['staging_medical_service.system', 'Reference medical service coding was repeated'],
+  ['staging_value_set_entry.entry_id', 'Reference value set entry ID was repeated'],
+  ['staging_value_set_entry.system', 'Reference value set entry coding was repeated'],
+]
+
+function translateStagingConstraintError(error: unknown): never {
+  if (error instanceof Database.SqliteError && error.code.startsWith('SQLITE_CONSTRAINT')) {
+    for (const [columnTarget, message] of stagingConstraintMessages) {
+      if (error.message.includes(columnTarget)) {
+        throw new Error(message)
+      }
+    }
+  }
+  throw error
 }
 
-export function importReferenceDataRelease(
-  database: ReferenceDatabase,
-  manifestPath: string,
-): ReferenceImportResult {
-  verifyReferenceMigrations(database)
-  const manifest = referenceImportManifestSchema.parse(JSON.parse(readFileSync(manifestPath, 'utf8')))
-  const manifestDirectory = dirname(resolve(manifestPath))
-  const sources: ReferenceSourceManifest[] = []
-  const concepts: Array<ReferenceConcept & { sourceId: string }> = []
-  const laboratoryDefinitions: SourcedLaboratoryDefinition[] = []
-  const laboratoryPanelMembers: SourcedLaboratoryPanelMember[] = []
-  const laboratorySpecimens: SourcedLaboratorySpecimen[] = []
-  const laboratoryUnits: SourcedLaboratoryUnit[] = []
-  const medicationProducts: Array<ReferenceMedicationProduct & { sourceId: string }> = []
-  const services: Array<ReferenceMedicalService & { sourceId: string }> = []
-  const valueSetEntries: Array<ReferenceValueSetEntry & { sourceId: string }> = []
-  for (const source of manifest.sources) {
-    const artifactPath = resolve(manifestDirectory, source.artifactPath)
-    const artifactBytes = readFileSync(artifactPath)
-    const actualChecksum = checksum(artifactBytes)
-    if (actualChecksum !== source.checksum) {
-      throw new Error(`Reference source checksum mismatch: ${source.sourceId}`)
-    }
-    let candidate: ReturnType<typeof parseCnHealthCandidateReferenceArtifact> | undefined
-    let artifact: ReferenceArtifact
-    if (source.artifactFormat === 'cn-health-candidate') {
-      candidate = parseCnHealthCandidateReferenceArtifact(artifactPath)
-      if (candidate.provenance.releaseId !== source.upstreamVersion) {
-        throw new Error(`Reference source version does not match Candidate: ${source.sourceId}`)
-      }
-      artifact = candidate.artifact
-    } else {
-      artifact = parseReferenceSourceArtifact({
-        content: artifactBytes.toString('utf8'),
-        format: source.artifactFormat,
-        version: source.upstreamVersion,
-      })
-    }
-    sources.push({
-      acquisitionMethod: source.acquisitionMethod,
-      artifactFormat: source.artifactFormat,
-      ...(candidate === undefined ? {} : { candidate: candidate.provenance }),
-      checksum: actualChecksum,
-      licenseId: source.licenseId,
-      ...(source.materialization === undefined ? {} : { materialization: source.materialization }),
-      ...(source.publishedAt === undefined ? {} : { publishedAt: source.publishedAt }),
-      importDiagnostics: {
-        acceptedCount: artifact.concepts.length
-          + laboratoryAdultRuleCount(artifact)
-          + artifact.laboratoryPanelMembers.length
-          + artifact.laboratorySpecimens.length
-          + artifact.laboratoryUnits.length
-          + artifact.medicationProducts.length
-          + artifact.services.length
-          + artifact.valueSetEntries.length,
-        rejectedCount: 0,
-        warnings: [],
-      },
-      recordCount: artifact.concepts.length
-        + laboratoryAdultRuleCount(artifact)
-        + artifact.laboratoryPanelMembers.length
-        + artifact.laboratorySpecimens.length
-        + artifact.laboratoryUnits.length
-        + artifact.medicationProducts.length
-        + artifact.services.length
-        + artifact.valueSetEntries.length,
-      retrievedAt: source.retrievedAt,
-      sourceId: source.sourceId,
-      sourceUrl: source.sourceUrl,
-      upstreamVersion: source.upstreamVersion,
-    })
-    for (const concept of artifact.concepts) {
-      concepts.push({ ...concept, sourceId: source.sourceId })
-    }
-    for (const definition of artifact.laboratoryDefinitions) {
-      laboratoryDefinitions.push({ ...definition, sourceId: source.sourceId })
-    }
-    for (const member of artifact.laboratoryPanelMembers) {
-      laboratoryPanelMembers.push({ ...member, sourceId: source.sourceId })
-    }
-    for (const specimen of artifact.laboratorySpecimens) {
-      laboratorySpecimens.push({ ...specimen, sourceId: source.sourceId })
-    }
-    for (const unit of artifact.laboratoryUnits) {
-      laboratoryUnits.push({ ...unit, sourceId: source.sourceId })
-    }
-    for (const product of artifact.medicationProducts) {
-      medicationProducts.push({ ...product, sourceId: source.sourceId })
-    }
-    for (const service of artifact.services) {
-      services.push({ ...service, sourceId: source.sourceId })
-    }
-    for (const entry of artifact.valueSetEntries) {
-      valueSetEntries.push({ ...entry, sourceId: source.sourceId })
-    }
+function runStagingWrite<Result>(operation: () => Result): Result {
+  try {
+    return operation()
+  } catch (error) {
+    translateStagingConstraintError(error)
   }
-  const seenIds = new Set<string>()
-  const seenCodes = new Set<string>()
-  for (const concept of concepts) {
-    if (seenIds.has(concept.id)) throw new Error(`Reference concept ID was repeated: ${concept.id}`)
-    seenIds.add(concept.id)
-    const codingKey = referenceCodingIdentity(concept)
-    if (seenCodes.has(codingKey)) throw new Error(`Reference coding was repeated: ${concept.system}|${concept.version}|${concept.code}`)
-    seenCodes.add(codingKey)
+}
+
+function insertMultiRowBatch<Item>(input: {
+  batch: Item[]
+  columnsSql: string
+  driver: Database.Database
+  fullBatchStatementRef: { current?: Database.Statement<unknown[], unknown> }
+  placeholderTuple: string
+  serializeRow: (item: Item) => readonly unknown[]
+  tableName: string
+}): void {
+  if (input.batch.length === 0) return
+  const parameters: unknown[] = []
+  for (const item of input.batch) {
+    parameters.push(...input.serializeRow(item))
   }
-  const seenProductIds = new Set<string>()
-  const seenProductCodes = new Set<string>()
-  for (const product of medicationProducts) {
-    if (seenProductIds.has(product.id)) throw new Error(`Reference medication product ID was repeated: ${product.id}`)
-    seenProductIds.add(product.id)
-    const codingKey = referenceCodingIdentity(product)
-    if (seenProductCodes.has(codingKey)) {
-      throw new Error(`Reference medication product coding was repeated: ${product.system}|${product.version}|${product.code}`)
+  const count = input.batch.length
+  input.batch.length = 0
+  runStagingWrite(() => {
+    if (count === stagingBatchRowLimit) {
+      input.fullBatchStatementRef.current ??= input.driver.prepare(`
+        INSERT INTO temp.${input.tableName} (${input.columnsSql})
+        VALUES ${Array.from({ length: count }, () => input.placeholderTuple).join(', ')}
+      `)
+      input.fullBatchStatementRef.current.run(...parameters)
+      return
     }
-    seenProductCodes.add(codingKey)
-  }
-  for (const [label, entries] of [
-    ['medical service', services],
-    ['value set entry', valueSetEntries],
-  ] as const) {
-    const ids = new Set<string>()
-    const codes = new Set<string>()
-    for (const entry of entries) {
-      if (ids.has(entry.id)) throw new Error(`Reference ${label} ID was repeated: ${entry.id}`)
-      ids.add(entry.id)
-      const codingKey = referenceCodingIdentity(entry)
-      if (codes.has(codingKey)) {
-        throw new Error(`Reference ${label} coding was repeated: ${entry.system}|${entry.version}|${entry.code}`)
-      }
-      codes.add(codingKey)
-    }
-  }
-  const hash = contentHash({
-    concepts,
-    laboratoryDefinitions,
-    laboratoryPanelMembers,
-    laboratorySpecimens,
-    laboratoryUnits,
-    medicationProducts,
-    release: manifest,
-    services,
-    sources,
-    valueSetEntries,
+    input.driver.prepare(`
+      INSERT INTO temp.${input.tableName} (${input.columnsSql})
+      VALUES ${Array.from({ length: count }, () => input.placeholderTuple).join(', ')}
+    `).run(...parameters)
   })
-  const existing = database.driver.prepare(
-    'SELECT content_hash FROM reference_release WHERE release_id = ?',
-  ).get(manifest.releaseId) as { content_hash: string } | undefined
-  if (existing !== undefined) {
-    if (existing.content_hash !== hash) {
-      throw new Error(`Reference Data Release is immutable: ${manifest.releaseId}`)
-    }
-    return {
-      conceptCount: concepts.length,
-      contentHash: hash,
-      created: false,
-      laboratoryDefinitionCount: laboratoryDefinitions.length,
-      laboratoryPanelMemberCount: laboratoryPanelMembers.length,
-      laboratorySpecimenCount: laboratorySpecimens.length,
-      laboratoryUnitCount: laboratoryUnits.length,
-      medicationProductCount: medicationProducts.length,
-      releaseId: manifest.releaseId,
-      serviceCount: services.length,
-      sourceCount: sources.length,
-      valueSetEntryCount: valueSetEntries.length,
+}
+
+class StagingBatchWriter implements ReferenceStagingSink {
+  readonly #concepts: ReferenceConcept[] = []
+  readonly #conceptsStmt: { current?: Database.Statement<unknown[], unknown> } = {}
+  readonly #definitions: ReferenceLaboratoryDefinition[] = []
+  readonly #definitionsStmt: { current?: Database.Statement<unknown[], unknown> } = {}
+  readonly #driver: Database.Database
+  readonly #panelMembers: ReferenceLaboratoryPanelMember[] = []
+  readonly #panelMembersStmt: { current?: Database.Statement<unknown[], unknown> } = {}
+  readonly #products: ReferenceMedicationProduct[] = []
+  readonly #productsStmt: { current?: Database.Statement<unknown[], unknown> } = {}
+  readonly #services: ReferenceMedicalService[] = []
+  readonly #servicesStmt: { current?: Database.Statement<unknown[], unknown> } = {}
+  readonly #sourceId: string
+  readonly #specimens: ReferenceLaboratorySpecimen[] = []
+  readonly #specimensStmt: { current?: Database.Statement<unknown[], unknown> } = {}
+  readonly #units: ReferenceLaboratoryUnit[] = []
+  readonly #unitsStmt: { current?: Database.Statement<unknown[], unknown> } = {}
+  readonly #valueSetEntries: ReferenceValueSetEntry[] = []
+  readonly #valueSetEntriesStmt: { current?: Database.Statement<unknown[], unknown> } = {}
+
+  constructor(driver: Database.Database, sourceId: string) {
+    this.#driver = driver
+    this.#sourceId = sourceId
+  }
+
+  stageConcept(concept: ReferenceConcept): void {
+    this.#concepts.push(concept)
+    if (this.#concepts.length >= stagingBatchRowLimit) this.#flushConcepts()
+  }
+
+  stageLaboratoryDefinition(definition: ReferenceLaboratoryDefinition): void {
+    this.#definitions.push(definition)
+    if (this.#definitions.length >= stagingBatchRowLimit) {
+      this.#flushConcepts()
+      this.#flushDefinitions()
     }
   }
 
-  database.driver.exec('BEGIN IMMEDIATE')
-  try {
-    database.driver.prepare(`
-      INSERT INTO reference_release (
-        release_id, schema_version, status, created_at, content_hash, source_count,
-        concept_count, laboratory_definition_count, laboratory_unit_count,
-        laboratory_specimen_count, laboratory_panel_member_count,
-        medication_product_count, service_count, value_set_entry_count
-      ) VALUES (?, '1', 'published', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      manifest.releaseId,
-      manifest.createdAt,
-      hash,
-      sources.length,
-      concepts.length,
-      laboratoryDefinitions.length,
-      laboratoryUnits.length,
-      laboratorySpecimens.length,
-      laboratoryPanelMembers.length,
-      medicationProducts.length,
-      services.length,
-      valueSetEntries.length,
-    )
-    const insertSource = database.driver.prepare(`
-      INSERT INTO reference_source_manifest (
-        release_id, source_id, upstream_version, published_at, retrieved_at,
-        source_url, checksum, license_id, acquisition_method, artifact_format, record_count,
-        import_diagnostics_json, candidate_provenance_json, materialization_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    for (const source of sources) {
-      insertSource.run(
-        manifest.releaseId,
-        source.sourceId,
-        source.upstreamVersion,
-        source.publishedAt ?? null,
-        source.retrievedAt,
-        source.sourceUrl,
-        source.checksum,
-        source.licenseId,
-        source.acquisitionMethod,
-        source.artifactFormat,
-        source.recordCount,
-        JSON.stringify(source.importDiagnostics),
-        source.candidate === undefined ? null : JSON.stringify(source.candidate),
-        source.materialization === undefined ? null : JSON.stringify(source.materialization),
-      )
+  stageLaboratoryUnit(unit: ReferenceLaboratoryUnit): void {
+    this.#units.push(unit)
+    if (this.#units.length >= stagingBatchRowLimit) {
+      this.#flushConcepts()
+      this.#flushUnits()
     }
-    const insertConcept = database.driver.prepare(`
-      INSERT INTO reference_concept (
-        release_id, concept_id, domain, system, system_version, code, display,
+  }
+
+  stageLaboratorySpecimen(specimen: ReferenceLaboratorySpecimen): void {
+    this.#specimens.push(specimen)
+    if (this.#specimens.length >= stagingBatchRowLimit) {
+      this.#flushConcepts()
+      this.#flushSpecimens()
+    }
+  }
+
+  stageLaboratoryPanelMember(member: ReferenceLaboratoryPanelMember): void {
+    this.#panelMembers.push(member)
+    if (this.#panelMembers.length >= stagingBatchRowLimit) {
+      this.#flushConcepts()
+      this.#flushPanelMembers()
+    }
+  }
+
+  stageMedicationProduct(product: ReferenceMedicationProduct): void {
+    this.#products.push(product)
+    if (this.#products.length >= stagingBatchRowLimit) this.#flushProducts()
+  }
+
+  stageMedicalService(service: ReferenceMedicalService): void {
+    this.#services.push(service)
+    if (this.#services.length >= stagingBatchRowLimit) this.#flushServices()
+  }
+
+  stageValueSetEntry(entry: ReferenceValueSetEntry): void {
+    this.#valueSetEntries.push(entry)
+    if (this.#valueSetEntries.length >= stagingBatchRowLimit) this.#flushValueSetEntries()
+  }
+
+  flush(): void {
+    this.#flushConcepts()
+    this.#flushDefinitions()
+    this.#flushUnits()
+    this.#flushSpecimens()
+    this.#flushPanelMembers()
+    this.#flushProducts()
+    this.#flushServices()
+    this.#flushValueSetEntries()
+  }
+
+  #flushConcepts(): void {
+    insertMultiRowBatch({
+      batch: this.#concepts,
+      columnsSql: `
+        concept_id, domain, system, system_version, code, display,
         status, source_id, source_locator, laboratory_metadata_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    for (const concept of concepts) {
-      insertConcept.run(
-        manifest.releaseId,
+      `,
+      driver: this.#driver,
+      fullBatchStatementRef: this.#conceptsStmt,
+      placeholderTuple: '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      serializeRow: concept => [
         concept.id,
         concept.domain,
         concept.system,
@@ -1365,87 +1413,105 @@ export function importReferenceDataRelease(
         concept.code,
         concept.display,
         concept.status,
-        concept.sourceId,
+        this.#sourceId,
         concept.sourceLocator,
         concept.laboratory === undefined ? null : JSON.stringify(concept.laboratory),
-      )
-    }
-    const insertLaboratoryDefinition = database.driver.prepare(`
-      INSERT INTO reference_laboratory_definition (
-        release_id, concept_id, definition_json, source_id, source_locator
-      ) VALUES (?, ?, ?, ?, ?)
-    `)
-    for (const definition of laboratoryDefinitions) {
-      const { sourceId, ...value } = definition
-      insertLaboratoryDefinition.run(
-        manifest.releaseId,
+      ],
+      tableName: 'staging_concept',
+    })
+  }
+
+  #flushDefinitions(): void {
+    insertMultiRowBatch({
+      batch: this.#definitions,
+      columnsSql: 'concept_id, definition_json, source_id, source_locator',
+      driver: this.#driver,
+      fullBatchStatementRef: this.#definitionsStmt,
+      placeholderTuple: '(?, ?, ?, ?)',
+      serializeRow: definition => [
         definition.conceptId,
-        JSON.stringify(value),
-        sourceId,
+        JSON.stringify(definition),
+        this.#sourceId,
         definition.sourceLocator,
-      )
-    }
-    const insertLaboratoryUnit = database.driver.prepare(`
-      INSERT INTO reference_laboratory_unit (
-        release_id, concept_id, code, kind, ordinal, source_id, source_locator
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `)
-    for (const unit of laboratoryUnits) {
-      insertLaboratoryUnit.run(
-        manifest.releaseId,
+      ],
+      tableName: 'staging_laboratory_definition',
+    })
+  }
+
+  #flushUnits(): void {
+    insertMultiRowBatch({
+      batch: this.#units,
+      columnsSql: 'concept_id, code, kind, ordinal, source_id, source_locator',
+      driver: this.#driver,
+      fullBatchStatementRef: this.#unitsStmt,
+      placeholderTuple: '(?, ?, ?, ?, ?, ?)',
+      serializeRow: unit => [
         unit.conceptId,
         unit.code,
         unit.kind,
         unit.ordinal,
-        unit.sourceId,
+        this.#sourceId,
         unit.sourceLocator,
-      )
-    }
-    const insertLaboratorySpecimen = database.driver.prepare(`
-      INSERT INTO reference_laboratory_specimen (
-        release_id, concept_id, part_number, part_name, display, link_type,
-        source_id, source_locator
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    for (const specimen of laboratorySpecimens) {
-      insertLaboratorySpecimen.run(
-        manifest.releaseId,
+      ],
+      tableName: 'staging_laboratory_unit',
+    })
+  }
+
+  #flushSpecimens(): void {
+    insertMultiRowBatch({
+      batch: this.#specimens,
+      columnsSql: `
+        concept_id, part_number, part_name, display, link_type, source_id, source_locator
+      `,
+      driver: this.#driver,
+      fullBatchStatementRef: this.#specimensStmt,
+      placeholderTuple: '(?, ?, ?, ?, ?, ?, ?)',
+      serializeRow: specimen => [
         specimen.conceptId,
         specimen.partNumber,
         specimen.partName,
         specimen.display,
         specimen.linkType,
-        specimen.sourceId,
+        this.#sourceId,
         specimen.sourceLocator,
-      )
-    }
-    const insertLaboratoryPanelMember = database.driver.prepare(`
-      INSERT INTO reference_laboratory_panel_member (
-        release_id, panel_concept_id, member_concept_id, member_order,
-        relationship, source_id, source_locator
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `)
-    for (const member of laboratoryPanelMembers) {
-      insertLaboratoryPanelMember.run(
-        manifest.releaseId,
+      ],
+      tableName: 'staging_laboratory_specimen',
+    })
+  }
+
+  #flushPanelMembers(): void {
+    insertMultiRowBatch({
+      batch: this.#panelMembers,
+      columnsSql: `
+        panel_concept_id, member_concept_id, member_order, relationship, source_id, source_locator
+      `,
+      driver: this.#driver,
+      fullBatchStatementRef: this.#panelMembersStmt,
+      placeholderTuple: '(?, ?, ?, ?, ?, ?)',
+      serializeRow: member => [
         member.panelConceptId,
         member.memberConceptId,
         member.memberOrder,
         member.relationship,
-        member.sourceId,
+        this.#sourceId,
         member.sourceLocator,
-      )
-    }
-    const insertMedicationProduct = database.driver.prepare(`
-      INSERT INTO reference_medication_product (
-        release_id, product_id, system, system_version, code, generic_name,
-        brand_name, dosage_form, strength, package_description, manufacturer,
+      ],
+      tableName: 'staging_laboratory_panel_member',
+    })
+  }
+
+  #flushProducts(): void {
+    insertMultiRowBatch({
+      batch: this.#products,
+      columnsSql: `
+        product_id, system, system_version, code, generic_name, brand_name,
+        dosage_form, strength, package_description, manufacturer,
         approval_number, status, source_id, source_locator
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    for (const product of medicationProducts) {
-      insertMedicationProduct.run(
-        manifest.releaseId,
+      `,
+      driver: this.#driver,
+      fullBatchStatementRef: this.#productsStmt,
+      placeholderTuple: '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      serializeRow: product => [
         product.id,
         product.system,
         product.version,
@@ -1458,19 +1524,24 @@ export function importReferenceDataRelease(
         product.manufacturer,
         product.approvalNumber,
         product.status,
-        product.sourceId,
+        this.#sourceId,
         product.sourceLocator,
-      )
-    }
-    const insertService = database.driver.prepare(`
-      INSERT INTO reference_medical_service (
-        release_id, service_id, system, system_version, code, display,
+      ],
+      tableName: 'staging_medication_product',
+    })
+  }
+
+  #flushServices(): void {
+    insertMultiRowBatch({
+      batch: this.#services,
+      columnsSql: `
+        service_id, system, system_version, code, display,
         category_code, billing_unit_code, status, source_id, source_locator
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    for (const service of services) {
-      insertService.run(
-        manifest.releaseId,
+      `,
+      driver: this.#driver,
+      fullBatchStatementRef: this.#servicesStmt,
+      placeholderTuple: '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      serializeRow: service => [
         service.id,
         service.system,
         service.version,
@@ -1479,19 +1550,24 @@ export function importReferenceDataRelease(
         service.categoryCode,
         service.billingUnitCode,
         service.status,
-        service.sourceId,
+        this.#sourceId,
         service.sourceLocator,
-      )
-    }
-    const insertValueSetEntry = database.driver.prepare(`
-      INSERT INTO reference_value_set_entry (
-        release_id, entry_id, value_set, system, system_version, code,
+      ],
+      tableName: 'staging_medical_service',
+    })
+  }
+
+  #flushValueSetEntries(): void {
+    insertMultiRowBatch({
+      batch: this.#valueSetEntries,
+      columnsSql: `
+        entry_id, value_set, system, system_version, code,
         display, status, source_id, source_locator
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    for (const entry of valueSetEntries) {
-      insertValueSetEntry.run(
-        manifest.releaseId,
+      `,
+      driver: this.#driver,
+      fullBatchStatementRef: this.#valueSetEntriesStmt,
+      placeholderTuple: '(?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      serializeRow: entry => [
         entry.id,
         entry.valueSet,
         entry.system,
@@ -1499,28 +1575,491 @@ export function importReferenceDataRelease(
         entry.code,
         entry.display,
         entry.status,
-        entry.sourceId,
+        this.#sourceId,
         entry.sourceLocator,
-      )
-    }
-    database.driver.exec('COMMIT')
-  } catch (error) {
-    if (database.driver.inTransaction) database.driver.exec('ROLLBACK')
-    throw error
+      ],
+      tableName: 'staging_value_set_entry',
+    })
   }
+}
+
+const existingReleaseHashRowSchema = z.object({
+  content_hash: z.string(),
+}).strict().optional()
+
+const stagingCountsRowSchema = z.object({
+  concept_count: z.number().int().nonnegative(),
+  laboratory_definition_count: z.number().int().nonnegative(),
+  laboratory_panel_member_count: z.number().int().nonnegative(),
+  laboratory_specimen_count: z.number().int().nonnegative(),
+  laboratory_unit_count: z.number().int().nonnegative(),
+  medication_product_count: z.number().int().nonnegative(),
+  service_count: z.number().int().nonnegative(),
+  value_set_entry_count: z.number().int().nonnegative(),
+}).strict()
+
+function streamStagedRows<RawRow, Mapped>(input: {
+  count: number
+  driver: Database.Database
+  mapRow: (row: RawRow) => Mapped
+  rowSchema: z.ZodType<RawRow>
+  sql: string
+}): Iterable<Mapped> {
+  if (input.count === 0) return []
   return {
-    conceptCount: concepts.length,
-    contentHash: hash,
-    created: true,
-    laboratoryDefinitionCount: laboratoryDefinitions.length,
-    laboratoryPanelMemberCount: laboratoryPanelMembers.length,
-    laboratorySpecimenCount: laboratorySpecimens.length,
-    laboratoryUnitCount: laboratoryUnits.length,
-    medicationProductCount: medicationProducts.length,
-    releaseId: manifest.releaseId,
-    serviceCount: services.length,
-    sourceCount: sources.length,
-    valueSetEntryCount: valueSetEntries.length,
+    * [Symbol.iterator]() {
+      const statement = input.driver.prepare(input.sql)
+      for (const raw of statement.iterate()) {
+        yield input.mapRow(input.rowSchema.parse(raw))
+      }
+    },
+  }
+}
+
+export function importReferenceDataRelease(
+  database: ReferenceDatabase,
+  manifestPath: string,
+): ReferenceImportResult {
+  verifyReferenceMigrations(database)
+  const manifest = referenceImportManifestSchema.parse(JSON.parse(readFileSync(manifestPath, 'utf8')))
+  const manifestDirectory = dirname(resolve(manifestPath))
+
+  database.driver.exec(createTempStagingTablesSql)
+  let result!: ReferenceImportResult
+  let primaryError: unknown
+  let cleanupError: unknown
+  try {
+    const insertInitialSource = database.driver.prepare(`
+      INSERT INTO temp.staging_source_manifest (
+        source_id, upstream_version, published_at, retrieved_at,
+        source_url, checksum, license_id, acquisition_method, artifact_format,
+        record_count, import_diagnostics_json, candidate_provenance_json, materialization_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, ?)
+    `)
+    const updateFinalSource = database.driver.prepare(`
+      UPDATE temp.staging_source_manifest
+      SET record_count = ?,
+          import_diagnostics_json = ?,
+          candidate_provenance_json = ?
+      WHERE source_id = ?
+    `)
+    const emptyDiagnosticsJson = JSON.stringify({
+      acceptedCount: 0,
+      rejectedCount: 0,
+      warnings: [],
+    })
+
+    for (const source of manifest.sources) {
+      const artifactPath = resolve(manifestDirectory, source.artifactPath)
+      const actualChecksum = streamFileSha256AndSize(artifactPath).sha256
+      if (actualChecksum !== source.checksum) {
+        throw new Error(`Reference source checksum mismatch: ${source.sourceId}`)
+      }
+      runStagingWrite(() => {
+        insertInitialSource.run(
+          source.sourceId,
+          source.upstreamVersion,
+          source.publishedAt ?? null,
+          source.retrievedAt,
+          source.sourceUrl,
+          actualChecksum,
+          source.licenseId,
+          source.acquisitionMethod,
+          source.artifactFormat,
+          emptyDiagnosticsJson,
+          source.materialization === undefined ? null : JSON.stringify(source.materialization),
+        )
+      })
+      const sink = new StagingBatchWriter(database.driver, source.sourceId)
+      if (source.artifactFormat === 'cn-health-candidate') {
+        const stagedCandidate = stageCnHealthCandidateReferenceArtifact({
+          driver: database.driver,
+          expectedUpstreamVersion: source.upstreamVersion,
+          manifestPath: artifactPath,
+          runStagingWrite,
+          sink,
+          sourceId: source.sourceId,
+        })
+        updateFinalSource.run(
+          stagedCandidate.recordCount,
+          JSON.stringify({
+            acceptedCount: stagedCandidate.acceptedCount,
+            rejectedCount: 0,
+            warnings: [],
+          }),
+          JSON.stringify(stagedCandidate.provenance),
+          source.sourceId,
+        )
+      } else {
+        const stagedText = stageTextReferenceSourceArtifact({
+          artifactPath,
+          format: source.artifactFormat,
+          sink,
+          version: source.upstreamVersion,
+        })
+        updateFinalSource.run(
+          stagedText.recordCount,
+          JSON.stringify({
+            acceptedCount: stagedText.acceptedCount,
+            rejectedCount: 0,
+            warnings: [],
+          }),
+          null,
+          source.sourceId,
+        )
+      }
+    }
+
+    const stagedSources = z.array(sourceManifestDatabaseRowSchema).parse(
+      database.driver.prepare(`
+        SELECT source_id, upstream_version, published_at, retrieved_at, source_url,
+          checksum, license_id, acquisition_method, artifact_format, record_count,
+          import_diagnostics_json, candidate_provenance_json, materialization_json
+        FROM temp.staging_source_manifest
+        ORDER BY source_id
+      `).all(),
+    ).map(mapSourceManifestRow)
+
+    const counts = stagingCountsRowSchema.parse(database.driver.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM temp.staging_concept) AS concept_count,
+        (SELECT COUNT(*) FROM temp.staging_laboratory_definition) AS laboratory_definition_count,
+        (SELECT COUNT(*) FROM temp.staging_laboratory_panel_member) AS laboratory_panel_member_count,
+        (SELECT COUNT(*) FROM temp.staging_laboratory_specimen) AS laboratory_specimen_count,
+        (SELECT COUNT(*) FROM temp.staging_laboratory_unit) AS laboratory_unit_count,
+        (SELECT COUNT(*) FROM temp.staging_medication_product) AS medication_product_count,
+        (SELECT COUNT(*) FROM temp.staging_medical_service) AS service_count,
+        (SELECT COUNT(*) FROM temp.staging_value_set_entry) AS value_set_entry_count
+    `).get())
+
+    const hash = computeStreamingReleaseContentHash({
+      concepts: streamStagedRows({
+        count: counts.concept_count,
+        driver: database.driver,
+        mapRow: mapConceptRow,
+        rowSchema: conceptDatabaseRowSchema,
+        sql: `
+          SELECT concept_id, domain, system, system_version, code, display, status,
+            laboratory_metadata_json, source_id, source_locator
+          FROM temp.staging_concept
+          ORDER BY source_id, concept_id
+        `,
+      }),
+      laboratoryDefinitions: streamStagedRows({
+        count: counts.laboratory_definition_count,
+        driver: database.driver,
+        mapRow: mapLaboratoryDefinitionRow,
+        rowSchema: laboratoryDefinitionDatabaseRowSchema,
+        sql: `
+          SELECT concept_id, definition_json, source_id, source_locator
+          FROM temp.staging_laboratory_definition
+          ORDER BY source_id, concept_id
+        `,
+      }),
+      laboratoryPanelMembers: streamStagedRows({
+        count: counts.laboratory_panel_member_count,
+        driver: database.driver,
+        mapRow: mapLaboratoryPanelMemberRow,
+        rowSchema: laboratoryPanelMemberDatabaseRowSchema,
+        sql: `
+          SELECT panel_concept_id, member_concept_id, member_order, relationship,
+            source_id, source_locator
+          FROM temp.staging_laboratory_panel_member
+          ORDER BY source_id, panel_concept_id, member_order, member_concept_id, source_locator
+        `,
+      }),
+      laboratorySpecimens: streamStagedRows({
+        count: counts.laboratory_specimen_count,
+        driver: database.driver,
+        mapRow: mapLaboratorySpecimenRow,
+        rowSchema: laboratorySpecimenDatabaseRowSchema,
+        sql: `
+          SELECT concept_id, part_number, part_name, display, link_type,
+            source_id, source_locator
+          FROM temp.staging_laboratory_specimen
+          ORDER BY source_id, concept_id, part_number, link_type
+        `,
+      }),
+      laboratoryUnits: streamStagedRows({
+        count: counts.laboratory_unit_count,
+        driver: database.driver,
+        mapRow: mapLaboratoryUnitRow,
+        rowSchema: laboratoryUnitDatabaseRowSchema,
+        sql: `
+          SELECT concept_id, code, kind, ordinal, source_id, source_locator
+          FROM temp.staging_laboratory_unit
+          ORDER BY source_id, concept_id, ordinal, code, source_locator
+        `,
+      }),
+      medicationProducts: streamStagedRows({
+        count: counts.medication_product_count,
+        driver: database.driver,
+        mapRow: mapMedicationProductRow,
+        rowSchema: medicationProductDatabaseRowSchema,
+        sql: `
+          SELECT product_id, system, system_version, code, generic_name, brand_name,
+            dosage_form, strength, package_description, manufacturer, approval_number,
+            status, source_id, source_locator
+          FROM temp.staging_medication_product
+          ORDER BY source_id, product_id
+        `,
+      }),
+      release: manifest,
+      services: streamStagedRows({
+        count: counts.service_count,
+        driver: database.driver,
+        mapRow: mapMedicalServiceRow,
+        rowSchema: medicalServiceDatabaseRowSchema,
+        sql: `
+          SELECT service_id, system, system_version, code, display, category_code,
+            billing_unit_code, status, source_id, source_locator
+          FROM temp.staging_medical_service
+          ORDER BY source_id, service_id
+        `,
+      }),
+      sources: stagedSources,
+      valueSetEntries: streamStagedRows({
+        count: counts.value_set_entry_count,
+        driver: database.driver,
+        mapRow: mapValueSetEntryRow,
+        rowSchema: valueSetEntryDatabaseRowSchema,
+        sql: `
+          SELECT entry_id, value_set, system, system_version, code, display,
+            status, source_id, source_locator
+          FROM temp.staging_value_set_entry
+          ORDER BY source_id, entry_id
+        `,
+      }),
+    })
+
+    const existing = existingReleaseHashRowSchema.parse(
+      database.driver.prepare(
+        'SELECT content_hash FROM reference_release WHERE release_id = ?',
+      ).get(manifest.releaseId),
+    )
+    if (existing !== undefined) {
+      if (existing.content_hash !== hash) {
+        throw new Error(`Reference Data Release is immutable: ${manifest.releaseId}`)
+      }
+      result = {
+        conceptCount: counts.concept_count,
+        contentHash: hash,
+        created: false,
+        laboratoryDefinitionCount: counts.laboratory_definition_count,
+        laboratoryPanelMemberCount: counts.laboratory_panel_member_count,
+        laboratorySpecimenCount: counts.laboratory_specimen_count,
+        laboratoryUnitCount: counts.laboratory_unit_count,
+        medicationProductCount: counts.medication_product_count,
+        releaseId: manifest.releaseId,
+        serviceCount: counts.service_count,
+        sourceCount: stagedSources.length,
+        valueSetEntryCount: counts.value_set_entry_count,
+      }
+    } else {
+      database.driver.exec('BEGIN IMMEDIATE')
+      try {
+        database.driver.prepare(`
+          INSERT INTO reference_release (
+            release_id, schema_version, status, created_at, content_hash, source_count,
+            concept_count, laboratory_definition_count, laboratory_unit_count,
+            laboratory_specimen_count, laboratory_panel_member_count,
+            medication_product_count, service_count, value_set_entry_count
+          ) VALUES (?, '1', 'published', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          manifest.releaseId,
+          manifest.createdAt,
+          hash,
+          stagedSources.length,
+          counts.concept_count,
+          counts.laboratory_definition_count,
+          counts.laboratory_unit_count,
+          counts.laboratory_specimen_count,
+          counts.laboratory_panel_member_count,
+          counts.medication_product_count,
+          counts.service_count,
+          counts.value_set_entry_count,
+        )
+        database.driver.prepare(`
+          INSERT INTO reference_source_manifest (
+            release_id, source_id, upstream_version, published_at, retrieved_at,
+            source_url, checksum, license_id, acquisition_method, artifact_format, record_count,
+            import_diagnostics_json, candidate_provenance_json, materialization_json
+          )
+          SELECT
+            ?, source_id, upstream_version, published_at, retrieved_at,
+            source_url, checksum, license_id, acquisition_method, artifact_format, record_count,
+            import_diagnostics_json, candidate_provenance_json, materialization_json
+          FROM temp.staging_source_manifest
+          ORDER BY source_id
+        `).run(manifest.releaseId)
+        if (counts.concept_count > 0) {
+          database.driver.prepare(`
+            INSERT INTO reference_concept (
+              release_id, concept_id, domain, system, system_version, code, display,
+              status, source_id, source_locator, laboratory_metadata_json
+            )
+            SELECT
+              ?, concept_id, domain, system, system_version, code, display,
+              status, source_id, source_locator, laboratory_metadata_json
+            FROM temp.staging_concept
+            ORDER BY source_id, concept_id
+          `).run(manifest.releaseId)
+        }
+        if (counts.laboratory_definition_count > 0) {
+          database.driver.prepare(`
+            INSERT INTO reference_laboratory_definition (
+              release_id, concept_id, definition_json, source_id, source_locator
+            )
+            SELECT ?, concept_id, definition_json, source_id, source_locator
+            FROM temp.staging_laboratory_definition
+            ORDER BY source_id, concept_id
+          `).run(manifest.releaseId)
+        }
+        if (counts.laboratory_unit_count > 0) {
+          database.driver.prepare(`
+            INSERT INTO reference_laboratory_unit (
+              release_id, concept_id, code, kind, ordinal, source_id, source_locator
+            )
+            SELECT ?, concept_id, code, kind, ordinal, source_id, source_locator
+            FROM temp.staging_laboratory_unit
+            ORDER BY source_id, concept_id, ordinal, code, source_locator
+          `).run(manifest.releaseId)
+        }
+        if (counts.laboratory_specimen_count > 0) {
+          database.driver.prepare(`
+            INSERT INTO reference_laboratory_specimen (
+              release_id, concept_id, part_number, part_name, display, link_type,
+              source_id, source_locator
+            )
+            SELECT
+              ?, concept_id, part_number, part_name, display, link_type,
+              source_id, source_locator
+            FROM temp.staging_laboratory_specimen
+            ORDER BY source_id, concept_id, part_number, link_type
+          `).run(manifest.releaseId)
+        }
+        if (counts.laboratory_panel_member_count > 0) {
+          database.driver.prepare(`
+            INSERT INTO reference_laboratory_panel_member (
+              release_id, panel_concept_id, member_concept_id, member_order,
+              relationship, source_id, source_locator
+            )
+            SELECT
+              ?, panel_concept_id, member_concept_id, member_order,
+              relationship, source_id, source_locator
+            FROM temp.staging_laboratory_panel_member
+            ORDER BY source_id, panel_concept_id, member_order, member_concept_id, source_locator
+          `).run(manifest.releaseId)
+        }
+        if (counts.medication_product_count > 0) {
+          database.driver.prepare(`
+            INSERT INTO reference_medication_product (
+              release_id, product_id, system, system_version, code, generic_name,
+              brand_name, dosage_form, strength, package_description, manufacturer,
+              approval_number, status, source_id, source_locator
+            )
+            SELECT
+              ?, product_id, system, system_version, code, generic_name,
+              brand_name, dosage_form, strength, package_description, manufacturer,
+              approval_number, status, source_id, source_locator
+            FROM temp.staging_medication_product
+            ORDER BY source_id, product_id
+          `).run(manifest.releaseId)
+        }
+        if (counts.service_count > 0) {
+          database.driver.prepare(`
+            INSERT INTO reference_medical_service (
+              release_id, service_id, system, system_version, code, display,
+              category_code, billing_unit_code, status, source_id, source_locator
+            )
+            SELECT
+              ?, service_id, system, system_version, code, display,
+              category_code, billing_unit_code, status, source_id, source_locator
+            FROM temp.staging_medical_service
+            ORDER BY source_id, service_id
+          `).run(manifest.releaseId)
+        }
+        if (counts.value_set_entry_count > 0) {
+          database.driver.prepare(`
+            INSERT INTO reference_value_set_entry (
+              release_id, entry_id, value_set, system, system_version, code,
+              display, status, source_id, source_locator
+            )
+            SELECT
+              ?, entry_id, value_set, system, system_version, code,
+              display, status, source_id, source_locator
+            FROM temp.staging_value_set_entry
+            ORDER BY source_id, entry_id
+          `).run(manifest.releaseId)
+        }
+        database.driver.exec('COMMIT')
+      } catch (error) {
+        if (database.driver.inTransaction) database.driver.exec('ROLLBACK')
+        throw error
+      }
+
+      result = {
+        conceptCount: counts.concept_count,
+        contentHash: hash,
+        created: true,
+        laboratoryDefinitionCount: counts.laboratory_definition_count,
+        laboratoryPanelMemberCount: counts.laboratory_panel_member_count,
+        laboratorySpecimenCount: counts.laboratory_specimen_count,
+        laboratoryUnitCount: counts.laboratory_unit_count,
+        medicationProductCount: counts.medication_product_count,
+        releaseId: manifest.releaseId,
+        serviceCount: counts.service_count,
+        sourceCount: stagedSources.length,
+        valueSetEntryCount: counts.value_set_entry_count,
+      }
+    }
+  } catch (error) {
+    primaryError = error
+  } finally {
+    try {
+      database.driver.exec(dropTempStagingTablesSql)
+    } catch (error) {
+      cleanupError = error
+    }
+  }
+  if (primaryError !== undefined) throw primaryError
+  if (cleanupError !== undefined) throw cleanupError
+  return result
+}
+
+const foreignKeyViolationRowSchema = z.object({
+  fkid: z.number().int().nonnegative(),
+  parent: z.string(),
+  rowid: z.number().int().nullable(),
+  table: z.string(),
+})
+
+function streamMappedRows<RawRow, Mapped extends { sourceId: string }>(input: {
+  acceptedBySource: Map<string, number>
+  acceptedWeight?: (row: Mapped) => number
+  driver: Database.Database
+  mapRow: (row: RawRow) => Mapped
+  onCount: () => void
+  parameters: readonly unknown[]
+  rowSchema: z.ZodType<RawRow>
+  sql: string
+}): Iterable<Mapped> {
+  return {
+    * [Symbol.iterator]() {
+      const statement = input.driver.prepare(input.sql)
+      for (const raw of statement.iterate(...input.parameters)) {
+        const mapped = input.mapRow(input.rowSchema.parse(raw))
+        input.onCount()
+        const weight = input.acceptedWeight === undefined ? 1 : input.acceptedWeight(mapped)
+        if (weight > 0) {
+          input.acceptedBySource.set(
+            mapped.sourceId,
+            (input.acceptedBySource.get(mapped.sourceId) ?? 0) + weight,
+          )
+        }
+        yield mapped
+      }
+    },
   }
 }
 
@@ -1528,12 +2067,8 @@ export function verifyReferenceDatabase(database: ReferenceDatabase): ReferenceD
   const migration = verifyReferenceMigrations(database)
   const integrity = String(database.driver.pragma('integrity_check', { simple: true }))
   if (integrity !== 'ok') throw new Error(`Reference database integrity check failed: ${integrity}`)
-  const foreignKeyViolations = z.array(z.object({
-    fkid: z.number().int().nonnegative(),
-    parent: z.string(),
-    rowid: z.number().int().nullable(),
-    table: z.string(),
-  })).parse(database.driver.pragma('foreign_key_check'))
+  const foreignKeyViolations = z.array(foreignKeyViolationRowSchema)
+    .parse(database.driver.pragma('foreign_key_check'))
   if (foreignKeyViolations.length > 0) {
     const violation = foreignKeyViolations[0]!
     throw new Error(
@@ -1544,86 +2079,179 @@ export function verifyReferenceDatabase(database: ReferenceDatabase): ReferenceD
   const releases = readReferenceDataReleases(database)
   for (const release of releases.items) {
     referenceDataReleaseSummarySchema.parse(release)
-    const concepts = conceptRows(database, release.releaseId)
-    const laboratoryDefinitions = laboratoryDefinitionRows(database, release.releaseId)
-    const laboratoryPanelMembers = laboratoryPanelMemberRows(database, release.releaseId)
-    const laboratorySpecimens = laboratorySpecimenRows(database, release.releaseId)
-    const laboratoryUnits = laboratoryUnitRows(database, release.releaseId)
-    const medicationProducts = medicationProductRows(database, release.releaseId)
-    const services = medicalServiceRows(database, release.releaseId)
-    const valueSetEntries = valueSetEntryRows(database, release.releaseId)
     if (release.sourceCount !== release.sources.length) {
       throw new Error(`Reference Data Release source count mismatch: ${release.releaseId}`)
     }
-    if (release.conceptCount !== concepts.length) {
-      throw new Error(`Reference Data Release concept count mismatch: ${release.releaseId}`)
-    }
-    if (release.medicationProductCount !== medicationProducts.length) {
-      throw new Error(`Reference Data Release medication product count mismatch: ${release.releaseId}`)
-    }
-    if (release.laboratoryDefinitionCount !== laboratoryDefinitions.length) {
-      throw new Error(`Reference Data Release laboratory definition count mismatch: ${release.releaseId}`)
-    }
-    if (release.laboratoryPanelMemberCount !== laboratoryPanelMembers.length) {
-      throw new Error(`Reference Data Release laboratory panel member count mismatch: ${release.releaseId}`)
-    }
-    if (release.laboratorySpecimenCount !== laboratorySpecimens.length) {
-      throw new Error(`Reference Data Release laboratory specimen count mismatch: ${release.releaseId}`)
-    }
-    if (release.laboratoryUnitCount !== laboratoryUnits.length) {
-      throw new Error(`Reference Data Release laboratory unit count mismatch: ${release.releaseId}`)
-    }
-    if (release.serviceCount !== services.length) {
-      throw new Error(`Reference Data Release service count mismatch: ${release.releaseId}`)
-    }
-    if (release.valueSetEntryCount !== valueSetEntries.length) {
-      throw new Error(`Reference Data Release value set entry count mismatch: ${release.releaseId}`)
+    const counts = {
+      conceptCount: 0,
+      laboratoryDefinitionCount: 0,
+      laboratoryPanelMemberCount: 0,
+      laboratorySpecimenCount: 0,
+      laboratoryUnitCount: 0,
+      medicationProductCount: 0,
+      serviceCount: 0,
+      valueSetEntryCount: 0,
     }
     const acceptedCountBySource = new Map<string, number>()
-    for (const concept of concepts) {
-      acceptedCountBySource.set(concept.sourceId, (acceptedCountBySource.get(concept.sourceId) ?? 0) + 1)
+
+    const actualHash = computeStreamingReleaseContentHash({
+      concepts: streamMappedRows({
+        acceptedBySource: acceptedCountBySource,
+        driver: database.driver,
+        mapRow: mapConceptRow,
+        onCount: () => { counts.conceptCount += 1 },
+        parameters: [release.releaseId],
+        rowSchema: conceptDatabaseRowSchema,
+        sql: `
+          SELECT concept_id, domain, system, system_version, code, display, status,
+            laboratory_metadata_json, source_id, source_locator
+          FROM reference_concept
+          WHERE release_id = ?
+          ORDER BY source_id, concept_id
+        `,
+      }),
+      laboratoryDefinitions: streamMappedRows({
+        acceptedBySource: acceptedCountBySource,
+        acceptedWeight: definition => (
+          definition.kind === 'laboratory-cn-test'
+            ? definition.adultReferenceRules.length
+            : 0
+        ),
+        driver: database.driver,
+        mapRow: mapLaboratoryDefinitionRow,
+        onCount: () => { counts.laboratoryDefinitionCount += 1 },
+        parameters: [release.releaseId],
+        rowSchema: laboratoryDefinitionDatabaseRowSchema,
+        sql: `
+          SELECT concept_id, definition_json, source_id, source_locator
+          FROM reference_laboratory_definition
+          WHERE release_id = ?
+          ORDER BY source_id, concept_id
+        `,
+      }),
+      laboratoryPanelMembers: streamMappedRows({
+        acceptedBySource: acceptedCountBySource,
+        driver: database.driver,
+        mapRow: mapLaboratoryPanelMemberRow,
+        onCount: () => { counts.laboratoryPanelMemberCount += 1 },
+        parameters: [release.releaseId],
+        rowSchema: laboratoryPanelMemberDatabaseRowSchema,
+        sql: `
+          SELECT panel_concept_id, member_concept_id, member_order, relationship,
+            source_id, source_locator
+          FROM reference_laboratory_panel_member
+          WHERE release_id = ?
+          ORDER BY source_id, panel_concept_id, member_order, member_concept_id, source_locator
+        `,
+      }),
+      laboratorySpecimens: streamMappedRows({
+        acceptedBySource: acceptedCountBySource,
+        driver: database.driver,
+        mapRow: mapLaboratorySpecimenRow,
+        onCount: () => { counts.laboratorySpecimenCount += 1 },
+        parameters: [release.releaseId],
+        rowSchema: laboratorySpecimenDatabaseRowSchema,
+        sql: `
+          SELECT concept_id, part_number, part_name, display, link_type,
+            source_id, source_locator
+          FROM reference_laboratory_specimen
+          WHERE release_id = ?
+          ORDER BY source_id, concept_id, part_number, link_type
+        `,
+      }),
+      laboratoryUnits: streamMappedRows({
+        acceptedBySource: acceptedCountBySource,
+        driver: database.driver,
+        mapRow: mapLaboratoryUnitRow,
+        onCount: () => { counts.laboratoryUnitCount += 1 },
+        parameters: [release.releaseId],
+        rowSchema: laboratoryUnitDatabaseRowSchema,
+        sql: `
+          SELECT concept_id, code, kind, ordinal, source_id, source_locator
+          FROM reference_laboratory_unit
+          WHERE release_id = ?
+          ORDER BY source_id, concept_id, ordinal, code, source_locator
+        `,
+      }),
+      medicationProducts: streamMappedRows({
+        acceptedBySource: acceptedCountBySource,
+        driver: database.driver,
+        mapRow: mapMedicationProductRow,
+        onCount: () => { counts.medicationProductCount += 1 },
+        parameters: [release.releaseId],
+        rowSchema: medicationProductDatabaseRowSchema,
+        sql: `
+          SELECT product_id, system, system_version, code, generic_name, brand_name,
+            dosage_form, strength, package_description, manufacturer, approval_number,
+            status, source_id, source_locator
+          FROM reference_medication_product
+          WHERE release_id = ?
+          ORDER BY source_id, product_id
+        `,
+      }),
+      release,
+      services: streamMappedRows({
+        acceptedBySource: acceptedCountBySource,
+        driver: database.driver,
+        mapRow: mapMedicalServiceRow,
+        onCount: () => { counts.serviceCount += 1 },
+        parameters: [release.releaseId],
+        rowSchema: medicalServiceDatabaseRowSchema,
+        sql: `
+          SELECT service_id, system, system_version, code, display, category_code,
+            billing_unit_code, status, source_id, source_locator
+          FROM reference_medical_service
+          WHERE release_id = ?
+          ORDER BY source_id, service_id
+        `,
+      }),
+      sources: release.sources,
+      valueSetEntries: streamMappedRows({
+        acceptedBySource: acceptedCountBySource,
+        driver: database.driver,
+        mapRow: mapValueSetEntryRow,
+        onCount: () => { counts.valueSetEntryCount += 1 },
+        parameters: [release.releaseId],
+        rowSchema: valueSetEntryDatabaseRowSchema,
+        sql: `
+          SELECT entry_id, value_set, system, system_version, code, display,
+            status, source_id, source_locator
+          FROM reference_value_set_entry
+          WHERE release_id = ?
+          ORDER BY source_id, entry_id
+        `,
+      }),
+    })
+
+    if (release.conceptCount !== counts.conceptCount) {
+      throw new Error(`Reference Data Release concept count mismatch: ${release.releaseId}`)
     }
-    for (const definition of laboratoryDefinitions) {
-      if (definition.kind !== 'laboratory-cn-test') continue
-      acceptedCountBySource.set(
-        definition.sourceId,
-        (acceptedCountBySource.get(definition.sourceId) ?? 0)
-          + definition.adultReferenceRules.length,
-      )
+    if (release.medicationProductCount !== counts.medicationProductCount) {
+      throw new Error(`Reference Data Release medication product count mismatch: ${release.releaseId}`)
     }
-    for (const item of [
-      ...laboratoryPanelMembers,
-      ...laboratorySpecimens,
-      ...laboratoryUnits,
-    ]) {
-      acceptedCountBySource.set(item.sourceId, (acceptedCountBySource.get(item.sourceId) ?? 0) + 1)
+    if (release.laboratoryDefinitionCount !== counts.laboratoryDefinitionCount) {
+      throw new Error(`Reference Data Release laboratory definition count mismatch: ${release.releaseId}`)
     }
-    for (const product of medicationProducts) {
-      acceptedCountBySource.set(product.sourceId, (acceptedCountBySource.get(product.sourceId) ?? 0) + 1)
+    if (release.laboratoryPanelMemberCount !== counts.laboratoryPanelMemberCount) {
+      throw new Error(`Reference Data Release laboratory panel member count mismatch: ${release.releaseId}`)
     }
-    for (const service of services) {
-      acceptedCountBySource.set(service.sourceId, (acceptedCountBySource.get(service.sourceId) ?? 0) + 1)
+    if (release.laboratorySpecimenCount !== counts.laboratorySpecimenCount) {
+      throw new Error(`Reference Data Release laboratory specimen count mismatch: ${release.releaseId}`)
     }
-    for (const entry of valueSetEntries) {
-      acceptedCountBySource.set(entry.sourceId, (acceptedCountBySource.get(entry.sourceId) ?? 0) + 1)
+    if (release.laboratoryUnitCount !== counts.laboratoryUnitCount) {
+      throw new Error(`Reference Data Release laboratory unit count mismatch: ${release.releaseId}`)
+    }
+    if (release.serviceCount !== counts.serviceCount) {
+      throw new Error(`Reference Data Release service count mismatch: ${release.releaseId}`)
+    }
+    if (release.valueSetEntryCount !== counts.valueSetEntryCount) {
+      throw new Error(`Reference Data Release value set entry count mismatch: ${release.releaseId}`)
     }
     for (const source of release.sources) {
       if ((acceptedCountBySource.get(source.sourceId) ?? 0) !== source.importDiagnostics.acceptedCount) {
         throw new Error(`Reference source accepted count mismatch: ${release.releaseId}/${source.sourceId}`)
       }
     }
-    const actualHash = contentHash({
-      concepts,
-      laboratoryDefinitions,
-      laboratoryPanelMembers,
-      laboratorySpecimens,
-      laboratoryUnits,
-      medicationProducts,
-      release,
-      services,
-      sources: release.sources,
-      valueSetEntries,
-    })
     if (actualHash !== release.contentHash) {
       throw new Error(`Reference Data Release content hash mismatch: ${release.releaseId}`)
     }

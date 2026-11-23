@@ -45,14 +45,14 @@
       "maximumBusyCount": 0,
       "maximumDatabaseGrowthBytes": 720896,
       "maximumErrorCount": 0,
-      "maximumQueriesPerIteration": 3,
+      "maximumQueriesPerIteration": 6,
       "maximumRetryCount": 0,
-      "maximumRowsWrittenPerIteration": 202,
-      "maximumStatementsPerIteration": 207,
+      "maximumRowsWrittenPerIteration": 404,
+      "maximumStatementsPerIteration": 16,
       "maximumTraceBytesPerIteration": 0,
       "maximumTraceRowsPerIteration": 0,
-      "maximumWritesPerIteration": 202,
-      "minimumRowsWrittenPerIteration": 202
+      "maximumWritesPerIteration": 8,
+      "minimumRowsWrittenPerIteration": 404
     },
     "reference-catalog-search-http": {
       "maximumBusyCount": 0,

@@ -225,8 +225,15 @@ export function publishOfflineInventory(database: ReferenceDatabase, inventory: 
   }
 }
 
+const inventoryRowSchema = z.object({
+  content_hash: z.string(),
+  inventory_id: z.string(),
+  inventory_json: z.string(),
+})
+const totalCountRowSchema = z.object({ total: z.number().int().nonnegative() })
+
 function readInventory(value: unknown): OfflineReferenceInventory {
-  const row = z.object({ inventory_id: z.string(), content_hash: z.string(), inventory_json: z.string() }).parse(value)
+  const row = inventoryRowSchema.parse(value)
   const inventory = offlineReferenceInventorySchema.parse(JSON.parse(row.inventory_json))
   const { contentHash, ...basis } = inventory
   if (row.inventory_id !== inventory.inventoryId || row.content_hash !== contentHash || digest(JSON.stringify(basis)) !== contentHash) {
@@ -236,7 +243,7 @@ function readInventory(value: unknown): OfflineReferenceInventory {
 }
 
 export function listOfflineInventories(database: ReferenceDatabase, input: OfflineReferenceInventoryQuery) {
-  const { total } = z.object({ total: z.number().int().nonnegative() })
+  const { total } = totalCountRowSchema
     .parse(database.driver.prepare('SELECT COUNT(*) AS total FROM reference_offline_inventory').get())
   const rows = database.driver.prepare('SELECT * FROM reference_offline_inventory ORDER BY inventory_id LIMIT ? OFFSET ?')
     .all(input.pageSize, (input.page - 1) * input.pageSize)
@@ -244,11 +251,10 @@ export function listOfflineInventories(database: ReferenceDatabase, input: Offli
 }
 
 export function verifyOfflineInventories(database: ReferenceDatabase): void {
-  let page = 1
-  while (true) {
-    const result = listOfflineInventories(database, { page, pageSize: 50 })
-    if (page * result.pageSize >= result.total) return
-    page += 1
+  for (const row of database.driver.prepare(
+    'SELECT inventory_id, content_hash, inventory_json FROM reference_offline_inventory ORDER BY inventory_id',
+  ).iterate()) {
+    readInventory(row)
   }
 }
 

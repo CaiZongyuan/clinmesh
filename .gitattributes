@@ -2,3 +2,4 @@
 /pathology-assets/prompts/*.md text eol=lf
 /apps/server/container-entrypoint.sh text eol=lf
 /apps/server/tests/fixtures/reference-data/*.csv text eol=lf
+/apps/server/tests/fixtures/reference-data/*.xml text eol=lf
