@@ -1115,8 +1115,8 @@ const operationCliMetadataList = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: '列出本院病理会诊服务、是否开展，以及该病例可见既往病史中可送检的手术；是否开展与病例病情无关',
-    version: 1,
+    summary: '列出本院病理会诊服务、是否开展，以及该病例可见既往病史中可送检的手术；首期支持乳腺、结直肠既往活检/息肉切除和甲状腺既往手术的 H&E 切片，是否开展与病例病情无关',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'pathology-request', 'draft', 'set'],
