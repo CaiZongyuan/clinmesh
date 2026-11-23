@@ -11,6 +11,7 @@ import {
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import { doctorCaseDetailSchema, type PrescriptionConflictReason } from '@clinmesh/contracts/his'
+import { assertOutpatientOrderPrerequisites } from './clinical-request-context.ts'
 import { CommandReceiptNotFoundError, type ActorContext, type CommandEffect, type CommandExecutor } from './command-executor.ts'
 import type { DoctorRecommendationsWorkflowPort } from './outpatient-workflow-context.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
@@ -864,6 +865,7 @@ export class DoctorRecommendationsService {
         recordIds.push(confirmed.data.confirmation.id)
         effects.push(...confirmed.effects)
       } else if (kind === 'prescription') {
+        assertOutpatientOrderPrerequisites(this.options.database, context, caseId)
         const items = selections.flatMap(selection => selection.kind !== 'prescription' ? [] : [{
           catalogItemId: selection.catalogItemId, doseText: selection.doseText, frequencyCode: selection.frequencyCode,
           routeCode: selection.routeCode, courseDays: selection.courseDays, quantity: selection.quantity,
@@ -888,6 +890,7 @@ export class DoctorRecommendationsService {
         if (currentDraft !== undefined && request.input.resolveExistingDraft !== true) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'An existing investigation draft needs explicit resolution before confirming prepared items')
         }
+        assertOutpatientOrderPrerequisites(this.options.database, context, caseId)
         let resolvedDraft = currentDraft === undefined
         for (const [selectionIndex, selection] of selections.entries()) {
           const previousVersion = draftVersion, previousEffects = effects.length, previousRecords = recordIds.length

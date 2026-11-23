@@ -34,6 +34,7 @@ import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scena
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { completeSyntheticOutpatient, FinancialAcceptanceProvider } from './fixtures/complete-synthetic-outpatient.ts'
 import { signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
+import { satisfyOutpatientOrderPrerequisites, signInitialOutpatientDocument } from './fixtures/outpatient-order-gate.ts'
 
 describe('Outpatient prescription catalog split, reason codes, and external prescription loop', () => {
   const runtimes: Array<Awaited<ReturnType<typeof createClinMeshRuntime>>> = []
@@ -201,6 +202,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
   it('允许冠心病跨类联合处方并在整单拒绝药理互斥与超单日极量后保留可重试状态', async () => {
     const { password, runtime } = await setupRuntime()
     const visit = await startActiveVisit(runtime, password)
+    await signInitialOutpatientDocument(runtime, visit.doctor, visit.caseId)
     const encounterVersion = await confirmDiagnosis(runtime, visit.doctor, visit.encounterId, visit.encounterVersion, 'diagnosis-coronary-heart-disease')
     const regimen = [
       { catalogItemId: 'medication-pci-aspirin', doseText: '100 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 },
@@ -300,6 +302,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
   it('persists hospital prescription specification snapshots and resolves prescription_authorship doctor name with legacy fallbacks', async () => {
     const { password, runtime } = await setupRuntime()
     const visit = await startActiveVisit(runtime, password)
+    await signInitialOutpatientDocument(runtime, visit.doctor, visit.caseId)
     const encounterVersion = await confirmDiagnosis(
       runtime,
       visit.doctor,
@@ -402,6 +405,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
   it('rejects mixing hospital pharmacy and national reference medications across draft save, direct issue, and recommendation confirm', async () => {
     const { password, runtime } = await setupRuntime()
     const visit = await startActiveVisit(runtime, password)
+    await signInitialOutpatientDocument(runtime, visit.doctor, visit.caseId)
     const encounterVersion = await confirmDiagnosis(
       runtime,
       visit.doctor,
@@ -525,10 +529,11 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
     }
 
     // 1. Unconfirmed primary diagnosis
+    await signInitialOutpatientDocument(runtime, visit.doctor, visit.caseId)
     const unconfirmed = await confirmPrepared(visit.encounterVersion, oseltamivir)
     expect(unconfirmed.status).toBe(409)
     expect(apiErrorSchema.parse(await unconfirmed.json())).toMatchObject({
-      error: { code: 'WORKFLOW_CONFLICT', reason: 'PRESCRIPTION_DIAGNOSIS_UNCONFIRMED' },
+      error: { code: 'DIAGNOSIS_UNCONFIRMED' },
     })
 
     // 2. Confirmed diagnosis not allowed for selected medication (R50.9 fever vs oseltamivir J10.1)
@@ -634,7 +639,6 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
     })
 
     // 7. Complete encounter, then verify PRESCRIPTION_ENCOUNTER_NOT_ACTIVE
-    await signClinicalDocument(runtime, visit.doctor, visit.encounterId, encounterVersion)
     const completed = await runtime.app.request(
       `/api/his/v1/encounters/${visit.encounterId}/actions/complete`,
       {
@@ -655,6 +659,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
   it('returns PRESCRIPTION_NO_MEDICATION_RECORDED from recommendation confirmation after no-medication is confirmed', async () => {
     const second = await setupRuntime()
     const secondVisit = await startActiveVisit(second.runtime, second.password)
+    const secondGate = await satisfyOutpatientOrderPrerequisites(second.runtime, secondVisit.doctor, secondVisit.caseId)
     const oseltamivir = {
       catalogItemId: 'medication-oseltamivir',
       courseDays: 5,
@@ -667,7 +672,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
       `/api/his/v1/encounters/${secondVisit.encounterId}/medication-conclusion/actions/confirm-no-medication`,
       {
         body: JSON.stringify({
-          expectedVersions: { [secondVisit.encounterRef]: secondVisit.encounterVersion },
+          expectedVersions: { [secondVisit.encounterRef]: secondGate.encounterVersion },
           input: { expectedDraftVersion: 0 },
         }),
         headers: commandHeaders(secondVisit.doctor),
@@ -680,7 +685,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
       `/api/his/v1/doctor/cases/${secondVisit.caseId}/recommendations/prescription/actions/confirm`,
       {
         body: JSON.stringify({
-          expectedVersions: { [secondVisit.encounterRef]: secondVisit.encounterVersion },
+          expectedVersions: { [secondVisit.encounterRef]: secondGate.encounterVersion },
           input: {
             expectedDraftVersion: noMedDraftVersion,
             selections: [{ ...oseltamivir, kind: 'prescription', source: 'manual' }],
@@ -822,6 +827,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
     const { password, runtime } = await setupRuntime()
     const referenceProduct = syntheticNhsaMedicationProductSnapshot[0]!
     const visitB = await startActiveVisit(runtime, password)
+    await signInitialOutpatientDocument(runtime, visitB.doctor, visitB.caseId)
     const encounterVersionB = await confirmDiagnosis(
       runtime,
       visitB.doctor,
@@ -891,6 +897,7 @@ describe('Outpatient prescription catalog split, reason codes, and external pres
   it('keeps external prescription and no-medication conclusions available when all hospital outpatient medications are inactive or inpatient-only', async () => {
     const { password, runtime } = await setupRuntime()
     const visit = await startActiveVisit(runtime, password)
+    await signInitialOutpatientDocument(runtime, visit.doctor, visit.caseId)
     const encounterVersion = await confirmDiagnosis(
       runtime,
       visit.doctor,

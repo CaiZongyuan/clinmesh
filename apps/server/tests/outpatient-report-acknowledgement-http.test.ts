@@ -25,6 +25,7 @@ import {
 } from './fixtures/imaging-scenario.ts'
 import { installSyntheticPathologySlides } from './fixtures/pathology-catalog.ts'
 import { breastCaseBundle, preparePathology } from './fixtures/pathology-scenario.ts'
+import { satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 
 const kinds = ['laboratory', 'imaging', 'pathology'] as const
@@ -96,7 +97,8 @@ async function setup() {
   await preparePathology(runtime, admin, [sourceCaseId])
   const visit = await startConsultation(runtime, admin, sourceCaseId)
   let doctor = visit.doctor
-  const expectedVersions = { [`Encounter/${visit.encounterId}`]: '3' }
+  const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctor, visit.outpatientCaseId)
+  const expectedVersions = { [`Encounter/${visit.encounterId}`]: gate.encounterVersion }
   for (const kind of kinds) {
     const input = kind === 'laboratory'
       ? { catalogItemId: laboratoryService.id, indicationCode: 'clinical-assessment', expectedDraftVersion: 0 }

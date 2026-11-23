@@ -1,4 +1,5 @@
 import { ExaminationPage } from './examination-page.tsx'
+import { resolveOutpatientOrderPrerequisiteGate } from './outpatient-order-gate.tsx'
 import { doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
 import type { MedicationRoute } from '@clinmesh/contracts/medication-safety'
 import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
@@ -230,6 +231,24 @@ export function CaseDetail({
   const parsedSection = doctorCaseSectionSchema.safeParse(sectionView.tab)
   const activeSection = parsedSection.success ? parsedSection.data : 'record'
   const setActiveSection = useCallback((section: DoctorCaseSection) => sectionView.setTab(section), [sectionView.setTab])
+  const [openRecordRevisionNonce, setOpenRecordRevisionNonce] = useState(0)
+  const orderGate = resolveOutpatientOrderPrerequisiteGate(detail, setActiveSection)
+  const reviseRecordForMedication = useCallback((summaryLine: string) => {
+    const trimmedSummary = summaryLine.trim()
+    if (trimmedSummary.length > 0 && !workingClinicalDocument.disposition.includes(trimmedSummary)) {
+      const currentDisposition = workingClinicalDocument.disposition.trim()
+      const nextDocument: ClinicalDocumentContent = {
+        ...workingClinicalDocument,
+        disposition: currentDisposition.length === 0
+          ? trimmedSummary
+          : `${currentDisposition}\n${trimmedSummary}`,
+      }
+      onClinicalDocumentChange(nextDocument)
+      clinicalDocumentActions.save?.onSubmit(nextDocument)
+    }
+    setOpenRecordRevisionNonce(current => current + 1)
+    setActiveSection('record')
+  }, [clinicalDocumentActions.save, onClinicalDocumentChange, setActiveSection, workingClinicalDocument])
   const [pendingNavigation, setPendingNavigation] = useState<{
     source: 'checklist' | 'correction'
     target: EncounterCompletionTarget
@@ -519,8 +538,8 @@ export function CaseDetail({
               count: detail.consultation.turns.findLast(turn => turn.kind === 'text')?.speaker === 'doctor' ? 1 : 0,
               status: detail.consultation.turns.length > 0 ? 'completed' : 'pending' }]),
             { value: 'record', label: messages.medicalRecord },
-            { value: 'laboratory', label: messages.laboratoryAndExamination },
             { value: 'diagnosis', label: messages.diagnosis },
+            { value: 'laboratory', label: messages.laboratoryAndExamination },
             { value: 'prescription', label: messages.prescription },
           ].map(item => {
             const pending = completion.data?.items.filter(check => check.status === 'incomplete'
@@ -595,6 +614,7 @@ export function CaseDetail({
                     actions={clinicalDocumentActions}
                     allowRevision={!clinicalReadOnly || correctionTarget === 'clinical-document'}
                     defaultRevisionOpen={correctionTarget === 'clinical-document'}
+                    openRevisionRequest={openRecordRevisionNonce}
                     detail={detail}
                     hideInlineActions
                     hideRecordingControls
@@ -649,32 +669,6 @@ export function CaseDetail({
                 scope={recommendationScope}
               /></fieldset>
             )}
-          </DoctorDraftScope></DoctorCasePanel>
-
-          <DoctorCasePanel keepMounted={detail.consultation !== undefined} value="prescription"><DoctorDraftScope caseId={detail.caseId} kind="prescription" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['prescription'] ?? 0} locale={locale}>
-            {detail.consultation === undefined || catalog.isPending ? (
-              detail.consultation === undefined ? revisitWorkflow : <Skeleton className="h-72 w-full" />
-            ) : catalog.isError ? (
-              <ErrorAlert
-                message={getWorkspaceErrorMessage(catalog.error, messages)}
-                title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
-              />
-            ) : catalog.data.prescriptionConclusionSupported ? (
-              <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('prescription') === true}><PrescriptionPage
-                actions={prescriptionActions}
-                recommendationScope={recommendationScope}
-                recommendationRevision={recommendationRevision}
-                allowWithdrawal={!clinicalReadOnly || correctionTarget === 'medication-conclusion'}
-                catalog={catalog.data.medications}
-                detail={detail}
-                elementId={encounterCompletionTargetElementIds['medication-conclusion']}
-                key={`medication-conclusion:${detail.caseId}:${agentDraftHydrationRevisions.prescription ?? 0}`}
-                locale={locale}
-                messages={messages}
-                readOnly={clinicalReadOnly}
-                referenceSearch={referenceCatalogSearches.medications}
-              /></fieldset>
-            ) : null}
           </DoctorDraftScope></DoctorCasePanel>
 
           <DoctorCasePanel value="laboratory">
@@ -739,6 +733,7 @@ export function CaseDetail({
                   onIndicationChange={onIndicationChange}
                   onIssueLegacyOrder={onIssueOrder}
                   onLaboratoryItemChange={onLaboratoryItemChange}
+                  orderGate={orderGate}
                   readOnly={clinicalReadOnly}
                   referenceSearch={referenceCatalogSearches.laboratory}
                   editDraft={(agentDraftHydrationRevisions.laboratory ?? 0) > 0}
@@ -761,6 +756,7 @@ export function CaseDetail({
                   encounter={detail.encounter}
                   key={`imaging:${detail.caseId}:${agentDraftHydrationRevisions.imaging ?? 0}`}
                   locale={locale}
+                  orderGate={orderGate}
                   readOnly={clinicalReadOnly}
                   state={detail.imagingRequests}
                   editDraft={(agentDraftHydrationRevisions.imaging ?? 0) > 0}
@@ -769,7 +765,7 @@ export function CaseDetail({
                   selectedReportId={investigationView.reportId}
                 /></fieldset>
               </DoctorDraftScope></TabsContent>
-              <TabsContent keepMounted value="examination"><ExaminationPage detail={detail} locale={locale} readOnly={clinicalReadOnly} active={investigationView.category === 'examination'} elementId={encounterCompletionTargetElementIds.examination} actionContext={investigationActionContext} recommendationScope={recommendationScope} selectedRequestId={investigationView.selected.examination} onSelectRequest={id => onSelectInvestigationRequest('examination', id)} key={`examination:${detail.caseId}:${agentDraftHydrationRevisions.examination ?? 0}`} /></TabsContent>
+              <TabsContent keepMounted value="examination"><ExaminationPage detail={detail} locale={locale} readOnly={clinicalReadOnly} active={investigationView.category === 'examination'} elementId={encounterCompletionTargetElementIds.examination} actionContext={investigationActionContext} orderGate={orderGate} recommendationScope={recommendationScope} selectedRequestId={investigationView.selected.examination} onSelectRequest={id => onSelectInvestigationRequest('examination', id)} key={`examination:${detail.caseId}:${agentDraftHydrationRevisions.examination ?? 0}`} /></TabsContent>
               <TabsContent keepMounted value="pathology"><DoctorDraftScope caseId={detail.caseId} kind="pathology" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['pathology'] ?? 0} locale={locale}>
                 <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('pathology') === true}><PathologyPage
                   actionContext={investigationActionContext}
@@ -782,6 +778,7 @@ export function CaseDetail({
                   encounter={detail.encounter}
                   key={`pathology:${detail.caseId}:${agentDraftHydrationRevisions.pathology ?? 0}`}
                   locale={locale}
+                  orderGate={orderGate}
                   readOnly={clinicalReadOnly}
                   state={detail.pathologyRequests}
                   editDraft={(agentDraftHydrationRevisions.pathology ?? 0) > 0}
@@ -792,6 +789,34 @@ export function CaseDetail({
               </DoctorDraftScope></TabsContent>
             </Tabs>
           </DoctorCasePanel>
+
+          <DoctorCasePanel keepMounted={detail.consultation !== undefined} value="prescription"><DoctorDraftScope caseId={detail.caseId} kind="prescription" revision={clinicalReadOnly ? 0 : agentDraftHydrationRevisions['prescription'] ?? 0} locale={locale}>
+            {detail.consultation === undefined || catalog.isPending ? (
+              detail.consultation === undefined ? revisitWorkflow : <Skeleton className="h-72 w-full" />
+            ) : catalog.isError ? (
+              <ErrorAlert
+                message={getWorkspaceErrorMessage(catalog.error, messages)}
+                title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
+              />
+            ) : catalog.data.prescriptionConclusionSupported ? (
+              <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('prescription') === true}><PrescriptionPage
+                actions={prescriptionActions}
+                recommendationScope={recommendationScope}
+                recommendationRevision={recommendationRevision}
+                allowWithdrawal={!clinicalReadOnly || correctionTarget === 'medication-conclusion'}
+                catalog={catalog.data.medications}
+                detail={detail}
+                elementId={encounterCompletionTargetElementIds['medication-conclusion']}
+                key={`medication-conclusion:${detail.caseId}:${agentDraftHydrationRevisions.prescription ?? 0}`}
+                locale={locale}
+                messages={messages}
+                onReviseRecord={clinicalReadOnly ? undefined : reviseRecordForMedication}
+                orderGate={orderGate}
+                readOnly={clinicalReadOnly}
+                referenceSearch={referenceCatalogSearches.medications}
+              /></fieldset>
+            ) : null}
+          </DoctorDraftScope></DoctorCasePanel>
         </WorkspaceTabs>
       </div>
 

@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { readActionTraceMetrics, SqlitePerformanceProbe } from '../src/performance/sqlite-performance-probe.ts'
 import type { createClinMeshRuntime } from '../src/runtime.ts'
 import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
+import { satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 import {
   caseBundle,
@@ -76,7 +77,8 @@ describe('Imaging study read boundary HTTP contract', () => {
     const syntheticCaseId = await generateCase(runtime, administrator)
     await prepareImaging(runtime, administrator, [syntheticCaseId])
     const visit = await startConsultation(runtime, administrator, syntheticCaseId)
-    const expectedVersions = { [`Encounter/${visit.encounterId}`]: '3' }
+    const prereq = await satisfyOutpatientOrderPrerequisites(runtime, visit.doctor, visit.outpatientCaseId)
+    const expectedVersions = { [`Encounter/${visit.encounterId}`]: prereq.encounterVersion }
     const draft = await runtime.app.request(
       `/api/his/v1/encounters/${visit.encounterId}/imaging-request/draft`,
       mutation(visit.doctor, {

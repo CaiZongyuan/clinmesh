@@ -37,14 +37,20 @@ async function buildFixture(version: string) {
   artifacts.set(version, artifact)
   return artifact
 }
-async function mount(page: Page, version: string, mode: 'polish' | 'empty' | 'existing' | 'recommendations' | 'failed' | 'recovery' | 'retry-disabled' | 'catalog-split', multiple = false) {
+async function mount(
+  page: Page,
+  version: string,
+  mode: 'polish' | 'empty' | 'existing' | 'recommendations' | 'failed' | 'recovery' | 'retry-disabled' | 'catalog-split',
+  multiple = false,
+  confirmedDiagnosis = false,
+) {
   const { script, styles } = await buildFixture(version)
   // 宿主为 1440（容纳三栏建议栈后保持开单/检查双栏合同），视口需一致，否则文档出现横向滚动。
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.route('http://localhost/', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
   await page.goto('http://localhost/')
   expect(z.object({ ready: z.literal(true) }).parse(await readJsonFromBrowser(page,
-    `<!doctype html><html data-fixture-mode="${mode}" data-fixture-multiple="${multiple}"><head><meta charset="utf-8"><style>body{margin:0}</style><style data-fixture>${styles}</style></head><body><script>${script.replaceAll('</script', '<\\/script')}</script></body></html>`,
+    `<!doctype html><html data-fixture-mode="${mode}" data-fixture-multiple="${multiple}" data-fixture-confirmed-diagnosis="${confirmedDiagnosis}"><head><meta charset="utf-8"><style>body{margin:0}</style><style data-fixture>${styles}</style></head><body><script>${script.replaceAll('</script', '<\\/script')}</script></body></html>`,
   ))).toEqual({ ready: true })
   await page.getByRole('button', { name: /合成浏览器患者/ }).click()
 }
@@ -210,7 +216,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await expectNoFixtureErrors(page)
   })
   test(`shows both AI medications as issued records and selects the second detail on React ${version}`, async ({ page }) => {
-    await mount(page, version, 'recommendations', true)
+    await mount(page, version, 'recommendations', true, true)
     await openWorkspaceTab(page, '处方')
     await expectWorkspaceColumns(page, false)
     const panel = page.getByRole('region', { name: '待开具处方', exact: true })
@@ -310,7 +316,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
   })
 
   test(`requires explicit missing prescription fields and preserves manual edits through refresh and failure on React ${version}`, async ({ page }) => {
-    await mount(page, version, 'recommendations')
+    await mount(page, version, 'recommendations', false, true)
     await appearance(page, 'zh-CN', 'dark', 'large', 390)
     await openWorkspaceTab(page, '处方')
     const panel = page.getByRole('region', { name: '待开具处方', exact: true })

@@ -47,6 +47,7 @@ import {
   getWorkspaceErrorTitle,
 } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
+import { OutpatientOrderGateGuidance, resolveOutpatientOrderPrerequisiteGate, type OutpatientOrderPrerequisiteGate } from './outpatient-order-gate.tsx'
 import {
   MedicationComposerDialog,
   localMedicationInsertTarget,
@@ -158,6 +159,8 @@ export function PrescriptionPage({
   elementId,
   locale,
   messages,
+  onReviseRecord,
+  orderGate,
   readOnly,
   recommendationRevision,
   recommendationScope,
@@ -170,12 +173,18 @@ export function PrescriptionPage({
   elementId: string
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
+  onReviseRecord?: ((summaryLine: string) => void) | undefined
+  orderGate?: OutpatientOrderPrerequisiteGate | undefined
   readOnly: boolean
   recommendationRevision?: string
   recommendationScope?: string
   referenceSearch: ReferenceCatalogSearches['medications']
 }): React.JSX.Element {
   const dismissDraftItem = useDoctorDraftItemEdit()
+  const effectiveOrderGate = orderGate ?? resolveOutpatientOrderPrerequisiteGate(detail)
+  const canNavigateToRecordRevision = !readOnly
+    && (detail.clinicalDocument?.signed.length ?? 0) > 0
+    && onReviseRecord !== undefined
 
   const preparationSubmitting = useDoctorPreparation()?.submitting('prescription') ?? false
   const operationPending = actions.saveDraft.pending || actions.issue.pending || actions.deleteDraft.pending || actions.confirmNoMedication.pending || preparationSubmitting
@@ -538,48 +547,51 @@ export function PrescriptionPage({
         </AlertDescription>
       </Alert>
       {draftSaveFeedback}
-      <AlertDialog pending={actions.confirmNoMedication.pending} onOpenChange={setNoMedicationOpen} open={noMedicationOpen}>
-        <AlertDialogTrigger render={<Button
-          className="self-start"
-          data-unavailable={dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending ? '' : undefined}
-          disabled={dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending}
-          type="button"
-          variant="outline"
-        />}>
-          <CheckIcon data-icon="inline-start" />{messages.confirmNoMedication}
-        </AlertDialogTrigger>
-        <AlertDialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
-          <AlertDialogHeader>
-            <AlertDialogTitle>{messages.confirmNoMedication}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {locale === 'zh-CN' ? '记录本次就诊无需用药，不生成药品医嘱或处方。' : 'Record that no medication is needed for this encounter. No medication orders or prescription will be created.'}
-              {items.length === 0 ? null : (locale === 'zh-CN' ? '现有未开具草稿将同时清除。' : 'The existing unissued draft will also be cleared.')}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <p className="break-words text-sm font-medium">{detail.patient.name}</p>
-          {items.length === 0 ? null : (
-            <ul className="flex flex-col gap-2 text-sm">
-              {items.map(item => (
-                <li className="flex flex-wrap justify-between gap-2" key={item.key}><DoctorDraftItem id={item.catalogItemId}><div className="flex min-w-0 items-center gap-1 pr-14">
-                  <span className="break-words">{item.referenceProduct?.genericName
-                    ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
-                    ?? item.catalogItemId}</span>
-                  <span className="text-muted-foreground">{messages.quantity} {item.quantity}</span>
-                </div></DoctorDraftItem></li>
-              ))}
-            </ul>
-          )}
-          <AlertDialogFooter>
-            <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-            <AlertDialogCancel disabled={dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending} onClick={() => {
-              setNoMedicationOpen(false)
-              queueMicrotask(actions.confirmNoMedication.onSubmit)
-            }} variant="default">
-              <CheckIcon data-icon="inline-start" />{messages.confirmNoMedication}
-            </AlertDialogCancel>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <div className="flex flex-wrap items-center gap-2">
+        <AlertDialog pending={actions.confirmNoMedication.pending} onOpenChange={setNoMedicationOpen} open={noMedicationOpen}>
+          <AlertDialogTrigger render={<Button
+            className="self-start"
+            data-unavailable={effectiveOrderGate.blocked || dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending ? '' : undefined}
+            disabled={effectiveOrderGate.blocked || dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending}
+            type="button"
+            variant="outline"
+          />}>
+            <CheckIcon data-icon="inline-start" />{messages.confirmNoMedication}
+          </AlertDialogTrigger>
+          <AlertDialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
+            <AlertDialogHeader>
+              <AlertDialogTitle>{messages.confirmNoMedication}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {locale === 'zh-CN' ? '记录本次就诊无需用药，不生成药品医嘱或处方。' : 'Record that no medication is needed for this encounter. No medication orders or prescription will be created.'}
+                {items.length === 0 ? null : (locale === 'zh-CN' ? '现有未开具草稿将同时清除。' : 'The existing unissued draft will also be cleared.')}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <p className="break-words text-sm font-medium">{detail.patient.name}</p>
+            {items.length === 0 ? null : (
+              <ul className="flex flex-col gap-2 text-sm">
+                {items.map(item => (
+                  <li className="flex flex-wrap justify-between gap-2" key={item.key}><DoctorDraftItem id={item.catalogItemId}><div className="flex min-w-0 items-center gap-1 pr-14">
+                    <span className="break-words">{item.referenceProduct?.genericName
+                      ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
+                      ?? item.catalogItemId}</span>
+                    <span className="text-muted-foreground">{messages.quantity} {item.quantity}</span>
+                  </div></DoctorDraftItem></li>
+                ))}
+              </ul>
+            )}
+            <AlertDialogFooter>
+              <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
+              <AlertDialogCancel disabled={effectiveOrderGate.blocked || dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending} onClick={() => {
+                setNoMedicationOpen(false)
+                queueMicrotask(actions.confirmNoMedication.onSubmit)
+              }} variant="default">
+                <CheckIcon data-icon="inline-start" />{messages.confirmNoMedication}
+              </AlertDialogCancel>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        <OutpatientOrderGateGuidance gate={effectiveOrderGate} locale={locale} />
+      </div>
       {actions.confirmNoMedication.error === null ? null : (
         <ErrorAlert
           message={getWorkspaceErrorMessage(actions.confirmNoMedication.error, messages)}
@@ -780,6 +792,17 @@ export function PrescriptionPage({
             ? prescription.withdrawal === undefined ? null : ` · ${formatClinicalDateTime(prescription.withdrawal.withdrawnAt, locale)}`
             : ` · ${locale === 'zh-CN' ? `${prescription.items.length} 条药品医嘱 · 已开具处方不可直接编辑` : `${prescription.items.length} medication orders · Issued prescriptions are read only`}`}
         </p>
+        {canNavigateToRecordRevision && prescription.status !== 'withdrawn' ? (
+          <Button
+            className="h-auto max-w-full whitespace-normal py-1 text-left"
+            onClick={() => onReviseRecord?.(`已开具门诊处方（${prescription.number}，共 ${prescription.items.length} 项药品）。`)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            {locale === 'zh-CN' ? '补充病历评估/处置/随访' : 'Update clinical record'}
+          </Button>
+        ) : null}
         {allowWithdrawal
           && (prescription.status === 'signed' || prescription.status === 'paid') ? (
           <AlertDialog pending={actions.withdraw.pending}>
@@ -916,6 +939,7 @@ export function PrescriptionPage({
               caseId={detail.caseId}
               enabled={!readOnly && noMedicationConclusion === undefined && mode === 'prescription'}
               disabled={!canEditDraft || pending}
+              orderGate={effectiveOrderGate}
               inputRevision={recommendationRevision}
               kind="prescription"
               locale={locale}
@@ -1038,8 +1062,19 @@ export function PrescriptionPage({
         <Alert>
           <CheckIcon aria-hidden="true" />
           <AlertTitle>{messages.noMedicationConfirmed}</AlertTitle>
-          <AlertDescription>
-            {messages.authoredAt} · {formatClinicalDateTime(noMedicationConclusion.authoredAt, locale)}
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+            <span>{messages.authoredAt} · {formatClinicalDateTime(noMedicationConclusion.authoredAt, locale)}</span>
+            {canNavigateToRecordRevision ? (
+              <Button
+                className="h-auto max-w-full whitespace-normal py-1 text-left"
+                onClick={() => onReviseRecord?.('本次门诊评估无需开具药物处方。')}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {locale === 'zh-CN' ? '补充病历评估/处置/随访' : 'Update clinical record'}
+              </Button>
+            ) : null}
           </AlertDescription>
         </Alert>
       )}

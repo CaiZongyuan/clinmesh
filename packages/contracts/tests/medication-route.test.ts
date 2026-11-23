@@ -361,7 +361,7 @@ describe('MedicationRoute contracts and operation catalog versions', () => {
     expect(getHisOperation('doctor.case.get').version).toBe(22)
     expect(getHisOperation('doctor.case.order-set-drafts.read').version).toBe(2)
     expect(getHisOperation('encounter.prescription.draft.set').version).toBe(4)
-    expect(getHisOperation('encounter.prescription.issue').version).toBe(6)
+    expect(getHisOperation('encounter.prescription.issue').version).toBe(7)
     expect(getHisOperation('pharmacy.queue.list').version).toBe(2)
     expect(getHisOperation('inpatient.pharmacy.read').version).toBe(4)
     expect(getHisOperation('inpatient.catalog.search').version).toBe(4)

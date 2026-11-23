@@ -179,6 +179,12 @@ class CliE2eChatProvider implements JsonChatCompletionsProvider {
   }
 
   async completeJson(input: JsonChatCompletionInput) {
+    if (input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification') {
+      return { content: JSON.stringify({ issues: [], agentFactChecks: [], recordingChecks: [] }), model: input.model }
+    }
+    if (input.usageContext?.stage === 'recording') {
+      return { content: JSON.stringify({ additions: [] }), model: input.model }
+    }
     this.requests.push(input)
     const output = this.#outputs.shift()
     if (output === undefined) throw new Error('No synthetic CLI E2E model output remains')
@@ -793,6 +799,87 @@ describe('clinmesh CLI process over real HTTP', () => {
       'payment.confirm',
       'payment.preview',
     ], 'cli-cross-role-cashier-grant-1')
+    const document = {
+      allergyHistory: '否认已知药物过敏。',
+      assessment: '结合问诊和检验结果，考虑甲型流感。',
+      chiefComplaint: '发热伴咽痛两天。',
+      disposition: '门诊口服抗病毒药物治疗。',
+      familyHistory: '否认特殊家族遗传病史。',
+      followUp: '三天后复诊，持续高热或气促时立即就医。',
+      historyOfPresentIllness: '两天前出现发热，最高体温 38.8 摄氏度，伴咽痛。',
+      menstrualHistory: '患者自述既往月经规律。',
+      obstetricHistory: '患者自述既往婚育史无特殊。',
+      physicalExamination: '神志清楚，咽部充血，双肺呼吸音清。',
+      priorMedicalHistory: '既往体健。',
+    }
+    const documentDraft = cliData(
+      await execute(doctorToken, [
+        'encounter', 'clinical-document', 'draft', 'set',
+        '--input', '-',
+        '--idempotency-key', 'cli-cross-role-document-draft-1',
+      ], {
+        document,
+        encounterId: doctorItem.encounterId,
+        encounterVersion: activeDoctorItem.encounterVersion,
+        expectedDraftVersion: pending.clinicalDocument?.draft?.version ?? 0,
+      }),
+      'encounter.clinical-document.draft.set',
+      clinicalDocumentDraftResponseSchema,
+    ).data
+    const documentPreview = cliData(
+      await execute(doctorToken, [
+        'encounter', 'clinical-document', 'sign', 'preview',
+        '--input', '-',
+        '--idempotency-key', 'cli-cross-role-document-preview-1',
+      ], {
+        encounterId: doctorItem.encounterId,
+        encounterVersion: activeDoctorItem.encounterVersion,
+        expectedDraftVersion: documentDraft.draftVersion,
+      }),
+      'encounter.clinical-document.sign.preview',
+      clinicalDocumentSignPreviewResponseSchema,
+    ).data
+    cliData(
+      await execute(doctorToken, [
+        'encounter', 'clinical-document', 'sign', 'commit',
+        '--input', '-',
+        '--idempotency-key', 'cli-cross-role-document-sign-1',
+      ], {
+        commitToken: documentPreview.commitToken,
+        encounterId: doctorItem.encounterId,
+        encounterVersion: activeDoctorItem.encounterVersion,
+        previewId: documentPreview.previewId,
+      }),
+      'encounter.clinical-document.sign',
+      clinicalDocumentSignResponseSchema,
+    )
+    const diagnosisDraft = cliData(
+      await execute(doctorToken, [
+        'encounter', 'diagnosis', 'draft', 'set',
+        '--input', '-',
+        '--idempotency-key', 'cli-cross-role-diagnosis-draft-1',
+      ], {
+        encounterId: doctorItem.encounterId,
+        encounterVersion: activeDoctorItem.encounterVersion,
+        entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }],
+        expectedDraftVersion: 0,
+      }),
+      'encounter.diagnosis.draft.set',
+      diagnosisDraftResponseSchema,
+    ).data
+    const diagnosis = cliData(
+      await execute(doctorToken, [
+        'encounter', 'diagnosis', 'confirm',
+        '--input', '-',
+        '--idempotency-key', 'cli-cross-role-diagnosis-confirm-1',
+      ], {
+        encounterId: doctorItem.encounterId,
+        encounterVersion: activeDoctorItem.encounterVersion,
+        expectedDraftVersion: diagnosisDraft.draftVersion,
+      }),
+      'encounter.diagnosis.confirm',
+      confirmDiagnosisResponseSchema,
+    ).data
     const laboratoryDraft = cliData(
       await execute(doctorToken, [
         'encounter', 'laboratory-request', 'draft', 'set',
@@ -801,7 +888,7 @@ describe('clinmesh CLI process over real HTTP', () => {
       ], {
         catalogItemId: laboratoryConcept.id,
         encounterId: doctorItem.encounterId,
-        encounterVersion: activeDoctorItem.encounterVersion,
+        encounterVersion: diagnosis.encounterVersion,
         expectedDraftVersion: 0,
         indicationCode: 'fever',
       }),
@@ -815,7 +902,7 @@ describe('clinmesh CLI process over real HTTP', () => {
         '--idempotency-key', 'cli-cross-role-lab-issue-1',
       ], {
         encounterId: doctorItem.encounterId,
-        encounterVersion: activeDoctorItem.encounterVersion,
+        encounterVersion: diagnosis.encounterVersion,
         expectedDraftVersion: laboratoryDraft.draftVersion,
       }),
       'encounter.laboratory-request.issue',
@@ -878,33 +965,6 @@ describe('clinmesh CLI process over real HTTP', () => {
       acknowledgeLaboratoryReportResponseSchema,
     )
 
-    const diagnosisDraft = cliData(
-      await execute(doctorToken, [
-        'encounter', 'diagnosis', 'draft', 'set',
-        '--input', '-',
-        '--idempotency-key', 'cli-cross-role-diagnosis-draft-1',
-      ], {
-        encounterId: doctorItem.encounterId,
-        encounterVersion: activeDoctorItem.encounterVersion,
-        entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }],
-        expectedDraftVersion: 0,
-      }),
-      'encounter.diagnosis.draft.set',
-      diagnosisDraftResponseSchema,
-    ).data
-    const diagnosis = cliData(
-      await execute(doctorToken, [
-        'encounter', 'diagnosis', 'confirm',
-        '--input', '-',
-        '--idempotency-key', 'cli-cross-role-diagnosis-confirm-1',
-      ], {
-        encounterId: doctorItem.encounterId,
-        encounterVersion: activeDoctorItem.encounterVersion,
-        expectedDraftVersion: diagnosisDraft.draftVersion,
-      }),
-      'encounter.diagnosis.confirm',
-      confirmDiagnosisResponseSchema,
-    ).data
     const prescriptionDraft = cliData(
       await execute(doctorToken, [
         'encounter', 'prescription', 'draft', 'set',
@@ -939,55 +999,6 @@ describe('clinmesh CLI process over real HTTP', () => {
       'encounter.prescription.issue',
       issuePrescriptionResponseSchema,
     ).data.prescription
-    const document = {
-      assessment: '结合问诊和检验结果，考虑甲型流感。',
-      chiefComplaint: '发热伴咽痛两天。',
-      disposition: '门诊口服抗病毒药物治疗。',
-      followUp: '三天后复诊，持续高热或气促时立即就医。',
-      historyOfPresentIllness: '两天前出现发热，最高体温 38.8 摄氏度，伴咽痛。',
-      physicalExamination: '神志清楚，咽部充血，双肺呼吸音清。',
-    }
-    const documentDraft = cliData(
-      await execute(doctorToken, [
-        'encounter', 'clinical-document', 'draft', 'set',
-        '--input', '-',
-        '--idempotency-key', 'cli-cross-role-document-draft-1',
-      ], {
-        document,
-        encounterId: doctorItem.encounterId,
-        encounterVersion: diagnosis.encounterVersion,
-        expectedDraftVersion: 0,
-      }),
-      'encounter.clinical-document.draft.set',
-      clinicalDocumentDraftResponseSchema,
-    ).data
-    const documentPreview = cliData(
-      await execute(doctorToken, [
-        'encounter', 'clinical-document', 'sign', 'preview',
-        '--input', '-',
-        '--idempotency-key', 'cli-cross-role-document-preview-1',
-      ], {
-        encounterId: doctorItem.encounterId,
-        encounterVersion: diagnosis.encounterVersion,
-        expectedDraftVersion: documentDraft.draftVersion,
-      }),
-      'encounter.clinical-document.sign.preview',
-      clinicalDocumentSignPreviewResponseSchema,
-    ).data
-    cliData(
-      await execute(doctorToken, [
-        'encounter', 'clinical-document', 'sign', 'commit',
-        '--input', '-',
-        '--idempotency-key', 'cli-cross-role-document-sign-1',
-      ], {
-        commitToken: documentPreview.commitToken,
-        encounterId: doctorItem.encounterId,
-        encounterVersion: diagnosis.encounterVersion,
-        previewId: documentPreview.previewId,
-      }),
-      'encounter.clinical-document.sign',
-      clinicalDocumentSignResponseSchema,
-    )
     const completionPreview = cliData(
       await execute(doctorToken, [
         'encounter', 'completion', 'preview', '--encounter-id', doctorItem.encounterId,

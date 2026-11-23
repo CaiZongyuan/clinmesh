@@ -669,6 +669,12 @@ export const prescriptionDraftItemSchema = z.object({
   routeCode: medicationRouteSchema,
 }).strict()
 
+export const outpatientOrderPrerequisiteCodeSchema = z.enum([
+  'CLINICAL_DOCUMENT_UNSIGNED',
+  'DIAGNOSIS_UNCONFIRMED',
+])
+export type OutpatientOrderPrerequisiteCode = z.infer<typeof outpatientOrderPrerequisiteCodeSchema>
+
 export const prescriptionConflictReasonSchema = z.enum([
   'PRESCRIPTION_ENCOUNTER_NOT_ACTIVE',
   'PRESCRIPTION_NO_MEDICATION_RECORDED',

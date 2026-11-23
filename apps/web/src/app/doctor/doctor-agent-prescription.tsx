@@ -6,6 +6,7 @@ import {
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import type { DoctorCaseModel } from './doctor-case-model.tsx'
 import { requireDoctorDetail } from './doctor-case-support.tsx'
+import { assertOutpatientAgentOrderPrerequisites } from './outpatient-order-gate.tsx'
 import { clearPrescriptionPrivateDraftForHydration, hasPendingPrescriptionEdits } from './prescription-draft-storage.ts'
 import { hasStoredInvestigationConfirmation } from './investigation-draft-storage.ts'
 
@@ -92,12 +93,13 @@ export function doctorPrescriptionAgentActions({
       },
     },
     'outpatient.prescription.issue.propose': {
-      description: 'Open human review before issuing the current prescription draft; optionally prefill clinicalOverride for non-red-line quality alerts.',
+      description: 'Open human review before issuing the current prescription draft (requires signed initial clinical document and confirmed primary diagnosis); optionally prefill clinicalOverride for non-red-line quality alerts.',
       enabled: detail.data?.medicationConclusion?.draft !== undefined,
       parameters: clinicalOverrideToolParameters,
       execute: (raw: unknown, signal: AbortSignal) => {
         const { clinicalOverride } = agentToolInputSchemas['outpatient.prescription.issue.propose'].parse(raw ?? {})
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+        assertOutpatientAgentOrderPrerequisites(current)
         const state = current.medicationConclusion
         if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
         const scope = JSON.stringify([pageScope, current.caseId, current.encounter.id, 'prescription'])
@@ -145,13 +147,14 @@ export function doctorPrescriptionAgentActions({
       },
     },
     'outpatient.medication.none.propose': {
-      description: 'Open human review before recording a formal no-medication conclusion.',
+      description: 'Open human review before recording a formal no-medication conclusion (requires signed initial clinical document and confirmed primary diagnosis).',
       enabled: detail.data?.consultation !== undefined
         && detail.data.medicationConclusion?.prescription === undefined
         && detail.data.medicationConclusion?.noMedication === undefined,
       parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
       execute: (_raw: unknown, signal: AbortSignal) => {
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+        assertOutpatientAgentOrderPrerequisites(current)
         const state = current.medicationConclusion
         if (state?.prescription !== undefined || state?.noMedication !== undefined) {
           throw new Error(messages.consultationUnavailable)

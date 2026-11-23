@@ -19,6 +19,63 @@ export function assertInpatientRequestScope(database: ClinMeshDatabase, context:
   return admission
 }
 
+/**
+ * 现代门诊（带独立 Consultation）正式开单与用药结论前置门禁：
+ * 住院申请（inpatient_admission）与无 Consultation 的首期兼容门诊跳过；
+ * 强制先存在首版正式签署病历（CLINICAL_DOCUMENT_UNSIGNED），再存在有效已确认主诊断（DIAGNOSIS_UNCONFIRMED）。
+ */
+export function assertOutpatientOrderPrerequisites(
+  database: ClinMeshDatabase,
+  context: ActorContext,
+  caseId: string,
+): void {
+  if (inpatientRequestOwner(database, context, caseId) !== undefined) return
+  const consultation = database.driver.prepare(
+    'SELECT 1 FROM consultation WHERE workspace_id = ? AND epoch = ? AND case_id = ?',
+  ).get(context.workspaceId, context.epoch, caseId)
+  if (consultation === undefined) return
+
+  const signedRoot = database.driver.prepare(`
+    SELECT 1 FROM signed_clinical_document
+    WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND revision_of_document_id IS NULL
+  `).get(context.workspaceId, context.epoch, caseId)
+  if (signedRoot === undefined) {
+    throw new WorkflowError(
+      'CLINICAL_DOCUMENT_UNSIGNED',
+      '正式开立医嘱或确认用药结论前，须先完成首版结构化门诊病历正式电子签名。',
+    )
+  }
+
+  const confirmedPrimaryDiagnosis = database.driver.prepare(`
+    SELECT 1
+    FROM diagnosis_confirmation AS confirmation
+    JOIN diagnosis_entry AS entry
+      ON entry.workspace_id = confirmation.workspace_id
+     AND entry.epoch = confirmation.epoch
+     AND entry.confirmation_id = confirmation.confirmation_id
+    WHERE confirmation.workspace_id = ? AND confirmation.epoch = ? AND confirmation.case_id = ?
+      AND confirmation.revision_number = (
+        SELECT MAX(revision_number) FROM diagnosis_confirmation
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      )
+      AND entry.role = 'primary'
+    LIMIT 1
+  `).get(
+    context.workspaceId,
+    context.epoch,
+    caseId,
+    context.workspaceId,
+    context.epoch,
+    caseId,
+  )
+  if (confirmedPrimaryDiagnosis === undefined) {
+    throw new WorkflowError(
+      'DIAGNOSIS_UNCONFIRMED',
+      '正式开立医嘱或确认用药结论前，须先确认至少一条有效主诊断。',
+    )
+  }
+}
+
 /** LIS/RIS 报告事务的费用适配；修订不经过首次完成入口。 */
 export function recordInpatientInvestigationCharge(database: ClinMeshDatabase, transaction: CommandTransaction, context: ActorContext, requestId: string, now: string): InpatientEffects {
   const row = z.object({ admission_id: z.string(), organization_id: z.string(), financial_status: z.string(), status: z.string(), request_kind: z.enum(['laboratory', 'imaging', 'examination']), price_fen: z.number().int().nonnegative().safe(), charge_definition_json: z.string() }).optional()

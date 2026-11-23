@@ -15,6 +15,10 @@ import { sourceArtifactHash } from '../../server/src/application/scenario-data/p
 import { installSyntheticImagingAssets } from '../../server/tests/fixtures/imaging-catalog.ts'
 import { installSyntheticPathologySlides } from '../../server/tests/fixtures/pathology-catalog.ts'
 import { createInvestigationReferenceDatabase, type InvestigationReferenceOptions } from './investigation-workspace.fixture.ts'
+import {
+  satisfyActiveInProgressOutpatientOrderPrerequisitesAndRefresh,
+  stubOutpatientQualityChatPayload,
+} from './outpatient-order-gate.fixture.ts'
 
 /** 只准备待诊病例，所有正式申请和应收均由浏览器中的医生工作流创建。 */
 export async function startInvestigationBillingServer(webRoot: string, allKinds = false, options: InvestigationReferenceOptions & { includeCt?: boolean; pathologyBatch?: boolean; normalCardiovascularBaseline?: boolean } = {}) {
@@ -87,6 +91,8 @@ export async function startInvestigationBillingServer(webRoot: string, allKinds 
         }
       }(),
       chatCompletionsProvider: { completeJson: async input => {
+        const quality = stubOutpatientQualityChatPayload(input)
+        if (quality !== undefined) return { model: input.model, content: JSON.stringify(quality) }
         expect(input.schemaName).toBe('patient_persona')
         return { model: input.model, content: JSON.stringify(persona) }
       } },
@@ -155,6 +161,7 @@ export async function startDoctorFirstVisit(page: Page, password: string) {
   if (await queueRail.isVisible()) await queueRail.click()
   await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
   if (await queueRail.isVisible()) await queueRail.click()
+  await satisfyActiveInProgressOutpatientOrderPrerequisitesAndRefresh(page, new URL(page.url()).origin)
   await openWorkspaceTab(page, '检验检查')
 }
 

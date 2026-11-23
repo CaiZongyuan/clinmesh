@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { repairImagingAssets } from '../src/infrastructure/imaging-assets/imaging-asset-store.ts'
 import type { createClinMeshRuntime } from '../src/runtime.ts'
 import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
+import { confirmPrimaryOutpatientDiagnosis, satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 import {
   acuteBronchitis,
@@ -94,6 +95,12 @@ describe('Imaging request HTTP contract', () => {
     const syntheticCaseId = await generateCase(created.runtime, administrator)
     await prepareImaging(created.runtime, administrator, [syntheticCaseId])
     const visit = await startConsultation(created.runtime, administrator, syntheticCaseId)
+    if (recording) {
+      await confirmPrimaryOutpatientDiagnosis(created.runtime, visit.doctor, visit.outpatientCaseId)
+    } else {
+      await satisfyOutpatientOrderPrerequisites(created.runtime, visit.doctor, visit.outpatientCaseId)
+      await dispatchAll(created.runtime)
+    }
     return { ...created, ...visit, administrator, syntheticCaseId }
   }
 
@@ -120,14 +127,14 @@ describe('Imaging request HTTP contract', () => {
   ) {
     return await runtime.app.request(
       `/api/his/v1/encounters/${encounterId}/imaging-request/draft`,
-      mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: '3' }, input }, 'PUT'),
+      mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: '4' }, input }, 'PUT'),
     )
   }
 
   async function issue(runtime: Runtime, doctor: string, encounterId: string, expectedDraftVersion: number) {
     const response = await runtime.app.request(
       `/api/his/v1/encounters/${encounterId}/imaging-request/actions/issue`,
-      mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: '3' }, input: { expectedDraftVersion } }),
+      mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: '4' }, input: { expectedDraftVersion } }),
     )
     if (response.status === 200) {
       const issued = issueImagingRequestResponseSchema.parse(await response.clone().json()).data
@@ -166,13 +173,27 @@ describe('Imaging request HTTP contract', () => {
   it('saves every published imaging text section in the recording source with its fixed version and hash', async () => {
     const visit = await consultation(caseBundle({ gender: 'male', index: [{ ...lungCancer, resourceType: 'Condition' }], name: '全文来源合成患者' }), true)
     const { runtime, doctor, encounterId, outpatientCaseId } = visit
+    const orderWhileUnsigned = async (serviceId: string, expectedDraftVersion = 0) => {
+      runtime.database.driver.prepare(`
+        INSERT INTO signed_clinical_document (
+          workspace_id, epoch, document_id, case_id, composition_id, bundle_id, provenance_id, revision_of_document_id, signed_by, signed_at
+        )
+        SELECT workspace_id, epoch, 'temp-doc-' || case_id, case_id, 'temp-comp-' || case_id, 'temp-bundle-' || case_id, 'temp-prov-' || case_id, NULL, 'synthetic-doctor', '2026-06-01T10:00:00.000Z'
+        FROM outpatient_case WHERE case_id = ?
+      `).run(outpatientCaseId)
+      try {
+        return await order(visit, serviceId, expectedDraftVersion)
+      } finally {
+        runtime.database.driver.prepare('DELETE FROM signed_clinical_document WHERE case_id = ?').run(outpatientCaseId)
+      }
+    }
     const initial = await caseDetail(runtime, doctor, outpatientCaseId)
     const paused = await runtime.app.request(`/api/his/v1/encounters/${encounterId}/consultation-recording/actions/control`, mutation(doctor, {
       expectedVersions: { [`Encounter/${encounterId}`]: initial.encounter.versionId },
       input: { action: 'pause', expectedRecordingVersion: initial.consultationRecording!.version },
     }))
     expect(paused.status).toBe(200)
-    await order(visit, radiographService)
+    await orderWhileUnsigned(radiographService)
     await dispatchAll(runtime)
     const detail = await caseDetail(runtime, doctor, outpatientCaseId)
     const report = detail.imagingRequests!.requests[0]!.report!
@@ -183,7 +204,7 @@ describe('Imaging request HTTP contract', () => {
     expect(source).toMatchObject({ reportReference: `DiagnosticReport/${report.diagnosticReportId}/_history/${report.diagnosticReportVersion}`,
       reportContentHash: expect.stringMatching(/^[a-f0-9]{64}$/u) })
     expect(detail.consultationRecording).toMatchObject({ status: 'paused', remainingCount: 1 })
-    await order(visit, ctService, 2)
+    await orderWhileUnsigned(ctService, 2)
     await dispatchAll(runtime)
     expect((await caseDetail(runtime, doctor, outpatientCaseId)).consultationRecording!.sources!.find(item => item.id === source.id)).toEqual(source)
   })
@@ -253,7 +274,7 @@ describe('Imaging request HTTP contract', () => {
     expect(apiErrorSchema.parse(await duplicate.json()).error.code).toBe('IMAGING_REQUEST_DUPLICATE')
     const cleared = await runtime.app.request(
       `/api/his/v1/encounters/${encounterId}/imaging-request/draft`,
-      mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: '3' }, input: { expectedDraftVersion: 3 } }, 'DELETE'),
+      mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: '4' }, input: { expectedDraftVersion: 3 } }, 'DELETE'),
     )
     expect(cleared.status).toBe(200)
 

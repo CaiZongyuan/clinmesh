@@ -112,7 +112,7 @@ export function doctorWorkspaceAgentActions({
       },
     },
     'outpatient.section.select': {
-      description: 'Select a case section; its Tools appear only while it is active (consultation; record; laboratory: lab/imaging/pathology requests, reports; diagnosis; prescription). imagingRequestId/pathologyRequestId (laboratory only) opens that study or slide for the human; no pixels.',
+      description: 'Select a case section; its Tools appear only while it is active (consultation; record; diagnosis; laboratory: lab/imaging/pathology/examination requests, reports; prescription). imagingRequestId/pathologyRequestId (laboratory only) opens that study or slide for the human; no pixels.',
       enabled: detail.data !== undefined,
       parameters: {
         type: 'object' as const,

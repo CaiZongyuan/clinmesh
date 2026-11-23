@@ -2,6 +2,7 @@ import { inpatientReferralResponseSchema } from '@clinmesh/contracts/inpatient'
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
 import { useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
+import { satisfyOutpatientOrderPrerequisites, signInitialOutpatientDocument } from './fixtures/outpatient-order-gate.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -496,10 +497,11 @@ async function startSyntheticPatientConsultation(runtime: TestRuntime, password:
 
 async function issueIndependentLaboratoryRequest(
   runtime: TestRuntime, doctorCookie: string,
-  started: { encounterId: string; encounterVersion: string },
+  started: { caseId: string; encounterId: string; encounterVersion: string },
   catalogItemId = 'lab-cbc', expectedDraftVersion = 0,
 ) {
-  const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
+  const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, started.caseId)
+  const expectedVersions = { [`Encounter/${started.encounterId}`]: gate.encounterVersion }
   const draftResponse = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`, {
     method: 'PUT', headers: commandHeaders(doctorCookie),
     body: JSON.stringify({ expectedVersions, input: { catalogItemId, expectedDraftVersion, indicationCode: 'fever' } }),
@@ -541,7 +543,9 @@ async function createIndependentReportedLaboratoryRequest(
   password: string,
 ) {
   const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
-  const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
+  const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, started.caseId)
+  started.encounterVersion = gate.encounterVersion
+  const expectedVersions = { [`Encounter/${started.encounterId}`]: gate.encounterVersion }
   const draftResponse = await runtime.app.request(
     `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
     {
@@ -801,7 +805,7 @@ async function createCompletionReadyConsultation(
         withdrawPrescriptionResponseSchema.parse(await withdrawResponse.json())
       }
     }
-  } else if (medicationMode) {
+  } else if (medicationMode && documentMode === true && diagnosisMode === true) {
     const noMedicationResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/medication-conclusion/actions/confirm-no-medication`,
       {
@@ -955,6 +959,7 @@ async function selectAdditionalDoctorRole(
 
 async function createIssuedIndependentPrescription(runtime: TestRuntime, password: string) {
   const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+  await signInitialOutpatientDocument(runtime, doctorCookie, started.caseId)
   const diagnosisDraftResponse = await runtime.app.request(
     `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
     {
@@ -1365,8 +1370,8 @@ const completionBlockerCases: Array<{
   options: Parameters<typeof createCompletionReadyConsultation>[2]
 }> = [
   {
-    expectedCodes: ['primary-diagnosis-confirmed'],
-    expectedStatusTexts: ['待确认主诊断'],
+    expectedCodes: ['primary-diagnosis-confirmed', 'medication-conclusion-recorded'],
+    expectedStatusTexts: ['待确认主诊断', '待记录用药结论'],
     name: 'the primary diagnosis is unconfirmed',
     options: { diagnosis: false },
   },
@@ -1374,16 +1379,18 @@ const completionBlockerCases: Array<{
   {
     expectedCodes: [
       'clinical-document-signed',
+      'medication-conclusion-recorded',
       'disposition-complete',
       'follow-up-complete',
     ],
-    expectedStatusTexts: ['待签署结构化病历', '待完善处置', '待完善随访安排'],
+    expectedStatusTexts: ['待签署结构化病历', '待记录用药结论', '待完善处置', '待完善随访安排'],
     name: 'the clinical document is unsigned',
     options: { document: false },
   },
   {
     expectedCodes: [
       'clinical-document-signed',
+      'medication-conclusion-recorded',
       'no-pending-drafts',
       'disposition-complete',
       'follow-up-complete',
@@ -1391,6 +1398,7 @@ const completionBlockerCases: Array<{
     expectedPendingDraftTarget: 'clinical-document',
     expectedStatusTexts: [
       '待签署结构化病历',
+      '待记录用药结论',
       '存在未处理临床草稿',
       '待完善处置',
       '待完善随访安排',
@@ -1399,9 +1407,9 @@ const completionBlockerCases: Array<{
     options: { document: 'draft' },
   },
   {
-    expectedCodes: ['primary-diagnosis-confirmed', 'no-pending-drafts'],
+    expectedCodes: ['primary-diagnosis-confirmed', 'medication-conclusion-recorded', 'no-pending-drafts'],
     expectedPendingDraftTarget: 'diagnosis',
-    expectedStatusTexts: ['待确认主诊断', '存在未处理临床草稿'],
+    expectedStatusTexts: ['待确认主诊断', '待记录用药结论', '存在未处理临床草稿'],
     name: 'the diagnosis remains a draft',
     options: { diagnosis: 'draft' },
   },
@@ -1480,7 +1488,8 @@ describe('outpatient workflow HTTP contract', () => {
   it('bills an independent laboratory request without changing the active doctor visit and releases only after full payment', async () => {
     const { runtime, password } = await paymentTestRuntime()
     const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
+    const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, started.caseId)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: gate.encounterVersion }
     const draftResponse = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`, {
       method: 'PUT', headers: commandHeaders(doctorCookie), body: JSON.stringify({ expectedVersions,
         input: { catalogItemId: 'lab-cbc', expectedDraftVersion: 0, indicationCode: 'fever' } }),
@@ -1530,7 +1539,8 @@ describe('outpatient workflow HTTP contract', () => {
   it('requires renewed review when a local laboratory draft price changes', async () => {
     const { runtime, password } = await paymentTestRuntime()
     const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
+    const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, started.caseId)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: gate.encounterVersion }
     const save = (expectedDraftVersion: number) => runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`, {
       method: 'PUT', headers: commandHeaders(doctorCookie), body: JSON.stringify({ expectedVersions,
         input: { catalogItemId: 'lab-cbc', expectedDraftVersion, indicationCode: 'fever' } }),
@@ -4606,9 +4616,20 @@ describe('outpatient workflow HTTP contract', () => {
         method: 'PUT',
       },
     )
-    expect(ordinarySaveResponse.status).toBe(409)
-    expect(apiErrorSchema.parse(await ordinarySaveResponse.json())).toMatchObject({
-      error: { message: 'The signed Clinical Document requires a revision' },
+    expect(ordinarySaveResponse.status).toBe(200)
+    expect(clinicalDocumentDraftResponseSchema.parse(await ordinarySaveResponse.json()).data).toMatchObject({
+      caseId: started.caseId,
+      draftVersion: 2,
+    })
+    const completionWhileRevisionPending = encounterCompletionPreviewSchema.parse(
+      await (await runtime.app.request(
+        `/api/his/v1/encounters/${started.encounterId}/completion`,
+        { headers: { cookie: doctorCookie } },
+      )).json(),
+    )
+    expect(completionWhileRevisionPending.items.find(item => item.code === 'no-pending-drafts')).toMatchObject({
+      status: 'incomplete',
+      target: 'clinical-document',
     })
 
     const staleRevisionResponse = await runtime.app.request(
@@ -5386,7 +5407,8 @@ describe('outpatient workflow HTTP contract', () => {
     })
     runtimes.push(runtime)
     const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
+    const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, started.caseId)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: gate.encounterVersion }
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
@@ -5689,7 +5711,8 @@ describe('outpatient workflow HTTP contract', () => {
     })
     runtimes.push(runtime)
     const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
+    const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, started.caseId)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: gate.encounterVersion }
     const save = (
       catalogItemId: string,
       expectedDraftVersion: number,
@@ -5786,7 +5809,8 @@ describe('outpatient workflow HTTP contract', () => {
     })
     runtimes.push(runtime)
     const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
-    const expectedEncounter = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
+    const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, started.caseId)
+    const expectedEncounter = { [`Encounter/${started.encounterId}`]: gate.encounterVersion }
     const saveAndIssue = async (
       catalogItemId: 'lab-cbc' | 'lab-crp',
       expectedDraftVersion: number,
@@ -5995,7 +6019,8 @@ describe('outpatient workflow HTTP contract', () => {
     })
     runtimes.push(runtime)
     const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
+    const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, started.caseId)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: gate.encounterVersion }
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
@@ -6129,11 +6154,12 @@ describe('outpatient workflow HTTP contract', () => {
     })
     runtimes.push(runtime)
     const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, started.caseId)
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: gate.encounterVersion },
           input: {
             catalogItemId: 'lab-cbc',
             expectedDraftVersion: 0,
@@ -6166,7 +6192,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: gate.encounterVersion },
           input: { expectedDraftVersion: 1 },
         }),
         headers: commandHeaders(doctorCookie),
@@ -6767,7 +6793,8 @@ describe('outpatient workflow HTTP contract', () => {
     }
     const initialRuntime = await createClinMeshRuntime(runtimeOptions)
     const { doctorCookie, started } = await startSyntheticPatientConsultation(initialRuntime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
+    const gate = await satisfyOutpatientOrderPrerequisites(initialRuntime, doctorCookie, started.caseId)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: gate.encounterVersion }
     const draftResponse = await initialRuntime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
@@ -7024,7 +7051,8 @@ describe('outpatient workflow HTTP contract', () => {
     })
     runtimes.push(runtime)
     const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
+    const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, started.caseId)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: gate.encounterVersion }
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
@@ -9523,6 +9551,7 @@ describe('outpatient workflow HTTP contract', () => {
     })
     runtimes.push(runtime)
     const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    await signInitialOutpatientDocument(runtime, doctorCookie, started.caseId)
     const saveDiagnosisResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
       {
@@ -9682,6 +9711,7 @@ describe('outpatient workflow HTTP contract', () => {
     })
     runtimes.push(runtime)
     const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    await signInitialOutpatientDocument(runtime, doctorCookie, started.caseId)
     const diagnosisDraftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
       {
@@ -9874,6 +9904,23 @@ describe('outpatient workflow HTTP contract', () => {
     const draftVersion = prescriptionDraftResponseSchema.parse(
       await prescriptionDraftResponse.json(),
     ).data.draftVersion
+    const unsignedIssueResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/prescription/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
+          input: { expectedDraftVersion: draftVersion },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(unsignedIssueResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await unsignedIssueResponse.json())).toMatchObject({
+      error: { code: 'CLINICAL_DOCUMENT_UNSIGNED' },
+    })
+
+    await signInitialOutpatientDocument(runtime, doctorCookie, started.caseId)
     const issueResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/prescription/actions/issue`,
       {
@@ -9887,7 +9934,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
     expect(issueResponse.status).toBe(409)
     expect(apiErrorSchema.parse(await issueResponse.json())).toMatchObject({
-      error: { code: 'WORKFLOW_CONFLICT', reason: 'PRESCRIPTION_DIAGNOSIS_UNCONFIRMED' },
+      error: { code: 'DIAGNOSIS_UNCONFIRMED' },
     })
   })
 
@@ -9911,12 +9958,13 @@ describe('outpatient workflow HTTP contract', () => {
     })
     runtimes.push(runtime)
     const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, started.caseId)
     const endpoint
       = `/api/his/v1/encounters/${started.encounterId}/medication-conclusion/actions/confirm-no-medication`
 
     const response = await runtime.app.request(endpoint, {
       body: JSON.stringify({
-        expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
+        expectedVersions: { [`Encounter/${started.encounterId}`]: gate.encounterVersion },
         input: { expectedDraftVersion: 0 },
       }),
       headers: commandHeaders(doctorCookie),
@@ -9953,7 +10001,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: gate.encounterVersion },
           input: {
             expectedDraftVersion: 1,
             items: [{
@@ -9976,7 +10024,7 @@ describe('outpatient workflow HTTP contract', () => {
     })
     const duplicateResponse = await runtime.app.request(endpoint, {
       body: JSON.stringify({
-        expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
+        expectedVersions: { [`Encounter/${started.encounterId}`]: gate.encounterVersion },
         input: { expectedDraftVersion: 1 },
       }),
       headers: commandHeaders(doctorCookie),

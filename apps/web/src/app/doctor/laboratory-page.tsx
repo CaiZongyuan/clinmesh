@@ -41,6 +41,7 @@ import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-e
 import { formatLaboratoryPrice } from '../workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
+import { resolveOutpatientOrderPrerequisiteGate, type OutpatientOrderPrerequisiteGate } from './outpatient-order-gate.tsx'
 import {
   LaboratoryCatalogPicker,
   type LaboratoryCatalogSelection,
@@ -222,6 +223,7 @@ export function LaboratoryPage({
   selectedReportId,
   selectedRequestId,
   onSelectRequest,
+  orderGate,
   showCorrection,
 }: {
   active?: boolean | undefined
@@ -242,6 +244,7 @@ export function LaboratoryPage({
   onIndicationChange: (value: string) => void
   onIssueLegacyOrder: () => void
   onLaboratoryItemChange: (value: string) => void
+  orderGate?: OutpatientOrderPrerequisiteGate | undefined
   readOnly: boolean
   referenceSearch: ReferenceCatalogSearches['laboratory']
   recommendationRevision?: string | undefined
@@ -251,6 +254,7 @@ export function LaboratoryPage({
   onSelectRequest?: ((id: string) => void) | undefined
   showCorrection: boolean
 }): React.JSX.Element {
+  const effectiveOrderGate = orderGate ?? resolveOutpatientOrderPrerequisiteGate(detail)
   const firstVisitDraft = detail.drafts?.firstVisit
   const laboratoryItems = laboratoryCatalog.map(item => ({
     label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${item.priceFen === undefined ? (locale === 'zh-CN' ? '未配置价格' : 'Price unavailable') : formatLaboratoryPrice(item.priceFen, locale)}`,
@@ -367,6 +371,7 @@ export function LaboratoryPage({
             selectedReportId={selectedReportId}
             selectedRequestId={selectedRequestId}
             onSelectRequest={onSelectRequest}
+            orderGate={effectiveOrderGate}
             showCorrection={showCorrection}
             state={detail.laboratoryRequests}
           />
@@ -390,6 +395,7 @@ function LaboratoryRequestEditor({
   messages,
   onIndicationChange,
   onLaboratoryItemChange,
+  orderGate,
   readOnly,
   referenceSearch,
   recommendationRevision,
@@ -413,6 +419,7 @@ function LaboratoryRequestEditor({
   messages: ReturnType<typeof getWorkspaceMessages>
   onIndicationChange: (value: string) => void
   onLaboratoryItemChange: (value: string) => void
+  orderGate: OutpatientOrderPrerequisiteGate
   readOnly: boolean
   referenceSearch: ReferenceCatalogSearches['laboratory']
   recommendationRevision?: string | undefined
@@ -589,6 +596,7 @@ function LaboratoryRequestEditor({
       scope={recommendationScope}
       enabled={active && !readOnly}
       disabled={manualDrafts.failed || actions.save.pending || actions.issue.pending || actions.deleteDraft.pending}
+      orderGate={orderGate}
       encounter={encounter}
       expectedDraftVersion={state?.draftVersion ?? 0}
       resolveExistingDraft={state?.draft !== undefined}

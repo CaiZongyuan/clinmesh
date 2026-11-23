@@ -1,4 +1,5 @@
 import { persona, StubSyntheaProvider, startConsultationCase } from './fixtures/consultation.ts'
+import { signInitialOutpatientDocument } from './fixtures/outpatient-order-gate.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -491,6 +492,7 @@ describe('Reference Data HTTP contract', () => {
     expect(startResponse.status).toBe(200)
     const started = { encounterId: generated.encounterId, caseId: generated.outpatientCaseId }
     const encounterReference = `Encounter/${started.encounterId}`
+    await signInitialOutpatientDocument(first.runtime, doctorCookie, started.caseId)
 
     const diagnosisDraftResponse = await first.runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,

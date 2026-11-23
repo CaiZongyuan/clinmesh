@@ -30,6 +30,7 @@ import {
 } from '@clinmesh/contracts/reference-data'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
+import { assertOutpatientOrderPrerequisites } from './clinical-request-context.ts'
 import {
   type ActorContext,
   type CommandEffect,
@@ -601,6 +602,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
     if (existingPrescription !== undefined) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter already has a prescription', undefined, 'PRESCRIPTION_ALREADY_ISSUED')
     }
+    assertOutpatientOrderPrerequisites(this.#context.database, input.context, outpatientCase.case_id)
     const draft = prescriptionDraftContentSchema.parse(JSON.parse(state.draft_json))
     const medications = this.#validatedPrescriptionDraftMedications(
       input.context,
@@ -1026,6 +1028,7 @@ export class OutpatientPrescriptionService implements OutpatientPrescriptionTran
       if ((draftState?.version ?? 0) !== input.expectedDraftVersion) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft version has changed')
       }
+      assertOutpatientOrderPrerequisites(this.#context.database, input.context, outpatientCase.case_id)
       const authoredAt = this.#context.virtualTime(input.context)
       const conclusionId = uuidv7()
       this.#context.database.driver.prepare(`

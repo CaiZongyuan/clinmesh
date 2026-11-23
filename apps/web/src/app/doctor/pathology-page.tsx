@@ -41,6 +41,7 @@ import { InvestigationRequestWorkspace } from './investigation-request-workspace
 import { useInvestigationPreferences, useManualInvestigationDrafts } from './investigation-draft-storage.ts'
 import { OutpatientInvestigationActions } from './outpatient-investigation-actions.tsx'
 import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
+import type { OutpatientOrderPrerequisiteGate } from './outpatient-order-gate.tsx'
 
 interface PathologyRequestState {
   draft?: { purpose: string; service: PathologyServiceSnapshot; sourceProcedure: PathologySourceProcedure } | undefined
@@ -51,9 +52,11 @@ interface PathologyRequestState {
 export interface PathologyPageActions {
   /** 当前账号兼有管理员岗位时才能更正报告。 */
   canCorrect: boolean
+  hasSignedRecord?: boolean | undefined
   onChanged: () => Promise<unknown> | void
-  /** 把报告摘要插入未签病历；病历已签或只读时不提供。 */
+  /** 把报告摘要插入未签病历或进行中就诊的病历修订草稿；只读时不提供。 */
   onInsertSummary?: ((request: PathologyRequest, report: PathologyReport) => ImagingSummaryInsertion) | undefined
+  onNavigateToRecord?: (() => void) | undefined
   /** 阅片状态与放射共用同一种结构，按申请和报告标识区分。 */
   view: ImagingViewState
 }
@@ -232,7 +235,16 @@ function PathologyRequestItem({ actions, active, locale, readOnly: _readOnly, re
             )}
 
           </div>
-          {summaryInsertion === undefined ? null : (
+          {summaryInsertion === undefined ? null : actions.hasSignedRecord === true && summaryInsertion === 'inserted' ? (
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground" role="status">
+              <span>{zh ? '已写入病历修订草稿（辅助检查），请前往病历记录提交修订签名。' : 'Saved to the clinical document revision draft (Auxiliary examination). Submit a signed revision in Medical record.'}</span>
+              {actions.onNavigateToRecord === undefined ? null : (
+                <Button onClick={actions.onNavigateToRecord} size="sm" type="button" variant="outline">
+                  {zh ? '前往病历修订' : 'Open record revision'}
+                </Button>
+              )}
+            </div>
+          ) : (
             <p className="mt-1 text-xs text-muted-foreground" role="status">{summaryInsertionLabels[summaryInsertion][zh ? 0 : 1]}</p>
           )}
           {!viewerOpen ? null : study.isPending ? <Skeleton className="mt-2 h-40 w-full" /> : study.isError || source === undefined ? (
@@ -422,7 +434,7 @@ function PathologyComposerDialog({ addedItems, draftPending, locale, notice, onC
  * 医生工作台的病理会诊：选择本院会诊服务、从患者可见既往病史中选择送检对应的手术并填写会诊目的，
  * 手工与自动项目共用待开具清单；目录与申请信息同屏填写，正式申请与剩余待开具项目分组管理。
  */
-export function PathologyPage({ actions, active = true, actionContext, caseId, elementId, encounter, locale, onSelectRequest, readOnly, recommendationRevision, recommendationScope, selectedReportId, selectedRequestId, state }: {
+export function PathologyPage({ actions, active = true, actionContext, caseId, elementId, encounter, locale, onSelectRequest, orderGate, readOnly, recommendationRevision, recommendationScope, selectedReportId, selectedRequestId, state }: {
   actions: PathologyPageActions
   actionContext?: OutpatientInvestigationActionContext | undefined
   active?: boolean | undefined
@@ -432,6 +444,7 @@ export function PathologyPage({ actions, active = true, actionContext, caseId, e
   encounter: { id: string; versionId: string }
   locale: WorkspaceLocale
   onSelectRequest?: ((requestId: string) => void) | undefined
+  orderGate?: OutpatientOrderPrerequisiteGate | undefined
   readOnly: boolean
   recommendationRevision?: string | undefined
   recommendationScope?: string | undefined
@@ -559,6 +572,7 @@ export function PathologyPage({ actions, active = true, actionContext, caseId, e
       scope={recommendationScope}
       enabled={active && !readOnly}
       disabled={manualDrafts.failed || draftAction.isPending || services.isFetching}
+      orderGate={orderGate}
       encounter={encounter}
       expectedDraftVersion={draftVersion}
       resolveExistingDraft={state?.draft !== undefined}

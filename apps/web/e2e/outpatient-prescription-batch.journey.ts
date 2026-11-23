@@ -3,6 +3,7 @@ import { expect, type Page } from '@playwright/test'
 import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema } from '@clinmesh/contracts/doctor-recommendations'
 import { clinicalCatalogSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { closeQueue, expectConsultationStarted, openQueue } from './queue-overlay.fixture.ts'
+import { signInitialOutpatientRecordAndRefresh } from './outpatient-order-gate.fixture.ts'
 import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 
 export async function runOutpatientPrescriptionBatchJourney({ page, browserApp, consultationCase, step = async () => {} }: {
@@ -29,6 +30,7 @@ export async function runOutpatientPrescriptionBatchJourney({ page, browserApp, 
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await expectConsultationStarted(page)
   await closeQueue(page)
+  await signInitialOutpatientRecordAndRefresh(page, browserApp.origin, consultationCase.outpatientCaseId)
   const readCase = async () => {
     const response = await page.request.get(`${browserApp.origin}/api/his/v1/doctor/cases/${consultationCase.outpatientCaseId}`)
     expect(response.status()).toBe(200)

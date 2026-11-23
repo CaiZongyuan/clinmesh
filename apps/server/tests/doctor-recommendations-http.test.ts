@@ -20,6 +20,7 @@ import { breastCaseBundle } from './fixtures/pathology-scenario.ts'
 import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
 import { modelUsageControlSchema, modelUsageListSchema, unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { setModelControl } from './fixtures/model-control.ts'
+import { satisfyOutpatientOrderPrerequisites, signInitialOutpatientDocument } from './fixtures/outpatient-order-gate.ts'
 import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 import { caseLaboratoryCatalogSearchSchema, caseImagingServiceCatalogSchema, casePathologyServiceCatalogSchema } from '@clinmesh/contracts/his'
 
@@ -1063,6 +1064,8 @@ it.each([false, true])('maps pathology only to an offered service and its author
   }, { syntheaProvider })
   await installSyntheticPathologySlides({ assetDirectory: join(fixture.directory, 'pathology-assets'),
     catalogDirectory: join(fixture.directory, 'pathology-catalog'), slides: [{ assetId: 'synthetic-breast-slide' }] })
+  await satisfyOutpatientOrderPrerequisites(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  await fixture.runtime.dispatchPending()
   const before = await fixture.readCase()
   expect((await fixture.generate('pathology')).status).toBe(200)
   await fixture.runtime.dispatchPending()
@@ -1954,6 +1957,8 @@ it.each(['legacy-format', 'foreign-case-reference'] as const)('independently che
 
 it('preserves a formal no-medication conclusion and explains why a new prescription recommendation is unnecessary', async () => {
   const fixture = await setup()
+  await signInitialOutpatientDocument(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  await fixture.runtime.dispatchPending()
   const post = async (action: string, input: unknown, method = 'POST') => fixture.runtime.app.request(
     `/api/his/v1/encounters/${fixture.started.encounterId}/${action}`, {
       method, headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
@@ -2063,6 +2068,8 @@ it('invalidates every prepared kind when a formal investigation is issued or can
     (workspace_id, epoch, service_id, code, name_zh, name_en, version, active, config_json)
     VALUES ('workspace-demo', 'epoch-1', ?, ?, ?, ?, 1, 1, ?)
   `).run(service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service }))
+  await satisfyOutpatientOrderPrerequisites(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  await fixture.runtime.dispatchPending()
   const before = await Promise.all(['diagnosis', 'laboratory', 'prescription'].map(kind => fixture.read(kind)))
   const post = async (action: string, input: unknown, method = 'POST') => fixture.runtime.app.request(
     `/api/his/v1/encounters/${fixture.started.encounterId}/${action}`, {
@@ -2131,6 +2138,8 @@ it.each(['laboratory', 'imaging', 'pathology'] as const)('requires a new review 
     SET version=?,config_json=json_set(config_json,?, ?,?,json(?)) WHERE service_id=?`)
     .run(service.version, `$.${kind}Service.version`, service.version, `$.${kind}Service.outpatientBilling`, JSON.stringify(service.outpatientBilling), id)
   configure(reviewed)
+  await satisfyOutpatientOrderPrerequisites(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  await fixture.runtime.dispatchPending()
   const clinical = await fixture.readCase()
   const fields = kind === 'laboratory' ? { catalogItemId: id, indicationCode: 'clinical-evaluation' }
     : kind === 'imaging' ? { serviceId: id, indication: '核对当前检查目的。' }
@@ -2302,6 +2311,8 @@ function installPreparationLaboratory(fixture: Awaited<ReturnType<typeof setup>>
 it('keeps each successful laboratory request when another selected item fails and replays the original results', async () => {
   const fixture = await setup()
   for (const id of ['lab-batch-valid', 'lab-batch-invalid']) installPreparationLaboratory(fixture, id)
+  await satisfyOutpatientOrderPrerequisites(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  await fixture.runtime.dispatchPending()
   const clinical = await fixture.readCase()
   const selections = await Promise.all(['lab-batch-valid', 'lab-batch-invalid'].map(async (catalogItemId, index) => ({
     kind: 'laboratory', source: 'manual', catalogItemId,
@@ -2414,6 +2425,8 @@ it('issues independent prepared laboratory items and preserves an unresolved man
   })
   installPreparationLaboratory(fixture, 'lab-preparation-a')
   installPreparationLaboratory(fixture, 'lab-preparation-b')
+  await satisfyOutpatientOrderPrerequisites(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  await fixture.runtime.dispatchPending()
   await fixture.generate('laboratory')
   await fixture.runtime.dispatchPending()
   const prepared = await fixture.read('laboratory')
@@ -2461,6 +2474,8 @@ it('issues independent prepared laboratory items and preserves an unresolved man
 it('requires explicit versioned resolution and preserves the existing laboratory draft when every replacement fails', async () => {
   const fixture = await setup()
   for (const id of ['lab-manual-original', 'lab-manual-next', 'lab-manual-other']) installPreparationLaboratory(fixture, id)
+  await satisfyOutpatientOrderPrerequisites(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  await fixture.runtime.dispatchPending()
   const clinical = await fixture.readCase()
   const expectedVersions = { [`Encounter/${clinical.encounter.id}`]: clinical.encounter.versionId }
   const saved = await fixture.runtime.app.request(`/api/his/v1/encounters/${clinical.encounter.id}/laboratory-request/draft`, {
@@ -2503,6 +2518,8 @@ it.each(['imaging', 'pathology'] as const)('resolves an existing %s draft atomic
     catalogDirectory: join(fixture.directory, 'imaging-catalog'), assets: [{ assetId: 'synthetic-ct', examCode: 'chest-ct-plain' }] })
   else await installSyntheticPathologySlides({ assetDirectory: join(fixture.directory, 'pathology-assets'),
     catalogDirectory: join(fixture.directory, 'pathology-catalog'), slides: [{ assetId: 'synthetic-breast-slide' }] })
+  await satisfyOutpatientOrderPrerequisites(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  await fixture.runtime.dispatchPending()
   const clinical = await fixture.readCase()
   const expectedVersions = { [`Encounter/${clinical.encounter.id}`]: clinical.encounter.versionId }
   const fields = kind === 'imaging' ? { serviceId: 'imaging-chest-ct-plain', indication: '医生核对当前检查目的。' }
@@ -2616,6 +2633,8 @@ it('诊断组非法不改变旧确认，修正后整组确认并从重启后的�
 
 it('双药处方任一行拒绝整单回滚，修正后整体开具并读取重启后的原回执', async () => {
   const fixture = await setup()
+  await signInitialOutpatientDocument(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  await fixture.runtime.dispatchPending()
   const initial = await fixture.readCase()
   const diagnosed = await confirmPreparation(fixture, 'diagnosis', {
     expectedVersions: { [`Encounter/${initial.encounter.id}`]: initial.encounter.versionId },
@@ -2677,6 +2696,8 @@ it('issues a prepared prescription through the existing diagnosis, dose and prod
       } })) }
     return { model: input.model, content: JSON.stringify(output) }
   })
+  await signInitialOutpatientDocument(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  await fixture.runtime.dispatchPending()
   await fixture.generate()
   await fixture.runtime.dispatchPending()
   const diagnosis = await fixture.read()
@@ -2728,6 +2749,8 @@ it('rejects prepared diagnosis confirmation when a report is published after the
       ? diagnosisOutput(input) : verificationOutput(input)) }
   })
   installPreparationLaboratory(fixture, 'lab-report-race')
+  await satisfyOutpatientOrderPrerequisites(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  await fixture.runtime.dispatchPending()
   const initial = await fixture.read()
   const headers = { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json' }
   const saved = await fixture.runtime.app.request(`/api/his/v1/encounters/${initial.encounterId}/laboratory-request/draft`, {
@@ -2753,7 +2776,7 @@ it('rejects prepared diagnosis confirmation when a report is published after the
     const prepared = await fixture.read()
     expect(prepared.status).toBe('ready')
     const body = preparationBody(prepared, [{ kind: 'diagnosis', source: 'agent', suggestionId: prepared.items[0]!.id,
-      catalogItemId: 'diagnosis-hypertension', role: 'primary' }])
+      catalogItemId: 'diagnosis-hypertension', role: 'primary' }], (await fixture.readCase()).diagnosis?.draftVersion ?? 0)
     release()
     await reporting
     const latest = await fixture.readCase()
@@ -2774,6 +2797,8 @@ it('confirms prepared imaging through its actual offering and returns the formal
   })
   await installSyntheticImagingAssets({ assetDirectory: join(fixture.directory, 'imaging-assets'),
     catalogDirectory: join(fixture.directory, 'imaging-catalog'), assets: [{ assetId: 'synthetic-ct', examCode: 'chest-ct-plain' }] })
+  await satisfyOutpatientOrderPrerequisites(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  await fixture.runtime.dispatchPending()
   await fixture.generate('imaging')
   await fixture.runtime.dispatchPending()
   const state = await fixture.read('imaging')
@@ -2860,6 +2885,8 @@ async function installPreparationReferenceDiagnoses(directory: string) {
 
 it('re-resolves the real Reference medication rather than trusting a client product snapshot during manual issuance', async () => {
   const fixture = await setup(undefined, { referenceDiagnoses: true })
+  await signInitialOutpatientDocument(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  await fixture.runtime.dispatchPending()
   const catalog = await fixture.runtime.app.request('/api/his/v1/reference-catalogs/medications?query=合成苯磺酸氨氯地平片&pageSize=20', { headers: { cookie: fixture.cookie } })
   expect(catalog.status).toBe(200)
   expect(await catalog.json()).toMatchObject({ items: [preparationReferenceProduct] })
@@ -2943,6 +2970,8 @@ it.each([false, true])('preserves an existing physician prescription draft until
       } })) }
     return { model: input.model, content: JSON.stringify(output) }
   })
+  await signInitialOutpatientDocument(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  await fixture.runtime.dispatchPending()
   await fixture.generate()
   await fixture.runtime.dispatchPending()
   const diagnosis = await fixture.read()

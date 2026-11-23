@@ -43,6 +43,7 @@ import {
   preparePciPaymentDrgFixture,
   type PciPaymentDrgFixture,
 } from './fixtures/pci-payment-drg.ts'
+import { defaultOutpatientGateDocument } from './fixtures/outpatient-order-gate.ts'
 
 const fixtures: PciPaymentDrgFixture[] = []
 
@@ -687,17 +688,6 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
       { catalogItemId: 'nhsa-diagnosis:nhc-icd10-clinical@2022.r4:I25.103', role: 'primary' },
     ])
     let cpCase = await fixture.read('doctor', `/api/his/v1/doctor/cases/${chestPainVisit.caseId}`, doctorCaseDetailSchema)
-    await parsePciResponse(
-      confirmNoMedicationResponseSchema,
-      await fixture.request(
-        'doctor',
-        `/api/his/v1/encounters/${chestPainVisit.encounterId}/medication-conclusion/actions/confirm-no-medication`,
-        { expectedDraftVersion: cpCase.medicationConclusion?.draftVersion ?? 0 },
-        randomUUID(),
-        { [`Encounter/${chestPainVisit.encounterId}`]: cpCase.encounter.versionId },
-      ),
-    )
-    cpCase = await fixture.read('doctor', `/api/his/v1/doctor/cases/${chestPainVisit.caseId}`, doctorCaseDetailSchema)
     const cookie = await fixture.login('doctor')
     const savedDoc = await parsePciResponse(
       clinicalDocumentDraftResponseSchema,
@@ -707,6 +697,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
           input: {
             expectedDraftVersion: cpCase.clinicalDocument?.draft?.version ?? 0,
             document: {
+              ...defaultOutpatientGateDocument,
               chiefComplaint: '突发胸骨后压榨性胸痛 2 小时。',
               historyOfPresentIllness: '患者 2 小时前出现胸痛，外院急诊已查心电图与肌钙蛋白。',
               physicalExamination: '神志清，心率 84 次/分，律齐。',
@@ -736,6 +727,17 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
         'doctor',
         `/api/his/v1/encounters/${chestPainVisit.encounterId}/clinical-document/actions/sign`,
         { commitToken: signPreview.data.commitToken, previewId: signPreview.data.previewId },
+        randomUUID(),
+        { [`Encounter/${chestPainVisit.encounterId}`]: cpCase.encounter.versionId },
+      ),
+    )
+    cpCase = await fixture.read('doctor', `/api/his/v1/doctor/cases/${chestPainVisit.caseId}`, doctorCaseDetailSchema)
+    await parsePciResponse(
+      confirmNoMedicationResponseSchema,
+      await fixture.request(
+        'doctor',
+        `/api/his/v1/encounters/${chestPainVisit.encounterId}/medication-conclusion/actions/confirm-no-medication`,
+        { expectedDraftVersion: cpCase.medicationConclusion?.draftVersion ?? 0 },
         randomUUID(),
         { [`Encounter/${chestPainVisit.encounterId}`]: cpCase.encounter.versionId },
       ),

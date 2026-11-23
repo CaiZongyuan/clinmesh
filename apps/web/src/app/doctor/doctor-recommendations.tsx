@@ -9,7 +9,7 @@ import {
   type GuidelineEvidence,
   type SetDoctorConsiderationDispositionRequest,
 } from '@clinmesh/contracts/doctor-recommendations'
-import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
+import { outpatientOrderPrerequisiteCodeSchema, type DoctorCaseDetail } from '@clinmesh/contracts/his'
 import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import { doctorInpatientHistoryRecordSchema } from '@clinmesh/contracts/agent'
 import { InpatientHistorySummary } from './doctor-history-panel.tsx'
@@ -33,6 +33,7 @@ import { ApiClientError, confirmDoctorPreparation, getDoctorInvestigationConfirm
 import { ClinicalQualityBanner, extractClinicalQualityError } from '../clinical-quality-banner.tsx'
 import { getPrescriptionIssueErrorMessage, getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
+import { OutpatientOrderGateGuidance, type OutpatientOrderPrerequisiteGate } from './outpatient-order-gate.tsx'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { indicationLabel as laboratoryIndicationLabel } from './laboratory-page.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
@@ -276,9 +277,10 @@ function caseContainsConfirmation(detail: DoctorCaseDetail, result: Awaited<Retu
   return (version ?? 0) >= result.draftVersion && result.recordIds.every(id => ids.includes(id))
 }
 
-export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualUnavailableReason, manualItems: suppliedManualItems = [], manualControls, itemActions, itemDetails, investigationServiceFor, pathologySourcesFor, allowedRoutesFor, issuedCatalogItemIds, onManualChange, onManualEdit, onManualRemove, onConfirmed, encounter, resolveExistingDraft = false, expectedDraftVersion, disabled = false }: {
+export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualUnavailableReason, manualItems: suppliedManualItems = [], manualControls, itemActions, itemDetails, investigationServiceFor, pathologySourcesFor, allowedRoutesFor, issuedCatalogItemIds, onManualChange, onManualEdit, onManualRemove, onConfirmed, encounter, resolveExistingDraft = false, expectedDraftVersion, disabled = false, orderGate }: {
   caseId: string; kind: DoctorRecommendationKind; enabled: boolean; inputRevision?: string | undefined; scope?: string | undefined; locale?: WorkspaceLocale | undefined
   disabled?: boolean | undefined
+  orderGate?: OutpatientOrderPrerequisiteGate | undefined
   manualItems?: ManualPreparedItem[] | undefined
   itemActions?: ((value: PreparationDraft) => ReactNode) | undefined
   itemDetails?: ((value: PreparationDraft) => ReactNode) | undefined
@@ -508,7 +510,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         return await confirmDoctorPreparation(frozen.state, frozen.draftVersion, frozen.selections, frozen.key, frozen.resolveExistingDraft, frozen.clinicalOverride)
       } catch (error) {
         // 只有原 POST 的确定拒绝才能释放意图；查询失败和网络错误都保留原 body/key。
-        if (error instanceof ApiClientError && error.status === 409 && ['EXPECTED_VERSION_CONFLICT', 'WORKFLOW_CONFLICT', 'CATALOG_CONFLICT', 'DIAGNOSIS_PRIMARY_REQUIRED', 'CLINICAL_QUALITY_ALERT', 'CLINICAL_QUALITY_RED_LINE'].includes(error.code)
+        if (error instanceof ApiClientError && error.status === 409 && ['EXPECTED_VERSION_CONFLICT', 'WORKFLOW_CONFLICT', 'CATALOG_CONFLICT', 'DIAGNOSIS_PRIMARY_REQUIRED', ...outpatientOrderPrerequisiteCodeSchema.options, 'CLINICAL_QUALITY_ALERT', 'CLINICAL_QUALITY_RED_LINE'].includes(error.code)
           && mounted.current && recordView.current.token === request.recordView
           && (!request.recovery || restoreMissingInputs(request, request.rows))) originalIntent.save(() => null)
         throw error
@@ -719,7 +721,8 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       {editError ? <p role="alert">{zh ? '请补齐有效的项目信息。' : 'Complete the item with valid values.'}</p> : null}
       {editSwitchBlocked ? <p role="alert">{zh ? '请先保留当前调整，再查看其他待开具项目。' : 'Keep the current edits before opening another pending item.'}</p> : null}
     </FieldGroup><DialogFooter><Button disabled={disabled || submitting} type="submit">{zh ? '保留本次调整' : 'Keep edits'}</Button></DialogFooter></form>}</DoctorDraftEditorScope>)
-  const confirmDisabled = inlineEditing && editDirty || !canConfirm || available.length === 0 || block !== undefined || available.some(row => needsReview(row.key) && (priceReviewChanged(row.value) || !(currentEncounter !== undefined && row.value.source === 'manual')))
+  const orderGateBlocked = kind !== 'diagnosis' && orderGate?.blocked === true
+  const confirmDisabled = orderGateBlocked || inlineEditing && editDirty || !canConfirm || available.length === 0 || block !== undefined || available.some(row => needsReview(row.key) && (priceReviewChanged(row.value) || !(currentEncounter !== undefined && row.value.source === 'manual')))
   const submitSelection = (clinicalOverride?: ClinicalOverrideInput) => {
     if (confirmationContext === undefined) return
     submission.mutate({
@@ -740,7 +743,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       ...(clinicalOverride === undefined ? {} : { clinicalOverride }),
     })
   }
-  const confirmationControls = (<CardFooter className="flex flex-wrap items-center justify-between gap-3">{inlineEditing && editDirty ? <p className="text-xs text-muted-foreground">{zh ? '有未保存调整，请保留后再开具。' : 'Keep the pending edits before confirming.'}</p> : null}<p className="text-xs text-muted-foreground">{zh ? `已选 ${available.length} 项` : `${available.length} selected`}</p><Button data-unavailable={confirmDisabled ? '' : undefined} disabled={confirmDisabled} onClick={() => submitSelection()} type="button" variant="outline">{kind === 'diagnosis' ? zh ? '确认选中诊断' : 'Confirm selected diagnoses' : kind === 'prescription' ? zh ? '开具处方' : 'Issue prescription' : zh ? '开具选中项目' : 'Issue selected orders'}（{available.length}）</Button></CardFooter>)
+  const confirmationControls = (<CardFooter className="flex flex-wrap items-center justify-between gap-3">{inlineEditing && editDirty ? <p className="text-xs text-muted-foreground">{zh ? '有未保存调整，请保留后再开具。' : 'Keep the pending edits before confirming.'}</p> : null}<OutpatientOrderGateGuidance gate={orderGateBlocked ? orderGate : undefined} locale={locale} /><p className="text-xs text-muted-foreground">{zh ? `已选 ${available.length} 项` : `${available.length} selected`}</p><Button data-unavailable={confirmDisabled ? '' : undefined} disabled={confirmDisabled} onClick={() => submitSelection()} type="button" variant="outline">{kind === 'diagnosis' ? zh ? '确认选中诊断' : 'Confirm selected diagnoses' : kind === 'prescription' ? zh ? '开具处方' : 'Issue prescription' : zh ? '开具选中项目' : 'Issue selected orders'}（{available.length}）</Button></CardFooter>)
   if (!enabled) return null
   const toolLabels = {
     refresh: refreshRecords ? (zh ? '刷新记录' : 'Refresh records') : state?.status === 'failed' ? (zh ? '重新生成' : 'Regenerate') : (zh ? '刷新' : 'Refresh'),

@@ -32,6 +32,7 @@ import {
   startConsultation,
 } from './fixtures/imaging-scenario.ts'
 import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
+import { satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 
 const created: Awaited<ReturnType<typeof createImagingRuntime>>[] = []
 afterEach(async () => {
@@ -89,6 +90,7 @@ async function setup(
       ).json(),
     )
   const issue = async (serviceId = 'examination-ecg-12-lead') => {
+    await satisfyOutpatientOrderPrerequisites(item.runtime, visit.doctor, visit.outpatientCaseId)
     const current = await detail(),
       expectedVersions = { [`Encounter/${visit.encounterId}`]: current.encounter.versionId }
     const saved = await item.runtime.app.request(
@@ -420,14 +422,18 @@ it('新确认心血管阳性事实不能复用先前正常快照', async () => {
   })
   await dispatchAll(s.runtime)
   expect((await s.detail()).examinationRequests?.requests[0]?.status).toBe('reported')
-  const expectedVersions = { [`Encounter/${s.visit.encounterId}`]: (await s.detail()).encounter.versionId }
+  const currentBeforeReconfirm = await s.detail()
+  const expectedVersions = { [`Encounter/${s.visit.encounterId}`]: currentBeforeReconfirm.encounter.versionId }
   const saved = await s.runtime.app.request(
     `/api/his/v1/encounters/${s.visit.encounterId}/diagnosis/draft`,
     mutation(
       s.visit.doctor,
       {
         expectedVersions,
-        input: { expectedDraftVersion: 0, entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary' }] },
+        input: {
+          expectedDraftVersion: currentBeforeReconfirm.diagnosis?.draftVersion ?? 0,
+          entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary' }],
+        },
       },
       'PUT',
     ),
@@ -654,12 +660,13 @@ it('报告事务失败后的人工重试和相同病例 Epoch 重放复用固定
   )
   expect(start.status, await start.clone().text()).toBe(200)
   const visit = { doctor, encounterId: queued.encounterId, outpatientCaseId: queued.caseId }
+  const prereq = await satisfyOutpatientOrderPrerequisites(s.runtime, visit.doctor, visit.outpatientCaseId)
   const saved = await s.runtime.app.request(
     `/api/his/v1/encounters/${visit.encounterId}/examination-request/draft`,
     mutation(
       visit.doctor,
       {
-        expectedVersions: { [`Encounter/${visit.encounterId}`]: '3' },
+        expectedVersions: { [`Encounter/${visit.encounterId}`]: prereq.encounterVersion },
         input: { expectedDraftVersion: 0, serviceId: 'examination-ecg-12-lead', indication: '胸部不适评估' },
       },
       'PUT',
@@ -669,7 +676,7 @@ it('报告事务失败后的人工重试和相同病例 Epoch 重放复用固定
   const issued = await s.runtime.app.request(
     `/api/his/v1/encounters/${visit.encounterId}/examination-request/actions/issue`,
     mutation(visit.doctor, {
-      expectedVersions: { [`Encounter/${visit.encounterId}`]: '3' },
+      expectedVersions: { [`Encounter/${visit.encounterId}`]: prereq.encounterVersion },
       input: { expectedDraftVersion: 1 },
     }),
   )

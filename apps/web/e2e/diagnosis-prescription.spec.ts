@@ -9,9 +9,6 @@ import {
   billingCaseSchema,
   billingQueueSchema,
   clinicalCatalogSchema,
-  clinicalDocumentDraftResponseSchema,
-  clinicalDocumentSignPreviewResponseSchema,
-  clinicalDocumentSignResponseSchema,
   doctorCaseDetailSchema,
   encounterCompletionPreviewSchema,
   encounterCompletionResponseSchema,
@@ -23,6 +20,7 @@ import { persona, startConsultationCase, StubSyntheaProvider } from '../../serve
 import { signInCashier, submitPayment } from './billing-payments.fixture.ts'
 import { test as base, expect } from './fixtures.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
+import { signInitialOutpatientRecordAndRefresh, signInitialOutpatientRecordByApi } from './outpatient-order-gate.fixture.ts'
 import { closeQueue, expectConsultationStarted, openQueue } from './queue-overlay.fixture.ts'
 
 const products: ReferenceMedicationProduct[] = [10, 20].map(count => ({
@@ -96,6 +94,7 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   const widths = await queueNavigation.getByRole('tab').evaluateAll(elements => elements.map(element => element.getBoundingClientRect().width))
   expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1)
   await closeQueue(page)
+  await signInitialOutpatientRecordAndRefresh(page, browserApp.origin, consultationCase.outpatientCaseId)
   const readCase = async () => {
     const response = await page.request.get(`${browserApp.origin}/api/his/v1/doctor/cases/${consultationCase.outpatientCaseId}`)
     expect(response.status()).toBe(200)
@@ -309,36 +308,18 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
 })
 
 async function signAndCompleteEncounter(page: import('@playwright/test').Page, origin: string, caseId: string) {
-  const detail = doctorCaseDetailSchema.parse(await (await page.request.get(`${origin}/api/his/v1/doctor/cases/${caseId}`)).json())
+  const detail = await signInitialOutpatientRecordByApi(page, origin, caseId, {
+    assessment: '合成发热病例诊断与用药结论已记录。',
+    chiefComplaint: '合成发热伴头痛一天。',
+    disposition: '门诊按医嘱观察与对症处理。',
+    followUp: '高热不退或症状加重时及时复诊。',
+    historyOfPresentIllness: '一天前出现发热伴头痛，无呼吸困难。',
+    menstrualHistory: '患者自述已绝经，年龄记不清。',
+    obstetricHistory: '患者自述孕2产2。',
+    physicalExamination: '神志清楚，双肺呼吸音清。',
+  })
   const encounterRef = `Encounter/${detail.encounter.id}`
   const basePath = `/api/his/v1/encounters/${detail.encounter.id}`
-  const command = async (target: string, input: object, method = 'POST') => {
-    const response = await page.request.fetch(`${origin}${target}`, {
-      method,
-      headers: { origin, 'idempotency-key': randomUUID() },
-      data: { expectedVersions: { [encounterRef]: detail.encounter.versionId }, input },
-    })
-    expect(response.status(), target).toBe(200)
-    return response.json()
-  }
-  const draft = clinicalDocumentDraftResponseSchema.parse(await command(`${basePath}/clinical-document/draft`, {
-    expectedDraftVersion: detail.clinicalDocument?.draft?.version ?? 0,
-    document: {
-      assessment: '合成发热病例诊断与用药结论已记录。',
-      chiefComplaint: '合成发热伴头痛一天。',
-      disposition: '门诊按医嘱观察与对症处理。',
-      followUp: '高热不退或症状加重时及时复诊。',
-      historyOfPresentIllness: '一天前出现发热伴头痛，无呼吸困难。',
-      menstrualHistory: '患者自述已绝经，年龄记不清。', obstetricHistory: '患者自述孕2产2。', physicalExamination: '神志清楚，双肺呼吸音清。',
-    },
-  }, 'PUT')).data
-  const preview = clinicalDocumentSignPreviewResponseSchema.parse(await command(`${basePath}/clinical-document/actions/preview-sign`, {
-    expectedDraftVersion: draft.draftVersion,
-  })).data
-  clinicalDocumentSignResponseSchema.parse(await command(`${basePath}/clinical-document/actions/sign`, {
-    commitToken: preview.commitToken,
-    previewId: preview.previewId,
-  }))
   const completion = encounterCompletionPreviewSchema.parse(await (await page.request.get(`${origin}${basePath}/completion`)).json())
   expect(completion.canComplete).toBe(true)
   expect(completion.items.find(item => item.code === 'medication-conclusion-recorded')?.status).toBe('complete')
@@ -365,6 +346,16 @@ test('completes hospital pharmacy prescription billing and dispensing from defau
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await expectConsultationStarted(page)
   await closeQueue(page)
+  await signInitialOutpatientRecordAndRefresh(page, browserApp.origin, consultationCase.outpatientCaseId, {
+    assessment: '合成发热病例初步评估完成，拟确认诊断并开具退热药。',
+    chiefComplaint: '合成发热伴头痛一天。',
+    disposition: '门诊按医嘱观察与对症处理。',
+    followUp: '高热不退或症状加重时及时复诊。',
+    historyOfPresentIllness: '一天前出现发热伴头痛，无呼吸困难。',
+    menstrualHistory: '患者自述已绝经，年龄记不清。',
+    obstetricHistory: '患者自述孕2产2。',
+    physicalExamination: '神志清楚，双肺呼吸音清。',
+  })
 
   // 确认主诊断 R50.9（发热，未特指）
   await openWorkspaceTab(page, '诊断')
@@ -460,6 +451,7 @@ test('completes encounter with national reference external prescription without 
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await expectConsultationStarted(page)
   await closeQueue(page)
+  await signInitialOutpatientRecordAndRefresh(page, browserApp.origin, consultationCase.outpatientCaseId)
 
   await openWorkspaceTab(page, '诊断')
   await page.locator('[data-agent-section="diagnosis"]').getByRole('button', { name: '添加诊断', exact: true }).click()

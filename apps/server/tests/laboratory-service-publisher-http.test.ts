@@ -42,6 +42,7 @@ import { openReferenceDatabase } from '../src/infrastructure/sqlite/reference-da
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { referenceDatabaseIsReady } from '../src/reference-readiness.ts'
+import { satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 
 class LaboratoryEnrichmentProvider implements JsonChatCompletionsProvider {
   calls: JsonChatCompletionInput[] = []
@@ -615,12 +616,13 @@ describe('Laboratory Service Publisher HTTP contract', () => {
   ) {
     const { runtime, doctorCookie } = fixture
     const started = await startMaterializedCase(fixture)
+    const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, started.caseId)
     const encounterReference = `Encounter/${started.encounterId}`
     const draft = laboratoryRequestDraftResponseSchema.parse(await (await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '3' },
+          expectedVersions: { [encounterReference]: gate.encounterVersion },
           input: {
             catalogItemId: serviceId,
             expectedDraftVersion: 0,
@@ -640,7 +642,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '3' },
+          expectedVersions: { [encounterReference]: gate.encounterVersion },
           input: { expectedDraftVersion: draft.draftVersion },
         }),
         headers: {
@@ -1210,6 +1212,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     expect((await searchCatalog('血常规 不存在')).total).toBe(0)
 
     const publishedService = doctorCatalog.items[0]!
+    const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, started.caseId)
     const encounterReference = `Encounter/${started.encounterId}`
     const mutationHeaders = () => ({
       'content-type': 'application/json',
@@ -1221,7 +1224,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '3' },
+          expectedVersions: { [encounterReference]: gate.encounterVersion },
           input: {
             catalogItemId: 'loinc:synthetic:58410-2',
             expectedDraftVersion: 0,
@@ -1238,7 +1241,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '3' },
+          expectedVersions: { [encounterReference]: gate.encounterVersion },
           input: {
             catalogItemId: publishedService.id,
             expectedDraftVersion: 0,
@@ -1268,7 +1271,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '3' },
+          expectedVersions: { [encounterReference]: gate.encounterVersion },
           input: { expectedDraftVersion: draft.draftVersion },
         }),
         headers: mutationHeaders(),
@@ -1848,18 +1851,19 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         expectedVersions: { [`Encounter/${started.encounterId}`]: '2', [`Task/${triage.doctorTaskId}`]: '1' },
         input: {},
       })).status).toBe(200)
-      return { ...started, draftVersion: 0 }
+      const gate = await satisfyOutpatientOrderPrerequisites(current(), cookies.doctor, started.outpatientCaseId)
+      return { ...started, draftVersion: 0, encounterVersion: gate.encounterVersion }
     }
 
-    async function orderPayAndDispatch(visit: { draftVersion: number; encounterId: string; outpatientCaseId: string }, serviceId: string) {
+    async function orderPayAndDispatch(visit: { draftVersion: number; encounterId: string; encounterVersion: string; outpatientCaseId: string }, serviceId: string) {
       const draftResponse = await postJson(`/api/his/v1/encounters/${visit.encounterId}/laboratory-request/draft`, cookies.doctor, {
-        expectedVersions: { [`Encounter/${visit.encounterId}`]: '3' },
+        expectedVersions: { [`Encounter/${visit.encounterId}`]: visit.encounterVersion },
         input: { catalogItemId: serviceId, expectedDraftVersion: visit.draftVersion, indicationCode: 'clinical-evaluation' },
       }, 'PUT')
       expect(draftResponse.status, await draftResponse.clone().text()).toBe(200)
       const draft = laboratoryRequestDraftResponseSchema.parse(await draftResponse.json()).data
       const issueResponse = await postJson(`/api/his/v1/encounters/${visit.encounterId}/laboratory-request/actions/issue`, cookies.doctor, {
-        expectedVersions: { [`Encounter/${visit.encounterId}`]: '3' },
+        expectedVersions: { [`Encounter/${visit.encounterId}`]: visit.encounterVersion },
         input: { expectedDraftVersion: draft.draftVersion },
       })
       expect(issueResponse.status, await issueResponse.clone().text()).toBe(200)
@@ -1950,7 +1954,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     it('rejects an adult-only baseline request for a pediatric outpatient', async () => {
       const visit = await materializeOutpatientVisit({ birthDate: '2014-06-01', gender: 'male', observations: [] })
       const response = await postJson(`/api/his/v1/encounters/${visit.encounterId}/laboratory-request/draft`, cookies.doctor, {
-        expectedVersions: { [`Encounter/${visit.encounterId}`]: '3' },
+        expectedVersions: { [`Encounter/${visit.encounterId}`]: visit.encounterVersion },
         input: { catalogItemId: service('2100404B').id, expectedDraftVersion: 0, indicationCode: 'clinical-evaluation' },
       }, 'PUT')
       expect(response.status).toBe(409)

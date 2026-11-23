@@ -11,6 +11,7 @@ import { insurancePreviewResponseSchema, insuranceResponseSchema, insuranceState
 import { refundCaseSchema } from '@clinmesh/contracts/refunds'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider, useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
+import { satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -47,6 +48,7 @@ async function setup() {
   })
   expect(visit.status, await visit.clone().text()).toBe(200)
   startVisitResponseSchema.parse(await visit.json())
+  await satisfyOutpatientOrderPrerequisites(runtime, doctor, started.outpatientCaseId)
   const readDetail = async () => doctorCaseDetailSchema.parse(await (await runtime.app.request(
     `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie: doctor } },
   )).json())

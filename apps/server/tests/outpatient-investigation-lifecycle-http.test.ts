@@ -13,6 +13,7 @@ import {
   caseBundle, createImagingRuntime, generateCase, lungCancer,
   mutation, prepareImaging, signIn, snomed, startConsultation,
 } from './fixtures/imaging-scenario.ts'
+import { satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 
 describe('门诊独立检查的应收与执行门禁', () => {
   it('正式开立生成原申请应收，未收款不受理且缺少放行快照不执行', async () => {
@@ -39,7 +40,8 @@ describe('门诊独立检查的应收与执行门禁', () => {
       const caseId = await generateCase(runtime, administrator)
       await prepareImaging(runtime, administrator, [caseId])
       const visit = await startConsultation(runtime, administrator, caseId)
-      const expectedVersions = { [`Encounter/${visit.encounterId}`]: '3' }
+      const gate = await satisfyOutpatientOrderPrerequisites(runtime, visit.doctor, visit.outpatientCaseId)
+      const expectedVersions = { [`Encounter/${visit.encounterId}`]: gate.encounterVersion }
       const saved = await runtime.app.request(`/api/his/v1/encounters/${visit.encounterId}/imaging-request/draft`, mutation(visit.doctor, {
         expectedVersions,
         input: { expectedDraftVersion: 0, indication: '咳嗽两周，排查肺部病变', serviceId: 'imaging-chest-radiograph' },

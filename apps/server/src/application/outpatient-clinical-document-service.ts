@@ -9,6 +9,7 @@ import {
   clinicalDocumentContentSchema,
   clinicalDocumentDraftContentSchema,
   clinicalDocumentDraftResponseSchema,
+  clinicalDocumentFieldSchema,
   clinicalDocumentQualityControlStateSchema,
   clinicalDocumentRevisionResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
@@ -168,10 +169,21 @@ const clinicalDocumentIdRowSchema = z.object({
 
 const clinicalDocumentRevisionSourceRowSchema = practitionerRoleIdRowSchema.extend({
   bundle_id: z.string().min(1),
+  case_id: z.string().min(1),
+  case_status: z.string().min(1),
   document_id: z.string().min(1),
   encounter_id: z.string().min(1),
   patient_id: z.string().min(1),
 }).strict()
+
+function hasPendingClinicalDocumentRevisionDraft(
+  signedContent: ClinicalDocumentContent,
+  draftContent: z.infer<typeof clinicalDocumentDraftContentSchema>,
+): boolean {
+  return clinicalDocumentFieldSchema.options.some(
+    field => (draftContent[field] ?? '').trim() !== (signedContent[field] ?? '').trim(),
+  )
+}
 
 function structuredClinicalDocumentFromComposition(resource: FhirResource): ClinicalDocumentContent | undefined {
   const composition = structuredCompositionSchema.safeParse(resource)
@@ -379,11 +391,18 @@ export class OutpatientClinicalDocumentService {
     )
     const medicationConclusionRecorded = medicationStatus.hasIssuedPrescription
       || medicationStatus.hasNoMedicationConclusion
-    const clinicalDocumentDraft = z.object({ present: z.literal(1) }).strict().optional().parse(
+    const clinicalDocumentDraft = z.object({ content_json: z.string() }).strict().optional().parse(
       this.#context.database.driver.prepare(`
-        SELECT 1 AS present FROM clinical_document_draft
+        SELECT content_json FROM clinical_document_draft
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
       `).get(context.workspaceId, context.epoch, outpatientCase.case_id),
+    )
+    const hasPendingDocumentDraft = clinicalDocumentDraft !== undefined && (
+      signedDocument === undefined
+      || hasPendingClinicalDocumentRevisionDraft(
+        signedDocument.content,
+        clinicalDocumentDraftContentSchema.parse(JSON.parse(clinicalDocumentDraft.content_json)),
+      )
     )
     const diagnosisDraft = diagnosisStateRowSchema.pick({ draft_json: true }).optional().parse(
       this.#context.database.driver.prepare(`
@@ -396,7 +415,7 @@ export class OutpatientClinicalDocumentService {
       outpatientCase.case_id,
     )
     let pendingDraftTarget: EncounterCompletionTarget | undefined
-    if (signedDocument === undefined && clinicalDocumentDraft !== undefined) {
+    if (hasPendingDocumentDraft) {
       pendingDraftTarget = 'clinical-document'
     } else if (investigationDraftTarget !== undefined) {
       pendingDraftTarget = investigationDraftTarget
@@ -1577,7 +1596,8 @@ export class OutpatientClinicalDocumentService {
     }, transaction => {
       const source = clinicalDocumentRevisionSourceRowSchema.optional().parse(
         this.#context.database.driver.prepare(`
-          SELECT document.document_id, document.bundle_id, outpatient_case.patient_id,
+          SELECT document.document_id, document.bundle_id, outpatient_case.case_id,
+            outpatient_case.status AS case_status, outpatient_case.patient_id,
             outpatient_case.encounter_id, responsibility.practitioner_role_id
           FROM signed_clinical_document AS document
           JOIN outpatient_case
@@ -1716,6 +1736,45 @@ export class OutpatientClinicalDocumentService {
         input.context.epoch,
         source.document_id,
       )
+      const encounter = transaction.fhir.read(input.context, 'Encounter', source.encounter_id)
+      const draftEffects: Array<{ kind: 'created' | 'updated'; reference: string; versionId: string }> = []
+      if (
+        'document' in input.revision
+        && source.case_status !== 'completed'
+        && encounter.status === 'in-progress'
+      ) {
+        const currentDraft = z.object({ version: z.number().int().positive() }).optional().parse(
+          this.#context.database.driver.prepare(`
+            SELECT version FROM clinical_document_draft
+            WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+          `).get(input.context.workspaceId, input.context.epoch, source.case_id),
+        )
+        const nextDraftVersion = (currentDraft?.version ?? 0) + 1
+        this.#host.consultationRecording.trackDraftSave(input.context, source.case_id, input.revision.document)
+        this.#context.database.driver.prepare(`
+          INSERT INTO clinical_document_draft (
+            workspace_id, epoch, case_id, version, content_json, updated_by, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (workspace_id, epoch, case_id) DO UPDATE SET
+            version = excluded.version,
+            content_json = excluded.content_json,
+            updated_by = excluded.updated_by,
+            updated_at = excluded.updated_at
+        `).run(
+          input.context.workspaceId,
+          input.context.epoch,
+          source.case_id,
+          nextDraftVersion,
+          JSON.stringify(input.revision.document),
+          input.context.actorId,
+          now,
+        )
+        draftEffects.push({
+          kind: currentDraft === undefined ? 'created' : 'updated',
+          reference: `ClinicalDocumentDraft/${source.case_id}`,
+          versionId: String(nextDraftVersion),
+        })
+      }
       return {
         data: {
           bundleId,
@@ -1726,11 +1785,14 @@ export class OutpatientClinicalDocumentService {
           revisionNumber,
           revisionOfCompositionId: input.compositionId,
         },
-        effects: [composition, bundle, provenance].map(resource => ({
-          kind: 'created' as const,
-          reference: `${resource.resourceType}/${resource.id}`,
-          versionId: resource.meta?.versionId ?? '1',
-        })),
+        effects: [
+          ...[composition, bundle, provenance].map(resource => ({
+            kind: 'created' as const,
+            reference: `${resource.resourceType}/${resource.id}`,
+            versionId: resource.meta?.versionId ?? '1',
+          })),
+          ...draftEffects,
+        ],
       }
     })
   }
@@ -1879,7 +1941,7 @@ export class OutpatientClinicalDocumentService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is not editable')
       }
       if (this.#signedClinicalDocumentRoot(input.context, outpatientCase.case_id) !== undefined) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The signed Clinical Document requires a revision')
+        this.#context.assertCaseResponsibility(input.context, outpatientCase.case_id)
       }
       const current = this.#context.database.driver.prepare(`
         SELECT version, content_json FROM clinical_document_draft

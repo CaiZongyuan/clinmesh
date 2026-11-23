@@ -19,7 +19,7 @@ import { referenceConceptSnapshotSchema } from '@clinmesh/contracts/reference-da
 import type { InvestigationResultContent } from '@clinmesh/contracts/scenario'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
-import { assertInpatientRequestScope, inpatientRequestOwner } from './clinical-request-context.ts'
+import { assertInpatientRequestScope, assertOutpatientOrderPrerequisites, inpatientRequestOwner } from './clinical-request-context.ts'
 import {
   laboratoryRequestPolicy,
   reportAcknowledgementRowSchema,
@@ -740,6 +740,7 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
         'The laboratory request draft version has changed',
       )
     }
+    assertOutpatientOrderPrerequisites(this.#context.database, input.context, outpatientCase.case_id)
     const duplicate = this.#context.database.driver.prepare(`
       SELECT request_id FROM laboratory_request
       WHERE workspace_id = ? AND epoch = ? AND case_id = ?
