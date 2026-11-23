@@ -23,7 +23,7 @@ async function advance(s: Scenario, sessionId: string, revision: number) {
   expect(await authorized.json()).toEqual({ active: true, writable: true })
   s.remote.revision = revision
   const committed = await s.callback(sessionId, { event: 'committed', bindingId, previousRevision: revision - 1, revision, intentId })
-  expect(await committed.json()).toEqual({ active: true, writable: true })
+  expect(await committed.json()).toEqual({ active: true, writable: false })
 }
 async function expectRepairWithoutReplacement(s: Scenario, before: { bindings: number; sessions: number }) {
   const opened = await s.open()

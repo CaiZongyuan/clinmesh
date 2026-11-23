@@ -29,6 +29,9 @@ const sessionRowSchema = z.object({ id: z.uuid(), workspace_id: z.string(), epoc
   context_json: z.string(), actor_json: z.string(), generation: z.uuid(), config_version: z.number(), callback_token_hash: z.string(),
   expires_at: z.string(), displayed: z.number(), closed: z.number(), remote_json: z.string().nullable() })
 type SessionRow = z.infer<typeof sessionRowSchema>
+type ReadingScope = Pick<ActorContext, 'workspaceId' | 'epoch'>
+const bindingInputSchema = externalPathologyAssetOutputSchema.pick({ assetKey: true, contentHash: true, organ: true, specimenType: true, stain: true })
+  .extend({ bindingId: z.uuid(), intentId: z.uuid(), context: readingContextSchema }).strict()
 const actorSchema = z.object({ actorId: z.string(), workspaceId: z.string(), epoch: z.string(), roleCode: z.string(),
   scenarioRunId: z.string(), practitionerId: z.string().optional(), practitionerRoleId: z.string().optional(),
   organizationId: z.string().optional(), locationId: z.string().optional() }).strict()
@@ -63,7 +66,7 @@ export class PathologyReadingService {
     if (!this.options.deployment?.serviceToken) return pathologyReadingStatusSchema.parse({ state: 'credentials-unavailable', config, capabilities: [] })
     try {
       const response = await this.adapter(config).capabilities()
-      const repair = this.options.database.driver.prepare("SELECT 1 FROM pathology_reading_binding WHERE workspace_id=? AND state='repair-required' LIMIT 1").get(context.workspaceId)
+      const repair = this.options.database.driver.prepare("SELECT 1 FROM pathology_reading_binding WHERE workspace_id=? AND epoch=? AND state='repair-required' LIMIT 1").get(context.workspaceId, context.epoch)
       return pathologyReadingStatusSchema.parse({ state: repair ? 'repair-required' : 'ready', config, capabilities: response.capabilities })
     } catch (error) {
       if (!(error instanceof PathologyReadingError)) throw error
@@ -87,7 +90,7 @@ export class PathologyReadingService {
       this.options.database.driver.prepare(`INSERT INTO pathology_reading_config (workspace_id, version, config_json) VALUES (?, ?, ?)
         ON CONFLICT(workspace_id) DO UPDATE SET version=excluded.version, config_json=excluded.config_json`)
         .run(context.workspaceId, next.version, JSON.stringify(next))
-      this.options.database.driver.prepare('UPDATE pathology_reading_session SET closed=1, displayed=0 WHERE workspace_id=?').run(context.workspaceId)
+      this.options.database.driver.prepare('UPDATE pathology_reading_session SET closed=1, displayed=0 WHERE workspace_id=? AND epoch=?').run(context.workspaceId, context.epoch)
       return { data: next, effects: [] }
     }).data
   }
@@ -122,50 +125,45 @@ export class PathologyReadingService {
     } catch { return false }
   }
 
-  private requireCheckpoint(bindingId: string, revision: number) {
+  private requireCheckpoint(scope: ReadingScope, bindingId: string, revision: number) {
     const row = z.object({ state: z.string(), remote_revision: z.number().nullable() }).parse(this.options.database.driver.prepare(
-      'SELECT state,remote_revision FROM pathology_reading_binding WHERE binding_id=?').get(bindingId))
+      'SELECT state,remote_revision FROM pathology_reading_binding WHERE workspace_id=? AND epoch=? AND binding_id=?').get(scope.workspaceId, scope.epoch, bindingId))
     if (row.state === 'repair-required' || row.remote_revision !== revision) {
-      this.options.database.driver.prepare("UPDATE pathology_reading_binding SET state='repair-required' WHERE binding_id=?").run(bindingId)
+      this.options.database.driver.prepare("UPDATE pathology_reading_binding SET state='repair-required' WHERE workspace_id=? AND epoch=? AND binding_id=?").run(scope.workspaceId, scope.epoch, bindingId)
       throw new PathologyReadingError('PATHOLOGY_READING_REPAIR_REQUIRED', 'The reading service history does not match the confirmed checkpoint')
     }
   }
 
-  private async readable(bindingId: string, config: PathologyReadingConfig) {
+  private async readable(scope: ReadingScope, bindingId: string, config: PathologyReadingConfig) {
     const remote = await this.adapter(config).binding(bindingId).catch(error => {
       if (error instanceof PathologyReadingError && error.code === 'PATHOLOGY_READING_OBJECT_MISSING') {
-        this.options.database.driver.prepare("UPDATE pathology_reading_binding SET state='repair-required' WHERE binding_id=?").run(bindingId)
+        this.options.database.driver.prepare("UPDATE pathology_reading_binding SET state='repair-required' WHERE workspace_id=? AND epoch=? AND binding_id=?").run(scope.workspaceId, scope.epoch, bindingId)
         throw new PathologyReadingError('PATHOLOGY_READING_REPAIR_REQUIRED', 'The original reading object is missing')
       }
       throw error
     })
     const local = z.object({ content_hash: z.string(), instance_id: z.string() }).parse(this.options.database.driver.prepare(
-      'SELECT content_hash,instance_id FROM pathology_reading_binding WHERE binding_id=?').get(bindingId))
+      'SELECT content_hash,instance_id FROM pathology_reading_binding WHERE workspace_id=? AND epoch=? AND binding_id=?').get(scope.workspaceId, scope.epoch, bindingId))
     if (remote.bindingId !== bindingId || remote.contentHash !== local.content_hash || remote.instanceId !== local.instance_id) {
-      this.options.database.driver.prepare("UPDATE pathology_reading_binding SET state='repair-required' WHERE binding_id=?").run(bindingId)
+      this.options.database.driver.prepare("UPDATE pathology_reading_binding SET state='repair-required' WHERE workspace_id=? AND epoch=? AND binding_id=?").run(scope.workspaceId, scope.epoch, bindingId)
       throw new PathologyReadingError('PATHOLOGY_READING_REPAIR_REQUIRED', 'The original reading object cannot be verified')
     }
-    this.requireCheckpoint(bindingId, remote.revision)
+    this.requireCheckpoint(scope, bindingId, remote.revision)
     if (!remote.available) throw new PathologyReadingError('IMAGING_STUDY_UNAVAILABLE', 'The bound slide is currently unreadable', 503)
     return remote
   }
 
 
-  private row(id: string) {
-    const row = sessionRowSchema.optional().parse(this.options.database.driver.prepare('SELECT * FROM pathology_reading_session WHERE id=?').get(id))
+  private scopedRow(context: ActorContext, id: string) {
+    const row = sessionRowSchema.optional().parse(this.options.database.driver.prepare(`SELECT * FROM pathology_reading_session
+      WHERE workspace_id=? AND epoch=? AND actor_id=? AND id=?`).get(context.workspaceId, context.epoch, context.actorId, id))
     if (row === undefined) throw new PathologyReadingError('PATHOLOGY_READING_NOT_FOUND', 'The reading session was not found', 404)
     return row
   }
 
-  private scopedRow(context: ActorContext, id: string) {
-    const row = this.row(id)
-    if (row.workspace_id !== context.workspaceId || row.epoch !== context.epoch || row.actor_id !== context.actorId) {
-      throw new PathologyReadingError('PATHOLOGY_READING_NOT_FOUND', 'The reading session was not found', 404)
-    }
-    return row
+  private callbackToken(scope: ReadingScope, id: string) {
+    return createHmac('sha256', this.sealKey).update(JSON.stringify(['reading-authorization', scope.workspaceId, scope.epoch, id])).digest('base64url')
   }
-
-  private callbackToken(id: string) { return createHmac('sha256', this.sealKey).update(`reading-authorization:${id}`).digest('base64url') }
   private seal(value: unknown) {
     const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', this.sealKey, iv)
     const encrypted = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()])
@@ -199,33 +197,52 @@ export class PathologyReadingService {
     if (sameIntent && sameIntent.request_hash !== hash) throw new PathologyReadingError('IDEMPOTENCY_KEY_REUSED', 'The reading intent was already used with a different input')
     const existing = sameIntent ?? sessionRowSchema.optional().parse(this.options.database.driver.prepare(`SELECT * FROM pathology_reading_session
       WHERE workspace_id=? AND epoch=? AND actor_id=? AND auth_session_id=? AND binding_id=? AND config_version=?
-        AND closed=0 AND remote_json IS NULL AND expires_at>?
+        AND closed=0 AND remote_json IS NULL
         AND json_extract(context_json,'$.reportId')=? AND json_extract(context_json,'$.reportVersion')=?
       ORDER BY expires_at LIMIT 1`).get(context.workspaceId, context.epoch, context.actorId, authSessionId, bindingId,
-      config.version, this.now().toISOString(), input.reportId, input.reportVersion))
+      config.version, input.reportId, input.reportVersion))
+    if (existing && existing.expires_at <= this.now().toISOString()) {
+      if (existing.remote_json === null) {
+        const original = await adapter.operation(existing.id, bindingId)
+        if (original.status === 'unknown') throw new PathologyReadingError('PATHOLOGY_READING_RESULT_UNKNOWN', 'The original reading intent is unresolved', 503, 'unknown')
+        if (original.status === 'applied') readingSessionCreatedSchema.parse(original.result)
+      }
+      this.options.database.driver.prepare('UPDATE pathology_reading_session SET closed=1,displayed=0 WHERE workspace_id=? AND epoch=? AND id=?').run(context.workspaceId, context.epoch, existing.id)
+      throw new PathologyReadingError('PATHOLOGY_READING_SESSION_EXPIRED', 'The original reading outcome is known; open a new session', 403)
+    }
     if (existing?.remote_json !== null && existing?.remote_json !== undefined) {
-      if (!(await this.authorize(this.callbackToken(existing.id))).active) throw new PathologyReadingError('PATHOLOGY_READING_CONTEXT_CHANGED', 'The reading context has changed', 403)
-      await this.readable(existing.binding_id, config)
+      if (!(await this.authorize(this.callbackToken(context, existing.id))).active) throw new PathologyReadingError('PATHOLOGY_READING_CONTEXT_CHANGED', 'The reading context has changed', 403)
+      await this.readable(context, existing.binding_id, config)
       return this.response(existing, config, access.writable)
+    }
+    const bindInput = bindingInputSchema.parse({ bindingId, intentId: bindingId, contentHash: output.data.contentHash, assetKey: output.data.assetKey,
+      context: boundContext, organ: output.data.organ, specimenType: output.data.specimenType, stain: output.data.stain })
+    const bindingRow = z.object({ input_json: z.string(), remote_json: z.string().nullable(), state: z.string() }).optional().parse(this.options.database.driver.prepare(
+      'SELECT input_json,remote_json,state FROM pathology_reading_binding WHERE workspace_id=? AND epoch=? AND binding_id=?')
+      .get(context.workspaceId, context.epoch, bindingId))
+    const frozenBindInput = bindingRow ? bindingInputSchema.parse(JSON.parse(bindingRow.input_json)) : bindInput
+    if (frozenBindInput.bindingId !== bindingId || frozenBindInput.context.workspaceId !== context.workspaceId
+      || frozenBindInput.context.epochId !== context.epoch || frozenBindInput.context.requestId !== requestId) {
+      throw new PathologyReadingError('PATHOLOGY_READING_REPAIR_REQUIRED', 'The frozen reading input belongs to another context')
     }
     const sessionId = existing?.id ?? randomUUID(), expiresAt = existing?.expires_at ?? new Date(this.now().getTime() + 5 * 60_000).toISOString()
     if (!existing) this.options.commands.execute({ context, dataSchema: z.object({ id: z.uuid() }).strict(), expectedVersions: {}, idempotencyKey,
       input: { ...input, authSessionId, requestId }, operation: 'pathology-reading.open' }, () => {
+      this.options.database.driver.prepare(`INSERT INTO pathology_reading_binding
+        (workspace_id,epoch,request_id,binding_id,instance_id,content_hash,input_json,state) VALUES (?,?,?,?,?,?,?,'prepared')
+        ON CONFLICT(workspace_id,epoch,request_id) DO NOTHING`)
+        .run(context.workspaceId, context.epoch, requestId, bindingId, config.instanceId, output.data.contentHash, JSON.stringify(bindInput))
+      this.options.database.driver.prepare(`UPDATE pathology_reading_session SET closed=1,displayed=0 WHERE workspace_id=? AND epoch=? AND actor_id=?
+        AND closed=0 AND id<>? AND json_extract(context_json,'$.requestId')=? AND json_extract(context_json,'$.reportId')=?`).run(
+        context.workspaceId, context.epoch, context.actorId, sessionId, requestId, input.reportId)
       this.options.database.driver.prepare(`INSERT INTO pathology_reading_session (id,workspace_id,epoch,actor_id,auth_session_id,idempotency_key,
         request_hash,binding_id,head_report_id,head_report_version,context_json,actor_json,generation,config_version,callback_token_hash,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
         .run(sessionId, context.workspaceId, context.epoch, context.actorId, authSessionId, idempotencyKey, hash, bindingId,
           access.request.report!.diagnosticReportId, access.request.report!.diagnosticReportVersion,
           JSON.stringify(boundContext), JSON.stringify(context), input.generation, config.version,
-          createHash('sha256').update(this.callbackToken(sessionId)).digest('hex'), expiresAt)
+          createHash('sha256').update(this.callbackToken(context, sessionId)).digest('hex'), expiresAt)
       return { data: { id: sessionId }, effects: [] }
     })
-    const bindInput = { bindingId, intentId: bindingId, contentHash: output.data.contentHash, assetKey: output.data.assetKey,
-      context: boundContext, organ: output.data.organ, specimenType: output.data.specimenType, stain: output.data.stain }
-    const bindingRow = z.object({ remote_json: z.string().nullable(), state: z.string() }).optional().parse(this.options.database.driver.prepare(
-      'SELECT remote_json,state FROM pathology_reading_binding WHERE binding_id=?').get(bindingId))
-    if (!bindingRow) this.options.database.driver.prepare(`INSERT INTO pathology_reading_binding
-      (workspace_id,epoch,request_id,binding_id,instance_id,content_hash,input_json,state) VALUES (?,?,?,?,?,?,?,'prepared')`)
-      .run(context.workspaceId, context.epoch, requestId, bindingId, config.instanceId, output.data.contentHash, JSON.stringify(bindInput))
     if (bindingRow?.state === 'repair-required') throw new PathologyReadingError('PATHOLOGY_READING_REPAIR_REQUIRED', 'The original binding requires recovery')
     if (!bindingRow?.remote_json) {
       try {
@@ -237,46 +254,46 @@ export class PathologyReadingService {
             if (result.bindingId !== bindingId || result.instanceId !== config.instanceId || result.contentHash !== output.data.contentHash) {
               throw new PathologyReadingError('PATHOLOGY_READING_BINDING_MISMATCH', 'The original reading binding does not match')
             }
-            this.options.database.driver.prepare("UPDATE pathology_reading_binding SET remote_json=?,state='ready' WHERE binding_id=?").run(JSON.stringify(result), bindingId)
-          } else await this.bind(adapter, bindInput)
-        } else await this.bind(adapter, bindInput)
+            this.options.database.driver.prepare("UPDATE pathology_reading_binding SET remote_json=?,state='ready' WHERE workspace_id=? AND epoch=? AND binding_id=?").run(JSON.stringify(result), context.workspaceId, context.epoch, bindingId)
+          } else await this.bind(context, adapter, frozenBindInput)
+        } else await this.bind(context, adapter, frozenBindInput)
       } catch (error) {
-        this.options.database.driver.prepare("UPDATE pathology_reading_binding SET state='unknown' WHERE binding_id=?").run(bindingId)
+        this.options.database.driver.prepare("UPDATE pathology_reading_binding SET state='unknown' WHERE workspace_id=? AND epoch=? AND binding_id=?").run(context.workspaceId, context.epoch, bindingId)
         throw error
       }
     }
     const checkpoint = z.object({ remote_revision: z.number().nullable() }).parse(this.options.database.driver.prepare(
-      'SELECT remote_revision FROM pathology_reading_binding WHERE binding_id=?').get(bindingId))
+      'SELECT remote_revision FROM pathology_reading_binding WHERE workspace_id=? AND epoch=? AND binding_id=?').get(context.workspaceId, context.epoch, bindingId))
     if (checkpoint.remote_revision === null) {
       const initial = await adapter.binding(bindingId)
       if (initial.bindingId !== bindingId || initial.revision !== 0 || initial.contentHash !== output.data.contentHash || initial.instanceId !== config.instanceId) {
-        this.options.database.driver.prepare("UPDATE pathology_reading_binding SET state='repair-required' WHERE binding_id=?").run(bindingId)
+        this.options.database.driver.prepare("UPDATE pathology_reading_binding SET state='repair-required' WHERE workspace_id=? AND epoch=? AND binding_id=?").run(context.workspaceId, context.epoch, bindingId)
         throw new PathologyReadingError('PATHOLOGY_READING_REPAIR_REQUIRED', 'The initial reading checkpoint cannot be verified')
       }
       if (!initial.available) {
         throw new PathologyReadingError('IMAGING_STUDY_UNAVAILABLE', 'The original slide cannot be verified', 503)
       }
-      this.options.database.driver.prepare('UPDATE pathology_reading_binding SET remote_revision=? WHERE binding_id=? AND remote_revision IS NULL').run(initial.revision, bindingId)
-    } else await this.readable(bindingId, config)
+      this.options.database.driver.prepare('UPDATE pathology_reading_binding SET remote_revision=? WHERE workspace_id=? AND epoch=? AND binding_id=? AND remote_revision IS NULL').run(initial.revision, context.workspaceId, context.epoch, bindingId)
+    } else await this.readable(context, bindingId, config)
     let remote: z.infer<typeof readingSessionCreatedSchema>
     if (existing) {
       const original = await adapter.operation(sessionId, bindingId)
       if (original.status === 'unknown') throw new PathologyReadingError('PATHOLOGY_READING_RESULT_UNKNOWN', 'The original reading intent is unresolved', 503, 'unknown')
       remote = original.status === 'applied' ? readingSessionCreatedSchema.parse(original.result)
         : await adapter.createSession({ intentId: sessionId, bindingId, actor: { id: context.actorId, displayName: context.practitionerId ?? context.actorId },
-          context: boundContext, writable: access.writable, parentOrigin: input.parentOrigin, expiresAt, authorizationToken: this.callbackToken(sessionId) })
+          context: boundContext, writable: access.writable, parentOrigin: input.parentOrigin, expiresAt, authorizationToken: this.callbackToken(context, sessionId) })
     } else remote = await adapter.createSession({ intentId: sessionId, bindingId, actor: { id: context.actorId, displayName: context.practitionerId ?? context.actorId },
-      context: boundContext, writable: access.writable, parentOrigin: input.parentOrigin, expiresAt, authorizationToken: this.callbackToken(sessionId) })
+      context: boundContext, writable: access.writable, parentOrigin: input.parentOrigin, expiresAt, authorizationToken: this.callbackToken(context, sessionId) })
     if (Date.parse(remote.expiresAt) > Date.parse(expiresAt)) throw new PathologyReadingError('PATHOLOGY_READING_PROTOCOL_INVALID', 'The external session exceeds the authorized lifetime', 502)
-    const active = await this.authorize(this.callbackToken(sessionId))
+    const active = await this.authorize(this.callbackToken(context, sessionId))
     if (!active.active) throw new PathologyReadingError('PATHOLOGY_READING_CONTEXT_CHANGED', 'The reading context has changed', 403)
-    this.options.database.driver.prepare('UPDATE pathology_reading_session SET remote_json=? WHERE id=?').run(this.seal(remote), sessionId)
-    return this.response(this.row(sessionId), config, access.writable)
+    this.options.database.driver.prepare('UPDATE pathology_reading_session SET remote_json=? WHERE workspace_id=? AND epoch=? AND id=?').run(this.seal(remote), context.workspaceId, context.epoch, sessionId)
+    return this.response(this.scopedRow(context, sessionId), config, access.writable)
   }
 
-  private async bind(adapter: PathJxAdapter, input: Parameters<PathJxAdapter['bind']>[0]) {
+  private async bind(scope: ReadingScope, adapter: PathJxAdapter, input: Parameters<PathJxAdapter['bind']>[0]) {
     const remote = await adapter.bind(input)
-    this.options.database.driver.prepare("UPDATE pathology_reading_binding SET remote_json=?,state='ready' WHERE binding_id=?").run(JSON.stringify(remote), input.bindingId)
+    this.options.database.driver.prepare("UPDATE pathology_reading_binding SET remote_json=?,state='ready' WHERE workspace_id=? AND epoch=? AND binding_id=?").run(JSON.stringify(remote), scope.workspaceId, scope.epoch, input.bindingId)
   }
 
   private response(row: SessionRow, config: PathologyReadingConfig, writable: boolean) {
@@ -287,10 +304,41 @@ export class PathologyReadingService {
       launchToken: remote.launchToken, expiresAt: remote.expiresAt, writable })
   }
 
+  private confirmCommitted(row: SessionRow, event: Extract<z.infer<typeof readingAuthorizationInputSchema>, { event: 'committed' }>): boolean {
+    if (event.bindingId !== row.binding_id) return false
+    const scope = { workspaceId: row.workspace_id, epoch: row.epoch }
+    const binding = z.object({ state: z.string(), remote_revision: z.number().nullable() }).optional().parse(this.options.database.driver.prepare(
+      'SELECT state,remote_revision FROM pathology_reading_binding WHERE workspace_id=? AND epoch=? AND binding_id=?').get(row.workspace_id, row.epoch, row.binding_id))
+    if (!binding || binding.state === 'repair-required') return false
+    const original = z.object({ previous_revision: z.number(), confirmed_revision: z.number().nullable() }).optional().parse(
+      this.options.database.driver.prepare('SELECT previous_revision,confirmed_revision FROM pathology_reading_checkpoint_intent WHERE workspace_id=? AND epoch=? AND binding_id=? AND intent_id=?')
+        .get(row.workspace_id, row.epoch, row.binding_id, event.intentId))
+    if (!original || original.previous_revision !== event.previousRevision || event.revision < event.previousRevision
+      || (original.confirmed_revision !== null && (original.confirmed_revision !== event.revision || binding.remote_revision === null || binding.remote_revision < event.revision))) {
+      this.options.database.driver.prepare("UPDATE pathology_reading_binding SET state='repair-required' WHERE workspace_id=? AND epoch=? AND binding_id=?").run(row.workspace_id, row.epoch, row.binding_id)
+      return false
+    }
+    if (original.confirmed_revision === null) {
+      this.requireCheckpoint(scope, row.binding_id, event.previousRevision)
+      this.options.database.driver.transaction(() => {
+        this.options.database.driver.prepare('UPDATE pathology_reading_checkpoint_intent SET confirmed_revision=? WHERE workspace_id=? AND epoch=? AND binding_id=? AND intent_id=?')
+          .run(event.revision, row.workspace_id, row.epoch, row.binding_id, event.intentId)
+        this.options.database.driver.prepare('UPDATE pathology_reading_binding SET remote_revision=? WHERE workspace_id=? AND epoch=? AND binding_id=?').run(event.revision, row.workspace_id, row.epoch, row.binding_id)
+      })()
+    }
+    return true
+  }
+
   async authorize(token: string, event?: z.infer<typeof readingAuthorizationInputSchema>) {
-    const row = sessionRowSchema.optional().parse(this.options.database.driver.prepare('SELECT * FROM pathology_reading_session WHERE callback_token_hash=?')
-      .get(createHash('sha256').update(token).digest('hex')))
-    if (!row || row.closed || row.expires_at <= this.now().toISOString()) return { active: false, writable: false }
+    const rows = z.array(sessionRowSchema).parse(this.options.database.driver.prepare('SELECT * FROM pathology_reading_session WHERE callback_token_hash=? LIMIT 2')
+      .all(createHash('sha256').update(token).digest('hex')))
+    const row = rows.length === 1 ? rows[0] : undefined
+    if (!row) return { active: false, writable: false }
+    if (event?.event === 'committed') {
+      try { return { active: this.confirmCommitted(row, event), writable: false } }
+      catch { return { active: false, writable: false } }
+    }
+    if (row.closed || row.expires_at <= this.now().toISOString()) return { active: false, writable: false }
     const stored = actorSchema.parse(JSON.parse(row.actor_json)), bound = readingContextSchema.parse(JSON.parse(row.context_json))
     const context: ActorContext = { actorId: stored.actorId, workspaceId: stored.workspaceId, epoch: stored.epoch,
       roleCode: stored.roleCode, scenarioRunId: stored.scenarioRunId,
@@ -301,7 +349,7 @@ export class PathologyReadingService {
     const config = this.config(row.workspace_id)
     if (!config?.enabled || config.version !== row.config_version || !this.options.identity.humanSessionCurrent(row.auth_session_id, context)) return { active: false, writable: false }
     const binding = z.object({ state: z.string() }).optional().parse(this.options.database.driver.prepare(
-      'SELECT state FROM pathology_reading_binding WHERE binding_id=?').get(row.binding_id))
+      'SELECT state FROM pathology_reading_binding WHERE workspace_id=? AND epoch=? AND binding_id=?').get(row.workspace_id, row.epoch, row.binding_id))
     if (!binding || binding.state === 'repair-required') return { active: false, writable: false }
     try {
       const access = this.requiredAccess(context, bound.requestId, bound.reportId), report = access.report
@@ -311,28 +359,11 @@ export class PathologyReadingService {
       if (event) {
         if (event.bindingId !== row.binding_id) return { active: false, writable: false }
         if (event.event === 'authorize') {
-          this.requireCheckpoint(row.binding_id, event.revision)
+          this.requireCheckpoint(context, row.binding_id, event.revision)
           if (event.intentId !== undefined && active && access.writable) {
             this.options.database.driver.prepare(`INSERT INTO pathology_reading_checkpoint_intent
-              (binding_id,intent_id,previous_revision) VALUES (?,?,?) ON CONFLICT(binding_id,intent_id) DO NOTHING`)
-              .run(row.binding_id, event.intentId, event.revision)
-          }
-        } else {
-          const original = z.object({ previous_revision: z.number(), confirmed_revision: z.number().nullable() }).optional().parse(
-            this.options.database.driver.prepare('SELECT previous_revision,confirmed_revision FROM pathology_reading_checkpoint_intent WHERE binding_id=? AND intent_id=?')
-              .get(row.binding_id, event.intentId))
-          if (!original || original.previous_revision !== event.previousRevision || event.revision < event.previousRevision
-            || (original.confirmed_revision !== null && original.confirmed_revision !== event.revision)) {
-            this.options.database.driver.prepare("UPDATE pathology_reading_binding SET state='repair-required' WHERE binding_id=?").run(row.binding_id)
-            return { active: false, writable: false }
-          }
-          if (original.confirmed_revision === null) {
-            this.requireCheckpoint(row.binding_id, event.previousRevision)
-            this.options.database.driver.transaction(() => {
-              this.options.database.driver.prepare('UPDATE pathology_reading_checkpoint_intent SET confirmed_revision=? WHERE binding_id=? AND intent_id=?')
-                .run(event.revision, row.binding_id, event.intentId)
-              this.options.database.driver.prepare('UPDATE pathology_reading_binding SET remote_revision=? WHERE binding_id=?').run(event.revision, row.binding_id)
-            })()
+              (workspace_id,epoch,binding_id,intent_id,previous_revision) VALUES (?,?,?,?,?) ON CONFLICT(workspace_id,epoch,binding_id,intent_id) DO NOTHING`)
+              .run(row.workspace_id, row.epoch, row.binding_id, event.intentId, event.revision)
           }
         }
       }
@@ -341,7 +372,7 @@ export class PathologyReadingService {
   }
 
   async state(context: ActorContext, id: string) {
-    const row = this.scopedRow(context, id), active = await this.authorize(this.callbackToken(row.id))
+    const row = this.scopedRow(context, id), active = await this.authorize(this.callbackToken(context, row.id))
     return pathologyReadingSessionStateSchema.parse({ id, ...active, displayed: active.active && row.displayed === 1, expiresAt: row.expires_at })
   }
 
@@ -351,10 +382,10 @@ export class PathologyReadingService {
     for (const key of ['sessionId', 'requestId', 'reportId', 'reportVersion', 'generation'] as const) {
       if (message[key] !== original[key]) throw new PathologyReadingError('PATHOLOGY_READING_EVENT_INVALID', 'The reading event belongs to another context', 403)
     }
-    const active = await this.authorize(this.callbackToken(id))
+    const active = await this.authorize(this.callbackToken(context, id))
     if (!active.active || message.type !== 'displayed') throw new PathologyReadingError('PATHOLOGY_READING_CONTEXT_CHANGED', 'The reading context is no longer active', 403)
-    await this.readable(row.binding_id, config)
-    this.options.database.driver.prepare('UPDATE pathology_reading_session SET displayed=1 WHERE id=? AND closed=0').run(id)
+    await this.readable(context, row.binding_id, config)
+    this.options.database.driver.prepare('UPDATE pathology_reading_session SET displayed=1 WHERE workspace_id=? AND epoch=? AND id=? AND closed=0').run(context.workspaceId, context.epoch, id)
     return this.state(context, id)
   }
 
@@ -367,8 +398,8 @@ export class PathologyReadingService {
     for (const row of rows) {
       const bound = readingContextSchema.parse(JSON.parse(row.context_json))
       if (bound.requestId !== requestId || bound.reportId !== reportId) continue
-      if (!(await this.authorize(this.callbackToken(row.id))).active) continue
-      try { await this.readable(row.binding_id, this.enabled(context.workspaceId)); return true } catch { return false }
+      if (!(await this.authorize(this.callbackToken(context, row.id))).active) continue
+      try { await this.readable(context, row.binding_id, this.enabled(context.workspaceId)); return true } catch { return false }
     }
     return false
   }
@@ -377,7 +408,7 @@ export class PathologyReadingService {
     const row = this.scopedRow(context, id)
     this.options.commands.execute({ context, contextRequirement: 'current', dataSchema: z.object({ id: z.uuid() }).strict(), expectedVersions: {},
       idempotencyKey, input: { id }, operation: 'pathology-reading.close' }, () => {
-      this.options.database.driver.prepare('UPDATE pathology_reading_session SET closed=1,displayed=0 WHERE id=?').run(id)
+      this.options.database.driver.prepare('UPDATE pathology_reading_session SET closed=1,displayed=0 WHERE workspace_id=? AND epoch=? AND id=?').run(context.workspaceId, context.epoch, id)
       return { data: { id }, effects: [] }
     })
     const config = this.config(context.workspaceId)
