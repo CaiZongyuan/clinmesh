@@ -32,7 +32,7 @@ export const externalPathologyAssetOutputSchema = z.object({
   instanceId: z.string().min(1).max(256),
   kind: z.literal('pathjx'),
   organ: z.enum(['colorectal', 'thyroid']),
-  specimenType: z.string().min(1).max(128),
+  specimenType: z.enum(['biopsy', 'resection']),
   stain: z.literal('HE'),
 }).strict()
 export type ExternalPathologyAssetOutput = z.infer<typeof externalPathologyAssetOutputSchema>

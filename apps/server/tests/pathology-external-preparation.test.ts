@@ -19,7 +19,7 @@ const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
 
 function asset(organ: 'colorectal' | 'thyroid'): ExternalPathologyAsset {
-  const output = { kind: 'pathjx' as const, instanceId: 'synthetic-pathjx-instance', assetKey: `synthetic-${organ}`, contentHash: (organ === 'thyroid' ? 'a' : 'b').repeat(64), organ, specimenType: organ === 'thyroid' ? 'surgical_resection' : 'polypectomy', stain: 'HE' as const }
+  const output = { kind: 'pathjx' as const, instanceId: 'synthetic-pathjx-instance', assetKey: `synthetic-${organ}`, contentHash: (organ === 'thyroid' ? 'a' : 'b').repeat(64), organ, specimenType: 'resection' as const, stain: 'HE' as const }
   const report = { revision: 1, diagnosis: `${organ === 'thyroid' ? '甲状腺结节性增生' : '结直肠管状腺瘤'}（合成测试报告）。`, immunohistochemistry: '本次未提供免疫组化切片。', microscopy: '合成测试：既往标本 H&E 切片。', note: '完全合成的接入测试，不作医学诊断。' }
   return externalPathologyCatalogSchema.parse({ packId: 'synthetic-pathjx-slides', ruleVersion: 1, assets: [{
     assetId: `synthetic-${organ}-slide`, diagnosis: { system: 'http://snomed.info/sct', code: organ === 'thyroid' ? '237495005' : '68496003' },

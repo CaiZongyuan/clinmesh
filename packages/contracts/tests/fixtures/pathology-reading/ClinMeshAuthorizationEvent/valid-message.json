@@ -1,0 +1,18 @@
+{
+  "schema": "ClinMeshAuthorizationEvent",
+  "expect": "valid",
+  "checks": "all",
+  "enforcers": [
+    "platform",
+    "executor",
+    "tile_service"
+  ],
+  "context": {},
+  "value": {
+    "bindingId": "binding-a",
+    "previousRevision": 0,
+    "revision": 2,
+    "intentId": "review-a",
+    "event": "committed"
+  }
+}

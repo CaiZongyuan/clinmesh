@@ -35,6 +35,8 @@ export const externalPathologyAssetSchema = z.object({
 }).strict().superRefine((asset, context) => {
   const expectedOrgan = asset.examCode === 'thyroid-slide-consultation' ? 'thyroid' : 'colorectal'
   if (asset.output.organ !== expectedOrgan) context.addIssue({ code: 'custom', message: 'The slide organ must match its consultation', path: ['output', 'organ'] })
+  const expectedSpecimen = asset.sourceSpecimenType === 'prior-colorectal-biopsy' ? 'biopsy' : 'resection'
+  if (asset.output.specimenType !== expectedSpecimen) context.addIssue({ code: 'custom', message: 'The external specimen must match the frozen source procedure', path: ['output', 'specimenType'] })
   if (asset.examCode === 'thyroid-slide-consultation' && asset.sourceSpecimenType !== 'prior-thyroid-surgical-specimen') {
     context.addIssue({ code: 'custom', message: 'Thyroid consultations only accept prior surgical specimens', path: ['sourceSpecimenType'] })
   }

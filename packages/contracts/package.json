@@ -47,7 +47,8 @@
     "./order-set-templates": "./src/order-set-templates.ts",
     "./clinical-scores": "./src/clinical-scores.ts",
     "./clinical-quality": "./src/clinical-quality.ts",
-    "./guideline-topics": "./src/guideline-topics.ts"
+    "./guideline-topics": "./src/guideline-topics.ts",
+    "./pathology-reading": "./src/pathology-reading.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

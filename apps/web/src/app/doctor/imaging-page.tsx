@@ -50,7 +50,7 @@ interface ImagingRequestState {
 export interface ImagingViewState {
   isOpen(requestId: string): boolean
   isShown(diagnosticReportId: string): boolean
-  markShown(diagnosticReportId: string): void
+  markShown(diagnosticReportId: string, shown?: boolean): void
   setOpen(requestId: string, open: boolean): void
 }
 
@@ -63,8 +63,9 @@ export function useImagingViewState(scope: string): ImagingViewState {
     return {
       isOpen: requestId => current.open.includes(requestId),
       isShown: diagnosticReportId => current.shown.includes(diagnosticReportId),
-      markShown: diagnosticReportId => setState((previous) => {
+      markShown: (diagnosticReportId, shown = true) => setState((previous) => {
         const value = scoped(previous)
+        if (!shown) return value.shown.includes(diagnosticReportId) ? { ...value, shown: value.shown.filter(id => id !== diagnosticReportId) } : value
         return value.shown.includes(diagnosticReportId) ? value : { ...value, shown: [...value.shown, diagnosticReportId] }
       }),
       setOpen: (requestId, open) => setState((previous) => {

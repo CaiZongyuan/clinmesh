@@ -121,7 +121,7 @@ _Avoid_: Asset link in clinical DTO, study reference
 _Avoid_: Imaging Asset, DICOM file, source study
 
 **Pathology Consultation**:
-门诊医生为既往接受过乳腺手术的患者开立的切片病理会诊：患者携带既往手术的 H&E 切片，由本院病理科以受控系统执行者身份出具会诊报告。它不是本院活检、冰冻切片或细胞学检查。
+门诊医生对既往标本的单张 H&E 切片开立的会诊，覆盖乳腺手术、结直肠内镜活检或息肉切除及甲状腺手术标本，由本院病理科以受控系统执行者身份出具会诊报告。它不是本院活检、冰冻切片或细胞学检查。
 _Avoid_: Biopsy order, laboratory test, frozen section
 
 **Slide Asset**:

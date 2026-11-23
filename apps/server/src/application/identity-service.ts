@@ -246,6 +246,24 @@ export class IdentityService {
     return this.#doctorTaskContextStatus(context, operations, false)
   }
 
+  /** 外部阅片授权持续绑定原人类登录及所选岗位，注销或切换岗位后不能靠旧授权续签。 */
+  humanSessionCurrent(sessionId: string, context: ActorContext): boolean {
+    if (context.agentGrantId !== undefined || this.modelTaskContextStatus(context) !== 'active') return false
+    return this.#database.driver.prepare(`SELECT 1 FROM session
+      JOIN workspace_membership AS membership ON membership.user_id=session.user_id
+      JOIN membership_practitioner_role AS granted ON granted.membership_id=membership.membership_id
+      LEFT JOIN auth_session_context AS selected ON selected.session_id=session.id
+      WHERE session.id=? AND session.expires_at>? AND session.user_id=membership.user_id
+        AND granted.practitioner_role_id=? AND membership.actor_id=? AND membership.workspace_id=? AND membership.status='active'
+        AND (selected.practitioner_role_id=granted.practitioner_role_id OR (selected.session_id IS NULL AND granted.practitioner_role_id=(
+          SELECT candidate.practitioner_role_id FROM membership_practitioner_role AS candidate
+          JOIN workspace_membership AS member ON member.membership_id=candidate.membership_id
+          JOIN practitioner_role_binding AS role ON role.workspace_id=candidate.workspace_id AND role.practitioner_role_id=candidate.practitioner_role_id
+          WHERE member.user_id=session.user_id AND member.status='active' AND role.active=1
+          ORDER BY member.workspace_id,candidate.practitioner_role_id LIMIT 1)))`)
+      .get(sessionId, this.#now().getTime(), context.practitionerRoleId ?? '', context.actorId, context.workspaceId) !== undefined
+  }
+
   #doctorTaskContextStatus(context: ActorContext, operations: readonly string[], doctorOnly = true): 'active' | 'inactive' | 'superseded' {
     try {
       this.#workspaces.assertCurrent(context, context.scenarioRunId)

@@ -20,7 +20,7 @@ const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
 
 for (const organ of ['colorectal', 'thyroid'] as const) it(`completes the ${organ} public consultation lifecycle with frozen original fee and same-slide correction`, async () => {
-  const output = { kind: 'pathjx' as const, instanceId: 'synthetic-instance', assetKey: `synthetic-${organ}`, contentHash: (organ === 'thyroid' ? 'a' : 'b').repeat(64), organ, specimenType: organ === 'thyroid' ? 'surgical_resection' : 'polypectomy', stain: 'HE' as const }
+  const output = { kind: 'pathjx' as const, instanceId: 'synthetic-instance', assetKey: `synthetic-${organ}`, contentHash: (organ === 'thyroid' ? 'a' : 'b').repeat(64), organ, specimenType: 'resection' as const, stain: 'HE' as const }
   const report = { revision: 1, diagnosis: `${organ} 合成会诊诊断`, immunohistochemistry: '未提供免疫组化切片。', microscopy: '既往标本 H&E 组织，合成测试所见。', note: '纯合成测试，不作医学诊断。' }
   const review = (value: typeof report) => ({ ...value, review: { conclusion: 'approved' as const, contentHash: externalPathologyReportHash({ output }, value), reviewedAt: '2026-11-20T00:00:00Z', reviewer: 'Synthetic Reviewer' } })
   const asset = externalPathologyCatalogSchema.parse({ packId: 'synthetic-pathjx-slides', ruleVersion: 1, assets: [{

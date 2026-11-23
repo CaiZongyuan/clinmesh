@@ -157,7 +157,10 @@ import {
 } from './application/imaging-preparation-service.ts'
 import type { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
 import { SyntheticCaseVisitError } from './application/synthetic-case-visit-service.ts'
-import { AuthoredCasePackError } from './application/scenario-data/authored-case-pack-service.ts'
+import { AuthoredCasePackError, type AuthoredCasePackService } from './application/scenario-data/authored-case-pack-service.ts'
+import type { PathologyReadingService } from './application/pathology-reading-service.ts'
+import { PathologyReadingError } from './infrastructure/pathology-reading/pathjx-adapter.ts'
+import { installPathologyReadingRoutes } from './pathology-reading-routes.ts'
 import { PciCaseSourceError } from './application/scenario-data/pci-case-source.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
 import { WorkflowError } from './application/workflow-service.ts'
@@ -192,6 +195,8 @@ interface FhirRuntime {
 }
 
 export interface CreateAppOptions {
+  pathologyReading?: PathologyReadingService
+  pathologyCasePack?: AuthoredCasePackService
   dshBridgeSecret?: string
   modelUsage?: ModelUsageService
   inpatient?: InpatientService
@@ -288,6 +293,7 @@ function apiErrorResponse(
   }
     if (
       error instanceof IdentityError
+      || error instanceof PathologyReadingError
       || error instanceof ClinicalQualityReadError
       || error instanceof ModelUsagePolicyError
       || error instanceof InsuranceError
@@ -461,6 +467,25 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       },
     }, 500)
   })
+
+  if (options.identity && options.pathologyReading) installPathologyReadingRoutes(app, options.identity, options.pathologyReading, apiErrorResponse)
+  if (options.identity && options.pathologyCasePack) {
+    const identity = options.identity, pack = options.pathologyCasePack
+    app.get('/api/sim/v1/admin/pathology-case-pack', async context => {
+      context.header('Cache-Control', 'private, no-store')
+      try { return context.json(pack.read((await identity.resolveSessionContext(context.req.raw.headers)).actor)) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/sim/v1/admin/pathology-case-pack/prepare', async context => {
+      context.header('Cache-Control', 'private, no-store')
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = authoredCasePackPrepareRequestSchema.parse(await context.req.json())
+        return context.json(pack.prepare((await identity.resolveSessionContext(context.req.raw.headers)).actor, body.input,
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+  }
 
   app.get('/api/health', (context) => {
     const response: HealthResponse = {
@@ -3499,7 +3524,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
               expectedVersions: body.expectedVersions,
               idempotencyKey: idempotencyKey(context),
               requestId,
-              studyAvailable: await results.studyAvailable(context_.workspaceId, context_.epoch, requestId),
+              studyAvailable: await options.pathologyReading?.acknowledgementAvailable(context_, requestId, context.req.param('diagnosticReportId'))
+                ?? await results.studyAvailable(context_.workspaceId, context_.epoch, requestId),
             }))
           } catch (error) {
             return apiErrorResponse(context, error)

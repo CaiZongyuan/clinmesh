@@ -83,6 +83,15 @@ export const docsPages: DocsPage[] = [
     outline: [2, 3],
   },
   {
+    source: 'docs/architecture/pathology-reading.md',
+    route: 'architecture/pathology-reading.md',
+    label: '外部病理阅片',
+    sidebar: 'architecture',
+    section: 'Architecture',
+    order: 5.5,
+    outline: [2, 3],
+  },
+  {
     source: 'docs/architecture/storage.md',
     route: 'architecture/storage.md',
     label: '存储与事务',

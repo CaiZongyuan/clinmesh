@@ -24,6 +24,7 @@ import { WorkflowService } from './application/workflow-service.ts'
 import { OutboxDispatcher } from './application/outbox-dispatcher.ts'
 import { z } from 'zod'
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import {
   applyMigrations,
   openClinMeshDatabase,
@@ -74,6 +75,11 @@ import {
   PathologyResultUnavailableError,
 } from './application/pathology-result-resolver.ts'
 import { PathologySlideReader } from './application/pathology-slide-reader.ts'
+import { PathologyReadingService } from './application/pathology-reading-service.ts'
+import type { PathologyReadingDeployment } from './infrastructure/pathology-reading/pathjx-adapter.ts'
+import { externalPathologyCatalogSchema, type PathologyExternalAssetSource } from './application/pathology-external-catalog.ts'
+import { AuthoredCasePackService } from './application/scenario-data/authored-case-pack-service.ts'
+import { compiledPathologyAuthoredCasePack } from './application/scenario-data/pathology-authored-case-pack.ts'
 import {
   ImagingResultResolver,
   ImagingResultUnavailableError,
@@ -162,6 +168,9 @@ export interface CreateClinMeshRuntimeOptions {
   imagingCatalogDirectory?: string
   pathologyAssetDirectory?: string
   pathologyCatalogDirectory?: string
+  pathologyReading?: PathologyReadingDeployment
+  pathologyExternalSource?: PathologyExternalAssetSource
+  pathologyExternalCatalogPath?: string
   migrationMode: 'apply' | 'verify'
   chatCompletionsProvider?: JsonChatCompletionsProvider
   investigationModel?: string
@@ -369,11 +378,28 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       assetDirectory: options.pathologyAssetDirectory,
       catalogDirectory: options.pathologyCatalogDirectory,
     })
+    const identity = new IdentityService(database, {
+      authBaseUrl: options.authBaseUrl,
+      authSecret: options.authSecret,
+      commands,
+      ...clockOptions,
+      trustedOrigins: options.trustedOrigins,
+    })
     const pathologyPreparations = new PathologyPreparationRepository(database)
+    const pathologyReading = new PathologyReadingService({ database, commands, identity, secret: options.authSecret,
+      ...clockOptions, ...(options.pathologyReading === undefined ? {} : { deployment: options.pathologyReading }),
+      access: (context, requestId, reportId) => workflow.pathology.readingAccess(context, requestId, reportId),
+    })
+    const pathologyExternalSource: PathologyExternalAssetSource | undefined = options.pathologyExternalSource
+      ?? (options.pathologyExternalCatalogPath === undefined ? undefined : {
+        catalog: async () => externalPathologyCatalogSchema.parse(JSON.parse(await readFile(options.pathologyExternalCatalogPath!, 'utf8'))),
+        available: (asset, workspaceId) => pathologyReading.assetAvailable(workspaceId, asset),
+      })
     const pathologyResults = new PathologyResultResolver({
       database,
       library: pathologyLibrary,
       preparations: pathologyPreparations,
+      ...(pathologyExternalSource === undefined ? {} : { external: pathologyExternalSource }),
     })
     const pathologyPreparation = new PathologyPreparationService({
       cases: syntheticCases,
@@ -381,6 +407,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       library: pathologyLibrary,
       preparations: pathologyPreparations,
       profiles: syntheticPatientProfiles,
+      ...(pathologyExternalSource === undefined ? {} : { external: pathologyExternalSource }),
     })
     const scenarioData = new ScenarioDataService({
       personas: patientPersonas,
@@ -435,13 +462,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const examinationResults = new ExaminationResultResolver(database)
     workflow.imaging.ensureServices()
     workflow.pathology.ensureServices()
-    const identity = new IdentityService(database, {
-      authBaseUrl: options.authBaseUrl,
-      authSecret: options.authSecret,
-      commands,
-      ...clockOptions,
-      trustedOrigins: options.trustedOrigins,
-    })
     await identity.seedSyntheticAccounts({
       password: options.demoPassword,
       workspaceId: 'workspace-demo',
@@ -825,6 +845,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           })
         }, options.autoDispatchIntervalMs)
     const app = createApp({
+      pathologyReading,
+      pathologyCasePack: new AuthoredCasePackService(commands, syntheticPatientProfiles, syntheticCases, patientPersonas, compiledPathologyAuthoredCasePack),
       modelUsage,
       ...(options.dshBridgeSecret === undefined ? {} : { dshBridgeSecret: options.dshBridgeSecret }),
       inpatient,

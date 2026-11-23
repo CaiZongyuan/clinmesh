@@ -15,7 +15,7 @@ import { payOutpatientInvestigation } from './pay-outpatient-investigation.ts'
 const instanceId = 'synthetic-reading-instance'
 const endpoint = 'http://synthetic-pathjx.invalid'
 const output = { kind: 'pathjx' as const, instanceId, assetKey: 'synthetic-colorectal-slide', contentHash: 'b'.repeat(64),
-  organ: 'colorectal' as const, specimenType: 'polypectomy', stain: 'HE' as const }
+  organ: 'colorectal' as const, specimenType: 'resection' as const, stain: 'HE' as const }
 const report = { revision: 1, diagnosis: '合成结直肠切片会诊诊断', microscopy: '合成 H&E 测试所见。', immunohistochemistry: '未提供免疫组化切片。', note: '纯合成测试，不作医学诊断。' }
 const reviewed = (value: typeof report) => ({ ...value, review: { conclusion: 'approved' as const,
   contentHash: externalPathologyReportHash({ output }, value), reviewedAt: '2026-11-20T00:00:00Z', reviewer: 'Synthetic Reviewer' } })

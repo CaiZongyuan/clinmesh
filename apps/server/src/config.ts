@@ -53,6 +53,11 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_IMAGING_CATALOG_DIRECTORY: z.string().trim().min(1).optional(),
   CLINMESH_PATHOLOGY_ASSET_DIRECTORY: z.string().trim().min(1).optional(),
   CLINMESH_PATHOLOGY_CATALOG_DIRECTORY: z.string().trim().min(1).optional(),
+  CLINMESH_PATHOLOGY_READING_ENDPOINT: httpUrlSchema.optional(),
+  CLINMESH_PATHOLOGY_READING_VIEWER_ORIGIN: z.url().optional(),
+  CLINMESH_PATHOLOGY_READING_INSTANCE_ID: z.string().trim().min(1).optional(),
+  CLINMESH_PATHOLOGY_READING_TOKEN: z.string().min(32).optional(),
+  CLINMESH_PATHOLOGY_EXTERNAL_CATALOG_PATH: z.string().trim().min(1).optional(),
   CLINMESH_PORT: z.string()
     .regex(/^\d+$/)
     .default('51868')
@@ -65,6 +70,11 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_TRUSTED_ORIGINS: z.string().trim().min(1).optional(),
   CLINMESH_WEB_ROOT: z.string().trim().min(1).optional(),
 }).superRefine((environment, context) => {
+  const reading = [environment.CLINMESH_PATHOLOGY_READING_ENDPOINT, environment.CLINMESH_PATHOLOGY_READING_VIEWER_ORIGIN,
+    environment.CLINMESH_PATHOLOGY_READING_INSTANCE_ID, environment.CLINMESH_PATHOLOGY_READING_TOKEN]
+  if (reading.some(value => value !== undefined) && reading.some(value => value === undefined)) {
+    context.addIssue({ code: 'custom', path: ['CLINMESH_PATHOLOGY_READING_ENDPOINT'], message: 'Pathology reading endpoint, viewer origin, instance and token must be configured together' })
+  }
   if ((environment.CLINMESH_DRG_RULES_DIRECTORY === undefined) !== (environment.CLINMESH_DRG_RULES_REVIEW_PATH === undefined)) {
     context.addIssue({ code: 'custom', path: ['CLINMESH_DRG_RULES_REVIEW_PATH'],
       message: 'DRG runtime rules require both a package directory and an explicit review file' })
@@ -122,6 +132,8 @@ export interface ServerConfig {
   imagingCatalogDirectory: string
   pathologyAssetDirectory: string
   pathologyCatalogDirectory: string
+  pathologyReading?: { endpoint: string; viewerOrigin: string; instanceId: string; serviceToken: string; trustedOrigins: string[] }
+  pathologyExternalCatalogPath?: string
   port: number
   referenceDatabasePath?: string
   referenceReleaseId?: string
@@ -195,6 +207,7 @@ export function readServerEnvironment(
     'CLINMESH_IMAGING_CATALOG_DIRECTORY',
     'CLINMESH_PATHOLOGY_ASSET_DIRECTORY',
     'CLINMESH_PATHOLOGY_CATALOG_DIRECTORY',
+    'CLINMESH_PATHOLOGY_EXTERNAL_CATALOG_PATH',
     'CLINMESH_REFERENCE_DATABASE_PATH',
     'CLINMESH_WEB_ROOT',
   ] as const) {
@@ -275,6 +288,12 @@ export function readServerConfig(
     imagingCatalogDirectory: parsed.CLINMESH_IMAGING_CATALOG_DIRECTORY ?? defaultImagingCatalogDirectory,
     pathologyAssetDirectory: parsed.CLINMESH_PATHOLOGY_ASSET_DIRECTORY ?? defaultPathologyAssetDirectory,
     pathologyCatalogDirectory: parsed.CLINMESH_PATHOLOGY_CATALOG_DIRECTORY ?? defaultPathologyCatalogDirectory,
+    ...(parsed.CLINMESH_PATHOLOGY_EXTERNAL_CATALOG_PATH === undefined ? {} : { pathologyExternalCatalogPath: parsed.CLINMESH_PATHOLOGY_EXTERNAL_CATALOG_PATH }),
+    ...(parsed.CLINMESH_PATHOLOGY_READING_ENDPOINT && parsed.CLINMESH_PATHOLOGY_READING_VIEWER_ORIGIN && parsed.CLINMESH_PATHOLOGY_READING_INSTANCE_ID && parsed.CLINMESH_PATHOLOGY_READING_TOKEN
+      ? { pathologyReading: { endpoint: parsed.CLINMESH_PATHOLOGY_READING_ENDPOINT, viewerOrigin: parsed.CLINMESH_PATHOLOGY_READING_VIEWER_ORIGIN,
+        instanceId: parsed.CLINMESH_PATHOLOGY_READING_INSTANCE_ID, serviceToken: parsed.CLINMESH_PATHOLOGY_READING_TOKEN,
+        trustedOrigins: [new URL(parsed.CLINMESH_PATHOLOGY_READING_ENDPOINT).origin, new URL(parsed.CLINMESH_PATHOLOGY_READING_VIEWER_ORIGIN).origin] } }
+      : {}),
     port: parsed.CLINMESH_PORT,
     ...(parsed.CLINMESH_REFERENCE_DATABASE_PATH === undefined
       ? {}

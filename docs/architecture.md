@@ -10,6 +10,7 @@ ClinMesh 是面向 Agent 的中国公立医院仿真 HIS，当前交付 standalo
 | 修改 FHIR 能力、资源映射、术语、Search 或 HIS Command 接口 | [FHIR 与 Command 合同](architecture/fhir-and-commands.md) |
 | 修改 DSH Surface、Page Context、Tool、人工审阅或 Agent CLI | [Agent 接入与能力边界](architecture/agent-integration.md) |
 | 修改门诊、文书、医嘱、检查、处方、收费或其他临床状态流 | [临床业务流程](architecture/clinical-workflows.md) |
+| 修改 PathJX 受限阅片、单片绑定、授权回调、修订检查点或恢复 | [可插拔病理阅片](architecture/pathology-reading.md) |
 | 修改 CHS-DRG 条件提取、规则包、分组计算或独立对照 | [DRG 条件分组](architecture/drg-grouping.md) |
 | 修改 DRG 离线精简物理储存、无损读取或维护命令 | [DRG 离线资料储存合同](drg-reference-storage.md) |
 | 修改存储、事务、outbox、标识符、数据库运维或迁移 | [存储与事务](architecture/storage.md) |

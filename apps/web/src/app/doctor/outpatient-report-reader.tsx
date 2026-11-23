@@ -22,30 +22,37 @@ import { reportDraftKey, reportIdentity, reportRecords, reportScope, reportSnaps
   type ReportRecord, type ReportRow } from './outpatient-report-reader-store.ts'
 import { useOutpatientReportWriter } from './outpatient-report-writer.ts'
 import { ReportText as PathologyReportText } from './pathology-page.tsx'
+import { PathologyReadingViewer } from './pathology-reading-viewer.tsx'
+import { closePathologyReading, getPathologyReading } from '../pathology-reading-api.ts'
 
 interface ReaderProps { context: OutpatientInvestigationActionContext; detail: DoctorCaseDetail; locale: WorkspaceLocale; readOnly: boolean }
 export function OutpatientReportReader(props: ReaderProps) {
   return <ReportReaderSession key={reportDraftKey(reportScope(props.context))} {...props} />
 }
-function ReportPreview({ record, locale, onReady }: { record: ReportRecord; locale: WorkspaceLocale; onReady: (ready: boolean) => void }) {
+function ReportPreview({ record, locale, onReady, onSession }: { record: ReportRecord; locale: WorkspaceLocale; onReady: (ready: boolean) => void; onSession: (id: string, identity: string) => void }) {
   const report = record.request.report
+  const pathology = 'service' in record.request && 'sourceProcedure' in record.request ? record.request : undefined
+  const external = pathology !== undefined && pathology.service.examCode !== 'breast-slide-consultation'
   const studyId = report && 'studyId' in report ? report.studyId : undefined
-  const study = useQuery({ enabled: studyId !== undefined, gcTime: 0, queryKey: ['outpatient-reader-study', studyId ?? 'none'], queryFn: ({ signal }) => getImagingStudy(studyId!, signal) })
+  const study = useQuery({ enabled: studyId !== undefined && !external, gcTime: 0, queryKey: ['outpatient-reader-study', studyId ?? 'none'], queryFn: ({ signal }) => getImagingStudy(studyId!, signal) })
   const source = useMemo<ImagingViewerSource | undefined>(() => study.data === undefined || studyId === undefined ? undefined
     : { study: study.data, loadBlock: (path, signal) => getImagingStudyBlock(studyId, path, signal) }, [study.data, studyId])
   const shown = useRef(false)
   useEffect(() => {
+    if (external) return
     if (report && 'results' in report) onReady(true)
     else if (study.isError || study.data?.available !== true) { shown.current = false; onReady(false) }
     else if (shown.current) onReady(true)
-  }, [report, study.isError, study.data?.available, onReady])
+  }, [report, study.isError, study.data?.available, onReady, external])
   const frameShown = useCallback(() => { shown.current = true; onReady(study.data?.available === true && !study.isError) }, [onReady, study.data?.available, study.isError])
   if (!report) return null
   return <article aria-label={locale === 'zh-CN' ? '当前报告全文' : 'Current full report'} className="min-w-0 space-y-3">
     <h3 className="font-semibold">{record.title}</h3>
     {'technique' in report && 'results' in report ? <ExaminationReportText report={report} locale={locale} /> : 'results' in report ? <LaboratoryReportVersion current locale={locale} messages={getWorkspaceMessages(locale)} report={report} />
       : 'microscopy' in report ? <PathologyReportText locale={locale} report={report} /> : <ImagingReportText locale={locale} report={report} />}
-    {studyId === undefined ? null : study.isPending ? <p role="status">{locale === 'zh-CN' ? '正在读取影像或切片' : 'Loading images or slides'}</p>
+    {external && pathology?.report ? <PathologyReadingViewer request={pathology} report={pathology.report} locale={locale} onReady={onReady}
+      onSession={id => onSession(id, reportIdentity(reportSnapshot(record)!))} retainSession />
+      : studyId === undefined ? null : study.isPending ? <p role="status">{locale === 'zh-CN' ? '正在读取影像或切片' : 'Loading images or slides'}</p>
       : study.isError || !source || !source.study.available ? <Alert variant="destructive">
         <AlertTitle>{locale === 'zh-CN' ? '影像或切片暂不可读' : 'Images or slides unavailable'}</AlertTitle>
         <AlertDescription>
@@ -71,19 +78,35 @@ const messageCopy = {
 const outcomeCopy = { success: ['已确认已阅', 'Acknowledged'], rejected: ['未完成，请重新核对', 'Not completed; review again'], unknown: ['结果待查明，后续项目已停止', 'Result unknown; subsequent items stopped'], waiting: ['尚未办理', 'Not yet processed'] } as const
 function recordId(record: ReportRecord) { return `${record.kind}:${record.request.id}` }
 function ReportReaderSession({ context, detail, locale, readOnly }: ReaderProps) {
+  const readingSessions = useRef(new Set<string>())
+  const [retained, setRetained] = useState<Array<{ id: string; identity: string }>>([])
+  const retainSession = useCallback((id: string, identity: string) => {
+    readingSessions.current.add(id)
+    setRetained(previous => [...previous.filter(item => item.identity !== identity), { id, identity }])
+  }, [])
+  const closeReadings = useCallback(() => {
+    for (const id of readingSessions.current) void closePathologyReading(id, newIdempotencyKey()).catch(() => undefined)
+    readingSessions.current.clear()
+  }, [])
+  useEffect(() => () => closeReadings(), [closeReadings])
   const text = (copy: readonly [string, string]) => copy[locale === 'zh-CN' ? 0 : 1]
   const writer = useOutpatientReportWriter(context, readOnly), records = reportRecords(detail, locale)
   const [open, setOpen] = useState(false), [selectedId, setSelectedId] = useState<string | null>(null), [ready, setReady] = useState<Set<string>>(() => new Set())
+  const readingStates = useQueries({ queries: retained.map(item => ({ enabled: open,
+    queryKey: ['outpatient-reader-reading-session', item.id], gcTime: 0, refetchInterval: 5000,
+    queryFn: ({ signal }: { signal: AbortSignal }) => getPathologyReading(item.id, signal) })) })
+  const invalidReadings = retained.filter((_, index) => readingStates[index]?.isError || readingStates[index]?.data?.active === false).map(item => item.identity)
   const [query, setQuery] = useState(''), [page, setPage] = useState(0), [filter, setFilter] = useState<'all' | 'unread' | 'progress'>('all')
   const [review, setReview] = useState<ReportRow[] | null>(null), [discard, setDiscard] = useState(false)
   // Keep only already displayed studies observed while switching reports. Metadata cannot grant reading eligibility.
   const displayedStudies = records.flatMap(record => {
     const current = reportSnapshot(record), report = record.request.report
-    return open && current && ready.has(reportIdentity(current)) && report && 'studyId' in report ? [{ identity: reportIdentity(current), studyId: report.studyId }] : []
+    return open && current && ready.has(reportIdentity(current)) && report && 'studyId' in report
+      && !('sourceProcedure' in record.request && record.request.service.examCode !== 'breast-slide-consultation') ? [{ identity: reportIdentity(current), studyId: report.studyId }] : []
   })
   const studyStates = useQueries({ queries: displayedStudies.map(item => ({ queryKey: ['outpatient-reader-study', item.studyId],
     queryFn: ({ signal }: { signal: AbortSignal }) => getImagingStudy(item.studyId, signal), gcTime: 0 })) })
-  const unavailable = displayedStudies.filter((_, index) => studyStates[index]?.isError || studyStates[index]?.data?.available !== true).map(item => item.identity)
+  const unavailable = [...invalidReadings, ...displayedStudies.filter((_, index) => studyStates[index]?.isError || studyStates[index]?.data?.available !== true).map(item => item.identity)]
   const unavailableKey = JSON.stringify(unavailable)
   useEffect(() => {
     if (unavailableKey === '[]') return
@@ -99,7 +122,7 @@ function ReportReaderSession({ context, detail, locale, readOnly }: ReaderProps)
     if (!shownIdentity || !open || generation.current !== readerGeneration || currentPreview.current !== shownIdentity) return
     setReady(previous => { if (previous.has(shownIdentity) === value) return previous; const next = new Set(previous); if (value) next.add(shownIdentity); else next.delete(shownIdentity); return next })
   }, [shownIdentity, open, readerGeneration])
-  const close = () => { generation.current++; setOpen(false); setReady(new Set()); setSelectedId(null); setReview(null); setDiscard(false) }
+  const close = () => { closeReadings(); setRetained([]); generation.current++; setOpen(false); setReady(new Set()); setSelectedId(null); setReview(null); setDiscard(false) }
   const blocked = readOnly || writer.error || writer.busy || writer.draft?.intent != null
   const eligible = (record: ReportRecord) => { const current = reportSnapshot(record); return record.request.status === 'reported' && current !== undefined && ready.has(reportIdentity(current)) && !unavailable.includes(reportIdentity(current)) }
   const rowEligible = (row: ReportRow) => { const record = records.find(item => item.kind === row.snapshot.kind && item.request.id === row.snapshot.requestId); return record !== undefined && sameReport(row, record) && eligible(record) }
@@ -130,7 +153,7 @@ function ReportReaderSession({ context, detail, locale, readOnly }: ReaderProps)
       if (!row) return true
       const record = current.records.find(item => item.kind === row.snapshot.kind && item.request.id === row.snapshot.requestId)
       return record !== undefined && sameReport(row, record) && record.request.status === 'reported' && current.ready.has(reportIdentity(row.snapshot)) && !current.unavailable.includes(reportIdentity(row.snapshot))
-    }).finally(() => { generation.current++; setReady(new Set()); setSelectedId(null) })
+    }).finally(() => { closeReadings(); setRetained([]); generation.current++; setReady(new Set()); setSelectedId(null) })
   }
   return <>
     <Button aria-label={text(['连续阅读报告', 'Read reports continuously'])} className="h-auto min-h-8 max-w-full flex-wrap whitespace-normal" variant="outline" onClick={() => { generation.current++; setReady(new Set()); setOpen(true) }}>{text(['连续阅读报告', 'Read reports continuously'])}<Badge variant="secondary">{records.filter(item => item.request.status === 'reported').length}{text([' 份待阅', ' unread'])}</Badge></Button>
@@ -151,7 +174,7 @@ function ReportReaderSession({ context, detail, locale, readOnly }: ReaderProps)
               {visible.length === 0 ? <p>{text(['没有匹配的报告', 'No matching reports'])}</p> : <ul className="space-y-2">{visible.map(record => <li key={recordId(record)} className="space-y-2 rounded-lg border p-2"><Button className="h-auto w-full justify-start whitespace-normal text-left" variant={selectedId === recordId(record) ? 'secondary' : 'ghost'} disabled={!record.request.report} aria-label={`${text(['打开报告：', 'Open report: '])}${record.title}`} onClick={() => setSelectedId(recordId(record))}>{record.title}</Button><Field orientation="horizontal"><Checkbox aria-label={`${text(['选择已阅：', 'Select acknowledgement: '])}${record.title}`} checked={rows.some(row => row.selected && sameReport(row, record))} disabled={blocked || !eligible(record)} onCheckedChange={checked => choose([record], checked)} /><FieldLabel>{text(['确认已阅', 'Acknowledge'])}</FieldLabel></Field><p className="text-xs text-muted-foreground">{eligible(record) ? text(['本轮已阅读，可选择', 'Read this session; eligible for selection']) : reason(record)}</p></li>)}</ul>}
               <div className="flex flex-wrap items-center gap-2"><Button size="sm" variant="outline" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>{text(['上一页报告', 'Previous reports page'])}</Button><span className="text-xs">{currentPage + 1}/{Math.max(1, Math.ceil(filtered.length / 10))} · {text(['每页10项', '10 per page'])}</span><Button size="sm" variant="outline" disabled={(currentPage + 1) * 10 >= filtered.length} onClick={() => setPage(currentPage + 1)}>{text(['下一页报告', 'Next reports page'])}</Button></div>
             </section>
-            <section className="min-w-0 rounded-lg border p-3">{selectedRecord && shownIdentity ? <ReportPreview key={shownIdentity} record={selectedRecord} locale={locale} onReady={onReady} /> : <p className="text-sm text-muted-foreground">{text(['请从列表打开一份报告，全文在此显示。', 'Open a report from the list to display its full content here.'])}</p>}</section>
+            <section className="min-w-0 rounded-lg border p-3">{selectedRecord && shownIdentity ? <ReportPreview key={shownIdentity} record={selectedRecord} locale={locale} onReady={onReady} onSession={retainSession} /> : <p className="text-sm text-muted-foreground">{text(['请从列表打开一份报告，全文在此显示。', 'Open a report from the list to display its full content here.'])}</p>}</section>
             <section role="region" aria-label={text(['报告完整待确认清单', 'Complete pending report acknowledgements'])} className="min-w-0 space-y-3">
               <h3 className="text-sm font-semibold">{text(['待确认', 'Pending'])} {rows.length}/20 · {text(['已选', 'Selected'])} {selected.length}</h3>
               <div className="flex flex-wrap gap-2"><Button size="sm" disabled={blocked || selected.length === 0 || selected.some(row => !rowEligible(row))} onClick={() => setReview(structuredClone(selected))}>{text(['核对选中报告', 'Review selected reports'])}</Button><Button size="sm" variant="outline" disabled={blocked || selected.length === 0} onClick={() => writer.change(value => ({ ...value, rows: value.rows.map(row => ({ ...row, selected: false })) }))}>{text(['清空已阅选择', 'Clear acknowledgement selection'])}</Button><Button size="sm" variant="outline" disabled={writer.busy || writer.draft?.intent != null || rows.length === 0 && !writer.error} onClick={() => setDiscard(true)}>{text(['丢弃已阅清单', 'Discard acknowledgement list'])}</Button></div>
