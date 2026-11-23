@@ -23,6 +23,19 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('病理会诊目录示例使用三器官服务与可见来源标本合同', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+  const line = commandLines(skill).find(line => line.startsWith('clinmesh doctor case pathology-services list '))!
+  const operation = inspectExample(program, line).operation!
+  expect(operation.id).toBe('doctor.case.pathology-services.list')
+  expect(operation.version).toBe(2)
+  expect(operation.summary).toContain('结直肠既往活检/息肉切除')
+  expect(operation.summary).toContain('甲状腺既往手术')
+  expect(skill).toContain('specimenType')
+  expect(skill).toContain('一份会诊固定一张 H&E 切片')
+})
+
 it('诊断清空示例绑定当前版本和幂等键，仅丢弃未确认草稿', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')

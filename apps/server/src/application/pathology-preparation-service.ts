@@ -99,7 +99,7 @@ export class PathologyPreparationService {
     this.#assertAdministrator(input.context)
     const catalog = await this.#matchingCatalog()
     const external = await this.#external?.catalog()
-    const externalAvailability = new Map(await Promise.all((external?.assets ?? []).map(async asset => [asset.assetId, await this.#external!.available(asset)] as const)))
+    const externalAvailability = new Map(await Promise.all((external?.assets ?? []).map(async asset => [asset.assetId, await this.#external!.available(asset, input.context.workspaceId)] as const)))
     const catalogHash = external === undefined ? catalog?.hash : canonicalJsonHash({ local: catalog?.hash, external, installed: [...externalAvailability] })
     if (catalog === undefined && external === undefined) {
       throw new PathologyPreparationError(
@@ -280,7 +280,7 @@ export class PathologyPreparationService {
     }
     const externalCatalog = await this.#external?.catalog()
     for (const asset of externalCatalog?.assets ?? []) {
-      if (externalPathologyPublishedReport(asset) !== undefined && await this.#external!.available(asset)) readyExamCodes.add(asset.examCode)
+      if (externalPathologyPublishedReport(asset) !== undefined && await this.#external!.available(asset, context.workspaceId)) readyExamCodes.add(asset.examCode)
     }
     const caseId = this.#preparations.materializedCase(context.workspaceId, context.epoch, visit)
     const truth = caseId === undefined ? undefined : this.#cases.getTruthForSimulator(context.workspaceId, caseId)

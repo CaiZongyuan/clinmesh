@@ -45,7 +45,8 @@ it('prepares both prior-specimen cases with template Personas and freezes matchi
   expect(prepared.readyCount).toBe(2)
   expect(pack.prepare(context, { expectedEpoch: context.epoch }, 'pathology-pack-repeat').data.cases.map(item => item.case?.caseId)).toEqual(prepared.cases.map(item => item.case?.caseId))
   const assets = [asset('colorectal'), asset('thyroid')]
-  const external = { catalog: async () => ({ packId: 'synthetic-pathjx-slides', ruleVersion: 1, assets }), available: async () => true }
+  let sourceAvailable = true
+  const external = { catalog: async () => ({ packId: 'synthetic-pathjx-slides', ruleVersion: 1, assets }), available: async (_asset: ExternalPathologyAsset, workspaceId: string) => sourceAvailable && workspaceId === context.workspaceId }
   const preparations = new PathologyPreparationRepository(runtime.database)
   const preparation = new PathologyPreparationService({ cases, commands, profiles, preparations, library: new PathologyAssetLibrary({ catalogDirectory: join(directory, 'missing'), assetDirectory: join(directory, 'missing-assets') }), external })
   const result = (await preparation.prepareBatch({ context, idempotencyKey: 'prepare-both' })).data
@@ -63,6 +64,16 @@ it('prepares both prior-specimen cases with template Personas and freezes matchi
   expect(offering.readyExamCodes).toEqual(new Set(['colorectal-slide-consultation', 'thyroid-slide-consultation']))
   expect(offering.sourceProcedures.get('colorectal-slide-consultation')).toHaveLength(1)
   expect(offering.sourceProcedures.get('thyroid-slide-consultation')).toHaveLength(0)
+  const otherWorkspace = await preparation.offering({ ...context, workspaceId: 'unconfigured-workspace' }, { encounterId: visit.encounterId })
+  expect(otherWorkspace.readyExamCodes.size).toBe(0)
+  assets[0] = { ...asset('colorectal'), reports: asset('colorectal').reports.map(report => ({ ...report, diagnosis: '未经重新核对的报告变化' })) }
+  const staleReport = await preparation.offering(context, { encounterId: visit.encounterId })
+  expect(staleReport.readyExamCodes).toEqual(new Set(['thyroid-slide-consultation']))
+  expect(staleReport.sourceProcedures.get('colorectal-slide-consultation')).toHaveLength(1)
+  assets[0] = asset('colorectal')
+  sourceAvailable = false
+  expect((await preparation.offering(context, { encounterId: visit.encounterId })).readyExamCodes.size).toBe(0)
+  sourceAvailable = true
   const frozen = preparation.getCasePreparation(context, firstCaseId).bindings
   assets[0] = { ...asset('colorectal'), assetId: 'synthetic-replacement' }
   await preparation.prepareBatch({ context, idempotencyKey: 'after-start-prepare' })

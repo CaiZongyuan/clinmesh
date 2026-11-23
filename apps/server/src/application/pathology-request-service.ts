@@ -356,7 +356,7 @@ export class PathologyRequestService {
       encounterId: row.encounter_id,
       report,
       request,
-      writable: outpatientCase.status === 'first-visit' && encounter.status !== 'completed'
+      writable: outpatientCase.status === 'first-visit' && encounter.status === 'in-progress'
         && this.#host.hasConsultation(context, row.case_id)
         && request.report?.diagnosticReportId === report.diagnosticReportId,
     }

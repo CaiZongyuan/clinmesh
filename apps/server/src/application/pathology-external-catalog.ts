@@ -60,7 +60,7 @@ export type ExternalPathologyCatalog = z.infer<typeof externalPathologyCatalogSc
 
 export interface PathologyExternalAssetSource {
   catalog(): Promise<ExternalPathologyCatalog | undefined>
-  available(asset: ExternalPathologyAsset): Promise<boolean>
+  available(asset: ExternalPathologyAsset, workspaceId: string): Promise<boolean>
 }
 
 const sourceProcedureRules: ReadonlyArray<{ examCode: PathologyExamCode; specimenType: PathologySpecimenType; coding: { system: string; code: string } }> = [
