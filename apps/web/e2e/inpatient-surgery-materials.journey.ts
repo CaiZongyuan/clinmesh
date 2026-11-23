@@ -158,13 +158,18 @@ export async function prepareSurgeryMaterialsPatient(page: Page, app: Parameters
   const surgery = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json())
   const requested = inpatientSurgeryResponseSchema.parse(await (await s.api.post(`${s.path}/surgeries/request`, {
     encounterVersion: surgery.encounterVersion, procedureId: 'hospital-surgery-1', catalogVersion: 1,
+    surgeryType: 'elective', locationId: 'location-catheterization-lab',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
     plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成 PCI 逐笔耗材验证',
   })).json()).data.requests[0]!
   await s.api.login('ward-nurse')
   expect((await s.api.post(`${s.path}/surgeries/check-preop`, { requestId: requested.id, expectedRequestVersion: requested.version, note: '合成术前已核对' })).status()).toBe(200)
   await s.api.login('inpatient-doctor')
   const checked = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).requests[0]!
-  expect((await s.api.post(`${s.path}/surgeries/confirm-consent`, { requestId: requested.id, expectedRequestVersion: checked.version, note: '合成签署已确认' })).status()).toBe(200)
+  expect((await s.api.post(`${s.path}/surgeries/confirm-consent`, {
+    requestId: requested.id, expectedRequestVersion: checked.version,
+    signerRole: 'patient', signerName: s.name, patientChoice: 'agree', note: '合成签署已确认',
+  })).status()).toBe(200)
   expect((await s.api.post(`${s.path}/drg/reservations`, { encounterVersion: surgery.encounterVersion,
     requestId: requested.id, materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 2, reason: '合成两枚支架备用' })).status()).toBe(200)
   return s

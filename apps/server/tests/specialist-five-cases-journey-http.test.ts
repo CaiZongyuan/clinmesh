@@ -614,11 +614,15 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     const adm = (await grantOp('inpatient-doctor', 'inpatient.admission.read', { admissionId }, inpatientDetailSchema)).admission
     const requested = (await grantOp('inpatient-doctor', 'inpatient.surgery.request', {
       admissionId,
+      anesthesiaMethod: 'local-infiltration',
       catalogVersion: angioProc.version,
       encounterVersion: adm.versionId,
+      locationId: 'location-catheterization-lab',
       plannedFor: '2026-08-24T11:00:00+08:00',
       procedureId: angioProc.id,
       reason: '选择性冠脉造影评估',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor',
+      surgeryType: 'elective',
     }, inpatientSurgeryResponseSchema)).data.requests.find(item => item.plannedProcedure.id === angioProc.id && item.status === 'requested')!
     const preop = (await grantOp('ward-nurse', 'inpatient.surgery.check-preop', {
       admissionId,
@@ -630,7 +634,10 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
       admissionId,
       expectedRequestVersion: preop.version,
       note: '知情同意书已签署',
+      patientChoice: 'agree',
       requestId: requested.id,
+      signerName: adm.patientName,
+      signerRole: 'patient',
     }, inpatientSurgeryResponseSchema)).data.requests.find(item => item.id === requested.id)!
     await grantOp('inpatient-doctor', 'inpatient.surgery.execute', {
       admissionId,
@@ -652,11 +659,15 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     const adm = (await grantOp('inpatient-doctor', 'inpatient.admission.read', { admissionId }, inpatientDetailSchema)).admission
     const requested = (await grantOp('inpatient-doctor', 'inpatient.surgery.request', {
       admissionId,
+      anesthesiaMethod: 'local-infiltration',
       catalogVersion: pciProc.version,
       encounterVersion: adm.versionId,
+      locationId: 'location-catheterization-lab',
       plannedFor: '2026-08-24T14:00:00+08:00',
       procedureId: pciProc.id,
       reason: '缺血靶病变单支架 PCI 血运重建',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor',
+      surgeryType: 'elective',
     }, inpatientSurgeryResponseSchema)).data.requests.find(item => item.plannedProcedure.id === pciProc.id && item.status === 'requested')!
     const materialIds = [
       'hospital-material-pci-guidewire',
@@ -699,7 +710,10 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
       admissionId,
       expectedRequestVersion: preop.version,
       note: 'PCI 知情同意已确认',
+      patientChoice: 'agree',
       requestId: requested.id,
+      signerName: adm.patientName,
+      signerRole: 'patient',
     }, inpatientSurgeryResponseSchema)).data.requests.find(item => item.id === requested.id)!
     const executed = await grantOp('inpatient-doctor', 'inpatient.surgery.execute', {
       admissionId,
@@ -1451,6 +1465,8 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
       viewId: 'inpatient',
       viewRevision: 'case3-ip-surgery',
     })
+    const dshSurgeryList = await surfaceInpatientQuery('inpatient-doctor', surg3Ctx, 'inpatient.surgery.read', stay3.admissionId, '/surgeries', {}, inpatientSurgerySchema)
+    expect(dshSurgeryList.requests[0]?.consentConfirmation?.document?.templateId).toBe('coronary-angiography')
     const dshPciPreflight = await surfaceInpatientQuery('inpatient-doctor', surg3Ctx, 'inpatient.clinical-quality.read', stay3.admissionId, '/clinical-quality', { gate: 'inpatient-pci-plan' }, clinicalQualityCheckSchema)
     expect(dshPciPreflight.alerts).toContainEqual(expect.objectContaining({ code: 'PCI_NON_ISCHEMIC_LESION', tier: 'alert' }))
 
@@ -1458,11 +1474,15 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     const pciProc = surgCatalog.procedures.find(item => item.coding.code === '36.0700')!
     const blockedPci = await invokeOperationRaw(grants.get('inpatient-doctor')!, 'inpatient.surgery.request', {
       admissionId: stay3.admissionId,
+      anesthesiaMethod: 'local-infiltration',
       catalogVersion: pciProc.version,
       encounterVersion: adm3BeforePci.versionId,
+      locationId: 'location-catheterization-lab',
       plannedFor: '2026-08-24T15:00:00+08:00',
       procedureId: pciProc.id,
       reason: '拟行前降支支架置入术',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor',
+      surgeryType: 'elective',
     })
     expect(blockedPci.res.status).toBe(409)
     expect(apiErrorSchema.parse(JSON.parse(blockedPci.text)).error).toMatchObject({

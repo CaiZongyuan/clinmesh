@@ -82,7 +82,9 @@ describe('独立分组记录核对公共 HTTP', () => {
     const pci = catalog.procedures.find(item => item.coding.code === '00.6600')!
     const current = inpatientDetailSchema.parse(await (await s.request(s.doctor, s.path)).json()).admission
     const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: current.versionId,
-      procedureId: pci.id, catalogVersion: pci.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: '独立核对合成 PCI 计划' })
+      procedureId: pci.id, catalogVersion: pci.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      plannedFor: '2026-08-24T15:00:00+08:00', reason: '独立核对合成 PCI 计划' })
     expect(requested.status).toBe(200)
     let surgery = inpatientSurgeryResponseSchema.parse(await requested.json()).data
     const plan = surgery.requests[0]!
@@ -93,7 +95,9 @@ describe('独立分组记录核对公共 HTTP', () => {
     expect(planned.sources).toContainEqual(expect.objectContaining({ target: 'surgery', display: expect.stringContaining('计划操作') }))
     for (const [actor, action] of [[s.nurse, 'check-preop'], [s.doctor, 'confirm-consent']] as const) {
       const response = await s.request(actor, `${s.path}/surgeries/${action}`, { requestId: plan.id,
-        expectedRequestVersion: surgery.requests[0]!.version, note: '合成核对准备' })
+        expectedRequestVersion: surgery.requests[0]!.version,
+        ...(action === 'confirm-consent' ? { signerRole: 'patient', signerName: current.patientName, patientChoice: 'agree' } : {}),
+        note: '合成核对准备' })
       expect(response.status).toBe(200)
       surgery = inpatientSurgeryResponseSchema.parse(await response.json()).data
     }
@@ -132,13 +136,17 @@ describe('独立分组记录核对公共 HTTP', () => {
     const pci = catalog.procedures.find(item => item.coding.code === '00.6600')!
     const admission = inpatientDetailSchema.parse(await (await s.request(s.doctor, s.path)).json()).admission
     const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: admission.versionId,
-      procedureId: angiography.id, catalogVersion: angiography.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成原计划造影' })
+      procedureId: angiography.id, catalogVersion: angiography.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成原计划造影' })
     expect(requested.status).toBe(200)
     let surgery = inpatientSurgeryResponseSchema.parse(await requested.json()).data
     const requestId = surgery.requests[0]!.id
     for (const [actor, action] of [[s.nurse, 'check-preop'], [s.doctor, 'confirm-consent']] as const) {
       const response = await s.request(actor, `${s.path}/surgeries/${action}`, { requestId,
-        expectedRequestVersion: surgery.requests[0]!.version, note: '合成术前核实' })
+        expectedRequestVersion: surgery.requests[0]!.version,
+        ...(action === 'confirm-consent' ? { signerRole: 'patient', signerName: admission.patientName, patientChoice: 'agree' } : {}),
+        note: '合成术前核实' })
       expect(response.status).toBe(200)
       surgery = inpatientSurgeryResponseSchema.parse(await response.json()).data
     }

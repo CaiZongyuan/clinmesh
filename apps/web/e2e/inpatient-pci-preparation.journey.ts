@@ -147,9 +147,11 @@ export async function preparePciThroughPages(page: Page, app: PciBrowserApp, ope
   await open('inpatient-doctor', admission.patientName)
   await stage(page, '手术')
   await page.getByRole('button', { name: '确认已签', exact: true }).click()
-  await page.getByLabel('签署说明', { exact: true }).fill('合成冠脉造影知情同意')
+  const consentDialog = page.getByRole('dialog', { name: '手术知情同意书', exact: true })
+  await expect(consentDialog.getByRole('article', { name: '冠状动脉造影术知情同意书', exact: true })).toBeVisible()
+  await consentDialog.getByLabel('签署备注', { exact: true }).fill('合成冠脉造影知情同意')
   const consented = page.waitForResponse(response => response.url().endsWith(`${path}/surgeries/confirm-consent`) && response.request().method() === 'POST')
-  await page.getByRole('button', { name: "确认手术知情同意书已签", exact: true }).click()
+  await consentDialog.getByRole('button', { name: "确认手术知情同意书已签", exact: true }).click()
   expect((await consented).status()).toBe(200)
   // These bounded PRN doses belong to the prepared, consented angiography, before its actual procedure is recorded.
   await executePciMedicationThroughPages(page, app, open, stay, ['heparin', 'iohexol'])

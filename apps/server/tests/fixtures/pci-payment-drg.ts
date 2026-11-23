@@ -186,8 +186,10 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     const procedure = catalog.procedures.find(item => item.coding.code === '36.0700')!
     assert.equal(procedure.coding.code, '36.0700')
     const planned = (await parsePciResponse(inpatientSurgeryResponseSchema, await request('inpatient-doctor', `${path}/surgeries/request`, {
-      encounterVersion: stay.encounterVersion, procedureId: procedure.id, catalogVersion: procedure.version,
-      plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成冠心病PCI支架计划' }))).data.requests[0]!
+      encounterVersion: stay.encounterVersion, surgeryType: 'elective', procedureId: procedure.id, catalogVersion: procedure.version,
+      plannedFor: '2026-08-24T15:00:00+08:00', locationId: 'location-catheterization-lab',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      reason: '合成冠心病PCI支架计划' }))).data.requests[0]!
     let reservations: z.infer<typeof inpatientMaterialReservationListSchema>['reservations'] = []
     const reservationResponse = commandResponseSchema(inpatientMaterialReservationListSchema)
     for (const materialId of materialIds) {
@@ -203,8 +205,10 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
   async function pciExecutionInput(stay: Awaited<ReturnType<typeof preparePciAdmission>>, requestId = stay.requestId) {
     for (const [role, action] of [['ward-nurse', 'check-preop'], ['inpatient-doctor', 'confirm-consent']] as const) {
       const surgery = await read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)
-      await parsePciResponse(inpatientSurgeryResponseSchema, await request(role, `${stay.path}/surgeries/${action}`, {
-        requestId, expectedRequestVersion: surgery.requests.find(item => item.id === requestId)!.version, note: '合成PCI术前准备完成' }))
+      const expectedRequestVersion = surgery.requests.find(item => item.id === requestId)!.version
+      await parsePciResponse(inpatientSurgeryResponseSchema, await request(role, `${stay.path}/surgeries/${action}`, action === 'confirm-consent'
+        ? { requestId, expectedRequestVersion, signerRole: 'patient', signerName: '合成冠脉病例甲', patientChoice: 'agree', note: '合成PCI术前准备完成' }
+        : { requestId, expectedRequestVersion, note: '合成PCI术前准备完成' }))
     }
     const surgery = await read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)
     return { requestId, expectedRequestVersion: surgery.requests.find(item => item.id === requestId)!.version,
@@ -242,8 +246,10 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     const procedure = stay.catalog.procedures.find(item => item.coding.code === '88.5500')!
     const admission = await read('inpatient-doctor', stay.path, inpatientDetailSchema)
     const requested = await parsePciResponse(inpatientSurgeryResponseSchema, await request('inpatient-doctor', `${stay.path}/surgeries/request`, {
-      encounterVersion: admission.admission.versionId, procedureId: procedure.id, catalogVersion: procedure.version,
-      plannedFor: '2026-08-24T15:00:00+08:00', reason: '固定合成病例实际冠脉造影' }))
+      encounterVersion: admission.admission.versionId, surgeryType: 'elective', procedureId: procedure.id, catalogVersion: procedure.version,
+      plannedFor: '2026-08-24T15:00:00+08:00', locationId: 'location-catheterization-lab',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      reason: '固定合成病例实际冠脉造影' }))
     const requestId = requested.data.requests.find(item => item.plannedProcedure.id === procedure.id)!.id
     const angiography = { ...stay, procedure, requestId, reservations: [] }
     const input = await pciExecutionInput(angiography)

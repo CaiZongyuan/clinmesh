@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SURGICAL_LOCATIONS } from '@clinmesh/core/inpatient-surgery-consent'
 import { syntheticInpatientSurgeryCatalog } from './scenario-data/inpatient-surgery-catalog.ts'
 import { storeMaterialSnapshot } from './scenario-data/cardiovascular-materials.ts'
 import { standardMedicationPackageInsert } from './scenario-data/medication-package-inserts.ts'
@@ -68,6 +69,23 @@ export function seedInpatientEnvironment(
       resourceType: 'PractitionerRole', id: `practitioner-role-${account.roleCode}`, active: true,
       practitioner: { reference: `Practitioner/${account.practitionerId}` }, organization: { reference: 'Organization/organization-clinmesh' },
       code: [{ text: account.roleCode }], location: [{ reference: `Location/location-${account.roleCode}` }],
+    })
+  }
+  for (const surgicalLocation of SURGICAL_LOCATIONS) {
+    if (!exists('Location', surgicalLocation.id)) fhir.create(context, {
+      resourceType: 'Location', id: surgicalLocation.id, status: 'active', name: surgicalLocation.name,
+      managingOrganization: { reference: 'Organization/organization-clinmesh' },
+      form: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/location-physical-type', code: 'ro' }] },
+    })
+  }
+  for (const [surgeonId, surgeonName, title] of [
+    ['practitioner-surgeon-chief', '林海', '主任医师'],
+    ['practitioner-surgeon-attending', '陈铭', '主治医师'],
+  ] as const) {
+    if (!exists('Practitioner', surgeonId)) fhir.create(context, {
+      resourceType: 'Practitioner', id: surgeonId, active: true,
+      name: [{ text: surgeonName }],
+      qualification: [{ code: { text: title } }],
     })
   }
   for (const [suffix, name, department] of [['general', '住院病区', 'medicine']] as const) {

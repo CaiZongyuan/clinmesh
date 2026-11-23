@@ -464,11 +464,15 @@ async function setup(options: { withCardiologyLabs?: boolean; withDialogue?: boo
     const adm = inpatientDetailSchema.parse(await (await get('inpatient-doctor', `/api/his/v1/inpatient/admissions/${admissionId}`)).json()).admission
     const reqRes = await mutate('inpatient-doctor', `/api/his/v1/inpatient/admissions/${admissionId}/surgeries/request`, {
       input: {
+        anesthesiaMethod: 'local-infiltration',
         catalogVersion: angioProc.version,
         encounterVersion: adm.versionId,
+        locationId: 'location-catheterization-lab',
         plannedFor: '2026-08-24T11:00:00+08:00',
         procedureId: angioProc.id,
         reason: '冠脉造影评估血管病变',
+        surgeonPractitionerId: 'practitioner-inpatient-doctor',
+        surgeryType: 'elective',
       },
     })
     expect(reqRes.status, await reqRes.clone().text()).toBe(200)
@@ -479,7 +483,14 @@ async function setup(options: { withCardiologyLabs?: boolean; withDialogue?: boo
     expect(preop.status, await preop.clone().text()).toBe(200)
     const afterPreop = inpatientSurgeryResponseSchema.parse(await preop.json()).data.requests.find(item => item.id === reqData.id)!
     const consent = await mutate('inpatient-doctor', `/api/his/v1/inpatient/admissions/${admissionId}/surgeries/confirm-consent`, {
-      input: { expectedRequestVersion: afterPreop.version, note: '已签署知情同意书', requestId: reqData.id },
+      input: {
+        expectedRequestVersion: afterPreop.version,
+        note: '已签署知情同意书',
+        patientChoice: 'agree',
+        requestId: reqData.id,
+        signerName: adm.patientName,
+        signerRole: 'patient',
+      },
     })
     expect(consent.status, await consent.clone().text()).toBe(200)
     const afterConsent = inpatientSurgeryResponseSchema.parse(await consent.json()).data.requests.find(item => item.id === reqData.id)!

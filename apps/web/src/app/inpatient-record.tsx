@@ -1,4 +1,5 @@
 import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
+import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
 import type { inpatientCatalogSchema } from '@clinmesh/contracts/inpatient'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
@@ -10,10 +11,11 @@ import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { AlertCircleIcon, CheckCircle2Icon, CircleIcon } from 'lucide-react'
 import { apiGet } from './api-client.ts'
 import { InpatientClinicalQualityBanner } from './clinical-quality-banner.tsx'
+import { SurgeryNoticeSummaryList, SurgicalConsentPreviewButton } from './inpatient-surgery-consent.tsx'
 import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
@@ -49,6 +51,39 @@ export function inpatientRecordPhase(data: z.infer<typeof inpatientRecordSchema>
   if (data.reviewCurrent) return 'approved'
   const last = data.reviews.at(-1)
   return last?.revision === data.revision.revision && last.outcome === 'returned' ? 'returned' : 'submitted'
+}
+
+function RecordSurgeryNoticesDisclosure({ admission, session, locale }: { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale }): React.JSX.Element {
+  const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
+  const [open, setOpen] = useState(false)
+  useEffect(() => { setOpen(false) }, [admission.id])
+  const surgeries = useQuery({
+    queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'surgeries'],
+    enabled: open,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal),
+  })
+  const statusLabel = { requested: t('待准备', 'Preparation pending'), ready: t('已就绪', 'Ready'), completed: t('已实施', 'Completed'), cancelled: t('已取消', 'Cancelled') }
+  return <details className="clinmesh-inpatient-disclosure" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>{t('查看手术通知单与知情同意书', 'View surgery notices and informed consents')}</summary>
+    <div className="flex flex-col gap-3 pt-2">
+      {surgeries.isPending ? <Skeleton className="h-16 w-full" /> : null}
+      {surgeries.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(surgeries.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
+      {surgeries.data && surgeries.data.requests.length === 0 ? <p className="text-xs text-muted-foreground">{t('本次住院无手术申请单记录。', 'No surgery notice records in this admission.')}</p> : null}
+      {surgeries.data?.requests.map(req => {
+        const isRunning = Boolean(surgeries.data?.inProgress.some(exec => exec.requestId === req.id))
+        return <div key={req.id} className="flex flex-col gap-2 rounded-md border border-border p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold">{req.plannedProcedure.coding.code} {req.plannedProcedure.coding.display}</span>
+            <Badge variant="outline">{isRunning ? t('进行中', 'In progress') : statusLabel[req.status]}</Badge>
+            <span className="flex-1" />
+            <SurgicalConsentPreviewButton admission={admission} request={req} locale={locale} />
+          </div>
+          <SurgeryNoticeSummaryList row={req} locale={locale} />
+          {req.cancellation ? <p className="text-xs text-muted-foreground">{t('取消原因：', 'Cancellation: ')}{req.cancellation.note}</p> : null}
+        </div>
+      })}
+    </div>
+  </details>
 }
 
 type Stage = 'orders' | 'surgery' | 'fees' | 'discharge'
@@ -204,6 +239,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
       </div></RecordSection>
       <RecordSection label={operations.length > 0 && canSubmitRecord ? t('实际操作 · 确认本次主操作', 'Performed procedures · confirm primary') : t('实际操作', 'Performed procedures')} subtitle={t('ICD-9-CM-3 临床版 3.0', 'ICD-9-CM-3 clinical edition 3.0')} link={!archived ? { label: t('去手术', 'Open surgery'), onClick: open('surgery') } : undefined}><div className="flex flex-col gap-2">
         {mainPicker}
+        <RecordSurgeryNoticesDisclosure admission={admission} session={session} locale={locale} />
       </div></RecordSection>
       {feeSection}
     </div> : null
@@ -266,6 +302,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
               </div>
             </li>)}</ul>
           </section>
+          <RecordSurgeryNoticesDisclosure admission={admission} session={session} locale={locale} />
         </> : fields}
         {settled && history.length > 0 ? <section aria-label={t('提交与审核记录', 'Submission and review history')} className="clinmesh-inpatient-preparation"><h4 className="font-medium">{t('提交与审核记录', 'Submission and review history')}</h4>
           <ul className="clinmesh-inpatient-preparation-list">{history.map(item => <li key={`${item.at}-${item.text}`} className="!grid-cols-[auto_minmax(0,1fr)]"><time className="tabular-nums text-muted-foreground" dateTime={item.at}>{timestamp(item.at)}</time><span>{item.text}</span></li>)}</ul></section> : null}
@@ -303,6 +340,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
           </div>
           <span className="text-xs tabular-nums text-muted-foreground">{timestamp(item.performedAt)}{item.performedBy ? ` · ${item.performedBy}` : ''}</span>
         </div>)}
+        <RecordSurgeryNoticesDisclosure admission={admission} session={session} locale={locale} />
         {coder ? <details className="clinmesh-inpatient-disclosure"><summary>{t('查看编码与上报范围', 'Coding and reporting scope')}</summary><p className="text-xs text-muted-foreground">{t('诊断采用固定临床版2022来源（原始工作簿权威身份尚未独立验证）；操作采用临床版3.0固定有界摘录。核心字段集不能直接用于国家首页或医保清单上报。', 'Diagnosis uses the fixed 2022 clinical source, whose original workbook authority is not independently verified; procedures use a bounded 3.0 excerpt. This core set is not a national reporting dataset.')}</p></details> : null}
       </div>
     </RecordSection>

@@ -258,19 +258,26 @@ describe('ClinMesh DSH Agent contracts', () => {
       .map(tool => tool.operationId)).not.toContain('outpatient.report.acknowledge.propose')
     expect(agentToolsForContext('inpatient-doctor', 'inpatient', 'surgery').map(tool => tool.operationId))
       .toEqual(expect.arrayContaining([
+        'inpatient.surgery.read',
         'inpatient.angiography-reports.read',
         'inpatient.clinical-scores.read',
         'inpatient.guideline-topics.read',
         'inpatient.clinical-quality.read',
       ]))
+    expect(agentToolsForContext('ward-nurse', 'inpatient', 'surgery').map(tool => tool.operationId))
+      .toContain('inpatient.surgery.read')
     expect(agentToolsForContext('inpatient-doctor', 'inpatient', 'orders').map(tool => tool.operationId))
       .toContain('inpatient.order-set-drafts.read')
+    expect(agentToolsForContext('inpatient-doctor', 'inpatient', 'orders').map(tool => tool.operationId))
+      .not.toContain('inpatient.surgery.read')
     expect(agentToolsForContext('medical-records', 'inpatient', 'record').map(tool => tool.operationId))
       .toEqual(expect.arrayContaining([
+        'inpatient.surgery.read',
         'inpatient.angiography-reports.read',
         'inpatient.clinical-scores.read',
         'inpatient.guideline-topics.read',
       ]))
+    expect(parseAgentToolInput('inpatient.surgery.read', {})).toEqual({})
     expect(parseAgentToolInput('outpatient.order-set-drafts.read', {})).toEqual({})
     expect(parseAgentToolInput('outpatient.order-set-drafts.read', { templateId: 'chest-pain-stat-workup' }))
       .toEqual({ templateId: 'chest-pain-stat-workup' })

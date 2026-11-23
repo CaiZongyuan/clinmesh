@@ -2044,8 +2044,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: false, idempotency: 'none' },
     risk: 'read',
     roles: ['inpatient-doctor','ward-nurse'],
-    summary: '读取固定手术分类与完整耗材来源；unit-unconfirmed项保留参考价格但不可计费',
-    version: 2,
+    summary: '读取固定手术分类、院内受控手术地点与临床医师候选及完整耗材来源；unit-unconfirmed项保留参考价格但不可计费',
+    version: 3,
   },
   {
     cliPath: ['inpatient','surgeries'],
@@ -2054,8 +2054,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: false, idempotency: 'none' },
     risk: 'read',
     roles: ['inpatient-doctor','ward-nurse','medical-records'],
-    summary: '分别读取计划、术前确认与本次实际实施事实',
-    version: 2,
+    summary: '读取手术通知单六要素、一术一议知情同意书快照、术前核对与本次实际实施事实',
+    version: 3,
   },
   {
     cliPath: ['inpatient','request-surgery'],
@@ -2064,8 +2064,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '申请手术；PCI 计划校验非缺血临界病变质控警示（CLINICAL_QUALITY_ALERT 或附 clinicalOverride）；保存计划，不代表实际实施',
-    version: 3,
+    summary: '申请手术通知单六要素（手术类型、术式、时间、地点、主刀及可选一助、麻醉方式）并投影 FHIR R5 ServiceRequest；PCI 计划校验非缺血临界病变质控警示（CLINICAL_QUALITY_ALERT 或附 clinicalOverride）',
+    version: 4,
   },
   {
     cliPath: ['inpatient','check-surgery-preop'],
@@ -2074,8 +2074,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['ward-nurse'],
-    summary: '护士记录术前检查核对事实',
-    version: 2,
+    summary: '护士记录术前检查核对事实，返回含手术通知单六要素与一术一议知情同意书快照的手术状态',
+    version: 3,
   },
   {
     cliPath: ['inpatient','confirm-surgery-consent'],
@@ -2084,8 +2084,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '医生确认已签署知情同意书；不代替电子签名',
-    version: 2,
+    summary: '医生按术式模板核对并登记患者本人或受托人签署的一术一议结构化手术知情同意书，持久化不可变文书快照与审计记录',
+    version: 3,
   },
   {
     cliPath: ['inpatient','cancel-surgery'],
@@ -2094,8 +2094,8 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '取消未实施手术；保留申请与准备事实',
-    version: 2,
+    summary: '取消未实施手术；保留手术通知单、准备与知情同意书快照事实',
+    version: 3,
   },
   {
     cliPath: ['inpatient', 'start-surgery'],
@@ -2105,7 +2105,7 @@ const operationCliMetadataList = [
     risk: 'write',
     roles: ['inpatient-doctor'],
     summary: '开始已双准备手术，创建in-progress操作，不收术式费；术式与计划一致时说明选填，偏离时必填',
-    version: 2,
+    version: 3,
   },
   {
     cliPath: ['inpatient', 'record-surgery-material'],
@@ -2115,7 +2115,7 @@ const operationCliMetadataList = [
     risk: 'write',
     roles: ['inpatient-doctor'],
     summary: '逐笔确认实际耗材并记费，分次消耗预留，不提前完成手术；绑定本台有效预留余量内时依据选填，额外或通用预留使用必填',
-    version: 2,
+    version: 3,
   },
   {
     cliPath: ['inpatient', 'correct-surgery-material'],
@@ -2125,7 +2125,7 @@ const operationCliMetadataList = [
     risk: 'write',
     roles: ['inpatient-doctor'],
     summary: '追加耗材记录更正，引用原使用和原费用精确冲正，保留更正前事实',
-    version: 1,
+    version: 2,
   },
   {
     cliPath: ['inpatient', 'supplement-surgery-material'],
@@ -2135,7 +2135,7 @@ const operationCliMetadataList = [
     risk: 'write',
     roles: ['inpatient-doctor'],
     summary: '在院未结算且未归档时，为原已完成手术补登记漏记耗材；核对计费依据并原子追加使用及费用',
-    version: 1,
+    version: 2,
   },
   {
     cliPath: ['inpatient', 'preview-surgery-completion'],
@@ -2155,7 +2155,7 @@ const operationCliMetadataList = [
     risk: 'write',
     roles: ['inpatient-doctor'],
     summary: '按审阅指纹原子追加最终用量差额、更正、选定预留处理及一次术式费；零净差额且无未消耗预留时说明选填，差额或未用预留处置必填',
-    version: 3,
+    version: 4,
   },
   {
     cliPath: ['inpatient','execute-surgery'],
@@ -2165,7 +2165,7 @@ const operationCliMetadataList = [
     risk: 'write',
     roles: ['inpatient-doctor'],
     summary: '按双准备门禁记录实际手术和耗材并原子计费；术式与计划一致且完整消耗本台预留时说明选填，术式或耗材偏差必填',
-    version: 3,
+    version: 4,
   },
   {
     cliPath:['inpatient','investigation-catalog'],

@@ -14,7 +14,9 @@ async function setupBatch() {
   const s = await setupDrgReview(cleanups)
   const initial = inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json())
   const planned = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: initial.encounterVersion,
-    procedureId: 'hospital-surgery-8', catalogVersion: 1, plannedFor: initial.virtualTime, reason: '合成双导管造影计划' })
+    procedureId: 'hospital-surgery-8', catalogVersion: 1, surgeryType: 'elective', locationId: 'location-catheterization-lab',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    plannedFor: initial.virtualTime, reason: '合成双导管造影计划' })
   expect(planned.status).toBe(200)
   const surgery = inpatientSurgeryResponseSchema.parse(await planned.json()).data
   const requestId = surgery.requests[0]!.id
@@ -56,7 +58,9 @@ it('再次确认须完整审阅原预留，原子替换且不释放其他计划�
   })).json()).data.reservations.find(item => item.requestId === undefined)!
   const surgery = inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json())
   const other = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: surgery.encounterVersion,
-    procedureId: 'hospital-surgery-7', catalogVersion: 1, plannedFor: surgery.virtualTime, reason: '另一独立造影计划' })
+    procedureId: 'hospital-surgery-7', catalogVersion: 1, surgeryType: 'elective', locationId: 'location-catheterization-lab',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    plannedFor: surgery.virtualTime, reason: '另一独立造影计划' })
   expect(other.status).toBe(200)
   const otherPlan = inpatientSurgeryResponseSchema.parse(await other.json()).data.requests.find(item => item.id !== s.input.requestId)!
   const otherReservation = responseSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/reservations`, {
@@ -189,7 +193,8 @@ it('失权、已取消或已开始的计划不能整批确认，已有材料使�
     requestId: s.input.requestId, expectedRequestVersion: 1, note: '合成术前核查' })
   expect(prepared.status).toBe(200)
   const consent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
-    requestId: s.input.requestId, expectedRequestVersion: 2, note: '合成知情同意' })
+    requestId: s.input.requestId, expectedRequestVersion: 2,
+    signerRole: 'patient', signerName: '合成预留患者', patientChoice: 'agree', note: '合成知情同意' })
   expect(consent.status).toBe(200)
   const started = await s.request(s.doctor, `${s.path}/surgeries/start`, {
     requestId: s.input.requestId, expectedRequestVersion: 3, procedureId: 'hospital-surgery-8', catalogVersion: 1, note: '合成造影开始' })
@@ -209,7 +214,9 @@ it('失权、已取消或已开始的计划不能整批确认，已有材料使�
   expect(inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json())).toEqual(surgery)
 
   const other = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: surgery.encounterVersion,
-    procedureId: 'hospital-surgery-7', catalogVersion: 1, plannedFor: surgery.virtualTime, reason: '另一个已撤销合成造影计划' })
+    procedureId: 'hospital-surgery-7', catalogVersion: 1, surgeryType: 'elective', locationId: 'location-catheterization-lab',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    plannedFor: surgery.virtualTime, reason: '另一个已撤销合成造影计划' })
   const otherPlan = inpatientSurgeryResponseSchema.parse(await other.json()).data.requests.find(item => item.id !== s.input.requestId)!
   expect((await s.request(s.doctor, `${s.path}/surgeries/cancel`, {
     requestId: otherPlan.id, expectedRequestVersion: otherPlan.version, note: '临床计划调整' })).status).toBe(200)

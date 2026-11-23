@@ -78,6 +78,7 @@ it('0111非空升级保留原款、零金额分配、旧退款预览和回执并
       '0117_clinical-quality-override.sql',
       '0118_item-insurance-coverage.sql',
       '0119_medication-route.sql',
+      '0120_surgery-notice-and-consent.sql',
     ])
     preservedTables.forEach((table, index) => expect(database.driver.prepare(`SELECT * FROM ${table}`).all()).toEqual(
       table === 'charge_record'

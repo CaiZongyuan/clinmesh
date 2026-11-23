@@ -1155,11 +1155,15 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
     const angioProc = stay.catalog.procedures.find(item => item.coding.code === '88.5500')!
     const admBefore2 = await fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)
     const req2Resp = await parsePciResponse(inpatientSurgeryResponseSchema, await fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, {
+      anesthesiaMethod: 'local-infiltration',
       encounterVersion: admBefore2.admission.versionId,
+      locationId: 'location-catheterization-lab',
       procedureId: angioProc.id,
       catalogVersion: angioProc.version,
       plannedFor: '2026-08-24T15:30:00+08:00',
       reason: '复查冠脉造影',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor',
+      surgeryType: 'elective',
     }))
     const angioReq2Id = req2Resp.data.requests.find(item => item.plannedProcedure.id === angioProc.id && item.status === 'requested')!.id
     for (const [role, action] of [['ward-nurse', 'check-preop'], ['inpatient-doctor', 'confirm-consent']] as const) {
@@ -1167,6 +1171,9 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
       await parsePciResponse(inpatientSurgeryResponseSchema, await fixture.request(role, `${stay.path}/surgeries/${action}`, {
         requestId: angioReq2Id,
         expectedRequestVersion: surg.requests.find(item => item.id === angioReq2Id)!.version,
+        ...(action === 'confirm-consent'
+          ? { patientChoice: 'agree', signerName: admBefore2.admission.patientName, signerRole: 'patient' }
+          : {}),
         note: '复查造影术前准备',
       }))
     }
@@ -1245,11 +1252,15 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
     const pciProc = surgeryCatalog.procedures.find(item => item.coding.code === '36.0700')!
     const surgeriesNow = await fixture.read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)
     const pciReqBlocked = await fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, {
+      anesthesiaMethod: 'local-infiltration',
       encounterVersion: surgeriesNow.encounterVersion,
+      locationId: 'location-catheterization-lab',
       procedureId: pciProc.id,
       catalogVersion: pciProc.version,
       plannedFor: '2026-08-24T16:00:00.000Z',
       reason: '申请PCI支架植入',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor',
+      surgeryType: 'elective',
     })
     expect(pciReqBlocked.status).toBe(409)
     expect(apiErrorSchema.parse(await pciReqBlocked.json()).error.code).toBe('CLINICAL_QUALITY_ALERT')
@@ -1262,12 +1273,16 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
     const createdPciReq = await parsePciResponse(
       inpatientSurgeryResponseSchema,
       await fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, {
+        anesthesiaMethod: 'local-infiltration',
         clinicalOverride: pciOverride,
         encounterVersion: surgeriesNow.encounterVersion,
+        locationId: 'location-catheterization-lab',
         procedureId: pciProc.id,
         catalogVersion: pciProc.version,
         plannedFor: '2026-08-24T16:00:00.000Z',
         reason: '申请PCI支架植入',
+        surgeonPractitionerId: 'practitioner-inpatient-doctor',
+        surgeryType: 'elective',
       }),
     )
     expect(clinicalQualityReceiptSchema.parse(createdPciReq.clinicalQuality)).toMatchObject({

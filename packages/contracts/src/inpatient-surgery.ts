@@ -7,6 +7,96 @@ const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const version = z.number().int().positive()
 const note = z.string().trim().min(1).max(2000)
 const optionalNote = z.string().trim().max(2000).optional()
+
+export const surgeryTypes = ['elective', 'semi-elective', 'emergency', 'day-surgery'] as const
+export const surgeryTypeSchema = z.enum(surgeryTypes)
+export type SurgeryType = z.infer<typeof surgeryTypeSchema>
+
+export const anesthesiaMethods = ['local-infiltration', 'local-sedation', 'general', 'neuraxial', 'nerve-block'] as const
+export const anesthesiaMethodSchema = z.enum(anesthesiaMethods)
+export type AnesthesiaMethod = z.infer<typeof anesthesiaMethodSchema>
+
+export const surgeryLocationIds = [
+  'location-catheterization-lab',
+  'location-operating-center',
+  'location-endoscopy-suite',
+  'location-outpatient-or',
+] as const
+export const surgeryLocationIdSchema = z.enum(surgeryLocationIds)
+export type SurgeryLocationId = z.infer<typeof surgeryLocationIdSchema>
+
+export const inpatientSurgeryLocationSchema = z.object({
+  id: surgeryLocationIdSchema,
+  name: z.string().min(1),
+  nameEn: z.string().min(1),
+}).strict()
+export type InpatientSurgeryLocation = z.infer<typeof inpatientSurgeryLocationSchema>
+
+export const inpatientSurgeryPractitionerSchema = z.object({
+  id,
+  name: z.string().min(1),
+  title: z.string().min(1).optional(),
+}).strict()
+export type InpatientSurgeryPractitioner = z.infer<typeof inpatientSurgeryPractitionerSchema>
+
+export const surgicalConsentTemplateIds = [
+  'coronary-angiography',
+  'coronary-des-pci',
+  'coronary-balloon-pci',
+  'general-surgery',
+] as const
+export const surgicalConsentTemplateIdSchema = z.enum(surgicalConsentTemplateIds)
+export type SurgicalConsentTemplateId = z.infer<typeof surgicalConsentTemplateIdSchema>
+
+export const surgicalConsentSignerRoles = ['patient', 'family-proxy'] as const
+export const surgicalConsentSignerRoleSchema = z.enum(surgicalConsentSignerRoles)
+export type SurgicalConsentSignerRole = z.infer<typeof surgicalConsentSignerRoleSchema>
+
+export const SURGICAL_CONSENT_DISCLAIMER = '合成临床教学文书模板，仅供仿真演练使用，非真实医疗法律文书' as const
+
+export const inpatientSurgicalConsentDocumentSchema = z.object({
+  templateId: surgicalConsentTemplateIdSchema,
+  templateVersion: z.literal('2026-11-23.r1'),
+  title: z.string().min(1),
+  disclaimer: z.literal(SURGICAL_CONSENT_DISCLAIMER),
+  patient: z.object({
+    name: z.string().min(1),
+    gender: z.enum(['female', 'male', 'other', 'unknown']),
+    birthDate: z.iso.date().nullable(),
+    inpatientNumber: z.string().min(1),
+  }).strict(),
+  primaryDiagnosis: z.object({
+    code: z.string().min(1),
+    display: z.string().min(1),
+  }).strict().nullable(),
+  surgeryNotice: z.object({
+    surgeryType: surgeryTypeSchema.nullable(),
+    procedureCode: z.string().min(1),
+    procedureDisplay: z.string().min(1),
+    plannedFor: z.iso.datetime({ offset: true }),
+    locationName: z.string().min(1).nullable(),
+    anesthesiaMethod: anesthesiaMethodSchema.nullable(),
+    surgeonName: z.string().min(1).nullable(),
+    assistantName: z.string().min(1).nullable(),
+  }).strict(),
+  purposeAndMethod: z.string().min(1),
+  commonRisks: z.array(z.string().min(1)).min(3),
+  individualizedRisks: z.string().trim().max(2000).nullable(),
+  alternativePlans: z.string().min(1),
+  patientChoiceStatement: z.string().min(1),
+  signature: z.object({
+    signerRole: surgicalConsentSignerRoleSchema,
+    signerName: z.string().trim().min(1).max(80),
+    signerRelationship: z.string().trim().min(1).max(40).nullable(),
+    patientChoice: z.literal('agree'),
+    talkingDoctorId: id,
+    talkingDoctorName: z.string().min(1),
+    signedAt: z.iso.datetime({ offset: true }),
+  }).strict(),
+  renderedText: z.string().min(1),
+}).strict()
+export type InpatientSurgicalConsentDocument = z.infer<typeof inpatientSurgicalConsentDocumentSchema>
+
 export const inpatientProcedureCodingSchema = z.object({ system: z.literal('urn:clinmesh:classification:icd-9-cm-3-clinical'),
   version: z.literal('3.0'), code: z.string().min(1), display: z.string().min(1), category: z.enum(['手术','介入治疗','诊断性操作']),
   releaseId: z.literal('clinmesh-surgery-subset-2026-10-20'), sourceUrl: z.url(), sourceSha256: z.string().length(64), sourceLocator: z.string().min(1),
@@ -32,12 +122,77 @@ export const inpatientMaterialItemSchema = z.object({ id, version, display: z.st
 const unavailableMaterial = inpatientMaterialItemSchema.omit({ chargeDefinition: true, reference: true }).extend({
   unavailableReason: z.literal('unit-unconfirmed'), reference: inpatientMaterialReferenceSchema.extend({ unit: z.null() }),
 }).strict()
-export const inpatientSurgeryCatalogSchema = z.object({ procedures: z.array(inpatientProcedureItemSchema),
-  materials: z.array(z.union([inpatientMaterialItemSchema, unavailableMaterial])) }).strict()
-export const inpatientSurgeryRequestInputSchema = z.object({ admissionId: id, encounterVersion: z.string().regex(/^\d+$/),
-  procedureId: id, catalogVersion: version, plannedFor: z.iso.datetime({ offset: true }), reason: note, clinicalOverride: clinicalOverrideInputSchema.optional() }).strict()
+export const inpatientSurgeryCatalogSchema = z.object({
+  procedures: z.array(inpatientProcedureItemSchema),
+  materials: z.array(z.union([inpatientMaterialItemSchema, unavailableMaterial])),
+  locations: z.array(inpatientSurgeryLocationSchema).default([]),
+  practitioners: z.array(inpatientSurgeryPractitionerSchema).default([]),
+}).strict()
+
+const surgeryRequestFields = {
+  encounterVersion: z.string().regex(/^\d+$/),
+  surgeryType: surgeryTypeSchema,
+  procedureId: id,
+  catalogVersion: version,
+  plannedFor: z.iso.datetime({ offset: true }),
+  locationId: surgeryLocationIdSchema,
+  surgeonPractitionerId: id,
+  assistantPractitionerId: id.optional(),
+  anesthesiaMethod: anesthesiaMethodSchema,
+  reason: note,
+  clinicalOverride: clinicalOverrideInputSchema.optional(),
+}
+
+function distinctSurgeons(input: { surgeonPractitionerId: string; assistantPractitionerId?: string | undefined }): boolean {
+  return input.assistantPractitionerId === undefined || input.assistantPractitionerId !== input.surgeonPractitionerId
+}
+
+export const inpatientSurgeryRequestBodySchema = z.object(surgeryRequestFields).strict().refine(distinctSurgeons, {
+  message: '主刀医师与第一助手不能为同一人',
+  path: ['assistantPractitionerId'],
+})
+
+export const inpatientSurgeryRequestInputSchema = z.object({
+  admissionId: id,
+  ...surgeryRequestFields,
+}).strict().refine(distinctSurgeons, {
+  message: '主刀医师与第一助手不能为同一人',
+  path: ['assistantPractitionerId'],
+})
+
 const surgeryActionBaseSchema = z.object({ admissionId: id, requestId: id, expectedRequestVersion: version }).strict()
 export const inpatientSurgeryActionInputSchema = surgeryActionBaseSchema.extend({ note }).strict()
+
+const confirmConsentFields = {
+  requestId: id,
+  expectedRequestVersion: version,
+  signerRole: surgicalConsentSignerRoleSchema,
+  signerName: z.string().trim().min(1).max(80),
+  signerRelationship: z.string().trim().min(1).max(40).optional(),
+  patientChoice: z.literal('agree'),
+  individualizedRisks: z.string().trim().max(2000).optional(),
+  note: optionalNote,
+}
+
+function validConsentSigner(input: { signerRole: SurgicalConsentSignerRole; signerRelationship?: string | undefined }): boolean {
+  return input.signerRole === 'family-proxy'
+    ? input.signerRelationship !== undefined && input.signerRelationship.trim().length > 0
+    : input.signerRelationship === undefined
+}
+
+export const inpatientSurgeryConfirmConsentBodySchema = z.object(confirmConsentFields).strict().refine(validConsentSigner, {
+  message: '受托人签署须提供与患者关系，患者本人签署不填写受托关系',
+  path: ['signerRelationship'],
+})
+
+export const inpatientSurgeryConfirmConsentInputSchema = z.object({
+  admissionId: id,
+  ...confirmConsentFields,
+}).strict().refine(validConsentSigner, {
+  message: '受托人签署须提供与患者关系，患者本人签署不填写受托关系',
+  path: ['signerRelationship'],
+})
+
 export const inpatientSurgeryExecuteInputSchema = surgeryActionBaseSchema.extend({ procedureId: id, catalogVersion: version, note: optionalNote,
   materials: z.array(z.object({ materialId: id, catalogVersion: version, quantity: z.number().int().positive().max(1000),
     /** 预留替换：引用本住院预留中的耗材记录，执行时一次性转为实际使用，不重复计费。 */
@@ -72,10 +227,27 @@ export const inpatientSurgeryCompleteInputSchema = surgeryActionBaseSchema.exten
   reconciliation: z.object({ ...reconciliation, expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
 }).strict()
 const preparation = z.object({ actorId: z.string().min(1), practitionerRoleId: id, recordedAt: z.iso.datetime({ offset: true }), note }).strict()
-export const inpatientSurgeryRequestSchema = z.object({ id, admissionId: id, version, status: z.enum(['requested','ready','completed','cancelled']),
-  plannedProcedure: inpatientProcedureItemSchema, plannedFor: z.iso.datetime({ offset: true }), reason: note,
-  requestedAt: z.iso.datetime({ offset: true }), requestedBy: z.string().min(1), organizationId: id,
-  preopCheck: preparation.optional(), consentConfirmation: preparation.optional(), cancellation: preparation.optional(),
+export const inpatientConsentConfirmationSchema = preparation.extend({
+  document: inpatientSurgicalConsentDocumentSchema.optional(),
+}).strict()
+export type InpatientConsentConfirmation = z.infer<typeof inpatientConsentConfirmationSchema>
+
+export const inpatientSurgeryRequestSchema = z.object({
+  id, admissionId: id, version, status: z.enum(['requested','ready','completed','cancelled']),
+  surgeryType: surgeryTypeSchema.optional(),
+  plannedProcedure: inpatientProcedureItemSchema,
+  plannedFor: z.iso.datetime({ offset: true }),
+  location: inpatientSurgeryLocationSchema.pick({ id: true, name: true }).optional(),
+  surgeon: inpatientSurgeryPractitionerSchema.optional(),
+  assistant: inpatientSurgeryPractitionerSchema.optional(),
+  anesthesiaMethod: anesthesiaMethodSchema.optional(),
+  reason: note,
+  requestedAt: z.iso.datetime({ offset: true }),
+  requestedBy: z.string().min(1),
+  organizationId: id,
+  preopCheck: preparation.optional(),
+  consentConfirmation: inpatientConsentConfirmationSchema.optional(),
+  cancellation: preparation.optional(),
 }).strict()
 export const inpatientSurgeryMaterialUseSchema = z.object({ id, item: inpatientMaterialItemSchema,
   quantity: z.number().int().positive().max(1000), amountFen: z.number().int().nonnegative().safe() }).strict()

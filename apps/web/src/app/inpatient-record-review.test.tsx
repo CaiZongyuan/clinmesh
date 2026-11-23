@@ -224,3 +224,193 @@ it('病案人员看归档病案不重复归档标签和修订号，时间到分�
   // 病案号、住院号仍用等宽；时间不用。
   expect([...region.querySelectorAll('.font-mono')].filter(node => /\d{2}:\d{2}/.test(node.textContent ?? ''))).toEqual([])
 })
+
+it('病案页按需展开手术通知单与知情同意书，默认不额外请求 surgeries 且支持全文查阅', async () => {
+  const urls: string[] = []
+  const surgeryPayload = {
+    admissionId: admission.id,
+    encounterVersion: admission.versionId,
+    virtualTime: '2026-11-03T09:20:00+08:00',
+    requests: [{
+      id: 'req-consent-1',
+      admissionId: admission.id,
+      version: 3,
+      status: 'completed',
+      surgeryType: 'elective',
+      plannedProcedure: {
+        id: 'proc-angio',
+        version: 1,
+        coding: {
+          system: 'urn:clinmesh:classification:icd-9-cm-3-clinical',
+          version: '3.0',
+          code: '88.5500',
+          display: '用单根导管的冠状动脉造影术',
+          category: '诊断性操作',
+          releaseId: 'clinmesh-surgery-subset-2026-10-20',
+          sourceUrl: 'https://example.com/synthetic',
+          sourceSha256: 'a'.repeat(64),
+          sourceLocator: 'synthetic',
+        },
+        chargeDefinition: { id: 'charge-angio', priceFen: 120000, unit: '次', synthetic: true, trigger: 'execution' },
+      },
+      plannedFor: '2026-11-03T10:30:00+08:00',
+      location: { id: 'location-catheterization-lab', name: '导管室' },
+      surgeon: { id: 'practitioner-surgeon-chief', name: '林海', title: '主任医师' },
+      assistant: { id: 'practitioner-inpatient-doctor', name: '周宁', title: '主治医师' },
+      anesthesiaMethod: 'local-infiltration',
+      reason: '胸痛待查冠脉造影',
+      requestedAt: '2026-11-03T09:15:00+08:00',
+      requestedBy: 'doctor',
+      organizationId: admission.organizationId,
+      consentConfirmation: {
+        actorId: 'doctor',
+        practitionerRoleId: 'role-doctor',
+        recordedAt: '2026-11-03T09:20:00+08:00',
+        note: '患者本人已签署《冠状动脉造影术知情同意书》',
+        document: {
+          templateId: 'coronary-angiography',
+          templateVersion: '2026-11-23.r1',
+          title: '冠状动脉造影术知情同意书',
+          disclaimer: '合成临床教学文书模板，仅供仿真演练使用，非真实医疗法律文书',
+          patient: { name: admission.patientName, gender: 'female', birthDate: '1980-01-01', inpatientNumber: admission.inpatientNumber },
+          primaryDiagnosis: { code: 'I10', display: '合成高血压' },
+          surgeryNotice: {
+            surgeryType: 'elective',
+            procedureCode: '88.5500',
+            procedureDisplay: '用单根导管的冠状动脉造影术',
+            plannedFor: '2026-11-03T10:30:00+08:00',
+            locationName: '导管室',
+            anesthesiaMethod: 'local-infiltration',
+            surgeonName: '林海 · 主任医师',
+            assistantName: '周宁 · 主治医师',
+          },
+          purposeAndMethod: '经动脉穿刺置入造影导管明确冠脉病变。',
+          commonRisks: [
+            '穿刺部位局部出血或血肿。',
+            '含碘对比剂过敏或肾损伤。',
+            '导管操作诱发冠脉痉挛或夹层。',
+          ],
+          individualizedRisks: '合并高血压，术中监测血压波动。',
+          alternativePlans: '可选冠脉 CTA 无创评估。',
+          patientChoiceStatement: '本人已充分理解并同意手术与麻醉方案。',
+          signature: {
+            signerRole: 'patient',
+            signerName: admission.patientName,
+            signerRelationship: null,
+            patientChoice: 'agree',
+            talkingDoctorId: 'practitioner-inpatient-doctor',
+            talkingDoctorName: '周宁 · 主治医师',
+            signedAt: '2026-11-03T09:20:00+08:00',
+          },
+          renderedText: '合成冠脉造影术知情同意书全文',
+        },
+      },
+    }],
+    executions: [],
+    inProgress: [],
+  }
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    urls.push(path)
+    if (path.endsWith('/record')) return Response.json(record)
+    if (path.endsWith('/surgeries')) return Response.json(surgeryPayload)
+    throw new Error(`Unexpected read ${path}`)
+  }))
+  const user = userEvent.setup()
+  mount(write => <InpatientRecord admission={admission} session={session} locale="zh-CN" write={write} />)
+  await screen.findByRole('region', { name: '正式诊断与实际操作' })
+  expect(urls.some(path => path.endsWith('/surgeries'))).toBe(false)
+  await user.click(screen.getByText('查看手术通知单与知情同意书', { selector: 'summary' }))
+  await waitFor(() => expect(urls.some(path => path.endsWith('/surgeries'))).toBe(true))
+  expect(await screen.findByText('导管室')).toBeDefined()
+  expect(screen.getByText(/林海（主任医师）/)).toBeDefined()
+  await user.click(screen.getByRole('button', { name: '查看知情同意书' }))
+  const modal = await screen.findByRole('dialog', { name: '冠状动脉造影术知情同意书' })
+  expect(modal.textContent).toContain('合并高血压，术中监测血压波动。')
+})
+
+it('在院未结算住院医生病案页亦可展开查阅通知单与同意书，且对术中手术准确标识进行中', async () => {
+  const doctorSession: SessionContext = {
+    ...session,
+    actor: { ...session.actor, actorId: 'doctor', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor' },
+    user: { id: 'doctor', name: '住院医生', email: 'doctor@demo.clinmesh.local' },
+  }
+  const inProgressProcedure = {
+    id: 'proc-pci',
+    version: 1,
+    coding: {
+      system: 'urn:clinmesh:classification:icd-9-cm-3-clinical',
+      version: '3.0',
+      code: '36.0700',
+      display: '药物洗脱冠状动脉支架置入术',
+      category: '介入治疗',
+      releaseId: 'clinmesh-surgery-subset-2026-10-20',
+      sourceUrl: 'https://example.com/synthetic',
+      sourceSha256: 'a'.repeat(64),
+      sourceLocator: 'synthetic',
+    },
+    chargeDefinition: { id: 'charge-pci', priceFen: 350000, unit: '次', synthetic: true, trigger: 'execution' },
+  }
+  const surgeryPayload = {
+    admissionId: admission.id,
+    encounterVersion: admission.versionId,
+    virtualTime: '2026-11-03T11:10:00+08:00',
+    requests: [{
+      id: 'req-running-1',
+      admissionId: admission.id,
+      version: 3,
+      status: 'ready',
+      surgeryType: 'emergency',
+      plannedProcedure: inProgressProcedure,
+      plannedFor: '2026-11-03T11:00:00+08:00',
+      location: { id: 'location-catheterization-lab', name: '导管室' },
+      surgeon: { id: 'practitioner-surgeon-chief', name: '林海', title: '主任医师' },
+      anesthesiaMethod: 'local-sedation',
+      reason: '急性冠脉综合征急诊支架置入',
+      requestedAt: '2026-11-03T10:30:00+08:00',
+      requestedBy: 'doctor',
+      organizationId: admission.organizationId,
+      consentConfirmation: {
+        actorId: 'doctor',
+        practitionerRoleId: 'role-doctor',
+        recordedAt: '2026-11-03T10:40:00+08:00',
+        note: '家属已签署急诊同意书',
+      },
+      preopCheck: {
+        actorId: 'nurse',
+        practitionerRoleId: 'role-nurse',
+        recordedAt: '2026-11-03T10:45:00+08:00',
+        note: '急诊术前核对无误',
+      },
+    }],
+    executions: [],
+    inProgress: [{
+      id: 'exec-running-1',
+      admissionId: admission.id,
+      requestId: 'req-running-1',
+      actualProcedure: inProgressProcedure,
+      performedAt: '2026-11-03T11:05:00+08:00',
+      performedBy: 'doctor',
+      practitionerRoleId: 'role-doctor',
+      organizationId: admission.organizationId,
+      note: '按计划开始手术',
+      materials: [],
+      materialHistory: [],
+    }],
+  }
+  const urls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    urls.push(path)
+    if (path.endsWith('/record')) return Response.json(record)
+    if (path.endsWith('/surgeries')) return Response.json(surgeryPayload)
+    throw new Error(`Unexpected read ${path}`)
+  }))
+  const user = userEvent.setup()
+  mount(write => <InpatientActionProvider stage="record"><InpatientRecord admission={admission} session={doctorSession} locale="zh-CN" write={write} /><InpatientActionOutlet /></InpatientActionProvider>, doctorSession)
+  await screen.findByRole('region', { name: '提交首页前' })
+  expect(urls.some(path => path.endsWith('/surgeries'))).toBe(false)
+  await user.click(screen.getByText('查看手术通知单与知情同意书', { selector: 'summary' }))
+  expect(await screen.findByText('进行中')).toBeDefined()
+  expect(screen.queryByText('已就绪')).toBeNull()
+  expect(screen.getByText('急诊手术')).toBeDefined()
+  expect(screen.getByText('局部麻醉+镇静')).toBeDefined()
+})

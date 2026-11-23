@@ -6,7 +6,7 @@ import Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
 import { guidelineTopicBundleSchema, guidelineTopicIds, type GuidelineTopicId } from '@clinmesh/contracts/guideline-topics'
 import { inpatientGuidelineAdviceListSchema, inpatientGuidelineAdviceSchema, inpatientGuidelineAdviceResponseSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
-import { inpatientSurgerySchema, inpatientSurgeryResponseSchema, inpatientSurgeryCatalogSchema, inpatientSurgeryRequestInputSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientSurgerySchema, inpatientSurgeryResponseSchema, inpatientSurgeryCatalogSchema, inpatientSurgeryRequestBodySchema } from '@clinmesh/contracts/inpatient-surgery'
 import {
   apiErrorSchema,
   createPatientResponseSchema,
@@ -186,8 +186,15 @@ it.each(['report-draft', 'manual-confirmation'] as const)('指南只使用所属
   })
   const admission = await s.fixture.read('inpatient-doctor', s.stay.path, inpatientDetailSchema)
   const requested = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    encounterVersion: admission.admission.versionId, procedureId: s.stay.procedure.id, catalogVersion: s.stay.procedure.version,
-    plannedFor: '2026-08-24T15:00:00+08:00', reason: '同次住院的另一项独立PCI计划',
+    anesthesiaMethod: 'local-infiltration',
+    encounterVersion: admission.admission.versionId,
+    locationId: 'location-catheterization-lab',
+    procedureId: s.stay.procedure.id,
+    catalogVersion: s.stay.procedure.version,
+    plannedFor: '2026-08-24T15:00:00+08:00',
+    reason: '同次住院的另一项独立PCI计划',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor',
+    surgeryType: 'elective',
   })
   expect(requested.status).toBe(200)
   const second = inpatientSurgeryResponseSchema.parse(await requested.json()).data.requests
@@ -533,8 +540,17 @@ it('仅持有指南请求的窄Grant可显式准备，不能创建手术；撤�
   const admission = await s.fixture.read('inpatient-doctor', s.stay.path, inpatientDetailSchema)
   const catalog = await s.fixture.read('inpatient-doctor', '/api/his/v1/inpatient/surgery-catalog', inpatientSurgeryCatalogSchema)
   const procedure = catalog.procedures.find(item => item.id === s.stay.procedure.id)!
-  const input = inpatientSurgeryRequestInputSchema.omit({ admissionId: true }).parse({ encounterVersion: admission.admission.versionId,
-    procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: '窄指南授权不得创建另一项手术计划' })
+  const input = inpatientSurgeryRequestBodySchema.parse({
+    anesthesiaMethod: 'local-infiltration',
+    encounterVersion: admission.admission.versionId,
+    locationId: 'location-catheterization-lab',
+    procedureId: procedure.id,
+    catalogVersion: procedure.version,
+    plannedFor: '2026-08-24T15:00:00+08:00',
+    reason: '窄指南授权不得创建另一项手术计划',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor',
+    surgeryType: 'elective',
+  })
   const before = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgerySchema)
   const surgery = await s.fixture.runtime.app.request(`${s.stay.path}/surgeries/request`, { method: 'POST',
     headers: { authorization: `Bearer ${grant.token}`, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
@@ -1064,11 +1080,15 @@ it('无 PCI 手术申请的内科住院可按专题完成术前水化、FFR > 0.
   const angioProc = surgCat.procedures.find(item => item.coding.code === '88.5500')!
   const admDetail = await s.fixture.read('inpatient-doctor', medicalStay.path, inpatientDetailSchema)
   const angioReq = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${medicalStay.path}/surgeries/request`, {
+    anesthesiaMethod: 'local-infiltration',
     catalogVersion: angioProc.version,
     encounterVersion: admDetail.admission.versionId,
+    locationId: 'location-catheterization-lab',
     plannedFor: '2026-08-24T11:00:00+08:00',
     procedureId: angioProc.id,
     reason: '诊断性冠脉造影与 FFR 功能学评估',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor',
+    surgeryType: 'elective',
   })).json()).data.requests[0]!
   await s.fixture.request('ward-nurse', `${medicalStay.path}/surgeries/check-preop`, {
     expectedRequestVersion: angioReq.version,
@@ -1079,7 +1099,10 @@ it('无 PCI 手术申请的内科住院可按专题完成术前水化、FFR > 0.
   await s.fixture.request('inpatient-doctor', `${medicalStay.path}/surgeries/confirm-consent`, {
     expectedRequestVersion: preopSurg.requests[0]!.version,
     note: '签署造影知情同意',
+    patientChoice: 'agree',
     requestId: angioReq.id,
+    signerName: admDetail.admission.patientName,
+    signerRole: 'patient',
   })
   const readySurg = await s.fixture.read('inpatient-doctor', `${medicalStay.path}/surgeries`, inpatientSurgerySchema)
   const angioExec = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${medicalStay.path}/surgeries/execute`, {

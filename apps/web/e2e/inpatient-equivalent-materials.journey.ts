@@ -61,7 +61,10 @@ export async function runEquivalentMaterialJourney(page: Page, app: PciBrowserAp
   let request = (await s.read('ward-nurse', `${stay.path}/surgeries`, inpatientSurgerySchema)).requests.find(item => item.id === stay.requestId)!
   expect((await s.request('ward-nurse', `${stay.path}/surgeries/check-preop`, { requestId: stay.requestId, expectedRequestVersion: request.version, note: '合成术前准备已核对' })).status).toBe(200)
   request = (await s.read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)).requests.find(item => item.id === stay.requestId)!
-  expect((await s.request('inpatient-doctor', `${stay.path}/surgeries/confirm-consent`, { requestId: stay.requestId, expectedRequestVersion: request.version, note: '合成签署已确认' })).status).toBe(200)
+  expect((await s.request('inpatient-doctor', `${stay.path}/surgeries/confirm-consent`, {
+    requestId: stay.requestId, expectedRequestVersion: request.version,
+    signerRole: 'patient', signerName: '合成冠脉病例甲', patientChoice: 'agree', note: '合成签署已确认',
+  })).status).toBe(200)
   request = (await s.read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)).requests.find(item => item.id === stay.requestId)!
   const started = inpatientSurgeryResponseSchema.parse(await (await s.request('inpatient-doctor', `${stay.path}/surgeries/start`, { requestId: stay.requestId, expectedRequestVersion: request.version, procedureId: stay.procedure.id, catalogVersion: 1, note: '合成开始手术' })).json()).data
   const running = page.getByRole('region', { name: '本台耗材', exact: true })

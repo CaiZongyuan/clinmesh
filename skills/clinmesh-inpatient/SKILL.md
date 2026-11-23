@@ -14,6 +14,7 @@ description: ClinMesh 住院登记、诊断、医嘱校对执行、发药给药�
 | 工具 | 当前岗位与动作 |
 | --- | --- |
 | `clinmesh_select_inpatient_stage` | 切换当前岗位可读的住院环节 |
+| `clinmesh_read_inpatient_surgeries` | 住院医生、病区护士或病案在手术或病案环节只读手术通知单六要素、一术一议知情同意书快照、术前核对与已实施操作 |
 | `clinmesh_read_inpatient_angiography_reports` | 住院医生、病区护士或病案在检查检验、手术或病案环节只读正式冠脉造影报告与多支生理学所见 |
 | `clinmesh_read_inpatient_clinical_scores` | 住院医生、病区护士或病案在入院、医嘱、手术、出院或病案环节只读确定性临床评分与缺项 |
 | `clinmesh_read_inpatient_guideline_topics` | 住院医生、病区护士或病案在医嘱、手术、出院或病案环节只读已核验指南专题原文与指标缺项 |
@@ -115,7 +116,7 @@ clinmesh inpatient reverse-charge --input @reversal.json --idempotency-key <key>
 
 每个文件使用受信读取结果的 `admissionId`。诊断确认传 `encounterVersion`、`expectedRevision` 与恰好一个 primary 的 `entries`；每项必须显式选择 `admissionCondition`（`1`有、`2`临床未确定、`3`情况不明、`4`无），输入顺序保存在正式确认中，不根据备注或日期推断病情；签发传当前 `encounterVersion`、`duration` 和受控 `selection`。药品选择含目录 ID/版本、医生本次填写的 `doseText`、`routeCode`、`frequencyCode`、每次 `doseQuantity`；数量以目录 `unit` 计，质量单位按明确的 `doseBasis` 换算为整数制剂数量，并受 `maxDoseQuantity` 约束。`doses` 是常用建议，未填写本次剂量由医嘱表单提示。单位或含量不明确时先补资料；合成本院适应症、组合、过敏、剂量、途径和频次不满足时不得换 ID 绕过。
 
-`inpatient.order.issue` version 10 requires a controlled medication `routeCode` (`PO | IVGTT | IV | IM | IH | SL | TOP | INH` within the item's `allowedRouteCodes`, omitted on `kind="service"` orders) and accepts `QD | BID | TID | QN | PRN | ONCE`, optional medication `instructions` (e.g. hydration rate or PRN repeat limits from `order-set-drafts` `instructionsZh`), and optional `clinicalOverride`. ONCE 仅用于 `duration=temporary`；长期 QD/BID/TID/QN 分别按上海 08:00、08:00/20:00、08:00/14:00/20:00、22:00 排程。声明 `safety` 的药品按 ICD-10 前缀适应证、药理互斥及单次／单日极量审方，PRN 按每日最多四次校验，实际任务也受业务日四次及单日数量上限限制。按 `error.reason` 修正本次选择：`MEDICATION_COMBINATION_NOT_ALLOWED` 更换互斥药理类别，`MEDICATION_DIAGNOSIS_NOT_ALLOWED` 核对已确认诊断，`MEDICATION_ALLERGY_CONFLICT` 更换过敏冲突药品，`MEDICATION_DOSAGE_NOT_ALLOWED` 调整剂量／频次／数量，`MEDICATION_ROUTE_NOT_ALLOWED` 切换至目录 `allowedRouteCodes` 允许的给药途径，`MEDICATION_ONCE_REQUIRES_TEMPORARY` 改为临时或其他合法频次。此外，`inpatient clinical-quality` 提供 `inpatient-order`（需传 `--catalog-item-id`）、`inpatient-pci-plan`、`inpatient-discharge` 只读预检；`inpatient.order.issue`、`inpatient.surgery.request`（PCI 术式 v3）、`inpatient.pci-selection.confirm`（v3）、`inpatient.discharge.issue`（v2）与离院后 `inpatient.record.submit`（v3）在同一事务执行双层事中临床质控：第一层红线 `CLINICAL_QUALITY_RED_LINE`（如已证实 `eGFR < 30` 开二甲双胍／达格列净、明确过敏冲突、超极量、药理互斥叠加）附 `clinicalOverride` 仍硬性拒绝；第二层路径与指南偏离 `CLINICAL_QUALITY_ALERT`（如无近期血肌酐开肾排泄高危药 `RENAL_CREATININE_MISSING`、单纯病毒感染无细菌指征开抗菌药 `ANTIBIOTIC_WITHOUT_BACTERIAL_INDICATION`、造影示 `FFR > 0.80` 仍拟 PCI `PCI_NON_ISCHEMIC_LESION`、冠心病／PCI 出院漏开抗血小板或他汀长期医嘱 `DISCHARGE_ANTIPLATELET_MISSING`/`DISCHARGE_STATIN_MISSING`）未带合规 `clinicalOverride` 时返回 409，补齐临床依据或以新幂等键携带受控 `reasonCode`、`note` 与完整 `acknowledgedAlerts` 提交后原子落库并写入回执、审计与 Action Trace。保留原输入，重新读取权威目录和版本，不换身份绕过。病区护士或住院医生可用 `record-vital-signs`（`expectedRevision` 初次为 `0`，冲突返回 `INPATIENT_VITAL_SIGNS_CONFLICT`）录入心率、血压、呼吸、体温、血氧及可选体重身高，或用 `record-risk-assessment`（冲突返回 `INPATIENT_RISK_ASSESSMENT_CONFLICT`）录入床旁专病风险事实（`killipClass`、`cardiacArrestOnAdmission`、`anginaEpisodes24h`、`stSegmentDeviation`、`aspirinUsedLast7Days`、`smokingStatus`、`familyHistoryPrematureCad`、`knownCoronaryStenosisGe50`、`priorBleedingHistory`；未传字段保持原值或未记录）；`clinical-scores` 仅按已落库客观记录返回六项确定性算子与缺项 `missingInputs`。住院医生可用 `order-set-drafts` 按有效确认药物过敏、`ckd-epi-2021-egfr` 与最新住院护理体征（心率、收缩压及最近一次已记录体重）预筛四套版本化专病组套（`chest-pain-stat-workup`、`cad-admission-baseline`、`cin-perioperative-hydration`、`cad-pci-secondary-prevention`，药物候选带受控 `routeCode`），体征、体重或肾功缺失时返回 `needs-review`（`pending-verification`）而不静默假定正常，调用本身不产生正式医嘱、检查申请或收费，候选经医生核对后通过既有 `issue-order` 或住院检查开立命令签发。
+`inpatient.order.issue` version 10 requires a controlled medication `routeCode` (`PO | IVGTT | IV | IM | IH | SL | TOP | INH` within the item's `allowedRouteCodes`, omitted on `kind="service"` orders) and accepts `QD | BID | TID | QN | PRN | ONCE`, optional medication `instructions` (e.g. hydration rate or PRN repeat limits from `order-set-drafts` `instructionsZh`), and optional `clinicalOverride`. ONCE 仅用于 `duration=temporary`；长期 QD/BID/TID/QN 分别按上海 08:00、08:00/20:00、08:00/14:00/20:00、22:00 排程。声明 `safety` 的药品按 ICD-10 前缀适应证、药理互斥及单次／单日极量审方，PRN 按每日最多四次校验，实际任务也受业务日四次及单日数量上限限制。按 `error.reason` 修正本次选择：`MEDICATION_COMBINATION_NOT_ALLOWED` 更换互斥药理类别，`MEDICATION_DIAGNOSIS_NOT_ALLOWED` 核对已确认诊断，`MEDICATION_ALLERGY_CONFLICT` 更换过敏冲突药品，`MEDICATION_DOSAGE_NOT_ALLOWED` 调整剂量／频次／数量，`MEDICATION_ROUTE_NOT_ALLOWED` 切换至目录 `allowedRouteCodes` 允许的给药途径，`MEDICATION_ONCE_REQUIRES_TEMPORARY` 改为临时或其他合法频次。此外，`inpatient clinical-quality` 提供 `inpatient-order`（需传 `--catalog-item-id`）、`inpatient-pci-plan`、`inpatient-discharge` 只读预检；`inpatient.order.issue`、`inpatient.surgery.request`（PCI 术式 v4）、`inpatient.pci-selection.confirm`（v3）、`inpatient.discharge.issue`（v2）与离院后 `inpatient.record.submit`（v3）在同一事务执行双层事中临床质控：第一层红线 `CLINICAL_QUALITY_RED_LINE`（如已证实 `eGFR < 30` 开二甲双胍／达格列净、明确过敏冲突、超极量、药理互斥叠加）附 `clinicalOverride` 仍硬性拒绝；第二层路径与指南偏离 `CLINICAL_QUALITY_ALERT`（如无近期血肌酐开肾排泄高危药 `RENAL_CREATININE_MISSING`、单纯病毒感染无细菌指征开抗菌药 `ANTIBIOTIC_WITHOUT_BACTERIAL_INDICATION`、造影示 `FFR > 0.80` 仍拟 PCI `PCI_NON_ISCHEMIC_LESION`、冠心病／PCI 出院漏开抗血小板或他汀长期医嘱 `DISCHARGE_ANTIPLATELET_MISSING`/`DISCHARGE_STATIN_MISSING`）未带合规 `clinicalOverride` 时返回 409，补齐临床依据或以新幂等键携带受控 `reasonCode`、`note` 与完整 `acknowledgedAlerts` 提交后原子落库并写入回执、审计与 Action Trace。保留原输入，重新读取权威目录和版本，不换身份绕过。病区护士或住院医生可用 `record-vital-signs`（`expectedRevision` 初次为 `0`，冲突返回 `INPATIENT_VITAL_SIGNS_CONFLICT`）录入心率、血压、呼吸、体温、血氧及可选体重身高，或用 `record-risk-assessment`（冲突返回 `INPATIENT_RISK_ASSESSMENT_CONFLICT`）录入床旁专病风险事实（`killipClass`、`cardiacArrestOnAdmission`、`anginaEpisodes24h`、`stSegmentDeviation`、`aspirinUsedLast7Days`、`smokingStatus`、`familyHistoryPrematureCad`、`knownCoronaryStenosisGe50`、`priorBleedingHistory`；未传字段保持原值或未记录）；`clinical-scores` 仅按已落库客观记录返回六项确定性算子与缺项 `missingInputs`。住院医生可用 `order-set-drafts` 按有效确认药物过敏、`ckd-epi-2021-egfr` 与最新住院护理体征（心率、收缩压及最近一次已记录体重）预筛四套版本化专病组套（`chest-pain-stat-workup`、`cad-admission-baseline`、`cin-perioperative-hydration`、`cad-pci-secondary-prevention`，药物候选带受控 `routeCode`），体征、体重或肾功缺失时返回 `needs-review`（`pending-verification`）而不静默假定正常，调用本身不产生正式医嘱、检查申请或收费，候选经医生核对后通过既有 `issue-order` 或住院检查开立命令签发。
 
 `vital-signs.json` 与 `inpatient-risk-assessment.json` 合成示例（`priorBleedingHistory` 取 `"spontaneous" | "non-spontaneous" | "negative"`，仅自发性出血计入 PRECISE-DAPT 出血史，外伤或手术出血填 `"non-spontaneous"`）：
 
@@ -401,7 +402,7 @@ clinmesh inpatient surgeries --admission-id <admission-id>
 clinmesh inpatient angiography-reports --admission-id <admission-id>
 clinmesh inpatient request-surgery --input @surgery-request.json --idempotency-key <key>
 clinmesh inpatient check-surgery-preop --input @surgery-preparation.json --idempotency-key <key>
-clinmesh inpatient confirm-surgery-consent --input @surgery-preparation.json --idempotency-key <key>
+clinmesh inpatient confirm-surgery-consent --input @surgery-consent.json --idempotency-key <key>
 clinmesh inpatient start-surgery --input @surgery-start.json --idempotency-key <key>
 clinmesh inpatient record-surgery-material --input @surgery-material.json --idempotency-key <key>
 clinmesh inpatient supplement-surgery-material --input @surgery-material-addendum.json --idempotency-key <key>
@@ -413,17 +414,49 @@ clinmesh inpatient cancel-surgery --input @surgery-preparation.json --idempotenc
 clinmesh command receipt get --operation-id inpatient.surgery.execute --idempotency-key <key>
 ```
 
-住院医生申请传本次 `admissionId/encounterVersion`、目录 `procedureId/catalogVersion`、不早于当前虚拟时间的 `plannedFor` 和 `reason`。计划只创建 ServiceRequest，不产生已实施事实或费用，场景推进也不自动执行。目录是临床版 ICD-9-CM-3 工作表3.0的固定八条来源摘录，保留前导零、点和扩展后缀、类别、项目摘录Release与来源定位；不是全量、最新版或医保版目录。院内收费ID与临床分类码分开，价格明确为合成演示价，不得将分类编码当成收费项目ID提交。
+住院医生申请（`request-surgery`，operation v4）传本次 `admissionId/encounterVersion`、受控 `surgeryType`（`elective | semi-elective | emergency | day-surgery`）、目录 `procedureId/catalogVersion`、不早于当前虚拟时间的 `plannedFor`、院内手术地点 `locationId`（`location-catheterization-lab | location-operating-center | location-endoscopy-suite | location-outpatient-or`，由 `surgery-catalog` 返回）、本院有效临床医师 `surgeonPractitionerId`（及可选不与主刀重名的 `assistantPractitionerId`）、受控 `anesthesiaMethod`（`local-infiltration | local-sedation | general | neuraxial | nerve-block`）和 `reason`（PCI 术式可附 `clinicalOverride`）。计划创建包含 `priority`、`category`、`location`、`performer` 与参数化 `orderDetail` 的 FHIR R5 `ServiceRequest`，不产生已实施事实或费用，场景推进也不自动执行。目录是临床版 ICD-9-CM-3 工作表3.0的固定八条来源摘录，保留前导零、点和扩展后缀、类别、项目摘录Release与来源定位；不是全量、最新版或医保版目录。院内收费ID与临床分类码分开，价格明确为合成演示价，不得将分类编码当成收费项目ID提交。
 
-`surgery-catalog`（operation v2）的 `materials` 保留原两项合成材料及231条心血管参考记录。新增项的 `reference` 包含来源、原字段、地区与期限、单位/规格缺项；`reference.priceFen` 为表内中选价，`baseSupplyPriceFen` 为独立的基准品拟供应价，不替代中选价。只有带 `chargeDefinition` 的条目可用于实际实施：52条明确单位的记录按表内中选价制定合成本院演示价；`unavailableReason=unit-unconfirmed` 的179条没有收费定义，单位为null，保留参考价格但不能使用，不推测单位。来源包含历史采购参考及地区限制，不代表当前实际医院价格。
+`surgery-request.json` 合成示例；首次提交前以本次受信读取的住院版本、术式与本院临床医师替换示例值：
 
-护士以 `check-surgery-preop` 记录术前检查核对，医生以 `confirm-surgery-consent` 记录对已签署知情同意书的确认；这是可审计的确认事实，不提供真实电子签名。两个动作与取消均传 `requestId/expectedRequestVersion/note`，两项准备均完成才能执行。准备和执行按当前住院科室及病区责任授权，原申请作者身份不会阻止合法接管。
+```json
+{
+  "admissionId": "synthetic-admission",
+  "encounterVersion": "2",
+  "surgeryType": "elective",
+  "procedureId": "hospital-surgery-3",
+  "catalogVersion": 1,
+  "plannedFor": "2026-08-25T09:00:00+08:00",
+  "locationId": "location-catheterization-lab",
+  "surgeonPractitionerId": "practitioner-inpatient-doctor",
+  "assistantPractitionerId": "practitioner-surgeon-attending",
+  "anesthesiaMethod": "local-infiltration",
+  "reason": "冠脉造影证实前降支重度缺血狭窄，拟行药物洗脱支架置入"
+}
+```
 
-执行（`execute-surgery`，operation v3）传 `admissionId/requestId/expectedRequestVersion`、实际 `procedureId/catalogVersion`、可选 `note` 和 `materials`；耗材每项为 `materialId/catalogVersion/quantity`（引用预留带 `reservationId`），未使用时显式空数组。实际术式与计划一致、全部耗材绑定本台有效预留（`reservation.requestId === requestId`）、无遗留未消耗本台预留且与已确认术前清单一致时可省略 `note`，由服务端生成结构化默认留痕；实际术式变更、含无预留或通用住院预留耗材、遗留未消耗本台预留或偏离已确认术前清单时必须填写 `note`，否则拒绝并返回 `INPATIENT_SURGERY_NOTE_REQUIRED`（HTTP 400）。server 按实际目录冻结手术及耗材价格，原子保存唯一 Procedure、用料、逐项账项与审计。不得传任意收费金额，不推断未记录耗材或手术；原始实施不能取消删除；独立财务冲正仍走收费员原费用关联入口，临床耗材记录更正沿下述窄 Command 办理。未实施未取消申请阻断出院。
+`surgery-catalog`（operation v3）除 `procedures` 外还返回当前可用手术地点 `locations`、有效临床手术医师 `practitioners` 及 `materials`（保留原合成材料及231条心血管参考记录）。新增项的 `reference` 包含来源、原字段、地区与期限、单位/规格缺项；`reference.priceFen` 为表内中选价，`baseSupplyPriceFen` 为独立的基准品拟供应价，不替代中选价。只有带 `chargeDefinition` 的条目可用于实际实施：52条明确单位的记录按表内中选价制定合成本院演示价；`unavailableReason=unit-unconfirmed` 的179条没有收费定义，单位为null，保留参考价格但不能使用，不推测单位。来源包含历史采购参考及地区限制，不代表当前实际医院价格。
 
-术中逐笔入口复用同一住院、申请和实际 Procedure。`start-surgery`（operation v2）传 `admissionId/requestId/expectedRequestVersion/procedureId/catalogVersion` 与可选 `note`：实际术式与计划一致时可省略 `note`，实际术式变更时必须填写 `note`（缺省返回 `INPATIENT_SURGERY_NOTE_REQUIRED`）。两项准备齐全后创建 `inProgress`，不登记耗材、不收术式费，也不完成手术。`surgeries.executions` 只包含已完成操作；`inProgress` 不可用于术后医嘱或首页主操作。已经开始的申请不能再取消、重做准备或走一次性 `execute-surgery`；旧一次性接口仍要求预留整笔原样替换。
+护士以 `check-surgery-preop`（operation v3）传 `admissionId/requestId/expectedRequestVersion/note` 记录术前检查核对；取消（`cancel-surgery`，operation v3）同样传 `requestId/expectedRequestVersion/note`。医生以 `confirm-surgery-consent`（operation v3）传 `admissionId/requestId/expectedRequestVersion`、签署身份 `signerRole`（`patient | family-proxy`）、`signerName`（`family-proxy` 必填 `signerRelationship`）、`patientChoice: "agree"`、可选 `individualizedRisks` 与可选 `note`：服务端在同一事务重读权威患者、住院号、当前已确认住院主诊断、手术通知单要素与谈话医师，按具体术式模板（冠脉造影、药物洗脱支架置入、冠脉球囊成形或通用外科备选模板，带「合成临床教学文书模板」声明）生成并持久化不可变一术一议知情同意书快照 `consentConfirmation.document`，不接入真实手写生物特征硬件签名。两项准备均完成才能执行，手术开始后不可覆盖重签。准备和执行按当前住院科室及病区责任授权，原申请作者身份不会阻止合法接管。
 
-`record-surgery-material`（operation v2）传当前申请版本、`executionId`、可选 `note` 和单个 `material`：`materialId/catalogVersion/quantity`，引用预留时另带 `reservationId/expectedReservationVersion`。显式绑定本台手术有效预留（`reservation.requestId === requestId`）且不超过余量时可省略 `note`；无预留额外使用或仅关联全住院通用预留（`reservation.requestId === null`）时必须填写 `note`，否则返回 `INPATIENT_SURGERY_NOTE_REQUIRED`。每笔立即按共享收费 owner 记费，不完成术式；同产品可分多笔。预留的原数量保留，`consumedQuantity/remainingQuantity/version` 分别表达已消耗、尚未使用和当前版本；只把剩余预留计入费用推演。全耗尽才为 `replaced`，额外使用显式不引用预留。预留版本、归属、产品、单位或余量冲突均拒绝，不跨版本取价。
+`surgery-consent.json` 合成示例；恢复原意图时保持原文件与原幂等键不变：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "requestId": "synthetic-surgery-request",
+  "expectedRequestVersion": 1,
+  "signerRole": "patient",
+  "signerName": "合成患者",
+  "patientChoice": "agree",
+  "individualizedRisks": "合并慢性肾脏病，已充分沟通围术期水化与对比剂肾损伤防范方案"
+}
+```
+
+执行（`execute-surgery`，operation v4）传 `admissionId/requestId/expectedRequestVersion`、实际 `procedureId/catalogVersion`、可选 `note` 和 `materials`；耗材每项为 `materialId/catalogVersion/quantity`（引用预留带 `reservationId`），未使用时显式空数组。实际术式与计划一致、全部耗材绑定本台有效预留（`reservation.requestId === requestId`）、无遗留未消耗本台预留且与已确认术前清单一致时可省略 `note`，由服务端生成结构化默认留痕；实际术式变更、含无预留或通用住院预留耗材、遗留未消耗本台预留或偏离已确认术前清单时必须填写 `note`，否则拒绝并返回 `INPATIENT_SURGERY_NOTE_REQUIRED`（HTTP 400）。server 按实际目录冻结手术及耗材价格，原子保存唯一 Procedure、用料、逐项账项与审计。不得传任意收费金额，不推断未记录耗材或手术；原始实施不能取消删除；独立财务冲正仍走收费员原费用关联入口，临床耗材记录更正沿下述窄 Command 办理。未实施未取消申请阻断出院。
+
+术中逐笔入口复用同一住院、申请和实际 Procedure。`start-surgery`（operation v3）传 `admissionId/requestId/expectedRequestVersion/procedureId/catalogVersion` 与可选 `note`：实际术式与计划一致时可省略 `note`，实际术式变更时必须填写 `note`（缺省返回 `INPATIENT_SURGERY_NOTE_REQUIRED`）。两项准备齐全后创建 `inProgress`，不登记耗材、不收术式费，也不完成手术。`surgeries.executions` 只包含已完成操作；`inProgress` 不可用于术后医嘱或首页主操作。已经开始的申请不能再取消、重做准备或走一次性 `execute-surgery`；旧一次性接口仍要求预留整笔原样替换。
+
+`record-surgery-material`（operation v3）传当前申请版本、`executionId`、可选 `note` 和单个 `material`：`materialId/catalogVersion/quantity`，引用预留时另带 `reservationId/expectedReservationVersion`。显式绑定本台手术有效预留（`reservation.requestId === requestId`）且不超过余量时可省略 `note`；无预留额外使用或仅关联全住院通用预留（`reservation.requestId === null`）时必须填写 `note`，否则返回 `INPATIENT_SURGERY_NOTE_REQUIRED`。每笔立即按共享收费 owner 记费，不完成术式；同产品可分多笔。预留的原数量保留，`consumedQuantity/remainingQuantity/version` 分别表达已消耗、尚未使用和当前版本；只把剩余预留计入费用推演。全耗尽才为 `replaced`，额外使用显式不引用预留。预留版本、归属、产品、单位或余量冲突均拒绝，不跨版本取价。
 
 `correct-surgery-material` 传当前申请版本、`executionId/materialUseId` 与必填 `note`，可附 `replacement`（形状同 `material`）。不带 replacement 表示撤销错误记录；带 replacement 追加正确使用。原记录保存在 `materialHistory`，仅 `materials` 表达当前有效使用。`correction` 引用原费用、精确冲正和替代使用 ID；已有收费员冲正时只引用、不再次冲正。更正允许术中及术后账户尚开放、病案未归档时办理，不代表实际取出器械或退库存，不修改既有原始数量或收费金额。单独财务冲正不自动更正临床使用事实，记录／费用疑点仍需核实。
 
@@ -437,7 +470,7 @@ clinmesh command receipt get --operation-id inpatient.surgery.execute --idempote
 
 完成前用 `preview-surgery-completion`（operation v2）核实真实最终总量：传当前 `admissionId/requestId/expectedRequestVersion/executionId`、可选 `note`、`finalMaterials` 和 `releaseReservations`。全部最终项与已登记量一致（`deltaQuantity === 0`）、无本台未用预留且无未解释术前清单少用时（含纯无耗材手术及术中已说明原因的额外使用）可省略 `note`；存在数量增减差额、未用预留保留或释放、或术前清单少用／无法核验时必须填写 `note`，否则返回 `INPATIENT_SURGERY_NOTE_REQUIRED`。每个最终项为 `materialId/catalogVersion/quantity/materialUseIds`；quantity 可为0，来源列表必须恰好覆盖当前全部有效使用，已更正历史不能重用。不同冻结依据及预留身份分别列项；新增项的来源列表为空。消耗原预留须显式带 `reservationId/expectedReservationVersion`，多个候选不能按名称自动选取。增加超过原预留余量时，另列不引用预留的额外使用。释放项只能引用本手术的原预留身份和当前版本；空数组保留全部余量。
 
-预览使用 POST 传递核实清单，仍是 `risk=read` 的只读查询，不产生 Command receipt。连接中断、响应无效或 5xx 按读取错误处理；需要继续时可重新执行同份预览，核对有效结果后再决定完成，不能以失败预览提交完成。预览返回每项净实际量差额、冻结计价依据、`materialDeltaFen/procedureAmountFen/totalDeltaFen`、未选保留项及按归一化 `note`（缺省或空白与结构化默认留痕一致）计算的 `fingerprint`。`complete-surgery`（operation v3）在原完成字段外带 `reconciliation`，其内容为同份 `finalMaterials/releaseReservations` 及 `expectedFingerprint`，并保持与预览一致的 `note`（同省略或同填写）。同一 Command 内只追加本次增加，减少或归零沿原使用追加更正／原费用冲正，已有财务冲正只引用；零量不新增零使用或零收费，完成同一 Procedure 只收一次术式费。仅释放明确选择的原预留，未选项在 warnings 中说明保留。目录、冻结价、用量、费用或预留变化导致 `INPATIENT_SURGERY_REVIEW_CONFLICT`，须重新读取和预览，历史不回写。
+预览使用 POST 传递核实清单，仍是 `risk=read` 的只读查询，不产生 Command receipt。连接中断、响应无效或 5xx 按读取错误处理；需要继续时可重新执行同份预览，核对有效结果后再决定完成，不能以失败预览提交完成。预览返回每项净实际量差额、冻结计价依据、`materialDeltaFen/procedureAmountFen/totalDeltaFen`、未选保留项及按归一化 `note`（缺省或空白与结构化默认留痕一致）计算的 `fingerprint`。`complete-surgery`（operation v4）在原完成字段外带 `reconciliation`，其内容为同份 `finalMaterials/releaseReservations` 及 `expectedFingerprint`，并保持与预览一致的 `note`（同省略或同填写）。同一 Command 内只追加本次增加，减少或归零沿原使用追加更正／原费用冲正，已有财务冲正只引用；零量不新增零使用或零收费，完成同一 Procedure 只收一次术式费。仅释放明确选择的原预留，未选项在 warnings 中说明保留。目录、冻结价、用量、费用或预留变化导致 `INPATIENT_SURGERY_REVIEW_CONFLICT`，须重新读取和预览，历史不回写。
 
 不带 `reconciliation` 的旧完成输入在无本台未用预留且无术前清单少用／冲突时也可省略 `note`，只收一次术式费并保留全部未选预留；存在本台未用预留或术前清单少用仍须填写 `note`（否则返回 `INPATIENT_SURGERY_NOTE_REQUIRED`），旧幂等键和历史回执继续恢复。明确关闭的预留保留 `releaseReason`；术后更正仅对已经明确关闭的预留保持关闭，未选预留的退回量继续保留。每个写入均需原幂等键；结果未知先查 `inpatient.surgery.complete` 原 receipt，不能改写未知意图或换键重做。
 

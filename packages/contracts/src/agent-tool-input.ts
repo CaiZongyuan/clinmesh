@@ -150,6 +150,7 @@ export const agentToolInputSchemas = Object.freeze({
   'ui.navigate': z.object({ destination: agentViewIdSchema }).strict(),
   'ui.panel.focus': emptyInputSchema,
   'inpatient.stage.select': z.object({ stage: inpatientStageSchema }).strict(),
+  'inpatient.surgery.read': emptyInputSchema,
   'inpatient.angiography-reports.read': emptyInputSchema,
   'inpatient.clinical-scores.read': emptyInputSchema,
   'inpatient.guideline-topics.read': guidelineTopicQuerySchema,

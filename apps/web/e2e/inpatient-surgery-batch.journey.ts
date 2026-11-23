@@ -17,6 +17,8 @@ export async function prepareSurgeryBatchPatient(page: Page, app: Parameters<typ
     const before = await read()
     const requested = inpatientSurgeryResponseSchema.parse(await (await s.api.post(`${s.path}/surgeries/request`, {
       encounterVersion: before.encounterVersion, procedureId, catalogVersion: 1,
+      surgeryType: 'elective', locationId: 'location-operating-center',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general',
       plannedFor: '2026-11-10T09:00:00+08:00', reason,
     })).json()).data.requests.find(row => row.reason === reason)!
     await s.api.login('ward-nurse')
@@ -24,8 +26,10 @@ export async function prepareSurgeryBatchPatient(page: Page, app: Parameters<typ
       expectedRequestVersion: requested.version, note: '合成术前准备已核对' })).status()).toBe(200)
     await s.api.login('inpatient-doctor')
     const checked = (await read()).requests.find(row => row.id === requested.id)!
-    expect((await s.api.post(`${s.path}/surgeries/confirm-consent`, { requestId: checked.id,
-      expectedRequestVersion: checked.version, note: '合成知情同意已签' })).status()).toBe(200)
+    expect((await s.api.post(`${s.path}/surgeries/confirm-consent`, {
+      requestId: checked.id, expectedRequestVersion: checked.version,
+      signerRole: 'patient', signerName: s.name, patientChoice: 'agree', note: '合成知情同意已签',
+    })).status()).toBe(200)
     return requested.id
   }
   const batchRequestId = await ready('hospital-surgery-4', '合成第一台整台补录')

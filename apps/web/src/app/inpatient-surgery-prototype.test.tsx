@@ -20,6 +20,14 @@ const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId:
 const procedure = { id: 'procedure-1', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '51.2300', display: '腹腔镜下胆囊切除术', category: '手术', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.com/synthetic', sourceSha256: 'a'.repeat(64), sourceLocator: 'synthetic' }, chargeDefinition: { id: 'procedure-price', priceFen: 10000, unit: '次', synthetic: true, trigger: 'execution' } }
 const material = { id: 'material-1', version: 1, display: '合成钛夹', chargeDefinition: { id: 'material-price', priceFen: 2000, unit: '枚', synthetic: true, trigger: 'execution' } }
 const plan = inpatientSurgeryRequestSchema.parse({ id: 'request-1', admissionId: admission.id, version: 3, status: 'requested', plannedProcedure: procedure, plannedFor: time, reason: '合成胆囊手术计划', requestedAt: time, requestedBy: 'doctor', organizationId: 'org-1', consentConfirmation: { actorId: 'doctor', practitionerRoleId: 'role-doctor', recordedAt: time, note: '已核实同意书' } })
+const catalogLocations = [
+  { id: 'location-operating-center', name: '中心手术室', nameEn: 'Operating Center' },
+  { id: 'location-catheterization-lab', name: '导管室', nameEn: 'Catheterization Lab' },
+]
+const catalogPractitioners = [
+  { id: 'practitioner-inpatient-doctor', name: '住院医生', title: '主治医师' },
+  { id: 'practitioner-surgeon-chief', name: '林海', title: '主任医师' },
+]
 const clients: QueryClient[] = []
 
 afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); sessionStorage.clear() })
@@ -37,7 +45,7 @@ it.each(['request', 'correction', 'estimate', 'reservations'] as const)('%s 弹�
     if (path.endsWith('/api/auth/context')) return Response.json(session)
     if (init?.method === 'POST') return Response.json({ error: { code: 'VERSION_CONFLICT', message: '合成当前任务写入失败' } }, { status: 409 })
     if (path.endsWith('/surgeries')) return Response.json(getSurgery())
-    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material] })
+    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material], locations: catalogLocations, practitioners: catalogPractitioners })
     if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: currentStay.id, encounterVersion: '1', reservations: [], reservationSets: [] })
     return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料暂不可用' } }, { status: 503 })
   }))
@@ -132,7 +140,7 @@ it('补登记恢复被拒绝时在原弹窗显示冲突并保留刷新入口和�
           performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: 'org-1', note: '合成原手术', materials: [], materialHistory: [],
         }] }))
     }
-    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material] })
+    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material], locations: catalogLocations, practitioners: catalogPractitioners })
     if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: currentStay.id, encounterVersion: '1', reservations: [], reservationSets: [] })
     return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料暂不可用' } }, { status: 503 })
   }))
@@ -175,7 +183,7 @@ it('预计未决请求保留原任务恢复入口，手工预留只在打开时�
     if (init?.method === 'POST') posts.push(path)
     reads.push(path)
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '1', virtualTime: time, requests: [plan], executions: [], inProgress: [] })
-    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material] })
+    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material], locations: catalogLocations, practitioners: catalogPractitioners })
     if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: admission.id, encounterVersion: '1', reservations: [], reservationSets: [] })
     throw new Error(`Unexpected request ${path}`)
   }))
@@ -222,7 +230,7 @@ function mount(requests = [plan], activeSession = session, inProgress: Array<Ret
       return Response.json({ data, auditId: 'synthetic-audit', requestId: 'synthetic-receipt', effects: [], warnings: [] })
     }
     if (path.endsWith('/surgeries')) return Response.json(data)
-    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials })
+    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials, locations: catalogLocations, practitioners: catalogPractitioners })
     if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: admission.id, encounterVersion: '1', reservations, reservationSets: [] })
     return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料暂不可用' } }, { status: 503 })
   }))
@@ -629,7 +637,7 @@ it('第 ② 步编辑耗材清单后先保存未提交输入并以新 revision �
       return Response.json({ data, auditId: 'synthetic-audit', requestId: 'synthetic-receipt', effects: [], warnings: [] })
     }
     if (path.endsWith('/surgeries')) return Response.json(data)
-    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material] })
+    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material], locations: catalogLocations, practitioners: catalogPractitioners })
     if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: admission.id, encounterVersion: '1', reservations: [], reservationSets: [{ requestId: plan.id, fingerprint: 'c'.repeat(64) }] })
     if (path.endsWith('/material-estimates')) return Response.json(inpatientMaterialEstimatesSchema.parse({ admissionId: admission.id, estimates: [currentEstimate], unprepared: [] }))
     return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料暂不可用' } }, { status: 503 })
@@ -689,7 +697,7 @@ it('非冠脉手术不查询造影报告；已完成冠脉造影伴阴性 FFR（
     requestedUrls.push(path)
     if (path.endsWith('/api/auth/context')) return Response.json(session)
     if (path.endsWith('/surgeries')) return Response.json(choleData)
-    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material] })
+    if (path.endsWith('/surgery-catalog')) return Response.json({ procedures: [procedure], materials: [material], locations: catalogLocations, practitioners: catalogPractitioners })
     if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: admission.id, encounterVersion: '1', reservations: [], reservationSets: [] })
     return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料暂不可用' } }, { status: 503 })
   }))

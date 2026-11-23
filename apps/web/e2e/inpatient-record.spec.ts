@@ -194,10 +194,18 @@ test('提交中主操作不可编辑，修订被其他请求推进后原选择�
   const catalog = (await (await page.request.get(`${browserApp.origin}/api/his/v1/inpatient/surgery-catalog`)).json())
   const requests: Array<{ id: string; version: number; procedureId: string }> = []
   for (const procedure of catalog.procedures.slice(3, 5)) {
-    const requested = await post(`${path}/surgeries/request`, { encounterVersion: version, procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: '2026-08-24T09:00:00+08:00', reason: '合成主操作选择示教' })
+    const requested = await post(`${path}/surgeries/request`, {
+      encounterVersion: version, procedureId: procedure.id, catalogVersion: procedure.version,
+      surgeryType: 'elective', locationId: 'location-operating-center',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general',
+      plannedFor: '2026-08-24T09:00:00+08:00', reason: '合成主操作选择示教',
+    })
     expect(requested.status()).toBe(200)
     const current = (await requested.json()).data.requests.find((request: { status: string; plannedProcedure: { id: string } }) => request.status === 'requested' && request.plannedProcedure.id === procedure.id)
-    const consented = await post(`${path}/surgeries/confirm-consent`, { requestId: current.id, expectedRequestVersion: current.version, note: '已核签署同意' })
+    const consented = await post(`${path}/surgeries/confirm-consent`, {
+      requestId: current.id, expectedRequestVersion: current.version,
+      signerRole: 'patient', signerName: '合成主操作草稿患者', patientChoice: 'agree', note: '已核签署同意',
+    })
     expect(consented.status()).toBe(200)
     const consent = (await consented.json()).data.requests.find((request: { id: string }) => request.id === current.id)
     requests.push({ id: consent.id, version: consent.version, procedureId: procedure.id })

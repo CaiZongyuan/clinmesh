@@ -10,7 +10,12 @@ export async function runPciSelectionJourney(page: Page, app: { origin: string; 
   expect((await s.api.post('/api/his/v1/inpatient/pci-data/prepare', { expectedEpoch: 'epoch-1' })).status()).toBe(200)
   await s.api.login('inpatient-doctor')
   const surgery = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json())
-  const requested = inpatientSurgeryResponseSchema.parse(await (await s.api.post(`${s.path}/surgeries/request`, { encounterVersion: surgery.encounterVersion, procedureId: 'hospital-surgery-3', catalogVersion: 1, plannedFor: '2026-08-25T09:00:00+08:00', reason: '合成PCI参数关联计划' })).json())
+  const requested = inpatientSurgeryResponseSchema.parse(await (await s.api.post(`${s.path}/surgeries/request`, {
+    encounterVersion: surgery.encounterVersion, procedureId: 'hospital-surgery-3', catalogVersion: 1,
+    surgeryType: 'elective', locationId: 'location-catheterization-lab',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    plannedFor: '2026-08-25T09:00:00+08:00', reason: '合成PCI参数关联计划',
+  })).json())
   const requestId = requested.data.requests[0]!.id
   const show = async () => {
     await open()

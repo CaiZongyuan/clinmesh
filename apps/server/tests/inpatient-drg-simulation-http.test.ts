@@ -270,7 +270,9 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     const procedure = s.catalog.procedures[0]
     const current = (await (await s.request(s.doctor, s.path)).json()).admission
     const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: current.versionId,
-      procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成PCI推演' })
+      procedureId: procedure.id, catalogVersion: procedure.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成PCI推演' })
     expect(requested.status).toBe(200)
     const request = (await requested.json()).data.requests[0]
     const simulated = await (await s.request(s.doctor, `${s.path}/drg/simulation`, {})).json()
@@ -288,7 +290,9 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     for (let index = 0; index < 2; index += 1) {
       const admission = (await (await s.request(s.doctor, s.path)).json()).admission
       const response = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: admission.versionId,
-        procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: `合成计划${index}` })
+        procedureId: procedure.id, catalogVersion: procedure.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
+        surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+        plannedFor: '2026-08-24T15:00:00+08:00', reason: `合成计划${index}` })
       expect(response.status).toBe(200)
       const requests = (await response.json()).data.requests
       ids.push(requests.find((request: { id: string }) => !ids.includes(request.id)).id)
@@ -312,7 +316,9 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     const procedure = s.catalog.procedures[0], material = s.catalog.materials[0]
     const current = (await (await s.request(s.doctor, s.path)).json()).admission
     const request = (await (await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: current.versionId,
-      procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成PCI实施' })).json()).data.requests[0]
+      procedureId: procedure.id, catalogVersion: procedure.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成PCI实施' })).json()).data.requests[0]
     const reserved = await s.request(s.doctor, `${s.path}/drg/reservations`, { encounterVersion: (await (await s.request(s.doctor, s.path)).json()).admission.versionId,
       materialId: material.id, catalogVersion: material.version, quantity: 2, requestId: request.id, reason: 'PCI耗材预留' })
     expect(reserved.status).toBe(200)
@@ -323,7 +329,11 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
       estimatedFen: material.chargeDefinition.priceFen * 2 })
     for (const [cookie, action] of [[s.nurse, 'check-preop'], [s.doctor, 'confirm-consent']] as const) {
       const version = (await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests[0].version
-      expect((await s.request(cookie, `${s.path}/surgeries/${action}`, { requestId: request.id, expectedRequestVersion: version, note: '合成准备完成' })).status).toBe(200)
+      expect((await s.request(cookie, `${s.path}/surgeries/${action}`, {
+        requestId: request.id, expectedRequestVersion: version,
+        ...(action === 'confirm-consent' ? { signerRole: 'patient', signerName: current.patientName, patientChoice: 'agree' } : {}),
+        note: '合成准备完成',
+      })).status).toBe(200)
     }
     // 跨目录版本置换被拒：预留冻结的是 v1 目录价，须按预留原版本替换。
     const stale = await s.request(s.doctor, `${s.path}/surgeries/execute`, { requestId: request.id,
