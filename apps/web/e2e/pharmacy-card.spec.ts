@@ -7,6 +7,7 @@ test('药师从真实入口原位审核、部分发药和发完后回查，保�
   try {
     await page.goto(`${server.origin}/pharmacy`)
     await expect(page.getByRole('heading', { name: '发药队列', exact: true })).toBeVisible()
+    await expect(page.getByText(/口服（po）/)).toBeVisible()
     await expect(page.getByRole('tab', { name: '异常', exact: true })).toHaveCount(0)
     const pending = async () => pharmacyQueueSchema.parse(await (await page.request.get(`${server.origin}/api/his/v1/pharmacy/queue?status=pending`)).json())
     const action = page.getByRole('region', { name: '当前操作', exact: true })

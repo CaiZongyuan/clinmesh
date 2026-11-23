@@ -32,7 +32,7 @@ describe('doctor recommendation history evidence', () => {
         kind: 'inpatient', admissionId: 'admission', admittedAt: '2026-08-20T10:00:00+08:00', dischargedAt: '2026-08-24T10:00:00+08:00',
         diagnoses: [{ code: 'I25.1', display: '冠状动脉粥样硬化性心脏病', role: 'primary' }],
         procedures: [{ code: '36.06', display: '冠状动脉支架置入术', performedAt: '2026-08-21T10:00:00+08:00', conclusion: '支架内血流通畅' }],
-        medications: [{ display: '阿司匹林', doseText: '100 mg', frequencyCode: 'QD', state: 'stopped' }],
+        medications: [{ display: '阿司匹林', doseText: '100 mg', frequencyCode: 'QD', routeCode: 'PO', state: 'stopped' }],
         reports: [{ title: '超声心动图', conclusion: '左室收缩功能正常', findings: ['LVEF：60 %'] }],
       } })
     const packed = packDoctorRecommendationHistory('follow-up', [history])
@@ -50,7 +50,7 @@ describe('doctor recommendation history evidence', () => {
         kind: 'inpatient', admissionId: 'fortnight', admittedAt: '2026-08-10T10:00:00+08:00', dischargedAt: '2026-08-24T10:00:00+08:00',
         diagnoses: [{ code: 'I25.1', display: '冠状动脉粥样硬化性心脏病', role: 'primary' }],
         procedures: [{ code: '36.06', display: '冠状动脉支架置入术', performedAt: '2026-08-11T10:00:00+08:00' }],
-        medications: [{ display: '阿司匹林', doseText: '100 mg', frequencyCode: 'QD', state: 'stopped' }],
+        medications: [{ display: '阿司匹林', doseText: '100 mg', frequencyCode: 'QD', routeCode: 'PO', state: 'stopped' }],
         reports: Array.from({ length: 28 }, (_, index) => ({ title: `合成住院每日血常规与生化复查 ${index}`,
           issuedAt: '2026-08-12T10:00:00+08:00', conclusion: '未见明确异常，仍需结合临床病史及其他检验结果。',
           findings: Array.from({ length: 20 }, (_, finding) => `合成检验指标${finding}：3.5 mmol/L（已签发）`) })),

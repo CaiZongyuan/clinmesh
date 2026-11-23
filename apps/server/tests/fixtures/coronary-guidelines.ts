@@ -104,7 +104,7 @@ export function createCoronaryProvider() {
         assert.ok(item.caseEvidenceIds.every(id => payload.caseEvidence.some(fact => fact.id === id)))
       }
       output = { items: payload.items.map(item => ({ id: item.id, guidelineSupported: true, caseSupported: true, applicable: true, qualifiersPreserved: true,
-        ...(item.kind === 'prescription' ? { prescriptionFields: { doseText: false, frequencyCode: true, courseDays: true, quantity: false } } : {}),
+        ...(item.kind === 'prescription' ? { prescriptionFields: { doseText: false, frequencyCode: true, routeCode: true, courseDays: true, quantity: false } } : {}),
       })) }
     } else if (input.schemaName === 'doctor_recommendations') {
       const payload = z.object({ kind: doctorRecommendationKindSchema, guidelines: z.array(guidelineEvidenceSchema), caseEvidence: z.array(doctorCaseEvidenceSchema),
@@ -131,7 +131,7 @@ export function createCoronaryProvider() {
         } else {
           assert.ok(payload.catalogs.medications?.some(item => item.id === 'medication-pci-aspirin'))
           output = { items: [{ ...common, kind: 'prescription', catalogItemId: 'medication-pci-aspirin',
-            doseText: '100 mg', frequencyCode: 'QD', courseDays: 1, quantity: 1 }], considerations: [], missingInformation: [] }
+            doseText: '100 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 1, quantity: 1 }], considerations: [], missingInformation: [] }
         }
       }
     } else throw new Error(`Unexpected coronary fixture request: ${input.schemaName}`)

@@ -37,7 +37,7 @@ export async function prepareInpatientExecutionBatch(page: Page, app: PciBrowser
     const evaluation = inpatientDrgSimulationSchema.parse(await evaluationResponse.json())
     const current = await clinical(page, app, path)
     const issuedResponse = await post(page, app, path + '/orders/issue', { encounterVersion: current.encounterVersion, duration: 'temporary',
-      expectedDrgFingerprint: evaluation.fingerprint, selection: { kind: 'medication', ...medication } })
+      expectedDrgFingerprint: evaluation.fingerprint, selection: { kind: 'medication', ...medication, routeCode: item.defaultRouteCode } })
     expect(issuedResponse.status(), await issuedResponse.text()).toBe(200)
     const order = inpatientFullClinicalResponseSchema.parse(await issuedResponse.json()).data.orders.find(item => item.catalogItemId === medication.catalogItemId)!
     await loginPciBrowser(page, app, 'ward-nurse')
@@ -156,6 +156,7 @@ export async function runInpatientExecutionBatchJourney(page: Page, subject: Exe
   await step('实际给药须逐项核实后才能选择；核实前不可选，也没有全选')
   for (const execution of medications) {
     const row = dialog.getByRole('article', { name: `给药项目：${execution.id}`, exact: true })
+    await expect(row).toContainText('口服（po）')
     await expect(row.getByRole('checkbox', { name: /^选择给药：/ })).not.toBeChecked()
     await expect(row.getByRole('checkbox', { name: /^选择给药：/ })).toBeDisabled()
     await row.getByRole('checkbox', { name: /^已核实实际给药：/ }).check()
@@ -184,6 +185,8 @@ export async function runInpatientExecutionBatchJourney(page: Page, subject: Exe
   await expect(dialog.getByRole('button', { name: /全选/ })).toHaveCount(0)
   for (const execution of education) {
     const row = dialog.getByRole('article', { name: `教育项目：${execution.id}`, exact: true })
+    await expect(row).not.toContainText('口服（po）')
+    await expect(row).not.toContainText('静脉注射（iv）')
     await row.getByRole('checkbox', { name: /^已核实实际教育：/ }).check()
     await row.getByRole('checkbox', { name: /^选择教育：/ }).check()
   }
@@ -196,6 +199,7 @@ export async function runInpatientExecutionBatchJourney(page: Page, subject: Exe
   dialog = await openExecutionBatch(page, 'request-prn')
   const [commonReason, overrideReason] = reasons
   await dialog.getByRole('textbox', { name: 'PRN共同理由', exact: true }).fill(commonReason)
+  await expect(dialog).toContainText('静脉注射（iv）')
   for (const order of subject.prnOrders) await dialog.getByRole('article', { name: `PRN项目：${order.id}`, exact: true }).getByRole('checkbox', { name: /^选择 PRN：|^选择PRN：/ }).check()
   const overrideOrder = subject.prnOrders[1]!
   const draft = dialog.getByRole('region', { name: 'PRN待办清单', exact: true }).getByRole('article', { name: `待办项目：${overrideOrder.id}`, exact: true })
@@ -308,6 +312,8 @@ export async function runInpatientExecutionRecoveryJourney(page: Page, subject: 
   let dialog = await openExecutionBatch(page, 'complete')
   for (const execution of education) {
     const row = dialog.getByRole('article', { name: `教育项目：${execution.id}`, exact: true })
+    await expect(row).not.toContainText('口服（po）')
+    await expect(row).not.toContainText('静脉注射（iv）')
     await row.getByRole('checkbox', { name: /^已核实实际教育：/ }).check()
     await row.getByRole('checkbox', { name: /^选择教育：/ }).check()
   }

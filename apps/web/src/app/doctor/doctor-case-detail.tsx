@@ -1,5 +1,6 @@
 import { ExaminationPage } from './examination-page.tsx'
 import { doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
+import type { MedicationRoute } from '@clinmesh/contracts/medication-safety'
 import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
 import {
   type ClinicalCatalog,
@@ -173,6 +174,7 @@ export function CaseDetail({
       doseText: string
       frequencyCode: string
       quantity: number
+      routeCode: MedicationRoute
     }>
   }) => void
   onSign: () => void

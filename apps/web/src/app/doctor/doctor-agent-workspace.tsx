@@ -1,4 +1,5 @@
 import { agentToolInputSchemas, clinicalOverrideToolParameters, doctorCaseSectionSchema } from '@clinmesh/contracts/agent'
+import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
 import { guidelineTopicIds } from '@clinmesh/contracts/guideline-topics'
 import {
   doctorQueueViewStatusGroups
@@ -212,8 +213,9 @@ export function doctorWorkspaceAgentActions({
                 doseText: { type: 'string' },
                 frequencyCode: { type: 'string' },
                 quantity: { type: 'integer' },
+                routeCode: { type: 'string', enum: [...medicationRouteSchema.options] },
               },
-              required: ['catalogItemId', 'doseText', 'frequencyCode', 'quantity'],
+              required: ['catalogItemId', 'doseText', 'frequencyCode', 'quantity', 'routeCode'],
               additionalProperties: false,
             },
           },

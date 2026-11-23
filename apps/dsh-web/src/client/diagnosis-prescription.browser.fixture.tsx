@@ -13,7 +13,7 @@ import {
   type PrescriptionDraftItem,
   type SessionContext,
 } from '@clinmesh/contracts/his'
-import type { ReferenceConcept, ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
+import type { ReferenceConcept, ReferenceMedicationCatalogItem } from '@clinmesh/contracts/reference-data'
 import {
   confirmDoctorPreparationRequestSchema, doctorRecommendationKindSchema, doctorRecommendationStateSchema, generateDoctorRecommendationsRequestSchema,
   type DoctorRecommendationState, type GuidelineEvidence,
@@ -41,15 +41,15 @@ const diagnoses: ReferenceConcept[] = [
   { id: 'synthetic-diagnosis-3', code: 'SYN-D3', display: '合成追加诊断',
     domain: 'diagnosis', sourceLocator: 'synthetic:test', system: 'urn:synthetic:diagnosis', version: '1', status: 'active' },
 ]
-const medication: ReferenceMedicationProduct = {
+const medication: ReferenceMedicationCatalogItem = {
   approvalNumber: '合成批准号', brandName: '合成商品名', code: 'SYN-M1', dosageForm: '片剂',
   genericName: '合成药品与需要完整显示的复杂中文通用名称', id: 'synthetic-product-1',
   manufacturer: '合成制药有限公司与很长的生产企业名称', packageDescription: '10片/盒',
   sourceLocator: 'synthetic:test', status: 'active', strength: '10 mg',
-  system: 'urn:synthetic:medication', version: '1',
+  system: 'urn:synthetic:medication', version: '1', defaultRouteCode: 'PO', allowedRouteCodes: ['PO', 'SL'],
 }
-const products = [medication, { ...medication, id: 'synthetic-product-2', code: 'SYN-M2', packageDescription: '20片/盒' },
-  { ...medication, id: 'synthetic-product-3', code: 'SYN-M3', genericName: '合成第二药品', packageDescription: '30片/盒' }]
+const products: ReferenceMedicationCatalogItem[] = [medication, { ...medication, id: 'synthetic-product-2', code: 'SYN-M2', packageDescription: '20片/盒' },
+  { ...medication, id: 'synthetic-product-3', code: 'SYN-M3', genericName: '合成第二药品', packageDescription: '30片/盒', allowedRouteCodes: ['PO'] }]
 const laboratoryReferenceConcept = {
   code: 'SYN-LAB', display: '合成检验项目', id: 'synthetic-reference', sourceLocator: 'synthetic:test',
   system: 'urn:synthetic:laboratory', version: '1',
@@ -122,10 +122,12 @@ const hospitalMedication = {
   allowedCombinationIds: [] as string[],
   allowedDoseTexts: ['75 mg'],
   allowedFrequencyCodes: ['BID'],
+  allowedRouteCodes: ['PO'] as const,
   allowedCourseDays: [5],
   allowedQuantities: [2],
   defaultDoseText: '75 mg',
   defaultFrequencyCode: 'BID',
+  defaultRouteCode: 'PO' as const,
   defaultCourseDays: 5,
   defaultQuantity: 2,
   packageInsert: {
@@ -176,7 +178,7 @@ const initialEntries: DiagnosisDraftEntry[] = diagnoses.slice(0, 2).map((concept
 }))
 const initialItems: PrescriptionDraftItem[] = [products[1]!, products[2]!].map(product => ({
   catalogItemId: product.id, courseDays: 3, doseText: '每次一片，合成剂量说明', frequencyCode: '每日两次',
-  quantity: 1, referenceProduct: product,
+  quantity: 1, referenceProduct: product, routeCode: 'PO',
 }))
 const detail: DoctorCaseDetail = {
   registrationNumber: 'CM-OP-20261020-1234567',
@@ -257,9 +259,9 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
       ? [hospitalMedication]
       : recommendationsMode ? [medication, ...(multipleRecommendations ? [products[2]!] : [])].map(product => ({
           id: product.id, nameZh: product.genericName, nameEn: 'Synthetic browser medication', version: 1,
-          allowedCombinationIds: [], allowedDoseTexts: ['5 mg', '10 mg'], allowedFrequencyCodes: ['QD', 'BID'],
+          allowedCombinationIds: [], allowedDoseTexts: ['5 mg', '10 mg'], allowedFrequencyCodes: ['QD', 'BID'], allowedRouteCodes: ['PO'],
           allowedCourseDays: [3, 7], allowedQuantities: [1, 2],
-          defaultDoseText: '10 mg', defaultFrequencyCode: 'BID', defaultCourseDays: 3, defaultQuantity: 1,
+          defaultDoseText: '10 mg', defaultFrequencyCode: 'BID', defaultRouteCode: 'PO', defaultCourseDays: 3, defaultQuantity: 1,
         })) : [],
     prescriptionConclusionSupported: true })
   if (path === '/api/his/v1/doctor/completed-cases') return Response.json({ items: [], page: 1, pageSize: 20, total: document.documentElement.dataset.fixtureMode === 'polish' ? 12 : 0 })
@@ -321,6 +323,7 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
           catalogItemId: item.catalogItemId,
           doseText: item.doseText,
           frequencyCode: item.frequencyCode,
+          routeCode: item.routeCode,
           courseDays: item.courseDays,
           quantity: item.quantity,
           ...(refProduct === undefined ? {} : { referenceProduct: refProduct }),
@@ -355,10 +358,10 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
           ...(index === 0 ? {} : { guidelineEvidenceIds: ['synthetic-guideline'], caseEvidenceIds: ['synthetic-case-evidence-2'] }),
         })) : kind === 'prescription' ? multipleRecommendations ? [medication, products[2]!].map((product, index) => ({
           ...common, id: `synthetic-recommendation-prescription-${index}`, kind, label: product.genericName,
-          catalogItemId: product.id, doseText: '5 mg', frequencyCode: 'QD', courseDays: 7, quantity: 1,
+          catalogItemId: product.id, doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 7, quantity: 1,
         })) : [{
           ...common, id: 'synthetic-recommendation-prescription', kind, label: medication.genericName,
-          catalogItemId: medication.id, doseText: '5 mg', frequencyCode: 'QD', courseDays: null, quantity: null,
+          catalogItemId: medication.id, doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: null, quantity: null,
         }] : [],
         guidelines: recommendationGuidelines,
         caseEvidence: [

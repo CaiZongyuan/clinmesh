@@ -319,13 +319,16 @@ async function setupOutpatient(options: { withLabCnReference?: boolean } = {}) {
     confirmDiagnosisResponseSchema.parse(await confirmed.json())
   }
   const issuePrescription = async (
-    items: Array<{ catalogItemId: string; courseDays: number; doseText: string; frequencyCode: string; quantity: number }>,
+    items: Array<{ catalogItemId: string; courseDays: number; doseText: string; frequencyCode: string; quantity: number; routeCode?: string }>,
   ) => {
     const detail = await readDetail()
     const expectedVersions = { [`Encounter/${started.encounterId}`]: detail.encounter.versionId }
     const draftRes = await write(
       `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
-      { expectedDraftVersion: detail.medicationConclusion?.draftVersion ?? 0, items },
+      {
+        expectedDraftVersion: detail.medicationConclusion?.draftVersion ?? 0,
+        items: items.map(item => ({ routeCode: 'PO', ...item })),
+      },
       doctor,
       expectedVersions,
       'PUT',
@@ -686,9 +689,9 @@ describe('品规级甲乙丙医保属性、混合处方明细结算与冻结快�
     const ezetimibe = catalog.medications.find((m) => m.id === 'medication-ezetimibe')!
     const education = catalog.services.find((svc) => svc.id === 'hospital-service-diabetes-education')!
 
-    await issueAndRunOrder({ kind: 'medication', catalogItemId: perindopril.id, catalogVersion: perindopril.version, doseText: '4 mg', doseQuantity: 1, frequencyCode: 'ONCE' }) // 甲类 0%, 80
-    await issueAndRunOrder({ kind: 'medication', catalogItemId: ticagrelor.id, catalogVersion: ticagrelor.version, doseText: '90 mg', doseQuantity: 1, frequencyCode: 'ONCE' }) // 乙类 15%, 150 -> prior 22, eligible 128
-    await issueAndRunOrder({ kind: 'medication', catalogItemId: ezetimibe.id, catalogVersion: ezetimibe.version, doseText: '10 mg', doseQuantity: 1, frequencyCode: 'ONCE' }) // 丙类, 100
+    await issueAndRunOrder({ kind: 'medication', catalogItemId: perindopril.id, catalogVersion: perindopril.version, doseText: '4 mg', doseQuantity: 1, frequencyCode: 'ONCE', routeCode: 'PO' }) // 甲类 0%, 80
+    await issueAndRunOrder({ kind: 'medication', catalogItemId: ticagrelor.id, catalogVersion: ticagrelor.version, doseText: '90 mg', doseQuantity: 1, frequencyCode: 'ONCE', routeCode: 'PO' }) // 乙类 15%, 150 -> prior 22, eligible 128
+    await issueAndRunOrder({ kind: 'medication', catalogItemId: ezetimibe.id, catalogVersion: ezetimibe.version, doseText: '10 mg', doseQuantity: 1, frequencyCode: 'ONCE', routeCode: 'PO' }) // 丙类, 100
     await issueAndRunOrder({ kind: 'service', serviceId: education.id, serviceVersion: education.version, quantity: 1 }) // 丙类, 3000
 
     // Mutate BOTH catalogs before departure/settlement to prove snapshot immutability!

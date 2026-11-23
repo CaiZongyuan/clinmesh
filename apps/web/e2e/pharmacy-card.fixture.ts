@@ -53,7 +53,7 @@ export async function startPharmacyCardServer(page: Page, webRoot: string) {
     const diagnosis = diagnosisDraftResponseSchema.parse(await command(`${path}/diagnosis/draft`, { entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }], expectedDraftVersion: 0 }, undefined, 'PUT')).data
     encounterVersion = confirmDiagnosisResponseSchema.parse(await command(`${path}/diagnosis/actions/confirm`, { expectedDraftVersion: diagnosis.draftVersion })).data.encounterVersion
     const medication = prescriptionDraftResponseSchema.parse(await command(`${path}/prescription/draft`, { expectedDraftVersion: 0,
-      items: [{ catalogItemId: 'medication-oseltamivir', courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10 }] }, undefined, 'PUT')).data
+      items: [{ catalogItemId: 'medication-oseltamivir', courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10, routeCode: 'PO' }] }, undefined, 'PUT')).data
     const prescription = issuePrescriptionResponseSchema.parse(await command(`${path}/prescription/actions/issue`, { expectedDraftVersion: medication.draftVersion })).data.prescription
     encounterVersion = encounterCompletionResponseSchema.parse(await command(`${path}/actions/complete`, {})).data.encounterVersion
     await signIn('cashier')

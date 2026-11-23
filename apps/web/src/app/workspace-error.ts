@@ -115,6 +115,7 @@ const PRESCRIPTION_REASON_MESSAGE_KEYS: Record<PrescriptionConflictReason, keyof
   PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED: 'prescriptionIssueReason_diagnosisNotAllowed',
   PRESCRIPTION_COMBINATION_NOT_ALLOWED: 'prescriptionIssueReason_combinationNotAllowed',
   PRESCRIPTION_DOSAGE_NOT_ALLOWED: 'prescriptionIssueReason_dosageNotAllowed',
+  PRESCRIPTION_ROUTE_NOT_ALLOWED: 'prescriptionIssueReason_routeNotAllowed',
   PRESCRIPTION_MIXED_CATALOG_SOURCES: 'prescriptionIssueReason_mixedCatalogSources',
 }
 
@@ -287,6 +288,7 @@ export function getBatchFailureMessage(
   const medicationReasons: Record<string, [string, string]> = {
     MEDICATION_ONCE_REQUIRES_TEMPORARY: ['ONCE 仅允许用于临时医嘱', 'ONCE requires a temporary order.'],
     MEDICATION_DOSAGE_NOT_ALLOWED: ['剂量、频次或每次数量超出药品安全范围', 'The dose, frequency or quantity exceeds the medication safety limits.'],
+    MEDICATION_ROUTE_NOT_ALLOWED: ['给药途径不在该药品允许范围内', 'The administration route is not allowed for this medication.'],
     MEDICATION_DIAGNOSIS_NOT_ALLOWED: ['当前确诊不符合药品适应证', 'The current diagnoses do not match the medication indications.'],
     MEDICATION_ALLERGY_CONFLICT: ['药品与已确认的药物过敏冲突', 'The medication conflicts with a confirmed allergy.'],
     MEDICATION_COMBINATION_NOT_ALLOWED: ['药品组合存在药理类别互斥，请调整医嘱', 'The medications have mutually exclusive pharmacology classes. Adjust the orders.'],

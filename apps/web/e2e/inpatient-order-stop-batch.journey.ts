@@ -45,7 +45,7 @@ export async function prepareOrderStopBatchPatient(page: Page, app: { origin: st
     return inpatientFullClinicalResponseSchema.parse(await response.json()).data.orders.find(order => !before.orders.some(old => old.id === order.id))!
   }
   const medication = await issue({ kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1,
-    doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' })
+    doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD', routeCode: 'PO' })
   const education = await issue({ kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 1 })
   const signed = await issue({ kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 2 })
   await login('ward-nurse')

@@ -1,3 +1,4 @@
+import { formatMedicationRoute } from '@clinmesh/core/medication-safety'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { inpatientFullClinicalSchema, InpatientOrder } from '@clinmesh/contracts/inpatient-clinical'
@@ -79,7 +80,7 @@ export function InpatientStopOrders({ admission, session, locale, data, loading,
       setReview(false); void batch.start(guard)
     } finally { setChecking(false) }
   }
-  const details = (order: InpatientOrder) => <><span>{order.duration === 'long' ? t('长期', 'Long') : t('临时', 'Temporary')}</span><span>{t('每次 ', 'Per execution ')}{order.doseText || `${order.doseQuantity}${order.unit}`}</span><span>{inpatientFrequencyLabel(order.frequencyCode, locale)}</span></>
+  const details = (order: InpatientOrder) => <><span>{order.duration === 'long' ? t('长期', 'Long') : t('临时', 'Temporary')}</span><span>{t('每次 ', 'Per execution ')}{order.doseText || `${order.doseQuantity}${order.unit}`}</span><span>{inpatientFrequencyLabel(order.frequencyCode, locale)}{order.kind === 'medication' ? ` · ${formatMedicationRoute(order.routeCode, locale)}` : ''}</span></>
   const impact = (order: InpatientOrder) => {
     const executions = data.executions.filter(execution => execution.orderId === order.id)
     return <p className="text-xs text-muted-foreground">{t(`核停后：待执行 ${executions.filter(execution => execution.status === 'pending').length} 次、已发药待给药 ${executions.filter(execution => execution.status === 'dispensed').length} 次执行任务将取消；既有发药和给药记录保留，库存及费用不自动退回。`, `After verification: ${executions.filter(execution => execution.status === 'pending').length} pending and ${executions.filter(execution => execution.status === 'dispensed').length} dispensed execution tasks cancel. Existing dispensing and administration records remain; stock and charges are not automatically reversed.`)}</p>

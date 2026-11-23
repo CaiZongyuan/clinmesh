@@ -1,4 +1,4 @@
-import { medicationPackageInsertSchema, medicationSafetyRuleSchema } from './medication-safety.ts'
+import { medicationPackageInsertSchema, medicationRouteSchema, medicationSafetyRuleSchema } from './medication-safety.ts'
 import { catalogInsuranceCoverageSchema } from './investigation-billing.ts'
 import { z } from 'zod'
 import {
@@ -270,7 +270,7 @@ export const scenarioInvestigationCatalogItemSchema = scenarioCatalogItemBaseSch
   valueType: z.enum(['boolean', 'codeable', 'panel', 'quantity', 'string']),
 }).strict()
 
-const scenarioMedicationWorkflowSchema = z.object({
+const scenarioMedicationWorkflowBaseShape = {
   safety: medicationSafetyRuleSchema.optional(),
   allowedCombinationIds: z.array(z.string().min(1)),
   allowedCourseDays: z.array(z.number().int().positive()).min(1),
@@ -280,7 +280,27 @@ const scenarioMedicationWorkflowSchema = z.object({
   allowedQuantities: z.array(z.number().int().positive()).min(1),
   defaultCourseDays: z.number().int().positive(),
   defaultQuantity: z.number().int().positive(),
-}).strict()
+} as const
+
+const scenarioLegacyMedicationWorkflowSchema = z.object({
+  ...scenarioMedicationWorkflowBaseShape,
+  allowedRouteCodes: z.array(medicationRouteSchema).min(1).optional(),
+  defaultRouteCode: medicationRouteSchema.optional(),
+}).strict().refine(
+  workflow => workflow.defaultRouteCode === undefined
+    || workflow.allowedRouteCodes === undefined
+    || workflow.allowedRouteCodes.includes(workflow.defaultRouteCode),
+  '默认给药途径须属于允许途径集合',
+)
+
+const scenarioProductMedicationWorkflowSchema = z.object({
+  ...scenarioMedicationWorkflowBaseShape,
+  allowedRouteCodes: z.array(medicationRouteSchema).min(1),
+  defaultRouteCode: medicationRouteSchema,
+}).strict().refine(
+  workflow => workflow.allowedRouteCodes.includes(workflow.defaultRouteCode),
+  '默认给药途径须属于允许途径集合',
+)
 
 const scenarioLegacyMedicationCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
   category: z.string().min(1),
@@ -292,11 +312,12 @@ const scenarioLegacyMedicationCatalogItemSchema = scenarioCatalogItemBaseSchema.
   packageInsert: medicationPackageInsertSchema.optional(),
   restriction: z.string().min(1).nullable(),
   unit: z.string().min(1),
-  workflow: scenarioMedicationWorkflowSchema,
+  workflow: scenarioLegacyMedicationWorkflowSchema,
 }).strict()
 
 export const scenarioProductMedicationCatalogItemSchema = scenarioLegacyMedicationCatalogItemSchema.extend({
   availableScopes: z.array(z.enum(['outpatient', 'inpatient'])).min(1),
+  workflow: scenarioProductMedicationWorkflowSchema,
   drugConcept: z.object({
     code: z.string().min(1),
     conceptId: z.string().min(1),

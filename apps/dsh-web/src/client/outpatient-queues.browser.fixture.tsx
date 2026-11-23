@@ -35,7 +35,7 @@ const englishDoctor = doctorQueueSchema.parse({ ...doctor, items: doctor.items.m
 const pharmacy = pharmacyQueueSchema.parse({ items: [{
   allergyWarnings: [], authoredBy: 'doctor', caseId: 'case-1', encounterId: 'encounter', encounterStatus: 'completed', encounterVersion: '1', patient,
   prescriptionId: 'prescription', prescriptionNumber: 'CM-RX-20261104-000001', prescriptionStatus: 'issued', prescriptionVersion: 1, status: 'awaiting-review',
-  medications: [{ doseText: '一片', dispensedQuantity: 0, frequencyCode: 'BID', lots: [], medicationId: 'medication', medicationRequestId: 'medication-request', medicationRequestVersion: '1',
+  medications: [{ doseText: '一片', dispensedQuantity: 0, frequencyCode: 'BID', routeCode: 'PO', lots: [], medicationId: 'medication', medicationRequestId: 'medication-request', medicationRequestVersion: '1',
     nameEn: 'Synthetic medication', nameZh: '合成药品', quantity: 10, remainingQuantity: 10, unitPriceFen: 100 }],
 }], page: 1, pageSize: 20, total: 1 })
 const consultation = { version: 1, turns: [

@@ -1,4 +1,4 @@
-import { medicationPackageInsertSchema, medicationSafetyRuleSchema } from './medication-safety.ts'
+import { medicationPackageInsertSchema, medicationRouteSchema, medicationSafetyRuleSchema } from './medication-safety.ts'
 import { clinicalOverrideInputSchema, clinicalQualityCheckSchema, clinicalQualityReceiptSchema } from './clinical-quality.ts'
 import { z } from 'zod'
 import { catalogInsuranceCoverageSchema, outpatientInvestigationBillingSchema, outpatientInvestigationPriceSchema } from './investigation-billing.ts'
@@ -16,7 +16,7 @@ import {
   referenceLaboratoryAdultRuleSchema,
   referenceLaboratoryDefinitionSchema,
   referenceLaboratorySourceDatasetSchema,
-  referenceMedicationProductSchema,
+  referenceMedicationCatalogItemSchema,
 } from './reference-data.ts'
 
 export const roleCodeSchema = z.enum([
@@ -218,8 +218,10 @@ const legacyMedicationCatalogItemSchema = catalogItemSchema.extend({
   allowedCombinationIds: z.array(z.string().min(1)),
   allowedDoseTexts: z.array(z.string().min(1)).min(1),
   allowedFrequencyCodes: z.array(z.string().min(1)).min(1),
+  allowedRouteCodes: z.array(medicationRouteSchema).min(1),
   defaultDoseText: z.string().min(1),
   defaultFrequencyCode: z.string().min(1),
+  defaultRouteCode: medicationRouteSchema,
   dosageForm: z.string().min(1).optional(),
   packageDescription: z.string().min(1).optional(),
   packageInsert: medicationPackageInsertSchema.optional(),
@@ -662,8 +664,9 @@ export const prescriptionDraftItemSchema = z.object({
   doseText: z.string().trim().min(1).max(120),
   frequencyCode: z.string().trim().min(1).max(32),
   instructions: z.string().trim().min(1).max(500).optional(),
-  referenceProduct: referenceMedicationProductSchema.optional(),
+  referenceProduct: referenceMedicationCatalogItemSchema.optional(),
   quantity: z.number().int().min(1).max(1_000),
+  routeCode: medicationRouteSchema,
 }).strict()
 
 export const prescriptionConflictReasonSchema = z.enum([
@@ -675,6 +678,7 @@ export const prescriptionConflictReasonSchema = z.enum([
   'PRESCRIPTION_DIAGNOSIS_UNCONFIRMED',
   'PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED',
   'PRESCRIPTION_DOSAGE_NOT_ALLOWED',
+  'PRESCRIPTION_ROUTE_NOT_ALLOWED',
   'PRESCRIPTION_COMBINATION_NOT_ALLOWED',
   'PRESCRIPTION_MIXED_CATALOG_SOURCES',
 ])
@@ -2262,6 +2266,7 @@ export const doctorCaseDetailSchema = z.object({
         medicationId: z.string().min(1),
         medicationRequestId: z.string().min(1),
         quantity: z.number().int().positive(),
+        routeCode: medicationRouteSchema,
         versionId: z.string().regex(/^\d+$/),
       })),
       number: z.string().min(1),
@@ -2581,6 +2586,7 @@ export const pharmacyQueueSchema = z.object({
       nameZh: z.string().min(1),
       quantity: z.number().int().positive(),
       remainingQuantity: z.number().int().nonnegative(),
+      routeCode: medicationRouteSchema,
       unitPriceFen: z.number().int().nonnegative(),
     })),
     patient: patientSummarySchema,

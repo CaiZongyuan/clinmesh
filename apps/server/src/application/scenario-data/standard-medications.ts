@@ -1,6 +1,6 @@
 import type { CatalogInsuranceCoverage } from '@clinmesh/contracts/insurance'
 import type { ScenarioProductMedicationCatalogItem } from '@clinmesh/contracts/scenario'
-import type { MedicationSafetyRule } from '@clinmesh/contracts/medication-safety'
+import type { MedicationRoute, MedicationSafetyRule } from '@clinmesh/contracts/medication-safety'
 import { medicationCombinationConflict } from '@clinmesh/core/medication-safety'
 import {
   CLASS_A_COVERAGE,
@@ -110,6 +110,24 @@ export function standardMedicationDoseBasis(id: string) {
   return pci?.hospitalSupplement.doseBasis ?? { amount: definition[4], unit: standardMedicationSafety(id)!.doseLimits.unit }
 }
 
+const specialMedicationRoutes: Readonly<Record<string, { defaultRouteCode: MedicationRoute; allowedRouteCodes: MedicationRoute[] }>> = {
+  'medication-nitroglycerin': { defaultRouteCode: 'SL', allowedRouteCodes: ['SL', 'PO'] },
+  'medication-pci-heparin': { defaultRouteCode: 'IV', allowedRouteCodes: ['IV', 'IVGTT', 'IH'] },
+  'medication-heparin': { defaultRouteCode: 'IV', allowedRouteCodes: ['IV', 'IVGTT', 'IH'] },
+  'medication-enoxaparin': { defaultRouteCode: 'IH', allowedRouteCodes: ['IH'] },
+  'medication-sodium-chloride': { defaultRouteCode: 'IVGTT', allowedRouteCodes: ['IVGTT', 'IV'] },
+  'medication-pci-iohexol': { defaultRouteCode: 'IV', allowedRouteCodes: ['IV', 'IVGTT'] },
+}
+
+export function standardMedicationRoutes(id: string): { defaultRouteCode: MedicationRoute; allowedRouteCodes: MedicationRoute[] } | undefined {
+  const special = specialMedicationRoutes[id]
+  if (special !== undefined) return { defaultRouteCode: special.defaultRouteCode, allowedRouteCodes: [...special.allowedRouteCodes] }
+  if (legacyRules[id] !== undefined || definitions.some(([suffix]) => id === `medication-${suffix}` || id === `medication-pci-${suffix}`)) {
+    return { defaultRouteCode: 'PO', allowedRouteCodes: ['PO'] }
+  }
+  return undefined
+}
+
 export function standardMedicationCatalog(): ScenarioProductMedicationCatalogItem[] {
   return definitions.map(([suffix, name, category, indications, dose, , , , frequency, priceFen]) => {
     const pci = pciDataPackage.medications.find(item => item.id === `medication-pci-${suffix}`)
@@ -142,6 +160,7 @@ export function standardMedicationCatalog(): ScenarioProductMedicationCatalogIte
         allowedCombinationIds: [], allowedCourseDays: Array.from({ length: 30 }, (_, i) => i + 1), allowedDiagnosisCodes: indications.split(','),
         allowedDoseTexts: [doseText], allowedFrequencyCodes: ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE'],
         allowedQuantities: suffix === 'oseltamivir' ? [1, 10] : [1],
+        ...standardMedicationRoutes(id)!,
         defaultCourseDays: suffix === 'oseltamivir' ? 5 : 1,
         defaultQuantity: suffix === 'oseltamivir' ? 10 : 1,
         safety
@@ -154,10 +173,12 @@ export function enableStandardMedicationRules(medications: ScenarioProductMedica
   return medications.map(medication => {
     const safety = standardMedicationSafety(medication.id)
     const packageInsert = medication.packageInsert ?? standardMedicationPackageInsert(medication.id)
+    const routes = standardMedicationRoutes(medication.id)
     if (!safety) return packageInsert ? { ...medication, packageInsert } : medication
     return {
       ...medication, ...(packageInsert ? { packageInsert } : {}), availableScopes: ['outpatient', 'inpatient'], workflow: {
         ...medication.workflow, safety,
+        ...(routes ? routes : {}),
         allowedCourseDays: Array.from({ length: 30 }, (_, i) => i + 1), allowedQuantities: medication.workflow.allowedQuantities,
         allowedFrequencyCodes: ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE'],
         allowedCombinationIds: medications.filter(other => other.id !== medication.id && !medicationCombinationConflict(safety.pharmacologyClasses, standardMedicationSafety(other.id)?.pharmacologyClasses ?? [])).map(other => other.id)

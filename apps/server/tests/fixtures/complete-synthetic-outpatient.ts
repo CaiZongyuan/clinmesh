@@ -49,7 +49,7 @@ export async function completeSyntheticOutpatient(runtime: Awaited<ReturnType<ty
     entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }], expectedDraftVersion: 0 }, undefined, 'PUT')).json()).data
   encounterVersion = confirmDiagnosisResponseSchema.parse(await (await command(doctor, `${encounterPath}/diagnosis/actions/confirm`, { expectedDraftVersion: diagnosis.draftVersion })).json()).data.encounterVersion
   const prescriptionDraft = prescriptionDraftResponseSchema.parse(await (await command(doctor, `${encounterPath}/prescription/draft`, { expectedDraftVersion: 0,
-    items: [{ catalogItemId: 'medication-oseltamivir', courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10 }] }, undefined, 'PUT')).json()).data
+    items: [{ catalogItemId: 'medication-oseltamivir', courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', routeCode: 'PO', quantity: 10 }] }, undefined, 'PUT')).json()).data
   const prescription = issuePrescriptionResponseSchema.parse(await (await command(doctor, `${encounterPath}/prescription/actions/issue`, { expectedDraftVersion: prescriptionDraft.draftVersion })).json()).data.prescription
   const completion = await runtime.app.request(`${encounterPath}/completion`, { headers: { cookie: doctor } })
   expect(completion.status).toBe(200)

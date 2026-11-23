@@ -208,7 +208,7 @@ it('持久保存失败保留已核实内容且阻止写入，损坏绑定不被�
 })
 
 it.each(['missing-created-task', 'wrong-reason', 'wrong-task', 'completed-task'])('PRN不能借历史或错误任务证明本次发起：%s', async kind => {
-  const prnOrder = { ...order, kind: 'medication' as const, duration: 'long' as const, frequencyCode: 'PRN' as const }
+  const prnOrder = { ...order, kind: 'medication' as const, duration: 'long' as const, frequencyCode: 'PRN' as const, routeCode: 'PO' as const }
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path === '/api/auth/context') return Response.json(session)
     return Response.json({ ...response('execution-1'), effects: kind === 'missing-created-task' ? [] : [{ kind: 'created', reference: `Task/${kind === 'wrong-task' ? 'other-task' : 'old-task'}`, versionId: '1' }], data: { ...response('execution-1').data, orders: [prnOrder], executions: [{ id: 'old-task', orderId: prnOrder.id, scheduledFor: '2026-08-24T09:00:00+08:00', status: kind === 'completed-task' ? 'completed' : 'pending', version: 1, reason: kind === 'wrong-reason' ? '合成旧理由' : '合成本次理由' }], charges: [], chargesFen: 0 } })

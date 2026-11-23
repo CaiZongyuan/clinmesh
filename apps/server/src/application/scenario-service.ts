@@ -45,8 +45,10 @@ function installedMedicationConfigJson(
     allowedDoseTexts: medication.workflow.allowedDoseTexts,
     allowedFrequencyCodes: medication.workflow.allowedFrequencyCodes,
     allowedQuantities: medication.workflow.allowedQuantities,
+    ...(medication.workflow.allowedRouteCodes === undefined ? {} : { allowedRouteCodes: medication.workflow.allowedRouteCodes }),
     defaultCourseDays: medication.workflow.defaultCourseDays,
     defaultQuantity: medication.workflow.defaultQuantity,
+    ...(medication.workflow.defaultRouteCode === undefined ? {} : { defaultRouteCode: medication.workflow.defaultRouteCode }),
     dose: medication.defaultDose,
     frequency: medication.defaultFrequency,
     ...(medication.insuranceCoverage === undefined ? {} : { insuranceCoverage: medication.insuranceCoverage }),
@@ -704,14 +706,14 @@ export class ScenarioService {
       ['lab-crp', 'laboratory', 'CRP', 'C 反应蛋白', 'C-reactive protein', 4300, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[],"insuranceCoverage":{"included":true,"priorSelfPayBps":1000}}'],
       ...(supportsPrescriptionConclusion
         ? []
-        : [['medication-oseltamivir', 'medication', 'OSELTAMIVIR', '磷酸奥司他韦胶囊', 'Oseltamivir phosphate capsules', 760, '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"],"insuranceCoverage":{"included":true,"priorSelfPayBps":2000}}'] as const]),
+        : [['medication-oseltamivir', 'medication', 'OSELTAMIVIR', '磷酸奥司他韦胶囊', 'Oseltamivir phosphate capsules', 760, '{"dose":"75 mg","frequency":"BID","defaultRouteCode":"PO","allowedRouteCodes":["PO"],"allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"],"insuranceCoverage":{"included":true,"priorSelfPayBps":2000}}'] as const]),
       ['medication-acetaminophen', 'medication', 'ACETAMINOPHEN', '对乙酰氨基酚片', 'Acetaminophen tablets', 120, supportsPrescriptionConclusion
         ? installedMedicationConfigJson(
             hospitalAcetaminophen,
             hospitalDiagnosisIdByCode,
             ['medication-oseltamivir'],
           )
-        : '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"],"insuranceCoverage":{"included":true,"priorSelfPayBps":0}}'],
+        : '{"dose":"0.5 g","frequency":"PRN","defaultRouteCode":"PO","allowedRouteCodes":["PO"],"allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"],"insuranceCoverage":{"included":true,"priorSelfPayBps":0}}'],
       ...(supportsPrescriptionConclusion
         ? hospitalBaseline.catalog.medications
             .filter(medication => medication.id !== 'medication-acetaminophen')

@@ -15,8 +15,8 @@ type Medication = Extract<ClinicalCatalog, { prescriptionConclusionSupported: tr
 const medications: Medication[] = ['a', 'b'].map((id, index) => ({
   id: `synthetic-medication-${id}`, nameZh: `合成药品${id.toUpperCase()}`, nameEn: `Synthetic medicine ${id}`,
   version: 1, allowedCombinationIds: [`synthetic-medication-${index === 0 ? 'b' : 'a'}`],
-  allowedCourseDays: [3], allowedDoseTexts: ['5 mg', '10 mg'], allowedFrequencyCodes: ['QD'], allowedQuantities: [3],
-  defaultCourseDays: 3, defaultDoseText: '5 mg', defaultFrequencyCode: 'QD', defaultQuantity: 3,
+  allowedCourseDays: [3], allowedDoseTexts: ['5 mg', '10 mg'], allowedFrequencyCodes: ['QD'], allowedQuantities: [3], allowedRouteCodes: ['PO'],
+  defaultCourseDays: 3, defaultDoseText: '5 mg', defaultFrequencyCode: 'QD', defaultQuantity: 3, defaultRouteCode: 'PO',
 }))
 const session: SessionContext = { user: { id: 'synthetic-user', email: 'doctor@example.test', name: '合成医生' }, availableRoles: [],
   actor: { actorId: 'synthetic-doctor', epoch: 'synthetic-epoch', workspaceId: 'synthetic-workspace',
@@ -25,7 +25,7 @@ const initialDetail: DoctorCaseDetail = { caseId: 'synthetic-case', registration
   patient: { id: 'synthetic-patient', identifier: 'SYNTHETIC', name: '合成患者', synthetic: true, versionId: '1' },
   encounter: { id: 'synthetic-encounter', versionId: '1' }, status: 'first-visit', taskId: 'synthetic-task', taskVersion: '1',
   consultation: { version: 1, turns: [] } }
-const agentInput = { items: [{ catalogItemId: 'synthetic-medication-b', courseDays: 3, doseText: '10 mg', frequencyCode: 'QD', quantity: 3 }] }
+const agentInput = { items: [{ catalogItemId: 'synthetic-medication-b', courseDays: 3, doseText: '10 mg', frequencyCode: 'QD', quantity: 3, routeCode: 'PO' as const }] }
 const clients: QueryClient[] = []
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); sessionStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 

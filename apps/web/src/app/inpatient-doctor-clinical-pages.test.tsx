@@ -27,7 +27,7 @@ const admission = inpatientAdmissionSchema.parse({
 })
 const diagnosis = { id: 'diagnosis-1', code: 'I25.1', display: '合成冠心病诊断', system: 'https://example.test/icd', version: '1', sourceLocator: 'synthetic-fixture' }
 const hypertension = { id: 'nhsa-diagnosis:nhc-icd10-clinical@2022.r4:I10.x09', code: 'I10.x09', display: '合成高血压', domain: 'diagnosis', sourceLocator: 'synthetic-fixture', status: 'active', system: 'https://example.test/nhc-icd10', version: '2022.r4' }
-const medication = { id: 'medication-2', display: '合成降压药', version: 1, priceFen: 1500, unit: '片', strength: '5 mg', packageDescription: '30片/盒', doseBasis: { amount: 5, unit: 'mg' }, doses: [{ doseText: '5 mg', quantity: 1 }], frequencyCodes: ['QD'], lots: [] }
+const medication = { id: 'medication-2', display: '合成降压药', version: 1, priceFen: 1500, unit: '片', strength: '5 mg', packageDescription: '30片/盒', doseBasis: { amount: 5, unit: 'mg' }, doses: [{ doseText: '5 mg', quantity: 1 }], frequencyCodes: ['QD'], defaultRouteCode: 'PO', allowedRouteCodes: ['PO'], lots: [] }
 const simulation = {
   admissionId: 'admission-1', evaluatedAt: '2026-08-24T09:00:00+08:00', fingerprint: 'a'.repeat(64), rulesId: 'synthetic-rules', rulesVersion: '1',
   formal: { chargesFen: 5000, items: [] }, committed: { items: [] }, reserved: { items: [] }, draft: { items: [{ kind: 'medication', id: 'medication-2', display: '合成降压药', quantity: 1, estimatedFen: 1500 }], missing: [] },
@@ -36,7 +36,7 @@ const simulation = {
 }
 const clinical = inpatientFullClinicalSchema.parse({
   admissionId: admission.id, encounterVersion: '2', diagnosis: { revision: 1, entries: [{ conditionId: 'condition-1', role: 'primary', admissionCondition: '1', ordinal: 1, coding: diagnosis }] },
-  orders: [{ id: 'order-1', admissionId: admission.id, kind: 'medication', duration: 'long', catalogItemId: 'medication-1', catalogVersion: 1, display: '合成抗血小板药', doseText: '1片', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: 'verified', version: 1, requestVersion: '1', signedAt: '2026-08-24T09:00:00+08:00', signedBy: 'doctor-1', organizationId: 'organization-inpatient' }],
+  orders: [{ id: 'order-1', admissionId: admission.id, kind: 'medication', duration: 'long', catalogItemId: 'medication-1', catalogVersion: 1, display: '合成抗血小板药', doseText: '1片', doseQuantity: 1, unit: '片', frequencyCode: 'QD', routeCode: 'PO', state: 'verified', version: 1, requestVersion: '1', signedAt: '2026-08-24T09:00:00+08:00', signedBy: 'doctor-1', organizationId: 'organization-inpatient' }],
   executions: [{ id: 'execution-1', orderId: 'order-1', scheduledFor: '2026-08-24T09:00:00+08:00', status: 'completed', version: 1 }], dispenses: [], charges: [], chargesFen: 0
 })
 const investigations = inpatientInvestigationsSchema.parse({
@@ -435,12 +435,12 @@ it('每条医嘱的费用预计保留单项依据，等待重新预计时不能�
   const dialog = screen.getByRole('dialog', { name: '开立医嘱' })
   expect(within(dialog).queryByRole('textbox', { name: '每次剂量' })).toBeNull()
   const suggestions = await within(dialog).findByRole('region', { name: '医嘱项目候选' })
-  expect((await within(suggestions).findByRole('button', { name: '选择合成降压药' })).textContent).toContain('5 mg · 30片/盒 · 每次 5 mg · 每日一次（QD） · ¥15.00/片')
+  expect((await within(suggestions).findByRole('button', { name: '选择合成降压药' })).textContent).toContain('5 mg · 30片/盒 · 每次 5 mg · 每日一次（QD） · 口服（po） · ¥15.00/片')
   await user.click(within(suggestions).getByRole('button', { name: /另有 1 项暂不能开立/ }))
   expect(suggestions.textContent).toContain('合成缺价药暂不能开立：缺院内价格')
   await user.click(within(suggestions).getByRole('button', { name: '选择合成降压药' }))
   const row = within(dialog).getByRole('region', { name: '待开：合成降压药' })
-  expect(row.querySelector('[data-order-check-summary]')?.textContent).toBe('5 mg · 30片/盒 · 长期 · 每次 5 mg · 每日一次（QD） · 1 片')
+  expect(row.querySelector('[data-order-check-summary]')?.textContent).toBe('5 mg · 30片/盒 · 长期 · 每次 5 mg · 每日一次（QD） · 口服（po） · 1 片')
   expect((within(row).getByRole('textbox', { name: '每次剂量' }) as HTMLInputElement).value).toBe('5 mg')
   expect(within(row).getByText('= 1 片')).toBeDefined()
   await user.click(within(row).getByRole('button', { name: '费用预计' }))
@@ -454,7 +454,7 @@ it('每条医嘱的费用预计保留单项依据，等待重新预计时不能�
   await waitFor(() => expect(within(dialog).getByRole('button', { name: '开立所选医嘱（1）' }).hasAttribute('disabled')).toBe(false))
   await user.click(within(dialog).getByRole('button', { name: '开立所选医嘱（1）' }))
   await waitFor(() => expect(writes.filter(write => write.path.endsWith('/orders/issue'))).toHaveLength(1))
-  expect(writes.find(write => write.path.endsWith('/orders/issue'))).toMatchObject({ body: { input: { expectedDrgFingerprint: 'a'.repeat(64), selection: { kind: 'medication', catalogItemId: 'medication-2', doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' } } } })
+  expect(writes.find(write => write.path.endsWith('/orders/issue'))).toMatchObject({ body: { input: { expectedDrgFingerprint: 'a'.repeat(64), selection: { kind: 'medication', catalogItemId: 'medication-2', doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD', routeCode: 'PO' } } } })
 })
 
 it('开立被拒时在该行保留服务端原因和输入，关闭后可修改诊断', async () => {
@@ -888,4 +888,43 @@ it('住院开立医嘱器仅对药品提供说明书抽屉（含旧浏览器草�
   expect(screen.getByRole('dialog', { name: '开立医嘱' })).toBeTruthy()
   expect((within(draftRow).getByRole('textbox', { name: '每次剂量' }) as HTMLInputElement).value).toBe('10 mg')
   expect((within(draftRow).getByRole('textbox', { name: '给药说明' }) as HTMLInputElement).value).toBe('清晨餐后整片吞服')
+})
+
+it('多给药途径住院药品支持切换受控给药途径，护理服务医嘱不显示给药途径', async () => {
+  const heparin = {
+    ...medication,
+    id: 'medication-pci-heparin',
+    display: '肝素钠注射液',
+    unit: '支',
+    strength: '12500 IU/2 mL',
+    packageDescription: '2 mL/支',
+    doseBasis: { amount: 12500, unit: 'IU' },
+    doses: [{ doseText: '12500 IU', quantity: 1 }],
+    frequencyCodes: ['QD'],
+    defaultRouteCode: 'IV',
+    allowedRouteCodes: ['IV', 'IVGTT', 'IH'],
+  }
+  const { writes } = mount('orders', { medicationsCatalog: [heparin] })
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: '开立医嘱' }))
+  const composer = screen.getByRole('dialog', { name: '开立医嘱' })
+  const suggestions = await within(composer).findByRole('region', { name: '医嘱项目候选' })
+  await user.click(await within(suggestions).findByRole('button', { name: '选择肝素钠注射液' }))
+  await user.click(within(suggestions).getByRole('button', { name: '选择合成健康教育' }))
+
+  const serviceRow = within(composer).getByRole('region', { name: '待开：合成健康教育' })
+  expect(within(serviceRow).queryByRole('combobox', { name: '给药途径' })).toBeNull()
+  expect(serviceRow.textContent).not.toContain('给药途径')
+
+  const medRow = within(composer).getByRole('region', { name: '待开：肝素钠注射液' })
+  expect(medRow.querySelector('[data-order-check-summary]')?.textContent).toContain('静脉注射（iv）')
+  await user.click(within(medRow).getByRole('combobox', { name: '给药途径' }))
+  await user.click(await screen.findByRole('option', { name: '皮下注射（ih）' }))
+  expect(medRow.querySelector('[data-order-check-summary]')?.textContent).toContain('皮下注射（ih）')
+
+  await user.click(within(composer).getByRole('button', { name: '开立所选医嘱（2）' }))
+  await waitFor(() => expect(writes.filter(write => write.path.endsWith('/orders/issue'))).toHaveLength(2))
+  expect(writes.find(write => (write.body as { input?: { selection?: { kind?: string } } }).input?.selection?.kind === 'medication')).toMatchObject({
+    body: { input: { selection: { kind: 'medication', catalogItemId: 'medication-pci-heparin', routeCode: 'IH' } } },
+  })
 })

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { ClinicalCatalog, DoctorCaseDetail } from '@clinmesh/contracts/his'
-import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
+import type { ReferenceMedicationCatalogItem } from '@clinmesh/contracts/reference-data'
 import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema, type DoctorRecommendationState, type DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -22,20 +22,24 @@ const medication: Medication = {
   allowedDoseTexts: ['500 mg', '1 g'],
   allowedFrequencyCodes: ['PRN', 'BID'],
   allowedQuantities: [6, 10],
+  allowedRouteCodes: ['PO'],
   defaultCourseDays: 3,
   defaultDoseText: '500 mg',
   defaultFrequencyCode: 'PRN',
   defaultQuantity: 6,
+  defaultRouteCode: 'PO',
   id: 'medication-a',
   nameEn: 'Synthetic acetaminophen',
   nameZh: '合成对乙酰氨基酚',
   version: 1,
 }
 
-const referenceProduct: ReferenceMedicationProduct = {
+const referenceProduct: ReferenceMedicationCatalogItem = {
+  allowedRouteCodes: ['PO'],
   approvalNumber: '国药准字H20260001',
   brandName: '合成品牌',
   code: 'synthetic-product',
+  defaultRouteCode: 'PO',
   dosageForm: '胶囊',
   genericName: '合成参考药品',
   id: 'reference-medication',
@@ -74,6 +78,7 @@ const issuedPrescription: NonNullable<DoctorCaseDetail['medicationConclusion']>[
     medicationRequestId: 'request-a',
     medicationRequestVersion: '1',
     quantity: 6,
+    routeCode: 'PO',
   }, {
     catalogItemId: 'medication-b',
     courseDays: 5,
@@ -83,6 +88,7 @@ const issuedPrescription: NonNullable<DoctorCaseDetail['medicationConclusion']>[
     medicationRequestId: 'request-b',
     medicationRequestVersion: '1',
     quantity: 10,
+    routeCode: 'PO',
   }],
   number: 'RX-SYNTHETIC-1',
   status: 'paid',
@@ -105,6 +111,7 @@ const recommendation: PrescriptionSuggestion = {
   opposingInformation: [],
   quantity: 10,
   rationale: '已核对的合成用药依据',
+  routeCode: 'PO',
   supportingInformation: ['已有合成病例资料'],
 }
 
@@ -193,6 +200,7 @@ describe('开具拦截文案', () => {
       ['PRESCRIPTION_DIAGNOSIS_UNCONFIRMED', '请先在诊断页签确认主诊断'],
       ['PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED', '不在该药品允许的目录范围'],
       ['PRESCRIPTION_DOSAGE_NOT_ALLOWED', '剂量、频次、疗程或数量不在该药品目录允许的范围'],
+      ['PRESCRIPTION_ROUTE_NOT_ALLOWED', '给药途径不在该药品目录允许的范围'],
       ['PRESCRIPTION_MIXED_CATALOG_SOURCES', '不能同时包含本院药房药品与国家参考目录药品'],
     ]
     for (const [reason, fragment] of expectations) {
@@ -339,7 +347,7 @@ describe('PrescriptionPage', () => {
   })
   it('deletes a saved prescription draft when its final medication is explicitly removed from the list', async () => {
     const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
-      draftVersion: 1, draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 }] },
+      draftVersion: 1, draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', courseDays: 3, quantity: 6 }] },
     } } })
     const user = userEvent.setup()
     await user.click(within(screen.getByRole('region', { name: '待开具处方' })).getByRole('button', { name: /^移除/ }))
@@ -354,7 +362,7 @@ describe('PrescriptionPage', () => {
   })
   it('keeps the final medication and its directions when draft deletion fails and retries its removal', async () => {
     const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
-      draftVersion: 1, draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 }] },
+      draftVersion: 1, draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', courseDays: 3, quantity: 6 }] },
     } } })
     const user = userEvent.setup()
     const panel = within(screen.getByRole('region', { name: '待开具处方' }))
@@ -364,7 +372,7 @@ describe('PrescriptionPage', () => {
     }} />)
     expect(panel.getByRole('checkbox', { name: '选择合成对乙酰氨基酚' })).toBeTruthy()
     expect(panel.getByRole('button', { name: '编辑药品 合成对乙酰氨基酚' })).toBeTruthy()
-    expect(panel.getByText('500 mg · 必要时（PRN） · 3 天 · 6')).toBeTruthy()
+    expect(panel.getByText('500 mg · 必要时（PRN） · 口服（po） · 3 天 · 6')).toBeTruthy()
     expect(screen.getByText(mounted.props.messages.operationFailed)).toBeTruthy()
     await user.click(panel.getByRole('button', { name: /^移除/ }))
     expect(mounted.props.actions.deleteDraft.onSubmit).toHaveBeenCalledTimes(2)
@@ -373,7 +381,7 @@ describe('PrescriptionPage', () => {
     const secondProduct = { ...referenceProduct, id: 'reference-medication-b', genericName: '合成第二药品' }
     const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
       draftVersion: 1, draft: { items: [{ catalogItemId: referenceProduct.id, referenceProduct,
-        courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10 }] },
+        courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', routeCode: 'PO', quantity: 10 }] },
     } }, referenceSearch: {
       data: { items: [secondProduct], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' },
       error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn(),
@@ -416,14 +424,14 @@ describe('PrescriptionPage', () => {
     }))
     const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
       draftVersion: 1, draft: { items: [{ catalogItemId: referenceProduct.id, referenceProduct,
-        courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10 }] },
+        courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', routeCode: 'PO', quantity: 10 }] },
     } } })
     const panel = within(screen.getByRole('region', { name: '待开具处方' }))
     await userEvent.setup().click(panel.getByRole('button', { name: /^开具处方/ }))
     await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-prescription': '1' }, input: {
       expectedDraftVersion: 1, resolveExistingDraft: true, selections: [
         { source: 'manual', kind: 'prescription', catalogItemId: referenceProduct.id, referenceProduct,
-          courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10 },
+          courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', routeCode: 'PO', quantity: 10 },
       ],
     } }]))
     expect(mounted.props.actions.issue.onSubmit).not.toHaveBeenCalled()
@@ -434,7 +442,7 @@ describe('PrescriptionPage', () => {
     const mounted = renderPage({
       detail: { ...detail, medicationConclusion: {
         draftVersion: 1, draft: { items: [{ catalogItemId: referenceProduct.id, referenceProduct,
-          courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10 }] },
+          courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', routeCode: 'PO', quantity: 10 }] },
       } },
       referenceSearch: {
         data: { items: [referenceProduct], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' },
@@ -495,7 +503,7 @@ describe('PrescriptionPage', () => {
     expect(panel.getAllByRole('button', { name: /^开具处方/ })).toHaveLength(1)
     expect(screen.queryByRole('button', { name: '正式开具处方' })).toBeNull()
     await waitFor(() => expect(mounted.props.actions.saveDraft.onSubmit).toHaveBeenCalledWith([
-      { catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 },
+      { catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', quantity: 6 },
     ]), { timeout: 2000 })
   })
   it('issues the prepared prescription together with the current manual dose in one versioned confirmation', async () => {
@@ -510,7 +518,7 @@ describe('PrescriptionPage', () => {
     }))
     const secondMedication: Medication = { ...medication, allowedCombinationIds: [medication.id], id: 'medication-b', nameZh: '合成第二药品' }
     const mounted = renderPage({ catalog: [medication, secondMedication], detail: { ...detail, medicationConclusion: {
-      draft: { items: [{ catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 }] },
+      draft: { items: [{ catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', quantity: 6 }] },
       draftVersion: 1,
     } } })
     const user = userEvent.setup()
@@ -529,8 +537,8 @@ describe('PrescriptionPage', () => {
     await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-prescription': '1' }, input: {
       generation: 1, inputFingerprint: '1'.repeat(64), expectedDraftVersion: 1, resolveExistingDraft: true,
       selections: [
-        { source: 'manual', kind: 'prescription', catalogItemId: 'medication-a', courseDays: 3, doseText: '1 g', frequencyCode: 'PRN', quantity: 6 },
-        { source: 'agent', suggestionId: 'recommendation-b', kind: 'prescription', catalogItemId: 'medication-b', courseDays: 5, doseText: '1 g', frequencyCode: 'BID', quantity: 10 },
+        { source: 'manual', kind: 'prescription', catalogItemId: 'medication-a', courseDays: 3, doseText: '1 g', frequencyCode: 'PRN', routeCode: 'PO', quantity: 6 },
+        { source: 'agent', suggestionId: 'recommendation-b', kind: 'prescription', catalogItemId: 'medication-b', courseDays: 5, doseText: '1 g', frequencyCode: 'BID', routeCode: 'PO', quantity: 10 },
       ],
     } }]))
     expect(screen.queryByRole('combobox', { name: '剂量' })).toBeNull()
@@ -552,7 +560,7 @@ describe('PrescriptionPage', () => {
     const writes: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === 'POST') writes.push(String(input))
-      return Response.json(recommendationState([{ ...recommendation, courseDays: null, doseText: null, frequencyCode: null, quantity: null }]))
+      return Response.json(recommendationState([{ ...recommendation, courseDays: null, doseText: null, frequencyCode: null, routeCode: null, quantity: null }]))
     }))
     const mounted = renderPage({ catalog: [{ ...medication, id: 'medication-b', nameZh: '合成第二药品' }] })
     const panel = within(screen.getByRole('region', { name: '待开具处方' }))
@@ -563,7 +571,7 @@ describe('PrescriptionPage', () => {
     expect(mounted.readAgentState()).toEqual({ forms: { prescription: { mode: 'prescription', items: [] } } })
     await userEvent.setup().click(panel.getByRole('button', { name: '调整' }))
     const dialog = within(screen.getByRole('dialog', { name: '调整项目' }))
-    for (const label of ['每次剂量', '频次', '疗程（天）', '数量']) expect(dialog.getByLabelText(label)).toHaveProperty('value', '')
+    for (const label of ['每次剂量', '频次', '给药途径', '疗程（天）', '数量']) expect(dialog.getByLabelText(label)).toHaveProperty('value', '')
     expect(writes).toEqual([])
     expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
     expect(mounted.props.actions.issue.onSubmit).not.toHaveBeenCalled()
@@ -572,7 +580,7 @@ describe('PrescriptionPage', () => {
   it('keeps an incomplete manual prescription dose in the prepared list without restoring a default', async () => {
     const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
       draftVersion: 1, draft: { items: [{ catalogItemId: referenceProduct.id, referenceProduct,
-        doseText: '', frequencyCode: 'BID', courseDays: 5, quantity: 10 }] },
+        doseText: '', frequencyCode: 'BID', routeCode: 'PO', courseDays: 5, quantity: 10 }] },
     } } })
     const panel = within(screen.getByRole('region', { name: '待开具处方' }))
     expect(panel.getByText('用法用量待补充')).toBeTruthy()
@@ -589,7 +597,7 @@ describe('PrescriptionPage', () => {
     await user.click(dialog.getByRole('button', { name: '取消' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(mounted.readAgentState()).toEqual({ forms: { prescription: { mode: 'prescription', items: [{
-      catalogItemId: referenceProduct.id, courseDays: 5, doseText: '', frequencyCode: 'BID', quantity: 10,
+      catalogItemId: referenceProduct.id, courseDays: 5, doseText: '', frequencyCode: 'BID', routeCode: 'PO', quantity: 10,
     }] } } })
     expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
   })
@@ -597,6 +605,7 @@ describe('PrescriptionPage', () => {
   it.each([
     ['dose', { allowedDoseTexts: ['500 mg'] }],
     ['frequency', { allowedFrequencyCodes: ['PRN'] }],
+    ['route', { allowedRouteCodes: ['SL'] }],
     ['course', { allowedCourseDays: [3] }],
     ['quantity', { allowedQuantities: [6] }],
   ] satisfies [string, Partial<Medication>][])('prevents confirmation when the current catalog no longer accepts the suggested %s', async (_field, changes) => {
@@ -621,7 +630,7 @@ describe('PrescriptionPage', () => {
     const firstMedication: Medication = { ...medication, allowedCombinationIds: conflict === 'outward-combination' ? [] : ['medication-b'] }
     const existingId = firstMedication.id
     const mounted = renderPage({ catalog: conflict === 'unavailable' ? [firstMedication] : [firstMedication, secondMedication], detail: { ...detail, medicationConclusion: {
-      draft: { items: [{ catalogItemId: existingId, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 }] },
+      draft: { items: [{ catalogItemId: existingId, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', quantity: 6 }] },
       draftVersion: 1,
     } } })
     await screen.findByRole('checkbox', { name: '选择合成第二药品' })
@@ -637,7 +646,7 @@ describe('PrescriptionPage', () => {
     const ids = [...Array.from({ length: 8 }, (_, index) => `medication-limit-${index}`), recommendation.catalogItemId]
     const catalog = ids.map(id => ({ ...medication, id, allowedCombinationIds: ids, nameZh: id === recommendation.catalogItemId ? '合成第二药品' : id }))
     const mounted = renderPage({ catalog, detail: { ...detail, medicationConclusion: {
-      draft: { items: ids.slice(0, 8).map(catalogItemId => ({ catalogItemId, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 })) },
+      draft: { items: ids.slice(0, 8).map(catalogItemId => ({ catalogItemId, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO' as const, quantity: 6 })) },
       draftVersion: 1,
     } } })
     await screen.findByRole('checkbox', { name: '选择合成第二药品' })
@@ -687,7 +696,7 @@ describe('PrescriptionPage', () => {
 
   it('keeps manual draft edits while no-medication mode suspends preparations and autosave', async () => {
     const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
-      draftVersion: 1, draft: { items: [{ catalogItemId: referenceProduct.id, referenceProduct, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10 }] },
+      draftVersion: 1, draft: { items: [{ catalogItemId: referenceProduct.id, referenceProduct, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', routeCode: 'PO', quantity: 10 }] },
     } } })
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /^编辑药品 合成参考药品/ }))
@@ -705,14 +714,14 @@ describe('PrescriptionPage', () => {
     expect(within(screen.getByRole('region', { name: '待开具处方' })).getByText(/150 mg · 每日两次/)).toBeTruthy()
     await act(async () => { await vi.advanceTimersByTimeAsync(900) })
     expect(mounted.props.actions.saveDraft.onSubmit).toHaveBeenCalledWith([{
-      catalogItemId: referenceProduct.id, referenceProduct, courseDays: 5, doseText: '150 mg', frequencyCode: 'BID', quantity: 10,
+      catalogItemId: referenceProduct.id, referenceProduct, courseDays: 5, doseText: '150 mg', frequencyCode: 'BID', routeCode: 'PO', quantity: 10,
     }])
     expect(mounted.props.actions.confirmNoMedication.onSubmit).not.toHaveBeenCalled()
   })
 
   it('cancels an unsaved draft timer when the case becomes read-only', async () => {
     const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
-      draft: { items: [{ catalogItemId: referenceProduct.id, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10, referenceProduct }] },
+      draft: { items: [{ catalogItemId: referenceProduct.id, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', routeCode: 'PO', quantity: 10, referenceProduct }] },
       draftVersion: 1,
     } } })
     const user = userEvent.setup()
@@ -731,7 +740,7 @@ describe('PrescriptionPage', () => {
     let state = initial
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(state)))
     const mounted = renderPage({ catalog: [{ ...medication, id: 'medication-b', nameZh: '合成第二药品' }], recommendationRevision: 'source-1', detail: { ...detail, medicationConclusion: {
-      draftVersion: 1, draft: { items: [{ catalogItemId: 'medication-b', courseDays: 5, doseText: '1 g', frequencyCode: 'BID', quantity: 10 }] },
+      draftVersion: 1, draft: { items: [{ catalogItemId: 'medication-b', courseDays: 5, doseText: '1 g', frequencyCode: 'BID', routeCode: 'PO', quantity: 10 }] },
     } } })
     const user = userEvent.setup()
     medicationForm()
@@ -759,7 +768,7 @@ describe('PrescriptionPage', () => {
     const user = userEvent.setup()
     const pageActions = createActions()
     const mounted = renderPage({ actions: pageActions, detail: { ...detail, medicationConclusion: {
-      draft: { items: [{ catalogItemId: referenceProduct.id, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10, referenceProduct }] },
+      draft: { items: [{ catalogItemId: referenceProduct.id, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', routeCode: 'PO', quantity: 10, referenceProduct }] },
       draftVersion: 1,
     } } })
     await user.click(screen.getByRole('button', { name: '删除处方草稿' }))
@@ -792,7 +801,7 @@ describe('PrescriptionPage', () => {
     expect(within(screen.getByRole('region', { name: '待开具处方' })).getByText(/150 mg/)).toBeTruthy()
     await act(async () => { await vi.advanceTimersByTimeAsync(900) })
     expect(pageActions.saveDraft.onSubmit).toHaveBeenLastCalledWith([{
-      catalogItemId: referenceProduct.id, courseDays: 5, doseText: '150 mg', frequencyCode: 'BID', quantity: 10, referenceProduct,
+      catalogItemId: referenceProduct.id, courseDays: 5, doseText: '150 mg', frequencyCode: 'BID', routeCode: 'PO', quantity: 10, referenceProduct,
     }])
   })
 
@@ -808,7 +817,7 @@ describe('PrescriptionPage', () => {
     await user.click(dialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     const savedActions = { ...pageActions, saveDraft: { ...pageActions.saveDraft, success: true,
-      savedRevision: JSON.stringify([{ catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 }]),
+      savedRevision: JSON.stringify([{ catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6, routeCode: 'PO' }]),
     } }
     mounted.rerender(<PrescriptionPage {...mounted.props} actions={savedActions} />)
     mounted.rerender(<PrescriptionPage {...mounted.props} actions={savedActions} detail={{ ...detail, medicationConclusion: { draftVersion: 2 } }} />)
@@ -839,8 +848,8 @@ describe('PrescriptionPage', () => {
     expect(screen.queryByLabelText('剂量')).toBeNull()
     const dialog = await openComposer(user)
     await user.click(dialog.getByRole('button', { name: '选择 合成对乙酰氨基酚' }))
-    // 点选后弹窗内展开四个用药字段。
-    for (const label of ['剂量', '频次', '疗程', '数量']) expect(dialog.getByLabelText(label)).toBeTruthy()
+    // 点选后弹窗内展开五个用药字段。
+    for (const label of ['剂量', '频次', '给药途径', '疗程', '数量']) expect(dialog.getByLabelText(label)).toBeTruthy()
     await user.click(dialog.getByRole('button', { name: '加入处方' }))
     expect(screen.getByRole('dialog')).toBeTruthy()
     expect(dialog.getByText('待开具 1 项')).toBeTruthy()
@@ -863,10 +872,10 @@ describe('PrescriptionPage', () => {
 
   it('按药品保留同窗未保存编辑，保存另一药及重新挂载后仍可继续修改', async () => {
     const user = userEvent.setup()
-    const overrides = { catalog: [medication, { ...medication, id: 'medication-b', nameZh: '合成第二药品', allowedCombinationIds: [medication.id] }],
+    const overrides: Partial<React.ComponentProps<typeof PrescriptionPage>> = { catalog: [medication, { ...medication, id: 'medication-b', nameZh: '合成第二药品', allowedCombinationIds: [medication.id] }],
       detail: { ...detail, medicationConclusion: { draftVersion: 1, draft: { items: [
-        { catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 },
-        { catalogItemId: 'medication-b', courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 },
+        { catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', quantity: 6 },
+        { catalogItemId: 'medication-b', courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', quantity: 6 },
       ] } } } }
     const first = renderPage(overrides)
     let dialog = await openComposer(user)
@@ -907,9 +916,9 @@ describe('PrescriptionPage', () => {
 
   it('未加入的新药输入与既有药品编辑分别保留，切换患者后回到原稿仍可恢复', async () => {
     const user = userEvent.setup()
-    const overrides = { catalog: [medication, { ...medication, id: 'medication-b', nameZh: '合成第二药品', allowedCombinationIds: [medication.id] }],
+    const overrides: Partial<React.ComponentProps<typeof PrescriptionPage>> = { catalog: [medication, { ...medication, id: 'medication-b', nameZh: '合成第二药品', allowedCombinationIds: [medication.id] }],
       detail: { ...detail, medicationConclusion: { draftVersion: 1, draft: { items: [
-        { catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 },
+        { catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', quantity: 6 },
       ] } } } }
     const first = renderPage(overrides)
     let dialog = await openComposer(user)
@@ -936,11 +945,11 @@ describe('PrescriptionPage', () => {
     const user = userEvent.setup()
     const scope = JSON.stringify([undefined, detail.caseId, detail.encounter.id, 'prescription'])
     sessionStorage.setItem(`clinmesh.outpatient-investigation.prescription-composer:v1:${scope}`, JSON.stringify({
-      catalogItemId: medication.id, fields: { courseDays: 5, doseText: '1 g', frequencyCode: 'BID', quantity: 10 },
+      catalogItemId: medication.id, fields: { courseDays: 5, doseText: '1 g', frequencyCode: 'BID', routeCode: 'PO', quantity: 10 },
       ...(kind === 'edit' ? { editingId: medication.id } : {}),
     }))
-    const overrides = kind === 'edit' ? { detail: { ...detail, medicationConclusion: { draftVersion: 1, draft: { items: [
-      { catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 },
+    const overrides: Partial<React.ComponentProps<typeof PrescriptionPage>> = kind === 'edit' ? { detail: { ...detail, medicationConclusion: { draftVersion: 1, draft: { items: [
+      { catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', quantity: 6 },
     ] } } } } : {}
     const first = renderPage(overrides)
     const target = kind === 'edit' ? '编辑药品 合成对乙酰氨基酚' : '添加药品'
@@ -983,7 +992,7 @@ describe('PrescriptionPage', () => {
       return key.includes(prefix) ? '{}' : getItem.call(this, key)
     })
     renderPage({ detail: { ...detail, medicationConclusion: { draftVersion: 1, draft: { items: [{
-      catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6,
+      catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', quantity: 6,
     }] } } } })
     const issue = await screen.findByRole('button', { name: '开具处方（1）' })
     await waitFor(() => expect(screen.getByText('处方草稿无法读取或保存，已停止新开具。请确认清空草稿后再试。')).toBeTruthy())
@@ -1028,7 +1037,7 @@ describe('PrescriptionPage', () => {
   it('waits for server deletion and displays its rejection inside the clear confirmation', async () => {
     const user = userEvent.setup()
     const mounted = renderPage({ detail: { ...detail, medicationConclusion: { draftVersion: 1, draft: { items: [{
-      catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6,
+      catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', quantity: 6,
     }] } } } })
     await user.click(screen.getByRole('button', { name: '清空手动草稿' }))
     await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '确认清空' }))
@@ -1068,7 +1077,7 @@ describe('PrescriptionPage', () => {
     const user = userEvent.setup()
     const { props } = renderPage({
       detail: { ...detail, medicationConclusion: {
-        draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 }] },
+        draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', courseDays: 3, quantity: 6 }] },
         draftVersion: 1,
       } },
     })
@@ -1098,7 +1107,7 @@ describe('PrescriptionPage', () => {
     renderPage({
       actions,
       detail: { ...detail, medicationConclusion: {
-        draft: { items: [{ catalogItemId: referenceProduct.id, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10, referenceProduct }] },
+        draft: { items: [{ catalogItemId: referenceProduct.id, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', routeCode: 'PO', quantity: 10, referenceProduct }] },
         draftVersion: 1,
       } },
     })
@@ -1122,6 +1131,7 @@ describe('PrescriptionPage', () => {
       frequencyCode: 'BID',
       quantity: 10,
       referenceProduct,
+      routeCode: 'PO',
     }])
     expect(panel.getByText(/150 mg/)).toBeTruthy()
   })
@@ -1129,7 +1139,7 @@ describe('PrescriptionPage', () => {
   it('marks invalid reference directions and prevents saving or issuing until they are corrected', async () => {
     vi.useFakeTimers()
     const { props } = renderPage({ detail: { ...detail, medicationConclusion: {
-      draft: { items: [{ catalogItemId: referenceProduct.id, courseDays: 31, doseText: '75 mg', frequencyCode: 'BID', quantity: 1001, referenceProduct }] },
+      draft: { items: [{ catalogItemId: referenceProduct.id, courseDays: 31, doseText: '75 mg', frequencyCode: 'BID', routeCode: 'PO', quantity: 1001, referenceProduct }] },
       draftVersion: 1,
     } } })
 
@@ -1153,7 +1163,7 @@ describe('PrescriptionPage', () => {
     fireEvent.click(dialog.getByRole('button', { name: '保存修改' }))
     await act(async () => { await vi.advanceTimersByTimeAsync(900) })
     expect(props.actions.saveDraft.onSubmit).toHaveBeenCalledWith([{
-      catalogItemId: referenceProduct.id, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10, referenceProduct,
+      catalogItemId: referenceProduct.id, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', routeCode: 'PO', quantity: 10, referenceProduct,
     }])
   })
 
@@ -1162,8 +1172,8 @@ describe('PrescriptionPage', () => {
     const secondMedication: Medication = { ...medication, allowedCombinationIds: [medication.id], id: 'medication-b', nameEn: 'Synthetic second medication', nameZh: '合成第二药品' }
     renderPage({ catalog: [medication, secondMedication], detail: { ...detail, medicationConclusion: {
       draft: { items: [
-        { catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 },
-        { catalogItemId: secondMedication.id, doseText: '500 mg', frequencyCode: 'BID', courseDays: 5, quantity: 10 },
+        { catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', courseDays: 3, quantity: 6 },
+        { catalogItemId: secondMedication.id, doseText: '500 mg', frequencyCode: 'BID', routeCode: 'PO', courseDays: 5, quantity: 10 },
       ] },
       draftVersion: 1,
     } } })
@@ -1190,7 +1200,7 @@ describe('PrescriptionPage', () => {
     const ids = Array.from({ length: 9 }, (_, index) => `medication-${index + 1}`)
     const catalog = ids.map((id, index) => ({ ...medication, allowedCombinationIds: ids, id, nameZh: `合成药品 ${index + 1}` }))
     const { unmount } = renderPage({ catalog, detail: { ...detail, medicationConclusion: {
-      draft: { items: catalog.slice(0, 8).map(item => ({ catalogItemId: item.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 })) },
+      draft: { items: catalog.slice(0, 8).map(item => ({ catalogItemId: item.id, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO' as const, courseDays: 3, quantity: 6 })) },
       draftVersion: 1,
     } } })
     // 八条封顶：入口在满额时禁用。
@@ -1198,7 +1208,7 @@ describe('PrescriptionPage', () => {
     unmount()
 
     renderPage({ catalog: [medication, { ...medication, id: 'incompatible', nameZh: '合成不兼容药品', allowedCombinationIds: [] }], detail: { ...detail, medicationConclusion: {
-      draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 }] },
+      draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', courseDays: 3, quantity: 6 }] },
       draftVersion: 1,
     } } })
     const dialog = await openComposer(user)
@@ -1263,7 +1273,7 @@ describe('处方页签布局整理', () => {
 
   it('有草稿时自动保存状态与删除入口跟随表单区，右辅助列不再放置草稿工具', () => {
     renderPage({ detail: { ...detail, medicationConclusion: {
-      draftVersion: 1, draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 }] },
+      draftVersion: 1, draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', courseDays: 3, quantity: 6 }] },
     } } })
     const form = screen.getByRole('region', { name: '填写处方' })
     const tools = form.querySelector('[data-draft-tools]')
@@ -1298,7 +1308,7 @@ describe('处方页签布局整理', () => {
     const craft = { ...referenceProduct, id: 'reference-craft', packageDescription: '本品采用五层共挤输液用三室袋、氧指示剂和高阻隔外包装袋。；14袋/盒' }
     renderPage({ detail: { ...detail, medicationConclusion: { draftVersion: 2, prescription: {
       ...issuedPrescription,
-      items: [{ catalogItemId: craft.id, courseDays: 3, display: craft.genericName, doseText: '75 mg', frequencyCode: 'BID',
+      items: [{ catalogItemId: craft.id, courseDays: 3, display: craft.genericName, doseText: '75 mg', frequencyCode: 'BID', routeCode: 'PO',
         medicationRequestId: 'request-craft', medicationRequestVersion: '1', quantity: 10, referenceProduct: craft }],
     } } } })
     const list = within(screen.getByRole('region', { name: '药品列表' }))
@@ -1446,7 +1456,7 @@ describe('处方页签布局整理', () => {
       catalog: [{ ...medication, priceFen: 120, strength: '500 mg' }],
       detail: { ...detail, medicationConclusion: {
         draftVersion: 1,
-        draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 }] },
+        draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', courseDays: 3, quantity: 6 }] },
       } },
       referenceSearch: search,
     })
@@ -1472,7 +1482,7 @@ describe('处方页签布局整理', () => {
       catalog: [{ ...medication, priceFen: 120, strength: '500 mg' }],
       detail: { ...detail, medicationConclusion: {
         draftVersion: 1,
-        draft: { items: [{ catalogItemId: referenceProduct.id, doseText: '75 mg', frequencyCode: 'BID', courseDays: 5, quantity: 2, referenceProduct }] },
+        draft: { items: [{ catalogItemId: referenceProduct.id, doseText: '75 mg', frequencyCode: 'BID', routeCode: 'PO', courseDays: 5, quantity: 2, referenceProduct }] },
       } },
       referenceSearch: search,
     })
@@ -1497,7 +1507,7 @@ describe('处方页签布局整理', () => {
       catalog: [{ ...medication, priceFen: 120, strength: '500 mg' }],
       detail: { ...detail, medicationConclusion: {
         draftVersion: 1,
-        draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 }] },
+        draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', routeCode: 'PO', courseDays: 3, quantity: 6 }] },
       } },
       locale: 'en-US',
       messages: getWorkspaceMessages('en-US'),
@@ -1562,7 +1572,7 @@ describe('处方页签布局整理', () => {
       catalog: [{ ...medication, id: 'medication-b', nameZh: '合成第二药品' }],
       detail: { ...detail, medicationConclusion: {
         draftVersion: 1,
-        draft: { items: [{ catalogItemId: referenceProduct.id, doseText: '75 mg', frequencyCode: 'BID', courseDays: 5, quantity: 2, referenceProduct }] },
+        draft: { items: [{ catalogItemId: referenceProduct.id, doseText: '75 mg', frequencyCode: 'BID', routeCode: 'PO', courseDays: 5, quantity: 2, referenceProduct }] },
       } },
     })
     const user = userEvent.setup()
@@ -1624,9 +1634,9 @@ describe('处方页签布局整理', () => {
     await user.click(addButton)
     await user.click(dialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(within(screen.getByRole('region', { name: '待开具处方' })).getByText('47.5 mg · 每日一次（QD） · 14 天 · 14')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '待开具处方' })).getByText('47.5 mg · 每日一次（QD） · 口服（po） · 14 天 · 14')).toBeTruthy()
     await waitFor(() => expect(mounted.props.actions.saveDraft.onSubmit).toHaveBeenCalledWith([
-      { catalogItemId: 'medication-metoprolol', doseText: '47.5 mg', frequencyCode: 'QD', courseDays: 14, quantity: 14 },
+      { catalogItemId: 'medication-metoprolol', doseText: '47.5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 14, quantity: 14 },
     ]))
   })
 
@@ -1658,13 +1668,13 @@ describe('处方页签布局整理', () => {
 
     const pendingInDialog = within(dialog.getByRole('region', { name: '处方待开清单' }))
     expect(pendingInDialog.getByRole('button', { name: '编辑待开药品 磷酸奥司他韦胶囊' })).toBeTruthy()
-    expect(pendingInDialog.getByText('75 mg · 10粒/盒 · 单次 75 mg · 每日两次（BID） · 5 天 · 10 粒')).toBeTruthy()
+    expect(pendingInDialog.getByText('75 mg · 10粒/盒 · 单次 75 mg · 每日两次（BID） · 口服（po） · 5 天 · 10 粒')).toBeTruthy()
 
     await user.click(dialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
 
     const pendingPanel = within(screen.getByRole('region', { name: '待开具处方' }))
-    expect(pendingPanel.getByText('75 mg · 每日两次（BID） · 5 天 · 10')).toBeTruthy()
+    expect(pendingPanel.getByText('75 mg · 每日两次（BID） · 口服（po） · 5 天 · 10')).toBeTruthy()
     expect(pendingPanel.getByText('75 mg · 10粒/盒 · 发药总量 10 粒')).toBeTruthy()
 
     mounted.rerender(<PrescriptionPage {...mounted.props} catalog={[oseltamivir]} detail={{
@@ -1684,6 +1694,7 @@ describe('处方页签布局整理', () => {
             medicationRequestVersion: '1',
             packageDescription: '10粒/盒',
             quantity: 10,
+            routeCode: 'PO',
             strength: '75 mg',
             unit: '粒',
           }],
@@ -1695,7 +1706,7 @@ describe('处方页签布局整理', () => {
     expect(screen.getByRole('list', { name: '处方进度' })).toBeTruthy()
     const issuedTable = within(screen.getByRole('region', { name: '药品列表' }))
     expect(issuedTable.getByText('75 mg · 10粒/盒')).toBeTruthy()
-    expect(issuedTable.getByText('75 mg · 每日两次（BID） · 5 天')).toBeTruthy()
+    expect(issuedTable.getByText('75 mg · 每日两次（BID） · 口服（po） · 5 天')).toBeTruthy()
     expect(issuedTable.getByText('10 粒')).toBeTruthy()
     expect(issuedTable.queryByText('—')).toBeNull()
   })
@@ -1871,6 +1882,112 @@ describe('处方页签布局整理', () => {
     expect(within(await screen.findByRole('dialog', { name: '药品说明书摘要' })).getByText(/单日最大剂量不超过 10 mg/)).toBeTruthy()
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '药品说明书摘要' })).toBeNull())
-    expect(pendingPanel.getByText('95 mg · 每日一次（QD） · 14 天 · 14 · 餐后整片吞服')).toBeTruthy()
+    expect(pendingPanel.getByText('95 mg · 每日一次（QD） · 口服（po） · 14 天 · 14 · 餐后整片吞服')).toBeTruthy()
+  })
+
+  it('多途径药品默认预填 defaultRouteCode，仅提供允许的受控给药途径并支持切换', async () => {
+    const nitroglycerin: Medication = {
+      ...medication,
+      allowedCourseDays: [1, 7],
+      allowedDoseTexts: ['0.5 mg'],
+      allowedFrequencyCodes: ['PRN'],
+      allowedQuantities: [1],
+      allowedRouteCodes: ['SL', 'PO'],
+      defaultCourseDays: 7,
+      defaultDoseText: '0.5 mg',
+      defaultFrequencyCode: 'PRN',
+      defaultQuantity: 1,
+      defaultRouteCode: 'SL',
+      id: 'medication-nitroglycerin',
+      nameEn: 'Nitroglycerin tablets',
+      nameZh: '硝酸甘油片',
+    }
+    const mounted = renderPage({ catalog: [nitroglycerin] })
+    const user = userEvent.setup()
+    const dialog = await openComposer(user)
+    await user.click(dialog.getByRole('button', { name: '选择 硝酸甘油片' }))
+    const routeSelect = dialog.getByRole('combobox', { name: '给药途径' })
+    expect(within(routeSelect).getByText('舌下含服（sl）')).toBeTruthy()
+    await user.click(routeSelect)
+    expect(await screen.findByRole('option', { name: '舌下含服（sl）' })).toBeTruthy()
+    const oralOption = screen.getByRole('option', { name: '口服（po）' })
+    expect(screen.queryByRole('option', { name: /静脉/ })).toBeNull()
+    await user.click(oralOption)
+    await user.click(dialog.getByRole('button', { name: '加入处方' }))
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(within(screen.getByRole('region', { name: '待开具处方' })).getByText('0.5 mg · 必要时（PRN） · 口服（po） · 7 天 · 1')).toBeTruthy()
+    await waitFor(() => expect(mounted.props.actions.saveDraft.onSubmit).toHaveBeenCalledWith([
+      { catalogItemId: 'medication-nitroglycerin', courseDays: 7, doseText: '0.5 mg', frequencyCode: 'PRN', routeCode: 'PO', quantity: 1 },
+    ]))
+  })
+
+  it('恢复缺少给药途径元数据的旧浏览器参考药品草稿时按剂型与通用名重算允许途径', async () => {
+    const scope = JSON.stringify(['scope-legacy-ref', detail.caseId, detail.encounter.id, 'prescription'])
+    const legacyInjectableProduct = {
+      approvalNumber: '国药准字H20260099',
+      brandName: '合成克赛',
+      code: 'SYN-LEGACY-IH',
+      dosageForm: '注射剂',
+      genericName: '依诺肝素钠注射液',
+      id: 'reference-legacy-enoxaparin',
+      manufacturer: '合成制药有限公司',
+      packageDescription: '0.4ml:4000AXaIU*2支/盒',
+      sourceLocator: 'synthetic-fixture',
+      status: 'active',
+      strength: '0.4ml:4000AXaIU',
+      system: 'https://example.test/medications',
+      version: '1',
+    }
+    sessionStorage.setItem(
+      `clinmesh.outpatient-investigation.prescription:v1:${scope}`,
+      JSON.stringify({
+        dirty: true,
+        items: [{
+          catalogItemId: legacyInjectableProduct.id,
+          courseDays: 5,
+          doseText: '4000 IU',
+          frequencyCode: 'QD',
+          key: 'legacy-line-1',
+          quantity: 2,
+          referenceProduct: legacyInjectableProduct,
+        }],
+        mode: 'prescription',
+        version: 1,
+      }),
+    )
+    const mounted = renderPage({
+      recommendationScope: 'scope-legacy-ref',
+      referenceSearch: {
+        data: { items: [], page: 1, pageSize: 20, releaseId: 'synthetic', total: 0 },
+        error: null,
+        isError: false,
+        isFetching: false,
+        isPending: false,
+        onSearch: vi.fn(),
+      },
+    })
+    const user = userEvent.setup()
+    const panel = within(screen.getByRole('region', { name: '待开具处方' }))
+    await user.click(panel.getByRole('button', { name: /^编辑药品 依诺肝素钠注射液/ }))
+    const dialog = within(screen.getByRole('dialog'))
+    const routeSelect = dialog.getByRole('combobox', { name: '给药途径' })
+    await user.click(routeSelect)
+    const subcutaneousOption = await screen.findByRole('option', { name: '皮下注射（ih）' })
+    expect(screen.queryByRole('option', { name: '口服（po）' })).toBeNull()
+    await user.click(subcutaneousOption)
+    await user.click(dialog.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(panel.getByText('4000 IU · 每日一次（QD） · 皮下注射（ih） · 5 天 · 2')).toBeTruthy()
+    await waitFor(() => expect(mounted.props.actions.saveDraft.onSubmit).toHaveBeenCalledWith([
+      expect.objectContaining({
+        catalogItemId: legacyInjectableProduct.id,
+        courseDays: 5,
+        doseText: '4000 IU',
+        frequencyCode: 'QD',
+        quantity: 2,
+        routeCode: 'IH',
+      }),
+    ]))
   })
 })

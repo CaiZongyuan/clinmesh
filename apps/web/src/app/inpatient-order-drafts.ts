@@ -1,4 +1,5 @@
-import { medicationDailyFrequency } from '@clinmesh/core/medication-safety'
+import { medicationDailyFrequency, medicationRouteAllowed } from '@clinmesh/core/medication-safety'
+import { medicationRouteSchema, type MedicationRoute } from '@clinmesh/contracts/medication-safety'
 import { z } from 'zod'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
@@ -17,7 +18,7 @@ export const orderPickSchema = z.discriminatedUnion('kind', [
 export const orderAttemptSchema = z.object({ idempotencyKey: z.uuid(), input: inpatientOrderIssueInputSchema }).strict()
 export const orderDraftRowSchema = z.object({
   id: z.uuid(), pick: orderPickSchema, selected: z.boolean(), duration: z.enum(['long', 'temporary']),
-  doseText: z.string().max(120), frequencyCode: z.enum(['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE']).optional(), instructions: z.string().max(500).optional(), surgeryExecutionId: z.string().optional(),
+  doseText: z.string().max(120), frequencyCode: z.enum(['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE']).optional(), routeCode: medicationRouteSchema.optional(), instructions: z.string().max(500).optional(), surgeryExecutionId: z.string().optional(),
   estimate: z.object({ generation: z.uuid(), fingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), stale: z.boolean() }).strict().optional(),
   attempt: orderAttemptSchema.optional(),
   error: z.union([z.string(), issueDraftFailureSchema]).optional(),
@@ -40,12 +41,13 @@ export function orderDose(row: { pick: z.infer<typeof orderPickSchema>; doseText
     ...(item.maxDoseQuantity === undefined ? {} : { maxDoseQuantity: item.maxDoseQuantity }) }, row.doseText)
 }
 
-export function orderSelection(row: { pick: z.infer<typeof orderPickSchema>; doseText: string; frequencyCode?: 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' | undefined; instructions?: string | undefined }): z.infer<typeof inpatientOrderIssueInputSchema>['selection'] | undefined {
+export function orderSelection(row: { pick: z.infer<typeof orderPickSchema>; doseText: string; frequencyCode?: 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' | undefined; routeCode?: MedicationRoute | undefined; instructions?: string | undefined }): z.infer<typeof inpatientOrderIssueInputSchema>['selection'] | undefined {
   if (row.pick.kind === 'service') return { kind: 'service', serviceId: row.pick.item.id, serviceVersion: row.pick.item.version, quantity: 1 }
   const item = row.pick.item, dose = orderDose(row), instructions = row.instructions?.trim() || undefined
   return dose && 'quantity' in dose && row.frequencyCode && item.frequencyCodes.includes(row.frequencyCode)
+    && row.routeCode && medicationRouteAllowed(item.allowedRouteCodes, row.routeCode)
     && (!item.safety || dose.quantity * medicationDailyFrequency(row.frequencyCode) <= item.safety.maximumDailyQuantity)
-    ? { kind: 'medication', catalogItemId: item.id, catalogVersion: item.version, doseText: row.doseText, doseQuantity: dose.quantity, frequencyCode: row.frequencyCode, ...(instructions ? { instructions } : {}) } : undefined
+    ? { kind: 'medication', catalogItemId: item.id, catalogVersion: item.version, doseText: row.doseText, doseQuantity: dose.quantity, frequencyCode: row.frequencyCode, routeCode: row.routeCode, ...(instructions ? { instructions } : {}) } : undefined
 }
 
 export function orderDraftKey(session: SessionContext, admission: InpatientAdmission) {

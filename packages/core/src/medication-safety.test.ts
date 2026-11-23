@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { formatMedicationFrequency, medicationCombinationConflict, medicationDoseConflict, medicationIndicationMatches, medicationQuantityAllowed, medicationScheduledHours } from './medication-safety.ts'
+import {
+  MEDICATION_ROUTE_CODE_SYSTEM,
+  deriveReferenceMedicationRoutes,
+  formatMedicationFrequency,
+  formatMedicationRoute,
+  medicationCombinationConflict,
+  medicationDoseConflict,
+  medicationIndicationMatches,
+  medicationQuantityAllowed,
+  medicationRouteAllowed,
+  medicationRouteConcept,
+  medicationScheduledHours,
+} from './medication-safety.ts'
 
 describe('共享药事安全规则', () => {
   it('允许跨类联合并拒绝 ACEI/ARB、ACEI/ARNI、双 P2Y12 和双他汀', () => {
@@ -53,5 +65,75 @@ describe('共享药事安全规则', () => {
     expect(formatMedicationFrequency('PRN', 'en-US')).toBe('As needed (PRN)')
     expect(formatMedicationFrequency('TID', 'en-US', { withTime: true })).toBe('Three times daily (TID) · 08:00, 14:00, 20:00')
     expect(formatMedicationFrequency('自定义外延频次', 'zh-CN')).toBe('自定义外延频次')
+  })
+  it('将八种受控给药途径统一格式化为中文全角括号小写缩写与英文标准标签，并输出 FHIR R5 CodeableConcept', () => {
+    expect(formatMedicationRoute('PO', 'zh-CN')).toBe('口服（po）')
+    expect(formatMedicationRoute('IVGTT', 'zh-CN')).toBe('静脉滴注（ivgtt）')
+    expect(formatMedicationRoute('IV', 'zh-CN')).toBe('静脉注射（iv）')
+    expect(formatMedicationRoute('IM', 'zh-CN')).toBe('肌内注射（im）')
+    expect(formatMedicationRoute('IH', 'zh-CN')).toBe('皮下注射（ih）')
+    expect(formatMedicationRoute('SL', 'zh-CN')).toBe('舌下含服（sl）')
+    expect(formatMedicationRoute('TOP', 'zh-CN')).toBe('外用（top）')
+    expect(formatMedicationRoute('INH', 'zh-CN')).toBe('吸入（inh）')
+    expect(formatMedicationRoute(' ivgtt ', 'zh-CN')).toBe('静脉滴注（ivgtt）')
+    expect(formatMedicationRoute('PO', 'en-US')).toBe('Oral (po)')
+    expect(formatMedicationRoute('IVGTT', 'en-US')).toBe('Intravenous infusion (ivgtt)')
+    expect(formatMedicationRoute('IV', 'en-US')).toBe('Intravenous injection (iv)')
+    expect(formatMedicationRoute('IM', 'en-US')).toBe('Intramuscular injection (im)')
+    expect(formatMedicationRoute('IH', 'en-US')).toBe('Subcutaneous injection (ih)')
+    expect(formatMedicationRoute('SL', 'en-US')).toBe('Sublingual (sl)')
+    expect(formatMedicationRoute('TOP', 'en-US')).toBe('Topical (top)')
+    expect(formatMedicationRoute('INH', 'en-US')).toBe('Inhalation (inh)')
+    expect(formatMedicationRoute('UNKNOWN', 'zh-CN')).toBe('UNKNOWN')
+
+    expect(medicationRouteAllowed(['IV', 'IVGTT', 'IH'], 'IH')).toBe(true)
+    expect(medicationRouteAllowed(['IV', 'IVGTT', 'IH'], 'PO')).toBe(false)
+
+    expect(medicationRouteConcept('IV')).toEqual({
+      coding: [{
+        system: MEDICATION_ROUTE_CODE_SYSTEM,
+        code: 'IV',
+        display: '静脉注射',
+      }],
+      text: '静脉注射（iv）',
+    })
+    expect(medicationRouteConcept('IVGTT')).toEqual({
+      coding: [{
+        system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/medication-route',
+        code: 'IVGTT',
+        display: '静脉滴注',
+      }],
+      text: '静脉滴注（ivgtt）',
+    })
+  })
+  it('按剂型与通用名确定性派生国家参考目录的默认途径与允许途径集合，完整覆盖 8 种受控途径', () => {
+    expect(deriveReferenceMedicationRoutes({ dosageForm: '片剂', genericName: '苯磺酸氨氯地平片' }))
+      .toEqual({ defaultRouteCode: 'PO', allowedRouteCodes: ['PO'] })
+    expect(deriveReferenceMedicationRoutes({ dosageForm: '片剂', genericName: '硝酸甘油片' }))
+      .toEqual({ defaultRouteCode: 'SL', allowedRouteCodes: ['SL', 'PO'] })
+    expect(deriveReferenceMedicationRoutes({ dosageForm: '片剂(舌下片)', genericName: '硝酸甘油舌下片' }))
+      .toEqual({ defaultRouteCode: 'SL', allowedRouteCodes: ['SL'] })
+    expect(deriveReferenceMedicationRoutes({ dosageForm: '吸入粉雾剂', genericName: '布地奈德福莫特罗粉雾剂' }))
+      .toEqual({ defaultRouteCode: 'INH', allowedRouteCodes: ['INH'] })
+    expect(deriveReferenceMedicationRoutes({ dosageForm: '气雾剂', genericName: '硫酸沙丁胺醇气雾剂' }))
+      .toEqual({ defaultRouteCode: 'INH', allowedRouteCodes: ['INH'] })
+    expect(deriveReferenceMedicationRoutes({ dosageForm: '气雾剂', genericName: '云南白药气雾剂' }))
+      .toEqual({ defaultRouteCode: 'TOP', allowedRouteCodes: ['TOP'] })
+    expect(deriveReferenceMedicationRoutes({ dosageForm: '溶液剂(含甘油)', genericName: '开塞露(含甘油)' }))
+      .toEqual({ defaultRouteCode: 'TOP', allowedRouteCodes: ['TOP'] })
+    expect(deriveReferenceMedicationRoutes({ dosageForm: '注射剂(外用)', genericName: '外用人表皮生长因子' }))
+      .toEqual({ defaultRouteCode: 'TOP', allowedRouteCodes: ['TOP'] })
+    expect(deriveReferenceMedicationRoutes({ dosageForm: '注射剂', genericName: '依诺肝素钠注射液' }))
+      .toEqual({ defaultRouteCode: 'IH', allowedRouteCodes: ['IH'] })
+    expect(deriveReferenceMedicationRoutes({ dosageForm: '注射剂', genericName: '门冬胰岛素注射液' }))
+      .toEqual({ defaultRouteCode: 'IH', allowedRouteCodes: ['IH', 'IV', 'IVGTT'] })
+    expect(deriveReferenceMedicationRoutes({ dosageForm: '注射剂', genericName: '黄体酮注射液' }))
+      .toEqual({ defaultRouteCode: 'IM', allowedRouteCodes: ['IM'] })
+    expect(deriveReferenceMedicationRoutes({ dosageForm: '注射剂(大容量注射剂)', genericName: '0.9%氯化钠注射液' }))
+      .toEqual({ defaultRouteCode: 'IVGTT', allowedRouteCodes: ['IVGTT', 'IV'] })
+    expect(deriveReferenceMedicationRoutes({ dosageForm: '注射剂', genericName: '肝素钠注射液' }))
+      .toEqual({ defaultRouteCode: 'IV', allowedRouteCodes: ['IV', 'IVGTT', 'IH'] })
+    expect(deriveReferenceMedicationRoutes({ dosageForm: '注射剂', genericName: '呋塞米注射液' }))
+      .toEqual({ defaultRouteCode: 'IV', allowedRouteCodes: ['IV', 'IVGTT', 'IM', 'IH'] })
   })
 })

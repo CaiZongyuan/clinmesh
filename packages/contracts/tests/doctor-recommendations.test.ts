@@ -96,10 +96,11 @@ it.each(['laboratory', 'imaging', 'pathology'] as const)('requires the reviewed 
 it('preserves the selected Reference medication product for the shared manual editor', () => {
   const referenceProduct = { approvalNumber: '合成批准文号', brandName: null, code: 'SYNTHETIC-MED', dosageForm: '片剂',
     genericName: '合成药品', id: 'reference-medication', manufacturer: '合成药厂', packageDescription: '30片/盒',
-    sourceLocator: 'synthetic:medications[0]', status: 'active', strength: '5mg', system: 'https://example.org/synthetic-medications', version: '1' }
+    sourceLocator: 'synthetic:medications[0]', status: 'active', strength: '5mg', system: 'https://example.org/synthetic-medications', version: '1',
+    defaultRouteCode: 'PO', allowedRouteCodes: ['PO'] }
   const request = { expectedVersions: { 'Encounter/synthetic-encounter': '1' }, input: {
     expectedDraftVersion: 0, selections: [{ kind: 'prescription', source: 'manual', catalogItemId: referenceProduct.id,
-      doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30, referenceProduct }],
+      doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30, referenceProduct }],
   } }
   expect(confirmDoctorPreparationRequestSchema.parse(request).input.selections[0]).toHaveProperty('referenceProduct', referenceProduct)
 })

@@ -1,3 +1,4 @@
+import { formatMedicationRoute } from '@clinmesh/core/medication-safety'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { InpatientOrder } from '@clinmesh/contracts/inpatient-clinical'
@@ -65,7 +66,7 @@ export function InpatientVerification({ admission, session, locale, orders, load
   const details = (order: InpatientOrder) => <>
     <span>{order.duration === 'long' ? t('长期', 'Long') : t('临时', 'Temporary')}</span>
     <span>{order.kind === 'medication' ? t('药品 · 每次 ', 'Medication · per dose ') : t('护理治疗 · 每次 ', 'Nursing care · per execution ')}{order.doseText || `${order.doseQuantity}${order.unit}`}{order.kind === 'medication' && order.doseText.replace(/\s/g, '') !== `${order.doseQuantity}${order.unit}` ? `（${order.doseQuantity}${order.unit}）` : ''}</span>
-    <span>{order.kind === 'medication' ? inpatientFrequencyLabel(order.frequencyCode, locale) : t('按医嘱执行', 'As ordered')}</span>
+    <span>{order.kind === 'medication' ? `${inpatientFrequencyLabel(order.frequencyCode, locale)} · ${formatMedicationRoute(order.routeCode, locale)}` : t('按医嘱执行', 'As ordered')}</span>
     <span>{t('开立 ', 'Signed ')}{formatShanghaiMinute(order.signedAt)}</span>
   </>
   const successCount = batch.items.filter(item => item.status === 'success').length

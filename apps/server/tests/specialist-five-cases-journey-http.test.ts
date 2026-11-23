@@ -741,6 +741,7 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
           doseText,
           frequencyCode,
           kind: 'medication',
+          routeCode: med.defaultRouteCode,
         },
       }, inpatientFullClinicalResponseSchema)
     }
@@ -1323,9 +1324,9 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
       encounterVersion: revDetailBeforeRx.encounter.versionId,
       expectedDraftVersion: 0,
       items: [
-        { catalogItemId: 'medication-pci-aspirin', courseDays: 30, doseText: '100 mg', frequencyCode: 'QD', quantity: 30 },
-        { catalogItemId: 'medication-pci-clopidogrel', courseDays: 30, doseText: '75 mg', frequencyCode: 'QD', quantity: 30 },
-        { catalogItemId: 'medication-pci-atorvastatin', courseDays: 30, doseText: '20 mg', frequencyCode: 'QD', quantity: 60 },
+        { catalogItemId: 'medication-pci-aspirin', courseDays: 30, doseText: '100 mg', frequencyCode: 'QD', quantity: 30, routeCode: 'PO' },
+        { catalogItemId: 'medication-pci-clopidogrel', courseDays: 30, doseText: '75 mg', frequencyCode: 'QD', quantity: 30, routeCode: 'PO' },
+        { catalogItemId: 'medication-pci-atorvastatin', courseDays: 30, doseText: '20 mg', frequencyCode: 'QD', quantity: 60, routeCode: 'PO' },
       ],
     }, prescriptionDraftResponseSchema)).data
     const revIssuedRx = (await grantOp('doctor', 'encounter.prescription.issue', {
@@ -1550,6 +1551,7 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     const salineCandidate = salineItem.candidate
     expect(salineCandidate?.kind).toBe('medication')
     if (salineCandidate?.kind === 'medication' && salineCandidate.inpatient !== null) {
+      expect(salineCandidate.routeCode).toBe('IVGTT')
       const issuedSaline = (await grantOp('inpatient-doctor', 'inpatient.order.issue', {
         admissionId: stay4.admissionId,
         duration: salineCandidate.inpatient.duration,
@@ -1562,6 +1564,7 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
           frequencyCode: salineCandidate.frequencyCode,
           ...(salineCandidate.instructionsZh ? { instructions: salineCandidate.instructionsZh } : {}),
           kind: 'medication',
+          routeCode: salineCandidate.routeCode,
         },
       }, inpatientFullClinicalResponseSchema)).data
       expect(issuedSaline.orders.some(o => o.catalogItemId === salineCandidate.catalogItemId)).toBe(true)
@@ -1643,6 +1646,7 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
           doseText: contra.doseText,
           frequencyCode: contra.frequencyCode,
           quantity: contra.quantity,
+          routeCode: 'PO',
         }],
       }, prescriptionDraftResponseSchema)).data
       rxDraftVersion = draft.draftVersion
@@ -1674,9 +1678,9 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
       encounterVersion: dSafe.encounter.versionId,
       expectedDraftVersion: rxDraftVersion,
       items: [
-        { catalogItemId: 'medication-amlodipine', courseDays: 10, doseText: '5 mg', frequencyCode: 'QD', quantity: 10 },
-        { catalogItemId: 'medication-valsartan', courseDays: 1, doseText: '80 mg', frequencyCode: 'QD', quantity: 1 },
-        { catalogItemId: 'medication-ezetimibe', courseDays: 1, doseText: '10 mg', frequencyCode: 'QD', quantity: 1 },
+        { catalogItemId: 'medication-amlodipine', courseDays: 10, doseText: '5 mg', frequencyCode: 'QD', quantity: 10, routeCode: 'PO' },
+        { catalogItemId: 'medication-valsartan', courseDays: 1, doseText: '80 mg', frequencyCode: 'QD', quantity: 1, routeCode: 'PO' },
+        { catalogItemId: 'medication-ezetimibe', courseDays: 1, doseText: '10 mg', frequencyCode: 'QD', quantity: 1, routeCode: 'PO' },
       ],
     }, prescriptionDraftResponseSchema)).data
     const issuedRx = (await grantOp('doctor', 'encounter.prescription.issue', {

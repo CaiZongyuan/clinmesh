@@ -2,7 +2,8 @@ import {
   type ClinicalCatalog,
   type DoctorCaseDetail
 } from '@clinmesh/contracts/his'
-import { medicationFrequencySchema } from '@clinmesh/contracts/medication-safety'
+import { medicationFrequencySchema, medicationRouteSchema, type MedicationRoute } from '@clinmesh/contracts/medication-safety'
+import { formatMedicationRoute } from '@clinmesh/core/medication-safety'
 import { Button } from '@clinmesh/ui/components/button'
 import { FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
@@ -29,6 +30,7 @@ export function RevisitEditor({ catalog, detail, locale, messages, onSave, pendi
       doseText: string
       frequencyCode: string
       quantity: number
+      routeCode: MedicationRoute
     }>
   }) => void
   pending: boolean
@@ -52,6 +54,7 @@ export function RevisitEditor({ catalog, detail, locale, messages, onSave, pendi
         frequencyCode: item.frequencyCode,
         key: item.medicationRequestId,
         quantity: String(item.quantity),
+        routeCode: item.routeCode,
       }))
     }
     return []
@@ -65,7 +68,7 @@ export function RevisitEditor({ catalog, detail, locale, messages, onSave, pendi
     values: {
       diagnosis: { code: diagnosisCode, display: diagnosisDisplay },
       document: { assessment, plan },
-      medications: medications.map(({ catalogItemId, doseText, frequencyCode, quantity }) => ({ catalogItemId, doseText, frequencyCode, quantity })),
+      medications: medications.map(({ catalogItemId, doseText, frequencyCode, quantity, routeCode }) => ({ catalogItemId, doseText, frequencyCode, quantity, routeCode })),
     },
   })
   const updateMedication = (index: number, update: Partial<MedicationDraftLine>) => {
@@ -80,15 +83,22 @@ export function RevisitEditor({ catalog, detail, locale, messages, onSave, pendi
       frequencyCode: '',
       key: globalThis.crypto.randomUUID(),
       quantity: '1',
+      routeCode: '',
     }])
   }
-  const hasInvalidMedication = medications.some(item => (
-    item.catalogItemId.length === 0
-    || item.doseText.length === 0
-    || item.frequencyCode.length === 0
-    || !Number.isInteger(Number(item.quantity))
-    || Number(item.quantity) < 1
-  ))
+  const hasInvalidMedication = medications.some(item => {
+    const parsedRoute = medicationRouteSchema.safeParse(item.routeCode)
+    const selected = medicationById.get(item.catalogItemId)
+    return (
+      item.catalogItemId.length === 0
+      || item.doseText.length === 0
+      || item.frequencyCode.length === 0
+      || !parsedRoute.success
+      || (selected !== undefined && !selected.allowedRouteCodes.includes(parsedRoute.data))
+      || !Number.isInteger(Number(item.quantity))
+      || Number(item.quantity) < 1
+    )
+  })
 
   return (
     <form
@@ -102,6 +112,7 @@ export function RevisitEditor({ catalog, detail, locale, messages, onSave, pendi
             doseText: item.doseText,
             frequencyCode: item.frequencyCode,
             quantity: Number(item.quantity),
+            routeCode: medicationRouteSchema.parse(item.routeCode),
           })),
         })
       }}
@@ -130,8 +141,12 @@ export function RevisitEditor({ catalog, detail, locale, messages, onSave, pendi
               : value,
             value,
           })) ?? []
+          const routeItems = selectedMedication?.allowedRouteCodes.map(value => ({
+            label: formatMedicationRoute(value, locale),
+            value,
+          })) ?? []
           return (
-            <div className="grid grid-cols-1 gap-3 border-b pb-4 @min-[1024px]/case-content:grid-cols-[minmax(12rem,1.5fr)_minmax(7rem,0.8fr)_minmax(7rem,0.8fr)_6rem_auto]" key={line.key}>
+            <div className="grid grid-cols-1 gap-3 border-b pb-4 @min-[1024px]/case-content:grid-cols-[minmax(12rem,1.4fr)_minmax(7rem,0.8fr)_minmax(7rem,0.8fr)_minmax(8rem,0.9fr)_6rem_auto]" key={line.key}>
               <Field>
                 <FieldLabel htmlFor={`medication-${index}`}>{messages.medication}{suffix}</FieldLabel>
                 <WorkspaceSelect
@@ -144,6 +159,7 @@ export function RevisitEditor({ catalog, detail, locale, messages, onSave, pendi
                       catalogItemId: selected.id,
                       doseText: selected.defaultDoseText,
                       frequencyCode: selected.defaultFrequencyCode,
+                      routeCode: selected.defaultRouteCode,
                     })
                   }}
                   placeholder={locale === 'zh-CN' ? '请选择药品' : 'Select medication'}
@@ -161,6 +177,10 @@ export function RevisitEditor({ catalog, detail, locale, messages, onSave, pendi
               <Field>
                 <FieldLabel htmlFor={`frequency-${index}`}>{messages.frequency}{suffix}</FieldLabel>
                 <WorkspaceSelect id={`frequency-${index}`} items={frequencyItems} onValueChange={value => updateMedication(index, { frequencyCode: value ?? '' })} value={line.frequencyCode} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`route-${index}`}>{messages.route}{suffix}</FieldLabel>
+                <WorkspaceSelect id={`route-${index}`} items={routeItems} onValueChange={value => updateMedication(index, { routeCode: value ?? '' })} value={line.routeCode || null} />
               </Field>
               <Field><FieldLabel htmlFor={`quantity-${index}`}>{messages.quantity}{suffix}</FieldLabel><Input id={`quantity-${index}`} min="1" onChange={event => updateMedication(index, { quantity: event.currentTarget.value })} required type="number" value={line.quantity} /></Field>
               <div className="flex items-end">

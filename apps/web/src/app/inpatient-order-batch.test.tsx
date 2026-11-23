@@ -17,7 +17,7 @@ const session: SessionContext = {
 const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-0001', admissionRoute: 'direct', wardId: 'ward-general',
   organizationId: 'organization-inpatient', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-08-24T09:00:00+08:00', depositFen: 0, chargesFen: 0, versionId: '2' })
 const medication = { id: 'medication-example', display: '合成药品', version: 1, priceFen: 100, unit: '片',
-  doses: [{ doseText: '5 mg', quantity: 1 }], doseBasis: { amount: 5, unit: 'mg' }, maxDoseQuantity: 2, frequencyCodes: ['QD'], lots: [] }
+  doses: [{ doseText: '5 mg', quantity: 1 }], doseBasis: { amount: 5, unit: 'mg' }, maxDoseQuantity: 2, frequencyCodes: ['QD'], defaultRouteCode: 'PO', allowedRouteCodes: ['PO'], lots: [] }
 
 const service = { id: 'service-example', display: '合成护理项目', version: 1, priceFen: 500, unit: '次' }
 

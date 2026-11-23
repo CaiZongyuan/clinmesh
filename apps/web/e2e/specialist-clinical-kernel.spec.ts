@@ -234,9 +234,9 @@ test('专病临床内核最小前端入口回归：五例病例包准备、住�
       input: {
         expectedDraftVersion: 0,
         items: [
-          { catalogItemId: 'medication-amlodipine', courseDays: 10, doseText: '5 mg', frequencyCode: 'QD', quantity: 10 },
-          { catalogItemId: 'medication-valsartan', courseDays: 1, doseText: '80 mg', frequencyCode: 'QD', quantity: 1 },
-          { catalogItemId: 'medication-ezetimibe', courseDays: 1, doseText: '10 mg', frequencyCode: 'QD', quantity: 1 },
+          { catalogItemId: 'medication-amlodipine', courseDays: 10, doseText: '5 mg', frequencyCode: 'QD', quantity: 10, routeCode: 'PO' },
+          { catalogItemId: 'medication-valsartan', courseDays: 1, doseText: '80 mg', frequencyCode: 'QD', quantity: 1, routeCode: 'PO' },
+          { catalogItemId: 'medication-ezetimibe', courseDays: 1, doseText: '10 mg', frequencyCode: 'QD', quantity: 1, routeCode: 'PO' },
         ],
       },
     },

@@ -34,6 +34,7 @@ const suggestion: PrescriptionSuggestion = {
   opposingInformation: [],
   quantity: null,
   rationale: '合成依据，仅验证目录映射。',
+  routeCode: ' PO ',
   supportingInformation: ['合成病例资料'],
 }
 
@@ -44,6 +45,7 @@ describe('prescription recommendation normalization', () => {
       doseText: '0.5 g',
       frequencyCode: 'PRN',
       label: '对乙酰氨基酚片',
+      routeCode: 'PO',
     })
   })
 
@@ -56,11 +58,34 @@ describe('prescription recommendation normalization', () => {
     expect(normalizePrescriptionRecommendation({ ...suggestion, ...fields }, catalog)).toBeUndefined()
   })
 
+  it('clears routeCode to null while retaining the candidate when routeCode is invalid or outside allowedRouteCodes', () => {
+    expect(normalizePrescriptionRecommendation({ ...suggestion, routeCode: 'IVGTT' }, catalog)).toMatchObject({
+      catalogItemId: 'medication-acetaminophen',
+      doseText: '0.5 g',
+      frequencyCode: 'PRN',
+      routeCode: null,
+    })
+    expect(normalizePrescriptionRecommendation({ ...suggestion, routeCode: 'UNKNOWN' }, catalog)).toMatchObject({
+      catalogItemId: 'medication-acetaminophen',
+      routeCode: null,
+    })
+    expect(normalizePrescriptionRecommendation({
+      ...suggestion,
+      catalogItemId: 'medication-nitroglycerin',
+      doseText: '0.5 mg',
+      frequencyCode: 'PRN',
+      routeCode: 'SL',
+    }, catalog)).toMatchObject({
+      catalogItemId: 'medication-nitroglycerin',
+      routeCode: 'SL',
+    })
+  })
+
   it('keeps all missing fields empty instead of using catalog defaults or inventing guideline evidence', () => {
     const normalized = normalizePrescriptionRecommendation({ ...suggestion,
-      courseDays: null, doseText: ' ', frequencyCode: null, quantity: null,
+      courseDays: null, doseText: ' ', frequencyCode: null, quantity: null, routeCode: ' ',
     }, catalog)
-    expect(normalized).toMatchObject({ courseDays: null, doseText: null, frequencyCode: null, quantity: null })
+    expect(normalized).toMatchObject({ courseDays: null, doseText: null, frequencyCode: null, quantity: null, routeCode: null })
     expect(normalized?.guidelineEvidenceIds).toEqual(['synthetic-guideline-evidence'])
     expect(normalized?.caseEvidenceIds).toEqual(['synthetic-case-evidence'])
     expect(normalized?.missingInformation).toEqual(['疗程和数量缺少适用依据'])

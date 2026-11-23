@@ -208,7 +208,7 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
     expect((await s.request(s.cashier, `${s.path}/drg/payer-reviews`)).status).toBe(403)
     // 医保办不取得临床写入与患者收退款权限。
     expect((await s.request(s.insurance, `${s.path}/orders/issue`, { encounterVersion: '1', duration: 'temporary',
-      selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', frequencyCode: 'QD', doseQuantity: 1 } })).status).toBe(403)
+      selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', doseQuantity: 1 } })).status).toBe(403)
   })
 
   it('冻结分组未确定病组或参数未覆盖时按缺口报告，不落核定记录', async () => {

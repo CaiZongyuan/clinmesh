@@ -1,11 +1,28 @@
 import { prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
+import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
+import { referenceMedicationProductSchema } from '@clinmesh/contracts/reference-data'
+import { deriveReferenceMedicationRoutes } from '@clinmesh/core/medication-safety'
 import { z } from 'zod'
 import { ensureInvestigationDraftsCleared, investigationDraftPrefix, useStoredInvestigationValue } from './investigation-draft-storage.ts'
 
-const fieldsSchema = prescriptionDraftItemSchema.pick({ courseDays: true, doseText: true, frequencyCode: true, instructions: true, quantity: true }).extend({
-  courseDays: z.number().finite().nullable(), doseText: z.string().max(120), frequencyCode: z.string().max(32), instructions: z.string().max(500).optional(), quantity: z.number().finite().nullable(),
+const storedReferenceProductSchema = referenceMedicationProductSchema.extend({
+  allowedRouteCodes: z.array(medicationRouteSchema).min(1).optional(),
+  defaultRouteCode: medicationRouteSchema.optional(),
+}).transform(product => {
+  const derived = deriveReferenceMedicationRoutes(product)
+  const defaultRouteCode = product.defaultRouteCode ?? product.allowedRouteCodes?.[0] ?? derived.defaultRouteCode
+  const allowedRouteCodes = product.allowedRouteCodes
+    ?? (derived.allowedRouteCodes.includes(defaultRouteCode) ? derived.allowedRouteCodes : [defaultRouteCode])
+  return {
+    ...product,
+    defaultRouteCode,
+    allowedRouteCodes,
+  }
 })
-const lineSchema = prescriptionDraftItemSchema.extend({ ...fieldsSchema.shape, key: z.string().min(1) })
+const fieldsSchema = prescriptionDraftItemSchema.pick({ courseDays: true, doseText: true, frequencyCode: true, instructions: true, quantity: true }).extend({
+  courseDays: z.number().finite().nullable(), doseText: z.string().max(120), frequencyCode: z.string().max(32), instructions: z.string().max(500).optional(), quantity: z.number().finite().nullable(), routeCode: z.string().max(16).default(''),
+})
+const lineSchema = prescriptionDraftItemSchema.extend({ ...fieldsSchema.shape, key: z.string().min(1), referenceProduct: storedReferenceProductSchema.optional() })
 const draftSchema = z.object({ version: z.literal(1), items: z.array(lineSchema).max(8), dirty: z.boolean(),
   mode: z.enum(['prescription', 'no-medication']),
 }).strict().refine(value => new Set(value.items.map(item => item.catalogItemId)).size === value.items.length)
@@ -17,7 +34,7 @@ export function usePrescriptionDraft(scope: string, initialItems: PrescriptionDr
 }
 
 const composerSchema = z.object({
-  catalogItemId: z.string().min(1), referenceProduct: prescriptionDraftItemSchema.shape.referenceProduct,
+  catalogItemId: z.string().min(1), referenceProduct: storedReferenceProductSchema.optional(),
   fields: fieldsSchema, editingId: z.string().min(1).optional(),
 }).strict()
 export type MedicationComposerDraft = z.infer<typeof composerSchema>
@@ -38,8 +55,8 @@ function composerStorageSchema(items: PrescriptionDraftLine[]) {
 export function prescriptionEditorsChanged(items: PrescriptionDraftLine[], editors: Record<string, MedicationComposerDraft>) {
   return Object.entries(editors).some(([key, editor]) => {
     const item = items.find(item => item.key === key)
-    return item !== undefined && JSON.stringify([item.catalogItemId, item.doseText.trim(), item.frequencyCode.trim(), item.courseDays, item.quantity, item.instructions?.trim() ?? '', item.referenceProduct ?? null])
-      !== JSON.stringify([editor.catalogItemId, editor.fields.doseText.trim(), editor.fields.frequencyCode.trim(), editor.fields.courseDays, editor.fields.quantity, editor.fields.instructions?.trim() ?? '', editor.referenceProduct ?? null])
+    return item !== undefined && JSON.stringify([item.catalogItemId, item.doseText.trim(), item.frequencyCode.trim(), item.routeCode.trim(), item.courseDays, item.quantity, item.instructions?.trim() ?? '', item.referenceProduct ?? null])
+      !== JSON.stringify([editor.catalogItemId, editor.fields.doseText.trim(), editor.fields.frequencyCode.trim(), editor.fields.routeCode.trim(), editor.fields.courseDays, editor.fields.quantity, editor.fields.instructions?.trim() ?? '', editor.referenceProduct ?? null])
   })
 }
 export function hasPendingPrescriptionEdits(scope: string, fallbackItems: PrescriptionDraftLine[]) {

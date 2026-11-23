@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 import type { Locator, Page, TestInfo } from '@playwright/test'
 import { expect, test } from '../../../web/e2e/fixtures.ts'
+import { waitForLayout } from '../../../web/e2e/layout-stability.ts'
 import { startInvestigationBillingServer } from '../../../web/e2e/investigation-billing.fixture.ts'
 import { openOutpatientInvestigationActions, prepareInpatientInvestigationActions, prepareOutpatientInvestigationCancel,
   runInpatientInvestigationRetryJourney, runInpatientInvestigationSelectionJourney, runOutpatientInvestigationCancelJourney } from '../../../web/e2e/investigation-actions-batch.journey.ts'
@@ -73,7 +74,7 @@ async function reviewAppearanceMatrix(page: Page, dialog: Locator, trigger: Loca
       await expect.poll(() => text.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeCloseTo(font * large / scale, 3)
     }
     const heading = dialog.getByRole('heading').first(), confirm = dialog.getByRole('button', { name: /^确认/ })
-    await dialog.evaluate(async element => { await Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished)) })
+    await waitForLayout(dialog)
     await expect(dialog.getByRole('article')).toHaveCount(count)
     await expect(heading).toBeVisible()
     await expect(confirm).toBeEnabled()

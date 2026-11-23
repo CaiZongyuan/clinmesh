@@ -1,5 +1,5 @@
 import { clinicalRiskAssessmentRecordSchema, inpatientVitalSignsRecordSchema } from './clinical-scores.ts'
-import { medicationPackageInsertSchema, medicationSafetyRuleSchema } from './medication-safety.ts'
+import { medicationPackageInsertSchema, medicationRouteSchema, medicationSafetyRuleSchema } from './medication-safety.ts'
 import { clinicalOverrideInputSchema } from './clinical-quality.ts'
 import { referenceConceptSnapshotSchema } from './reference-data.ts'
 import { z } from 'zod'
@@ -25,7 +25,7 @@ export const inpatientOrderIssueInputSchema = z.object({ admissionId: id, encoun
   expectedDrgFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), clinicalOverride: clinicalOverrideInputSchema.optional(),
   duration: z.enum(['long','temporary']), selection: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('medication'), catalogItemId: id, catalogVersion: z.number().int().positive(), doseText: z.string().trim().min(1).max(120),
-      frequencyCode: z.enum(['QD','BID','TID','QN','PRN','ONCE']), doseQuantity: z.number().int().positive().max(100),
+      frequencyCode: z.enum(['QD','BID','TID','QN','PRN','ONCE']), routeCode: medicationRouteSchema, doseQuantity: z.number().int().positive().max(100),
       instructions: z.string().trim().min(1).max(500).optional() }).strict(),
     z.object({ kind: z.literal('service'), serviceId: id, serviceVersion: z.number().int().positive(), quantity: z.number().int().positive().max(100) }).strict(),
   ]),
@@ -37,14 +37,28 @@ export const inpatientDispenseInputSchema = inpatientExecutionActionInputSchema.
   lotId: id, expectedVersion: z.number().int().positive(), quantity: z.number().int().positive().max(100),
 }).strict()).min(1).max(20) })
 export const inpatientChargeReverseInputSchema = z.object({ admissionId: id, chargeId: id, expectedChargeVersion: z.number().int().positive(), reason: z.string().trim().min(1).max(2000) }).strict()
-export const inpatientOrderSchema = z.object({ id, admissionId: id, surgeryExecutionId: id.optional(), kind: z.enum(['medication','service']), duration: z.enum(['long','temporary']),
+const inpatientOrderCommonShape = {
+  id, admissionId: id, surgeryExecutionId: id.optional(), duration: z.enum(['long','temporary']),
   catalogItemId: id, catalogVersion: z.number().int().positive(), display: z.string(), doseText: z.string(), doseQuantity: z.number().int().positive(),
   unit: z.string(), frequencyCode: z.enum(['QD','BID','TID','QN','PRN','ONCE']), instructions: z.string().trim().min(1).max(500).optional(),
   state: z.enum(['signed','verified','stop-requested','stopped','completed']),
   version: z.number().int().positive(), requestVersion: version, signedAt: z.iso.datetime({ offset: true }), signedBy: z.string(),
   organizationId: id, verifiedAt: z.iso.datetime({ offset: true }).optional(), stoppedAt: z.iso.datetime({ offset: true }).optional(),
   stopReason: z.string().trim().min(1).max(2000).optional(),
+} as const
+export const inpatientMedicationOrderSchema = z.object({
+  ...inpatientOrderCommonShape,
+  kind: z.literal('medication'),
+  routeCode: medicationRouteSchema,
 }).strict()
+export const inpatientServiceOrderSchema = z.object({
+  ...inpatientOrderCommonShape,
+  kind: z.literal('service'),
+}).strict()
+export const inpatientOrderSchema = z.discriminatedUnion('kind', [
+  inpatientMedicationOrderSchema,
+  inpatientServiceOrderSchema,
+])
 export const inpatientExecutionSchema = z.object({ id, orderId: id, scheduledFor: z.iso.datetime({ offset: true }),
   status: z.enum(['pending','dispensed','completed','cancelled']), version: z.number().int().positive(), administrationId: id.optional(),
   reason: z.string().optional(),
@@ -55,6 +69,7 @@ export const inpatientChargeSchema = z.object({ id, label: z.string().min(1), ki
 export const inpatientMedicationSchema = z.object({
   safety: medicationSafetyRuleSchema.optional(), id, display: z.string(), version: z.number().int().positive(), priceFen: z.number().int().nonnegative(), unit: z.string(),
   strength: z.string().min(1).optional(), packageDescription: z.string().min(1).optional(), packageInsert: medicationPackageInsertSchema.optional(),
+  defaultRouteCode: medicationRouteSchema, allowedRouteCodes: z.array(medicationRouteSchema).min(1),
   doseBasis: z.object({ amount: z.number().positive(), unit: z.string().min(1) }).strict().optional(), maxDoseQuantity: z.number().int().positive().optional(),
   doses: z.array(z.object({ doseText: z.string(), quantity: z.number().int().positive() }).strict()), frequencyCodes: z.array(z.enum(['QD','BID','TID','QN','PRN','ONCE'])),
   lots: z.array(z.object({ id, version: z.number().int().positive(), quantityOnHand: z.number().int().nonnegative(), expiresOn: z.string() }).strict()),
@@ -95,7 +110,7 @@ export const inpatientPharmacyAdmissionSchema = z.object({ admissionId: id, pati
   status: inpatientAdmissionSchema.shape.status }).strict()
 export const inpatientPharmacyListSchema = z.object({ items: z.array(inpatientPharmacyAdmissionSchema) }).strict()
 export const inpatientPharmacySchema = z.object({ admission: inpatientPharmacyAdmissionSchema,
-  orders: z.array(inpatientOrderSchema.extend({ kind: z.literal('medication') })),
+  orders: z.array(inpatientMedicationOrderSchema),
   executions: z.array(inpatientExecutionSchema.omit({ administrationId: true })), dispenses: z.array(inpatientDispenseSchema),
   medications: z.array(inpatientMedicationSchema.pick({ id: true, display: true, unit: true, lots: true })),
   medicationAllergies: z.array(z.object({ id, display: z.string() }).strict()),

@@ -70,7 +70,7 @@ export async function prepareDispenseBatchPatient(page: Page, app: { origin: str
     const selected = catalog.medications.find(item => item.id === medication.id)!
     const response = await post(`${path}/orders/issue`, { encounterVersion: (await clinical()).encounterVersion, duration: options.sameLot ? 'long' : 'temporary',
       selection: { kind: 'medication', catalogItemId: selected.id, catalogVersion: selected.version,
-        doseText: medication.doseText, doseQuantity: medication.doseQuantity, frequencyCode: options.sameLot ? 'BID' : 'QD' },
+        doseText: medication.doseText, doseQuantity: medication.doseQuantity, frequencyCode: options.sameLot ? 'BID' : 'QD', routeCode: selected.defaultRouteCode },
       ...(medication.id === 'medication-metformin' ? { clinicalOverride: { acknowledgedAlerts: ['RENAL_CREATININE_MISSING'], reasonCode: 'external-result-verified', note: '合成集中发药准备已核对外院血肌酐正常' } } : {}) })
     expect(response.status(), response.ok() ? undefined : await response.text()).toBe(200)
     orders.push(inpatientFullClinicalResponseSchema.parse(await response.json()).data.orders.find(item => item.catalogItemId === selected.id)!)
@@ -157,6 +157,7 @@ export async function runDispenseBatchJourney(page: Page, s: Patient, open: () =
   await trigger.click()
   await expect(dialog.getByRole('article')).toHaveCount(3)
   for (const medication of ['阿司匹林', '氯吡格雷', '阿托伐他汀']) await expect(dialog).toContainText(medication)
+  await expect(dialog).toContainText('口服（po）')
   await expect(dialog).toContainText('库存批次')
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()

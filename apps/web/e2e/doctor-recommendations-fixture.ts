@@ -78,7 +78,7 @@ export function recommendationFixture(input: Pick<JsonChatCompletionInput, 'sche
       ...(item.id.endsWith('-rejected') ? { reason: '原文仅记录体位关系未明确，不能改写为已排除。' }
         : item.id.endsWith('-downgraded') ? { reason: '所引指南条款未支持本项合成判断。' } : {}),
       ...('kind' in item && item.kind === 'prescription' ? { prescriptionFields: {
-        doseText: true, frequencyCode: true, courseDays: false, quantity: false,
+        doseText: true, frequencyCode: true, routeCode: true, courseDays: false, quantity: false,
       } } : {}),
     })) }
   }
@@ -158,7 +158,7 @@ export function recommendationFixture(input: Pick<JsonChatCompletionInput, 'sche
     if (medication === undefined) throw new Error('Synthetic baseline must provide amlodipine')
     // Deliberately unsupported course and quantity must be removed by independent verification.
     return { items: [{ ...common, kind: 'prescription', catalogItemId: medication.id,
-      doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }], missingInformation: [] }
+      doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 }], missingInformation: [] }
   }
   return { items: [], missingInformation: ['当前合成病例没有相符的检查依据。'] }
 }

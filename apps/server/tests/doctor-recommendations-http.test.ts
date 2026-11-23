@@ -379,7 +379,7 @@ function prescriptionOutput(input: Parameters<JsonChatCompletionsProvider['compl
   const payload = z.object({ guidelines: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
   return { ...base, items: [{ ...base.items[0]!, kind: 'prescription', catalogItemId: 'medication-amlodipine',
     guidelineEvidenceIds: [payload.guidelines.find(item => item.id === 'viatris-norvasc-adult-hypertension-dose')!.id],
-    doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30,
+    doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30,
   }] }
 }
 
@@ -1134,7 +1134,7 @@ it('uses actual installed product specifications and leaves unsupported prescrip
     inputs.push(input)
     const output = input.schemaName === 'doctor_recommendations' ? prescriptionOutput(input)
       : { items: verificationOutput(input).items.map(item => ({ ...item, prescriptionFields: {
-        doseText: true, frequencyCode: true, courseDays: false, quantity: false,
+        doseText: true, frequencyCode: true, routeCode: false, courseDays: false, quantity: false,
       } })) }
     return { content: JSON.stringify(output), model: input.model }
   })
@@ -1142,8 +1142,12 @@ it('uses actual installed product specifications and leaves unsupported prescrip
   expect((await fixture.generate('prescription')).status).toBe(200)
   await fixture.runtime.dispatchPending()
   expect(await fixture.read('prescription')).toMatchObject({ status: 'ready', items: [{
-    catalogItemId: 'medication-amlodipine', label: '苯磺酸氨氯地平片', doseText: '5 mg', frequencyCode: 'QD', courseDays: null, quantity: null,
-    missingInformation: expect.arrayContaining([expect.stringContaining('疗程缺少'), expect.stringContaining('数量缺少')]),
+    catalogItemId: 'medication-amlodipine', label: '苯磺酸氨氯地平片', doseText: '5 mg', frequencyCode: 'QD', routeCode: null, courseDays: null, quantity: null,
+    missingInformation: expect.arrayContaining([
+      expect.stringContaining('给药途径缺少'),
+      expect.stringContaining('疗程缺少'),
+      expect.stringContaining('数量缺少'),
+    ]),
   }] })
   const payload = z.object({ medicationPresentations: z.array(z.object({ id: z.string(),
     product: z.object({ strength: z.string(), dosageForm: z.string(), packageDescription: z.string() }).optional() })) }).parse(inputs[1]!.userPayload)
@@ -1158,7 +1162,7 @@ it('uses actual installed product specifications and leaves unsupported prescrip
 it('preserves missing dose and packaging evidence even when a verifier incorrectly approves a legacy medication', async () => {
   const fixture = await setup(async input => ({ content: JSON.stringify(input.schemaName === 'doctor_recommendations' ? prescriptionOutput(input)
     : { items: verificationOutput(input).items.map(item => ({ ...item, prescriptionFields: {
-      doseText: true, frequencyCode: true, courseDays: true, quantity: true,
+      doseText: true, frequencyCode: true, routeCode: true, courseDays: true, quantity: true,
     } })) }), model: input.model }))
   fixture.runtime.database.driver.prepare(`UPDATE outpatient_catalog SET config_json = json_remove(config_json,
     '$.product', '$.drugConcept', '$.regulatoryVerification', '$.availableScopes')
@@ -1693,7 +1697,7 @@ it('reads every batch of a large history concurrently and reuses original-source
     const output = input.schemaName === 'doctor_recommendations'
       ? payload.kind === 'prescription' ? prescriptionOutput(input) : diagnosisOutput(input)
       : { items: verificationOutput(input).items.map(item => ({ ...item,
-        ...(payload.kind !== 'prescription' ? {} : { prescriptionFields: { doseText: true, frequencyCode: true, courseDays: true, quantity: true } }),
+        ...(payload.kind !== 'prescription' ? {} : { prescriptionFields: { doseText: true, frequencyCode: true, routeCode: true, courseDays: true, quantity: true } }),
       })) }
     return { content: JSON.stringify(output), model: input.model }
   }, { syntheaProvider })
@@ -2628,8 +2632,8 @@ it('双药处方任一行拒绝整单回滚，修正后整体开具并读取重�
   }
   const before = await fixture.readCase()
   const selections = [
-    { kind: 'prescription', source: 'manual', catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 },
-    { kind: 'prescription', source: 'manual', catalogItemId: 'medication-metformin', doseText: '0.5 g', frequencyCode: 'BID', courseDays: 30, quantity: 60 },
+    { kind: 'prescription', source: 'manual', catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 },
+    { kind: 'prescription', source: 'manual', catalogItemId: 'medication-metformin', doseText: '0.5 g', frequencyCode: 'BID', routeCode: 'PO', courseDays: 30, quantity: 60 },
   ]
   const body = { expectedVersions: { [`Encounter/${before.encounter.id}`]: before.encounter.versionId }, input: { expectedDraftVersion: 0, selections,
     clinicalOverride: { reasonCode: 'result-pending-follow-up', note: '已同步安排肾功能复查并告知随访', acknowledgedAlerts: ['RENAL_CREATININE_MISSING'] } } }
@@ -2669,7 +2673,7 @@ it('issues a prepared prescription through the existing diagnosis, dose and prod
     const output = input.schemaName === 'doctor_recommendations'
       ? kind === 'prescription' ? prescriptionOutput(input) : diagnosisOutput(input)
       : { items: verificationOutput(input).items.map(item => ({ ...item, prescriptionFields: {
-        doseText: true, frequencyCode: true, courseDays: true, quantity: true,
+        doseText: true, frequencyCode: true, routeCode: true, courseDays: true, quantity: true,
       } })) }
     return { model: input.model, content: JSON.stringify(output) }
   })
@@ -2681,14 +2685,19 @@ it('issues a prepared prescription through the existing diagnosis, dose and prod
   await fixture.generate('prescription')
   await fixture.runtime.dispatchPending()
   const prepared = await fixture.read('prescription')
-  expect(prepared).toMatchObject({ status: 'ready', items: [expect.objectContaining({ doseText: '5 mg', courseDays: 30, quantity: 30 })] })
+  expect(prepared).toMatchObject({ status: 'ready', items: [expect.objectContaining({ doseText: '5 mg', routeCode: 'PO', courseDays: 30, quantity: 30 })] })
   const selection = { kind: 'prescription', source: 'agent', suggestionId: prepared.items[0]!.id,
-    catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }
+    catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 }
   const before = await fixture.readCase()
   const incomplete = await confirmPreparation(fixture, 'prescription', preparationBody(prepared, [{ ...selection, doseText: null }]))
   expect(incomplete.status).toBe(400)
+  const incompleteRoute = await confirmPreparation(fixture, 'prescription', preparationBody(prepared, [{ ...selection, routeCode: null }]))
+  expect(incompleteRoute.status).toBe(400)
   const invalid = await confirmPreparation(fixture, 'prescription', preparationBody(prepared, [{ ...selection, doseText: 'unsupported dose' }]))
   expect(invalid.status, await invalid.clone().text()).toBe(409)
+  const invalidRoute = await confirmPreparation(fixture, 'prescription', preparationBody(prepared, [{ ...selection, routeCode: 'IV' }]))
+  expect(invalidRoute.status, await invalidRoute.clone().text()).toBe(409)
+  expect(await invalidRoute.json()).toMatchObject({ error: { code: 'CATALOG_CONFLICT', reason: 'PRESCRIPTION_ROUTE_NOT_ALLOWED' } })
   expect(await fixture.readCase()).toEqual(before)
   const body = preparationBody(prepared, [selection])
   const key = randomUUID()
@@ -2697,7 +2706,7 @@ it('issues a prepared prescription through the existing diagnosis, dose and prod
   const receipt = confirmDoctorPreparationResponseSchema.parse(await issued.json())
   expect(receipt).toMatchObject({ data: { kind: 'prescription', draftVersion: 2, recordIds: [expect.any(String)] } })
   expect((await fixture.readCase()).medicationConclusion?.prescription).toMatchObject({ status: 'signed',
-    items: [{ catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }] })
+    items: [{ catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 }] })
   expect(confirmDoctorPreparationResponseSchema.parse(await (await confirmPreparation(fixture, 'prescription', body, key)).json())).toEqual(receipt)
 })
 
@@ -2863,7 +2872,7 @@ it('re-resolves the real Reference medication rather than trusting a client prod
   expect(diagnosis.status, await diagnosis.clone().text()).toBe(200)
   const current = await fixture.readCase()
   const selection = { kind: 'prescription', source: 'manual', catalogItemId: preparationReferenceProduct.id,
-    doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30,
+    doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30,
     referenceProduct: { ...preparationReferenceProduct, id: 'fabricated-product', genericName: '伪造药品', strength: '500mg', packageDescription: '999片/盒',
       dosageForm: '伪造剂型', manufacturer: '伪造厂商' },
   }
@@ -2930,7 +2939,7 @@ it.each([false, true])('preserves an existing physician prescription draft until
     const output = input.schemaName === 'doctor_recommendations'
       ? kind === 'prescription' ? prescriptionOutput(input) : diagnosisOutput(input)
       : { items: verificationOutput(input).items.map(item => ({ ...item, prescriptionFields: {
-        doseText: true, frequencyCode: true, courseDays: true, quantity: true,
+        doseText: true, frequencyCode: true, routeCode: true, courseDays: true, quantity: true,
       } })) }
     return { model: input.model, content: JSON.stringify(output) }
   })
@@ -2940,7 +2949,7 @@ it.each([false, true])('preserves an existing physician prescription draft until
   expect((await confirmPreparation(fixture, 'diagnosis', preparationBody(diagnosis, [{ kind: 'diagnosis', source: 'agent',
     suggestionId: diagnosis.items[0]!.id, catalogItemId: 'diagnosis-hypertension', role: 'primary' }]))).status).toBe(200)
   const clinical = await fixture.readCase()
-  const prescription = { catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }
+  const prescription = { catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 30, quantity: 30 }
   const saved = await fixture.runtime.app.request(`/api/his/v1/encounters/${diagnosis.encounterId}/prescription/draft`, {
     method: 'PUT', headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
     body: JSON.stringify({ expectedVersions: { [`Encounter/${diagnosis.encounterId}`]: clinical.encounter.versionId }, input: {

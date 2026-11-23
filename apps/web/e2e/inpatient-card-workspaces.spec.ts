@@ -208,7 +208,7 @@ test('400px 住院药房浮层队列选择患者后发药主区可达', async ({
     })).status()).toBe(200)
     const diagnosed = await (await api.get(`${path}/clinical`)).json()
     const issued = await api.post(`${path}/orders/issue`, { encounterVersion: diagnosed.encounterVersion, duration: 'long',
-      selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' } })
+      selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD', routeCode: 'PO' } })
     expect(issued.status()).toBe(200)
     const order = (await issued.json()).data.orders[0]
     await api.login('ward-nurse')
@@ -266,7 +266,7 @@ for (const state of ['signed', 'dispensed'] as const) {
     })).status()).toBe(200)
     expect((await api.post(`${path}/orders/issue`, { encounterVersion: (await clinical()).encounterVersion,
       duration: state === 'signed' ? 'long' : 'temporary', selection: { kind: 'medication', catalogItemId: 'medication-amlodipine',
-        catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' },
+        catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD', routeCode: 'PO' },
     })).status()).toBe(200)
     const order = (await clinical()).orders[0]!
     if (state === 'dispensed') {
@@ -381,7 +381,7 @@ test('护士能看见未来给药时间和出院缺项，门禁受阻时明确�
   })).status()).toBe(200)
   const clinical = await (await page.request.get(`${origin}${path}/clinical`)).json()
   const issued = await post(`${path}/orders/issue`, { encounterVersion: clinical.encounterVersion, duration: 'long',
-    selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' } })
+    selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD', routeCode: 'PO' } })
   expect(issued.status()).toBe(200)
   const order = (await issued.json()).data.orders[0]
   await asRole('ward-nurse')

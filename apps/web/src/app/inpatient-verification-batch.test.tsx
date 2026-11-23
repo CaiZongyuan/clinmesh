@@ -2,7 +2,7 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SessionContext } from '@clinmesh/contracts/his'
-import { inpatientOrderSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientMedicationOrderSchema, inpatientOrderSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useInpatientOrderBatch, inpatientOrderBatchScope } from './inpatient-order-batch.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
@@ -11,9 +11,10 @@ import { hideUnknownDraftAtLogout } from './inpatient-draft-test-support.ts'
 
 const session: SessionContext = { actor: { actorId: 'nurse', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-nurse', roleCode: 'ward-nurse' }, user: { id: 'nurse', name: '合成护士', email: 'nurse@demo.clinmesh.local' }, availableRoles: [] }
 const scope = inpatientOrderBatchScope(session, 'patient-1', 'admission-1')
-const first = inpatientOrderSchema.parse({ id: 'order-1', admissionId: 'admission-1', kind: 'medication', duration: 'long', catalogItemId: 'medicine-1', catalogVersion: 1,
-  display: '合成长期按需药', doseText: '500mg', doseQuantity: 1, unit: '片', frequencyCode: 'PRN', state: 'signed', version: 1, requestVersion: '1', signedAt: '2026-08-24T09:00:00+08:00', signedBy: 'doctor-1', organizationId: 'ward-1' })
-const second = inpatientOrderSchema.parse({ ...first, id: 'order-2', display: '合成教育', kind: 'service', duration: 'temporary', doseQuantity: 2, doseText: '2次', unit: '次', frequencyCode: 'QD' })
+const first = inpatientMedicationOrderSchema.parse({ id: 'order-1', admissionId: 'admission-1', kind: 'medication', duration: 'long', catalogItemId: 'medicine-1', catalogVersion: 1,
+  display: '合成长期按需药', doseText: '500mg', doseQuantity: 1, unit: '片', frequencyCode: 'PRN', routeCode: 'PO', state: 'signed', version: 1, requestVersion: '1', signedAt: '2026-08-24T09:00:00+08:00', signedBy: 'doctor-1', organizationId: 'ward-1' })
+const { routeCode: _firstRouteCode, ...firstWithoutRoute } = first
+const second = inpatientOrderSchema.parse({ ...firstWithoutRoute, id: 'order-2', display: '合成教育', kind: 'service', duration: 'temporary', doseQuantity: 2, doseText: '2次', unit: '次', frequencyCode: 'QD' })
 const third = inpatientOrderSchema.parse({ ...second, id: 'order-3', doseQuantity: 1, doseText: '1次' })
 const output = { auditId: 'audit-1', requestId: 'receipt-1', effects: [], warnings: [], data: { admissionId: 'admission-1', encounterVersion: '1', diagnosis: { revision: 0, entries: [] }, orders: [first, second, third].map(order => ({ ...order, state: 'verified', version: 2 })), executions: [], dispenses: [], charges: [], chargesFen: 0 } }
 const clients: QueryClient[] = []

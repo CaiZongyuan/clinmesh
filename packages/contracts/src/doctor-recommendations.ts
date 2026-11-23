@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { clinicalOverrideInputSchema } from './clinical-quality.ts'
 import { commandResponseSchema, saveDiagnosisDraftRequestSchema, prescriptionDraftItemSchema } from './his.ts'
-import { referenceConceptSnapshotSchema } from './reference-data.ts'
+import { medicationRouteSchema } from './medication-safety.ts'
+import { referenceConceptSnapshotSchema, referenceMedicationProductSchema } from './reference-data.ts'
 import { outpatientInvestigationPriceSchema } from './investigation-billing.ts'
 
 export const doctorRecommendationKindSchema = z.enum(['laboratory', 'imaging', 'pathology', 'diagnosis', 'prescription'])
@@ -79,6 +80,7 @@ export const doctorRecommendationSuggestionSchema = z.discriminatedUnion('kind',
   z.object({ ...common, kind: z.literal('prescription'), catalogItemId: identity,
     doseText: z.string().trim().min(1).max(256).nullable(),
     frequencyCode: z.string().trim().min(1).max(128).nullable(),
+    routeCode: z.string().trim().min(1).max(64).nullable(),
     courseDays: z.number().int().min(1).max(365).nullable(),
     quantity: z.number().int().min(1).max(10_000).nullable(),
   }).strict(),
@@ -201,8 +203,15 @@ export const doctorPreparationSelectionSchema = z.discriminatedUnion('kind', [
     catalogItemId: identity, role: z.enum(['primary', 'secondary']),
     referenceConcept: referenceConceptSnapshotSchema.optional(),
     note: z.string().trim().min(1).max(500).optional() }).strict(),
-  z.object({ ...prescriptionDraftItemSchema.shape,
-    ...preparationSelectionSource, kind: z.literal('prescription') }).strict(),
+  z.object({
+    ...prescriptionDraftItemSchema.shape,
+    ...preparationSelectionSource,
+    kind: z.literal('prescription'),
+    referenceProduct: referenceMedicationProductSchema.extend({
+      defaultRouteCode: medicationRouteSchema.optional(),
+      allowedRouteCodes: z.array(medicationRouteSchema).min(1).optional(),
+    }).strict().optional(),
+  }).strict(),
   z.object({ ...preparationSelectionSource, kind: z.literal('laboratory'),
     reviewedService: doctorReviewedInvestigationServiceSchema,
     catalogItemId: identity, indicationCode: z.string().min(1).max(64) }).strict(),

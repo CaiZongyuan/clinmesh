@@ -1,3 +1,4 @@
+import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
 import { medicationRegimenDoseAllowed, medicationQuantityAllowed } from '@clinmesh/core/medication-safety'
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import type { ClinicalCatalog } from '@clinmesh/contracts/his'
@@ -13,6 +14,12 @@ export function normalizePrescriptionRecommendation(
   if (medication === undefined) return undefined
   const doseText = suggestion.doseText?.trim() || null
   const frequencyCode = suggestion.frequencyCode?.trim() || null
+  const parsedRoute = suggestion.routeCode === null
+    ? undefined
+    : medicationRouteSchema.safeParse(suggestion.routeCode.trim().toUpperCase())
+  const routeCode = parsedRoute?.success && medication.allowedRouteCodes.includes(parsedRoute.data)
+    ? parsedRoute.data
+    : null
   if ((doseText !== null && !medicationRegimenDoseAllowed(medication, doseText, frequencyCode ?? medication.defaultFrequencyCode))
     || (frequencyCode !== null && !medication.allowedFrequencyCodes.includes(frequencyCode))
     || (suggestion.courseDays !== null && !medication.allowedCourseDays.includes(suggestion.courseDays))
@@ -22,5 +29,6 @@ export function normalizePrescriptionRecommendation(
     doseText,
     frequencyCode,
     label: medication.nameZh,
+    routeCode,
   }
 }

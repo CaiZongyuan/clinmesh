@@ -113,7 +113,7 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     const issued = await s.request(s.doctor, `${s.path}/orders/issue`, {
       encounterVersion: clinical.encounterVersion, duration: 'long',
       selection: { kind: 'medication', catalogItemId: 'medication-acetaminophen', catalogVersion: 1,
-        doseText: '0.5 g', doseQuantity: 1, frequencyCode },
+        doseText: '0.5 g', doseQuantity: 1, frequencyCode, routeCode: 'PO' },
     })
     expect(issued.status).toBe(200)
     const order = inpatientFullClinicalResponseSchema.parse(await issued.json()).data.orders[0]!
@@ -126,7 +126,7 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     const issued = await s.request(s.doctor, `${s.path}/orders/issue`, {
       encounterVersion: clinical.encounterVersion, duration: 'long',
       selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1,
-        doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' },
+        doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD', routeCode: 'PO' },
     })
     expect(issued.status).toBe(200)
     const order = inpatientFullClinicalResponseSchema.parse(await issued.json()).data.orders[0]!

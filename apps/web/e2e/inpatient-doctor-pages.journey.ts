@@ -24,7 +24,7 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
   expect((await subject.api.post(`${subject.path}/surgeries/request`, { encounterVersion: (await clinical()).encounterVersion,
     procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成六页结构验收计划' })).status()).toBe(200)
   expect((await subject.api.post(`${subject.path}/orders/issue`, { encounterVersion: (await clinical()).encounterVersion, duration: 'temporary',
-    selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' } })).status()).toBe(200)
+    selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD', routeCode: 'PO' } })).status()).toBe(200)
   await page.setViewportSize({ width: 1600, height: 1000 })
   await options.mount()
   await page.getByRole('button', { name: `查看${subject.name}`, exact: true }).click()

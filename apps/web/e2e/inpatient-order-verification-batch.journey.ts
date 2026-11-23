@@ -50,7 +50,7 @@ export async function prepareOrderVerificationBatchPatient(page: Page, app: { or
     return next
   }
   const medication = await issue('long', { kind: 'medication', catalogItemId: 'medication-acetaminophen', catalogVersion: 1,
-    doseText: '0.5 g', doseQuantity: 1, frequencyCode: 'PRN' })
+    doseText: '0.5 g', doseQuantity: 1, frequencyCode: 'PRN', routeCode: 'PO' })
   const education = await issue('temporary', { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 1 })
   const remaining = await issue('temporary', { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 2 })
   const stopped = await issue('temporary', { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 3 })
@@ -109,7 +109,9 @@ export async function runOrderVerificationBatchJourney(page: Page, s: Patient, o
   const dialog = page.getByRole('dialog', { name: '集中核对新医嘱', exact: true })
   await expect(dialog).toContainText(s.medication.display)
   await expect(dialog).toContainText('0.5 g')
+  await expect(dialog).toContainText('口服（po）')
   await expect(dialog).toContainText(s.education.display)
+  await expect(dialog.getByRole('article').filter({ hasText: s.education.display }).first()).not.toContainText('口服（po）')
   await expect(dialog).toContainText('必要时（PRN）')
   await expect(dialog).toContainText('长期')
   await expect(dialog).toContainText('临时')

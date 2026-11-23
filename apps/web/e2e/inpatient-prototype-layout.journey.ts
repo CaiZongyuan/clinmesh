@@ -14,7 +14,7 @@ export async function runInpatientPrototypeMatrix(page: Page, browserApp: { orig
     await state.api.login('inpatient-doctor')
     const clinical = inpatientFullClinicalSchema.parse(await (await state.api.get(`${state.path}/clinical`)).json())
     expect((await state.api.post(`${state.path}/orders/issue`, { encounterVersion: clinical.encounterVersion, duration: 'temporary',
-      selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' },
+      selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD', routeCode: 'PO' },
     })).status()).toBe(200)
     await state.api.login('ward-nurse')
     const order = inpatientFullClinicalSchema.parse(await (await state.api.get(`${state.path}/clinical`)).json()).orders[0]!

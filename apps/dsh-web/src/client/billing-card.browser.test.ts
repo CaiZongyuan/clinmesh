@@ -9,7 +9,7 @@ import { startBrowserServer } from '../../../server/tests/browser-server.ts'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 
 for (const version of ['18', '19']) test.describe(`billing cards on React ${version}`, () => {
-  test.beforeAll(async () => { await buildNonDoctorCard(version) })
+  test.beforeAll(async () => { test.setTimeout(60_000); await buildNonDoctorCard(version) })
   test('shows one consistent bill and keeps secondary workflows collapsed at both Surface widths', async ({ page }) => {
     const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
     try {
@@ -50,6 +50,7 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
         await mountNonDoctorCard(page, version, server, 'cashier', {}, { locale })
         const messages = getWorkspaceMessages(locale)
         await expect(page.getByRole('heading', { name: messages.billingQueue, exact: true })).toBeVisible()
+        await expect(page.getByRole('button', { name: '助手准备收款', exact: true })).toBeVisible()
         await page.locator('.clinmesh-web-root').evaluate((element, options) => {
           element.setAttribute('data-font-size', options.fontSize)
           const shadow = element.getRootNode()
@@ -68,8 +69,10 @@ for (const version of ['18', '19']) test.describe(`billing cards on React ${vers
         expect(categoryBox).not.toBeNull(); expect(statusBox).not.toBeNull()
         expect(categoryBox!.y + categoryBox!.height).toBeLessThanOrEqual(statusBox!.y)
         for (const label of categoryLabels) {
+          const option = page.getByRole('option', { name: label, exact: true })
           await category.click()
-          await page.getByRole('option', { name: label, exact: true }).click()
+          await expect(option).toBeVisible({ timeout: 1_500 }).catch(async () => { await category.click() })
+          await option.click()
           await expect(category).toContainText(label)
         }
         for (const label of statusLabels) {

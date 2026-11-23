@@ -598,8 +598,10 @@ export function createHospitalBaseline(
           allowedDoseTexts: ['0.5 g'],
           allowedFrequencyCodes: ['PRN'],
           allowedQuantities: [6],
+          allowedRouteCodes: ['PO'] as Array<'PO'>,
           defaultCourseDays: 3,
           defaultQuantity: 6,
+          defaultRouteCode: 'PO' as const,
         },
       }, {
         ...catalogBase({ code: 'METFORMIN', id: 'medication-metformin', name: '盐酸二甲双胍片', priceFen: 1_200 }),
@@ -629,8 +631,10 @@ export function createHospitalBaseline(
           allowedDoseTexts: ['0.5 g'],
           allowedFrequencyCodes: ['BID'],
           allowedQuantities: [60],
+          allowedRouteCodes: ['PO'] as Array<'PO'>,
           defaultCourseDays: 30,
           defaultQuantity: 60,
+          defaultRouteCode: 'PO' as const,
         },
       }, {
         ...catalogBase({ code: 'AMLODIPINE', id: 'medication-amlodipine', name: '苯磺酸氨氯地平片', priceFen: 1_500 }),
@@ -660,8 +664,10 @@ export function createHospitalBaseline(
           allowedDoseTexts: ['5 mg'],
           allowedFrequencyCodes: ['QD'],
           allowedQuantities: [30],
+          allowedRouteCodes: ['PO'] as Array<'PO'>,
           defaultCourseDays: 30,
           defaultQuantity: 30,
+          defaultRouteCode: 'PO' as const,
         },
       }],
       services: [hospitalService({

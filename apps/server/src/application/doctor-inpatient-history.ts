@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { doctorInpatientHistoryRecordSchema } from '@clinmesh/contracts/agent'
 import { inpatientProcedureItemSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { ActorContext } from './command-executor.ts'
 import { WorkflowError } from './workflow-error.ts'
@@ -56,10 +57,10 @@ export function inpatientHistoryDetail(database: ClinMeshDatabase, context: Acto
     .map(row => { const { coding: code } = inpatientProcedureItemSchema.parse(JSON.parse(row.actual_procedure_json));
       return { code: code.code ?? '', display: conceptLabel(code), performedAt: row.performed_at,
         ...(row.report_conclusion === null ? {} : { conclusion: row.report_conclusion }) } })
-  const medications = z.array(z.object({ display: z.string(), dose_text: z.string(), frequency_code: z.string(), state: z.enum(['signed', 'verified', 'stop-requested', 'stopped', 'completed']) }))
-    .parse(database.driver.prepare(`SELECT display,dose_text,frequency_code,state FROM inpatient_order WHERE workspace_id=? AND epoch=? AND admission_id=?
+  const medications = z.array(z.object({ display: z.string(), dose_text: z.string(), frequency_code: z.string(), route_code: medicationRouteSchema, state: z.enum(['signed', 'verified', 'stop-requested', 'stopped', 'completed']) }))
+    .parse(database.driver.prepare(`SELECT display,dose_text,frequency_code,route_code,state FROM inpatient_order WHERE workspace_id=? AND epoch=? AND admission_id=?
       AND kind='medication' AND state IN ('signed','verified','stop-requested','stopped','completed') ORDER BY signed_at,order_id`).all(...bindings))
-    .map(row => ({ display: row.display, doseText: row.dose_text, frequencyCode: row.frequency_code, state: row.state }))
+    .map(row => ({ display: row.display, doseText: row.dose_text, frequencyCode: row.frequency_code, routeCode: row.route_code, state: row.state }))
   const reports = z.array(z.object({ content_json: z.string() })).parse(database.driver.prepare(`SELECT content_json FROM fhir_resource
     WHERE workspace_id=? AND epoch=? AND resource_type='DiagnosticReport' AND deleted=0
       AND json_extract(content_json,'$.encounter.reference')=? AND json_extract(content_json,'$.subject.reference')=?

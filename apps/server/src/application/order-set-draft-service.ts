@@ -13,10 +13,10 @@ import type {
   OrderSetTemplateOption,
 } from '@clinmesh/contracts/order-set-templates'
 import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
-import { medicationSafetyRuleSchema } from '@clinmesh/contracts/medication-safety'
+import { medicationRouteSchema, medicationSafetyRuleSchema } from '@clinmesh/contracts/medication-safety'
 import type { ClinicalScoreBundle } from '@clinmesh/contracts/clinical-scores'
 import { resolveInpatientDose } from '@clinmesh/core/inpatient-dose'
-import { medicationDailyFrequency, medicationQuantityAllowed, medicationRegimenDoseAllowed } from '@clinmesh/core/medication-safety'
+import { medicationDailyFrequency, medicationQuantityAllowed, medicationRegimenDoseAllowed, medicationRouteAllowed } from '@clinmesh/core/medication-safety'
 import {
   orderSetAllergyReason,
   orderSetDisposition,
@@ -30,6 +30,7 @@ import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts
 import type { ClinicalScoreService } from './clinical-score-service.ts'
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import type { ExaminationRequestService } from './examination-request-service.ts'
+import { resolveCatalogMedicationRoutes } from './inpatient-medication-config.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { laboratoryOutpatientPrice } from './outpatient-investigation-billing.ts'
 import type { OutpatientWorkflowContext } from './outpatient-workflow-context.ts'
@@ -58,10 +59,13 @@ const medicationConfigSchema = z.object({
   allowedDoseTexts: z.array(z.string()).default([]),
   allowedFrequencyCodes: z.array(z.string()).default([]),
   allowedQuantities: z.array(z.number()).default([]),
+  allowedRouteCodes: z.array(medicationRouteSchema).min(1).optional(),
   availableScopes: z.array(z.string()).optional(),
+  defaultRouteCode: medicationRouteSchema.optional(),
   drugConcept: z.object({ code: z.string().optional() }).optional(),
   inpatientDoseBasis: z.object({ amount: z.number().positive(), unit: z.string().min(1) }).optional(),
-  product: z.object({ code: z.string().optional(), strength: z.string().optional() }).optional(),
+  product: z.object({ code: z.string().optional(), dosageForm: z.string().optional(), strength: z.string().optional() }).optional(),
+  route: z.string().optional(),
   safety: medicationSafetyRuleSchema.optional(),
 })
 const medicationRowSchema = z.object({ code: z.string(), config_json: z.string(), item_id: z.string(), name_zh: z.string(), version: z.number().int().positive() })
@@ -329,19 +333,21 @@ export class OrderSetDraftService {
         const resolved = this.#medicationEntry(context, option.medicationKey)
         if (resolved === undefined) return unavailable('catalog-unavailable', '本院药房未启用该药品')
         const { codes, config, row } = resolved
+        const routes = resolveCatalogMedicationRoutes(config, row.name_zh)
         const strength = config.inpatientDoseBasis === undefined ? config.product?.strength : `${config.inpatientDoseBasis.amount} ${config.inpatientDoseBasis.unit}`
         const quantity = strength === undefined ? undefined : orderSetOutpatientQuantity({ courseDays: option.courseDays, doseText: option.doseText,
           frequencyCode: option.frequencyCode, prnQuantity: option.prnQuantity, strength })
         if ((config.availableScopes !== undefined && !config.availableScopes.includes('outpatient'))
           || (config.allowedCourseDays !== undefined && !config.allowedCourseDays.includes(option.courseDays))
+          || !medicationRouteAllowed(routes.allowedRouteCodes, option.routeCode)
           || !medicationRegimenDoseAllowed(config, option.doseText, option.frequencyCode)
           || quantity === undefined || !medicationQuantityAllowed(config, quantity, option.courseDays, option.frequencyCode)) {
-          return unavailable('catalog-rule-mismatch', `${row.name_zh} 的组套剂量、频次或数量不符合本院门诊药事规则`)
+          return unavailable('catalog-rule-mismatch', `${row.name_zh} 的组套剂量、途径、频次或数量不符合本院门诊药事规则`)
         }
         return {
           candidate: { catalogItemId: row.item_id, catalogVersion: row.version, display: row.name_zh, doseText: option.doseText,
             frequencyCode: option.frequencyCode, inpatient: null, instructionsZh: option.instructionsZh ?? null, kind: 'medication',
-            outpatient: { courseDays: option.frequencyCode === 'ONCE' ? 1 : option.courseDays, quantity } },
+            outpatient: { courseDays: option.frequencyCode === 'ONCE' ? 1 : option.courseDays, quantity }, routeCode: option.routeCode },
           codes,
         }
       },
@@ -391,13 +397,14 @@ export class OrderSetDraftService {
         const dose = resolveInpatientDose({ doses: item.doses, unit: item.unit, ...(item.doseBasis ? { doseBasis: item.doseBasis } : {}),
           ...(item.maxDoseQuantity === undefined ? {} : { maxDoseQuantity: item.maxDoseQuantity }) }, option.doseText)
         if (!('quantity' in dose) || !item.frequencyCodes.includes(option.frequencyCode)
+          || !medicationRouteAllowed(item.allowedRouteCodes, option.routeCode)
           || (item.safety !== undefined && dose.quantity * medicationDailyFrequency(option.frequencyCode) > item.safety.maximumDailyQuantity)) {
-          return unavailable('catalog-rule-mismatch', `${item.display} 的组套剂量或频次不符合本院住院药事规则`)
+          return unavailable('catalog-rule-mismatch', `${item.display} 的组套剂量、途径或频次不符合本院住院药事规则`)
         }
         return {
           candidate: { catalogItemId: item.id, catalogVersion: item.version, display: item.display, doseText: option.doseText,
             frequencyCode: option.frequencyCode, inpatient: { doseQuantity: dose.quantity, duration: option.inpatientDuration },
-            instructionsZh: option.instructionsZh ?? null, kind: 'medication', outpatient: null },
+            instructionsZh: option.instructionsZh ?? null, kind: 'medication', outpatient: null, routeCode: option.routeCode },
           codes: resolved.codes,
         }
       },

@@ -1,3 +1,4 @@
+import { formatMedicationRoute } from '@clinmesh/core/medication-safety'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -90,7 +91,7 @@ export function InpatientExecutionBatch({ admission, session, locale, action, da
     } finally { setChecking(false) }
   }
   const details = (row: Candidate) => <div className="flex flex-wrap gap-x-3 gap-y-1 break-words text-xs text-muted-foreground">
-    <span>{row.order.duration === 'long' ? t('长期', 'Long') : t('临时', 'Temporary')} · {inpatientFrequencyLabel(row.order.frequencyCode, locale)}</span>
+    <span>{row.order.duration === 'long' ? t('长期', 'Long') : t('临时', 'Temporary')} · {inpatientFrequencyLabel(row.order.frequencyCode, locale)}{row.order.kind === 'medication' ? ` · ${formatMedicationRoute(row.order.routeCode, locale)}` : ''}</span>
     <span>{t('每次 ', 'Per execution ')}{row.order.doseText || `${row.order.doseQuantity}${row.order.unit}`} · {row.order.doseQuantity}{row.order.unit}</span>
     {row.execution ? <span>{formatShanghaiMinute(row.execution.scheduledFor)}</span> : null}<span className="break-all">{row.id}</span>
   </div>

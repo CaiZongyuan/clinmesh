@@ -60,7 +60,7 @@ it('功能检查重建迁移保留旧费用、精确预览和收费归属并允�
       .run(scope.workspaceId, scope.epoch, now)
     const charges = database.driver.prepare('SELECT * FROM charge_record').all(),
       previews = database.driver.prepare('SELECT * FROM payment_preview').all()
-    expect(applyMigrations(database).applied).toEqual([migration, '0114_outpatient-follow-up-source.sql', '0115_clinical-risk-vitals.sql', '0116_guideline-topic-advice.sql', '0117_clinical-quality-override.sql', '0118_item-insurance-coverage.sql'])
+    expect(applyMigrations(database).applied).toEqual([migration, '0114_outpatient-follow-up-source.sql', '0115_clinical-risk-vitals.sql', '0116_guideline-topic-advice.sql', '0117_clinical-quality-override.sql', '0118_item-insurance-coverage.sql', '0119_medication-route.sql'])
     expect(database.driver.prepare('SELECT * FROM charge_record').all()).toEqual(
       charges.map(row => ({ ...(row as Record<string, unknown>), coverage_json: null })),
     )

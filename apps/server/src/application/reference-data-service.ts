@@ -1,3 +1,4 @@
+import { deriveReferenceMedicationRoutes } from '@clinmesh/core/medication-safety'
 import {
   offlineReferenceInventoryListSchema,
   offlineReferenceInventoryQuerySchema,
@@ -14,6 +15,7 @@ import {
   type ReferenceLaboratoryRecord,
   type ReferenceLaboratorySourceDataset,
   type ReferenceMedicalService,
+  type ReferenceMedicationCatalogItem,
   type ReferenceMedicationProduct,
   type ReferenceValueSetEntry,
 } from '@clinmesh/contracts/reference-data'
@@ -296,6 +298,7 @@ export class ReferenceDataService {
       : this.#reader.searchMedicationProducts(release.releaseId, input)
     return referenceMedicationCatalogSearchSchema.parse({
       ...result,
+      items: result.items.map(item => ({ ...item, ...deriveReferenceMedicationRoutes(item) })),
       page: input.page,
       pageSize: input.pageSize,
       releaseId: release.releaseId,
@@ -324,13 +327,15 @@ export class ReferenceDataService {
   medicationById(
     context: ActorContext,
     productId: string,
-  ): ReferenceMedicationProduct | undefined {
+  ): ReferenceMedicationCatalogItem | undefined {
     this.#assertCatalogReader(context)
     const release = this.#catalogRelease()
     const product = this.#reader?.medicationProductById === undefined
       ? syntheticNhsaMedicationProductSnapshot.find(item => item.id === productId)
       : this.#reader.medicationProductById(release.releaseId, productId)
-    return product?.status === 'active' ? product : undefined
+    return product?.status === 'active'
+      ? { ...product, ...deriveReferenceMedicationRoutes(product) }
+      : undefined
   }
 
   #assertDiagnosisReader(context: ActorContext) {

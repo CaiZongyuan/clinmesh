@@ -346,7 +346,7 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
     await expect(quantity).toHaveValue('2')
     await edit.getByRole('button', { name: '保留本次调整', exact: true }).click()
     await expect.poll(async () => (await readCase(page)).medicationConclusion?.draft).toEqual({
-      items: [{ catalogItemId: 'synthetic-product-1', doseText: '10 mg', frequencyCode: 'QD', courseDays: 7, quantity: 2 }],
+      items: [{ catalogItemId: 'synthetic-product-1', doseText: '10 mg', frequencyCode: 'QD', routeCode: 'PO', courseDays: 7, quantity: 2 }],
     })
     expect((await readCase(page)).medicationConclusion?.prescription).toBeUndefined()
     // 确定的 409 拒绝允许核对后重提；503 属于未知结果，应走原操作恢复。
@@ -1090,11 +1090,23 @@ for (const version of ['18', '19']) test.describe(`diagnosis and prescription on
       await chosen.press('Enter')
       await dialog.getByRole('textbox', { name: '剂量', exact: true }).fill(index === 0 ? '每次一片' : '每次两片')
       await dialog.getByRole('textbox', { name: '频次', exact: true }).fill(index === 0 ? '每日一次' : '每日两次')
+      const routeCombobox = dialog.getByRole('combobox', { name: '给药途径', exact: true })
+      await expect(routeCombobox).toContainText('口服（po）')
+      if (index === 0) {
+        await routeCombobox.click()
+        const sublingualOption = page.getByRole('option', { name: '舌下含服（sl）', exact: true })
+        await expect(sublingualOption).toBeVisible()
+        expect(await sublingualOption.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
+        await sublingualOption.click()
+        await expect(routeCombobox).toContainText('舌下含服（sl）')
+      }
       await dialog.getByRole('button', { name: '加入处方', exact: true }).click()
       await expect(dialog).toBeVisible()
       await expect(dialog.getByText(`待开具 ${index + 1} 项`, { exact: true })).toBeVisible()
     }
     const pendingRows = page.getByRole('region', { name: '处方待开清单', exact: true })
+    await expect(pendingRows).toContainText('舌下含服（sl）')
+    await expect(pendingRows).toContainText('口服（po）')
     await pendingRows.getByRole('button', { name: /^编辑待开药品 / }).first().click()
     const editor = page.getByRole('dialog', { name: '编辑药品', exact: true })
     await expect(editor.getByRole('textbox', { name: '剂量', exact: true })).toHaveValue('每次一片')

@@ -85,7 +85,7 @@ it('患者横幅常驻，阶段只显示当前业务表单，切换后保留原�
 })
 
 it('开立被业务规则拒绝时只在开立区显示服务端原因，不再出现目录已变化的全局提示', async () => {
-  const medication = { id: 'medication-1', display: '合成降压药', version: 1, priceFen: 1500, unit: '片', doses: [{ doseText: '1片', quantity: 1 }], frequencyCodes: ['QD'], lots: [] }
+  const medication = { id: 'medication-1', display: '合成降压药', version: 1, priceFen: 1500, unit: '片', doses: [{ doseText: '1片', quantity: 1 }], frequencyCodes: ['QD'], defaultRouteCode: 'PO', allowedRouteCodes: ['PO'], lots: [] }
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/auth/context') return Response.json(session)
     if (init?.method === 'POST' && path.endsWith('/orders/issue')) return Response.json({ error: { code: 'CATALOG_CONFLICT', message: '本次住院确诊不符合药品适应症' } }, { status: 409 })
@@ -156,7 +156,7 @@ it('药师选中患者后保留窄住院上下文，显示发药后交接给护�
     if (path.endsWith('/pharmacy/admissions')) return Response.json({ items: [pharmacyAdmission] })
     if (path.endsWith('/pharmacy')) return detailsUnavailable ? Response.json({ error: { code: 'UNAVAILABLE', message: '合成药房读取失败' } }, { status: 503 }) : Response.json({
       admission: pharmacyAdmission,
-      orders: [{ id: 'order-1', admissionId: admission.id, kind: 'medication', duration: 'long', catalogItemId: 'med-1', catalogVersion: 1, display: '合成氨氯地平', doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: 'verified', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
+      orders: [{ id: 'order-1', admissionId: admission.id, kind: 'medication', duration: 'long', catalogItemId: 'med-1', catalogVersion: 1, display: '合成氨氯地平', doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', routeCode: 'PO', state: 'verified', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
       executions: [{ id: 'execution-1', orderId: 'order-1', scheduledFor: scenarioState.virtualTime, status: 'pending', version: 1 }], dispenses: [],
       medications: [{ id: 'med-1', display: '合成氨氯地平', unit: '片', lots: [{ id: 'lot-internal-1', version: 1, quantityOnHand: 10, expiresOn: '2026-08-30' }] }], medicationAllergies
     })
@@ -523,7 +523,7 @@ it('药房只读取当前患者页的窄详情，用户翻页后才读取下一�
       const suffix = item.admissionId.split('-').at(-1)
       return Response.json({
         admission: item,
-        orders: [{ id: `paged-order-${suffix}`, admissionId: item.admissionId, kind: 'medication', duration: 'temporary', catalogItemId: `paged-med-${suffix}`, catalogVersion: 1, display: `分页药品${suffix}`, doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: 'verified', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
+        orders: [{ id: `paged-order-${suffix}`, admissionId: item.admissionId, kind: 'medication', duration: 'temporary', catalogItemId: `paged-med-${suffix}`, catalogVersion: 1, display: `分页药品${suffix}`, doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', routeCode: 'PO', state: 'verified', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
         executions: [{ id: `paged-execution-${suffix}`, orderId: `paged-order-${suffix}`, scheduledFor: scenarioState.virtualTime, status: 'pending', version: 1 }], dispenses: [],
         medications: [{ id: `paged-med-${suffix}`, display: `分页药品${suffix}`, unit: '片', lots: [{ id: `paged-lot-${suffix}`, version: 1, quantityOnHand: 10, expiresOn: '2030-12-31' }] }], medicationAllergies: []
       })
@@ -534,7 +534,7 @@ it('药房只读取当前患者页的窄详情，用户翻页后才读取下一�
   const { InpatientPharmacy } = await import('./inpatient-pharmacy.tsx')
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><InpatientPharmacy session={{ ...session, actor: { ...session.actor, roleCode: 'pharmacist' } }} locale="zh-CN" /></QueryClientProvider>)
   const firstRow = await screen.findByRole('button', { name: '查看合成分页患者1 · 分页药品1 · 2026-08-24 15:00' })
-  expect(firstRow.textContent).toContain('5 mg · 每日一次（QD） · 1片')
+  expect(firstRow.textContent).toContain('5 mg · 每日一次（QD） · 口服（po） · 1片')
   expect(detailReads).toHaveLength(10)
   expect(detailReads).not.toContain('paged-admission-11')
   expect(screen.getByText('药品计数仅限本页患者')).toBeDefined()
@@ -569,7 +569,7 @@ it.each(['admitted', 'departed', 'cleared'] as const)('本页发药完成后显�
     const status = pending ? 'pending' : item.status === 'admitted' && (number === '1' || number === '11') ? 'dispensed' : 'completed'
     return {
       admission: item,
-      orders: [{ id: `continue-order-${number}`, admissionId: item.admissionId, kind: 'medication', duration: 'temporary', catalogItemId: `continue-med-${number}`, catalogVersion: 1, display: `连续药品${number}`, doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: item.status === 'admitted' && (number === '1' || number === '11') ? 'verified' : 'completed', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
+      orders: [{ id: `continue-order-${number}`, admissionId: item.admissionId, kind: 'medication', duration: 'temporary', catalogItemId: `continue-med-${number}`, catalogVersion: 1, display: `连续药品${number}`, doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', routeCode: 'PO', state: item.status === 'admitted' && (number === '1' || number === '11') ? 'verified' : 'completed', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
       executions: [{ id: `continue-execution-${number}`, orderId: `continue-order-${number}`, scheduledFor: scenarioState.virtualTime, status, version: status === 'pending' ? 1 : 2 }],
       dispenses: pending ? [] : [{ id: `continue-dispense-${number}`, executionId: `continue-execution-${number}`, lotId: `continue-lot-${number}`, quantity: 1, dispensedAt: scenarioState.virtualTime, dispensedBy: 'synthetic-pharmacist' }],
       medications: [{ id: `continue-med-${number}`, display: `连续药品${number}`, unit: '片', lots: [{ id: `continue-lot-${number}`, version: pending ? 1 : 2, quantityOnHand: pending ? 10 : 9, expiresOn: '2030-12-31' }] }], medicationAllergies: []
@@ -667,7 +667,7 @@ it('待发先筛在院患者再分页，已发历史使用独立页码且按用�
       const number = item.admissionId.split('-').at(-1), admitted = item.status === 'admitted'
       return Response.json({
         admission: item,
-        orders: [{ id: `status-order-${number}`, admissionId: item.admissionId, kind: 'medication', duration: 'temporary', catalogItemId: `status-med-${number}`, catalogVersion: 1, display: `状态药品${number}`, doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', state: admitted ? 'verified' : 'completed', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
+        orders: [{ id: `status-order-${number}`, admissionId: item.admissionId, kind: 'medication', duration: 'temporary', catalogItemId: `status-med-${number}`, catalogVersion: 1, display: `状态药品${number}`, doseText: '5 mg', doseQuantity: 1, unit: '片', frequencyCode: 'QD', routeCode: 'PO', state: admitted ? 'verified' : 'completed', version: 1, requestVersion: '1', signedAt: scenarioState.virtualTime, signedBy: 'synthetic-doctor', organizationId: 'org-1', verifiedAt: scenarioState.virtualTime }],
         executions: [{ id: `status-execution-${number}`, orderId: `status-order-${number}`, scheduledFor: scenarioState.virtualTime, status: admitted ? 'pending' : 'completed', version: 1 }],
         dispenses: admitted ? [] : [{ id: `status-dispense-${number}`, executionId: `status-execution-${number}`, lotId: `status-lot-${number}`, quantity: 1, dispensedAt: scenarioState.virtualTime, dispensedBy: 'synthetic-pharmacist' }],
         medications: [{ id: `status-med-${number}`, display: `状态药品${number}`, unit: '片', lots: [{ id: `status-lot-${number}`, version: 1, quantityOnHand: 10, expiresOn: '2030-12-31' }] }], medicationAllergies: []

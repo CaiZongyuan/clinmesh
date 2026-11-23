@@ -4,6 +4,9 @@ import { z } from 'zod'
 import { confirmDoctorPreparationResponseSchema, doctorManualInvestigationDraftSchema, doctorPreparationSelectionSchema, doctorRecommendationKindSchema, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
 import { clinicalOverrideInputSchema } from '@clinmesh/contracts/clinical-quality'
 import { diagnosisDraftEntrySchema, prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
+import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
+import { referenceMedicationProductSchema } from '@clinmesh/contracts/reference-data'
+import { deriveReferenceMedicationRoutes } from '@clinmesh/core/medication-safety'
 import type { OrderSetDraft } from '@clinmesh/contracts/order-set-templates'
 import type { ManualPreparedItem } from './doctor-recommendations.tsx'
 import type { DraftPreferences } from './doctor-preparation-state.tsx'
@@ -134,7 +137,18 @@ const investigationSelectionSchema = doctorPreparationSelectionSchema.refine(ite
 const prescriptionDraftSchema = prescriptionDraftItemSchema.extend({
   kind: z.literal('prescription'), source: z.enum(['manual', 'agent']), suggestionId: z.string().min(1).optional(),
   doseText: z.string().max(256).nullable(), frequencyCode: z.string().max(128).nullable(),
+  routeCode: medicationRouteSchema.nullable().default(null),
   courseDays: z.number().finite().nullable(), quantity: z.number().finite().nullable(),
+  referenceProduct: referenceMedicationProductSchema.extend({
+    defaultRouteCode: medicationRouteSchema.optional(),
+    allowedRouteCodes: z.array(medicationRouteSchema).min(1).optional(),
+  }).strict().transform(product => {
+    const derived = deriveReferenceMedicationRoutes(product)
+    const defaultRouteCode = product.defaultRouteCode ?? product.allowedRouteCodes?.[0] ?? derived.defaultRouteCode
+    const allowedRouteCodes = product.allowedRouteCodes
+      ?? (derived.allowedRouteCodes.includes(defaultRouteCode) ? derived.allowedRouteCodes : [defaultRouteCode])
+    return { ...product, defaultRouteCode, allowedRouteCodes }
+  }).optional(),
 }).strict().refine(item => (item.source === 'agent') === (item.suggestionId !== undefined))
 const diagnosisDraftSchema = diagnosisDraftEntrySchema.extend({
   kind: z.literal('diagnosis'), source: z.enum(['manual', 'agent']), suggestionId: z.string().min(1).optional(),

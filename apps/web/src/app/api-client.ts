@@ -4,6 +4,7 @@ import {
   type ClinicalRiskAssessmentFieldsInput,
 } from '@clinmesh/contracts/clinical-scores'
 import { clinicalQualityCheckSchema, type ClinicalOverrideInput, type ClinicalQualityCheck } from '@clinmesh/contracts/clinical-quality'
+import type { MedicationRoute } from '@clinmesh/contracts/medication-safety'
 import { guidelineTopicBundleSchema } from '@clinmesh/contracts/guideline-topics'
 import {
   orderSetDraftBundleSchema,
@@ -2080,6 +2081,7 @@ export function saveRevisitDraft(input: {
     doseText: string
     frequencyCode: string
     quantity: number
+    routeCode: MedicationRoute
   }>
 }, idempotencyKey: string) {
   return apiMutation(

@@ -240,7 +240,7 @@ it('已知未收口手术按原出院门禁提示先处理，填写说明后也�
 })
 
 const nursingClinical = inpatientFullClinicalSchema.parse({ admissionId: admission.id, encounterVersion: '2', diagnosis: { revision: 0, entries: [] },
-  orders: ['medication', 'service'].map((kind, index) => ({ id: 'order-' + index, admissionId: admission.id, kind, duration: 'long', catalogItemId: 'item-' + index, catalogVersion: 1, display: '合成护理待办' + index, doseText: '1次', doseQuantity: 1, unit: '次', frequencyCode: 'QD', state: 'verified', version: 1, requestVersion: '1', signedAt: admission.registeredAt, signedBy: 'doctor', organizationId: admission.organizationId })),
+  orders: (['medication', 'service'] as const).map((kind, index) => ({ id: 'order-' + index, admissionId: admission.id, kind, duration: 'long', catalogItemId: 'item-' + index, catalogVersion: 1, display: '合成护理待办' + index, doseText: '1次', doseQuantity: 1, unit: '次', frequencyCode: 'QD', ...(kind === 'medication' ? { routeCode: 'PO' as const } : {}), state: 'verified', version: 1, requestVersion: '1', signedAt: admission.registeredAt, signedBy: 'doctor', organizationId: admission.organizationId })),
   executions: [{ id: 'execution-0', orderId: 'order-0', scheduledFor: admission.registeredAt, status: 'dispensed', version: 1 }, { id: 'execution-1', orderId: 'order-1', scheduledFor: admission.registeredAt, status: 'pending', version: 1 }],
   dispenses: [], charges: [], chargesFen: 0,
 })
@@ -264,7 +264,7 @@ it('医生开出院医嘱的说明提示不混入护士实际离院的停嘱给�
   expect(screen.queryByText(/请住院医生停嘱/)).toBeNull()
   // 在用医嘱只提醒，不阻止开出院医嘱。
   const active = screen.getByRole('region', { name: '开出院医嘱前' }).textContent
-  expect(active).toContain('合成护理待办0 1次 每日一次（QD） · 长期')
+  expect(active).toContain('合成护理待办0 1次 每日一次（QD） 口服（po） · 长期')
   expect(active).toContain('合成护理待办1 1次 每日一次（QD） · 长期 未停')
   expect(active).not.toContain('项未收口')
   await userEvent.setup().type(screen.getByRole('textbox', { name: '出院处理说明' }), '合成医生出院说明')

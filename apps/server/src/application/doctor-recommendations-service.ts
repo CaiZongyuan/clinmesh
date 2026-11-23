@@ -52,7 +52,7 @@ const verificationSchema = z.object({ items: z.array(z.object({
   applicable: z.boolean(), qualifiersPreserved: z.boolean(),
   reason: z.string().trim().min(1).max(2_000).optional(),
   prescriptionFields: z.object({ doseText: z.boolean(), frequencyCode: z.boolean(),
-    courseDays: z.boolean(), quantity: z.boolean() }).strict().optional(),
+    routeCode: z.boolean(), courseDays: z.boolean(), quantity: z.boolean() }).strict().optional(),
 }).strict()).max(8) }).strict()
 const historySelectionSchema = z.object({
   complete: z.boolean(), selectedEvidenceIds: z.array(z.string().min(1).max(256)).max(100),
@@ -93,8 +93,8 @@ mode为considerations-only时items必须为空，必须显式返回consideration
 患者自述、分诊和报告是不同来源，分别保留原文、时间、否定、条件与不确定性；患者说没自行量过体温时，仍须保留本轮分诊已记录的数值，按各自时间解释其意义。
 待核实事项只列出会改变当前这条判断的信息，并说明它影响什么；没有检测结果不自动阻断该检测的建议，不把未安排检查、缺少全套实验室资料或未记录病史当成所有候选的前置门槛。
 未记录不代表阴性，医生的提问不是患者已经确认的自述。
-目录仅定义可选项目与允许值，default和allowed字段不是临床依据。不能用模型记忆补齐指南、事实或处方字段；无依据的处方字段必须为null。
-处方需要核对具体药品规格、单位和包装，疗程与数量分别需要依据，不得根据默认值或剂量自行猜测换算。
+目录仅定义可选项目与允许值，default和allowed字段不是临床依据。不能用模型记忆补齐指南、事实或处方字段；无依据的处方字段（含doseText、frequencyCode、routeCode、courseDays、quantity）必须为null。
+处方需要核对具体药品规格、单位、剂型、给药途径（PO/IVGTT/IV/IM/IH/SL/TOP/INH）和包装，疗程与数量分别需要依据，不得根据默认值或剂量自行猜测换算。
 只给建议或思路，不正式开立。缺项放在相关条目内，顶层missingInformation返回空数组；指南覆盖、目录和系统核验限制由系统单独说明，不生成无关联的缺项长清单。`
 const verificationPrompt = `独立核对items候选和considerations思路与实际提供的病例，恰好覆盖两类全部id，每个核验结果仍放在items数组中。
 items逐项判断指南支持、病例支持、适用性、否定和限定语是否保留；considerations是无采纳动作的诊断/检查推断，核对病例事实、合理适用性和限定语，缺少指南支持可以返回guidelineSupported:false，不能仅因缺少指南就把病例支持或思路适用性也判false。
@@ -103,7 +103,7 @@ items逐项判断指南支持、病例支持、适用性、否定和限定语是
 reason说明未通过的具体条目、原文或条件；不要只说缺少依据。全部成立时reason可简述成立依据。
 候选名称与诊断编码已按实际目录固定；selectedCatalogItems提供所选检查的真实编码、项目与授权手术来源，必须核对这一最终临床身份。
 引用存在不等于临床语义成立，未证实、条件缺失或冲突时对相应判断返回false。
-处方还必须分别核对doseText、frequencyCode、courseDays、quantity：仅使用指南、病例及medicationPresentations的真实品名、规格、剂型和包装；目录允许值与默认值不能证明临床依据，无法证实时返回false。`
+处方还必须分别核对doseText、frequencyCode、routeCode、courseDays、quantity：仅使用指南、病例及medicationPresentations的真实品名、规格、剂型和包装；目录允许值与默认值不能证明临床依据，无法证实时返回false。`
 const historySelectionPrompt = `为本次诊断、检查和用药读取这一批全部历史资料，结合requiredEvidence索引摘要（必读与本次资料的紧凑索引，不是全文）和指南，选择有具体关联的historyEvidence完整原始记录编号，每项只包含一条记录。
 保留可能支持或反对当前判断、影响用药或检查安全、与本次问题有关且异常未解释或临床意义尚不确定的记录。只排除明确无关的信息，不能只选近期记录，也不能因反对当前判断而排除证据。
 没有异常标记不等于正常，也不能把字段缺失一概当作异常或待核实证据；按原文与当前问题及安全事项的具体联系判断，不能用模型记忆补充事实。
@@ -866,7 +866,7 @@ export class DoctorRecommendationsService {
       } else if (kind === 'prescription') {
         const items = selections.flatMap(selection => selection.kind !== 'prescription' ? [] : [{
           catalogItemId: selection.catalogItemId, doseText: selection.doseText, frequencyCode: selection.frequencyCode,
-          courseDays: selection.courseDays, quantity: selection.quantity,
+          routeCode: selection.routeCode, courseDays: selection.courseDays, quantity: selection.quantity,
           ...(selection.instructions === undefined ? {} : { instructions: selection.instructions }),
         }])
         const saved = this.options.workflow.applySavePrescriptionDraft(transaction, { ...base, expectedDraftVersion: draftVersion, items })
@@ -1252,16 +1252,21 @@ export class DoctorRecommendationsService {
         if (item.kind === 'prescription') {
           const missingInformation = [...item.missingInformation]
           const medication = snapshot.catalogs.medications!.find(medication => medication.id === item.catalogItemId)
-          const fields = { doseText: item.doseText, frequencyCode: item.frequencyCode, courseDays: item.courseDays, quantity: item.quantity }
-          for (const field of ['doseText', 'frequencyCode', 'courseDays', 'quantity'] as const) {
-            if (!check.prescriptionFields![field] || ((field === 'doseText' || field === 'quantity')
+          const parsedRoute = item.routeCode === null ? undefined : item.routeCode.trim().toUpperCase()
+          const routeDisallowed = parsedRoute !== undefined && (medication === undefined || !medication.allowedRouteCodes.some(code => code === parsedRoute))
+          const fields = { doseText: item.doseText, frequencyCode: item.frequencyCode, routeCode: item.routeCode, courseDays: item.courseDays, quantity: item.quantity }
+          for (const field of ['doseText', 'frequencyCode', 'routeCode', 'courseDays', 'quantity'] as const) {
+            if (!check.prescriptionFields![field] || (field === 'routeCode' && routeDisallowed) || ((field === 'doseText' || field === 'quantity')
               && (medication?.product === undefined || medication.regulatoryVerification === undefined))) {
               fields[field] = null
-              missingInformation.push(`处方${{ doseText: '剂量', frequencyCode: '频次', courseDays: '疗程', quantity: '数量' }[field]}缺少指南、病例或药品规格依据。`)
+              missingInformation.push(`处方${{ doseText: '剂量', frequencyCode: '频次', routeCode: '给药途径', courseDays: '疗程', quantity: '数量' }[field]}缺少指南、病例或药品规格依据。`)
             }
           }
-          const prescription = { ...item, ...fields, missingInformation: [...new Set(missingInformation)].slice(0, 12) }
-          return normalizePrescriptionRecommendation(prescription, snapshot.catalogs.medications!) === undefined ? [] : [prescription]
+          const prescription = normalizePrescriptionRecommendation(
+            { ...item, ...fields, missingInformation: [...new Set(missingInformation)].slice(0, 12) },
+            snapshot.catalogs.medications!,
+          )
+          return prescription === undefined ? [] : [prescription]
         }
         return [item]
       })

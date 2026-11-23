@@ -50,10 +50,12 @@ const medicationCatalog: PrescriptionMedication[] = [{
   allowedDoseTexts: ['每次 75mg'],
   allowedFrequencyCodes: ['bid'],
   allowedQuantities: [1],
+  allowedRouteCodes: ['PO'],
   defaultCourseDays: 3,
   defaultDoseText: '每次 75mg',
   defaultFrequencyCode: 'bid',
   defaultQuantity: 1,
+  defaultRouteCode: 'PO',
   id: 'med-oseltamivir',
   nameEn: 'Oseltamivir Capsule',
   nameZh: '奥司他韦胶囊',
@@ -125,7 +127,7 @@ function CatalogDialog({ kind, onSearch, onSelect }: {
           brandName: null, id: 'synthetic-product', code: 'SYN-1', genericName: '合成测试片',
           dosageForm: '片剂', strength: '10 mg', manufacturer: '合成药厂', approvalNumber: '合成批准号',
           packageDescription: '10片/盒', status: 'active', system: 'urn:synthetic:medication',
-          version: '1', sourceLocator: 'synthetic:test',
+          version: '1', sourceLocator: 'synthetic:test', defaultRouteCode: 'PO', allowedRouteCodes: ['PO'],
         }], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic',
       })}
     />

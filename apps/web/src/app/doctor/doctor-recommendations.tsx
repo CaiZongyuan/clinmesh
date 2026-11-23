@@ -1,4 +1,5 @@
-import { formatMedicationFrequency } from '@clinmesh/core/medication-safety'
+import { formatMedicationFrequency, formatMedicationRoute } from '@clinmesh/core/medication-safety'
+import { medicationRouteSchema, type MedicationRoute } from '@clinmesh/contracts/medication-safety'
 import {
   considerationLabelKey, doctorPreparationSelectionSchema, type DoctorCaseEvidence, type DoctorPreparationSelection, type DoctorRecommendationConsideration,
   type DoctorRecommendationKind,
@@ -73,9 +74,12 @@ function selection(item: DoctorRecommendationSuggestion): PreparationDraft {
     ...source, kind: item.kind, catalogItemId: item.catalogItemId, role: item.role ?? null,
     ...(item.referenceConcept === undefined ? {} : { referenceConcept: item.referenceConcept })
   }
-  if (item.kind === 'prescription') return {
-    ...source, kind: item.kind, catalogItemId: item.catalogItemId,
-    doseText: item.doseText, frequencyCode: item.frequencyCode, courseDays: item.courseDays, quantity: item.quantity
+  if (item.kind === 'prescription') {
+    const parsedRoute = medicationRouteSchema.safeParse(item.routeCode)
+    return {
+      ...source, kind: item.kind, catalogItemId: item.catalogItemId,
+      doseText: item.doseText, frequencyCode: item.frequencyCode, routeCode: parsedRoute.success ? parsedRoute.data : null, courseDays: item.courseDays, quantity: item.quantity,
+    }
   }
   if (item.kind === 'laboratory') return { ...source, kind: item.kind, catalogItemId: item.catalogItemId, indicationCode: item.indicationCode }
   if (item.kind === 'imaging') return { ...source, kind: item.kind, serviceId: item.serviceId, indication: item.indication }
@@ -83,7 +87,7 @@ function selection(item: DoctorRecommendationSuggestion): PreparationDraft {
 }
 function clinicalValue(item: PreparationDraft) {
   if (item.kind === 'diagnosis') return JSON.stringify([identity(item), item.role, item.note ?? ''])
-  if (item.kind === 'prescription') return JSON.stringify([identity(item), item.doseText, item.frequencyCode, item.courseDays, item.quantity, item.instructions ?? ''])
+  if (item.kind === 'prescription') return JSON.stringify([identity(item), item.doseText, item.frequencyCode, item.routeCode, item.courseDays, item.quantity, item.instructions ?? ''])
   if (item.kind === 'laboratory') return JSON.stringify([identity(item), item.indicationCode, serviceReviewSignature(item.reviewedService)])
   if (item.kind === 'imaging') return JSON.stringify([identity(item), item.indication, serviceReviewSignature(item.reviewedService)])
   return JSON.stringify([identity(item), item.sourceProcedureReference, item.purpose, serviceReviewSignature(item.reviewedService)])
@@ -97,6 +101,10 @@ function frequencyLabel(code: string | null, zh: boolean) {
     ? messages.recommendationFieldPending
     : formatMedicationFrequency(code, zh ? 'zh-CN' : 'en-US')
 }
+function routeLabel(code: MedicationRoute | null, zh: boolean) {
+  const messages = getWorkspaceMessages(zh ? 'zh-CN' : 'en-US')
+  return code === null ? messages.recommendationFieldPending : formatMedicationRoute(code, zh ? 'zh-CN' : 'en-US')
+}
 function indicationLabel(code: string, zh: boolean) {
   const messages = getWorkspaceMessages(zh ? 'zh-CN' : 'en-US')
   const mapped = laboratoryIndicationLabel(code, messages)
@@ -104,7 +112,7 @@ function indicationLabel(code: string, zh: boolean) {
 }
 function summary(item: PreparationDraft, zh: boolean) {
   if (item.kind === 'diagnosis') return item.role === null ? zh ? '主次待确认' : 'Choose the diagnosis role' : item.role === 'primary' ? zh ? '主诊断' : 'Primary' : zh ? '次诊断' : 'Secondary'
-  if (item.kind === 'prescription') return complete(item) ? `${item.doseText} · ${frequencyLabel(item.frequencyCode, zh)} · ${item.courseDays} ${zh ? '天' : 'days'} · ${item.quantity}${item.instructions ? ` · ${item.instructions}` : ''}` : zh ? '用法用量待补充' : 'Complete the prescription fields'
+  if (item.kind === 'prescription') return complete(item) ? `${item.doseText} · ${frequencyLabel(item.frequencyCode, zh)} · ${routeLabel(item.routeCode, zh)} · ${item.courseDays} ${zh ? '天' : 'days'} · ${item.quantity}${item.instructions ? ` · ${item.instructions}` : ''}` : zh ? '用法用量待补充' : 'Complete the prescription fields'
   if (item.kind === 'laboratory') return indicationLabel(item.indicationCode, zh)
   return item.kind === 'imaging' ? item.indication : item.purpose
 }
@@ -268,7 +276,7 @@ function caseContainsConfirmation(detail: DoctorCaseDetail, result: Awaited<Retu
   return (version ?? 0) >= result.draftVersion && result.recordIds.every(id => ids.includes(id))
 }
 
-export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualUnavailableReason, manualItems: suppliedManualItems = [], manualControls, itemActions, itemDetails, investigationServiceFor, pathologySourcesFor, issuedCatalogItemIds, onManualChange, onManualEdit, onManualRemove, onConfirmed, encounter, resolveExistingDraft = false, expectedDraftVersion, disabled = false }: {
+export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualUnavailableReason, manualItems: suppliedManualItems = [], manualControls, itemActions, itemDetails, investigationServiceFor, pathologySourcesFor, allowedRoutesFor, issuedCatalogItemIds, onManualChange, onManualEdit, onManualRemove, onConfirmed, encounter, resolveExistingDraft = false, expectedDraftVersion, disabled = false }: {
   caseId: string; kind: DoctorRecommendationKind; enabled: boolean; inputRevision?: string | undefined; scope?: string | undefined; locale?: WorkspaceLocale | undefined
   disabled?: boolean | undefined
   manualItems?: ManualPreparedItem[] | undefined
@@ -276,6 +284,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   itemDetails?: ((value: PreparationDraft) => ReactNode) | undefined
   investigationServiceFor?: ((value: PreparationDraft, state: DoctorRecommendationState | undefined) => DoctorReviewedInvestigationService | undefined) | undefined
   pathologySourcesFor?: ((value: PreparationDraft) => PathologySourceProcedure[]) | undefined
+  allowedRoutesFor?: ((catalogItemId: string) => readonly MedicationRoute[] | undefined) | undefined
   manualControls?: ReactNode
   issuedCatalogItemIds?: ReadonlySet<string>
   onManualChange?: ((item: ManualPreparedItem) => boolean | void) | undefined
@@ -657,7 +666,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     setEditDirty(true)
     setEditing(previous => previous === undefined ? undefined : { ...previous, fields: { ...previous.fields, [field]: value } })
   }
-  const editingFields: Array<[string, string]> = activeEditing?.value.kind === 'prescription' ? [['doseText', zh ? '每次剂量' : 'Dose'], ['frequencyCode', zh ? '频次' : 'Frequency'], ['courseDays', zh ? '疗程（天）' : 'Days'], ['quantity', zh ? '数量' : 'Quantity']]
+  const editingFields: Array<[string, string]> = activeEditing?.value.kind === 'prescription' ? [['doseText', zh ? '每次剂量' : 'Dose'], ['frequencyCode', zh ? '频次' : 'Frequency'], ['routeCode', zh ? '给药途径' : 'Route'], ['courseDays', zh ? '疗程（天）' : 'Days'], ['quantity', zh ? '数量' : 'Quantity']]
     : activeEditing?.value.kind === 'laboratory' ? [['indicationCode', zh ? '检查目的' : 'Indication']]
       : activeEditing?.value.kind === 'imaging' ? [['indication', zh ? '检查目的' : 'Indication']]
         : activeEditing?.value.kind === 'pathology' ? [['purpose', zh ? '会诊目的' : 'Purpose']] : []
@@ -694,14 +703,17 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
           onValueChange={sourceProcedureReference => { setEditDirty(true); if (sourceProcedureReference !== null) setEditing(previous => previous?.value.kind === 'pathology' && previous.value.source === 'manual' ? { ...previous, value: { ...previous.value, sourceProcedureReference } } : previous) }} />
       </Field> : null}
       {editingFields.map(([field, label]) => {
-        const value = field === 'doseText' && activeEditing.value.kind === 'prescription' ? activeEditing.value.doseText : field === 'frequencyCode' && activeEditing.value.kind === 'prescription' ? activeEditing.value.frequencyCode : field === 'courseDays' && activeEditing.value.kind === 'prescription' ? activeEditing.value.courseDays : field === 'quantity' && activeEditing.value.kind === 'prescription' ? activeEditing.value.quantity : field === 'indicationCode' && activeEditing.value.kind === 'laboratory' ? activeEditing.value.indicationCode : field === 'indication' && activeEditing.value.kind === 'imaging' ? activeEditing.value.indication : activeEditing.value.kind === 'pathology' ? activeEditing.value.purpose : ''
+        const value = field === 'doseText' && activeEditing.value.kind === 'prescription' ? activeEditing.value.doseText : field === 'frequencyCode' && activeEditing.value.kind === 'prescription' ? activeEditing.value.frequencyCode : field === 'routeCode' && activeEditing.value.kind === 'prescription' ? activeEditing.value.routeCode : field === 'courseDays' && activeEditing.value.kind === 'prescription' ? activeEditing.value.courseDays : field === 'quantity' && activeEditing.value.kind === 'prescription' ? activeEditing.value.quantity : field === 'indicationCode' && activeEditing.value.kind === 'laboratory' ? activeEditing.value.indicationCode : field === 'indication' && activeEditing.value.kind === 'imaging' ? activeEditing.value.indication : activeEditing.value.kind === 'pathology' ? activeEditing.value.purpose : ''
         return <Field key={field}><FieldLabel htmlFor={`prepared-${field}`}>{label}</FieldLabel>{field === 'frequencyCode' && activeEditing.value.kind === 'prescription' && activeEditing.value.referenceProduct === undefined
           ? <WorkspaceSelect id={`prepared-${field}`} value={activeEditing.value.frequencyCode} placeholder={zh ? '请选择频次' : 'Choose frequency'} items={[...new Set(['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE', ...activeEditing.value.frequencyCode ? [activeEditing.value.frequencyCode] : []])].map(code => ({ value: code, label: frequencyLabel(code, zh) }))}
             onValueChange={code => { setEditDirty(true); setEditing(previous => previous?.value.kind === 'prescription' ? { ...previous, value: { ...previous.value, frequencyCode: code } } : previous) }} />
-          : field === 'indicationCode' && activeEditing.value.kind === 'laboratory'
-            ? <WorkspaceSelect id={`prepared-${field}`} value={activeEditing.value.indicationCode} items={[...new Set(['clinical-evaluation', 'fever', activeEditing.value.indicationCode])].map(code => ({ value: code, label: indicationLabel(code, zh) }))}
-              onValueChange={code => { setEditDirty(true); if (code !== null) setEditing(previous => previous?.value.kind === 'laboratory' ? { ...previous, value: { ...previous.value, indicationCode: code } } : previous) }} />
-            : <Input value={activeEditing.fields?.[field] ?? value ?? ''} onChange={event => changeEditingField(field, event.currentTarget.value)} id={`prepared-${field}`} min={1} name={field} required type={field === 'quantity' || field === 'courseDays' ? 'number' : 'text'} />}</Field>
+          : field === 'routeCode' && activeEditing.value.kind === 'prescription'
+            ? <WorkspaceSelect id={`prepared-${field}`} value={activeEditing.value.routeCode} placeholder={zh ? '请选择给药途径' : 'Choose route'} items={(activeEditing.value.referenceProduct?.allowedRouteCodes ?? allowedRoutesFor?.(activeEditing.value.catalogItemId) ?? medicationRouteSchema.options).map(code => ({ value: code, label: routeLabel(code, zh) }))}
+              onValueChange={code => { setEditDirty(true); const parsed = medicationRouteSchema.safeParse(code); setEditing(previous => previous?.value.kind === 'prescription' ? { ...previous, value: { ...previous.value, routeCode: parsed.success ? parsed.data : null } } : previous) }} />
+            : field === 'indicationCode' && activeEditing.value.kind === 'laboratory'
+              ? <WorkspaceSelect id={`prepared-${field}`} value={activeEditing.value.indicationCode} items={[...new Set(['clinical-evaluation', 'fever', activeEditing.value.indicationCode])].map(code => ({ value: code, label: indicationLabel(code, zh) }))}
+                onValueChange={code => { setEditDirty(true); if (code !== null) setEditing(previous => previous?.value.kind === 'laboratory' ? { ...previous, value: { ...previous.value, indicationCode: code } } : previous) }} />
+              : <Input value={activeEditing.fields?.[field] ?? value ?? ''} onChange={event => changeEditingField(field, event.currentTarget.value)} id={`prepared-${field}`} min={1} name={field} required type={field === 'quantity' || field === 'courseDays' ? 'number' : 'text'} />}</Field>
       })}
       {activeEditing.value.kind === 'prescription' ? <Field><FieldLabel htmlFor="prepared-instructions">{zh ? '给药说明' : 'Instructions'}</FieldLabel><Input value={activeEditing.fields?.instructions ?? activeEditing.value.instructions ?? ''} onChange={event => changeEditingField('instructions', event.currentTarget.value)} id="prepared-instructions" maxLength={240} name="instructions" /></Field> : null}
       {editError ? <p role="alert">{zh ? '请补齐有效的项目信息。' : 'Complete the item with valid values.'}</p> : null}

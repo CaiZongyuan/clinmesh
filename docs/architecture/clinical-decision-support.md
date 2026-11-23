@@ -42,7 +42,7 @@
 
 - **可观察请求硬上限与未知恢复**：同一阶段批次含首次最多发起 3 次真实模型请求，单次 `generation` 跨全部批次累计最多允许 4 次额外请求（限流重发、格式修复、自动恢复与人工继续共享派发前原子预占计数）；已派发但超时、断流或重启结果未明的请求记为 `MODEL_OUTCOME_UNKNOWN` 并保留已耗额度、禁止自动重发；医生可通过 `continueGeneration`（`refresh:false`）沿原模型与剩余额度续跑未完成步骤，或通过 `refresh:true` 开启新 `generation`（见[模型执行恢复](storage.md#模型执行恢复)与[模型请求控制与恢复决策](../decisions/implemented/architecture/2026-10-21-model-request-control-recovery.md)）。
 - **UTF-8 字节分批打包与收敛**：必读本次资料与安全信息始终完整保留，其余既往史在溢出时按单包 12 KiB（单次桥接信封上限 256 KiB）无损拆分筛选（相同筛选哈希跨类别持久复用）；当必读与已选历史合入生成请求超限时，触发 `history-consolidation` 收敛轮按容量保留关键记录（容量为 0 则仅保留必读资料并附通知），若必读资料本身超限则明确返回 `missing-evidence` 而绝不截断证据原文。
-- **独立核验与思路降级**：可采纳候选 `items` 先锁定真实目录编码，再经独立请求逐项复核指南条款支持、病例事实支持、适用性与限定语（处方额外核对本院药品实际规格与各字段依据，无据字段保持 `null`）；非处方候选若仅缺指南条款支持而病例与适用性核验成立，自动降级为只读待核实思路 `considerations`（无采纳入口，候选与思路合计最多 8 项；处方建议绝不输出无指南思路）。取舍见[门诊指南诊疗建议决策](../decisions/implemented/architecture/2026-10-13-doctor-guideline-recommendations.md)。
+- **独立核验与思路降级**：可采纳候选 `items` 先锁定真实目录编码，再经独立请求逐项复核指南条款支持、病例事实支持、适用性与限定语（处方额外核对本院药品实际规格、允许给药途径 `allowedRouteCodes` 与各字段依据，无明确依据的剂量、频次、途径、疗程或数量保持 `null` 待医生补全）；非处方候选若仅缺指南条款支持而病例与适用性核验成立，自动降级为只读待核实思路 `considerations`（无采纳入口，候选与思路合计最多 8 项；处方建议绝不输出无指南思路）。取舍见[门诊指南诊疗建议决策](../decisions/implemented/architecture/2026-10-13-doctor-guideline-recommendations.md)。
 
 ### 住院只读指南参考意见
 
