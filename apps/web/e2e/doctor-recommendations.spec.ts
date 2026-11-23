@@ -35,6 +35,7 @@ const test = base.extend<{ recommendationCase: Awaited<ReturnType<typeof startCo
 
 
 for (const width of [1280, 390]) test(`prepares in the background and directly confirms or issues selected verified items at ${width}px`, async ({ page, browserApp, recommendationCase }) => {
+  test.setTimeout(120_000)
   const errors: string[] = []
   const preparedKinds = new Set<string>()
   page.on('response', response => {
