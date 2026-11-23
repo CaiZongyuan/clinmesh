@@ -1,6 +1,6 @@
 # 可插拔病理阅片
 
-ClinMesh 拥有患者、就诊、病理申请、原费用、正式报告、责任和报告已阅；外部阅片服务拥有切片、分析、模型、候选、测量与人工复核。两者通过 `clinmesh.pathology-reading.v1` 互通，首个适配器是独立部署的 PathJX。协议与 PathJX 原生 `/api/v1` 分开版本化，不建立通用插件市场。业务流程见[病理会诊](clinical-workflows.md#病理会诊)，部署与恢复见[部署教程](../deployment.md#pathjx-外部阅片服务)。
+ClinMesh 拥有患者、就诊、病理申请、原费用、正式报告、责任和报告已阅；外部阅片服务拥有切片、分析、模型、候选、测量与人工复核。两者通过 `clinmesh.pathology-reading.v1` 互通，首个适配器是独立部署的 PathJX。协议与 PathJX 原生 `/api/v1` 分开版本化，不建立通用插件市场。业务流程见[病理会诊](examinations-and-reports.md#病理切片会诊闭环)，部署与恢复见[部署教程](../deployment.md#pathjx-外部阅片服务)。
 
 ## 单片绑定与来源
 
@@ -12,17 +12,7 @@ ClinMesh 拥有患者、就诊、病理申请、原费用、正式报告、责�
 
 管理员配置使用版本检查、幂等键和共享 Command 审计，只能选择部署已批准的确切 HTTP(S) origin。服务凭据只留 Server，绑定和创建会话不向外部发送 ClinMesh Cookie。未配置、未启用或外部离线均不阻碍 HIS 启动。
 
-服务接口前缀为 `/api/integrations/clinmesh/v1`：
-
-| 入口 | 合同 |
-| --- | --- |
-| `GET /capabilities` | 协议、实例、器官、标本、染色、任务、模型版本和摘要；读取不触发推理 |
-| `GET /assets/:assetKey` | 登记资产的内容身份与当前可读性 |
-| `PUT /bindings/:bindingId` | 原意图幂等准备一张切片的隔离复核对象 |
-| `GET /bindings/:bindingId` | 原对象身份、可读性与修订检查点 |
-| `POST /sessions` | 按当前医生和固定上下文创建最长五分钟受限会话 |
-| `GET /operations/:intentId?bindingId=…` | 查询原绑定或会话意图；未知时保持未知 |
-| `DELETE /sessions/:sessionId` | 撤销外部会话；本地先撤权，外部故障不恢复本地权限 |
+能力读取、素材核对、幂等绑定、会话创建、原意图查询与关闭由[PathJX 适配器](../../apps/server/src/infrastructure/pathology-reading/pathjx-adapter.ts)封装；消息 schema 由[共享合同](../../packages/contracts/src/pathology-reading.ts)拥有。会话最长五分钟，查询不运行模型，关闭时本地先撤权，外部故障不恢复本地权限。
 
 浏览器加载独立 origin 的 `/clinmesh/reading`。无凭据 `GET /bootstrap` 声明协议；iframe 发出 `ready`，父页严格核对 origin 与发送窗口后通过消息发送一次性 `launchToken` 和代次。iframe 使用 `POST /sessions/exchange` 的 `{ launchToken }` 换取内存短效 token；只可调用返回的 `/api/integrations/clinmesh/v1/session/:sessionId`。token 不写 URL、日志或浏览器持久存储，也不使用 ClinMesh Cookie 或 PathJX 原生账号 token。
 

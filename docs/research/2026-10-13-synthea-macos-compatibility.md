@@ -32,7 +32,7 @@ docker buildx imagetools inspect ghcr.io/caizongyuan/cn-health-synthea-localizer
 
 [Provider 发行 workflow](../../.github/workflows/synthea-provider.yml)明确以 `platforms: linux/amd64` 构建、验证后发布。它的命令测试矩阵只有 Ubuntu 与 Windows，镜像组合测试在 Ubuntu 运行；该 workflow 不包含 macOS 或原生 arm64 验收。[Docker 合同测试](../../apps/server/tests/synthea-docker-contract.test.ts)也明确要求该 workflow 不出现 `linux/arm64`。因此补齐原生支持不仅是改变一个本地启动参数，还会涉及发行及相应合同。
 
-历史[一键运行时 Note](../decisions/implemented/architecture/2026-09-03-one-command-synthea-runtime.md)列出的 Provider `8018b3ea…` 已不是当前 Compose 的固定 digest。本轮查询使用当前 Compose 的 `d93c5797…`，不能使用历史 digest 推断当前发行。
+历史[Synthea 病例来源与运行时决策](../decisions/implemented/architecture/2026-08-30-synthea-case-source-and-replay.md)记录的早期 Provider digest 已不是当前 Compose 的固定 digest。本轮查询使用当前 Compose 的 `d93c5797…`，不能使用历史 digest 推断当前发行。
 
 ## Docker 官方能力与 Mac 的区别
 

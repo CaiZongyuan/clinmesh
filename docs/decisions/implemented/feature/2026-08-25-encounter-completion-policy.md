@@ -1,35 +1,29 @@
-# Agent Note: Encounter 完诊门禁与只读转换
+# Agent Note: 门诊多岗位核心诊疗生命周期、七项完诊门禁与已完诊病例时间线
 
 Status: implemented
 
 ## Problem
 
-[用临床门禁完成 Encounter](https://github.com/CaiZongyuan/clinmesh/issues/30)要求医生在独立诊断、结构化病历、检查报告和用药结论各自完成后结束同一个 Encounter。首期复诊兼容流把诊断、两字段文书、处方、费用交接和完诊放在一次组合签署中，无法复用各临床 owner 已交付的独立事实，也会让页面状态或某个下游队列错误地成为临床完成依据。
-
-总体医生核心边界由[医生核心临床业务流](./2026-08-24-doctor-clinical-core-workflow.md)拥有；当前接口、条件语义和状态机由[门诊闭环](../../../../docs/architecture/clinical-workflows.md#81-门诊闭环)拥有。本 Note 只记录已经交付的汇总门禁、状态所有权和只读转换取舍。
+门诊 HIS 既需要多岗位协作闭环（挂号、分诊、接诊、检查收费与报告、处方收费与药房调剂），又需要医生在同一个 `Encounter` 内独立恢复并并发控制问诊、结构化病历、检查申请与报告确认、主次诊断、处方或无需用药结论。若把草稿直接存为临时 FHIR 资源，会让未确认编辑混入正式临床读取与历史版本；若沿用早期单次组合签署将诊断、两字段文书、处方和完诊绑死在一个动作中，或用 `DiagnosticReport.status=final` 推定医生已阅、用修改同一逻辑资源版本代替签发后更正、从可变排队 `Task` 推断完诊病例归属，则会导致各临床事实耦合锁死、报告修订后漏读以及只读病例库权限漂移。
 
 ## Decision
 
-Encounter Completion Policy 是只读汇总模块，不复制诊断、文书、检查或用药状态机。它只适用于带 Consultation 的病例，并从各 owner 当前正式事实计算七项稳定条件：主诊断已确认、结构化病历已签署、必要报告已阅、用药结论已记录、无未处理草稿、处置完整和随访完整。预览同时返回稳定 code、机器状态、中文状态和目标入口，使 Web 和后续窄工具可以定位原 owner，而不必解析错误文本或了解 owner 的持久化结构。
+以单一门诊 `Encounter` 串联跨岗位交接、各领域独立持久草稿与不可变修订链、只读汇总完诊门禁及责任绑定的已完诊病例库，当前完整合同见[门诊业务流程](../../../architecture/outpatient-workflows.md)、[处方、医嘱与药事](../../../architecture/orders-and-pharmacy.md)及[检验、检查与报告](../../../architecture/examinations-and-reports.md)：
 
-完成 Command 在事务内重新计算全部条件并校验 Encounter expected version。预览不是授权票据，条件在预览后变化时提交必须失败。成功只更新 FHIR Encounter 的 `status` 与 `actualPeriod.end`；医生 Queue Task、病例领域状态、Registration、收费、处方、发药和 Scenario Run 都保持不变。队列消失来自查询按 Encounter 当前状态过滤，不是完成 Command 对其他聚合的隐式写入。
-
-Web 由 TanStack Query 持有完诊预览，并在任一临床 owner 刷新后使该查询失效。每项入口聚焦真实诊断、文书、检查或用药区域。完成时先固定当前病例选择，再刷新队列与详情；队列移除该病例，详情按 Encounter 状态统一关闭问诊和全部写控件，同时保留已签病历、报告、诊断和用药事实。
+1. **单 Encounter 多岗位闭环、直达接诊与双主体超级管理员代理**：一次门诊由同一个 FHIR R5 `Encounter` 贯穿挂号（原子创建 `Patient`、`Registration`、`Encounter`、候诊 `Task`、`Account` 与挂号 `ChargeItem`）、分诊、医生接诊与完诊；药品支付与药师审方、批次发药在 `Encounter` 完成后继续独立推进并将 `Scenario Run` 置为 `completed`，绝不反向改写临床完诊状态。Virtual Patient 直达接诊原子建立挂号、队列任务与病例责任而不伪造分诊或收费记录；Super Administrator 切换 `Acting Practitioner Context` 时，Command、`AuditEvent` 与 `Provenance` 同时记录真实管理员 Actor 与所代表的 `PractitionerRole`。所有纠错 Command 在校验预期版本前先执行岗位与责任预检，并以结构化 `conflict` 字段返回可本地化冲突原因。
+2. **领域原生草稿与四类不可变临床事实生命周期**：所有未确认草稿均作为 domain-native 表按 `Encounter` 版本与 `expectedDraftVersion` 做 CAS 保护，正式确认后才发布标准 FHIR R5 资源：
+   - **结构化临床文书**：签署采用 5 分钟 HMAC 绑定预览与提交两步协议，创建不可变 `Composition`、自包含文档 `Bundle` 与 `Provenance`（每病例唯一根文书，签署后更正仅允许针对最新后继创建新逻辑资源并以 `Composition.relatesTo.type=replaces` 构成线性修订链，与旧版两字段组合签署互斥）。
+   - **主次诊断**：草稿支持 1–8 条非重复目录项并要求恰有一条 `primary`；确认创建 `encounter-diagnosis` `Condition`、更新 `Encounter.diagnosis` 双向引用并写入 `Provenance`（完诊前再次修订创建新确认版本并将被替代 `Condition` 标为 `entered-in-error`，见[统一直接记录与草稿修订](../architecture/2026-10-15-unified-direct-document-recording.md)）。
+   - **处方与无需用药结论**：正式开具重验目录、过敏与已确认诊断后创建带处方号的 `Prescription`、`prescription_authorship` 与 `MedicationRequest`（院内与外延分轨见[门诊外延处方分轨](../architecture/2026-11-05-outpatient-external-prescription-split.md)）；`no_medication_conclusion` 作为独立带责任人的正式事实与有效处方互斥；未调剂处方撤回追加不可变 `prescription_withdrawal` 并将 `MedicationRequest` 置为 `cancelled`，不物理删除账项或历史（已缴费撤方经收费员原款退款处理）。
+   - **报告已阅与不可变报告修订**：`ReportAcknowledgement` 按 `DiagnosticReport` 逻辑 ID 独立记录责任医生已阅事实而不改动报告版本；受控 `lis-system`（由具备 administrator 资格的会话经服务端受信绑定触发）更正已签发报告时，为 `DiagnosticReport` 与全部 `Observation` 创建全新逻辑 ID 并以 `Provenance.entity.role=revision` 串成线性链，将申请退回 `reported` 强制医生重阅新版报告。
+3. **只读七项完诊门禁与独立已完诊病例库**：`Encounter Completion Policy` 作为纯只读汇总器，不复制子域状态机，实时核验带 Consultation 病例的七项条件（主诊断已确认、结构化病历已签署、未取消检查报告均已阅、有效处方或无需用药已记录、无未处理诊断／检查／处方草稿、处置完整、随访完整），缺项返回稳定 `ENCOUNTER_COMPLETION_BLOCKED` 与定位入口；完成事务重验全部条件后仅更新 `Encounter.status='completed'` 与 `actualPeriod.end`。`outpatient_case_responsibility` 一对一持久化首次接诊责任岗位；已完诊病例库使用不含任何草稿或编辑版本的独立 strict DTO，在 SQL 层合并责任岗位与完成条件分页查询，并由服务端按确定性顺序组装统一业务时间线与保守的 `correctionSupported` 更正导航。
 
 ## Alternatives considered
 
-**让客户端根据病例详情自行判断能否完诊。** 这可以省去预览查询，却会把领域规则复制到 Web，并允许旧页面状态或漏读的 owner 事实启用错误提交。服务端策略是唯一规则来源，客户端只渲染返回项。
-
-**由每个 owner 推进一个共享病例状态。** 这会让诊断确认、报告更正、处方撤回和文书签署互相知道下游步骤，并产生难以原子维护的派生状态。Completion Policy 在读取时汇总当前事实，owner 不写共享门禁投影。
-
-**完成 Encounter 时同时完成医生 Task 和 `outpatient_case`。** 这能让现有队列自然消失，却把临床完成与排队、页面兼容状态绑定，并增加无业务依据的副作用。当前队列直接读取 Encounter 状态，保留旧聚合以支持兼容详情和后续独立归档入口。
-
-**把药品支付、发药或 Scenario Run 完成作为门禁。** 这会使跨部门执行阻塞医生临床责任结束，也会允许药房反向改变 Encounter。完诊只要求医生记录有效处方或无需用药结论，下游流程继续独立推进。
+- **复诊另建第二个 `Encounter`，或等药房发完药才允许医生完诊**：拆散同次挂号下的检验与文书归属，或让跨部门收费发药阻塞医生临床收尾。
+- **把未确认草稿存为 `provisional`/`draft` FHIR 资源，或用空处方代表无需用药**：污染正式 FHIR 查询与患者既往史，空处方则无法区分“医生明确判定无需用药”与异常空单。
+- **在原 `Composition`／`DiagnosticReport` 逻辑 ID 上递增 FHIR `_history` 表示临床修订，或从当前排队 `Task` 推断完诊病例库权限**：混淆技术存储版本与临床替代责任，且排队 `Task` 随流转变化无法充当长期病历归属依据。
 
 ## Consequences
 
-共享 contract 固定七个条件 code、四个目标和严格预览/提交 schema；HTTP 提供预览查询与幂等完成 Command。无未取消检查申请时报告条件成立，已撤回处方不构成用药结论，签署结构化文书后保留的文书草稿不再阻塞，诊断、检查和处方草稿仍会阻塞。
-
-条件缺失返回稳定 `ENCOUNTER_COMPLETION_BLOCKED`，整个 Command 无状态变化；相同幂等键重放首次成功回执，同一 expected Encounter version 的并发提交只有一个成功。成功审计只列出 Encounter effect，便于调用方和测试确认没有隐藏的 Queue Task、费用或 Scenario 副作用。
-
-医生工作台在完成后保留本次选中详情；独立的已完诊病例检索入口和统一时间线不属于本决策，由[已完诊病例与业务时间线](https://github.com/CaiZongyuan/clinmesh/issues/31)定义。
+门诊各临床子域拥有清晰的草稿隔离、乐观并发与不可变修订历史，任何报告更正或处方撤回都会通过实时汇总自然反映到完诊门禁与已完诊时间线中，无需维护易失步的冗余聚合状态位。

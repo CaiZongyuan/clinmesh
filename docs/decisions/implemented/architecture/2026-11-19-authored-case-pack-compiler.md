@@ -1,40 +1,25 @@
-# Agent Note: 通用多病例 Authored Case Pack 编译器与分阶段 Case Truth 解析
+# Agent Note: 固定来源直接住院、通用多病例 Authored Case Pack 编译器与分阶段真值解析
 
 Status: implemented
 
 ## Problem
 
-既有 `PciCaseSource` 固定单病例底稿硬编码了男性性别、单枚支架、固定 FM39 分组目标、空可见病史以及单病例准备入口，无法表达女性患者、零支架保守管理（GDMT）、纯门诊慢病病例以及带既往慢性病史的跨阶段临床路径。此外，原检验与功能检查解析器仅按时间戳取最新隐藏 `Observation`，同一 `source_case_id` 无法在首诊、同就诊复测（如连续高敏肌钙蛋白 I 或水化后复查血肌酐）以及出院后门诊随访（如复查 LDL-C、肌酐与心电图 ST 段回落）之间确定性切换真值，也无法为同一病例同时提供独立的 ECG 与 TTE 精确结论。
+Synthea 随机生成患者既不能稳定产出特定冠脉病变与多阶段慢病组合，早期 `Synthetic Case` 物化又强制走门诊挂号收费而无法表达择期直接入院，且若要求管理员照手册逐字段手填首个 `Patient Persona` 或调用外部模型生成固定演示自述，会增加演示前置负担或引入输出漂移。进一步扩展至多病种专病闭环时，原单病例 `PciCaseSource` 硬编码了男性、单枚支架、空既往史与固定 FM39 目标，且原检验／功能检查解析器仅按时间戳取单条隐藏 `Observation`，无法在同一病例来源下确定性区分门诊首诊、住院基线、同次复测（如连续 `hs-cTnI` 或水化后复查血肌酐）与出院后门诊随访（如复查 `LDL-C` 与心电图 ST 段回落）。
 
 ## Decision
 
-1. **通用版本化 `Authored Case Pack` 编译器与幂等准备服务**：
-   - 新增 `AuthoredCasePackCompiler`（`apps/server/src/application/scenario-data/authored-case-pack-compiler.ts`），将声明式版本化多病例定义编译为不可变 FHIR R4 来源 Bundle、`CompiledSyntheaIndexCase`、`SyntheticPatientProfile` 模板与版本化 `PatientPersona`（`model: 'clinmesh-authored-template'`）。
-   - 支持男女人口学、`0 | 1 | ...` 支架计划、可选冠脉造影、早于 `indexDateTime` 的定制 `Visible Source History`（既往就诊、诊断、检验与用药），以及覆盖 WS/T 886-2026 + LOINC 双编码检验、`ECG`/`TTE` 完整指标与分检查精确结论、多支冠脉造影（含可选 FFR/iFR 与 QCA）的隐藏 `Case Truth`。编译期复用 `personaLeaksDiagnosis` 强制校验所有模板 Persona 不泄漏未确诊隐藏诊断。
-   - 新增 `AuthoredCasePackService`（`apps/server/src/application/scenario-data/authored-case-pack-service.ts`），经由共享 `CommandExecutor`（`operation: 'synthetic-case.authored-pack.prepare'`，`idempotencyScope: 'workspace'`）在同一事务内幂等准备全部病例，挂载管理员专属接口 `GET /api/sim/v1/synthetic-cases/authored-pack`（只返回无真值泄漏的就绪摘要）与 `POST /api/sim/v1/synthetic-cases/authored-pack/prepare`。重复准备保留人工 Persona 修订和既有就诊绑定；清空患者库重置后自动恢复归档 Profile 并递增 `profileRevision` 创建新的 `brief-ready` 实例；运行中 Persona 任务返回 `409 AUTHORED_CASE_PACK_PERSONA_RUNNING`，排队任务标记 `PERSONA_JOB_SUPERSEDED`。
-   - 原 `inpatient.pci-data.*`、`pciDataPackage` 与 `POST /api/sim/v1/synthetic-cases/pci/prepare` 保持 100% 向后兼容不变。
+在保留固定单病例 PCI 入口完全向后兼容的基础上，构建直接住院实体化、模板 Persona 一次就绪、通用多病例 `Authored Case Pack` 编译器与分阶段 `Case Truth` 解析体系，领域词汇与架构合同见[领域词汇](../../../../CONTEXT.md)及[仿真、病例与素材](../../../architecture/simulation.md)：
 
-2. **分阶段确定性 `Case Truth` 解析**：
-   - 引入隐藏 `Observation` 阶段扩展 `urn:clinmesh:synthetic:truth-stage`（`initial` | `inpatient` | `repeat` | `follow-up`，未标记作为通用兜底），在 `InvestigationService` 与 `ExaminationResultResolver` 中共用统一优先级：
-     - 跨就诊门诊复诊（`outpatient_case_source` 命中）：始终优先 `follow-up -> 未标记`，绝不落入住院/首诊 `repeat`。
-     - 住院阶段：首次优先 `inpatient -> initial -> 未标记`，同住院已有同编码终态报告/检验时优先 `repeat -> inpatient -> initial -> 未标记`。
-     - 门诊首诊：首次优先 `initial -> 未标记`，同门诊已有同编码终态报告/检验时优先 `repeat -> initial -> 未标记`。
-   - 为避免住院多项检查超出 `#formalEvidence` 的 `LIMIT 20` 截断，`InvestigationService` 使用独立的无上限当前就诊终态检验编码查询判定复测，严格按包含阶段上下文的 `inputHash` 命中快照（不跨阶段回退最新快照），并补充肌酐 `umol/L -> mg/dL` 换算以同时兼容 `laboratory-cn` 与 `pci-data`。
-   - `ExaminationResultResolver` 同时接受 `urn:clinmesh:examination:ecg` / `tte` 体系与按 `urn:clinmesh:examination:exam-code` 区分的 `urn:clinmesh:examination:conclusion` 精确结论；所选阶段写入 `inputHash`，在保持 `clinmesh-authored` 零正常兜底与同阶段冲突拦截的前提下，实现首诊、复测、随访快照分离及 Epoch 重放复用。
-   - 在保持 `encounter.complete` 不改写 `outpatient_case.status` 或 `Scenario Run` 合同的前提下，`activeCaseByPatient` 对已记录无需用药结论、FHIR `Encounter.status = 'completed'` 且无未结处方或待缴临床费用的门诊就诊不再视为活动阻塞，既允许转住院出院后再次门诊随访挂号，又保持未缴费/未发药处方病例对重复挂号的拦截。
-
-3. **五例心血管与慢病专病合成病例包及紧凑管理入口**：
-   - 在 `apps/server/src/application/scenario-data/cardiorenal-authored-case-pack.ts` 交付五例合成病例，完整对齐 `@clinmesh/core` 临床评分、医嘱组套与事中临床质控红线/警示边界；所有病例定义与 Persona 文本仅保存在 `apps/server/`，不进入 `packages/contracts/`。
-   - 在 `apps/web/src/app/pci-preparation.tsx` 原位扩展紧凑的专病病例包就绪面板与一键准备按钮（经由 `useInpatientWriteIntent` 与 `admin.authored-case-pack.prepare` 持久写意图及 `/api/his/v1/command-receipts` 恢复回执，服务端统一映射持久回执名 `synthetic-case.authored-pack.prepare`，仅使用 React 18.3.1 / 19.2 共有 API），确保 `apps/dsh-web/lib/client.js` 严格维持在 5,000,000 字节上限之下。
+1. **`clinmesh-authored` 直接住院实体化与模板 Persona 同事务就绪**：作者底稿编译为独立的 `clinmesh-authored` 来源（精确检验快照标记 `case-truth-exact` 以区别于 `synthea-exact`，底稿不含已执行手术，本院诊疗事实均由真实岗位 Command 产生）。直接住院在共享事务内校验病例与 Persona 版本及一次消费门禁，创建住院型 materialization 并调用住院登记，不产生虚假门诊挂号或门诊费（Epoch 重置按原修订重放直接住院；清空患者库重置后再次准备时自动恢复归档 Profile 并递增 `profileRevision` 建立新 `brief-ready` 实例）。准备事务同步创建并首次选定经 `personaLeaksDiagnosis` 编译期校验的版本化模板 `PatientPersona`（`model: 'clinmesh-authored-template'`），零模型调用即达待挂号／待入院态；重复准备优先保留人工编辑修订与既有就诊绑定，遇运行中异步 Persona 任务返回 `409` 拒绝、排队任务标为 `PERSONA_JOB_SUPERSEDED`。
+2. **通用多病例 `AuthoredCasePackCompiler` 与幂等管理入口**：通过 `authored-case-pack-compiler.ts` 与 `AuthoredCasePackService`（`synthetic-case.authored-pack.prepare`，`hisOperationCatalog` 映射 `admin.authored-case-pack.{read,prepare}`）在既有 `synthetic_patient_profile`／`synthetic_case_instance` 表上零数据库迁移交付五例心肾专病合成病例（覆盖男女人口学、`0 | 1 | ...` 支架计划、早于 `indexDateTime` 的可见慢病史、WS/T 886 + LOINC 双编码检验、独立 `ECG`/`TTE` 精确结论及含 FFR/iFR 与 QCA 的多支冠脉造影；病例正文仅驻留 `apps/server/`）。`pci-preparation.tsx` 原位扩展紧凑准备面板并复用持久写意图恢复，保持 `apps/dsh-web/lib/client.js` 在 5,500,000 字节预算内（见[DSH 客户端语法压缩](../testing/2026-11-13-dsh-client-syntax-compaction.md)）。
+3. **分阶段确定性 `Case Truth` 解析与院后随访挂号放行**：引入隐藏 `Observation` 扩展 `urn:clinmesh:synthetic:truth-stage`（`initial | inpatient | repeat | follow-up`），在 `InvestigationService`（使用无条数截断的当前就诊终态编码查询判定复测，补充肌酐 `umol/L <-> mg/dL` 换算）与 `ExaminationResultResolver`（按 `exam-code` 隔离 ECG 与 TTE 精确结论）中统一执行阶段优先级：跨就诊门诊复诊优先 `follow-up -> 未标记`；住院首次 `inpatient -> initial -> 未标记`、同住院复测 `repeat -> inpatient -> initial -> 未标记`；门诊首次 `initial -> 未标记`、同门诊复测 `repeat -> initial -> 未标记`。阶段上下文纳入快照 `inputHash` 防止跨阶段串用。同时 `activeCaseByPatient` 对已完诊、已记录无需用药且无未结处方或待缴费用的门诊病例解除活动阻塞，打通“首诊转住院 → 出院 → 门诊随访挂号”全链路。
 
 ## Alternatives considered
 
-- **直接改造 `PciCaseSource` 替换原固定 PCI 病例**：会破坏既有 `pciDataPackage` 内容哈希与固定 PCI 黄金链路回归测试，因此保留旧入口并新增通用多病例编译器与 `/api/sim/v1/synthetic-cases/authored-pack`。
-- **把五例病例拆分注册为五个独立准备端点或写入 SQLite 新表**：增加无关迁移成本且破坏与现有 `synthetic_patient_profile` / `synthetic_case_instance` 表的统一重放语义，因此完全复用现有表结构实现零迁移交付。
-- **靠虚拟时钟顺序或人工改库模拟复测与出院随访变化**：缺乏确定性且无法在单次病例真值中清晰表达跨阶段演变；通过 FHIR 扩展 `urn:clinmesh:synthetic:truth-stage` 将阶段规则内聚在解析边界，既不污染临床 DTO，又确保零 LLM 调用与 Epoch 重放一致。
+- **先伪造一次门诊再转住院，或每次由外部模型动态生成固定病例的首个 Persona**：前者产生虚构门诊账单，后者引入模型配置依赖与文本漂移。
+- **直接改写原 `PciCaseSource` 替换单病例底稿，或为五例病例新建独立数据库表／五个端点**：破坏既有 `pciDataPackage` 内容哈希与[PCI 从零岗位旅程](../testing/2026-10-27-pci-from-zero-journey.md)黄金账本，或增加无谓表结构冗余。
+- **依赖虚拟时钟推进快慢或手工改库模拟复测与随访指标变化**：缺乏确定性与跨 Epoch 重放一致性；内置 `truth-stage` 扩展可在零模型、零临床 DTO 污染下精确表达病程演变。
 
 ## Consequences
 
-- 管理员可在单一入口幂等准备全部五例心血管与慢病专病病例，并在不调用任何外部模型的情况下完成门诊首诊、复测、住院造影/PCI 决策、肾功能红线拦截及出院后门诊随访全链路验证。
-- 临床接口、可见病史、FHIR Search 与管理摘要均保持零 `Case Truth` 泄漏；CLI Operation Catalog 与 DSH 只读工具接入见 [同源专病临床内核与像素暂缓边界](2026-11-19-shared-specialist-clinical-kernel-and-pixel-deferral.md)。
-- 当前领域词汇归 [领域词汇](../../../../CONTEXT.md)，架构规则归 [仿真、病例与素材](../../../architecture/simulation.md#103-场景定义)。
+管理员可一键零模型幂等就绪单病例 PCI 与五例心肾专病病例包，完整支撑首诊、同次复测、造影 FFR 决策、围术期护肾、药事红线拦截及院后随访的确定性端到端回归，所有公开临床、历史与管理摘要接口维持零 `Case Truth` 泄漏（三端同源内核与无像素边界见[同源专病临床内核与像素暂缓边界](2026-11-19-shared-specialist-clinical-kernel-and-pixel-deferral.md)）。

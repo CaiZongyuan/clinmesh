@@ -1,22 +1,17 @@
 # 部署指南
 
-本指南从 clone 开始，按顺序完成本地部署：基础运行、参考目录同步、AI Provider 配置、Synthea 患者生成与可选运行方式。每一步都以前一步为前提；只想快速体验的读者完成步骤 1、2、5 即可登录演示账号。产品定位与工程形态见仓库根 [README](../README.md)，单实例与持久化运行边界见[系统架构](architecture/system.md#部署拓扑与单实例约束)。
-
-不配置 Synthea Provider 不阻塞 ClinMesh 启动；Provider 缺失只影响新的患者生成任务。生成患者后，"生成患者档案"和"开始门诊就诊"要求步骤 4 的 AI Provider 已配置。
+本指南从 clone 开始，按顺序完成本地部署：基础运行、参考目录与指南同步、AI Provider 配置、启动验证，以及 Synthea、影像／病理素材、Docker、生产直跑、局域网与 DSH 原生入口。只想快速体验演示工作台的读者完成步骤 1、2、5 即可登录合成账号。产品定位见仓库根 [README](../README.md)，单实例运行边界见[系统架构](architecture/system.md#部署拓扑与单实例约束)。
 
 ## 0. 前置条件
 
 | 目标 | 需要的工具 |
 | --- | --- |
-| 基础运行（步骤 1–2、5） | Node.js `>=24.9.0`、pnpm `11.17.0`、Git，首次启动可访问 cn-health Registry 与 GitHub Release |
-| 完整参考目录（步骤 3） | 同上，加可访问 cn-health Registry 的网络 |
-| 患者档案与就诊闭环（步骤 4） | 同上，加一个 OpenAI-compatible Provider 及 API key，或 DSH 已配置的 Provider |
-| Synthea 患者生成（步骤 6） | x86-64 主机上的 Docker Engine 与 `docker compose` |
-| 全量检查与生产构建 | Bun `1.4.2`（DSH React Surface artifact 构建使用 `bun`） |
-| DSH Web 原生入口 | Bun `1.4.2` 与网络，其余由 `pnpm dsh:setup` 按 lock 自动安装；Windows 同时需要系统自带的 Windows PowerShell 5.1 |
+| 基础运行（步骤 1–3、5） | Node.js `>=24.9.0`、pnpm `11.17.0`（可由 corepack 按 `packageManager` 自动切换）、Git，首次启动可访问 cn-health Registry 与 GitHub Release |
+| 动态患者档案与自由问诊（步骤 4） | 同上，加 OpenAI-compatible Provider 及 API key，或 DSH 已配置的 Provider（固定 PCI 与专病病例包无需外部模型即可运行） |
+| Synthea 动态患者生成（步骤 6） | x86-64（`linux/amd64`）主机上的 Docker Engine 与 `docker compose` |
+| 全量检查与生产构建 | Bun `1.4.2`（构建 DSH React Surface artifact） |
+| DSH Web 原生入口 | Bun `1.4.2` 与网络，其余由 `pnpm dsh:setup` 按 lock 自动安装；Windows 另需系统自带 Windows PowerShell 5.1 |
 | Mobile 原生目标 | Xcode 或 Android Studio |
-
-pnpm 版本由根 `package.json` 的 `packageManager` 字段固定，可使用 corepack 自动切换。
 
 ## 1. 获取代码与安装依赖
 
@@ -27,7 +22,7 @@ git submodule update --init --recursive
 pnpm install
 ```
 
-子模块初始化必须发生在 `pnpm install` 之前：`apps/dsh-web` 通过 `file:` 协议依赖 `vendor/dsh-react-surface/packages/{runtime,build}`，子模块不存在时安装会以 ENOENT 失败。依赖版本由 `pnpm-lock.yaml` 固定；pnpm build scripts 采用 allowlist，只允许仓库明确登记的安装步骤。
+子模块初始化必须在 `pnpm install` 之前：`apps/dsh-web` 通过 `file:` 依赖 `vendor/dsh-react-surface/packages/{runtime,build}`，缺失时安装会以 `ENOENT` 失败。依赖版本与允许执行的构建脚本均由 `pnpm-lock.yaml` 和根配置固定。
 
 ## 2. 创建环境文件
 
@@ -35,180 +30,63 @@ pnpm install
 cp .env.example .env
 ```
 
-已有 `.env` 时不要覆盖。Server 与数据库 CLI 自动读取仓库根 `.env`，显式 shell 环境变量优先级更高。`.env.example` 已包含全部必填项：`CLINMESH_AUTH_SECRET`、`CLINMESH_CURSOR_SECRET`、`CLINMESH_DATABASE_PATH` 和 `CLINMESH_DEMO_PASSWORD`；默认 Server 监听 `127.0.0.1:51868`，Web 开发入口为 `51888`。在 git worktree 中运行时，`.env` 必须位于该 worktree 根目录。
+已有 `.env` 时不要覆盖。Server 与数据库 CLI 自动读取当前仓库或 git worktree 根目录的 `.env`，显式 shell 环境变量优先级更高。`.env.example` 已包含 `CLINMESH_AUTH_SECRET`、`CLINMESH_CURSOR_SECRET`、`CLINMESH_DATABASE_PATH`、`CLINMESH_REFERENCE_DATABASE_PATH` 和 `CLINMESH_DEMO_PASSWORD`；默认 Server 监听 `127.0.0.1:51868`，Web 热更新入口监听 `127.0.0.1:51888`。
 
-## 3. 参考目录自动准备与维护
+## 3. 参考目录、DRG 与指南同步
 
-默认同步诊断（ICD-10）、药品和 `laboratory-cn` 三个数据集，并自动准备完整 DRG 固定资料；独立 LOINC 目录不进入默认 lock。参考数据保存在独立 Reference SQLite；Server 启动时自动将 laboratory-cn 单项和组合的可开服务快照写入 HIS operational SQLite。仓库提交的 `reference-data.lock.json` 固定每个 Dataset Release 与 Manifest hash；同步只在开发、构建或运维阶段访问 Registry，Server 运行时不执行 `cn-health`，也不访问 GitHub 或 Registry。
-
-`pnpm dev:server` 等正常开发入口会自动准备参考目录；维护者需要提前核对时，可运行 check-only。它按 lock materialize 每个精确 Release 并交叉验证签名、身份、hash、SQLite 和表不变量，不写正式数据库。三个 Dataset 的 materialize 并行执行，stderr 逐阶段输出进度与耗时（stdout 的 JSON 结果不受影响）：
+`pnpm dev:server`、`pnpm dev:dsh` 和 `pnpm dev:lan` 首次启动会自动按 `reference-data.lock.json` 同步 ICD-10 诊断、药品和 `laboratory-cn` 数据集到独立的 `.data/clinmesh-reference.sqlite`，并自动启用本院检验服务快照；Server 运行期只读该库，不联网调用 `cn-health`。维护者可显式执行只读核对（如当前 `laboratory-cn@2026-09-01.r1` 应报告 `laboratory_test=84`、`laboratory_reference=96`、`laboratory_panel=15`、`laboratory_panel_member=88`）或正式同步：
 
 ```sh
 pnpm reference:sync -- --check
-```
-
-当前 `laboratory-cn@2026-09-01.r1` 应报告 `laboratory_test=84`、`laboratory_reference=96`、`laboratory_panel=15`、`laboratory_panel_member=88`。确认后执行正式同步：
-
-```sh
 pnpm reference:sync
 ```
 
-正式同步写入 `.data/clinmesh-reference.sqlite`，相同 lock 重复执行返回幂等成功。`.env.example` 已默认启用 `CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite`；当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`（lock 升级后自动跟随），仅覆盖 `CLINMESH_REFERENCE_RELEASE_ID` 时才需要手动维护。同步不会修改 `.env`，也不会热切换已启动的 Server。绕过准备入口直接启动 Server 时，库中缺少当前 Release 会失败关闭（`REFERENCE_RELEASE_NOT_FOUND`），错误消息指引重跑 `pnpm reference:sync`。只有显式移除参考数据库配置时，Server 才使用内置合成 fixture（`clinmesh-hospital-reference-fixture-2026-08-28`）：诊断与检验目录为空，药品目录只有 3 条合成产品，医生无法下诊断或开检验。
+绕过准备入口直接启动 Server 且参考库缺少当前 Release 时，进程以 `REFERENCE_RELEASE_NOT_FOUND` 失败关闭；仅显式移除 `CLINMESH_REFERENCE_DATABASE_PATH` 时才回退内置最小合成 fixture（诊断与检验为空，仅含 3 条合成药品）。
 
 ### 离线 DRG 资料核对
 
-新用户无需复制资料目录或单独导入。`pnpm dev:server`、`pnpm dsh:setup` / `pnpm dev:dsh` 和 `pnpm dev:lan` 的启动准备自动取得并核验完整五目录 r3 与 OpenDRG 2026-10-20 快照；`pnpm reference:sync` 同样包含这一步。首次准备需要访问 GitHub Release；精简包约 36.1 MB，常驻约 347.6 MB，完整保留原 2,335 个逻辑文件。精确字节、物理文件数和无损读取机制见[DRG 储存合同](drg-reference-storage.md)。Docker 构建时自动准备并将资料及参考库放入镜像，冷启动离线复用，不从个人电脑寻找资料。
-
-自动启动准备使用 `.env.example` 中的参考数据库配置。显式移除 `CLINMESH_REFERENCE_DATABASE_PATH` 时保留合成 fixture 模式，不下载 DRG，也不报告 DRG 已就绪；维护 CLI 显式指定 `--database` 仍可准备目标库。
-
-内容身份由[离线清单](../apps/server/reference-data/drg-offline.lock.json)固定，下载地址、压缩包哈希及解包规模由[分发锁](../apps/server/reference-data/drg-distribution.lock.json)固定。自动安装目录位于参考数据库同级的 `drg-reference/`，默认是 `.data/drg-reference/`，按当前锁身份保存。仓库根或安装目录中已有完整的当前精简资料时，核验后离线复用；缺失时下载固定精简包。开发阶段只维护当前格式，不扫描、转换或回退旧完整安装；已有库残留旧格式登记时，按[局部恢复](#旧格式-drg-登记的局部恢复)处理，不因清单格式变化重建临床参考目录。
-
-正常准备完成后，维护者可从仓库根目录核对结果：
+启动准备与 `pnpm reference:sync` 会按[离线清单](../apps/server/reference-data/drg-offline.lock.json)和[分发锁](../apps/server/reference-data/drg-distribution.lock.json)自动下载并核验五目录 r3 与 OpenDRG 固定精简包，默认安装于 `.data/drg-reference/`（物理表示、无损读取与维护制包命令见[DRG 离线资料储存合同](drg-reference-storage.md)）。已安装完整版本离线复用，准备前跨分页校验全部现存登记格式与内容哈希，缺失或损坏时在临时目录重验通过后才原子替换；用途固定为离线核对（`runtimeEnabled=false`），管理员会话可通过 `GET /api/sim/v1/reference-data/offline-inventories` 分页回读摘要（审计边界见[参考数据策略](architecture/fhir-and-commands.md#54-中国术语与参考数据策略)）。维护者核对与单独修复命令如下：
 
 ```sh
+pnpm --filter @clinmesh/server drg:prepare --check
+pnpm --filter @clinmesh/server drg:prepare
 pnpm --filter @clinmesh/server reference-db list-inventories --database ../../.data/clinmesh-reference.sqlite --page 1 --page-size 20
 pnpm --filter @clinmesh/server reference-db inventory-audit --database ../../.data/clinmesh-reference.sqlite
 pnpm --filter @clinmesh/server reference-db verify --database ../../.data/clinmesh-reference.sqlite
 ```
 
-自动准备失败时显示下载或校验错误，启动准备不宣告成功；网络恢复后重跑原启动命令即可。已安装资料完整时不访问分发源；缺失或损坏时重新下载到临时目录，整包及来源文件核验通过才替换安装版本，失败保留已有文件和清单。只想修复 DRG 而不重新同步临床目录时，可运行 `pnpm --filter @clinmesh/server drg:prepare`；它读取与 Server 相同的环境文件和参考库路径，支持 `--database`、`--install-directory`、`--manifest`、`--distribution`、`--input-root` 供维护及隔离验证使用。`--check` 在临时目录核验，不写正式资料目录、数据库或审计。自定义 `--database` 应与 Server 配置一致。
-
-准备在复用或登记当前身份前跨分页核验全部现存登记的格式和内容哈希（当前清单已在前页命中也不跳过后续页的无效记录，仅参考库或登记表尚未建立时走首次初始化）；已有无效登记或其他不可恢复的数据库读取错误会直接失败，不以重新登记掩盖。每轮准备对完整资料核验一遍，登记清单复用本轮核验结果；下一次独立准备仍会重新检查全部文件，已有相同清单返回 `created: false`。LAN 和 DSH 启动器完成参考资料准备后，通过 Server 内部 `dev:prepared` 入口继续启动，只执行数据库迁移；`pnpm dev:server` 独立启动仍执行完整准备。哈希失配、缺文件、版本或格式不兼容、行数不符、越界路径、归档链接、循环依赖、重复或未列入索引的物理文件均拒绝发布；同一 `inventoryId` 不能覆盖。当前精简清单为 `clinmesh-drg-offline-2026-10-25.r1`，原逻辑 manifest/checksums 与全部来源事实保持不变；用途继续固定为离线核对，不启用分组或支付计算。`inventory-audit` 返回最近 100 条本地准备和查询记录，包含实际操作系统用户、时间、成功或失败，不记录原文；完整资料已就绪且相同清单已存在时，自动检查仅以只读方式复用。
-
-维护者构建、制包和按需导出使用[储存维护命令](drg-reference-storage.md#维护命令)，安装不永久生成逻辑副本。新资料资产与两份锁一起更新，不能覆盖已发布快照；仓库只保留当前精简格式的发行锁。
-
-管理员可在登录会话下请求 `GET /api/sim/v1/reference-data/offline-inventories?page=1&pageSize=20`，回读来源、Manifest／文件哈希、版本、行数、来源单位、覆盖与隔离项。HTTP 与 CLI 清单列表均返回 `items/page/pageSize/total`，默认每页 20 条、最多 50 条，可按总数继续翻页。普通岗位访问被拒绝；成功和失败读取沿用 operational 审计链及 FHIR AuditEvent。查询与恢复依据见[参考数据合同](architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
-
 ### 运行时 DRG 规则启用
 
-离线清单就绪默认不启用住院分组。当同步后的精简资料包含 `apps/server/reference-data/drg-rules-source.lock.json` 固定的三份输入时，`pnpm dev:server` 执行的 `pnpm --filter @clinmesh/server db:prepare` 会自动将 `clinmesh-chs-drg-30-2026-10-25.conditions-v2` 物化到 `.data/drg-rules/clinmesh-chs-drg-30-2026-10-25.conditions-v2`，在 `deployment/drg/pci-demo-review.json` 存在时调用 `loadReviewedDrgRules` 联动校验规则 Manifest 与当前临床 Reference Release 的绑定关系，并将同目录 `NOTICE.md` 复制到物化目录保留署名（`runtimeEnabled: false`，不自动开启运行时分组；合成最小测试夹具缺失来源输入时跳过物化）。需要单独物化到自定义目录时，从已安装精简资料根目录在仓库根执行：
+离线资料就绪默认不启用住院分组。`db:prepare` 在精简资料齐备时会自动按 `drg-rules-source.lock.json` 将 `clinmesh-chs-drg-30-2026-10-25.conditions-v2` 物化到 `.data/drg-rules/clinmesh-chs-drg-30-2026-10-25.conditions-v2`（也可使用绝对路径执行 `pnpm --filter @clinmesh/server drg:rules:prepare --input-root <精简资料根绝对路径> --output-directory <输出绝对路径>` 单独物化，条件编译边界见[DRG 条件分组](architecture/drg-grouping.md#规则产物与交接)）。部署审核 JSON（`clinmesh.drg-rules-review.v1`）须绑定实际 `releaseId/sourceVersion/manifestSha256/referenceReleaseId` 且 `usageTerms`、`codingCompatibility`、`sourceApplicability`、`algorithmValidation` 四项均为 `verified`（本机合成演示可直接复用已核验的 [`deployment/drg/pci-demo-review.json`](../deployment/drg/README.md)，证据见[DRG 条件核验记录](research/2026-10-25-drg-condition-verification.md)）。在根 `.env` 同时配置以下两项并重启 Server 即可开启 CHS-DRG 3.0 预分组、归档冻结与医保办核定（缺一、哈希不符或临床 Release 不匹配均启动失败）：
 
-```sh
-pnpm --filter @clinmesh/server drg:rules:prepare --input-root <已安装精简资料根目录绝对路径> --output-directory <新规则目录绝对路径>
-```
-
-`--input-root` 指向包含 `.data/drg-compact/v1/index.json` 的已安装根目录；命令从精简读取器重建三份固定逻辑输入，不要求旧逻辑路径存在物理文件，也不永久展开来源副本。默认离线锁为 `apps/server/reference-data/drg-offline.lock.json`，隔离准备可用 `--manifest <离线锁绝对路径>` 指定另一份当前格式的固定清单。参数使用绝对路径，避免 `pnpm --filter` 切换到 Server 目录后解析到其他位置。
-
-该命令将 `apps/server/reference-data/drg-rules-source.lock.json` 的三份来源路径及 SHA-256 与离线清单交叉核对，编译完整有序条件并核对 CC、MCC、CCE 与必填 SS_VALID 参数表，不执行上游 JavaScript。输出仅接受 `clinmesh.drg-rules.v2`；当前规则身份为 `clinmesh-chs-drg-30-2026-10-25.conditions-v2`，可将新规则目录放在仓库 `.data/drg-rules/` 下。新包在暂存目录校验后原子发布，重复运行核对同一 Manifest；输出目录已包含不同身份、缺少 Manifest、使用目录链接或产物损坏时明确报错，不能覆盖历史包。输出包含 `manifestSha256`、资料版本与 `runtimeEnabled:false`，不生成启用审核。显式单文件输入制包仍使用[分组维护命令](architecture/drg-grouping.md#规则产物与交接)。
-
-部署审核使用 [`drgRulesReviewSchema`](../apps/server/src/infrastructure/reference-data/drg-rules-package.ts) 定义的本地 JSON：固定 `schemaVersion=clinmesh.drg-rules-review.v1`、`scope=hospital-simulation`，绑定实际 `releaseId/sourceVersion/manifestSha256/referenceReleaseId`，记录核验人和 UTC 时间。`checks.usageTerms/codingCompatibility/sourceApplicability/algorithmValidation` 必须分别有 `status=verified` 和非空证据引用。审核是部署受信配置，文件完整性和制包成功不能代替来源用途、编码与算法核验；不得为通过启动而填写未经证实的结论。
-
-本机合成医院演示已完成核验时，在根 `.env` 同时配置以下两个变量并重启 Server（自定义部署改为对应审核文件路径）：
-
-```sh
+```dotenv
 CLINMESH_DRG_RULES_DIRECTORY=.data/drg-rules/clinmesh-chs-drg-30-2026-10-25.conditions-v2
 CLINMESH_DRG_RULES_REVIEW_PATH=deployment/drg/pci-demo-review.json
 ```
 
-相对路径以环境文件所在目录解析。只配置其中一个、审核不完整、包哈希或规则身份不一致、临床 Reference Release 不匹配时启动失败。审核核对的同一份 Manifest 用于装载文件并再次验证完整条件；旧 v1 包及其审核不能用于 v2，重新制包后须按实际产物哈希、规则身份与临床目录版本核验。未配置时其他 HIS 流程可用，DRG 入口明确显示规则未就绪。运行期只读取物化包，不临时下载来源或执行原分组程序。
-
-固定样本已独立对照冠心病无操作 FR59、实际 `36.0700` 支架置入 FM39、心衰 `I50.900` 的 FR25 和肺炎 `J18.900` 的 ES45；`00.6600` 在该来源有效操作表中未命中，不能以 PTCA 计划代替已核验的支架分组。完整条件程序的固定来源对照见[核验记录](research/2026-10-25-drg-condition-verification.md)，不能代替部署病例全部主次编码、来源用途及适用性的核验。[本机 PCI 演示部署](../deployment/drg/README.md)提供绑定上述完整 v2 包与实际临床 Release 的固定受信审核，来源用途及官方更新 PDF 已分别核对；审核仅适用于本机合成仿真。制包仍不自动启用，离线大包其他资料继续隔离，规则产物再分发及商业交付不在该审核范围内。来源证据边界见[资料核验](research/2026-10-21-opendrg-public-data-inventory.md)。
-
 ### 旧格式 DRG 登记的局部恢复
 
-本流程只处理已证明被当前精简资料完整替代的旧登记。`clinmesh-drg-offline-2026-10-25.r1` 与 `clinmesh-drg-offline-2026-10-22.r2` 的全部逻辑文件保持相同 SHA-256，变化的是物理储存和登记身份，见[固定快照](drg-reference-storage.md#当前固定快照)。若旧登记缺少 `storage`，当前读取器会拒绝它；单纯重复下载新资料不能消除旧登记。新安装没有此类残留时无需执行恢复。
-
-维护者显式确认恢复范围后按以下顺序处理；正常准备不会自动删除、忽略或迁移历史记录，当前没有专用清理 CLI。
-
-1. 核对 Server 实际配置的参考库绝对路径与临床 Reference Release，停止会访问或热重启该库的进程，确保维护期间没有并发写入。记录待删除旧身份、预期内容哈希及当前替代身份；不能把所有缺少 `storage` 的记录当成同一类可清理对象。
-2. 使用 SQLite 一致备份机制保存完整参考库，包含 WAL 中已提交内容；不要在连接活跃时仅复制主 `.sqlite` 文件。核对备份完整性与源库逻辑状态一致，将目标旧登记的原始 `inventory_id/content_hash/inventory_json`、关联审计、替代依据及非目标数据校验值另行归档。备份与归档放在持久的本地资料目录，不进入 Git，禁止先删记录再备份。
-3. 完整核验当前锁对应的物理对象、全部逻辑文件覆盖与原 SHA-256，以及行数、单位、缺参和隔离条件。可从公开入口执行下列 check-only 命令；自定义安装目录时同时指定实际 `--install-directory`，该模式不修改正式数据库、安装目录或审计。
-
-   ```sh
-   pnpm --filter @clinmesh/server drg:prepare --database <参考库绝对路径> --check
-   ```
-
-4. 对照归档旧登记和本轮核验得到的当前清单，逐项确认来源、版本、manifest/checksums、逻辑文件哈希及覆盖相符，当前登记的身份和内容哈希也必须与核验结果相符。没有明确替代关系、原哈希不符、当前资料不完整或归档不可验证时停止；不补写 `storage`，不改写旧内容或绕过不可变校验。
-5. 在短 SQLite 写事务内再次核对目标旧身份、内容哈希及原始 JSON 与归档完全相同，并确认当前替代登记仍与本轮核验结果相符；只删除这次确认的旧登记，要求影响行数与预期一致。保留既有审计、其他登记、全部临床参考目录及业务数据库，任一检查失败则回滚。事务内不进行下载或长时间资料核验。
-6. 回读所有剩余清单并运行参考库完整核验，比较清理前后非目标参考数据及既有审计，确认仅目标登记被移除且业务库未修改，再重跑原准备与启动入口。备份和原始归档继续保留；如仍有未知或损坏登记，保留现场并单独诊断，不扩大删除范围。
-
-此流程调整的是已替代登记的维护策略，不恢复旧物理格式支持，也不要求变更临床 Release 配置或重新导入诊断、药品、检验目录。决策理由见[局部恢复决策](decisions/implemented/bug-fix/2026-10-26-drg-inventory-recovery.md)。
-
-### 冠心病资料的本地流程验证
-
-此入口先验证用户提供的冠心病资料能进入现有建议生成、核验与医生确认；固定 Release 分发及新环境自动安装见[免费指南全文同步](#免费指南全文同步)。本地验证不表示来源已获商业授权，不改变原 26 份资料的用途标记。取舍见[本地指南验证决策](decisions/implemented/architecture/2026-10-26-local-guideline-validation.md)，运行与存储边界见[临床业务流程](architecture/clinical-workflows.md#81-门诊闭环)。
-
-`apps/server/reference-data/local-guideline-sources.json` 固定来源元数据、原始 SHA-256 及可纳入的 PDF 物理页范围；当前清单纳入 30 份本地验证来源。2016 PCI 和冠脉痉挛两份异常原文暂不纳入，其他已识别不可解释符号页也被排除。将维护者收到的原始 PDF 逐份核对后，以 `<sha256>.pdf` 放到 `.data/guidelines/local-originals/` 或显式指定的目录，不修改原字节或猜测替换医学符号；接收机不能把维护者个人桌面路径当成安装合同。
-
-```sh
-pnpm guidelines:local-sync -- --source-dir <原件目录> --database <指南库路径>
-```
-
-本地清单是 `local-evaluation-` 来源空间的完整快照，不是增量补丁；删掉条目或收紧范围会先停用相应旧段落，随后原件缺失或导入失败不会恢复已撤销范围。其他来源保持不变，原文及范围相同的重复导入不新增段落。导入校验文件哈希、32 MiB 大小上限、页范围和可读文本；失败逐项报告，不提交完整原文或 SQLite。
-
-同一指南的院内上传副本或节选可在 `source.derivedFromSourceId` 登记原来源稳定 ID（如 `"coronary-01-2021"`），无原来源则留空；既有 30 项本地冠心病来源已登记对应固定包来源。原来源撤回、替代或正文未核验会沿关联链停用派生副本，相同完整正文跨入口共享一份索引而各自保留来源状态与用途限制。普通导入和 `guidelines:prepare` 会补齐可唯一确认的旧来源关联；若出现多候选歧义，在清单显式登记后再重导，不靠删除库解除停用。指南库 schema v1/v2 升级到 v3 时，先停止所有访问进程并保留一致备份，再运行普通 `guidelines:prepare`（只读 `--check` 在临时副本核对，不升级正式旧库）；回滚旧代码须恢复对应旧 schema 的指南库备份，不回滚业务库，完整迁移边界见[存储合同](architecture/storage.md#99-数据库迁移边界)。
-
-在本地内部流程验证部署中，根 `.env` 显式设置：
-
-```dotenv
-CLINMESH_GUIDELINE_LOCAL_EVALUATION=true
-```
-
-该值仅接受 `true`／`false`，默认 `false`；只影响显式本地来源，不会打开原 WHO 或其他未知来源。`CLINMESH_GUIDELINE_NON_COMMERCIAL_USE` 保持原来的独立意义。更改用途或首次建立库后重启 Server，已经打开的库可以读取独立 writer 发布的内容；用实际 Server 路径只读核对当前用途下的可用数量：
-
-```sh
-pnpm guidelines:sync -- --check --database <指南库路径>
-```
-
-本地验证开关与下文固定包的 `CLINMESH_GUIDELINE_DEPLOYMENT_POLICY` 独立：`internal-testing` 不启用 `local-evaluation-` 来源，本地验证开关也不启用固定包中的用途待核实全文；两者可同时选择。原来源撤回、被替代或正文核验未通过时，同哈希或稳定来源 ID 关联的派生内容也停止提供，准备、同步与运行时使用同一可用判断。
-
-模式及来源变化使旧自动依据失效；已正式确认的诊断、检查和处方保留。出处详情显示真实版本、出版链接、页码、原文和纳入范围，不把节选表述为完整最新版。语义验证使用合成病例、临时业务库和受控模型，未提供临床准确性或真实模型性能证明。
-
-维护前保留指南库的一致备份。新本地来源可省略未核实的下载端点；若需回滚到仍强制要求该字段的旧读端，先停用访问指南库的进程并恢复对应指南库快照，不回滚业务库或参考库。当前用途与实现取舍见[本地验证决策](decisions/implemented/architecture/2026-10-26-local-guideline-validation.md)。
+若历史参考库残留缺少 `storage` 字段的旧格式登记，启动会因不可变登记校验失败而报错退出，且单纯重下新资料不会自动清除旧记录。确认该旧登记已被当前精简快照逐逻辑文件等哈希完整替代后，先停止所有访问参考库的进程并对参考库执行 SQLite 在线一致备份，运行 `pnpm --filter @clinmesh/server drg:prepare --database <参考库绝对路径> --check` 验证当前物理包与全部原逻辑文件哈希无误，再在短 SQLite 写事务内仅删除已核实的被替代旧登记行（保留既有审计、其他登记、临床参考目录与业务数据库），最后运行 `reference-db verify` 复核无误后重启；未确认替代关系前严禁删除记录或改写旧 JSON（格式边界见[当前格式决策](decisions/implemented/simplification/2026-10-25-drg-current-format-only.md)）。
 
 ### 免费指南全文同步
 
-正常的 Server、LAN 和 DSH 准备入口会安装[固定指南包](../apps/server/reference-data/guideline-release.lock.json)，不因业务库或 Reference 库已存在而跳过。生产镜像在构建时准备相同资料，启动时离线复核；业务请求不下载原件。也可在仓库根单独准备或只读检查：
+<a id="冠心病资料的本地流程验证"></a>
+
+正常启动准备会自动按[`guideline-release.lock.json`](../apps/server/reference-data/guideline-release.lock.json)、[`guideline-release-manifest.json`](../apps/server/reference-data/guideline-release-manifest.json)与[`guideline-release-overlay.json`](../apps/server/reference-data/guideline-release-overlay.json)离线核验或下载安装 58 份锁定指南快照到 `.data/clinmesh-guidelines.sqlite`（`CLINMESH_GUIDELINE_DATABASE_PATH` 可覆盖；异常中断遗留 `.prepare.lock` 时确认无准备进程后再删除；人群隔离、共享正文与检索规则见[临床决策支持与质控](architecture/clinical-decision-support.md)，schema 升级与回滚备份边界见[数据库迁移边界](architecture/storage.md#99-数据库迁移边界)，来源考证见[临床指南研究](research/2026-10-13-clinical-recommendation-guidelines.md)）。常用准备、官方注册表同步与已复核单来源恢复命令如下：
 
 ```sh
 pnpm guidelines:prepare
 pnpm guidelines:prepare -- --check
-```
-
-包锁拥有精确版本、Release URL、归档 SHA-256、解包规模、清单身份及原始段落数量；[来源清单](../apps/server/reference-data/guideline-release-manifest.json)拥有逐项题名、机构、文献性质、年份、来源、原件哈希及派生正文、核验记录的哈希；静态打包的[发行叠加层](../apps/server/reference-data/guideline-release-overlay.json)在不改动包锁与原始清单哈希的前提下，对全部 58 项来源做 1:1 人群（16 项 `pediatric`、5 项 `all`、37 项 `adult`）和专科标注，并经 `beforeSha256`／`afterSha256` 双重校验对 `coronary-20-2021` 物理第 4 页剥离图 1 矢量字体控制字符乱码、恢复可读全文与按页定位。快照为 `guidelines-2026-10-26-v1`，包含既有 26 项及新增冠心病 32 项：58 份原件（53 PDF、5 WHO 文本），另有一份题录 XLSX。2016 年中国 PCI 指南使用 MinerU 恢复正文，2015 年冠状动脉痉挛共识使用 PDF.js CMap 正文并以 MinerU 辅助对照；原始导出、独立物理页映射及 Agent 校对修订随包锁定。核验记录的 `reviewerKind` 区分自动检查、Agent 校对与自然人审校；`manualReview` 只记录自然人状态，安装者无需另行提供人工记录。`textStatus=verified` 表示提取正文及定位通过登记的检查，具体校对页和未确认内容以核验记录为准；不能把局部校对称为全篇临床审校，也不能把 2015—2023 年冠心病合集称为最新指南全集。
-
-默认沿用原用途过滤，当前包可检索全文为 0。内部测试部署在根 `.env` 显式选择以下策略后重启 Server，再检查准备结果：
-
-```dotenv
-CLINMESH_GUIDELINE_DEPLOYMENT_POLICY=internal-testing
-```
-
-单独设置该策略即可启用固定包中全部 58 份正文检查通过、状态 active 且至少有一段可靠正文的已登记来源（无需同时开启 `CLINMESH_GUIDELINE_NON_COMMERCIAL_USE`；成人上下文可检索 42 份 `adult`＋`all` 指南，16 份儿童血液肿瘤规范零召回）；正文待核验、不可读、已撤回或被替代的来源保持停用。尚未确认的控制字符或替代字符段落完整保留，但在检索候选限额前隔离；可检索段落数因此可能少于已提取段落数，以准备结果为准。来源原始许可和用途待核实状态不变，不将内部测试策略表示为开放许可。取消该策略或设回 `default` 后恢复原限制，部署策略、人群边界、来源身份、状态、正文与质量规则共同进入 revision，旧建议随之失效；首次建库或切换库路径需重启，已打开的库通过独立 writer 更新后运行中的只读连接可见新内容。未配置路径时，准备器和 Server 都使用 `.data/clinmesh-guidelines.sqlite`。
-
-`guidelines:prepare` 的 stdout JSON 报告来源、物理原件、提取、正文核验、原始／可检索段落及 `withheldReason`（顶层描述固定包，`corpus` 单列全库共享正文去重统计），进度写入 stderr；支持 `--database <path>`、`--install-directory <path>`（默认数据库同级 `guidelines/<manifest-sha256>/`）与 `--manifest <lock>`。完整安装重复准备可离线复用；`--check` 不下载、不建库、不改写正式目录及其 WAL/SHM sidecar，而是在系统临时副本中核对已提交事务的全文索引与正文一致性（复制期间若有活跃写入，待写入完成后重跑；索引损坏可由普通准备离线重建）。异常遗留 `.prepare.lock` 时确认无准备进程后再删除；若报告 recovery failed，先保全提示中的 staging／previous 路径并恢复备份。维护者制包在仓库外快照上运行 `pnpm guidelines:package -- --input-root <snapshot> --output <archive.tar.gz> --url <固定Release资产URL>`，校对定位须唯一匹配锁定正文；维护同步发布的撤回、替代、正文限制和用途收紧优先于固定包并在导入或修复时保留，完整持久化与恢复边界见[存储合同](architecture/storage.md#99-数据库迁移边界)。
-
-固定包来源需要重新启用时，维护者先复核对应版本、正文和用途，确认当前锁定快照仍可使用，再明确指定来源 ID：
-
-```sh
 pnpm guidelines:prepare -- --restore-source coronary-01-2021
-```
-
-`--restore-source` 可重复指定多个来源，仅接受锁定包内 active、正文核验为 `verified` 且有可靠段落的来源。命令重新核对固定包的原件、正文和核验记录，在同一事务恢复指定来源的包内状态与原始许可，保留其余来源的限制；已安装资料可离线使用，不从单篇 `downloadUrl` 重新抓取，也不能与 `--check` 合用。恢复后是否可检索仍由部署用途策略决定。若复核后的版本、正文或许可与当前锁不同，先发布新 Release 并更新锁，不用旧快照解除仍有效的限制。
-
-原有官方来源也可更新注册表并显式运行下文的维护同步；正文核验限制须显式登记恢复为 `verified`，旧注册表缺少核验状态时会拒绝重新导入 active 来源并保留限制，用途限制须更新为复核后的许可与分发状态。冠心病固定包来源使用上述恢复入口；不要通过删除库或限制记录恢复启用。
-
-原有官方来源维护同步仍可独立使用：
-
-```sh
 pnpm guidelines:sync
 pnpm guidelines:sync -- --check
 ```
 
-同步从 `apps/server/reference-data/guideline-sources.json` 登记的免费官方地址获取文件，逐项校验 SHA-256 并提取正文；默认数据库为 `.data/clinmesh-guidelines.sqlite`，原文件缓存为 `.data/guidelines/cache`。`--check` 只读现有数据库，不下载；stdout JSON 分别报告来源总数、可检索来源数、段落数、可检索段落数、失败数及逐项状态，进度和失败原因写到 stderr。失败来源使退出码非零，损坏或失败更新保留旧版；来源撤回、被替代或用途收紧为非商业、未核实会优先发布限制并停用旧版，不能因下载失败继续使用。
-
-首批注册表包含 21 份国内官方 PDF 和 5 份 WHO 正文文本，具体覆盖与许可事实由[来源研究](research/2026-10-13-clinical-recommendation-guidelines.md#免费路线的首批原文与正文核验)拥有。`sourceCount` 不等于可供模型使用的数量：国内全文用途暂未核实，标为 withheld；WHO 单篇采用非商业许可，仅适用于已核实的当前科研用途，不能据此承诺商业部署权益。新增或修订来源时由维护者核对版本、状态、许可、下载地址与哈希后更新注册表并重新同步，不自动抓取未知来源或推断最新版本。
-
-在 `default` 部署策略下，只有核实本部署及所用模型服务的实际用途符合对应非商业许可后，才在根 `.env` 显式设置 `CLINMESH_GUIDELINE_NON_COMMERCIAL_USE=true`；未声明或设为 `false` 时非商业全文不进入建议、模型输入或可检索数量。Server、准备和同步 CLI 读取同一声明，变量只接受 `true`／`false`。该开关仅启用现有 5 份 WHO 中正文可靠的段落，不放行用途待核实资料；原有已核短引文沿用其独立依据。内部测试用途由上文的独立策略表达。
-
-Server 默认从 `CLINMESH_GUIDELINE_DATABASE_PATH` 读取该库。库存在时只读打开；缺失时继续使用原有已核短引文，库存在但格式错误时启动失败。首次建立库或改变路径后重启 Server；已打开库的内容更新可被运行中的只读连接读取，并使旧建议失效。可显式使用 `--database <path>`、`--manifest <path>`、`--cache-dir <path>`，其中 `--database` 应与 Server 配置保持一致。备份时保留注册表版本与数据库，并按需保留可重新校验的下载缓存；完整原文和派生数据不提交 Git。正文抽取不等于表格、脚注、临床适用性或所有版本现行性已完成医学审校。
+默认用途策略下固定包可检索全文为 `0`。内部测试环境可在 `.env` 显式设置 `CLINMESH_GUIDELINE_DEPLOYMENT_POLICY=internal-testing` 并重启 Server 启用锁定包中正文核验通过的可靠段落；`default` 策略下核实非商业科研用途后设置 `CLINMESH_GUIDELINE_NON_COMMERCIAL_USE=true` 仅启用 WHO 非商业许可段落。维护者对本地原始冠心病 PDF（按 `<sha256>.pdf` 放入目录并匹配 `local-guideline-sources.json`）做内部验证时，运行 `pnpm guidelines:local-sync -- --source-dir <原件目录> --database <指南库路径>` 并设置独立的 `CLINMESH_GUIDELINE_LOCAL_EVALUATION=true`。
 
 ## 4. 配置 AI Provider（患者档案必需）
 
-Server 在启动时按 `CLINMESH_AI_SOURCE` 选择模型来源，默认 `openai`。`pnpm dev:dsh` 自动设置为 `dsh`，复用宿主 Provider 与凭据，无需重复填写下面的地址、密钥或模型变量。在 DSH“设置 → 通用 → ClinMesh 模型”中选择具体 Provider／模型，或保留“使用 DSH 默认模型”；右侧会话的模型选择独立。
-
-DSH 模型任务报 `AI_AUTH_FAILED` 时，在宿主模型设置中检查所选 Provider 的凭据与该模型的访问权限；模型出现在候选目录中不代表上游允许调用。需要改用其他可用模型时，保存新的 ClinMesh 模型选择：问诊点击“重试患者回答”，失败检验点击重新生成；患者档案或目录补全发起新生成任务。已在执行或排队的任务继续使用其绑定模型，已有结果保持不变。
-
-独立 Web 默认使用 OpenAI-compatible Provider。四个基础变量必须同时配置；档案复用 `CLINMESH_AI_BRIEF_MODEL`，自由问诊另配置 `CLINMESH_AI_CONSULTATION_MODEL`：
+`pnpm dev:dsh` 自动设置 `CLINMESH_AI_SOURCE=dsh` 复用宿主 Provider 与凭据，在 DSH“设置 → 通用 → ClinMesh 模型”即可选择路由（若报 `AI_AUTH_FAILED`，在宿主检查凭据或改选可用模型后对问诊点击重试、对失败检验点击重新生成、对患者档案发起新任务；已在途任务保持原绑定模型）。standalone Web 默认 `CLINMESH_AI_SOURCE=openai`，动态 Synthea 病例的档案生成、检验模型兜底与自由问诊在 `.env` 配置（OpenAI 兼容网关 `baseURL` 须填包含 `/v1` 的实际 API 根路径；仅显式通过 CLI 发布 LOINC 候选服务时才需额外配置 `CLINMESH_AI_CATALOG_ENRICHMENT_MODEL`）：
 
 ```dotenv
 CLINMESH_AI_BASE_URL=https://provider.example/v1
@@ -218,15 +96,7 @@ CLINMESH_AI_INVESTIGATION_MODEL=provider/investigation-model
 CLINMESH_AI_CONSULTATION_MODEL=provider/consultation-model
 ```
 
-laboratory-cn 默认自动启用，不需要 Catalog Enrichment。只有显式配置包含 LOINC 的 Reference Release，并通过 CLI 发布该来源服务时，才需要 `CLINMESH_AI_CATALOG_ENRICHMENT_MODEL`。未配置基础变量时，动态 Synthea 病例的"生成患者档案"返回 `PROVIDER_NOT_AVAILABLE`，且没有档案就无法把该病例开始为门诊就诊（`BRIEF_NOT_READY`）；固定 PCI 病例与五例心肾专病 `Authored Case Pack`（Web“模拟数据 → PCI 演示准备”或 `clinmesh admin authored-case-pack prepare`）使用确定性版本化模板 `clinmesh-authored-template` 与结构化分阶段 `Case Truth`，无需配置外部 AI Provider 即可准备并跑通门诊／住院临床评分、同步指南专题、医嘱组套预筛、双层事中质控与品规级医保结算。
-
-未配置 consultation 模型时，已有服务仍可启动；自由问诊返回 `CONSULTATION_REPLY_UNAVAILABLE`，保留医生发言并可在模型恢复后重试。每轮问诊最多等待约 30 秒。
-
-可显式运行一次本地 live smoke 验证 schema 与泄漏检查；它不进入 `pnpm check`，不打印档案内容或凭证：
-
-```sh
-pnpm smoke:patient-brief:live
-```
+固定 PCI 病例与五例心肾专病 `Authored Case Pack`（Web“模拟数据 → PCI 演示准备”或 `clinmesh admin authored-case-pack prepare`）内置版本化模板 `clinmesh-authored-template` 与分阶段 `Case Truth`，无需配置外部 AI Provider 即可跑通完整门诊与住院流程。缺少 consultation 模型时服务仍正常启动，仅自由问诊返回 `CONSULTATION_REPLY_UNAVAILABLE` 并保留医生提问供恢复后重试；配置外部 Provider 后可显式运行 `pnpm smoke:patient-brief:live` 做单次连通性自检。
 
 ## 5. 启动并验证
 
@@ -234,14 +104,7 @@ pnpm smoke:patient-brief:live
 pnpm dev:server
 ```
 
-`pnpm dev:server` 先构建 Web，迁移 operational SQLite 和 `.env` 中已配置的 Reference SQLite，seed 演示 workspace 与合成账号，再启动只验证 schema 的监听进程。默认地址：
-
-- Server 与 Web 发布：http://127.0.0.1:51868/
-- Web 开发入口（热更新）：`pnpm dev:web` → http://127.0.0.1:51888/
-- 健康检查：http://127.0.0.1:51868/api/health
-- FHIR metadata：http://127.0.0.1:51868/fhir/R5/metadata
-
-合成演示账号（共用 `.env` 中 `CLINMESH_DEMO_PASSWORD`，从 `.env.example` 复制时默认为 `ClinMesh-demo-password-2026!`）：
+`pnpm dev:server` 构建 Web、迁移 operational SQLite、准备参考与指南资料、seed 演示工作区与账号并监听 `http://127.0.0.1:51868/`（前端热更新另开终端运行 `pnpm dev:web` 访问 `http://127.0.0.1:51888/`；健康检查 `/api/health`，FHIR 元数据 `/fhir/R5/metadata`）。全部合成岗位账号共用 `.env` 中的 `CLINMESH_DEMO_PASSWORD`（默认 `ClinMesh-demo-password-2026!`）：
 
 | 岗位 | 账户邮箱 |
 | --- | --- |
@@ -256,74 +119,33 @@ pnpm dev:server
 | 医保办 | `medical-insurance@demo.clinmesh.local` |
 | 管理员 | `admin@demo.clinmesh.local` |
 
-住院医生、病区护士、病案人员与医保办登录后进入对应住院或医保核定工作台；挂号员、收费员与药师在各自工作台切换住院页签。住院医生与病区护士的当前岗位绑定具体科室和病区，转科时使用目标科室岗位接管，业务门禁见[临床业务流程](architecture/clinical-workflows.md#82-住院闭环后续)。
-
-完成步骤 3 后，以门诊医生登录并打开诊断选择器应能搜索到 ICD-10 条目，即参考目录生效。
-
-管理员可通过 [住院 CLI 的 PCI 资料准备入口](../skills/clinmesh-inpatient/SKILL.md#诊断医嘱与执行)读取固定版本底稿，再按当前 Epoch 幂等准备首例药耗及检验目录。该步骤只补基础资料和药品批次，不创建患者或就诊；已有价格、配置、库存消耗和业务保留。用量、候选缺项与数据边界见[住院医嘱合同](architecture/clinical-workflows.md#83-医嘱生命周期)，完整病例及 DRG 联合验收仍由对应执行任务完成。
+以门诊医生登录可搜索 ICD-10 目录即表示参考库生效；住院跨科室交接与药耗目录准备分别见[住院与手术流程](architecture/inpatient-workflows.md)、[处方、医嘱与药事](architecture/orders-and-pharmacy.md)及[住院 CLI Skill](../skills/clinmesh-inpatient/SKILL.md)。
 
 ## 6. Synthea 患者生成
 
-Synthea Provider 与中国化 localizer 由固定 digest 的预构建镜像提供。镜像内已经包含固定 Synthea JAR、`synthea-cn@2026-08-29.r4` profile、匹配的姓名/地理/人口 Release 与实验性中文显示目录；宿主机不需要 JDK、Python、Rust、`uv`、第二个源码仓库或数据挂载。
-
-当前 Provider 镜像只发布 `linux/amd64`。arm64 主机不自动启用模拟运行，必须等待对应的原生镜像发行。
-
-启动两个内部容器并等待健康检查：
+Synthea Provider 与中文化 localizer 由固定 digest 的 `linux/amd64` 预构建容器提供，无需宿主机安装 JDK 或 Python（运行与重放边界见[Synthea 病例来源与重放决策](decisions/implemented/architecture/2026-08-30-synthea-case-source-and-replay.md)）：
 
 ```sh
 pnpm synthea:up
-```
-
-命令幂等拉取镜像，只启动 `cn-health-localizer` 与 `synthea-provider`，并在 Provider 真正健康后返回。需要执行一次完整的全模块单患者生成诊断时运行：
-
-```sh
 pnpm synthea:doctor
-```
-
-`doctor` 只打印版本、profile、模块数和 smoke 结果，不打印生成的 FHIR Bundle、模型内容或凭证。临床显示目录明确属于 `experimental-preview`；结构与 provenance 错误失败关闭，缺失翻译保留来源英文并在患者来源页显示“翻译待确认”。
-
-访问管理员模拟数据页面 `http://127.0.0.1:51868/scenario-data`，在“合成患者库”中点击“生成患者”；默认选择全部 Synthea 模块，每次打开都会产生新的双 seed，高级设置可手动修改以复现。生成完成后选择患者，可在“来源”页查看完整来源病史。
-
-需要能看片的患者时，在“定向病例”中选择一个影像适配条目，性别与年龄会对齐到条目的适用人群。定向生成要求 Provider 镜像在健康检查中声明 `targetedGeneration`；旧镜像不显示该选项。Synthea 在一次运行中固定患者的年龄等人口属性，只重试临床模拟，抽到难以满足条件的年龄时本次尝试约需一到两分钟才判定未命中，Server 随后换 seed 重试，整个任务可能持续十余分钟。肺癌条目把年龄收窄到 48–66 岁能显著缩短等待，因为 Synthea 的肺癌模块只在 45–65 岁发病且数年内死亡。各失败原因的处理见 [影像检查使用指南](imaging.md)。
-
-在“来源历史”中打开任一条目的 R4 详情，点击“生成患者档案”（要求步骤 4 已配置）。Brief 成功且已有当前 revision 后点击“开始门诊就诊”，选择科室、地点和门诊类型；系统直接创建普通 HIS 的 Patient、Registration、Encounter 和 Queue Task，随后即可继续岗位流程。
-
-停止并只移除两个 Synthea 容器：
-
-```sh
 pnpm synthea:down
 ```
 
-该命令不删除 ClinMesh SQLite、业务数据、Docker volume 或其他服务。Provider 未启动、不可达或停止时，ClinMesh 普通 HIS 与已经生成的病例继续运行；只有新的患者生成任务不可用。运行与发行边界见 [一键 Synthea 运行时](decisions/implemented/architecture/2026-09-03-one-command-synthea-runtime.md)。
+启动后在管理员 `http://127.0.0.1:51868/scenario-data` 点击“生成患者”（可选放射或病理定向条目），生成 Patient Persona 后即可开始就诊。`synthea:down` 仅移除两个生成容器，不影响已有病例与 HIS 运行。
 
 ## 7. 可选运行方式
 
 ### 影像素材
 
-胸片与胸部 CT 平扫的阅片需要本地影像素材。素材不随仓库分发：仓库只提交 [影像素材清单](../imaging-assets/README.md)，像素由下面的命令按清单从公开数据源拉取。不安装素材时系统照常启动，医生的放射服务显示为“本院当前未开展”，其余流程不受影响。
+胸片与胸部 CT 阅片按[影像素材清单](../imaging-assets/README.md)从公开数据源拉取 DICOM 到 `.data/imaging-assets`（可用 `CLINMESH_IMAGING_ASSET_DIRECTORY` 覆盖，支持重复 `--asset <assetId>` 限定范围，经代理访问公网时加 `NODE_USE_ENV_PROXY=1`；不安装时放射服务仅显示未开展）：
 
 ```sh
 pnpm imaging:sync
 pnpm imaging:verify
-```
-
-`imaging:sync` 需要访问 The Cancer Imaging Archive，逐文件下载来源 DICOM、校验哈希与 DICOM 中的 Study/Series/Instance UID、转码并原子安装；网络错误、超时、服务端错误、限流和被截断的响应会短暂退避后重试，其他请求错误直接报告失败。安装与保留的来源文件都完好的素材会被跳过，命令可以重复运行，中断后重跑即可，开始时会清理被中断运行遗留的临时目录。首批五套素材的来源文件约 355 MB，安装后另占约 352 MB。经代理访问公网时为该命令设置 `NODE_USE_ENV_PROXY=1`，Node 才会使用 `HTTPS_PROXY`。`imaging:verify` 只读核对已安装素材与 `sources/` 中保留的来源文件，不访问网络；每套素材的状态为 `ready`（完好）、`missing` / `corrupt` / `outdated`（安装目录缺失、损坏或与清单版本不符）、`sources-missing` / `sources-corrupt`（安装可用，但保留的来源文件缺失或哈希不符，无法离线修复）或 `unrecorded`（清单尚未登记）。两个命令都接受可重复的 `--asset <assetId>` 以限定素材。
-
-素材默认安装到 `.data/imaging-assets`，用 `CLINMESH_IMAGING_ASSET_DIRECTORY` 可以改到其他位置；Server 与这些命令读取同一个变量。目录结构是 `sources/`（保留的来源文件）、`installed/`（阅片使用的规范帧数据）和 `.staging/`（安装中的临时目录）。安装完成后的运行期阅片不访问网络。
-
-安装后以管理员进入“模拟数据”，在“影像覆盖清单”查看每套素材的安装与发布状态，并对已生成的病例运行影像准备；只有准备结果为已就绪的病例开立放射申请后才有报告和影像。后续操作和各状态的含义见 [影像检查使用指南](imaging.md)。
-
-素材损坏或被误删时：
-
-```sh
 pnpm imaging:repair
 ```
 
-`imaging:repair` 用 `sources/` 中保留的来源文件离线重建 `installed/`，不访问网络；来源文件也丢失或损坏时重新运行 `imaging:sync`，它会补齐 `sources/` 并重建安装。素材不可读期间，已签发的报告仍可阅读，阅片器提示影像暂不可用，确认已阅不开放；修复后无需重启 Server。
-
-清单和哈希只能校验字节，不能取回字节：公开数据源可能下线或变更，因此仅有清单不构成可恢复的备份。备份 operational SQLite 时同时备份素材目录中的 `sources/`（不可变的来源文件），或者保留一份能独立校验为相同字节的副本；清单、哈希和转码版本随仓库提交固定。`installed/` 可以由 `imaging:repair` 从 `sources/` 离线重建，不必备份。恢复时把 `sources/` 放回目标机器的素材目录，运行 `pnpm imaging:repair` 重建安装，再运行 `pnpm imaging:verify`，确认每套素材都是 `ready`。
-
-Docker 一键镜像不包含影像清单和素材，其中的放射服务显示为未开展；阅片闭环在源码运行方式下使用。
+`imaging:repair` 从本地保留的 `sources/` 离线重建 `installed/`，修复后无需重启 Server；备份数据库时须同步备份 `sources/` 原件目录，病例影像准备与阅片操作见[影像检查使用指南](imaging.md)。
 
 ### PathJX 外部阅片服务
 
@@ -351,41 +173,23 @@ PathJX 独立部署，ClinMesh 未配置它也能启动。结直肠与甲状腺�
 
 ### 病理切片素材
 
-乳腺切片病理会诊使用单独的病理素材包，与上面的放射素材互不依赖：可以只安装其中一个，任何一个缺失、安装失败或损坏都不影响另一个，也不影响 Server 启动。仓库只提交 [病理切片素材清单](../pathology-assets/README.md)，切片像素由下面的命令按清单拉取。
+乳腺切片病理会诊按[病理切片素材清单](../pathology-assets/README.md)独立拉取 TCGA-BRCA 公开切片到 `.data/pathology-assets`（`CLINMESH_PATHOLOGY_ASSET_DIRECTORY`，与放射素材互不依赖，支持 `--asset <assetId>` 按需安装，最大单张摄取进程内存峰值约 1.2 GB）：
 
 ```sh
 pnpm pathology:sync
 pnpm pathology:verify
-```
-
-`pathology:sync` 需要访问 NCI Imaging Data Commons 的公开存储桶（`idc-open-data.s3.amazonaws.com`，匿名读取），按清单登记的序列目录下载来源 DICOM，校验哈希与文件中的 Study/Series/Instance UID，摄取为分层瓦片并原子安装；只下载清单登记的组织层级实例，不下载缩略图。下载按 8 MiB 的字节区间进行，网络错误、超时、服务端错误、限流和被截断的区间在退避后只重试该区间，对象在下载途中发生变化或其他请求错误直接报告失败；进度写入标准错误。安装与保留的来源文件都完好的切片会被跳过，命令可以重复运行，中断后重跑即可。首批七张切片的来源文件约 1.2 GB，安装后另占约 1.6 GB，其中最大的一张来源约 0.76 GB；一张切片的来源实例整份读入内存后摄取，这张切片摄取时进程内存峰值约 1.2 GB，摄取本身耗时数分钟。经代理访问公网时同样为该命令设置 `NODE_USE_ENV_PROXY=1`。`pathology:verify` 只读核对已安装切片与保留的来源文件，不访问网络，状态含义与 `imaging:verify` 相同。两个命令都接受可重复的 `--asset <assetId>` 以限定切片，例如只安装验收所需的两张。
-
-切片默认安装到 `.data/pathology-assets`，用 `CLINMESH_PATHOLOGY_ASSET_DIRECTORY` 可以改到其他位置，`CLINMESH_PATHOLOGY_CATALOG_DIRECTORY` 指向清单目录；它们与放射的 `CLINMESH_IMAGING_*` 变量相互独立。目录结构与放射素材目录相同：`sources/`（保留的来源文件）、`installed/`（每张切片的 `levels/<n>.tiles` 瓦片文件、`levels/<n>.index` 偏移索引、`icc-profile.icc` 和安装回执）和 `.staging/`。来源文件头带有公开数据集的受试者编号，`installed/` 中没有。
-
-切片损坏或被误删时：
-
-```sh
 pnpm pathology:repair
 ```
 
-`pathology:repair` 用 `sources/` 中保留的来源文件离线重建 `installed/`，重建结果与清单登记的哈希逐字节一致；来源文件也丢失或损坏时重新运行 `pathology:sync`。摄取的转码与降采样结果依赖清单登记的编解码库版本，升级 `jpeg-js` 或 `@cornerstonejs/codec-openjpeg` 后同步与修复会在哈希核对处失败，需要维护者重新登记。
-
-备份规则与放射素材相同但分开执行：备份病理素材目录中的 `sources/` 或保留一份能独立校验为相同字节的副本，`installed/` 不必备份；恢复时放回 `sources/`，依次运行 `pnpm pathology:repair` 与 `pnpm pathology:verify`，确认每张切片都是 `ready`。两个素材包的备份、恢复和修复互不影响。
+备份与离线修复同样以保留 `sources/` 为准（升级底层 JPEG/JPEG 2000 编解码库会改变转码哈希，须维护者重新登记），切片复核签署与病例匹配操作见[病理切片会诊使用指南](pathology.md)。
 
 ### Docker 一键启动
-
-需要完整容器化运行时（含 Synthea）时叠加两个 Compose 文件：
 
 ```sh
 docker compose -f compose.yaml -f compose.synthea.yaml up -d --build
 ```
 
-- Web：`http://localhost:51868/`
-- 模拟数据：`http://localhost:51868/scenario-data`
-
-容器入口使用命名卷 `clinmesh-data`，在启动应用进程前执行幂等 migration。业务库和可维护指南库分别位于卷内的 `/var/lib/clinmesh/clinmesh.sqlite` 与 `/var/lib/clinmesh/guidelines.sqlite`；指南准备复用镜像中 `/opt/clinmesh/guidelines` 的锁定资料，首次启动可离线建库，已有库保留后续撤回、替代、正文及用途限制，重建或升级容器也不覆盖。自定义 `CLINMESH_GUIDELINE_DATABASE_PATH` 时同样将目标目录挂载到持久卷。除非明确要删除本地合成数据，不要使用 `docker compose down -v`。只需要容器化 ClinMesh、不需要 Synthea 时可单独运行 `docker compose up -d --build`。
-
-从指南库位于 `/opt/clinmesh/guidelines.sqlite` 的旧容器升级时，先停用访问指南库的进程，导出该库的一致备份，再把备份放入新容器使用的持久卷目标路径后启动；不能只保留业务库或直接删除旧容器，否则容器层中的维护限制无法恢复。指南 schema 升级和旧代码回滚仍按[指南库升级规则](#冠心病资料的本地流程验证)操作。持久化取舍见[容器指南库决定](decisions/implemented/bug-fix/2026-10-27-guideline-container-persistence.md)。
+容器使用命名卷 `clinmesh-data` 持久化 `/var/lib/clinmesh/clinmesh.sqlite` 与 `/var/lib/clinmesh/guidelines.sqlite`（镜像内置锁定参考库与指南包，冷启动离线可用，不包含影像与病理像素；无需 Synthea 时只传 `compose.yaml`，避免使用 `down -v` 误删卷数据；从指南库位于 `/opt/clinmesh/guidelines.sqlite` 的旧容器升级时须先导出一致备份再迁入新持久卷）。
 
 ### 生产构建与 Node.js 直跑
 
@@ -395,9 +199,7 @@ pnpm --filter @clinmesh/server db:migrate
 pnpm --filter @clinmesh/server start
 ```
 
-构建顺序由 workspace 依赖和 Turborepo 决定：先生成 Web assets，再生成 Server 的 Node.js bundle，同时构建 Desktop、DSH Surface artifact 和文档站。Server 启动时只验证 migration 状态，不隐式修改 schema；`CLINMESH_HOST`、`CLINMESH_PORT` 和 `CLINMESH_WEB_ROOT` 可覆盖运行配置。
-
-升级前保留一致备份。门诊号迁移要求完整可信的历史发行证据，证据不足时拒绝迁移并保留原库；不要从现存最大号手工补发号状态。在线备份与带发行权威高水位合并的受控恢复通过 `@clinmesh/server` CLI 执行（连接活跃期间禁止直接复制主 `.sqlite` 文件或双开克隆实例）：
+Server `start` 只校验 schema 版本而不隐式执行迁移，可用 `CLINMESH_HOST`、`CLINMESH_PORT`、`CLINMESH_WEB_ROOT` 覆盖监听与静态资源目录。升级前须使用在线备份 API 保存快照，恢复旧备份时必须停止旧库进程并传入最新权威库合并按日门诊号高水位（细则见[数据库运维](architecture/storage.md#database-operations)）：
 
 ```sh
 pnpm --filter @clinmesh/server db:verify
@@ -406,189 +208,40 @@ pnpm --filter @clinmesh/server db:backup --output ./.data/clinmesh-backup.sqlite
 pnpm --filter @clinmesh/server db:restore --authority-database ./.data/clinmesh.sqlite --backup ./.data/clinmesh-backup.sqlite --destination ./.data/clinmesh-restored.sqlite
 ```
 
-恢复旧备份前须先停止使用旧权威库的 Server，同时保全可信最新发行权威库 `--authority-database`，生成新目标文件 `--destination` 后再切换配置启动。权威退休、按日高水位合并与校验失败边界见[数据库运维](architecture/storage.md#database-operations)。
-
 ### 局域网访问 Web 开发入口
 
-```sh
-pnpm dev:lan
-```
-
-该命令同时启动 Server 和 Web：自动识别私有 IPv4 地址、让 Vite 监听 `0.0.0.0:51888`，并把本机及识别到的 Web origins 注入 `CLINMESH_TRUSTED_ORIGINS`。启动进程前会检查数据源并打印就绪状态：Synthea Provider 按 `CLINMESH_SYNTHEA_PROVIDER_URL` 探测，URL 未配置时只提示患者生成不可用；不可达且为本地受管地址（环回主机名加 `CLINMESH_SYNTHEA_PROVIDER_PORT` 端口）时自动执行与 `pnpm synthea:up` 等价的拉起，Docker 不可用、拉起失败或为远程地址时只打印警告并继续（HIS 正常运行，仅新的患者生成任务不可用）。参考目录数据库缺失或未包含当前 lock Release 时，自动向配置的数据库路径执行 `pnpm reference:sync`，同步失败时降级警告并继续；Server 仍对已配置库的 Release 缺失执行失败关闭。`0.0.0.0` 仅用于监听，浏览器应访问打印出的具体地址；只需允许防火墙 TCP `51888` 入站。未识别到正确地址时可显式指定，例如 `CLINMESH_LAN_IP=192.168.1.23 pnpm dev:lan`。开发入口不提供 HTTPS，只应暴露在可信局域网内。
+运行 `pnpm dev:lan` 会自动探测私有 IPv4（或由 `CLINMESH_LAN_IP=192.168.x.x` 显式指定）、将 Vite 绑定到 `0.0.0.0:51888` 并注入 `CLINMESH_TRUSTED_ORIGINS`，同时检查参考库与本地 Synthea 容器状态。该入口无 HTTPS，仅限可信局域网开放防火墙 TCP `51888` 访问打印出的具体地址。
 
 ### DSH Web 原生入口
 
-ClinMesh 只要求 DSH、React Surface 和 AG-UI。精确来源、版本、commit、依赖关系及维护归属由 [`dsh-upstreams.lock.json`](../dsh-upstreams.lock.json) 记录；React Surface 与 AG-UI 均直接声明当前 RC 依赖。其他插件与旧 HIS Demo 不属于此组合，不需要升级或逐项验收，也不应覆盖它们的配置和数据。跟进公开正式版和 RC 时更新经过验证的精确输入，不把 `latest` 当作可复现版本。
-
-Windows PowerShell、Linux 和 macOS 使用两条命令完成搭建与启动：
+ClinMesh 所需 DSH Host、React Surface 与 AG-UI 的精确版本和 commit 统一锁定在 [`dsh-upstreams.lock.json`](../dsh-upstreams.lock.json)，跨平台使用两条命令完成隔离沙箱供给与双进程启动：
 
 ```sh
 pnpm dsh:setup
 pnpm dev:dsh
 ```
 
-`dsh:setup` 幂等供给 `.data/dsh-runtime/` 沙箱（已忽略，`CLINMESH_DSH_SANDBOX` 可覆盖到仓库外）：按 lock 安装 dshvm 工具目录与隔离宿主槽位、用宿主锁文件恢复依赖、克隆锁定 commit 的 AG-UI、构建 React Surface runtime 与 ClinMesh DSH artifact、组装 Web Profile 并重验三个插件 `link:`。`dev:dsh` 复用同一 ensure，然后直接启动 ClinMesh Server（`pnpm --filter @clinmesh/server dev`，绕过 Turborepo，`CLINMESH_AI_*` 直接生效）与 DSH Web（`dshvm exec web --port 3080 --no-open`）；Ctrl+C 或任一进程退出时全部停止并打印原因。就绪横幅打印 DSH Web 与 Server 地址；DSH Web 的真实入口是 Host 打印的带本次启动 token 的地址，直接打开无 token 地址会被要求认证。子进程日志以 `[Server]`/`[DSH]` 前缀标注归属，ensure 探测命令静默执行（失败时回显输出尾部）。`CLINMESH_DSH_BRIDGE_SECRET` 缺失时自动生成并追加到 `.env`，已有值不覆盖；`CLINMESH_TRUSTED_ORIGINS` 自动包含 `127.0.0.1:51868/51888/3080`，自定义 `CLINMESH_PORT` 时跟随。前置只检查 Bun `1.4.2` 与 submodule；网络步骤失败自动重试一次，仍失败则带原因退出且不启动任何进程。端口 `3080` 已被占用时启动前直接失败——DSH 会静默改用其他端口并导致 trusted origin 与登录校验错位。Profile `link:` 每次启动重验，仓库迁移目录后自动修复指向。React Surface 与 AG-UI 按 commit stamp 跳过重复构建，ClinMesh DSH artifact 每次启动重建。首次新装 Profile 后需在隔离宿主设置页配置模型 Provider。数据源检查行为与 `pnpm dev:lan` 一致。
+`dsh:setup` 幂等构建 `.data/dsh-runtime/`（`CLINMESH_DSH_SANDBOX` 可改到仓库外）：按 lock 安装 `dshvm` 与宿主槽位、用 [`deployment/dsh/host/package-lock.json`](../deployment/dsh/host/package-lock.json) 恢复依赖、克隆构建锁定 AG-UI、构建 React Surface runtime 与 `@clinmesh/dsh-web` artifact，并在专用 Web Profile 建立三个插件链接（Windows 使用无需管理员权限的目录 junction）。`dev:dsh` 自动生成缺失的 `CLINMESH_DSH_BRIDGE_SECRET`、对齐 `127.0.0.1:51868/51888/3080` 可信 Origin（端口 `3080` 被占用时直接报错退出），并以进程组／Windows Job Object 同时拉起直连 `@clinmesh/server`（绕过 Turborepo，保留 `CLINMESH_AI_*` 环境变量）与 DSH Web。
 
-复用工具目录前，ensure 核对已安装 dshvm 的 `package.json` 版本是否与 lock 一致；旧版、缺失或非法 manifest 触发重新安装，不能仅凭 CLI 文件存在跳过升级。仍有效的宿主槽位、Profile 和桥接构建继续复用。
-
-AG-UI 的缓存 HEAD 与锁定提交不同时，ensure 先从 lock 的 `source` 获取精确 commit，再检出和重建；已有 clone 的 origin 不决定新提交的来源。获取失败自动重试一次，仍失败则在检出和构建前停止，保留原有构建记录；HEAD 已匹配时不联网获取。
-
-Windows 的 npm/pnpm 启动由 `cross-spawn` 解析命令入口并转义参数；插件目录使用 junction，不要求管理员权限或开发者模式。目录迁移后的失效链接也会重建。开发服务由 Windows Job Object 持有，退出时清理本次启动的完整子树；POSIX 使用进程组。PowerShell 必须允许本地 `Add-Type` 调用 Win32 Job API；受限语言模式不受支持。命令或工作目录不存在时直接提示检查安装、PATH 和路径，不按网络故障重试。
-
-验收重建也可使用以下手工路径。Bash 示例建立独立工具、连接器和数据目录，不接管日常 DSH。`CLINMESH_DSH_SANDBOX` 应使用仓库外尚未使用的绝对目录：
-
-```sh
-export CLINMESH_DSH_SANDBOX="$(cd .. && pwd)/clinmesh-dsh-runtime"
-export DSHVM_HOME="$CLINMESH_DSH_SANDBOX/versions"
-export DSHVM_BIN_DIR="$CLINMESH_DSH_SANDBOX/bin"
-npm install --prefix "$CLINMESH_DSH_SANDBOX/tooling" @dsh-so/dshvm@0.2.0
-DSHVM_CLI="$CLINMESH_DSH_SANDBOX/tooling/node_modules/@dsh-so/dshvm/bin/dshvm.js"
-node "$DSHVM_CLI" install 0.2.2-rc.1
-cp deployment/dsh/host/package*.json "$DSHVM_HOME/dsh-0.2.2-rc.1/"
-npm ci --prefix "$DSHVM_HOME/dsh-0.2.2-rc.1"
-node "$DSHVM_CLI" isolate 0.2.2-rc.1
-node "$DSHVM_CLI" use 0.2.2-rc.1
-node "$DSHVM_CLI" which 0.2.2-rc.1
-node "$DSHVM_CLI" exec --version
-export DSH_HOME="$DSHVM_HOME/isolate/0.2.2-rc.1"
-DSH_CLI="$DSHVM_HOME/dsh-0.2.2-rc.1/node_modules/@deepseek-ai/dsh/lib/bin.js"
-```
-
-`which` 应指向该隔离槽位，`exec --version` 应返回锁定版本。宿主安装 manifest 的 `allowScripts` 明确审批 subprocess helper、koffi、node-pty 和 protobufjs，避免 npm 的默认脚本拦截遗漏原生运行支持。宿主安装必须在停止状态下使用 [`deployment/dsh/host/package-lock.json`](../deployment/dsh/host/package-lock.json) 执行 `npm ci`；dshvm 的初始安装用于建立槽位登记，不能代替锁文件恢复，因为 DSH 顶层版本的内部依赖仍使用版本范围。不要对已有共享槽位使用 `setup` 或 `isolate --copy` 来建立干净验收环境。Windows PowerShell 使用 `$env:DSHVM_HOME`、`$env:DSHVM_BIN_DIR` 和 `$env:DSH_HOME` 设置相同目录，普通路径变量使用 `$变量名`；Node CLI 的参数相同。新终端需要重新提供这些变量。DSH Provider 在隔离宿主设置页单独配置，密钥不写入 Profile 仓库或公开记录。
-
-先按上游锁文件构建 React Surface 与 ClinMesh，再构建并安装 AG-UI。AG-UI 安装使用公开支持分支的精确 commit，合并后仍可按同一 commit 重建：
-
-```sh
-bun install --cwd vendor/dsh-react-surface --frozen-lockfile
-bun run --cwd vendor/dsh-react-surface build:runtime
-pnpm --filter @clinmesh/dsh-web build
-git clone https://github.com/CaiZongyuan/dsh-ag-ui.git "$CLINMESH_DSH_SANDBOX/ag-ui"
-git -C "$CLINMESH_DSH_SANDBOX/ag-ui" checkout 7b200d6f8557557e491ab9c82340d4b69c078951
-pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" install --frozen-lockfile
-pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" build
-DSH_PROFILE="$DSH_HOME/profiles/web"
-mkdir -p "$DSH_PROFILE/plugins"
-cp deployment/dsh/profile/* "$DSH_PROFILE/"
-ln -s "$CLINMESH_DSH_SANDBOX/ag-ui" "$DSH_PROFILE/plugins/ag-ui"
-ln -s "$PWD/vendor/dsh-react-surface/packages/runtime" "$DSH_PROFILE/plugins/react-surface"
-ln -s "$PWD/apps/dsh-web" "$DSH_PROFILE/plugins/clinmesh"
-pnpm --dir "$DSH_PROFILE" install --frozen-lockfile
-```
-
-[`deployment/dsh/profile`](../deployment/dsh/profile/package.json) 只加载 `@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app` 与上述三个插件；内置 bundle 由宿主槽位的 npm lock 提供，Profile 不重复安装宿主依赖闭包；其 pnpm lock 只固定三个本地插件的相对 `link:`。Windows 可用 `New-Item -ItemType Junction -Path <Profile/plugins/名称> -Target <对应源码绝对目录>` 代替三个 `ln -s`。模板只用于新建的专用 Profile，不覆盖已有 Profile；再次安装使用已有链接和 `--frozen-lockfile`。链接安装不替插件安装源码依赖，因此不能省略各 workspace 的安装与构建。
-
-需要查看或修改插件时直接调用 `node "$DSH_CLI" plugin --profile web ...`：dshvm `0.2.0` 仍会把 `plugin --profile web` 识别为 Web 启动，并在默认端口被占用时附加插件命令不接受的 `--port`。dshvm 连接器也会按 active-data 覆盖显式 `DSH_HOME`；测试自行管理数据目录时应使用对应槽位的实际 bin。插件变更后重新验证并更新 Profile lock，日常运行不要用无锁安装替换已验证组合。
-
-非开发模式的 DSH 会在插件激活时把 client 脚本读入内存。重新构建 `@clinmesh/dsh-web` 后，须重新加载插件或重启对应 DSH 宿主，再刷新页面并打开 ClinMesh；仅刷新浏览器不能替换宿主缓存。验收应核对宿主实际返回的脚本包含当前构建内容，并确认 `/react-surface-agent/lease` 成功、真实模型请求包含 ClinMesh 工具且能完成一次调用。页面已登录或 Page Context 签发成功不足以证明工具注册成功；原生 Session 的工作目录无需与 ClinMesh 源码目录一致。
-
-手工路径在 `.env` 中设置 `CLINMESH_AI_SOURCE=dsh`、`CLINMESH_DSH_MODEL_ORIGIN=http://127.0.0.1:3080`，为 Server 配置至少 32 bytes 的 `CLINMESH_DSH_BRIDGE_SECRET`，并把实际 DSH Web origin 加入 `CLINMESH_TRUSTED_ORIGINS`（DSH 默认开发端口 `3080`；使用 `--port` 时必须同步替换该 origin，否则登录和 mutation 的 CSRF 校验会拒绝）：
-
-```sh
-export CLINMESH_TRUSTED_ORIGINS=http://127.0.0.1:51868,http://127.0.0.1:51888,http://127.0.0.1:3080
-pnpm dev:server
-```
-
-另一个终端把同一个 secret 提供给 DSH Host；Server 使用非默认端口时同时设置 `CLINMESH_DSH_UPSTREAM_ORIGIN`：
-
-```sh
-set -a
-. ./.env
-set +a
-node "$DSHVM_CLI" exec web --port 3080 --no-open
-```
-
-模型桥接地址只接受 HTTP loopback origin；DSH 使用非默认端口时同步修改 `CLINMESH_DSH_MODEL_ORIGIN`。同一 Server 的全部入口共用启动时选定的模型来源，打开或关闭 Surface 不切换来源。宿主设置权限允许的用户从侧栏底部“账号菜单 → 设置 → 通用设置”修改“ClinMesh 模型”，修改对该 Profile 的新任务生效，刷新和重启后仍保留；没有候选时先在 DSH 模型设置中配置 Provider。
-
-DSH 一次结构化生成默认允许 120 秒；`CLINMESH_AI_TIMEOUT_MS` 可在 100 毫秒至十分钟之间覆盖。路由解析、初次生成、最多一次格式修复及有限限流恢复共用原始截止时间，每次调用只向宿主传递剩余预算；持久任务和 lease 仍覆盖路由与模型处理。病历页显示自动记录失败的具体原因，超时或修复失败后转为待更新，患者回答保留供人工核对。共享时限见[有限恢复决策](decisions/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)，任务预算和失败分类见[自动病史调用决策](decisions/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
-
-OpenAI 兼容网关的 `baseURL` 使用实际 API 根路径；需要 `/v1` 的网关不能只填写站点首页。模型列表或 HTTP 200 不证明生成可用，应核对 JSON／SSE 类型、实际内容和正常终止。模型桥对明确限流返回安全的 HTTP 429；Provider 按服务端提示在剩余预算内最多重试一次，格式修复共用这一次机会，无提示时等待一秒。诊疗建议在持续限流后停止并显示原因，稍后可人工刷新；不会自动改用其他模型。恢复合同见[记录级筛选决策](decisions/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)。
-
-切换模型后的任务绑定与人工重试规则见[系统架构](architecture/simulation.md#103-场景定义)。宿主不可达、原 Provider 删除或凭据失效时任务可控失败，可修复原 Provider，或按[AI Provider 配置](#4-配置-ai-provider患者档案必需)中的步骤使用新模型恢复。切换 Server 来源前遗留的 OpenAI 任务不会被重映射到 DSH，需恢复原来源处理或显式发起新生成尝试。
-
-真实宿主模型 smoke 使用隔离 Profile 和合成 Provider，不调用付费模型；先构建 DSH adapter，再运行。默认使用本地 lock 对应的 runtime 槽位，可通过 `CLINMESH_DSH_SMOKE_RUNTIME` 指定槽位绝对目录：
-
-```sh
-pnpm --filter @clinmesh/dsh-web build
-pnpm exec tsx scripts/smoke-dsh-models.ts
-```
+浏览器必须打开控制台打印的带本次启动 token 的 DSH URL，首次使用在宿主设置配置模型 Provider，并从左侧栏“医院工作台”打开左右分屏（顶栏支持全屏与收起右侧会话无刷新切换）。非开发模式 DSH 在插件激活时将 client 脚本读入内存，手工重编 `@clinmesh/dsh-web` 后须重载插件或重启 DSH 宿主；手动直启 Server 时若进程环境已含 `.env` 相对路径变量，须先按 `.env` 目录转为绝对路径。单次结构化生成默认限时 120 秒（`CLINMESH_AI_TIMEOUT_MS` 可在 `100`–`600000` 间覆盖，初次生成、一次格式修复与一次限流重试共享同一截止时间）。
 
 #### 问诊自动记录原生验收
 
-完成上述宿主、React Surface、AG-UI 的锁定安装和构建后，在仓库根目录运行。默认读取 `.data/dsh-runtime/versions/dsh-<锁定版本>` 与 `.data/dsh-runtime/ag-ui`；目录不同时分别设置 `CLINMESH_DSH_SMOKE_RUNTIME` 和 `CLINMESH_DSH_SMOKE_AG_UI` 为绝对路径。脚本核对宿主版本及两个桥接组件的 commit，使用临时 Profile、SQLite、密码和 secret，从“医院工作台”打开 Surface，自动运行合成问诊与真实原生工具签署。运行结束清理临时环境，不改变日常 Profile。
-
-```sh
-pnpm --filter @clinmesh/dsh-web build
-pnpm smoke:consultation:native
-```
-
-真实模型验收显式指定一个已有配置的隔离 `DSH_HOME` 和完整 Provider/model 路由。脚本把凭据和 Profile patch 复制到新的临时环境，在完整确定性旅程后，对新合成病例运行两轮真实病史总结与独立事实核对；患者档案和两轮回答使用固定合成 fixture，以便逐项核对起病、发热、干咳、体温及胸痛、气促的否定。`--summary-only` 可单独运行该多轮总结及来源入口验收，完整合成旅程的断言保持在默认模式。真实调用可能产生费用，命令不进入 `pnpm check` 或 CI。
-
-通过 `HTTP_PROXY`／`HTTPS_PROXY` 访问模型 API 时，为验收命令设置 `NODE_USE_ENV_PROXY=1`；隔离 Node 宿主保留这一显式开关，仍不继承任意 `NODE_OPTIONS`。`NO_PROXY` 应包含 `localhost,127.0.0.1`，使本机模型桥和 Server 请求直接连接。
-
-```sh
-export CLINMESH_DSH_SMOKE_HOME=/absolute/path/to/configured/dsh-home
-export CLINMESH_DSH_SMOKE_LIVE_MODEL='dsh:{"provider":"configured-provider","model":"configured-model"}'
-pnpm smoke:consultation:live
-# 已有完整合成旅程证据时，单独验证真实总结质量
-pnpm smoke:consultation:live --summary-only
-```
-
-可用 `CLINMESH_DSH_SMOKE_REPORT=/absolute/path/to/report.json` 保存版本、代码 commit/内容 hash、处理数量和 request/audit/trace 关联的验收摘要；真实总结模式还保存固定合成回答、总结和事实来源供逐项复核，不保存凭据或 prompt。`liveJobs` 保留当前任务错误码，`liveFailedAttempts` 从不可变回执保留历次失败的错误码、阶段与有界校验诊断，重试成功后仍可追查；诊断机制见[直接记录决策](decisions/implemented/architecture/2026-10-14-consultation-direct-recording.md)。成功说明本次合成样本满足总结质量与来源断言，不能证明所有病史的语义准确；模型局限与 CI 证据边界见[测试策略](testing.md#end-to-end)。
-
-指南建议复用上述宿主、组件和真实模型配置。`native` 使用已发布合成检验目录与合成模型，验证后台准备、折叠来源、处方缺项、医生直接确认与开具，以及报告发布后既有记录不被改写；`live` 在该旅程之后对新的合成病例读取诊断、处方和检验建议，不提交真实模型结果，也不创建临床事实。可执行建议的引用必须属于实际提供的指南与病例资料；只读思路引用本轮病例，明确待核实，不进入正式操作。没有可发布条目是合法结果，界面分别说明指南覆盖、院内目录、核验和系统处理限制。报告只保留该模式的状态、建议及来源数量，不能将少量样本视为临床语义质量评估。
-
-```sh
-pnpm smoke:recommendations:native
-pnpm smoke:recommendations:live
-```
-
-病历质控可以复用同一隔离宿主运行 `pnpm smoke:consultation:live --quality-only`。合成原生旅程验证质控展示及医生操作，随后在新的合成病例中通过真实模型检查未保存正文、保存相同正文及另一个客户端检查入口。报告的 `liveDocumentQuality` 分别记录持久任务数、实际模型桥调用数、请求字节、最终状态与安全失败分类；相同授权及完整输入复用同一轮，不把有限格式纠正当作额外业务轮次。该入口不提交真实模型生成的诊断、处方或签署。
-
-无桌面交互的浏览器验收可在隔离 Profile 的 `cordis.patch.yml` 使用官方目录选择器替换点，避免工作区选择触发不可操作的 Windows 原生对话框：
-
-```yaml
-- id: directory-picker
-  disabled: true
-- insert:
-    - id: directory-picker-browse
-      name: '@deepseek-ai/dsh-host-directory-picker-browse'
-    - id: ui-directory-picker-browse
-      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
-```
-
-该替换同时加载 host 与 client 两半，不能与自动选择器同时启用；保存后重启隔离 DSH。可交互桌面的普通运行无需此覆盖。
-
-重新启动 DSH Web 后，左侧栏顶端显示 ClinMesh Logo 和名称；应用尚未打开或已经关闭时仍保留该 Profile 品牌。新会话中央同样显示 ClinMesh Logo，中文标题为“医疗智能体平台”，英文为“Medical AI Agent Platform”。禁用或卸载 ClinMesh 插件后恢复宿主的品牌显示。从侧栏底部“医院工作台”菜单打开 ClinMesh；登录后岗位导航直接显示在宿主侧栏的新会话与工作区之间，底部菜单保留设置与主题入口，其他已注册 Surface 位于“其他应用”分组。ClinMesh 在 DSH 内不显示自己的左侧栏，默认使用 `workspace` 左右分屏并保留原生会话；现有页头的“全屏 ClinMesh”与“返回 DSH 分屏”按钮可往返切换，无需刷新。页头右侧的“收起会话 / 展开会话”可释放或恢复右侧空间，原生文件栏随会话隐藏并保留开合、文件选择和草稿；左侧医院导航保持可用。全屏时先返回分屏再使用宿主导航，返回后保留会话收起状态。窗口缩小或侧栏开关不自动全屏，应用内部按容器宽度适配。页面导航使用 Memory Router，不修改 DSH document pathname。独立 Web 保留原侧栏。当前模式只信任安装到同一 Web Profile 的插件，并只允许合成数据。
-
-根 `pnpm dev:server` 直连 pnpm 运行 `@clinmesh/server` 的 `dev` 脚本，不经过 Turborepo：Turborepo 在 Windows 上包装 `tsx watch` 的持久任务时会把进程树冻结在启动阶段（服务永不监听），且 strict env 会过滤未声明的 `CLINMESH_AI_*` 变量——漏配时 Patient Persona 和 Investigation provider 会被视为未配置。`pnpm dev:dsh` 的 Server 进程同样直启。手动直启时若环境里已存在 `.env` 加载出的原始相对路径（`CLINMESH_DATABASE_PATH`、`CLINMESH_REFERENCE_DATABASE_PATH`、`CLINMESH_WEB_ROOT`），必须先按 `.env` 所在目录绝对化：Server 会对 `.env` 中的相对路径做同样的绝对化，但进程环境变量的原始相对值会覆盖该结果并按进程工作目录解析。
+完成锁定 DSH 沙箱安装与 `pnpm --filter @clinmesh/dsh-web build` 后，开发者可显式运行 `pnpm smoke:consultation:native` 或 `pnpm smoke:recommendations:native` 在临时隔离 Profile、临时 SQLite 与合成模型下端到端验证原生 Session browser Tool 草稿保存、`.propose` 人工批准签署及 request/audit/trace 串联；仅在取得明确许可并配置隔离 `CLINMESH_DSH_SMOKE_HOME` 与 `CLINMESH_DSH_SMOKE_LIVE_MODEL` 时才运行对应的 `:live` 实模自检（无桌面环境可在隔离 Profile `cordis.patch.yml` 切换 `directory-picker-browse`），验证分层见[测试策略](testing.md#end-to-end)。
 
 ### DSH 持续升级
 
-[`DSH upstream updates`](../.github/workflows/dsh-upstreams.yml) 每日 UTC 02:23（北京时间 10:23）按 [`dsh-upstreams.lock.json`](../dsh-upstreams.lock.json) 发现 npm 正式版／`rc.N` 与源码默认分支 commit 更新（也支持手动运行），并串行触发[候选验收](../.github/workflows/dsh-upstreams-verify.yml)。`main` 上的上游锁是已验证基线，升级分支的 `deployment/dsh/candidate.json` 与 `discovery.json` 记录待适配目标。需要跳过某次升级时，在对应升级 PR 上添加 **`跳过此版本`** 标签并关闭 PR（仅跳过该候选中实际变化的精确版本或 commit，恢复时移除标签）；不要 force-push 自动分支或把未经核对的人工改动覆写为 `discovery.json`。
-
-本地只读发现运行 `pnpm upstream:discover`（输出至已忽略的 `dsh-upstreams.discovery.json`，`--publish` 另需 `GH_TOKEN`）；独立验收在全新 clone 检出升级 PR HEAD、递归初始化子模块并 `pnpm install --frozen-lockfile` 后运行 `pnpm upstream:verify`，在隔离临时目录核对 registry 摘要、重建宿主与 Profile、运行 HTTP smoke 与 `pnpm check`，全部通过才写入目标锁与 `deployment/dsh/automation.json`（原生会话与业务闭环仍按[测试策略](testing.md)补充人工核验）。若 Actions 报 `GitHub Actions is not permitted to create or approve pull requests`，在仓库 Settings → Actions → General → Workflow permissions 开启该权限；专用验证分支 `automation/dsh-upstreams-validation` 用于验证该自动化链路而不改动 `main`。
+[`.github/workflows/dsh-upstreams.yml`](../.github/workflows/dsh-upstreams.yml) 每日自动发现上游正式版／RC 与 commit 更新并串行触发[候选验收](../.github/workflows/dsh-upstreams-verify.yml)；需跳过某次候选时在升级 PR 添加 `跳过此版本` 标签并关闭 PR。本地只读发现与全新克隆隔离验收分别运行 `pnpm upstream:discover` 和 `pnpm upstream:verify`。
 
 ## 8. 升级与重置
 
-普通升级先停止 Server，保留一致备份，再执行 `pnpm --filter @clinmesh/server db:migrate` 和 `pnpm --filter @clinmesh/server db:verify`；启动只验证当前 schema。患者来源库、账号与配置同在 operational SQLite，不能通过删除整库处理 schema 变化。日常重跑 Scenario 使用管理员 Epoch reset，原运行世代和审计保留；它不转换旧支付结构。通用备份、恢复和单实例约束见[数据库运维](architecture/storage.md#database-operations)与[系统架构](architecture/system.md#部署拓扑与单实例约束)。
+<a id="共享收款的一次性开发切换"></a>
 
-### 共享收款的一次性开发切换
-
-旧合成收款升级返回 `PAYMENT_CUTOVER_REQUIRED` 时，先让来源生成、Persona 和检验目录发布任务结束并停止所有业务库写入进程，再按[保留与舍弃清单](architecture/storage.md#共享收款的一次性开发切换)执行一次性开发切换（舍弃旧合成运行链并推进新 Epoch，保留患者来源、账号配置及持久 owner 回执；新模型已产生交易后不得再次使用）：
-
-```sh
-pnpm --filter @clinmesh/server db payment-cutover --database "<业务库绝对路径>" --backup "<新的备份绝对路径>" --confirm discard-synthetic-runtime
-pnpm --filter @clinmesh/server db verify --database "<业务库绝对路径>"
-pnpm dev:server
-```
-
-`--backup` 必须指向尚不存在的新路径；命令自行生成并校验切换前备份，失败时整体回滚并保留原库与备份（`PAYMENT_CUTOVER_BUSY` 需先等待后台来源任务结束）。切换前备份属于旧 schema，不能直接交给当前 `db restore`；确需回退旧代码时须先制定保全最新发号高水位的单权威恢复方案。
+常规升级先停止 Server，运行 `db:backup` 保留一致备份，再依次执行 `db:migrate` 与 `db:verify`；日常重跑合成病例使用管理员页面的“重置数据”（Epoch reset），禁止通过删除整库替代数据库迁移（见[数据库运维](architecture/storage.md#database-operations)）。
 
 ## 模型用量
 
-Web 与 DSH 的 ClinMesh 设置菜单提供“模型用量”总览、“额度与策略”（Workspace 级停用／恢复、请求数／Token／人民币上限及默认 90 天的明细保留期）与只读“计价说明”。权限、统计与核对接口见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)，持久化、保留期清理与长期汇总边界见[模型账本](architecture/storage.md#910-模型调用账本)与[明细保留与长期汇总](architecture/storage.md#明细保留与长期汇总)。
-
-部署维护者可通过相对 `.env` 目录解析的本地 JSON 配置部署级总上限（`CLINMESH_MODEL_CONTROL_PATH=.data/model-control.json`）与统一合成价表／汇率（`CLINMESH_MODEL_PRICING_PATH=.data/model-pricing.json`），修改后重启 Server 生效，配置缺失或校验失败时启动失败：
+ClinMesh“设置 → 模型用量”提供跨 Epoch 用量总览、Workspace 级开关／请求数／Token／人民币上限与默认 90 天明细保留期管理，以及只读计价说明。部署维护者可通过相对 `.env` 目录的 JSON 文件配置部署级总上限（`CLINMESH_MODEL_CONTROL_PATH=.data/model-control.json`）与统一合成价表／汇率（`CLINMESH_MODEL_PRICING_PATH=.data/model-pricing.json`，单价为原币／百万 Token、最多六位小数，`model` 精确匹配请求路由），修改后重启生效：
 
 ```json
 { "enabled": true, "requests": 1000, "tokens": null, "cny": null, "automaticRetries": true }
@@ -596,33 +249,13 @@ Web 与 DSH 的 ClinMesh 设置菜单提供“模型用量”总览、“额度�
 
 ```json
 {
-  "prices": [
-    {
-      "provider": "synthetic.invalid",
-      "model": "synthetic-model",
-      "version": "synthetic-price-v1",
-      "currency": "USD",
-      "rates": { "input": 2, "output": 4, "cacheRead": 0.5, "cacheWrite": 2, "reasoning": 4 }
-    }
-  ],
-  "exchangeRates": [
-    { "currency": "USD", "version": "synthetic-fx-v1", "cnyPerUnit": 7 }
-  ]
+  "prices": [{ "provider": "synthetic.invalid", "model": "synthetic-model", "version": "v1", "currency": "USD", "rates": { "input": 2, "output": 4, "cacheRead": 0.5, "cacheWrite": 2, "reasoning": 4 } }],
+  "exchangeRates": [{ "currency": "USD", "version": "fx-v1", "cnyPerUnit": 7 }]
 }
 ```
 
-`requests`/`tokens` 为非负安全整数或 `null`，`cny`、单价（原币／百万 Token）与汇率 `cnyPerUnit` 最多六位小数（`CNY` 默认 1:1）；`model` 必须精确匹配 `requestedModel`（DSH 填完整 `dsh:{"provider":"...","model":"..."}` 路由）。当前三类调用入口对有限 Token／非零人民币额度的预占边界如下（请求次数限制与无限模式均保持可用，配置有限 Token 或非零人民币上限后新派发以 `MODEL_METERING_UNAVAILABLE` 阻断）：
-
-| 入口 | 有限 Token／非零金额的可信边界 | 明细原因 |
-| --- | --- | --- |
-| Server 直接 OpenAI-compatible 请求 | 未发送硬输出 Token 上限；响应字节限制不能约束服务商计费 Token | `output-limit-unbounded` |
-| Server 经 DSH bridge 调用 | SDK 准备句柄锁定配置，但未公开实际 wire adapter 的计量与硬上限保证 | `adapter-metering-unavailable` |
-| Host 独立医生代问识别 | 使用同一准备句柄和既有 1024 输出配置，仍缺少可信计量保证 | `adapter-metering-unavailable` |
+当前三类模型入口均可精确限制请求次数；因直接 OpenAI 请求无硬输出 Token 上限且 DSH SDK 未公开底层 wire 计量保证，配置有限 Token 或非零人民币上限后新派发会以 `MODEL_METERING_UNAVAILABLE` 失败关闭。授权与持久账本合同分别见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)和[模型调用账本](architecture/storage.md#模型调用账本)。
 
 ## 实时病历整理模型与负载验证
 
-`CLINMESH_AI_RECORDING_MODEL` 可为实时整理固定独立模型；不设置时沿用问诊模型，DSH 使用完整 `dsh:{"provider":"...","model":"..."}` 路由。自动记录、核对和历史补录沿用 `CLINMESH_AI_TIMEOUT_MS` 的常规模型等待配置；DSH 默认每次桥接请求 120 秒，OpenAI 默认 60 秒，不另加 6 秒截止。既有 `CLINMESH_AI_RECORDING_TIMEOUT_MS` 不再读取。任务仍有覆盖模型解析和格式修复的有界总等待，关闭或任务失效继续取消请求；真实模型失败保留来源供恢复。取消短截止不能证明已达到实时性能目标。
-
-实时路由应明确选择 Provider 支持的思考强度，不能从模型名称推断延迟。DSH DeepSeek 路由未指定强度时继承 Provider 策略，Provider 也未配置时默认为 high；需要关闭实时整理的思考时，可配置 `CLINMESH_AI_RECORDING_MODEL=dsh:{"provider":"deepseek-official","model":"deepseek-flash","reasoningEffort":"off"}`，重启 ClinMesh Server 后对新批次生效。该覆盖只选择实时整理模型，语义核对与主会话继续沿用各自配置；批次上限、来源完整性与优化参考边界见[临床业务流程](architecture/clinical-workflows.md#81-门诊闭环)和[常规模型等待决策](decisions/implemented/architecture/2026-10-18-recording-normal-model-budget.md)。
-
-废弃自动记录压测入口已移除。日常开发与验收使用合成 Provider、受控模型流和临时数据库；真实模型开发验证或压测须取得用户针对本次运行的明确许可，执行边界见[工程规则](../AGENTS.md)。
+`CLINMESH_AI_RECORDING_MODEL` 可为门诊实时自动病历整理固定独立路由（如在 DSH 路由 JSON 中显式指定 `"reasoningEffort":"off"` 关闭思考延迟，不设置时沿用问诊模型），超时统一遵循 `CLINMESH_AI_TIMEOUT_MS`（DSH 默认 120 秒、OpenAI 默认 60 秒），批次与来源约束见[门诊业务流程](architecture/outpatient-workflows.md)与[模型调用账本](architecture/storage.md#模型调用账本)。日常开发与验收默认使用合成 Provider 与临时数据库；任何真实模型验证或负载测试均须事先取得用户针对当次运行的明确许可，严格遵循[工程规则](../AGENTS.md)。

@@ -1,47 +1,28 @@
-# Agent Note: Node.js 与 SQLite Web 基础设施
+# Agent Note: Node.js、SQLite 与跨端单仓基础设施
 
 Status: implemented
 
 ## Problem
 
-ClinMesh 当前工程壳以 Cloudflare Worker 为运行时，但首个可验收发布只面向本地、局域网或单实例容器中的少量 Web 用户。此阶段同时维护 Worker/D1 与本地 SQLite 会迫使 Command 事务、迁移、测试和部署围绕两套能力的交集设计，却不能为门诊闭环提供额外验证价值。
-
-系统仍需证明 Workspace/Epoch 隔离、幂等、乐观并发、FHIR current/history/search、审计、Action Trace、异步模拟器恢复和 Scenario reset。把 SQLite 当作无约束的开发数据库会掩盖这些正确性要求，也会让未来迁移到 D1、PostgreSQL 或 Supabase 时泄漏 driver 和表类型。
+ClinMesh 需要同时支撑多岗位仿真 HIS、跨平台客户端、可验证的临床 UI 合同与公开文档站。若首期同时维护 Cloudflare Worker/D1 与本地 SQLite 双适配器、照搬外部参考仓库的 Next.js/Go/PostgreSQL 或通用 React Native 树，或者在文档站与 Storybook 中复制第二套文档和静态组件示例，会让 Command 事务、迁移、UI 密度 token 与文档相对链接在多个权威源之间漂移。
 
 ## Decision
 
-`apps/server` 是单个 Node.js 进程中的 Hono 服务，以一个本地文件系统上的 SQLite 数据库保存身份、FHIR 资源、领域事实、仿真状态、审计、Action Trace 和 outbox。开发时 Vite 代理 API；可部署构建由同一个 Node.js 服务提供 Web 静态资源、SPA fallback、HTTP API 和 FHIR R5 API。Desktop、React Native Mobile 和 Agent runtime 不属于当前产品能力。
+仓库采用 pnpm workspaces 与 Turborepo 单仓结构，包含 `apps/{web,dsh-web,server,cli,desktop,mobile,docs}` 与 `packages/{contracts,core,ui,views}`，模块边界见[系统边界](../../../architecture/system.md)与[前端架构](../../../frontend-architecture.md)：
 
-SQLite 连接启用 foreign keys、WAL 和五秒 `busy_timeout`。一个服务端进程是唯一 writer，Command 使用短 `BEGIN IMMEDIATE` 事务，单次同步 Command 的真实 SQLite 合约要求事务持续时间小于一秒；网络调用、模拟器等待和长计算不进入事务。每次业务提交原子写入幂等 receipt、expected-version 保护的当前事实、FHIR history/search、Audit Event、Action Trace 和适用的 outbox 事件。
-
-所有适用的业务表、唯一键、外键和岗位查询索引包含 `workspace_id + epoch`。Scenario reset 构建并激活新 Epoch，不删除数据库文件；审计保留域跨 Epoch 保存。LIS 与药房就绪事件由同进程 outbox dispatcher 处理，claim、结果、失败和 correlation 状态持久化，使进程重启后可以恢复且重复投递不重复产生业务结果。支付 success/declined/ambiguous 由支付 Command 确定性提交，只有成功结果产生后续 outbox。
-
-Operational schema 只通过 `apps/server/drizzle/` 中的有序 migration 变更；独立 Reference SQLite 只通过 `apps/server/reference-drizzle/` 中的有序 migration 变更。Server 进程只验证已配置数据库的 schema；operational 数据库 CLI 显式执行 migration、verify、reindex、backup 和 restore，Reference CLI 显式执行 migration、verify、import 和 list。已有旧版 operational 数据库执行 migration 前先在同目录创建并验证升级前备份；Reference Release 可从版本锁和来源 artifact 重建，每个 Reference migration 在独立 SQLite 事务中应用。Operational backup 与 restore 都验证源和候选的 schema、integrity 与 canonical state hash，候选必须与源等价后才能保留或成为新目标。Compose 使用单副本与命名持久卷，数据库文件不得位于缺少 SQLite 锁语义保证的共享网络文件系统。
-
-Server 与数据库 CLI 在 workspace 中运行时读取仓库根 `.env`，显式 shell 环境变量拥有更高优先级；文件中的相对数据库和 Web 路径以 `.env` 所在目录为基准。本地 `.env` 不进入版本库，仓库只提供合成开发值模板。`pnpm dev:server` 依次构建 Web，通过 `db:prepare` 先迁移 operational SQLite、再迁移已配置的 Reference SQLite，最后启动只验证两个 schema 的 Server 进程；未配置 Reference 路径时只准备 operational SQLite。
-
-canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引和 migration/runtime metadata 外的全部持久领域表；JSON 列按解析后的值规范化。该 hash 用于同一 schema 下的备份恢复等价验证，不是跨版本 replay contract。
-
-公开 contracts、FHIR capability registry 和 Web Query 层不依赖 SQLite 表类型、SQL 方言或 driver 错误。当前只实现 SQLite Repository；迁移到 D1、PostgreSQL 或 Supabase 时需要新增真实 adapter、数据迁移工具和双端 contract tests。仓库不预先维护未使用的兼容实现，也不承诺零成本切换。
+1. **客户端共享分层与真实组件目录**：Web 与 Desktop 共享 `contracts -> core -> ui -> views`；Mobile 仅复用 `contracts`、标识符和无平台依赖的 `core` 纯函数，独立维护 React Native UI、导航、存储与 QueryClient。`packages/ui/src/styles.css` 与 `packages/ui/src/components` 分别拥有语义 token 和共享视觉 primitive，Web 提供无需登录、零应用 API 请求的 `/components` 公共路由直接挂载真实 `@clinmesh/ui` 组件，验证尺寸、状态、可访问性与明暗主题，设计约束见[临床 UI 设计](../../../ui/design.md)。
+2. **单进程 Node.js Hono 与双 SQLite 边界**：`apps/server` 在单个 Node.js 进程内承载 HTTP API、FHIR R5 API、静态 Web 与同进程持久 outbox dispatcher。Operational SQLite 保存身份、FHIR 资源、领域事实、仿真状态、审计、Action Trace 与 outbox，连接启用外键、WAL 与 5 秒 `busy_timeout`；单服务端进程为唯一 writer，同步 Command 使用小于 1 秒的 `BEGIN IMMEDIATE` 短事务原子提交幂等回执、expected-version 保护事实、FHIR 历史／索引、审计与 outbox，外部网络调用与模型等待均留在事务外。所有业务表、唯一键与岗位索引携带 `workspace_id + epoch`；临床参考目录保存在独立只读 Reference SQLite。
+3. **显式迁移、升级前备份与状态哈希**：Operational 与 Reference schema 分别只通过 `apps/server/drizzle/` 和 `apps/server/reference-drizzle/` 有序迁移演进，Server 进程启动只校验不改表。非空 operational 数据库迁移前自动创建并核验升级前备份；`backup` 与 `restore` 同时核验 schema、SQLite integrity 与覆盖 FHIR current/history 及持久领域表的规范化 `canonical state hash`（排除派生检索索引与运行时元数据）。根 `.env` 提供本地合成开发配置并由显式环境变量优先覆盖，持久化细则见[存储与事务](../../../architecture/storage.md)。
+4. **单一源码文档投影**：仓库内 Markdown 为唯一事实源，`apps/docs/docs.ts` 显式选择公开页面并由 `scripts/project-doc-site.ts` 投影为一次性 VitePress 构建输入，规则见[文档规则](../../../AGENTS.md)。
 
 ## Alternatives considered
 
-**继续使用 Cloudflare Worker + D1。** 它适合低运维的公开部署，但会在首期引入 D1 batch、远端迁移、预览环境和边缘运行时限制。当前目标是先证明单实例基础设施和门诊闭环，因此暂不承担这些成本。
-
-**立即使用 PostgreSQL 或 Supabase。** 它们适合多实例、托管运维和更高并发，但在数据量与使用者都很少时增加远程依赖、连接和环境管理。Repository 边界保留后续迁移入口。
-
-**使用浏览器内 SQLite。** 它减少服务端组件，却无法建立多账户共享状态、受信 Actor context、服务端 Hidden Fact 隔离和权威审计。
-
-**同时维护 SQLite 与 D1 adapter。** 它能提早证明可移植性，但会让首期每个 schema、事务和测试都承担双实现成本。只有确定迁移目标后，真实的第二 adapter contract test 才能提供有效证据。
-
-**要求每次启动前逐项导出环境变量并手动迁移。** 这保持每一步显式，却让本地开发依赖容易遗漏的 shell 状态。根 `.env` 固定本机配置，显式环境变量仍可覆盖共享或临时运行值；开发脚本只编排已有数据库 CLI，不把 schema 修改能力放入 Server 进程。
+- **首期同时维护 Cloudflare Worker + D1 或立即引入 PostgreSQL**：会在单实例仿真闭环阶段叠加边缘批次限制、远端迁移和双适配器契约测试成本；保留无 SQLite 方言泄漏的 Repository 边界，待确有多实例需求时再建设第二适配器。
+- **使用浏览器内 SQLite**：无法建立多账户共享状态、服务端受信 Actor 上下文、隐藏 Case Truth 隔离与权威审计。
+- **全端共用一套通用 React Native 组件树**：迫使桌面高密度临床表格与移动端原生交互迁就最弱公共抽象，改为只共享语义契约与纯函数。
+- **引入独立 Storybook、复制静态组件示例或在文档中抄写全量色值表**：产生脱离生产 primitive 的假视觉证据或第二套 token 权威；真实 `/components` 路由与包级无障碍测试已覆盖交付状态。
+- **直接在 `apps/docs` 下手写另一套文档树**：导致仓库相对链接与公开站点内容分叉。
 
 ## Consequences
 
-Node.js、HTTP/FHIR/Web 组合和业务持久化共享一个可备份 operational 文件与事务边界，空库 migration、旧库升级前备份、进程重启、备份恢复、索引重建、Workspace/Epoch 隔离、幂等冲突和 outbox 恢复都使用真实临时 SQLite 文件验证。Reference 目录保留在独立只读 SQLite。开发入口不再依赖调用者预先导出整组变量或手动迁移任一已配置数据库。应用成功启动意味着所有已配置 schema 都已经由独立入口迁移并通过 verify；运行进程不会自行改变 schema。
-
-SQLite 的单 writer 使岗位轮询、会话校验和业务写入竞争同一数据库。查询保持分页并使用组合索引，写事务保持短小；持续 busy 或无法满足交互延迟时必须重新选择持久化与部署方案。
-
-单进程 dispatcher 不提供高可用，只承诺进程重启后的持久恢复，不承诺进程停止期间的实时处理或多副本故障转移。当前开发环境没有 Docker，因此 Dockerfile/Compose 的 build、healthcheck 和挂载同一卷的容器重建仍需在具备 Docker 的发布环境验证。
-
-Repository 边界只能降低应用代码与 SQL 表的耦合，不能消除 SQL 方言、migration 和运维差异。任何第二数据库都需要显式迁移设计、canonical 数据校验和真实双端 contract tests。
+单文件 operational SQLite 与同进程 outbox 提供确定性的本地事务、备份恢复与重启续跑验证，但单 writer 要求查询严格分页建索引、写事务保持短小，且不提供多副本高可用或共享网络文件系统支持。`/components` 可在无后端时独立验收视觉与键盘合同；公开页面变更须同步维护 `apps/docs/docs.ts` 与 `pnpm doc-sync` 校验。

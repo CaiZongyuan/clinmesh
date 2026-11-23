@@ -12,7 +12,7 @@ Status: implemented
 
 存量活动 Epoch 在 `seedInpatientEnvironment` 与 `inpatient.pci-data.prepare` 中仅对缺失 `packageInsert` 的已登记药品就地补写 `config_json`，单纯补写摘要时不递增 `outpatient_catalog.version`，保持既有草稿与医嘱的 `catalogVersion` 乐观锁有效。自定义院内药品与国家参考目录外延药品允许无 `packageInsert`，不计入住院目录 `missingFields`，页面统一呈现「暂无院内说明书摘要」空态且不阻断开立。`packageInsert` 不写入处方快照、计费记录、FHIR 资源、病案归档来源，也在门诊处方建议目录装配时显式剥离，避免参考文案勘误触发建议指纹失效或占用模型上下文预算。
 
-前端在门诊选药弹窗、处方待开清单与住院开医嘱器中复用单一只读抽屉 `MedicationPackageInsertSheet`；候选行的触发按钮与整行选择按钮保持同级兄弟节点，嵌套于弹窗内打开时强制渲染独立遮罩层，确保通过 `Esc`、遮罩点击或关闭按钮收起抽屉时仅关闭抽屉本身，底层弹窗及未提交草稿保持原状。当前目录与界面行为由[临床流程合同](../../../architecture/clinical-workflows.md#声明式药事规则)拥有。
+前端在门诊选药弹窗、处方待开清单与住院开医嘱器中复用单一只读抽屉 `MedicationPackageInsertSheet`；候选行的触发按钮与整行选择按钮保持同级兄弟节点，嵌套于弹窗内打开时强制渲染独立遮罩层，确保通过 `Esc`、遮罩点击或关闭按钮收起抽屉时仅关闭抽屉本身，底层弹窗及未提交草稿保持原状。当前目录与界面行为由[处方、医嘱与药事](../../../architecture/orders-and-pharmacy.md#门诊与住院共享声明式药事安全规则)拥有。
 
 ## Alternatives considered
 

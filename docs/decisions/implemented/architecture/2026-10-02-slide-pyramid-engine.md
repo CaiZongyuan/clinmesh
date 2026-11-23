@@ -6,9 +6,9 @@ Status: implemented
 
 病理切片是多层 RGB 瓦片金字塔，一张原生 20× 切片有数万个 JPEG 瓦片，阅片需要平移、连续缩放、导航小图和倍率读数。[胸片与胸部 CT 阅片闭环](2026-10-01-chest-imaging-reading-loop.md) 的阅片外壳按序列 `kind` 取引擎，已有的灰度堆叠引擎按帧读取整幅图像，不适用于瓦片。
 
-新引擎要同时满足三个约束。DSH Surface 的 Client 是一个不压缩依赖、不能有动态 chunk 的 lazy-CJS 文件，当前体积上限由[DSH 客户端产物体积预算](../testing/2026-10-07-dsh-client-size-budget.md)拥有，宿主提供 React 18.3.1，standalone Web 使用 React 19.2。瓦片属于受认证、不缓存的本院检查读取，必须经外壳给出的读取函数取得，切换切片或病例后旧瓦片不能显示。切片层级之间不逐级减半：原生 20× 切片的层级是 20×、10×、5×，之后跳到 1.25×。
+新引擎要同时满足三个约束。DSH Surface 的 Client 是一个不压缩依赖、不能有动态 chunk 的 lazy-CJS 文件，当前体积上限由[DSH 客户端语法压缩与体积预算](../testing/2026-11-13-dsh-client-syntax-compaction.md)拥有，宿主提供 React 18.3.1，standalone Web 使用 React 19.2。瓦片属于受认证、不缓存的本院检查读取，必须经外壳给出的读取函数取得，切换切片或病例后旧瓦片不能显示。切片层级之间不逐级减半：原生 20× 切片的层级是 20×、10×、5×，之后跳到 1.25×。
 
-本决策由 [issue #142](https://github.com/CaiZongyuan/clinmesh/issues/142) 交付，规格见 [issue #135](https://github.com/CaiZongyuan/clinmesh/issues/135)。当前行为的详细归属是 [前端架构的阅片器](../../../../docs/frontend-architecture.md#阅片器)；本记录只保留取舍和实测数据。
+本决策由 [issue #142](https://github.com/CaiZongyuan/clinmesh/issues/142) 交付，规格见 [issue #135](https://github.com/CaiZongyuan/clinmesh/issues/135)。当前行为的详细归属是[前端架构](../../../frontend-architecture.md)；本记录只保留取舍和实测数据。
 
 ## Decision
 
@@ -22,7 +22,7 @@ Status: implemented
 
 **引用压缩构建，不引用包的默认入口。** Surface 构建器不压缩依赖。默认入口是未压缩源码，引入后产物为 4,109,187 字节，超出选型时的预算；压缩构建经构建器重新排版后仍比默认入口小约 19 万字节。压缩构建没有类型声明，`apps/web/src/app/imaging/openseadragon-min.d.ts` 把它指向包内类型，`apps/dsh-web/tsconfig.json` 显式包含该声明文件。
 
-**CI 与 DSH 候选验收固定使用 Bun 1.4.2。** 相同源码、锁定依赖与构建器在 Bun 1.4.0 下生成 4,528,716 字节的产物，超过选型时的预算；Bun 1.4.2 下生成 3,995,150 字节，并通过 lazy-CJS、依赖和 Tool 描述合同。编译器版本属于体积证据的输入，验收使用已验证的版本；预算调整遵循[独立决策](../testing/2026-10-07-dsh-client-size-budget.md)。
+**CI 与 DSH 候选验收固定使用 Bun 1.4.2。** 相同源码、锁定依赖与构建器在 Bun 1.4.0 下生成 4,528,716 字节的产物，超过选型时的预算；Bun 1.4.2 下生成 3,995,150 字节，并通过 lazy-CJS、依赖和 Tool 描述合同。编译器版本属于体积证据的输入，验收使用已验证的版本；预算调整遵循[独立决策](../testing/2026-11-13-dsh-client-syntax-compaction.md)。
 
 **瓦片读取完全由引擎接管。** 引擎构造自定义瓦片源并覆盖 `downloadTileStart` 与 `downloadTileAbort`：位置交给外壳的 `loadBlock`，JPEG 字节用 `createImageBitmap` 解码，画到每个瓦片自己的 canvas 后立即 `close()`，再以 `context2d` 类型交给 OpenSeadragon。`getTileUrl` 的返回值只作缓存键。内置导航按钮会从 `prefixUrl` 请求图片，因此关闭，按钮由引擎自己渲染。浏览器合同断言阅片器没有发起任何 `fetch`、XHR 或资源请求。
 
@@ -46,7 +46,7 @@ Status: implemented
 
 ## Consequences
 
-引擎验收时的完整 DSH 产物为 3,995,150 字节。当前上限与体积余量见[DSH 客户端产物体积预算](../testing/2026-11-19-dsh-client-size-budget-5500k.md)。后续向 Surface 增加依赖或大段代码前先看 `verify-artifact.ts` 的结果；余量不足时优先考虑把本引擎换成轻量实现。
+引擎验收时的完整 DSH 产物为 3,995,150 字节。当前上限与体积余量见[DSH 客户端语法压缩与体积预算](../testing/2026-11-13-dsh-client-syntax-compaction.md)。后续向 Surface 增加依赖或大段代码前先看 `verify-artifact.ts` 的结果；余量不足时优先考虑把本引擎换成轻量实现。
 
 OpenSeadragon 随 Surface 一起加载和初始化，不阅片的页面也承担这部分解析开销。它在模块初始化时探测 canvas 支持，jsdom 下的 Web 测试会因此打印 `getContext` 未实现的提示，不影响结果。产物中包含 OpenSeadragon 的图像转换 Worker 源码，当前配置不会启动它。
 

@@ -12,11 +12,11 @@ Status: implemented
 
 `PaymentCollection` 统一负责门诊与住院的收款尝试、结果确认及原尝试查询恢复，使用统一交易存储。门诊 owner 负责费用关联、应收与结清判断及收费后的业务放行；住院 owner 负责预交金入账与抵扣、补缴、首次结算及后续调整，继续拥有临床执行、计费来源、出院与清床门禁及病案首页。原交易退款继续归既有 `RefundLedger`，业务 owner 消费正式资金结果，不重复维护收款交易状态机。
 
-支付方式及其金额记录属于交易事实；收款抵扣哪些费用或哪次结算属于业务资金分配。共享交易内核不接管门诊费用分配或住院预交金使用政策。具体接入取舍归[门诊分配决策](2026-10-29-payment-collection-outpatient.md)和[住院用途决策](2026-10-29-payment-collection-inpatient.md)，需求及验收见 [共享收款需求（Issue #342）](https://github.com/CaiZongyuan/clinmesh/issues/342)。当前业务合同归[临床流程](../../../architecture/clinical-workflows.md)，#225 的已交付业务及结案边界见 [一体化需求（Issue #225）](https://github.com/CaiZongyuan/clinmesh/issues/225)。
+支付方式及其金额记录属于交易事实；收款抵扣哪些费用或哪次结算属于业务资金分配。共享交易内核不接管门诊费用分配或住院预交金使用政策。具体接入取舍归[门诊合并原款决策](2026-11-10-outpatient-multi-charge-collection.md)和[住院共享资金决策](2026-10-22-inpatient-funding-and-first-settlement.md)，需求及验收见 [共享收款需求（Issue #342）](https://github.com/CaiZongyuan/clinmesh/issues/342)。当前业务合同归[收费、结算与医保](../../../architecture/billing-and-insurance.md)，#225 的已交付业务及结案边界见 [一体化需求（Issue #225）](https://github.com/CaiZongyuan/clinmesh/issues/225)。
 
-交易与资金分配始终绑定原就诊及业务用途。同一患者的门诊费用、不同次住院和各次住院预交金分别核算；本次住院预交金可以按本次住院规则抵扣其费用，不因共用交易存储而成为跨就诊余额。跨门诊或住院转款需要独立业务设计，不属于本次共享收款范围。付款方式组成与业务资金分配的领域术语见 [Payment Tender 与 Payment Allocation](../../../../CONTEXT.md#费用与医保)。
+交易与资金分配始终绑定原就诊及业务用途。同一患者的门诊费用、不同次住院和各次住院预交金分别核算；本次住院预交金可以按本次住院规则抵扣其费用，不因共用交易存储而成为跨就诊余额。跨门诊或住院转款需要独立业务设计，不属于本次共享收款范围。付款方式组成与业务资金分配的领域术语见 [Payment Tender 与 Payment Allocation](../../../../CONTEXT.md)。
 
-本次开发切换舍弃旧合成历史交易及其关联运行链，保留患者来源、可复用资产及其持久 owner 的幂等回执，通过岗位重新建立新交易；不维护两套交易格式。理由及替代方案归[开发切换决策](2026-10-30-payment-collection-development-cutover.md)，具体保留清单与失败恢复归[存储合同](../../../architecture/storage.md#共享收款的一次性开发切换)。本次例外不允许后续升级舍弃新模型的成功交易、未决尝试、退款引用或回执。
+统一交易存储不双写兼容旧格式历史交易；所有统一模型下的成功交易、未决尝试、退款引用与回执均受正式前向迁移保护，具体持久化与存量维护边界见[门诊合并原款决策](2026-11-10-outpatient-multi-charge-collection.md)与[存储合同](../../../architecture/storage.md)。
 
 共享内核位于现有 Server 内，由门诊和住院 Command 分别调用。本地交易事实、业务入账、回执、审计及相关 outbox 沿用同一 Command 事务，保持状态职责分开而提交一致。门诊收费和住院财务分别保留原页面及业务动作，首期完成共享内核接入和原尝试恢复，不新增统一交易工作台。
 
@@ -30,7 +30,7 @@ Status: implemented
 
 医保办专岗承接医院侧 DRG、模拟核定反馈及差异复核。收费员继续拥有患者收付和待遇结算，病案人员继续拥有编码审核归档，临床事实由医生及相应执行 owner 确认。权限按所需投影划分，避免为了 DRG 复核而把完整病案读取或临床写入合并到收费岗位。读取与正式动作分别保留审计。
 
-首次待遇冻结和后续补偿的独有取舍分别归[首次冻结决策](2026-10-22-inpatient-insurance-freeze.md)及[后续补偿决策](2026-10-22-inpatient-insurance-adjustments.md)；在院当前事实、审阅指纹及核定基线归[联合入口决策](../feature/2026-10-25-drg-joint-acceptance-and-review.md)。共享收款不改变这些 owner 和冻结语义。
+首次待遇冻结和后续补偿的独有取舍归[患者医保待遇决策](2026-10-22-patient-insurance-benefits.md)；在院当前事实、审阅指纹及核定基线归[联合入口决策](../feature/2026-10-25-drg-joint-acceptance-and-review.md)。共享收款不改变这些 owner 和冻结语义。
 
 ## Alternatives considered
 
@@ -52,6 +52,6 @@ Status: implemented
 
 支付、患者待遇、医院 DRG、临床及归档仍有独立状态和金额口径，岗位页面需保留原事实、当前调整与恢复入口。资金未知阻断首次财务完成，后续未知只保持对应调整待处理；两者不能共用一个会倒退临床完成事实的状态开关。
 
-患者库来源资产与就诊运行事实位于同一 operational SQLite，重建关联合成就诊运行链须按保留清单处理，不能通过删除整库丢失患者库、账号及目录配置。现有 Epoch reset 关闭并保留旧 Epoch，不是清除旧交易存储或跳过 schema 变更的入口。切换路径须明确完成 schema 转换、隔离旧运行意图并通过保留资产的完整性检查，审计保留边界继续按[仿真合同](../../../architecture/simulation.md#106-重置与-epoch-隔离)执行。
+患者库来源资产与就诊运行事实位于同一 operational SQLite，重建关联合成就诊运行链须按保留清单处理，不能通过删除整库丢失患者库、账号及目录配置。现有 Epoch reset 关闭并保留旧 Epoch，不是清除旧交易存储或跳过 schema 变更的入口。切换路径须明确完成 schema 转换、隔离旧运行意图并通过保留资产的完整性检查，审计保留边界继续按[仿真合同](../../../architecture/simulation.md)执行。
 
 共同内核、两端公开 HTTP、独立进程竞争、新交易重启恢复、切换后 PCI 联合账本及原岗位页面分别验证交易机制和业务边界，不能只用两个业务成功路径证明共同 owner。验收入口与范围由[共享收款需求（Issue #342）](https://github.com/CaiZongyuan/clinmesh/issues/342)和[测试策略](../../../testing.md)拥有，本地事务原子性不表示外部支付渠道可以随数据库回滚。

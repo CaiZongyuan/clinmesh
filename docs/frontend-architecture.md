@@ -36,11 +36,11 @@ Web HTTP adapter 为 fetch、完整响应体读取和 schema 校验设置 30 秒
 
 `apps/dsh-web` 是 DSH Host/Client adapter，不拥有医院状态或第二套页面。Host 注册固定 loopback `/clinmesh-api` proxy 与 execution-proof route；Client 把 `apps/web` 挂载为 `dsh-react-surface`，使用 DSH 共享 React runtime、Memory Router、独立 QueryClient 和 ShadowRoot 样式/Portal。
 
-API 代理的保留路径 `/clinmesh-api/_fhir/R5/Patient/<id>` 仅转发既有 Patient GET，用于患者卡的性别与生日；原始路径限制、拒绝其他资源／方法及取舍见[身份只读代理 Note](decisions/implemented/architecture/2026-10-30-surface-patient-identity-proxy.md)。standalone 继续请求原 `/fhir`，业务 DTO 与角色授权不变。
+API 代理的保留路径 `/clinmesh-api/_fhir/R5/Patient/<id>` 仅转发既有 Patient GET，用于患者卡的性别与生日；原始路径限制、拒绝其他资源／方法及宿主集成取舍见[DSH 原生 ClinMesh Surface 决策](decisions/implemented/architecture/2026-08-30-dsh-native-clinmesh-surface.md)。standalone 继续请求原 `/fhir`，业务 DTO 与角色授权不变。
 
 Surface Agent controller 把当前页面注册投影成 DSH Session-scoped browser Tools。Client adapter 订阅 DSH 唯一的 current-session store 与 resolved theme，并把当前 Session ID 和 light/dark 结果作为 Web runtime 输入；切换 Session 会立即撤下旧 Page Context 与 review，ClinMesh 在 Surface 内始终跟随该结果，不读取本地主题选择覆盖宿主；独立 Web 保留本地主题选择。Capability availability 由 DSH bridge 拥有；publisher 先发布 registration 以启动冷探测，已 active 的 lease 报告失败状态时替换 Page Context 和 registration，正常 `connecting` 则完成刚发布 registration 的租约切换。完整生命周期见[系统架构](architecture/agent-integration.md#72-page-context)。Detached review 只在 lease 保持 `active` 时有效，离开时立即取消。Page Context、Tool catalog、proposal 和 review contract 位于 `packages/contracts` 与 Server；DSH adapter 不导入 Repository、Workflow 状态机或 Hidden Fact。默认使用左右分屏，手动全屏与容器响应式合同见[系统架构](architecture/agent-integration.md#71-surface-与-host-边界)；Web root 受宿主高度约束，业务 panel 独立纵向滚动，隐藏时 keep-alive 保留客户端草稿。
 
-DSH Client artifact 是一个 lazy-CJS 文件，React、ReactDOM 和 Surface runtime 保持 external，不生成动态 chunk 或第二份 React。`vendor/dsh-react-surface` 以 submodule 固定；pnpm 拥有 workspace 并通过 tsx 生成样式。Bun 执行上游 Surface builder 后，本地 `compact-client.ts` 使用 Terser 对 factory 正文执行局部语法与空白压缩（布尔与内建字面量、相邻声明合并、函数内局部临时变量折叠与未使用局部绑定清理、点属性与简写语法、顺序语句与返回缩写），关闭顶层清理、条件折叠、死代码分支消除、函数内联、tree shaking 和标识符改名，保留 UTF-8、许可证及函数／类名称，输出语法与共享 ES2023 对齐；外层 wrapper 与宿主 `require` 保持原样。最后由 artifact verifier 检查 lazy wrapper、宿主依赖、5 MB 上限和实际 Tool 描述/schema。构建取舍与名称合同见[语法压缩决策](decisions/implemented/testing/2026-11-13-dsh-client-syntax-compaction.md)。
+DSH Client artifact 是一个 lazy-CJS 文件，React、ReactDOM 和 Surface runtime 保持 external，不生成动态 chunk 或第二份 React。`vendor/dsh-react-surface` 以 submodule 固定；pnpm 拥有 workspace 并通过 tsx 生成样式。Bun 执行上游 Surface builder 后，本地 `compact-client.ts` 使用 Terser 对 factory 正文执行局部语法与空白压缩（布尔与内建字面量、相邻声明合并、函数内局部临时变量折叠与未使用局部绑定清理、点属性与简写语法、顺序语句与返回缩写），关闭顶层清理、条件折叠、死代码分支消除、函数内联、tree shaking 和标识符改名，保留 UTF-8、许可证及函数／类名称，输出语法与共享 ES2023 对齐；外层 wrapper 与宿主 `require` 保持原样。最后由 artifact verifier 检查 lazy wrapper、宿主依赖、5.5 MB 上限和实际 Tool 描述/schema。构建取舍与预算合同见[语法压缩与体积预算决策](decisions/implemented/testing/2026-11-13-dsh-client-syntax-compaction.md)。
 
 ### Server
 
@@ -118,7 +118,7 @@ interface NavigationAdapter {
 
 切片金字塔的几何与倍率规则是 `@clinmesh/core/imaging-pyramid` 中不读取 DOM 的纯函数：各层相对第 0 层的降采样倍数取自实际层级尺寸，不要求逐级减半（原生 20× 切片的层级在 5× 之后跳到 1.25×）；显示层级取“一个层级像素不小于半个设备像素”的层级中分辨率最高者，与 OpenSeadragon 的选择一致；倍率读数按第 0 层像素间距和当前屏幕比例换算（10× 对应 1 µm/px），最高显示 20×，缩放上限是第 0 层像素与屏幕像素一比一且不超过 20×。引擎把这些函数接入 OpenSeadragon 的瓦片源。
 
-DSH 单文件产物不压缩依赖，也不能生成动态 chunk，OpenSeadragon 因此随 Surface 一起加载；引擎引用它的压缩构建 `openseadragon/build/openseadragon/openseadragon.min.js`，以减少单文件体积。客户端上限见 [DSH 产物预算](decisions/implemented/testing/2026-10-07-dsh-client-size-budget.md)。选型依据与实测体积见 [Agent Note](decisions/implemented/architecture/2026-10-02-slide-pyramid-engine.md)。引擎由合成金字塔的 React 18/19 浏览器合同验证；医生的病理会诊页面和管理员的切片复核预览都通过同一个阅片外壳使用它。
+DSH 单文件产物不压缩依赖，也不能生成动态 chunk，OpenSeadragon 因此随 Surface 一起加载；引擎引用它的压缩构建 `openseadragon/build/openseadragon/openseadragon.min.js`，以减少单文件体积。客户端上限见 [DSH 产物压缩与体积预算](decisions/implemented/testing/2026-11-13-dsh-client-syntax-compaction.md)。选型依据与实测体积见 [Agent Note](decisions/implemented/architecture/2026-10-02-slide-pyramid-engine.md)。引擎由合成金字塔的 React 18/19 浏览器合同验证；医生的病理会诊页面和管理员的切片复核预览都通过同一个阅片外壳使用它。
 
 ## 状态所有权
 
@@ -128,7 +128,7 @@ DSH 单文件产物不压缩依赖，也不能生成动态 chunk，OpenSeadragon
 - DSH Page Context 是短期授权快照，不进入 TanStack Query 或 Zustand；DSH Session、页面 scope、selection 或资源版本变化会替换 lease，其他可见页面状态只重新签发 context，二者都不成为医院状态 owner。
 - 首期在 Command 成功后精确失效 Query，并通过聚焦刷新和短间隔轮询同步岗位状态；未来的推送仍只更新 Query cache，不把服务端 payload 镜像进 Zustand。
 - 会导航、支付、发药、退费或确认的流程等待服务端成功后再清理本地状态。
-- 跨患者连续办理只保存具名导航快照，不缓存第二份服务端队列事实；原输入与原写意图按完整身份和患者绑定，持久成功处理独立于挂载组件。住院工作台只用挂载时已有的原意图恢复患者定位，实时提交不自动选人或切换布局；待确认期间保留当前患者的原位查看，未选患者的工作台继续显示本岗位原操作的失败提示。具体行为见[病案与医保](architecture/clinical-workflows.md#病案首页与归档)、[患者库开始](architecture/simulation.md#103-场景定义)及[取舍决策](decisions/implemented/architecture/2026-11-10-cross-patient-continuation.md)。
+- 跨患者连续办理只保存具名导航快照，不缓存第二份服务端队列事实；原输入与原写意图按完整身份和患者绑定，持久成功处理独立于挂载组件。住院工作台只用挂载时已有的原意图恢复患者定位，实时提交不自动选人或切换布局；待确认期间保留当前患者的原位查看，未选患者的工作台继续显示本岗位原操作的失败提示。具体行为见[住院与手术流程](architecture/inpatient-workflows.md)、[患者库开始](architecture/simulation.md#103-场景定义)及[连续办理与原回执恢复决策](decisions/implemented/architecture/2026-11-10-clinical-batch-draft-and-receipt-recovery.md)。
 - 首诊与复诊在提交时固定目标病例，防止候诊队列轮询先移除病例而取消详情读取。成功后优先读取刷新后的完整队列；队列读取失败或当前页没有该病例时，可用本次 Command 成功回执中的状态完成导航。导航仅在原工作台仍挂载且仍选中该病例时执行；卸载后继续完成必要的数据刷新，不改变当前视图。
 
 ## 构建和发布
