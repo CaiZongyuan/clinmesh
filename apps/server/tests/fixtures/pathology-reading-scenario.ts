@@ -6,9 +6,10 @@ import { z } from 'zod'
 import { expect } from 'vitest'
 import { casePathologyServiceCatalogSchema, doctorCaseDetailSchema, issuePathologyRequestResponseSchema, pathologyRequestDraftResponseSchema, sessionContextSchema } from '@clinmesh/contracts/his'
 import { authoredCasePackPrepareResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
-import { pathologyReadingProtocol, pathologyReadingSessionSchema, readingAuthorizationInputSchema, readingBindingSchema, readingSessionCreatedSchema, type PathologyReadingSessionInput } from '@clinmesh/contracts/pathology-reading'
+import { pathologyReadingProtocol, pathologyReadingSessionSchema, readingAuthorizationInputSchema, readingBindingSchema, readingSessionCreatedSchema, type PathologyReadingSessionInput, type ReadingCapability } from '@clinmesh/contracts/pathology-reading'
 import { externalPathologyCatalogSchema, externalPathologyReportHash, type ExternalPathologyAsset } from '../../src/application/pathology-external-catalog.ts'
 import { createClinMeshRuntime } from '../../src/runtime.ts'
+import { backupDatabase, expectedSchemaVersion, restoreDatabase } from '../../src/infrastructure/sqlite/database.ts'
 import { mutation, signIn, startConsultation } from './imaging-scenario.ts'
 import { payOutpatientInvestigation } from './pay-outpatient-investigation.ts'
 
@@ -32,7 +33,12 @@ export class SyntheticPathJxService {
   available = true
   loseNextSessionResponse = false
 
-  constructor(private readonly asset: ExternalPathologyAsset['output'] = output) {}
+  readonly capabilities: ReadingCapability[]
+
+  constructor(private readonly asset: ExternalPathologyAsset['output'] = output) {
+    this.capabilities = [{ taskCode: `synthetic-${asset.organ}-review`, modelVersion: 'synthetic-v1', modelDigest: 'a'.repeat(64), organ: asset.organ,
+      specimenTypes: [asset.specimenType], stain: 'HE', available: true, limitations: ['合成执行器，仅验证协议，不运行模型'] }]
+  }
 
   readonly fetch: typeof globalThis.fetch = async (input, init) => {
     const url = new URL(String(input)), method = init?.method ?? 'GET'
@@ -41,9 +47,7 @@ export class SyntheticPathJxService {
     const headers = new Headers(init?.headers)
     expect(headers.get('cookie')).toBeNull()
     expect(headers.get('authorization')).toBe('Bearer synthetic-service-credential')
-    if (path === '/capabilities') return Response.json({ protocol: pathologyReadingProtocol, instanceId: this.asset.instanceId, capabilities: [{
-      taskCode: `synthetic-${this.asset.organ}-review`, modelVersion: 'synthetic-v1', modelDigest: 'a'.repeat(64), organ: this.asset.organ,
-      specimenTypes: [this.asset.specimenType], stain: 'HE', available: true, limitations: ['合成执行器，仅验证协议，不运行模型'] }] })
+    if (path === '/capabilities') return Response.json({ protocol: pathologyReadingProtocol, instanceId: this.asset.instanceId, capabilities: this.capabilities })
     if (path.startsWith('/assets/')) return Response.json({ ...this.asset, kind: undefined, instanceId: undefined,
       assetKey: decodeURIComponent(path.slice('/assets/'.length)), available: this.available })
     if (path.startsWith('/bindings/')) {
@@ -79,7 +83,9 @@ export class SyntheticPathJxService {
   count(method: string, prefix: string) { return this.calls.filter(call => call.method === method && call.path.startsWith(prefix)).length }
 }
 
-export async function createPathologyReadingScenario() {
+export async function createPathologyReadingScenario(options: {
+  trustedOrigins?: string[]; fetch?: typeof globalThis.fetch; remote?: SyntheticPathJxService; now?: () => Date
+} = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-reading-lifecycle-'))
   const catalogPath = join(directory, 'synthetic-external-catalog.json')
   const catalog = externalPathologyCatalogSchema.parse({ packId: 'synthetic-reading-slides', ruleVersion: 1, assets: [{
@@ -89,12 +95,15 @@ export async function createPathologyReadingScenario() {
     sourceSpecimenType: 'prior-colorectal-polypectomy', reports: [reviewed(report)],
   }] })
   await writeFile(catalogPath, JSON.stringify(catalog))
-  const remote = new SyntheticPathJxService()
-  const runtime = await createClinMeshRuntime({ authBaseUrl: 'http://localhost', authSecret: 'test-auth-secret-with-at-least-32-characters',
-    cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath: join(directory, 'runtime.sqlite'),
-    demoPassword: 'Synthetic-Demo-Password-2026!', autoDispatchIntervalMs: 0, migrationMode: 'apply', trustedOrigins: ['http://localhost'],
-    pathologyExternalCatalogPath: catalogPath, pathologyReading: { serviceToken: 'synthetic-service-credential', trustedOrigins: [endpoint], fetch: remote.fetch },
-  })
+  const remote = options.remote ?? new SyntheticPathJxService()
+  let databasePath = join(directory, 'runtime.sqlite')
+  const runtimeOptions = { ...(options.now === undefined ? {} : { now: options.now }), authBaseUrl: 'http://localhost', authSecret: 'test-auth-secret-with-at-least-32-characters',
+    cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath,
+    demoPassword: 'Synthetic-Demo-Password-2026!', autoDispatchIntervalMs: 0, migrationMode: 'apply' as const, trustedOrigins: ['http://localhost'],
+    pathologyExternalCatalogPath: catalogPath, pathologyReading: { serviceToken: 'synthetic-service-credential', trustedOrigins: options.trustedOrigins ?? [endpoint], fetch: options.fetch ?? remote.fetch },
+  }
+  let runtime = await createClinMeshRuntime(runtimeOptions)
+  let running = true
   try {
     const admin = await signIn(runtime)
     const configure = async (enabled: boolean, expectedVersion: number) => runtime.app.request('/api/sim/v1/admin/pathology-reading/config',
@@ -159,7 +168,22 @@ export async function createPathologyReadingScenario() {
         input: { expectedRequestVersion: reported.version, reason: '采用同片已复核修订', reportRevision: 2 },
       }))
     }
-    return { runtime, remote, admin, visit, reported, input, detail, open, session, acknowledge, callback, correct, configure,
-      close: async () => { await runtime.close(); await rm(directory, { recursive: true, force: true }) } }
-  } catch (error) { await runtime.close(); await rm(directory, { recursive: true, force: true }); throw error }
+    const backup = async (name: string) => {
+      const path = join(directory, `${name}.sqlite`)
+      await backupDatabase(runtime.database, path)
+      return path
+    }
+    const restore = async (backupPath: string) => {
+      await runtime.close()
+      running = false
+      const destinationPath = join(directory, `restored-${randomUUID()}.sqlite`)
+      await restoreDatabase({ authorityDatabasePath: databasePath, backupPath, destinationPath,
+        busyTimeoutMs: 5000, expectedSchemaVersion: expectedSchemaVersion() })
+      databasePath = destinationPath
+      runtime = await createClinMeshRuntime({ ...runtimeOptions, databasePath, migrationMode: 'verify' })
+      running = true
+    }
+    return { get runtime() { return runtime }, remote, admin, visit, reported, input, detail, open, session, acknowledge, callback, correct, configure, backup, restore,
+      close: async () => { if (running) await runtime.close(); await rm(directory, { recursive: true, force: true }) } }
+  } catch (error) { if (running) await runtime.close(); await rm(directory, { recursive: true, force: true }); throw error }
 }
