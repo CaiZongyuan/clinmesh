@@ -1025,7 +1025,7 @@ function ScopedSyntheticPatientLibrary({ locale, session }: { locale: WorkspaceL
             await queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', profileId] })
           }} /></WorkspaceCard>
           <WorkspaceCard><ImagingCoveragePanel locale={locale} /></WorkspaceCard>
-          <WorkspaceCard><PathologyCoveragePanel locale={locale} /></WorkspaceCard>
+          <WorkspaceCard><PathologyCoveragePanel locale={locale} session={session} /></WorkspaceCard>
         </div>
       </TabsContent>
       <TabsContent className={cn('min-h-0 flex-1 overflow-auto', section !== 'library' && 'hidden')} keepMounted value="library">
