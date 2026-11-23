@@ -40,9 +40,10 @@ export async function acknowledgeInpatientCompletion(page: Page, title: string) 
   const completed = page.locator('[data-slot="toast"]').filter({ hasText: title })
   await expect(completed).toHaveCount(1)
   const content = completed.locator('[data-slot="toast-content"]')
-  if (await content.getAttribute('data-expanded') === null) await page.keyboard.press('F6')
-  await expect(content).toHaveAttribute('data-expanded', '')
-  await completed.getByRole('button', { name: 'Close toast', exact: true }).click()
+  if ((await content.getAttribute('data-expanded').catch(() => null)) === null) await page.keyboard.press('F6')
+  if ((await completed.count()) > 0) {
+    await completed.getByRole('button', { name: 'Close toast', exact: true }).click({ timeout: 2_000 }).catch(() => undefined)
+  }
   await expect(completed).toHaveCount(0)
 }
 

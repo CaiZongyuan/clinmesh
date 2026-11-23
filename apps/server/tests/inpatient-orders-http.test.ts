@@ -1075,9 +1075,46 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
         SET response_json = json_remove(response_json, '$.data.orders[0].routeCode')
         WHERE operation = 'inpatient.order.verify' AND response_json IS NOT NULL
       `).run()
-      const scope = z.object({ workspace_id: z.string(), epoch: z.string(), signed_by: z.string() }).parse(
-        database.driver.prepare('SELECT workspace_id, epoch, signed_by FROM inpatient_order LIMIT 1').get(),
+      const scope = z.object({ workspace_id: z.string(), epoch: z.string(), signed_by: z.string(), admission_id: z.string(), organization_id: z.string() }).parse(
+        database.driver.prepare('SELECT workspace_id, epoch, signed_by, admission_id, organization_id FROM inpatient_order LIMIT 1').get(),
       )
+      database.driver.prepare(`
+        INSERT INTO outpatient_catalog (
+          workspace_id, epoch, item_id, kind, code, name_zh, name_en, price_fen, version, active, config_json
+        ) VALUES (?, ?, 'medication-custom-ceftriaxone', 'medication', 'SYN-CEFTRIAXONE', '注射用头孢曲松钠', 'Ceftriaxone for injection', 1800, 1, 1, ?)
+      `).run(
+        scope.workspace_id,
+        scope.epoch,
+        JSON.stringify({
+          allowedCombinationIds: [],
+          allowedCourseDays: [3],
+          allowedDiagnosisCatalogItemIds: ['diagnosis-hypertension'],
+          allowedDoseTexts: ['1 g'],
+          allowedFrequencyCodes: ['QD'],
+          allowedQuantities: [1],
+          availableScopes: ['outpatient', 'inpatient'],
+          dose: '1 g',
+          frequency: 'QD',
+          inpatientBillingTrigger: 'dispense',
+          inpatientDoses: [{ doseText: '1 g', quantity: 1 }],
+          product: {
+            dosageForm: '粉针剂',
+            id: 'syn-prod-ceftriaxone',
+            packageDescription: '1g/瓶',
+            strength: '1 g',
+            system: 'urn:clinmesh:operational:medication',
+            version: '1',
+          },
+          unit: '瓶',
+        }),
+      )
+      database.driver.prepare(`
+        INSERT INTO inpatient_order (
+          workspace_id, epoch, order_id, admission_id, kind, duration,
+          catalog_item_id, catalog_version, display, dose_text, dose_quantity,
+          unit, frequency_code, price_fen, state, version, organization_id, signed_at, signed_by
+        ) VALUES (?, ?, 'legacy-custom-ivgtt-order', ?, 'medication', 'temporary', 'medication-custom-ceftriaxone', 1, '注射用头孢曲松钠', '1 g', 1, '瓶', 'QD', 1800, 'signed', 1, ?, '2026-08-24T08:00:00.000Z', ?)
+      `).run(scope.workspace_id, scope.epoch, scope.admission_id, scope.organization_id, scope.signed_by)
       const legacyReferenceCase = z.object({ case_id: z.string() }).optional().parse(
         database.driver.prepare('SELECT case_id FROM outpatient_case WHERE workspace_id = ? AND epoch = ? LIMIT 1').get(scope.workspace_id, scope.epoch),
       )
@@ -1199,9 +1236,12 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       database.driver.pragma('foreign_keys=ON')
       expect(() => database.driver.prepare("UPDATE inpatient_order SET frequency_code='TID'").run()).toThrow(/CHECK/)
       expect(applyMigrations(database, 'drizzle').applied).toEqual(['0112_medication-frequency.sql', '0118_item-insurance-coverage.sql', '0119_medication-route.sql'])
-      expect(database.driver.prepare('SELECT * FROM inpatient_order').all()).toEqual(
+      expect(database.driver.prepare("SELECT * FROM inpatient_order WHERE order_id != 'legacy-custom-ivgtt-order'").all()).toEqual(
         (orders as Array<Record<string, unknown>>).map(row => ({ ...row, coverage_json: null })),
       )
+      expect(database.driver.prepare("SELECT route_code FROM inpatient_order WHERE order_id = 'legacy-custom-ivgtt-order'").get()).toEqual({
+        route_code: 'IVGTT',
+      })
       const verifyReceipt = z.object({ response_json: z.string() }).parse(
         database.driver.prepare("SELECT response_json FROM command_receipt WHERE operation = 'inpatient.order.verify'").get(),
       )

@@ -28,7 +28,7 @@ SELECT
   workspace_id, epoch, prescription_id, medication_request_id,
   medication_id, medication_snapshot_json, quantity, dose_text,
   frequency_code,
-  clinmesh_backfill_prescription_item_route(medication_id, medication_snapshot_json),
+  clinmesh_backfill_prescription_item_route(workspace_id, epoch, medication_id, medication_snapshot_json),
   course_days, dispensed_quantity,
   unit_price_fen, coverage_json
 FROM prescription_item;
@@ -76,14 +76,7 @@ SELECT
   workspace_id, epoch, order_id, admission_id, kind, duration,
   catalog_item_id, catalog_version, display, dose_text, dose_quantity,
   unit, frequency_code,
-  CASE
-    WHEN kind = 'service' THEN NULL
-    WHEN catalog_item_id = 'medication-nitroglycerin' THEN 'SL'
-    WHEN catalog_item_id = 'medication-enoxaparin' THEN 'IH'
-    WHEN catalog_item_id IN ('medication-heparin', 'medication-pci-heparin', 'medication-pci-iohexol') THEN 'IV'
-    WHEN catalog_item_id = 'medication-sodium-chloride' THEN 'IVGTT'
-    ELSE 'PO'
-  END,
+  clinmesh_backfill_inpatient_order_route(workspace_id, epoch, kind, catalog_item_id, display),
   price_fen, state, version, organization_id, signed_at, signed_by,
   verified_at, stopped_at, coverage_json
 FROM inpatient_order;
@@ -98,7 +91,9 @@ SET draft_json = json_set(
   draft_json,
   '$.items',
   (
-    SELECT json_group_array(json(clinmesh_backfill_prescription_json_item(item.value)))
+    SELECT json_group_array(
+      json(clinmesh_backfill_prescription_json_item(prescription_draft_state.workspace_id, prescription_draft_state.epoch, item.value))
+    )
     FROM json_each(prescription_draft_state.draft_json, '$.items') AS item
   )
 )
@@ -130,26 +125,7 @@ SET response_json = json_set(
   '$.data.orders',
   (
     SELECT json_group_array(
-      json(
-        CASE
-          WHEN json_extract(item.value, '$.kind') = 'medication'
-            AND json_type(item.value, '$.routeCode') IS NULL
-          THEN json_set(
-            item.value,
-            '$.routeCode',
-            CASE json_extract(item.value, '$.catalogItemId')
-              WHEN 'medication-nitroglycerin' THEN 'SL'
-              WHEN 'medication-enoxaparin' THEN 'IH'
-              WHEN 'medication-heparin' THEN 'IV'
-              WHEN 'medication-pci-heparin' THEN 'IV'
-              WHEN 'medication-pci-iohexol' THEN 'IV'
-              WHEN 'medication-sodium-chloride' THEN 'IVGTT'
-              ELSE 'PO'
-            END
-          )
-          ELSE item.value
-        END
-      )
+      json(clinmesh_backfill_inpatient_json_order(command_receipt.workspace_id, command_receipt.epoch, item.value))
     )
     FROM json_each(command_receipt.response_json, '$.data.orders') AS item
   )
@@ -161,7 +137,9 @@ SET response_json = json_set(
   response_json,
   '$.data.prescription.items',
   (
-    SELECT json_group_array(json(clinmesh_backfill_prescription_json_item(item.value)))
+    SELECT json_group_array(
+      json(clinmesh_backfill_prescription_json_item(command_receipt.workspace_id, command_receipt.epoch, item.value))
+    )
     FROM json_each(command_receipt.response_json, '$.data.prescription.items') AS item
   )
 )
@@ -172,7 +150,9 @@ SET response_json = json_set(
   response_json,
   '$.data.draft.items',
   (
-    SELECT json_group_array(json(clinmesh_backfill_prescription_json_item(item.value)))
+    SELECT json_group_array(
+      json(clinmesh_backfill_prescription_json_item(command_receipt.workspace_id, command_receipt.epoch, item.value))
+    )
     FROM json_each(command_receipt.response_json, '$.data.draft.items') AS item
   )
 )
