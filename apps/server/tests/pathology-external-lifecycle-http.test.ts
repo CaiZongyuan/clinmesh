@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { apiErrorSchema, casePathologyServiceCatalogSchema, doctorCaseDetailSchema, issuePathologyRequestResponseSchema, pathologyRequestDraftResponseSchema } from '@clinmesh/contracts/his'
+import { pathologyReadingProtocol, pathologyReadingSessionSchema } from '@clinmesh/contracts/pathology-reading'
 import { CommandExecutor } from '../src/application/command-executor.ts'
 import { externalPathologyCatalogSchema, externalPathologyReportHash } from '../src/application/pathology-external-catalog.ts'
 import { AuthoredCasePackService } from '../src/application/scenario-data/authored-case-pack-service.ts'
@@ -13,6 +14,7 @@ import { SyntheticPatientProfileRepository } from '../src/infrastructure/sqlite/
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { mutation, signIn, startConsultation } from './fixtures/imaging-scenario.ts'
 import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
+import { SyntheticPathJxService } from './fixtures/pathology-reading-scenario.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
@@ -28,13 +30,17 @@ for (const organ of ['colorectal', 'thyroid'] as const) it(`completes the ${orga
   }] }).assets[0]!
   let available = true
   const directory = await mkdtemp(join(tmpdir(), `clinmesh-${organ}-http-`))
+  const readingService = new SyntheticPathJxService(output)
   const runtime = await createClinMeshRuntime({
     authBaseUrl: 'http://localhost', authSecret: 'test-auth-secret-with-at-least-32-characters', cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath: join(directory, 'runtime.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!', autoDispatchIntervalMs: 0, migrationMode: 'apply', trustedOrigins: ['http://localhost'],
     pathologyExternalSource: { catalog: async () => ({ packId: 'synthetic-pathjx-slides', ruleVersion: 1, assets: [asset] }), available: async (_asset, workspaceId) => available && workspaceId === 'workspace-demo' },
+    pathologyReading: { serviceToken: 'synthetic-service-credential', trustedOrigins: ['http://synthetic-pathjx.invalid'], fetch: readingService.fetch },
   })
   cleanups.push(async () => { await runtime.close(); await rm(directory, { recursive: true, force: true }) })
   const admin = await signIn(runtime), context = (await runtime.identity.resolveSessionContext(new Headers({ cookie: admin }))).actor
+  expect((await runtime.app.request('/api/sim/v1/admin/pathology-reading/config', mutation(admin, { expectedVersion: 0, enabled: true,
+    instanceId: output.instanceId, endpoint: 'http://synthetic-pathjx.invalid', viewerOrigin: 'http://synthetic-pathjx.invalid' }, 'PUT'))).status).toBe(200)
   const cases = new SyntheticCaseRepository(runtime.database), profiles = new SyntheticPatientProfileRepository(runtime.database)
   const pack = new AuthoredCasePackService(new CommandExecutor(runtime.database, runtime.fhir), profiles, cases, new PatientPersonaRepository(runtime.database, cases), compiledPathologyAuthoredCasePack)
   const selected = pack.prepare(context, { expectedEpoch: context.epoch }, `prepare-${organ}`).data.cases.find(item => item.draftId.includes(organ))!.case!
@@ -74,12 +80,25 @@ for (const organ of ['colorectal', 'thyroid'] as const) it(`completes the ${orga
   const acknowledge = () => runtime.app.request(path('acknowledge'), mutation(visit.doctor, {
     expectedVersions: { [`DiagnosticReport/${currentReport.diagnosticReportId}`]: currentReport.diagnosticReportVersion, [`ServiceRequest/${reported.serviceRequestId}`]: reported.serviceRequestVersion, [`Task/${reported.taskId}`]: reported.taskVersion }, input: { expectedRequestVersion: reported.version },
   }))
+  const opened = await runtime.app.request(`/api/his/v1/pathology-requests/${reported.id}/reading-sessions`, mutation(visit.doctor, {
+    reportId: currentReport.diagnosticReportId, reportVersion: currentReport.diagnosticReportVersion, requestVersion: reported.version,
+    generation: '9c149be9-8a6e-4a0e-bc1c-e6383bb1434a', parentOrigin: 'http://localhost',
+  }))
+  expect(opened.status, await opened.clone().text()).toBe(200)
+  const session = pathologyReadingSessionSchema.parse(await opened.json())
+  const displayed = await runtime.app.request(`/api/his/v1/pathology-reading/sessions/${session.id}/displayed`, mutation(visit.doctor, {
+    protocol: pathologyReadingProtocol, type: 'displayed', sessionId: session.sessionId, generation: session.generation,
+    requestId: session.requestId, reportId: session.reportId, reportVersion: session.reportVersion,
+  }))
+  expect(displayed.status, await displayed.clone().text()).toBe(200)
   available = false
+  readingService.available = false
   const blocked = await acknowledge()
   expect(blocked.status).toBe(409)
   expect(apiErrorSchema.parse(await blocked.json()).error.code).toBe('IMAGING_STUDY_UNAVAILABLE')
   expect((await detail()).pathologyRequests!.requests[0]!.report!.diagnosis).toBe(report.diagnosis)
   available = true
+  readingService.available = true
   expect((await acknowledge()).status).toBe(200)
   const acknowledged = (await detail()).pathologyRequests!.requests[0]!
   asset.reports.push(review({ ...report, revision: 2, microscopy: '同一切片已核对的第二版镜下所见。' }))
