@@ -18,8 +18,8 @@ const endpoint = 'http://synthetic-pathjx.invalid'
 const output = { kind: 'pathjx' as const, instanceId, assetKey: 'synthetic-colorectal-slide', contentHash: 'b'.repeat(64),
   organ: 'colorectal' as const, specimenType: 'resection' as const, stain: 'HE' as const }
 const report = { revision: 1, diagnosis: '合成结直肠切片会诊诊断', microscopy: '合成 H&E 测试所见。', immunohistochemistry: '未提供免疫组化切片。', note: '纯合成测试，不作医学诊断。' }
-const reviewed = (value: typeof report) => ({ ...value, review: { conclusion: 'approved' as const,
-  contentHash: externalPathologyReportHash({ output }, value), reviewedAt: '2026-11-20T00:00:00Z', reviewer: 'Synthetic Reviewer' } })
+const reviewed = (value: typeof report, sourceOutput: ExternalPathologyAsset['output'] = output) => ({ ...value, review: { conclusion: 'approved' as const,
+  contentHash: externalPathologyReportHash({ output: sourceOutput }, value), reviewedAt: '2026-11-20T00:00:00Z', reviewer: 'Synthetic Reviewer' } })
 const remoteSessionInputSchema = z.object({ intentId: z.string(), bindingId: z.string(), expiresAt: z.string(), authorizationToken: z.string(),
   writable: z.boolean() }).passthrough()
 
@@ -85,36 +85,38 @@ export class SyntheticPathJxService {
 
 export async function createPathologyReadingScenario(options: {
   trustedOrigins?: string[]; fetch?: typeof globalThis.fetch; remote?: SyntheticPathJxService; now?: () => Date
+  assetOutput?: ExternalPathologyAsset['output']; serviceOrigin?: string; serviceToken?: string
 } = {}) {
+  const assetOutput = options.assetOutput ?? output, serviceOrigin = options.serviceOrigin ?? endpoint
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-reading-lifecycle-'))
   const catalogPath = join(directory, 'synthetic-external-catalog.json')
   const catalog = externalPathologyCatalogSchema.parse({ packId: 'synthetic-reading-slides', ruleVersion: 1, assets: [{
-    assetId: 'synthetic-colorectal-asset', diagnosis: { system: 'http://snomed.info/sct', code: '68496003' },
-    examCode: 'colorectal-slide-consultation', license: { source: 'https://example.invalid/synthetic', identifier: 'synthetic',
-      attribution: 'Synthetic fixture', deidentified: true, synthetic: true }, output,
-    sourceSpecimenType: 'prior-colorectal-polypectomy', reports: [reviewed(report)],
+    assetId: `synthetic-${assetOutput.organ}-asset`, diagnosis: { system: 'http://snomed.info/sct', code: assetOutput.organ === 'thyroid' ? '237495005' : '68496003' },
+    examCode: `${assetOutput.organ}-slide-consultation`, license: { source: 'https://example.invalid/synthetic', identifier: 'synthetic',
+      attribution: 'Synthetic fixture', deidentified: true, synthetic: true }, output: assetOutput,
+    sourceSpecimenType: assetOutput.organ === 'thyroid' ? 'prior-thyroid-surgical-specimen' : 'prior-colorectal-polypectomy', reports: [reviewed(report, assetOutput)],
   }] })
   await writeFile(catalogPath, JSON.stringify(catalog))
-  const remote = options.remote ?? new SyntheticPathJxService()
+  const remote = options.remote ?? new SyntheticPathJxService(assetOutput)
   let databasePath = join(directory, 'runtime.sqlite')
   const runtimeOptions = { ...(options.now === undefined ? {} : { now: options.now }), authBaseUrl: 'http://localhost', authSecret: 'test-auth-secret-with-at-least-32-characters',
     cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath,
     demoPassword: 'Synthetic-Demo-Password-2026!', autoDispatchIntervalMs: 0, migrationMode: 'apply' as const, trustedOrigins: ['http://localhost'],
-    pathologyExternalCatalogPath: catalogPath, pathologyReading: { serviceToken: 'synthetic-service-credential', trustedOrigins: options.trustedOrigins ?? [endpoint], fetch: options.fetch ?? remote.fetch },
+    pathologyExternalCatalogPath: catalogPath, pathologyReading: { serviceToken: options.serviceToken ?? 'synthetic-service-credential', trustedOrigins: options.trustedOrigins ?? [serviceOrigin], fetch: options.fetch ?? remote.fetch },
   }
   let runtime = await createClinMeshRuntime(runtimeOptions)
   let running = true
   try {
     const admin = await signIn(runtime)
     const configure = async (enabled: boolean, expectedVersion: number) => runtime.app.request('/api/sim/v1/admin/pathology-reading/config',
-      mutation(admin, { enabled, expectedVersion, instanceId, endpoint, viewerOrigin: endpoint }, 'PUT'))
+      mutation(admin, { enabled, expectedVersion, instanceId: assetOutput.instanceId, endpoint: serviceOrigin, viewerOrigin: serviceOrigin }, 'PUT'))
     expect((await configure(true, 0)).status).toBe(200)
     const context = await runtime.app.request('/api/auth/context', { headers: { cookie: admin } })
     expect(context.status).toBe(200)
     const epoch = sessionContextSchema.parse(await context.json()).actor.epoch
     const prepare = await runtime.app.request('/api/sim/v1/admin/pathology-case-pack/prepare', mutation(admin, { input: { expectedEpoch: epoch } }))
     expect(prepare.status, await prepare.clone().text()).toBe(200)
-    const selected = authoredCasePackPrepareResponseSchema.parse(await prepare.json()).data.cases.find(item => item.draftId.includes('colorectal'))!.case!
+    const selected = authoredCasePackPrepareResponseSchema.parse(await prepare.json()).data.cases.find(item => item.draftId.includes(assetOutput.organ))!.case!
     const preparation = await runtime.app.request('/api/sim/v1/admin/pathology-preparations', mutation(admin, { input: { caseIds: [selected.caseId] } }))
     expect(preparation.status, await preparation.clone().text()).toBe(200)
     const visit = await startConsultation(runtime, admin, selected.caseId)
@@ -124,7 +126,7 @@ export async function createPathologyReadingScenario(options: {
       return doctorCaseDetailSchema.parse(await response.json())
     }
     const services = await runtime.app.request(`/api/his/v1/doctor/cases/${visit.outpatientCaseId}/pathology-services`, { headers: { cookie: visit.doctor } })
-    const service = casePathologyServiceCatalogSchema.parse(await services.json()).items.find(item => item.service.examCode === 'colorectal-slide-consultation')!
+    const service = casePathologyServiceCatalogSchema.parse(await services.json()).items.find(item => item.service.examCode === `${assetOutput.organ}-slide-consultation`)!
     expect(service.available).toBe(true)
     const expectedVersions = { [`Encounter/${visit.encounterId}`]: '3' }
     const drafted = await runtime.app.request(`/api/his/v1/encounters/${visit.encounterId}/pathology-request/draft`, mutation(visit.doctor, {
@@ -161,7 +163,7 @@ export async function createPathologyReadingScenario(options: {
       method: 'POST', headers: { authorization: `Bearer ${remote.authorizationTokens.get(sessionId)}`, 'content-type': 'application/json' }, body: JSON.stringify(event),
     })
     const correct = async () => {
-      catalog.assets[0]!.reports.push(reviewed({ ...report, revision: 2, microscopy: '同一切片已复核第二版镜下所见。' }))
+      catalog.assets[0]!.reports.push(reviewed({ ...report, revision: 2, microscopy: '同一切片已复核第二版镜下所见。' }, assetOutput))
       await writeFile(catalogPath, JSON.stringify(catalog))
       return runtime.app.request(`/api/his/v1/pathology-requests/${reported.id}/reports/${input.reportId}/actions/correct`, mutation(admin, {
         expectedVersions: { [`DiagnosticReport/${input.reportId}`]: input.reportVersion },

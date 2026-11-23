@@ -230,6 +230,8 @@ pnpm perf:full-import -- --manifest /absolute/path/to/release.json
 
 ## 影像合同
 
+外部病理阅片的 `pathology-reading-lifecycle-http.test.ts` 拥有当前会话、原意图、显示资格、撤权与两阶段检查点；`pathology-reading-recovery-http.test.ts` 用真实 ClinMesh SQLite 备份还原及受控外部服务覆盖单侧／匹配恢复、实例替换和能力发现，远端状态回退不代表真实 PostgreSQL 恢复演练。`pathology-reading-two-service-http.test.ts` 仅在显式设置 `CLINMESH_TEST_PATHJX_ORIGIN` 与 `CLINMESH_TEST_PATHJX_DESCRIPTOR` 后运行，连接 PathJX 自有合成 bridge 的真实平台 HTTP 与独立临时 PostgreSQL，默认测试跳过；descriptor 只存本机，不进入日志或 Git。两侧服务测试没有真实模型或像素，浏览器显示与消息合同由 `pathology-reading.browser.test.ts` 的合成瓦片另行验证。
+
 常规测试使用完全合成的 DICOM、患者与 Provider，不访问真实数据集、模型或公网；真实素材只出现在显式的真实入口验证中。
 
 - 素材流水线测试从公开入口覆盖清单校验、逐文件哈希、不支持的传输语法与方向、单块 2 MiB 上限、原子安装、离线修复、标注导出，以及报告自动核对与复核签署的发布门禁。

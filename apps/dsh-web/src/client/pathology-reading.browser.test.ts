@@ -36,7 +36,8 @@ async function listen(server: Server) {
 
 async function startFixture(version: string) {
   const { script, styles } = await buildFixture(version), sessions: Session[] = [], displayed: PathologyReadingMessage[] = [], closed: string[] = []
-  let origin = '', holdDisplayed = false, releaseDisplayed = () => {}, displayedGate = Promise.resolve()
+  let origin = '', holdDisplayed = false, releaseDisplayed = () => {}, displayedGate = Promise.resolve(), expireNextOpen = false
+  const openKeys: string[] = []
   const viewer = createServer((request, response) => {
     const id = new URL(request.url!, 'http://localhost').searchParams.get('id'), session = sessions.find(item => item.id === id)
     if (!session) { response.writeHead(404); response.end(); return }
@@ -61,6 +62,12 @@ async function startFixture(version: string) {
     }
     let data = ''; for await (const chunk of request) data += String(chunk)
     if (url.pathname.endsWith('/reading-sessions') && request.method === 'POST') {
+      openKeys.push(String(request.headers['idempotency-key']))
+      if (expireNextOpen) {
+        expireNextOpen = false
+        response.writeHead(403, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ error: { code: 'PATHOLOGY_READING_SESSION_EXPIRED', message: 'Synthetic original intent expired after recovery' } })); return
+      }
       const input = JSON.parse(data) as { reportId: string; reportVersion: string; generation: string }, id = randomUUID()
       const current: Session = { id, sessionId: `pathjx-${sessions.length}`, requestId: decodeURIComponent(url.pathname.split('/').at(-2)!), reportId: input.reportId,
         reportVersion: input.reportVersion, generation: input.generation, viewerOrigin, viewerUrl: `${viewerOrigin}/clinmesh/reading?id=${id}`,
@@ -74,7 +81,7 @@ async function startFixture(version: string) {
     send({ id: current.id, active: url.pathname.endsWith('/displayed') ? true : current.active, writable: true, displayed: true, expiresAt: current.expiresAt })
   })
   origin = await listen(parent)
-  return { origin, viewerOrigin, sessions, displayed, closed,
+  return { origin, viewerOrigin, sessions, displayed, closed, openKeys, expireNextOpen: () => { expireNextOpen = true },
     holdDisplayed: () => { holdDisplayed = true; displayedGate = new Promise<void>(resolve => { releaseDisplayed = resolve }) },
     releaseDisplayed: () => { holdDisplayed = false; releaseDisplayed() },
     close: async () => { releaseDisplayed(); await Promise.all([parent, viewer].map(server => new Promise<void>(resolve => server.close(() => resolve())))) } }
@@ -103,6 +110,18 @@ for (const { version, surface, title } of [
   { version: '18', surface: true, title: 'ShadowRoot React 18' },
   { version: '19', surface: true, title: 'ShadowRoot React 19' },
 ]) test.describe(`PathJX 外壳 ${title}`, () => {
+  test('原创建结果查明已过期后，明确重试使用新意图并恢复阅片', async ({ page }) => {
+    const app = await startFixture(version)
+    app.expireNextOpen()
+    try {
+      await page.goto(`${app.origin}/fixture?surface=${surface ? '1' : '0'}`)
+      await page.getByRole('button', { name: '重新打开切片', exact: true }).click()
+      await expect(page.frameLocator('iframe').getByText('已收到当前会话启动', { exact: true })).toBeVisible()
+      expect(app.openKeys).toHaveLength(2)
+      expect(app.openKeys[0]).not.toBe(app.openKeys[1])
+    } finally { await app.close() }
+  })
+
   test('严格绑定消息，实际iframe握手后才授予显示资格，失败及时撤销', async ({ page }) => {
     test.setTimeout(120_000)
     const app = await startFixture(version), errors: string[] = []

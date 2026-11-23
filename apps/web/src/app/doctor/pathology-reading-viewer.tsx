@@ -2,7 +2,7 @@ import type { PathologyReport, PathologyRequest } from '@clinmesh/contracts/his'
 import { pathologyReadingMessageSchema, pathologyReadingProtocol, pathologyReadingReadySchema, type PathologyReadingSession } from '@clinmesh/contracts/pathology-reading'
 import { Button } from '@clinmesh/ui/components/button'
 import { useEffect, useRef, useState } from 'react'
-import { newIdempotencyKey } from '../api-client.ts'
+import { ApiClientError, newIdempotencyKey } from '../api-client.ts'
 import { closePathologyReading, getPathologyReading, markPathologyReadingDisplayed, openPathologyReading } from '../pathology-reading-api.ts'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 
@@ -80,7 +80,12 @@ export function PathologyReadingViewer({ request, report, locale, onReady, onSes
       if (disposed) { void closePathologyReading(result.id, closeKey).catch(() => undefined); return }
       setSession(result)
       sessionCallback.current?.(result.id)
-    }).catch(() => { if (!disposed) invalidate() })
+    }).catch(error => {
+      if (error instanceof ApiClientError && error.code === 'PATHOLOGY_READING_SESSION_EXPIRED') {
+        intent.current = { scope, generation: newIdempotencyKey(), key: newIdempotencyKey() }
+      }
+      if (!disposed) invalidate()
+    })
     const interval = window.setInterval(() => {
       if (!current || disposed || invalidated) return
       const writable = current.writable
