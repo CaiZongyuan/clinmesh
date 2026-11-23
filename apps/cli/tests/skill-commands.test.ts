@@ -1278,4 +1278,12 @@ it('keeps clinical risk assessment, nursing vitals, and deterministic clinical s
     expect(doctorSkill).toContain(code)
     expect(inpatientSkill).toContain(code)
   }
+
+  expect(getHisOperation('catalog.clinical.read').version).toBe(3)
+  expect(getHisOperation('inpatient.catalog.search').version).toBe(3)
+  expect(getHisOperation('inpatient.clinical.catalog').version).toBe(4)
+  for (const skill of [doctorSkill, inpatientSkill]) {
+    expect(skill).toContain('packageInsert')
+    expect(skill).toContain('合成教学参考，非真实上市产品法定说明书')
+  }
 })

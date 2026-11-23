@@ -128,6 +128,16 @@ const hospitalMedication = {
   defaultFrequencyCode: 'BID',
   defaultCourseDays: 5,
   defaultQuantity: 2,
+  packageInsert: {
+    genericName: '磷酸奥司他韦胶囊',
+    specificationAndForm: '胶囊剂 · 75 mg · 10粒/盒',
+    indicationsSummary: '用于成人甲型和乙型流行性感冒治疗。',
+    dosageAndAdministration: '口服，常规每次 75 mg，每日两次（BID），疗程 5 天。',
+    contraindications: '对本品任何成分严重过敏者禁用。',
+    precautions: '中重度肾功能不全需调整剂量，本品对细菌感染无效。',
+    adverseReactions: '常见恶心、呕吐与头痛。',
+    disclaimer: '合成教学参考，非真实上市产品法定说明书',
+  },
 }
 const recommendationGuidelines: GuidelineEvidence[] = [
   ...(['national-standard', 'official-protocol', 'guideline'] as const).map(documentType => ({

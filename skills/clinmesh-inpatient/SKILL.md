@@ -111,7 +111,7 @@ clinmesh inpatient complete-service --input @execution.json --idempotency-key <k
 clinmesh inpatient reverse-charge --input @reversal.json --idempotency-key <key>
 ```
 
-`catalog-search` 的 `kind` 为 `medication` 或 `laboratory`，`source` 为 `hospital` 或 `reference`；两来源分别分页，`pageSize` 最大 50。候选返回 `available`、`incomplete` 或 `inactive`，`missingFields` 列明缺项。只用 `available` 返回的 `catalogItemId/catalogVersion` 开立；Reference ID、同名产品或不唯一映射不能替代院内身份。查询失败时保留失败原因并重新查询，空结果不表示加载成功前可自行补造项目。
+`catalog-search` 的 `kind` 为 `medication` 或 `laboratory`，`source` 为 `hospital` 或 `reference`；两来源分别分页，`pageSize` 最大 50。候选返回 `available`、`incomplete` 或 `inactive`，`missingFields` 列明缺项（可选只读合成 `packageInsert` 说明书摘要带 `disclaimer: "合成教学参考，非真实上市产品法定说明书"`，仅用于参考，不计入缺项，也不进入医嘱或归档快照）。只用 `available` 返回的 `catalogItemId/catalogVersion` 开立；Reference ID、同名产品或不唯一映射不能替代院内身份。查询失败时保留失败原因并重新查询，空结果不表示加载成功前可自行补造项目。
 
 每个文件使用受信读取结果的 `admissionId`。诊断确认传 `encounterVersion`、`expectedRevision` 与恰好一个 primary 的 `entries`；每项必须显式选择 `admissionCondition`（`1`有、`2`临床未确定、`3`情况不明、`4`无），输入顺序保存在正式确认中，不根据备注或日期推断病情；签发传当前 `encounterVersion`、`duration` 和受控 `selection`。药品选择含目录 ID/版本、医生本次填写的 `doseText`、`frequencyCode`、每次 `doseQuantity`；数量以目录 `unit` 计，质量单位按明确的 `doseBasis` 换算为整数制剂数量，并受 `maxDoseQuantity` 约束。`doses` 是常用建议，未填写本次剂量由医嘱表单提示。单位或含量不明确时先补资料；合成本院适应症、组合、过敏、剂量和频次不满足时不得换 ID 绕过。
 

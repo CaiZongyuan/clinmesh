@@ -26,6 +26,11 @@ import { notifyIssueDraftSettled, subscribeIssueDraftSettlement } from './inpati
 import { orderSetExcludedIds, OrderSetSelectorBar } from './order-set-selector.tsx'
 import { getBatchFailureMessage, getWorkspaceErrorMessage } from './workspace-error.ts'
 import { inpatientFrequencyLabel } from './inpatient-labels.ts'
+import {
+  MedicationInsertTriggerButton,
+  MedicationPackageInsertSheet,
+  type MedicationPackageInsertTarget,
+} from './medication-package-insert-sheet.tsx'
 import { orderBatchLimit, orderDose, orderDraftKey, orderDraftSchema, orderSelection, readOrderDraft, saveOrderDraft, type OrderAttempt, type OrderDraft, type OrderDraftRow } from './inpatient-order-drafts.ts'
 import { InpatientOrderRowEstimate } from './inpatient-order-row-estimate.tsx'
 
@@ -60,6 +65,8 @@ export function InpatientOrderComposer(props: Props) {
   }), [session, admission])
   const isCurrent = () => mounted.current && latest.current.active && latest.current.open && latest.current.admission.id === admission.id && latest.current.admission.status === 'admitted' && latest.current.admission.recordStatus !== 'archived'
   const [confirmClear, setConfirmClear] = useState(false), [notice, setNotice] = useState('')
+  const [insertTarget, setInsertTarget] = useState<MedicationPackageInsertTarget | null>(null)
+  useEffect(() => { if (!open) setInsertTarget(null) }, [open])
   const [readyEstimates, setReadyEstimates] = useState<Record<string, string | undefined>>({})
   const estimateReady = useCallback((id: string, fingerprint: string | undefined) => setReadyEstimates(previous => previous[id] === fingerprint ? previous : { ...previous, [id]: fingerprint }), [])
   const save = useCallback((next: OrderDraft) => {
@@ -134,7 +141,7 @@ export function InpatientOrderComposer(props: Props) {
     <Dialog open={open} pending={running} onOpenChange={next => { if (!busy.current) onOpenChange(next) }}>
       <DialogContent className="flex h-[min(800px,calc(100svh-2.5rem))] flex-col sm:max-w-5xl" showCloseButton={!running}>
         <DialogHeader><DialogTitle>{t('开立医嘱', 'Issue order')}</DialogTitle><DialogDescription>{t(`连续添加药品和护理治疗，逐条核对后集中开立；最多 ${orderBatchLimit} 项，关闭后保留。开立后仍须护士校对，不代表已经执行。`, `Add and review medications and nursing items, then issue together. Keep up to ${orderBatchLimit} drafts after closing. Nurse verification and actual execution remain separate.`)}</DialogDescription></DialogHeader>
-        <OrderComposerLayout locale={locale} catalog={<InpatientOrderPicker id={`${formId}-item`} inline session={session} locale={locale} services={services} diagnosed={diagnosed} disabled={locked} picked={null} onPick={add} />}>
+        <OrderComposerLayout locale={locale} catalog={<InpatientOrderPicker id={`${formId}-item`} inline session={session} locale={locale} services={services} diagnosed={diagnosed} disabled={locked} picked={null} onOpenInsert={setInsertTarget} onPick={add} />}>
           <div className="flex min-w-0 flex-col gap-3">
             <OrderSetSelectorBar
               disabled={locked || loading || !!catalogError}
@@ -195,15 +202,16 @@ export function InpatientOrderComposer(props: Props) {
             {draft.rows.map(row => {
               const dose = orderDose(row)
               const edit = (patch: Partial<OrderDraftRow>) => update(row.id, { ...patch, estimate: undefined, error: undefined })
-              const catalogMedication = row.pick.kind === 'medication' ? medications.find(item => item.id === row.pick.item.id) : undefined
-              const medicationSpec = row.pick.kind === 'medication'
+              const medicationPick = row.pick.kind === 'medication' ? row.pick.item : undefined
+              const catalogMedication = medicationPick ? medications.find(item => item.id === medicationPick.id) : undefined
+              const medicationSpec = medicationPick
                 ? formatMedicationSpec(
-                    row.pick.item.strength ?? catalogMedication?.strength,
-                    row.pick.item.packageDescription ?? catalogMedication?.packageDescription,
+                    medicationPick.strength ?? catalogMedication?.strength,
+                    medicationPick.packageDescription ?? catalogMedication?.packageDescription,
                   )
                 : ''
               return <section key={row.id} aria-label={t(`待开：${row.pick.item.display}`, `Draft: ${row.pick.item.display}`)} className="flex min-w-0 flex-col gap-2 rounded-md border p-3">
-                <div className="flex items-start gap-2"><Checkbox aria-label={t(`选择待开${row.pick.item.display}`, `Select draft ${row.pick.item.display}`)} checked={row.selected} disabled={locked} onCheckedChange={selected => update(row.id, { selected })} /><strong className="min-w-0 flex-1 text-sm wrap-anywhere">{row.pick.item.display}</strong><Button size="sm" variant="ghost" disabled={locked} onClick={() => save({ ...current.current, rows: current.current.rows.filter(item => item.id !== row.id) })}>{t('移除项目', 'Remove item')}</Button></div>
+                <div className="flex items-start gap-2"><Checkbox aria-label={t(`选择待开${row.pick.item.display}`, `Select draft ${row.pick.item.display}`)} checked={row.selected} disabled={locked} onCheckedChange={selected => update(row.id, { selected })} /><strong className="min-w-0 flex-1 text-sm wrap-anywhere">{row.pick.item.display}</strong>{medicationPick ? <MedicationInsertTriggerButton locale={locale} onOpen={() => setInsertTarget({ title: medicationPick.display, subtitle: medicationSpec || undefined, packageInsert: medicationPick.packageInsert ?? catalogMedication?.packageInsert })} /> : null}<Button size="sm" variant="ghost" disabled={locked} onClick={() => save({ ...current.current, rows: current.current.rows.filter(item => item.id !== row.id) })}>{t('移除项目', 'Remove item')}</Button></div>
                 {row.pick.kind === 'medication' ? (
                   <p className="break-words text-xs text-muted-foreground" data-order-check-summary="">
                     {[
@@ -252,6 +260,7 @@ export function InpatientOrderComposer(props: Props) {
         <OrderComposerFooter hint={running ? t('正在逐项开立，请稍候…', 'Issuing each item…') : write.blocked ? t('请先恢复原住院操作', 'Recover the original inpatient operation first') : selected.some(problem) ? t('还差：请修正所选医嘱的问题', 'Complete: fix the selected orders') : t(`本次仅开立所选 ${selected.length} 项，成功后仍待护士校对`, `Issue only ${selected.length} selected items; nurse verification follows`)}>
           <DialogClose render={<Button variant="outline" />}>{t('关闭', 'Close')}</DialogClose><Button disabled={locked || loading || !!catalogError || selected.length === 0 || selected.some(problem)} onClick={() => void run()}>{t(`开立所选医嘱（${selected.length}）`, `Issue selected orders (${selected.length})`)}</Button>
         </OrderComposerFooter>
+        <MedicationPackageInsertSheet locale={locale} onClose={() => setInsertTarget(null)} target={insertTarget} />
       </DialogContent>
     </Dialog>
     <AlertDialog pending={false} open={confirmClear} onOpenChange={setConfirmClear}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t('丢弃全部未提交待开清单？', 'Discard all unsubmitted drafts?')}</AlertDialogTitle><AlertDialogDescription>{t('将删除本次住院未提交的医嘱输入，已开立医嘱不受影响。', 'Discard unsubmitted order inputs for this admission. Issued orders remain.')}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>{t('保留待开清单', 'Keep drafts')}</AlertDialogCancel><AlertDialogAction onClick={() => { save(emptyDraft()); setConfirmClear(false) }}>{t('确认清空', 'Confirm discard')}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>

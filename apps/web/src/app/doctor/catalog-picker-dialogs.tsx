@@ -53,6 +53,11 @@ import {
 } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { formatFen } from '../workspace-format.ts'
+import {
+  MedicationInsertTriggerButton,
+  MedicationPackageInsertSheet,
+  type MedicationPackageInsertTarget,
+} from '../medication-package-insert-sheet.tsx'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { DoctorDraftField as Field, useDoctorDraftFieldEdit } from './doctor-draft-fields.tsx'
@@ -791,6 +796,27 @@ function formatLocalMedicationPresentation(item: PrescriptionMedication, locale:
   }
 }
 
+export function localMedicationInsertTarget(
+  item: PrescriptionMedication,
+  locale: WorkspaceLocale,
+): MedicationPackageInsertTarget {
+  const { specText } = formatLocalMedicationPresentation(item, locale)
+  return {
+    packageInsert: item.packageInsert,
+    subtitle: [item.dosageForm, specText].filter(Boolean).join(' · ') || undefined,
+    title: locale === 'zh-CN' ? item.nameZh : item.nameEn,
+  }
+}
+
+export function referenceProductInsertTarget(product: ReferenceMedicationProduct): MedicationPackageInsertTarget {
+  return {
+    subtitle: [product.dosageForm, formatMedicationSpec(product.strength, product.packageDescription), product.manufacturer]
+      .filter(Boolean)
+      .join(' · ') || undefined,
+    title: product.genericName,
+  }
+}
+
 /** 目录保持打开以连续加入；待开清单由处方页面拥有，最终仍整单开具。 */
 export function MedicationComposerDialog({
   atCapacity = false, disabled = false, draftItems, draftScope, excludedIds, localCatalog, locale, lockedSource, onConfirm, onOpenChange, open, pendingItems, search, target,
@@ -806,11 +832,15 @@ export function MedicationComposerDialog({
   onConfirm: (selection: MedicationCatalogSelection, fields: MedicationComposerFields) => boolean
   onOpenChange: (open: boolean) => void
   open: boolean
-  pendingItems?: ReactNode
+  pendingItems?: ReactNode | ((openInsert: (target: MedicationPackageInsertTarget) => void) => ReactNode)
   search: ReferenceCatalogSearches['medications']
   target: MedicationComposerTarget | undefined
 }) {
   const messages = copy[locale]
+  const [insertTarget, setInsertTarget] = useState<MedicationPackageInsertTarget | null>(null)
+  useEffect(() => {
+    if (!open) setInsertTarget(null)
+  }, [open])
   const markEdited = useDoctorDraftFieldEdit()
   const composer = usePrescriptionComposerDraft(draftScope, draftItems, target?.key)
   const draft = composer.value
@@ -890,21 +920,29 @@ export function MedicationComposerDialog({
           <DialogTitle>{target === undefined ? messages.chooseMedication : messages.editMedication}</DialogTitle>
           <DialogDescription>{messages.medicationComposerDescription}</DialogDescription>
         </DialogHeader>
-        <OrderComposerLayout locale={locale} catalog={open ? <MedicationCatalogPicker active={open} defaultSource={target?.selection.kind ?? (draft?.referenceProduct === undefined ? 'local' : 'reference')} disabled={disabled || composer.failed || atCapacity && target === undefined} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} lockedSource={lockedSource} onSelect={select} search={search} {...(selected === undefined ? {} : { selectedId: medicationComposerSelectionId(selected) })} /> : null}>
-          {pendingItems}
+        <OrderComposerLayout locale={locale} catalog={open ? <MedicationCatalogPicker active={open} defaultSource={target?.selection.kind ?? (draft?.referenceProduct === undefined ? 'local' : 'reference')} disabled={disabled || composer.failed || atCapacity && target === undefined} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} lockedSource={lockedSource} onOpenInsert={setInsertTarget} onSelect={select} search={search} {...(selected === undefined ? {} : { selectedId: medicationComposerSelectionId(selected) })} /> : null}>
+          {typeof pendingItems === 'function' ? pendingItems(setInsertTarget) : pendingItems}
           {composer.failed ? <p role="alert">{locale === 'zh-CN' ? '用药输入无法读取或保存，请确认清空草稿后再试。' : 'The medicine draft could not be read or saved. Confirm discarding the draft before continuing.'}</p> : null}
           {selected === undefined ? null : (
             <section aria-label={messages.medicationDetails} className="flex flex-col gap-4 border-t p-4">
               {/* 当前条目头：编辑的条目可能不在目录结果里，必须能看到在编辑谁。 */}
-              <div className="min-w-0">
-                <h4 className="break-words font-semibold text-sm">{selectedProduct?.genericName
-                  ?? (locale === 'zh-CN' ? selectedMedication?.nameZh : selectedMedication?.nameEn)}</h4>
-                <p className="mt-1 break-words text-xs text-muted-foreground">{selectedProduct === undefined
-                  ? (selectedMedication === undefined ? '' : (() => {
-                      const localPresentation = formatLocalMedicationPresentation(selectedMedication, locale)
-                      return [messages.hospitalPharmacyTab, localPresentation.specText, localPresentation.priceText].filter(Boolean).join(' · ')
-                    })())
-                  : [selectedProduct.manufacturer, selectedProduct.strength, medicationPackageSummary(selectedProduct.packageDescription)].filter(Boolean).join(' · ')}</p>
+              <div className="flex min-w-0 items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h4 className="break-words font-semibold text-sm">{selectedProduct?.genericName
+                    ?? (locale === 'zh-CN' ? selectedMedication?.nameZh : selectedMedication?.nameEn)}</h4>
+                  <p className="mt-1 break-words text-xs text-muted-foreground">{selectedProduct === undefined
+                    ? (selectedMedication === undefined ? '' : (() => {
+                        const localPresentation = formatLocalMedicationPresentation(selectedMedication, locale)
+                        return [messages.hospitalPharmacyTab, localPresentation.specText, localPresentation.priceText].filter(Boolean).join(' · ')
+                      })())
+                    : [selectedProduct.manufacturer, selectedProduct.strength, medicationPackageSummary(selectedProduct.packageDescription)].filter(Boolean).join(' · ')}</p>
+                </div>
+                <MedicationInsertTriggerButton
+                  locale={locale}
+                  onOpen={() => setInsertTarget(selectedProduct !== undefined
+                    ? referenceProductInsertTarget(selectedProduct)
+                    : localMedicationInsertTarget(selectedMedication!, locale))}
+                />
               </div>
               <fieldset className="contents" disabled={disabled || composer.failed}><FieldGroup className="grid min-w-0 grid-cols-2 gap-3">
                 <Field data-invalid={invalidFields.has('doseText')}>
@@ -949,6 +987,7 @@ export function MedicationComposerDialog({
           <DialogClose render={<Button type="button" variant="outline" />}>{target === undefined ? (locale === 'zh-CN' ? '完成选择' : 'Finish selecting') : messages.close}</DialogClose>
           <Button aria-busy={disabled || undefined} data-busy={disabled || undefined} data-unavailable={!fieldsValid || disabled ? '' : undefined} disabled={!fieldsValid || disabled} onClick={confirm} type="button">{disabled ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{disabled ? (locale === 'zh-CN' ? '正在处理' : 'Processing') : target === undefined ? messages.confirmMedication : messages.updateMedication}</Button>
         </OrderComposerFooter>
+        <MedicationPackageInsertSheet locale={locale} onClose={() => setInsertTarget(null)} target={insertTarget} />
       </DialogContent>
     </Dialog>
   )
@@ -1221,12 +1260,13 @@ function groupMedicationProducts(products: ReferenceMedicationProduct[]): Medica
   return [...groups.values()]
 }
 
-function MedicationProductRow({ group, disabled = false, disabledReason, excludedIds, locale, selectionId, onSelect, onConfirm }: {
+function MedicationProductRow({ group, disabled = false, disabledReason, excludedIds, locale, selectionId, onOpenInsert, onSelect, onConfirm }: {
   disabled?: boolean
   disabledReason?: string | undefined
   group: MedicationProductGroup
   excludedIds: ReadonlySet<string>
   locale: WorkspaceLocale
+  onOpenInsert?: ((target: MedicationPackageInsertTarget) => void) | undefined
   selectionId?: string | undefined
   onSelect: (selection: MedicationCatalogSelection | undefined) => void
   onConfirm?: (selection: MedicationCatalogSelection) => void
@@ -1265,8 +1305,13 @@ function MedicationProductRow({ group, disabled = false, disabledReason, exclude
   )
   if (onConfirm === undefined) return (
     <li title={[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ') || undefined}>
-      <OrderCatalogCandidate label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`}
-        disabled={unavailable} selected={selected && selectionId === item.id} onSelect={() => onSelect(selection)}>
+      <OrderCatalogCandidate
+        action={onOpenInsert === undefined ? undefined : <MedicationInsertTriggerButton className="mt-1" locale={locale} onOpen={() => onOpenInsert(referenceProductInsertTarget(item))} />}
+        label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`}
+        disabled={unavailable}
+        selected={selected && selectionId === item.id}
+        onSelect={() => onSelect(selection)}
+      >
         <strong data-agent-medication-name="" className="min-w-0 truncate text-sm" title={item.genericName}>{item.genericName}</strong>
         <span className="min-w-0 text-xs text-muted-foreground">{item.strength} · {medicationPackageSummary(item.packageDescription)}</span>
         {excludedIds.has(item.id) || item.status !== 'active' ? <span className="text-xs text-muted-foreground">{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : (locale === 'zh-CN' ? '停用' : 'Inactive')}</span> : null}
@@ -1298,7 +1343,7 @@ function MedicationProductRow({ group, disabled = false, disabledReason, exclude
 }
 
 export function MedicationCatalogPicker({
-  active = true, collapsible = false, defaultSource, disabled = false, excludedIds, localCatalog, locale, lockedSource, onConfirm, onSearchReset, onSelect, search, selectedId: selectionId,
+  active = true, collapsible = false, defaultSource, disabled = false, excludedIds, localCatalog, locale, lockedSource, onConfirm, onOpenInsert, onSearchReset, onSelect, search, selectedId: selectionId,
 }: {
   active?: boolean
   collapsible?: boolean
@@ -1309,6 +1354,7 @@ export function MedicationCatalogPicker({
   locale: WorkspaceLocale
   lockedSource?: MedicationCatalogSource | undefined
   onConfirm?: (selection: MedicationCatalogSelection) => void
+  onOpenInsert?: ((target: MedicationPackageInsertTarget) => void) | undefined
   onSearchReset?: () => void
   onSelect: (selection: MedicationCatalogSelection | undefined) => void
   search: ReferenceCatalogSearches['medications']
@@ -1452,8 +1498,13 @@ const confirm = (selection: MedicationCatalogSelection) => {
                 {isLocalSource ? localResults.map(item => {
                   const { priceText, specText } = formatLocalMedicationPresentation(item, locale)
                   return <li key={item.id}>
-                    <OrderCatalogCandidate label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} selected={selectionId === item.id}
-                      disabled={disabled || crossSourceReason !== undefined || excludedIds.has(item.id)} onSelect={() => select({ kind: 'local', medication: item })}>
+                    <OrderCatalogCandidate
+                      action={onOpenInsert === undefined ? undefined : <MedicationInsertTriggerButton className="mt-1" locale={locale} onOpen={() => onOpenInsert(localMedicationInsertTarget(item, locale))} />}
+                      label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`}
+                      selected={selectionId === item.id}
+                      disabled={disabled || crossSourceReason !== undefined || excludedIds.has(item.id)}
+                      onSelect={() => select({ kind: 'local', medication: item })}
+                    >
                       <strong data-agent-medication-name="" className="min-w-0 truncate text-sm">{locale === 'zh-CN' ? item.nameZh : item.nameEn}</strong>
                       {specText ? <span className="min-w-0 text-xs text-muted-foreground">{specText}</span> : null}
                       {priceText ? <span className="shrink-0 tabular-nums text-xs font-medium text-foreground/80">{priceText}</span> : null}
@@ -1461,7 +1512,7 @@ const confirm = (selection: MedicationCatalogSelection) => {
                       {crossSourceReason === undefined ? null : <span className="basis-full text-xs text-muted-foreground">{crossSourceReason}</span>}
                     </OrderCatalogCandidate>
                   </li>
-                }) : referenceGroups.map(group => <MedicationProductRow key={medicationProductGroupKey(group.product)} group={group} disabled={disabled || results.isFetching || crossSourceReason !== undefined} disabledReason={crossSourceReason} excludedIds={excludedIds} locale={locale} selectionId={selectionId} onSelect={select} />)}
+                }) : referenceGroups.map(group => <MedicationProductRow key={medicationProductGroupKey(group.product)} group={group} disabled={disabled || results.isFetching || crossSourceReason !== undefined} disabledReason={crossSourceReason} excludedIds={excludedIds} locale={locale} onOpenInsert={onOpenInsert} selectionId={selectionId} onSelect={select} />)}
               </ul> : <Table className="min-w-[1000px] table-fixed" singleScrollContainer>
                 <TableHeader className="sticky top-0 z-10 bg-popover">
                   <TableRow>

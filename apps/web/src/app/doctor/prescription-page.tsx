@@ -48,12 +48,19 @@ import {
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import {
   MedicationComposerDialog,
+  localMedicationInsertTarget,
+  referenceProductInsertTarget,
   resolveMedicationDisplayMeta,
   type MedicationCatalogSelection,
   type MedicationComposerFields,
   type MedicationComposerTarget,
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
+import {
+  MedicationInsertTriggerButton,
+  MedicationPackageInsertSheet,
+  type MedicationPackageInsertTarget,
+} from '../medication-package-insert-sheet.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { DoctorDraftEditorScope, DoctorDraftItem, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { DoctorOrderWorkspace } from './doctor-order-workspace.tsx'
@@ -197,6 +204,7 @@ export function PrescriptionPage({
     && !hasActivePrescription && mode === 'prescription' && prescription === undefined
   const [composerOpen, setComposerOpen] = useState(false)
   const [composerEditIndex, setComposerEditIndex] = useState<number>()
+  const [pageInsertTarget, setPageInsertTarget] = useState<MedicationPackageInsertTarget | null>(null)
   const [deleteDraftOpen, setDeleteDraftOpen] = useState(false)
   const [clearPrivateDraftOpen, setClearPrivateDraftOpen] = useState(false)
   const [clearPrivateDraftFailed, setClearPrivateDraftFailed] = useState(false)
@@ -211,6 +219,11 @@ export function PrescriptionPage({
   const currentItems = useRef(items)
   currentItems.current = items
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
+  const insertTargetFor = (item: { catalogItemId: string; referenceProduct?: ReferenceMedicationProduct | undefined }): MedicationPackageInsertTarget => {
+    if (item.referenceProduct !== undefined) return referenceProductInsertTarget(item.referenceProduct)
+    const entry = catalogById.get(item.catalogItemId)
+    return entry !== undefined ? localMedicationInsertTarget(entry, locale) : { title: item.catalogItemId }
+  }
   const submittedItems = items.map(({ key: _key, instructions, ...item }) => ({
     ...item,
     ...(instructions?.trim() ? { instructions: instructions.trim() } : {}),
@@ -689,7 +702,7 @@ export function PrescriptionPage({
               if (previous?.catalogItemId !== id) dismissDraftItem(id)
               return true
             }}
-            pendingItems={<section aria-label={locale === 'zh-CN' ? '处方待开清单' : 'Pending prescription'} className="flex flex-col gap-2 border-b p-4">
+            pendingItems={openInsert => <section aria-label={locale === 'zh-CN' ? '处方待开清单' : 'Pending prescription'} className="flex flex-col gap-2 border-b p-4">
               <p className="text-sm font-medium">{locale === 'zh-CN' ? `待开具 ${items.length} 项` : `${items.length} pending`}</p>
               {items.length >= 8 ? <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '已达 8 项上限，可编辑或移除已加药品。' : 'Eight-item limit reached. Edit or remove an added medicine.'}</p> : null}
               {items.length === 0 && composerDraft.value === null ? null : <Button disabled={operationPending || recoveryPending} onClick={() => setClearPrivateDraftOpen(true)} size="sm" type="button" variant="ghost">{locale === 'zh-CN' ? '清空手动草稿' : 'Discard manual draft'}</Button>}
@@ -711,7 +724,10 @@ export function PrescriptionPage({
                     <Button aria-label={`${locale === 'zh-CN' ? '编辑待开药品' : 'Edit pending medicine'} ${label}`} className="h-auto min-w-0 justify-start whitespace-normal text-left" disabled={pending} onClick={() => setComposerEditIndex(index)} type="button" variant="ghost">{label}</Button>
                     <p className="break-words px-2.5 text-xs text-muted-foreground">{checkSummary}</p>
                   </div>
-                  <Button aria-label={`${locale === 'zh-CN' ? '移除待开药品' : 'Remove pending medicine'} ${label}`} disabled={pending} onClick={() => { removeMedication(item.catalogItemId); setComposerEditIndex(undefined) }} type="button" variant="ghost">{locale === 'zh-CN' ? '移除' : 'Remove'}</Button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <MedicationInsertTriggerButton locale={locale} onOpen={() => openInsert(insertTargetFor(item))} />
+                    <Button aria-label={`${locale === 'zh-CN' ? '移除待开药品' : 'Remove pending medicine'} ${label}`} disabled={pending} onClick={() => { removeMedication(item.catalogItemId); setComposerEditIndex(undefined) }} type="button" variant="ghost">{locale === 'zh-CN' ? '移除' : 'Remove'}</Button>
+                  </div>
                 </div>
               })}
             </section>}
@@ -899,6 +915,9 @@ export function PrescriptionPage({
               }}
               onManualRemove={removePreparedItem}
               onConfirmed={consumePreparedItems}
+              itemActions={value => value.kind === 'prescription'
+                ? <MedicationInsertTriggerButton locale={locale} onOpen={() => setPageInsertTarget(insertTargetFor(value))} />
+                : null}
               itemDetails={value => {
                 if (value.kind !== 'prescription') return null
                 const { specText, unit } = resolveMedicationDisplayMeta(value, catalogById.get(value.catalogItemId))
@@ -1031,6 +1050,7 @@ export function PrescriptionPage({
           title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)}
         />
       )}
+      <MedicationPackageInsertSheet locale={locale} onClose={() => setPageInsertTarget(null)} target={pageInsertTarget} />
     </section>
   )
 }

@@ -1,9 +1,10 @@
-import { medicationSafetyRuleSchema } from '@clinmesh/contracts/medication-safety'
+import { medicationPackageInsertSchema, medicationSafetyRuleSchema } from '@clinmesh/contracts/medication-safety'
 import { z } from 'zod'
 import type { InpatientCatalogMissingField } from '@clinmesh/contracts/inpatient-clinical'
 
 export const inpatientMedicationConfigSchema = z.object({
   safety: medicationSafetyRuleSchema.optional(),
+  packageInsert: medicationPackageInsertSchema.optional().catch(undefined),
   availableScopes: z.array(z.string()), unit: z.string().trim().min(1),
   product: z.object({ id: z.string().min(1), system: z.string().min(1), version: z.string().min(1),
     strength: z.string().min(1), dosageForm: z.string().min(1), packageDescription: z.string().min(1) }),

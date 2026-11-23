@@ -37,7 +37,7 @@ export class InpatientOrders {
     return medications.flatMap(row => {
       const config = this.#parseMedicationConfig(row.price_fen, row.config_json)
       if (config === null) return []
-      return [{ id: row.item_id, display: row.name_zh, version: row.version, priceFen: row.price_fen, unit: config.unit, strength: config.product.strength, packageDescription: config.product.packageDescription, ...(config.safety ? { safety: config.safety } : {}), doses: [...config.inpatientDoses],
+      return [{ id: row.item_id, display: row.name_zh, version: row.version, priceFen: row.price_fen, unit: config.unit, strength: config.product.strength, packageDescription: config.product.packageDescription, ...(config.packageInsert ? { packageInsert: config.packageInsert } : {}), ...(config.safety ? { safety: config.safety } : {}), doses: [...config.inpatientDoses],
         ...(config.inpatientDoseBasis ? { doseBasis: { ...config.inpatientDoseBasis } } : {}),
         maxDoseQuantity: Math.min(config.inpatientMaxDoseQuantity ?? Math.max(...config.inpatientDoses.map(dose => dose.quantity)), config.safety && config.inpatientDoseBasis?.unit === config.safety.doseLimits.unit ? Math.floor(config.safety.doseLimits.maximumSingleDose / config.inpatientDoseBasis.amount) : 100),
         frequencyCodes: config.allowedFrequencyCodes.filter((code): code is 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' => ['QD','BID','TID','QN','PRN','ONCE'].includes(code)),

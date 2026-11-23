@@ -16,3 +16,18 @@ export const medicationSafetyRuleSchema = z.object({
   }).strict(),
 }).strict()
 export type MedicationSafetyRule = z.infer<typeof medicationSafetyRuleSchema>
+
+export const SYNTHETIC_PACKAGE_INSERT_DISCLAIMER = '合成教学参考，非真实上市产品法定说明书' as const
+
+/** 目录级只读合成药品说明书摘要；不进入处方收费快照或病案归档指纹。 */
+export const medicationPackageInsertSchema = z.object({
+  genericName: z.string().trim().min(1).max(200),
+  specificationAndForm: z.string().trim().min(1).max(300),
+  indicationsSummary: z.string().trim().min(1).max(1_000),
+  dosageAndAdministration: z.string().trim().min(1).max(1_000),
+  contraindications: z.string().trim().min(1).max(1_000),
+  precautions: z.string().trim().min(1).max(1_000),
+  adverseReactions: z.string().trim().min(1).max(1_000),
+  disclaimer: z.literal(SYNTHETIC_PACKAGE_INSERT_DISCLAIMER),
+}).strict()
+export type MedicationPackageInsert = z.infer<typeof medicationPackageInsertSchema>
