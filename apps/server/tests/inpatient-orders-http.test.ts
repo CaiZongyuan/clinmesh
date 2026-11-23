@@ -3,7 +3,7 @@ import { isRetiredCapturedPaymentTable, prePaymentCutoverMigrations } from './fi
 import { serviceCatalogSearchSchema } from '@clinmesh/contracts/his'
 import type { ReferenceConcept } from '@clinmesh/contracts/reference-data'
 import { applyMigrations, canonicalStateHash, expectedSchemaVersion, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
-import { dispenseResponseSchema, prescriptionReviewResponseSchema, pharmacyQueueSchema, registrationResponseSchema } from '@clinmesh/contracts/his'
+import { dispenseResponseSchema, issuePrescriptionResponseSchema, prescriptionDraftItemSchema, prescriptionReviewResponseSchema, pharmacyQueueSchema, registrationResponseSchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import { inpatientPharmacySchema, inpatientPharmacyListSchema, inpatientPharmacyResponseSchema, inpatientChargesSchema, inpatientChargesResponseSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { scenarioStateSchema, sessionContextSchema } from '@clinmesh/contracts/his'
@@ -1075,6 +1075,126 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
         SET response_json = json_remove(response_json, '$.data.orders[0].routeCode')
         WHERE operation = 'inpatient.order.verify' AND response_json IS NOT NULL
       `).run()
+      const scope = z.object({ workspace_id: z.string(), epoch: z.string(), signed_by: z.string() }).parse(
+        database.driver.prepare('SELECT workspace_id, epoch, signed_by FROM inpatient_order LIMIT 1').get(),
+      )
+      const legacyReferenceCase = z.object({ case_id: z.string() }).optional().parse(
+        database.driver.prepare('SELECT case_id FROM outpatient_case WHERE workspace_id = ? AND epoch = ? LIMIT 1').get(scope.workspace_id, scope.epoch),
+      )
+      const legacyInhaledProduct = {
+        approvalNumber: '国药准字HJ20260001',
+        brandName: '合成信必可',
+        code: 'SYN-REF-INH',
+        dosageForm: '吸入粉雾剂',
+        genericName: '布地奈德福莫特罗吸入粉雾剂',
+        id: 'reference:SYN-REF-INH',
+        manufacturer: '合成呼吸制药',
+        packageDescription: '60吸/支',
+        sourceLocator: 'synthetic-reference:inhaled',
+        status: 'active',
+        strength: '160μg/4.5μg',
+        system: 'urn:clinmesh:reference:nhsa-medication-product',
+        version: '2026',
+      }
+      const legacyTopicalProduct = {
+        ...legacyInhaledProduct,
+        approvalNumber: '国药准字H20260002',
+        brandName: '合成百多邦',
+        code: 'SYN-REF-TOP',
+        dosageForm: '软膏剂',
+        genericName: '莫匹罗星软膏',
+        id: 'reference:SYN-REF-TOP',
+        packageDescription: '5g/支',
+        sourceLocator: 'synthetic-reference:topical',
+        strength: '2%',
+      }
+      const legacySubcutaneousProduct = {
+        ...legacyInhaledProduct,
+        approvalNumber: '国药准字H20260003',
+        brandName: '合成克赛',
+        code: 'SYN-REF-IH',
+        dosageForm: '注射剂',
+        genericName: '依诺肝素钠注射液',
+        id: 'reference:SYN-REF-IH',
+        packageDescription: '0.4ml:4000AXaIU*2支/盒',
+        sourceLocator: 'synthetic-reference:subcutaneous',
+        strength: '0.4ml:4000AXaIU',
+      }
+      if (legacyReferenceCase !== undefined) {
+        database.driver.prepare(`
+          INSERT OR REPLACE INTO prescription_draft_state (
+            workspace_id, epoch, case_id, version, draft_json, updated_by, updated_at
+          ) VALUES (?, ?, ?, 1, ?, ?, '2026-08-24T08:00:00.000Z')
+        `).run(
+          scope.workspace_id,
+          scope.epoch,
+          legacyReferenceCase.case_id,
+          JSON.stringify({
+            items: [{
+              catalogItemId: legacyInhaledProduct.id,
+              courseDays: 14,
+              doseText: '1 吸',
+              frequencyCode: 'BID',
+              quantity: 1,
+              referenceProduct: legacyInhaledProduct,
+            }],
+          }),
+          scope.signed_by,
+        )
+        database.driver.prepare(`
+          INSERT INTO prescription (
+            workspace_id, epoch, prescription_id, case_id, prescription_number,
+            status, version, authored_by, authored_at, signed_at
+          ) VALUES (?, ?, 'legacy-ref-rx', ?, 'CM-RX-LEGACY-REF', 'signed', 1, ?, '2026-08-24T08:00:00.000Z', '2026-08-24T08:00:00.000Z')
+        `).run(scope.workspace_id, scope.epoch, legacyReferenceCase.case_id, scope.signed_by)
+        database.driver.prepare(`
+          INSERT INTO prescription_item (
+            workspace_id, epoch, prescription_id, medication_request_id,
+            medication_id, medication_snapshot_json, quantity, dose_text,
+            frequency_code, course_days, dispensed_quantity
+          ) VALUES (?, ?, 'legacy-ref-rx', 'legacy-ref-med-req', ?, ?, 2, '4000 IU', 'QD', 5, 0)
+        `).run(scope.workspace_id, scope.epoch, legacySubcutaneousProduct.id, JSON.stringify(legacySubcutaneousProduct))
+      }
+      database.driver.prepare(`
+        INSERT INTO command_receipt (
+          workspace_id, epoch, actor_id, operation, idempotency_key,
+          request_hash, status, response_json, created_at, updated_at
+        ) VALUES (?, ?, ?, 'doctor.prescription.issue', 'legacy-ref-issue-receipt', 'legacy-hash', 'completed', ?, '2026-08-24T08:00:00.000Z', '2026-08-24T08:00:00.000Z')
+      `).run(
+        scope.workspace_id,
+        scope.epoch,
+        scope.signed_by,
+        JSON.stringify({
+          auditId: 'legacy-audit',
+          data: {
+            draftVersion: 2,
+            prescription: {
+              authoredAt: '2026-08-24T08:00:00.000Z',
+              authoredByPractitionerRoleId: 'role-doctor',
+              id: 'legacy-topical-rx',
+              items: [{
+                catalogItemId: legacyTopicalProduct.id,
+                courseDays: 7,
+                display: legacyTopicalProduct.genericName,
+                doseText: '适量',
+                frequencyCode: 'TID',
+                medicationRequestId: 'legacy-topical-req',
+                medicationRequestVersion: '1',
+                packageDescription: legacyTopicalProduct.packageDescription,
+                quantity: 1,
+                referenceProduct: legacyTopicalProduct,
+                strength: legacyTopicalProduct.strength,
+              }],
+              number: 'CM-RX-LEGACY-TOP',
+              status: 'signed',
+              version: 1,
+            },
+          },
+          effects: [],
+          requestId: 'legacy-req',
+          warnings: [],
+        }),
+      )
       database.driver.prepare('DELETE FROM schema_migration WHERE migration_id IN (?,?,?)').run('0112_medication-frequency.sql', '0118_item-insurance-coverage.sql', '0119_medication-route.sql')
       database.driver.pragma('foreign_keys=ON')
       expect(() => database.driver.prepare("UPDATE inpatient_order SET frequency_code='TID'").run()).toThrow(/CHECK/)
@@ -1089,6 +1209,39 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
         kind: 'medication',
         routeCode: 'PO',
       })
+      const issueReceipt = z.object({ response_json: z.string() }).parse(
+        database.driver.prepare("SELECT response_json FROM command_receipt WHERE idempotency_key = 'legacy-ref-issue-receipt'").get(),
+      )
+      expect(issuePrescriptionResponseSchema.parse(JSON.parse(issueReceipt.response_json)).data.prescription.items[0]).toMatchObject({
+        catalogItemId: 'reference:SYN-REF-TOP',
+        referenceProduct: {
+          allowedRouteCodes: ['TOP'],
+          defaultRouteCode: 'TOP',
+        },
+        routeCode: 'TOP',
+      })
+      if (legacyReferenceCase !== undefined) {
+        const migratedItem = z.object({ route_code: z.string() }).parse(
+          database.driver.prepare("SELECT route_code FROM prescription_item WHERE prescription_id = 'legacy-ref-rx'").get(),
+        )
+        expect(migratedItem.route_code).toBe('IH')
+        const migratedDraft = z.object({ draft_json: z.string() }).parse(
+          database.driver.prepare('SELECT draft_json FROM prescription_draft_state WHERE workspace_id = ? AND epoch = ? AND case_id = ?').get(
+            scope.workspace_id,
+            scope.epoch,
+            legacyReferenceCase.case_id,
+          ),
+        )
+        const parsedDraftItems = z.object({ items: z.array(prescriptionDraftItemSchema) }).parse(JSON.parse(migratedDraft.draft_json)).items
+        expect(parsedDraftItems[0]).toMatchObject({
+          catalogItemId: 'reference:SYN-REF-INH',
+          referenceProduct: {
+            allowedRouteCodes: ['INH'],
+            defaultRouteCode: 'INH',
+          },
+          routeCode: 'INH',
+        })
+      }
       expect(database.driver.prepare('SELECT * FROM inpatient_execution').all()).toEqual(executions)
       for (const frequency of ['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE']) expect(() => database.driver.prepare('UPDATE inpatient_order SET frequency_code=?').run(frequency)).not.toThrow()
       expect(() => database.driver.prepare("UPDATE inpatient_order SET frequency_code='Q4H'").run()).toThrow(/CHECK/)

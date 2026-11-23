@@ -1,6 +1,7 @@
 import { prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
 import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
 import { referenceMedicationProductSchema } from '@clinmesh/contracts/reference-data'
+import { deriveReferenceMedicationRoutes } from '@clinmesh/core/medication-safety'
 import { z } from 'zod'
 import { ensureInvestigationDraftsCleared, investigationDraftPrefix, useStoredInvestigationValue } from './investigation-draft-storage.ts'
 
@@ -8,11 +9,14 @@ const storedReferenceProductSchema = referenceMedicationProductSchema.extend({
   allowedRouteCodes: z.array(medicationRouteSchema).min(1).optional(),
   defaultRouteCode: medicationRouteSchema.optional(),
 }).transform(product => {
-  const defaultRouteCode = product.defaultRouteCode ?? product.allowedRouteCodes?.[0] ?? 'PO'
+  const derived = deriveReferenceMedicationRoutes(product)
+  const defaultRouteCode = product.defaultRouteCode ?? product.allowedRouteCodes?.[0] ?? derived.defaultRouteCode
+  const allowedRouteCodes = product.allowedRouteCodes
+    ?? (derived.allowedRouteCodes.includes(defaultRouteCode) ? derived.allowedRouteCodes : [defaultRouteCode])
   return {
     ...product,
     defaultRouteCode,
-    allowedRouteCodes: product.allowedRouteCodes ?? [defaultRouteCode],
+    allowedRouteCodes,
   }
 })
 const fieldsSchema = prescriptionDraftItemSchema.pick({ courseDays: true, doseText: true, frequencyCode: true, instructions: true, quantity: true }).extend({

@@ -1921,4 +1921,73 @@ describe('处方页签布局整理', () => {
       { catalogItemId: 'medication-nitroglycerin', courseDays: 7, doseText: '0.5 mg', frequencyCode: 'PRN', routeCode: 'PO', quantity: 1 },
     ]))
   })
+
+  it('恢复缺少给药途径元数据的旧浏览器参考药品草稿时按剂型与通用名重算允许途径', async () => {
+    const scope = JSON.stringify(['scope-legacy-ref', detail.caseId, detail.encounter.id, 'prescription'])
+    const legacyInjectableProduct = {
+      approvalNumber: '国药准字H20260099',
+      brandName: '合成克赛',
+      code: 'SYN-LEGACY-IH',
+      dosageForm: '注射剂',
+      genericName: '依诺肝素钠注射液',
+      id: 'reference-legacy-enoxaparin',
+      manufacturer: '合成制药有限公司',
+      packageDescription: '0.4ml:4000AXaIU*2支/盒',
+      sourceLocator: 'synthetic-fixture',
+      status: 'active',
+      strength: '0.4ml:4000AXaIU',
+      system: 'https://example.test/medications',
+      version: '1',
+    }
+    sessionStorage.setItem(
+      `clinmesh.outpatient-investigation.prescription:v1:${scope}`,
+      JSON.stringify({
+        dirty: true,
+        items: [{
+          catalogItemId: legacyInjectableProduct.id,
+          courseDays: 5,
+          doseText: '4000 IU',
+          frequencyCode: 'QD',
+          key: 'legacy-line-1',
+          quantity: 2,
+          referenceProduct: legacyInjectableProduct,
+        }],
+        mode: 'prescription',
+        version: 1,
+      }),
+    )
+    const mounted = renderPage({
+      recommendationScope: 'scope-legacy-ref',
+      referenceSearch: {
+        data: { items: [], page: 1, pageSize: 20, releaseId: 'synthetic', total: 0 },
+        error: null,
+        isError: false,
+        isFetching: false,
+        isPending: false,
+        onSearch: vi.fn(),
+      },
+    })
+    const user = userEvent.setup()
+    const panel = within(screen.getByRole('region', { name: '待开具处方' }))
+    await user.click(panel.getByRole('button', { name: /^编辑药品 依诺肝素钠注射液/ }))
+    const dialog = within(screen.getByRole('dialog'))
+    const routeSelect = dialog.getByRole('combobox', { name: '给药途径' })
+    await user.click(routeSelect)
+    const subcutaneousOption = await screen.findByRole('option', { name: '皮下注射（ih）' })
+    expect(screen.queryByRole('option', { name: '口服（po）' })).toBeNull()
+    await user.click(subcutaneousOption)
+    await user.click(dialog.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(panel.getByText('4000 IU · 每日一次（QD） · 皮下注射（ih） · 5 天 · 2')).toBeTruthy()
+    await waitFor(() => expect(mounted.props.actions.saveDraft.onSubmit).toHaveBeenCalledWith([
+      expect.objectContaining({
+        catalogItemId: legacyInjectableProduct.id,
+        courseDays: 5,
+        doseText: '4000 IU',
+        frequencyCode: 'QD',
+        quantity: 2,
+        routeCode: 'IH',
+      }),
+    ]))
+  })
 })

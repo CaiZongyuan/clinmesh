@@ -28,15 +28,7 @@ SELECT
   workspace_id, epoch, prescription_id, medication_request_id,
   medication_id, medication_snapshot_json, quantity, dose_text,
   frequency_code,
-  CASE medication_id
-    WHEN 'medication-nitroglycerin' THEN 'SL'
-    WHEN 'medication-enoxaparin' THEN 'IH'
-    WHEN 'medication-heparin' THEN 'IV'
-    WHEN 'medication-pci-heparin' THEN 'IV'
-    WHEN 'medication-pci-iohexol' THEN 'IV'
-    WHEN 'medication-sodium-chloride' THEN 'IVGTT'
-    ELSE 'PO'
-  END,
+  clinmesh_backfill_prescription_item_route(medication_id, medication_snapshot_json),
   course_days, dispensed_quantity,
   unit_price_fen, coverage_json
 FROM prescription_item;
@@ -106,50 +98,31 @@ SET draft_json = json_set(
   draft_json,
   '$.items',
   (
-    SELECT json_group_array(
-      json(
-        CASE
-          WHEN json_type(item.value, '$.referenceProduct') = 'object'
-            AND json_type(item.value, '$.referenceProduct.defaultRouteCode') IS NULL
-          THEN json_set(
-            item.value,
-            '$.routeCode', COALESCE(
-              json_extract(item.value, '$.routeCode'),
-              CASE json_extract(item.value, '$.catalogItemId')
-                WHEN 'medication-nitroglycerin' THEN 'SL'
-                WHEN 'medication-enoxaparin' THEN 'IH'
-                WHEN 'medication-heparin' THEN 'IV'
-                WHEN 'medication-pci-heparin' THEN 'IV'
-                WHEN 'medication-pci-iohexol' THEN 'IV'
-                WHEN 'medication-sodium-chloride' THEN 'IVGTT'
-                ELSE 'PO'
-              END
-            ),
-            '$.referenceProduct.defaultRouteCode', 'PO',
-            '$.referenceProduct.allowedRouteCodes', json('["PO"]')
-          )
-          WHEN json_type(item.value, '$.routeCode') IS NULL
-          THEN json_set(
-            item.value,
-            '$.routeCode',
-            CASE json_extract(item.value, '$.catalogItemId')
-              WHEN 'medication-nitroglycerin' THEN 'SL'
-              WHEN 'medication-enoxaparin' THEN 'IH'
-              WHEN 'medication-heparin' THEN 'IV'
-              WHEN 'medication-pci-heparin' THEN 'IV'
-              WHEN 'medication-pci-iohexol' THEN 'IV'
-              WHEN 'medication-sodium-chloride' THEN 'IVGTT'
-              ELSE 'PO'
-            END
-          )
-          ELSE item.value
-        END
-      )
-    )
+    SELECT json_group_array(json(clinmesh_backfill_prescription_json_item(item.value)))
     FROM json_each(prescription_draft_state.draft_json, '$.items') AS item
   )
 )
 WHERE draft_json IS NOT NULL AND json_type(draft_json, '$.items') = 'array';
+
+UPDATE doctor_recommendation_state
+SET state_json = json_set(
+  state_json,
+  '$.items',
+  (
+    SELECT json_group_array(
+      json(
+        CASE
+          WHEN json_extract(item.value, '$.kind') = 'prescription'
+            AND json_type(item.value, '$.routeCode') IS NULL
+          THEN json_set(item.value, '$.routeCode', json('null'))
+          ELSE item.value
+        END
+      )
+    )
+    FROM json_each(doctor_recommendation_state.state_json, '$.items') AS item
+  )
+)
+WHERE kind = 'prescription' AND state_json IS NOT NULL AND json_type(state_json, '$.items') = 'array';
 
 UPDATE command_receipt
 SET response_json = json_set(
@@ -188,46 +161,7 @@ SET response_json = json_set(
   response_json,
   '$.data.prescription.items',
   (
-    SELECT json_group_array(
-      json(
-        CASE
-          WHEN json_type(item.value, '$.referenceProduct') = 'object'
-            AND json_type(item.value, '$.referenceProduct.defaultRouteCode') IS NULL
-          THEN json_set(
-            item.value,
-            '$.routeCode', COALESCE(
-              json_extract(item.value, '$.routeCode'),
-              CASE json_extract(item.value, '$.catalogItemId')
-                WHEN 'medication-nitroglycerin' THEN 'SL'
-                WHEN 'medication-enoxaparin' THEN 'IH'
-                WHEN 'medication-heparin' THEN 'IV'
-                WHEN 'medication-pci-heparin' THEN 'IV'
-                WHEN 'medication-pci-iohexol' THEN 'IV'
-                WHEN 'medication-sodium-chloride' THEN 'IVGTT'
-                ELSE 'PO'
-              END
-            ),
-            '$.referenceProduct.defaultRouteCode', 'PO',
-            '$.referenceProduct.allowedRouteCodes', json('["PO"]')
-          )
-          WHEN json_type(item.value, '$.routeCode') IS NULL
-          THEN json_set(
-            item.value,
-            '$.routeCode',
-            CASE json_extract(item.value, '$.catalogItemId')
-              WHEN 'medication-nitroglycerin' THEN 'SL'
-              WHEN 'medication-enoxaparin' THEN 'IH'
-              WHEN 'medication-heparin' THEN 'IV'
-              WHEN 'medication-pci-heparin' THEN 'IV'
-              WHEN 'medication-pci-iohexol' THEN 'IV'
-              WHEN 'medication-sodium-chloride' THEN 'IVGTT'
-              ELSE 'PO'
-            END
-          )
-          ELSE item.value
-        END
-      )
-    )
+    SELECT json_group_array(json(clinmesh_backfill_prescription_json_item(item.value)))
     FROM json_each(command_receipt.response_json, '$.data.prescription.items') AS item
   )
 )
@@ -238,47 +172,30 @@ SET response_json = json_set(
   response_json,
   '$.data.draft.items',
   (
-    SELECT json_group_array(
-      json(
-        CASE
-          WHEN json_type(item.value, '$.referenceProduct') = 'object'
-            AND json_type(item.value, '$.referenceProduct.defaultRouteCode') IS NULL
-          THEN json_set(
-            item.value,
-            '$.routeCode', COALESCE(
-              json_extract(item.value, '$.routeCode'),
-              CASE json_extract(item.value, '$.catalogItemId')
-                WHEN 'medication-nitroglycerin' THEN 'SL'
-                WHEN 'medication-enoxaparin' THEN 'IH'
-                WHEN 'medication-heparin' THEN 'IV'
-                WHEN 'medication-pci-heparin' THEN 'IV'
-                WHEN 'medication-pci-iohexol' THEN 'IV'
-                WHEN 'medication-sodium-chloride' THEN 'IVGTT'
-                ELSE 'PO'
-              END
-            ),
-            '$.referenceProduct.defaultRouteCode', 'PO',
-            '$.referenceProduct.allowedRouteCodes', json('["PO"]')
-          )
-          WHEN json_type(item.value, '$.routeCode') IS NULL
-          THEN json_set(
-            item.value,
-            '$.routeCode',
-            CASE json_extract(item.value, '$.catalogItemId')
-              WHEN 'medication-nitroglycerin' THEN 'SL'
-              WHEN 'medication-enoxaparin' THEN 'IH'
-              WHEN 'medication-heparin' THEN 'IV'
-              WHEN 'medication-pci-heparin' THEN 'IV'
-              WHEN 'medication-pci-iohexol' THEN 'IV'
-              WHEN 'medication-sodium-chloride' THEN 'IVGTT'
-              ELSE 'PO'
-            END
-          )
-          ELSE item.value
-        END
-      )
-    )
+    SELECT json_group_array(json(clinmesh_backfill_prescription_json_item(item.value)))
     FROM json_each(command_receipt.response_json, '$.data.draft.items') AS item
   )
 )
 WHERE response_json IS NOT NULL AND json_type(response_json, '$.data.draft.items') = 'array';
+
+UPDATE command_receipt
+SET response_json = json_set(
+  response_json,
+  '$.data.items',
+  (
+    SELECT json_group_array(
+      json(
+        CASE
+          WHEN json_extract(item.value, '$.kind') = 'prescription'
+            AND json_type(item.value, '$.routeCode') IS NULL
+          THEN json_set(item.value, '$.routeCode', json('null'))
+          ELSE item.value
+        END
+      )
+    )
+    FROM json_each(command_receipt.response_json, '$.data.items') AS item
+  )
+)
+WHERE response_json IS NOT NULL
+  AND json_extract(response_json, '$.data.kind') = 'prescription'
+  AND json_type(response_json, '$.data.items') = 'array';
