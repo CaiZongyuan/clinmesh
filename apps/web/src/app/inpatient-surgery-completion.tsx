@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import type { z } from 'zod'
@@ -195,7 +196,7 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
       {materialList}
       <SurgeryReleasePicker reservations={originalReservations} rows={rows} selected={releases} locale={locale} disabled={editingBlocked} onChange={next => draft.save({ ...draft.value, releases: next }, { keepCurrentOnFailure: next.length < releases.length })} />
       <SurgeryFinalMaterialPicker catalog={catalog} locale={locale} count={rows.length} disabled={editingBlocked} onAdd={item => { if (rows.length < 100) setRows(previous => [...previous, {
-            key: crypto.randomUUID(), materialId: item.id, catalogVersion: item.version, quantity: '1', materialUseIds: [], previousQuantity: 0, display: item.display,
+            key: createRandomUuid(), materialId: item.id, catalogVersion: item.version, quantity: '1', materialUseIds: [], previousQuantity: 0, display: item.display,
             unit: item.chargeDefinition.unit, priceFen: item.chargeDefinition.priceFen,
           }]) }}>{materialList}</SurgeryFinalMaterialPicker>
       </>}

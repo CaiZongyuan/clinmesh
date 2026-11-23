@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import type { z } from 'zod'
 import type { InpatientMaterialReservation } from '@clinmesh/contracts/inpatient-drg-simulation'
 import type { inpatientMaterialItemSchema, inpatientSurgeryCatalogSchema, inpatientSurgeryExecutionSchema, inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -38,7 +39,7 @@ export function InpatientCorrectionComposer({ draft, write, locale, execution, r
   const basis = JSON.stringify({ value: draft.value, requestVersion: request.version, history: execution.materialHistory, catalog, reservations })
   const edit = (row: CorrectionRow, change: Partial<CorrectionRow>) => {
     setReview(null); setMessage('')
-    draft.save({ ...draft.value, rows: rows.map(item => item.id === row.id ? { ...item, ...change, revision: crypto.randomUUID() } : item) })
+    draft.save({ ...draft.value, rows: rows.map(item => item.id === row.id ? { ...item, ...change, revision: createRandomUuid() } : item) })
   }
   const issue = (row: CorrectionRow) => {
     const original = execution.materialHistory.find(item => item.id === row.id)
@@ -75,13 +76,13 @@ export function InpatientCorrectionComposer({ draft, write, locale, execution, r
   if (rows.length === 0 && draft.items.length === 0 && !draft.failed && !draft.busy) return null
   return <section aria-label={t('待更正清单', 'Pending corrections')} className="flex min-w-0 flex-col gap-3 border-t pt-3">
     <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold">{t('待更正清单', 'Pending corrections')}（{rows.length}/20） · {t('已选 ', 'Selected ')}{selected.length}</h4>
-      <div className="flex flex-wrap gap-2"><Button type="button" variant="ghost" size="sm" disabled={!editable || rows.length === 0} onClick={() => { setReview(null); draft.save({ ...draft.value, rows: rows.map(row => ({ ...row, selected: false, revision: crypto.randomUUID() })) }) }}>{t('清空选择', 'Clear selection')}</Button>
+      <div className="flex flex-wrap gap-2"><Button type="button" variant="ghost" size="sm" disabled={!editable || rows.length === 0} onClick={() => { setReview(null); draft.save({ ...draft.value, rows: rows.map(row => ({ ...row, selected: false, revision: createRandomUuid() })) }) }}>{t('清空选择', 'Clear selection')}</Button>
         <Button type="button" variant="ghost" size="sm" disabled={!editable || rows.length === 0} onClick={() => { setClearFailed(false); setDiscard('all') }}>{t('清空更正输入', 'Discard correction input')}</Button></div>
     </div>
     {!writable ? <p role="status">{t('当前岗位、归档或结算状态不允许更正；未提交输入保留。', 'The current role, archive or settlement state prevents corrections. Input is kept.')}</p> : null}
     {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('更正输入或原尝试的存储不可用，已阻止发送。原输入保留；请检查存储后重试。', 'Correction storage or original attempt is unavailable. Sending is blocked and input is kept. Check storage and retry.')}</AlertDescription><Button type="button" variant="outline" size="sm" disabled={!active || draft.busy || write.mutation.isPending} onClick={() => draft.retryStorage()}>{t('重试保存更正输入', 'Retry saving correction input')}</Button></Alert> : null}
     {rows.length > 0 ? <>
-      <Field><FieldLabel htmlFor={`${id}-common`}>{t('共同更正依据', 'Common correction basis')}</FieldLabel><Input id={`${id}-common`} maxLength={2000} disabled={!editable} value={commonReason} onChange={event => { setReview(null); draft.save({ ...draft.value, commonReason: event.target.value, rows: rows.map(row => ({ ...row, revision: crypto.randomUUID() })) }) }} /></Field>
+      <Field><FieldLabel htmlFor={`${id}-common`}>{t('共同更正依据', 'Common correction basis')}</FieldLabel><Input id={`${id}-common`} maxLength={2000} disabled={!editable} value={commonReason} onChange={event => { setReview(null); draft.save({ ...draft.value, commonReason: event.target.value, rows: rows.map(row => ({ ...row, revision: createRandomUuid() })) }) }} /></Field>
       <div className="flex max-h-[min(45svh,440px)] min-h-0 flex-col gap-3 overflow-y-auto" tabIndex={0} aria-label={t('逐项更正输入', 'Correction entry inputs')}>
         {rows.map(row => { const label = rowLabel(row), problem = issue(row), material = row.material
           const usable = reservations.filter(item => item.materialId === material?.id && item.admissionId === request.admissionId

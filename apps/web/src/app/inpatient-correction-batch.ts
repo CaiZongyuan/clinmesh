@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { inpatientMaterialReservationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientMaterialItemSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryMaterialHistorySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -171,7 +172,7 @@ export function useCorrectionBatchDraft({ scope, session, write }: { scope: Scop
         const input = correctionInput(row, record.value.commonReason, expectedRequestVersion)
         if (!input.success) return false
         items.push({ rowId: row.id, rowRevision: row.revision, label: `${row.original.item.display} × ${row.original.quantity}`, original: row.original, originalReservationId: row.original.reservationId,
-          command: { operation: 'inpatient.surgery.correct-material', input: input.data }, idempotencyKey: crypto.randomUUID(), status: 'ready' })
+          command: { operation: 'inpatient.surgery.correct-material', input: input.data }, idempotencyKey: createRandomUuid(), status: 'ready' })
       }
       return persist({ ...record, items, paused: false, pauseReason: null, nextRequestVersion: null, touchedReservations: [] }, true)
     },

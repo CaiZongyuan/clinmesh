@@ -1,0 +1,23 @@
+{
+  "schema": "ClinMeshReceipt",
+  "expect": "valid",
+  "checks": "all",
+  "enforcers": [
+    "platform",
+    "executor",
+    "tile_service"
+  ],
+  "context": {},
+  "value": {
+    "intentId": "review-a",
+    "status": "applied",
+    "httpStatus": 201,
+    "result": {
+      "items": [
+        {
+          "id": "01900000-0000-7000-8000-000000000001"
+        }
+      ]
+    }
+  }
+}

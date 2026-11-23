@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { inpatientInvestigationActionInputSchema, inpatientInvestigationResponseSchema, type inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { useEffect, useRef, useState } from 'react'
@@ -151,13 +152,13 @@ export function useInvestigationSendDrafts({ scope, session, write }: { scope: S
       for (const entry of entries) {
         if (entry.unavailable !== null || entry.snapshot.input.admissionId !== scope.admissionId) return false
         const index = rows.findIndex(row => row.snapshot.id === entry.snapshot.id)
-        const row = { revision: crypto.randomUUID(), selected, snapshot: entry.snapshot }
+        const row = { revision: createRandomUuid(), selected, snapshot: entry.snapshot }
         if (index < 0) { if (selected) rows.push(row) } else rows[index] = row
       }
       if (rows.length > 20) return false
       return changeRows(rows)
     },
-    deselectAll: () => changeRows(latest.current.record.rows.map(row => ({ ...row, selected: false, revision: crypto.randomUUID() }))),
+    deselectAll: () => changeRows(latest.current.record.rows.map(row => ({ ...row, selected: false, revision: createRandomUuid() }))),
     remove: (id: string) => changeRows(latest.current.record.rows.filter(row => row.snapshot.id !== id)),
     clear() {
       if (!isOwner() || running.current || writer.current.blocked || latest.current.record.items.some(item => item.status === 'unknown')) return false
@@ -169,7 +170,7 @@ export function useInvestigationSendDrafts({ scope, session, write }: { scope: S
       const rows = latest.current.record.rows.filter(row => row.selected)
       if (!rows.length || rows.length > 20 || rows.some(row => !entries.some(entry => entry.unavailable === null && sameSendSnapshot(entry.snapshot, row.snapshot)))) return false
       const items = rows.map(row => ({ row, command: commandSchema.parse({ operation: 'inpatient.investigation.send', input: row.snapshot.input }),
-        idempotencyKey: crypto.randomUUID(), status: 'ready' as const }))
+        idempotencyKey: createRandomUuid(), status: 'ready' as const }))
       return persist({ ...latest.current.record, items, reviewRequired: false })
     },
     start: (guard: () => boolean) => run(false, guard),

@@ -1,0 +1,31 @@
+{
+  "schema": "ClinMeshCapabilities",
+  "expect": "valid",
+  "checks": "all",
+  "enforcers": [
+    "platform",
+    "executor",
+    "tile_service"
+  ],
+  "context": {},
+  "value": {
+    "protocol": "clinmesh.pathology-reading.v1",
+    "instanceId": "instance-a",
+    "capabilities": [
+      {
+        "taskCode": "thyroid",
+        "modelVersion": "01900000-0000-7000-8000-000000000001",
+        "modelDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "organ": "thyroid",
+        "specimenTypes": [
+          "biopsy"
+        ],
+        "stain": "HE",
+        "available": true,
+        "limitations": [
+          "合成模型，仅用于协议验证"
+        ]
+      }
+    ]
+  }
+}

@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { commandResponseSchema, sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationListSchema, inpatientMaterialReservationReleaseInputSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { useEffect, useRef, useState } from 'react'
@@ -173,7 +174,7 @@ export function useReservationBatchDraft<T extends Value>({ scope, schema, initi
       for (const entry of parsed.data) {
         const row = current.current.value.rows.find(row => row.id === entry.rowId && row.revision === entry.rowRevision && row.selected)
         if (!row) return false
-        const item: Item = { ...entry, idempotencyKey: crypto.randomUUID(), status: 'ready' }
+        const item: Item = { ...entry, idempotencyKey: createRandomUuid(), status: 'ready' }
         if (entry.command.operation === 'inpatient.drg.reservation.release') {
           const original = z.object({ reservation: z.object({ id: z.string(), admissionId: z.string(), requestId: z.string().nullable().optional(), version: z.number().int().positive() }).passthrough() }).passthrough().safeParse(row)
           if (!original.success) return false

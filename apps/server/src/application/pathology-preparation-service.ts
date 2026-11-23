@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
+import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import {
   administratorPathologyPreparationSchema,
   pathologyCoverageSchema,
@@ -29,6 +30,15 @@ import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic
 import type { SyntheticPatientProfileRepository } from '../infrastructure/sqlite/synthetic-patient-profile-repository.ts'
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import type { SourceResource } from './imaging-preparation.ts'
+import {
+  externalPathologyExamCodes,
+  externalPathologyPublishedReport,
+  externalPathologyReportHash,
+  externalPathologySourceHasDiagnosis,
+  type ExternalPathologyCatalog,
+  externalPathologySourceProcedures,
+  type PathologyExternalAssetSource,
+} from './pathology-external-catalog.ts'
 import {
   indexVisitStart,
   matchCasePathology,
@@ -67,6 +77,7 @@ export class PathologyPreparationService {
   readonly #library: PathologyAssetLibrary
   readonly #preparations: PathologyPreparationRepository
   readonly #profiles: SyntheticPatientProfileRepository
+  readonly #external: PathologyExternalAssetSource | undefined
 
   constructor(input: {
     cases: SyntheticCaseRepository
@@ -74,18 +85,23 @@ export class PathologyPreparationService {
     library: PathologyAssetLibrary
     preparations: PathologyPreparationRepository
     profiles: SyntheticPatientProfileRepository
+    external?: PathologyExternalAssetSource
   }) {
     this.#cases = input.cases
     this.#commands = input.commands
     this.#library = input.library
     this.#preparations = input.preparations
     this.#profiles = input.profiles
+    this.#external = input.external
   }
 
   async prepareBatch(input: { caseIds?: string[] | undefined; context: ActorContext; idempotencyKey: string }) {
     this.#assertAdministrator(input.context)
     const catalog = await this.#matchingCatalog()
-    if (catalog === undefined) {
+    const external = await this.#external?.catalog()
+    const externalAvailability = new Map(await Promise.all((external?.assets ?? []).map(async asset => [asset.assetId, await this.#external!.available(asset, input.context.workspaceId)] as const)))
+    const catalogHash = external === undefined ? catalog?.hash : canonicalJsonHash({ local: catalog?.hash, external, installed: [...externalAvailability] })
+    if (catalog === undefined && external === undefined) {
       throw new PathologyPreparationError(
         'PATHOLOGY_CATALOG_UNAVAILABLE',
         'The pathology asset catalog or its matching rules are not available',
@@ -99,11 +115,11 @@ export class PathologyPreparationService {
       expectedVersions: {},
       idempotencyKey: input.idempotencyKey,
       idempotencyScope: 'workspace',
-      input: { caseIds: input.caseIds ?? null, catalogHash: catalog.hash },
+      input: { caseIds: input.caseIds ?? null, catalogHash },
       operation: 'pathology-preparation.prepare',
     }, () => {
       const pending = input.caseIds === undefined
-        ? this.#preparations.casesNeedingPreparation(workspaceId, catalog.hash, batchLimit)
+        ? this.#preparations.casesNeedingPreparation(workspaceId, catalogHash!, batchLimit)
         : { caseIds: input.caseIds, total: input.caseIds.length }
       const now = new Date().toISOString()
       const effects: Array<{ kind: 'created'; reference: string; versionId: string }> = []
@@ -111,7 +127,7 @@ export class PathologyPreparationService {
         const source = this.#caseSource(workspaceId, caseId)
         const started = this.#preparations.started(workspaceId, caseId)
         const existing = this.#preparations.bindings(workspaceId, caseId, source.case.sourceHash)
-        const exams = matchCasePathology({
+        const exams = catalog === undefined ? [] : matchCasePathology({
           // 未开始的病例重新选择；已开始的病例沿用已固定的绑定。
           bound: started ? existing : [],
           catalog,
@@ -121,11 +137,18 @@ export class PathologyPreparationService {
           indexResources: source.truth.hiddenResources,
           sourceHash: source.case.sourceHash,
         })
+        if (external !== undefined) exams.push(...this.#externalExams({
+          bound: started ? existing : [],
+          catalog: external,
+          history: this.#cases.getVisibleResourcesForSimulator(workspaceId, caseId),
+          installed: externalAvailability,
+          visitStart: indexVisitStart(source.truth.hiddenResources, source.truth.indexEncounterReference),
+        }))
         const latest = this.#preparations.latest(workspaceId, caseId)
-        if (latest?.catalog.hash !== catalog.hash || !isDeepStrictEqual(latest.exams, exams)) {
+        if (latest === undefined || latest.catalog.hash !== catalogHash || !isDeepStrictEqual(latest.exams, exams)) {
           const preparation = this.#preparations.append({
             caseId,
-            catalog: { hash: catalog.hash, packId: catalog.packId, ruleVersion: catalog.rules.ruleVersion },
+            catalog: { hash: catalogHash!, packId: external?.packId ?? catalog!.packId, ruleVersion: external?.ruleVersion ?? catalog!.rules.ruleVersion },
             createdAt: now,
             exams,
             profileId: source.case.profileId,
@@ -142,7 +165,12 @@ export class PathologyPreparationService {
             for (const procedure of exam.sourceProcedures) {
               if (procedure.assetId === undefined || (started && existing.some(binding => binding.examCode === exam.examCode
                 && binding.sourceProcedureReference === procedure.sourceReference))) continue
-              const { asset } = catalog.assets.get(procedure.assetId)!
+              const remoteAsset = external?.assets.find(asset => asset.assetId === procedure.assetId)
+              const asset = remoteAsset ?? catalog!.assets.get(procedure.assetId)!.asset
+              const remoteReport = remoteAsset === undefined ? undefined : externalPathologyPublishedReport(remoteAsset, procedure.reportRevision)
+              const reportHash = remoteAsset === undefined
+                ? pathologyReportContentSha256(catalog!.assets.get(procedure.assetId)!.asset, catalog!.assets.get(procedure.assetId)!.asset.reports!.find(report => report.revision === procedure.reportRevision)!)
+                : externalPathologyReportHash(remoteAsset, remoteReport!)
               this.#preparations.bind({
                 assetId: asset.assetId,
                 assetOutput: asset.output,
@@ -151,10 +179,7 @@ export class PathologyPreparationService {
                 examCode: exam.examCode,
                 matchingProfileId: exam.matchingProfileId!,
                 preparationRevision: preparation.revision,
-                reportContentSha256: pathologyReportContentSha256(
-                  asset,
-                  asset.reports!.find(report => report.revision === procedure.reportRevision)!,
-                ),
+                reportContentSha256: reportHash,
                 reportRevision: procedure.reportRevision!,
                 sourceHash: source.case.sourceHash,
                 sourceProcedureReference: procedure.sourceReference,
@@ -246,26 +271,29 @@ export class PathologyPreparationService {
   }> {
     const sourceProcedures = new Map<PathologyExamCode, PathologySourceProcedure[]>()
     let rules: PathologyMatchingCatalog['rules'] | undefined
-    let readyExamCodes = new Set<PathologyExamCode>()
+    const readyExamCodes = new Set<PathologyExamCode>()
     try {
       rules = (await this.#matchingCatalog())?.rules
-      readyExamCodes = await this.#library.readyExamCodes()
+      for (const code of await this.#library.readyExamCodes()) readyExamCodes.add(code)
     } catch (error) {
       if (!(error instanceof PathologyPreparationError) && !(error instanceof ImagingCatalogInvalidError)) throw error
-      return { readyExamCodes: new Set(), sourceProcedures }
+    }
+    const externalCatalog = await this.#external?.catalog()
+    for (const asset of externalCatalog?.assets ?? []) {
+      if (externalPathologyPublishedReport(asset) !== undefined && await this.#external!.available(asset, context.workspaceId)) readyExamCodes.add(asset.examCode)
     }
     const caseId = this.#preparations.materializedCase(context.workspaceId, context.epoch, visit)
     const truth = caseId === undefined ? undefined : this.#cases.getTruthForSimulator(context.workspaceId, caseId)
-    if (rules === undefined || caseId === undefined || truth === undefined) return { readyExamCodes, sourceProcedures }
+    if (caseId === undefined || truth === undefined) return { readyExamCodes, sourceProcedures }
     const historyResources = this.#cases.getVisibleResourcesForSimulator(context.workspaceId, caseId)
     const visitStart = indexVisitStart(truth.hiddenResources, truth.indexEncounterReference)
-    for (const service of rules.services) {
-      sourceProcedures.set(service.examCode, pathologySourceProcedures({
-        codeSystem: rules.codeSystem,
-        historyResources,
-        service,
-        visitStart,
-      }))
+    for (const service of rules?.services ?? []) {
+      sourceProcedures.set(service.examCode, pathologySourceProcedures({ codeSystem: rules!.codeSystem, historyResources, service, visitStart }))
+    }
+    if (externalCatalog !== undefined) {
+      for (const examCode of externalPathologyExamCodes) {
+        sourceProcedures.set(examCode, externalPathologySourceProcedures({ examCode, historyResources, visitStart }))
+      }
     }
     return { readyExamCodes, sourceProcedures }
   }
@@ -327,6 +355,35 @@ export class PathologyPreparationService {
     if (catalog === undefined) return false
     return matchCasePathology({ ...candidate, bound: [], catalog })
       .some(exam => exam.status === 'ready' && exam.matchingProfileId === target.profileId)
+  }
+
+  #externalExams(input: {
+    bound: ReturnType<PathologyPreparationRepository['bindings']>
+    catalog: ExternalPathologyCatalog
+    history: SourceResource[]
+    installed: Map<string, boolean>
+    visitStart: string | undefined
+  }) {
+    return externalPathologyExamCodes.map(examCode => {
+      const procedures = externalPathologySourceProcedures({ examCode, historyResources: input.history, visitStart: input.visitStart })
+      const candidates = input.catalog.assets.filter(asset => asset.examCode === examCode)
+      const sourceProcedures = procedures.map(procedure => {
+        const bound = input.bound.find(binding => binding.examCode === examCode && binding.sourceProcedureReference === procedure.sourceReference)
+        const asset = bound === undefined
+          ? candidates.filter(asset => asset.sourceSpecimenType === procedure.specimenType && externalPathologySourceHasDiagnosis(asset, input.history)
+            && externalPathologyPublishedReport(asset) !== undefined && input.installed.get(asset.assetId)).toSorted((a, b) => a.assetId.localeCompare(b.assetId))[0]
+          : candidates.find(asset => asset.assetId === bound.assetId)
+        const report = asset === undefined ? undefined : externalPathologyPublishedReport(asset, bound?.reportRevision)
+        return { ...procedure, ...(bound === undefined ? asset === undefined || report === undefined ? {} : { assetId: asset.assetId, reportRevision: report.revision }
+          : { assetId: bound.assetId, reportRevision: bound.reportRevision }), supplements: [] }
+      })
+      const ready = sourceProcedures.some(procedure => 'assetId' in procedure)
+      const reason = procedures.length === 0 ? 'NO_SOURCE_PROCEDURE' as const
+        : candidates.length === 0 || !candidates.some(asset => externalPathologyPublishedReport(asset)) ? 'ASSET_NOT_PUBLISHED' as const
+        : !candidates.some(asset => input.installed.get(asset.assetId)) ? 'ASSET_NOT_INSTALLED' as const : 'NO_APPLICABLE_RULE' as const
+      return { evidence: { conditions: [], facts: [] }, examCode, matchingProfileId: `external-${examCode}`, sourceProcedures,
+        ...(ready ? { status: 'ready' as const } : { reason, status: 'unsupported' as const }) }
+    })
   }
 
   #publishedProfiles(catalog: PathologyMatchingCatalog) {

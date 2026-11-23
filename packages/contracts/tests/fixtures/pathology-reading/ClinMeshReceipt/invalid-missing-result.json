@@ -1,0 +1,16 @@
+{
+  "schema": "ClinMeshReceipt",
+  "expect": "invalid",
+  "checks": "structure",
+  "enforcers": [
+    "platform",
+    "executor",
+    "tile_service"
+  ],
+  "context": {},
+  "value": {
+    "intentId": "review-a",
+    "status": "applied",
+    "httpStatus": 201
+  }
+}

@@ -16,6 +16,27 @@ export type PathologyFactName = z.infer<typeof pathologyFactNameSchema>
 export const pathologyFactValueSchema = z.enum(['negative', 'positive', 'T1', 'T2', 'T3', 'T4'])
 export type PathologyFactValue = z.infer<typeof pathologyFactValueSchema>
 
+/** 首期 PathJX 病理会诊使用的来源标本类型。乳腺既有事实继续使用原匹配规则。 */
+export const pathologySpecimenTypeSchema = z.enum([
+  'prior-breast-surgical-specimen',
+  'prior-colorectal-biopsy',
+  'prior-colorectal-polypectomy',
+  'prior-thyroid-surgical-specimen',
+])
+export type PathologySpecimenType = z.infer<typeof pathologySpecimenTypeSchema>
+
+/** 外部阅片绑定的冻结素材身份，只在管理员与受信服务边界使用，不含任意路径或像素。 */
+export const externalPathologyAssetOutputSchema = z.object({
+  assetKey: z.string().min(1).max(256),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  instanceId: z.string().min(1).max(256),
+  kind: z.literal('pathjx'),
+  organ: z.enum(['colorectal', 'thyroid']),
+  specimenType: z.enum(['biopsy', 'resection']),
+  stain: z.literal('HE'),
+}).strict()
+export type ExternalPathologyAssetOutput = z.infer<typeof externalPathologyAssetOutputSchema>
+
 /**
  * 一项会诊没有得到可用切片的原因；`FIXED_FACT_CONFLICT` 对应 `conflict`，其余对应 `unsupported`。
  * `FACT_UNKNOWN` 表示来源缺少某项固定事实，无法确认任何素材与病例相容。
@@ -39,6 +60,7 @@ const sourceCodingEvidenceSchema = z.object({
 /** 可送检的来源手术：来自病例的既往来源病史，早于本次就诊。 */
 export const pathologySourceProcedureSchema = sourceCodingEvidenceSchema.extend({
   performedAt: z.string().min(10).max(64),
+  specimenType: pathologySpecimenTypeSchema.optional(),
 }).strict()
 export type PathologySourceProcedure = z.infer<typeof pathologySourceProcedureSchema>
 

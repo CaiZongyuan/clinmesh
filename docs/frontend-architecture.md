@@ -104,7 +104,9 @@ interface NavigationAdapter {
 
 ## 阅片器
 
-放射检查与病理切片的阅片器位于 `apps/web`，standalone Web 与 DSH Surface 使用同一份组件，只使用 React 18.3.1 与 19.2 共有的 API，并纳入 React 18/19 双版本浏览器合同测试。
+放射检查与乳腺本地病理切片的阅片器位于 `apps/web`，standalone Web 与 DSH Surface 使用同一份组件，只使用 React 18.3.1 与 19.2 共有的 API，并纳入 React 18/19 双版本浏览器合同测试。
+
+结直肠与甲状腺采用独立 origin 的 PathJX 专用 iframe。ClinMesh 外壳仅管理当前患者、报告上下文、全屏往返、受限会话与显示资格，不复建 PathJX 渲染和复核界面；standalone 与 React 18/19 Surface 复用同一外壳，消息和失效合同见[可插拔病理阅片](architecture/pathology-reading.md)。下述本地引擎及倍率限制不约束 PathJX。
 
 阅片器由外壳和渲染引擎组成。外壳负责序列导航、全屏与返回、像素不可用时的提示，以及把“首次有图像成功显示”通知给调用方；调用方用它决定是否开放确认已阅。调用方只提供检查的读取描述和一个按相对路径读取像素块的函数，不知道序列如何组织像素；阅片器不知道检查来自门诊申请还是管理员复核预览。
 

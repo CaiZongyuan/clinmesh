@@ -506,6 +506,7 @@ describe('HIS operation catalog', () => {
       const operation = getHisOperation(id as string)
       return [operation.id, operation.mode, operation.risk, operation.roles]
     })).toEqual(expected)
+    expect(getHisOperation('doctor.case.pathology-services.list').version).toBe(2)
     // 会诊草稿只接受服务、可见病史中的来源手术引用与会诊目的，不接受素材标识或放射的检查指征。
     const draft = getHisOperation('encounter.pathology-request.draft.set')
     const input = {

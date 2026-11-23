@@ -147,6 +147,30 @@ pnpm imaging:repair
 
 `imaging:repair` 从本地保留的 `sources/` 离线重建 `installed/`，修复后无需重启 Server；备份数据库时须同步备份 `sources/` 原件目录，病例影像准备与阅片操作见[影像检查使用指南](imaging.md)。
 
+### PathJX 外部阅片服务
+
+PathJX 独立部署，ClinMesh 未配置它也能启动。结直肠与甲状腺会诊依赖外部原片、相容模型和经复核报告，乳腺仍使用下方的本地素材包。支持的协议固定为 `clinmesh.pathology-reading.v1`；原生 REST `/api/v1` 的版本不能代替该握手。双方端点及恢复规则见[协议合同](architecture/pathology-reading.md)；PathJX 侧由[接入 Issue](https://github.com/JinhaoFang/PathJX-01/issues/327)关联的 `contracts/clinmesh-reading.md` 拥有。
+
+1. 部署支持该协议的 PathJX 平台、瓦片服务与 Web 专用入口 `/clinmesh/reading`。Web 与 ClinMesh 必须使用不同 origin；反向代理保留 `private, no-store`，只对部署白名单中的确切父 origin 允许嵌入。生产使用 HTTPS。
+2. 在 PathJX 的部署环境设置 `PATHJX_CLINMESH_KEY`、稳定的 `PATHJX_CLINMESH_INSTANCE_ID`、`PATHJX_CLINMESH_PARENT_ORIGINS`，以及固定的 `CLINMESH_AUTHORIZATION_URL=<ClinMesh origin>/api/his/v1/pathology-reading/authorize`。使用 `PATHJX_CLINMESH_ACTORS` 将 ClinMesh 稳定 Actor ID 映射到已有的启用人类医生账号；不要映射管理员、Agent 或共享服务账号。`PATHJX_CLINMESH_ASSETS` 将稳定资产键映射到预登记的原片。凭据只留各自服务环境。
+3. 核验原片许可、署名、去标识和完整 SHA-256，在本机准备外部清单 JSON。格式由 `apps/server/src/application/pathology-external-catalog.ts` 的 `externalPathologyCatalogSchema` 拥有；报告人工批准的 `contentHash` 使用同模块 `externalPathologyReportHash` 计算。外部 `output` 包含 `kind: "pathjx"`、实例、资产键、内容哈希、器官、标本类型与 `stain: "HE"`，不包含文件路径或下载 URL。只有来源诊断与既往标本相容、报告复核有效且远端资产可读才就绪。
+4. 在 ClinMesh 的 `.env` 设置 `CLINMESH_PATHOLOGY_READING_ENDPOINT`、`CLINMESH_PATHOLOGY_READING_VIEWER_ORIGIN`、`CLINMESH_PATHOLOGY_READING_INSTANCE_ID` 和 `CLINMESH_PATHOLOGY_READING_TOKEN`，四项一起提供。令牌与 PathJX 集成密钥一致；前两项仅为确切 origin。设置 `CLINMESH_PATHOLOGY_EXTERNAL_CATALOG_PATH` 为上一步 JSON 的绝对路径。重启 Server 加载部署授权，浏览器不能修改白名单或令牌。
+5. 管理员打开“模拟数据 → 病理阅片服务”，填写同一实例和地址，明确“保存并启用”，再“检查连接”。核对实际模型版本、适用器官和限制；这一步不运行推理。通过公开管理员 `GET /api/sim/v1/admin/pathology-case-pack` 查看版本化病例包，`POST /api/sim/v1/admin/pathology-case-pack/prepare` 携带当前 Epoch 和幂等键准备固定两例，再按[病理指南](pathology.md#管理员与医生pathjx-外部会诊)准备并开始病例。
+6. 由医生按原开单、缴费和出报告流程打开切片，核对实际显示、当前医生、原报告和单片范围。模型提示与人工复核不自动写回正式报告。真实模型现场计算仍须本次明确授权；合成执行器测试不算真实医学效果证据。
+
+| 部署组合 | 行为 |
+| --- | --- |
+| 两侧均声明并通过 `clinmesh.pathology-reading.v1` 合同 | 允许按当前授权建立单片会话 |
+| 任一侧缺少接入端点、实例不符或协议不兼容 | 嵌入阅片不可用，保留 ClinMesh 文字报告与历史引用 |
+| 缺凭据、未启用、离线或原片不可读 | 拒绝新的阅读资格与写入，不影响其他 HIS 业务 |
+| 原对象、内容或确认修订不一致 | 待修复；不得自动补建、换片或重跑 |
+
+本次验证的来源组合为 ClinMesh 本次 `clinmesh.pathology-reading.v1` 适配器与 PathJX 提交 `53d7f0ffcfee1026ce98af26f69916dd770e4f71`（包含专用 Web 页、受限平台 API 与瓦片代理），使用 PostgreSQL 18、Go 1.27.3、合成切片与合成模型声明；真实两侧 HTTP 旅程覆盖两器官、当前人类身份复核、原回执、单片报告更正及停用撤权。ClinMesh 外壳另通过 Chromium 1243 的 standalone 与 React 18/19 ShadowRoot 合同。PathJX 原主线 `789f96eae83b4deb893e375e22f4dff290ab1b8b` 缺少接入端点，不能作为兼容部署组合。该来源组合仍需按各仓库流程交付后部署；这些合成证据不代表真实原片、GPU、模型质量或全部外部版本组合已验证。
+
+升级前停用 ClinMesh 阅片服务，保留数据库一致备份和固定版本引用，在隔离环境运行共享正反样例、原回执恢复及单片旅程后再启用。回退同时使用已验证的两侧版本与匹配数据；不以回退单侧代码抹掉已确认动作。当前本地实现与合成验证不构成对任意已发布版本组合的兼容承诺。
+
+备份需包含 ClinMesh SQLite 的绑定、会话与检查点，以及 PathJX PostgreSQL 的受控病例、切片、冻结模型、分析、复核、测量、回执和加密材料；原片文件、模型、实例与密钥配置分别保留。分别恢复任何一侧后先保持停用，核对原实例、内容和双方已确认修订；缺失或回退时保留诊断并恢复匹配备份，不清空回执或重新准备同一个已开始会诊。短效会话可重新签发，历史临床事实不得据此重建。
+
 ### 病理切片素材
 
 乳腺切片病理会诊按[病理切片素材清单](../pathology-assets/README.md)独立拉取 TCGA-BRCA 公开切片到 `.data/pathology-assets`（`CLINMESH_PATHOLOGY_ASSET_DIRECTORY`，与放射素材互不依赖，支持 `--asset <assetId>` 按需安装，最大单张摄取进程内存峰值约 1.2 GB）：

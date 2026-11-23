@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { getDoctorCase, signOut } from '../api-client.ts'
 import { OutpatientReportReader } from './outpatient-report-reader.tsx'
+import { pathologyReadingSessionInputSchema, pathologyReadingProtocol } from '@clinmesh/contracts/pathology-reading'
 
 vi.setConfig({ testTimeout: 15_000 })
 
@@ -98,6 +99,50 @@ beforeEach(() => {
   vi.stubGlobal('ImageData', class { constructor(readonly data: Uint8ClampedArray, readonly width: number, readonly height: number) {} })
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+it('连续阅读切走外部病理后仍核对原会话，撤权时清除已阅资格且保留已选私稿', async () => {
+  const api = server(1), user = userEvent.setup()
+  const source = { code: '274025005', display: '既往结肠镜息肉切除术', performedAt: '2026-07-01T00:00:00Z', sourceReference: 'urn:synthetic:polyp', specimenType: 'prior-colorectal-polypectomy' }
+  api.update({ ...api.get(), pathologyRequests: { draftVersion: 0, requests: [{ id: 'pathology-1', previousReports: [], purpose: '复核既往标本',
+    sourceProcedure: source, status: 'reported', version: 1, serviceRequestId: 'service-pathology-1', serviceRequestVersion: '1', taskId: 'task-pathology-1', taskVersion: '1',
+    service: { applicability: '既往息肉切除标本', bodySite: '结直肠', code: 'SYN-PATH', department: '病理科', examCode: 'colorectal-slide-consultation',
+      id: 'colorectal-service', name: '合成结直肠会诊', reportSections: ['specimen', 'microscopy', 'diagnosis', 'immunohistochemistry', 'note'], specimenType: '既往石蜡标本', stain: 'HE', version: 1 },
+    report: { diagnosis: '合成诊断', diagnosticReportId: 'pathology-report-1', diagnosticReportVersion: '1', immunohistochemistry: '未提供', issuedAt: '2026-08-24T00:00:00Z',
+      microscopy: '合成所见', note: '纯合成', receivedAt: '2026-08-24T00:00:00Z', revisionNumber: 1, specimen: { procedure: source, slideCount: 1, specimenId: 'specimen-pathology', stain: 'HE' }, status: 'final', studyId: 'external-study' },
+  }] } })
+  const originalFetch = fetch, sessionId = '00000000-0000-4000-8000-000000000001'
+  let active = true, generation = ''
+  vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const path = String(input)
+    const state = { id: sessionId, active, writable: active, displayed: active, expiresAt: '2099-01-01T00:00:00Z' }
+    if (path.endsWith('/reading-sessions')) {
+      generation = pathologyReadingSessionInputSchema.parse(JSON.parse(String(init?.body))).generation
+      return Response.json({ id: sessionId, sessionId: 'external-session', requestId: 'pathology-1', reportId: 'pathology-report-1', reportVersion: '1', generation,
+        viewerUrl: 'https://synthetic-pathjx.test/clinmesh/reading', viewerOrigin: 'https://synthetic-pathjx.test', launchToken: 'synthetic-launch-token', expiresAt: state.expiresAt, writable: true })
+    }
+    if (path.includes('/pathology-reading/sessions/')) return Response.json(state)
+    return originalFetch(input, init)
+  }))
+  const mounted = mount()
+  await user.click(await screen.findByRole('button', { name: '连续阅读报告' }))
+  await user.click(screen.getByRole('button', { name: '打开报告：合成结直肠会诊' }))
+  const frame = await screen.findByTitle<HTMLIFrameElement>('病理切片阅片')
+  const choice = screen.getByRole('checkbox', { name: '选择已阅：合成结直肠会诊' })
+  expect(choice.getAttribute('aria-disabled')).toBe('true')
+  await act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: 'https://synthetic-pathjx.test', source: frame.contentWindow,
+    data: { protocol: pathologyReadingProtocol, type: 'displayed', sessionId: 'external-session', generation,
+      requestId: 'pathology-1', reportId: 'pathology-report-1', reportVersion: '1' } })) })
+  await waitFor(() => expect(choice.getAttribute('aria-disabled')).not.toBe('true'))
+  await user.click(choice)
+  await user.click(screen.getByRole('button', { name: '打开报告：合成检验1' }))
+  expect(choice.getAttribute('aria-disabled')).not.toBe('true')
+  active = false
+  await act(async () => { await mounted.client.invalidateQueries({ queryKey: ['outpatient-reader-reading-session'] }) })
+  await waitFor(() => expect(choice.getAttribute('aria-disabled')).toBe('true'))
+  expect(choice.getAttribute('aria-checked')).toBe('true')
+  expect(screen.getByRole('button', { name: '核对选中报告' })).toHaveProperty('disabled', true)
+  expect(api.posts).toEqual([])
+})
 
 it('ECG与TTE纯文本报告打开后逐项已阅，无影像请求', async () => {
   const api = server(0), user = userEvent.setup(); api.controls.loseSecond = false

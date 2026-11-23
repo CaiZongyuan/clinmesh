@@ -1,3 +1,4 @@
+import { createRandomUuid } from '../random-uuid.ts'
 import {
   type ClinicalCatalog,
   type DoctorCaseDetail
@@ -78,7 +79,7 @@ export function RevisitEditor({ catalog, detail, locale, messages, onSave, pendi
       catalogItemId: '',
       doseText: '',
       frequencyCode: '',
-      key: globalThis.crypto.randomUUID(),
+      key: createRandomUuid(),
       quantity: '1',
     }])
   }

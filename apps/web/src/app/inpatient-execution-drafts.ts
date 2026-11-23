@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { inpatientExecutionActionInputSchema, inpatientExecutionSchema, inpatientFullClinicalResponseSchema, inpatientOrderReasonInputSchema, inpatientOrderSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { useEffect, useRef, useState } from 'react'
@@ -129,18 +130,18 @@ export function useExecutionDrafts({ scope, session, write }: { scope: Scope; se
       const same = previous !== undefined && sameExecutionDraft(previous, candidate)
       const verified = patch.verified ?? (scope.action === 'request-prn' || same && previous.verified)
       const selected = verified && (patch.selected ?? (same && previous.selected))
-      const row: ExecutionDraft = { ...candidate, revision: crypto.randomUUID(), verified, selected, ...(previous?.reasonOverride === undefined ? {} : { reasonOverride: previous.reasonOverride }) }
+      const row: ExecutionDraft = { ...candidate, revision: createRandomUuid(), verified, selected, ...(previous?.reasonOverride === undefined ? {} : { reasonOverride: previous.reasonOverride }) }
       if (index < 0) rows.push(row); else rows[index] = row
       if (rows.length > 20) return false
       return change(rows)
     },
-    setCommonReason: (reason: string) => change(latest.current.record.rows.map(row => row.reasonOverride === undefined ? { ...row, revision: crypto.randomUUID() } : row), reason),
+    setCommonReason: (reason: string) => change(latest.current.record.rows.map(row => row.reasonOverride === undefined ? { ...row, revision: createRandomUuid() } : row), reason),
     setReasonOverride: (id: string, reason: string | undefined) => change(latest.current.record.rows.map(row => {
       if (row.id !== id) return row
       const { reasonOverride: _old, ...rest } = row
-      return { ...rest, revision: crypto.randomUUID(), ...(reason === undefined ? {} : { reasonOverride: reason }) }
+      return { ...rest, revision: createRandomUuid(), ...(reason === undefined ? {} : { reasonOverride: reason }) }
     })),
-    deselectAll: () => change(latest.current.record.rows.map(row => ({ ...row, selected: false, revision: crypto.randomUUID() }))),
+    deselectAll: () => change(latest.current.record.rows.map(row => ({ ...row, selected: false, revision: createRandomUuid() }))),
     remove: (id: string) => change(latest.current.record.rows.filter(row => row.id !== id)),
     clear() {
       if (!isOwner() || running.current || latest.current.record.items.some(item => item.status === 'unknown') || writer.current.pending) return false
@@ -153,7 +154,7 @@ export function useExecutionDrafts({ scope, session, write }: { scope: Scope; se
       if (!rows.length || rows.some(row => !row.verified || !candidates.some(candidate => candidate.id === row.id && sameExecutionDraft(row, candidate))) || scope.action === 'request-prn' && rows.some(row => !(row.reasonOverride ?? latest.current.record.commonReason).trim())) return false
       const items = rows.map(row => ({ row: scope.action === 'request-prn' ? { ...row, reasonOverride: (row.reasonOverride ?? latest.current.record.commonReason).trim() } : row,
         command: commandSchema.parse({ operation: `inpatient.execution.${scope.action}`, input: scope.action === 'request-prn' ? { admissionId: scope.admissionId, orderId: row.id, expectedOrderVersion: row.order.version, reason: row.reasonOverride ?? latest.current.record.commonReason }
-          : { admissionId: scope.admissionId, executionId: row.id, expectedExecutionVersion: row.execution?.version } }), idempotencyKey: crypto.randomUUID(), status: 'ready' as const }))
+          : { admissionId: scope.admissionId, executionId: row.id, expectedExecutionVersion: row.execution?.version } }), idempotencyKey: createRandomUuid(), status: 'ready' as const }))
       return persist({ ...latest.current.record, items, reviewRequired: false }, true)
     },
     start: (guard: () => boolean, canSend?: () => boolean) => run(false, guard, canSend), recover: (guard: () => boolean, canSend?: () => boolean) => run(true, guard, canSend),

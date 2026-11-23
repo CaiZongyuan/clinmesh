@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import {
   agentPageBindingRevision,
   hasSameDoctorCase,
@@ -122,7 +123,7 @@ export function buildSurfaceAgentTools(
       ),
       execute: async (raw, signal) => {
         input.onExecutionStart?.()
-        const id = crypto.randomUUID()
+        const id = createRandomUuid()
         let executionProof: string | undefined
         let unconfirmed = false
         let feedback: ((phase: AgentActionFeedback['phase'], message?: string) => void) | undefined

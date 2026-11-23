@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { z } from 'zod'
 import { inpatientMaterialReservationSchema, type InpatientMaterialReservation } from '@clinmesh/contracts/inpatient-drg-simulation'
 
@@ -24,7 +25,7 @@ export function validReservationQuantity(quantity: string) {
 }
 
 export function releaseInputRow(reservation: InpatientMaterialReservation, previous?: ReservationInputRow): ReservationInputRow {
-  return { id: reservation.id, revision: crypto.randomUUID(), selected: true, materialId: reservation.materialId,
+  return { id: reservation.id, revision: createRandomUuid(), selected: true, materialId: reservation.materialId,
     ...(reservation.catalogVersion === undefined ? {} : { catalogVersion: reservation.catalogVersion }),
     display: reservation.materialDisplay, unit: reservation.unit, priceFen: reservation.priceFen,
     quantity: String(reservationRemaining(reservation)), reason: previous?.reason ?? '', reservation }

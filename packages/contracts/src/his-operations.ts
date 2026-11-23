@@ -1115,8 +1115,8 @@ const operationCliMetadataList = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: '列出本院病理会诊服务、是否开展，以及该病例可见既往病史中可送检的手术；是否开展与病例病情无关',
-    version: 1,
+    summary: '列出本院病理会诊服务、是否开展，以及该病例可见既往病史中可送检的手术；首期支持乳腺、结直肠既往活检/息肉切除和甲状腺既往手术的 H&E 切片，是否开展与病例病情无关',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'pathology-request', 'draft', 'set'],
@@ -1193,8 +1193,8 @@ const operationCliMetadataList = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: '确认已阅当前病理会诊报告；切片不可读时以 IMAGING_STUDY_UNAVAILABLE 拒绝',
-    version: 1,
+    summary: '确认已阅当前病理会诊报告；外部会诊 requires-human-current-session，须当前人类登录的有效会话实际显示原片，独立 Agent Grant 不能冒充显示会话；切片不可读或未取得有效显示资格均以 IMAGING_STUDY_UNAVAILABLE 拒绝，先由医生工作台恢复阅片',
+    version: 2,
   },
   {
     cliPath: ['pathology-report', 'correct'],

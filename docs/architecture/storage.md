@@ -100,7 +100,7 @@ queued/claimed    -> abandoned
 
 ### 文书与附件边界
 
-已签署临床文书 `Bundle`、`Composition`、`Provenance` 作为结构化 FHIR JSON 存入 current/history store，修订创建新 logical resource 并声明 `replaces`，唯一根约束阻止分叉。首期不提供 Binary、PDF、扫描件等附件存储；放射与病理像素保存在数据库外的本地素材目录，经只读阅片边界按检查标识访问，绝不进入 SQLite、FHIR 正文、日志或模型输入，见[影像素材与病例影像准备](simulation.md#107-影像素材与病例影像准备)。
+已签署临床文书 `Bundle`、`Composition`、`Provenance` 作为结构化 FHIR JSON 存入 current/history store，修订创建新 logical resource 并声明 `replaces`，唯一根约束阻止分叉。首期不提供 Binary、PDF、扫描件等附件存储；放射与本地乳腺病理像素保存在数据库外的素材目录，经只读阅片边界按检查标识访问；PathJX 外部原片与派生结果由其独立存储拥有。像素绝不进入 ClinMesh SQLite、FHIR 正文、日志或通用模型输入；专用病理视觉模型只在 PathJX 受控边界处理像素，见[影像素材与病例影像准备](simulation.md#107-影像素材与病例影像准备)及[外部阅片合同](pathology-reading.md)。
 
 <a id="99-数据库迁移边界"></a>
 

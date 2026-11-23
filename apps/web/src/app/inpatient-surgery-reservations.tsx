@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { inpatientMaterialReservationListSchema, type InpatientMaterialReservationList } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -77,7 +78,7 @@ function ReservationBatchSection({ admission, session, locale, write, active = t
     setReview(undefined); setSelectionError('')
     return draft.save({ ...draft.value, rows: next }, { keepCurrentOnFailure })
   }
-  const editRow = (rowId: string, change: Partial<ReservationInputRow>) => saveRows(rows.map(row => row.id === rowId ? { ...row, ...change, revision: crypto.randomUUID() } : row))
+  const editRow = (rowId: string, change: Partial<ReservationInputRow>) => saveRows(rows.map(row => row.id === rowId ? { ...row, ...change, revision: createRandomUuid() } : row))
   const reservations = list?.reservations.filter(item => (item.requestId ?? null) === (requestId ?? null))
   const problem = (row: ReservationInputRow) => {
     if (creating) {
@@ -109,7 +110,7 @@ function ReservationBatchSection({ admission, session, locale, write, active = t
     const next = [...rows]
     for (const row of targets) {
       const index = next.findIndex(item => item.id === row.id)
-      const updated = !creating && row.reservation ? releaseInputRow(reservations?.find(item => item.id === row.id) ?? row.reservation, row) : { ...row, selected: true, revision: crypto.randomUUID() }
+      const updated = !creating && row.reservation ? releaseInputRow(reservations?.find(item => item.id === row.id) ?? row.reservation, row) : { ...row, selected: true, revision: createRandomUuid() }
       if (index < 0) next.push(updated); else next[index] = updated
     }
     saveRows(next)
@@ -135,16 +136,16 @@ function ReservationBatchSection({ admission, session, locale, write, active = t
     <FieldSet disabled={!editable} className="min-w-0"><FieldLegend>{title}</FieldLegend>
       <p className="text-sm text-muted-foreground">{creating ? t('同窗连续加入耗材，再按项核对数量；逐项理由留空时采用共同理由。', 'Add materials continuously, then review each quantity. A blank item reason uses the common reason.') : t('仅释放当前手术的未用余量，已用部分及正式收费保留。逐项理由留空时采用共同理由。', 'Release only unused quantities for this surgery. Used quantities and posted charges remain. A blank item reason uses the common reason.')}</p>
       {creating ? <ReservationMaterialPicker catalog={catalog} locale={locale} added={rows.map(row => row.materialId)} limit={limit} disabled={!editable || !dataReady || !planAvailable}
-        onAdd={item => { if (!editable || !('chargeDefinition' in item) || rows.length >= limit || rows.some(row => row.materialId === item.id)) return; saveRows([...rows, { id: crypto.randomUUID(), revision: crypto.randomUUID(), selected: true, materialId: item.id, catalogVersion: item.version, display: item.display, unit: item.chargeDefinition.unit, priceFen: item.chargeDefinition.priceFen, quantity: '1', reason: '' }]) }} /> : null}
-      <FieldGroup><Field><FieldLabel htmlFor={`${id}-reason`}>{creating ? t('新增预留共同理由', 'Common creation reason') : t('释放预留共同理由', 'Common release reason')}</FieldLabel><Input id={`${id}-reason`} value={commonReason} maxLength={2000} onChange={event => { setReview(undefined); draft.save({ ...draft.value, commonReason: event.target.value, rows: rows.map(row => ({ ...row, revision: crypto.randomUUID() })) }) }} /></Field>
+        onAdd={item => { if (!editable || !('chargeDefinition' in item) || rows.length >= limit || rows.some(row => row.materialId === item.id)) return; saveRows([...rows, { id: createRandomUuid(), revision: createRandomUuid(), selected: true, materialId: item.id, catalogVersion: item.version, display: item.display, unit: item.chargeDefinition.unit, priceFen: item.chargeDefinition.priceFen, quantity: '1', reason: '' }]) }} /> : null}
+      <FieldGroup><Field><FieldLabel htmlFor={`${id}-reason`}>{creating ? t('新增预留共同理由', 'Common creation reason') : t('释放预留共同理由', 'Common release reason')}</FieldLabel><Input id={`${id}-reason`} value={commonReason} maxLength={2000} onChange={event => { setReview(undefined); draft.save({ ...draft.value, commonReason: event.target.value, rows: rows.map(row => ({ ...row, revision: createRandomUuid() })) }) }} /></Field>
         <Field><FieldLabel htmlFor={`${id}-search`}>{creating ? t('搜索未提交新增项', 'Search creation input') : t('搜索当前手术预留', 'Search surgery reservations')}</FieldLabel><Input id={`${id}-search`} value={search} maxLength={200} onChange={event => { setSearch(event.target.value); setPage(1) }} /></Field></FieldGroup>
-      <div className="flex flex-wrap items-center gap-2"><Button type="button" variant="outline" size="sm" disabled={!editable || !dataReady || selectable.length === 0} onClick={() => { if (allSelected) saveRows(rows.map(row => selectable.some(item => item.id === row.id) ? { ...row, selected: false, revision: crypto.randomUUID() } : row)); else selectRows(selectable) }}>{allSelected ? t('取消本页选择', 'Deselect this page') : t('全选本页可办理项', 'Select eligible items on this page')}</Button>
-        <Button type="button" variant="ghost" size="sm" disabled={!editable || selected.length === 0} onClick={() => saveRows(rows.map(row => ({ ...row, selected: false, revision: crypto.randomUUID() })))}>{t('清空选择', 'Clear selection')}</Button>
+      <div className="flex flex-wrap items-center gap-2"><Button type="button" variant="outline" size="sm" disabled={!editable || !dataReady || selectable.length === 0} onClick={() => { if (allSelected) saveRows(rows.map(row => selectable.some(item => item.id === row.id) ? { ...row, selected: false, revision: createRandomUuid() } : row)); else selectRows(selectable) }}>{allSelected ? t('取消本页选择', 'Deselect this page') : t('全选本页可办理项', 'Select eligible items on this page')}</Button>
+        <Button type="button" variant="ghost" size="sm" disabled={!editable || selected.length === 0} onClick={() => saveRows(rows.map(row => ({ ...row, selected: false, revision: createRandomUuid() })))}>{t('清空选择', 'Clear selection')}</Button>
         <Button type="button" variant="ghost" size="sm" disabled={!editable || rows.length === 0 && !commonReason} onClick={() => { setClearOpen(true); setClearFailed(false) }}>{t('清空未提交输入', 'Clear unsubmitted input')}</Button></div>
       <p role="status" className="text-sm">{t(`已选择 ${selected.length} / ${limit} 项；清空选择保留数量与理由。`, `${selected.length} / ${limit} selected. Clearing selection keeps quantities and reasons.`)}</p>
       {selectionError ? <Alert variant="destructive"><AlertDescription>{selectionError}</AlertDescription></Alert> : null}
       {visible.map(row => <ReservationInputCard key={row.id} row={row} creating={creating} locale={locale} prefix={id} commonReason={commonReason} disabled={!editable} selectionDisabled={!dataReady || !creating && !row.selected && (row.reservation?.status !== 'reserved' || reservationRemaining(row.reservation) <= 0)} problem={row.selected ? problem(row) : null}
-        onSelect={checked => { if (checked) selectRows([row]); else editRow(row.id, { selected: false }) }} onEdit={change => { if (rows.some(item => item.id === row.id)) editRow(row.id, change); else saveRows([...rows, { ...row, ...change, revision: crypto.randomUUID() }]) }} onRemove={() => saveRows(rows.filter(item => item.id !== row.id), true)} />)}
+        onSelect={checked => { if (checked) selectRows([row]); else editRow(row.id, { selected: false }) }} onEdit={change => { if (rows.some(item => item.id === row.id)) editRow(row.id, change); else saveRows([...rows, { ...row, ...change, revision: createRandomUuid() }]) }} onRemove={() => saveRows(rows.filter(item => item.id !== row.id), true)} />)}
       {dataReady && visible.length === 0 ? <p className="text-sm text-muted-foreground">{creating ? t('尚无匹配的未提交新增项。', 'No matching creation input.') : t('当前手术没有匹配预留。', 'No matching reservations for this surgery.')}</p> : null}
       <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">{t(`第 ${currentPage} / ${pages} 页，共 ${filtered.length} 项`, `Page ${currentPage} / ${pages}, ${filtered.length} items`)}</span>
         <Button type="button" variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>{t('上一页待办', 'Previous input page')}</Button><Button type="button" variant="outline" size="sm" disabled={currentPage >= pages} onClick={() => setPage(currentPage + 1)}>{t('下一页待办', 'Next input page')}</Button></div>

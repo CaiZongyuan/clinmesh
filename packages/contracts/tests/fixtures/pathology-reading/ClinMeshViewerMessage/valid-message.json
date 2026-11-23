@@ -1,0 +1,20 @@
+{
+  "schema": "ClinMeshViewerMessage",
+  "expect": "valid",
+  "checks": "all",
+  "enforcers": [
+    "platform",
+    "executor",
+    "tile_service"
+  ],
+  "context": {},
+  "value": {
+    "protocol": "clinmesh.pathology-reading.v1",
+    "type": "displayed",
+    "sessionId": "01900000-0000-7000-8000-000000000001",
+    "generation": "01900000-0000-7000-8000-000000000002",
+    "requestId": "request-a",
+    "reportId": "report-a",
+    "reportVersion": "1"
+  }
+}

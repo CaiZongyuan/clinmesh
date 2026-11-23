@@ -4,6 +4,10 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PathologyCoveragePanel, PatientPathologyPreparation } from './pathology-preparation.tsx'
+import type { SessionContext } from '@clinmesh/contracts/his'
+
+const session: SessionContext = { user: { id: 'synthetic-admin', email: 'admin@demo.clinmesh.local', name: '合成管理员' },
+  actor: { actorId: 'synthetic-admin', epoch: 'epoch-1', practitionerRoleId: 'role-admin', roleCode: 'administrator', scenarioRunId: 'run-1', workspaceId: 'workspace-demo' }, availableRoles: [] }
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
@@ -193,7 +197,7 @@ describe('administrator pathology preparation panels', () => {
       })
     }))
     const user = userEvent.setup()
-    renderWithQueries(<PathologyCoveragePanel locale="zh-CN" />)
+    renderWithQueries(<PathologyCoveragePanel locale="zh-CN" session={session} />)
 
     expect(requests).toEqual([])
     await user.click(screen.getByText('病理覆盖清单'))

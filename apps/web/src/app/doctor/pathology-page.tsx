@@ -27,6 +27,7 @@ import {
   newIdempotencyKey,
 } from '../api-client.ts'
 import { ImagingViewer, type ImagingViewerSource } from '../imaging/imaging-viewer.tsx'
+import { PathologyReadingViewer } from './pathology-reading-viewer.tsx'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
@@ -188,8 +189,9 @@ function PathologyRequestItem({ actions, active, locale, readOnly: _readOnly, re
   const viewerOpen = active && view.isOpen(request.id)
   const diagnosticReportId = request.report?.diagnosticReportId
   const studyId = request.report?.studyId
+  const external = request.service.examCode !== 'breast-slide-consultation'
   const study = useQuery({
-    enabled: viewerOpen && studyId !== undefined,
+    enabled: viewerOpen && studyId !== undefined && !external,
     gcTime: 0,
     queryFn: ({ signal }) => getImagingStudy(studyId!, signal),
     queryKey: ['imaging-study', studyId ?? 'none'],
@@ -235,7 +237,8 @@ function PathologyRequestItem({ actions, active, locale, readOnly: _readOnly, re
           {summaryInsertion === undefined ? null : (
             <p className="mt-1 text-xs text-muted-foreground" role="status">{summaryInsertionLabels[summaryInsertion][zh ? 0 : 1]}</p>
           )}
-          {!viewerOpen ? null : study.isPending ? <Skeleton className="mt-2 h-40 w-full" /> : study.isError || source === undefined ? (
+          {!viewerOpen ? null : external ? <PathologyReadingViewer request={request} report={request.report} locale={locale}
+            onReady={ready => { if (diagnosticReportId) view.markShown(diagnosticReportId, ready) }} /> : study.isPending ? <Skeleton className="mt-2 h-40 w-full" /> : study.isError || source === undefined ? (
             <Alert className="mt-2" variant="destructive">
               <AlertTitle>{zh ? '无法打开切片' : 'Unable to open the slide'}</AlertTitle>
               <AlertDescription>
@@ -252,7 +255,19 @@ function PathologyRequestItem({ actions, active, locale, readOnly: _readOnly, re
               <summary className="cursor-pointer text-xs text-muted-foreground">
                 {zh ? `历史报告 · ${request.previousReports.length}` : `Earlier reports · ${request.previousReports.length}`}
               </summary>
-              {request.previousReports.map(report => <ReportText key={report.diagnosticReportId} locale={locale} report={report} />)}
+              {request.previousReports.map(report => {
+                const historyKey = `history:${request.id}:${report.diagnosticReportId}`
+                const historyViewerOpen = active && historyOpen && view.isOpen(historyKey)
+                return <section key={report.diagnosticReportId} className="mt-2 space-y-2">
+                  <ReportText locale={locale} report={report} />
+                  {external ? <>
+                    <Button size="sm" variant="outline" onClick={() => view.setOpen(historyKey, !historyViewerOpen)}>
+                      {historyViewerOpen ? (zh ? '收起历史切片' : 'Hide historical slide') : (zh ? '只读查看历史切片' : 'Read historical slide')}
+                    </Button>
+                    {historyViewerOpen ? <PathologyReadingViewer request={request} report={report} locale={locale} onReady={() => undefined} /> : null}
+                  </> : null}
+                </section>
+              })}
             </details>
           )}
           {actions.canCorrect

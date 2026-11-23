@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { z } from 'zod'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
@@ -74,7 +75,7 @@ export function applyOrderSetInvestigations(
       kind: c.kind, priceFen: c.priceFen, version: c.catalogVersion,
     }
     next.push({
-      id: globalThis.crypto.randomUUID(), indication: c.kind === 'examination' ? c.indication : '',
+      id: createRandomUuid(), indication: c.kind === 'examination' ? c.indication : '',
       indicationCode: c.kind === 'laboratory' ? c.indicationCode : '', item, selected: !rev,
     })
     firstKind ??= c.kind

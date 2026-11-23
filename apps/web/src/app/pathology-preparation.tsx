@@ -1,3 +1,4 @@
+import type { SessionContext } from '@clinmesh/contracts/his'
 import type {
   PathologyCoverage,
   PathologyExamCode,
@@ -23,9 +24,13 @@ import {
 import { ImagingViewer, type ImagingViewerSource } from './imaging/imaging-viewer.tsx'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
+import { PathologyCasePackPreparation } from './pathology-case-pack-preparation.tsx'
+import { PathologyReadingSettings } from './pathology-reading-settings.tsx'
 
 const examLabels: Record<PathologyExamCode, [string, string]> = {
   'breast-slide-consultation': ['乳腺切片病理会诊', 'Breast slide consultation'],
+  'colorectal-slide-consultation': ['结直肠切片病理会诊', 'Colorectal slide consultation'],
+  'thyroid-slide-consultation': ['甲状腺切片病理会诊', 'Thyroid slide consultation'],
 }
 
 const reasonLabels: Record<PathologyPreparationReason, [string, string]> = {
@@ -232,7 +237,7 @@ function PathologyAssetReview({ assetId, locale }: { assetId: string; locale: Wo
 type CoverageAsset = PathologyCoverage['profiles'][number]['assets'][number]
 
 /** 管理员覆盖清单：由素材派生的适配条目、素材状态、缺少字段的素材和当前患者库的准备结果；可批量准备。 */
-export function PathologyCoveragePanel({ locale }: { locale: WorkspaceLocale }) {
+export function PathologyCoveragePanel({ locale, session }: { locale: WorkspaceLocale; session: SessionContext }) {
   const [open, setOpen] = useState(false)
   const [reviewing, setReviewing] = useState<string>()
   const zh = locale === 'zh-CN'
@@ -271,6 +276,10 @@ export function PathologyCoveragePanel({ locale }: { locale: WorkspaceLocale }) 
       <summary className="cursor-pointer text-sm font-semibold">{zh ? '病理覆盖清单' : 'Pathology coverage'}</summary>
       {open ? (
         <div className="mt-3">
+          <div className="mb-4 space-y-4">
+            <PathologyCasePackPreparation locale={locale} session={session} />
+            <PathologyReadingSettings locale={locale} session={session} />
+          </div>
           <p className="text-xs text-muted-foreground">{zh ? '仅管理员可见。切片只配给受体、淋巴结与 T 类别全部相符的病例；适配条目由素材的临床字段派生。' : 'Administrator only. Slides are assigned only to cases whose receptor, node and T facts all agree.'}</p>
           {coverage.isPending ? <Skeleton className="mt-3 h-32 w-full" /> : coverage.isError ? (
             <Alert className="mt-3" variant="destructive">

@@ -1,3 +1,4 @@
+import { createRandomUuid } from './random-uuid.ts'
 import { inpatientSurgeryRequestReasonResponseSchema, inpatientSurgeryRequestReasonSchema } from '@clinmesh/contracts/inpatient-surgery'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -23,7 +24,7 @@ export function SurgeryRequestReason({ admissionId, session, open, locale, value
     queryFn: ({ signal }) => apiGet(path, inpatientSurgeryRequestReasonSchema, signal),
     refetchInterval: query => open && ['queued', 'running'].includes(query.state.data?.status ?? '') ? 1_000 : false,
     refetchIntervalInBackground: false })
-  const request = useMutation({ mutationFn: () => apiMutation(path, inpatientSurgeryRequestReasonResponseSchema, { input: {} }, { idempotencyKey: crypto.randomUUID() }),
+  const request = useMutation({ mutationFn: () => apiMutation(path, inpatientSurgeryRequestReasonResponseSchema, { input: {} }, { idempotencyKey: createRandomUuid() }),
     retry: false, onSuccess: response => { client.setQueryData(key, response.data) } })
   useEffect(() => {
     const current = state.data

@@ -105,6 +105,20 @@ describe('Pathology consultation request HTTP contract', () => {
     return casePathologyServiceCatalogSchema.parse(await response.json())
   }
 
+  it('publishes separate colorectal and thyroid consultations without borrowing breast materials', async () => {
+    const { runtime, doctor, outpatientCaseId } = await consultation({ name: '合成病理目录患者' })
+    const catalog = await services(runtime, doctor, outpatientCaseId)
+    expect(catalog.items.map(item => [item.service.id, item.available])).toEqual([
+      ['pathology-breast-slide-consultation', true],
+      ['pathology-colorectal-slide-consultation', false],
+      ['pathology-thyroid-slide-consultation', false],
+    ])
+    for (const item of catalog.items.slice(1)) {
+      expect(item.sourceProcedures).toEqual([])
+      expect(item.service.outpatientBilling).toMatchObject({ priceFen: 20000, unit: '次会诊' })
+    }
+  })
+
   async function saveDraft(
     runtime: Runtime,
     doctor: string,
@@ -220,7 +234,7 @@ describe('Pathology consultation request HTTP contract', () => {
     const { doctor, encounterId, outpatientCaseId, patientId, runtime } = visit
 
     const catalog = await services(runtime, doctor, outpatientCaseId)
-    expect(catalog.items).toHaveLength(1)
+    expect(catalog.items).toHaveLength(3)
     expect(catalog.items[0]).toMatchObject({
       available: true,
       service: {
@@ -435,7 +449,11 @@ describe('Pathology consultation request HTTP contract', () => {
     const { assetDirectory: _radiology, doctor, encounterId, outpatientCaseId, pathologyAssetDirectory, runtime } = visit
 
     const catalog = await services(runtime, doctor, outpatientCaseId)
-    expect(catalog.items.map(item => [item.service.id, item.available, item.sourceProcedures])).toEqual([[service, true, []]])
+    expect(catalog.items.map(item => [item.service.id, item.available, item.sourceProcedures])).toEqual([
+      [service, true, []],
+      ['pathology-colorectal-slide-consultation', false, []],
+      ['pathology-thyroid-slide-consultation', false, []],
+    ])
     const hidden = await saveDraft(runtime, doctor, encounterId, { expectedDraftVersion: 0 })
     expect(hidden.status).toBe(409)
     expect(apiErrorSchema.parse(await hidden.json()).error.code).toBe('PATHOLOGY_SOURCE_PROCEDURE_UNAVAILABLE')

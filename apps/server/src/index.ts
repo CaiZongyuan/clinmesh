@@ -38,6 +38,8 @@ const runtime = await createClinMeshRuntime({
   imagingCatalogDirectory: resolve(config.imagingCatalogDirectory),
   pathologyAssetDirectory: resolve(config.pathologyAssetDirectory),
   pathologyCatalogDirectory: resolve(config.pathologyCatalogDirectory),
+  ...(config.pathologyReading === undefined ? {} : { pathologyReading: config.pathologyReading }),
+  ...(config.pathologyExternalCatalogPath === undefined ? {} : { pathologyExternalCatalogPath: resolve(config.pathologyExternalCatalogPath) }),
   ...(config.dshBridgeSecret === undefined
     ? {}
     : { dshBridgeSecret: config.dshBridgeSecret }),

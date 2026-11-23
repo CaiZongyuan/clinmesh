@@ -80,6 +80,8 @@ export class AuthoredCasePackService {
     input: z.infer<typeof authoredCasePackPrepareRequestSchema>['input'],
     idempotencyKey: string,
   ) {
+    // 包标识只进入 Command 的幂等请求体，公开请求仍保持向后兼容的 expectedEpoch 形状。
+    const commandInput = { ...input, packageId: this.pack.id, packageVersion: this.pack.version }
     return this.commands.execute({
       authorize: () => {
         if (context.roleCode !== 'administrator') {
@@ -94,7 +96,7 @@ export class AuthoredCasePackService {
       expectedVersions: {},
       idempotencyKey,
       idempotencyScope: 'workspace',
-      input,
+      input: commandInput,
       operation: 'synthetic-case.authored-pack.prepare',
     }, () => {
       const now = new Date().toISOString()
