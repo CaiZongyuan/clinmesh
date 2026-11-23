@@ -202,7 +202,11 @@ export const imagingSeriesViewSchema = z.discriminatedUnion('kind', [
 export type ImagingSeriesView = z.infer<typeof imagingSeriesViewSchema>
 
 /** 病理检查项目；放射检查的准备、绑定与覆盖清单仍只接受 `imagingExamCodeSchema`。 */
-export const pathologyExamCodeSchema = z.enum(['breast-slide-consultation'])
+export const pathologyExamCodeSchema = z.enum([
+  'breast-slide-consultation',
+  'colorectal-slide-consultation',
+  'thyroid-slide-consultation',
+])
 
 /** 阅片器读取一次本院检查所需的描述；像素当前不可读时 `available` 为 false 且没有序列。 */
 export const imagingStudyViewSchema = z.object({

@@ -79,6 +79,8 @@ const servicePrices: Readonly<Record<string, { category: InvestigationCategory; 
   'imaging-chest-radiograph': { category: 'imaging', priceFen: 8000, unit: '次检查' },
   'imaging-chest-ct-plain': { category: 'imaging', priceFen: 30000, unit: '次检查' },
   'pathology-breast-slide-consultation': { category: 'pathology', priceFen: 20000, unit: '次会诊' },
+  'pathology-colorectal-slide-consultation': { category: 'pathology', priceFen: 20000, unit: '次会诊' },
+  'pathology-thyroid-slide-consultation': { category: 'pathology', priceFen: 20000, unit: '次会诊' },
 }
 
 function syntheticPrice(id: string, priceFen: number, unit: string): OutpatientInvestigationPrice {

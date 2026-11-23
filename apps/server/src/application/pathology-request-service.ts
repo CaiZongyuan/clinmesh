@@ -14,6 +14,7 @@ import {
   type PathologyServiceSnapshot,
 } from '@clinmesh/contracts/his'
 import {
+  externalPathologyAssetOutputSchema,
   pathologySourceProcedureSchema,
   type PathologyExamCode,
   type PathologySourceProcedure,
@@ -71,6 +72,36 @@ export const pathologyServiceBaseline: PathologyServiceSnapshot[] = [
     stain: 'HE',
     version: 1,
   },
+  {
+    applicability: '既往肠镜活检或息肉切除石蜡 H&E 切片的会诊复核；不含本院取材、制片、冰冻切片、细胞学、免疫组化与分子检测',
+    bodySite: '结直肠',
+    code: 'PATH-COLORECTAL-SLIDE-CONSULT',
+    department: '病理科',
+    examCode: 'colorectal-slide-consultation',
+    id: 'pathology-colorectal-slide-consultation',
+    insuranceCoverage: CLASS_C_COVERAGE,
+    outpatientBilling: serviceOutpatientPrice('pathology', 'pathology-colorectal-slide-consultation'),
+    name: '结直肠切片病理会诊',
+    reportSections: ['specimen', 'microscopy', 'diagnosis', 'immunohistochemistry', 'note'],
+    specimenType: '既往肠镜活检或息肉切除的石蜡切片',
+    stain: 'HE',
+    version: 1,
+  },
+  {
+    applicability: '既往甲状腺手术标本石蜡 H&E 切片的会诊复核；不含本院取材、制片、冰冻切片、细胞学、免疫组化与分子检测',
+    bodySite: '甲状腺',
+    code: 'PATH-THYROID-SLIDE-CONSULT',
+    department: '病理科',
+    examCode: 'thyroid-slide-consultation',
+    id: 'pathology-thyroid-slide-consultation',
+    insuranceCoverage: CLASS_C_COVERAGE,
+    outpatientBilling: serviceOutpatientPrice('pathology', 'pathology-thyroid-slide-consultation'),
+    name: '甲状腺切片病理会诊',
+    reportSections: ['specimen', 'microscopy', 'diagnosis', 'immunohistochemistry', 'note'],
+    specimenType: '既往甲状腺手术标本的石蜡切片',
+    stain: 'HE',
+    version: 1,
+  },
 ]
 
 const pathologyServiceCodeSystem = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/pathology-service'
@@ -91,7 +122,7 @@ const requestRowSchema = z.object({
   case_id: z.string().min(1),
   diagnostic_report_id: z.string().nullable(),
   encounter_id: z.string().min(1),
-  exam_code: z.enum(['breast-slide-consultation']),
+  exam_code: z.enum(['breast-slide-consultation', 'colorectal-slide-consultation', 'thyroid-slide-consultation']),
   execution_task_id: z.string().min(1),
   generation_error_code: z.string().nullable(),
   generation_error_message: z.string().nullable(),
@@ -276,7 +307,7 @@ export class PathologyRequestService {
       asset_id: z.string().min(1),
       asset_output_json: z.string().min(1),
       case_id: z.string().min(1),
-      exam_code: z.enum(['breast-slide-consultation']),
+      exam_code: z.enum(['breast-slide-consultation', 'colorectal-slide-consultation', 'thyroid-slide-consultation']),
     }).strict().optional().parse(this.#database.driver.prepare(`
       SELECT study.asset_id, study.asset_output_json, study.case_id, study.exam_code
       FROM pathology_study AS study
@@ -294,6 +325,40 @@ export class PathologyRequestService {
       assetOutput: JSON.parse(study.asset_output_json) as unknown,
       examCode: study.exam_code,
       slideLabel,
+    }
+  }
+
+  /** 受信阅片模块的会诊读取入口：外部引用保持私有，当前权限与可写状态每次重新判断。 */
+  readingAccess(context: ActorContext, requestId: string, reportId?: string) {
+    assertRole(context, ['outpatient-doctor'])
+    const row = this.#request(context, requestId)
+    if (row === undefined || !['reported', 'acknowledged'].includes(row.status)) return undefined
+    this.#host.assertCaseResponsibility(context, row.case_id)
+    const request = this.#project(context, row)
+    const report = reportId === undefined || request.report?.diagnosticReportId === reportId
+      ? request.report
+      : request.previousReports.find(candidate => candidate.diagnosticReportId === reportId)
+    if (report === undefined) return undefined
+    const study = z.object({ asset_id: z.string(), asset_output_json: z.string() }).strict().optional().parse(
+      this.#database.driver.prepare(`SELECT asset_id, asset_output_json FROM pathology_study
+        WHERE workspace_id=? AND epoch=? AND request_id=? AND study_id=?`)
+        .get(context.workspaceId, context.epoch, requestId, report.studyId),
+    )
+    if (study === undefined) return undefined
+    const output = externalPathologyAssetOutputSchema.safeParse(JSON.parse(study.asset_output_json))
+    if (!output.success) return undefined
+    const outpatientCase = this.#host.caseByEncounter(context, row.encounter_id)
+    const encounter = this.#fhir.read(context, 'Encounter', row.encounter_id)
+    return {
+      assetId: study.asset_id,
+      assetOutput: output.data,
+      caseId: row.case_id,
+      encounterId: row.encounter_id,
+      report,
+      request,
+      writable: outpatientCase.status === 'first-visit' && encounter.status !== 'completed'
+        && this.#host.hasConsultation(context, row.case_id)
+        && request.report?.diagnosticReportId === report.diagnosticReportId,
     }
   }
 

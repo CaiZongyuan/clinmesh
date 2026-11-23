@@ -1,5 +1,7 @@
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
+import { externalPathologyAssetOutputSchema } from '@clinmesh/contracts/pathology'
+import { externalPathologyPublishedReport, externalPathologyReportHash, type PathologyExternalAssetSource } from './pathology-external-catalog.ts'
 import type { PathologyAssetLibrary } from '../infrastructure/imaging-assets/pathology-asset-library.ts'
 import type { PathologyCatalogAsset } from '../infrastructure/imaging-assets/pathology-catalog.ts'
 import {
@@ -36,15 +38,18 @@ export class PathologyResultResolver {
   readonly #database: ClinMeshDatabase
   readonly #library: PathologyAssetLibrary
   readonly #preparations: PathologyPreparationRepository
+  readonly #external: PathologyExternalAssetSource | undefined
 
   constructor(input: {
     database: ClinMeshDatabase
     library: PathologyAssetLibrary
     preparations: PathologyPreparationRepository
+    external?: PathologyExternalAssetSource
   }) {
     this.#database = input.database
     this.#library = input.library
     this.#preparations = input.preparations
+    this.#external = input.external
   }
 
   /** 首次报告：使用绑定固定的素材版本与报告修订，发布前逐字节核对切片文件。 */
@@ -82,6 +87,7 @@ export class PathologyResultResolver {
           workspaceId,
         })
     if (binding === undefined) throw new PathologyResultUnavailableError('CASE_NOT_PREPARED')
+    if (externalPathologyAssetOutputSchema.safeParse(binding.assetOutput).success) return this.#externalResult(binding.assetId, binding.assetOutput, binding.reportRevision, binding.reportContentSha256)
     const asset = await this.#asset(binding.assetId, binding.assetOutput)
     const result = this.#result(asset, binding.reportRevision)
     if (result.reportContentSha256 !== binding.reportContentSha256) {
@@ -100,6 +106,7 @@ export class PathologyResultResolver {
   ): Promise<PathologyResult> {
     const study = this.#study(workspaceId, epoch, requestId)
     if (study === undefined) throw new PathologyResultUnavailableError('REQUEST_NOT_FOUND')
+    if (externalPathologyAssetOutputSchema.safeParse(study.assetOutput).success) return this.#externalResult(study.assetId, study.assetOutput, reportRevision)
     return this.#result(await this.#asset(study.assetId, study.assetOutput), reportRevision)
   }
 
@@ -108,6 +115,10 @@ export class PathologyResultResolver {
     const study = this.#study(workspaceId, epoch, requestId)
     if (study === undefined) return false
     try {
+      if (externalPathologyAssetOutputSchema.safeParse(study.assetOutput).success) {
+        const asset = await this.#externalAsset(study.assetId, study.assetOutput)
+        return this.#external === undefined ? false : this.#external.available(asset)
+      }
       return await this.#library.open(await this.#asset(study.assetId, study.assetOutput)) !== undefined
     } catch (error) {
       if (error instanceof PathologyResultUnavailableError) return false
@@ -130,6 +141,23 @@ export class PathologyResultResolver {
       throw new PathologyResultUnavailableError('ASSET_CHANGED')
     }
     return asset
+  }
+
+  async #externalAsset(assetId: string, expectedOutput: unknown) {
+    const asset = (await this.#external?.catalog())?.assets.find(asset => asset.assetId === assetId)
+    if (asset === undefined || !isDeepStrictEqual(asset.output, expectedOutput)) throw new PathologyResultUnavailableError('ASSET_CHANGED')
+    return asset
+  }
+
+  async #externalResult(assetId: string, expectedOutput: unknown, revision: number, expectedReportHash?: string): Promise<PathologyResult> {
+    const asset = await this.#externalAsset(assetId, expectedOutput)
+    const report = externalPathologyPublishedReport(asset, revision)
+    if (report === undefined || expectedReportHash !== undefined && externalPathologyReportHash(asset, report) !== expectedReportHash) {
+      throw new PathologyResultUnavailableError('REPORT_REVISION_NOT_PUBLISHED')
+    }
+    if (!await this.#external!.available(asset)) throw new PathologyResultUnavailableError('ASSET_NOT_INSTALLED')
+    return { assetId, assetOutput: asset.output, diagnosis: report.diagnosis, immunohistochemistry: report.immunohistochemistry,
+      microscopy: report.microscopy, note: report.note, reportContentSha256: externalPathologyReportHash(asset, report), reportRevision: report.revision, slideCount: 1 }
   }
 
   #result(asset: PathologyCatalogAsset, reportRevision: number): PathologyResult {

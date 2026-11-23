@@ -116,6 +116,11 @@ export const authoredVisibleHistoryEventSchema = z.object({
     system: z.string().min(1).max(256).default('urn:clinmesh:reference:drug-concept'),
   }).strict()).default([]),
   observations: z.array(authoredLabObservationSchema).default([]),
+  procedures: z.array(z.object({
+    coding: authoredCodingSchema,
+    id: idSchema,
+    performedAt: isoDateTimeSchema.optional(),
+  }).strict()).optional(),
   reasonText: z.string().trim().min(1).max(500),
 }).strict()
 
@@ -126,7 +131,7 @@ export const authoredCaseDefinitionSchema = z.object({
   id: idSchema,
   indexConditions: z.array(authoredConditionSchema).min(1),
   indexDateTime: isoDateTimeSchema,
-  laboratories: z.array(authoredLabObservationSchema).min(1),
+  laboratories: z.array(authoredLabObservationSchema),
   patient: z.object({
     birthDate: z.iso.date(),
     gender: z.enum(['female', 'male']),
@@ -515,6 +520,11 @@ export function compileAuthoredCase(rawDefinition: AuthoredCaseDefinitionInput):
         )
       }
     }
+    for (const procedure of event.procedures ?? []) {
+      if (procedure.performedAt !== undefined && Date.parse(procedure.performedAt) >= indexTimeMs) {
+        throw new AuthoredCasePackCompileError('VISIBLE_HISTORY_AFTER_INDEX', `Case ${definition.id} procedure ${procedure.id} must precede indexDateTime`)
+      }
+    }
   }
 
   const patientRef = `urn:uuid:${definition.patient.id}`
@@ -599,6 +609,21 @@ export function compileAuthoredCase(rawDefinition: AuthoredCaseDefinitionInput):
             text: med.display,
           },
           resourceType: 'MedicationRequest',
+          status: 'completed',
+          subject: { reference: patientRef },
+        },
+      })
+    }
+    for (const procedure of event.procedures ?? []) {
+      const id = `${definition.id}-history-procedure-${event.id}-${procedure.id}`
+      entries.push({
+        fullUrl: `urn:uuid:${id}`,
+        resource: {
+          code: { coding: [procedure.coding], text: procedure.coding.display },
+          encounter: { reference: encRef },
+          id,
+          performedDateTime: procedure.performedAt ?? event.encounterDateTime,
+          resourceType: 'Procedure',
           status: 'completed',
           subject: { reference: patientRef },
         },
