@@ -393,6 +393,7 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('inpatient.surgery.read', 'clinmesh_read_inpatient_surgeries', 'query', ipClinical, inpatientView, ['surgery', 'record']),
   tool('inpatient.angiography-reports.read', 'clinmesh_read_inpatient_angiography_reports', 'query', ipClinical, inpatientView, ['investigations', 'surgery', 'record']),
   tool('inpatient.clinical-scores.read', 'clinmesh_read_inpatient_clinical_scores', 'query', ipClinical, inpatientView, ['admission', 'orders', 'surgery', 'discharge', 'record']),
+  tool('inpatient.clinical-fact-ledger.read', 'clinmesh_read_inpatient_clinical_fact_ledger', 'query', ipDoc, inpatientView, ['admission', 'orders', 'surgery', 'discharge', 'record']),
   tool('inpatient.guideline-topics.read', 'clinmesh_read_inpatient_guideline_topics', 'query', ipClinical, inpatientView, ['orders', 'surgery', 'discharge', 'record']),
   tool('inpatient.clinical-quality.read', 'clinmesh_read_inpatient_clinical_quality', 'query', ipDoc, inpatientView, ['orders', 'surgery', 'discharge', 'record']),
   tool('inpatient.order-set-drafts.read', 'clinmesh_read_inpatient_order_set_drafts', 'query', ipDoc, inpatientView, ['orders', 'investigations']),
@@ -426,6 +427,7 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('outpatient.history.search', 'clinmesh_search_doctor_history', 'query', doctor, consultationView),
   tool('outpatient.history.read', 'clinmesh_read_doctor_history', 'query', doctor, consultationView),
   tool('outpatient.clinical-scores.read', 'clinmesh_read_clinical_scores', 'query', doctor, consultationView, ['diagnosis', 'prescription']),
+  tool('outpatient.clinical-fact-ledger.read', 'clinmesh_read_clinical_fact_ledger', 'query', doctor, consultationView, ['diagnosis', 'prescription']),
   tool('outpatient.guideline-topics.read', 'clinmesh_read_guideline_topics', 'query', doctor, consultationView, ['diagnosis', 'prescription']),
   tool('outpatient.clinical-quality.read', 'clinmesh_read_clinical_quality', 'query', doctor, consultationView, ['diagnosis', 'prescription', 'record']),
   tool('outpatient.order-set-drafts.read', 'clinmesh_read_order_set_drafts', 'query', doctor, consultationView, ['diagnosis', 'prescription']),
@@ -501,7 +503,8 @@ export function agentToolsForContext(
 export function isDoctorReadOperation(operationId: string): boolean {
   return operationId === 'ui.context.read' || operationId === 'outpatient.case.read'
     || operationId === 'outpatient.history.search' || operationId === 'outpatient.history.read'
-    || operationId === 'outpatient.clinical-scores.read' || operationId === 'outpatient.guideline-topics.read'
+    || operationId === 'outpatient.clinical-scores.read' || operationId === 'outpatient.clinical-fact-ledger.read'
+    || operationId === 'outpatient.guideline-topics.read'
     || operationId === 'outpatient.clinical-quality.read' || operationId === 'outpatient.order-set-drafts.read'
 }
 

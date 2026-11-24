@@ -90,6 +90,7 @@ import { OutpatientPrescriptionService } from './outpatient-prescription-service
 import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
 import { ClinicalScoreService, buildVitalObservationComponents } from './clinical-score-service.ts'
 import { ClinicalQualityService } from './clinical-quality-service.ts'
+import { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
 import { OrderSetDraftService } from './order-set-draft-service.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
 import {
@@ -313,6 +314,7 @@ export class WorkflowService
   readonly pathology: PathologyRequestService
   readonly consultationRecording: ConsultationRecordingService
   readonly qualityControl: ClinicalDocumentQualityControl
+  readonly clinicalFactLedger: ClinicalFactLedgerService
   readonly clinicalScores: ClinicalScoreService
   readonly clinicalQuality: ClinicalQualityService
   /** 专病组套只读草稿预装配；不写入任何正式业务事实。 */
@@ -357,14 +359,21 @@ export class WorkflowService
       requests: this.#requests,
       tokenSecret: options.tokenSecret,
     })
+    this.clinicalFactLedger = new ClinicalFactLedgerService({
+      commands,
+      database,
+      fhir,
+      outpatientContext: this.#context,
+    })
     this.clinicalScores = new ClinicalScoreService({
       commands,
       database,
+      factLedger: this.clinicalFactLedger,
       fhir,
       ...(options.guidelines === undefined ? {} : { guidelines: options.guidelines }),
       outpatientContext: this.#context,
     })
-    this.clinicalQuality = new ClinicalQualityService({ commands, database, fhir, outpatientContext: this.#context, scores: this.clinicalScores })
+    this.clinicalQuality = new ClinicalQualityService({ commands, database, factLedger: this.clinicalFactLedger, fhir, outpatientContext: this.#context, scores: this.clinicalScores })
     this.insurance = new InsuranceService(database, commands, {
       now: this.#now,
       readSource: (context, target) => {

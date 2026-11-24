@@ -128,6 +128,26 @@ export class InpatientService {
   readClinicalQuality(context: ActorContext, input: Parameters<WorkflowService['clinicalQuality']['readInpatient']>[2]) {
     return this.workflow.clinicalQuality.readInpatient(this, context, input)
   }
+  readClinicalFactLedger(
+    context: ActorContext,
+    admissionId: string,
+    options?: Parameters<WorkflowService['clinicalFactLedger']['readInpatientLedger']>[3],
+  ) {
+    return this.workflow.clinicalFactLedger.readInpatientLedger(this, context, admissionId, options)
+  }
+  recordClinicalFactVerification(
+    context: ActorContext,
+    admissionId: string,
+    body: Parameters<WorkflowService['clinicalFactLedger']['recordInpatientVerification']>[1]['body'],
+    idempotencyKey: string,
+  ) {
+    return this.workflow.clinicalFactLedger.recordInpatientVerification(this, {
+      context,
+      admissionId,
+      body,
+      idempotencyKey,
+    })
+  }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)
     this.#workspaces.assertActive(context, context.scenarioRunId)

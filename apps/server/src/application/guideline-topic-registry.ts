@@ -1146,12 +1146,13 @@ export function extractSupplementaryIndicators(options: {
   database: ClinMeshDatabase
   encounterId?: string | undefined
   fhir: FhirRepository
+  ineligibleObservationIds?: ReadonlySet<string> | undefined
   inpatient?: { actor: ActorContext; service: InpatientService } | undefined
   isArchivedCutoff?: boolean | undefined
   patientId?: string | undefined
   referenceCutoffIso?: string | undefined
 }): SupplementaryClinicalIndicators {
-  const { caseId, context, database, encounterId, fhir, inpatient, isArchivedCutoff, patientId, referenceCutoffIso } = options
+  const { caseId, context, database, encounterId, fhir, ineligibleObservationIds, inpatient, isArchivedCutoff, patientId, referenceCutoffIso } = options
   const cutoffMs =
     referenceCutoffIso === undefined
       ? Number.NaN
@@ -1319,6 +1320,7 @@ export function extractSupplementaryIndicators(options: {
         valueQuantity: z.object({ code: z.string().optional(), unit: z.string().optional(), value: z.number().finite().optional() }).loose().optional(),
       }).loose().safeParse(fhir.read(context, 'Observation', obsId))
       if (!obs.success || !['final', 'amended', 'corrected'].includes(obs.data.status ?? '')) continue
+      if (ineligibleObservationIds?.has(obs.data.id)) continue
       const codes = new Set((obs.data.code?.coding ?? []).map(c => c.code ?? ''))
       const text = [obs.data.code?.text, ...(obs.data.code?.coding ?? []).map(c => c.display)].filter(Boolean).join(' ')
       const rawUnit = (obs.data.valueQuantity?.unit ?? obs.data.valueQuantity?.code)?.trim() ?? ''

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { clinicalOverrideInputSchema, clinicalOverrideReasonSchema, clinicalQualityAlertCodeSchema, outpatientClinicalQualityInputSchema } from './clinical-quality.ts'
+import { clinicalFactLedgerFilterQuerySchema } from './clinical-fact-ledger.ts'
 import { doctorCaseHistoryInputSchema, doctorCaseHistoryDetailInputSchema } from './doctor-history.ts'
 import { guidelineTopicQuerySchema } from './guideline-topics.ts'
 import { inpatientOrderActionInputSchema } from './inpatient-clinical.ts'
@@ -153,6 +154,7 @@ export const agentToolInputSchemas = Object.freeze({
   'inpatient.surgery.read': emptyInputSchema,
   'inpatient.angiography-reports.read': emptyInputSchema,
   'inpatient.clinical-scores.read': emptyInputSchema,
+  'inpatient.clinical-fact-ledger.read': clinicalFactLedgerFilterQuerySchema,
   'inpatient.guideline-topics.read': guidelineTopicQuerySchema,
   'inpatient.clinical-quality.read': inpatientClinicalQualityToolInputSchema,
   'inpatient.order-set-drafts.read': orderSetDraftQuerySchema,
@@ -191,6 +193,7 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.history.search': doctorCaseHistoryInputSchema,
   'outpatient.history.read': doctorCaseHistoryDetailInputSchema,
   'outpatient.clinical-scores.read': emptyInputSchema,
+  'outpatient.clinical-fact-ledger.read': clinicalFactLedgerFilterQuerySchema,
   'outpatient.guideline-topics.read': guidelineTopicQuerySchema,
   'outpatient.clinical-quality.read': outpatientClinicalQualityInputSchema.omit({ encounterId: true }),
   'outpatient.order-set-drafts.read': z.object({ templateId: z.enum(outpatientOrderSetTemplateIds).optional() }).strict(),

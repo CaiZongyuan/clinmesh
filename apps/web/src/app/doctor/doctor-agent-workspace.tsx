@@ -78,6 +78,15 @@ export function doctorWorkspaceAgentActions({
       ['source', 'entryId'],
     ),
     'outpatient.clinical-scores.read': docRead('Read deterministic clinical scores (eGFR, CrCl, GRACE, TIMI, PRECISE-DAPT, ASCVD LDL-C) and missing inputs for the current case.'),
+    'outpatient.clinical-fact-ledger.read': docRead(
+      'Read on-demand clinical fact ledger (all 8 categories, quality flags, conflicts, external unverified items, point-in-time asOf filter) for the current case.',
+      {
+        asOf: { type: 'string' },
+        itemCodes: { type: 'string' },
+        categories: { type: 'string' },
+        includeSuperseded: { type: 'boolean' },
+      },
+    ),
     'outpatient.guideline-topics.read': docRead(
       'Read verified guideline topic excerpts, limitations, and current patient indicator gaps without model calls.',
       { topicId: { type: 'string', enum: guidelineTopicIds } },

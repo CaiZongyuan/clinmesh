@@ -135,6 +135,8 @@ export function useInpatientAgentTools(input: Input) {
         'Read formal coronary angiography reports, multivessel physiology findings, and QCA measurements for the current inpatient.'),
       'inpatient.clinical-scores.read': queryAction('inpatient.clinical-scores.read', '/clinical-scores', clinicalRoles, ['admission', 'orders', 'surgery', 'discharge', 'record'],
         'Read deterministic clinical scores and missing inputs for the current inpatient.'),
+      'inpatient.clinical-fact-ledger.read': queryAction('inpatient.clinical-fact-ledger.read', '/clinical-fact-ledger', ['inpatient-doctor'], ['admission', 'orders', 'surgery', 'discharge', 'record'],
+        'Read on-demand clinical fact ledger (all 8 categories, quality flags, conflicts, external unverified items, point-in-time asOf filter) for the current inpatient.'),
       'inpatient.guideline-topics.read': queryAction('inpatient.guideline-topics.read', '/guideline-topics', clinicalRoles, ['orders', 'surgery', 'discharge', 'record'],
         'Read verified guideline topic excerpts, limitations, and patient indicator gaps for the current inpatient.'),
       'inpatient.clinical-quality.read': queryAction('inpatient.clinical-quality.read', '/clinical-quality', ['inpatient-doctor'], ['orders', 'surgery', 'discharge', 'record'],

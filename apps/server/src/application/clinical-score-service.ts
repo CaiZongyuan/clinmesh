@@ -14,6 +14,7 @@ import {
   type InpatientVitalSignsRecord,
   type OutpatientRiskAssessmentInput,
 } from '@clinmesh/contracts/clinical-scores'
+import type { ClinicalFact } from '@clinmesh/contracts/clinical-fact-ledger'
 import type { GuidelineTopicBundle, GuidelineTopicId } from '@clinmesh/contracts/guideline-topics'
 import { inpatientFullClinicalResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { investigationResultContentSchema } from '@clinmesh/contracts/scenario'
@@ -34,6 +35,7 @@ import {
   type CommandTransaction,
   provenanceAgents,
 } from './command-executor.ts'
+import type { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
 import { buildSynchronousTopicBundle } from './guideline-topic-registry.ts'
 import { businessDate } from './inpatient-orders.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
@@ -499,6 +501,7 @@ function isExplicitNormalStLead(value: unknown, interpretation?: string): boolea
 export class ClinicalScoreService {
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
+  readonly #factLedger: ClinicalFactLedgerService | undefined
   readonly #fhir: FhirRepository
   readonly #guidelines: GuidelineCorpus | undefined
   readonly #outpatientContext: OutpatientWorkflowContext
@@ -506,12 +509,14 @@ export class ClinicalScoreService {
   constructor(options: {
     commands: CommandExecutor
     database: ClinMeshDatabase
+    factLedger?: ClinicalFactLedgerService
     fhir: FhirRepository
     guidelines?: GuidelineCorpus
     outpatientContext: OutpatientWorkflowContext
   }) {
     this.#commands = options.commands
     this.#database = options.database
+    this.#factLedger = options.factLedger
     this.#fhir = options.fhir
     this.#guidelines = options.guidelines
     this.#outpatientContext = options.outpatientContext
@@ -1726,11 +1731,26 @@ export class ClinicalScoreService {
 
     const birthDateStr = typeof patient.birthDate === 'string' ? patient.birthDate : undefined
     const cutoffMs = Date.parse(options.now)
+    const evaluatedLedger = this.#factLedger?.buildInternalLedger(
+      context,
+      { kind: options.inpatient ? 'inpatient' : 'outpatient', id: options.caseId, patientId: options.patientId },
+      { asOf: options.now, includeSuperseded: false },
+    )
+    const ineligibleObservationIds = new Set(
+      evaluatedLedger?.facts
+        .filter(f => f.provenance.sourceSystemId === 'clinmesh-his-fhir' && f.provenance.recordType === 'Observation' && !f.eligibleForScoringAndRedLine)
+        .map(f => f.provenance.recordId) ?? [],
+    )
+    const verifiedExternalFacts = evaluatedLedger?.facts.filter(
+      f => f.institutionScope === 'external' && f.clinicianVerification.verified && f.eligibleForScoringAndRedLine,
+    ) ?? []
+    const factGate = { ineligibleObservationIds, verifiedExternalFacts }
     const labs = this.#extractLaboratoryAnalytes(
       context,
       options.caseId,
       options.legacyDiagnosticReportId,
       options.inpatientTimingGate,
+      factGate,
     )
     let ckdChronicity: {
       ckdLt30Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
@@ -1756,6 +1776,7 @@ export class ClinicalScoreService {
           age,
           sex,
           cutoffMs,
+          ineligibleObservationIds,
         )
       }
     }
@@ -1797,6 +1818,7 @@ export class ClinicalScoreService {
       options.now,
       labs.latestLipidObservationMs,
       options.isArchivedCutoff,
+      ineligibleObservationIds,
     )
     const bedsideKnownStenosis =
       riskRef !== undefined && riskAssessment.values.knownCoronaryStenosisGe50 !== null
@@ -2346,6 +2368,7 @@ export class ClinicalScoreService {
     fallbackAgeYears: number,
     sex: 'male' | 'female',
     cutoffMs: number,
+    ineligibleObservationIds?: ReadonlySet<string>,
   ): {
     ckdLt30Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
     ckdLt60Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
@@ -2386,7 +2409,7 @@ export class ClinicalScoreService {
       const page = this.#fhir.search(context, 'Observation', obsParams)
       for (const raw of page.resources) {
         const obs = observationResourceSchema.safeParse(raw)
-        if (!obs.success || excludedObsIds.has(obs.data.id)) continue
+        if (!obs.success || excludedObsIds.has(obs.data.id) || ineligibleObservationIds?.has(obs.data.id)) continue
         if (!['final', 'amended', 'corrected'].includes(obs.data.status ?? '')) continue
         const codes = new Set(
           (obs.data.code?.coding ?? [])
@@ -2491,6 +2514,10 @@ export class ClinicalScoreService {
           earliestSurgeryMs: number | undefined
         }
       | undefined,
+    factGate?: {
+      ineligibleObservationIds: ReadonlySet<string>
+      verifiedExternalFacts: readonly ClinicalFact[]
+    },
   ) {
     const rows = z.array(z.object({
       diagnostic_report_id: z.string(),
@@ -2567,6 +2594,7 @@ export class ClinicalScoreService {
         if (!obsId) continue
         const obs = observationResourceSchema.safeParse(this.#fhir.read(context, 'Observation', obsId))
         if (!obs.success || !['final', 'amended', 'corrected'].includes(obs.data.status ?? '')) continue
+        if (factGate?.ineligibleObservationIds.has(obs.data.id)) continue
 
         const codes = new Set(
           (obs.data.code?.coding ?? [])
@@ -2676,6 +2704,36 @@ export class ClinicalScoreService {
             value: { unit, value: quantity },
           })
         }
+      }
+    }
+
+    for (const fact of factGate?.verifiedExternalFacts ?? []) {
+      if (fact.category !== 'laboratory' || fact.presence === 'not-asked') continue
+      const source: ClinicalScoreSourceReference = {
+        label: `外院已核实 ${fact.itemCode.display}`.slice(0, 120),
+        reference: fact.provenance.recordId.slice(0, 200),
+        versionId: fact.provenance.recordVersion,
+      }
+      const timestampMs = parseResourceTimestampMs(fact.effectiveAt ?? fact.reportedAt ?? fact.ingestedAt)
+      const val = fact.value.normalizedValue
+      if (typeof val === 'object' && val !== null && 'value' in val && 'unit' in val) {
+        if (fact.itemCode.code === '2160-0' && fact.presence === 'present') creatinineHitsDesc.push({ source, timestampMs, value: val })
+        else if (fact.itemCode.code === '6690-2' && fact.presence === 'present') wbcHitsDesc.push({ source, timestampMs, value: val })
+        else if (fact.itemCode.code === '718-7' && fact.presence === 'present') hemoglobinHitsDesc.push({ source, timestampMs, value: val })
+        else if (fact.itemCode.code === '2093-3' && fact.presence === 'present') tcHitsDesc.push({ source, specimenKey: fact.provenance.recordId, timestampMs, value: val })
+        else if (fact.itemCode.code === '2085-9' && fact.presence === 'present') hdlHitsDesc.push({ source, specimenKey: fact.provenance.recordId, timestampMs, value: val })
+        else if (fact.itemCode.code === '13457-7' && fact.presence === 'present') ldlHitsDesc.push({ source, timestampMs, value: val })
+        else if (fact.itemCode.code === '89579-7' || fact.itemCode.code === '6597-9') {
+          troponinHitsDesc.push({ elevated: val.value > 14, source, timestampMs })
+        } else if (fact.itemCode.code === '10839-9') {
+          troponinHitsDesc.push({ elevated: val.value > 0.04, source, timestampMs })
+        }
+      } else if (
+        (fact.itemCode.code === '89579-7' || fact.itemCode.code === '10839-9' || fact.itemCode.code === '6597-9')
+        && (typeof val === 'boolean' || typeof val === 'string')
+      ) {
+        const elevated = typeof val === 'boolean' ? val : /阳性|升高|positive|elevated|high/i.test(val)
+        troponinHitsDesc.push({ elevated, source, timestampMs })
       }
     }
 
@@ -3348,6 +3406,7 @@ export class ClinicalScoreService {
     nowIso: string,
     latestCurrentCaseLipidMs: number | undefined,
     isArchivedCutoff: boolean,
+    ineligibleObservationIds?: ReadonlySet<string>,
   ): {
     lipidLoweringMedicationActive?: { source: ClinicalScoreSourceReference; value: boolean }
     pretreatmentHdlCholesterol?: { source: ClinicalScoreSourceReference; value: { unit: string; value: number } }
@@ -3757,7 +3816,7 @@ export class ClinicalScoreService {
       const page = this.#fhir.search(context, 'Observation', obsParams)
       for (const raw of page.resources) {
         const obs = observationResourceSchema.safeParse(raw)
-        if (!obs.success || excludedObsIds.has(obs.data.id)) continue
+        if (!obs.success || excludedObsIds.has(obs.data.id) || ineligibleObservationIds?.has(obs.data.id)) continue
         if (!['final', 'amended', 'corrected'].includes(obs.data.status ?? '')) continue
         const unit = obs.data.valueQuantity?.code ?? obs.data.valueQuantity?.unit
         const quantity = obs.data.valueQuantity?.value

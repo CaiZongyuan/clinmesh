@@ -804,9 +804,9 @@ describe('HIS operation catalog', () => {
     expect(counts).toEqual({
       'clinmesh-administrator': 6,
       'clinmesh-billing': 18,
-      'clinmesh-doctor': 70,
+      'clinmesh-doctor': 72,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 120,
+      'clinmesh-inpatient': 122,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 8,
       'clinmesh-shared': 1,
