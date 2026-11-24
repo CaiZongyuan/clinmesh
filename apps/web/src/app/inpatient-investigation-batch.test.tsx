@@ -10,6 +10,7 @@ import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { signOut } from './api-client.ts'
 import { createDraftDiscard } from './draft-discard.ts'
+import { investigationDraftKey, saveInvestigationDraft } from './inpatient-investigation-drafts.ts'
 
 const session: SessionContext = {
   actor: { actorId: 'actor-doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor' },
@@ -564,4 +565,32 @@ it('整类加入自动按 assayKeys 去重重叠检验组合及其子项，杜�
   await user.click(dialog.getByRole('button', { name: '选择丙氨酸氨基转移酶测定' }))
   await user.click(dialog.getByRole('button', { name: '加入本类可开项目（2）' }))
   expect(dialog.getByText(/完整已选清单：丙氨酸氨基转移酶测定、肌酐测定、淀粉酶测定/)).toBeDefined()
+
+  // 若专病组套或历史私稿预先写入了不含 assayKeys 的组合草稿行，打开弹窗后仍按最新目录反查 assayKeys 去重
+  await user.click(dialog.getByRole('button', { name: '关闭' }))
+  cleanup()
+  saveInvestigationDraft(investigationDraftKey(session, admission), {
+    rows: [{
+      id: crypto.randomUUID(),
+      indication: '',
+      indicationCode: 'clinical-evaluation',
+      item: {
+        available: true,
+        display: '肝功能',
+        id: 'panel-liver',
+        indicationCodes: ['clinical-evaluation'],
+        kind: 'laboratory',
+        priceFen: 5500,
+        version: 1,
+      },
+      selected: true,
+    }],
+    successes: [],
+  })
+  mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  const reopened = within(screen.getByRole('dialog', { name: '开立住院检查' }))
+  await user.click(within(reopened.getByRole('group', { name: '检验分类' })).getByRole('button', { name: '生化/肝肾电解质' }))
+  await user.click(reopened.getByRole('button', { name: '加入本类可开项目（2）' }))
+  expect(reopened.getByText(/完整已选清单：肝功能、肌酐测定、淀粉酶测定/)).toBeDefined()
 })

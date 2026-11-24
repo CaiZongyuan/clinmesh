@@ -4,7 +4,6 @@ import type { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatien
 import {
   groupInvestigationDispatchUnits,
   isBloodDrawSpecimenContainer,
-  resolveLaboratorySpecimenContainer,
   type DispatchableInvestigationItem,
   type MergedInvestigationDispatchUnit,
 } from '@clinmesh/core/laboratory-specimen-container'
@@ -98,9 +97,9 @@ export function InpatientInvestigationSend({ admission, session, locale, data, l
         : entry.unavailable === 'versions' ? t('申请信息不完整，请刷新核对。', 'Refresh the incomplete request details.') : ''
   const listUnits = toListUnits(entries)
   const allSendableTubePeers = (snapshot: InvestigationSendSnapshot, pool: readonly InvestigationSendEntry[]): InvestigationSendEntry[] => {
-    if (snapshot.kind !== 'laboratory' || !resolveLaboratorySpecimenContainer(snapshot).mergeable) return []
+    if (snapshot.kind !== 'laboratory') return []
     const units = pool === entries ? listUnits : toListUnits(pool)
-    const containing = units.find(unit => unit.unitKind === 'tube' && unit.items.some(item => item.id === snapshot.id))
+    const containing = units.find(unit => unit.unitKind === 'tube' && unit.container.mergeable && unit.items.some(item => item.id === snapshot.id))
     return containing?.unitKind === 'tube' ? containing.items.map(item => item.entry) : []
   }
   const unselectedTubePeers = (snapshot: InvestigationSendSnapshot, pool: readonly InvestigationSendEntry[], chosenIds: ReadonlySet<string>): InvestigationSendEntry[] =>

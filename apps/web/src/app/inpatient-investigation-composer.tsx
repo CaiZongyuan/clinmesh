@@ -31,9 +31,17 @@ const emptyDraft = (): InvestigationDraft => ({ rows: [], successes: [] })
 function selectNonOverlappingLaboratoryItems(
   availableItems: readonly CatalogItem[],
   draftRows: readonly InvestigationDraftRow[],
+  allCatalogItems: readonly CatalogItem[],
 ): CatalogItem[] {
-  const assayIds = (item: CatalogItem): readonly string[] =>
-    item.assayKeys && item.assayKeys.length > 0 ? item.assayKeys : [item.id]
+  const byLabId = new Map<string, CatalogItem>()
+  for (const item of allCatalogItems) {
+    if (item.kind === 'laboratory') byLabId.set(item.id, item)
+  }
+  const assayIds = (item: CatalogItem): readonly string[] => {
+    const resolved = byLabId.get(item.id)
+    const keys = resolved?.assayKeys ?? item.assayKeys
+    return keys && keys.length > 0 ? keys : [item.id]
+  }
   const coveredAssays = new Set<string>()
   for (const row of draftRows) {
     if (row.item.kind !== 'laboratory') continue
@@ -121,8 +129,8 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
       || containerText.toLowerCase().includes(text)
   })
   const available = matches.filter(item => item.available), unavailable = matches.filter(item => !item.available), pageSize = 10
-  const categoryBulkBaseline = kind === 'laboratory' ? selectNonOverlappingLaboratoryItems(available, []) : []
-  const addableInCategory = kind === 'laboratory' ? selectNonOverlappingLaboratoryItems(available, draft.rows) : []
+  const categoryBulkBaseline = kind === 'laboratory' ? selectNonOverlappingLaboratoryItems(available, [], items) : []
+  const addableInCategory = kind === 'laboratory' ? selectNonOverlappingLaboratoryItems(available, draft.rows, items) : []
   const labCategoryOptions: Array<{ value: LabFilterCategory; label: string }> = [
     ...(hasPanels ? [{ value: 'panel' as const, label: t('常用组合', 'Panels') }] : []),
     { value: 'hematology-coagulation', label: t('血细胞/凝血', 'Hematology & Coag') },
@@ -150,7 +158,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
     setDraftPage(Math.ceil((rows.length + 1) / pageSize)); setNotice('')
   }
   const addCategoryItems = () => {
-    if (locked || addableInCategory.length === 0) return
+    if (locked || loading || error !== undefined || addableInCategory.length === 0) return
     if (draft.rows.length + addableInCategory.length > investigationBatchLimit) {
       setNotice(t(`最多保留 ${investigationBatchLimit} 项，请先办理或移除项目`, `Keep at most ${investigationBatchLimit} items; process or remove an item first`))
       return
@@ -223,7 +231,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
               }}>
                 {labCategoryOptions.map(option => <ToggleGroupItem key={option.value} value={option.value}>{option.label}</ToggleGroupItem>)}
               </ToggleGroup> : null}
-              {kind === 'laboratory' && categoryBulkBaseline.length > 0 && categoryBulkBaseline.length <= investigationBatchLimit && text === '' ? <div className="flex items-center justify-between gap-2">
+              {kind === 'laboratory' && !loading && error === undefined && categoryBulkBaseline.length > 0 && categoryBulkBaseline.length <= investigationBatchLimit && text === '' ? <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-muted-foreground">{t(`当前分类共 ${available.length} 项`, `${available.length} items in category`)}</span>
                 <Button size="sm" variant="outline" disabled={locked || addableInCategory.length === 0} onClick={addCategoryItems}>
                   {t(`加入本类可开项目（${addableInCategory.length}）`, `Add category items (${addableInCategory.length})`)}
