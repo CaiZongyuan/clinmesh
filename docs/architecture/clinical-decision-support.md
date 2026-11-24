@@ -72,3 +72,15 @@
 ### 与门诊病历完备性质控的职责边界
 
 双层事中临床质控引擎与[门诊病历完备性质控](outpatient-workflows.md#页头主诉投影与病历完备性质控)职责正交、互不替代：前者是运行在共享写 Command 事务内的零模型确定性规则门禁，针对正式医嘱、完诊、介入手术与出院四个不可逆临床责任节点执行硬性安全阻断与受审计越权留痕；后者是经 outbox 异步执行的模型辅助文书审校，针对 12 字段病历草稿检查模板漏项、问诊前后矛盾与自动整理引用归属，仅提供纯提示定位与直接正文编辑引导，不阻断病历签署、也不要求填写越权理由。
+
+## 临床事实总账与可插拔专病包底座
+
+### 只读按需的临床事实总账与受审计核实
+
+门诊（`doctor.case.clinical-fact-ledger.read`）与住院（`inpatient.clinical-fact-ledger.read`）共用只读、按需生成的 `Clinical Fact Ledger` 引擎（`@clinmesh/contracts/clinical-fact-ledger` 与 `@clinmesh/core/clinical-fact-ledger`），不另外落库复制正本，统一通过三套来源规则将本院 FHIR R5 正式资源（含完整批次且认人通过的院内多源接入结果，保留各来源 `sourceSystemId`）、`Visible Source History` 与 `Clinical Risk Assessment` 誊写为覆盖八类临床数据的 14 字段标准化事实（排除草稿、未签发报告、病历全文与 `Case Truth`）。总账严格保持方法隔离（例如高敏肌钙蛋白 I、常规肌钙蛋白 I 与肌钙蛋白 T 独立成账）、支持任意 `asOf` 截止时点无回漏重现（仅纳入当时已入库且未作废版本，报告更正时精确保留旧时点视图）及公共层默认有效期校验；并在誊写期标出三类确定性拦截标记——`suspicious`（非白名单单位、超生理范围、报告早于开单、性别常识矛盾）、`conflict`（同标本同项目矛盾结果双双保留）与 `external-unverified`（外院历史默认待核实）。任一标记事实及过期事实默认标记 `eligibleForScoringAndRedLine: false`，不参与临床评分与药事/肾功能红线判定，直至责任医生通过受审计写命令（`doctor.case.clinical-fact-verification.record` / `inpatient.clinical-fact-verification.record`，落库 `clinical_fact_verification` 并写入 `AuditEvent` 与 `Action Trace`）正式核实并放行至同一截止时点之后（取舍见[临床事实总账与院内本地接入决策](../decisions/implemented/architecture/2026-11-24-clinical-fact-ledger-and-local-ingestion.md)）。
+
+### 纯数据专病包格式、三层叠覆与受控运行时
+
+平台合同（`@clinmesh/contracts/guideline-topics`、`@clinmesh/contracts/order-set-templates` 与 `@clinmesh/contracts/inpatient-guideline-advice`）已解除专题、科室与组套 ID 的封闭枚举耦合，改由纯数据文件夹形式的 `Disease Pack`（支持 `full` 与 `recognition` 两种类型，`@clinmesh/contracts/disease-pack` 与 `@clinmesh/core/disease-pack`）及运行期注册表校验已注册条目（未注册标识返回 `404`）。包加载器在入库前强制校验数据指纹、拦截任何可执行代码片段（`PACK_CODE_FORBIDDEN`）并核对版本化平台公式库引用（`PACK_FORMULA_VERSION_NOT_FOUND`）；公共层、病种包与医院适配层按“本地化映射与模板可替换、安全类条款（红线、禁止动作、有效期上限、触发条件与考卷门槛）只准收紧不准放宽”的规则合并三层配置，试图削弱安全限制时立即拒绝加载并指明越界字段（`HOSPITAL_OVERLAY_SAFETY_RELAXATION_FORBIDDEN`）。
+
+专病包运行时（`DiseasePackRuntimeService`）基于 `Clinical Fact Ledger` 自动求值跨时间、跨就诊结构化触发条件（显式指定比较时间戳字段）与诊疗阶段切换（阶段变化自动审计），并合并医生通过受审计 Command 提交的手动启停覆写；同时提供按任务声明过滤最小必要字段的只读任务视图（仅返回当前任务声明的关键项与次要项，隐藏无关护理与费用明细）、三档就绪门禁（`ready` / `missing-secondary` / `missing-critical`，其中被标为可疑、冲突或未核实的外院事实按缺项处理，缺关键项时直接拒绝 `PCI 术前指南参考意见` 等任务起草，仅缺次要项时允许带缺项批注起草）以及挂载在业务与 DSH 工具入口上的包工具白名单与禁止动作网关（越权调用返回 `403` 并记录 `AuditEvent`；详细取舍见[专病包格式、三层叠覆与受控运行时决策](../decisions/implemented/architecture/2026-11-24-disease-pack-format-and-runtime.md)）。

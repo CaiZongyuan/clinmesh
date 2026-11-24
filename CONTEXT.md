@@ -84,6 +84,10 @@ _Avoid_: Synthetic Patient Profile, local Encounter, Scenario Dataset
 一组版本固定、可按统一编译边界生成多个 `Synthetic Patient Profile`、`Synthetic Case Instance`、`Visible Source History`、结构化分阶段 `Case Truth` 与模板 `Patient Persona` 的作者合成病例集合。准备只建立病例来源与就绪状态，不产生本院诊断、检查检验报告、医嘱、手术或费用。
 _Avoid_: Seed script, fixture dump, runtime clinical record, Synthea batch
 
+**Golden Case**:
+用于验证专病能力搬迁前后一致性与异常陷阱防线的版本冻结合成病例集合，全部预期检验检查结果预先写入 `Case Truth` 并在开单后按阶段精确显现；未预置项目不兜底生成正常参考值或调用模型。
+_Avoid_: Ad-hoc demo seed, mutable test patient, model-guessed fallback
+
 **Patient Persona**:
 扮演患者所依据的版本固定档案，包含性格、表达方式、健康素养、症状体验、主诉、开场陈述和自知病史。它描述患者知道的自身情况，不直接命名尚未获知的本次疾病。
 _Avoid_: Case Truth, diagnosis note, chat transcript
@@ -237,6 +241,18 @@ _Avoid_: Hard safety red-line block, document quality issue, DRG payment warning
 **Clinical Override**:
 负责医生针对特定 Clinical Quality Alert 选择受控临床原因并填写医学依据后，随原业务意图一并留存的正式越权决策记录。它与被确认的警示条目一同进入审计与回放链，但不能绕过药事与生理安全红线。
 _Avoid_: Silent bypass, unreasoned force flag, red-line exemption
+
+**Clinical Fact Ledger**:
+只读、按需从本院 FHIR R5 正式记录、Visible Source History 与 Clinical Risk Assessment 誊写生成的标准化患者临床事实视图。每条事实保留来源系统、时点、标本、方法、确定性质量标记及医生正式核实状态，供下游评分、质控与专病运行时读取，不覆盖原始正本，也不暴露 Case Truth。
+_Avoid_: Mutable shadow database, free-text case summary, Case Truth
+
+**Disease Pack**:
+不含可执行代码的纯数据专病配置包，按固定结构声明激活条件、诊疗阶段、任务级就绪字段要求、公认平台公式引用、工具白名单及禁止动作，在公共层与医院本地适配层叠加后以只收紧不放宽的规则驱动临床运行时。
+_Avoid_: Hardcoded TypeScript specialty module, executable plugin script, hospital-only local catalog
+
+**Recognition Pack**:
+与完整专病包共用同一数据格式但聚焦易漏诊疑难或罕见病线索提示的专病包类型，仅声明跨时间结构化触发条件、不适用人群与提示规范，不包含组套或治疗阶段。
+_Avoid_: Automated treatment pathway, full specialty management pack, diagnostic order engine
 
 **Report Acknowledgement**:
 负责医生确认已查看一份已签发诊断报告的业务事实。它不改变报告内容或签发状态。
