@@ -1,0 +1,14 @@
+{
+  "examSuite": {
+    "cases": [
+      {
+        "caseId": "syn-exam-case-1",
+        "expectedActive": true,
+        "expectedBlockedTaskIds": ["pci-preop-guideline-advice"],
+        "expectedStageId": "baseline-assessment",
+        "titleZh": "合成测试综合征基线回归例"
+      }
+    ],
+    "passThreshold": 0.8
+  }
+}

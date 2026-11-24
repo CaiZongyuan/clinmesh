@@ -131,7 +131,7 @@ function buildSyntheticTopicCorpusDocuments(options: {
   const bySource = new Map<string, {
     pages: Map<number, string[]>
     sha256: string
-    specialty: 'cardiology' | 'endocrinology'
+    specialty: string
     title: string
     version: string
   }>()

@@ -327,6 +327,13 @@ export class InpatientGuidelineAdvice {
       const parameters = selection.drafts?.find(item => item.requestId === requestId)?.parameters
         ?? (selection.confirmation?.parameters.requestId === requestId ? selection.confirmation.parameters : undefined)
       const measurements = parameters?.measurements ?? []
+      const readiness = this.owner.workflow.diseasePacks.evaluateGuidelineAdviceTaskReadiness(
+        this.owner,
+        context,
+        admissionId,
+        topicId,
+        requestId,
+      )
       const missing = collectPciSelectionMissingItems({
         hasValidCandidate: selection.candidates.some(item => item.eligibility === 'valid'),
         measurements,
@@ -335,7 +342,7 @@ export class InpatientGuidelineAdvice {
       const input: BasisInput = {
         topic: sourceRead.topic,
         guidelines: sourceRead.guidelines,
-        missing: clampTopicMissingList([...new Set([...missing, ...sourceRead.missing])]),
+        missing: clampTopicMissingList([...new Set([...missing, ...sourceRead.missing, ...readiness.annotations])]),
         sourceStatus: sourceRead.sourceStatus,
         dependencyFingerprint: canonicalJsonHash({
           candidates: selection.candidates,
@@ -428,10 +435,18 @@ export class InpatientGuidelineAdvice {
       isArchivedCutoff,
     )
 
+    const readiness = this.owner.workflow.diseasePacks.evaluateGuidelineAdviceTaskReadiness(
+      this.owner,
+      context,
+      admissionId,
+      topicId,
+      requestId,
+    )
+
     const input: BasisInput = {
       topic: sourceRead.topic,
       guidelines: sourceRead.guidelines,
-      missing: clampTopicMissingList([...new Set([...missingPatientInputs, ...sourceRead.missing])]),
+      missing: clampTopicMissingList([...new Set([...missingPatientInputs, ...sourceRead.missing, ...readiness.annotations])]),
       sourceStatus: sourceRead.sourceStatus,
       dependencyFingerprint: canonicalJsonHash({
         activeMedicationOrders,
@@ -891,6 +906,21 @@ export class InpatientGuidelineAdvice {
         const basis = this.#basis(context, input.admissionId, topicId, requestId)
         if (basis.requestStatus === 'cancelled' || basis.frozen) {
           throw new InpatientError('INPATIENT_GUIDELINE_STALE', messages[state.status])
+        }
+        const readiness = this.owner.workflow.diseasePacks.evaluateGuidelineAdviceTaskReadiness(
+          this.owner,
+          context,
+          input.admissionId,
+          topicId,
+          requestId,
+        )
+        if (readiness.blocked) {
+          throw new InpatientError(
+            'TASK_READINESS_CRITICAL_MISSING',
+            `缺少关键临床资料，不能起草指南参考意见：${readiness.missingLabels.join('、')}`,
+            409,
+            'TASK_READINESS_CRITICAL_MISSING',
+          )
         }
         if (['queued', 'running', 'succeeded', 'incomplete', 'blocked'].includes(state.status)) {
           return { data: state, effects: [] }

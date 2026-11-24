@@ -165,6 +165,11 @@ describe('HIS operation catalog', () => {
         id: 'catalog.order-set-templates.list',
         roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
       },
+      {
+        cliPath: 'catalog disease-packs list',
+        id: 'catalog.disease-packs.list',
+        roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor', 'ward-nurse', 'medical-records'],
+      },
     ])
   })
 
@@ -804,9 +809,9 @@ describe('HIS operation catalog', () => {
     expect(counts).toEqual({
       'clinmesh-administrator': 6,
       'clinmesh-billing': 18,
-      'clinmesh-doctor': 72,
+      'clinmesh-doctor': 78,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 122,
+      'clinmesh-inpatient': 127,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 8,
       'clinmesh-shared': 1,
@@ -877,7 +882,8 @@ it('publishes shared guideline-topics queries and surgery-optional inpatient gui
   expect(outpatientTopics.roles).toEqual(['outpatient-doctor'])
   expect(outpatientTopics.risk).toBe('read')
   expect(outpatientTopics.input.safeParse({ caseId: 'case-1', topicId: 'acute-chest-pain-acs' }).success).toBe(true)
-  expect(outpatientTopics.input.safeParse({ caseId: 'case-1', topicId: 'unknown-topic' }).success).toBe(false)
+  expect(outpatientTopics.input.safeParse({ caseId: 'case-1', topicId: 'synthetic-pack-topic' }).success).toBe(true)
+  expect(outpatientTopics.input.safeParse({ caseId: 'case-1', topicId: 'Invalid_Topic!' }).success).toBe(false)
 
   const inpatientTopics = getHisOperation('inpatient.guideline-topics.read')
   expect(inpatientTopics.roles).toEqual(['inpatient-doctor', 'ward-nurse', 'medical-records'])

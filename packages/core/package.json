@@ -19,6 +19,7 @@
     "./clinical-scores": "./src/clinical-scores.ts",
     "./clinical-quality": "./src/clinical-quality.ts",
     "./clinical-fact-ledger": "./src/clinical-fact-ledger.ts",
+    "./disease-pack": "./src/disease-pack.ts",
     "./insurance": "./src/insurance.ts",
     "./laboratory-specimen-container": "./src/laboratory-specimen-container.ts"
   },

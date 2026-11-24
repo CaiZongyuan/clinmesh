@@ -1,6 +1,6 @@
 import {
   guidelineTopicBundleSchema,
-  guidelineTopicIds,
+  guidelineTopicIdSchema,
   type GuidelineTopicId,
   type GuidelineTopicRead,
 } from '@clinmesh/contracts/guideline-topics'
@@ -9,7 +9,6 @@ import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import {
   inpatientGuidelineAdviceListSchema,
   type InpatientGuidelineAdvice,
-  type InpatientGuidelineAdviceKind,
 } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
@@ -37,7 +36,7 @@ type Props = {
   initialTopicId?: GuidelineTopicId | undefined
 }
 
-export const guidelineTopicOptionLabels: Record<GuidelineTopicId, readonly [string, string]> = {
+export const guidelineTopicOptionLabels: Record<string, readonly [string, string]> = {
   'contrast-kidney-hydration': ['对比剂肾损伤预防与围术期水化', 'Contrast kidney protection & hydration'],
   'coronary-revascularization-indication': ['冠脉血运重建指征与 FFR 功能学评估', 'Coronary revascularization & FFR'],
   'cad-dapt-and-secondary-prevention': ['双联抗血小板与冠心病二级预防', 'DAPT & secondary prevention'],
@@ -46,9 +45,9 @@ export const guidelineTopicOptionLabels: Record<GuidelineTopicId, readonly [stri
   't2dm-renal-medication': ['2 型糖尿病合并慢性肾脏病用药', 'T2DM & CKD medication'],
 }
 
-const orderedPickerTopics = Object.keys(guidelineTopicOptionLabels) as GuidelineTopicId[]
+const orderedPickerTopics = Object.keys(guidelineTopicOptionLabels)
 
-const kinds: Record<InpatientGuidelineAdviceKind, readonly [string, string]> = {
+const kinds: Record<string, readonly [string, string]> = {
   'stent-category': ['支架类别', 'Stent category'],
   'imaging-guidance': ['IVUS／OCT 指导条件', 'IVUS / OCT guidance conditions'],
   'measurement-requirements': ['尺寸与测量要求', 'Sizing and measurement requirements'],
@@ -250,14 +249,18 @@ export function InpatientGuidelineAdvicePanel({
             value={selectedTopic}
             onChange={event => {
               const value = event.currentTarget.value
-              if ((guidelineTopicIds as readonly string[]).includes(value)) {
-                setSelectedTopic(value as GuidelineTopicId)
+              if (guidelineTopicIdSchema.safeParse(value).success) {
+                setSelectedTopic(value)
               }
             }}
           >
-            {orderedPickerTopics.map(topicId => (
+            {[...new Set([
+              ...orderedPickerTopics,
+              ...(initialTopicId ? [initialTopicId] : []),
+              ...(topicReadQuery.data?.items.map(item => item.topic.id) ?? []),
+            ])].map(topicId => (
               <option key={topicId} value={topicId}>
-                {guidelineTopicOptionLabels[topicId][locale === 'zh-CN' ? 0 : 1]}
+                {guidelineTopicOptionLabels[topicId]?.[locale === 'zh-CN' ? 0 : 1] ?? topicId}
               </option>
             ))}
           </select>
@@ -471,7 +474,7 @@ function GuidelineAdvice({ advice, locale }: { advice: InpatientGuidelineAdvice;
         <>
           <div className="flex min-w-0 flex-col gap-4">
             {result.conclusions.map(conclusion => {
-              const label = kinds[conclusion.kind][locale === 'zh-CN' ? 0 : 1]
+              const label = kinds[conclusion.kind]?.[locale === 'zh-CN' ? 0 : 1] ?? conclusion.kind
               return (
                 <article key={conclusion.kind} className="flex min-w-0 flex-col gap-2 border-b pb-3 last:border-b-0">
                   <div className="flex flex-wrap items-center gap-2">

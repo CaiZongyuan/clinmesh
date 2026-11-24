@@ -209,10 +209,12 @@ export const agentExecutionProofPayloadSchema = z.object({
 }).strict()
 
 export const agentToolAuthorizationRequestSchema = z.object({
+  actionTag: z.string().trim().min(1).max(128).optional(),
   contextToken: z.string().min(32),
   executionProof: z.string().min(32),
   input: z.json(),
   operationId: z.string().trim().min(1).max(128),
+  packId: z.string().regex(/^[a-z0-9-]{1,64}$/).optional(),
 }).strict().superRefine((value, context) => {
   if (!isAgentOperationId(value.operationId)) {
     context.addIssue({ code: 'custom', message: 'The Agent operation is not registered', path: ['operationId'] })
@@ -397,6 +399,8 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('inpatient.guideline-topics.read', 'clinmesh_read_inpatient_guideline_topics', 'query', ipClinical, inpatientView, ['orders', 'surgery', 'discharge', 'record']),
   tool('inpatient.clinical-quality.read', 'clinmesh_read_inpatient_clinical_quality', 'query', ipDoc, inpatientView, ['orders', 'surgery', 'discharge', 'record']),
   tool('inpatient.order-set-drafts.read', 'clinmesh_read_inpatient_order_set_drafts', 'query', ipDoc, inpatientView, ['orders', 'investigations']),
+  tool('inpatient.disease-packs.read', 'clinmesh_read_inpatient_disease_packs', 'query', ipClinical, inpatientView, ['admission', 'orders', 'surgery', 'discharge', 'record']),
+  tool('inpatient.disease-pack-task-facts.read', 'clinmesh_read_inpatient_disease_pack_task_facts', 'query', ipDoc, inpatientView, ['admission', 'orders', 'surgery', 'discharge', 'record']),
   tool('inpatient.order.verify.propose', 'clinmesh_prepare_verify_inpatient_order', 'proposal', ['ward-nurse'], inpatientView, 'orders'),
   tool('inpatient.report.acknowledge.propose', 'clinmesh_prepare_acknowledge_inpatient_report', 'proposal', ipDoc, inpatientView, 'investigations'),
   tool('inpatient.payment.draft.set', 'clinmesh_fill_inpatient_payment_draft', 'draft', cashier, inpatientView, 'discharge'),
@@ -431,6 +435,8 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('outpatient.guideline-topics.read', 'clinmesh_read_guideline_topics', 'query', doctor, consultationView, ['diagnosis', 'prescription']),
   tool('outpatient.clinical-quality.read', 'clinmesh_read_clinical_quality', 'query', doctor, consultationView, ['diagnosis', 'prescription', 'record']),
   tool('outpatient.order-set-drafts.read', 'clinmesh_read_order_set_drafts', 'query', doctor, consultationView, ['diagnosis', 'prescription']),
+  tool('outpatient.disease-packs.read', 'clinmesh_read_disease_packs', 'query', doctor, consultationView, ['diagnosis', 'prescription']),
+  tool('outpatient.disease-pack-task-facts.read', 'clinmesh_read_disease_pack_task_facts', 'query', doctor, consultationView, ['diagnosis', 'prescription']),
   tool('outpatient.case.select', 'clinmesh_select_doctor_case', 'ui', doctor, consultationView),
   tool('outpatient.section.select', 'clinmesh_select_doctor_section', 'ui', doctor, consultationView),
   tool('outpatient.consultation.ask', 'clinmesh_ask_virtual_patient', 'draft', doctor, consultationView, 'consultation'),
@@ -506,6 +512,7 @@ export function isDoctorReadOperation(operationId: string): boolean {
     || operationId === 'outpatient.clinical-scores.read' || operationId === 'outpatient.clinical-fact-ledger.read'
     || operationId === 'outpatient.guideline-topics.read'
     || operationId === 'outpatient.clinical-quality.read' || operationId === 'outpatient.order-set-drafts.read'
+    || operationId === 'outpatient.disease-packs.read' || operationId === 'outpatient.disease-pack-task-facts.read'
 }
 
 export function usesDoctorReadBinding(snapshot: AgentPageContextSnapshot, operationId: string): boolean {

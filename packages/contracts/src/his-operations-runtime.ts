@@ -20,6 +20,22 @@ import {
   outpatientClinicalFactVerificationInputSchema,
 } from './clinical-fact-ledger.ts'
 import {
+  diseasePackCatalogListSchema,
+  diseasePackRuntimeBundleSchema,
+  diseasePackTaskFactsResponseSchema,
+  diseasePackTaskReadinessResultSchema,
+  diseasePackToggleResponseSchema,
+  diseasePackToolAuthorizeResponseSchema,
+  inpatientDiseasePackReadQuerySchema,
+  inpatientDiseasePackTaskQuerySchema,
+  inpatientDiseasePackToggleInputSchema,
+  inpatientDiseasePackToolAuthorizeInputSchema,
+  outpatientDiseasePackReadQuerySchema,
+  outpatientDiseasePackTaskQuerySchema,
+  outpatientDiseasePackToggleInputSchema,
+  outpatientDiseasePackToolAuthorizeInputSchema,
+} from './disease-pack.ts'
+import {
   guidelineTopicBundleSchema,
   inpatientGuidelineTopicsInputSchema,
   outpatientGuidelineTopicsInputSchema,
@@ -1299,6 +1315,15 @@ const rawOperationRuntimeDefinitions = [
   {
     http: {
       method: 'GET',
+      path: '/api/his/v1/catalogs/disease-packs',
+    },
+    id: 'catalog.disease-packs.list',
+    input: emptyInputSchema,
+    output: diseasePackCatalogListSchema,
+  },
+  {
+    http: {
+      method: 'GET',
       path: '/api/his/v1/patients',
     },
     id: 'patient.search',
@@ -1452,6 +1477,50 @@ const rawOperationRuntimeDefinitions = [
     id: 'doctor.case.order-set-drafts.read',
     input: outpatientOrderSetDraftsInputSchema,
     output: orderSetDraftBundleSchema,
+  },
+  {
+    http: { method: 'GET', path: '/api/his/v1/outpatient/cases/:caseId/disease-packs' },
+    id: 'doctor.case.disease-packs.read',
+    input: outpatientDiseasePackReadQuerySchema,
+    output: diseasePackRuntimeBundleSchema,
+  },
+  {
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/toggle',
+      encodeBody: (raw: unknown) => {
+        const { caseId: _caseId, packId: _packId, ...input } = outpatientDiseasePackToggleInputSchema.parse(raw)
+        return { input }
+      },
+    },
+    id: 'doctor.case.disease-packs.toggle',
+    input: outpatientDiseasePackToggleInputSchema,
+    output: diseasePackToggleResponseSchema,
+  },
+  {
+    http: { method: 'GET', path: '/api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/tasks/:taskId/readiness' },
+    id: 'doctor.case.disease-pack-task-readiness.read',
+    input: outpatientDiseasePackTaskQuerySchema,
+    output: diseasePackTaskReadinessResultSchema,
+  },
+  {
+    http: { method: 'GET', path: '/api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/tasks/:taskId/facts' },
+    id: 'doctor.case.disease-pack-task-facts.read',
+    input: outpatientDiseasePackTaskQuerySchema,
+    output: diseasePackTaskFactsResponseSchema,
+  },
+  {
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/tools/authorize',
+      encodeBody: (raw: unknown) => {
+        const { caseId: _caseId, packId: _packId, ...input } = outpatientDiseasePackToolAuthorizeInputSchema.parse(raw)
+        return { input }
+      },
+    },
+    id: 'doctor.case.disease-pack-tools.authorize',
+    input: outpatientDiseasePackToolAuthorizeInputSchema,
+    output: diseasePackToolAuthorizeResponseSchema,
   },
   {
     http: { method: 'PUT', path: '/api/his/v1/encounters/:encounterId/risk-assessment' },
@@ -2059,6 +2128,45 @@ const rawOperationRuntimeDefinitions = [
   admOp('inpatient.clinical-fact-verification.record', '/clinical-fact-verifications', inpatientClinicalFactVerificationInputSchema, clinicalFactVerificationResponseSchema),
   admQuery('inpatient.clinical-quality.read', '/clinical-quality', clinicalQualityCheckSchema, inpatientClinicalQualityInputSchema),
   admQuery('inpatient.order-set-drafts.read', '/order-set-drafts', orderSetDraftBundleSchema, inpatientOrderSetDraftsInputSchema),
+  admQuery('inpatient.disease-packs.read', '/disease-packs', diseasePackRuntimeBundleSchema, inpatientDiseasePackReadQuerySchema),
+  {
+    id: 'inpatient.disease-packs.toggle',
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/toggle',
+      encodeBody: (raw: unknown) => {
+        const { admissionId: _admissionId, packId: _packId, ...input } = inpatientDiseasePackToggleInputSchema.parse(raw)
+        return { input }
+      },
+    },
+    input: inpatientDiseasePackToggleInputSchema,
+    output: diseasePackToggleResponseSchema,
+  },
+  {
+    id: 'inpatient.disease-pack-task-readiness.read',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/tasks/:taskId/readiness' },
+    input: inpatientDiseasePackTaskQuerySchema,
+    output: diseasePackTaskReadinessResultSchema,
+  },
+  {
+    id: 'inpatient.disease-pack-task-facts.read',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/tasks/:taskId/facts' },
+    input: inpatientDiseasePackTaskQuerySchema,
+    output: diseasePackTaskFactsResponseSchema,
+  },
+  {
+    id: 'inpatient.disease-pack-tools.authorize',
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/tools/authorize',
+      encodeBody: (raw: unknown) => {
+        const { admissionId: _admissionId, packId: _packId, ...input } = inpatientDiseasePackToolAuthorizeInputSchema.parse(raw)
+        return { input }
+      },
+    },
+    input: inpatientDiseasePackToolAuthorizeInputSchema,
+    output: diseasePackToolAuthorizeResponseSchema,
+  },
   admOp('inpatient.diagnosis.confirm', '/diagnoses/confirm', inpatientDiagnosisConfirmInputSchema, inpatientFullClinicalResponseSchema),
   admOp('inpatient.order.issue', '/orders/issue', inpatientOrderIssueInputSchema, inpatientFullClinicalResponseSchema),
   admOp('inpatient.order.verify', '/orders/verify', inpatientOrderActionInputSchema, inpatientFullClinicalResponseSchema),

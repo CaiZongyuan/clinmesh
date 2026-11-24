@@ -42,10 +42,20 @@ export interface GuidelineTopicDefinition {
   readonly matchTerms: readonly string[]
   readonly navigation: string
   readonly references: readonly GuidelineTopicReferenceSpec[]
-  readonly specialty: 'cardiology' | 'endocrinology'
+  readonly specialty: string
   readonly titleEn: string
   readonly titleZh: string
   readonly version: string
+}
+
+export class UnknownGuidelineTopicError extends Error {
+  readonly code = 'GUIDELINE_TOPIC_NOT_FOUND' as const
+  readonly status = 404 as const
+
+  constructor(readonly topicId: string) {
+    super(`Unknown guideline topic: ${topicId}`)
+    this.name = 'UnknownGuidelineTopicError'
+  }
 }
 
 const REVASCULARIZATION_HASH = '9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e'
@@ -393,7 +403,7 @@ export function listGuidelineTopicDefinitions(): readonly GuidelineTopicDefiniti
 
 export function getGuidelineTopicDefinition(topicId: GuidelineTopicId): GuidelineTopicDefinition {
   const topic = TOPICS_BY_ID.get(topicId)
-  if (topic === undefined) throw new Error(`Unknown guideline topic: ${topicId}`)
+  if (topic === undefined) throw new UnknownGuidelineTopicError(topicId)
   return topic
 }
 

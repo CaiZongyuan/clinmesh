@@ -1,10 +1,8 @@
 import { agentToolInputSchemas, clinicalOverrideToolParameters, doctorCaseSectionSchema } from '@clinmesh/contracts/agent'
 import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
-import { guidelineTopicIds } from '@clinmesh/contracts/guideline-topics'
 import {
   doctorQueueViewStatusGroups
 } from '@clinmesh/contracts/his'
-import { outpatientOrderSetTemplateIds } from '@clinmesh/contracts/order-set-templates'
 import {
   newIdempotencyKey,
   previewStructuredClinicalDocumentSign
@@ -89,7 +87,7 @@ export function doctorWorkspaceAgentActions({
     ),
     'outpatient.guideline-topics.read': docRead(
       'Read verified guideline topic excerpts, limitations, and current patient indicator gaps without model calls.',
-      { topicId: { type: 'string', enum: guidelineTopicIds } },
+      { topicId: { type: 'string', pattern: '^[a-z0-9-]{1,64}$' } },
     ),
     'outpatient.clinical-quality.read': docRead(
       'Run read-only two-tier clinical quality preflight (red lines and alerts) for outpatient-prescription or outpatient-completion.',
@@ -98,7 +96,18 @@ export function doctorWorkspaceAgentActions({
     ),
     'outpatient.order-set-drafts.read': docRead(
       'Read version-bound outpatient order-set candidate drafts screened against allergies, eGFR, and triage vitals without issuing orders.',
-      { templateId: { type: 'string', enum: outpatientOrderSetTemplateIds } },
+      { templateId: { type: 'string', pattern: '^[a-z0-9-]{1,64}$' } },
+    ),
+    'outpatient.disease-packs.read': docRead(
+      'Read active/available declarative disease packs, matched stages, task readiness, and tool policies for the current outpatient case.',
+    ),
+    'outpatient.disease-pack-task-facts.read': docRead(
+      'Read task-scoped clinical fact ledger and readiness checks for a specific disease pack and task.',
+      {
+        packId: { type: 'string', pattern: '^[a-z0-9-]{1,64}$' },
+        taskId: { type: 'string', maxLength: 64 },
+      },
+      ['packId', 'taskId'],
     ),
     'outpatient.case.select': {
       description: 'Select caseId from loaded queue.items; switch to its waiting or active tab.',

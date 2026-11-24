@@ -148,6 +148,11 @@ export interface CreateClinMeshRuntimeOptions {
   autoDispatchIntervalMs?: number
   cursorSecret: string
   databasePath: string
+  diseasePackDirs?: readonly string[]
+  diseasePacks?: readonly unknown[]
+  diseasePackVerifyFingerprint?: boolean
+  hospitalOverlays?: readonly unknown[]
+  includeBuiltinDraftDiseasePacks?: boolean
   /** DRG 规则数据包目录（含 manifest.json）；缺省时住院 DRG 预分组返回未配置错误。 */
   drgRulesDirectory?: string
   /** 部署启用审核；正常服务入口必须提供。省略仅供受控规则注入测试使用。 */
@@ -286,6 +291,11 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       qualityModelAvailable: chatCompletions !== undefined && (consultationModel ?? investigationModel ?? patientPersonaModel) !== undefined,
       qualityContextStatus: context => identity.clinicalDocumentQualityContextStatus(context),
       consultationRecordingContextStatus: context => identity.consultationRecordingContextStatus(context),
+      ...(options.diseasePackDirs === undefined ? {} : { diseasePackDirs: options.diseasePackDirs }),
+      ...(options.diseasePacks === undefined ? {} : { diseasePacks: options.diseasePacks }),
+      ...(options.diseasePackVerifyFingerprint === undefined ? {} : { diseasePackVerifyFingerprint: options.diseasePackVerifyFingerprint }),
+      ...(options.hospitalOverlays === undefined ? {} : { hospitalOverlays: options.hospitalOverlays }),
+      ...(options.includeBuiltinDraftDiseasePacks === undefined ? {} : { includeBuiltinDraftDiseasePacks: options.includeBuiltinDraftDiseasePacks }),
       ...(guidelineCorpus === undefined ? {} : { guidelines: guidelineCorpus }),
       investigation,
       ...clockOptions,
@@ -450,6 +460,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ? undefined
       : new AgentIntegrationService(database, {
           cases: syntheticCases,
+          diseasePacks: workflow.diseasePacks,
+          inpatient,
           ...clockOptions,
           secret: options.dshBridgeSecret,
         })
@@ -909,6 +921,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         return closePromise
       },
       database,
+      diseasePacks: workflow.diseasePacks,
       dispatchPending,
       dispatchScenarioGenerationJobs,
       dispatchPatientPersonaJobs,

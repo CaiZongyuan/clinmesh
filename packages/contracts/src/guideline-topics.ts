@@ -1,6 +1,10 @@
 import { z } from 'zod'
 import { guidelineEvidenceSchema } from './doctor-recommendations.ts'
 
+/**
+ * Legacy built-in cardiology/endocrinology topic ID list retained temporarily for
+ * cardiology test iteration until S5 removes it; schemas accept open slugs.
+ */
 export const guidelineTopicIds = [
   'acute-chest-pain-acs',
   'coronary-revascularization-indication',
@@ -10,7 +14,7 @@ export const guidelineTopicIds = [
   't2dm-renal-medication',
 ] as const
 
-export const guidelineTopicIdSchema = z.enum(guidelineTopicIds)
+export const guidelineTopicIdSchema = z.string().regex(/^[a-z0-9-]{1,64}$/)
 export type GuidelineTopicId = z.infer<typeof guidelineTopicIdSchema>
 
 export const guidelineTopicEvidenceSchema = guidelineEvidenceSchema.extend({
@@ -21,7 +25,7 @@ export type GuidelineTopicEvidence = z.infer<typeof guidelineTopicEvidenceSchema
 export const guidelineTopicSummarySchema = z.object({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   id: guidelineTopicIdSchema,
-  specialty: z.enum(['cardiology', 'endocrinology']),
+  specialty: z.string().regex(/^[a-z0-9-]{1,64}$/),
   titleEn: z.string().trim().min(1).max(240),
   titleZh: z.string().trim().min(1).max(240),
   version: z.string().trim().min(1).max(64),
@@ -56,7 +60,7 @@ export type GuidelineTopicRead = z.infer<typeof guidelineTopicReadSchema>
 export const guidelineTopicBundleSchema = z.object({
   encounterId: z.string().min(1).max(64),
   evaluatedAt: z.iso.datetime({ offset: true }),
-  items: z.array(guidelineTopicReadSchema).min(1).max(6),
+  items: z.array(guidelineTopicReadSchema).min(1).max(64),
 }).strict()
 export type GuidelineTopicBundle = z.infer<typeof guidelineTopicBundleSchema>
 

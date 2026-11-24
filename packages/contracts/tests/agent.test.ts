@@ -288,9 +288,9 @@ describe('ClinMesh DSH Agent contracts', () => {
     expect(parseAgentToolInput('outpatient.order-set-drafts.read', {})).toEqual({})
     expect(parseAgentToolInput('outpatient.order-set-drafts.read', { templateId: 'chest-pain-stat-workup' }))
       .toEqual({ templateId: 'chest-pain-stat-workup' })
-    expect(() => parseAgentToolInput('outpatient.order-set-drafts.read', { templateId: 'cin-perioperative-hydration' }))
-      .toThrow()
-    expect(() => parseAgentToolInput('outpatient.order-set-drafts.read', { templateId: 'cad-admission-baseline' }))
+    expect(parseAgentToolInput('outpatient.order-set-drafts.read', { templateId: 'synthetic-syndrome-workup' }))
+      .toEqual({ templateId: 'synthetic-syndrome-workup' })
+    expect(() => parseAgentToolInput('outpatient.order-set-drafts.read', { templateId: 'Bad_Template_Id!' }))
       .toThrow()
   })
 

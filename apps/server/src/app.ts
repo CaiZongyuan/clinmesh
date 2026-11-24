@@ -13,6 +13,15 @@ import {
   recordClinicalFactVerificationBodySchema,
 } from '@clinmesh/contracts/clinical-fact-ledger'
 import {
+  diseasePackSlugSchema,
+  diseasePackToggleBodySchema,
+  diseasePackToolAuthorizeBodySchema,
+} from '@clinmesh/contracts/disease-pack'
+import { DiseasePackValidationError } from '@clinmesh/core/disease-pack'
+import { DiseasePackRuntimeError } from './application/disease-pack-runtime-service.ts'
+import { UnknownGuidelineTopicError } from './application/guideline-topic-registry.ts'
+import { UnknownOrderSetTemplateError } from './application/order-set-template-registry.ts'
+import {
   inpatientRiskAssessmentInputSchema,
   inpatientVitalSignsInputSchema,
   outpatientRiskAssessmentInputSchema,
@@ -293,6 +302,21 @@ const verificationRequestBodySchema = z.union([
   recordClinicalFactVerificationBodySchema,
 ])
 
+const diseasePackToggleRequestBodySchema = z.union([
+  z.object({
+    expectedVersions: z.record(z.string(), z.string()).optional(),
+    input: diseasePackToggleBodySchema,
+  }).strict().transform(body => body.input),
+  diseasePackToggleBodySchema,
+])
+
+const diseasePackToolAuthorizeRequestBodySchema = z.union([
+  z.object({
+    input: diseasePackToolAuthorizeBodySchema,
+  }).strict().transform(body => body.input),
+  diseasePackToolAuthorizeBodySchema,
+])
+
 function apiErrorResponse(
   context: Context,
   error: unknown,
@@ -301,12 +325,18 @@ function apiErrorResponse(
   if (error instanceof SyntaxError || error instanceof z.ZodError) {
     return invalidInputResponse(context, invalidInputMessage)
   }
+  if (error instanceof DiseasePackValidationError) {
+    return context.json(apiErrorBody(context, error.code, error.message), 400)
+  }
   if (error instanceof ClinicalQualityError) {
     return context.json(apiErrorBody(context, error.code, error.message, undefined, undefined, error.check), error.status)
   }
     if (
       error instanceof IdentityError
       || error instanceof ClinicalFactLedgerError
+      || error instanceof DiseasePackRuntimeError
+      || error instanceof UnknownGuidelineTopicError
+      || error instanceof UnknownOrderSetTemplateError
       || error instanceof ClinicalQualityReadError
       || error instanceof ModelUsagePolicyError
       || error instanceof InsuranceError
@@ -333,7 +363,7 @@ function apiErrorResponse(
       error.code,
       error.message,
       error instanceof WorkflowError ? error.conflict : undefined,
-      error instanceof WorkflowError || error instanceof InpatientError ? error.reason : undefined,
+      error instanceof WorkflowError || error instanceof InpatientError || error instanceof DiseasePackRuntimeError ? error.reason : undefined,
       error instanceof WorkflowError || error instanceof InpatientError ? error.clinicalQuality : undefined,
     ), error.status)
   }
@@ -781,7 +811,37 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           }
           if (query.operationId === 'outpatient.order-set-drafts.read') return context.json(workflow.orderSets.readOutpatient(
             session.actor, query.caseId, orderSetDraftQuerySchema.parse(query.input).templateId))
+          if (query.operationId === 'outpatient.disease-packs.read') return context.json(workflow.diseasePacks.readOutpatientPacks(
+            session.actor, query.caseId))
+          if (query.operationId === 'outpatient.disease-pack-task-facts.read') {
+            const parsed = z.object({ packId: diseasePackSlugSchema, taskId: z.string().trim().min(1).max(64) }).strict().parse(query.input)
+            return context.json(workflow.diseasePacks.readOutpatientTaskFacts(session.actor, query.caseId, parsed.packId, parsed.taskId))
+          }
           throw new AgentIntegrationError('AGENT_OPERATION_NOT_ALLOWED', 'The doctor query is not available', 403)
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      app.post('/api/agent/v1/disease-packs/tools/authorize', async context => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          const body = z.object({
+            actionTag: z.string().trim().min(1).max(128).optional(),
+            operationId: z.string().trim().min(1).max(128),
+            packId: diseasePackSlugSchema,
+            subjectId: z.string().trim().min(1).max(64),
+            subjectKind: z.enum(['outpatient', 'inpatient']),
+          }).strict().parse(await context.req.json())
+          return context.json(workflow.diseasePacks.authorizePackToolInvocation({
+            context: session.actor,
+            ...(body.subjectKind === 'inpatient' && options.inpatient !== undefined ? { inpatient: options.inpatient } : {}),
+            packId: body.packId,
+            rawBody: {
+              ...(body.actionTag === undefined ? {} : { actionTag: body.actionTag }),
+              operationId: body.operationId,
+            },
+            subjectId: body.subjectId,
+            subjectKind: body.subjectKind,
+          }))
         } catch (error) { return apiErrorResponse(context, error) }
       })
     }
@@ -1993,6 +2053,57 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(inpatient.workflow.orderSets.readInpatient(inpatient, await actor(context), context.req.param('admissionId'), query.templateId))
       } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/disease-packs', async context => {
+      try {
+        return context.json(inpatient.readDiseasePacks(await actor(context), context.req.param('admissionId')))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/toggle', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = diseasePackToggleRequestBodySchema.parse(await context.req.json())
+        const key = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+        return context.json(inpatient.toggleDiseasePack(
+          await actor(context),
+          context.req.param('admissionId'),
+          diseasePackSlugSchema.parse(context.req.param('packId')),
+          body,
+          key,
+        ))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/tasks/:taskId/readiness', async context => {
+      try {
+        return context.json(inpatient.readDiseasePackTaskReadiness(
+          await actor(context),
+          context.req.param('admissionId'),
+          diseasePackSlugSchema.parse(context.req.param('packId')),
+          context.req.param('taskId'),
+        ))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/tasks/:taskId/facts', async context => {
+      try {
+        return context.json(inpatient.readDiseasePackTaskFacts(
+          await actor(context),
+          context.req.param('admissionId'),
+          diseasePackSlugSchema.parse(context.req.param('packId')),
+          context.req.param('taskId'),
+        ))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/tools/authorize', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = diseasePackToolAuthorizeRequestBodySchema.parse(await context.req.json())
+        return context.json(inpatient.authorizeDiseasePackTool(
+          await actor(context),
+          context.req.param('admissionId'),
+          diseasePackSlugSchema.parse(context.req.param('packId')),
+          body,
+        ))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/diagnoses/confirm', async context => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -2185,6 +2296,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try {
         const query = orderSetTemplateListQuerySchema.parse(context.req.query())
         return context.json(workflow.orderSets.listTemplates(await actor(context), query.scope))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/catalogs/disease-packs', async (context) => {
+      try {
+        return context.json(workflow.diseasePacks.listCatalog(await actor(context)))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
@@ -2568,6 +2686,67 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try {
         const query = orderSetDraftQuerySchema.parse(context.req.query())
         return context.json(workflow.orderSets.readOutpatient(await actor(context), context.req.param('caseId'), query.templateId))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/outpatient/cases/:caseId/disease-packs', async (context) => {
+      try {
+        return context.json(workflow.diseasePacks.readOutpatientPacks(await actor(context), context.req.param('caseId')))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/toggle', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = diseasePackToggleRequestBodySchema.parse(await context.req.json())
+        return context.json(workflow.diseasePacks.toggleOutpatientPack(
+          await actor(context),
+          context.req.param('caseId'),
+          diseasePackSlugSchema.parse(context.req.param('packId')),
+          body,
+          idempotencyKey(context),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/tasks/:taskId/readiness', async (context) => {
+      try {
+        return context.json(workflow.diseasePacks.readOutpatientTaskReadiness(
+          await actor(context),
+          context.req.param('caseId'),
+          diseasePackSlugSchema.parse(context.req.param('packId')),
+          context.req.param('taskId'),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/tasks/:taskId/facts', async (context) => {
+      try {
+        return context.json(workflow.diseasePacks.readOutpatientTaskFacts(
+          await actor(context),
+          context.req.param('caseId'),
+          diseasePackSlugSchema.parse(context.req.param('packId')),
+          context.req.param('taskId'),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/tools/authorize', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = diseasePackToolAuthorizeRequestBodySchema.parse(await context.req.json())
+        return context.json(workflow.diseasePacks.authorizePackToolInvocation({
+          context: await actor(context),
+          packId: diseasePackSlugSchema.parse(context.req.param('packId')),
+          rawBody: body,
+          subjectId: context.req.param('caseId'),
+          subjectKind: 'outpatient',
+        }))
       } catch (error) {
         return apiErrorResponse(context, error)
       }

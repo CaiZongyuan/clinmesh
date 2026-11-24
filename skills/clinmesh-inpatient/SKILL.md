@@ -102,6 +102,11 @@ clinmesh inpatient clinical-fact-ledger --admission-id <admission-id> --as-of 20
 clinmesh inpatient clinical-fact-verification record --input @fact-verification.json --idempotency-key <key>
 clinmesh inpatient clinical-quality --admission-id <admission-id> --gate inpatient-discharge
 clinmesh inpatient order-set-drafts --admission-id <admission-id> --template-id cin-perioperative-hydration
+clinmesh inpatient disease-packs list --admission-id <admission-id>
+clinmesh inpatient disease-packs toggle --input @disease-pack-toggle.json --idempotency-key <key>
+clinmesh inpatient disease-packs task-readiness --admission-id <admission-id> --pack-id <pack-id> --task-id <task-id>
+clinmesh inpatient disease-packs task-facts --admission-id <admission-id> --pack-id <pack-id> --task-id <task-id>
+clinmesh inpatient disease-packs authorize-tool --admission-id <admission-id> --pack-id <pack-id> --operation-id <tool-operation-id>
 clinmesh inpatient confirm-diagnosis --input @diagnoses.json --idempotency-key <key>
 clinmesh inpatient issue-order --input @order.json --idempotency-key <key>
 clinmesh inpatient verify-order --input @verification.json --idempotency-key <key>

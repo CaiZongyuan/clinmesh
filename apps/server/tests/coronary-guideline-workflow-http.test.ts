@@ -134,7 +134,7 @@ it('门诊诊疗建议复用共享 Guideline Topic 注册表，对派生副本�
   const data = await createCoronaryData(directory)
   const writer = new GuidelineCorpus({ databasePath: data.guidelineDatabasePath })
   try {
-    const bySource = new Map<string, { pages: Map<number, string[]>; sha256: string; specialty: 'cardiology' | 'endocrinology'; title: string; version: string }>()
+    const bySource = new Map<string, { pages: Map<number, string[]>; sha256: string; specialty: string; title: string; version: string }>()
     for (const topicId of guidelineTopicIds) {
       const def = getGuidelineTopicDefinition(topicId)
       for (const ref of def.references) {

@@ -1,12 +1,13 @@
 import { z } from 'zod'
 import { clinicalOverrideInputSchema, clinicalOverrideReasonSchema, clinicalQualityAlertCodeSchema, outpatientClinicalQualityInputSchema } from './clinical-quality.ts'
 import { clinicalFactLedgerFilterQuerySchema } from './clinical-fact-ledger.ts'
+import { diseasePackSlugSchema } from './disease-pack.ts'
 import { doctorCaseHistoryInputSchema, doctorCaseHistoryDetailInputSchema } from './doctor-history.ts'
 import { guidelineTopicQuerySchema } from './guideline-topics.ts'
 import { inpatientOrderActionInputSchema } from './inpatient-clinical.ts'
 import { inpatientInvestigationAcknowledgeInputSchema } from './inpatient-investigations.ts'
 import { medicationFrequencySchema, medicationRouteSchema } from './medication-safety.ts'
-import { orderSetDraftQuerySchema, outpatientOrderSetTemplateIds } from './order-set-templates.ts'
+import { orderSetDraftQuerySchema } from './order-set-templates.ts'
 import {
   clinicalDocumentContentSchema,
   clinicalDocumentDraftContentSchema,
@@ -158,6 +159,8 @@ export const agentToolInputSchemas = Object.freeze({
   'inpatient.guideline-topics.read': guidelineTopicQuerySchema,
   'inpatient.clinical-quality.read': inpatientClinicalQualityToolInputSchema,
   'inpatient.order-set-drafts.read': orderSetDraftQuerySchema,
+  'inpatient.disease-packs.read': emptyInputSchema,
+  'inpatient.disease-pack-task-facts.read': z.object({ packId: diseasePackSlugSchema, taskId: boundedIdSchema }).strict(),
   'inpatient.order.verify.propose': inpatientOrderActionInputSchema.omit({ admissionId: true }),
   'inpatient.report.acknowledge.propose': inpatientInvestigationAcknowledgeInputSchema.omit({ admissionId: true }),
   'inpatient.payment.draft.set': z.object({ tenders: paymentTendersSchema }).strict(),
@@ -196,7 +199,9 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.clinical-fact-ledger.read': clinicalFactLedgerFilterQuerySchema,
   'outpatient.guideline-topics.read': guidelineTopicQuerySchema,
   'outpatient.clinical-quality.read': outpatientClinicalQualityInputSchema.omit({ encounterId: true }),
-  'outpatient.order-set-drafts.read': z.object({ templateId: z.enum(outpatientOrderSetTemplateIds).optional() }).strict(),
+  'outpatient.order-set-drafts.read': orderSetDraftQuerySchema,
+  'outpatient.disease-packs.read': emptyInputSchema,
+  'outpatient.disease-pack-task-facts.read': z.object({ packId: diseasePackSlugSchema, taskId: boundedIdSchema }).strict(),
   'outpatient.case.select': caseIdInputSchema,
   'outpatient.section.select': z.object({
     /** 同时定位这条功能检查申请的结构化文字报告；只与 `laboratory` 栏目一起使用。 */
