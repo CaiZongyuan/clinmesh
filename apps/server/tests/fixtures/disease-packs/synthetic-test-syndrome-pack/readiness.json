@@ -1,0 +1,40 @@
+{
+  "readinessTasks": [
+    {
+      "criticalItems": [
+        {
+          "alternateItemCodes": ["14682-9", "1700404A"],
+          "category": "laboratory",
+          "itemCode": "2160-0",
+          "labelZh": "血清肌酐 / eGFR",
+          "maxAgeDays": 14
+        }
+      ],
+      "relevantCategories": ["diagnosis"],
+      "relevantItemCodes": ["2160-0", "smoking-status"],
+      "secondaryItems": [
+        {
+          "category": "bedside-questionnaire",
+          "itemCode": "smoking-status",
+          "labelZh": "吸烟状态"
+        }
+      ],
+      "taskId": "pci-preop-guideline-advice",
+      "titleZh": "PCI 术前指南参考意见"
+    },
+    {
+      "criticalItems": [
+        {
+          "category": "laboratory",
+          "itemCode": "2160-0",
+          "labelZh": "血清肌酐 / eGFR"
+        }
+      ],
+      "relevantCategories": ["diagnosis", "laboratory"],
+      "relevantItemCodes": ["2160-0", "13457-7", "smoking-status"],
+      "secondaryItems": [],
+      "taskId": "followup-review",
+      "titleZh": "跨就诊复查核对"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "triggers": [
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodes": ["I25.1", "I25.103", "SYN-DX-01"],
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "descriptionZh": "确诊冠脉或合成测试综合征诊断后激活专病包",
+      "id": "synthetic-dx-trigger"
+    }
+  ],
+  "inapplicablePopulations": [
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodes": ["O99.8"],
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "descriptionZh": "妊娠合并症人群不适用",
+      "id": "pregnancy-inapplicable"
+    }
+  ]
+}

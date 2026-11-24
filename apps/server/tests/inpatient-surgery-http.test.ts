@@ -2136,7 +2136,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
         VALUES(?,?,'guide-1','adm-1','pci-stent','req-inflight',1,'{}','{}','f2','automatic','succeeded',?)
       `).run(scope.workspaceId, scope.epoch, now)
 
-      expect(applyMigrations(db).applied).toEqual([migrationFile, '0121_clinical-fact-verification.sql', '0122_local-source-ingestion.sql'])
+      expect(applyMigrations(db).applied).toEqual([migrationFile, '0121_clinical-fact-verification.sql', '0122_local-source-ingestion.sql', '0123_disease-pack-runtime.sql'])
       expect(db.driver.pragma('foreign_key_check')).toEqual([])
       const migratedRows = z.array(z.object({
         request_id: z.string(),

@@ -148,6 +148,34 @@ export class InpatientService {
       idempotencyKey,
     })
   }
+  readDiseasePacks(context: ActorContext, admissionId: string) {
+    return this.workflow.diseasePacks.readInpatientPacks(this, context, admissionId)
+  }
+  toggleDiseasePack(
+    context: ActorContext,
+    admissionId: string,
+    packId: string,
+    body: unknown,
+    idempotencyKey: string,
+  ) {
+    return this.workflow.diseasePacks.toggleInpatientPack(this, context, admissionId, packId, body, idempotencyKey)
+  }
+  readDiseasePackTaskReadiness(context: ActorContext, admissionId: string, packId: string, taskId: string) {
+    return this.workflow.diseasePacks.readInpatientTaskReadiness(this, context, admissionId, packId, taskId)
+  }
+  readDiseasePackTaskFacts(context: ActorContext, admissionId: string, packId: string, taskId: string) {
+    return this.workflow.diseasePacks.readInpatientTaskFacts(this, context, admissionId, packId, taskId)
+  }
+  authorizeDiseasePackTool(context: ActorContext, admissionId: string, packId: string, rawBody: unknown) {
+    return this.workflow.diseasePacks.authorizePackToolInvocation({
+      context,
+      inpatient: this,
+      packId,
+      rawBody,
+      subjectId: admissionId,
+      subjectKind: 'inpatient',
+    })
+  }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)
     this.#workspaces.assertActive(context, context.scenarioRunId)

@@ -1,0 +1,51 @@
+{
+  "stages": [
+    {
+      "entryCondition": {
+        "category": "diagnosis",
+        "itemCodes": ["I25.1", "I25.103", "SYN-DX-01"],
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "id": "baseline-assessment",
+      "order": 1,
+      "orderSetIds": ["cad-admission-baseline"],
+      "questionnaireItemCodes": ["smoking-status"],
+      "taskIds": ["pci-preop-guideline-advice"],
+      "titleEn": "Baseline Assessment Stage",
+      "titleZh": "基线评估期",
+      "topicIds": ["pci-stent"]
+    },
+    {
+      "entryCondition": {
+        "first": {
+          "category": "diagnosis",
+          "itemCodes": ["I25.1", "I25.103", "SYN-DX-01"],
+          "kind": "fact",
+          "presence": "present",
+          "requireEligible": true
+        },
+        "kind": "sequence",
+        "maxGapDays": 30,
+        "requireDistinctEncounters": true,
+        "then": {
+          "category": "laboratory",
+          "itemCodes": ["2160-0"],
+          "kind": "fact",
+          "presence": "present",
+          "requireEligible": true
+        },
+        "timestampField": "effectiveAt"
+      },
+      "id": "cross-encounter-followup",
+      "order": 2,
+      "orderSetIds": ["cad-pci-secondary-prevention"],
+      "questionnaireItemCodes": ["smoking-status"],
+      "taskIds": ["followup-review"],
+      "titleEn": "Cross-Encounter Followup Stage",
+      "titleZh": "跨就诊复查期",
+      "topicIds": ["cad-dapt-and-secondary-prevention"]
+    }
+  ]
+}

@@ -312,6 +312,18 @@ const definitions: Array<Omit<OrderSetTemplate, 'fingerprint'>> = [
 export const orderSetTemplates: readonly OrderSetTemplate[] = Object.freeze(definitions.map(definition =>
   orderSetTemplateSchema.parse({ ...definition, fingerprint: canonicalJsonHash(definition) })))
 
+export class UnknownOrderSetTemplateError extends Error {
+  readonly code = 'ORDER_SET_TEMPLATE_NOT_FOUND' as const
+  readonly status = 404 as const
+
+  constructor(readonly templateId: string) {
+    super(`Unknown order set template: ${templateId}`)
+    this.name = 'UnknownOrderSetTemplateError'
+  }
+}
+
 export function orderSetTemplate(id: OrderSetTemplateId): OrderSetTemplate {
-  return orderSetTemplates.find(template => template.id === id)!
+  const found = orderSetTemplates.find(template => template.id === id)
+  if (found === undefined) throw new UnknownOrderSetTemplateError(id)
+  return found
 }

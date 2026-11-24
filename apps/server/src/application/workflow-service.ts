@@ -92,6 +92,7 @@ import { ClinicalScoreService, buildVitalObservationComponents } from './clinica
 import { ClinicalQualityService } from './clinical-quality-service.ts'
 import { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
 import { LocalSourceIngestionService } from './local-source-ingestion-service.ts'
+import { DiseasePackRegistry, DiseasePackRuntimeService } from './disease-pack-runtime-service.ts'
 import { OrderSetDraftService } from './order-set-draft-service.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
 import {
@@ -319,6 +320,7 @@ export class WorkflowService
   readonly localIngestion: LocalSourceIngestionService
   readonly clinicalScores: ClinicalScoreService
   readonly clinicalQuality: ClinicalQualityService
+  readonly diseasePacks: DiseasePackRuntimeService
   /** 专病组套只读草稿预装配；不写入任何正式业务事实。 */
   readonly orderSets: OrderSetDraftService
 
@@ -328,6 +330,11 @@ export class WorkflowService
     commands: CommandExecutor,
     options: {
       consultationRecordingEnabled?: boolean
+      diseasePacks?: readonly unknown[]
+      diseasePackDirs?: readonly string[]
+      diseasePackVerifyFingerprint?: boolean
+      hospitalOverlays?: readonly unknown[]
+      includeBuiltinDraftDiseasePacks?: boolean
       qualityModelAvailable?: boolean
       qualityContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
       consultationRecordingContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
@@ -382,6 +389,20 @@ export class WorkflowService
       outpatientContext: this.#context,
     })
     this.clinicalQuality = new ClinicalQualityService({ commands, database, factLedger: this.clinicalFactLedger, fhir, outpatientContext: this.#context, scores: this.clinicalScores })
+    this.diseasePacks = new DiseasePackRuntimeService({
+      commands,
+      database,
+      factLedger: this.clinicalFactLedger,
+      fhir,
+      outpatientContext: this.#context,
+      registry: new DiseasePackRegistry({
+        ...(options.includeBuiltinDraftDiseasePacks === undefined ? {} : { includeBuiltinDraftPacks: options.includeBuiltinDraftDiseasePacks }),
+        ...(options.hospitalOverlays === undefined ? {} : { overlays: options.hospitalOverlays }),
+        ...(options.diseasePackDirs === undefined ? {} : { packDirs: options.diseasePackDirs }),
+        ...(options.diseasePacks === undefined ? {} : { packs: options.diseasePacks }),
+        ...(options.diseasePackVerifyFingerprint === undefined ? {} : { verifyFingerprint: options.diseasePackVerifyFingerprint }),
+      }),
+    })
     this.insurance = new InsuranceService(database, commands, {
       now: this.#now,
       readSource: (context, target) => {

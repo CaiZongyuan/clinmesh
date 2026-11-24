@@ -143,6 +143,25 @@ export function useInpatientAgentTools(input: Input) {
         'Run read-only two-tier clinical quality preflight (inpatient-order, inpatient-pci-plan, or inpatient-discharge).'),
       'inpatient.order-set-drafts.read': queryAction('inpatient.order-set-drafts.read', '/order-set-drafts', ['inpatient-doctor'], ['orders', 'investigations'],
         'Read version-bound inpatient order-set candidate drafts screened against allergies, eGFR, and nursing vitals.'),
+      'inpatient.disease-packs.read': queryAction('inpatient.disease-packs.read', '/disease-packs', clinicalRoles, ['admission', 'orders', 'surgery', 'discharge', 'record'],
+        'Read active/available declarative disease packs, stages, task readiness, and tool policies for the current inpatient.'),
+      'inpatient.disease-pack-task-facts.read': {
+        description: 'Read task-scoped clinical fact ledger and readiness checks for a specific disease pack and task on the current inpatient.',
+        parameters: parameters('inpatient.disease-pack-task-facts.read'),
+        enabled: role === 'inpatient-doctor' && ['admission', 'orders', 'surgery', 'discharge', 'record'].includes(input.stage),
+        execute(raw, signal) {
+          const parsed = parseAgentToolInput('inpatient.disease-pack-task-facts.read', raw)
+          const frame = readCurrent()
+          if (frame.session.actor.roleCode !== 'inpatient-doctor' || !['admission', 'orders', 'surgery', 'discharge', 'record'].includes(frame.stage)) {
+            throw new Error(t('当前岗位或环节不能读取该资料。', 'This role or stage cannot read this resource.'))
+          }
+          return apiGet(
+            `/api/his/v1/inpatient/admissions/${encodeURIComponent(frame.admission.id)}/disease-packs/${encodeURIComponent(parsed.packId)}/tasks/${encodeURIComponent(parsed.taskId)}/facts`,
+            getHisOperation('inpatient.disease-pack-task-facts.read').output,
+            signal,
+          )
+        },
+      },
       'inpatient.report.acknowledge.propose': {
         description: 'Prepare acknowledgement of the current inpatient report. Imaging requires an image actually displayed for the doctor.',
         parameters: parameters('inpatient.report.acknowledge.propose'),

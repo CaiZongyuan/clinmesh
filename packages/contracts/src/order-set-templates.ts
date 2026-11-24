@@ -13,7 +13,7 @@ export const outpatientOrderSetTemplateIds = [
   'chest-pain-stat-workup',
   'cad-pci-secondary-prevention',
 ] as const
-export const orderSetTemplateIdSchema = z.enum(orderSetTemplateIds)
+export const orderSetTemplateIdSchema = z.string().regex(/^[a-z0-9-]{1,64}$/)
 export type OrderSetTemplateId = z.infer<typeof orderSetTemplateIdSchema>
 
 const scope = z.enum(['outpatient', 'inpatient'])
@@ -199,7 +199,7 @@ const facts = strict({
 export type OrderSetPatientFacts = z.infer<typeof facts>
 
 export const orderSetDraftBundleSchema = strict({
-  drafts: z.array(draft).min(1).max(orderSetTemplateIds.length),
+  drafts: z.array(draft).min(1).max(64),
   evaluatedAt: isoTime,
   patientFacts: facts,
   target: z.discriminatedUnion('scope', [
@@ -212,7 +212,7 @@ export type OrderSetDraftBundle = z.infer<typeof orderSetDraftBundleSchema>
 export const orderSetTemplateListQuerySchema = strict({ scope: scope.optional() })
 export type OrderSetTemplateListQuery = z.infer<typeof orderSetTemplateListQuerySchema>
 
-export const orderSetTemplateListSchema = strict({ items: z.array(orderSetTemplateSchema).min(1).max(orderSetTemplateIds.length) })
+export const orderSetTemplateListSchema = strict({ items: z.array(orderSetTemplateSchema).min(1).max(64) })
 export type OrderSetTemplateList = z.infer<typeof orderSetTemplateListSchema>
 
 const keyId = z.string().min(1).max(64)
