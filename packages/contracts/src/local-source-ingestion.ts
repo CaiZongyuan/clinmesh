@@ -224,13 +224,30 @@ export interface SourceSystemLedgerSnapshot {
   facts: readonly ClinicalFact[]
 }
 
+function normalizeTimestampSortToken(iso: string | null): string {
+  if (!iso) return ''
+  const ms = Date.parse(iso)
+  return Number.isNaN(ms) ? iso : String(ms).padStart(16, '0')
+}
+
+function timestampsEqualUtc(left: string | null, right: string | null): boolean {
+  if (left === right) return true
+  if (left === null || right === null) return false
+  const leftMs = Date.parse(left)
+  const rightMs = Date.parse(right)
+  if (!Number.isNaN(leftMs) && !Number.isNaN(rightMs)) {
+    return leftMs === rightMs
+  }
+  return false
+}
+
 function stableFactSortKey(fact: ClinicalFact): string {
   return [
     fact.category,
     fact.itemCode.system,
     fact.itemCode.code,
-    fact.effectiveAt ?? '',
-    fact.reportedAt ?? '',
+    normalizeTimestampSortToken(fact.effectiveAt),
+    normalizeTimestampSortToken(fact.reportedAt),
     fact.recordStatus,
     fact.provenance.recordVersion,
     JSON.stringify(fact.value.normalizedValue),
@@ -312,10 +329,10 @@ export function evaluateSourceAgnosticismResult(
         `${label} specimenOrSite mismatch: ${JSON.stringify(l.specimenOrSite)} vs ${JSON.stringify(r.specimenOrSite)}`,
       )
     }
-    if (l.effectiveAt !== r.effectiveAt) {
+    if (!timestampsEqualUtc(l.effectiveAt, r.effectiveAt)) {
       mismatches.push(`${label} effectiveAt mismatch: ${String(l.effectiveAt)} vs ${String(r.effectiveAt)}`)
     }
-    if (l.reportedAt !== r.reportedAt) {
+    if (!timestampsEqualUtc(l.reportedAt, r.reportedAt)) {
       mismatches.push(`${label} reportedAt mismatch: ${String(l.reportedAt)} vs ${String(r.reportedAt)}`)
     }
     if (l.recordStatus !== r.recordStatus) {

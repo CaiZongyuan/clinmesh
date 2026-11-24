@@ -25,14 +25,31 @@
     {
       "criticalItems": [
         {
+          "alternateItemCodes": ["18262-6", "2089-1", "1700303A"],
           "category": "laboratory",
-          "itemCode": "2160-0",
-          "labelZh": "血清肌酐 / eGFR"
+          "itemCode": "13457-7",
+          "labelZh": "低密度脂蛋白胆固醇 (LDL-C)"
         }
       ],
-      "relevantCategories": ["diagnosis", "laboratory"],
-      "relevantItemCodes": ["2160-0", "13457-7", "smoking-status"],
-      "secondaryItems": [],
+      "relevantCategories": ["medication"],
+      "relevantItemCodes": ["13457-7", "8480-6", "8462-4", "discharge-time"],
+      "secondaryItems": [
+        {
+          "category": "vital-sign",
+          "itemCode": "8480-6",
+          "labelZh": "收缩压"
+        },
+        {
+          "category": "vital-sign",
+          "itemCode": "8462-4",
+          "labelZh": "舒张压"
+        },
+        {
+          "alternateItemCodes": ["18842-5", "discharge-summary"],
+          "itemCode": "discharge-time",
+          "labelZh": "出院时间"
+        }
+      ],
       "taskId": "followup-review",
       "titleZh": "跨就诊复查核对"
     }

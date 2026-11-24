@@ -497,6 +497,21 @@ describe('Intra-Hospital Second Source System, Patient Quarantine & Batch Comple
     expect(primaryLedger.facts).toHaveLength(4)
     expect(simV2Ledger.facts).toHaveLength(4)
 
+    // Verify AC37: completed & matched ingested batches are persisted into L1 FHIR Repository (Observation + Provenance) without ledger duplication
+    const ac37Scope = { workspaceId: scenario.workspaceId, epoch: scenario.epoch } as const
+    const primaryFhirObs = fixture.runtime.fhir.search(
+      ac37Scope,
+      'Observation',
+      new URLSearchParams({ _count: '100', patient: `Patient/${visitPrimary.patientId}` }),
+    ).resources.filter(r => r.id.startsWith('l0-'))
+    expect(primaryFhirObs).toHaveLength(4)
+    const primaryFhirProv = fixture.runtime.fhir.search(
+      ac37Scope,
+      'Provenance',
+      new URLSearchParams({ _count: '100', target: `Observation/${primaryFhirObs[0]!.id}` }),
+    ).resources
+    expect(primaryFhirProv).toHaveLength(1)
+
     const ac37Result = compareSourceSystemLedgers({
       leftSourceSystemId: PRIMARY_LOCAL_SOURCE_SYSTEM_ID,
       leftLedger: primaryLedger,
@@ -619,7 +634,15 @@ describe('Intra-Hospital Second Source System, Patient Quarantine & Batch Comple
     expect(chunk1Data.batch.expectedItemCount).toBe(10)
     expect(chunk1Data.visibleInClinicalLedger).toBe(false)
 
-    // Verify 0 records from incomplete batch are visible to doctor, agent ledger tool, or scores
+    // Verify 0 records from incomplete batch are visible to doctor, L1 FHIR Observation, agent ledger tool, or scores
+    const ac39Scope = { workspaceId: scenario.workspaceId, epoch: scenario.epoch } as const
+    const fhirObsWhileIncomplete = fixture.runtime.fhir.search(
+      ac39Scope,
+      'Observation',
+      new URLSearchParams({ _count: '100', patient: `Patient/${patientADemographics.id}` }),
+    ).resources.filter(r => r.id.startsWith('l0-'))
+    expect(fhirObsWhileIncomplete).toHaveLength(0)
+
     const doctorLedgerWhileIncomplete = await fixture.read(
       'doctor',
       `/api/his/v1/outpatient/cases/${visitA.caseId}/clinical-fact-ledger`,
@@ -836,6 +859,14 @@ describe('Intra-Hospital Second Source System, Patient Quarantine & Batch Comple
         reference: `IdentityQuarantine/${quarantinedData.identityCandidate.candidateId}`,
       }),
     )
+
+    // Now Patient A's L1 FHIR & ClinicalFactLedger include all released/matched L0 records without duplication
+    const patientAFhirObsAfterMerge = fixture.runtime.fhir.search(
+      scope,
+      'Observation',
+      new URLSearchParams({ _count: '100', patient: `Patient/${patientADemographics.id}` }),
+    ).resources.filter(r => r.id.startsWith('l0-'))
+    expect(patientAFhirObsAfterMerge).toHaveLength(11)
 
     // Now Patient A's ledger includes the released TG observation
     const ledgerAfterMerge = await fixture.read(

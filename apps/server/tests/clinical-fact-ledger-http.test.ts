@@ -501,12 +501,31 @@ describe('Clinical Fact Ledger & Fact Verification HTTP integration (S2 #555)', 
     )
     expect(pharmacistVerifyRes.status).toBe(403)
 
-    // Responsible doctor formally verifies external severe creatinine (3.8 mg/dL), plus tests idempotent replay
+    // Mismatched expectedSourceVersion must fail cleanly with 409 CLINICAL_FACT_VERSION_CONFLICT
+    const versionConflictRes = await fixture.request(
+      'doctor',
+      `/api/his/v1/outpatient/cases/${visit.caseId}/clinical-fact-verifications`,
+      {
+        factId: extCrFact.factId,
+        decision: 'verified',
+        expectedSourceVersion: '999',
+        note: '错误来源版本验证',
+      },
+    )
+    expect(versionConflictRes.status).toBe(409)
+    expect(apiErrorSchema.parse(await versionConflictRes.json()).error.code).toBe('CLINICAL_FACT_VERSION_CONFLICT')
+
+    // Responsible doctor formally verifies external severe creatinine (3.8 mg/dL) with matching expectedSourceVersion, plus tests idempotent replay
     const verifyKey = randomUUID()
     const verifyRes = await fixture.request(
       'doctor',
       `/api/his/v1/outpatient/cases/${visit.caseId}/clinical-fact-verifications`,
-      { factId: extCrFact.factId, decision: 'verified', note: '已核对患者携带来院外院化验单原件' },
+      {
+        factId: extCrFact.factId,
+        decision: 'verified',
+        expectedSourceVersion: extCrFact.provenance.recordVersion,
+        note: '已核对患者携带来院外院化验单原件',
+      },
       verifyKey,
     )
     expect(verifyRes.status).toBe(200)
@@ -519,7 +538,12 @@ describe('Clinical Fact Ledger & Fact Verification HTTP integration (S2 #555)', 
     const replayRes = await fixture.request(
       'doctor',
       `/api/his/v1/outpatient/cases/${visit.caseId}/clinical-fact-verifications`,
-      { factId: extCrFact.factId, decision: 'verified', note: '已核对患者携带来院外院化验单原件' },
+      {
+        factId: extCrFact.factId,
+        decision: 'verified',
+        expectedSourceVersion: extCrFact.provenance.recordVersion,
+        note: '已核对患者携带来院外院化验单原件',
+      },
       verifyKey,
     )
     expect(replayRes.status).toBe(200)
@@ -690,11 +714,29 @@ describe('Clinical Fact Ledger & Fact Verification HTTP integration (S2 #555)', 
     const nurseIpForbidden = await fixture.request('ward-nurse', `/api/his/v1/inpatient/admissions/${conflictStay.admissionId}/clinical-fact-ledger`)
     expect(nurseIpForbidden.status).toBe(403)
 
-    // Inpatient doctor formally verifies confB (3.4 mg/dL)
+    // Inpatient doctor mismatched expectedSourceVersion fails 409, then matching version verifies confB (3.4 mg/dL)
+    const ipVersionConflict = await fixture.request(
+      'inpatient-doctor',
+      `/api/his/v1/inpatient/admissions/${conflictStay.admissionId}/clinical-fact-verifications`,
+      {
+        factId: confB.factId,
+        decision: 'verified',
+        expectedSourceVersion: '999',
+        note: '错版本检查',
+      },
+    )
+    expect(ipVersionConflict.status).toBe(409)
+    expect(apiErrorSchema.parse(await ipVersionConflict.json()).error.code).toBe('CLINICAL_FACT_VERSION_CONFLICT')
+
     const ipVerifyRes = await fixture.request(
       'inpatient-doctor',
       `/api/his/v1/inpatient/admissions/${conflictStay.admissionId}/clinical-fact-verifications`,
-      { factId: confB.factId, decision: 'verified', note: '检验科复核确认3.4mg/dL准确' },
+      {
+        factId: confB.factId,
+        decision: 'verified',
+        expectedSourceVersion: confB.provenance.recordVersion,
+        note: '检验科复核确认3.4mg/dL准确',
+      },
     )
     expect(ipVerifyRes.status).toBe(200)
     const ipVerified = clinicalFactVerificationResponseSchema.parse(await ipVerifyRes.json())
@@ -704,5 +746,26 @@ describe('Clinical Fact Ledger & Fact Verification HTTP integration (S2 #555)', 
     // Verified confB now participates cleanly in inpatient clinical scores
     const ipScores = await fixture.read('inpatient-doctor', `${conflictStay.path}/clinical-scores`, clinicalScoreBundleSchema)
     expect(ipScores.scores.find(s => s.id === 'ckd-epi-2021-egfr')?.status).toBe('complete')
+
+    // Expired local observation is marked isExpiredAtAsOf & excluded from eligibleForScoringAndRedLine (AC2 / D1)
+    insertLabReport(fixture, {
+      workspaceId: scenario.workspaceId,
+      epoch: scenario.epoch,
+      caseId: conflictStay.admissionId,
+      encounterId: conflictStay.admissionId,
+      patientId: conflictStay.patientId,
+      authoredAt: '2026-01-01T08:00:00+08:00',
+      reportedAt: '2026-01-01T09:00:00+08:00',
+      observations: [{ id: 'obs-ip-expired-cr', coding: [{ code: '2160-0', display: '血清肌酐' }], valueQuantity: { value: 1.5, unit: 'mg/dL' } }],
+    })
+    const expiredCheckLedger = await fixture.read(
+      'inpatient-doctor',
+      `/api/his/v1/inpatient/admissions/${conflictStay.admissionId}/clinical-fact-ledger?itemCodes=2160-0`,
+      clinicalFactLedgerSchema,
+    )
+    const expiredCrFact = expiredCheckLedger.facts.find(f => f.provenance.recordId === 'obs-ip-expired-cr')!
+    expect(expiredCrFact.isExpiredAtAsOf).toBe(true)
+    expect(expiredCrFact.eligibleForScoringAndRedLine).toBe(false)
+    expect(expiredCrFact.ineligibleReasons).toContain('expired')
   })
 })

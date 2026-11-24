@@ -302,7 +302,6 @@ function invalidInputResponse(context: Context, message = 'The request is invali
 
 const verificationRequestBodySchema = z.union([
   z.object({
-    expectedVersions: z.record(z.string(), z.string()).optional(),
     input: recordClinicalFactVerificationBodySchema,
   }).strict().transform(body => body.input),
   recordClinicalFactVerificationBodySchema,
@@ -310,7 +309,6 @@ const verificationRequestBodySchema = z.union([
 
 const confirmQuarantineMergeRequestBodySchema = z.union([
   z.object({
-    expectedVersions: z.record(z.string(), z.string()).optional(),
     input: confirmIdentityQuarantineMergeBodySchema,
   }).strict().transform(body => body.input),
   confirmIdentityQuarantineMergeBodySchema,
@@ -325,7 +323,6 @@ const ingestLocalBatchRequestBodySchema = z.union([
 
 const diseasePackToggleRequestBodySchema = z.union([
   z.object({
-    expectedVersions: z.record(z.string(), z.string()).optional(),
     input: diseasePackToggleBodySchema,
   }).strict().transform(body => body.input),
   diseasePackToggleBodySchema,

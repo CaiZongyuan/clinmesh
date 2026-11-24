@@ -485,14 +485,6 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
       ? this.#context.outpatientBilling.priceForPublishedLaboratory({ id: selection.catalog.item_id, version: selection.catalog.version, priceFen: selection.catalog.price_fen })
       : this.#context.outpatientBilling.priceForLaboratory(laboratoryService)
     const now = this.#context.virtualTime(input.context)
-    if (laboratoryService !== undefined) {
-      this.#assertAdultLaboratoryServiceApplicable(
-        input.context,
-        outpatientCase.patient_id,
-        laboratoryService,
-        now,
-      )
-    }
     if (laboratoryService === undefined) {
       this.#assertInvestigationGenerationSupported(
         input.context,
@@ -504,6 +496,12 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
       this.#assertLaboratoryServiceGenerationSupported(
         input.context,
         outpatientCase.case_id,
+      )
+      this.#assertAdultLaboratoryServiceApplicable(
+        input.context,
+        outpatientCase.patient_id,
+        laboratoryService,
+        now,
       )
     }
     if (!catalogConfig.allowedIndicationCodes.includes(input.indicationCode)) {
@@ -765,14 +763,6 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
       ? undefined
       : laboratoryServiceSnapshotSchema.parse(JSON.parse(state.draft_service_snapshot_json))
     const now = this.#context.virtualTime(input.context)
-    if (laboratoryService !== undefined) {
-      this.#assertAdultLaboratoryServiceApplicable(
-        input.context,
-        outpatientCase.patient_id,
-        laboratoryService,
-        now,
-      )
-    }
     const { catalog, config: catalogConfig } = this.#laboratorySelectionFromSnapshot(
       input.context,
       state.draft_catalog_item_id,
@@ -802,6 +792,12 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
       this.#assertLaboratoryServiceGenerationSupported(
         input.context,
         outpatientCase.case_id,
+      )
+      this.#assertAdultLaboratoryServiceApplicable(
+        input.context,
+        outpatientCase.patient_id,
+        laboratoryService,
+        now,
       )
     }
     if (!catalogConfig.allowedIndicationCodes.includes(state.draft_indication_code)) {

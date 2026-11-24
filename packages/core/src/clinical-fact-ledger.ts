@@ -369,7 +369,9 @@ export function resolveCanonicalItemCode(rawCode: string): string {
 
 export function getPublicValidityDays(itemCode: string): number | null {
   const canonical = resolveCanonicalItemCode(itemCode)
-  return PUBLIC_VALIDITY_DAYS_BY_ITEM_CODE[canonical] ?? null
+  return Object.hasOwn(PUBLIC_VALIDITY_DAYS_BY_ITEM_CODE, canonical)
+    ? PUBLIC_VALIDITY_DAYS_BY_ITEM_CODE[canonical]!
+    : null
 }
 
 export function tightenValidityDays(itemCode: string, overrideDays: number): number {
@@ -779,6 +781,10 @@ function mapVerificationStatus(concept: FhirCodeableConceptLike | undefined): {
   return { verificationStatus: 'provisional', presence: 'present', recordStatus: 'final' }
 }
 
+function readOwnRecordValue<T>(map: Readonly<Record<string, T>> | undefined, key: string): T | undefined {
+  return map !== undefined && Object.hasOwn(map, key) ? map[key] : undefined
+}
+
 function resolveSpecimenOrSite(
   specimenRef: { reference?: string | undefined; display?: string | undefined } | undefined,
   bodySite: FhirCodeableConceptLike | readonly FhirCodeableConceptLike[] | undefined,
@@ -788,7 +794,7 @@ function resolveSpecimenOrSite(
   const specimenId = ref ? ref.replace(/^Specimen\//, '') : null
   const siteEntry = Array.isArray(bodySite) ? bodySite[0] : bodySite
   const label = specimenRef?.display
-    ?? (specimenId ? specimenLabelById?.[specimenId] : undefined)
+    ?? (specimenId ? readOwnRecordValue(specimenLabelById, specimenId) : undefined)
     ?? siteEntry?.coding?.[0]?.display
     ?? siteEntry?.text
     ?? null
@@ -832,18 +838,18 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
   }
 
   const resolveOrderedAtForObs = (obs: FhirObservationLike, report?: FhirDiagnosticReportLike): string | null => {
-    if (input.orderedAtByObservationId?.[obs.id]) return input.orderedAtByObservationId[obs.id]!
-    if (report && input.orderedAtByReportId?.[report.id]) return input.orderedAtByReportId[report.id]!
+    const byObs = readOwnRecordValue(input.orderedAtByObservationId, obs.id)
+    if (byObs) return byObs
+    const byReport = report ? readOwnRecordValue(input.orderedAtByReportId, report.id) : undefined
+    if (byReport) return byReport
     for (const ref of obs.basedOn ?? []) {
-      if (ref.reference && input.orderedAtByRequestRef?.[ref.reference]) {
-        return input.orderedAtByRequestRef[ref.reference]!
-      }
+      const byReq = ref.reference ? readOwnRecordValue(input.orderedAtByRequestRef, ref.reference) : undefined
+      if (byReq) return byReq
     }
     if (report) {
       for (const ref of report.basedOn ?? []) {
-        if (ref.reference && input.orderedAtByRequestRef?.[ref.reference]) {
-          return input.orderedAtByRequestRef[ref.reference]!
-        }
+        const byReq = ref.reference ? readOwnRecordValue(input.orderedAtByRequestRef, ref.reference) : undefined
+        if (byReq) return byReq
       }
     }
     return null
@@ -855,15 +861,15 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
     report?: FhirDiagnosticReportLike,
     componentCode?: string,
   ): string | null => {
-    const prevObsId = input.supersedesObservationId?.[obs.id]
+    const prevObsId = readOwnRecordValue(input.supersedesObservationId, obs.id)
     if (prevObsId) {
       const prevObs = obsById.get(prevObsId)
       const prevVersion = prevObs?.meta?.versionId ?? '1'
-      const prevSourceSystemId = input.sourceSystemIdByObservationId?.[prevObsId] ?? defaultSourceSystemId
+      const prevSourceSystemId = readOwnRecordValue(input.sourceSystemIdByObservationId, prevObsId) ?? defaultSourceSystemId
       return buildFactId(prevSourceSystemId, 'Observation', prevObsId, prevVersion, componentCode)
     }
     if (!report) return null
-    const prevReportId = input.supersedesReportId?.[report.id]
+    const prevReportId = readOwnRecordValue(input.supersedesReportId, report.id)
     if (!prevReportId) return null
     const prevReport = (input.diagnosticReports ?? []).find(r => r.id === prevReportId)
     if (!prevReport) return null
@@ -874,7 +880,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
       if (!prevObs) continue
       const { itemCode } = pickCodingConcept(prevObs.code, prevObs.id, prevObs.id)
       if (itemCode.code === canonicalCode) {
-        const prevSourceSystemId = input.sourceSystemIdByObservationId?.[prevObs.id] ?? defaultSourceSystemId
+        const prevSourceSystemId = readOwnRecordValue(input.sourceSystemIdByObservationId, prevObs.id) ?? defaultSourceSystemId
         return buildFactId(prevSourceSystemId, 'Observation', prevObs.id, prevObs.meta?.versionId ?? '1')
       }
     }
@@ -895,12 +901,12 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
         ? 'amended'
         : 'final'
 
-    const obsSourceSystemId = input.sourceSystemIdByObservationId?.[obs.id] ?? defaultSourceSystemId
+    const obsSourceSystemId = readOwnRecordValue(input.sourceSystemIdByObservationId, obs.id) ?? defaultSourceSystemId
     const orderedAt = resolveOrderedAtForObs(obs, linkedReport)
     const reportedAt = pickTimestamp(obs.issued, linkedReport?.issued)
     const effectiveAt = pickTimestamp(obs.effectiveDateTime, linkedReport?.effectiveDateTime, reportedAt)
     const ingestedAt = pickTimestamp(
-      input.ingestedAtByObservationId?.[obs.id],
+      readOwnRecordValue(input.ingestedAtByObservationId, obs.id),
       obs.issued,
       linkedReport?.issued,
       obs.effectiveDateTime,
@@ -1015,21 +1021,21 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
 
     const recordVersion = report.meta?.versionId ?? '1'
     const { itemCode, method } = pickCodingConcept(report.code, report.id, report.code?.text ?? report.id)
-    const orderedAt = input.orderedAtByReportId?.[report.id]
-      ?? report.basedOn?.map(b => (b.reference ? input.orderedAtByRequestRef?.[b.reference] : undefined)).find(Boolean)
+    const orderedAt = readOwnRecordValue(input.orderedAtByReportId, report.id)
+      ?? report.basedOn?.map(b => (b.reference ? readOwnRecordValue(input.orderedAtByRequestRef, b.reference) : undefined)).find(Boolean)
       ?? null
     const reportedAt = pickTimestamp(report.issued, report.effectiveDateTime)
     const effectiveAt = pickTimestamp(report.effectiveDateTime, reportedAt)
     const ingestedAt = pickTimestamp(report.issued, report.effectiveDateTime, report.meta?.lastUpdated) ?? new Date(0).toISOString()
 
-    const prevReportId = input.supersedesReportId?.[report.id]
+    const prevReportId = readOwnRecordValue(input.supersedesReportId, report.id)
     const prevReport = prevReportId ? (input.diagnosticReports ?? []).find(r => r.id === prevReportId) : undefined
     const supersedesFactId = prevReport
-      ? buildFactId('clinmesh-his-fhir', 'DiagnosticReport', prevReport.id, prevReport.meta?.versionId ?? '1')
+      ? buildFactId(defaultSourceSystemId, 'DiagnosticReport', prevReport.id, prevReport.meta?.versionId ?? '1')
       : null
 
     candidates.push({
-      factId: buildFactId('clinmesh-his-fhir', 'DiagnosticReport', report.id, recordVersion),
+      factId: buildFactId(defaultSourceSystemId, 'DiagnosticReport', report.id, recordVersion),
       category: isExamOrImaging ? 'examination' : 'laboratory',
       itemCode,
       value: {
@@ -1051,7 +1057,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
         recordType: 'DiagnosticReport',
         recordId: report.id,
         recordVersion,
-        sourceSystemId: 'clinmesh-his-fhir',
+        sourceSystemId: defaultSourceSystemId,
       },
       institutionScope: 'local',
       recordStatus,
@@ -1074,7 +1080,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
     const noteText = cond.note?.map(n => n.text).filter(Boolean).join('; ')
 
     candidates.push({
-      factId: buildFactId('clinmesh-his-fhir', 'Condition', cond.id, recordVersion),
+      factId: buildFactId(defaultSourceSystemId, 'Condition', cond.id, recordVersion),
       category: 'diagnosis',
       itemCode,
       value: {
@@ -1090,7 +1096,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
         recordType: 'Condition',
         recordId: cond.id,
         recordVersion,
-        sourceSystemId: 'clinmesh-his-fhir',
+        sourceSystemId: defaultSourceSystemId,
       },
       institutionScope: 'local',
       recordStatus,
@@ -1115,7 +1121,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
     const rawText = reactions.length > 0 ? `${itemCode.display}: ${reactions.join('、')}` : itemCode.display
 
     candidates.push({
-      factId: buildFactId('clinmesh-his-fhir', 'AllergyIntolerance', allergy.id, recordVersion),
+      factId: buildFactId(defaultSourceSystemId, 'AllergyIntolerance', allergy.id, recordVersion),
       category: 'allergy',
       itemCode,
       value: {
@@ -1131,7 +1137,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
         recordType: 'AllergyIntolerance',
         recordId: allergy.id,
         recordVersion,
-        sourceSystemId: 'clinmesh-his-fhir',
+        sourceSystemId: defaultSourceSystemId,
       },
       institutionScope: 'local',
       recordStatus,
@@ -1173,7 +1179,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
     )
 
     candidates.push({
-      factId: buildFactId('clinmesh-his-fhir', med.resourceType, med.id, recordVersion),
+      factId: buildFactId(defaultSourceSystemId, med.resourceType, med.id, recordVersion),
       category: 'medication',
       itemCode,
       value: {
@@ -1189,7 +1195,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
         recordType: med.resourceType,
         recordId: med.id,
         recordVersion,
-        sourceSystemId: 'clinmesh-his-fhir',
+        sourceSystemId: defaultSourceSystemId,
       },
       institutionScope: 'local',
       recordStatus,
@@ -1211,7 +1217,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
     const outcomeText = proc.outcome?.text ?? proc.outcome?.coding?.[0]?.display
 
     candidates.push({
-      factId: buildFactId('clinmesh-his-fhir', 'Procedure', proc.id, recordVersion),
+      factId: buildFactId(defaultSourceSystemId, 'Procedure', proc.id, recordVersion),
       category: 'procedure',
       itemCode,
       value: {
@@ -1227,7 +1233,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
         recordType: 'Procedure',
         recordId: proc.id,
         recordVersion,
-        sourceSystemId: 'clinmesh-his-fhir',
+        sourceSystemId: defaultSourceSystemId,
       },
       institutionScope: 'local',
       recordStatus,
@@ -1636,6 +1642,30 @@ function evaluateQuantityQc(
   return []
 }
 
+function canonicalValueEquals(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true
+  if (typeof left === 'number' && typeof right === 'number') {
+    return Math.abs(left - right) <= NUMBER_EPSILON
+  }
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') {
+    return false
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((entry, idx) => canonicalValueEquals(entry, right[idx]))
+  }
+  const leftObj = left as Record<string, unknown>
+  const rightObj = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftObj).filter(key => leftObj[key] !== undefined).sort()
+  const rightKeys = Object.keys(rightObj).filter(key => rightObj[key] !== undefined).sort()
+  if (leftKeys.length !== rightKeys.length) return false
+  return leftKeys.every(
+    (key, idx) => key === rightKeys[idx] && Object.hasOwn(rightObj, key) && canonicalValueEquals(leftObj[key], rightObj[key]),
+  )
+}
+
 function areFactsContradictory(a: TranscribedClinicalFactCandidate, b: TranscribedClinicalFactCandidate): boolean {
   if (a.presence !== b.presence) return true
   const valA = a.value.normalizedValue
@@ -1650,7 +1680,7 @@ function areFactsContradictory(a: TranscribedClinicalFactCandidate, b: Transcrib
     return Math.abs(valA.value - valB.value) > Math.max(NUMBER_EPSILON, 0.01 * maxAbs)
   }
 
-  return JSON.stringify(valA) !== JSON.stringify(valB)
+  return !canonicalValueEquals(valA, valB)
 }
 
 export interface ClinicalFactLedgerEvaluationInput {
@@ -1852,6 +1882,7 @@ export function evaluateClinicalFactLedger(input: ClinicalFactLedgerEvaluationIn
     if (candidate.presence === 'not-asked') ineligibleReasons.push('not-asked')
     if (latestVer?.decision === 'rejected') ineligibleReasons.push('clinician-rejected')
     if (isExternalUnverified) ineligibleReasons.push('external-unverified')
+    if (isExpiredAtAsOf) ineligibleReasons.push('expired')
 
     if (!isVerifiedByClinician) {
       for (const reason of suspiciousReasons) {

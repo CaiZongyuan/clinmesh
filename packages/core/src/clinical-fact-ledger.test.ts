@@ -491,6 +491,8 @@ describe('clinical-fact-ledger core transcription and evaluation', () => {
 
     expect(ledger.facts[0]?.validityDays).toBe(30)
     expect(ledger.facts[0]?.isExpiredAtAsOf).toBe(true)
+    expect(ledger.facts[0]?.eligibleForScoringAndRedLine).toBe(false)
+    expect(ledger.facts[0]?.ineligibleReasons).toContain('expired')
     expect(ledger.summary.expiredCount).toBe(1)
   })
 
@@ -534,5 +536,70 @@ describe('clinical-fact-ledger core transcription and evaluation', () => {
     expect(ledger.facts[0]?.provenance.recordId).toBe('obs-scr-1')
     expect(ledger.facts[0]?.qualityFlags).toEqual([])
     expect(ledger.facts[0]?.eligibleForScoringAndRedLine).toBe(true)
+  })
+
+  it('propagates custom sourceSystemId across all six local FHIR resource types and detects order-independent conflicts', () => {
+    const candidates = transcribeLocalFhirFacts({
+      allergyIntolerances: [
+        {
+          code: { coding: [{ code: 'allergy-asa', display: '阿司匹林' }] },
+          id: 'all-custom',
+          recordedDate: '2026-08-24T08:00:00+08:00',
+          verificationStatus: { coding: [{ code: 'confirmed' }] },
+        },
+      ],
+      conditions: [
+        {
+          code: { coding: [{ code: 'I25.103', display: '冠心病' }] },
+          id: 'cond-custom',
+          recordedDate: '2026-08-24T08:00:00+08:00',
+          verificationStatus: { coding: [{ code: 'confirmed' }] },
+        },
+      ],
+      diagnosticReports: [
+        {
+          category: [{ coding: [{ code: 'ECG' }] }],
+          code: { coding: [{ code: '11524-6', display: '十二导联心电图' }] },
+          conclusion: '窦性心律',
+          effectiveDateTime: '2026-08-24T08:00:00+08:00',
+          id: 'rep-custom',
+          issued: '2026-08-24T08:05:00+08:00',
+          status: 'final',
+        },
+      ],
+      medications: [
+        {
+          authoredOn: '2026-08-24T08:00:00+08:00',
+          id: 'med-custom',
+          medicationCodeableConcept: { coding: [{ code: 'aspirin', display: '阿司匹林' }] },
+          resourceType: 'MedicationRequest',
+          status: 'active',
+        },
+      ],
+      observations: [
+        {
+          code: { coding: [{ code: '2160-0', display: '血清肌酐' }] },
+          effectiveDateTime: '2026-08-24T08:00:00+08:00',
+          id: 'obs-custom',
+          issued: '2026-08-24T08:05:00+08:00',
+          status: 'final',
+          valueQuantity: { unit: 'umol/L', value: 88 },
+        },
+      ],
+      procedures: [
+        {
+          code: { coding: [{ code: '36.0700', display: 'PCI' }] },
+          id: 'proc-custom',
+          performedDateTime: '2026-08-24T08:10:00+08:00',
+          recorded: '2026-08-24T08:15:00+08:00',
+          status: 'completed',
+        },
+      ],
+      sourceSystemId: 'custom-ward-lis',
+    })
+
+    expect(candidates).toHaveLength(6)
+    expect(candidates.every(c => c.provenance.sourceSystemId === 'custom-ward-lis')).toBe(true)
+    expect(candidates.every(c => c.factId.startsWith('fact:custom-ward-lis:'))).toBe(true)
   })
 })

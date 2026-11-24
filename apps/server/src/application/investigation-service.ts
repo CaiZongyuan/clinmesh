@@ -877,6 +877,7 @@ export class InvestigationService {
       string,
       ReturnType<typeof selectAdultReferenceRule>
     >()
+    let adultRuleError: AdultReferenceApplicabilityError | undefined
     if (service.sourceDataset?.datasetId === 'laboratory-cn') {
       try {
         for (const definition of service.reportDefinition.results) {
@@ -888,7 +889,7 @@ export class InvestigationService {
         }
       } catch (error) {
         if (!(error instanceof AdultReferenceApplicabilityError)) throw error
-        throw new InvestigationGenerationError('INVESTIGATION_OUTPUT_INVALID', error.message)
+        adultRuleError = error
       }
     }
     const priorCodings = this.#priorEncounterObservationCodings(workspaceId, epoch, row.encounter_id)
@@ -926,6 +927,9 @@ export class InvestigationService {
     )
     if (profile.source.providerId === 'clinmesh-authored' && missing.length > 0) {
       throw new InvestigationGenerationError('INVESTIGATION_UNSUPPORTED', '本病例未预置该检查')
+    }
+    if (adultRuleError !== undefined) {
+      throw new InvestigationGenerationError('INVESTIGATION_OUTPUT_INVALID', adultRuleError.message)
     }
     const basePayload = {
       caseRevision: row.synthetic_case_revision,

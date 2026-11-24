@@ -1,3 +1,4 @@
+import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import {
   confirmIdentityQuarantineMergeBodySchema,
   confirmIdentityQuarantineMergeResponseSchema,
@@ -39,6 +40,7 @@ import {
 } from '../infrastructure/sqlite/fhir-repository.ts'
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import type { OutpatientWorkflowContext } from './outpatient-workflow-context.ts'
+import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 
 export class LocalSourceIngestionError extends Error {
   constructor(
@@ -123,6 +125,19 @@ const ingestionRecordSubjectRowSchema = z.object({
   fhir_observation_json: z.string(),
 }).strict()
 
+const ingestionRecordProjectRowSchema = z.object({
+  ingestion_record_id: z.string(),
+  source_system_id: z.string(),
+  fhir_observation_json: z.string(),
+  provenance_json: z.string(),
+}).strict()
+
+const basedOnEntrySchema = z.object({
+  display: z.string().optional(),
+  identifier: z.unknown().optional(),
+  reference: z.string().optional(),
+}).loose()
+
 const QUARANTINE_ALLOWED_ROLES = new Set(['administrator', 'registrar'])
 
 function assertRole(context: ActorContext, allowed: ReadonlySet<string>): void {
@@ -141,11 +156,7 @@ function extractPatientDemographics(rawContent: unknown): {
   nationalId: string | null
   phone: string | null
 } {
-  const parsed = fhirPatientContentSchema.safeParse(rawContent)
-  if (!parsed.success) {
-    return { fullName: null, birthDate: null, nationalId: null, phone: null }
-  }
-  const p = parsed.data
+  const p = fhirPatientContentSchema.parse(rawContent)
   const nameEntry = p.name?.[0]
   const fullName = nameEntry?.text?.trim()
     || [nameEntry?.family ?? '', ...(nameEntry?.given ?? [])].join('').trim()
@@ -317,7 +328,7 @@ export class LocalSourceIngestionService {
       let identityCandidate: PatientIdentityCandidate
       if (existingQuarantine) {
         const existingPayload = localIngestionPatientRefSchema.parse(JSON.parse(existingQuarantine.patient_payload_json))
-        if (JSON.stringify(existingPayload) !== JSON.stringify(patientRef)) {
+        if (canonicalJsonHash(existingPayload) !== canonicalJsonHash(patientRef)) {
           throw new LocalSourceIngestionError(
             'INGESTION_PATIENT_PAYLOAD_CONFLICT',
             `Batch ${parsedBody.batchId} received conflicting demographics for externalPatientId ${patientRef.externalPatientId}`,
@@ -471,6 +482,10 @@ export class LocalSourceIngestionService {
         ingestedAt,
       })
 
+      const projectedEffects = complete && assignedPatientId !== null
+        ? this.#projectBatchRecordsToFhir(input.context, parsedBody.batchId, assignedPatientId)
+        : []
+
       return {
         data: {
           batch: batchSummary,
@@ -489,6 +504,7 @@ export class LocalSourceIngestionService {
             reference: `IdentityQuarantine/${identityCandidate.candidateId}`,
             versionId: '1',
           },
+          ...projectedEffects,
         ],
       }
     })
@@ -525,7 +541,7 @@ export class LocalSourceIngestionService {
                  resolved_at, note, created_at
           FROM local_ingestion_quarantine
           WHERE ${clauses.join(' AND ')}
-          ORDER BY created_at DESC, candidate_id ASC
+          ORDER BY julianday(created_at) DESC, candidate_id ASC
         `).all(...params),
       )
 
@@ -683,16 +699,35 @@ export class LocalSourceIngestionService {
           WHERE workspace_id = ? AND epoch = ? AND ingestion_record_id = ?
         `)
         for (const rec of records) {
-          const parsedObs = JSON.parse(rec.fhir_observation_json) as Record<string, unknown>
-          parsedObs['subject'] = { reference: `Patient/${targetPatientId}` }
+          const parsedObs = fhirResourceSchema.parse(JSON.parse(rec.fhir_observation_json))
+          const updatedObs = {
+            ...parsedObs,
+            subject: { reference: `Patient/${targetPatientId}` },
+          }
           updateRecordStmt.run(
             targetPatientId,
-            JSON.stringify(parsedObs),
+            JSON.stringify(updatedObs),
             input.context.workspaceId,
             input.context.epoch,
             rec.ingestion_record_id,
           )
         }
+
+        const completeBatchRows = z.array(z.object({ batch_id: z.string().min(1) }).strict()).parse(
+          this.#database.driver.prepare(`
+            SELECT DISTINCT r.batch_id
+            FROM local_ingestion_record AS r
+            JOIN local_ingestion_batch AS b
+              ON b.workspace_id = r.workspace_id
+             AND b.epoch = r.epoch
+             AND b.batch_id = r.batch_id
+            WHERE r.workspace_id = ? AND r.epoch = ? AND r.candidate_id = ? AND b.status = 'complete'
+            ORDER BY r.batch_id ASC
+          `).all(input.context.workspaceId, input.context.epoch, input.candidateId),
+        )
+        const projectedEffects = completeBatchRows.flatMap(batchRow => (
+          this.#projectBatchRecordsToFhir(input.context, batchRow.batch_id, targetPatientId)
+        ))
 
         const updatedRow = quarantineRowSchema.parse(
           this.#database.driver.prepare(`
@@ -728,6 +763,7 @@ export class LocalSourceIngestionService {
               reference: `IdentityQuarantine/${input.candidateId}`,
               versionId: '2',
             },
+            ...projectedEffects,
           ],
         }
       }
@@ -829,5 +865,88 @@ export class LocalSourceIngestionService {
       })
     }
     return entries
+  }
+
+  #hasFhirResource(context: RepositoryContext, resourceType: string, resourceId: string): boolean {
+    try {
+      this.#fhir.read(context, resourceType, resourceId)
+      return true
+    } catch (error) {
+      if (error instanceof FhirRepositoryError && error.code === 'NOT_FOUND') return false
+      throw error
+    }
+  }
+
+  #projectBatchRecordsToFhir(
+    context: RepositoryContext,
+    batchId: string,
+    targetPatientId: string,
+  ): Array<{ kind: 'created' | 'updated'; reference: string; versionId: string }> {
+    const rows = z.array(ingestionRecordProjectRowSchema).parse(
+      this.#database.driver.prepare(`
+        SELECT ingestion_record_id, source_system_id, fhir_observation_json, provenance_json
+        FROM local_ingestion_record
+        WHERE workspace_id = ? AND epoch = ? AND batch_id = ?
+        ORDER BY rowid ASC
+      `).all(context.workspaceId, context.epoch, batchId),
+    )
+
+    const effects: Array<{ kind: 'created' | 'updated'; reference: string; versionId: string }> = []
+    for (const row of rows) {
+      const parsedObs = fhirResourceSchema.parse(JSON.parse(row.fhir_observation_json))
+      const parsedProv = fhirResourceSchema.parse(JSON.parse(row.provenance_json))
+      if (this.#hasFhirResource(context, 'Provenance', parsedProv.id)) {
+        continue
+      }
+
+      const rawBasedOn = parsedObs['basedOn']
+      const sanitizedBasedOn = Array.isArray(rawBasedOn)
+        ? z.array(basedOnEntrySchema).parse(rawBasedOn).map(entry => {
+            if (typeof entry.reference === 'string' && entry.reference.startsWith('ServiceRequest/')) {
+              const srId = entry.reference.slice('ServiceRequest/'.length)
+              if (!this.#hasFhirResource(context, 'ServiceRequest', srId)) {
+                return {
+                  display: srId,
+                  identifier: {
+                    system: `urn:clinmesh:local-source:${row.source_system_id}:order`,
+                    value: srId,
+                  },
+                }
+              }
+            }
+            return entry
+          })
+        : undefined
+
+      const obsForFhir = fhirResourceSchema.parse({
+        ...parsedObs,
+        subject: { reference: `Patient/${targetPatientId}` },
+        ...(sanitizedBasedOn !== undefined ? { basedOn: sanitizedBasedOn } : {}),
+      })
+
+      let existingObsVersion: string | undefined
+      try {
+        existingObsVersion = this.#fhir.read(context, 'Observation', obsForFhir.id).meta?.versionId
+      } catch (error) {
+        if (!(error instanceof FhirRepositoryError && error.code === 'NOT_FOUND')) throw error
+      }
+
+      const committedObs = existingObsVersion === undefined
+        ? this.#fhir.create(context, obsForFhir)
+        : this.#fhir.update(context, obsForFhir, existingObsVersion)
+      effects.push({
+        kind: existingObsVersion === undefined ? 'created' : 'updated',
+        reference: `Observation/${committedObs.id}`,
+        versionId: committedObs.meta?.versionId ?? '1',
+      })
+
+      const committedProv = this.#fhir.createImmutable(context, parsedProv)
+      effects.push({
+        kind: 'created',
+        reference: `Provenance/${committedProv.id}`,
+        versionId: committedProv.meta?.versionId ?? '1',
+      })
+    }
+    return effects
   }
 }

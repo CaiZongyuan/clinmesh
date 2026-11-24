@@ -99,9 +99,11 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
     verifyFingerprint?: boolean
     withOverlay?: unknown
     withGuidelineCorpus?: boolean
+    skipSyntheticPack?: boolean
   } = {}) {
     const prepared = await preparePciPaymentDrgFixture()
     cleanups.push(() => rm(prepared.directory, { recursive: true, force: true }))
+    const modelCalls: Array<{ feature: string }> = []
 
     if (options.withGuidelineCorpus) {
       const guidelineDbPath = join(prepared.directory, 'guidelines.sqlite')
@@ -116,6 +118,7 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
         fetch: async (_url, init) => {
           const body = JSON.parse(String(init?.body))
           const feature: string = body.response_format?.json_schema?.name ?? body.tools?.[0]?.function?.name
+          modelCalls.push({ feature })
           const input = JSON.parse(body.messages[1].content) as { guidelines?: Array<{ id: string }> }
           const fallback = feature === 'inpatient_drg_recommendation'
             ? {
@@ -164,7 +167,9 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
 
     const dshSecret = 'test-dsh-bridge-secret-with-at-least-32-characters'
     prepared.options.dshBridgeSecret = dshSecret
-    prepared.options.diseasePackDirs = [SYNTHETIC_PACK_DIR]
+    if (!options.skipSyntheticPack) {
+      prepared.options.diseasePackDirs = [SYNTHETIC_PACK_DIR]
+    }
     if (options.verifyFingerprint !== undefined) {
       prepared.options.diseasePackVerifyFingerprint = options.verifyFingerprint
     }
@@ -174,7 +179,7 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
 
     const fixture = await createPciPaymentDrgFixture(prepared)
     cleanups.push(() => fixture.runtime.close())
-    return { dshSecret, fixture, prepared }
+    return { dshSecret, fixture, modelCalls, prepared }
   }
 
   async function startOutpatientVisitForDoctor(fixture: PciPaymentDrgFixture, chiefComplaint = '胸闷待查') {
@@ -320,6 +325,34 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
     } catch (error) {
       expect((error as DiseasePackValidationError).code).toBe('PACK_CODE_FORBIDDEN')
     }
+
+    // Default verifyFingerprint=true must reject a tampered manifest fingerprint even when option is omitted
+    const tamperedDir = await mkdtemp(join(tmpdir(), 'clinmesh-tampered-pack-'))
+    cleanups.push(() => rm(tamperedDir, { recursive: true, force: true }))
+    await cp(SYNTHETIC_PACK_DIR, tamperedDir, { recursive: true })
+    await writeFile(join(tamperedDir, 'manifest.json'), JSON.stringify({
+      dependencies: [],
+      fingerprint: 'f'.repeat(64),
+      id: 'tampered-pack',
+      packType: 'recognition',
+      specialty: 'synthetic-medicine',
+      status: 'active',
+      supportedTasks: ['early-triage-recognition'],
+      titleEn: 'Tampered Pack',
+      titleZh: '篡改校验包',
+      version: '1.0.0',
+    }))
+    await writeFile(join(tamperedDir, 'recognition-card.json'), JSON.stringify({
+      recognitionCard: {
+        differentialPackIds: [],
+        escalationGuidanceZh: '提示急诊科进一步检查',
+        id: 'tamper-card',
+        summaryZh: '摘要',
+        titleZh: '标题',
+      },
+    }))
+    expect(() => new DiseasePackRegistry({ includeBuiltinDraftPacks: false, packDirs: [tamperedDir] }))
+      .toThrow(DiseasePackValidationError)
   })
 
   it('AC5: applies 3-layer overlay localization & safety tightening, rejects overlay weakening', async () => {
@@ -457,11 +490,11 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
     expect(auditCount.cnt).toBeGreaterThanOrEqual(1)
   })
 
-  it('AC20 & AC32: enforces PCI pre-op creatinine red-line refusal, suspicious rejection, smoking annotation & task-scoped filtering', async () => {
-    const { fixture } = await setupRuntimeWithSyntheticPack({ verifyFingerprint: true, withGuidelineCorpus: true })
+  it('AC20 & AC32: enforces PCI pre-op creatinine red-line refusal, pre-LLM automatic block, suspicious rejection, smoking annotation & task-scoped filtering', async () => {
+    const { fixture, modelCalls } = await setupRuntimeWithSyntheticPack({ withGuidelineCorpus: true })
     const stay = await fixture.preparePciAdmission([])
 
-    // 1. Missing creatinine -> readiness returns missing-critical AND guideline-advice/request refuses 409 (0 model calls)
+    // 1. Missing creatinine -> readiness returns missing-critical, automatic advice starts 'blocked', dispatchPending() runs 0 model calls, AND manual request refuses 409
     const initialReadiness = await fixture.read(
       'inpatient-doctor',
       `${stay.path}/disease-packs/synthetic-test-syndrome/tasks/pci-preop-guideline-advice/readiness`,
@@ -476,6 +509,13 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
       `${stay.path}/guideline-advice/${stay.requestId}`,
       inpatientGuidelineAdviceSchema,
     )
+    expect(initialAdvice.status).toBe('blocked')
+    expect(initialAdvice.failureCode).toBe('TASK_READINESS_CRITICAL_MISSING')
+    expect(initialAdvice.result).toBeNull()
+
+    await fixture.runtime.dispatchPending()
+    expect(modelCalls).toHaveLength(0)
+
     const blockedDraft = await fixture.request(
       'inpatient-doctor',
       `${stay.path}/guideline-advice/request`,
@@ -487,6 +527,7 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
     )
     expect(blockedDraft.status).toBe(409)
     expect(apiErrorSchema.parse(await blockedDraft.json()).error.code).toBe('TASK_READINESS_CRITICAL_MISSING')
+    expect(modelCalls).toHaveLength(0)
 
     // 2. Suspicious out-of-range creatinine MUST NOT satisfy critical requirement!
     insertLocalObservation(fixture, {
@@ -535,12 +576,13 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
     expect(secondaryReadiness.canProceed).toBe(true)
     expect(secondaryReadiness.annotations).toEqual(['缺吸烟状态'])
 
-    // Now drafting guideline advice succeeds and annotates '缺吸烟状态'
+    // Now drafting guideline advice succeeds and annotates '缺吸烟状态' both in missing[] and draft limitations
     const refreshedAdvice = await fixture.read(
       'inpatient-doctor',
       `${stay.path}/guideline-advice/${stay.requestId}`,
       inpatientGuidelineAdviceSchema,
     )
+    expect(refreshedAdvice.status).toBe('stale')
     expect(refreshedAdvice.missing).toContain('缺吸烟状态')
     const allowedDraft = await fixture.request(
       'inpatient-doctor',
@@ -553,17 +595,90 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
     )
     expect(allowedDraft.status).toBe(200)
 
+    await fixture.runtime.dispatchPending()
+    expect(modelCalls.length).toBeGreaterThanOrEqual(2)
+    const draftedAdvice = await fixture.read(
+      'inpatient-doctor',
+      `${stay.path}/guideline-advice/${stay.requestId}`,
+      inpatientGuidelineAdviceSchema,
+    )
+    expect(draftedAdvice.status).toBe('incomplete')
+    expect(draftedAdvice.missing).toContain('缺吸烟状态')
+    expect(draftedAdvice.result?.limitations).toContain('资料缺项标注：缺吸烟状态')
+
     // AC32: Task-scoped ledger filtering excludes all 60 unrelated UNREL-* labs!
     const scopedFacts = await fixture.read(
       'inpatient-doctor',
       `${stay.path}/disease-packs/synthetic-test-syndrome/tasks/pci-preop-guideline-advice/facts`,
       diseasePackTaskFactsResponseSchema,
     )
+    expect(scopedFacts.declaredItemCodes).toEqual(expect.arrayContaining(['2160-0', 'smoking-status']))
     expect(scopedFacts.readiness.annotations).toEqual(['缺吸烟状态'])
     expect(scopedFacts.ledger.facts.every(f => !f.itemCode.code.startsWith('UNREL-'))).toBe(true)
     expect(scopedFacts.ledger.facts.some(f => f.itemCode.code === '2160-0')).toBe(true)
     expect(scopedFacts.ledger.summary.totalFacts).toBe(scopedFacts.ledger.facts.length)
     expect(scopedFacts.ledger.summary.totalFacts).toBeLessThan(15)
+
+    // AC32 followup-review scope: includes LDL-C, BP, discharge-time & active meds, strictly excludes creatinine & 60 UNREL-* labs!
+    insertLocalObservation(fixture, {
+      code: '13457-7',
+      display: '低密度脂蛋白胆固醇 (LDL-C)',
+      encounterId: stay.admissionId,
+      patientId: stay.patientId,
+      unit: 'mmol/L',
+      value: 2.1,
+    })
+    insertLocalObservation(fixture, {
+      categoryCode: 'vital-signs',
+      code: '8480-6',
+      display: '收缩压',
+      encounterId: stay.admissionId,
+      patientId: stay.patientId,
+      unit: 'mmHg',
+      value: 124,
+    })
+    insertLocalObservation(fixture, {
+      categoryCode: 'vital-signs',
+      code: '8462-4',
+      display: '舒张压',
+      encounterId: stay.admissionId,
+      patientId: stay.patientId,
+      unit: 'mmHg',
+      value: 76,
+    })
+    fixture.runtime.fhir.create({ epoch: currentEpoch(fixture), workspaceId: 'workspace-demo' }, {
+      code: { coding: [{ code: 'discharge-time', display: '出院时间' }] },
+      effectiveDateTime: currentVirtualTime(fixture),
+      encounter: { reference: `Encounter/${stay.admissionId}` },
+      id: `obs-discharge-${randomUUID()}`,
+      issued: currentVirtualTime(fixture),
+      resourceType: 'Observation',
+      status: 'final',
+      subject: { reference: `Patient/${stay.patientId}` },
+      valueString: currentVirtualTime(fixture),
+    })
+    fixture.runtime.fhir.create({ epoch: currentEpoch(fixture), workspaceId: 'workspace-demo' }, {
+      authoredOn: currentVirtualTime(fixture),
+      id: `med-followup-${randomUUID()}`,
+      intent: 'order',
+      medicationCodeableConcept: { coding: [{ code: 'atorvastatin', display: '阿托伐他汀' }] },
+      resourceType: 'MedicationRequest',
+      status: 'active',
+      subject: { reference: `Patient/${stay.patientId}` },
+    })
+
+    const followupFacts = await fixture.read(
+      'inpatient-doctor',
+      `${stay.path}/disease-packs/synthetic-test-syndrome/tasks/followup-review/facts`,
+      diseasePackTaskFactsResponseSchema,
+    )
+    expect(followupFacts.declaredItemCodes).toEqual(expect.arrayContaining(['13457-7', '8480-6', '8462-4', 'discharge-time']))
+    expect(followupFacts.ledger.facts.map(f => f.itemCode.code)).toEqual(
+      expect.arrayContaining(['13457-7', '8480-6', '8462-4', 'discharge-time', 'atorvastatin']),
+    )
+    expect(followupFacts.ledger.facts.some(f => f.itemCode.code === '2160-0')).toBe(false)
+    expect(followupFacts.ledger.facts.some(f => f.itemCode.code.startsWith('UNREL-'))).toBe(false)
+    expect(followupFacts.ledger.facts.some(f => f.category === 'diagnosis')).toBe(false)
 
     // 4. Record smoking-status -> ready!
     const clinicalAfterLabs = await fixture.read('inpatient-doctor', `${stay.path}/clinical`, inpatientFullClinicalSchema)
@@ -746,8 +861,45 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
     expect(queryRes.status).toBe(200)
     const queryJson = await queryRes.text()
     expect(queryJson).not.toMatch(/caseTruth|case_truth/i)
-    const queriedBundle = diseasePackRuntimeBundleSchema.parse(JSON.parse(queryJson))
-    expect(queriedBundle.packs.find(p => p.packId === 'synthetic-test-syndrome')?.activationStatus).toBe('active')
+    const querieJsonCheck = diseasePackRuntimeBundleSchema.parse(JSON.parse(queryJson))
+    expect(querieJsonCheck.packs.find(p => p.packId === 'synthetic-test-syndrome')?.activationStatus).toBe('active')
+
+    // Replaying call-pack-1 MUST return 409 AGENT_CALL_REPLAYED without duplicating DSAP_TOOL_POLICY_AUTHORIZED audits
+    const authCountBeforeReplay = (fixture.runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS cnt FROM audit_log WHERE operation = 'DSAP_TOOL_POLICY_AUTHORIZED'
+    `).get() as { cnt: number }).cnt
+    const replayAuthRes = await fixture.runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({
+        contextToken: ctxBinding.token,
+        executionProof: signProof(toolDef.toolName, 'call-pack-1'),
+        input: {},
+        operationId: 'outpatient.disease-packs.read',
+        packId: 'synthetic-test-syndrome',
+      }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    expect(replayAuthRes.status).toBe(409)
+    expect(apiErrorSchema.parse(await replayAuthRes.json()).error.code).toBe('AGENT_CALL_REPLAYED')
+    const authCountAfterReplay = (fixture.runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS cnt FROM audit_log WHERE operation = 'DSAP_TOOL_POLICY_AUTHORIZED'
+    `).get() as { cnt: number }).cnt
+    expect(authCountAfterReplay).toBe(authCountBeforeReplay)
+
+    // Calling /api/agent/v1/tool-calls WITHOUT packId still enforces active pack forbiddenActions (403 DSAP_TOOL_POLICY_DENIED + AuditEvent)
+    const noPackForbiddenRes = await fixture.runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({
+        actionTag: 'auto-prescribe-medication',
+        contextToken: ctxBinding.token,
+        executionProof: signProof(toolDef.toolName, 'call-no-pack-forbidden'),
+        input: {},
+        operationId: 'outpatient.disease-packs.read',
+      }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    expect(noPackForbiddenRes.status).toBe(403)
+    expect(apiErrorSchema.parse(await noPackForbiddenRes.json()).error.code).toBe('DSAP_TOOL_POLICY_DENIED')
 
     // Disabling synthetic pack causes gateway authorization with packId to reject 409 DSAP_PACK_INACTIVE
     const toggleOff = await fixture.request(
@@ -768,5 +920,33 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
     })
     expect(inactiveAuth.status).toBe(409)
     expect(apiErrorSchema.parse(await inactiveAuth.json()).error.code).toBe('DSAP_PACK_INACTIVE')
+  })
+
+  it('activates built-in coronary-cad draft pack manually via toggle and blocks readiness with 0 LLM calls', async () => {
+    const { fixture, modelCalls } = await setupRuntimeWithSyntheticPack({ skipSyntheticPack: true, withGuidelineCorpus: true })
+    const stay = await fixture.preparePciAdmission([])
+    // Manually enable built-in coronary-cad draft pack on the stay
+    const enableRes = await fixture.request(
+      'inpatient-doctor',
+      `${stay.path}/disease-packs/coronary-cad/toggle`,
+      { expectedVersion: 0, note: '手动启用冠心病路径专病包校验', overrideMode: 'enabled' },
+    )
+    expect(enableRes.status).toBe(200)
+    const enabled = diseasePackToggleResponseSchema.parse(await enableRes.json()).data
+    expect(enabled.activationStatus).toBe('active')
+    expect(enabled.readinessTasks.map(r => r.taskId)).toEqual(
+      expect.arrayContaining(['pci-preop-guideline-advice', 'pci-stent', 'followup-review']),
+    )
+
+    // Pre-existing queued event is blocked right before LLM call (0 model calls)
+    await fixture.runtime.dispatchPending()
+    expect(modelCalls).toHaveLength(0)
+    const adviceAfterToggle = await fixture.read(
+      'inpatient-doctor',
+      `${stay.path}/guideline-advice/${stay.requestId}`,
+      inpatientGuidelineAdviceSchema,
+    )
+    expect(adviceAfterToggle.status).toBe('blocked')
+    expect(adviceAfterToggle.failureCode).toBe('TASK_READINESS_CRITICAL_MISSING')
   })
 })

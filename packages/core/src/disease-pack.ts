@@ -208,6 +208,14 @@ export interface PublicLayerPolicyInput {
   readonly examPassThreshold?: number
 }
 
+function readOwnNumericRecord(map: Readonly<Record<string, number>> | undefined, key: string): number | undefined {
+  return map !== undefined && Object.hasOwn(map, key) ? map[key] : undefined
+}
+
+function readOwnTextRecord(map: Readonly<Record<string, string>> | undefined, key: string): string | undefined {
+  return map !== undefined && Object.hasOwn(map, key) ? map[key] : undefined
+}
+
 function applyTightenedValidityOverrides(
   validityMap: Record<string, number>,
   overrides: ReadonlyArray<{ itemCode: string; maxValidityDays: number }>,
@@ -215,7 +223,9 @@ function applyTightenedValidityOverrides(
 ): void {
   for (const item of overrides) {
     const canonical = resolveCanonicalItemCode(item.itemCode)
-    const baseVal = validityMap[canonical] ?? validityMap[item.itemCode] ?? getPublicValidityDays(canonical)
+    const baseVal = readOwnNumericRecord(validityMap, canonical)
+      ?? readOwnNumericRecord(validityMap, item.itemCode)
+      ?? getPublicValidityDays(canonical)
     if (baseVal !== null && baseVal !== undefined && item.maxValidityDays > baseVal) {
       throw new DiseasePackValidationError(
         'HOSPITAL_OVERLAY_SAFETY_RELAXATION_FORBIDDEN',
@@ -288,6 +298,22 @@ export function mergeThreeLayerPack(input: {
       'HOSPITAL_OVERLAY_SAFETY_RELAXATION_FORBIDDEN',
       `Hospital overlay ${overlay?.hospitalId} cannot remove forbidden actions (${adjustments.forbiddenActionRemovals.join(', ')})`,
     )
+  }
+  if (adjustments?.triggerRemovals && adjustments.triggerRemovals.length > 0) {
+    throw new DiseasePackValidationError(
+      'HOSPITAL_OVERLAY_SAFETY_RELAXATION_FORBIDDEN',
+      `Hospital overlay ${overlay?.hospitalId} cannot remove triggers (${adjustments.triggerRemovals.join(', ')})`,
+    )
+  }
+
+  if (input.publicLayer?.examPassThreshold !== undefined) {
+    const packThreshold = pack.qualityTightenings.examPassThreshold ?? pack.examSuite.passThreshold
+    if (packThreshold < input.publicLayer.examPassThreshold || pack.examSuite.passThreshold < input.publicLayer.examPassThreshold) {
+      throw new DiseasePackValidationError(
+        'HOSPITAL_OVERLAY_SAFETY_RELAXATION_FORBIDDEN',
+        `Pack ${pack.manifest.id} cannot lower public examPassThreshold (${input.publicLayer.examPassThreshold})`,
+      )
+    }
   }
 
   applyTightenedValidityOverrides(
@@ -395,12 +421,16 @@ function extractNumericFactValue(fact: ClinicalFact): { value: number; unit: str
 }
 
 function resolveEncounterKey(fact: ClinicalFact, field: DiseasePackTimestampField, options?: TriggerEvaluationOptions): string {
-  const explicitByFact = options?.encounterIdByFactId?.[fact.factId]
+  const explicitByFact = readOwnTextRecord(options?.encounterIdByFactId, fact.factId)
   if (explicitByFact) return `enc:${explicitByFact}`
-  const explicitByRecord = options?.encounterIdByRecordId?.[fact.provenance.recordId]
+  const explicitByRecord = readOwnTextRecord(options?.encounterIdByRecordId, fact.provenance.recordId)
   if (explicitByRecord) return `enc:${explicitByRecord}`
   const tsIso = readFactTimestampIso(fact, field) ?? fact.ingestedAt
-  return `${fact.provenance.sourceSystemId}::${tsIso.slice(0, 10)}`
+  const ms = parseTimestampMs(tsIso)
+  const dayBucket = ms !== null
+    ? new Date(ms + 8 * 3_600_000).toISOString().slice(0, 10)
+    : tsIso.slice(0, 10)
+  return `${fact.provenance.sourceSystemId}::${dayBucket}`
 }
 
 function matchesFactLeaf(
@@ -699,7 +729,8 @@ function effectiveMaxAgeDaysForItem(
   const candidates = [item.itemCode, resolveCanonicalItemCode(item.itemCode), ...(item.alternateItemCodes ?? [])]
   let tightened: number | null = item.maxAgeDays ?? null
   for (const code of candidates) {
-    const fromLayer = effectiveValidityDaysByItemCode[code] ?? effectiveValidityDaysByItemCode[resolveCanonicalItemCode(code)]
+    const fromLayer = readOwnNumericRecord(effectiveValidityDaysByItemCode, code)
+      ?? readOwnNumericRecord(effectiveValidityDaysByItemCode, resolveCanonicalItemCode(code))
     if (fromLayer !== undefined) {
       tightened = tightened === null ? fromLayer : Math.min(tightened, fromLayer)
     }
@@ -836,6 +867,31 @@ export function evaluateTaskReadiness(
   }
 }
 
+/** Return all explicitly declared item codes (critical, secondary, alternates, relevantItemCodes) for a task. */
+export function collectDeclaredTaskItemCodes(
+  effectivePack: EffectiveDiseasePack,
+  taskId: string,
+): string[] {
+  const declaration = effectivePack.pack.readinessTasks.find(task => task.taskId === taskId)
+  if (declaration === undefined) {
+    throw new DiseasePackValidationError(
+      'TASK_NOT_FOUND_IN_PACK',
+      `Task ${taskId} is not declared in disease pack ${effectivePack.pack.manifest.id}`,
+    )
+  }
+  const declared = new Set<string>()
+  const addCode = (code: string) => {
+    declared.add(code)
+    declared.add(resolveCanonicalItemCode(code))
+  }
+  for (const item of [...declaration.criticalItems, ...declaration.secondaryItems]) {
+    addCode(item.itemCode)
+    for (const alt of item.alternateItemCodes ?? []) addCode(alt)
+  }
+  for (const code of declaration.relevantItemCodes ?? []) addCode(code)
+  return [...declared].sort((a, b) => a.localeCompare(b))
+}
+
 /**
  * Narrow ClinicalFactLedger to ONLY the facts required by a specific task (AC32),
  * recalculating summary counts over the scoped subset.
@@ -853,23 +909,21 @@ export function filterLedgerForTaskView(
     )
   }
 
-  const allowedCodes = new Set<string>()
-  const addCode = (code: string) => {
-    allowedCodes.add(code)
-    allowedCodes.add(resolveCanonicalItemCode(code))
-  }
+  const allowedCodes = new Set(collectDeclaredTaskItemCodes(effectivePack, taskId))
+  const explicitCategoriesWithItems = new Set<ClinicalFact['category']>()
   for (const item of [...declaration.criticalItems, ...declaration.secondaryItems]) {
-    addCode(item.itemCode)
-    for (const alt of item.alternateItemCodes ?? []) addCode(alt)
+    if (item.category !== undefined) {
+      explicitCategoriesWithItems.add(item.category)
+    }
   }
-  for (const code of declaration.relevantItemCodes ?? []) addCode(code)
-
-  const allowedCategories = new Set(declaration.relevantCategories ?? [])
+  const allowedWholeCategories = new Set(
+    (declaration.relevantCategories ?? []).filter(cat => !explicitCategoriesWithItems.has(cat)),
+  )
 
   const scopedFacts = ledger.facts.filter(fact => (
     allowedCodes.has(fact.itemCode.code)
     || allowedCodes.has(resolveCanonicalItemCode(fact.itemCode.code))
-    || allowedCategories.has(fact.category)
+    || allowedWholeCategories.has(fact.category)
   ))
 
   return {

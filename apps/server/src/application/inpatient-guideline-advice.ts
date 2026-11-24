@@ -630,8 +630,19 @@ export class InpatientGuidelineAdvice {
         || (basis.legacyFingerprint !== null && row.basis_fingerprint === basis.legacyFingerprint)
       )
     const readableSnapshot = unchanged || (isLifecycleFrozen && row?.frozen_readable === 1 && frozenEvidenceIntact)
+    const readinessBlockedRow = row?.status === 'blocked' && row.error_code === 'TASK_READINESS_CRITICAL_MISSING'
+    const readinessCheck = readinessBlockedRow
+      ? this.owner.workflow.diseasePacks.evaluateGuidelineAdviceTaskReadiness(
+          this.owner,
+          context,
+          admissionId,
+          topicId,
+          requestId,
+        )
+      : undefined
     let status: Advice['status'] = row?.status ?? 'idle'
     if (row && (!unchanged || !authorized)) status = 'stale'
+    if (readinessBlockedRow && readinessCheck && !readinessCheck.blocked) status = 'stale'
     if (isLifecycleFrozen) status = 'frozen'
     if (row?.cancelled === 1) status = row.status === 'succeeded' ? 'frozen' : 'cancelled'
     if (basis.input.sourceStatus !== 'available' || (isLifecycleFrozen && row?.status === 'succeeded' && !frozenEvidenceIntact)) {
@@ -650,10 +661,14 @@ export class InpatientGuidelineAdvice {
         ? inpatientGuidelineAdviceResultSchema.parse(JSON.parse(row.result_json))
         : null
     if (status === 'succeeded' && basis.input.missing.length > 0) status = 'incomplete'
-    const effectiveMissing =
+    const baseMissing =
       status === 'frozen' && result !== null && persistedBasis?.success === true
         ? clampTopicMissingList(persistedBasis.data.missing)
         : basis.input.missing
+    const effectiveMissing =
+      status === 'blocked' && readinessCheck?.blocked && readinessCheck.missingLabels.length > 0
+        ? clampTopicMissingList([...new Set([...baseMissing, ...readinessCheck.missingLabels])])
+        : baseMissing
     const effectiveFingerprint =
       row !== undefined && (unchanged || (isLifecycleFrozen && result !== null))
         ? row.basis_fingerprint
@@ -661,6 +676,9 @@ export class InpatientGuidelineAdvice {
 
     const idleMessage = requestId !== null ? '尚未准备本计划的指南参考意见。' : messages.idle
     const frozenMessage = requestId !== null ? '手术已开始、完成或病案已归档，指南参考意见保留历史只读。' : messages.frozen
+    const blockedReadinessMessage = status === 'blocked' && row?.error_code === 'TASK_READINESS_CRITICAL_MISSING'
+      ? '缺少关键临床资料，指南参考意见尚未起草。'
+      : undefined
     return inpatientGuidelineAdviceSchema.parse({
       admissionId,
       topicId,
@@ -675,11 +693,13 @@ export class InpatientGuidelineAdvice {
           : '本次单次准备已取消，指南意见停止准备；可显式重新评估。'
         : basis.input.sourceStatus === 'read-failed'
           ? '指南原文读取失败，请核查指南库后显式重新评估。'
-          : status === 'idle'
-            ? idleMessage
-            : status === 'frozen'
-              ? frozenMessage
-              : messages[status],
+          : blockedReadinessMessage !== undefined
+            ? blockedReadinessMessage
+            : status === 'idle'
+              ? idleMessage
+              : status === 'frozen'
+                ? frozenMessage
+                : messages[status],
       missing: effectiveMissing,
       failureCode: row?.error_code ?? null,
       result,
@@ -798,11 +818,22 @@ export class InpatientGuidelineAdvice {
     const previous = this.#row(context, admissionId, topicId, requestId)
     const taskId = previous?.task_id ?? uuidv7()
     const available = basis.input.sourceStatus === 'available'
+    const readiness = available
+      ? this.owner.workflow.diseasePacks.evaluateGuidelineAdviceTaskReadiness(
+          this.owner,
+          context,
+          admissionId,
+          topicId,
+          requestId,
+        )
+      : { annotations: [], blocked: false, missingLabels: [], readinessResults: [] }
+    const initialStatus: Row['status'] = !available ? 'no-evidence' : readiness.blocked ? 'blocked' : 'queued'
+    const initialErrorCode = available && readiness.blocked ? 'TASK_READINESS_CRITICAL_MISSING' : null
     this.owner.database.driver.prepare(`
       INSERT INTO inpatient_guideline_advice (
         workspace_id, epoch, task_id, admission_id, topic_id, request_id, version,
-        context_json, basis_json, basis_fingerprint, trigger, status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        context_json, basis_json, basis_fingerprint, trigger, status, error_code, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       context.workspaceId,
       context.epoch,
@@ -815,10 +846,11 @@ export class InpatientGuidelineAdvice {
       JSON.stringify(basis.input),
       basis.fingerprint,
       trigger,
-      available ? 'queued' : 'no-evidence',
+      initialStatus,
+      initialErrorCode,
       this.owner.virtualTime(context),
     )
-    if (available) {
+    if (available && !readiness.blocked) {
       transaction.enqueue({
         kind: 'inpatient.guideline-advice.prepare',
         dedupKey: `${taskId}:${version}:${basis.fingerprint}`,
@@ -922,7 +954,8 @@ export class InpatientGuidelineAdvice {
             'TASK_READINESS_CRITICAL_MISSING',
           )
         }
-        if (['queued', 'running', 'succeeded', 'incomplete', 'blocked'].includes(state.status)) {
+        if (['queued', 'running', 'succeeded', 'incomplete'].includes(state.status)
+          || (state.status === 'blocked' && state.failureCode !== 'TASK_READINESS_CRITICAL_MISSING')) {
           return { data: state, effects: [] }
         }
         const data = this.#create(context, input.admissionId, topicId, requestId, state.version + 1, 'manual', transaction)
@@ -953,7 +986,8 @@ export class InpatientGuidelineAdvice {
         WHERE workspace_id=? AND epoch=? AND task_id=? AND version=?
       `).get(event.workspaceId, event.epoch, payload.taskId, payload.version),
     )
-    if (!row || ['succeeded', 'unknown', 'stale', 'no-evidence', 'rejected', 'failed'].includes(row.status)) {
+    if (!row || ['succeeded', 'unknown', 'stale', 'no-evidence', 'rejected', 'failed'].includes(row.status)
+      || (row.status === 'blocked' && row.error_code === 'TASK_READINESS_CRITICAL_MISSING')) {
       return { status: 'completed' }
     }
     const update = (status: Row['status'], code: string | null, result: string | null = null) =>
@@ -988,6 +1022,17 @@ export class InpatientGuidelineAdvice {
     let waitUntil: 'runtime-restart' | undefined
     try {
       const context = assertCurrent()
+      const readiness = this.owner.workflow.diseasePacks.evaluateGuidelineAdviceTaskReadiness(
+        this.owner,
+        context,
+        row.admission_id,
+        row.topic_id,
+        row.request_id,
+      )
+      if (readiness.blocked) {
+        update('blocked', 'TASK_READINESS_CRITICAL_MISSING')
+        return { status: 'completed' }
+      }
       if (!options.provider || !options.model || options.provider.supportsUsageAccounting !== true) {
         waitUntil = 'runtime-restart'
         throw new ModelUsageControlError('MODEL_METERING_UNAVAILABLE', 'workspace')
@@ -1064,6 +1109,12 @@ export class InpatientGuidelineAdvice {
       }
       this.owner.database.driver.transaction(() => {
         assertCurrent()
+        const annotatedLimitations = [
+          ...new Set([
+            ...input.topic.limitations,
+            ...readiness.annotations.map(item => `资料缺项标注：${item}`),
+          ]),
+        ]
         update('succeeded', null, JSON.stringify(inpatientGuidelineAdviceResultSchema.parse({
           id: uuidv7(),
           fingerprint: row.basis_fingerprint,
@@ -1072,7 +1123,7 @@ export class InpatientGuidelineAdvice {
           topic: { id: input.topic.id, version: input.topic.version, fingerprint: definition.fingerprint },
           guidelines: input.guidelines,
           conclusions: proposed.conclusions,
-          limitations: input.topic.limitations,
+          limitations: annotatedLimitations,
         })))
       })()
       return { status: 'completed' }

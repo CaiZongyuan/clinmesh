@@ -3,6 +3,7 @@ import { evaluateClinicalFactLedger } from './clinical-fact-ledger.ts'
 import {
   DiseasePackValidationError,
   PLATFORM_FORMULA_REGISTRY,
+  collectDeclaredTaskItemCodes,
   evaluatePackActivation,
   evaluatePackPointScale,
   evaluatePackStages,
@@ -516,6 +517,7 @@ describe('disease-pack contracts, validator, overlay & runtime evaluators', () =
       { safetyAdjustments: { validityOverrides: [{ itemCode: '2160-0', maxValidityDays: 30 }] } },
       { safetyAdjustments: { redLineRemovals: ['renal-red-line'] } },
       { safetyAdjustments: { forbiddenActionRemovals: ['auto-prescribe-medication'] } },
+      { safetyAdjustments: { triggerRemovals: ['dx-activation'] } },
       { safetyAdjustments: { examPassThreshold: 0.5 } },
     ]
     for (const bad of weakeningCases) {
@@ -529,6 +531,11 @@ describe('disease-pack contracts, validator, overlay & runtime evaluators', () =
         expect((err as DiseasePackValidationError).code).toBe('HOSPITAL_OVERLAY_SAFETY_RELAXATION_FORBIDDEN')
       }
     }
+
+    expect(() => mergeThreeLayerPack({
+      diseasePack: pack,
+      publicLayer: { examPassThreshold: 0.95 },
+    })).toThrow(DiseasePackValidationError)
   })
 
   it('evaluates cross-time & cross-encounter sequence triggers with explicit timestampField', () => {
@@ -701,7 +708,10 @@ describe('disease-pack contracts, validator, overlay & runtime evaluators', () =
     expect(ready.canProceed).toBe(true)
     expect(ready.annotations).toEqual([])
 
-    // AC32: Task-scoped ledger filtering excludes unrelated lab facts
+    // AC32: Task-scoped ledger filtering excludes unrelated lab facts and returns declaredItemCodes
+    expect(collectDeclaredTaskItemCodes(merged, 'pci-preop-guideline-advice')).toEqual(
+      expect.arrayContaining(['2160-0', 'smoking-status', '89579-7']),
+    )
     const scoped = filterLedgerForTaskView(merged, 'pci-preop-guideline-advice', readyLedger)
     expect(scoped.facts.map(f => f.factId)).toEqual(['dx-1', 'creat-ok', 'smoke-never'])
     expect(scoped.summary.totalFacts).toBe(3)

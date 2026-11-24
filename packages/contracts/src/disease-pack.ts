@@ -392,6 +392,7 @@ export const hospitalOverlaySafetyAdjustmentsSchema = z.object({
   redLineAdditions: z.array(diseasePackRedLineRuleSchema).max(64).optional(),
   redLineRemovals: z.array(boundedCode).max(64).optional(),
   triggerAdditions: z.array(diseasePackTriggerRuleSchema).max(32).optional(),
+  triggerRemovals: z.array(diseasePackSlugSchema).max(32).optional(),
   validityOverrides: z.array(diseasePackValidityOverrideSchema).max(64).optional(),
 }).strict()
 
@@ -539,6 +540,7 @@ export const inpatientDiseasePackToggleInputSchema = diseasePackToggleBodySchema
 export const diseasePackToggleResponseSchema = commandResponseSchema(diseasePackRuntimeEntrySchema)
 
 export const diseasePackTaskFactsResponseSchema = z.object({
+  declaredItemCodes: z.array(boundedCode),
   ledger: clinicalFactLedgerSchema,
   packId: diseasePackSlugSchema,
   readiness: diseasePackTaskReadinessResultSchema,

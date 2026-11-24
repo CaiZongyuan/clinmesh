@@ -513,29 +513,6 @@ export class AgentIntegrationService {
       request.input,
     )
     if (parsedInput === undefined) throw this.#staleContext()
-    const targetPackId = request.packId ?? (
-      (definition.operationId === 'outpatient.disease-pack-task-facts.read'
-        || definition.operationId === 'inpatient.disease-pack-task-facts.read')
-        ? (parsedInput as { packId: string }).packId
-        : undefined
-    )
-    if (targetPackId !== undefined && this.#diseasePacks !== undefined) {
-      const sel = context.claim.selection
-      if (sel?.kind === 'case' || sel?.kind === 'inpatient-admission') {
-        const subjectKind = sel.kind === 'case' ? 'outpatient' : 'inpatient'
-        this.#diseasePacks.authorizePackToolInvocation({
-          context: input.actor,
-          ...(subjectKind === 'inpatient' && this.#inpatient !== undefined ? { inpatient: this.#inpatient } : {}),
-          packId: targetPackId,
-          rawBody: {
-            ...(request.actionTag === undefined ? {} : { actionTag: request.actionTag }),
-            operationId: definition.operationId,
-          },
-          subjectId: sel.id,
-          subjectKind,
-        })
-      }
-    }
     if (proof.origin?.task.delegationId !== undefined
       && !usesDoctorReadBinding(context, definition.operationId)
       && definition.operationId !== 'outpatient.consultation.ask'
@@ -543,6 +520,56 @@ export class AgentIntegrationService {
       && !(definition.operationId === 'outpatient.section.select'
         && z.object({ section: z.literal('consultation') }).strict().safeParse(parsedInput).success)) {
       throw this.#taskChanged()
+    }
+    const existingCall = this.#database.driver.prepare(`
+      SELECT 1 AS found FROM agent_tool_call
+      WHERE workspace_id = ? AND epoch = ? AND dsh_session_id = ? AND call_id = ?
+    `).get(
+      context.workspace.id,
+      context.workspace.epoch,
+      proof.dshSessionId,
+      proof.callId,
+    )
+    if (existingCall !== undefined) {
+      throw new AgentIntegrationError(
+        'AGENT_CALL_REPLAYED',
+        'The DSH Tool call was already authorized',
+        409,
+      )
+    }
+    const targetPackId = request.packId ?? (
+      (definition.operationId === 'outpatient.disease-pack-task-facts.read'
+        || definition.operationId === 'inpatient.disease-pack-task-facts.read')
+        ? (parsedInput as { packId: string }).packId
+        : undefined
+    )
+    if (this.#diseasePacks !== undefined) {
+      const sel = context.claim.selection
+      if (sel?.kind === 'case' || sel?.kind === 'inpatient-admission') {
+        const subjectKind = sel.kind === 'case' ? 'outpatient' : 'inpatient'
+        if (targetPackId !== undefined) {
+          this.#diseasePacks.authorizePackToolInvocation({
+            context: input.actor,
+            ...(subjectKind === 'inpatient' && this.#inpatient !== undefined ? { inpatient: this.#inpatient } : {}),
+            packId: targetPackId,
+            rawBody: {
+              ...(request.actionTag === undefined ? {} : { actionTag: request.actionTag }),
+              operationId: definition.operationId,
+            },
+            subjectId: sel.id,
+            subjectKind,
+          })
+        } else {
+          this.#diseasePacks.enforceActivePacksForbiddenActions({
+            ...(request.actionTag === undefined ? {} : { actionTag: request.actionTag }),
+            context: input.actor,
+            ...(subjectKind === 'inpatient' && this.#inpatient !== undefined ? { inpatient: this.#inpatient } : {}),
+            operationId: definition.operationId,
+            subjectId: sel.id,
+            subjectKind,
+          })
+        }
+      }
     }
 
     const startedAt = this.#now().toISOString()

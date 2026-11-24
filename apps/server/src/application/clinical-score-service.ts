@@ -1742,7 +1742,11 @@ export class ClinicalScoreService {
     )
     const ineligibleObservationIds = new Set(
       evaluatedLedger?.facts
-        .filter(f => f.institutionScope === 'local' && f.provenance.recordType === 'Observation' && !f.eligibleForScoringAndRedLine)
+        .filter(f => (
+          f.institutionScope === 'local'
+          && f.provenance.recordType === 'Observation'
+          && f.ineligibleReasons.some(reason => reason !== 'expired')
+        ))
         .map(f => f.provenance.recordId) ?? [],
     )
     const verifiedExternalFacts = evaluatedLedger?.facts.filter(

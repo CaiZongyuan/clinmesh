@@ -13,6 +13,7 @@ import {
 } from '@clinmesh/contracts/clinical-fact-ledger'
 import { clinicalRiskAssessmentValuesSchema } from '@clinmesh/contracts/clinical-scores'
 import { visibleSourceClinicalSchema } from '@clinmesh/contracts/agent'
+import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import {
   evaluateClinicalFactLedger,
   transcribeBedsideQuestionnaireFacts,
@@ -62,9 +63,24 @@ const ingestedFhirObservationSchema = z.object({
 }).loose()
 
 const ingestedProvenancePayloadSchema = z.object({
-  ingestedAt: z.string().optional(),
-  orderedAt: z.string().nullable().optional(),
-}).loose()
+  resourceType: z.literal('Provenance'),
+  id: z.string().min(1),
+  target: z.array(z.object({ reference: z.string().min(1) }).strict()).min(1),
+  recorded: z.string().min(1),
+  sourceSystemId: z.string().min(1),
+  hospitalId: z.string().min(1),
+  batchId: z.string().min(1),
+  ingestedAt: z.string().min(1),
+  mappingVersion: z.string().min(1),
+  orderedAt: z.string().nullable(),
+  externalReportId: z.string().min(1),
+  specimenBarcode: z.string().nullable(),
+  adapterFormat: z.enum(['clinmesh-sim-lis-v2', 'clinmesh-his-fhir-v1']),
+  meta: z.object({
+    versionId: z.string().min(1),
+    lastUpdated: z.string().min(1),
+  }).strict(),
+}).strict()
 
 export interface ClinicalFactLedgerQueryOptions {
   asOf?: string | undefined
@@ -258,9 +274,7 @@ export class ClinicalFactLedgerService {
       },
       context: input.context,
       dataSchema: clinicalFactVerificationResponseSchema.shape.data,
-      expectedVersions: input.body.expectedSourceVersion
-        ? { [input.body.factId]: input.body.expectedSourceVersion }
-        : {},
+      expectedVersions: {},
       idempotencyKey: input.idempotencyKey,
       input: { caseId: input.caseId, ...input.body },
       operation: 'doctor.case.clinical-fact-verification.record',
@@ -301,9 +315,7 @@ export class ClinicalFactLedgerService {
       },
       context: input.context,
       dataSchema: clinicalFactVerificationResponseSchema.shape.data,
-      expectedVersions: input.body.expectedSourceVersion
-        ? { [input.body.factId]: input.body.expectedSourceVersion }
-        : {},
+      expectedVersions: {},
       idempotencyKey: input.idempotencyKey,
       input: { admissionId: input.admissionId, ...input.body },
       operation: 'inpatient.clinical-fact-verification.record',
@@ -511,18 +523,14 @@ export class ClinicalFactLedgerService {
         continue
       }
       for (const row of historyRows) {
-        const parsed = JSON.parse(row.content_json) as Record<string, unknown>
-        const existingMeta = typeof parsed['meta'] === 'object' && parsed['meta'] !== null
-          ? (parsed['meta'] as Record<string, unknown>)
-          : {}
+        const parsed = fhirResourceSchema.parse(JSON.parse(row.content_json))
+        const existingMeta = parsed.meta
         resources.push({
           ...parsed,
           meta: {
             ...existingMeta,
             versionId: String(row.version_id),
-            lastUpdated: typeof existingMeta['lastUpdated'] === 'string'
-              ? existingMeta['lastUpdated']
-              : row.last_updated,
+            lastUpdated: existingMeta?.lastUpdated ?? row.last_updated,
           },
         })
       }
@@ -550,9 +558,17 @@ export class ClinicalFactLedgerService {
     const sourceSystemIdByObservationId: Record<string, string> = {}
     const ingestedAtByObservationId: Record<string, string> = {}
 
+    const existingObsVersionKeys = new Set(
+      observations.map(obs => `${obs.id}::${obs.meta?.versionId ?? '1'}`),
+    )
     for (const entry of this.listEligibleIngestedObservations(context, patientId)) {
       const obsId = entry.observation.id
-      observations.push(entry.observation)
+      const obsVer = entry.observation.meta?.versionId ?? '1'
+      const versionKey = `${obsId}::${obsVer}`
+      if (!existingObsVersionKeys.has(versionKey)) {
+        observations.push(entry.observation)
+        existingObsVersionKeys.add(versionKey)
+      }
       sourceSystemIdByObservationId[obsId] = entry.sourceSystemId
       ingestedAtByObservationId[obsId] = entry.ingestedAt
       if (entry.orderedAt) {
