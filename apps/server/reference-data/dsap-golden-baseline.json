@@ -1,0 +1,5152 @@
+{
+  "baselinePack": {
+    "authoredPackHash": "a557bad3e367f2c46d68d820462bda0b004be3e958242cf8521bf8ac7f578fc3",
+    "authoredPackId": "clinmesh-cardiorenal-authored-case-pack",
+    "authoredPackVersion": "2026-11-19.r1",
+    "extraGoldenPackHash": "3de7504e0361b23365d40885dd3696dd135ef3ca3270fae25019b601b8a8e526",
+    "extraGoldenPackId": "clinmesh-dsap-golden-extra-case-pack",
+    "extraGoldenPackVersion": "2026-11-24.r1",
+    "frozenCaseIds": [
+      "cardio-nstemi-chest-pain-v1",
+      "cardio-elective-lad-pci-v1",
+      "cardio-borderline-ffr-gdmt-v1",
+      "cardio-cad-ckd3b-hydration-pci-v1",
+      "renal-t2dm-htn-ckd4-control-v1",
+      "trap-low-risk-chest-wall-pain-v1",
+      "fh-premature-cad-clue-v1",
+      "trap-epigastric-t2dm-ruleout-v1",
+      "trap-external-creatinine-v1",
+      "trap-pregnant-chest-pain-v1"
+    ],
+    "guidelineTopicsCount": 6,
+    "hospital": {
+      "id": "hospital-synthetic-renhe",
+      "name": "ClinMesh 临床仿真医院"
+    },
+    "llmInvocationCount": 0
+  },
+  "cases": [
+    {
+      "clinicalQualityGates": {
+        "outpatient-completion": {
+          "alerts": [
+            {
+              "code": "CHEST_PAIN_WORKUP_INCOMPLETE",
+              "evidenceTypes": [
+                "Observation"
+              ],
+              "message": "急性胸痛就诊尚未完成12 导联心电图与心肌肌钙蛋白即拟完诊；请补齐检查，或说明原因后完诊。",
+              "tier": "alert"
+            }
+          ],
+          "gate": "outpatient-completion",
+          "redLines": [],
+          "status": "alert"
+        },
+        "outpatient-prescription": {
+          "alerts": [],
+          "gate": "outpatient-prescription",
+          "redLines": [],
+          "status": "pass"
+        }
+      },
+      "clinicalScores": {
+        "scores": [
+          {
+            "id": "ckd-epi-2021-egfr",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min/1.73m2",
+            "value": null
+          },
+          {
+            "id": "cockcroft-gault-crcl",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min",
+            "value": null
+          },
+          {
+            "id": "grace-acs",
+            "missingInputs": [
+              "cardiacArrestOnAdmission",
+              "elevatedCardiacBiomarker",
+              "killipClass",
+              "serumCreatinine",
+              "stSegmentDeviation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "timi-ua-nstemi",
+            "missingInputs": [
+              "anginaEpisodes24h",
+              "aspirinUsedLast7Days",
+              "elevatedCardiacBiomarker",
+              "familyHistoryPrematureCad",
+              "knownCoronaryStenosisGe50",
+              "ldlCholesterol",
+              "smokingStatus",
+              "stSegmentDeviation",
+              "totalCholesterol"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "precise-dapt",
+            "missingInputs": [
+              "hemoglobin",
+              "pciDaptIndication",
+              "priorBleedingHistory",
+              "serumCreatinine",
+              "wbc"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "ascvd-ldl-target",
+            "missingInputs": [
+              "cadOnsetAge",
+              "ldlCholesterol",
+              "serumCreatinine",
+              "smokingStatus"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：冠心病发病年龄、低密度脂蛋白或总胆固醇、血肌酐 (SCr)、明确吸烟状态",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mmol/L",
+            "value": null
+          }
+        ],
+        "vitalSigns": {
+          "bloodPressure": {
+            "diastolicMmHg": 90,
+            "systolicMmHg": 148
+          },
+          "oxygenSaturationPct": 97,
+          "pulseBpm": 96,
+          "respirationBpm": 18,
+          "temperatureC": 36.6,
+          "weightKg": 74
+        }
+      },
+      "draftId": "cardio-nstemi-chest-pain-v1",
+      "entryPath": "outpatient",
+      "guidelineTopics": [
+        {
+          "degradedReason": null,
+          "fingerprint": "65bcd12fecc5162b70ba15fa2aa9ad029a5aba6cfb2cf62ece6b1459158272e7",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少已签发 12 导联心电图结构化报告。",
+            "缺少心肌肌钙蛋白（cTn/hs-cTn）检验及动态复测记录。",
+            "GRACE 危险分层未就绪（待补齐：血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "TIMI 缺血评分未就绪（待补齐：低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "缺少基线血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "acs-presentation",
+              "status": "present",
+              "valueText": "间断胸骨后闷痛 6 小时，伴出汗与轻微气促。"
+            },
+            {
+              "code": "cardiac-troponin",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "ecg-12-lead",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "grace-acs",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            },
+            {
+              "code": "timi-ua-nstemi",
+              "status": "missing",
+              "valueText": "待补齐：低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "acute-chest-pain-acs",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c970c5653d3ebbd1753c30802ad5aa881e6c34ca74eb5c0344799e5114fc3874",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "尚未关联本次正式冠脉造影狭窄率或 FFR/iFR 功能学评估记录。",
+            "缺少经胸超声心动图左室射血分数（LVEF）记录。",
+            "缺少造影/血运重建前血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "coronary-angiography",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "coronary-revascularization-indication",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "edda4d12d5171f753dde89fc89d3b647987dd10d6d956739a60e169e2cc36f06",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少冠脉造影报告及 PCI 靶病变长度、近端/远端参考管径测量。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "pci-selection-plan",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "pci-stent",
+          "version": "2026-11-02.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "cb7e6575d3259ad9897b28098d54eb43bd2b00b7d1da176fa3d8f99dd3f17e26",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前尚未关联拟行冠脉造影、PCI 或其他血管内含碘对比剂检查/手术申请，仅可按条件性参考核对。",
+            "缺少术前血肌酐与 eGFR 危险分层依据（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（影响按体重水化速率计算）（待补齐：血肌酐 (SCr)）",
+            "缺少经胸超声心动图 LVEF 或心功能评估（水化须防止左心功能不全容量负荷过重）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "contrast-procedure-indication",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "contrast-kidney-hydration",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "669758615626baf809d0ad6f7d6ab13b7810f2bcf8be3ab603dcb030ed912d5c",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "PRECISE-DAPT 出血评分未就绪（待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史）",
+            "LDL-C 目标值核对未就绪（待补齐：冠心病发病年龄、低密度脂蛋白或总胆固醇、血肌酐 (SCr)、明确吸烟状态）",
+            "缺少 LVEF 评估（影响合并 LVEF ≤ 40% 时 ACEI/ARB/β 受体阻滞剂二级预防核对）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ascvd-ldl-target",
+              "status": "missing",
+              "valueText": "待补齐：冠心病发病年龄、低密度脂蛋白或总胆固醇、血肌酐 (SCr)、明确吸烟状态"
+            },
+            {
+              "code": "cad-acs-eligibility",
+              "status": "present",
+              "valueText": "急性非ST段抬高型心肌梗死"
+            },
+            {
+              "code": "precise-dapt",
+              "status": "missing",
+              "valueText": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史"
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c2d1ad724cf39cc1c2dc4f699cd74b1628731d4b61655abb6cc4e77c17ea1b6d",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前患者尚未确认 2 型糖尿病（ICD-10 E11）适用诊断，仅可按条件性参考核对。",
+            "缺少血肌酐与 eGFR（无法判定二甲双胍/达格列净肾功能分期界值）（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（待补齐：血肌酐 (SCr)）",
+            "缺少近期糖化血红蛋白（HbA1c）检验记录。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "lab-hba1c",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "t2dm-diagnosis",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "t2dm-renal-medication",
+          "version": "2026-11-17.r1"
+        }
+      ],
+      "orderSetDrafts": {
+        "drafts": [
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 0,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "ecg-12-lead",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hs-ctni",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "d-dimer",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "renal-function",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "electrolytes",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "chest-pain-stat-workup",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 1,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "aspirin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "p2y12-inhibitor",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "statin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "beta-blocker",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "needs-review",
+                "key": "acei",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "egfr-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "ready",
+                "key": "nitroglycerin-prn",
+                "kind": "medication",
+                "reasons": []
+              }
+            ],
+            "templateId": "cad-pci-secondary-prevention",
+            "version": "2026-11-18.r1"
+          }
+        ],
+        "patientFacts": {
+          "allergiesCount": 0,
+          "egfr": {
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "missing"
+          },
+          "vitalSigns": {
+            "diastolicMmHg": 90,
+            "pulseBpm": 96,
+            "source": "triage",
+            "status": "present",
+            "systolicMmHg": 148
+          },
+          "weight": {
+            "status": "present",
+            "weightKg": 74
+          }
+        }
+      },
+      "recommendedEntry": "outpatient"
+    },
+    {
+      "clinicalQualityGates": {
+        "inpatient-discharge": {
+          "alerts": [
+            {
+              "code": "DISCHARGE_ANTIPLATELET_MISSING",
+              "evidenceTypes": [
+                "Condition"
+              ],
+              "message": "冠心病/PCI 患者出院前未见在用抗血小板长期医嘱；请补开，或登记禁忌原因后提交。",
+              "tier": "alert"
+            },
+            {
+              "code": "DISCHARGE_STATIN_MISSING",
+              "evidenceTypes": [
+                "Condition"
+              ],
+              "message": "冠心病/PCI 患者出院前未见在用他汀长期医嘱；请补开，或登记禁忌原因后提交。",
+              "tier": "alert"
+            }
+          ],
+          "gate": "inpatient-discharge",
+          "redLines": [],
+          "status": "alert"
+        },
+        "inpatient-pci-plan": {
+          "alerts": [],
+          "gate": "inpatient-pci-plan",
+          "redLines": [],
+          "status": "pass"
+        }
+      },
+      "clinicalScores": {
+        "scores": [
+          {
+            "id": "ckd-epi-2021-egfr",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min/1.73m2",
+            "value": null
+          },
+          {
+            "id": "cockcroft-gault-crcl",
+            "missingInputs": [
+              "serumCreatinine",
+              "weightKg"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：体重 (kg)、血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min",
+            "value": null
+          },
+          {
+            "id": "grace-acs",
+            "missingInputs": [
+              "acsPresentation",
+              "cardiacArrestOnAdmission",
+              "elevatedCardiacBiomarker",
+              "heartRateBpm",
+              "killipClass",
+              "serumCreatinine",
+              "stSegmentDeviation",
+              "systolicBpMmHg"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、心率/脉搏、收缩压、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "timi-ua-nstemi",
+            "missingInputs": [
+              "anginaEpisodes24h",
+              "aspirinUsedLast7Days",
+              "elevatedCardiacBiomarker",
+              "familyHistoryPrematureCad",
+              "knownCoronaryStenosisGe50",
+              "ldlCholesterol",
+              "smokingStatus",
+              "stSegmentDeviation",
+              "totalCholesterol",
+              "uaNstemiPresentation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "precise-dapt",
+            "missingInputs": [
+              "hemoglobin",
+              "pciDaptIndication",
+              "priorBleedingHistory",
+              "serumCreatinine",
+              "wbc",
+              "weightKg"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、体重 (kg)、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "ascvd-ldl-target",
+            "missingInputs": [],
+            "status": "complete",
+            "summaryZh": "极高危（目标 <1.8 mmol/L）",
+            "tierCode": "very-high",
+            "tierLabelZh": "极高危（目标 <1.8 mmol/L）",
+            "unit": "mmol/L",
+            "value": 1.8
+          }
+        ],
+        "vitalSigns": null
+      },
+      "draftId": "cardio-elective-lad-pci-v1",
+      "entryPath": "inpatient",
+      "guidelineTopics": [
+        {
+          "degradedReason": null,
+          "fingerprint": "65bcd12fecc5162b70ba15fa2aa9ad029a5aba6cfb2cf62ece6b1459158272e7",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "当前患者尚未记录急性胸痛主诉或疑似/确诊急性冠脉综合征（ACS）就诊依据，仅可按条件性参考核对。",
+            "缺少已签发 12 导联心电图结构化报告。",
+            "缺少心肌肌钙蛋白（cTn/hs-cTn）检验及动态复测记录。",
+            "GRACE 危险分层未就绪（待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、心率/脉搏、收缩压、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "TIMI 缺血评分未就绪（待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "缺少基线血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "acs-presentation",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "cardiac-troponin",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "ecg-12-lead",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "grace-acs",
+              "status": "missing",
+              "valueText": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、心率/脉搏、收缩压、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            },
+            {
+              "code": "timi-ua-nstemi",
+              "status": "missing",
+              "valueText": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "acute-chest-pain-acs",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c970c5653d3ebbd1753c30802ad5aa881e6c34ca74eb5c0344799e5114fc3874",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "尚未关联本次正式冠脉造影狭窄率或 FFR/iFR 功能学评估记录。",
+            "缺少经胸超声心动图左室射血分数（LVEF）记录。",
+            "缺少造影/血运重建前血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "coronary-angiography",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "coronary-revascularization-indication",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "edda4d12d5171f753dde89fc89d3b647987dd10d6d956739a60e169e2cc36f06",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少冠脉造影报告及 PCI 靶病变长度、近端/远端参考管径测量。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "pci-selection-plan",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "pci-stent",
+          "version": "2026-11-02.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "cb7e6575d3259ad9897b28098d54eb43bd2b00b7d1da176fa3d8f99dd3f17e26",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前尚未关联拟行冠脉造影、PCI 或其他血管内含碘对比剂检查/手术申请，仅可按条件性参考核对。",
+            "缺少术前血肌酐与 eGFR 危险分层依据（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（影响按体重水化速率计算）（待补齐：体重 (kg)、血肌酐 (SCr)）",
+            "缺少经胸超声心动图 LVEF 或心功能评估（水化须防止左心功能不全容量负荷过重）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：体重 (kg)、血肌酐 (SCr)"
+            },
+            {
+              "code": "contrast-procedure-indication",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "contrast-kidney-hydration",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "669758615626baf809d0ad6f7d6ab13b7810f2bcf8be3ab603dcb030ed912d5c",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "PRECISE-DAPT 出血评分未就绪（待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、体重 (kg)、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史）",
+            "缺少 LVEF 评估（影响合并 LVEF ≤ 40% 时 ACEI/ARB/β 受体阻滞剂二级预防核对）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ascvd-ldl-target",
+              "status": "present",
+              "valueText": "极高危（目标 <1.8 mmol/L）"
+            },
+            {
+              "code": "cad-acs-eligibility",
+              "status": "present",
+              "valueText": "冠状动脉粥样硬化性心脏病"
+            },
+            {
+              "code": "precise-dapt",
+              "status": "missing",
+              "valueText": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、体重 (kg)、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史"
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c2d1ad724cf39cc1c2dc4f699cd74b1628731d4b61655abb6cc4e77c17ea1b6d",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前患者尚未确认 2 型糖尿病（ICD-10 E11）适用诊断，仅可按条件性参考核对。",
+            "缺少血肌酐与 eGFR（无法判定二甲双胍/达格列净肾功能分期界值）（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（待补齐：体重 (kg)、血肌酐 (SCr)）",
+            "缺少近期糖化血红蛋白（HbA1c）检验记录。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：体重 (kg)、血肌酐 (SCr)"
+            },
+            {
+              "code": "lab-hba1c",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "t2dm-diagnosis",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "t2dm-renal-medication",
+          "version": "2026-11-17.r1"
+        }
+      ],
+      "orderSetDrafts": {
+        "drafts": [
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 0,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "ecg-12-lead",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hs-ctni",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "d-dimer",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "renal-function",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "electrolytes",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "chest-pain-stat-workup",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 0,
+              "ready": 10,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "ecg-12-lead",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "tte",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "cbc",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "renal-function",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "electrolytes",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "lipids",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hba1c",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hs-ctni",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "nt-probnp",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "coagulation",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "cad-admission-baseline",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 1,
+              "ready": 1,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "needs-review",
+                "key": "isotonic-saline-hydration",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "egfr-missing",
+                    "severity": "pending-verification"
+                  },
+                  {
+                    "code": "weight-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "ready",
+                "key": "creatinine-recheck",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "cin-perioperative-hydration",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 3,
+              "ready": 3,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "aspirin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "p2y12-inhibitor",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "statin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "needs-review",
+                "key": "beta-blocker",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "vital-signs-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "needs-review",
+                "key": "acei",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "vital-signs-missing",
+                    "severity": "pending-verification"
+                  },
+                  {
+                    "code": "egfr-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "needs-review",
+                "key": "nitroglycerin-prn",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "vital-signs-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              }
+            ],
+            "templateId": "cad-pci-secondary-prevention",
+            "version": "2026-11-18.r1"
+          }
+        ],
+        "patientFacts": {
+          "allergiesCount": 0,
+          "egfr": {
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "missing"
+          },
+          "vitalSigns": {
+            "source": "inpatient-nursing",
+            "status": "missing"
+          },
+          "weight": {
+            "status": "missing"
+          }
+        }
+      },
+      "recommendedEntry": "inpatient"
+    },
+    {
+      "clinicalQualityGates": {
+        "inpatient-discharge": {
+          "alerts": [
+            {
+              "code": "DISCHARGE_ANTIPLATELET_MISSING",
+              "evidenceTypes": [
+                "Condition"
+              ],
+              "message": "冠心病/PCI 患者出院前未见在用抗血小板长期医嘱；请补开，或登记禁忌原因后提交。",
+              "tier": "alert"
+            },
+            {
+              "code": "DISCHARGE_STATIN_MISSING",
+              "evidenceTypes": [
+                "Condition"
+              ],
+              "message": "冠心病/PCI 患者出院前未见在用他汀长期医嘱；请补开，或登记禁忌原因后提交。",
+              "tier": "alert"
+            }
+          ],
+          "gate": "inpatient-discharge",
+          "redLines": [],
+          "status": "alert"
+        },
+        "inpatient-pci-plan": {
+          "alerts": [],
+          "gate": "inpatient-pci-plan",
+          "redLines": [],
+          "status": "pass"
+        }
+      },
+      "clinicalScores": {
+        "scores": [
+          {
+            "id": "ckd-epi-2021-egfr",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min/1.73m2",
+            "value": null
+          },
+          {
+            "id": "cockcroft-gault-crcl",
+            "missingInputs": [
+              "serumCreatinine",
+              "weightKg"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：体重 (kg)、血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min",
+            "value": null
+          },
+          {
+            "id": "grace-acs",
+            "missingInputs": [
+              "acsPresentation",
+              "cardiacArrestOnAdmission",
+              "elevatedCardiacBiomarker",
+              "heartRateBpm",
+              "killipClass",
+              "serumCreatinine",
+              "stSegmentDeviation",
+              "systolicBpMmHg"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、心率/脉搏、收缩压、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "timi-ua-nstemi",
+            "missingInputs": [
+              "anginaEpisodes24h",
+              "aspirinUsedLast7Days",
+              "elevatedCardiacBiomarker",
+              "familyHistoryPrematureCad",
+              "knownCoronaryStenosisGe50",
+              "ldlCholesterol",
+              "smokingStatus",
+              "stSegmentDeviation",
+              "totalCholesterol",
+              "uaNstemiPresentation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "precise-dapt",
+            "missingInputs": [
+              "hemoglobin",
+              "pciDaptIndication",
+              "priorBleedingHistory",
+              "serumCreatinine",
+              "wbc",
+              "weightKg"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、体重 (kg)、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "ascvd-ldl-target",
+            "missingInputs": [],
+            "status": "complete",
+            "summaryZh": "极高危（目标 <1.8 mmol/L）",
+            "tierCode": "very-high",
+            "tierLabelZh": "极高危（目标 <1.8 mmol/L）",
+            "unit": "mmol/L",
+            "value": 1.8
+          }
+        ],
+        "vitalSigns": null
+      },
+      "draftId": "cardio-borderline-ffr-gdmt-v1",
+      "entryPath": "inpatient",
+      "guidelineTopics": [
+        {
+          "degradedReason": null,
+          "fingerprint": "65bcd12fecc5162b70ba15fa2aa9ad029a5aba6cfb2cf62ece6b1459158272e7",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "当前患者尚未记录急性胸痛主诉或疑似/确诊急性冠脉综合征（ACS）就诊依据，仅可按条件性参考核对。",
+            "缺少已签发 12 导联心电图结构化报告。",
+            "缺少心肌肌钙蛋白（cTn/hs-cTn）检验及动态复测记录。",
+            "GRACE 危险分层未就绪（待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、心率/脉搏、收缩压、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "TIMI 缺血评分未就绪（待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "缺少基线血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "acs-presentation",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "cardiac-troponin",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "ecg-12-lead",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "grace-acs",
+              "status": "missing",
+              "valueText": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、心率/脉搏、收缩压、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            },
+            {
+              "code": "timi-ua-nstemi",
+              "status": "missing",
+              "valueText": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "acute-chest-pain-acs",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c970c5653d3ebbd1753c30802ad5aa881e6c34ca74eb5c0344799e5114fc3874",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "尚未关联本次正式冠脉造影狭窄率或 FFR/iFR 功能学评估记录。",
+            "缺少经胸超声心动图左室射血分数（LVEF）记录。",
+            "缺少造影/血运重建前血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "coronary-angiography",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "coronary-revascularization-indication",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "edda4d12d5171f753dde89fc89d3b647987dd10d6d956739a60e169e2cc36f06",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少冠脉造影报告及 PCI 靶病变长度、近端/远端参考管径测量。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "pci-selection-plan",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "pci-stent",
+          "version": "2026-11-02.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "cb7e6575d3259ad9897b28098d54eb43bd2b00b7d1da176fa3d8f99dd3f17e26",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前尚未关联拟行冠脉造影、PCI 或其他血管内含碘对比剂检查/手术申请，仅可按条件性参考核对。",
+            "缺少术前血肌酐与 eGFR 危险分层依据（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（影响按体重水化速率计算）（待补齐：体重 (kg)、血肌酐 (SCr)）",
+            "缺少经胸超声心动图 LVEF 或心功能评估（水化须防止左心功能不全容量负荷过重）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：体重 (kg)、血肌酐 (SCr)"
+            },
+            {
+              "code": "contrast-procedure-indication",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "contrast-kidney-hydration",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "669758615626baf809d0ad6f7d6ab13b7810f2bcf8be3ab603dcb030ed912d5c",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "PRECISE-DAPT 出血评分未就绪（待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、体重 (kg)、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史）",
+            "缺少 LVEF 评估（影响合并 LVEF ≤ 40% 时 ACEI/ARB/β 受体阻滞剂二级预防核对）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ascvd-ldl-target",
+              "status": "present",
+              "valueText": "极高危（目标 <1.8 mmol/L）"
+            },
+            {
+              "code": "cad-acs-eligibility",
+              "status": "present",
+              "valueText": "冠状动脉粥样硬化性心脏病"
+            },
+            {
+              "code": "precise-dapt",
+              "status": "missing",
+              "valueText": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、体重 (kg)、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史"
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c2d1ad724cf39cc1c2dc4f699cd74b1628731d4b61655abb6cc4e77c17ea1b6d",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前患者尚未确认 2 型糖尿病（ICD-10 E11）适用诊断，仅可按条件性参考核对。",
+            "缺少血肌酐与 eGFR（无法判定二甲双胍/达格列净肾功能分期界值）（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（待补齐：体重 (kg)、血肌酐 (SCr)）",
+            "缺少近期糖化血红蛋白（HbA1c）检验记录。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：体重 (kg)、血肌酐 (SCr)"
+            },
+            {
+              "code": "lab-hba1c",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "t2dm-diagnosis",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "t2dm-renal-medication",
+          "version": "2026-11-17.r1"
+        }
+      ],
+      "orderSetDrafts": {
+        "drafts": [
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 0,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "ecg-12-lead",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hs-ctni",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "d-dimer",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "renal-function",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "electrolytes",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "chest-pain-stat-workup",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 0,
+              "ready": 10,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "ecg-12-lead",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "tte",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "cbc",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "renal-function",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "electrolytes",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "lipids",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hba1c",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hs-ctni",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "nt-probnp",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "coagulation",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "cad-admission-baseline",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 1,
+              "ready": 1,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "needs-review",
+                "key": "isotonic-saline-hydration",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "egfr-missing",
+                    "severity": "pending-verification"
+                  },
+                  {
+                    "code": "weight-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "ready",
+                "key": "creatinine-recheck",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "cin-perioperative-hydration",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 3,
+              "ready": 3,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "aspirin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "p2y12-inhibitor",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "statin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "needs-review",
+                "key": "beta-blocker",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "vital-signs-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "needs-review",
+                "key": "acei",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "vital-signs-missing",
+                    "severity": "pending-verification"
+                  },
+                  {
+                    "code": "egfr-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "needs-review",
+                "key": "nitroglycerin-prn",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "vital-signs-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              }
+            ],
+            "templateId": "cad-pci-secondary-prevention",
+            "version": "2026-11-18.r1"
+          }
+        ],
+        "patientFacts": {
+          "allergiesCount": 0,
+          "egfr": {
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "missing"
+          },
+          "vitalSigns": {
+            "source": "inpatient-nursing",
+            "status": "missing"
+          },
+          "weight": {
+            "status": "missing"
+          }
+        }
+      },
+      "recommendedEntry": "inpatient"
+    },
+    {
+      "clinicalQualityGates": {
+        "inpatient-discharge": {
+          "alerts": [
+            {
+              "code": "DISCHARGE_ANTIPLATELET_MISSING",
+              "evidenceTypes": [
+                "Condition"
+              ],
+              "message": "冠心病/PCI 患者出院前未见在用抗血小板长期医嘱；请补开，或登记禁忌原因后提交。",
+              "tier": "alert"
+            },
+            {
+              "code": "DISCHARGE_STATIN_MISSING",
+              "evidenceTypes": [
+                "Condition"
+              ],
+              "message": "冠心病/PCI 患者出院前未见在用他汀长期医嘱；请补开，或登记禁忌原因后提交。",
+              "tier": "alert"
+            }
+          ],
+          "gate": "inpatient-discharge",
+          "redLines": [],
+          "status": "alert"
+        },
+        "inpatient-pci-plan": {
+          "alerts": [],
+          "gate": "inpatient-pci-plan",
+          "redLines": [],
+          "status": "pass"
+        }
+      },
+      "clinicalScores": {
+        "scores": [
+          {
+            "id": "ckd-epi-2021-egfr",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min/1.73m2",
+            "value": null
+          },
+          {
+            "id": "cockcroft-gault-crcl",
+            "missingInputs": [
+              "serumCreatinine",
+              "weightKg"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：体重 (kg)、血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min",
+            "value": null
+          },
+          {
+            "id": "grace-acs",
+            "missingInputs": [
+              "acsPresentation",
+              "cardiacArrestOnAdmission",
+              "elevatedCardiacBiomarker",
+              "heartRateBpm",
+              "killipClass",
+              "serumCreatinine",
+              "stSegmentDeviation",
+              "systolicBpMmHg"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、心率/脉搏、收缩压、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "timi-ua-nstemi",
+            "missingInputs": [
+              "anginaEpisodes24h",
+              "aspirinUsedLast7Days",
+              "elevatedCardiacBiomarker",
+              "familyHistoryPrematureCad",
+              "knownCoronaryStenosisGe50",
+              "ldlCholesterol",
+              "smokingStatus",
+              "stSegmentDeviation",
+              "totalCholesterol",
+              "uaNstemiPresentation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "precise-dapt",
+            "missingInputs": [
+              "hemoglobin",
+              "pciDaptIndication",
+              "priorBleedingHistory",
+              "serumCreatinine",
+              "wbc",
+              "weightKg"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、体重 (kg)、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "ascvd-ldl-target",
+            "missingInputs": [],
+            "status": "complete",
+            "summaryZh": "极高危（目标 <1.8 mmol/L）",
+            "tierCode": "very-high",
+            "tierLabelZh": "极高危（目标 <1.8 mmol/L）",
+            "unit": "mmol/L",
+            "value": 1.8
+          }
+        ],
+        "vitalSigns": null
+      },
+      "draftId": "cardio-cad-ckd3b-hydration-pci-v1",
+      "entryPath": "inpatient",
+      "guidelineTopics": [
+        {
+          "degradedReason": null,
+          "fingerprint": "65bcd12fecc5162b70ba15fa2aa9ad029a5aba6cfb2cf62ece6b1459158272e7",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "当前患者尚未记录急性胸痛主诉或疑似/确诊急性冠脉综合征（ACS）就诊依据，仅可按条件性参考核对。",
+            "缺少已签发 12 导联心电图结构化报告。",
+            "缺少心肌肌钙蛋白（cTn/hs-cTn）检验及动态复测记录。",
+            "GRACE 危险分层未就绪（待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、心率/脉搏、收缩压、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "TIMI 缺血评分未就绪（待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "缺少基线血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "acs-presentation",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "cardiac-troponin",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "ecg-12-lead",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "grace-acs",
+              "status": "missing",
+              "valueText": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、心率/脉搏、收缩压、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            },
+            {
+              "code": "timi-ua-nstemi",
+              "status": "missing",
+              "valueText": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "acute-chest-pain-acs",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c970c5653d3ebbd1753c30802ad5aa881e6c34ca74eb5c0344799e5114fc3874",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "尚未关联本次正式冠脉造影狭窄率或 FFR/iFR 功能学评估记录。",
+            "缺少经胸超声心动图左室射血分数（LVEF）记录。",
+            "缺少造影/血运重建前血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "coronary-angiography",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "coronary-revascularization-indication",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "edda4d12d5171f753dde89fc89d3b647987dd10d6d956739a60e169e2cc36f06",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少冠脉造影报告及 PCI 靶病变长度、近端/远端参考管径测量。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "pci-selection-plan",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "pci-stent",
+          "version": "2026-11-02.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "cb7e6575d3259ad9897b28098d54eb43bd2b00b7d1da176fa3d8f99dd3f17e26",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前尚未关联拟行冠脉造影、PCI 或其他血管内含碘对比剂检查/手术申请，仅可按条件性参考核对。",
+            "缺少术前血肌酐与 eGFR 危险分层依据（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（影响按体重水化速率计算）（待补齐：体重 (kg)、血肌酐 (SCr)）",
+            "缺少经胸超声心动图 LVEF 或心功能评估（水化须防止左心功能不全容量负荷过重）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：体重 (kg)、血肌酐 (SCr)"
+            },
+            {
+              "code": "contrast-procedure-indication",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "contrast-kidney-hydration",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "669758615626baf809d0ad6f7d6ab13b7810f2bcf8be3ab603dcb030ed912d5c",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "PRECISE-DAPT 出血评分未就绪（待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、体重 (kg)、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史）",
+            "缺少 LVEF 评估（影响合并 LVEF ≤ 40% 时 ACEI/ARB/β 受体阻滞剂二级预防核对）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ascvd-ldl-target",
+              "status": "present",
+              "valueText": "极高危（目标 <1.8 mmol/L）"
+            },
+            {
+              "code": "cad-acs-eligibility",
+              "status": "present",
+              "valueText": "冠状动脉粥样硬化性心脏病"
+            },
+            {
+              "code": "precise-dapt",
+              "status": "missing",
+              "valueText": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、体重 (kg)、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史"
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c2d1ad724cf39cc1c2dc4f699cd74b1628731d4b61655abb6cc4e77c17ea1b6d",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前患者尚未确认 2 型糖尿病（ICD-10 E11）适用诊断，仅可按条件性参考核对。",
+            "缺少血肌酐与 eGFR（无法判定二甲双胍/达格列净肾功能分期界值）（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（待补齐：体重 (kg)、血肌酐 (SCr)）",
+            "缺少近期糖化血红蛋白（HbA1c）检验记录。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：体重 (kg)、血肌酐 (SCr)"
+            },
+            {
+              "code": "lab-hba1c",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "t2dm-diagnosis",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "t2dm-renal-medication",
+          "version": "2026-11-17.r1"
+        }
+      ],
+      "orderSetDrafts": {
+        "drafts": [
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 0,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "ecg-12-lead",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hs-ctni",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "d-dimer",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "renal-function",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "electrolytes",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "chest-pain-stat-workup",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 0,
+              "ready": 10,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "ecg-12-lead",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "tte",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "cbc",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "renal-function",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "electrolytes",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "lipids",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hba1c",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hs-ctni",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "nt-probnp",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "coagulation",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "cad-admission-baseline",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 1,
+              "ready": 1,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "needs-review",
+                "key": "isotonic-saline-hydration",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "egfr-missing",
+                    "severity": "pending-verification"
+                  },
+                  {
+                    "code": "weight-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "ready",
+                "key": "creatinine-recheck",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "cin-perioperative-hydration",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 3,
+              "ready": 3,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "aspirin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "p2y12-inhibitor",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "statin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "needs-review",
+                "key": "beta-blocker",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "vital-signs-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "needs-review",
+                "key": "acei",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "vital-signs-missing",
+                    "severity": "pending-verification"
+                  },
+                  {
+                    "code": "egfr-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "needs-review",
+                "key": "nitroglycerin-prn",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "vital-signs-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              }
+            ],
+            "templateId": "cad-pci-secondary-prevention",
+            "version": "2026-11-18.r1"
+          }
+        ],
+        "patientFacts": {
+          "allergiesCount": 0,
+          "egfr": {
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "missing"
+          },
+          "vitalSigns": {
+            "source": "inpatient-nursing",
+            "status": "missing"
+          },
+          "weight": {
+            "status": "missing"
+          }
+        }
+      },
+      "recommendedEntry": "inpatient"
+    },
+    {
+      "clinicalQualityGates": {
+        "outpatient-completion": {
+          "alerts": [],
+          "gate": "outpatient-completion",
+          "redLines": [],
+          "status": "pass"
+        },
+        "outpatient-prescription": {
+          "alerts": [],
+          "gate": "outpatient-prescription",
+          "redLines": [],
+          "status": "pass"
+        }
+      },
+      "clinicalScores": {
+        "scores": [
+          {
+            "id": "ckd-epi-2021-egfr",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min/1.73m2",
+            "value": null
+          },
+          {
+            "id": "cockcroft-gault-crcl",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min",
+            "value": null
+          },
+          {
+            "id": "grace-acs",
+            "missingInputs": [
+              "acsPresentation",
+              "cardiacArrestOnAdmission",
+              "elevatedCardiacBiomarker",
+              "killipClass",
+              "serumCreatinine",
+              "stSegmentDeviation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "timi-ua-nstemi",
+            "missingInputs": [
+              "anginaEpisodes24h",
+              "aspirinUsedLast7Days",
+              "elevatedCardiacBiomarker",
+              "knownCoronaryStenosisGe50",
+              "stSegmentDeviation",
+              "uaNstemiPresentation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "precise-dapt",
+            "missingInputs": [
+              "hemoglobin",
+              "pciDaptIndication",
+              "priorBleedingHistory",
+              "serumCreatinine",
+              "wbc"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "ascvd-ldl-target",
+            "missingInputs": [],
+            "status": "complete",
+            "summaryZh": "极高危（目标 <1.8 mmol/L）",
+            "tierCode": "very-high",
+            "tierLabelZh": "极高危（目标 <1.8 mmol/L）",
+            "unit": "mmol/L",
+            "value": 1.8
+          }
+        ],
+        "vitalSigns": {
+          "bloodPressure": {
+            "diastolicMmHg": 86,
+            "systolicMmHg": 144
+          },
+          "oxygenSaturationPct": 96,
+          "pulseBpm": 84,
+          "respirationBpm": 18,
+          "temperatureC": 36.6,
+          "weightKg": 62
+        }
+      },
+      "draftId": "renal-t2dm-htn-ckd4-control-v1",
+      "entryPath": "outpatient",
+      "guidelineTopics": [
+        {
+          "degradedReason": null,
+          "fingerprint": "65bcd12fecc5162b70ba15fa2aa9ad029a5aba6cfb2cf62ece6b1459158272e7",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "当前患者尚未记录急性胸痛主诉或疑似/确诊急性冠脉综合征（ACS）就诊依据，仅可按条件性参考核对。",
+            "缺少已签发 12 导联心电图结构化报告。",
+            "缺少心肌肌钙蛋白（cTn/hs-cTn）检验及动态复测记录。",
+            "GRACE 危险分层未就绪（待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "TIMI 缺血评分未就绪（待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "缺少基线血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "acs-presentation",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "cardiac-troponin",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "ecg-12-lead",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "grace-acs",
+              "status": "missing",
+              "valueText": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            },
+            {
+              "code": "timi-ua-nstemi",
+              "status": "missing",
+              "valueText": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "acute-chest-pain-acs",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c970c5653d3ebbd1753c30802ad5aa881e6c34ca74eb5c0344799e5114fc3874",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "尚未关联本次正式冠脉造影狭窄率或 FFR/iFR 功能学评估记录。",
+            "缺少经胸超声心动图左室射血分数（LVEF）记录。",
+            "缺少造影/血运重建前血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "coronary-angiography",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "coronary-revascularization-indication",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "edda4d12d5171f753dde89fc89d3b647987dd10d6d956739a60e169e2cc36f06",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少冠脉造影报告及 PCI 靶病变长度、近端/远端参考管径测量。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "pci-selection-plan",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "pci-stent",
+          "version": "2026-11-02.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "cb7e6575d3259ad9897b28098d54eb43bd2b00b7d1da176fa3d8f99dd3f17e26",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前尚未关联拟行冠脉造影、PCI 或其他血管内含碘对比剂检查/手术申请，仅可按条件性参考核对。",
+            "缺少术前血肌酐与 eGFR 危险分层依据（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（影响按体重水化速率计算）（待补齐：血肌酐 (SCr)）",
+            "缺少经胸超声心动图 LVEF 或心功能评估（水化须防止左心功能不全容量负荷过重）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "contrast-procedure-indication",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "contrast-kidney-hydration",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "669758615626baf809d0ad6f7d6ab13b7810f2bcf8be3ab603dcb030ed912d5c",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前患者尚未确认冠心病/急性冠脉综合征（ICD-10 I20–I25）或冠脉血运重建依据，仅可按条件性参考核对。",
+            "PRECISE-DAPT 出血评分未就绪（待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史）",
+            "缺少 LVEF 评估（影响合并 LVEF ≤ 40% 时 ACEI/ARB/β 受体阻滞剂二级预防核对）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ascvd-ldl-target",
+              "status": "present",
+              "valueText": "极高危（目标 <1.8 mmol/L）"
+            },
+            {
+              "code": "cad-acs-eligibility",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "precise-dapt",
+              "status": "missing",
+              "valueText": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史"
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c2d1ad724cf39cc1c2dc4f699cd74b1628731d4b61655abb6cc4e77c17ea1b6d",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "缺少血肌酐与 eGFR（无法判定二甲双胍/达格列净肾功能分期界值）（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（待补齐：血肌酐 (SCr)）",
+            "缺少近期糖化血红蛋白（HbA1c）检验记录。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "lab-hba1c",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "t2dm-diagnosis",
+              "status": "present",
+              "valueText": "2型糖尿病伴高血糖"
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "t2dm-renal-medication",
+          "version": "2026-11-17.r1"
+        }
+      ],
+      "orderSetDrafts": {
+        "drafts": [
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 0,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "ecg-12-lead",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hs-ctni",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "d-dimer",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "renal-function",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "electrolytes",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "chest-pain-stat-workup",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 1,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "aspirin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "p2y12-inhibitor",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "statin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "beta-blocker",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "needs-review",
+                "key": "acei",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "egfr-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "ready",
+                "key": "nitroglycerin-prn",
+                "kind": "medication",
+                "reasons": []
+              }
+            ],
+            "templateId": "cad-pci-secondary-prevention",
+            "version": "2026-11-18.r1"
+          }
+        ],
+        "patientFacts": {
+          "allergiesCount": 0,
+          "egfr": {
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "missing"
+          },
+          "vitalSigns": {
+            "diastolicMmHg": 86,
+            "pulseBpm": 84,
+            "source": "triage",
+            "status": "present",
+            "systolicMmHg": 144
+          },
+          "weight": {
+            "status": "present",
+            "weightKg": 62
+          }
+        }
+      },
+      "recommendedEntry": "outpatient"
+    },
+    {
+      "clinicalQualityGates": {
+        "outpatient-completion": {
+          "alerts": [
+            {
+              "code": "CHEST_PAIN_WORKUP_INCOMPLETE",
+              "evidenceTypes": [
+                "Condition"
+              ],
+              "message": "急性胸痛就诊尚未完成12 导联心电图与心肌肌钙蛋白即拟完诊；请补齐检查，或说明原因后完诊。",
+              "tier": "alert"
+            }
+          ],
+          "gate": "outpatient-completion",
+          "redLines": [],
+          "status": "alert"
+        },
+        "outpatient-prescription": {
+          "alerts": [],
+          "gate": "outpatient-prescription",
+          "redLines": [],
+          "status": "pass"
+        }
+      },
+      "clinicalScores": {
+        "scores": [
+          {
+            "id": "ckd-epi-2021-egfr",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min/1.73m2",
+            "value": null
+          },
+          {
+            "id": "cockcroft-gault-crcl",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min",
+            "value": null
+          },
+          {
+            "id": "grace-acs",
+            "missingInputs": [
+              "acsPresentation",
+              "cardiacArrestOnAdmission",
+              "elevatedCardiacBiomarker",
+              "killipClass",
+              "serumCreatinine",
+              "stSegmentDeviation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "timi-ua-nstemi",
+            "missingInputs": [
+              "anginaEpisodes24h",
+              "aspirinUsedLast7Days",
+              "elevatedCardiacBiomarker",
+              "familyHistoryPrematureCad",
+              "knownCoronaryStenosisGe50",
+              "ldlCholesterol",
+              "smokingStatus",
+              "stSegmentDeviation",
+              "totalCholesterol",
+              "uaNstemiPresentation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "precise-dapt",
+            "missingInputs": [
+              "hemoglobin",
+              "pciDaptIndication",
+              "priorBleedingHistory",
+              "serumCreatinine",
+              "wbc"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "ascvd-ldl-target",
+            "missingInputs": [
+              "hdlCholesterol",
+              "ldlCholesterol",
+              "serumCreatinine",
+              "smokingStatus"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)、低密度脂蛋白或总胆固醇、高密度脂蛋白胆固醇 (HDL-C)、明确吸烟状态",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mmol/L",
+            "value": null
+          }
+        ],
+        "vitalSigns": {
+          "bloodPressure": {
+            "diastolicMmHg": 74,
+            "systolicMmHg": 116
+          },
+          "oxygenSaturationPct": 99,
+          "pulseBpm": 72,
+          "respirationBpm": 18,
+          "temperatureC": 36.6,
+          "weightKg": 56
+        }
+      },
+      "draftId": "trap-low-risk-chest-wall-pain-v1",
+      "entryPath": "outpatient",
+      "guidelineTopics": [
+        {
+          "degradedReason": null,
+          "fingerprint": "65bcd12fecc5162b70ba15fa2aa9ad029a5aba6cfb2cf62ece6b1459158272e7",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少已签发 12 导联心电图结构化报告。",
+            "缺少心肌肌钙蛋白（cTn/hs-cTn）检验及动态复测记录。",
+            "GRACE 危险分层未就绪（待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "TIMI 缺血评分未就绪（待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "缺少基线血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "acs-presentation",
+              "status": "present",
+              "valueText": "胸壁疼痛"
+            },
+            {
+              "code": "cardiac-troponin",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "ecg-12-lead",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "grace-acs",
+              "status": "missing",
+              "valueText": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            },
+            {
+              "code": "timi-ua-nstemi",
+              "status": "missing",
+              "valueText": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "acute-chest-pain-acs",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c970c5653d3ebbd1753c30802ad5aa881e6c34ca74eb5c0344799e5114fc3874",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "尚未关联本次正式冠脉造影狭窄率或 FFR/iFR 功能学评估记录。",
+            "缺少经胸超声心动图左室射血分数（LVEF）记录。",
+            "缺少造影/血运重建前血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "coronary-angiography",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "coronary-revascularization-indication",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "edda4d12d5171f753dde89fc89d3b647987dd10d6d956739a60e169e2cc36f06",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少冠脉造影报告及 PCI 靶病变长度、近端/远端参考管径测量。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "pci-selection-plan",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "pci-stent",
+          "version": "2026-11-02.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "cb7e6575d3259ad9897b28098d54eb43bd2b00b7d1da176fa3d8f99dd3f17e26",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前尚未关联拟行冠脉造影、PCI 或其他血管内含碘对比剂检查/手术申请，仅可按条件性参考核对。",
+            "缺少术前血肌酐与 eGFR 危险分层依据（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（影响按体重水化速率计算）（待补齐：血肌酐 (SCr)）",
+            "缺少经胸超声心动图 LVEF 或心功能评估（水化须防止左心功能不全容量负荷过重）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "contrast-procedure-indication",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "contrast-kidney-hydration",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "669758615626baf809d0ad6f7d6ab13b7810f2bcf8be3ab603dcb030ed912d5c",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前患者尚未确认冠心病/急性冠脉综合征（ICD-10 I20–I25）或冠脉血运重建依据，仅可按条件性参考核对。",
+            "PRECISE-DAPT 出血评分未就绪（待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史）",
+            "LDL-C 目标值核对未就绪（待补齐：血肌酐 (SCr)、低密度脂蛋白或总胆固醇、高密度脂蛋白胆固醇 (HDL-C)、明确吸烟状态）",
+            "缺少 LVEF 评估（影响合并 LVEF ≤ 40% 时 ACEI/ARB/β 受体阻滞剂二级预防核对）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ascvd-ldl-target",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)、低密度脂蛋白或总胆固醇、高密度脂蛋白胆固醇 (HDL-C)、明确吸烟状态"
+            },
+            {
+              "code": "cad-acs-eligibility",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "precise-dapt",
+              "status": "missing",
+              "valueText": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史"
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c2d1ad724cf39cc1c2dc4f699cd74b1628731d4b61655abb6cc4e77c17ea1b6d",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前患者尚未确认 2 型糖尿病（ICD-10 E11）适用诊断，仅可按条件性参考核对。",
+            "缺少血肌酐与 eGFR（无法判定二甲双胍/达格列净肾功能分期界值）（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（待补齐：血肌酐 (SCr)）",
+            "缺少近期糖化血红蛋白（HbA1c）检验记录。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "lab-hba1c",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "t2dm-diagnosis",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "t2dm-renal-medication",
+          "version": "2026-11-17.r1"
+        }
+      ],
+      "orderSetDrafts": {
+        "drafts": [
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 0,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "ecg-12-lead",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hs-ctni",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "d-dimer",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "renal-function",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "electrolytes",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "chest-pain-stat-workup",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 1,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "aspirin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "p2y12-inhibitor",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "statin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "beta-blocker",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "needs-review",
+                "key": "acei",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "egfr-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "ready",
+                "key": "nitroglycerin-prn",
+                "kind": "medication",
+                "reasons": []
+              }
+            ],
+            "templateId": "cad-pci-secondary-prevention",
+            "version": "2026-11-18.r1"
+          }
+        ],
+        "patientFacts": {
+          "allergiesCount": 0,
+          "egfr": {
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "missing"
+          },
+          "vitalSigns": {
+            "diastolicMmHg": 74,
+            "pulseBpm": 72,
+            "source": "triage",
+            "status": "present",
+            "systolicMmHg": 116
+          },
+          "weight": {
+            "status": "present",
+            "weightKg": 56
+          }
+        }
+      },
+      "recommendedEntry": "outpatient"
+    },
+    {
+      "clinicalQualityGates": {
+        "outpatient-completion": {
+          "alerts": [
+            {
+              "code": "CHEST_PAIN_WORKUP_INCOMPLETE",
+              "evidenceTypes": [
+                "Observation"
+              ],
+              "message": "急性胸痛就诊尚未完成12 导联心电图与心肌肌钙蛋白即拟完诊；请补齐检查，或说明原因后完诊。",
+              "tier": "alert"
+            }
+          ],
+          "gate": "outpatient-completion",
+          "redLines": [],
+          "status": "alert"
+        },
+        "outpatient-prescription": {
+          "alerts": [],
+          "gate": "outpatient-prescription",
+          "redLines": [],
+          "status": "pass"
+        }
+      },
+      "clinicalScores": {
+        "scores": [
+          {
+            "id": "ckd-epi-2021-egfr",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min/1.73m2",
+            "value": null
+          },
+          {
+            "id": "cockcroft-gault-crcl",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min",
+            "value": null
+          },
+          {
+            "id": "grace-acs",
+            "missingInputs": [
+              "acsPresentation",
+              "cardiacArrestOnAdmission",
+              "elevatedCardiacBiomarker",
+              "killipClass",
+              "serumCreatinine",
+              "stSegmentDeviation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "timi-ua-nstemi",
+            "missingInputs": [
+              "anginaEpisodes24h",
+              "aspirinUsedLast7Days",
+              "elevatedCardiacBiomarker",
+              "familyHistoryPrematureCad",
+              "knownCoronaryStenosisGe50",
+              "smokingStatus",
+              "stSegmentDeviation",
+              "uaNstemiPresentation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "precise-dapt",
+            "missingInputs": [
+              "hemoglobin",
+              "pciDaptIndication",
+              "priorBleedingHistory",
+              "serumCreatinine",
+              "wbc"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "ascvd-ldl-target",
+            "missingInputs": [],
+            "status": "complete",
+            "summaryZh": "极高危（目标 <1.8 mmol/L）",
+            "tierCode": "very-high",
+            "tierLabelZh": "极高危（目标 <1.8 mmol/L）",
+            "unit": "mmol/L",
+            "value": 1.8
+          }
+        ],
+        "vitalSigns": {
+          "bloodPressure": {
+            "diastolicMmHg": 80,
+            "systolicMmHg": 128
+          },
+          "oxygenSaturationPct": 99,
+          "pulseBpm": 78,
+          "respirationBpm": 18,
+          "temperatureC": 36.6,
+          "weightKg": 72
+        }
+      },
+      "draftId": "fh-premature-cad-clue-v1",
+      "entryPath": "outpatient",
+      "guidelineTopics": [
+        {
+          "degradedReason": null,
+          "fingerprint": "65bcd12fecc5162b70ba15fa2aa9ad029a5aba6cfb2cf62ece6b1459158272e7",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少已签发 12 导联心电图结构化报告。",
+            "缺少心肌肌钙蛋白（cTn/hs-cTn）检验及动态复测记录。",
+            "GRACE 危险分层未就绪（待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "TIMI 缺血评分未就绪（待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "缺少基线血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "acs-presentation",
+              "status": "present",
+              "valueText": "快走及上坡时胸骨后紧缩感 3 周，多年外院血脂显著升高。"
+            },
+            {
+              "code": "cardiac-troponin",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "ecg-12-lead",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "grace-acs",
+              "status": "missing",
+              "valueText": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            },
+            {
+              "code": "timi-ua-nstemi",
+              "status": "missing",
+              "valueText": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "acute-chest-pain-acs",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c970c5653d3ebbd1753c30802ad5aa881e6c34ca74eb5c0344799e5114fc3874",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "尚未关联本次正式冠脉造影狭窄率或 FFR/iFR 功能学评估记录。",
+            "缺少经胸超声心动图左室射血分数（LVEF）记录。",
+            "缺少造影/血运重建前血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "coronary-angiography",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "coronary-revascularization-indication",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "edda4d12d5171f753dde89fc89d3b647987dd10d6d956739a60e169e2cc36f06",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少冠脉造影报告及 PCI 靶病变长度、近端/远端参考管径测量。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "pci-selection-plan",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "pci-stent",
+          "version": "2026-11-02.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "cb7e6575d3259ad9897b28098d54eb43bd2b00b7d1da176fa3d8f99dd3f17e26",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前尚未关联拟行冠脉造影、PCI 或其他血管内含碘对比剂检查/手术申请，仅可按条件性参考核对。",
+            "缺少术前血肌酐与 eGFR 危险分层依据（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（影响按体重水化速率计算）（待补齐：血肌酐 (SCr)）",
+            "缺少经胸超声心动图 LVEF 或心功能评估（水化须防止左心功能不全容量负荷过重）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "contrast-procedure-indication",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "contrast-kidney-hydration",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "669758615626baf809d0ad6f7d6ab13b7810f2bcf8be3ab603dcb030ed912d5c",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "PRECISE-DAPT 出血评分未就绪（待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史）",
+            "缺少 LVEF 评估（影响合并 LVEF ≤ 40% 时 ACEI/ARB/β 受体阻滞剂二级预防核对）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ascvd-ldl-target",
+              "status": "present",
+              "valueText": "极高危（目标 <1.8 mmol/L）"
+            },
+            {
+              "code": "cad-acs-eligibility",
+              "status": "present",
+              "valueText": "冠状动脉粥样硬化性心脏病"
+            },
+            {
+              "code": "precise-dapt",
+              "status": "missing",
+              "valueText": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史"
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c2d1ad724cf39cc1c2dc4f699cd74b1628731d4b61655abb6cc4e77c17ea1b6d",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前患者尚未确认 2 型糖尿病（ICD-10 E11）适用诊断，仅可按条件性参考核对。",
+            "缺少血肌酐与 eGFR（无法判定二甲双胍/达格列净肾功能分期界值）（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（待补齐：血肌酐 (SCr)）",
+            "缺少近期糖化血红蛋白（HbA1c）检验记录。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "lab-hba1c",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "t2dm-diagnosis",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "t2dm-renal-medication",
+          "version": "2026-11-17.r1"
+        }
+      ],
+      "orderSetDrafts": {
+        "drafts": [
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 0,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "ecg-12-lead",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hs-ctni",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "d-dimer",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "renal-function",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "electrolytes",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "chest-pain-stat-workup",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 1,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "aspirin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "p2y12-inhibitor",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "statin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "beta-blocker",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "needs-review",
+                "key": "acei",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "egfr-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "ready",
+                "key": "nitroglycerin-prn",
+                "kind": "medication",
+                "reasons": []
+              }
+            ],
+            "templateId": "cad-pci-secondary-prevention",
+            "version": "2026-11-18.r1"
+          }
+        ],
+        "patientFacts": {
+          "allergiesCount": 0,
+          "egfr": {
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "missing"
+          },
+          "vitalSigns": {
+            "diastolicMmHg": 80,
+            "pulseBpm": 78,
+            "source": "triage",
+            "status": "present",
+            "systolicMmHg": 128
+          },
+          "weight": {
+            "status": "present",
+            "weightKg": 72
+          }
+        }
+      },
+      "recommendedEntry": "outpatient"
+    },
+    {
+      "clinicalQualityGates": {
+        "outpatient-completion": {
+          "alerts": [],
+          "gate": "outpatient-completion",
+          "redLines": [],
+          "status": "pass"
+        },
+        "outpatient-prescription": {
+          "alerts": [],
+          "gate": "outpatient-prescription",
+          "redLines": [],
+          "status": "pass"
+        }
+      },
+      "clinicalScores": {
+        "scores": [
+          {
+            "id": "ckd-epi-2021-egfr",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min/1.73m2",
+            "value": null
+          },
+          {
+            "id": "cockcroft-gault-crcl",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min",
+            "value": null
+          },
+          {
+            "id": "grace-acs",
+            "missingInputs": [
+              "acsPresentation",
+              "cardiacArrestOnAdmission",
+              "elevatedCardiacBiomarker",
+              "killipClass",
+              "serumCreatinine",
+              "stSegmentDeviation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "timi-ua-nstemi",
+            "missingInputs": [
+              "anginaEpisodes24h",
+              "aspirinUsedLast7Days",
+              "elevatedCardiacBiomarker",
+              "familyHistoryPrematureCad",
+              "knownCoronaryStenosisGe50",
+              "ldlCholesterol",
+              "smokingStatus",
+              "stSegmentDeviation",
+              "totalCholesterol",
+              "uaNstemiPresentation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "precise-dapt",
+            "missingInputs": [
+              "hemoglobin",
+              "pciDaptIndication",
+              "priorBleedingHistory",
+              "serumCreatinine",
+              "wbc"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "ascvd-ldl-target",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mmol/L",
+            "value": null
+          }
+        ],
+        "vitalSigns": {
+          "bloodPressure": {
+            "diastolicMmHg": 78,
+            "systolicMmHg": 132
+          },
+          "oxygenSaturationPct": 98,
+          "pulseBpm": 76,
+          "respirationBpm": 18,
+          "temperatureC": 36.6,
+          "weightKg": 68
+        }
+      },
+      "draftId": "trap-epigastric-t2dm-ruleout-v1",
+      "entryPath": "outpatient",
+      "guidelineTopics": [
+        {
+          "degradedReason": null,
+          "fingerprint": "65bcd12fecc5162b70ba15fa2aa9ad029a5aba6cfb2cf62ece6b1459158272e7",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "当前患者尚未记录急性胸痛主诉或疑似/确诊急性冠脉综合征（ACS）就诊依据，仅可按条件性参考核对。",
+            "缺少已签发 12 导联心电图结构化报告。",
+            "缺少心肌肌钙蛋白（cTn/hs-cTn）检验及动态复测记录。",
+            "GRACE 危险分层未就绪（待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "TIMI 缺血评分未就绪（待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "缺少基线血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "acs-presentation",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "cardiac-troponin",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "ecg-12-lead",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "grace-acs",
+              "status": "missing",
+              "valueText": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            },
+            {
+              "code": "timi-ua-nstemi",
+              "status": "missing",
+              "valueText": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "acute-chest-pain-acs",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c970c5653d3ebbd1753c30802ad5aa881e6c34ca74eb5c0344799e5114fc3874",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "尚未关联本次正式冠脉造影狭窄率或 FFR/iFR 功能学评估记录。",
+            "缺少经胸超声心动图左室射血分数（LVEF）记录。",
+            "缺少造影/血运重建前血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "coronary-angiography",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "coronary-revascularization-indication",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "edda4d12d5171f753dde89fc89d3b647987dd10d6d956739a60e169e2cc36f06",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少冠脉造影报告及 PCI 靶病变长度、近端/远端参考管径测量。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "pci-selection-plan",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "pci-stent",
+          "version": "2026-11-02.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "cb7e6575d3259ad9897b28098d54eb43bd2b00b7d1da176fa3d8f99dd3f17e26",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前尚未关联拟行冠脉造影、PCI 或其他血管内含碘对比剂检查/手术申请，仅可按条件性参考核对。",
+            "缺少术前血肌酐与 eGFR 危险分层依据（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（影响按体重水化速率计算）（待补齐：血肌酐 (SCr)）",
+            "缺少经胸超声心动图 LVEF 或心功能评估（水化须防止左心功能不全容量负荷过重）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "contrast-procedure-indication",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "contrast-kidney-hydration",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "669758615626baf809d0ad6f7d6ab13b7810f2bcf8be3ab603dcb030ed912d5c",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前患者尚未确认冠心病/急性冠脉综合征（ICD-10 I20–I25）或冠脉血运重建依据，仅可按条件性参考核对。",
+            "PRECISE-DAPT 出血评分未就绪（待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史）",
+            "LDL-C 目标值核对未就绪（待补齐：血肌酐 (SCr)）",
+            "缺少 LVEF 评估（影响合并 LVEF ≤ 40% 时 ACEI/ARB/β 受体阻滞剂二级预防核对）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ascvd-ldl-target",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cad-acs-eligibility",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "precise-dapt",
+              "status": "missing",
+              "valueText": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史"
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c2d1ad724cf39cc1c2dc4f699cd74b1628731d4b61655abb6cc4e77c17ea1b6d",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "缺少血肌酐与 eGFR（无法判定二甲双胍/达格列净肾功能分期界值）（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（待补齐：血肌酐 (SCr)）",
+            "缺少近期糖化血红蛋白（HbA1c）检验记录。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "lab-hba1c",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "t2dm-diagnosis",
+              "status": "present",
+              "valueText": "2型糖尿病"
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "t2dm-renal-medication",
+          "version": "2026-11-17.r1"
+        }
+      ],
+      "orderSetDrafts": {
+        "drafts": [
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 0,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "ecg-12-lead",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hs-ctni",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "d-dimer",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "renal-function",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "electrolytes",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "chest-pain-stat-workup",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 1,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "aspirin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "p2y12-inhibitor",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "statin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "beta-blocker",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "needs-review",
+                "key": "acei",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "egfr-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "ready",
+                "key": "nitroglycerin-prn",
+                "kind": "medication",
+                "reasons": []
+              }
+            ],
+            "templateId": "cad-pci-secondary-prevention",
+            "version": "2026-11-18.r1"
+          }
+        ],
+        "patientFacts": {
+          "allergiesCount": 0,
+          "egfr": {
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "missing"
+          },
+          "vitalSigns": {
+            "diastolicMmHg": 78,
+            "pulseBpm": 76,
+            "source": "triage",
+            "status": "present",
+            "systolicMmHg": 132
+          },
+          "weight": {
+            "status": "present",
+            "weightKg": 68
+          }
+        }
+      },
+      "recommendedEntry": "outpatient"
+    },
+    {
+      "clinicalQualityGates": {
+        "outpatient-completion": {
+          "alerts": [
+            {
+              "code": "CHEST_PAIN_WORKUP_INCOMPLETE",
+              "evidenceTypes": [
+                "Observation"
+              ],
+              "message": "急性胸痛就诊尚未完成12 导联心电图与心肌肌钙蛋白即拟完诊；请补齐检查，或说明原因后完诊。",
+              "tier": "alert"
+            }
+          ],
+          "gate": "outpatient-completion",
+          "redLines": [],
+          "status": "alert"
+        },
+        "outpatient-prescription": {
+          "alerts": [],
+          "gate": "outpatient-prescription",
+          "redLines": [],
+          "status": "pass"
+        }
+      },
+      "clinicalScores": {
+        "scores": [
+          {
+            "id": "ckd-epi-2021-egfr",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min/1.73m2",
+            "value": null
+          },
+          {
+            "id": "cockcroft-gault-crcl",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min",
+            "value": null
+          },
+          {
+            "id": "grace-acs",
+            "missingInputs": [
+              "cardiacArrestOnAdmission",
+              "elevatedCardiacBiomarker",
+              "killipClass",
+              "serumCreatinine",
+              "stSegmentDeviation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "timi-ua-nstemi",
+            "missingInputs": [
+              "anginaEpisodes24h",
+              "aspirinUsedLast7Days",
+              "elevatedCardiacBiomarker",
+              "familyHistoryPrematureCad",
+              "knownCoronaryStenosisGe50",
+              "ldlCholesterol",
+              "smokingStatus",
+              "stSegmentDeviation",
+              "totalCholesterol"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "precise-dapt",
+            "missingInputs": [
+              "hemoglobin",
+              "pciDaptIndication",
+              "priorBleedingHistory",
+              "serumCreatinine",
+              "wbc"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "ascvd-ldl-target",
+            "missingInputs": [
+              "cadOnsetAge",
+              "ldlCholesterol",
+              "smokingStatus"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：冠心病发病年龄、低密度脂蛋白或总胆固醇、明确吸烟状态",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mmol/L",
+            "value": null
+          }
+        ],
+        "vitalSigns": {
+          "bloodPressure": {
+            "diastolicMmHg": 88,
+            "systolicMmHg": 152
+          },
+          "oxygenSaturationPct": 98,
+          "pulseBpm": 80,
+          "respirationBpm": 18,
+          "temperatureC": 36.6,
+          "weightKg": 70
+        }
+      },
+      "draftId": "trap-external-creatinine-v1",
+      "entryPath": "outpatient",
+      "guidelineTopics": [
+        {
+          "degradedReason": null,
+          "fingerprint": "65bcd12fecc5162b70ba15fa2aa9ad029a5aba6cfb2cf62ece6b1459158272e7",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少已签发 12 导联心电图结构化报告。",
+            "缺少心肌肌钙蛋白（cTn/hs-cTn）检验及动态复测记录。",
+            "GRACE 危险分层未就绪（待补齐：血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "TIMI 缺血评分未就绪（待补齐：低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "缺少基线血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "acs-presentation",
+              "status": "present",
+              "valueText": "间断胸闷胸痛 5 小时，携带外院肌酐 220 μmol/L 化验单。"
+            },
+            {
+              "code": "cardiac-troponin",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "ecg-12-lead",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "grace-acs",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            },
+            {
+              "code": "timi-ua-nstemi",
+              "status": "missing",
+              "valueText": "待补齐：低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "acute-chest-pain-acs",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c970c5653d3ebbd1753c30802ad5aa881e6c34ca74eb5c0344799e5114fc3874",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "尚未关联本次正式冠脉造影狭窄率或 FFR/iFR 功能学评估记录。",
+            "缺少经胸超声心动图左室射血分数（LVEF）记录。",
+            "缺少造影/血运重建前血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "coronary-angiography",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "coronary-revascularization-indication",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "edda4d12d5171f753dde89fc89d3b647987dd10d6d956739a60e169e2cc36f06",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少冠脉造影报告及 PCI 靶病变长度、近端/远端参考管径测量。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "pci-selection-plan",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "pci-stent",
+          "version": "2026-11-02.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "cb7e6575d3259ad9897b28098d54eb43bd2b00b7d1da176fa3d8f99dd3f17e26",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前尚未关联拟行冠脉造影、PCI 或其他血管内含碘对比剂检查/手术申请，仅可按条件性参考核对。",
+            "缺少术前血肌酐与 eGFR 危险分层依据（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（影响按体重水化速率计算）（待补齐：血肌酐 (SCr)）",
+            "缺少经胸超声心动图 LVEF 或心功能评估（水化须防止左心功能不全容量负荷过重）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "contrast-procedure-indication",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "contrast-kidney-hydration",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "669758615626baf809d0ad6f7d6ab13b7810f2bcf8be3ab603dcb030ed912d5c",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "PRECISE-DAPT 出血评分未就绪（待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史）",
+            "LDL-C 目标值核对未就绪（待补齐：冠心病发病年龄、低密度脂蛋白或总胆固醇、明确吸烟状态）",
+            "缺少 LVEF 评估（影响合并 LVEF ≤ 40% 时 ACEI/ARB/β 受体阻滞剂二级预防核对）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ascvd-ldl-target",
+              "status": "missing",
+              "valueText": "待补齐：冠心病发病年龄、低密度脂蛋白或总胆固醇、明确吸烟状态"
+            },
+            {
+              "code": "cad-acs-eligibility",
+              "status": "present",
+              "valueText": "不稳定型心绞痛"
+            },
+            {
+              "code": "precise-dapt",
+              "status": "missing",
+              "valueText": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史"
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c2d1ad724cf39cc1c2dc4f699cd74b1628731d4b61655abb6cc4e77c17ea1b6d",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前患者尚未确认 2 型糖尿病（ICD-10 E11）适用诊断，仅可按条件性参考核对。",
+            "缺少血肌酐与 eGFR（无法判定二甲双胍/达格列净肾功能分期界值）（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（待补齐：血肌酐 (SCr)）",
+            "缺少近期糖化血红蛋白（HbA1c）检验记录。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "lab-hba1c",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "t2dm-diagnosis",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "t2dm-renal-medication",
+          "version": "2026-11-17.r1"
+        }
+      ],
+      "orderSetDrafts": {
+        "drafts": [
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 0,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "ecg-12-lead",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hs-ctni",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "d-dimer",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "renal-function",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "electrolytes",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "chest-pain-stat-workup",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 1,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "aspirin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "p2y12-inhibitor",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "statin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "beta-blocker",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "needs-review",
+                "key": "acei",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "egfr-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "ready",
+                "key": "nitroglycerin-prn",
+                "kind": "medication",
+                "reasons": []
+              }
+            ],
+            "templateId": "cad-pci-secondary-prevention",
+            "version": "2026-11-18.r1"
+          }
+        ],
+        "patientFacts": {
+          "allergiesCount": 0,
+          "egfr": {
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "missing"
+          },
+          "vitalSigns": {
+            "diastolicMmHg": 88,
+            "pulseBpm": 80,
+            "source": "triage",
+            "status": "present",
+            "systolicMmHg": 152
+          },
+          "weight": {
+            "status": "present",
+            "weightKg": 70
+          }
+        }
+      },
+      "recommendedEntry": "outpatient"
+    },
+    {
+      "clinicalQualityGates": {
+        "outpatient-completion": {
+          "alerts": [
+            {
+              "code": "CHEST_PAIN_WORKUP_INCOMPLETE",
+              "evidenceTypes": [
+                "Condition"
+              ],
+              "message": "急性胸痛就诊尚未完成12 导联心电图与心肌肌钙蛋白即拟完诊；请补齐检查，或说明原因后完诊。",
+              "tier": "alert"
+            }
+          ],
+          "gate": "outpatient-completion",
+          "redLines": [],
+          "status": "alert"
+        },
+        "outpatient-prescription": {
+          "alerts": [],
+          "gate": "outpatient-prescription",
+          "redLines": [],
+          "status": "pass"
+        }
+      },
+      "clinicalScores": {
+        "scores": [
+          {
+            "id": "ckd-epi-2021-egfr",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min/1.73m2",
+            "value": null
+          },
+          {
+            "id": "cockcroft-gault-crcl",
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mL/min",
+            "value": null
+          },
+          {
+            "id": "grace-acs",
+            "missingInputs": [
+              "acsPresentation",
+              "cardiacArrestOnAdmission",
+              "elevatedCardiacBiomarker",
+              "killipClass",
+              "serumCreatinine",
+              "stSegmentDeviation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "timi-ua-nstemi",
+            "missingInputs": [
+              "anginaEpisodes24h",
+              "aspirinUsedLast7Days",
+              "elevatedCardiacBiomarker",
+              "familyHistoryPrematureCad",
+              "knownCoronaryStenosisGe50",
+              "ldlCholesterol",
+              "smokingStatus",
+              "stSegmentDeviation",
+              "totalCholesterol",
+              "uaNstemiPresentation"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "precise-dapt",
+            "missingInputs": [
+              "hemoglobin",
+              "pciDaptIndication",
+              "priorBleedingHistory",
+              "serumCreatinine",
+              "wbc"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "分",
+            "value": null
+          },
+          {
+            "id": "ascvd-ldl-target",
+            "missingInputs": [
+              "hdlCholesterol",
+              "ldlCholesterol",
+              "serumCreatinine",
+              "smokingStatus"
+            ],
+            "status": "incomplete",
+            "summaryZh": "待补齐：血肌酐 (SCr)、低密度脂蛋白或总胆固醇、高密度脂蛋白胆固醇 (HDL-C)、明确吸烟状态",
+            "tierCode": null,
+            "tierLabelZh": null,
+            "unit": "mmol/L",
+            "value": null
+          }
+        ],
+        "vitalSigns": {
+          "bloodPressure": {
+            "diastolicMmHg": 72,
+            "systolicMmHg": 112
+          },
+          "oxygenSaturationPct": 99,
+          "pulseBpm": 88,
+          "respirationBpm": 18,
+          "temperatureC": 36.6,
+          "weightKg": 64
+        }
+      },
+      "draftId": "trap-pregnant-chest-pain-v1",
+      "entryPath": "outpatient",
+      "guidelineTopics": [
+        {
+          "degradedReason": null,
+          "fingerprint": "65bcd12fecc5162b70ba15fa2aa9ad029a5aba6cfb2cf62ece6b1459158272e7",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少已签发 12 导联心电图结构化报告。",
+            "缺少心肌肌钙蛋白（cTn/hs-cTn）检验及动态复测记录。",
+            "GRACE 危险分层未就绪（待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "TIMI 缺血评分未就绪（待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告）",
+            "缺少基线血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "acs-presentation",
+              "status": "present",
+              "valueText": "未特指的胸痛"
+            },
+            {
+              "code": "cardiac-troponin",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "ecg-12-lead",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "grace-acs",
+              "status": "missing",
+              "valueText": "待补齐：疑似或确诊急性冠脉综合征（ACS）就诊依据、血肌酐 (SCr)、Killip 心功能分级、入院心脏骤停、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            },
+            {
+              "code": "timi-ua-nstemi",
+              "status": "missing",
+              "valueText": "待补齐：不稳定型心绞痛或 NSTEMI 就诊依据（非 STEMI）、低密度脂蛋白或总胆固醇、总胆固醇 (TC)、明确吸烟状态、早发冠心病家族史、已知冠脉狭窄 ≥50%、近7天阿司匹林使用、24h 心绞痛发作次数、心电图 ST 段偏移确认、心肌损伤标志物报告"
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "acute-chest-pain-acs",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c970c5653d3ebbd1753c30802ad5aa881e6c34ca74eb5c0344799e5114fc3874",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "尚未关联本次正式冠脉造影狭窄率或 FFR/iFR 功能学评估记录。",
+            "缺少经胸超声心动图左室射血分数（LVEF）记录。",
+            "缺少造影/血运重建前血肌酐与 eGFR（待补齐：血肌酐 (SCr)）"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "coronary-angiography",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "coronary-revascularization-indication",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "edda4d12d5171f753dde89fc89d3b647987dd10d6d956739a60e169e2cc36f06",
+          "guidelineCount": 3,
+          "missingPatientInputs": [
+            "缺少冠脉造影报告及 PCI 靶病变长度、近端/远端参考管径测量。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "pci-selection-plan",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "pci-stent",
+          "version": "2026-11-02.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "cb7e6575d3259ad9897b28098d54eb43bd2b00b7d1da176fa3d8f99dd3f17e26",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前尚未关联拟行冠脉造影、PCI 或其他血管内含碘对比剂检查/手术申请，仅可按条件性参考核对。",
+            "缺少术前血肌酐与 eGFR 危险分层依据（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（影响按体重水化速率计算）（待补齐：血肌酐 (SCr)）",
+            "缺少经胸超声心动图 LVEF 或心功能评估（水化须防止左心功能不全容量负荷过重）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "contrast-procedure-indication",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "contrast-kidney-hydration",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "669758615626baf809d0ad6f7d6ab13b7810f2bcf8be3ab603dcb030ed912d5c",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前患者尚未确认冠心病/急性冠脉综合征（ICD-10 I20–I25）或冠脉血运重建依据，仅可按条件性参考核对。",
+            "PRECISE-DAPT 出血评分未就绪（待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史）",
+            "LDL-C 目标值核对未就绪（待补齐：血肌酐 (SCr)、低密度脂蛋白或总胆固醇、高密度脂蛋白胆固醇 (HDL-C)、明确吸烟状态）",
+            "缺少 LVEF 评估（影响合并 LVEF ≤ 40% 时 ACEI/ARB/β 受体阻滞剂二级预防核对）。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ascvd-ldl-target",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)、低密度脂蛋白或总胆固醇、高密度脂蛋白胆固醇 (HDL-C)、明确吸烟状态"
+            },
+            {
+              "code": "cad-acs-eligibility",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "precise-dapt",
+              "status": "missing",
+              "valueText": "待补齐：冠脉支架植入（PCI）或双联抗血小板（DAPT）指征、血肌酐 (SCr)、血红蛋白 (Hb)、白细胞计数 (WBC)、既往自发性出血史"
+            },
+            {
+              "code": "tte-lvef",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "2026-11-17.r1"
+        },
+        {
+          "degradedReason": null,
+          "fingerprint": "c2d1ad724cf39cc1c2dc4f699cd74b1628731d4b61655abb6cc4e77c17ea1b6d",
+          "guidelineCount": 4,
+          "missingPatientInputs": [
+            "当前患者尚未确认 2 型糖尿病（ICD-10 E11）适用诊断，仅可按条件性参考核对。",
+            "缺少血肌酐与 eGFR（无法判定二甲双胍/达格列净肾功能分期界值）（待补齐：血肌酐 (SCr)）",
+            "缺少体重或肌酐清除率（待补齐：血肌酐 (SCr)）",
+            "缺少近期糖化血红蛋白（HbA1c）检验记录。"
+          ],
+          "missingSources": [],
+          "patientIndicators": [
+            {
+              "code": "ckd-epi-2021-egfr",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "cockcroft-gault-crcl",
+              "status": "missing",
+              "valueText": "待补齐：血肌酐 (SCr)"
+            },
+            {
+              "code": "lab-hba1c",
+              "status": "missing",
+              "valueText": null
+            },
+            {
+              "code": "t2dm-diagnosis",
+              "status": "missing",
+              "valueText": null
+            }
+          ],
+          "population": "adult",
+          "status": "available",
+          "topicId": "t2dm-renal-medication",
+          "version": "2026-11-17.r1"
+        }
+      ],
+      "orderSetDrafts": {
+        "drafts": [
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 0,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "ecg-12-lead",
+                "kind": "examination",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "hs-ctni",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "d-dimer",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "renal-function",
+                "kind": "laboratory",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "electrolytes",
+                "kind": "laboratory",
+                "reasons": []
+              }
+            ],
+            "templateId": "chest-pain-stat-workup",
+            "version": "2026-11-18.r1"
+          },
+          {
+            "counts": {
+              "excluded": 0,
+              "needsReview": 1,
+              "ready": 5,
+              "unavailable": 0
+            },
+            "items": [
+              {
+                "disposition": "ready",
+                "key": "aspirin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "p2y12-inhibitor",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "statin",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "ready",
+                "key": "beta-blocker",
+                "kind": "medication",
+                "reasons": []
+              },
+              {
+                "disposition": "needs-review",
+                "key": "acei",
+                "kind": "medication",
+                "reasons": [
+                  {
+                    "code": "egfr-missing",
+                    "severity": "pending-verification"
+                  }
+                ]
+              },
+              {
+                "disposition": "ready",
+                "key": "nitroglycerin-prn",
+                "kind": "medication",
+                "reasons": []
+              }
+            ],
+            "templateId": "cad-pci-secondary-prevention",
+            "version": "2026-11-18.r1"
+          }
+        ],
+        "patientFacts": {
+          "allergiesCount": 0,
+          "egfr": {
+            "missingInputs": [
+              "serumCreatinine"
+            ],
+            "status": "missing"
+          },
+          "vitalSigns": {
+            "diastolicMmHg": 72,
+            "pulseBpm": 88,
+            "source": "triage",
+            "status": "present",
+            "systolicMmHg": 112
+          },
+          "weight": {
+            "status": "present",
+            "weightKg": 64
+          }
+        }
+      },
+      "recommendedEntry": "outpatient"
+    }
+  ],
+  "schemaVersion": "1",
+  "stageResolution": {
+    "caseId": "cardio-nstemi-chest-pain-v1",
+    "followUp": {
+      "hsCtni": {
+        "code": "2100404B",
+        "interpretation": "normal",
+        "unit": "ng/L",
+        "value": 12
+      },
+      "ldl": {
+        "code": "2000404A",
+        "interpretation": "normal",
+        "unit": "mmol/L",
+        "value": 1.25
+      }
+    },
+    "initial": {
+      "hsCtni": {
+        "code": "2100404B",
+        "interpretation": "high",
+        "unit": "ng/L",
+        "value": 680
+      }
+    },
+    "repeat": {
+      "hsCtni": {
+        "code": "2100404B",
+        "interpretation": "high",
+        "unit": "ng/L",
+        "value": 1450
+      }
+    }
+  },
+  "unprepopulatedEnforcement": {
+    "caseId": "trap-low-risk-chest-wall-pain-v1",
+    "prepopulatedResults": {
+      "cardiacPanel": {
+        "analytes": [
+          {
+            "code": "2100104A",
+            "interpretation": "normal",
+            "unit": "U/L",
+            "value": 10
+          },
+          {
+            "code": "2100304A",
+            "interpretation": "normal",
+            "unit": "ng/mL",
+            "value": 26
+          },
+          {
+            "code": "2100404A",
+            "interpretation": "normal",
+            "unit": "ng/mL",
+            "value": 0.004
+          },
+          {
+            "code": "2100504A",
+            "interpretation": "normal",
+            "unit": "ng/mL",
+            "value": 0.004
+          },
+          {
+            "code": "2100604A",
+            "interpretation": "normal",
+            "unit": "ng/L",
+            "value": 28
+          },
+          {
+            "code": "2100704A",
+            "interpretation": "normal",
+            "unit": "ng/L",
+            "value": 42
+          },
+          {
+            "code": "2100404B",
+            "interpretation": "normal",
+            "unit": "ng/L",
+            "value": 4
+          }
+        ],
+        "status": "reported"
+      },
+      "ecg12Lead": {
+        "impression": "窦性心律，心电图未见明显 ST-T 缺血性改变。",
+        "status": "reported"
+      }
+    },
+    "unprepopulatedFailures": {
+      "examinationTte": {
+        "generationError": {
+          "code": "INVESTIGATION_UNSUPPORTED",
+          "message": "本病例未预置该检查"
+        },
+        "serviceId": "examination-tte",
+        "status": "generation-failed"
+      },
+      "panelCoagulation": {
+        "catalogCode": "CN-LAB-COAGULATION",
+        "generationError": {
+          "code": "INVESTIGATION_UNSUPPORTED",
+          "message": "本病例未预置该检查"
+        },
+        "status": "generation-failed"
+      },
+      "singleLabTsh": {
+        "catalogCode": "1201004A",
+        "generationError": {
+          "code": "INVESTIGATION_UNSUPPORTED",
+          "message": "本病例未预置该检查"
+        },
+        "status": "generation-failed"
+      }
+    }
+  }
+}
