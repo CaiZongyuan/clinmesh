@@ -16,6 +16,7 @@ import { applyMigrations, openClinMeshDatabase } from '../src/infrastructure/sql
 import { FhirRepository } from '../src/infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceRepository } from '../src/infrastructure/sqlite/workspace-repository.ts'
 import { seedInpatientEnvironment } from '../src/application/inpatient-environment.ts'
+import { commandRequestHash, type ActorContext } from '../src/application/command-executor.ts'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -2151,10 +2152,21 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       await rm(migrationDir, { recursive: true })
     }
 
-    // 验证升级前处于 requested（六要素列全为 NULL）的在途申请可正常办理 confirm-consent，且历史 command_receipt 响应正常读取
+    // 验证升级前处于 requested（六要素列全为 NULL）的在途申请可正常办理 confirm-consent，且历史 command_receipt 支持查询与旧入参 POST 幂等重放
     const s = await setup()
-    const auth = z.object({ actor: z.object({ actorId: z.string(), practitionerRoleId: z.string(), workspaceId: z.string(), epoch: z.string() }) }).loose()
-      .parse(await (await s.request(s.doctor, '/api/auth/context')).json()).actor
+    const auth = z.object({
+      actor: z.object({
+        actorId: z.string(),
+        practitionerId: z.string().optional(),
+        practitionerRoleId: z.string(),
+        roleCode: z.string(),
+        organizationId: z.string().optional(),
+        locationId: z.string().optional(),
+        workspaceId: z.string(),
+        epoch: z.string(),
+        scenarioRunId: z.string(),
+      }),
+    }).loose().parse(await (await s.request(s.doctor, '/api/auth/context')).json()).actor as ActorContext
     const requestReceiptKey = `legacy-request-${randomUUID()}`
     const created = inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/request`, {
       encounterVersion: s.admission.versionId,
@@ -2174,6 +2186,17 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       WHERE workspace_id=? AND epoch=? AND request_id=?
     `).run(auth.workspaceId, auth.epoch, created.id)
 
+    const legacyConsentBody = {
+      requestId: created.id,
+      expectedRequestVersion: created.version,
+      note: '旧版持久回执无六要素与无结构化正文',
+    }
+    const legacyConsentHash = commandRequestHash({
+      context: auth,
+      expectedVersions: {},
+      input: { admissionId: s.admission.id, ...legacyConsentBody },
+      operation: 'inpatient.surgery.confirm-consent',
+    })
     const legacyReceiptKey = `legacy-consent-${randomUUID()}`
     const legacyReceiptBody = {
       auditId: 'legacy-audit-1',
@@ -2208,9 +2231,22 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     }
     s.runtime.database.driver.prepare(`
       INSERT INTO command_receipt(workspace_id,epoch,actor_id,practitioner_role_id,operation,idempotency_key,request_hash,status,response_json,created_at,updated_at)
-      VALUES(?,?,?,?,'inpatient.surgery.confirm-consent',?,'0000000000000000000000000000000000000000000000000000000000000000','completed',?,?,?)
-    `).run(auth.workspaceId, auth.epoch, auth.actorId, auth.practitionerRoleId, legacyReceiptKey, JSON.stringify(legacyReceiptBody), '2026-08-24T09:00:00.000Z', '2026-08-24T09:00:00.000Z')
-    // 同时将刚才真实写入的 request 回执降级为无六要素旧响应，验证相同幂等键重放经过 dataSchema 校验仍 200 通过
+      VALUES(?,?,?,?,'inpatient.surgery.confirm-consent',?,?, 'completed',?,?,?)
+    `).run(auth.workspaceId, auth.epoch, auth.actorId, auth.practitionerRoleId, legacyReceiptKey, legacyConsentHash, JSON.stringify(legacyReceiptBody), '2026-08-24T09:00:00.000Z', '2026-08-24T09:00:00.000Z')
+
+    // v2 客户端丢失响应后使用原幂等键与原 {requestId, expectedRequestVersion, note} 重试 POST 须 200 原样重放；改载荷报 409，新幂等键仍报 400
+    const replayedLegacyConsent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, legacyConsentBody, legacyReceiptKey)
+    expect(replayedLegacyConsent.status, await replayedLegacyConsent.clone().text()).toBe(200)
+    expect(inpatientSurgeryResponseSchema.parse(await replayedLegacyConsent.json()).data.requests[0]!.consentConfirmation?.note).toContain('旧版持久回执')
+    const conflictLegacyConsent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
+      ...legacyConsentBody,
+      note: '篡改旧版回执备注',
+    }, legacyReceiptKey)
+    expect(conflictLegacyConsent.status).toBe(409)
+    expect(apiErrorSchema.parse(await conflictLegacyConsent.json()).error.code).toBe('IDEMPOTENCY_KEY_REUSED')
+    expect((await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, legacyConsentBody)).status).toBe(400)
+
+    // 同时验证升级前旧版三字段 surgeries/request 持久回执在同幂等键 POST 重试时 200 原样重放，新幂等键仍 400 拒绝
     const storedReqReceipt = z.object({ response_json: z.string() }).parse(
       s.runtime.database.driver.prepare('SELECT response_json FROM command_receipt WHERE workspace_id=? AND epoch=? AND operation=? AND idempotency_key=?')
         .get(auth.workspaceId, auth.epoch, 'inpatient.surgery.request', requestReceiptKey),
@@ -2219,21 +2255,25 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     for (const field of ['surgeryType', 'location', 'surgeon', 'assistant', 'anesthesiaMethod']) {
       delete degradedReqReceipt.data.requests[0]![field]
     }
-    s.runtime.database.driver.prepare('UPDATE command_receipt SET response_json=? WHERE workspace_id=? AND epoch=? AND operation=? AND idempotency_key=?')
-      .run(JSON.stringify(degradedReqReceipt), auth.workspaceId, auth.epoch, 'inpatient.surgery.request', requestReceiptKey)
-    const replayedLegacyReq = await s.request(s.doctor, `${s.path}/surgeries/request`, {
+    const legacyV3RequestBody = {
       encounterVersion: s.admission.versionId,
       procedureId: 'hospital-surgery-8',
       catalogVersion: 1,
-      surgeryType: 'elective',
       plannedFor: '2026-08-25T02:00:00.000Z',
-      locationId: 'location-catheterization-lab',
-      surgeonPractitionerId: 'practitioner-inpatient-doctor',
-      anesthesiaMethod: 'local-infiltration',
       reason: '模拟 0120 升级前在途申请',
-    }, requestReceiptKey)
-    expect(replayedLegacyReq.status).toBe(200)
+    }
+    const legacyV3RequestHash = commandRequestHash({
+      context: auth,
+      expectedVersions: { [`Encounter/${s.admission.id}`]: s.admission.versionId },
+      input: { admissionId: s.admission.id, ...legacyV3RequestBody },
+      operation: 'inpatient.surgery.request',
+    })
+    s.runtime.database.driver.prepare('UPDATE command_receipt SET request_hash=?, response_json=? WHERE workspace_id=? AND epoch=? AND operation=? AND idempotency_key=?')
+      .run(legacyV3RequestHash, JSON.stringify(degradedReqReceipt), auth.workspaceId, auth.epoch, 'inpatient.surgery.request', requestReceiptKey)
+    const replayedLegacyReq = await s.request(s.doctor, `${s.path}/surgeries/request`, legacyV3RequestBody, requestReceiptKey)
+    expect(replayedLegacyReq.status, await replayedLegacyReq.clone().text()).toBe(200)
     expect(inpatientSurgeryResponseSchema.parse(await replayedLegacyReq.json()).data.requests[0]!.surgeryType).toBeUndefined()
+    expect((await s.request(s.doctor, `${s.path}/surgeries/request`, legacyV3RequestBody)).status).toBe(400)
 
     const legacyLookup = await s.request(s.doctor, `/api/his/v1/command-receipts?operationId=inpatient.surgery.confirm-consent&idempotencyKey=${legacyReceiptKey}`)
     expect(legacyLookup.status).toBe(200)

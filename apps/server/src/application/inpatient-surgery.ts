@@ -3,6 +3,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
 import {
   anesthesiaMethodSchema,
+  inpatientLegacySurgeryRequestInputSchema,
   inpatientMaterialItemSchema,
   inpatientProcedureItemSchema,
   inpatientSurgeryActionInputSchema,
@@ -266,6 +267,20 @@ export class InpatientSurgery {
     if (procedure.status !== 'completed') throw new InpatientError('INPATIENT_SURGERY_EXECUTION_REQUIRED', '术后医嘱须引用本次住院已实施的手术')
   }
   request(context: ActorContext, raw: unknown, idempotencyKey: string) {
+    if (!inpatientSurgeryRequestInputSchema.safeParse(raw).success) {
+      const legacy = inpatientLegacySurgeryRequestInputSchema.safeParse(raw)
+      if (legacy.success) {
+        const replayed = this.owner.commands.replayIfExists({
+          context,
+          input: legacy.data,
+          idempotencyKey,
+          operation: 'inpatient.surgery.request',
+          expectedVersions: { [`Encounter/${legacy.data.admissionId}`]: legacy.data.encounterVersion },
+          dataSchema: inpatientSurgerySchema,
+        })
+        if (replayed !== null) return replayed
+      }
+    }
     const input = inpatientSurgeryRequestInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.surgery.request',
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientSurgerySchema,
@@ -327,6 +342,20 @@ export class InpatientSurgery {
     })
   }
   confirmConsent(context: ActorContext, raw: unknown, idempotencyKey: string) {
+    if (!inpatientSurgeryConfirmConsentInputSchema.safeParse(raw).success) {
+      const legacy = inpatientSurgeryActionInputSchema.safeParse(raw)
+      if (legacy.success) {
+        const replayed = this.owner.commands.replayIfExists({
+          context,
+          input: legacy.data,
+          idempotencyKey,
+          operation: 'inpatient.surgery.confirm-consent',
+          expectedVersions: {},
+          dataSchema: inpatientSurgerySchema,
+        })
+        if (replayed !== null) return replayed
+      }
+    }
     const input = inpatientSurgeryConfirmConsentInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.surgery.confirm-consent', expectedVersions: {}, dataSchema: inpatientSurgerySchema,
       authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, () => {

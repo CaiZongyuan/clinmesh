@@ -160,6 +160,23 @@ export const inpatientSurgeryRequestInputSchema = z.object({
   path: ['assistantPractitionerId'],
 })
 
+/** 升级前旧版手术申请入参，仅用于既有持久回执（`command_receipt`）原样幂等重放。 */
+const legacySurgeryRequestFields = {
+  encounterVersion: z.string().regex(/^\d+$/),
+  procedureId: id,
+  catalogVersion: version,
+  plannedFor: z.iso.datetime({ offset: true }),
+  reason: note,
+  clinicalOverride: clinicalOverrideInputSchema.optional(),
+}
+
+export const inpatientLegacySurgeryRequestBodySchema = z.object(legacySurgeryRequestFields).strict()
+
+export const inpatientLegacySurgeryRequestInputSchema = z.object({
+  admissionId: id,
+  ...legacySurgeryRequestFields,
+}).strict()
+
 const surgeryActionBaseSchema = z.object({ admissionId: id, requestId: id, expectedRequestVersion: version }).strict()
 export const inpatientSurgeryActionInputSchema = surgeryActionBaseSchema.extend({ note }).strict()
 
