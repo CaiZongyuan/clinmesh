@@ -269,6 +269,7 @@ export function SurgicalConsentSignDialog({
   blocked,
   open,
   onOpenChange,
+  onRetry,
   returnFocus,
 }: {
   admission: InpatientAdmission
@@ -281,6 +282,7 @@ export function SurgicalConsentSignDialog({
   blocked: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
+  onRetry?: () => void
   returnFocus?: RefObject<HTMLElement | null> | undefined
 }): React.JSX.Element {
   const t = (cn: string, en: string) => (locale === 'zh-CN' ? cn : en)
@@ -378,7 +380,10 @@ export function SurgicalConsentSignDialog({
       },
       {
         onSuccess: () => onOpenChange(false),
-        onError: () => { void clinical.refetch() },
+        onError: () => {
+          void clinical.refetch()
+          onRetry?.()
+        },
       },
     )
   }

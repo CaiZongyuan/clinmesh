@@ -50,6 +50,11 @@ import {
 } from '@clinmesh/core/inpatient-surgery-notes'
 import type { RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 
+const DEDICATED_SURGICAL_PRACTITIONER_IDS = [
+  'practitioner-surgeon-chief',
+  'practitioner-surgeon-attending',
+] as const
+
 const KNOWN_SURGICAL_PRACTITIONER_ORDER = [
   'practitioner-inpatient-doctor',
   'practitioner-surgeon-chief',
@@ -140,7 +145,7 @@ export class InpatientSurgery {
         WHERE workspace_id=? AND epoch=? AND resource_type='PractitionerRole' AND deleted=0
       `).all(context.workspaceId, context.epoch),
     )
-    const eligibleIds = new Set<string>(KNOWN_SURGICAL_PRACTITIONER_ORDER)
+    const eligibleIds = new Set<string>(DEDICATED_SURGICAL_PRACTITIONER_IDS)
     for (const roleRow of roleRows) {
       const parsed = storedPractitionerRoleContentSchema.parse(JSON.parse(roleRow.content_json))
       if (parsed.active === false) continue

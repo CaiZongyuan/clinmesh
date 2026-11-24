@@ -248,14 +248,15 @@ it('目录无可用手术地点或无可选医师时不伪造兜底选项并阻�
   const currentSession: SessionContext = { ...session, actor: { ...session.actor, practitionerId: 'practitioner-inpatient-doctor' } }
   let emptyLocations = true
   let diagnosisRevision = 1
+  let requestVersion = 3
   const confirmCalls: Array<Record<string, unknown>> = []
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path.endsWith('/api/auth/context')) return Response.json(currentSession)
     if (path.endsWith('/surgeries/confirm-consent') && init?.method === 'POST') {
       const payload = JSON.parse(String(init.body ?? '{}')) as { input: Record<string, unknown> }
       confirmCalls.push(payload.input)
-      if (payload.input.expectedDiagnosisRevision !== diagnosisRevision) {
-        return Response.json({ error: { code: 'INPATIENT_SURGERY_CONFLICT', message: '住院诊断已更新，请重新核对知情同意书后再确认签署' } }, { status: 409 })
+      if (payload.input.expectedDiagnosisRevision !== diagnosisRevision || payload.input.expectedRequestVersion !== requestVersion) {
+        return Response.json({ error: { code: 'INPATIENT_SURGERY_CONFLICT', message: '手术准备或诊断状态已更新，请重新核对后再确认签署' } }, { status: 409 })
       }
       return Response.json({
         auditId: '019a0000-0000-7000-8000-000000000091',
@@ -265,7 +266,7 @@ it('目录无可用手术地点或无可选医师时不伪造兜底选项并阻�
           admissionId: admission.id,
           encounterVersion: '1',
           virtualTime: time,
-          requests: [{ ...plan, status: 'ready' }],
+          requests: [{ ...plan, version: requestVersion + 1, status: 'ready' }],
           executions: [],
           inProgress: [],
         },
@@ -304,7 +305,7 @@ it('目录无可用手术地点或无可选医师时不伪造兜底选项并阻�
       admissionId: admission.id,
       encounterVersion: '1',
       virtualTime: time,
-      requests: [{ ...plan, status: 'requested', consentConfirmation: undefined }],
+      requests: [{ ...plan, version: requestVersion, status: 'requested', consentConfirmation: undefined }],
       executions: [],
       inProgress: [],
     })
@@ -346,13 +347,14 @@ it('目录无可用手术地点或无可选医师时不伪造兜底选项并阻�
   expect(article.textContent).toContain('I20.000 不稳定型心绞痛')
 
   diagnosisRevision = 2
+  requestVersion = 4
   await user.click(within(consentDialog).getByRole('button', { name: '确认手术知情同意书已签' }))
   await waitFor(() => expect(confirmCalls).toHaveLength(1))
-  expect(confirmCalls[0]).toMatchObject({ expectedDiagnosisRevision: 1 })
+  expect(confirmCalls[0]).toMatchObject({ expectedDiagnosisRevision: 1, expectedRequestVersion: 3 })
   expect((await within(consentDialog).findByRole('alert')).textContent).toContain('手术申请或准备状态已变化')
   await waitFor(() => expect(within(consentDialog).getByRole('article', { name: '冠状动脉造影术知情同意书' }).textContent).toContain('I21.401 急性非ST段抬高型心肌梗死'))
 
   await user.click(within(consentDialog).getByRole('button', { name: '确认手术知情同意书已签' }))
   await waitFor(() => expect(confirmCalls).toHaveLength(2))
-  expect(confirmCalls[1]).toMatchObject({ expectedDiagnosisRevision: 2 })
+  expect(confirmCalls[1]).toMatchObject({ expectedDiagnosisRevision: 2, expectedRequestVersion: 4 })
 })

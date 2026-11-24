@@ -1732,6 +1732,26 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     expect(practitionerIds).not.toContain('practitioner-ward-nurse')
     expect(practitionerIds).not.toContain('practitioner-cashier')
 
+    // 停用普通临床医生的 PractitionerRole（Practitioner 本身仍 active）后，目录与手术申请均立即排除该医生
+    if (practitionerIds.includes('practitioner-outpatient-doctor')) {
+      const auth = z.object({ actor: z.object({ workspaceId: z.string(), epoch: z.string() }) }).loose()
+        .parse(await (await s.request(s.doctor, '/api/auth/context')).json()).actor
+      const roleRows = z.array(z.object({ resource_id: z.string(), content_json: z.string() })).parse(
+        s.runtime.database.driver.prepare(`
+          SELECT resource_id, content_json FROM fhir_resource
+          WHERE workspace_id=? AND epoch=? AND resource_type='PractitionerRole' AND deleted=0
+        `).all(auth.workspaceId, auth.epoch),
+      ).filter(row => row.content_json.includes('Practitioner/practitioner-outpatient-doctor'))
+      for (const row of roleRows) {
+        const deactivated = { ...(JSON.parse(row.content_json) as Record<string, unknown>), active: false }
+        s.runtime.database.driver.prepare(`
+          UPDATE fhir_resource SET content_json=? WHERE workspace_id=? AND epoch=? AND resource_type='PractitionerRole' AND resource_id=?
+        `).run(JSON.stringify(deactivated), auth.workspaceId, auth.epoch, row.resource_id)
+      }
+      const afterRoleOff = inpatientSurgeryCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json())
+      expect(afterRoleOff.practitioners.map(item => item.id)).not.toContain('practitioner-outpatient-doctor')
+    }
+
     const baseRequest = {
       encounterVersion: s.admission.versionId,
       procedureId: 'hospital-surgery-8',
