@@ -98,6 +98,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const [anesthesiaMethod, setAnesthesiaMethod] = useState<AnesthesiaMethod | null>(null), [anesthesiaEdited, setAnesthesiaEdited] = useState(false)
   const [preparationSlot, setPreparationSlot] = useState<HTMLDivElement | null>(null)
   const [requestOpen, setRequestOpen] = useState(false), [otherPlansOpen, setOtherPlansOpen] = useState(false)
+  const [completedHistoryOpen, setCompletedHistoryOpen] = useState(false), [cancelledPlansOpen, setCancelledPlansOpen] = useState(false)
   const [correctionOpen, setCorrectionOpen] = useState(false), [correctionVisited, setCorrectionVisited] = useState(false)
   const localView = useSurgeryView()
   const [view, setView] = providedView ?? localView
@@ -121,6 +122,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   useLayoutEffect(() => {
     if (requestOwner.current !== requestOwnerKey) {
       setRequestOpen(false); setCorrectionOpen(false); setCorrectionVisited(false)
+      setCompletedHistoryOpen(false); setCancelledPlansOpen(false)
       resetRequestDraft()
       setStep1ConfirmedPlanId(null); setEditingStep1(false); setEditingStep2(false)
       setSelectionEditedAfterReserve(false); setSelectedRequestId(null)
@@ -406,9 +408,9 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         ? completedExecutions.filter(item => item.id !== selectedCompletedExecution?.id)
         : completedExecutions
       if (archivedCompleted.length === 0) return null
-      return <details className="clinmesh-inpatient-disclosure">
+      return <details className="clinmesh-inpatient-disclosure" open={completedHistoryOpen} onToggle={event => setCompletedHistoryOpen(event.currentTarget.open)}>
         <summary>{showPrimaryDone ? t('其他已完成手术', 'Other completed surgeries') : t('已完成手术记录', 'Completed surgery records')}（{archivedCompleted.length}）</summary>
-        <div className="flex flex-col gap-3 py-3">
+        {completedHistoryOpen ? <div className="flex flex-col gap-3 py-3">
           {archivedCompleted.map(exec => {
             const req = surgery.data?.requests.find(item => item.id === exec.requestId)
             return <div key={exec.id} className="clinmesh-inpatient-summary flex flex-col gap-2">
@@ -422,12 +424,12 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
               {req ? <SurgeryNoticeSummaryList row={req} locale={locale} includeProcedure={req.plannedProcedure.coding.code !== exec.actualProcedure.coding.code} extraItems={[{ label: t('实际实施时间', 'Performed at'), value: formatShanghaiMinute(exec.performedAt).slice(5), className: 'tabular-nums' }]} /> : null}
             </div>
           })}
-        </div>
+        </div> : null}
       </details>
     })()}
-    {cancelledPlans.length > 0 ? <details className="clinmesh-inpatient-disclosure">
+    {cancelledPlans.length > 0 ? <details className="clinmesh-inpatient-disclosure" open={cancelledPlansOpen} onToggle={event => setCancelledPlansOpen(event.currentTarget.open)}>
       <summary>{t('已取消手术申请', 'Cancelled surgery requests')}（{cancelledPlans.length}）</summary>
-      <div className="flex flex-col gap-3 py-3">
+      {cancelledPlansOpen ? <div className="flex flex-col gap-3 py-3">
         {cancelledPlans.map(row => <div key={row.id} className="clinmesh-inpatient-summary flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <h4 className="text-sm font-semibold">{row.plannedProcedure.coding.display}</h4>
@@ -439,7 +441,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
           <SurgeryNoticeSummaryList row={row} locale={locale} />
           {row.cancellation ? <p className="text-sm text-muted-foreground">{t('取消原因：', 'Cancellation: ')}{row.cancellation.note}</p> : null}
         </div>)}
-      </div>
+      </div> : null}
     </details> : null}
   </section>
 }

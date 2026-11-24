@@ -2043,7 +2043,7 @@ const operationCliMetadataList = [
     mode: 'query',
     requirements: { expectedVersions: false, idempotency: 'none' },
     risk: 'read',
-    roles: ['inpatient-doctor','ward-nurse'],
+    roles: ['inpatient-doctor','ward-nurse','medical-records'],
     summary: '读取固定手术分类、院内受控手术地点与临床医师候选及完整耗材来源；unit-unconfirmed项保留参考价格但不可计费',
     version: 3,
   },

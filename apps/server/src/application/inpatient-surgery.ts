@@ -108,7 +108,7 @@ export class InpatientSurgery {
     return this.#catalogCache
   }
   catalog(context: ActorContext) {
-    this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse'])
+    this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     const cached = this.#ensureCatalogItems(context)
     return {
       procedures: cached.procedures,

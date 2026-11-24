@@ -966,7 +966,7 @@ it('publishes read-only clinical quality preflight queries and clinicalOverride 
   expect(getHisOperation('inpatient.clinical.catalog').version).toBe(5)
   expect(getHisOperation('inpatient.order.issue').version).toBe(10)
   expect(getHisOperation('inpatient.surgery.catalog').version).toBe(3)
-  expect(getHisOperation('inpatient.surgery.catalog').roles).toEqual(['inpatient-doctor', 'ward-nurse'])
+  expect(getHisOperation('inpatient.surgery.catalog').roles).toEqual(['inpatient-doctor', 'ward-nurse', 'medical-records'])
   expect(getHisOperation('inpatient.surgery.read').version).toBe(3)
   expect(getHisOperation('inpatient.surgery.read').roles).toEqual(['inpatient-doctor', 'ward-nurse', 'medical-records'])
   expect(getHisOperation('inpatient.surgery.request').version).toBe(4)

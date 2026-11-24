@@ -65,7 +65,7 @@ function RecordSurgeryNoticesDisclosure({ admission, session, locale }: { admiss
   const statusLabel = { requested: t('待准备', 'Preparation pending'), ready: t('已就绪', 'Ready'), completed: t('已实施', 'Completed'), cancelled: t('已取消', 'Cancelled') }
   return <details className="clinmesh-inpatient-disclosure" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary>{t('查看手术通知单与知情同意书', 'View surgery notices and informed consents')}</summary>
-    <div className="flex flex-col gap-3 pt-2">
+    {open ? <div className="flex flex-col gap-3 pt-2">
       {surgeries.isPending ? <Skeleton className="h-16 w-full" /> : null}
       {surgeries.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(surgeries.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
       {surgeries.data && surgeries.data.requests.length === 0 ? <p className="text-xs text-muted-foreground">{t('本次住院无手术申请单记录。', 'No surgery notice records in this admission.')}</p> : null}
@@ -82,7 +82,7 @@ function RecordSurgeryNoticesDisclosure({ admission, session, locale }: { admiss
           {req.cancellation ? <p className="text-xs text-muted-foreground">{t('取消原因：', 'Cancellation: ')}{req.cancellation.note}</p> : null}
         </div>
       })}
-    </div>
+    </div> : null}
   </details>
 }
 

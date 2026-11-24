@@ -1711,12 +1711,10 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
 
   it('手术目录提供院内手术地点与有效临床医师候选，手术申请六要素校验并投影 FHIR R5 ServiceRequest', async () => {
     const s = await setup(), medicalRecords = await s.login('medical-records')
-    for (const cookie of [s.doctor, s.nurse]) {
+    for (const cookie of [s.doctor, s.nurse, medicalRecords]) {
       expect((await s.request(cookie, '/api/his/v1/inpatient/surgery-catalog')).status).toBe(200)
     }
-    for (const cookie of [medicalRecords, s.cashier]) {
-      expect((await s.request(cookie, '/api/his/v1/inpatient/surgery-catalog')).status).toBe(403)
-    }
+    expect((await s.request(s.cashier, '/api/his/v1/inpatient/surgery-catalog')).status).toBe(403)
     expect((await s.request(medicalRecords, `${s.path}/surgeries`)).status).toBe(200)
     const catalog = inpatientSurgeryCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json())
     expect(catalog.locations.map(item => item.id)).toEqual([
