@@ -25,3 +25,6 @@
 - [参考项目评估与采用边界](architecture-reference-decisions.md)
 - [dsh-our-free-model：模型来源、架构与使用边界](2026-10-26-dsh-our-free-model.md)
 - [专病智能体全景调研与建设蓝图](2026-11-10-disease-specific-agent-blueprint.md)
+- [国内外专病智能体调研：行业实践、数据治理与标准化架构](2026-11-17-disease-specific-agents-survey.md)
+- [CPG-on-FHIR、CDS Hooks、CardX、mCODE 与专病包的对齐调研](2026-11-24-cpg-cdshooks-cardx-mcode-pack-alignment.md)
+- [PathJX 病理阅片系统的接入面核验](2026-11-19-pathjx-integration-surface.md)
