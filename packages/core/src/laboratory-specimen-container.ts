@@ -99,15 +99,17 @@ export interface SpecimenResolutionInput {
 const routineUrineCodes = new Set(['urine', 'lp7681-2'])
 const routineUrineDisplays = new Set(['尿液', '清洁中段尿', '随机尿', '晨尿'])
 const routineUrineEnDisplays = new Set(['urine', 'clean midstream urine', 'random urine'])
+const serumCodes = new Set(['serum', 'ser', 'lp7633-3'])
+const serumDisplays = new Set(['血清', '合成血清', '血清、血浆', '血清/血浆', '全血、血清、血浆'])
+const serumEnDisplays = new Set(['serum', 'serum or plasma', 'serum/plasma'])
 const coagulationLoincCodes = new Set(['6301-6', '5902-2', '3173-2', '3255-7', '48065-7'])
+const edtaLoincCodes = new Set(['6690-2', '718-7', '777-3', '789-8', '4544-3', '787-2', '785-6', '786-4', '4548-4'])
 
 export function resolveLaboratorySpecimenContainer(input: SpecimenResolutionInput): LaboratorySpecimenContainer {
   if (input.specimenContainer !== undefined && input.specimenContainer !== null) {
     return input.specimenContainer
   }
   const ref = input.referenceCode?.trim() ?? ''
-  if (ref === '0300101A') return esrBlack
-
   const rawCode = typeof input.specimen === 'object' && input.specimen !== null ? (input.specimen.code?.trim().toLowerCase() ?? '') : ''
   const rawDisplay = typeof input.specimen === 'string'
     ? input.specimen.trim()
@@ -116,17 +118,24 @@ export function resolveLaboratorySpecimenContainer(input: SpecimenResolutionInpu
       : ''
   const lowerDisplay = rawDisplay.toLowerCase()
 
-  if (rawDisplay === '混合标本' || rawCode.includes('mixed')) return mixedSpecimen
+  if (rawCode === 'esr-blood' || (ref === '0300101A' && (rawDisplay === '' || rawDisplay === '全血' || lowerDisplay === 'whole blood'))) {
+    return esrBlack
+  }
+  if (rawDisplay === '混合标本' || lowerDisplay === 'mixed specimens' || rawCode === 'mixed' || rawCode === 'mixed-specimen') {
+    return mixedSpecimen
+  }
   const isRoutineUrineDisplay = routineUrineDisplays.has(rawDisplay) || routineUrineEnDisplays.has(lowerDisplay)
   if (isRoutineUrineDisplay || (routineUrineCodes.has(rawCode) && rawDisplay === '')) {
     return sterileUrine
   }
-  const explicitCitrateSpecimen = rawCode === 'citrated-plasma'
+  const explicitCitrateSpecimen = (
+    rawCode === 'citrated-plasma'
     || rawCode === 'ppp'
     || rawDisplay.includes('枸橼酸')
     || rawDisplay.includes('柠檬酸')
     || lowerDisplay.includes('citrate')
     || rawDisplay.includes('贫血小板血浆')
+  ) && !rawDisplay.includes('1:4') && !rawDisplay.includes('血沉')
   const isKnownCoagulationReference = ref === 'CN-LAB-COAGULATION'
     || /^05\d{5}[A-Z]$/.test(ref)
     || coagulationLoincCodes.has(ref)
@@ -134,27 +143,24 @@ export function resolveLaboratorySpecimenContainer(input: SpecimenResolutionInpu
   if (explicitCitrateSpecimen || (isKnownCoagulationReference && genericPlasmaOrUnset)) {
     return citrateBlue
   }
-  if (
-    rawCode === 'serum'
-    || rawCode === 'ser/plas'
-    || rawDisplay === '血清'
-    || rawDisplay === '合成血清'
-    || rawDisplay === '血清、血浆'
-    || rawDisplay === '血清/血浆'
-    || rawDisplay === '全血、血清、血浆'
-  ) {
+  if (serumDisplays.has(rawDisplay) || serumEnDisplays.has(lowerDisplay) || (serumCodes.has(rawCode) && rawDisplay === '')) {
     return sstYellow
   }
-  if (
-    rawCode === 'whole-blood'
-    || rawCode === 'bld'
-    || rawDisplay === '全血'
-    || rawDisplay === '合成全血'
-    || (rawDisplay.includes('全血') && !rawDisplay.includes('血清') && !rawDisplay.includes('血浆'))
-    || ref === 'CN-LAB-CBC'
+  const explicitEdtaWholeBlood = (
+    rawCode === 'edta-blood'
+    || rawCode === 'edta-k2'
+    || rawCode === 'bld-edta'
+    || lowerDisplay.includes('edta')
+    || rawDisplay.includes('紫头')
+  ) && !rawDisplay.includes('血浆') && !lowerDisplay.includes('plasma') && !rawDisplay.includes('血清') && !lowerDisplay.includes('serum')
+  const isKnownEdtaReference = ref === 'CN-LAB-CBC'
     || ref === 'CN-LAB-CBC-5DIFF'
     || ref === 'CN-LAB-HBA1C'
-  ) {
+    || /^01\d{5}[A-Z]$/.test(ref)
+    || ref === '1100301A'
+    || edtaLoincCodes.has(ref)
+  const genericWholeBloodOrUnset = rawDisplay === '' || rawDisplay === '全血' || rawDisplay === '合成全血' || lowerDisplay === 'whole blood'
+  if (explicitEdtaWholeBlood || (isKnownEdtaReference && genericWholeBloodOrUnset)) {
     return edtaPurple
   }
   return customSpecimenContainer(rawDisplay)

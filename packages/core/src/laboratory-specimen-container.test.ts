@@ -149,6 +149,27 @@ describe('laboratory specimen container resolution and tube merging', () => {
         mergeable: false,
       })
     }
+
+    expect(resolveLaboratorySpecimenContainer({ referenceCode: '0100101A', specimen: '全血' })).toMatchObject({
+      code: 'edta-k2-purple',
+      mergeable: true,
+    })
+    expect(resolveLaboratorySpecimenContainer({ specimen: { code: 'edta-blood', display: 'EDTA抗凝全血' } })).toMatchObject({
+      code: 'edta-k2-purple',
+      mergeable: true,
+    })
+    for (const nonEdtaWholeBlood of [
+      { specimen: '全血' },
+      { specimen: '肝素抗凝全血' },
+      { specimen: '动脉全血' },
+      { specimen: { code: 'whole-blood', display: '肝素抗凝全血' } },
+      { specimen: 'EDTA抗凝血浆' },
+    ]) {
+      expect(resolveLaboratorySpecimenContainer(nonEdtaWholeBlood)).toMatchObject({
+        code: 'custom-specimen',
+        mergeable: false,
+      })
+    }
   })
 
   it('splits mergeable specimen tubes exceeding 20 requests into bounded 20-item collection units', () => {

@@ -30,8 +30,8 @@ function laboratory(
   options: { referenceCode?: string; specimenCode?: string; specimenDisplay?: string } = {},
 ) {
   const code = options.referenceCode ?? `synthetic-${index}`
-  const specimenCode = options.specimenCode ?? 'whole-blood'
-  const specimenDisplay = options.specimenDisplay ?? '合成全血'
+  const specimenCode = options.specimenCode ?? 'edta-blood'
+  const specimenDisplay = options.specimenDisplay ?? 'EDTA抗凝全血'
   const referenceConcept = { id: `laboratory-${index}`, code, display: name, system: 'https://example.test/laboratory', version: '1', sourceLocator: 'synthetic-fixture' }
   return {
     id: `request-${index}`, catalogItemId: `laboratory-${index}`, indicationCode: 'screening', serviceRequestId: `service-request-${index}`,
