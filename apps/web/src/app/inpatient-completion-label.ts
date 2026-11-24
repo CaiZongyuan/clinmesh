@@ -96,6 +96,7 @@ export function inpatientCompletionLabel(command: CompletedCommand, locale: Work
     case 'inpatient.surgery.cancel': return t('已取消手术申请', 'Surgery request cancelled')
     case 'inpatient.surgery.start': return t('手术已开始', 'Surgery started')
     case 'inpatient.surgery.record-material': return t('已登记耗材用量', 'Material use recorded')
+    case 'inpatient.surgery.record-medication': return t('已登记台内用药', 'Intraoperative medication recorded')
     case 'inpatient.surgery.supplement-material': return t('已补登记术后耗材', 'Postoperative material use added')
     case 'inpatient.surgery.correct-material': return command.input.replacement
       ? t('已更正耗材登记', 'Material entry corrected') : t('已撤销耗材登记', 'Material entry voided')

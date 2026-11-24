@@ -57,7 +57,7 @@ function observations(payload: unknown, verification = false) {
 }
 
 it('无跟进的护士可读术中及术后用量，医生按需解释并复用同依据的实际计量结果', async () => {
-  let costExplanation = '本台已登记导丝费用200元，住院预计费用3065.98元。'
+  let costExplanation = '本台已登记导丝费用200元，住院预计费用3145.98元。'
   const s = await setup((schema, payload) => ({ observations: observations(payload, schema === 'inpatient_drg_verification'),
     ...(schema === 'inpatient_drg_recommendation' ? { costExplanation } : { costExplanationSupported: true }) }), true)
   const stay = s.pciStay!
@@ -75,7 +75,7 @@ it('无跟进的护士可读术中及术后用量，医生按需解释并复用�
   await s.fixture.runtime.dispatchPending()
   expect(s.calls).toEqual([])
   const board = await s.fixture.read('ward-nurse', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)
-  expect(board).toMatchObject({ taskId: null, status: 'inactive', costs: { components: { formalChargesFen: 20000, projectedTotalFen: 306598 } },
+  expect(board).toMatchObject({ taskId: null, status: 'inactive', costs: { components: { formalChargesFen: 20000, projectedTotalFen: 314598 } },
     usage: expect.arrayContaining([expect.objectContaining({ materialId: 'hospital-material-pci-guidewire', actualQuantity: 1, remainingQuantity: 0 })]) })
   const checks = await s.checks()
   await parsePciResponse(inpatientDrgExplanationResponseSchema, await s.fixture.request('inpatient-doctor', `${stay.path}/drg/record-checks/explain`, {

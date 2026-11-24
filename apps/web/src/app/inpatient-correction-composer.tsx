@@ -18,7 +18,7 @@ import { getBatchFailureMessage } from './workspace-error.ts'
 type Material = z.infer<typeof inpatientMaterialItemSchema>
 type Props = { draft: ReturnType<typeof useCorrectionBatchDraft>; write: ReturnType<typeof useInpatientWriteIntent>; locale: WorkspaceLocale;
   execution: z.infer<typeof inpatientSurgeryExecutionSchema>; request: z.infer<typeof inpatientSurgeryRequestSchema>;
-  catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined; reservations: InpatientMaterialReservation[];
+  catalog: z.input<typeof inpatientSurgeryCatalogSchema> | undefined; reservations: InpatientMaterialReservation[];
   active: boolean; writable: boolean; dataReady: boolean; refresh: () => Promise<unknown> }
 const remaining = (item: InpatientMaterialReservation) => item.remainingQuantity ?? (item.status === 'reserved' ? item.quantity - item.consumedQuantity : 0)
 const rowLabel = (row: CorrectionRow) => `${row.original.item.display} × ${row.original.quantity}`

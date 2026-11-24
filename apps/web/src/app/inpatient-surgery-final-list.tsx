@@ -11,7 +11,7 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
-type Props = { rows: CompletionDraftRow[]; catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined;
+type Props = { rows: CompletionDraftRow[]; catalog: z.input<typeof inpatientSurgeryCatalogSchema> | undefined;
   reservations: InpatientMaterialReservation[]; requestId: string; locale: WorkspaceLocale; disabled: boolean;
   rowProblem: (row: CompletionDraftRow) => string | null;
   onChange: (change: (previous: CompletionDraftRow[]) => CompletionDraftRow[], discard?: boolean) => void }

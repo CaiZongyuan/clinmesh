@@ -1,12 +1,55 @@
 import { z } from 'zod'
 import { SURGICAL_LOCATIONS } from '@clinmesh/core/inpatient-surgery-consent'
+import { CLASS_A_COVERAGE } from './catalog-insurance-coverage.ts'
 import { syntheticInpatientSurgeryCatalog } from './scenario-data/inpatient-surgery-catalog.ts'
 import { storeMaterialSnapshot } from './scenario-data/cardiovascular-materials.ts'
 import { standardMedicationPackageInsert } from './scenario-data/medication-package-inserts.ts'
+import { standardMedicationDoseBasis, standardMedicationRoutes, standardMedicationSafety } from './scenario-data/standard-medications.ts'
 import type { createHospitalBaseline } from './scenario-data/hospital-baseline.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository, RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 import { syntheticAccounts } from './identity-service.ts'
+
+const SURGICAL_LIDOCAINE_PRODUCT = {
+  id: 'synthetic-medication-product-surgical-lidocaine',
+  code: 'CM-NHSA-PRODUCT-SURGICAL-LIDOCAINE',
+  system: 'urn:clinmesh:reference:nhsa-medication-product',
+  version: 'clinmesh-synthetic-medications-2026-11-24',
+  approvalNumber: 'CM-SYNTHETIC-SURGICAL-LIDOCAINE',
+  brandName: null,
+  dosageForm: '注射剂',
+  genericName: '盐酸利多卡因注射液',
+  manufacturer: '仁和仿真制药厂',
+  packageDescription: '5mL:100mg×5支/盒',
+  strength: '5 mL:100 mg',
+} as const
+
+const INTRAOPERATIVE_NURSING_SERVICES = [
+  {
+    serviceId: 'hospital-service-intraoperative-interventional-nursing',
+    code: 'HOSP-SVC-INTRAOP-INTERVENTIONAL-NURSING',
+    nameZh: '术中介入专科护理',
+    nameEn: 'Intraoperative Interventional Specialty Nursing',
+    executingDepartmentId: 'location-catheterization-lab',
+    priceFen: 8000,
+    procedureIds: [
+      'hospital-surgery-1',
+      'hospital-surgery-2',
+      'hospital-surgery-3',
+      'hospital-surgery-7',
+      'hospital-surgery-8',
+    ],
+  },
+  {
+    serviceId: 'hospital-service-intraoperative-surgical-nursing',
+    code: 'HOSP-SVC-INTRAOP-SURGICAL-NURSING',
+    nameZh: '术中手术室专科护理',
+    nameEn: 'Intraoperative Operating Room Specialty Nursing',
+    executingDepartmentId: 'location-operating-center',
+    priceFen: 10000,
+    procedureIds: ['hospital-surgery-5'],
+  },
+] as const
 
 export function backfillMedicationPackageInserts(database: ClinMeshDatabase, context: RepositoryContext) {
   const missing = z.array(z.object({ item_id: z.string() })).parse(database.driver.prepare(`
@@ -54,12 +97,106 @@ export function seedInpatientEnvironment(
     '$.availableScopes',json('["outpatient","inpatient"]'),'$.inpatientBillingTrigger','execution')
     WHERE workspace_id=? AND epoch=? AND service_id='hospital-service-diabetes-education' AND json_type(config_json,'$.inpatientBillingTrigger') IS NULL`)
     .run(context.workspaceId, context.epoch)
+  const lidocaineConfig = {
+    availableScopes: ['surgical-base'],
+    surgicalBaseStock: true,
+    unit: 'mL',
+    dose: '5 mL',
+    frequency: 'ONCE',
+    route: '注射',
+    ...standardMedicationRoutes('medication-surgical-lidocaine')!,
+    product: SURGICAL_LIDOCAINE_PRODUCT,
+    inpatientDoses: [
+      { doseText: '5 mL', quantity: 5 },
+      { doseText: '100 mg', quantity: 5 },
+    ],
+    inpatientDoseBasis: standardMedicationDoseBasis('medication-surgical-lidocaine')!,
+    inpatientMaxDoseQuantity: 20,
+    allowedFrequencyCodes: ['ONCE'],
+    allowedCombinationIds: [],
+    inpatientBillingTrigger: 'dispense',
+    insuranceCoverage: CLASS_A_COVERAGE,
+    safety: standardMedicationSafety('medication-surgical-lidocaine')!,
+    packageInsert: standardMedicationPackageInsert('medication-surgical-lidocaine')!,
+  }
+  database.driver.prepare(`
+    INSERT INTO outpatient_catalog(workspace_id,epoch,item_id,kind,code,name_zh,name_en,price_fen,version,active,config_json)
+    VALUES(?,?,'medication-surgical-lidocaine','medication','SURGICAL-LIDOCAINE','盐酸利多卡因注射液','Lidocaine Hydrochloride Injection',120,1,1,?)
+    ON CONFLICT(workspace_id,epoch,item_id) DO NOTHING
+  `).run(context.workspaceId, context.epoch, JSON.stringify(lidocaineConfig))
+  database.driver.prepare(`
+    UPDATE outpatient_catalog SET config_json=json_set(config_json,'$.surgicalBaseStock',json('true'))
+    WHERE workspace_id=? AND epoch=? AND kind='medication'
+      AND item_id IN ('medication-pci-heparin','medication-nitroglycerin','medication-sodium-chloride','medication-pci-iohexol')
+      AND json_type(config_json,'$.surgicalBaseStock') IS NULL
+  `).run(context.workspaceId, context.epoch)
+  for (const nursing of INTRAOPERATIVE_NURSING_SERVICES) {
+    const config = {
+      availableScopes: ['inpatient'],
+      billingUnit: {
+        code: 'SESSION',
+        display: '次',
+        system: 'urn:clinmesh:wst:billing-unit',
+        valueSet: 'urn:clinmesh:wst:value-set:billing-unit',
+        version: 'synthetic-surgery-nursing-2026-11-24',
+      },
+      category: {
+        code: 'NURSING',
+        display: '专科护理',
+        system: 'urn:clinmesh:wst:service-category',
+        valueSet: 'urn:clinmesh:wst:value-set:service-category',
+        version: 'synthetic-surgery-nursing-2026-11-24',
+      },
+      chargeDefinition: {
+        id: `charge-definition-${nursing.serviceId}`,
+        currency: 'CNY',
+        effectiveOn: '2026-11-24',
+        priceFen: nursing.priceFen,
+      },
+      componentServiceIds: [],
+      executingDepartmentId: nursing.executingDepartmentId,
+      insuranceCoverage: CLASS_A_COVERAGE,
+      nationalService: {
+        code: 'CM-NHC-SERVICE-SURGICAL-NURSING',
+        display: '合成术中专科护理服务',
+        id: `reference-service-${nursing.serviceId}`,
+        system: 'urn:clinmesh:reference:nhc-medical-service',
+        version: 'synthetic-2026-11-24',
+      },
+      reportTemplate: `${nursing.nameZh}随对应术式完成自动联动计费。`,
+      requestCatalogItemIds: [],
+      tatMinutes: 30,
+      inpatientBillingTrigger: 'surgery-completion',
+      surgicalProcedureIds: [...nursing.procedureIds],
+    }
+    database.driver.prepare(`
+      INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json)
+      VALUES(?,?,?,?,?,?,1,1,?)
+      ON CONFLICT(workspace_id,epoch,service_id) DO NOTHING
+    `).run(context.workspaceId, context.epoch, nursing.serviceId, nursing.code, nursing.nameZh, nursing.nameEn, JSON.stringify(config))
+  }
   const exists = (type: string, id: string) => database.driver.prepare(`
     SELECT 1 FROM fhir_resource WHERE workspace_id=? AND epoch=? AND resource_type=? AND resource_id=? AND deleted=0`)
     .get(context.workspaceId, context.epoch, type, id) !== undefined
   const hasResourceRow = (type: string, id: string) => database.driver.prepare(`
     SELECT 1 FROM fhir_resource WHERE workspace_id=? AND epoch=? AND resource_type=? AND resource_id=?`)
     .get(context.workspaceId, context.epoch, type, id) !== undefined
+  if (!hasResourceRow('Medication', 'medication-surgical-lidocaine')) {
+    fhir.create(context, {
+      resourceType: 'Medication',
+      id: 'medication-surgical-lidocaine',
+      status: 'active',
+      code: {
+        coding: [{
+          system: SURGICAL_LIDOCAINE_PRODUCT.system,
+          version: SURGICAL_LIDOCAINE_PRODUCT.version,
+          code: SURGICAL_LIDOCAINE_PRODUCT.code,
+          display: SURGICAL_LIDOCAINE_PRODUCT.genericName,
+        }],
+        text: SURGICAL_LIDOCAINE_PRODUCT.genericName,
+      },
+    })
+  }
   for (const account of syntheticAccounts.filter(account => ['inpatient-doctor', 'ward-nurse', 'medical-records', 'medical-insurance'].includes(account.roleCode))) {
     if (!hasResourceRow('Practitioner', account.practitionerId)) fhir.create(context, {
       resourceType: 'Practitioner', id: account.practitionerId, active: true, name: [{ text: account.name }],

@@ -153,6 +153,9 @@ export class InpatientPciData {
         ...(safety ? { safety } : {}),
         ...(packageInsert ? { packageInsert } : {}),
         ...(routes ? routes : {}),
+        ...(definition.id === 'medication-pci-iohexol' || definition.id === 'medication-pci-heparin'
+          ? { surgicalBaseStock: true }
+          : {}),
         product: productSnapshot, availableScopes: ['outpatient', 'inpatient'], unit: supplement.unit,
         dose: supplement.suggestedDoseText, frequency: supplement.frequencyCodes[0], route: supplement.route,
         inpatientDoses: [{ doseText: supplement.suggestedDoseText, quantity: supplement.suggestedQuantity }],
@@ -185,11 +188,11 @@ export class InpatientPciData {
         if (inserted.changes !== 1) throw new InpatientError('INPATIENT_PCI_CATALOG_AMBIGUOUS', 'PCI 药品院内 ID 已被其他产品占用')
         effects.push({ kind: 'created', reference: `HospitalMedication/${itemId}`, versionId: '1' })
       } else if (JSON.stringify(config) !== JSON.stringify(old)) {
-        const { packageInsert: _nextInsert, ...configWithoutInsert } = config
-        const { packageInsert: oldInsert, ...oldWithoutInsert } = old
-        const onlyPackageInsertBackfilled = (oldInsert === undefined || oldInsert === null)
-          && JSON.stringify(configWithoutInsert) === JSON.stringify(oldWithoutInsert)
-        if (onlyPackageInsertBackfilled) {
+        const { packageInsert: _nextInsert, surgicalBaseStock: _nextBaseStock, ...configWithoutBackfill } = config
+        const { packageInsert: oldInsert, surgicalBaseStock: oldBaseStock, ...oldWithoutBackfill } = old
+        const onlyBackfilled = ((oldInsert === undefined || oldInsert === null) || (oldBaseStock === undefined || oldBaseStock === null))
+          && JSON.stringify(configWithoutBackfill) === JSON.stringify(oldWithoutBackfill)
+        if (onlyBackfilled) {
           database.prepare('UPDATE outpatient_catalog SET config_json=? WHERE workspace_id=? AND epoch=? AND item_id=? AND version=?')
             .run(JSON.stringify(config), context.workspaceId, context.epoch, itemId, current.version)
         } else {

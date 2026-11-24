@@ -42,6 +42,7 @@ import { cn } from '@clinmesh/ui/lib/utils'
 import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { formatMedicationRoute } from '@clinmesh/core/medication-safety'
 import { isSamePlannedProcedure } from '@clinmesh/core/inpatient-surgery-notes'
 import { ApiClientError, apiGet } from './api-client.ts'
 import { extractClinicalQualityError, InpatientClinicalQualityBanner } from './clinical-quality-banner.tsx'
@@ -60,6 +61,7 @@ import { CoronaryAngiographyDisclosure } from './inpatient-pci-draft-fields.tsx'
 import { InpatientDrgReviewPanel } from './inpatient-drg-review.tsx'
 import { surgeryPreparation, surgeryStepLabel, useSurgeryView, type SurgeryView } from './inpatient-surgery-flow.ts'
 import { SurgeryExecuteComposer } from './inpatient-surgery-execute-composer.tsx'
+import { SurgeryExecutionExtrasSummary } from './inpatient-surgery-medications.tsx'
 
 type Props = {
   admission: InpatientAdmission
@@ -441,6 +443,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
                 {req ? <SurgicalConsentPreviewButton admission={admission} request={req} locale={locale} /> : null}
               </div>
               {req ? <SurgeryNoticeSummaryList row={req} locale={locale} includeProcedure={req.plannedProcedure.coding.code !== exec.actualProcedure.coding.code} extraItems={[{ label: t('实际实施时间', 'Performed at'), value: formatShanghaiMinute(exec.performedAt).slice(5), className: 'tabular-nums' }]} /> : null}
+              <SurgeryExecutionExtrasSummary execution={exec} locale={locale} />
             </div>
           })}
         </div> : null}
@@ -472,15 +475,22 @@ function SurgeryDone({ admission, request, execution, angiographyReport, locale,
     if (row) { row.quantity += use.quantity; row.amountFen += use.amountFen } else result.push({ item: use.item, quantity: use.quantity, amountFen: use.amountFen })
     return result
   }, [])
+  const medications = execution.medications ?? []
+  const linkedNursing = execution.linkedNursing
   const procedureFen = execution.actualProcedure.chargeDefinition.priceFen
+  const totalFen = rows.reduce((sum, row) => sum + row.amountFen, procedureFen)
+    + medications.reduce((sum, med) => sum + med.amountFen, 0)
+    + (linkedNursing?.amountFen ?? 0)
   return <section aria-label={t('最终耗材', 'Final materials')} className="flex min-w-0 flex-col gap-2">
     <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{execution.actualProcedure.coding.display}</h4><span className="font-mono text-xs text-muted-foreground">{execution.actualProcedure.coding.code}</span><Badge variant="outline" className="text-success">{t('已完成', 'Completed')}</Badge><span className="flex-1" />{request ? <SurgicalConsentPreviewButton admission={admission} request={request} locale={locale} /> : null}{actions}</div>
     {request ? <div className="clinmesh-inpatient-summary"><SurgeryNoticeSummaryList row={request} locale={locale} includeProcedure={request.plannedProcedure.coding.code !== execution.actualProcedure.coding.code} /></div> : null}
     {angiographyReport && angiographyReport.status !== 'processing' ? <CoronaryAngiographyDisclosure report={angiographyReport} locale={locale} summary={t('冠脉造影与生理学报告', 'Coronary angiography & physiology report')} /> : null}
     <Table><TableHeader><TableRow><TableHead>{t('耗材', 'Material')}</TableHead><TableHead>{t('最终用量', 'Final quantity')}</TableHead><TableHead className="text-right">{t('费用', 'Charge')}</TableHead></TableRow></TableHeader>
       <TableBody>{rows.map(row => <TableRow key={row.item.id}><TableCell className="whitespace-normal">{row.item.display}</TableCell><TableCell className="tabular-nums">{row.quantity} {row.item.chargeDefinition.unit}</TableCell><TableCell className="text-right tabular-nums">{formatFen(row.amountFen, locale)}</TableCell></TableRow>)}
+        {medications.map(med => <TableRow key={`med-${med.id}`}><TableCell className="whitespace-normal">{t('台内药', 'Intraoperative med')} · {med.display}（{med.doseText} · {formatMedicationRoute(med.routeCode, locale)}）</TableCell><TableCell className="tabular-nums">{med.quantity} {med.unit}</TableCell><TableCell className="text-right tabular-nums">{formatFen(med.amountFen, locale)}</TableCell></TableRow>)}
+        {linkedNursing ? <TableRow><TableCell className="whitespace-normal">{t('术中专科护理', 'Specialty nursing')} · {linkedNursing.display}</TableCell><TableCell className="tabular-nums">1 {linkedNursing.unit}</TableCell><TableCell className="text-right tabular-nums">{formatFen(linkedNursing.amountFen, locale)}</TableCell></TableRow> : null}
         <TableRow><TableCell className="whitespace-normal">{t('术式费', 'Procedure fee')} · {execution.actualProcedure.coding.display}</TableCell><TableCell>{t('1 次', '1')}</TableCell><TableCell className="text-right tabular-nums">{formatFen(procedureFen, locale)}</TableCell></TableRow></TableBody>
-      <TableFooter><TableRow><TableCell colSpan={2}>{t('本台合计', 'Surgery total')}</TableCell><TableCell className="text-right tabular-nums">{formatFen(rows.reduce((sum, row) => sum + row.amountFen, procedureFen), locale)}</TableCell></TableRow></TableFooter></Table>
+      <TableFooter><TableRow><TableCell colSpan={2}>{t('本台合计', 'Surgery total')}</TableCell><TableCell className="text-right tabular-nums">{formatFen(totalFen, locale)}</TableCell></TableRow></TableFooter></Table>
     {!actions ? <p className="text-sm text-muted-foreground">{t('耗材与术式费已计入住院费用', 'Materials and procedure fee are posted')}</p> : null}
   </section>
 }

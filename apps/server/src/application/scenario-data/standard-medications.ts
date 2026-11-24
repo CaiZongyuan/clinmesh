@@ -84,6 +84,7 @@ const legacyRules: Record<string, { classes: string[]; prefixes: string[]; basis
 
 export function standardMedicationSafety(id: string): MedicationSafetyRule | undefined {
   if (id === 'medication-pci-iohexol') return { maximumDailyQuantity: 400, pharmacologyClasses: ['contrast'], indicationPrefixes: ['I20', 'I21', 'I25'], doseLimits: { unit: 'mL', minimumSingleDose: 1, maximumSingleDose: 100, maximumDailyDose: 400 } }
+  if (id === 'medication-surgical-lidocaine') return { maximumDailyQuantity: 20, pharmacologyClasses: ['local-anesthetic'], indicationPrefixes: ['I', 'K', 'C', 'D', 'M', 'S', 'T', 'Z'], doseLimits: { unit: 'mg', minimumSingleDose: 20, maximumSingleDose: 400, maximumDailyDose: 400 } }
   const legacy = legacyRules[id]
   if (legacy) return {
     maximumDailyQuantity: legacy.daily / legacy.basis, pharmacologyClasses: legacy.classes, indicationPrefixes: legacy.prefixes,
@@ -102,6 +103,7 @@ export function standardMedicationSafety(id: string): MedicationSafetyRule | und
 }
 
 export function standardMedicationDoseBasis(id: string) {
+  if (id === 'medication-surgical-lidocaine') return { amount: 20, unit: 'mg' }
   const legacy = legacyRules[id]
   if (legacy) return { amount: legacy.basis, unit: 'mg' }
   const definition = definitions.find(([suffix]) => id === `medication-${suffix}` || id === `medication-pci-${suffix}`)
@@ -117,6 +119,7 @@ const specialMedicationRoutes: Readonly<Record<string, { defaultRouteCode: Medic
   'medication-enoxaparin': { defaultRouteCode: 'IH', allowedRouteCodes: ['IH'] },
   'medication-sodium-chloride': { defaultRouteCode: 'IVGTT', allowedRouteCodes: ['IVGTT', 'IV'] },
   'medication-pci-iohexol': { defaultRouteCode: 'IV', allowedRouteCodes: ['IV', 'IVGTT'] },
+  'medication-surgical-lidocaine': { defaultRouteCode: 'IH', allowedRouteCodes: ['IH', 'IM', 'IV'] },
 }
 
 export function standardMedicationRoutes(id: string): { defaultRouteCode: MedicationRoute; allowedRouteCodes: MedicationRoute[] } | undefined {

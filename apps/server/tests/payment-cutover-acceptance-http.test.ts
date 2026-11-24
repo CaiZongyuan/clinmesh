@@ -129,7 +129,7 @@ it('非空旧库显式切换后，从原岗位重建两端资金并联合核对 
       .toMatchObject({ depositFen: 5000, remainingFen: pciGoldenAmounts.supplementFen })
     const reviewed = (await parsePciResponse(inpatientPaymentPreviewResponseSchema, await s.request('cashier', `${stay.path}/payments/preview`, {
       kind: 'supplement', amountFen: pciGoldenAmounts.supplementFen,
-      tenders: [{ method: 'cash', amountFen: 10000 }, { method: 'mobile', amountFen: 169645 }], simulatorRule: 'ambiguous',
+      tenders: [{ method: 'cash', amountFen: 10000 }, { method: 'mobile', amountFen: 172845 }], simulatorRule: 'ambiguous',
     }))).data
     const key = randomUUID(), confirmation = { previewId: reviewed.previewId, commitToken: reviewed.commitToken }
     const pending = await parsePciResponse(inpatientPaymentResponseSchema, await s.request('cashier', `${stay.path}/payments/confirm`, confirmation, key))
@@ -162,7 +162,7 @@ it('非空旧库显式切换后，从原岗位重建两端资金并联合核对 
       paymentId: pending.data.paymentId, expectedPaymentVersion: 1,
     }))
     const funded = await s.read('cashier', `${stay.path}/payments`, inpatientPaymentsSchema)
-    expect(funded).toMatchObject({ depositFen: 5000, supplementFen: 179645, remainingFen: 0, pendingCount: 0 })
+    expect(funded).toMatchObject({ depositFen: 5000, supplementFen: 182845, remainingFen: 0, pendingCount: 0 })
     expect(funded.sources.reduce((sum, source) => sum + source.amountFen, 0)).toBe(pciGoldenAmounts.patientFen)
     expect(await s.read('cashier', `${nextPath}/payments`, inpatientPaymentsSchema)).toMatchObject({ depositFen: 700, supplementFen: 0 })
     const ready = await s.read('cashier', `${stay.path}/discharge/preview`, inpatientSettlementPreviewSchema)

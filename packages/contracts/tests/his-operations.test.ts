@@ -806,7 +806,7 @@ describe('HIS operation catalog', () => {
       'clinmesh-billing': 18,
       'clinmesh-doctor': 70,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 120,
+      'clinmesh-inpatient': 121,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 8,
       'clinmesh-shared': 1,
@@ -965,9 +965,9 @@ it('publishes read-only clinical quality preflight queries and clinicalOverride 
   expect(getHisOperation('inpatient.catalog.search').version).toBe(4)
   expect(getHisOperation('inpatient.clinical.catalog').version).toBe(5)
   expect(getHisOperation('inpatient.order.issue').version).toBe(10)
-  expect(getHisOperation('inpatient.surgery.catalog').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.catalog').version).toBe(4)
   expect(getHisOperation('inpatient.surgery.catalog').roles).toEqual(['inpatient-doctor', 'ward-nurse', 'medical-records'])
-  expect(getHisOperation('inpatient.surgery.read').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.read').version).toBe(4)
   expect(getHisOperation('inpatient.surgery.read').roles).toEqual(['inpatient-doctor', 'ward-nurse', 'medical-records'])
   expect(getHisOperation('inpatient.surgery.request').version).toBe(4)
   expect(getHisOperation('inpatient.surgery.check-preop').version).toBe(3)
@@ -975,11 +975,13 @@ it('publishes read-only clinical quality preflight queries and clinicalOverride 
   expect(getHisOperation('inpatient.surgery.cancel').version).toBe(3)
   expect(getHisOperation('inpatient.surgery.start').version).toBe(3)
   expect(getHisOperation('inpatient.surgery.record-material').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.record-medication').version).toBe(1)
   expect(getHisOperation('inpatient.surgery.correct-material').version).toBe(2)
   expect(getHisOperation('inpatient.surgery.supplement-material').version).toBe(2)
-  expect(getHisOperation('inpatient.surgery.preview-completion').version).toBe(2)
-  expect(getHisOperation('inpatient.surgery.complete').version).toBe(4)
-  expect(getHisOperation('inpatient.surgery.execute').version).toBe(4)
+  expect(getHisOperation('inpatient.surgery.preview-completion').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.complete').version).toBe(5)
+  expect(getHisOperation('inpatient.surgery.execute').version).toBe(5)
+  expect(getHisOperation('inpatient.drg.simulate').version).toBe(6)
   expect(getHisOperation('inpatient.pci-selection.confirm').version).toBe(3)
   expect(getHisOperation('inpatient.record.submit').version).toBe(3)
 })
@@ -1059,6 +1061,48 @@ it('accepts omitted routine surgery notes on the five routine operations while k
   const execute = getHisOperation('inpatient.surgery.execute')
   expect(execute.input.parse({ admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 2, procedureId: 'proc-1', catalogVersion: 1, materials: [] }))
     .toEqual({ admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 2, procedureId: 'proc-1', catalogVersion: 1, materials: [] })
+  expect(execute.input.parse({
+    admissionId: 'adm-1',
+    requestId: 'req-1',
+    expectedRequestVersion: 2,
+    procedureId: 'proc-1',
+    catalogVersion: 1,
+    materials: [],
+    medications: [{ medicationId: 'medication-pci-iohexol', catalogVersion: 1, doseText: '50 mL', quantity: 50, routeCode: 'IV' }],
+  })).toMatchObject({
+    medications: [{ medicationId: 'medication-pci-iohexol', quantity: 50, routeCode: 'IV' }],
+  })
+  expect(execute.input.safeParse({
+    admissionId: 'adm-1',
+    requestId: 'req-1',
+    expectedRequestVersion: 2,
+    procedureId: 'proc-1',
+    catalogVersion: 1,
+    materials: [],
+    medications: [
+      { medicationId: 'medication-pci-iohexol', catalogVersion: 1, doseText: '50 mL', quantity: 50, routeCode: 'IV' },
+      { medicationId: 'medication-pci-iohexol', catalogVersion: 1, doseText: '20 mL', quantity: 20, routeCode: 'IV' },
+    ],
+  }).success).toBe(false)
+
+  const recordMed = getHisOperation('inpatient.surgery.record-medication')
+  expect(recordMed.input.parse({
+    admissionId: 'adm-1',
+    requestId: 'req-1',
+    expectedRequestVersion: 3,
+    executionId: 'exec-1',
+    medication: { medicationId: 'medication-pci-heparin', catalogVersion: 1, doseText: '1 mL', quantity: 1, routeCode: 'IV' },
+  })).toMatchObject({
+    executionId: 'exec-1',
+    medication: { medicationId: 'medication-pci-heparin', routeCode: 'IV' },
+  })
+  expect(recordMed.input.safeParse({
+    admissionId: 'adm-1',
+    requestId: 'req-1',
+    expectedRequestVersion: 3,
+    executionId: 'exec-1',
+    medication: { medicationId: 'medication-pci-heparin', catalogVersion: 1, doseText: '1 mL', quantity: 1, routeCode: 'UNKNOWN', priceFen: 100 },
+  }).success).toBe(false)
 
   const record = getHisOperation('inpatient.surgery.record-material')
   expect(record.input.parse({ admissionId: 'adm-1', requestId: 'req-1', expectedRequestVersion: 3, executionId: 'exec-1', material: { materialId: 'mat-1', catalogVersion: 1, quantity: 1, reservationId: 'res-1', expectedReservationVersion: 1 } }))
