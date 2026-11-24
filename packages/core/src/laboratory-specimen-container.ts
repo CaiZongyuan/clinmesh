@@ -96,6 +96,11 @@ export interface SpecimenResolutionInput {
   specimenContainer?: LaboratorySpecimenContainer | null | undefined
 }
 
+const routineUrineCodes = new Set(['urine', 'lp7681-2'])
+const routineUrineDisplays = new Set(['尿液', '清洁中段尿', '随机尿', '晨尿'])
+const routineUrineEnDisplays = new Set(['urine', 'clean midstream urine', 'random urine'])
+const coagulationLoincCodes = new Set(['6301-6', '5902-2', '3173-2', '3255-7', '48065-7'])
+
 export function resolveLaboratorySpecimenContainer(input: SpecimenResolutionInput): LaboratorySpecimenContainer {
   if (input.specimenContainer !== undefined && input.specimenContainer !== null) {
     return input.specimenContainer
@@ -112,17 +117,21 @@ export function resolveLaboratorySpecimenContainer(input: SpecimenResolutionInpu
   const lowerDisplay = rawDisplay.toLowerCase()
 
   if (rawDisplay === '混合标本' || rawCode.includes('mixed')) return mixedSpecimen
-  if (rawDisplay.includes('尿') || lowerDisplay.includes('urine') || rawCode === 'urine') return sterileUrine
-  if (
-    rawCode === 'citrated-plasma'
+  const isRoutineUrineDisplay = routineUrineDisplays.has(rawDisplay) || routineUrineEnDisplays.has(lowerDisplay)
+  if (isRoutineUrineDisplay || (routineUrineCodes.has(rawCode) && rawDisplay === '')) {
+    return sterileUrine
+  }
+  const explicitCitrateSpecimen = rawCode === 'citrated-plasma'
     || rawCode === 'ppp'
     || rawDisplay.includes('枸橼酸')
-    || rawDisplay === '血浆'
+    || rawDisplay.includes('柠檬酸')
+    || lowerDisplay.includes('citrate')
     || rawDisplay.includes('贫血小板血浆')
-    || ref === 'CN-LAB-COAGULATION'
-    || ref === '6301-6'
-    || ref.startsWith('05')
-  ) {
+  const isKnownCoagulationReference = ref === 'CN-LAB-COAGULATION'
+    || /^05\d{5}[A-Z]$/.test(ref)
+    || coagulationLoincCodes.has(ref)
+  const genericPlasmaOrUnset = rawDisplay === '' || rawDisplay === '血浆' || lowerDisplay === 'plasma'
+  if (explicitCitrateSpecimen || (isKnownCoagulationReference && genericPlasmaOrUnset)) {
     return citrateBlue
   }
   if (

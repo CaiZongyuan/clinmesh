@@ -105,4 +105,49 @@ describe('laboratory specimen container resolution and tube merging', () => {
 
     expect(resolveLaboratorySpecimenContainer({ specimen: null }).mergeable).toBe(false)
   })
+
+  it('keeps timed or catheter urine and generic non-coagulation plasma unmerged while mapping explicit routine urine and coagulation plasma', () => {
+    expect(resolveLaboratorySpecimenContainer({ referenceCode: '0600310D', specimen: '尿液' })).toMatchObject({
+      code: 'sterile-urine',
+      mergeable: true,
+    })
+    expect(resolveLaboratorySpecimenContainer({ specimen: { code: 'LP7681-2', display: '尿液' } })).toMatchObject({
+      code: 'sterile-urine',
+      mergeable: true,
+    })
+    for (const nonRoutineUrine of [
+      { specimen: '24小时尿液' },
+      { specimen: '导尿标本' },
+      { specimen: '24-hour urine' },
+      { specimen: { code: 'urine', display: '24小时尿液' } },
+    ]) {
+      expect(resolveLaboratorySpecimenContainer(nonRoutineUrine)).toMatchObject({
+        code: 'custom-specimen',
+        mergeable: false,
+      })
+    }
+
+    expect(resolveLaboratorySpecimenContainer({ referenceCode: '0500103A', specimen: '血浆' })).toMatchObject({
+      code: 'citrate-blue',
+      mergeable: true,
+    })
+    expect(resolveLaboratorySpecimenContainer({ referenceCode: 'CN-LAB-COAGULATION', specimen: '血浆' })).toMatchObject({
+      code: 'citrate-blue',
+      mergeable: true,
+    })
+    expect(resolveLaboratorySpecimenContainer({ specimen: { code: 'citrated-plasma', display: '枸橼酸盐抗凝血浆' } })).toMatchObject({
+      code: 'citrate-blue',
+      mergeable: true,
+    })
+    for (const genericPlasma of [
+      { specimen: '血浆' },
+      { referenceCode: 'LOINC-AMMONIA-1', specimen: '血浆' },
+      { referenceCode: '05999-1', specimen: { code: 'plas', display: 'Plasma' } },
+    ]) {
+      expect(resolveLaboratorySpecimenContainer(genericPlasma)).toMatchObject({
+        code: 'custom-specimen',
+        mergeable: false,
+      })
+    }
+  })
 })
