@@ -54,8 +54,9 @@ export async function runDrgProgressJourney(page: Page, app: { origin: string; p
   expect((await s.api.post(`${s.path}/surgeries/check-preop`, { requestId: requested.id, expectedRequestVersion: requested.version, note: '合成术前已核对' })).status()).toBe(200)
   await s.api.login('inpatient-doctor')
   let current = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).requests[0]!
+  const expectedDiagnosisRevision = ((await (await s.api.get(`${s.path}/clinical`)).json()) as { diagnosis: { revision: number } }).diagnosis.revision
   expect((await s.api.post(`${s.path}/surgeries/confirm-consent`, {
-    requestId: current.id, expectedRequestVersion: current.version,
+    requestId: current.id, expectedRequestVersion: current.version, expectedDiagnosisRevision,
     signerRole: 'patient', signerName: s.name, patientChoice: 'agree', note: '合成签署已确认',
   })).status()).toBe(200)
   current = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).requests[0]!

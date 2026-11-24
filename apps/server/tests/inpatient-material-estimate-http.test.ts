@@ -757,11 +757,13 @@ it('造影完成后护士读取历史预计说明生命周期停止，不误报�
   const doctor = await s.fixture.read('inpatient-doctor', '/api/auth/context', sessionContextSchema)
   expect((await s.fixture.read('ward-nurse', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates[0])
     .toMatchObject({ status: original.status, missing: original.missing, draft: original.draft })
+  const stayClinical = z.object({ diagnosis: z.object({ revision: z.number().int().nonnegative() }).loose() }).loose()
+    .parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/clinical`)).json())
   for (const [role, action] of [['ward-nurse', 'check-preop'], ['inpatient-doctor', 'confirm-consent']] as const) {
     const current = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgerySchema)
     expect((await s.fixture.request(role, `${s.stay.path}/surgeries/${action}`, {
       requestId: planned.id, expectedRequestVersion: current.requests.find(item => item.id === planned.id)!.version,
-      ...(action === 'confirm-consent' ? { signerRole: 'patient', signerName: '合成预计患者', patientChoice: 'agree' } : {}),
+      ...(action === 'confirm-consent' ? { expectedDiagnosisRevision: stayClinical.diagnosis.revision, signerRole: 'patient', signerName: '合成预计患者', patientChoice: 'agree' } : {}),
       note: '合成造影术前准备',
     })).status).toBe(200)
   }

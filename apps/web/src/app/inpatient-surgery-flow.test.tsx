@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -242,4 +242,117 @@ it('按计划术式开始默认折叠备注并可直接提交，改换实际术�
   expect(within(dialog).getByRole('button', { name: '开始手术' }).hasAttribute('disabled')).toBe(true)
   await user.type(within(dialog).getByRole('textbox', { name: '开始说明' }), '造影发现重度狭窄改为支架置入')
   expect(within(dialog).getByRole('button', { name: '开始手术' }).hasAttribute('disabled')).toBe(false)
+})
+
+it('目录无可用手术地点或无可选医师时不伪造兜底选项并阻断提交，签署同意书绑定所审阅的诊断修订版本并在冲突后刷新重签', async () => {
+  const currentSession: SessionContext = { ...session, actor: { ...session.actor, practitionerId: 'practitioner-inpatient-doctor' } }
+  let emptyLocations = true
+  let diagnosisRevision = 1
+  const confirmCalls: Array<Record<string, unknown>> = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/api/auth/context')) return Response.json(currentSession)
+    if (path.endsWith('/surgeries/confirm-consent') && init?.method === 'POST') {
+      const payload = JSON.parse(String(init.body ?? '{}')) as { input: Record<string, unknown> }
+      confirmCalls.push(payload.input)
+      if (payload.input.expectedDiagnosisRevision !== diagnosisRevision) {
+        return Response.json({ error: { code: 'INPATIENT_SURGERY_CONFLICT', message: '住院诊断已更新，请重新核对知情同意书后再确认签署' } }, { status: 409 })
+      }
+      return Response.json({
+        auditId: '019a0000-0000-7000-8000-000000000091',
+        correlationId: '019a0000-0000-7000-8000-000000000092',
+        effects: [],
+        data: {
+          admissionId: admission.id,
+          encounterVersion: '1',
+          virtualTime: time,
+          requests: [{ ...plan, status: 'ready' }],
+          executions: [],
+          inProgress: [],
+        },
+      })
+    }
+    if (path.endsWith('/clinical')) {
+      return Response.json(inpatientFullClinicalSchema.parse({
+        admissionId: admission.id,
+        encounterVersion: '1',
+        diagnosis: {
+          revision: diagnosisRevision,
+          entries: [{
+            conditionId: 'cond-1',
+            role: 'primary',
+            admissionCondition: '1',
+            ordinal: 1,
+            coding: {
+              id: diagnosisRevision === 1 ? 'diagnosis-1' : 'diagnosis-2',
+              system: 'urn:clinmesh:reference:nhsa-diagnosis',
+              version: '2022',
+              code: diagnosisRevision === 1 ? 'I20.000' : 'I21.401',
+              display: diagnosisRevision === 1 ? '不稳定型心绞痛' : '急性非ST段抬高型心肌梗死',
+              releaseId: 'clinmesh-icd10-2026',
+              sourceLocator: 'cn-health:diagnosis:1',
+            },
+          }],
+        },
+        orders: [],
+        executions: [],
+        dispenses: [],
+        charges: [],
+        chargesFen: 0,
+      }))
+    }
+    if (path.endsWith('/surgeries')) return Response.json({
+      admissionId: admission.id,
+      encounterVersion: '1',
+      virtualTime: time,
+      requests: [{ ...plan, status: 'requested', consentConfirmation: undefined }],
+      executions: [],
+      inProgress: [],
+    })
+    if (path.endsWith('/surgery-catalog')) return Response.json({
+      procedures: [procedure],
+      materials: [material],
+      locations: emptyLocations ? [] : [{ id: 'location-catheterization-lab', name: '导管室', nameEn: 'Catheterization Lab' }],
+      practitioners: [],
+    })
+    if (path.endsWith('/drg/reservations')) return Response.json({ admissionId: admission.id, encounterVersion: '1', reservationSets: [], reservations: [] })
+    if (path.endsWith('/material-estimates')) return Response.json({ admissionId: admission.id, estimates: [], unprepared: [] })
+    return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料未准备' } }, { status: 503 })
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  clients.push(client)
+  function Harness() {
+    const write = useInpatientWriteIntent(currentSession, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
+    return <InpatientActionProvider stage="surgery"><InpatientSurgery admission={admission} session={currentSession} locale="zh-CN" write={write} /><InpatientActionOutlet /></InpatientActionProvider>
+  }
+  render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
+  const user = userEvent.setup()
+
+  await user.click(await screen.findByRole('button', { name: '申请手术' }))
+  const reqDialog = await screen.findByRole('dialog', { name: '申请手术' })
+  await waitFor(() => expect(within(reqDialog).getByText('当前无可用手术执行地点，暂不可提交手术申请')).toBeDefined())
+  expect(within(reqDialog).queryByText('导管室')).toBeNull()
+  expect(within(reqDialog).getByRole('button', { name: '提交手术申请' }).hasAttribute('disabled')).toBe(true)
+
+  emptyLocations = false
+  await client.invalidateQueries({ queryKey: ['inpatient'] })
+  await waitFor(() => expect(within(reqDialog).getByText('当前无可选手术医师，暂不可提交手术申请')).toBeDefined())
+  expect(within(reqDialog).queryByText('住院医生')).toBeNull()
+  expect(within(reqDialog).getByRole('button', { name: '提交手术申请' }).hasAttribute('disabled')).toBe(true)
+  await user.click(within(reqDialog).getByRole('button', { name: '取消' }))
+
+  await user.click(await screen.findByRole('button', { name: '确认已签' }))
+  const consentDialog = await screen.findByRole('dialog', { name: '手术知情同意书' })
+  const article = await within(consentDialog).findByRole('article', { name: '冠状动脉造影术知情同意书' })
+  expect(article.textContent).toContain('I20.000 不稳定型心绞痛')
+
+  diagnosisRevision = 2
+  await user.click(within(consentDialog).getByRole('button', { name: '确认手术知情同意书已签' }))
+  await waitFor(() => expect(confirmCalls).toHaveLength(1))
+  expect(confirmCalls[0]).toMatchObject({ expectedDiagnosisRevision: 1 })
+  expect((await within(consentDialog).findByRole('alert')).textContent).toContain('手术申请或准备状态已变化')
+  await waitFor(() => expect(within(consentDialog).getByRole('article', { name: '冠状动脉造影术知情同意书' }).textContent).toContain('I21.401 急性非ST段抬高型心肌梗死'))
+
+  await user.click(within(consentDialog).getByRole('button', { name: '确认手术知情同意书已签' }))
+  await waitFor(() => expect(confirmCalls).toHaveLength(2))
+  expect(confirmCalls[1]).toMatchObject({ expectedDiagnosisRevision: 2 })
 })

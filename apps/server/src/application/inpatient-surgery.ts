@@ -336,7 +336,11 @@ export class InpatientSurgery {
       const patientName = patientNames?.[0]?.text?.trim() || admission.patientId
       const patientGender = z.enum(['female', 'male', 'other', 'unknown']).optional().safeParse(patient.gender).data ?? 'unknown'
       const patientBirthDate = z.iso.date().optional().safeParse(patient.birthDate).data ?? null
-      const primaryEntry = this.owner.orders.diagnosis(context, input.admissionId).entries.find(entry => entry.role === 'primary')
+      const diagnosis = this.owner.orders.diagnosis(context, input.admissionId)
+      if (diagnosis.revision !== input.expectedDiagnosisRevision) {
+        throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '住院诊断已更新，请重新核对知情同意书后再确认签署')
+      }
+      const primaryEntry = diagnosis.entries.find(entry => entry.role === 'primary')
       const plannedProcedure = inpatientProcedureItemSchema.parse(JSON.parse(row.planned_procedure_json))
       const location = row.location_json === null ? null : inpatientSurgeryLocationSchema.pick({ id: true, name: true }).parse(JSON.parse(row.location_json))
       const surgeon = row.surgeon_json === null ? null : inpatientSurgeryPractitionerSchema.parse(JSON.parse(row.surgeon_json))

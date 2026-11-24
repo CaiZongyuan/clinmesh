@@ -20,7 +20,6 @@ import {
   type inpatientSurgeryRequestSchema,
 } from '@clinmesh/contracts/inpatient-surgery'
 import {
-  SURGICAL_LOCATIONS,
   formatAnesthesiaMethod,
   formatPractitionerDisplay,
   formatSurgeryType,
@@ -133,29 +132,49 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   useLayoutEffect(() => { if (!active) { setRequestOpen(false); setCorrectionOpen(false) } }, [active])
   const blocked = write.blocked || admission.status !== 'admitted'
   const procedure = catalog.data?.procedures.find(item => item.id === procedureId)
-  const availableLocations = catalog.data && catalog.data.locations.length > 0 ? catalog.data.locations : SURGICAL_LOCATIONS
-  const defaultSurgeonId = session.actor.practitionerId ?? catalog.data?.practitioners[0]?.id ?? 'practitioner-inpatient-doctor'
-  const currentPractitionerName = session.availableRoles.find(role => role.id === session.actor.practitionerRoleId)?.practitionerName ?? session.user.name
-  const availablePractitioners = catalog.data && catalog.data.practitioners.length > 0
-    ? catalog.data.practitioners
-    : [{ id: defaultSurgeonId, name: currentPractitionerName }]
-  const effectiveSurgeonId = surgeonId && availablePractitioners.some(item => item.id === surgeonId)
+  const availableLocations = catalog.data?.locations ?? []
+  const availablePractitioners = catalog.data?.practitioners ?? []
+  const preferredSurgeonId = session.actor.practitionerId
+  const effectiveSurgeonId: string | null = surgeonId && availablePractitioners.some(item => item.id === surgeonId)
     ? surgeonId
-    : (availablePractitioners.find(item => item.id === defaultSurgeonId)?.id ?? availablePractitioners[0]?.id ?? defaultSurgeonId)
+    : preferredSurgeonId && availablePractitioners.some(item => item.id === preferredSurgeonId)
+      ? preferredSurgeonId
+      : (availablePractitioners[0]?.id ?? null)
   const effectiveAssistantId = assistantId && assistantId !== effectiveSurgeonId && availablePractitioners.some(item => item.id === assistantId)
     ? assistantId
     : undefined
-  const effectiveLocationId: SurgeryLocationId | null = locationId ?? (procedure ? recommendedSurgeryLocationId(procedure) : null)
+  const preferredLocationId: SurgeryLocationId | null = locationId ?? (procedure ? recommendedSurgeryLocationId(procedure) : null)
+  const effectiveLocationId: SurgeryLocationId | null = preferredLocationId && availableLocations.some(item => item.id === preferredLocationId)
+    ? preferredLocationId
+    : (availableLocations[0]?.id ?? null)
   const effectiveAnesthesia: AnesthesiaMethod | null = anesthesiaMethod ?? (procedure ? recommendedAnesthesiaMethod(procedure) : null)
   const selectProcedure = (nextId: string | null) => {
     setProcedureId(nextId)
     const next = catalog.data?.procedures.find(item => item.id === nextId)
     if (next) {
-      if (!locationEdited) setLocationId(recommendedSurgeryLocationId(next))
+      if (!locationEdited) {
+        const recommended = recommendedSurgeryLocationId(next)
+        setLocationId(
+          availableLocations.some(item => item.id === recommended)
+            ? recommended
+            : (availableLocations[0]?.id ?? null),
+        )
+      }
       if (!anesthesiaEdited) setAnesthesiaMethod(recommendedAnesthesiaMethod(next))
     }
   }
-  const requestReady = Boolean(procedure && surgery.data && plannedFor && effectiveLocationId && effectiveSurgeonId && effectiveAnesthesia && reason.trim())
+  const catalogUnavailable = catalog.isSuccess && (availableLocations.length === 0 || availablePractitioners.length === 0)
+  const requestReady = Boolean(
+    catalog.isSuccess
+    && !catalogUnavailable
+    && procedure
+    && surgery.data
+    && plannedFor
+    && effectiveLocationId
+    && effectiveSurgeonId
+    && effectiveAnesthesia
+    && reason.trim(),
+  )
   const request = (clinicalOverride?: ClinicalOverrideInput) => {
     if (!procedure || !surgery.data || !plannedFor || !effectiveLocationId || !effectiveSurgeonId || !effectiveAnesthesia || !reason.trim()) return
     const date = new Date(`${plannedFor}+08:00`)
@@ -298,7 +317,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
                 <div className="md:col-span-2"><SurgeryRequestReason key={requestOwnerKey} admissionId={admission.id} session={session} open={requestOpen && active} locale={locale} value={reason} onChange={setReason} id={`${formId}-reason`} disabled={blocked} /></div>
               </FieldGroup></FieldSet>
             </div>
-            <OrderComposerFooter hint={!procedure ? t('还差：选择计划术式', 'Select the planned procedure') : !plannedFor ? t('还差：填写计划手术时间', 'Enter the planned surgery time') : !effectiveLocationId ? t('还差：选择手术执行地点', 'Select the surgical location') : !effectiveAnesthesia ? t('还差：选择拟行麻醉方式', 'Select the anesthesia method') : !reason.trim() ? t('还差：填写手术申请理由', 'Enter the surgery request reason') : t('提交后办理知情同意与术前核对', 'Complete consent and preoperative checks after submission')}>{requestAction}</OrderComposerFooter>
+            <OrderComposerFooter hint={catalog.isPending ? t('正在加载手术目录…', 'Loading surgery catalog…') : catalog.isSuccess && availableLocations.length === 0 ? t('当前无可用手术执行地点，暂不可提交手术申请', 'No active surgical location is available') : catalog.isSuccess && availablePractitioners.length === 0 ? t('当前无可选手术医师，暂不可提交手术申请', 'No eligible surgical practitioner is available') : !procedure ? t('还差：选择计划术式', 'Select the planned procedure') : !plannedFor ? t('还差：填写计划手术时间', 'Enter the planned surgery time') : !effectiveLocationId ? t('还差：选择手术执行地点', 'Select the surgical location') : !effectiveSurgeonId ? t('还差：选择主刀医师', 'Select the primary surgeon') : !effectiveAnesthesia ? t('还差：选择拟行麻醉方式', 'Select the anesthesia method') : !reason.trim() ? t('还差：填写手术申请理由', 'Enter the surgery request reason') : t('提交后办理知情同意与术前核对', 'Complete consent and preoperative checks after submission')}>{requestAction}</OrderComposerFooter>
           </form>
         </DialogContent>
       </Dialog>

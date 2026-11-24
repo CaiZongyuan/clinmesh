@@ -166,8 +166,9 @@ export async function prepareSurgeryMaterialsPatient(page: Page, app: Parameters
   expect((await s.api.post(`${s.path}/surgeries/check-preop`, { requestId: requested.id, expectedRequestVersion: requested.version, note: '合成术前已核对' })).status()).toBe(200)
   await s.api.login('inpatient-doctor')
   const checked = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).requests[0]!
+  const expectedDiagnosisRevision = ((await (await s.api.get(`${s.path}/clinical`)).json()) as { diagnosis: { revision: number } }).diagnosis.revision
   expect((await s.api.post(`${s.path}/surgeries/confirm-consent`, {
-    requestId: requested.id, expectedRequestVersion: checked.version,
+    requestId: requested.id, expectedRequestVersion: checked.version, expectedDiagnosisRevision,
     signerRole: 'patient', signerName: s.name, patientChoice: 'agree', note: '合成签署已确认',
   })).status()).toBe(200)
   expect((await s.api.post(`${s.path}/drg/reservations`, { encounterVersion: surgery.encounterVersion,

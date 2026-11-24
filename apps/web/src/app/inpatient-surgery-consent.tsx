@@ -359,7 +359,7 @@ export function SurgicalConsentSignDialog({
   const formId = `surgery-consent-form-${request.id}`
 
   const submit = () => {
-    if (submitDisabled) return
+    if (submitDisabled || !clinical.data) return
     write.mutation.mutate(
       {
         operation: 'inpatient.surgery.confirm-consent',
@@ -367,6 +367,7 @@ export function SurgicalConsentSignDialog({
           admissionId: admission.id,
           requestId: request.id,
           expectedRequestVersion: request.version,
+          expectedDiagnosisRevision: clinical.data.diagnosis.revision,
           signerRole,
           signerName: signerName.trim(),
           ...(signerRole === 'family-proxy' ? { signerRelationship: signerRelationship.trim() } : {}),
@@ -375,7 +376,10 @@ export function SurgicalConsentSignDialog({
           ...(note.trim() ? { note: note.trim() } : {}),
         },
       },
-      { onSuccess: () => onOpenChange(false) },
+      {
+        onSuccess: () => onOpenChange(false),
+        onError: () => { void clinical.refetch() },
+      },
     )
   }
 

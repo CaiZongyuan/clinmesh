@@ -26,8 +26,10 @@ export async function prepareSurgeryBatchPatient(page: Page, app: Parameters<typ
       expectedRequestVersion: requested.version, note: '合成术前准备已核对' })).status()).toBe(200)
     await s.api.login('inpatient-doctor')
     const checked = (await read()).requests.find(row => row.id === requested.id)!
+    const expectedDiagnosisRevision = z.object({ diagnosis: z.object({ revision: z.number().int().nonnegative() }).loose() }).loose()
+      .parse(await (await s.api.get(`${s.path}/clinical`)).json()).diagnosis.revision
     expect((await s.api.post(`${s.path}/surgeries/confirm-consent`, {
-      requestId: checked.id, expectedRequestVersion: checked.version,
+      requestId: checked.id, expectedRequestVersion: checked.version, expectedDiagnosisRevision,
       signerRole: 'patient', signerName: s.name, patientChoice: 'agree', note: '合成知情同意已签',
     })).status()).toBe(200)
     return requested.id

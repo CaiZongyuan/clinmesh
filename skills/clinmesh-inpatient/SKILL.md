@@ -436,7 +436,7 @@ clinmesh command receipt get --operation-id inpatient.surgery.execute --idempote
 
 `surgery-catalog`（operation v3）除 `procedures` 外还返回当前可用手术地点 `locations`、有效临床手术医师 `practitioners` 及 `materials`（保留原合成材料及231条心血管参考记录）。新增项的 `reference` 包含来源、原字段、地区与期限、单位/规格缺项；`reference.priceFen` 为表内中选价，`baseSupplyPriceFen` 为独立的基准品拟供应价，不替代中选价。只有带 `chargeDefinition` 的条目可用于实际实施：52条明确单位的记录按表内中选价制定合成本院演示价；`unavailableReason=unit-unconfirmed` 的179条没有收费定义，单位为null，保留参考价格但不能使用，不推测单位。来源包含历史采购参考及地区限制，不代表当前实际医院价格。
 
-护士以 `check-surgery-preop`（operation v3）传 `admissionId/requestId/expectedRequestVersion/note` 记录术前检查核对；取消（`cancel-surgery`，operation v3）同样传 `requestId/expectedRequestVersion/note`。医生以 `confirm-surgery-consent`（operation v3）传 `admissionId/requestId/expectedRequestVersion`、签署身份 `signerRole`（`patient | family-proxy`）、`signerName`（`family-proxy` 必填 `signerRelationship`）、`patientChoice: "agree"`、可选 `individualizedRisks` 与可选 `note`：服务端在同一事务重读权威患者、住院号、当前已确认住院主诊断、手术通知单要素与谈话医师，按具体术式模板（冠脉造影、药物洗脱支架置入、冠脉球囊成形或通用外科备选模板，带「合成临床教学文书模板」声明）生成并持久化不可变一术一议知情同意书快照 `consentConfirmation.document`，不接入真实手写生物特征硬件签名。两项准备均完成才能执行，手术开始后不可覆盖重签。准备和执行按当前住院科室及病区责任授权，原申请作者身份不会阻止合法接管。
+护士以 `check-surgery-preop`（operation v3）传 `admissionId/requestId/expectedRequestVersion/note` 记录术前检查核对；取消（`cancel-surgery`，operation v3）同样传 `requestId/expectedRequestVersion/note`。医生以 `confirm-surgery-consent`（operation v3）传 `admissionId/requestId/expectedRequestVersion/expectedDiagnosisRevision`（来自 `clinical` 读取的 `diagnosis.revision`，未确认主诊断时为 `0`）、签署身份 `signerRole`（`patient | family-proxy`）、`signerName`（`family-proxy` 必填 `signerRelationship`）、`patientChoice: "agree"`、可选 `individualizedRisks` 与可选 `note`：服务端在同一事务校验 `diagnosis.revision === expectedDiagnosisRevision`（不一致以 `INPATIENT_SURGERY_CONFLICT` 拒绝，防止签署期间主诊断变更导致审阅正文与落盘快照不一致），并重读权威患者、住院号、当前已确认住院主诊断、手术通知单要素与谈话医师，按具体术式模板（冠脉造影、药物洗脱支架置入、冠脉球囊成形或通用外科备选模板，带「合成临床教学文书模板」声明）生成并持久化不可变一术一议知情同意书快照 `consentConfirmation.document`，不接入真实手写生物特征硬件签名。两项准备均完成才能执行，手术开始后不可覆盖重签。准备和执行按当前住院科室及病区责任授权，原申请作者身份不会阻止合法接管。
 
 `surgery-consent.json` 合成示例；恢复原意图时保持原文件与原幂等键不变：
 
@@ -445,6 +445,7 @@ clinmesh command receipt get --operation-id inpatient.surgery.execute --idempote
   "admissionId": "synthetic-admission",
   "requestId": "synthetic-surgery-request",
   "expectedRequestVersion": 1,
+  "expectedDiagnosisRevision": 1,
   "signerRole": "patient",
   "signerName": "合成患者",
   "patientChoice": "agree",

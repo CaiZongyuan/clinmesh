@@ -1015,14 +1015,24 @@ it('validates six-element surgery notice requests and structured one-procedure-o
     admissionId: 'adm-1',
     requestId: 'req-1',
     expectedRequestVersion: 1,
+    expectedDiagnosisRevision: 0,
     signerRole: 'patient',
     signerName: '患者甲',
     patientChoice: 'agree',
-  })).toMatchObject({ signerRole: 'patient', patientChoice: 'agree' })
+  })).toMatchObject({ signerRole: 'patient', patientChoice: 'agree', expectedDiagnosisRevision: 0 })
   expect(consent.input.safeParse({
     admissionId: 'adm-1',
     requestId: 'req-1',
     expectedRequestVersion: 1,
+    signerRole: 'patient',
+    signerName: '患者甲',
+    patientChoice: 'agree',
+  }).success).toBe(false)
+  expect(consent.input.safeParse({
+    admissionId: 'adm-1',
+    requestId: 'req-1',
+    expectedRequestVersion: 1,
+    expectedDiagnosisRevision: 1,
     signerRole: 'family-proxy',
     signerName: '家属乙',
     patientChoice: 'agree',
@@ -1031,12 +1041,13 @@ it('validates six-element surgery notice requests and structured one-procedure-o
     admissionId: 'adm-1',
     requestId: 'req-1',
     expectedRequestVersion: 1,
+    expectedDiagnosisRevision: 2,
     signerRole: 'family-proxy',
     signerName: '家属乙',
     signerRelationship: '配偶',
     patientChoice: 'agree',
     individualizedRisks: '合并慢性肾脏病，已告知对比剂肾损水化预防',
-  })).toMatchObject({ signerRole: 'family-proxy', signerRelationship: '配偶' })
+  })).toMatchObject({ signerRole: 'family-proxy', signerRelationship: '配偶', expectedDiagnosisRevision: 2 })
 })
 
 it('accepts omitted routine surgery notes on the five routine operations while keeping legal and correction notes mandatory', () => {

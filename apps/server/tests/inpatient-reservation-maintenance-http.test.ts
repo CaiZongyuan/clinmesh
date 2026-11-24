@@ -176,12 +176,14 @@ it('审阅后部分使用改变预留版本，旧版本拒绝释放，重新审�
   const created = await s.create()
   expect(created.status).toBe(200)
   const reviewed = responseSchema.parse(await created.json()).data.reservations[0]!
+  const clinical = z.object({ diagnosis: z.object({ revision: z.number().int().nonnegative() }).loose() }).loose()
+    .parse(await (await s.request(s.doctor, `${s.path}/clinical`)).json())
   for (const [cookie, action, expectedRequestVersion] of [
     [s.nurse, 'check-preop', 1], [s.doctor, 'confirm-consent', 2],
   ] as const) {
     expect((await s.request(cookie, `${s.path}/surgeries/${action}`, {
       requestId: s.requestId, expectedRequestVersion,
-      ...(action === 'confirm-consent' ? { signerRole: 'patient', signerName: '合成预留维护患者', patientChoice: 'agree' } : {}),
+      ...(action === 'confirm-consent' ? { expectedDiagnosisRevision: clinical.diagnosis.revision, signerRole: 'patient', signerName: '合成预留维护患者', patientChoice: 'agree' } : {}),
       note: '合成术前准备确认',
     })).status).toBe(200)
   }

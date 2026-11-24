@@ -192,6 +192,7 @@ test('提交中主操作不可编辑，修订被其他请求推进后原选择�
   await login('inpatient-doctor')
   const version = (await (await page.request.get(`${browserApp.origin}${path}`)).json()).admission.versionId
   const catalog = (await (await page.request.get(`${browserApp.origin}/api/his/v1/inpatient/surgery-catalog`)).json())
+  const expectedDiagnosisRevision = ((await (await page.request.get(`${browserApp.origin}${path}/clinical`)).json()) as { diagnosis: { revision: number } }).diagnosis.revision
   const requests: Array<{ id: string; version: number; procedureId: string }> = []
   for (const procedure of catalog.procedures.slice(3, 5)) {
     const requested = await post(`${path}/surgeries/request`, {
@@ -203,7 +204,7 @@ test('提交中主操作不可编辑，修订被其他请求推进后原选择�
     expect(requested.status()).toBe(200)
     const current = (await requested.json()).data.requests.find((request: { status: string; plannedProcedure: { id: string } }) => request.status === 'requested' && request.plannedProcedure.id === procedure.id)
     const consented = await post(`${path}/surgeries/confirm-consent`, {
-      requestId: current.id, expectedRequestVersion: current.version,
+      requestId: current.id, expectedRequestVersion: current.version, expectedDiagnosisRevision,
       signerRole: 'patient', signerName: '合成主操作草稿患者', patientChoice: 'agree', note: '已核签署同意',
     })
     expect(consented.status()).toBe(200)

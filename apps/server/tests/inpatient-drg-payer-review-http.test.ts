@@ -224,7 +224,7 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
       const version = (await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests[0].version
       expect((await s.request(cookie, `${s.path}/surgeries/${action}`, {
         requestId: request.id, expectedRequestVersion: version,
-        ...(action === 'confirm-consent' ? { signerRole: 'patient', signerName: current.patientName, patientChoice: 'agree' } : {}),
+        ...(action === 'confirm-consent' ? { expectedDiagnosisRevision: 1, signerRole: 'patient', signerName: current.patientName, patientChoice: 'agree' } : {}),
         note: '合成准备完成',
       })).status).toBe(200)
     }

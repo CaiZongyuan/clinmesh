@@ -1096,7 +1096,10 @@ it('无 PCI 手术申请的内科住院可按专题完成术前水化、FFR > 0.
     requestId: angioReq.id,
   })
   const preopSurg = await s.fixture.read('inpatient-doctor', `${medicalStay.path}/surgeries`, inpatientSurgerySchema)
+  const medicalClinical = z.object({ diagnosis: z.object({ revision: z.number().int().nonnegative() }).loose() }).loose()
+    .parse(await (await s.fixture.request('inpatient-doctor', `${medicalStay.path}/clinical`)).json())
   await s.fixture.request('inpatient-doctor', `${medicalStay.path}/surgeries/confirm-consent`, {
+    expectedDiagnosisRevision: medicalClinical.diagnosis.revision,
     expectedRequestVersion: preopSurg.requests[0]!.version,
     note: '签署造影知情同意',
     patientChoice: 'agree',

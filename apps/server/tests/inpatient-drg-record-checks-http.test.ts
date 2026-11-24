@@ -96,7 +96,7 @@ describe('独立分组记录核对公共 HTTP', () => {
     for (const [actor, action] of [[s.nurse, 'check-preop'], [s.doctor, 'confirm-consent']] as const) {
       const response = await s.request(actor, `${s.path}/surgeries/${action}`, { requestId: plan.id,
         expectedRequestVersion: surgery.requests[0]!.version,
-        ...(action === 'confirm-consent' ? { signerRole: 'patient', signerName: current.patientName, patientChoice: 'agree' } : {}),
+        ...(action === 'confirm-consent' ? { expectedDiagnosisRevision: 1, signerRole: 'patient', signerName: current.patientName, patientChoice: 'agree' } : {}),
         note: '合成核对准备' })
       expect(response.status).toBe(200)
       surgery = inpatientSurgeryResponseSchema.parse(await response.json()).data
@@ -145,7 +145,7 @@ describe('独立分组记录核对公共 HTTP', () => {
     for (const [actor, action] of [[s.nurse, 'check-preop'], [s.doctor, 'confirm-consent']] as const) {
       const response = await s.request(actor, `${s.path}/surgeries/${action}`, { requestId,
         expectedRequestVersion: surgery.requests[0]!.version,
-        ...(action === 'confirm-consent' ? { signerRole: 'patient', signerName: admission.patientName, patientChoice: 'agree' } : {}),
+        ...(action === 'confirm-consent' ? { expectedDiagnosisRevision: 1, signerRole: 'patient', signerName: admission.patientName, patientChoice: 'agree' } : {}),
         note: '合成术前核实' })
       expect(response.status).toBe(200)
       surgery = inpatientSurgeryResponseSchema.parse(await response.json()).data

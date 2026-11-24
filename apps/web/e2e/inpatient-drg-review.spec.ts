@@ -169,7 +169,7 @@ test('实际手术显式引用治疗预留并替换，正式费用与预留不�
   expect((await s.api.post(`${s.path}/drg/reservations`, { encounterVersion: clinical.encounterVersion, materialId: material.id, catalogVersion: material.version,
     quantity: 2, requestId: requested.id, reason: '合成明确替换预留' })).status()).toBe(200)
   expect((await s.api.post(`${s.path}/surgeries/confirm-consent`, {
-    requestId: requested.id, expectedRequestVersion: requested.version,
+    requestId: requested.id, expectedRequestVersion: requested.version, expectedDiagnosisRevision: clinical.diagnosis.revision,
     signerRole: 'patient', signerName: s.name, patientChoice: 'agree', note: '合成知情同意已签署',
   })).status()).toBe(200)
   await s.api.login('ward-nurse')

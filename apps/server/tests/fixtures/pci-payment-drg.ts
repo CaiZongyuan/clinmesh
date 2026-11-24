@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { clinicalQualityCheckSchema } from '@clinmesh/contracts/clinical-quality'
 import { commandResponseSchema, createPatientResponseSchema, scenarioStateSchema } from '@clinmesh/contracts/his'
 import { inpatientCommandResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
-import { inpatientFullCatalogSchema, inpatientFullClinicalResponseSchema,
+import { inpatientFullCatalogSchema, inpatientFullClinicalResponseSchema, inpatientFullClinicalSchema,
   inpatientPharmacySchema, inpatientPharmacyResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientMaterialReservationListSchema, inpatientDrgSimulationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -203,11 +203,12 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     return { ...stay, procedure, requestId: planned.id, reservations, catalog }
   }
   async function pciExecutionInput(stay: Awaited<ReturnType<typeof preparePciAdmission>>, requestId = stay.requestId) {
+    const clinical = await read('inpatient-doctor', `${stay.path}/clinical`, inpatientFullClinicalSchema)
     for (const [role, action] of [['ward-nurse', 'check-preop'], ['inpatient-doctor', 'confirm-consent']] as const) {
       const surgery = await read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)
       const expectedRequestVersion = surgery.requests.find(item => item.id === requestId)!.version
       await parsePciResponse(inpatientSurgeryResponseSchema, await request(role, `${stay.path}/surgeries/${action}`, action === 'confirm-consent'
-        ? { requestId, expectedRequestVersion, signerRole: 'patient', signerName: '合成冠脉病例甲', patientChoice: 'agree', note: '合成PCI术前准备完成' }
+        ? { requestId, expectedRequestVersion, expectedDiagnosisRevision: clinical.diagnosis.revision, signerRole: 'patient', signerName: '合成冠脉病例甲', patientChoice: 'agree', note: '合成PCI术前准备完成' }
         : { requestId, expectedRequestVersion, note: '合成PCI术前准备完成' }))
     }
     const surgery = await read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)

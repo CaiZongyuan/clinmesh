@@ -39,6 +39,7 @@ import { doctorCaseHistorySchema } from '@clinmesh/contracts/agent'
 import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations-runtime'
 import { inpatientCommandResponseSchema, inpatientDetailSchema, inpatientListSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientAngiographyReportsSchema } from '@clinmesh/contracts/inpatient-angiography'
+import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientInvestigationCatalogSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import {
   authoredCasePackPrepareResponseSchema,
@@ -482,8 +483,10 @@ async function setup(options: { withCardiologyLabs?: boolean; withDialogue?: boo
     })
     expect(preop.status, await preop.clone().text()).toBe(200)
     const afterPreop = inpatientSurgeryResponseSchema.parse(await preop.json()).data.requests.find(item => item.id === reqData.id)!
+    const clinical = inpatientFullClinicalSchema.parse(await (await get('inpatient-doctor', `/api/his/v1/inpatient/admissions/${admissionId}/clinical`)).json())
     const consent = await mutate('inpatient-doctor', `/api/his/v1/inpatient/admissions/${admissionId}/surgeries/confirm-consent`, {
       input: {
+        expectedDiagnosisRevision: clinical.diagnosis.revision,
         expectedRequestVersion: afterPreop.version,
         note: '已签署知情同意书',
         patientChoice: 'agree',

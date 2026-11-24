@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { afterEach, expect, it } from 'vitest'
 import { apiErrorSchema, commandResponseSchema } from '@clinmesh/contracts/his'
-import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientChargesSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientMaterialReservationListSchema, inpatientDrgSimulationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { setupDrgReview } from './fixtures/inpatient-drg-review.ts'
@@ -192,8 +192,9 @@ it('失权、已取消或已开始的计划不能整批确认，已有材料使�
   const prepared = await s.request(s.nurse, `${s.path}/surgeries/check-preop`, {
     requestId: s.input.requestId, expectedRequestVersion: 1, note: '合成术前核查' })
   expect(prepared.status).toBe(200)
+  const clinical = inpatientFullClinicalSchema.parse(await (await s.request(s.doctor, `${s.path}/clinical`)).json())
   const consent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
-    requestId: s.input.requestId, expectedRequestVersion: 2,
+    requestId: s.input.requestId, expectedRequestVersion: 2, expectedDiagnosisRevision: clinical.diagnosis.revision,
     signerRole: 'patient', signerName: '合成预留患者', patientChoice: 'agree', note: '合成知情同意' })
   expect(consent.status).toBe(200)
   const started = await s.request(s.doctor, `${s.path}/surgeries/start`, {

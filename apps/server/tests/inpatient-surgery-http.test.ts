@@ -1066,7 +1066,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       expect(requested.status).toBe(200)
       const row = (await requested.json()).data.requests[0]
       input = action === 'confirm-consent'
-        ? { requestId:row.id,expectedRequestVersion:row.version,signerRole:'patient',signerName:s.patient.name,patientChoice:'agree',note:'合成准备或取消' }
+        ? { requestId:row.id,expectedRequestVersion:row.version,expectedDiagnosisRevision:0,signerRole:'patient',signerName:s.patient.name,patientChoice:'agree',note:'合成准备或取消' }
         : { requestId:row.id,expectedRequestVersion:row.version,note:'合成准备或取消' }
     }
     const before = await (await s.request(s.doctor, `${s.path}/surgeries`)).json()
@@ -1137,7 +1137,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     const replays: Array<{ cookie:string; action:string; input:Record<string,unknown>; key:string; response:unknown }> = []
     for (const [cookie,action,version] of [[s.nurse,'check-preop',2],[s.doctor,'confirm-consent',3]] as const) {
       const input: Record<string,unknown> = action === 'confirm-consent'
-        ? { requestId:id,expectedRequestVersion:version-1,signerRole:'patient',signerName:s.patient.name,patientChoice:'agree',note:'合成准备责任确认' }
+        ? { requestId:id,expectedRequestVersion:version-1,expectedDiagnosisRevision:0,signerRole:'patient',signerName:s.patient.name,patientChoice:'agree',note:'合成准备责任确认' }
         : { requestId:id,expectedRequestVersion:version-1,note:'合成准备责任确认' }
       const key = randomUUID()
       const prepared = await s.request(cookie, `${s.path}/surgeries/${action}`, input, key)
@@ -1184,7 +1184,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     expect(checked.status).toBe(200)
     state = (await checked.json()).data
     expect((await s.request(s.doctor, `${s.path}/surgeries/execute`, execute())).status).toBe(409)
-    const consent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, { requestId: id, expectedRequestVersion: state.requests[0].version,
+    const consent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, { requestId: id, expectedRequestVersion: state.requests[0].version, expectedDiagnosisRevision: 0,
       signerRole: 'patient', signerName: s.patient.name, patientChoice: 'agree', note: '确认已签署知情同意书' })
     expect(consent.status).toBe(200)
     state = (await consent.json()).data
@@ -1228,7 +1228,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     expect(requested.status).toBe(200)
     const row = (await requested.json()).data.requests[0]
     const preopAction = { requestId: row.id, expectedRequestVersion: row.version, note: '确认已核对' }
-    const consentAction = { requestId: row.id, expectedRequestVersion: row.version, signerRole: 'patient', signerName: s.patient.name, patientChoice: 'agree', note: '确认已签署' }
+    const consentAction = { requestId: row.id, expectedRequestVersion: row.version, expectedDiagnosisRevision: 0, signerRole: 'patient', signerName: s.patient.name, patientChoice: 'agree', note: '确认已签署' }
     expect((await s.request(s.nurse, `${s.path}/surgeries/confirm-consent`, consentAction)).status).toBe(403)
     expect((await s.request(s.doctor, `${s.path}/surgeries/check-preop`, preopAction)).status).toBe(403)
     const consent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, consentAction)
@@ -1408,7 +1408,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       })).json()).data.requests.find(item => item.reason === reason)!
       expect((await s.request(s.nurse, `${s.path}/surgeries/check-preop`, { requestId: created.id, expectedRequestVersion: created.version, note: '合成术前核对' })).status).toBe(200)
       expect((await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
-        requestId: created.id, expectedRequestVersion: created.version + 1,
+        requestId: created.id, expectedRequestVersion: created.version + 1, expectedDiagnosisRevision: 0,
         signerRole: 'patient', signerName: s.patient.name, patientChoice: 'agree', note: '合成同意确认',
       })).status).toBe(200)
       return inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests.find(item => item.id === created.id)!
@@ -1579,7 +1579,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       expect((await s.request(s.nurse, `${s.path}/surgeries/check-preop`, { requestId: created.id, expectedRequestVersion: created.version, note: '术前核对完成' })).status).toBe(200)
       const checked = inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests.find(row => row.id === created.id)!
       const consented = inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
-        requestId: created.id, expectedRequestVersion: checked.version,
+        requestId: created.id, expectedRequestVersion: checked.version, expectedDiagnosisRevision: 0,
         signerRole: 'patient', signerName: s.patient.name, patientChoice: 'agree', note: '已签署手术同意书',
       })).json()).data
       return consented.requests.find(row => row.id === created.id)!
@@ -1836,13 +1836,27 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       requestId: angioCreated.id, expectedRequestVersion: angioCreated.version, note: '旧版仅备注',
     })).status).toBe(400)
     expect((await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
-      requestId: angioCreated.id, expectedRequestVersion: angioCreated.version,
+      requestId: angioCreated.id, expectedRequestVersion: angioCreated.version, expectedDiagnosisRevision: 0,
       signerRole: 'family-proxy', signerName: '李家属', patientChoice: 'agree',
     })).status).toBe(400)
+
+    // 预期诊断修订版本与当前正式诊断不一致时 409 拦截，防止审阅正文与落盘快照错位
+    const staleBeforeConfirm = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
+      requestId: angioCreated.id,
+      expectedRequestVersion: angioCreated.version,
+      expectedDiagnosisRevision: 1,
+      signerRole: 'patient',
+      signerName: s.patient.name,
+      patientChoice: 'agree',
+      note: '过期诊断版本测试',
+    })
+    expect(staleBeforeConfirm.status).toBe(409)
+    expect(apiErrorSchema.parse(await staleBeforeConfirm.json()).error.code).toBe('INPATIENT_SURGERY_CONFLICT')
 
     const angioConsentResp = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
       requestId: angioCreated.id,
       expectedRequestVersion: angioCreated.version,
+      expectedDiagnosisRevision: 0,
       signerRole: 'patient',
       signerName: s.patient.name,
       patientChoice: 'agree',
@@ -1887,6 +1901,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     const duplicateConsent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
       requestId: angioCreated.id,
       expectedRequestVersion: angioConsented.version,
+      expectedDiagnosisRevision: 0,
       signerRole: 'patient',
       signerName: s.patient.name,
       patientChoice: 'agree',
@@ -1956,9 +1971,22 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       const reqData = inpatientSurgeryResponseSchema.parse(await reqResp.json()).data
       encounterVersion = reqData.encounterVersion
       const createdRow = reqData.requests.find(item => item.plannedProcedure.coding.code === spec.code)!
+      const staleDiagSign = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
+        requestId: createdRow.id,
+        expectedRequestVersion: createdRow.version,
+        expectedDiagnosisRevision: 0,
+        signerRole: spec.signerRole,
+        signerName: spec.signerName,
+        ...(spec.signerRelationship ? { signerRelationship: spec.signerRelationship } : {}),
+        patientChoice: 'agree',
+      })
+      expect(staleDiagSign.status).toBe(409)
+      expect(apiErrorSchema.parse(await staleDiagSign.json()).error.code).toBe('INPATIENT_SURGERY_CONFLICT')
+
       const signResp = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
         requestId: createdRow.id,
         expectedRequestVersion: createdRow.version,
+        expectedDiagnosisRevision: 1,
         signerRole: spec.signerRole,
         signerName: spec.signerName,
         ...(spec.signerRelationship ? { signerRelationship: spec.signerRelationship } : {}),
@@ -2176,6 +2204,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     const resumedConsent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
       requestId: created.id,
       expectedRequestVersion: created.version,
+      expectedDiagnosisRevision: 0,
       signerRole: 'patient',
       signerName: s.patient.name,
       patientChoice: 'agree',
@@ -2209,7 +2238,7 @@ async function readySurgery(s: Awaited<ReturnType<typeof setup>>, complete = tru
   const id = requestedBody.effects[0].reference.split('/')[1]
   const checked = await s.request(s.nurse, `${s.path}/surgeries/check-preop`, { requestId: id, expectedRequestVersion: 1, note: '已核对检查' })
   expect(checked.status).toBe(200)
-  const consent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, { requestId: id, expectedRequestVersion: 2,
+  const consent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, { requestId: id, expectedRequestVersion: 2, expectedDiagnosisRevision: 0,
     signerRole: 'patient', signerName: s.patient.name, patientChoice: 'agree', note: '确认同意已签署' })
   expect(consent.status).toBe(200)
   state = (await consent.json()).data

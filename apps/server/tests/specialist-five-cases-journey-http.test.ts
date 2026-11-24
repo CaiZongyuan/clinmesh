@@ -630,8 +630,10 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
       note: '术前核查完成',
       requestId: requested.id,
     }, inpatientSurgeryResponseSchema)).data.requests.find(item => item.id === requested.id)!
+    const clinical = await grantOp('inpatient-doctor', 'inpatient.clinical.read', { admissionId }, inpatientFullClinicalSchema)
     const consent = (await grantOp('inpatient-doctor', 'inpatient.surgery.confirm-consent', {
       admissionId,
+      expectedDiagnosisRevision: clinical.diagnosis.revision,
       expectedRequestVersion: preop.version,
       note: '知情同意书已签署',
       patientChoice: 'agree',
@@ -706,8 +708,10 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
       note: 'PCI 术前核查完成',
       requestId: requested.id,
     }, inpatientSurgeryResponseSchema)).data.requests.find(item => item.id === requested.id)!
+    const clinical = await grantOp('inpatient-doctor', 'inpatient.clinical.read', { admissionId }, inpatientFullClinicalSchema)
     const consent = (await grantOp('inpatient-doctor', 'inpatient.surgery.confirm-consent', {
       admissionId,
+      expectedDiagnosisRevision: clinical.diagnosis.revision,
       expectedRequestVersion: preop.version,
       note: 'PCI 知情同意已确认',
       patientChoice: 'agree',

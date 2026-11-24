@@ -2084,7 +2084,7 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '医生按术式模板核对并登记患者本人或受托人签署的一术一议结构化手术知情同意书，持久化不可变文书快照与审计记录',
+    summary: '医生按术式模板与预期住院诊断版本核对并登记患者本人或受托人签署的一术一议结构化手术知情同意书，持久化不可变文书快照与审计记录',
     version: 3,
   },
   {

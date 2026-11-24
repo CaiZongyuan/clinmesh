@@ -1166,13 +1166,14 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
       surgeryType: 'elective',
     }))
     const angioReq2Id = req2Resp.data.requests.find(item => item.plannedProcedure.id === angioProc.id && item.status === 'requested')!.id
+    const clinicalBefore2 = await fixture.read('inpatient-doctor', `${stay.path}/clinical`, inpatientFullClinicalSchema)
     for (const [role, action] of [['ward-nurse', 'check-preop'], ['inpatient-doctor', 'confirm-consent']] as const) {
       const surg = await fixture.read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)
       await parsePciResponse(inpatientSurgeryResponseSchema, await fixture.request(role, `${stay.path}/surgeries/${action}`, {
         requestId: angioReq2Id,
         expectedRequestVersion: surg.requests.find(item => item.id === angioReq2Id)!.version,
         ...(action === 'confirm-consent'
-          ? { patientChoice: 'agree', signerName: admBefore2.admission.patientName, signerRole: 'patient' }
+          ? { expectedDiagnosisRevision: clinicalBefore2.diagnosis.revision, patientChoice: 'agree', signerName: admBefore2.admission.patientName, signerRole: 'patient' }
           : {}),
         note: '复查造影术前准备',
       }))

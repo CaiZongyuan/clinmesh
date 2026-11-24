@@ -166,6 +166,7 @@ export const inpatientSurgeryActionInputSchema = surgeryActionBaseSchema.extend(
 const confirmConsentFields = {
   requestId: id,
   expectedRequestVersion: version,
+  expectedDiagnosisRevision: z.number().int().nonnegative(),
   signerRole: surgicalConsentSignerRoleSchema,
   signerName: z.string().trim().min(1).max(80),
   signerRelationship: z.string().trim().min(1).max(40).optional(),

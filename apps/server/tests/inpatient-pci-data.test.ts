@@ -276,7 +276,7 @@ describe('固定 PCI 数据公开 Command 与目录回读', () => {
     const surgery = inpatientSurgeryResponseSchema.parse(await requested.json()).data.requests[0]!
     expect((await s.request(nurse.cookie, `${path}/surgeries/check-preop`, { requestId: surgery.id, expectedRequestVersion: 1, note: '人工核对本次术前资料' })).status).toBe(200)
     expect((await s.request(doctor.cookie, `${path}/surgeries/confirm-consent`, {
-      requestId: surgery.id, expectedRequestVersion: 2, signerRole: 'patient', signerName: '合成PCI患者', patientChoice: 'agree', note: '人工确认本次同意书',
+      requestId: surgery.id, expectedRequestVersion: 2, expectedDiagnosisRevision: currentClinical.diagnosis.revision, signerRole: 'patient', signerName: '合成PCI患者', patientChoice: 'agree', note: '人工确认本次同意书',
     })).status).toBe(200)
     const surgeryInput = { requestId: surgery.id, expectedRequestVersion: 3, procedureId: 'hospital-surgery-3', catalogVersion: 1,
       materials: ['guidewire', 'guiding-catheter', 'balloon', 'stent'].map(suffix => ({ materialId: `hospital-material-pci-${suffix}`, catalogVersion: 1, quantity: 1 })), note: '人工确认本次实际植入一枚合成支架及耗材使用' }

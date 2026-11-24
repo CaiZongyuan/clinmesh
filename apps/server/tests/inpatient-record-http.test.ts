@@ -110,7 +110,7 @@ describe('住院病案首页公共 HTTP', () => {
     for (const [cookie, action] of [[s.doctor, 'confirm-consent'], [s.nurse, 'check-preop']] as const) {
       const prepared = await s.request(cookie, `${s.path}/surgeries/${action}`, {
         requestId: request.id, expectedRequestVersion: request.version,
-        ...(action === 'confirm-consent' ? { signerRole: 'patient', signerName: s.admission.patientName, patientChoice: 'agree' } : {}),
+        ...(action === 'confirm-consent' ? { expectedDiagnosisRevision: 0, signerRole: 'patient', signerName: s.admission.patientName, patientChoice: 'agree' } : {}),
         note: '合成准备完成',
       })
       expect(prepared.status).toBe(200)
@@ -303,7 +303,7 @@ describe('住院病案首页公共 HTTP', () => {
     for (const [cookie, action] of [[s.doctor, 'confirm-consent'], [s.nurse, 'check-preop']] as const) {
       const prepared = await s.request(cookie, `${s.path}/surgeries/${action}`, {
         requestId: request.id, expectedRequestVersion: request.version,
-        ...(action === 'confirm-consent' ? { signerRole: 'patient', signerName: s.admission.patientName, patientChoice: 'agree' } : {}),
+        ...(action === 'confirm-consent' ? { expectedDiagnosisRevision: 0, signerRole: 'patient', signerName: s.admission.patientName, patientChoice: 'agree' } : {}),
         note: '准备核对完成',
       })
       expect(prepared.status).toBe(200)
