@@ -489,7 +489,7 @@ clinmesh inpatient retry-investigation --input @investigation-action.json --idem
 clinmesh inpatient acknowledge-investigation --input @report-acknowledgement.json --idempotency-key <key>
 ```
 
-住院医生只从 `investigation-catalog` 选择 `available=true` 且有明确 `priceFen` 的项目。`unavailableReason=unpriced` 表示尚未声明住院价格，不表示免费；基础 WBC/HGB/CBC（含 `CN-LAB-CBC-5DIFF` 2500分）及心血管代谢核心检验（`CN-LAB-CARDIAC`、`2100404B` 高敏肌钙蛋白I、`2100704A` NT-proBNP、血脂、肾功能、电解质、糖化血红蛋白、D-二聚体）在新 Epoch 默认具备正数门诊与住院合成价，其他已声明的正数住院价按原目录执行，不宣称国家收费标准。开立固定目录版本、收费定义、执行完成触发点和本次住院的合成病例来源；无来源患者不支持生成报告，不使用其他病例或 Scenario 的正常结果代替。
+住院医生只从 `investigation-catalog` 选择 `available=true` 且有明确 `priceFen` 的项目。`unavailableReason=unpriced` 表示尚未声明住院价格，不表示免费；`laboratory-cn` 全量 15 个常用检验组合（含 `CN-LAB-CBC-5DIFF`、肝功能、肾功能、肝肾功能、电解质、凝血功能、`CN-LAB-CARDIAC`、血脂、空腹血糖、糖化血红蛋白、尿常规、炎症指标、甲状腺功能、乙肝五项、基础肿瘤标志物组合）及全部原子检验项目（含 `2100404B` 高敏肌钙蛋白I、`2100704A` NT-proBNP、`0300101A` 红细胞沉降率等）在新 Epoch 默认具备正整数门诊与住院合成价，其他已声明的正数住院价按原目录执行，不宣称国家收费标准。`investigation-catalog` 对 `laboratory` 项目额外返回 `isPanel`、`memberCount`、`laboratoryCategory`（`hematology-coagulation`、`biochemistry`、`cardiac-metabolic`、`urinalysis-infection`、`endocrine-tumor` 及 PCI 术前 9 项专属 `preop-routine`）、`specimen` 与结构化 `specimenContainer`（管帽颜色、容器名称、标本类别、采集混匀要求与 `mergeable` 标记），供医生工作台按组合／专科分类筛选或一键整类加入待开清单（单模态常规检验不进入跨模态专病组套 `Order Set Template`）。开立固定目录版本、收费定义、执行完成触发点和本次住院的合成病例来源；无来源患者不支持生成报告，不使用其他病例或 Scenario 的正常结果代替。
 
 `investigation.json` 合成示例；用当前受信读取的住院版本和可开展目录版本替换示例值：
 
@@ -527,7 +527,7 @@ clinmesh inpatient acknowledge-investigation --input @report-acknowledgement.jso
 clinmesh inpatient issue-investigation --input @inpatient-examination.json --idempotency-key <key>
 ```
 
-检验选择为 `kind=laboratory`、`catalogItemId` 和目录允许的 `indicationCode`。医生开立后保持待送检，病区护士校对并送检才进入原 LIS/RIS 申请内核。操作文件传 `admissionId/requestId/expectedRequestVersion/serviceRequestVersion/taskVersion`；已阅另传当前 `diagnosticReportId/diagnosticReportVersion`，影像须当前可读取。检验目录定量定义含可选 `criticalMinimum`/`criticalMaximum` 危急值上下限，定量检验结果（及更正后重算结果）含独立于 `interpretation` 的可选布尔 `critical` 危急值标记。仅未送检或明确生成失败的申请可取消；已送检在途申请继续完成。来源不相容或不支持的检验不可重试，须取消。报告更正保留原报告和已阅事实，不再次收执行费。
+检验选择为 `kind=laboratory`、`catalogItemId` 和目录允许的 `indicationCode`。医生开立后保持待送检，病区护士校对并送检才进入原 LIS/RIS 申请内核：护士工作台对当前待送检的 `laboratory` 申请按 `specimenContainer`（`mergeable=true` 的同规格采血管自动合并，如紫头 EDTA-K2 全血、黄头促凝血清、蓝头 1:9 枸橼酸抗凝血浆、黑头 1:4 血沉管与清洁尿管；混合标本与特殊标本 `mergeable=false` 独立核对）聚类为采血管卡片，与非采血 `examination`／`imaging` 申请并列展示，已送检或已取消申请保持独立状态而不混入待采血管；确认送检后底层仍按每个 `requestId` 与独立幂等键逐项调用 `inpatient.investigation.send`，不新增整管批量写命令。操作文件传 `admissionId/requestId/expectedRequestVersion/serviceRequestVersion/taskVersion`；已阅另传当前 `diagnosticReportId/diagnosticReportVersion`，影像须当前可读取。检验目录定量定义含可选 `criticalMinimum`/`criticalMaximum` 危急值上下限，定量检验结果（及更正后重算结果）含独立于 `interpretation` 的可选布尔 `critical` 危急值标记。仅未送检或明确生成失败的申请可取消；已送检在途申请继续完成。来源不相容或不支持的检验不可重试，须取消。报告更正保留原报告和已阅事实，不再次收执行费。
 
 ```bash
 clinmesh inpatient transfer-catalog

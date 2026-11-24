@@ -98,6 +98,13 @@ export class InpatientPciData {
       const priceFen = previousPrice.success ? previousPrice.data.chargeDefinition?.priceFen ?? definition.priceFen : definition.priceFen
       const billing = { id: `inpatient-charge-${serviceId}`, version: 1, display: definition.nameZh, priceFen, currency: 'CNY', trigger: 'execution-completed',
         source: previousPrice.success && previousPrice.data.chargeDefinition !== undefined ? 'published-hospital-price' : `synthetic-pci-${pciDataPackage.version}`, availableScopes: ['inpatient'], effectiveOn: '2026-10-25' }
+      const oldLab = old.laboratoryService !== null && typeof old.laboratoryService === 'object' && !Array.isArray(old.laboratoryService)
+        ? old.laboratoryService as Record<string, unknown>
+        : undefined
+      const nextLab = oldLab === undefined ? definition
+        : oldLab.specimenContainer === undefined && definition.specimenContainer !== undefined
+          ? { ...oldLab, specimenContainer: definition.specimenContainer }
+          : old.laboratoryService
       const config = { ...old,
         ...(old.billingUnit === undefined || old.billingUnit === null ? { billingUnit: { code: 'ITEM', display: '项目', system: 'urn:clinmesh:wst:billing-unit',
           valueSet: 'urn:clinmesh:wst:value-set:billing-unit', version: `synthetic-pci-${pciDataPackage.version}` } } : {}),
@@ -112,7 +119,7 @@ export class InpatientPciData {
         ...(old.requestCatalogItemIds === undefined ? { requestCatalogItemIds: [definition.referenceConcept.id] } : {}),
         ...(old.tatMinutes === undefined ? { tatMinutes: definition.tatMinutes } : {}),
         ...(old.availableScopes === undefined ? { availableScopes: ['outpatient', 'inpatient'] } : {}),
-        ...(old.laboratoryService === undefined ? { laboratoryService: definition } : {}),
+        laboratoryService: nextLab,
         ...(old.inpatientInvestigationBilling === undefined || old.inpatientInvestigationBilling === null ? { inpatientInvestigationBilling: billing } : {}),
         ...(old.insuranceCoverage === undefined ? { insuranceCoverage: CLASS_A_COVERAGE } : {}),
         ...(old.pciDataSupplement === undefined ? { pciDataSupplement: { synthetic: true, packageId: pciDataPackage.id, version: pciDataPackage.version, referenceRanges: 'synthetic-hospital' } } : {}),

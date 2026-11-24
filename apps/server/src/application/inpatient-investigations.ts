@@ -1,10 +1,12 @@
 import { z } from 'zod'
 import { inpatientInvestigationAcknowledgeInputSchema, inpatientInvestigationActionInputSchema, inpatientInvestigationIssueInputSchema, inpatientInvestigationResponseSchema, inpatientInvestigationsSchema, inpatientInvestigationCatalogSchema } from '@clinmesh/contracts/inpatient-investigations'
+import { resolveLaboratorySpecimenContainer } from '@clinmesh/core/laboratory-specimen-container'
 import type { ImagingExamCode } from '@clinmesh/contracts/imaging'
 import type { ActorContext } from './command-executor.ts'
 import { ClinicalRequestKernel, laboratoryRequestPolicy } from './clinical-request-kernel.ts'
 import { examinationRequestPolicy } from './examination-request-service.ts'
 import { imagingRequestPolicy } from './imaging-request-service.ts'
+import { classifyInpatientLaboratoryCategory } from './inpatient-laboratory-category.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { InpatientInvestigationsWorkflowPort } from './outpatient-workflow-context.ts'
 import { inpatientInvestigationBillingSchema, inpatientLaboratoryConfiguration } from './inpatient-laboratory-config.ts'
@@ -64,8 +66,20 @@ export class InpatientInvestigations {
       const laboratory = inpatientLaboratoryConfiguration(raw)
       if(laboratory.service?.doctorOrderable) {
         const { priceFen, missingFields, service } = laboratory, available = missingFields.length === 0
+        const isPanel = service.componentServiceIds.length > 0
+        const laboratoryCategory = classifyInpatientLaboratoryCategory({
+          hasPciSupplement: config.pciDataSupplement !== undefined && config.pciDataSupplement !== null,
+          localCode: service.localCode,
+          referenceCode: service.referenceConcept.code,
+        })
+        const specimenContainer = resolveLaboratorySpecimenContainer({
+          referenceCode: service.referenceConcept.code,
+          specimen: service.specimen,
+          specimenContainer: service.specimenContainer,
+        })
         return [{id:row.service_id,kind:'laboratory' as const,display:service.nameZh,version:row.version,...(priceFen===undefined?{}:{priceFen}),available,
-          ...(available?{}:{unavailableReason:priceFen===undefined?'unpriced' as const:'not-offered' as const}),indicationCodes:service.allowedIndicationCodes}]
+          ...(available?{}:{unavailableReason:priceFen===undefined?'unpriced' as const:'not-offered' as const}),indicationCodes:service.allowedIndicationCodes,
+          isPanel,...(isPanel?{memberCount:service.componentServiceIds.length}:{}),laboratoryCategory,specimen:service.specimen.display,specimenContainer}]
       }
       return []
     })})

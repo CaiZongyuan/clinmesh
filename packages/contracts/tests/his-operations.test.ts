@@ -318,7 +318,7 @@ describe('HIS operation catalog', () => {
         path: '/api/his/v1/doctor/cases/:caseId/reference-catalogs/laboratory',
       },
       skill: 'clinmesh-doctor',
-      version: 2,
+      version: 3,
     })
     expect(operation.input.parse({
       caseId: 'case-1',
@@ -547,9 +547,9 @@ describe('HIS operation catalog', () => {
       const operation = getHisOperation(id as string)
       return [operation.id, operation.mode, operation.risk, operation.roles]
     })).toEqual(expected)
-    expect(getHisOperation('encounter.laboratory-request.issue').version).toBe(3)
-    expect(getHisOperation('laboratory-request.cancel').version).toBe(2)
-    expect(getHisOperation('laboratory-request.retry-generation').version).toBe(5)
+    expect(getHisOperation('encounter.laboratory-request.issue').version).toBe(4)
+    expect(getHisOperation('laboratory-request.cancel').version).toBe(3)
+    expect(getHisOperation('laboratory-request.retry-generation').version).toBe(6)
     for (const id of [
       'inpatient.investigation.read',
       'inpatient.investigation.issue',
@@ -560,7 +560,7 @@ describe('HIS operation catalog', () => {
       'inpatient.pci-data.read',
       'inpatient.pci-data.prepare',
     ]) {
-      expect(getHisOperation(id).version).toBe(id.startsWith('inpatient.investigation.') ? 3 : 2)
+      expect(getHisOperation(id).version).toBe(id.startsWith('inpatient.investigation.') ? 4 : 3)
     }
   })
 
@@ -959,8 +959,8 @@ it('publishes read-only clinical quality preflight queries and clinicalOverride 
     .toEqual({ input: { encounterVersion: '3', reason: '好转出院', clinicalOverride } })
 
   expect(getHisOperation('encounter.prescription.issue').version).toBe(7)
-  expect(getHisOperation('doctor.case.get').version).toBe(22)
-  expect(getHisOperation('doctor.completed-cases.get').version).toBe(7)
+  expect(getHisOperation('doctor.case.get').version).toBe(23)
+  expect(getHisOperation('doctor.completed-cases.get').version).toBe(8)
   expect(getHisOperation('doctor.case.history.read').version).toBe(3)
   expect(getHisOperation('inpatient.catalog.search').version).toBe(4)
   expect(getHisOperation('inpatient.clinical.catalog').version).toBe(5)

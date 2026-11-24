@@ -1,8 +1,10 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { z } from 'zod'
+import type { InpatientLaboratoryCategory } from '@clinmesh/contracts/his'
 import type { inpatientInvestigationCatalogSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
+import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
@@ -23,6 +25,7 @@ import { getBatchFailureMessage } from './workspace-error.ts'
 import { applyOrderSetInvestigations, investigationBatchLimit, investigationDraftSchema, readInvestigationDraft, saveInvestigationDraft, type InvestigationAttempt, type InvestigationDraft, type InvestigationDraftRow } from './inpatient-investigation-drafts.ts'
 
 type CatalogItem = z.infer<typeof inpatientInvestigationCatalogSchema>['items'][number]
+type LabFilterCategory = 'panel' | InpatientLaboratoryCategory | 'all'
 const emptyDraft = (): InvestigationDraft => ({ rows: [], successes: [] })
 
 export function InpatientInvestigationComposer({ open, onOpenChange, items, locale, disabled, disabledReason, loading, error, onReload, draftKey, admissionId, encounterVersion, onIssue, onRecover }: {
@@ -52,6 +55,8 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
     } catch { setStorageError(true) }
   }), [draftKey, admissionId])
   const [query, setQuery] = useState(''), [kind, setKind] = useState<'laboratory' | 'imaging' | 'examination'>('laboratory'), [page, setPage] = useState(1), [draftPage, setDraftPage] = useState(1)
+  const [labCategoryOverride, setLabCategoryOverride] = useState<LabFilterCategory | null>(null)
+  const [searchCategoryOverride, setSearchCategoryOverride] = useState<LabFilterCategory | null>(null)
   const [showUnavailable, setShowUnavailable] = useState(false), [confirmClear, setConfirmClear] = useState(false), [notice, setNotice] = useState('')
   const save = (next: InvestigationDraft) => {
     try {
@@ -62,8 +67,39 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
   }
   const update = (id: string, patch: Partial<InvestigationDraftRow>) => save({ ...current.current, rows: current.current.rows.map(row => row.id === id ? { ...row, ...patch } : row) })
   const locked = disabled || running || storageError || draft.rows.some(row => row.attempt)
-  const text = query.trim().toLowerCase(), matches = items.filter(item => item.kind === kind && (text === '' || item.display.toLowerCase().includes(text) || item.id.toLowerCase().includes(text)))
+  const labItems = items.filter(item => item.kind === 'laboratory')
+  const labAvailableAll = labItems.filter(item => item.available)
+  const hasPanels = labAvailableAll.some(item => item.isPanel === true)
+  const hasPreopRoutine = labItems.some(item => item.laboratoryCategory === 'preop-routine')
+  const showLabCategories = kind === 'laboratory' && (hasPanels || hasPreopRoutine || labAvailableAll.length > 10)
+  const defaultLabCategory: LabFilterCategory = labAvailableAll.length > 10 && hasPanels ? 'panel' : 'all'
+  const activeLabCategory: LabFilterCategory = labCategoryOverride ?? defaultLabCategory
+  const text = query.trim().toLowerCase()
+  const effectiveLabCategory: LabFilterCategory = text !== '' ? (searchCategoryOverride ?? 'all') : activeLabCategory
+  const matches = items.filter(item => {
+    if (item.kind !== kind) return false
+    if (kind === 'laboratory' && effectiveLabCategory !== 'all') {
+      if (effectiveLabCategory === 'panel' ? item.isPanel !== true : item.laboratoryCategory !== effectiveLabCategory) return false
+    }
+    if (text === '') return true
+    const containerText = item.specimenContainer ? `${item.specimenContainer.containerNameZh} ${item.specimenContainer.containerNameEn} ${item.specimenContainer.specimenCategoryZh}` : ''
+    return item.display.toLowerCase().includes(text)
+      || item.id.toLowerCase().includes(text)
+      || (item.specimen?.toLowerCase().includes(text) ?? false)
+      || containerText.toLowerCase().includes(text)
+  })
   const available = matches.filter(item => item.available), unavailable = matches.filter(item => !item.available), pageSize = 10
+  const addableInCategory = kind === 'laboratory' ? available.filter(item => !draft.rows.some(row => row.item.kind === item.kind && row.item.id === item.id)) : []
+  const labCategoryOptions: Array<{ value: LabFilterCategory; label: string }> = [
+    ...(hasPanels ? [{ value: 'panel' as const, label: t('常用组合', 'Panels') }] : []),
+    { value: 'hematology-coagulation', label: t('血细胞/凝血', 'Hematology & Coag') },
+    { value: 'biochemistry', label: t('生化/肝肾电解质', 'Biochemistry') },
+    { value: 'cardiac-metabolic', label: t('心脏/代谢', 'Cardiac & Metabolic') },
+    { value: 'urinalysis-infection', label: t('尿液/感染', 'Urinalysis & Infection') },
+    { value: 'endocrine-tumor', label: t('内分泌/肿瘤', 'Endocrine & Tumor') },
+    ...(hasPreopRoutine ? [{ value: 'preop-routine' as const, label: t('术前常规单项', 'Pre-op routine') }] : []),
+    { value: 'all', label: t('全部', 'All') },
+  ]
   const catalogPage = Math.min(page, Math.max(1, Math.ceil(available.length / pageSize))), visible = available.slice((catalogPage - 1) * pageSize, catalogPage * pageSize)
   const rows = draft.rows.filter(row => row.item.kind === kind), rowPage = Math.min(draftPage, Math.max(1, Math.ceil(rows.length / pageSize))), visibleRows = rows.slice((rowPage - 1) * pageSize, rowPage * pageSize)
   const selected = rows.filter(row => row.selected && !row.attempt)
@@ -79,6 +115,24 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
     if (draft.rows.length >= investigationBatchLimit) { setNotice(t(`最多保留 ${investigationBatchLimit} 项，请先办理或移除项目`, `Keep at most ${investigationBatchLimit} items; process or remove an item first`)); return }
     save({ ...current.current, rows: [...current.current.rows, { id: newIdempotencyKey(), item, indicationCode: item.indicationCodes.length === 1 ? item.indicationCodes[0]! : '', indication: '', selected: true }] })
     setDraftPage(Math.ceil((rows.length + 1) / pageSize)); setNotice('')
+  }
+  const addCategoryItems = () => {
+    if (locked || addableInCategory.length === 0) return
+    if (draft.rows.length + addableInCategory.length > investigationBatchLimit) {
+      setNotice(t(`最多保留 ${investigationBatchLimit} 项，请先办理或移除项目`, `Keep at most ${investigationBatchLimit} items; process or remove an item first`))
+      return
+    }
+    const appended: InvestigationDraftRow[] = addableInCategory.map(item => ({
+      id: newIdempotencyKey(),
+      item,
+      indicationCode: item.indicationCodes.length === 1 ? item.indicationCodes[0]! : '',
+      indication: '',
+      selected: true,
+    }))
+    if (save({ ...current.current, rows: [...current.current.rows, ...appended] })) {
+      setDraftPage(Math.ceil((rows.length + appended.length) / pageSize))
+      setNotice('')
+    }
   }
   const run = async (recover?: InvestigationDraftRow) => {
     if (busy.current || storageError || (recover === undefined && (locked || loading || error !== undefined || selected.length === 0 || selected.some(problem)))) return
@@ -114,7 +168,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
         <div className="flex flex-wrap items-center justify-between gap-2">
           <ToggleGroup data-view-switch="" aria-label={t('检查类别', 'Investigation category')} size="sm" variant="outline" disabled={running} value={[kind]} onValueChange={values => {
             const next = values[0]
-            if (next === 'laboratory' || next === 'imaging' || next === 'examination') { setKind(next); setPage(1); setDraftPage(1); setQuery('') }
+            if (next === 'laboratory' || next === 'imaging' || next === 'examination') { setKind(next); setPage(1); setDraftPage(1); setQuery(''); setSearchCategoryOverride(null) }
           }}>
             <ToggleGroupItem value="laboratory">{t('检验', 'Laboratory')}</ToggleGroupItem>
             <ToggleGroupItem value="examination">{t('功能检查', 'Functional examination')}</ToggleGroupItem>
@@ -123,11 +177,34 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
           <Button size="sm" variant="outline" disabled={running || loading} onClick={onReload}>{t('刷新目录', 'Refresh catalog')}</Button>
         </div>
         <OrderComposerLayout locale={locale} catalog={<div className="flex min-h-0 flex-1 flex-col">
-          <OrderComposerSearch><Input aria-label={t('搜索检查检验目录', 'Search investigations')} value={query} maxLength={200} onChange={event => { setQuery(event.currentTarget.value); setPage(1) }} /></OrderComposerSearch>
+          <OrderComposerSearch>
+            <div className="flex flex-col gap-2">
+              <Input aria-label={t('搜索检查检验目录', 'Search investigations')} value={query} maxLength={200} onChange={event => { setQuery(event.currentTarget.value); setSearchCategoryOverride(null); setPage(1) }} />
+              {showLabCategories ? <ToggleGroup data-view-switch="" className="w-full flex-wrap justify-start" aria-label={t('检验分类', 'Laboratory category')} size="sm" variant="outline" disabled={running} value={[effectiveLabCategory]} onValueChange={values => {
+                const next = values[0] as LabFilterCategory | undefined
+                if (next !== undefined) {
+                  if (text !== '') setSearchCategoryOverride(next)
+                  else setLabCategoryOverride(next)
+                  setPage(1)
+                }
+              }}>
+                {labCategoryOptions.map(option => <ToggleGroupItem key={option.value} value={option.value}>{option.label}</ToggleGroupItem>)}
+              </ToggleGroup> : null}
+              {kind === 'laboratory' && available.length > 0 && available.length <= investigationBatchLimit && text === '' ? <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">{t(`当前分类共 ${available.length} 项`, `${available.length} items in category`)}</span>
+                <Button size="sm" variant="outline" disabled={locked || addableInCategory.length === 0} onClick={addCategoryItems}>
+                  {t(`加入本类可开项目（${addableInCategory.length}）`, `Add category items (${addableInCategory.length})`)}
+                </Button>
+              </div> : null}
+            </div>
+          </OrderComposerSearch>
           <ul data-catalog-results="" className="flex min-h-0 flex-1 flex-col overflow-y-auto px-1 pb-2">
             {loading ? <li role="status">{t('正在加载目录…', 'Loading catalog…')}</li> : error !== undefined ? <li><p>{error}</p><Button onClick={onReload}>{t('重试加载', 'Retry loading')}</Button></li> : <>
               {visible.map(item => <li key={item.id}><OrderCatalogCandidate label={t(`选择${item.display}`, `Select ${item.display}`)} selected={draft.rows.some(row => row.item.id === item.id && row.item.kind === item.kind)} disabled={locked} onSelect={() => add(item)}>
-                <span className="font-medium">{item.display}</span><span className="text-xs tabular-nums text-muted-foreground">{item.priceFen === undefined ? '—' : formatFen(item.priceFen, locale)}</span>
+                <span className="font-medium">{item.display}</span>
+                {item.isPanel ? <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">{item.memberCount !== undefined ? t(`组合 · ${item.memberCount} 项`, `Panel · ${item.memberCount}`) : t('组合', 'Panel')}</Badge> : null}
+                <span className="text-xs tabular-nums text-muted-foreground">{item.priceFen === undefined ? '—' : formatFen(item.priceFen, locale)}</span>
+                {item.kind === 'laboratory' && (item.specimenContainer || item.specimen) ? <span className="basis-full text-xs text-muted-foreground">{item.specimenContainer ? (zh ? `${item.specimenContainer.containerNameZh} · ${item.specimenContainer.specimenCategoryZh}` : `${item.specimenContainer.containerNameEn} · ${item.specimenContainer.specimenCategoryEn}`) : item.specimen}</span> : null}
               </OrderCatalogCandidate></li>)}
               {available.length === 0 ? <li className="p-3 text-sm text-muted-foreground">{t('没有匹配的可开立项目', 'No matching orderable items')}</li> : null}
               {unavailable.length > 0 ? <li className="p-3 text-sm"><span>{t(`另有 ${unavailable.length} 项暂不能开立`, `${unavailable.length} unavailable items`)}</span><Button variant="link" size="sm" aria-expanded={showUnavailable} onClick={() => setShowUnavailable(value => !value)}>{showUnavailable ? t('收起原因', 'Hide reasons') : t('查看原因', 'Show reasons')}</Button>

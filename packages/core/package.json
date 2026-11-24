@@ -17,7 +17,8 @@
     "./order-set-screening": "./src/order-set-screening.ts",
     "./clinical-scores": "./src/clinical-scores.ts",
     "./clinical-quality": "./src/clinical-quality.ts",
-    "./insurance": "./src/insurance.ts"
+    "./insurance": "./src/insurance.ts",
+    "./laboratory-specimen-container": "./src/laboratory-specimen-container.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

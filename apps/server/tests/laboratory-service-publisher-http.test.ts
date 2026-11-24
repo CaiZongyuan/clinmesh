@@ -868,7 +868,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       doctorOrderable: true,
       nameZh: '合成血常规',
       priceFen: 0,
-      publicationPolicyVersion: 'clinmesh-laboratory-defaults-v2',
+      publicationPolicyVersion: 'clinmesh-laboratory-defaults-v3',
       reportDefinition: {
         conclusionTemplate: '本报告为 ClinMesh 合成检验结果，仅用于仿真。',
         results: [

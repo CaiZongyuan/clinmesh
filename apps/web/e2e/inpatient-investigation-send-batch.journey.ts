@@ -21,12 +21,14 @@ import { selectInpatientStage } from './inpatient-ui.ts'
 async function createSendReferenceDatabase(directory: string, longNames: boolean) {
   const sourceVersion = '2026-09-01', system = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026'
   const tests = [
-    { code: '0100101A', display: '合成白细胞计数', loinc: '6690-2', low: 3.5, high: 9.5, unitCode: '10*9/L', unitDisplay: '×10^9/L' },
-    { code: '0100501A', display: '合成血红蛋白', loinc: '718-7', low: 115, high: 150, unitCode: 'g/L', unitDisplay: 'g/L' },
-    { code: '0100301A', display: '合成血小板计数', loinc: '777-3', low: 125, high: 350, unitCode: '10*9/L', unitDisplay: '×10^9/L' },
+    { code: '0100101A', display: '合成白细胞计数', loinc: '6690-2', low: 3.5, high: 9.5, specimen: '全血', unitCode: '10*9/L', unitDisplay: '×10^9/L' },
+    { code: '0100501A', display: '合成血红蛋白', loinc: '718-7', low: 115, high: 150, specimen: '全血', unitCode: 'g/L', unitDisplay: 'g/L' },
+    { code: '0100301A', display: '合成血小板计数', loinc: '777-3', low: 125, high: 350, specimen: '全血', unitCode: '10*9/L', unitDisplay: '×10^9/L' },
+    { code: '1700404A', display: '合成肌酐测定', loinc: '2160-0', low: 57, high: 111, specimen: '血清、血浆', unitCode: 'umol/L', unitDisplay: 'umol/L' },
+    { code: '0500103A', display: '合成凝血酶原时间', loinc: '5902-2', low: 10, high: 14, specimen: '血浆', unitCode: 's', unitDisplay: 's' },
   ]
-  if (longNames) for (const item of tests) item.display += '（合成长中文名称：护士逐项核对本次住院申请及冻结全血标本，送检后仍须由检验岗位受理并实际执行）'.repeat(3)
-  const panelDisplay = longNames ? '合成血常规（合成长中文组合申请：白细胞、血红蛋白与血小板分别保留原来源和冻结标本，送检不会立即生成报告）'.repeat(3) : '合成血常规'
+  if (longNames) for (const item of tests) item.display += '（合成长中文名称：护士按采血管核对本次住院申请与标本要求，送检后仍须由检验岗位受理并实际执行）'.repeat(4)
+  const panelDisplay = longNames ? '合成血常规（合成长中文组合申请：白细胞、血红蛋白与血小板分别保留原来源和全血标本，送检不会立即生成报告）'.repeat(4) : '合成血常规'
   const panelConceptId = 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC'
   const artifact = `${JSON.stringify({ schemaVersion: '1', medicationProducts: [], concepts: [...tests.map(item => ({
     code: item.code, display: item.display, domain: 'laboratory', id: `wst-886:2026:${item.code}`,
@@ -36,15 +38,15 @@ async function createSendReferenceDatabase(directory: string, longNames: boolean
     system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn', version: sourceVersion }],
   laboratoryDefinitions: [...tests.map(item => ({ adultReferenceRules: [{ high: item.high, low: item.low, notes: '合成成人静脉血定义',
     referenceKind: 'range', sex: 'all', simulationHigh: item.high, simulationLow: item.low, sourceLocation: '合成测试定义',
-    sourceStandard: 'WS/T 405-2012', sourceType: 'national-standard', sourceVersion: '2012' }],
-    alternateCodings: [{ code: item.loinc, system: 'http://loinc.org', version: '2.83' }], analyte: item.display, category: '血细胞分析',
+    sourceStandard: 'WS/T 886-2026', sourceType: 'national-standard', sourceVersion: '2026' }],
+    alternateCodings: [{ code: item.loinc, system: 'http://loinc.org', version: '2.83' }], analyte: item.display, category: '临床检验',
     conceptId: `wst-886:2026:${item.code}`, datasetReleaseId: `laboratory-cn@${sourceVersion}.r1`, healthyStrategy: 'uniform',
     kind: 'laboratory-cn-test', precision: 1, resultKind: 'quantity', scale: '定量', sourceLocator: `synthetic:send-e2e:${item.code}`,
-    sourceVersion, specimen: '全血', unit: { code: item.unitCode, display: item.unitDisplay, system: 'http://unitsofmeasure.org' },
+    sourceVersion, specimen: item.specimen, unit: { code: item.unitCode, display: item.unitDisplay, system: 'http://unitsofmeasure.org' },
   })), { conceptId: panelConceptId, datasetReleaseId: `laboratory-cn@${sourceVersion}.r1`, kind: 'laboratory-cn-panel',
     notes: '合成白细胞、血红蛋白和血小板组合', sourceLocation: 'synthetic/send-batch/panel', sourceLocator: 'synthetic:send-e2e:CN-LAB-CBC',
     sourceType: 'project-authored', sourceVersion, specimen: '全血' }],
-  laboratoryPanelMembers: tests.map((item, index) => ({ memberConceptId: `wst-886:2026:${item.code}`, memberOrder: index + 1,
+  laboratoryPanelMembers: tests.slice(0, 3).map((item, index) => ({ memberConceptId: `wst-886:2026:${item.code}`, memberOrder: index + 1,
     panelConceptId, relationship: 'contains', sourceLocator: `synthetic:send-e2e:CN-LAB-CBC:${index + 1}` })) })}\n`
   await writeFile(join(directory, 'reference.json'), artifact)
   const manifestPath = join(directory, 'release.json')
@@ -119,7 +121,8 @@ export async function prepareInvestigationSendBatchPatient(page: Page, app: Awai
     return inpatientInvestigationResponseSchema.parse(await response.json()).data.laboratoryRequests.find(item => !before.laboratoryRequests.some(old => old.id === item.id))!
   }
   const requests = []
-  for (const display of ['合成白细胞计数', '合成血红蛋白', '合成血常规']) requests.push(await issue(display))
+  // 两项全血合入 1 支紫头管 + 一项血清独立入 1 支黄头管，共 2 管、3 项底层申请
+  for (const display of ['合成白细胞计数', '合成血红蛋白', '合成肌酐测定']) requests.push(await issue(display))
   await login('registrar')
   const otherPatient = createPatientResponseSchema.parse(await (await post('/api/his/v1/patients', {
     name: '合成送检范围隔离患者', gender: 'female', birthDate: '1980-01-01', identifier: `SYN-${randomUUID()}`,
@@ -149,18 +152,20 @@ export async function openInvestigationSendBatchPatient(page: Page, s: Patient, 
 export async function runInvestigationSendBatchJourney(page: Page, s: Patient, open: () => Promise<void>, step: Step = async () => {}) {
   const get = (path: string) => page.request.get(s.app.origin + path)
   await openInvestigationSendBatchPatient(page, s, open)
-  const choices = page.getByRole('checkbox', { name: /^选择送检：/ })
-  await expect(choices).toHaveCount(3)
+  const choices = page.getByRole('checkbox', { name: /^选择采血管：/ })
+  await expect(choices).toHaveCount(2)
   await expect(page.getByRole('button', { name: '校对并送检', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: '全选本页可送检申请', exact: true }).click()
   const drafts = page.getByRole('region', { name: '送检待处理清单', exact: true })
   await expect(drafts).toContainText(/已选\s*3\s*项/)
-  await expect(drafts).toContainText('全血')
+  await expect(drafts).toContainText('EDTA-K2 紫头管')
+  await expect(drafts).toContainText('促凝黄头管')
   await page.getByRole('button', { name: '清空选择', exact: true }).click()
   for (const choice of await choices.all()) await expect(choice).not.toBeChecked()
   await expect(drafts).toContainText('合成血红蛋白')
+  await expect(drafts).toContainText('合成肌酐测定')
   await page.getByRole('button', { name: '全选本页可送检申请', exact: true }).click()
-  await step('病区护士选择三项待送检申请，核对名称、类别、全血标本与当前状态')
+  await step('病区护士选择紫头管与黄头管两支采血管（合并三项检验申请），核对容器规格与采集要求')
   await openQueue(page)
   await page.getByRole('button', { name: new RegExp(s.other.name) }).click()
   await expect(choices).toHaveCount(0)
@@ -170,7 +175,7 @@ export async function runInvestigationSendBatchJourney(page: Page, s: Patient, o
   await openInvestigationSendBatchPatient(page, s, async () => {})
   await expect(drafts).toContainText(/已选\s*3\s*项/)
   for (const choice of await choices.all()) await expect(choice).toBeChecked()
-  await step('清空勾选保留草稿，切患者和刷新恢复三项选择，尚未产生送检事实')
+  await step('清空勾选保留送检清单，切患者和刷新恢复两管三项选择，尚未产生送检记录')
 
   const keys: string[] = [], sentIds: string[] = []
   await page.route(`**${s.path}/investigations/send`, async route => {
@@ -183,12 +188,14 @@ export async function runInvestigationSendBatchJourney(page: Page, s: Patient, o
   })
   await page.getByRole('button', { name: '集中送检', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '集中送检核对', exact: true })
-  await expect(dialog.getByRole('article')).toHaveCount(3)
-  await expect(dialog).toContainText('全血')
+  await expect(dialog).toContainText('共 2 管采血（合并 3 项检验）')
+  await expect(dialog.getByRole('article')).toHaveCount(2)
+  await expect(dialog).toContainText('EDTA-K2 紫头管')
+  await expect(dialog).toContainText('促凝黄头管')
   await expect(dialog).toContainText('待送检')
   await expect(dialog).toContainText('临床评估')
   await expect(dialog).not.toContainText('clinical-evaluation')
-  await step('集中核对三项申请的名称、标本和待送检状态，再一次确认')
+  await step('集中核对两管三项申请的采血管规格、标本和待送检状态，再一次确认')
   await dialog.getByRole('button', { name: '确认送检', exact: true }).click()
   await expect(page.getByRole('button', { name: '恢复原送检', exact: true })).toBeEnabled()
   expect(keys).toHaveLength(2)
@@ -209,9 +216,10 @@ export async function runInvestigationSendBatchJourney(page: Page, s: Patient, o
   expect(recovered.sent).toHaveLength(2)
   const receipt = commandReceiptLookupSchema.parse(await (await get(`/api/his/v1/command-receipts?operationId=inpatient.investigation.send&idempotencyKey=${keys[1]}`)).json())
   expect(receipt.status).toBe('completed')
-  await step('按原幂等键恢复送检回执，两项已送检；第三项保留，重新核对后才继续')
+  await step('按原幂等键恢复送检回执，紫头管两项已送检；黄头管保留，重新核对后才继续')
   await page.getByRole('button', { name: '集中送检', exact: true }).click()
   await expect(dialog.getByRole('article')).toHaveCount(1)
+  await expect(dialog).toContainText('促凝黄头管')
   await dialog.getByRole('button', { name: '确认送检', exact: true }).click()
   await expect.poll(async () => inpatientInvestigationsSchema.parse(await (await get(`${s.path}/investigations`)).json()).sent.length).toBe(3)
   expect(keys).toHaveLength(3)

@@ -9,6 +9,7 @@ import {
   type LaboratoryServiceSnapshot,
 } from '@clinmesh/contracts/his'
 import type { CatalogInsuranceCoverage } from '@clinmesh/contracts/insurance'
+import { resolveLaboratorySpecimenContainer } from '@clinmesh/core/laboratory-specimen-container'
 import { defaultSyntheticLaboratoryCoverage } from './catalog-insurance-coverage.ts'
 import { investigationCodeableValueSchema } from '@clinmesh/contracts/scenario'
 import {
@@ -223,7 +224,7 @@ function defaultLaboratoryCriticalBounds(definition: LaboratoryCnTestRecord['def
 }
 
 const promptVersion = 'laboratory-service-enrichment-v1'
-const laboratoryCnPublicationPolicyVersion = 'clinmesh-laboratory-defaults-v2'
+const laboratoryCnPublicationPolicyVersion = 'clinmesh-laboratory-defaults-v3'
 const laboratoryCnConclusion = '本报告为 ClinMesh 合成检验结果，仅用于仿真。'
 const laboratorySpecimenSystem = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-specimen-cn'
 const wst886EffectiveOn = '2026-11-01'
@@ -484,9 +485,45 @@ export class LaboratoryServicePublisher {
         }
       })
     }
+    this.#ensureSpecimenContainers()
     this.#ensureOutpatientPrices()
     this.ensureInpatientPrices()
     this.#ensureInsuranceCoverage()
+  }
+
+  #ensureSpecimenContainers(): void {
+    const rows = z.array(z.object({
+      code: z.string(),
+      epoch: z.string(),
+      service_id: z.string(),
+      specimenCode: z.string().nullable(),
+      specimenDisplay: z.string().nullable(),
+      workspace_id: z.string(),
+    })).parse(this.#database.driver.prepare(`
+      SELECT h.workspace_id, h.epoch, h.service_id,
+        json_extract(h.config_json, '$.laboratoryService.referenceConcept.code') AS code,
+        json_extract(h.config_json, '$.laboratoryService.specimen.code') AS specimenCode,
+        json_extract(h.config_json, '$.laboratoryService.specimen.display') AS specimenDisplay
+      FROM hospital_service_catalog h JOIN workspace w
+        ON w.workspace_id = h.workspace_id AND w.active_epoch = h.epoch
+      WHERE h.active = 1 AND json_type(h.config_json, '$.laboratoryService') = 'object'
+        AND json_type(h.config_json, '$.laboratoryService.specimenContainer') IS NULL
+    `).all())
+    if (rows.length === 0) return
+    const update = this.#database.driver.prepare(`
+      UPDATE hospital_service_catalog
+      SET config_json = json_set(config_json, '$.laboratoryService.specimenContainer', json(?))
+      WHERE workspace_id = ? AND epoch = ? AND service_id = ?
+    `)
+    this.#database.driver.transaction(() => {
+      for (const row of rows) {
+        const container = resolveLaboratorySpecimenContainer({
+          referenceCode: row.code,
+          specimen: { code: row.specimenCode ?? undefined, display: row.specimenDisplay },
+        })
+        update.run(JSON.stringify(container), row.workspace_id, row.epoch, row.service_id)
+      }
+    })()
   }
 
   #ensureInsuranceCoverage(): void {
@@ -1186,6 +1223,7 @@ export class LaboratoryServicePublisher {
         datasetId: 'laboratory-cn' as const,
         releaseId: rootDefinition.datasetReleaseId,
       }
+      const rootSpecimen = this.#specimen(resolved.root, this.#laboratoryCnSpecimen(resolved.root, resolved.leaves))!
       drafts.push({
         draft: {
           allowedIndicationCodes: ['clinical-evaluation'],
@@ -1205,14 +1243,19 @@ export class LaboratoryServicePublisher {
           },
           serviceKind: 'laboratory',
           sourceDataset,
+          specimen: rootSpecimen,
+          specimenContainer: resolveLaboratorySpecimenContainer({
+            referenceCode: resolved.root.concept.code,
+            specimen: rootSpecimen,
+          }),
           standardStatus,
-          specimen: this.#specimen(resolved.root, this.#laboratoryCnSpecimen(resolved.root, resolved.leaves))!,
           tatMinutes: 180,
         },
         rootConceptId: resolved.root.concept.id,
       })
       if (rootDefinition.kind === 'laboratory-cn-test') continue
       resolved.leaves.forEach((leaf, index) => {
+        const leafSpecimen = this.#specimen(leaf)!
         drafts.push({
           draft: {
             allowedIndicationCodes: ['clinical-evaluation'],
@@ -1232,8 +1275,12 @@ export class LaboratoryServicePublisher {
             },
             serviceKind: 'laboratory',
             sourceDataset,
+            specimen: leafSpecimen,
+            specimenContainer: resolveLaboratorySpecimenContainer({
+              referenceCode: leaf.concept.code,
+              specimen: leafSpecimen,
+            }),
             standardStatus,
-            specimen: this.#specimen(leaf)!,
             tatMinutes: 180,
           },
         })
@@ -1330,6 +1377,7 @@ export class LaboratoryServicePublisher {
           ))
       const specimen = resolved.root.specimens[0]!
       const rootServiceId = this.#serviceId(job.referenceReleaseId, resolved.root.concept.id)
+      const rootSpecimen = { code: specimen.partNumber, display: specimen.display }
       drafts.push({
         draft: {
           allowedIndicationCodes: ['clinical-evaluation'],
@@ -1347,7 +1395,11 @@ export class LaboratoryServicePublisher {
             conclusionTemplate: enriched.conclusionTemplate,
             results: reportResults,
           },
-          specimen: { code: specimen.partNumber, display: specimen.display },
+          specimen: rootSpecimen,
+          specimenContainer: resolveLaboratorySpecimenContainer({
+            referenceCode: resolved.root.concept.code,
+            specimen: rootSpecimen,
+          }),
           serviceKind: 'laboratory',
           tatMinutes: enriched.tatMinutes,
         },
@@ -1356,6 +1408,7 @@ export class LaboratoryServicePublisher {
       if (resolved.root.panelMembers.length === 0) continue
       leaves.forEach((leaf, index) => {
         const leafSpecimen = leaf.specimens[0] ?? specimen
+        const leafSpecimenPayload = { code: leafSpecimen.partNumber, display: leafSpecimen.display }
         drafts.push({
           draft: {
             allowedIndicationCodes: ['clinical-evaluation'],
@@ -1373,7 +1426,11 @@ export class LaboratoryServicePublisher {
               conclusionTemplate: leaf.concept.display,
               results: [reportResults[index]!],
             },
-            specimen: { code: leafSpecimen.partNumber, display: leafSpecimen.display },
+            specimen: leafSpecimenPayload,
+            specimenContainer: resolveLaboratorySpecimenContainer({
+              referenceCode: leaf.concept.code,
+              specimen: leafSpecimenPayload,
+            }),
             serviceKind: 'laboratory',
             tatMinutes: enriched.tatMinutes,
           },
