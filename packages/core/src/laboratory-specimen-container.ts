@@ -167,6 +167,8 @@ export function isBloodDrawSpecimenContainer(container: LaboratorySpecimenContai
     || container.code === 'esr-black'
 }
 
+export const maxMergedRequestsPerTube = 20
+
 export function specimenContainerMergeKey(container: LaboratorySpecimenContainer): string | null {
   if (!container.mergeable) return null
   return `tube:${container.code}:${container.specimenCategoryZh}:${container.collectionRequirementZh}`
@@ -215,6 +217,7 @@ export function groupInvestigationDispatchUnits<T extends DispatchableInvestigat
 ): InvestigationDispatchUnit<T>[] {
   const units: InvestigationDispatchUnit<T>[] = []
   const byMergeKey = new Map<string, Extract<InvestigationDispatchUnit<T>, { unitKind: 'tube' }>>()
+  const tubeChunkCounts = new Map<string, number>()
 
   for (const entry of entries) {
     if (options?.unmerged?.(entry) === true) {
@@ -238,13 +241,15 @@ export function groupInvestigationDispatchUnits<T extends DispatchableInvestigat
     const mergeKey = specimenContainerMergeKey(container)
     if (mergeKey !== null) {
       const existing = byMergeKey.get(mergeKey)
-      if (existing !== undefined) {
+      if (existing !== undefined && existing.items.length < maxMergedRequestsPerTube) {
         existing.items.push(entry)
         continue
       }
+      const chunkIndex = (tubeChunkCounts.get(mergeKey) ?? 0) + 1
+      tubeChunkCounts.set(mergeKey, chunkIndex)
       const created: Extract<InvestigationDispatchUnit<T>, { unitKind: 'tube' }> = {
         container,
-        groupKey: mergeKey,
+        groupKey: chunkIndex === 1 ? mergeKey : `${mergeKey}#${chunkIndex}`,
         items: [entry],
         unitKind: 'tube',
       }

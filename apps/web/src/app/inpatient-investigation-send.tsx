@@ -5,7 +5,6 @@ import {
   groupInvestigationDispatchUnits,
   isBloodDrawSpecimenContainer,
   resolveLaboratorySpecimenContainer,
-  specimenContainerMergeKey,
   type DispatchableInvestigationItem,
   type MergedInvestigationDispatchUnit,
 } from '@clinmesh/core/laboratory-specimen-container'
@@ -34,6 +33,20 @@ import { getBatchFailureMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 
 type Facts = z.infer<typeof inpatientInvestigationsSchema>
+
+function toListUnits(pool: readonly InvestigationSendEntry[]) {
+  return groupInvestigationDispatchUnits(
+    pool.map(entry => ({
+      entry,
+      id: entry.snapshot.id,
+      kind: entry.snapshot.kind,
+      referenceCode: entry.snapshot.referenceCode,
+      specimen: entry.snapshot.specimen,
+      specimenContainer: entry.snapshot.specimenContainer,
+    })),
+    { unmerged: item => item.entry.unavailable !== null },
+  )
+}
 
 function summarizeDispatchUnits(units: readonly MergedInvestigationDispatchUnit<DispatchableInvestigationItem>[]) {
   let bloodTubeCount = 0
@@ -83,27 +96,15 @@ export function InpatientInvestigationSend({ admission, session, locale, data, l
     : entry.unavailable === 'sent' ? t('已送检，不能重复送检。', 'Already sent; dispatch cannot be repeated.')
       : entry.unavailable === 'state' ? t('当前状态不可送检。', 'This state does not allow dispatch.')
         : entry.unavailable === 'versions' ? t('申请信息不完整，请刷新核对。', 'Refresh the incomplete request details.') : ''
-  const unselectedTubePeers = (snapshot: InvestigationSendSnapshot, pool: readonly InvestigationSendEntry[], chosenIds: ReadonlySet<string>): InvestigationSendEntry[] => {
-    if (snapshot.kind !== 'laboratory') return []
-    const mergeKey = specimenContainerMergeKey(resolveLaboratorySpecimenContainer(snapshot))
-    if (mergeKey === null) return []
-    return pool.filter(peer =>
-      peer.unavailable === null
-      && peer.snapshot.kind === 'laboratory'
-      && specimenContainerMergeKey(resolveLaboratorySpecimenContainer(peer.snapshot)) === mergeKey
-      && !chosenIds.has(peer.snapshot.id),
-    )
-  }
+  const listUnits = toListUnits(entries)
   const allSendableTubePeers = (snapshot: InvestigationSendSnapshot, pool: readonly InvestigationSendEntry[]): InvestigationSendEntry[] => {
-    if (snapshot.kind !== 'laboratory') return []
-    const mergeKey = specimenContainerMergeKey(resolveLaboratorySpecimenContainer(snapshot))
-    if (mergeKey === null) return []
-    return pool.filter(peer =>
-      peer.unavailable === null
-      && peer.snapshot.kind === 'laboratory'
-      && specimenContainerMergeKey(resolveLaboratorySpecimenContainer(peer.snapshot)) === mergeKey,
-    )
+    if (snapshot.kind !== 'laboratory' || !resolveLaboratorySpecimenContainer(snapshot).mergeable) return []
+    const units = pool === entries ? listUnits : toListUnits(pool)
+    const containing = units.find(unit => unit.unitKind === 'tube' && unit.items.some(item => item.id === snapshot.id))
+    return containing?.unitKind === 'tube' ? containing.items.map(item => item.entry) : []
   }
+  const unselectedTubePeers = (snapshot: InvestigationSendSnapshot, pool: readonly InvestigationSendEntry[], chosenIds: ReadonlySet<string>): InvestigationSendEntry[] =>
+    allSendableTubePeers(snapshot, pool).filter(peer => !chosenIds.has(peer.snapshot.id))
   const issue = (snapshot: InvestigationSendSnapshot) => {
     const entry = entries.find(entry => entry.snapshot.id === snapshot.id)
     const base = reason(entry) || (entry && !sameSendSnapshot(entry.snapshot, snapshot) ? t('申请已变化，请更新核对后重试。', 'The request changed; review its current details.') : '')
@@ -113,18 +114,6 @@ export function InpatientInvestigationSend({ admission, session, locale, data, l
     }
     return ''
   }
-
-  const listUnits = groupInvestigationDispatchUnits(
-    entries.map(entry => ({
-      entry,
-      id: entry.snapshot.id,
-      kind: entry.snapshot.kind,
-      referenceCode: entry.snapshot.referenceCode,
-      specimen: entry.snapshot.specimen,
-      specimenContainer: entry.snapshot.specimenContainer,
-    })),
-    { unmerged: item => item.entry.unavailable !== null },
-  )
   const queryText = search.trim().toLocaleLowerCase()
   const filteredUnits = listUnits.filter(unit => {
     if (queryText === '') return true

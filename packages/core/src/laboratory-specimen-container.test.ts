@@ -150,4 +150,18 @@ describe('laboratory specimen container resolution and tube merging', () => {
       })
     }
   })
+
+  it('splits mergeable specimen tubes exceeding 20 requests into bounded 20-item collection units', () => {
+    const twentyTwoSerum = Array.from({ length: 22 }, (_, index) => ({
+      id: `req-serum-${index + 1}`,
+      kind: 'laboratory' as const,
+      specimen: '血清',
+    }))
+    const units = groupInvestigationDispatchUnits(twentyTwoSerum)
+    expect(units).toHaveLength(2)
+    expect(units.map(unit => unit.unitKind === 'tube' ? { groupKey: unit.groupKey, count: unit.items.length } : null)).toEqual([
+      { count: 20, groupKey: 'tube:sst-yellow:血清:静脉采血 · 颠倒混匀 5 次后静置促凝分离血清' },
+      { count: 2, groupKey: 'tube:sst-yellow:血清:静脉采血 · 颠倒混匀 5 次后静置促凝分离血清#2' },
+    ])
+  })
 })

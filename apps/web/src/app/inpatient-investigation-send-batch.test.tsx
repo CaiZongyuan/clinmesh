@@ -640,3 +640,35 @@ it('同采血管新增待送检项目时拦截半管送检并支持整管同步�
   await user.click(within(drafts).getByRole('checkbox', { name: /^待送检采血管：EDTA-K2 紫头管/ }))
   expect(drafts.textContent).toContain('已选 0 项')
 })
+
+it('同一采血管超过 20 项待送检申请时自动拆分为有界 20 项分管，可分两批无死锁完成全部送检', async () => {
+  const twentyTwoSerum = Array.from({ length: 22 }, (_, index) =>
+    laboratory(index + 1, `合成血清项目${String(index + 1).padStart(2, '0')}`, 'issued', {
+      specimenCode: 'serum',
+      specimenDisplay: '血清',
+    }),
+  )
+  const api = server(twentyTwoSerum)
+  mount()
+  const user = userEvent.setup()
+  const tubeChoices = await screen.findAllByRole('checkbox', { name: /^选择采血管：促凝黄头管/ })
+  expect(tubeChoices).toHaveLength(2)
+
+  // 首支分管含 20 项，可直接勾选并完成送检
+  await user.click(tubeChoices[0]!)
+  expect(screen.getByRole('region', { name: '送检待处理清单' }).textContent).toContain('已选 20 项')
+  await user.click(screen.getByRole('button', { name: '集中送检' }))
+  await user.click(within(screen.getByRole('dialog', { name: '集中送检核对' })).getByRole('button', { name: '确认送检' }))
+  await waitFor(() => expect(api.posts).toHaveLength(20))
+
+  // 首批 20 项转为已送检历史（占前 2 页），翻至第 3 页勾选剩余 2 项黄头管完成第二批送检
+  await waitFor(() => expect(screen.getByText('1/3')).toBeDefined())
+  await user.click(screen.getByRole('button', { name: '下一页' }))
+  await user.click(screen.getByRole('button', { name: '下一页' }))
+  const remainingTube = await screen.findByRole('checkbox', { name: /^选择采血管：促凝黄头管/ })
+  await user.click(remainingTube)
+  await user.click(screen.getByRole('button', { name: '集中送检' }))
+  await user.click(within(screen.getByRole('dialog', { name: '集中送检核对' })).getByRole('button', { name: '确认送检' }))
+  await waitFor(() => expect(api.posts).toHaveLength(22))
+  expect(api.facts().sent).toHaveLength(22)
+}, 20_000)
