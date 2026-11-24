@@ -13,7 +13,9 @@ import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgRecordChecksSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientSurgeryCompletionPreviewSchema, inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { applyMigrations, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
+import { FhirRepository } from '../src/infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceRepository } from '../src/infrastructure/sqlite/workspace-repository.ts'
+import { seedInpatientEnvironment } from '../src/application/inpatient-environment.ts'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -1750,6 +1752,24 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       }
       const afterRoleOff = inpatientSurgeryCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json())
       expect(afterRoleOff.practitioners.map(item => item.id)).not.toContain('practitioner-outpatient-doctor')
+
+      // 软删除手术地点或专职手术医师后重新执行环境种子（模拟重启幂等初始化），不触发 fhir_history 主键冲突且不复活已删资源
+      s.runtime.database.driver.prepare(`
+        UPDATE fhir_resource SET deleted=1 WHERE workspace_id=? AND epoch=? AND resource_type='Location' AND resource_id='location-outpatient-or'
+      `).run(auth.workspaceId, auth.epoch)
+      s.runtime.database.driver.prepare(`
+        UPDATE fhir_resource SET deleted=1 WHERE workspace_id=? AND epoch=? AND resource_type='Practitioner' AND resource_id='practitioner-surgeon-attending'
+      `).run(auth.workspaceId, auth.epoch)
+      seedInpatientEnvironment(s.runtime.database, new FhirRepository(s.runtime.database), auth, [])
+      const afterReseed = inpatientSurgeryCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json())
+      expect(afterReseed.locations.map(item => item.id)).not.toContain('location-outpatient-or')
+      expect(afterReseed.practitioners.map(item => item.id)).not.toContain('practitioner-surgeon-attending')
+      s.runtime.database.driver.prepare(`
+        UPDATE fhir_resource SET deleted=0 WHERE workspace_id=? AND epoch=? AND resource_type='Location' AND resource_id='location-outpatient-or'
+      `).run(auth.workspaceId, auth.epoch)
+      s.runtime.database.driver.prepare(`
+        UPDATE fhir_resource SET deleted=0 WHERE workspace_id=? AND epoch=? AND resource_type='Practitioner' AND resource_id='practitioner-surgeon-attending'
+      `).run(auth.workspaceId, auth.epoch)
     }
 
     const baseRequest = {

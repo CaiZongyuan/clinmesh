@@ -57,22 +57,25 @@ export function seedInpatientEnvironment(
   const exists = (type: string, id: string) => database.driver.prepare(`
     SELECT 1 FROM fhir_resource WHERE workspace_id=? AND epoch=? AND resource_type=? AND resource_id=? AND deleted=0`)
     .get(context.workspaceId, context.epoch, type, id) !== undefined
+  const hasResourceRow = (type: string, id: string) => database.driver.prepare(`
+    SELECT 1 FROM fhir_resource WHERE workspace_id=? AND epoch=? AND resource_type=? AND resource_id=?`)
+    .get(context.workspaceId, context.epoch, type, id) !== undefined
   for (const account of syntheticAccounts.filter(account => ['inpatient-doctor', 'ward-nurse', 'medical-records', 'medical-insurance'].includes(account.roleCode))) {
-    if (!exists('Practitioner', account.practitionerId)) fhir.create(context, {
+    if (!hasResourceRow('Practitioner', account.practitionerId)) fhir.create(context, {
       resourceType: 'Practitioner', id: account.practitionerId, active: true, name: [{ text: account.name }],
     })
-    if (['medical-records', 'medical-insurance'].includes(account.roleCode) && !exists('Location', `location-${account.roleCode}`)) fhir.create(context, {
+    if (['medical-records', 'medical-insurance'].includes(account.roleCode) && !hasResourceRow('Location', `location-${account.roleCode}`)) fhir.create(context, {
       resourceType: 'Location', id: `location-${account.roleCode}`, status: 'active', name: `${account.name}工作区`,
       managingOrganization: { reference: 'Organization/organization-clinmesh' },
     })
-    if (['medical-records', 'medical-insurance'].includes(account.roleCode) && !exists('PractitionerRole', `practitioner-role-${account.roleCode}`)) fhir.create(context, {
+    if (['medical-records', 'medical-insurance'].includes(account.roleCode) && !hasResourceRow('PractitionerRole', `practitioner-role-${account.roleCode}`)) fhir.create(context, {
       resourceType: 'PractitionerRole', id: `practitioner-role-${account.roleCode}`, active: true,
       practitioner: { reference: `Practitioner/${account.practitionerId}` }, organization: { reference: 'Organization/organization-clinmesh' },
       code: [{ text: account.roleCode }], location: [{ reference: `Location/location-${account.roleCode}` }],
     })
   }
   for (const surgicalLocation of SURGICAL_LOCATIONS) {
-    if (!exists('Location', surgicalLocation.id)) fhir.create(context, {
+    if (!hasResourceRow('Location', surgicalLocation.id)) fhir.create(context, {
       resourceType: 'Location', id: surgicalLocation.id, status: 'active', name: surgicalLocation.name,
       managingOrganization: { reference: 'Organization/organization-clinmesh' },
       form: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/location-physical-type', code: 'ro' }] },
@@ -82,7 +85,7 @@ export function seedInpatientEnvironment(
     ['practitioner-surgeon-chief', '林海', '主任医师'],
     ['practitioner-surgeon-attending', '陈铭', '主治医师'],
   ] as const) {
-    if (!exists('Practitioner', surgeonId)) fhir.create(context, {
+    if (!hasResourceRow('Practitioner', surgeonId)) fhir.create(context, {
       resourceType: 'Practitioner', id: surgeonId, active: true,
       name: [{ text: surgeonName }],
       qualification: [{ code: { text: title } }],
