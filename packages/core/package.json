@@ -18,6 +18,7 @@
     "./order-set-screening": "./src/order-set-screening.ts",
     "./clinical-scores": "./src/clinical-scores.ts",
     "./clinical-quality": "./src/clinical-quality.ts",
+    "./clinical-fact-ledger": "./src/clinical-fact-ledger.ts",
     "./insurance": "./src/insurance.ts",
     "./laboratory-specimen-container": "./src/laboratory-specimen-container.ts"
   },

@@ -29,6 +29,7 @@ import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import type { ClinicalScoreService } from './clinical-score-service.ts'
+import type { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
 import type { ActorContext, CommandEffect, CommandExecutor } from './command-executor.ts'
 import { extractSupplementaryIndicators } from './guideline-topic-registry.ts'
 import { inpatientMedicationConfigSchema } from './inpatient-medication-config.ts'
@@ -61,16 +62,32 @@ interface Facts {
 export class ClinicalQualityService {
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
+  readonly #factLedger: ClinicalFactLedgerService | undefined
   readonly #fhir: FhirRepository
   readonly #outpatient: OutpatientWorkflowContext
   readonly #scores: ClinicalScoreService
 
-  constructor(options: { commands: CommandExecutor; database: ClinMeshDatabase; fhir: FhirRepository; outpatientContext: OutpatientWorkflowContext; scores: ClinicalScoreService }) {
+  constructor(options: { commands: CommandExecutor; database: ClinMeshDatabase; factLedger?: ClinicalFactLedgerService; fhir: FhirRepository; outpatientContext: OutpatientWorkflowContext; scores: ClinicalScoreService }) {
     this.#commands = options.commands
     this.#database = options.database
+    this.#factLedger = options.factLedger
     this.#fhir = options.fhir
     this.#outpatient = options.outpatientContext
     this.#scores = options.scores
+  }
+
+  #ineligibleObservationIds(
+    context: ActorContext,
+    subject: { kind: 'outpatient' | 'inpatient'; id: string; patientId: string },
+    asOf: string,
+  ): ReadonlySet<string> | undefined {
+    if (!this.#factLedger) return undefined
+    const ledger = this.#factLedger.buildInternalLedger(context, subject, { asOf, includeSuperseded: false })
+    return new Set(
+      ledger.facts
+        .filter(f => f.provenance.sourceSystemId === 'clinmesh-his-fhir' && f.provenance.recordType === 'Observation' && !f.eligibleForScoringAndRedLine)
+        .map(f => f.provenance.recordId),
+    )
   }
 
   medicationSafety(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, catalogItemId: string): MedicationSafetyRule | undefined {
@@ -122,7 +139,16 @@ export class ClinicalQualityService {
   }
 
   outpatientCompletion(context: ActorContext, input: { caseId: string; encounterId: string }): ClinicalQualityCheck {
-    const indicators = extractSupplementaryIndicators({ caseId: input.caseId, context, database: this.#database, encounterId: input.encounterId, fhir: this.#fhir })
+    const patientRow = this.#factLedger
+      ? z.object({ patient_id: z.string().min(1) }).optional().parse(
+          this.#database.driver.prepare('SELECT patient_id FROM outpatient_case WHERE workspace_id = ? AND epoch = ? AND case_id = ?').get(context.workspaceId, context.epoch, input.caseId),
+        )
+      : undefined
+    const asOf = this.#outpatient.virtualTime(context)
+    const ineligibleObservationIds = patientRow
+      ? this.#ineligibleObservationIds(context, { kind: 'outpatient', id: input.caseId, patientId: patientRow.patient_id }, asOf)
+      : undefined
+    const indicators = extractSupplementaryIndicators({ caseId: input.caseId, context, database: this.#database, encounterId: input.encounterId, fhir: this.#fhir, ineligibleObservationIds })
     return this.#result(context, 'outpatient-completion', [], chestPainWorkupFindings({
       presentation: evidence('急性胸痛就诊依据', indicators.acsEligibility),
       ecg: indicators.ecgSummary && { label: '12 导联心电图报告', reference: indicators.ecgSummary.sourceReference, versionId: indicators.ecgSummary.versionId },
@@ -178,8 +204,9 @@ export class ClinicalQualityService {
     cutoff: string,
     issueEventId?: string,
   ): ClinicalQualityCheck {
+    const ineligibleObservationIds = this.#ineligibleObservationIds(context, { kind: 'inpatient', id: admissionId, patientId }, cutoff)
     const indicators = extractSupplementaryIndicators({ caseId: admissionId, context, database: this.#database, encounterId: admissionId, fhir: this.#fhir,
-      inpatient: { actor: context, service: inpatient }, patientId })
+      ineligibleObservationIds, inpatient: { actor: context, service: inpatient }, patientId })
     const rows = z.array(z.object({ order_id: z.string(), catalog_item_id: z.string(), stopped_at: z.string().nullable() })).parse(
       issueEventId === undefined
         ? this.#database.driver.prepare(`SELECT order_id, catalog_item_id, stopped_at FROM inpatient_order

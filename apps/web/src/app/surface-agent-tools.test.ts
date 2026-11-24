@@ -483,6 +483,7 @@ describe('ClinMesh Surface Agent tools', () => {
   it('routes specialist outpatient decision read tools through queryDoctor without dynamic binding parameters', async () => {
     const ops = [
       ['outpatient.clinical-scores.read', 'clinmesh_read_clinical_scores', {}, {}],
+      ['outpatient.clinical-fact-ledger.read', 'clinmesh_read_clinical_fact_ledger', { asOf: { type: 'string' }, itemCodes: { type: 'string' }, categories: { type: 'string' }, includeSuperseded: { type: 'boolean' } }, { categories: 'laboratory' }],
       ['outpatient.guideline-topics.read', 'clinmesh_read_guideline_topics', { topicId: { type: 'string' } }, { topicId: 'acute-chest-pain-acs' }],
       ['outpatient.clinical-quality.read', 'clinmesh_read_clinical_quality', { gate: { type: 'string' } }, { gate: 'outpatient-completion' }],
       ['outpatient.order-set-drafts.read', 'clinmesh_read_order_set_drafts', { templateId: { type: 'string' } }, { templateId: 'chest-pain-stat-workup' }],
@@ -524,7 +525,7 @@ describe('ClinMesh Surface Agent tools', () => {
       resolveFrame: () => frame,
       review: async () => ({}),
     })
-    expect(tools).toHaveLength(4)
+    expect(tools).toHaveLength(ops.length)
     for (const [index, [, toolName, , input]] of ops.entries()) {
       const tool = tools[index]!
       expect(tool.name).toBe(toolName)
@@ -533,6 +534,6 @@ describe('ClinMesh Surface Agent tools', () => {
       const out = JSON.parse(await tool.execute(input, new AbortController().signal))
       expect(out).toEqual({ data: { echoed: input }, ok: true })
     }
-    expect(queryDoctor).toHaveBeenCalledTimes(4)
+    expect(queryDoctor).toHaveBeenCalledTimes(ops.length)
   })
 })

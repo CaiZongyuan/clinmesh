@@ -581,6 +581,7 @@ function narrowOperations(
         'inpatient.surgery.read',
         'inpatient.angiography-reports.read',
         'inpatient.clinical-scores.read',
+        'inpatient.clinical-fact-ledger.read',
         'inpatient.guideline-topics.read',
         'inpatient.clinical-quality.read',
       )
@@ -612,6 +613,7 @@ function narrowOperations(
         'outpatient.history.search',
         'outpatient.history.read',
         'outpatient.clinical-scores.read',
+        'outpatient.clinical-fact-ledger.read',
         'outpatient.guideline-topics.read',
         'outpatient.clinical-quality.read',
         'outpatient.order-set-drafts.read',

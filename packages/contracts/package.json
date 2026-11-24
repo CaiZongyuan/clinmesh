@@ -47,6 +47,7 @@
     "./order-set-templates": "./src/order-set-templates.ts",
     "./clinical-scores": "./src/clinical-scores.ts",
     "./clinical-quality": "./src/clinical-quality.ts",
+    "./clinical-fact-ledger": "./src/clinical-fact-ledger.ts",
     "./guideline-topics": "./src/guideline-topics.ts"
   },
   "scripts": {

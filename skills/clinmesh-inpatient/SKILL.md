@@ -98,6 +98,8 @@ clinmesh inpatient clinical --admission-id <admission-id>
 clinmesh inpatient record-vital-signs --input @vital-signs.json --idempotency-key <key>
 clinmesh inpatient record-risk-assessment --input @inpatient-risk-assessment.json --idempotency-key <key>
 clinmesh inpatient clinical-scores --admission-id <admission-id>
+clinmesh inpatient clinical-fact-ledger --admission-id <admission-id> --as-of 2026-08-24T10:00:00+08:00
+clinmesh inpatient clinical-fact-verification record --input @fact-verification.json --idempotency-key <key>
 clinmesh inpatient clinical-quality --admission-id <admission-id> --gate inpatient-discharge
 clinmesh inpatient order-set-drafts --admission-id <admission-id> --template-id cin-perioperative-hydration
 clinmesh inpatient confirm-diagnosis --input @diagnoses.json --idempotency-key <key>

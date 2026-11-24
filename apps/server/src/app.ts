@@ -4,6 +4,15 @@ import {
 } from '@clinmesh/contracts/clinical-quality'
 import { ClinicalQualityError, ClinicalQualityReadError } from './application/clinical-quality-service.ts'
 import {
+  ClinicalFactLedgerError,
+  buildFactQueryFromHttp,
+  parseClinicalFactLedgerFilterParams,
+} from './application/clinical-fact-ledger-service.ts'
+import {
+  clinicalFactLedgerFilterQuerySchema,
+  recordClinicalFactVerificationBodySchema,
+} from '@clinmesh/contracts/clinical-fact-ledger'
+import {
   inpatientRiskAssessmentInputSchema,
   inpatientVitalSignsInputSchema,
   outpatientRiskAssessmentInputSchema,
@@ -276,6 +285,14 @@ function invalidInputResponse(context: Context, message = 'The request is invali
   return context.json(apiErrorBody(context, 'INVALID_INPUT', message), 400)
 }
 
+const verificationRequestBodySchema = z.union([
+  z.object({
+    expectedVersions: z.record(z.string(), z.string()).optional(),
+    input: recordClinicalFactVerificationBodySchema,
+  }).strict().transform(body => body.input),
+  recordClinicalFactVerificationBodySchema,
+])
+
 function apiErrorResponse(
   context: Context,
   error: unknown,
@@ -289,6 +306,7 @@ function apiErrorResponse(
   }
     if (
       error instanceof IdentityError
+      || error instanceof ClinicalFactLedgerError
       || error instanceof ClinicalQualityReadError
       || error instanceof ModelUsagePolicyError
       || error instanceof InsuranceError
@@ -750,6 +768,10 @@ export function createApp(options: CreateAppOptions = {}): Hono {
             session.actor, query.caseId, doctorCaseHistoryDetailInputSchema.parse(query.input)))
           if (query.operationId === 'outpatient.clinical-scores.read') return context.json(workflow.clinicalScores.readOutpatientClinicalScores(
             session.actor, query.caseId))
+          if (query.operationId === 'outpatient.clinical-fact-ledger.read') {
+            const filter = parseClinicalFactLedgerFilterParams(clinicalFactLedgerFilterQuerySchema.parse(query.input))
+            return context.json(workflow.clinicalFactLedger.readOutpatientLedger(session.actor, query.caseId, filter))
+          }
           if (query.operationId === 'outpatient.guideline-topics.read') return context.json(workflow.clinicalScores.readOutpatientGuidelineTopics(
             session.actor, query.caseId, guidelineTopicQuerySchema.parse(query.input).topicId))
           if (query.operationId === 'outpatient.clinical-quality.read') {
@@ -1937,6 +1959,23 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(inpatient.readClinicalScores(await actor(context), context.req.param('admissionId')))
       } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/clinical-fact-ledger', async context => {
+      try {
+        const filter = buildFactQueryFromHttp({
+          single: context.req.query(),
+          multi: key => context.req.queries(key),
+        })
+        return context.json(inpatient.readClinicalFactLedger(await actor(context), context.req.param('admissionId'), filter))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/clinical-fact-verifications', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = verificationRequestBodySchema.parse(await context.req.json())
+        const idempotencyKey = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+        return context.json(inpatient.recordClinicalFactVerification(await actor(context), context.req.param('admissionId'), body, idempotencyKey))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/clinical-quality', async context => {
       try {
         const rawQuery = context.req.query()
@@ -2480,6 +2519,35 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           await actor(context),
           context.req.param('caseId'),
         ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/outpatient/cases/:caseId/clinical-fact-ledger', async (context) => {
+      try {
+        const filter = buildFactQueryFromHttp({
+          single: context.req.query(),
+          multi: key => context.req.queries(key),
+        })
+        return context.json(workflow.clinicalFactLedger.readOutpatientLedger(
+          await actor(context),
+          context.req.param('caseId'),
+          filter,
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/outpatient/cases/:caseId/clinical-fact-verifications', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = verificationRequestBodySchema.parse(await context.req.json())
+        return context.json(workflow.clinicalFactLedger.recordOutpatientVerification({
+          context: await actor(context),
+          caseId: context.req.param('caseId'),
+          body,
+          idempotencyKey: idempotencyKey(context),
+        }))
       } catch (error) {
         return apiErrorResponse(context, error)
       }

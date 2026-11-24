@@ -12,6 +12,14 @@ import {
   outpatientRiskAssessmentResponseSchema,
 } from './clinical-scores.ts'
 import {
+  clinicalFactLedgerSchema,
+  clinicalFactVerificationResponseSchema,
+  inpatientClinicalFactLedgerQuerySchema,
+  inpatientClinicalFactVerificationInputSchema,
+  outpatientClinicalFactLedgerQuerySchema,
+  outpatientClinicalFactVerificationInputSchema,
+} from './clinical-fact-ledger.ts'
+import {
   guidelineTopicBundleSchema,
   inpatientGuidelineTopicsInputSchema,
   outpatientGuidelineTopicsInputSchema,
@@ -1415,6 +1423,25 @@ const rawOperationRuntimeDefinitions = [
     output: clinicalScoreBundleSchema,
   },
   {
+    http: { method: 'GET', path: '/api/his/v1/outpatient/cases/:caseId/clinical-fact-ledger' },
+    id: 'doctor.case.clinical-fact-ledger.read',
+    input: outpatientClinicalFactLedgerQuerySchema,
+    output: clinicalFactLedgerSchema,
+  },
+  {
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/outpatient/cases/:caseId/clinical-fact-verifications',
+      encodeBody: (raw: unknown) => {
+        const { caseId: _id, ...input } = outpatientClinicalFactVerificationInputSchema.parse(raw)
+        return { input }
+      },
+    },
+    id: 'doctor.case.clinical-fact-verification.record',
+    input: outpatientClinicalFactVerificationInputSchema,
+    output: clinicalFactVerificationResponseSchema,
+  },
+  {
     http: { method: 'GET', path: '/api/his/v1/doctor/cases/:caseId/guideline-topics' },
     id: 'doctor.case.guideline-topics.read',
     input: outpatientGuidelineTopicsInputSchema,
@@ -2028,6 +2055,8 @@ const rawOperationRuntimeDefinitions = [
     output: inpatientFullClinicalResponseSchema,
   },
   admQuery('inpatient.clinical-scores.read', '/clinical-scores', clinicalScoreBundleSchema),
+  admQuery('inpatient.clinical-fact-ledger.read', '/clinical-fact-ledger', clinicalFactLedgerSchema, inpatientClinicalFactLedgerQuerySchema),
+  admOp('inpatient.clinical-fact-verification.record', '/clinical-fact-verifications', inpatientClinicalFactVerificationInputSchema, clinicalFactVerificationResponseSchema),
   admQuery('inpatient.clinical-quality.read', '/clinical-quality', clinicalQualityCheckSchema, inpatientClinicalQualityInputSchema),
   admQuery('inpatient.order-set-drafts.read', '/order-set-drafts', orderSetDraftBundleSchema, inpatientOrderSetDraftsInputSchema),
   admOp('inpatient.diagnosis.confirm', '/diagnoses/confirm', inpatientDiagnosisConfirmInputSchema, inpatientFullClinicalResponseSchema),

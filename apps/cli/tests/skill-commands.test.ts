@@ -1254,12 +1254,16 @@ it('keeps clinical risk assessment, nursing vitals, and deterministic clinical s
   for (const [skill, path, id] of [
     [doctorSkill, 'catalog order-set-templates list', 'catalog.order-set-templates.list'],
     [doctorSkill, 'doctor case clinical-scores get', 'doctor.case.clinical-scores.read'],
+    [doctorSkill, 'doctor case clinical-fact-ledger get', 'doctor.case.clinical-fact-ledger.read'],
+    [doctorSkill, 'doctor case clinical-fact-verification record', 'doctor.case.clinical-fact-verification.record'],
     [doctorSkill, 'doctor case guideline-topics get', 'doctor.case.guideline-topics.read'],
     [doctorSkill, 'doctor case order-set-drafts get', 'doctor.case.order-set-drafts.read'],
     [doctorSkill, 'encounter risk-assessment record', 'encounter.risk-assessment.record'],
     [inpatientSkill, 'inpatient record-vital-signs', 'inpatient.vital-signs.record'],
     [inpatientSkill, 'inpatient record-risk-assessment', 'inpatient.risk-assessment.record'],
     [inpatientSkill, 'inpatient clinical-scores', 'inpatient.clinical-scores.read'],
+    [inpatientSkill, 'inpatient clinical-fact-ledger', 'inpatient.clinical-fact-ledger.read'],
+    [inpatientSkill, 'inpatient clinical-fact-verification record', 'inpatient.clinical-fact-verification.record'],
     [inpatientSkill, 'inpatient guideline-topics', 'inpatient.guideline-topics.read'],
     [inpatientSkill, 'inpatient order-set-drafts', 'inpatient.order-set-drafts.read'],
   ] as const) {

@@ -238,6 +238,7 @@ describe('ClinMesh DSH Agent contracts', () => {
     ]))
     for (const op of [
       'outpatient.clinical-scores.read',
+      'outpatient.clinical-fact-ledger.read',
       'outpatient.guideline-topics.read',
       'outpatient.clinical-quality.read',
       'outpatient.order-set-drafts.read',
@@ -248,6 +249,7 @@ describe('ClinMesh DSH Agent contracts', () => {
     expect(agentToolsForContext('outpatient-doctor', 'consultation', 'diagnosis').map(tool => tool.operationId))
       .toEqual(expect.arrayContaining([
         'outpatient.clinical-scores.read',
+        'outpatient.clinical-fact-ledger.read',
         'outpatient.guideline-topics.read',
         'outpatient.clinical-quality.read',
         'outpatient.order-set-drafts.read',
@@ -261,15 +263,20 @@ describe('ClinMesh DSH Agent contracts', () => {
         'inpatient.surgery.read',
         'inpatient.angiography-reports.read',
         'inpatient.clinical-scores.read',
+        'inpatient.clinical-fact-ledger.read',
         'inpatient.guideline-topics.read',
         'inpatient.clinical-quality.read',
       ]))
+    expect(agentToolsForContext('ward-nurse', 'inpatient', 'surgery').map(tool => tool.operationId))
+      .not.toContain('inpatient.clinical-fact-ledger.read')
     expect(agentToolsForContext('ward-nurse', 'inpatient', 'surgery').map(tool => tool.operationId))
       .toContain('inpatient.surgery.read')
     expect(agentToolsForContext('inpatient-doctor', 'inpatient', 'orders').map(tool => tool.operationId))
       .toContain('inpatient.order-set-drafts.read')
     expect(agentToolsForContext('inpatient-doctor', 'inpatient', 'orders').map(tool => tool.operationId))
       .not.toContain('inpatient.surgery.read')
+    expect(agentToolsForContext('medical-records', 'inpatient', 'record').map(tool => tool.operationId))
+      .not.toContain('inpatient.clinical-fact-ledger.read')
     expect(agentToolsForContext('medical-records', 'inpatient', 'record').map(tool => tool.operationId))
       .toEqual(expect.arrayContaining([
         'inpatient.surgery.read',
