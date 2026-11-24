@@ -11,6 +11,10 @@ import { persona, startConsultationCase, StubSyntheaProvider } from '../../serve
 import { test as base, expect } from './fixtures.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
 import { collectOutpatientInvestigation } from './outpatient-investigation-payment.fixture.ts'
+import {
+  satisfyOutpatientOrderPrerequisitesAndRefresh,
+  stubOutpatientQualityChatPayload,
+} from './outpatient-order-gate.fixture.ts'
 import { expectConsultationStarted, openQueue } from './queue-overlay.fixture.ts'
 
 const test = base.extend<{ investigationCase: Awaited<ReturnType<typeof startConsultationCase>> }>({
@@ -37,6 +41,8 @@ const test = base.extend<{ investigationCase: Awaited<ReturnType<typeof startCon
           }
         }(),
         chatCompletionsProvider: { completeJson: async input => {
+          const quality = stubOutpatientQualityChatPayload(input)
+          if (quality !== undefined) return { model: input.model, content: JSON.stringify(quality) }
           expect(input.schemaName).toBe('patient_persona')
           return { model: input.model, content: JSON.stringify(persona) }
         } },
@@ -70,6 +76,7 @@ test('keeps manual laboratory drafts across reload, recovers partial success aft
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await expectConsultationStarted(page)
+  await satisfyOutpatientOrderPrerequisitesAndRefresh(page, browserApp.origin, investigationCase.outpatientCaseId)
   await openWorkspaceTab(page, '检验检查')
   const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
   const pending = laboratory.getByRole('region', { name: '待开具检验', exact: true })
@@ -164,6 +171,7 @@ test('keeps an unknown laboratory confirmation recoverable after logout without 
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await expectConsultationStarted(page)
+  await satisfyOutpatientOrderPrerequisitesAndRefresh(page, browserApp.origin, investigationCase.outpatientCaseId)
   await openWorkspaceTab(page, '检验检查')
   const pending = page.getByRole('region', { name: '待开具检验', exact: true })
   const readCase = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
@@ -232,6 +240,7 @@ test('releases a rejected stale encounter intent and confirms the retained labor
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await expectConsultationStarted(page)
+  await satisfyOutpatientOrderPrerequisitesAndRefresh(page, browserApp.origin, investigationCase.outpatientCaseId)
   await openWorkspaceTab(page, '检验检查')
   const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
   const pending = laboratory.getByRole('region', { name: '待开具检验', exact: true })
@@ -308,6 +317,7 @@ test('a doctor cancels an incompatible laboratory request after reviewing its fa
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await expectConsultationStarted(page)
+  await satisfyOutpatientOrderPrerequisitesAndRefresh(page, browserApp.origin, investigationCase.outpatientCaseId)
   await openWorkspaceTab(page, '检验检查')
   const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
   const readCase = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
@@ -378,6 +388,7 @@ test('keeps the current category when another category finishes issuing a reques
     await page.getByRole('button', { name: /^选择病例 / }).click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
     await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
+    await satisfyOutpatientOrderPrerequisitesAndRefresh(page, browserApp.origin, investigationCase.outpatientCaseId)
     await openWorkspaceTab(page, '检验检查')
     const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
     // 弹窗合同：先在弹窗内加入检验草稿，再发起开具并用路由闸门挂起请求。
@@ -431,6 +442,7 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await expectConsultationStarted(page)
+  await satisfyOutpatientOrderPrerequisitesAndRefresh(page, browserApp.origin, investigationCase.outpatientCaseId)
   await openWorkspaceTab(page, '检验检查')
   const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
   const readCase = async () => {

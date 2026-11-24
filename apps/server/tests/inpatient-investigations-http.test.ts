@@ -18,6 +18,7 @@ import { applyMigrations, canonicalStateHash, openClinMeshDatabase } from '../sr
 import { z } from 'zod'
 import { repairImagingAssets } from '../src/infrastructure/imaging-assets/imaging-asset-store.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import { satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -746,9 +747,11 @@ describe('住院检查检验 HTTP 合同', () => {
 
   it('78旧库非空申请、草稿、报告确认、快照、回执与outbox保真迁移，失败回滚并恢复外键', async () => {
     const s = await setup(), opDoctor = s.visit.doctor
-    const save = await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/imaging-request/draft`, mutation(opDoctor, { expectedVersions: { [`Encounter/${s.visit.encounterId}`]: '3' }, input: { expectedDraftVersion: 0, serviceId: 'imaging-chest-radiograph', indication: '合成门诊存量检查' } }, 'PUT'))
+    const prereq = await satisfyOutpatientOrderPrerequisites(s.runtime, opDoctor, s.visit.outpatientCaseId)
+    const opExpectedVersions = { [`Encounter/${s.visit.encounterId}`]: prereq.encounterVersion }
+    const save = await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/imaging-request/draft`, mutation(opDoctor, { expectedVersions: opExpectedVersions, input: { expectedDraftVersion: 0, serviceId: 'imaging-chest-radiograph', indication: '合成门诊存量检查' } }, 'PUT'))
     expect(save.status).toBe(200)
-    const issue = await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/imaging-request/actions/issue`, mutation(opDoctor, { expectedVersions: { [`Encounter/${s.visit.encounterId}`]: '3' }, input: { expectedDraftVersion: 1 } }))
+    const issue = await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/imaging-request/actions/issue`, mutation(opDoctor, { expectedVersions: opExpectedVersions, input: { expectedDraftVersion: 1 } }))
     expect(issue.status).toBe(200)
     const imaging = issueImagingRequestResponseSchema.parse(await issue.json()).data.request
     await payOutpatientInvestigation(s.runtime, { caseId: s.visit.outpatientCaseId, category: 'imaging', chargeItemId: imaging.billing!.chargeItemId })
@@ -756,9 +759,9 @@ describe('住院检查检验 HTTP 合同', () => {
     const detail = await (await s.request(opDoctor, `/api/his/v1/doctor/cases/${s.visit.outpatientCaseId}`)).json()
     const request = detail.imagingRequests.requests[0]
     expect((await s.runtime.app.request(`/api/his/v1/imaging-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/acknowledge`, mutation(opDoctor, { expectedVersions: { [`DiagnosticReport/${request.report.diagnosticReportId}`]: '1' }, input: { expectedRequestVersion: request.version } }))).status).toBe(200)
-    const labDraft = await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/laboratory-request/draft`, mutation(opDoctor, { expectedVersions: { [`Encounter/${s.visit.encounterId}`]: '3' }, input: { expectedDraftVersion: 0, catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' } }, 'PUT'))
+    const labDraft = await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/laboratory-request/draft`, mutation(opDoctor, { expectedVersions: opExpectedVersions, input: { expectedDraftVersion: 0, catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' } }, 'PUT'))
     expect(labDraft.status).toBe(200)
-    const labIssue = await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/laboratory-request/actions/issue`, mutation(opDoctor, { expectedVersions: { [`Encounter/${s.visit.encounterId}`]: '3' }, input: { expectedDraftVersion: 1 } }))
+    const labIssue = await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/laboratory-request/actions/issue`, mutation(opDoctor, { expectedVersions: opExpectedVersions, input: { expectedDraftVersion: 1 } }))
     expect(labIssue.status).toBe(200)
     const laboratory = issueLaboratoryRequestResponseSchema.parse(await labIssue.json()).data.request
     await payOutpatientInvestigation(s.runtime, { caseId: s.visit.outpatientCaseId, category: 'laboratory', chargeItemId: laboratory.billing!.chargeItemId })

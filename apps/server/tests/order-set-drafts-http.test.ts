@@ -31,6 +31,7 @@ import { startSyntheticCaseResultSchema, syntheticCaseInstanceSchema } from '@cl
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import { signInitialOutpatientDocument } from './fixtures/outpatient-order-gate.ts'
 
 type ClinMeshRuntime = Awaited<ReturnType<typeof createClinMeshRuntime>>
 
@@ -601,6 +602,7 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
       ).get(visit.outpatientCaseId) as { count: number }).count,
     }).toEqual(countBefore)
 
+    await signInitialOutpatientDocument(current(), cookies.doctor, visit.outpatientCaseId)
     const diagDraft = diagnosisDraftResponseSchema.parse(await (await postJson(
       `/api/his/v1/encounters/${visit.encounterId}/diagnosis/draft`,
       cookies.doctor,

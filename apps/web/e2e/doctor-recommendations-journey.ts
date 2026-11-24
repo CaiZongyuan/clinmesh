@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { syntheticGuidelineDocument, syntheticGuidelineMarker, syntheticGuidelineParagraph } from '../../server/tests/fixtures/guideline-corpus.ts'
 import { recommendationProcessingMarker, recommendationReasoningMarker } from './doctor-recommendations-fixture.ts'
+import { signInitialOutpatientRecordInWorkspace } from './outpatient-order-gate.fixture.ts'
 
 export async function runRecommendationJourney({ page, read, collectLaboratory }: {
   page: Page; read: () => Promise<DoctorCaseDetail>; collectLaboratory: (chargeItemId: string) => Promise<void>
@@ -116,8 +117,12 @@ export async function runRecommendationJourney({ page, read, collectLaboratory }
   await edit.getByRole('spinbutton', { name: '疗程（天）', exact: true }).fill('30')
   await edit.getByRole('spinbutton', { name: '数量', exact: true }).fill('30')
   await edit.getByRole('button', { name: '保留本次调整', exact: true }).click()
-  await expect(issuePrescription).toBeEnabled()
+  await expect(issuePrescription).toBeDisabled()
+  await expect(prescription.getByRole('button', { name: '去签署首版病历', exact: true })).toBeVisible()
+  await prescription.getByRole('button', { name: '去签署首版病历', exact: true }).click()
   await saveHistory(`${originalHistory}\n合成补充资料：再次核对处方用法用量。`)
+  await signInitialOutpatientRecordInWorkspace(page)
+  await expect.poll(async () => (await read()).clinicalDocument?.signed.length).toBe(1)
   await openWorkspaceTab(page, '处方')
   await prescription.getByRole('button', { name: '刷新', exact: true }).click()
   await expect(issuePrescription).toBeEnabled()

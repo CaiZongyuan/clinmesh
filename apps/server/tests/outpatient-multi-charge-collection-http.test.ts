@@ -14,6 +14,7 @@ import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider, useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
+import { satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
@@ -65,6 +66,7 @@ async function setup() {
     }, doctor)
     expect(startedVisit.status, await startedVisit.clone().text()).toBe(200)
     startVisitResponseSchema.parse(await startedVisit.json())
+    await satisfyOutpatientOrderPrerequisites(runtime, doctor, visit.outpatientCaseId)
     for (const catalogItemId of ['lab-cbc', 'lab-crp']) {
       const detail = await readDetailFor(visit.outpatientCaseId)
       const expectedVersions = { [`Encounter/${visit.encounterId}`]: detail.encounter.versionId }

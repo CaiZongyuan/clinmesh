@@ -547,7 +547,7 @@ describe('HIS operation catalog', () => {
       const operation = getHisOperation(id as string)
       return [operation.id, operation.mode, operation.risk, operation.roles]
     })).toEqual(expected)
-    expect(getHisOperation('encounter.laboratory-request.issue').version).toBe(2)
+    expect(getHisOperation('encounter.laboratory-request.issue').version).toBe(3)
     expect(getHisOperation('laboratory-request.cancel').version).toBe(2)
     expect(getHisOperation('laboratory-request.retry-generation').version).toBe(5)
     for (const id of [
@@ -949,7 +949,7 @@ it('publishes read-only clinical quality preflight queries and clinicalOverride 
     acknowledgedAlerts: ['DISCHARGE_ANTIPLATELET_MISSING' as const],
   }
   const complete = getHisOperation('encounter.complete')
-  expect(complete.version).toBe(2)
+  expect(complete.version).toBe(3)
   expect(complete.http.encodeBody?.({ encounterId: 'enc-1', encounterVersion: '4', clinicalOverride }))
     .toEqual({ expectedVersions: { 'Encounter/enc-1': '4' }, input: { clinicalOverride } })
 
@@ -958,7 +958,7 @@ it('publishes read-only clinical quality preflight queries and clinicalOverride 
   expect(dischargeIssue.http.encodeBody?.({ admissionId: 'adm-1', encounterVersion: '3', reason: '好转出院', clinicalOverride }))
     .toEqual({ input: { encounterVersion: '3', reason: '好转出院', clinicalOverride } })
 
-  expect(getHisOperation('encounter.prescription.issue').version).toBe(6)
+  expect(getHisOperation('encounter.prescription.issue').version).toBe(7)
   expect(getHisOperation('doctor.case.get').version).toBe(22)
   expect(getHisOperation('doctor.completed-cases.get').version).toBe(7)
   expect(getHisOperation('doctor.case.history.read').version).toBe(3)

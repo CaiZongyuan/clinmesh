@@ -16,6 +16,7 @@ import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
 import {
   caseBundle, createImagingRuntime, generateCase, lungCancer, mutation, prepareImaging, signIn, snomed, startConsultation,
 } from './fixtures/imaging-scenario.ts'
+import { satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
@@ -67,7 +68,8 @@ async function setup() {
   const visit = await startConsultation(runtime, admin, sourceCaseId)
   let cashier = await signIn(runtime, 'cashier@demo.clinmesh.local')
   let doctor = visit.doctor
-  const expectedVersions = { [`Encounter/${visit.encounterId}`]: '3' }
+  const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctor, visit.outpatientCaseId)
+  const expectedVersions = { [`Encounter/${visit.encounterId}`]: gate.encounterVersion }
   const readCase = async () => doctorCaseDetailSchema.parse(await (await runtime.app.request(`/api/his/v1/doctor/cases/${visit.outpatientCaseId}`, { headers: { cookie: doctor } })).json())
   const readBill = async () => billingCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${visit.outpatientCaseId}`, { headers: { cookie: cashier } })).json())
   const readResourceCounts = async () => {

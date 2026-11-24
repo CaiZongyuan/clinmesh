@@ -8,14 +8,14 @@
 
 门诊处方草稿是病例级 domain-native 聚合，保存 1–8 条受控药品、单次剂量、频次、受控给药途径（`routeCode`）、疗程与数量，并以 `Encounter` expected version 和单调递增的 `expectedDraftVersion` 执行 CAS 更新；临床目录通过 `prescriptionConclusionSupported` 声明当前 Epoch 是否启用独立用药结论能力。草稿支持同窗连续加入、逐行编辑与移除（已加入行的本地未保存修改必须先保存，才允许提交正式开具或应用 Agent 建议覆盖），保存或删除草稿均不创建 FHIR `MedicationRequest`。
 
-门诊药品来源显式划分为默认选中的「本院药房」（当前启用的门诊可用院内常备药目录）与「国家参考目录」（电子外延处方品规，在 `ReferenceDataService` 读取边界按剂型与通用名确定性派生 `defaultRouteCode` 与 `allowedRouteCodes`，不改动底层 Reference SQLite 物理列与发布 `content_hash`）。单张处方在草稿保存、直接正式开具与建议待办确认三个入口统一强制单一目录来源，混选两类来源一律返回 `CATALOG_CONFLICT`（`PRESCRIPTION_MIXED_CATALOG_SOURCES`）。正式开具按整张处方单笔 Command 原子执行：事务内重新读取目录与最新已确认正式诊断，核验药品联合禁忌、诊断适应证、有效药物过敏、单次／单日剂量、频次、允许给药途径（超范围返回 `PRESCRIPTION_ROUTE_NOT_ALLOWED`）、疗程与总数量（任一药品不满足即整单回滚并保留全部待开行；网络超时等结果未知时通过限定病例与 `prescription` 类别的医生 Session 回执接口恢复），由 `prescription_authorship` 通过 `workspace_actor` 与 `Practitioner Role` 复合外键记录负责身份，清空草稿正文并递增草稿版本：
+门诊药品来源显式划分为默认选中的「本院药房」（当前启用的门诊可用院内常备药目录）与「国家参考目录」（电子外延处方品规，在 `ReferenceDataService` 读取边界按剂型与通用名确定性派生 `defaultRouteCode` 与 `allowedRouteCodes`，不改动底层 Reference SQLite 物理列与发布 `content_hash`）。单张处方在草稿保存、直接正式开具与建议待办确认三个入口统一强制单一目录来源，混选两类来源一律返回 `CATALOG_CONFLICT`（`PRESCRIPTION_MIXED_CATALOG_SOURCES`）。正式开具按整张处方单笔 Command 原子执行：现代 `Consultation` 门诊病例统一先核验已签署首版根病历（`CLINICAL_DOCUMENT_UNSIGNED`）与有效已确认主诊断（`DIAGNOSIS_UNCONFIRMED`，见[门诊业务流程](outpatient-workflows.md#专科动态病史策略与不可变文书签署修订)），事务内重新读取目录与最新已确认正式诊断，核验药品联合禁忌、诊断适应证、有效药物过敏、单次／单日剂量、频次、允许给药途径（超范围返回 `PRESCRIPTION_ROUTE_NOT_ALLOWED`）、疗程与总数量（任一药品不满足即整单回滚并保留全部待开行；网络超时等结果未知时通过限定病例与 `prescription` 类别的医生 Session 回执接口恢复），由 `prescription_authorship` 通过 `workspace_actor` 与 `Practitioner Role` 复合外键记录负责身份，清空草稿正文并递增草稿版本：
 
 - **本院药房处方**：原子创建带稳定处方号的 `Prescription` 聚合、每种药品一条 `active` FHIR R5 `MedicationRequest`、药品 `ChargeItem` 与 `Charge Record`；当门诊 `Encounter` 已完诊且处方保持 `signed` 未撤回时向收费员开放收费与医保结算，全额收齐后移交本院药房调剂发药。
 - **国家参考目录外延处方**：同样创建稳定处方号、`Prescription` 与 `MedicationRequest`，满足门诊完诊的“用药结论已记录”门禁并支持未撤回时按统一规则撤回，但不创建 `0 元` `ChargeItem` 或 `Charge Record`，不进入本院收费队列与本院药房发药流转。分轨取舍见[门诊本院药房与国家外延处方分轨决策](../decisions/implemented/architecture/2026-11-05-outpatient-external-prescription-split.md)。
 
 ### 无需用药结论与受控处方撤回
 
-`无需用药` 结论是独立的 domain-native 正式事实，记录负责 Actor、`Practitioner Role` 与虚拟业务时间，绝不用空 `Prescription` 或空 `MedicationRequest` 冒充。有效未撤回处方与无需用药结论严格互斥；确认无需用药同步清空处方草稿并递增草稿版本，已开具处方在合法撤回后方可改记无需用药结论。
+`无需用药` 结论是独立的 domain-native 正式事实（现代 `Consultation` 门诊同样受首版病历签署与主诊断确认前置门禁约束），记录负责 Actor、`Practitioner Role` 与虚拟业务时间，绝不用空 `Prescription` 或空 `MedicationRequest` 冒充。有效未撤回处方与无需用药结论严格互斥；确认无需用药同步清空处方草稿并递增草稿版本，已开具处方在合法撤回后方可改记无需用药结论。
 
 处方撤回通过追加不可变的 `prescription_withdrawal` 事实表达（`prescription.withdraw`），严禁物理删除或覆盖原 `Prescription`。仅当处方处于 `signed` 或 `paid`、尚未发生任何药房调剂、不存在未知或部分收款、且不存在有效医保分配时，才允许携带 `Prescription` expected version 与全部关联 `MedicationRequest` expected versions 执行撤回（即使基金与个人账户支付均为零的医保分配也可能已累计患者年度起付线，须先由收费员撤销原医保待遇并追加年度补偿后才能撤回处方）。撤回成功后，全部 `MedicationRequest` 更新为 `cancelled` 并保留完整 FHIR 历史，`Prescription` 版本递增且读模型投影为 `withdrawn`；未收款的药品费用移出收费员待收队列，已全额收款的记录保留原支付历史且不隐式触发退款（由收费员按需办理费用冲减与原款退回），药房队列、审核与发药入口全面拒绝已撤回处方。
 

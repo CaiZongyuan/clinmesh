@@ -1,5 +1,18 @@
-import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contracts/his'
+import {
+  clinicalDocumentFieldSchema,
+  type ClinicalDocumentContent,
+  type DoctorCaseDetail,
+} from '@clinmesh/contracts/his'
 import { emptyAuxiliaryExamination } from './imaging-report-summary.ts'
+
+export function hasClinicalDocumentContentDifference(
+  left: ClinicalDocumentContent,
+  right: ClinicalDocumentContent,
+): boolean {
+  return clinicalDocumentFieldSchema.options.some(
+    field => (left[field] ?? '').trim() !== (right[field] ?? '').trim(),
+  )
+}
 
 export function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocumentContent {
   const vitals = detail.presentation?.vitalSigns

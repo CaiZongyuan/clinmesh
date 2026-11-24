@@ -52,6 +52,7 @@ import { OutboxRepository } from '../src/infrastructure/sqlite/outbox-repository
 import { CommandExecutor } from '../src/application/command-executor.ts'
 import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
+import { satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 import type {
   JsonChatCompletionInput,
@@ -1338,6 +1339,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     )
     expect(startVisit.status).toBe(200)
     startVisitResponseSchema.parse(await startVisit.json())
+    const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, startedCommand.data.outpatientCaseId)
     const encounterReference = `Encounter/${startedCommand.data.encounterId}`
     const commandHeaders = () => ({
       'content-type': 'application/json',
@@ -1468,7 +1470,7 @@ describe('Synthetic Case generation HTTP contract', () => {
         `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/draft`,
         {
           body: JSON.stringify({
-            expectedVersions: { [encounterReference]: '3' },
+            expectedVersions: { [encounterReference]: gate.encounterVersion },
             input: {
               catalogItemId,
               expectedDraftVersion,
@@ -1487,7 +1489,7 @@ describe('Synthetic Case generation HTTP contract', () => {
         `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/actions/issue`,
         {
           body: JSON.stringify({
-            expectedVersions: { [encounterReference]: '3' },
+            expectedVersions: { [encounterReference]: gate.encounterVersion },
             input: { expectedDraftVersion },
           }),
           headers: commandHeaders(),
@@ -1653,7 +1655,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/actions/issue`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '3' },
+          expectedVersions: { [encounterReference]: gate.encounterVersion },
           input: { expectedDraftVersion: duplicateDraft.draftVersion },
         }),
         headers: commandHeaders(),
@@ -1951,7 +1953,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '3' },
+          expectedVersions: { [encounterReference]: gate.encounterVersion },
           input: {
             catalogItemId: maleOnlyService.id,
             expectedDraftVersion: duplicateDraft.draftVersion,
@@ -2150,7 +2152,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '3' },
+          expectedVersions: { [encounterReference]: gate.encounterVersion },
           input: {
             catalogItemId: 'lab-fever-panel',
             expectedDraftVersion: adultIssue.draftVersion,
@@ -2612,12 +2614,13 @@ describe('Synthetic Case generation HTTP contract', () => {
       contraindicatedAllergyCodes: [],
       referenceConcept: exactConcept,
     }))
+    const replayGate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, replayed.outpatient_case_id)
     const replayEncounterReference = `Encounter/${replayed.encounter_id}`
     const replayExactDraftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${replayed.encounter_id}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [replayEncounterReference]: '3' },
+          expectedVersions: { [replayEncounterReference]: replayGate.encounterVersion },
           input: {
             catalogItemId: 'lab-cbc',
             expectedDraftVersion: 0,
@@ -2644,7 +2647,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       `/api/his/v1/encounters/${replayed.encounter_id}/laboratory-request/actions/issue`,
       {
         body: JSON.stringify({
-          expectedVersions: { [replayEncounterReference]: '3' },
+          expectedVersions: { [replayEncounterReference]: replayGate.encounterVersion },
           input: { expectedDraftVersion: replayExactDraft.draftVersion },
         }),
         headers: {
@@ -2666,7 +2669,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       `/api/his/v1/encounters/${replayed.encounter_id}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [replayEncounterReference]: '3' },
+          expectedVersions: { [replayEncounterReference]: replayGate.encounterVersion },
           input: {
             catalogItemId: 'lab-crp',
             expectedDraftVersion: replayExactIssue.draftVersion,
@@ -2690,7 +2693,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       `/api/his/v1/encounters/${replayed.encounter_id}/laboratory-request/actions/issue`,
       {
         body: JSON.stringify({
-          expectedVersions: { [replayEncounterReference]: '3' },
+          expectedVersions: { [replayEncounterReference]: replayGate.encounterVersion },
           input: { expectedDraftVersion: replayDraft.draftVersion },
         }),
         headers: {
@@ -2725,7 +2728,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       `/api/his/v1/encounters/${replayed.encounter_id}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [replayEncounterReference]: '3' },
+          expectedVersions: { [replayEncounterReference]: replayGate.encounterVersion },
           input: {
             catalogItemId: adultPanelService.id,
             expectedDraftVersion: replayIssue.draftVersion,
@@ -2749,7 +2752,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       `/api/his/v1/encounters/${replayed.encounter_id}/laboratory-request/actions/issue`,
       {
         body: JSON.stringify({
-          expectedVersions: { [replayEncounterReference]: '3' },
+          expectedVersions: { [replayEncounterReference]: replayGate.encounterVersion },
           input: { expectedDraftVersion: replayAdultDraft.draftVersion },
         }),
         headers: {
@@ -2899,6 +2902,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       },
     )
     expect(startVisit.status).toBe(200)
+    const gate = await satisfyOutpatientOrderPrerequisites(runtime, doctorCookie, startedCommand.data.outpatientCaseId)
     const commandHeaders = () => ({
       'content-type': 'application/json',
       cookie: doctorCookie,
@@ -2910,7 +2914,7 @@ describe('Synthetic Case generation HTTP contract', () => {
         `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/draft`,
         {
           body: JSON.stringify({
-            expectedVersions: { [`Encounter/${startedCommand.data.encounterId}`]: '3' },
+            expectedVersions: { [`Encounter/${startedCommand.data.encounterId}`]: gate.encounterVersion },
             input: {
               catalogItemId,
               expectedDraftVersion,
@@ -2929,7 +2933,7 @@ describe('Synthetic Case generation HTTP contract', () => {
         `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/actions/issue`,
         {
           body: JSON.stringify({
-            expectedVersions: { [`Encounter/${startedCommand.data.encounterId}`]: '3' },
+            expectedVersions: { [`Encounter/${startedCommand.data.encounterId}`]: gate.encounterVersion },
             input: { expectedDraftVersion },
           }),
           headers: commandHeaders(),
@@ -2941,7 +2945,10 @@ describe('Synthetic Case generation HTTP contract', () => {
       await startLaboratoryRequest(runtime, startedCommand.data.outpatientCaseId, issued.request)
       return issued
     }
-    return { runtime, briefProvider, doctorCookie, caseId, startedCommand, commandHeaders, saveLaboratoryDraft, issueLaboratory }
+    return {
+      runtime, briefProvider, doctorCookie, caseId, startedCommand, commandHeaders,
+      encounterVersion: gate.encounterVersion, saveLaboratoryDraft, issueLaboratory,
+    }
   }
 
   function unitObservation(code: string, unitCode: string, value: number) {
@@ -3177,7 +3184,11 @@ describe('Synthetic Case generation HTTP contract', () => {
     const request = (await issueLaboratory(draft.draftVersion)).request
     // 复原升级前已完成的失败尝试；通过共享失败 Command 保留 Task 与申请的一致状态。
     const outbox = new OutboxRepository(runtime.database)
-    const claim = outbox.claimNext({ leaseDurationMs: 60_000, leaseOwner: 'legacy-unit-fixture', now: new Date() })
+    let claim = outbox.claimNext({ leaseDurationMs: 60_000, leaseOwner: 'legacy-unit-fixture', now: new Date() })
+    while (claim?.kind === 'clinical-document.check-quality') {
+      outbox.complete(claim, 'completed', { maxAttempts: 3, maxRetryDelayMs: 0, now: new Date(), retryDelayMs: 0 })
+      claim = outbox.claimNext({ leaseDurationMs: 60_000, leaseOwner: 'legacy-unit-fixture', now: new Date() })
+    }
     expect(claim?.kind).toBe('laboratory.report-request')
     if (claim === undefined) throw new Error('The report event was not found')
     runtime.workflow.failLaboratoryResultGeneration({
@@ -3481,7 +3492,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${startedCommand.data.encounterId}`]: '3' },
+          expectedVersions: { [`Encounter/${startedCommand.data.encounterId}`]: '4' },
           input: {
             catalogItemId: publishedService.id,
             expectedDraftVersion: 5,
@@ -3501,7 +3512,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/actions/issue`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${startedCommand.data.encounterId}`]: '3' },
+          expectedVersions: { [`Encounter/${startedCommand.data.encounterId}`]: '4' },
           input: { expectedDraftVersion: 5 },
         }),
         headers: commandHeaders(),

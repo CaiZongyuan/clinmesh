@@ -7,6 +7,7 @@ import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { coronaryDocument, coronaryGuidelineParagraph, coronaryGuidelineTitle, coronaryHistory, coronaryReferenceRelease,
   CoronarySyntheaProvider, createCoronaryData, createCoronaryProvider, excludedCoronaryParagraph, startCoronaryCase } from '../../server/tests/fixtures/coronary-guidelines.ts'
 import { test, expect } from './fixtures.ts'
+import { signInitialOutpatientRecordInWorkspace } from './outpatient-order-gate.fixture.ts'
 
 test('冠心病本地PDF经真实Web依据展示、诊断和检验确认及人工补全处方', async ({ page, webRoot }) => {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-coronary-web-'))
@@ -41,6 +42,12 @@ test('冠心病本地PDF经真实Web依据展示、诊断和检验确认及人�
     await page.getByLabel('现病史', { exact: true }).fill(coronaryHistory)
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(coronaryHistory)
+    await signInitialOutpatientRecordInWorkspace(page, {
+      chiefComplaint: coronaryDocument.chiefComplaint,
+      disposition: coronaryDocument.disposition,
+      historyOfPresentIllness: coronaryHistory,
+    })
+    await expect.poll(async () => (await read()).clinicalDocument?.signed.length).toBe(1)
 
     await openWorkspaceTab(page, '诊断')
     const diagnosis = page.getByRole('region', { name: '待确认诊断', exact: true })

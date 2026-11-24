@@ -34,7 +34,7 @@ export const agentViewIdSchema = z.enum([
 ])
 
 /** 门诊医生病例页的诊疗栏目；页面标签、栏目切换 Tool 与 Tool 栏目归属共用这份枚举。 */
-export const doctorCaseSectionSchema = z.enum(['consultation', 'record', 'diagnosis', 'prescription', 'laboratory'])
+export const doctorCaseSectionSchema = z.enum(['consultation', 'record', 'diagnosis', 'laboratory', 'prescription'])
 
 export const inpatientStageSchema = z.enum(['admission', 'orders', 'investigations', 'surgery', 'transfer', 'fees', 'discharge', 'record', 'drg'])
 export type InpatientStage = z.infer<typeof inpatientStageSchema>

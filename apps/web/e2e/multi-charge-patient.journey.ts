@@ -4,6 +4,7 @@ import { startConsultationCase } from '../../server/tests/fixtures/consultation.
 import { readBill } from './billing-payments.fixture.ts'
 import { issueDoctorLaboratoryRequest, readDoctorBillingCase, type startInvestigationBillingServer } from './investigation-billing.fixture.ts'
 import { multiChargeDialog, previewSelectedCharges } from './multi-charge-payment.journey.ts'
+import { satisfyOutpatientOrderPrerequisitesAndRefresh } from './outpatient-order-gate.fixture.ts'
 import { openWorkspaceTab } from './workspace-tabs.fixture.ts'
 
 type BillingServer = Awaited<ReturnType<typeof startInvestigationBillingServer>>
@@ -40,7 +41,9 @@ export async function runMultiChargePatientJourney(cashier: Page, doctor: Page, 
   await doctor.getByRole('tab', { name: '待诊', exact: true }).click()
   await doctor.getByRole('button', { name: /^选择病例 / }).click()
   await doctor.getByRole('button', { name: '开始首诊', exact: true }).click()
+  await expect(doctor.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
   if (await rail.isVisible()) await rail.click()
+  await satisfyOutpatientOrderPrerequisitesAndRefresh(doctor, server.origin, second.outpatientCaseId)
   await openWorkspaceTab(doctor, '检验检查')
   const firstRequest = await issueDoctorLaboratoryRequest(doctor, { query: '白细胞', name: laboratoryName, code: '0100101A' })
   await doctor.getByRole('tab', { name: /^检验 \d+$/ }).click()

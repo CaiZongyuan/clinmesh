@@ -151,6 +151,8 @@ export function getWorkspaceErrorMessage(
   fallback = messages.serviceErrorDescription,
 ): string {
   if (!(error instanceof ApiClientError)) return fallback
+  if (error.code === 'CLINICAL_DOCUMENT_UNSIGNED') return messages.outpatientOrderGate_documentUnsigned
+  if (error.code === 'DIAGNOSIS_UNCONFIRMED') return messages.outpatientOrderGate_diagnosisUnconfirmed
   if (error.reason === 'CLINICAL_HISTORY_REQUIRED') return messages.clinicalHistoryRequiredError
   if (error.code === 'CLINICAL_QUALITY_RED_LINE' || error.code === 'CLINICAL_QUALITY_ALERT') {
     const red = error.code === 'CLINICAL_QUALITY_RED_LINE'

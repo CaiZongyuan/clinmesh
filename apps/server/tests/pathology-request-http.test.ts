@@ -5,10 +5,7 @@ import {
   apiErrorSchema,
   billingCaseSchema,
   casePathologyServiceCatalogSchema,
-  clinicalDocumentDraftResponseSchema,
-  clinicalDocumentSignPreviewResponseSchema,
-  confirmDiagnosisResponseSchema,
-  diagnosisDraftResponseSchema,
+  clinicalDocumentRevisionResponseSchema,
   doctorCaseDetailSchema,
   doctorCompletedCaseDetailSchema,
   encounterCompletionPreviewSchema,
@@ -32,6 +29,7 @@ import {
   startConsultation,
 } from './fixtures/imaging-scenario.ts'
 import { installSyntheticPathologySlides, type SyntheticSlide } from './fixtures/pathology-catalog.ts'
+import { satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 import {
   breastCaseBundle,
@@ -81,7 +79,29 @@ describe('Pathology consultation request HTTP contract', () => {
     const syntheticCaseId = await generateCase(created.runtime, administrator)
     if (slides.length > 0) await preparePathology(created.runtime, administrator, [syntheticCaseId])
     const visit = await startConsultation(created.runtime, administrator, syntheticCaseId)
-    return { ...created, ...visit, administrator, install, syntheticCaseId }
+    if (recording) {
+      const initial = await caseDetail(created.runtime, visit.doctor, visit.outpatientCaseId)
+      const paused = await created.runtime.app.request(
+        `/api/his/v1/encounters/${visit.encounterId}/consultation-recording/actions/control`,
+        mutation(visit.doctor, {
+          expectedVersions: { [`Encounter/${visit.encounterId}`]: initial.encounter.versionId },
+          input: { action: 'pause', expectedRecordingVersion: initial.consultationRecording!.version },
+        }),
+      )
+      expect(paused.status).toBe(200)
+    }
+    const gate = await satisfyOutpatientOrderPrerequisites(created.runtime, visit.doctor, visit.outpatientCaseId)
+    await dispatchAll(created.runtime)
+    return {
+      ...created,
+      ...visit,
+      administrator,
+      compositionId: gate.compositionId,
+      compositionVersion: gate.compositionVersion,
+      encounterVersion: gate.encounterVersion,
+      install,
+      syntheticCaseId,
+    }
   }
 
   async function caseDetail(runtime: Runtime, doctor: string, caseId: string) {
@@ -109,12 +129,12 @@ describe('Pathology consultation request HTTP contract', () => {
     runtime: Runtime,
     doctor: string,
     encounterId: string,
-    input: { expectedDraftVersion: number; purpose?: string; sourceProcedureReference?: string },
+    input: { encounterVersion?: string; expectedDraftVersion: number; purpose?: string; sourceProcedureReference?: string },
   ) {
     return await runtime.app.request(
       `/api/his/v1/encounters/${encounterId}/pathology-request/draft`,
       mutation(doctor, {
-        expectedVersions: { [`Encounter/${encounterId}`]: '3' },
+        expectedVersions: { [`Encounter/${encounterId}`]: input.encounterVersion ?? '4' },
         input: {
           expectedDraftVersion: input.expectedDraftVersion,
           purpose: input.purpose ?? '外院手术切片复核，明确病理类型',
@@ -125,10 +145,16 @@ describe('Pathology consultation request HTTP contract', () => {
     )
   }
 
-  async function issue(runtime: Runtime, doctor: string, encounterId: string, expectedDraftVersion: number) {
+  async function issue(
+    runtime: Runtime,
+    doctor: string,
+    encounterId: string,
+    expectedDraftVersion: number,
+    encounterVersion = '4',
+  ) {
     const response = await runtime.app.request(
       `/api/his/v1/encounters/${encounterId}/pathology-request/actions/issue`,
-      mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: '3' }, input: { expectedDraftVersion } }),
+      mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: encounterVersion }, input: { expectedDraftVersion } }),
     )
     if (response.status === 200) {
       const issued = issuePathologyRequestResponseSchema.parse(await response.clone().json()).data
@@ -139,14 +165,18 @@ describe('Pathology consultation request HTTP contract', () => {
 
   /** 保存草稿并开立，返回正式申请。 */
   async function order(
-    visit: { doctor: string; encounterId: string; runtime: Runtime },
+    visit: { doctor: string; encounterId: string; encounterVersion?: string; runtime: Runtime },
     expectedDraftVersion = 0,
     sourceProcedureReference = procedureReference,
   ) {
-    const draft = await saveDraft(visit.runtime, visit.doctor, visit.encounterId, { expectedDraftVersion, sourceProcedureReference })
+    const draft = await saveDraft(visit.runtime, visit.doctor, visit.encounterId, {
+      ...(visit.encounterVersion === undefined ? {} : { encounterVersion: visit.encounterVersion }),
+      expectedDraftVersion,
+      sourceProcedureReference,
+    })
     expect(draft.status).toBe(200)
     const { draftVersion } = pathologyRequestDraftResponseSchema.parse(await draft.json()).data
-    const issued = await issue(visit.runtime, visit.doctor, visit.encounterId, draftVersion)
+    const issued = await issue(visit.runtime, visit.doctor, visit.encounterId, draftVersion, visit.encounterVersion)
     expect(issued.status).toBe(200)
     return issuePathologyRequestResponseSchema.parse(await issued.json()).data.request
   }
@@ -178,13 +208,7 @@ describe('Pathology consultation request HTTP contract', () => {
   it('saves every published pathology text section in the recording source with its fixed version and hash', async () => {
     const note = '本次会诊切片为原发灶组织，未包含淋巴结；淋巴结情况以原病例记录为准。' + '合成公开报告备注。'.repeat(2500)
     const visit = await consultation({ name: '全文来源合成患者' }, [{ assetId: luminal, note }], undefined, true)
-    const { runtime, doctor, encounterId, outpatientCaseId } = visit
-    const initial = await caseDetail(runtime, doctor, outpatientCaseId)
-    const paused = await runtime.app.request(`/api/his/v1/encounters/${encounterId}/consultation-recording/actions/control`, mutation(doctor, {
-      expectedVersions: { [`Encounter/${encounterId}`]: initial.encounter.versionId },
-      input: { action: 'pause', expectedRecordingVersion: initial.consultationRecording!.version },
-    }))
-    expect(paused.status).toBe(200)
+    const { runtime, doctor, outpatientCaseId } = visit
     const report = (await reportedRequest(visit)).report!
     const detail = await caseDetail(runtime, doctor, outpatientCaseId)
     const source = detail.consultationRecording!.sources!.find(item => item.kind === 'report')!
@@ -289,7 +313,7 @@ describe('Pathology consultation request HTTP contract', () => {
     expect(apiErrorSchema.parse(await duplicate.json()).error.code).toBe('PATHOLOGY_REQUEST_DUPLICATE')
     const cleared = await runtime.app.request(
       `/api/his/v1/encounters/${encounterId}/pathology-request/draft`,
-      mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: '3' }, input: { expectedDraftVersion: 3 } }, 'DELETE'),
+      mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: visit.encounterVersion }, input: { expectedDraftVersion: 3 } }, 'DELETE'),
     )
     expect(cleared.status).toBe(200)
 
@@ -897,12 +921,12 @@ describe('Pathology consultation request HTTP contract', () => {
 
   it('keeps the consultation, its slide and its history readable after the encounter is completed', async () => {
     const visit = await consultation({ name: '乳腺随访' })
-    const { doctor, encounterId, outpatientCaseId, runtime } = visit
+    const { compositionId, compositionVersion, doctor, encounterId, encounterVersion, outpatientCaseId, runtime } = visit
     // 一份草稿被删除，一条申请被取消，另一条出报告并确认已阅。
-    expect((await saveDraft(runtime, doctor, encounterId, { expectedDraftVersion: 0 })).status).toBe(200)
+    expect((await saveDraft(runtime, doctor, encounterId, { encounterVersion, expectedDraftVersion: 0 })).status).toBe(200)
     expect((await runtime.app.request(
       `/api/his/v1/encounters/${encounterId}/pathology-request/draft`,
-      mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: '3' }, input: { expectedDraftVersion: 1 } }, 'DELETE'),
+      mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: encounterVersion }, input: { expectedDraftVersion: 1 } }, 'DELETE'),
     )).status).toBe(200)
     const cancelledRequest = await order(visit, 2)
     expect((await runtime.app.request(
@@ -920,37 +944,36 @@ describe('Pathology consultation request HTTP contract', () => {
     expect((await runtime.app.request(reportPath(reported, 'acknowledge'), mutation(doctor, reportVersions(reported)))).status)
       .toBe(200)
 
-    // 签署病历、确认诊断与无需用药后完成就诊。
-    const versions = { [`Encounter/${encounterId}`]: '3' }
-    const post = async (path: string, input: unknown, expectedVersions: Record<string, string> = versions, method: 'POST' | 'PUT' = 'POST') => {
+    // 修订病历、确认无需用药后完成就诊。
+    const current = { [`Encounter/${encounterId}`]: encounterVersion }
+    const post = async (path: string, input: unknown, expectedVersions: Record<string, string> = current, method: 'POST' | 'PUT' = 'POST') => {
       const response = await runtime.app.request(`/api/his/v1/encounters/${encounterId}/${path}`, mutation(doctor, { expectedVersions, input }, method))
       expect(response.status, path).toBe(200)
       return await response.json()
     }
-    const documentDraft = clinicalDocumentDraftResponseSchema.parse(await post('clinical-document/draft', {
-      document: {
-        assessment: '乳腺癌术后随访，病理会诊已复核。',
-        chiefComplaint: '乳腺癌术后来复查。',
-        disposition: '门诊随访，按原方案继续治疗。',
-        followUp: '三个月后复诊。',
-        historyOfPresentIllness: '既往行乳房肿块切除术，携带外院切片来院会诊。',
-        menstrualHistory: '患者自述已绝经，年龄记不清。', obstetricHistory: '患者自述孕2产2。',
-        physicalExamination: '生命体征平稳。',
-      },
-      expectedDraftVersion: 0,
-    }, versions, 'PUT')).data
-    const preview = clinicalDocumentSignPreviewResponseSchema.parse(
-      await post('clinical-document/actions/preview-sign', { expectedDraftVersion: documentDraft.draftVersion }),
-    ).data
-    await post('clinical-document/actions/sign', { commitToken: preview.commitToken, previewId: preview.previewId, })
-    const diagnosisDraft = diagnosisDraftResponseSchema.parse(await post('diagnosis/draft', {
-      entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }],
-      expectedDraftVersion: 0,
-    }, versions, 'PUT')).data
-    const encounterVersion = confirmDiagnosisResponseSchema.parse(
-      await post('diagnosis/actions/confirm', { expectedDraftVersion: diagnosisDraft.draftVersion }),
-    ).data.encounterVersion
-    const current = { [`Encounter/${encounterId}`]: encounterVersion }
+    const reviseResponse = await runtime.app.request(
+      `/api/his/v1/clinical-documents/${compositionId}/actions/revise`,
+      mutation(doctor, {
+        expectedVersions: {
+          [`Composition/${compositionId}`]: compositionVersion,
+          [`Encounter/${encounterId}`]: encounterVersion,
+        },
+        input: {
+          document: {
+            assessment: '乳腺癌术后随访，病理会诊已复核。',
+            chiefComplaint: '乳腺癌术后来复查。',
+            disposition: '门诊随访，按原方案继续治疗。',
+            followUp: '三个月后复诊。',
+            historyOfPresentIllness: '既往行乳房肿块切除术，携带外院切片来院会诊。',
+            menstrualHistory: '患者自述已绝经，年龄记不清。', obstetricHistory: '患者自述孕2产2。',
+            physicalExamination: '生命体征平稳。',
+          },
+          reason: '病理会诊报告回报并确认已阅后修订病历评估与随访。',
+        },
+      }),
+    )
+    expect(reviseResponse.status).toBe(200)
+    clinicalDocumentRevisionResponseSchema.parse(await reviseResponse.json())
     await post('medication-conclusion/actions/confirm-no-medication', { expectedDraftVersion: 0 }, current)
     await post('actions/complete', {}, current)
 

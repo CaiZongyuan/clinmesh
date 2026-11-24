@@ -12,7 +12,7 @@
 
 ### 门诊开立与住院护士送检门禁
 
-门诊病例使用独立的病例级草稿聚合（如 `laboratory_request_state`）维护单调递增草稿版本，以 `Encounter` 与草稿预期版本做 CAS 更新；尚未分配主接诊医生的 `awaiting-doctor` 病例必须先完成接诊责任绑定，才开放医技草稿与正式开立。保存草稿读取当前启用且允许医生开立的 `Hospital Service` 冻结服务与报告定义快照，正式开立重验相同服务身份与版本（直接提交底层 Reference Concept ID 返回目录冲突），创建 `ServiceRequest.status=active` 与 `Task.status=requested`（`focus` 指向该 `ServiceRequest`），开立动作本身不推进门诊 `Encounter` 状态。
+门诊病例使用独立的病例级草稿聚合（如 `laboratory_request_state`）维护单调递增草稿版本，以 `Encounter` 与草稿预期版本做 CAS 更新；尚未分配主接诊医生的 `awaiting-doctor` 病例必须先完成接诊责任绑定，才开放医技草稿与正式开立。现代 `Consultation` 门诊病例在门禁前允许保存或删除四类医技草稿及应用专病组套预填，但正式开立（含单项 Command 与工作台集中确认）统一要求先完成首版结构化病历正式电子签名与有效主诊断确认（分别返回 `CLINICAL_DOCUMENT_UNSIGNED` 与 `DIAGNOSIS_UNCONFIRMED`，见[门诊业务流程](outpatient-workflows.md#专科动态病史策略与不可变文书签署修订)）。保存草稿读取当前启用且允许医生开立的 `Hospital Service` 冻结服务与报告定义快照，正式开立重验相同服务身份与版本（直接提交底层 Reference Concept ID 返回目录冲突），创建 `ServiceRequest.status=active` 与 `Task.status=requested`（`focus` 指向该 `ServiceRequest`），开立动作本身不推进门诊 `Encounter` 状态。
 
 住院医技由 `InpatientInvestigations` 适配同一申请内核（严禁住院病例绕行门诊公开接口）：开立通过本次入院登记固定的私有 `source_case_id` 定位同 Epoch 的真实 `Synthetic Case` 解析真值，无合成来源的手工建档患者明确拒绝开立而不以正常值兜底；正式生成的 `ServiceRequest`、`Specimen`、`Observation`、`ImagingStudy` 与 `DiagnosticReport` 均归属当前住院 `Encounter`。住院目录明确区分“可开展”、“尚未开展”与“未计价”：门诊与住院国内核心检验（覆盖五分类血常规、心肌损伤标志物与高敏肌钙蛋白 `hs-cTnI`、血脂、肾功能、电解质、糖化血红蛋白、凝血与 D-二聚体）按精确 `system + version + code` 对齐共享合成价目表，未声明有效住院价格的项目禁止开立；申请开立时冻结服务版本、住院价目与 `execution-completed` 计费触发点，仅在首次报告完成时于同一事务计收一次住院费（报告修订不重收，患者已出区或已结算后拒绝补入账）。
 
@@ -69,7 +69,7 @@
 
 门诊医生与住院医生分别在同次就诊或同次住院的统一报告阅读窗口内连续审阅检验、功能检查、放射与病理报告（住院读写校验当前责任科室与病区，转科后由新科室接管；住院报告发布不触发门诊对话卡片或门诊病历自动整理）。单纯打开或切换报告绝不隐式写入已阅事实：检验与功能检查报告必须在本轮阅读窗口实际打开，放射与病理报告还必须满足本地影像／切片素材当前可读且已在真实阅读器中成功渲染（素材缺失或损坏时仍可阅读文字报告，但禁止确认已阅；关闭窗口、刷新页面、切换患者或切换行动身份立即撤销内存中的本轮阅读资格，从 `sessionStorage` 恢复的选择草稿须重新打开核实）。
 
-`Report Acknowledgement` 是绑定具体 `DiagnosticReport` 版本的独立领域事实，仅允许原开单责任医生（住院为当前责任科室医生）对 `DiagnosticReport.status=final` 且申请处于 `reported` 的报告确认（集中确认逐份调用原 `acknowledge` Command，携带独立幂等键）：成功后将申请推进至 `acknowledged` 并递增申请版本、记录 `ReportAcknowledgement/<id>` 审计与 `Action Trace`，但不修改 `DiagnosticReport` 内容或其 FHIR `meta.versionId`；不同幂等键重复确认同一报告版本幂等返回首次已阅记录。医生另可将放射或病理报告摘要（注明报告版本与签发时间）显式插入未签署门诊病历的“辅助检查”字段，后续报告晚到或修订不自动改写病历正文。
+`Report Acknowledgement` 是绑定具体 `DiagnosticReport` 版本的独立领域事实，仅允许原开单责任医生（住院为当前责任科室医生）对 `DiagnosticReport.status=final` 且申请处于 `reported` 的报告确认（集中确认逐份调用原 `acknowledge` Command，携带独立幂等键）：成功后将申请推进至 `acknowledged` 并递增申请版本、记录 `ReportAcknowledgement/<id>` 审计与 `Action Trace`，但不修改 `DiagnosticReport` 内容或其 FHIR `meta.versionId`；不同幂等键重复确认同一报告版本幂等返回首次已阅记录。医生另可将放射或病理报告摘要（注明报告版本与签发时间）显式插入未签署门诊病历或进行中已签署门诊病例的病历修订草稿“辅助检查”字段（后者须在完诊前提交病历修订签名或放弃修订草稿），后续报告晚到或修订不自动改写病历正文。
 
 ### 受控不可变报告修订
 

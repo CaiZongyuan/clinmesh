@@ -31,6 +31,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
+import { hasClinicalDocumentContentDifference } from './clinical-document-content.ts'
 import { ClinicalVisitKindControl, type ClinicalVisitKindAction } from './clinical-visit-kind-control.tsx'
 import { ClinicalDocumentUpdateControl, type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
 import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
@@ -116,6 +117,7 @@ export function ClinicalDocumentPage({
   hideInlineActions = false,
   hideRecordingControls = false,
   defaultRevisionOpen = true,
+  openRevisionRequest = 0,
 }: {
   actions: ClinicalDocumentPageActions
   allowRevision: boolean
@@ -132,15 +134,33 @@ export function ClinicalDocumentPage({
   hideInlineActions?: boolean | undefined
   hideRecordingControls?: boolean | undefined
   defaultRevisionOpen?: boolean | undefined
+  openRevisionRequest?: number | undefined
 }): React.JSX.Element | null {
   const signedDocuments = (detail.clinicalDocument?.signed ?? [])
     .toSorted((left, right) => right.revisionNumber - left.revisionNumber)
   const latestSignedDocument = signedDocuments[0]
+  const serverRevisionDraft = detail.encounter.status === 'in-progress'
+    && detail.clinicalDocument?.draft !== undefined
+    && latestSignedDocument !== undefined
+    && hasClinicalDocumentContentDifference(detail.clinicalDocument.draft, latestSignedDocument.content)
+    ? detail.clinicalDocument.draft
+    : undefined
+  const localRevisionDraft = detail.encounter.status === 'in-progress'
+    && actions.save !== undefined
+    && latestSignedDocument !== undefined
+    && hasClinicalDocumentContentDifference(workingDocument, latestSignedDocument.content)
+    ? workingDocument
+    : undefined
+  const activeRevisionDraft = localRevisionDraft ?? serverRevisionDraft
+  const hasPendingRevisionDraft = activeRevisionDraft !== undefined
   const [revisionPreview, setRevisionPreview] = useState<ClinicalDocumentRevisionInput>()
-  const [revisionOpen, setRevisionOpen] = useState(defaultRevisionOpen)
+  const [revisionOpen, setRevisionOpen] = useState(defaultRevisionOpen || hasPendingRevisionDraft || openRevisionRequest > 0)
   useEffect(() => {
-    if (defaultRevisionOpen) setRevisionOpen(true)
-  }, [defaultRevisionOpen])
+    if (defaultRevisionOpen || hasPendingRevisionDraft) setRevisionOpen(true)
+  }, [defaultRevisionOpen, hasPendingRevisionDraft])
+  useEffect(() => {
+    if (openRevisionRequest > 0) setRevisionOpen(true)
+  }, [openRevisionRequest])
   const internalQuality = useDocumentQualityControl({ detail, document: workingDocument, scope: qualityScope,
     enabled: externalQuality === undefined && signedDocuments.length === 0 && detail.encounter.status === 'in-progress' })
   const quality = externalQuality ?? internalQuality
@@ -222,11 +242,22 @@ export function ClinicalDocumentPage({
           ) : null}
           {!allowRevision || latestSignedDocument === undefined ? null : (
             <div className="flex flex-col gap-3">
+              {hasPendingRevisionDraft ? (
+                <Alert className="border-warning/50 bg-warning/10">
+                  <CircleAlertIcon aria-hidden="true" />
+                  <AlertTitle>{locale === 'zh-CN' ? '存在待签署的病历修订草稿' : 'Pending clinical document revision draft'}</AlertTitle>
+                  <AlertDescription>
+                    {locale === 'zh-CN'
+                      ? '完诊前须填写修订原因并提交病历修订签名，或放弃本次修订草稿以恢复至最近生效病历。'
+                      : 'Submit a signed clinical document revision with a reason, or discard the revision draft before completing the encounter.'}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="text-sm font-semibold">
                   {revisionOpen ? (locale === 'zh-CN' ? '更新病历记录' : 'Update clinical document') : (locale === 'zh-CN' ? '门诊病历已签署' : 'Signed clinical document')}
                 </h4>
-                {defaultRevisionOpen ? null : (
+                {defaultRevisionOpen || hasPendingRevisionDraft ? null : (
                   <Button
                     onClick={() => setRevisionOpen(current => !current)}
                     size="sm"
@@ -246,12 +277,28 @@ export function ClinicalDocumentPage({
               ) : (
               <ClinicalDocumentForm
                 historyRequirements={detail.clinicalHistory}
-                content={latestSignedDocument.content}
+                content={activeRevisionDraft ?? latestSignedDocument.content}
                 formName={messages.clinicalDocumentRevisionForm}
                 idPrefix={`clinical-document-revision-${latestSignedDocument.compositionId}`}
                 includeRevisionReason
-                key={`${detail.caseId}:${latestSignedDocument.compositionId}`}
+                key={`${detail.caseId}:${latestSignedDocument.compositionId}:${detail.clinicalDocument?.draft?.version ?? 0}`}
                 messages={messages}
+                {...(detail.encounter.status === 'in-progress' && actions.save !== undefined ? {
+                  onSaveDraft: (document: ClinicalDocumentContent) => {
+                    onDocumentChange(document)
+                    actions.save?.onSubmit(document)
+                  },
+                  saveDraftLabel: locale === 'zh-CN' ? '保存修订草稿' : 'Save revision draft',
+                  saveDraftPending: actions.save.pending,
+                  ...(hasPendingRevisionDraft ? {
+                    discardDraftLabel: locale === 'zh-CN' ? '放弃修订草稿' : 'Discard revision draft',
+                    onDiscardDraft: () => {
+                      onDocumentChange(latestSignedDocument.content)
+                      if (serverRevisionDraft !== undefined) actions.save?.onSubmit(latestSignedDocument.content)
+                      if (!defaultRevisionOpen) setRevisionOpen(false)
+                    },
+                  } : {}),
+                } : {})}
                 onSubmit={(document, reason) => setRevisionPreview({
                   caseId: detail.caseId,
                   compositionId: latestSignedDocument.compositionId,
@@ -686,29 +733,61 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
   )
 }
 
+function readFormDocument(form: HTMLFormElement): { document: ClinicalDocumentContent; reason: string } {
+  const data = new FormData(form)
+  return {
+    document: {
+      allergyHistory: String(data.get('allergyHistory') ?? ''),
+      assessment: String(data.get('assessment') ?? ''),
+      auxiliaryExamination: String(data.get('auxiliaryExamination') ?? ''),
+      chiefComplaint: String(data.get('chiefComplaint') ?? ''),
+      disposition: String(data.get('disposition') ?? ''),
+      followUp: String(data.get('followUp') ?? ''),
+      familyHistory: String(data.get('familyHistory') ?? ''),
+      menstrualHistory: String(data.get('menstrualHistory') ?? ''),
+      obstetricHistory: String(data.get('obstetricHistory') ?? ''),
+      historyOfPresentIllness: String(data.get('historyOfPresentIllness') ?? ''),
+      physicalExamination: String(data.get('physicalExamination') ?? ''),
+      priorMedicalHistory: String(data.get('priorMedicalHistory') ?? ''),
+    },
+    reason: String(data.get('revisionReason') ?? ''),
+  }
+}
+
 function ClinicalDocumentForm({
   historyRequirements,
   content,
+  discardDraftLabel,
   formName,
   idPrefix,
   includeRevisionReason = false,
   messages,
+  onDiscardDraft,
+  onSaveDraft,
   onSubmit,
   pending,
   pendingLabel,
+  saveDraftLabel,
+  saveDraftPending = false,
   submitLabel,
 }: {
   historyRequirements: ClinicalHistoryRequirements | undefined
   content: ClinicalDocumentContent
+  discardDraftLabel?: string | undefined
   formName: string
   idPrefix: string
   includeRevisionReason?: boolean
   messages: ReturnType<typeof getWorkspaceMessages>
+  onDiscardDraft?: (() => void) | undefined
+  onSaveDraft?: ((document: ClinicalDocumentContent) => void) | undefined
   onSubmit: (document: ClinicalDocumentContent, reason: string) => void
   pending: boolean
   pendingLabel: string
+  saveDraftLabel?: string | undefined
+  saveDraftPending?: boolean | undefined
   submitLabel: string
 }): React.JSX.Element {
+  const formRef = useRef<HTMLFormElement>(null)
   const [reasonText, setReasonText] = useState('')
   const [reproductiveDraft, setReproductiveDraft] = useState(() => ({
     menstrualHistory: content.menstrualHistory ?? '',
@@ -717,23 +796,11 @@ function ClinicalDocumentForm({
   return (
     <form
       aria-label={formName}
+      ref={formRef}
       onSubmit={event => {
         event.preventDefault()
-        const data = new FormData(event.currentTarget)
-        onSubmit({
-          allergyHistory: String(data.get('allergyHistory') ?? ''),
-          assessment: String(data.get('assessment') ?? ''),
-          auxiliaryExamination: String(data.get('auxiliaryExamination') ?? ''),
-          chiefComplaint: String(data.get('chiefComplaint') ?? ''),
-          disposition: String(data.get('disposition') ?? ''),
-          followUp: String(data.get('followUp') ?? ''),
-          familyHistory: String(data.get('familyHistory') ?? ''),
-          menstrualHistory: String(data.get('menstrualHistory') ?? ''),
-          obstetricHistory: String(data.get('obstetricHistory') ?? ''),
-          historyOfPresentIllness: String(data.get('historyOfPresentIllness') ?? ''),
-          physicalExamination: String(data.get('physicalExamination') ?? ''),
-          priorMedicalHistory: String(data.get('priorMedicalHistory') ?? ''),
-        }, String(data.get('revisionReason') ?? ''))
+        const { document, reason } = readFormDocument(event.currentTarget)
+        onSubmit(document, reason)
       }}
     >
       <FieldGroup className={revisionGridClassName}>
@@ -882,10 +949,33 @@ function ClinicalDocumentForm({
             />
           </Field>
         ) : null}
-        <div className="flex justify-end col-span-full">
+        <div className="flex flex-wrap justify-end gap-2 col-span-full">
+          {onDiscardDraft === undefined || discardDraftLabel === undefined ? null : (
+            <Button
+              disabled={pending || saveDraftPending}
+              onClick={onDiscardDraft}
+              type="button"
+              variant="ghost"
+            >
+              {discardDraftLabel}
+            </Button>
+          )}
+          {onSaveDraft === undefined || saveDraftLabel === undefined ? null : (
+            <Button
+              disabled={pending || saveDraftPending}
+              onClick={() => {
+                if (formRef.current === null) return
+                onSaveDraft(readFormDocument(formRef.current).document)
+              }}
+              type="button"
+              variant="outline"
+            >
+              {saveDraftLabel}
+            </Button>
+          )}
           <Button
             data-unavailable={includeRevisionReason && reasonText.trim().length < 2 ? '' : undefined}
-            disabled={pending}
+            disabled={pending || saveDraftPending}
             type="submit"
             variant="outline"
           >

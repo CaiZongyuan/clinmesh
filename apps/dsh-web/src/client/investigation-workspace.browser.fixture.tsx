@@ -117,7 +117,47 @@ function request(id: string, selectedService: LaboratoryServiceSnapshot, reporte
 }
 const detail: DoctorCaseDetail = {
   registrationNumber: null,
-  allergies: [], caseId: 'synthetic-case', consultation: { turns: [], version: 1 },
+  allergies: [], caseId: 'synthetic-case',
+  clinicalDocument: {
+    signed: [{
+      bundleId: 'synthetic-bundle-1',
+      compositionId: 'synthetic-composition-1',
+      compositionVersion: '1',
+      content: {
+        assessment: '合成初步评估。',
+        auxiliaryExamination: '暂未见外院及本院辅助检查结果。',
+        chiefComplaint: '合成主诉。',
+        disposition: '门诊对症处理。',
+        followUp: '不适随诊。',
+        historyOfPresentIllness: '合成现病史。',
+        physicalExamination: '合成体格检查。',
+        priorMedicalHistory: '系统未记录既往病史。',
+      },
+      documentId: 'synthetic-document-1',
+      provenanceId: 'synthetic-doc-provenance-1',
+      revisionNumber: 1,
+      signedAt: '2026-10-10T09:55:00+08:00',
+    }],
+  },
+  consultation: { turns: [], version: 1 },
+  diagnosis: {
+    confirmation: {
+      confirmedAt: '2026-10-10T09:58:00+08:00',
+      entries: [{
+        catalogItemId: 'synthetic-diagnosis-1',
+        code: 'SYN-D1',
+        conditionId: 'synthetic-condition-1',
+        conditionVersion: '1',
+        display: '合成主诊断',
+        role: 'primary',
+        system: 'urn:synthetic:diagnosis',
+      }],
+      id: 'synthetic-confirmation-1',
+      provenanceId: 'synthetic-diag-provenance-1',
+      revisionNumber: 1,
+    },
+    draftVersion: 2,
+  },
   consultationRecording: { hasSavedDraft: false, version: 1, paused: false, processedCount: 0,
     remainingCount: 0, failedCount: 0, status: 'idle', failures: [], additions: [] },
   encounter: { id: 'synthetic-encounter', status: 'in-progress', versionId: '1' },

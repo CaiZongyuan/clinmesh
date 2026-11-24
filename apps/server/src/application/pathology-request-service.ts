@@ -22,6 +22,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
+import { assertOutpatientOrderPrerequisites } from './clinical-request-context.ts'
 import {
   reportAcknowledgementRowSchema,
   type ClinicalRequestKernel,
@@ -486,6 +487,7 @@ export class PathologyRequestService {
       || draft.draft_source_procedure_json === null) {
       throw this.#draftConflict()
     }
+    assertOutpatientOrderPrerequisites(this.#database, input.context, outpatientCase.case_id)
     // 开立使用草稿保存时冻结的服务定义；服务此后变更时要求重新保存草稿。
     const service = pathologyServiceSnapshotSchema.parse(JSON.parse(draft.draft_service_snapshot_json))
     if (JSON.stringify(this.#activeService(input.context, service.id)) !== JSON.stringify(service)) {

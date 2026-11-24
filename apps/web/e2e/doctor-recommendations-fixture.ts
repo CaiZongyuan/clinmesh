@@ -9,6 +9,7 @@ import { syntheticGuidelineDocument, syntheticGuidelineMarker } from '../../serv
 import { StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { sourceArtifactHash } from '../../server/src/application/scenario-data/provider.ts'
 import { GuidelineCorpus } from '../../server/src/infrastructure/sqlite/guideline-corpus.ts'
+import { stubOutpatientQualityChatPayload } from './outpatient-order-gate.fixture.ts'
 
 export const recommendationReasoningMarker = '合成待核实评估：患者近一周反复头晕；头晕与体位的关系尚未明确。'
 export const recommendationProcessingMarker = '合成处理说明验收：本轮不输出任何候选或思路。'
@@ -41,6 +42,8 @@ export function createRecommendationGuidelineDatabase(directory: string): string
 
 // The external model is synthetic; the server still owns evidence, catalogs, verification and persistence.
 export function recommendationFixture(input: Pick<JsonChatCompletionInput, 'schemaName' | 'userPayload'>): unknown {
+  const quality = stubOutpatientQualityChatPayload(input)
+  if (quality !== undefined) return quality
   if (input.schemaName === 'doctor_recommendation_catalog_selection') {
     const payload = z.object({ catalogs: z.object({ laboratory: z.object({ items: z.array(z.object({
       id: z.string(), nameZh: z.string(),

@@ -1,4 +1,4 @@
-import { assertInpatientRequestScope, inpatientRequestOwner } from './clinical-request-context.ts'
+import { assertInpatientRequestScope, assertOutpatientOrderPrerequisites, inpatientRequestOwner } from './clinical-request-context.ts'
 import type { FhirResource } from '@clinmesh/contracts/fhir'
 import {
   acknowledgeImagingReportResponseSchema,
@@ -479,6 +479,7 @@ export class ImagingRequestService {
       || draft.draft_service_snapshot_json === null) {
       throw this.#draftConflict()
     }
+    assertOutpatientOrderPrerequisites(this.#database, input.context, outpatientCase.case_id)
     // 开立使用草稿保存时冻结的服务定义；服务此后变更时要求重新保存草稿。
     const service = imagingServiceSnapshotSchema.parse(JSON.parse(draft.draft_service_snapshot_json))
     if (JSON.stringify(this.#activeService(input.context, service.id)) !== JSON.stringify(service)) {

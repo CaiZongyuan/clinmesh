@@ -204,57 +204,10 @@ test('专病临床内核最小前端入口回归：五例病例包准备、住�
 
   const readOp = async () => doctorCaseDetailSchema.parse(await (await page.request.get(`${origin}/api/his/v1/doctor/cases/${startedOp.outpatientCaseId}`)).json())
   const d1 = await readOp()
-  const diagDraft = diagnosisDraftResponseSchema.parse(await (await apiPost(
-    `/api/his/v1/encounters/${startedOp.encounterId}/diagnosis/draft`,
-    {
-      expectedVersions: { [`Encounter/${startedOp.encounterId}`]: d1.encounter.versionId },
-      input: {
-        entries: [
-          { catalogItemId: 'diagnosis-hypertension', role: 'primary' },
-          { catalogItemId: 'diagnosis-dyslipidemia', role: 'secondary' },
-        ],
-        expectedDraftVersion: 0,
-      },
-    },
-    'PUT',
-  )).json()).data
-  confirmDiagnosisResponseSchema.parse(await (await apiPost(
-    `/api/his/v1/encounters/${startedOp.encounterId}/diagnosis/actions/confirm`,
-    {
-      expectedVersions: { [`Encounter/${startedOp.encounterId}`]: d1.encounter.versionId },
-      input: { expectedDraftVersion: diagDraft.draftVersion },
-    },
-  )).json())
-
-  const d2 = await readOp()
-  const rxDraft = prescriptionDraftResponseSchema.parse(await (await apiPost(
-    `/api/his/v1/encounters/${startedOp.encounterId}/prescription/draft`,
-    {
-      expectedVersions: { [`Encounter/${startedOp.encounterId}`]: d2.encounter.versionId },
-      input: {
-        expectedDraftVersion: 0,
-        items: [
-          { catalogItemId: 'medication-amlodipine', courseDays: 10, doseText: '5 mg', frequencyCode: 'QD', quantity: 10, routeCode: 'PO' },
-          { catalogItemId: 'medication-valsartan', courseDays: 1, doseText: '80 mg', frequencyCode: 'QD', quantity: 1, routeCode: 'PO' },
-          { catalogItemId: 'medication-ezetimibe', courseDays: 1, doseText: '10 mg', frequencyCode: 'QD', quantity: 1, routeCode: 'PO' },
-        ],
-      },
-    },
-    'PUT',
-  )).json()).data
-  issuePrescriptionResponseSchema.parse(await (await apiPost(
-    `/api/his/v1/encounters/${startedOp.encounterId}/prescription/actions/issue`,
-    {
-      expectedVersions: { [`Encounter/${startedOp.encounterId}`]: d2.encounter.versionId },
-      input: { expectedDraftVersion: rxDraft.draftVersion },
-    },
-  )).json())
-
-  const d3 = await readOp()
   const docDraft = clinicalDocumentDraftResponseSchema.parse(await (await apiPost(
     `/api/his/v1/encounters/${startedOp.encounterId}/clinical-document/draft`,
     {
-      expectedVersions: { [`Encounter/${startedOp.encounterId}`]: d3.encounter.versionId },
+      expectedVersions: { [`Encounter/${startedOp.encounterId}`]: d1.encounter.versionId },
       input: {
         document: {
           assessment: '高血压合并血脂异常，开具甲/乙/丙混合降压调脂处方。',
@@ -271,22 +224,70 @@ test('专病临床内核最小前端入口回归：五例病例包准备、住�
     },
     'PUT',
   )).json()).data
-  const d4 = await readOp()
+  const d2 = await readOp()
   const signPrev = clinicalDocumentSignPreviewResponseSchema.parse(await (await apiPost(
     `/api/his/v1/encounters/${startedOp.encounterId}/clinical-document/actions/preview-sign`,
     {
-      expectedVersions: { [`Encounter/${startedOp.encounterId}`]: d4.encounter.versionId },
+      expectedVersions: { [`Encounter/${startedOp.encounterId}`]: d2.encounter.versionId },
       input: { expectedDraftVersion: docDraft.draftVersion },
     },
   )).json()).data
-  const d5 = await readOp()
+  const d3 = await readOp()
   clinicalDocumentSignResponseSchema.parse(await (await apiPost(
     `/api/his/v1/encounters/${startedOp.encounterId}/clinical-document/actions/sign`,
     {
-      expectedVersions: { [`Encounter/${startedOp.encounterId}`]: d5.encounter.versionId },
+      expectedVersions: { [`Encounter/${startedOp.encounterId}`]: d3.encounter.versionId },
       input: { commitToken: signPrev.commitToken, previewId: signPrev.previewId },
     },
   )).json())
+
+  const d4 = await readOp()
+  const diagDraft = diagnosisDraftResponseSchema.parse(await (await apiPost(
+    `/api/his/v1/encounters/${startedOp.encounterId}/diagnosis/draft`,
+    {
+      expectedVersions: { [`Encounter/${startedOp.encounterId}`]: d4.encounter.versionId },
+      input: {
+        entries: [
+          { catalogItemId: 'diagnosis-hypertension', role: 'primary' },
+          { catalogItemId: 'diagnosis-dyslipidemia', role: 'secondary' },
+        ],
+        expectedDraftVersion: 0,
+      },
+    },
+    'PUT',
+  )).json()).data
+  confirmDiagnosisResponseSchema.parse(await (await apiPost(
+    `/api/his/v1/encounters/${startedOp.encounterId}/diagnosis/actions/confirm`,
+    {
+      expectedVersions: { [`Encounter/${startedOp.encounterId}`]: d4.encounter.versionId },
+      input: { expectedDraftVersion: diagDraft.draftVersion },
+    },
+  )).json())
+
+  const d5 = await readOp()
+  const rxDraft = prescriptionDraftResponseSchema.parse(await (await apiPost(
+    `/api/his/v1/encounters/${startedOp.encounterId}/prescription/draft`,
+    {
+      expectedVersions: { [`Encounter/${startedOp.encounterId}`]: d5.encounter.versionId },
+      input: {
+        expectedDraftVersion: 0,
+        items: [
+          { catalogItemId: 'medication-amlodipine', courseDays: 10, doseText: '5 mg', frequencyCode: 'QD', quantity: 10, routeCode: 'PO' },
+          { catalogItemId: 'medication-valsartan', courseDays: 1, doseText: '80 mg', frequencyCode: 'QD', quantity: 1, routeCode: 'PO' },
+          { catalogItemId: 'medication-ezetimibe', courseDays: 1, doseText: '10 mg', frequencyCode: 'QD', quantity: 1, routeCode: 'PO' },
+        ],
+      },
+    },
+    'PUT',
+  )).json()).data
+  issuePrescriptionResponseSchema.parse(await (await apiPost(
+    `/api/his/v1/encounters/${startedOp.encounterId}/prescription/actions/issue`,
+    {
+      expectedVersions: { [`Encounter/${startedOp.encounterId}`]: d5.encounter.versionId },
+      input: { expectedDraftVersion: rxDraft.draftVersion },
+    },
+  )).json())
+
   const d6 = await readOp()
   encounterCompletionResponseSchema.parse(await (await apiPost(
     `/api/his/v1/encounters/${startedOp.encounterId}/actions/complete`,

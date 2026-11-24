@@ -2,9 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import {
   acknowledgeLaboratoryReportResponseSchema,
-  billingCaseSchema, caseLaboratoryCatalogSearchSchema, clinicalDocumentDraftResponseSchema,
-  clinicalDocumentSignPreviewResponseSchema, clinicalDocumentSignResponseSchema,
-  confirmDiagnosisResponseSchema, confirmNoMedicationResponseSchema, diagnosisDraftResponseSchema,
+  billingCaseSchema, caseLaboratoryCatalogSearchSchema, clinicalDocumentRevisionResponseSchema,
+  confirmNoMedicationResponseSchema,
   doctorCaseDetailSchema, doctorCompletedCaseListSchema, doctorQueueSchema,
   encounterCompletionResponseSchema, issueLaboratoryRequestResponseSchema, laboratoryRequestDraftResponseSchema,
   patientSearchSchema, paymentPreviewResponseSchema, paymentResponseSchema,
@@ -15,6 +14,7 @@ import { doctorCaseHistoryDetailSchema, doctorCaseHistorySchema } from '@clinmes
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { inpatientAngiographyReportsSchema } from '@clinmesh/contracts/inpatient-angiography'
 import { uniquePatientCaseSource } from '../src/application/outpatient-case-source.ts'
+import { satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 import {
   createPciPaymentDrgFixture, parsePciResponse, preparePciPaymentDrgFixture,
   type PciPaymentDrgFixture,
@@ -128,6 +128,10 @@ it('completes a new consultation and exact follow-up investigation after PCI dis
   }))
   expect(dialogue.data.patientTurn.messageText).toBe('医生您好，我今天按约定来复查。')
   expect(dialogueCalls).toBe(1)
+  const doctorCookie = await fixture.login('doctor')
+  const gate = await satisfyOutpatientOrderPrerequisites(fixture.runtime, doctorCookie, caseId, {
+    diagnosisCatalogItemId: 'diagnosis-hypertension',
+  })
   const catalog = await fixture.read('doctor', `/api/his/v1/doctor/cases/${caseId}/reference-catalogs/laboratory?query=${encodeURIComponent('白细胞')}&page=1&pageSize=20`, caseLaboratoryCatalogSearchSchema)
   const laboratory = catalog.items.find(item => item.referenceConcept?.code === '6690-2')
   expect(laboratory).toBeDefined()
@@ -156,23 +160,23 @@ it('completes a new consultation and exact follow-up investigation after PCI dis
       expectedRequestVersion: reported.version,
     }, randomUUID(), { [`DiagnosticReport/${reported.report!.diagnosticReportId}`]: reported.report!.diagnosticReportVersion }))
 
-  await parsePciResponse(diagnosisDraftResponseSchema, await post('diagnosis/draft', {
-    expectedDraftVersion: 0, entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary' }],
-  }, 'PUT'))
-  await parsePciResponse(confirmDiagnosisResponseSchema, await post('diagnosis/actions/confirm', { expectedDraftVersion: 1 }))
   await parsePciResponse(confirmNoMedicationResponseSchema, await post('medication-conclusion/actions/confirm-no-medication', { expectedDraftVersion: 0 }))
   const document = {
     chiefComplaint: '冠脉介入出院后复查。', historyOfPresentIllness: '患者按约定返院复查，已核对本院住院摘要。',
     physicalExamination: '生命体征平稳，未见急性异常。', assessment: '已核对住院治疗及本次血常规报告。',
     disposition: '继续原出院安排。', followUp: '按约定复查，出现胸痛立即就医。',
   }
-  const draft = await parsePciResponse(clinicalDocumentDraftResponseSchema,
-    await post('clinical-document/draft', { document, expectedDraftVersion: 0 }, 'PUT'))
-  const sign = await parsePciResponse(clinicalDocumentSignPreviewResponseSchema,
-    await post('clinical-document/actions/preview-sign', { expectedDraftVersion: draft.data.draftVersion }))
-  await parsePciResponse(clinicalDocumentSignResponseSchema, await post('clinical-document/actions/sign', {
-    previewId: sign.data.previewId, commitToken: sign.data.commitToken,
-  }))
+  const detailBeforeRevise = await read()
+  await parsePciResponse(clinicalDocumentRevisionResponseSchema, await fixture.request(
+    'doctor',
+    `/api/his/v1/clinical-documents/${gate.compositionId}/actions/revise`,
+    { document, reason: '血常规回报已阅后更新评估、处置与随访安排。' },
+    randomUUID(),
+    {
+      [`Composition/${gate.compositionId}`]: gate.compositionVersion,
+      [`Encounter/${encounterId}`]: detailBeforeRevise.encounter.versionId,
+    },
+  ))
   const completed = await parsePciResponse(encounterCompletionResponseSchema, await post('actions/complete', {}))
   expect(completed.data.status).toBe('completed')
   expect((await read()).patient.id).toBe(stay.patientId)

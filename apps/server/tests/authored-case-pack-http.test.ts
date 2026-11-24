@@ -11,9 +11,7 @@ import {
   apiErrorSchema,
   billingCaseSchema,
   caseLaboratoryCatalogSearchSchema,
-  clinicalDocumentDraftResponseSchema,
-  clinicalDocumentSignPreviewResponseSchema,
-  clinicalDocumentSignResponseSchema,
+  clinicalDocumentRevisionResponseSchema,
   confirmDiagnosisResponseSchema,
   confirmNoMedicationResponseSchema,
   diagnosisDraftResponseSchema,
@@ -57,6 +55,7 @@ import {
 } from '@clinmesh/contracts/scenario'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
+import { defaultOutpatientGateDocument, satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -209,8 +208,8 @@ async function setup(options: { withCardiologyLabs?: boolean; withDialogue?: boo
           dialogueInputs.push({ systemPrompt: input.systemPrompt, userPayload: input.userPayload })
           return { content: JSON.stringify({ reply: '医生您好，我胸口闷痛一阵一阵的，走路快了更明显。' }), model: input.model }
         }
-        if (options.withDialogue && (input.usageContext?.stage === 'recording' || input.schemaName === 'clinical_document_quality')) {
-          return { content: JSON.stringify(input.schemaName === 'clinical_document_quality' ? { issues: [], agentFactChecks: [], recordingChecks: [] } : { changes: [] }), model: input.model }
+        if (options.withDialogue && (input.usageContext?.stage === 'recording' || input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification')) {
+          return { content: JSON.stringify(input.schemaName.startsWith('clinical_document_quality') ? { issues: [], agentFactChecks: [], recordingChecks: [] } : { changes: [], additions: [] }), model: input.model }
         }
         unexpectedModelCalls.push(input.schemaName)
         throw new Error(`专病合成病例包确定性路径不应调用模型: ${input.schemaName}`)
@@ -720,6 +719,13 @@ it('病例①完成门诊首诊、患者问诊防泄漏、复测肌钙蛋白、�
   for (const payload of [askText, s.dialogueInputs[0]!.systemPrompt, JSON.stringify(s.dialogueInputs[0]!.userPayload)]) {
     expect(payload).not.toMatch(/hiddenResources|caseTruth|angiography-conclusion|truth-stage|I21\.4|90%/)
   }
+  const fhirConditionsBeforePrereq = fhirBundleSchema.parse(await (await s.get('doctor', `/fhir/R5/Condition?patient=Patient/${op.patientId}`)).json())
+  expect(fhirConditionsBeforePrereq.entry ?? []).toHaveLength(0)
+
+  const opPrereq = await satisfyOutpatientOrderPrerequisites(s.runtime, await s.login('doctor'), op.caseId, {
+    diagnosisCatalogItemId: 'diagnosis-coronary-heart-disease',
+  })
+  await s.dispatchAll()
 
   const ecgInitial = await s.runOutpatientExam(op.caseId, op.encounterId, 'examination-ecg-12-lead')
   expect(ecgInitial.report!.impression).toContain('ST段压低')
@@ -749,7 +755,8 @@ it('病例①完成门诊首诊、患者问诊防泄漏、复测肌钙蛋白、�
   }
   expect((await s.get('doctor', `/api/sim/v1/admin/synthetic-cases/${case1.caseId}/truth`)).status).toBe(403)
   const fhirConditions = fhirBundleSchema.parse(await (await s.get('doctor', `/fhir/R5/Condition?patient=Patient/${op.patientId}`)).json())
-  expect(fhirConditions.entry ?? []).toHaveLength(0)
+  expect(fhirConditions.entry ?? []).toHaveLength(1)
+  expect(JSON.stringify(fhirConditions)).not.toMatch(/I21\.4|hiddenResources/)
 
   // 2. Complete outpatient encounter after issuing referral -> Inpatient admission -> TTE (LVEF 52%) + Multivessel Angiography (pLAD 90% TIMI 2 + QCA 15mm)
   const opDetail = doctorCaseDetailSchema.parse(await (await s.get('doctor', `/api/his/v1/doctor/cases/${op.caseId}`)).json())
@@ -763,7 +770,7 @@ it('病例①完成门诊首诊、患者问诊防泄漏、复测肌钙蛋白、�
   })
   expect(refRes.status, await refRes.clone().text()).toBe(200)
   const referral = (await refRes.json()).data.referral as { id: string; patientVersion: string }
-  // Acknowledge all outpatient reports, confirm diagnosis + no outpatient medication, sign note, and complete initial outpatient visit
+  // Acknowledge all outpatient reports, confirm no outpatient medication, revise signed note, and complete initial outpatient visit
   for (const labReq of opDetail.laboratoryRequests?.requests ?? []) {
     if (labReq.status === 'reported' && labReq.report !== undefined) {
       const ack = await s.mutate('doctor', `/api/his/v1/laboratory-requests/${labReq.id}/reports/${labReq.report.diagnosticReportId}/actions/acknowledge`, {
@@ -784,16 +791,6 @@ it('病例①完成门诊首诊、患者问诊防泄漏、复测肌钙蛋白、�
     }
   }
   const opForClose = () => s.get('doctor', `/api/his/v1/doctor/cases/${op.caseId}`).then(async r => doctorCaseDetailSchema.parse(await r.json()))
-  const d1 = await opForClose()
-  const diagDraft1 = await s.mutate('doctor', `/api/his/v1/encounters/${op.encounterId}/diagnosis/draft`, {
-    expectedVersions: { [`Encounter/${op.encounterId}`]: d1.encounter.versionId },
-    input: { entries: [{ catalogItemId: 'diagnosis-coronary-heart-disease', role: 'primary' }], expectedDraftVersion: 0 },
-  }, 'PUT')
-  expect(diagDraft1.status, await diagDraft1.clone().text()).toBe(200)
-  expect((await s.mutate('doctor', `/api/his/v1/encounters/${op.encounterId}/diagnosis/actions/confirm`, {
-    expectedVersions: { [`Encounter/${op.encounterId}`]: d1.encounter.versionId },
-    input: { expectedDraftVersion: diagnosisDraftResponseSchema.parse(await diagDraft1.json()).data.draftVersion },
-  })).status).toBe(200)
   const d2 = await opForClose()
   const noMed = await s.mutate('doctor', `/api/his/v1/encounters/${op.encounterId}/medication-conclusion/actions/confirm-no-medication`, {
     expectedVersions: { [`Encounter/${op.encounterId}`]: d2.encounter.versionId },
@@ -802,10 +799,14 @@ it('病例①完成门诊首诊、患者问诊防泄漏、复测肌钙蛋白、�
   expect(noMed.status, await noMed.clone().text()).toBe(200)
   confirmNoMedicationResponseSchema.parse(await noMed.json())
   const d3 = await opForClose()
-  const docDraft = clinicalDocumentDraftResponseSchema.parse(await (await s.mutate('doctor', `/api/his/v1/encounters/${op.encounterId}/clinical-document/draft`, {
-    expectedVersions: { [`Encounter/${op.encounterId}`]: d3.encounter.versionId },
+  const revisedOpDoc = await s.mutate('doctor', `/api/his/v1/clinical-documents/${opPrereq.compositionId}/actions/revise`, {
+    expectedVersions: {
+      [`Composition/${opPrereq.compositionId}`]: opPrereq.compositionVersion,
+      [`Encounter/${op.encounterId}`]: d3.encounter.versionId,
+    },
     input: {
       document: {
+        ...defaultOutpatientGateDocument,
         assessment: '急性非ST段抬高型心肌梗死高危表现，已开具住院证转入心内科。',
         chiefComplaint: '间断胸骨后闷痛 6 小时。',
         disposition: '转住院行冠脉造影及血运重建。',
@@ -813,19 +814,12 @@ it('病例①完成门诊首诊、患者问诊防泄漏、复测肌钙蛋白、�
         historyOfPresentIllness: '胸痛伴出汗，心电图示前壁 ST 段压低，高敏肌钙蛋白动态升高。',
         physicalExamination: '神清，生命体征平稳。',
       },
-      expectedDraftVersion: 0,
+      reason: '检验检查回报并开具住院证后完善门诊病历。',
     },
-  }, 'PUT')).json()).data
-  const d4 = await opForClose()
-  const signPrev = clinicalDocumentSignPreviewResponseSchema.parse(await (await s.mutate('doctor', `/api/his/v1/encounters/${op.encounterId}/clinical-document/actions/preview-sign`, {
-    expectedVersions: { [`Encounter/${op.encounterId}`]: d4.encounter.versionId },
-    input: { expectedDraftVersion: docDraft.draftVersion },
-  })).json()).data
-  const d5 = await opForClose()
-  clinicalDocumentSignResponseSchema.parse(await (await s.mutate('doctor', `/api/his/v1/encounters/${op.encounterId}/clinical-document/actions/sign`, {
-    expectedVersions: { [`Encounter/${op.encounterId}`]: d5.encounter.versionId },
-    input: { commitToken: signPrev.commitToken, previewId: signPrev.previewId },
-  })).json())
+  })
+  expect(revisedOpDoc.status, await revisedOpDoc.clone().text()).toBe(200)
+  clinicalDocumentRevisionResponseSchema.parse(await revisedOpDoc.json())
+  await s.dispatchAll()
   const d6 = await opForClose()
   const completedOp = await s.mutate('doctor', `/api/his/v1/encounters/${op.encounterId}/actions/complete`, {
     expectedVersions: { [`Encounter/${op.encounterId}`]: d6.encounter.versionId },
@@ -868,6 +862,10 @@ it('病例①完成门诊首诊、患者问诊防泄漏、复测肌钙蛋白、�
     patientId: op.patientId,
     patientName: '陈志远',
   })
+  await satisfyOutpatientOrderPrerequisites(s.runtime, await s.login('doctor'), revisit.caseId, {
+    diagnosisCatalogItemId: 'diagnosis-coronary-heart-disease',
+  })
+  await s.dispatchAll()
 
   const ecgFollowUp = await s.runOutpatientExam(revisit.caseId, revisit.encounterId, 'examination-ecg-12-lead')
   expect(ecgFollowUp.report!.results.find(r => r.code === 'ventricular-rate')?.value).toBe(68)
@@ -941,6 +939,9 @@ it('病例②③④直接住院验证择期 PCI、女性临界 FFR 阴性过度�
     patientId: stay4.patientId,
     patientName: '赵德明',
   })
+  await satisfyOutpatientOrderPrerequisites(s.runtime, await s.login('doctor'), revisit4.caseId, {
+    diagnosisCatalogItemId: 'diagnosis-coronary-heart-disease',
+  })
   const scr4FollowUp1 = await s.runOutpatientLab(revisit4.caseId, revisit4.encounterId, '1700404A')
   expect(scr4FollowUp1.report!.results.find(r => r.code === '1700404A')?.value).toBe(170)
   const scr4FollowUp2 = await s.runOutpatientLab(revisit4.caseId, revisit4.encounterId, '1700404A')
@@ -955,6 +956,9 @@ it('病例⑤（64 岁女性 T2DM+高血压+CKD 4 期）门诊算出 eGFR=26.0 �
   const prepared = await s.preparePack()
   const case5 = prepared.data.cases[4]!.case!
   const op = await s.startOutpatient(case5.caseId, case5.revision, case5.activeBriefRevision!, '近期血糖偏高 1 个月复诊调药')
+  const op5Prereq = await satisfyOutpatientOrderPrerequisites(s.runtime, await s.login('doctor'), op.caseId, {
+    diagnosisCatalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia',
+  })
 
   const scr = await s.runOutpatientLab(op.caseId, op.encounterId, '1700404A')
   expect(scr.report!.results.find(r => r.code === '1700404A')?.value).toBe(184.6)
@@ -993,7 +997,7 @@ it('病例⑤（64 岁女性 T2DM+高血压+CKD 4 期）门诊算出 eGFR=26.0 �
         { catalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia', role: 'primary' },
         { catalogItemId: 'diagnosis-hypertension', role: 'secondary' },
       ],
-      expectedDraftVersion: 0,
+      expectedDraftVersion: detail.diagnosis?.draftVersion ?? 0,
     },
   }, 'PUT')
   expect(diagDraft.status, await diagDraft.clone().text()).toBe(200)
@@ -1067,10 +1071,14 @@ it('病例⑤（64 岁女性 T2DM+高血压+CKD 4 期）门诊算出 eGFR=26.0 �
   issuePrescriptionResponseSchema.parse(await safeIssueRx.json())
 
   const dDoc = await readOp()
-  const docDraft = clinicalDocumentDraftResponseSchema.parse(await (await s.mutate('doctor', `/api/his/v1/encounters/${op.encounterId}/clinical-document/draft`, {
-    expectedVersions: { [`Encounter/${op.encounterId}`]: dDoc.encounter.versionId },
+  const revisedCase5Doc = await s.mutate('doctor', `/api/his/v1/clinical-documents/${op5Prereq.compositionId}/actions/revise`, {
+    expectedVersions: {
+      [`Composition/${op5Prereq.compositionId}`]: op5Prereq.compositionVersion,
+      [`Encounter/${op.encounterId}`]: dDoc.encounter.versionId,
+    },
     input: {
       document: {
+        ...defaultOutpatientGateDocument,
         assessment: '2型糖尿病伴高血糖、高血压、慢性肾脏病4期（eGFR 26.0），停用经肾禁忌降糖药，维持氨氯地平降压。',
         chiefComplaint: '近期血糖偏高 1 个月复诊调药。',
         disposition: '开具苯磺酸氨氯地平片继续控制血压，肾内科及内分泌联合随访降糖方案。',
@@ -1078,19 +1086,11 @@ it('病例⑤（64 岁女性 T2DM+高血压+CKD 4 期）门诊算出 eGFR=26.0 �
         historyOfPresentIllness: '既往糖尿病、高血压及慢性肾脏病史，近期血糖控制欠佳。',
         physicalExamination: '神清，双下肢轻度水肿。',
       },
-      expectedDraftVersion: 0,
+      reason: '复查肾功能及处方调整后完善门诊病历。',
     },
-  }, 'PUT')).json()).data
-  const dPrev = await readOp()
-  const signPrev = clinicalDocumentSignPreviewResponseSchema.parse(await (await s.mutate('doctor', `/api/his/v1/encounters/${op.encounterId}/clinical-document/actions/preview-sign`, {
-    expectedVersions: { [`Encounter/${op.encounterId}`]: dPrev.encounter.versionId },
-    input: { expectedDraftVersion: docDraft.draftVersion },
-  })).json()).data
-  const dSign = await readOp()
-  clinicalDocumentSignResponseSchema.parse(await (await s.mutate('doctor', `/api/his/v1/encounters/${op.encounterId}/clinical-document/actions/sign`, {
-    expectedVersions: { [`Encounter/${op.encounterId}`]: dSign.encounter.versionId },
-    input: { commitToken: signPrev.commitToken, previewId: signPrev.previewId },
-  })).json())
+  })
+  expect(revisedCase5Doc.status, await revisedCase5Doc.clone().text()).toBe(200)
+  clinicalDocumentRevisionResponseSchema.parse(await revisedCase5Doc.json())
   const dComplete = await readOp()
   const completeRes = await s.mutate('doctor', `/api/his/v1/encounters/${op.encounterId}/actions/complete`, {
     expectedVersions: { [`Encounter/${op.encounterId}`]: dComplete.encounter.versionId },

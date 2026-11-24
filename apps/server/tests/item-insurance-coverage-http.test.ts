@@ -5,9 +5,6 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   billingCaseSchema,
-  clinicalDocumentDraftResponseSchema,
-  clinicalDocumentSignPreviewResponseSchema,
-  clinicalDocumentSignResponseSchema,
   confirmDiagnosisResponseSchema,
   diagnosisDraftResponseSchema,
   doctorCaseDetailSchema,
@@ -55,6 +52,7 @@ import {
   startConsultation,
 } from './fixtures/imaging-scenario.ts'
 import { inpatientInsuranceFixture } from './fixtures/insurance-inpatient.ts'
+import { satisfyOutpatientOrderPrerequisites, signInitialOutpatientDocument } from './fixtures/outpatient-order-gate.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -321,6 +319,7 @@ async function setupOutpatient(options: { withLabCnReference?: boolean } = {}) {
   const issuePrescription = async (
     items: Array<{ catalogItemId: string; courseDays: number; doseText: string; frequencyCode: string; quantity: number; routeCode?: string }>,
   ) => {
+    await signInitialOutpatientDocument(runtime, doctor, started.outpatientCaseId)
     const detail = await readDetail()
     const expectedVersions = { [`Encounter/${started.encounterId}`]: detail.encounter.versionId }
     const draftRes = await write(
@@ -345,46 +344,10 @@ async function setupOutpatient(options: { withLabCnReference?: boolean } = {}) {
     return issuePrescriptionResponseSchema.parse(await issuedRes.json()).data
   }
   const completeEncounter = async () => {
+    await signInitialOutpatientDocument(runtime, doctor, started.outpatientCaseId)
     const detail = await readDetail()
     const expected = { [`Encounter/${started.encounterId}`]: detail.encounter.versionId }
     const encPath = `/api/his/v1/encounters/${started.encounterId}`
-    const draftRes = await write(
-      `${encPath}/clinical-document/draft`,
-      {
-        expectedDraftVersion: 0,
-        document: {
-          assessment: '合成混合处方评估完整。',
-          chiefComplaint: '合成门诊复诊评估。',
-          disposition: '按处方规律服药。',
-          followUp: '两周后门诊随访。',
-          historyOfPresentIllness: '病情稳定，无明显不适。',
-          menstrualHistory: '患者自述已绝经。',
-          obstetricHistory: '患者自述孕2产2。',
-          physicalExamination: '神志清，心肺听诊未见异常。',
-        },
-      },
-      doctor,
-      expected,
-      'PUT',
-    )
-    expect(draftRes.status, await draftRes.clone().text()).toBe(200)
-    const draft = clinicalDocumentDraftResponseSchema.parse(await draftRes.json()).data
-    const previewRes = await write(
-      `${encPath}/clinical-document/actions/preview-sign`,
-      { expectedDraftVersion: draft.draftVersion },
-      doctor,
-      expected,
-    )
-    expect(previewRes.status, await previewRes.clone().text()).toBe(200)
-    const preview = clinicalDocumentSignPreviewResponseSchema.parse(await previewRes.json()).data
-    const signedRes = await write(
-      `${encPath}/clinical-document/actions/sign`,
-      { previewId: preview.previewId, commitToken: preview.commitToken },
-      doctor,
-      expected,
-    )
-    expect(signedRes.status, await signedRes.clone().text()).toBe(200)
-    clinicalDocumentSignResponseSchema.parse(await signedRes.json())
     const completedRes = await write(`${encPath}/actions/complete`, {}, doctor, expected)
     expect(completedRes.status, await completedRes.clone().text()).toBe(200)
     encounterCompletionResponseSchema.parse(await completedRes.json())
@@ -480,6 +443,7 @@ describe('品规级甲乙丙医保属性、混合处方明细结算与冻结快�
 
   it('门诊功能检查区分 ECG 甲类 0% 与 TTE 乙类 10%，且目录变更不影响已开立费用', async () => {
     const s = await setupOutpatient()
+    await satisfyOutpatientOrderPrerequisites(s.runtime, s.doctor, s.started.outpatientCaseId)
     const issueExam = async (serviceId: 'examination-ecg-12-lead' | 'examination-tte') => {
       const detail = await s.readDetail()
       const expectedVersions = { [`Encounter/${s.started.encounterId}`]: detail.encounter.versionId }

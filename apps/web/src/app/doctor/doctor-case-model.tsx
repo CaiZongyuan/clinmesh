@@ -378,8 +378,7 @@ export function useDoctorCaseModel({
       },
     },
   }
-  const persistedClinicalDocumentVersion = detail.data?.clinicalDocument?.draft?.version
-    ?? detail.data?.clinicalDocument?.signed.at(-1)?.revisionNumber
+  const persistedClinicalDocumentVersion = `${detail.data?.clinicalDocument?.draft?.version ?? 0}:${detail.data?.clinicalDocument?.signed.at(-1)?.revisionNumber ?? 0}`
   useEffect(() => {
     const currentDetail = detail.data
     if (currentDetail === undefined) return
@@ -904,6 +903,7 @@ export function useDoctorCaseModel({
     },
     onError: async (_error, variables) => refreshCaseById(variables.caseId),
     onSuccess: async (_response, variables) => {
+      setWorkingClinicalDocuments(({ [variables.caseId]: _cleared, ...rest }) => rest)
       prepareClinicalDocumentSign.reset()
       await refreshCaseById(variables.caseId)
     },
@@ -924,6 +924,7 @@ export function useDoctorCaseModel({
       ])
     },
     onSuccess: async (_response, variables) => {
+      setWorkingClinicalDocuments(({ [variables.caseId]: _cleared, ...rest }) => rest)
       await Promise.all([
         refreshCaseById(variables.caseId),
         refreshCompletedCaseDetails(),
@@ -1122,7 +1123,10 @@ export function useDoctorCaseModel({
     },
     onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
-  const persistedWorkingClinicalDocument = detail.data === undefined ? undefined : createWorkingClinicalDocument(detail.data)
+  const persistedWorkingClinicalDocument = useMemo(
+    () => (detail.data === undefined ? undefined : createWorkingClinicalDocument(detail.data)),
+    [detail.data],
+  )
   const currentClinicalDocument = detail.data === undefined
     ? undefined
     : workingClinicalDocuments[detail.data.caseId] ?? persistedWorkingClinicalDocument
@@ -1152,6 +1156,7 @@ export function useDoctorCaseModel({
     page,
     setPage,
     activeCaseSection,
+    setActiveCaseSection,
     completionNavigate,
     setCompletionNavigateStable,
     caseDetailRoot,

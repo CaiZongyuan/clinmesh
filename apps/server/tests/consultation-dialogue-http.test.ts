@@ -24,6 +24,7 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { setModelControl } from './fixtures/model-control.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
+import { satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 
 class ScriptedDialogueProvider implements JsonChatCompletionsProvider {
@@ -902,6 +903,10 @@ describe('Consultation free dialogue HTTP contract', () => {
     const dialogueInputs: JsonChatCompletionInput[] = []
     const runtime = await createRuntimeWithProvider({ completeJson: async input => {
       if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: input.model }
+      if (input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification') {
+        return { content: JSON.stringify({ issues: [], agentFactChecks: [], recordingChecks: [] }), model: input.model }
+      }
+      if (input.usageContext?.stage === 'recording') return { content: JSON.stringify({ additions: [] }), model: input.model }
       dialogueInputs.push(input)
       resolveGeneration()
       return answer
@@ -909,10 +914,13 @@ describe('Consultation free dialogue HTTP contract', () => {
     useSyntheticLaboratoryCatalog(runtime)
     const started = await startConsultationCase(runtime)
     const cookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+    await satisfyOutpatientOrderPrerequisites(runtime, cookie, started.outpatientCaseId)
+    while (await runtime.dispatcher.dispatchOnce() !== undefined) { /* drain quality check */ }
+    const beforeAsk = doctorCaseDetailSchema.parse(await (await runtime.app.request(`/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } })).json())
     const headers = () => ({ cookie, origin, 'content-type': 'application/json', 'idempotency-key': randomUUID() })
     const askRequest = { method: 'POST', headers: headers(), body: JSON.stringify({
-      expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1' },
-      input: { expectedConsultationVersion: 2, message: '还有哪里不舒服？' },
+      expectedVersions: { [`Encounter/${started.encounterId}`]: beforeAsk.encounter.versionId, [`Task/${beforeAsk.taskId}`]: beforeAsk.taskVersion },
+      input: { expectedConsultationVersion: beforeAsk.consultation!.version, message: '还有哪里不舒服？' },
     }) }
     const asking = runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, askRequest)
     await generationStarted

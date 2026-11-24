@@ -10,6 +10,7 @@ import {
   signIn,
   startConsultation,
 } from './fixtures/imaging-scenario.ts'
+import { defaultOutpatientGateDocument, satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 
 const created: Awaited<ReturnType<typeof createImagingRuntime>>[] = []
 afterEach(async () => {
@@ -39,12 +40,13 @@ it('offers pixel-free ECG/TTE and freezes a normal adult report after payment', 
   expect(
     (await catalog.json()).items.map((entry: { service: { examCode: string } }) => entry.service.examCode),
   ).toEqual(['ecg-12-lead', 'tte'])
+  const prereq = await satisfyOutpatientOrderPrerequisites(item.runtime, visit.doctor, visit.outpatientCaseId)
   const saved = await item.runtime.app.request(
     `/api/his/v1/encounters/${visit.encounterId}/examination-request/draft`,
     mutation(
       visit.doctor,
       {
-        expectedVersions: { [`Encounter/${visit.encounterId}`]: '3' },
+        expectedVersions: { [`Encounter/${visit.encounterId}`]: prereq.encounterVersion },
         input: { expectedDraftVersion: 0, serviceId: 'examination-ecg-12-lead', indication: '胸部不适评估' },
       },
       'PUT',
@@ -54,7 +56,7 @@ it('offers pixel-free ECG/TTE and freezes a normal adult report after payment', 
   const issued = await item.runtime.app.request(
     `/api/his/v1/encounters/${visit.encounterId}/examination-request/actions/issue`,
     mutation(visit.doctor, {
-      expectedVersions: { [`Encounter/${visit.encounterId}`]: '3' },
+      expectedVersions: { [`Encounter/${visit.encounterId}`]: prereq.encounterVersion },
       input: { expectedDraftVersion: 1 },
     }),
   )
@@ -98,32 +100,39 @@ it('offers pixel-free ECG/TTE and freezes a normal adult report after payment', 
     }),
   )
   expect(ack.status, await ack.clone().text()).toBe(200)
-  const encounterVersions = async () => {
+  const readDetail = async () => {
     const res = await item.runtime.app.request(`/api/his/v1/doctor/cases/${visit.outpatientCaseId}`, {
       headers: { cookie: visit.doctor },
     })
-    return { [`Encounter/${visit.encounterId}`]: doctorCaseDetailSchema.parse(await res.json()).encounter.versionId }
+    return doctorCaseDetailSchema.parse(await res.json())
   }
-  expect(
-    (
-      await item.runtime.app.request(
-        `/api/his/v1/encounters/${visit.encounterId}/diagnosis/draft`,
-        mutation(
-          visit.doctor,
-          {
-            expectedVersions: await encounterVersions(),
-            input: { expectedDraftVersion: 0, entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary' }] },
-          },
-          'PUT',
-        ),
-      )
-    ).status,
-  ).toBe(200)
+  const encounterVersions = async () => ({
+    [`Encounter/${visit.encounterId}`]: (await readDetail()).encounter.versionId,
+  })
+  const beforeDiag = await readDetail()
+  const diagDraft = await item.runtime.app.request(
+    `/api/his/v1/encounters/${visit.encounterId}/diagnosis/draft`,
+    mutation(
+      visit.doctor,
+      {
+        expectedVersions: { [`Encounter/${visit.encounterId}`]: beforeDiag.encounter.versionId },
+        input: {
+          expectedDraftVersion: beforeDiag.diagnosis?.draftVersion ?? 0,
+          entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary' }],
+        },
+      },
+      'PUT',
+    ),
+  )
+  expect(diagDraft.status, await diagDraft.clone().text()).toBe(200)
   expect(
     (
       await item.runtime.app.request(
         `/api/his/v1/encounters/${visit.encounterId}/diagnosis/actions/confirm`,
-        mutation(visit.doctor, { expectedVersions: await encounterVersions(), input: { expectedDraftVersion: 1 } }),
+        mutation(visit.doctor, {
+          expectedVersions: await encounterVersions(),
+          input: { expectedDraftVersion: (await diagDraft.json()).data.draftVersion },
+        }),
       )
     ).status,
   ).toBe(200)
@@ -135,48 +144,28 @@ it('offers pixel-free ECG/TTE and freezes a normal adult report after payment', 
       )
     ).status,
   ).toBe(200)
-  const docDraft = await item.runtime.app.request(
-    `/api/his/v1/encounters/${visit.encounterId}/clinical-document/draft`,
-    mutation(
-      visit.doctor,
-      {
-        expectedVersions: await encounterVersions(),
-        input: {
-          expectedDraftVersion: 0,
-          document: {
-            chiefComplaint: '咳嗽三天伴胸闷。',
-            historyOfPresentIllness: '患者咳嗽三天，行心电图排查。',
-            physicalExamination: '双肺呼吸音粗，心律齐。',
-            assessment: '急性支气管炎，心电图正常。',
-            disposition: '门诊随访观察。',
-            followUp: '症状加重随诊。',
-          },
-        },
-      },
-      'PUT',
-    ),
-  )
-  expect(docDraft.status).toBe(200)
-  const preview = await item.runtime.app.request(
-    `/api/his/v1/encounters/${visit.encounterId}/clinical-document/actions/preview-sign`,
+  const revisedDoc = await item.runtime.app.request(
+    `/api/his/v1/clinical-documents/${prereq.compositionId}/actions/revise`,
     mutation(visit.doctor, {
-      expectedVersions: await encounterVersions(),
-      input: { expectedDraftVersion: (await docDraft.json()).data.draftVersion },
+      expectedVersions: {
+        ...(await encounterVersions()),
+        [`Composition/${prereq.compositionId}`]: prereq.compositionVersion,
+      },
+      input: {
+        document: {
+          ...defaultOutpatientGateDocument,
+          chiefComplaint: '咳嗽三天伴胸闷。',
+          historyOfPresentIllness: '患者咳嗽三天，行心电图排查。',
+          physicalExamination: '双肺呼吸音粗，心律齐。',
+          assessment: '急性支气管炎，心电图正常。',
+          disposition: '门诊随访观察。',
+          followUp: '症状加重随诊。',
+        },
+        reason: '心电图检查回报后完善病历。',
+      },
     }),
   )
-  expect(preview.status).toBe(200)
-  const previewData = (await preview.json()).data
-  expect(
-    (
-      await item.runtime.app.request(
-        `/api/his/v1/encounters/${visit.encounterId}/clinical-document/actions/sign`,
-        mutation(visit.doctor, {
-          expectedVersions: await encounterVersions(),
-          input: { previewId: previewData.previewId, commitToken: previewData.commitToken },
-        }),
-      )
-    ).status,
-  ).toBe(200)
+  expect(revisedDoc.status, await revisedDoc.clone().text()).toBe(200)
   expect(
     (
       await item.runtime.app.request(

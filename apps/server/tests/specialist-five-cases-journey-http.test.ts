@@ -25,6 +25,7 @@ import {
   billingCaseSchema,
   caseLaboratoryCatalogSearchSchema,
   clinicalDocumentDraftResponseSchema,
+  clinicalDocumentRevisionResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
   clinicalDocumentSignResponseSchema,
   confirmDiagnosisResponseSchema,
@@ -456,6 +457,62 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     expect(firstVisitRes.status, await firstVisitRes.clone().text()).toBe(200)
     startVisitResponseSchema.parse(await firstVisitRes.json())
     return { caseId: started.outpatientCaseId, encounterId: started.encounterId, patientId: started.patientId }
+  }
+
+  async function prepareOutpatientOrdersByGrant(
+    caseId: string,
+    encounterId: string,
+    entries: Array<{ catalogItemId: string; role: 'primary' | 'secondary' }>,
+    document: Record<string, string>,
+  ) {
+    const detail = await grantOp('doctor', 'doctor.case.get', { caseId }, doctorCaseDetailSchema)
+    const docDraft = (await grantOp('doctor', 'encounter.clinical-document.draft.set', {
+      document,
+      encounterId,
+      encounterVersion: detail.encounter.versionId,
+      expectedDraftVersion: detail.clinicalDocument?.draft?.version ?? 0,
+    }, clinicalDocumentDraftResponseSchema)).data
+    const signPrev = (await grantOp('doctor', 'encounter.clinical-document.sign.preview', {
+      encounterId,
+      encounterVersion: detail.encounter.versionId,
+      expectedDraftVersion: docDraft.draftVersion,
+    }, clinicalDocumentSignPreviewResponseSchema)).data
+    const signed = (await grantOp('doctor', 'encounter.clinical-document.sign', {
+      commitToken: signPrev.commitToken,
+      encounterId,
+      encounterVersion: detail.encounter.versionId,
+      previewId: signPrev.previewId,
+    }, clinicalDocumentSignResponseSchema)).data
+    const diagDraft = (await grantOp('doctor', 'encounter.diagnosis.draft.set', {
+      encounterId,
+      encounterVersion: detail.encounter.versionId,
+      entries,
+      expectedDraftVersion: detail.diagnosis?.draftVersion ?? 0,
+    }, diagnosisDraftResponseSchema)).data
+    await grantOp('doctor', 'encounter.diagnosis.confirm', {
+      encounterId,
+      encounterVersion: detail.encounter.versionId,
+      expectedDraftVersion: diagDraft.draftVersion,
+    }, confirmDiagnosisResponseSchema)
+    return signed
+  }
+
+  async function reviseOutpatientDocumentByGrant(
+    caseId: string,
+    encounterId: string,
+    signed: { compositionId: string; compositionVersion: string },
+    document: Record<string, string>,
+    reason: string,
+  ) {
+    const detail = await grantOp('doctor', 'doctor.case.get', { caseId }, doctorCaseDetailSchema)
+    return (await grantOp('doctor', 'clinical-document.revise', {
+      compositionId: signed.compositionId,
+      compositionVersion: signed.compositionVersion,
+      document,
+      encounterId,
+      encounterVersion: detail.encounter.versionId,
+      reason,
+    }, clinicalDocumentRevisionResponseSchema)).data
   }
 
   async function payOutpatientByGrant(caseId: string, category: 'examination' | 'laboratory' | 'medication', chargeItemId: string) {
@@ -1029,6 +1086,20 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
       expect(serialized, `${label} must not echo internal systemPrompt`).not.toContain(internalSystemPrompt)
     }
 
+    const initialOpDoc = await prepareOutpatientOrdersByGrant(
+      op.caseId,
+      op.encounterId,
+      [{ catalogItemId: 'diagnosis-coronary-heart-disease', role: 'primary' }],
+      {
+        assessment: '间断胸骨后闷痛待查，拟急查心电图及高敏肌钙蛋白排查急性冠脉综合征。',
+        chiefComplaint: '间断胸骨后闷痛 6 小时。',
+        disposition: '门诊急查十二导联心电图、高敏心肌肌钙蛋白I及基础血脂肌酐。',
+        followUp: '检查结果回报后立即复核评估住院指征。',
+        historyOfPresentIllness: '6 小时前出现间断胸骨后闷痛，走路时加重伴轻微出汗。',
+        physicalExamination: '神清，双肺呼吸音清。',
+      },
+    )
+
     const ecg = await runOutpatientExamByGrant(op.caseId, op.encounterId, 'examination-ecg-12-lead')
     expect(ecg.report!.impression).toContain('ST段压低')
     const ctni1 = await runOutpatientLabByGrant(op.caseId, op.encounterId, '2100404B')
@@ -1058,27 +1129,17 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
       wardId: 'ward-general',
     }) as { data: { referral: { id: string; patientVersion: string } } }).data.referral
 
-    const d1 = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
-    const diagDraft = (await grantOp('doctor', 'encounter.diagnosis.draft.set', {
-      encounterId: op.encounterId,
-      encounterVersion: d1.encounter.versionId,
-      entries: [{ catalogItemId: 'diagnosis-coronary-heart-disease', role: 'primary' }],
-      expectedDraftVersion: 0,
-    }, diagnosisDraftResponseSchema)).data
-    await grantOp('doctor', 'encounter.diagnosis.confirm', {
-      encounterId: op.encounterId,
-      encounterVersion: d1.encounter.versionId,
-      expectedDraftVersion: diagDraft.draftVersion,
-    }, confirmDiagnosisResponseSchema)
     const d2 = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
     await grantOp('doctor', 'encounter.medication-conclusion.confirm-none', {
       encounterId: op.encounterId,
       encounterVersion: d2.encounter.versionId,
       expectedDraftVersion: 0,
     }, confirmNoMedicationResponseSchema)
-    const d3 = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
-    const docDraft = (await grantOp('doctor', 'encounter.clinical-document.draft.set', {
-      document: {
+    await reviseOutpatientDocumentByGrant(
+      op.caseId,
+      op.encounterId,
+      initialOpDoc,
+      {
         assessment: '急性非ST段抬高型心肌梗死高危，转入心内科病房。',
         chiefComplaint: '间断胸骨后闷痛 6 小时。',
         disposition: '开具住院证转住院行冠脉造影及 PCI。',
@@ -1086,23 +1147,8 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
         historyOfPresentIllness: '胸痛伴心电图前壁 ST 段压低，高敏肌钙蛋白动态升高。',
         physicalExamination: '神清，双肺呼吸音清。',
       },
-      encounterId: op.encounterId,
-      encounterVersion: d3.encounter.versionId,
-      expectedDraftVersion: 0,
-    }, clinicalDocumentDraftResponseSchema)).data
-    const d4 = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
-    const signPrev = (await grantOp('doctor', 'encounter.clinical-document.sign.preview', {
-      encounterId: op.encounterId,
-      encounterVersion: d4.encounter.versionId,
-      expectedDraftVersion: docDraft.draftVersion,
-    }, clinicalDocumentSignPreviewResponseSchema)).data
-    const d5 = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
-    await grantOp('doctor', 'encounter.clinical-document.sign', {
-      commitToken: signPrev.commitToken,
-      encounterId: op.encounterId,
-      encounterVersion: d5.encounter.versionId,
-      previewId: signPrev.previewId,
-    }, clinicalDocumentSignResponseSchema)
+      '心电图与复测高敏肌钙蛋白回报后明确高危 NSTEMI 并开具住院证。',
+    )
     const d6 = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
     await grantOp('doctor', 'encounter.complete', {
       encounterId: op.encounterId,
@@ -1294,23 +1340,25 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     }, doctorCompletedHistoryDetailSchema)
     expect(JSON.stringify(ipSummary)).toContain('36.0700')
 
+    const revisitInitialDoc = await prepareOutpatientOrdersByGrant(
+      revisit.caseId,
+      revisit.encounterId,
+      [{ catalogItemId: 'diagnosis-coronary-heart-disease', role: 'primary' }],
+      {
+        assessment: 'NSTEMI PCI 术后门诊随访，拟复查血脂、肾功能与血常规评估双抗续方。',
+        chiefComplaint: 'PCI 术后门诊随访复查血脂与双抗评估。',
+        disposition: '门诊完善血脂、肌酐与血常规复查。',
+        followUp: '检验回报后评估降脂达标与出血风险。',
+        historyOfPresentIllness: '本院 NSTEMI 单支架 PCI 术后规律服药，无胸痛复发及出血表现。',
+        physicalExamination: '神清，穿刺处愈合良好。',
+      },
+    )
+
     const ldlFollowUp = await runOutpatientLabByGrant(revisit.caseId, revisit.encounterId, '2000404A')
     expect(ldlFollowUp.report!.results.find(r => r.code === '2000404A')?.value).toBe(1.25)
     await runOutpatientLabByGrant(revisit.caseId, revisit.encounterId, '1700404A')
     await runOutpatientLabByGrant(revisit.caseId, revisit.encounterId, 'CN-LAB-CBC-5DIFF')
 
-    const revDetail1 = await grantOp('doctor', 'doctor.case.get', { caseId: revisit.caseId }, doctorCaseDetailSchema)
-    const revDiagDraft = (await grantOp('doctor', 'encounter.diagnosis.draft.set', {
-      encounterId: revisit.encounterId,
-      encounterVersion: revDetail1.encounter.versionId,
-      entries: [{ catalogItemId: 'diagnosis-coronary-heart-disease', role: 'primary' }],
-      expectedDraftVersion: 0,
-    }, diagnosisDraftResponseSchema)).data
-    await grantOp('doctor', 'encounter.diagnosis.confirm', {
-      encounterId: revisit.encounterId,
-      encounterVersion: revDetail1.encounter.versionId,
-      expectedDraftVersion: revDiagDraft.draftVersion,
-    }, confirmDiagnosisResponseSchema)
     const revDetail2 = await grantOp('doctor', 'doctor.case.get', { caseId: revisit.caseId }, doctorCaseDetailSchema)
     await grantOp('doctor', 'encounter.risk-assessment.record', {
       encounterId: revisit.encounterId,
@@ -1347,8 +1395,11 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     expect(revScoresBeforeDispense.scores.find(s => s.id === 'ascvd-ldl-target')?.status).toBe('complete')
 
     // Complete revisit, pay & dispense DAPT prescription -> outpatient PRECISE-DAPT also becomes complete
-    const revDocDraft = (await grantOp('doctor', 'encounter.clinical-document.draft.set', {
-      document: {
+    await reviseOutpatientDocumentByGrant(
+      revisit.caseId,
+      revisit.encounterId,
+      revisitInitialDoc,
+      {
         assessment: 'NSTEMI PCI 术后随访，LDL-C 1.25 mmol/L 达标，继续双联抗血小板及强化他汀治疗。',
         chiefComplaint: 'PCI 术后门诊随访复查血脂与双抗评估。',
         disposition: '续方阿司匹林、氯吡格雷与阿托伐他汀。',
@@ -1356,23 +1407,8 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
         historyOfPresentIllness: '本院 NSTEMI 单支架 PCI 术后规律服药，无胸痛复发及出血表现。',
         physicalExamination: '神清，穿刺处愈合良好。',
       },
-      encounterId: revisit.encounterId,
-      encounterVersion: revDetail3.encounter.versionId,
-      expectedDraftVersion: 0,
-    }, clinicalDocumentDraftResponseSchema)).data
-    const revD4 = await grantOp('doctor', 'doctor.case.get', { caseId: revisit.caseId }, doctorCaseDetailSchema)
-    const revSignPrev = (await grantOp('doctor', 'encounter.clinical-document.sign.preview', {
-      encounterId: revisit.encounterId,
-      encounterVersion: revD4.encounter.versionId,
-      expectedDraftVersion: revDocDraft.draftVersion,
-    }, clinicalDocumentSignPreviewResponseSchema)).data
-    const revD5 = await grantOp('doctor', 'doctor.case.get', { caseId: revisit.caseId }, doctorCaseDetailSchema)
-    await grantOp('doctor', 'encounter.clinical-document.sign', {
-      commitToken: revSignPrev.commitToken,
-      encounterId: revisit.encounterId,
-      encounterVersion: revD5.encounter.versionId,
-      previewId: revSignPrev.previewId,
-    }, clinicalDocumentSignResponseSchema)
+      '随访血脂回报达标并开具双抗及强化他汀续方后修订病历。',
+    )
     const revD6 = await grantOp('doctor', 'doctor.case.get', { caseId: revisit.caseId }, doctorCaseDetailSchema)
     await grantOp('doctor', 'encounter.complete', {
       encounterId: revisit.encounterId,
@@ -1589,28 +1625,30 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
   it('病例⑤（renal-t2dm-htn-ckd4-control-v1）：贯通 CKD 4 期（eGFR 26.0）、指南专题、二甲双胍与达格列净红线拦截（含越权参数仍 409）及甲/乙/丙混合处方医保结算发药', async () => {
     const case5 = preparedPack.cases.find(item => item.draftId === 'renal-t2dm-htn-ckd4-control-v1')!.case!
     const op = await startOutpatientByGrant(case5.caseId, case5.revision, case5.activeBriefRevision!, '近期血糖偏高 1 个月复诊调药')
+    const case5InitialDoc = await prepareOutpatientOrdersByGrant(
+      op.caseId,
+      op.encounterId,
+      [
+        { catalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia', role: 'primary' },
+        { catalogItemId: 'diagnosis-hypertension', role: 'secondary' },
+        { catalogItemId: 'diagnosis-dyslipidemia', role: 'secondary' },
+      ],
+      {
+        assessment: '2型糖尿病伴高血糖、高血压、血脂异常随访，拟完善肾功能、糖化血红蛋白、血钾与血脂后调药。',
+        chiefComplaint: '近期血糖偏高 1 个月复诊调药。',
+        disposition: '门诊完善肾功能、电解质、糖化血红蛋白与血脂检验。',
+        followUp: '检验回报后复核肾功能分级并制定降糖降压降脂处方。',
+        historyOfPresentIllness: '慢性肾脏病随访合并近 1 个月血糖升高。',
+        menstrualHistory: '已绝经。',
+        obstetricHistory: '孕2产2。',
+        physicalExamination: '神清，心肺无殊。',
+      },
+    )
 
     expect((await runOutpatientLabByGrant(op.caseId, op.encounterId, '1700404A', true)).report!.results.find(r => r.code === '1700404A')?.value).toBe(184.6)
     expect((await runOutpatientLabByGrant(op.caseId, op.encounterId, '1100301A', true)).report!.results.find(r => r.code === '1100301A')?.value).toBe(8.2)
     expect((await runOutpatientLabByGrant(op.caseId, op.encounterId, '1400605A', true)).report!.results.find(r => r.code === '1400605A')?.value).toBe(4.8)
     expect((await runOutpatientLabByGrant(op.caseId, op.encounterId, '2000404A', true)).report!.results.find(r => r.code === '2000404A')?.value).toBe(3.1)
-
-    const d1 = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
-    const diagDraft = (await grantOp('doctor', 'encounter.diagnosis.draft.set', {
-      encounterId: op.encounterId,
-      encounterVersion: d1.encounter.versionId,
-      entries: [
-        { catalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia', role: 'primary' },
-        { catalogItemId: 'diagnosis-hypertension', role: 'secondary' },
-        { catalogItemId: 'diagnosis-dyslipidemia', role: 'secondary' },
-      ],
-      expectedDraftVersion: 0,
-    }, diagnosisDraftResponseSchema)).data
-    await grantOp('doctor', 'encounter.diagnosis.confirm', {
-      encounterId: op.encounterId,
-      encounterVersion: d1.encounter.versionId,
-      expectedDraftVersion: diagDraft.draftVersion,
-    }, confirmDiagnosisResponseSchema)
 
     // Read eGFR = 26.0 (G4) & `t2dm-renal-medication` guideline topic via DSH `doctor-queries`
     const d2 = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
@@ -1689,9 +1727,11 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
       expectedDraftVersion: mixedDraft.draftVersion,
     }, issuePrescriptionResponseSchema)).data
 
-    const dDoc = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
-    const docDraft = (await grantOp('doctor', 'encounter.clinical-document.draft.set', {
-      document: {
+    await reviseOutpatientDocumentByGrant(
+      op.caseId,
+      op.encounterId,
+      case5InitialDoc,
+      {
         assessment: '2型糖尿病伴高血糖、高血压、血脂异常、慢性肾脏病4期（eGFR 26.0），严禁双胍与达格列净。',
         chiefComplaint: '近期血糖偏高 1 个月复诊调药。',
         disposition: '开具氨氯地平、缬沙坦与依折麦布控制血压血脂，肾内内分泌联合制定降糖方案。',
@@ -1701,23 +1741,8 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
         obstetricHistory: '孕2产2。',
         physicalExamination: '神清，心肺无殊。',
       },
-      encounterId: op.encounterId,
-      encounterVersion: dDoc.encounter.versionId,
-      expectedDraftVersion: 0,
-    }, clinicalDocumentDraftResponseSchema)).data
-    const dPrev = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
-    const signPrev = (await grantOp('doctor', 'encounter.clinical-document.sign.preview', {
-      encounterId: op.encounterId,
-      encounterVersion: dPrev.encounter.versionId,
-      expectedDraftVersion: docDraft.draftVersion,
-    }, clinicalDocumentSignPreviewResponseSchema)).data
-    const dSign = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
-    await grantOp('doctor', 'encounter.clinical-document.sign', {
-      commitToken: signPrev.commitToken,
-      encounterId: op.encounterId,
-      encounterVersion: dSign.encounter.versionId,
-      previewId: signPrev.previewId,
-    }, clinicalDocumentSignResponseSchema)
+      '肾功能（eGFR 26.0）回报后确认禁用双胍与达格列净并开具安全降压降脂处方。',
+    )
     const dComp = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
     await grantOp('doctor', 'encounter.complete', {
       encounterId: op.encounterId,

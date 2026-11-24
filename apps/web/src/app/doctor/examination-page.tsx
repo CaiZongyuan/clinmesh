@@ -48,6 +48,7 @@ import { InvestigationRequestWorkspace } from './investigation-request-workspace
 import { InvestigationBilling, InvestigationPrice } from './investigation-billing.tsx'
 import { OutpatientInvestigationActions } from './outpatient-investigation-actions.tsx'
 import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
+import { OutpatientOrderGateGuidance, resolveOutpatientOrderPrerequisiteGate, type OutpatientOrderPrerequisiteGate } from './outpatient-order-gate.tsx'
 
 export function ExaminationPage({
   detail,
@@ -56,6 +57,7 @@ export function ExaminationPage({
   active,
   elementId,
   actionContext,
+  orderGate,
   recommendationScope,
   selectedRequestId,
   onSelectRequest,
@@ -66,10 +68,12 @@ export function ExaminationPage({
   active: boolean
   elementId: string
   actionContext: OutpatientInvestigationActionContext | undefined
+  orderGate?: OutpatientOrderPrerequisiteGate | undefined
   recommendationScope?: string | undefined
   selectedRequestId?: string | undefined
   onSelectRequest: (id: string) => void
 }) {
+  const effectiveOrderGate = orderGate ?? resolveOutpatientOrderPrerequisiteGate(detail)
   const zh = locale === 'zh-CN',
     state = detail.examinationRequests,
     draftVersion = state?.draftVersion ?? 0,
@@ -232,8 +236,12 @@ export function ExaminationPage({
               <>
                 <strong>{state.draft.service.name}</strong>
                 <p>{state.draft.indication}</p>
-                <div className="flex gap-2">
-                  <Button disabled={readOnly || mutation.isPending} onClick={() => mutation.mutate('issue')}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    data-unavailable={effectiveOrderGate.blocked ? '' : undefined}
+                    disabled={readOnly || mutation.isPending || effectiveOrderGate.blocked}
+                    onClick={() => mutation.mutate('issue')}
+                  >
                     <FilePlus2 aria-hidden="true" />
                     {zh ? '开立功能检查' : 'Issue examination'}
                   </Button>
@@ -253,6 +261,7 @@ export function ExaminationPage({
                     {zh ? '删除草稿' : 'Delete draft'}
                   </Button>
                 </div>
+                <OutpatientOrderGateGuidance gate={effectiveOrderGate} locale={locale} />
               </>
             ) : (
               <p>{zh ? '暂无功能检查草稿' : 'No examination draft'}</p>

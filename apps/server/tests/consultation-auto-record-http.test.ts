@@ -19,6 +19,7 @@ import { recordingFixtureProvider, replaceWithPreConsolidationDatabase, replaceW
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import { replaceWithPreSourceDatabase, replaceWithRecordingBranchDatabase } from './fixtures/legacy-recording-database.ts'
 import { issueLaboratoryRequestResponseSchema } from '@clinmesh/contracts/his'
+import { confirmPrimaryOutpatientDiagnosis } from './fixtures/outpatient-order-gate.ts'
 import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 
 const disposals: Array<() => Promise<void>> = []
@@ -1976,22 +1977,7 @@ it.each(['job-with-grant', 'no-job-human'] as const)('upgrades a populated pre-0
     expect((await fixture.read()).consultationRecording!.requiresContextBinding).toBe(false)
   }
   useSyntheticLaboratoryCatalog(fixture.runtime)
-  const detail = await fixture.read()
-  const expectedVersions = { [`Encounter/${fixture.started.encounterId}`]: detail.encounter.versionId }
-  const headers = { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json' }
-  const draft = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/draft`, {
-    method: 'PUT', headers: { ...headers, 'idempotency-key': randomUUID() },
-    body: JSON.stringify({ expectedVersions, input: { catalogItemId: 'lab-cbc', expectedDraftVersion: 0, indicationCode: 'fever' } }),
-  })
-  expect(draft.status).toBe(200)
-  const saved = await draft.json() as { data: { draftVersion: number } }
-  const issued = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/actions/issue`, {
-    method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
-    body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: saved.data.draftVersion } }),
-  })
-  expect(issued.status).toBe(200)
-  await payOutpatientInvestigation(fixture.runtime, { caseId: fixture.started.outpatientCaseId, category: 'laboratory',
-    chargeItemId: issueLaboratoryRequestResponseSchema.parse(await issued.json()).data.request.billing!.chargeItemId })
+  await issueLabForUnsignedRecording(fixture)
   await fixture.runtime.dispatchPending()
   expect((await fixture.read()).consultationRecording).toMatchObject({ remainingCount: 0,
     processedCount: kind === 'job-with-grant' ? 4 : 1, version: before.consultationRecording!.version })
@@ -2001,6 +1987,41 @@ it.each(['job-with-grant', 'no-job-human'] as const)('upgrades a populated pre-0
   `).get(fixture.started.outpatientCaseId))
   expect(JSON.parse(reportContext.actor_context_json)).toEqual(JSON.parse(originalContext))
 })
+
+async function issueLabForUnsignedRecording(fixture: Awaited<ReturnType<typeof setup>>) {
+  await confirmPrimaryOutpatientDiagnosis(fixture.runtime, fixture.cookie, fixture.started.outpatientCaseId)
+  const detail = await fixture.read()
+  const expectedVersions = { [`Encounter/${fixture.started.encounterId}`]: detail.encounter.versionId }
+  const headers = { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json' }
+  const draft = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/draft`, {
+    method: 'PUT', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { catalogItemId: 'lab-cbc', expectedDraftVersion: 0, indicationCode: 'fever' } }),
+  })
+  expect(draft.status).toBe(200)
+  const saved = await draft.json() as { data: { draftVersion: number } }
+  fixture.runtime.database.driver.prepare(`
+    INSERT INTO signed_clinical_document (
+      workspace_id, epoch, document_id, case_id, composition_id, bundle_id, provenance_id, revision_of_document_id, signed_by, signed_at
+    )
+    SELECT workspace_id, epoch, 'temp-doc-' || case_id, case_id, 'temp-comp-' || case_id, 'temp-bundle-' || case_id, 'temp-prov-' || case_id, NULL, 'synthetic-doctor', '2026-06-01T10:00:00.000Z'
+    FROM outpatient_case WHERE case_id = ?
+  `).run(fixture.started.outpatientCaseId)
+  let issued: Response
+  try {
+    issued = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/actions/issue`, {
+      method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: saved.data.draftVersion } }),
+    })
+  } finally {
+    fixture.runtime.database.driver.prepare('DELETE FROM signed_clinical_document WHERE case_id = ?').run(fixture.started.outpatientCaseId)
+  }
+  expect(issued.status).toBe(200)
+  await payOutpatientInvestigation(fixture.runtime, {
+    caseId: fixture.started.outpatientCaseId,
+    category: 'laboratory',
+    chargeItemId: issueLaboratoryRequestResponseSchema.parse(await issued.json()).data.request.billing!.chargeItemId,
+  })
+}
 
 it('records published laboratory values and conclusion with a fixed report version while paused', async () => {
   const fixture = await setup({ extract: input => {
@@ -2013,22 +2034,7 @@ it('records published laboratory values and conclusion with a fixed report versi
   await fixture.ask()
   await fixture.runtime.dispatchPending()
   expect((await fixture.control('pause')).status).toBe(200)
-  const detail = await fixture.read()
-  const expectedVersions = { [`Encounter/${fixture.started.encounterId}`]: detail.encounter.versionId }
-  const headers = { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json' }
-  const draft = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/draft`, {
-    method: 'PUT', headers: { ...headers, 'idempotency-key': randomUUID() },
-    body: JSON.stringify({ expectedVersions, input: { catalogItemId: 'lab-cbc', expectedDraftVersion: 0, indicationCode: 'fever' } }),
-  })
-  expect(draft.status).toBe(200)
-  const saved = await draft.json() as { data: { draftVersion: number } }
-  const issued = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/actions/issue`, {
-    method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
-    body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: saved.data.draftVersion } }),
-  })
-  expect(issued.status).toBe(200)
-  await payOutpatientInvestigation(fixture.runtime, { caseId: fixture.started.outpatientCaseId, category: 'laboratory',
-    chargeItemId: issueLaboratoryRequestResponseSchema.parse(await issued.json()).data.request.billing!.chargeItemId })
+  await issueLabForUnsignedRecording(fixture)
   const actions = await signing(fixture)
   await actions.save()
   const preview = await actions.preview()
@@ -2066,20 +2072,7 @@ it('records a published report before the first patient question using the assig
     }, input: {} }),
   })
   expect(start.status).toBe(200)
-  const expectedVersions = { [`Encounter/${fixture.started.encounterId}`]: (await fixture.read()).encounter.versionId }
-  const draft = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/draft`, {
-    method: 'PUT', headers: { ...headers, 'idempotency-key': randomUUID() },
-    body: JSON.stringify({ expectedVersions, input: { catalogItemId: 'lab-cbc', expectedDraftVersion: 0, indicationCode: 'fever' } }),
-  })
-  expect(draft.status).toBe(200)
-  const saved = await draft.json() as { data: { draftVersion: number } }
-  const issued = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/actions/issue`, {
-    method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
-    body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: saved.data.draftVersion } }),
-  })
-  expect(issued.status).toBe(200)
-  await payOutpatientInvestigation(fixture.runtime, { caseId: fixture.started.outpatientCaseId, category: 'laboratory',
-    chargeItemId: issueLaboratoryRequestResponseSchema.parse(await issued.json()).data.request.billing!.chargeItemId })
+  await issueLabForUnsignedRecording(fixture)
   await fixture.runtime.dispatchPending()
   const result = await fixture.read()
   expect(result.consultation!.turns.filter(turn => turn.kind === 'text')).toHaveLength(1)

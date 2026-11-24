@@ -39,6 +39,7 @@ import { InvestigationRequestWorkspace } from './investigation-request-workspace
 import { useInvestigationPreferences, useManualInvestigationDrafts } from './investigation-draft-storage.ts'
 import { OutpatientInvestigationActions } from './outpatient-investigation-actions.tsx'
 import type { OutpatientInvestigationActionContext } from './outpatient-investigation-action-store.ts'
+import type { OutpatientOrderPrerequisiteGate } from './outpatient-order-gate.tsx'
 
 interface ImagingRequestState {
   draft?: { indication: string; service: ImagingServiceSnapshot } | undefined
@@ -81,9 +82,11 @@ export type ImagingSummaryInsertion = 'duplicate' | 'inserted' | 'too-long'
 export interface ImagingPageActions {
   /** 当前账号兼有管理员岗位时才能更正报告。 */
   canCorrect: boolean
+  hasSignedRecord?: boolean | undefined
   onChanged: () => Promise<unknown> | void
-  /** 把报告摘要插入未签病历；病历已签或只读时不提供。 */
+  /** 把报告摘要插入未签病历或进行中就诊的病历修订草稿；只读时不提供。 */
   onInsertSummary?: ((request: ImagingRequest, report: ImagingReport) => ImagingSummaryInsertion) | undefined
+  onNavigateToRecord?: (() => void) | undefined
   view: ImagingViewState
 }
 
@@ -226,7 +229,16 @@ function ImagingRequestItem({ actions, active, locale, readOnly: _readOnly, requ
             )}
 
           </div>
-          {summaryInsertion === undefined ? null : (
+          {summaryInsertion === undefined ? null : actions.hasSignedRecord === true && summaryInsertion === 'inserted' ? (
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground" role="status">
+              <span>{zh ? '已写入病历修订草稿（辅助检查），请前往病历记录提交修订签名。' : 'Saved to the clinical document revision draft (Auxiliary examination). Submit a signed revision in Medical record.'}</span>
+              {actions.onNavigateToRecord === undefined ? null : (
+                <Button onClick={actions.onNavigateToRecord} size="sm" type="button" variant="outline">
+                  {zh ? '前往病历修订' : 'Open record revision'}
+                </Button>
+              )}
+            </div>
+          ) : (
             <p className="mt-1 text-xs text-muted-foreground" role="status">{summaryInsertionLabels[summaryInsertion][zh ? 0 : 1]}</p>
           )}
           {!viewerOpen ? null : study.isPending ? <Skeleton className="mt-2 h-40 w-full" /> : study.isError || source === undefined ? (
@@ -385,7 +397,7 @@ function ImagingComposerDialog({ addedItems, draftPending, locale, notice, onCon
 /** 放射目录与申请管理复用同一表单；报告与阅片只展示当前选中的正式申请。 */
 export function ImagingPage({
   actions, active = true, caseId, elementId, encounter, locale, readOnly, recommendationRevision, recommendationScope,
-  state, selectedRequestId, onSelectRequest, selectedReportId, actionContext,
+  state, selectedRequestId, onSelectRequest, selectedReportId, actionContext, orderGate,
 }: {
   actions: ImagingPageActions
   active?: boolean | undefined
@@ -394,6 +406,7 @@ export function ImagingPage({
   elementId: string
   encounter: { id: string; versionId: string }
   locale: WorkspaceLocale
+  orderGate?: OutpatientOrderPrerequisiteGate | undefined
   readOnly: boolean
   recommendationRevision?: string | undefined
   recommendationScope?: string | undefined
@@ -521,6 +534,7 @@ export function ImagingPage({
       scope={recommendationScope}
       enabled={active && !readOnly}
       disabled={manualDrafts.failed || draftAction.isPending || services.isFetching}
+      orderGate={orderGate}
       encounter={encounter}
       expectedDraftVersion={draftVersion}
       resolveExistingDraft={state?.draft !== undefined}

@@ -643,7 +643,7 @@ it('keeps laboratory failure recovery instructions aligned with the command cata
   expect(skill).toContain('criticalMinimum')
   expect(skill).toContain('criticalMaximum')
   expect(getHisOperation('doctor.case.laboratory-catalog.search').version).toBe(2)
-  expect(getHisOperation('encounter.laboratory-request.issue').version).toBe(2)
+  expect(getHisOperation('encounter.laboratory-request.issue').version).toBe(3)
   expect(getHisOperation('laboratory-request.cancel').version).toBe(2)
   expect(getHisOperation('laboratory-request.cancel').summary).toContain('generation-failed')
 })
@@ -863,8 +863,8 @@ describe('ClinMesh CLI Agent Skills', () => {
     const document = { assessment: '继续评估。', chiefComplaint: '头晕一周。', disposition: '门诊随访。',
       followUp: '加重时就诊。', historyOfPresentIllness: '站立时头晕。', physicalExamination: '神志清楚。' }
     for (const [prefix, version, input] of [
-      ['clinmesh encounter clinical-document draft set', 6, { encounterId: 'synthetic', encounterVersion: '1', expectedDraftVersion: 0 }],
-      ['clinmesh clinical-document revise', 3, { compositionId: 'synthetic', compositionVersion: '1', encounterId: 'synthetic', encounterVersion: '1', reason: '补充病史。' }],
+      ['clinmesh encounter clinical-document draft set', 7, { encounterId: 'synthetic', encounterVersion: '1', expectedDraftVersion: 0 }],
+      ['clinmesh clinical-document revise', 4, { compositionId: 'synthetic', compositionVersion: '1', encounterId: 'synthetic', encounterVersion: '1', reason: '补充病史。' }],
     ] as const) {
       const line = commandLines(skill).find(line => line.startsWith(prefix))!
       const operation = inspectExample(program, line).operation!
@@ -936,7 +936,7 @@ describe('ClinMesh CLI Agent Skills', () => {
   it('keeps the doctor draft example compatible with incomplete content and the versioned Catalog', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
     const operation = getHisOperation('encounter.clinical-document.draft.set')
-    expect(operation.version).toBe(6)
+    expect(operation.version).toBe(7)
     expect(skill).toContain('empty fields')
     expect(skill).toContain('including whitespace and punctuation')
     expect(operation.summary).toContain('whitespace is preserved exactly')
@@ -1170,7 +1170,8 @@ it('药物频次、审方拒绝与CLI Skill的当前合同保持一致', async (
   for (const reason of ['MEDICATION_COMBINATION_NOT_ALLOWED', 'MEDICATION_DIAGNOSIS_NOT_ALLOWED', 'MEDICATION_ALLERGY_CONFLICT', 'MEDICATION_DOSAGE_NOT_ALLOWED', 'MEDICATION_ROUTE_NOT_ALLOWED', 'MEDICATION_ONCE_REQUIRES_TEMPORARY']) expect(skill).toContain(reason)
   expect(getHisOperation('inpatient.execution.request-prn').version).toBe(6)
   expect(getHisOperation('encounter.prescription.draft.set').version).toBe(4)
-  expect(getHisOperation('encounter.prescription.issue').version).toBe(6)
+  expect(getHisOperation('encounter.prescription.issue').version).toBe(7)
+  expect(getHisOperation('encounter.medication-conclusion.confirm-none').version).toBe(2)
 })
 
 it('门诊处方操作、错误reason与clinmesh-doctor单源外延处方说明保持一致', async () => {

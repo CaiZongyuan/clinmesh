@@ -981,12 +981,62 @@ export async function runTrajectoryPerformanceProfile() {
       message: '您哪里不舒服？',
     }))
     const consultationEncounterVersion = runtime.workflow.doctorCaseDetail(doctorContext, started.outpatientCaseId).encounter.versionId!
+    const initialDocument = {
+      assessment: '多次血压升高，初步考虑高血压。',
+      auxiliaryExamination: '拟开立血常规进一步排查。',
+      chiefComplaint: '发现血压升高，偶有头晕。',
+      disposition: '待完善血常规后制定门诊降压方案。',
+      followUp: '两至四周复查血压和外周水肿。',
+      historyOfPresentIllness: '近期多次血压偏高，无胸痛或气促。',
+      menstrualHistory: '合成患者自述已绝经。',
+      obstetricHistory: '合成患者自述孕2产2。',
+      physicalExamination: '血压 162/96 mmHg，双下肢无水肿。',
+      priorMedicalHistory: '两年前曾被告知高血压。',
+    }
+    const documentDraft = (await measure(() => runtime.workflow.saveClinicalDocumentDraft({
+      context: doctorContext,
+      document: initialDocument,
+      encounterId: started.encounterId,
+      expectedDraftVersion: 0,
+      expectedVersions: { [encounterReference]: consultationEncounterVersion },
+      idempotencyKey: 'performance-trajectory-document-draft',
+    }))).data
+    const preview = (await measure(() => runtime.workflow.previewStructuredClinicalDocumentSign({
+      context: doctorContext,
+      encounterId: started.encounterId,
+      expectedDraftVersion: documentDraft.draftVersion,
+      expectedVersions: { [encounterReference]: consultationEncounterVersion },
+      idempotencyKey: 'performance-trajectory-document-preview',
+    }))).data
+    const initialSigned = (await measure(() => runtime.workflow.signStructuredClinicalDocument({
+      commitToken: preview.commitToken,
+      context: doctorContext,
+      encounterId: started.encounterId,
+      expectedVersions: { [encounterReference]: consultationEncounterVersion },
+      idempotencyKey: 'performance-trajectory-document-sign',
+      previewId: preview.previewId,
+    }))).data
+    const diagnosisDraft = (await measure(() => runtime.workflow.saveDiagnosisDraft({
+      context: doctorContext,
+      encounterId: started.encounterId,
+      entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary' }],
+      expectedDraftVersion: 0,
+      expectedVersions: { [encounterReference]: consultationEncounterVersion },
+      idempotencyKey: 'performance-trajectory-diagnosis-draft',
+    }))).data
+    const diagnosis = (await measure(() => runtime.workflow.confirmDiagnosis({
+      context: doctorContext,
+      encounterId: started.encounterId,
+      expectedDraftVersion: diagnosisDraft.draftVersion,
+      expectedVersions: { [encounterReference]: consultationEncounterVersion },
+      idempotencyKey: 'performance-trajectory-diagnosis-confirm',
+    }))).data
     const laboratoryDraft = (await measure(() => runtime.workflow.saveLaboratoryRequestDraft({
       catalogItemId: 'lab-cbc',
       context: doctorContext,
       encounterId: started.encounterId,
       expectedDraftVersion: 0,
-      expectedVersions: { [encounterReference]: consultationEncounterVersion },
+      expectedVersions: { [encounterReference]: diagnosis.encounterVersion },
       idempotencyKey: 'performance-trajectory-lab-draft',
       indicationCode: 'fever',
     }))).data
@@ -994,7 +1044,7 @@ export async function runTrajectoryPerformanceProfile() {
       context: doctorContext,
       encounterId: started.encounterId,
       expectedDraftVersion: laboratoryDraft.draftVersion,
-      expectedVersions: { [encounterReference]: consultationEncounterVersion },
+      expectedVersions: { [encounterReference]: diagnosis.encounterVersion },
       idempotencyKey: 'performance-trajectory-lab-issue',
     }))).data.request
     if (laboratory.billing === undefined) throw new Error('Performance trajectory original laboratory charge is missing')
@@ -1010,8 +1060,9 @@ export async function runTrajectoryPerformanceProfile() {
       context: cashierContext, expectedVersions: expectedChargeVersions,
       idempotencyKey: 'performance-trajectory-lab-payment', previewId: paymentPreview.previewId, commitToken: paymentPreview.commitToken,
     }))
+    const laboratoryKinds = ['laboratory.accept-request', 'laboratory.start-request', 'laboratory.report-request']
     for (let step = 0; step < 3; step += 1) {
-      await measure(() => runtime.dispatcher.dispatchOnce())
+      await measure(() => runtime.dispatcher.dispatchOnce({ kinds: laboratoryKinds }))
     }
     const reportedCase = await measure(() => runtime.workflow.doctorCaseDetail(
       doctorContext,
@@ -1032,21 +1083,6 @@ export async function runTrajectoryPerformanceProfile() {
       idempotencyKey: 'performance-trajectory-lab-acknowledge',
       requestId: reported.id,
     }))
-    const diagnosisDraft = (await measure(() => runtime.workflow.saveDiagnosisDraft({
-      context: doctorContext,
-      encounterId: started.encounterId,
-      entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary' }],
-      expectedDraftVersion: 0,
-      expectedVersions: { [encounterReference]: consultationEncounterVersion },
-      idempotencyKey: 'performance-trajectory-diagnosis-draft',
-    }))).data
-    const diagnosis = (await measure(() => runtime.workflow.confirmDiagnosis({
-      context: doctorContext,
-      encounterId: started.encounterId,
-      expectedDraftVersion: diagnosisDraft.draftVersion,
-      expectedVersions: { [encounterReference]: consultationEncounterVersion },
-      idempotencyKey: 'performance-trajectory-diagnosis-confirm',
-    }))).data
     const prescriptionDraft = (await measure(() => runtime.workflow.savePrescriptionDraft({
       context: doctorContext,
       encounterId: started.encounterId,
@@ -1069,39 +1105,23 @@ export async function runTrajectoryPerformanceProfile() {
       expectedVersions: { [encounterReference]: diagnosis.encounterVersion },
       idempotencyKey: 'performance-trajectory-prescription-issue',
     }))
-    const document = {
-      assessment: '多次血压升高，诊断为高血压。',
-      auxiliaryExamination: '血常规已报告并确认。',
-      chiefComplaint: '发现血压升高，偶有头晕。',
-      disposition: '门诊启动氨氯地平治疗。',
-      followUp: '两至四周复查血压和外周水肿。',
-      historyOfPresentIllness: '近期多次血压偏高，无胸痛或气促。',
-      menstrualHistory: '合成患者自述已绝经。', obstetricHistory: '合成患者自述孕2产2。',
-      physicalExamination: '血压 162/96 mmHg，双下肢无水肿。',
-      priorMedicalHistory: '两年前曾被告知高血压。',
-    }
-    const documentDraft = (await measure(() => runtime.workflow.saveClinicalDocumentDraft({
+    await measure(() => runtime.workflow.reviseClinicalDocument({
+      compositionId: initialSigned.compositionId,
       context: doctorContext,
-      document,
-      encounterId: started.encounterId,
-      expectedDraftVersion: 0,
-      expectedVersions: { [encounterReference]: diagnosis.encounterVersion },
-      idempotencyKey: 'performance-trajectory-document-draft',
-    }))).data
-    const preview = (await measure(() => runtime.workflow.previewStructuredClinicalDocumentSign({
-      context: doctorContext,
-      encounterId: started.encounterId,
-      expectedDraftVersion: documentDraft.draftVersion,
-      expectedVersions: { [encounterReference]: diagnosis.encounterVersion },
-      idempotencyKey: 'performance-trajectory-document-preview',
-    }))).data
-    await measure(() => runtime.workflow.signStructuredClinicalDocument({
-      commitToken: preview.commitToken,
-      context: doctorContext,
-      encounterId: started.encounterId,
-      expectedVersions: { [encounterReference]: diagnosis.encounterVersion },
-      idempotencyKey: 'performance-trajectory-document-sign',
-      previewId: preview.previewId,
+      expectedVersions: {
+        [`Composition/${initialSigned.compositionId}`]: initialSigned.compositionVersion,
+        [encounterReference]: diagnosis.encounterVersion,
+      },
+      idempotencyKey: 'performance-trajectory-document-revise',
+      reason: '补充血常规报告确认与氨氯地平门诊处方处置。',
+      revision: {
+        document: {
+          ...initialDocument,
+          assessment: '多次血压升高，诊断为高血压。',
+          auxiliaryExamination: '血常规已报告并确认。',
+          disposition: '门诊启动氨氯地平治疗。',
+        },
+      },
     }))
     await measure(() => runtime.workflow.completeEncounter({
       context: doctorContext,

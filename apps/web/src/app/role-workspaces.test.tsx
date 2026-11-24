@@ -328,6 +328,48 @@ function pagination(total: number) {
 
 let doctorQueryContext: unknown
 
+const prerequisiteSatisfiedOutpatientSlice = {
+  clinicalDocument: {
+    signed: [{
+      bundleId: 'bundle-prerequisite-1',
+      compositionId: 'composition-prerequisite-1',
+      compositionVersion: '1',
+      content: {
+        assessment: '合成初步评估。',
+        auxiliaryExamination: '暂未见外院及本院辅助检查结果。',
+        chiefComplaint: '发热伴咽痛一天。',
+        disposition: '门诊对症处理并完善检查。',
+        followUp: '症状加重时随诊。',
+        historyOfPresentIllness: '昨晚起发热伴咽痛一天。',
+        physicalExamination: '咽充血，双肺呼吸音清。',
+        priorMedicalHistory: '系统未记录既往病史。',
+      },
+      documentId: 'document-prerequisite-1',
+      provenanceId: 'provenance-prerequisite-1',
+      revisionNumber: 1,
+      signedAt: '2026-08-24T09:00:00+08:00',
+    }],
+  },
+  diagnosis: {
+    confirmation: {
+      confirmedAt: '2026-08-24T09:00:00+08:00',
+      entries: [{
+        catalogItemId: 'diagnosis-influenza',
+        code: 'J10.1',
+        conditionId: 'condition-prerequisite-1',
+        conditionVersion: '1',
+        display: '流感伴其他呼吸道表现',
+        role: 'primary' as const,
+        system: 'http://hl7.org/fhir/sid/icd-10',
+      }],
+      id: 'diagnosis-confirmation-prerequisite-1',
+      provenanceId: 'provenance-diagnosis-prerequisite-1',
+      revisionNumber: 1,
+    },
+    draftVersion: 2,
+  },
+}
+
 function documentQualityFetch(implementation: typeof fetch) {
   const states = new Map<string, ClinicalDocumentQualityControlState>()
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -4063,10 +4105,16 @@ describe('role workspaces', () => {
     const queries = within(container)
     try {
       await queries.findByRole('tab', { name: '病历记录' })
+      expect(
+        Array.from(
+          container.querySelectorAll<HTMLElement>('[data-doctor-region="detail"] [data-tab-measure]'),
+          element => element.dataset.tabMeasure,
+        ),
+      ).toEqual(['consultation', 'record', 'diagnosis', 'laboratory', 'prescription'])
       for (const { section, label } of [
         { section: 'consultation', label: '问诊记录' }, { section: 'record', label: '病历记录' },
-        { section: 'diagnosis', label: '诊断' }, { section: 'prescription', label: '处方' },
-        { section: 'laboratory', label: '检验检查' },
+        { section: 'diagnosis', label: '诊断' }, { section: 'laboratory', label: '检验检查' },
+        { section: 'prescription', label: '处方' },
       ]) {
         const tool = await waitFor(() => {
           const candidate = registration?.tools.find(tool => tool.name === 'clinmesh_select_doctor_section')
@@ -4496,7 +4544,7 @@ describe('role workspaces', () => {
       if (path.endsWith('/catalogs/clinical')) return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
       if (path.endsWith('/doctor/queue')) return Response.json({ items: [queueItem], ...pagination(1) })
       if (path.endsWith('/cases/case-late-investigation')) return Response.json({
-        ...queueItem, allergies: [], consultation: { turns: [], version: 1 }, priorFacts: [],
+        ...queueItem, ...prerequisiteSatisfiedOutpatientSlice, allergies: [], consultation: { turns: [], version: 1 }, priorFacts: [],
         encounter: { id: queueItem.encounterId, status: 'in-progress', versionId: '1' },
         laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [] },
         imagingRequests: {
@@ -4817,6 +4865,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-1') {
         return Response.json({
           registrationNumber: null,
+          ...prerequisiteSatisfiedOutpatientSlice,
           allergies: [],
           caseId: 'case-virtual-1',
           consultation: { turns: [], version: 1 },
@@ -5050,7 +5099,7 @@ describe('role workspaces', () => {
       }
       const response = await originalFetch(input, init)
       if (url.pathname !== '/api/his/v1/doctor/cases/case-recording') return response
-      return Response.json({ ...await response.json(), laboratoryRequests: { draftVersion: requests.length, reportingSupported: true, requests } })
+      return Response.json({ ...await response.json(), ...prerequisiteSatisfiedOutpatientSlice, laboratoryRequests: { draftVersion: requests.length, reportingSupported: true, requests } })
     }))
     const user = userEvent.setup()
     render(<WebApp />)
@@ -5645,6 +5694,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-1') {
         return Response.json({
           registrationNumber: null,
+          ...prerequisiteSatisfiedOutpatientSlice,
           allergies: [],
           caseId: 'case-virtual-1',
           consultation: { turns: [], version: 1 },
@@ -7536,6 +7586,7 @@ describe('role workspaces', () => {
           allergies: [],
           caseId: 'case-prescription-conclusion',
           consultation: { turns: [], version: 1 },
+          clinicalDocument: prerequisiteSatisfiedOutpatientSlice.clinicalDocument,
           diagnosis: {
             confirmation: {
               confirmedAt: '2026-08-24T09:00:00+08:00',
@@ -7802,6 +7853,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/cases/case-prescription-conflict') {
         return Response.json({
           registrationNumber: null,
+          ...prerequisiteSatisfiedOutpatientSlice,
           allergies: [{ code: 'OSELTAMIVIR', display: '磷酸奥司他韦过敏' }],
           caseId: 'case-prescription-conflict',
           consultation: { turns: [], version: 1 },
@@ -9181,6 +9233,7 @@ describe('role workspaces', () => {
       caseId: completedDetail.caseId,
       clinicalDocument: { signed: [signedDocument] },
       consultation: { turns: [], version: 1 },
+      diagnosis: prerequisiteSatisfiedOutpatientSlice.diagnosis,
       encounter: {
         id: completedDetail.encounter.id,
         status: 'in-progress',

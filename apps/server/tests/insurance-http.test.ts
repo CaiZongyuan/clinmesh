@@ -6,9 +6,6 @@ import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
   billingCaseSchema,
-  clinicalDocumentDraftResponseSchema,
-  clinicalDocumentSignPreviewResponseSchema,
-  clinicalDocumentSignResponseSchema,
   confirmDiagnosisResponseSchema,
   diagnosisDraftResponseSchema,
   doctorQueueSchema,
@@ -42,6 +39,7 @@ import {
   startConsultationCase,
   StubSyntheaProvider,
 } from './fixtures/consultation.ts'
+import { signInitialOutpatientDocument } from './fixtures/outpatient-order-gate.ts'
 
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -493,6 +491,16 @@ async function issueMedication(s: Awaited<ReturnType<typeof setup>>) {
       )
     ).json(),
   ).data
+  await signInitialOutpatientDocument(s.runtime, s.doctor, s.target.id, {
+    assessment: '合成流感诊断依据完整。',
+    chiefComplaint: '合成发热伴咽痛一天。',
+    disposition: '门诊抗病毒治疗。',
+    followUp: '持续发热或气促时复诊。',
+    historyOfPresentIllness: '一天前开始发热咽痛，无呼吸困难。',
+    menstrualHistory: '患者自述已绝经，年龄记不清。',
+    obstetricHistory: '患者自述孕2产2。',
+    physicalExamination: '神志清楚，咽部充血，双肺呼吸音清。',
+  })
   const prescription = prescriptionDraftResponseSchema.parse(
     await put(
       'prescription/draft',
@@ -528,21 +536,6 @@ async function completeMedicationEncounter(s: Awaited<ReturnType<typeof setup>>)
   const detail = doctorCaseDetailSchema.parse(await (await s.runtime.app.request(`/api/his/v1/doctor/cases/${s.target.id}`, { headers: { cookie: s.doctor } })).json())
   const expected = { [`Encounter/${s.started.encounterId}`]: detail.encounter.versionId }
   const path = `/api/his/v1/encounters/${s.started.encounterId}`
-  const draftResponse = await s.runtime.app.request(path + '/clinical-document/draft', {
-    method: 'PUT', headers: { cookie: s.doctor, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
-    body: JSON.stringify({ expectedVersions: expected, input: { expectedDraftVersion: 0, document: {
-      assessment: '合成流感诊断依据完整。', chiefComplaint: '合成发热伴咽痛一天。', disposition: '门诊抗病毒治疗。',
-      followUp: '持续发热或气促时复诊。', historyOfPresentIllness: '一天前开始发热咽痛，无呼吸困难。', menstrualHistory: '患者自述已绝经，年龄记不清。', obstetricHistory: '患者自述孕2产2。', physicalExamination: '神志清楚，咽部充血，双肺呼吸音清。',
-    } } }),
-  })
-  expect(draftResponse.status, await draftResponse.clone().text()).toBe(200)
-  const draft = clinicalDocumentDraftResponseSchema.parse(await draftResponse.json()).data
-  const preview = clinicalDocumentSignPreviewResponseSchema.parse(await (await s.write(path + '/clinical-document/actions/preview-sign', {
-    expectedDraftVersion: draft.draftVersion,
-  }, s.doctor, randomUUID(), expected)).json()).data
-  const signed = await s.write(path + '/clinical-document/actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken }, s.doctor, randomUUID(), expected)
-  expect(signed.status, await signed.clone().text()).toBe(200)
-  clinicalDocumentSignResponseSchema.parse(await signed.json())
   const completed = await s.write(path + '/actions/complete', {}, s.doctor, randomUUID(), expected)
   expect(completed.status, await completed.clone().text()).toBe(200)
   encounterCompletionResponseSchema.parse(await completed.json())

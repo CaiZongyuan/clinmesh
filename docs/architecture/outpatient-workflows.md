@@ -10,8 +10,8 @@
 管理员生成 Synthetic Case + 选定 Patient Persona
   -> 挂号员选择待挂号病例与科室/号别/诊室 -> Registration + Encounter + Account + 挂号 ChargeItem + Consultation (awaiting-triage)
   -> 分诊录入体征 Observation + Queue Task ready (awaiting-doctor) -> 负责医生接诊绑定责任
-  -> 受控问诊 + 12 字段病历整理 + 独立医技申请收齐放行与报告已阅
-  -> 确认主次诊断 Condition + 本院/外延处方或无需用药结论 + 签署不可变结构化病历
+  -> 受控问诊 + 12 字段首版病历整理与正式电子签名 -> 确认主次诊断 Condition
+  -> 独立医技申请收齐放行与报告已阅 + 本院/外延处方或无需用药结论 + 可选签后病历修订草稿与线性 Composition 修订签名
   -> 七项完诊门禁与事中质控通过 -> Encounter completed -> 药房发药与取消检查退款收敛 -> Scenario Run completed
 ```
 
@@ -67,6 +67,8 @@ DSH 模型桥接已配置时，新病例默认启用实时病历整理；历史�
 
 签署预览固定 Actor 上下文、`Encounter` 版本、草稿正文与版本及问诊／来源快照，推进提取代次冻结迟到整理（取消则恢复未完成提取）；正式提交重验依赖与 token，原子创建带稳定章节编码的不可变 FHIR R5 `Composition`、首 `entry` 为该 `Composition` 的自包含 `document Bundle` 与 `Provenance`，不直接完成 `Encounter`。每个病例仅允许一个根文书，`signed_clinical_document` 维护仅接受最新 `Composition` 的线性替代修订链，历史原件永久可读。
 
+现代 `Consultation` 门诊病例将“已签署首版根文书”与“已确认有效主诊断”作为正式开单与确认用药结论的统一前置门禁（门诊工作台页签按 `问诊记录 -> 病历记录 -> 诊断 -> 检验检查 -> 处方` 排列）：未签署首版病历时先返回 `409 CLINICAL_DOCUMENT_UNSIGNED`，已签署首版病历但尚无有效已确认主诊断时返回 `409 DIAGNOSIS_UNCONFIRMED`，统一约束四类医技申请签发、处方签发、无需用药结论确认及工作台待办集中确认（草稿保存删除、专病医嘱组套预填、病历完备性质控与 AI 诊疗建议在门禁前保持开放；无 `Consultation` 聚合的首期兼容门诊路径与住院医技不受影响）。首版根文书签署后，只要 `Encounter` 仍处于 `in-progress`，主接诊责任医生仍可经 `encounter.clinical-document.draft.set` 保存签后病历修订草稿（含插入放射／病理报告摘要），并在补充辅助检查、评估、处置或随访后经 `clinical-document.revise` 签署线性替代修订并同步草稿基线。取舍见[门诊首版病历签署与诊断前置开单门禁决策](../decisions/implemented/architecture/2026-11-23-outpatient-initial-document-signing-order-gate.md)。
+
 ## 门诊诊断草稿与线性确认修订
 
 门诊诊断基于版本化 `diagnosis_catalog` 受控 ICD-10 条目在 `diagnosis_state` 保存 1–8 条诊断、主次角色与可选备注，以 `Encounter` expected version 与单调 `expectedDraftVersion` 做 CAS；保存草稿不创建 `Condition`，提交空 `entries` 显式丢弃草稿并递增版本而不改动已确认诊断。目录弹窗支持连续加入最多 8 项并维护唯一主诊断，与 Agent 建议共用待办清单（含 Agent 项时额外核验准备代次与资料指纹，见[准备临床确认决策](../decisions/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)）；确认发送前冻结载荷与幂等键，未知结果先查医生 Session 原回执，确定冲突时释放冻结并保留整组草稿（见[连续办理私稿与逐项原回执恢复](clinical-workflows.md#连续办理私稿与逐项原回执恢复)与[浏览器未提交私稿](storage.md#浏览器未提交私稿)）。
@@ -79,7 +81,7 @@ DSH 模型桥接已配置时，新病例默认启用实时病历整理；历史�
 
 一个普通门诊 `Encounter` 同时只能有一名主接诊医生，由 `outpatient_case_responsibility` 按 `Workspace`、`Epoch` 与病例唯一记录首次分配的 `Practitioner Role` 与虚拟时间。无责任人的 `awaiting-doctor` 病例须先由接诊 Command 分配责任才开放临床写入，他人抢占接管返回权限冲突，完诊后纠错同样校验该持久责任。
 
-`GET /api/his/v1/encounters/{id}/completion` 返回主诊断已确认、结构化病历已签署、必要报告已阅（全部未取消医技申请须处于最新报告 `acknowledged`，无申请直接成立）、用药结论已记录（未撤回本院／外延处方或正式无需用药结论）、无未处理草稿（诊断、医技或处方草稿均已清空或确认，已签根文书后的文书草稿不阻塞）、处置完整与随访完整七项稳定编码。`encounter.complete` 在 `BEGIN IMMEDIATE` 事务内忽略历史预览，重算七项门禁与急性胸痛完诊事中质控（见[临床决策支持与质控](clinical-decision-support.md#四大责任关口与红线警示双层规则)）并核对 `Encounter` expected version；任一缺失返回 `ENCOUNTER_COMPLETION_BLOCKED`，通过后仅更新 `Encounter.status=completed` 与 `actualPeriod.end`，不改动队列任务、挂号、收费、发药或 `Scenario Run`。取舍见[门诊完诊策略与病例库决策](../decisions/implemented/feature/2026-08-25-encounter-completion-policy.md)。
+`GET /api/his/v1/encounters/{id}/completion` 返回主诊断已确认、结构化病历已签署、必要报告已阅（全部未取消医技申请须处于最新报告 `acknowledged`，无申请直接成立）、用药结论已记录（未撤回本院／外延处方或正式无需用药结论）、无未处理草稿（诊断、医技或处方草稿均已清空或确认，且已签根文书后的 `clinical_document_draft` 与最新已签 `Composition` 正文无未提交修订差异，否则以 `target = 'clinical-document'` 阻塞）、处置完整与随访完整七项稳定编码。`encounter.complete` 在 `BEGIN IMMEDIATE` 事务内忽略历史预览，重算七项门禁与急性胸痛完诊事中质控（见[临床决策支持与质控](clinical-decision-support.md#四大责任关口与红线警示双层规则)）并核对 `Encounter` expected version；任一缺失返回 `ENCOUNTER_COMPLETION_BLOCKED`，通过后仅更新 `Encounter.status=completed` 与 `actualPeriod.end`，不改动队列任务、挂号、收费、发药或 `Scenario Run`。取舍见[门诊完诊策略与病例库决策](../decisions/implemented/feature/2026-08-25-encounter-completion-policy.md)。
 
 ### 已完诊病例库、业务时间线与受控纠错回跳
 

@@ -15,6 +15,7 @@ import { pciDataPackage } from '../src/application/scenario-data/pci-data.ts'
 import { signIn } from './fixtures/consultation.ts'
 import { coronaryDocument, coronaryGuidelineParagraph, coronaryGuidelineTitle, coronaryReferenceRelease,
   CoronarySyntheaProvider, createCoronaryData, createCoronaryProvider, startCoronaryCase } from './fixtures/coronary-guidelines.ts'
+import { signInitialOutpatientDocument } from './fixtures/outpatient-order-gate.ts'
 
 it('本地冠心病PDF只用纳入页生成三类建议，医生确认后关闭模式保留正式事实', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-coronary-workflow-'))
@@ -50,12 +51,12 @@ it('本地冠心病PDF只用纳入页生成三类建议，医生确认后关闭�
       }, input: {} }),
     })
     expect(claim.status).toBe(200)
-    const current = await readCase()
-    const saved = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`, {
-      method: 'PUT', headers: headers(), body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: current.encounter.versionId },
-        input: { expectedDraftVersion: current.clinicalDocument?.draft?.version ?? 0, document: coronaryDocument } }),
+    await signInitialOutpatientDocument(runtime, cookie, started.outpatientCaseId, {
+      chiefComplaint: coronaryDocument.chiefComplaint,
+      disposition: coronaryDocument.disposition,
+      historyOfPresentIllness: coronaryDocument.historyOfPresentIllness,
     })
-    expect(saved.status).toBe(200)
+    await runtime.dispatchPending()
     const path = (kind: DoctorRecommendationKind) => `/api/his/v1/doctor/cases/${started.outpatientCaseId}/recommendations/${kind}`
     const read = async (kind: DoctorRecommendationKind) => doctorRecommendationStateSchema.parse(await (await runtime.app.request(path(kind), { headers: { cookie } })).json())
     const generate = async (kind: DoctorRecommendationKind) => {

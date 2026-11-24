@@ -23,6 +23,7 @@ import {
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import type { DoctorCaseModel } from './doctor-case-model.tsx'
 import { doctorString, isCancellableLaboratoryRequest, isQuantitativeLaboratoryResult, reportCorrectionInputSchema, requireDoctorDetail } from './doctor-case-support.tsx'
+import { assertOutpatientAgentOrderPrerequisites } from './outpatient-order-gate.tsx'
 
 type Context = Pick<DoctorCaseModel,
   | 'messages'
@@ -201,7 +202,7 @@ export function doctorInvestigationsAgentActions({
       },
     },
     'outpatient.laboratory.issue.propose': {
-      description: 'Open human review before issuing the current laboratory request.',
+      description: 'Open human review before issuing the current laboratory request (Consultation visits require signed initial clinical document and confirmed primary diagnosis).',
       enabled: usesIndependentLaboratoryRequests
         ? detail.data?.laboratoryRequests?.draft !== undefined
         && detail.data.laboratoryRequests.draft.catalogItemId === resolvedLaboratoryItemId
@@ -210,21 +211,25 @@ export function doctorInvestigationsAgentActions({
         && !(issueRequest.isPending && issueRequest.variables?.caseId === activeCaseId)
         : detail.data?.drafts?.firstVisit !== undefined,
       parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-      execute: (_raw: unknown, signal: AbortSignal) => agentReview.request({
-        confirmLabel: locale => getWorkspaceMessages(locale).issueLaboratoryRequest,
-        description: locale => resolvedLaboratoryItem?.[locale === 'zh-CN' ? 'nameZh' : 'nameEn']
-          ?? detail.data?.laboratoryRequests?.draft?.laboratoryService?.[locale === 'zh-CN' ? 'nameZh' : 'nameEn']
-          ?? detail.data?.laboratoryRequests?.draft?.referenceConcept?.display
-          ?? getWorkspaceMessages(locale).consultationUnavailable,
-        onConfirm: () => {
-          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          return usesIndependentLaboratoryRequests
-            ? issueRequest.mutateAsync({ caseId: current.caseId })
-            : issueOrder.mutateAsync({ caseId: current.caseId })
-        },
-        signal,
-        title: locale => getWorkspaceMessages(locale).issueLaboratoryRequest,
-      }),
+      execute: (_raw: unknown, signal: AbortSignal) => {
+        const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+        if (usesIndependentLaboratoryRequests) assertOutpatientAgentOrderPrerequisites(current)
+        return agentReview.request({
+          confirmLabel: locale => getWorkspaceMessages(locale).issueLaboratoryRequest,
+          description: locale => resolvedLaboratoryItem?.[locale === 'zh-CN' ? 'nameZh' : 'nameEn']
+            ?? detail.data?.laboratoryRequests?.draft?.laboratoryService?.[locale === 'zh-CN' ? 'nameZh' : 'nameEn']
+            ?? detail.data?.laboratoryRequests?.draft?.referenceConcept?.display
+            ?? getWorkspaceMessages(locale).consultationUnavailable,
+          onConfirm: () => {
+            const latest = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+            return usesIndependentLaboratoryRequests
+              ? issueRequest.mutateAsync({ caseId: latest.caseId })
+              : issueOrder.mutateAsync({ caseId: latest.caseId })
+          },
+          signal,
+          title: locale => getWorkspaceMessages(locale).issueLaboratoryRequest,
+        })
+      },
     },
     'outpatient.laboratory.cancel.propose': {
       description: 'Open human review before cancelling one cancellable laboratory request.',
@@ -403,11 +408,12 @@ export function doctorInvestigationsAgentActions({
       },
     },
     'outpatient.examination.issue.propose': {
-      description: 'Open human review before issuing the saved examination request draft.',
+      description: 'Open human review before issuing the saved examination request draft (requires signed initial clinical document and confirmed primary diagnosis).',
       enabled: detail.data?.examinationRequests?.draft !== undefined,
       parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
       execute: (_raw: unknown, signal: AbortSignal) => {
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+        assertOutpatientAgentOrderPrerequisites(current)
         const state = current.examinationRequests
         if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
         return agentReview.request({
@@ -488,11 +494,12 @@ export function doctorInvestigationsAgentActions({
       },
     },
     'outpatient.imaging.issue.propose': {
-      description: 'Open human review before issuing the saved imaging request draft.',
+      description: 'Open human review before issuing the saved imaging request draft (requires signed initial clinical document and confirmed primary diagnosis).',
       enabled: detail.data?.imagingRequests?.draft !== undefined,
       parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
       execute: (_raw: unknown, signal: AbortSignal) => {
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+        assertOutpatientAgentOrderPrerequisites(current)
         const state = current.imagingRequests
         if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
         return agentReview.request({
@@ -602,11 +609,12 @@ export function doctorInvestigationsAgentActions({
       },
     },
     'outpatient.pathology.issue.propose': {
-      description: 'Open human review before issuing the saved slide consultation draft.',
+      description: 'Open human review before issuing the saved slide consultation draft (requires signed initial clinical document and confirmed primary diagnosis).',
       enabled: detail.data?.pathologyRequests?.draft !== undefined,
       parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
       execute: (_raw: unknown, signal: AbortSignal) => {
         const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+        assertOutpatientAgentOrderPrerequisites(current)
         const state = current.pathologyRequests
         if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
         return agentReview.request({

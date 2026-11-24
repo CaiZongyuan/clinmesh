@@ -28,6 +28,7 @@ import { outpatientCaseFlowState } from '../workspace-flow.ts'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { createWorkingClinicalDocument } from './clinical-document-content.ts'
+import { resolveOutpatientOrderPrerequisiteGate } from './outpatient-order-gate.tsx'
 import { doctorConsultationAgentActions } from './doctor-agent-consultation.tsx'
 import { doctorDiagnosisAgentActions } from './doctor-agent-diagnosis.tsx'
 import { doctorInvestigationsAgentActions } from './doctor-agent-investigations.tsx'
@@ -142,6 +143,7 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     page,
     setPage,
     activeCaseSection,
+    setActiveCaseSection,
     completionNavigate,
     setCompletionNavigateStable,
     caseDetailRoot,
@@ -322,32 +324,42 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     },
     label: 'ClinMesh · 门诊医生',
     feedbackSelectionId: activeCaseId ?? '',
-    readState: () => ({
-      case: detail.data === undefined ? null : {
-        caseId: detail.data.caseId,
-        consultation: detail.data.consultation ?? null,
-        diagnosis: detail.data.diagnosis ?? null,
-        encounter: detail.data.encounter,
-        examinationRequests: detail.data.examinationRequests ?? null,
-        imagingRequests: detail.data.imagingRequests ?? null,
-        laboratoryRequests: detail.data.laboratoryRequests ?? null,
-        pathologyRequests: detail.data.pathologyRequests ?? null,
-        patient: detail.data.patient,
-        presentation: detail.data.presentation,
-      },
-      clinicalDocumentDraft: currentClinicalDocument ?? null,
-      laboratoryDraft: laboratoryPendingDrafts.at(-1)?.value ?? { catalogItemId: resolvedLaboratoryItemId, indicationCode: resolvedIndicationCode },
-      laboratoryDrafts: laboratoryPendingDrafts,
-      imagingDrafts: imagingPendingDrafts,
-      pathologyDrafts: pathologyPendingDrafts,
-      queue: queue.data ?? null,
-      queueCount: queue.data?.total ?? 0,
-      section: activeCaseSection,
-      investigation: investigationView,
-    }),
+    readState: () => {
+      const gate = resolveOutpatientOrderPrerequisiteGate(detail.data)
+      return {
+        case: detail.data === undefined ? null : {
+          caseId: detail.data.caseId,
+          clinicalDocumentSignedCount: detail.data.clinicalDocument?.signed.length ?? 0,
+          consultation: detail.data.consultation ?? null,
+          diagnosis: detail.data.diagnosis ?? null,
+          encounter: detail.data.encounter,
+          examinationRequests: detail.data.examinationRequests ?? null,
+          imagingRequests: detail.data.imagingRequests ?? null,
+          laboratoryRequests: detail.data.laboratoryRequests ?? null,
+          orderPrerequisites: {
+            blockedCode: gate.code ?? null,
+            hasConfirmedPrimaryDiagnosis: !gate.missingConfirmedDiagnosis,
+            hasSignedInitialRecord: !gate.missingSignedRecord,
+          },
+          pathologyRequests: detail.data.pathologyRequests ?? null,
+          patient: detail.data.patient,
+          presentation: detail.data.presentation,
+        },
+        clinicalDocumentDraft: currentClinicalDocument ?? null,
+        laboratoryDraft: laboratoryPendingDrafts.at(-1)?.value ?? { catalogItemId: resolvedLaboratoryItemId, indicationCode: resolvedIndicationCode },
+        laboratoryDrafts: laboratoryPendingDrafts,
+        imagingDrafts: imagingPendingDrafts,
+        pathologyDrafts: pathologyPendingDrafts,
+        queue: queue.data ?? null,
+        queueCount: queue.data?.total ?? 0,
+        section: activeCaseSection,
+        investigation: investigationView,
+      }
+    },
   }), [
     activeCaseId,
     activeCaseSection,
+    setActiveCaseSection,
     acknowledgeReport.mutateAsync,
     agentReview,
     askQuestion.isPending,
@@ -673,9 +685,11 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
               laboratoryItemId={resolvedLaboratoryItemId}
               imagingActions={{
                 canCorrect: canCorrectReports,
+                hasSignedRecord: (detail.data.clinicalDocument?.signed.length ?? 0) > 0,
                 onChanged: () => refreshCaseById(detail.data.caseId),
-                // 摘要只插入未签病历的工作稿；已签文书通过文书更正流程修改。
-                ...(detail.data.encounter.status !== 'in-progress' || (detail.data.clinicalDocument?.signed.length ?? 0) > 0
+                onNavigateToRecord: () => setActiveCaseSection('record'),
+                // 进行中就诊允许插入病历草稿；已签署首版病历时写入修订草稿，完诊前须提交修订签名或放弃修订草稿。
+                ...(detail.data.encounter.status !== 'in-progress'
                   ? {}
                   : {
                     onInsertSummary: (request, report) => {
@@ -687,10 +701,14 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
                         revisionNumber: report.revisionNumber,
                       })
                       if (insertion.status === 'inserted') {
+                        const nextDocument = { ...document, auxiliaryExamination: insertion.text }
                         setWorkingClinicalDocuments(current => ({
                           ...current,
-                          [detail.data.caseId]: { ...document, auxiliaryExamination: insertion.text },
+                          [detail.data.caseId]: nextDocument,
                         }))
+                        if ((detail.data.clinicalDocument?.signed.length ?? 0) > 0) {
+                          saveDocumentDraft.mutate({ caseId: detail.data.caseId, document: nextDocument })
+                        }
                       }
                       return insertion.status
                     },
@@ -699,8 +717,10 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
               }}
               pathologyActions={{
                 canCorrect: canCorrectReports,
+                hasSignedRecord: (detail.data.clinicalDocument?.signed.length ?? 0) > 0,
                 onChanged: () => refreshCaseById(detail.data.caseId),
-                ...(detail.data.encounter.status !== 'in-progress' || (detail.data.clinicalDocument?.signed.length ?? 0) > 0
+                onNavigateToRecord: () => setActiveCaseSection('record'),
+                ...(detail.data.encounter.status !== 'in-progress'
                   ? {}
                   : {
                     onInsertSummary: (request, report) => {
@@ -713,10 +733,14 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
                         revisionNumber: report.revisionNumber,
                       })
                       if (insertion.status === 'inserted') {
+                        const nextDocument = { ...document, auxiliaryExamination: insertion.text }
                         setWorkingClinicalDocuments(current => ({
                           ...current,
-                          [detail.data.caseId]: { ...document, auxiliaryExamination: insertion.text },
+                          [detail.data.caseId]: nextDocument,
                         }))
+                        if ((detail.data.clinicalDocument?.signed.length ?? 0) > 0) {
+                          saveDocumentDraft.mutate({ caseId: detail.data.caseId, document: nextDocument })
+                        }
                       }
                       return insertion.status
                     },

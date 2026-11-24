@@ -48,7 +48,7 @@ export function doctorRecordAgentActions({
 }: Context) {
   return {
     'outpatient.record.draft.set': {
-      description: 'Validate and save the structured clinical document draft without signing it.',
+      description: 'Validate and save the structured clinical document draft (initial draft or in-progress post-sign revision draft) without signing it.',
       enabled: usesStructuredClinicalDocument(detail.data)
         && detail.data?.encounter.status === 'in-progress',
       parameters: {
@@ -105,9 +105,10 @@ export function doctorRecordAgentActions({
       },
     },
     'outpatient.record.sign.propose': {
-      description: 'Generate a sign preview and open human review before signing clinical facts.',
+      description: 'Generate a sign preview and open human review before signing initial clinical facts.',
       enabled: usesStructuredClinicalDocument(detail.data)
         ? detail.data?.clinicalDocument?.draft !== undefined
+          && (detail.data.clinicalDocument.signed.length ?? 0) === 0
         : detail.data?.drafts?.document !== undefined,
       parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
       execute: async (_raw: unknown, signal: AbortSignal) => {
