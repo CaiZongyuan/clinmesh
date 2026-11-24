@@ -725,7 +725,7 @@ export function createHospitalBaseline(
       displayOrder: 1,
       id: hospitalId,
       locale: 'zh-CN',
-      name: '仁和临床仿真医院',
+      name: 'ClinMesh 临床仿真医院',
       status: 'active',
       type: 'public-general-hospital',
     },

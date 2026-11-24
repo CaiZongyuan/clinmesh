@@ -140,7 +140,7 @@ export function standardMedicationCatalog(): ScenarioProductMedicationCatalogIte
       id: `synthetic-medication-product-${suffix}`, code: `CM-NHSA-PRODUCT-${suffix.toUpperCase()}`,
       version: 'clinmesh-synthetic-medications-2026-11-13', system: 'urn:clinmesh:reference:nhsa-medication-product' as const,
       approvalNumber: `CM-SYNTHETIC-${suffix.toUpperCase()}`, brandName: null, dosageForm: unit === '片' ? '片剂' : unit === '粒' ? '胶囊剂' : '注射剂', genericName: name,
-      manufacturer: '仁和仿真制药厂', packageDescription: standardPackageDescriptions[suffix] ?? `10${unit}/盒`, strength: `${basis.amount} ${basis.unit}`
+      manufacturer: 'ClinMesh 仿真制药厂', packageDescription: standardPackageDescriptions[suffix] ?? `10${unit}/盒`, strength: `${basis.amount} ${basis.unit}`
     }
     const { sourceLocator: _locator, status: _status, ...snapshot } = { ...product, sourceLocator: '', status: 'active' }
     const packageInsert = standardMedicationPackageInsert(id)
