@@ -17,6 +17,8 @@ export async function prepareReservationBatchPatient(page: Page, app: Parameters
     const before = await read()
     const response = await s.api.post(`${s.path}/surgeries/request`, {
       encounterVersion: before.encounterVersion, procedureId, catalogVersion: 1,
+      surgeryType: 'elective', locationId: 'location-operating-center',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general',
       plannedFor: '2026-11-10T09:00:00+08:00', reason,
     })
     expect(response.status()).toBe(200)

@@ -199,10 +199,10 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
   const common = { admissionId: 'synthetic-admission', requestId: 'synthetic-request', expectedRequestVersion: 4, executionId: 'synthetic-execution', note: '合成逐笔确认' }
   const { note: _omittedNote, ...routineCommon } = common
   const start = getHisOperation('inpatient.surgery.start')
-  expect(start.version).toBe(2)
+  expect(start.version).toBe(3)
   expect(start.input.safeParse({ admissionId: 'synthetic-admission', requestId: 'synthetic-request', expectedRequestVersion: 3, procedureId: 'hospital-surgery-5', catalogVersion: 1 }).success).toBe(true)
   const record = getHisOperation('inpatient.surgery.record-material')
-  expect(record.version).toBe(2)
+  expect(record.version).toBe(3)
   expect(record.input.safeParse({ ...common, material: { materialId: 'synthetic-material', catalogVersion: 1, quantity: 1, reservationId: 'synthetic-reservation' } }).success).toBe(false)
   expect(record.input.safeParse({ ...routineCommon, material: { materialId: 'synthetic-material', catalogVersion: 1, quantity: 1, reservationId: 'synthetic-reservation', expectedReservationVersion: 2 } }).success).toBe(true)
   expect(getHisOperation('inpatient.surgery.correct-material').input.safeParse({ ...routineCommon, materialUseId: 'synthetic-use' }).success).toBe(false)
@@ -233,7 +233,7 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
     'clinmesh command receipt get --operation-id inpatient.surgery.preview-completion --idempotency-key example-key',
   )).toThrow('Operation does not create a Command receipt: inpatient.surgery.preview-completion')
   const complete = getHisOperation('inpatient.surgery.complete')
-  expect(complete.version).toBe(3)
+  expect(complete.version).toBe(4)
   expect(complete.input.parse(routineCommon)).toEqual(routineCommon)
   expect(complete.input.parse(common)).toEqual(common)
   const reconciliation = { finalMaterials: review.finalMaterials, releaseReservations: [], expectedFingerprint: 'a'.repeat(64) }
@@ -1087,16 +1087,29 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
     expect(operation.roles).toEqual([role])
     expect(operation.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
   }
+  const requestExample = skill.match(/`surgery-request\.json`[^]*?```json\n([^]*?)\n```/)
+  expect(requestExample).toBeDefined()
+  expect(getHisOperation('inpatient.surgery.request').input.parse(JSON.parse(requestExample![1]!))).toMatchObject({
+    surgeryType: 'elective',
+    locationId: 'location-catheterization-lab',
+    anesthesiaMethod: 'local-infiltration',
+  })
+  const consentExample = skill.match(/`surgery-consent\.json`[^]*?```json\n([^]*?)\n```/)
+  expect(consentExample).toBeDefined()
+  expect(getHisOperation('inpatient.surgery.confirm-consent').input.parse(JSON.parse(consentExample![1]!))).toMatchObject({
+    signerRole: 'patient',
+    patientChoice: 'agree',
+  })
   const executionExample = skill.match(/`surgery-execution\.json`[^]*?```json\n([^]*?)\n```/)
   expect(executionExample).toBeDefined()
   const executeOp = getHisOperation('inpatient.surgery.execute')
-  expect(executeOp.version).toBe(3)
+  expect(executeOp.version).toBe(4)
   expect(executeOp.input.parse(JSON.parse(executionExample![1]!))).toMatchObject({ expectedRequestVersion: 3, materials: [{ quantity: 2 }] })
   expect(executeOp.input.safeParse({ ...JSON.parse(executionExample![1]!), note: undefined }).success).toBe(true)
   expect(getHisOperation('inpatient.order.issue').version).toBe(10)
   expect(skill).toContain('surgeryExecutionId')
   expect(skill).toContain('inpatient.surgery.execute')
-  expect(getHisOperation('inpatient.surgery.catalog').version).toBe(2)
+  expect(getHisOperation('inpatient.surgery.catalog').version).toBe(3)
   expect(getHisOperation('inpatient.surgery.catalog').summary).toContain('unit-unconfirmed')
   expect(skill).toContain('unavailableReason=unit-unconfirmed')
   expect(skill).toContain('baseSupplyPriceFen')

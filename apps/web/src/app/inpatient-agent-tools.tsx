@@ -129,6 +129,8 @@ export function useInpatientAgentTools(input: Input) {
       ...(input.session.actor.roleCode === 'ward-nurse' || input.session.actor.roleCode === 'inpatient-doctor'
         ? { clinical: input.clinical, investigations: input.investigations } : {}) }),
     actions: {
+      'inpatient.surgery.read': queryAction('inpatient.surgery.read', '/surgeries', clinicalRoles, ['surgery', 'record'],
+        'Read surgery notice six elements, structured informed consent snapshots, preop checks, and performed procedures for the current inpatient.'),
       'inpatient.angiography-reports.read': queryAction('inpatient.angiography-reports.read', '/angiography-reports', clinicalRoles, ['investigations', 'surgery', 'record'],
         'Read formal coronary angiography reports, multivessel physiology findings, and QCA measurements for the current inpatient.'),
       'inpatient.clinical-scores.read': queryAction('inpatient.clinical-scores.read', '/clinical-scores', clinicalRoles, ['admission', 'orders', 'surgery', 'discharge', 'record'],

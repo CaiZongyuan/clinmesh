@@ -217,10 +217,16 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
     const procedure = s.catalog.procedures[0]
     const current = (await (await s.request(s.doctor, s.path)).json()).admission
     const request = (await (await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: current.versionId,
-      procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成PCI核定' })).json()).data.requests[0]
+      procedureId: procedure.id, catalogVersion: procedure.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成PCI核定' })).json()).data.requests[0]
     for (const [cookie, action] of [[s.nurse, 'check-preop'], [s.doctor, 'confirm-consent']] as const) {
       const version = (await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests[0].version
-      expect((await s.request(cookie, `${s.path}/surgeries/${action}`, { requestId: request.id, expectedRequestVersion: version, note: '合成准备完成' })).status).toBe(200)
+      expect((await s.request(cookie, `${s.path}/surgeries/${action}`, {
+        requestId: request.id, expectedRequestVersion: version,
+        ...(action === 'confirm-consent' ? { expectedDiagnosisRevision: 1, signerRole: 'patient', signerName: current.patientName, patientChoice: 'agree' } : {}),
+        note: '合成准备完成',
+      })).status).toBe(200)
     }
     expect((await s.request(s.doctor, `${s.path}/surgeries/execute`, { requestId: request.id,
       expectedRequestVersion: (await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests[0].version,

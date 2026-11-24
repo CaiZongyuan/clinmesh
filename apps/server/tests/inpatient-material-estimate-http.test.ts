@@ -56,8 +56,15 @@ async function setup(respond?: (feature: string, input: unknown, index: number) 
 
 async function plan(s: Awaited<ReturnType<typeof setup>>, procedureId = 'hospital-surgery-8') {
   const response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    encounterVersion: s.stay.encounterVersion, procedureId, catalogVersion: 1,
-    plannedFor: '2026-08-24T15:00:00+08:00', reason: '医生确认合成冠脉操作方向',
+    anesthesiaMethod: 'local-infiltration',
+    encounterVersion: s.stay.encounterVersion,
+    locationId: 'location-catheterization-lab',
+    procedureId,
+    catalogVersion: 1,
+    plannedFor: '2026-08-24T15:00:00+08:00',
+    reason: '医生确认合成冠脉操作方向',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor',
+    surgeryType: 'elective',
   })
   expect(response.status).toBe(200)
   return inpatientSurgeryResponseSchema.parse(await response.json()).data.requests.at(-1)!
@@ -402,8 +409,15 @@ it('保存双根导管造影计划即自动预计一次，刷新复用且不启�
   const s = await setup()
   expect((await s.read()).estimates).toEqual([])
   const planned = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    encounterVersion: s.stay.encounterVersion, procedureId: 'hospital-surgery-8', catalogVersion: 1,
-    plannedFor: '2026-08-24T15:00:00+08:00', reason: '医生已确认双根导管冠脉造影方向',
+    anesthesiaMethod: 'local-infiltration',
+    encounterVersion: s.stay.encounterVersion,
+    locationId: 'location-catheterization-lab',
+    procedureId: 'hospital-surgery-8',
+    catalogVersion: 1,
+    plannedFor: '2026-08-24T15:00:00+08:00',
+    reason: '医生已确认双根导管冠脉造影方向',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor',
+    surgeryType: 'elective',
   })
   expect(planned.status).toBe(200)
   const requestId = inpatientSurgeryResponseSchema.parse(await planned.json()).data.requests[0]!.id
@@ -743,10 +757,13 @@ it('造影完成后护士读取历史预计说明生命周期停止，不误报�
   const doctor = await s.fixture.read('inpatient-doctor', '/api/auth/context', sessionContextSchema)
   expect((await s.fixture.read('ward-nurse', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates[0])
     .toMatchObject({ status: original.status, missing: original.missing, draft: original.draft })
+  const stayClinical = z.object({ diagnosis: z.object({ revision: z.number().int().nonnegative() }).loose() }).loose()
+    .parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/clinical`)).json())
   for (const [role, action] of [['ward-nurse', 'check-preop'], ['inpatient-doctor', 'confirm-consent']] as const) {
     const current = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgerySchema)
     expect((await s.fixture.request(role, `${s.stay.path}/surgeries/${action}`, {
       requestId: planned.id, expectedRequestVersion: current.requests.find(item => item.id === planned.id)!.version,
+      ...(action === 'confirm-consent' ? { expectedDiagnosisRevision: stayClinical.diagnosis.revision, signerRole: 'patient', signerName: '合成预计患者', patientChoice: 'agree' } : {}),
       note: '合成造影术前准备',
     })).status).toBe(200)
   }
@@ -903,8 +920,17 @@ it('术中清单返回自身确认候选，后确认的另一PCI计划不会替�
   await s.fixture.runtime.dispatchPending()
   await confirmEstimate(s)
   const admission = (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
-  const next = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, { encounterVersion: admission.versionId,
-    procedureId: stay.procedure.id, catalogVersion: 1, plannedFor: '2026-08-24T18:00:00+08:00', reason: '另一台已确认的合成PCI计划' })).json()).data.requests.find(item => item.id !== stay.requestId)!
+  const next = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, {
+    anesthesiaMethod: 'local-infiltration',
+    encounterVersion: admission.versionId,
+    locationId: 'location-catheterization-lab',
+    procedureId: stay.procedure.id,
+    catalogVersion: 1,
+    plannedFor: '2026-08-24T18:00:00+08:00',
+    reason: '另一台已确认的合成PCI计划',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor',
+    surgeryType: 'elective',
+  })).json()).data.requests.find(item => item.id !== stay.requestId)!
   expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 1,
     parameters: { ...pciAgentParameters, requestId: next.id, measurements: pciAgentParameters.measurements.map(item => item.kind === 'proximal-reference-diameter' ? { ...item, value: 3.5 } : item) } })).status).toBe(200)
   const latest = await s.fixture.read('inpatient-doctor', `${stay.path}/pci-selection`, inpatientPciSelectionResponseSchema.shape.data)
@@ -933,8 +959,17 @@ it('两份明确草稿合并才达到九成时，候选与模型费用使用同�
   expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId } })).status).toBe(200)
   await s.fixture.runtime.dispatchPending()
   let admission = (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
-  const nextResponse = await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, { encounterVersion: admission.versionId, procedureId: stay.procedure.id, catalogVersion: 1,
-    plannedFor: '2026-08-24T18:00:00+08:00', reason: '合成第二计划，独立材料清单' })
+  const nextResponse = await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, {
+    anesthesiaMethod: 'local-infiltration',
+    encounterVersion: admission.versionId,
+    locationId: 'location-catheterization-lab',
+    procedureId: stay.procedure.id,
+    catalogVersion: 1,
+    plannedFor: '2026-08-24T18:00:00+08:00',
+    reason: '合成第二计划，独立材料清单',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor',
+    surgeryType: 'elective',
+  })
   expect(nextResponse.status).toBe(200)
   const next = inpatientSurgeryResponseSchema.parse(await nextResponse.json()).data.requests.find(item => item.id !== stay.requestId)!
   s.fixture.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET snapshot_json=json_set(snapshot_json,'$.chargeDefinition.priceFen',466804) WHERE item_id='hospital-material-balloon'").run()

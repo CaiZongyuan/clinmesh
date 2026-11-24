@@ -865,8 +865,8 @@ describe('trusted session and Scenario HTTP contract', () => {
 
     for (const [resourceType, total] of [
       ['Organization', 2],
-      ['Location', 15],
-      ['Practitioner', 10],
+      ['Location', 19],
+      ['Practitioner', 12],
       ['PractitionerRole', 10],
       ['Medication', 22],
     ] as const) {

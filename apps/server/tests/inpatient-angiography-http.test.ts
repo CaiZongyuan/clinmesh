@@ -248,7 +248,15 @@ it('医生编辑草稿后新报告不覆盖人工值，旧版本保存返回冲�
   const procedure = s.stay.catalog.procedures.find(item => item.coding.code === '88.5500')!
   const encounterVersion = (await s.fixture.read('inpatient-doctor', s.stay.path, inpatientDetailSchema)).admission.versionId
   const planned = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    encounterVersion, procedureId: procedure.id, catalogVersion: 1, plannedFor: '2026-08-24T15:00:00+08:00', reason: '复查合成造影，保留人工草稿',
+    anesthesiaMethod: 'local-infiltration',
+    encounterVersion,
+    locationId: 'location-catheterization-lab',
+    procedureId: procedure.id,
+    catalogVersion: 1,
+    plannedFor: '2026-08-24T15:00:00+08:00',
+    reason: '复查合成造影，保留人工草稿',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor',
+    surgeryType: 'elective',
   })).json()).data.requests.at(-1)!
   const executionInput = await s.fixture.pciExecutionInput({ ...s.stay, procedure, requestId: planned.id, reservations: [] })
   expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/execute`, executionInput)).status).toBe(200)
@@ -509,8 +517,15 @@ describe('多手术计划的选型依据隔离', () => {
 
   it('计划B的编辑草稿不与计划A的默认确认混用，也不污染A预计依据，显式B读取保留其草稿', async () => {
     const planned = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-      encounterVersion, procedureId: s.stay.procedure.id, catalogVersion: s.stay.procedure.version,
-      plannedFor: '2026-08-24T15:00:00+08:00', reason: '第二个PCI计划独立准备报告草稿',
+      anesthesiaMethod: 'local-infiltration',
+      encounterVersion,
+      locationId: 'location-catheterization-lab',
+      procedureId: s.stay.procedure.id,
+      catalogVersion: s.stay.procedure.version,
+      plannedFor: '2026-08-24T15:00:00+08:00',
+      reason: '第二个PCI计划独立准备报告草稿',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor',
+      surgeryType: 'elective',
     })).json()).data.requests.at(-1)!
     const before = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema))
       .estimates.find(item => item.requestId === s.stay.requestId)!

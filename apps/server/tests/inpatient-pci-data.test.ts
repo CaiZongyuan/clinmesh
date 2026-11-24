@@ -270,11 +270,14 @@ describe('固定 PCI 数据公开 Command 与目录回读', () => {
     expect(charges.charges.filter(charge => charge.kind === 'medication')).toMatchObject([{ amountFen: 80 }])
     const currentClinical = inpatientFullClinicalResponseSchema.shape.data.parse(await (await s.request(doctor.cookie, `${path}/clinical`)).json())
     const requested = await s.request(doctor.cookie, `${path}/surgeries/request`, { encounterVersion: currentClinical.encounterVersion, procedureId: 'hospital-surgery-3', catalogVersion: 1,
+      surgeryType: 'elective', locationId: 'location-catheterization-lab', surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
       plannedFor: s.owner.virtualTime(admin.context), reason: '合成择期单枚支架局部接入验证' })
     expect(requested.status).toBe(200)
     const surgery = inpatientSurgeryResponseSchema.parse(await requested.json()).data.requests[0]!
     expect((await s.request(nurse.cookie, `${path}/surgeries/check-preop`, { requestId: surgery.id, expectedRequestVersion: 1, note: '人工核对本次术前资料' })).status).toBe(200)
-    expect((await s.request(doctor.cookie, `${path}/surgeries/confirm-consent`, { requestId: surgery.id, expectedRequestVersion: 2, note: '人工确认本次同意书' })).status).toBe(200)
+    expect((await s.request(doctor.cookie, `${path}/surgeries/confirm-consent`, {
+      requestId: surgery.id, expectedRequestVersion: 2, expectedDiagnosisRevision: currentClinical.diagnosis.revision, signerRole: 'patient', signerName: '合成PCI患者', patientChoice: 'agree', note: '人工确认本次同意书',
+    })).status).toBe(200)
     const surgeryInput = { requestId: surgery.id, expectedRequestVersion: 3, procedureId: 'hospital-surgery-3', catalogVersion: 1,
       materials: ['guidewire', 'guiding-catheter', 'balloon', 'stent'].map(suffix => ({ materialId: `hospital-material-pci-${suffix}`, catalogVersion: 1, quantity: 1 })), note: '人工确认本次实际植入一枚合成支架及耗材使用' }
     const executed = await s.request(doctor.cookie, `${path}/surgeries/execute`, surgeryInput, 'pci-business-surgery')

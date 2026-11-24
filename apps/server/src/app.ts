@@ -25,7 +25,7 @@ import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPrevie
 import { inpatientDischargeInputSchema, inpatientDischargeIssueInputSchema, inpatientSettleInputSchema, inpatientDepartInputSchema,
   inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema,
   inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
-import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema, inpatientSurgeryCompletionReviewInputSchema, inpatientSurgeryCompletionPreviewSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientSurgeryRequestBodySchema, inpatientLegacySurgeryRequestBodySchema, inpatientSurgeryConfirmConsentBodySchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema, inpatientSurgeryCompletionReviewInputSchema, inpatientSurgeryCompletionPreviewSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -1746,11 +1746,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/request', async context => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
-        const body = z.object({ input: inpatientSurgeryRequestInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const body = z.object({ input: z.union([inpatientSurgeryRequestBodySchema, inpatientLegacySurgeryRequestBodySchema]) }).strict().parse(await context.req.json())
         return context.json(inpatient.surgery.request(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch (error) { return apiErrorResponse(context, error) }
     })
-    const surgeryPreparation = (action: 'check-preop' | 'confirm-consent' | 'cancel') => async (context: Context) => {
+    const surgeryPreparation = (action: 'check-preop' | 'cancel') => async (context: Context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
         const body = z.object({ input: inpatientSurgeryActionInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
@@ -1758,7 +1758,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       } catch (error) { return apiErrorResponse(context, error) }
     }
     app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/check-preop', surgeryPreparation('check-preop'))
-    app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/confirm-consent', surgeryPreparation('confirm-consent'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/confirm-consent', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: z.union([inpatientSurgeryConfirmConsentBodySchema, inpatientSurgeryActionInputSchema.omit({ admissionId: true })]) }).strict().parse(await context.req.json())
+        return context.json(inpatient.surgery.confirmConsent(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/cancel', surgeryPreparation('cancel'))
     app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/start', async context => {
       try {

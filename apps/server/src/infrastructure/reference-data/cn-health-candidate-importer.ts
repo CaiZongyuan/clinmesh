@@ -1176,6 +1176,7 @@ export function stageCnHealthCandidateReferenceArtifact(input: {
   let primaryError: unknown
   let cleanupError: unknown
   try {
+    input.driver.pragma(`${attachedCandidateSchema}.cache_size = -2000`)
     input.driver.pragma('query_only = ON')
     if (input.driver.pragma(`${attachedCandidateSchema}.integrity_check`, { simple: true }) !== 'ok') {
       throw new Error('cn-health Candidate SQLite integrity check failed')

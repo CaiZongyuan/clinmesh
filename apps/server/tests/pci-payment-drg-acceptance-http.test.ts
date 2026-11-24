@@ -90,8 +90,16 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
 
     const currentAdmission = await s.read('inpatient-doctor', path, inpatientDetailSchema)
     const otherPlan = (await parsePciResponse(inpatientSurgeryResponseSchema, await s.request('inpatient-doctor', `${path}/surgeries/request`, {
-      encounterVersion: currentAdmission.admission.versionId, procedureId: stay.procedure.id, catalogVersion: stay.procedure.version,
-      plannedFor: '2026-08-24T16:00:00+08:00', reason: '合成另一个计划不得挪用原PCI预留' }))).data.requests.find(item => item.id !== stay.requestId)!
+      anesthesiaMethod: 'local-infiltration',
+      encounterVersion: currentAdmission.admission.versionId,
+      locationId: 'location-catheterization-lab',
+      procedureId: stay.procedure.id,
+      catalogVersion: stay.procedure.version,
+      plannedFor: '2026-08-24T16:00:00+08:00',
+      reason: '合成另一个计划不得挪用原PCI预留',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor',
+      surgeryType: 'elective',
+    }))).data.requests.find(item => item.id !== stay.requestId)!
     const mismatchedReservation = await s.request('inpatient-doctor', `${path}/surgeries/execute`, await s.pciExecutionInput(stay, otherPlan.id))
     expect(mismatchedReservation.status).toBe(409)
     expect(apiErrorSchema.parse(await mismatchedReservation.json()).error.code).toBe('INPATIENT_RESERVATION_CONFLICT')

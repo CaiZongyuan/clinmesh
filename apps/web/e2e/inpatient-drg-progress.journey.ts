@@ -45,13 +45,20 @@ export async function runDrgProgressJourney(page: Page, app: { origin: string; p
   // 本计划的进行中事实继续参与预计分组；登记后费用在一次刷新周期内更新。
   const before = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json())
   const requested = inpatientSurgeryResponseSchema.parse(await (await s.api.post(`${s.path}/surgeries/request`, {
-    encounterVersion: before.encounterVersion, procedureId: 'hospital-surgery-1', catalogVersion: 1, plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成全程费用进度验证',
+    encounterVersion: before.encounterVersion, procedureId: 'hospital-surgery-1', catalogVersion: 1,
+    surgeryType: 'elective', locationId: 'location-catheterization-lab',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成全程费用进度验证',
   })).json()).data.requests[0]!
   await s.api.login('ward-nurse')
   expect((await s.api.post(`${s.path}/surgeries/check-preop`, { requestId: requested.id, expectedRequestVersion: requested.version, note: '合成术前已核对' })).status()).toBe(200)
   await s.api.login('inpatient-doctor')
   let current = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).requests[0]!
-  expect((await s.api.post(`${s.path}/surgeries/confirm-consent`, { requestId: current.id, expectedRequestVersion: current.version, note: '合成签署已确认' })).status()).toBe(200)
+  const expectedDiagnosisRevision = ((await (await s.api.get(`${s.path}/clinical`)).json()) as { diagnosis: { revision: number } }).diagnosis.revision
+  expect((await s.api.post(`${s.path}/surgeries/confirm-consent`, {
+    requestId: current.id, expectedRequestVersion: current.version, expectedDiagnosisRevision,
+    signerRole: 'patient', signerName: s.name, patientChoice: 'agree', note: '合成签署已确认',
+  })).status()).toBe(200)
   current = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).requests[0]!
   const running = inpatientSurgeryResponseSchema.parse(await (await s.api.post(`${s.path}/surgeries/start`, {
     requestId: current.id, expectedRequestVersion: current.version, procedureId: 'hospital-surgery-1', catalogVersion: 1, note: '合成开始手术',
