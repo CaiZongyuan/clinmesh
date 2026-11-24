@@ -31,6 +31,7 @@ import {
 } from './synthea-index-case.ts'
 import { canonicalJsonHash } from './canonical-json.ts'
 import { AuthoredCasePackService } from './authored-case-pack-service.ts'
+import { compiledDsapExtraGoldenCasePack } from './dsap-golden-case-pack.ts'
 import { PciCaseSource } from './pci-case-source.ts'
 import type { PatientPersonaRepository } from '../../infrastructure/sqlite/patient-persona-repository.ts'
 
@@ -106,6 +107,26 @@ export class ScenarioDataService {
   }
   prepareAuthoredCasePack(...args: Parameters<AuthoredCasePackService['prepare']>) {
     return new AuthoredCasePackService(this.#commands, this.#profiles, this.#cases, this.#personas).prepare(...args)
+  }
+  readGoldenCasePack(...args: Parameters<AuthoredCasePackService['read']>) {
+    return new AuthoredCasePackService(
+      this.#commands,
+      this.#profiles,
+      this.#cases,
+      this.#personas,
+      compiledDsapExtraGoldenCasePack,
+      { prepareOperation: 'synthetic-case.golden-pack.prepare', readAuditOperation: 'admin.golden-case-pack.read' },
+    ).read(...args)
+  }
+  prepareGoldenCasePack(...args: Parameters<AuthoredCasePackService['prepare']>) {
+    return new AuthoredCasePackService(
+      this.#commands,
+      this.#profiles,
+      this.#cases,
+      this.#personas,
+      compiledDsapExtraGoldenCasePack,
+      { prepareOperation: 'synthetic-case.golden-pack.prepare', readAuditOperation: 'admin.golden-case-pack.read' },
+    ).prepare(...args)
   }
   readonly #cases: SyntheticCaseRepository
   readonly #commands: CommandExecutor

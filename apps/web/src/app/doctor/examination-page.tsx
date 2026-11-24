@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { FilePlus2, Trash2 } from 'lucide-react'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import { ExaminationReportText } from './examination-report-text.tsx'
+import { goldenCaseUnprepopulatedErrorMessage } from '../laboratory-generation-error.ts'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { AgentReviewAnchor } from '../agent-review.tsx'
 import { useMutation, useQuery } from '@tanstack/react-query'
@@ -305,7 +306,13 @@ export function ExaminationPage({
               {selected.generationError ? (
                 <Alert variant="destructive">
                   <AlertTitle>{zh ? '未取得报告' : 'No report'}</AlertTitle>
-                  <AlertDescription>{selected.generationError.message}</AlertDescription>
+                  <AlertDescription>
+                    {goldenCaseUnprepopulatedErrorMessage(
+                      selected.generationError.code,
+                      zh ? 'zh-CN' : 'en-US',
+                      selected.generationError.message,
+                    ) ?? selected.generationError.message}
+                  </AlertDescription>
                 </Alert>
               ) : null}
               {selected.report ? <ExaminationReportText report={selected.report} locale={locale} /> : null}

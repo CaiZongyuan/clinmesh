@@ -108,7 +108,7 @@ describe('Reference Data source importers', () => {
       dosageForm: '片剂',
       genericName: '对乙酰氨基酚片',
       id: 'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-ACETAMINOPHEN',
-      manufacturer: '仁和仿真制药一厂',
+      manufacturer: 'ClinMesh 仿真制药一厂',
       packageDescription: '20片/盒',
       sourceLocator: 'nhsa-medication-products.csv:2',
       status: 'active',

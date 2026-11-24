@@ -354,7 +354,7 @@ async function createDrugCandidate(directory: string, count: number): Promise<{
         '盒',
         '合成医药企业',
         NULL,
-        '仁和仿真制药厂',
+        'ClinMesh 仿真制药厂',
         printf('国药准字H%08d', n),
         NULL,
         printf('869%011d', n),

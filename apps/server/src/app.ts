@@ -1011,6 +1011,22 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.get('/api/sim/v1/synthetic-cases/golden-pack', async context => {
+      try {
+        const actor = await identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+        context.header('cache-control', 'private, no-store')
+        return context.json(scenarioData.readGoldenCasePack(actor))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/sim/v1/synthetic-cases/golden-pack/prepare', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = authoredCasePackPrepareRequestSchema.parse(await context.req.json())
+        const actor = await identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+        return context.json(scenarioData.prepareGoldenCasePack(actor, body.input,
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.get('/api/sim/v1/synthetic-patients', async (context) => {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)

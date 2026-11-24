@@ -625,11 +625,13 @@ export class InvestigationService {
       concept,
       stagePriority,
     )
+    const syntheticCase = this.#cases.get(workspaceId, materialization.synthetic_case_id)
+    const profile = syntheticCase === undefined
+      ? undefined
+      : this.#profiles.getRevision(workspaceId, syntheticCase.profileId, syntheticCase.profileRevision)
     if (exact !== undefined) {
       try {
         this.#contentFromExactObservation(concept, exact.observation)
-        const syntheticCase = this.#cases.get(workspaceId, materialization.synthetic_case_id)
-        const profile = syntheticCase === undefined ? undefined : this.#profiles.getRevision(workspaceId, syntheticCase.profileId, syntheticCase.profileRevision)
         return { source: profile?.source.providerId === 'clinmesh-authored' ? 'case-truth-exact' : 'synthea-exact', supported: true }
       } catch (error) {
         if (error instanceof InvestigationGenerationError) {
@@ -637,6 +639,9 @@ export class InvestigationService {
         }
         throw error
       }
+    }
+    if (profile?.source.providerId === 'clinmesh-authored') {
+      return { reason: 'no-case-source', supported: false }
     }
     return this.#agentGenerationPlan(concept).capability
   }
@@ -757,6 +762,9 @@ export class InvestigationService {
         source: profile.source.providerId === 'clinmesh-authored' ? 'case-truth-exact' : 'synthea-exact',
         workspaceId,
       })
+    }
+    if (profile.source.providerId === 'clinmesh-authored') {
+      throw new InvestigationGenerationError('INVESTIGATION_UNSUPPORTED', '本病例未预置该检查')
     }
     const agentPlan = this.#agentGenerationPlan(requestedConcept)
     if (!('metadata' in agentPlan) || this.#provider === undefined || this.#model === undefined) {
@@ -916,6 +924,9 @@ export class InvestigationService {
     const missing = service.reportDefinition.results.filter(
       definition => !exactResults.has(definition.referenceConcept.code),
     )
+    if (profile.source.providerId === 'clinmesh-authored' && missing.length > 0) {
+      throw new InvestigationGenerationError('INVESTIGATION_UNSUPPORTED', '本病例未预置该检查')
+    }
     const basePayload = {
       caseRevision: row.synthetic_case_revision,
       demographics: {

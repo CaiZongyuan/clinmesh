@@ -1,6 +1,26 @@
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
-export function laboratoryGenerationErrorMessage(code: string, locale: WorkspaceLocale): string {
+const GOLDEN_CASE_UNPREPOPULATED_MESSAGE_ZH = '本病例未预置该检查'
+const GOLDEN_CASE_UNPREPOPULATED_MESSAGE_EN = 'This investigation is not pre-populated for this golden case.'
+
+export function goldenCaseUnprepopulatedErrorMessage(
+  code: string,
+  locale: WorkspaceLocale,
+  serverMessage?: string,
+): string | undefined {
+  if (code === 'INVESTIGATION_UNSUPPORTED' && serverMessage === GOLDEN_CASE_UNPREPOPULATED_MESSAGE_ZH) {
+    return locale === 'zh-CN' ? GOLDEN_CASE_UNPREPOPULATED_MESSAGE_ZH : GOLDEN_CASE_UNPREPOPULATED_MESSAGE_EN
+  }
+  return undefined
+}
+
+export function laboratoryGenerationErrorMessage(
+  code: string,
+  locale: WorkspaceLocale,
+  serverMessage?: string,
+): string {
+  const goldenCaseMessage = goldenCaseUnprepopulatedErrorMessage(code, locale, serverMessage)
+  if (goldenCaseMessage !== undefined) return goldenCaseMessage
   const messages: Record<string, { 'zh-CN': string; 'en-US': string }> = {
     INVESTIGATION_UNSUPPORTED: {
       'zh-CN': '该病例缺少此检验的合成结果底账，无法生成结果。',

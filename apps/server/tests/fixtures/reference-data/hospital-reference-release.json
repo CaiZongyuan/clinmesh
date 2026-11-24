@@ -7,7 +7,7 @@
       "acquisitionMethod": "generated",
       "artifactFormat": "nhsa-medication-product-csv",
       "artifactPath": "synthetic-nhsa-medication-products.csv",
-      "checksum": "b72aa94f14b640dc9bc2952d687728995cc06a137da734b2b74bbffb64256c93",
+      "checksum": "1bfa500d86b812895011ee6ef490789a249589cb46ceae17b9b01b8a01d91088",
       "licenseId": "LicenseRef-ClinMesh-Proprietary",
       "retrievedAt": "2026-08-28T00:00:00.000Z",
       "sourceId": "clinmesh-synthetic-nhsa-medication-products",
