@@ -27,8 +27,10 @@ describe('HIS operation route coverage', () => {
     ))
     const excludedRoutes = excludedHisRoutes.map(route => routeKey(route.method, route.path))
 
-    expect(operations).toHaveLength(229)
+    expect(operations).toHaveLength(231)
     expect(canonicalRoutes).toEqual(expect.arrayContaining([
+      'GET /api/his/v1/identity-quarantine',
+      'POST /api/his/v1/identity-quarantine/:candidateId/confirm-merge',
       'GET /api/his/v1/encounters/:encounterId/clinical-quality',
       'GET /api/his/v1/inpatient/admissions/:admissionId/clinical-quality',
       'GET /api/his/v1/inpatient/admissions/:admissionId/angiography-reports',

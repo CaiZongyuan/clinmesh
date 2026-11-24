@@ -1736,15 +1736,31 @@ export class ClinicalScoreService {
       { kind: options.inpatient ? 'inpatient' : 'outpatient', id: options.caseId, patientId: options.patientId },
       { asOf: options.now, includeSuperseded: false },
     )
+    const eligibleIngestedEntries = this.#factLedger?.listEligibleIngestedObservations(context, options.patientId) ?? []
+    const eligibleIngestedByObsId = new Map(
+      eligibleIngestedEntries.map(entry => [entry.observation.id, entry.observation]),
+    )
     const ineligibleObservationIds = new Set(
       evaluatedLedger?.facts
-        .filter(f => f.provenance.sourceSystemId === 'clinmesh-his-fhir' && f.provenance.recordType === 'Observation' && !f.eligibleForScoringAndRedLine)
+        .filter(f => f.institutionScope === 'local' && f.provenance.recordType === 'Observation' && !f.eligibleForScoringAndRedLine)
         .map(f => f.provenance.recordId) ?? [],
     )
     const verifiedExternalFacts = evaluatedLedger?.facts.filter(
       f => f.institutionScope === 'external' && f.clinicianVerification.verified && f.eligibleForScoringAndRedLine,
     ) ?? []
-    const factGate = { ineligibleObservationIds, verifiedExternalFacts }
+    const eligibleIngestedLocalFacts = evaluatedLedger?.facts.filter(
+      f =>
+        f.institutionScope === 'local'
+        && f.provenance.recordType === 'Observation'
+        && f.eligibleForScoringAndRedLine
+        && eligibleIngestedByObsId.has(f.provenance.recordId),
+    ) ?? []
+    const factGate = {
+      ineligibleObservationIds,
+      verifiedExternalFacts,
+      eligibleIngestedLocalFacts,
+      eligibleIngestedByObsId,
+    }
     const labs = this.#extractLaboratoryAnalytes(
       context,
       options.caseId,
@@ -2517,6 +2533,8 @@ export class ClinicalScoreService {
     factGate?: {
       ineligibleObservationIds: ReadonlySet<string>
       verifiedExternalFacts: readonly ClinicalFact[]
+      eligibleIngestedLocalFacts?: readonly ClinicalFact[]
+      eligibleIngestedByObsId?: ReadonlyMap<string, unknown>
     },
   ) {
     const rows = z.array(z.object({
@@ -2582,6 +2600,7 @@ export class ClinicalScoreService {
       value: { unit: string; value: number }
     }> = []
 
+    const seenReportObservationIds = new Set<string>()
     const revisionIndex = this.#buildReportRevisionIndex(context)
     for (const { reportId, reportTime } of reportEntries) {
       const rawReport = this.#fhir.read(context, 'DiagnosticReport', reportId)
@@ -2594,6 +2613,7 @@ export class ClinicalScoreService {
         if (!obsId) continue
         const obs = observationResourceSchema.safeParse(this.#fhir.read(context, 'Observation', obsId))
         if (!obs.success || !['final', 'amended', 'corrected'].includes(obs.data.status ?? '')) continue
+        seenReportObservationIds.add(obs.data.id)
         if (factGate?.ineligibleObservationIds.has(obs.data.id)) continue
 
         const codes = new Set(
@@ -2707,13 +2727,12 @@ export class ClinicalScoreService {
       }
     }
 
-    for (const fact of factGate?.verifiedExternalFacts ?? []) {
-      if (fact.category !== 'laboratory' || fact.presence === 'not-asked') continue
-      const source: ClinicalScoreSourceReference = {
-        label: `外院已核实 ${fact.itemCode.display}`.slice(0, 120),
-        reference: fact.provenance.recordId.slice(0, 200),
-        versionId: fact.provenance.recordVersion,
-      }
+    const appendFactToAnalyteHits = (
+      fact: ClinicalFact,
+      source: ClinicalScoreSourceReference,
+      ingestedObs?: unknown,
+    ): void => {
+      if (fact.category !== 'laboratory' || fact.presence === 'not-asked') return
       const timestampMs = parseResourceTimestampMs(fact.effectiveAt ?? fact.reportedAt ?? fact.ingestedAt)
       const val = fact.value.normalizedValue
       if (typeof val === 'object' && val !== null && 'value' in val && 'unit' in val) {
@@ -2723,10 +2742,11 @@ export class ClinicalScoreService {
         else if (fact.itemCode.code === '2093-3' && fact.presence === 'present') tcHitsDesc.push({ source, specimenKey: fact.provenance.recordId, timestampMs, value: val })
         else if (fact.itemCode.code === '2085-9' && fact.presence === 'present') hdlHitsDesc.push({ source, specimenKey: fact.provenance.recordId, timestampMs, value: val })
         else if (fact.itemCode.code === '13457-7' && fact.presence === 'present') ldlHitsDesc.push({ source, timestampMs, value: val })
-        else if (fact.itemCode.code === '89579-7' || fact.itemCode.code === '6597-9') {
-          troponinHitsDesc.push({ elevated: val.value > 14, source, timestampMs })
-        } else if (fact.itemCode.code === '10839-9') {
-          troponinHitsDesc.push({ elevated: val.value > 0.04, source, timestampMs })
+        else if (fact.itemCode.code === '89579-7' || fact.itemCode.code === '6597-9' || fact.itemCode.code === '10839-9') {
+          const parsedObs = ingestedObs !== undefined ? observationResourceSchema.safeParse(ingestedObs) : undefined
+          const obsElevated = parsedObs?.success ? this.#evaluateTroponinElevation(parsedObs.data) : undefined
+          const fallbackThreshold = fact.itemCode.code === '10839-9' ? 0.04 : 14
+          troponinHitsDesc.push({ elevated: obsElevated ?? val.value > fallbackThreshold, source, timestampMs })
         }
       } else if (
         (fact.itemCode.code === '89579-7' || fact.itemCode.code === '10839-9' || fact.itemCode.code === '6597-9')
@@ -2735,6 +2755,27 @@ export class ClinicalScoreService {
         const elevated = typeof val === 'boolean' ? val : /阳性|升高|positive|elevated|high/i.test(val)
         troponinHitsDesc.push({ elevated, source, timestampMs })
       }
+    }
+
+    for (const fact of factGate?.eligibleIngestedLocalFacts ?? []) {
+      if (seenReportObservationIds.has(fact.provenance.recordId)) continue
+      appendFactToAnalyteHits(
+        fact,
+        {
+          label: fact.itemCode.display.slice(0, 120),
+          reference: `Observation/${fact.provenance.recordId}`,
+          versionId: fact.provenance.recordVersion,
+        },
+        factGate?.eligibleIngestedByObsId?.get(fact.provenance.recordId),
+      )
+    }
+
+    for (const fact of factGate?.verifiedExternalFacts ?? []) {
+      appendFactToAnalyteHits(fact, {
+        label: `外院已核实 ${fact.itemCode.display}`.slice(0, 120),
+        reference: fact.provenance.recordId.slice(0, 200),
+        versionId: fact.provenance.recordVersion,
+      })
     }
 
     const troponinChronological = [...troponinHitsDesc]

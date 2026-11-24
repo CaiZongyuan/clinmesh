@@ -516,6 +516,9 @@ export interface LocalFhirTranscriptionInput {
   supersedesObservationId?: Readonly<Record<string, string>>
   supersedesReportId?: Readonly<Record<string, string>>
   mappingVersion?: string
+  sourceSystemId?: string
+  sourceSystemIdByObservationId?: Readonly<Record<string, string>>
+  ingestedAtByObservationId?: Readonly<Record<string, string>>
 }
 
 export interface VisibleSourceObservationFieldsLike {
@@ -812,6 +815,7 @@ function inferSexRestrictionFromCodeOrText(code: string, display: string): 'fema
 
 export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): TranscribedClinicalFactCandidate[] {
   const mappingVersion = input.mappingVersion ?? CLINICAL_FACT_MAPPING_VERSION
+  const defaultSourceSystemId = input.sourceSystemId ?? 'clinmesh-his-fhir'
   const candidates: TranscribedClinicalFactCandidate[] = []
 
   const obsById = new Map<string, FhirObservationLike>()
@@ -855,7 +859,8 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
     if (prevObsId) {
       const prevObs = obsById.get(prevObsId)
       const prevVersion = prevObs?.meta?.versionId ?? '1'
-      return buildFactId('clinmesh-his-fhir', 'Observation', prevObsId, prevVersion, componentCode)
+      const prevSourceSystemId = input.sourceSystemIdByObservationId?.[prevObsId] ?? defaultSourceSystemId
+      return buildFactId(prevSourceSystemId, 'Observation', prevObsId, prevVersion, componentCode)
     }
     if (!report) return null
     const prevReportId = input.supersedesReportId?.[report.id]
@@ -869,7 +874,8 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
       if (!prevObs) continue
       const { itemCode } = pickCodingConcept(prevObs.code, prevObs.id, prevObs.id)
       if (itemCode.code === canonicalCode) {
-        return buildFactId('clinmesh-his-fhir', 'Observation', prevObs.id, prevObs.meta?.versionId ?? '1')
+        const prevSourceSystemId = input.sourceSystemIdByObservationId?.[prevObs.id] ?? defaultSourceSystemId
+        return buildFactId(prevSourceSystemId, 'Observation', prevObs.id, prevObs.meta?.versionId ?? '1')
       }
     }
     return null
@@ -889,10 +895,17 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
         ? 'amended'
         : 'final'
 
+    const obsSourceSystemId = input.sourceSystemIdByObservationId?.[obs.id] ?? defaultSourceSystemId
     const orderedAt = resolveOrderedAtForObs(obs, linkedReport)
     const reportedAt = pickTimestamp(obs.issued, linkedReport?.issued)
     const effectiveAt = pickTimestamp(obs.effectiveDateTime, linkedReport?.effectiveDateTime, reportedAt)
-    const ingestedAt = pickTimestamp(obs.issued, linkedReport?.issued, obs.effectiveDateTime, obs.meta?.lastUpdated) ?? new Date(0).toISOString()
+    const ingestedAt = pickTimestamp(
+      input.ingestedAtByObservationId?.[obs.id],
+      obs.issued,
+      linkedReport?.issued,
+      obs.effectiveDateTime,
+      obs.meta?.lastUpdated,
+    ) ?? new Date(0).toISOString()
 
     if (obs.component && obs.component.length > 0) {
       const orderedComponents = [...obs.component].filter(c => {
@@ -904,7 +917,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
         const { itemCode, method, spec } = pickCodingConcept(comp.code, `${obs.id}-comp-${i}`, `${obs.id} component ${i}`)
         const extracted = extractValueAndQcFromObservationFields(comp, spec)
         const category = spec?.categoryHint ?? 'vital-sign'
-        const factId = buildFactId('clinmesh-his-fhir', 'Observation', obs.id, recordVersion, itemCode.code)
+        const factId = buildFactId(obsSourceSystemId, 'Observation', obs.id, recordVersion, itemCode.code)
         candidates.push({
           factId,
           category,
@@ -919,7 +932,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
             recordType: 'Observation',
             recordId: obs.id,
             recordVersion,
-            sourceSystemId: 'clinmesh-his-fhir',
+            sourceSystemId: obsSourceSystemId,
           },
           institutionScope: 'local',
           recordStatus: effectiveRecordStatus,
@@ -949,7 +962,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
     const category = observationCategory(obs, spec)
 
     candidates.push({
-      factId: buildFactId('clinmesh-his-fhir', 'Observation', obs.id, recordVersion),
+      factId: buildFactId(obsSourceSystemId, 'Observation', obs.id, recordVersion),
       category,
       itemCode,
       value: extracted.value,
@@ -962,7 +975,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
         recordType: 'Observation',
         recordId: obs.id,
         recordVersion,
-        sourceSystemId: 'clinmesh-his-fhir',
+        sourceSystemId: obsSourceSystemId,
       },
       institutionScope: 'local',
       recordStatus: effectiveRecordStatus,
@@ -1229,7 +1242,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
   // Link sequential versions of the same FHIR resource/itemCode as superseding earlier revisions
   const byResourceItem = new Map<string, TranscribedClinicalFactCandidate[]>()
   for (const candidate of candidates) {
-    const key = `${candidate.provenance.recordType}::${candidate.provenance.recordId}::${candidate.itemCode.code}`
+    const key = `${candidate.provenance.sourceSystemId}::${candidate.provenance.recordType}::${candidate.provenance.recordId}::${candidate.itemCode.code}`
     const group = byResourceItem.get(key)
     if (group) group.push(candidate)
     else byResourceItem.set(key, [candidate])

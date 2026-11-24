@@ -91,6 +91,7 @@ import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.
 import { ClinicalScoreService, buildVitalObservationComponents } from './clinical-score-service.ts'
 import { ClinicalQualityService } from './clinical-quality-service.ts'
 import { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
+import { LocalSourceIngestionService } from './local-source-ingestion-service.ts'
 import { OrderSetDraftService } from './order-set-draft-service.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
 import {
@@ -315,6 +316,7 @@ export class WorkflowService
   readonly consultationRecording: ConsultationRecordingService
   readonly qualityControl: ClinicalDocumentQualityControl
   readonly clinicalFactLedger: ClinicalFactLedgerService
+  readonly localIngestion: LocalSourceIngestionService
   readonly clinicalScores: ClinicalScoreService
   readonly clinicalQuality: ClinicalQualityService
   /** 专病组套只读草稿预装配；不写入任何正式业务事实。 */
@@ -360,6 +362,12 @@ export class WorkflowService
       tokenSecret: options.tokenSecret,
     })
     this.clinicalFactLedger = new ClinicalFactLedgerService({
+      commands,
+      database,
+      fhir,
+      outpatientContext: this.#context,
+    })
+    this.localIngestion = new LocalSourceIngestionService({
       commands,
       database,
       fhir,

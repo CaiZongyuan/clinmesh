@@ -20,6 +20,12 @@ import {
   outpatientClinicalFactVerificationInputSchema,
 } from './clinical-fact-ledger.ts'
 import {
+  confirmIdentityQuarantineMergeInputSchema,
+  confirmIdentityQuarantineMergeResponseSchema,
+  listIdentityQuarantineQuerySchema,
+  listIdentityQuarantineResponseSchema,
+} from './local-source-ingestion.ts'
+import {
   guidelineTopicBundleSchema,
   inpatientGuidelineTopicsInputSchema,
   outpatientGuidelineTopicsInputSchema,
@@ -1349,6 +1355,28 @@ const rawOperationRuntimeDefinitions = [
     id: 'registration.synthetic-case.start',
     input: startSyntheticCaseOperationInputSchema,
     output: commandResponseSchema(startSyntheticCaseResultSchema),
+  },
+  {
+    http: {
+      method: 'GET',
+      path: '/api/his/v1/identity-quarantine',
+    },
+    id: 'identity-quarantine.list',
+    input: listIdentityQuarantineQuerySchema,
+    output: listIdentityQuarantineResponseSchema,
+  },
+  {
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/identity-quarantine/:candidateId/confirm-merge',
+      encodeBody: (raw) => {
+        const { candidateId: _candidateId, ...input } = confirmIdentityQuarantineMergeInputSchema.parse(raw)
+        return { input }
+      },
+    },
+    id: 'identity-quarantine.confirm-merge',
+    input: confirmIdentityQuarantineMergeInputSchema,
+    output: confirmIdentityQuarantineMergeResponseSchema,
   },
   {
     http: {

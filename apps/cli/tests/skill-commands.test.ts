@@ -1311,3 +1311,36 @@ it('keeps clinical risk assessment, nursing vitals, and deterministic clinical s
     expect(skill).toContain('合成教学参考，非真实上市产品法定说明书')
   }
 })
+
+it('认人隔离区 CLI 与 Skill 保留管理员/登记员边界及审计合同', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const registrationSkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-registration/SKILL.md'), 'utf8')
+  const administratorSkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-administrator/SKILL.md'), 'utf8')
+
+  const listLine = commandLines(registrationSkill).find(item => item.startsWith('clinmesh identity-quarantine list'))
+  expect(listLine).toBeDefined()
+  expect(inspectExample(program, listLine!).operation).toMatchObject({
+    id: 'identity-quarantine.list',
+    mode: 'query',
+    roles: ['administrator', 'registrar'],
+    skill: 'clinmesh-registration',
+  })
+
+  const confirmLine = commandLines(registrationSkill).find(item => item.startsWith('clinmesh identity-quarantine confirm-merge '))
+  expect(confirmLine).toBeDefined()
+  const confirmOp = inspectExample(program, confirmLine!).operation!
+  expect(confirmOp.id).toBe('identity-quarantine.confirm-merge')
+  expect(confirmOp.roles).toEqual(['administrator', 'registrar'])
+  expect(confirmOp.requirements).toEqual({ expectedVersions: false, idempotency: 'required' })
+
+  const mergeJson = registrationSkill
+    .slice(registrationSkill.indexOf('identity-quarantine confirm-merge'))
+    .match(/```json\n([^]*?)\n```/)
+  expect(mergeJson).toBeDefined()
+  expect(confirmOp.input.parse(JSON.parse(mergeJson![1]!))).toMatchObject({
+    candidateId: 'cand-1',
+    decision: 'confirm-merge',
+    targetPatientId: 'patient-1',
+  })
+  expect(administratorSkill).toContain('../clinmesh-registration/SKILL.md')
+})

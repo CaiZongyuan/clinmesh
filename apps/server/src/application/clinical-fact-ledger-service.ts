@@ -47,6 +47,25 @@ export class ClinicalFactLedgerError extends Error {
   }
 }
 
+const eligibleIngestedRecordRowSchema = z.object({
+  ingestion_record_id: z.string(),
+  source_system_id: z.string(),
+  fhir_observation_json: z.string(),
+  provenance_json: z.string(),
+  ingested_at: z.string(),
+}).strict()
+
+const ingestedFhirObservationSchema = z.object({
+  resourceType: z.literal('Observation'),
+  id: z.string(),
+  status: z.string(),
+}).loose()
+
+const ingestedProvenancePayloadSchema = z.object({
+  ingestedAt: z.string().optional(),
+  orderedAt: z.string().nullable().optional(),
+}).loose()
+
 export interface ClinicalFactLedgerQueryOptions {
   asOf?: string | undefined
   itemCodes?: readonly string[] | undefined
@@ -525,8 +544,21 @@ export class ClinicalFactLedgerService {
     const procedures = this.#loadFhirHistoryForPatient(context, 'Procedure', patientId) as unknown as FhirProcedureLike[]
     const serviceRequests = this.#searchAllFhirIdsForPatient(context, 'ServiceRequest', patientId)
 
+    const orderedAtByObservationId: Record<string, string> = {}
     const orderedAtByReportId: Record<string, string> = {}
     const orderedAtByRequestRef: Record<string, string> = {}
+    const sourceSystemIdByObservationId: Record<string, string> = {}
+    const ingestedAtByObservationId: Record<string, string> = {}
+
+    for (const entry of this.listEligibleIngestedObservations(context, patientId)) {
+      const obsId = entry.observation.id
+      observations.push(entry.observation)
+      sourceSystemIdByObservationId[obsId] = entry.sourceSystemId
+      ingestedAtByObservationId[obsId] = entry.ingestedAt
+      if (entry.orderedAt) {
+        orderedAtByObservationId[obsId] = entry.orderedAt
+      }
+    }
 
     for (const sr of serviceRequests) {
       if (typeof sr.resource['authoredOn'] === 'string') {
@@ -647,11 +679,65 @@ export class ClinicalFactLedgerService {
       allergyIntolerances,
       medications: [...medicationRequests, ...medicationAdmins, ...medicationDispenses] as unknown as FhirMedicationLike[],
       procedures,
+      orderedAtByObservationId,
       orderedAtByReportId,
       orderedAtByRequestRef,
       specimenLabelById,
       supersedesObservationId,
       supersedesReportId,
+      sourceSystemIdByObservationId,
+      ingestedAtByObservationId,
+    })
+  }
+
+  listEligibleIngestedObservations(
+    context: RepositoryContext,
+    patientId: string,
+  ): ReadonlyArray<{
+    observation: FhirObservationLike & {
+      referenceRange?: ReadonlyArray<{ low?: { value?: number }; high?: { value?: number } }>
+      interpretation?: ReadonlyArray<{ coding?: ReadonlyArray<{ code?: string; display?: string }> }>
+    }
+    sourceSystemId: string
+    ingestedAt: string
+    orderedAt: string | null
+  }> {
+    const rows = z.array(eligibleIngestedRecordRowSchema).parse(
+      this.#database.driver.prepare(`
+        SELECT r.ingestion_record_id, r.source_system_id, r.fhir_observation_json,
+               r.provenance_json, r.ingested_at
+        FROM local_ingestion_record AS r
+        JOIN local_ingestion_batch AS b
+          ON b.workspace_id = r.workspace_id
+         AND b.epoch = r.epoch
+         AND b.batch_id = r.batch_id
+        JOIN local_ingestion_quarantine AS q
+          ON q.workspace_id = r.workspace_id
+         AND q.epoch = r.epoch
+         AND q.candidate_id = r.candidate_id
+        WHERE r.workspace_id = ?
+          AND r.epoch = ?
+          AND r.patient_id = ?
+          AND b.status = 'complete'
+          AND q.resolution_status IN ('auto-matched', 'confirmed-merged')
+        ORDER BY r.ingested_at ASC, r.ingestion_record_id ASC
+      `).all(context.workspaceId, context.epoch, patientId),
+    )
+
+    return rows.map(row => {
+      const obs = ingestedFhirObservationSchema.parse(
+        JSON.parse(row.fhir_observation_json),
+      ) as unknown as FhirObservationLike & {
+        referenceRange?: ReadonlyArray<{ low?: { value?: number }; high?: { value?: number } }>
+        interpretation?: ReadonlyArray<{ coding?: ReadonlyArray<{ code?: string; display?: string }> }>
+      }
+      const prov = ingestedProvenancePayloadSchema.parse(JSON.parse(row.provenance_json))
+      return {
+        observation: obs,
+        sourceSystemId: row.source_system_id,
+        ingestedAt: prov.ingestedAt ?? row.ingested_at,
+        orderedAt: prov.orderedAt ?? null,
+      }
     })
   }
 

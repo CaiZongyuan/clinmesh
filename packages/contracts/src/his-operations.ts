@@ -30,6 +30,7 @@ export const hisOperationHandlerOwnerSchema = z.enum([
   'WorkflowService',
   'InsuranceService',
   'InpatientService',
+  'LocalSourceIngestionService',
 ])
 export const hisOperationSkillSchema = z.enum([
   'clinmesh-administrator',
@@ -409,6 +410,32 @@ const operationCliMetadataList = [
     roles: ['administrator', 'registrar'],
     summary: 'Start an outpatient visit from a ready Synthetic Case Instance using the shared durable number allocator; REGISTRATION_NUMBER_STATE_INVALID, REGISTRATION_NUMBER_EXHAUSTED, or REGISTRATION_NUMBER_AUTHORITY_RETIRED requires administrator recovery, not a new intent or a guessed number',
     version: 2,
+  },
+  {
+    cliPath: ['identity-quarantine', 'list'],
+    id: 'identity-quarantine.list',
+    mode: 'query',
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'none',
+    },
+    risk: 'read',
+    roles: ['administrator', 'registrar'],
+    summary: 'List intra-hospital multi-source patient identity quarantine candidates awaiting review or already resolved',
+    version: 1,
+  },
+  {
+    cliPath: ['identity-quarantine', 'confirm-merge'],
+    id: 'identity-quarantine.confirm-merge',
+    mode: 'command',
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['administrator', 'registrar'],
+    summary: 'Confirm merging a quarantined external patient identity into a verified local Patient (birthDate mismatch forbidden) or reject as a distinct patient with mandatory audit note',
+    version: 1,
   },
   {
     cliPath: ['triage', 'queue', 'list'],
@@ -2868,6 +2895,8 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'registration.synthetic-case.list': 'clinmesh-registration',
   'registration.synthetic-case.start': 'clinmesh-registration',
   'registration.synthetic-case.start-inpatient': 'clinmesh-registration',
+  'identity-quarantine.list': 'clinmesh-registration',
+  'identity-quarantine.confirm-merge': 'clinmesh-registration',
   'admin.pci-case.prepare': 'clinmesh-administrator',
   'admin.authored-case-pack.read': 'clinmesh-administrator',
   'admin.authored-case-pack.prepare': 'clinmesh-administrator',
@@ -2892,6 +2921,7 @@ function handlerOwnerFor(
   }
   if (operation.id.startsWith('insurance.')) return 'InsuranceService'
   if (operation.id.startsWith('registration.synthetic-case.')) return 'SyntheticCaseVisitService'
+  if (operation.id.startsWith('identity-quarantine.')) return 'LocalSourceIngestionService'
   return 'WorkflowService'
 }
 
