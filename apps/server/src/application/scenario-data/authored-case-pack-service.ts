@@ -36,11 +36,16 @@ export class AuthoredCasePackService {
     readonly cases: SyntheticCaseRepository,
     readonly personas: PatientPersonaRepository,
     readonly pack: CompiledAuthoredCasePack = compiledCardiorenalAuthoredCasePack,
+    readonly options: {
+      prepareOperation?: string
+      readAuditOperation?: string
+    } = {},
   ) {}
 
   read(context: ActorContext) {
+    const readAuditOperation = this.options.readAuditOperation ?? 'admin.authored-case-pack.read'
     if (context.roleCode !== 'administrator') {
-      try { this.commands.auditRead(context, 'admin.authored-case-pack.read', {}, 'failed') } catch { /* preserve original error */ }
+      try { this.commands.auditRead(context, readAuditOperation, {}, 'failed') } catch { /* preserve original error */ }
       throw new AuthoredCasePackError('ROLE_NOT_ALLOWED', '只有管理员可以查看专病病例包准备状态', 403)
     }
     const now = new Date().toISOString()
@@ -71,7 +76,7 @@ export class AuthoredCasePackService {
       readyCount: entries.filter(item => isCaseReady(item.case?.status)).length,
       totalCount: entries.length,
     })
-    this.commands.auditRead(context, 'admin.authored-case-pack.read', {}, 'success')
+    this.commands.auditRead(context, readAuditOperation, {}, 'success')
     return summary
   }
 
@@ -95,7 +100,7 @@ export class AuthoredCasePackService {
       idempotencyKey,
       idempotencyScope: 'workspace',
       input,
-      operation: 'synthetic-case.authored-pack.prepare',
+      operation: this.options.prepareOperation ?? 'synthetic-case.authored-pack.prepare',
     }, () => {
       const now = new Date().toISOString()
       const effects: CommandEffect[] = []

@@ -653,7 +653,7 @@ function LaboratoryRequestEditor({
             <InvestigationBilling billing={activeRequest.billing} locale={locale} />
             {activeRequest.generationError === undefined ? null : (
               <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" />
-                <AlertTitle>{laboratoryGenerationErrorMessage(activeRequest.generationError.code, locale)}</AlertTitle></Alert>
+                <AlertTitle>{laboratoryGenerationErrorMessage(activeRequest.generationError.code, locale, activeRequest.generationError.message)}</AlertTitle></Alert>
             )}
             {activeRequest.status === 'in-progress' ? (
               <Alert><RefreshCwIcon aria-hidden="true" className="animate-spin" /><AlertTitle>{messages.laboratoryResultPending}</AlertTitle></Alert>
