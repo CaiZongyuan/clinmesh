@@ -13,6 +13,12 @@ import {
   recordClinicalFactVerificationBodySchema,
 } from '@clinmesh/contracts/clinical-fact-ledger'
 import {
+  confirmIdentityQuarantineMergeBodySchema,
+  ingestLocalSourceBatchRequestSchema,
+  listIdentityQuarantineQuerySchema,
+} from '@clinmesh/contracts/local-source-ingestion'
+import { LocalSourceIngestionError } from './application/local-source-ingestion-service.ts'
+import {
   inpatientRiskAssessmentInputSchema,
   inpatientVitalSignsInputSchema,
   outpatientRiskAssessmentInputSchema,
@@ -293,6 +299,21 @@ const verificationRequestBodySchema = z.union([
   recordClinicalFactVerificationBodySchema,
 ])
 
+const confirmQuarantineMergeRequestBodySchema = z.union([
+  z.object({
+    expectedVersions: z.record(z.string(), z.string()).optional(),
+    input: confirmIdentityQuarantineMergeBodySchema,
+  }).strict().transform(body => body.input),
+  confirmIdentityQuarantineMergeBodySchema,
+])
+
+const ingestLocalBatchRequestBodySchema = z.union([
+  z.object({
+    input: ingestLocalSourceBatchRequestSchema,
+  }).strict().transform(body => body.input),
+  ingestLocalSourceBatchRequestSchema,
+])
+
 function apiErrorResponse(
   context: Context,
   error: unknown,
@@ -307,6 +328,7 @@ function apiErrorResponse(
     if (
       error instanceof IdentityError
       || error instanceof ClinicalFactLedgerError
+      || error instanceof LocalSourceIngestionError
       || error instanceof ClinicalQualityReadError
       || error instanceof ModelUsagePolicyError
       || error instanceof InsuranceError
@@ -2545,6 +2567,44 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(workflow.clinicalFactLedger.recordOutpatientVerification({
           context: await actor(context),
           caseId: context.req.param('caseId'),
+          body,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/sim/v1/local-ingestion/batches', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = ingestLocalBatchRequestBodySchema.parse(await context.req.json())
+        return context.json(workflow.localIngestion.ingestBatch({
+          context: await actor(context),
+          body,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/identity-quarantine', async (context) => {
+      try {
+        const query = listIdentityQuarantineQuerySchema.parse(context.req.query())
+        return context.json(workflow.localIngestion.listQuarantineCandidates(
+          await actor(context),
+          query,
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/identity-quarantine/:candidateId/confirm-merge', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = confirmQuarantineMergeRequestBodySchema.parse(await context.req.json())
+        return context.json(workflow.localIngestion.confirmMerge({
+          context: await actor(context),
+          candidateId: context.req.param('candidateId'),
           body,
           idempotencyKey: idempotencyKey(context),
         }))

@@ -44,3 +44,5 @@ clinmesh command receipt get --operation-id admin.authored-case-pack.prepare --i
 ```
 
 传输结果未知时保留原键与原输入先查询 `admin.authored-case-pack.prepare` 回执。`AUTHORED_CASE_PACK_EPOCH_CONFLICT` 表示受信上下文的 `epoch` 已变化，刷新上下文核对当前轮次后再决定新意图；`AUTHORED_CASE_PACK_PERSONA_RUNNING`（409）表示仍有运行中或已选修订病例的排队生成任务，待原任务全部结束后沿原键与原输入恢复；历史未选用病例仅有排队任务时，准备会原子终止这些旧任务并记为 `failed / PERSONA_JOB_SUPERSEDED`，已人工修订或已消费病例保持原选用与绑定。
+
+本院跨系统辅检来源（例如第二套 LIS）批量接入后的认人隔离区审阅与人工并档入口位于 [登记工作流](../clinmesh-registration/SKILL.md#本院跨系统患者认人隔离区)，管理员与登记员均可在核对出生日期与身份证件后确认合并或拒绝为不同患者；未达完整批次或仍待审阅的记录不会进入临床事实台账、Agent 摘要或评分计算。

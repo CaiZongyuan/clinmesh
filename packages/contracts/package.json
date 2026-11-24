@@ -48,6 +48,7 @@
     "./clinical-scores": "./src/clinical-scores.ts",
     "./clinical-quality": "./src/clinical-quality.ts",
     "./clinical-fact-ledger": "./src/clinical-fact-ledger.ts",
+    "./local-source-ingestion": "./src/local-source-ingestion.ts",
     "./guideline-topics": "./src/guideline-topics.ts"
   },
   "scripts": {

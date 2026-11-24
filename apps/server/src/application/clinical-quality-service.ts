@@ -85,7 +85,7 @@ export class ClinicalQualityService {
     const ledger = this.#factLedger.buildInternalLedger(context, subject, { asOf, includeSuperseded: false })
     return new Set(
       ledger.facts
-        .filter(f => f.provenance.sourceSystemId === 'clinmesh-his-fhir' && f.provenance.recordType === 'Observation' && !f.eligibleForScoringAndRedLine)
+        .filter(f => f.institutionScope === 'local' && f.provenance.recordType === 'Observation' && !f.eligibleForScoringAndRedLine)
         .map(f => f.provenance.recordId),
     )
   }

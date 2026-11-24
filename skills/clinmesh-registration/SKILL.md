@@ -42,3 +42,18 @@ clinmesh command receipt get --operation-id registration.synthetic-case.start-in
 ```json
 {"caseId":"synthetic-case","activeBriefRevision":1,"expectedCaseRevision":2,"expectedEpoch":"epoch-1","wardId":"ward-general"}
 ```
+
+## 本院跨系统患者认人隔离区
+
+当本院第二套 LIS 等院内辅检来源以不同外部患者编号接入，但身份证号与出生日期匹配而电话/姓名细节存在偏差、置信度低于自动合并阈值时，来件记录会先进入认人隔离区，不会写入患者临床事实台账或评分；同姓同名但出生日期不同的患者始终视为不同患者并拒绝合并。由管理员或登记员核对后执行确认并档或判定不同患者，所有操作计入 `AuditEvent` 与 `ActionTrace`。
+
+```bash
+clinmesh identity-quarantine list
+clinmesh identity-quarantine list --resolution-status pending-review
+clinmesh identity-quarantine confirm-merge --input @quarantine-merge.json --idempotency-key <key>
+clinmesh command receipt get --operation-id identity-quarantine.confirm-merge --idempotency-key <key>
+```
+
+```json
+{"candidateId":"cand-1","decision":"confirm-merge","targetPatientId":"patient-1","auditNote":"核对居民身份证号与出生日期一致，确认并档"}
+```
