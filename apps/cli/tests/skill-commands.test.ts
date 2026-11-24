@@ -636,15 +636,15 @@ it('keeps laboratory failure recovery instructions aligned with the command cata
     expect(inspectExample(program, line).operation?.id).toBe(`laboratory-request.${path}`)
   }
   const retry = getHisOperation('laboratory-request.retry-generation')
-  expect(retry.version).toBe(5)
+  expect(retry.version).toBe(6)
   expect(retry.summary).toContain('INVESTIGATION_TRUTH_INCOMPATIBLE')
   expect(retry.summary).toContain('MODEL_OUTCOME_UNKNOWN')
   expect(skill).toContain('INVESTIGATION_TRUTH_INCOMPATIBLE')
   expect(skill).toContain('criticalMinimum')
   expect(skill).toContain('criticalMaximum')
-  expect(getHisOperation('doctor.case.laboratory-catalog.search').version).toBe(2)
-  expect(getHisOperation('encounter.laboratory-request.issue').version).toBe(3)
-  expect(getHisOperation('laboratory-request.cancel').version).toBe(2)
+  expect(getHisOperation('doctor.case.laboratory-catalog.search').version).toBe(3)
+  expect(getHisOperation('encounter.laboratory-request.issue').version).toBe(4)
+  expect(getHisOperation('laboratory-request.cancel').version).toBe(3)
   expect(getHisOperation('laboratory-request.cancel').summary).toContain('generation-failed')
 })
 
@@ -666,7 +666,7 @@ it('keeps consultation recovery examples aligned with durable attempt semantics'
     }
     expect(operation.input.safeParse({ encounterId: 'synthetic', arbitraryPayload: {} }).success).toBe(false)
   }
-  expect(getHisOperation('doctor.case.get').version).toBe(22)
+  expect(getHisOperation('doctor.case.get').version).toBe(23)
   expect(getHisOperation('doctor.case.get').summary).toContain('consultation.replyAttempt')
   expect(skill).toContain('consultation.replyAttempt')
   expect(skill).toContain('same ask/retry key')
@@ -819,9 +819,9 @@ it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
   }
   expect(skill).toContain('criticalMinimum')
   expect(skill).toContain('CN-LAB-CBC-5DIFF')
-  expect(getHisOperation('inpatient.investigation.read').version).toBe(3)
-  expect(getHisOperation('inpatient.pci-data.read').version).toBe(2)
-  expect(getHisOperation('inpatient.pci-data.prepare').version).toBe(2)
+  expect(getHisOperation('inpatient.investigation.read').version).toBe(4)
+  expect(getHisOperation('inpatient.pci-data.read').version).toBe(3)
+  expect(getHisOperation('inpatient.pci-data.prepare').version).toBe(3)
 })
 
 describe('ClinMesh CLI Agent Skills', () => {
@@ -886,11 +886,11 @@ describe('ClinMesh CLI Agent Skills', () => {
       expect(getHisOperation(id).summary).toContain('CLINICAL_HISTORY_REQUIRED')
     }
     const read = getHisOperation('doctor.case.get')
-    expect(read.version).toBe(22)
+    expect(read.version).toBe(23)
     expect(read.summary).toContain('clinicalHistory.requiredFields')
     expect(read.summary).toContain('twelve-field')
     const completed = getHisOperation('doctor.completed-cases.get')
-    expect(completed.version).toBe(7)
+    expect(completed.version).toBe(8)
     for (const field of ['menstrualHistory', 'obstetricHistory']) expect(completed.summary).toContain(field)
     expect(skill).toContain('clinicalHistory.requiredFields')
     expect(skill).toContain('普通门诊可留空；适用女性专科初诊要求两项')
@@ -917,7 +917,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(operation.summary).toContain('MODEL_OUTCOME_UNKNOWN')
     expect(skill).toContain('`MODEL_OUTCOME_UNKNOWN` stops automatic resending')
     const read = getHisOperation('doctor.case.get')
-    expect(read.version).toBe(22)
+    expect(read.version).toBe(23)
     expect(read.summary).toContain('sourceResults')
     expect(read.summary).toContain('legacy verification counts are zero and issues empty')
     expect(skill).toContain('Retry actual recording failures')
@@ -959,7 +959,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 22 : 4)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 23 : 4)
       expect(operation.summary).toContain('presentation')
       expect(operation.summary).toContain('registrationNumber')
       const line = commandLines(doctorSkill).find(line => line.startsWith(id === 'doctor.case.get' ? 'clinmesh doctor case get ' : 'clinmesh doctor queue list'))!
@@ -1122,7 +1122,7 @@ it('keeps inpatient investigation and transfer examples bound to narrow versione
   expect(getHisOperation('inpatient.investigation.issue').input.parse(investigation)).toMatchObject({catalogVersion:1,selection:{kind:'imaging'}})
   const examination = examples.find(input => input.selection?.kind === 'examination')
   expect(getHisOperation('inpatient.investigation.issue').input.parse(examination)).toMatchObject({ catalogVersion: 1, selection: { kind: 'examination', serviceId: 'examination-tte' } })
-  expect(getHisOperation('inpatient.investigation.issue').version).toBe(3)
+  expect(getHisOperation('inpatient.investigation.issue').version).toBe(4)
   expect(getHisOperation('inpatient.investigation.issue').input.safeParse({...investigation,amountFen:1}).success).toBe(false)
   expect(getHisOperation('inpatient.investigation.issue').input.safeParse({...investigation,url:'https://example.invalid'}).success).toBe(false)
   expect(getHisOperation('inpatient.transfer.receive').roles).toEqual(['ward-nurse'])

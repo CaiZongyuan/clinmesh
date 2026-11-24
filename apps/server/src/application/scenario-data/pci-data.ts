@@ -1,6 +1,7 @@
 import { inpatientPciDataPackageSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
 import { referenceConceptSnapshotSchema, referenceMedicationProductSchema } from '@clinmesh/contracts/reference-data'
+import { resolveLaboratorySpecimenContainer } from '@clinmesh/core/laboratory-specimen-container'
 import products from './pci-medication-products.json' with { type: 'json' }
 import laboratoryCodings from './pci-laboratory-codings.json' with { type: 'json' }
 import clopidogrelQuotation from './pci-clopidogrel-quotation.json' with { type: 'json' }
@@ -87,7 +88,9 @@ export const pciDataPackage = inpatientPciDataPackageSchema.parse({
     reportDefinition: { conclusionTemplate: 'ClinMesh 固定合成资料支持的检验结果，仅用于仿真。', results: [{
       referenceConcept: loinc(code), referenceRange: { low, high, text: `${low}-${high} ${unit}（合成院内参考区间）` },
       unit: { code: unit, display: unit, system: 'http://unitsofmeasure.org' }, valueType: 'quantity',
-    }] }, specimen: { code: specimenCode, display: specimenDisplay }, serviceKind: 'laboratory', tatMinutes: 30,
+    }] }, specimen: { code: specimenCode, display: specimenDisplay },
+    specimenContainer: resolveLaboratorySpecimenContainer({ referenceCode: code, specimen: { code: specimenCode, display: specimenDisplay } }),
+    serviceKind: 'laboratory', tatMinutes: 30,
     publicationPolicyVersion: `clinmesh-pci-laboratory-${version}`,
   })),
   paymentParameters: syntheticPciDrgPaymentParameters,

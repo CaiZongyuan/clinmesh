@@ -103,6 +103,12 @@
   --sidebar-accent-foreground: var(--foreground);
   --sidebar-border: var(--border);
   --sidebar-ring: var(--ring);
+  --specimen-cap-purple: #7c3aed;
+  --specimen-cap-yellow: #ca8a04;
+  --specimen-cap-blue: #0284c7;
+  --specimen-cap-black: #18181b;
+  --specimen-cap-amber: #d97706;
+  --specimen-cap-neutral: var(--muted-foreground);
   --clinmesh-glow: 0 0 0 1.5px color-mix(in srgb, var(--info) 35%, transparent), 0 0 16px color-mix(in srgb, var(--info) 16%, transparent);
 }
 
@@ -133,6 +139,12 @@
   --border: var(--dsw-alias-border-l2, #ffffff1f);
   --input: #848b96;
   --sidebar: var(--dsw-specific-sidebar-fill, #1b1b1c);
+  --specimen-cap-purple: #c084fc;
+  --specimen-cap-yellow: #facc15;
+  --specimen-cap-blue: #38bdf8;
+  --specimen-cap-black: #e4e4e7;
+  --specimen-cap-amber: #fb923c;
+  --specimen-cap-neutral: var(--muted-foreground);
 }
 
 [data-clinmesh-app="web"] {
@@ -223,6 +235,21 @@
 .clinmesh-glow {
   box-shadow: var(--clinmesh-glow);
 }
+
+/* 检验真空采血管管帽语义标识色点（与文字容器名共同出现，不单独承载语义）。 */
+.clinmesh-specimen-cap {
+  display: inline-block;
+  width: 0.625rem;
+  height: 0.625rem;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  background-color: var(--specimen-cap-neutral);
+}
+.clinmesh-specimen-cap[data-cap="purple"] { background-color: var(--specimen-cap-purple); }
+.clinmesh-specimen-cap[data-cap="yellow"] { background-color: var(--specimen-cap-yellow); }
+.clinmesh-specimen-cap[data-cap="blue"] { background-color: var(--specimen-cap-blue); }
+.clinmesh-specimen-cap[data-cap="black"] { background-color: var(--specimen-cap-black); box-shadow: 0 0 0 1px var(--border); }
+.clinmesh-specimen-cap[data-cap="amber"] { background-color: var(--specimen-cap-amber); }
 
 /* Compatibility styles for the pre-prototype application shell. */
 .cm-shell {

@@ -10,6 +10,7 @@ import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { signOut } from './api-client.ts'
 import { createDraftDiscard } from './draft-discard.ts'
+import { investigationDraftKey, saveInvestigationDraft } from './inpatient-investigation-drafts.ts'
 
 const session: SessionContext = {
   actor: { actorId: 'actor-doctor', workspaceId: 'workspace-demo', epoch: 'epoch-1', scenarioRunId: 'run-1', practitionerRoleId: 'role-doctor', roleCode: 'inpatient-doctor' },
@@ -333,4 +334,263 @@ it('全局恢复查原检查回执一次并同步已关闭待开清单', async (
   expect(dialog().getByRole('button', { name: '开立所选检验（1）' }).hasAttribute('disabled')).toBe(false)
   expect(posts).toHaveLength(1)
   expect(receipts).toEqual(posts)
+})
+
+it('大型检验目录默认聚焦常用组合并展示标本管与细项数，切换术前常规单项可一键整类加入并自动去重', async () => {
+  const purple = {
+    capColor: 'purple' as const,
+    code: 'edta-k2-purple' as const,
+    collectionRequirementEn: 'Invert 8 times',
+    collectionRequirementZh: '静脉采血 · 立即颠倒混匀 8 次，勿剧烈摇晃',
+    containerNameEn: 'EDTA-K2 purple-top tube',
+    containerNameZh: 'EDTA-K2 紫头管',
+    mergeable: true,
+    specimenCategoryEn: 'Whole blood',
+    specimenCategoryZh: '全血',
+  }
+  const yellow = {
+    capColor: 'yellow' as const,
+    code: 'sst-yellow' as const,
+    collectionRequirementEn: 'Invert 5 times',
+    collectionRequirementZh: '静脉采血 · 颠倒混匀 5 次后静置促凝分离血清',
+    containerNameEn: 'SST yellow-top tube',
+    containerNameZh: '促凝黄头管',
+    mergeable: true,
+    specimenCategoryEn: 'Serum',
+    specimenCategoryZh: '血清',
+  }
+  const blue = {
+    capColor: 'blue' as const,
+    code: 'citrate-blue' as const,
+    collectionRequirementEn: 'Fill to mark',
+    collectionRequirementZh: '严格采足刻度 · 立即颠倒混匀 5–8 次',
+    containerNameEn: 'Sodium citrate blue-top tube (1:9)',
+    containerNameZh: '枸橼酸钠蓝头管 (1:9)',
+    mergeable: true,
+    specimenCategoryEn: 'Citrated plasma',
+    specimenCategoryZh: '抗凝血浆',
+  }
+  const preopNames = ['白细胞计数', '血红蛋白', '血小板计数', '肌酐（质量浓度）', '国际标准化比值 INR', '丙氨酸氨基转移酶', '天冬氨酸氨基转移酶', '钾', '钠']
+  const largeCatalog = [
+    { id: 'panel-cbc', display: '血常规（五分类）', kind: 'laboratory' as const, version: 1, priceFen: 2500, available: true, indicationCodes: ['clinical-evaluation'], isPanel: true, memberCount: 8, laboratoryCategory: 'hematology-coagulation' as const, specimen: '全血', specimenContainer: purple },
+    { id: 'panel-liver', display: '肝功能', kind: 'laboratory' as const, version: 1, priceFen: 5500, available: true, indicationCodes: ['clinical-evaluation'], isPanel: true, memberCount: 8, laboratoryCategory: 'biochemistry' as const, specimen: '血清、血浆', specimenContainer: yellow },
+    { id: 'panel-coag', display: '凝血功能', kind: 'laboratory' as const, version: 1, priceFen: 6500, available: true, indicationCodes: ['clinical-evaluation'], isPanel: true, memberCount: 6, laboratoryCategory: 'hematology-coagulation' as const, specimen: '血浆', specimenContainer: blue },
+    ...preopNames.map((display, idx) => ({
+      id: `hospital-lab-pci-${idx + 1}`,
+      display,
+      kind: 'laboratory' as const,
+      version: 1,
+      priceFen: 800,
+      available: true,
+      indicationCodes: ['clinical-assessment'],
+      isPanel: false,
+      laboratoryCategory: 'preop-routine' as const,
+      specimen: idx < 3 ? '全血' : idx === 4 ? '枸橼酸盐抗凝血浆' : '血清',
+      specimenContainer: idx < 3 ? purple : idx === 4 ? blue : yellow,
+    })),
+    { id: 'test-esr', display: '红细胞沉降率测定', kind: 'laboratory' as const, version: 1, priceFen: 1500, available: true, indicationCodes: ['clinical-evaluation'], isPanel: false, laboratoryCategory: 'hematology-coagulation' as const, specimen: '全血', specimenContainer: purple },
+    { id: 'test-alt', display: '谷丙转氨酶单项', kind: 'laboratory' as const, version: 1, priceFen: 800, available: true, indicationCodes: ['clinical-evaluation'], isPanel: false, laboratoryCategory: 'biochemistry' as const, specimen: '血清', specimenContainer: yellow },
+  ]
+  const issuedIds: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.endsWith('/investigation-catalog')) return Response.json({ items: largeCatalog })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], examinationRequests: [], sent: [] })
+    if (path.endsWith('/investigations/issue')) {
+      issuedIds.push(JSON.parse(String(init?.body)).input.selection.catalogItemId)
+      return Response.json({ auditId: 'audit-1', requestId: 'request-1', effects: [], warnings: [], data: { admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], examinationRequests: [], sent: [] } })
+    }
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const user = userEvent.setup()
+  mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  const dialog = within(screen.getByRole('dialog', { name: '开立住院检查' }))
+  const categoryBar = dialog.getByRole('group', { name: '检验分类' })
+  expect(within(categoryBar).getByRole('button', { name: '常用组合' }).getAttribute('aria-pressed')).toBe('true')
+  expect(dialog.getByRole('button', { name: '选择肝功能' })).toBeDefined()
+  expect(dialog.getAllByText(/组合 · 8 项/)).toHaveLength(2)
+  expect(dialog.queryByRole('button', { name: '选择红细胞沉降率测定' })).toBeNull()
+
+  const search = dialog.getByRole('textbox', { name: '搜索检查检验目录' })
+  await user.type(search, '红细胞沉降率')
+  expect(dialog.getByRole('button', { name: '选择红细胞沉降率测定' })).toBeDefined()
+  await user.clear(search)
+
+  await user.click(within(categoryBar).getByRole('button', { name: '术前常规单项' }))
+  expect(dialog.getByRole('button', { name: '选择白细胞计数' })).toBeDefined()
+  // 切换分类后再输入搜索词时，自动切回「全部」跨分类检索并同步页签高亮状态
+  await user.type(search, '肝功能')
+  expect(within(categoryBar).getByRole('button', { name: '全部' }).getAttribute('aria-pressed')).toBe('true')
+  expect(dialog.getByRole('button', { name: '选择肝功能' })).toBeDefined()
+  await user.clear(search)
+  expect(within(categoryBar).getByRole('button', { name: '术前常规单项' }).getAttribute('aria-pressed')).toBe('true')
+  await user.click(dialog.getByRole('button', { name: '选择白细胞计数' }))
+  await user.click(dialog.getByRole('button', { name: '加入本类可开项目（8）' }))
+  expect(dialog.getAllByRole('checkbox')).toHaveLength(9)
+  expect(dialog.getByRole('button', { name: '加入本类可开项目（0）' }).hasAttribute('disabled')).toBe(true)
+
+  await user.click(dialog.getByRole('button', { name: '开立所选检验（9）' }))
+  await vi.waitFor(() => expect(issuedIds).toHaveLength(9))
+  expect(new Set(issuedIds).size).toBe(9)
+})
+
+it('整类加入超出待开清单 20 项上限时整批提示拦截且不半类混入', async () => {
+  const catalog = [
+    ...Array.from({ length: 15 }, (_, idx) => ({
+      id: `panel-${idx}`,
+      display: `合成组合${idx + 1}`,
+      kind: 'laboratory' as const,
+      version: 1,
+      priceFen: 2000,
+      available: true,
+      indicationCodes: ['clinical-evaluation'],
+      isPanel: true,
+      memberCount: 4,
+      laboratoryCategory: 'biochemistry' as const,
+    })),
+    ...Array.from({ length: 8 }, (_, idx) => ({
+      id: `preop-${idx}`,
+      display: `术前单项${idx + 1}`,
+      kind: 'laboratory' as const,
+      version: 1,
+      priceFen: 800,
+      available: true,
+      indicationCodes: ['clinical-assessment'],
+      isPanel: false,
+      laboratoryCategory: 'preop-routine' as const,
+    })),
+  ]
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/investigation-catalog')) return Response.json({ items: catalog })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], examinationRequests: [], sent: [] })
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const user = userEvent.setup()
+  mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  const dialog = within(screen.getByRole('dialog', { name: '开立住院检查' }))
+  await user.click(dialog.getByRole('button', { name: '加入本类可开项目（15）' }))
+  expect(dialog.getByText(/待开 15 项/)).toBeDefined()
+  await user.click(within(dialog.getByRole('group', { name: '检验分类' })).getByRole('button', { name: '术前常规单项' }))
+  await user.click(dialog.getByRole('button', { name: '加入本类可开项目（8）' }))
+  expect(dialog.getByRole('alert').textContent).toContain('最多保留 20 项')
+  expect(dialog.getByText(/待开 15 项/)).toBeDefined()
+})
+
+it('整类加入自动按 assayKeys 去重重叠检验组合及其子项，杜绝同分类内重复开立与重复计费', async () => {
+  const catalog = [
+    {
+      id: 'panel-liver-renal',
+      display: '肝肾功能',
+      kind: 'laboratory' as const,
+      version: 1,
+      priceFen: 8500,
+      available: true,
+      indicationCodes: ['clinical-evaluation'],
+      isPanel: true,
+      memberCount: 2,
+      assayKeys: ['wst#1500104A', 'wst#1700404A'],
+      laboratoryCategory: 'biochemistry' as const,
+    },
+    {
+      id: 'panel-liver',
+      display: '肝功能',
+      kind: 'laboratory' as const,
+      version: 1,
+      priceFen: 5500,
+      available: true,
+      indicationCodes: ['clinical-evaluation'],
+      isPanel: true,
+      memberCount: 1,
+      assayKeys: ['wst#1500104A'],
+      laboratoryCategory: 'biochemistry' as const,
+    },
+    {
+      id: 'test-alt',
+      display: '丙氨酸氨基转移酶测定',
+      kind: 'laboratory' as const,
+      version: 1,
+      priceFen: 800,
+      available: true,
+      indicationCodes: ['clinical-evaluation'],
+      isPanel: false,
+      assayKeys: ['wst#1500104A'],
+      laboratoryCategory: 'biochemistry' as const,
+    },
+    {
+      id: 'test-cr',
+      display: '肌酐测定',
+      kind: 'laboratory' as const,
+      version: 1,
+      priceFen: 1000,
+      available: true,
+      indicationCodes: ['clinical-evaluation'],
+      isPanel: false,
+      assayKeys: ['wst#1700404A'],
+      laboratoryCategory: 'biochemistry' as const,
+    },
+    {
+      id: 'test-amy',
+      display: '淀粉酶测定',
+      kind: 'laboratory' as const,
+      version: 1,
+      priceFen: 1500,
+      available: true,
+      indicationCodes: ['clinical-evaluation'],
+      isPanel: false,
+      assayKeys: ['wst#1501204A'],
+      laboratoryCategory: 'biochemistry' as const,
+    },
+  ]
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/investigation-catalog')) return Response.json({ items: catalog })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], examinationRequests: [], sent: [] })
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const user = userEvent.setup()
+  mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  const dialog = within(screen.getByRole('dialog', { name: '开立住院检查' }))
+  await user.click(within(dialog.getByRole('group', { name: '检验分类' })).getByRole('button', { name: '生化/肝肾电解质' }))
+
+  // 5 个候选中：优先保留覆盖更全的「肝肾功能」与独立单项「淀粉酶测定」（共 2 项），跳过被覆盖的「肝功能」「ALT」「肌酐」
+  await user.click(dialog.getByRole('button', { name: '加入本类可开项目（2）' }))
+  expect(dialog.getByText(/完整已选清单：肝肾功能、淀粉酶测定/)).toBeDefined()
+  expect(dialog.getByRole('button', { name: '加入本类可开项目（0）' }).hasAttribute('disabled')).toBe(true)
+
+  // 若医生先单独选择了原子子项 ALT，再点整类加入，则不会叠加包含 ALT 的组合，只补齐未覆盖的肌酐与淀粉酶
+  await user.click(dialog.getByRole('button', { name: '清空待开清单' }))
+  await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '确认清空' }))
+  await user.click(dialog.getByRole('button', { name: '选择丙氨酸氨基转移酶测定' }))
+  await user.click(dialog.getByRole('button', { name: '加入本类可开项目（2）' }))
+  expect(dialog.getByText(/完整已选清单：丙氨酸氨基转移酶测定、肌酐测定、淀粉酶测定/)).toBeDefined()
+
+  // 若专病组套或历史私稿预先写入了不含 assayKeys 的组合草稿行，打开弹窗后仍按最新目录反查 assayKeys 去重
+  await user.click(dialog.getByRole('button', { name: '关闭' }))
+  cleanup()
+  saveInvestigationDraft(investigationDraftKey(session, admission), {
+    rows: [{
+      id: crypto.randomUUID(),
+      indication: '',
+      indicationCode: 'clinical-evaluation',
+      item: {
+        available: true,
+        display: '肝功能',
+        id: 'panel-liver',
+        indicationCodes: ['clinical-evaluation'],
+        kind: 'laboratory',
+        priceFen: 5500,
+        version: 1,
+      },
+      selected: true,
+    }],
+    successes: [],
+  })
+  mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  const reopened = within(screen.getByRole('dialog', { name: '开立住院检查' }))
+  await user.click(within(reopened.getByRole('group', { name: '检验分类' })).getByRole('button', { name: '生化/肝肾电解质' }))
+  await user.click(reopened.getByRole('button', { name: '加入本类可开项目（2）' }))
+  expect(reopened.getByText(/完整已选清单：肝功能、肌酐测定、淀粉酶测定/)).toBeDefined()
 })

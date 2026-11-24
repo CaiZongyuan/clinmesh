@@ -466,6 +466,46 @@ const laboratoryServiceResultDefinitionSchema = z.object({
   }
 })
 
+export const laboratorySpecimenContainerCodeSchema = z.enum([
+  'edta-k2-purple',
+  'sst-yellow',
+  'citrate-blue',
+  'esr-black',
+  'sterile-urine',
+  'mixed-specimen',
+  'custom-specimen',
+])
+
+export const laboratorySpecimenCapColorSchema = z.enum([
+  'purple',
+  'yellow',
+  'blue',
+  'black',
+  'amber',
+  'neutral',
+])
+
+export const laboratorySpecimenContainerSchema = z.object({
+  capColor: laboratorySpecimenCapColorSchema,
+  code: laboratorySpecimenContainerCodeSchema,
+  collectionRequirementEn: z.string().min(1).max(240),
+  collectionRequirementZh: z.string().min(1).max(240),
+  containerNameEn: z.string().min(1).max(120),
+  containerNameZh: z.string().min(1).max(120),
+  mergeable: z.boolean(),
+  specimenCategoryEn: z.string().min(1).max(120),
+  specimenCategoryZh: z.string().min(1).max(120),
+}).strict()
+
+export const inpatientLaboratoryCategorySchema = z.enum([
+  'hematology-coagulation',
+  'biochemistry',
+  'cardiac-metabolic',
+  'urinalysis-infection',
+  'endocrine-tumor',
+  'preop-routine',
+])
+
 export const laboratoryServiceSnapshotSchema = z.object({
   insuranceCoverage: optCoverage,
   outpatientBilling: outpatientInvestigationPriceSchema.optional(),
@@ -499,6 +539,7 @@ export const laboratoryServiceSnapshotSchema = z.object({
     system: z.string().url().optional(),
     version: z.string().min(1).max(128).optional(),
   }).strict(),
+  specimenContainer: laboratorySpecimenContainerSchema.optional(),
   sourceDataset: z.object({
     datasetId: z.literal('laboratory-cn'),
     releaseId: z.string().min(1).max(256),
@@ -2660,6 +2701,10 @@ export type LaboratoryRequest = z.infer<typeof laboratoryRequestSchema>
 export type InvestigationGenerationCapability = z.infer<typeof investigationGenerationCapabilitySchema>
 export type LaboratoryServicePublicationJob = z.infer<typeof laboratoryServicePublicationJobSchema>
 export type LaboratoryServiceSnapshot = z.infer<typeof laboratoryServiceSnapshotSchema>
+export type LaboratorySpecimenContainer = z.infer<typeof laboratorySpecimenContainerSchema>
+export type LaboratorySpecimenContainerCode = z.infer<typeof laboratorySpecimenContainerCodeSchema>
+export type LaboratorySpecimenCapColor = z.infer<typeof laboratorySpecimenCapColorSchema>
+export type InpatientLaboratoryCategory = z.infer<typeof inpatientLaboratoryCategorySchema>
 export type LaboratoryReport = z.infer<typeof laboratoryReportSchema>
 export type BillingQueueItem = z.infer<typeof billingQueueSchema>['items'][number]
 export type PharmacyQueueItem = z.infer<typeof pharmacyQueueSchema>['items'][number]

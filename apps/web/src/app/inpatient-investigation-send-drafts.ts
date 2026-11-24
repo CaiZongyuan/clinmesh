@@ -1,5 +1,6 @@
-import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
+import { laboratorySpecimenContainerSchema, sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { inpatientInvestigationActionInputSchema, inpatientInvestigationResponseSchema, type inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
+import { resolveLaboratorySpecimenContainer } from '@clinmesh/core/laboratory-specimen-container'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import { createDraftDiscard, hasUnknownDraftAttempt } from './draft-discard.ts'
@@ -18,7 +19,9 @@ const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionConte
   patientId: z.string().min(1), admissionId: z.string().min(1), action: z.literal('send') }).strict()
 type Scope = z.infer<typeof scopeSchema>
 const snapshotSchema = z.object({ id: z.string().min(1), kind: z.enum(['laboratory', 'imaging', 'examination']), display: z.string().min(1),
-  specimen: z.string().nullable(), indication: z.string(), input: inpatientInvestigationActionInputSchema }).strict()
+  specimen: z.string().nullable(), referenceCode: z.string().nullable().optional(),
+  specimenContainer: laboratorySpecimenContainerSchema.optional(),
+  indication: z.string(), input: inpatientInvestigationActionInputSchema }).strict()
 export type InvestigationSendSnapshot = z.infer<typeof snapshotSchema>
 export type InvestigationSendEntry = { snapshot: InvestigationSendSnapshot; status: string; sent: boolean; unavailable: 'sent' | 'state' | 'versions' | null }
 const rowSchema = z.object({ revision: z.uuid(), selected: z.boolean(), snapshot: snapshotSchema }).strict()
@@ -47,6 +50,14 @@ export function investigationSendEntries(facts: Facts): InvestigationSendEntry[]
     const snapshot: InvestigationSendSnapshot = { id: request.id, kind,
       display: 'service' in request ? request.service.name : request.laboratoryService?.nameZh ?? request.referenceConcept?.display ?? request.catalogItemId,
       specimen: 'service' in request ? null : request.laboratoryService?.specimen.display ?? null,
+      ...('service' in request ? {} : {
+        referenceCode: request.laboratoryService?.referenceConcept.code ?? request.referenceConcept?.code ?? null,
+        specimenContainer: resolveLaboratorySpecimenContainer({
+          referenceCode: request.laboratoryService?.referenceConcept.code ?? request.referenceConcept?.code ?? null,
+          specimen: request.laboratoryService?.specimen ?? null,
+          specimenContainer: request.laboratoryService?.specimenContainer,
+        }),
+      }),
       indication: 'service' in request ? request.indication : request.indicationCode,
       input: { admissionId: facts.admissionId, requestId: request.id, expectedRequestVersion: request.version,
         serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion ?? '0' } }
@@ -158,7 +169,17 @@ export function useInvestigationSendDrafts({ scope, session, write }: { scope: S
       return changeRows(rows)
     },
     deselectAll: () => changeRows(latest.current.record.rows.map(row => ({ ...row, selected: false, revision: crypto.randomUUID() }))),
+    setSelectedIds: (ids: readonly string[], selected: boolean) => {
+      const targetIds = new Set(ids)
+      return changeRows(latest.current.record.rows.map(row =>
+        targetIds.has(row.snapshot.id) ? { ...row, selected, revision: crypto.randomUUID() } : row,
+      ))
+    },
     remove: (id: string) => changeRows(latest.current.record.rows.filter(row => row.snapshot.id !== id)),
+    removeMany: (ids: readonly string[]) => {
+      const targetIds = new Set(ids)
+      return changeRows(latest.current.record.rows.filter(row => !targetIds.has(row.snapshot.id)))
+    },
     clear() {
       if (!isOwner() || running.current || writer.current.blocked || latest.current.record.items.some(item => item.status === 'unknown')) return false
       try { if (hasUnknownDraftAttempt(key)) return false; sessionStorage.removeItem(key); discard.ensureCleared(); const next = readLatest.current(); latest.current = next; setStored(next); notify(key); return true }
