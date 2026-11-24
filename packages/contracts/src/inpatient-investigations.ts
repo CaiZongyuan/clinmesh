@@ -26,6 +26,6 @@ export const inpatientInvestigationActionInputSchema = z.object({ admissionId: i
 export const inpatientInvestigationAcknowledgeInputSchema = inpatientInvestigationActionInputSchema.extend({ diagnosticReportId: id, diagnosticReportVersion: version }).strict()
 export const inpatientInvestigationCatalogSchema = z.object({ items: z.array(z.object({ id:catalogId, kind: z.enum(['laboratory', 'imaging', 'examination']), display: z.string().min(1), version: z.number().int().positive(),
   priceFen: z.number().int().positive().safe().optional(), available: z.boolean(), unavailableReason:z.enum(['unpriced','not-offered']).optional(), indicationCodes: z.array(z.string().min(1)),
-  isPanel: z.boolean().optional(), memberCount: z.number().int().positive().optional(),
+  isPanel: z.boolean().optional(), memberCount: z.number().int().positive().optional(), assayKeys: z.array(z.string().min(1).max(512)).optional(),
   laboratoryCategory: inpatientLaboratoryCategorySchema.optional(), specimen: z.string().min(1).max(1_000).optional(),
   specimenContainer: laboratorySpecimenContainerSchema.optional() }).strict().refine(item=>!item.available||(item.priceFen!==undefined&&item.unavailableReason===undefined),'可开展检查须声明有效医院价格')) }).strict()

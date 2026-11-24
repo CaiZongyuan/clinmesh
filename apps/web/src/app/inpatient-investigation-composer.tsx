@@ -28,6 +28,38 @@ type CatalogItem = z.infer<typeof inpatientInvestigationCatalogSchema>['items'][
 type LabFilterCategory = 'panel' | InpatientLaboratoryCategory | 'all'
 const emptyDraft = (): InvestigationDraft => ({ rows: [], successes: [] })
 
+function selectNonOverlappingLaboratoryItems(
+  availableItems: readonly CatalogItem[],
+  draftRows: readonly InvestigationDraftRow[],
+): CatalogItem[] {
+  const assayIds = (item: CatalogItem): readonly string[] =>
+    item.assayKeys && item.assayKeys.length > 0 ? item.assayKeys : [item.id]
+  const coveredAssays = new Set<string>()
+  for (const row of draftRows) {
+    if (row.item.kind !== 'laboratory') continue
+    coveredAssays.add(row.item.id)
+    for (const assayId of assayIds(row.item)) coveredAssays.add(assayId)
+  }
+  const prioritized = [...availableItems].sort((left, right) => {
+    const leftPanel = left.isPanel === true ? 1 : 0
+    const rightPanel = right.isPanel === true ? 1 : 0
+    if (leftPanel !== rightPanel) return rightPanel - leftPanel
+    const leftSize = left.assayKeys?.length ?? left.memberCount ?? 1
+    const rightSize = right.assayKeys?.length ?? right.memberCount ?? 1
+    return rightSize - leftSize
+  })
+  const acceptedIds = new Set<string>()
+  for (const candidate of prioritized) {
+    if (coveredAssays.has(candidate.id)) continue
+    const assays = assayIds(candidate)
+    if (assays.some(assayId => coveredAssays.has(assayId))) continue
+    acceptedIds.add(candidate.id)
+    coveredAssays.add(candidate.id)
+    for (const assayId of assays) coveredAssays.add(assayId)
+  }
+  return availableItems.filter(item => acceptedIds.has(item.id))
+}
+
 export function InpatientInvestigationComposer({ open, onOpenChange, items, locale, disabled, disabledReason, loading, error, onReload, draftKey, admissionId, encounterVersion, onIssue, onRecover }: {
   open: boolean; onOpenChange(open: boolean): void; items: readonly CatalogItem[]; locale: WorkspaceLocale
   disabled: boolean; disabledReason?: string | undefined; loading: boolean; error?: string | undefined; onReload(): void
@@ -89,7 +121,8 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
       || containerText.toLowerCase().includes(text)
   })
   const available = matches.filter(item => item.available), unavailable = matches.filter(item => !item.available), pageSize = 10
-  const addableInCategory = kind === 'laboratory' ? available.filter(item => !draft.rows.some(row => row.item.kind === item.kind && row.item.id === item.id)) : []
+  const categoryBulkBaseline = kind === 'laboratory' ? selectNonOverlappingLaboratoryItems(available, []) : []
+  const addableInCategory = kind === 'laboratory' ? selectNonOverlappingLaboratoryItems(available, draft.rows) : []
   const labCategoryOptions: Array<{ value: LabFilterCategory; label: string }> = [
     ...(hasPanels ? [{ value: 'panel' as const, label: t('常用组合', 'Panels') }] : []),
     { value: 'hematology-coagulation', label: t('血细胞/凝血', 'Hematology & Coag') },
@@ -190,7 +223,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
               }}>
                 {labCategoryOptions.map(option => <ToggleGroupItem key={option.value} value={option.value}>{option.label}</ToggleGroupItem>)}
               </ToggleGroup> : null}
-              {kind === 'laboratory' && available.length > 0 && available.length <= investigationBatchLimit && text === '' ? <div className="flex items-center justify-between gap-2">
+              {kind === 'laboratory' && categoryBulkBaseline.length > 0 && categoryBulkBaseline.length <= investigationBatchLimit && text === '' ? <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-muted-foreground">{t(`当前分类共 ${available.length} 项`, `${available.length} items in category`)}</span>
                 <Button size="sm" variant="outline" disabled={locked || addableInCategory.length === 0} onClick={addCategoryItems}>
                   {t(`加入本类可开项目（${addableInCategory.length}）`, `Add category items (${addableInCategory.length})`)}

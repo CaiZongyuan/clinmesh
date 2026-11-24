@@ -77,9 +77,14 @@ export class InpatientInvestigations {
           specimen: service.specimen,
           specimenContainer: service.specimenContainer,
         })
+        const assayKeys = Array.from(new Set(
+          service.reportDefinition.results.length > 0
+            ? service.reportDefinition.results.map(result => `${result.referenceConcept.system}#${result.referenceConcept.code}`)
+            : [`${service.referenceConcept.system}#${service.referenceConcept.code}`],
+        ))
         return [{id:row.service_id,kind:'laboratory' as const,display:service.nameZh,version:row.version,...(priceFen===undefined?{}:{priceFen}),available,
           ...(available?{}:{unavailableReason:priceFen===undefined?'unpriced' as const:'not-offered' as const}),indicationCodes:service.allowedIndicationCodes,
-          isPanel,...(isPanel?{memberCount:service.componentServiceIds.length}:{}),laboratoryCategory,specimen:service.specimen.display,specimenContainer}]
+          isPanel,...(isPanel?{memberCount:service.componentServiceIds.length}:{}),assayKeys,laboratoryCategory,specimen:service.specimen.display,specimenContainer}]
       }
       return []
     })})

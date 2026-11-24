@@ -329,6 +329,7 @@ describe('住院常用检验组合默认定价、目录分类与标本容器投�
     const byDisplay = (display: string) => catalog.items.find(item => item.display === display && item.kind === 'laboratory')
 
     expect(byDisplay('肝功能')).toMatchObject({
+      assayKeys: byDisplay('丙氨酸氨基转移酶测定')!.assayKeys,
       available: true,
       isPanel: true,
       laboratoryCategory: 'biochemistry',
@@ -336,6 +337,10 @@ describe('住院常用检验组合默认定价、目录分类与标本容器投�
       specimen: '血清、血浆',
       specimenContainer: { code: 'sst-yellow', mergeable: true },
     })
+    expect(byDisplay('肝肾功能')!.assayKeys).toEqual([
+      ...byDisplay('丙氨酸氨基转移酶测定')!.assayKeys!,
+      ...byDisplay('肌酐测定')!.assayKeys!,
+    ])
     expect(byDisplay('尿常规')).toMatchObject({
       available: true,
       isPanel: true,

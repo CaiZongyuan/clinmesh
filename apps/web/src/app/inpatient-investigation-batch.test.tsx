@@ -476,3 +476,92 @@ it('整类加入超出待开清单 20 项上限时整批提示拦截且不半类
   expect(dialog.getByRole('alert').textContent).toContain('最多保留 20 项')
   expect(dialog.getByText(/待开 15 项/)).toBeDefined()
 })
+
+it('整类加入自动按 assayKeys 去重重叠检验组合及其子项，杜绝同分类内重复开立与重复计费', async () => {
+  const catalog = [
+    {
+      id: 'panel-liver-renal',
+      display: '肝肾功能',
+      kind: 'laboratory' as const,
+      version: 1,
+      priceFen: 8500,
+      available: true,
+      indicationCodes: ['clinical-evaluation'],
+      isPanel: true,
+      memberCount: 2,
+      assayKeys: ['wst#1500104A', 'wst#1700404A'],
+      laboratoryCategory: 'biochemistry' as const,
+    },
+    {
+      id: 'panel-liver',
+      display: '肝功能',
+      kind: 'laboratory' as const,
+      version: 1,
+      priceFen: 5500,
+      available: true,
+      indicationCodes: ['clinical-evaluation'],
+      isPanel: true,
+      memberCount: 1,
+      assayKeys: ['wst#1500104A'],
+      laboratoryCategory: 'biochemistry' as const,
+    },
+    {
+      id: 'test-alt',
+      display: '丙氨酸氨基转移酶测定',
+      kind: 'laboratory' as const,
+      version: 1,
+      priceFen: 800,
+      available: true,
+      indicationCodes: ['clinical-evaluation'],
+      isPanel: false,
+      assayKeys: ['wst#1500104A'],
+      laboratoryCategory: 'biochemistry' as const,
+    },
+    {
+      id: 'test-cr',
+      display: '肌酐测定',
+      kind: 'laboratory' as const,
+      version: 1,
+      priceFen: 1000,
+      available: true,
+      indicationCodes: ['clinical-evaluation'],
+      isPanel: false,
+      assayKeys: ['wst#1700404A'],
+      laboratoryCategory: 'biochemistry' as const,
+    },
+    {
+      id: 'test-amy',
+      display: '淀粉酶测定',
+      kind: 'laboratory' as const,
+      version: 1,
+      priceFen: 1500,
+      available: true,
+      indicationCodes: ['clinical-evaluation'],
+      isPanel: false,
+      assayKeys: ['wst#1501204A'],
+      laboratoryCategory: 'biochemistry' as const,
+    },
+  ]
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/investigation-catalog')) return Response.json({ items: catalog })
+    if (path.endsWith('/investigations')) return Response.json({ admissionId: admission.id, laboratoryRequests: [], imagingRequests: [], examinationRequests: [], sent: [] })
+    throw new Error(`Unexpected request ${path}`)
+  }))
+  const user = userEvent.setup()
+  mount()
+  await user.click(await screen.findByRole('button', { name: '开立住院检查' }))
+  const dialog = within(screen.getByRole('dialog', { name: '开立住院检查' }))
+  await user.click(within(dialog.getByRole('group', { name: '检验分类' })).getByRole('button', { name: '生化/肝肾电解质' }))
+
+  // 5 个候选中：优先保留覆盖更全的「肝肾功能」与独立单项「淀粉酶测定」（共 2 项），跳过被覆盖的「肝功能」「ALT」「肌酐」
+  await user.click(dialog.getByRole('button', { name: '加入本类可开项目（2）' }))
+  expect(dialog.getByText(/完整已选清单：肝肾功能、淀粉酶测定/)).toBeDefined()
+  expect(dialog.getByRole('button', { name: '加入本类可开项目（0）' }).hasAttribute('disabled')).toBe(true)
+
+  // 若医生先单独选择了原子子项 ALT，再点整类加入，则不会叠加包含 ALT 的组合，只补齐未覆盖的肌酐与淀粉酶
+  await user.click(dialog.getByRole('button', { name: '清空待开清单' }))
+  await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '确认清空' }))
+  await user.click(dialog.getByRole('button', { name: '选择丙氨酸氨基转移酶测定' }))
+  await user.click(dialog.getByRole('button', { name: '加入本类可开项目（2）' }))
+  expect(dialog.getByText(/完整已选清单：丙氨酸氨基转移酶测定、肌酐测定、淀粉酶测定/)).toBeDefined()
+})
