@@ -13,7 +13,7 @@
 
 - **指南 FTS5 校验与损坏修复**：FTS5 external-content 表的 `count(*)` 直接读正文表，必须用 `integrity-check`（`rank=1`，临时副本可写连接）核验索引完整性；正文失配重导前须先在同一事务内 `rebuild` 索引（直接删坏正文会让删除触发器留下坏词项使 `bm25` 返回 `null`）；`readonly` 连接在 WAL 下仍可能碰 `-shm`，无写入检查放在临时副本核对。来源损坏停用时须保留停用身份以阻止内置短引文回退，且派生副本不能反向停用原来源。
 - **指南用途边界与容器持久化**：公开许可不替代部署用途声明，受限全文默认关闭，独立 worktree 同步的指南库不随 Git 进入主目录（用 `guidelines:sync -- --check --database <实际路径>` 核对，启动成功不代表全文已就绪）；容器指南库含运行期维护限制，必须挂载持久卷而非每次用镜像层覆盖；PDF.js 控制符与 MinerU 单位前缀（如 `μg`）可能失真，未人工核对原页的段落不送检索或模型。
-- **参考库与 DRG 离线清单**：`pnpm reference:sync` 固定写默认 `.data/clinmesh-reference.sqlite`（不读 `.env` 自定义路径），不要在 `.env` 手抄 `releaseId` 制造双事实源，同步后重启 Server。`readInventory` 报缺 `storage` 时用只读查询检查 `reference_offline_inventory` 旧登记并按 [`docs/deployment.md#旧格式-drg-登记的局部恢复`](../deployment.md#旧格式-drg-登记的局部恢复) 处理；核验数十万行 JSONL 时将 Zod schema 提为模块常量，内容哈希在持久化 schema 规范化后再 `JSON.stringify`；耗材工作稿指纹计算前先按稳定产品 ID 排序，避免模型与目录排序不同导致首次生成即误报 `stale`。
+- **参考库与 DRG 离线清单**：`pnpm reference:sync` 固定写默认 `.data/clinmesh-reference.sqlite`（不读 `.env` 自定义路径），不要在 `.env` 手抄 `releaseId` 制造双事实源，同步后重启 Server。`readInventory` 报缺 `storage` 时用只读查询检查 `reference_offline_inventory` 旧登记并按 [`docs/deployment.md#旧格式-drg-登记的局部恢复`](../deployment.md#旧格式-drg-登记的局部恢复) 处理；核验数十万行 JSONL 时将 Zod schema 提为模块常量，内容哈希在持久化 schema 规范化后再 `JSON.stringify`；`better-sqlite3` 编译默认 `cache_size=-16000` 会为 `main`/`temp`/`ATTACH` 各自预留约 `16 MiB` 页缓存，30 万行流式导入与哈希须显式收敛连接页缓存、复用归并头对象，并避免对同连接已校验 `TEMP` staging 行重复执行二次 `z.string().url()` 与对象展开分配；耗材工作稿指纹计算前先按稳定产品 ID 排序，避免模型与目录排序不同导致首次生成即误报 `stale`。
 
 ## 模型任务、Synthea 与影像病理素材
 

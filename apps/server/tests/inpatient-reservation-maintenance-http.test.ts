@@ -19,6 +19,8 @@ async function setupMaintenance() {
   const initial = inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json())
   const planned = await s.request(s.doctor, `${s.path}/surgeries/request`, {
     encounterVersion: initial.encounterVersion, procedureId: 'hospital-surgery-8', catalogVersion: 1,
+    surgeryType: 'elective', locationId: 'location-catheterization-lab',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
     plannedFor: initial.virtualTime, reason: '合成手工预留维护计划',
   })
   expect(planned.status).toBe(200)
@@ -174,11 +176,15 @@ it('审阅后部分使用改变预留版本，旧版本拒绝释放，重新审�
   const created = await s.create()
   expect(created.status).toBe(200)
   const reviewed = responseSchema.parse(await created.json()).data.reservations[0]!
+  const clinical = z.object({ diagnosis: z.object({ revision: z.number().int().nonnegative() }).loose() }).loose()
+    .parse(await (await s.request(s.doctor, `${s.path}/clinical`)).json())
   for (const [cookie, action, expectedRequestVersion] of [
     [s.nurse, 'check-preop', 1], [s.doctor, 'confirm-consent', 2],
   ] as const) {
     expect((await s.request(cookie, `${s.path}/surgeries/${action}`, {
-      requestId: s.requestId, expectedRequestVersion, note: '合成术前准备确认',
+      requestId: s.requestId, expectedRequestVersion,
+      ...(action === 'confirm-consent' ? { expectedDiagnosisRevision: clinical.diagnosis.revision, signerRole: 'patient', signerName: '合成预留维护患者', patientChoice: 'agree' } : {}),
+      note: '合成术前准备确认',
     })).status).toBe(200)
   }
   const started = await s.request(s.doctor, `${s.path}/surgeries/start`, {

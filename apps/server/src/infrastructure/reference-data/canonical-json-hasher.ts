@@ -16,7 +16,7 @@ import type {
 } from '@clinmesh/contracts/reference-data'
 
 const defaultCollator = new Intl.Collator()
-const defaultMaxChunkRows = 1_024
+const defaultMaxChunkRows = 4_096
 const defaultMaxChunkBytes = 2 * 1024 * 1024
 const writeBufferBytes = 64 * 1024
 const totalMergeReadBudgetBytes = 4 * 1024 * 1024
@@ -46,6 +46,7 @@ interface MergeHead {
 
 interface CachedObjectShape {
   keys: readonly string[]
+  quotedKeys: readonly string[]
   sortedKeys: readonly string[]
 }
 
@@ -106,9 +107,11 @@ function resolveObjectShape(keys: readonly string[], allowCache: boolean): Cache
   if (allowCache && cachedTopShape !== undefined && matchesCachedShape(keys, cachedTopShape)) {
     return cachedTopShape
   }
+  const sortedKeys = [...keys].sort(compareLocaleStrings)
   const shape: CachedObjectShape = {
     keys: [...keys],
-    sortedKeys: [...keys].sort(compareLocaleStrings),
+    quotedKeys: sortedKeys.map(key => JSON.stringify(key)),
+    sortedKeys,
   }
   if (allowCache) cachedTopShape = shape
   return shape
@@ -136,6 +139,24 @@ function canonicalizeValue(value: unknown, isTopObject: boolean): unknown {
 }
 
 function canonicalJsonString(value: unknown): string | undefined {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>
+    const shape = resolveObjectShape(Object.keys(record), true)
+    let out = '{'
+    let hasProperty = false
+    for (let index = 0; index < shape.sortedKeys.length; index += 1) {
+      const entry = record[shape.sortedKeys[index]!]
+      if (entry === undefined) continue
+      const serialized = entry === null || typeof entry !== 'object'
+        ? JSON.stringify(entry)
+        : JSON.stringify(canonicalizeValue(entry, false))
+      if (serialized === undefined) continue
+      if (hasProperty) out += ','
+      hasProperty = true
+      out += `${shape.quotedKeys[index]!}:${serialized}`
+    }
+    return `${out}}`
+  }
   return JSON.stringify(canonicalizeValue(value, true))
 }
 
@@ -283,7 +304,7 @@ class RunReader {
     this.#buffer = Buffer.allocUnsafe(bufferBytes)
   }
 
-  next(): Omit<MergeHead, 'readerIndex'> | undefined {
+  next(readerIndex: number, reuse?: MergeHead): MergeHead | undefined {
     if (!this.#ensureAvailable(8)) return undefined
     const keyLength = this.#buffer.readUInt32LE(this.#bufferStart)
     const jsonLength = this.#buffer.readUInt32LE(this.#bufferStart + 4)
@@ -297,7 +318,14 @@ class RunReader {
       const jsonStart = this.#bufferStart + keyLength
       const jsonBytes = this.#buffer.subarray(jsonStart, jsonStart + jsonLength)
       this.#bufferStart += payloadLength
-      return { jsonBytes, key, ordinal }
+      if (reuse !== undefined) {
+        reuse.jsonBytes = jsonBytes
+        reuse.key = key
+        reuse.ordinal = ordinal
+        reuse.readerIndex = readerIndex
+        return reuse
+      }
+      return { jsonBytes, key, ordinal, readerIndex }
     }
     const largePayload = Buffer.allocUnsafe(payloadLength)
     const cachedBytes = this.#bufferEnd - this.#bufferStart
@@ -322,10 +350,19 @@ class RunReader {
       filled += bytesRead
     }
     const { key, ordinal } = deserializeKeyPayload(largePayload, 0)
+    const jsonBytes = largePayload.subarray(keyLength, payloadLength)
+    if (reuse !== undefined) {
+      reuse.jsonBytes = jsonBytes
+      reuse.key = key
+      reuse.ordinal = ordinal
+      reuse.readerIndex = readerIndex
+      return reuse
+    }
     return {
-      jsonBytes: largePayload.subarray(keyLength, payloadLength),
+      jsonBytes,
       key,
       ordinal,
+      readerIndex,
     }
   }
 
@@ -506,8 +543,8 @@ function writeSortedArrayField<Row>(input: {
     const readers = runs.map(range => new RunReader(tempFd!, range, readerBufferBytes))
     const heap: MergeHead[] = []
     for (let readerIndex = 0; readerIndex < readers.length; readerIndex += 1) {
-      const head = readers[readerIndex]!.next()
-      if (head !== undefined) pushHeap(heap, { ...head, readerIndex })
+      const head = readers[readerIndex]!.next(readerIndex)
+      if (head !== undefined) pushHeap(heap, head)
     }
     let emitted = 0
     while (heap.length > 0) {
@@ -515,8 +552,8 @@ function writeSortedArrayField<Row>(input: {
       if (emitted > 0) input.hash.update(',')
       input.hash.update(current.jsonBytes)
       emitted += 1
-      const next = readers[current.readerIndex]!.next()
-      if (next !== undefined) pushHeap(heap, { ...next, readerIndex: current.readerIndex })
+      const next = readers[current.readerIndex]!.next(current.readerIndex, current)
+      if (next !== undefined) pushHeap(heap, next)
     }
     input.hash.update(']')
     return true

@@ -390,6 +390,7 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('ui.navigate', 'clinmesh_navigate', 'ui', allRoles, allViews),
   tool('ui.panel.focus', 'clinmesh_focus_panel', 'ui', allRoles, allViews),
   tool('inpatient.stage.select', 'clinmesh_select_inpatient_stage', 'ui', ['inpatient-doctor', 'ward-nurse', 'cashier', 'medical-records'], inpatientView),
+  tool('inpatient.surgery.read', 'clinmesh_read_inpatient_surgeries', 'query', ipClinical, inpatientView, ['surgery', 'record']),
   tool('inpatient.angiography-reports.read', 'clinmesh_read_inpatient_angiography_reports', 'query', ipClinical, inpatientView, ['investigations', 'surgery', 'record']),
   tool('inpatient.clinical-scores.read', 'clinmesh_read_inpatient_clinical_scores', 'query', ipClinical, inpatientView, ['admission', 'orders', 'surgery', 'discharge', 'record']),
   tool('inpatient.guideline-topics.read', 'clinmesh_read_inpatient_guideline_topics', 'query', ipClinical, inpatientView, ['orders', 'surgery', 'discharge', 'record']),

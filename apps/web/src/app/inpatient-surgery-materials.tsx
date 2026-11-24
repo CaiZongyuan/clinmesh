@@ -17,6 +17,7 @@ import { InpatientSurgeryCompletion } from './inpatient-surgery-completion.tsx'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { correctionDraftScope, useCorrectionBatchDraft, type CorrectionRow } from './inpatient-correction-batch.ts'
 import { InpatientCorrectionComposer } from './inpatient-correction-composer.tsx'
+import { SurgeryNoticeSummaryList, SurgicalConsentPreviewButton } from './inpatient-surgery-consent.tsx'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
   write: ReturnType<typeof useInpatientWriteIntent>; execution: z.infer<typeof inpatientSurgeryExecutionSchema>;
@@ -88,12 +89,27 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
     : admission.status !== 'admitted' ? t('患者已离院，不能补登记耗材。', 'Materials cannot be added after departure.')
     : session.actor.roleCode !== 'inpatient-doctor' ? t('仅住院医生可以补登记或更正耗材。', 'Only an inpatient doctor can add or correct materials.') : null
   return <section aria-label={t('本台耗材', 'Materials for this surgery')} className="flex min-w-0 flex-col gap-3">
-    {running ? <div className="clinmesh-inpatient-summary">
-      <div className="flex flex-wrap items-center gap-2"><h4 className="font-semibold">{t('手术进行中', 'Surgery in progress')} · {execution.actualProcedure.coding.display}</h4><span className="font-mono text-xs text-muted-foreground">{execution.actualProcedure.coding.code}</span></div>
-      <dl className="grid gap-3 text-sm @lg:grid-cols-3"><div><dt className="text-xs text-muted-foreground">{t('计划术式', 'Planned procedure')}</dt><dd>{request.plannedProcedure.coding.code === execution.actualProcedure.coding.code ? t('与实际相同', 'Same as performed') : request.plannedProcedure.coding.display}</dd></div>
-        <div><dt className="text-xs text-muted-foreground">{t('开始', 'Started')}</dt><dd className="tabular-nums">{formatShanghaiMinute(execution.performedAt)}</dd></div>
-        <div><dt className="text-xs text-muted-foreground">{t('开始说明', 'Start note')}</dt><dd>{execution.note}</dd></div></dl>
-    </div> : null}
+    <div className="clinmesh-inpatient-summary flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <h4 className="font-semibold">{running ? `${t('手术进行中', 'Surgery in progress')} · ` : ''}{execution.actualProcedure.coding.display}</h4>
+        <span className="font-mono text-xs text-muted-foreground">{execution.actualProcedure.coding.code}</span>
+        <span className="flex-1" />
+        <SurgicalConsentPreviewButton admission={admission} request={request} locale={locale} />
+      </div>
+      <SurgeryNoticeSummaryList
+        row={request}
+        locale={locale}
+        includeProcedure={request.plannedProcedure.coding.code !== execution.actualProcedure.coding.code}
+        extraItems={running
+          ? [
+              { label: t('开始', 'Started'), value: formatShanghaiMinute(execution.performedAt), className: 'tabular-nums' },
+              { label: t('开始说明', 'Start note'), value: execution.note },
+            ]
+          : [
+              { label: t('实际实施时间', 'Performed at'), value: formatShanghaiMinute(execution.performedAt), className: 'tabular-nums' },
+            ]}
+      />
+    </div>
     {running ? <IntraoperativeMaterialRows admissionId={admission.id} session={session} locale={locale} execution={execution} catalog={catalog}
       reservations={reservations} active={active} dataReady={dataReady} editable={editable} onCorrect={addCorrections} write={write} requestVersion={request.version} /> : <>
     <div className="flex flex-wrap items-baseline gap-2"><h4 className="text-sm font-semibold">{t('本台耗材', 'Materials for this surgery')}</h4></div>

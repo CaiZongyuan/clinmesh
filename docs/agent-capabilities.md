@@ -46,7 +46,7 @@
 | 门诊医生（`outpatient-doctor`） | 病例与已加载队列页、`local-completed`/`visible-source` 历史检索与详情、临床风险评分、指南专题、事中质控预检、专病医嘱组套预筛 | 选队列病例、切换诊疗栏目（含展开检查报告／阅片器）、受控虚拟患者提问与补答重试、保存病历／诊断／内外延处方／检验／功能检查／放射／病理草稿、签署预览 | 开始接诊、确认诊断、签发／取消／重试各类检查申请、报告已阅与受控更正、开立／撤回处方与无需用药、签署／修订病历、完成就诊 |
 | 收费（`cashier`） | `billing.queue.read` 与 `billing.case.read`（含按页原款历史，见[预览与提交](architecture/fhir-and-commands.md#66-预览与提交)） | 选中待收费用、生成门诊分次／组合缴费预览，填写住院补交草稿并生成收款／结算预览 | 确认门诊缴费、查询恢复 `ambiguous` 原支付结果（规则见[收费、结算与医保](architecture/billing-and-insurance.md)） |
 | 药房（`pharmacist`） | `pharmacy.queue.read` 读取处方队列 | 选中处方、填写审核意见及同药品批次与发药数量草稿 | 提交处方审核、执行发药 |
-| 住院各岗位 | 住院医生与护士按阶段读取多支冠脉造影、临床评分、指南专题、事中质控与医嘱组套预筛 | `inpatient.stage.select` 切换授权住院阶段（不开放住院端 DSH 临床草稿写 Tool） | 病区护士 `inpatient.order.verify.propose` 医嘱校对、住院医生 `inpatient.report.acknowledge.propose` 报告已阅 |
+| 住院各岗位 | 住院医生、护士与病案人员按阶段读取手术通知单与知情同意书、多支冠脉造影、临床评分、指南专题、事中质控与医嘱组套预筛 | `inpatient.stage.select` 切换授权住院阶段（不开放住院端 DSH 临床草稿写 Tool） | 病区护士 `inpatient.order.verify.propose` 医嘱校对、住院医生 `inpatient.report.acknowledge.propose` 报告已阅 |
 | 仿真管理（`administrator`） | 读取场景状态、Provider 健康与生成任务状态 | —（不开放直接触发患者生成或无审阅重置的写 Tool） | `scenario.reset.propose` 二次确认重置新 Epoch |
 
 关键运行时约束：

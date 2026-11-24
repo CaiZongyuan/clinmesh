@@ -13,7 +13,9 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   const catalog = inpatientSurgeryCatalogSchema.parse(await (await subject.api.get('/api/his/v1/inpatient/surgery-catalog')).json())
   const procedure = catalog.procedures.find(item => item.coding.code === '00.6600')!
   expect((await subject.api.post(`${subject.path}/surgeries/request`, { encounterVersion: (await clinical()).encounterVersion,
-    procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成布局复核手术' })).status()).toBe(200)
+    procedureId: procedure.id, catalogVersion: procedure.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成布局复核手术' })).status()).toBe(200)
   const request = inpatientSurgerySchema.parse(await (await subject.api.get(`${subject.path}/surgeries`)).json()).requests[0]!
   expect((await subject.api.post(`${subject.path}/drg/reservations`, { encounterVersion: (await clinical()).encounterVersion,
     requestId: request.id, materialId: 'hospital-material-stent', catalogVersion: 1, quantity: 1, reason: '合成布局复核已确认耗材' })).status()).toBe(200)
@@ -29,10 +31,14 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   const workspace = page.locator('.clinmesh-card-workspace')
   await selectInpatientStage(page, '手术')
   await page.getByRole('button', { name: '确认已签', exact: true }).click()
-  const consent = page.getByRole('button', { name: '确认手术知情同意书已签', exact: true })
+  const consentDialog = page.getByRole('dialog', { name: '手术知情同意书', exact: true })
+  const signerInput = consentDialog.getByLabel('签署人姓名', { exact: true })
+  await signerInput.fill('')
+  const consent = consentDialog.getByRole('button', { name: '确认手术知情同意书已签', exact: true })
   await expect(consent).toBeDisabled()
   await expect(consent).toHaveCSS('border-style', 'dashed')
-  await page.getByLabel('签署说明', { exact: true }).fill('合成已核对知情同意书')
+  await signerInput.fill(subject.name)
+  await consentDialog.getByLabel('签署备注', { exact: true }).fill('合成已核对知情同意书')
   await expect(consent).toBeEnabled()
   await expect(consent).toHaveCSS('border-style', 'solid')
   const consentPath = `${app.origin}${subject.path}/surgeries/confirm-consent`
@@ -57,7 +63,8 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   }
   expect(consentStatus).toBe(200)
   const confirmed = inpatientSurgerySchema.parse(await (await subject.api.get(`${subject.path}/surgeries`)).json()).requests.find(item => item.id === request.id)
-  expect(confirmed?.consentConfirmation?.note).toBe('合成已核对知情同意书')
+  expect(confirmed?.consentConfirmation?.note).toContain('合成已核对知情同意书')
+  expect(confirmed?.consentConfirmation?.document?.templateId).toBe('coronary-balloon-pci')
   const queue = workspace.locator('.clinmesh-card-queue')
   const refresh = queue.getByRole('button', { name: '刷新', exact: true })
   await expect(refresh.locator('svg')).toHaveCount(1)

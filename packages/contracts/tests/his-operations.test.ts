@@ -965,14 +965,89 @@ it('publishes read-only clinical quality preflight queries and clinicalOverride 
   expect(getHisOperation('inpatient.catalog.search').version).toBe(4)
   expect(getHisOperation('inpatient.clinical.catalog').version).toBe(5)
   expect(getHisOperation('inpatient.order.issue').version).toBe(10)
-  expect(getHisOperation('inpatient.surgery.request').version).toBe(3)
-  expect(getHisOperation('inpatient.surgery.start').version).toBe(2)
-  expect(getHisOperation('inpatient.surgery.record-material').version).toBe(2)
+  expect(getHisOperation('inpatient.surgery.catalog').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.catalog').roles).toEqual(['inpatient-doctor', 'ward-nurse', 'medical-records'])
+  expect(getHisOperation('inpatient.surgery.read').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.read').roles).toEqual(['inpatient-doctor', 'ward-nurse', 'medical-records'])
+  expect(getHisOperation('inpatient.surgery.request').version).toBe(4)
+  expect(getHisOperation('inpatient.surgery.check-preop').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.confirm-consent').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.cancel').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.start').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.record-material').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.correct-material').version).toBe(2)
+  expect(getHisOperation('inpatient.surgery.supplement-material').version).toBe(2)
   expect(getHisOperation('inpatient.surgery.preview-completion').version).toBe(2)
-  expect(getHisOperation('inpatient.surgery.complete').version).toBe(3)
-  expect(getHisOperation('inpatient.surgery.execute').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.complete').version).toBe(4)
+  expect(getHisOperation('inpatient.surgery.execute').version).toBe(4)
   expect(getHisOperation('inpatient.pci-selection.confirm').version).toBe(3)
   expect(getHisOperation('inpatient.record.submit').version).toBe(3)
+})
+
+it('validates six-element surgery notice requests and structured one-procedure-one-consent inputs', () => {
+  const request = getHisOperation('inpatient.surgery.request')
+  const validNotice = {
+    admissionId: 'adm-1',
+    encounterVersion: '2',
+    surgeryType: 'elective' as const,
+    procedureId: 'hospital-surgery-3',
+    catalogVersion: 1,
+    plannedFor: '2026-08-25T09:00:00+08:00',
+    locationId: 'location-catheterization-lab' as const,
+    surgeonPractitionerId: 'practitioner-inpatient-doctor',
+    assistantPractitionerId: 'practitioner-surgeon-attending',
+    anesthesiaMethod: 'local-infiltration' as const,
+    reason: '拟行冠脉支架置入',
+  }
+  expect(request.input.parse(validNotice)).toEqual(validNotice)
+  expect(request.input.safeParse({ ...validNotice, assistantPractitionerId: 'practitioner-inpatient-doctor' }).success).toBe(false)
+  expect(request.input.safeParse({
+    admissionId: 'adm-1',
+    encounterVersion: '2',
+    procedureId: 'hospital-surgery-3',
+    catalogVersion: 1,
+    plannedFor: '2026-08-25T09:00:00+08:00',
+    reason: '缺少六要素',
+  }).success).toBe(false)
+
+  const consent = getHisOperation('inpatient.surgery.confirm-consent')
+  expect(consent.input.parse({
+    admissionId: 'adm-1',
+    requestId: 'req-1',
+    expectedRequestVersion: 1,
+    expectedDiagnosisRevision: 0,
+    signerRole: 'patient',
+    signerName: '患者甲',
+    patientChoice: 'agree',
+  })).toMatchObject({ signerRole: 'patient', patientChoice: 'agree', expectedDiagnosisRevision: 0 })
+  expect(consent.input.safeParse({
+    admissionId: 'adm-1',
+    requestId: 'req-1',
+    expectedRequestVersion: 1,
+    signerRole: 'patient',
+    signerName: '患者甲',
+    patientChoice: 'agree',
+  }).success).toBe(false)
+  expect(consent.input.safeParse({
+    admissionId: 'adm-1',
+    requestId: 'req-1',
+    expectedRequestVersion: 1,
+    expectedDiagnosisRevision: 1,
+    signerRole: 'family-proxy',
+    signerName: '家属乙',
+    patientChoice: 'agree',
+  }).success).toBe(false)
+  expect(consent.input.parse({
+    admissionId: 'adm-1',
+    requestId: 'req-1',
+    expectedRequestVersion: 1,
+    expectedDiagnosisRevision: 2,
+    signerRole: 'family-proxy',
+    signerName: '家属乙',
+    signerRelationship: '配偶',
+    patientChoice: 'agree',
+    individualizedRisks: '合并慢性肾脏病，已告知对比剂肾损水化预防',
+  })).toMatchObject({ signerRole: 'family-proxy', signerRelationship: '配偶', expectedDiagnosisRevision: 2 })
 })
 
 it('accepts omitted routine surgery notes on the five routine operations while keeping legal and correction notes mandatory', () => {

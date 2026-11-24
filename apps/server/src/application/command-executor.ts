@@ -266,6 +266,74 @@ export class CommandExecutor {
     }).immediate()
   }
 
+  /**
+   * 仅当同幂等键已存在持久回执时校验请求哈希并重放响应，用于契约升级后旧版客户端丢失响应的重试恢复；
+   * 若无既有回执则立即提交只读检查并返回 `null`，由调用方继续执行当前版本入参校验。
+   */
+  replayIfExists<Input, Data>(
+    invocation: Pick<
+      CommandInvocation<Input, Data>,
+      'context' | 'dataSchema' | 'expectedVersions' | 'idempotencyKey' | 'idempotencyScope' | 'input' | 'operation' | 'replay'
+    >,
+  ): CommandResponse<Data> | null {
+    const { context } = invocation
+    const requestHash = commandRequestHash(invocation)
+    const receiptKey = [
+      context.workspaceId,
+      context.epoch,
+      context.actorId,
+      invocation.operation,
+      invocation.idempotencyKey,
+    ] as const
+    const now = this.#now().toISOString()
+
+    this.#database.driver.exec('BEGIN IMMEDIATE')
+    try {
+      const existing = invocation.idempotencyScope === 'workspace'
+        ? this.#database.driver.prepare(`
+            SELECT request_hash, response_json, status
+            FROM command_receipt
+            WHERE workspace_id = ? AND actor_id = ?
+              AND operation = ? AND idempotency_key = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+          `).get(
+            context.workspaceId,
+            context.actorId,
+            invocation.operation,
+            invocation.idempotencyKey,
+          ) as ReceiptRow | undefined
+        : this.#database.driver.prepare(`
+            SELECT request_hash, response_json, status
+            FROM command_receipt
+            WHERE workspace_id = ? AND epoch = ? AND actor_id = ?
+              AND operation = ? AND idempotency_key = ?
+          `).get(...receiptKey) as ReceiptRow | undefined
+      if (existing === undefined) {
+        this.#database.driver.exec('COMMIT')
+        return null
+      }
+      if (existing.request_hash !== requestHash) {
+        throw new CommandConflictError('The idempotency key was already used with a different payload')
+      }
+      if (existing.status !== 'completed' || existing.response_json === null) {
+        throw new CommandConflictError('The idempotent command has not reached a replayable result')
+      }
+      if (invocation.replay === 'reject') {
+        throw new CommandConflictError('The one-time command result cannot be replayed')
+      }
+      const response = storedCommandResponseSchema.extend({
+        data: invocation.dataSchema,
+      }).parse(JSON.parse(existing.response_json))
+      this.#database.driver.exec('COMMIT')
+      return response
+    } catch (error) {
+      if (this.#database.driver.inTransaction) this.#database.driver.exec('ROLLBACK')
+      this.#recordFailedAttempt(context, invocation.operation, requestHash, now)
+      throw error
+    }
+  }
+
   execute<Input, Data>(
     invocation: CommandInvocation<Input, Data>,
     handler: (transaction: CommandTransaction) => CommandHandlerResult<Data>,

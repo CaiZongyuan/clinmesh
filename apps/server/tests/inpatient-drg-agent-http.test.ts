@@ -1117,8 +1117,15 @@ it('岗位待办必须通过正式事实复查解决，人工处置不重跑同�
 it('术前冻结计划按选型确认身份及版本绑定原手术，不被同身份的新版本改指另一手术', async () => {
   const s = await setupPostoperativeAgent(), state = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgeryResponseSchema.shape.data)
   const requested = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    encounterVersion: state.encounterVersion, procedureId: s.stay.procedure.id, catalogVersion: s.stay.procedure.version,
-    plannedFor: '2026-08-24T15:00:00+08:00', reason: '医生新增另一 PCI 计划，原术前计划保持冻结',
+    anesthesiaMethod: 'local-infiltration',
+    encounterVersion: state.encounterVersion,
+    locationId: 'location-catheterization-lab',
+    procedureId: s.stay.procedure.id,
+    catalogVersion: s.stay.procedure.version,
+    plannedFor: '2026-08-24T15:00:00+08:00',
+    reason: '医生新增另一 PCI 计划，原术前计划保持冻结',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor',
+    surgeryType: 'elective',
   })).json()).data.requests.at(-1)!
   await cancelAutomaticMaterialEstimate(s.fixture, { path: s.stay.path, requestId: requested.id })
   const confirmed = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, { expectedVersion: 1,
@@ -1155,8 +1162,16 @@ it('多台PCI仅参数确认时按各手术原确认汇总用量，不被最新�
   expect(originalUsage).toContainEqual(expect.objectContaining({ materialId: 'hospital-material-pci-guidewire',
     plannedQuantity: 1, actualQuantity: 2, excessQuantity: 1, usedFen: 40000, additionalFen: 20000 }))
   const requested = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    encounterVersion: surgery.encounterVersion, procedureId: s.stay.procedure.id, catalogVersion: s.stay.procedure.version,
-    plannedFor: '2026-08-24T16:00:00+08:00', reason: '第二台仅认可支架，第一台保留自己的选型确认' })
+    anesthesiaMethod: 'local-infiltration',
+    encounterVersion: surgery.encounterVersion,
+    locationId: 'location-catheterization-lab',
+    procedureId: s.stay.procedure.id,
+    catalogVersion: s.stay.procedure.version,
+    plannedFor: '2026-08-24T16:00:00+08:00',
+    reason: '第二台仅认可支架，第一台保留自己的选型确认',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor',
+    surgeryType: 'elective',
+  })
   expect(requested.status).toBe(200)
   const secondRequest = inpatientSurgeryResponseSchema.parse(await requested.json()).data.requests.at(-1)!
   const selected = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, { expectedVersion: 1,
@@ -1613,8 +1628,17 @@ it('第二台PCI没有自己的冻结计划时使用本次参数，不继承第�
   const originalIssues = original.todos.filter(item => item.executionId === firstExecution.id && item.kind === 'unplanned-product')
   expect(originalIssues).toHaveLength(3)
   const state = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgeryResponseSchema.shape.data)
-  const requested = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, { encounterVersion: state.encounterVersion,
-    procedureId: s.stay.procedure.id, catalogVersion: s.stay.procedure.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: '医生另开第二台PCI计划' })
+  const requested = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
+    anesthesiaMethod: 'local-infiltration',
+    encounterVersion: state.encounterVersion,
+    locationId: 'location-catheterization-lab',
+    procedureId: s.stay.procedure.id,
+    catalogVersion: s.stay.procedure.version,
+    plannedFor: '2026-08-24T15:00:00+08:00',
+    reason: '医生另开第二台PCI计划',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor',
+    surgeryType: 'elective',
+  })
   expect(requested.status).toBe(200)
   const secondRequest = inpatientSurgeryResponseSchema.parse(await requested.json()).data.requests.at(-1)!
   await cancelAutomaticMaterialEstimate(s.fixture, { path: s.stay.path, requestId: secondRequest.id })

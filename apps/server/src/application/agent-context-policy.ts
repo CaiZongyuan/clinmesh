@@ -578,6 +578,7 @@ function narrowOperations(
     if (selection.kind === 'inpatient-admission') {
       operations.push(
         'inpatient.stage.select',
+        'inpatient.surgery.read',
         'inpatient.angiography-reports.read',
         'inpatient.clinical-scores.read',
         'inpatient.guideline-topics.read',

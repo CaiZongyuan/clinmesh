@@ -2,11 +2,13 @@ import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import {
   referenceConceptSchema,
+  referenceDataDomainSchema,
   referenceDataReleaseListSchema,
   referenceDataReleaseSummarySchema,
   referenceImportDiagnosticsSchema,
   referenceImportManifestSchema,
   referenceLaboratoryDefinitionSchema,
+  referenceLaboratoryMetadataSchema,
   referenceLaboratoryPanelMemberSchema,
   referenceLaboratorySpecimenSchema,
   referenceLaboratoryUnitSchema,
@@ -114,9 +116,16 @@ export function openReferenceDatabase(options: {
   const driver = new Database(options.databasePath, options.readonly === true
     ? { fileMustExist: true, readonly: true }
     : undefined)
-  driver.pragma('foreign_keys = ON')
-  driver.pragma(`busy_timeout = ${options.busyTimeoutMs}`)
-  if (options.readonly !== true) driver.pragma('journal_mode = WAL')
+  try {
+    driver.pragma('foreign_keys = ON')
+    driver.pragma(`busy_timeout = ${options.busyTimeoutMs}`)
+    driver.pragma('cache_size = -2000')
+    driver.pragma('temp.cache_size = -2000')
+    if (options.readonly !== true) driver.pragma('journal_mode = WAL')
+  } catch (error) {
+    driver.close()
+    throw error
+  }
   return new ReferenceDatabase(options.performanceObserver === undefined
     ? driver
     : instrumentSqliteDriver(driver, options.performanceObserver))
@@ -453,27 +462,29 @@ const medicationProductDatabaseRowSchema = z.object({
   system_version: z.string(),
 })
 
+const sourcedReferenceMedicationProductSchema = referenceMedicationProductSchema.extend({
+  sourceId: z.string(),
+}).strict()
+
 function mapMedicationProductRow(
   row: z.infer<typeof medicationProductDatabaseRowSchema>,
 ): ReferenceMedicationProduct & { sourceId: string } {
-  return {
-    ...referenceMedicationProductSchema.parse({
-      approvalNumber: row.approval_number,
-      brandName: row.brand_name,
-      code: row.code,
-      dosageForm: row.dosage_form,
-      genericName: row.generic_name,
-      id: row.product_id,
-      manufacturer: row.manufacturer,
-      packageDescription: row.package_description,
-      sourceLocator: row.source_locator,
-      status: row.status,
-      strength: row.strength,
-      system: row.system,
-      version: row.system_version,
-    }),
+  return sourcedReferenceMedicationProductSchema.parse({
+    approvalNumber: row.approval_number,
+    brandName: row.brand_name,
+    code: row.code,
+    dosageForm: row.dosage_form,
+    genericName: row.generic_name,
+    id: row.product_id,
+    manufacturer: row.manufacturer,
+    packageDescription: row.package_description,
     sourceId: row.source_id,
-  }
+    sourceLocator: row.source_locator,
+    status: row.status,
+    strength: row.strength,
+    system: row.system,
+    version: row.system_version,
+  })
 }
 
 function medicationProductRows(
@@ -1599,6 +1610,17 @@ const stagingCountsRowSchema = z.object({
   value_set_entry_count: z.number().int().nonnegative(),
 }).strict()
 
+const stagedRecordStatusSchema = z.enum(['active', 'inactive'])
+
+const stagedConceptDatabaseRowSchema = conceptDatabaseRowSchema.extend({
+  domain: referenceDataDomainSchema,
+  status: stagedRecordStatusSchema,
+})
+
+const stagedMedicationProductDatabaseRowSchema = medicationProductDatabaseRowSchema.extend({
+  status: stagedRecordStatusSchema,
+})
+
 function streamStagedRows<RawRow, Mapped>(input: {
   count: number
   driver: Database.Database
@@ -1614,6 +1636,46 @@ function streamStagedRows<RawRow, Mapped>(input: {
         yield input.mapRow(input.rowSchema.parse(raw))
       }
     },
+  }
+}
+
+function mapStagedConceptRow(
+  row: z.infer<typeof stagedConceptDatabaseRowSchema>,
+): ReferenceConcept & { sourceId: string } {
+  return {
+    code: row.code,
+    display: row.display,
+    domain: row.domain,
+    id: row.concept_id,
+    ...(row.laboratory_metadata_json === null
+      ? {}
+      : { laboratory: referenceLaboratoryMetadataSchema.parse(JSON.parse(row.laboratory_metadata_json)) }),
+    sourceId: row.source_id,
+    sourceLocator: row.source_locator,
+    status: row.status,
+    system: row.system,
+    version: row.system_version,
+  }
+}
+
+function mapStagedMedicationProductRow(
+  row: z.infer<typeof stagedMedicationProductDatabaseRowSchema>,
+): ReferenceMedicationProduct & { sourceId: string } {
+  return {
+    approvalNumber: row.approval_number,
+    brandName: row.brand_name,
+    code: row.code,
+    dosageForm: row.dosage_form,
+    genericName: row.generic_name,
+    id: row.product_id,
+    manufacturer: row.manufacturer,
+    packageDescription: row.package_description,
+    sourceId: row.source_id,
+    sourceLocator: row.source_locator,
+    status: row.status,
+    strength: row.strength,
+    system: row.system,
+    version: row.system_version,
   }
 }
 
@@ -1754,8 +1816,8 @@ export function importReferenceDataRelease(
       concepts: streamStagedRows({
         count: counts.concept_count,
         driver: database.driver,
-        mapRow: mapConceptRow,
-        rowSchema: conceptDatabaseRowSchema,
+        mapRow: mapStagedConceptRow,
+        rowSchema: stagedConceptDatabaseRowSchema,
         sql: `
           SELECT concept_id, domain, system, system_version, code, display, status,
             laboratory_metadata_json, source_id, source_locator
@@ -1812,8 +1874,8 @@ export function importReferenceDataRelease(
       medicationProducts: streamStagedRows({
         count: counts.medication_product_count,
         driver: database.driver,
-        mapRow: mapMedicationProductRow,
-        rowSchema: medicationProductDatabaseRowSchema,
+        mapRow: mapStagedMedicationProductRow,
+        rowSchema: stagedMedicationProductDatabaseRowSchema,
         sql: `
           SELECT product_id, system, system_version, code, generic_name, brand_name,
             dosage_form, strength, package_description, manufacturer, approval_number,
