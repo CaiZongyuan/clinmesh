@@ -229,7 +229,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       }],
       page: 1,
       pageSize: 1,
-      total: 3,
+      total: 4,
     })
     const secondResponse = await runtime.app.request(
       `/api/his/v1/catalogs/services?query=${encodeURIComponent('血')}&page=2&pageSize=1`,
@@ -238,7 +238,7 @@ describe('trusted session and Scenario HTTP contract', () => {
     expect(serviceCatalogSearchSchema.parse(await secondResponse.json())).toMatchObject({
       items: [{ id: 'hospital-service-hba1c' }],
       page: 2,
-      total: 3,
+      total: 4,
     })
     expect((await runtime.app.request(
       '/api/his/v1/catalogs/services?page=1&pageSize=101',
