@@ -1,0 +1,370 @@
+import type { ClinicalFactLedger } from '@clinmesh/contracts/clinical-fact-ledger'
+import type { ConceptVocabulary } from '@clinmesh/contracts/concept-vocabulary'
+import {
+  adjudicateConflictRequestSchema,
+  conceptMappingImpactRequestSchema,
+  guidelineDiffReportRequestSchema,
+  offlineGuidelineSearchRequestSchema,
+  offlineGuidelineSearchResponseSchema,
+  offlineKnowledgePipelineInputSchema,
+  type AdjudicateConflictResult,
+  type ConceptMappingImpactReport,
+  type GuidelineSourceDiffReport,
+  type OfflineGuidelineSearchResponse,
+  type OfflineKnowledgePipelineResult,
+} from '@clinmesh/contracts/knowledge-pipeline'
+import { shanghaiBusinessDate } from '@clinmesh/contracts/scenario'
+import {
+  PUBLIC_CONCEPT_VOCABULARY,
+  mergeThreeLayerConceptVocabulary,
+} from '@clinmesh/core/concept-vocabulary'
+import { KnowledgeClaimError } from '@clinmesh/core/knowledge-claims'
+import {
+  adjudicateGuidelineClaimConflict,
+  buildConceptMappingImpactReport as buildCoreMappingImpactReport,
+  buildGuidelineSourceDiffReport as buildCoreGuidelineDiffReport,
+  createDeterministicClaimDraftStream,
+  createPassageBackedDeterministicDraftStream,
+  runOfflineKnowledgeClaimPipeline,
+} from '@clinmesh/core/knowledge-pipeline'
+import { z } from 'zod'
+import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
+import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
+import type { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
+import type { ActorContext, CommandExecutor } from './command-executor.ts'
+import type { DiseasePackRuntimeService } from './disease-pack-runtime-service.ts'
+import type { OutpatientWorkflowContext } from './outpatient-workflow-context.ts'
+
+export class KnowledgePipelineError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status: 400 | 403 | 404 | 409 = 400,
+    readonly reason?: string,
+  ) {
+    super(message)
+    this.name = 'KnowledgePipelineError'
+  }
+}
+
+const patientIdRowSchema = z.object({
+  patient_id: z.string().min(1),
+}).strict()
+
+/**
+ * Offline developer/admin-only tooling service for AC33 claim drafting,
+ * AC34 guideline diff & expert adjudication, AC35 mapping impact reporting,
+ * and AC36 synonym-expanded guideline search. Never exposed to online Agent runtime.
+ */
+export class KnowledgePipelineService {
+  readonly #commands: CommandExecutor
+  readonly #database: ClinMeshDatabase
+  readonly #diseasePacks: DiseasePackRuntimeService
+  readonly #factLedger: ClinicalFactLedgerService
+  readonly #guidelines: GuidelineCorpus | undefined
+  readonly #outpatient: OutpatientWorkflowContext
+
+  constructor(options: {
+    commands: CommandExecutor
+    database: ClinMeshDatabase
+    diseasePacks: DiseasePackRuntimeService
+    factLedger: ClinicalFactLedgerService
+    guidelines?: GuidelineCorpus
+    outpatientContext: OutpatientWorkflowContext
+  }) {
+    this.#commands = options.commands
+    this.#database = options.database
+    this.#diseasePacks = options.diseasePacks
+    this.#factLedger = options.factLedger
+    this.#guidelines = options.guidelines
+    this.#outpatient = options.outpatientContext
+  }
+
+  #assertOfflineAdministrator(context: ActorContext): void {
+    if (context.agentGrantId !== undefined) {
+      throw new KnowledgePipelineError(
+        'OFFLINE_TOOL_FORBIDDEN_FOR_AGENT',
+        '离线知识制卡与影响分析工具严禁在线 Agent 运行时调用',
+        403,
+      )
+    }
+    if (context.roleCode !== 'administrator') {
+      throw new KnowledgePipelineError(
+        'ROLE_NOT_ALLOWED',
+        '离线知识制卡与影响分析工具仅限管理员（administrator）调用',
+        403,
+      )
+    }
+  }
+
+  #resolveVocabulary(packId: string | undefined, override?: ConceptVocabulary): ConceptVocabulary {
+    if (override !== undefined) {
+      const hasPublicLayer = override.nodes.some(node => node.layer === 'public')
+      return hasPublicLayer
+        ? override
+        : mergeThreeLayerConceptVocabulary({
+            packLayer: override,
+            publicLayer: PUBLIC_CONCEPT_VOCABULARY,
+          })
+    }
+    if (packId === undefined) {
+      return PUBLIC_CONCEPT_VOCABULARY
+    }
+    const effective = this.#diseasePacks.registry.getEffective(packId)
+    if (effective.pack.conceptVocabulary === undefined) {
+      return PUBLIC_CONCEPT_VOCABULARY
+    }
+    return mergeThreeLayerConceptVocabulary({
+      packLayer: effective.pack.conceptVocabulary,
+      publicLayer: PUBLIC_CONCEPT_VOCABULARY,
+    })
+  }
+
+  #buildEmptyLedger(asOf: string): ClinicalFactLedger {
+    return {
+      facts: [],
+      includeSuperseded: false,
+      patientId: 'offline-impact-analysis',
+      subjectId: 'offline-impact-analysis',
+      subjectKind: 'outpatient',
+      summary: {
+        conflictCount: 0,
+        eligibleCount: 0,
+        expiredCount: 0,
+        externalUnverifiedCount: 0,
+        notAskedCount: 0,
+        supersededCount: 0,
+        suspiciousCount: 0,
+        totalFacts: 0,
+        verifiedExternalCount: 0,
+      },
+      trace: {
+        evaluatedAsOf: asOf,
+        hospitalId: 'hospital-synthetic-clinmesh',
+        mappingVersion: '2026-11-24.r1',
+      },
+    }
+  }
+
+  runDraftPipeline(context: ActorContext, rawBody: unknown): OfflineKnowledgePipelineResult {
+    const auditInput: Record<string, unknown> = {}
+    try {
+      this.#assertOfflineAdministrator(context)
+      const input = offlineKnowledgePipelineInputSchema.parse(rawBody)
+      auditInput.packId = input.packId
+      auditInput.topicId = input.topicId
+      auditInput.snapshotVersion = input.snapshotVersion
+
+      const vocabulary = this.#resolveVocabulary(input.packId, input.vocabulary)
+      const controlledDraftStream = input.candidates !== undefined
+        ? createDeterministicClaimDraftStream(input.candidates)
+        : createPassageBackedDeterministicDraftStream()
+
+      const result = runOfflineKnowledgeClaimPipeline({
+        ...(input.clinicianReviewer === undefined ? {} : { clinicianReviewer: input.clinicianReviewer }),
+        controlledDraftStream,
+        effectiveFrom: input.effectiveFrom,
+        packId: input.packId,
+        snapshotVersion: input.snapshotVersion,
+        sourceDocument: input.sourceDocument,
+        topicId: input.topicId,
+        ...(input.topicMetadata === undefined ? {} : { topicMetadata: input.topicMetadata }),
+        version: input.version,
+        vocabulary,
+      })
+
+      this.#commands.auditRead(context, 'offline.knowledge-claims.draft-pipeline', {
+        ...auditInput,
+        acceptedCount: result.acceptedClaims.length,
+        draftedCount: result.draftedCount,
+        rejectedCount: result.rejectedClaims.length,
+      }, 'success')
+      return result
+    } catch (error) {
+      try {
+        this.#commands.auditRead(context, 'offline.knowledge-claims.draft-pipeline', auditInput, 'failed')
+      } catch {
+        // preserve original error
+      }
+      throw error
+    }
+  }
+
+  buildGuidelineDiffReport(context: ActorContext, rawBody: unknown): GuidelineSourceDiffReport {
+    const auditInput: Record<string, unknown> = {}
+    try {
+      this.#assertOfflineAdministrator(context)
+      const input = guidelineDiffReportRequestSchema.parse(rawBody)
+      auditInput.packId = input.packId
+      auditInput.v1Version = input.v1Document.version
+      auditInput.v2Version = input.v2Document.version
+
+      const effectivePack = this.#diseasePacks.registry.getEffective(input.packId)
+      let snapshot = input.snapshot
+      if (snapshot === undefined) {
+        const snapshots = effectivePack.pack.knowledgeSnapshots ?? []
+        if (snapshots.length === 0) {
+          throw new KnowledgeClaimError('KNOWLEDGE_SNAPSHOT_NOT_FOUND', `专病包 ${input.packId} 未声明基线知识快照`)
+        }
+        snapshot = [...snapshots].sort((a, b) => Date.parse(a.effectiveFrom) - Date.parse(b.effectiveFrom)).at(-1)!
+      }
+
+      const report = buildCoreGuidelineDiffReport({
+        effectivePack,
+        snapshot,
+        v1Document: input.v1Document,
+        ...(input.v2Candidates === undefined ? {} : { v2Candidates: input.v2Candidates }),
+        v2Document: input.v2Document,
+      })
+
+      this.#commands.auditRead(context, 'offline.guidelines.diff-report', {
+        ...auditInput,
+        affectedClaimCount: report.affectedClaimIds.length,
+        conflictCount: report.conflicts.length,
+      }, 'success')
+      return report
+    } catch (error) {
+      try {
+        this.#commands.auditRead(context, 'offline.guidelines.diff-report', auditInput, 'failed')
+      } catch {
+        // preserve original error
+      }
+      throw error
+    }
+  }
+
+  adjudicateGuidelineConflict(context: ActorContext, rawBody: unknown): AdjudicateConflictResult {
+    const auditInput: Record<string, unknown> = {}
+    try {
+      this.#assertOfflineAdministrator(context)
+      const input = adjudicateConflictRequestSchema.parse(rawBody)
+      auditInput.conflictId = input.adjudication.conflictId
+      auditInput.decision = input.adjudication.decision
+      auditInput.reviewerId = input.adjudication.reviewer.reviewerId
+
+      const result = adjudicateGuidelineClaimConflict({
+        adjudication: input.adjudication,
+        ...(input.effectiveFrom === undefined ? {} : { effectiveFrom: input.effectiveFrom }),
+        nowIso: this.#outpatient.virtualTime(context),
+        report: input.report,
+        snapshot: input.snapshot,
+      })
+
+      this.#commands.auditRead(context, 'offline.guidelines.adjudicate-conflict', auditInput, 'success')
+      return result
+    } catch (error) {
+      try {
+        this.#commands.auditRead(context, 'offline.guidelines.adjudicate-conflict', auditInput, 'failed')
+      } catch {
+        // preserve original error
+      }
+      throw error
+    }
+  }
+
+  buildConceptMappingImpactReport(
+    context: ActorContext,
+    rawBody: unknown,
+  ): ConceptMappingImpactReport {
+    const auditInput: Record<string, unknown> = {}
+    try {
+      this.#assertOfflineAdministrator(context)
+      const input = conceptMappingImpactRequestSchema.parse(rawBody)
+      auditInput.packId = input.packId
+
+      const effectivePack = this.#diseasePacks.registry.getEffective(input.packId)
+      const beforeVocabulary = this.#resolveVocabulary(input.packId, input.beforeVocabulary)
+      const afterVocabulary = this.#resolveVocabulary(input.packId, input.afterVocabulary)
+      const virtualNow = this.#outpatient.virtualTime(context)
+      const asOfDate = input.asOfDate ?? shanghaiBusinessDate(virtualNow)
+
+      let ledger: ClinicalFactLedger
+      if (input.ledger !== undefined) {
+        ledger = input.ledger
+      } else if (input.caseId !== undefined) {
+        const patientId = this.#diseasePacks.readOutpatientPatientId(context, input.caseId)
+        ledger = this.#factLedger.buildInternalLedger(
+          context,
+          { id: input.caseId, kind: 'outpatient', patientId },
+          { asOf: virtualNow, includeSuperseded: false },
+        )
+      } else if (input.admissionId !== undefined) {
+        const admissionRow = patientIdRowSchema.optional().parse(
+          this.#database.driver.prepare(`
+            SELECT patient_id FROM inpatient_admission
+            WHERE workspace_id = ? AND epoch = ? AND admission_id = ?
+          `).get(context.workspaceId, context.epoch, input.admissionId),
+        )
+        if (admissionRow === undefined) {
+          throw new KnowledgePipelineError('INPATIENT_NOT_FOUND', `未找到住院记录 ${input.admissionId}`, 404)
+        }
+        ledger = this.#factLedger.buildInternalLedger(
+          context,
+          { id: input.admissionId, kind: 'inpatient', patientId: admissionRow.patient_id },
+          { asOf: virtualNow, includeSuperseded: false },
+        )
+      } else {
+        ledger = this.#buildEmptyLedger(virtualNow)
+      }
+
+      const snapshots = input.snapshots ?? effectivePack.pack.knowledgeSnapshots ?? []
+      const report = buildCoreMappingImpactReport({
+        afterVocabulary,
+        asOfDate,
+        beforeVocabulary,
+        effectivePack,
+        ...(input.examCases === undefined ? {} : { examCases: input.examCases }),
+        ledger,
+        snapshots,
+      })
+
+      this.#commands.auditRead(context, 'offline.concept-mappings.impact-report', {
+        ...auditInput,
+        affectedFactCount: report.affectedHistoricalFactIds.length,
+        downgradedCount: report.downgradedMappingIds.length,
+      }, 'success')
+      return report
+    } catch (error) {
+      try {
+        this.#commands.auditRead(context, 'offline.concept-mappings.impact-report', auditInput, 'failed')
+      } catch {
+        // preserve original error
+      }
+      throw error
+    }
+  }
+
+  searchGuidelinesWithSynonyms(context: ActorContext, rawBody: unknown): OfflineGuidelineSearchResponse {
+    const auditInput: Record<string, unknown> = {}
+    try {
+      this.#assertOfflineAdministrator(context)
+      const input = offlineGuidelineSearchRequestSchema.parse(rawBody)
+      auditInput.query = input.query
+
+      if (this.#guidelines === undefined) {
+        throw new KnowledgePipelineError('GUIDELINE_CORPUS_UNAVAILABLE', '指南全文检索库未初始化', 404)
+      }
+
+      const vocabulary = this.#resolveVocabulary(input.packId, input.vocabulary)
+
+      const result = this.#guidelines.search(input.query, {
+        ...(input.population === undefined ? {} : { population: input.population }),
+        vocabulary,
+      })
+
+      this.#commands.auditRead(context, 'offline.guidelines.search', {
+        ...auditInput,
+        expandedCount: result.expandedTerms?.length ?? 0,
+        hitCount: result.guidelines.length,
+      }, 'success')
+      return offlineGuidelineSearchResponseSchema.parse(result)
+    } catch (error) {
+      try {
+        this.#commands.auditRead(context, 'offline.guidelines.search', auditInput, 'failed')
+      } catch {
+        // preserve original error
+      }
+      throw error
+    }
+  }
+}

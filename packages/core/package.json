@@ -23,6 +23,7 @@
     "./disease-pack": "./src/disease-pack.ts",
     "./concept-vocabulary": "./src/concept-vocabulary.ts",
     "./knowledge-claims": "./src/knowledge-claims.ts",
+    "./knowledge-pipeline": "./src/knowledge-pipeline.ts",
     "./insurance": "./src/insurance.ts",
     "./laboratory-specimen-container": "./src/laboratory-specimen-container.ts"
   },

@@ -6,6 +6,7 @@ import {
   type ConceptNode,
   type ConceptVocabulary,
 } from '@clinmesh/contracts/concept-vocabulary'
+import type { GuidelineSearchExpandedTerm } from '@clinmesh/contracts/knowledge-pipeline'
 
 export type ConceptVocabularyErrorCode = 'CONCEPT_VOCABULARY_INVALID'
 
@@ -788,6 +789,129 @@ export function resolveLedgerFactsForConcept(input: {
   }
 }
 
+export interface SearchQuerySynonymResolution {
+  readonly terms: string[]
+  readonly expansions: GuidelineSearchExpandedTerm[]
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function findMatchingSearchTerm(query: string, candidateTerms: readonly string[]): string | undefined {
+  const trimmedQuery = query.trim()
+  const lowerQuery = trimmedQuery.toLowerCase()
+  for (const rawTerm of candidateTerms) {
+    const term = rawTerm.trim()
+    const lowerTerm = term.toLowerCase()
+    if (!lowerTerm) continue
+    if (lowerQuery === lowerTerm) return trimmedQuery
+    if (lowerTerm.length < 2) continue
+    if (/\p{Script=Han}/u.test(lowerTerm)) {
+      if (lowerQuery.includes(lowerTerm)) return term
+    } else {
+      const boundary = new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(lowerTerm)}(?:$|[^a-z0-9])`, 'i')
+      if (boundary.test(trimmedQuery)) return term
+    }
+  }
+  return undefined
+}
+
+/**
+ * Resolve a search query into expanded terms and structured synonym mappings using ONLY
+ * concept node displays/synonyms and approved (`approved`) `exact` SKOS mappings.
+ * Never expands via `proposed`, `reviewed`, `deprecated`, `close`, `broader`, or `narrower` mappings.
+ */
+export function resolveSearchQuerySynonymExpansions(
+  query: string,
+  vocabulary: ConceptVocabulary,
+  options?: { asOfDate?: string },
+): SearchQuerySynonymResolution {
+  const trimmed = query.trim()
+  if (!trimmed) {
+    return { expansions: [], terms: [] }
+  }
+
+  const approvedExactMappings = vocabulary.mappings.filter(mapping => (
+    evaluateConceptMappingEligibility(
+      mapping,
+      options?.asOfDate === undefined ? undefined : { asOfDate: options.asOfDate },
+    ).eligibleForScoreAndRedLine
+  ))
+
+  const matchedQueryTermByCode = new Map<string, string>()
+  for (const node of vocabulary.nodes) {
+    const nodeTerms = [
+      node.displayZh,
+      ...node.synonyms,
+      ...(node.displayEn === undefined ? [] : [node.displayEn]),
+      node.code,
+    ]
+    const matched = findMatchingSearchTerm(trimmed, nodeTerms)
+    if (matched !== undefined) {
+      matchedQueryTermByCode.set(node.code, matched)
+    }
+  }
+
+  for (const mapping of approvedExactMappings) {
+    if (matchedQueryTermByCode.has(mapping.targetConceptCode)) continue
+    const matched = findMatchingSearchTerm(trimmed, [mapping.sourceDisplay, mapping.sourceCode])
+    if (matched !== undefined) {
+      matchedQueryTermByCode.set(mapping.targetConceptCode, matched)
+    }
+  }
+
+  const expandedTerms = new Set<string>([trimmed])
+  const expansions: GuidelineSearchExpandedTerm[] = []
+  const nodeByCode = new Map(vocabulary.nodes.map(node => [node.code, node]))
+
+  for (const [code, queryTerm] of matchedQueryTermByCode) {
+    const node = nodeByCode.get(code)
+    if (node === undefined) continue
+
+    const termCandidates = new Map<string, string | undefined>()
+    const registerTerm = (rawTerm: string, mappingId?: string) => {
+      const term = rawTerm.trim()
+      if (!term) return
+      const existing = termCandidates.get(term)
+      if (existing === undefined && mappingId !== undefined) {
+        termCandidates.set(term, mappingId)
+      } else if (!termCandidates.has(term)) {
+        termCandidates.set(term, mappingId)
+      }
+    }
+
+    for (const mapping of approvedExactMappings) {
+      if (mapping.targetConceptCode !== code) continue
+      registerTerm(mapping.sourceDisplay, mapping.id)
+      registerTerm(mapping.sourceCode, mapping.id)
+    }
+    registerTerm(node.displayZh)
+    for (const syn of node.synonyms) registerTerm(syn)
+    if (node.displayEn !== undefined) registerTerm(node.displayEn)
+    registerTerm(node.code)
+
+    const seenLower = new Set<string>()
+    for (const [term, mappingId] of termCandidates) {
+      expandedTerms.add(term)
+      const lowerTerm = term.toLowerCase()
+      if (lowerTerm === queryTerm.toLowerCase() || seenLower.has(lowerTerm)) continue
+      seenLower.add(lowerTerm)
+      expansions.push({
+        conceptCode: code,
+        expandedTerm: term,
+        ...(mappingId === undefined ? {} : { mappingId }),
+        queryTerm,
+      })
+    }
+  }
+
+  return {
+    expansions,
+    terms: [...expandedTerms],
+  }
+}
+
 /**
  * Expand a search query using ONLY node displays/synonyms and approved `exact` mappings.
  * Never expands via unapproved (`proposed`, `reviewed`), `deprecated`, or non-exact (`close`, `broader`, `narrower`) mappings.
@@ -796,58 +920,5 @@ export function expandSearchQueryWithApprovedSynonyms(
   query: string,
   vocabulary: ConceptVocabulary,
 ): string[] {
-  const trimmed = query.trim()
-  if (!trimmed) return []
-
-  const lowerQuery = trimmed.toLowerCase()
-  const approvedExactMappings = vocabulary.mappings.filter(mapping => (
-    mapping.reviewStatus === 'approved' && mapping.relation === 'exact'
-  ))
-
-  const matchesTerm = (term: string): boolean => {
-    const lowerTerm = term.trim().toLowerCase()
-    if (!lowerTerm) return false
-    if (lowerQuery === lowerTerm) return true
-    if (lowerTerm.length >= 2 && lowerQuery.includes(lowerTerm)) return true
-    return false
-  }
-
-  const matchedNodeCodes = new Set<string>()
-  for (const node of vocabulary.nodes) {
-    const nodeTerms = [
-      node.code,
-      node.displayZh,
-      ...(node.displayEn === undefined ? [] : [node.displayEn]),
-      ...node.synonyms,
-    ]
-    if (nodeTerms.some(matchesTerm)) {
-      matchedNodeCodes.add(node.code)
-    }
-  }
-
-  for (const mapping of approvedExactMappings) {
-    if (matchesTerm(mapping.sourceCode) || matchesTerm(mapping.sourceDisplay)) {
-      matchedNodeCodes.add(mapping.targetConceptCode)
-    }
-  }
-
-  const expanded = new Set<string>([trimmed])
-  const nodeByCode = new Map(vocabulary.nodes.map(node => [node.code, node]))
-
-  for (const code of matchedNodeCodes) {
-    const node = nodeByCode.get(code)
-    if (node === undefined) continue
-    expanded.add(node.code)
-    expanded.add(node.displayZh)
-    if (node.displayEn !== undefined) expanded.add(node.displayEn)
-    for (const syn of node.synonyms) expanded.add(syn)
-    for (const mapping of approvedExactMappings) {
-      if (mapping.targetConceptCode === code) {
-        expanded.add(mapping.sourceCode)
-        expanded.add(mapping.sourceDisplay)
-      }
-    }
-  }
-
-  return [...expanded]
+  return resolveSearchQuerySynonymExpansions(query, vocabulary).terms
 }

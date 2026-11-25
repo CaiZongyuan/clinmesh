@@ -1,4 +1,5 @@
 import type { GuidelineEvidence } from '@clinmesh/contracts/doctor-recommendations'
+import type { GuidelineSearchExpandedTerm } from '@clinmesh/contracts/knowledge-pipeline'
 
 export type GuidelineDeploymentPolicy = 'default' | 'internal-testing'
 export type GuidelineSourcePopulation = 'adult' | 'pediatric' | 'all'
@@ -51,6 +52,7 @@ export interface GuidelineSearchResult {
   diagnosisQueries: string[]
   inactiveSources: Array<{ id: string; url?: string; sourceHash?: string }>
   revision: string
+  expandedTerms?: GuidelineSearchExpandedTerm[]
 }
 
 export interface GuidelineSourceStatus {

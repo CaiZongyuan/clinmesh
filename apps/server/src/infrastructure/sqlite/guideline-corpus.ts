@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import type { ConceptVocabulary } from '@clinmesh/contracts/concept-vocabulary'
 import { guidelineEvidenceSchema, type GuidelineEvidence } from '@clinmesh/contracts/doctor-recommendations'
+import { PUBLIC_CONCEPT_VOCABULARY, resolveSearchQuerySynonymExpansions } from '@clinmesh/core/concept-vocabulary'
 import Database from 'better-sqlite3'
 import { z } from 'zod'
 import { guidelinePassagePolicyRevision, guidelineSourceLineage, isGuidelinePassageUsable, isGuidelineSourceUsable, localEvaluationSourcePrefix, matchesGuidelineLineagePopulation } from '../../application/guideline-corpus.ts'
@@ -84,6 +86,32 @@ const searchRevision = 'topic-shared-body-rounds-v3'
 const searchCacheLimit = 64
 const databaseVersionSchema = z.object({ dataVersion: z.number().int(), totalChanges: z.number().int() })
 const patientPopulationSchema = z.enum(['adult', 'pediatric', 'all-only'])
+
+function escapeSearchRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function matchesBoundarySearchTerm(text: string, term: string): boolean {
+  const escaped = escapeSearchRegExp(term)
+  return new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, 'i').test(text)
+}
+
+function matchesTopicSearchTerm(candidateQuery: string, rawTopicTerm: string): boolean {
+  const normalized = rawTopicTerm.trim().toLowerCase()
+  if (!normalized) return false
+  if (candidateQuery === normalized) return true
+  if (/\p{Script=Han}/u.test(normalized)) {
+    return normalized.length >= 2 && candidateQuery.includes(normalized)
+  }
+  return normalized.length >= 2 && matchesBoundarySearchTerm(candidateQuery, normalized)
+}
+
+function tokenizeSearchText(value: string): string[] {
+  const tokens = value.match(/\p{Script=Han}+|[a-zA-Z0-9]+/gu) ?? []
+  return tokens.flatMap(token => /^\p{Script=Han}{4,}$/u.test(token)
+    ? [token, ...Array.from({ length: token.length - 2 }, (_, index) => token.slice(index, index + 3))]
+    : [token]).filter(term => [...term].length >= 2)
+}
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex')
@@ -532,9 +560,10 @@ export class GuidelineCorpus {
     return evidence
   }
 
-  search(text: string, options?: { population?: GuidelinePatientPopulation }): GuidelineSearchResult {
+  search(text: string, options?: { population?: GuidelinePatientPopulation; vocabulary?: ConceptVocabulary }): GuidelineSearchResult {
     const population = options?.population === undefined ? undefined : patientPopulationSchema.parse(options.population)
-    const cacheKey = JSON.stringify([population ?? null, text])
+    const customVocabKey = options?.vocabulary === undefined ? null : hash(JSON.stringify(options.vocabulary))
+    const cacheKey = JSON.stringify([population ?? null, customVocabKey, text])
     return this.#database.transaction(() => {
       const version = JSON.stringify(databaseVersionSchema.parse(this.#databaseVersion.get()))
       if (version !== this.#searchVersion) {
@@ -559,7 +588,8 @@ export class GuidelineCorpus {
       const sourceBodies = new Map(rows.map(row => [row.id, row.bodyId]))
       const revision = hash(JSON.stringify([searchRevision, guidelinePassagePolicyRevision, this.#allowNonCommercial, this.#deploymentPolicy, this.#allowLocalEvaluation,
         rows.map(row => [row.digest, row.bodyId, validSourceIds.has(row.id)]),
-        ...(population === undefined ? [] : [population])]))
+        ...(population === undefined ? [] : [population]),
+        ...(customVocabKey === null ? [] : [customVocabKey])]))
       const guidelines: GuidelineEvidence[] = []
       const diagnosisQueries = new Set<string>()
       const inactiveSources: GuidelineSearchResult['inactiveSources'] = rows.flatMap(row => {
@@ -575,11 +605,29 @@ export class GuidelineCorpus {
       const inactiveSourceIds = new Set(inactiveSources.map(source => source.id))
       const candidates = new Map<string, { evidence: GuidelineEvidence; bodyId: string; queries: string[]; rank: number; topicMatches: number }>()
       const queryText = text.toLowerCase()
-      const tokens = text.match(/\p{Script=Han}+|[a-zA-Z0-9]+/gu) ?? []
-      const terms = [...new Set(tokens.flatMap(token => /^\p{Script=Han}{4,}$/u.test(token)
-        ? [token, ...Array.from({ length: token.length - 2 }, (_, index) => token.slice(index, index + 3))]
-        : [token]))]
-        .filter(term => [...term].length >= 2).slice(0, 96)
+      const activeVocabulary = options?.vocabulary ?? PUBLIC_CONCEPT_VOCABULARY
+      const synonymResolution = resolveSearchQuerySynonymExpansions(text, activeVocabulary)
+      const expansions = synonymResolution.expansions
+      const candidateTopicQueries = [queryText, ...expansions.map(item => item.expandedTerm.toLowerCase())]
+
+      const baseTerms = [...new Set(tokenizeSearchText(text))]
+      const baseTermLowerSet = new Set(baseTerms.map(term => term.toLowerCase()))
+      const safeExpandedTerms: string[] = []
+      const shortAsciiExpandedTerms: string[] = []
+      for (const expansion of expansions) {
+        for (const token of tokenizeSearchText(expansion.expandedTerm)) {
+          if (baseTermLowerSet.has(token.toLowerCase())) continue
+          if (/\p{Script=Han}/u.test(token) || [...token].length >= 4) {
+            safeExpandedTerms.push(token)
+          } else {
+            shortAsciiExpandedTerms.push(token)
+          }
+        }
+      }
+      const terms = [...new Set([...baseTerms, ...safeExpandedTerms, ...shortAsciiExpandedTerms])].slice(0, 96)
+      const safeNonShortAsciiLower = new Set([...baseTerms, ...safeExpandedTerms].map(term => term.toLowerCase()))
+      const uniqueShortAsciiExpanded = [...new Set(shortAsciiExpandedTerms)]
+
       for (const source of sources) {
         if (inactiveSourceIds.has(source.id)) continue
         if (!matchesGuidelineLineagePopulation(source, sources, population)) continue
@@ -587,7 +635,7 @@ export class GuidelineCorpus {
           allowLocalEvaluation: this.#allowLocalEvaluation, knownSources: sources })) continue
         const bodyId = sourceBodies.get(source.id)
         if (bodyId === null || bodyId === undefined) continue
-        const topics = source.topics.filter(topic => topic.terms.some(term => queryText.includes(term.toLowerCase())))
+        const topics = source.topics.filter(topic => topic.terms.some(term => candidateTopicQueries.some(qt => matchesTopicSearchTerm(qt, term))))
         const sourceTerms = [...new Set([...topics.flatMap(topic => topic.terms), ...terms])].slice(0, 128)
         const indexedTerms = sourceTerms.filter(term => [...term].length >= 3)
         const shortTerms = sourceTerms.filter(term => [...term].length === 2)
@@ -603,14 +651,20 @@ export class GuidelineCorpus {
           AND guideline_passage_usable(text)
           AND (${shortTerms.map(() => 'instr(lower(text), lower(?)) > 0').join(' OR ')}) ORDER BY id LIMIT 64
         `).all(bodyId, ...shortTerms)))
+        const sourceSafeTermsLower = new Set([...safeNonShortAsciiLower, ...topics.flatMap(topic => topic.terms.map(t => t.toLowerCase()))])
         const seen = new Set<string>()
         for (const passage of passages) {
           if (seen.has(passage.id)) continue
           seen.add(passage.id)
+          const passageText = passage.text.toLowerCase()
+          if (uniqueShortAsciiExpanded.length > 0) {
+            const matchesSafeTerm = [...sourceSafeTermsLower].some(term => passageText.includes(term))
+            const matchesBoundedShortAscii = uniqueShortAsciiExpanded.some(term => matchesBoundarySearchTerm(passage.text, term))
+            if (!matchesSafeTerm && !matchesBoundedShortAscii) continue
+          }
           const evidence = this.#evidence(source, passage)
           const queries = new Set<string>()
           let topicMatches = 0
-          const passageText = passage.text.toLowerCase()
           for (const topic of topics) {
             if (!topic.terms.some(term => passageText.includes(term.toLowerCase()))) continue
             topicMatches++
@@ -635,11 +689,23 @@ export class GuidelineCorpus {
         || left.bodyRound - right.bodyRound || left.rank - right.rank || left.evidence.id.localeCompare(right.evidence.id))) {
         if (guidelines.length === 8) break
         const queries = new Set([...diagnosisQueries, ...candidate.queries])
-        if (Buffer.byteLength(JSON.stringify({ guidelines: [...guidelines, candidate.evidence], diagnosisQueries: [...queries], inactiveSources, revision })) > 48 * 1024) continue
+        if (Buffer.byteLength(JSON.stringify({
+          guidelines: [...guidelines, candidate.evidence],
+          diagnosisQueries: [...queries],
+          inactiveSources,
+          revision,
+          ...(expansions.length > 0 ? { expandedTerms: expansions } : {}),
+        })) > 48 * 1024) continue
         guidelines.push(candidate.evidence)
         for (const query of queries) diagnosisQueries.add(query)
       }
-      const result = { guidelines, diagnosisQueries: [...diagnosisQueries], inactiveSources, revision }
+      const result: GuidelineSearchResult = {
+        guidelines,
+        diagnosisQueries: [...diagnosisQueries],
+        inactiveSources,
+        revision,
+        ...(expansions.length > 0 && guidelines.length > 0 ? { expandedTerms: expansions } : {}),
+      }
       this.#searchResults.set(cacheKey, structuredClone(result))
       if (this.#searchResults.size > searchCacheLimit) this.#searchResults.delete(this.#searchResults.keys().next().value!)
       return result
