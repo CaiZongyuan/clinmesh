@@ -7,6 +7,7 @@ import { inpatientAngiographyReportsSchema, type InpatientAngiographyReport } fr
 import { inpatientPciSelectionSchema, pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientMaterialEstimateResponseSchema, inpatientMaterialEstimatesSchema, inpatientMaterialEstimateSaveInputSchema, type InpatientMaterialEstimate } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientGuidelineAdviceListSchema, type InpatientGuidelineAdvice } from '@clinmesh/contracts/inpatient-guideline-advice'
+import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
 import type { z } from 'zod'
 import {
   anesthesiaMethods,
@@ -38,6 +39,7 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
+import { Checkbox } from '@clinmesh/ui/components/checkbox'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@clinmesh/ui/components/dialog'
 import { Spinner } from '@clinmesh/ui/components/spinner'
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
@@ -99,6 +101,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const reservations = useQuery({ queryKey: [...scope, admission.id, 'drg-reservations'], enabled: active && doctor, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/reservations`, inpatientMaterialReservationListSchema, signal) })
   const [surgeryType, setSurgeryType] = useState<SurgeryType>('elective')
   const [procedureId, setProcedureId] = useState<string | null>(null), [plannedFor, setPlannedFor] = useState(''), [reason, setReason] = useState('')
+  const [standbyAdHocPci, setStandbyAdHocPci] = useState(false)
   const [locationId, setLocationId] = useState<SurgeryLocationId | null>(null), [locationEdited, setLocationEdited] = useState(false)
   const [surgeonId, setSurgeonId] = useState<string | null>(null), [assistantId, setAssistantId] = useState<string | null>(null)
   const [anesthesiaMethod, setAnesthesiaMethod] = useState<AnesthesiaMethod | null>(null), [anesthesiaEdited, setAnesthesiaEdited] = useState(false)
@@ -122,7 +125,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const requestFocus = useRef<HTMLElement | null>(null)
   const resetRequestDraft = () => {
     setSurgeryType('elective')
-    setProcedureId(null); setPlannedFor(''); setReason('')
+    setProcedureId(null); setPlannedFor(''); setReason(''); setStandbyAdHocPci(false)
     setLocationId(null); setLocationEdited(false)
     setSurgeonId(null); setAssistantId(null)
     setAnesthesiaMethod(null); setAnesthesiaEdited(false)
@@ -163,6 +166,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const selectProcedure = (nextId: string | null) => {
     setProcedureId(nextId)
     const next = catalog.data?.procedures.find(item => item.id === nextId)
+    if (!next || !angiographyProcedureCodes.has(next.coding.code)) setStandbyAdHocPci(false)
     if (next) {
       if (!locationEdited) {
         const recommended = recommendedSurgeryLocationId(next)
@@ -208,6 +212,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         anesthesiaMethod: effectiveAnesthesia,
         preopOrderPolicy: effectivePreopOrderPolicy,
         reason,
+        ...(standbyAdHocPci && angiographyProcedureCodes.has(procedure.coding.code) ? { standbyAdHocPci: true } : {}),
         ...(clinicalOverride === undefined ? {} : { clinicalOverride }),
       },
     }, {
@@ -224,10 +229,14 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const running = surgery.data?.inProgress ?? []
   const reservationRows = reservations.data?.reservations ?? []
   const refresh = () => Promise.all([surgery.refetch(), catalog.refetch(), reservations.refetch()])
-  const estimatePlans = surgery.data?.requests.filter(row => ['requested', 'ready'].includes(row.status)) ?? []
+  const standbyDecisionPlans = surgery.data?.requests.filter(row => row.status === 'standby-pci' && row.adHocPci === undefined) ?? []
+  const estimatePlans = surgery.data?.requests.filter(row => ['requested', 'ready'].includes(row.status)
+    || (row.status === 'standby-pci' && row.adHocPci?.status === 'converted')) ?? []
   const pendingPlans = estimatePlans.filter(row => !running.some(execution => execution.requestId === row.id))
   const selectedPlan = pendingPlans.find(row => row.id === selectedRequestId) ?? pendingPlans[0] ?? estimatePlans[0]
-  const isPci = Boolean(selectedPlan && pciSelectionProcedureCodes.includes(selectedPlan.plannedProcedure.coding.code))
+  const selectedPlanStage = selectedPlan?.status === 'standby-pci' && selectedPlan.adHocPci?.status === 'converted' ? 'ad-hoc-pci' as const : 'primary' as const
+  const selectedPlanProcedure = selectedPlanStage === 'ad-hoc-pci' && selectedPlan?.adHocPci ? selectedPlan.adHocPci.procedure : selectedPlan?.plannedProcedure
+  const isPci = Boolean(selectedPlanProcedure && pciSelectionProcedureCodes.includes(selectedPlanProcedure.coding.code))
   const preopActive = doctor && running.length === 0 && pendingPlans.length > 0 && selectedPlan !== undefined
   const pollActive = active && preopActive && admission.status === 'admitted' && admission.recordStatus !== 'archived'
   const preopQuery = <T,>(subpath: string, schema: z.ZodType<T>, enabled = isPci) => useQuery({
@@ -274,9 +283,20 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/angiography-reports`, inpatientAngiographyReportsSchema, signal),
   })
   const selectedCompletedExecution = completedExecutions.find(item => item.id === selectedExecutionId) ?? completedExecutions.at(-1)
+  const showPrimaryDone = running.length === 0 && pendingPlans.length === 0 && standbyDecisionPlans.length === 0
+  const showPrimaryCta = Boolean(
+    doctor && showPrimaryDone && admission.status === 'admitted' && admission.recordStatus !== 'archived'
+    && selectedCompletedExecution?.executionStage === 'ad-hoc-pci',
+  )
+  const inStayRecord = useQuery({
+    queryKey: [...scope, admission.id, 'record'],
+    enabled: active && showPrimaryCta,
+    retry: false,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/record`, inpatientRecordSchema, signal),
+  })
   const materialDataReady = catalog.isSuccess && !catalog.isFetching && reservations.isSuccess && !reservations.isFetching
-  const activeReservations = reservationRows.filter(item => item.status === 'reserved' && item.requestId === selectedPlan?.id)
-  const currentEstimate = selectedPlan ? estimates.data?.estimates.find(item => item.requestId === selectedPlan.id) : undefined
+  const activeReservations = reservationRows.filter(item => item.status === 'reserved' && item.requestId === selectedPlan?.id && (item.surgeryStage ?? 'primary') === selectedPlanStage)
+  const currentEstimate = selectedPlan ? estimates.data?.estimates.find(item => item.requestId === selectedPlan.id && (item.surgeryStage ?? 'primary') === selectedPlanStage) : undefined
   const currentDraft = selectedPlan ? selection.data?.drafts?.find(item => item.requestId === selectedPlan.id) : undefined
   const currentConfirmed = selectedPlan && selection.data?.confirmation?.parameters.requestId === selectedPlan.id ? selection.data.confirmation.parameters : undefined
   const currentAdvice = selectedPlan ? guidelines.data?.advice.find(item => item.requestId === selectedPlan.id) : undefined
@@ -296,12 +316,19 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const cancelledPlans = surgery.data?.requests.filter(row => row.status === 'cancelled') ?? []
   const plans = <>
     {pendingPlans.length > 1 ? <Field><FieldLabel htmlFor="current-surgery-plan">{t('当前计划', 'Current plan')}</FieldLabel><WorkspaceSelect id="current-surgery-plan" value={selectedPlan?.id ?? null} disabled={write.blocked}
-      items={pendingPlans.map(row => ({ value: row.id, label: `${row.plannedProcedure.coding.display} · ${row.reason}` }))} onValueChange={setSelectedRequestId} /></Field> : null}
-    {pendingPlans.map(row => <div key={row.id} hidden={row.id !== selectedPlan?.id || running.length > 0 && !otherPlansOpen}><SurgeryRequest key={`${requestOwnerKey}:${row.id}`} row={row} catalog={catalog.data} reservations={reservationRows}
-      planBasis={estimates.data?.estimates.find(item => item.requestId === row.id)?.planBasis}
-      virtualTime={surgery.data?.virtualTime ?? admission.registeredAt}
-      dataReady={materialDataReady} onRetry={() => { void refresh() }}
-      admission={admission} session={session} locale={locale} write={write} preparationSlot={isPci || showStepTwo ? preparationSlot : null} preparation={row.id === selectedPlan?.id ? preparation : undefined} focused={active && row.id === selectedPlan?.id && (running.length === 0 || otherPlansOpen)} /></div>)}
+      items={pendingPlans.map(row => ({ value: row.id, label: `${row.status === 'standby-pci' && row.adHocPci?.status === 'converted' ? row.adHocPci.procedure.coding.display : row.plannedProcedure.coding.display} · ${row.reason}` }))} onValueChange={setSelectedRequestId} /></Field> : null}
+    {pendingPlans.map(row => {
+      const rowStage = row.status === 'standby-pci' && row.adHocPci?.status === 'converted' ? 'ad-hoc-pci' as const : 'primary' as const
+      const primaryLinkedNursingServiceId = rowStage === 'ad-hoc-pci'
+        ? completedExecutions.find(item => item.requestId === row.id && (item.executionStage ?? 'primary') === 'primary')?.linkedNursing?.serviceId
+        : undefined
+      return <div key={row.id} hidden={row.id !== selectedPlan?.id || running.length > 0 && !otherPlansOpen}><SurgeryRequest key={`${requestOwnerKey}:${row.id}:${rowStage}`} row={row} catalog={catalog.data} reservations={reservationRows}
+        planBasis={estimates.data?.estimates.find(item => item.requestId === row.id && (item.surgeryStage ?? 'primary') === rowStage)?.planBasis}
+        primaryLinkedNursingServiceId={primaryLinkedNursingServiceId}
+        virtualTime={surgery.data?.virtualTime ?? admission.registeredAt}
+        dataReady={materialDataReady} onRetry={() => { void refresh() }}
+        admission={admission} session={session} locale={locale} write={write} preparationSlot={isPci || showStepTwo ? preparationSlot : null} preparation={row.id === selectedPlan?.id ? preparation : undefined} focused={active && row.id === selectedPlan?.id && (running.length === 0 || otherPlansOpen)} /></div>
+    })}
   </>
   return <section aria-label={t('住院手术', 'Inpatient surgery')} className="flex flex-col gap-4">
     {doctor ? <div className="flex flex-wrap items-center justify-end gap-2">
@@ -343,6 +370,24 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
                       : t('手术完成时保留术前有效长期医嘱继续执行，术后重整自动跳过已在用项目。', 'Active pre-op long-term orders continue after surgery; postoperative templates skip already-active items by default.')}
                   </FieldDescription>
                 </Field>
+                {procedure && angiographyProcedureCodes.has(procedure.coding.code) ? (
+                  <Field orientation="horizontal" className="items-start rounded-md border border-border bg-muted/20 px-3 py-2.5 md:col-span-2">
+                    <Checkbox
+                      id={`${formId}-standby-pci`}
+                      aria-label={t('备选同台介入治疗（必要时行 PCI）', 'Standby same-session PCI if indicated')}
+                      className="mt-0.5"
+                      checked={standbyAdHocPci}
+                      disabled={blocked}
+                      onCheckedChange={checked => setStandbyAdHocPci(Boolean(checked))}
+                    />
+                    <FieldLabel htmlFor={`${formId}-standby-pci`} className="flex cursor-pointer flex-col items-start gap-0.5 text-sm font-normal">
+                      <span className="font-medium">{t('备选同台介入治疗（必要时行 PCI）', 'Standby same-session PCI if indicated')}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {t('勾选后签署造影与 PCI 联合知情同意书；造影完成后可免二次手术申请与二次术前核对，直接台内转行 PCI。', 'Signs a joint angiography & PCI consent; after angiography, convert directly to same-session PCI without a second request or preop check.')}
+                      </span>
+                    </FieldLabel>
+                  </Field>
+                ) : null}
                 <div className="md:col-span-2"><SurgeryRequestReason key={requestOwnerKey} admissionId={admission.id} session={session} open={requestOpen && active} locale={locale} value={reason} onChange={setReason} id={`${formId}-reason`} disabled={blocked} /></div>
               </FieldGroup></FieldSet>
             </div>
@@ -358,6 +403,22 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
       return plan ? <InpatientSurgeryMaterials key={execution.id} admission={admission} session={session} locale={locale} write={write} active={active}
         execution={execution} request={plan} catalog={catalog.data} reservations={reservationRows} dataReady={materialDataReady} running refresh={refresh} /> : null
     })}
+    {running.length === 0 && standbyDecisionPlans.length > 0 ? standbyDecisionPlans.map(row => {
+      const cagExec = completedExecutions.find(item => item.requestId === row.id && (item.executionStage ?? 'primary') === 'primary')
+      const cagReport = cagExec ? angiographyReports.data?.reports.find(item => item.procedureId === cagExec.id) : undefined
+      return <StandbyPciDecisionCard
+        key={`standby:${requestOwnerKey}:${row.id}`}
+        admission={admission}
+        doctor={doctor}
+        row={row}
+        cagExecution={cagExec}
+        report={cagReport}
+        catalog={catalog.data}
+        locale={locale}
+        write={write}
+        blocked={blocked}
+      />
+    }) : null}
     {pendingPlans.length > 0 ? running.length > 0 ? <details className="clinmesh-inpatient-disclosure" onToggle={event => setOtherPlansOpen(event.currentTarget.open)}><summary>{t('其他待实施手术', 'Other planned procedures')}</summary><div className="flex flex-col gap-4 py-3">{plans}</div></details> : <>
       {plans}
       {doctor && selectedPlan && isPci ? <PciStepOneCard
@@ -414,7 +475,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
       /> : null}
       <div ref={setPreparationSlot} />
     </> : null}
-    {!doctor && selectedCompletedExecution && running.length === 0 && pendingPlans.length === 0 ? <SurgeryDone admission={admission} request={surgery.data?.requests.find(item => item.id === selectedCompletedExecution.requestId)} execution={selectedCompletedExecution} angiographyReport={completedAngiographyReport} locale={locale} /> : null}
+    {!doctor && selectedCompletedExecution && showPrimaryDone ? <SurgeryDone admission={admission} request={surgery.data?.requests.find(item => item.id === selectedCompletedExecution.requestId)} execution={selectedCompletedExecution} angiographyReport={completedAngiographyReport} locale={locale} /> : null}
     {surgery.data?.requests.length === 0 ? <>
       <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
         <p>{t('本次住院暂无手术申请。', 'No surgery requests for this admission.')}</p>
@@ -430,7 +491,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
       const req = surgery.data?.requests.find(item => item.id === selectedCompletedExecution.requestId)
       if (!req) return null
       const correctionTrigger = <DialogTrigger render={<Button type="button" variant="outline" className="self-start" />}>{t('补登记与更正耗材', 'Add or correct materials')}</DialogTrigger>
-      const postopBanner = doctor && admission.status === 'admitted' && admission.recordStatus !== 'archived' ? (
+      const postopBanner = doctor && admission.status === 'admitted' && admission.recordStatus !== 'archived' && req.status !== 'standby-pci' ? (
         <div role="region" aria-label={t('手术完成术后医嘱引导', 'Postoperative order guidance')} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-info/40 bg-info/5 px-3 py-2.5 text-sm">
           <div className="min-w-0 flex-1">
             <p className="font-medium text-foreground">
@@ -447,8 +508,54 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
           </Button>
         </div>
       ) : null
+      const currentMainId = inStayRecord.data?.snapshot.clinical.mainProcedureExecutionId ?? null
+      const alreadyPrimary = currentMainId === selectedCompletedExecution.id
+      const primaryBanner = showPrimaryCta ? (
+        <div role="region" aria-label={t('确认在院主操作', 'Confirm in-stay primary procedure')} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/20 px-3.5 py-2.5 text-sm">
+          <div className="flex flex-col gap-0.5">
+            <span className="font-medium">
+              {alreadyPrimary
+                ? t(`已确认 ${selectedCompletedExecution.actualProcedure.coding.code} 为在院主操作`, `${selectedCompletedExecution.actualProcedure.coding.code} is confirmed as the in-stay primary procedure`)
+                : t(`是否将 ${selectedCompletedExecution.actualProcedure.coding.code} · ${selectedCompletedExecution.actualProcedure.coding.display} 确认为在院主操作？`, `Confirm ${selectedCompletedExecution.actualProcedure.coding.code} as the in-stay primary procedure?`)}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {alreadyPrimary
+                ? t('DRG 预分组已按当前主操作计算；出院结算后仍需提交完整病案首页。', 'DRG pre-grouping reflects this primary procedure; submit the full record after settlement.')
+                : t('确认后显式保存在院主操作并刷新 DRG 预分组，不会自动改写其他病案字段。', 'Explicitly saves the in-stay primary procedure and refreshes DRG pre-grouping without auto-editing other record fields.')}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {alreadyPrimary ? (
+              <>
+                <Badge variant="outline" className="text-success">{t('已确认为在院主操作', 'Confirmed as primary')}</Badge>
+                {onOpenStage ? <Button type="button" variant="link" size="sm" onClick={() => onOpenStage('record')}>{t('去病案查看', 'View record')}</Button> : null}
+              </>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                disabled={blocked || inStayRecord.isPending || !inStayRecord.data || write.mutation.isPending}
+                onClick={() => {
+                  if (!inStayRecord.data) return
+                  write.mutation.mutate({
+                    operation: 'inpatient.record.submit',
+                    input: {
+                      admissionId: admission.id,
+                      expectedRevision: inStayRecord.data.revision?.revision ?? 0,
+                      expectedSourcesHash: inStayRecord.data.sourcesHash,
+                      mainProcedureExecutionId: selectedCompletedExecution.id,
+                    },
+                  })
+                }}
+              >
+                {t(`确认 ${selectedCompletedExecution.actualProcedure.coding.code} 为在院主操作`, `Confirm ${selectedCompletedExecution.actualProcedure.coding.code} as primary procedure`)}
+              </Button>
+            )}
+          </div>
+        </div>
+      ) : null
       return <><Dialog open={correctionOpen} pending={write.mutation.isPending} onOpenChange={open => { setCorrectionOpen(open); if (open) setCorrectionVisited(true) }}>
-        {doctor && running.length === 0 && pendingPlans.length === 0 ? <SurgeryDone admission={admission} request={req} execution={selectedCompletedExecution} angiographyReport={completedAngiographyReport} locale={locale} guidance={postopBanner} actions={correctionTrigger} /> : <>{postopBanner}{correctionTrigger}</>}
+        {doctor && showPrimaryDone ? <SurgeryDone admission={admission} request={req} execution={selectedCompletedExecution} angiographyReport={completedAngiographyReport} locale={locale} guidance={postopBanner} actions={correctionTrigger} footer={primaryBanner} /> : <>{postopBanner}{correctionTrigger}</>}
         <DialogContent keepMounted={correctionVisited} className="sm:max-w-[800px]" showCloseButton={!write.mutation.isPending}>
           <DialogHeader><DialogTitle>{t('术后耗材补登记、更正与历史', 'Postoperative material addenda, corrections and history')}</DialogTitle><DialogDescription>{selectedCompletedExecution.actualProcedure.coding.display}</DialogDescription></DialogHeader>
           <div className="min-h-0 overflow-y-auto p-4">
@@ -459,13 +566,13 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
             {write.mutation.error && (attemptedCommand?.operation === 'inpatient.surgery.correct-material' || attemptedCommand?.operation === 'inpatient.surgery.supplement-material')
               && attemptedCommand.input.admissionId === admission.id && attemptedCommand.input.requestId === req.id
               && attemptedCommand.input.executionId === selectedCompletedExecution.id ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))} <Button type="button" variant="outline" size="sm" disabled={write.blocked} onClick={() => { void refresh() }}>{t('刷新目录与记录，保留编辑', 'Refresh catalog and records, keep edits')}</Button></AlertDescription></Alert> : null}
-            {doctor && (running.length > 0 || pendingPlans.length > 0) && correctionVisited ? <InpatientDrgReviewPanel key={`review:${requestOwnerKey}:${req.id}`} requestId={req.id} admission={admission} session={session} locale={locale} write={write} active={active && correctionOpen} compact onOpenRecord={target => onOpenStage?.(target)} /> : null}
+            {doctor && !showPrimaryDone && correctionVisited ? <InpatientDrgReviewPanel key={`review:${requestOwnerKey}:${req.id}`} requestId={req.id} admission={admission} session={session} locale={locale} write={write} active={active && correctionOpen} compact onOpenRecord={target => onOpenStage?.(target)} /> : null}
             {correctionVisited ? <InpatientSurgeryMaterials key={`${requestOwnerKey}:${selectedCompletedExecution.id}`} admission={admission} session={session} locale={locale} write={write} active={active && correctionOpen} execution={selectedCompletedExecution} request={req} catalog={catalog.data} reservations={reservationRows} dataReady={materialDataReady} running={false} inDialog refresh={refresh} /> : null}
           </div>
           <OrderComposerFooter><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>
         </DialogContent>
       </Dialog>
-      {doctor && running.length === 0 && pendingPlans.length === 0 ? <InpatientDrgReviewPanel key={requestOwnerKey} requestId={selectedCompletedExecution.requestId} admission={admission} session={session} locale={locale} write={write} active={active} compact showPrimaryAction onOpenRecord={target => onOpenStage?.(target)} /> : null}
+      {doctor && showPrimaryDone ? <InpatientDrgReviewPanel key={requestOwnerKey} requestId={selectedCompletedExecution.requestId} admission={admission} session={session} locale={locale} write={write} active={active} compact showPrimaryAction onOpenRecord={target => onOpenStage?.(target)} /> : null}
       {doctor ? (
         <InpatientPostopComposer
           open={postopOpen && active}
@@ -481,7 +588,6 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
       ) : null}</>
     })() : null}
     {(() => {
-      const showPrimaryDone = running.length === 0 && pendingPlans.length === 0
       const archivedCompleted = showPrimaryDone
         ? completedExecutions.filter(item => item.id !== selectedCompletedExecution?.id)
         : completedExecutions
@@ -525,7 +631,162 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   </section>
 }
 
-function SurgeryDone({ admission, request, execution, angiographyReport, locale, guidance, actions }: { admission: InpatientAdmission; request: Request | undefined; execution: z.infer<typeof inpatientSurgeryExecutionSchema>; angiographyReport: InpatientAngiographyReport | undefined; locale: WorkspaceLocale; guidance?: ReactNode; actions?: ReactNode }) {
+function StandbyPciDecisionCard({ admission, doctor, row, cagExecution, report, catalog, locale, write, blocked }: {
+  admission: InpatientAdmission
+  doctor: boolean
+  row: Request
+  cagExecution: z.infer<typeof inpatientSurgeryExecutionSchema> | undefined
+  report: InpatientAngiographyReport | undefined
+  catalog: Catalog | undefined
+  locale: WorkspaceLocale
+  write: ReturnType<typeof useInpatientWriteIntent>
+  blocked: boolean
+}): React.JSX.Element {
+  const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
+  const pciProcedures = (catalog?.procedures ?? []).filter(item => pciSelectionProcedureCodes.includes(item.coding.code))
+  const [selectedPciId, setSelectedPciId] = useState<string | null>(null)
+  const [decisionNote, setDecisionNote] = useState('')
+  const targetPci = pciProcedures.find(item => item.id === selectedPciId)
+    ?? pciProcedures.find(item => item.coding.code === '36.0700')
+    ?? pciProcedures[0]
+  const reportProcessing = !report || report.status === 'processing'
+  const reportUsable = report !== undefined && (
+    report.status === 'final'
+    || (report.status === 'partial'
+      && (report.vessels.length > 0 || report.measurements.length > 0 || report.targetSite !== null || report.conclusion !== null))
+  )
+  const convert = (clinicalOverride?: ClinicalOverrideInput) => {
+    if (blocked || !reportUsable || !targetPci) return
+    const trimmed = decisionNote.trim()
+    write.mutation.mutate({
+      operation: 'inpatient.surgery.convert-to-pci',
+      input: {
+        admissionId: admission.id,
+        requestId: row.id,
+        expectedRequestVersion: row.version,
+        procedureId: targetPci.id,
+        catalogVersion: targetPci.version,
+        ...(trimmed ? { note: trimmed } : {}),
+        ...(clinicalOverride === undefined ? {} : { clinicalOverride }),
+      },
+    })
+  }
+  const finalizeStandby = () => {
+    if (blocked) return
+    const trimmed = decisionNote.trim()
+    write.mutation.mutate({
+      operation: 'inpatient.surgery.finalize-standby',
+      input: {
+        admissionId: admission.id,
+        requestId: row.id,
+        expectedRequestVersion: row.version,
+        ...(trimmed ? { note: trimmed } : {}),
+      },
+    })
+  }
+  const convertError = write.mutation.error
+    && (write.mutation.variables?.operation === 'inpatient.surgery.convert-to-pci' || write.mutation.variables?.operation === 'inpatient.surgery.finalize-standby')
+    && write.mutation.variables.input.admissionId === admission.id
+    && write.mutation.variables.input.requestId === row.id
+    ? write.mutation.error
+    : null
+  const actionButtons = <>
+    <Button type="button" variant="outline" disabled={blocked || write.mutation.isPending} onClick={finalizeStandby}>
+      {t('仅完成造影，结束本台手术', 'Angiography only, close surgery')}
+    </Button>
+    <Button type="button" disabled={blocked || !reportUsable || !targetPci || write.mutation.isPending} onClick={() => convert()}>
+      {t('同台转行 PCI', 'Convert to Ad-hoc PCI')}
+    </Button>
+  </>
+  return (
+    <article role="region" aria-label={t('待同台决策', 'Standby PCI decision')} className="flex min-w-0 flex-col gap-3 rounded-lg border border-info/40 bg-card p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h4 className="font-semibold">{t('冠脉造影已完成 · 待同台决策', 'Coronary angiography completed · Standby PCI decision')}</h4>
+        <Badge variant="outline" className="text-info">{t('待同台决策', 'Standby PCI')}</Badge>
+        <span className="flex-1" />
+        <SurgicalConsentPreviewButton admission={admission} request={row} locale={locale} />
+      </div>
+      <div className="clinmesh-inpatient-summary flex flex-col gap-2">
+        <SurgeryNoticeSummaryList
+          row={row}
+          locale={locale}
+          includeProcedure
+          extraItems={cagExecution ? [{ label: t('造影完成时间', 'Angiography completed'), value: formatShanghaiMinute(cagExecution.completedAt ?? cagExecution.performedAt).slice(5), className: 'tabular-nums' }] : []}
+        />
+        <SurgeryExecutionExtrasSummary execution={cagExecution} locale={locale} />
+      </div>
+      {reportProcessing ? (
+        <div role="status" className="flex items-center gap-2 rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          <Spinner aria-hidden="true" className="size-3.5" />
+          <span>{t('冠脉造影报告正在生成，报告就绪后可同台转行 PCI；如仅完成造影可直接结束本台手术。', 'Coronary angiography report is generating; same-session PCI unlocks when ready, or close angiography now.')}</span>
+        </div>
+      ) : (
+        <>
+          <CoronaryAngiographyDisclosure report={report} locale={locale} summary={t('冠脉造影与生理学报告', 'Coronary angiography & physiology report')} />
+          {!reportUsable ? (
+            <Alert variant="destructive">
+              <AlertDescription>
+                {t('本次冠脉造影未产出有效报告结果，暂不能同台转行 PCI；请先仅完成造影结束本台手术，核实造影资料后再决定后续治疗。', 'No usable coronary angiography findings are available; close as angiography-only and verify results before scheduling PCI.')}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+        </>
+      )}
+      {doctor ? (
+        <>
+          <p className="text-xs text-muted-foreground">
+            {t('本台已签署造影与 PCI 联合知情同意书并完成术前核对。根据造影结果选择同台直接转行 PCI（免二次手术申请与术前核对），或仅完成造影结束本台手术。', 'Joint consent and preoperative check are complete. Convert directly to same-session PCI without a second request/preop check, or close as angiography-only.')}
+          </p>
+          {convertError && !extractClinicalQualityError(convertError) ? (
+            <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(convertError, getWorkspaceMessages(locale))}</AlertDescription></Alert>
+          ) : null}
+          <InpatientClinicalQualityBanner
+            admissionId={admission.id}
+            locale={locale}
+            match={write.mutation.variables?.operation === 'inpatient.surgery.convert-to-pci' && write.mutation.variables.input.requestId === row.id}
+            onSubmitOverride={override => convert(override)}
+            operation="inpatient.surgery.convert-to-pci"
+            pending={blocked || !reportUsable || !targetPci || write.mutation.isPending}
+            write={write}
+          />
+          <FieldSet disabled={blocked}><FieldGroup className="grid gap-3 md:grid-cols-2">
+            <Field>
+              <FieldLabel htmlFor={`standby-pci-procedure-${row.id}`}>{t('拟转 PCI 术式', 'Target PCI procedure')}</FieldLabel>
+              <WorkspaceSelect
+                id={`standby-pci-procedure-${row.id}`}
+                value={targetPci?.id ?? null}
+                items={pciProcedures.map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))}
+                onValueChange={setSelectedPciId}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`standby-pci-note-${row.id}`}>{t('决策说明（选填）', 'Decision note (optional)')}</FieldLabel>
+              <Input
+                id={`standby-pci-note-${row.id}`}
+                maxLength={2000}
+                placeholder={t('例如：造影示 LAD 近段 90% 狭窄，同台转行支架置入', 'e.g. Proximal LAD 90% stenosis; convert to same-session PCI')}
+                value={decisionNote}
+                onChange={event => setDecisionNote(event.currentTarget.value)}
+              />
+            </Field>
+          </FieldGroup></FieldSet>
+          <InpatientPrimaryAction stage="surgery" priority={48} fallback={<div className="flex flex-wrap justify-end gap-2">{actionButtons}</div>}>
+            <WorkspaceActionBar
+              tone={reportProcessing ? 'blocked' : 'normal'}
+              summary={t('冠脉造影已完成 · 待同台决策', 'Angiography complete · Standby PCI')}
+              reason={reportProcessing ? t('等待造影报告生成后再转 PCI，或仅完成造影结束本台', 'Wait for the angiography report to convert, or close as angiography-only') : t('免二次申请与术前核对，可直接同台转行 PCI', 'Convert directly to same-session PCI without a second request')}
+              action={actionButtons}
+            />
+          </InpatientPrimaryAction>
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground">{t('冠脉造影已完成，等待住院医生根据造影结果决定是否同台转行 PCI。', 'Angiography complete; waiting for the inpatient doctor to decide whether to convert to same-session PCI.')}</p>
+      )}
+    </article>
+  )
+}
+
+function SurgeryDone({ admission, request, execution, angiographyReport, locale, guidance, actions, footer }: { admission: InpatientAdmission; request: Request | undefined; execution: z.infer<typeof inpatientSurgeryExecutionSchema>; angiographyReport: InpatientAngiographyReport | undefined; locale: WorkspaceLocale; guidance?: ReactNode; actions?: ReactNode; footer?: ReactNode }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const rows = execution.materials.reduce<{ item: (typeof execution.materials)[number]['item']; quantity: number; amountFen: number }[]>((result, use) => {
     const row = result.find(item => item.item.id === use.item.id)
@@ -539,16 +800,17 @@ function SurgeryDone({ admission, request, execution, angiographyReport, locale,
     + medications.reduce((sum, med) => sum + med.amountFen, 0)
     + (linkedNursing?.amountFen ?? 0)
   return <section aria-label={t('最终耗材', 'Final materials')} className="flex min-w-0 flex-col gap-2">
-    <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{execution.actualProcedure.coding.display}</h4><span className="font-mono text-xs text-muted-foreground">{execution.actualProcedure.coding.code}</span><Badge variant="outline" className="text-success">{t('已完成', 'Completed')}</Badge><span className="flex-1" />{request ? <SurgicalConsentPreviewButton admission={admission} request={request} locale={locale} /> : null}{actions}</div>
+    <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{execution.actualProcedure.coding.display}</h4><span className="font-mono text-xs text-muted-foreground">{execution.actualProcedure.coding.code}</span>{execution.executionStage === 'ad-hoc-pci' ? <Badge variant="secondary">{t('同台转 PCI', 'Ad-hoc PCI')}</Badge> : null}<Badge variant="outline" className="text-success">{t('已完成', 'Completed')}</Badge><span className="flex-1" />{request ? <SurgicalConsentPreviewButton admission={admission} request={request} locale={locale} /> : null}{actions}</div>
     {guidance}
     {request ? <div className="clinmesh-inpatient-summary"><SurgeryNoticeSummaryList row={request} locale={locale} includeProcedure={request.plannedProcedure.coding.code !== execution.actualProcedure.coding.code} /></div> : null}
     {angiographyReport && angiographyReport.status !== 'processing' ? <CoronaryAngiographyDisclosure report={angiographyReport} locale={locale} summary={t('冠脉造影与生理学报告', 'Coronary angiography & physiology report')} /> : null}
     <Table><TableHeader><TableRow><TableHead>{t('耗材', 'Material')}</TableHead><TableHead>{t('最终用量', 'Final quantity')}</TableHead><TableHead className="text-right">{t('费用', 'Charge')}</TableHead></TableRow></TableHeader>
       <TableBody>{rows.map(row => <TableRow key={row.item.id}><TableCell className="whitespace-normal">{row.item.display}</TableCell><TableCell className="tabular-nums">{row.quantity} {row.item.chargeDefinition.unit}</TableCell><TableCell className="text-right tabular-nums">{formatFen(row.amountFen, locale)}</TableCell></TableRow>)}
         {medications.map(med => <TableRow key={`med-${med.id}`}><TableCell className="whitespace-normal">{t('台内药', 'Intraoperative med')} · {med.display}（{med.doseText} · {formatMedicationRoute(med.routeCode, locale)}）</TableCell><TableCell className="tabular-nums">{med.quantity} {med.unit}</TableCell><TableCell className="text-right tabular-nums">{formatFen(med.amountFen, locale)}</TableCell></TableRow>)}
-        {linkedNursing ? <TableRow><TableCell className="whitespace-normal">{t('术中专科护理', 'Specialty nursing')} · {linkedNursing.display}</TableCell><TableCell className="tabular-nums">1 {linkedNursing.unit}</TableCell><TableCell className="text-right tabular-nums">{formatFen(linkedNursing.amountFen, locale)}</TableCell></TableRow> : null}
+        {linkedNursing ? <TableRow><TableCell className="whitespace-normal">{t('术中专科护理', 'Specialty nursing')} · {linkedNursing.display}</TableCell><TableCell className="tabular-nums">1 {linkedNursing.unit}</TableCell><TableCell className="text-right tabular-nums">{formatFen(linkedNursing.amountFen, locale)}</TableCell></TableRow> : execution.sameSessionNursingIncluded ? <TableRow><TableCell className="whitespace-normal">{t('术中专科护理', 'Specialty nursing')}</TableCell><TableCell className="text-xs text-muted-foreground">{t('已包含于同台造影阶段，不重复计收', 'Included in same-session angiography')}</TableCell><TableCell className="text-right tabular-nums">{formatFen(0, locale)}</TableCell></TableRow> : null}
         <TableRow><TableCell className="whitespace-normal">{t('术式费', 'Procedure fee')} · {execution.actualProcedure.coding.display}</TableCell><TableCell>{t('1 次', '1')}</TableCell><TableCell className="text-right tabular-nums">{formatFen(procedureFen, locale)}</TableCell></TableRow></TableBody>
       <TableFooter><TableRow><TableCell colSpan={2}>{t('本台合计', 'Surgery total')}</TableCell><TableCell className="text-right tabular-nums">{formatFen(totalFen, locale)}</TableCell></TableRow></TableFooter></Table>
+    {footer}
     {!actions ? <p className="text-sm text-muted-foreground">{t('耗材与术式费已计入住院费用', 'Materials and procedure fee are posted')}</p> : null}
   </section>
 }
@@ -575,8 +837,9 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, repo
   const [lesionLength, setLesionLength] = useState<string | null>(null)
   const [proximalDiameter, setProximalDiameter] = useState<string | null>(null)
   const [distalDiameter, setDistalDiameter] = useState<string | null>(null)
+  const effectiveProcedure = plan.status === 'standby-pci' && plan.adHocPci?.status === 'converted' ? plan.adHocPci.procedure : plan.plannedProcedure
   const siteValue = targetSite ?? base?.targetSite ?? ''
-  const planValue = treatmentPlan ?? base?.treatmentPlan ?? plan.plannedProcedure.coding.display
+  const planValue = treatmentPlan ?? base?.treatmentPlan ?? effectiveProcedure.coding.display
   const findMeasurement = (kind: 'lesion-length' | 'proximal-reference-diameter' | 'distal-reference-diameter') =>
     base?.measurements.find(item => item.kind === kind)
   const lengthM = findMeasurement('lesion-length')
@@ -588,7 +851,7 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, repo
   const prefilled = draft !== undefined && !draft.edited
   const validNum = (v: string, allowEmpty = false) => allowEmpty && v.trim() === '' ? true : Number(v) > 0
   const valid = siteValue.trim().length > 0 && planValue.trim().length > 0 && validNum(lengthVal) && validNum(proxVal) && validNum(distVal, true)
-  const hasManualEdits = siteValue.trim() !== (base?.targetSite ?? '') || planValue.trim() !== (base?.treatmentPlan ?? plan.plannedProcedure.coding.display)
+  const hasManualEdits = siteValue.trim() !== (base?.targetSite ?? '') || planValue.trim() !== (base?.treatmentPlan ?? effectiveProcedure.coding.display)
     || [lengthVal, proxVal, distVal].some((value, index) => value.trim() !== ([lengthM, proxM, distM][index]?.value == null ? '' : String([lengthM, proxM, distM][index]!.value)))
   const saveAndConfirmStepOne = async (clinicalOverride?: ClinicalOverrideInput) => {
     if (!valid || blocked) return
@@ -717,7 +980,7 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, repo
     {report && report.status !== 'processing' ? <CoronaryAngiographyDisclosure report={report} locale={locale} summary={t('冠脉造影与生理学依据', 'Coronary angiography & physiology evidence')} /> : null}
     <InpatientClinicalQualityBanner admissionId={admission.id} locale={locale} match={write.mutation.variables?.operation === 'inpatient.pci-selection.confirm' && write.mutation.variables.input.parameters.requestId === plan.id} onSubmitOverride={override => { void saveAndConfirmStepOne(override) }} operation="inpatient.pci-selection.confirm" pending={blocked || !valid || write.mutation.isPending} write={write} />
     <InpatientPrimaryAction stage="surgery" priority={45} fallback={primaryButton}>
-      <WorkspaceActionBar tone={valid ? 'normal' : 'blocked'} summary={plan.plannedProcedure.coding.display} reason={draft ? t('核对助手预填的病变测量', 'Review assistant-prefilled lesion measurements') : t('填写病变测量', 'Enter lesion measurements')} action={primaryButton} />
+      <WorkspaceActionBar tone={valid ? 'normal' : 'blocked'} summary={effectiveProcedure.coding.display} reason={draft ? t('核对助手预填的病变测量', 'Review assistant-prefilled lesion measurements') : t('填写病变测量', 'Enter lesion measurements')} action={primaryButton} />
     </InpatientPrimaryAction>
   </section>
 }
@@ -1000,7 +1263,7 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
     <InpatientPrimaryAction stage="surgery" priority={45} fallback={confirmBtn}>
       <WorkspaceActionBar
         tone={nonZeroItems.length === 0 ? 'blocked' : 'normal'}
-        summary={plan.plannedProcedure.coding.display}
+        summary={plan.status === 'standby-pci' && plan.adHocPci?.status === 'converted' ? plan.adHocPci.procedure.coding.display : plan.plannedProcedure.coding.display}
         reason={nonZeroItems.length === 0 ? t('还差：耗材数量', 'Enter material quantities') : confirmLabel}
         action={confirmBtn}
       />
@@ -1008,7 +1271,7 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
   </section>
 }
 
-function SurgeryRequest({ row, catalog, reservations, planBasis, virtualTime, dataReady, onRetry, admission, session, locale, write, focused, preparation, preparationSlot }: Props & { preparationSlot?: HTMLDivElement | null; preparation?: ReturnType<typeof surgeryPreparation> | undefined; row: Request; catalog: Catalog | undefined; reservations: InpatientMaterialReservation[]; planBasis?: z.infer<typeof inpatientMaterialEstimatesSchema>['estimates'][number]['planBasis'] | undefined; virtualTime: string; focused: boolean; dataReady: boolean; onRetry: () => void }): React.JSX.Element {
+function SurgeryRequest({ row, catalog, reservations, planBasis, primaryLinkedNursingServiceId, virtualTime, dataReady, onRetry, admission, session, locale, write, focused, preparation, preparationSlot }: Props & { preparationSlot?: HTMLDivElement | null; preparation?: ReturnType<typeof surgeryPreparation> | undefined; row: Request; catalog: Catalog | undefined; reservations: InpatientMaterialReservation[]; planBasis?: z.infer<typeof inpatientMaterialEstimatesSchema>['estimates'][number]['planBasis'] | undefined; primaryLinkedNursingServiceId?: string | undefined; virtualTime: string; focused: boolean; dataReady: boolean; onRetry: () => void }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const doctor = session.actor.roleCode === 'inpatient-doctor', nurse = session.actor.roleCode === 'ward-nurse'
   const [panel, setPanel] = useState<'consent' | 'cancel' | 'start' | 'batch' | null>(null)
@@ -1017,16 +1280,19 @@ function SurgeryRequest({ row, catalog, reservations, planBasis, virtualTime, da
   const [actualId, setActualId] = useState<string | null>(null)
   const batchTrigger = useRef<HTMLButtonElement | null>(null), startTrigger = useRef<HTMLButtonElement | null>(null), consentTrigger = useRef<HTMLElement | null>(null)
   useLayoutEffect(() => { if (!focused) setPanel(current => current === 'consent' || current === 'start' || current === 'batch' ? null : current) }, [focused])
-  const actual = catalog?.procedures.find(item => item.id === (actualId ?? row.plannedProcedure.id))
+  const adHocConverted = row.status === 'standby-pci' && row.adHocPci?.status === 'converted'
+  const effectiveProcedure = adHocConverted && row.adHocPci ? row.adHocPci.procedure : row.plannedProcedure
+  const stage = adHocConverted ? 'ad-hoc-pci' as const : 'primary' as const
+  const actual = catalog?.procedures.find(item => item.id === (actualId ?? effectiveProcedure.id))
   const startServerNoteRequired = write.mutation.error instanceof ApiClientError && write.mutation.error.code === 'INPATIENT_SURGERY_NOTE_REQUIRED'
     && write.mutation.variables?.operation === 'inpatient.surgery.start' && write.mutation.variables.input.requestId === row.id
-  const startDeviated = Boolean(actual && !isSamePlannedProcedure(actual, row.plannedProcedure)) || startServerNoteRequired
+  const startDeviated = Boolean(actual && !isSamePlannedProcedure(actual, effectiveProcedure)) || startServerNoteRequired
   const showStartNote = startDeviated || startNoteOpen || startNote.trim().length > 0
-  const active = ['requested', 'ready'].includes(row.status), ready = row.status === 'ready', blocked = write.blocked || admission.status !== 'admitted'
+  const active = ['requested', 'ready'].includes(row.status) || adHocConverted, ready = row.status === 'ready' || adHocConverted, blocked = write.blocked || admission.status !== 'admitted'
   const common = { admissionId: admission.id, requestId: row.id, expectedRequestVersion: row.version }
   const close = { onSuccess: () => setPanel(null) }
   const pending = (operation: string) => write.mutation.isPending && write.mutation.variables?.operation === operation
-  const planned = reservations.filter(item => item.requestId === row.id && item.status === 'reserved')
+  const planned = reservations.filter(item => item.requestId === row.id && (item.surgeryStage ?? 'primary') === stage && item.status === 'reserved')
   const plannedFen = planned.reduce((sum, item) => sum + item.priceFen * (item.remainingQuantity ?? item.quantity - item.consumedQuantity), 0)
   const start = () => {
     const trimmed = startNote.trim()
@@ -1038,24 +1304,37 @@ function SurgeryRequest({ row, catalog, reservations, planBasis, virtualTime, da
     }
   }
   const missing = [!row.consentConfirmation ? t('手术知情同意书（你）', 'signed consent (you)') : null, !row.preopCheck ? t('术前核对（病区护士）', 'preoperative checks (ward nurse)') : null].filter(Boolean)
-  const status = { requested: t('待准备', 'Preparation pending'), ready: t('已就绪', 'Ready'), completed: t('已实施', 'Completed'), cancelled: t('已取消', 'Cancelled') }[row.status]
+  const status = {
+    requested: t('待准备', 'Preparation pending'),
+    ready: t('已就绪', 'Ready'),
+    'standby-pci': adHocConverted ? t('同台转 PCI 待实施', 'Converted to Ad-hoc PCI') : t('待同台决策', 'Standby PCI'),
+    completed: t('已实施', 'Completed'),
+    cancelled: t('已取消', 'Cancelled'),
+  }[row.status]
   const preparationTitle = t('术前准备', 'Preoperative preparation')
   const preparationReady = !doctor || !preparation || ['consent', 'nurse', 'start'].includes(preparation.step)
   const bar = panel === 'cancel' ? {
     priority: 50,
     tone: cancelNote.trim() ? 'confirm' as const : 'blocked' as const,
     busy: undefined,
-    reason: cancelNote.trim() ? t('取消后这份申请不能再开始手术', 'A cancelled request cannot start surgery') : t('还差：取消理由', 'Enter the cancellation reason'),
+    reason: adHocConverted
+      ? (cancelNote.trim() ? t('放弃后将释放同台 PCI 预留并仅保留已完成造影记录', 'Abandoning releases Ad-hoc PCI reservations and closes with angiography only') : t('还差：放弃同台 PCI 理由', 'Enter the reason for abandoning Ad-hoc PCI'))
+      : (cancelNote.trim() ? t('取消后这份申请不能再开始手术', 'A cancelled request cannot start surgery') : t('还差：取消理由', 'Enter the cancellation reason')),
     action: <><Button variant="ghost" disabled={write.mutation.isPending} onClick={() => setPanel(null)}>{t('返回', 'Back')}</Button>
-      <Button variant="destructive" disabled={blocked || !cancelNote.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.cancel', input: { ...common, note: cancelNote.trim() } }, close)}>{t('确认取消手术申请', 'Cancel surgery request')}</Button></>,
+      <Button variant="destructive" disabled={blocked || !cancelNote.trim()} onClick={() => write.mutation.mutate(
+        adHocConverted
+          ? { operation: 'inpatient.surgery.finalize-standby', input: { ...common, note: cancelNote.trim() } }
+          : { operation: 'inpatient.surgery.cancel', input: { ...common, note: cancelNote.trim() } },
+        close,
+      )}>{adHocConverted ? t('确认放弃同台 PCI，仅保留造影结束本台', 'Abandon Ad-hoc PCI and close angiography') : t('确认取消手术申请', 'Cancel surgery request')}</Button></>,
   }
     : {
       priority: ready ? 20 : -20,
       tone: ready && !blocked ? 'normal' as const : 'blocked' as const,
       busy: undefined,
-      reason: missing.length > 0 ? `${t('还差：', 'Still needed: ')}${missing.join(t('、', ', '))}` : t('开始后逐笔登记耗材；术式费在完成手术时计入', 'Record materials one by one after starting; the procedure fee is posted at completion'),
-      action: <>{ready ? <Button ref={batchTrigger} variant="outline" disabled={blocked} onClick={() => setPanel('batch')}>{t('整台补录', 'Record entire surgery')}</Button> : null}
-        <Button ref={startTrigger} disabled={blocked || !ready} onClick={() => { setActualId(null); setStartNoteOpen(false); setPanel('start') }}>{t('开始手术', 'Start surgery')}</Button></>,
+      reason: missing.length > 0 ? `${t('还差：', 'Still needed: ')}${missing.join(t('、', ', '))}` : adHocConverted ? t('已免二次术前核对与知情同意；开始同台 PCI 后逐笔登记支架与耗材，术中专科护理不重复计收', 'Consent & preop waived; start Ad-hoc PCI to record materials with no duplicate specialty nursing charge') : t('开始后逐笔登记耗材；术式费在完成手术时计入', 'Record materials one by one after starting; the procedure fee is posted at completion'),
+      action: <>{ready ? <Button ref={batchTrigger} variant="outline" disabled={blocked} onClick={() => setPanel('batch')}>{adHocConverted ? t('整台补录同台 PCI', 'Record entire Ad-hoc PCI') : t('整台补录', 'Record entire surgery')}</Button> : null}
+        <Button ref={startTrigger} disabled={blocked || !ready} onClick={() => { setActualId(null); setStartNoteOpen(false); setPanel('start') }}>{adHocConverted ? t('开始同台 PCI', 'Start Ad-hoc PCI') : t('开始手术', 'Start surgery')}</Button></>,
     }
   const nextStep = preparation?.step ?? (!row.consentConfirmation ? 'consent' : !row.preopCheck ? 'nurse' : 'start')
   if (panel === null && nextStep !== 'start') {
@@ -1064,7 +1343,7 @@ function SurgeryRequest({ row, catalog, reservations, planBasis, virtualTime, da
   }
   const procedureItems = (catalog?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))
   const actualField = <Field><FieldLabel htmlFor={`surgery-actual-${row.id}`}>{t('实际术式', 'Performed procedure')}</FieldLabel><WorkspaceSelect id={`surgery-actual-${row.id}`} value={actual?.id ?? null} items={procedureItems} onValueChange={setActualId} />
-    <FieldDescription>{actual && !isSamePlannedProcedure(actual, row.plannedProcedure) ? `${t('与计划不同（计划：', 'Differs from plan (')}${row.plannedProcedure.coding.display}${t('）；DRG 预分组按实际术式重算', '); DRG is recalculated with the performed procedure')}` : t('默认与计划术式相同', 'Defaults to the planned procedure')}</FieldDescription></Field>
+    <FieldDescription>{actual && !isSamePlannedProcedure(actual, effectiveProcedure) ? `${t('与计划不同（计划：', 'Differs from plan (')}${effectiveProcedure.coding.display}${t('）；DRG 预分组按实际术式重算', '); DRG is recalculated with the performed procedure')}` : t('默认与计划术式相同', 'Defaults to the planned procedure')}</FieldDescription></Field>
   const preopBusy = pending('inpatient.surgery.check-preop')
   const preopBtn = (cls?: string) => <Button className={cls} aria-busy={preopBusy || undefined} data-busy={preopBusy || undefined} data-unavailable={!write.mutation.isPending && (blocked || !preopNote.trim()) || undefined} disabled={blocked || !preopNote.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.surgery.check-preop', input: { ...common, note: preopNote.trim() } })}>{preopBusy ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{preopBusy ? t('正在术前核对', 'Recording preoperative checks') : t('术前核对', 'Record preoperative checks')}</Button>
   const presetBtns = (items: Array<[string, string]>, pick: (v: string) => void) => <div className="flex flex-wrap gap-2">{items.map(([cn, en]) => { const v = t(cn, en); return <Button key={v} type="button" variant="outline" size="sm" disabled={blocked} onClick={() => pick(v)}>{v}</Button> })}</div>
@@ -1072,11 +1351,12 @@ function SurgeryRequest({ row, catalog, reservations, planBasis, virtualTime, da
     ? [{ label: t('申请医生', 'Requesting doctor'), value: t('住院医生', 'Inpatient doctor') }]
     : planned.length > 0
       ? [{ label: t('预计耗材', 'Estimated materials'), value: `${formatFen(plannedFen, locale)} · ${t('已预留', 'Reserved')}`, className: 'tabular-nums' }]
-      : ready && pciSelectionProcedureCodes.includes(row.plannedProcedure.coding.code)
-        ? [{ label: t('术前准备', 'Preop preparation'), value: t('同意书、术前核对已完成', 'Consent & preop check complete') }]
+      : ready && pciSelectionProcedureCodes.includes(effectiveProcedure.coding.code)
+        ? [{ label: t('术前准备', 'Preop preparation'), value: adHocConverted ? t('联合同意书、术前核对已完成（免二次核对）', 'Joint consent & preop complete (no repeat check)') : t('同意书、术前核对已完成', 'Consent & preop check complete') }]
         : []
   const preparationContent = <div hidden={doctor && !focused} className="flex flex-col gap-4">
-    {!preparationReady ? <section aria-label={preparationTitle} className="flex flex-col gap-1.5 rounded-lg border border-dashed px-3.5 py-2.5 text-sm text-muted-foreground"><div className="flex flex-wrap items-center justify-between gap-2"><h4>{preparationTitle}</h4><SurgicalConsentPreviewButton admission={admission} request={row} locale={locale} /></div><p>{t('确认手术耗材后办理术前准备', 'Confirm surgical materials before preoperative preparation')}</p></section> : <section aria-label={preparationTitle} className="clinmesh-inpatient-preparation"><h4 className="font-medium">{doctor ? '3 · ' : ''}{preparationTitle}</h4>
+    {!preparationReady ? <section aria-label={preparationTitle} className="flex flex-col gap-1.5 rounded-lg border border-dashed px-3.5 py-2.5 text-sm text-muted-foreground"><div className="flex flex-wrap items-center justify-between gap-2"><h4>{preparationTitle}</h4><SurgicalConsentPreviewButton admission={admission} request={row} locale={locale} /></div><p>{adHocConverted ? t('同台造影阶段已完成联合知情同意书与术前核对；确认本次 PCI 耗材后可直接开始同台 PCI。', 'Joint consent and preoperative checks were completed during angiography; confirm PCI materials to start Ad-hoc PCI directly.') : t('确认手术耗材后办理术前准备', 'Confirm surgical materials before preoperative preparation')}</p></section> : <section aria-label={preparationTitle} className="clinmesh-inpatient-preparation"><h4 className="font-medium">{doctor ? '3 · ' : ''}{preparationTitle}</h4>
+      {adHocConverted ? <p className="text-xs text-muted-foreground">{t('同台造影阶段已签署联合知情同意书并完成术前核对，免二次申请与二次核对，可直接开始同台 PCI。', 'Joint consent and preoperative checks are complete from the angiography stage; start Ad-hoc PCI directly.')}</p> : null}
       <ul className="clinmesh-inpatient-preparation-list">{[
         { key: 'consent', title: t('手术知情同意书已签', 'Signed surgical consent'), owner: t('住院医生', 'Inpatient doctor'), record: row.consentConfirmation },
         { key: 'preop', title: t('术前核对', 'Preoperative checks'), owner: t('病区护士', 'Ward nurse'), record: row.preopCheck },
@@ -1091,7 +1371,7 @@ function SurgeryRequest({ row, catalog, reservations, planBasis, virtualTime, da
       </li>)}</ul>
     </section>}
     {nurse && active && focused && !row.preopCheck ? <InpatientPrimaryAction stage="surgery" priority={1} fallback={preopBtn('self-start')}><WorkspaceActionBar summary={row.plannedProcedure.coding.display} tone={blocked || !preopNote.trim() ? 'blocked' : 'normal'} reason={preopNote.trim() ? t('已填写术前核对说明，可提交术前核对', 'Ready to record preoperative checks') : t('还差：术前核对说明', 'Complete: Preoperative check note')} busy={preopBusy ? t('正在术前核对', 'Recording preoperative checks') : undefined} action={preopBtn()} /></InpatientPrimaryAction> : null}
-    {doctor && (preparationReady || panel === 'cancel') && active && focused && panel !== 'consent' && panel !== 'start' && panel !== 'batch' ? <InpatientPrimaryAction stage="surgery" priority={bar.priority} fallback={bar.action}><WorkspaceActionBar summary={row.plannedProcedure.coding.display} tone={bar.tone} reason={bar.reason} busy={bar.busy} action={bar.action} /></InpatientPrimaryAction> : null}
+    {doctor && (preparationReady || panel === 'cancel') && active && focused && panel !== 'consent' && panel !== 'start' && panel !== 'batch' ? <InpatientPrimaryAction stage="surgery" priority={bar.priority} fallback={bar.action}><WorkspaceActionBar summary={effectiveProcedure.coding.display} tone={bar.tone} reason={bar.reason} busy={bar.busy} action={bar.action} /></InpatientPrimaryAction> : null}
     {doctor && active && !row.consentConfirmation ? <SurgicalConsentSignDialog admission={admission} session={session} request={row} catalog={catalog} virtualTime={virtualTime} locale={locale} write={write} blocked={blocked} open={panel === 'consent' && focused} onOpenChange={open => setPanel(open ? 'consent' : null)} onRetry={onRetry} returnFocus={consentTrigger} /> : null}
     {doctor && active ? <Dialog open={panel === 'start' && focused} pending={write.mutation.isPending} onOpenChange={open => { if (!open) setPanel(null) }}>
       <DialogContent className="max-h-[calc(100%-2rem)] sm:max-w-[640px]" showCloseButton={!write.mutation.isPending} finalFocus={() => startTrigger.current}>
@@ -1113,14 +1393,14 @@ function SurgeryRequest({ row, catalog, reservations, planBasis, virtualTime, da
         </OrderComposerFooter>
       </form>
     </DialogContent></Dialog> : null}
-    {doctor && active ? <SurgeryExecuteComposer admission={admission} session={session} request={row} catalog={catalog} reservations={reservations} planBasis={planBasis} locale={locale} write={write}
+    {doctor && active ? <SurgeryExecuteComposer admission={admission} session={session} request={row} catalog={catalog} reservations={reservations} planBasis={planBasis} primaryLinkedNursingServiceId={primaryLinkedNursingServiceId} locale={locale} write={write}
       dataReady={dataReady} onRetry={onRetry} open={panel === 'batch'} focused={focused} onOpenChange={open => setPanel(open ? 'batch' : null)} returnFocus={batchTrigger} /> : null}</div>
   return <article role="region" aria-label={focused ? t('当前手术计划', 'Current surgery plan') : t('手术计划记录', 'Surgery plan record')} className="flex min-w-0 flex-col gap-4">
     <div className="clinmesh-inpatient-summary flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2"><h4 className="font-semibold">{row.plannedProcedure.coding.display}</h4><span className="font-mono text-xs text-muted-foreground">{row.plannedProcedure.coding.code}</span><span className="flex-1" /><Badge variant="outline">{status}</Badge>
-        {doctor && active && focused ? <Button variant="ghost" size="sm" aria-expanded={panel === 'cancel'} disabled={blocked} onClick={() => setPanel(panel === 'cancel' ? null : 'cancel')}>{t('取消申请', 'Cancel request')}</Button> : null}</div>
-      <SurgeryNoticeSummaryList row={row} locale={locale} extraItems={extraNoticeItems} />
-      {panel === 'cancel' ? <Field><FieldLabel htmlFor={`surgery-cancel-${row.id}`}>{t('取消理由', 'Cancellation reason')}</FieldLabel><Input id={`surgery-cancel-${row.id}`} autoFocus maxLength={2000} disabled={blocked} value={cancelNote} onChange={event => setCancelNote(event.currentTarget.value)} /></Field> : null}
+      <div className="flex flex-wrap items-center gap-2"><h4 className="font-semibold">{effectiveProcedure.coding.display}</h4><span className="font-mono text-xs text-muted-foreground">{effectiveProcedure.coding.code}</span>{adHocConverted ? <Badge variant="secondary">{t('同台转 PCI · 已免二次核对与知情同意', 'Ad-hoc PCI · consent & preop waived')}</Badge> : null}<span className="flex-1" /><Badge variant="outline">{status}</Badge>
+        {doctor && active && focused ? <Button variant="ghost" size="sm" aria-expanded={panel === 'cancel'} disabled={blocked} onClick={() => setPanel(panel === 'cancel' ? null : 'cancel')}>{adHocConverted ? t('放弃同台 PCI', 'Abandon Ad-hoc PCI') : t('取消申请', 'Cancel request')}</Button> : null}</div>
+      <SurgeryNoticeSummaryList row={row} locale={locale} includeProcedure={adHocConverted} extraItems={extraNoticeItems} />
+      {panel === 'cancel' ? <Field><FieldLabel htmlFor={`surgery-cancel-${row.id}`}>{adHocConverted ? t('放弃同台 PCI 理由', 'Reason for abandoning Ad-hoc PCI') : t('取消理由', 'Cancellation reason')}</FieldLabel><Input id={`surgery-cancel-${row.id}`} autoFocus maxLength={2000} disabled={blocked} value={cancelNote} onChange={event => setCancelNote(event.currentTarget.value)} /></Field> : null}
       {row.cancellation ? <p className="text-sm">{t('取消原因：', 'Cancellation: ')}{row.cancellation.note}</p> : null}
     </div>
     {doctor && preparationSlot ? createPortal(preparationContent, preparationSlot) : preparationContent}

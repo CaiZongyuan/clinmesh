@@ -4,6 +4,7 @@ import type { InpatientMaterialReservation } from '@clinmesh/contracts/inpatient
 import type { InpatientMaterialPlanBasis } from '@clinmesh/contracts/inpatient-material-plan'
 import type { inpatientSurgeryCatalogSchema, inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { formatPreopOrderPolicy } from '@clinmesh/core/inpatient-surgery-consent'
+import { linkedNursingForProcedureId } from '@clinmesh/core/inpatient-surgery-medications'
 import { evaluateExecuteNoteRequirement, isSamePlannedProcedure } from '@clinmesh/core/inpatient-surgery-notes'
 import { ApiClientError } from './api-client.ts'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
@@ -36,16 +37,19 @@ const draftSchema = z.object({ procedureId: z.string(), procedureVersion: z.numb
 }).strict()
 type Discard = { kind: 'clear' } | { kind: 'remove'; id: string; display: string }
 
-export function SurgeryExecuteComposer({ admission, session, request, catalog, reservations, planBasis, dataReady, onRetry, locale, write, open, focused, onOpenChange, returnFocus }: {
+export function SurgeryExecuteComposer({ admission, session, request, catalog, reservations, planBasis, primaryLinkedNursingServiceId, dataReady, onRetry, locale, write, open, focused, onOpenChange, returnFocus }: {
   admission: InpatientAdmission; session: SessionContext; request: Request; catalog: Catalog | undefined; reservations: InpatientMaterialReservation[];
-  planBasis?: InpatientMaterialPlanBasis | undefined;
+  planBasis?: InpatientMaterialPlanBasis | undefined; primaryLinkedNursingServiceId?: string | undefined;
   locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; open: boolean; focused: boolean;
   dataReady: boolean; onRetry: () => void;
   onOpenChange: (open: boolean) => void; returnFocus: RefObject<HTMLButtonElement | null>;
 }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
-  const scope = surgeryDraftScope({ session, patientId: admission.patientId, admissionId: admission.id, requestId: request.id, action: 'execute' })
-  const draft = useSurgeryDraft({ scope, schema: draftSchema, initial: { procedureId: request.plannedProcedure.id, procedureVersion: request.plannedProcedure.version, note: '', rows: [], medications: [] } })
+  const adHocConverted = request.status === 'standby-pci' && request.adHocPci?.status === 'converted'
+  const stage = adHocConverted ? 'ad-hoc-pci' as const : 'primary' as const
+  const plannedProcedure = adHocConverted && request.adHocPci ? request.adHocPci.procedure : request.plannedProcedure
+  const scope = surgeryDraftScope({ session, patientId: admission.patientId, admissionId: admission.id, requestId: request.id, stage: adHocConverted ? 'ad-hoc-pci' : undefined, action: 'execute' })
+  const draft = useSurgeryDraft({ scope, schema: draftSchema, initial: { procedureId: plannedProcedure.id, procedureVersion: plannedProcedure.version, note: '', rows: [], medications: [] } })
   const value = draft.value
   const [search, setSearch] = useState(''), [page, setPage] = useState(0), [noteOpen, setNoteOpen] = useState(false)
   const [discard, setDiscard] = useState<Discard | null>(null), [attemptOwner, setAttemptOwner] = useState<string | null>(null)
@@ -58,7 +62,7 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
     if (!focused || previousOwner.current !== owner) { if (open) onOpenChange(false); setDiscard(null); setSearch(''); setPage(0); setNoteOpen(false) }
     previousOwner.current = owner
   }, [focused, owner, open, onOpenChange])
-  const blocked = write.blocked || admission.status !== 'admitted' || admission.recordStatus === 'archived' || request.status !== 'ready' || !focused
+  const blocked = write.blocked || admission.status !== 'admitted' || admission.recordStatus === 'archived' || (request.status !== 'ready' && !adHocConverted) || !focused
   const actual = catalog?.procedures.find(item => item.id === value.procedureId)
   const procedureValid = actual !== undefined && actual.version === value.procedureVersion
   const candidates = (catalog?.materials ?? []).filter(item => item.display.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
@@ -66,7 +70,7 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
   const pageCount = Math.max(1, Math.ceil(candidates.length / 8)), currentPage = Math.min(page, pageCount - 1)
   const eligibleReservation = (reservation: InpatientMaterialReservation, materialId: string, catalogVersion: number) => reservation.status === 'reserved'
     && reservation.materialId === materialId && reservation.catalogVersion === catalogVersion
-    && (!reservation.requestId || reservation.requestId === request.id) && reservation.consumedQuantity === 0
+    && (!reservation.requestId || (reservation.requestId === request.id && (reservation.surgeryStage ?? 'primary') === stage)) && reservation.consumedQuantity === 0
   const rows = value.rows.map(row => {
     const item = catalog?.materials.find(item => item.id === row.materialId)
     const reservation = reservations.find(item => item.id === row.reservationId)
@@ -77,11 +81,11 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
       : row.reservationId && (!reservation || !eligibleReservation(reservation, row.materialId, row.catalogVersion) || quantity !== reservation.quantity) ? t('关联预留已变化、目录依据不符或已部分使用，请取消关联后重新核对', 'The linked reservation changed, uses a different catalog version or was partially used; unlink and review it') : null
     return { row, item, quantity, problem }
   })
-  const activePlanReservations = reservations.filter(item => item.requestId === request.id && item.status === 'reserved')
+  const activePlanReservations = reservations.filter(item => item.requestId === request.id && (item.surgeryStage ?? 'primary') === stage && item.status === 'reserved')
   const positiveRows = rows.filter(row => row.problem === null && row.quantity > 0)
   const notePolicy = actual ? evaluateExecuteNoteRequirement({
     actual,
-    planned: request.plannedProcedure,
+    planned: plannedProcedure,
     materials: positiveRows.map(({ row, quantity }) => ({ materialId: row.materialId, catalogVersion: row.catalogVersion, quantity, reservationId: row.reservationId })),
     activeRequestReservations: activePlanReservations.map(item => ({ id: item.id, quantity: item.quantity })),
     planBasis,
@@ -122,7 +126,7 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
             <Field data-invalid={!procedureValid || undefined}><FieldLabel htmlFor={`execute-procedure-${request.id}`}>{t('实际术式', 'Performed procedure')}</FieldLabel>
               <WorkspaceSelect id={`execute-procedure-${request.id}`} value={value.procedureId} items={(catalog?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))}
                 onValueChange={id => { const item = catalog?.procedures.find(item => item.id === id); if (item) draft.save({ ...value, procedureId: item.id, procedureVersion: item.version }) }} />
-              <FieldDescription>{procedureValid ? isSamePlannedProcedure(actual, request.plannedProcedure) ? t('默认与计划术式相同', 'Defaults to the planned procedure') : t(`与计划不同（计划：${request.plannedProcedure.coding.display}）；DRG 预分组按实际术式重算`, `Differs from the planned procedure; DRG uses the performed procedure`) : t('实际术式目录未加载或已变化，请重新选择并核对', 'Procedure catalog is unavailable or changed; review and select again')}</FieldDescription>
+              <FieldDescription>{procedureValid ? isSamePlannedProcedure(actual, plannedProcedure) ? t('默认与计划术式相同', 'Defaults to the planned procedure') : t(`与计划不同（计划：${plannedProcedure.coding.display}）；DRG 预分组按实际术式重算`, `Differs from the planned procedure; DRG uses the performed procedure`) : t('实际术式目录未加载或已变化，请重新选择并核对', 'Procedure catalog is unavailable or changed; review and select again')}</FieldDescription>
               {actual && !procedureValid ? <Button type="button" variant="outline" onClick={() => draft.save({ ...value, procedureVersion: actual.version })}>{t('重新核对术式', 'Review procedure again')}</Button> : null}
             </Field>
             {!dataReady ? <Alert><AlertDescription>{t('手术资料正在加载或读取失败，暂不能提交；已有输入保留。', 'Surgery data is loading or unavailable. Submission is blocked and input is retained.')}<Button type="button" variant="outline" size="sm" onClick={onRetry}>{t('重试手术资料', 'Retry surgery records')}</Button></AlertDescription></Alert> : null}
@@ -155,13 +159,31 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
                 </Field>)}</FieldGroup>
               </section>
             </div>
-            <SurgeryBatchMedicationsEditor requestId={request.id} procedure={actual} catalog={catalog} rows={value.medications} disabled={blocked} locale={locale} onChange={medications => draft.save({ ...value, medications })} />
+            <SurgeryBatchMedicationsEditor
+              requestId={request.id}
+              procedure={actual}
+              catalog={catalog}
+              rows={value.medications}
+              disabled={blocked}
+              locale={locale}
+              sameSessionNursingIncluded={adHocConverted && Boolean(
+                primaryLinkedNursingServiceId
+                && actual
+                && linkedNursingForProcedureId(catalog?.nursingBindings ?? [], actual.id)?.serviceId === primaryLinkedNursingServiceId,
+              )}
+              onChange={medications => draft.save({ ...value, medications })}
+            />
             {request.preopOrderPolicy === 'stop-on-completion' ? (
               <section aria-label={t('术前医嘱停续策略提示', 'Pre-op order policy notice')} className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-foreground">
-                {t(
-                  '本手术术前医嘱策略为「术后自动停术前长期医嘱并重整」：提交完成手术时，将同事务把当前有效术前长期医嘱转为「待停嘱核对」，完成后可直接开立术后医嘱重整。',
-                  'Pre-op order policy is stop-on-completion: submitting will atomically mark active pre-op long-term orders stop-requested so postoperative orders can be reorganized immediately.',
-                )}
+                {stage === 'primary' && request.standbyAdHocPci
+                  ? t(
+                      '本手术术前医嘱策略为「术后自动停术前长期医嘱并重整」：第一阶段造影完成后将先进入同台 PCI 待决策态，待整台手术最终完成或收口时再自动停用术前长期医嘱。',
+                      'Pre-op order policy is stop-on-completion: stage-1 angiography enters standby-pci first; active pre-op long-term orders will be stopped when the session finalizes or completes.',
+                    )
+                  : t(
+                      '本手术术前医嘱策略为「术后自动停术前长期医嘱并重整」：提交完成手术时，将同事务把当前有效术前长期医嘱转为「待停嘱核对」，完成后可直接开立术后医嘱重整。',
+                      'Pre-op order policy is stop-on-completion: submitting will atomically mark active pre-op long-term orders stop-requested so postoperative orders can be reorganized immediately.',
+                    )}
               </section>
             ) : (
               <p className="text-xs text-muted-foreground">

@@ -1662,7 +1662,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
         { materialId: 'hospital-material-suture', catalogVersion: 1, display: '合成演示缝合材料', specification: '合成规格', quantity: 1, unit: '包', unitPriceFen: 2000, estimatedFen: 2000, reason: '按计划', quantityBasis: '创口缝合', evidenceIds: ['ev-suture'] },
       ],
     }
-    s.runtime.database.driver.prepare('INSERT INTO inpatient_material_plan_confirmation VALUES(?,?,?,?,?,?,?,?)')
+    s.runtime.database.driver.prepare('INSERT INTO inpatient_material_plan_confirmation(workspace_id,epoch,admission_id,request_id,confirmation_id,estimate_id,draft_revision,snapshot_json) VALUES(?,?,?,?,?,?,?,?)')
       .run(authCtx.workspaceId, authCtx.epoch, s.admission.id, planReq.id, 'plan-confirm-1', estimateTaskId, 1, JSON.stringify(planSnapshot))
 
     // 虽然活动预留仅有 stent×1 且已完整关联，但少于已确认清单中的 suture×1，execute 省略 note 须拒绝
@@ -2142,7 +2142,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
         VALUES(?,?,'guide-1','adm-1','pci-stent','req-inflight',1,'{}','{}','f2','automatic','succeeded',?)
       `).run(scope.workspaceId, scope.epoch, now)
 
-      expect(applyMigrations(db).applied).toEqual([migrationFile, '0121_surgery-medications-and-nursing.sql', '0122_surgery-preop-policy-and-postop-investigations.sql'])
+      expect(applyMigrations(db).applied).toEqual([migrationFile, '0121_surgery-medications-and-nursing.sql', '0122_surgery-ad-hoc-pci.sql', '0123_surgery-preop-policy-and-postop-investigations.sql'])
       expect(db.driver.pragma('foreign_key_check')).toEqual([])
       const migratedRows = z.array(z.object({
         request_id: z.string(),

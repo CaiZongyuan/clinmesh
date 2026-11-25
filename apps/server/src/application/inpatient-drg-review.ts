@@ -71,9 +71,21 @@ export class InpatientDrgReview {
         display: `实际操作：${item.actualProcedure.coding.display}（${item.actualProcedure.coding.code}）` })),
       ...surgery.inProgress.map(item => ({ reference: `Procedure/${item.id}`, target: 'surgery' as const,
         display: `术中实际操作（参与计划推演，尚未完成）：${item.actualProcedure.coding.display}（${item.actualProcedure.coding.code}）` })),
-      ...surgery.requests.filter(item => item.status === 'requested' || item.status === 'ready').map(item => ({
-        reference: `ServiceRequest/${item.id}/version/${item.version}`, target: 'surgery' as const,
-        display: `计划操作：${item.plannedProcedure.coding.display}（${item.plannedProcedure.coding.code}），${item.reason.slice(0, 1000)}` })),
+      ...surgery.requests.flatMap(item => {
+        if (item.status === 'requested' || item.status === 'ready') {
+          return [{
+            reference: `ServiceRequest/${item.id}/version/${item.version}`, target: 'surgery' as const,
+            display: `计划操作：${item.plannedProcedure.coding.display}（${item.plannedProcedure.coding.code}），${item.reason.slice(0, 1000)}`,
+          }]
+        }
+        if (item.status === 'standby-pci' && item.adHocPci?.status === 'converted') {
+          return [{
+            reference: `ServiceRequest/${item.id}/version/${item.version}`, target: 'surgery' as const,
+            display: `计划操作（同台转行）：${item.adHocPci.procedure.coding.display}（${item.adHocPci.procedure.coding.code}），${item.adHocPci.note.slice(0, 1000)}`,
+          }]
+        }
+        return []
+      }),
     ]
     const issues: InpatientDrgRecordChecks['issues'] = [], missing: string[] = []
     let simulation: InpatientDrgRecordChecks['simulation'] = evaluated ?? null
@@ -149,7 +161,7 @@ export class InpatientDrgReview {
   #materialBasis(context: RepositoryContext, admissionId: string): InpatientDrgReviewBasis | undefined {
     const executions = this.owner.surgery.executionFacts(context, admissionId, 'completed')
     if (executions.length === 0) return undefined
-    const scoped = executions.map(execution => ({ execution, planBasis: this.owner.materialPlans.forRequestFacts(context, admissionId, execution.requestId) }))
+    const scoped = executions.map(execution => ({ execution, planBasis: this.owner.materialPlans.forRequestFacts(context, admissionId, execution.requestId, execution.executionStage ?? 'primary') }))
       .filter(({ execution, planBasis }) => pciSelectionProcedureCodes.includes(execution.actualProcedure.coding.code)
         || planBasis.history.length > 0 || planBasis.status === 'unverifiable')
     const clinicalExecutions = new Set(scoped.map(item => item.execution.id))
@@ -157,7 +169,7 @@ export class InpatientDrgReview {
     const issues: z.infer<typeof inpatientDrgReviewIssueSchema>[] = [], comparisons: InpatientDrgReviewBasis['comparisons'] = []
     for (const { execution, planBasis } of scoped) {
       const plan = planBasis.history.find(item => item.reference === planBasis.effectiveReference)
-      const scope = { requestId: execution.requestId, executionId: execution.id, procedureDisplay: execution.actualProcedure.coding.display }
+      const scope = { requestId: execution.requestId, executionId: execution.id, ...(execution.executionStage === 'ad-hoc-pci' ? { surgeryStage: 'ad-hoc-pci' as const } : {}), procedureDisplay: execution.actualProcedure.coding.display }
       const planRef = plan?.reference ?? `ServiceRequest/${execution.requestId}`
       if (!plan) issues.push({ ...scope, key: `${planBasis.status === 'conflict' ? 'plan-conflict' : 'missing-plan'}:${execution.id}`,
         kind: planBasis.status === 'conflict' ? 'plan-conflict' : 'missing-plan', ownerRole: 'inpatient-doctor', materialId: null,

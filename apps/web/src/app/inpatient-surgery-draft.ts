@@ -9,6 +9,7 @@ const changedEvent = 'clinmesh.surgery-draft.changed'
 const discard = createDraftDiscard(prefix, () => notify('*'))
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(),
   patientId: z.string().min(1), admissionId: z.string().min(1), requestId: z.string().min(1),
+  stage: z.enum(['primary', 'ad-hoc-pci']).optional(),
   executionId: z.string().min(1).optional(), action: z.enum(['execute', 'complete']) }).strict()
 type Scope = z.infer<typeof scopeSchema>
 const envelopeSchema = z.object({ version: z.literal(1), scope: scopeSchema, revision: z.uuid(), value: z.unknown(),
@@ -20,9 +21,9 @@ const commandSchema = z.discriminatedUnion('operation', [
 type Envelope = z.infer<typeof envelopeSchema>
 export class SurgeryDraftUnreadable extends Error {}
 
-export function surgeryDraftScope({ session, ...context }: { session: SessionContext; patientId: string; admissionId: string;
-  requestId: string; executionId?: string; action: Scope['action'] }): Scope {
-  return scopeSchema.parse({ ...context, accountId: session.user.id, actor: session.actor })
+export function surgeryDraftScope({ session, stage, ...context }: { session: SessionContext; patientId: string; admissionId: string;
+  requestId: string; stage?: 'primary' | 'ad-hoc-pci' | undefined; executionId?: string; action: Scope['action'] }): Scope {
+  return scopeSchema.parse({ ...context, ...(stage === 'ad-hoc-pci' ? { stage } : {}), accountId: session.user.id, actor: session.actor })
 }
 
 function signature(value: unknown): string {

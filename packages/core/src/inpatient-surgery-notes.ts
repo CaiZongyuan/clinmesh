@@ -3,6 +3,8 @@ import type { InpatientMaterialPlan, InpatientMaterialPlanBasis } from '@clinmes
 export const DEFAULT_ROUTINE_START_NOTE = '按计划术式开始手术'
 export const DEFAULT_ROUTINE_EXECUTE_NOTE = '按计划术式及预留实施手术'
 export const DEFAULT_ROUTINE_MATERIAL_NOTE = '按本台预留消耗'
+export const DEFAULT_AD_HOC_PCI_CONVERSION_NOTE = '冠脉造影明确血运重建指征，台内直接转行同台 PCI'
+export const DEFAULT_STANDBY_FINALIZATION_NOTE = '冠脉造影评估无需同台 PCI，仅完成造影结束本台手术'
 
 export interface ProcedureIdentity {
   id: string

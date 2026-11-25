@@ -479,6 +479,7 @@ describe('手术通知单停续术前医嘱策略与术后成套医嘱模板重�
       preopOrderPolicy: PreopOrderPolicy
       procedureCode: string
       reason: string
+      standbyAdHocPci?: boolean
     },
   ) {
     const surgeryCatalog = inpatientSurgeryCatalogSchema.parse(
@@ -496,6 +497,7 @@ describe('手术通知单停续术前医嘱策略与术后成套医嘱模板重�
       preopOrderPolicy: options.preopOrderPolicy,
       procedureId: procedure.id,
       reason: options.reason,
+      ...(options.standbyAdHocPci ? { standbyAdHocPci: true } : {}),
       surgeonPractitionerId: 'practitioner-inpatient-doctor',
       surgeryType: 'elective',
     })
@@ -521,12 +523,12 @@ describe('手术通知单停续术前医嘱策略与术后成套医嘱模板重�
     return { procedure, ready }
   }
 
-  it('0122 迁移回填已有手术申请默认策略为 continue-active 并建立术后医技关联表且外键完整', async () => {
-    const migrationDir = await mkdtemp(join(tmpdir(), 'clinmesh-0122-migration-'))
-    const migrationFile = '0122_surgery-preop-policy-and-postop-investigations.sql'
+  it('0123 迁移回填已有手术申请默认策略为 continue-active 并建立术后医技关联表且外键完整', async () => {
+    const migrationDir = await mkdtemp(join(tmpdir(), 'clinmesh-0123-migration-'))
+    const migrationFile = '0123_surgery-preop-policy-and-postop-investigations.sql'
     const db = openClinMeshDatabase({ databasePath: join(migrationDir, 'hospital.sqlite'), busyTimeoutMs: 5000 })
     try {
-      const preMigrations = join(migrationDir, 'pre-0122')
+      const preMigrations = join(migrationDir, 'pre-0123')
       await mkdir(preMigrations)
       await Promise.all(
         (await readdir('drizzle'))
@@ -534,27 +536,27 @@ describe('手术通知单停续术前医嘱策略与术后成套医嘱模板重�
           .map(file => copyFile(join('drizzle', file), join(preMigrations, file))),
       )
       applyMigrations(db, preMigrations)
-      const scope = { workspaceId: 'synthetic-0122', epoch: 'epoch-1', scenarioRunId: 'run-1' }
+      const scope = { workspaceId: 'synthetic-0123', epoch: 'epoch-1', scenarioRunId: 'run-1' }
       const now = '2026-11-25T09:00:00.000Z'
-      new WorkspaceRepository(db).install({ ...scope, scenarioId: 'synthetic-0122', workspaceName: '合成0122迁移验证' })
-      db.driver.prepare("INSERT INTO scenario_definition(scenario_id,version,kind,schema_version) VALUES('synthetic-0122','1','candidate','1')").run()
+      new WorkspaceRepository(db).install({ ...scope, scenarioId: 'synthetic-0123', workspaceName: '合成0123迁移验证' })
+      db.driver.prepare("INSERT INTO scenario_definition(scenario_id,version,kind,schema_version) VALUES('synthetic-0123','1','candidate','1')").run()
       db.driver.prepare(
-        "INSERT INTO scenario_epoch_state(workspace_id,epoch,scenario_run_id,scenario_id,deterministic_seed,virtual_time,initial_state_hash) VALUES(?,?,'run-1','synthetic-0122',1,?,?)",
+        "INSERT INTO scenario_epoch_state(workspace_id,epoch,scenario_run_id,scenario_id,deterministic_seed,virtual_time,initial_state_hash) VALUES(?,?,'run-1','synthetic-0123',1,?,?)",
       ).run(scope.workspaceId, scope.epoch, now, '0'.repeat(64))
       db.driver.prepare("INSERT INTO inpatient_ward(workspace_id,epoch,ward_id,organization_id,name) VALUES(?,?,'ward-1','org-1','合成病区')").run(scope.workspaceId, scope.epoch)
       db.driver.prepare(
         `INSERT INTO inpatient_admission(workspace_id,epoch,admission_id,patient_id,inpatient_number,admission_route,ward_id,organization_id,status,financial_status,record_status,registered_at,admitted_at)
-         VALUES(?,?,'adm-1','pat-1','ZY-0122','direct','ward-1','org-1','admitted','open','open',?,?)`,
+         VALUES(?,?,'adm-1','pat-1','ZY-0123','direct','ward-1','org-1','admitted','open','open',?,?)`,
       ).run(scope.workspaceId, scope.epoch, now, now)
       db.driver.prepare(
         `INSERT INTO inpatient_surgery_request(workspace_id,epoch,request_id,admission_id,version,status,planned_procedure_json,planned_for,reason,requested_at,requested_by,organization_id)
-         VALUES(?,?,'req-pre0122','adm-1',1,'requested','{}',?,'升级前已有申请',?,'doctor','org-1')`,
+         VALUES(?,?,'req-pre0123','adm-1',1,'requested','{}',?,'升级前已有申请',?,'doctor','org-1')`,
       ).run(scope.workspaceId, scope.epoch, now, now)
 
       expect(applyMigrations(db).applied).toEqual([migrationFile])
       expect(db.driver.pragma('foreign_key_check')).toEqual([])
       const row = z.object({ preop_order_policy: z.literal('continue-active') }).parse(
-        db.driver.prepare("SELECT preop_order_policy FROM inpatient_surgery_request WHERE request_id = 'req-pre0122'").get(),
+        db.driver.prepare("SELECT preop_order_policy FROM inpatient_surgery_request WHERE request_id = 'req-pre0123'").get(),
       )
       expect(row.preop_order_policy).toBe('continue-active')
       expect(db.driver.prepare('SELECT COUNT(*) AS c FROM inpatient_postoperative_investigation').get()).toEqual({ c: 0 })
@@ -1172,5 +1174,79 @@ describe('手术通知单停续术前医嘱策略与术后成套医嘱模板重�
       await (await request(cookies.doctor, `${stay.path}/clinical-quality?gate=inpatient-discharge`)).json(),
     )
     expect(quality.alerts.map(alert => alert.code)).toContain('DISCHARGE_ANTIPLATELET_MISSING')
+
+    // 7. 备选同台 PCI（standbyAdHocPci=true）+ stop-on-completion：第一阶段造影进入 standby-pci 不提前停嘱，待 finalize-standby 收口为 completed 时原子停用术前长期医嘱
+    const clinicalBeforeStandby = inpatientFullClinicalSchema.parse(await (await request(cookies.doctor, `${stay.path}/clinical`)).json())
+    const issuedForStandby = await request(cookies.doctor, `${stay.path}/orders/issue`, {
+      duration: 'long',
+      encounterVersion: clinicalBeforeStandby.encounterVersion,
+      selection: {
+        catalogItemId: amlodipine.id,
+        catalogVersion: amlodipine.version,
+        doseQuantity: 1,
+        doseText: '5 mg',
+        frequencyCode: 'QD',
+        kind: 'medication',
+        routeCode: 'PO',
+      },
+    })
+    expect(issuedForStandby.status, await issuedForStandby.clone().text()).toBe(200)
+    const standbyLongOrder = inpatientFullClinicalResponseSchema.parse(await issuedForStandby.json()).data.orders.at(-1)!
+    expect((await request(cookies.nurse, `${stay.path}/orders/verify`, { expectedOrderVersion: standbyLongOrder.version, orderId: standbyLongOrder.id })).status).toBe(200)
+
+    const { procedure: angioProc, ready: angioReady } = await prepareSurgery(stay, {
+      anesthesiaMethod: 'general',
+      locationId: 'location-catheterization-lab',
+      preopOrderPolicy: 'stop-on-completion',
+      procedureCode: '88.5500',
+      reason: '冠脉造影备选同台 PCI 且采用全麻停嘱策略',
+      standbyAdHocPci: true,
+    })
+    const startedStandby = inpatientSurgeryResponseSchema.parse(await (await request(cookies.doctor, `${stay.path}/surgeries/start`, {
+      catalogVersion: angioProc.version,
+      expectedRequestVersion: angioReady.version,
+      procedureId: angioProc.id,
+      requestId: angioReady.id,
+    })).json()).data
+    const startedStandbyReq = startedStandby.requests.find(item => item.id === angioReady.id)!
+    const runningStandbyExec = startedStandby.inProgress.find(item => item.requestId === angioReady.id)!
+
+    const standbyPreviewRes = await request(cookies.doctor, `${stay.path}/surgeries/preview-completion`, {
+      executionId: runningStandbyExec.id,
+      expectedRequestVersion: startedStandbyReq.version,
+      finalMaterials: [],
+      releaseReservations: [],
+      requestId: angioReady.id,
+    })
+    expect(standbyPreviewRes.status, await standbyPreviewRes.clone().text()).toBe(200)
+    const standbyPreview = inpatientSurgeryCompletionPreviewSchema.parse(await standbyPreviewRes.json())
+    expect(standbyPreview.preopOrderPolicy).toBe('stop-on-completion')
+    expect(standbyPreview.autoStopPreopOrders).toEqual([])
+
+    const standbyCompleteRes = await request(cookies.doctor, `${stay.path}/surgeries/complete`, {
+      executionId: runningStandbyExec.id,
+      expectedRequestVersion: startedStandbyReq.version,
+      reconciliation: {
+        expectedFingerprint: standbyPreview.fingerprint,
+        finalMaterials: [],
+        releaseReservations: [],
+      },
+      requestId: angioReady.id,
+    })
+    expect(standbyCompleteRes.status, await standbyCompleteRes.clone().text()).toBe(200)
+    const standbyReq = inpatientSurgeryResponseSchema.parse(await standbyCompleteRes.json()).data.requests.find(item => item.id === angioReady.id)!
+    expect(standbyReq.status).toBe('standby-pci')
+    const clinicalMidStandby = inpatientFullClinicalSchema.parse(await (await request(cookies.doctor, `${stay.path}/clinical`)).json())
+    expect(clinicalMidStandby.orders.find(item => item.id === standbyLongOrder.id)?.state).toBe('verified')
+
+    const finalizeRes = await request(cookies.doctor, `${stay.path}/surgeries/finalize-standby`, {
+      expectedRequestVersion: standbyReq.version,
+      note: '造影评估仅需药物保守，结束本台手术',
+      requestId: angioReady.id,
+    })
+    expect(finalizeRes.status, await finalizeRes.clone().text()).toBe(200)
+    expect(inpatientSurgeryResponseSchema.parse(await finalizeRes.json()).data.requests.find(item => item.id === angioReady.id)?.status).toBe('completed')
+    const clinicalFinalStandby = inpatientFullClinicalSchema.parse(await (await request(cookies.doctor, `${stay.path}/clinical`)).json())
+    expect(clinicalFinalStandby.orders.find(item => item.id === standbyLongOrder.id)?.state).toBe('stop-requested')
   })
 })

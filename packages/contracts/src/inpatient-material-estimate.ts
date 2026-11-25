@@ -28,7 +28,7 @@ export const inpatientMaterialEstimateDraftSchema = z.object({
   confirmedRevision: version.nullable(), reservationIds: z.array(id).max(20),
 }).strict()
 export const inpatientMaterialEstimateSchema = z.object({
-  id, admissionId: id, requestId: id, version, requestVersion: version,
+  id, admissionId: id, requestId: id, surgeryStage: z.literal('ad-hoc-pci').optional(), version, requestVersion: version,
   status: z.enum(['incomplete', 'queued', 'running', 'succeeded', 'stale', 'blocked', 'unknown', 'failed', 'cancelled']),
   basisFingerprint: fingerprint, failureCode: text.nullable(), missing: z.array(text),
   candidates: z.array(inpatientMaterialEstimateCandidateSchema).max(20),
@@ -42,7 +42,7 @@ export const inpatientMaterialEstimateSchema = z.object({
 }).strict()
 export const inpatientMaterialEstimatesSchema = z.object({
   admissionId: id, estimates: z.array(inpatientMaterialEstimateSchema),
-  unprepared: z.array(z.object({ requestId: id, requestVersion: version, basisFingerprint: fingerprint }).strict()),
+  unprepared: z.array(z.object({ requestId: id, surgeryStage: z.literal('ad-hoc-pci').optional(), requestVersion: version, basisFingerprint: fingerprint }).strict()),
 }).strict()
 export const inpatientMaterialEstimateResponseSchema = commandResponseSchema(inpatientMaterialEstimateSchema)
 export const inpatientMaterialEstimateRequestInputSchema = z.object({

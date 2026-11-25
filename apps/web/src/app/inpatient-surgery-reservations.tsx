@@ -24,7 +24,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; active?: boolean; requestId?: string }
 type Command = z.infer<typeof reservationBatchCommandSchema>
 type Entry = { rowId: string; rowRevision: string; label: string; command: Command }
-type SectionProps = Props & { action: 'create' | 'release'; dataReady: boolean; list: InpatientMaterialReservationList | undefined; catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined; planAvailable: boolean; planDisplay: string }
+type SectionProps = Props & { action: 'create' | 'release'; dataReady: boolean; list: InpatientMaterialReservationList | undefined; catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined; planAvailable: boolean; planDisplay: string; stage: 'primary' | 'ad-hoc-pci' }
 const safeText = (text: string) => text.replaceAll(/草稿/g, '未提交输入').replaceAll(/版本/g, '核对依据')
 
 export function InpatientMaterialReservations(props: Props): React.JSX.Element {
@@ -43,23 +43,27 @@ function ReservationWorkspace(props: Props): React.JSX.Element {
   const queries = [list, catalog, surgery], error = queries.find(query => query.isError)?.error
   const dataReady = queries.every(query => query.isSuccess && !query.isFetching)
   const plan = surgery.data?.requests.find(item => item.id === requestId)
-  const planDisplay = plan?.plannedProcedure.coding.display ?? t('当前手术', 'Current surgery')
-  const shared = { ...props, dataReady, list: list.data, catalog: catalog.data, planAvailable: !requestId || !!plan && (plan.status === 'requested' || plan.status === 'ready'), planDisplay }
+  const adHocConverted = Boolean(plan?.status === 'standby-pci' && plan.adHocPci?.status === 'converted')
+  const planDisplay = adHocConverted && plan?.adHocPci
+    ? plan.adHocPci.procedure.coding.display
+    : (plan?.plannedProcedure.coding.display ?? t('当前手术', 'Current surgery'))
+  const stage = adHocConverted ? 'ad-hoc-pci' as const : 'primary' as const
+  const shared = { ...props, dataReady, list: list.data, catalog: catalog.data, planAvailable: !requestId || !!plan && (plan.status === 'requested' || plan.status === 'ready' || adHocConverted), planDisplay, stage }
   return <section aria-label={t('治疗耗材预留', 'Treatment material reservations')} className="flex min-w-0 flex-col gap-4">
     <p className="text-sm text-muted-foreground">{t('预留用于预计，未使用余量不计费。新增与释放分别核对，每次最多20项；已消耗部分保留正式收费。', 'Reservations are estimates; unused quantities carry no charge. Review creation and release separately, up to 20 items each. Consumed quantities retain their posted charges.')}</p>
     <p className="break-words text-sm">{requestId ? `${t('当前手术：', 'Current surgery: ')}${planDisplay}` : t('当前为未关联手术的独立单项维护，每次最多1项。', 'Independent, unlinked maintenance: one item per action.')}</p>
     {!dataReady && !error ? <p role="status">{t('正在核对预留、目录与手术资料；未提交输入已保留，核对完成后可办理。', 'Checking reservations, catalog and surgery data. Input is kept; submit when checks finish.')}</p> : null}
     {error ? <Alert variant="destructive"><AlertDescription>{safeText(getWorkspaceErrorMessage(error, getWorkspaceMessages(locale)))} {t('未提交输入已保留，请重试资料读取后重新核对。', 'Input is kept. Retry loading, then review again.')}</AlertDescription>
       <Button type="button" variant="outline" size="sm" disabled={!active || queries.some(query => query.isFetching)} onClick={() => { void Promise.all(queries.map(query => query.refetch())) }}>{t('重试预留资料', 'Retry reservation data')}</Button></Alert> : null}
-    <ReservationBatchSection {...shared} action="create" />
-    <ReservationBatchSection {...shared} action="release" />
+    <ReservationBatchSection key={`${stage}:create`} {...shared} action="create" />
+    <ReservationBatchSection key={`${stage}:release`} {...shared} action="release" />
   </section>
 }
 
-function ReservationBatchSection({ admission, session, locale, write, active = true, requestId, action, list, catalog, dataReady, planAvailable, planDisplay }: SectionProps) {
+function ReservationBatchSection({ admission, session, locale, write, active = true, requestId, action, list, catalog, dataReady, planAvailable, planDisplay, stage }: SectionProps) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const creating = action === 'create', limit = requestId ? 20 : 1, id = useId()
-  const scope = reservationDraftScope({ session, patientId: admission.patientId, admissionId: admission.id, requestId: requestId ?? null, action }), scopeKey = JSON.stringify(scope)
+  const scope = reservationDraftScope({ session, patientId: admission.patientId, admissionId: admission.id, requestId: requestId ?? null, stage: stage === 'ad-hoc-pci' ? 'ad-hoc-pci' : undefined, action }), scopeKey = JSON.stringify(scope)
   const draft = useReservationBatchDraft({ scope, schema: reservationInputSchema, initial: { rows: [], commonReason: '' }, session, write })
   const { rows, commonReason } = draft.value, selected = rows.filter(row => row.selected)
   const [search, setSearch] = useState(''), [page, setPage] = useState(1), [selectionError, setSelectionError] = useState('')
@@ -78,7 +82,7 @@ function ReservationBatchSection({ admission, session, locale, write, active = t
     return draft.save({ ...draft.value, rows: next }, { keepCurrentOnFailure })
   }
   const editRow = (rowId: string, change: Partial<ReservationInputRow>) => saveRows(rows.map(row => row.id === rowId ? { ...row, ...change, revision: crypto.randomUUID() } : row))
-  const reservations = list?.reservations.filter(item => (item.requestId ?? null) === (requestId ?? null))
+  const reservations = list?.reservations.filter(item => (item.requestId ?? null) === (requestId ?? null) && (!requestId || (item.surgeryStage ?? 'primary') === stage))
   const problem = (row: ReservationInputRow) => {
     if (creating) {
       if (!validReservationQuantity(row.quantity)) return t('数量须为1至1000的整数', 'Quantity must be an integer from 1 to 1000')

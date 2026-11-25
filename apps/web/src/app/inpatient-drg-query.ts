@@ -28,7 +28,8 @@ export function useInpatientDrgQuery({ admission, session, active, draft, allowP
   const surgery = useQuery({ queryKey: [...scope, 'surgeries'], enabled: enabled && selectPlan,
     refetchInterval: enabled && selectPlan ? 3_000 : false, refetchIntervalInBackground: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
-  const plans = (surgery.data?.requests ?? []).filter(item => item.status === 'requested' || item.status === 'ready')
+  const plans = (surgery.data?.requests ?? []).filter(item => item.status === 'requested' || item.status === 'ready'
+    || (item.status === 'standby-pci' && item.adHocPci?.status === 'converted'))
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
   const primarySurgeryRequestId = selectPlan && plans.length > 1 && plans.some(item => item.id === selectedPlanId) ? selectedPlanId : null
   const simulationInput = draft ?? (primarySurgeryRequestId === null ? undefined : { medications: [], services: [], primarySurgeryRequestId })
@@ -43,7 +44,10 @@ export function useInpatientDrgQuery({ admission, session, active, draft, allowP
   // 术前准备拥有读取；这里只订阅同一缓存，避免另一组轮询。
   const estimates = useQuery({ queryKey: [...scope, 'material-estimates'], enabled: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/material-estimates`, inpatientMaterialEstimatesSchema, signal) })
-  const planEstimates = (estimates.data?.estimates ?? []).filter(estimate => plans.some(plan => plan.id === estimate.requestId))
+  const planEstimates = (estimates.data?.estimates ?? []).filter(estimate => plans.some(plan => {
+    const stage = plan.status === 'standby-pci' && plan.adHocPci?.status === 'converted' ? 'ad-hoc-pci' : 'primary'
+    return plan.id === estimate.requestId && (estimate.surgeryStage ?? 'primary') === stage
+  }))
   const previewEstimates = selectPlan ? planEstimates.filter(estimate => estimate.status !== 'cancelled'
     && !surgery.data?.inProgress.some(execution => execution.requestId === estimate.requestId)
     && (estimate.draft === null || estimate.draft.confirmedRevision !== estimate.draft.revision)) : []

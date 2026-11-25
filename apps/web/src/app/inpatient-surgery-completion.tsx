@@ -59,15 +59,18 @@ export function InpatientSurgeryCompletion(props: Props): React.JSX.Element {
 function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Element {
   const { execution, request, catalog, reservations, write, locale, refresh, onClose, session, admission, active, dataReady } = props
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
+  const stage = execution.executionStage ?? 'primary'
+  const plannedProcedure = stage === 'ad-hoc-pci' && request.adHocPci ? request.adHocPci.procedure : request.plannedProcedure
+  const stageReservations = reservations.filter(item => !item.requestId || (item.requestId === request.id && (item.surgeryStage ?? 'primary') === stage))
   const scope = surgeryDraftScope({ session, patientId: admission.patientId, admissionId: admission.id, requestId: request.id, executionId: execution.id, action: 'complete' })
   const scopeKey = JSON.stringify(scope)
-  const draft = useSurgeryDraft({ scope, schema: completionDraftSchema, initial: initialCompletionDraft(execution, reservations, request.id) })
+  const draft = useSurgeryDraft({ scope, schema: completionDraftSchema, initial: initialCompletionDraft(execution, stageReservations, request.id) })
   const { rows, releases } = draft.value
   const [editing, setEditing] = useState(false), [noteOpen, setNoteOpen] = useState(false), [latchedServerNoteRequired, setLatchedServerNoteRequired] = useState(false)
   const attemptedPreview = useRef('')
   const estimates = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'material-estimates'],
     enabled: active !== false, retry: false, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/material-estimates`, inpatientMaterialEstimatesSchema, signal) })
-  const planBasis = estimates.data?.estimates.find(item => item.requestId === request.id)?.planBasis
+  const planBasis = estimates.data?.estimates.find(item => item.requestId === request.id && (item.surgeryStage ?? 'primary') === stage)?.planBasis
   const { plan } = resolveMaterialPlanBasis(planBasis)
   const setRows = (change: (previous: CompletionDraftRow[]) => CompletionDraftRow[], discard = false) => draft.save({ ...draft.value, rows: change(rows) }, { keepCurrentOnFailure: discard })
   const [clearOpen, setClearOpen] = useState(false), [clearFailed, setClearFailed] = useState(false)
@@ -75,8 +78,8 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
   current.current = { scopeKey, active, dataReady }
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const isCurrent = () => mounted.current && current.current.scopeKey === scopeKey && current.current.active !== false
-  const originalReservations = reservations.filter(item => item.requestId === request.id && item.status !== 'released')
-  const requestReservationIds = new Set(reservations.filter(item => item.requestId === request.id).map(item => item.id))
+  const originalReservations = stageReservations.filter(item => item.requestId === request.id && item.status !== 'released')
+  const requestReservationIds = new Set(stageReservations.filter(item => item.requestId === request.id).map(item => item.id))
   const quantities = completionQuantities(rows, plan)
   const hasUnusedReservation = originalReservations.some(item => item.releaseReason == null && (remainingAfterCompletion(item, rows) ?? 0) > 0)
   const completionNotePolicy = evaluateCompletionNoteRequirement({
@@ -93,11 +96,11 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
     requestReservationIds,
     hasUnusedReservation,
     planBasis,
-    samePlannedProcedure: isSamePlannedProcedure(execution.actualProcedure, request.plannedProcedure),
+    samePlannedProcedure: isSamePlannedProcedure(execution.actualProcedure, plannedProcedure),
   })
   const noteRequired = completionNotePolicy.noteRequired || latchedServerNoteRequired
   const hasExplainedPlanExcess = !noteRequired && completionNotePolicy.hasExplainedExtraUse
-  const note = draft.value.noteSource === 'doctor' ? draft.value.note : hasExplainedPlanExcess ? completionReviewNote(rows, plan, execution, releases, locale, reservations) : ''
+  const note = draft.value.noteSource === 'doctor' ? draft.value.note : hasExplainedPlanExcess ? completionReviewNote(rows, plan, execution, releases, locale, stageReservations) : ''
   const trimmedNote = note.trim()
   const showNote = noteRequired || hasExplainedPlanExcess || editing || noteOpen || draft.value.note.trim().length > 0
   const finalMaterials = rows.map(({ materialId, catalogVersion, quantity, materialUseIds, reservationId, expectedReservationVersion }) => ({
@@ -140,7 +143,7 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
     if (Number(row.quantity) > row.previousQuantity && (!currentMaterial || !('chargeDefinition' in currentMaterial))) return t('目录或依据已失效，请移除本项后重新选择', 'Catalog item or version changed; remove and select again')
     if (row.materialUseIds.some(id => !execution.materialHistory.some(use => use.id === id && use.correction === null))) return t('原使用已更正，请重新带入当前用量', 'Original use was corrected; reload current quantities')
     if (row.reservationId) {
-      const item = reservations.find(item => item.id === row.reservationId)
+      const item = stageReservations.find(item => item.id === row.reservationId)
       if (!item || item.materialId !== row.materialId || item.catalogVersion !== row.catalogVersion || item.requestId && item.requestId !== request.id) return t('原预留身份或手术归属已变化，请重新核对关联', 'Reservation identity or surgery changed; review the link')
       if (item.version !== row.expectedReservationVersion) return t('原预留依据已变化，请刷新核实依据', 'Reservation version changed; refresh review sources')
       const remaining = remainingAfterCompletion(item, rows)
@@ -161,7 +164,7 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
   const valid = (!noteRequired || trimmedNote.length > 0) && validation == null
   const editingBlocked = write.blocked || refreshBasis.isPending || draft.failed || active === false
   const blocked = editingBlocked || preview.isPending
-  const materialList = <SurgeryFinalMaterialList rows={rows} catalog={catalog} reservations={reservations} requestId={request.id}
+  const materialList = <SurgeryFinalMaterialList rows={rows} catalog={catalog} reservations={stageReservations} requestId={request.id}
     locale={locale} disabled={editingBlocked} rowProblem={rowProblem} onChange={setRows} />
   const hint = validation ?? (noteRequired && !trimmedNote ? t('还差：核实说明', 'Enter the review note') : reviewed ? t('确认后补登差额并计入术式费，手术结束', 'Confirmation posts the differences and procedure fee and completes surgery') : t('正在核对差额，完成后可确认', 'Checking differences before confirmation'))
   const confirm = () => {
@@ -203,13 +206,15 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
       </>}
       {originalReservations.some(item => (remainingAfterCompletion(item, rows) ?? 0) > 0) && !editing ? <div className="flex flex-col gap-2 text-sm"><span>{t('未用的预留', 'Unused reservations')}</span><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" className={releases.length === 0 ? 'border-info bg-info/10 text-info' : undefined} aria-pressed={releases.length === 0} onClick={() => draft.save({ ...draft.value, releases: [] })}>{t('保留预留', 'Keep reservations')}</Button><Button type="button" variant="outline" className={releases.length > 0 ? 'border-info bg-info/10 text-info' : undefined} aria-pressed={releases.length > 0} onClick={() => draft.save({ ...draft.value, releases: originalReservations.filter(item => item.releaseReason == null && (remainingAfterCompletion(item, rows) ?? 0) > 0).map(item => ({ reservationId: item.id, expectedReservationVersion: item.version, display: item.materialDisplay })) })}>{t('释放预留', 'Release reservations')}</Button></div></div> : null}
       {reviewed && preview.data ? <section aria-label={t('本次差额', 'Differences')} className="flex flex-col gap-2 text-sm">
-        <div className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums"><span>{t('耗材差额合计 ', 'Material difference ')}<b>{formatFen(preview.data.materialDeltaFen, locale)}</b></span><span>{t('术式费 ', 'Procedure fee ')}<b>{formatFen(preview.data.procedureAmountFen, locale)}</b></span>{preview.data.linkedNursing ? <span>{t(`术中专科护理（${preview.data.linkedNursing.display}） `, `Specialty nursing (${preview.data.linkedNursing.display}) `)}<b>{formatFen(preview.data.nursingAmountFen, locale)}</b></span> : null}<span>{t('本次新增费用 ', 'New charges ')}<b>{formatFen(preview.data.totalDeltaFen, locale)}</b></span></div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums"><span>{t('耗材差额合计 ', 'Material difference ')}<b>{formatFen(preview.data.materialDeltaFen, locale)}</b></span><span>{t('术式费 ', 'Procedure fee ')}<b>{formatFen(preview.data.procedureAmountFen, locale)}</b></span>{preview.data.linkedNursing ? <span>{t(`术中专科护理（${preview.data.linkedNursing.display}） `, `Specialty nursing (${preview.data.linkedNursing.display}) `)}<b>{formatFen(preview.data.nursingAmountFen, locale)}</b></span> : preview.data.sameSessionNursingIncluded ? <span>{t('术中专科护理 ', 'Specialty nursing ')}<b>{t('已包含于同台造影阶段，不重复计收', 'Included in same-session angiography (no duplicate charge)')}</b></span> : null}<span>{t('本次新增费用 ', 'New charges ')}<b>{formatFen(preview.data.totalDeltaFen, locale)}</b></span></div>
         {preview.data.preopOrderPolicy === 'stop-on-completion' ? (
           <section aria-label={t('将自动转入待停嘱的术前长期医嘱', 'Pre-op long-term orders to auto-stop')} className="flex flex-col gap-1.5 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
             <p className="font-medium text-foreground">
-              {preview.data.autoStopPreopOrders.length > 0
-                ? t(`术前医嘱策略（术后自动停长嘱）：确认完成手术后将同事务把以下 ${preview.data.autoStopPreopOrders.length} 条术前长期医嘱转为「待停嘱核对」`, `Pre-op order policy (stop-on-completion): confirming will mark ${preview.data.autoStopPreopOrders.length} active pre-op long-term orders stop-requested`)
-                : t('术前医嘱策略：术后自动停术前长期医嘱（当前无在用术前长期医嘱）', 'Pre-op order policy: stop-on-completion (no active pre-op long-term orders)')}
+              {stage === 'primary' && request.standbyAdHocPci
+                ? t('术前医嘱策略（术后自动停长嘱）：第一阶段造影完成后将进入同台 PCI 待决策态，待整台手术最终完成或收口后再自动停用术前长期医嘱', 'Pre-op order policy (stop-on-completion): stage-1 angiography enters standby-pci; pre-op long-term orders will be stopped when the session finalizes or completes')
+                : preview.data.autoStopPreopOrders.length > 0
+                  ? t(`术前医嘱策略（术后自动停长嘱）：确认完成手术后将同事务把以下 ${preview.data.autoStopPreopOrders.length} 条术前长期医嘱转为「待停嘱核对」`, `Pre-op order policy (stop-on-completion): confirming will mark ${preview.data.autoStopPreopOrders.length} active pre-op long-term orders stop-requested`)
+                  : t('术前医嘱策略：术后自动停术前长期医嘱（当前无在用术前长期医嘱）', 'Pre-op order policy: stop-on-completion (no active pre-op long-term orders)')}
             </p>
             {preview.data.autoStopPreopOrders.length > 0 ? (
               <ul className="flex flex-col gap-1 text-muted-foreground">

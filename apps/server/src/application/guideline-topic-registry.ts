@@ -1482,7 +1482,9 @@ export function extractSupplementaryIndicators(options: {
       }
     }
     const pciCandidates = inpatient.service.surgery.read(inpatient.actor, caseId).requests
-      .filter(item => item.status !== 'cancelled' && pciSelectionProcedureCodes.includes(item.plannedProcedure.coding.code))
+      .filter(item => item.status !== 'cancelled' && item.adHocPci?.status !== 'cancelled'
+        && (pciSelectionProcedureCodes.includes(item.plannedProcedure.coding.code)
+          || (item.adHocPci !== undefined && pciSelectionProcedureCodes.includes(item.adHocPci.procedure.coding.code))))
     const pciRequest = pciCandidates.findLast(item => item.status !== 'completed') ?? pciCandidates.at(-1)
     if (pciRequest !== undefined) {
       const selection = inpatient.service.pciSelection.read(inpatient.actor, caseId, pciRequest.id)

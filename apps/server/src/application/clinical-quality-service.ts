@@ -201,7 +201,7 @@ export class ClinicalQualityService {
       if (issueSeq === null) return false
       const stopSeq = z.object({ seq: z.number().nullable() }).parse(this.#database.driver.prepare(`
         SELECT MAX(sequence) AS seq FROM action_trace
-        WHERE workspace_id=? AND epoch=? AND operation IN ('inpatient.order.request-stop','inpatient.surgery.complete','inpatient.surgery.execute') AND outcome='success' AND instr(effect_json, ?) > 0
+        WHERE workspace_id=? AND epoch=? AND operation IN ('inpatient.order.request-stop','inpatient.surgery.complete','inpatient.surgery.execute','inpatient.surgery.finalize-standby') AND outcome='success' AND instr(effect_json, ?) > 0
       `).get(context.workspaceId, context.epoch, `"MedicationRequest/${row.order_id}"`)).seq
       return stopSeq !== null && stopSeq > issueSeq
     })

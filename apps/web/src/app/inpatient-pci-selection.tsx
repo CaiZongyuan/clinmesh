@@ -38,8 +38,15 @@ function SelectionContent(props: Props) {
   const surgery = useQuery({ queryKey: [...inpatientScopeKey(session), admission.id, 'surgeries'], enabled: active,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
   const error = query.error ?? surgery.error
-  const plans = (surgery.data?.requests ?? []).filter(request => ['requested', 'ready'].includes(request.status) && pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code))
-    .map(request => ({ id: request.id, label: `${request.plannedProcedure.coding.display} · ${request.reason}` }))
+  const plans = (surgery.data?.requests ?? []).filter(request => (
+    ['requested', 'ready'].includes(request.status) && pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code)
+  ) || (
+    request.status === 'standby-pci' && request.adHocPci?.status === 'converted' && pciSelectionProcedureCodes.includes(request.adHocPci.procedure.coding.code)
+  ))
+    .map(request => ({
+      id: request.id,
+      label: `${request.status === 'standby-pci' && request.adHocPci?.status === 'converted' ? request.adHocPci.procedure.coding.display : request.plannedProcedure.coding.display} · ${request.reason}`,
+    }))
   const manualPlans = plans.filter(plan => !query.data?.drafts?.some(draft => draft.requestId === plan.id))
   const hasReportPlans = manualPlans.length !== plans.length
   return <section aria-label={t('PCI 参数与候选', 'PCI parameters and candidates')} className="flex flex-col gap-3 py-3">

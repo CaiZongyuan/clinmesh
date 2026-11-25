@@ -32,7 +32,7 @@ describe('HIS operation catalog', () => {
     } })
     for (const expectedReservationVersion of [0, -1, 1.5, '2'])
       expect(operation.input.safeParse({ ...original, expectedReservationVersion }).success).toBe(false)
-    expect(operation.version).toBe(6)
+    expect(operation.version).toBe(7)
   })
   it('结算后收退确认声明原预览token，恢复只接受原尝试及版本', () => {
     for (const kind of ['refund', 'payment']) {
@@ -806,7 +806,7 @@ describe('HIS operation catalog', () => {
       'clinmesh-billing': 18,
       'clinmesh-doctor': 70,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 121,
+      'clinmesh-inpatient': 123,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 8,
       'clinmesh-shared': 1,
@@ -967,21 +967,38 @@ it('publishes read-only clinical quality preflight queries and clinicalOverride 
   expect(getHisOperation('inpatient.order.issue').version).toBe(10)
   expect(getHisOperation('inpatient.surgery.catalog').version).toBe(4)
   expect(getHisOperation('inpatient.surgery.catalog').roles).toEqual(['inpatient-doctor', 'ward-nurse', 'medical-records'])
-  expect(getHisOperation('inpatient.surgery.read').version).toBe(5)
+  expect(getHisOperation('inpatient.surgery.read').version).toBe(6)
   expect(getHisOperation('inpatient.surgery.read').roles).toEqual(['inpatient-doctor', 'ward-nurse', 'medical-records'])
-  expect(getHisOperation('inpatient.surgery.request').version).toBe(5)
-  expect(getHisOperation('inpatient.surgery.check-preop').version).toBe(4)
-  expect(getHisOperation('inpatient.surgery.confirm-consent').version).toBe(4)
-  expect(getHisOperation('inpatient.surgery.cancel').version).toBe(4)
-  expect(getHisOperation('inpatient.surgery.start').version).toBe(4)
-  expect(getHisOperation('inpatient.surgery.record-material').version).toBe(4)
-  expect(getHisOperation('inpatient.surgery.record-medication').version).toBe(2)
-  expect(getHisOperation('inpatient.surgery.correct-material').version).toBe(3)
-  expect(getHisOperation('inpatient.surgery.supplement-material').version).toBe(3)
-  expect(getHisOperation('inpatient.surgery.preview-completion').version).toBe(4)
-  expect(getHisOperation('inpatient.surgery.complete').version).toBe(6)
-  expect(getHisOperation('inpatient.surgery.execute').version).toBe(6)
-  expect(getHisOperation('inpatient.drg.simulate').version).toBe(6)
+  expect(getHisOperation('inpatient.surgery.request').version).toBe(6)
+  expect(getHisOperation('inpatient.surgery.check-preop').version).toBe(5)
+  expect(getHisOperation('inpatient.surgery.confirm-consent').version).toBe(5)
+  expect(getHisOperation('inpatient.surgery.cancel').version).toBe(5)
+  expect(getHisOperation('inpatient.surgery.start').version).toBe(5)
+  expect(getHisOperation('inpatient.surgery.record-material').version).toBe(5)
+  expect(getHisOperation('inpatient.surgery.record-medication').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.correct-material').version).toBe(4)
+  expect(getHisOperation('inpatient.surgery.supplement-material').version).toBe(4)
+  expect(getHisOperation('inpatient.surgery.preview-completion').version).toBe(5)
+  expect(getHisOperation('inpatient.surgery.complete').version).toBe(7)
+  expect(getHisOperation('inpatient.surgery.execute').version).toBe(7)
+  expect(getHisOperation('inpatient.surgery.convert-to-pci')).toMatchObject({
+    cliPath: ['inpatient', 'convert-surgery-to-pci'],
+    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/surgeries/convert-to-pci' },
+    risk: 'write',
+    roles: ['inpatient-doctor'],
+    skill: 'clinmesh-inpatient',
+    version: 2,
+  })
+  expect(getHisOperation('inpatient.surgery.finalize-standby')).toMatchObject({
+    cliPath: ['inpatient', 'finalize-surgery-standby'],
+    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/surgeries/finalize-standby' },
+    risk: 'write',
+    roles: ['inpatient-doctor'],
+    skill: 'clinmesh-inpatient',
+    version: 2,
+  })
+  expect(getHisOperation('inpatient.drg.simulate').version).toBe(7)
+  expect(getHisOperation('inpatient.material-estimate.read').version).toBe(6)
   expect(getHisOperation('inpatient.pci-selection.confirm').version).toBe(3)
   expect(getHisOperation('inpatient.record.submit').version).toBe(3)
 })
@@ -1005,6 +1022,22 @@ it('validates six-element surgery notice requests and structured one-procedure-o
   expect(request.input.parse(validNotice)).toEqual(validNotice)
   expect(request.input.parse({ ...validNotice, preopOrderPolicy: 'stop-on-completion' })).toMatchObject({ preopOrderPolicy: 'stop-on-completion' })
   expect(request.input.safeParse({ ...validNotice, preopOrderPolicy: undefined }).success).toBe(false)
+  expect(request.input.parse({ ...validNotice, standbyAdHocPci: true })).toEqual({ ...validNotice, standbyAdHocPci: true })
+  const convert = getHisOperation('inpatient.surgery.convert-to-pci')
+  expect(convert.input.parse({
+    admissionId: 'adm-1',
+    requestId: 'req-1',
+    expectedRequestVersion: 3,
+    procedureId: 'hospital-surgery-3',
+    catalogVersion: 1,
+  })).toMatchObject({ requestId: 'req-1', procedureId: 'hospital-surgery-3' })
+  const finalize = getHisOperation('inpatient.surgery.finalize-standby')
+  expect(finalize.input.parse({
+    admissionId: 'adm-1',
+    requestId: 'req-1',
+    expectedRequestVersion: 3,
+    note: '轻度狭窄，暂行药物保守治疗',
+  })).toMatchObject({ requestId: 'req-1', note: '轻度狭窄，暂行药物保守治疗' })
   expect(request.input.safeParse({ ...validNotice, assistantPractitionerId: 'practitioner-inpatient-doctor' }).success).toBe(false)
   expect(request.input.safeParse({
     admissionId: 'adm-1',

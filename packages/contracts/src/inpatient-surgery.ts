@@ -48,8 +48,13 @@ export const inpatientSurgeryPractitionerSchema = z.object({
 }).strict()
 export type InpatientSurgeryPractitioner = z.infer<typeof inpatientSurgeryPractitionerSchema>
 
+export const surgeryExecutionStages = ['primary', 'ad-hoc-pci'] as const
+export const surgeryExecutionStageSchema = z.enum(surgeryExecutionStages)
+export type SurgeryExecutionStage = z.infer<typeof surgeryExecutionStageSchema>
+
 export const surgicalConsentTemplateIds = [
   'coronary-angiography',
+  'coronary-angiography-ad-hoc-pci',
   'coronary-des-pci',
   'coronary-balloon-pci',
   'general-surgery',
@@ -87,6 +92,7 @@ export const inpatientSurgicalConsentDocumentSchema = z.object({
     anesthesiaMethod: anesthesiaMethodSchema.nullable(),
     surgeonName: z.string().min(1).nullable(),
     assistantName: z.string().min(1).nullable(),
+    standbyAdHocPci: z.boolean().optional(),
   }).strict(),
   purposeAndMethod: z.string().min(1),
   commonRisks: z.array(z.string().min(1)).min(3),
@@ -219,6 +225,7 @@ const surgeryRequestFields = {
   assistantPractitionerId: id.optional(),
   anesthesiaMethod: anesthesiaMethodSchema,
   preopOrderPolicy: preopOrderPolicySchema,
+  standbyAdHocPci: z.boolean().optional(),
   reason: note,
   clinicalOverride: clinicalOverrideInputSchema.optional(),
 }
@@ -338,14 +345,36 @@ export const inpatientSurgeryCompletionReviewInputSchema = surgeryActionBaseSche
 export const inpatientSurgeryCompleteInputSchema = surgeryActionBaseSchema.extend({ note: optionalNote, executionId: id,
   reconciliation: z.object({ ...reconciliation, expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
 }).strict()
+export const inpatientSurgeryConvertToPciInputSchema = surgeryActionBaseSchema.extend({
+  procedureId: id,
+  catalogVersion: version,
+  note: optionalNote,
+  clinicalOverride: clinicalOverrideInputSchema.optional(),
+}).strict()
+export const inpatientSurgeryFinalizeStandbyInputSchema = surgeryActionBaseSchema.extend({
+  note: optionalNote,
+}).strict()
 const preparation = z.object({ actorId: z.string().min(1), practitionerRoleId: id, recordedAt: z.iso.datetime({ offset: true }), note }).strict()
 export const inpatientConsentConfirmationSchema = preparation.extend({
   document: inpatientSurgicalConsentDocumentSchema.optional(),
 }).strict()
 export type InpatientConsentConfirmation = z.infer<typeof inpatientConsentConfirmationSchema>
 
+export const inpatientAdHocPciConversionSchema = z.object({
+  status: z.enum(['converted', 'cancelled']),
+  procedure: inpatientProcedureItemSchema,
+  convertedAt: z.iso.datetime({ offset: true }),
+  convertedBy: z.string().min(1),
+  practitionerRoleId: id,
+  note,
+  angiographyExecutionId: id,
+  angiographyReportId: id.nullable(),
+  cancellation: preparation.optional(),
+}).strict()
+export type InpatientAdHocPciConversion = z.infer<typeof inpatientAdHocPciConversionSchema>
+
 export const inpatientSurgeryRequestSchema = z.object({
-  id, admissionId: id, version, status: z.enum(['requested','ready','completed','cancelled']),
+  id, admissionId: id, version, status: z.enum(['requested','ready','standby-pci','completed','cancelled']),
   surgeryType: surgeryTypeSchema.optional(),
   plannedProcedure: inpatientProcedureItemSchema,
   plannedFor: z.iso.datetime({ offset: true }),
@@ -354,6 +383,9 @@ export const inpatientSurgeryRequestSchema = z.object({
   assistant: inpatientSurgeryPractitionerSchema.optional(),
   anesthesiaMethod: anesthesiaMethodSchema.optional(),
   preopOrderPolicy: preopOrderPolicySchema,
+  standbyAdHocPci: z.boolean().optional(),
+  adHocPci: inpatientAdHocPciConversionSchema.optional(),
+  standbyFinalization: preparation.optional(),
   reason: note,
   requestedAt: z.iso.datetime({ offset: true }),
   requestedBy: z.string().min(1),
@@ -401,11 +433,14 @@ export const inpatientSurgeryNursingChargeSchema = z.object({
 }).strict()
 export type InpatientSurgeryNursingCharge = z.infer<typeof inpatientSurgeryNursingChargeSchema>
 
-export const inpatientSurgeryExecutionSchema = z.object({ id, admissionId: id, requestId: id, actualProcedure: inpatientProcedureItemSchema,
+export const inpatientSurgeryExecutionSchema = z.object({ id, admissionId: id, requestId: id,
+  executionStage: z.literal('ad-hoc-pci').optional(),
+  actualProcedure: inpatientProcedureItemSchema,
   performedAt: z.iso.datetime({ offset: true }), performedBy: z.string().min(1), practitionerRoleId: id, organizationId: id, note,
   materials: z.array(inpatientSurgeryMaterialUseSchema), materialHistory: z.array(inpatientSurgeryMaterialHistorySchema).default([]),
   medications: z.array(inpatientSurgeryMedicationUseSchema).optional(),
   linkedNursing: inpatientSurgeryNursingChargeSchema.optional(),
+  sameSessionNursingIncluded: z.literal(true).optional(),
   completedAt: z.iso.datetime({ offset: true }).optional(),
 }).strict()
 export const inpatientSurgerySchema = z.object({ admissionId: id, encounterVersion: z.string().regex(/^\d+$/), virtualTime: z.iso.datetime({ offset: true }),
@@ -433,6 +468,7 @@ export const inpatientSurgeryCompletionPreviewSchema = z.object({
   materialDeltaFen: z.number().int().safe(), procedureAmountFen: z.number().int().nonnegative().safe(),
   nursingAmountFen: z.number().int().nonnegative().safe().default(0),
   linkedNursing: inpatientSurgeryNursingChargeSchema.omit({ chargeId: true }).nullable().default(null),
+  sameSessionNursingIncluded: z.boolean().optional(),
   preopOrderPolicy: preopOrderPolicySchema.default('continue-active'),
   autoStopPreopOrders: z.array(inpatientSurgeryAutoStopOrderPreviewSchema).default([]),
   totalDeltaFen: z.number().int().safe(),

@@ -9,7 +9,8 @@ const prefix = 'clinmesh.reservation-batch:v1:'
 const changedEvent = 'clinmesh.reservation-batch.changed'
 const discard = createDraftDiscard(prefix, () => notify('*'))
 const scopeSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict(), patientId: z.string().min(1),
-  admissionId: z.string().min(1), requestId: z.string().min(1).nullable(), action: z.enum(['create', 'release']) }).strict()
+  admissionId: z.string().min(1), requestId: z.string().min(1).nullable(), stage: z.enum(['primary', 'ad-hoc-pci']).optional(),
+  action: z.enum(['create', 'release']) }).strict()
 type Scope = z.infer<typeof scopeSchema>
 export const reservationBatchCommandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('inpatient.drg.reservation.create'), input: inpatientMaterialReservationCreateInputSchema }).strict(),
@@ -63,9 +64,9 @@ function readRecord(key: string, scope: Scope): Record | null {
   assertRecordBinding(record)
   return record
 }
-export function reservationDraftScope({ session, requestId, ...context }: { session: SessionContext; patientId: string; admissionId: string;
-  requestId?: string | null; action: Scope['action'] }): Scope {
-  return scopeSchema.parse({ ...context, requestId: requestId ?? null, accountId: session.user.id, actor: session.actor })
+export function reservationDraftScope({ session, requestId, stage, ...context }: { session: SessionContext; patientId: string; admissionId: string;
+  requestId?: string | null; stage?: 'primary' | 'ad-hoc-pci' | undefined; action: Scope['action'] }): Scope {
+  return scopeSchema.parse({ ...context, requestId: requestId ?? null, ...(stage === 'ad-hoc-pci' ? { stage } : {}), accountId: session.user.id, actor: session.actor })
 }
 
 /** 人工输入与冻结尝试同存；原回执与重放只由共享 write-intent 处理。 */

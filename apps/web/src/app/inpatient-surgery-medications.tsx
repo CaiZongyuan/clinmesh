@@ -180,7 +180,8 @@ export function SurgeryExecutionExtrasSummary({
   const t = (cn: string, en: string) => (locale === 'zh-CN' ? cn : en)
   const medications = execution?.medications ?? []
   const linkedNursing = execution?.linkedNursing
-  if (medications.length === 0 && !linkedNursing) return null
+  const sameSessionNursingIncluded = execution?.sameSessionNursingIncluded === true
+  if (medications.length === 0 && !linkedNursing && !sameSessionNursingIncluded) return null
   return (
     <p className="text-xs text-muted-foreground">
       {[
@@ -192,7 +193,11 @@ export function SurgeryExecutionExtrasSummary({
           ? [
               `${t('术中专科护理', 'Specialty nursing')}：${linkedNursing.display}（${formatFen(linkedNursing.amountFen, locale)}）`,
             ]
-          : []),
+          : sameSessionNursingIncluded
+            ? [
+                `${t('术中专科护理', 'Specialty nursing')}：${t('已包含于同台造影阶段，不重复计收', 'Included in same-session angiography; not billed again')}`,
+              ]
+            : []),
       ].join(' · ')}
     </p>
   )
@@ -214,6 +219,7 @@ export function SurgeryBatchMedicationsEditor({
   rows,
   disabled,
   locale,
+  sameSessionNursingIncluded = false,
   onChange,
 }: {
   requestId: string
@@ -222,6 +228,7 @@ export function SurgeryBatchMedicationsEditor({
   rows: readonly ExecuteMedicationRow[]
   disabled: boolean
   locale: WorkspaceLocale
+  sameSessionNursingIncluded?: boolean
   onChange: (next: ExecuteMedicationRow[]) => void
 }): React.JSX.Element {
   const t = (cn: string, en: string) => (locale === 'zh-CN' ? cn : en)
@@ -291,8 +298,9 @@ export function SurgeryBatchMedicationsEditor({
             <b className="font-medium text-foreground">{linkedNursing.display}</b>
           </span>
           <span className="tabular-nums">
-            {formatFen(linkedNursing.priceFen, locale)}/{linkedNursing.unit} ·{' '}
-            {t('完成本台手术时自动计入费用', 'posted automatically upon completion')}
+            {sameSessionNursingIncluded
+              ? t('已包含于同台造影阶段，本阶段不重复计收', 'Included in same-session angiography; not billed again')
+              : `${formatFen(linkedNursing.priceFen, locale)}/${linkedNursing.unit} · ${t('完成本台手术时自动计入费用', 'posted automatically upon completion')}`}
           </span>
         </div>
       ) : null}
@@ -590,8 +598,9 @@ export function IntraoperativeMedicationsSection({
 
   const medications = execution.medications ?? []
   const linkedNursing = execution.linkedNursing
+  const sameSessionNursingIncluded = execution.sameSessionNursingIncluded === true
 
-  if (!running && medications.length === 0 && !linkedNursing) {
+  if (!running && medications.length === 0 && !linkedNursing && !sameSessionNursingIncluded) {
     return null
   }
   if (running && medications.length === 0 && baseStockMedications.length === 0 && matchingPackages.length === 0) {
@@ -917,6 +926,14 @@ export function IntraoperativeMedicationsSection({
             <b className="font-medium">{linkedNursing.display}</b>（1 {linkedNursing.unit}）
           </span>
           <b className="tabular-nums">{formatFen(linkedNursing.amountFen, locale)}</b>
+        </div>
+      ) : !running && sameSessionNursingIncluded ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+          <span>
+            {t('术中专科护理', 'Intraoperative specialty nursing')} ·{' '}
+            {t('已包含于同台造影阶段，不重复计收', 'Included in same-session angiography; not billed again')}
+          </span>
+          <span className="tabular-nums">{formatFen(0, locale)}</span>
         </div>
       ) : null}
 
