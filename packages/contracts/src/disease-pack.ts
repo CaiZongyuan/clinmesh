@@ -2,24 +2,47 @@ import { z } from 'zod'
 import {
   clinicalFactCategorySchema,
   clinicalFactLedgerSchema,
-  clinicalFactVerificationStatusSchema,
 } from './clinical-fact-ledger.ts'
+import { conceptVocabularySchema } from './concept-vocabulary.ts'
+import {
+  diseasePackSha256Schema,
+  diseasePackSlugSchema,
+  diseasePackTimestampFieldSchema,
+  diseasePackTriggerNodeSchema,
+  type DiseasePackAllOfTriggerNode,
+  type DiseasePackAnyOfTriggerNode,
+  type DiseasePackFactTriggerNode,
+  type DiseasePackNotTriggerNode,
+  type DiseasePackSequenceTriggerNode,
+  type DiseasePackSlug,
+  type DiseasePackTimestampField,
+  type DiseasePackTriggerNode,
+} from './disease-pack-triggers.ts'
 import { guidelineTopicIdSchema } from './guideline-topics.ts'
 import { commandResponseSchema } from './his.ts'
+import { knowledgeSnapshotSchema } from './knowledge-claims.ts'
 import { orderSetTemplateIdSchema } from './order-set-templates.ts'
 
-export const diseasePackSlugSchema = z.string().regex(/^[a-z0-9-]{1,64}$/)
-export type DiseasePackSlug = z.infer<typeof diseasePackSlugSchema>
+export {
+  diseasePackSha256Schema,
+  diseasePackSlugSchema,
+  diseasePackTimestampFieldSchema,
+  diseasePackTriggerNodeSchema,
+  type DiseasePackAllOfTriggerNode,
+  type DiseasePackAnyOfTriggerNode,
+  type DiseasePackFactTriggerNode,
+  type DiseasePackNotTriggerNode,
+  type DiseasePackSequenceTriggerNode,
+  type DiseasePackSlug,
+  type DiseasePackTimestampField,
+  type DiseasePackTriggerNode,
+}
 
-export const diseasePackSha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 export const diseasePackTypeSchema = z.enum(['full', 'recognition'])
 export type DiseasePackType = z.infer<typeof diseasePackTypeSchema>
 
 export const diseasePackStatusSchema = z.enum(['draft', 'active', 'retired'])
 export type DiseasePackStatus = z.infer<typeof diseasePackStatusSchema>
-
-export const diseasePackTimestampFieldSchema = z.enum(['effectiveAt', 'reportedAt', 'ingestedAt'])
-export type DiseasePackTimestampField = z.infer<typeof diseasePackTimestampFieldSchema>
 
 const nonEmptyText = z.string().trim().min(1).max(1000)
 const boundedCode = z.string().trim().min(1).max(128)
@@ -50,108 +73,6 @@ export const diseasePackManifestSchema = z.object({
   version: z.string().trim().min(1).max(64),
 }).strict()
 export type DiseasePackManifest = z.infer<typeof diseasePackManifestSchema>
-
-export interface DiseasePackFactTriggerNode {
-  kind: 'fact'
-  category?: z.infer<typeof clinicalFactCategorySchema> | undefined
-  itemCodes?: string[] | undefined
-  itemCodePattern?: string | undefined
-  presence: 'present' | 'absent'
-  requireEligible: boolean
-  verificationStatus?: z.infer<typeof clinicalFactVerificationStatusSchema> | undefined
-  minValue?: number | undefined
-  maxValue?: number | undefined
-  unit?: string | undefined
-  textPattern?: string | undefined
-  withinDays?: number | undefined
-  timestampField?: DiseasePackTimestampField | undefined
-}
-
-export interface DiseasePackSequenceTriggerNode {
-  kind: 'sequence'
-  first: DiseasePackTriggerNode
-  then: DiseasePackTriggerNode
-  maxGapDays?: number | undefined
-  requireDistinctEncounters?: boolean | undefined
-  timestampField: DiseasePackTimestampField
-}
-
-export interface DiseasePackAllOfTriggerNode {
-  kind: 'allOf'
-  nodes: DiseasePackTriggerNode[]
-}
-
-export interface DiseasePackAnyOfTriggerNode {
-  kind: 'anyOf'
-  nodes: DiseasePackTriggerNode[]
-}
-
-export interface DiseasePackNotTriggerNode {
-  kind: 'not'
-  node: DiseasePackTriggerNode
-}
-
-export type DiseasePackTriggerNode =
-  | DiseasePackFactTriggerNode
-  | DiseasePackSequenceTriggerNode
-  | DiseasePackAllOfTriggerNode
-  | DiseasePackAnyOfTriggerNode
-  | DiseasePackNotTriggerNode
-
-export const diseasePackTriggerNodeSchema: z.ZodType<DiseasePackTriggerNode> = z.lazy(() =>
-  z.discriminatedUnion('kind', [
-    z.object({
-      kind: z.literal('fact'),
-      category: clinicalFactCategorySchema.optional(),
-      itemCodes: z.array(boundedCode).min(1).max(64).optional(),
-      itemCodePattern: z.string().trim().min(1).max(200).optional(),
-      presence: z.enum(['present', 'absent']).default('present'),
-      requireEligible: z.boolean().default(true),
-      verificationStatus: clinicalFactVerificationStatusSchema.optional(),
-      minValue: z.number().finite().optional(),
-      maxValue: z.number().finite().optional(),
-      unit: z.string().trim().min(1).max(64).optional(),
-      textPattern: z.string().trim().min(1).max(200).optional(),
-      withinDays: z.number().positive().max(36500).optional(),
-      timestampField: diseasePackTimestampFieldSchema.optional(),
-    }).strict().superRefine((node, ctx) => {
-      if (node.category === undefined && node.itemCodes === undefined && node.itemCodePattern === undefined) {
-        ctx.addIssue({
-          code: 'custom',
-          message: 'Fact trigger must declare category, itemCodes, or itemCodePattern',
-        })
-      }
-      if (node.withinDays !== undefined && node.timestampField === undefined) {
-        ctx.addIssue({
-          code: 'custom',
-          message: 'Fact trigger with withinDays must explicitly specify timestampField',
-          path: ['timestampField'],
-        })
-      }
-    }),
-    z.object({
-      kind: z.literal('sequence'),
-      first: diseasePackTriggerNodeSchema,
-      // oxlint-disable-next-line unicorn/no-thenable -- Schema preserves DSAP TriggerNode AST contract ('first' -> 'then').
-      then: diseasePackTriggerNodeSchema,
-      maxGapDays: z.number().positive().max(36500).optional(),
-      requireDistinctEncounters: z.boolean().optional(),
-      timestampField: diseasePackTimestampFieldSchema,
-    }).strict(),
-    z.object({
-      kind: z.literal('allOf'),
-      nodes: z.array(diseasePackTriggerNodeSchema).min(1).max(32),
-    }).strict(),
-    z.object({
-      kind: z.literal('anyOf'),
-      nodes: z.array(diseasePackTriggerNodeSchema).min(1).max(32),
-    }).strict(),
-    z.object({
-      kind: z.literal('not'),
-      node: diseasePackTriggerNodeSchema,
-    }).strict(),
-  ]),
-)
 
 export const diseasePackStageSchema = z.object({
   entryCondition: diseasePackTriggerNodeSchema,
@@ -329,12 +250,14 @@ export const diseasePackTriggerRuleSchema = z.object({
 }).strict()
 
 export const diseasePackSchema = z.object({
+  conceptVocabulary: conceptVocabularySchema.optional(),
   confusablePacks: z.array(diseasePackConfusablePackSchema).max(32).optional(),
   examSuite: diseasePackExamSuiteSchema,
   exitCriteria: z.array(diseasePackExitCriterionSchema).max(32).optional(),
   formulaRefs: z.array(diseasePackFormulaRefSchema).max(32).default([]),
   inapplicablePopulations: z.array(diseasePackInapplicablePopulationSchema).max(32).default([]),
   indicationRules: z.array(diseasePackIndicationRuleSchema).max(64).optional(),
+  knowledgeSnapshots: z.array(knowledgeSnapshotSchema).max(32).optional(),
   manifest: diseasePackManifestSchema,
   orderSets: z.array(diseasePackOrderSetSchema).max(32).optional(),
   pointScales: z.array(diseasePackPointScaleSchema).max(16).optional(),
