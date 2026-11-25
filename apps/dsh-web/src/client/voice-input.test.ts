@@ -317,6 +317,21 @@ describe('createSurfaceVoiceInput', () => {
       await vi.waitFor(() => expect(voice.getSnapshot().phase).toBe('idle'))
       expect(draft).toBe('医生手工修改后的问题')
 
+      // Deleting the recognized suffix back to the nonempty base draft during polish is respected
+      let resolvePolish2!: (value: unknown) => void
+      remote.polish = vi.fn(() => new Promise(resolve => { resolvePolish2 = resolve }))
+      speech = createFakeSpeechRecognition()
+      draft = '既往史：'
+      voice.start(target)
+      speech.emitResult([{ transcript: '高血压十年', isFinal: true }])
+      expect(draft).toBe('既往史：高血压十年')
+      voice.stop()
+      await vi.waitFor(() => expect(voice.getSnapshot().phase).toBe('polishing'))
+      draft = '既往史：'
+      resolvePolish2(ok({ status: 'ok', text: '高血压十年。' }))
+      await vi.waitFor(() => expect(voice.getSnapshot().phase).toBe('idle'))
+      expect(draft).toBe('既往史：')
+
       // Polish failure keeps raw transcript and surfaces non-destructive error
       remote.polish = vi.fn(async () => ok({ status: 'error', message: 'upstream failed' }))
       speech = createFakeSpeechRecognition()

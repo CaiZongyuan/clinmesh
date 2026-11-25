@@ -414,10 +414,8 @@ function collapseDraft(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
-function shouldApplyPolish(current: string, expected: string, base: string): boolean {
-  const normalizedCurrent = collapseDraft(current)
-  return normalizedCurrent === collapseDraft(expected)
-    || (base.trim() !== '' && normalizedCurrent === collapseDraft(base))
+function shouldApplyPolish(current: string, expected: string): boolean {
+  return collapseDraft(current) === collapseDraft(expected)
 }
 
 function unwrapRemoteResult(raw: unknown): { ok: true; value: unknown } | { ok: false; message: string } {
@@ -994,7 +992,7 @@ export function createSurfaceVoiceInput(
         controller.signal,
       )
       if (disposed || controller.signal.aborted || epoch !== capturedEpoch) return
-      if (!shouldApplyPolish(target.getDraft(), expectedDraft, baseDraft)) {
+      if (!shouldApplyPolish(target.getDraft(), expectedDraft)) {
         setPhase('idle')
         return
       }
@@ -1033,6 +1031,9 @@ export function createSurfaceVoiceInput(
     if (!alreadyApplied) {
       appliedDraft = joinVoiceText(baseDraft, trimmed)
       target.setDraft(appliedDraft)
+    } else if (!shouldApplyPolish(target.getDraft(), appliedDraft)) {
+      setPhase('idle')
+      return
     }
     void runPolish(target, trimmed, baseDraft, appliedDraft, currentSettings, capturedEpoch)
   }
