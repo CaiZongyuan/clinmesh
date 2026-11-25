@@ -247,8 +247,8 @@ export const inpatientSurgeryRequestInputSchema = z.object({
   path: ['assistantPractitionerId'],
 })
 
-/** 升级前旧版手术申请入参，仅用于既有持久回执（`command_receipt`）原样幂等重放。 */
-const legacySurgeryRequestFields = {
+/** 升级前旧版手术申请入参（v3 三字段与 v4/v5 缺省 preopOrderPolicy 六要素），仅用于既有持久回执（`command_receipt`）原样幂等重放。 */
+const legacyV3SurgeryRequestFields = {
   encounterVersion: z.string().regex(/^\d+$/),
   procedureId: id,
   catalogVersion: version,
@@ -257,12 +257,29 @@ const legacySurgeryRequestFields = {
   clinicalOverride: clinicalOverrideInputSchema.optional(),
 }
 
-export const inpatientLegacySurgeryRequestBodySchema = z.object(legacySurgeryRequestFields).strict()
+const { preopOrderPolicy: _legacyOmittedPreopOrderPolicy, ...legacyV4V5SurgeryRequestFields } = surgeryRequestFields
 
-export const inpatientLegacySurgeryRequestInputSchema = z.object({
-  admissionId: id,
-  ...legacySurgeryRequestFields,
-}).strict()
+export const inpatientLegacySurgeryRequestBodySchema = z.union([
+  z.object(legacyV3SurgeryRequestFields).strict(),
+  z.object(legacyV4V5SurgeryRequestFields).strict().refine(distinctSurgeons, {
+    message: '主刀医师与第一助手不能为同一人',
+    path: ['assistantPractitionerId'],
+  }),
+])
+
+export const inpatientLegacySurgeryRequestInputSchema = z.union([
+  z.object({
+    admissionId: id,
+    ...legacyV3SurgeryRequestFields,
+  }).strict(),
+  z.object({
+    admissionId: id,
+    ...legacyV4V5SurgeryRequestFields,
+  }).strict().refine(distinctSurgeons, {
+    message: '主刀医师与第一助手不能为同一人',
+    path: ['assistantPractitionerId'],
+  }),
+])
 
 const surgeryActionBaseSchema = z.object({ admissionId: id, requestId: id, expectedRequestVersion: version }).strict()
 export const inpatientSurgeryActionInputSchema = surgeryActionBaseSchema.extend({ note }).strict()

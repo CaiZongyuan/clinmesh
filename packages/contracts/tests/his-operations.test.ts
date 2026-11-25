@@ -1022,6 +1022,8 @@ it('validates six-element surgery notice requests and structured one-procedure-o
   expect(request.input.parse(validNotice)).toEqual(validNotice)
   expect(request.input.parse({ ...validNotice, preopOrderPolicy: 'stop-on-completion' })).toMatchObject({ preopOrderPolicy: 'stop-on-completion' })
   expect(request.input.safeParse({ ...validNotice, preopOrderPolicy: undefined }).success).toBe(false)
+  const { preopOrderPolicy: _droppedPolicy, ...legacyV5Notice } = validNotice
+  expect(request.input.safeParse({ ...legacyV5Notice, standbyAdHocPci: true }).success).toBe(false)
   expect(getHisOperation('inpatient.surgery.read').output.parse({
     admissionId: 'adm-1',
     encounterVersion: '2',

@@ -2286,6 +2286,47 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     expect(replayedLegacyReqData.preopOrderPolicy).toBe('continue-active')
     expect((await s.request(s.doctor, `${s.path}/surgeries/request`, legacyV3RequestBody)).status).toBe(400)
 
+    // 同时验证升级前 v4/v5 六要素（含可选 standbyAdHocPci、无 preopOrderPolicy）持久回执在同幂等键重放返回 200，改载荷 409，新幂等键 400
+    const legacyV5RequestKey = `legacy-v5-request-${randomUUID()}`
+    const legacyV5RequestBody = {
+      encounterVersion: s.admission.versionId,
+      surgeryType: 'elective' as const,
+      procedureId: 'hospital-surgery-8',
+      catalogVersion: 1,
+      plannedFor: '2026-08-25T02:00:00.000Z',
+      locationId: 'location-catheterization-lab' as const,
+      surgeonPractitionerId: 'practitioner-inpatient-doctor',
+      anesthesiaMethod: 'local-infiltration' as const,
+      standbyAdHocPci: true,
+      reason: '模拟 0122 升级前六要素无 preopOrderPolicy 回执',
+    }
+    const legacyV5RequestHash = commandRequestHash({
+      context: auth,
+      expectedVersions: { [`Encounter/${s.admission.id}`]: s.admission.versionId },
+      input: { admissionId: s.admission.id, ...legacyV5RequestBody },
+      operation: 'inpatient.surgery.request',
+    })
+    const legacyV5StoredReceipt = JSON.parse(storedReqReceipt.response_json) as { data: { requests: Array<Record<string, unknown>> } }
+    delete legacyV5StoredReceipt.data.requests[0]!.preopOrderPolicy
+    legacyV5StoredReceipt.data.requests[0]!.standbyAdHocPci = true
+    s.runtime.database.driver.prepare(`
+      INSERT INTO command_receipt(workspace_id,epoch,actor_id,practitioner_role_id,operation,idempotency_key,request_hash,status,response_json,created_at,updated_at)
+      VALUES(?,?,?,?,'inpatient.surgery.request',?,?, 'completed',?,?,?)
+    `).run(auth.workspaceId, auth.epoch, auth.actorId, auth.practitionerRoleId, legacyV5RequestKey, legacyV5RequestHash, JSON.stringify(legacyV5StoredReceipt), '2026-08-24T09:00:00.000Z', '2026-08-24T09:00:00.000Z')
+    const replayedLegacyV5Req = await s.request(s.doctor, `${s.path}/surgeries/request`, legacyV5RequestBody, legacyV5RequestKey)
+    expect(replayedLegacyV5Req.status, await replayedLegacyV5Req.clone().text()).toBe(200)
+    const replayedLegacyV5Data = inpatientSurgeryResponseSchema.parse(await replayedLegacyV5Req.json()).data.requests[0]!
+    expect(replayedLegacyV5Data.surgeryType).toBe('elective')
+    expect(replayedLegacyV5Data.standbyAdHocPci).toBe(true)
+    expect(replayedLegacyV5Data.preopOrderPolicy).toBe('continue-active')
+    const conflictLegacyV5Req = await s.request(s.doctor, `${s.path}/surgeries/request`, {
+      ...legacyV5RequestBody,
+      reason: '篡改旧版 v5 回执理由',
+    }, legacyV5RequestKey)
+    expect(conflictLegacyV5Req.status).toBe(409)
+    expect(apiErrorSchema.parse(await conflictLegacyV5Req.json()).error.code).toBe('IDEMPOTENCY_KEY_REUSED')
+    expect((await s.request(s.doctor, `${s.path}/surgeries/request`, legacyV5RequestBody)).status).toBe(400)
+
     const legacyLookup = await s.request(s.doctor, `/api/his/v1/command-receipts?operationId=inpatient.surgery.confirm-consent&idempotencyKey=${legacyReceiptKey}`)
     expect(legacyLookup.status).toBe(200)
     const parsedLookup = commandReceiptLookupSchema.parse(await legacyLookup.json())
