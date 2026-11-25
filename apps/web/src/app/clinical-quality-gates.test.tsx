@@ -752,6 +752,7 @@ describe('Clinical quality gates Web UI & AgentReviewProvider contracts', () => 
       status: 'requested',
       plannedProcedure: pciProcedure,
       plannedFor: time,
+      preopOrderPolicy: 'continue-active',
       reason: '造影前拟行前降支介入评估与支架置入',
       requestedAt: time,
       requestedBy: 'actor-inpatient-doctor',

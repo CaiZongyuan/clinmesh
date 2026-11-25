@@ -159,7 +159,7 @@ export async function prepareSurgeryMaterialsPatient(page: Page, app: Parameters
   const requested = inpatientSurgeryResponseSchema.parse(await (await s.api.post(`${s.path}/surgeries/request`, {
     encounterVersion: surgery.encounterVersion, procedureId: 'hospital-surgery-1', catalogVersion: 1,
     surgeryType: 'elective', locationId: 'location-catheterization-lab',
-    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成 PCI 逐笔耗材验证',
   })).json()).data.requests[0]!
   await s.api.login('ward-nurse')

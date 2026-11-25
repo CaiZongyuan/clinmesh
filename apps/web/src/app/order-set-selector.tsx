@@ -26,7 +26,7 @@ export interface OrderSetApplyResult {
 
 export type OrderSetTarget =
   | { caseId: string; scope: 'outpatient' }
-  | { admissionId: string; scope: 'inpatient' }
+  | { admissionId: string; scope: 'inpatient'; surgeryExecutionId?: string | undefined }
 
 const [cpId, baseId, cinId, secId] = orderSetTemplateIds
 const both: readonly OrderSetScope[] = ['outpatient', 'inpatient']
@@ -46,8 +46,9 @@ export function orderSetExcludedIds(draft: OrderSetDraft, kind: OrderSetItemKind
   return new Set(draft.items.flatMap(i => i.kind === kind && i.disposition === 'excluded' && i.matchedCatalogId !== null ? [i.matchedCatalogId] : []))
 }
 
-function badgeFor(d: OrderSetDraftItem['disposition'], zh: boolean): [string, 'outline' | 'warning'] | undefined {
+function badgeFor(d: OrderSetDraftItem['disposition'], zh: boolean): [string, 'outline' | 'secondary' | 'warning'] | undefined {
   if (d === 'excluded') return [zh ? '已按禁忌剔除' : 'Excluded', 'warning']
+  if (d === 'skipped') return [zh ? '术前已在用 · 默认跳过' : 'Already active · skipped', 'secondary']
   if (d === 'needs-review') return [zh ? '待核实' : 'Needs verification', 'warning']
   return d === 'unavailable' ? [zh ? '暂不可开立' : 'Unavailable', 'outline'] : undefined
 }
@@ -125,6 +126,7 @@ export function OrderSetSelectorBar({
           <p className="font-medium">
             {t(`已套用「${cur.draft.template.titleZh}」：加入待开清单 ${add} 项`, `Applied "${cur.draft.template.titleEn}": added ${add} items`)}
             {rev > 0 ? t(`（其中待核实 ${rev} 项默认未勾选，核实后再勾选开立）`, ` (${rev} require verification and start unselected)`) : ''}
+            {cur.draft.counts.skipped > 0 ? t(` · 术前已在用默认跳过 ${cur.draft.counts.skipped} 项`, ` · ${cur.draft.counts.skipped} skipped (already active)`) : ''}
             {cur.draft.counts.excluded > 0 ? t(` · 已按禁忌剔除 ${cur.draft.counts.excluded} 项`, ` · ${cur.draft.counts.excluded} excluded`) : ''}
             {rm > 0 ? t(` · 已从待开清单移除受限项 ${rm} 项`, ` · removed ${rm} restricted items`) : ''}
             {extraNote ? ` · ${extraNote}` : ''}

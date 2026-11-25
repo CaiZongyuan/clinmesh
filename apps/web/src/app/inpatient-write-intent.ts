@@ -32,6 +32,7 @@ import { useEffect, useRef, useState } from 'react'
 import { IssueDraftUnreadable, type IssueDraftOutcome } from './inpatient-issue-draft-settlement.ts'
 import { settleIssuedOrder } from './inpatient-order-drafts.ts'
 import { settleIssuedInvestigation } from './inpatient-investigation-drafts.ts'
+import { settlePostopAttempt } from './inpatient-postop-drafts.ts'
 import { consumeSurgeryDraft, SurgeryDraftUnreadable } from './inpatient-surgery-draft.ts'
 import { ReservationDraftUnreadable, settleReservationAttempt } from './inpatient-reservation-batch.ts'
 import { settleCorrectionAttempt } from './inpatient-correction-batch.ts'
@@ -272,8 +273,14 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       const settleIssue = (outcome: IssueDraftOutcome) => {
         try {
           const command = intent.command
-          if (command.operation === 'inpatient.order.issue') settleIssuedOrder(command.input, intent.idempotencyKey, session, outcome)
-          if (command.operation === 'inpatient.investigation.issue') settleIssuedInvestigation(command.input, intent.idempotencyKey, session, outcome)
+          if (command.operation === 'inpatient.order.issue') {
+            settleIssuedOrder(command.input, intent.idempotencyKey, session, outcome)
+            settlePostopAttempt('inpatient.order.issue', command.input, intent.idempotencyKey, session, outcome)
+          }
+          if (command.operation === 'inpatient.investigation.issue') {
+            settleIssuedInvestigation(command.input, intent.idempotencyKey, session, outcome)
+            settlePostopAttempt('inpatient.investigation.issue', command.input, intent.idempotencyKey, session, outcome)
+          }
         } catch (error) {
           if (error instanceof IssueDraftUnreadable) throw new OriginalContinuationUnreadable(intent.idempotencyKey)
           throw storageError()

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { inpatientSurgeryCompletionPreviewSchema, type inpatientSurgeryCompletionReviewInputSchema,
+import { inpatientSurgeryCompletionPreviewSchema, type InpatientSurgeryAutoStopOrderPreview, type PreopOrderPolicy, type inpatientSurgeryCompletionReviewInputSchema,
   type inpatientSurgeryExecutionSchema, type inpatientSurgeryCatalogSchema, type inpatientMaterialItemSchema, type inpatientProcedureItemSchema } from '@clinmesh/contracts/inpatient-surgery'
 import type { InpatientMaterialReservationList } from '@clinmesh/contracts/inpatient-drg-simulation'
 import type { InpatientMaterialPlanBasis } from '@clinmesh/contracts/inpatient-material-plan'
@@ -27,7 +27,8 @@ export function planSurgeryCompletion(input: z.infer<typeof inpatientSurgeryComp
   catalog: z.infer<typeof inpatientSurgeryCatalogSchema>,
   reservations: InpatientMaterialReservationList, reservationItems: Record<string, z.infer<typeof inpatientMaterialItemSchema>>,
   charges: MaterialChargeBasis, context: Pick<ActorContext, 'workspaceId' | 'epoch' | 'actorId' | 'practitionerRoleId'>,
-  planBasis?: InpatientMaterialPlanBasis) {
+  planBasis?: InpatientMaterialPlanBasis,
+  preopOrders?: { preopOrderPolicy: PreopOrderPolicy; autoStopPreopOrders: InpatientSurgeryAutoStopOrderPreview[] }) {
   const conflict = (message: string): never => { throw new InpatientError('INPATIENT_SURGERY_REVIEW_CONFLICT', message) }
   const seen = new Set<string>(), releases = new Set<string>(), reviewedReservationItems = new Set<string>()
   const reservationDeltas = new Map<string, number>()
@@ -131,9 +132,22 @@ export function planSurgeryCompletion(input: z.infer<typeof inpatientSurgeryComp
         amountFen: linked.priceFen,
       }
   const nursingAmountFen = linkedNursing?.amountFen ?? 0
+  const preopOrderPolicy: PreopOrderPolicy = preopOrders?.preopOrderPolicy ?? 'continue-active'
+  const autoStopPreopOrders = preopOrderPolicy === 'stop-on-completion' ? (preopOrders?.autoStopPreopOrders ?? []) : []
   const preview = inpatientSurgeryCompletionPreviewSchema.parse({
-    fingerprint: canonicalJsonHash({ input: { ...input, note: resolvedNote }, execution, catalog, reservations, reservationItems, charges, context }),
+    fingerprint: canonicalJsonHash({
+      input: { ...input, note: resolvedNote },
+      execution,
+      catalog,
+      reservations,
+      reservationItems,
+      charges,
+      context,
+      preopOrderPolicy,
+      autoStopPreopOrders,
+    }),
     materials, materialDeltaFen, procedureAmountFen, nursingAmountFen, linkedNursing,
+    preopOrderPolicy, autoStopPreopOrders,
     totalDeltaFen: materialDeltaFen + procedureAmountFen + nursingAmountFen,
     retainedReservations,
   })

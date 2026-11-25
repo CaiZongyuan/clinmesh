@@ -56,7 +56,7 @@ async function setup(respond?: (feature: string, input: unknown, index: number) 
 
 async function plan(s: Awaited<ReturnType<typeof setup>>, procedureId = 'hospital-surgery-8') {
   const response = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    anesthesiaMethod: 'local-infiltration',
+    anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     encounterVersion: s.stay.encounterVersion,
     locationId: 'location-catheterization-lab',
     procedureId,
@@ -409,7 +409,7 @@ it('保存双根导管造影计划即自动预计一次，刷新复用且不启�
   const s = await setup()
   expect((await s.read()).estimates).toEqual([])
   const planned = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    anesthesiaMethod: 'local-infiltration',
+    anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     encounterVersion: s.stay.encounterVersion,
     locationId: 'location-catheterization-lab',
     procedureId: 'hospital-surgery-8',
@@ -921,7 +921,7 @@ it('术中清单返回自身确认候选，后确认的另一PCI计划不会替�
   await confirmEstimate(s)
   const admission = (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
   const next = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, {
-    anesthesiaMethod: 'local-infiltration',
+    anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     encounterVersion: admission.versionId,
     locationId: 'location-catheterization-lab',
     procedureId: stay.procedure.id,
@@ -960,7 +960,7 @@ it('两份明确草稿合并才达到九成时，候选与模型费用使用同�
   await s.fixture.runtime.dispatchPending()
   let admission = (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
   const nextResponse = await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, {
-    anesthesiaMethod: 'local-infiltration',
+    anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     encounterVersion: admission.versionId,
     locationId: 'location-catheterization-lab',
     procedureId: stay.procedure.id,

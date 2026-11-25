@@ -21,6 +21,10 @@ export const anesthesiaMethods = ['local-infiltration', 'local-sedation', 'gener
 export const anesthesiaMethodSchema = z.enum(anesthesiaMethods)
 export type AnesthesiaMethod = z.infer<typeof anesthesiaMethodSchema>
 
+export const preopOrderPolicies = ['continue-active', 'stop-on-completion'] as const
+export const preopOrderPolicySchema = z.enum(preopOrderPolicies)
+export type PreopOrderPolicy = z.infer<typeof preopOrderPolicySchema>
+
 export const surgeryLocationIds = [
   'location-catheterization-lab',
   'location-operating-center',
@@ -214,6 +218,7 @@ const surgeryRequestFields = {
   surgeonPractitionerId: id,
   assistantPractitionerId: id.optional(),
   anesthesiaMethod: anesthesiaMethodSchema,
+  preopOrderPolicy: preopOrderPolicySchema,
   reason: note,
   clinicalOverride: clinicalOverrideInputSchema.optional(),
 }
@@ -348,6 +353,7 @@ export const inpatientSurgeryRequestSchema = z.object({
   surgeon: inpatientSurgeryPractitionerSchema.optional(),
   assistant: inpatientSurgeryPractitionerSchema.optional(),
   anesthesiaMethod: anesthesiaMethodSchema.optional(),
+  preopOrderPolicy: preopOrderPolicySchema,
   reason: note,
   requestedAt: z.iso.datetime({ offset: true }),
   requestedBy: z.string().min(1),
@@ -405,6 +411,18 @@ export const inpatientSurgeryExecutionSchema = z.object({ id, admissionId: id, r
 export const inpatientSurgerySchema = z.object({ admissionId: id, encounterVersion: z.string().regex(/^\d+$/), virtualTime: z.iso.datetime({ offset: true }),
   requests: z.array(inpatientSurgeryRequestSchema), executions: z.array(inpatientSurgeryExecutionSchema), inProgress: z.array(inpatientSurgeryExecutionSchema).default([]) }).strict()
 export const inpatientSurgeryResponseSchema = commandResponseSchema(inpatientSurgerySchema)
+export const inpatientSurgeryAutoStopOrderPreviewSchema = z.object({
+  orderId: id,
+  orderVersion: version,
+  kind: z.enum(['medication', 'service']),
+  display: z.string().min(1),
+  state: z.enum(['signed', 'verified']),
+  doseText: z.string().min(1).optional(),
+  frequencyCode: z.string().min(1).optional(),
+  routeCode: medicationRouteSchema.optional(),
+}).strict()
+export type InpatientSurgeryAutoStopOrderPreview = z.infer<typeof inpatientSurgeryAutoStopOrderPreviewSchema>
+
 export const inpatientSurgeryCompletionPreviewSchema = z.object({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   materials: z.array(z.object({ item: inpatientMaterialItemSchema, materialUseIds: z.array(id), reservationId: id.nullable(),
@@ -415,6 +433,8 @@ export const inpatientSurgeryCompletionPreviewSchema = z.object({
   materialDeltaFen: z.number().int().safe(), procedureAmountFen: z.number().int().nonnegative().safe(),
   nursingAmountFen: z.number().int().nonnegative().safe().default(0),
   linkedNursing: inpatientSurgeryNursingChargeSchema.omit({ chargeId: true }).nullable().default(null),
+  preopOrderPolicy: preopOrderPolicySchema.default('continue-active'),
+  autoStopPreopOrders: z.array(inpatientSurgeryAutoStopOrderPreviewSchema).default([]),
   totalDeltaFen: z.number().int().safe(),
 }).strict()
 

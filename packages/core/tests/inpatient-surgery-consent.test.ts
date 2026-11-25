@@ -7,9 +7,11 @@ import {
   formatAnesthesiaMethod,
   formatConsentSignerRole,
   formatPractitionerDisplay,
+  formatPreopOrderPolicy,
   formatSurgeryType,
   formatSurgicalConsentSummaryNote,
   recommendedAnesthesiaMethod,
+  recommendedPreopOrderPolicy,
   recommendedSurgeryLocationId,
   resolveSurgicalConsentTemplate,
 } from '../src/inpatient-surgery-consent.ts'
@@ -34,6 +36,13 @@ describe('inpatient-surgery-consent', () => {
     expect(recommendedSurgeryLocationId({ coding: { category: '手术', code: '47.0100' } })).toBe('location-operating-center')
     expect(recommendedAnesthesiaMethod({ coding: { category: '手术', code: '47.0100' } })).toBe('general')
     expect(recommendedAnesthesiaMethod({ coding: { category: '手术', code: '53.0001' } })).toBe('neuraxial')
+    expect(formatPreopOrderPolicy('continue-active', 'zh-CN')).toBe('继续术前有效长期医嘱（常规介入/局麻）')
+    expect(formatPreopOrderPolicy('stop-on-completion', 'en-US')).toBe('Auto-stop active pre-op long-term orders on completion')
+    expect(recommendedPreopOrderPolicy({ coding: { category: '介入治疗', code: '36.0700' } }, 'local-infiltration')).toBe('continue-active')
+    expect(recommendedPreopOrderPolicy({ coding: { category: '诊断性操作', code: '88.5600' } }, 'local-sedation')).toBe('continue-active')
+    expect(recommendedPreopOrderPolicy({ coding: { category: '手术', code: '51.2300' } }, 'general')).toBe('stop-on-completion')
+    expect(recommendedPreopOrderPolicy({ coding: { category: '手术', code: '53.0001' } }, 'neuraxial')).toBe('stop-on-completion')
+    expect(recommendedPreopOrderPolicy({ coding: { category: '介入治疗', code: '36.0700' } }, 'general')).toBe('stop-on-completion')
   })
 
   it('maps coronary angiography, DES PCI, balloon PCI, and general surgery to distinct procedure-specific consent templates', () => {
@@ -96,10 +105,18 @@ describe('inpatient-surgery-consent', () => {
       surgeon: { id: 'practitioner-inpatient-doctor', name: '合成住院医生' },
       assistant: { id: 'practitioner-surgeon-attending', name: '陈铭', title: '主治医师' },
       anesthesiaMethod: 'local-infiltration',
+      preopOrderPolicy: 'continue-active',
     })
     expect(fhirFields.priority).toBe('stat')
     expect(fhirFields.location).toEqual([{ reference: { reference: 'Location/location-catheterization-lab', display: '导管室' } }])
     expect(fhirFields.performer).toHaveLength(2)
     expect(fhirFields.orderDetail[0]?.parameter[0]?.valueCodeableConcept.text).toBe('局部浸润麻醉')
+    expect(fhirFields.orderDetail[0]?.parameter[1]).toMatchObject({
+      code: { coding: [{ code: 'preop-order-policy' }] },
+      valueCodeableConcept: {
+        coding: [{ code: 'continue-active', display: '继续术前有效长期医嘱（常规介入/局麻）' }],
+        text: '继续术前有效长期医嘱（常规介入/局麻）',
+      },
+    })
   })
 })

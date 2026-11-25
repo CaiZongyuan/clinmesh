@@ -18,7 +18,7 @@ export async function prepareSurgeryBatchPatient(page: Page, app: Parameters<typ
     const requested = inpatientSurgeryResponseSchema.parse(await (await s.api.post(`${s.path}/surgeries/request`, {
       encounterVersion: before.encounterVersion, procedureId, catalogVersion: 1,
       surgeryType: 'elective', locationId: 'location-operating-center',
-      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general', preopOrderPolicy: 'continue-active',
       plannedFor: '2026-11-10T09:00:00+08:00', reason,
     })).json()).data.requests.find(row => row.reason === reason)!
     await s.api.login('ward-nurse')

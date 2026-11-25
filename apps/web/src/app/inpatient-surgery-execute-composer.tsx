@@ -3,6 +3,7 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientMaterialReservation } from '@clinmesh/contracts/inpatient-drg-simulation'
 import type { InpatientMaterialPlanBasis } from '@clinmesh/contracts/inpatient-material-plan'
 import type { inpatientSurgeryCatalogSchema, inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { formatPreopOrderPolicy } from '@clinmesh/core/inpatient-surgery-consent'
 import { evaluateExecuteNoteRequirement, isSamePlannedProcedure } from '@clinmesh/core/inpatient-surgery-notes'
 import { ApiClientError } from './api-client.ts'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
@@ -155,6 +156,18 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
               </section>
             </div>
             <SurgeryBatchMedicationsEditor requestId={request.id} procedure={actual} catalog={catalog} rows={value.medications} disabled={blocked} locale={locale} onChange={medications => draft.save({ ...value, medications })} />
+            {request.preopOrderPolicy === 'stop-on-completion' ? (
+              <section aria-label={t('术前医嘱停续策略提示', 'Pre-op order policy notice')} className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-foreground">
+                {t(
+                  '本手术术前医嘱策略为「术后自动停术前长期医嘱并重整」：提交完成手术时，将同事务把当前有效术前长期医嘱转为「待停嘱核对」，完成后可直接开立术后医嘱重整。',
+                  'Pre-op order policy is stop-on-completion: submitting will atomically mark active pre-op long-term orders stop-requested so postoperative orders can be reorganized immediately.',
+                )}
+              </section>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {t(`术前医嘱策略：${formatPreopOrderPolicy(request.preopOrderPolicy, locale)}`, `Pre-op order policy: ${formatPreopOrderPolicy(request.preopOrderPolicy, locale)}`)}
+              </p>
+            )}
             {showNote ? <Field data-invalid={noteRequired && !trimmedNote || undefined}><FieldLabel htmlFor={`execute-note-${request.id}`}>{t('补录依据', 'Record basis')}</FieldLabel><Input id={`execute-note-${request.id}`} maxLength={2000} placeholder={noteRequired ? (procedureChanged ? t('实际术式偏离原计划，请填写变更原因', 'Explain why the performed procedure differs from the plan') : t('存在计划外耗材或未按本台预留完整消耗，请说明依据', 'Explain unplanned materials or unconsumed plan reservations')) : undefined} value={value.note} onChange={event => draft.save({ ...value, note: event.currentTarget.value })} /></Field>
               : <Button type="button" variant="ghost" size="sm" className="self-start" disabled={blocked} onClick={() => setNoteOpen(true)}>{t('添加备注', 'Add note')}</Button>}
           </FieldGroup></FieldSet>

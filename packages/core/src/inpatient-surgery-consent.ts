@@ -4,6 +4,7 @@ import {
   type InpatientSurgicalConsentDocument,
   type InpatientSurgeryLocation,
   type InpatientSurgeryPractitioner,
+  type PreopOrderPolicy,
   type SurgicalConsentSignerRole,
   type SurgicalConsentTemplateId,
   type SurgeryLocationId,
@@ -34,6 +35,11 @@ const ANESTHESIA_METHOD_LABELS: Record<AnesthesiaMethod, { zh: string; en: strin
   'nerve-block': { zh: '神经阻滞', en: 'Regional nerve block' },
 }
 
+const PREOP_ORDER_POLICY_LABELS: Record<PreopOrderPolicy, { zh: string; en: string }> = {
+  'continue-active': { zh: '继续术前有效长期医嘱（常规介入/局麻）', en: 'Continue active pre-op long-term orders' },
+  'stop-on-completion': { zh: '术后自动停术前长期医嘱并重整（外科/全麻）', en: 'Auto-stop active pre-op long-term orders on completion' },
+}
+
 const SIGNER_ROLE_LABELS: Record<SurgicalConsentSignerRole, { zh: string; en: string }> = {
   patient: { zh: '患者本人', en: 'Patient' },
   'family-proxy': { zh: '患者近亲属/受托人', en: 'Family member / proxy' },
@@ -45,6 +51,10 @@ export function formatSurgeryType(type: SurgeryType, locale: SurgeryDisplayLocal
 
 export function formatAnesthesiaMethod(method: AnesthesiaMethod, locale: SurgeryDisplayLocale = 'zh-CN'): string {
   return locale === 'zh-CN' ? ANESTHESIA_METHOD_LABELS[method].zh : ANESTHESIA_METHOD_LABELS[method].en
+}
+
+export function formatPreopOrderPolicy(policy: PreopOrderPolicy, locale: SurgeryDisplayLocale = 'zh-CN'): string {
+  return locale === 'zh-CN' ? PREOP_ORDER_POLICY_LABELS[policy].zh : PREOP_ORDER_POLICY_LABELS[policy].en
 }
 
 export function formatConsentSignerRole(role: SurgicalConsentSignerRole, locale: SurgeryDisplayLocale = 'zh-CN'): string {
@@ -76,8 +86,25 @@ export function recommendedAnesthesiaMethod(procedure: {
   return 'general'
 }
 
+export function recommendedPreopOrderPolicy(
+  procedure: { coding: { category: '手术' | '介入治疗' | '诊断性操作'; code: string } },
+  anesthesiaMethod?: AnesthesiaMethod | undefined,
+): PreopOrderPolicy {
+  const effectiveAnesthesia = anesthesiaMethod ?? recommendedAnesthesiaMethod(procedure)
+  if (
+    procedure.coding.category === '手术'
+    || effectiveAnesthesia === 'general'
+    || effectiveAnesthesia === 'neuraxial'
+    || effectiveAnesthesia === 'nerve-block'
+  ) {
+    return 'stop-on-completion'
+  }
+  return 'continue-active'
+}
+
 const SURGERY_TYPE_CODE_SYSTEM = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/surgery-type'
 const ANESTHESIA_CODE_SYSTEM = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/anesthesia-method'
+const PREOP_ORDER_POLICY_CODE_SYSTEM = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/preop-order-policy'
 const SURGERY_ORDER_PARAMETER_SYSTEM = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/surgery-order-parameter'
 const SURGERY_PERFORMER_ROLE_URL = 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/surgery-performer-role'
 
@@ -87,6 +114,7 @@ export function buildSurgeryServiceRequestFields(input: {
   surgeon: InpatientSurgeryPractitioner
   assistant?: InpatientSurgeryPractitioner | undefined
   anesthesiaMethod: AnesthesiaMethod
+  preopOrderPolicy: PreopOrderPolicy
 }) {
   const priority = input.surgeryType === 'emergency'
     ? 'stat'
@@ -95,6 +123,7 @@ export function buildSurgeryServiceRequestFields(input: {
       : 'routine'
   const surgeryTypeDisplay = formatSurgeryType(input.surgeryType, 'zh-CN')
   const anesthesiaDisplay = formatAnesthesiaMethod(input.anesthesiaMethod, 'zh-CN')
+  const preopOrderPolicyDisplay = formatPreopOrderPolicy(input.preopOrderPolicy, 'zh-CN')
   return {
     priority,
     category: [{
@@ -119,16 +148,28 @@ export function buildSurgeryServiceRequestFields(input: {
         : []),
     ],
     orderDetail: [{
-      parameter: [{
-        code: {
-          coding: [{ system: SURGERY_ORDER_PARAMETER_SYSTEM, code: 'anesthesia-method', display: '拟行麻醉方式' }],
-          text: '拟行麻醉方式',
+      parameter: [
+        {
+          code: {
+            coding: [{ system: SURGERY_ORDER_PARAMETER_SYSTEM, code: 'anesthesia-method', display: '拟行麻醉方式' }],
+            text: '拟行麻醉方式',
+          },
+          valueCodeableConcept: {
+            coding: [{ system: ANESTHESIA_CODE_SYSTEM, code: input.anesthesiaMethod, display: anesthesiaDisplay }],
+            text: anesthesiaDisplay,
+          },
         },
-        valueCodeableConcept: {
-          coding: [{ system: ANESTHESIA_CODE_SYSTEM, code: input.anesthesiaMethod, display: anesthesiaDisplay }],
-          text: anesthesiaDisplay,
+        {
+          code: {
+            coding: [{ system: SURGERY_ORDER_PARAMETER_SYSTEM, code: 'preop-order-policy', display: '术前长期医嘱停续策略' }],
+            text: '术前长期医嘱停续策略',
+          },
+          valueCodeableConcept: {
+            coding: [{ system: PREOP_ORDER_POLICY_CODE_SYSTEM, code: input.preopOrderPolicy, display: preopOrderPolicyDisplay }],
+            text: preopOrderPolicyDisplay,
+          },
         },
-      }],
+      ],
     }],
   }
 }

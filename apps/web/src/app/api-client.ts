@@ -11,6 +11,7 @@ import {
   type OrderSetTemplateId,
 } from '@clinmesh/contracts/order-set-templates'
 import { clearOrderDrafts } from './inpatient-order-drafts.ts'
+import { clearPostopDrafts } from './inpatient-postop-drafts.ts'
 import { clearInvestigationDrafts as clearInpatientInvestigationDrafts } from './inpatient-investigation-drafts.ts'
 import { clearInpatientOrderDrafts } from './inpatient-order-batch.ts'
 import { clearInvestigationSendDrafts } from './inpatient-investigation-send-drafts.ts'
@@ -451,7 +452,7 @@ export async function signOut(): Promise<void> {
     import('./inpatient-intent-storage.ts'),
   ])
   markInpatientLogout()
-  for (const clearDrafts of [clearInpatientInvestigationDrafts, clearInvestigationDrafts, clearOrderDrafts,
+  for (const clearDrafts of [clearInpatientInvestigationDrafts, clearInvestigationDrafts, clearOrderDrafts, clearPostopDrafts,
     clearSurgeryDrafts, clearReservationDrafts, clearCorrectionDrafts, clearInpatientOrderDrafts,
     clearInvestigationSendDrafts, clearDispenseDrafts, clearInpatientInvestigationActionDrafts,
     clearInpatientReportDrafts, clearOutpatientInvestigationActionDrafts, clearOutpatientReportDrafts, clearExecutionDrafts, clearMultiChargeDrafts,
@@ -1363,14 +1364,20 @@ export function getOutpatientClinicalScores(caseId: string, signal?: AbortSignal
 }
 
 export function getOrderSetDrafts(
-  target: { caseId: string; scope: 'outpatient' } | { admissionId: string; scope: 'inpatient' },
+  target: { caseId: string; scope: 'outpatient' } | { admissionId: string; scope: 'inpatient'; surgeryExecutionId?: string | undefined },
   templateId?: OrderSetTemplateId,
   signal?: AbortSignal,
 ) {
   const base = target.scope === 'outpatient'
     ? `/api/his/v1/doctor/cases/${encodeURIComponent(target.caseId)}`
     : `/api/his/v1/inpatient/admissions/${encodeURIComponent(target.admissionId)}`
-  return apiGet(`${base}/order-set-drafts${templateId ? `?templateId=${templateId}` : ''}`, orderSetDraftBundleSchema, signal)
+  const params = new URLSearchParams()
+  if (templateId) params.set('templateId', templateId)
+  if (target.scope === 'inpatient' && target.surgeryExecutionId) {
+    params.set('surgeryExecutionId', target.surgeryExecutionId)
+  }
+  const query = params.toString()
+  return apiGet(`${base}/order-set-drafts${query ? `?${query}` : ''}`, orderSetDraftBundleSchema, signal)
 }
 
 export function recordOutpatientRiskAssessment(input: {

@@ -34,7 +34,7 @@ test('多手术计划仅按医生选择推演主操作，正式事实与首页�
     const result = inpatientSurgeryResponseSchema.parse(await (await s.api.post(`${s.path}/surgeries/request`, {
       encounterVersion: clinical.encounterVersion, procedureId: procedure.id, catalogVersion: procedure.version,
       surgeryType: 'elective', locationId: 'location-catheterization-lab',
-      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       plannedFor: '2026-08-24T15:00:00+08:00', reason,
     })).json()).data
     return result.requests.find(item => item.reason === reason)!
@@ -164,7 +164,7 @@ test('实际手术显式引用治疗预留并替换，正式费用与预留不�
   const clinical = inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json())
   const requested = inpatientSurgeryResponseSchema.parse(await (await s.api.post(`${s.path}/surgeries/request`, { encounterVersion: clinical.encounterVersion,
     procedureId: procedure.id, catalogVersion: procedure.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
-    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成预留替换验证' })).json()).data.requests[0]!
   expect((await s.api.post(`${s.path}/drg/reservations`, { encounterVersion: clinical.encounterVersion, materialId: material.id, catalogVersion: material.version,
     quantity: 2, requestId: requested.id, reason: '合成明确替换预留' })).status()).toBe(200)

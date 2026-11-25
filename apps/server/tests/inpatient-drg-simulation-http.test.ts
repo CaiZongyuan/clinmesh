@@ -271,7 +271,7 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     const current = (await (await s.request(s.doctor, s.path)).json()).admission
     const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: current.versionId,
       procedureId: procedure.id, catalogVersion: procedure.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
-      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成PCI推演' })
     expect(requested.status).toBe(200)
     const request = (await requested.json()).data.requests[0]
@@ -291,7 +291,7 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
       const admission = (await (await s.request(s.doctor, s.path)).json()).admission
       const response = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: admission.versionId,
         procedureId: procedure.id, catalogVersion: procedure.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
-        surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+        surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
         plannedFor: '2026-08-24T15:00:00+08:00', reason: `合成计划${index}` })
       expect(response.status).toBe(200)
       const requests = (await response.json()).data.requests
@@ -317,7 +317,7 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     const current = (await (await s.request(s.doctor, s.path)).json()).admission
     const request = (await (await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: current.versionId,
       procedureId: procedure.id, catalogVersion: procedure.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
-      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成PCI实施' })).json()).data.requests[0]
     const reserved = await s.request(s.doctor, `${s.path}/drg/reservations`, { encounterVersion: (await (await s.request(s.doctor, s.path)).json()).admission.versionId,
       materialId: material.id, catalogVersion: material.version, quantity: 2, requestId: request.id, reason: 'PCI耗材预留' })

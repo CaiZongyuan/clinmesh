@@ -1,6 +1,7 @@
 import type { LaboratorySpecimenContainer, SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
+import type { inpatientSurgeryExecutionSchema } from '@clinmesh/contracts/inpatient-surgery'
 import {
   groupInvestigationDispatchUnits,
   isBloodDrawSpecimenContainer,
@@ -71,8 +72,10 @@ function summarizeDispatchUnits(units: readonly MergedInvestigationDispatchUnit<
   }
 }
 
-export function InpatientInvestigationSend({ admission, session, locale, data, loading, active, refresh, write, renderEntry }: {
-  admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; data: Facts | undefined; loading: boolean; active: boolean;
+export function InpatientInvestigationSend({ admission, session, locale, data, surgeries, loading, active, refresh, write, renderEntry }: {
+  admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; data: Facts | undefined;
+  surgeries?: readonly z.infer<typeof inpatientSurgeryExecutionSchema>[] | undefined;
+  loading: boolean; active: boolean;
   refresh: () => Promise<Facts | undefined>; write: ReturnType<typeof useInpatientWriteIntent>;
   renderEntry: (entry: InvestigationSendEntry, choice: ReactNode, metadata: ReactNode) => ReactNode;
 }) {
@@ -260,10 +263,17 @@ export function InpatientInvestigationSend({ admission, session, locale, data, l
         </>}
       >
         <ul className="flex min-w-0 flex-col gap-1.5 text-xs">
-          {tubeEntries.map(entry => <li key={entry.snapshot.id} className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded-md bg-muted/40 px-2.5 py-1.5">
-            <span className="min-w-0 flex-1 font-medium text-foreground break-words">{entry.snapshot.display}</span>
-            <span className="text-muted-foreground">{t('指征：', 'Indication: ')}{indicationLabel(entry.snapshot.indication, messages)}</span>
-          </li>)}
+          {tubeEntries.map(entry => {
+            const surgeryExecutionId = data?.laboratoryRequests.find(req => req.id === entry.snapshot.id)?.surgeryExecutionId
+            const surgeryDisplay = surgeryExecutionId
+              ? surgeries?.find(item => item.id === surgeryExecutionId)?.actualProcedure.coding.display ?? t('已关联手术', 'Linked procedure')
+              : undefined
+            return <li key={entry.snapshot.id} className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded-md bg-muted/40 px-2.5 py-1.5">
+              <span className="min-w-0 flex-1 font-medium text-foreground break-words">{entry.snapshot.display}</span>
+              {surgeryDisplay ? <span className="text-muted-foreground">{t('术后复查 · ', 'Postoperative recheck · ')}{surgeryDisplay}</span> : null}
+              <span className="text-muted-foreground">{t('指征：', 'Indication: ')}{indicationLabel(entry.snapshot.indication, messages)}</span>
+            </li>
+          })}
         </ul>
       </InpatientItemRow>
     })}

@@ -5,7 +5,7 @@ import { guidelineTopicQuerySchema } from './guideline-topics.ts'
 import { inpatientOrderActionInputSchema } from './inpatient-clinical.ts'
 import { inpatientInvestigationAcknowledgeInputSchema } from './inpatient-investigations.ts'
 import { medicationFrequencySchema, medicationRouteSchema } from './medication-safety.ts'
-import { orderSetDraftQuerySchema, outpatientOrderSetTemplateIds } from './order-set-templates.ts'
+import { inpatientOrderSetDraftQuerySchema, outpatientOrderSetTemplateIds } from './order-set-templates.ts'
 import {
   clinicalDocumentContentSchema,
   clinicalDocumentDraftContentSchema,
@@ -155,7 +155,7 @@ export const agentToolInputSchemas = Object.freeze({
   'inpatient.clinical-scores.read': emptyInputSchema,
   'inpatient.guideline-topics.read': guidelineTopicQuerySchema,
   'inpatient.clinical-quality.read': inpatientClinicalQualityToolInputSchema,
-  'inpatient.order-set-drafts.read': orderSetDraftQuerySchema,
+  'inpatient.order-set-drafts.read': inpatientOrderSetDraftQuerySchema,
   'inpatient.order.verify.propose': inpatientOrderActionInputSchema.omit({ admissionId: true }),
   'inpatient.report.acknowledge.propose': inpatientInvestigationAcknowledgeInputSchema.omit({ admissionId: true }),
   'inpatient.payment.draft.set': z.object({ tenders: paymentTendersSchema }).strict(),

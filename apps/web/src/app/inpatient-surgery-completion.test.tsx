@@ -14,7 +14,7 @@ const session: SessionContext = { actor: { actorId: 'doctor', workspaceId: 'work
 const admission = inpatientAdmissionSchema.parse({ id: 'admission-1', patientId: 'patient-1', patientName: '合成患者', inpatientNumber: 'ZY-001', admissionRoute: 'direct', wardId: 'ward-1', organizationId: 'org-1', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-11-03T00:00:00Z', depositFen: 0, chargesFen: 0, versionId: '1' })
 const charge = { id: 'charge-1', priceFen: 10000, unit: '根', synthetic: true, trigger: 'execution' }
 const procedure = { id: 'procedure-1', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '36.0600', display: 'PCI', category: '介入治疗', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.com/synthetic', sourceSha256: 'a'.repeat(64), sourceLocator: 'synthetic' }, chargeDefinition: { ...charge, unit: '次' } }
-const request = inpatientSurgeryRequestSchema.parse({ id: 'request-1', admissionId: admission.id, version: 1, status: 'ready', plannedProcedure: procedure, plannedFor: '2026-11-03T00:00:00Z', reason: '合成计划', requestedAt: '2026-11-03T00:00:00Z', requestedBy: 'doctor', organizationId: 'org-1' })
+const request = inpatientSurgeryRequestSchema.parse({ id: 'request-1', admissionId: admission.id, version: 1, status: 'ready', plannedProcedure: procedure, plannedFor: '2026-11-03T00:00:00Z', preopOrderPolicy: 'continue-active', reason: '合成计划', requestedAt: '2026-11-03T00:00:00Z', requestedBy: 'doctor', organizationId: 'org-1' })
 const execution = inpatientSurgeryExecutionSchema.parse({ id: 'execution-1', admissionId: admission.id, requestId: request.id, actualProcedure: procedure, performedAt: '2026-11-03T00:00:00Z', performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: 'org-1', note: '合成手术', materials: [], materialHistory: [] })
 const catalog = inpatientSurgeryCatalogSchema.parse({ procedures: [procedure], materials: ['导丝', '球囊'].map((display, index) => ({ id: `material-${index + 1}`, version: 1, display, chargeDefinition: charge })) })
 const clients: QueryClient[] = []
@@ -23,7 +23,7 @@ afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clea
 function mount(overrides: Partial<React.ComponentProps<typeof InpatientSurgeryCompletion>> = {}) {
   if (!vi.isMockFunction(fetch)) vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path.endsWith('/api/auth/context')) return Response.json(session)
-    if (path.endsWith('/preview-completion')) return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000 })
+    if (path.endsWith('/preview-completion')) return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000, preopOrderPolicy: 'continue-active', autoStopPreopOrders: [] })
     return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料未准备' } }, { status: 503 })
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
@@ -116,7 +116,7 @@ it('预览只核实同一整台意图，完成成功后消费原未提交输入�
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/auth/context') return Response.json(session)
     const body = JSON.parse(String(init?.body)); requests.push({ path, input: body.input })
-    if (path.endsWith('/preview-completion')) return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 20000, procedureAmountFen: 10000, totalDeltaFen: 30000 })
+    if (path.endsWith('/preview-completion')) return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 20000, procedureAmountFen: 10000, totalDeltaFen: 30000, preopOrderPolicy: 'continue-active', autoStopPreopOrders: [] })
     if (path.endsWith('/complete')) return Response.json({ data: { admissionId: admission.id, encounterVersion: '2', virtualTime: '2026-11-03T00:00:00Z', requests: [request], executions: [execution], inProgress: [] }, effects: [], warnings: [], auditId: 'audit-1', requestId: 'receipt-1' })
     throw new Error(`Unexpected ${path}`)
   }))
@@ -219,7 +219,7 @@ it('fresh Session 与当前视图变化阻止已点击的旧核实意图发送',
     if (path === '/api/auth/context') return delaySession ? new Promise<Response>(resolve => { pending.push(resolve) }) : Response.json(session)
     if (path.endsWith('/material-estimates')) return Response.json({ error: { code: 'UNAVAILABLE', message: '合成计划未准备' } }, { status: 503 })
     mutations.push(path)
-    if (path.endsWith('/preview-completion')) return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000 })
+    if (path.endsWith('/preview-completion')) return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000, preopOrderPolicy: 'continue-active', autoStopPreopOrders: [] })
     throw new Error(`Unexpected ${path}`)
   }))
   const user = userEvent.setup(), view = mount()
@@ -281,7 +281,7 @@ it('零差额默认折叠核实说明且无需输入即可完成，现场改量�
     if (path === '/api/auth/context') return Response.json(session)
     if (path.endsWith('/preview-completion')) {
       inputs.push(JSON.parse(String(init?.body)).input)
-      return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000 })
+      return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000, preopOrderPolicy: 'continue-active', autoStopPreopOrders: [] })
     }
     return Response.json({ error: { code: 'UNAVAILABLE', message: '合成资料未准备' } }, { status: 503 })
   }))
@@ -323,7 +323,7 @@ it('术中已说明原因的额外使用在零差额完术时自动带入多用�
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path === '/api/auth/context') return Response.json(session)
     if (path.endsWith('/material-estimates')) return Response.json({ admissionId: admission.id, estimates: [estimate], unprepared: [] })
-    if (path.endsWith('/preview-completion')) return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000 })
+    if (path.endsWith('/preview-completion')) return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000, preopOrderPolicy: 'continue-active', autoStopPreopOrders: [] })
     return Response.json({ error: { code: 'UNAVAILABLE', message: '合成资料未准备' } }, { status: 503 })
   }))
   const user = userEvent.setup()
@@ -356,7 +356,7 @@ it('无术前确认清单但术中已登记计划外耗材时完术自动带出�
       if (!body.input.note) {
         return Response.json({ error: { code: 'INPATIENT_SURGERY_NOTE_REQUIRED', message: '存在历史确认差异，请填写核实说明' } }, { status: 400 })
       }
-      return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000 })
+      return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000, preopOrderPolicy: 'continue-active', autoStopPreopOrders: [] })
     }
     return Response.json({ error: { code: 'UNAVAILABLE', message: '合成资料未准备' } }, { status: 503 })
   }))
@@ -374,7 +374,7 @@ it('资料未变化时刷新核实依据仍重新自动预览并恢复完成入�
     if (path.endsWith('/api/auth/context')) return Response.json(session)
     if (path.endsWith('/preview-completion')) {
       previews += 1
-      return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000 })
+      return Response.json({ fingerprint: 'a'.repeat(64), materials: [], retainedReservations: [], materialDeltaFen: 0, procedureAmountFen: 10000, totalDeltaFen: 10000, preopOrderPolicy: 'continue-active', autoStopPreopOrders: [] })
     }
     return Response.json({ error: { code: 'UNAVAILABLE', message: '合成次级资料未准备' } }, { status: 503 })
   }))

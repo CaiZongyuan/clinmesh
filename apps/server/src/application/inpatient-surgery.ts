@@ -34,6 +34,7 @@ import {
   inpatientSurgerySchema,
   inpatientSurgeryStartInputSchema,
   inpatientSurgerySupplementMaterialInputSchema,
+  preopOrderPolicySchema,
   surgeryTypeSchema,
   type InpatientBaseStockMedication,
   type InpatientProcedureNursingBinding,
@@ -364,6 +365,7 @@ export class InpatientSurgery {
         ...(row.surgeon_json === null ? {} : { surgeon: JSON.parse(row.surgeon_json) }),
         ...(row.assistant_json === null ? {} : { assistant: JSON.parse(row.assistant_json) }),
         ...(row.anesthesia_method === null ? {} : { anesthesiaMethod: row.anesthesia_method }),
+        preopOrderPolicy: row.preop_order_policy,
         reason: row.reason, requestedAt: row.requested_at,
         requestedBy: row.requested_by, organizationId: row.organization_id,
         ...(row.preop_check_json === null ? {} : { preopCheck: JSON.parse(row.preop_check_json) }),
@@ -516,11 +518,11 @@ export class InpatientSurgery {
         : { effects: [] }
       this.owner.database.driver.prepare(`INSERT INTO inpatient_surgery_request(
         workspace_id,epoch,request_id,admission_id,status,surgery_type,planned_procedure_json,planned_for,
-        location_json,surgeon_json,assistant_json,anesthesia_method,reason,requested_at,requested_by,organization_id
-      ) VALUES(?,?,?,?,'requested',?,?,?,?,?,?,?,?,?,?,?)`).run(
+        location_json,surgeon_json,assistant_json,anesthesia_method,preop_order_policy,reason,requested_at,requested_by,organization_id
+      ) VALUES(?,?,?,?,'requested',?,?,?,?,?,?,?,?,?,?,?,?)`).run(
         context.workspaceId, context.epoch, id, admission.id, input.surgeryType, JSON.stringify(item), input.plannedFor,
         JSON.stringify(location), JSON.stringify(surgeon), assistant ? JSON.stringify(assistant) : null, input.anesthesiaMethod,
-        input.reason, now, context.actorId, admission.organizationId,
+        input.preopOrderPolicy, input.reason, now, context.actorId, admission.organizationId,
       )
       this.owner.fhir.create(context, {
         resourceType: 'ServiceRequest',
@@ -533,6 +535,7 @@ export class InpatientSurgery {
           surgeon,
           assistant,
           anesthesiaMethod: input.anesthesiaMethod,
+          preopOrderPolicy: input.preopOrderPolicy,
         }),
         code: { concept: { coding: [clinicalCoding(item.coding)], text: item.coding.display } },
         subject: { reference: `Patient/${admission.patientId}` },
@@ -954,9 +957,13 @@ export class InpatientSurgery {
         .all(context.workspaceId, context.epoch, input.executionId, input.admissionId))
     const charges: MaterialChargeBasis = Object.fromEntries(chargeRows.map(row => [row.material_use_id,
       { chargeId: row.charge_id, version: row.version, amountFen: row.amount_fen, reversalId: row.reversal_id }]))
+    const autoStopPreopOrders = request.preop_order_policy === 'stop-on-completion'
+      ? this.owner.orders.previewAutoStopPreopOrders(context, input.admissionId)
+      : []
     return planSurgeryCompletion(input, execution, plannedProcedure, this.catalog(context), this.owner.drg.reservations(context, input.admissionId), reservationItems, charges,
       { workspaceId: context.workspaceId, epoch: context.epoch, actorId: context.actorId, practitionerRoleId: context.practitionerRoleId! },
-      this.owner.materialPlans.forRequestFacts(context, input.admissionId, input.requestId))
+      this.owner.materialPlans.forRequestFacts(context, input.admissionId, input.requestId),
+      { preopOrderPolicy: request.preop_order_policy, autoStopPreopOrders })
   }
   private readyRequest(context: ActorContext, input: { admissionId: string; requestId: string; expectedRequestVersion: number }) {
     this.owner.assertNotArchived(context, input.admissionId)
@@ -1040,6 +1047,16 @@ export class InpatientSurgery {
     }
     effects.push({ kind: 'updated', reference: `InpatientSurgeryRequest/${request.request_id}`, versionId: String(request.version + 1) })
     this.updateRequestProjection(context, request.request_id, 'completed', effects)
+    if (request.preop_order_policy === 'stop-on-completion') {
+      const actual = inpatientProcedureItemSchema.parse(JSON.parse(execution.actual_procedure_json))
+      this.owner.orders.requestStopForSurgeryCompletion(
+        context,
+        request.admission_id,
+        execution.execution_id,
+        actual.coding.display,
+        effects,
+      )
+    }
     this.owner.angiography.schedule(context, request.admission_id, execution.execution_id, transaction)
   }
   private executionForRequest(context: ActorContext, requestId: string) {
@@ -1252,6 +1269,7 @@ const requestRowSchema = z.object({ request_id: z.string(), admission_id: z.stri
   surgeon_json: z.string().nullable().default(null),
   assistant_json: z.string().nullable().default(null),
   anesthesia_method: anesthesiaMethodSchema.nullable().default(null),
+  preop_order_policy: preopOrderPolicySchema.default('continue-active'),
   reason: z.string(),
   requested_at: z.string(), requested_by: z.string(), organization_id: z.string(), preop_check_json: z.string().nullable(), consent_confirmation_json: z.string().nullable(), cancellation_json: z.string().nullable() })
 const executionRowSchema = z.object({ execution_id: z.string(), admission_id: z.string(), request_id: z.string(),

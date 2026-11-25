@@ -486,6 +486,7 @@ export class ExaminationRequestService {
       idempotencyKey: string
       /** 当前至少有一套已发布且已安装服务的检查；本院未开展的服务不能开立。 */
       readyExamCodes: ReadonlySet<ExaminationExamCode>
+      supportingInfo?: Array<{ reference: { reference: string } }>
     },
   ) {
     const outpatientCase = this.#caseForAction(input.context, input.encounterId)
@@ -545,6 +546,7 @@ export class ExaminationRequestService {
       encounter: { reference: `Encounter/${input.encounterId}` },
       authoredOn: now,
       requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+      ...(input.supportingInfo && input.supportingInfo.length > 0 ? { supportingInfo: input.supportingInfo } : {}),
       reason: [{ concept: { text: draft.draft_indication } }],
     })
     const task = transaction.fhir.create(input.context, {

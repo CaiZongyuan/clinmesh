@@ -263,7 +263,12 @@ describe('ClinMesh DSH Agent contracts', () => {
         'inpatient.clinical-scores.read',
         'inpatient.guideline-topics.read',
         'inpatient.clinical-quality.read',
+        'inpatient.order-set-drafts.read',
       ]))
+    expect(parseAgentToolInput('inpatient.order-set-drafts.read', { surgeryExecutionId: 'exec-1' }))
+      .toEqual({ surgeryExecutionId: 'exec-1' })
+    expect(parseAgentToolInput('inpatient.order-set-drafts.read', { templateId: 'pci-postop-standard', surgeryExecutionId: 'exec-1' }))
+      .toEqual({ templateId: 'pci-postop-standard', surgeryExecutionId: 'exec-1' })
     expect(agentToolsForContext('ward-nurse', 'inpatient', 'surgery').map(tool => tool.operationId))
       .toContain('inpatient.surgery.read')
     expect(agentToolsForContext('inpatient-doctor', 'inpatient', 'orders').map(tool => tool.operationId))

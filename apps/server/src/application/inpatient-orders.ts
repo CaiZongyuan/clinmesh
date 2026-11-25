@@ -1,6 +1,7 @@
 import { medicationRouteSchema, type MedicationRoute } from '@clinmesh/contracts/medication-safety'
 import { medicationCombinationConflict, medicationDoseConflict, medicationIndicationMatches, medicationRouteAllowed, medicationRouteConcept, medicationScheduledHours } from '@clinmesh/core/medication-safety'
 import { inpatientPharmacyListSchema, inpatientPharmacySchema, inpatientPharmacyResponseSchema, inpatientChargesSchema, inpatientChargesResponseSchema, inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientDiagnosisConfirmInputSchema, inpatientDiagnosisSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientMedicationOrderSchema, inpatientOrderSchema, inpatientExecutionSchema, inpatientDispenseSchema, inpatientChargeSchema, type InpatientOrder } from '@clinmesh/contracts/inpatient-clinical'
+import type { InpatientSurgeryAutoStopOrderPreview } from '@clinmesh/contracts/inpatient-surgery'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import type { ActorContext } from './command-executor.ts'
@@ -175,7 +176,7 @@ export class InpatientOrders {
           ...(config.inpatientDoseBasis ? { doseBasis: config.inpatientDoseBasis } : {}),
           ...(config.inpatientMaxDoseQuantity ? { maxDoseQuantity: config.inpatientMaxDoseQuantity } : {}) }, selection.doseText)
         const safetyDose = this.owner.workflow.clinicalQuality.inpatientSafetyDose(catalogRow.config_json, selection.doseText, selection.doseQuantity) ?? selection.doseText
-        const active = this.facts(context, admission.id).orders.filter(order => order.kind === 'medication' && !['stopped','completed'].includes(order.state))
+        const active = this.facts(context, admission.id).orders.filter(order => order.kind === 'medication' && ['signed', 'verified'].includes(order.state))
         const activeQuality = active.map(other => ({ catalogItemId: other.catalogItemId, display: other.display, pharmacologyClasses: this.owner.workflow.clinicalQuality.medicationClasses(context, other.catalogItemId) }))
         const candidate = {
           catalogItemId: item.id,
@@ -285,16 +286,22 @@ export class InpatientOrders {
       if (row.version !== input.expectedOrderVersion || !stateAllowsAction) {
         throw new InpatientError('INPATIENT_ORDER_CONFLICT', '医嘱状态或版本已变化')
       }
-      const now = this.owner.virtualTime(context), state = action === 'verify' ? 'verified' : action === 'request-stop' ? 'stop-requested' : 'stopped'
-      this.owner.database.driver.prepare(`UPDATE inpatient_order SET state=?,version=version+1,
-        verified_at=CASE WHEN ?='verify' THEN ? ELSE verified_at END,stopped_at=CASE WHEN ?='request-stop' THEN ? ELSE stopped_at END WHERE workspace_id=? AND epoch=? AND order_id=? AND version=?`)
-        .run(state, action, now, action, now, context.workspaceId, context.epoch, row.order_id, row.version)
-      if (action !== 'request-stop') this.owner.database.driver.prepare('INSERT INTO inpatient_order_verification VALUES(?,?,?,?,?,?,?,?)').run(context.workspaceId, context.epoch, row.order_id, action, row.version, context.actorId, context.practitionerRoleId, now)
-      const request = this.owner.fhir.read(context, row.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', row.order_id)
-      const updated = this.owner.fhir.update(context, { ...request, status: action === 'verify-stop' ? (row.kind === 'medication' ? 'stopped' : 'revoked') : 'active',
-        extension: [{ url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/inpatient-order-state', valueCode: state }],
-        ...('reason' in input ? { note: [...(Array.isArray(request.note) ? request.note : []), { id: 'clinmesh-stop-reason', text: input.reason }] } : {}) }, request.meta!.versionId!)
-      const effects: Effects = [{ kind: 'updated', reference: `${request.resourceType}/${row.order_id}`, versionId: updated.meta!.versionId! }]
+      const now = this.owner.virtualTime(context)
+      const effects: Effects = []
+      if (action === 'request-stop') {
+        const reason = 'reason' in input && typeof input.reason === 'string' ? input.reason : ''
+        this.#markOrderStopRequested(context, row, now, reason, effects)
+      } else {
+        const state = action === 'verify' ? 'verified' : 'stopped'
+        this.owner.database.driver.prepare(`UPDATE inpatient_order SET state=?,version=version+1,
+          verified_at=CASE WHEN ?='verify' THEN ? ELSE verified_at END WHERE workspace_id=? AND epoch=? AND order_id=? AND version=?`)
+          .run(state, action, now, context.workspaceId, context.epoch, row.order_id, row.version)
+        this.owner.database.driver.prepare('INSERT INTO inpatient_order_verification VALUES(?,?,?,?,?,?,?,?)').run(context.workspaceId, context.epoch, row.order_id, action, row.version, context.actorId, context.practitionerRoleId, now)
+        const request = this.owner.fhir.read(context, row.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', row.order_id)
+        const updated = this.owner.fhir.update(context, { ...request, status: action === 'verify-stop' ? (row.kind === 'medication' ? 'stopped' : 'revoked') : 'active',
+          extension: [{ url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/inpatient-order-state', valueCode: state }] }, request.meta!.versionId!)
+        effects.push({ kind: 'updated', reference: `${request.resourceType}/${row.order_id}`, versionId: updated.meta!.versionId! })
+      }
       if (action === 'verify') {
         const fresh = this.order(context, input.admissionId, row.order_id)
         if (row.duration === 'temporary' && row.frequency_code !== 'PRN') this.createExecution(context, fresh, now, undefined, effects)
@@ -306,6 +313,61 @@ export class InpatientOrders {
       }
       return { data: this.read(context, input.admissionId), effects }
     })
+  }
+  #listAutoStoppableLongTermOrders(context: ActorContext, admissionId: string): OrderRow[] {
+    return z.array(orderRowSchema).parse(this.owner.database.driver.prepare(`
+      SELECT * FROM inpatient_order
+      WHERE workspace_id=? AND epoch=? AND admission_id=? AND duration='long' AND state IN ('signed','verified')
+      ORDER BY julianday(signed_at), order_id
+    `).all(context.workspaceId, context.epoch, admissionId))
+  }
+  #markOrderStopRequested(context: ActorContext, row: OrderRow, now: string, stopReason: string, effects: Effects) {
+    const changed = this.owner.database.driver.prepare(`
+      UPDATE inpatient_order
+      SET state='stop-requested', version=version+1, stopped_at=?
+      WHERE workspace_id=? AND epoch=? AND order_id=? AND version=? AND state IN ('signed','verified')
+    `).run(now, context.workspaceId, context.epoch, row.order_id, row.version)
+    if (changed.changes !== 1) throw new InpatientError('INPATIENT_ORDER_CONFLICT', '医嘱状态或版本已变化')
+    const resourceType = row.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest'
+    const request = this.owner.fhir.read(context, resourceType, row.order_id)
+    const updated = this.owner.fhir.update(context, {
+      ...request,
+      status: 'active',
+      extension: [{ url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/inpatient-order-state', valueCode: 'stop-requested' }],
+      note: [...(Array.isArray(request.note) ? request.note : []), { id: 'clinmesh-stop-reason', text: stopReason }],
+    }, request.meta!.versionId!)
+    effects.push({ kind: 'updated', reference: `${resourceType}/${row.order_id}`, versionId: updated.meta!.versionId! })
+  }
+  /** 仅预览术前仍有效的长期医嘱（signed/verified），供手术完成核实弹窗展示，不修改医嘱状态。 */
+  previewAutoStopPreopOrders(context: ActorContext, admissionId: string): InpatientSurgeryAutoStopOrderPreview[] {
+    return this.#listAutoStoppableLongTermOrders(context, admissionId).map(row => ({
+      orderId: row.order_id,
+      orderVersion: row.version,
+      kind: row.kind,
+      display: row.display,
+      state: row.state === 'verified' ? 'verified' : 'signed',
+      ...(row.kind === 'medication'
+        ? {
+            doseText: row.dose_text,
+            frequencyCode: row.frequency_code,
+            routeCode: medicationRouteSchema.parse(row.route_code),
+          }
+        : {}),
+    }))
+  }
+  /** 手术完成事务内按 stop-on-completion 策略将术前有效长期医嘱统一转为 stop-requested，交由病区护士核对停嘱。 */
+  requestStopForSurgeryCompletion(
+    context: ActorContext,
+    admissionId: string,
+    executionId: string,
+    procedureDisplay: string,
+    effects: Effects,
+  ) {
+    const rows = this.#listAutoStoppableLongTermOrders(context, admissionId)
+    if (rows.length === 0) return
+    const now = this.owner.virtualTime(context)
+    const stopReason = `术后医嘱重整自动停嘱：${procedureDisplay}完成（Procedure/${executionId}）`
+    for (const row of rows) this.#markOrderStopRequested(context, row, now, stopReason, effects)
   }
   createExecution(context: ActorContext, order: OrderRow, time: string, reason: string | undefined, effects: Effects) {
     this.owner.assertNotArchived(context,order.admission_id)

@@ -83,7 +83,7 @@ describe('独立分组记录核对公共 HTTP', () => {
     const current = inpatientDetailSchema.parse(await (await s.request(s.doctor, s.path)).json()).admission
     const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: current.versionId,
       procedureId: pci.id, catalogVersion: pci.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
-      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       plannedFor: '2026-08-24T15:00:00+08:00', reason: '独立核对合成 PCI 计划' })
     expect(requested.status).toBe(200)
     let surgery = inpatientSurgeryResponseSchema.parse(await requested.json()).data
@@ -137,7 +137,7 @@ describe('独立分组记录核对公共 HTTP', () => {
     const admission = inpatientDetailSchema.parse(await (await s.request(s.doctor, s.path)).json()).admission
     const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: admission.versionId,
       procedureId: angiography.id, catalogVersion: angiography.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
-      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成原计划造影' })
     expect(requested.status).toBe(200)
     let surgery = inpatientSurgeryResponseSchema.parse(await requested.json()).data

@@ -15,7 +15,7 @@ async function setupBatch() {
   const initial = inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json())
   const planned = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: initial.encounterVersion,
     procedureId: 'hospital-surgery-8', catalogVersion: 1, surgeryType: 'elective', locationId: 'location-catheterization-lab',
-    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     plannedFor: initial.virtualTime, reason: '合成双导管造影计划' })
   expect(planned.status).toBe(200)
   const surgery = inpatientSurgeryResponseSchema.parse(await planned.json()).data
@@ -59,7 +59,7 @@ it('再次确认须完整审阅原预留，原子替换且不释放其他计划�
   const surgery = inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json())
   const other = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: surgery.encounterVersion,
     procedureId: 'hospital-surgery-7', catalogVersion: 1, surgeryType: 'elective', locationId: 'location-catheterization-lab',
-    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     plannedFor: surgery.virtualTime, reason: '另一独立造影计划' })
   expect(other.status).toBe(200)
   const otherPlan = inpatientSurgeryResponseSchema.parse(await other.json()).data.requests.find(item => item.id !== s.input.requestId)!
@@ -216,7 +216,7 @@ it('失权、已取消或已开始的计划不能整批确认，已有材料使�
 
   const other = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: surgery.encounterVersion,
     procedureId: 'hospital-surgery-7', catalogVersion: 1, surgeryType: 'elective', locationId: 'location-catheterization-lab',
-    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     plannedFor: surgery.virtualTime, reason: '另一个已撤销合成造影计划' })
   const otherPlan = inpatientSurgeryResponseSchema.parse(await other.json()).data.requests.find(item => item.id !== s.input.requestId)!
   expect((await s.request(s.doctor, `${s.path}/surgeries/cancel`, {

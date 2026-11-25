@@ -494,7 +494,11 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
     const all = orderSetTemplateListSchema.parse(await allResponse.json())
     expect(all.items.map(item => item.id)).toEqual([...orderSetTemplateIds])
     for (const template of all.items) {
-      expect(template.version).toBe('2026-11-18.r1')
+      expect(template.version).toBe(
+        template.id === 'pci-postop-standard' || template.id === 'general-surgery-postop-standard'
+          ? '2026-11-25.r1'
+          : '2026-11-18.r1',
+      )
       expect(template.fingerprint).toMatch(/^[a-f0-9]{64}$/)
     }
 
@@ -585,9 +589,9 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
       'cad-pci-secondary-prevention',
     ])
     const chestPain = normalBundle.drafts[0]!
-    expect(chestPain.counts).toEqual({ excluded: 0, needsReview: 0, ready: 5, unavailable: 0 })
+    expect(chestPain.counts).toEqual({ excluded: 0, needsReview: 0, ready: 5, skipped: 0, unavailable: 0 })
     const secondaryPrevention = normalBundle.drafts[1]!
-    expect(secondaryPrevention.counts).toEqual({ excluded: 0, needsReview: 0, ready: 6, unavailable: 0 })
+    expect(secondaryPrevention.counts).toEqual({ excluded: 0, needsReview: 0, ready: 6, skipped: 0, unavailable: 0 })
 
     // Zero formal side-effects invariant
     expect({
@@ -742,7 +746,7 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
       { headers: { cookie: cookies.doctor } },
     )).json())
     const contraDraft = contraBundle.drafts[0]!
-    expect(contraDraft.counts).toEqual({ excluded: 5, needsReview: 0, ready: 1, unavailable: 0 })
+    expect(contraDraft.counts).toEqual({ excluded: 5, needsReview: 0, ready: 1, skipped: 0, unavailable: 0 })
     expect(contraDraft.items.find(item => item.key === 'aspirin')).toMatchObject({
       candidate: null,
       disposition: 'excluded',
@@ -835,7 +839,7 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
     expect(initialInpatient.patientFacts.egfr.status).toBe('missing')
 
     const baselineDraft = initialInpatient.drafts.find(draft => draft.template.id === 'cad-admission-baseline')!
-    expect(baselineDraft.counts).toEqual({ excluded: 0, needsReview: 0, ready: 10, unavailable: 0 })
+    expect(baselineDraft.counts).toEqual({ excluded: 0, needsReview: 0, ready: 10, skipped: 0, unavailable: 0 })
 
     const hydrationMissing = initialInpatient.drafts.find(draft => draft.template.id === 'cin-perioperative-hydration')!
     expect(hydrationMissing.items.find(item => item.key === 'isotonic-saline-hydration')).toMatchObject({
@@ -910,7 +914,7 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
     expect(cinReadyBundle.patientFacts.egfr.status).toBe('present')
 
     const hydrationReady = cinReadyBundle.drafts.find(draft => draft.template.id === 'cin-perioperative-hydration')!
-    expect(hydrationReady.counts).toEqual({ excluded: 0, needsReview: 0, ready: 2, unavailable: 0 })
+    expect(hydrationReady.counts).toEqual({ excluded: 0, needsReview: 0, ready: 2, skipped: 0, unavailable: 0 })
     const salineCandidate = hydrationReady.items.find(item => item.key === 'isotonic-saline-hydration')!.candidate!
     expect(salineCandidate).toMatchObject({
       doseText: '1000 mL',
@@ -926,7 +930,7 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
       disposition: 'needs-review',
       reasons: [expect.objectContaining({ code: 'egfr-below-threshold', severity: 'caution', threshold: 60 })],
     })
-    expect(secondaryInpatient.counts).toEqual({ excluded: 0, needsReview: 1, ready: 5, unavailable: 0 })
+    expect(secondaryInpatient.counts).toEqual({ excluded: 0, needsReview: 1, ready: 5, skipped: 0, unavailable: 0 })
 
     // Zero formal side-effects invariant on inpatient tables
     expect({
@@ -1053,7 +1057,7 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
     expect(deteriorated.items.find(item => item.key === 'beta-blocker')?.disposition).toBe('excluded')
     expect(deteriorated.items.find(item => item.key === 'acei')?.disposition).toBe('excluded')
     expect(deteriorated.items.find(item => item.key === 'nitroglycerin-prn')?.disposition).toBe('excluded')
-    expect(deteriorated.counts).toEqual({ excluded: 4, needsReview: 0, ready: 2, unavailable: 0 })
+    expect(deteriorated.counts).toEqual({ excluded: 4, needsReview: 0, ready: 2, skipped: 0, unavailable: 0 })
 
     // 5. Distinguish catalog-unavailable vs catalog-unpriced on inpatient investigations
     const bnpRow = current().database.driver.prepare(`

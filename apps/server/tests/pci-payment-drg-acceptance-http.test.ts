@@ -93,7 +93,7 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
 
     const currentAdmission = await s.read('inpatient-doctor', path, inpatientDetailSchema)
     const otherPlan = (await parsePciResponse(inpatientSurgeryResponseSchema, await s.request('inpatient-doctor', `${path}/surgeries/request`, {
-      anesthesiaMethod: 'local-infiltration',
+      anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       encounterVersion: currentAdmission.admission.versionId,
       locationId: 'location-catheterization-lab',
       procedureId: stay.procedure.id,

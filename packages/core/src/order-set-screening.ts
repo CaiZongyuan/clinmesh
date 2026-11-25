@@ -4,7 +4,7 @@ import type {
   OrderSetScreeningRule,
 } from '@clinmesh/contracts/order-set-templates'
 import type { MedicationFrequency } from '@clinmesh/contracts/medication-safety'
-import { medicationDailyFrequency } from './medication-safety.ts'
+import { medicationCombinationConflict, medicationDailyFrequency } from './medication-safety.ts'
 
 /** 已落库客观事实；null 表示未记录，筛选时只能标注待核实，不能视为正常。 */
 export interface OrderSetScreeningFact {
@@ -98,9 +98,121 @@ export function orderSetAllergyReason(allergy: { code: string; display: string; 
   }
 }
 
+export interface OrderSetActiveOrderFact {
+  catalogItemId: string
+  code?: string | undefined
+  display: string
+  drugConceptCode?: string | undefined
+  duration: 'long' | 'temporary'
+  genericName?: string | undefined
+  kind: 'medication' | 'service'
+  orderId: string
+  pharmacologyClasses?: readonly string[] | undefined
+  reference: string
+}
+
+export interface OrderSetInFlightInvestigationFact {
+  catalogItemId: string
+  display: string
+  examCode?: string | undefined
+  kind: 'laboratory' | 'examination'
+  reference: string
+  referenceCode?: string | undefined
+  status: string
+}
+
+function normalizedToken(value: string | undefined): string | undefined {
+  const trimmed = value?.trim().toUpperCase()
+  return trimmed !== undefined && trimmed.length > 0 ? trimmed : undefined
+}
+
+export function screenOrderSetActiveOrder(
+  candidate: {
+    catalogItemId: string
+    code?: string | undefined
+    display: string
+    drugConceptCode?: string | undefined
+    genericName?: string | undefined
+    kind: 'medication' | 'service'
+    pharmacologyClasses?: readonly string[] | undefined
+  },
+  activeOrders: readonly OrderSetActiveOrderFact[],
+): OrderSetReason | undefined {
+  const candidateCode = normalizedToken(candidate.code)
+  const candidateConcept = normalizedToken(candidate.drugConceptCode)
+  const candidateGeneric = normalizedToken(candidate.genericName)
+  const sameOrder = activeOrders.find(order =>
+    order.kind === candidate.kind
+    && (
+      order.catalogItemId === candidate.catalogItemId
+      || (candidateCode !== undefined && normalizedToken(order.code) === candidateCode)
+      || (candidateConcept !== undefined && normalizedToken(order.drugConceptCode) === candidateConcept)
+      || (candidateGeneric !== undefined && normalizedToken(order.genericName) === candidateGeneric)
+    ))
+  if (sameOrder !== undefined) {
+    const durationLabel = sameOrder.duration === 'long' ? '长期' : '临时'
+    return {
+      code: 'already-active-order',
+      messageZh: `术前已在用有效${durationLabel}医嘱「${sameOrder.display}」，术后重整默认跳过重复开立。`,
+      observedValue: null,
+      severity: 'skip',
+      sourceReference: sameOrder.reference,
+      threshold: null,
+    }
+  }
+  if (candidate.kind === 'medication' && candidate.pharmacologyClasses !== undefined && candidate.pharmacologyClasses.length > 0) {
+    const exclusive = activeOrders.find(order =>
+      order.kind === 'medication'
+      && order.pharmacologyClasses !== undefined
+      && order.pharmacologyClasses.length > 0
+      && medicationCombinationConflict(order.pharmacologyClasses, candidate.pharmacologyClasses!))
+    if (exclusive !== undefined) {
+      const durationLabel = exclusive.duration === 'long' ? '长期' : '临时'
+      return {
+        code: 'mutually-exclusive-active-order',
+        messageZh: `术前已在用同药理类有效${durationLabel}医嘱「${exclusive.display}」，与「${candidate.display}」同类互斥，术后重整默认跳过。`,
+        observedValue: null,
+        severity: 'skip',
+        sourceReference: exclusive.reference,
+        threshold: null,
+      }
+    }
+  }
+  return undefined
+}
+
+export function screenOrderSetInFlightInvestigation(
+  candidate: {
+    catalogItemId: string
+    display: string
+    examCode?: string | undefined
+    kind: 'laboratory' | 'examination'
+    referenceCode?: string | undefined
+  },
+  inFlight: readonly OrderSetInFlightInvestigationFact[],
+): OrderSetReason | undefined {
+  const matched = inFlight.find(item =>
+    item.kind === candidate.kind
+    && (
+      item.catalogItemId === candidate.catalogItemId
+      || (candidate.referenceCode !== undefined && item.referenceCode === candidate.referenceCode)
+      || (candidate.examCode !== undefined && item.examCode === candidate.examCode)
+    ))
+  if (matched === undefined) return undefined
+  return {
+    code: 'in-flight-investigation',
+    messageZh: `已存在在途检查申请「${matched.display}」（状态 ${matched.status}），默认跳过重复开立。`,
+    observedValue: null,
+    severity: 'skip',
+    sourceReference: matched.reference,
+    threshold: null,
+  }
+}
+
 export function orderSetDisposition(reasons: readonly OrderSetReason[]): OrderSetDisposition {
   if (reasons.some(reason => reason.severity === 'unavailable')) return 'unavailable'
   if (reasons.some(reason => reason.severity === 'exclude')) return 'excluded'
+  if (reasons.some(reason => reason.severity === 'skip')) return 'skipped'
   if (reasons.some(reason => reason.severity === 'caution' || reason.severity === 'pending-verification')) return 'needs-review'
   return 'ready'
 }

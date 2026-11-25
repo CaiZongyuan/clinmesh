@@ -50,7 +50,7 @@ it('只选择本次住院未完成未取消的 PCI 计划，并把requestId随�
   const submitted: unknown[] = []
   const procedure = { id: 'hospital-surgery-3', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '36.0700', display: '合成PCI计划', category: '介入治疗', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.test/coding', sourceSha256: '0'.repeat(64), sourceLocator: 'test:1' }, chargeDefinition: { id: 'charge-surgery-3', priceFen: 180000, unit: '次', synthetic: true, trigger: 'execution' } }
   const requests = ['requested', 'cancelled', 'completed'].map((status, index) => ({ id: `pci-request-${index}`, admissionId: admission.id, version: 1, status,
-    plannedProcedure: procedure, plannedFor: '2026-08-25T09:00:00+08:00', reason: '合成计划', requestedAt: '2026-08-24T09:00:00+08:00', requestedBy: 'doctor', organizationId: 'organization-inpatient' }))
+    plannedProcedure: procedure, plannedFor: '2026-08-25T09:00:00+08:00', preopOrderPolicy: 'continue-active', reason: '合成计划', requestedAt: '2026-08-24T09:00:00+08:00', requestedBy: 'doctor', organizationId: 'organization-inpatient' }))
   requests.push({ ...requests[0]!, id: 'non-pci', plannedProcedure: { ...procedure, coding: { ...procedure.coding, code: '47.0100', display: '阑尾切除术' } } })
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/auth/context') return Response.json(session)
@@ -79,7 +79,7 @@ it('只选择本次住院未完成未取消的 PCI 计划，并把requestId随�
 it('报告计划使用同屏一次确认，混合计划只给无报告计划保留手填入口', async () => {
   const procedure = { id: 'hospital-pci', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '36.0700', display: '合成PCI', category: '介入治疗', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.test/coding', sourceSha256: '0'.repeat(64), sourceLocator: 'test:1' }, chargeDefinition: { id: 'charge-pci', priceFen: 180000, unit: '次', synthetic: true, trigger: 'execution' } }
   const requests = ['manual-plan', 'report-plan'].map(id => ({ id, admissionId: admission.id, version: 1, status: 'requested', plannedProcedure: procedure,
-    plannedFor: '2026-08-25T09:00:00+08:00', reason: id, requestedAt: '2026-08-24T09:00:00+08:00', requestedBy: 'doctor', organizationId: 'organization-inpatient' }))
+    plannedFor: '2026-08-25T09:00:00+08:00', preopOrderPolicy: 'continue-active', reason: id, requestedAt: '2026-08-24T09:00:00+08:00', requestedBy: 'doctor', organizationId: 'organization-inpatient' }))
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: '2026-08-24T09:00:00+08:00', requests, executions: [] })
     if (path.endsWith('/pci-selection')) return Response.json({ ...initial, drafts: [{ requestId: 'report-plan', version: 1, reportId: 'report-1', reportVersion: 1,
@@ -114,7 +114,7 @@ it('隐藏的已访问页签不加载手填参数或派发新操作', async () =
 it('另一计划的报告晚到时保留当前无报告计划的手填输入', async () => {
   const procedure = { id: 'hospital-pci', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '36.0700', display: '合成PCI', category: '介入治疗', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.test/coding', sourceSha256: '0'.repeat(64), sourceLocator: 'test:1' }, chargeDefinition: { id: 'charge-pci', priceFen: 180000, unit: '次', synthetic: true, trigger: 'execution' } }
   const requests = ['manual-plan', 'report-plan'].map(id => ({ id, admissionId: admission.id, version: 1, status: 'requested', plannedProcedure: procedure,
-    plannedFor: '2026-08-25T09:00:00+08:00', reason: id, requestedAt: '2026-08-24T09:00:00+08:00', requestedBy: 'doctor', organizationId: 'organization-inpatient' }))
+    plannedFor: '2026-08-25T09:00:00+08:00', preopOrderPolicy: 'continue-active', reason: id, requestedAt: '2026-08-24T09:00:00+08:00', requestedBy: 'doctor', organizationId: 'organization-inpatient' }))
   let drafts: Array<Record<string, unknown>> = []
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: '2026-08-24T09:00:00+08:00', requests, executions: [] })

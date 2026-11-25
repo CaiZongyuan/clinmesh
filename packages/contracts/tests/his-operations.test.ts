@@ -560,7 +560,7 @@ describe('HIS operation catalog', () => {
       'inpatient.pci-data.read',
       'inpatient.pci-data.prepare',
     ]) {
-      expect(getHisOperation(id).version).toBe(id.startsWith('inpatient.investigation.') ? 4 : 3)
+      expect(getHisOperation(id).version).toBe(id.startsWith('inpatient.investigation.') ? 5 : 3)
     }
   })
 
@@ -967,20 +967,20 @@ it('publishes read-only clinical quality preflight queries and clinicalOverride 
   expect(getHisOperation('inpatient.order.issue').version).toBe(10)
   expect(getHisOperation('inpatient.surgery.catalog').version).toBe(4)
   expect(getHisOperation('inpatient.surgery.catalog').roles).toEqual(['inpatient-doctor', 'ward-nurse', 'medical-records'])
-  expect(getHisOperation('inpatient.surgery.read').version).toBe(4)
+  expect(getHisOperation('inpatient.surgery.read').version).toBe(5)
   expect(getHisOperation('inpatient.surgery.read').roles).toEqual(['inpatient-doctor', 'ward-nurse', 'medical-records'])
-  expect(getHisOperation('inpatient.surgery.request').version).toBe(4)
-  expect(getHisOperation('inpatient.surgery.check-preop').version).toBe(3)
-  expect(getHisOperation('inpatient.surgery.confirm-consent').version).toBe(3)
-  expect(getHisOperation('inpatient.surgery.cancel').version).toBe(3)
-  expect(getHisOperation('inpatient.surgery.start').version).toBe(3)
-  expect(getHisOperation('inpatient.surgery.record-material').version).toBe(3)
-  expect(getHisOperation('inpatient.surgery.record-medication').version).toBe(1)
-  expect(getHisOperation('inpatient.surgery.correct-material').version).toBe(2)
-  expect(getHisOperation('inpatient.surgery.supplement-material').version).toBe(2)
-  expect(getHisOperation('inpatient.surgery.preview-completion').version).toBe(3)
-  expect(getHisOperation('inpatient.surgery.complete').version).toBe(5)
-  expect(getHisOperation('inpatient.surgery.execute').version).toBe(5)
+  expect(getHisOperation('inpatient.surgery.request').version).toBe(5)
+  expect(getHisOperation('inpatient.surgery.check-preop').version).toBe(4)
+  expect(getHisOperation('inpatient.surgery.confirm-consent').version).toBe(4)
+  expect(getHisOperation('inpatient.surgery.cancel').version).toBe(4)
+  expect(getHisOperation('inpatient.surgery.start').version).toBe(4)
+  expect(getHisOperation('inpatient.surgery.record-material').version).toBe(4)
+  expect(getHisOperation('inpatient.surgery.record-medication').version).toBe(2)
+  expect(getHisOperation('inpatient.surgery.correct-material').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.supplement-material').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.preview-completion').version).toBe(4)
+  expect(getHisOperation('inpatient.surgery.complete').version).toBe(6)
+  expect(getHisOperation('inpatient.surgery.execute').version).toBe(6)
   expect(getHisOperation('inpatient.drg.simulate').version).toBe(6)
   expect(getHisOperation('inpatient.pci-selection.confirm').version).toBe(3)
   expect(getHisOperation('inpatient.record.submit').version).toBe(3)
@@ -999,9 +999,12 @@ it('validates six-element surgery notice requests and structured one-procedure-o
     surgeonPractitionerId: 'practitioner-inpatient-doctor',
     assistantPractitionerId: 'practitioner-surgeon-attending',
     anesthesiaMethod: 'local-infiltration' as const,
+    preopOrderPolicy: 'continue-active' as const,
     reason: '拟行冠脉支架置入',
   }
   expect(request.input.parse(validNotice)).toEqual(validNotice)
+  expect(request.input.parse({ ...validNotice, preopOrderPolicy: 'stop-on-completion' })).toMatchObject({ preopOrderPolicy: 'stop-on-completion' })
+  expect(request.input.safeParse({ ...validNotice, preopOrderPolicy: undefined }).success).toBe(false)
   expect(request.input.safeParse({ ...validNotice, assistantPractitionerId: 'practitioner-inpatient-doctor' }).success).toBe(false)
   expect(request.input.safeParse({
     admissionId: 'adm-1',

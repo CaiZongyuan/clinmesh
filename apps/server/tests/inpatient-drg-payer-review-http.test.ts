@@ -218,7 +218,7 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
     const current = (await (await s.request(s.doctor, s.path)).json()).admission
     const request = (await (await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: current.versionId,
       procedureId: procedure.id, catalogVersion: procedure.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
-      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成PCI核定' })).json()).data.requests[0]
     for (const [cookie, action] of [[s.nurse, 'check-preop'], [s.doctor, 'confirm-consent']] as const) {
       const version = (await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests[0].version
