@@ -59,7 +59,7 @@
 
 Case Truth 表示普通岗位不能直接读取、只能通过问诊和合规检查发现的隐藏病例事实。管理员在模拟数据患者详情展开默认折叠的“本次病例真值”时才请求 `GET /api/sim/v1/admin/synthetic-cases/:caseId/truth`（校验受信 administrator 会话与 Workspace，返回 `Cache-Control: no-store`，非管理员 403、不存在 404，收起或切换患者立即销毁正文）；该入口不加入 Operation Catalog、CLI、Page Context 或 Agent Tools。Patient Persona、Case Truth 与 Investigation Result Snapshot 均不进入普通 FHIR Search、Visible Source History 或 HIS 查询。
 
-Action Trace 按 Scenario Run 记录 Command 尝试、结果、Effect 引用和资源版本，事件时间使用当前 Epoch Virtual Time（Audit Event 继续保存真实接收时间）；它不记录普通读取或模型 chain-of-thought，首期也不定义自动评分规则或 evaluator service account。
+Action Trace 按 Scenario Run 记录 Command 尝试、结果、Effect 引用和资源版本，事件时间使用当前 Epoch Virtual Time（Audit Event 继续保存真实接收时间）；它本身不记录普通读取或模型 chain-of-thought，也不内建自动评分规则或 evaluator service account（面向离线与仿真基准的受控 Agent 输出双轨评测见[临床决策支持与质控](clinical-decision-support.md)）。
 
 <a id="106-重置与-epoch-隔离"></a>
 

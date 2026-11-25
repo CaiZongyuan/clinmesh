@@ -254,6 +254,22 @@ _Avoid_: Hardcoded TypeScript specialty module, executable plugin script, hospit
 与完整专病包共用同一数据格式但聚焦易漏诊疑难或罕见病线索提示的专病包类型，仅声明跨时间结构化触发条件、不适用人群与提示规范，不包含组套或治疗阶段。
 _Avoid_: Automated treatment pathway, full specialty management pack, diagnostic order engine
 
+**Concept Vocabulary**:
+分本院目录项、平台概念与国家/国际标准编码三层组织的受控临床概念词表，显式记录 SKOS 映射关系（`exact`、`close`、`broader`、`narrower`）与复核生命周期（`proposed`、`reviewed`、`approved`、`deprecated`）；仅复核通过且精确等价的映射允许驱动临床评分与安全红线。
+_Avoid_: Unverified fuzzy synonym table, hardcoded drug-name array, implicit code equivalence
+
+**Knowledge Claim**:
+绑定指南原文逐字引文、页码定位与结构化适用条件的原子专病知识主张，与面向临床导航的专题说明分层管理；须经九状态发布流转与执业医生身份签署方可进入正式发布快照，未签署知识仅能标为试用版并显式提示未经医生检查。
+_Avoid_: Unanchored free-text summary, unsigned authoritative clinical rule, mutable in-place claim overwrite
+
+**Offline Knowledge Pipeline**:
+在临床运行时之外借助受控模型流起草候选知识主张并执行原文锚点、逐字引文、概念映射与越界细节结构校验的离线知识治理流水线，配套提供指南跨版本差异仲裁队列与概念映射降级影响评估；临床在线运行时不开放任何直接写知识入口。
+_Avoid_: Online self-modifying knowledge base, unreviewed auto-overwrite on guideline update, runtime write-knowledge agent tool
+
+**Agent Output Scorer**:
+对照患者 `Clinical Fact Ledger` 与专病任务评分量表对 Agent 临床文书或建议输出执行正分覆盖与漏报扣分双轨核算、单独列出捏造临床事实并按字符差异统计医生逐字段增删改幅度的评测能力；未跑分输出默认显式标为未评测，真实模型评测须具备当次运行的明确授权许可。
+_Avoid_: Undifferentiated single composite score, unverified external history counted as ground truth, unauthorized live-model benchmark run
+
 **Report Acknowledgement**:
 负责医生确认已查看一份已签发诊断报告的业务事实。它不改变报告内容或签发状态。
 _Avoid_: Report status, report approval, read receipt
