@@ -1,4 +1,5 @@
 import { medicationScheduledHours } from '@clinmesh/core/medication-safety'
+import { linkedNursingForProcedureId } from '@clinmesh/core/inpatient-surgery-medications'
 import { medicationFrequencySchema } from '@clinmesh/contracts/medication-safety'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
@@ -218,10 +219,12 @@ export class InpatientDrg {
     const facts = loaded?.facts ?? this.owner.orders.facts(context, admissionId), surgery = loaded?.surgery ?? this.owner.surgery.read(context, admissionId)
     const requestProcedures = surgery.requests.filter(request => ['requested', 'ready'].includes(request.status))
       .map(request => ({ request, procedure: surgery.inProgress.find(execution => execution.requestId === request.id)?.actualProcedure ?? request.plannedProcedure }))
+    const nursingBindings = requestProcedures.length === 0 ? [] : this.owner.surgery.catalog(context).nursingBindings
     const chargesFen = facts.charges.reduce((sum, charge) => sum + charge.amountFen, 0)
     const quantities = new Map([
       ...facts.dispenses.map(item => [item.id, item.quantity] as const),
       ...[...surgery.executions, ...surgery.inProgress].flatMap(execution => (execution.materialHistory.length > 0 ? execution.materialHistory : execution.materials).map(item => [item.id, item.quantity] as const)),
+      ...[...surgery.executions, ...surgery.inProgress].flatMap(execution => (execution.medications ?? []).map(item => [item.id, item.quantity] as const)),
       ...facts.executions.map(execution => [execution.id, facts.orders.find(order => order.id === execution.orderId)?.doseQuantity ?? 1] as const),
     ])
     const chargesById = new Map(facts.charges.map(charge => [charge.id, charge]))
@@ -241,9 +244,25 @@ export class InpatientDrg {
           quantity, estimatedFen: quantity * row.price_fen }
       })
         .filter(item => item.quantity > 0),
-      ...requestProcedures.map(({ request, procedure }) => ({
-        kind: 'surgery' as const, id: request.id, display: procedure.coding.display, quantity: 1,
-        estimatedFen: procedure.chargeDefinition.priceFen })),
+      ...requestProcedures.flatMap(({ request, procedure }) => {
+        const linked = linkedNursingForProcedureId(nursingBindings, procedure.id)
+        return [
+          {
+            kind: 'surgery' as const,
+            id: request.id,
+            display: procedure.coding.display,
+            quantity: 1,
+            estimatedFen: procedure.chargeDefinition.priceFen,
+          },
+          ...(linked === undefined ? [] : [{
+            kind: 'surgery' as const,
+            id: `${request.id}.nursing`,
+            display: linked.display,
+            quantity: 1,
+            estimatedFen: linked.priceFen,
+          }]),
+        ]
+      }),
     ]
     const reserved = z.array(z.object({ reservation_id: z.string(), request_id: z.string().nullable(), material_display: z.string(),
       quantity: z.number(), price_fen: z.number() })).parse(this.owner.database.driver.prepare(
@@ -352,6 +371,7 @@ export class InpatientDrg {
       prices: { medications: catalogPrices.medications,
         services: catalogPrices.services,
         procedures: surgeryCatalog.procedures.map(item => [item.id, item.version, item.chargeDefinition.priceFen]),
+        nursingBindings: surgeryCatalog.nursingBindings.map(item => [item.serviceId, item.serviceVersion, item.priceFen, item.procedureIds]),
         // 计价单位未确认的耗材无价格，指纹以 null 占位；补价后指纹随之变化即过期。
         materials: surgeryCatalog.materials.map(item => [item.id, item.version, 'chargeDefinition' in item ? item.chargeDefinition.priceFen : null]) },
       rulesId: this.rules!.rulesId,

@@ -501,7 +501,7 @@ describe('多手术计划的选型依据隔离', () => {
     const published = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema))
       .estimates.find(item => item.requestId === s.stay.requestId)!
     expect(published.draft!.items).toHaveLength(4)
-    expect(published.costs?.components.projectedTotalFen).toBe(306598)
+    expect(published.costs?.components.projectedTotalFen).toBe(314598)
     // 首次发布的明确稿进入全住院费用后，沿实际后台周期再核对一次跟进依据。
     await s.fixture.runtime.dispatchPending()
     const beforeFollowup = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)

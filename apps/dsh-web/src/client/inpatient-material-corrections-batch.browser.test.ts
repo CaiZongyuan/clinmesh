@@ -55,7 +55,7 @@ for (const version of ['18', '19']) test.describe(`React ${version} Surface æœ¯å
         }
       })
     expect(zoomChecked).toBe(true)
-    expect(result).toMatchObject({ posts: 2, audits: 2, chargesFen: 200000, historyCount: 3 })
+    expect(result).toMatchObject({ posts: 2, audits: 2, chargesFen: 208000, historyCount: 3 })
     expect(errors).toEqual([])
   })
 })

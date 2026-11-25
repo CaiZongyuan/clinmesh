@@ -21,7 +21,7 @@ import type { WorkspaceLocale } from './workspace-i18n.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
 type Execution = z.infer<typeof inpatientSurgeryExecutionSchema>
-type Catalog = z.infer<typeof inpatientSurgeryCatalogSchema>
+type Catalog = z.input<typeof inpatientSurgeryCatalogSchema>
 type Props = { admissionId: string; session: SessionContext; locale: WorkspaceLocale; execution: Execution;
   catalog: Catalog | undefined; reservations: InpatientMaterialReservation[]; active: boolean; dataReady: boolean; editable: boolean;
   onCorrect: (uses: Execution['materialHistory']) => void;

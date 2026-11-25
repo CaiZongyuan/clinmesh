@@ -1213,7 +1213,10 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       subject: { reference: `Patient/${s.patient.id}` }, basedOn: [{ reference: `ServiceRequest/${id}` }] })
     const ledger = await (await s.request(s.cashier, `${s.path}/charges`)).json()
     expect(ledger.charges.map((charge: { kind: string; amountFen: number }) => ({ kind: charge.kind, amountFen: charge.amountFen }))).toEqual([
-      { kind: 'surgery', amountFen: actual.chargeDefinition.priceFen }, { kind: 'material', amountFen: material.chargeDefinition.priceFen * 2 }])
+      { kind: 'surgery', amountFen: actual.chargeDefinition.priceFen },
+      { kind: 'material', amountFen: material.chargeDefinition.priceFen * 2 },
+      { kind: 'service', amountFen: 10000 },
+    ])
     expect((await s.request(s.doctor, `${s.path}/surgeries/cancel`, { requestId: id, expectedRequestVersion: state.requests[0].version, note: '不能取消已实施事实' })).status).toBe(409)
   })
 
@@ -2136,7 +2139,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
         VALUES(?,?,'guide-1','adm-1','pci-stent','req-inflight',1,'{}','{}','f2','automatic','succeeded',?)
       `).run(scope.workspaceId, scope.epoch, now)
 
-      expect(applyMigrations(db).applied).toEqual([migrationFile])
+      expect(applyMigrations(db).applied).toEqual([migrationFile, '0121_surgery-medications-and-nursing.sql'])
       expect(db.driver.pragma('foreign_key_check')).toEqual([])
       const migratedRows = z.array(z.object({
         request_id: z.string(),

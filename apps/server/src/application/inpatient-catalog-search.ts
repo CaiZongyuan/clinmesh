@@ -35,7 +35,9 @@ export class InpatientCatalogSearch {
     if (input.source === 'hospital') {
       const medication = input.kind === 'medication'
       const table = medication ? 'outpatient_catalog' : 'hospital_service_catalog', id = medication ? 'item_id' : 'service_id'
-      const where = `workspace_id=? AND epoch=? AND ${medication ? "kind='medication'" : "(json_type(config_json,'$.laboratoryService')='object' OR json_array_length(config_json,'$.requestCatalogItemIds')>0)"}
+      const where = `workspace_id=? AND epoch=? AND ${medication
+        ? "kind='medication' AND NOT (json_array_length(config_json,'$.availableScopes')=1 AND json_extract(config_json,'$.availableScopes[0]')='surgical-base')"
+        : "(json_type(config_json,'$.laboratoryService')='object' OR json_array_length(config_json,'$.requestCatalogItemIds')>0)"}
         AND (instr(lower(name_zh),lower(?))>0 OR instr(lower(${medication ? 'code' : 'service_id'}),lower(?))>0)`
       const params = [context.workspaceId, context.epoch, input.query ?? '', input.query ?? '']
       const total = z.object({ total: z.number().int().nonnegative() }).parse(this.owner.database.driver.prepare(`SELECT COUNT(*) total FROM ${table} WHERE ${where}`).get(...params)).total
@@ -51,7 +53,7 @@ export class InpatientCatalogSearch {
       const referencePath = medication ? 'product' : 'laboratoryService.referenceConcept'
       const table = medication ? 'outpatient_catalog' : 'hospital_service_catalog', id = medication ? 'item_id' : 'service_id'
       const rows = z.array(rowSchema).parse(this.owner.database.driver.prepare(`SELECT ${id} id,name_zh,version,active,${medication ? 'price_fen' : '0'} price_fen,config_json FROM ${table}
-        WHERE workspace_id=? AND epoch=? ${medication ? "AND kind='medication'" : ''}
+        WHERE workspace_id=? AND epoch=? ${medication ? "AND kind='medication' AND NOT (json_array_length(config_json,'$.availableScopes')=1 AND json_extract(config_json,'$.availableScopes[0]')='surgical-base')" : ''}
         AND json_extract(config_json,'$.${referencePath}.id')=? AND json_extract(config_json,'$.${referencePath}.system')=? AND json_extract(config_json,'$.${referencePath}.version')=?
         ORDER BY ${id} LIMIT 2`).all(context.workspaceId, context.epoch, item.id, item.system, item.version))
       const display = 'genericName' in item ? `${item.genericName} · ${item.strength} · ${item.manufacturer}` : item.display

@@ -4,6 +4,7 @@ import { inpatientSurgeryCompletionPreviewSchema, type inpatientSurgeryCompletio
 import type { InpatientMaterialReservationList } from '@clinmesh/contracts/inpatient-drg-simulation'
 import type { InpatientMaterialPlanBasis } from '@clinmesh/contracts/inpatient-material-plan'
 import { evaluateCompletionNoteRequirement, isSamePlannedProcedure } from '@clinmesh/core/inpatient-surgery-notes'
+import { linkedNursingForProcedureId } from '@clinmesh/core/inpatient-surgery-medications'
 import { InpatientError } from './inpatient-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import type { ActorContext } from './command-executor.ts'
@@ -119,9 +120,21 @@ export function planSurgeryCompletion(input: z.infer<typeof inpatientSurgeryComp
     throw new InpatientError('INPATIENT_SURGERY_NOTE_REQUIRED', '最终耗材存在数量增减差额、未消耗预留或未核实的术前清单差异，请填写核实说明', 400)
   }
   const resolvedNote = explicitNote ?? notePolicy.defaultNote
+  const linked = linkedNursingForProcedureId(catalog.nursingBindings, execution.actualProcedure.id)
+  const linkedNursing = linked === undefined
+    ? null
+    : {
+        serviceId: linked.serviceId,
+        serviceVersion: linked.serviceVersion,
+        display: linked.display,
+        unit: linked.unit,
+        amountFen: linked.priceFen,
+      }
+  const nursingAmountFen = linkedNursing?.amountFen ?? 0
   const preview = inpatientSurgeryCompletionPreviewSchema.parse({
     fingerprint: canonicalJsonHash({ input: { ...input, note: resolvedNote }, execution, catalog, reservations, reservationItems, charges, context }),
-    materials, materialDeltaFen, procedureAmountFen, totalDeltaFen: materialDeltaFen + procedureAmountFen,
+    materials, materialDeltaFen, procedureAmountFen, nursingAmountFen, linkedNursing,
+    totalDeltaFen: materialDeltaFen + procedureAmountFen + nursingAmountFen,
     retainedReservations,
   })
   return { preview, resolvedNote }

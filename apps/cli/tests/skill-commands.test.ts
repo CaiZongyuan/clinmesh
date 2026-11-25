@@ -182,7 +182,7 @@ it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', 
   expect(skill).toContain('INPATIENT_DRG_PLAN_CONFLICT')
   expect(getHisOperation('inpatient.drg.simulate').input.parse({ admissionId: 'synthetic-admission',
     draft: { primarySurgeryRequestId: 'synthetic-plan' } })).toMatchObject({ draft: { primarySurgeryRequestId: 'synthetic-plan' } })
-  expect(getHisOperation('inpatient.drg.simulate').version).toBe(5)
+  expect(getHisOperation('inpatient.drg.simulate').version).toBe(6)
   expect(getHisOperation('inpatient.drg.pregroup').version).toBe(4)
   expect(getHisOperation('inpatient.drg.payer.review.preview').version).toBe(2)
   expect(payer.version).toBe(4)
@@ -193,6 +193,7 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   for (const [path, id] of [['start-surgery', 'inpatient.surgery.start'], ['record-surgery-material', 'inpatient.surgery.record-material'],
+    ['record-surgery-medication', 'inpatient.surgery.record-medication'],
     ['supplement-surgery-material', 'inpatient.surgery.supplement-material'], ['correct-surgery-material', 'inpatient.surgery.correct-material'], ['preview-surgery-completion', 'inpatient.surgery.preview-completion'], ['complete-surgery', 'inpatient.surgery.complete']]) {
     expect(inspectExample(program, commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!).operation?.id).toBe(id)
   }
@@ -220,9 +221,15 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
   expect(supplement.input.safeParse({ ...addendum, amountFen: 1 }).success).toBe(false)
   expect(supplement.roles).toEqual(['inpatient-doctor'])
   expect(supplement.requirements).toMatchObject({ expectedVersions: true, idempotency: 'required' })
+  const recordMedication = getHisOperation('inpatient.surgery.record-medication')
+  expect(recordMedication.version).toBe(1)
+  const medicationExample = skill.match(/`surgery-medication\.json`[^]*?```json\n([^]*?)\n```/)
+  expect(medicationExample).not.toBeNull()
+  expect(recordMedication.input.safeParse(JSON.parse(medicationExample![1]!)).success).toBe(true)
+  expect(skill).toContain('--operation-id inpatient.surgery.record-medication')
   const review = examples.find(item => item.finalMaterials)
   const preview = getHisOperation('inpatient.surgery.preview-completion')
-  expect(preview.version).toBe(2)
+  expect(preview.version).toBe(3)
   expect(preview.input.safeParse(review).success).toBe(true)
   expect(preview.input.safeParse({ ...review, note: undefined }).success).toBe(true)
   expect(preview).toMatchObject({ http: { method: 'POST' }, mode: 'query', risk: 'read', requirements: { idempotency: 'none' } })
@@ -233,7 +240,7 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
     'clinmesh command receipt get --operation-id inpatient.surgery.preview-completion --idempotency-key example-key',
   )).toThrow('Operation does not create a Command receipt: inpatient.surgery.preview-completion')
   const complete = getHisOperation('inpatient.surgery.complete')
-  expect(complete.version).toBe(4)
+  expect(complete.version).toBe(5)
   expect(complete.input.parse(routineCommon)).toEqual(routineCommon)
   expect(complete.input.parse(common)).toEqual(common)
   const reconciliation = { finalMaterials: review.finalMaterials, releaseReservations: [], expectedFingerprint: 'a'.repeat(64) }
@@ -1103,13 +1110,17 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
   const executionExample = skill.match(/`surgery-execution\.json`[^]*?```json\n([^]*?)\n```/)
   expect(executionExample).toBeDefined()
   const executeOp = getHisOperation('inpatient.surgery.execute')
-  expect(executeOp.version).toBe(4)
-  expect(executeOp.input.parse(JSON.parse(executionExample![1]!))).toMatchObject({ expectedRequestVersion: 3, materials: [{ quantity: 2 }] })
+  expect(executeOp.version).toBe(5)
+  expect(executeOp.input.parse(JSON.parse(executionExample![1]!))).toMatchObject({
+    expectedRequestVersion: 3,
+    materials: [{ quantity: 2 }],
+    medications: [{ medicationId: 'medication-surgical-lidocaine', quantity: 5, routeCode: 'IH' }],
+  })
   expect(executeOp.input.safeParse({ ...JSON.parse(executionExample![1]!), note: undefined }).success).toBe(true)
   expect(getHisOperation('inpatient.order.issue').version).toBe(10)
   expect(skill).toContain('surgeryExecutionId')
   expect(skill).toContain('inpatient.surgery.execute')
-  expect(getHisOperation('inpatient.surgery.catalog').version).toBe(3)
+  expect(getHisOperation('inpatient.surgery.catalog').version).toBe(4)
   expect(getHisOperation('inpatient.surgery.catalog').summary).toContain('unit-unconfirmed')
   expect(skill).toContain('unavailableReason=unit-unconfirmed')
   expect(skill).toContain('baseSupplyPriceFen')

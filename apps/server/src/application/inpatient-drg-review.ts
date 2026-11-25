@@ -187,12 +187,15 @@ export class InpatientDrgReview {
       }
     }
     for (const execution of executions) {
+      const chargeNet = (kind: string, sourceId: string) => {
+        const original = charges.filter(charge => charge.kind === kind && charge.sourceId === sourceId)
+        const ids = new Set(original.map(item => item.id))
+        const related = charges.filter(charge => ids.has(charge.id) || (charge.reversalOf !== undefined && ids.has(charge.reversalOf)))
+        return { original, related, net: related.reduce((sum, charge) => sum + charge.amountFen, 0) }
+      }
       for (const use of execution.materialHistory.length > 0 ? execution.materialHistory : execution.materials.map(item => ({ ...item, correction: null }))) {
         const expected = use.correction === null ? use.amountFen : 0
-        const original = charges.filter(charge => charge.kind === 'material' && charge.sourceId === use.id)
-        const originalIds = new Set(original.map(item => item.id))
-        const related = charges.filter(charge => originalIds.has(charge.id) || (charge.reversalOf !== undefined && originalIds.has(charge.reversalOf)))
-        const net = related.reduce((sum, charge) => sum + charge.amountFen, 0)
+        const { original, related, net } = chargeNet('material', use.id)
         if (original.length !== 1 || net !== expected) issues.push({ requestId: execution.requestId, executionId: execution.id, procedureDisplay: execution.actualProcedure.coding.display, key: `billing-mismatch:${execution.id}:${use.id}`, kind: 'billing-mismatch', ownerRole: 'cashier',
           materialId: use.item.id, display: use.item.display, plannedQuantity: null, actualQuantity: use.quantity,
           expectedChargeFen: expected, actualChargeFen: net, chargeDifferenceFen: net - expected,
@@ -205,15 +208,71 @@ export class InpatientDrgReview {
       }
     }
     for (const execution of executions) {
-      const original = charges.filter(charge => charge.kind === 'surgery' && charge.sourceId === execution.id), ids = new Set(original.map(item => item.id))
-      const related = charges.filter(charge => ids.has(charge.id) || (charge.reversalOf !== undefined && ids.has(charge.reversalOf)))
-      if (original.length !== 1 || related.reduce((sum, item) => sum + item.amountFen, 0) !== execution.actualProcedure.chargeDefinition.priceFen)
+      const chargeNet = (kind: string, sourceId: string) => {
+        const original = charges.filter(charge => charge.kind === kind && charge.sourceId === sourceId)
+        const ids = new Set(original.map(item => item.id))
+        const related = charges.filter(charge => ids.has(charge.id) || (charge.reversalOf !== undefined && ids.has(charge.reversalOf)))
+        return { original, related, net: related.reduce((sum, charge) => sum + charge.amountFen, 0) }
+      }
+      const procCharge = chargeNet('surgery', execution.id)
+      if (procCharge.original.length !== 1 || procCharge.net !== execution.actualProcedure.chargeDefinition.priceFen)
         issues.push({ requestId: execution.requestId, executionId: execution.id, procedureDisplay: execution.actualProcedure.coding.display, key: `billing-mismatch:Procedure/${execution.id}`, kind: 'billing-mismatch', ownerRole: 'cashier', materialId: null,
           display: execution.actualProcedure.coding.display, plannedQuantity: null, actualQuantity: 1, explanation: '已完成手术与正式术式收费净额不一致，须核实原收费及关联更正。',
           expectedChargeFen: execution.actualProcedure.chargeDefinition.priceFen,
-          actualChargeFen: related.reduce((sum, charge) => sum + charge.amountFen, 0),
-          chargeDifferenceFen: related.reduce((sum, charge) => sum + charge.amountFen, 0) - execution.actualProcedure.chargeDefinition.priceFen,
-          evidence: [`Procedure/${execution.id}`, ...related.map(charge => `ChargeItem/${charge.id}/version/${charge.version}`)] })
+          actualChargeFen: procCharge.net,
+          chargeDifferenceFen: procCharge.net - execution.actualProcedure.chargeDefinition.priceFen,
+          evidence: [`Procedure/${execution.id}`, ...procCharge.related.map(charge => `ChargeItem/${charge.id}/version/${charge.version}`)] })
+      for (const med of execution.medications ?? []) {
+        const medCharge = chargeNet('medication', med.id)
+        if (medCharge.original.length !== 1 || medCharge.net !== med.amountFen) {
+          issues.push({
+            requestId: execution.requestId,
+            executionId: execution.id,
+            procedureDisplay: execution.actualProcedure.coding.display,
+            key: `billing-mismatch:InpatientSurgeryMedication/${med.id}`,
+            kind: 'billing-mismatch',
+            ownerRole: 'cashier',
+            materialId: null,
+            display: med.display,
+            plannedQuantity: null,
+            actualQuantity: med.quantity,
+            explanation: '台内基数药有效使用与正式收费净额不一致，须在正式记录和账务入口核实更正。',
+            expectedChargeFen: med.amountFen,
+            actualChargeFen: medCharge.net,
+            chargeDifferenceFen: medCharge.net - med.amountFen,
+            evidence: [
+              `MedicationAdministration/${med.administrationId}`,
+              `Procedure/${execution.id}`,
+              ...medCharge.related.map(charge => `ChargeItem/${charge.id}/version/${charge.version}`),
+            ],
+          })
+        }
+      }
+      if (execution.linkedNursing) {
+        const nursingCharge = chargeNet('service', execution.id)
+        if (nursingCharge.original.length !== 1 || nursingCharge.net !== execution.linkedNursing.amountFen) {
+          issues.push({
+            requestId: execution.requestId,
+            executionId: execution.id,
+            procedureDisplay: execution.actualProcedure.coding.display,
+            key: `billing-mismatch:SurgicalNursing/${execution.id}`,
+            kind: 'billing-mismatch',
+            ownerRole: 'cashier',
+            materialId: null,
+            display: execution.linkedNursing.display,
+            plannedQuantity: null,
+            actualQuantity: 1,
+            explanation: '已完成手术与术中联动专科护理收费净额不一致，须核实原收费及关联更正。',
+            expectedChargeFen: execution.linkedNursing.amountFen,
+            actualChargeFen: nursingCharge.net,
+            chargeDifferenceFen: nursingCharge.net - execution.linkedNursing.amountFen,
+            evidence: [
+              `Procedure/${execution.id}`,
+              ...nursingCharge.related.map(charge => `ChargeItem/${charge.id}/version/${charge.version}`),
+            ],
+          })
+        }
+      }
     }
     for (const issue of issues) issue.target = issue.ownerRole === 'cashier' ? 'charges' : issue.ownerRole === 'medical-records' ? 'record' : 'surgery'
     const basis = { planBases: scoped.map(item => item.planBasis), summary: { formalDrgCode: null,

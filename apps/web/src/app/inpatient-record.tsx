@@ -16,6 +16,7 @@ import { AlertCircleIcon, CheckCircle2Icon, CircleIcon } from 'lucide-react'
 import { apiGet } from './api-client.ts'
 import { InpatientClinicalQualityBanner } from './clinical-quality-banner.tsx'
 import { SurgeryNoticeSummaryList, SurgicalConsentPreviewButton } from './inpatient-surgery-consent.tsx'
+import { SurgeryExecutionExtrasSummary } from './inpatient-surgery-medications.tsx'
 import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
@@ -71,6 +72,7 @@ function RecordSurgeryNoticesDisclosure({ admission, session, locale }: { admiss
       {surgeries.data && surgeries.data.requests.length === 0 ? <p className="text-xs text-muted-foreground">{t('本次住院无手术申请单记录。', 'No surgery notice records in this admission.')}</p> : null}
       {surgeries.data?.requests.map(req => {
         const isRunning = Boolean(surgeries.data?.inProgress.some(exec => exec.requestId === req.id))
+        const completedExec = surgeries.data?.executions.find(exec => exec.requestId === req.id)
         return <div key={req.id} className="flex flex-col gap-2 rounded-md border border-border p-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-semibold">{req.plannedProcedure.coding.code} {req.plannedProcedure.coding.display}</span>
@@ -79,6 +81,7 @@ function RecordSurgeryNoticesDisclosure({ admission, session, locale }: { admiss
             <SurgicalConsentPreviewButton admission={admission} request={req} locale={locale} />
           </div>
           <SurgeryNoticeSummaryList row={req} locale={locale} />
+          <SurgeryExecutionExtrasSummary execution={completedExec} locale={locale} />
           {req.cancellation ? <p className="text-xs text-muted-foreground">{t('取消原因：', 'Cancellation: ')}{req.cancellation.note}</p> : null}
         </div>
       })}

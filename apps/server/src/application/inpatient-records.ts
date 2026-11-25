@@ -46,7 +46,10 @@ export class InpatientRecords {
     addResource('Account', admissionId)
     for (const entry of diagnosis.entries)
       addResource('Condition', entry.conditionId)
-    const operations = executions.map(item => ({ ...item, procedureVersion: addResource('Procedure', item.id).meta!.versionId!, primary: item.id === mainProcedureExecutionId }))
+    const operations = executions.map(item => {
+      for (const med of item.medications ?? []) addResource('MedicationAdministration', med.administrationId)
+      return { ...item, procedureVersion: addResource('Procedure', item.id).meta!.versionId!, primary: item.id === mainProcedureExecutionId }
+    })
     for (const charge of fees.charges)
       addResource('ChargeItem', charge.id)
     const requests = this.#rows(context, 'SELECT * FROM laboratory_request WHERE workspace_id=? AND epoch=? AND case_id=? ORDER BY request_id', admissionId)

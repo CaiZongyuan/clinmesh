@@ -30,8 +30,8 @@ export async function runEquivalentMaterialJourney(page: Page, app: PciBrowserAp
   const header = page.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组', exact: true })
   const materials = page.getByRole('region', { name: '手术耗材', exact: true })
   await expect(materials.getByRole('button', { name: '换成这个', exact: true })).toBeVisible()
-  await expect(materials).toContainText('单价少 ¥200.00；换后预计 ¥10,865.98')
-  await expect(header).toContainText('做完预计 ¥11,065.98')
+  await expect(materials).toContainText('单价少 ¥200.00；换后预计 ¥10,945.98')
+  await expect(header).toContainText('做完预计 ¥11,145.98')
   for (const width of [1101, 826]) for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width: 1600, height: 1000 })
     await page.locator('.clinmesh-card-workspace').evaluate((element, value) => { (element as HTMLElement).style.width = `${value}px` }, width)
@@ -41,11 +41,11 @@ export async function runEquivalentMaterialJourney(page: Page, app: PciBrowserAp
   }
   await materials.getByRole('button', { name: '换成这个', exact: true }).click()
   await expect(materials.getByRole('button', { name: '换回原耗材', exact: true })).toBeVisible()
-  await expect(header).toContainText('做完预计 ¥10,865.98')
+  await expect(header).toContainText('做完预计 ¥10,945.98')
   await materials.getByRole('button', { name: '换回原耗材', exact: true }).click()
-  await expect(header).toContainText('做完预计 ¥11,065.98')
+  await expect(header).toContainText('做完预计 ¥11,145.98')
   await materials.getByRole('button', { name: '换成这个', exact: true }).click()
-  await expect(header).toContainText('做完预计 ¥10,865.98')
+  await expect(header).toContainText('做完预计 ¥10,945.98')
   const draft = (await s.read('inpatient-doctor', `${stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)).estimates[0]!.draft!
   expect(draft.items).toHaveLength(4)
   expect(draft.items.map(item => item.quantity)).toEqual([1, 1, 1, 1])
@@ -109,9 +109,9 @@ export async function runColdDraftCostJourney(page: Page, app: PciBrowserApp, mo
   await page.getByRole('button', { name: `查看${admission.patientName}`, exact: true }).click()
   await selectInpatientStage(page, 'DRG 预分组')
   const header = page.getByRole('button', { name: 'DRG 费用进度，点击查看 DRG 预分组', exact: true })
-  await expect(header).toContainText('做完预计 ¥11,065.98')
+  await expect(header).toContainText('做完预计 ¥11,145.98')
   await expect(header).toContainText('接近')
-  await expect(header).toContainText('预计还剩 ¥934.02')
-  await expect(page.getByRole('region', { name: '做完计划手术后', exact: true })).toContainText('预计住院总费用 ¥11,065.98')
+  await expect(header).toContainText('预计还剩 ¥854.02')
+  await expect(page.getByRole('region', { name: '做完计划手术后', exact: true })).toContainText('预计住院总费用 ¥11,145.98')
   await page.goto('about:blank')
 }

@@ -2,10 +2,17 @@ import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import { pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
 import {
+  medicationPackageInsertSchema,
+  medicationRouteSchema,
+  medicationSafetyRuleSchema,
+} from '@clinmesh/contracts/medication-safety'
+import {
   anesthesiaMethodSchema,
+  inpatientBaseStockMedicationSchema,
   inpatientLegacySurgeryRequestInputSchema,
   inpatientMaterialItemSchema,
   inpatientProcedureItemSchema,
+  inpatientProcedureNursingBindingSchema,
   inpatientSurgeryActionInputSchema,
   inpatientSurgeryCatalogSchema,
   inpatientSurgeryCompleteInputSchema,
@@ -16,8 +23,11 @@ import {
   inpatientSurgeryLocationSchema,
   inpatientSurgeryMaterialHistorySchema,
   inpatientSurgeryMaterialSelectionSchema,
+  inpatientSurgeryMedicationSelectionSchema,
+  inpatientSurgeryNursingChargeSchema,
   inpatientSurgeryPractitionerSchema,
   inpatientSurgeryRecordMaterialInputSchema,
+  inpatientSurgeryRecordMedicationInputSchema,
   inpatientSurgeryRequestInputSchema,
   inpatientSurgeryRequestSchema,
   inpatientSurgeryExecutionSchema,
@@ -25,13 +35,18 @@ import {
   inpatientSurgeryStartInputSchema,
   inpatientSurgerySupplementMaterialInputSchema,
   surgeryTypeSchema,
+  type InpatientBaseStockMedication,
+  type InpatientProcedureNursingBinding,
   type SurgeryLocationId,
 } from '@clinmesh/contracts/inpatient-surgery'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { ActorContext, CommandTransaction } from './command-executor.ts'
 import type { InpatientEffects } from './inpatient-billing.ts'
+import { freezeCatalogCoverageJson, readConfigInsuranceCoverage } from './catalog-insurance-coverage.ts'
+import { resolveCatalogMedicationRoutes } from './inpatient-medication-config.ts'
 import { businessDate } from './inpatient-orders.ts'
 import { readMaterialSnapshot } from './scenario-data/cardiovascular-materials.ts'
+import { standardMedicationDoseBasis, standardMedicationSafety } from './scenario-data/standard-medications.ts'
 import { planSurgeryCompletion, materialReductions, type MaterialChargeBasis } from './inpatient-surgery-completion.ts'
 import {
   SURGICAL_LOCATIONS,
@@ -40,6 +55,14 @@ import {
   formatPractitionerDisplay,
   formatSurgicalConsentSummaryNote,
 } from '@clinmesh/core/inpatient-surgery-consent'
+import {
+  DEFAULT_INTRAOPERATIVE_MEDICATION_NOTE,
+  buildSurgicalMedicationPackages,
+  linkedNursingForProcedureId,
+  surgicalMedicationSafetyDose,
+  validateSurgicalMedicationSelection,
+} from '@clinmesh/core/inpatient-surgery-medications'
+import { medicationRouteConcept } from '@clinmesh/core/medication-safety'
 import {
   DEFAULT_ROUTINE_EXECUTE_NOTE,
   DEFAULT_ROUTINE_START_NOTE,
@@ -90,6 +113,37 @@ const storedPractitionerContentSchema = z.object({
   }).loose()).optional(),
 }).loose()
 
+const surgicalBaseMedicationConfigSchema = z.object({
+  unit: z.string().trim().min(1),
+  defaultRouteCode: medicationRouteSchema.optional(),
+  allowedRouteCodes: z.array(medicationRouteSchema).min(1).optional(),
+  route: z.string().trim().min(1).optional(),
+  product: z.object({
+    strength: z.string().min(1),
+    dosageForm: z.string().min(1),
+    packageDescription: z.string().min(1),
+  }).loose(),
+  inpatientDoses: z.array(z.object({
+    doseText: z.string().trim().min(1).max(120),
+    quantity: z.number().int().positive().max(1000),
+  })).default([]),
+  inpatientDoseBasis: z.object({
+    amount: z.number().positive(),
+    unit: z.string().trim().min(1),
+  }).optional(),
+  inpatientMaxDoseQuantity: z.number().int().positive().max(1000).optional(),
+  safety: medicationSafetyRuleSchema.optional(),
+  packageInsert: medicationPackageInsertSchema.optional().catch(undefined),
+}).loose()
+
+const surgicalNursingServiceConfigSchema = z.object({
+  billingUnit: z.object({ display: z.string().min(1) }).loose(),
+  chargeDefinition: z.object({ priceFen: z.number().int().positive().safe() }).loose(),
+  surgicalProcedureIds: z.array(z.string().min(1)).min(1),
+}).loose()
+
+const storedLinkedNursingSchema = inpatientSurgeryNursingChargeSchema.omit({ chargeId: true })
+
 export class InpatientSurgery {
   #catalogCache: {
     key: string
@@ -113,15 +167,115 @@ export class InpatientSurgery {
     }
     return this.#catalogCache
   }
-  catalog(context: ActorContext) {
+  catalog(context: ActorContext): z.infer<typeof inpatientSurgeryCatalogSchema> {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     const cached = this.#ensureCatalogItems(context)
+    const { medications: baseStockMedications, inactiveIds } = this.#readBaseStockMedications(context)
+    const { bindings: nursingBindings } = this.#readNursingBindings(context)
     return {
       procedures: cached.procedures,
       materials: cached.materials,
       locations: this.#readLocations(context),
       practitioners: this.#readPractitioners(context),
+      baseStockMedications,
+      medicationPackages: buildSurgicalMedicationPackages(baseStockMedications, inactiveIds),
+      nursingBindings,
     }
+  }
+  #readBaseStockMedications(context: RepositoryContext) {
+    const rows = z.array(z.object({
+      item_id: z.string(),
+      code: z.string(),
+      name_zh: z.string(),
+      version: z.number().int().positive(),
+      active: z.number(),
+      price_fen: z.number().int().nonnegative(),
+      config_json: z.string(),
+    })).parse(
+      this.owner.database.driver.prepare(`
+        SELECT item_id, code, name_zh, version, active, price_fen, config_json
+        FROM outpatient_catalog
+        WHERE workspace_id=? AND epoch=? AND kind='medication'
+          AND json_extract(config_json,'$.surgicalBaseStock')=1
+        ORDER BY item_id
+      `).all(context.workspaceId, context.epoch),
+    )
+    const inactiveIds = new Set<string>()
+    const configByItemId = new Map<string, string>()
+    const medications: InpatientBaseStockMedication[] = []
+    for (const row of rows) {
+      if (row.active !== 1) {
+        inactiveIds.add(row.item_id)
+        continue
+      }
+      if (row.price_fen <= 0) continue
+      const parsedConfig = surgicalBaseMedicationConfigSchema.safeParse(JSON.parse(row.config_json))
+      if (!parsedConfig.success) continue
+      const config = parsedConfig.data
+      const routes = resolveCatalogMedicationRoutes(config, row.name_zh)
+      const safety = config.safety ?? standardMedicationSafety(row.item_id)
+      const doseBasis = config.inpatientDoseBasis ?? standardMedicationDoseBasis(row.item_id)
+      const singleLimitQuantity = safety?.doseLimits.unit === config.unit
+        ? Math.floor(safety.doseLimits.maximumSingleDose)
+        : safety && doseBasis && doseBasis.unit === safety.doseLimits.unit
+          ? Math.floor(safety.doseLimits.maximumSingleDose / doseBasis.amount)
+          : 100
+      const maxDoseQuantity = Math.min(
+        1000,
+        config.inpatientMaxDoseQuantity
+          ?? Math.max(1, singleLimitQuantity, ...config.inpatientDoses.map(dose => dose.quantity)),
+      )
+      configByItemId.set(row.item_id, row.config_json)
+      medications.push(inpatientBaseStockMedicationSchema.parse({
+        id: row.item_id,
+        version: row.version,
+        code: row.code,
+        display: row.name_zh,
+        unit: config.unit,
+        priceFen: row.price_fen,
+        strength: config.product.strength,
+        packageDescription: config.product.packageDescription,
+        ...routes,
+        doses: config.inpatientDoses,
+        ...(doseBasis === undefined ? {} : { doseBasis }),
+        maxDoseQuantity,
+        ...(safety === undefined ? {} : { safety }),
+        ...(config.packageInsert === undefined ? {} : { packageInsert: config.packageInsert }),
+      }))
+    }
+    return { medications, inactiveIds, configByItemId }
+  }
+  #readNursingBindings(context: RepositoryContext) {
+    const rows = z.array(z.object({
+      service_id: z.string(),
+      name_zh: z.string(),
+      version: z.number().int().positive(),
+      config_json: z.string(),
+    })).parse(
+      this.owner.database.driver.prepare(`
+        SELECT service_id, name_zh, version, config_json
+        FROM hospital_service_catalog
+        WHERE workspace_id=? AND epoch=? AND active=1
+          AND json_extract(config_json,'$.inpatientBillingTrigger')='surgery-completion'
+        ORDER BY service_id
+      `).all(context.workspaceId, context.epoch),
+    )
+    const configByServiceId = new Map<string, string>()
+    const bindings: InpatientProcedureNursingBinding[] = []
+    for (const row of rows) {
+      const parsed = surgicalNursingServiceConfigSchema.safeParse(JSON.parse(row.config_json))
+      if (!parsed.success) continue
+      configByServiceId.set(row.service_id, row.config_json)
+      bindings.push(inpatientProcedureNursingBindingSchema.parse({
+        serviceId: row.service_id,
+        serviceVersion: row.version,
+        display: row.name_zh,
+        unit: parsed.data.billingUnit.display,
+        priceFen: parsed.data.chargeDefinition.priceFen,
+        procedureIds: parsed.data.surgicalProcedureIds,
+      }))
+    }
+    return { bindings, configByServiceId }
   }
   #readLocations(context: RepositoryContext) {
     const rows = z.array(z.object({ resource_id: z.string(), content_json: z.string() })).parse(
@@ -243,6 +397,60 @@ export class InpatientSurgery {
           LEFT JOIN inpatient_surgery_material_correction c ON c.workspace_id=m.workspace_id AND c.epoch=m.epoch AND c.material_use_id=m.material_use_id
           WHERE m.workspace_id=? AND m.epoch=? AND m.execution_id=? ORDER BY m.material_use_id`).all(admissionId, context.workspaceId, context.epoch, row.execution_id))
       const uses = materials.map(item => ({ id: item.material_use_id, item: JSON.parse(item.item_json), quantity: item.quantity, amountFen: item.amount_fen }))
+      const medicationRows = z.array(z.object({
+        medication_use_id: z.string(),
+        administration_id: z.string(),
+        medication_id: z.string(),
+        catalog_version: z.number().int().positive(),
+        display: z.string(),
+        dose_text: z.string(),
+        quantity: z.number().int().positive(),
+        unit: z.string(),
+        route_code: medicationRouteSchema,
+        price_fen: z.number().int().nonnegative(),
+        amount_fen: z.number().int().nonnegative(),
+        recorded_at: z.string(),
+        recorded_by: z.string(),
+        practitioner_role_id: z.string(),
+        note: z.string(),
+        charge_id: z.string().nullable(),
+      })).parse(this.owner.database.driver.prepare(`
+        SELECT m.*, b.charge_id
+        FROM inpatient_surgery_medication m
+        LEFT JOIN inpatient_charge b
+          ON b.workspace_id=m.workspace_id AND b.epoch=m.epoch AND b.source_id=m.medication_use_id AND b.kind='medication' AND b.admission_id=?
+        WHERE m.workspace_id=? AND m.epoch=? AND m.execution_id=?
+        ORDER BY julianday(m.recorded_at), m.medication_use_id
+      `).all(admissionId, context.workspaceId, context.epoch, row.execution_id))
+      const medications = medicationRows.map(item => ({
+        id: item.medication_use_id,
+        administrationId: item.administration_id,
+        medicationId: item.medication_id,
+        catalogVersion: item.catalog_version,
+        display: item.display,
+        doseText: item.dose_text,
+        quantity: item.quantity,
+        unit: item.unit,
+        routeCode: item.route_code,
+        priceFen: item.price_fen,
+        amountFen: item.amount_fen,
+        recordedAt: item.recorded_at,
+        recordedBy: item.recorded_by,
+        practitionerRoleId: item.practitioner_role_id,
+        note: item.note,
+        chargeId: item.charge_id,
+      }))
+      const linkedNursing = row.linked_nursing_json === null
+        ? undefined
+        : (() => {
+            const parsed = storedLinkedNursingSchema.parse(JSON.parse(row.linked_nursing_json))
+            const charge = z.object({ charge_id: z.string() }).optional().parse(
+              this.owner.database.driver.prepare(
+                "SELECT charge_id FROM inpatient_charge WHERE workspace_id=? AND epoch=? AND admission_id=? AND kind='service' AND source_id=?",
+              ).get(context.workspaceId, context.epoch, admissionId, row.execution_id),
+            )
+            return { ...parsed, chargeId: charge?.charge_id ?? null }
+          })()
       return inpatientSurgeryExecutionSchema.parse({ id: row.execution_id, admissionId, requestId: row.request_id,
         actualProcedure: JSON.parse(row.actual_procedure_json), performedAt: row.performed_at, performedBy: row.performed_by,
         practitionerRoleId: row.practitioner_role_id, organizationId: row.organization_id, note: row.note,
@@ -250,6 +458,8 @@ export class InpatientSurgery {
         materialHistory: materials.map((item, index) => ({ ...uses[index], recordedAt: item.recorded_at ?? row.performed_at,
           recordedBy: item.recorded_by ?? row.performed_by, practitionerRoleId: item.practitioner_role_id ?? row.practitioner_role_id,
           recordingKind: item.recording_kind ?? 'initial', note: item.note ?? row.note, reservationId: item.reservation_id, chargeId: item.charge_id, correction: item.correction_json === null ? null : JSON.parse(item.correction_json) })),
+        ...(medications.length === 0 ? {} : { medications }),
+        ...(linkedNursing === undefined ? {} : { linkedNursing }),
       })
     })
   }
@@ -495,6 +705,10 @@ export class InpatientSurgery {
       for (const selection of selections) {
         this.writeMaterial(context, execution, selection, explicitNote, effects)
       }
+      for (const medication of input.medications ?? []) {
+        this.writeMedication(context, execution, medication, explicitNote, effects)
+      }
+      this.billLinkedNursing(context, execution, effects)
       this.finish(context, row, execution, resolvedNote, effects, transaction)
       return { data: this.read(context, input.admissionId), effects }
     })
@@ -519,16 +733,43 @@ export class InpatientSurgery {
     const input = inpatientSurgeryRecordMaterialInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.surgery.record-material', expectedVersions: {}, dataSchema: inpatientSurgerySchema,
       authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, () => {
-      this.owner.assertNotArchived(context, input.admissionId)
-      this.owner.orders.assertAdmitted(context, input.admissionId)
-      const request = this.currentRequest(context, input), execution = this.executionForRequest(context, request.request_id)
-      if (!execution || execution.execution_id !== input.executionId || execution.status !== 'in-progress')
-        throw new InpatientError('INPATIENT_SURGERY_NOT_IN_PROGRESS', '须引用本次住院正在进行的手术')
+      const { request, execution } = this.#requireInProgressExecution(context, input)
       const effects: InpatientEffects = []
       this.writeMaterial(context, execution, input.material, input.note?.trim() || undefined, effects)
       this.advanceRequest(context, request, effects)
       return { data: this.read(context, input.admissionId), effects }
     })
+  }
+  recordMedication(context: ActorContext, raw: unknown, idempotencyKey: string) {
+    const input = inpatientSurgeryRecordMedicationInputSchema.parse(raw)
+    return this.owner.commands.execute({
+      context,
+      input,
+      idempotencyKey,
+      operation: 'inpatient.surgery.record-medication',
+      expectedVersions: {},
+      dataSchema: inpatientSurgerySchema,
+      authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']),
+    }, () => {
+      const { request, execution } = this.#requireInProgressExecution(context, input)
+      const effects: InpatientEffects = []
+      this.writeMedication(context, execution, input.medication, input.note?.trim() || undefined, effects)
+      this.advanceRequest(context, request, effects)
+      return { data: this.read(context, input.admissionId), effects }
+    })
+  }
+  #requireInProgressExecution(
+    context: ActorContext,
+    input: { admissionId: string; requestId: string; expectedRequestVersion: number; executionId: string },
+  ) {
+    this.owner.assertNotArchived(context, input.admissionId)
+    this.owner.orders.assertAdmitted(context, input.admissionId)
+    const request = this.currentRequest(context, input)
+    const execution = this.executionForRequest(context, request.request_id)
+    if (!execution || execution.execution_id !== input.executionId || execution.status !== 'in-progress') {
+      throw new InpatientError('INPATIENT_SURGERY_NOT_IN_PROGRESS', '须引用本次住院正在进行的手术')
+    }
+    return { request, execution }
   }
   supplementMaterial(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientSurgerySupplementMaterialInputSchema.parse(raw)
@@ -747,9 +988,45 @@ export class InpatientSurgery {
       serviceDate: businessDate(now), virtualTime: now, label: actual.coding.display,
       coverageJson: JSON.stringify({ code: `synthetic-inpatient-surgery:${actual.id}`, version: `item-v${actual.version}`, included: true, priorSelfPayBps: 0 }) }, effects)
   }
+  private billLinkedNursing(context: ActorContext, execution: z.infer<typeof executionRowSchema>, effects: InpatientEffects) {
+    const actual = inpatientProcedureItemSchema.parse(JSON.parse(execution.actual_procedure_json))
+    const { bindings, configByServiceId } = this.#readNursingBindings(context)
+    const linked = linkedNursingForProcedureId(bindings, actual.id)
+    if (!linked) return
+    const now = this.owner.virtualTime(context)
+    const stored = storedLinkedNursingSchema.parse({
+      serviceId: linked.serviceId,
+      serviceVersion: linked.serviceVersion,
+      display: linked.display,
+      unit: linked.unit,
+      amountFen: linked.priceFen,
+    })
+    this.owner.database.driver.prepare(
+      'UPDATE inpatient_surgery_execution SET linked_nursing_json=? WHERE workspace_id=? AND epoch=? AND execution_id=?',
+    ).run(JSON.stringify(stored), context.workspaceId, context.epoch, execution.execution_id)
+    const coverageJson = freezeCatalogCoverageJson(
+      `synthetic-inpatient-service:${linked.serviceId}`,
+      `item-v${linked.serviceVersion}`,
+      readConfigInsuranceCoverage(configByServiceId.get(linked.serviceId)),
+    )
+    this.owner.billing.record(context, {
+      admissionId: execution.admission_id,
+      organizationId: execution.organization_id,
+      kind: 'service',
+      sourceId: execution.execution_id,
+      amountFen: linked.priceFen,
+      serviceDate: businessDate(now),
+      virtualTime: now,
+      label: `${linked.display}（${actual.coding.display}）`,
+      coverageJson,
+    }, effects)
+  }
   private finish(context: ActorContext, request: z.infer<typeof requestRowSchema>, execution: z.infer<typeof executionRowSchema>, note: string, effects: InpatientEffects, transaction: CommandTransaction, explicitNote = true) {
     const now = this.owner.virtualTime(context)
-    if (execution.status === 'in-progress') this.billProcedure(context, execution, effects)
+    if (execution.status === 'in-progress') {
+      this.billProcedure(context, execution, effects)
+      this.billLinkedNursing(context, execution, effects)
+    }
     const executionNote = execution.status === 'in-progress' ? mergeExecutionCompletionNote(execution.note, note, explicitNote) : note
     this.owner.database.driver.prepare("UPDATE inpatient_surgery_execution SET status='completed',completed_at=?,note=? WHERE workspace_id=? AND epoch=? AND execution_id=? AND status='in-progress'")
       .run(now, executionNote, context.workspaceId, context.epoch, execution.execution_id)
@@ -824,6 +1101,123 @@ export class InpatientSurgery {
     effects.push({ kind: 'created', reference: `InpatientSurgeryMaterial/${id}`, versionId: '1' })
     return id
   }
+  private writeMedication(
+    context: ActorContext,
+    execution: z.infer<typeof executionRowSchema>,
+    selection: z.infer<typeof inpatientSurgeryMedicationSelectionSchema>,
+    note: string | undefined,
+    effects: InpatientEffects,
+  ) {
+    const admission = this.owner.admissionBinding(context, execution.admission_id)
+    const { medications, configByItemId } = this.#readBaseStockMedications(context)
+    const item = medications.find(
+      candidate => candidate.id === selection.medicationId && candidate.version === selection.catalogVersion,
+    )
+    if (!item) throw new InpatientError('CATALOG_CONFLICT', '台内基数药目录或版本无效')
+    const safetyDose = surgicalMedicationSafetyDose(item, selection.doseText, selection.quantity)
+    const candidate = {
+      catalogItemId: item.id,
+      code: item.code,
+      display: item.display,
+      pharmacologyClasses: item.safety?.pharmacologyClasses ?? this.owner.workflow.clinicalQuality.medicationClasses(context, item.id),
+      doseLimits: item.safety?.doseLimits,
+      doseText: safetyDose,
+      frequencyCode: 'ONCE',
+    }
+    const redLineCheck = () => {
+      const check = this.owner.workflow.clinicalQuality.inpatientOrder(
+        this.owner,
+        context,
+        admission.id,
+        admission.patientId,
+        candidate,
+        [],
+        { skipRenal: true },
+      )
+      return check.redLines.length > 0 ? check : undefined
+    }
+    const validation = validateSurgicalMedicationSelection(item, selection)
+    if (!validation.ok) {
+      if (validation.reason === 'MEDICATION_ROUTE_NOT_ALLOWED') {
+        throw new InpatientError('CATALOG_CONFLICT', '给药途径不符合台内基数药允许范围', 409, 'MEDICATION_ROUTE_NOT_ALLOWED', redLineCheck())
+      }
+      throw new InpatientError('CATALOG_CONFLICT', '剂量、单位或每次数量不符合台内基数药目录', 409, 'MEDICATION_DOSAGE_NOT_ALLOWED', redLineCheck())
+    }
+    const check = redLineCheck()
+    if (check?.redLines.some(line => line.code === 'MEDICATION_ALLERGY_CONFLICT')) {
+      throw new InpatientError('CATALOG_CONFLICT', '药品与已确认的有效药物过敏冲突', 409, 'MEDICATION_ALLERGY_CONFLICT', check)
+    }
+    const id = uuidv7()
+    const administrationId = uuidv7()
+    const now = this.owner.virtualTime(context)
+    const resolvedNote = note?.trim() || DEFAULT_INTRAOPERATIVE_MEDICATION_NOTE
+    const amountFen = z.number().int().nonnegative().safe().parse(item.priceFen * selection.quantity)
+    this.owner.database.driver.prepare(`
+      INSERT INTO inpatient_surgery_medication(
+        workspace_id,epoch,medication_use_id,execution_id,administration_id,medication_id,catalog_version,
+        display,dose_text,quantity,unit,route_code,price_fen,amount_fen,recorded_at,recorded_by,practitioner_role_id,note
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      id,
+      execution.execution_id,
+      administrationId,
+      item.id,
+      item.version,
+      item.display,
+      selection.doseText,
+      selection.quantity,
+      item.unit,
+      selection.routeCode,
+      item.priceFen,
+      amountFen,
+      now,
+      context.actorId,
+      context.practitionerRoleId!,
+      resolvedNote,
+    )
+    this.owner.fhir.create(context, {
+      resourceType: 'MedicationAdministration',
+      id: administrationId,
+      status: 'completed',
+      medication: { reference: { reference: `Medication/${item.id}`, display: item.display } },
+      subject: { reference: `Patient/${admission.patientId}` },
+      encounter: { reference: `Encounter/${admission.id}` },
+      partOf: [{ reference: `Procedure/${execution.execution_id}` }],
+      occurenceDateTime: now,
+      recorded: now,
+      performer: [{ actor: { reference: { reference: `PractitionerRole/${context.practitionerRoleId}` } } }],
+      dosage: {
+        route: medicationRouteConcept(selection.routeCode),
+        text: selection.doseText,
+        dose: { value: selection.quantity, unit: item.unit },
+      },
+      note: [{ text: resolvedNote }],
+    })
+    const actual = inpatientProcedureItemSchema.parse(JSON.parse(execution.actual_procedure_json))
+    const coverageJson = freezeCatalogCoverageJson(
+      `synthetic-inpatient-medication:${item.id}`,
+      `item-v${item.version}`,
+      readConfigInsuranceCoverage(configByItemId.get(item.id)),
+    )
+    this.owner.billing.record(context, {
+      admissionId: execution.admission_id,
+      organizationId: execution.organization_id,
+      kind: 'medication',
+      sourceId: id,
+      serviceDate: businessDate(now),
+      virtualTime: now,
+      amountFen,
+      label: `${item.display}（${actual.coding.display} · ${selection.doseText}）`,
+      coverageJson,
+    }, effects)
+    effects.push(
+      { kind: 'created', reference: `MedicationAdministration/${administrationId}`, versionId: '1' },
+      { kind: 'created', reference: `InpatientSurgeryMedication/${id}`, versionId: '1' },
+    )
+    return id
+  }
   private authorize(context: ActorContext, admissionId: string, roles: string[]) {
     this.owner.assertRole(context, roles)
     this.owner.admissionBinding(context, admissionId)
@@ -861,6 +1255,7 @@ const requestRowSchema = z.object({ request_id: z.string(), admission_id: z.stri
   reason: z.string(),
   requested_at: z.string(), requested_by: z.string(), organization_id: z.string(), preop_check_json: z.string().nullable(), consent_confirmation_json: z.string().nullable(), cancellation_json: z.string().nullable() })
 const executionRowSchema = z.object({ execution_id: z.string(), admission_id: z.string(), request_id: z.string(),
-  actual_procedure_json: z.string(), performed_at: z.string(), performed_by: z.string(), practitioner_role_id: z.string(), organization_id: z.string(), note: z.string(), status: z.enum(['in-progress','completed']), completed_at: z.string().nullable() })
+  actual_procedure_json: z.string(), performed_at: z.string(), performed_by: z.string(), practitioner_role_id: z.string(), organization_id: z.string(), note: z.string(), status: z.enum(['in-progress','completed']), completed_at: z.string().nullable(),
+  linked_nursing_json: z.string().nullable().default(null) })
 
 function clinicalCoding({ system, version, code, display }: z.infer<typeof inpatientProcedureItemSchema>['coding']) { return { system, version, code, display } }

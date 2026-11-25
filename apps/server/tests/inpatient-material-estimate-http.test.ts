@@ -855,10 +855,10 @@ it('接近支付参考的等效建议由同组规则筛选，九成边界前为�
   expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId } })).status).toBe(200)
   await s.fixture.runtime.dispatchPending()
   const initial = (await s.read()).estimates[0]!
-  expect(initial.costs?.components.projectedTotalFen).toBe(306598)
+  expect(initial.costs?.components.projectedTotalFen).toBe(314598)
   expect(initial.draft?.items).toHaveLength(4)
   expect(initial.equivalentSuggestions).toEqual([])
-  for (const [extra, expected] of [[773401, false], [773402, true], [773403, true]] as const) {
+  for (const [extra, expected] of [[765401, false], [765402, true], [765403, true]] as const) {
     // 固定合成备用项目的价格是测试输入；行为与金额只通过公开 HTTP 回读核对。
     s.fixture.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET snapshot_json=json_set(snapshot_json,'$.chargeDefinition.priceFen',?) WHERE item_id='hospital-material-balloon'").run(extra)
     const admission = (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
@@ -869,7 +869,7 @@ it('接近支付参考的等效建议由同组规则筛选，九成边界前为�
     expect(current.equivalentSuggestions).toHaveLength(expected ? 1 : 0)
     if (expected) expect(current.equivalentSuggestions[0]).toMatchObject({ groupId: 'synthetic-pci-stent-3.0x18',
       from: { id: 'hospital-material-pci-stent' }, to: { id: 'hospital-material-pci-stent-equivalent-b' }, quantity: 1,
-      unitSavingsFen: 20000, totalSavingsFen: 20000, beforeTotalFen: 306598 + extra, afterTotalFen: 286598 + extra, paymentReferenceFen: 1200000 })
+      unitSavingsFen: 20000, totalSavingsFen: 20000, beforeTotalFen: 314598 + extra, afterTotalFen: 294598 + extra, paymentReferenceFen: 1200000 })
     const list = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
     const reservation = list.reservations.find(item => item.materialId === 'hospital-material-balloon' && item.status === 'reserved')!
     expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/reservations/${reservation.id}/release`, { encounterVersion: list.encounterVersion, reason: '结束本项合成边界验证' })).status).toBe(200)
@@ -896,12 +896,12 @@ it('人工采用等效候选只改产品并保存同数量工作稿，换回恢�
   }
   const adopted = await change('hospital-material-pci-stent', 'hospital-material-pci-stent-equivalent-b')
   expect(adopted.draft!.items.map(item => item.quantity)).toEqual([1, 1, 1, 1])
-  expect(adopted.costs!.components.projectedTotalFen).toBe(1086598)
+  expect(adopted.costs!.components.projectedTotalFen).toBe(1094598)
   expect(adopted.materialDraftDeltaFen).toBe(106598)
   expect(adopted.materialDraftReservationBasis).toEqual([[expect.any(String), 20, 800000]])
   expect(adopted.draft!.analysisId).toBeNull()
   const restored = await change('hospital-material-pci-stent-equivalent-b', 'hospital-material-pci-stent')
-  expect(restored.costs!.components.projectedTotalFen).toBe(1106598)
+  expect(restored.costs!.components.projectedTotalFen).toBe(1114598)
   expect(restored.equivalentSuggestions).toHaveLength(1)
   await change('hospital-material-pci-stent', 'hospital-material-pci-stent-equivalent-b')
   const confirmed = await confirmEstimate(s)
@@ -972,7 +972,7 @@ it('两份明确草稿合并才达到九成时，候选与模型费用使用同�
   })
   expect(nextResponse.status).toBe(200)
   const next = inpatientSurgeryResponseSchema.parse(await nextResponse.json()).data.requests.find(item => item.id !== stay.requestId)!
-  s.fixture.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET snapshot_json=json_set(snapshot_json,'$.chargeDefinition.priceFen',466804) WHERE item_id='hospital-material-balloon'").run()
+  s.fixture.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET snapshot_json=json_set(snapshot_json,'$.chargeDefinition.priceFen',450804) WHERE item_id='hospital-material-balloon'").run()
   admission = (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
   expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/reservations`, { encounterVersion: admission.versionId,
     materialId: 'hospital-material-balloon', catalogVersion: 1, quantity: 1, reason: '独立合成备用预留，用于九成边界' })).status).toBe(200)
