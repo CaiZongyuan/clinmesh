@@ -727,7 +727,7 @@ describe('createSurfaceVoiceInput', () => {
       window.dispatchEvent(alreadyHandled)
       expect(toggle).not.toHaveBeenCalled()
 
-      // 4. Host dsh-ears actively recording in right pane yields shortcut to stop right pane
+      // 4. Host dsh-ears actively recording in right pane yields shortcut AND blocks button-driven start()
       document.body.append(recognitionBar)
       const hostRecordingEvent = new KeyboardEvent('keydown', {
         code: 'Space', key: ' ', ctrlKey: true, shiftKey: true, cancelable: true,
@@ -735,15 +735,29 @@ describe('createSurfaceVoiceInput', () => {
       window.dispatchEvent(hostRecordingEvent)
       expect(hostRecordingEvent.defaultPrevented).toBe(false)
       expect(toggle).not.toHaveBeenCalled()
+      voice.start({ getDraft: () => '', setDraft: () => {} })
+      expect(speech.started).toBe(0)
+      expect(voice.getSnapshot().phase).toBe('error')
+      expect(voice.getSnapshot().error).toContain('右侧会话正在录音')
+      recognitionBar.setAttribute('data-state', 'starting')
+      voice.clearError()
+      voice.start({ getDraft: () => '', setDraft: () => {} })
+      expect(speech.started).toBe(0)
+      expect(voice.getSnapshot().phase).toBe('error')
       recognitionBar.remove()
+      voice.clearError()
 
-      // 5. Once clear, shortcut fires normally
+      // 5. Once clear, shortcut and button-driven start() work normally
       const cleanEvent = new KeyboardEvent('keydown', {
         code: 'Space', key: ' ', ctrlKey: true, shiftKey: true, cancelable: true,
       })
       window.dispatchEvent(cleanEvent)
       expect(cleanEvent.defaultPrevented).toBe(true)
       expect(toggle).toHaveBeenCalledTimes(1)
+      voice.start({ getDraft: () => '', setDraft: () => {} })
+      expect(speech.started).toBe(1)
+      expect(voice.getSnapshot().phase).toBe('recording')
+      voice.cancel()
     } finally {
       unregister()
       recognitionBar.remove()

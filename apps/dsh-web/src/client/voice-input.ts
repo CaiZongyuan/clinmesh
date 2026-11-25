@@ -1208,6 +1208,16 @@ export function createSurfaceVoiceInput(
         handle.abort()
         return
       }
+      if (isHostVoiceRecording()) {
+        handle.abort()
+        failVoice(
+          getLocale() === 'zh-CN'
+            ? '右侧会话正在录音，请先停止后再启动问诊语音'
+            : 'Stop the right-hand conversation recording before starting consultation voice.',
+          capturedEpoch,
+        )
+        return
+      }
       mediaHandle = handle
       mediaBaseDraft = target.getDraft()
       mediaStartedAt = Date.now()
@@ -1246,6 +1256,18 @@ export function createSurfaceVoiceInput(
       if (disposed || controller.signal.aborted || epoch !== capturedEpoch) {
         handle.abort()
         void remote.cancelRealtime(sessionId).catch(() => undefined)
+        return
+      }
+      if (isHostVoiceRecording()) {
+        handle.abort()
+        void remote.cancelRealtime(sessionId).catch(() => undefined)
+        if (activeAbort === controller) activeAbort = undefined
+        failVoice(
+          getLocale() === 'zh-CN'
+            ? '右侧会话正在录音，请先停止后再启动问诊语音'
+            : 'Stop the right-hand conversation recording before starting consultation voice.',
+          capturedEpoch,
+        )
         return
       }
       const streamAbort = new AbortController()
@@ -1411,6 +1433,15 @@ export function createSurfaceVoiceInput(
   const start = (target: WebSurfaceVoiceTarget) => {
     if (disposed) return
     if (phase === 'starting' || phase === 'recording' || phase === 'transcribing' || phase === 'polishing') return
+    if (isHostVoiceRecording()) {
+      setPhase(
+        'error',
+        getLocale() === 'zh-CN'
+          ? '右侧会话正在录音，请先停止后再启动问诊语音'
+          : 'Stop the right-hand conversation recording before starting consultation voice.',
+      )
+      return
+    }
     const currentSnapshot = buildSnapshot()
     if (!currentSnapshot.ready) {
       emit()
