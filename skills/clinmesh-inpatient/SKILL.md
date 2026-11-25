@@ -546,7 +546,7 @@ clinmesh command receipt get --operation-id inpatient.surgery.execute --idempote
 
 ### 同台冠脉造影转 PCI（Ad-hoc PCI）
 
-当 `standbyAdHocPci=true` 且已签署 `coronary-angiography-ad-hoc-pci` 联合知情同意书的冠脉造影完成并进入 `standby-pci` 且造影报告已出具（非 `processing`）后，医生无需二次提交手术申请或二次护士术前核对：
+当 `standbyAdHocPci=true` 且已签署 `coronary-angiography-ad-hoc-pci` 联合知情同意书的冠脉造影完成并进入 `standby-pci` 且已产出有效造影报告（`final` 或含临床所见的 `partial`）后，医生无需二次提交手术申请或二次护士术前核对：
 
 1. 若明确需要血运重建，使用 `convert-surgery-to-pci`（`inpatient.surgery.convert-to-pci` v1）选定 PCI 术式（`00.6600`／`00.6600x008`／`36.0700`）。该命令在同一事务内执行 `#523` `FFR > 0.80` 临床质控（`PCI_NON_ISCHEMIC_LESION` 返回 409 `CLINICAL_QUALITY_ALERT` 或附合规 `clinicalOverride`），成功后自动创建 PCI 选型草稿、触发 `surgeryStage="ad-hoc-pci"` 阶段耗材预计与指南意见。后续按既有 `material-estimates` → `confirm-material-estimate` → `start-surgery` / `record-surgery-material` / `record-surgery-medication` / `preview-surgery-completion` / `complete-surgery`（或 `execute-surgery`）在**同一 `requestId`** 下完成第二阶段 PCI，生成 `executionStage="ad-hoc-pci"` 且 `partOf: Procedure/<造影executionId>` 的独立 `Procedure`。同台冠脉造影与 PCI 仅在造影完成时收取一次 `术中介入专科护理`（`80.00 元`），同台 PCI 阶段不再重复计收并显式标记 `sameSessionNursingIncluded=true`。完成后不会自动改写首页主操作，医生可在住院期间显式调用 `submit-record` 将 `36.0700` 确认为主操作以刷新 DRG 预分组至 `FM39`。
 2. 若造影评估无需行 PCI 或决定放弃已转换但尚未开始的同台 PCI，使用 `finalize-surgery-standby`（`inpatient.surgery.finalize-standby` v1）将申请收口为 `completed`（仅造影结束时 `note` 选填；放弃已转换同台 PCI 时 `note` 必填，并原子释放该申请 `surgeryStage="ad-hoc-pci"` 全部预留、取消同台 PCI 耗材预计与指南意见，完整保留已完成的冠脉造影事实）。结果未知先按原输入与原幂等键查对应 operation 的 receipt。

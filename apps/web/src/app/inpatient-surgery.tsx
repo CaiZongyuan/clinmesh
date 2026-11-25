@@ -593,8 +593,13 @@ function StandbyPciDecisionCard({ admission, doctor, row, cagExecution, report, 
     ?? pciProcedures.find(item => item.coding.code === '36.0700')
     ?? pciProcedures[0]
   const reportProcessing = !report || report.status === 'processing'
+  const reportUsable = report !== undefined && (
+    report.status === 'final'
+    || (report.status === 'partial'
+      && (report.vessels.length > 0 || report.measurements.length > 0 || report.targetSite !== null || report.conclusion !== null))
+  )
   const convert = (clinicalOverride?: ClinicalOverrideInput) => {
-    if (blocked || reportProcessing || !targetPci) return
+    if (blocked || !reportUsable || !targetPci) return
     const trimmed = decisionNote.trim()
     write.mutation.mutate({
       operation: 'inpatient.surgery.convert-to-pci',
@@ -632,7 +637,7 @@ function StandbyPciDecisionCard({ admission, doctor, row, cagExecution, report, 
     <Button type="button" variant="outline" disabled={blocked || write.mutation.isPending} onClick={finalizeStandby}>
       {t('仅完成造影，结束本台手术', 'Angiography only, close surgery')}
     </Button>
-    <Button type="button" disabled={blocked || reportProcessing || !targetPci || write.mutation.isPending} onClick={() => convert()}>
+    <Button type="button" disabled={blocked || !reportUsable || !targetPci || write.mutation.isPending} onClick={() => convert()}>
       {t('同台转行 PCI', 'Convert to Ad-hoc PCI')}
     </Button>
   </>
@@ -659,7 +664,16 @@ function StandbyPciDecisionCard({ admission, doctor, row, cagExecution, report, 
           <span>{t('冠脉造影报告正在生成，报告就绪后可同台转行 PCI；如仅完成造影可直接结束本台手术。', 'Coronary angiography report is generating; same-session PCI unlocks when ready, or close angiography now.')}</span>
         </div>
       ) : (
-        <CoronaryAngiographyDisclosure report={report} locale={locale} summary={t('冠脉造影与生理学报告', 'Coronary angiography & physiology report')} />
+        <>
+          <CoronaryAngiographyDisclosure report={report} locale={locale} summary={t('冠脉造影与生理学报告', 'Coronary angiography & physiology report')} />
+          {!reportUsable ? (
+            <Alert variant="destructive">
+              <AlertDescription>
+                {t('本次冠脉造影未产出有效报告结果，暂不能同台转行 PCI；请先仅完成造影结束本台手术，核实造影资料后再决定后续治疗。', 'No usable coronary angiography findings are available; close as angiography-only and verify results before scheduling PCI.')}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+        </>
       )}
       {doctor ? (
         <>
@@ -675,7 +689,7 @@ function StandbyPciDecisionCard({ admission, doctor, row, cagExecution, report, 
             match={write.mutation.variables?.operation === 'inpatient.surgery.convert-to-pci' && write.mutation.variables.input.requestId === row.id}
             onSubmitOverride={override => convert(override)}
             operation="inpatient.surgery.convert-to-pci"
-            pending={blocked || reportProcessing || !targetPci || write.mutation.isPending}
+            pending={blocked || !reportUsable || !targetPci || write.mutation.isPending}
             write={write}
           />
           <FieldSet disabled={blocked}><FieldGroup className="grid gap-3 md:grid-cols-2">

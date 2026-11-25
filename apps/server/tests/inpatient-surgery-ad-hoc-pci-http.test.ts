@@ -736,6 +736,30 @@ describe('同台冠脉造影直接转 PCI（Ad-hoc PCI）HTTP 与真实 SQLite �
     ).data
     const cagOnlyStandby = d2.requests.find(item => item.id === cagOnlyReq.id)!
     expect(cagOnlyStandby.status).toBe('standby-pci')
+    const cagOnlyExecId = d2.executions.find(item => item.requestId === cagOnlyReq.id)!.id
+    // 造影报告为 unavailable 或无有效临床所见的 partial 时必须拒绝同台转 PCI（避免绕过造影依据与 FFR 质控）
+    await fixture.runtime.dispatchPending()
+    const cagOnlyReport = (
+      await fixture.read('inpatient-doctor', `${stay.path}/angiography-reports`, inpatientAngiographyReportsSchema)
+    ).reports.find(item => item.procedureId === cagOnlyExecId)!
+    for (const unusable of [
+      { ...cagOnlyReport, status: 'unavailable' as const, targetSite: null, measurements: [], vessels: [], conclusion: null, missing: ['无造影真值来源'] },
+      { ...cagOnlyReport, status: 'partial' as const, targetSite: null, measurements: [], vessels: [], conclusion: null, missing: ['造影节段解析缺项'] },
+    ]) {
+      const updated = fixture.runtime.database.driver
+        .prepare('UPDATE inpatient_angiography_report SET report_json=? WHERE workspace_id=? AND epoch=? AND procedure_id=?')
+        .run(JSON.stringify(unusable), stay.scenario.workspaceId, stay.scenario.epoch, cagOnlyExecId)
+      expect(updated.changes).toBe(1)
+      const rejectedUnusable = await fixture.request('inpatient-doctor', `${stay.path}/surgeries/convert-to-pci`, {
+        requestId: cagOnlyReq.id,
+        expectedRequestVersion: cagOnlyStandby.version,
+        procedureId: pciProc.id,
+        catalogVersion: pciProc.version,
+        note: '尝试在无有效造影报告时转行 PCI',
+      })
+      expect(rejectedUnusable.status).toBe(409)
+      expect(apiErrorSchema.parse(await rejectedUnusable.json()).error.code).toBe('INPATIENT_SURGERY_CONFLICT')
+    }
     const finalizedCagOnly = (
       await parsePciResponse(
         inpatientSurgeryResponseSchema,

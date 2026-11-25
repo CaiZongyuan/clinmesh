@@ -2184,7 +2184,7 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write',
     roles: ['inpatient-doctor'],
-    summary: '在已签署联合知情同意书的备选同台 PCI 造影完成并进入 standby-pci 且造影报告非生成中后，免二次手术申请、免二次术前核对直接台内转行 PCI，校验 FFR>0.80 临床质控警示（CLINICAL_QUALITY_ALERT 或附 clinicalOverride），自动生成 PCI 选型草稿与同台 PCI 阶段耗材预计',
+    summary: '在已签署联合知情同意书的备选同台 PCI 造影完成并进入 standby-pci 且已产出有效造影报告（final 或含临床所见的 partial）后，免二次手术申请、免二次术前核对直接台内转行 PCI，校验 FFR>0.80 临床质控警示（CLINICAL_QUALITY_ALERT 或附 clinicalOverride），自动生成 PCI 选型草稿与同台 PCI 阶段耗材预计',
     version: 1,
   },
   {

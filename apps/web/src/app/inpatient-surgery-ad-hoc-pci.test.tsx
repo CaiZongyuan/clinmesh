@@ -281,8 +281,8 @@ describe('同台造影转 PCI（Ad-hoc PCI）工作台交互', () => {
     expect(jointArticle.textContent).toContain('支架内血栓')
   }, 15_000)
 
-  it('standby-pci 待决策卡片在造影报告生成中禁用转 PCI、就绪后处理 FFR>0.80 警示并支持直接转行或结束造影', async () => {
-    let reportReady = false
+  it('standby-pci 待决策卡片在造影报告生成中或不可用时禁用转 PCI、就绪后处理 FFR>0.80 警示并支持直接转行或结束造影', async () => {
+    let reportMode: 'processing' | 'unavailable' | 'final' = 'processing'
     const convertCalls: Array<Record<string, unknown>> = []
     const finalizeCalls: Array<Record<string, unknown>> = []
     const standbyRequest = {
@@ -348,7 +348,13 @@ describe('同台造影转 PCI（Ad-hoc PCI）工作台交互', () => {
       if (path.endsWith('/angiography-reports')) {
         return Response.json({
           admissionId: admission.id,
-          reports: reportReady ? [finalReport] : [{ ...finalReport, status: 'processing', vessels: [], conclusion: null }],
+          reports: [
+            reportMode === 'final'
+              ? finalReport
+              : reportMode === 'unavailable'
+                ? { ...finalReport, status: 'unavailable', targetSite: null, measurements: [], vessels: [], conclusion: null, missing: ['无造影真值来源'] }
+                : { ...finalReport, status: 'processing', targetSite: null, measurements: [], vessels: [], conclusion: null },
+          ],
         })
       }
       if (path.endsWith('/surgeries')) {
@@ -418,8 +424,15 @@ describe('同台造影转 PCI（Ad-hoc PCI）工作台交互', () => {
     expect(within(actionBar).getByRole('button', { name: '同台转行 PCI' }).hasAttribute('disabled')).toBe(true)
     expect(within(actionBar).getByRole('button', { name: '仅完成造影，结束本台手术' }).hasAttribute('disabled')).toBe(false)
 
+    // 报告不可用（unavailable）时仍禁转 PCI 并提示仅完成造影结束本台手术
+    reportMode = 'unavailable'
+    await clients[0]!.invalidateQueries({ queryKey: ['inpatient'] })
+    await within(decisionCard).findByText(/本次冠脉造影未产出有效报告结果/)
+    expect(within(actionBar).getByRole('button', { name: '同台转行 PCI' }).hasAttribute('disabled')).toBe(true)
+    expect(within(actionBar).getByRole('button', { name: '仅完成造影，结束本台手术' }).hasAttribute('disabled')).toBe(false)
+
     // 报告就绪后解锁转 PCI 并验证内联 FFR > 0.80 警示
-    reportReady = true
+    reportMode = 'final'
     await clients[0]!.invalidateQueries({ queryKey: ['inpatient'] })
     await waitFor(() =>
       expect(within(actionBar).getByRole('button', { name: '同台转行 PCI' }).hasAttribute('disabled')).toBe(false),

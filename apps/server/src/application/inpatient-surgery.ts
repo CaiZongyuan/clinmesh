@@ -722,8 +722,14 @@ export class InpatientSurgery {
         throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '第一阶段冠脉造影尚未完成，不能转行同台 PCI')
       }
       const report = this.owner.angiography.reports(context, admission.id).find(item => item.procedureId === primaryExecution.execution_id)
-      if (report?.status === 'processing') {
+      if (!report || report.status === 'processing') {
         throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '冠脉造影报告仍在生成中，请待造影报告出具后再确认同台转行 PCI')
+      }
+      const usableReport = report.status === 'final'
+        || (report.status === 'partial'
+          && (report.vessels.length > 0 || report.measurements.length > 0 || report.targetSite !== null || report.conclusion !== null))
+      if (!usableReport) {
+        throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '本次冠脉造影未产出有效造影报告，不能直接转行同台 PCI，请仅完成造影结束本台手术')
       }
       const procedure = this.procedure(context, input.procedureId, input.catalogVersion)
       if (!pciSelectionProcedureCodes.includes(procedure.coding.code)) {
@@ -731,7 +737,7 @@ export class InpatientSurgery {
       }
       const quality = this.owner.workflow.clinicalQuality.enforce(context, {
         check: this.owner.workflow.clinicalQuality.inpatientPciPlan(this.owner, context, admission.id, {
-          reportReferences: report ? [`DiagnosticReport/${report.id}`] : undefined,
+          reportReferences: [`DiagnosticReport/${report.id}`],
         }),
         operation: 'inpatient.surgery.convert-to-pci',
         override: input.clinicalOverride,
@@ -748,7 +754,7 @@ export class InpatientSurgery {
         practitionerRoleId: context.practitionerRoleId!,
         note: conversionNote,
         angiographyExecutionId: primaryExecution.execution_id,
-        angiographyReportId: report?.id ?? null,
+        angiographyReportId: report.id,
       })
       this.owner.database.driver.prepare(
         'UPDATE inpatient_surgery_request SET ad_hoc_pci_json=?, version=version+1 WHERE workspace_id=? AND epoch=? AND request_id=? AND version=?',
