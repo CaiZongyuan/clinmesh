@@ -382,7 +382,7 @@ export const inpatientSurgeryRequestSchema = z.object({
   surgeon: inpatientSurgeryPractitionerSchema.optional(),
   assistant: inpatientSurgeryPractitionerSchema.optional(),
   anesthesiaMethod: anesthesiaMethodSchema.optional(),
-  preopOrderPolicy: preopOrderPolicySchema,
+  preopOrderPolicy: preopOrderPolicySchema.default('continue-active'),
   standbyAdHocPci: z.boolean().optional(),
   adHocPci: inpatientAdHocPciConversionSchema.optional(),
   standbyFinalization: preparation.optional(),

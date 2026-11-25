@@ -1022,6 +1022,46 @@ it('validates six-element surgery notice requests and structured one-procedure-o
   expect(request.input.parse(validNotice)).toEqual(validNotice)
   expect(request.input.parse({ ...validNotice, preopOrderPolicy: 'stop-on-completion' })).toMatchObject({ preopOrderPolicy: 'stop-on-completion' })
   expect(request.input.safeParse({ ...validNotice, preopOrderPolicy: undefined }).success).toBe(false)
+  expect(getHisOperation('inpatient.surgery.read').output.parse({
+    admissionId: 'adm-1',
+    encounterVersion: '2',
+    virtualTime: '2026-08-25T08:00:00+08:00',
+    requests: [{
+      id: 'req-legacy',
+      admissionId: 'adm-1',
+      version: 1,
+      status: 'requested',
+      plannedProcedure: {
+        id: 'hospital-surgery-3',
+        version: 1,
+        coding: {
+          system: 'urn:clinmesh:classification:icd-9-cm-3-clinical',
+          version: '3.0',
+          code: '36.0700',
+          display: '药物洗脱冠状动脉支架置入',
+          category: '介入治疗',
+          releaseId: 'clinmesh-surgery-subset-2026-10-20',
+          sourceUrl: 'https://example.test/surgery',
+          sourceSha256: 'a'.repeat(64),
+          sourceLocator: 'row:3',
+        },
+        chargeDefinition: {
+          id: 'charge-surgery-3',
+          priceFen: 180000,
+          unit: '次',
+          synthetic: true,
+          trigger: 'execution',
+        },
+      },
+      plannedFor: '2026-08-25T09:00:00+08:00',
+      reason: '升级前持久回执缺省 preopOrderPolicy',
+      requestedAt: '2026-08-24T09:00:00+08:00',
+      requestedBy: 'doctor',
+      organizationId: 'org-1',
+    }],
+    executions: [],
+    inProgress: [],
+  })).toMatchObject({ requests: [{ id: 'req-legacy', preopOrderPolicy: 'continue-active' }] })
   expect(request.input.parse({ ...validNotice, standbyAdHocPci: true })).toEqual({ ...validNotice, standbyAdHocPci: true })
   const convert = getHisOperation('inpatient.surgery.convert-to-pci')
   expect(convert.input.parse({

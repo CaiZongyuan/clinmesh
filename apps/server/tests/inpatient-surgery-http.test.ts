@@ -2221,7 +2221,6 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
           status: 'requested',
           plannedProcedure: created.plannedProcedure,
           plannedFor: created.plannedFor,
-          preopOrderPolicy: 'continue-active',
           reason: created.reason,
           requestedAt: created.requestedAt,
           requestedBy: created.requestedBy,
@@ -2245,7 +2244,9 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     // v2 客户端丢失响应后使用原幂等键与原 {requestId, expectedRequestVersion, note} 重试 POST 须 200 原样重放；改载荷报 409，新幂等键仍报 400
     const replayedLegacyConsent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, legacyConsentBody, legacyReceiptKey)
     expect(replayedLegacyConsent.status, await replayedLegacyConsent.clone().text()).toBe(200)
-    expect(inpatientSurgeryResponseSchema.parse(await replayedLegacyConsent.json()).data.requests[0]!.consentConfirmation?.note).toContain('旧版持久回执')
+    const replayedLegacyConsentRequest = inpatientSurgeryResponseSchema.parse(await replayedLegacyConsent.json()).data.requests[0]!
+    expect(replayedLegacyConsentRequest.consentConfirmation?.note).toContain('旧版持久回执')
+    expect(replayedLegacyConsentRequest.preopOrderPolicy).toBe('continue-active')
     const conflictLegacyConsent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
       ...legacyConsentBody,
       note: '篡改旧版回执备注',
@@ -2260,7 +2261,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
         .get(auth.workspaceId, auth.epoch, 'inpatient.surgery.request', requestReceiptKey),
     )
     const degradedReqReceipt = JSON.parse(storedReqReceipt.response_json) as { data: { requests: Array<Record<string, unknown>> } }
-    for (const field of ['surgeryType', 'location', 'surgeon', 'assistant', 'anesthesiaMethod']) {
+    for (const field of ['surgeryType', 'location', 'surgeon', 'assistant', 'anesthesiaMethod', 'preopOrderPolicy']) {
       delete degradedReqReceipt.data.requests[0]![field]
     }
     const legacyV3RequestBody = {
@@ -2280,7 +2281,9 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       .run(legacyV3RequestHash, JSON.stringify(degradedReqReceipt), auth.workspaceId, auth.epoch, 'inpatient.surgery.request', requestReceiptKey)
     const replayedLegacyReq = await s.request(s.doctor, `${s.path}/surgeries/request`, legacyV3RequestBody, requestReceiptKey)
     expect(replayedLegacyReq.status, await replayedLegacyReq.clone().text()).toBe(200)
-    expect(inpatientSurgeryResponseSchema.parse(await replayedLegacyReq.json()).data.requests[0]!.surgeryType).toBeUndefined()
+    const replayedLegacyReqData = inpatientSurgeryResponseSchema.parse(await replayedLegacyReq.json()).data.requests[0]!
+    expect(replayedLegacyReqData.surgeryType).toBeUndefined()
+    expect(replayedLegacyReqData.preopOrderPolicy).toBe('continue-active')
     expect((await s.request(s.doctor, `${s.path}/surgeries/request`, legacyV3RequestBody)).status).toBe(400)
 
     const legacyLookup = await s.request(s.doctor, `/api/his/v1/command-receipts?operationId=inpatient.surgery.confirm-consent&idempotencyKey=${legacyReceiptKey}`)
