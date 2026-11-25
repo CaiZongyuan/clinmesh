@@ -3199,6 +3199,36 @@ export const excludedHisRoutes = [
     path: '/api/his/v1/imaging-studies/:studyId/series/:seriesIndex/levels/:level/tiles/:column/:row',
     reason: 'Binary slide tile transport for the human viewer; Agent tools and the CLI do not read pixels in this phase',
   },
+  {
+    method: 'POST',
+    path: '/api/his/v1/offline/knowledge-claims/draft-pipeline',
+    reason: '仅用于离线知识治理与受控模型流制卡流水线，不暴露为临床 CLI 命令或在线 Agent 写知识工具（#560 AC33）',
+  },
+  {
+    method: 'POST',
+    path: '/api/his/v1/offline/guidelines/diff-report',
+    reason: '仅用于离线指南版本差异比对治理接口，不暴露为临床 CLI 命令或在线 Agent 写知识工具（#560 AC34）',
+  },
+  {
+    method: 'POST',
+    path: '/api/his/v1/offline/guidelines/adjudicate-conflict',
+    reason: '仅用于离线专家仲裁队列接口，不暴露为临床 CLI 命令或在线 Agent 写知识工具（#560 AC34）',
+  },
+  {
+    method: 'POST',
+    path: '/api/his/v1/offline/concept-mappings/impact-report',
+    reason: '仅用于离线概念映射降级影响评估治理接口，不暴露为临床 CLI 命令或在线 Agent 写知识工具（#560 AC35）',
+  },
+  {
+    method: 'POST',
+    path: '/api/his/v1/offline/guidelines/search',
+    reason: '仅用于离线/治理端指南全文检索与同义词扩展接口，临床运行时按受控专病知识检索暴露',
+  },
+  {
+    method: 'POST',
+    path: '/api/his/v1/evaluation/agent-output-score',
+    reason: '仅用于离线与仿真基准 Agent 输出双轨评测接口，不暴露为临床 CLI 命令或在线 Agent Grant（#565 AC40）',
+  },
 ] as const satisfies readonly ExcludedHisRoute[]
 
 const operationsById = new Map(hisOperationCatalog.map(operation => [operation.id, operation]))

@@ -68,13 +68,19 @@ describe('HIS operation route coverage', () => {
       'GET /api/his/v1/inpatient/admissions/:admissionId/guideline-advice',
       'POST /api/his/v1/inpatient/admissions/:admissionId/guideline-advice/request',
     ]))
-    expect(excludedHisRoutes).toHaveLength(20)
+    expect(excludedHisRoutes).toHaveLength(26)
     expect(excludedRoutes).toEqual(expect.arrayContaining([
       'GET /api/his/v1/doctor/cases/:caseId/recommendations/:kind/confirmations/:idempotencyKey',
       'POST /api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm',
       'GET /api/his/v1/inpatient/admissions/:admissionId/guideline-advice/:requestId',
       'GET /api/his/v1/inpatient/admissions/:admissionId/surgeries/request-reason',
       'POST /api/his/v1/inpatient/admissions/:admissionId/surgeries/request-reason',
+      'POST /api/his/v1/offline/knowledge-claims/draft-pipeline',
+      'POST /api/his/v1/offline/guidelines/diff-report',
+      'POST /api/his/v1/offline/guidelines/adjudicate-conflict',
+      'POST /api/his/v1/offline/concept-mappings/impact-report',
+      'POST /api/his/v1/offline/guidelines/search',
+      'POST /api/his/v1/evaluation/agent-output-score',
     ]))
     expect(new Set(operations.map(operation => operation.id)).size).toBe(operations.length)
     expect(new Set(operations.map(operation => operation.cliPath.join(' '))).size).toBe(operations.length)
