@@ -447,4 +447,72 @@ describe('ClinMesh React Surface definition', () => {
     // 升级函数依赖快照读出 workspace-mirror 才能落盘覆盖为 workspace。
     expect(definition.layout.supported).toEqual(['workspace', 'workspace-mirror', 'full-frame'])
   })
+
+  it('wires optional dsh-ears voice input during apply without blocking when remote.dshEars is absent', async () => {
+    const disposers: Array<() => void> = []
+    let registeredDefinition: ReturnType<typeof createDefinition> | undefined
+    const fiberDispose = vi.fn()
+    const ctx = {
+      get(name: string) {
+        if (name === 'reactSurfaces') {
+          return {
+            getSnapshot: () => ({ activeId: 'clinmesh.his', surfaces: [] }),
+            subscribe: () => () => {},
+            register(definition: ReturnType<typeof createDefinition>) {
+              registeredDefinition = definition
+              return () => { registeredDefinition = undefined }
+            },
+          }
+        }
+        if (name === 'theme') return { getTheme: () => ({ active: { colorScheme: 'light' } }) }
+        if (name === 'locale') return { getLocale: () => ({ active: 'zh-CN' }), subscribe: () => () => {} }
+        if (name === 'sessions') return { binding: () => undefined }
+        if (name === 'uiSession') return { adapter: { current: { getSnapshot: () => ({ key: 'session-1' }), subscribe: () => () => {} } } }
+        return {}
+      },
+      on: () => () => {},
+      inject: vi.fn(() => ({ dispose: fiberDispose })),
+      effect: (callback: () => () => void) => { disposers.push(callback()) },
+      slots: {
+        inject: (name: string, register: () => () => void) => name === 'sidebar.workspaces.directoryFlow' ? () => {} : register(),
+        register: () => () => {},
+      },
+    }
+    let runtime: WebRuntimeOptions | undefined
+    const render = vi.spyOn(application, 'WebApp').mockImplementation(props => {
+      runtime = props?.runtime
+      return createElement('div')
+    })
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    try {
+      apply(ctx as unknown as ClientContext)
+      expect(registeredDefinition).toBeDefined()
+      await act(() => root.render(createElement(registeredDefinition!.component, {
+        active: true,
+        conversationCollapsed: false,
+        agent: { register: () => () => {} },
+        capabilities: { agent: { available: false, status: 'unavailable' } },
+        close() {},
+        layout: 'workspace',
+        location: '/',
+        navigate() {},
+      })))
+      expect(runtime?.surfaceVoiceInput).toBeDefined()
+      expect(runtime?.surfaceVoiceInput?.getSnapshot()).toMatchObject({
+        installed: false,
+        ready: false,
+        phase: 'idle',
+      })
+    } finally {
+      await act(() => root.unmount())
+      for (const dispose of disposers.reverse()) dispose()
+      container.remove()
+      render.mockRestore()
+      vi.unstubAllGlobals()
+    }
+    expect(fiberDispose).toHaveBeenCalledOnce()
+  })
 })

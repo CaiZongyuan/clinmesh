@@ -284,7 +284,7 @@ export async function verifyCandidate(root: string, fetch: typeof globalThis.fet
     await cp(join(profile, 'pnpm-lock.yaml'), join(root, 'deployment/dsh/profile/pnpm-lock.yaml'))
     const cli = join(hostDirectory, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
     const plugins = await run(process.execPath, [cli, 'plugin', '--profile', 'web', 'list'], runtime, log, env)
-    for (const name of ['dsh-react-surface', 'dsh-ag-ui', '@clinmesh/dsh-web']) {
+    for (const name of ['dsh-react-surface', 'dsh-ag-ui', '@clinmesh/dsh-web', 'dsh-ears']) {
       if (!plugins.includes(name)) throw new Error(`临时 Profile 缺少插件：${name}`)
     }
     await smokeHost(managerCli, runtime, host.version, log, env)

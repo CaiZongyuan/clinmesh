@@ -13,10 +13,11 @@ import { registerProfileBrand } from './profile-brand.tsx'
 import { normalizeHostLocale, type ClientLocalePort } from './host-locale.ts'
 import { subscribeHostTheme, type ClientSessionBindingPort, type ClientSessionInputPort, type ClientThemePort } from './host-ports.ts'
 import { createWorkspaceNavigation, registerWorkspaceNavigation } from './workspace-navigation.tsx'
-import type { WebSurfaceDisplay, WebSurfaceNavigation, WebRuntimeOptions } from '@clinmesh/web/runtime'
+import type { WebSurfaceDisplay, WebSurfaceNavigation, WebSurfaceVoiceInput, WebRuntimeOptions } from '@clinmesh/web/runtime'
 import { createDoctorInputBridge } from './doctor-task.ts'
 import { createFontSizePreference, registerFontSizeSettings, type FontSizePreferenceStore } from './font-size-settings.tsx'
 import { registerModelSettings } from './model-settings.tsx'
+import { createSurfaceVoiceInput } from './voice-input.ts'
 import type { FontSizePreference } from '../../../web/src/app/preferences.ts'
 
 function ClinMeshSurface({
@@ -33,6 +34,7 @@ function ClinMeshSurface({
   surfaceDisplay,
   surfaceNavigation,
   surfaceDoctorInput,
+  surfaceVoiceInput,
 }: ReactSurfaceProps & {
   surfaceNavigation: WebSurfaceNavigation
   surfaceDisplay: WebSurfaceDisplay
@@ -41,6 +43,7 @@ function ClinMeshSurface({
   surfaceFontSize: FontSizePreference
   surfaceSessionId?: string
   surfaceDoctorInput: NonNullable<WebRuntimeOptions['surfaceDoctorInput']>
+  surfaceVoiceInput?: WebSurfaceVoiceInput
 }): React.JSX.Element {
   const locationRef = useRef(location)
   const navigateRef = useRef(navigate)
@@ -82,6 +85,7 @@ function ClinMeshSurface({
         surfaceDisplay,
         surfaceNavigation,
         surfaceDoctorInput,
+        ...(surfaceVoiceInput === undefined ? {} : { surfaceVoiceInput }),
         ...(surfaceSessionId === undefined ? {} : { surfaceSessionId }),
       }}
     />
@@ -96,6 +100,7 @@ export function createDefinition(
   ctx: ClientContext,
   navigation = createWorkspaceNavigation(),
   fontSize: FontSizePreferenceStore = createFontSizePreference(),
+  voiceInput?: WebSurfaceVoiceInput,
 ): Readonly<ReactSurfaceDefinition> {
   const sessionBinding = ctx.get('uiSession') as unknown as ClientSessionBindingPort
   const theme = ctx.get('theme') as unknown as ClientThemePort
@@ -142,6 +147,7 @@ export function createDefinition(
         surfaceColorScheme={surfaceColorScheme}
         surfaceLocale={surfaceLocale}
         surfaceFontSize={surfaceFontSize}
+        {...(voiceInput === undefined ? {} : { surfaceVoiceInput: voiceInput })}
         {...(surfaceSessionId === undefined ? {} : { surfaceSessionId })}
       />
     )
@@ -182,10 +188,12 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => registerProfileBrand(ctx), 'clinmesh-dsh-web: register Profile identity')
   const navigation = createWorkspaceNavigation()
   const fontSize = createFontSizePreference()
+  const voiceInput = createSurfaceVoiceInput(ctx)
+  ctx.effect(() => () => voiceInput.dispose(), 'clinmesh-dsh-web: dsh-ears voice bridge')
   ctx.effect(() => registerModelSettings(ctx), 'clinmesh-dsh-web: register model setting')
   ctx.effect(() => registerFontSizeSettings(ctx, fontSize), 'clinmesh-dsh-web: register font size setting')
   ctx.effect(() => registerWorkspaceNavigation(ctx, navigation), 'clinmesh-dsh-web: register hospital navigation')
-  const definition = createDefinition(ctx, navigation, fontSize)
+  const definition = createDefinition(ctx, navigation, fontSize, voiceInput)
   const reactSurfaces = ctx.get('reactSurfaces') as unknown as ReactSurfaceRegistry
   ctx.effect(
     () => {

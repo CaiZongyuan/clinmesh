@@ -14,12 +14,41 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from '@clinmesh/ui/components/message-scroller'
-import { CircleAlertIcon, MessagesSquareIcon, RefreshCwIcon, SendIcon } from 'lucide-react'
-import { useState } from 'react'
+import { CircleAlertIcon, LoaderCircleIcon, MessagesSquareIcon, MicIcon, RefreshCwIcon, SendIcon, SquareIcon, XIcon } from 'lucide-react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
+import { useOptionalWebRuntime, type WebSurfaceVoiceSnapshot } from '../web-runtime.tsx'
 import { formatClinicalTime } from './clinical-date-time.ts'
 import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
+
+const EMPTY_VOICE_SNAPSHOT: WebSurfaceVoiceSnapshot = {
+  installed: false,
+  ready: false,
+  phase: 'idle',
+  shortcutEnabled: false,
+  shortcut: '',
+}
+
+const noopSubscribe = () => () => {}
+
+function deepActiveElement(root: Document | ShadowRoot): Element | null {
+  let current = root.activeElement
+  while (current !== null && current.shadowRoot !== null && current.shadowRoot.activeElement !== null) {
+    current = current.shadowRoot.activeElement
+  }
+  return current
+}
+
+function isTextareaVisible(textarea: HTMLTextAreaElement | null): boolean {
+  if (textarea === null || !textarea.isConnected || textarea.disabled) return false
+  if (textarea.closest('[hidden]') !== null) return false
+  if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+    const style = window.getComputedStyle(textarea)
+    if (style.display === 'none' || style.visibility === 'hidden') return false
+  }
+  return true
+}
 
 export interface ConsultationPageAction {
   error: Error | null
@@ -42,6 +71,15 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
   recordingReadOnly?: boolean
 }): React.JSX.Element {
   const [message, setMessage] = useState('')
+  const formRef = useRef<HTMLFormElement | null>(null)
+  const messageDraftRef = useRef(message)
+  const runtime = useOptionalWebRuntime()
+  const voiceInput = runtime?.surfaceVoiceInput
+  const voiceSnapshot = useSyncExternalStore(
+    voiceInput === undefined ? noopSubscribe : voiceInput.subscribe,
+    voiceInput === undefined ? () => EMPTY_VOICE_SNAPSHOT : voiceInput.getSnapshot,
+    voiceInput === undefined ? () => EMPTY_VOICE_SNAPSHOT : voiceInput.getSnapshot,
+  )
   const lastTextTurn = consultation.turns.findLast(turn => turn.kind === 'text')
   const unanswered = lastTextTurn?.speaker === 'doctor'
   const replyStatus = consultation.replyAttempt?.doctorTurnId === lastTextTurn?.id
@@ -50,6 +88,121 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
   const optimisticMessage = action.pending && action.pendingMessage !== undefined
     && !(unanswered && lastTextTurn.messageText === action.pendingMessage)
     ? action.pendingMessage : undefined
+
+  const voiceDisabled = readOnly || action.pending || unanswered
+  const voiceActive = voiceSnapshot.phase === 'starting' || voiceSnapshot.phase === 'recording'
+  const voiceBusy = voiceSnapshot.phase === 'transcribing' || voiceSnapshot.phase === 'polishing'
+  const voiceOwningRef = useRef(false)
+  const surfaceActive = runtime?.surfaceActive !== false
+  const rightPaneHidden = runtime?.surfaceDisplay?.fullscreen === true
+    || runtime?.surfaceDisplay?.conversation?.collapsed === true
+
+  const latestRef = useRef({
+    surfaceActive,
+    rightPaneHidden,
+    voiceDisabled,
+    voiceSnapshot,
+    voiceInput,
+  })
+  useEffect(() => {
+    messageDraftRef.current = message
+    latestRef.current = {
+      surfaceActive,
+      rightPaneHidden,
+      voiceDisabled,
+      voiceSnapshot,
+      voiceInput,
+    }
+  })
+
+  const toggleVoice = () => {
+    const latest = latestRef.current
+    const controller = latest.voiceInput
+    if (controller === undefined || latest.voiceDisabled) return
+    const current = latest.voiceSnapshot
+    if (current.phase === 'starting' || current.phase === 'recording') {
+      controller.stop()
+      return
+    }
+    if (current.phase === 'transcribing' || current.phase === 'polishing') return
+    if (!current.ready) return
+    voiceOwningRef.current = true
+    controller.start({
+      getDraft: () => messageDraftRef.current,
+      setDraft: next => {
+        const clamped = next.slice(0, 2000)
+        messageDraftRef.current = clamped
+        setMessage(clamped)
+      },
+    })
+  }
+  const toggleVoiceRef = useRef(toggleVoice)
+  useEffect(() => {
+    toggleVoiceRef.current = toggleVoice
+  })
+
+  useEffect(() => {
+    if (voiceSnapshot.phase === 'idle' || voiceSnapshot.phase === 'error') {
+      voiceOwningRef.current = false
+    }
+  }, [voiceSnapshot.phase])
+
+  useEffect(() => {
+    if (voiceInput === undefined) return
+    if (surfaceActive) voiceInput.refresh()
+  }, [voiceInput, surfaceActive])
+
+  useEffect(() => {
+    if (voiceInput === undefined) return
+    return voiceInput.registerShortcutHandler({
+      shouldHandle: () => {
+        const latest = latestRef.current
+        if (!latest.surfaceActive || latest.voiceDisabled) return false
+        const textarea = formRef.current?.querySelector('textarea') ?? null
+        if (!isTextareaVisible(textarea)) return false
+        const active = typeof document === 'undefined' ? null : deepActiveElement(document)
+        if (textarea !== null && active === textarea) return true
+        return latest.rightPaneHidden
+      },
+      toggle: () => toggleVoiceRef.current(),
+    })
+  }, [voiceInput])
+
+  useEffect(() => {
+    if ((voiceDisabled || !surfaceActive) && voiceOwningRef.current) {
+      voiceOwningRef.current = false
+      latestRef.current.voiceInput?.cancel()
+    }
+  }, [voiceDisabled, surfaceActive])
+
+  useEffect(() => () => {
+    if (voiceOwningRef.current) {
+      voiceOwningRef.current = false
+      latestRef.current.voiceInput?.cancel()
+    }
+  }, [])
+
+  const chinese = locale === 'zh-CN'
+  const showVoiceControl = voiceInput !== undefined && voiceSnapshot.installed && !unanswered
+  const voiceLabel = voiceActive
+    ? (chinese ? '停止语音输入' : 'Stop voice input')
+    : voiceSnapshot.phase === 'transcribing'
+      ? (chinese ? '正在转写语音' : 'Transcribing voice')
+      : voiceSnapshot.phase === 'polishing'
+        ? (chinese ? '正在润色文本' : 'Polishing text')
+        : voiceSnapshot.ready
+          ? (chinese ? '语音输入' : 'Voice input')
+          : (voiceSnapshot.unavailableReason ?? (chinese ? '语音输入暂不可用' : 'Voice input unavailable'))
+  const voiceStatusText = voiceSnapshot.phase === 'starting'
+    ? (chinese ? '正在启动麦克风…' : 'Starting microphone…')
+    : voiceSnapshot.phase === 'recording'
+      ? (chinese ? '正在录音…' : 'Recording…')
+      : voiceSnapshot.phase === 'transcribing'
+        ? (chinese ? '正在转写…' : 'Transcribing…')
+        : voiceSnapshot.phase === 'polishing'
+          ? (chinese ? '正在润色…' : 'Polishing…')
+          : undefined
+
   return (
     <section aria-label={messages.consultationRecord} className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
       {recording === undefined || recordingReadOnly === true ? null : (
@@ -111,13 +264,29 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
       {readOnly ? null : (
         <form
           className="shrink-0"
+          onFocus={() => {
+            if (voiceSnapshot.installed && !voiceSnapshot.ready && voiceSnapshot.phase === 'idle') {
+              voiceInput?.refresh()
+            }
+          }}
+          onPointerEnter={() => {
+            if (voiceSnapshot.installed && !voiceSnapshot.ready && voiceSnapshot.phase === 'idle') {
+              voiceInput?.refresh()
+            }
+          }}
           onSubmit={event => {
             event.preventDefault()
             if (message.trim() !== '' && !action.pending && !unanswered) {
+              if (voiceOwningRef.current || voiceActive || voiceBusy) {
+                voiceOwningRef.current = false
+                voiceInput?.cancel()
+              }
               action.onAsk(message.trim())
+              messageDraftRef.current = ''
               setMessage('')
             }
           }}
+          ref={formRef}
         >
           <FieldGroup className="gap-3">
             <Field>
@@ -128,12 +297,36 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                   disabled={action.pending || unanswered}
                   id="consultation-message"
                   maxLength={2000}
-                  onChange={event => setMessage(event.target.value)}
+                  onChange={event => {
+                    if (voiceSnapshot.phase === 'error') voiceInput?.clearError()
+                    messageDraftRef.current = event.target.value
+                    setMessage(event.target.value)
+                  }}
                   placeholder={messages.askPatient}
                   value={message}
                 />
                 <InputGroupAddon align="block-end">
                   {action.pending ? <InputGroupText>{messages.waitingForPatientAnswer}</InputGroupText> : null}
+                  {!action.pending && showVoiceControl && voiceStatusText !== undefined ? (
+                    <InputGroupText role="status" aria-live="polite">
+                      {voiceStatusText}
+                    </InputGroupText>
+                  ) : null}
+                  {!action.pending && showVoiceControl && (voiceActive || voiceBusy) ? (
+                    <InputGroupButton
+                      aria-label={chinese ? '取消语音输入' : 'Cancel voice input'}
+                      onClick={() => {
+                        voiceOwningRef.current = false
+                        voiceInput?.cancel()
+                      }}
+                      size="xs"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <XIcon aria-hidden="true" />
+                      {chinese ? '取消' : 'Cancel'}
+                    </InputGroupButton>
+                  ) : null}
                   {unanswered && !action.pending ? (
                     <InputGroupButton className="ml-auto" disabled={replyStatus === 'blocked'} onClick={action.onRetry} size="sm" type="button" variant="outline">
                       <RefreshCwIcon aria-hidden="true" data-icon="inline-start" />
@@ -142,24 +335,51 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                         : (locale === 'zh-CN' ? '重试患者回答' : 'Retry patient reply')}
                     </InputGroupButton>
                   ) : (
-                    <InputGroupButton
-                      aria-label={action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
-                      className="ml-auto shrink-0 transition-none"
-                      data-unavailable={action.pending || message.trim() === '' ? '' : undefined}
-                      disabled={action.pending || message.trim() === ''}
-                      size="sm"
-                      title={action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
-                      type="submit"
-                      variant="default"
-                    >
-                      {action.pending
-                        ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
-                        : <SendIcon aria-hidden="true" data-icon="inline-start" />}
-                      {locale === 'zh-CN' ? '发送' : 'Send'}
-                    </InputGroupButton>
+                    <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                      {showVoiceControl ? (
+                        <InputGroupButton
+                          aria-label={voiceLabel}
+                          aria-pressed={voiceActive}
+                          className="shrink-0 transition-none"
+                          data-voice-state={voiceSnapshot.phase}
+                          disabled={voiceDisabled || voiceBusy || (!voiceActive && !voiceSnapshot.ready)}
+                          onClick={toggleVoice}
+                          size="icon-sm"
+                          title={voiceLabel}
+                          type="button"
+                          variant={voiceActive ? 'destructive' : 'outline'}
+                        >
+                          {voiceBusy
+                            ? <LoaderCircleIcon aria-hidden="true" className="animate-spin" />
+                            : voiceActive
+                              ? <SquareIcon aria-hidden="true" />
+                              : <MicIcon aria-hidden="true" />}
+                        </InputGroupButton>
+                      ) : null}
+                      <InputGroupButton
+                        aria-label={action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
+                        className="shrink-0 transition-none"
+                        data-unavailable={action.pending || message.trim() === '' ? '' : undefined}
+                        disabled={action.pending || message.trim() === ''}
+                        size="sm"
+                        title={action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
+                        type="submit"
+                        variant="default"
+                      >
+                        {action.pending
+                          ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
+                          : <SendIcon aria-hidden="true" data-icon="inline-start" />}
+                        {locale === 'zh-CN' ? '发送' : 'Send'}
+                      </InputGroupButton>
+                    </div>
                   )}
                 </InputGroupAddon>
               </InputGroup>
+              {showVoiceControl && voiceSnapshot.phase === 'error' && voiceSnapshot.error !== undefined ? (
+                <p className="text-destructive text-xs" role="alert">
+                  {voiceSnapshot.error}
+                </p>
+              ) : null}
               {unanswered && !action.pending ? (
                 <p className="text-muted-foreground text-sm">
                   {replyStatus === 'blocked'

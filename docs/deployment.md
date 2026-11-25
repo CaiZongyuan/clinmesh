@@ -197,9 +197,9 @@ pnpm dsh:setup
 pnpm dev:dsh
 ```
 
-`dsh:setup` 幂等构建 `.data/dsh-runtime/`（`CLINMESH_DSH_SANDBOX` 可改到仓库外）：按 lock 安装 `dshvm` 与宿主槽位、用 [`deployment/dsh/host/package-lock.json`](../deployment/dsh/host/package-lock.json) 恢复依赖、克隆构建锁定 AG-UI、构建 React Surface runtime 与 `@clinmesh/dsh-web` artifact，并在专用 Web Profile 建立三个插件链接（Windows 使用无需管理员权限的目录 junction）。`dev:dsh` 自动生成缺失的 `CLINMESH_DSH_BRIDGE_SECRET`、对齐 `127.0.0.1:51868/51888/3080` 可信 Origin（端口 `3080` 被占用时直接报错退出），并以进程组／Windows Job Object 同时拉起直连 `@clinmesh/server`（绕过 Turborepo，保留 `CLINMESH_AI_*` 环境变量）与 DSH Web。
+`dsh:setup` 幂等构建 `.data/dsh-runtime/`（`CLINMESH_DSH_SANDBOX` 可改到仓库外）：按 lock 安装 `dshvm` 与宿主槽位、用 [`deployment/dsh/host/package-lock.json`](../deployment/dsh/host/package-lock.json) 恢复依赖、克隆构建锁定 AG-UI、构建 React Surface runtime 与 `@clinmesh/dsh-web` artifact，并在专用 Web Profile 装配内置插件（`@clinmesh/dsh-web`、`dsh-react-surface`、`dsh-ag-ui` 与语音输入插件 `dsh-ears`，Windows 使用无需管理员权限的目录 junction）。`dev:dsh` 自动生成缺失的 `CLINMESH_DSH_BRIDGE_SECRET`、对齐 `127.0.0.1:51868/51888/3080` 可信 Origin（端口 `3080` 被占用时直接报错退出），并以进程组／Windows Job Object 同时拉起直连 `@clinmesh/server`（绕过 Turborepo，保留 `CLINMESH_AI_*` 环境变量）与 DSH Web。
 
-浏览器必须打开控制台打印的带本次启动 token 的 DSH URL，首次使用在宿主设置配置模型 Provider，并从左侧栏“医院工作台”打开左右分屏（顶栏支持全屏与收起右侧会话无刷新切换）。非开发模式 DSH 在插件激活时将 client 脚本读入内存，手工重编 `@clinmesh/dsh-web` 后须重载插件或重启 DSH 宿主；手动直启 Server 时若进程环境已含 `.env` 相对路径变量，须先按 `.env` 目录转为绝对路径。单次结构化生成默认限时 120 秒（`CLINMESH_AI_TIMEOUT_MS` 可在 `100`–`600000` 间覆盖，初次生成、一次格式修复与一次限流重试共享同一截止时间）。
+浏览器必须打开控制台打印的带本次启动 token 的 DSH URL，首次使用在宿主设置配置模型 Provider，并从左侧栏“医院工作台”打开左右分屏（顶栏支持全屏与收起右侧会话无刷新切换）。如需使用语音输入，可在宿主“设置 → `dsh-ears`”选择 Web Speech、本地 Whisper 或云端 ASR（如百炼／OpenAI 兼容／实时接口）与润色选项；右侧会话与门诊“患者问诊”共用该配置，且在分屏、全屏与收起右侧会话时均可使用。非开发模式 DSH 在插件激活时将 client 脚本读入内存，手工重编 `@clinmesh/dsh-web` 后须重载插件或重启 DSH 宿主；手动直启 Server 时若进程环境已含 `.env` 相对路径变量，须先按 `.env` 目录转为绝对路径。单次结构化生成默认限时 120 秒（`CLINMESH_AI_TIMEOUT_MS` 可在 `100`–`600000` 间覆盖，初次生成、一次格式修复与一次限流重试共享同一截止时间）。
 
 #### 问诊自动记录原生验收
 
