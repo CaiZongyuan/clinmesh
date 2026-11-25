@@ -58,7 +58,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/discharge`, inpatientDischargeEventsSchema, signal) })
   const effectiveReason = nurse && admission.status === 'departed' && admission.financialStatus === 'settled' && !reason ? clearPresets[0]! : reason
   const blocked = write.blocked || !effectiveReason.trim()
-  const openSurgeries = activity?.surgery?.requests.filter(request => request.status === 'requested' || request.status === 'ready') ?? []
+  const openSurgeries = activity?.surgery?.requests.filter(request => request.status === 'requested' || request.status === 'ready' || request.status === 'standby-pci') ?? []
   const pendingSurgeries = openSurgeries.length
   const pendingInvestigations = [...activity?.investigations?.laboratoryRequests ?? [], ...activity?.investigations?.imagingRequests ?? []]
     .filter(request => ['issued', 'accepted', 'in-progress', 'generation-failed'].includes(request.status)).length

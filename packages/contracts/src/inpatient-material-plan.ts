@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { inpatientDrgAgentMaterialSchema, inpatientDrgAgentSourcesSchema } from './inpatient-drg-agent.ts'
+import { surgeryExecutionStageSchema } from './inpatient-surgery.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 /** 医生实际确认的不可变术前依据；数量不随预留余额变化。 */
@@ -15,7 +16,8 @@ export const inpatientMaterialPlanSchema = z.object({
   reservationIds: z.array(id).max(20),
 }).strict()
 export const inpatientMaterialPlanBasisSchema = z.object({
-  requestId: id, status: z.enum(['confirmed', 'missing', 'unverifiable', 'conflict']),
+  requestId: id, surgeryStage: surgeryExecutionStageSchema.optional(),
+  status: z.enum(['confirmed', 'missing', 'unverifiable', 'conflict']),
   effectiveReference: z.string().min(1).max(512).nullable(),
   history: z.array(inpatientMaterialPlanSchema),
 }).strict()

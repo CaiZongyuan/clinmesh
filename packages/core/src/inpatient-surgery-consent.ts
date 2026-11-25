@@ -12,6 +12,12 @@ import {
 
 export type SurgeryDisplayLocale = 'zh-CN' | 'en-US'
 
+export const CORONARY_ANGIOGRAPHY_PROCEDURE_CODES = ['88.5500', '88.5600'] as const
+
+export function isCoronaryAngiographyProcedureCode(code: string): boolean {
+  return (CORONARY_ANGIOGRAPHY_PROCEDURE_CODES as readonly string[]).includes(code)
+}
+
 export const SURGICAL_LOCATIONS: readonly InpatientSurgeryLocation[] = Object.freeze([
   { id: 'location-catheterization-lab', name: '导管室', nameEn: 'Catheterization lab' },
   { id: 'location-operating-center', name: '中心手术室', nameEn: 'Central operating suite' },
@@ -87,6 +93,7 @@ export function buildSurgeryServiceRequestFields(input: {
   surgeon: InpatientSurgeryPractitioner
   assistant?: InpatientSurgeryPractitioner | undefined
   anesthesiaMethod: AnesthesiaMethod
+  standbyAdHocPci?: boolean | undefined
 }) {
   const priority = input.surgeryType === 'emergency'
     ? 'stat'
@@ -95,6 +102,37 @@ export function buildSurgeryServiceRequestFields(input: {
       : 'routine'
   const surgeryTypeDisplay = formatSurgeryType(input.surgeryType, 'zh-CN')
   const anesthesiaDisplay = formatAnesthesiaMethod(input.anesthesiaMethod, 'zh-CN')
+  type OrderDetailParameter =
+    | {
+        code: { coding: Array<{ system: string; code: 'anesthesia-method'; display: string }>; text: string }
+        valueCodeableConcept: { coding: Array<{ system: string; code: AnesthesiaMethod; display: string }>; text: string }
+      }
+    | {
+        code: { coding: Array<{ system: string; code: 'standby-ad-hoc-pci'; display: string }>; text: string }
+        valueBoolean: true
+      }
+  const parameters: [
+    Extract<OrderDetailParameter, { valueCodeableConcept: unknown }>,
+    ...Array<Extract<OrderDetailParameter, { valueBoolean: true }>>,
+  ] = [{
+    code: {
+      coding: [{ system: SURGERY_ORDER_PARAMETER_SYSTEM, code: 'anesthesia-method', display: '拟行麻醉方式' }],
+      text: '拟行麻醉方式',
+    },
+    valueCodeableConcept: {
+      coding: [{ system: ANESTHESIA_CODE_SYSTEM, code: input.anesthesiaMethod, display: anesthesiaDisplay }],
+      text: anesthesiaDisplay,
+    },
+  }]
+  if (input.standbyAdHocPci === true) {
+    parameters.push({
+      code: {
+        coding: [{ system: SURGERY_ORDER_PARAMETER_SYSTEM, code: 'standby-ad-hoc-pci', display: '备选同台介入治疗' }],
+        text: '备选同台介入治疗',
+      },
+      valueBoolean: true,
+    })
+  }
   return {
     priority,
     category: [{
@@ -119,16 +157,7 @@ export function buildSurgeryServiceRequestFields(input: {
         : []),
     ],
     orderDetail: [{
-      parameter: [{
-        code: {
-          coding: [{ system: SURGERY_ORDER_PARAMETER_SYSTEM, code: 'anesthesia-method', display: '拟行麻醉方式' }],
-          text: '拟行麻醉方式',
-        },
-        valueCodeableConcept: {
-          coding: [{ system: ANESTHESIA_CODE_SYSTEM, code: input.anesthesiaMethod, display: anesthesiaDisplay }],
-          text: anesthesiaDisplay,
-        },
-      }],
+      parameter: parameters,
     }],
   }
 }
@@ -161,6 +190,25 @@ const CONSENT_TEMPLATES: Record<SurgicalConsentTemplateId, SurgicalConsentTempla
       '可选冠状动脉 CT 血管成像（CCTA）、心肌灌注显像或负荷超声心动图等无创评估方案，以及单纯规范冠心病药物保守治疗；无创影像在严重钙化或管腔功能学评估上存在局限。',
     patientChoiceStatement:
       '医师已向本人（或患者近亲属/受托人）详细告知当前病情、拟行冠状动脉造影术的目的与操作过程、拟行麻醉方式、常见及个体化医疗风险与替代医疗方案。本人已充分理解并自愿同意实施该项检查操作及相应麻醉与急救处置。',
+  }),
+  'coronary-angiography-ad-hoc-pci': Object.freeze({
+    id: 'coronary-angiography-ad-hoc-pci',
+    templateVersion: '2026-11-23.r1',
+    title: '冠状动脉造影及必要时同台经皮冠状动脉介入治疗（PCI）知情同意书',
+    purposeAndMethod:
+      '经桡动脉或股动脉局部麻醉穿刺置入动脉鞘管，先行冠状动脉造影（必要时联合 FFR/iFR 功能学评估）明确冠状动脉病变部位、狭窄程度及心肌缺血指征；若术中明确存在显著缺血性狭窄且解剖条件适宜，将在同一台导管室操作中直接转为经皮冠状动脉介入治疗（球囊扩张成形术及/或药物洗脱支架置入术），避免二次穿刺与分期手术；若病变未达血运重建指征或更适宜药物保守/外科搭桥，则仅完成造影后结束本台手术。若同台置入冠脉支架，术后需按医嘱规范接受双联抗血小板及冠心病二级预防治疗。',
+    commonRisks: Object.freeze([
+      '穿刺部位局部出血、皮下血肿、假性动脉瘤、动静脉瘘、桡动脉痉挛或闭塞、腹膜后血肿及周围神经损伤。',
+      '含碘对比剂过敏反应（皮疹、喉头水肿乃至过敏性休克）及对比剂相关性急性肾损伤（同台行 PCI 时对比剂总量可能相应增加）。',
+      '冠状动脉痉挛、内膜夹层、急性血管弹性回缩、血管穿孔、心包积血或急性心包填塞，严重时需心包穿刺引流或急诊外科搭桥抢救。',
+      '靶病变或分支血管急性闭塞、斑块脱落致远端微栓塞、慢血流或无复流现象、支架脱载、膨胀不全或贴壁不良、急性/亚急性支架内血栓形成及远期再狭窄。',
+      '围术期心肌损伤或急性心肌梗死、恶性心律失常（室速、室颤、严重传导阻滞）、急性心力衰竭、心源性休克、脑卒中乃至心搏骤停。',
+      '围术期双联抗血小板与抗凝药物相关消化道、颅内或泌尿道出血，以及因血管严重钙化、迂曲或慢性闭塞致器械无法通过而血运重建失败。',
+    ]),
+    alternativePlans:
+      '可选冠状动脉 CT 血管成像（CCTA）或负荷心肌灌注等无创评估、规范冠心病药物保守治疗、先单纯行冠状动脉造影后择期分台 PCI，或外科冠状动脉旁路移植术（CABG，尤其适用于复杂多支或左主干病变）。',
+    patientChoiceStatement:
+      '医师已向本人（或患者近亲属/受托人）详细告知当前病情、先行冠状动脉造影并于术中达到血运重建指征时同台直接行经皮冠状动脉介入治疗（球囊扩张及/或药物洗脱支架置入）的适应证、麻醉方式、两阶段专有并发症风险、术后双联抗血小板治疗要求及替代治疗方案。本人已充分理解并自愿同意实施冠状动脉造影及必要时同台 PCI 联合方案。',
   }),
   'coronary-des-pci': Object.freeze({
     id: 'coronary-des-pci',
@@ -217,9 +265,11 @@ const CONSENT_TEMPLATES: Record<SurgicalConsentTemplateId, SurgicalConsentTempla
   }),
 })
 
-export function resolveSurgicalConsentTemplate(procedureCode: string): SurgicalConsentTemplate {
-  if (procedureCode === '88.5500' || procedureCode === '88.5600') {
-    return CONSENT_TEMPLATES['coronary-angiography']
+export function resolveSurgicalConsentTemplate(procedureCode: string, standbyAdHocPci = false): SurgicalConsentTemplate {
+  if (isCoronaryAngiographyProcedureCode(procedureCode)) {
+    return standbyAdHocPci
+      ? CONSENT_TEMPLATES['coronary-angiography-ad-hoc-pci']
+      : CONSENT_TEMPLATES['coronary-angiography']
   }
   if (procedureCode === '36.0700') {
     return CONSENT_TEMPLATES['coronary-des-pci']
@@ -260,6 +310,7 @@ export interface BuildSurgicalConsentDocumentInput {
     anesthesiaMethod: AnesthesiaMethod | null
     surgeonName: string | null
     assistantName: string | null
+    standbyAdHocPci?: boolean | undefined
   }
   individualizedRisks?: string | null | undefined
   signature: {
@@ -273,7 +324,8 @@ export interface BuildSurgicalConsentDocumentInput {
 }
 
 export function buildSurgicalConsentDocument(input: BuildSurgicalConsentDocumentInput): InpatientSurgicalConsentDocument {
-  const template = resolveSurgicalConsentTemplate(input.surgeryNotice.procedureCode)
+  const standbyAdHocPci = input.surgeryNotice.standbyAdHocPci === true
+  const template = resolveSurgicalConsentTemplate(input.surgeryNotice.procedureCode, standbyAdHocPci)
   const individualized = input.individualizedRisks?.trim() || null
   const relationship = input.signature.signerRole === 'family-proxy'
     ? (input.signature.signerRelationship?.trim() || null)
@@ -289,6 +341,7 @@ export function buildSurgicalConsentDocument(input: BuildSurgicalConsentDocument
     : '未记录'
   const surgeonText = input.surgeryNotice.surgeonName ?? '未记录'
   const assistantText = input.surgeryNotice.assistantName ? `；第一助手：${input.surgeryNotice.assistantName}` : ''
+  const standbyText = standbyAdHocPci ? '；同台备选：必要时同台转行经皮冠状动脉介入治疗（Ad-hoc PCI）' : ''
   const signerText = input.signature.signerRole === 'patient'
     ? `患者本人：${input.signature.signerName.trim()}`
     : `患者近亲属/受托人：${input.signature.signerName.trim()}（关系：${relationship ?? '未注明'}）`
@@ -296,7 +349,7 @@ export function buildSurgicalConsentDocument(input: BuildSurgicalConsentDocument
   const renderedText = [
     `【${SURGICAL_CONSENT_DISCLAIMER}】`,
     template.title,
-    `一、患者与拟施手术信息：姓名 ${input.patient.name}，性别 ${formatGenderZh(input.patient.gender)}，出生日期 ${input.patient.birthDate ?? '未记录'}，住院号 ${input.patient.inpatientNumber}；住院主诊断：${diagnosisText}；手术类型：${surgeryTypeText}；拟施术式：${input.surgeryNotice.procedureCode} ${input.surgeryNotice.procedureDisplay}；计划手术时间：${formatConsentMinuteShanghai(input.surgeryNotice.plannedFor)}；手术执行地点：${input.surgeryNotice.locationName ?? '未记录'}；拟行麻醉方式：${anesthesiaText}；主刀医师：${surgeonText}${assistantText}。`,
+    `一、患者与拟施手术信息：姓名 ${input.patient.name}，性别 ${formatGenderZh(input.patient.gender)}，出生日期 ${input.patient.birthDate ?? '未记录'}，住院号 ${input.patient.inpatientNumber}；住院主诊断：${diagnosisText}；手术类型：${surgeryTypeText}；拟施术式：${input.surgeryNotice.procedureCode} ${input.surgeryNotice.procedureDisplay}${standbyText}；计划手术时间：${formatConsentMinuteShanghai(input.surgeryNotice.plannedFor)}；手术执行地点：${input.surgeryNotice.locationName ?? '未记录'}；拟行麻醉方式：${anesthesiaText}；主刀医师：${surgeonText}${assistantText}。`,
     `二、手术目的与简要方法：${template.purposeAndMethod}`,
     `三、常见风险与并发症告知：\n${template.commonRisks.map((clause, index) => `${index + 1}. ${clause}`).join('\n')}`,
     `四、患者个体化特别风险说明：${individualized ?? '无额外补充特殊风险条款。'}`,
@@ -304,6 +357,7 @@ export function buildSurgicalConsentDocument(input: BuildSurgicalConsentDocument
     `六、知情选择与签署确认：${template.patientChoiceStatement}\n签署方：${signerText}（同意手术与麻醉方案）｜谈话医师：${input.signature.talkingDoctorName}｜确认时间：${formatConsentMinuteShanghai(input.signature.signedAt)}`,
   ].join('\n\n')
 
+  const { standbyAdHocPci: _ignoredStandby, ...baseNotice } = input.surgeryNotice
   return {
     templateId: template.id,
     templateVersion: template.templateVersion,
@@ -311,7 +365,7 @@ export function buildSurgicalConsentDocument(input: BuildSurgicalConsentDocument
     disclaimer: SURGICAL_CONSENT_DISCLAIMER,
     patient: input.patient,
     primaryDiagnosis: input.primaryDiagnosis,
-    surgeryNotice: input.surgeryNotice,
+    surgeryNotice: standbyAdHocPci ? { ...baseNotice, standbyAdHocPci: true } : baseNotice,
     purposeAndMethod: template.purposeAndMethod,
     commonRisks: [...template.commonRisks],
     individualizedRisks: individualized,

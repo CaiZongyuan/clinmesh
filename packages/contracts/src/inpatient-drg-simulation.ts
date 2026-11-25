@@ -105,6 +105,7 @@ export type InpatientSurgeryUsage = z.infer<typeof inpatientSurgeryUsageSchema>
 export const inpatientMaterialReservationSchema = z.object({
   id, admissionId: id,
   requestId: id.optional(),
+  surgeryStage: z.literal('ad-hoc-pci').optional(),
   materialId: id,
   materialDisplay: z.string().min(1),
   unit: z.string().min(1).nullable().default(null),

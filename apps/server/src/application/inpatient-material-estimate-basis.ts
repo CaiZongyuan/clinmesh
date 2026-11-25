@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { InpatientDrgSimulation } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientMaterialEstimateCandidateSchema, inpatientMaterialEstimateDraftSchema } from '@clinmesh/contracts/inpatient-material-estimate'
-import { inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientSurgeryRequestSchema, type SurgeryExecutionStage } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientDiagnosisSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { pciSelectionProcedureCodes, pciSelectionEvidenceSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -22,7 +22,13 @@ export const materialEstimateBasisSchema = z.object({
 export const supportsMaterialEstimate = (code: string) => ['88.5500', '88.5600', ...pciSelectionProcedureCodes].includes(code)
 
 /** 只读取本岗位正式资料；未结构化的测量保留缺项，不从病例作者底稿推断。 */
-export function readMaterialEstimateBasis(owner: InpatientService, context: ActorContext, admissionId: string, requestId: string) {
+export function readMaterialEstimateBasis(
+  owner: InpatientService,
+  context: ActorContext,
+  admissionId: string,
+  requestId: string,
+  stage: SurgeryExecutionStage = 'primary',
+) {
   const surgery = owner.surgery.read(context, admissionId)
   const request = surgery.requests.find(item => item.id === requestId)
   if (!request) throw new InpatientError('INPATIENT_SURGERY_NOT_FOUND', '未找到本次住院的手术计划', 404)
@@ -35,7 +41,8 @@ export function readMaterialEstimateBasis(owner: InpatientService, context: Acto
     drafts: [{ ...selectionDraft, confirmedSelectionVersion: null }] } : selected
   const candidates: z.infer<typeof inpatientMaterialEstimateCandidateSchema>[] = []
   const missing: string[] = []
-  const code = request.plannedProcedure.coding.code
+  const effectiveProcedure = stage === 'ad-hoc-pci' ? (request.adHocPci?.procedure ?? request.plannedProcedure) : request.plannedProcedure
+  const code = effectiveProcedure.coding.code
   const angiography = code === '88.5500' || code === '88.5600'
   const evidencePackage = angiography ? { id: 'clinmesh-angiography-estimate', version: '2026-10-28.r1' }
     : { id: selection.evidencePackage.id, version: selection.evidencePackage.version }
@@ -82,16 +89,20 @@ export function readMaterialEstimateBasis(owner: InpatientService, context: Acto
   const estimate = materialEstimateBasisSchema.parse({ request: plan,
     diagnosis: owner.orders.diagnosis(context, admissionId), investigations: owner.investigations.read(context, admissionId), candidates, evidencePackage })
   const stored = z.object({ draft_json: z.string().nullable(), status: z.enum(['active', 'cancelled']) }).optional().parse(owner.database.driver.prepare(`
-    SELECT draft_json,status FROM inpatient_material_estimate WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?`)
-    .get(context.workspaceId, context.epoch, admissionId, requestId))
+    SELECT draft_json,status FROM inpatient_material_estimate WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? AND surgery_stage=?`)
+    .get(context.workspaceId, context.epoch, admissionId, requestId, stage))
   const draft = stored?.draft_json ? inpatientMaterialEstimateDraftSchema.parse(JSON.parse(stored.draft_json)) : null
-  const preview = ['requested', 'ready'].includes(request.status) && !surgery.inProgress.some(item => item.requestId === requestId)
+  const isStageActive = stage === 'ad-hoc-pci'
+    ? (request.status === 'standby-pci' && request.adHocPci?.status === 'converted')
+    : ['requested', 'ready'].includes(request.status)
+  const stageInProgress = surgery.inProgress.some(item => item.requestId === requestId && (item.executionStage ?? 'primary') === stage)
+  const preview = isStageActive && !stageInProgress
     && stored?.status !== 'cancelled' && (draft === null || draft.confirmedRevision !== draft.revision)
   const forecast = draft?.items ?? candidates.filter(candidate => candidate.eligibility === 'valid' && candidate.selected)
     .map(candidate => ({ materialId: candidate.materialId, catalogVersion: candidate.catalogVersion, quantity: candidate.expectedQuantity! }))
   const remaining = forecast.filter(item => candidates.some(candidate => candidate.materialId === item.materialId && candidate.eligibility === 'valid'))
     .map(item => ({ materialId: item.materialId, quantity: item.quantity })).sort((a, b) => a.materialId.localeCompare(b.materialId))
-  const planned = preview && (draft !== null || forecast.length > 0) ? { requestId, items: forecast.flatMap(item => {
+  const planned = preview && (draft !== null || forecast.length > 0) ? { requestId, surgeryStage: stage, items: forecast.flatMap(item => {
     const candidate = candidates.find(candidate => candidate.materialId === item.materialId && candidate.catalogVersion === item.catalogVersion)
     if (!candidate?.item || candidate.item.chargeDefinition.priceFen <= 0) {
       missing.push(`${item.materialId} 缺少本次可核验的院内价格，当前清单费用尚不完整`)
@@ -101,18 +112,18 @@ export function readMaterialEstimateBasis(owner: InpatientService, context: Acto
       unitPriceFen: candidate.item.chargeDefinition.priceFen, display: candidate.item.display }]
   }) } : undefined
   let evaluated: InpatientDrgSimulation | null | undefined
-  if (['requested', 'ready'].includes(request.status)) {
+  if (isStageActive) {
     try { evaluated = owner.drg.simulate(context, admissionId, { medications: [], services: [], primarySurgeryRequestId: requestId }) }
     catch (error) { if (!(error instanceof InpatientError) || error.code !== 'DRG_RULES_NOT_CONFIGURED') throw error; evaluated = null }
   }
   const costs = readInpatientCosts(owner, context, admissionId, planned ? { ...planned, incomplete: planned.items.length !== forecast.length } : undefined, evaluated)
-  // 每份全住院 costs 都包含其他计划；只发布本计划可独立合并的预留差额。
+  // 每份全住院 costs 都包含其他计划；只发布本计划当前阶段可独立合并的预留差额。
   const reservations = planned ? owner.drg.reservations(context, admissionId).reservations : []
   const materialDraftReservationBasis = planned ? reservations.filter(item => item.status === 'reserved' && (item.remainingQuantity ?? item.quantity - item.consumedQuantity) > 0)
     .map((item): [string, number, number] => { const quantity = item.remainingQuantity ?? item.quantity - item.consumedQuantity; return [item.id, quantity, item.priceFen * quantity] })
     .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0) : null
   const ownReservedFen = planned ? reservations
-    .filter(item => item.requestId === requestId && item.status === 'reserved')
+    .filter(item => item.requestId === requestId && (item.surgeryStage ?? 'primary') === stage && item.status === 'reserved')
     .reduce((sum, item) => sum + item.priceFen * (item.remainingQuantity ?? item.quantity - item.consumedQuantity), 0) : 0
   const delta = planned?.items.length === forecast.length ? planned.items.reduce((sum, item) => sum + item.unitPriceFen * item.quantity, 0) - ownReservedFen : null
   const materialDraftDeltaFen = draft !== null && delta !== null && Number.isSafeInteger(delta) ? delta : null

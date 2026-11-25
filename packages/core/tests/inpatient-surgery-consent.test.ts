@@ -102,4 +102,55 @@ describe('inpatient-surgery-consent', () => {
     expect(fhirFields.performer).toHaveLength(2)
     expect(fhirFields.orderDetail[0]?.parameter[0]?.valueCodeableConcept.text).toBe('局部浸润麻醉')
   })
+
+  it('selects the joint CAG + Ad-hoc PCI consent template and ServiceRequest orderDetail when standbyAdHocPci is enabled', () => {
+    const joint = resolveSurgicalConsentTemplate('88.5500', true)
+    expect(joint.id).toBe('coronary-angiography-ad-hoc-pci')
+    expect(joint.title).toContain('必要时同台经皮冠状动脉介入治疗')
+    expect(joint.commonRisks.some(item => item.includes('支架内血栓'))).toBe(true)
+    expect(joint.commonRisks.some(item => item.includes('对比剂相关性急性肾损伤'))).toBe(true)
+    expect(resolveSurgicalConsentTemplate('47.0100', true).id).toBe('general-surgery')
+
+    const doc = buildSurgicalConsentDocument({
+      patient: {
+        name: '合成同台患者',
+        gender: 'male',
+        birthDate: '1965-05-12',
+        inpatientNumber: 'ZY-2026-0002',
+      },
+      primaryDiagnosis: { code: 'I25.103', display: '冠状动脉粥样硬化性心脏病' },
+      surgeryNotice: {
+        surgeryType: 'elective',
+        procedureCode: '88.5500',
+        procedureDisplay: '冠状动脉造影',
+        plannedFor: '2026-08-25T09:30:00+08:00',
+        locationName: '导管室',
+        anesthesiaMethod: 'local-infiltration',
+        surgeonName: '林海（主任医师）',
+        assistantName: null,
+        standbyAdHocPci: true,
+      },
+      signature: {
+        signerRole: 'patient',
+        signerName: '合成同台患者',
+        talkingDoctorId: 'practitioner-inpatient-doctor',
+        talkingDoctorName: '合成住院医生',
+        signedAt: '2026-08-24T10:15:00+08:00',
+      },
+    })
+    expect(inpatientSurgicalConsentDocumentSchema.parse(doc)).toEqual(doc)
+    expect(doc.templateId).toBe('coronary-angiography-ad-hoc-pci')
+    expect(doc.surgeryNotice.standbyAdHocPci).toBe(true)
+    expect(doc.renderedText).toContain('同台备选：必要时同台转行经皮冠状动脉介入治疗')
+
+    const fhirFields = buildSurgeryServiceRequestFields({
+      surgeryType: 'elective',
+      location: { id: 'location-catheterization-lab', name: '导管室' },
+      surgeon: { id: 'practitioner-inpatient-doctor', name: '合成住院医生' },
+      anesthesiaMethod: 'local-infiltration',
+      standbyAdHocPci: true,
+    })
+    expect(fhirFields.orderDetail[0]?.parameter).toHaveLength(2)
+    expect(fhirFields.orderDetail[0]?.parameter[1]).toMatchObject({ valueBoolean: true })
+  })
 })

@@ -61,7 +61,7 @@
 
 1. **门诊处方与住院医嘱签发关口**（`encounter.issue-prescription`、门诊处方准备确认、`inpatient.order.issue`）：联合声明式药事安全规则与近期客观肾功能记录，区分绝对用药红线与缺血肌酐／抗菌药指征条件警示（既有药事拒绝同步附带 `error.clinicalQuality` 阻断摘要）。
 2. **门诊完诊关口**（`encounter.complete`）：核对急性胸痛主诉或诊断病例是否已完成已签发 12 导联心电图及心肌损伤标志物评估（`CHEST_PAIN_WORKUP_INCOMPLETE`）。
-3. **冠脉介入计划与选型确认关口**（PCI 术式 `inpatient.surgery.request`、`inpatient.pci-selection.confirm`）：核对最新已签发冠脉造影报告是否存在功能学非缺血临界病变（`FFR > 0.80`）仍拟行 PCI 介入（`PCI_NON_ISCHEMIC_LESION`）；造影前已先开立 PCI 申请并由造影报告自动生成选型草稿时，耗材清单整批确认前必须先经 `inpatient.pci-selection.confirm` 完成质控核对或越权登记。
+3. **冠脉介入计划与选型确认关口**（PCI 术式 `inpatient.surgery.request`、同台造影转 PCI `inpatient.surgery.convert-to-pci`、`inpatient.pci-selection.confirm`）：核对最新已签发冠脉造影报告是否存在功能学非缺血临界病变（`FFR > 0.80`）仍拟行 PCI 介入（`PCI_NON_ISCHEMIC_LESION`）；造影前已先开立 PCI 申请并由造影报告自动生成选型草稿时，耗材清单整批确认前必须先经 `inpatient.pci-selection.confirm` 完成质控核对或越权登记。
 4. **住院出院医嘱与离院后病案提交关口**（`inpatient.discharge.issue`、离院后 `inpatient.record.submit`）：对冠心病或本次住院已实施 PCI 病例，按出院医嘱截止时点核对是否已开立长期抗血小板（`DISCHARGE_ANTIPLATELET_MISSING`）与他汀类（`DISCHARGE_STATIN_MISSING`）二级预防医嘱（在院期间仅保存主操作预分组快照不触发出院质控；出院医嘱与离院首页提交各自独立校验并留存越权记录）。
 
 两层质控规则实行严格的越权边界隔离：

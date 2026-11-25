@@ -88,7 +88,7 @@ export function inpatientPending(input: InpatientActivity): Record<InpatientStag
     result.orders = admission.status === 'admitted' && clinical?.diagnosis.entries.length === 0 ? 1 : 0
     result.investigations = [...investigations?.laboratoryRequests ?? [], ...investigations?.examinationRequests ?? [], ...investigations?.imagingRequests ?? []]
       .filter(request => request.status === 'reported' || request.status === 'generation-failed').length
-    result.surgery = surgery?.requests.filter(request => request.status === 'ready' && !surgery.inProgress.some(execution => execution.requestId === request.id)
+    result.surgery = surgery?.requests.filter(request => (request.status === 'ready' || request.status === 'standby-pci') && !surgery.inProgress.some(execution => execution.requestId === request.id)
       || request.status === 'requested' && !request.consentConfirmation).length ?? 0
     result.surgery += surgery?.inProgress.length ?? 0
     result.surgery += input.review?.todos.filter(todo => todo.ownerRole === role && (todo.status === 'pending' || todo.status === 'in-progress')).length ?? 0

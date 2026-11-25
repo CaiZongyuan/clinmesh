@@ -4,12 +4,13 @@ import { commandResponseSchema } from './his.ts'
 import { inpatientDrgSimulationSchema, inpatientCostsSchema, inpatientSurgeryUsageSchema } from './inpatient-drg-simulation.ts'
 import { inpatientDrgPregroupResultSchema } from './inpatient-drg.ts'
 import { inpatientMaterialPlanBasisSchema } from './inpatient-material-plan.ts'
+import { surgeryExecutionStageSchema } from './inpatient-surgery.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const text = z.string().trim().min(1).max(2000)
 export const inpatientDrgReviewIssueSchema = z.object({
   key: z.string().min(1).max(256), kind: z.enum(['extra-use', 'unused-plan', 'unplanned-product', 'replacement', 'billing-mismatch', 'missing-plan', 'plan-conflict', 'grouping-incomplete', 'primary-procedure-difference', 'grouping-difference']),
-  requestId: id.optional(), executionId: id.optional(), procedureDisplay: text.optional(),
+  requestId: id.optional(), executionId: id.optional(), surgeryStage: surgeryExecutionStageSchema.optional(), procedureDisplay: text.optional(),
   ownerRole: z.enum(['inpatient-doctor', 'cashier', 'medical-records']), materialId: id.nullable(), display: text,
   plannedQuantity: z.number().int().nonnegative().nullable(), actualQuantity: z.number().int().nonnegative().nullable(),
   explanation: text, evidence: z.array(z.string().min(1).max(512)).min(1).max(100),
@@ -21,7 +22,7 @@ export const inpatientDrgReviewBasisSchema = z.object({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   summary: z.object({ formalDrgCode: z.string().nullable(), formalChargesFen: z.number().int().safe().nullable(), projectedTotalFen: z.number().int().safe().nullable() }).strict(),
   simulation: inpatientDrgSimulationSchema.nullable(), issues: z.array(inpatientDrgReviewIssueSchema),
-  comparisons: z.array(z.object({ requestId: id.optional(), executionId: id.optional(), procedureDisplay: text.optional(), materialId: id, catalogVersion: z.number().int().positive(), display: text,
+  comparisons: z.array(z.object({ requestId: id.optional(), executionId: id.optional(), surgeryStage: surgeryExecutionStageSchema.optional(), procedureDisplay: text.optional(), materialId: id, catalogVersion: z.number().int().positive(), display: text,
     plannedQuantity: z.number().int().nonnegative().nullable(), actualQuantity: z.number().int().nonnegative() }).strict()),
   missing: z.array(text),
   planBases: z.array(inpatientMaterialPlanBasisSchema).default([]),

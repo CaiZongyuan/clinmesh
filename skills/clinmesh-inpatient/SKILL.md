@@ -411,12 +411,16 @@ clinmesh inpatient correct-surgery-material --input @surgery-correction.json --i
 clinmesh inpatient preview-surgery-completion --input @surgery-final-review.json
 clinmesh inpatient complete-surgery --input @surgery-complete.json --idempotency-key <key>
 clinmesh inpatient execute-surgery --input @surgery-execution.json --idempotency-key <key>
+clinmesh inpatient convert-surgery-to-pci --input @surgery-convert-to-pci.json --idempotency-key <key>
+clinmesh inpatient finalize-surgery-standby --input @surgery-finalize-standby.json --idempotency-key <key>
 clinmesh inpatient cancel-surgery --input @surgery-preparation.json --idempotency-key <key>
 clinmesh command receipt get --operation-id inpatient.surgery.record-medication --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.surgery.convert-to-pci --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.surgery.finalize-standby --idempotency-key <key>
 clinmesh command receipt get --operation-id inpatient.surgery.execute --idempotency-key <key>
 ```
 
-住院医生申请（`request-surgery`，operation v4）传本次 `admissionId/encounterVersion`、受控 `surgeryType`（`elective | semi-elective | emergency | day-surgery`）、目录 `procedureId/catalogVersion`、不早于当前虚拟时间的 `plannedFor`、院内手术地点 `locationId`（`location-catheterization-lab | location-operating-center | location-endoscopy-suite | location-outpatient-or`，由 `surgery-catalog` 返回）、本院有效临床医师 `surgeonPractitionerId`（及可选不与主刀重名的 `assistantPractitionerId`）、受控 `anesthesiaMethod`（`local-infiltration | local-sedation | general | neuraxial | nerve-block`）和 `reason`（PCI 术式可附 `clinicalOverride`）。计划创建包含 `priority`、`category`、`location`、`performer` 与参数化 `orderDetail` 的 FHIR R5 `ServiceRequest`，不产生已实施事实或费用，场景推进也不自动执行。目录是临床版 ICD-9-CM-3 工作表3.0的固定八条来源摘录，保留前导零、点和扩展后缀、类别、项目摘录Release与来源定位；不是全量、最新版或医保版目录。院内收费ID与临床分类码分开，价格明确为合成演示价，不得将分类编码当成收费项目ID提交。
+住院医生申请（`request-surgery`，operation v5）传本次 `admissionId/encounterVersion`、受控 `surgeryType`（`elective | semi-elective | emergency | day-surgery`）、目录 `procedureId/catalogVersion`、不早于当前虚拟时间的 `plannedFor`、院内手术地点 `locationId`（`location-catheterization-lab | location-operating-center | location-endoscopy-suite | location-outpatient-or`，由 `surgery-catalog` 返回）、本院有效临床医师 `surgeonPractitionerId`（及可选不与主刀重名的 `assistantPractitionerId`）、受控 `anesthesiaMethod`（`local-infiltration | local-sedation | general | neuraxial | nerve-block`）、冠脉造影（`88.5500`／`88.5600`）可选布尔 `standbyAdHocPci`（备选同台介入治疗，非造影术式传 `true` 返回 `INPATIENT_SURGERY_STANDBY_PCI_UNSUPPORTED`）和 `reason`（PCI 术式可附 `clinicalOverride`）。计划创建包含 `priority`、`category`、`location`、`performer` 与参数化 `orderDetail`（含 `standby-ad-hoc-pci` 标记）的 FHIR R5 `ServiceRequest`，不产生已实施事实或费用，场景推进也不自动执行。勾选 `standbyAdHocPci=true` 的冠脉造影申请，在 `confirm-surgery-consent` 时自动采用联合模板 `coronary-angiography-ad-hoc-pci`（《冠状动脉造影及必要时同台经皮冠状动脉介入治疗（PCI）知情同意书》）；第一阶段造影完成后申请进入 `standby-pci` 状态（仍阻断出院、转科与病案归档），不重复收取第二份术前核对或二次知情同意。目录是临床版 ICD-9-CM-3 工作表3.0的固定八条来源摘录，保留前导零、点和扩展后缀、类别、项目摘录Release与来源定位；不是全量、最新版或医保版目录。院内收费ID与临床分类码分开，价格明确为合成演示价，不得将分类编码当成收费项目ID提交。
 
 `surgery-request.json` 合成示例；首次提交前以本次受信读取的住院版本、术式与本院临床医师替换示例值：
 
@@ -537,6 +541,37 @@ clinmesh command receipt get --operation-id inpatient.surgery.execute --idempote
     "quantity": 5,
     "routeCode": "IH"
   }]
+}
+```
+
+### 同台冠脉造影转 PCI（Ad-hoc PCI）
+
+当 `standbyAdHocPci=true` 且已签署 `coronary-angiography-ad-hoc-pci` 联合知情同意书的冠脉造影完成并进入 `standby-pci` 且造影报告已出具（非 `processing`）后，医生无需二次提交手术申请或二次护士术前核对：
+
+1. 若明确需要血运重建，使用 `convert-surgery-to-pci`（`inpatient.surgery.convert-to-pci` v1）选定 PCI 术式（`00.6600`／`00.6600x008`／`36.0700`）。该命令在同一事务内执行 `#523` `FFR > 0.80` 临床质控（`PCI_NON_ISCHEMIC_LESION` 返回 409 `CLINICAL_QUALITY_ALERT` 或附合规 `clinicalOverride`），成功后自动创建 PCI 选型草稿、触发 `surgeryStage="ad-hoc-pci"` 阶段耗材预计与指南意见。后续按既有 `material-estimates` → `confirm-material-estimate` → `start-surgery` / `record-surgery-material` / `record-surgery-medication` / `preview-surgery-completion` / `complete-surgery`（或 `execute-surgery`）在**同一 `requestId`** 下完成第二阶段 PCI，生成 `executionStage="ad-hoc-pci"` 且 `partOf: Procedure/<造影executionId>` 的独立 `Procedure`。同台冠脉造影与 PCI 仅在造影完成时收取一次 `术中介入专科护理`（`80.00 元`），同台 PCI 阶段不再重复计收并显式标记 `sameSessionNursingIncluded=true`。完成后不会自动改写首页主操作，医生可在住院期间显式调用 `submit-record` 将 `36.0700` 确认为主操作以刷新 DRG 预分组至 `FM39`。
+2. 若造影评估无需行 PCI 或决定放弃已转换但尚未开始的同台 PCI，使用 `finalize-surgery-standby`（`inpatient.surgery.finalize-standby` v1）将申请收口为 `completed`（仅造影结束时 `note` 选填；放弃已转换同台 PCI 时 `note` 必填，并原子释放该申请 `surgeryStage="ad-hoc-pci"` 全部预留、取消同台 PCI 耗材预计与指南意见，完整保留已完成的冠脉造影事实）。结果未知先按原输入与原幂等键查对应 operation 的 receipt。
+
+`surgery-convert-to-pci.json` 合成示例：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "requestId": "synthetic-surgery-request",
+  "expectedRequestVersion": 4,
+  "procedureId": "hospital-surgery-3",
+  "catalogVersion": 1,
+  "note": "造影示前降支近段 85% 狭窄且 FFR 0.72，同台直接转行药物洗脱支架置入"
+}
+```
+
+`surgery-finalize-standby.json` 合成示例：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "requestId": "synthetic-surgery-request",
+  "expectedRequestVersion": 4,
+  "note": "冠脉造影示轻度狭窄，FFR 0.88，暂行药物保守治疗并结束本台手术"
 }
 ```
 

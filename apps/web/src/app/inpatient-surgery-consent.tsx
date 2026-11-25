@@ -74,6 +74,15 @@ export function SurgeryNoticeSummaryList({
     ...(includeProcedure
       ? [{ label: t('拟施术式', 'Planned procedure'), value: `${row.plannedProcedure.coding.code} · ${row.plannedProcedure.coding.display}` }]
       : []),
+    ...(row.standbyAdHocPci
+      ? [{ label: t('同台备选', 'Same-session standby'), value: t('必要时同台转行 PCI', 'Standby same-session PCI if indicated') }]
+      : []),
+    ...(row.adHocPci?.status === 'converted'
+      ? [{ label: t('同台转 PCI', 'Ad-hoc PCI conversion'), value: `${row.adHocPci.procedure.coding.code} · ${row.adHocPci.procedure.coding.display}` }]
+      : []),
+    ...(row.standbyFinalization
+      ? [{ label: t('同台结束说明', 'Standby closure'), value: row.standbyFinalization.note }]
+      : []),
     { label: t('计划手术时间', 'Planned surgery time'), value: formatShanghaiMinute(row.plannedFor).slice(5), className: 'tabular-nums' },
     { label: t('手术执行地点', 'Surgical location'), value: row.location?.name ?? unrecorded },
     { label: t('主刀医师', 'Primary surgeon'), value: surgeonDisplay },
@@ -145,6 +154,12 @@ function ConsentDocumentContent({
           <div><dt className="text-xs text-muted-foreground">{t('住院主诊断', 'Primary diagnosis')}</dt><dd>{diagnosisText}</dd></div>
           <div><dt className="text-xs text-muted-foreground">{t('手术类型', 'Surgery type')}</dt><dd>{surgeryTypeText}</dd></div>
           <div><dt className="text-xs text-muted-foreground">{t('拟施术式', 'Planned procedure')}</dt><dd>{document.surgeryNotice.procedureCode} · {document.surgeryNotice.procedureDisplay}</dd></div>
+          {document.surgeryNotice.standbyAdHocPci ? (
+            <div className="sm:col-span-2">
+              <dt className="text-xs text-muted-foreground">{t('同台备选方案', 'Same-session standby option')}</dt>
+              <dd>{t('造影后如提示显著狭窄，可按本次联合同意书同台直接转行经皮冠状动脉介入治疗（PCI）', 'If angiography reveals significant stenosis, proceed directly to same-session PCI under this joint consent')}</dd>
+            </div>
+          ) : null}
           <div><dt className="text-xs text-muted-foreground">{t('计划手术时间', 'Planned surgery time')}</dt><dd className="tabular-nums">{formatShanghaiMinute(document.surgeryNotice.plannedFor)}</dd></div>
           <div><dt className="text-xs text-muted-foreground">{t('手术执行地点', 'Surgical location')}</dt><dd>{document.surgeryNotice.locationName ?? unrecorded}</dd></div>
           <div><dt className="text-xs text-muted-foreground">{t('主刀医师', 'Primary surgeon')}</dt><dd>{document.surgeryNotice.surgeonName ?? unrecorded}{document.surgeryNotice.assistantName ? ` · ${t('第一助手：', '1st assistant: ')}${document.surgeryNotice.assistantName}` : ''}</dd></div>
@@ -331,6 +346,7 @@ export function SurgicalConsentSignDialog({
       anesthesiaMethod: request.anesthesiaMethod ?? null,
       surgeonName: request.surgeon ? formatPractitionerDisplay(request.surgeon) : null,
       assistantName: request.assistant ? formatPractitionerDisplay(request.assistant) : null,
+      ...(request.standbyAdHocPci ? { standbyAdHocPci: true } : {}),
     },
     individualizedRisks,
     signature: {

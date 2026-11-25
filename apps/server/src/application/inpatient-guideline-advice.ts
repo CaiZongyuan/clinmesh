@@ -79,9 +79,19 @@ const rowSchema = z.object({
 type Row = z.infer<typeof rowSchema>
 
 const authorizationOperations = {
-  automatic: 'inpatient.surgery.request',
-  manual: 'inpatient.guideline-advice.request',
+  automatic: ['inpatient.surgery.request', 'inpatient.surgery.convert-to-pci'] as const,
+  manual: ['inpatient.guideline-advice.request'] as const,
 } as const
+
+function pciProcedureForRequest(request: z.infer<typeof inpatientSurgeryRequestSchema>) {
+  if (pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code)) {
+    return request.plannedProcedure
+  }
+  if (request.adHocPci !== undefined && pciSelectionProcedureCodes.includes(request.adHocPci.procedure.coding.code)) {
+    return request.adHocPci.procedure
+  }
+  return undefined
+}
 
 const pciRequestFactsSchema = z.object({
   request: inpatientSurgeryRequestSchema.pick({ id: true, plannedProcedure: true, plannedFor: true }),
@@ -287,7 +297,7 @@ export class InpatientGuidelineAdvice {
     this.owner.assertRole(context, ['inpatient-doctor'])
     this.owner.assertNotArchived(context, admissionId)
     this.owner.orders.assertAdmitted(context, admissionId)
-    if (this.options.contextStatus(context, [authorizationOperations[trigger]]) !== 'active') {
+    if (this.options.contextStatus(context, authorizationOperations[trigger]) !== 'active') {
       throw new InpatientError('INPATIENT_GUIDELINE_FORBIDDEN', '原准备岗位授权已失效，请由当前主管医生重新评估', 403)
     }
   }
@@ -320,7 +330,8 @@ export class InpatientGuidelineAdvice {
       }
       const surgery = this.owner.surgery.read(context, admissionId)
       const request = surgery.requests.find(item => item.id === requestId)
-      if (!request || !pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code)) {
+      const pciProcedure = request === undefined ? undefined : pciProcedureForRequest(request)
+      if (!request || pciProcedure === undefined) {
         throw new InpatientError('INPATIENT_GUIDELINE_PLAN_REQUIRED', '未找到本次住院有效的PCI计划', 404)
       }
       const selection = this.owner.pciSelection.read(context, admissionId, requestId)
@@ -344,7 +355,7 @@ export class InpatientGuidelineAdvice {
           topic: definition.fingerprint,
         }),
         clinicalFacts: {
-          request: { id: request.id, plannedProcedure: request.plannedProcedure, plannedFor: request.plannedFor },
+          request: { id: request.id, plannedProcedure: pciProcedure, plannedFor: request.plannedFor },
           diagnosis: this.owner.orders.diagnosis(context, admissionId),
           investigations: this.owner.investigations.readSnapshot(context, admissionId),
           measurements,
@@ -364,14 +375,15 @@ export class InpatientGuidelineAdvice {
                 topic: legacyTopicFingerprint,
               }),
             })
+      const targetStage = request.standbyAdHocPci ? 'ad-hoc-pci' : 'primary'
       return {
         binding,
         fingerprint: canonicalJsonHash(input),
-        frozen: surgery.inProgress.some(item => item.requestId === requestId)
-          || surgery.executions.some(item => item.requestId === requestId),
+        frozen: surgery.inProgress.some(item => item.requestId === requestId && (item.executionStage ?? 'primary') === targetStage)
+          || surgery.executions.some(item => item.requestId === requestId && (item.executionStage ?? 'primary') === targetStage),
         input,
         legacyFingerprint,
-        requestStatus: request.status,
+        requestStatus: request.status === 'cancelled' || request.adHocPci?.status === 'cancelled' ? 'cancelled' : request.status,
       }
     }
 
@@ -596,7 +608,7 @@ export class InpatientGuidelineAdvice {
         const original = contextSchema.parse(JSON.parse(row.context_json))
         this.owner.assertReadRole(original, ['inpatient-doctor'])
         this.owner.readAdmissionBinding(original, admissionId)
-        authorized = this.options.contextStatus(original, [authorizationOperations[row.trigger]]) === 'active'
+        authorized = this.options.contextStatus(original, authorizationOperations[row.trigger]) === 'active'
       } catch (error) {
         if (error instanceof InpatientError || error instanceof WorkspaceContextError) authorized = false
         else throw error
@@ -686,7 +698,7 @@ export class InpatientGuidelineAdvice {
     try {
       this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
       const pciRequests = this.owner.surgery.read(context, admissionId).requests
-        .filter(item => pciSelectionProcedureCodes.includes(item.plannedProcedure.coding.code))
+        .filter(item => pciProcedureForRequest(item) !== undefined)
 
       let advice: Advice[]
       if (topicId !== undefined) {
@@ -815,7 +827,7 @@ export class InpatientGuidelineAdvice {
 
   automatic(context: ActorContext, admissionId: string, requestId: string, transaction: CommandTransaction) {
     const request = this.owner.surgery.read(context, admissionId).requests.find(item => item.id === requestId)
-    if (!request || !pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code) || this.#row(context, admissionId, 'pci-stent', requestId)) {
+    if (!request || pciProcedureForRequest(request) === undefined || request.adHocPci?.status === 'cancelled' || this.#row(context, admissionId, 'pci-stent', requestId)) {
       return
     }
     this.#create(context, admissionId, 'pci-stent', requestId, 1, 'automatic', transaction)

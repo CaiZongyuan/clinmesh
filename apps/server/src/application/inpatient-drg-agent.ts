@@ -125,8 +125,10 @@ export class InpatientDrgAgent {
     const candidates = selection.candidates.filter(candidate => approvedMaterialIds.includes(candidate.materialId))
     const { virtualTime: _time, encounterVersion: _version, ...facts } = surgery
     const requestId = selection.confirmation?.parameters.requestId
-    const completed = facts.executions.find(item => item.requestId === requestId)
-    const ongoing = facts.inProgress.find(item => item.requestId === requestId)
+    const boundRequest = requestId === undefined ? undefined : facts.requests.find(item => item.id === requestId)
+    const targetStage: 'primary' | 'ad-hoc-pci' = boundRequest?.standbyAdHocPci ? 'ad-hoc-pci' : 'primary'
+    const completed = facts.executions.find(item => item.requestId === requestId && (item.executionStage ?? 'primary') === targetStage)
+    const ongoing = facts.inProgress.find(item => item.requestId === requestId && (item.executionStage ?? 'primary') === targetStage)
     const stage = completed ? 'postoperative' : ongoing ? 'intraoperative' : 'preoperative'
     const frozenPlan = requestId === undefined ? undefined : this.prePlanForRequest(current.context, current.task.admissionId, requestId)
     const plan = frozenPlan?.sources.selectionConfirmationId === selection.confirmation?.id
@@ -138,13 +140,13 @@ export class InpatientDrgAgent {
     })
     const review = stage === 'postoperative' ? this.owner.drgReview.modelBasis(current.context, current.task.admissionId) : undefined
     const pendingDraft = readPendingMaterialDrafts(this.owner, current.context, current.task.admissionId)
-      .find(item => item.request.id === requestId)?.draft
+      .find(item => item.request.id === requestId && item.stage === targetStage)?.draft
     const suggestedItems = pendingDraft?.items ?? remaining.flatMap(item => {
       const candidate = candidates.find(candidate => candidate.materialId === item.materialId)
       return candidate && item.quantity > 0 ? [{ materialId: item.materialId, catalogVersion: candidate.materialVersion, quantity: item.quantity }] : []
     })
     const ownReservations = requestId === undefined || pendingDraft ? [] : this.owner.drg.reservations(current.context, current.task.admissionId).reservations
-      .filter(item => item.requestId === requestId && item.status === 'reserved' && (item.remainingQuantity ?? item.quantity - item.consumedQuantity) > 0)
+      .filter(item => item.requestId === requestId && (item.surgeryStage ?? 'primary') === targetStage && item.status === 'reserved' && (item.remainingQuantity ?? item.quantity - item.consumedQuantity) > 0)
     const unreserved = suggestedItems.flatMap(item => {
       const candidate = candidates.find(candidate => candidate.materialId === item.materialId && candidate.materialVersion === item.catalogVersion)
       const covered = ownReservations.filter(reservation => reservation.materialId === item.materialId && reservation.catalogVersion === item.catalogVersion)
@@ -153,7 +155,7 @@ export class InpatientDrgAgent {
       return quantity > 0 ? [{ ...item, quantity, candidate }] : []
     })
     // 明确工作稿优先；其余只补本计划未被同版本预留覆盖的余量，保留原预留的冻结价格及额外数量。
-    const forecast = !pendingDraft && requestId !== undefined && stage !== 'postoperative' ? { requestId,
+    const forecast = !pendingDraft && requestId !== undefined && stage !== 'postoperative' ? { requestId, surgeryStage: targetStage,
       incomplete: unreserved.some(item => !item.candidate?.item || item.candidate.eligibility !== 'valid' || item.candidate.item.chargeDefinition.priceFen <= 0),
       items: [...ownReservations.map(item => ({ materialId: item.materialId, catalogVersion: item.catalogVersion!,
         quantity: item.remainingQuantity ?? item.quantity - item.consumedQuantity, unitPriceFen: item.priceFen, display: item.materialDisplay })),
@@ -170,7 +172,7 @@ export class InpatientDrgAgent {
     for (const materialId of approvedMaterialIds) {
       if (!selection.candidates.some(candidate => candidate.materialId === materialId)) missing.push(`${materialId}: 不在已发布的 PCI 候选中`)
     }
-    if (requestId === undefined || !facts.requests.some(item => item.id === requestId && item.status !== 'cancelled')) missing.push('尚无关联的有效 PCI 手术计划')
+    if (requestId === undefined || !facts.requests.some(item => item.id === requestId && item.status !== 'cancelled' && item.adHocPci?.status !== 'cancelled')) missing.push('尚无关联的有效 PCI 手术计划')
     if (current.errorCode !== null && !['DRG_RULES_NOT_CONFIGURED', 'DRG_GROUPING_INCOMPLETE', 'DRG_PAYMENT_REFERENCE_MISSING'].includes(current.errorCode))
       missing.push(current.errorCode)
     for (const candidate of candidates) {

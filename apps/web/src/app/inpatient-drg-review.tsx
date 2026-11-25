@@ -117,7 +117,12 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
         {data.summary.formalChargesFen !== null ? <p>{t('阶段正式收费 ', 'Posted charges at review ')}{formatFen(data.summary.formalChargesFen, locale)}{financial ? '' : ` · ${t('阶段 DRG ', 'Stage DRG ')}${data.summary.formalDrgCode ?? t('未确定', 'Undetermined')}`}</p> : null}
         {!financial && data.summary.projectedTotalFen !== null ? <p>{t('阶段费用预计 ', 'Projected charges at review ')}{formatFen(data.summary.projectedTotalFen, locale)}</p> : null}
         {modelStatus ? <p role="status">{modelStatus}</p> : null}
-        {data.planBases.map(basis => <InpatientMaterialPlanBasisDetails key={basis.requestId} basis={basis} locale={locale} procedureDisplay={data.comparisons.find(item => item.requestId === basis.requestId)?.procedureDisplay ?? data.todos.find(item => item.requestId === basis.requestId)?.procedureDisplay} />)}
+        {data.planBases.map(basis => {
+          const stage = basis.surgeryStage ?? 'primary'
+          const procedureDisplay = data.comparisons.find(item => item.requestId === basis.requestId && (item.surgeryStage ?? 'primary') === stage)?.procedureDisplay
+            ?? data.todos.find(item => item.requestId === basis.requestId && (item.surgeryStage ?? 'primary') === stage)?.procedureDisplay
+          return <InpatientMaterialPlanBasisDetails key={`${basis.requestId}:${stage}`} basis={basis} locale={locale} procedureDisplay={procedureDisplay} />
+        })}
         {data.comparisons.map(item => <p key={`${item.executionId ?? ''}:${item.materialId}@${item.catalogVersion}`}>{item.display} · {t('术前确认 ', 'Confirmed ')}{item.plannedQuantity ?? t('未知', 'Unknown')} · {t('实际 ', 'Actual ')}{item.actualQuantity}</p>)}
         {data.model?.observations.map(item => <p key={item.key}>{item.explanation}</p>)}
         {data.resolvedTodos.map(todo => <p key={todo.id}>{todo.display} · {statusName(todo.status)} · {todo.reason}</p>)}
@@ -147,7 +152,12 @@ export function InpatientDrgReviewPanel({ admission, session, locale, write, act
       {data.missing.length > 0 && data.status !== 'waiting-surgery' && data.status !== 'inactive' ? <p role="status">{t('核查不完整：', 'Incomplete review: ')}{data.missing.join(' · ')}</p> : null}
       {compact && !compactClinical ? history : null}
       {!compact ? <>
-        {!financial ? data.planBases.map(basis => <InpatientMaterialPlanBasisDetails key={basis.requestId} basis={basis} locale={locale} procedureDisplay={data.comparisons.find(item => item.requestId === basis.requestId)?.procedureDisplay ?? data.todos.find(item => item.requestId === basis.requestId)?.procedureDisplay} />) : null}
+        {!financial ? data.planBases.map(basis => {
+          const stage = basis.surgeryStage ?? 'primary'
+          const procedureDisplay = data.comparisons.find(item => item.requestId === basis.requestId && (item.surgeryStage ?? 'primary') === stage)?.procedureDisplay
+            ?? data.todos.find(item => item.requestId === basis.requestId && (item.surgeryStage ?? 'primary') === stage)?.procedureDisplay
+          return <InpatientMaterialPlanBasisDetails key={`${basis.requestId}:${stage}`} basis={basis} locale={locale} procedureDisplay={procedureDisplay} />
+        }) : null}
         {data.comparisons.length > 0 ? <Table><TableHeader><TableRow><TableHead>{t('耗材产品', 'Material')}</TableHead><TableHead>{t('术前确认数量', 'Confirmed preoperative quantity')}</TableHead><TableHead>{t('实际使用', 'Actual use')}</TableHead></TableRow></TableHeader><TableBody>{data.comparisons.map(item => <TableRow key={`${item.executionId ?? ''}:${item.materialId}@${item.catalogVersion}`}><TableCell>{item.display}{item.executionId ? <p className="text-sm text-muted-foreground">{item.procedureDisplay ?? t('实际手术记录', 'Performed procedure record')}</p> : null}</TableCell><TableCell>{item.plannedQuantity ?? t('未知', 'Unknown')}</TableCell><TableCell>{item.actualQuantity}</TableCell></TableRow>)}</TableBody></Table> : null}
         {modelStatus ? <p role="status">{modelStatus}</p> : null}
         {data.model && data.model.observations.length > 0 ? <details><summary>{data.model.current ? t('查看已核验解释', 'Verified explanations') : t('查看保留的历史解释', 'Retained historical explanations')}</summary>{data.model.observations.map(item => <p key={item.key}>{item.explanation}</p>)}</details> : null}

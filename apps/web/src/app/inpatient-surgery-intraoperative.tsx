@@ -38,7 +38,8 @@ export function IntraoperativeMaterialRows({ admissionId, session, locale, execu
   const [extraId, setExtraId] = useState<string | null>(null), [extraNote, setExtraNote] = useState(''), [otherOpen, setOtherOpen] = useState(false)
   const [otherId, setOtherId] = useState<string | null>(null), [quantity, setQuantity] = useState('1'), [otherNote, setOtherNote] = useState('')
   const [adopted, setAdopted] = useState<InpatientEquivalentMaterialSuggestion | null>(null)
-  const own = reservations.filter(item => item.requestId === execution.requestId)
+  const stage = execution.executionStage ?? 'primary'
+  const own = reservations.filter(item => item.requestId === execution.requestId && (item.surgeryStage ?? 'primary') === stage)
   const plan = data?.intraoperativePlans.find(item => item.requestId === execution.requestId)
   const items = catalog?.materials.filter(item => 'chargeDefinition' in item) ?? []
   const ids = [...new Set([...(plan?.items.map(item => item.materialId) ?? own.map(item => item.materialId)), ...execution.materials.map(use => use.item.id)])]

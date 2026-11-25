@@ -165,9 +165,12 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   // 与病案页同键，在医生打开病案页或已结算患者计算病案待办时读取，用于第一行写清提交、退回或等待审核并更新角标。
   const record = useQuery({ queryKey: [...scope, admission.id, 'record'], enabled: (doctor && (chosen.data === 'record' || (admission.financialStatus === 'settled' && admission.recordStatus === 'open'))) || admission.recordStatus === 'archived', queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/record`, inpatientRecordSchema, signal) })
   const activity = { admission, role, ...(careOpen ? { clinical: clinical.data, investigations: investigations.data, surgery: surgery.data, transfers: transfers.data, review: surgeryReview.error === null ? surgeryReview.data : undefined } : {}), record: record.data, virtualTime: scenario.data?.virtualTime }
-  const activeSurgeryPlans = (surgery.data?.requests ?? []).filter(plan => ['requested', 'ready'].includes(plan.status)
+  const activeSurgeryPlans = (surgery.data?.requests ?? []).filter(plan => (['requested', 'ready'].includes(plan.status)
+    || (plan.status === 'standby-pci' && plan.adHocPci?.status === 'converted'))
     && !surgery.data?.inProgress.some(execution => execution.requestId === plan.id))
-  const pciPlans = activeSurgeryPlans.filter(plan => pciSelectionProcedureCodes.includes(plan.plannedProcedure.coding.code))
+  const pciPlans = activeSurgeryPlans.filter(plan => pciSelectionProcedureCodes.includes(
+    plan.status === 'standby-pci' && plan.adHocPci?.status === 'converted' ? plan.adHocPci.procedure.coding.code : plan.plannedProcedure.coding.code,
+  ))
   const surgeryReservations = useQuery({ queryKey: [...scope, admission.id, 'drg-reservations'], enabled: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/reservations`, inpatientMaterialReservationListSchema, signal) })
   const surgeryView = useSurgeryView()
@@ -214,7 +217,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     }
   }, [active, succeededAt, succeededState?.at])
   const surgeryAllDone = (surgery.data?.inProgress.length ?? 0) === 0
-    && !(surgery.data?.requests ?? []).some(r => ['requested', 'ready'].includes(r.status))
+    && !(surgery.data?.requests ?? []).some(r => ['requested', 'ready', 'standby-pci'].includes(r.status))
     && (surgery.data?.executions.length ?? 0) > 0
   const stageAllowsCompletionBar = active !== 'drg' && !(doctor && (active === 'admission' || active === 'fees')) && !(doctor && active === 'surgery' && surgeryAllDone)
   const showForegroundSuccess = foregroundSuccess && dismissedSucceededAt !== succeededAt && (succeededState === null || succeededState.stage === active) && stageAllowsCompletionBar
@@ -265,11 +268,16 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     const data = surgery.data
     if (!data) return waiting.surgery
     if (data.inProgress.length > 0) return t('轮到你：逐笔登记耗材，核实后完成手术', 'Your turn: record materials and complete surgery')
-    const activeRequests = data.requests.filter(request => request.status === 'requested' || request.status === 'ready')
+    if (data.requests.some(request => request.status === 'standby-pci' && request.adHocPci === undefined)) {
+      return t('轮到你：决定是否同台转行 PCI 或结束本台手术', 'Your turn: decide whether to convert to Ad-hoc PCI or close surgery')
+    }
+    const activeRequests = data.requests.filter(request => request.status === 'requested' || request.status === 'ready'
+      || (request.status === 'standby-pci' && request.adHocPci?.status === 'converted'))
     const selectedPlan = activeRequests.find(request => request.id === surgeryView[0].selectedRequestId) ?? activeRequests[0]
     if (selectedPlan) {
-      const estimate = pciPreparation.estimatesData?.estimates.find(item => item.requestId === selectedPlan.id)
-      const state = surgeryPreparation(selectedPlan, pciPreparation.selectionData, estimate, surgeryView[0], surgeryReservations.data?.reservations.some(item => item.requestId === selectedPlan.id && item.status === 'reserved') ?? false)
+      const stage = selectedPlan.status === 'standby-pci' && selectedPlan.adHocPci?.status === 'converted' ? 'ad-hoc-pci' : 'primary'
+      const estimate = pciPreparation.estimatesData?.estimates.find(item => item.requestId === selectedPlan.id && (item.surgeryStage ?? 'primary') === stage)
+      const state = surgeryPreparation(selectedPlan, pciPreparation.selectionData, estimate, surgeryView[0], surgeryReservations.data?.reservations.some(item => item.requestId === selectedPlan.id && (item.surgeryStage ?? 'primary') === stage && item.status === 'reserved') ?? false)
       const label = surgeryStepLabel(state.step, locale)
       return state.step === 'nurse' ? label : `${t('轮到你：', 'Your turn: ')}${label}`
     }
