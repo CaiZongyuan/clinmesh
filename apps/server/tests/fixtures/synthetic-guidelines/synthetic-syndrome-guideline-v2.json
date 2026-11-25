@@ -1,0 +1,47 @@
+{
+  "disclaimerZh": "合成测试原件，仅用于合成测试，不冒充真实临床指南",
+  "passages": [
+    {
+      "conceptCodes": [
+        "coronary-artery-disease",
+        "syn-syndrome-dx"
+      ],
+      "locator": "PDF 物理第 35 页",
+      "page": 35,
+      "text": "In patients undergoing PCI, new-generation DES should be used in preference to BMS. Synthetic v2 test passage; evaluate bleeding and stent thrombosis risk.",
+      "topicIds": [
+        "syn-pci-guidance-card"
+      ]
+    },
+    {
+      "conceptCodes": [
+        "coronary-artery-disease",
+        "syn-syndrome-dx"
+      ],
+      "locator": "PDF 物理第 36 页",
+      "page": 36,
+      "text": "OCT is a reasonable alternative, except in ostial left main disease.",
+      "topicIds": [
+        "syn-pci-guidance-card"
+      ]
+    },
+    {
+      "conceptCodes": [
+        "89579-7",
+        "2160-0"
+      ],
+      "locator": "PDF 物理第 37 页",
+      "page": 37,
+      "text": "For patients with elevated high-sensitivity cardiac troponin I (hs-cTnI), serial monitoring and renal creatinine baseline verification are recommended.",
+      "topicIds": [
+        "syn-pci-guidance-card"
+      ]
+    }
+  ],
+  "publisher": "ClinMesh 合成测试指南机构",
+  "sha256": "05aff942d6ae5643b16d7c13d509b9b7ee7932672247158c28f8e720ba8d3537",
+  "sourceId": "synthetic-syndrome-guideline",
+  "syntheticTestMarker": "SYNTHETIC_TEST_GUIDELINE_NOT_CLINICAL",
+  "title": "合成测试综合征诊疗指导意见（测试版 v2）",
+  "version": "2.0.0"
+}

@@ -101,7 +101,7 @@ export function resolveKnowledgeDisplayStage(status: KnowledgePublicationStatus)
   return '未发布'
 }
 
-function normalizeAnchorText(text: string): string {
+export function normalizeAnchorText(text: string): string {
   return text
     .replace(/([a-z])-\r?\n([a-z])/g, '$1$2')
     .replace(/[\u2010-\u2015\u2212]/g, '-')

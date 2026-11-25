@@ -27,6 +27,7 @@ import { ConceptVocabularyError } from '@clinmesh/core/concept-vocabulary'
 import { DiseasePackValidationError } from '@clinmesh/core/disease-pack'
 import { KnowledgeClaimError } from '@clinmesh/core/knowledge-claims'
 import { DiseasePackRuntimeError } from './application/disease-pack-runtime-service.ts'
+import { KnowledgePipelineError } from './application/knowledge-pipeline-service.ts'
 import { KnowledgeSemanticError } from './application/knowledge-semantic-service.ts'
 import { UnknownGuidelineTopicError } from './application/guideline-topic-registry.ts'
 import { UnknownOrderSetTemplateError } from './application/order-set-template-registry.ts'
@@ -365,6 +366,7 @@ function apiErrorResponse(
       || error instanceof ClinicalFactLedgerError
       || error instanceof LocalSourceIngestionError
       || error instanceof DiseasePackRuntimeError
+      || error instanceof KnowledgePipelineError
       || error instanceof KnowledgeSemanticError
       || error instanceof UnknownGuidelineTopicError
       || error instanceof UnknownOrderSetTemplateError
@@ -394,7 +396,7 @@ function apiErrorResponse(
       error.code,
       error.message,
       error instanceof WorkflowError ? error.conflict : undefined,
-      error instanceof WorkflowError || error instanceof InpatientError || error instanceof DiseasePackRuntimeError || error instanceof KnowledgeSemanticError ? error.reason : undefined,
+      error instanceof WorkflowError || error instanceof InpatientError || error instanceof DiseasePackRuntimeError || error instanceof KnowledgePipelineError || error instanceof KnowledgeSemanticError ? error.reason : undefined,
       error instanceof WorkflowError || error instanceof InpatientError ? error.clinicalQuality : undefined,
     ), error.status)
   }
@@ -2355,6 +2357,66 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           await actor(context),
           context.req.query(),
         ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    const unwrapOfflineBody = (raw: unknown): unknown => {
+      if (
+        raw !== null
+        && typeof raw === 'object'
+        && !Array.isArray(raw)
+        && 'input' in raw
+        && Object.keys(raw).every(key => key === 'input' || key === 'expectedVersions')
+      ) {
+        return (raw as { input: unknown }).input
+      }
+      return raw
+    }
+    app.post('/api/his/v1/offline/knowledge-claims/draft-pipeline', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const rawBody = unwrapOfflineBody(await context.req.json())
+        return context.json(workflow.knowledgePipeline.runDraftPipeline(await actor(context), rawBody))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/offline/guidelines/diff-report', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const rawBody = unwrapOfflineBody(await context.req.json())
+        return context.json(workflow.knowledgePipeline.buildGuidelineDiffReport(await actor(context), rawBody))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/offline/guidelines/adjudicate-conflict', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const rawBody = unwrapOfflineBody(await context.req.json())
+        return context.json(workflow.knowledgePipeline.adjudicateGuidelineConflict(await actor(context), rawBody))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/offline/concept-mappings/impact-report', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const rawBody = unwrapOfflineBody(await context.req.json())
+        return context.json(workflow.knowledgePipeline.buildConceptMappingImpactReport(
+          await actor(context),
+          rawBody,
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/offline/guidelines/search', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const rawBody = unwrapOfflineBody(await context.req.json())
+        return context.json(workflow.knowledgePipeline.searchGuidelinesWithSynonyms(await actor(context), rawBody))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
