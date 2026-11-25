@@ -770,6 +770,7 @@ export function createSurfaceVoiceInput(
   let earsRemote: DshEarsRemotePort | undefined
   let settings: EarsSettings = defaultSettings()
   let settingsLoaded = false
+  let settingsAvailable = true
   let backends: readonly AsrBackendInfo[] = []
   let whisperState: WhisperModelState | undefined
   let phase: WebSurfaceVoicePhase = 'idle'
@@ -836,12 +837,16 @@ export function createSurfaceVoiceInput(
   const buildSnapshot = (): WebSurfaceVoiceSnapshot => {
     const installed = readRemote() !== undefined
     const chinese = getLocale() === 'zh-CN'
-    const unavailableReason = installed && settingsLoaded
-      ? resolveUnavailableReason(settings, backends, whisperState, browserCaps(), chinese)
-      : undefined
+    const unavailableReason = !installed
+      ? undefined
+      : !settingsAvailable
+        ? (chinese ? '语音设置暂不可用，请稍后重试或检查 DSH 设置 → dsh-ears' : 'Voice settings are temporarily unavailable. Retry or check DSH Settings → dsh-ears.')
+        : settingsLoaded
+          ? resolveUnavailableReason(settings, backends, whisperState, browserCaps(), chinese)
+          : undefined
     return {
       installed,
-      ready: installed && settingsLoaded && unavailableReason === undefined,
+      ready: installed && settingsAvailable && settingsLoaded && unavailableReason === undefined,
       phase,
       ...(unavailableReason === undefined ? {} : { unavailableReason }),
       ...(errorText === undefined ? {} : { error: errorText }),
@@ -1025,8 +1030,16 @@ export function createSurfaceVoiceInput(
       if (unwrappedSettings.ok) {
         const parsed = earsSettingsViewSchema.safeParse(unwrappedSettings.value)
         if (parsed.success) {
-          settings = parsed.data.settings
-          settingsLoaded = true
+          if (parsed.data.available) {
+            settings = parsed.data.settings
+            settingsAvailable = true
+            settingsLoaded = true
+          } else {
+            // Do not adopt fallback settings (e.g. web-speech) when host settings are unavailable.
+            settingsAvailable = false
+            settingsLoaded = false
+            whisperState = undefined
+          }
         }
       }
       const unwrappedBackends = unwrapRemoteResult(rawBackends)
@@ -1034,7 +1047,7 @@ export function createSurfaceVoiceInput(
         const parsed = z.array(asrBackendInfoSchema).safeParse(unwrappedBackends.value)
         if (parsed.success) backends = parsed.data
       }
-      if (settings.asrBackend === 'local-whisper' && typeof remote.getWhisperModelState === 'function') {
+      if (settingsAvailable && settingsLoaded && settings.asrBackend === 'local-whisper' && typeof remote.getWhisperModelState === 'function') {
         const rawWhisper = await remote.getWhisperModelState(settings.localWhisperModel)
         if (disposed) return
         const unwrappedWhisper = unwrapRemoteResult(rawWhisper)
@@ -1322,6 +1335,7 @@ export function createSurfaceVoiceInput(
   const stopRealtimeRecording = async (capturedEpoch: number) => {
     const handle = realtimeHandle
     const sessionId = realtimeSessionId
+    const streamAbort = realtimeStreamAbort
     const target = activeTarget
     const currentSettings = realtimeSettingsSnapshot ?? settings
     const remote = readRemote()
@@ -1332,11 +1346,16 @@ export function createSurfaceVoiceInput(
     setPhase('transcribing')
     let stopFallbackTimer: ReturnType<typeof setTimeout> | undefined
     try {
+      const stopPromise = handle.stop()
+      // Avoid unhandled rejection if stopPromise rejects after the timeout branch wins the race.
+      void stopPromise.catch(() => undefined)
       await Promise.race([
-        handle.stop(),
+        stopPromise,
         new Promise<void>(resolve => {
           stopFallbackTimer = setTimeout(() => {
             stopFallbackTimer = undefined
+            // Abort any stalled sendRealtimeAudio RPC before calling finishRealtime/cancelRealtime.
+            streamAbort?.abort()
             handle.abort()
             resolve()
           }, REALTIME_STOP_TIMEOUT_MS)
@@ -1376,12 +1395,13 @@ export function createSurfaceVoiceInput(
       failVoice(getLocale() === 'zh-CN' ? '实时语音转写失败，请重试' : 'Realtime transcription failed. Please retry.', capturedEpoch)
     } finally {
       if (stopFallbackTimer !== undefined) clearTimeout(stopFallbackTimer)
+      streamAbort?.abort()
       if (realtimeHandle === handle) {
         realtimeHandle = undefined
         realtimeStopping = false
       }
       if (realtimeSessionId === sessionId) realtimeSessionId = undefined
-      realtimeStreamAbort = undefined
+      if (realtimeStreamAbort === streamAbort) realtimeStreamAbort = undefined
       realtimeSettingsSnapshot = undefined
       if (activeAbort === controller) activeAbort = undefined
       void remote.cancelRealtime(sessionId).catch(() => undefined)
@@ -1520,6 +1540,7 @@ export function createSurfaceVoiceInput(
         if (earsRemote === candidate) {
           earsRemote = undefined
           settingsLoaded = false
+          settingsAvailable = true
           whisperState = undefined
           cancel()
           emit()

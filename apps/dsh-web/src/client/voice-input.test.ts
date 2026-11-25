@@ -776,4 +776,124 @@ describe('createSurfaceVoiceInput', () => {
       voice.dispose()
     }
   })
+
+  it('keeps the bridge unready and never falls back to web-speech when getSettings reports available: false', async () => {
+    let available = false
+    let backend = 'web-speech'
+    const remote = createFakeRemote({
+      getSettings: vi.fn(async () => ok({
+        available,
+        settings: makeSettings({ asrBackend: backend, cloudAsrProvider: 'bailian', polishingEnabled: false }),
+      })),
+    })
+    const fake = createFakeContext({ remote })
+    const speech = createFakeSpeechRecognition()
+    const voice = createSurfaceVoiceInput(fake.ctx, {
+      createSpeechRecognition: () => speech,
+      isMediaRecorderAvailable: () => true,
+    })
+    const toggle = vi.fn()
+    const unregister = voice.registerShortcutHandler({ shouldHandle: () => true, toggle })
+    try {
+      await vi.waitFor(() => expect(voice.getSnapshot().unavailableReason).toContain('语音设置暂不可用'))
+      expect(voice.getSnapshot().installed).toBe(true)
+      expect(voice.getSnapshot().ready).toBe(false)
+
+      // Must refuse to start fallback Web Speech and must not hijack shortcut
+      voice.start({ getDraft: () => '', setDraft: () => {} })
+      expect(speech.started).toBe(0)
+      expect(voice.getSnapshot().phase).toBe('idle')
+      const shortcutEvent = new KeyboardEvent('keydown', {
+        code: 'Space', key: ' ', ctrlKey: true, shiftKey: true, cancelable: true,
+      })
+      window.dispatchEvent(shortcutEvent)
+      expect(shortcutEvent.defaultPrevented).toBe(false)
+      expect(toggle).not.toHaveBeenCalled()
+
+      // Becomes ready once real configured backend is available
+      available = true
+      backend = 'cloud-openai'
+      fake.emitRemote('settings/document-updated')
+      await vi.waitFor(() => expect(voice.getSnapshot().ready).toBe(true))
+
+      // Temporarily unavailable settings again -> becomes unready instead of switching to web-speech fallback
+      available = false
+      backend = 'web-speech'
+      fake.emitRemote('settings/document-updated')
+      await vi.waitFor(() => expect(voice.getSnapshot().ready).toBe(false))
+      expect(voice.getSnapshot().unavailableReason).toContain('语音设置暂不可用')
+      voice.start({ getDraft: () => '', setDraft: () => {} })
+      expect(speech.started).toBe(0)
+    } finally {
+      unregister()
+      voice.dispose()
+    }
+  })
+
+  it('aborts stalled sendRealtimeAudio RPC before calling finishRealtime when stop() times out', async () => {
+    let stalledSignal: AbortSignal | undefined
+    let finishSawAbortedStream = false
+    let pendingChunkPromise: Promise<void> | undefined
+    const remote = createFakeRemote({
+      getSettings: vi.fn(async () => ok({
+        available: true,
+        settings: makeSettings({
+          asrBackend: 'cloud-openai',
+          cloudAsrProvider: 'deepgram',
+          cloudAsrDeepgramService: 'realtime',
+          polishingEnabled: false,
+        }),
+      })),
+      sendRealtimeAudio: vi.fn((_id, _audio, signal) => new Promise((_resolve, reject) => {
+        stalledSignal = signal
+        signal?.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'))
+        }, { once: true })
+      })),
+      finishRealtime: vi.fn(async () => {
+        finishSawAbortedStream = stalledSignal?.aborted === true
+        return ok({ status: 'ok', text: '最终实时转写' })
+      }),
+    })
+    const fake = createFakeContext({ remote })
+    let emitChunk!: (base64: string) => Promise<void>
+    const handle: RealtimeCaptureHandle = {
+      start: cb => { emitChunk = cb },
+      stop: vi.fn(async () => {
+        if (pendingChunkPromise !== undefined) await pendingChunkPromise
+      }),
+      abort: vi.fn(),
+    }
+    const voice = createSurfaceVoiceInput(fake.ctx, {
+      isRealtimeCaptureAvailable: () => true,
+      createRealtimeCapture: async () => handle,
+    })
+    try {
+      await vi.waitFor(() => expect(voice.getSnapshot().ready).toBe(true))
+      let draft = ''
+      voice.start({ getDraft: () => draft, setDraft: next => { draft = next } })
+      await vi.waitFor(() => expect(voice.getSnapshot().phase).toBe('recording'))
+
+      pendingChunkPromise = emitChunk('UENN')
+      await vi.waitFor(() => expect(stalledSignal).toBeDefined())
+      expect(stalledSignal?.aborted).toBe(false)
+
+      vi.useFakeTimers()
+      voice.stop()
+      expect(voice.getSnapshot().phase).toBe('transcribing')
+
+      // Advance past REALTIME_STOP_TIMEOUT_MS (4000ms)
+      await vi.advanceTimersByTimeAsync(4_000)
+      expect(voice.getSnapshot().phase).toBe('idle')
+
+      expect(stalledSignal?.aborted).toBe(true)
+      expect(finishSawAbortedStream).toBe(true)
+      expect(handle.abort).toHaveBeenCalledOnce()
+      expect(remote.finishRealtime).toHaveBeenCalledWith('rt-1', expect.any(AbortSignal))
+      expect(remote.cancelRealtime).toHaveBeenCalledWith('rt-1')
+      expect(draft).toBe('最终实时转写')
+    } finally {
+      voice.dispose()
+    }
+  })
 })
