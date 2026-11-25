@@ -198,7 +198,7 @@ test('提交中主操作不可编辑，修订被其他请求推进后原选择�
     const requested = await post(`${path}/surgeries/request`, {
       encounterVersion: version, procedureId: procedure.id, catalogVersion: procedure.version,
       surgeryType: 'elective', locationId: 'location-operating-center',
-      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general', preopOrderPolicy: 'continue-active',
       plannedFor: '2026-08-24T09:00:00+08:00', reason: '合成主操作选择示教',
     })
     expect(requested.status()).toBe(200)

@@ -271,7 +271,7 @@ it('PCI 准备行逐项说明未就绪内容，手术助手计数只包含已带
     if (path.endsWith('/surgeries')) return Response.json({
       admissionId: admission.id, encounterVersion: '2', virtualTime: scenarioState.virtualTime,
       requests: [{
-        id: 'pci-plan', admissionId: admission.id, version: 1, status: 'requested', plannedProcedure, plannedFor: scenarioState.virtualTime,
+        id: 'pci-plan', admissionId: admission.id, version: 1, status: 'requested', plannedProcedure, plannedFor: scenarioState.virtualTime, preopOrderPolicy: 'continue-active',
         requestedAt: scenarioState.virtualTime, requestedBy: session.actor.actorId, organizationId: 'organization-inpatient', reason: '合成支架治疗计划'
       }], executions: [], inProgress: []
     })

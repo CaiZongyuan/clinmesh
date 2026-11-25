@@ -13,8 +13,10 @@ import {
   anesthesiaMethods,
   inpatientSurgeryCatalogSchema,
   inpatientSurgerySchema,
+  preopOrderPolicies,
   surgeryTypes,
   type AnesthesiaMethod,
+  type PreopOrderPolicy,
   type SurgeryLocationId,
   type SurgeryType,
   type inpatientSurgeryExecutionSchema,
@@ -23,10 +25,13 @@ import {
 import {
   formatAnesthesiaMethod,
   formatPractitionerDisplay,
+  formatPreopOrderPolicy,
   formatSurgeryType,
   recommendedAnesthesiaMethod,
+  recommendedPreopOrderPolicy,
   recommendedSurgeryLocationId,
 } from '@clinmesh/core/inpatient-surgery-consent'
+import { InpatientPostopComposer } from './inpatient-postop-composer.tsx'
 import { SurgeryNoticeSummaryList, SurgicalConsentPreviewButton, SurgicalConsentSignDialog, type NoticeSummaryItem } from './inpatient-surgery-consent.tsx'
 import { inpatientMaterialReservationListSchema, type InpatientMaterialReservation } from '@clinmesh/contracts/inpatient-drg-simulation'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
@@ -100,6 +105,8 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const [locationId, setLocationId] = useState<SurgeryLocationId | null>(null), [locationEdited, setLocationEdited] = useState(false)
   const [surgeonId, setSurgeonId] = useState<string | null>(null), [assistantId, setAssistantId] = useState<string | null>(null)
   const [anesthesiaMethod, setAnesthesiaMethod] = useState<AnesthesiaMethod | null>(null), [anesthesiaEdited, setAnesthesiaEdited] = useState(false)
+  const [preopOrderPolicy, setPreopOrderPolicy] = useState<PreopOrderPolicy | null>(null), [preopPolicyEdited, setPreopPolicyEdited] = useState(false)
+  const [postopOpen, setPostopOpen] = useState(false)
   const [preparationSlot, setPreparationSlot] = useState<HTMLDivElement | null>(null)
   const [requestOpen, setRequestOpen] = useState(false), [otherPlansOpen, setOtherPlansOpen] = useState(false)
   const [completedHistoryOpen, setCompletedHistoryOpen] = useState(false), [cancelledPlansOpen, setCancelledPlansOpen] = useState(false)
@@ -122,10 +129,11 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     setLocationId(null); setLocationEdited(false)
     setSurgeonId(null); setAssistantId(null)
     setAnesthesiaMethod(null); setAnesthesiaEdited(false)
+    setPreopOrderPolicy(null); setPreopPolicyEdited(false)
   }
   useLayoutEffect(() => {
     if (requestOwner.current !== requestOwnerKey) {
-      setRequestOpen(false); setCorrectionOpen(false); setCorrectionVisited(false)
+      setRequestOpen(false); setCorrectionOpen(false); setCorrectionVisited(false); setPostopOpen(false)
       setCompletedHistoryOpen(false); setCancelledPlansOpen(false)
       resetRequestDraft()
       setStep1ConfirmedPlanId(null); setEditingStep1(false); setEditingStep2(false)
@@ -134,7 +142,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     }
     requestOwner.current = requestOwnerKey
   }, [requestOwnerKey])
-  useLayoutEffect(() => { if (!active) { setRequestOpen(false); setCorrectionOpen(false) } }, [active])
+  useLayoutEffect(() => { if (!active) { setRequestOpen(false); setCorrectionOpen(false); setPostopOpen(false) } }, [active])
   const blocked = write.blocked || admission.status !== 'admitted'
   const procedure = catalog.data?.procedures.find(item => item.id === procedureId)
   const availableLocations = catalog.data?.locations ?? []
@@ -153,6 +161,8 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     ? preferredLocationId
     : (availableLocations[0]?.id ?? null)
   const effectiveAnesthesia: AnesthesiaMethod | null = anesthesiaMethod ?? (procedure ? recommendedAnesthesiaMethod(procedure) : null)
+  const effectivePreopOrderPolicy: PreopOrderPolicy = preopOrderPolicy
+    ?? (procedure ? recommendedPreopOrderPolicy(procedure, effectiveAnesthesia ?? undefined) : 'continue-active')
   const selectProcedure = (nextId: string | null) => {
     setProcedureId(nextId)
     const next = catalog.data?.procedures.find(item => item.id === nextId)
@@ -166,7 +176,9 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
             : (availableLocations[0]?.id ?? null),
         )
       }
-      if (!anesthesiaEdited) setAnesthesiaMethod(recommendedAnesthesiaMethod(next))
+      const nextAnesthesia = anesthesiaEdited && anesthesiaMethod ? anesthesiaMethod : recommendedAnesthesiaMethod(next)
+      if (!anesthesiaEdited) setAnesthesiaMethod(nextAnesthesia)
+      if (!preopPolicyEdited) setPreopOrderPolicy(recommendedPreopOrderPolicy(next, nextAnesthesia))
     }
   }
   const catalogUnavailable = catalog.isSuccess && (availableLocations.length === 0 || availablePractitioners.length === 0)
@@ -198,6 +210,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         surgeonPractitionerId: effectiveSurgeonId,
         ...(effectiveAssistantId === undefined ? {} : { assistantPractitionerId: effectiveAssistantId }),
         anesthesiaMethod: effectiveAnesthesia,
+        preopOrderPolicy: effectivePreopOrderPolicy,
         reason,
         ...(standbyAdHocPci && angiographyProcedureCodes.has(procedure.coding.code) ? { standbyAdHocPci: true } : {}),
         ...(clinicalOverride === undefined ? {} : { clinicalOverride }),
@@ -342,7 +355,21 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
                 <Field><FieldLabel htmlFor={`${formId}-location`}>{t('手术执行地点', 'Surgical location')}</FieldLabel><WorkspaceSelect id={`${formId}-location`} value={effectiveLocationId} items={availableLocations.map(item => ({ value: item.id, label: locale === 'zh-CN' ? item.name : item.nameEn }))} onValueChange={value => { if (value) { setLocationId(value as SurgeryLocationId); setLocationEdited(true) } }} /></Field>
                 <Field><FieldLabel htmlFor={`${formId}-surgeon`}>{t('主刀医师', 'Primary surgeon')}</FieldLabel><WorkspaceSelect id={`${formId}-surgeon`} value={effectiveSurgeonId} items={availablePractitioners.map(item => ({ value: item.id, label: formatPractitionerDisplay(item) }))} onValueChange={value => { setSurgeonId(value); if (value && value === assistantId) setAssistantId(null) }} /></Field>
                 <Field><FieldLabel htmlFor={`${formId}-assistant`}>{t('第一助手', 'First assistant')}</FieldLabel><WorkspaceSelect id={`${formId}-assistant`} value={effectiveAssistantId ?? NO_ASSISTANT_OPTION} items={[{ value: NO_ASSISTANT_OPTION, label: t('无（不设第一助手）', 'None') }, ...availablePractitioners.filter(item => item.id !== effectiveSurgeonId).map(item => ({ value: item.id, label: formatPractitionerDisplay(item) }))]} onValueChange={value => setAssistantId(value === NO_ASSISTANT_OPTION ? null : value)} /></Field>
-                <Field className="md:col-span-2"><FieldLabel htmlFor={`${formId}-anesthesia`}>{t('拟行麻醉方式', 'Planned anesthesia')}</FieldLabel><WorkspaceSelect id={`${formId}-anesthesia`} value={effectiveAnesthesia} items={anesthesiaMethods.map(code => ({ value: code, label: formatAnesthesiaMethod(code, locale) }))} onValueChange={value => { if (value) { setAnesthesiaMethod(value as AnesthesiaMethod); setAnesthesiaEdited(true) } }} /></Field>
+                <Field className="md:col-span-2"><FieldLabel htmlFor={`${formId}-anesthesia`}>{t('拟行麻醉方式', 'Planned anesthesia')}</FieldLabel><WorkspaceSelect id={`${formId}-anesthesia`} value={effectiveAnesthesia} items={anesthesiaMethods.map(code => ({ value: code, label: formatAnesthesiaMethod(code, locale) }))} onValueChange={value => { if (value) { const nextAnesthesia = value as AnesthesiaMethod; setAnesthesiaMethod(nextAnesthesia); setAnesthesiaEdited(true); if (!preopPolicyEdited && procedure) setPreopOrderPolicy(recommendedPreopOrderPolicy(procedure, nextAnesthesia)) } }} /></Field>
+                <Field className="md:col-span-2">
+                  <FieldLabel htmlFor={`${formId}-preop-policy`}>{t('术前长期医嘱停续策略', 'Pre-op long-term order policy')}</FieldLabel>
+                  <WorkspaceSelect
+                    id={`${formId}-preop-policy`}
+                    value={effectivePreopOrderPolicy}
+                    items={preopOrderPolicies.map(code => ({ value: code, label: formatPreopOrderPolicy(code, locale) }))}
+                    onValueChange={value => { if (value) { setPreopOrderPolicy(value as PreopOrderPolicy); setPreopPolicyEdited(true) } }}
+                  />
+                  <FieldDescription>
+                    {effectivePreopOrderPolicy === 'stop-on-completion'
+                      ? t('手术完成时同事务将术前有效长期医嘱转为待停嘱核对，医生可立即重整术后医嘱。', 'Completing surgery atomically marks active pre-op long-term orders stop-requested for postoperative reorganization.')
+                      : t('手术完成时保留术前有效长期医嘱继续执行，术后重整自动跳过已在用项目。', 'Active pre-op long-term orders continue after surgery; postoperative templates skip already-active items by default.')}
+                  </FieldDescription>
+                </Field>
                 {procedure && angiographyProcedureCodes.has(procedure.coding.code) ? (
                   <Field orientation="horizontal" className="items-start rounded-md border border-border bg-muted/20 px-3 py-2.5 md:col-span-2">
                     <Checkbox
@@ -464,6 +491,23 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
       const req = surgery.data?.requests.find(item => item.id === selectedCompletedExecution.requestId)
       if (!req) return null
       const correctionTrigger = <DialogTrigger render={<Button type="button" variant="outline" className="self-start" />}>{t('补登记与更正耗材', 'Add or correct materials')}</DialogTrigger>
+      const postopBanner = doctor && admission.status === 'admitted' && admission.recordStatus !== 'archived' && req.status !== 'standby-pci' ? (
+        <div role="region" aria-label={t('手术完成术后医嘱引导', 'Postoperative order guidance')} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-info/40 bg-info/5 px-3 py-2.5 text-sm">
+          <div className="min-w-0 flex-1">
+            <p className="font-medium text-foreground">
+              {req.preopOrderPolicy === 'stop-on-completion'
+                ? t('术前长期医嘱已按策略转入待停嘱，请立即开立术后医嘱重整', 'Pre-op long-term orders transitioned to stop-requested; reorganize postoperative orders now')
+                : t('手术已完成，可一键套用术后成套医嘱模板补充术后医嘱与复查', 'Surgery completed; apply the postoperative order set to add post-op orders and recheck tests')}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {t(`策略：${formatPreopOrderPolicy(req.preopOrderPolicy, locale)} · 所有新开立术后医嘱与复查将自动关联本次手术`, `Policy: ${formatPreopOrderPolicy(req.preopOrderPolicy, locale)} · new orders and tests auto-link to this procedure`)}
+            </p>
+          </div>
+          <Button type="button" size="sm" onClick={() => setPostopOpen(true)}>
+            {t('开立术后医嘱', 'Issue postoperative orders')}
+          </Button>
+        </div>
+      ) : null
       const currentMainId = inStayRecord.data?.snapshot.clinical.mainProcedureExecutionId ?? null
       const alreadyPrimary = currentMainId === selectedCompletedExecution.id
       const primaryBanner = showPrimaryCta ? (
@@ -511,7 +555,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         </div>
       ) : null
       return <><Dialog open={correctionOpen} pending={write.mutation.isPending} onOpenChange={open => { setCorrectionOpen(open); if (open) setCorrectionVisited(true) }}>
-        {doctor && showPrimaryDone ? <SurgeryDone admission={admission} request={req} execution={selectedCompletedExecution} angiographyReport={completedAngiographyReport} locale={locale} actions={correctionTrigger} footer={primaryBanner} /> : correctionTrigger}
+        {doctor && showPrimaryDone ? <SurgeryDone admission={admission} request={req} execution={selectedCompletedExecution} angiographyReport={completedAngiographyReport} locale={locale} guidance={postopBanner} actions={correctionTrigger} footer={primaryBanner} /> : <>{postopBanner}{correctionTrigger}</>}
         <DialogContent keepMounted={correctionVisited} className="sm:max-w-[800px]" showCloseButton={!write.mutation.isPending}>
           <DialogHeader><DialogTitle>{t('术后耗材补登记、更正与历史', 'Postoperative material addenda, corrections and history')}</DialogTitle><DialogDescription>{selectedCompletedExecution.actualProcedure.coding.display}</DialogDescription></DialogHeader>
           <div className="min-h-0 overflow-y-auto p-4">
@@ -528,7 +572,20 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
           <OrderComposerFooter><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>
         </DialogContent>
       </Dialog>
-      {doctor && showPrimaryDone ? <InpatientDrgReviewPanel key={requestOwnerKey} requestId={selectedCompletedExecution.requestId} admission={admission} session={session} locale={locale} write={write} active={active} compact showPrimaryAction onOpenRecord={target => onOpenStage?.(target)} /> : null}</>
+      {doctor && showPrimaryDone ? <InpatientDrgReviewPanel key={requestOwnerKey} requestId={selectedCompletedExecution.requestId} admission={admission} session={session} locale={locale} write={write} active={active} compact showPrimaryAction onOpenRecord={target => onOpenStage?.(target)} /> : null}
+      {doctor ? (
+        <InpatientPostopComposer
+          open={postopOpen && active}
+          onOpenChange={setPostopOpen}
+          active={active}
+          session={session}
+          admission={admission}
+          surgeries={completedExecutions}
+          initialSurgeryExecutionId={selectedCompletedExecution.id}
+          locale={locale}
+          write={write}
+        />
+      ) : null}</>
     })() : null}
     {(() => {
       const archivedCompleted = showPrimaryDone
@@ -729,7 +786,7 @@ function StandbyPciDecisionCard({ admission, doctor, row, cagExecution, report, 
   )
 }
 
-function SurgeryDone({ admission, request, execution, angiographyReport, locale, actions, footer }: { admission: InpatientAdmission; request: Request | undefined; execution: z.infer<typeof inpatientSurgeryExecutionSchema>; angiographyReport: InpatientAngiographyReport | undefined; locale: WorkspaceLocale; actions?: ReactNode; footer?: ReactNode }) {
+function SurgeryDone({ admission, request, execution, angiographyReport, locale, guidance, actions, footer }: { admission: InpatientAdmission; request: Request | undefined; execution: z.infer<typeof inpatientSurgeryExecutionSchema>; angiographyReport: InpatientAngiographyReport | undefined; locale: WorkspaceLocale; guidance?: ReactNode; actions?: ReactNode; footer?: ReactNode }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const rows = execution.materials.reduce<{ item: (typeof execution.materials)[number]['item']; quantity: number; amountFen: number }[]>((result, use) => {
     const row = result.find(item => item.item.id === use.item.id)
@@ -744,6 +801,7 @@ function SurgeryDone({ admission, request, execution, angiographyReport, locale,
     + (linkedNursing?.amountFen ?? 0)
   return <section aria-label={t('最终耗材', 'Final materials')} className="flex min-w-0 flex-col gap-2">
     <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{execution.actualProcedure.coding.display}</h4><span className="font-mono text-xs text-muted-foreground">{execution.actualProcedure.coding.code}</span>{execution.executionStage === 'ad-hoc-pci' ? <Badge variant="secondary">{t('同台转 PCI', 'Ad-hoc PCI')}</Badge> : null}<Badge variant="outline" className="text-success">{t('已完成', 'Completed')}</Badge><span className="flex-1" />{request ? <SurgicalConsentPreviewButton admission={admission} request={request} locale={locale} /> : null}{actions}</div>
+    {guidance}
     {request ? <div className="clinmesh-inpatient-summary"><SurgeryNoticeSummaryList row={request} locale={locale} includeProcedure={request.plannedProcedure.coding.code !== execution.actualProcedure.coding.code} /></div> : null}
     {angiographyReport && angiographyReport.status !== 'processing' ? <CoronaryAngiographyDisclosure report={angiographyReport} locale={locale} summary={t('冠脉造影与生理学报告', 'Coronary angiography & physiology report')} /> : null}
     <Table><TableHeader><TableRow><TableHead>{t('耗材', 'Material')}</TableHead><TableHead>{t('最终用量', 'Final quantity')}</TableHead><TableHead className="text-right">{t('费用', 'Charge')}</TableHead></TableRow></TableHeader>

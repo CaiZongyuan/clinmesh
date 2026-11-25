@@ -1157,7 +1157,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
     const angioProc = stay.catalog.procedures.find(item => item.coding.code === '88.5500')!
     const admBefore2 = await fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)
     const req2Resp = await parsePciResponse(inpatientSurgeryResponseSchema, await fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, {
-      anesthesiaMethod: 'local-infiltration',
+      anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       encounterVersion: admBefore2.admission.versionId,
       locationId: 'location-catheterization-lab',
       procedureId: angioProc.id,
@@ -1255,7 +1255,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
     const pciProc = surgeryCatalog.procedures.find(item => item.coding.code === '36.0700')!
     const surgeriesNow = await fixture.read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)
     const pciReqBlocked = await fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, {
-      anesthesiaMethod: 'local-infiltration',
+      anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       encounterVersion: surgeriesNow.encounterVersion,
       locationId: 'location-catheterization-lab',
       procedureId: pciProc.id,
@@ -1276,7 +1276,7 @@ describe('Two-tier clinical quality gates HTTP integration', () => {
     const createdPciReq = await parsePciResponse(
       inpatientSurgeryResponseSchema,
       await fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, {
-        anesthesiaMethod: 'local-infiltration',
+        anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
         clinicalOverride: pciOverride,
         encounterVersion: surgeriesNow.encounterVersion,
         locationId: 'location-catheterization-lab',

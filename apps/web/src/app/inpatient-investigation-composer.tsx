@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { z } from 'zod'
 import type { InpatientLaboratoryCategory } from '@clinmesh/contracts/his'
 import type { inpatientInvestigationCatalogSchema } from '@clinmesh/contracts/inpatient-investigations'
+import type { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
@@ -68,8 +69,8 @@ function selectNonOverlappingLaboratoryItems(
   return availableItems.filter(item => acceptedIds.has(item.id))
 }
 
-export function InpatientInvestigationComposer({ open, onOpenChange, items, locale, disabled, disabledReason, loading, error, onReload, draftKey, admissionId, encounterVersion, onIssue, onRecover }: {
-  open: boolean; onOpenChange(open: boolean): void; items: readonly CatalogItem[]; locale: WorkspaceLocale
+export function InpatientInvestigationComposer({ open, onOpenChange, items, surgeries = [], locale, disabled, disabledReason, loading, error, onReload, draftKey, admissionId, encounterVersion, onIssue, onRecover }: {
+  open: boolean; onOpenChange(open: boolean): void; items: readonly CatalogItem[]; surgeries?: readonly z.infer<typeof inpatientSurgerySchema>['executions'][number][]; locale: WorkspaceLocale
   disabled: boolean; disabledReason?: string | undefined; loading: boolean; error?: string | undefined; onReload(): void
   draftKey: string; admissionId: string; encounterVersion: string
   onIssue(attempt: InvestigationAttempt, isCurrent: () => boolean): Promise<unknown>; onRecover(attempt: InvestigationAttempt, isCurrent: () => boolean): Promise<unknown>
@@ -182,6 +183,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
       for (const row of recover ? [recover] : selected) {
         if (!active.current) break
         const attempt: InvestigationAttempt = row.attempt ?? { idempotencyKey: newIdempotencyKey(), input: { admissionId, encounterVersion, catalogVersion: row.item.version,
+          ...(row.surgeryExecutionId ? { surgeryExecutionId: row.surgeryExecutionId } : {}),
           selection: row.item.kind !== 'laboratory' ? { kind: row.item.kind, serviceId: row.item.id, indication: row.indication.trim() } : { kind: 'laboratory', catalogItemId: row.item.id, indicationCode: row.indicationCode } } }
         if (!update(row.id, { attempt, error: undefined })) break
         try {
@@ -283,6 +285,7 @@ export function InpatientInvestigationComposer({ open, onOpenChange, items, loca
                 {row.item.kind !== 'laboratory' ? <Input id={`${formId}-${row.id}`} disabled={locked || !!row.attempt} value={row.indication} maxLength={500} onChange={event => update(row.id, { indication: event.currentTarget.value, error: undefined })} />
                   : row.item.indicationCodes.length === 1 ? <div id={`${formId}-${row.id}`} className="flex h-8 items-center rounded-md border px-2.5 text-sm">{indicationLabel(row.item.indicationCodes[0]!, messages)}</div>
                     : <WorkspaceSelect id={`${formId}-${row.id}`} disabled={locked || !!row.attempt} value={row.indicationCode || null} onValueChange={value => update(row.id, { indicationCode: value ?? '', error: undefined })} items={row.item.indicationCodes.map(code => ({ value: code, label: indicationLabel(code, messages) }))} />}</Field>
+              {surgeries.length > 0 ? <Field><FieldLabel htmlFor={`${formId}-${row.id}-surgery`}>{t('术后复查关联手术', 'Postoperative procedure')}</FieldLabel><WorkspaceSelect id={`${formId}-${row.id}-surgery`} disabled={locked || !!row.attempt} value={row.surgeryExecutionId ?? ''} items={[{ value: '', label: t('不关联（普通检查）', 'None (regular investigation)') }, ...surgeries.map(item => ({ value: item.id, label: `${item.actualProcedure.coding.code} · ${item.actualProcedure.coding.display}` }))]} onValueChange={value => update(row.id, { surgeryExecutionId: value || undefined, error: undefined })} /></Field> : null}
               {!loading && error === undefined && problem(row) ? <p className="text-xs text-destructive">{problem(row)}</p> : null}
               {row.error ? <p role="alert" className="text-xs text-destructive">{typeof row.error === 'string' && zh ? row.error : <>
                   {getBatchFailureMessage(typeof row.error === 'string' ? undefined : row.error, locale)} · {row.attempt

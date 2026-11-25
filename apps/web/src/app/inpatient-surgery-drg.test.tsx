@@ -36,7 +36,7 @@ const procedure = {
   chargeDefinition: { id: 'charge-pci', priceFen: 320000, unit: '次', synthetic: true, trigger: 'execution' as const },
 }
 const plan = inpatientSurgeryRequestSchema.parse({
-  id: 'request-1', admissionId: admission.id, version: 3, status: 'ready', plannedProcedure: procedure, plannedFor: time,
+  id: 'request-1', admissionId: admission.id, version: 3, status: 'ready', plannedProcedure: procedure, plannedFor: time, preopOrderPolicy: 'continue-active',
   reason: '前降支近段狭窄介入治疗', requestedAt: time, requestedBy: 'doctor', organizationId: 'org-1',
   consentConfirmation: { actorId: 'doctor', practitionerRoleId: 'role-doctor', recordedAt: time, note: '患者及家属已签字' },
   preopCheck: { actorId: 'nurse', practitionerRoleId: 'role-nurse', recordedAt: time, note: '术前核对完成' },
@@ -80,6 +80,8 @@ it('完成手术弹窗填写最终总量、勾选释放余量并预览差额后�
         materialDeltaFen: 150000,
         procedureAmountFen: 320000,
         totalDeltaFen: 470000,
+        preopOrderPolicy: 'continue-active',
+        autoStopPreopOrders: [],
       })
     }
     if (init?.method === 'POST') {

@@ -10,7 +10,7 @@ import {
 } from '@clinmesh/contracts/clinical-scores'
 import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
 import { guidelineTopicQuerySchema } from '@clinmesh/contracts/guideline-topics'
-import { orderSetDraftQuerySchema, orderSetTemplateListQuerySchema } from '@clinmesh/contracts/order-set-templates'
+import { inpatientOrderSetDraftQuerySchema, orderSetDraftQuerySchema, orderSetTemplateListQuerySchema } from '@clinmesh/contracts/order-set-templates'
 import { inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgExplainInputSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionSaveInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -1955,8 +1955,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/order-set-drafts', async context => {
       try {
-        const query = orderSetDraftQuerySchema.parse(context.req.query())
-        return context.json(inpatient.workflow.orderSets.readInpatient(inpatient, await actor(context), context.req.param('admissionId'), query.templateId))
+        const query = inpatientOrderSetDraftQuerySchema.parse(context.req.query())
+        return context.json(inpatient.workflow.orderSets.readInpatient(inpatient, await actor(context), context.req.param('admissionId'), {
+          ...(query.surgeryExecutionId === undefined ? {} : { surgeryExecutionId: query.surgeryExecutionId }),
+          ...(query.templateId === undefined ? {} : { templateId: query.templateId }),
+        }))
       } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/diagnoses/confirm', async context => {

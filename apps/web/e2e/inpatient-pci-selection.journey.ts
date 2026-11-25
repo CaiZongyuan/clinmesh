@@ -13,7 +13,7 @@ export async function runPciSelectionJourney(page: Page, app: { origin: string; 
   const requested = inpatientSurgeryResponseSchema.parse(await (await s.api.post(`${s.path}/surgeries/request`, {
     encounterVersion: surgery.encounterVersion, procedureId: 'hospital-surgery-3', catalogVersion: 1,
     surgeryType: 'elective', locationId: 'location-catheterization-lab',
-    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     plannedFor: '2026-08-25T09:00:00+08:00', reason: '合成PCI参数关联计划',
   })).json())
   const requestId = requested.data.requests[0]!.id

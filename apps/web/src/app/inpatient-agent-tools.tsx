@@ -139,8 +139,8 @@ export function useInpatientAgentTools(input: Input) {
         'Read verified guideline topic excerpts, limitations, and patient indicator gaps for the current inpatient.'),
       'inpatient.clinical-quality.read': queryAction('inpatient.clinical-quality.read', '/clinical-quality', ['inpatient-doctor'], ['orders', 'surgery', 'discharge', 'record'],
         'Run read-only two-tier clinical quality preflight (inpatient-order, inpatient-pci-plan, or inpatient-discharge).'),
-      'inpatient.order-set-drafts.read': queryAction('inpatient.order-set-drafts.read', '/order-set-drafts', ['inpatient-doctor'], ['orders', 'investigations'],
-        'Read version-bound inpatient order-set candidate drafts screened against allergies, eGFR, and nursing vitals.'),
+      'inpatient.order-set-drafts.read': queryAction('inpatient.order-set-drafts.read', '/order-set-drafts', ['inpatient-doctor'], ['orders', 'investigations', 'surgery'],
+        'Read version-bound inpatient or postoperative order-set candidate drafts (optional surgeryExecutionId) screened against allergies, eGFR, vitals, and active orders.'),
       'inpatient.report.acknowledge.propose': {
         description: 'Prepare acknowledgement of the current inpatient report. Imaging requires an image actually displayed for the doctor.',
         parameters: parameters('inpatient.report.acknowledge.propose'),

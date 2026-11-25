@@ -13,7 +13,7 @@ import { equivalentMaterialSuggestions } from '@clinmesh/core/inpatient-equivale
 import { readInpatientCosts } from './inpatient-costs.ts'
 
 export const materialEstimateBasisSchema = z.object({
-  request: inpatientSurgeryRequestSchema.omit({ preopCheck: true, consentConfirmation: true }),
+  request: inpatientSurgeryRequestSchema.omit({ preopCheck: true, consentConfirmation: true, preopOrderPolicy: true }),
   diagnosis: inpatientDiagnosisSchema,
   investigations: inpatientInvestigationsSchema,
   candidates: z.array(inpatientMaterialEstimateCandidateSchema),
@@ -85,7 +85,7 @@ export function readMaterialEstimateBasis(
   }
   if (!supportsMaterialEstimate(code)) missing.push('本次术式尚无已核验耗材方案')
   for (const candidate of candidates.filter(item => item.selected)) if (candidate.eligibility === 'unavailable') missing.push(...candidate.missing)
-  const { preopCheck: _check, consentConfirmation: _consent, ...plan } = request
+  const { preopCheck: _check, consentConfirmation: _consent, preopOrderPolicy: _policy, ...plan } = request
   const estimate = materialEstimateBasisSchema.parse({ request: plan,
     diagnosis: owner.orders.diagnosis(context, admissionId), investigations: owner.investigations.read(context, admissionId), candidates, evidencePackage })
   const stored = z.object({ draft_json: z.string().nullable(), status: z.enum(['active', 'cancelled']) }).optional().parse(owner.database.driver.prepare(`

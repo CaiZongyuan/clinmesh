@@ -1,5 +1,10 @@
 import { z } from 'zod'
-import { inpatientSurgeryCompletionPreviewSchema, type SurgeryExecutionStage, type inpatientSurgeryCompletionReviewInputSchema,
+import {
+  inpatientSurgeryCompletionPreviewSchema,
+  type InpatientSurgeryAutoStopOrderPreview,
+  type PreopOrderPolicy,
+  type SurgeryExecutionStage,
+  type inpatientSurgeryCompletionReviewInputSchema,
   type inpatientSurgeryExecutionSchema, type inpatientSurgeryCatalogSchema, type inpatientMaterialItemSchema, type inpatientProcedureItemSchema } from '@clinmesh/contracts/inpatient-surgery'
 import type { InpatientMaterialReservationList } from '@clinmesh/contracts/inpatient-drg-simulation'
 import type { InpatientMaterialPlanBasis } from '@clinmesh/contracts/inpatient-material-plan'
@@ -28,7 +33,12 @@ export function planSurgeryCompletion(input: z.infer<typeof inpatientSurgeryComp
   reservations: InpatientMaterialReservationList, reservationItems: Record<string, z.infer<typeof inpatientMaterialItemSchema>>,
   charges: MaterialChargeBasis, context: Pick<ActorContext, 'workspaceId' | 'epoch' | 'actorId' | 'practitionerRoleId'>,
   planBasis?: InpatientMaterialPlanBasis,
-  options?: { executionStage?: SurgeryExecutionStage; sameSessionNursingIncluded?: boolean }) {
+  options?: {
+    executionStage?: SurgeryExecutionStage
+    sameSessionNursingIncluded?: boolean
+    preopOrderPolicy?: PreopOrderPolicy
+    autoStopPreopOrders?: InpatientSurgeryAutoStopOrderPreview[]
+  }) {
   const executionStage: SurgeryExecutionStage = options?.executionStage ?? execution.executionStage ?? 'primary'
   const sameSessionNursingIncluded = options?.sameSessionNursingIncluded === true
   const matchesStage = (item: InpatientMaterialReservationList['reservations'][number]) =>
@@ -136,6 +146,8 @@ export function planSurgeryCompletion(input: z.infer<typeof inpatientSurgeryComp
         amountFen: linked.priceFen,
       }
   const nursingAmountFen = linkedNursing?.amountFen ?? 0
+  const preopOrderPolicy: PreopOrderPolicy = options?.preopOrderPolicy ?? 'continue-active'
+  const autoStopPreopOrders = preopOrderPolicy === 'stop-on-completion' ? (options?.autoStopPreopOrders ?? []) : []
   const preview = inpatientSurgeryCompletionPreviewSchema.parse({
     fingerprint: canonicalJsonHash({
       input: { ...input, note: resolvedNote },
@@ -145,10 +157,13 @@ export function planSurgeryCompletion(input: z.infer<typeof inpatientSurgeryComp
       reservationItems,
       charges,
       context,
+      preopOrderPolicy,
+      autoStopPreopOrders,
       ...(sameSessionNursingIncluded ? { sameSessionNursingIncluded: true } : {}),
     }),
     materials, materialDeltaFen, procedureAmountFen, nursingAmountFen, linkedNursing,
     ...(sameSessionNursingIncluded ? { sameSessionNursingIncluded: true } : {}),
+    preopOrderPolicy, autoStopPreopOrders,
     totalDeltaFen: materialDeltaFen + procedureAmountFen + nursingAmountFen,
     retainedReservations,
   })

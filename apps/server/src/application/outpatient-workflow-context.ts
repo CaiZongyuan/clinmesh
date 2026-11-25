@@ -798,6 +798,7 @@ export interface OutpatientLaboratoryTransactionPort {
       expectedDraftVersion: number
       expectedVersions: Record<string, string>
       idempotencyKey: string
+      supportingInfo?: Array<{ reference: { reference: string } }>
     },
   ): {
     data: z.infer<typeof issueLaboratoryRequestResponseSchema.shape.data>
@@ -848,6 +849,7 @@ export interface ImagingWorkflowPort {
       expectedVersions: Record<string, string>
       idempotencyKey: string
       readyExamCodes: ReadonlySet<ImagingExamCode>
+      supportingInfo?: Array<{ reference: { reference: string } }>
     },
   ): {
     data: z.infer<typeof issueImagingRequestResponseSchema.shape.data>

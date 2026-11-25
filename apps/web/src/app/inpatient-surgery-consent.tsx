@@ -15,6 +15,7 @@ import {
   formatAnesthesiaMethod,
   formatConsentSignerRole,
   formatPractitionerDisplay,
+  formatPreopOrderPolicy,
   formatSurgeryType,
 } from '@clinmesh/core/inpatient-surgery-consent'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
@@ -87,6 +88,7 @@ export function SurgeryNoticeSummaryList({
     { label: t('手术执行地点', 'Surgical location'), value: row.location?.name ?? unrecorded },
     { label: t('主刀医师', 'Primary surgeon'), value: surgeonDisplay },
     { label: t('拟行麻醉方式', 'Planned anesthesia'), value: row.anesthesiaMethod ? formatAnesthesiaMethod(row.anesthesiaMethod, locale) : unrecorded },
+    { label: t('术前医嘱策略', 'Pre-op order policy'), value: formatPreopOrderPolicy(row.preopOrderPolicy, locale) },
     ...extraItems,
     { label: t('申请理由', 'Request reason'), value: row.reason },
   ]

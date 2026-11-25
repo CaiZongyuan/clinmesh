@@ -38,6 +38,7 @@ import {
   inpatientSurgerySchema,
   inpatientSurgeryStartInputSchema,
   inpatientSurgerySupplementMaterialInputSchema,
+  preopOrderPolicySchema,
   surgeryExecutionStageSchema,
   surgeryTypeSchema,
   type InpatientBaseStockMedication,
@@ -373,6 +374,7 @@ export class InpatientSurgery {
         ...(row.surgeon_json === null ? {} : { surgeon: JSON.parse(row.surgeon_json) }),
         ...(row.assistant_json === null ? {} : { assistant: JSON.parse(row.assistant_json) }),
         ...(row.anesthesia_method === null ? {} : { anesthesiaMethod: row.anesthesia_method }),
+        preopOrderPolicy: row.preop_order_policy,
         ...(row.standby_ad_hoc_pci === 1 ? { standbyAdHocPci: true } : {}),
         ...(row.ad_hoc_pci_json === null ? {} : { adHocPci: JSON.parse(row.ad_hoc_pci_json) }),
         ...(row.standby_finalization_json === null ? {} : { standbyFinalization: JSON.parse(row.standby_finalization_json) }),
@@ -536,11 +538,11 @@ export class InpatientSurgery {
         : { effects: [] }
       this.owner.database.driver.prepare(`INSERT INTO inpatient_surgery_request(
         workspace_id,epoch,request_id,admission_id,status,surgery_type,planned_procedure_json,planned_for,
-        location_json,surgeon_json,assistant_json,anesthesia_method,standby_ad_hoc_pci,reason,requested_at,requested_by,organization_id
-      ) VALUES(?,?,?,?,'requested',?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        location_json,surgeon_json,assistant_json,anesthesia_method,preop_order_policy,standby_ad_hoc_pci,reason,requested_at,requested_by,organization_id
+      ) VALUES(?,?,?,?,'requested',?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
         context.workspaceId, context.epoch, id, admission.id, input.surgeryType, JSON.stringify(item), input.plannedFor,
         JSON.stringify(location), JSON.stringify(surgeon), assistant ? JSON.stringify(assistant) : null, input.anesthesiaMethod,
-        standbyAdHocPci ? 1 : 0, input.reason, now, context.actorId, admission.organizationId,
+        input.preopOrderPolicy, standbyAdHocPci ? 1 : 0, input.reason, now, context.actorId, admission.organizationId,
       )
       this.owner.fhir.create(context, {
         resourceType: 'ServiceRequest',
@@ -553,6 +555,7 @@ export class InpatientSurgery {
           surgeon,
           assistant,
           anesthesiaMethod: input.anesthesiaMethod,
+          preopOrderPolicy: input.preopOrderPolicy,
           ...(standbyAdHocPci ? { standbyAdHocPci: true } : {}),
         }),
         code: { concept: { coding: [clinicalCoding(item.coding)], text: item.coding.display } },
@@ -848,6 +851,20 @@ export class InpatientSurgery {
         this.owner.guidelineAdvice.cancel(context, input.admissionId, row.request_id)
       }
       this.updateRequestProjection(context, row.request_id, 'completed', effects, finalNote)
+      if (row.preop_order_policy === 'stop-on-completion') {
+        const primaryExecution = this.executionForStage(context, row.request_id, 'primary')
+        const procedureDisplay = primaryExecution
+          ? inpatientProcedureItemSchema.parse(JSON.parse(primaryExecution.actual_procedure_json)).coding.display
+          : inpatientProcedureItemSchema.parse(JSON.parse(row.planned_procedure_json)).coding.display
+        this.owner.orders.requestStopForSurgeryCompletion(
+          context,
+          row.admission_id,
+          row.request_id,
+          primaryExecution?.execution_id ?? row.request_id,
+          procedureDisplay,
+          effects,
+        )
+      }
       return { data: this.read(context, input.admissionId), effects }
     })
   }
@@ -1146,10 +1163,21 @@ export class InpatientSurgery {
     const sameSessionNursingIncluded = stage === 'ad-hoc-pci'
       && linked !== undefined
       && this.#primaryHasBilledNursingService(context, input.requestId, linked.serviceId)
+    const willEnterStandbyPci = stage === 'primary'
+      && request.standby_ad_hoc_pci === 1
+      && isCoronaryAngiographyProcedureCode(execution.actualProcedure.coding.code)
+    const autoStopPreopOrders = !willEnterStandbyPci && request.preop_order_policy === 'stop-on-completion'
+      ? this.owner.orders.previewAutoStopPreopOrders(context, input.admissionId, input.requestId)
+      : []
     return planSurgeryCompletion(input, execution, plannedProcedure, catalog, this.owner.drg.reservations(context, input.admissionId), reservationItems, charges,
       { workspaceId: context.workspaceId, epoch: context.epoch, actorId: context.actorId, practitionerRoleId: context.practitionerRoleId! },
       this.owner.materialPlans.forRequestFacts(context, input.admissionId, input.requestId, stage),
-      { executionStage: stage, sameSessionNursingIncluded })
+      {
+        executionStage: stage,
+        sameSessionNursingIncluded,
+        preopOrderPolicy: request.preop_order_policy,
+        autoStopPreopOrders,
+      })
   }
   private readyRequest(context: ActorContext, input: { admissionId: string; requestId: string; expectedRequestVersion: number }) {
     this.owner.assertNotArchived(context, input.admissionId)
@@ -1288,6 +1316,16 @@ export class InpatientSurgery {
     effects.push({ kind: 'updated', reference: `InpatientSurgeryRequest/${request.request_id}`, versionId: String(request.version + 1) })
     if (!enterStandbyPci) {
       this.updateRequestProjection(context, request.request_id, 'completed', effects)
+      if (request.preop_order_policy === 'stop-on-completion') {
+        this.owner.orders.requestStopForSurgeryCompletion(
+          context,
+          request.admission_id,
+          request.request_id,
+          execution.execution_id,
+          actual.coding.display,
+          effects,
+        )
+      }
     }
     this.owner.angiography.schedule(context, request.admission_id, execution.execution_id, transaction)
   }
@@ -1518,6 +1556,7 @@ const requestRowSchema = z.object({ request_id: z.string(), admission_id: z.stri
   surgeon_json: z.string().nullable().default(null),
   assistant_json: z.string().nullable().default(null),
   anesthesia_method: anesthesiaMethodSchema.nullable().default(null),
+  preop_order_policy: preopOrderPolicySchema.default('continue-active'),
   standby_ad_hoc_pci: z.union([z.literal(0), z.literal(1)]).default(0),
   ad_hoc_pci_json: z.string().nullable().default(null),
   standby_finalization_json: z.string().nullable().default(null),

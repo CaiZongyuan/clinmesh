@@ -175,6 +175,7 @@ const readyRequest = inpatientSurgeryRequestSchema.parse({
   status: 'ready',
   plannedProcedure: angioProc,
   plannedFor: '2026-11-24T10:00:00+08:00',
+  preopOrderPolicy: 'continue-active',
   reason: '合成冠脉造影准备',
   requestedAt: '2026-11-24T08:00:00+08:00',
   requestedBy: 'inpatient-doctor',
@@ -337,6 +338,8 @@ it('分步术中登记台内基数药、完术预览展示联动护理费，且�
             amountFen: 8000,
           },
           totalDeltaFen: 88000,
+          preopOrderPolicy: 'continue-active',
+          autoStopPreopOrders: [],
         })
       }
       if (init?.method === 'POST') {

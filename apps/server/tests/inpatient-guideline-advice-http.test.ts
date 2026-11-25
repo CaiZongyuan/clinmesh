@@ -186,7 +186,7 @@ it.each(['report-draft', 'manual-confirmation'] as const)('指南只使用所属
   })
   const admission = await s.fixture.read('inpatient-doctor', s.stay.path, inpatientDetailSchema)
   const requested = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    anesthesiaMethod: 'local-infiltration',
+    anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     encounterVersion: admission.admission.versionId,
     locationId: 'location-catheterization-lab',
     procedureId: s.stay.procedure.id,
@@ -541,7 +541,7 @@ it('仅持有指南请求的窄Grant可显式准备，不能创建手术；撤�
   const catalog = await s.fixture.read('inpatient-doctor', '/api/his/v1/inpatient/surgery-catalog', inpatientSurgeryCatalogSchema)
   const procedure = catalog.procedures.find(item => item.id === s.stay.procedure.id)!
   const input = inpatientSurgeryRequestBodySchema.parse({
-    anesthesiaMethod: 'local-infiltration',
+    anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     encounterVersion: admission.admission.versionId,
     locationId: 'location-catheterization-lab',
     procedureId: procedure.id,
@@ -1080,7 +1080,7 @@ it('无 PCI 手术申请的内科住院可按专题完成术前水化、FFR > 0.
   const angioProc = surgCat.procedures.find(item => item.coding.code === '88.5500')!
   const admDetail = await s.fixture.read('inpatient-doctor', medicalStay.path, inpatientDetailSchema)
   const angioReq = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${medicalStay.path}/surgeries/request`, {
-    anesthesiaMethod: 'local-infiltration',
+    anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     catalogVersion: angioProc.version,
     encounterVersion: admDetail.admission.versionId,
     locationId: 'location-catheterization-lab',

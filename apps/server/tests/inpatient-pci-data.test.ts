@@ -270,7 +270,7 @@ describe('固定 PCI 数据公开 Command 与目录回读', () => {
     expect(charges.charges.filter(charge => charge.kind === 'medication')).toMatchObject([{ amountFen: 80 }])
     const currentClinical = inpatientFullClinicalResponseSchema.shape.data.parse(await (await s.request(doctor.cookie, `${path}/clinical`)).json())
     const requested = await s.request(doctor.cookie, `${path}/surgeries/request`, { encounterVersion: currentClinical.encounterVersion, procedureId: 'hospital-surgery-3', catalogVersion: 1,
-      surgeryType: 'elective', locationId: 'location-catheterization-lab', surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      surgeryType: 'elective', locationId: 'location-catheterization-lab', surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       plannedFor: s.owner.virtualTime(admin.context), reason: '合成择期单枚支架局部接入验证' })
     expect(requested.status).toBe(200)
     const surgery = inpatientSurgeryResponseSchema.parse(await requested.json()).data.requests[0]!

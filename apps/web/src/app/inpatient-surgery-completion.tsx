@@ -14,7 +14,9 @@ import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
 import { Input } from '@clinmesh/ui/components/input'
 import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
+import { formatPreopOrderPolicy } from '@clinmesh/core/inpatient-surgery-consent'
 import { evaluateCompletionNoteRequirement, isSamePlannedProcedure, resolveMaterialPlanBasis } from '@clinmesh/core/inpatient-surgery-notes'
+import { formatMedicationRoute } from '@clinmesh/core/medication-safety'
 import { completionQuantities, completionReviewNote } from './inpatient-surgery-notes.ts'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { apiGet, ApiClientError, apiMutation, getSession } from './api-client.ts'
@@ -205,6 +207,34 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
       {originalReservations.some(item => (remainingAfterCompletion(item, rows) ?? 0) > 0) && !editing ? <div className="flex flex-col gap-2 text-sm"><span>{t('未用的预留', 'Unused reservations')}</span><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" className={releases.length === 0 ? 'border-info bg-info/10 text-info' : undefined} aria-pressed={releases.length === 0} onClick={() => draft.save({ ...draft.value, releases: [] })}>{t('保留预留', 'Keep reservations')}</Button><Button type="button" variant="outline" className={releases.length > 0 ? 'border-info bg-info/10 text-info' : undefined} aria-pressed={releases.length > 0} onClick={() => draft.save({ ...draft.value, releases: originalReservations.filter(item => item.releaseReason == null && (remainingAfterCompletion(item, rows) ?? 0) > 0).map(item => ({ reservationId: item.id, expectedReservationVersion: item.version, display: item.materialDisplay })) })}>{t('释放预留', 'Release reservations')}</Button></div></div> : null}
       {reviewed && preview.data ? <section aria-label={t('本次差额', 'Differences')} className="flex flex-col gap-2 text-sm">
         <div className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums"><span>{t('耗材差额合计 ', 'Material difference ')}<b>{formatFen(preview.data.materialDeltaFen, locale)}</b></span><span>{t('术式费 ', 'Procedure fee ')}<b>{formatFen(preview.data.procedureAmountFen, locale)}</b></span>{preview.data.linkedNursing ? <span>{t(`术中专科护理（${preview.data.linkedNursing.display}） `, `Specialty nursing (${preview.data.linkedNursing.display}) `)}<b>{formatFen(preview.data.nursingAmountFen, locale)}</b></span> : preview.data.sameSessionNursingIncluded ? <span>{t('术中专科护理 ', 'Specialty nursing ')}<b>{t('已包含于同台造影阶段，不重复计收', 'Included in same-session angiography (no duplicate charge)')}</b></span> : null}<span>{t('本次新增费用 ', 'New charges ')}<b>{formatFen(preview.data.totalDeltaFen, locale)}</b></span></div>
+        {preview.data.preopOrderPolicy === 'stop-on-completion' ? (
+          <section aria-label={t('将自动转入待停嘱的术前长期医嘱', 'Pre-op long-term orders to auto-stop')} className="flex flex-col gap-1.5 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
+            <p className="font-medium text-foreground">
+              {stage === 'primary' && request.standbyAdHocPci
+                ? t('术前医嘱策略（术后自动停长嘱）：第一阶段造影完成后将进入同台 PCI 待决策态，待整台手术最终完成或收口后再自动停用术前长期医嘱', 'Pre-op order policy (stop-on-completion): stage-1 angiography enters standby-pci; pre-op long-term orders will be stopped when the session finalizes or completes')
+                : preview.data.autoStopPreopOrders.length > 0
+                  ? t(`术前医嘱策略（术后自动停长嘱）：确认完成手术后将同事务把以下 ${preview.data.autoStopPreopOrders.length} 条术前长期医嘱转为「待停嘱核对」`, `Pre-op order policy (stop-on-completion): confirming will mark ${preview.data.autoStopPreopOrders.length} active pre-op long-term orders stop-requested`)
+                  : t('术前医嘱策略：术后自动停术前长期医嘱（当前无在用术前长期医嘱）', 'Pre-op order policy: stop-on-completion (no active pre-op long-term orders)')}
+            </p>
+            {preview.data.autoStopPreopOrders.length > 0 ? (
+              <ul className="flex flex-col gap-1 text-muted-foreground">
+                {preview.data.autoStopPreopOrders.map(order => (
+                  <li key={order.orderId} className="flex flex-wrap items-baseline gap-1.5">
+                    <span className="font-medium text-foreground">{order.display}</span>
+                    {order.kind === 'medication' && order.doseText ? (
+                      <span>{order.doseText}{order.frequencyCode ? ` · ${order.frequencyCode}` : ''}{order.routeCode ? ` · ${formatMedicationRoute(order.routeCode, locale)}` : ''}</span>
+                    ) : null}
+                    <span>（{order.state === 'verified' ? t('已校对', 'Verified') : t('待校对', 'Awaiting verification')} → {t('待停嘱核对', 'Stop requested')}）</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            {t(`术前医嘱策略：${formatPreopOrderPolicy(preview.data.preopOrderPolicy, locale)}`, `Pre-op order policy: ${formatPreopOrderPolicy(preview.data.preopOrderPolicy, locale)}`)}
+          </p>
+        )}
         {editing ? <details open className="clinmesh-inpatient-disclosure"><summary>{t('费用差额与预留明细', 'Charge differences and reservation details')}</summary><div className="flex flex-col gap-1 p-2">      {preview.data.materials.map((row, index) => <div key={index} className="flex flex-col gap-1">
         {row.deltaQuantity !== 0 ? <p className="flex gap-3"><span className="flex-1">{row.item.display} {row.deltaQuantity > 0 ? t('补登', 'add') : t('冲减', 'reduce')} {Math.abs(row.deltaQuantity)} {row.item.chargeDefinition.unit}</span>{' '}<b className="tabular-nums">{formatFen(row.deltaFen, locale)}</b></p> : null}
         {rows[index] && (rows[index]!.priceFen !== row.item.chargeDefinition.priceFen || rows[index]!.unit !== row.item.chargeDefinition.unit)

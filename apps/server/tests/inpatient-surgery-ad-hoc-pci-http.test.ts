@@ -141,6 +141,7 @@ describe('同台冠脉造影直接转 PCI（Ad-hoc PCI）HTTP 与真实 SQLite �
           locationId: 'location-catheterization-lab',
           surgeonPractitionerId: 'practitioner-inpatient-doctor',
           anesthesiaMethod: 'local-infiltration',
+          preopOrderPolicy: 'continue-active',
           standbyAdHocPci: true,
           reason: '冠状动脉造影并备选同台介入治疗（必要时行 PCI）',
         }),
@@ -607,6 +608,7 @@ describe('同台冠脉造影直接转 PCI（Ad-hoc PCI）HTTP 与真实 SQLite �
       locationId: 'location-catheterization-lab',
       surgeonPractitionerId: 'practitioner-inpatient-doctor',
       anesthesiaMethod: 'local-infiltration',
+      preopOrderPolicy: 'continue-active',
       standbyAdHocPci: true,
       reason: '非造影术式错误开启同台备选',
     })
@@ -625,6 +627,7 @@ describe('同台冠脉造影直接转 PCI（Ad-hoc PCI）HTTP 与真实 SQLite �
           locationId: 'location-catheterization-lab',
           surgeonPractitionerId: 'practitioner-inpatient-doctor',
           anesthesiaMethod: 'local-infiltration',
+          preopOrderPolicy: 'continue-active',
           reason: '单纯诊断性冠脉造影',
         }),
       )
@@ -693,6 +696,7 @@ describe('同台冠脉造影直接转 PCI（Ad-hoc PCI）HTTP 与真实 SQLite �
           locationId: 'location-catheterization-lab',
           surgeonPractitionerId: 'practitioner-inpatient-doctor',
           anesthesiaMethod: 'local-infiltration',
+          preopOrderPolicy: 'continue-active',
           standbyAdHocPci: true,
           reason: '备选同台造影后仅保留造影分支验证',
         }),
@@ -799,6 +803,7 @@ describe('同台冠脉造影直接转 PCI（Ad-hoc PCI）HTTP 与真实 SQLite �
           locationId: 'location-catheterization-lab',
           surgeonPractitionerId: 'practitioner-inpatient-doctor',
           anesthesiaMethod: 'local-infiltration',
+          preopOrderPolicy: 'continue-active',
           standbyAdHocPci: true,
           reason: '临界病变 FFR>0.80 同台转 PCI 质控与放弃分支验证',
         }),
@@ -1039,7 +1044,7 @@ describe('同台冠脉造影直接转 PCI（Ad-hoc PCI）HTTP 与真实 SQLite �
         )
         .run(scope.workspaceId, scope.epoch, now)
 
-      expect(applyMigrations(db).applied).toEqual([migrationFile])
+      expect(applyMigrations(db).applied).toEqual([migrationFile, '0123_surgery-preop-policy-and-postop-investigations.sql'])
       expect(db.driver.pragma('foreign_key_check')).toEqual([])
 
       expect(

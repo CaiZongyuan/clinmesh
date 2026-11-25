@@ -1117,7 +1117,7 @@ it('岗位待办必须通过正式事实复查解决，人工处置不重跑同�
 it('术前冻结计划按选型确认身份及版本绑定原手术，不被同身份的新版本改指另一手术', async () => {
   const s = await setupPostoperativeAgent(), state = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgeryResponseSchema.shape.data)
   const requested = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    anesthesiaMethod: 'local-infiltration',
+    anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     encounterVersion: state.encounterVersion,
     locationId: 'location-catheterization-lab',
     procedureId: s.stay.procedure.id,
@@ -1162,7 +1162,7 @@ it('多台PCI仅参数确认时按各手术原确认汇总用量，不被最新�
   expect(originalUsage).toContainEqual(expect.objectContaining({ materialId: 'hospital-material-pci-guidewire',
     plannedQuantity: 1, actualQuantity: 2, excessQuantity: 1, usedFen: 40000, additionalFen: 20000 }))
   const requested = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    anesthesiaMethod: 'local-infiltration',
+    anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     encounterVersion: surgery.encounterVersion,
     locationId: 'location-catheterization-lab',
     procedureId: s.stay.procedure.id,
@@ -1629,7 +1629,7 @@ it('第二台PCI没有自己的冻结计划时使用本次参数，不继承第�
   expect(originalIssues).toHaveLength(3)
   const state = await s.fixture.read('inpatient-doctor', `${s.stay.path}/surgeries`, inpatientSurgeryResponseSchema.shape.data)
   const requested = await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    anesthesiaMethod: 'local-infiltration',
+    anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     encounterVersion: state.encounterVersion,
     locationId: 'location-catheterization-lab',
     procedureId: s.stay.procedure.id,

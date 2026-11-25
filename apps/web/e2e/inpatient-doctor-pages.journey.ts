@@ -23,7 +23,7 @@ export async function runInpatientDoctorPages(page: Page, app: { origin: string;
   const clinical = () => subject.api.get(`${subject.path}/clinical`).then(response => response.json()).then(value => inpatientFullClinicalSchema.parse(value))
   expect((await subject.api.post(`${subject.path}/surgeries/request`, { encounterVersion: (await clinical()).encounterVersion,
     procedureId: procedure.id, catalogVersion: procedure.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
-    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成六页结构验收计划' })).status()).toBe(200)
   expect((await subject.api.post(`${subject.path}/orders/issue`, { encounterVersion: (await clinical()).encounterVersion, duration: 'temporary',
     selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD', routeCode: 'PO' } })).status()).toBe(200)

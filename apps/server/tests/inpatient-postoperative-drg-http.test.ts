@@ -74,7 +74,7 @@ it('多个新完成操作的假想病组与支付参考一致时给共同预计�
   const first = await s.fixture.executePci(s.stay)
   const admission = await s.fixture.read('inpatient-doctor', s.stay.path, inpatientDetailSchema)
   expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    anesthesiaMethod: 'local-infiltration',
+    anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     encounterVersion: admission.admission.versionId,
     locationId: 'location-catheterization-lab',
     procedureId: s.stay.procedure.id,

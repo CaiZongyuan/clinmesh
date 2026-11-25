@@ -200,10 +200,10 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
   const common = { admissionId: 'synthetic-admission', requestId: 'synthetic-request', expectedRequestVersion: 4, executionId: 'synthetic-execution', note: '合成逐笔确认' }
   const { note: _omittedNote, ...routineCommon } = common
   const start = getHisOperation('inpatient.surgery.start')
-  expect(start.version).toBe(4)
+  expect(start.version).toBe(5)
   expect(start.input.safeParse({ admissionId: 'synthetic-admission', requestId: 'synthetic-request', expectedRequestVersion: 3, procedureId: 'hospital-surgery-5', catalogVersion: 1 }).success).toBe(true)
   const record = getHisOperation('inpatient.surgery.record-material')
-  expect(record.version).toBe(4)
+  expect(record.version).toBe(5)
   expect(record.input.safeParse({ ...common, material: { materialId: 'synthetic-material', catalogVersion: 1, quantity: 1, reservationId: 'synthetic-reservation' } }).success).toBe(false)
   expect(record.input.safeParse({ ...routineCommon, material: { materialId: 'synthetic-material', catalogVersion: 1, quantity: 1, reservationId: 'synthetic-reservation', expectedReservationVersion: 2 } }).success).toBe(true)
   expect(getHisOperation('inpatient.surgery.correct-material').input.safeParse({ ...routineCommon, materialUseId: 'synthetic-use' }).success).toBe(false)
@@ -222,14 +222,14 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
   expect(supplement.roles).toEqual(['inpatient-doctor'])
   expect(supplement.requirements).toMatchObject({ expectedVersions: true, idempotency: 'required' })
   const recordMedication = getHisOperation('inpatient.surgery.record-medication')
-  expect(recordMedication.version).toBe(2)
+  expect(recordMedication.version).toBe(3)
   const medicationExample = skill.match(/`surgery-medication\.json`[^]*?```json\n([^]*?)\n```/)
   expect(medicationExample).not.toBeNull()
   expect(recordMedication.input.safeParse(JSON.parse(medicationExample![1]!)).success).toBe(true)
   expect(skill).toContain('--operation-id inpatient.surgery.record-medication')
   const review = examples.find(item => item.finalMaterials)
   const preview = getHisOperation('inpatient.surgery.preview-completion')
-  expect(preview.version).toBe(4)
+  expect(preview.version).toBe(5)
   expect(preview.input.safeParse(review).success).toBe(true)
   expect(preview.input.safeParse({ ...review, note: undefined }).success).toBe(true)
   expect(preview).toMatchObject({ http: { method: 'POST' }, mode: 'query', risk: 'read', requirements: { idempotency: 'none' } })
@@ -240,7 +240,7 @@ it('术中逐笔示例绑定同一手术、预留版本与不可改写的更正�
     'clinmesh command receipt get --operation-id inpatient.surgery.preview-completion --idempotency-key example-key',
   )).toThrow('Operation does not create a Command receipt: inpatient.surgery.preview-completion')
   const complete = getHisOperation('inpatient.surgery.complete')
-  expect(complete.version).toBe(6)
+  expect(complete.version).toBe(7)
   expect(complete.input.parse(routineCommon)).toEqual(routineCommon)
   expect(complete.input.parse(common)).toEqual(common)
   const reconciliation = { finalMaterials: review.finalMaterials, releaseReservations: [], expectedFingerprint: 'a'.repeat(64) }
@@ -826,7 +826,7 @@ it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
   }
   expect(skill).toContain('criticalMinimum')
   expect(skill).toContain('CN-LAB-CBC-5DIFF')
-  expect(getHisOperation('inpatient.investigation.read').version).toBe(4)
+  expect(getHisOperation('inpatient.investigation.read').version).toBe(5)
   expect(getHisOperation('inpatient.pci-data.read').version).toBe(3)
   expect(getHisOperation('inpatient.pci-data.prepare').version).toBe(3)
 })
@@ -1100,6 +1100,7 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
     surgeryType: 'elective',
     locationId: 'location-catheterization-lab',
     anesthesiaMethod: 'local-infiltration',
+    preopOrderPolicy: 'continue-active',
   })
   const consentExample = skill.match(/`surgery-consent\.json`[^]*?```json\n([^]*?)\n```/)
   expect(consentExample).toBeDefined()
@@ -1110,7 +1111,7 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
   const executionExample = skill.match(/`surgery-execution\.json`[^]*?```json\n([^]*?)\n```/)
   expect(executionExample).toBeDefined()
   const executeOp = getHisOperation('inpatient.surgery.execute')
-  expect(executeOp.version).toBe(6)
+  expect(executeOp.version).toBe(7)
   expect(executeOp.input.parse(JSON.parse(executionExample![1]!))).toMatchObject({
     expectedRequestVersion: 3,
     materials: [{ quantity: 2 }],
@@ -1124,7 +1125,7 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
     const line = commandLines(skill).find(item => item.startsWith(`clinmesh inpatient ${path} `))!
     const operation = inspectExample(program, line).operation!
     expect(operation.id).toBe(id)
-    expect(operation.version).toBe(1)
+    expect(operation.version).toBe(2)
     expect(operation.roles).toEqual(['inpatient-doctor'])
     expect(operation.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
     const match = skill.match(new RegExp('`' + file.replaceAll('.', '\\.') + '`[^]*?```json\\n([^]*?)\\n```'))!
@@ -1151,7 +1152,8 @@ it('keeps inpatient investigation and transfer examples bound to narrow versione
   expect(getHisOperation('inpatient.investigation.issue').input.parse(investigation)).toMatchObject({catalogVersion:1,selection:{kind:'imaging'}})
   const examination = examples.find(input => input.selection?.kind === 'examination')
   expect(getHisOperation('inpatient.investigation.issue').input.parse(examination)).toMatchObject({ catalogVersion: 1, selection: { kind: 'examination', serviceId: 'examination-tte' } })
-  expect(getHisOperation('inpatient.investigation.issue').version).toBe(4)
+  expect(getHisOperation('inpatient.investigation.issue').version).toBe(5)
+  expect(getHisOperation('inpatient.investigation.issue').input.parse({ ...investigation, surgeryExecutionId: 'exec-1' })).toMatchObject({ surgeryExecutionId: 'exec-1' })
   expect(getHisOperation('inpatient.investigation.issue').input.safeParse({...investigation,amountFen:1}).success).toBe(false)
   expect(getHisOperation('inpatient.investigation.issue').input.safeParse({...investigation,url:'https://example.invalid'}).success).toBe(false)
   expect(getHisOperation('inpatient.transfer.receive').roles).toEqual(['ward-nurse'])

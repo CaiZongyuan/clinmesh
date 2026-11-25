@@ -164,7 +164,7 @@ async function prepareReadyRequest(
         plannedFor: '2026-08-26T10:00:00+08:00',
         locationId,
         surgeonPractitionerId: 'practitioner-inpatient-doctor',
-        anesthesiaMethod: 'local-infiltration',
+        anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
         reason: `合成准备手术 ${procedureId}`,
       })
     ).json(),
@@ -209,7 +209,12 @@ describe('导管室与手术室台内基数药记账及术中专科护理自动�
       await (await s.request(s.doctor, '/api/his/v1/inpatient/clinical-catalog')).json(),
     )
     expect(wardCatalog.medications.some(item => item.id === 'medication-surgical-lidocaine')).toBe(false)
-    expect(wardCatalog.services.map(item => item.id)).toEqual(['hospital-service-diabetes-education'])
+    expect(wardCatalog.services.map(item => item.id)).toEqual([
+      'hospital-service-diabetes-education',
+      'hospital-service-postop-ecg-monitoring',
+      'hospital-service-postop-puncture-immobilization',
+      'hospital-service-postop-wound-vital-nursing',
+    ])
 
     const wardSearch = inpatientCatalogSearchSchema.parse(
       await (
@@ -902,7 +907,7 @@ describe('导管室与手术室台内基数药记账及术中专科护理自动�
         )
         .run(scope.workspaceId, scope.epoch, procJson, now, now)
 
-      expect(applyMigrations(db).applied).toEqual([migrationFile, '0122_surgery-ad-hoc-pci.sql'])
+      expect(applyMigrations(db).applied).toEqual([migrationFile, '0122_surgery-ad-hoc-pci.sql', '0123_surgery-preop-policy-and-postop-investigations.sql'])
       expect(db.driver.pragma('foreign_key_check')).toEqual([])
       const row = z
         .object({ execution_id: z.string(), linked_nursing_json: z.null() })

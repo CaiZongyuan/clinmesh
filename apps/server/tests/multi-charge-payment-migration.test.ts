@@ -81,6 +81,7 @@ it('0111非空升级保留原款、零金额分配、旧退款预览和回执并
       '0120_surgery-notice-and-consent.sql',
       '0121_surgery-medications-and-nursing.sql',
       '0122_surgery-ad-hoc-pci.sql',
+      '0123_surgery-preop-policy-and-postop-investigations.sql',
     ])
     preservedTables.forEach((table, index) => expect(database.driver.prepare(`SELECT * FROM ${table}`).all()).toEqual(
       table === 'charge_record'

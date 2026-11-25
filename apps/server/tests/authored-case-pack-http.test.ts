@@ -464,7 +464,7 @@ async function setup(options: { withCardiologyLabs?: boolean; withDialogue?: boo
     const adm = inpatientDetailSchema.parse(await (await get('inpatient-doctor', `/api/his/v1/inpatient/admissions/${admissionId}`)).json()).admission
     const reqRes = await mutate('inpatient-doctor', `/api/his/v1/inpatient/admissions/${admissionId}/surgeries/request`, {
       input: {
-        anesthesiaMethod: 'local-infiltration',
+        anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
         catalogVersion: angioProc.version,
         encounterVersion: adm.versionId,
         locationId: 'location-catheterization-lab',

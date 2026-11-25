@@ -617,7 +617,7 @@ describe('住院检查检验 HTTP 合同', () => {
       const response = await s.request(s.doctor, `${s.path}/surgeries/request`, {
         encounterVersion: s.admission.versionId, procedureId: procedure.id, catalogVersion: procedure.version,
         surgeryType: 'elective', locationId: 'location-catheterization-lab',
-        surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+        surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
         plannedFor: s.admission.admittedAt!, reason: '合成转科前待收口手术',
       })
       expect(response.status).toBe(200)

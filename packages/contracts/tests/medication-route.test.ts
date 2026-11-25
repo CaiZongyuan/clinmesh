@@ -355,7 +355,7 @@ describe('MedicationRoute contracts and operation catalog versions', () => {
   it('bumps all affected HIS operation versions', () => {
     expect(getHisOperation('reference.medications.search').version).toBe(4)
     expect(getHisOperation('catalog.clinical.read').version).toBe(4)
-    expect(getHisOperation('catalog.order-set-templates.list').version).toBe(2)
+    expect(getHisOperation('catalog.order-set-templates.list').version).toBe(3)
     expect(getHisOperation('doctor.case.history.read').version).toBe(3)
     expect(getHisOperation('doctor.completed-cases.get').version).toBe(8)
     expect(getHisOperation('doctor.case.get').version).toBe(23)
@@ -369,7 +369,7 @@ describe('MedicationRoute contracts and operation catalog versions', () => {
     expect(getHisOperation('inpatient.clinical.read').version).toBe(6)
     expect(getHisOperation('inpatient.vital-signs.record').version).toBe(3)
     expect(getHisOperation('inpatient.risk-assessment.record').version).toBe(3)
-    expect(getHisOperation('inpatient.order-set-drafts.read').version).toBe(2)
+    expect(getHisOperation('inpatient.order-set-drafts.read').version).toBe(3)
     expect(getHisOperation('inpatient.diagnosis.confirm').version).toBe(5)
     expect(getHisOperation('inpatient.order.issue').version).toBe(10)
     expect(getHisOperation('inpatient.order.verify').version).toBe(5)

@@ -6,7 +6,7 @@ import { inpatientDrgAgentSchema, inpatientDrgAgentAnalysisSchema, inpatientDrgA
   inpatientDrgAgentVerificationSchema, inpatientDrgAgentStageSchema, inpatientDrgAgentConfirmInputSchema,
   inpatientDrgAgentPlanSchema, inpatientDrgAgentPostGenerationSchema, inpatientDrgAgentPostVerificationSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { inpatientPciSelectionSchema, inpatientEquivalentMaterialSuggestionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
-import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientSurgeryRequestSchema, inpatientSurgerySchema, preopOrderPolicySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { CommandTransaction, type ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { equivalentMaterialSuggestions } from '@clinmesh/core/inpatient-equivalent-materials'
@@ -23,9 +23,15 @@ import { readPendingMaterialDrafts } from './inpatient-material-cost-projection.
 import { inpatientCostsSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import type { RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 
+const drgAgentSurgeryRequestSchema = inpatientSurgeryRequestSchema
+  .omit({ preopOrderPolicy: true })
+  .extend({ preopOrderPolicy: preopOrderPolicySchema.optional() })
+  .strict()
 const inputSchema = z.object({
   selection: inpatientPciSelectionSchema.omit({ history: true }),
-  surgery: inpatientSurgerySchema.omit({ virtualTime: true, encounterVersion: true }),
+  surgery: inpatientSurgerySchema.omit({ virtualTime: true, encounterVersion: true }).extend({
+    requests: z.array(drgAgentSurgeryRequestSchema),
+  }).strict(),
   rulesFingerprint: z.string(), stage: inpatientDrgAgentStageSchema,
   review: inpatientDrgReviewBasisSchema.optional(),
   remaining: z.array(z.object({ materialId: z.string(), quantity: z.number().int().nonnegative() }).strict()),

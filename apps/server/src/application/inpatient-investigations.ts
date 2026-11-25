@@ -47,9 +47,23 @@ export class InpatientInvestigations {
       : context
     const sent = z.array(z.object({request_id:z.string(),sent_at:z.string(),sent_by:z.string()})).parse(this.owner.database.driver.prepare(
       'SELECT request_id,sent_at,sent_by FROM inpatient_investigation WHERE workspace_id=? AND epoch=? AND admission_id=? AND sent_at IS NOT NULL ORDER BY julianday(sent_at),request_id').all(context.workspaceId,context.epoch,admissionId))
-    return inpatientInvestigationsSchema.parse({admissionId,laboratoryRequests:this.workflow.inpatientLaboratoryRequests(scoped,admissionId),imagingRequests:this.workflow.imaging.state(scoped,admissionId).requests,
-      examinationRequests:this.workflow.examination.state(scoped,admissionId).requests,
-      sent:sent.map(row=>({requestId:row.request_id,sentAt:row.sent_at,sentBy:row.sent_by}))})
+    const postopRows = z.array(z.object({ request_id: z.string(), surgery_execution_id: z.string() })).parse(
+      this.owner.database.driver.prepare(
+        'SELECT request_id, surgery_execution_id FROM inpatient_postoperative_investigation WHERE workspace_id=? AND epoch=? AND admission_id=?',
+      ).all(context.workspaceId, context.epoch, admissionId),
+    )
+    const postopByRequestId = new Map(postopRows.map(row => [row.request_id, row.surgery_execution_id]))
+    const attachSurgery = <T extends { id: string }>(items: T[]) => items.map(item => {
+      const surgeryExecutionId = postopByRequestId.get(item.id)
+      return surgeryExecutionId === undefined ? item : { ...item, surgeryExecutionId }
+    })
+    return inpatientInvestigationsSchema.parse({
+      admissionId,
+      laboratoryRequests: attachSurgery(this.workflow.inpatientLaboratoryRequests(scoped, admissionId)),
+      imagingRequests: attachSurgery(this.workflow.imaging.state(scoped, admissionId).requests),
+      examinationRequests: attachSurgery(this.workflow.examination.state(scoped, admissionId).requests),
+      sent: sent.map(row => ({ requestId: row.request_id, sentAt: row.sent_at, sentBy: row.sent_by })),
+    })
   }
   catalog(context: ActorContext, ready: ReadonlySet<ImagingExamCode>) {
     this.owner.assertRole(context,['inpatient-doctor','ward-nurse'])
@@ -94,28 +108,32 @@ export class InpatientInvestigations {
     return this.owner.commands.execute({context,input,idempotencyKey,operation:'inpatient.investigation.issue',expectedVersions:{[`Encounter/${input.admissionId}`]:input.encounterVersion},
       dataSchema:inpatientInvestigationsSchema,authorize:()=>{this.owner.assertRole(context,['inpatient-doctor']);this.owner.orders.assertAdmitted(context,input.admissionId)}},transaction=>{
       this.owner.assertNotArchived(context,input.admissionId)
+      if (input.surgeryExecutionId !== undefined) this.owner.surgery.assertExecution(context, input.admissionId, input.surgeryExecutionId)
       const available=this.catalog(context,ready).items.find(item=>item.id===(input.selection.kind!=='laboratory'?input.selection.serviceId:input.selection.catalogItemId) && item.kind===input.selection.kind)
       if(available===undefined || !available.available || available.priceFen===undefined) throw new InpatientError('INPATIENT_INVESTIGATION_UNAVAILABLE','该检查尚未开展或没有声明住院价目')
       if(available.version!==input.catalogVersion) throw new InpatientError('INPATIENT_INVESTIGATION_CATALOG_CONFLICT','检查目录或价目版本已变化，请重新选择')
       const versions={[`Encounter/${input.admissionId}`]:input.encounterVersion}
+      const supportingInfo = input.surgeryExecutionId === undefined
+        ? undefined
+        : [{ reference: { reference: `Procedure/${input.surgeryExecutionId}` } }]
       let requestId:string
       let effects:Array<{kind:'created'|'updated';reference:string;versionId:string}>
       if(input.selection.kind==='examination') {
         const draft=this.workflow.examination.state(context,input.admissionId)
         const saved=this.workflow.examination.applySaveDraft(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:draft.draftVersion,expectedVersions:versions,idempotencyKey,indication:input.selection.indication,serviceId:input.selection.serviceId})
-        const issued=this.workflow.examination.applyIssue(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:saved.data.draftVersion,expectedVersions:versions,idempotencyKey,readyExamCodes:new Set(['ecg-12-lead','tte'])})
+        const issued=this.workflow.examination.applyIssue(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:saved.data.draftVersion,expectedVersions:versions,idempotencyKey,readyExamCodes:new Set(['ecg-12-lead','tte']),...(supportingInfo===undefined?{}:{supportingInfo})})
         requestId=issued.data.request.id;effects=issued.effects
       } else if(input.selection.kind==='imaging') {
         const draft=this.workflow.imaging.state(context,input.admissionId)
         const saved=this.workflow.imaging.applySaveDraft(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:draft.draftVersion,expectedVersions:versions,idempotencyKey,
           indication:input.selection.indication,serviceId:input.selection.serviceId})
-        const issued=this.workflow.imaging.applyIssue(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:saved.data.draftVersion,expectedVersions:versions,idempotencyKey,readyExamCodes:ready})
+        const issued=this.workflow.imaging.applyIssue(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:saved.data.draftVersion,expectedVersions:versions,idempotencyKey,readyExamCodes:ready,...(supportingInfo===undefined?{}:{supportingInfo})})
         requestId=issued.data.request.id;effects=issued.effects
       } else {
         const current=z.object({version:z.number()}).optional().parse(this.owner.database.driver.prepare('SELECT version FROM laboratory_request_state WHERE workspace_id=? AND epoch=? AND case_id=?').get(context.workspaceId,context.epoch,input.admissionId))
         const saved=this.workflow.applySaveLaboratoryRequestDraft(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:current?.version??0,expectedVersions:versions,idempotencyKey,
           catalogItemId:input.selection.catalogItemId,indicationCode:input.selection.indicationCode})
-        const issued=this.workflow.applyIssueLaboratoryRequest(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:saved.data.draftVersion,expectedVersions:versions,idempotencyKey})
+        const issued=this.workflow.applyIssueLaboratoryRequest(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:saved.data.draftVersion,expectedVersions:versions,idempotencyKey,...(supportingInfo===undefined?{}:{supportingInfo})})
         requestId=issued.data.request.id;effects=issued.effects
       }
       const stored=z.object({config_json:z.string()}).parse(this.owner.database.driver.prepare('SELECT config_json FROM hospital_service_catalog WHERE workspace_id=? AND epoch=? AND service_id=?').get(context.workspaceId,context.epoch,available.id))
@@ -135,6 +153,11 @@ export class InpatientInvestigations {
       )
       this.owner.database.driver.prepare(`INSERT INTO inpatient_investigation(workspace_id,epoch,request_id,admission_id,price_fen,charge_definition_json) VALUES(?,?,?,?,?,?)`)
         .run(context.workspaceId,context.epoch,requestId,input.admissionId,available.priceFen,JSON.stringify({...definition,display:available.display,trigger:'execution-completed',serviceId:available.id,catalogVersion:available.version,insuranceCoverage}))
+      if (input.surgeryExecutionId !== undefined) {
+        this.owner.database.driver.prepare(
+          'INSERT INTO inpatient_postoperative_investigation(workspace_id,epoch,admission_id,request_id,surgery_execution_id) VALUES(?,?,?,?,?)',
+        ).run(context.workspaceId, context.epoch, input.admissionId, requestId, input.surgeryExecutionId)
+      }
       return {data:this.read(context,input.admissionId),effects}
     })
   }

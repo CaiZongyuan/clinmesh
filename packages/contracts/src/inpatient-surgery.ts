@@ -21,6 +21,10 @@ export const anesthesiaMethods = ['local-infiltration', 'local-sedation', 'gener
 export const anesthesiaMethodSchema = z.enum(anesthesiaMethods)
 export type AnesthesiaMethod = z.infer<typeof anesthesiaMethodSchema>
 
+export const preopOrderPolicies = ['continue-active', 'stop-on-completion'] as const
+export const preopOrderPolicySchema = z.enum(preopOrderPolicies)
+export type PreopOrderPolicy = z.infer<typeof preopOrderPolicySchema>
+
 export const surgeryLocationIds = [
   'location-catheterization-lab',
   'location-operating-center',
@@ -220,6 +224,7 @@ const surgeryRequestFields = {
   surgeonPractitionerId: id,
   assistantPractitionerId: id.optional(),
   anesthesiaMethod: anesthesiaMethodSchema,
+  preopOrderPolicy: preopOrderPolicySchema,
   standbyAdHocPci: z.boolean().optional(),
   reason: note,
   clinicalOverride: clinicalOverrideInputSchema.optional(),
@@ -242,8 +247,8 @@ export const inpatientSurgeryRequestInputSchema = z.object({
   path: ['assistantPractitionerId'],
 })
 
-/** 升级前旧版手术申请入参，仅用于既有持久回执（`command_receipt`）原样幂等重放。 */
-const legacySurgeryRequestFields = {
+/** 升级前旧版手术申请入参（v3 三字段与 v4/v5 缺省 preopOrderPolicy 六要素），仅用于既有持久回执（`command_receipt`）原样幂等重放。 */
+const legacyV3SurgeryRequestFields = {
   encounterVersion: z.string().regex(/^\d+$/),
   procedureId: id,
   catalogVersion: version,
@@ -252,12 +257,29 @@ const legacySurgeryRequestFields = {
   clinicalOverride: clinicalOverrideInputSchema.optional(),
 }
 
-export const inpatientLegacySurgeryRequestBodySchema = z.object(legacySurgeryRequestFields).strict()
+const { preopOrderPolicy: _legacyOmittedPreopOrderPolicy, ...legacyV4V5SurgeryRequestFields } = surgeryRequestFields
 
-export const inpatientLegacySurgeryRequestInputSchema = z.object({
-  admissionId: id,
-  ...legacySurgeryRequestFields,
-}).strict()
+export const inpatientLegacySurgeryRequestBodySchema = z.union([
+  z.object(legacyV3SurgeryRequestFields).strict(),
+  z.object(legacyV4V5SurgeryRequestFields).strict().refine(distinctSurgeons, {
+    message: '主刀医师与第一助手不能为同一人',
+    path: ['assistantPractitionerId'],
+  }),
+])
+
+export const inpatientLegacySurgeryRequestInputSchema = z.union([
+  z.object({
+    admissionId: id,
+    ...legacyV3SurgeryRequestFields,
+  }).strict(),
+  z.object({
+    admissionId: id,
+    ...legacyV4V5SurgeryRequestFields,
+  }).strict().refine(distinctSurgeons, {
+    message: '主刀医师与第一助手不能为同一人',
+    path: ['assistantPractitionerId'],
+  }),
+])
 
 const surgeryActionBaseSchema = z.object({ admissionId: id, requestId: id, expectedRequestVersion: version }).strict()
 export const inpatientSurgeryActionInputSchema = surgeryActionBaseSchema.extend({ note }).strict()
@@ -377,6 +399,7 @@ export const inpatientSurgeryRequestSchema = z.object({
   surgeon: inpatientSurgeryPractitionerSchema.optional(),
   assistant: inpatientSurgeryPractitionerSchema.optional(),
   anesthesiaMethod: anesthesiaMethodSchema.optional(),
+  preopOrderPolicy: preopOrderPolicySchema.default('continue-active'),
   standbyAdHocPci: z.boolean().optional(),
   adHocPci: inpatientAdHocPciConversionSchema.optional(),
   standbyFinalization: preparation.optional(),
@@ -440,6 +463,18 @@ export const inpatientSurgeryExecutionSchema = z.object({ id, admissionId: id, r
 export const inpatientSurgerySchema = z.object({ admissionId: id, encounterVersion: z.string().regex(/^\d+$/), virtualTime: z.iso.datetime({ offset: true }),
   requests: z.array(inpatientSurgeryRequestSchema), executions: z.array(inpatientSurgeryExecutionSchema), inProgress: z.array(inpatientSurgeryExecutionSchema).default([]) }).strict()
 export const inpatientSurgeryResponseSchema = commandResponseSchema(inpatientSurgerySchema)
+export const inpatientSurgeryAutoStopOrderPreviewSchema = z.object({
+  orderId: id,
+  orderVersion: version,
+  kind: z.enum(['medication', 'service']),
+  display: z.string().min(1),
+  state: z.enum(['signed', 'verified']),
+  doseText: z.string().min(1).optional(),
+  frequencyCode: z.string().min(1).optional(),
+  routeCode: medicationRouteSchema.optional(),
+}).strict()
+export type InpatientSurgeryAutoStopOrderPreview = z.infer<typeof inpatientSurgeryAutoStopOrderPreviewSchema>
+
 export const inpatientSurgeryCompletionPreviewSchema = z.object({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   materials: z.array(z.object({ item: inpatientMaterialItemSchema, materialUseIds: z.array(id), reservationId: id.nullable(),
@@ -451,6 +486,8 @@ export const inpatientSurgeryCompletionPreviewSchema = z.object({
   nursingAmountFen: z.number().int().nonnegative().safe().default(0),
   linkedNursing: inpatientSurgeryNursingChargeSchema.omit({ chargeId: true }).nullable().default(null),
   sameSessionNursingIncluded: z.boolean().optional(),
+  preopOrderPolicy: preopOrderPolicySchema.default('continue-active'),
+  autoStopPreopOrders: z.array(inpatientSurgeryAutoStopOrderPreviewSchema).default([]),
   totalDeltaFen: z.number().int().safe(),
 }).strict()
 

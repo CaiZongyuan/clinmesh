@@ -256,7 +256,7 @@ describe('住院出院与结算公共 HTTP', () => {
   it('未收口手术阻断出院，取消后才可办理；当前其他科室没有出院权', async () => {
     const s = await setup()
     const surgery = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion:s.admission.versionId,procedureId:'hospital-surgery-4',catalogVersion:1,
-      surgeryType:'elective',locationId:'location-operating-center',surgeonPractitionerId:'practitioner-inpatient-doctor',anesthesiaMethod:'general',
+      surgeryType:'elective',locationId:'location-operating-center',surgeonPractitionerId:'practitioner-inpatient-doctor',anesthesiaMethod:'general', preopOrderPolicy: 'continue-active',
       plannedFor:'2026-08-25T01:00:00.000Z',reason:'合成手术在途' })
     expect(surgery.status).toBe(200)
     const input = { encounterVersion:s.admission.versionId,reason:'出院核对' }

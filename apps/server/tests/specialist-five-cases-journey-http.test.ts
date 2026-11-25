@@ -671,7 +671,7 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     const adm = (await grantOp('inpatient-doctor', 'inpatient.admission.read', { admissionId }, inpatientDetailSchema)).admission
     const requested = (await grantOp('inpatient-doctor', 'inpatient.surgery.request', {
       admissionId,
-      anesthesiaMethod: 'local-infiltration',
+      anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       catalogVersion: angioProc.version,
       encounterVersion: adm.versionId,
       locationId: 'location-catheterization-lab',
@@ -718,7 +718,7 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     const adm = (await grantOp('inpatient-doctor', 'inpatient.admission.read', { admissionId }, inpatientDetailSchema)).admission
     const requested = (await grantOp('inpatient-doctor', 'inpatient.surgery.request', {
       admissionId,
-      anesthesiaMethod: 'local-infiltration',
+      anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       catalogVersion: pciProc.version,
       encounterVersion: adm.versionId,
       locationId: 'location-catheterization-lab',
@@ -1514,7 +1514,7 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     const pciProc = surgCatalog.procedures.find(item => item.coding.code === '36.0700')!
     const blockedPci = await invokeOperationRaw(grants.get('inpatient-doctor')!, 'inpatient.surgery.request', {
       admissionId: stay3.admissionId,
-      anesthesiaMethod: 'local-infiltration',
+      anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       catalogVersion: pciProc.version,
       encounterVersion: adm3BeforePci.versionId,
       locationId: 'location-catheterization-lab',

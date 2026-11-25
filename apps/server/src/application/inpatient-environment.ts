@@ -51,6 +51,33 @@ const INTRAOPERATIVE_NURSING_SERVICES = [
   },
 ] as const
 
+const POSTOPERATIVE_WARD_NURSING_SERVICES = [
+  {
+    serviceId: 'hospital-service-postop-ecg-monitoring',
+    code: 'HOSP-SVC-POSTOP-ECG-MONITORING',
+    nameZh: '术后持续心电监护',
+    nameEn: 'Postoperative Continuous ECG Monitoring',
+    priceFen: 6000,
+    reportTemplate: '病房护士执行术后持续心电、血压、血氧监护并记录病情观察。',
+  },
+  {
+    serviceId: 'hospital-service-postop-puncture-immobilization',
+    code: 'HOSP-SVC-POSTOP-PUNCTURE-IMMOBILIZATION',
+    nameZh: '穿刺部位压迫止血与肢体制动护理',
+    nameEn: 'Post-PCI Puncture Site Compression and Limb Immobilization Nursing',
+    priceFen: 4000,
+    reportTemplate: '病房护士观察穿刺点渗血、血肿及远端动脉搏动，规范压迫止血与肢体制动护理。',
+  },
+  {
+    serviceId: 'hospital-service-postop-wound-vital-nursing',
+    code: 'HOSP-SVC-POSTOP-WOUND-VITAL-NURSING',
+    nameZh: '术后常规切口与生命体征护理',
+    nameEn: 'Postoperative Routine Wound and Vital Signs Nursing',
+    priceFen: 3500,
+    reportTemplate: '病房护士观察手术切口敷料、引流及生命体征，落实术后常规病房护理。',
+  },
+] as const
+
 export function backfillMedicationPackageInserts(database: ClinMeshDatabase, context: RepositoryContext) {
   const missing = z.array(z.object({ item_id: z.string() })).parse(database.driver.prepare(`
     SELECT item_id FROM outpatient_catalog
@@ -168,6 +195,50 @@ export function seedInpatientEnvironment(
       tatMinutes: 30,
       inpatientBillingTrigger: 'surgery-completion',
       surgicalProcedureIds: [...nursing.procedureIds],
+    }
+    database.driver.prepare(`
+      INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json)
+      VALUES(?,?,?,?,?,?,1,1,?)
+      ON CONFLICT(workspace_id,epoch,service_id) DO NOTHING
+    `).run(context.workspaceId, context.epoch, nursing.serviceId, nursing.code, nursing.nameZh, nursing.nameEn, JSON.stringify(config))
+  }
+  for (const nursing of POSTOPERATIVE_WARD_NURSING_SERVICES) {
+    const config = {
+      availableScopes: ['inpatient'],
+      billingUnit: {
+        code: 'SESSION',
+        display: '次',
+        system: 'urn:clinmesh:wst:billing-unit',
+        valueSet: 'urn:clinmesh:wst:value-set:billing-unit',
+        version: 'synthetic-postop-ward-nursing-2026-11-25',
+      },
+      category: {
+        code: 'NURSING',
+        display: '病房护理',
+        system: 'urn:clinmesh:wst:service-category',
+        valueSet: 'urn:clinmesh:wst:value-set:service-category',
+        version: 'synthetic-postop-ward-nursing-2026-11-25',
+      },
+      chargeDefinition: {
+        id: `charge-definition-${nursing.serviceId}`,
+        currency: 'CNY',
+        effectiveOn: '2026-11-25',
+        priceFen: nursing.priceFen,
+      },
+      componentServiceIds: [],
+      executingDepartmentId: 'ward-general',
+      insuranceCoverage: CLASS_A_COVERAGE,
+      nationalService: {
+        code: 'CM-NHC-SERVICE-POSTOP-WARD-NURSING',
+        display: '合成术后病房护理服务',
+        id: `reference-service-${nursing.serviceId}`,
+        system: 'urn:clinmesh:reference:nhc-medical-service',
+        version: 'synthetic-2026-11-25',
+      },
+      reportTemplate: nursing.reportTemplate,
+      requestCatalogItemIds: [],
+      tatMinutes: 30,
+      inpatientBillingTrigger: 'execution',
     }
     database.driver.prepare(`
       INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json)

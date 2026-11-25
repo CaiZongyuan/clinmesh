@@ -18,7 +18,7 @@ export const orderPickSchema = z.discriminatedUnion('kind', [
 export const orderAttemptSchema = z.object({ idempotencyKey: z.uuid(), input: inpatientOrderIssueInputSchema }).strict()
 export const orderDraftRowSchema = z.object({
   id: z.uuid(), pick: orderPickSchema, selected: z.boolean(), duration: z.enum(['long', 'temporary']),
-  doseText: z.string().max(120), frequencyCode: z.enum(['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE']).optional(), routeCode: medicationRouteSchema.optional(), instructions: z.string().max(500).optional(), surgeryExecutionId: z.string().optional(),
+  doseText: z.string().max(120), frequencyCode: z.enum(['QD', 'BID', 'TID', 'QN', 'PRN', 'ONCE']).optional(), routeCode: medicationRouteSchema.optional(), instructions: z.string().max(500).optional(), serviceQuantity: z.number().int().positive().max(20).optional(), surgeryExecutionId: z.string().optional(),
   estimate: z.object({ generation: z.uuid(), fingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), stale: z.boolean() }).strict().optional(),
   attempt: orderAttemptSchema.optional(),
   error: z.union([z.string(), issueDraftFailureSchema]).optional(),
@@ -41,8 +41,8 @@ export function orderDose(row: { pick: z.infer<typeof orderPickSchema>; doseText
     ...(item.maxDoseQuantity === undefined ? {} : { maxDoseQuantity: item.maxDoseQuantity }) }, row.doseText)
 }
 
-export function orderSelection(row: { pick: z.infer<typeof orderPickSchema>; doseText: string; frequencyCode?: 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' | undefined; routeCode?: MedicationRoute | undefined; instructions?: string | undefined }): z.infer<typeof inpatientOrderIssueInputSchema>['selection'] | undefined {
-  if (row.pick.kind === 'service') return { kind: 'service', serviceId: row.pick.item.id, serviceVersion: row.pick.item.version, quantity: 1 }
+export function orderSelection(row: { pick: z.infer<typeof orderPickSchema>; doseText: string; frequencyCode?: 'QD' | 'BID' | 'TID' | 'QN' | 'PRN' | 'ONCE' | undefined; routeCode?: MedicationRoute | undefined; instructions?: string | undefined; serviceQuantity?: number | undefined }): z.infer<typeof inpatientOrderIssueInputSchema>['selection'] | undefined {
+  if (row.pick.kind === 'service') return { kind: 'service', serviceId: row.pick.item.id, serviceVersion: row.pick.item.version, quantity: row.serviceQuantity ?? 1 }
   const item = row.pick.item, dose = orderDose(row), instructions = row.instructions?.trim() || undefined
   return dose && 'quantity' in dose && row.frequencyCode && item.frequencyCodes.includes(row.frequencyCode)
     && row.routeCode && medicationRouteAllowed(item.allowedRouteCodes, row.routeCode)
