@@ -107,6 +107,7 @@ clinmesh inpatient disease-packs toggle --input @disease-pack-toggle.json --idem
 clinmesh inpatient disease-packs task-readiness --admission-id <admission-id> --pack-id <pack-id> --task-id <task-id>
 clinmesh inpatient disease-packs task-facts --admission-id <admission-id> --pack-id <pack-id> --task-id <task-id>
 clinmesh inpatient disease-packs authorize-tool --admission-id <admission-id> --pack-id <pack-id> --operation-id <tool-operation-id>
+clinmesh inpatient disease-packs knowledge --admission-id <admission-id> --pack-id <pack-id>
 clinmesh inpatient confirm-diagnosis --input @diagnoses.json --idempotency-key <key>
 clinmesh inpatient issue-order --input @order.json --idempotency-key <key>
 clinmesh inpatient verify-order --input @verification.json --idempotency-key <key>

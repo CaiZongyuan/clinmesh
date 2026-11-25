@@ -26,6 +26,15 @@ import {
   listIdentityQuarantineResponseSchema,
 } from './local-source-ingestion.ts'
 import {
+  conceptVocabularyCatalogQuerySchema,
+  conceptVocabularyCatalogResponseSchema,
+} from './concept-vocabulary.ts'
+import {
+  diseasePackKnowledgeEvaluationSchema,
+  inpatientDiseasePackKnowledgeInputSchema,
+  outpatientDiseasePackKnowledgeInputSchema,
+} from './knowledge-claims.ts'
+import {
   diseasePackCatalogListSchema,
   diseasePackRuntimeBundleSchema,
   diseasePackTaskFactsResponseSchema,
@@ -1330,6 +1339,15 @@ const rawOperationRuntimeDefinitions = [
   {
     http: {
       method: 'GET',
+      path: '/api/his/v1/catalogs/concept-vocabulary',
+    },
+    id: 'catalog.concept-vocabulary.read',
+    input: conceptVocabularyCatalogQuerySchema,
+    output: conceptVocabularyCatalogResponseSchema,
+  },
+  {
+    http: {
+      method: 'GET',
       path: '/api/his/v1/patients',
     },
     id: 'patient.search',
@@ -1549,6 +1567,12 @@ const rawOperationRuntimeDefinitions = [
     id: 'doctor.case.disease-pack-tools.authorize',
     input: outpatientDiseasePackToolAuthorizeInputSchema,
     output: diseasePackToolAuthorizeResponseSchema,
+  },
+  {
+    http: { method: 'GET', path: '/api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/knowledge' },
+    id: 'doctor.case.disease-pack-knowledge.read',
+    input: outpatientDiseasePackKnowledgeInputSchema,
+    output: diseasePackKnowledgeEvaluationSchema,
   },
   {
     http: { method: 'PUT', path: '/api/his/v1/encounters/:encounterId/risk-assessment' },
@@ -2194,6 +2218,12 @@ const rawOperationRuntimeDefinitions = [
     },
     input: inpatientDiseasePackToolAuthorizeInputSchema,
     output: diseasePackToolAuthorizeResponseSchema,
+  },
+  {
+    id: 'inpatient.disease-pack-knowledge.read',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/knowledge' },
+    input: inpatientDiseasePackKnowledgeInputSchema,
+    output: diseasePackKnowledgeEvaluationSchema,
   },
   admOp('inpatient.diagnosis.confirm', '/diagnoses/confirm', inpatientDiagnosisConfirmInputSchema, inpatientFullClinicalResponseSchema),
   admOp('inpatient.order.issue', '/orders/issue', inpatientOrderIssueInputSchema, inpatientFullClinicalResponseSchema),

@@ -170,6 +170,11 @@ describe('HIS operation catalog', () => {
         id: 'catalog.disease-packs.list',
         roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor', 'ward-nurse', 'medical-records'],
       },
+      {
+        cliPath: 'catalog concept-vocabulary get',
+        id: 'catalog.concept-vocabulary.read',
+        roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor', 'ward-nurse', 'medical-records'],
+      },
     ])
   })
 
@@ -809,9 +814,9 @@ describe('HIS operation catalog', () => {
     expect(counts).toEqual({
       'clinmesh-administrator': 6,
       'clinmesh-billing': 18,
-      'clinmesh-doctor': 78,
+      'clinmesh-doctor': 80,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 127,
+      'clinmesh-inpatient': 128,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 10,
       'clinmesh-shared': 1,

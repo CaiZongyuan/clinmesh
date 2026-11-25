@@ -240,6 +240,7 @@ clinmesh doctor completed-cases get --case-id <case-id>
 ```bash
 clinmesh catalog order-set-templates list --scope outpatient
 clinmesh catalog disease-packs list
+clinmesh catalog concept-vocabulary get --as-of 2026-08-24
 clinmesh doctor case clinical-scores get --case-id <case-id>
 clinmesh doctor case clinical-fact-ledger get --case-id <case-id> --as-of 2026-08-24T10:00:00+08:00
 clinmesh doctor case clinical-fact-verification record --input @fact-verification.json --idempotency-key <key>
@@ -250,6 +251,7 @@ clinmesh doctor case disease-packs toggle --input @disease-pack-toggle.json --id
 clinmesh doctor case disease-packs task-readiness --case-id <case-id> --pack-id <pack-id> --task-id <task-id>
 clinmesh doctor case disease-packs task-facts --case-id <case-id> --pack-id <pack-id> --task-id <task-id>
 clinmesh doctor case disease-packs authorize-tool --case-id <case-id> --pack-id <pack-id> --operation-id <tool-operation-id>
+clinmesh doctor case disease-packs knowledge --case-id <case-id> --pack-id <pack-id>
 clinmesh encounter risk-assessment record --input @risk-assessment.json --idempotency-key <key>
 clinmesh command receipt get --operation-id encounter.risk-assessment.record --idempotency-key <key>
 ```

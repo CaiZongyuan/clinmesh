@@ -27,21 +27,24 @@ describe('HIS operation route coverage', () => {
     ))
     const excludedRoutes = excludedHisRoutes.map(route => routeKey(route.method, route.path))
 
-    expect(operations).toHaveLength(242)
+    expect(operations).toHaveLength(245)
     expect(canonicalRoutes).toEqual(expect.arrayContaining([
       'GET /api/his/v1/identity-quarantine',
       'POST /api/his/v1/identity-quarantine/:candidateId/confirm-merge',
+      'GET /api/his/v1/catalogs/concept-vocabulary',
       'GET /api/his/v1/catalogs/disease-packs',
       'GET /api/his/v1/outpatient/cases/:caseId/disease-packs',
       'POST /api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/toggle',
       'GET /api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/tasks/:taskId/readiness',
       'GET /api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/tasks/:taskId/facts',
       'POST /api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/tools/authorize',
+      'GET /api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/knowledge',
       'GET /api/his/v1/inpatient/admissions/:admissionId/disease-packs',
       'POST /api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/toggle',
       'GET /api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/tasks/:taskId/readiness',
       'GET /api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/tasks/:taskId/facts',
       'POST /api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/tools/authorize',
+      'GET /api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/knowledge',
       'GET /api/his/v1/encounters/:encounterId/clinical-quality',
       'GET /api/his/v1/inpatient/admissions/:admissionId/clinical-quality',
       'GET /api/his/v1/inpatient/admissions/:admissionId/angiography-reports',

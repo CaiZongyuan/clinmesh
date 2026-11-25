@@ -170,3 +170,13 @@ export const diseasePackKnowledgeReadQuerySchema = z.object({
   recheckLatest: z.boolean().optional(),
 }).strict()
 export type DiseasePackKnowledgeReadQuery = z.infer<typeof diseasePackKnowledgeReadQuerySchema>
+
+export const outpatientDiseasePackKnowledgeInputSchema = diseasePackKnowledgeReadQuerySchema.extend({
+  caseId: z.string().trim().min(1).max(64),
+  packId: diseasePackSlugSchema,
+}).strict()
+
+export const inpatientDiseasePackKnowledgeInputSchema = diseasePackKnowledgeReadQuerySchema.extend({
+  admissionId: z.string().trim().min(1).max(64),
+  packId: diseasePackSlugSchema,
+}).strict()
