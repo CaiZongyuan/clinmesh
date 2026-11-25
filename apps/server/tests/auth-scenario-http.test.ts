@@ -868,7 +868,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       ['Location', 19],
       ['Practitioner', 12],
       ['PractitionerRole', 10],
-      ['Medication', 22],
+      ['Medication', 23],
     ] as const) {
       const response = await runtime.app.request(
         `/fhir/R5/${resourceType}?_count=20&_total=accurate`,

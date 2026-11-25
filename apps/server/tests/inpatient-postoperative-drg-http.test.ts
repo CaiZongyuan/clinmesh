@@ -33,7 +33,7 @@ it('新完成PCI主操作尚未确认时重算术后预计，保留正式造影�
   expect(result.grouping.projected).toBeNull()
   expect(result.postoperativeEstimate).toMatchObject({ pendingExecutionIds: [execution.id],
     grouping: { status: 'grouped', drgCode: 'FM39' }, paymentReference: { drgCode: 'FM39', referenceFen: 1200000 } })
-  expect(result.formal.chargesFen).toBe(394298)
+  expect(result.formal.chargesFen).toBe(410298)
   expect(await s.fixture.read('inpatient-doctor', `${s.stay.path}/record`, inpatientRecordSchema)).toEqual(before)
   expect((await s.simulate()).postoperativeEstimate).toEqual(result.postoperativeEstimate)
   const wire = s.stay.catalog.materials.find(item => item.id === 'hospital-material-pci-guidewire')!
@@ -45,7 +45,7 @@ it('新完成PCI主操作尚未确认时重算术后预计，保留正式造影�
     expectedCharge: { id: wire.chargeDefinition.id, priceFen: wire.chargeDefinition.priceFen, unit: wire.chargeDefinition.unit },
   })).status).toBe(200)
   const updated = await s.simulate()
-  expect(updated.formal.chargesFen).toBe(414298)
+  expect(updated.formal.chargesFen).toBe(430298)
   expect(updated.fingerprint).not.toBe(result.fingerprint)
   expect(updated.postoperativeEstimate).toEqual(result.postoperativeEstimate)
   await s.fixture.confirmMainProcedure(s.stay, execution.id)

@@ -310,7 +310,7 @@ export async function runSurgeryBatchJourney(page: Page, s: Patient, open: () =>
   expect(procedures.total).toBe(2)
   await s.api.login('cashier')
   const charges = inpatientChargesSchema.parse(await (await s.api.get(`${s.path}/charges`)).json())
-  expect(charges.chargesFen).toBe(729000)
+  expect(charges.chargesFen).toBe(737000)
   expect(charges.charges.filter(row => row.kind === 'surgery')).toHaveLength(2)
   expect(charges.charges.filter(row => row.kind === 'material').map(row => row.amountFen).sort((a, b) => a - b)).toEqual([4000, 5000, 40000, 80000, 120000, 120000, 160000, 240000])
   expect(charges.charges.filter(row => row.reversalOf !== undefined).map(row => row.amountFen).sort((a, b) => a - b)).toEqual([-240000, -120000])

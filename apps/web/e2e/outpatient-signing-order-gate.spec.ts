@@ -192,16 +192,35 @@ test('前置门诊首版结构化病历正式电子签名与主诊断确认作�
     return { canComplete: preview.canComplete, status: pendingDraftItem?.status, target: pendingDraftItem?.target }
   }).toEqual({ canComplete: false, status: 'incomplete', target: 'clinical-document' })
 
+  const discardCaseRefreshed = page.waitForResponse(
+    response =>
+      response.url().endsWith(`/api/his/v1/doctor/cases/${consultationCase.outpatientCaseId}`)
+      && response.request().method() === 'GET'
+      && response.status() === 200,
+  )
   await revisionForm.getByRole('button', { name: '放弃修订草稿', exact: true }).click()
+  await discardCaseRefreshed
   await expect(page.getByText('存在待签署的病历修订草稿', { exact: true })).toHaveCount(0)
   await expect.poll(async () => (await readCompletion()).canComplete).toBe(true)
 
   await page.getByRole('button', { name: '修改病历', exact: true }).click()
+  await expect(revisionForm.getByRole('button', { name: '保存修订草稿', exact: true })).toBeEnabled()
   await revisionForm.getByLabel('辅助检查', { exact: true }).fill('门诊补充记录：生命体征复测平稳。')
+  const saveCaseRefreshed = page.waitForResponse(
+    response =>
+      response.url().endsWith(`/api/his/v1/doctor/cases/${consultationCase.outpatientCaseId}`)
+      && response.request().method() === 'GET'
+      && response.status() === 200,
+  )
   await revisionForm.getByRole('button', { name: '保存修订草稿', exact: true }).click()
+  await saveCaseRefreshed
+  await expect(revisionForm.getByRole('button', { name: '保存修订草稿', exact: true })).toBeEnabled()
   await expect(page.getByText('存在待签署的病历修订草稿', { exact: true })).toBeVisible()
   await revisionForm.getByLabel('修订原因', { exact: true }).fill('补充门诊诊间复测记录。')
-  await revisionForm.getByRole('button', { name: '提交病历修订', exact: true }).click()
+  const submitRevisionButton = revisionForm.getByRole('button', { name: '提交病历修订', exact: true })
+  await expect(submitRevisionButton).toBeEnabled()
+  await expect(submitRevisionButton).not.toHaveAttribute('data-unavailable', '')
+  await submitRevisionButton.click()
   const confirmRevisionDialog = page.getByRole('alertdialog', { name: '确认提交病历修订', exact: true })
   await expect(confirmRevisionDialog).toBeVisible()
   await confirmRevisionDialog.getByRole('button', { name: '确认提交修订', exact: true }).click()

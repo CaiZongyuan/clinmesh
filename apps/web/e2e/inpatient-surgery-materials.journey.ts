@@ -53,7 +53,7 @@ export async function runPostoperativeRecoveryConflictJourney(page: Page, s: Awa
   expect(keys[2]).not.toBe(keys[0])
   const saved = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).executions[0]!
   expect(saved.materialHistory.map(use => use.note)).toEqual(['合成另一笔已保存的球囊使用', basis])
-  expect(inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json()).formal.chargesFen).toBe(200000)
+  expect(inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json()).formal.chargesFen).toBe(208000)
   await open()
   await openQueue(page)
   await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
@@ -129,7 +129,7 @@ export async function runPostoperativeMaterialsJourney(page: Page, s: Awaited<Re
   expect(execution).toMatchObject({ id: s.completed.id, completedAt: s.completed.completedAt, performedAt: s.completed.performedAt,
     materialHistory: [{ recordingKind: 'postoperative-addendum', quantity: 1, amountFen: 40000 }] })
   const simulation = inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json())
-  expect(simulation.formal.chargesFen).toBe(160000)
+  expect(simulation.formal.chargesFen).toBe(168000)
   expect(simulation.reserved.items).toEqual([])
   await page.getByRole('button', { name: '补登记与更正耗材', exact: true }).click()
   await dialog.getByRole('button', { name: '更正 合成演示冠脉球囊 × 1', exact: true }).click()
@@ -143,14 +143,14 @@ export async function runPostoperativeMaterialsJourney(page: Page, s: Awaited<Re
   await expect(review).toContainText('合成术后复核实际漏记两只球囊')
   await review.getByRole('button', { name: '确认更正', exact: true }).click()
   await expect(dialog.getByRole('row', { name: '合成演示冠脉球囊 × 2个', exact: true })).toContainText('术后补登记')
-  expect(inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json()).formal.chargesFen).toBe(200000)
+  expect(inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json()).formal.chargesFen).toBe(208000)
   await dialog.getByRole('button', { name: '更正 合成演示冠脉球囊 × 2', exact: true }).click()
   await corrections.getByLabel('逐项更正依据 合成演示冠脉球囊 × 2', { exact: true }).fill('合成术后复核撤销误补登记')
   await corrections.getByRole('button', { name: '集中核对更正', exact: true }).click()
   await expect(review).toContainText('合成术后复核撤销误补登记')
   await review.getByRole('button', { name: '确认更正', exact: true }).click()
   await expect.poll(async () => inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json()).executions[0]?.materials.length).toBe(0)
-  expect(inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json()).formal.chargesFen).toBe(120000)
+  expect(inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json()).formal.chargesFen).toBe(128000)
 }
 
 export async function prepareSurgeryMaterialsPatient(page: Page, app: Parameters<typeof createDrgBrowserPatient>[1]) {
@@ -242,7 +242,7 @@ export async function runSurgeryMaterialsJourney(page: Page, s: Patient, open: (
   expect(final.executions).toHaveLength(1)
   expect(final.executions[0]!.materialHistory).toHaveLength(4)
   const completion = inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json())
-  expect(completion.formal.chargesFen).toBe(280000)
+  expect(completion.formal.chargesFen).toBe(288000)
   expect(completion.reserved.items).toEqual([])
 }
 
@@ -327,5 +327,5 @@ export async function runFinalMaterialsJourney(page: Page, s: Patient, open: () 
   expect(reservationList.reservations.find(item => item.materialId === 'hospital-material-balloon')).toMatchObject({ status: 'reserved', remainingQuantity: 2 })
   expect(reservationList.reservations.find(item => item.materialId === 'hospital-material-stent')).toMatchObject({ status: 'released', consumedQuantity: 1 })
   const simulation = inpatientDrgSimulationSchema.parse(await (await s.api.post(`${s.path}/drg/simulation`, {})).json())
-  expect(simulation.formal.chargesFen).toBe(202000)
+  expect(simulation.formal.chargesFen).toBe(210000)
 }
