@@ -23,9 +23,11 @@ import {
   diseasePackToggleBodySchema,
   diseasePackToolAuthorizeBodySchema,
 } from '@clinmesh/contracts/disease-pack'
+import { AgentOutputScorerError } from '@clinmesh/core/agent-output-scorer'
 import { ConceptVocabularyError } from '@clinmesh/core/concept-vocabulary'
 import { DiseasePackValidationError } from '@clinmesh/core/disease-pack'
 import { KnowledgeClaimError } from '@clinmesh/core/knowledge-claims'
+import { AgentOutputScorerServiceError } from './application/agent-output-scorer-service.ts'
 import { DiseasePackRuntimeError } from './application/disease-pack-runtime-service.ts'
 import { KnowledgeSemanticError } from './application/knowledge-semantic-service.ts'
 import { UnknownGuidelineTopicError } from './application/guideline-topic-registry.ts'
@@ -357,11 +359,16 @@ function apiErrorResponse(
         : 400
     return context.json(apiErrorBody(context, error.code, error.message), status)
   }
+  if (error instanceof AgentOutputScorerError) {
+    const status = error.code === 'LIVE_MODEL_SCORING_PERMISSION_REQUIRED' ? 403 : 400
+    return context.json(apiErrorBody(context, error.code, error.message), status)
+  }
   if (error instanceof ClinicalQualityError) {
     return context.json(apiErrorBody(context, error.code, error.message, undefined, undefined, error.check), error.status)
   }
     if (
       error instanceof IdentityError
+      || error instanceof AgentOutputScorerServiceError
       || error instanceof ClinicalFactLedgerError
       || error instanceof LocalSourceIngestionError
       || error instanceof DiseasePackRuntimeError
@@ -394,7 +401,7 @@ function apiErrorResponse(
       error.code,
       error.message,
       error instanceof WorkflowError ? error.conflict : undefined,
-      error instanceof WorkflowError || error instanceof InpatientError || error instanceof DiseasePackRuntimeError || error instanceof KnowledgeSemanticError ? error.reason : undefined,
+      error instanceof WorkflowError || error instanceof InpatientError || error instanceof DiseasePackRuntimeError || error instanceof KnowledgeSemanticError || error instanceof AgentOutputScorerServiceError ? error.reason : undefined,
       error instanceof WorkflowError || error instanceof InpatientError ? error.clinicalQuality : undefined,
     ), error.status)
   }
@@ -2849,6 +2856,18 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           diseasePackSlugSchema.parse(context.req.param('packId')),
           context.req.query(),
         ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/evaluation/agent-output-score', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const rawBody: unknown = await context.req.json()
+        return context.json(workflow.agentOutputScorer.evaluateHttp({
+          context: await actor(context),
+          rawBody,
+        }))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
