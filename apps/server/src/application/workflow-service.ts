@@ -95,6 +95,7 @@ import { LocalSourceIngestionService } from './local-source-ingestion-service.ts
 import { DiseasePackRegistry, DiseasePackRuntimeService } from './disease-pack-runtime-service.ts'
 import { KnowledgePipelineService } from './knowledge-pipeline-service.ts'
 import { KnowledgeSemanticService } from './knowledge-semantic-service.ts'
+import { AgentOutputScorerService } from './agent-output-scorer-service.ts'
 import { OrderSetDraftService } from './order-set-draft-service.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
 import {
@@ -325,6 +326,7 @@ export class WorkflowService
   readonly diseasePacks: DiseasePackRuntimeService
   readonly knowledgeSemantics: KnowledgeSemanticService
   readonly knowledgePipeline: KnowledgePipelineService
+  readonly agentOutputScorer: AgentOutputScorerService
   /** 专病组套只读草稿预装配；不写入任何正式业务事实。 */
   readonly orderSets: OrderSetDraftService
 
@@ -421,6 +423,12 @@ export class WorkflowService
       diseasePacks: this.diseasePacks,
       factLedger: this.clinicalFactLedger,
       ...(options.guidelines === undefined ? {} : { guidelines: options.guidelines }),
+      outpatientContext: this.#context,
+    })
+    this.agentOutputScorer = new AgentOutputScorerService({
+      commands,
+      database,
+      factLedger: this.clinicalFactLedger,
       outpatientContext: this.#context,
     })
     this.insurance = new InsuranceService(database, commands, {

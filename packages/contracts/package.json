@@ -53,7 +53,8 @@
     "./guideline-topics": "./src/guideline-topics.ts",
     "./concept-vocabulary": "./src/concept-vocabulary.ts",
     "./knowledge-claims": "./src/knowledge-claims.ts",
-    "./knowledge-pipeline": "./src/knowledge-pipeline.ts"
+    "./knowledge-pipeline": "./src/knowledge-pipeline.ts",
+    "./agent-output-scorer": "./src/agent-output-scorer.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
