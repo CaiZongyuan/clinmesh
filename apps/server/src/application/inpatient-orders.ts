@@ -314,12 +314,24 @@ export class InpatientOrders {
       return { data: this.read(context, input.admissionId), effects }
     })
   }
-  #listAutoStoppableLongTermOrders(context: ActorContext, admissionId: string): OrderRow[] {
+  #listAutoStoppableLongTermOrders(context: ActorContext, admissionId: string, requestId: string): OrderRow[] {
     return z.array(orderRowSchema).parse(this.owner.database.driver.prepare(`
-      SELECT * FROM inpatient_order
-      WHERE workspace_id=? AND epoch=? AND admission_id=? AND duration='long' AND state IN ('signed','verified')
-      ORDER BY julianday(signed_at), order_id
-    `).all(context.workspaceId, context.epoch, admissionId))
+      SELECT o.* FROM inpatient_order o
+      WHERE o.workspace_id=? AND o.epoch=? AND o.admission_id=? AND o.duration='long' AND o.state IN ('signed','verified')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM inpatient_postoperative_order po
+          JOIN inpatient_surgery_execution se
+            ON se.workspace_id = po.workspace_id
+           AND se.epoch = po.epoch
+           AND se.execution_id = po.surgery_execution_id
+          WHERE po.workspace_id = o.workspace_id
+            AND po.epoch = o.epoch
+            AND po.order_id = o.order_id
+            AND se.request_id = ?
+        )
+      ORDER BY julianday(o.signed_at), o.order_id
+    `).all(context.workspaceId, context.epoch, admissionId, requestId))
   }
   #markOrderStopRequested(context: ActorContext, row: OrderRow, now: string, stopReason: string, effects: Effects) {
     const changed = this.owner.database.driver.prepare(`
@@ -339,8 +351,8 @@ export class InpatientOrders {
     effects.push({ kind: 'updated', reference: `${resourceType}/${row.order_id}`, versionId: updated.meta!.versionId! })
   }
   /** 仅预览术前仍有效的长期医嘱（signed/verified），供手术完成核实弹窗展示，不修改医嘱状态。 */
-  previewAutoStopPreopOrders(context: ActorContext, admissionId: string): InpatientSurgeryAutoStopOrderPreview[] {
-    return this.#listAutoStoppableLongTermOrders(context, admissionId).map(row => ({
+  previewAutoStopPreopOrders(context: ActorContext, admissionId: string, requestId: string): InpatientSurgeryAutoStopOrderPreview[] {
+    return this.#listAutoStoppableLongTermOrders(context, admissionId, requestId).map(row => ({
       orderId: row.order_id,
       orderVersion: row.version,
       kind: row.kind,
@@ -359,11 +371,12 @@ export class InpatientOrders {
   requestStopForSurgeryCompletion(
     context: ActorContext,
     admissionId: string,
+    requestId: string,
     executionId: string,
     procedureDisplay: string,
     effects: Effects,
   ) {
-    const rows = this.#listAutoStoppableLongTermOrders(context, admissionId)
+    const rows = this.#listAutoStoppableLongTermOrders(context, admissionId, requestId)
     if (rows.length === 0) return
     const now = this.owner.virtualTime(context)
     const stopReason = `术后医嘱重整自动停嘱：${procedureDisplay}完成（Procedure/${executionId}）`

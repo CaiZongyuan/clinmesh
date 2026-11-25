@@ -859,6 +859,7 @@ export class InpatientSurgery {
         this.owner.orders.requestStopForSurgeryCompletion(
           context,
           row.admission_id,
+          row.request_id,
           primaryExecution?.execution_id ?? row.request_id,
           procedureDisplay,
           effects,
@@ -1166,7 +1167,7 @@ export class InpatientSurgery {
       && request.standby_ad_hoc_pci === 1
       && isCoronaryAngiographyProcedureCode(execution.actualProcedure.coding.code)
     const autoStopPreopOrders = !willEnterStandbyPci && request.preop_order_policy === 'stop-on-completion'
-      ? this.owner.orders.previewAutoStopPreopOrders(context, input.admissionId)
+      ? this.owner.orders.previewAutoStopPreopOrders(context, input.admissionId, input.requestId)
       : []
     return planSurgeryCompletion(input, execution, plannedProcedure, catalog, this.owner.drg.reservations(context, input.admissionId), reservationItems, charges,
       { workspaceId: context.workspaceId, epoch: context.epoch, actorId: context.actorId, practitionerRoleId: context.practitionerRoleId! },
@@ -1319,6 +1320,7 @@ export class InpatientSurgery {
         this.owner.orders.requestStopForSurgeryCompletion(
           context,
           request.admission_id,
+          request.request_id,
           execution.execution_id,
           actual.coding.display,
           effects,

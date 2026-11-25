@@ -823,6 +823,33 @@ describe('手术通知单停续术前医嘱策略与术后成套医嘱模板重�
       ]),
     })
 
+    // 普通住院组套请求（未传 surgeryExecutionId）不得返回绑定术式的术后模板，显式请求术后模板但未绑手术或术式不匹配均应 409 拒绝
+    const ordinaryDrafts = orderSetDraftBundleSchema.parse(
+      await (await request(cookies.doctor, `${stay.path}/order-set-drafts`)).json(),
+    )
+    expect(ordinaryDrafts.drafts.map(draft => draft.template.id)).not.toContain('pci-postop-standard')
+    expect(ordinaryDrafts.drafts.map(draft => draft.template.id)).not.toContain('general-surgery-postop-standard')
+
+    const postopWithoutSurgery = await request(cookies.doctor, `${stay.path}/order-set-drafts?templateId=pci-postop-standard`)
+    expect(postopWithoutSurgery.status).toBe(409)
+    expect(apiErrorSchema.parse(await postopWithoutSurgery.json()).error.code).toBe('ORDER_SET_SCOPE_NOT_APPLICABLE')
+
+    const postopMismatchedProcedure = await request(
+      cookies.doctor,
+      `${stay.path}/order-set-drafts?surgeryExecutionId=${execution.id}&templateId=general-surgery-postop-standard`,
+    )
+    expect(postopMismatchedProcedure.status).toBe(409)
+    expect(apiErrorSchema.parse(await postopMismatchedProcedure.json()).error.code).toBe('ORDER_SET_SCOPE_NOT_APPLICABLE')
+
+    const postopMatchedExplicitRes = await request(
+      cookies.doctor,
+      `${stay.path}/order-set-drafts?surgeryExecutionId=${execution.id}&templateId=pci-postop-standard`,
+    )
+    expect(postopMatchedExplicitRes.status, await postopMatchedExplicitRes.clone().text()).toBe(200)
+    expect(orderSetDraftBundleSchema.parse(await postopMatchedExplicitRes.json()).drafts.map(draft => draft.template.id)).toEqual([
+      'pci-postop-standard',
+    ])
+
     // 跨住院 surgeryExecutionId 校验拒绝
     const crossAdmissionDraft = await request(cookies.doctor, `${otherStay.path}/order-set-drafts?surgeryExecutionId=${execution.id}`)
     expect(crossAdmissionDraft.status).toBe(409)
@@ -1239,6 +1266,17 @@ describe('手术通知单停续术前医嘱策略与术后成套医嘱模板重�
     const clinicalMidStandby = inpatientFullClinicalSchema.parse(await (await request(cookies.doctor, `${stay.path}/clinical`)).json())
     expect(clinicalMidStandby.orders.find(item => item.id === standbyLongOrder.id)?.state).toBe('verified')
 
+    // 若在 standby-pci 期间已提前开立关联本台手术（同一 requestId）的术后长期护理医嘱，finalize-standby 收口时只停术前长嘱、不误停本台术后医嘱
+    const ecgMonitor = catalog.services.find(item => item.id === 'hospital-service-postop-ecg-monitoring')!
+    const sameSurgeryPostopRes = await request(cookies.doctor, `${stay.path}/orders/issue`, {
+      duration: 'long',
+      encounterVersion: clinicalMidStandby.encounterVersion,
+      selection: { kind: 'service', quantity: 1, serviceId: ecgMonitor.id, serviceVersion: ecgMonitor.version },
+      surgeryExecutionId: runningStandbyExec.id,
+    })
+    expect(sameSurgeryPostopRes.status, await sameSurgeryPostopRes.clone().text()).toBe(200)
+    const sameSurgeryPostopOrder = inpatientFullClinicalResponseSchema.parse(await sameSurgeryPostopRes.json()).data.orders.at(-1)!
+
     const finalizeRes = await request(cookies.doctor, `${stay.path}/surgeries/finalize-standby`, {
       expectedRequestVersion: standbyReq.version,
       note: '造影评估仅需药物保守，结束本台手术',
@@ -1248,5 +1286,6 @@ describe('手术通知单停续术前医嘱策略与术后成套医嘱模板重�
     expect(inpatientSurgeryResponseSchema.parse(await finalizeRes.json()).data.requests.find(item => item.id === angioReady.id)?.status).toBe('completed')
     const clinicalFinalStandby = inpatientFullClinicalSchema.parse(await (await request(cookies.doctor, `${stay.path}/clinical`)).json())
     expect(clinicalFinalStandby.orders.find(item => item.id === standbyLongOrder.id)?.state).toBe('stop-requested')
+    expect(clinicalFinalStandby.orders.find(item => item.id === sameSurgeryPostopOrder.id)?.state).toBe('signed')
   })
 })

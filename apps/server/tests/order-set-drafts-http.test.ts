@@ -833,7 +833,12 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
       `${admissionPath}/order-set-drafts`,
       { headers: { cookie: cookies.inpatientDoctor } },
     )).json())
-    expect(initialInpatient.drafts.map(draft => draft.template.id)).toEqual([...orderSetTemplateIds])
+    expect(initialInpatient.drafts.map(draft => draft.template.id)).toEqual([
+      'chest-pain-stat-workup',
+      'cad-admission-baseline',
+      'cin-perioperative-hydration',
+      'cad-pci-secondary-prevention',
+    ])
     expect(initialInpatient.patientFacts.vitalSigns).toEqual({ source: 'inpatient-nursing', status: 'missing' })
     expect(initialInpatient.patientFacts.weight).toEqual({ status: 'missing' })
     expect(initialInpatient.patientFacts.egfr.status).toBe('missing')

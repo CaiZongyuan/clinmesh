@@ -207,11 +207,7 @@ export class OrderSetDraftService {
           procedureDisplay: execution.actualProcedure.coding.display,
         }
       }
-      const templates = surgeryContext !== undefined && templateId === undefined
-        ? orderSetTemplates.filter(template =>
-            template.scopes.includes('inpatient')
-            && template.applicableProcedureCodes?.includes(surgeryContext.procedureCode) === true)
-        : this.#templates('inpatient', templateId, reason => new InpatientError('ORDER_SET_SCOPE_NOT_APPLICABLE', reason))
+      const templates = this.#inpatientTemplates(templateId, surgeryContext)
       const scores = this.#clinicalScores.inpatientSnapshot(inpatient, context, admissionId)
       const weighted = this.#clinicalScores.latestInpatientVitalSignsWithWeight(context, admissionId)
       const facts = this.#facts(
@@ -315,6 +311,36 @@ export class OrderSetDraftService {
         })),
     ]
     return { activeOrders, alwaysApply, inFlightInvestigations }
+  }
+
+  #inpatientTemplates(
+    templateId: OrderSetTemplateId | undefined,
+    surgeryContext: { procedureCode: string; procedureDisplay: string } | undefined,
+  ): OrderSetTemplate[] {
+    if (templateId === undefined) {
+      return orderSetTemplates.filter(template =>
+        template.scopes.includes('inpatient')
+        && (surgeryContext === undefined
+          ? template.applicableProcedureCodes === undefined
+          : template.applicableProcedureCodes?.includes(surgeryContext.procedureCode) === true))
+    }
+    const [template] = this.#templates(
+      'inpatient',
+      templateId,
+      reason => new InpatientError('ORDER_SET_SCOPE_NOT_APPLICABLE', reason),
+    )
+    if (template!.applicableProcedureCodes !== undefined) {
+      if (surgeryContext === undefined) {
+        throw new InpatientError('ORDER_SET_SCOPE_NOT_APPLICABLE', `术后组套 ${template!.titleZh} 须绑定适用术式的已完成手术`)
+      }
+      if (!template!.applicableProcedureCodes.includes(surgeryContext.procedureCode)) {
+        throw new InpatientError(
+          'ORDER_SET_SCOPE_NOT_APPLICABLE',
+          `术后组套 ${template!.titleZh} 不适用于已完成术式 ${surgeryContext.procedureDisplay}（${surgeryContext.procedureCode}）`,
+        )
+      }
+    }
+    return [template!]
   }
 
   #templates(scope: OrderSetScope, templateId: OrderSetTemplateId | undefined, conflict: (reason: string) => Error): OrderSetTemplate[] {
