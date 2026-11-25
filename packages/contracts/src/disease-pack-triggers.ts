@@ -13,6 +13,17 @@ export type DiseasePackTimestampField = z.infer<typeof diseasePackTimestampField
 
 const boundedCode = z.string().trim().min(1).max(128)
 
+export const diseasePackRegexPatternSchema = z.string().trim().min(1).max(200).superRefine((pattern, ctx) => {
+  try {
+    new RegExp(pattern)
+  } catch {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Must be a valid regular expression',
+    })
+  }
+})
+
 export interface DiseasePackFactTriggerNode {
   kind: 'fact'
   category?: z.infer<typeof clinicalFactCategorySchema> | undefined
@@ -66,14 +77,14 @@ export const diseasePackTriggerNodeSchema: z.ZodType<DiseasePackTriggerNode> = z
       kind: z.literal('fact'),
       category: clinicalFactCategorySchema.optional(),
       itemCodes: z.array(boundedCode).min(1).max(64).optional(),
-      itemCodePattern: z.string().trim().min(1).max(200).optional(),
+      itemCodePattern: diseasePackRegexPatternSchema.optional(),
       presence: z.enum(['present', 'absent']).default('present'),
       requireEligible: z.boolean().default(true),
       verificationStatus: clinicalFactVerificationStatusSchema.optional(),
       minValue: z.number().finite().optional(),
       maxValue: z.number().finite().optional(),
       unit: z.string().trim().min(1).max(64).optional(),
-      textPattern: z.string().trim().min(1).max(200).optional(),
+      textPattern: diseasePackRegexPatternSchema.optional(),
       withinDays: z.number().positive().max(36500).optional(),
       timestampField: diseasePackTimestampFieldSchema.optional(),
     }).strict().superRefine((node, ctx) => {

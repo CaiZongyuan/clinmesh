@@ -4,7 +4,7 @@ import {
   type AgentOutputScoreResult,
 } from '@clinmesh/contracts/agent-output-scorer'
 import {
-  AgentOutputScorerError,
+  assertLiveModelScoringPermitted,
   scoreAgentDraftOutput,
 } from '@clinmesh/core/agent-output-scorer'
 import { z } from 'zod'
@@ -58,19 +58,6 @@ function unwrapScorerRequestPayload(rawBody: unknown): unknown {
   return rawBody
 }
 
-function assertLiveModelGateBeforeValidation(candidate: unknown): void {
-  if (!isPlainRecord(candidate)) return
-  if (candidate['mode'] !== 'live-model') return
-  const permit = candidate['liveRunPermit']
-  const granted = isPlainRecord(permit) && permit['explicitUserPermissionGranted'] === true
-  if (!granted) {
-    throw new AgentOutputScorerError(
-      'LIVE_MODEL_SCORING_PERMISSION_REQUIRED',
-      '对真实模型输出评分必须获得用户针对当次运行的明确许可',
-    )
-  }
-}
-
 export class AgentOutputScorerService {
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
@@ -110,7 +97,7 @@ export class AgentOutputScorerService {
         if (typeof payload['mode'] === 'string') auditInput['mode'] = payload['mode']
       }
 
-      assertLiveModelGateBeforeValidation(payload)
+      assertLiveModelScoringPermitted(payload)
       const parsed = evaluateAgentOutputInputSchema.parse(payload)
       auditInput['rubricId'] = parsed.rubric.rubricId
       auditInput['packId'] = parsed.rubric.packId

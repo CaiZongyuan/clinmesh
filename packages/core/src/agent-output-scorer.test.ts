@@ -488,5 +488,57 @@ describe('agent-output-scorer core engine', () => {
       status: 'evaluated-live-authorized',
     })
     expect(permitted.clinicianEditMetrics?.modifiedFieldsCount).toBe(1)
+
+    // Missing or blank runId with explicitUserPermissionGranted=true still fails with 403 gate code (never Zod 400)
+    try {
+      scoreAgentDraftOutput({
+        input: {
+          ...baseInput,
+          liveRunPermit: {
+            authorizedAt: '2026-09-14T10:00:00+08:00',
+            authorizedByActorId: 'actor-administrator',
+            explicitUserPermissionGranted: true,
+            runId: '   ',
+          },
+        },
+        ledger,
+      })
+      throw new Error('Expected LIVE_MODEL_SCORING_PERMISSION_REQUIRED')
+    } catch (error) {
+      expect(error).toBeInstanceOf(AgentOutputScorerError)
+      expect((error as AgentOutputScorerError).code).toBe('LIVE_MODEL_SCORING_PERMISSION_REQUIRED')
+    }
+
+    // Empty/whitespace field keys reject with SCORER_INVALID_INPUT instead of raw ZodError on output parse
+    try {
+      scoreAgentDraftOutput({
+        input: {
+          ...baseInput,
+          draftFields: { '': 'empty key' },
+          mode: 'controlled-stream',
+        },
+        ledger,
+      })
+      throw new Error('Expected SCORER_INVALID_INPUT')
+    } catch (error) {
+      expect(error).toBeInstanceOf(AgentOutputScorerError)
+      expect((error as AgentOutputScorerError).code).toBe('SCORER_INVALID_INPUT')
+    }
+
+    // Future-ingested ledger facts relative to evaluatedAt are excluded defensively
+    const futureFactResult = scoreAgentDraftOutput({
+      evaluatedAt: '2026-09-10T00:00:00+08:00',
+      input: {
+        draftFields: { assessment: 'LDL 已达标（1.25 mmol/L）' },
+        draftText: 'LDL 已达标（1.25 mmol/L）。',
+        mode: 'controlled-stream',
+        rubric: {
+          ...case1FollowupRubric,
+          items: [case1FollowupRubric.items[0]!],
+        },
+      },
+      ledger,
+    })
+    expect(futureFactResult.coverageItems[0]?.status).toBe('not-applicable')
   })
 })

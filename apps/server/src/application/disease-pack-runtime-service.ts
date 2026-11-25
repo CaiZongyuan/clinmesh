@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import type { ClinicalFactLedger } from '@clinmesh/contracts/clinical-fact-ledger'
+import type { ConceptVocabulary } from '@clinmesh/contracts/concept-vocabulary'
 import {
   diseasePackRuntimeBundleSchema,
   diseasePackRuntimeEntrySchema,
@@ -21,8 +22,7 @@ import {
   type EffectiveDiseasePack,
 } from '@clinmesh/contracts/disease-pack'
 import {
-  PUBLIC_CONCEPT_VOCABULARY,
-  mergeThreeLayerConceptVocabulary,
+  resolveEffectiveConceptVocabulary,
 } from '@clinmesh/core/concept-vocabulary'
 import {
   DiseasePackValidationError,
@@ -596,7 +596,10 @@ export class DiseasePackRuntimeService {
         { id: caseId, kind: 'outpatient', patientId: caseRow.patient_id },
         { asOf, includeSuperseded: false },
       )
-      const readiness = diseasePackTaskReadinessResultSchema.parse(evaluateTaskReadiness(effective, taskId, ledger, { asOf }))
+      const vocabulary = this.#resolvePackVocabulary(effective)
+      const readiness = diseasePackTaskReadinessResultSchema.parse(
+        evaluateTaskReadiness(effective, taskId, ledger, { asOf, vocabulary }),
+      )
       this.#commands.auditRead(context, 'doctor.case.disease-pack-task-readiness.read', auditInput, 'success')
       return readiness
     } catch (error) {
@@ -623,7 +626,10 @@ export class DiseasePackRuntimeService {
         { id: admissionId, kind: 'inpatient', patientId: binding.patientId },
         { asOf, includeSuperseded: false },
       )
-      const readiness = diseasePackTaskReadinessResultSchema.parse(evaluateTaskReadiness(effective, taskId, ledger, { asOf }))
+      const vocabulary = this.#resolvePackVocabulary(effective)
+      const readiness = diseasePackTaskReadinessResultSchema.parse(
+        evaluateTaskReadiness(effective, taskId, ledger, { asOf, vocabulary }),
+      )
       inpatient.commands.auditRead(context, 'inpatient.disease-pack-task-readiness.read', auditInput, 'success')
       return readiness
     } catch (error) {
@@ -713,6 +719,7 @@ export class DiseasePackRuntimeService {
     }
 
     const effective = this.registry.getEffective(input.packId)
+    const vocabulary = this.#resolvePackVocabulary(effective)
     const subject = { id: input.subjectId, kind: input.subjectKind, patientId }
     const ledger = this.#factLedger.buildInternalLedger(input.context, subject, { asOf, includeSuperseded: false })
     const encounterMap = this.#resolveEncounterMap(input.context, patientId)
@@ -721,6 +728,7 @@ export class DiseasePackRuntimeService {
       asOf,
       encounterIdByRecordId: encounterMap,
       manualOverride: override?.override_mode ?? null,
+      vocabulary,
     })
 
     if (!activation.active) {
@@ -832,10 +840,12 @@ export class DiseasePackRuntimeService {
 
     for (const effective of effectiveList) {
       const override = this.#loadOverride(input.context, input.subjectKind, input.subjectId, effective.pack.manifest.id)
+      const vocabulary = this.#resolvePackVocabulary(effective)
       const activation = evaluatePackActivation(effective, ledger, {
         asOf,
         encounterIdByRecordId: encounterMap,
         manualOverride: override?.override_mode ?? null,
+        vocabulary,
       })
       if (!activation.active) continue
 
@@ -909,14 +919,16 @@ export class DiseasePackRuntimeService {
       const taskIds = matchingTaskIdsByPack.get(entry.pack.manifest.id)
       if (!taskIds) continue
       const override = this.#loadOverride(context, 'inpatient', admissionId, entry.pack.manifest.id)
+      const vocabulary = this.#resolvePackVocabulary(entry)
       const activation = evaluatePackActivation(entry, ledger, {
         asOf,
         encounterIdByRecordId: encounterMap,
         manualOverride: override?.override_mode ?? null,
+        vocabulary,
       })
       if (!activation.active) continue
       for (const taskId of taskIds) {
-        const res = evaluateTaskReadiness(entry, taskId, ledger, { asOf })
+        const res = evaluateTaskReadiness(entry, taskId, ledger, { asOf, vocabulary })
         readinessResults.push(res)
         if (!res.canProceed) {
           blocked = true
@@ -934,6 +946,17 @@ export class DiseasePackRuntimeService {
     }
   }
 
+  #resolvePackVocabulary(effective: EffectiveDiseasePack): ConceptVocabulary {
+    return resolveEffectiveConceptVocabulary({
+      ...(effective.hospitalOverlay?.conceptVocabulary === undefined
+        ? {}
+        : { hospitalLayer: effective.hospitalOverlay.conceptVocabulary }),
+      ...(effective.pack.conceptVocabulary === undefined
+        ? {}
+        : { packLayer: effective.pack.conceptVocabulary }),
+    })
+  }
+
   #buildTaskFactsResponse(
     effective: EffectiveDiseasePack,
     taskId: string,
@@ -941,7 +964,8 @@ export class DiseasePackRuntimeService {
     asOf: string,
   ): DiseasePackTaskFactsResponse {
     try {
-      const readiness = evaluateTaskReadiness(effective, taskId, ledger, { asOf })
+      const vocabulary = this.#resolvePackVocabulary(effective)
+      const readiness = evaluateTaskReadiness(effective, taskId, ledger, { asOf, vocabulary })
       const scopedLedger = filterLedgerForTaskView(effective, taskId, ledger)
       const declaredItemCodes = collectDeclaredTaskItemCodes(effective, taskId)
       return diseasePackTaskFactsResponseSchema.parse({
@@ -1090,12 +1114,7 @@ export class DiseasePackRuntimeService {
     override: z.infer<typeof overrideRowSchema> | undefined,
     asOf: string,
   ): DiseasePackRuntimeEntry {
-    const vocabulary = effective.pack.conceptVocabulary === undefined
-      ? PUBLIC_CONCEPT_VOCABULARY
-      : mergeThreeLayerConceptVocabulary({
-          packLayer: effective.pack.conceptVocabulary,
-          publicLayer: PUBLIC_CONCEPT_VOCABULARY,
-        })
+    const vocabulary = this.#resolvePackVocabulary(effective)
     const evalOptions = {
       asOf,
       encounterIdByRecordId: encounterMap,
@@ -1105,7 +1124,7 @@ export class DiseasePackRuntimeService {
     const activation = evaluatePackActivation(effective, ledger, evalOptions)
     const stageEval = evaluatePackStages(effective, ledger, evalOptions)
     const readinessTasks = effective.pack.readinessTasks.map(task => (
-      evaluateTaskReadiness(effective, task.taskId, ledger, { asOf })
+      evaluateTaskReadiness(effective, task.taskId, ledger, { asOf, vocabulary })
     ))
 
     return diseasePackRuntimeEntrySchema.parse({

@@ -87,7 +87,7 @@
 
 ### 概念词表映射门禁、知识主张发布与离线知识治理
 
-平台以本院目录项、平台概念与国家/国际标准三层受控词表（`@clinmesh/contracts/concept-vocabulary` 与 `@clinmesh/core/concept-vocabulary`）统一药物与检验概念语义（既有药理分类已迁移为受控词表节点并保留兼容导出），显式声明 SKOS 四类映射关系（`exact`、`close`、`broader`、`narrower`）与四态复核生命周期（`proposed`、`reviewed`、`approved`、`deprecated`）。临床评分与第一层药事/肾功能安全红线仅放行 `approved + exact` 映射，`close`、`broader`、`narrower` 或未完成批准与已弃用映射一律给出结构化拒绝原因码，仅在检索召回场景使用已批准同义扩展；词表结构通过全平台只读入口 `catalog.concept-vocabulary.read` 对外查询。
+平台以本院目录项、平台概念与国家/国际标准三层受控词表（`@clinmesh/contracts/concept-vocabulary` 与 `@clinmesh/core/concept-vocabulary`）统一药物与检验概念语义（既有药理分类已迁移为受控词表节点并保留兼容导出；医院适配层可通过 `HospitalOverlay.conceptVocabulary` 挂载仅限叶节点的本院扩展词表并与公共层、病种包层共同完成三层确定性合并），显式声明 SKOS 四类映射关系（`exact`、`close`、`broader`、`narrower`）与四态复核生命周期（`proposed`、`reviewed`、`approved`、`deprecated`）。临床评分与第一层药事/肾功能安全红线仅放行 `approved + exact` 映射，`close`、`broader`、`narrower` 或未完成批准与已弃用映射一律给出结构化拒绝原因码，仅在检索召回场景使用已批准同义扩展；词表结构通过全平台只读入口 `catalog.concept-vocabulary.read` 对外查询（支持按 `hospitalId` 过滤叠加本院适配层词表）。
 
 专病知识采用“专题导航 + 原子知识主张”双层结构（`@clinmesh/contracts/knowledge-claims` 与 `@clinmesh/core/knowledge-claims`），绑定结构化适用条件、概念编码与带来源 `sha256` 及页码定位的逐字引文锚点，并以九状态发布状态机（`imported` -> `draft` -> `concept-mapped` -> `auto-verified` -> `clinician-reviewed` -> `published`，以及 `rejected`、`superseded`、`retracted`）与不可变 `KnowledgeSnapshot` 版本快照管理生命周期：推进至 `clinician-reviewed` 或 `published` 强制核验已登记执业医生审核记录，自动校对态 `auto-verified` 仅以 `试用版` 展示并强制携带 `未经医生检查，仅用于仿真` 免责声明；门诊与住院只读操作（`doctor.case.disease-pack-knowledge.read` 与 `inpatient.disease-pack-knowledge.read`）支持按任意 `asOf` 截止时间重放历史生效快照及对比最新版差异，一旦底层指南来源撤回、段落失配或哈希变化，关联引文与主张立即判定为失活（`anchorValid: false`、`active: false`）并附带停用原因，不篡改既有快照历史。
 

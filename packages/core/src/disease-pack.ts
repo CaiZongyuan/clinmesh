@@ -24,7 +24,7 @@ import {
   PUBLIC_CONCEPT_VOCABULARY,
   evaluateConceptMappingEligibility,
   getConceptAncestors,
-  mergeThreeLayerConceptVocabulary,
+  resolveEffectiveConceptVocabulary,
 } from './concept-vocabulary.ts'
 
 export type DiseasePackErrorCode =
@@ -207,7 +207,7 @@ export function validateAndParseDiseasePack(
         )
       }
     }
-    mergeThreeLayerConceptVocabulary({
+    resolveEffectiveConceptVocabulary({
       packLayer: pack.conceptVocabulary,
       publicLayer: PUBLIC_CONCEPT_VOCABULARY,
     })
@@ -294,6 +294,14 @@ export function mergeThreeLayerPack(input: {
         `Hospital overlay packId ${overlay.packId} does not match pack ${pack.manifest.id}`,
       )
     }
+  }
+
+  if (pack.conceptVocabulary !== undefined || overlay?.conceptVocabulary !== undefined) {
+    resolveEffectiveConceptVocabulary({
+      ...(overlay?.conceptVocabulary === undefined ? {} : { hospitalLayer: overlay.conceptVocabulary }),
+      ...(pack.conceptVocabulary === undefined ? {} : { packLayer: pack.conceptVocabulary }),
+      publicLayer: PUBLIC_CONCEPT_VOCABULARY,
+    })
   }
 
   const validityMap: Record<string, number> = {
@@ -455,6 +463,30 @@ function resolveEncounterKey(fact: ClinicalFact, field: DiseasePackTimestampFiel
   return `${fact.provenance.sourceSystemId}::${dayBucket}`
 }
 
+function collectApprovedExactTargets(
+  sourceCodes: readonly string[],
+  vocabulary: ConceptVocabulary | undefined,
+  asOfDate: string | undefined,
+): Set<string> {
+  const normalized = new Set<string>()
+  for (const code of sourceCodes) {
+    normalized.add(code)
+    normalized.add(resolveCanonicalItemCode(code))
+    if (vocabulary === undefined) continue
+    for (const mapping of vocabulary.mappings) {
+      if (mapping.sourceCode !== code) continue
+      const eligibility = evaluateConceptMappingEligibility(
+        mapping,
+        asOfDate === undefined ? undefined : { asOfDate },
+      )
+      if (eligibility.eligibleForScoreAndRedLine) {
+        normalized.add(mapping.targetConceptCode)
+      }
+    }
+  }
+  return normalized
+}
+
 function collectEligibleConceptCodesForFact(
   factCode: string,
   vocabulary: ConceptVocabulary | undefined,
@@ -499,23 +531,7 @@ function matchesFactLeaf(
   if (node.itemCodes !== undefined || node.itemCodePattern !== undefined) {
     const factConceptCodes = collectEligibleConceptCodesForFact(fact.itemCode.code, vocabulary, asOfDate)
     if (node.itemCodes !== undefined) {
-      const normalizedMatches = new Set<string>()
-      for (const code of node.itemCodes) {
-        normalizedMatches.add(code)
-        normalizedMatches.add(resolveCanonicalItemCode(code))
-        if (vocabulary !== undefined) {
-          for (const mapping of vocabulary.mappings) {
-            if (mapping.sourceCode !== code) continue
-            const eligibility = evaluateConceptMappingEligibility(
-              mapping,
-              asOfDate === undefined ? undefined : { asOfDate },
-            )
-            if (eligibility.eligibleForScoreAndRedLine) {
-              normalizedMatches.add(mapping.targetConceptCode)
-            }
-          }
-        }
-      }
+      const normalizedMatches = collectApprovedExactTargets(node.itemCodes, vocabulary, asOfDate)
       if (!factConceptCodes.some(code => normalizedMatches.has(code))) return false
     }
     if (node.itemCodePattern !== undefined) {
@@ -789,11 +805,6 @@ export function evaluatePackStages(
   return { currentStageId, stages }
 }
 
-function collectCandidateCodesForItem(item: DiseasePackReadinessItem): Set<string> {
-  const raw = [item.itemCode, ...(item.alternateItemCodes ?? [])]
-  return new Set(raw.flatMap(code => [code, resolveCanonicalItemCode(code)]))
-}
-
 function effectiveMaxAgeDaysForItem(
   item: DiseasePackReadinessItem,
   effectiveValidityDaysByItemCode: Readonly<Record<string, number>>,
@@ -829,12 +840,18 @@ function evaluateReadinessItem(
   ledger: ClinicalFactLedger,
   effectiveValidityDaysByItemCode: Readonly<Record<string, number>>,
   asOfMs: number | null,
+  vocabulary: ConceptVocabulary | undefined,
+  asOfDate: string | undefined,
 ): { satisfied: boolean; matchedFactIds: string[]; ineligibleReasons: string[] } {
-  const codeSet = collectCandidateCodesForItem(item)
+  const codeSet = collectApprovedExactTargets(
+    [item.itemCode, ...(item.alternateItemCodes ?? [])],
+    vocabulary,
+    asOfDate,
+  )
   const matchingFacts = ledger.facts.filter(fact => {
     if (item.category !== undefined && fact.category !== item.category) return false
-    const code = fact.itemCode.code
-    return codeSet.has(code) || codeSet.has(resolveCanonicalItemCode(code))
+    const factConceptCodes = collectEligibleConceptCodesForFact(fact.itemCode.code, vocabulary, asOfDate)
+    return factConceptCodes.some(code => codeSet.has(code))
   })
   const maxAgeDays = effectiveMaxAgeDaysForItem(item, effectiveValidityDaysByItemCode)
   const eligibleIds: string[] = []
@@ -872,7 +889,7 @@ export function evaluateTaskReadiness(
   effectivePack: EffectiveDiseasePack,
   taskId: string,
   ledger: ClinicalFactLedger,
-  options?: { asOf?: string },
+  options?: { asOf?: string; vocabulary?: ConceptVocabulary },
 ): DiseasePackTaskReadinessResult {
   const declaration = effectivePack.pack.readinessTasks.find(task => task.taskId === taskId)
   if (declaration === undefined) {
@@ -882,13 +899,22 @@ export function evaluateTaskReadiness(
     )
   }
 
-  const asOfMs = parseTimestampMs(options?.asOf ?? ledger.trace.evaluatedAsOf)
+  const effectiveAsOf = options?.asOf ?? ledger.trace.evaluatedAsOf
+  const asOfMs = parseTimestampMs(effectiveAsOf)
+  const asOfDate = effectiveAsOf.slice(0, 10)
   const matchedFactIds: string[] = []
   const missingCriticalItems: DiseasePackTaskReadinessResult['missingCriticalItems'] = []
   const missingSecondaryItems: DiseasePackTaskReadinessResult['missingSecondaryItems'] = []
 
   for (const item of declaration.criticalItems) {
-    const res = evaluateReadinessItem(item, ledger, effectivePack.effectiveValidityDaysByItemCode, asOfMs)
+    const res = evaluateReadinessItem(
+      item,
+      ledger,
+      effectivePack.effectiveValidityDaysByItemCode,
+      asOfMs,
+      options?.vocabulary,
+      asOfDate,
+    )
     if (res.satisfied) {
       matchedFactIds.push(...res.matchedFactIds)
     } else {
@@ -902,7 +928,14 @@ export function evaluateTaskReadiness(
   }
 
   for (const item of declaration.secondaryItems) {
-    const res = evaluateReadinessItem(item, ledger, effectivePack.effectiveValidityDaysByItemCode, asOfMs)
+    const res = evaluateReadinessItem(
+      item,
+      ledger,
+      effectivePack.effectiveValidityDaysByItemCode,
+      asOfMs,
+      options?.vocabulary,
+      asOfDate,
+    )
     if (res.satisfied) {
       matchedFactIds.push(...res.matchedFactIds)
     } else {

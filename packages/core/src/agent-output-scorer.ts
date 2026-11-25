@@ -1085,7 +1085,12 @@ export function computeClinicianEditMetrics(
   }
 }
 
-function assertLiveModelScoringPermitted(rawInput: unknown): void {
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+/** Pre-validation per-run authorization gate for live-model scoring mode. */
+export function assertLiveModelScoringPermitted(rawInput: unknown): void {
   if (rawInput === null || typeof rawInput !== 'object') return
   const candidate = rawInput as { mode?: unknown; liveRunPermit?: unknown }
   if (candidate.mode !== 'live-model') return
@@ -1093,12 +1098,25 @@ function assertLiveModelScoringPermitted(rawInput: unknown): void {
   const granted = permit !== null
     && typeof permit === 'object'
     && (permit as { explicitUserPermissionGranted?: unknown }).explicitUserPermissionGranted === true
+    && isNonEmptyString((permit as { runId?: unknown }).runId)
+    && isNonEmptyString((permit as { authorizedByActorId?: unknown }).authorizedByActorId)
+    && isNonEmptyString((permit as { authorizedAt?: unknown }).authorizedAt)
   if (!granted) {
     throw new AgentOutputScorerError(
       'LIVE_MODEL_SCORING_PERMISSION_REQUIRED',
-      '对真实模型输出评分必须获得用户针对当次运行的明确许可',
+      '对真实模型输出评分必须获得用户针对当次运行的明确许可（含有效 runId 与授权签名）',
     )
   }
+}
+
+function filterLedgerAtEvaluatedAt(ledger: ClinicalFactLedger, evaluatedAt: string): ClinicalFactLedger {
+  const cutoffMs = Date.parse(evaluatedAt)
+  if (Number.isNaN(cutoffMs)) return ledger
+  const facts = ledger.facts.filter(fact => {
+    const ingestedMs = Date.parse(fact.ingestedAt)
+    return Number.isNaN(ingestedMs) || ingestedMs <= cutoffMs
+  })
+  return { ...ledger, facts }
 }
 
 export function scoreAgentDraftOutput(params: {
@@ -1126,6 +1144,8 @@ export function scoreAgentDraftOutput(params: {
   if (Number.isNaN(Date.parse(evaluatedAt))) {
     throw new AgentOutputScorerError('SCORER_INVALID_INPUT', `无效的评测时间 evaluatedAt: ${evaluatedAt}`)
   }
+
+  const effectiveLedger = filterLedgerAtEvaluatedAt(params.ledger, evaluatedAt)
 
   const badge: AgentOutputEvaluationBadge = parsedInput.mode === 'controlled-stream'
     ? {
@@ -1155,7 +1175,7 @@ export function scoreAgentDraftOutput(params: {
   for (const item of parsedInput.rubric.items) {
     const itemCoverage = evaluateRubricItemCoverage(
       item,
-      params.ledger,
+      effectiveLedger,
       evaluatedAt,
       combinedDraftText,
       uniqueSentences,
@@ -1177,7 +1197,7 @@ export function scoreAgentDraftOutput(params: {
 
   const fabrications = detectFabrications({
     fabricationPenaltyPoints: parsedInput.rubric.fabricationPenaltyPoints,
-    ledger: params.ledger,
+    ledger: effectiveLedger,
     structuredClaims: parsedInput.structuredClaims,
     uniqueSentences,
   })

@@ -560,10 +560,14 @@ export class GuidelineCorpus {
     return evidence
   }
 
-  search(text: string, options?: { population?: GuidelinePatientPopulation; vocabulary?: ConceptVocabulary }): GuidelineSearchResult {
+  search(
+    text: string,
+    options?: { asOfDate?: string; population?: GuidelinePatientPopulation; vocabulary?: ConceptVocabulary },
+  ): GuidelineSearchResult {
     const population = options?.population === undefined ? undefined : patientPopulationSchema.parse(options.population)
     const customVocabKey = options?.vocabulary === undefined ? null : hash(JSON.stringify(options.vocabulary))
-    const cacheKey = JSON.stringify([population ?? null, customVocabKey, text])
+    const asOfDate = options?.asOfDate
+    const cacheKey = JSON.stringify([population ?? null, customVocabKey, asOfDate ?? null, text])
     return this.#database.transaction(() => {
       const version = JSON.stringify(databaseVersionSchema.parse(this.#databaseVersion.get()))
       if (version !== this.#searchVersion) {
@@ -589,6 +593,7 @@ export class GuidelineCorpus {
       const revision = hash(JSON.stringify([searchRevision, guidelinePassagePolicyRevision, this.#allowNonCommercial, this.#deploymentPolicy, this.#allowLocalEvaluation,
         rows.map(row => [row.digest, row.bodyId, validSourceIds.has(row.id)]),
         ...(population === undefined ? [] : [population]),
+        ...(asOfDate === undefined ? [] : [asOfDate]),
         ...(customVocabKey === null ? [] : [customVocabKey])]))
       const guidelines: GuidelineEvidence[] = []
       const diagnosisQueries = new Set<string>()
@@ -606,7 +611,11 @@ export class GuidelineCorpus {
       const candidates = new Map<string, { evidence: GuidelineEvidence; bodyId: string; queries: string[]; rank: number; topicMatches: number }>()
       const queryText = text.toLowerCase()
       const activeVocabulary = options?.vocabulary ?? PUBLIC_CONCEPT_VOCABULARY
-      const synonymResolution = resolveSearchQuerySynonymExpansions(text, activeVocabulary)
+      const synonymResolution = resolveSearchQuerySynonymExpansions(
+        text,
+        activeVocabulary,
+        asOfDate === undefined ? undefined : { asOfDate },
+      )
       const expansions = synonymResolution.expansions
       const candidateTopicQueries = [queryText, ...expansions.map(item => item.expandedTerm.toLowerCase())]
 

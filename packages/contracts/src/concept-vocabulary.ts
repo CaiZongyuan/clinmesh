@@ -98,7 +98,14 @@ export const conceptMappingEligibilitySchema = z.object({
 export type ConceptMappingEligibility = z.infer<typeof conceptMappingEligibilitySchema>
 
 export const conceptVocabularyCatalogQuerySchema = z.object({
-  asOf: z.string().trim().min(1).max(64).optional(),
+  asOf: z.string().trim().superRefine((value, ctx) => {
+    if (!z.iso.date().safeParse(value).success && !z.iso.datetime({ offset: true }).safeParse(value).success) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'asOf 必须为 YYYY-MM-DD 日期或带时区偏移的 ISO 8601 时间戳',
+      })
+    }
+  }).optional(),
   hospitalId: boundedCode.optional(),
   packId: z.string().regex(/^[a-z0-9-]{1,64}$/).optional(),
   query: z.string().trim().min(1).max(200).optional(),

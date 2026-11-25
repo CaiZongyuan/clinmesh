@@ -315,6 +315,27 @@ describe('AC40 Agent Output Scorer & Clinician Edit Distance Tracker HTTP Contra
     expect(unpermittedLiveRes.status).toBe(403)
     expect(apiErrorSchema.parse(await unpermittedLiveRes.json()).error.code).toBe('LIVE_MODEL_SCORING_PERMISSION_REQUIRED')
 
+    // Missing/blank runId even with explicitUserPermissionGranted=true MUST also reject 403 LIVE_MODEL_SCORING_PERMISSION_REQUIRED
+    const incompletePermitRes = await fixture.request('doctor', '/api/his/v1/evaluation/agent-output-score', {
+      draftFields: {
+        assessment: 'LDL 已达标（1.25 mmol/L），肌酐 112 umol/L。',
+        plan: '继续阿司匹林+替格瑞洛双联抗血小板与阿托伐他汀。',
+      },
+      draftText: 'LDL 已达标，肌酐 112 umol/L，继续双联抗血小板及阿托伐他汀。',
+      liveRunPermit: {
+        authorizedAt: '2026-08-24T09:05:00+08:00',
+        authorizedByActorId: 'actor-administrator',
+        explicitUserPermissionGranted: true,
+        runId: '',
+      },
+      mode: 'live-model',
+      rubric: followupRubric,
+      subjectId: visit.caseId,
+      subjectKind: 'outpatient',
+    })
+    expect(incompletePermitRes.status).toBe(403)
+    expect(apiErrorSchema.parse(await incompletePermitRes.json()).error.code).toBe('LIVE_MODEL_SCORING_PERMISSION_REQUIRED')
+
     // 4. Live-model WITH explicit permit succeeds with 0 real LLM calls, and administrator role is also allowed
     const permittedLiveRes = await fixture.request('admin', '/api/his/v1/evaluation/agent-output-score', {
       draftFields: {

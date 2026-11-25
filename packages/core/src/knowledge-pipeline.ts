@@ -45,11 +45,11 @@ import {
   type SyntheticTestGuidelineDoc,
 } from '@clinmesh/contracts/knowledge-pipeline'
 import {
-  PUBLIC_CONCEPT_VOCABULARY,
   evaluateConceptMappingEligibility,
   getConceptAncestors,
-  mergeThreeLayerConceptVocabulary,
+  resolveEffectiveConceptVocabulary,
   resolveLedgerFactsForConcept,
+  validateAndNormalizeVocabularyOverride,
 } from './concept-vocabulary.ts'
 import {
   KnowledgeClaimError,
@@ -741,12 +741,10 @@ function candidateTargetsExistingClaim(
 }
 
 function buildEffectiveVocabulary(pack: DiseasePack, override?: ConceptVocabulary): ConceptVocabulary {
-  if (override !== undefined) return override
-  if (pack.conceptVocabulary === undefined) return PUBLIC_CONCEPT_VOCABULARY
-  return mergeThreeLayerConceptVocabulary({
-    packLayer: pack.conceptVocabulary,
-    publicLayer: PUBLIC_CONCEPT_VOCABULARY,
-  })
+  if (override !== undefined) return validateAndNormalizeVocabularyOverride(override)
+  return resolveEffectiveConceptVocabulary(
+    pack.conceptVocabulary === undefined ? {} : { packLayer: pack.conceptVocabulary },
+  )
 }
 
 /**
@@ -956,6 +954,12 @@ export function adjudicateGuidelineClaimConflict(input: {
     }
     const existingIndex = nextSnapshot.claims.findIndex(c => c.id === targetConflict.existingClaimId)
     const adoptedId = targetConflict.candidateClaim.claimId ?? `${targetConflict.existingClaimId}-adjudicated`
+    if (existingIndex >= 0 && adoptedId === targetConflict.existingClaimId) {
+      throw new KnowledgePipelineError(
+        'PIPELINE_INVALID_INPUT',
+        `新采纳主张编号 ${adoptedId} 不得与被替代旧主张一致，必须保留 superseded 历史记录`,
+      )
+    }
     const { status: publishedStatus } = advanceClaimPublicationStatus(adjudication.reviewer)
     const adoptedClaim: KnowledgeClaim = {
       anchor: targetConflict.candidateClaim.anchor,
@@ -971,26 +975,22 @@ export function adjudicateGuidelineClaimConflict(input: {
       version: targetConflict.candidateClaim.version ?? targetConflict.existingClaim.version,
     }
 
-    if (existingIndex >= 0 && adoptedId === targetConflict.existingClaimId) {
-      nextSnapshot.claims[existingIndex] = adoptedClaim
-    } else {
-      if (existingIndex >= 0) {
-        const currentClaim = nextSnapshot.claims[existingIndex]!
-        const supersededStatus = transitionKnowledgePublicationStatus({
-          actorKind: 'clinician-reviewer',
-          currentStatus: currentClaim.status,
-          nextStatus: 'superseded',
-          registeredReviewers: [adjudication.reviewer],
-          reviewerId: adjudication.reviewer.reviewerId,
-        })
-        nextSnapshot.claims[existingIndex] = {
-          ...currentClaim,
-          status: supersededStatus,
-          supersededByClaimId: adoptedId,
-        }
+    if (existingIndex >= 0) {
+      const currentClaim = nextSnapshot.claims[existingIndex]!
+      const supersededStatus = transitionKnowledgePublicationStatus({
+        actorKind: 'clinician-reviewer',
+        currentStatus: currentClaim.status,
+        nextStatus: 'superseded',
+        registeredReviewers: [adjudication.reviewer],
+        reviewerId: adjudication.reviewer.reviewerId,
+      })
+      nextSnapshot.claims[existingIndex] = {
+        ...currentClaim,
+        status: supersededStatus,
+        supersededByClaimId: adoptedId,
       }
-      nextSnapshot.claims.push(adoptedClaim)
     }
+    nextSnapshot.claims.push(adoptedClaim)
   }
 
   const updateConflictList = (items: readonly GuidelineClaimConflictItem[]) => items.map(item => (

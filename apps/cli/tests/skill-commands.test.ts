@@ -1344,3 +1344,27 @@ it('认人隔离区 CLI 与 Skill 保留管理员/登记员边界及审计合同
   })
   expect(administratorSkill).toContain('../clinmesh-registration/SKILL.md')
 })
+
+it('keeps concept vocabulary and disease-pack knowledge read-only Skill examples aligned with contracts', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const doctorSkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+  const inpatientSkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+
+  for (const [skill, path, id] of [
+    [doctorSkill, 'catalog concept-vocabulary get', 'catalog.concept-vocabulary.read'],
+    [doctorSkill, 'doctor case disease-packs knowledge', 'doctor.case.disease-pack-knowledge.read'],
+    [inpatientSkill, 'inpatient disease-packs knowledge', 'inpatient.disease-pack-knowledge.read'],
+  ] as const) {
+    const line = commandLines(skill).find(item => item.startsWith(`clinmesh ${path} `))
+    expect(line, path).toBeDefined()
+    expect(inspectExample(program, line!).operation?.id).toBe(id)
+  }
+
+  for (const skill of [doctorSkill, inpatientSkill]) {
+    expect(skill).toContain('KNOWLEDGE_SNAPSHOT_NOT_FOUND')
+    expect(skill).toContain('试用版')
+    expect(skill).toContain('未经医生检查，仅用于仿真')
+    expect(skill).toContain('--recheck-latest')
+    expect(skill).toContain('--include-retired')
+  }
+})

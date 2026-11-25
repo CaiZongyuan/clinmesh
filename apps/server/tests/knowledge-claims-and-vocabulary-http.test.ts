@@ -106,14 +106,16 @@ describe('Concept Vocabulary & Knowledge Claims HTTP Contracts (AC8, AC9, AC15)'
   async function setupRuntime(options: {
     withGuidelineCorpus?: boolean
     extraPacks?: readonly unknown[]
+    hospitalOverlays?: readonly unknown[]
   } = {}) {
     const prepared = await preparePciPaymentDrgFixture()
     cleanups.push(() => rm(prepared.directory, { recursive: true, force: true }))
 
+    let writer: GuidelineCorpus | undefined
     if (options.withGuidelineCorpus) {
       const guidelineDbPath = join(prepared.directory, 'guidelines.sqlite')
-      const writer = new GuidelineCorpus({ databasePath: guidelineDbPath })
-      cleanups.push(async () => writer.close())
+      writer = new GuidelineCorpus({ databasePath: guidelineDbPath })
+      cleanups.push(async () => writer!.close())
       writer.importDocuments(pciDocuments())
       prepared.options.guidelineDatabasePath = guidelineDbPath
     }
@@ -123,10 +125,13 @@ describe('Concept Vocabulary & Knowledge Claims HTTP Contracts (AC8, AC9, AC15)'
     if (options.extraPacks !== undefined) {
       prepared.options.diseasePacks = options.extraPacks
     }
+    if (options.hospitalOverlays !== undefined) {
+      prepared.options.hospitalOverlays = options.hospitalOverlays
+    }
 
     const fixture = await createPciPaymentDrgFixture(prepared)
     cleanups.push(() => fixture.runtime.close())
-    return { fixture }
+    return { fixture, writer }
   }
 
   function currentEpoch(fixture: PciPaymentDrgFixture): string {
@@ -250,7 +255,64 @@ describe('Concept Vocabulary & Knowledge Claims HTTP Contracts (AC8, AC9, AC15)'
       ],
     })
 
-    const { fixture } = await setupRuntime({ extraPacks: [hsTnPack], withGuidelineCorpus: true })
+    const hsTnHospitalOverlay = {
+      conceptVocabulary: {
+        mappings: [
+          {
+            effectiveDate: '2026-01-01',
+            id: 'hosp-east-map-hs-ctni',
+            relation: 'exact',
+            reviewStatus: 'approved',
+            reviewerId: 'reviewer-hosp-east',
+            sourceCode: 'HOSP-E1-CTNI',
+            sourceDisplay: '东院急诊高敏肌钙蛋白 I',
+            sourceSystem: 'urn:clinmesh:hospital:hosp-east-01',
+            targetConceptCode: '89579-7',
+            version: '1.0.0',
+          },
+        ],
+        nodes: [
+          {
+            code: 'hosp-east-hs-ctni-leaf',
+            displayZh: '东院急诊高敏肌钙蛋白 I 检测',
+            domain: 'laboratory',
+            layer: 'hospital',
+            parentCode: '89579-7',
+            synonyms: [],
+          },
+        ],
+        version: '1.0.0',
+      },
+      hospitalId: 'hosp-east-01',
+      packId: 'hs-troponin-pack',
+      safetyAdjustments: {
+        forbiddenActionAdditions: ['inpatient.order.issue'],
+      },
+      version: '1.0.0',
+    }
+
+    const { fixture } = await setupRuntime({
+      extraPacks: [hsTnPack],
+      hospitalOverlays: [hsTnHospitalOverlay],
+      withGuidelineCorpus: true,
+    })
+
+    // Catalog merges hospital leaf when hospitalId matches (or omitted) and omits when another hospitalId is requested
+    const eastCatalog = await fixture.read(
+      'inpatient-doctor',
+      '/api/his/v1/catalogs/concept-vocabulary?packId=hs-troponin-pack&hospitalId=hosp-east-01',
+      conceptVocabularyCatalogResponseSchema,
+    )
+    expect(eastCatalog.vocabulary.nodes.some(n => n.code === 'hosp-east-hs-ctni-leaf' && n.layer === 'hospital')).toBe(true)
+    expect(eastCatalog.vocabulary.mappings.some(m => m.id === 'hosp-east-map-hs-ctni')).toBe(true)
+
+    const otherHospCatalog = await fixture.read(
+      'inpatient-doctor',
+      '/api/his/v1/catalogs/concept-vocabulary?packId=hs-troponin-pack&hospitalId=hosp-other-02',
+      conceptVocabularyCatalogResponseSchema,
+    )
+    expect(otherHospCatalog.vocabulary.nodes.some(n => n.code === 'hosp-east-hs-ctni-leaf')).toBe(false)
+
     const stay = await fixture.preparePciAdmission([])
     const epoch = currentEpoch(fixture)
 
@@ -287,6 +349,22 @@ describe('Concept Vocabulary & Knowledge Claims HTTP Contracts (AC8, AC9, AC15)'
 
     const afterExact = await fixture.read('inpatient-doctor', `${stay.path}/disease-packs`, diseasePackRuntimeBundleSchema)
     expect(afterExact.packs.find(p => p.packId === 'hs-troponin-pack')?.activationStatus).toBe('active')
+
+    // Vocabulary-activated pack must also recognize activation in authorizePackToolInvocation & enforce forbiddenActions
+    const authAllowedRes = await fixture.request(
+      'inpatient-doctor',
+      `${stay.path}/disease-packs/hs-troponin-pack/tools/authorize`,
+      { operationId: 'inpatient.disease-packs.read' },
+    )
+    expect(authAllowedRes.status).toBe(200)
+
+    const authForbiddenRes = await fixture.request(
+      'inpatient-doctor',
+      `${stay.path}/disease-packs/hs-troponin-pack/tools/authorize`,
+      { operationId: 'inpatient.order.issue' },
+    )
+    expect(authForbiddenRes.status).toBe(403)
+    expect(apiErrorSchema.parse(await authForbiddenRes.json()).error.code).toBe('DSAP_TOOL_POLICY_DENIED')
   })
 
   it('AC8 & historical asOf replay + recheckLatest diff over inpatient & outpatient HTTP routes with zero Case Truth leakage (AC15)', async () => {
@@ -434,7 +512,7 @@ describe('Concept Vocabulary & Knowledge Claims HTTP Contracts (AC8, AC9, AC15)'
       }],
     })
 
-    const { fixture } = await setupRuntime({ extraPacks: [brokenTopicAndClaimPack], withGuidelineCorpus: true })
+    const { fixture, writer } = await setupRuntime({ extraPacks: [brokenTopicAndClaimPack], withGuidelineCorpus: true })
     const stay = await fixture.preparePciAdmission([])
 
     // Record a prior historical CAD condition visible since 2026-05-15 so asOf=2026-06-15 has eligible diagnosis facts
@@ -524,6 +602,31 @@ describe('Concept Vocabulary & Knowledge Claims HTTP Contracts (AC8, AC9, AC15)'
     expect(ac8Eval.claims.find(c => c.id === 'ac8-claim-bad-anchor')?.active).toBe(false)
     expect(ac8Eval.claims.find(c => c.id === 'ac8-claim-bad-anchor')?.anchorValid).toBe(false)
     expect(ac8Eval.claims.find(c => c.id === 'ac8-claim-valid-sibling')?.active).toBe(true)
+
+    // Unknown query param must reject 400 under strict schema validation
+    const bogusQueryRes = await fixture.request(
+      'inpatient-doctor',
+      `${stay.path}/disease-packs/ac8-anchor-pack/knowledge?bogus=1`,
+    )
+    expect(bogusQueryRes.status).toBe(400)
+
+    // Withdrawing the underlying guideline source in GuidelineCorpus immediately deactivates dependent claims (AC8)
+    const withdrawnDoc = pciDocuments()[1]!
+    writer!.importDocument({
+      ...withdrawnDoc,
+      source: {
+        ...withdrawnDoc.source,
+        status: 'withdrawn',
+      },
+    })
+    const afterWithdraw = await fixture.read(
+      'inpatient-doctor',
+      `${stay.path}/disease-packs/ac8-anchor-pack/knowledge`,
+      diseasePackKnowledgeEvaluationSchema,
+    )
+    const withdrawnSibling = afterWithdraw.claims.find(c => c.id === 'ac8-claim-valid-sibling')
+    expect(withdrawnSibling?.anchorValid).toBe(false)
+    expect(withdrawnSibling?.active).toBe(false)
 
     const inpatientAudits = fixture.runtime.database.driver.prepare(`
       SELECT operation, outcome FROM audit_log

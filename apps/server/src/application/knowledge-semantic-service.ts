@@ -13,10 +13,9 @@ import {
 } from '@clinmesh/contracts/knowledge-claims'
 import { shanghaiBusinessDate } from '@clinmesh/contracts/scenario'
 import {
-  PUBLIC_CONCEPT_VOCABULARY,
   evaluateConceptMappingEligibility,
   expandSearchQueryWithApprovedSynonyms,
-  mergeThreeLayerConceptVocabulary,
+  resolveEffectiveConceptVocabulary,
 } from '@clinmesh/core/concept-vocabulary'
 import {
   compareKnowledgeEvaluations,
@@ -24,8 +23,10 @@ import {
   type KnowledgePassageVerifier,
 } from '@clinmesh/core/knowledge-claims'
 import { z } from 'zod'
+import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
+import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
 import type { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import type { DiseasePackRuntimeService } from './disease-pack-runtime-service.ts'
@@ -67,12 +68,16 @@ function parseBooleanQueryFlag(raw: unknown, fieldName: string): boolean | undef
 
 function parseKnowledgeQuery(rawQuery: unknown): DiseasePackKnowledgeReadQuery {
   const rawRecord = z.record(z.string(), z.unknown()).parse(rawQuery ?? {})
-  const recheckLatest = parseBooleanQueryFlag(rawRecord.recheckLatest, 'recheckLatest')
-  const includeRetired = parseBooleanQueryFlag(rawRecord.includeRetired, 'includeRetired')
+  const parsedFlags: Record<string, unknown> = {}
+  if (rawRecord.recheckLatest !== undefined) {
+    parsedFlags.recheckLatest = parseBooleanQueryFlag(rawRecord.recheckLatest, 'recheckLatest')
+  }
+  if (rawRecord.includeRetired !== undefined) {
+    parsedFlags.includeRetired = parseBooleanQueryFlag(rawRecord.includeRetired, 'includeRetired')
+  }
   return diseasePackKnowledgeReadQuerySchema.parse({
-    ...(rawRecord.asOf === undefined ? {} : { asOf: rawRecord.asOf }),
-    ...(includeRetired === undefined ? {} : { includeRetired }),
-    ...(recheckLatest === undefined ? {} : { recheckLatest }),
+    ...rawRecord,
+    ...parsedFlags,
   })
 }
 
@@ -85,7 +90,7 @@ function resolveAsOfDate(rawAsOf: string | undefined, fallbackVirtualTime: strin
     return trimmed
   }
   if (z.iso.datetime({ offset: true }).safeParse(trimmed).success) {
-    return trimmed.slice(0, 10)
+    return shanghaiBusinessDate(trimmed)
   }
   throw new KnowledgeSemanticError('INVALID_INPUT', `无效的词表评估日期 asOf: ${rawAsOf}`, 400)
 }
@@ -98,9 +103,11 @@ export class KnowledgeSemanticService {
   readonly #fhir: FhirRepository
   readonly #guidelines: GuidelineCorpus | undefined
   readonly #outpatient: OutpatientWorkflowContext
+  readonly #workspaces: WorkspaceRepository
 
   constructor(options: {
     commands: CommandExecutor
+    database: ClinMeshDatabase
     diseasePacks: DiseasePackRuntimeService
     factLedger: ClinicalFactLedgerService
     fhir: FhirRepository
@@ -113,6 +120,7 @@ export class KnowledgeSemanticService {
     this.#fhir = options.fhir
     this.#guidelines = options.guidelines
     this.#outpatient = options.outpatientContext
+    this.#workspaces = new WorkspaceRepository(options.database)
   }
 
   readConceptVocabularyCatalog(
@@ -124,6 +132,7 @@ export class KnowledgeSemanticService {
       if (!(CATALOG_READ_ROLES as readonly string[]).includes(context.roleCode)) {
         throw new WorkflowError('ROLE_NOT_ALLOWED', '当前岗位无权读取概念词表目录')
       }
+      this.#workspaces.assertCurrent(context, context.scenarioRunId)
       const query = conceptVocabularyCatalogQuerySchema.parse(rawQuery ?? {})
       if (query.packId !== undefined) auditInput.packId = query.packId
       if (query.hospitalId !== undefined) auditInput.hospitalId = query.hospitalId
@@ -143,27 +152,38 @@ export class KnowledgeSemanticService {
           vocabulary: entry.pack.conceptVocabulary!,
         }))
 
-      let mergedVocabulary: ConceptVocabulary
-      if (packLayers.length === 0) {
-        mergedVocabulary = PUBLIC_CONCEPT_VOCABULARY
-      } else {
-        const combinedPackLayer: ConceptVocabulary = {
-          mappings: packLayers.flatMap(item => item.vocabulary.mappings),
-          nodes: packLayers.flatMap(item => item.vocabulary.nodes),
-          version: [...new Set(packLayers.map(item => `${item.packId}@${item.vocabulary.version}`))].join('+'),
-        }
-        mergedVocabulary = mergeThreeLayerConceptVocabulary({
-          packLayer: combinedPackLayer,
-          publicLayer: PUBLIC_CONCEPT_VOCABULARY,
-        })
-      }
+      const hospitalLayers = selectedEntries.filter(entry => (
+        entry.hospitalOverlay?.conceptVocabulary !== undefined
+        && (query.hospitalId === undefined || entry.hospitalOverlay.hospitalId === query.hospitalId)
+      ))
+
+      const combinedPackLayer: ConceptVocabulary | undefined = packLayers.length === 0
+        ? undefined
+        : {
+            mappings: packLayers.flatMap(item => item.vocabulary.mappings),
+            nodes: packLayers.flatMap(item => item.vocabulary.nodes),
+            version: [...new Set(packLayers.map(item => `${item.packId}@${item.vocabulary.version}`))].join('+'),
+          }
+
+      const combinedHospitalLayer: ConceptVocabulary | undefined = hospitalLayers.length === 0
+        ? undefined
+        : {
+            mappings: hospitalLayers.flatMap(item => item.hospitalOverlay!.conceptVocabulary!.mappings),
+            nodes: hospitalLayers.flatMap(item => item.hospitalOverlay!.conceptVocabulary!.nodes),
+            version: [...new Set(hospitalLayers.map(item => `${item.hospitalOverlay!.hospitalId}@${item.hospitalOverlay!.conceptVocabulary!.version}`))].join('+'),
+          }
+
+      const mergedVocabulary = resolveEffectiveConceptVocabulary({
+        ...(combinedHospitalLayer === undefined ? {} : { hospitalLayer: combinedHospitalLayer }),
+        ...(combinedPackLayer === undefined ? {} : { packLayer: combinedPackLayer }),
+      })
 
       const mappingEligibility = mergedVocabulary.mappings.map(mapping => (
         evaluateConceptMappingEligibility(mapping, { asOfDate })
       ))
       const expandedQueryTerms = query.query === undefined
         ? undefined
-        : expandSearchQueryWithApprovedSynonyms(query.query, mergedVocabulary)
+        : expandSearchQueryWithApprovedSynonyms(query.query, mergedVocabulary, { asOfDate })
 
       const response = conceptVocabularyCatalogResponseSchema.parse({
         asOfDate,
@@ -275,12 +295,14 @@ export class KnowledgeSemanticService {
       includeSuperseded: false,
     })
     const encounterMap = this.#diseasePacks.resolvePatientEncounterMap(input.context, input.subject.patientId)
-    const vocabulary = effective.pack.conceptVocabulary === undefined
-      ? PUBLIC_CONCEPT_VOCABULARY
-      : mergeThreeLayerConceptVocabulary({
-          packLayer: effective.pack.conceptVocabulary,
-          publicLayer: PUBLIC_CONCEPT_VOCABULARY,
-        })
+    const vocabulary = resolveEffectiveConceptVocabulary({
+      ...(effective.hospitalOverlay?.conceptVocabulary === undefined
+        ? {}
+        : { hospitalLayer: effective.hospitalOverlay.conceptVocabulary }),
+      ...(effective.pack.conceptVocabulary === undefined
+        ? {}
+        : { packLayer: effective.pack.conceptVocabulary }),
+    })
 
     const verifySourcePassage: KnowledgePassageVerifier = (anchor: KnowledgeAnchorCitation) => {
       if (this.#guidelines === undefined) {
@@ -296,7 +318,12 @@ export class KnowledgeSemanticService {
       const matched = read.guidelines.filter(item => (
         item.sourceHash === anchor.sha256
         && item.version === anchor.version
-        && (anchor.locator === undefined || item.locator === anchor.locator)
+        && (
+          anchor.locator === undefined
+          || item.locator === anchor.locator
+          || item.locator.startsWith(`${anchor.locator}；`)
+          || item.locator.startsWith(`${anchor.locator};`)
+        )
       ))
       if (matched.length === 0) {
         return { reason: 'passage-locator-mismatch', valid: false }

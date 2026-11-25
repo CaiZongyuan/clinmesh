@@ -5,6 +5,7 @@ import {
 } from './clinical-fact-ledger.ts'
 import { conceptVocabularySchema } from './concept-vocabulary.ts'
 import {
+  diseasePackRegexPatternSchema,
   diseasePackSha256Schema,
   diseasePackSlugSchema,
   diseasePackTimestampFieldSchema,
@@ -183,7 +184,7 @@ export const diseasePackPointScaleSchema = z.object({
 export const diseasePackIndicationRuleSchema = z.object({
   condition: diseasePackTriggerNodeSchema,
   id: diseasePackSlugSchema,
-  itemCodePattern: z.string().trim().min(1).max(200),
+  itemCodePattern: diseasePackRegexPatternSchema,
   orderKind: z.enum(['laboratory', 'examination', 'imaging', 'pathology', 'medication', 'procedure']),
   rationaleZh: nonEmptyText,
 }).strict()
@@ -320,6 +321,7 @@ export const hospitalOverlaySafetyAdjustmentsSchema = z.object({
 }).strict()
 
 export const hospitalOverlaySchema = z.object({
+  conceptVocabulary: conceptVocabularySchema.optional(),
   hospitalId: diseasePackSlugSchema,
   localizations: hospitalOverlayLocalizationsSchema.default({}),
   packId: diseasePackSlugSchema,

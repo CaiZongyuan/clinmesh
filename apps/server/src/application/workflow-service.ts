@@ -411,6 +411,7 @@ export class WorkflowService
     })
     this.knowledgeSemantics = new KnowledgeSemanticService({
       commands,
+      database: this.#database,
       diseasePacks: this.diseasePacks,
       factLedger: this.clinicalFactLedger,
       fhir,

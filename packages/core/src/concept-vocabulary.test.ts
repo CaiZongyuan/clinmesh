@@ -9,8 +9,10 @@ import {
   getConceptAncestors,
   getConceptDescendants,
   mergeThreeLayerConceptVocabulary,
+  resolveEffectiveConceptVocabulary,
   resolveLedgerFactsForConcept,
   resolvePharmacologyClassesFromVocabulary,
+  validateAndNormalizeVocabularyOverride,
 } from './concept-vocabulary.ts'
 import { evaluatePackTrigger, validateAndParseDiseasePack } from './disease-pack.ts'
 
@@ -103,6 +105,11 @@ describe('concept-vocabulary core engine', () => {
     expect(resolvePharmacologyClassesFromVocabulary(['antiplatelet-aspirin', 'statin'])).toEqual(
       expect.arrayContaining(['antiplatelet-aspirin', 'antiplatelet', 'statin', 'lipid-lowering', 'pharmacology-class']),
     )
+    for (const extraClass of ['fluid', 'antiviral', 'analgesic']) {
+      expect(resolvePharmacologyClassesFromVocabulary([extraClass])).toEqual(
+        expect.arrayContaining([extraClass, 'pharmacology-class']),
+      )
+    }
   })
 
   it('merges 3 layers cleanly and enforces hospital leaf-only, non-overwrite, cycle & target checks', () => {
@@ -533,6 +540,57 @@ describe('concept-vocabulary core engine', () => {
 
     const cadFullExpanded = expandSearchQueryWithApprovedSynonyms('冠状动脉粥样硬化性心脏病', vocabWithUnapproved)
     expect(cadFullExpanded).toContain('冠心病')
+
+    // Non-public disease-pack node.synonyms cannot trigger expansion without approved+exact mapping,
+    // and mappings effective in the future are excluded at earlier asOfDate
+    const datedAndScopedVocab = mergeThreeLayerConceptVocabulary({
+      packLayer: {
+        mappings: [
+          {
+            effectiveDate: '2026-10-01',
+            id: 'future-mi-alias',
+            relation: 'exact',
+            reviewStatus: 'approved',
+            reviewerId: 'rev-1',
+            sourceCode: 'FUTURE-MI',
+            sourceDisplay: '未来心梗同义词',
+            sourceSystem: 'urn:syn',
+            targetConceptCode: 'myocardial-infarction',
+            version: '1.0.0',
+          },
+        ],
+        nodes: [{
+          code: 'pack-scoped-syndrome',
+          displayZh: '包级自定义综合征',
+          domain: 'diagnosis',
+          layer: 'disease-pack',
+          parentCode: 'coronary-artery-disease',
+          synonyms: ['未批准节点别名'],
+        }],
+        version: '1.0.0',
+      },
+    })
+    expect(expandSearchQueryWithApprovedSynonyms('心梗', datedAndScopedVocab, { asOfDate: '2026-08-24' })).not.toContain('未来心梗同义词')
+    expect(expandSearchQueryWithApprovedSynonyms('心梗', datedAndScopedVocab, { asOfDate: '2026-10-05' })).toContain('未来心梗同义词')
+    expect(expandSearchQueryWithApprovedSynonyms('未批准节点别名', datedAndScopedVocab)).toEqual(['未批准节点别名'])
+
+    // validateAndNormalizeVocabularyOverride rejects mutated public hierarchy
+    const tamperedPublicVocab: ConceptVocabulary = {
+      ...PUBLIC_CONCEPT_VOCABULARY,
+      nodes: [
+        ...PUBLIC_CONCEPT_VOCABULARY.nodes.filter(n => n.code !== '89579-7'),
+        {
+          code: '89579-7',
+          displayZh: '高敏肌钙蛋白 I',
+          domain: 'laboratory',
+          layer: 'public',
+          parentCode: null,
+          synonyms: [],
+        },
+      ],
+    }
+    expect(() => validateAndNormalizeVocabularyOverride(tamperedPublicVocab)).toThrow(ConceptVocabularyError)
+    expect(resolveEffectiveConceptVocabulary()).toBe(PUBLIC_CONCEPT_VOCABULARY)
   })
 
   it('validates embedded conceptVocabulary inside DiseasePack on load', () => {

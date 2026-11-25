@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { agentToolCatalog } from '@clinmesh/contracts/agent'
 import { diseasePackRuntimeBundleSchema } from '@clinmesh/contracts/disease-pack'
+import { apiErrorSchema } from '@clinmesh/contracts/his'
 import { listHisOperations } from '@clinmesh/contracts/his-operations'
 import type { ClinicalReviewerRecord } from '@clinmesh/contracts/knowledge-claims'
 import {
@@ -381,7 +382,7 @@ describe('Offline Knowledge Pipeline, Diff/Impact Reports & Synonym Search (AC33
     expect(report.snapshot.claims[0]!.statementZh).toBe(v1Snapshot.claims[0]!.statementZh)
     expect(report.snapshot.claims[0]!.status).toBe('auto-verified')
 
-    // Unverified reviewer fails adjudication
+    // Unverified reviewer fails adjudication with 403 KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED
     const badAdjudicate = await fixture.request('admin', '/api/his/v1/offline/guidelines/adjudicate-conflict', {
       adjudication: {
         conflictId: queued.conflictId,
@@ -392,7 +393,22 @@ describe('Offline Knowledge Pipeline, Diff/Impact Reports & Synonym Search (AC33
       report,
       snapshot: v1Snapshot,
     })
-    expect(badAdjudicate.status).toBe(400)
+    expect(badAdjudicate.status).toBe(403)
+    expect(apiErrorSchema.parse(await badAdjudicate.json()).error.code).toBe('KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED')
+
+    // Missing conflictId returns 404 CONFLICT_NOT_FOUND (not 500 INTERNAL_ERROR)
+    const missingConflictRes = await fixture.request('admin', '/api/his/v1/offline/guidelines/adjudicate-conflict', {
+      adjudication: {
+        conflictId: 'nonexistent-conflict-id',
+        decision: 'keep-existing',
+        rationaleZh: '测试未知冲突编号映射 404',
+        reviewer: REVIEWER,
+      },
+      report,
+      snapshot: v1Snapshot,
+    })
+    expect(missingConflictRes.status).toBe(404)
+    expect(apiErrorSchema.parse(await missingConflictRes.json()).error.code).toBe('CONFLICT_NOT_FOUND')
 
     // Verified clinician adjudicates and adopts the new claim
     const okAdjudicate = await fixture.request('admin', '/api/his/v1/offline/guidelines/adjudicate-conflict', {
@@ -757,6 +773,21 @@ describe('Offline Knowledge Pipeline, Diff/Impact Reports & Synonym Search (AC33
     const parsedHttp = offlineGuidelineSearchResponseSchema.parse(await httpRes.json())
     expect(parsedHttp.guidelines.map(item => item.text)).toEqual([miDoc.passages[0]!.text])
     expect(parsedHttp.expandedTerms).toEqual(direct.expandedTerms)
+
+    // Unknown keys alongside { input } wrapper MUST reject 400 under strict wrapper check
+    const bogusWrapperRes = await fixture.runtime.app.request('/api/his/v1/offline/guidelines/search', {
+      body: JSON.stringify({
+        expectedVersions: { unexpected: '1' },
+        input: { population: 'adult', query: '心梗' },
+      }),
+      headers: {
+        'content-type': 'application/json',
+        cookie: await fixture.login('admin'),
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(bogusWrapperRes.status).toBe(400)
 
     // Large passages with expandedTerms still respect the 48 KiB JSON byte ceiling
     const largeMiDoc: GuidelineDocument = {

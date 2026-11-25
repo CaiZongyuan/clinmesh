@@ -314,6 +314,7 @@ export const guidelineSearchExpandedTermSchema = z.object({
 export type GuidelineSearchExpandedTerm = z.infer<typeof guidelineSearchExpandedTermSchema>
 
 export const offlineGuidelineSearchRequestSchema = z.object({
+  asOfDate: z.iso.date().optional(),
   packId: diseasePackSlugSchema.optional(),
   population: z.enum(['adult', 'pediatric', 'all-only']).optional(),
   query: z.string().trim().min(1).max(500),

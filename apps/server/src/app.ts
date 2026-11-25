@@ -27,6 +27,7 @@ import { AgentOutputScorerError } from '@clinmesh/core/agent-output-scorer'
 import { ConceptVocabularyError } from '@clinmesh/core/concept-vocabulary'
 import { DiseasePackValidationError } from '@clinmesh/core/disease-pack'
 import { KnowledgeClaimError } from '@clinmesh/core/knowledge-claims'
+import { KnowledgePipelineError as CoreKnowledgePipelineError } from '@clinmesh/core/knowledge-pipeline'
 import { AgentOutputScorerServiceError } from './application/agent-output-scorer-service.ts'
 import { DiseasePackRuntimeError } from './application/disease-pack-runtime-service.ts'
 import { KnowledgePipelineError } from './application/knowledge-pipeline-service.ts'
@@ -362,6 +363,14 @@ function apiErrorResponse(
   }
   if (error instanceof AgentOutputScorerError) {
     const status = error.code === 'LIVE_MODEL_SCORING_PERMISSION_REQUIRED' ? 403 : 400
+    return context.json(apiErrorBody(context, error.code, error.message), status)
+  }
+  if (error instanceof CoreKnowledgePipelineError) {
+    const status = error.code === 'CONFLICT_NOT_FOUND'
+      ? 404
+      : error.code === 'CONFLICT_ALREADY_ADJUDICATED'
+        ? 409
+        : 400
     return context.json(apiErrorBody(context, error.code, error.message), status)
   }
   if (error instanceof ClinicalQualityError) {
@@ -2369,14 +2378,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       }
     })
     const unwrapOfflineBody = (raw: unknown): unknown => {
-      if (
-        raw !== null
-        && typeof raw === 'object'
-        && !Array.isArray(raw)
-        && 'input' in raw
-        && Object.keys(raw).every(key => key === 'input' || key === 'expectedVersions')
-      ) {
-        return (raw as { input: unknown }).input
+      if (raw !== null && typeof raw === 'object' && !Array.isArray(raw) && 'input' in raw) {
+        return z.object({ input: z.unknown() }).strict().parse(raw).input
       }
       return raw
     }

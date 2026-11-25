@@ -1,5 +1,6 @@
 import type { ClinicalFactLedger } from '@clinmesh/contracts/clinical-fact-ledger'
 import type { ConceptVocabulary } from '@clinmesh/contracts/concept-vocabulary'
+import { clinicalReviewerRecordSchema } from '@clinmesh/contracts/knowledge-claims'
 import {
   adjudicateConflictRequestSchema,
   conceptMappingImpactRequestSchema,
@@ -15,8 +16,8 @@ import {
 } from '@clinmesh/contracts/knowledge-pipeline'
 import { shanghaiBusinessDate } from '@clinmesh/contracts/scenario'
 import {
-  PUBLIC_CONCEPT_VOCABULARY,
-  mergeThreeLayerConceptVocabulary,
+  resolveEffectiveConceptVocabulary,
+  validateAndNormalizeVocabularyOverride,
 } from '@clinmesh/core/concept-vocabulary'
 import { KnowledgeClaimError } from '@clinmesh/core/knowledge-claims'
 import {
@@ -30,6 +31,7 @@ import {
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
+import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
 import type { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import type { DiseasePackRuntimeService } from './disease-pack-runtime-service.ts'
@@ -51,6 +53,21 @@ const patientIdRowSchema = z.object({
   patient_id: z.string().min(1),
 }).strict()
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function assertClinicianReviewerAuthorized(rawReviewer: unknown): void {
+  if (rawReviewer === undefined) return
+  const check = clinicalReviewerRecordSchema.safeParse(rawReviewer)
+  if (!check.success) {
+    throw new KnowledgeClaimError(
+      'KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED',
+      '临床审核人未通过执业校验（licenseVerified 必须为 true），禁止签署或裁决正式知识主张',
+    )
+  }
+}
+
 /**
  * Offline developer/admin-only tooling service for AC33 claim drafting,
  * AC34 guideline diff & expert adjudication, AC35 mapping impact reporting,
@@ -63,6 +80,7 @@ export class KnowledgePipelineService {
   readonly #factLedger: ClinicalFactLedgerService
   readonly #guidelines: GuidelineCorpus | undefined
   readonly #outpatient: OutpatientWorkflowContext
+  readonly #workspaces: WorkspaceRepository
 
   constructor(options: {
     commands: CommandExecutor
@@ -78,6 +96,7 @@ export class KnowledgePipelineService {
     this.#factLedger = options.factLedger
     this.#guidelines = options.guidelines
     this.#outpatient = options.outpatientContext
+    this.#workspaces = new WorkspaceRepository(options.database)
   }
 
   #assertOfflineAdministrator(context: ActorContext): void {
@@ -95,28 +114,24 @@ export class KnowledgePipelineService {
         403,
       )
     }
+    this.#workspaces.assertCurrent(context, context.scenarioRunId)
   }
 
   #resolveVocabulary(packId: string | undefined, override?: ConceptVocabulary): ConceptVocabulary {
     if (override !== undefined) {
-      const hasPublicLayer = override.nodes.some(node => node.layer === 'public')
-      return hasPublicLayer
-        ? override
-        : mergeThreeLayerConceptVocabulary({
-            packLayer: override,
-            publicLayer: PUBLIC_CONCEPT_VOCABULARY,
-          })
+      return validateAndNormalizeVocabularyOverride(override)
     }
     if (packId === undefined) {
-      return PUBLIC_CONCEPT_VOCABULARY
+      return resolveEffectiveConceptVocabulary()
     }
     const effective = this.#diseasePacks.registry.getEffective(packId)
-    if (effective.pack.conceptVocabulary === undefined) {
-      return PUBLIC_CONCEPT_VOCABULARY
-    }
-    return mergeThreeLayerConceptVocabulary({
-      packLayer: effective.pack.conceptVocabulary,
-      publicLayer: PUBLIC_CONCEPT_VOCABULARY,
+    return resolveEffectiveConceptVocabulary({
+      ...(effective.hospitalOverlay?.conceptVocabulary === undefined
+        ? {}
+        : { hospitalLayer: effective.hospitalOverlay.conceptVocabulary }),
+      ...(effective.pack.conceptVocabulary === undefined
+        ? {}
+        : { packLayer: effective.pack.conceptVocabulary }),
     })
   }
 
@@ -150,6 +165,9 @@ export class KnowledgePipelineService {
     const auditInput: Record<string, unknown> = {}
     try {
       this.#assertOfflineAdministrator(context)
+      if (isPlainRecord(rawBody)) {
+        assertClinicianReviewerAuthorized(rawBody['clinicianReviewer'])
+      }
       const input = offlineKnowledgePipelineInputSchema.parse(rawBody)
       auditInput.packId = input.packId
       auditInput.topicId = input.topicId
@@ -237,6 +255,9 @@ export class KnowledgePipelineService {
     const auditInput: Record<string, unknown> = {}
     try {
       this.#assertOfflineAdministrator(context)
+      if (isPlainRecord(rawBody) && isPlainRecord(rawBody['adjudication'])) {
+        assertClinicianReviewerAuthorized(rawBody['adjudication']['reviewer'])
+      }
       const input = adjudicateConflictRequestSchema.parse(rawBody)
       auditInput.conflictId = input.adjudication.conflictId
       auditInput.decision = input.adjudication.decision
@@ -346,8 +367,10 @@ export class KnowledgePipelineService {
       }
 
       const vocabulary = this.#resolveVocabulary(input.packId, input.vocabulary)
+      const asOfDate = input.asOfDate ?? shanghaiBusinessDate(this.#outpatient.virtualTime(context))
 
       const result = this.#guidelines.search(input.query, {
+        asOfDate,
         ...(input.population === undefined ? {} : { population: input.population }),
         vocabulary,
       })

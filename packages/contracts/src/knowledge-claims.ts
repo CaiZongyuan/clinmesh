@@ -45,6 +45,22 @@ export const knowledgeAnchorCitationSchema = z.object({
 }).strict()
 export type KnowledgeAnchorCitation = z.infer<typeof knowledgeAnchorCitationSchema>
 
+const REVIEWER_REQUIRED_STATUSES = new Set<KnowledgePublicationStatus>(['clinician-reviewed', 'published'])
+
+function enforceReviewerRequirementForPublication(
+  entry: { readonly id: string; readonly reviewerId: string | null; readonly status: KnowledgePublicationStatus },
+  ctx: z.RefinementCtx,
+  kindLabel: string,
+): void {
+  if (REVIEWER_REQUIRED_STATUSES.has(entry.status) && (entry.reviewerId === null || entry.reviewerId.trim().length === 0)) {
+    ctx.addIssue({
+      code: 'custom',
+      message: `${kindLabel} ${entry.id} with status '${entry.status}' requires a non-empty reviewerId`,
+      path: ['reviewerId'],
+    })
+  }
+}
+
 export const knowledgeTopicCardSchema = z.object({
   effectiveFrom: dt,
   id: boundedId,
@@ -58,7 +74,9 @@ export const knowledgeTopicCardSchema = z.object({
   titleEn: boundedTitle.optional(),
   titleZh: boundedTitle,
   version: boundedVersion,
-}).strict()
+}).strict().superRefine((topic, ctx) => {
+  enforceReviewerRequirementForPublication(topic, ctx, 'Knowledge topic')
+})
 export type KnowledgeTopicCard = z.infer<typeof knowledgeTopicCardSchema>
 
 export const knowledgeClaimSchema = z.object({
@@ -74,7 +92,9 @@ export const knowledgeClaimSchema = z.object({
   supersededByClaimId: boundedId.optional(),
   topicId: boundedId,
   version: boundedVersion,
-}).strict()
+}).strict().superRefine((claim, ctx) => {
+  enforceReviewerRequirementForPublication(claim, ctx, 'Knowledge claim')
+})
 export type KnowledgeClaim = z.infer<typeof knowledgeClaimSchema>
 
 export const knowledgeSnapshotSchema = z.object({

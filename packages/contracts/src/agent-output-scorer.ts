@@ -85,10 +85,22 @@ export const liveModelScoringPermitSchema = z.object({
 }).strict()
 export type LiveModelScoringPermit = z.infer<typeof liveModelScoringPermitSchema>
 
+const agentOutputFieldKeySchema = z.string().min(1).max(500).refine(
+  key => key.trim().length > 0 && key.trim() === key,
+  'Field key must be non-empty without leading or trailing whitespace',
+)
+const agentOutputFieldsRecordSchema = z.record(
+  agentOutputFieldKeySchema,
+  z.string().max(20000),
+).refine(
+  record => Object.keys(record).length <= 64,
+  'Fields record cannot contain more than 64 entries',
+)
+
 export const evaluateAgentOutputInputSchema = z.object({
   asOf: dt.optional(),
-  clinicianFinalFields: z.record(z.string(), z.string()).optional(),
-  draftFields: z.record(z.string(), z.string()),
+  clinicianFinalFields: agentOutputFieldsRecordSchema.optional(),
+  draftFields: agentOutputFieldsRecordSchema,
   draftText: z.string().trim().min(1).max(20000),
   liveRunPermit: liveModelScoringPermitSchema.optional(),
   mode: agentDraftScoringModeSchema,

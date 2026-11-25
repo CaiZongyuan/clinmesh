@@ -288,6 +288,15 @@ const PUBLIC_NODES: readonly ConceptNode[] = [
   pubNode('carbapenem', '碳青霉烯类', 'medication-class', 'antibacterial', {
     displayEn: 'Carbapenems',
   }),
+  pubNode('fluid', '补液与电解质制剂', 'medication-class', 'pharmacology-class', {
+    displayEn: 'Fluids and Electrolytes',
+  }),
+  pubNode('antiviral', '抗病毒药', 'medication-class', 'pharmacology-class', {
+    displayEn: 'Antivirals',
+  }),
+  pubNode('analgesic', '解热镇痛药', 'medication-class', 'pharmacology-class', {
+    displayEn: 'Analgesics',
+  }),
   pubNode('contrast', '含碘对比剂', 'medication-class', 'pharmacology-class', {
     displayEn: 'Iodinated Contrast Media',
   }),
@@ -531,6 +540,97 @@ export function mergeThreeLayerConceptVocabulary(input: {
     nodes: [...mergedNodesByCode.values()],
     version,
   }
+}
+
+/**
+ * Resolve an effective 3-layer ConceptVocabulary from optional pack and hospital overlays.
+ */
+export function resolveEffectiveConceptVocabulary(input: {
+  publicLayer?: ConceptVocabulary | undefined
+  packLayer?: ConceptVocabulary | undefined
+  hospitalLayer?: ConceptVocabulary | undefined
+} = {}): ConceptVocabulary {
+  const publicLayer = input.publicLayer ?? PUBLIC_CONCEPT_VOCABULARY
+  if (input.packLayer === undefined && input.hospitalLayer === undefined) {
+    return publicLayer
+  }
+  return mergeThreeLayerConceptVocabulary({
+    ...(input.hospitalLayer === undefined ? {} : { hospitalLayer: input.hospitalLayer }),
+    ...(input.packLayer === undefined ? {} : { packLayer: input.packLayer }),
+    publicLayer,
+  })
+}
+
+/**
+ * Validate and normalize an arbitrary caller-supplied vocabulary override through
+ * strict 3-layer hierarchy checks (never bypassing public immutability, cycle, or hospital leaf rules).
+ */
+export function validateAndNormalizeVocabularyOverride(override: ConceptVocabulary): ConceptVocabulary {
+  const parsed = parseLayerOrThrow(override, 'vocabularyOverride')
+  const publicNodeMap = new Map(PUBLIC_CONCEPT_VOCABULARY.nodes.map(node => [node.code, node]))
+  const publicMappingById = new Map(PUBLIC_CONCEPT_VOCABULARY.mappings.map(mapping => [mapping.id, mapping]))
+
+  const packNodes: ConceptNode[] = []
+  const hospitalNodes: ConceptNode[] = []
+  const customMappings: ConceptMapping[] = []
+
+  for (const node of parsed.nodes) {
+    if (node.layer === 'public') {
+      const canonical = publicNodeMap.get(node.code)
+      if (canonical === undefined) {
+        throw new ConceptVocabularyError(
+          'CONCEPT_VOCABULARY_INVALID',
+          `Vocabulary override cannot inject unknown public node '${node.code}'`,
+        )
+      }
+      if (canonical.parentCode !== node.parentCode || canonical.domain !== node.domain) {
+        throw new ConceptVocabularyError(
+          'CONCEPT_VOCABULARY_INVALID',
+          `Vocabulary override cannot alter public node '${node.code}' parentCode or domain`,
+        )
+      }
+      continue
+    }
+    if (node.layer === 'disease-pack') {
+      packNodes.push(node)
+      continue
+    }
+    hospitalNodes.push(node)
+  }
+
+  for (const mapping of parsed.mappings) {
+    const canonical = publicMappingById.get(mapping.id)
+    if (canonical !== undefined) {
+      if (JSON.stringify(canonical) !== JSON.stringify(mapping)) {
+        throw new ConceptVocabularyError(
+          'CONCEPT_VOCABULARY_INVALID',
+          `Vocabulary override cannot alter built-in public mapping '${mapping.id}'`,
+        )
+      }
+      continue
+    }
+    customMappings.push(mapping)
+  }
+
+  if (packNodes.length === 0 && hospitalNodes.length === 0 && customMappings.length === 0) {
+    return PUBLIC_CONCEPT_VOCABULARY
+  }
+
+  return mergeThreeLayerConceptVocabulary({
+    ...(hospitalNodes.length === 0 ? {} : {
+      hospitalLayer: {
+        mappings: [],
+        nodes: hospitalNodes,
+        version: parsed.version,
+      },
+    }),
+    packLayer: {
+      mappings: customMappings,
+      nodes: packNodes,
+      version: parsed.version,
+    },
+    publicLayer: PUBLIC_CONCEPT_VOCABULARY,
+  })
 }
 
 function normalizeDateToken(rawDate: string | undefined): string | undefined {
@@ -843,7 +943,7 @@ export function resolveSearchQuerySynonymExpansions(
   for (const node of vocabulary.nodes) {
     const nodeTerms = [
       node.displayZh,
-      ...node.synonyms,
+      ...(node.layer === 'public' ? node.synonyms : []),
       ...(node.displayEn === undefined ? [] : [node.displayEn]),
       node.code,
     ]
@@ -887,7 +987,9 @@ export function resolveSearchQuerySynonymExpansions(
       registerTerm(mapping.sourceCode, mapping.id)
     }
     registerTerm(node.displayZh)
-    for (const syn of node.synonyms) registerTerm(syn)
+    if (node.layer === 'public') {
+      for (const syn of node.synonyms) registerTerm(syn)
+    }
     if (node.displayEn !== undefined) registerTerm(node.displayEn)
     registerTerm(node.code)
 
@@ -919,6 +1021,7 @@ export function resolveSearchQuerySynonymExpansions(
 export function expandSearchQueryWithApprovedSynonyms(
   query: string,
   vocabulary: ConceptVocabulary,
+  options?: { asOfDate?: string },
 ): string[] {
-  return resolveSearchQuerySynonymExpansions(query, vocabulary).terms
+  return resolveSearchQuerySynonymExpansions(query, vocabulary, options).terms
 }
