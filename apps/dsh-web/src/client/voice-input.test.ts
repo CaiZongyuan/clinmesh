@@ -972,4 +972,76 @@ describe('createSurfaceVoiceInput', () => {
       voice.dispose()
     }
   })
+
+  it('preserves trailing interim Web Speech words when stopping and passes the full transcript to polish', async () => {
+    const polish = vi.fn(async (text: string) => ok({ status: 'ok', text: `${text}？` }))
+    const remote = createFakeRemote({ polish })
+    const fake = createFakeContext({ remote })
+    const speech = createFakeSpeechRecognition()
+    const voice = createSurfaceVoiceInput(fake.ctx, { createSpeechRecognition: () => speech })
+    try {
+      await vi.waitFor(() => expect(voice.getSnapshot().ready).toBe(true))
+      let draft = ''
+      voice.start({ getDraft: () => draft, setDraft: next => { draft = next } })
+      speech.emitResult([
+        { transcript: '胸痛持续多久', isFinal: true },
+        { transcript: '是否伴出汗', isFinal: false },
+      ])
+      expect(draft).toBe('胸痛持续多久是否伴出汗')
+      voice.stop()
+      await vi.waitFor(() => expect(voice.getSnapshot().phase).toBe('idle'))
+      expect(polish).toHaveBeenCalledWith('胸痛持续多久是否伴出汗', '', '', '', expect.any(AbortSignal))
+      expect(draft).toBe('胸痛持续多久是否伴出汗？')
+    } finally {
+      voice.dispose()
+    }
+  })
+
+  it('cancels the remote realtime session immediately when cancelled while microphone setup is pending', async () => {
+    let resolveCapture!: (handle: RealtimeCaptureHandle) => void
+    const remote = createFakeRemote({
+      getSettings: vi.fn(async () => ok({
+        available: true,
+        settings: makeSettings({
+          asrBackend: 'cloud-openai',
+          cloudAsrProvider: 'deepgram',
+          cloudAsrDeepgramService: 'realtime',
+          polishingEnabled: false,
+        }),
+      })),
+    })
+    const fake = createFakeContext({ remote })
+    const createRealtimeCapture = vi.fn(() => new Promise<RealtimeCaptureHandle>(resolve => {
+      resolveCapture = resolve
+    }))
+    const voice = createSurfaceVoiceInput(fake.ctx, {
+      isRealtimeCaptureAvailable: () => true,
+      createRealtimeCapture,
+    })
+    try {
+      await vi.waitFor(() => expect(voice.getSnapshot().ready).toBe(true))
+      voice.start({ getDraft: () => '', setDraft: () => {} })
+      await vi.waitFor(() => expect(createRealtimeCapture).toHaveBeenCalledOnce())
+      expect(voice.getSnapshot().phase).toBe('starting')
+
+      // Cancel BEFORE getUserMedia / createRealtimeCapture resolves -> remote session cancelled immediately
+      voice.cancel()
+      expect(voice.getSnapshot().phase).toBe('idle')
+      expect(remote.cancelRealtime).toHaveBeenCalledTimes(1)
+      expect(remote.cancelRealtime).toHaveBeenCalledWith('rt-1')
+
+      // Late resolution aborts the newly acquired handle without cancelling remote session twice
+      const lateHandle: RealtimeCaptureHandle = {
+        start: vi.fn(),
+        stop: vi.fn(async () => undefined),
+        abort: vi.fn(),
+      }
+      resolveCapture(lateHandle)
+      await vi.waitFor(() => expect(lateHandle.abort).toHaveBeenCalledOnce())
+      expect(lateHandle.start).not.toHaveBeenCalled()
+      expect(remote.cancelRealtime).toHaveBeenCalledTimes(1)
+    } finally {
+      voice.dispose()
+    }
+  })
 })

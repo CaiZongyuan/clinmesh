@@ -1137,7 +1137,11 @@ export function createSurfaceVoiceInput(
         stopSpeechSession = undefined
       }
       if (disposed || epoch !== capturedEpoch || failed) return
-      const transcript = (finalText !== '' ? finalText : lastHeard).trim()
+      const finalTrimmed = finalText.trim()
+      const heardTrimmed = lastHeard.trim()
+      const transcript = heardTrimmed.length > finalTrimmed.length
+        ? heardTrimmed
+        : (finalTrimmed !== '' ? finalTrimmed : heardTrimmed)
       if (transcript === '') {
         setPhase('idle')
         return
@@ -1183,6 +1187,7 @@ export function createSurfaceVoiceInput(
     recognition.onend = () => {
       if (ended || disposed || epoch !== capturedEpoch) return
       if (!stopping && !failed) {
+        if (lastHeard.trim().length > finalText.trim().length) finalText = lastHeard
         try {
           recognition.start()
           return
@@ -1266,6 +1271,7 @@ export function createSurfaceVoiceInput(
     activeAbort = controller
     let sessionId: string | undefined
     let handle: RealtimeCaptureHandle | undefined
+    let streamAbort: AbortController | undefined
     try {
       const started = unwrapRemoteResult(await remote.startRealtime(controller.signal))
       if (!started.ok) throw new Error(started.message)
@@ -1275,15 +1281,24 @@ export function createSurfaceVoiceInput(
         void remote.cancelRealtime(sessionId).catch(() => undefined)
         return
       }
+      // Register sessionId immediately so cancel()/stop()/dispose() can cancel the remote
+      // session right away even if microphone permission / getUserMedia stays pending.
+      realtimeSessionId = sessionId
       handle = await (deps.createRealtimeCapture ?? createBrowserRealtimeCapture)()
       if (disposed || controller.signal.aborted || epoch !== capturedEpoch) {
         handle.abort()
-        void remote.cancelRealtime(sessionId).catch(() => undefined)
+        if (realtimeSessionId === sessionId) {
+          realtimeSessionId = undefined
+          void remote.cancelRealtime(sessionId).catch(() => undefined)
+        }
         return
       }
       if (isHostVoiceRecording()) {
         handle.abort()
-        void remote.cancelRealtime(sessionId).catch(() => undefined)
+        if (realtimeSessionId === sessionId) {
+          realtimeSessionId = undefined
+          void remote.cancelRealtime(sessionId).catch(() => undefined)
+        }
         if (activeAbort === controller) activeAbort = undefined
         failVoice(
           getLocale() === 'zh-CN'
@@ -1293,19 +1308,19 @@ export function createSurfaceVoiceInput(
         )
         return
       }
-      const streamAbort = new AbortController()
+      streamAbort = new AbortController()
+      const activeStreamAbort = streamAbort
       realtimeHandle = handle
       realtimeStopping = false
-      realtimeSessionId = sessionId
-      realtimeStreamAbort = streamAbort
+      realtimeStreamAbort = activeStreamAbort
       const initialDraft = target.getDraft()
       realtimeDraftState = { baseDraft: initialDraft, sessionDraft: initialDraft }
       realtimeSettingsSnapshot = currentSettings
       if (activeAbort === controller) activeAbort = undefined
       handle.start(async audioBase64 => {
-        if (disposed || streamAbort.signal.aborted || epoch !== capturedEpoch || realtimeSessionId !== sessionId) return
-        const chunkResult = unwrapRemoteResult(await remote.sendRealtimeAudio(sessionId!, audioBase64, streamAbort.signal))
-        if (disposed || streamAbort.signal.aborted || epoch !== capturedEpoch) return
+        if (disposed || activeStreamAbort.signal.aborted || epoch !== capturedEpoch || realtimeSessionId !== sessionId) return
+        const chunkResult = unwrapRemoteResult(await remote.sendRealtimeAudio(sessionId!, audioBase64, activeStreamAbort.signal))
+        if (disposed || activeStreamAbort.signal.aborted || epoch !== capturedEpoch) return
         if (!chunkResult.ok) throw new Error(chunkResult.message)
         const parsedChunk = realtimeTranscriptSchema.safeParse(chunkResult.value)
         if (!parsedChunk.success) return
@@ -1317,7 +1332,17 @@ export function createSurfaceVoiceInput(
       armMaxDuration(effectiveMaxSeconds(currentSettings))
     } catch {
       handle?.abort()
-      if (sessionId !== undefined) void remote.cancelRealtime(sessionId).catch(() => undefined)
+      streamAbort?.abort()
+      if (realtimeHandle === handle) {
+        realtimeHandle = undefined
+        realtimeStopping = false
+      }
+      if (realtimeStreamAbort === streamAbort) realtimeStreamAbort = undefined
+      realtimeSettingsSnapshot = undefined
+      if (sessionId !== undefined && realtimeSessionId === sessionId) {
+        realtimeSessionId = undefined
+        void remote.cancelRealtime(sessionId).catch(() => undefined)
+      }
       if (activeAbort === controller) activeAbort = undefined
       if (disposed || controller.signal.aborted || epoch !== capturedEpoch) return
       failVoice(getLocale() === 'zh-CN' ? '无法建立实时语音识别连接，请检查 DSH 设置 → dsh-ears' : 'Could not start realtime ASR. Check DSH Settings → dsh-ears.', capturedEpoch)
