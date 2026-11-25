@@ -25,6 +25,7 @@ ClinMesh Profile 通过 `apps/dsh-web/cordis.patch.yml` 声明业务 preset `cli
 - ClinMesh 插件在 Profile 加载时通过官方 `sidebar.brand.mark` / `sidebar.brand.name` 插槽固定左侧栏的现有 ClinMesh Logo 与名称，不依赖应用是否打开；新会话中央标志使用 `conversation.hero.brand.mark` 插槽，标题沿用 ClinMesh 的中英文产品标语；插件卸载后释放插槽并恢复宿主标题。DSH 拥有 Light/Dark/System theme；ClinMesh Surface 始终应用宿主 resolved theme，不提供独立主题选择，也不改写已保存的 Web 主题偏好。宿主底部按钮为“医院工作台”，打开后的菜单标题为“设置”。主题样式只作用于 Surface root，所有浮层通过注入 Portal 留在 ShadowRoot。宿主主题、语言、字号与导航归属取舍见 [DSH 原生 ClinMesh Surface 决策](../decisions/implemented/architecture/2026-08-30-dsh-native-clinmesh-surface.md)。
 - DSH 左栏默认收起，允许手动展开；两种形态只保留品牌、已授权岗位及底部入口。原生会话与工作区操作由对话区标题栏的历史弹层提供，读写和搜索由 DSH 公共控制器拥有。
 - 默认 `workspace` 左右分屏，窄空间按比例收缩并由应用内部响应式适配；全屏仅由用户手动选择，现有页头提供返回分屏入口。会话可独立收起，原生文件栏随之隐藏并保留状态，左侧宿主导航仍可使用（分栏与会话收起取舍见[助手右侧布局与会话收起决策](../decisions/implemented/feature/2026-10-22-dsh-mirror-layout-rollback.md)）。切换保留原生侧栏状态、分栏偏好与应用草稿，共享 React 双版本与响应式边界见[Surface React API 与响应式边界](../decisions/implemented/bug-fix/2026-09-16-dsh-surface-react-api-surface.md)。
+- Web Profile 内置社区语音插件 `dsh-ears`：右侧会话保留 `dsh-ears` 原生语音输入与 DSH“设置 → `dsh-ears`”配置，`apps/dsh-web` 则通过可选 `remote.dshEars` 桥接为门诊“患者问诊”输入框提供 `surfaceVoiceInput` 端口（不阻塞 Surface 挂载）。问诊转写与润色只填充输入框草稿，绝不自动提交给患者；在问诊输入框聚焦、全屏或收起右侧会话列时由 ClinMesh 优先拦截语音快捷键，避免与右侧会话冲突（决策见[内置 dsh-ears 语音输入决策](../decisions/implemented/feature/2026-11-25-dsh-ears-voice-input.md)）。
 - `/clinmesh-api` Host 代理只连接配置固定的 loopback Hono，保留 Cookie/Origin，限制路径、方法、请求体、响应体和超时，不记录患者正文。
 
 该模式只信任安装在同一 DSH Web Profile 的插件，并只处理合成数据。它不是不可信 marketplace 插件或真实患者数据的安全边界。
