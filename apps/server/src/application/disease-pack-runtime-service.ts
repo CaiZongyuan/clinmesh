@@ -21,6 +21,10 @@ import {
   type EffectiveDiseasePack,
 } from '@clinmesh/contracts/disease-pack'
 import {
+  PUBLIC_CONCEPT_VOCABULARY,
+  mergeThreeLayerConceptVocabulary,
+} from '@clinmesh/core/concept-vocabulary'
+import {
   DiseasePackValidationError,
   collectDeclaredTaskItemCodes,
   evaluatePackActivation,
@@ -273,6 +277,8 @@ const SPLIT_PACK_FILES = [
   'clinical.json',
   'exam-suite.json',
   'recognition-card.json',
+  'vocabulary.json',
+  'knowledge.json',
 ] as const
 
 function parsePackJsonObject(content: string, filename: string): Record<string, unknown> {
@@ -1084,10 +1090,17 @@ export class DiseasePackRuntimeService {
     override: z.infer<typeof overrideRowSchema> | undefined,
     asOf: string,
   ): DiseasePackRuntimeEntry {
+    const vocabulary = effective.pack.conceptVocabulary === undefined
+      ? PUBLIC_CONCEPT_VOCABULARY
+      : mergeThreeLayerConceptVocabulary({
+          packLayer: effective.pack.conceptVocabulary,
+          publicLayer: PUBLIC_CONCEPT_VOCABULARY,
+        })
     const evalOptions = {
       asOf,
       encounterIdByRecordId: encounterMap,
       manualOverride: override?.override_mode ?? null,
+      vocabulary,
     }
     const activation = evaluatePackActivation(effective, ledger, evalOptions)
     const stageEval = evaluatePackStages(effective, ledger, evalOptions)
@@ -1132,6 +1145,14 @@ export class DiseasePackRuntimeService {
         WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ? AND pack_id = ?
       `).get(context.workspaceId, context.epoch, subjectKind, subjectId, packId),
     )
+  }
+
+  readOutpatientPatientId(context: ActorContext, caseId: string): string {
+    return this.#readOutpatientCaseRow(context, caseId).patient_id
+  }
+
+  resolvePatientEncounterMap(context: ActorContext, patientId: string): Record<string, string> {
+    return this.#resolveEncounterMap(context, patientId)
   }
 
   #readOutpatientCaseRow(context: ActorContext, caseId: string) {

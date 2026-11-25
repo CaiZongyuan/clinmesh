@@ -1,4 +1,5 @@
 import type { ClinicalFact, ClinicalFactLedger } from '@clinmesh/contracts/clinical-fact-ledger'
+import type { ConceptVocabulary } from '@clinmesh/contracts/concept-vocabulary'
 import {
   MANDATORY_FORBIDDEN_PACK_ACTIONS,
   diseasePackSchema,
@@ -19,6 +20,12 @@ import {
   getPublicValidityDays,
   resolveCanonicalItemCode,
 } from './clinical-fact-ledger.ts'
+import {
+  PUBLIC_CONCEPT_VOCABULARY,
+  evaluateConceptMappingEligibility,
+  getConceptAncestors,
+  mergeThreeLayerConceptVocabulary,
+} from './concept-vocabulary.ts'
 
 export type DiseasePackErrorCode =
   | 'PACK_CODE_FORBIDDEN'
@@ -191,6 +198,20 @@ export function validateAndParseDiseasePack(
   }
 
   const pack = parsed.data
+  if (pack.conceptVocabulary !== undefined) {
+    for (const node of pack.conceptVocabulary.nodes) {
+      if (node.packId !== undefined && node.packId !== pack.manifest.id) {
+        throw new DiseasePackValidationError(
+          'PACK_SCHEMA_INVALID',
+          `Concept node ${node.code} declares packId '${node.packId}', expected '${pack.manifest.id}'`,
+        )
+      }
+    }
+    mergeThreeLayerConceptVocabulary({
+      packLayer: pack.conceptVocabulary,
+      publicLayer: PUBLIC_CONCEPT_VOCABULARY,
+    })
+  }
   for (const ref of pack.formulaRefs) {
     if (!hasPlatformFormulaVersion(ref.formulaId, ref.version)) {
       throw new DiseasePackValidationError(
@@ -387,6 +408,7 @@ export interface TriggerEvaluationOptions {
   readonly asOf?: string
   readonly encounterIdByFactId?: Readonly<Record<string, string>>
   readonly encounterIdByRecordId?: Readonly<Record<string, string>>
+  readonly vocabulary?: ConceptVocabulary
 }
 
 export interface TriggerEvaluationResult {
@@ -433,25 +455,73 @@ function resolveEncounterKey(fact: ClinicalFact, field: DiseasePackTimestampFiel
   return `${fact.provenance.sourceSystemId}::${dayBucket}`
 }
 
+function collectEligibleConceptCodesForFact(
+  factCode: string,
+  vocabulary: ConceptVocabulary | undefined,
+  asOfDate: string | undefined,
+): string[] {
+  const codes = new Set<string>([factCode, resolveCanonicalItemCode(factCode)])
+  if (vocabulary === undefined) {
+    return [...codes]
+  }
+  if (vocabulary.nodes.some(node => node.code === factCode)) {
+    for (const ancestor of getConceptAncestors(factCode, vocabulary)) {
+      codes.add(ancestor)
+    }
+  }
+  for (const mapping of vocabulary.mappings) {
+    if (mapping.sourceCode !== factCode) continue
+    const eligibility = evaluateConceptMappingEligibility(
+      mapping,
+      asOfDate === undefined ? undefined : { asOfDate },
+    )
+    if (!eligibility.eligibleForScoreAndRedLine) continue
+    codes.add(mapping.targetConceptCode)
+    for (const ancestor of getConceptAncestors(mapping.targetConceptCode, vocabulary)) {
+      codes.add(ancestor)
+    }
+  }
+  return [...codes]
+}
+
 function matchesFactLeaf(
   node: DiseasePackFactTriggerNode,
   fact: ClinicalFact,
   asOfMs: number | null,
+  vocabulary?: ConceptVocabulary,
+  asOfDate?: string,
 ): boolean {
   if (node.category !== undefined && fact.category !== node.category) return false
   if (node.presence !== fact.presence) return false
   if (node.requireEligible && !fact.eligibleForScoringAndRedLine) return false
   if (node.verificationStatus !== undefined && fact.verificationStatus !== node.verificationStatus) return false
 
-  if (node.itemCodes !== undefined) {
-    const normalizedMatches = new Set(node.itemCodes.flatMap(code => [code, resolveCanonicalItemCode(code)]))
-    const factCode = fact.itemCode.code
-    const canonicalFactCode = resolveCanonicalItemCode(factCode)
-    if (!normalizedMatches.has(factCode) && !normalizedMatches.has(canonicalFactCode)) return false
-  }
-  if (node.itemCodePattern !== undefined) {
-    const pattern = new RegExp(node.itemCodePattern)
-    if (!pattern.test(fact.itemCode.code) && !pattern.test(resolveCanonicalItemCode(fact.itemCode.code))) return false
+  if (node.itemCodes !== undefined || node.itemCodePattern !== undefined) {
+    const factConceptCodes = collectEligibleConceptCodesForFact(fact.itemCode.code, vocabulary, asOfDate)
+    if (node.itemCodes !== undefined) {
+      const normalizedMatches = new Set<string>()
+      for (const code of node.itemCodes) {
+        normalizedMatches.add(code)
+        normalizedMatches.add(resolveCanonicalItemCode(code))
+        if (vocabulary !== undefined) {
+          for (const mapping of vocabulary.mappings) {
+            if (mapping.sourceCode !== code) continue
+            const eligibility = evaluateConceptMappingEligibility(
+              mapping,
+              asOfDate === undefined ? undefined : { asOfDate },
+            )
+            if (eligibility.eligibleForScoreAndRedLine) {
+              normalizedMatches.add(mapping.targetConceptCode)
+            }
+          }
+        }
+      }
+      if (!factConceptCodes.some(code => normalizedMatches.has(code))) return false
+    }
+    if (node.itemCodePattern !== undefined) {
+      const pattern = new RegExp(node.itemCodePattern)
+      if (!factConceptCodes.some(code => pattern.test(code))) return false
+    }
   }
 
   if (node.minValue !== undefined || node.maxValue !== undefined || node.unit !== undefined) {
@@ -484,10 +554,12 @@ export function evaluatePackTrigger(
   ledger: ClinicalFactLedger,
   options?: TriggerEvaluationOptions,
 ): TriggerEvaluationResult {
-  const asOfMs = parseTimestampMs(options?.asOf ?? ledger.trace.evaluatedAsOf)
+  const effectiveAsOf = options?.asOf ?? ledger.trace.evaluatedAsOf
+  const asOfMs = parseTimestampMs(effectiveAsOf)
+  const asOfDate = effectiveAsOf.slice(0, 10)
 
   if (node.kind === 'fact') {
-    const matchedFacts = ledger.facts.filter(fact => matchesFactLeaf(node, fact, asOfMs))
+    const matchedFacts = ledger.facts.filter(fact => matchesFactLeaf(node, fact, asOfMs, options?.vocabulary, asOfDate))
     if (matchedFacts.length > 0) {
       return {
         matched: true,

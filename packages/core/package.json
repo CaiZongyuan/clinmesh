@@ -21,6 +21,8 @@
     "./clinical-fact-ledger": "./src/clinical-fact-ledger.ts",
     "./local-source-ingestion": "./src/local-source-ingestion.ts",
     "./disease-pack": "./src/disease-pack.ts",
+    "./concept-vocabulary": "./src/concept-vocabulary.ts",
+    "./knowledge-claims": "./src/knowledge-claims.ts",
     "./insurance": "./src/insurance.ts",
     "./laboratory-specimen-container": "./src/laboratory-specimen-container.ts"
   },

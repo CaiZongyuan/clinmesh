@@ -23,8 +23,11 @@ import {
   diseasePackToggleBodySchema,
   diseasePackToolAuthorizeBodySchema,
 } from '@clinmesh/contracts/disease-pack'
+import { ConceptVocabularyError } from '@clinmesh/core/concept-vocabulary'
 import { DiseasePackValidationError } from '@clinmesh/core/disease-pack'
+import { KnowledgeClaimError } from '@clinmesh/core/knowledge-claims'
 import { DiseasePackRuntimeError } from './application/disease-pack-runtime-service.ts'
+import { KnowledgeSemanticError } from './application/knowledge-semantic-service.ts'
 import { UnknownGuidelineTopicError } from './application/guideline-topic-registry.ts'
 import { UnknownOrderSetTemplateError } from './application/order-set-template-registry.ts'
 import {
@@ -343,8 +346,16 @@ function apiErrorResponse(
   if (error instanceof SyntaxError || error instanceof z.ZodError) {
     return invalidInputResponse(context, invalidInputMessage)
   }
-  if (error instanceof DiseasePackValidationError) {
+  if (error instanceof DiseasePackValidationError || error instanceof ConceptVocabularyError) {
     return context.json(apiErrorBody(context, error.code, error.message), 400)
+  }
+  if (error instanceof KnowledgeClaimError) {
+    const status = error.code === 'KNOWLEDGE_SNAPSHOT_NOT_FOUND'
+      ? 404
+      : error.code === 'KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED'
+        ? 403
+        : 400
+    return context.json(apiErrorBody(context, error.code, error.message), status)
   }
   if (error instanceof ClinicalQualityError) {
     return context.json(apiErrorBody(context, error.code, error.message, undefined, undefined, error.check), error.status)
@@ -354,6 +365,7 @@ function apiErrorResponse(
       || error instanceof ClinicalFactLedgerError
       || error instanceof LocalSourceIngestionError
       || error instanceof DiseasePackRuntimeError
+      || error instanceof KnowledgeSemanticError
       || error instanceof UnknownGuidelineTopicError
       || error instanceof UnknownOrderSetTemplateError
       || error instanceof ClinicalQualityReadError
@@ -382,7 +394,7 @@ function apiErrorResponse(
       error.code,
       error.message,
       error instanceof WorkflowError ? error.conflict : undefined,
-      error instanceof WorkflowError || error instanceof InpatientError || error instanceof DiseasePackRuntimeError ? error.reason : undefined,
+      error instanceof WorkflowError || error instanceof InpatientError || error instanceof DiseasePackRuntimeError || error instanceof KnowledgeSemanticError ? error.reason : undefined,
       error instanceof WorkflowError || error instanceof InpatientError ? error.clinicalQuality : undefined,
     ), error.status)
   }
@@ -2123,6 +2135,17 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         ))
       } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/knowledge', async context => {
+      try {
+        return context.json(inpatient.workflow.knowledgeSemantics.readInpatientKnowledge(
+          inpatient,
+          await actor(context),
+          context.req.param('admissionId'),
+          diseasePackSlugSchema.parse(context.req.param('packId')),
+          context.req.query(),
+        ))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/diagnoses/confirm', async context => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -2322,6 +2345,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.get('/api/his/v1/catalogs/disease-packs', async (context) => {
       try {
         return context.json(workflow.diseasePacks.listCatalog(await actor(context)))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/catalogs/concept-vocabulary', async (context) => {
+      try {
+        return context.json(workflow.knowledgeSemantics.readConceptVocabularyCatalog(
+          await actor(context),
+          context.req.query(),
+        ))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
@@ -2804,6 +2837,18 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           subjectId: context.req.param('caseId'),
           subjectKind: 'outpatient',
         }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/outpatient/cases/:caseId/disease-packs/:packId/knowledge', async (context) => {
+      try {
+        return context.json(workflow.knowledgeSemantics.readOutpatientKnowledge(
+          await actor(context),
+          context.req.param('caseId'),
+          diseasePackSlugSchema.parse(context.req.param('packId')),
+          context.req.query(),
+        ))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
