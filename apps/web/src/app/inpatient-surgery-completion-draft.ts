@@ -16,6 +16,7 @@ export type CompletionDraftRow = z.infer<typeof rowSchema>
 export type CompletionRelease = z.infer<typeof completionDraftSchema>['releases'][number]
 
 export function initialCompletionDraft(execution: z.infer<typeof inpatientSurgeryExecutionSchema>, reservations: InpatientMaterialReservation[], requestId: string) {
+  const stage = execution.executionStage ?? 'primary'
   const rows: CompletionDraftRow[] = [], grouped = new Map<string, CompletionDraftRow>()
   for (const use of execution.materialHistory.filter(use => use.correction === null)) {
     const key = JSON.stringify([use.item, use.reservationId]), row = grouped.get(key)
@@ -27,7 +28,7 @@ export function initialCompletionDraft(execution: z.infer<typeof inpatientSurger
       ...(use.reservationId ? { reservationId: use.reservationId, expectedReservationVersion: reservation?.version } : {}) }
     rows.push(next); grouped.set(key, next)
   }
-  for (const reservation of reservations.filter(item => item.requestId === requestId && item.status === 'reserved')) {
+  for (const reservation of reservations.filter(item => item.requestId === requestId && (item.surgeryStage ?? 'primary') === stage && item.status === 'reserved')) {
     if (rows.some(row => row.reservationId === reservation.id) || reservation.catalogVersion === undefined || reservation.unit === null) continue
     rows.push({ key: `reservation:${reservation.id}`, materialId: reservation.materialId, catalogVersion: reservation.catalogVersion,
       materialUseIds: [], quantity: '0', previousQuantity: 0, display: reservation.materialDisplay, unit: reservation.unit,

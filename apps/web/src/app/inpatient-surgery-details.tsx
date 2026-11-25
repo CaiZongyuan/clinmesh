@@ -31,6 +31,7 @@ export function InpatientSurgeryDetails({ admission, session, locale, write, pla
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const [open, setOpen] = useState(false)
   const [detail, setDetail] = useState<'estimate' | 'guideline' | 'reservations' | null>(null)
+  const effectiveProcedure = plan.status === 'standby-pci' && plan.adHocPci?.status === 'converted' ? plan.adHocPci.procedure : plan.plannedProcedure
   const parameters = selection?.drafts?.find(draft => draft.requestId === plan.id)?.parameters
     ?? (selection?.confirmation?.parameters.requestId === plan.id ? selection.confirmation.parameters : undefined)
   const title = detail === 'estimate' ? t('完整预计依据与扩展参数', 'Estimate evidence and extended parameters')
@@ -44,7 +45,7 @@ export function InpatientSurgeryDetails({ admission, session, locale, write, pla
   return <Dialog open={open} pending={write.mutation.isPending} onOpenChange={setOpen}>
     {labels.filter(([kind]) => kind === 'reservations' || kind === 'estimate' && (estimate || parameters || report) || kind === 'guideline' && selection).map(([kind, label]) => <DialogTrigger key={kind} render={<Button type="button" variant="ghost" size="sm" />} onClick={() => { setDetail(kind); setOpen(true) }}>{label}</DialogTrigger>)}
     <DialogContent keepMounted={detail !== null} className="h-[min(85svh,800px)] sm:max-w-[800px]" showCloseButton={!write.mutation.isPending}>
-      <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{plan.plannedProcedure.coding.display}</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{effectiveProcedure.coding.display}</DialogDescription></DialogHeader>
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
         {estimateError ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(estimateError, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
         {detail === 'estimate' ? <>
@@ -62,7 +63,7 @@ export function InpatientSurgeryDetails({ admission, session, locale, write, pla
               {estimate.analysis.items.map(item => <div key={item.materialId} className="flex flex-col gap-1"><h5 className="font-medium">{item.display} × {item.quantity} {item.unit}</h5><p>{item.reason}</p><p className="text-muted-foreground">{item.quantityBasis}</p></div>)}
               {estimate.analysis.sources.materialEvidence.map(evidence => <div key={evidence.id} className="flex flex-col gap-1"><p>{evidence.specification} · {evidence.quantityBasis}</p><p className="text-muted-foreground">{evidence.scope} · {evidence.applicability} · {evidence.compatibility}</p><p className="break-words text-xs text-muted-foreground">{evidence.sourceLocator}</p></div>)}
             </> : <p>{t('尚无成功生成的预计快照，可在主流程手工填写。', 'No successful estimate snapshot is available. Enter materials in the main workflow.')}</p>}
-            {estimate.planBasis ? <InpatientMaterialPlanBasisDetails basis={estimate.planBasis} locale={locale} procedureDisplay={plan.plannedProcedure.coding.display} /> : null}
+            {estimate.planBasis ? <InpatientMaterialPlanBasisDetails basis={estimate.planBasis} locale={locale} procedureDisplay={effectiveProcedure.coding.display} /> : null}
             {estimate.status === 'unknown' && onOpenUsage ? <DialogClose render={<Button type="button" variant="outline" className="self-start" />} onClick={() => onOpenUsage(estimate.id, 'estimate')}>{t('核查原预计请求', 'Check original estimate request')}</DialogClose> : null}
             {writable && !['unknown', 'queued', 'running'].includes(estimate.status) ? <Button type="button" variant="outline" className="self-start" disabled={write.blocked} onClick={() => write.mutation.mutate({ operation: 'inpatient.material-estimate.request', input: { admissionId: admission.id, requestId: plan.id, expectedVersion: estimate.version, expectedRequestVersion: estimate.requestVersion, expectedBasisFingerprint: estimate.basisFingerprint } })}>{t('重新预计，保留耗材清单', 'Re-estimate and retain material list')}</Button> : null}
           </section> : null}

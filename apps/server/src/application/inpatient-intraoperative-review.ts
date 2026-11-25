@@ -44,7 +44,7 @@ export class InpatientIntraoperativeReview {
     const surgery = this.owner.surgery.read(context, admissionId)
     return surgery.inProgress.flatMap(execution => {
       if (!pciSelectionProcedureCodes.includes(execution.actualProcedure.coding.code)) return []
-      const basis = this.owner.materialPlans.forRequest(context, admissionId, execution.requestId)
+      const basis = this.owner.materialPlans.forRequest(context, admissionId, execution.requestId, execution.executionStage ?? 'primary')
       const plan = basis.history.find(item => item.reference === basis.effectiveReference)
       const selection = this.owner.pciSelection.read(context, admissionId, execution.requestId, 'confirmation')
       if (!plan || selection.candidates.length === 0) return []

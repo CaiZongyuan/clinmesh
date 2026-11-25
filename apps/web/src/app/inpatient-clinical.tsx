@@ -37,7 +37,7 @@ import { InpatientExecutionBatch } from './inpatient-execution-batch.tsx'
 type Write = ReturnType<typeof useInpatientWriteIntent>
 
 const inlineQualityOps = new Set([
-  'inpatient.order.issue', 'inpatient.surgery.request', 'inpatient.pci-selection.confirm',
+  'inpatient.order.issue', 'inpatient.surgery.request', 'inpatient.surgery.convert-to-pci', 'inpatient.pci-selection.confirm',
   'inpatient.discharge.issue', 'inpatient.record.submit',
 ])
 

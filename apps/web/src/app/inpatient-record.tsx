@@ -63,7 +63,7 @@ function RecordSurgeryNoticesDisclosure({ admission, session, locale }: { admiss
     enabled: open,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal),
   })
-  const statusLabel = { requested: t('待准备', 'Preparation pending'), ready: t('已就绪', 'Ready'), completed: t('已实施', 'Completed'), cancelled: t('已取消', 'Cancelled') }
+  const statusLabel = { requested: t('待准备', 'Preparation pending'), ready: t('已就绪', 'Ready'), 'standby-pci': t('待同台决策', 'Standby PCI'), completed: t('已实施', 'Completed'), cancelled: t('已取消', 'Cancelled') }
   return <details className="clinmesh-inpatient-disclosure" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary>{t('查看手术通知单与知情同意书', 'View surgery notices and informed consents')}</summary>
     {open ? <div className="flex flex-col gap-3 pt-2">
@@ -72,16 +72,28 @@ function RecordSurgeryNoticesDisclosure({ admission, session, locale }: { admiss
       {surgeries.data && surgeries.data.requests.length === 0 ? <p className="text-xs text-muted-foreground">{t('本次住院无手术申请单记录。', 'No surgery notice records in this admission.')}</p> : null}
       {surgeries.data?.requests.map(req => {
         const isRunning = Boolean(surgeries.data?.inProgress.some(exec => exec.requestId === req.id))
-        const completedExec = surgeries.data?.executions.find(exec => exec.requestId === req.id)
+        const completedExecs = surgeries.data?.executions.filter(exec => exec.requestId === req.id) ?? []
         return <div key={req.id} className="flex flex-col gap-2 rounded-md border border-border p-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-semibold">{req.plannedProcedure.coding.code} {req.plannedProcedure.coding.display}</span>
-            <Badge variant="outline">{isRunning ? t('进行中', 'In progress') : statusLabel[req.status]}</Badge>
+            <Badge variant="outline">{isRunning ? t('进行中', 'In progress') : req.status === 'standby-pci' && req.adHocPci?.status === 'converted' ? t('同台转 PCI 待实施', 'Converted to Ad-hoc PCI') : statusLabel[req.status]}</Badge>
             <span className="flex-1" />
             <SurgicalConsentPreviewButton admission={admission} request={req} locale={locale} />
           </div>
           <SurgeryNoticeSummaryList row={req} locale={locale} />
-          <SurgeryExecutionExtrasSummary execution={completedExec} locale={locale} />
+          {completedExecs.length <= 1
+            ? <SurgeryExecutionExtrasSummary execution={completedExecs[0]} locale={locale} />
+            : <div className="flex flex-col gap-1.5 border-t pt-2">
+                {completedExecs.map(exec => (
+                  <div key={exec.id} className="flex flex-col gap-0.5">
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                      <span className="font-medium">{exec.actualProcedure.coding.code} {exec.actualProcedure.coding.display}</span>
+                      {exec.executionStage === 'ad-hoc-pci' ? <Badge variant="secondary">{t('同台转 PCI', 'Ad-hoc PCI')}</Badge> : null}
+                    </div>
+                    <SurgeryExecutionExtrasSummary execution={exec} locale={locale} />
+                  </div>
+                ))}
+              </div>}
           {req.cancellation ? <p className="text-xs text-muted-foreground">{t('取消原因：', 'Cancellation: ')}{req.cancellation.note}</p> : null}
         </div>
       })}

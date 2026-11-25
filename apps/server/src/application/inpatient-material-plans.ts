@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import type { InpatientMaterialEstimate } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientMaterialPlanSchema, type InpatientMaterialPlan, type InpatientMaterialPlanBasis } from '@clinmesh/contracts/inpatient-material-plan'
+import type { SurgeryExecutionStage } from '@clinmesh/contracts/inpatient-surgery'
 import type { ActorContext, CommandEffect } from './command-executor.ts'
 import type { readMaterialEstimateBasis } from './inpatient-material-estimate-basis.ts'
 import type { InpatientService } from './inpatient-service.ts'
@@ -11,48 +12,57 @@ import type { RepositoryContext } from '../infrastructure/sqlite/fhir-repository
 export class InpatientMaterialPlans {
   constructor(readonly owner: InpatientService) {}
 
-  #estimates(context: RepositoryContext, admissionId: string, requestId: string) {
+  #estimates(context: RepositoryContext, admissionId: string, requestId: string, stage: SurgeryExecutionStage = 'primary') {
     return z.array(z.object({ snapshot_json: z.string() })).parse(this.owner.database.driver.prepare(`SELECT snapshot_json
-      FROM inpatient_material_plan_confirmation WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? ORDER BY draft_revision DESC`)
-      .all(context.workspaceId, context.epoch, admissionId, requestId)).map(row => inpatientMaterialPlanSchema.parse(JSON.parse(row.snapshot_json)))
+      FROM inpatient_material_plan_confirmation WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? AND surgery_stage=? ORDER BY draft_revision DESC`)
+      .all(context.workspaceId, context.epoch, admissionId, requestId, stage)).map(row => inpatientMaterialPlanSchema.parse(JSON.parse(row.snapshot_json)))
   }
 
-  forRequest(context: ActorContext, admissionId: string, requestId: string): InpatientMaterialPlanBasis {
+  forRequest(context: ActorContext, admissionId: string, requestId: string, stage: SurgeryExecutionStage = 'primary'): InpatientMaterialPlanBasis {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     this.owner.readAdmissionBinding(context, admissionId)
-    return this.forRequestFacts(context, admissionId, requestId)
+    return this.forRequestFacts(context, admissionId, requestId, stage)
   }
-  forRequestFacts(context: RepositoryContext, admissionId: string, requestId: string): InpatientMaterialPlanBasis {
-    const estimates = this.#estimates(context, admissionId, requestId)
-    const legacy: InpatientMaterialPlan[] = this.owner.drgAgent.prePlansForRequestFacts(context, admissionId, requestId).map(plan => ({
-      reference: `InpatientDrgPlan/${admissionId}/version/${plan.revision}`,
-      requestId, source: 'drg-agent', sourceId: plan.analysisId, sourceVersion: plan.revision,
-      basisFingerprint: plan.basisFingerprint, sources: plan.sources, confirmedBy: plan.confirmedBy, confirmedAt: plan.confirmedAt,
-      supersedes: null, reservationIds: [], items: plan.items.map(item => {
-        const specifications = [...new Set(plan.sources.materialEvidence.filter(evidence => item.evidenceIds.includes(evidence.id)).map(evidence => evidence.specification))]
-        return { ...item, specification: specifications.length === 1 ? specifications[0]! : null }
-      }),
-    }))
+  forRequestFacts(context: RepositoryContext, admissionId: string, requestId: string, stage: SurgeryExecutionStage = 'primary'): InpatientMaterialPlanBasis {
+    const estimates = this.#estimates(context, admissionId, requestId, stage)
+    const requestRow = z.object({ standby_ad_hoc_pci: z.number().default(0) }).optional().parse(
+      this.owner.database.driver.prepare(
+        'SELECT standby_ad_hoc_pci FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?',
+      ).get(context.workspaceId, context.epoch, admissionId, requestId),
+    )
+    const includeLegacyDrgPlans = stage === 'ad-hoc-pci' || requestRow?.standby_ad_hoc_pci !== 1
+    const legacy: InpatientMaterialPlan[] = includeLegacyDrgPlans
+      ? this.owner.drgAgent.prePlansForRequestFacts(context, admissionId, requestId).map(plan => ({
+          reference: `InpatientDrgPlan/${admissionId}/version/${plan.revision}`,
+          requestId, source: 'drg-agent', sourceId: plan.analysisId, sourceVersion: plan.revision,
+          basisFingerprint: plan.basisFingerprint, sources: plan.sources, confirmedBy: plan.confirmedBy, confirmedAt: plan.confirmedAt,
+          supersedes: null, reservationIds: [], items: plan.items.map(item => {
+            const specifications = [...new Set(plan.sources.materialEvidence.filter(evidence => item.evidenceIds.includes(evidence.id)).map(evidence => evidence.specification))]
+            return { ...item, specification: specifications.length === 1 ? specifications[0]! : null }
+          }),
+        }))
+      : []
     for (let index = 0; index < legacy.length; index++) legacy[index]!.supersedes = legacy[index + 1]?.reference ?? null
     const history = [...estimates, ...legacy]
     const oldConfirmation = z.object({ draft_json: z.string().nullable() }).optional().parse(this.owner.database.driver.prepare(`SELECT draft_json
-      FROM inpatient_material_estimate WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?`)
-      .get(context.workspaceId, context.epoch, admissionId, requestId))
+      FROM inpatient_material_estimate WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? AND surgery_stage=?`)
+      .get(context.workspaceId, context.epoch, admissionId, requestId, stage))
     // 老工作稿只证明曾确认过，不能证明原确认时的完整材料快照。
     const confirmedRevision = oldConfirmation?.draft_json ? z.object({ confirmedRevision: z.number().nullable() })
       .parse(JSON.parse(oldConfirmation.draft_json)).confirmedRevision : null
     const missingSnapshot = confirmedRevision !== null && !estimates.some(plan => plan.sourceVersion === confirmedRevision)
     const conflict = legacy.length > 0 && (estimates.length > 0 || missingSnapshot)
-    return { requestId, status: conflict ? 'conflict' : missingSnapshot ? 'unverifiable'
+    return { requestId, ...(stage === 'ad-hoc-pci' ? { surgeryStage: 'ad-hoc-pci' as const } : {}), status: conflict ? 'conflict' : missingSnapshot ? 'unverifiable'
       : history.length > 0 ? 'confirmed' : 'missing', effectiveReference: conflict || missingSnapshot ? null : history[0]?.reference ?? null, history }
   }
 
   /** 调用者持有确认 Command 的事务、版本和术前状态校验。 */
   confirmEstimate(context: ActorContext, admissionId: string, input: {
-    taskId: string; requestId: string; draft: NonNullable<InpatientMaterialEstimate['draft']>;
+    taskId: string; requestId: string; surgeryStage?: SurgeryExecutionStage; draft: NonNullable<InpatientMaterialEstimate['draft']>;
     basis: ReturnType<typeof readMaterialEstimateBasis>; reservationIds: string[]
   }, effects: CommandEffect[]) {
-    const previous = this.#estimates(context, admissionId, input.requestId)[0]
+    const stage: SurgeryExecutionStage = input.surgeryStage ?? 'primary'
+    const previous = this.#estimates(context, admissionId, input.requestId, stage)[0]
     const confirmationId = uuidv7(), { selection, estimate } = input.basis.input
     const plan: InpatientMaterialPlan = {
       reference: `InpatientMaterialPlan/${confirmationId}`, requestId: input.requestId, source: 'material-estimate',
@@ -72,8 +82,9 @@ export class InpatientMaterialPlans {
           quantityBasis: candidate.quantityBasis, evidenceIds: [candidate.evidence.id] }
       }),
     }
-    this.owner.database.driver.prepare('INSERT INTO inpatient_material_plan_confirmation VALUES(?,?,?,?,?,?,?,?)')
-      .run(context.workspaceId, context.epoch, admissionId, input.requestId, confirmationId, input.taskId, input.draft.revision, JSON.stringify(plan))
+    this.owner.database.driver.prepare(`INSERT INTO inpatient_material_plan_confirmation
+      (workspace_id,epoch,admission_id,request_id,confirmation_id,estimate_id,draft_revision,snapshot_json,surgery_stage) VALUES(?,?,?,?,?,?,?,?,?)`)
+      .run(context.workspaceId, context.epoch, admissionId, input.requestId, confirmationId, input.taskId, input.draft.revision, JSON.stringify(plan), stage)
     effects.push({ kind: 'created', reference: plan.reference, versionId: String(plan.sourceVersion) })
   }
 }

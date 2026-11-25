@@ -18,6 +18,7 @@ type SurgeryRequestState = {
   id: string
   status: string
   plannedProcedure: { coding: { display: string } }
+  adHocPci?: { status: string; procedure: { coding: { display: string } } } | undefined
   preopCheck?: unknown
   consentConfirmation?: unknown
 }
@@ -45,6 +46,16 @@ export function aggregateDoctorReminders(input: {
       `Outstanding balance ${formatFen(input.outstandingFen, input.locale)}; check with the cashier.`) })
   }
   for (const request of input.surgeryRequests ?? []) {
+    if (request.status === 'standby-pci') {
+      if (request.adHocPci?.status === 'converted') {
+        reminders.push({ key: `surgery-${request.id}`, tone: 'warn', stage: 'surgery', summary: t('同台转 PCI 待实施', 'Ad-hoc PCI pending'),
+          text: `${request.adHocPci.procedure.coding.display}：${t('已免二次术前核对与知情同意，待实施同台 PCI', 'Consent & preop waived; ready for Ad-hoc PCI')}` })
+      } else {
+        reminders.push({ key: `surgery-${request.id}`, tone: 'warn', stage: 'surgery', summary: t('冠脉造影待同台决策', 'Standby PCI decision'),
+          text: `${request.plannedProcedure.coding.display}：${t('造影已完成，请决定是否同台转行 PCI 或结束本台手术', 'Angiography completed; decide whether to convert to PCI or close surgery')}` })
+      }
+      continue
+    }
     if (!['requested', 'ready'].includes(request.status)) continue
     const missing = [request.preopCheck === null || request.preopCheck === undefined ? t('等病区护士完成术前核对', 'waiting for ward nurse preoperative checks') : null,
       request.consentConfirmation === null || request.consentConfirmation === undefined ? t('等住院医生确认手术知情同意书已签', 'waiting for the inpatient doctor to confirm signed surgical consent') : null]

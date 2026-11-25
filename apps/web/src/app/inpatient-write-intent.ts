@@ -16,7 +16,7 @@ import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPrevie
 import { inpatientDischargeInputSchema, inpatientDischargeIssueInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema,
   inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema,
   inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
-import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryConfirmConsentInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgeryRecordMedicationInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryConfirmConsentInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgeryRecordMedicationInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema, inpatientSurgeryConvertToPciInputSchema, inpatientSurgeryFinalizeStandbyInputSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema,inpatientInvestigationAcknowledgeInputSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientDiagnosisConfirmInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientChargeReverseInputSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -133,6 +133,8 @@ const commandSchema = z.discriminatedUnion('operation', [
   cmd('inpatient.surgery.correct-material', inpatientSurgeryCorrectMaterialInputSchema),
   cmd('inpatient.surgery.complete', inpatientSurgeryCompleteInputSchema),
   cmd('inpatient.surgery.execute', inpatientSurgeryExecuteInputSchema),
+  cmd('inpatient.surgery.convert-to-pci', inpatientSurgeryConvertToPciInputSchema),
+  cmd('inpatient.surgery.finalize-standby', inpatientSurgeryFinalizeStandbyInputSchema),
   cmd('inpatient.investigation.issue', inpatientInvestigationIssueInputSchema),
   cmd('inpatient.investigation.send', inpatientInvestigationActionInputSchema),
   cmd('inpatient.investigation.cancel', inpatientInvestigationActionInputSchema),

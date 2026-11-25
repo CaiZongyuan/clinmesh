@@ -902,7 +902,7 @@ describe('导管室与手术室台内基数药记账及术中专科护理自动�
         )
         .run(scope.workspaceId, scope.epoch, procJson, now, now)
 
-      expect(applyMigrations(db).applied).toEqual([migrationFile])
+      expect(applyMigrations(db).applied).toEqual([migrationFile, '0122_surgery-ad-hoc-pci.sql'])
       expect(db.driver.pragma('foreign_key_check')).toEqual([])
       const row = z
         .object({ execution_id: z.string(), linked_nursing_json: z.null() })

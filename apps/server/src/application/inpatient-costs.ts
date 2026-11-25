@@ -1,4 +1,6 @@
 import { inpatientCostsSchema, inpatientSurgeryUsageSchema, type InpatientSurgeryUsage, type InpatientCosts, type InpatientDrgSimulation } from '@clinmesh/contracts/inpatient-drg-simulation'
+import { pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
+import type { SurgeryExecutionStage } from '@clinmesh/contracts/inpatient-surgery'
 import type { ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { pendingMaterialDraftCostDelta } from './inpatient-material-cost-projection.ts'
@@ -6,13 +8,13 @@ import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 
 /** 仅从当前岗位可见的正式事实和既有计价器读取；不依赖模型或持续跟进授权。 */
 export function readInpatientCosts(owner: InpatientService, context: ActorContext, admissionId: string,
-  planned?: { requestId: string; items: Array<{ materialId: string; catalogVersion: number; quantity: number; unitPriceFen: number; display: string }>; incomplete?: boolean },
+  planned?: { requestId: string; surgeryStage?: SurgeryExecutionStage; items: Array<{ materialId: string; catalogVersion: number; quantity: number; unitPriceFen: number; display: string }>; incomplete?: boolean },
   evaluated?: InpatientDrgSimulation | null) {
   let simulation = evaluated ?? null
   if (evaluated === undefined) try { simulation = owner.drg.simulate(context, admissionId, undefined) }
   catch (error) { if (!(error instanceof InpatientError) || error.code !== 'DRG_RULES_NOT_CONFIGURED') throw error }
   const priced = planned === undefined && simulation !== null ? simulation : owner.drg.costProjection(context, admissionId, undefined, planned)
-  const pendingDrafts = pendingMaterialDraftCostDelta(owner, context, admissionId, planned?.requestId)
+  const pendingDrafts = pendingMaterialDraftCostDelta(owner, context, admissionId, planned ? { requestId: planned.requestId, surgeryStage: planned.surgeryStage ?? 'primary' } : undefined)
   const projectionMissing = [...pendingDrafts.missing, ...(planned?.incomplete ? ['当前计划耗材工作稿缺少可核验价格，预计费用暂不可用'] : [])]
   const projectionComplete = projectionMissing.length === 0
   const sum = (items: typeof priced.committed.items) => items.reduce((total, item) => total + (item.estimatedFen ?? 0), 0)
@@ -73,9 +75,11 @@ export function readInpatientSurgeryUsage(owner: InpatientService, context: Acto
   const surgery = owner.surgery.read(context, admissionId)
   const usage: InpatientSurgeryUsage[] = []
   for (const execution of [...surgery.inProgress, ...surgery.executions]) {
-    const basis = owner.materialPlans.forRequest(context, admissionId, execution.requestId)
+    const stage: SurgeryExecutionStage = execution.executionStage ?? 'primary'
+    const basis = owner.materialPlans.forRequest(context, admissionId, execution.requestId, stage)
     const plan = basis.history.find(item => item.reference === basis.effectiveReference)
-    const selection = basis.status === 'missing' ? owner.pciSelection.read(context, admissionId, execution.requestId, 'confirmation') : null
+    const isPciExecution = pciSelectionProcedureCodes.includes(execution.actualProcedure.coding.code)
+    const selection = basis.status === 'missing' && isPciExecution ? owner.pciSelection.read(context, admissionId, execution.requestId, 'confirmation') : null
     const selected = selection?.confirmation?.parameters.requestId === execution.requestId
     const planned = plan?.items ?? (selection && selected ? selection.candidates.filter(item => item.eligibility === 'valid' && item.item !== null)
       .map(item => ({ materialId: item.materialId, catalogVersion: item.materialVersion, display: item.item!.display,

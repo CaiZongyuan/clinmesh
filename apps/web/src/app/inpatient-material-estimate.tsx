@@ -70,7 +70,8 @@ export function InpatientMaterialEstimates({ admission, session, locale, write, 
     refetchInterval: active && admission.status === 'admitted' && admission.recordStatus !== 'archived' ? 3_000 : false, refetchIntervalInBackground: false })
   const reservations = useQuery({ queryKey: [...scope, 'drg-reservations'], retry: false, enabled: active,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/reservations`, inpatientMaterialReservationListSchema, signal) })
-  const hasPciPlan = requests?.some(request => pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code)) ?? false
+  const hasPciPlan = requests?.some(request => pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code)
+    || (request.status === 'standby-pci' && request.adHocPci?.status === 'converted' && pciSelectionProcedureCodes.includes(request.adHocPci.procedure.coding.code))) ?? false
   const selection = useQuery({ queryKey: [...scope, 'pci-selection'], retry: false, enabled: active && hasPciPlan,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/pci-selection`, inpatientPciSelectionSchema, signal),
     refetchInterval: active && admission.status === 'admitted' && admission.recordStatus !== 'archived' ? 3_000 : false, refetchIntervalInBackground: false })
@@ -86,18 +87,27 @@ export function InpatientMaterialEstimates({ admission, session, locale, write, 
     <p>{t('保存冠脉计划后自动预计一次，无需开启持续跟进。耗材清单与有效预留分别保存；预留只用于费用预计，实际使用与正式费用另行记录。', 'A coronary plan triggers one estimate without continuous follow-up. Material lists and active reservations are saved separately. Reservations support estimate; actual use and charges are recorded separately.')}</p>
     {query.isPending ? <div role="status" aria-label={t('正在读取耗材预计', 'Loading material estimates')}><Skeleton className="h-16 w-full" /></div> : null}
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
-    {query.data?.estimates.map(estimate => <EstimateEditor key={JSON.stringify([session.user.id, session.actor.actorId, ...scope, estimate.requestId])} estimate={estimate} admission={admission}
-      title={requests?.find(request => request.id === estimate.requestId)?.plannedProcedure.coding.display ?? estimate.requestId}
-      preoperative={!inProgressRequestIds.includes(estimate.requestId) && (requests === undefined || requests.some(request => request.id === estimate.requestId && ['requested', 'ready'].includes(request.status)))}
-      reservations={reservations.data?.reservations ?? []} encounterVersion={reservations.data?.encounterVersion}
-      pciDraft={selection.data?.drafts?.find(draft => draft.requestId === estimate.requestId)}
-      reports={reports.data?.reports ?? []}
-      reservationFingerprint={reservations.data?.reservationSets.find(set => set.requestId === estimate.requestId)?.fingerprint}
-      locale={locale} session={session} write={write} editable={editable} active={active}
-      readable={query.error === null}
-      current={!query.isFetching && query.error === null && !reservations.isFetching && reservations.error === null
-        && (!hasPciPlan || selection.isSuccess && reports.isSuccess && !selection.isFetching && !reports.isFetching)} />)}
-    {query.data?.unprepared.map(plan => <article key={plan.requestId} className="flex flex-col gap-2 rounded-md border p-3">
+    {query.data?.estimates.map(estimate => {
+      const req = requests?.find(request => request.id === estimate.requestId)
+      const stage = estimate.surgeryStage ?? 'primary'
+      const stageTitle = stage === 'ad-hoc-pci' && req?.adHocPci ? req.adHocPci.procedure.coding.display : (req?.plannedProcedure.coding.display ?? estimate.requestId)
+      const isPreoperative = !inProgressRequestIds.includes(estimate.requestId) && (requests === undefined || requests.some(request => request.id === estimate.requestId && (
+        (stage === 'primary' && ['requested', 'ready'].includes(request.status))
+        || (stage === 'ad-hoc-pci' && request.status === 'standby-pci' && request.adHocPci?.status === 'converted')
+      )))
+      return <EstimateEditor key={JSON.stringify([session.user.id, session.actor.actorId, ...scope, estimate.requestId, stage])} estimate={estimate} admission={admission}
+        title={stageTitle}
+        preoperative={isPreoperative}
+        reservations={(reservations.data?.reservations ?? []).filter(item => !item.requestId || (item.requestId === estimate.requestId && (item.surgeryStage ?? 'primary') === stage))} encounterVersion={reservations.data?.encounterVersion}
+        pciDraft={(stage === 'ad-hoc-pci' || pciSelectionProcedureCodes.includes(req?.plannedProcedure.coding.code ?? '')) ? selection.data?.drafts?.find(draft => draft.requestId === estimate.requestId) : undefined}
+        reports={reports.data?.reports ?? []}
+        reservationFingerprint={reservations.data?.reservationSets.find(set => set.requestId === estimate.requestId)?.fingerprint}
+        locale={locale} session={session} write={write} editable={editable} active={active}
+        readable={query.error === null}
+        current={!query.isFetching && query.error === null && !reservations.isFetching && reservations.error === null
+          && (!hasPciPlan || selection.isSuccess && reports.isSuccess && !selection.isFetching && !reports.isFetching)} />
+    })}
+    {query.data?.unprepared.map(plan => <article key={`${plan.requestId}:${plan.surgeryStage ?? 'primary'}`} className="flex flex-col gap-2 rounded-md border p-3">
       <p>{requests?.find(request => request.id === plan.requestId)?.plannedProcedure.coding.display ?? plan.requestId} · {t('历史计划尚未准备预计', 'Historical plan has no estimate')}</p>
       {editable ? <Button variant="outline" disabled={write.blocked || query.isFetching || query.error !== null} onClick={() => write.mutation.mutate({ operation: 'inpatient.material-estimate.request', input: {
         admissionId: admission.id, requestId: plan.requestId, expectedRequestVersion: plan.requestVersion, expectedVersion: 0, expectedBasisFingerprint: plan.basisFingerprint,
@@ -198,13 +208,13 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
       if (alive.current) {
         setFailedSave(null)
         const latest = client.getQueryData<z.infer<typeof inpatientMaterialEstimatesSchema>>(
-          [...inpatientScopeKey(session), admission.id, 'material-estimates'])?.estimates.find(item => item.requestId === estimate.requestId) ?? latestEstimate.current
+          [...inpatientScopeKey(session), admission.id, 'material-estimates'])?.estimates.find(item => item.id === estimate.id) ?? latestEstimate.current
         const ownReceipt = latest.version === saved.version && (latest.basisFingerprint === value.basisFingerprint
           && (latest.draft?.revision ?? 0) === value.revision || latest.basisFingerprint === saved.basisFingerprint
           && latest.draft?.revision === saved.draft?.revision)
         if (!ownReceipt) { setReviewed(null); return undefined }
         client.setQueryData<z.infer<typeof inpatientMaterialEstimatesSchema>>([...inpatientScopeKey(session), admission.id, 'material-estimates'],
-          data => data && { ...data, estimates: data.estimates.map(item => item.requestId !== saved.requestId ? item
+          data => data && { ...data, estimates: data.estimates.map(item => item.id !== saved.id ? item
             : JSON.stringify(item) === JSON.stringify(estimate) ? saved : { ...item, draft: saved.draft }) })
         setEditing(current => latestInput.current === inputKey ? null : current === null ? null : { ...current,
           revision: saved.draft!.revision, basisFingerprint: saved.draft!.basisFingerprint, analysisId: saved.draft!.analysisId })
@@ -239,7 +249,7 @@ function EstimateEditor({ estimate, admission, title, reservations, encounterVer
       const saved = editing !== null || !draft ? await save() : estimate
       if (!saved?.draft || !alive.current || !visibility.current.active || visibility.current.version !== visibilityVersion || latestInput.current !== inputKey) return
       const scope = [...inpatientScopeKey(session), admission.id]
-      const latest = client.getQueryData<z.infer<typeof inpatientMaterialEstimatesSchema>>([...scope, 'material-estimates'])?.estimates.find(item => item.requestId === estimate.requestId) ?? saved
+      const latest = client.getQueryData<z.infer<typeof inpatientMaterialEstimatesSchema>>([...scope, 'material-estimates'])?.estimates.find(item => item.id === estimate.id) ?? saved
       const latestDraft = client.getQueryData<z.infer<typeof inpatientPciSelectionSchema>>([...scope, 'pci-selection'])?.drafts?.find(item => item.requestId === estimate.requestId)
       const latestReport = client.getQueryData<z.infer<typeof inpatientAngiographyReportsSchema>>([...scope, 'angiography-reports'])?.reports.find(item => item.id === latestDraft?.reportId && item.version === latestDraft.reportVersion)
       const latestReservations = client.getQueryData<z.infer<typeof inpatientMaterialReservationListSchema>>([...scope, 'drg-reservations'])
