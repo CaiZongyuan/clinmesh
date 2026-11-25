@@ -910,4 +910,66 @@ describe('createSurfaceVoiceInput', () => {
       voice.dispose()
     }
   })
+
+  it('blocks host dsh-ears mic button clicks and pointerdown while consultation owns the microphone', async () => {
+    const remote = createFakeRemote()
+    const fake = createFakeContext({ remote })
+    const speech = createFakeSpeechRecognition()
+    const voice = createSurfaceVoiceInput(fake.ctx, { createSpeechRecognition: () => speech })
+    const slot = document.createElement('div')
+    slot.setAttribute('data-slot', 'conversation.input.right')
+    const hostMicButton = document.createElement('button')
+    hostMicButton.type = 'button'
+    hostMicButton.setAttribute('data-state', 'idle')
+    hostMicButton.setAttribute('aria-pressed', 'false')
+    const icon = document.createElement('span')
+    hostMicButton.append(icon)
+    slot.append(hostMicButton)
+    const otherButton = document.createElement('button')
+    otherButton.type = 'button'
+    document.body.append(slot, otherButton)
+
+    const hostOnClick = vi.fn()
+    const hostOnPointerDown = vi.fn()
+    const otherOnClick = vi.fn()
+    hostMicButton.addEventListener('click', hostOnClick)
+    hostMicButton.addEventListener('pointerdown', hostOnPointerDown)
+    otherButton.addEventListener('click', otherOnClick)
+
+    try {
+      await vi.waitFor(() => expect(voice.getSnapshot().ready).toBe(true))
+
+      // Idle consultation: host mic button clicks pass through normally
+      icon.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      expect(hostOnClick).toHaveBeenCalledTimes(1)
+
+      // Start consultation recording -> host mic click & pointerdown are blocked before reaching button
+      voice.start({ getDraft: () => '', setDraft: () => {} })
+      expect(voice.getSnapshot().phase).toBe('recording')
+
+      const blockedClick = new MouseEvent('click', { bubbles: true, cancelable: true })
+      icon.dispatchEvent(blockedClick)
+      expect(blockedClick.defaultPrevented).toBe(true)
+      expect(hostOnClick).toHaveBeenCalledTimes(1)
+
+      const blockedPointerDown = new Event('pointerdown', { bubbles: true, cancelable: true })
+      hostMicButton.dispatchEvent(blockedPointerDown)
+      expect(blockedPointerDown.defaultPrevented).toBe(true)
+      expect(hostOnPointerDown).toHaveBeenCalledTimes(0)
+
+      // Unrelated buttons remain clickable
+      otherButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      expect(otherOnClick).toHaveBeenCalledTimes(1)
+
+      // After consultation stops/cancels, host mic button works again
+      voice.cancel()
+      expect(voice.getSnapshot().phase).toBe('idle')
+      icon.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      expect(hostOnClick).toHaveBeenCalledTimes(2)
+    } finally {
+      slot.remove()
+      otherButton.remove()
+      voice.dispose()
+    }
+  })
 })

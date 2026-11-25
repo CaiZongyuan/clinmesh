@@ -463,9 +463,32 @@ function isEventInsideDialog(event: KeyboardEvent): boolean {
   return event.target instanceof Element && event.target.closest('[role="dialog"]') !== null
 }
 
+const HOST_VOICE_BUTTON_IDLE_SELECTOR = '[data-slot="conversation.input.right"] button[data-state][aria-pressed="false"]'
+const HOST_VOICE_ACTIVE_SELECTOR = [
+  '[data-phase="visible"][data-state="starting"]',
+  '[data-phase="visible"][data-state="recording"]',
+  '[data-slot="conversation.input.right"] button[data-state="starting"][aria-pressed="true"]',
+  '[data-slot="conversation.input.right"] button[data-state="recording"][aria-pressed="true"]',
+].join(', ')
+
 function isHostVoiceRecording(): boolean {
   if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return false
-  return document.querySelector('[data-phase="visible"][data-state="starting"], [data-phase="visible"][data-state="recording"]') !== null
+  return document.querySelector(HOST_VOICE_ACTIVE_SELECTOR) !== null
+}
+
+function findIdleHostVoiceButton(event: Event): HTMLButtonElement | null {
+  if (typeof Element === 'undefined') return null
+  const matchNode = (node: EventTarget | null | undefined): HTMLButtonElement | null => {
+    if (!(node instanceof Element)) return null
+    return node.closest<HTMLButtonElement>(HOST_VOICE_BUTTON_IDLE_SELECTOR)
+  }
+  if (typeof event.composedPath === 'function') {
+    for (const node of event.composedPath()) {
+      const found = matchNode(node)
+      if (found !== null) return found
+    }
+  }
+  return matchNode(event.target)
 }
 
 function getSpeechConstructor(): (new () => SpeechRecognitionLike) | undefined {
@@ -1529,6 +1552,16 @@ export function createSurfaceVoiceInput(
     }
   }
 
+  // While consultation voice owns the microphone, block clicks / pointerdown on the host
+  // dsh-ears microphone button in capture phase before React's root handler runs, preventing
+  // dual concurrent microphone capture in split-screen mode.
+  const onHostMicInteraction = (event: Event) => {
+    if (disposed || (phase !== 'starting' && phase !== 'recording')) return
+    if (findIdleHostVoiceButton(event) === null) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+
   const onWindowFocus = () => {
     refresh()
   }
@@ -1540,9 +1573,13 @@ export function createSurfaceVoiceInput(
   const disposers: Array<() => void> = []
   if (typeof window !== 'undefined') {
     window.addEventListener('keydown', onKeyDown, true)
+    window.addEventListener('click', onHostMicInteraction, true)
+    window.addEventListener('pointerdown', onHostMicInteraction, true)
     window.addEventListener('focus', onWindowFocus)
     disposers.push(() => {
       window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('click', onHostMicInteraction, true)
+      window.removeEventListener('pointerdown', onHostMicInteraction, true)
       window.removeEventListener('focus', onWindowFocus)
     })
   }
