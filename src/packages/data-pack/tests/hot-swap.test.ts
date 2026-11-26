@@ -39,6 +39,8 @@ it('switches institutions atomically and reopens frozen catalog, currency and cl
     expect(active?.organization.practitionerRoles.map(role => role.id)).not.toContain('family-clinician');
     expect(active?.catalog.services.some(item => item.code === 'ecg12')).toBe(false);
     expect(active?.catalog.medications).toHaveLength(22);
+    const knownBaselines = active!.cases.map(patient => patient.priorHistory.observations[0]!.value).sort((first, second) => Number(first) - Number(second));
+    expect(knownBaselines).toEqual([70, 102, 172]);
     expect(await store.read(reader => reader.list(second, 'encounters'))).toEqual([]);
     await expect(store.withTransaction(tx => installHospitalDataPack(tx, { ...initial, expectedEpoch: first.epoch }, BUILTIN_DATA_PACKS['global-general']))).rejects.toMatchObject({ code: 'EPOCH_CONFLICT' });
     const zeroDecimal = structuredClone(BUILTIN_DATA_PACKS['global-general']);
@@ -52,6 +54,7 @@ it('switches institutions atomically and reopens frozen catalog, currency and cl
         expect(reader.getEpoch(first)?.status).toBe('closed');
         expect(reader.getEpoch(third)?.status).toBe('active');
         expect(readHospitalDataPack(reader, first)).toEqual(before);
+        expect(readHospitalDataPack(reader, second)).toEqual(active);
         expect(reader.list(third, 'catalog_items', { code: 'ecg12' })[0]).toMatchObject({ amount_minor: 900, currency_code: 'JPY', currency_exponent: 0 });
         expect(reader.list(first, 'charge_items')[0]).toMatchObject({ amount_minor: 2850, currency_code: 'USD', currency_exponent: 2 });
         expect(() => reader.readPrivateCaseTruth(first, { purpose: 'completed-debrief', encounterId })).toThrow();

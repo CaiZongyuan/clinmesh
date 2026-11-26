@@ -56,6 +56,62 @@ it('exempts a qualified Prior History diagnosis and matches codes and aliases as
   expect(() => parseHospitalDataPack(pack)).not.toThrow();
 });
 
+it('distinguishes a hidden code from a known dotted descendant in the same coding system', () => {
+  const pack = general();
+  const patient = pack.cases[0]!;
+  const hidden = { codeSystem: 'urn:example:diagnoses', code: 'D4' };
+  const known = { ...hidden, code: 'D4.1' };
+  pack.catalog.diagnoses.push({ ...hidden, display: { en: 'Hidden teaching diagnosis', zh: '隐藏演示诊断' } }, { ...known, display: { en: 'Known teaching diagnosis', zh: '既往演示诊断' } });
+  patient.caseTruth.primaryDiagnosis = hidden;
+  patient.priorHistory.diagnoses = [known];
+  patient.patientPersona.openingStatement.en = 'My prior record says D4.1.';
+  expect(() => parseHospitalDataPack(pack)).not.toThrow();
+  patient.patientPersona.openingStatement.en = 'My prior record says D4.1. The new code is D4.';
+  expect(() => parseHospitalDataPack(pack)).toThrowError(expect.objectContaining({ code: 'PERSONA_TRUTH_LEAK' }));
+  patient.patientPersona.openingStatement.en = 'I remember D4.1 and the hidden teaching diagnosis.';
+  expect(() => parseHospitalDataPack(pack)).toThrowError(expect.objectContaining({ code: 'PERSONA_TRUTH_LEAK' }));
+});
+
+it('validates a preoperative long-term order policy separately from its prerequisite investigations', () => {
+  const pack = structuredClone(BUILTIN_DATA_PACKS['cn-cardiology']);
+  const [intervention, investigation] = pack.catalog.procedures;
+  expect(intervention?.defaultPreopOrderPolicy).toBe('stop-on-completion');
+  expect(investigation?.defaultPreopOrderPolicy).toBe('continue-active');
+  expect(intervention?.preopServices.map(service => service.code)).toEqual(['cag', 'renal']);
+  Object.assign(intervention!, { defaultPreopOrderPolicy: 'unrecognized' });
+  expect(() => parseHospitalDataPack(pack)).toThrowError(expect.objectContaining({ code: 'INVALID_PACK' }));
+  Object.assign(intervention!, { defaultPreopOrderPolicy: 'continue-active' });
+  intervention!.preopServices[0]!.code = 'absent';
+  expect(() => parseHospitalDataPack(pack)).toThrowError(expect.objectContaining({ code: 'INVALID_REFERENCE' }));
+});
+
+it('provides an initial result for every pre-catheterization investigation and a staged result for every planned procedure prerequisite', () => {
+  const sameCode = (first: { codeSystem: string; code: string }, second: typeof first) => first.codeSystem === second.codeSystem && first.code === second.code;
+  for (const pack of Object.values(BUILTIN_DATA_PACKS)) {
+    const template = pack.knowledge?.orderSetTemplates.find(item => item.id === 'pre-cath-kidney-check');
+    for (const patient of pack.cases) {
+      const results = patient.caseTruth.results;
+      for (const service of template?.members ?? []) expect(results.some(item => item.stage === 'initial' && sameCode(item.service, service))).toBe(true);
+      for (const coding of patient.caseTruth.expectedProcedures ?? []) {
+        const procedure = findCatalogItem(pack, 'procedures', coding)!;
+        for (const service of procedure.preopServices) expect(results.some(item => ['initial', 'inpatient'].includes(item.stage) && sameCode(item.service, service))).toBe(true);
+      }
+    }
+  }
+});
+
+it('validates the service, analyte, unit and timestamp of a prior observation', () => {
+  const pack = structuredClone(BUILTIN_DATA_PACKS['cn-cardiology']);
+  const sample = pack.cases[0]!.priorHistory.observations[0]!;
+  expect(sample).toMatchObject({ observedAt: '2026-01-15T01:00:00Z', value: 172, unit: 'µmol/L' });
+  sample.unit = 'mg/dL';
+  expect(() => parseHospitalDataPack(pack)).toThrowError(expect.objectContaining({ code: 'INVALID_REFERENCE' }));
+  sample.unit = 'µmol/L'; sample.service.code = 'ecg';
+  expect(() => parseHospitalDataPack(pack)).toThrowError(expect.objectContaining({ code: 'INVALID_REFERENCE' }));
+  sample.service.code = 'renal'; sample.observedAt = 'yesterday';
+  expect(() => parseHospitalDataPack(pack)).toThrowError(expect.objectContaining({ code: 'INVALID_PACK' }));
+});
+
 it('parses JSON and YAML in memory and freezes nested Patient Persona data', () => {
   const pack = general();
   expect(parseHospitalDataPack(JSON.stringify(pack))).toEqual(parseHospitalDataPack(stringify(pack, { aliasDuplicateObjects: false })));

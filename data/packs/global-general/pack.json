@@ -362,6 +362,7 @@
         "identifiers": [{ "issuer": "teaching-clinic", "value": "SIM-G01" }]
       },
       "priorHistory": {
+        "observations": [],
         "diagnoses": [],
         "medications": [],
         "allergies": {
@@ -449,6 +450,7 @@
         "identifiers": [{ "issuer": "teaching-clinic", "value": "SIM-G02" }]
       },
       "priorHistory": {
+        "observations": [],
         "diagnoses": [{ "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "I10" }],
         "medications": [],
         "allergies": { "status": "not-asked" }
@@ -546,6 +548,7 @@
         "identifiers": [{ "issuer": "teaching-clinic", "value": "SIM-G03" }]
       },
       "priorHistory": {
+        "observations": [],
         "diagnoses": [],
         "medications": [],
         "allergies": { "status": "none-known" }
@@ -640,6 +643,7 @@
         "identifiers": [{ "issuer": "teaching-clinic", "value": "SIM-G04" }]
       },
       "priorHistory": {
+        "observations": [],
         "diagnoses": [],
         "medications": [],
         "allergies": { "status": "not-asked" }

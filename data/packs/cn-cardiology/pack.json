@@ -794,7 +794,8 @@
         "unit": "次",
         "defaultAnesthesia": "local",
         "defaultLocation": "cath-lab",
-        "defaultPreopOrderPolicy": [
+        "defaultPreopOrderPolicy": "stop-on-completion",
+        "preopServices": [
           { "codeSystem": "urn:clinmesh:cv:service", "code": "cag" },
           { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" }
         ]
@@ -810,7 +811,8 @@
         "unit": "次",
         "defaultAnesthesia": "local",
         "defaultLocation": "cath-lab",
-        "defaultPreopOrderPolicy": [{ "codeSystem": "urn:clinmesh:cv:service", "code": "renal" }]
+        "defaultPreopOrderPolicy": "continue-active",
+        "preopServices": [{ "codeSystem": "urn:clinmesh:cv:service", "code": "renal" }]
       }
     ],
     "materials": [
@@ -930,6 +932,15 @@
         "identifiers": [{ "issuer": "teaching-centre", "value": "SIM-C01" }]
       },
       "priorHistory": {
+        "observations": [
+          {
+            "observedAt": "2026-01-15T01:00:00Z",
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+            "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" },
+            "value": 172,
+            "unit": "µmol/L"
+          }
+        ],
         "diagnoses": [
           { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "N18.3" },
           { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "I10" },
@@ -983,11 +994,21 @@
         "secondaryDiagnoses": [{ "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "N18.3" }],
         "hiddenHistory": [
           {
-            "en": "Previous creatinine 172 µmol/L in January supports chronicity.",
-            "zh": "一月既往肌酐 172 µmol/L，支持肾损害慢性化。"
+            "en": "No recent use of analgesics or herbal remedies.",
+            "zh": "近期没有自行服用止痛药或中草药。"
           }
         ],
         "results": [
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "ecg" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": {
+              "en": "Sinus rhythm at 74/min, no significant ST-T abnormalities.",
+              "zh": "窦性心律 74 次/分，未见明显 ST-T 异常。"
+            },
+            "observations": []
+          },
           {
             "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
             "stage": "initial",
@@ -1109,6 +1130,15 @@
         "identifiers": [{ "issuer": "teaching-centre", "value": "SIM-C02" }]
       },
       "priorHistory": {
+        "observations": [
+          {
+            "observedAt": "2026-03-08T01:00:00Z",
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+            "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" },
+            "value": 70,
+            "unit": "µmol/L"
+          }
+        ],
         "diagnoses": [
           { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "I10" },
           { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "E78.5" }
@@ -1156,6 +1186,15 @@
           { "en": "No rest symptoms or nocturnal breathlessness.", "zh": "无静息痛及夜间憋醒。" }
         ],
         "results": [
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": { "en": "Admission creatinine 72 µmol/L.", "zh": "入院肌酐 72 µmol/L。" },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 72 }
+            ]
+          },
           {
             "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "ecg" },
             "stage": "initial",
@@ -1246,6 +1285,15 @@
         "identifiers": [{ "issuer": "teaching-centre", "value": "SIM-C03" }]
       },
       "priorHistory": {
+        "observations": [
+          {
+            "observedAt": "2025-10-12T01:30:00Z",
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+            "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" },
+            "value": 102,
+            "unit": "µmol/L"
+          }
+        ],
         "diagnoses": [
           { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "I10" },
           { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "E78.5" }
@@ -1295,6 +1343,15 @@
           }
         ],
         "results": [
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": { "en": "Initial creatinine 118 µmol/L.", "zh": "初诊肌酐 118 µmol/L。" },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 118 }
+            ]
+          },
           {
             "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "ecg" },
             "stage": "initial",

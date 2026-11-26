@@ -16,6 +16,8 @@ pnpm start
 
 打开 `http://127.0.0.1:51868`。可用 `$env:CLINMESH_HOST`、`$env:CLINMESH_PORT` 修改监听地址。Node 的开发入口 `pnpm dev` 会监视服务端变更，也从 `dist/client` 提供页面；需要前端热更新时，在另一 PowerShell 窗口运行 `pnpm dev:web`，通过 Vite 输出的地址访问（`/api` 代理到 Node）。
 
+Vite 开发页从 `src/web` 启动，按公开入口的依赖图加载模块与资源。构建后可执行 `pnpm exec vite preview` 预览 `dist/client`，Node 与 Worker 的静态资源也来自该目录。
+
 ## 其他运行方式
 
 - 本地 Worker 可通过 `pnpm build` 和 `pnpm dev:worker` 启动。Wrangler 在 Windows 上运行 workerd 和静态资源服务。每个 Workspace 的 `WORKSPACE_DO` 实例首次启动时建立 v1 SQLite 关系模型。[Store 使用说明](src/packages/store/README.md)

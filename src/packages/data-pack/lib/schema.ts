@@ -63,7 +63,10 @@ const service = concept.extend({
 });
 export const catalog = z.strictObject({
   diagnoses: z.array(concept.extend({ aliases: texts.optional() })), medications: z.array(medication), services: z.array(service),
-  procedures: z.array(concept.extend({ unitPriceMinor: money, unit: text, defaultAnesthesia: text, defaultLocation: text, defaultPreopOrderPolicy: z.array(coding) })),
+  procedures: z.array(concept.extend({
+    unitPriceMinor: money, unit: text, defaultAnesthesia: text, defaultLocation: text,
+    defaultPreopOrderPolicy: z.enum(['continue-active', 'stop-on-completion']), preopServices: z.array(coding),
+  })),
   materials: z.array(concept.extend({ unitPriceMinor: money, unit: text, diameterMm: positive.optional(), lengthMm: positive.optional() })),
 });
 
@@ -81,8 +84,10 @@ export const knowledge = z.strictObject({
 });
 
 const allergy = z.strictObject({ groupCode: text, severity: z.enum(['mild', 'moderate', 'severe']), reaction: bilingual });
+const observation = z.strictObject({ analyte: coding, value: z.union([z.number(), text]) });
 export const priorHistory = z.strictObject({
   diagnoses: z.array(coding), medications: z.array(coding),
+  observations: z.array(observation.extend({ observedAt: z.iso.datetime(), service: coding, unit: text })).default([]),
   allergies: z.discriminatedUnion('status', [
     z.strictObject({ status: z.literal('not-asked') }), z.strictObject({ status: z.literal('none-known') }),
     z.strictObject({ status: z.literal('confirmed'), items: z.array(allergy).min(1) }),
@@ -102,7 +107,7 @@ const asset = text.refine(value => {
 const result = z.strictObject({
   service: coding, stage: z.enum(['initial', 'inpatient', 'repeat', 'follow-up']), revision: z.int().positive(),
   amendmentReason: bilingual.optional(), summary: bilingual,
-  observations: z.array(z.strictObject({ analyte: coding, value: z.union([z.number(), text]) })), images: z.array(asset).optional(),
+  observations: z.array(observation), images: z.array(asset).optional(),
 });
 const truth = z.strictObject({
   primaryDiagnosis: coding, secondaryDiagnoses: z.array(coding), hiddenHistory: z.array(bilingual), results: z.array(result),

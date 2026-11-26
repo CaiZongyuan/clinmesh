@@ -24,6 +24,10 @@ const visible = await store.read(reader => readHospitalDataPack(reader, at));
 
 价格为机构币种的整数最小单位，精度范围与 Store 一致（0–9）。报告结果以服务编码与阶段定位，同一结果的修订从 1 开始连续编号。后继修订须给出更正原因。新的采样复查使用 `repeat` 阶段。参考区间、剂量上限、教学价格与病例答案均随包版本冻结。
 
+已知既往测量写在 `priorHistory.observations`。每项包含 UTC `observedAt`、同包服务和指标的完整编码、值及单位。编译器核对指标所属服务与单位。`caseTruth.results` 保存本次就诊各阶段签发报告所需的私有结果。
+
+术式 `defaultPreopOrderPolicy` 对应住院模块手术申请的长期医嘱处理策略。`continue-active` 保持术前长期医嘱有效，`stop-on-completion` 在手术完成时请求停用。所需术前检查使用 `preopServices` 指向院内服务目录。每例拟行手术的检查依据取该病例的相应阶段结果。
+
 ## 验证
 
 在 Windows 原生运行 `pnpm exec vitest run src/packages/data-pack/tests src/server/pack-privacy.test.ts`。它通过公开模块验证编译器、真实文件 SQLite 跨 Epoch 热切换与同事务回滚、实际 workerd SQLite 装载，以及开发 Web 服务器对原始资料的访问边界。构建后运行 `pnpm verify:worker` 生成真实 Worker 上传包并核对压缩体积。

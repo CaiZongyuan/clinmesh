@@ -30,12 +30,14 @@ function normalized(value: string) {
   return value.normalize('NFKC').toLowerCase().replace(/[\u200b-\u200d\ufeff]/gu, '').replace(/\s+/gu, ' ');
 }
 
-function containsTerm(text: string, term: string) {
+function termPattern(term: string, exactCode = false) {
   const needle = normalized(term);
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const left = /^[a-z0-9]/.test(needle) ? '(?<![a-z0-9])' : '';
   const right = /[a-z0-9]$/.test(needle) ? '(?![a-z0-9])' : '';
-  return new RegExp(`${left}${escaped}${right}`, 'u').test(text);
+  const codeStart = exactCode ? '(?<![a-z0-9][._/-])' : '';
+  const codeEnd = exactCode ? '(?![._/-][a-z0-9])' : '';
+  return new RegExp(`${left}${codeStart}${escaped}${codeEnd}${right}`, 'u');
 }
 
 function checkPersona(patient: ClinicalCase, diagnoses: ReadonlyMap<string, Diagnosis>) {
@@ -47,8 +49,9 @@ function checkPersona(patient: ClinicalCase, diagnoses: ReadonlyMap<string, Diag
     const key = codingKey(diagnosis);
     const entry = reference(diagnoses, key, 'caseTruth.diagnoses');
     if (known.has(key)) continue;
-    const terms = [entry.code, entry.display.en, entry.display.zh, ...entry.aliases ?? []];
-    if (terms.some(term => speech.some(field => containsTerm(field, term)))) throw new DataPackError('PERSONA_TRUTH_LEAK', 'patientPersona');
+    const names = [entry.display.en, entry.display.zh, ...entry.aliases ?? []];
+    const forbidden = [termPattern(entry.code, true), ...names.map(name => termPattern(name))];
+    if (forbidden.some(pattern => speech.some(field => pattern.test(field)))) throw new DataPackError('PERSONA_TRUTH_LEAK', 'patientPersona');
   }
 }
 
@@ -119,7 +122,7 @@ export function validateReferences(pack: HospitalDataPack) {
     if (drug.safety.maxDailyDose < drug.safety.maxSingleDose) throw new DataPackError('INVALID_PACK', 'maxDailyDose');
   }
   for (const service of catalog.services) indexBy(service.analytes, codingKey, 'services.analytes');
-  for (const procedure of catalog.procedures) requireCodes('services', procedure.defaultPreopOrderPolicy, 'defaultPreopOrderPolicy');
+  for (const procedure of catalog.procedures) requireCodes('services', procedure.preopServices, 'preopServices');
   if (pack.knowledge) {
     indexBy(pack.knowledge.guidelineTopics, item => item.id, 'guidelineTopics');
     indexBy(pack.knowledge.orderSetTemplates, item => item.id, 'orderSetTemplates');
@@ -136,6 +139,11 @@ export function validateReferences(pack: HospitalDataPack) {
     indexBy(patient.demographics.identifiers, id => JSON.stringify([id.issuer, id.value]), 'demographics.identifiers');
     requireCodes('diagnoses', patient.priorHistory.diagnoses, 'priorHistory.diagnoses');
     requireCodes('medications', patient.priorHistory.medications, 'priorHistory.medications');
+    for (const sample of patient.priorHistory.observations) {
+      const service = reference(entries.services, codingKey(sample.service), 'priorHistory.observations.service');
+      const analyte = service.analytes.find(item => codingKey(item) === codingKey(sample.analyte));
+      if (!analyte || analyte.unit !== sample.unit) throw new DataPackError('INVALID_REFERENCE', 'priorHistory.observations.analyte');
+    }
     const allergies = patient.priorHistory.allergies;
     if (allergies.status === 'confirmed' && allergies.items.some(item => !allergyGroups.has(item.groupCode))) throw new DataPackError('INVALID_REFERENCE', 'priorHistory.allergies');
     const truth = patient.caseTruth;
