@@ -1,0 +1,8 @@
+@layer ui-sdk;
+@import "tailwindcss" source("../");
+@import "@ui-sdk/core/web.css" layer(components);
+
+body {
+  background: var(--ui-background);
+  color: var(--ui-foreground);
+}

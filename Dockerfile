@@ -1,41 +1,17 @@
-# syntax=docker/dockerfile:1.7
-
-FROM node:24.11.1-bookworm-slim AS build
-
-ENV PNPM_HOME=/pnpm
-ENV PATH=$PNPM_HOME:$PATH
-WORKDIR /workspace
-
-RUN apt-get update \
-  && apt-get install --yes --no-install-recommends g++ make python3 \
-  && rm -rf /var/lib/apt/lists/*
-RUN corepack enable && corepack prepare pnpm@11.17.0 --activate
-COPY . .
+FROM node:24-bookworm AS build
+WORKDIR /app
+RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @clinmesh/web build && pnpm --filter @clinmesh/server build
-RUN pnpm --filter @clinmesh/server deploy --prod --legacy --config.auto-install-peers=false /opt/clinmesh
-RUN node node_modules/tsx/dist/cli.mjs apps/server/src/reference-sync.ts --database /opt/clinmesh/reference-data.sqlite
-RUN node node_modules/tsx/dist/cli.mjs apps/server/src/guideline-prepare.ts --database /opt/clinmesh/guidelines.sqlite
-RUN cd /opt/clinmesh && node --input-type=module -e "import Database from 'better-sqlite3'; const db = new Database('reference-data.sqlite'); db.pragma('wal_checkpoint(TRUNCATE)'); db.pragma('journal_mode=DELETE'); db.close()"
-RUN cd /opt/clinmesh && node --input-type=module -e "import Database from 'better-sqlite3'; const db = new Database('guidelines.sqlite'); db.pragma('wal_checkpoint(TRUNCATE)'); db.pragma('journal_mode=DELETE'); db.close()"
-RUN cp reference-data.lock.json /opt/clinmesh/reference-data.lock.json
+COPY . .
+RUN pnpm build && CI=true pnpm prune --prod
 
-FROM node:24.11.1-bookworm-slim AS runtime
-
-ENV CLINMESH_DATABASE_PATH=/var/lib/clinmesh/clinmesh.sqlite
-ENV CLINMESH_REFERENCE_DATABASE_PATH=/opt/clinmesh/reference-data.sqlite
-ENV CLINMESH_GUIDELINE_DATABASE_PATH=/var/lib/clinmesh/guidelines.sqlite
-ENV CLINMESH_HOST=0.0.0.0
-ENV CLINMESH_PORT=51868
-ENV CLINMESH_WEB_ROOT=/opt/clinmesh/web
-WORKDIR /opt/clinmesh
-
-RUN groupadd --system clinmesh && useradd --system --gid clinmesh --home /opt/clinmesh clinmesh
-COPY --from=build --chown=clinmesh:clinmesh /opt/clinmesh ./
-COPY --from=build --chown=clinmesh:clinmesh /workspace/apps/web/dist ./web
-RUN mkdir -p /var/lib/clinmesh && chown clinmesh:clinmesh /var/lib/clinmesh
-
-USER clinmesh
-VOLUME ["/var/lib/clinmesh"]
+FROM node:24-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production CLINMESH_HOST=0.0.0.0 CLINMESH_PORT=51868
+COPY --from=build /app/package.json ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+USER node
 EXPOSE 51868
-ENTRYPOINT ["sh", "/opt/clinmesh/container-entrypoint.sh"]
+CMD ["node", "dist/server/node-server.js"]

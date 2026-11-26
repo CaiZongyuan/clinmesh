@@ -2,7 +2,7 @@
 
 ClinMesh is a global healthcare agent exploration platform built around a modular **Mini HIS Core**, dual isolated `pi-durable` agents (**Patient Agent** and **Clinician Assistant**), declarative **Hospital Data Packs**, `@ui-sdk/react` agent-ready UI, and optional voice (`mod-voice`), running isomorphically on Cloudflare Workers Free (SQLite-backed Durable Objects) and local Node (SQLite, PostgreSQL-portable).
 
-> **Migration note on `refactor/next-gen-modular-his`**: Legacy `apps/*`, `packages/*`, `CONTEXT.md`, and `docs/decisions/` are being retired incrementally under `docs/adr/0001`–`0008`. New work targets the architecture below exclusively.
+> **Migration note on `refactor/next-gen-modular-his`**: Legacy implementations are available in Git history. New work targets the architecture below exclusively.
 
 ## Where things live
 
@@ -26,5 +26,6 @@ ClinMesh is a global healthcare agent exploration platform built around a modula
 - **Minimize `useEffect`**: Compute derived state during render, handle user actions inside event callbacks, own server state in TanStack Query (client view state only in Zustand), and reset component state with `key`. Reserve `useEffect` strictly for genuine external subscriptions or DOM/WebSocket bridges.
 - **Code as comment (near-zero comments)**: Express intent through sharp domain names, narrow types, and small cohesive functions. Write a 1–2 line comment only when a reader would otherwise get the code wrong (a non-obvious trade-off, protocol quirk, or security invariant). Omit narrating comments and redundant JSDoc on app code.
 - **Schema-validate external boundaries**: Validate HTTP, WebSocket, CLI, data-pack, and storage boundaries with Zod; rely on TypeScript strict mode for typed in-process calls.
+- **Current verification host**: Use native Windows, the Node.js 24.18.0 baseline and the pinned pnpm for local and CI checks. Exercise Workers with local Wrangler/workerd and deployment dry-runs; containers, Linux and live deployment are outside this phase's acceptance scope.
 - **Keep docs and git worktrees clean**: Update or delete stale documentation in the same change that alters behavior—never leave archived/completed doc graveyards. After merging branches or finishing isolated tasks, run `git worktree list` and `git worktree prune` and remove stale local branches/worktrees. Never modify read-only `references/` or commit secrets, real patient data, or `.data/`.
 - **Workflow & verification**: Follow [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md) for GitHub Issues, work on feature/refactor branches via PRs into `main` (never push directly to `main`), write commits/issues/PRs in Simplified Chinese with standard technical identifiers, end files with one LF newline, and report only checks actually executed.

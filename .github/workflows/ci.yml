@@ -3,121 +3,24 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main, master]
+    branches: [main, refactor/next-gen-modular-his]
 
 permissions:
   contents: read
 
 jobs:
-  plan:
-    runs-on: ubuntu-latest
-    outputs:
-      selection: ${{ steps.plan.outputs.selection }}
-      checks: ${{ steps.plan.outputs.checks }}
-      unit: ${{ steps.plan.outputs.unit }}
-      browser: ${{ steps.plan.outputs.browser }}
-      e2e: ${{ steps.plan.outputs.e2e }}
-      unit_shards: ${{ steps.plan.outputs.unit_shards }}
-      browser_shards: ${{ steps.plan.outputs.browser_shards }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - id: plan
-        run: node scripts/ci.ts plan
-
-  checks:
-    needs: plan
-    if: needs.plan.outputs.checks == 'true'
-    runs-on: ubuntu-latest
-    env:
-      CI_PLAN: ${{ needs.plan.outputs.selection }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          submodules: recursive
-      - uses: ./.github/actions/ci-setup
-      - uses: ./.github/actions/ci-stage
-        with:
-          stage: checks
-
-  unit:
-    name: unit ${{ matrix.shard }}
-    needs: plan
-    if: needs.plan.outputs.unit == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: ${{ fromJSON(needs.plan.outputs.unit_shards) }}
-    runs-on: ubuntu-latest
-    env:
-      CI_PLAN: ${{ needs.plan.outputs.selection }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          submodules: recursive
-      - uses: ./.github/actions/ci-setup
-      - uses: ./.github/actions/ci-stage
-        with:
-          stage: unit
-          shard: ${{ matrix.shard }}
-
-  browser:
-    name: browser ${{ matrix.shard }}
-    needs: plan
-    if: needs.plan.outputs.browser == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: ${{ fromJSON(needs.plan.outputs.browser_shards) }}
-    runs-on: ubuntu-latest
-    env:
-      CI_PLAN: ${{ needs.plan.outputs.selection }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          submodules: recursive
-      - uses: ./.github/actions/ci-setup
-      - uses: ./.github/actions/ci-stage
-        with:
-          stage: browser
-          shard: ${{ matrix.shard }}
-
-  e2e:
-    needs: plan
-    if: needs.plan.outputs.e2e == 'true'
-    runs-on: ubuntu-latest
-    env:
-      CI_PLAN: ${{ needs.plan.outputs.selection }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          submodules: recursive
-      - uses: ./.github/actions/ci-setup
-      - uses: ./.github/actions/ci-stage
-        with:
-          stage: e2e
-
   verify:
-    if: always()
-    needs: [plan, checks, unit, browser, e2e]
-    runs-on: ubuntu-latest
-    env:
-      CI_PLAN: ${{ needs.plan.outputs.selection }}
-      CI_RESULTS: ${{ toJSON(needs) }}
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
-      - run: node scripts/ci.ts verify
+          node-version: 24.18.0
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - run: git diff --exit-code -- pnpm-workspace.yaml pnpm-lock.yaml package.json
+      - run: pnpm check
+      - run: pnpm verify:worker

@@ -4,7 +4,7 @@
 
 ## Ownership
 
-GitHub Issue body 在任务活动期间拥有目的、范围、验收条件和测试决策。Agent Note 拥有真实权衡和决策理由；合并后的代码和当前状态文档拥有最终行为。Agent Brief comment、讨论摘要或 PR body 不能取代 Issue body 成为 implementation contract。
+GitHub Issue body 在任务活动期间拥有目的、范围、验收条件和测试决策。[ADR](../adr/) 拥有真实权衡和决策理由；合并后的代码和当前状态文档拥有最终行为。Agent Brief comment、讨论摘要或 PR body 不能取代 Issue body 成为 implementation contract。
 
 不在仓库内维护平行的 Markdown 需求规格目录；任务合入后，长期有效的产品事实与行为合同写入对应架构或 UI 文档，历史需求与变更记录通过对应 GitHub Issue 和 PR 追溯。
 
@@ -12,7 +12,7 @@ GitHub Issue body 在任务活动期间拥有目的、范围、验收条件和�
 
 ## Publication
 
-Issue 的 title、body 和 comments 遵循[消息与提交规范](../agent-development.md#消息与提交规范)。仓库公开；发布前检查患者信息、医保或支付凭证、平台密钥和未公开方案。已有对应内容与写入授权时直接执行；没有授权时展示完整 title、body、labels 和拆票结构并取得明确批准。显式调用 skill 不自动授权外部写入。
+Issue 的 title、body 和 comments 遵循[根工程规范](../../AGENTS.md#engineering--hygiene-standards)，使用简体中文，保留技术标识符原文。仓库公开；发布前检查患者信息、医保或支付凭证、平台密钥和未公开方案。已有对应内容与写入授权时直接执行；没有授权时展示完整 title、body、labels 和拆票结构并取得明确批准。显式调用 skill 不自动授权外部写入。
 
 批准后使用 `gh issue create`、`gh issue view`、`gh issue edit`、`gh issue comment`、`gh issue close` 及 `gh api`（`sub_issues` 与 `dependencies/blocked_by`）。需求变化再次取得批准，并用 revision comment 记录差异。
 
