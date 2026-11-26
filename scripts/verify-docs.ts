@@ -1,149 +1,68 @@
-import { execFileSync } from 'node:child_process'
-import { existsSync, globSync, lstatSync, readFileSync, statSync } from 'node:fs'
-import { dirname, extname, resolve, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import type { Nodes } from 'mdast'
-import { fromMarkdown } from 'mdast-util-from-markdown'
-import { gfmFromMarkdown } from 'mdast-util-gfm'
-import { gfm } from 'micromark-extension-gfm'
-import { collectMarkdownAnchors } from './project-doc-site.ts'
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { dirname, relative, resolve, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import GithubSlugger from 'github-slugger';
+import type { Nodes } from 'mdast';
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import { gfmFromMarkdown } from 'mdast-util-gfm';
+import { toString } from 'mdast-util-to-string';
+import { gfm } from 'micromark-extension-gfm';
 
-const defaultRoot = resolve(import.meta.dirname, '..')
-
-function isExternalOrRootRelativeUrl(url: string): boolean {
-  return url.startsWith('/') || url.startsWith('//') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url)
+function* walk(node: Nodes): Generator<Nodes> {
+  yield node;
+  if ('children' in node) for (const child of node.children) yield* walk(child);
 }
 
-function splitUrl(rawUrl: string): { path: string; fragment: string | undefined } {
-  const hashIndex = rawUrl.indexOf('#')
-  const withoutHash = hashIndex === -1 ? rawUrl : rawUrl.slice(0, hashIndex)
-  const fragment = hashIndex === -1 ? undefined : rawUrl.slice(hashIndex + 1)
-  const queryIndex = withoutHash.indexOf('?')
-  return {
-    path: queryIndex === -1 ? withoutHash : withoutHash.slice(0, queryIndex),
-    fragment,
-  }
-}
-
-function resolveTarget(repoRoot: string, sourcePath: string, rawPath: string): string | undefined {
-  if (rawPath === '') return resolve(repoRoot, sourcePath)
-  const decoded = decodeURIComponent(rawPath)
-  const direct = resolve(repoRoot, dirname(sourcePath), decoded)
-  if (existsSync(direct) && !lstatSync(direct).isDirectory()) return direct
-
-  const withoutLine = decoded.replace(/:\d+$/, '')
-  const candidate = resolve(repoRoot, dirname(sourcePath), withoutLine)
-  if (existsSync(candidate) && !lstatSync(candidate).isDirectory()) return candidate
-  if (extname(candidate) === '') {
-    if (existsSync(`${candidate}.md`)) return `${candidate}.md`
-    const index = resolve(candidate, 'index.md')
-    if (existsSync(index)) return index
-  }
-  return existsSync(candidate) ? candidate : undefined
-}
-
-export function verifyMarkdownFiles(repoRoot: string, relFiles: string[]): string[] {
-  const errors: string[] = []
-  const anchorCache = new Map<string, Set<string>>()
-
-  const anchorsForFile = (absPath: string): Set<string> => {
-    let cached = anchorCache.get(absPath)
-    if (cached === undefined) {
-      cached = collectMarkdownAnchors(readFileSync(absPath, 'utf8'))
-      anchorCache.set(absPath, cached)
+function readDocument(path: string) {
+  const content = readFileSync(path, 'utf8');
+  const markdown = content.replace(/^---\n[\s\S]*?\n---\n/, '');
+  const tree = fromMarkdown(markdown, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
+  const slugger = new GithubSlugger();
+  const anchors = new Set<string>();
+  const links: string[] = [];
+  for (const node of walk(tree)) {
+    if (node.type === 'heading') anchors.add(slugger.slug(toString(node)));
+    if (node.type === 'html') {
+      for (const match of node.value.matchAll(/\s(?:id|name)=["']([^"']+)["']/gi)) anchors.add(match[1]!);
     }
-    return cached
+    if (node.type === 'link' || node.type === 'image' || node.type === 'definition') links.push(node.url);
   }
+  return { content, anchors, links };
+}
 
-  for (const file of relFiles) {
-    const absFile = resolve(repoRoot, file)
-    const content = readFileSync(absFile, 'utf8')
-    if (!content.endsWith('\n')) errors.push(`${file}: file must end with one newline`)
-    const fences = content.split('\n').filter(line => line.startsWith('```')).length
-    if (fences % 2 !== 0) errors.push(`${file}: unbalanced fenced code blocks`)
-    let tree: Nodes
-    try {
-      tree = fromMarkdown(content, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] })
-    } catch (error: unknown) {
-      errors.push(`${file}: Markdown parse failed: ${error instanceof Error ? error.message : String(error)}`)
-      continue
+export function verifyMarkdown(root: string, files: string[]): string[] {
+  const errors: string[] = [];
+  const documents = new Map(files.map(file => [resolve(root, file), readDocument(resolve(root, file))]));
+  for (const [source, { content, links }] of documents) {
+    const file = relative(root, source);
+    if (content.includes('\r') || !content.endsWith('\n') || content.endsWith('\n\n')) {
+      errors.push(`${file}: use LF and end the file with exactly one newline`);
     }
-    const visit = (node: Nodes): void => {
-      if ((node.type === 'link' || node.type === 'image' || node.type === 'definition') && 'url' in node && !isExternalOrRootRelativeUrl(node.url)) {
-        let parsed: { path: string; fragment: string | undefined }
-        let target: string | undefined
-        let decodedFragment: string | undefined
-        try {
-          parsed = splitUrl(node.url)
-          target = resolveTarget(repoRoot, file, parsed.path)
-          decodedFragment = parsed.fragment === undefined ? undefined : decodeURIComponent(parsed.fragment)
-        } catch {
-          errors.push(`${file}: malformed relative URL ${JSON.stringify(node.url)}`)
-          return
+    for (const link of links) {
+      if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(link)) continue;
+      try {
+        const [location, fragment] = link.split('#', 2);
+        const path = decodeURIComponent(location?.split('?')[0] ?? '');
+        const target = !path ? source : path.startsWith('/') ? resolve(root, `.${path}`) : resolve(dirname(source), path);
+        const anchor = fragment && decodeURIComponent(fragment);
+        if (!(target === root || target.startsWith(root + sep)) || !existsSync(target)) {
+          errors.push(`${file}: missing local target ${link}`);
+        } else if (anchor && target.endsWith('.md') && statSync(target).isFile() && !documents.get(target)?.anchors.has(anchor)) {
+          errors.push(`${file}: missing heading ${link}`);
         }
-        if (target === undefined) {
-          errors.push(`${file}: missing relative target ${JSON.stringify(node.url)}`)
-        } else if (
-          node.type !== 'image'
-          && decodedFragment !== undefined
-          && decodedFragment !== ''
-          && !lstatSync(target).isDirectory()
-          && target.toLowerCase().endsWith('.md')
-        ) {
-          if (!anchorsForFile(target).has(decodedFragment)) {
-            errors.push(`${file}: missing heading anchor ${JSON.stringify(node.url)}`)
-          }
-        }
+      } catch (error) {
+        errors.push(`${file}: invalid link ${link}: ${error}`);
       }
-      if ('children' in node) for (const child of node.children) visit(child)
     }
-    visit(tree)
   }
-
-  return errors
+  return errors;
 }
 
-if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  // Git can check symlinks out as target-path placeholders on Windows; validate their canonical Markdown instead.
-  const trackedSymlinks = new Set((existsSync(resolve(defaultRoot, '.git'))
-    ? execFileSync('git', ['ls-files', '--stage', '-z', '--', '*.md'], { cwd: defaultRoot, encoding: 'utf8' }) : '')
-    .split('\0').filter(entry => entry.startsWith('120000 ')).map(entry => entry.slice(entry.indexOf('\t') + 1)))
-  const files = globSync([
-    '*.md',
-    'docs/**/*.md',
-    'apps/**/AGENTS.md',
-    'packages/**/AGENTS.md',
-    'skills/**/*.md',
-    'deployment/**/*.md',
-    'imaging-assets/**/*.md',
-    'pathology-assets/**/*.md',
-    '.github/**/*.md',
-  ], {
-    cwd: defaultRoot,
-    exclude: [
-      'references/**',
-      'node_modules/**',
-      '**/node_modules/**',
-      'vendor/**',
-      'apps/docs/.generated/**',
-      'apps/docs/.cache/**',
-      'apps/docs/.dist/**',
-      'docs/decisions/archived/**',
-    ],
-  }).map(path => path.split(sep).join('/'))
-    .filter(path => !trackedSymlinks.has(path) && !lstatSync(resolve(defaultRoot, path)).isSymbolicLink()).sort()
-
-  const errors = verifyMarkdownFiles(defaultRoot, files)
-  for (const generated of ['apps/docs/.generated', 'apps/docs/.cache', 'apps/docs/.dist']) {
-    const path = resolve(defaultRoot, generated)
-    if (existsSync(path) && !statSync(path).isDirectory()) errors.push(`${generated}: expected a generated directory`)
-  }
-
-  if (errors.length === 0) {
-    console.log(`verify-docs: ${files.length} Markdown file(s) checked.`)
-  } else {
-    console.error('verify-docs: violations found:')
-    for (const error of errors) console.error(`  ${error}`)
-    process.exitCode = 1
-  }
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const files = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '*.md'], { encoding: 'utf8' })
+    .split('\0').filter(file => file && existsSync(file));
+  const errors = verifyMarkdown(process.cwd(), files);
+  if (errors.length) { console.error(errors.join('\n')); process.exitCode = 1; }
+  else console.log(`Verified local links, headings and LF in ${files.length} Markdown files.`);
 }

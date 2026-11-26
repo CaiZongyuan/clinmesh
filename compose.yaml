@@ -1,32 +1,11 @@
 services:
   clinmesh:
-    build:
-      context: .
-    deploy:
-      replicas: 1
-    environment:
-      CLINMESH_AUTH_SECRET: ${CLINMESH_AUTH_SECRET:?set CLINMESH_AUTH_SECRET}
-      CLINMESH_CURSOR_SECRET: ${CLINMESH_CURSOR_SECRET:?set CLINMESH_CURSOR_SECRET}
-      CLINMESH_DEMO_PASSWORD: ${CLINMESH_DEMO_PASSWORD:?set CLINMESH_DEMO_PASSWORD}
-      CLINMESH_PUBLIC_ORIGIN: ${CLINMESH_PUBLIC_ORIGIN:-http://localhost:51868}
-      CLINMESH_TRUSTED_ORIGINS: ${CLINMESH_TRUSTED_ORIGINS:-http://localhost:51868}
-    healthcheck:
-      interval: 10s
-      retries: 5
-      start_period: 20s
-      test:
-        - CMD
-        - node
-        - -e
-        - fetch('http://127.0.0.1:51868/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
-      timeout: 3s
+    build: .
     init: true
     ports:
-      - "51868:51868"
-    restart: unless-stopped
-    stop_grace_period: 20s
-    volumes:
-      - clinmesh-data:/var/lib/clinmesh
-
-volumes:
-  clinmesh-data:
+      - "${CLINMESH_HOST:-127.0.0.1}:${CLINMESH_PORT:-51868}:51868"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:51868/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
