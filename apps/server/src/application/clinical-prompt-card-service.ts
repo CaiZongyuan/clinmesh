@@ -36,11 +36,13 @@ import {
   type PromptMedicationDescriptor,
 } from '@clinmesh/core/clinical-prompt-cards'
 import type { QualityMedication, RenalFunctionFact } from '@clinmesh/core/clinical-quality'
+import { PUBLIC_CONCEPT_VOCABULARY } from '@clinmesh/core/concept-vocabulary'
 import { evaluatePackTrigger } from '@clinmesh/core/disease-pack'
 import {
   evaluateKnowledgeSnapshotForPatient,
   type KnowledgePassageVerifier,
 } from '@clinmesh/core/knowledge-claims'
+import { SYNTHETIC_PHENOTYPE_KB, matchPhenotypeCandidates } from '@clinmesh/core/phenotype-matcher'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
@@ -851,6 +853,82 @@ export class ClinicalPromptCardService {
     return undefined
   }
 
+  #appendPhenotypeCandidateCards(input: {
+    asOf: string
+    cards: readonly ClinicalPromptCard[]
+    context: ActorContext
+    encounterMap: Readonly<Record<string, string>>
+    evaluatedPacks: readonly EvaluatedPackForPromptBuild[]
+    ledger: ClinicalFactLedger
+    patientId: string
+    timing: ClinicalPromptTiming
+  }): ClinicalPromptCard[] {
+    if (input.timing !== 'encounter-open' && input.timing !== 'report-arrived') {
+      return [...input.cards]
+    }
+    const patient = this.#fhir.read(input.context, 'Patient', input.patientId)
+    const patientBirthDate = patient.resourceType === 'Patient' && typeof patient.birthDate === 'string'
+      ? patient.birthDate
+      : undefined
+    const patientSex = patient.resourceType === 'Patient' && (
+      patient.gender === 'male'
+      || patient.gender === 'female'
+      || patient.gender === 'other'
+      || patient.gender === 'unknown'
+    )
+      ? patient.gender
+      : undefined
+
+    const nodeByCode = new Map<string, ConceptVocabulary['nodes'][number]>()
+    const mappingByKey = new Map<string, ConceptVocabulary['mappings'][number]>()
+    for (const vocab of [PUBLIC_CONCEPT_VOCABULARY, ...input.evaluatedPacks.map(item => item.vocabulary)]) {
+      for (const node of vocab.nodes) nodeByCode.set(node.code, node)
+      for (const mapping of vocab.mappings) {
+        mappingByKey.set(`${mapping.sourceSystem}|${mapping.sourceCode}|${mapping.targetConceptCode}`, mapping)
+      }
+    }
+    const mergedVocabulary: ConceptVocabulary = {
+      mappings: [...mappingByKey.values()],
+      nodes: [...nodeByCode.values()],
+      version: PUBLIC_CONCEPT_VOCABULARY.version,
+    }
+
+    const matchResult = matchPhenotypeCandidates({
+      asOf: input.asOf,
+      encounterIdByRecordId: input.encounterMap,
+      knowledgeBase: SYNTHETIC_PHENOTYPE_KB,
+      ledger: input.ledger,
+      ...(patientBirthDate === undefined ? {} : { patientBirthDate }),
+      ...(patientSex === undefined ? {} : { patientSex }),
+      timing: input.timing,
+      vocabulary: mergedVocabulary,
+    })
+
+    const combined = [...input.cards]
+    const seenCardIds = new Set(combined.map(card => card.cardId))
+    const packEntryById = new Map(input.evaluatedPacks.map(item => [item.effective.pack.manifest.id, item]))
+    for (const candidateCard of matchResult.promptCards) {
+      if (seenCardIds.has(candidateCard.cardId)) continue
+      const targetPack = candidateCard.packId ? packEntryById.get(candidateCard.packId) : undefined
+      if (targetPack) {
+        const entry = targetPack.entry
+        if (
+          entry.exited === true
+          || entry.activationStatus === 'inapplicable'
+          || entry.activationReason === 'manual-disabled'
+          || entry.activationReason === 'pack-draft'
+          || entry.activationReason === 'pack-retired'
+          || entry.status !== 'active'
+        ) {
+          continue
+        }
+      }
+      seenCardIds.add(candidateCard.cardId)
+      combined.push(candidateCard)
+    }
+    return combined
+  }
+
   #evaluateSingleSnapshotPass(input: {
     asOf: string
     context: ActorContext
@@ -905,6 +983,17 @@ export class ClinicalPromptCardService {
       verifySourcePassage,
     })
 
+    const cardsToFilter = this.#appendPhenotypeCandidateCards({
+      asOf: input.asOf,
+      cards: built.cards,
+      context: input.context,
+      encounterMap,
+      evaluatedPacks,
+      ledger,
+      patientId: input.subject.patientId,
+      timing: input.timing,
+    })
+
     const allergyCodes = this.#outpatient.patientAllergyCodes(input.context, input.subject.patientId)
     let scores: ClinicalScoreBundle | undefined
     try {
@@ -921,7 +1010,7 @@ export class ClinicalPromptCardService {
     const filtered = filterPromptCardsBeforeDisplay({
       activeMedications,
       allergyCodes,
-      cards: built.cards,
+      cards: cardsToFilter,
       effectivePacks: evaluatedPacks.map(item => item.effective),
       evaluatedEntries: evaluatedPacks.map(item => item.entry),
       ledger,

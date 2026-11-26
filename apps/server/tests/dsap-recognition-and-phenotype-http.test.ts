@@ -7,6 +7,7 @@ import {
   clinicalFactLedgerSchema,
   clinicalFactVerificationResponseSchema,
 } from '@clinmesh/contracts/clinical-fact-ledger'
+import { clinicalPromptBundleSchema } from '@clinmesh/contracts/clinical-prompt-cards'
 import { clinicalQualityCheckSchema } from '@clinmesh/contracts/clinical-quality'
 import {
   diseasePackCatalogListSchema,
@@ -811,6 +812,31 @@ describe('DSAP FH Recognition Pack (AC29) & Cross-Time Phenotype Matcher HTTP (A
     expect(phenotypeResult.promptCards[0]!.blockingTier).toBe('none')
     expect(phenotypeResult.promptCards[0]!.deliveryMode).toBe('display')
     expect(phenotypeResult.promptCards[0]!.suggestions.every(s => s.isDraftOnly)).toBe(true)
+
+    // Verify live HTTP prompt bundle emits non-blocking recognition & phenotype-candidate cards on both timings with 0 LLM calls
+    for (const timing of ['encounter-open', 'report-arrived'] as const) {
+      const promptRes = await ready.app.request(
+        `/api/his/v1/doctor/cases/${fhVisit.outpatientCaseId}/clinical-prompts?timing=${timing}`,
+        { headers: { cookie: cookies.doctor } },
+      )
+      expect(promptRes.status).toBe(200)
+      const promptBundle = clinicalPromptBundleSchema.parse(await promptRes.json())
+      const recognitionCard = promptBundle.cards.find(
+        c => c.category === 'recognition' && c.packId === 'familial-hypercholesterolemia',
+      )
+      expect(recognitionCard).toBeDefined()
+      expect(recognitionCard!.blockingTier).toBe('none')
+      expect(recognitionCard!.deliveryMode).toBe('display')
+
+      const phenotypeCard = promptBundle.cards.find(
+        c => c.category === 'phenotype-candidate' && c.packId === 'familial-hypercholesterolemia',
+      )
+      expect(phenotypeCard).toBeDefined()
+      expect(phenotypeCard!.blockingTier).toBe('none')
+      expect(phenotypeCard!.deliveryMode).toBe('display')
+      expect(phenotypeCard!.suggestions.every(s => s.isDraftOnly)).toBe(true)
+    }
+    expect(llmCallCount).toBe(0)
   }, 60_000)
 
   it('marks familial-hypercholesterolemia inapplicable and suppresses phenotype candidate when secondary hyperlipidemia (N04.9) is diagnosed', async () => {
@@ -961,6 +987,15 @@ describe('DSAP FH Recognition Pack (AC29) & Cross-Time Phenotype Matcher HTTP (A
       })
       expect(phenotypeMatch.llmInvocationCount).toBe(0)
       expect(phenotypeMatch.candidates.some(c => c.diseaseId === 'familial-hypercholesterolemia')).toBe(false)
+
+      const promptRes = await isolatedRuntime.app.request(
+        `/api/his/v1/doctor/cases/${started.outpatientCaseId}/clinical-prompts?timing=encounter-open`,
+        { headers: { cookie: isoDoctor } },
+      )
+      expect(promptRes.status).toBe(200)
+      const promptBundle = clinicalPromptBundleSchema.parse(await promptRes.json())
+      expect(promptBundle.cards.some(c => c.packId === 'familial-hypercholesterolemia' && c.category === 'recognition')).toBe(false)
+      expect(promptBundle.cards.some(c => c.packId === 'familial-hypercholesterolemia' && c.category === 'phenotype-candidate')).toBe(false)
       expect(llmCallCount).toBe(0)
     } finally {
       await isolatedRuntime.close()

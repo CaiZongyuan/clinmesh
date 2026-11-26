@@ -96,6 +96,7 @@ const NON_INTERVENTION_DIAGNOSTIC_CATEGORIES = new Set<ClinicalPromptCard['categ
   'exit-summary',
   'longitudinal-comparison',
   'recognition',
+  'phenotype-candidate',
 ])
 
 const RETIRED_OR_DEACTIVATED_KNOWLEDGE_STATUSES = new Set<ClinicalPromptCard['knowledgeStatus']>([
@@ -1085,6 +1086,38 @@ function claimToPromptCard(
 }
 
 /** 按指定触发时机与只读临床事实总账构建统一 ClinicalPromptCard 集合（零模型调用）。 */
+function buildRecognitionPromptCard(input: {
+  activeRiskTags: readonly ClinicalPromptRiskTag[]
+  effective: EffectiveDiseasePack
+  snapshotVersion: string | null
+  timing: 'encounter-open' | 'report-arrived'
+}): ClinicalPromptCard {
+  const rc = input.effective.pack.recognitionCard!
+  const packId = input.effective.pack.manifest.id
+  return clinicalPromptCardSchema.parse({
+    basedOnFactVersions: [],
+    blockingTier: 'none',
+    cardId: `${input.timing}:recognition:${packId}:${rc.id}`,
+    category: 'recognition',
+    deliveryMode: 'display',
+    detail: `${rc.summaryZh}；${rc.escalationGuidanceZh}`,
+    indicator: 'warning',
+    knowledgeSnapshotVersion: input.snapshotVersion,
+    knowledgeStatus: 'published',
+    overrideReasons: [],
+    packId,
+    packVersion: input.effective.pack.manifest.version,
+    riskTags: [...input.activeRiskTags],
+    sideBySideGroupKey: `${input.timing}:recognition`,
+    source: { label: `${input.effective.pack.manifest.titleZh} · 线索识别` },
+    suggestions: [],
+    summary: rc.titleZh,
+    timing: input.timing,
+    trialBadgeZh: null,
+    trialDisclaimerZh: null,
+  })
+}
+
 export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
   cards: ClinicalPromptCard[]
   retiredOrInactiveClaimIds: Set<string>
@@ -1412,28 +1445,11 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
 
         // 6. Recognition cards for recognition packs
         if (effective.pack.manifest.packType === 'recognition' && effective.pack.recognitionCard) {
-          const rc = effective.pack.recognitionCard
-          cards.push(clinicalPromptCardSchema.parse({
-            basedOnFactVersions: [],
-            blockingTier: 'none',
-            cardId: `encounter-open:recognition:${packId}:${rc.id}`,
-            category: 'recognition',
-            deliveryMode: 'display',
-            detail: `${rc.summaryZh}；${rc.escalationGuidanceZh}`,
-            indicator: 'warning',
-            knowledgeSnapshotVersion: snapshotVersion,
-            knowledgeStatus: 'published',
-            overrideReasons: [],
-            packId,
-            packVersion,
-            riskTags: activeRiskTags,
-            sideBySideGroupKey: 'encounter-open:recognition',
-            source: { label: `${effective.pack.manifest.titleZh} · 线索识别` },
-            suggestions: [],
-            summary: rc.titleZh,
+          cards.push(buildRecognitionPromptCard({
+            activeRiskTags,
+            effective,
+            snapshotVersion,
             timing: 'encounter-open',
-            trialBadgeZh: null,
-            trialDisclaimerZh: null,
           }))
         }
 
@@ -1515,7 +1531,15 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
           }))
         }
       }
-      if (!isConfusableSuppressed) {
+      if (isActive && !isConfusableSuppressed) {
+        if (effective.pack.manifest.packType === 'recognition' && effective.pack.recognitionCard) {
+          cards.push(buildRecognitionPromptCard({
+            activeRiskTags,
+            effective,
+            snapshotVersion,
+            timing: 'report-arrived',
+          }))
+        }
         for (const tag of effective.pack.riskTags ?? []) {
           const evaluated = evaluateRiskTagsForPack(tag, input, evalOptions, combinedMedicationClasses)
           if (!evaluated.matched) continue
