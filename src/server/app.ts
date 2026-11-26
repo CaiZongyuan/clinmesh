@@ -27,6 +27,7 @@ export function createApp(runtime: RuntimeHealth['runtime'], settings: GateSetti
       return result;
     }
     const credential = await gate.authenticate(context.req.header('cookie'), context.req.header('authorization'));
+    if (request.headers.has('X-ClinMesh-LLM-Api-Key') && origin.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname)) throw new CoreError(400, 'LLM_HTTPS_REQUIRED');
     checkOrigin();
     const response = await dispatch(request, credential, false);
     const result = new Response(response.body, response);

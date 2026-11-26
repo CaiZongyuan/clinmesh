@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { PatientRuntime, registerPatientOperations, type AgentEnvironment } from '../packages/agent-runtime';
 import { v7 } from 'uuid';
 import { z } from 'zod';
 import { installHospitalDataPack, readHospitalDataPack } from '../packages/data-pack';
@@ -9,13 +10,13 @@ import { StoreVersionConflictError, type StorePort } from '../packages/store';
 import { BUILTIN_DATA_PACKS } from './builtin-data-packs';
 
 export function handleError(error: Error) {
-  if (error instanceof CoreError) return Response.json({ code: error.code }, { status: error.status });
+  if (error instanceof CoreError) return Response.json(error.code.startsWith('LLM_') ? { code: error.code, settings: '#model-settings' } : { code: error.code }, { status: error.status });
   if (error instanceof z.ZodError || error instanceof SyntaxError) return Response.json({ code: 'INVALID_INPUT' }, { status: 400 });
   if (error instanceof StoreVersionConflictError) return Response.json({ code: 'VERSION_CONFLICT' }, { status: 409 });
   return Response.json({ code: 'INTERNAL_ERROR' }, { status: 500 });
 }
 
-export function createWorkspaceApp(store: StorePort, settings: GateSettings, modules: readonly ClinMeshModule<OperationCatalog>[] = []) {
+export function createWorkspaceApp(store: StorePort, settings: GateSettings, modules: readonly ClinMeshModule<OperationCatalog>[] = [], environment: AgentEnvironment = {}, background?: (task: Promise<void>) => void) {
   const app = new Hono<{ Bindings: { credential: Credential; entering: boolean } }>();
   app.onError(handleError);
   app.post('/api/auth/visitor/enter', async context => {
@@ -33,6 +34,10 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     return context.json(result);
   });
   const catalog = new OperationCatalog();
+  const patients = new PatientRuntime(store, environment, background);
+  registerPatientOperations(catalog, environment);
+  app.post('/api/agents/providers/test', async context => context.json(await patients.testProvider(context.env.credential, context.req.raw.headers, await context.req.json())));
+  app.get('/api/agents/sessions/:id/events', context => patients.events(context.env.credential, context.req.param('id'), context.req.raw));
   const registry = new ModuleRegistry(modules);
   registerPlatformOperations(catalog, { sign: createVisitorGate(settings).sign, modules: registry });
   catalog.command({ name: 'workspace.reset', method: 'POST', path: '/api/workspace/reset', access: administer }, { packId: z.string().optional() }, sessionSchema, ({ tx, at, actor, expectedVersion, virtualAt, recordedAt }, { packId }) => {
@@ -74,7 +79,11 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
   }
   for (const entry of catalog.entries) app.on(entry.method, entry.path, async context => {
     const targetId = context.req.param('id') ?? context.env.credential.ticket.workspaceId;
-    const result = await entry.invoke({ store, credential: context.env.credential, targetId, body: () => context.req.json() });
+    const credential = context.env.credential;
+    const replyOperation = ['consultation.question', 'consultation.retry', 'consultation.stop'].includes(entry.name);
+    const providerHeaders = replyOperation ? context.req.raw.headers : undefined;
+    const result = await entry.invoke({ store, credential, targetId, body: () => context.req.json(), providerHeaders });
+    if (providerHeaders) await patients.admitted(entry.name, result, credential, providerHeaders);
     return context.json(result);
   });
   app.notFound(async context => {

@@ -13,5 +13,7 @@
 | [store](store/index.ts) | 类型化 Store Repository Port、隔离的规范化事实、Node / DO SQLite 适配器与版本化逻辑快照。参见[使用说明](store/README.md) |
 | [data-pack](data-pack/index.ts) | 五层 Hospital Data Pack 编译、事务安装与公开病例投影。参见[使用说明](data-pack/README.md) |
 | [ui-kit](ui-kit/index.ts) | 统一临床控件、布局、Theme Tokens，以及带人工审批的 UI Agent 与 WebMCP 桥接 |
+| [agent-runtime](agent-runtime/README.md) | 按 Workspace、Epoch 和 Agent 角色打开 Pi 会话，执行 Patient Agent，保护请求凭据与问诊出口 |
+| [agent-protocol](agent-protocol/index.ts) | 浏览器和服务端共享的 Provider、问诊状态、回执与 SSE 事件契约 |
 
 依赖守卫：`pnpm lint:boundaries`。设计依据见 [ADR 0001](../../docs/adr/0001-modular-monolith-and-deep-modules.md)。

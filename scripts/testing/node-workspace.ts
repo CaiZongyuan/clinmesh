@@ -9,9 +9,9 @@ export async function withNodeWorkspace(run: (origin: string) => Promise<void>, 
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-core-http-'));
   try { await withNodeDatabase(join(directory, 'test.sqlite'), run, localOpen); } finally { await rm(directory, { recursive: true, force: true }); }
 }
-export async function withNodeDatabase(dbPath: string, run: (origin: string) => Promise<void>, localOpen = false) {
+export async function withNodeDatabase(dbPath: string, run: (origin: string) => Promise<void>, localOpen = false, environment: Record<string, string> = {}) {
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/server/node-server.ts'], {
-    windowsHide: true, env: { ...process.env, ...teachingGate, CLINMESH_SESSION_SECRET: '', CLINMESH_LOCAL_DEV_OPEN: localOpen ? '1' : '0', CLINMESH_PORT: '0', CLINMESH_HOST: '127.0.0.1', CLINMESH_DATABASE_PATH: dbPath }, stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true, env: { ...process.env, ...teachingGate, CLINMESH_LLM_API_KEY: '', CLINMESH_SESSION_SECRET: '', CLINMESH_LOCAL_DEV_OPEN: localOpen ? '1' : '0', CLINMESH_PORT: '0', CLINMESH_HOST: '127.0.0.1', CLINMESH_DATABASE_PATH: dbPath, ...environment }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   const closed = once(child, 'close');
   try {

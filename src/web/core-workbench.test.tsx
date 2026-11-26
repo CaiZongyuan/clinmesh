@@ -107,7 +107,7 @@ it('discovers the workbench, edits real drafts, and requires human approval for 
     const peerRead = async () => encounterViewSchema.parse(await (await transport(origin + visitPath, { headers: { cookie } })).json());
     const tabSession = sessionSchema.parse(await (await transport(origin + '/api/auth/session', { headers: { cookie } })).json());
     const peerSave = async (suffix: string, expectedVersion: number, fields: Record<string, unknown>, method = 'PUT') => {
-      const response = await transport(origin + visitPath + suffix, { method, headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ epoch: tabSession.epoch, idempotencyKey: crypto.randomUUID(), expectedVersion, ...fields }) });
+      const response = await transport(origin + visitPath + suffix, { method, headers: { cookie, 'content-type': 'application/json', 'X-ClinMesh-LLM-Mock': '1' }, body: JSON.stringify({ epoch: tabSession.epoch, idempotencyKey: crypto.randomUUID(), expectedVersion, ...fields }) });
       expect(response.status).toBe(200);
     };
     const peerNote = await peerRead();

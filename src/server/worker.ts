@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import type { AgentEnvironment } from '../packages/agent-runtime';
 import { createDurableObjectSqliteStore } from '../packages/store';
 import type { Credential, GateSettings } from '../packages/platform';
 import { createApp } from './app';
@@ -11,12 +12,12 @@ declare const CLINMESH_LOOPBACK_WRANGLER: boolean;
 export class WorkspaceDurableObject<Env = unknown> extends DurableObject<Env> {
   protected readonly store = createDurableObjectSqliteStore(this.ctx.storage);
   protected readonly builtinDataPacks = BUILTIN_DATA_PACKS;
-  private readonly workspace = createWorkspaceApp(this.store, gateSettings(this.env as WorkerEnvironment));
+  private readonly workspace = createWorkspaceApp(this.store, gateSettings(this.env as WorkerEnvironment), [], this.env as WorkerEnvironment, task => this.ctx.waitUntil(task));
   async signingSecret(): Promise<string> { return this.store.visitorSigningSecret(); }
   async handle(request: Request, credential: Credential, entering: boolean) { return this.workspace.fetch(request, { credential, entering }); }
 }
 
-interface WorkerEnvironment extends GateSettings { CLINMESH_LOCAL_DEV_OPEN?: string; WORKSPACE_DO: DurableObjectNamespace<WorkspaceDurableObject> }
+interface WorkerEnvironment extends GateSettings, AgentEnvironment { CLINMESH_LOCAL_DEV_OPEN?: string; WORKSPACE_DO: DurableObjectNamespace<WorkspaceDurableObject> }
 function gateSettings(env: WorkerEnvironment): GateSettings {
   return { CLINMESH_VISITOR_PASSCODE: env.CLINMESH_VISITOR_PASSCODE, CLINMESH_SESSION_SECRET: env.CLINMESH_SESSION_SECRET,
     ...workerGatePolicy(typeof CLINMESH_LOOPBACK_WRANGLER !== 'undefined' && CLINMESH_LOOPBACK_WRANGLER === true, env.CLINMESH_LOCAL_DEV_OPEN),

@@ -109,6 +109,8 @@ export const tables = {
   refund_transactions: table({ allocation_id: ref('payment_allocations'), reason: text, ...money, ...times }),
   regional_payer_records: table({ encounter_id: enc, payer_code: text, reference: text, determination: frozen, ...times }),
   encounter_triage: table({ encounter_id: enc, vitals: frozen, ...times }, 'encounter_id'),
+  patient_reply_runs: table({ id: ref('consultation_turns'), session_id: ref('pi_sessions'), attempt: positive, status: choice('running', 'done', 'stopped', 'failed'), provider: text, model: text, endpoint_hash: digest, effort: text, error_code: optional(text), version }),
+  agent_model_calls: table({ session_id: optional(ref('pi_sessions')), question_id: optional(ref('consultation_turns')), provider: text, model: text, status: text, input_tokens: integer, output_tokens: integer, cache_read: integer, cache_write: integer, duration_ms: integer, recorded_at: timestamp, version }),
 } satisfies Record<string, TableDefinition>;
 
 export type Entity = keyof typeof tables;
@@ -122,6 +124,8 @@ export const editable = {
   visitor_sessions: ['practitioner_role', 'revoked'], capability_tokens: ['revoked'], clinical_orders: ['status'],
   prescriptions: ['status'], inpatient_admissions: ['status', 'ward'], bed_occupancies: ['released_at'],
   surgery_requests: ['status'], material_reservations: ['status'],
+  patient_reply_runs: ['attempt', 'status', 'provider', 'model', 'endpoint_hash', 'effort', 'error_code'],
+  agent_model_calls: ['status', 'input_tokens', 'output_tokens', 'cache_read', 'cache_write', 'duration_ms'],
 } as const satisfies { [Name in Entity]?: readonly (keyof EntityRow<Name>)[] };
 export type EditableEntity = keyof typeof editable;
 export type Changes<Name extends EditableEntity> = Partial<Pick<EntityRow<Name>, (typeof editable)[Name][number] & keyof EntityRow<Name>>>;
