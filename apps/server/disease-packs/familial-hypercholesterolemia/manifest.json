@@ -1,0 +1,15 @@
+{
+  "dependencies": [],
+  "fingerprint": "0b28b0ebe665f486bc03663f43b83420a009266acb1ab992b81a301a37c0abb6",
+  "id": "familial-hypercholesterolemia",
+  "packType": "recognition",
+  "specialty": "cardiology",
+  "status": "active",
+  "supportedTasks": [
+    "early-phenotype-recognition",
+    "fh-workup-referral"
+  ],
+  "titleEn": "Familial Hypercholesterolemia Recognition Pack",
+  "titleZh": "家族性高胆固醇血症（FH）识别专病包",
+  "version": "2026-11-26.r1"
+}

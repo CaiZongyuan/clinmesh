@@ -1,0 +1,121 @@
+{
+  "conceptVocabulary": {
+    "mappings": [
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "fh-map-wst-ldl-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-cardio-01",
+        "sourceCode": "2000404A",
+        "sourceDisplay": "低密度脂蛋白胆固醇测定",
+        "sourceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026",
+        "targetConceptCode": "13457-7",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "fh-map-icd-e7801-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-cardio-01",
+        "sourceCode": "E78.01",
+        "sourceDisplay": "家族性高胆固醇血症",
+        "sourceSystem": "http://hl7.org/fhir/sid/icd-10",
+        "targetConceptCode": "familial-hypercholesterolemia",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "fh-map-icd-z824-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-cardio-01",
+        "sourceCode": "Z82.4",
+        "sourceDisplay": "缺血性心脏病及其他循环系统疾病家族史",
+        "sourceSystem": "http://hl7.org/fhir/sid/icd-10",
+        "targetConceptCode": "fh-premature-cad-family-history",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "fh-map-tendon-xanthoma-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-cardio-01",
+        "sourceCode": "tendon-xanthoma",
+        "sourceDisplay": "肌腱黄色瘤",
+        "sourceSystem": "urn:clinmesh:phenotype",
+        "targetConceptCode": "fh-tendon-xanthoma",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "fh-map-corneal-arcus-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-cardio-01",
+        "sourceCode": "corneal-arcus",
+        "sourceDisplay": "早发角膜弓",
+        "sourceSystem": "urn:clinmesh:phenotype",
+        "targetConceptCode": "fh-corneal-arcus-premature",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "fh-map-gene-panel-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-cardio-01",
+        "sourceCode": "LDLR-APOB-PCSK9-panel",
+        "sourceDisplay": "FH 致病基因检测（LDLR/APOB/PCSK9）",
+        "sourceSystem": "urn:clinmesh:laboratory",
+        "targetConceptCode": "fh-genetic-variant",
+        "version": "1.0.0"
+      }
+    ],
+    "nodes": [
+      {
+        "code": "fh-premature-cad-family-history",
+        "displayEn": "Family History of Premature Cardiovascular Disease",
+        "displayZh": "早发冠心病/心肌梗死家族史",
+        "domain": "phenotype",
+        "layer": "disease-pack",
+        "packId": "familial-hypercholesterolemia",
+        "parentCode": null,
+        "synonyms": ["Z82.4", "早发冠心病家族史", "早发心肌梗死家族史"]
+      },
+      {
+        "code": "fh-tendon-xanthoma",
+        "displayEn": "Tendon Xanthoma",
+        "displayZh": "肌腱黄色瘤（腱黄瘤）",
+        "domain": "phenotype",
+        "layer": "disease-pack",
+        "packId": "familial-hypercholesterolemia",
+        "parentCode": null,
+        "synonyms": ["肌腱黄色瘤", "腱黄瘤", "tendon xanthoma"]
+      },
+      {
+        "code": "fh-corneal-arcus-premature",
+        "displayEn": "Premature Arcus Cornealis (< 45y)",
+        "displayZh": "早发角膜弓（< 45 岁）",
+        "domain": "phenotype",
+        "layer": "disease-pack",
+        "packId": "familial-hypercholesterolemia",
+        "parentCode": null,
+        "synonyms": ["角膜弓", "早发角膜弓", "corneal arcus"]
+      },
+      {
+        "code": "fh-genetic-variant",
+        "displayEn": "FH Pathogenic Genetic Variant (LDLR/APOB/PCSK9)",
+        "displayZh": "FH 致病基因突变（LDLR/APOB/PCSK9）",
+        "domain": "laboratory",
+        "layer": "disease-pack",
+        "packId": "familial-hypercholesterolemia",
+        "parentCode": null,
+        "synonyms": ["LDL-R基因检测", "LDLR", "APOB", "PCSK9"]
+      }
+    ],
+    "version": "1.0.0"
+  }
+}

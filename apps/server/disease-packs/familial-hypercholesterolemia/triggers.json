@@ -1,0 +1,197 @@
+{
+  "inapplicablePopulations": [
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodePattern": "^N04",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "descriptionZh": "肾病综合征（ICD-10 N04.*）可导致继发性重度高胆固醇血症，需先评估原发肾病",
+      "id": "nephrotic-syndrome-secondary-hyperlipidemia"
+    },
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodePattern": "^(?:K83\\.1|K74\\.3)",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "descriptionZh": "胆道梗阻或原发性胆汁性胆管炎（K83.1/K74.3）可引起继发性高胆固醇血症",
+      "id": "biliary-obstruction-secondary-hyperlipidemia"
+    },
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodePattern": "^E03",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "descriptionZh": "未控制甲状腺功能减退症（ICD-10 E03.*）属于常见继发性高胆固醇血症，需先纠正甲功后复核",
+      "id": "hypothyroidism-secondary-hyperlipidemia"
+    }
+  ],
+  "triggers": [
+    {
+      "condition": {
+        "kind": "allOf",
+        "nodes": [
+          {
+            "first": {
+              "category": "laboratory",
+              "itemCodes": ["13457-7", "2000404A", "2089-1", "18262-6", "1700303A"],
+              "kind": "fact",
+              "maxValue": 20,
+              "minValue": 4.9,
+              "presence": "present",
+              "requireEligible": false,
+              "unit": "mmol/L"
+            },
+            "kind": "sequence",
+            "requireDistinctEncounters": true,
+            "then": {
+              "category": "laboratory",
+              "itemCodes": ["13457-7", "2000404A", "2089-1", "18262-6", "1700303A"],
+              "kind": "fact",
+              "maxValue": 20,
+              "minValue": 4.9,
+              "presence": "present",
+              "requireEligible": false,
+              "unit": "mmol/L"
+            },
+            "timestampField": "effectiveAt"
+          },
+          {
+            "kind": "anyOf",
+            "nodes": [
+              {
+                "category": "diagnosis",
+                "itemCodePattern": "^Z82\\.4",
+                "kind": "fact",
+                "presence": "present",
+                "requireEligible": false
+              },
+              {
+                "category": "bedside-questionnaire",
+                "itemCodes": ["family-history-premature-cad"],
+                "kind": "fact",
+                "presence": "present",
+                "requireEligible": true
+              },
+              {
+                "category": "diagnosis",
+                "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+                "kind": "fact",
+                "presence": "present",
+                "requireEligible": true
+              }
+            ]
+          }
+        ]
+      },
+      "descriptionZh": "跨时间多就诊持续 LDL-C ≥ 4.9 mmol/L，且伴一级亲属早发心血管病家族史（Z82.4/床旁问卷）或冠心病表现（I20-I25）",
+      "id": "fh-longitudinal-ldl-and-cad-or-fhx"
+    },
+    {
+      "condition": {
+        "kind": "allOf",
+        "nodes": [
+          {
+            "first": {
+              "kind": "anyOf",
+              "nodes": [
+                {
+                  "category": "diagnosis",
+                  "itemCodePattern": "^Z82\\.4",
+                  "kind": "fact",
+                  "presence": "present",
+                  "requireEligible": false
+                },
+                {
+                  "category": "laboratory",
+                  "itemCodes": ["13457-7", "2000404A", "2089-1", "18262-6", "1700303A"],
+                  "kind": "fact",
+                  "maxValue": 20,
+                  "minValue": 4.9,
+                  "presence": "present",
+                  "requireEligible": false,
+                  "unit": "mmol/L"
+                }
+              ]
+            },
+            "kind": "sequence",
+            "requireDistinctEncounters": true,
+            "then": {
+              "kind": "anyOf",
+              "nodes": [
+                {
+                  "category": "diagnosis",
+                  "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+                  "kind": "fact",
+                  "presence": "present",
+                  "requireEligible": true
+                },
+                {
+                  "category": "laboratory",
+                  "itemCodes": ["13457-7", "2000404A", "2089-1", "18262-6", "1700303A"],
+                  "kind": "fact",
+                  "maxValue": 20,
+                  "minValue": 4.9,
+                  "presence": "present",
+                  "requireEligible": true,
+                  "unit": "mmol/L"
+                }
+              ]
+            },
+            "timestampField": "effectiveAt"
+          },
+          {
+            "category": "laboratory",
+            "itemCodes": ["13457-7", "2000404A", "2089-1", "18262-6", "1700303A"],
+            "kind": "fact",
+            "maxValue": 20,
+            "minValue": 4.9,
+            "presence": "present",
+            "requireEligible": false,
+            "unit": "mmol/L"
+          },
+          {
+            "kind": "anyOf",
+            "nodes": [
+              {
+                "category": "diagnosis",
+                "itemCodePattern": "^Z82\\.4",
+                "kind": "fact",
+                "presence": "present",
+                "requireEligible": false
+              },
+              {
+                "category": "bedside-questionnaire",
+                "itemCodes": ["family-history-premature-cad"],
+                "kind": "fact",
+                "presence": "present",
+                "requireEligible": true
+              }
+            ]
+          }
+        ]
+      },
+      "descriptionZh": "既往或跨期家族早发心血管病史（Z82.4）与显著 LDL-C 升高（≥ 4.9 mmol/L）跨时间先后出现并伴本次冠心病/血脂复查",
+      "id": "fh-fhx-and-marked-ldl-cross-time"
+    },
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodes": ["E78.01", "familial-hypercholesterolemia"],
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "descriptionZh": "已正式登记或拟诊家族性高胆固醇血症诊断编码（ICD-10 E78.01）",
+      "id": "fh-confirmed-diagnosis"
+    }
+  ]
+}
