@@ -1,8 +1,11 @@
 import { expect, it } from 'vitest';
 import { z } from 'zod';
+import { v7 } from 'uuid';
+import { BUILTIN_DATA_PACKS } from '../../../server/builtin-data-packs';
+import { installHospitalDataPack } from '../../data-pack';
 import { canonicalJson, createNodeSqliteStore, type LogicalSnapshot } from '../../store';
 import { sha256 } from '../../platform';
-import { dispenseQueueSchema } from '../index';
+import { createPharmacyModule, dispenseQueueSchema } from '../index';
 import { configuredPharmacy } from './configured-pharmacy';
 
 const dose = { codeSystem: 'urn:clinmesh:general:drug', code: 'amoxicillin', dose: 500, routeCode: 'PO', timesPerDay: 3, days: 30, quantity: 129 };
@@ -64,12 +67,31 @@ it('rejects an invalid lot, direction or prescription projection in a correctly 
   } finally { await Promise.all([store.close(), target.close()]); }
 });
 
-it('keeps the completion contract of an Epoch with no installed pharmacy rules', async () => {
-  const { store, session } = await configuredPharmacy(pack => { delete pack.knowledge!.pharmacy; pack.manifest.version = '1.0.0'; });
+it.each(['global-general', 'cn-cardiology'] as const)('restores the frozen medication gate of an existing %s 1.0.0 Epoch', async packId => {
+  const source = createNodeSqliteStore({ dbPath: ':memory:' });
+  const restored = createNodeSqliteStore({ dbPath: ':memory:' });
   try {
-    const path = await session.start('Riley Dale', 'J06.9');
-    expect(await session.get(`${path}/completion`)).toMatchObject({ ready: true });
-    await session.applied(session.command(`${path}/complete`, 5));
-    expect(await session.get(path)).toMatchObject({ status: 'completed', completion: { ready: true } });
-  } finally { await store.close(); }
+    const pack = structuredClone(BUILTIN_DATA_PACKS[packId]);
+    pack.manifest.version = '1.0.0';
+    const encounterId = v7();
+    const time = '2026-11-01T00:00:00Z';
+    const at = await source.withTransaction(tx => {
+      const scope = installHospitalDataPack(tx, { workspaceId: v7(), expectedEpoch: null, virtualTime: time }, pack);
+      const patient = tx.list(scope, 'clinical_cases', { encounter_class: 'outpatient' })[0]!;
+      const patientId = v7();
+      tx.insert(scope, 'patients', { id: patientId, display_name: 'Teaching patient', birth_date: null, version: 1 });
+      tx.insert(scope, 'encounters', { id: encounterId, patient_id: patientId, source_case_id: patient.id, encounter_class: 'outpatient', status: 'active', active_practitioner_role: pack.organization.practitionerRoles[0]!.id, version: 1, virtual_at: time, recorded_at: time });
+      return scope;
+    });
+    const snapshot = await source.exportLogicalSnapshot(at.workspaceId);
+    const installed = snapshot.tables.find(table => table.name === 'data_pack_installations')!.rows[0]!;
+    const knowledge = z.record(z.string(), z.json()).parse(installed.knowledge);
+    delete knowledge.pharmacy;
+    installed.knowledge = knowledge;
+    snapshot.format = 'clinmesh.snapshot.v2';
+    snapshot.tables = snapshot.tables.slice(0, snapshot.tables.findIndex(table => table.name === 'prescription_signatures'));
+    await restored.importLogicalSnapshot(await rehash(snapshot));
+    const module = createPharmacyModule();
+    expect(await restored.read(reader => module.completion!(reader, at, encounterId))).toEqual([]);
+  } finally { await Promise.all([source.close(), restored.close()]); }
 });

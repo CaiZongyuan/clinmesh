@@ -10,6 +10,6 @@
 
 `knowledge.pharmacy` 指定适应证编码体系、互斥药理类别配对和开账批次。`catalog.medications[].source` 缺省为 `internal`，外配品规声明 `external`。`ingredient` 可标识不同品规共有的有效成分。医院停用收费时直接放行已完诊的本院处方。装配收费端口且当前包启用 `mod-billing` 时，签发事务冻结每行价格、数量、币种与版本，发药事务仅接受免费或足额结清的来源行。撤回事务重读锁账与未决资金。
 
-药房完诊条件随 Epoch 装载的数据包冻结。升级后，缺少 `knowledge.pharmacy` 的旧 Epoch 沿用原有完诊条件。新建或重置 Workspace 时，新版本数据包在同一事务中初始化药房规则及批次。
+药房完诊条件随 Epoch 装载的数据包冻结。恢复既有快照时，缺少 `knowledge.pharmacy` 的历史 Epoch 沿用原有完诊条件。新装医院包如果同时启用 `mod-pharmacy` 和 `medication-decision`，安装前须提供 `knowledge.pharmacy`。新建或重置 Workspace 时，系统在同一事务中初始化药房规则及批次。
 
 在 Windows 原生运行 `pnpm exec vitest run src/packages/mod-pharmacy/tests src/web/modules/pharmacy`。服务端流程覆核实际 Node HTTP 和 Worker 的 SQLite Durable Object。

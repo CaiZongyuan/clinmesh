@@ -139,6 +139,10 @@ export const catalogKinds = ['diagnoses', 'medications', 'services', 'procedures
 
 export function validateReferences(pack: HospitalDataPack) {
   checkOrganization(pack);
+  const { enabledModules, policies } = pack.manifest;
+  if (enabledModules.includes('mod-pharmacy') && policies.completionGates.includes('medication-decision') && !pack.knowledge?.pharmacy) {
+    throw new DataPackError('INVALID_PACK', 'knowledge.pharmacy');
+  }
   const catalog = pack.catalog;
   const entries = {
     diagnoses: indexBy(catalog.diagnoses, codingKey, 'catalog.diagnoses'), medications: indexBy(catalog.medications, codingKey, 'catalog.medications'),

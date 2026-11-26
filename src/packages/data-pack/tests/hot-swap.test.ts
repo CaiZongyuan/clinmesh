@@ -80,3 +80,19 @@ it('rolls an entire pack switch back when the enclosing Command fails', async ()
     expect(await store.exportLogicalSnapshot(workspaceId)).toEqual(before);
   } finally { await store.close(); }
 });
+it('rejects installing a new hospital declaring the medication decision gate without pharmacy rules', async () => {
+  const store = createNodeSqliteStore({ dbPath: ':memory:' });
+  try {
+    const at = await store.withTransaction(tx => installHospitalDataPack(tx, initial, BUILTIN_DATA_PACKS['global-general']));
+    const before = await store.exportLogicalSnapshot(workspaceId);
+    const custom = structuredClone(BUILTIN_DATA_PACKS['global-general']);
+    custom.manifest.packId = 'community-clinic';
+    custom.manifest.version = '2.0.0';
+    delete custom.knowledge!.pharmacy;
+    const install = () => store.withTransaction(tx => installHospitalDataPack(tx, { ...initial, expectedEpoch: at.epoch }, custom));
+    await expect(install()).rejects.toMatchObject({ code: 'INVALID_PACK', message: 'INVALID_PACK (knowledge.pharmacy)' });
+    expect(await store.exportLogicalSnapshot(workspaceId)).toEqual(before);
+    custom.manifest.enabledModules = custom.manifest.enabledModules.filter(id => id !== 'mod-pharmacy');
+    await expect(install()).resolves.toMatchObject({ workspaceId });
+  } finally { await store.close(); }
+});
