@@ -27,7 +27,8 @@ export async function seal(content: SnapshotContent): Promise<LogicalSnapshot> {
 export async function verifySnapshot(input: unknown): Promise<SnapshotContent> {
   const { sha256, ...content } = snapshotSchema.parse(input);
   if ((await seal(content)).sha256 !== sha256) throw new StoreSnapshotError('Snapshot digest mismatch');
-  const expected = ['workspaces', 'workspace_epochs', ...entityNames];
+  const includesTriage = content.tables.some(table => table.name === 'encounter_triage');
+  const expected = ['workspaces', 'workspace_epochs', ...entityNames.filter(name => name !== 'encounter_triage' || includesTriage)];
   if (content.tables.length !== expected.length || content.tables.some((table, index) => table.name !== expected[index])) throw new StoreSnapshotError('Incomplete or unordered snapshot tables');
   return content;
 }
@@ -55,7 +56,7 @@ export function capture(db: SqlConnection, workspaceId: string): SnapshotContent
         }
       }
     }
-    data.push({ name, rows });
+    if (name !== 'encounter_triage' || rows.length) data.push({ name, rows });
   }
   return { format, workspaceId, tables: data, pi };
 }
@@ -77,8 +78,9 @@ export async function restore(db: SqlConnection, content: SnapshotContent): Prom
     const { at, fields } = scoped(row);
     tx.createEpoch(at, epochFields.parse(fields));
   }
-  for (const [index, name] of entityNames.entries()) {
-    for (const row of entities[index]!.rows) {
+  const recordsByTable = new Map(entities.map(table => [table.name, table.rows]));
+  for (const name of entityNames) {
+    for (const row of recordsByTable.get(name) ?? []) {
       const { at, fields } = scoped(row);
       writeEntity(db, at, name, fields);
     }

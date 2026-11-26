@@ -23,4 +23,6 @@ const patient = await store.read(reader => reader.get({ workspaceId, epoch }, 'p
 
 `exportLogicalSnapshot(workspaceId)` 返回 `clinmesh.snapshot.v1` JSON，包含该 Workspace 所有 Epoch、私有 Case Truth、不可变历史和已初始化的 pi 会话。它是受信任的迁移和备份入口。导出包含敏感的私有病例及会话内容，只交给获授权的运维人员。校验摘要是对省略 `sha256` 字段、递归按键名排序的紧凑 UTF-8 JSON 计算的 SHA-256。表和修订按依赖顺序排列。`importLogicalSnapshot(snapshot)` 仅接受空库，在一个事务中校验、恢复和核对全部内容。v1 的 JSON 导入导出在内存中完成。
 
+每次开诊写入独立的 `encounter_triage` 分诊快照；空分诊表省略，以便已有 v1 逻辑快照可以按原摘要往返。`visitorSigningSecret()` 供宿主组合根取得 Visitor Gate 的签名材料。Node 在本机数据库保存它，Worker 使用独立命名的门禁 Durable Object。导出的 Workspace 快照范围仅覆盖规定的 Workspace 实体和 pi 会话。
+
 在 Windows 原生环境执行 `pnpm exec vitest run src/packages/store/tests`。同一套 `runStoreConformanceSuite(source, restoreIntoEmpty)` 驱动独立的源库和恢复目标。该套件会写入合成数据，使用可丢弃的空库运行。测试还在真实 workerd 与本地 SQLite 之间双向迁移数据。构建后执行 `pnpm verify:worker` 检查 Worker 体积与 Node 原生依赖。

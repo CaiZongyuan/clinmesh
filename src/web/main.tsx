@@ -10,15 +10,16 @@ if (!root) throw new Error('Missing application root');
 
 const catalog = window.location.pathname.replace(/\/$/, '') === '/dev/ui-kit';
 const UiKitCatalog = lazy(() => import('./UiKitCatalog'));
+const RuntimeHealth = lazy(() => import('./RuntimeHealth').then(module => ({ default: module.RuntimeHealth })));
 const approval = createApprovalPrompt();
 const agent = createClinMeshUiAgent(approval);
 const unregister = agent.registerWebMCP();
 import.meta.hot?.dispose(unregister);
 if (catalog) document.title = 'UI component catalogue · ClinMesh';
 
-createRoot(root).render(<QueryClientProvider client={new QueryClient()}>
+createRoot(root).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false, retry: false }, mutations: { retry: false } } })}>
   <ThemeFontProvider><ToastProvider>
-    {catalog ? <Suspense fallback={<p role="status">Loading the catalogue…</p>}><UiKitCatalog /></Suspense> : <App />}
+    <Suspense fallback={<p role="status">Loading…</p>}>{catalog ? <UiKitCatalog /> : window.location.pathname === '/dev/health' ? <RuntimeHealth /> : <App />}</Suspense>
     <UiAgentApprovalDialog prompt={approval} />
   </ToastProvider></ThemeFontProvider>
 </QueryClientProvider>);

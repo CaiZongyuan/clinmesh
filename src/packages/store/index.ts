@@ -8,3 +8,4 @@ export async function runStoreConformanceSuite(...args: Parameters<typeof import
 }
 export { StoreVersionConflictError, StoreIdempotencyConflictError, StorePrivateCaseTruthError, type StoreReader, type StoreTx } from './lib/repository';
 export type { Changes, EditableEntity, EntityRow, PublicEntity, StoreScope, Workspace, WorkspaceEpoch } from './lib/schema';
+export { canonicalJson } from './lib/json';

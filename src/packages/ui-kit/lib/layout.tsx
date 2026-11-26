@@ -24,7 +24,13 @@ export function AgentPanelShell({ title, status, children }: { title: string; st
   </aside>;
 }
 
-export function WorkspaceCardLayout({ header, queueLabel, queue, children }: { header: ReactNode; queueLabel: string; queue: ReactNode; children: ReactNode }) {
+export function DetailDrawer({ title, trigger, close, children }: { title: string; trigger: string; close: string; children: ReactNode }) {
+  return <Drawer side="end"><DrawerTrigger>{trigger}</DrawerTrigger><DrawerBackdrop />
+    <DrawerContent className="cm-queue-drawer"><DrawerTitle>{title}</DrawerTitle>{children}<DrawerClose>{close}</DrawerClose></DrawerContent>
+  </Drawer>;
+}
+
+export function WorkspaceCardLayout({ header, queueLabel, queue, children, queueVisible = true, closeQueue = 'Close queue' }: { header: ReactNode; queueLabel: string; queue: ReactNode; children: ReactNode; queueVisible?: boolean; closeQueue?: string }) {
   const workspace = useRef<HTMLDivElement>(null);
   const [desktop, setDesktop] = useState(false);
   useLayoutEffect(() => {
@@ -37,12 +43,12 @@ export function WorkspaceCardLayout({ header, queueLabel, queue, children }: { h
   }, []);
   return <div ref={workspace} className="cm-workspace">
     <header className="cm-topbar">{header}</header>
-    <div className="cm-workspace-body" data-desktop={desktop}>
-      {desktop ? <aside className="cm-queue" aria-label={queueLabel}>{queue}</aside> : <div className="cm-queue-trigger">
+    <div className="cm-workspace-body" data-desktop={desktop} data-queue-visible={queueVisible}>
+      {desktop ? queueVisible && <aside className="cm-queue" aria-label={queueLabel}>{queue}</aside> : <div className="cm-queue-trigger">
         <Drawer side="start">
           <DrawerTrigger>{queueLabel}</DrawerTrigger><DrawerBackdrop />
           <DrawerContent className="cm-queue-drawer">
-            <DrawerTitle>{queueLabel}</DrawerTitle>{queue}<DrawerClose>Close queue</DrawerClose>
+            <DrawerTitle>{queueLabel}</DrawerTitle>{queue}<DrawerClose>{closeQueue}</DrawerClose>
           </DrawerContent>
         </Drawer>
       </div>}

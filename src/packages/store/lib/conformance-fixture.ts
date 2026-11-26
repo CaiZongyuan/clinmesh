@@ -46,6 +46,7 @@ export function seedConformance(tx: StoreTx): string[] {
   add('patients', { id: patient_id, display_name: 'Synthetic One', birth_date: null, version: 1 });
   add('patient_identifiers', { id: fixtureId(19), patient_id, issuer: 'synthetic-issuer', value: 'test-01' });
   add('encounters', { id: encounter_id, patient_id, source_case_id: fixedCase, encounter_class: 'outpatient', status: 'active', active_practitioner_role: practitioner_role, version: 1, ...times });
+  add('encounter_triage', { id: fixtureId(101), encounter_id, vitals: { heartRateBpm: 84 }, ...times });
   add('pi_sessions', { id: fixtureId(70), agent: 'patient', encounter_id });
   add('pi_sessions', { id: fixtureId(71), agent: 'clinician', encounter_id: null });
   add('consultations', { id: fixtureId(21), encounter_id, reply_pending: false, version: 1 });

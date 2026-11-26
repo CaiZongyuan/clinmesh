@@ -1,0 +1,100 @@
+import { v7 } from 'uuid';
+import { z } from 'zod';
+import { manifestSchema, organizationSchema, readClinicalCase } from '../../data-pack';
+import { editEncounter, requireEncounter } from '../../patient-visit';
+import { checkVersion, CoreError, type CommandContext } from '../../platform';
+import type { EntityRow, StoreReader, StoreScope } from '../../store';
+import { diagnosisMember, noteFields } from './views';
+
+export function ageOn(birthDate: string, date: string) {
+  return Number(date.slice(0, 4)) - Number(birthDate.slice(0, 4)) - Number(date.slice(5, 10) < birthDate.slice(5));
+}
+
+export function visibleTemplate(reader: StoreReader, at: StoreScope, encounterId: string) {
+  const encounter = requireEncounter(reader, at, encounterId);
+  const patientCase = readClinicalCase(reader, at, encounter.source_case_id)!;
+  const pack = reader.list(at, 'data_pack_installations')[0]!;
+  const manifest = manifestSchema.parse(pack.manifest);
+  const practitioners = organizationSchema.parse(pack.organization).practitioners.filter(member => member.roleId === encounter.active_practitioner_role);
+  const date = new Intl.DateTimeFormat('en-CA', { timeZone: manifest.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(encounter.virtual_at));
+  const age = ageOn(patientCase.demographics.birthDate, date);
+  return manifest.clinicalRecordTemplate.filter(({ showWhen }) => !showWhen || (
+    (!showWhen.departmentId || practitioners.some(member => member.departmentId === showWhen.departmentId)) &&
+    (!showWhen.encounterClass || showWhen.encounterClass === encounter.encounter_class) && (!showWhen.sex || showWhen.sex === patientCase.demographics.sex) &&
+    (showWhen.minAge === undefined || age >= showWhen.minAge) && (showWhen.maxAge === undefined || age <= showWhen.maxAge)));
+}
+
+export function recordState(reader: StoreReader, at: StoreScope, encounterId: string) {
+  const filter = { encounter_id: encounterId };
+  const draft = reader.list(at, 'clinical_record_drafts', filter)[0];
+  const revisions = reader.list(at, 'clinical_record_revisions', filter).sort((first, second) => first.revision - second.revision);
+  return { draftVersion: draft?.version ?? 0, fields: noteFields.parse(draft?.fields ?? {}), recordRevisions: revisions.map(row => ({
+    id: row.id, revision: row.revision, previousId: row.previous_revision_id, signedBy: row.signed_by, virtualAt: row.virtual_at, fields: noteFields.parse(row.fields),
+  })) };
+}
+
+export function saveRecord(context: CommandContext, fields: Record<string, string>, expectedDraftVersion: number) {
+  const { tx, at, targetId } = context;
+  const version = editEncounter(context);
+  const visible = visibleTemplate(tx, at, targetId);
+  if (Object.keys(fields).some(id => !visible.some(field => field.id === id))) throw new CoreError(400, 'FIELD_NOT_IN_TEMPLATE');
+  const draft = tx.list(at, 'clinical_record_drafts', { encounter_id: targetId })[0];
+  checkVersion(draft?.version ?? 0, expectedDraftVersion);
+  if (draft) tx.update(at, 'clinical_record_drafts', draft.id, expectedDraftVersion, { fields });
+  else tx.insert(at, 'clinical_record_drafts', { id: v7(), encounter_id: targetId, version: 1, fields });
+  return { version, draftVersion: expectedDraftVersion + 1 };
+}
+
+export function signRecord(context: CommandContext, expectedDraftVersion?: number) {
+  const { tx, at, targetId, actor } = context;
+  const version = editEncounter(context);
+  const state = recordState(tx, at, targetId);
+  if (expectedDraftVersion !== undefined) checkVersion(state.draftVersion, expectedDraftVersion);
+  if (!state.draftVersion || visibleTemplate(tx, at, targetId).some(field => field.required && !state.fields[field.id]?.trim())) throw new CoreError(409, 'REQUIRED_FIELDS_MISSING');
+  const previous = state.recordRevisions.at(-1);
+  const revision = (previous?.revision ?? 0) + 1;
+  tx.insert(at, 'clinical_record_revisions', { id: v7(), encounter_id: targetId, fields: state.fields, revision, previous_revision_id: previous?.id ?? null,
+    signed_by: actor.role.id, virtual_at: context.virtualAt, recorded_at: context.recordedAt });
+  return { version, revision };
+}
+
+type Diagnosis = z.infer<typeof diagnosisMember>;
+type MemberRow = Pick<EntityRow<'diagnosis_drafts'>, 'code_system' | 'code' | 'is_primary' | 'ordinal'>;
+const byOrdinal = (first: MemberRow, second: MemberRow) => first.ordinal - second.ordinal;
+const member = (row: MemberRow): Diagnosis => ({ codeSystem: row.code_system, code: row.code, primary: row.is_primary });
+
+export function diagnosisState(reader: StoreReader, at: StoreScope, encounterId: string) {
+  const filter = { encounter_id: encounterId };
+  const diagnoses = reader.list(at, 'diagnosis_drafts', filter).sort(byOrdinal).map(member);
+  const revisions = reader.list(at, 'diagnosis_revisions', filter).sort((first, second) => first.revision - second.revision);
+  return { diagnoses, diagnosisRevisions: revisions.map(row => ({ id: row.id, revision: row.revision, previousId: row.previous_revision_id, signedBy: row.confirmed_by, virtualAt: row.virtual_at,
+    diagnoses: reader.list(at, 'diagnosis_confirmations', { revision_id: row.id }).sort(byOrdinal).map(member) })) };
+}
+
+export function saveDiagnoses(context: CommandContext, diagnoses: Diagnosis[]) {
+  const { tx, at, targetId } = context;
+  const version = editEncounter(context);
+  const seen = new Set<string>();
+  for (const item of diagnoses) {
+    const key = JSON.stringify([item.codeSystem, item.code]);
+    if (seen.has(key)) throw new CoreError(400, 'DUPLICATE_DIAGNOSIS');
+    if (!tx.list(at, 'catalog_items', { kind: 'diagnoses', code_system: item.codeSystem, code: item.code }).length) throw new CoreError(400, 'DIAGNOSIS_NOT_IN_CATALOG');
+    seen.add(key);
+  }
+  for (const old of tx.list(at, 'diagnosis_drafts', { encounter_id: targetId })) tx.remove(at, 'diagnosis_drafts', old.id, old.version);
+  diagnoses.forEach((item, index) => tx.insert(at, 'diagnosis_drafts', { id: v7(), encounter_id: targetId, version: 1, ordinal: index + 1,
+    code: item.code, code_system: item.codeSystem, is_primary: item.primary, poa_code: null }));
+  return { version };
+}
+
+export function confirmDiagnoses(context: CommandContext) {
+  const { tx, at, targetId } = context;
+  const version = editEncounter(context);
+  const { diagnoses, diagnosisRevisions } = diagnosisState(tx, at, targetId);
+  if (diagnoses.filter(item => item.primary).length !== 1) throw new CoreError(409, 'ONE_PRIMARY_DIAGNOSIS_REQUIRED');
+  const previous = diagnosisRevisions.at(-1);
+  const revision = (previous?.revision ?? 0) + 1;
+  tx.appendDiagnosisRevision(at, { id: v7(), encounter_id: targetId, revision, previous_revision_id: previous?.id ?? null, confirmed_by: context.actor.role.id,
+    virtual_at: context.virtualAt, recorded_at: context.recordedAt }, diagnoses.map((item, index) => ({ id: v7(), code: item.code, code_system: item.codeSystem, ordinal: index + 1, is_primary: item.primary, poa_code: null })));
+  return { version, revision };
+}

@@ -1,0 +1,58 @@
+import { z } from 'zod';
+import type { StorePort, StoreReader } from '../../store';
+import { authorize, commandEnvelope, executeCommand, resolveActor, type Actor, type CommandContext, type Route } from './commands';
+import { CoreError, type Credential } from './visitor-gate';
+
+export type ReadContext = { reader: StoreReader; actor: Actor; targetId: string };
+type Call = { store: StorePort; credential: Credential; targetId: string; body(): Promise<unknown> };
+type Result = z.core.util.JSONType;
+type Definition = Route & { input: z.ZodType; output: z.ZodType; invoke(call: Call): Promise<Result> };
+
+export class OperationCatalog {
+  readonly #entries: Definition[] = [];
+  constructor(private readonly moduleId?: string) {}
+  get entries(): readonly Definition[] { return this.#entries; }
+
+  contribute(moduleId: string | undefined, register: (catalog: OperationCatalog) => void) {
+    const contribution = new OperationCatalog(moduleId);
+    register(contribution);
+    for (const entry of contribution.entries) this.add(entry);
+  }
+
+  private add(entry: Definition) {
+    if (this.#entries.some(item => item.name === entry.name || (item.method === entry.method && item.path === entry.path))) throw Error(`Duplicate operation: ${entry.name}`);
+    this.#entries.push(entry);
+  }
+
+  query<Output extends Result>(route: Omit<Route, 'method'>, output: z.ZodType<Output>, read: (context: ReadContext) => Output) {
+    route = { ...route, moduleId: this.moduleId ?? route.moduleId };
+    this.add({ ...route, method: 'GET', input: z.strictObject({}), output, invoke: ({ store, credential, targetId }) => store.read(reader => {
+      const actor = resolveActor(reader, credential, new Date().toISOString());
+      authorize(actor, route);
+      return output.parse(read({ reader, actor, targetId }));
+    }) });
+  }
+
+  command<Fields extends z.ZodRawShape, Output extends Result, Prepared = undefined>(route: Route, fields: Fields, output: z.ZodType<Output>,
+    apply: (context: CommandContext, input: z.output<z.ZodObject<Fields>>, prepared: Prepared) => Output | Promise<Output>,
+    prepare?: (actor: Actor, input: z.output<z.ZodObject<Fields>>) => Promise<{ value: Prepared; firstResponse?: Record<string, string> }>) {
+    route = { ...route, moduleId: this.moduleId ?? route.moduleId };
+    const input = commandEnvelope.extend(fields).strict();
+    this.add({ ...route, input, output, async invoke({ store, credential, targetId, body }) {
+      const actor = await store.read(reader => resolveActor(reader, credential, new Date().toISOString()));
+      authorize(actor, route);
+      const parsed = input.parse(await body());
+      const args = parsed as z.output<z.ZodObject<Fields>>;
+      const prepared = await prepare?.(actor, args);
+      const execution = await executeCommand(store, credential, route, targetId, parsed as z.infer<typeof commandEnvelope>, async context => output.parse(await apply(context, args, prepared?.value as Prepared)));
+      if (prepared?.firstResponse && !execution.replay) return { ...z.record(z.string(), z.json()).parse(execution.result), ...prepared.firstResponse };
+      return output.parse(execution.result);
+    } });
+  }
+
+  require(name: string) {
+    const entry = this.entries.find(item => item.name === name);
+    if (!entry) throw new CoreError(400, 'UNKNOWN_OPERATION');
+    return entry;
+  }
+}
