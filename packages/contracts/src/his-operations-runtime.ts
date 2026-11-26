@@ -5,9 +5,15 @@ import {
   outpatientClinicalQualityInputSchema,
 } from './clinical-quality.ts'
 import {
+  bedsideQuestionnaireResponseSchema,
+  bedsideQuestionnaireStateSchema,
   clinicalScoreBundleSchema,
+  inpatientBedsideQuestionnaireReadInputSchema,
+  inpatientBedsideQuestionnaireRecordInputSchema,
   inpatientRiskAssessmentInputSchema,
   inpatientVitalSignsInputSchema,
+  outpatientBedsideQuestionnaireReadInputSchema,
+  outpatientBedsideQuestionnaireRecordInputSchema,
   outpatientRiskAssessmentOperationInputSchema,
   outpatientRiskAssessmentResponseSchema,
 } from './clinical-scores.ts'
@@ -1494,6 +1500,25 @@ const rawOperationRuntimeDefinitions = [
     output: clinicalScoreBundleSchema,
   },
   {
+    http: { method: 'GET', path: '/api/his/v1/outpatient/cases/:caseId/bedside-questionnaire' },
+    id: 'doctor.case.bedside-questionnaire.read',
+    input: outpatientBedsideQuestionnaireReadInputSchema,
+    output: bedsideQuestionnaireStateSchema,
+  },
+  {
+    http: {
+      method: 'PUT',
+      path: '/api/his/v1/outpatient/cases/:caseId/bedside-questionnaire',
+      encodeBody: (raw: unknown) => {
+        const { caseId: _caseId, ...input } = outpatientBedsideQuestionnaireRecordInputSchema.parse(raw)
+        return { input }
+      },
+    },
+    id: 'doctor.case.bedside-questionnaire.record',
+    input: outpatientBedsideQuestionnaireRecordInputSchema,
+    output: bedsideQuestionnaireResponseSchema,
+  },
+  {
     http: { method: 'GET', path: '/api/his/v1/outpatient/cases/:caseId/clinical-fact-ledger' },
     id: 'doctor.case.clinical-fact-ledger.read',
     input: outpatientClinicalFactLedgerQuerySchema,
@@ -2179,6 +2204,20 @@ const rawOperationRuntimeDefinitions = [
     output: inpatientFullClinicalResponseSchema,
   },
   admQuery('inpatient.clinical-scores.read', '/clinical-scores', clinicalScoreBundleSchema),
+  admQuery('inpatient.bedside-questionnaire.read', '/bedside-questionnaire', bedsideQuestionnaireStateSchema, inpatientBedsideQuestionnaireReadInputSchema),
+  {
+    id: 'inpatient.bedside-questionnaire.record',
+    http: {
+      method: 'PUT',
+      path: '/api/his/v1/inpatient/admissions/:admissionId/bedside-questionnaire',
+      encodeBody: (raw: unknown) => {
+        const { admissionId: _id, ...input } = inpatientBedsideQuestionnaireRecordInputSchema.parse(raw)
+        return { input }
+      },
+    },
+    input: inpatientBedsideQuestionnaireRecordInputSchema,
+    output: bedsideQuestionnaireResponseSchema,
+  },
   admQuery('inpatient.clinical-fact-ledger.read', '/clinical-fact-ledger', clinicalFactLedgerSchema, inpatientClinicalFactLedgerQuerySchema),
   admOp('inpatient.clinical-fact-verification.record', '/clinical-fact-verifications', inpatientClinicalFactVerificationInputSchema, clinicalFactVerificationResponseSchema),
   admQuery('inpatient.clinical-quality.read', '/clinical-quality', clinicalQualityCheckSchema, inpatientClinicalQualityInputSchema),

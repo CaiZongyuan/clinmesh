@@ -409,6 +409,18 @@ export class WorkflowService
         ...(options.diseasePackVerifyFingerprint === undefined ? {} : { verifyFingerprint: options.diseasePackVerifyFingerprint }),
       }),
     })
+    this.clinicalScores.setDiseasePacks(this.diseasePacks)
+    this.clinicalQuality.setDiseasePacks(this.diseasePacks)
+    this.clinicalFactLedger.setActivePromptsResolver((context, subject, baseLedger, asOf) => (
+      this.diseasePacks
+        .activeRuntimeSummaryForSubject(context, subject, asOf, baseLedger)
+        .activeQuestionnaireItems
+        .map(item => ({
+          code: item.code,
+          labelZh: item.labelZh,
+          ...(item.unit === undefined ? {} : { unit: item.unit }),
+        }))
+    ))
     this.knowledgeSemantics = new KnowledgeSemanticService({
       commands,
       database: this.#database,
@@ -548,7 +560,7 @@ export class WorkflowService
     }
     this.examination = new ExaminationRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.orderSets = new OrderSetDraftService({
-      clinicalScores: this.clinicalScores, commands, database, examination: this.examination, fhir, outpatientContext: this.#context,
+      clinicalScores: this.clinicalScores, commands, database, diseasePacks: this.diseasePacks, examination: this.examination, fhir, outpatientContext: this.#context,
     })
     this.imaging = new ImagingRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.pathology = new PathologyRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })

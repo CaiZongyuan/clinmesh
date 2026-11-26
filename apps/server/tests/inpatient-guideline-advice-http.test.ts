@@ -92,7 +92,7 @@ async function setup(options: { sources?: GuidelineDocument[]; metered?: boolean
   if (options.metered === false) prepared.options.chatCompletionsProvider = { completeJson: async () => { throw new Error('Must refuse before dispatch') } }
   const fixture = await createPciPaymentDrgFixture(prepared)
   cleanups.push(() => fixture.runtime.close())
-  const stay = await fixture.preparePciAdmission([])
+  const stay = await fixture.preparePciAdmission([], { baselineCreatinineUmolL: 88 })
   const path = `${stay.path}/guideline-advice/${stay.requestId}`
   const read = async () => {
     const response = await fixture.request('inpatient-doctor', path)

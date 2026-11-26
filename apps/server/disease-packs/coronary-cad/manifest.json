@@ -1,0 +1,20 @@
+{
+  "dependencies": [],
+  "fingerprint": "0489440211f216b7ec2759eb9ce76a018b548746e8401c27e9d02f28d20eeed3",
+  "id": "coronary-cad",
+  "packType": "full",
+  "specialty": "cardiology",
+  "status": "active",
+  "supportedTasks": [
+    "acute-chest-pain-acs",
+    "coronary-revascularization-indication",
+    "pci-preop-guideline-advice",
+    "pci-stent",
+    "contrast-kidney-hydration",
+    "cad-dapt-and-secondary-prevention",
+    "followup-review"
+  ],
+  "titleEn": "Coronary Artery Disease & PCI Pathway",
+  "titleZh": "冠心病与冠脉介入专病包",
+  "version": "2026-11-26.r1"
+}

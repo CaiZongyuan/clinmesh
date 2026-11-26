@@ -1,0 +1,193 @@
+{
+  "hospitalId": "hospital-synthetic-clinmesh",
+  "nameZh": "ClinMesh 临床仿真医院",
+  "version": "2026-11-26.r1",
+  "generalLabPanels": [
+    {
+      "code": "CN-LAB-CBC",
+      "displayZh": "血常规（三分类）",
+      "specimenZh": "全血",
+      "memberCodes": ["0100101A", "0100201A", "0100301A", "0100401A", "0100501A"]
+    },
+    {
+      "code": "CN-LAB-CBC-5DIFF",
+      "displayZh": "血常规（五分类）",
+      "specimenZh": "全血",
+      "memberCodes": ["0100101A", "0100201A", "0100301A", "0100401A", "0100501A", "0100601A", "0100701A", "0100801A"]
+    },
+    {
+      "code": "CN-LAB-LIVER",
+      "displayZh": "肝功能组合",
+      "specimenZh": "血清、血浆",
+      "memberCodes": ["1600104A", "1600204A", "1600304A", "1600404A", "1600504A"]
+    },
+    {
+      "code": "CN-LAB-RENAL",
+      "displayZh": "肾功能组合",
+      "specimenZh": "血清、血浆",
+      "memberCodes": ["1700204A", "1700304A", "1700404A", "1101204A"]
+    },
+    {
+      "code": "CN-LAB-ELECTROLYTES",
+      "displayZh": "电解质组合",
+      "specimenZh": "血清、血浆",
+      "memberCodes": ["1400205A", "1400305A", "1400404A", "1400505A", "1400605A", "1400705A"]
+    },
+    {
+      "code": "CN-LAB-COAGULATION",
+      "displayZh": "凝血筛查组合",
+      "specimenZh": "血浆",
+      "memberCodes": ["0500103A", "0500203A"]
+    }
+  ],
+  "orderSets": [
+    {
+      "applicableProcedureCodes": ["47.0100", "51.2300", "53.0001"],
+      "descriptionZh": "普外科常规术后标准重整组套：整合术后静脉补液、病房持续心电监护与切口生命体征护理，以及术后血常规、肾功能与电解质复查；适用于全麻/椎管内麻醉停术前长嘱后的术后医嘱重整。",
+      "id": "general-surgery-postop-standard",
+      "items": [
+        {
+          "key": "postop-saline-hydration",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 1,
+              "doseText": "1000 mL",
+              "frequencyCode": "ONCE",
+              "inpatientDuration": "temporary",
+              "instructionsZh": "术后禁食期间静脉滴注等渗补液，根据生命体征、尿量及心功能调整滴速",
+              "kind": "medication",
+              "medicationKey": "sodium-chloride",
+              "routeCode": "IVGTT",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "普外科术后常规等渗静脉补液，维持有效循环容量与水电解质平衡。",
+          "rules": [
+            {
+              "action": "caution",
+              "comparator": "required",
+              "input": "weightKg",
+              "rationaleZh": "术后补液量须结合体重与出入量核定",
+              "threshold": null
+            }
+          ],
+          "scopes": ["inpatient"],
+          "titleEn": "Postoperative isotonic saline infusion",
+          "titleZh": "术后 0.9% 氯化钠补液"
+        },
+        {
+          "key": "postop-ecg-monitoring",
+          "kind": "service",
+          "options": [
+            {
+              "inpatientDuration": "temporary",
+              "kind": "service",
+              "quantity": 1,
+              "serviceId": "hospital-service-postop-ecg-monitoring"
+            }
+          ],
+          "rationaleZh": "全麻或椎管内麻醉术后返回病房持续心电、血压与血氧监护。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Postoperative continuous ECG monitoring",
+          "titleZh": "术后持续心电监护"
+        },
+        {
+          "key": "postop-wound-vital-nursing",
+          "kind": "service",
+          "options": [
+            {
+              "inpatientDuration": "temporary",
+              "kind": "service",
+              "quantity": 1,
+              "serviceId": "hospital-service-postop-wound-vital-nursing"
+            }
+          ],
+          "rationaleZh": "观察切口敷料渗液、引流及体温血压变化，落实外科术后常规病房护理。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Postoperative routine wound and vital signs nursing",
+          "titleZh": "术后常规切口与生命体征护理"
+        },
+        {
+          "key": "postop-cbc",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-CBC-5DIFF",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-CBC",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            }
+          ],
+          "rationaleZh": "术后复查血常规，评估术后血红蛋白变化与炎症反应。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Postoperative CBC recheck",
+          "titleZh": "术后血常规（五分类）复查"
+        },
+        {
+          "key": "postop-renal-function",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-RENAL",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "1700404A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "2160-0",
+              "referenceSystem": "http://loinc.org"
+            }
+          ],
+          "rationaleZh": "术后复查肾功能，评估围术期灌注与肾功能状态。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Postoperative renal function recheck",
+          "titleZh": "术后肾功能复查"
+        },
+        {
+          "key": "postop-electrolytes",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-ELECTROLYTES",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "1400605A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "2823-3",
+              "referenceSystem": "http://loinc.org"
+            }
+          ],
+          "rationaleZh": "术后禁食与静脉补液期间复查电解质，预防低钾或水电解质紊乱。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Postoperative electrolytes recheck",
+          "titleZh": "术后电解质复查"
+        }
+      ],
+      "scopes": ["inpatient"],
+      "titleEn": "General surgery postoperative standard order set",
+      "titleZh": "普外科常规术后标准重整组套",
+      "version": "2026-11-25.r1"
+    }
+  ]
+}

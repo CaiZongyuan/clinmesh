@@ -1,5 +1,8 @@
 import { z } from 'zod'
+import { packSourceSummarySchema, type PackSourceSummary } from './pack-source.ts'
 import { guidelineEvidenceSchema } from './doctor-recommendations.ts'
+
+export { packSourceSummarySchema, type PackSourceSummary }
 
 /**
  * Legacy built-in cardiology/endocrinology topic ID list retained temporarily for
@@ -50,6 +53,8 @@ export const guidelineTopicReadSchema = z.object({
   missingPatientInputs: z.array(z.string().trim().min(1).max(4000)).max(24),
   missingSources: z.array(z.string().trim().min(1).max(4000)).max(24),
   navigation: z.string().trim().min(1).max(4000),
+  packId: z.string().regex(/^[a-z0-9-]{1,64}$/).optional(),
+  packVersion: z.string().trim().min(1).max(64).optional(),
   patientIndicators: z.array(guidelineTopicPatientIndicatorSchema).max(24),
   population: z.enum(['adult', 'pediatric', 'all-only']),
   status: z.enum(['available', 'unavailable']),
@@ -61,6 +66,9 @@ export const guidelineTopicBundleSchema = z.object({
   encounterId: z.string().min(1).max(64),
   evaluatedAt: z.iso.datetime({ offset: true }),
   items: z.array(guidelineTopicReadSchema).min(1).max(64),
+  packId: z.string().regex(/^[a-z0-9-]{1,64}$/).optional(),
+  packVersion: z.string().trim().min(1).max(64).optional(),
+  sourcePacks: z.array(packSourceSummarySchema).max(32).optional(),
 }).strict()
 export type GuidelineTopicBundle = z.infer<typeof guidelineTopicBundleSchema>
 

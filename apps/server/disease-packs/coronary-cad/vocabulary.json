@@ -1,0 +1,89 @@
+{
+  "conceptVocabulary": {
+    "mappings": [
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "coronary-map-wst-scr-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-cardio-01",
+        "sourceCode": "1700404A",
+        "sourceDisplay": "肌酐测定",
+        "sourceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026",
+        "targetConceptCode": "2160-0",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "coronary-map-wst-hs-ctni-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-cardio-01",
+        "sourceCode": "2100404B",
+        "sourceDisplay": "高敏心肌肌钙蛋白 I 测定",
+        "sourceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026",
+        "targetConceptCode": "89579-7",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "coronary-map-wst-ldl-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-cardio-01",
+        "sourceCode": "2000404A",
+        "sourceDisplay": "低密度脂蛋白胆固醇测定",
+        "sourceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026",
+        "targetConceptCode": "13457-7",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "coronary-map-ecg-service-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-cardio-01",
+        "sourceCode": "examination-ecg-12-lead",
+        "sourceDisplay": "常规 12 导联心电图",
+        "sourceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service",
+        "targetConceptCode": "11524-6",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "coronary-map-discharge-time-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-cardio-01",
+        "sourceCode": "18842-5",
+        "sourceDisplay": "住院出院小结与出院时间",
+        "sourceSystem": "http://loinc.org",
+        "targetConceptCode": "discharge-time",
+        "version": "1.0.0"
+      }
+    ],
+    "nodes": [
+      {
+        "code": "11524-6",
+        "displayEn": "12-lead ECG",
+        "displayZh": "常规 12 导联心电图",
+        "domain": "examination",
+        "layer": "disease-pack",
+        "packId": "coronary-cad",
+        "parentCode": null,
+        "synonyms": ["12导联心电图", "ECG", "examination-ecg-12-lead"]
+      },
+      {
+        "code": "discharge-time",
+        "displayEn": "Hospital Discharge Time / Summary",
+        "displayZh": "出院时间/出院小结",
+        "domain": "procedure",
+        "layer": "disease-pack",
+        "packId": "coronary-cad",
+        "parentCode": null,
+        "synonyms": ["18842-5", "出院小结", "discharge-summary"]
+      }
+    ],
+    "version": "1.0.0"
+  }
+}

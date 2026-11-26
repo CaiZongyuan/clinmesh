@@ -1,0 +1,79 @@
+{
+  "readinessTasks": [
+    {
+      "criticalItems": [
+        {
+          "alternateItemCodes": ["14682-9", "1700404A"],
+          "category": "laboratory",
+          "itemCode": "2160-0",
+          "labelZh": "血清肌酐 / eGFR",
+          "maxAgeDays": 14
+        }
+      ],
+      "relevantCategories": ["diagnosis"],
+      "relevantItemCodes": ["2160-0", "smoking-status"],
+      "secondaryItems": [
+        {
+          "category": "bedside-questionnaire",
+          "itemCode": "smoking-status",
+          "labelZh": "吸烟状态"
+        }
+      ],
+      "taskId": "pci-preop-guideline-advice",
+      "titleZh": "PCI 术前指南参考意见"
+    },
+    {
+      "criticalItems": [
+        {
+          "alternateItemCodes": ["14682-9", "1700404A"],
+          "category": "laboratory",
+          "itemCode": "2160-0",
+          "labelZh": "血清肌酐 / eGFR",
+          "maxAgeDays": 14
+        }
+      ],
+      "relevantCategories": ["diagnosis"],
+      "relevantItemCodes": ["2160-0", "smoking-status"],
+      "secondaryItems": [
+        {
+          "category": "bedside-questionnaire",
+          "itemCode": "smoking-status",
+          "labelZh": "吸烟状态"
+        }
+      ],
+      "taskId": "pci-stent",
+      "titleZh": "PCI 支架选型指南参考意见"
+    },
+    {
+      "criticalItems": [
+        {
+          "alternateItemCodes": ["18262-6", "2089-1", "1700303A"],
+          "category": "laboratory",
+          "itemCode": "13457-7",
+          "labelZh": "低密度脂蛋白胆固醇 (LDL-C)"
+        }
+      ],
+      "relevantCategories": ["medication"],
+      "relevantItemCodes": ["13457-7", "8480-6", "8462-4", "discharge-time", "18842-5"],
+      "secondaryItems": [
+        {
+          "category": "vital-sign",
+          "itemCode": "8480-6",
+          "labelZh": "收缩压"
+        },
+        {
+          "category": "vital-sign",
+          "itemCode": "8462-4",
+          "labelZh": "舒张压"
+        },
+        {
+          "alternateItemCodes": ["18842-5", "discharge-summary"],
+          "itemCode": "discharge-time",
+          "labelZh": "出院时间"
+        }
+      ],
+      "taskId": "followup-review",
+      "titleZh": "跨就诊复查核对"
+    }
+  ]
+}

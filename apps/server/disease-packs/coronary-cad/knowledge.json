@@ -1,0 +1,570 @@
+{
+  "guidelineTopics": [
+    {
+      "conclusionKinds": [
+        "initial-triage-diagnostics",
+        "ischemic-risk-stratification",
+        "invasive-timing-strategy"
+      ],
+      "generationRule": "仅依据 guidelines 原文与 clinicalFacts 起草三类只读结论：initial-triage-diagnostics（首诊心电与肌钙蛋白评估及非冠脉鉴别）、ischemic-risk-stratification（GRACE/TIMI 危险分层与抗栓前提）、invasive-timing-strategy（NSTE-ACS 禁溶栓与介入时机分层）。保留原文限定条件，缺客观资料时仅输出 conditional 意见。",
+      "id": "acute-chest-pain-acs",
+      "limitations": [
+        "固定引用 2019 急性冠脉综合征急诊快速诊治指南，仅用于流程与限定条件核对。",
+        "单次心电图或单次肌钙蛋白阴性不能直接排除 NSTE-ACS，亦不能跳过出血禁忌直接套用抗栓给药。"
+      ],
+      "matchTerms": [
+        "急性胸痛",
+        "急性冠脉综合征",
+        "胸骨后压榨",
+        "NSTEMI",
+        "STEMI",
+        "不稳定型心绞痛",
+        "ACS",
+        "I20.0",
+        "I21"
+      ],
+      "navigation": "适用于急性胸痛及疑似急性冠脉综合征患者核对首诊 10 分钟 12 导联心电图、心肌肌钙蛋白（cTn/hs-cTn）复测与非冠脉病因鉴别、GRACE/TIMI 缺血危险分层以及 NSTE-ACS 不行溶栓与高危早期介入时机。以下仅为操作性导航，结论必须逐条引用同时回读的指南原文。",
+      "references": [
+        {
+          "fragments": [
+            "10 min 内行标准 12 导联",
+            "检测 cTn 或 hs-cTn",
+            "单次 ECG 对 NSTE-ACS 诊断价值有限",
+            "非冠脉事件的 cTn 升高"
+          ],
+          "page": 2,
+          "sha256": "ed1502f49449419eb1d540e289e15715ea5f58b40a0dc71af281a08e69ed5139",
+          "sourceId": "coronary-31-2019",
+          "title": "急性冠脉综合征急诊快速诊治指南（2019）",
+          "version": "2019"
+        },
+        {
+          "fragments": [
+            "使用 GRACE 评分和（或）TIMI 积分评估 NSTE-ACS 缺血风险和预后",
+            "所有无阿司匹林禁忌证的患者"
+          ],
+          "page": 3,
+          "sha256": "ed1502f49449419eb1d540e289e15715ea5f58b40a0dc71af281a08e69ed5139",
+          "sourceId": "coronary-31-2019",
+          "title": "急性冠脉综合征急诊快速诊治指南（2019）",
+          "version": "2019"
+        },
+        {
+          "fragments": [
+            "NSTE-ACS 患者 不行溶栓治疗",
+            "GRACE 评分＞ 140 分",
+            "早期介入策略（＜ 24 h）"
+          ],
+          "page": 5,
+          "sha256": "ed1502f49449419eb1d540e289e15715ea5f58b40a0dc71af281a08e69ed5139",
+          "sourceId": "coronary-31-2019",
+          "title": "急性冠脉综合征急诊快速诊治指南（2019）",
+          "version": "2019"
+        }
+      ],
+      "specialty": "cardiology",
+      "titleEn": "Acute chest pain & ACS initial evaluation and invasive timing",
+      "titleZh": "急性胸痛与急性冠脉综合征急诊评估与介入时机",
+      "version": "2026-11-17.r1"
+    },
+    {
+      "conclusionKinds": [
+        "functional-ischemia-evaluation",
+        "revascularization-vs-gdmt",
+        "modality-and-anatomy-scope"
+      ],
+      "generationRule": "仅依据 guidelines 原文与 clinicalFacts 起草三类只读结论：functional-ischemia-evaluation（中等或 <90% 狭窄的功能学 FFR/iFR 与缺血证据要求）、revascularization-vs-gdmt（FFR > 0.80 / iFR > 0.89 不应行 PCI 与 ≥90% 狭窄或明确缺血干预边界）、modality-and-anatomy-scope（非左主干单双支解剖与生存获益限定条件）。缺造影或功能学数值时仅输出 conditional 意见。",
+      "id": "coronary-revascularization-indication",
+      "limitations": [
+        "固定引用 2021 ACC/AHA/SCAI 血运重建指南与 2018 稳定性冠心病指南，不替代心脏团队对左主干或复杂多支病变的综合讨论。",
+        "不能仅凭冠心病病名推定需要支架植入；FFR > 0.80 的非缺血病变以优化药物治疗与危险因素控制为主。"
+      ],
+      "matchTerms": [
+        "血运重建",
+        "临界病变",
+        "血流储备分数",
+        "FFR",
+        "iFR",
+        "冠脉造影指征",
+        "coronary revascularization"
+      ],
+      "navigation": "适用于稳定性或非急诊冠脉病变核对解剖狭窄程度、FFR/iFR 功能学缺血阈值及血运重建与规范药物治疗（GDMT）边界：中等狭窄（40%–69% 或 <90%）需结合缺血证据或 FFR/iFR；当 FFR > 0.80 或 iFR > 0.89 时不应行 PCI。以下仅为操作性导航，结论必须引用同时回读的原文。",
+      "references": [
+        {
+          "fragments": [
+            "40% to 69%",
+            "fractional flow reserve (FFR) or instantaneous wave-free ratio (iFR) is recommended",
+            "FFR >0.80 or iFR >0.89, PCI should not be performed"
+          ],
+          "page": 14,
+          "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+          "sourceId": "coronary-10-2021",
+          "title": "2021 ACC/AHA/SCAI 血运重建指南",
+          "version": "2021"
+        },
+        {
+          "fragments": [
+            "<70% diameter of non–left main coronary artery stenosis, FFR >0.80",
+            "coronary revascularization should not be performed with the primary or sole intent to improve survival"
+          ],
+          "page": 23,
+          "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+          "sourceId": "coronary-10-2021",
+          "title": "2021 ACC/AHA/SCAI 血运重建指南",
+          "version": "2021"
+        },
+        {
+          "fragments": [
+            "病变直径狭窄≥90% 时，可直接干预",
+            "当病变直径狭窄<90% 时，建议仅对有相应缺血证据，或 FFR≤0.8 的病变进行干预"
+          ],
+          "page": 7,
+          "sha256": "703136f8921a50cb40c5db7c9033da9c5a21fe3ae7d957d0e60f67492812367b",
+          "sourceId": "coronary-32-2018",
+          "title": "稳定性冠心病诊断与治疗指南（2018）",
+          "version": "2018"
+        }
+      ],
+      "specialty": "cardiology",
+      "titleEn": "Coronary physiological assessment (FFR/iFR) & revascularization indication",
+      "titleZh": "冠脉临界病变功能学评估（FFR/iFR）与血运重建指征",
+      "version": "2026-11-17.r1"
+    },
+    {
+      "conclusionKinds": [
+        "stent-category",
+        "imaging-guidance",
+        "measurement-requirements"
+      ],
+      "generationRule": "仅依据guidelines完整原文与clinicalFacts起草三类只读指南参考意见：stent-category（支架类别）、imaging-guidance（IVUS/OCT指导条件）、measurement-requirements（测量要求）。topic仅是操作性导航不是证据。逐条给实际evidenceId和未经改写的原句。保留人群、条件、例外与推荐强度，不把可考虑写成必须；不能把所有PCI写为必须IVUS，OCT需保留左主干开口限制。缺测量或单位仍给conditional类别意见和缺项，不补造患者事实，不从目录倒推测量，不推荐固定产品、规格或数量；3.0mm、5–16mm及每类一件只是合成方案，不是指南要求。",
+      "id": "pci-stent",
+      "limitations": [
+        "首期固定2021版血运重建指南与CVIT共识，未完成现行版本全集核查。",
+        "不判断是否应接受PCI，不提供具体产品、规格或固定数量；合成方案的3.0mm、5–16mm与每类一件不属于指南要求。"
+      ],
+      "matchTerms": [
+        "支架选型",
+        "血管内超声",
+        "IVUS",
+        "OCT",
+        "药物洗脱支架",
+        "DES"
+      ],
+      "navigation": "适用于已提出PCI计划时核对支架类别、IVUS／OCT指导条件与测量要求。DES相对BMS属于类别建议；IVUS的用途及OCT的替代均须保留人群、条件、例外与推荐强度。测量须区分近远端参考段、管腔与EEM及测长方法。以下仅为操作性导航，结论必须引用同时回读的原文，不以导航文字作证据。",
+      "references": [
+        {
+          "fragments": [
+            "In patients undergoing PCI, DES should be used in preference to BMS"
+          ],
+          "page": 35,
+          "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+          "sourceId": "coronary-10-2021",
+          "title": "2021 ACC/AHA/SCAI 血运重建指南",
+          "version": "2021"
+        },
+        {
+          "fragments": [
+            "IVUS can be useful",
+            "left main or complex coronary artery stenting",
+            "except in ostial left main disease"
+          ],
+          "page": 36,
+          "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+          "sourceId": "coronary-10-2021",
+          "title": "2021 ACC/AHA/SCAI 血运重建指南",
+          "version": "2021"
+        },
+        {
+          "fragments": [
+            "both proximal and distal reference",
+            "lumen, EEM, and plaque measurements",
+            "length cannot be measured"
+          ],
+          "page": 6,
+          "sha256": "c2018438f6bfe9abf39cdfa813f6a6312de858bb6047ce18d9a01bff222ae9ad",
+          "sourceId": "coronary-15-2021",
+          "title": "2021 CVIT 血管内超声共识",
+          "version": "2021"
+        }
+      ],
+      "specialty": "cardiology",
+      "titleEn": "PCI stent category, IVUS/OCT guidance & reference measurement",
+      "titleZh": "PCI 支架类别、腔内影像（IVUS/OCT）与参考段测量要求",
+      "version": "2026-11-02.r1"
+    },
+    {
+      "conclusionKinds": [
+        "renal-risk-stratification",
+        "hydration-and-volume-balance",
+        "contrast-dose-control"
+      ],
+      "generationRule": "仅依据 guidelines 原文与 clinicalFacts 起草三类只读结论：renal-risk-stratification（术前肾功能 eGFR 分层、CKD 高危识别及必要时肾内科会诊）、hydration-and-volume-balance（0.9% 氯化钠水化方案与左心功能不全防容量负荷过重平衡）、contrast-dose-control（对比剂体积与 eGFR 比值不大于 3.7 及零对比剂严格限定条件）。缺 eGFR 或心功能评估时仅输出 conditional 意见。",
+      "id": "contrast-kidney-hydration",
+      "limitations": [
+        "固定引用 2021 经动脉心血管介入诊治中含碘对比剂相关不良反应防治中国专家共识（第 4 页经受控勘误剥离图内乱码并保留原文正文）。",
+        "左心功能不全或失代偿心力衰竭患者严禁机械套用高速补液，须结合心功能个体化调整水化速率并监测术后肾功能。"
+      ],
+      "matchTerms": [
+        "对比剂",
+        "造影剂",
+        "PCAKI",
+        "对比剂肾病",
+        "碘海醇",
+        "碘克沙醇",
+        "contrast media"
+      ],
+      "navigation": "适用于拟行或已行含碘对比剂冠脉造影/PCI 患者核对术前血肌酐与 eGFR 危险分层、0.9% 氯化钠围术期水化与左心功能不全防容量负荷过重限制、对比剂剂量/eGFR 比值 ≤ 3.7 控制，以及超低/零对比剂技术须严格限定适应证且有术前影像与 IVUS 条件。以下仅为操作性导航，结论必须引用同时回读的原文。",
+      "references": [
+        {
+          "fragments": [
+            "慢性肾脏疾病",
+            "最重要的危险因素",
+            "比值>3.7"
+          ],
+          "page": 2,
+          "sha256": "332e74aa189a08a56053e38cc8deea8b07aeeb1903770a2b41248692cce77c0e",
+          "sourceId": "coronary-20-2021",
+          "title": "经动脉心血管介入诊治中含碘对比剂相关不良反应防治的中国专家共识（2021）",
+          "version": "2021"
+        },
+        {
+          "fragments": [
+            "必要时请肾内科会诊",
+            "个体化的获益风险评估"
+          ],
+          "page": 3,
+          "sha256": "332e74aa189a08a56053e38cc8deea8b07aeeb1903770a2b41248692cce77c0e",
+          "sourceId": "coronary-20-2021",
+          "title": "经动脉心血管介入诊治中含碘对比剂相关不良反应防治的中国专家共识（2021）",
+          "version": "2021"
+        },
+        {
+          "fragments": [
+            "术前进行肾功能的评估并根据患者 eGFR 的水平进行危险分层",
+            "0.9% 氯化钠溶液",
+            "对有左心功能不全的患者需防止容量负荷过重",
+            "对比剂剂量与 eGFR 的比值不能大于 3.7"
+          ],
+          "page": 4,
+          "sha256": "332e74aa189a08a56053e38cc8deea8b07aeeb1903770a2b41248692cce77c0e",
+          "sourceId": "coronary-20-2021",
+          "title": "经动脉心血管介入诊治中含碘对比剂相关不良反应防治的中国专家共识（2021）",
+          "version": "2021"
+        },
+        {
+          "fragments": [
+            "患者需要在术前有冠状动脉造影及 CT 影像资料",
+            "且须在 IVUS 指导下完成介入诊断治疗",
+            "尚不能在临床常规推广应用",
+            "建议严格限定其适应证"
+          ],
+          "page": 5,
+          "sha256": "332e74aa189a08a56053e38cc8deea8b07aeeb1903770a2b41248692cce77c0e",
+          "sourceId": "coronary-20-2021",
+          "title": "经动脉心血管介入诊治中含碘对比剂相关不良反应防治的中国专家共识（2021）",
+          "version": "2021"
+        }
+      ],
+      "specialty": "cardiology",
+      "titleEn": "Contrast-associated AKI risk stratification, hydration & contrast dose limit",
+      "titleZh": "含碘对比剂肾病（PCAKI）风险分层、围术期水化与对比剂限量",
+      "version": "2026-11-17.r1"
+    },
+    {
+      "conclusionKinds": [
+        "dapt-duration-and-bleeding",
+        "lipid-target-therapy",
+        "cardioprotective-gdmt"
+      ],
+      "generationRule": "仅依据 guidelines 原文与 clinicalFacts 起草三类只读结论：dapt-duration-and-bleeding（ACS/CCS 不同路径双抗疗程与 PRECISE-DAPT ≥ 25 高出血风险缩短条件）、lipid-target-therapy（以 LDL-C 为首要干预靶点及未达标联合依折麦布等条件）、cardioprotective-gdmt（合并高血压、LVEF ≤ 40%、糖尿病或慢性肾病时 ACEI/ARB 等综合二级预防）。缺出血评分或血脂/心超资料时仅输出 conditional 意见。",
+      "id": "cad-dapt-and-secondary-prevention",
+      "limitations": [
+        "固定引用 2021 冠心病双联抗血小板治疗中国专家共识与 2018 稳定性冠心病指南，不能对所有支架或冠心病患者机械套用单一双抗月数。",
+        "具体抗血小板与降脂药品选择须同时遵守患者过敏史、活动性出血禁忌、肝肾功能及院内处方审方规则。"
+      ],
+      "matchTerms": [
+        "双联抗血小板",
+        "双抗",
+        "DAPT",
+        "PRECISE-DAPT",
+        "二级预防",
+        "氯吡格雷",
+        "替格瑞洛",
+        "依折麦布"
+      ],
+      "navigation": "适用于冠心病（ACS 或 CCS）PCI 术后、保守药物治疗或院后随访阶段核对缺血与出血风险权衡（如 PRECISE-DAPT ≥ 25 高出血风险缩短疗程 vs 标准 6/12 个月疗程）、以 LDL-C 为首要靶点的降脂联合策略（他汀未达标加用依折麦布等）及合并高血压/LVEF ≤ 40%/糖尿病/CKD 时 ACEI/ARB 等二级预防用药。以下仅为操作性导航，结论必须引用同时回读的原文。",
+      "references": [
+        {
+          "fragments": [
+            "充分权衡缺血和出血风险",
+            "PRECISE-DAPT 评分≥25 分",
+            "选择 3~6 个月的 DAPT"
+          ],
+          "page": 3,
+          "sha256": "02c7080308bc64e9c499f8ba01f70a572127aee069f256e19937c9749a55f9e9",
+          "sourceId": "coronary-24-2021",
+          "title": "冠心病双联抗血小板治疗中国专家共识（2021）",
+          "version": "2021"
+        },
+        {
+          "fragments": [
+            "推荐 CCS 患者 PCI 术后 DAPT 疗程为 6 个月",
+            "6 个月 DAPT 并不适用于所有 CCS 患者",
+            "高出血风险的 CCS 患者应考虑缩短 PCI 术后 DAPT 疗程至 1~3 个月"
+          ],
+          "page": 9,
+          "sha256": "02c7080308bc64e9c499f8ba01f70a572127aee069f256e19937c9749a55f9e9",
+          "sourceId": "coronary-24-2021",
+          "title": "冠心病双联抗血小板治疗中国专家共识（2021）",
+          "version": "2021"
+        },
+        {
+          "fragments": [
+            "在接受单纯药物治疗的 ACS 患者中，建议 DAPT 至少 12 个月",
+            "除非出血风险大于潜在缺血获益"
+          ],
+          "page": 10,
+          "sha256": "02c7080308bc64e9c499f8ba01f70a572127aee069f256e19937c9749a55f9e9",
+          "sourceId": "coronary-24-2021",
+          "title": "冠心病双联抗血小板治疗中国专家共识（2021）",
+          "version": "2021"
+        },
+        {
+          "fragments": [
+            "推荐以 LDL-C 为首要干预靶点",
+            "依折麦布",
+            "合并高血压、LVEF≤40%、糖尿病或慢性肾病的高危患者",
+            "ACEI 或 ARB"
+          ],
+          "page": 7,
+          "sha256": "703136f8921a50cb40c5db7c9033da9c5a21fe3ae7d957d0e60f67492812367b",
+          "sourceId": "coronary-32-2018",
+          "title": "稳定性冠心病诊断与治疗指南（2018）",
+          "version": "2018"
+        }
+      ],
+      "specialty": "cardiology",
+      "titleEn": "CAD DAPT duration trade-off & secondary prevention lipid/GDMT management",
+      "titleZh": "冠心病双联抗血小板（DAPT）疗程权衡与二级预防达标管理",
+      "version": "2026-11-17.r1"
+    }
+  ],
+  "knowledgeSnapshots": [
+    {
+      "claims": [
+        {
+          "anchor": {
+            "locator": "PDF 物理第 2 页",
+            "page": 2,
+            "quoteFragment": "10 min 内行标准 12 导联",
+            "sha256": "ed1502f49449419eb1d540e289e15715ea5f58b40a0dc71af281a08e69ed5139",
+            "sourceId": "coronary-31-2019",
+            "title": "急性冠脉综合征急诊快速诊治指南（2019）",
+            "version": "2019"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:R07|R10\\.1|I20|I21)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["11524-6", "89579-7"],
+          "effectiveFrom": "2026-06-01T00:00:00Z",
+          "id": "coronary-claim-acs-ecg-10min",
+          "packId": "coronary-cad",
+          "reviewerId": null,
+          "statementZh": "拟诊急性胸痛或疑似急性冠脉综合征患者须于 10 分钟内行标准 12 导联心电图并检测 cTn/hs-cTn。",
+          "status": "auto-verified",
+          "topicId": "acute-chest-pain-acs",
+          "version": "1.0.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 35 页",
+            "page": 35,
+            "quoteFragment": "In patients undergoing PCI, DES should be used in preference to BMS",
+            "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+            "sourceId": "coronary-10-2021",
+            "title": "2021 ACC/AHA/SCAI 血运重建指南",
+            "version": "2021"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["coronary-artery-disease"],
+          "effectiveFrom": "2026-06-01T00:00:00Z",
+          "id": "coronary-claim-pci-des-over-bms",
+          "packId": "coronary-cad",
+          "reviewerId": null,
+          "statementZh": "拟行冠脉 PCI 治疗的患者优先使用药物洗脱支架（DES）而非金属裸支架（BMS）。",
+          "status": "auto-verified",
+          "topicId": "pci-stent",
+          "version": "1.0.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 4 页",
+            "page": 4,
+            "quoteFragment": "对比剂剂量与 eGFR 的比值不能大于 3.7",
+            "sha256": "332e74aa189a08a56053e38cc8deea8b07aeeb1903770a2b41248692cce77c0e",
+            "sourceId": "coronary-20-2021",
+            "title": "经动脉心血管介入诊治中含碘对比剂相关不良反应防治的中国专家共识（2021）",
+            "version": "2021"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["2160-0", "coronary-artery-disease"],
+          "effectiveFrom": "2026-06-01T00:00:00Z",
+          "id": "coronary-claim-contrast-egfr-limit",
+          "packId": "coronary-cad",
+          "reviewerId": null,
+          "statementZh": "含碘对比剂冠脉介入前须完成血肌酐与 eGFR 危险分层，并控制对比剂剂量与 eGFR 比值不大于 3.7。",
+          "status": "auto-verified",
+          "topicId": "contrast-kidney-hydration",
+          "version": "1.0.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 7 页",
+            "page": 7,
+            "quoteFragment": "推荐以 LDL-C 为首要干预靶点",
+            "sha256": "703136f8921a50cb40c5db7c9033da9c5a21fe3ae7d957d0e60f67492812367b",
+            "sourceId": "coronary-32-2018",
+            "title": "稳定性冠心病诊断与治疗指南（2018）",
+            "version": "2018"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["13457-7", "coronary-artery-disease"],
+          "effectiveFrom": "2026-06-01T00:00:00Z",
+          "id": "coronary-claim-ldl-primary-target",
+          "packId": "coronary-cad",
+          "reviewerId": null,
+          "statementZh": "冠心病二级预防及随访阶段以 LDL-C 为首要调脂干预靶点，未达标时须强化或联合依折麦布治疗。",
+          "status": "auto-verified",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "1.0.0"
+        }
+      ],
+      "effectiveFrom": "2026-06-01T00:00:00Z",
+      "snapshotVersion": "2026.06.v1",
+      "topics": [
+        {
+          "effectiveFrom": "2026-06-01T00:00:00Z",
+          "id": "acute-chest-pain-acs",
+          "limitationsZh": [
+            "单次心电图或单次肌钙蛋白阴性不能直接排除 NSTE-ACS，亦不能跳过出血禁忌直接套用抗栓给药。"
+          ],
+          "navigationZh": "适用于急性胸痛及疑似急性冠脉综合征患者核对首诊 10 分钟 12 导联心电图、动态肌钙蛋白与 GRACE/TIMI 危险分层。",
+          "packId": "coronary-cad",
+          "references": [
+            {
+              "locator": "PDF 物理第 2 页",
+              "page": 2,
+              "quoteFragment": "10 min 内行标准 12 导联",
+              "sha256": "ed1502f49449419eb1d540e289e15715ea5f58b40a0dc71af281a08e69ed5139",
+              "sourceId": "coronary-31-2019",
+              "title": "急性冠脉综合征急诊快速诊治指南（2019）",
+              "version": "2019"
+            }
+          ],
+          "reviewerId": null,
+          "status": "auto-verified",
+          "titleEn": "Acute Chest Pain & ACS Knowledge Card",
+          "titleZh": "急性胸痛与 ACS 评估知识卡",
+          "version": "1.0.0"
+        },
+        {
+          "effectiveFrom": "2026-06-01T00:00:00Z",
+          "id": "pci-stent",
+          "limitationsZh": [
+            "首期固定 2021 版血运重建指南与 CVIT 共识，不替代主管医生个体化术中决策。"
+          ],
+          "navigationZh": "适用于已提出 PCI 计划时核对 DES 支架类别、IVUS/OCT 指导条件与近远端参考段测量要求。",
+          "packId": "coronary-cad",
+          "references": [
+            {
+              "locator": "PDF 物理第 35 页",
+              "page": 35,
+              "quoteFragment": "In patients undergoing PCI, DES should be used in preference to BMS",
+              "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+              "sourceId": "coronary-10-2021",
+              "title": "2021 ACC/AHA/SCAI 血运重建指南",
+              "version": "2021"
+            }
+          ],
+          "reviewerId": null,
+          "status": "auto-verified",
+          "titleEn": "PCI Stent Selection & Imaging Guidance Card",
+          "titleZh": "PCI 支架与腔内影像知识卡",
+          "version": "1.0.0"
+        },
+        {
+          "effectiveFrom": "2026-06-01T00:00:00Z",
+          "id": "contrast-kidney-hydration",
+          "limitationsZh": [
+            "左心功能不全或失代偿心衰患者严禁机械套用高速补液，须结合容量负荷调整。"
+          ],
+          "navigationZh": "适用于拟行或已行含碘对比剂冠脉造影/PCI 患者核对术前 eGFR 分层、0.9% 氯化钠水化与剂量控制。",
+          "packId": "coronary-cad",
+          "references": [
+            {
+              "locator": "PDF 物理第 4 页",
+              "page": 4,
+              "quoteFragment": "对比剂剂量与 eGFR 的比值不能大于 3.7",
+              "sha256": "332e74aa189a08a56053e38cc8deea8b07aeeb1903770a2b41248692cce77c0e",
+              "sourceId": "coronary-20-2021",
+              "title": "经动脉心血管介入诊治中含碘对比剂相关不良反应防治的中国专家共识（2021）",
+              "version": "2021"
+            }
+          ],
+          "reviewerId": null,
+          "status": "auto-verified",
+          "titleEn": "Contrast Kidney Hydration Knowledge Card",
+          "titleZh": "含碘对比剂肾保护与水化知识卡",
+          "version": "1.0.0"
+        },
+        {
+          "effectiveFrom": "2026-06-01T00:00:00Z",
+          "id": "cad-dapt-and-secondary-prevention",
+          "limitationsZh": [
+            "不能对所有支架或冠心病患者机械套用单一双抗月数，须结合 PRECISE-DAPT 出血风险动态权衡。"
+          ],
+          "navigationZh": "适用于冠心病 PCI 术后、出院与门诊随访核对双联抗血小板疗程及 LDL-C 达标管理。",
+          "packId": "coronary-cad",
+          "references": [
+            {
+              "locator": "PDF 物理第 7 页",
+              "page": 7,
+              "quoteFragment": "推荐以 LDL-C 为首要干预靶点",
+              "sha256": "703136f8921a50cb40c5db7c9033da9c5a21fe3ae7d957d0e60f67492812367b",
+              "sourceId": "coronary-32-2018",
+              "title": "稳定性冠心病诊断与治疗指南（2018）",
+              "version": "2018"
+            }
+          ],
+          "reviewerId": null,
+          "status": "auto-verified",
+          "titleEn": "CAD Secondary Prevention Knowledge Card",
+          "titleZh": "冠心病双抗与二级预防知识卡",
+          "version": "1.0.0"
+        }
+      ]
+    }
+  ]
+}

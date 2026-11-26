@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { packSourceSummarySchema } from './pack-source.ts'
 import { medicationFrequencySchema } from './medication-safety.ts'
 
 const s = z.string(), id = s.regex(/^[A-Za-z0-9.-]{1,64}$/), dt = z.iso.datetime({ offset: true })
@@ -28,7 +29,10 @@ export const clinicalQualityCheckSchema = z.object({
   alerts: z.array(clinicalQualityAlertSchema).max(16),
   evaluatedAt: dt,
   gate: clinicalQualityGateSchema,
+  packId: z.string().regex(/^[a-z0-9-]{1,64}$/).optional(),
+  packVersion: z.string().trim().min(1).max(64).optional(),
   redLines: z.array(clinicalQualityRedLineSchema).max(16),
+  sourcePacks: z.array(packSourceSummarySchema).max(32).optional(),
   status: z.enum(['pass', 'alert', 'blocked']).optional(),
 }).strict()
 export type ClinicalQualityCheck = z.infer<typeof clinicalQualityCheckSchema>

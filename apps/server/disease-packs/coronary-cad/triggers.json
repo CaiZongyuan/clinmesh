@@ -1,0 +1,80 @@
+{
+  "triggers": [
+    {
+      "condition": {
+        "kind": "anyOf",
+        "nodes": [
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^R07",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "kind": "allOf",
+            "nodes": [
+              {
+                "category": "diagnosis",
+                "itemCodePattern": "^R10\\.1",
+                "kind": "fact",
+                "presence": "present",
+                "requireEligible": true
+              },
+              {
+                "category": "diagnosis",
+                "itemCodePattern": "^E11",
+                "kind": "fact",
+                "presence": "present",
+                "requireEligible": true
+              },
+              {
+                "kind": "anyOf",
+                "nodes": [
+                  {
+                    "category": "examination",
+                    "itemCodes": ["11524-6", "examination-ecg-12-lead"],
+                    "kind": "fact",
+                    "presence": "present",
+                    "requireEligible": true
+                  },
+                  {
+                    "category": "laboratory",
+                    "itemCodes": ["89579-7", "10839-9", "6597-9", "2100404B", "2100404A", "2100504A", "CN-LAB-CARDIAC"],
+                    "kind": "fact",
+                    "presence": "present",
+                    "requireEligible": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "descriptionZh": "结构化胸痛诊断（R07.*）或 2 型糖尿病伴上腹痛且已开立/存在心电图（11524-6）或心肌肌钙蛋白（89579-7/10839-9/6597-9/2100404B）等排查依据；病历纯文本否认胸痛不取消结构化触发",
+      "id": "acute-chest-pain-workup"
+    },
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "descriptionZh": "已确认或拟诊冠心病及急性冠脉综合征（ICD-10 I20-I25，含无症状稳定性冠心病择期 PCI）",
+      "id": "cad-or-acs-diagnosis"
+    },
+    {
+      "condition": {
+        "category": "procedure",
+        "itemCodePattern": "^(?:00\\.66|36\\.0[67]|36\\.1|88\\.5[56])",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "descriptionZh": "拟行或已行冠脉造影、PCI 或 CABG 血运重建术式编码（00.6600/36.0700/88.5500/88.5600 等）",
+      "id": "coronary-revascularization"
+    }
+  ]
+}

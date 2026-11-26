@@ -571,18 +571,41 @@ export interface VisibleSourceHistoryTranscriptionInput {
   mappingVersion?: string
 }
 
+export interface BedsideQuestionnaireExtraAnswerInput {
+  code: string
+  display?: string
+  unit?: string
+  value: boolean | number | string | null
+}
+
 export interface BedsideQuestionnaireRevisionInput {
   revisionId: string
   revisionNumber: number
   recordedAt: string
   observationId?: string | null
   observationVersion?: string | null
-  values: ClinicalRiskAssessmentValues
+  values?: ClinicalRiskAssessmentValues
+  extraAnswers?: readonly BedsideQuestionnaireExtraAnswerInput[]
 }
 
 export interface BedsideQuestionnaireTranscriptionInput {
   revisions: readonly BedsideQuestionnaireRevisionInput[]
   mappingVersion?: string
+}
+
+export interface GeneralizedBedsideAnswerRecordInput {
+  patientId?: string
+  revisionId: string
+  revisionNumber: number
+  recordedAt: string
+  answers: Readonly<Record<string, { display?: string; unit?: string; value: boolean | number | string | null }>>
+  mappingVersion?: string
+}
+
+export interface ActivePackPromptItemInput {
+  code: string
+  labelZh: string
+  unit?: string | undefined
 }
 
 export interface TranscribedClinicalFactCandidate {
@@ -1525,7 +1548,7 @@ interface QuestionnaireFieldDescriptor {
   display: string
 }
 
-const QUESTIONNAIRE_FIELDS: readonly QuestionnaireFieldDescriptor[] = [
+export const LEGACY_BEDSIDE_QUESTIONNAIRE_FIELDS: readonly QuestionnaireFieldDescriptor[] = [
   { key: 'killipClass', code: 'killip-class', display: 'Killip 心功能分级' },
   { key: 'cardiacArrestOnAdmission', code: 'cardiac-arrest-on-admission', display: '入院时心脏骤停' },
   { key: 'anginaEpisodes24h', code: 'angina-episodes-24h', display: '24 小时内反复心绞痛发作次数' },
@@ -1537,13 +1560,23 @@ const QUESTIONNAIRE_FIELDS: readonly QuestionnaireFieldDescriptor[] = [
   { key: 'priorBleedingHistory', code: 'prior-bleeding-history', display: '既往出血史' },
 ]
 
-function encodeQuestionnaireField(
-  descriptor: QuestionnaireFieldDescriptor,
-  rawVal: ClinicalRiskAssessmentValues[keyof ClinicalRiskAssessmentValues],
+const QUESTIONNAIRE_FIELDS = LEGACY_BEDSIDE_QUESTIONNAIRE_FIELDS
+
+export function normalizeBedsideItemCode(rawCode: string): string {
+  const trimmed = rawCode.trim()
+  if (trimmed === 'known-coronary-stenosis-ge50') return 'known-coronary-stenosis-ge-50'
+  if (trimmed === 'st-segment-deviation-bedside') return 'st-segment-deviation'
+  return trimmed
+}
+
+function encodeScalarQuestionnaireValue(
+  code: string,
+  rawVal: boolean | number | string | null | undefined,
+  unit?: string,
 ): { value: ClinicalFactValue; presence: ClinicalFactPresence } {
   if (rawVal === null || rawVal === undefined) {
     return {
-      value: { rawText: '未询问', normalizedValue: null },
+      value: { rawText: '没问到', normalizedValue: null },
       presence: 'not-asked',
     }
   }
@@ -1554,9 +1587,13 @@ function encodeQuestionnaireField(
     }
   }
   if (typeof rawVal === 'number') {
+    const normalizedUnit = unit?.trim()
     return {
-      value: { rawText: String(rawVal), normalizedValue: rawVal },
-      presence: descriptor.key === 'anginaEpisodes24h' && rawVal === 0 ? 'absent' : 'present',
+      value: {
+        rawText: normalizedUnit ? `${rawVal} ${normalizedUnit}` : String(rawVal),
+        normalizedValue: normalizedUnit ? { value: rawVal, unit: normalizedUnit } : rawVal,
+      },
+      presence: code === 'angina-episodes-24h' && rawVal === 0 ? 'absent' : 'present',
     }
   }
   const str = String(rawVal)
@@ -1567,31 +1604,78 @@ function encodeQuestionnaireField(
   }
 }
 
+function encodeQuestionnaireField(
+  descriptor: QuestionnaireFieldDescriptor,
+  rawVal: ClinicalRiskAssessmentValues[keyof ClinicalRiskAssessmentValues],
+): { value: ClinicalFactValue; presence: ClinicalFactPresence } {
+  return encodeScalarQuestionnaireValue(descriptor.code, rawVal)
+}
+
 export function transcribeBedsideQuestionnaireFacts(
   input: BedsideQuestionnaireTranscriptionInput,
 ): TranscribedClinicalFactCandidate[] {
   const mappingVersion = input.mappingVersion ?? CLINICAL_FACT_MAPPING_VERSION
   const sortedRevisions = [...input.revisions].sort((a, b) => a.revisionNumber - b.revisionNumber)
-  const previousFactIdByFieldKey = new Map<string, string>()
+  const previousFactIdByCode = new Map<string, string>()
   const candidates: TranscribedClinicalFactCandidate[] = []
 
   for (const rev of sortedRevisions) {
     const recordId = rev.observationId ?? rev.revisionId
     const recordVersion = rev.observationVersion ?? String(rev.revisionNumber)
 
-    for (const descriptor of QUESTIONNAIRE_FIELDS) {
-      const encoded = encodeQuestionnaireField(descriptor, rev.values[descriptor.key])
-      const factId = buildFactId('clinmesh-bedside-questionnaire', 'ClinicalRiskAssessment', recordId, recordVersion, descriptor.code)
-      const supersedesFactId = previousFactIdByFieldKey.get(descriptor.key) ?? null
-      previousFactIdByFieldKey.set(descriptor.key, factId)
+    const legacyValues = rev.values
+    if (legacyValues !== undefined) {
+      for (const descriptor of QUESTIONNAIRE_FIELDS) {
+        const encoded = encodeQuestionnaireField(descriptor, legacyValues[descriptor.key])
+        const factId = buildFactId('clinmesh-bedside-questionnaire', 'ClinicalRiskAssessment', recordId, recordVersion, descriptor.code)
+        const supersedesFactId = previousFactIdByCode.get(descriptor.code) ?? null
+        previousFactIdByCode.set(descriptor.code, factId)
+
+        candidates.push({
+          factId,
+          category: 'bedside-questionnaire',
+          itemCode: {
+            code: descriptor.code,
+            system: CLINMESH_RISK_SYSTEM,
+            display: descriptor.display,
+          },
+          value: encoded.value,
+          method: null,
+          specimenOrSite: null,
+          orderedAt: null,
+          effectiveAt: rev.recordedAt,
+          reportedAt: rev.recordedAt,
+          provenance: {
+            recordType: 'ClinicalRiskAssessment',
+            recordId,
+            recordVersion,
+            sourceSystemId: 'clinmesh-bedside-questionnaire',
+          },
+          institutionScope: 'local',
+          recordStatus: rev.revisionNumber > 1 && supersedesFactId ? 'amended' : 'final',
+          presence: encoded.presence,
+          supersedesFactId,
+          verificationStatus: 'not-applicable',
+          ingestedAt: rev.recordedAt,
+          mappingVersion,
+        })
+      }
+    }
+
+    for (const extra of rev.extraAnswers ?? []) {
+      const code = normalizeBedsideItemCode(extra.code)
+      const encoded = encodeScalarQuestionnaireValue(code, extra.value, extra.unit)
+      const factId = buildFactId('clinmesh-bedside-questionnaire', 'BedsideQuestionnaire', recordId, recordVersion, code)
+      const supersedesFactId = previousFactIdByCode.get(code) ?? null
+      previousFactIdByCode.set(code, factId)
 
       candidates.push({
         factId,
         category: 'bedside-questionnaire',
         itemCode: {
-          code: descriptor.code,
+          code,
           system: CLINMESH_RISK_SYSTEM,
-          display: descriptor.display,
+          display: extra.display ?? code,
         },
         value: encoded.value,
         method: null,
@@ -1600,7 +1684,7 @@ export function transcribeBedsideQuestionnaireFacts(
         effectiveAt: rev.recordedAt,
         reportedAt: rev.recordedAt,
         provenance: {
-          recordType: 'ClinicalRiskAssessment',
+          recordType: 'BedsideQuestionnaire',
           recordId,
           recordVersion,
           sourceSystemId: 'clinmesh-bedside-questionnaire',
@@ -1616,6 +1700,55 @@ export function transcribeBedsideQuestionnaireFacts(
     }
   }
 
+  return candidates
+}
+
+export function synthesizeUnaskedQuestionnaireCandidates(input: {
+  evaluatedAt: string
+  items: readonly ActivePackPromptItemInput[]
+  mappingVersion?: string
+  recordedCodes: ReadonlySet<string>
+  subjectId: string
+  subjectKind: 'outpatient' | 'inpatient'
+}): TranscribedClinicalFactCandidate[] {
+  const mappingVersion = input.mappingVersion ?? CLINICAL_FACT_MAPPING_VERSION
+  const seen = new Set<string>()
+  const candidates: TranscribedClinicalFactCandidate[] = []
+
+  for (const item of input.items) {
+    const code = normalizeBedsideItemCode(item.code)
+    if (seen.has(code) || input.recordedCodes.has(code)) continue
+    seen.add(code)
+    const recordId = `${input.subjectKind}:${input.subjectId}`
+    candidates.push({
+      factId: buildFactId('clinmesh-bedside-questionnaire', 'QuestionnairePrompt', recordId, '0', code),
+      category: 'bedside-questionnaire',
+      itemCode: {
+        code,
+        system: CLINMESH_RISK_SYSTEM,
+        display: item.labelZh,
+      },
+      value: { rawText: '没问到', normalizedValue: null },
+      method: null,
+      specimenOrSite: null,
+      orderedAt: null,
+      effectiveAt: input.evaluatedAt,
+      reportedAt: input.evaluatedAt,
+      provenance: {
+        recordType: 'QuestionnairePrompt',
+        recordId,
+        recordVersion: '0',
+        sourceSystemId: 'clinmesh-bedside-questionnaire',
+      },
+      institutionScope: 'local',
+      recordStatus: 'final',
+      presence: 'not-asked',
+      supersedesFactId: null,
+      verificationStatus: 'not-applicable',
+      ingestedAt: input.evaluatedAt,
+      mappingVersion,
+    })
+  }
   return candidates
 }
 

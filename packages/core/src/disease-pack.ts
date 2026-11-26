@@ -12,7 +12,9 @@ import {
   type DiseasePackTaskReadinessResult,
   type DiseasePackTimestampField,
   type DiseasePackTriggerNode,
+  type DeduplicatedQuestionnaireItem,
   type EffectiveDiseasePack,
+  type FollowUpLdlSummary,
   type HospitalOverlay,
 } from '@clinmesh/contracts/disease-pack'
 import {
@@ -1077,5 +1079,94 @@ export function evaluatePackPointScale(
     id: scale.id,
     matchedCriteriaIds,
     score,
+  }
+}
+
+/** Deduplicate bedside questionnaire items across active disease packs by item code, recording all contributing packIds. */
+export function deduplicateQuestionnaireItems(
+  activePacks: readonly EffectiveDiseasePack[],
+): DeduplicatedQuestionnaireItem[] {
+  const byCode = new Map<string, DeduplicatedQuestionnaireItem>()
+  const sortedPacks = [...activePacks].sort((a, b) => a.pack.manifest.id.localeCompare(b.pack.manifest.id))
+
+  for (const effective of sortedPacks) {
+    const packId = effective.pack.manifest.id
+    for (const item of effective.pack.questionnaireItems ?? []) {
+      const code = item.code.trim()
+      const existing = byCode.get(code)
+      if (existing === undefined) {
+        byCode.set(code, {
+          ...item,
+          code,
+          ...(item.options === undefined ? {} : { options: [...item.options] }),
+          packIds: [packId],
+        })
+      } else {
+        const packIds = existing.packIds.includes(packId)
+          ? existing.packIds
+          : [...existing.packIds, packId]
+        const mergedOptions = existing.options !== undefined || item.options !== undefined
+          ? [...new Set([...(existing.options ?? []), ...(item.options ?? [])])]
+          : undefined
+        byCode.set(code, {
+          ...existing,
+          ...(mergedOptions === undefined ? {} : { options: mergedOptions }),
+          packIds,
+        })
+      }
+    }
+  }
+
+  return [...byCode.values()]
+}
+
+/** Compute longitudinal LDL-C comparison (earliest eligible baseline vs latest follow-up measurement in mmol/L). */
+export function evaluateLongitudinalLdlComparison(
+  ledger: ClinicalFactLedger,
+  targetLdlMmolL = 1.4,
+): FollowUpLdlSummary | null {
+  const ldlFacts: Array<{ factId: string; measuredAt: string; measuredMs: number; valueMmolL: number }> = []
+  for (const fact of ledger.facts) {
+    if (!fact.eligibleForScoringAndRedLine || fact.presence !== 'present') continue
+    if (fact.category !== 'laboratory') continue
+    if (resolveCanonicalItemCode(fact.itemCode.code) !== '13457-7') continue
+    const rawVal = fact.value.normalizedValue
+    if (typeof rawVal !== 'object' || rawVal === null || !('value' in rawVal) || typeof rawVal.value !== 'number') continue
+    const unitLower = rawVal.unit.trim().toLowerCase()
+    const mmol = unitLower === 'mg/dl' ? rawVal.value / 38.67 : rawVal.value
+    if (!Number.isFinite(mmol) || mmol <= 0) continue
+    const measuredAt = fact.effectiveAt ?? fact.reportedAt ?? fact.ingestedAt
+    const measuredMs = parseTimestampMs(measuredAt) ?? 0
+    ldlFacts.push({
+      factId: fact.factId,
+      measuredAt,
+      measuredMs,
+      valueMmolL: Math.round(mmol * 100) / 100,
+    })
+  }
+
+  if (ldlFacts.length < 2) return null
+  ldlFacts.sort((a, b) => (a.measuredMs !== b.measuredMs ? a.measuredMs - b.measuredMs : a.factId.localeCompare(b.factId)))
+
+  const baseline = ldlFacts[0]!
+  const latest = ldlFacts[ldlFacts.length - 1]!
+  const deltaMmolL = Math.round((latest.valueMmolL - baseline.valueMmolL) * 100) / 100
+  const atGoal = latest.valueMmolL < targetLdlMmolL
+  const changeDesc = deltaMmolL <= 0
+    ? `下降 ${Math.abs(deltaMmolL)} mmol/L`
+    : `上升 ${deltaMmolL} mmol/L`
+  const goalDesc = atGoal ? `已达标 (< ${targetLdlMmolL} mmol/L)` : `未达标 (目标 < ${targetLdlMmolL} mmol/L)`
+
+  return {
+    atGoal,
+    baselineFactId: baseline.factId,
+    baselineLdlMmolL: baseline.valueMmolL,
+    baselineMeasuredAt: baseline.measuredAt,
+    comparisonTextZh: `LDL-C ${baseline.valueMmolL} -> ${latest.valueMmolL} mmol/L（${changeDesc}，${goalDesc}）`,
+    deltaMmolL,
+    latestFactId: latest.factId,
+    latestLdlMmolL: latest.valueMmolL,
+    latestMeasuredAt: latest.measuredAt,
+    targetLdlMmolL,
   }
 }

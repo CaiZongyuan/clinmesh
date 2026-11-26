@@ -35,8 +35,10 @@ import { KnowledgeSemanticError } from './application/knowledge-semantic-service
 import { UnknownGuidelineTopicError } from './application/guideline-topic-registry.ts'
 import { UnknownOrderSetTemplateError } from './application/order-set-template-registry.ts'
 import {
+  inpatientBedsideQuestionnaireRecordInputSchema,
   inpatientRiskAssessmentInputSchema,
   inpatientVitalSignsInputSchema,
+  outpatientBedsideQuestionnaireRecordInputSchema,
   outpatientRiskAssessmentInputSchema,
 } from '@clinmesh/contracts/clinical-scores'
 import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
@@ -2089,6 +2091,24 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(inpatient.readClinicalScores(await actor(context), context.req.param('admissionId')))
       } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/bedside-questionnaire', async context => {
+      try {
+        z.object({}).strict().parse(context.req.query())
+        return context.json(inpatient.readBedsideQuestionnaire(await actor(context), context.req.param('admissionId')))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.put('/api/his/v1/inpatient/admissions/:admissionId/bedside-questionnaire', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientBedsideQuestionnaireRecordInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const input = { ...body.input, admissionId: context.req.param('admissionId') }
+        return context.json(inpatient.recordBedsideQuestionnaire(
+          await actor(context),
+          input,
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key')),
+        ))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/clinical-fact-ledger', async context => {
       try {
         const filter = buildFactQueryFromHttp({
@@ -2784,6 +2804,30 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(workflow.clinicalScores.readOutpatientClinicalScores(
           await actor(context),
           context.req.param('caseId'),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/outpatient/cases/:caseId/bedside-questionnaire', async (context) => {
+      try {
+        z.object({}).strict().parse(context.req.query())
+        return context.json(workflow.clinicalScores.readOutpatientBedsideQuestionnaire(
+          await actor(context),
+          context.req.param('caseId'),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.put('/api/his/v1/outpatient/cases/:caseId/bedside-questionnaire', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: outpatientBedsideQuestionnaireRecordInputSchema.omit({ caseId: true }) }).strict().parse(await context.req.json())
+        return context.json(workflow.clinicalScores.recordOutpatientBedsideQuestionnaire(
+          await actor(context),
+          { ...body.input, caseId: context.req.param('caseId') },
+          idempotencyKey(context),
         ))
       } catch (error) {
         return apiErrorResponse(context, error)

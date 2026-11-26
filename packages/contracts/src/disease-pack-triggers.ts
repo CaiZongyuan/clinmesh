@@ -3,9 +3,19 @@ import {
   clinicalFactCategorySchema,
   clinicalFactVerificationStatusSchema,
 } from './clinical-fact-ledger.ts'
+import {
+  diseasePackSlugSchema,
+  packSourceSummarySchema,
+  type DiseasePackSlug,
+  type PackSourceSummary,
+} from './pack-source.ts'
 
-export const diseasePackSlugSchema = z.string().regex(/^[a-z0-9-]{1,64}$/)
-export type DiseasePackSlug = z.infer<typeof diseasePackSlugSchema>
+export {
+  diseasePackSlugSchema,
+  packSourceSummarySchema,
+  type DiseasePackSlug,
+  type PackSourceSummary,
+}
 
 export const diseasePackSha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 export const diseasePackTimestampFieldSchema = z.enum(['effectiveAt', 'reportedAt', 'ingestedAt'])
