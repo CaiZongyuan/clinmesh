@@ -1,7 +1,7 @@
 import type { Storage } from '@earendil-works/pi-durable';
 import { z } from 'zod';
 import { createPiSessions } from './pi';
-import { initializeEntity, initializeSchema, type StoreScope } from './schema';
+import { entityNames, initializeEntity, initializeSchema, type StoreScope } from './schema';
 import { createReader, createRepository, type StoreReader, type StoreTx } from './repository';
 import { SerialQueue, duringTransaction, type Schedule, type SqlConnection } from './sqlite';
 import { capture, restore, seal, verifySnapshot, type LogicalSnapshot } from './snapshot';
@@ -20,7 +20,10 @@ export function createStore(db: SqlConnection): StorePort {
   db.atomicSync(() => {
     db.exec('CREATE TABLE IF NOT EXISTS clinmesh_schema (version INTEGER NOT NULL PRIMARY KEY)');
     const versions = db.all('SELECT version FROM clinmesh_schema');
-    if (versions.length === 1 && versions[0]!.version === 1) { initializeEntity(db.exec, 'encounter_triage'); return; }
+    if (versions.length === 1 && versions[0]!.version === 1) {
+      for (const name of entityNames.slice(entityNames.indexOf('encounter_triage'))) initializeEntity(db.exec, name);
+      return;
+    }
     if (versions.length) throw new Error('Unsupported ClinMesh schema version');
     initializeSchema(db.exec);
     db.run('INSERT INTO clinmesh_schema (version) VALUES (1)');

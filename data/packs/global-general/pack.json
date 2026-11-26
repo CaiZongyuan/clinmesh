@@ -1,7 +1,7 @@
 {
   "manifest": {
     "packId": "global-general",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "schemaVersion": 1,
     "name": { "en": "Teaching outpatient clinic", "zh": "综合教学门诊" },
     "description": {
@@ -224,6 +224,15 @@
           "zh": "尿路抗菌药，须核对肾功能及感染部位。"
         },
         "unitPriceMinor": 95
+      },
+      {
+        "codeSystem": "urn:clinmesh:general:community-drug", "code": "doxy-100", "source": "external",
+        "ingredient": { "codeSystem": "urn:clinmesh:general:drug", "code": "doxycycline" },
+        "display": { "en": "Doxycycline · community supply", "zh": "多西环素 · 外配" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] }, "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 100, "unit": "mg" },
+        "safety": { "classCodes": ["antibacterial"], "allergyGroupCodes": ["tetracycline"], "indicationPrefixes": ["J18"], "maxSingleDose": 100, "maxDailyDose": 200 },
+        "packageInsertSummary": { "en": "Community-supplied tetracycline. Check allergy history.", "zh": "外配四环素类药物，核对过敏史。" }, "unitPriceMinor": 0
       }
     ],
     "services": [
@@ -321,6 +330,14 @@
     "materials": []
   },
   "knowledge": {
+    "pharmacy": {
+      "indicationCodeSystem": "http://hl7.org/fhir/sid/icd-10",
+      "classConflicts": [["acei", "arb"], ["acei", "arni"], ["arb", "arni"], ["p2y12", "p2y12"], ["statin", "statin"]],
+      "openingStock": [
+        { "codeSystem": "urn:clinmesh:general:drug", "medicationCodes": ["amoxicillin", "doxycycline", "metformin", "nitrofurantoin"], "lotNumber": "GEN-A", "expiryDate": "2032-06-30", "quantity": 6, "unit": "unit" },
+        { "codeSystem": "urn:clinmesh:general:drug", "medicationCodes": ["amoxicillin", "doxycycline", "metformin", "nitrofurantoin"], "lotNumber": "GEN-B", "expiryDate": "2033-06-30", "quantity": 60, "unit": "unit" }
+      ]
+    },
     "guidelineTopics": [
       {
         "id": "acute-chest-pain-troponin",

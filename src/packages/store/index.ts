@@ -6,6 +6,6 @@ export async function runStoreConformanceSuite(...args: Parameters<typeof import
   const suite = await import('./lib/conformance');
   return suite.runStoreConformanceSuite(...args);
 }
-export { StoreVersionConflictError, StoreIdempotencyConflictError, StorePrivateCaseTruthError, type StoreReader, type StoreTx } from './lib/repository';
+export { StoreVersionConflictError, StoreIdempotencyConflictError, StoreInsufficientInventoryError, StorePrivateCaseTruthError, type StoreReader, type StoreTx } from './lib/repository';
 export type { Changes, EditableEntity, EntityRow, PublicEntity, StoreScope, Workspace, WorkspaceEpoch } from './lib/schema';
 export { canonicalJson } from './lib/json';

@@ -66,8 +66,12 @@ export function seedConformance(tx: StoreTx): string[] {
   add('prescription_orders', { id: fixtureId(56), prescription_id: fixtureId(35), order_id: fixtureId(60) });
   add('no_medication_conclusions', { id: fixtureId(39), encounter_id, reason: 'Synthetic review', ...times });
   add('inventory_lots', { id: lot_id, catalog_item_id, lot_number: 'synthetic-lot', expiry_date: '2028-01-01', unit: 'unit' });
+  add('inventory_movements', { id: fixtureId(105), lot_id, quantity_delta: 5, reason: 'Opening stock', ...times });
   add('inventory_movements', { id: fixtureId(37), lot_id, quantity_delta: -2, reason: 'Dispense', ...times });
   add('dispenses', { id: fixtureId(38), prescription_order_id: fixtureId(56), movement_id: fixtureId(37), quantity: 2, ...times });
+  add('prescription_signatures', { id: fixtureId(102), prescription_id: fixtureId(35), actor: 'synthetic-actor', practitioner_role, source: 'internal', catalog_version: '1', snapshot_hash: '1'.repeat(64) });
+  add('prescription_directions', { id: fixtureId(103), order_id: fixtureId(60), directions: { quantity: 2 } });
+  add('prescription_withdrawals', { id: fixtureId(104), prescription_id: fixtureId(35), actor: 'synthetic-actor', practitioner_role, reason: 'Synthetic review', ...times });
   add('inpatient_admissions', { id: admission_id, encounter_id, ward: 'test-ward', status: 'admitted', version: 1, ...times });
   add('bed_occupancies', { id: fixtureId(41), admission_id, bed: 'test-bed', occupied_at: times.virtual_at, released_at: null, version: 1 });
   add('inpatient_transfers', { id: fixtureId(42), admission_id, from_ward: 'ward-a', to_ward: 'ward-b', ...times });

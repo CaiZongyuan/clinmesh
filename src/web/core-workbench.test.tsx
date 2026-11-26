@@ -101,6 +101,11 @@ it('discovers the workbench, edits real drafts, and requires human approval for 
     await press('Save diagnosis draft'); await formal('Confirm diagnoses', '/diagnosis/confirm');
     const diagnosisWrites = requests.filter(item => item.path.endsWith('/diagnosis/draft'));
     expect(diagnosisWrites[1]!.body.expectedVersion).toBe(Number(diagnosisWrites[0]!.body.expectedVersion) + 1);
+    await set('Clinical views', 'Prescriptions');
+    await screen.findByRole('switch', { name: 'No medication needed' });
+    await human.click(screen.getByRole('switch', { name: 'No medication needed' }));
+    await set('Reason for no medication', 'Teaching case reviewed');
+    await formal('Confirm no medication', '/no-medication');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Complete encounter' }).hasAttribute('disabled')).toBe(false));
     await set('Clinical views', 'Clinical record'); await set('Reason for visit', 'Revision after confirmation');
     const visitPath = requests.find(item => item.path.endsWith('/clinical-record/draft'))!.path.replace('/clinical-record/draft', '');

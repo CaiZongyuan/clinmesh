@@ -47,8 +47,10 @@ const bounds = z.strictObject({ low: z.number().optional(), high: z.number().opt
   range => (range.low !== undefined || range.high !== undefined) && (range.low === undefined || range.high === undefined || range.low <= range.high),
 );
 const analyte = concept.extend({ unit: text, referenceRange: bounds.optional(), critical: bounds.optional() });
-const medication = concept.extend({
-  routeCodes: z.strictObject({ default: text, allowed: texts.min(1) }), dosageUnits: texts.min(1),
+const routeCode = z.enum(['PO', 'IVGTT', 'IV', 'IM', 'IH', 'SL', 'TOP', 'INH']);
+export const medication = concept.extend({
+  source: z.enum(['internal', 'external']).default('internal'), ingredient: coding.optional(),
+  routeCodes: z.strictObject({ default: text, allowed: z.array(routeCode).min(1) }), dosageUnits: texts.min(1),
   inpatientDoseBasis: z.strictObject({ amount: positive, unit: text }),
   safety: z.strictObject({
     classCodes: texts.min(1), allergyGroupCodes: texts, indicationPrefixes: texts,
@@ -70,8 +72,12 @@ export const catalog = z.strictObject({
   materials: z.array(concept.extend({ unitPriceMinor: money, unit: text, diameterMm: positive.optional(), lengthMm: positive.optional() })),
 });
 
+export const pharmacyRules = z.strictObject({ indicationCodeSystem: z.url(), classConflicts: z.array(z.tuple([text, text])) });
+const stockLot = z.strictObject({ codeSystem: z.url(), medicationCodes: texts.min(1), lotNumber: text, expiryDate: z.iso.date(), quantity: z.int().positive(), unit: text });
+export const pharmacyKnowledge = pharmacyRules.extend({ openingStock: z.array(stockLot) });
 const member = coding.extend({ kind: z.enum(['medications', 'services', 'procedures', 'materials']) });
 export const knowledge = z.strictObject({
+  pharmacy: pharmacyKnowledge.optional(),
   guidelineTopics: z.array(z.strictObject({
     id: text, source: z.httpUrl(), version: text, physicalPage: z.int().positive(), verbatim: text, qualifiers: texts,
     population: z.enum(['adult', 'pediatric', 'all']),

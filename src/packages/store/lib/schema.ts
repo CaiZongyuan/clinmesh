@@ -109,6 +109,9 @@ export const tables = {
   refund_transactions: table({ allocation_id: ref('payment_allocations'), reason: text, ...money, ...times }),
   regional_payer_records: table({ encounter_id: enc, payer_code: text, reference: text, determination: frozen, ...times }),
   encounter_triage: table({ encounter_id: enc, vitals: frozen, ...times }, 'encounter_id'),
+  prescription_signatures: table({ prescription_id: ref('prescriptions'), source: choice('internal', 'external'), actor: text, practitioner_role: text, catalog_version: text, snapshot_hash: digest }, 'prescription_id'),
+  prescription_directions: table({ order_id: order, directions: frozen }, 'order_id'),
+  prescription_withdrawals: table({ prescription_id: ref('prescriptions'), actor: text, practitioner_role: text, reason: text, ...times }, 'prescription_id'),
 } satisfies Record<string, TableDefinition>;
 
 export type Entity = keyof typeof tables;

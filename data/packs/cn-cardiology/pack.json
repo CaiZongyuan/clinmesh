@@ -1,7 +1,7 @@
 {
   "manifest": {
     "packId": "cn-cardiology",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "schemaVersion": 1,
     "name": { "en": "Teaching cardiovascular centre", "zh": "心血管介入教学中心" },
     "description": {
@@ -851,6 +851,11 @@
     ]
   },
   "knowledge": {
+    "pharmacy": {
+      "indicationCodeSystem": "http://hl7.org/fhir/sid/icd-10",
+      "classConflicts": [["acei", "arb"], ["acei", "arni"], ["arb", "arni"], ["p2y12", "p2y12"], ["statin", "statin"]],
+      "openingStock": [{ "codeSystem": "urn:clinmesh:cv:drug", "medicationCodes": ["aspirin", "clopidogrel", "ticagrelor", "atorvastatin", "rosuvastatin", "ezetimibe", "perindopril", "valsartan", "sacubitril-valsartan", "metoprolol", "nitroglycerin", "heparin", "enoxaparin", "sodium-chloride", "furosemide", "spironolactone", "dapagliflozin", "oseltamivir", "amoxicillin", "acetaminophen", "metformin", "amlodipine"], "lotNumber": "CV-A", "expiryDate": "2033-06-30", "quantity": 100, "unit": "unit" }]
+    },
     "guidelineTopics": [
       {
         "id": "hypertension-treatment-principles",

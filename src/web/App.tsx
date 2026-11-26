@@ -7,6 +7,7 @@ import { sessionSchema } from '../packages/platform';
 import { Button, Card, Field, Input, Select } from '../packages/ui-kit';
 import { CoreWorkbench } from './CoreWorkbench';
 import type { WorkbenchPanels } from './EncounterPanel';
+import { builtinPanels } from './builtin-panels';
 import { createEpochDrafts } from './encounter-drafts';
 import { api, currentSession, errorMessage, jsonBody, sessionKey, words, workspaceKey, type Language, type Session } from './workbench-api';
 
@@ -41,7 +42,7 @@ function WorkspaceLoader({ session, preferred, panels }: { session: Session; pre
   return <CoreWorkbench workspace={{ ...state.data, sessionVersion: session.sessionVersion }} language={language} languageSelect={<LanguageSelect language={language}/>} panels={panels} draftsFor={draftsFor}/>;
 }
 
-export function App({ panels }: { panels?: WorkbenchPanels } = {}) {
+export function App({ panels = builtinPanels }: { panels?: WorkbenchPanels } = {}) {
   const preferred = useLocale(state => state.language);
   const session = useQuery({ queryKey: sessionKey, queryFn: ({ signal }) => currentSession(signal), staleTime: 60_000 });
   if (session.isError) return <p role="alert">{errorMessage(session.error, preferred ?? 'en')}</p>;
