@@ -1371,6 +1371,7 @@ export class DoctorRecommendationsService {
           const filtered = this.options.promptCards.filterCandidateCardsForSubject({
             cards: candidatesCards,
             context,
+            ledger: meta.ledger,
             subject: { id: payload.caseId, kind: 'outpatient', patientId: patientRow.patient_id },
             timing: 'encounter-open',
           })

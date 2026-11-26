@@ -788,6 +788,7 @@ export class InpatientGuidelineAdvice {
       cards: candidates,
       context,
       inpatient: this.owner,
+      ledger: meta.ledger,
       recordAudit,
       subject: { id: admissionId, kind: 'inpatient', patientId },
       timing,

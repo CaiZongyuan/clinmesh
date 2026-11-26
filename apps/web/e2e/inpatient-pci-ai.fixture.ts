@@ -139,8 +139,41 @@ export async function preparePciAiPatient(app: PciAiBrowserApp) {
   const path = `/api/his/v1/inpatient/admissions/${started.admissionId}`
   const registered = await f.read('registrar', path, inpatientDetailSchema)
   const admission = (await parsePciResponse(inpatientCommandResponseSchema, await f.request('ward-nurse', `${path}/receive`, { encounterVersion: registered.admission.versionId, bedId: 'bed-general-1' }))).data.admission
-  await parsePciResponse(inpatientFullClinicalResponseSchema, await f.request('inpatient-doctor', `${path}/diagnoses/confirm`, { encounterVersion: admission.versionId, expectedRevision: 0,
-    entries: [{ catalogItemId: data.package.diagnosis.id, role: 'primary', admissionCondition: '1', note: '本院确认合成冠心病' }] }))
+  const confirmedDiagnosis = (await parsePciResponse(inpatientFullClinicalResponseSchema, await f.request('inpatient-doctor', `${path}/diagnoses/confirm`, { encounterVersion: admission.versionId, expectedRevision: 0,
+    entries: [{ catalogItemId: data.package.diagnosis.id, role: 'primary', admissionCondition: '1', note: '本院确认合成冠心病' }] }))).data
+  const wsRow = f.runtime.database.driver.prepare(
+    'SELECT workspace_id FROM scenario_epoch_state WHERE epoch = ? LIMIT 1',
+  ).get(epoch) as { workspace_id: string }
+  f.runtime.fhir.create({ epoch, workspaceId: wsRow.workspace_id }, {
+    category: [{ coding: [{ code: 'laboratory', system: 'http://terminology.hl7.org/CodeSystem/observation-category' }] }],
+    code: { coding: [{ code: '2160-0', display: '血清肌酐', system: 'http://loinc.org' }], text: '血清肌酐' },
+    effectiveDateTime: '2026-08-24T08:30:00+08:00',
+    encounter: { reference: `Encounter/${started.admissionId}` },
+    id: randomUUID(),
+    resourceType: 'Observation',
+    status: 'final',
+    subject: { reference: `Patient/${started.patientId}` },
+    valueQuantity: { code: 'umol/L', system: 'http://unitsofmeasure.org', unit: 'umol/L', value: 88 },
+  })
+  const bedsideResponse = await f.runtime.app.request(`${path}/bedside-questionnaire`, {
+    method: 'PUT',
+    headers: {
+      cookie: await f.login('inpatient-doctor'),
+      origin: 'http://localhost',
+      'content-type': 'application/json',
+      'idempotency-key': randomUUID(),
+    },
+    body: JSON.stringify({
+      input: {
+        answers: [{ code: 'smoking-status', textValue: 'former' }],
+        encounterVersion: confirmedDiagnosis.encounterVersion,
+        expectedRevision: 0,
+      },
+    }),
+  })
+  if (bedsideResponse.status !== 200) {
+    throw new Error(`Failed to seed PCI AI bedside smoking-status: ${bedsideResponse.status} ${await bedsideResponse.text()}`)
+  }
   return { path, admissionId: admission.id, patientName: admission.patientName }
 }
 

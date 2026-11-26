@@ -131,6 +131,9 @@ function parsePackJsonObject(content: string, filename: string): Record<string, 
   return checked.data
 }
 
+let defaultDiscoveredPacksCache: readonly EffectiveDiseasePack[] | undefined
+const packVocabularyCache = new WeakMap<EffectiveDiseasePack, ConceptVocabulary>()
+
 export class DiseasePackRegistry {
   readonly #entries = new Map<string, EffectiveDiseasePack>()
   readonly #publicLayer: PublicLayerPolicyInput | undefined
@@ -148,9 +151,22 @@ export class DiseasePackRegistry {
     const disableDefaultDirs =
       options?.includeBuiltinDraftPacks === false ||
       (options?.packDirs !== undefined && options.packDirs.length === 0)
+    const canUseDefaultDiscoveryCache =
+      !disableDefaultDirs
+      && options?.publicLayer === undefined
+      && loadOptions.verifyFingerprint
     if (!disableDefaultDirs) {
-      for (const dir of discoverDefaultDiseasePackDirs()) {
-        this.loadDirectory(dir, loadOptions)
+      if (canUseDefaultDiscoveryCache && defaultDiscoveredPacksCache !== undefined) {
+        for (const cached of defaultDiscoveredPacksCache) {
+          this.#entries.set(cached.pack.manifest.id, cached)
+        }
+      } else {
+        for (const dir of discoverDefaultDiseasePackDirs()) {
+          this.loadDirectory(dir, loadOptions)
+        }
+        if (canUseDefaultDiscoveryCache) {
+          defaultDiscoveredPacksCache = [...this.#entries.values()]
+        }
       }
     }
     for (const dir of options?.packDirs ?? []) {
@@ -162,6 +178,21 @@ export class DiseasePackRegistry {
     for (const rawOverlay of options?.overlays ?? []) {
       this.applyHospitalOverlay(rawOverlay)
     }
+  }
+
+  resolvePackVocabulary(effective: EffectiveDiseasePack): ConceptVocabulary {
+    const cached = packVocabularyCache.get(effective)
+    if (cached !== undefined) return cached
+    const resolved = resolveEffectiveConceptVocabulary({
+      ...(effective.hospitalOverlay?.conceptVocabulary === undefined
+        ? {}
+        : { hospitalLayer: effective.hospitalOverlay.conceptVocabulary }),
+      ...(effective.pack.conceptVocabulary === undefined
+        ? {}
+        : { packLayer: effective.pack.conceptVocabulary }),
+    })
+    packVocabularyCache.set(effective, resolved)
+    return resolved
   }
 
   registerRawPack(
@@ -785,14 +816,7 @@ export class DiseasePackRuntimeService {
   }
 
   #resolvePackVocabulary(effective: EffectiveDiseasePack): ConceptVocabulary {
-    return resolveEffectiveConceptVocabulary({
-      ...(effective.hospitalOverlay?.conceptVocabulary === undefined
-        ? {}
-        : { hospitalLayer: effective.hospitalOverlay.conceptVocabulary }),
-      ...(effective.pack.conceptVocabulary === undefined
-        ? {}
-        : { packLayer: effective.pack.conceptVocabulary }),
-    })
+    return this.registry.resolvePackVocabulary(effective)
   }
 
   #buildTaskFactsResponse(

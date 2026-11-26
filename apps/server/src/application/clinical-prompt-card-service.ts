@@ -36,7 +36,6 @@ import {
   type PromptMedicationDescriptor,
 } from '@clinmesh/core/clinical-prompt-cards'
 import type { QualityMedication, RenalFunctionFact } from '@clinmesh/core/clinical-quality'
-import { resolveEffectiveConceptVocabulary } from '@clinmesh/core/concept-vocabulary'
 import { evaluatePackTrigger } from '@clinmesh/core/disease-pack'
 import {
   evaluateKnowledgeSnapshotForPatient,
@@ -340,6 +339,7 @@ export class ClinicalPromptCardService {
     cards: readonly ClinicalPromptCard[]
     context: ActorContext
     inpatient?: InpatientService | undefined
+    ledger?: ClinicalFactLedger | undefined
     medicationCandidatesByCardId?: ReadonlyMap<string, readonly PromptMedicationDescriptor[]> | undefined
     recordAudit?: boolean | undefined
     subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string }
@@ -350,21 +350,32 @@ export class ClinicalPromptCardService {
     visibleCards: ClinicalPromptCard[]
   } {
     const asOf = input.asOf ?? this.#outpatient.virtualTime(input.context)
-    const ledger = this.#factLedger.buildInternalLedger(input.context, input.subject, {
+    const ledger = input.ledger ?? this.#factLedger.buildInternalLedger(input.context, input.subject, {
       asOf,
       includeSuperseded: false,
     })
     const { evaluatedPacks, riskTagsByPackId, retiredClaimIds, snapshotVersionsByPackId } =
       this.#evaluatePacksForSubject(input.context, input.subject, ledger, asOf)
     const effectiveInpatient = input.inpatient ?? this.#inpatient
-    const scores = input.subject.kind === 'outpatient'
-      ? this.#clinicalScores.outpatientSnapshot(input.context, input.subject.id)
-      : effectiveInpatient
-        ? this.#clinicalScores.inpatientSnapshot(effectiveInpatient, input.context, input.subject.id)
-        : undefined
-    const activeMedications = this.#activeMedications(input.context, input.subject, effectiveInpatient)
-    const allergyCodes = this.#outpatient.patientAllergyCodes(input.context, input.subject.patientId)
-    const medicationCatalog = this.#buildMedicationCatalog(input.context)
+    const needsMedicationContext = (
+      input.medicationCandidatesByCardId !== undefined && input.medicationCandidatesByCardId.size > 0
+    ) || input.cards.some(card => card.suggestions.length > 0)
+    const scores: ClinicalScoreBundle | undefined = !needsMedicationContext
+      ? undefined
+      : input.subject.kind === 'outpatient'
+        ? this.#clinicalScores.outpatientSnapshot(input.context, input.subject.id)
+        : effectiveInpatient
+          ? this.#clinicalScores.inpatientSnapshot(effectiveInpatient, input.context, input.subject.id)
+          : undefined
+    const activeMedications: QualityMedication[] = needsMedicationContext
+      ? this.#activeMedications(input.context, input.subject, effectiveInpatient)
+      : []
+    const allergyCodes: ReadonlySet<string> = needsMedicationContext
+      ? this.#outpatient.patientAllergyCodes(input.context, input.subject.patientId)
+      : new Set<string>()
+    const medicationCatalog = needsMedicationContext
+      ? this.#buildMedicationCatalog(input.context)
+      : new Map<string, PromptMedicationDescriptor>()
 
     const filterResult = filterPromptCardsBeforeDisplay({
       activeMedications,
@@ -409,6 +420,7 @@ export class ClinicalPromptCardService {
     subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string },
     asOfInput?: string,
   ): {
+    ledger: ClinicalFactLedger
     primaryPack: { knowledgeSnapshotVersion: string | null; packId: string; packVersion: string } | undefined
     snapshotVersionsByPackId: Map<string, string>
   } {
@@ -421,6 +433,7 @@ export class ClinicalPromptCardService {
       this.#evaluatePacksForSubject(context, subject, ledger, asOf)
     const firstActive = evaluatedPacks.find(item => item.entry.activationStatus === 'active')
     return {
+      ledger,
       primaryPack: firstActive === undefined
         ? undefined
         : {
@@ -738,14 +751,7 @@ export class ClinicalPromptCardService {
       const packId = effective.pack.manifest.id
       const entry = entriesByPackId.get(packId)
       if (!entry) continue
-      const vocabulary: ConceptVocabulary = resolveEffectiveConceptVocabulary({
-        ...(effective.hospitalOverlay?.conceptVocabulary === undefined
-          ? {}
-          : { hospitalLayer: effective.hospitalOverlay.conceptVocabulary }),
-        ...(effective.pack.conceptVocabulary === undefined
-          ? {}
-          : { packLayer: effective.pack.conceptVocabulary }),
-      })
+      const vocabulary: ConceptVocabulary = this.#diseasePacks.registry.resolvePackVocabulary(effective)
       evaluatedPacks.push({ effective, entry, vocabulary })
 
       const snapshots = effective.pack.knowledgeSnapshots ?? []
