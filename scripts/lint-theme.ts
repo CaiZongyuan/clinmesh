@@ -12,6 +12,7 @@ const colorTokens = /\/\*[\s\S]*?\*\/|url\((?:[^()'"]|'[^']*'|"[^"]*")*\)|"(?:\\
 const namedColors: Readonly<Record<string, number[]>> = createRequire(import.meta.url)('color-name');
 const hexColor = /^#(?:[\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})$/i;
 const rawControl = /^(?:button|input|select|textarea)$/;
+const maxCombinedVariants = 64;
 type Report = (offset: number, token: string) => void;
 
 function acceptsColor(name: string) {
@@ -91,28 +92,67 @@ function scansModulePath(node: ts.Node) {
 
 function inspectScript(source: ts.SourceFile, checker: ts.TypeChecker, report: Report) {
   const resolving = new Set<ts.VariableDeclaration>();
+  type Part = { text: string; offset: number };
+  type Emit = (parts: Part[]) => void;
 
-  function value(node: ts.Node | undefined, use: string) {
+  function inspectParts(parts: Part[], use: string) {
+    const text = parts.map(part => part.text).join('');
+    const atOrigin: Report = (position, token) => {
+      for (const part of parts) {
+        if (position < part.text.length) { report(part.offset + position, token); return; }
+        position -= part.text.length;
+      }
+    };
+    if (use === 'class') inspectUtilities(text, 0, atOrigin);
+    else if (use === 'style') inspectCss(text, 0, atOrigin);
+    else inspectColor(text, 0, atOrigin, use);
+  }
+
+  function concatenate(nodes: ts.Node[], use: string, emit: Emit) {
+    let prefixes: Part[][] = [[]];
+    for (const node of nodes) {
+      const choices: Part[][] = [];
+      value(node, use, parts => choices.push(parts));
+      if (!choices.length) choices.push([{ text: '__dynamic__', offset: node.getStart(source) }]);
+      if (prefixes.length * choices.length > maxCombinedVariants) {
+        prefixes.forEach(emit);
+        prefixes = choices;
+      } else {
+        prefixes = prefixes.flatMap(prefix => choices.map(choice => [...prefix, ...choice]));
+      }
+    }
+    prefixes.forEach(emit);
+  }
+
+  function value(node: ts.Node | undefined, use: string, emit: Emit = parts => inspectParts(parts, use)) {
     if (!node) return;
     if (ts.isStringLiteralLike(node) || ts.isTemplateHead(node) || ts.isTemplateMiddleOrTemplateTail(node)) {
-      const offset = node.getStart(source) + 1;
-      if (use === 'class') inspectUtilities(node.text, offset, report);
-      else if (use === 'style') inspectCss(node.text, offset, report);
-      else inspectColor(node.text, offset, report, use);
+      emit([{ text: node.text, offset: node.getStart(source) + 1 }]);
+    } else if (ts.isNumericLiteral(node)) {
+      emit([{ text: node.text, offset: node.getStart(source) }]);
     } else if (ts.isIdentifier(node)) {
       const symbol = ts.isShorthandPropertyAssignment(node.parent) ? checker.getShorthandAssignmentValueSymbol(node.parent) : checker.getSymbolAtLocation(node);
       const declaration = symbol?.valueDeclaration;
       if (declaration && ts.isVariableDeclaration(declaration) && declaration.getSourceFile() === source &&
         (declaration.parent.flags & ts.NodeFlags.Const) && !resolving.has(declaration)) {
         resolving.add(declaration);
-        value(declaration.initializer, use);
+        value(declaration.initializer, use, emit);
         resolving.delete(declaration);
       }
-    } else if (ts.isJsxExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isParenthesizedExpression(node)) {
-      value(node.expression, use);
+    } else if (ts.isJsxExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
+      value(node.expression, use, emit);
     } else if (ts.isConditionalExpression(node)) {
-      value(node.whenTrue, use);
-      value(node.whenFalse, use);
+      value(node.whenTrue, use, emit);
+      value(node.whenFalse, use, emit);
+    } else if (ts.isBinaryExpression(node)) {
+      switch (node.operatorToken.kind) {
+        case ts.SyntaxKind.PlusToken: concatenate([node.left, node.right], use, emit); break;
+        case ts.SyntaxKind.AmpersandAmpersandToken: value(node.right, use, emit); break;
+        case ts.SyntaxKind.BarBarToken:
+        case ts.SyntaxKind.QuestionQuestionToken: value(node.left, use, emit); value(node.right, use, emit); break;
+      }
+    } else if (ts.isTemplateExpression(node)) {
+      concatenate([node.head, ...node.templateSpans.flatMap(span => [span.expression, span.literal])], use, emit);
     } else if (ts.isObjectLiteralExpression(node)) {
       for (const member of node.properties) {
         if (ts.isSpreadAssignment(member)) value(member.expression, use);
@@ -126,11 +166,6 @@ function inspectScript(source: ts.SourceFile, checker: ts.TypeChecker, report: R
       }
     } else if (use === 'class' && ts.isArrayLiteralExpression(node)) {
       for (const element of node.elements) value(element, use);
-    } else if (use === 'class' && ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
-      value(node.right, use);
-    } else if (use === 'class' && ts.isTemplateExpression(node)) {
-      value(node.head, use);
-      for (const span of node.templateSpans) { value(span.expression, use); value(span.literal, use); }
     }
   }
 

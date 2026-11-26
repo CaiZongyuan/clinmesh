@@ -16,6 +16,11 @@ it('allows semantic UI in business views and reports each raw control, SDK impor
     write('src/packages/ui-kit/lib/primitive.tsx', `import { Input } from '@ui-sdk/react/input'; const color = '#ffffff';`);
     write('src/packages/mod-lab/panel.css', '#abc { color: var(--ui-foreground); content: "Draft #123"; filter: url(#abc); animation-name: red; font-family: coral; }');
     write('src/web/Link.tsx', `const href = '#abc'; const copy = 'bg-blue-500'; const section = document.querySelector('#abc'); export const link = <a href={href} title={copy}>Draft #123</a>;`);
+    write('src/web/Expressions.tsx', [
+      "const fragment = '#abc'; const token = 'var(--ui-border)'; const utility = 'text-primary';",
+      'const copy = `Draft ${fragment}`; const selected = document.querySelector(`${fragment}`);',
+      '<a href={fragment} className={\'px-2 \' + (warn ? utility : \'text-muted\')} style={{ filter: `url(${fragment})`, border: `1px solid ${token}` }}>{copy}</a>;',
+    ].join('\n'));
     write('src/web/copy.css', '#abc::after { content: "text-red-500"; background: url(/icons/bg-blue-500.svg#abc); }');
     write('src/web/example.html', '<div title="Draft #123" style="color: var(--ui-info)">Draft #123</div>');
     expect(lintTheme(root)).toEqual([]);
@@ -26,12 +31,22 @@ it('allows semantic UI in business views and reports each raw control, SDK impor
     write('src/web/shorthand.css', '.note {\n  text-decoration: underline #abc;\n  filter: drop-shadow(0 1px 4px rgb(255 0 0));\n  column-rule: 1px solid coral;\n}');
     write('src/web/ThemeAlias.tsx', `const accent = '#abc';\nexport const note = <div style={{ color: accent, textDecoration: 'underline #123456' }} />;`);
     write('src/web/Bindings.tsx', `const stroke = '#dbc';\nconst tone = 'text-cyan-600';\nconst getMarker = () => document.querySelector('#dbc');\nconst other = () => { const tone = 'text-primary'; return <div className={tone}/>; };\nconst shape = <svg stroke={stroke}/>; const badge = <div className={clsx(tone)}/>;`);
+    write('src/web/Expressions.tsx', [
+      "const tone = '#ef4444';",
+      "const padded = 'px-2 ' + (warn ? 'text-red-600' : 'text-primary');",
+      '<div className={padded} style={{ border: `1px solid ${tone}` }} />;',
+      "<div className={'bg-' + 'blue-500'} style={{ borderColor: chosen ?? (other || '#def') }} />;",
+      '<div className={`p-2 ${ready && \'ring-red-700\'}`} style={{ boxShadow: `0 0 ${width}px #cec` }} />;',
+    ].join('\n'));
     const report = lintTheme(root).join('\n');
     for (const token of ['<button', '<input', '<select', '<textarea', '@ui-sdk/react/button', '@ui-sdk/react/input', 'bg-blue-500', 'text-red-600', 'border-gray-300', 'border-bs-red-500', 'scrollbar-thumb-blue-500', '#abc', 'rgb(', 'hsl(', 'oklch(', 'instead of red', 'rebeccapurple', 'instead of teal', 'lab(']) {
       expect(report, token).toContain(token);
     }
     expect(report).toContain('src/web/Invalid.tsx:2');
     expect(report).toContain('src/packages/mod-lab/view.tsx:2');
+    for (const [line, literal] of [[1, '#ef4444'], [2, 'text-red-600'], [4, 'bg-blue-500'], [4, '#def'], [5, 'ring-red-700'], [5, '#cec']]) {
+      expect(report).toContain(`src/web/Expressions.tsx:${line}: use ui-kit controls and semantic tokens instead of ${literal}`);
+    }
     expect(report.split('\n').filter(line => line.includes('src/web/Bindings.tsx'))).toEqual([
       'src/web/Bindings.tsx:1: use ui-kit controls and semantic tokens instead of #dbc',
       'src/web/Bindings.tsx:2: use ui-kit controls and semantic tokens instead of text-cyan-600',
