@@ -4,7 +4,7 @@
 
 ## Windows 本地启动
 
-本阶段仅支持和验收 Windows 原生环境。仓库保留容器配置，但 Docker、WSL 与 Linux 不在本阶段支持或验收范围。使用 Node.js 24 LTS 和 `package.json` 指定的 pnpm 版本，在仓库根目录的 PowerShell 中执行：
+本阶段仅支持和验收 Windows 原生环境。仓库保留容器配置，但 Docker、WSL 与 Linux 不在本阶段支持或验收范围。本机与 CI 的验证基线为 Node.js 24.18.0，同一 24.x 系列不接受更早版本。使用 `package.json` 指定的 pnpm 版本，在仓库根目录的 PowerShell 中执行：
 
 ```powershell
 pnpm install --frozen-lockfile

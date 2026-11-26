@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
@@ -8,6 +8,10 @@ const legalGraph: Record<string, string> = {
   'packages/store/lib/value': 'export type Value = number;',
   'packages/store/index': "export type { Value } from './lib/value';",
   'packages/store/tests/read': "export type { Value } from '../index';",
+  'packages/data-pack/index': 'export {};',
+  'packages/patient-visit/index': "import '../store';",
+  'packages/clinical-core/index': 'export {};',
+  'packages/platform/index': 'export {};',
   'packages/mod-lab/index': "export type { Value } from '../store';",
   'packages/mod-example/index': 'export {};',
   'server/app': "import '../packages/mod-lab';",
@@ -16,6 +20,8 @@ const legalGraph: Record<string, string> = {
 
 it.each([
   ['entrypoint-boundary-from-app', 'server/app', "import '../packages/store/lib/value'"],
+  ['entrypoint-boundary-from-app', '../vite.config', "import './src/packages/store/lib/value'"],
+  ['import-path-case', 'web/main', "import '../Packages/store/lib/value'"],
   ['entrypoint-boundary-across-packages', 'packages/mod-lab/index', "export type { Value } from '../store/lib/value'"],
   ['entrypoint-boundary-across-packages', 'packages/mod-lab/index', "export type { Value } from '@packages/store/lib/value'"],
   ['tests-through-entrypoints', 'packages/store/tests/read', "export type { Value } from '../lib/value'"],
@@ -23,6 +29,9 @@ it.each([
   ['no-server-importing-web', 'server/app', "void import('../web/main')"],
   ['no-web-importing-server', 'web/main', "import '../server/app'"],
   ['core-never-imports-modules', 'packages/store/index', "import '../mod-example'"],
+  ['ports-never-import-core', 'packages/store/index', "import '../data-pack'"],
+  ['ports-never-import-core', 'packages/platform/index', "import '../clinical-core'"],
+  ['ports-never-import-core', 'packages/platform/index', "import '../patient-visit'"],
   ['no-circular', 'packages/store/lib/value', "import '../index'; export type Value = number"],
 ])('%s accepts the legal graph and rejects the forbidden edge', (rule, source, illegal) => {
   const directory = mkdtempSync(join(process.cwd(), 'node_modules', '.clinmesh-graph-'));
@@ -33,16 +42,18 @@ it.each([
   };
   const lint = () => spawnSync(process.execPath, [guard], { cwd: directory, encoding: 'utf8' });
   try {
+    execFileSync('git', ['init', '--quiet'], { cwd: directory });
     mkdirSync(join(directory, 'scripts'));
     writeFileSync(join(directory, 'tsconfig.json'), JSON.stringify({
       compilerOptions: { baseUrl: '.', paths: { '@packages/*': ['src/packages/*'] } }, include: ['src'],
     }));
     for (const [path, code] of Object.entries(legalGraph)) writeModule(path, code);
+    writeModule('../vite.config', "import './src/packages/store'");
     const legal = lint();
     expect(legal.status, legal.stderr + legal.stdout).toBe(0);
     writeModule(source, illegal);
     const violation = lint();
-    expect(violation.status).toBe(1);
+    expect(violation.status, violation.stderr + violation.stdout).toBeGreaterThan(0);
     expect(violation.stdout + violation.stderr).toContain(rule);
   } finally {
     rmSync(directory, { recursive: true, force: true });

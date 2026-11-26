@@ -14,6 +14,8 @@ module.exports = {
     rule('no-web-importing-server', { path: '^src/web/' }, { path: '^src/server/' }),
     rule('core-never-imports-modules', { path: `${packages}(platform|store|data-pack|patient-visit|clinical-core)/` },
       { path: `${packages}mod-[^/]+/` }),
+    rule('ports-never-import-core', { path: `${packages}(platform|store)/` },
+      { path: `${packages}(data-pack|patient-visit|clinical-core)/` }),
     rule('no-circular', {}, { circular: true }),
   ],
   options: { doNotFollow: { path: 'node_modules' }, tsPreCompilationDeps: true, tsConfig: { fileName: 'tsconfig.json' } },

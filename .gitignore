@@ -11,6 +11,7 @@
 /.worktrees/
 /skills-lock.json
 /previews/
+.prototypes/
 node_modules/
 .wrangler/
 coverage/

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { dirname, relative, resolve, sep } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import GithubSlugger from 'github-slugger';
 import type { Nodes } from 'mdast';
@@ -22,13 +22,24 @@ function readDocument(path: string) {
   const anchors = new Set<string>();
   const links: string[] = [];
   for (const node of walk(tree)) {
-    if (node.type === 'heading') anchors.add(slugger.slug(toString(node)));
+    if (node.type === 'heading') anchors.add(slugger.slug(toString(node, { includeHtml: false })));
     if (node.type === 'html') {
       for (const match of node.value.matchAll(/\s(?:id|name)=["']([^"']+)["']/gi)) anchors.add(match[1]!);
     }
     if (node.type === 'link' || node.type === 'image' || node.type === 'definition') links.push(node.url);
   }
   return { content, anchors, links };
+}
+
+function existsWithExactCase(root: string, target: string) {
+  if (target === root) return true;
+  if (!target.startsWith(root + sep)) return false;
+  let directory = root;
+  for (const segment of relative(root, target).split(sep)) {
+    if (!readdirSync(directory).includes(segment)) return false;
+    directory = join(directory, segment);
+  }
+  return true;
 }
 
 export function verifyMarkdown(root: string, files: string[]): string[] {
@@ -46,7 +57,7 @@ export function verifyMarkdown(root: string, files: string[]): string[] {
         const path = decodeURIComponent(location?.split('?')[0] ?? '');
         const target = !path ? source : path.startsWith('/') ? resolve(root, `.${path}`) : resolve(dirname(source), path);
         const anchor = fragment && decodeURIComponent(fragment);
-        if (!(target === root || target.startsWith(root + sep)) || !existsSync(target)) {
+        if (!existsWithExactCase(root, target)) {
           errors.push(`${file}: missing local target ${link}`);
         } else if (anchor && target.endsWith('.md') && statSync(target).isFile() && !documents.get(target)?.anchors.has(anchor)) {
           errors.push(`${file}: missing heading ${link}`);

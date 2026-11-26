@@ -18,8 +18,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.18.0
       - uses: pnpm/action-setup@v4
       - run: pnpm install --frozen-lockfile
+      - run: git diff --exit-code -- pnpm-workspace.yaml pnpm-lock.yaml package.json
       - run: pnpm check
       - run: pnpm verify:worker
