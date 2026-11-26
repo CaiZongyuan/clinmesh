@@ -1,7 +1,7 @@
 {
   "manifest": {
     "packId": "cn-cardiology",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "schemaVersion": 1,
     "name": { "en": "Teaching cardiovascular centre", "zh": "心血管介入教学中心" },
     "description": {
@@ -780,7 +780,8 @@
             "unit": "mm"
           }
         ]
-      }
+      },
+      { "codeSystem": "urn:clinmesh:cv:service", "code": "registration", "display": { "en": "Visit registration", "zh": "就诊登记" }, "kind": "registration", "unitPriceMinor": 1000, "unit": "次", "analytes": [] }
     ],
     "procedures": [
       {
@@ -924,7 +925,7 @@
           "丙": { "included": false, "priorSelfPayBps": 0 }
         },
         "catalogCoverage": {
-          "urn:clinmesh:cv:service": { "renal": "甲", "tni": "乙", "ecg": "甲", "tte": "乙", "cag": "乙" },
+          "urn:clinmesh:cv:service": { "registration": "丙", "renal": "甲", "tni": "乙", "ecg": "甲", "tte": "乙", "cag": "乙" },
           "urn:clinmesh:classification:icd-9-cm-3-clinical": { "36.0700": "乙", "88.5500": "乙" },
           "urn:clinmesh:cv:material": { "wire-014": "乙", "guide-6f": "乙", "balloon-2.5x15": "乙", "des-3x18": "乙" }
         },

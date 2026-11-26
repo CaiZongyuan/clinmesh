@@ -17,8 +17,9 @@ export function parseRegionalRules(input: unknown) { return rulesSchema.parse(in
 export function regionalRules(reader: StoreReader, at: StoreScope) {
   const pack = reader.list(at, 'data_pack_installations')[0]!;
   const raw = z.object({ regionalRules: z.record(z.string(), z.json()).optional() }).parse(pack.knowledge).regionalRules?.['mod-drg-cn'];
-  if (!raw) throw new CoreError(409, 'REGIONAL_RULES_UNAVAILABLE');
-  return parseRegionalRules(raw);
+  const rules = rulesSchema.safeParse(raw);
+  if (!rules.success) throw new CoreError(409, 'REGIONAL_RULES_UNAVAILABLE');
+  return rules.data;
 }
 export function ratio(amountMinor: number, numerator: number) {
   return amount.parse(Number(BigInt(amountMinor) * BigInt(numerator) / 10_000n));

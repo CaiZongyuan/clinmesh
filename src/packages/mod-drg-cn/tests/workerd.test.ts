@@ -7,8 +7,9 @@ it('rechecks allocation recovery, frozen ward settlement and surgical projection
     await harness.listen();
     const worker = harness.getWorker();
     const run = async (path: string) => { const response = await worker.fetch(path); expect(response.status).toBe(200); return response.json(); };
-    expect(await run('/outpatient')).toMatchObject({ blocked: 'FUNDS_PENDING', replay: 'PAYMENT_ALREADY_RESOLVED', excess: 'REFUND_LIMIT', bill: { pending: false, balanceMinor: -10 }, pending: { tenders: [{ method: 'card', amountMinor: 35 }, { method: 'cash', amountMinor: 5 }] } });
+    expect(await run('/outpatient')).toMatchObject({ blocked: 'FUNDS_PENDING', replay: 'PAYMENT_ALREADY_RESOLVED', excess: 'REFUND_LIMIT', bill: { pending: false, balanceMinor: -60 }, cashOnly: { tenders: [{ method: 'cash', amountMinor: 40 }] }, pending: { tenders: [{ method: 'card', amountMinor: 35 }, { method: 'cash', amountMinor: 5 }] } });
     expect(await run('/inpatient')).toMatchObject({ lock: 'BILLING_LOCKED', corrected: { year: 2026 }, account: { balanceMinor: 5, settlement: { cashMinor: 3930, coverageMinor: 4760 } }, review: { archive: { reconciled: true } } });
     expect(await run('/projection')).toMatchObject({ planned: { group: { group: 'FM39', referenceMinor: 1200000 }, costs: { projectedMinor: 240830 } } });
+    expect(await run('/legacy')).toMatchObject({ restoredPaid: 90, refundedBefore: 10, excessive: 'REFUND_LIMIT', finalPaid: 50, overCorrection: 'CORRECTION_LIMIT', remaining: [0, -30], linked: true, originalRules: { status: 409 }, frozenMinor: 100 });
   } finally { await harness.close(); }
 }, 45_000);

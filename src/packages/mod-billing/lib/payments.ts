@@ -3,17 +3,17 @@ import { z } from 'zod';
 import { checkVersion, sha256, type CommandContext } from '../../platform';
 import { canonicalJson } from '../../store';
 import { account, conflict, reconcile } from './account';
-import { allocation, amount, attemptKind, id, positive, simulation, tender, type BillingAccount, type BillingOptions, type Simulation, type Tender } from './contracts';
+import { allocation, amount, attemptKind, attemptSchema, chargeSchema, id, positive, simulation, tender, type BillingAccount, type BillingOptions, type Simulation, type Tender } from './contracts';
 import { sumMinor } from './money';
 
 const refundCeiling = 1_000_000_000;
-const planSchema = z.strictObject({ kind: z.union([attemptKind, z.literal('settlement')]), amountMinor: amount, tenders: z.array(tender), allocations: z.array(allocation), originId: id.nullable(), reason: z.string(), simulation });
+const planSchema = z.strictObject({ kind: z.union([attemptKind, z.literal('settlement')]), amountMinor: amount, tenders: z.array(tender), allocations: z.array(allocation), originId: id.nullable(), reason: z.string(), simulation, correctionId: id.optional(), accountVersion: amount.optional() });
 type Plan = z.infer<typeof planSchema>;
-export const previewSchema = z.object({ ...planSchema.omit({ simulation: true }).shape, commitToken: id, expiresAt: z.iso.datetime(), version: amount, fingerprint: z.string() });
+export const previewSchema = z.object({ ...planSchema.omit({ simulation: true, accountVersion: true }).shape, commitToken: id, expiresAt: z.iso.datetime(), version: amount, fingerprint: z.string(), review: z.object({ charges: z.array(chargeSchema), payments: z.array(attemptSchema), netMinor: amount, coverageMinor: amount, cashMinor: amount, balanceMinor: z.int() }).optional() });
 export const paymentResult = z.object({ paymentId: id, status: z.enum(['succeeded', 'declined', 'unknown']) });
-export function currentBill(context: CommandContext, options: BillingOptions) {
+export function currentBill(context: CommandContext, options: BillingOptions, check = true) {
   const bill = account(context.tx, context.at, context.targetId, options);
-  checkVersion(bill.version, context.expectedVersion);
+  if (check) checkVersion(bill.version, context.expectedVersion);
   if (bill.policy === 'free') conflict('BILLING_FREE');
   return bill;
 }
@@ -43,16 +43,26 @@ export function collect(bill: BillingAccount, input: { chargeIds: string[]; amou
 }
 
 function requirePool(bill: BillingAccount) {
-  if (bill.encounterClass !== 'inpatient' || !bill.admissionStatus) conflict('ADMISSION_REQUIRED');
+  if (bill.encounterClass !== 'inpatient') conflict('ADMISSION_REQUIRED');
   if (bill.pending) conflict('FUNDS_PENDING');
   if (bill.payerPending) conflict('PAYER_REVIEW_REQUIRED');
 }
-export function deposit(bill: BillingAccount, input: { amountMinor: number; tenders?: Tender[]; simulation: Simulation }): Plan {
-  requirePool(bill);
-  if ((bill.settlement || bill.admissionStatus === 'departed') && input.amountMinor > bill.balanceMinor) conflict('COLLECTION_LIMIT');
-  return { kind: 'deposit', amountMinor: input.amountMinor, allocations: [], tenders: collectionTenders(input.amountMinor, input.tenders), originId: null, reason: '', simulation: input.simulation };
+function correctionLimit(bill: BillingAccount, correctionId: string | undefined, direction: number) {
+  if (!bill.settlement) {
+    if (correctionId) conflict('SETTLEMENT_REQUIRED');
+    return Number.MAX_SAFE_INTEGER;
+  }
+  const correction = bill.corrections.find(item => item.id === correctionId);
+  if (!correction) conflict('CORRECTION_REQUIRED');
+  return Math.max(0, correction.remainingMinor * direction);
 }
-export function refund(bill: BillingAccount, input: { paymentId: string; chargeId?: string; amountMinor: number; reason: string; simulation: Simulation }): Plan {
+export function deposit(bill: BillingAccount, input: { amountMinor: number; tenders?: Tender[]; simulation: Simulation; correctionId?: string }): Plan {
+  requirePool(bill);
+  if (input.amountMinor > correctionLimit(bill, input.correctionId, 1)) conflict('CORRECTION_LIMIT');
+  if ((bill.settlement || bill.admissionStatus === 'departed') && input.amountMinor > bill.balanceMinor) conflict('COLLECTION_LIMIT');
+  return { kind: 'deposit', amountMinor: input.amountMinor, allocations: [], tenders: collectionTenders(input.amountMinor, input.tenders), originId: null, reason: '', simulation: input.simulation, ...(input.correctionId && { correctionId: input.correctionId }) };
+}
+export function refund(bill: BillingAccount, input: { paymentId: string; chargeId?: string; amountMinor: number; reason: string; simulation: Simulation; correctionId?: string }): Plan {
   const pool = input.chargeId === undefined;
   if (pool) requirePool(bill);
   else if (bill.encounterClass !== 'outpatient') conflict('OUTPATIENT_REQUIRED');
@@ -65,18 +75,21 @@ export function refund(bill: BillingAccount, input: { paymentId: string; chargeI
   if (original.status !== 'succeeded') conflict('ORIGINAL_PAYMENT_REQUIRED');
   const allocationCap = line ? (original.allocations.find(item => item.chargeId === line.id)?.amountMinor ?? 0) - sumMinor(prior.flatMap(payment => payment.allocations.filter(item => item.chargeId === line.id).map(item => item.amountMinor))) : Number.MAX_SAFE_INTEGER;
   const basis = line ? -line.adjustedMinor - line.refundedMinor : -bill.balanceMinor;
+  if (pool && input.amountMinor > correctionLimit(bill, input.correctionId, -1)) conflict('CORRECTION_LIMIT');
   const originalCap = original.amountMinor - sumMinor(prior.map(payment => payment.amountMinor));
   if (input.amountMinor > Math.min(refundCeiling, basis, originalCap, allocationCap)) conflict('REFUND_LIMIT');
   let remaining = input.amountMinor;
   const channels: Tender[] = [];
   for (const channel of original.tenders.toReversed()) {
     const used = sumMinor(prior.flatMap(payment => payment.tenders.filter(item => item.method === channel.method).map(item => item.amountMinor)));
-    const returned = Math.min(remaining, channel.amountMinor - used);
+    const assigned = (payment: typeof original) => sumMinor(payment.tenderAllocations.filter(item => item.method === channel.method && item.chargeId === line?.id).map(item => item.amountMinor));
+    const lineRemaining = line ? assigned(original) - sumMinor(prior.map(assigned)) : remaining;
+    const returned = Math.min(remaining, channel.amountMinor - used, lineRemaining);
     if (returned > 0) channels.push({ method: channel.method, amountMinor: returned });
-    remaining -= returned;
+    remaining -= Math.max(0, returned);
   }
   if (remaining) conflict('REFUND_LIMIT');
-  return { kind: pool ? 'deposit-refund' : 'refund', amountMinor: input.amountMinor, tenders: channels, allocations: line ? [{ chargeId: line.id, amountMinor: input.amountMinor }] : [], originId: original.id, reason: input.reason, simulation: input.simulation };
+  return { kind: pool ? 'deposit-refund' : 'refund', amountMinor: input.amountMinor, tenders: channels, allocations: line ? [{ chargeId: line.id, amountMinor: input.amountMinor }] : [], originId: original.id, reason: input.reason, simulation: input.simulation, ...(input.correctionId && { correctionId: input.correctionId }) };
 }
 
 export function settlementPlan(bill: BillingAccount): Plan {
@@ -87,19 +100,28 @@ export function settlementPlan(bill: BillingAccount): Plan {
   return { kind: 'settlement', amountMinor: bill.netMinor, allocations: [], tenders: [], originId: null, reason: '', simulation: 'approved' };
 }
 
+function reviewed(bill: BillingAccount, plan: Plan) {
+  if (bill.encounterClass === 'inpatient') return { charges: bill.charges, payments: bill.payments, netMinor: bill.netMinor, coverageMinor: bill.coverageMinor, cashMinor: bill.cashMinor, balanceMinor: bill.balanceMinor };
+  const ids = new Set(plan.allocations.map(item => item.chargeId));
+  const charges = bill.charges.filter(line => ids.has(line.id));
+  const payments = bill.payments.filter(payment => (plan.originId && (payment.id === plan.originId || payment.originId === plan.originId)) || payment.allocations.some(item => ids.has(item.chargeId)));
+  const netMinor = sumMinor(charges.map(line => line.netMinor)), coverageMinor = sumMinor(charges.map(line => line.coverageMinor)), cashMinor = sumMinor(charges.map(line => line.netPaidMinor));
+  return { charges, payments, netMinor, coverageMinor, cashMinor, balanceMinor: sumMinor([netMinor, -coverageMinor, -cashMinor]) };
+}
+const fingerprintOf = (bill: BillingAccount, plan: Plan) => sha256(canonicalJson(bill.encounterClass === 'inpatient' ? bill : { currency: bill.currency, policy: bill.policy, ...reviewed(bill, plan) }));
 export async function preview(context: CommandContext, bill: BillingAccount, plan: Plan) {
   const commitToken = v7();
   const expiresAt = new Date(Date.parse(context.recordedAt) + 300_000).toISOString();
-  const fingerprint = await sha256(canonicalJson(bill));
-  context.tx.insert(context.at, 'billing_previews', { id: commitToken, encounter_id: bill.encounterId, actor_id: context.actor.id, practitioner_role: context.actor.role.id, plan, fingerprint, expires_at: expiresAt, virtual_at: context.virtualAt, recorded_at: context.recordedAt });
-  return previewSchema.parse({ ...plan, commitToken, expiresAt, version: bill.version, fingerprint });
+  const fingerprint = await fingerprintOf(bill, plan);
+  context.tx.insert(context.at, 'billing_previews', { id: commitToken, encounter_id: bill.encounterId, actor_id: context.actor.id, practitioner_role: context.actor.role.id, plan: { ...plan, accountVersion: bill.version }, fingerprint, expires_at: expiresAt, virtual_at: context.virtualAt, recorded_at: context.recordedAt });
+  return previewSchema.parse({ ...plan, commitToken, expiresAt, version: bill.version, fingerprint, review: reviewed(bill, plan) });
 }
 
 async function frozen(context: CommandContext, bill: BillingAccount, commitToken: string, kind: Plan['kind']) {
   const row = context.tx.get(context.at, 'billing_previews', commitToken);
   if (!row || row.actor_id !== context.actor.id || row.practitioner_role !== context.actor.role.id || row.encounter_id !== bill.encounterId || row.expires_at <= context.recordedAt) conflict('PREVIEW_EXPIRED');
   const plan = planSchema.parse(row.plan);
-  if (plan.kind !== kind || row.fingerprint !== await sha256(canonicalJson(bill))) conflict('PREVIEW_STALE');
+  if (plan.kind !== kind || row.fingerprint !== await fingerprintOf(bill, plan) || (context.expectedVersion !== plan.accountVersion && context.expectedVersion !== bill.version)) conflict('PREVIEW_STALE');
   return { plan, fingerprint: row.fingerprint };
 }
 

@@ -19,13 +19,15 @@ export async function outpatientContract(store: StorePort) {
   await command('payment.recover', { paymentId: attempt.paymentId, paymentVersion: 1 });
   const replay = await code(command('payment.recover', { paymentId: attempt.paymentId, paymentVersion: 1 }));
   await command('charge.adjust', { chargeId: first.chargeId, amountMinor: 50, reason: 'Duplicate supply' });
-  const refundFields = { paymentId: attempt.paymentId, chargeId: first.chargeId, amountMinor: 40, reason: 'Return original allocation', simulation: 'delayed-approval' };
+  const refundFields = { paymentId: attempt.paymentId, chargeId: second.chargeId, amountMinor: 40, reason: 'Return original allocation', simulation: 'delayed-approval' };
+  const cashOnly = await command('refund.allocation.preview', { ...refundFields, chargeId: first.chargeId });
+  await command('charge.adjust', { chargeId: second.chargeId, amountMinor: 50, reason: 'Duplicate supply' });
   const refund = await command('refund.allocation.preview', refundFields);
   const concurrent = await command('refund.allocation.preview', refundFields);
   const raced = await Promise.all([refund, concurrent].map(async preview => code(command('refund.allocation.confirm', { commitToken: preview.commitToken }))));
   const pending = (await read()).payments.find(payment => payment.kind === 'refund')!;
-  const blockedRefund = await code(command('refund.allocation.preview', { ...refundFields, chargeId: second.chargeId }));
+  const blockedRefund = await code(command('refund.allocation.preview', { ...refundFields, chargeId: first.chargeId }));
   await command('payment.recover', { paymentId: pending.id, paymentVersion: 1 });
   const excess = await code(command('refund.allocation.preview', { ...refundFields, amountMinor: 11 }));
-  return { short, attempt, blocked, replay, raced, blockedRefund, excess, releases, pending, bill: await read(), first: first.amount, second: second.amount };
+  return { short, attempt, blocked, replay, raced, blockedRefund, excess, releases, pending, cashOnly, bill: await read(), first: first.amount, second: second.amount };
 }

@@ -3,6 +3,7 @@ import { formatMinor, parseMinor } from '../index';
 import { createNodeSqliteStore } from '../../store';
 import { billingFixture } from '../../../server/testing/billing-fixture';
 import { outpatientContract } from '../../../server/testing/outpatient-billing';
+import { restoreLegacyBilling } from '../../../server/testing/legacy-billing';
 
 it('round trips the exact smallest units of a zero-decimal and a two-decimal hospital', () => {
   const yen = { code: 'JPY', minorUnitExponent: 0 };
@@ -12,6 +13,29 @@ it('round trips the exact smallest units of a zero-decimal and a two-decimal hos
   expect(parseMinor('90071992547409.91', dollar)).toBe(Number.MAX_SAFE_INTEGER);
   expect(() => parseMinor('1.1', yen)).toThrow();
   expect(() => parseMinor('90071992547409.92', dollar)).toThrow();
+});
+
+it('restores the 2f49e201 v2 ledger including its original refund and discharges the restored admission through production cashier routes', async () => {
+  const store = createNodeSqliteStore({ dbPath: ':memory:' });
+  try {
+    expect(await restoreLegacyBilling(store)).toMatchObject({ restoredPaid: 90, refundedBefore: 10, excessive: 'REFUND_LIMIT', finalPaid: 50, tenders: [{ method: 'card', amountMinor: 40 }], overCorrection: 'CORRECTION_LIMIT', remaining: [0, -30], linked: true, clearance: { canClearBed: false }, originalRules: { status: 409, data: { code: 'REGIONAL_RULES_UNAVAILABLE' } }, frozenMinor: 100 });
+  } finally { await store.close(); }
+});
+
+it('settles unchanged selected charges under an unrelated edit and refuses a withdrawn source at the point of collection', async () => {
+  const store = createNodeSqliteStore({ dbPath: ':memory:' });
+  try {
+    const { at, order, read, call, command } = await billingFixture(store);
+    const selected = await order(), unrelated = await order();
+    const preview = await command('payment.preview', { chargeIds: [selected.chargeId] });
+    const version = (await read()).version;
+    const withdrawn = await command('payment.preview', { chargeIds: [unrelated.chargeId] });
+    await store.withTransaction(tx => tx.update(at, 'clinical_orders', unrelated.orderId, 1, { status: 'withdrawn' }));
+    await expect(call('payment.confirm', { commitToken: preview.commitToken }, version)).resolves.toMatchObject({ status: 'succeeded' });
+    await expect(command('payment.confirm', { commitToken: withdrawn.commitToken })).rejects.toMatchObject({ code: 'PREVIEW_STALE' });
+    await expect(command('payment.preview', { chargeIds: [unrelated.chargeId] })).rejects.toMatchObject({ code: 'CHARGE_UNAVAILABLE' });
+    expect((await read()).charges.find(line => line.id === unrelated.chargeId)).toMatchObject({ cancelled: true, released: false, netMinor: 0 });
+  } finally { await store.close(); }
 });
 
 it('expires previews on the real clock, enforces single-use and rejects a cancelled clinical source at confirmation', async () => {
@@ -70,7 +94,8 @@ it('recovers the frozen shared payment, then refunds its explicit allocation in 
     expect(result.raced.filter(outcome => outcome === 'accepted')).toHaveLength(1);
     expect(new Set(result.releases).size).toBe(2);
     expect(result.releases).toHaveLength(2);
-    expect(result.bill).toMatchObject({ currency: { code: 'USD', minorUnitExponent: 2 }, pending: false, balanceMinor: -10 });
+    expect(result.cashOnly.tenders).toEqual([{ method: 'cash', amountMinor: 40 }]);
+    expect(result.bill).toMatchObject({ currency: { code: 'USD', minorUnitExponent: 2 }, pending: false, balanceMinor: -60 });
     expect(result.bill.payments).toHaveLength(3);
   } finally { await store.close(); }
 });

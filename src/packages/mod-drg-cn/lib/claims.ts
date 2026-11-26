@@ -11,7 +11,7 @@ export type Billing = Pick<ReturnType<typeof createBillingModule>, 'readAccount'
 const payer = 'mod-drg-cn';
 const terms = z.object({ patientId: z.uuidv7(), year: z.int(), encounterClass: z.enum(['outpatient', 'inpatient']), planId: z.string(), annualVersion: amount, allocations: allocationsSchema });
 export const claimSchema = terms.extend({ fingerprint: z.string().regex(/^[0-9a-f]{64}$/) });
-const event = terms.extend({ action: z.enum(['confirm', 'cancel']), originalId: z.uuidv7().nullable(), replacementRequired: z.boolean().default(false) });
+const event = terms.extend({ action: z.enum(['confirm', 'cancel']), originalId: z.uuidv7().nullable(), replacementRequired: z.boolean().default(false), correctionId: z.uuidv7().nullable().default(null) });
 export function claimEvents(reader: StoreReader, at: StoreScope, encounterId?: string) {
   return reader.list(at, 'regional_payer_records', { payer_code: payer, ...(encounterId ? { encounter_id: encounterId } : {}) }).map(row => ({ id: row.id, encounterId: row.encounter_id, ...event.parse(row.determination) }));
 }
@@ -26,6 +26,14 @@ export const regionalPayer: PayerBenefitHook = {
       coverage.set(item.chargeId, { amountMinor: sum([previous?.amountMinor ?? 0, delta]), revision: (previous?.revision ?? 0) + 1, basisMinor: entry.action === 'confirm' ? item.netMinor : undefined, requiresReview: entry.action === 'cancel' && entry.replacementRequired });
     }
     return coverage;
+  },
+  correctionCoverage(reader, at, encounterId) {
+    const credited = new Map<string, number>();
+    for (const claim of claimEvents(reader, at, encounterId)) if (claim.correctionId) {
+      const value = sum([claim.allocations.fundMinor, claim.allocations.accountMinor]) * (claim.action === 'confirm' ? 1 : -1);
+      credited.set(claim.correctionId, sum([credited.get(claim.correctionId) ?? 0, value]));
+    }
+    return credited;
   },
 };
 export function activeClaims(reader: StoreReader, at: StoreScope, encounterId: string) {
@@ -58,18 +66,23 @@ export async function quote(context: CommandContext, billing: Billing, input: { 
     if (bill.encounterClass === 'outpatient' && item.kind === 'medications' && encounter.status !== 'completed') denied('INSURANCE_FUNDS_CONFLICT');
     const tier = z.object({ insuranceTier: z.string().optional() }).parse(item.definition).insuranceTier ?? defaults.catalogCoverage[item.code_system]?.[item.code];
     if (!tier || !defaults.tiers[tier]) denied('INSURANCE_COVERAGE_UNAVAILABLE');
-    return { chargeId, tier, netMinor: line.netMinor };
+    const prescriptionId = line.orderId ? tx.list(at, 'prescription_orders', { order_id: line.orderId })[0]?.prescription_id : undefined;
+    if (prescriptionId) {
+      const prescriptionOrders = new Set(tx.list(at, 'prescription_orders', { prescription_id: prescriptionId }).map(member => member.order_id));
+      if (bill.charges.some(other => other.orderId && prescriptionOrders.has(other.orderId) && other.netMinor > 0 && !other.cancelled && !input.chargeIds.includes(other.id))) denied('PRESCRIPTION_COVERAGE_INCOMPLETE');
+    }
+    return { chargeId, tier, netMinor: line.netMinor, prescriptionId };
   });
   const annual = (key: 'fundMinor' | 'accountMinor' | 'eligibleMinor') => sum(history.filter(entry => key === 'accountMinor' || entry.encounterClass === bill.encounterClass).map(entry => entry.allocations[key] * (entry.action === 'confirm' ? 1 : -1)));
   const allocations = allocateBenefits(defaults, plan, bill.encounterClass, { eligibleMinor: annual('eligibleMinor'), fundMinor: annual('fundMinor'), accountUsedMinor: annual('accountMinor') }, lines);
   const result = { patientId: encounter.patient_id, year, planId: plan.id, encounterClass: bill.encounterClass, annualVersion: history.length, allocations };
-  return { ...result, replacesId: replacement?.originalId ?? null, fingerprint: await sha256(canonicalJson({ result, encounterId: targetId, billVersion: bill.version, epoch: at.epoch, actor: context.actor.id })) };
+  return { ...result, replacesId: replacement?.originalId ?? null, correctionId: replacement?.correctionId ?? null, fingerprint: await sha256(canonicalJson({ result, encounterId: targetId, billVersion: bill.version, epoch: at.epoch, actor: context.actor.id })) };
 }
 export async function confirmBenefit(ctx: CommandContext, billing: Billing, input: { planId: string; chargeIds: string[]; fingerprint: string }) {
-  const { fingerprint, replacesId, ...terms } = await quote(ctx, billing, input);
+  const { fingerprint, replacesId, correctionId, ...terms } = await quote(ctx, billing, input);
   if (fingerprint !== input.fingerprint) denied('BENEFIT_PREVIEW_STALE');
   const claimId = v7();
-  ctx.tx.insert(ctx.at, 'regional_payer_records', { id: claimId, encounter_id: ctx.targetId, payer_code: payer, reference: fingerprint, determination: { ...terms, action: 'confirm', originalId: replacesId }, virtual_at: ctx.virtualAt, recorded_at: ctx.recordedAt });
+  ctx.tx.insert(ctx.at, 'regional_payer_records', { id: claimId, encounter_id: ctx.targetId, payer_code: payer, reference: fingerprint, determination: { ...terms, action: 'confirm', originalId: replacesId, correctionId }, virtual_at: ctx.virtualAt, recorded_at: ctx.recordedAt });
   billing.reconcile(ctx.tx, ctx.at, ctx.targetId, ctx.virtualAt, ctx.recordedAt);
   return { claimId };
 }
@@ -78,9 +91,10 @@ export function cancelBenefit(ctx: CommandContext, billing: Billing, input: { cl
   checkVersion(bill.version, ctx.expectedVersion);
   if (bill.pending) denied('INSURANCE_FUNDS_CONFLICT');
   const original = activeClaims(ctx.tx, ctx.at, ctx.targetId).find(claim => claim.id === input.claimId) ?? denied('CLAIM_NOT_ACTIVE');
-  if (bill.settlement && !original.allocations.items.some(item => bill.charges.some(line => line.id === item.chargeId && line.payerPending))) denied('INSURANCE_FUNDS_CONFLICT');
+  const affected = new Set(original.allocations.items.filter(item => bill.charges.some(line => line.id === item.chargeId && line.payerPending)).map(item => item.chargeId));
+  const correctionId = bill.settlement ? bill.corrections.findLast(correction => affected.has(correction.chargeId))?.id ?? denied('INSURANCE_FUNDS_CONFLICT') : null;
   checkVersion(claimEvents(ctx.tx, ctx.at).filter(entry => entry.patientId === original.patientId && entry.year === original.year).length, input.annualVersion);
   const claimId = v7();
-  ctx.tx.insert(ctx.at, 'regional_payer_records', { id: claimId, encounter_id: ctx.targetId, payer_code: payer, reference: original.id, determination: { ...terms.parse(original), annualVersion: input.annualVersion, action: 'cancel', originalId: original.id, replacementRequired: Boolean(bill.settlement) }, virtual_at: ctx.virtualAt, recorded_at: ctx.recordedAt });
+  ctx.tx.insert(ctx.at, 'regional_payer_records', { id: claimId, encounter_id: ctx.targetId, payer_code: payer, reference: original.id, determination: { ...terms.parse(original), annualVersion: input.annualVersion, action: 'cancel', originalId: original.id, replacementRequired: Boolean(bill.settlement), correctionId }, virtual_at: ctx.virtualAt, recorded_at: ctx.recordedAt });
   return { claimId };
 }

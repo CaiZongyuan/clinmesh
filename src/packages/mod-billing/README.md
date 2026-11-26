@@ -2,6 +2,8 @@
 
 Node 与 Workspace Durable Object 都从 `builtinModules` 装配 `createBillingModule()`。收费岗位从就诊页打开「收费工作台」，切换门诊或住院队列，核对币种、余额、历史和冻结预览。选择模拟渠道响应可演练拒付、延迟成功与延迟拒付。正式资金动作要求人工确认。刷新中断请求后可用原幂等键核对回执。
 
+内置 1.1.0 数据包声明了门诊挂号服务。接诊岗开诊时由 `encounterStarted` 在同一事务登记费用，收费员可办理收退。住院 Encounter 从开诊起即有独立预交金账户，首次封账读取实际住院出区事实。
+
 ## 临床接入
 
 开立本院医嘱的同一写事务调用 `freezeCharge(tx, at, source)`。来源包含就诊、医嘱、品规 ID、数据包版本、数量、单价、币种、精度、业务时间及审计时间，可附发生科室。重复传入相同来源得到同一 Charge Item。受理检查或发药的事务通过 `readOrderFunds(reader, at, orderId)` 重读资金状态。`released` 体现预付或后付策略，`state` 提供药房核对结清所需的细分状态，`locked` 标记资金已涉及的账项。成功收款以及有效第三方覆盖足额后，持久化放行事实并在同一事务调用可选 `onRelease`。
@@ -20,8 +22,10 @@ Node 与 Workspace Durable Object 都从 `builtinModules` 装配 `createBillingM
 | `inpatient.deposit.*` / `inpatient.refund.*` | 预交金与出区补缴进入本次住院资金池。多收部分按选定原款退回。 |
 | `inpatient.settlement.preview` / `inpatient.discharge.settle` | 患者已实际出区并完成显式收退后封账。冻结逐项费用、分摊和实收快照，后续费用更正用 `inpatient.correction` 追加。 |
 
-原款及退回均保留独立尝试、渠道和逐项分配。冲减依据跨多次原款共享。确认在 Store 事务内重新校验冻结账本，任一资金或费用变化均须重新预览。第三方覆盖和待复核状态通过可选 `PayerBenefitHook` 提供。
+原款及退回均保留独立尝试、渠道和逐项分配。每项退款只退至原款实际分配给该项的渠道。冲减依据跨多次原款共享。门诊确认重验冻结费用和相关原款，住院确认重验全账。账本及资金端口的 `releaseRecorded` 记录该账项触发过临床放行，`released` 表示当前资金可执行性。结算后补收或退款须指定 `correctionId`，工作台列出各项更正的待收退额。第三方覆盖和待复核状态通过可选 `PayerBenefitHook` 提供。
 
 ## 验证
 
 `pnpm exec vitest run src/packages/mod-billing/tests src/packages/mod-drg-cn/tests src/web/modules/billing/cashier.test.tsx` 覆盖 USD、CNY、JPY、预览过期、并发退款、跨年度待遇、Node SQLite、workerd SQLite 与 UI Agent 人工确认。`pnpm check` 和 `pnpm verify:worker` 分别验证完整应用与生产 Worker 打包。
+
+基线 `2f49e201` 导出的[合成 v2 快照](../../server/testing/fixtures/2f49e201-v2.json)含原款 100、历史退款 10 及已实际出区的住院记录。两种 SQLite 宿主均从快照恢复，经正式收费路由处理剩余原款与住院封账。

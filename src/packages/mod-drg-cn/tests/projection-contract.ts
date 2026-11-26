@@ -29,5 +29,14 @@ export async function projectionContract(store: StorePort) {
   });
   const planned = projectionSchema.parse(await call('drg.summary'));
   await store.withTransaction(tx => tx.insert(at, 'surgery_executions', { id: v7(), surgery_request_id: surgeryId, outcome: 'completed', recorded_at: instant, virtual_at: instant }));
-  return { planned, performed: projectionSchema.parse(await call('drg.summary')) };
+  const performed = projectionSchema.parse(await call('drg.summary'));
+  await store.withTransaction(tx => {
+    const procedure = tx.list(at, 'catalog_items', { code: '88.5500' })[0]!;
+    const orderId = v7();
+    tx.insert(at, 'clinical_orders', { id: orderId, encounter_id: encounterId, catalog_item_id: procedure.id, version: 1, kind: 'surgery', status: 'signed', recorded_at: instant, virtual_at: instant });
+    tx.insert(at, 'surgery_requests', { id: v7(), order_id: orderId, procedure_item_id: procedure.id, status: 'planned', version: 1 });
+    const admission = tx.list(at, 'inpatient_admissions', { encounter_id: encounterId })[0]!;
+    tx.insert(at, 'medical_record_archives', { id: v7(), admission_id: admission.id, archive: { payerDetermination: { group: 'FM39', referenceMinor: 1200000, approvedMinor: 1080000 } }, recorded_at: instant, virtual_at: instant });
+  });
+  return { planned, performed, ambiguous: projectionSchema.parse(await call('drg.summary')) };
 }

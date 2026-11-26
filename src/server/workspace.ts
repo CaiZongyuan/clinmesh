@@ -55,7 +55,11 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
       operations: catalog.entries.filter(entry => permits(actor, entry)).map(({ name, method, path }) => ({ name, method, path })) };
   });
   catalog.command({ name: 'encounter.start', method: 'POST', path: '/api/his/cases/:id/start-encounter', access: { capabilities: ['register', 'assess'] } },
-    { language: z.enum(['en', 'zh']).optional() }, z.object({ encounterId: z.uuidv7(), version: z.int() }), (context, input) => startEncounter(context, input.language));
+    { language: z.enum(['en', 'zh']).optional() }, z.object({ encounterId: z.uuidv7(), version: z.int() }), (context, input) => {
+      const result = startEncounter(context, input.language);
+      for (const module of registry.enabled(context.actor.enabledModules)) module.encounterStarted?.(context.tx, context.at, result.encounterId, context.virtualAt, context.recordedAt);
+      return result;
+    });
   catalog.query({ name: 'encounter.list', path: '/api/his/encounters', access: {} }, z.array(summarySchema), ({ reader, actor }) => listEncounters(reader, actor.at));
   registerClinicalOperations(catalog, registry);
   for (const module of modules) {
