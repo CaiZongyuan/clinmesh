@@ -45,29 +45,43 @@ function RecordEditor(props: Editor) {
   const text = words(language);
   const note = drafts(state => state.note);
   const fields = currentRecordFields(encounter.template, { ...encounter.fields, ...note?.fields });
+  const activeEdits = currentRecordFields(encounter.template, note?.fields ?? {});
+  const hasActiveEdits = Object.keys(activeEdits).length > 0;
+  const retiredEdits = Object.fromEntries(Object.entries(note?.fields ?? {}).filter(([id]) => !Object.hasOwn(activeEdits, id)));
+  const reviewIds = [...new Set([...Object.keys(retiredEdits), ...Object.entries(encounter.retiredFields).filter(([, field]) => field.saved !== field.signed).map(([id]) => id)])];
   const editable = allowed(props, 'record.draft');
   const conflict = !!note && encounter.draftVersion > note.version;
   const titles = new Map(props.workspace.manifest.clinicalRecordTemplate.map(field => [field.id, field.title[language]]));
+  function acknowledge(submitted: Record<string, string>, result: unknown) {
+    const ack = z.object({ version: z.int(), draftVersion: z.int() }).parse(result);
+    drafts.setState(current => {
+      const remaining = Object.fromEntries(Object.entries(current.note?.fields ?? {}).filter(([id, value]) => submitted[id] !== value));
+      return { acknowledgedVersion: Math.max(current.acknowledgedVersion, ack.version), note: Object.keys(remaining).length ? { fields: remaining, version: ack.draftVersion } : undefined };
+    });
+  }
   function save() {
-    if (!note || conflict) return;
+    if (!note || !hasActiveEdits || conflict) return;
     const version = Math.max(encounter.version, drafts.getState().acknowledgedVersion);
-    run(props.submit({ name: 'record.draft', targetId: encounter.id, version, fields: { fields, expectedDraftVersion: note.version } }).then(result => {
-      const ack = z.object({ version: z.int(), draftVersion: z.int() }).parse(result);
-      drafts.setState(current => {
-        const remaining = Object.fromEntries(Object.entries(current.note?.fields ?? {}).filter(([key, value]) => note.fields[key] !== value));
-        return { acknowledgedVersion: Math.max(current.acknowledgedVersion, ack.version), note: Object.keys(remaining).length ? { fields: remaining, version: ack.draftVersion } : undefined };
-      });
-    }));
+    run(props.submit({ name: 'record.draft', targetId: encounter.id, version, fields: { fields, expectedDraftVersion: note.version } }).then(result => acknowledge(activeEdits, result)));
+  }
+  function signReviewed(decision: 'include' | 'discard') {
+    run(command(props, 'record.sign', { expectedDraftVersion: encounter.draftVersion, retiredReview: { decision, localFields: retiredEdits } }).then(result => acknowledge(retiredEdits, result)));
   }
   return <div className="clinical-panel"><div className="record-fields">{encounter.template.map(field => <Field key={field.id} label={field.title[language]}>
     <Textarea required={field.required} readOnly={!editable} value={fields[field.id] ?? ''} onValueChange={value => drafts.setState({ note: { fields: { ...note?.fields, [field.id]: value }, version: note?.version ?? encounter.draftVersion } })}/>
   </Field>)}</div>
     {conflict && editable && !props.busy && <DraftConflict language={language} keep={() => drafts.setState({ note: { ...note, version: encounter.draftVersion } })} discard={() => drafts.setState({ note: undefined })}>
-      <dl>{Object.entries(note.fields).map(([id, local]) => <div key={id}><dt>{titles.get(id) ?? id}</dt><dd>{text('Saved', '已保存')} · {encounter.fields[id] || '—'}</dd><dd>{text('My edits', '我的编辑')} · {local || '—'}</dd></div>)}</dl>
+      <dl>{Object.entries(note.fields).map(([id, local]) => <div key={id}><dt>{titles.get(id) ?? id}</dt><dd>{text('Saved', '已保存')} · {encounter.fields[id] || encounter.retiredFields[id]?.saved || '—'}</dd><dd>{text('My edits', '我的编辑')} · {local || '—'}</dd></div>)}</dl>
     </DraftConflict>}
+    {reviewIds.length > 0 && <Card><h3>{text('Review previous template fields', '核对既往模板字段')}</h3><dl>{reviewIds.map(id => <div key={id}><dt>{titles.get(id) ?? id}</dt>
+      <dd>{text('Last signed', '上次签署')} · {encounter.retiredFields[id]?.signed ?? '—'}</dd><dd>{text('Saved draft', '已存草稿')} · {encounter.retiredFields[id]?.saved ?? '—'}</dd>
+      {Object.hasOwn(retiredEdits, id) && <dd>{text('Unsaved edit', '本地编辑')} · {retiredEdits[id] || '—'}</dd>}</div>)}</dl>
+      {(['include', 'discard'] as const).map(decision => { const label = decision === 'include' ? text('Include corrections and sign', '保留更正并签署') : text('Discard corrections and sign', '放弃更正并签署');
+        return <ConfirmActionButton key={decision} confirmation={label} disabled={props.busy || hasActiveEdits || conflict || !allowed(props, 'record.sign') || !encounter.draftVersion} onClick={() => signReviewed(decision)}>{label}</ConfirmActionButton>; })}
+    </Card>}
     {encounter.status === 'active' && <div className="cm-actions">
-      <Button disabled={props.busy || !editable || !note || conflict} onClick={save}>{text('Save record draft', '保存病历草稿')}</Button>
-      <ConfirmActionButton disabled={props.busy || !allowed(props, 'record.sign') || !!note || !encounter.draftVersion} confirmation={text('Sign this saved clinical record?', '签署当前已保存的病历？')} onClick={() => run(command(props, 'record.sign', { expectedDraftVersion: encounter.draftVersion }))}>{text('Sign record', '签署病历')}</ConfirmActionButton></div>}
+      <Button disabled={props.busy || !editable || !hasActiveEdits || conflict} onClick={save}>{text('Save record draft', '保存病历草稿')}</Button>
+      <ConfirmActionButton disabled={props.busy || !allowed(props, 'record.sign') || !!note || reviewIds.length > 0 || !encounter.draftVersion} confirmation={text('Sign this saved clinical record?', '签署当前已保存的病历？')} onClick={() => run(command(props, 'record.sign', { expectedDraftVersion: encounter.draftVersion }))}>{text('Sign record', '签署病历')}</ConfirmActionButton></div>}
     {encounter.recordRevisions.length > 0 && <Dialog title={text('Signed records', '已签病历')} triggers={[text('View signed revisions', '查看病历修订')]} close={text('Close record history', '关闭病历修订')}>
       {encounter.recordRevisions.map(item => <section key={item.id}><h3>{text('Revision', '修订')} {item.revision} · {item.signedBy}</h3><dl>{Object.entries(item.fields).map(([id, value]) => <div key={id}><dt>{titles.get(id) ?? id}</dt><dd>{value || '—'}</dd></div>)}</dl></section>)}
     </Dialog>}

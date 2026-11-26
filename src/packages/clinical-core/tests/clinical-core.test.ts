@@ -32,5 +32,7 @@ it('checks both completion decisions and revision chains on Durable Object SQLit
       expect(response.status).toBe(200);
       verify(await response.json() as Awaited<ReturnType<typeof clinicalContract>>, changed);
     }
+    const retired = await server.getWorker().fetch('/retired-fields');
+    expect(await retired.json()).toMatchObject({ clean: true, blocked: 409, blockedSign: 409, before: false, reviewed: { revision: 2, reviewed: 'include' }, after: true, retained: ['Signed value', 'Unreviewed correction'] });
   } finally { await server.close(); }
 }, 30_000);

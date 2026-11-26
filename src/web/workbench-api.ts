@@ -41,6 +41,8 @@ const messages: Record<string, [string, string]> = {
   REQUIRED_FIELDS_MISSING: ['Complete all required record fields before signing.', '请先填写所有必填病历字段。'],
   ONE_PRIMARY_DIAGNOSIS_REQUIRED: ['Choose exactly one primary diagnosis.', '请选择唯一的主诊断。'], COMPLETION_BLOCKED: ['Review the outstanding completion checks.', '请先核对尚未通过的完诊条件。'],
   PATIENT_REPLY_PENDING: ['A patient reply is pending.', '正在等候患者回复。'],
+  FIELD_NOT_IN_TEMPLATE: ['Review the current template and any edits under the previous template.', '请核对当前模板与既往模板字段的更正。'],
+  RETIRED_FIELDS_REQUIRE_REVIEW: ['Review and resolve previous template corrections before signing.', '请核对并处置既往模板字段的更正后再签署。'],
   CASE_ALREADY_ACTIVE: ['This case already has an active encounter. Select it in the encounter list.', '该病例已有进行中的就诊，请从就诊列表打开。'],
 };
 export function errorMessage(error: Error, language: Language) {

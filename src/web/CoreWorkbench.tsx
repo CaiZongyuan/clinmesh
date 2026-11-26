@@ -46,6 +46,10 @@ export function CoreWorkbench({ workspace, language, languageSelect, panels, dra
     async onError(error, intent, sent) {
       if (!(error instanceof ApiError) || !sent || !sameEpoch(sent.workspace)) return;
       if (error.status === 401) { client.clear(); client.setQueryData(sessionKey, null); return; }
+      if (error.message === 'FIELD_NOT_IN_TEMPLATE' && intent.targetId) {
+        await Promise.all([refresh(workspaceKey(sent.workspace)), refresh(scopeKey(sent.workspace, intent.targetId, 'clinical'))]);
+        return;
+      }
       if (error.status !== 409 && error.status !== 403) return;
       const live = await client.fetchQuery({ queryKey: sessionKey, queryFn: ({ signal }) => currentSession(signal), staleTime: 0 });
       if (!live || !sameEpoch(sent.workspace, live)) return;

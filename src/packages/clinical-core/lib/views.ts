@@ -10,6 +10,7 @@ export const workspaceSchema = sessionSchema.extend({ manifest: manifestSchema, 
 export type WorkspaceView = z.infer<typeof workspaceSchema>;
 
 export const noteFields = z.record(z.string().min(1).max(100), z.string().max(16000));
+export const retiredReview = z.strictObject({ decision: z.enum(['include', 'discard']), localFields: noteFields });
 export const diagnosisMember = z.strictObject({ codeSystem: z.url(), code: z.string().trim().min(1).max(128), primary: z.boolean() });
 export const diagnosisMembers = z.array(diagnosisMember).min(1).max(8);
 const revision = z.object({ id: z.uuidv7(), revision: z.int().positive(), previousId: z.uuidv7().nullable(), signedBy: z.string(), virtualAt: z.iso.datetime() });
@@ -17,6 +18,7 @@ export const recordRevision = revision.extend({ fields: noteFields });
 export const diagnosisRevision = revision.extend({ diagnoses: diagnosisMembers });
 export const completionSchema = z.object({ ready: z.boolean(), checks: z.array(gateItem) });
 export const encounterViewSchema = visitSchema.extend({ age: z.int(), template: manifestSchema.shape.clinicalRecordTemplate,
-  draftVersion: z.int().nonnegative(), fields: noteFields, diagnoses: z.array(diagnosisMember), recordRevisions: z.array(recordRevision), diagnosisRevisions: z.array(diagnosisRevision), completion: completionSchema });
+  draftVersion: z.int().nonnegative(), fields: noteFields, retiredFields: z.record(z.string(), z.object({ signed: z.string().nullable(), saved: z.string().nullable() })),
+  diagnoses: z.array(diagnosisMember), recordRevisions: z.array(recordRevision), diagnosisRevisions: z.array(diagnosisRevision), completion: completionSchema });
 export type EncounterView = z.infer<typeof encounterViewSchema>;
 export const debriefSchema = z.object({ caseTruth: caseTruthSchema.extend({ tags: z.array(z.string()) }), recordRevisions: z.array(recordRevision), diagnosisRevisions: z.array(diagnosisRevision) });
