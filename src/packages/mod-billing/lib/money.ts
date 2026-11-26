@@ -1,7 +1,14 @@
 import { z } from 'zod';
+import { CoreError } from '../../platform';
 
 export const currencySchema = z.object({ code: z.string().regex(/^[A-Z]{3}$/), minorUnitExponent: z.int().min(0).max(9) });
 export type Currency = z.infer<typeof currencySchema>;
+
+export function requireDenomination(row: { id: string; amount_minor: number; currency_code: string; currency_exponent: number }, currency: Currency) {
+  if (row.currency_code !== currency.code || row.currency_exponent !== currency.minorUnitExponent) {
+    throw new CoreError(409, 'BILLING_CURRENCY_MISMATCH', { factId: row.id, amountMinor: row.amount_minor, currencyCode: row.currency_code, minorUnitExponent: row.currency_exponent });
+  }
+}
 
 export function formatMinor(amount: number, currency: Currency) {
   const digits = currencySchema.parse(currency).minorUnitExponent;

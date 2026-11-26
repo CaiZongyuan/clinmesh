@@ -1,12 +1,32 @@
 import { z } from 'zod';
 import { accountSchema, createBillingModule } from '../../packages/mod-billing';
 import { createDrgModule } from '../../packages/mod-drg-cn';
-import type { Credential } from '../../packages/platform';
-import type { StorePort } from '../../packages/store';
+import { sha256, type Credential } from '../../packages/platform';
+import { canonicalJson, type StorePort } from '../../packages/store';
 import { createWorkspaceApp } from '../workspace';
 import legacy from './fixtures/2f49e201-v2.json';
 
 const id = (number: number) => `0192eaf2-cb03-7000-8000-${String(number).padStart(12, '0')}`;
+export async function legacyCurrencyConflict(store: StorePort, targetTable: string, code: string, exponent: number) {
+  const record = z.record(z.string(), z.json());
+  const tables = legacy.tables.map(table => ({ name: table.name, rows: table.rows.map(original => {
+    const row = record.parse(original);
+    if (table.name === 'data_pack_installations') return { ...row, manifest: { ...record.parse(row.manifest), currency: { code: 'USD', symbol: '$', minorUnitExponent: 2 } } };
+    if (!Object.hasOwn(row, 'currency_code')) return row;
+    const mismatch = table.name === targetTable;
+    return { ...row, amount_minor: mismatch ? 1000 : row.amount_minor!, currency_code: mismatch ? code : 'USD', currency_exponent: mismatch ? exponent : 2 };
+  }) }));
+  const content = { format: legacy.format, workspaceId: legacy.workspaceId, pi: legacy.pi, tables };
+  await store.importLogicalSnapshot({ ...content, sha256: await sha256(canonicalJson(z.json().parse(content))) });
+  const billing = createBillingModule();
+  const app = createWorkspaceApp(store, { localOpen: true }, [billing]);
+  const credential: Credential = { ticket: { kind: 'visitor', workspaceId: legacy.workspaceId, id: id(3), expiresAt: '2099-01-01T00:00:00Z' } };
+  const path = `http://localhost/api/his/encounters/${id(7)}/billing`;
+  const get = await app.fetch(new Request(path), { credential, entering: false });
+  const post = await app.fetch(new Request(`${path}/payment.preview`, { method: 'POST', body: JSON.stringify({ epoch: id(2), expectedVersion: 0, idempotencyKey: crypto.randomUUID(), chargeIds: [id(17)] }) }), { credential, entering: false });
+  const after = await store.exportLogicalSnapshot(legacy.workspaceId);
+  return { read: { status: get.status, data: await get.json() }, collect: { status: post.status, data: await post.json() }, preserved: after.tables.find(table => table.name === targetTable)!.rows[0], previews: after.tables.find(table => table.name === 'billing_previews')!.rows.length };
+}
 export async function restoreLegacyBilling(store: StorePort) {
   await store.importLogicalSnapshot(legacy);
   const billing = createBillingModule();

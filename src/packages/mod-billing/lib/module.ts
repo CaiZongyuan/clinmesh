@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { CommandContext, OperationCatalog } from '../../platform';
 import type { StoreReader, StoreScope, StoreTx } from '../../store';
-import { account, encounterStarted, freezeCharge, readOrderFunds, reconcile } from './account';
+import { account, clinicalAccount, encounterStarted, facility, freezeCharge, freezeMaterialUse, readOrderFunds, reconcile } from './account';
 import { accountSchema, cashierQueueSchema, chargeIds, id, positive, reason, simulation, snapshotSchema, tenders, type BillingOptions } from './contracts';
 import { adjust, collect, confirm, currentBill, deposit, paymentResult, preview, previewSchema, recover, refund, settle, settlementPlan } from './payments';
 
@@ -11,11 +11,12 @@ const route = (name: string) => ({ name, path: `${base}/${name}`, method: 'POST'
 
 export function createBillingModule(options: BillingOptions = {}) {
   return {
-    id: 'mod-billing', kind: 'clinical' as const, version: '1', workbenchTabs: [{ id: 'billing', label: { en: 'Cashier', zh: '收费工作台' } }], freezeCharge, encounterStarted,
+    id: 'mod-billing', kind: 'clinical' as const, version: '1', workbenchTabs: [{ id: 'billing', label: { en: 'Cashier', zh: '收费工作台' } }], freezeCharge, freezeMaterialUse, encounterStarted,
     readOrderFunds: (reader: StoreReader, at: StoreScope, orderId: string) => readOrderFunds(reader, at, orderId, options),
     readAccount: (reader: StoreReader, at: StoreScope, encounterId: string) => account(reader, at, encounterId, options),
     readAdmissionFunds(reader: StoreReader, at: StoreScope, encounterId: string) {
-      const bill = account(reader, at, encounterId, options);
+      if (facility(reader, at).policy === 'free') return { outstandingMinor: 0, canClearBed: true, locked: false };
+      const bill = clinicalAccount(reader, at, encounterId, options);
       const unresolved = bill.pending || bill.payerPending;
       return { outstandingMinor: unresolved ? null : Math.max(0, bill.balanceMinor), canClearBed: bill.policy === 'free' || (!unresolved && !bill.balanceMinor && Boolean(bill.settlement)), locked: Boolean(bill.settlement) };
     },

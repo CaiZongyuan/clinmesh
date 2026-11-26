@@ -10,6 +10,8 @@ Node 与 Workspace Durable Object 都从 `builtinModules` 装配 `createBillingM
 
 未装配模块的宿主省略收费端口。启用模块且包策略为 `free` 时，端口可直接放行。来源医嘱撤回后，已有收付保留历史，未收款项目退出有效应收。清床的事务使用 `readAdmissionFunds(reader, at, encounterId)`，资金未知或待遇待复核时 `outstandingMinor` 返回 `null`。
 
+住院耗材使用由 `freezeMaterialUse(tx, at, materialUseId)` 按已登记的使用量、预留批次和冻结品规单价记费，重复提交同一使用 ID 返回原费用。业务日期按医院数据包的时区计算。账项、冲减、收款、渠道、分配和历史退款均核对原币种与精度，冲突时暂停合计及收退操作，收费员可查看原币金额。
+
 ## 资金命令
 
 `billing.account` 返回账项、资金尝试、分配、冲减、原始快照及账本版本。所有预览、确认和恢复通过 Operation Catalog 的 Command 事务执行，提交当前 `epoch`、`expectedVersion` 与 `idempotencyKey`。
@@ -26,6 +28,6 @@ Node 与 Workspace Durable Object 都从 `builtinModules` 装配 `createBillingM
 
 ## 验证
 
-`pnpm exec vitest run src/packages/mod-billing/tests src/packages/mod-drg-cn/tests src/web/modules/billing/cashier.test.tsx` 覆盖 USD、CNY、JPY、预览过期、并发退款、跨年度待遇、Node SQLite、workerd SQLite 与 UI Agent 人工确认。`pnpm check` 和 `pnpm verify:worker` 分别验证完整应用与生产 Worker 打包。
+`pnpm exec vitest run src/packages/mod-billing/tests src/packages/mod-drg-cn/tests src/server/testing src/web/modules/billing/cashier.test.tsx` 覆盖 USD、CNY、JPY、预览过期、并发退款、跨年度待遇、Node SQLite、workerd SQLite 与 UI Agent 人工确认。两个包各自从公共入口验证本包行为，联合收费与医保流程在服务端组合测试中验证。`pnpm check` 和 `pnpm verify:worker` 分别验证完整应用与生产 Worker 打包。
 
 基线 `2f49e201` 导出的[合成 v2 快照](../../server/testing/fixtures/2f49e201-v2.json)含原款 100、历史退款 10 及已实际出区的住院记录。两种 SQLite 宿主均从快照恢复，经正式收费路由处理剩余原款与住院封账。

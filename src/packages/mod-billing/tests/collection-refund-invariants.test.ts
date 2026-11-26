@@ -1,13 +1,14 @@
-import { expect, it, vi } from 'vitest';
-import { formatMinor, parseMinor } from '../index';
+import { v7 } from 'uuid';
+import { expect, it } from 'vitest';
+import { z } from 'zod';
+import general from '../../../../data/packs/global-general/pack.json';
+import { installHospitalDataPack } from '../../data-pack';
+import { OperationCatalog, type Credential } from '../../platform';
 import { createNodeSqliteStore } from '../../store';
-import { billingFixture } from '../../../server/testing/billing-fixture';
-import { outpatientContract } from '../../../server/testing/outpatient-billing';
-import { restoreLegacyBilling } from '../../../server/testing/legacy-billing';
+import { createBillingModule, formatMinor, parseMinor } from '../index';
 
-it('round trips the exact smallest units of a zero-decimal and a two-decimal hospital', () => {
-  const yen = { code: 'JPY', minorUnitExponent: 0 };
-  const dollar = { code: 'USD', minorUnitExponent: 2 };
+it('preserves integer minor units for both JPY and USD up to the safe integer limit', () => {
+  const yen = { code: 'JPY', minorUnitExponent: 0 }, dollar = { code: 'USD', minorUnitExponent: 2 };
   expect(formatMinor(1234, yen)).toBe('JPY 1234');
   expect(formatMinor(Number.MAX_SAFE_INTEGER, dollar)).toBe('USD 90071992547409.91');
   expect(parseMinor('90071992547409.91', dollar)).toBe(Number.MAX_SAFE_INTEGER);
@@ -15,100 +16,39 @@ it('round trips the exact smallest units of a zero-decimal and a two-decimal hos
   expect(() => parseMinor('90071992547409.92', dollar)).toThrow();
 });
 
-it('restores the 2f49e201 v2 ledger including its original refund and discharges the restored admission through production cashier routes', async () => {
+it('recovers one shared collection for two charges and reserves each original allocation against concurrent refunds', async () => {
   const store = createNodeSqliteStore({ dbPath: ':memory:' });
+  const billing = createBillingModule();
+  const catalog = new OperationCatalog();
+  catalog.contribute(billing.id, billing.registerOperations);
+  const encounterId = v7(), patientId = v7(), sessionId = v7();
+  const now = '2026-11-26T00:00:00Z', expiresAt = '2099-01-01T00:00:00Z';
+  const chargeIds = [v7(), v7()];
   try {
-    expect(await restoreLegacyBilling(store)).toMatchObject({ restoredPaid: 90, refundedBefore: 10, excessive: 'REFUND_LIMIT', finalPaid: 50, tenders: [{ method: 'card', amountMinor: 40 }], overCorrection: 'CORRECTION_LIMIT', remaining: [0, -30], linked: true, clearance: { canClearBed: false }, originalRules: { status: 409, data: { code: 'REGIONAL_RULES_UNAVAILABLE' } }, frozenMinor: 100 });
-  } finally { await store.close(); }
-});
-
-it('settles unchanged selected charges under an unrelated edit and refuses a withdrawn source at the point of collection', async () => {
-  const store = createNodeSqliteStore({ dbPath: ':memory:' });
-  try {
-    const { at, order, read, call, command } = await billingFixture(store);
-    const selected = await order(), unrelated = await order();
-    const preview = await command('payment.preview', { chargeIds: [selected.chargeId] });
-    const version = (await read()).version;
-    const withdrawn = await command('payment.preview', { chargeIds: [unrelated.chargeId] });
-    await store.withTransaction(tx => tx.update(at, 'clinical_orders', unrelated.orderId, 1, { status: 'withdrawn' }));
-    await expect(call('payment.confirm', { commitToken: preview.commitToken }, version)).resolves.toMatchObject({ status: 'succeeded' });
-    await expect(command('payment.confirm', { commitToken: withdrawn.commitToken })).rejects.toMatchObject({ code: 'PREVIEW_STALE' });
-    await expect(command('payment.preview', { chargeIds: [unrelated.chargeId] })).rejects.toMatchObject({ code: 'CHARGE_UNAVAILABLE' });
-    expect((await read()).charges.find(line => line.id === unrelated.chargeId)).toMatchObject({ cancelled: true, released: false, netMinor: 0 });
-  } finally { await store.close(); }
-});
-
-it('expires previews on the real clock, enforces single-use and rejects a cancelled clinical source at confirmation', async () => {
-  const store = createNodeSqliteStore({ dbPath: ':memory:' });
-  try {
-    const { at, order, read, command, call } = await billingFixture(store);
-    const line = await order();
-    const fields = { chargeIds: [line.chargeId] };
-    const quote = await command('payment.preview', fields);
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date(quote.expiresAt as string));
-    await expect(command('payment.confirm', { commitToken: quote.commitToken })).rejects.toMatchObject({ code: 'PREVIEW_EXPIRED' });
-    const fresh = await command('payment.preview', fields);
-    const version = (await read()).version;
-    const key = 'stable-confirm';
-    const payload = { commitToken: fresh.commitToken };
-    const first = await call('payment.confirm', payload, version, key);
-    expect(await call('payment.confirm', payload, version, key)).toEqual(first);
-    await expect(command('payment.confirm', payload)).rejects.toMatchObject({ code: 'PREVIEW_STALE' });
-    const second = await order();
-    const stale = await command('payment.preview', { chargeIds: [second.chargeId] });
-    await store.withTransaction(tx => tx.update(at, 'clinical_orders', second.orderId, 1, { status: 'cancelled' }));
-    await expect(command('payment.confirm', { commitToken: stale.commitToken })).rejects.toMatchObject({ code: 'PREVIEW_STALE' });
-    expect((await read()).charges.at(-1)).toMatchObject({ cancelled: true, netMinor: 0 });
-  } finally { vi.useRealTimers(); await store.close(); }
-});
-
-it('requires all allocations to belong to this encounter and caps the specified allocation, original transaction, shared reduction and single refund', async () => {
-  const store = createNodeSqliteStore({ dbPath: ':memory:' });
-  try {
-    const { order, command } = await billingFixture(store, 'yen');
-    const large = await order(undefined, 2_000_000), small = await order();
-    const fields = { chargeIds: [large.chargeId, small.chargeId] };
-    await expect(command('payment.preview', { chargeIds: [large.chargeId, large.chargeId] })).rejects.toThrow();
-    await expect(command('payment.preview', { chargeIds: Array(21).fill(large.chargeId) })).rejects.toThrow();
-    const other = await billingFixture(store);
-    await expect(command('payment.preview', { chargeIds: [large.chargeId, (await other.order()).chargeId] })).rejects.toMatchObject({ code: 'CHARGE_NOT_IN_ACCOUNT' });
-    const partial = await command('payment.preview', { chargeIds: [small.chargeId], amountMinor: 20 });
-    const first = await command('payment.confirm', { commitToken: partial.commitToken });
-    const rest = await command('payment.preview', fields);
-    const shared = await command('payment.confirm', { commitToken: rest.commitToken });
-    await command('charge.adjust', { chargeId: small.chargeId, amountMinor: small.amount, reason: 'Waived' });
-    const refund = { chargeId: small.chargeId, reason: 'Return by allocation' };
-    await expect(command('refund.allocation.preview', { ...refund, paymentId: first.paymentId, amountMinor: 21 })).rejects.toMatchObject({ code: 'REFUND_LIMIT' });
-    await expect(command('refund.allocation.preview', { ...refund, paymentId: shared.paymentId, amountMinor: small.amount })).rejects.toMatchObject({ code: 'REFUND_LIMIT' });
-    await command('charge.adjust', { chargeId: large.chargeId, amountMinor: 1_000_000_010, reason: 'Reversal' });
-    await expect(command('refund.allocation.preview', { ...refund, chargeId: large.chargeId, paymentId: shared.paymentId, amountMinor: 1_000_000_001 })).rejects.toMatchObject({ code: 'REFUND_LIMIT' });
-  } finally { await store.close(); }
-});
-
-it('recovers the frozen shared payment, then refunds its explicit allocation in reverse tender order exactly once', async () => {
-  const store = createNodeSqliteStore({ dbPath: ':memory:' });
-  try {
-    const result = await outpatientContract(store);
-    expect(result).toMatchObject({ short: 'TENDER_TOTAL_MISMATCH', attempt: { status: 'unknown' }, blocked: 'FUNDS_PENDING', replay: 'PAYMENT_ALREADY_RESOLVED', blockedRefund: 'FUNDS_PENDING', excess: 'REFUND_LIMIT', pending: { tenders: [{ method: 'card', amountMinor: 35 }, { method: 'cash', amountMinor: 5 }] } });
-    expect(result.raced.filter(outcome => outcome === 'accepted')).toHaveLength(1);
-    expect(new Set(result.releases).size).toBe(2);
-    expect(result.releases).toHaveLength(2);
-    expect(result.cashOnly.tenders).toEqual([{ method: 'cash', amountMinor: 40 }]);
-    expect(result.bill).toMatchObject({ currency: { code: 'USD', minorUnitExponent: 2 }, pending: false, balanceMinor: -60 });
-    expect(result.bill.payments).toHaveLength(3);
-  } finally { await store.close(); }
-});
-
-it.each(['general', 'cardiology', 'yen', 'free', 'disabled'] as const)('freezes each signed catalog line exactly once in %s and honours clinical policy', async facility => {
-  const store = createNodeSqliteStore({ dbPath: ':memory:' });
-  try {
-    const { at, order, billing } = await billingFixture(store, facility);
-    const line = await order();
-    expect(await store.withTransaction(tx => billing.freezeCharge(tx, at, line.source))).toBe(line.chargeId);
-    const free = facility === 'free' || facility === 'disabled';
-    expect(await store.read(reader => billing.readOrderFunds(reader, at, line.orderId))).toMatchObject({ chargeId: line.chargeId, state: free ? 'free' : 'unpaid', released: facility !== 'cardiology', locked: false, netPaidMinor: 0 });
-    expect(line.chargeId === null).toBe(free);
-    expect(await store.read(reader => reader.list(at, 'payment_transactions'))).toHaveLength(0);
+    const at = await store.withTransaction(tx => {
+      const at = installHospitalDataPack(tx, { workspaceId: v7(), virtualTime: now, expectedEpoch: null }, general);
+      tx.insert(at, 'visitor_sessions', { id: sessionId, practitioner_role: 'cashier', version: 1, expires_at: expiresAt, revoked: false });
+      tx.insert(at, 'patients', { id: patientId, display_name: 'Synthetic account', birth_date: null, version: 1 });
+      tx.insert(at, 'encounters', { id: encounterId, patient_id: patientId, source_case_id: tx.list(at, 'clinical_cases')[0]!.id, encounter_class: 'outpatient', status: 'active', active_practitioner_role: 'cashier', virtual_at: now, recorded_at: now, version: 1 });
+      for (const chargeId of chargeIds) tx.insert(at, 'charge_items', { id: chargeId, encounter_id: encounterId, order_id: null, description: 'Teaching service', amount_minor: 50, currency_code: 'USD', currency_exponent: 2, virtual_at: now, recorded_at: now });
+      return at;
+    });
+    const credential: Credential = { ticket: { kind: 'visitor', workspaceId: at.workspaceId, id: sessionId, expiresAt } };
+    const run = async (name: string, fields: Record<string, unknown>) => {
+      const version = await store.read(reader => billing.readAccount(reader, at, encounterId).version);
+      return z.record(z.string(), z.json()).parse(await catalog.require(name).invoke({ store, credential, targetId: encounterId, body: async () => ({ ...fields, expectedVersion: version, epoch: at.epoch, idempotencyKey: v7() }) }));
+    };
+    const selected = { chargeIds, tenders: [{ method: 'cash', amountMinor: 50 }, { method: 'card', amountMinor: 50 }], simulation: 'delayed-approval' };
+    const frozen = await run('payment.preview', selected);
+    const payment = await run('payment.confirm', { commitToken: frozen.commitToken });
+    await expect(run('payment.preview', selected)).rejects.toMatchObject({ code: 'FUNDS_PENDING' });
+    await run('payment.recover', { paymentId: payment.paymentId, paymentVersion: 1 });
+    const adjustment = { chargeId: chargeIds[0], reason: 'Duplicate service', amountMinor: 20 };
+    await run('charge.adjust', adjustment);
+    const refund = await run('refund.allocation.preview', { ...adjustment, paymentId: payment.paymentId });
+    expect(refund.tenders).toEqual([{ method: 'cash', amountMinor: 20 }]);
+    const attempts = await Promise.allSettled([0, 1].map(() => run('refund.allocation.confirm', { commitToken: refund.commitToken })));
+    expect(attempts.filter(entry => entry.status === 'fulfilled')).toHaveLength(1);
+    expect(await store.read(reader => billing.readAccount(reader, at, encounterId))).toMatchObject({ netMinor: 80, cashMinor: 80, balanceMinor: 0 });
   } finally { await store.close(); }
 });

@@ -9,7 +9,7 @@ import { StoreVersionConflictError, type StorePort } from '../packages/store';
 import { BUILTIN_DATA_PACKS } from './builtin-data-packs';
 
 export function handleError(error: Error) {
-  if (error instanceof CoreError) return Response.json({ code: error.code }, { status: error.status });
+  if (error instanceof CoreError) return Response.json({ code: error.code, details: error.details }, { status: error.status });
   if (error instanceof z.ZodError || error instanceof SyntaxError) return Response.json({ code: 'INVALID_INPUT' }, { status: 400 });
   if (error instanceof StoreVersionConflictError) return Response.json({ code: 'VERSION_CONFLICT' }, { status: 409 });
   return Response.json({ code: 'INTERNAL_ERROR' }, { status: 500 });

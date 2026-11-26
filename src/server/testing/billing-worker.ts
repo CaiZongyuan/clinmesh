@@ -1,9 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
-import { createDurableObjectSqliteStore } from '../../store';
-import { outpatientContract } from '../../../server/testing/outpatient-billing';
+import { createDurableObjectSqliteStore } from '../../packages/store';
+import { outpatientContract } from './outpatient-billing';
 import { inpatientContract } from './inpatient-contract';
-import { projectionContract } from './projection-contract';
-import { restoreLegacyBilling } from '../../../server/testing/legacy-billing';
+import { projectionContract, unpostedInvestigationContract } from './projection-contract';
+import { legacyCurrencyConflict, restoreLegacyBilling } from './legacy-billing';
 
 export class BillingWorkspace extends DurableObject {
   async fetch(request: Request) {
@@ -13,6 +13,8 @@ export class BillingWorkspace extends DurableObject {
       if (path === '/outpatient') return Response.json(await outpatientContract(store));
       if (path === '/inpatient') return Response.json(await inpatientContract(store));
       if (path === '/legacy') return Response.json(await restoreLegacyBilling(store));
+      if (path === '/currency') return Response.json(await legacyCurrencyConflict(store, 'charge_items', 'JPY', 0));
+      if (path === '/investigation') return Response.json(await unpostedInvestigationContract(store));
       return Response.json(await projectionContract(store));
     } finally { await store.close(); }
   }

@@ -14,10 +14,11 @@ export function projection(reader: StoreReader, at: StoreScope, encounterId: str
   const bill = billing.readAccount(reader, at, encounterId);
   const orders = reader.list(at, 'clinical_orders', { encounter_id: encounterId }).filter(order => !['cancelled', 'withdrawn'].includes(order.status));
   const posted = new Set(bill.charges.map(line => line.orderId));
+  const postedUses = new Set(bill.charges.map(line => line.materialUseId));
   const missing: string[] = [];
   const price = (itemId: string, quantity = 1) => {
     const item = reader.get(at, 'catalog_items', itemId);
-    if (!item || item.amount_minor === null) { missing.push(itemId); return 0; }
+    if (!item || item.amount_minor === null || item.currency_code !== bill.currency.code || item.currency_exponent !== bill.currency.minorUnitExponent) { missing.push(itemId); return 0; }
     return amount.parse(Number(BigInt(item.amount_minor) * BigInt(quantity)));
   };
   const committed: number[] = [], reserved: number[] = [], planned: number[] = [];
@@ -25,7 +26,11 @@ export function projection(reader: StoreReader, at: StoreScope, encounterId: str
   for (const order of orders) {
     const surgeries = reader.list(at, 'surgery_requests', { order_id: order.id }).filter(request => request.status !== 'cancelled');
     if (!surgeries.length) {
-      if (!posted.has(order.id) && !['completed', 'dispensed', 'reported'].includes(order.status) && !reader.list(at, 'order_executions', { order_id: order.id }).length) committed.push(price(order.catalog_item_id));
+      if (!posted.has(order.id)) {
+        const fulfilled = ['completed', 'dispensed', 'reported'].includes(order.status) || reader.list(at, 'order_executions', { order_id: order.id }).length || reader.list(at, 'diagnostic_reports', { order_id: order.id }).length || reader.list(at, 'prescription_orders', { order_id: order.id }).some(member => reader.list(at, 'dispenses', { prescription_order_id: member.id }).length);
+        if (fulfilled) missing.push(`unposted-order:${order.id}`);
+        else committed.push(price(order.catalog_item_id));
+      }
       continue;
     }
     for (const surgery of surgeries) {
@@ -37,8 +42,10 @@ export function projection(reader: StoreReader, at: StoreScope, encounterId: str
         else planned.push(price(item.id));
       }
       for (const reservation of reader.list(at, 'material_reservations', { surgery_request_id: surgery.id })) {
+        const uses = reader.list(at, 'material_uses', { reservation_id: reservation.id });
+        for (const use of uses) if (!postedUses.has(use.id)) missing.push(`unposted-material-use:${use.id}`);
         if (['cancelled', 'released', 'closed'].includes(reservation.status)) continue;
-        const consumed = sum(reader.list(at, 'material_uses', { reservation_id: reservation.id }).map(use => use.quantity));
+        const consumed = sum(uses.map(use => use.quantity));
         const remaining = Math.max(0, reservation.quantity - consumed);
         if (remaining) reserved.push(price(reader.get(at, 'inventory_lots', reservation.lot_id)!.catalog_item_id, remaining));
       }

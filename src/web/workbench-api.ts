@@ -9,13 +9,16 @@ export const sessionKey = ['visitor-session'] as const;
 export const scopeKey = (session: Session, ...domain: string[]) => [session.workspaceId, session.epoch, ...domain];
 export const workspaceKey = (session: Session) => scopeKey(session, 'workspace', session.roleId);
 export class ApiError extends Error {
-  constructor(readonly status: number, code: string) { super(code); }
+  constructor(readonly status: number, code: string, readonly details?: Record<string, string | number>) { super(code); }
 }
 
 export async function api<Value>(path: string, schema: z.ZodType<Value>, init?: RequestInit) {
   const response = await fetch(path, init);
   const body: unknown = await response.json();
-  if (!response.ok) throw new ApiError(response.status, z.object({ code: z.string() }).safeParse(body).data?.code ?? `HTTP_${response.status}`);
+  if (!response.ok) {
+    const error = z.object({ code: z.string(), details: z.record(z.string(), z.union([z.string(), z.number()])).optional() }).safeParse(body).data;
+    throw new ApiError(response.status, error?.code ?? `HTTP_${response.status}`, error?.details);
+  }
   return schema.parse(body);
 }
 

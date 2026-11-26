@@ -5,7 +5,7 @@ import { requireEncounter } from '../../patient-visit';
 import { CoreError } from '../../platform';
 import type { StoreReader, StoreScope, StoreTx } from '../../store';
 import { accountSchema, amount, snapshotSchema, tender, type Attempt, type BillingOptions, type FrozenCharge, type OrderFunds } from './contracts';
-import { sumMinor } from './money';
+import { requireDenomination, sumMinor, type Currency } from './money';
 import { correctionBalances } from './corrections';
 
 export function conflict(code: string): never { throw new CoreError(409, code); }
@@ -16,20 +16,26 @@ export function facility(reader: StoreReader, at: StoreScope) {
   return { installation, manifest, policy };
 }
 
-function paymentHistory(reader: StoreReader, at: StoreScope, encounterId: string): Attempt[] {
+function paymentHistory(reader: StoreReader, at: StoreScope, encounterId: string, currency: Currency): Attempt[] {
   const history: Attempt[] = [];
   for (const payment of reader.list(at, 'payment_transactions', { encounter_id: encounterId })) {
+    requireDenomination(payment, currency);
     const attempt = reader.list(at, 'billing_attempts', { payment_id: payment.id })[0];
     const recovery = reader.list(at, 'billing_recoveries', { payment_id: payment.id })[0];
     const channels = reader.list(at, 'payment_tenders', { payment_id: payment.id });
     const byCharge = new Map<string, number>();
     const tenderAllocations: Attempt['tenderAllocations'] = [];
-    for (const channel of channels) for (const item of reader.list(at, 'payment_allocations', { tender_id: channel.id })) {
-      byCharge.set(item.charge_id, sumMinor([byCharge.get(item.charge_id) ?? 0, item.amount_minor]));
-      tenderAllocations.push({ chargeId: item.charge_id, method: channel.method, amountMinor: item.amount_minor });
-      for (const legacy of reader.list(at, 'refund_transactions', { allocation_id: item.id })) {
-        const returned = { chargeId: item.charge_id, method: channel.method, amountMinor: legacy.amount_minor };
-        history.push({ id: legacy.id, kind: 'refund', originId: payment.id, status: 'succeeded', version: 1, correctionId: null, recordedAt: legacy.recorded_at, amountMinor: returned.amountMinor, allocations: [{ chargeId: returned.chargeId, amountMinor: returned.amountMinor }], tenders: [{ method: returned.method, amountMinor: returned.amountMinor }], tenderAllocations: [returned] });
+    for (const channel of channels) {
+      requireDenomination(channel, currency);
+      for (const item of reader.list(at, 'payment_allocations', { tender_id: channel.id })) {
+        requireDenomination(item, currency);
+        byCharge.set(item.charge_id, sumMinor([byCharge.get(item.charge_id) ?? 0, item.amount_minor]));
+        tenderAllocations.push({ chargeId: item.charge_id, method: channel.method, amountMinor: item.amount_minor });
+        for (const legacy of reader.list(at, 'refund_transactions', { allocation_id: item.id })) {
+          requireDenomination(legacy, currency);
+          const returned = { chargeId: item.charge_id, method: channel.method, amountMinor: legacy.amount_minor };
+          history.push({ id: legacy.id, kind: 'refund', originId: payment.id, status: 'succeeded', version: 1, correctionId: null, recordedAt: legacy.recorded_at, amountMinor: returned.amountMinor, allocations: [{ chargeId: returned.chargeId, amountMinor: returned.amountMinor }], tenders: [{ method: returned.method, amountMinor: returned.amountMinor }], tenderAllocations: [returned] });
+        }
       }
     }
     const plan = attempt ? reader.get(at, 'billing_previews', attempt.preview_id)?.plan : undefined;
@@ -40,6 +46,7 @@ function paymentHistory(reader: StoreReader, at: StoreScope, encounterId: string
 }
 
 const withdrawn = (status: string | undefined) => status === 'cancelled' || status === 'withdrawn';
+const businessDay = (instant: string, timezone: string) => new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(instant));
 
 function registrationService(reader: StoreReader, at: StoreScope) {
   const registrations = reader.list(at, 'catalog_items', { kind: 'services' }).filter(item => item.definition.kind === 'registration');
@@ -52,23 +59,58 @@ export function encounterStarted(tx: StoreTx, at: StoreScope, encounterId: strin
   if (policy === 'free' || requireEncounter(tx, at, encounterId).encounter_class !== 'outpatient') return;
   const item = registrationService(tx, at);
   if (!item?.amount_minor) return;
+  if (item.currency_code !== manifest.currency.code || item.currency_exponent !== manifest.currency.minorUnitExponent) conflict('CHARGE_SOURCE_CONFLICT');
   const display = z.object({ en: z.string(), zh: z.string() }).parse(item.definition.display);
   tx.insert(at, 'charge_items', { id: encounterId, encounter_id: encounterId, order_id: null, description: display[manifest.defaultLocale.startsWith('zh') ? 'zh' : 'en'], amount_minor: item.amount_minor, currency_code: manifest.currency.code, currency_exponent: manifest.currency.minorUnitExponent, virtual_at: virtualAt, recorded_at: recordedAt });
+}
+
+function materialSource(reader: StoreReader, at: StoreScope, useId: string) {
+  const use = reader.get(at, 'material_uses', useId);
+  if (!use) return undefined;
+  const reservation = reader.get(at, 'material_reservations', use.reservation_id)!;
+  const lot = reader.get(at, 'inventory_lots', reservation.lot_id)!;
+  const item = reader.get(at, 'catalog_items', lot.catalog_item_id)!;
+  const request = reader.get(at, 'surgery_requests', reservation.surgery_request_id)!;
+  const order = reader.get(at, 'clinical_orders', request.order_id)!;
+  return { use, item, encounterId: order.encounter_id };
+}
+
+export function freezeMaterialUse(tx: StoreTx, at: StoreScope, useId: string) {
+  const { manifest, policy } = facility(tx, at);
+  if (policy === 'free') return null;
+  const { use, item, encounterId } = materialSource(tx, at, useId) ?? conflict('MATERIAL_USE_REQUIRED');
+  if (item.kind !== 'materials' || item.amount_minor === null || item.currency_code !== manifest.currency.code || item.currency_exponent !== manifest.currency.minorUnitExponent) conflict('CHARGE_SOURCE_CONFLICT');
+  const amountMinor = amount.parse(Number(BigInt(item.amount_minor) * BigInt(use.quantity)));
+  const existing = tx.get(at, 'charge_items', useId);
+  if (existing) {
+    if (existing.encounter_id !== encounterId || existing.order_id !== null || existing.amount_minor !== amountMinor) conflict('CHARGE_SOURCE_CONFLICT');
+    requireDenomination(existing, manifest.currency);
+    return existing.id;
+  }
+  if (tx.list(at, 'billing_settlements', { encounter_id: encounterId }).length) conflict('BILLING_LOCKED');
+  const display = z.object({ en: z.string(), zh: z.string() }).parse(item.definition.display);
+  tx.insert(at, 'charge_items', { id: useId, encounter_id: encounterId, order_id: null, description: display[manifest.defaultLocale.startsWith('zh') ? 'zh' : 'en'], amount_minor: amountMinor, currency_code: manifest.currency.code, currency_exponent: manifest.currency.minorUnitExponent, virtual_at: use.virtual_at, recorded_at: use.recorded_at });
+  return useId;
 }
 
 export function account(reader: StoreReader, at: StoreScope, encounterId: string, options: BillingOptions) {
   const encounter = requireEncounter(reader, at, encounterId);
   const { manifest, policy } = facility(reader, at);
-  const payments = paymentHistory(reader, at, encounterId);
+  const payments = paymentHistory(reader, at, encounterId, manifest.currency);
   const benefits = options.payerBenefit?.coverage(reader, at, encounterId);
   const admission = reader.list(at, 'inpatient_admissions', { encounter_id: encounterId })[0];
   const settlement = reader.list(at, 'billing_settlements', { encounter_id: encounterId })[0];
   const charges = reader.list(at, 'charge_items', { encounter_id: encounterId }).map(line => {
+    requireDenomination(line, manifest.currency);
     const source = reader.list(at, 'charge_sources', { charge_id: line.id })[0];
     const registration = line.id === encounterId && !line.order_id ? registrationService(reader, at) : undefined;
+    const material = !registration && !line.order_id ? materialSource(reader, at, line.id) : undefined;
     const order = line.order_id ? reader.get(at, 'clinical_orders', line.order_id) : undefined;
     const cancelled = withdrawn(order?.status);
-    const adjustments = reader.list(at, 'charge_adjustments', { charge_id: line.id }).map(row => ({ id: row.id, reason: row.reason, amountMinor: row.amount_minor, virtualAt: row.virtual_at }));
+    const adjustments = reader.list(at, 'charge_adjustments', { charge_id: line.id }).map(row => {
+      requireDenomination(row, manifest.currency);
+      return { id: row.id, reason: row.reason, amountMinor: row.amount_minor, virtualAt: row.virtual_at };
+    });
     const assigned = payments.flatMap(payment => payment.allocations.filter(item => item.chargeId === line.id).map(item => ({ ...item, kind: payment.kind, status: payment.status, version: payment.version })));
     const success = assigned.filter(item => item.status === 'succeeded');
     const paidMinor = sumMinor(success.filter(item => item.kind === 'collection').map(item => item.amountMinor));
@@ -83,7 +125,7 @@ export function account(reader: StoreReader, at: StoreScope, encounterId: string
     const pending = assigned.some(item => item.status === 'unknown');
     const outstandingMinor = Math.max(0, netMinor - coverageMinor - netPaidMinor);
     const released = !cancelled && !pending && !payerPending && (policy !== 'prepaid' || !outstandingMinor);
-    return { id: line.id, orderId: line.order_id, catalogItemId: source?.catalog_item_id ?? order?.catalog_item_id ?? registration?.id ?? null, catalogVersion: source?.catalog_version ?? (registration ? manifest.version : null), quantity: source?.quantity ?? 1, unitPriceMinor: source?.unit_price_minor ?? line.amount_minor, description: line.description, department: source?.department ?? null, businessDay: source?.business_day ?? line.virtual_at.slice(0, 10), amountMinor: line.amount_minor, adjustedMinor, netMinor, coverageMinor, payerRevision: benefit?.revision ?? 0, payerPending, refundedMinor, netPaidMinor, outstandingMinor, pending, cancelled, released, releaseRecorded,
+    return { id: line.id, orderId: line.order_id, materialUseId: material?.use.id ?? null, catalogItemId: source?.catalog_item_id ?? order?.catalog_item_id ?? registration?.id ?? material?.item.id ?? null, catalogVersion: source?.catalog_version ?? (registration || material ? manifest.version : null), quantity: source?.quantity ?? material?.use.quantity ?? 1, unitPriceMinor: source?.unit_price_minor ?? material?.item.amount_minor ?? line.amount_minor, description: line.description, department: source?.department ?? null, businessDay: source?.business_day ?? businessDay(line.virtual_at, manifest.timezone), amountMinor: line.amount_minor, adjustedMinor, netMinor, coverageMinor, payerRevision: benefit?.revision ?? 0, payerPending, refundedMinor, netPaidMinor, outstandingMinor, pending, cancelled, released, releaseRecorded,
       version: (order?.version ?? 1) + adjustments.length + sumMinor(assigned.map(item => item.version)) + (benefit?.revision ?? 0), adjustments };
   });
   const netMinor = sumMinor(charges.map(line => line.netMinor));
@@ -111,20 +153,27 @@ export function freezeCharge(tx: StoreTx, at: StoreScope, row: FrozenCharge) {
   if (withdrawn(order.status)) conflict('CHARGE_CANCELLED');
   const chargeId = v7();
   const display = z.object({ display: z.object({ en: z.string(), zh: z.string() }) }).parse(item.definition).display;
-  const businessDay = new Intl.DateTimeFormat('en-CA', { timeZone: manifest.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(row.virtualAt));
   tx.insert(at, 'charge_items', { id: chargeId, encounter_id: row.encounterId, order_id: row.orderId, description: display[manifest.defaultLocale.startsWith('zh') ? 'zh' : 'en'], amount_minor: amountMinor, currency_code: row.currencyCode, currency_exponent: row.currencyExponent, virtual_at: row.virtualAt, recorded_at: row.recordedAt });
-  tx.insert(at, 'charge_sources', { id: v7(), charge_id: chargeId, order_id: row.orderId, catalog_item_id: item.id, catalog_version: row.catalogVersion, quantity: row.quantity, unit_price_minor: row.unitPriceMinor, department: row.department ?? null, business_day: businessDay });
+  tx.insert(at, 'charge_sources', { id: v7(), charge_id: chargeId, order_id: row.orderId, catalog_item_id: item.id, catalog_version: row.catalogVersion, quantity: row.quantity, unit_price_minor: row.unitPriceMinor, department: row.department ?? null, business_day: businessDay(row.virtualAt, manifest.timezone) });
   return chargeId;
 }
 
 export function readOrderFunds(reader: StoreReader, at: StoreScope, orderId: string, options: BillingOptions): OrderFunds {
   const order = reader.get(at, 'clinical_orders', orderId);
   if (!order) throw new CoreError(404, 'ORDER_NOT_FOUND');
-  const bill = account(reader, at, order.encounter_id, options);
-  if (bill.policy === 'free') return { chargeId: null, state: 'free', released: !withdrawn(order.status), releaseRecorded: false, locked: false, netPaidMinor: 0 };
+  if (facility(reader, at).policy === 'free') return { chargeId: null, state: 'free', released: !withdrawn(order.status), releaseRecorded: false, locked: false, netPaidMinor: 0 };
+  const bill = clinicalAccount(reader, at, order.encounter_id, options);
   const line = bill.charges.find(line => line.orderId === orderId);
   const state = line?.pending || line?.payerPending ? 'unknown' : line && !line.outstandingMinor ? 'settled' : line && line.netPaidMinor + line.coverageMinor > 0 ? 'partial' : 'unpaid';
   return { chargeId: line?.id ?? null, state, released: line?.released ?? false, releaseRecorded: line?.releaseRecorded ?? false, locked: Boolean(bill.settlement || state === 'unknown' || line?.netPaidMinor || line?.coverageMinor || line?.refundedMinor), netPaidMinor: line?.netPaidMinor ?? 0 };
+}
+
+export function clinicalAccount(reader: StoreReader, at: StoreScope, encounterId: string, options: BillingOptions) {
+  try { return account(reader, at, encounterId, options); }
+  catch (error) {
+    if (error instanceof CoreError && error.code === 'BILLING_CURRENCY_MISMATCH') throw new CoreError(409, error.code);
+    throw error;
+  }
 }
 
 export function reconcile(tx: StoreTx, at: StoreScope, encounterId: string, virtualAt: string, recordedAt: string, options: BillingOptions) {

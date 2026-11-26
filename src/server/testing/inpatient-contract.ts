@@ -1,7 +1,7 @@
 import { v7 } from 'uuid';
-import type { StorePort } from '../../store';
-import { createDrgModule, regionalPayer } from '../index';
-import { billingFixture } from '../../../server/testing/billing-fixture';
+import type { StorePort } from '../../packages/store';
+import { createDrgModule, regionalPayer } from '../../packages/mod-drg-cn';
+import { billingFixture } from './billing-fixture';
 
 export async function inpatientContract(store: StorePort) {
   const fixture = await billingFixture(store, 'cardiology', true, { payerBenefit: regionalPayer });
