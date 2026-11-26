@@ -58,6 +58,7 @@
     "dependency-cruiser": "18.9.0",
     "github-slugger": "2.0.0",
     "jsdom": "31.0.1",
+    "lightningcss": "1.33.0",
     "mdast-util-from-markdown": "2.1.0",
     "mdast-util-gfm": "3.1.0",
     "mdast-util-to-string": "4.0.0",

@@ -2,13 +2,16 @@ import { globSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { transformStyleAttribute } from 'lightningcss';
 import { parseFragment, type DefaultTreeAdapterMap } from 'parse5';
 import postcss from 'postcss';
 import ts from 'typescript';
 
 const rawPalette = /\b[a-z][\w-]*-(?:black|white|(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|mauve|olive|mist|taupe)-\d{2,3})\b/g;
 const colorTokens = /\/\*[\s\S]*?\*\/|url\((?:[^()'"]|'[^']*'|"[^"]*")*\)|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|#[\da-f]+\b|(?:rgba?|hsla?|hwb|(?:ok)?l(?:ab|ch)|color|device-cmyk)\s*\(|[\w-]+/gi;
-const namedColors = new Set(Object.keys(createRequire(import.meta.url)('color-name')));
+const namedColors: Readonly<Record<string, number[]>> = createRequire(import.meta.url)('color-name');
+const hexColor = /^#(?:[\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})$/i;
+const functionalColor = /^(?:rgba?|hsla?|hwb|(?:ok)?l(?:ab|ch)|color|device-cmyk)\s*\([\s\S]*\)$/i;
 const rawControl = /^(?:button|input|select|textarea)$/;
 type Report = (offset: number, token: string) => void;
 
@@ -17,10 +20,29 @@ function acceptsColor(name: string) {
   return /^(?:--|color$|(?:background|border|outline|fill|stroke)(?:-|$))|(?:-color|-shadow)$/.test(property);
 }
 
-function inspectColor(value: string, offset: number, report: Report) {
+function parsedColors(property: string, value: string) {
+  const colors = new Set<string>();
+  let customSyntax = false;
+  const resolved = value.replace(/var\(\s*--[\w-]+\s*(?:,\s*([^()]+))?\)/gi, (_, fallback: string | undefined) => fallback ?? 'currentcolor');
+  transformStyleAttribute({ code: Buffer.from(`${property}:${resolved}`), visitor: {
+    Declaration(declaration) { customSyntax = declaration.property === 'custom'; },
+    Color(color) { if (typeof color === 'object' && color.type === 'rgb') colors.add([color.r, color.g, color.b].join()); },
+  } });
+  return { colors, customSyntax };
+}
+
+function inspectColor(value: string, offset: number, report: Report, property?: string) {
+  let parsed: ReturnType<typeof parsedColors> | undefined;
   for (const match of value.matchAll(colorTokens)) {
     const token = match[0].toLowerCase();
-    if (/^#(?:[\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})$/.test(token) || token.endsWith('(') || namedColors.has(token)) report(offset + match.index, match[0]);
+    if (hexColor.test(token) || token.endsWith('(')) report(offset + match.index, match[0]);
+    else if (Object.hasOwn(namedColors, token)) {
+      if (property && !property.startsWith('--')) {
+        parsed ??= parsedColors(property, value);
+        if (!parsed.customSyntax && !parsed.colors.has(namedColors[token]!.join())) continue;
+      }
+      report(offset + match.index, match[0]);
+    }
   }
 }
 
@@ -32,9 +54,8 @@ function inspectUtilities(value: string, offset: number, report: Report) {
 function inspectCss(css: string, offset: number, report: Report) {
   const root = postcss.parse(css);
   root.walkDecls(declaration => {
-    if (!acceptsColor(declaration.prop)) return;
     const start = offset + (declaration.source?.start?.offset ?? 0) + declaration.prop.length + (declaration.raws.between?.length ?? 1);
-    inspectColor(declaration.value, start, report);
+    inspectColor(declaration.value, start, report, declaration.prop);
     for (const match of declaration.value.matchAll(rawPalette)) report(start + match.index, match[0]);
   });
   root.walkAtRules('apply', rule => inspectUtilities(rule.params, offset + (rule.source?.start?.offset ?? 0), report));
@@ -69,11 +90,16 @@ function scansModulePath(node: ts.Node) {
 
 function inspectScriptValue(node: ts.StringLiteralLike | ts.TemplateLiteralToken, source: ts.SourceFile, report: Report) {
   const offset = node.getStart(source) + 1;
+  let styleProperty: string | undefined;
   for (let context: ts.Node | undefined = node.parent; context && !ts.isStatement(context); context = context.parent) {
     if (ts.isPropertyAssignment(context) || ts.isJsxAttribute(context) || ts.isVariableDeclaration(context)) {
       const name = context.name.getText(source).replace(/^['"]|['"]$/g, '');
+      if (name === 'style' && styleProperty) return inspectColor(node.text, offset, report, styleProperty);
       if (acceptsColor(name)) return inspectColor(node.text, offset, report);
       if (/class(?:es|name)?$/i.test(name)) return inspectUtilities(node.text, offset, report);
+      if (ts.isJsxAttribute(context)) return;
+      if (ts.isPropertyAssignment(context)) styleProperty ??= name.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`);
+      if (ts.isVariableDeclaration(context) && (hexColor.test(node.text.trim()) || functionalColor.test(node.text.trim()))) return inspectColor(node.text, offset, report);
     }
     if (ts.isCallExpression(context) && /^(?:cn|clsx|classnames|twMerge)$/.test(context.expression.getText(source))) return inspectUtilities(node.text, offset, report);
   }

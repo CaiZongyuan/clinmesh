@@ -111,6 +111,9 @@ importers:
       jsdom:
         specifier: 31.0.1
         version: 31.0.1
+      lightningcss:
+        specifier: 1.33.0
+        version: 1.33.0
       mdast-util-from-markdown:
         specifier: 2.1.0
         version: 2.1.0
