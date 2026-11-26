@@ -5,6 +5,8 @@ import {
   type DoctorCaseHistoryDetailInput,
   type DoctorCaseHistoryInput,
 } from '@clinmesh/contracts/agent'
+import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
+import type { OrderIndicationOrderKind } from '@clinmesh/core/indication-rules'
 import type { FhirResource } from '@clinmesh/contracts/fhir'
 import { inpatientHistoryDetail, inpatientHistoryItems, isInpatientHistoryEntry } from './doctor-inpatient-history.ts'
 import { outpatientCaseSource, uniquePatientCaseSource } from './outpatient-case-source.ts'
@@ -550,12 +552,46 @@ export class WorkflowService
         }
       },
     })
+    const enforceOrderIndication = (indicationInput: {
+      asOf: string
+      candidateCodes?: readonly string[] | undefined
+      catalogItemId?: string | undefined
+      caseId: string
+      clinicalOverride?: ClinicalOverrideInput | undefined
+      context: ActorContext
+      itemCode: string
+      operation: string
+      orderDisplay?: string | undefined
+      orderKind: OrderIndicationOrderKind
+      patientId: string
+      subjectReference: string
+    }) => {
+      const inpatientOwner = inpatientRequestOwner(this.#database, indicationInput.context, indicationInput.caseId)
+      const subject = inpatientOwner === undefined
+        ? { id: indicationInput.caseId, kind: 'outpatient' as const, patientId: indicationInput.patientId }
+        : { id: inpatientOwner.admission_id, kind: 'inpatient' as const, patientId: inpatientOwner.patient_id }
+      const gate = inpatientOwner === undefined ? 'outpatient-prescription' as const : 'inpatient-order' as const
+      return this.clinicalQuality.enforceOrderIndication(indicationInput.context, {
+        asOf: indicationInput.asOf,
+        candidateCodes: indicationInput.candidateCodes,
+        catalogItemId: indicationInput.catalogItemId,
+        clinicalOverride: indicationInput.clinicalOverride,
+        gate,
+        itemCode: indicationInput.itemCode,
+        operation: indicationInput.operation,
+        orderDisplay: indicationInput.orderDisplay,
+        orderKind: indicationInput.orderKind,
+        subject,
+        subjectReference: indicationInput.subjectReference,
+      })
+    }
     const requestHost = {
       assertCaseResponsibility: (context: ActorContext, caseId: string) => this.#context.assertCaseResponsibility(context, caseId),
       assertExpectedVersions: (expectedVersions: Record<string, string>, references: string[]) => (
         this.#context.assertExpectedVersions(expectedVersions, references)
       ),
       caseByEncounter: (context: ActorContext, encounterId: string) => this.#context.caseByEncounter(context, encounterId),
+      enforceOrderIndication,
       hasConsultation: (context: ActorContext, caseId: string) => this.#context.hasConsultation(context, caseId),
       reportPublished: (transaction: CommandTransaction, context: ActorContext, caseId: string, reportReference: string) =>
         this.#recordPublishedReport(transaction, context, caseId, reportReference),
@@ -590,6 +626,7 @@ export class WorkflowService
     this.#laboratory = new OutpatientLaboratoryService({
       context: this.#context,
       host: {
+        enforceOrderIndication,
         reportPublished: (transaction, context, caseId, reportReference, reportName) => (
           this.#appendReportCardTurn(transaction, context, caseId, { reportName, reportReference })
         ),
@@ -795,6 +832,7 @@ export class WorkflowService
   }
 
   orderHospitalService(input: {
+    clinicalOverride?: ClinicalOverrideInput | undefined
     context: ActorContext
     encounterId: string
     expectedVersions: Record<string, string>
@@ -806,7 +844,11 @@ export class WorkflowService
       dataSchema: orderHospitalServiceResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
-      input: { encounterId: input.encounterId, serviceId: input.serviceId },
+      input: {
+        ...(input.clinicalOverride === undefined ? {} : { clinicalOverride: input.clinicalOverride }),
+        encounterId: input.encounterId,
+        serviceId: input.serviceId,
+      },
       operation: 'hospital-service.order',
     }, transaction => {
       this.#context.assertRole(input.context, ['outpatient-doctor'])
@@ -835,10 +877,28 @@ export class WorkflowService
       if (!config.availableScopes.includes('outpatient')) {
         throw new WorkflowError('CATALOG_CONFLICT', 'The Hospital Service is unavailable for outpatient care')
       }
+      const now = this.#context.virtualTime(input.context)
+      const orderKind: OrderIndicationOrderKind = ({
+        EXAMINATION: 'examination',
+        IMAGING: 'imaging',
+        LABORATORY: 'laboratory',
+      } as const)[config.category.code as 'EXAMINATION' | 'IMAGING' | 'LABORATORY'] ?? 'procedure'
+      const quality = this.clinicalQuality.enforceOrderIndication(input.context, {
+        asOf: now,
+        candidateCodes: [service.code, config.nationalService.code, service.service_id],
+        catalogItemId: service.service_id,
+        clinicalOverride: input.clinicalOverride,
+        gate: 'outpatient-prescription',
+        itemCode: service.code,
+        operation: 'hospital-service.order',
+        orderDisplay: service.name_zh,
+        orderKind,
+        subject: { id: outpatientCase.case_id, kind: 'outpatient', patientId: outpatientCase.patient_id },
+        subjectReference: `Encounter/${input.encounterId}`,
+      })
       const serviceRequestId = uuidv7()
       const taskId = `task-hospital-service-${serviceRequestId}`
       const chargeItemId = `charge-hospital-service-${serviceRequestId}`
-      const now = this.#context.virtualTime(input.context)
       const serviceRequest = transaction.fhir.create(input.context, {
         resourceType: 'ServiceRequest',
         id: serviceRequestId,
@@ -912,11 +972,12 @@ export class WorkflowService
           taskVersion: task.meta?.versionId ?? '1',
           totalFen: config.chargeDefinition.priceFen,
         },
-        effects: [serviceRequest, task, chargeItem].map(resource => ({
+        effects: [...[serviceRequest, task, chargeItem].map(resource => ({
           kind: 'created' as const,
           reference: `${resource.resourceType}/${resource.id}`,
           versionId: resource.meta?.versionId ?? '1',
-        })),
+        })), ...quality.effects],
+        ...(quality.receipt === undefined ? {} : { clinicalQuality: quality.receipt }),
       }
     })
   }

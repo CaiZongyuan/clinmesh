@@ -2513,6 +2513,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         identity.assertTrustedMutation(context.req.raw.headers)
         const request = orderHospitalServiceRequestSchema.parse(await context.req.json())
         return context.json(workflow.orderHospitalService({
+          ...(request.input.clinicalOverride === undefined ? {} : { clinicalOverride: request.input.clinicalOverride }),
           context: await actor(context),
           encounterId: context.req.param('encounterId'),
           expectedVersions: request.expectedVersions,
@@ -3553,6 +3554,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         identity.assertTrustedMutation(context.req.raw.headers)
         const body = issueLaboratoryRequestRequestSchema.parse(await context.req.json())
         return context.json(workflow.issueLaboratoryRequest({
+          ...(body.input.clinicalOverride === undefined ? {} : { clinicalOverride: body.input.clinicalOverride }),
           context: await actor(context),
           encounterId: context.req.param('encounterId'),
           expectedDraftVersion: body.input.expectedDraftVersion,
@@ -3704,6 +3706,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         identity.assertTrustedMutation(context.req.raw.headers)
         const body = issueExaminationRequestRequestSchema.parse(await context.req.json())
         return context.json(workflow.examination.issue({
+          ...(body.input.clinicalOverride === undefined ? {} : { clinicalOverride: body.input.clinicalOverride }),
           context: await actor(context),
           encounterId: context.req.param('encounterId'),
           expectedDraftVersion: body.input.expectedDraftVersion,
@@ -3848,6 +3851,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           identity.assertTrustedMutation(context.req.raw.headers)
           const body = issueImagingRequestRequestSchema.parse(await context.req.json())
           return context.json(workflow.imaging.issue({
+            ...(body.input.clinicalOverride === undefined ? {} : { clinicalOverride: body.input.clinicalOverride }),
             context: await actor(context),
             encounterId: context.req.param('encounterId'),
             expectedDraftVersion: body.input.expectedDraftVersion,

@@ -752,7 +752,18 @@ export class ClinicalPromptCardService {
       const entry = entriesByPackId.get(packId)
       if (!entry) continue
       const vocabulary: ConceptVocabulary = this.#diseasePacks.registry.resolvePackVocabulary(effective)
-      evaluatedPacks.push({ effective, entry, vocabulary })
+      const exitMeta = this.#diseasePacks.readExitMetadata(context, subject.kind, subject.id, packId)
+      evaluatedPacks.push({
+        effective,
+        entry,
+        ...(exitMeta.exited
+          ? {
+              exitMatchedFactIds: exitMeta.matchedFactIds,
+              exitSummaryAlreadyEmitted: exitMeta.exitSummaryDelivered,
+            }
+          : {}),
+        vocabulary,
+      })
 
       const snapshots = effective.pack.knowledgeSnapshots ?? []
       if (snapshots.some(s => { const t = Date.parse(s.effectiveFrom); return !Number.isNaN(t) && t <= asOfMs })) {
@@ -1057,12 +1068,32 @@ export class ClinicalPromptCardService {
       workingCards = this.#mergePersistedStaleSnapshots(context, subject, timing, workingCards)
     }
 
+    // Never re-surface stale snapshots from packs that are currently exited
+    const exitedPackIds = new Set(
+      baseline.evaluatedPacks
+        .filter(item => item.entry.exited === true || item.entry.activationReason === 'pack-exited')
+        .map(item => item.entry.packId),
+    )
+    if (exitedPackIds.size > 0) {
+      workingCards = workingCards.filter(
+        card => card.packId === null || !exitedPackIds.has(card.packId) || card.category === 'exit-summary',
+      )
+    }
+
     if (persistSnapshot && query.asOf === undefined) {
       const skipIds = new Set<string>(preserveStaleCardIds ?? [])
       for (const c of workingCards) {
         if (c.stale) skipIds.add(c.cardId)
       }
       this.#persistSnapshots(context, subject, workingCards, virtualNow, baselineAsOf, skipIds)
+    }
+
+    if (persistSnapshot && !systemBackgroundRefresh && query.asOf === undefined) {
+      for (const card of workingCards) {
+        if (card.category === 'exit-summary' && card.packId !== null) {
+          this.#diseasePacks.markExitSummaryDelivered(context, subject.kind, subject.id, card.packId)
+        }
+      }
     }
 
     // Apply clinician dismissals

@@ -5,22 +5,43 @@
         "kind": "allOf",
         "nodes": [
           {
-            "category": "diagnosis",
-            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "abnormal": false,
+            "category": "examination",
+            "itemCodes": ["11524-6", "examination-ecg-12-lead"],
             "kind": "fact",
-            "presence": "absent",
+            "presence": "present",
             "requireEligible": true
           },
           {
-            "category": "diagnosis",
-            "itemCodePattern": "^R07",
+            "abnormal": false,
+            "category": "laboratory",
+            "itemCodes": ["89579-7", "10839-9", "6597-9", "2100404B", "2100404A", "2100504A"],
             "kind": "fact",
-            "presence": "absent",
+            "minCount": 2,
+            "presence": "present",
             "requireEligible": true
+          },
+          {
+            "abnormal": false,
+            "category": "laboratory",
+            "itemCodes": ["48065-7", "0501703A"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "kind": "not",
+            "node": {
+              "category": "diagnosis",
+              "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25|I26|I71|R07)",
+              "kind": "fact",
+              "presence": "present",
+              "requireEligible": true
+            }
           }
         ]
       },
-      "descriptionZh": "经动态心电图与心肌肌钙蛋白排查已正式排除 ACS 及冠心病时退出专病路径",
+      "descriptionZh": "12 导联心电图、动态复测心肌肌钙蛋白（至少 2 次正常）及 D-二聚体均已完成且结果正常，并排除冠心病/ACS（I20-I25）、肺栓塞（I26）、主动脉夹层（I71）与胸痛诊断后，退出本专病排查路径",
       "id": "ruled-out-coronary-syndrome"
     }
   ],
@@ -39,7 +60,7 @@
         "nodes": [
           {
             "category": "diagnosis",
-            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25|R07)",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25|R07|R10\\.1|E11|I10|N18)",
             "kind": "fact",
             "presence": "present",
             "requireEligible": true
@@ -57,6 +78,89 @@
       "itemCodePattern": "^(?:2160-0|1700404A|CN-LAB-RENAL)$",
       "orderKind": "laboratory",
       "rationaleZh": "评估冠心病抗栓与含碘对比剂介入前基线肾功能及 eGFR 危险分层"
+    },
+    {
+      "condition": {
+        "kind": "anyOf",
+        "nodes": [
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "abnormal": true,
+            "category": "laboratory",
+            "itemCodes": ["89579-7", "10839-9", "6597-9", "2100404B", "2100404A", "2100504A"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "abnormal": true,
+            "category": "examination",
+            "itemCodes": ["11524-6", "examination-ecg-12-lead"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "category": "procedure",
+            "itemCodePattern": "^(?:36\\.0[67]|88\\.5[56])",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          }
+        ]
+      },
+      "id": "coronary-cta-indication",
+      "itemCodePattern": "^(?:CT-CORONARY-CTA|CORONARY-CTA|hospital-service-coronary-cta)$",
+      "orderKind": "imaging",
+      "rationaleZh": "冠状动脉 CTA 须具备明确的冠心病/ACS 诊断或心肌缺血客观依据（心电图异常或心肌肌钙蛋白升高）；低危非心源性胸壁痛且心电图及肌钙蛋白阴性时无常规冠脉 CTA 适应症",
+      "requiredItemCodes": [
+        "11524-6|examination-ecg-12-lead",
+        "89579-7|10839-9|6597-9|2100404B|2100404A|2100504A"
+      ]
+    },
+    {
+      "condition": {
+        "kind": "anyOf",
+        "nodes": [
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "abnormal": true,
+            "category": "laboratory",
+            "itemCodes": ["89579-7", "10839-9", "6597-9", "2100404B", "2100404A", "2100504A"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "abnormal": true,
+            "category": "examination",
+            "itemCodes": ["11524-6", "examination-ecg-12-lead"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          }
+        ]
+      },
+      "id": "coronary-angiography-indication",
+      "itemCodePattern": "^(?:88\\.55|88\\.56)",
+      "orderKind": "procedure",
+      "rationaleZh": "有创冠状动脉造影（CAG）须具备冠心病/ACS 诊断（I20-I25）、客观心肌缺血（心电图异常）或心肌损伤标志物升高依据",
+      "requiredItemCodes": [
+        "11524-6|examination-ecg-12-lead",
+        "89579-7|10839-9|6597-9|2100404B|2100404A|2100504A"
+      ]
     }
   ],
   "orderSets": [
@@ -1182,10 +1286,59 @@
   ],
   "ruleOutChecklist": [
     {
-      "actionHintZh": "急性胸痛或糖尿病伴不典型上腹痛须完成 12 导联心电图及动态肌钙蛋白复测并鉴别主动脉夹层、肺栓塞与急腹症",
+      "actionHintZh": "急性胸痛或 2 型糖尿病伴不典型上腹痛须重点排查三大高危致命病因：急性心肌梗死（I21.4）、急性肺栓塞（I26.9）、主动脉夹层（I71.0），并完成 12 导联心电图、至少 2 次动态高敏肌钙蛋白（hs-cTnI）及 D-二聚体排查",
+      "checkItems": [
+        {
+          "condition": {
+            "abnormal": false,
+            "category": "examination",
+            "itemCodes": ["11524-6", "examination-ecg-12-lead"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "id": "ecg-12-lead",
+          "labelZh": "12 导联心电图（11524-6）",
+          "minCount": 1,
+          "requireNormal": true,
+          "requiredItemCodes": ["11524-6", "examination-ecg-12-lead"]
+        },
+        {
+          "condition": {
+            "abnormal": false,
+            "category": "laboratory",
+            "itemCodes": ["89579-7", "10839-9", "6597-9", "2100404B", "2100404A", "2100504A"],
+            "kind": "fact",
+            "minCount": 2,
+            "presence": "present",
+            "requireEligible": true
+          },
+          "id": "serial-hs-ctni",
+          "labelZh": "动态心肌肌钙蛋白（hs-cTnI ≥ 2 次正常）",
+          "minCount": 2,
+          "requireNormal": true,
+          "requiredItemCodes": ["89579-7", "2100404B"]
+        },
+        {
+          "condition": {
+            "abnormal": false,
+            "category": "laboratory",
+            "itemCodes": ["48065-7", "0501703A"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "id": "d-dimer",
+          "labelZh": "D-二聚体（48065-7）",
+          "minCount": 1,
+          "requireNormal": true,
+          "requiredItemCodes": ["48065-7", "0501703A"]
+        }
+      ],
       "id": "acute-chest-pain-differential",
-      "targetConditionCodes": ["I21.4", "I20.0", "I26.9", "I71.0"],
-      "titleZh": "急性胸痛高危病因排查清单",
+      "requiredTestCodes": ["11524-6", "89579-7", "48065-7"],
+      "targetConditionCodes": ["I21.4", "I26.9", "I71.0", "I20.0"],
+      "titleZh": "急性胸痛高危病因排查清单（急性心肌梗死 I21.4 / 急性肺栓塞 I26.9 / 主动脉夹层 I71.0）",
       "trigger": {
         "kind": "anyOf",
         "nodes": [

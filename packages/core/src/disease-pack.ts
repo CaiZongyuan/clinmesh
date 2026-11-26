@@ -556,6 +556,10 @@ function matchesFactLeaf(
     if (!regex.test(candidateText)) return false
   }
 
+  if (node.abnormal !== undefined) {
+    if (typeof fact.abnormal !== 'boolean' || fact.abnormal !== node.abnormal) return false
+  }
+
   if (node.withinDays !== undefined && node.timestampField !== undefined && asOfMs !== null) {
     const tsMs = parseTimestampMs(readFactTimestampIso(fact, node.timestampField))
     if (tsMs === null || tsMs > asOfMs || (asOfMs - tsMs) > node.withinDays * MS_PER_DAY) {
@@ -578,7 +582,8 @@ export function evaluatePackTrigger(
 
   if (node.kind === 'fact') {
     const matchedFacts = ledger.facts.filter(fact => matchesFactLeaf(node, fact, asOfMs, options?.vocabulary, asOfDate))
-    if (matchedFacts.length > 0) {
+    const requiredCount = node.minCount ?? 1
+    if (matchedFacts.length >= requiredCount) {
       return {
         matched: true,
         matchedFactIds: matchedFacts.map(fact => fact.factId),
@@ -589,7 +594,11 @@ export function evaluatePackTrigger(
     return {
       matched: false,
       matchedFactIds: [],
-      missingReasons: [`missing:${label}`],
+      missingReasons: [
+        requiredCount > 1 && matchedFacts.length > 0
+          ? `insufficient-count:${label}:${matchedFacts.length}/${requiredCount}`
+          : `missing:${label}`,
+      ],
     }
   }
 
@@ -689,10 +698,43 @@ export interface PackActivationEvaluation {
     | 'manual-enabled'
     | 'manual-disabled'
     | 'inapplicable-population'
+    | 'pack-exited'
     | 'pack-draft'
     | 'pack-retired'
   readonly matchedTriggerIds: string[]
   readonly matchedInapplicableIds: string[]
+}
+
+export interface PackExitEvaluation {
+  readonly exited: boolean
+  readonly matchedCriterionId: string | null
+  readonly exitReasonZh: string | null
+  readonly matchedFactIds: string[]
+}
+
+/** Evaluate pack exit criteria against the clinical fact ledger. */
+export function evaluatePackExit(
+  effectivePack: EffectiveDiseasePack,
+  ledger: ClinicalFactLedger,
+  options?: TriggerEvaluationOptions,
+): PackExitEvaluation {
+  for (const criterion of effectivePack.pack.exitCriteria ?? []) {
+    const result = evaluatePackTrigger(criterion.condition, ledger, options)
+    if (result.matched) {
+      return {
+        exited: true,
+        exitReasonZh: criterion.descriptionZh,
+        matchedCriterionId: criterion.id,
+        matchedFactIds: result.matchedFactIds,
+      }
+    }
+  }
+  return {
+    exited: false,
+    exitReasonZh: null,
+    matchedCriterionId: null,
+    matchedFactIds: [],
+  }
 }
 
 /** Determine whether an effective disease pack is active, inactive, or excluded for this ledger. */

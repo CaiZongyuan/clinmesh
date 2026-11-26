@@ -7,6 +7,7 @@ import {
   laboratoryRequestSchema,
   laboratorySpecimenContainerSchema,
 } from './his.ts'
+import { clinicalOverrideInputSchema } from './clinical-quality.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const catalogId=z.string().min(1).max(512)
@@ -16,6 +17,7 @@ export const inpatientInvestigationsSchema = z.object({ admissionId: id, laborat
   sent: z.array(z.object({ requestId: id, sentAt: z.iso.datetime({ offset: true }), sentBy: id }).strict()) }).strict()
 export const inpatientInvestigationResponseSchema = commandResponseSchema(inpatientInvestigationsSchema)
 export const inpatientInvestigationIssueInputSchema = z.object({ admissionId: id, encounterVersion: version, catalogVersion:z.number().int().positive(),
+  clinicalOverride: clinicalOverrideInputSchema.optional(),
   surgeryExecutionId: id.optional(),
   selection: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('laboratory'), catalogItemId: catalogId, indicationCode: z.string().min(1).max(64) }).strict(),

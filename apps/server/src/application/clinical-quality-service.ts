@@ -24,6 +24,7 @@ import {
   type RenalFunctionFact,
 } from '@clinmesh/core/clinical-quality'
 import { resolveInpatientDose } from '@clinmesh/core/inpatient-dose'
+import { evaluateOrderIndicationRules, type OrderIndicationOrderKind } from '@clinmesh/core/indication-rules'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
@@ -308,6 +309,117 @@ export class ClinicalQualityService {
       medications,
     })
     return this.#withPackProvenance(context, subject, check, asOf)
+  }
+
+  /** 按当前已激活专病包的 `indicationRules` 对拟开立检查/检验/药品/术式做确定性适应症检查（不读 DRG）。 */
+  checkOrderIndication(input: {
+    asOf: string
+    candidateCodes?: readonly string[] | undefined
+    catalogItemId?: string | undefined
+    context: ActorContext
+    gate: ClinicalQualityGate
+    itemCode: string
+    orderDisplay?: string | undefined
+    orderKind: OrderIndicationOrderKind
+    subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string }
+  }): ClinicalQualityCheck {
+    if (!this.#factLedger || !this.#diseasePacks) {
+      return this.#result(input.context, input.gate, [], [])
+    }
+    const ledger = this.#factLedger.buildInternalLedger(input.context, input.subject, {
+      asOf: input.asOf,
+      includeSuperseded: false,
+    })
+    const encounterMap = this.#diseasePacks.resolvePatientEncounterMap(input.context, input.subject.patientId)
+    const runtimeSummary = this.#diseasePacks.activeRuntimeSummaryForSubject(
+      input.context,
+      input.subject,
+      input.asOf,
+      ledger,
+    )
+    const evaluatedPacks = runtimeSummary.entries.flatMap(entry => {
+      if (entry.activationStatus !== 'active' || entry.exited === true || entry.activationReason === 'pack-exited') {
+        return []
+      }
+      const effective = runtimeSummary.activePacks.find(p => p.pack.manifest.id === entry.packId)
+      return effective === undefined ? [] : [{ effective, entry }]
+    })
+    const evalResult = evaluateOrderIndicationRules({
+      asOf: input.asOf,
+      ...(input.candidateCodes === undefined ? {} : { candidateCodes: input.candidateCodes }),
+      ...(input.catalogItemId === undefined ? {} : { catalogItemId: input.catalogItemId }),
+      encounterIdByRecordId: encounterMap,
+      itemCode: input.itemCode,
+      ledger,
+      ...(input.orderDisplay === undefined ? {} : { orderDisplay: input.orderDisplay }),
+      orderKind: input.orderKind,
+      packs: evaluatedPacks,
+    })
+    const check = this.#result(input.context, input.gate, [], evalResult.alerts)
+    if (evalResult.sourcePacks.length === 0) return check
+    return {
+      ...check,
+      packId: evalResult.sourcePacks[0]!.packId,
+      packVersion: evalResult.sourcePacks[0]!.packVersion,
+      sourcePacks: evalResult.sourcePacks,
+    }
+  }
+
+  mergeChecks(base: ClinicalQualityCheck, extra: ClinicalQualityCheck): ClinicalQualityCheck {
+    const redLines = [...base.redLines, ...extra.redLines].slice(0, 16)
+    const alerts = [...base.alerts, ...extra.alerts].slice(0, 16)
+    const sourcePacksMap = new Map<string, NonNullable<ClinicalQualityCheck['sourcePacks']>[number]>()
+    for (const sp of [...(base.sourcePacks ?? []), ...(extra.sourcePacks ?? [])]) {
+      sourcePacksMap.set(sp.packId, sp)
+    }
+    const sourcePacks = [...sourcePacksMap.values()]
+    const primaryPack = base.packId ?? extra.packId
+    const primaryVersion = base.packVersion ?? extra.packVersion
+    return {
+      ...base,
+      alerts,
+      ...(primaryPack === undefined ? {} : { packId: primaryPack }),
+      ...(primaryVersion === undefined ? {} : { packVersion: primaryVersion }),
+      redLines,
+      ...(sourcePacks.length === 0 ? {} : { sourcePacks }),
+      status: redLines.length > 0 ? 'blocked' : alerts.length > 0 ? 'alert' : 'pass',
+    }
+  }
+
+  enforceOrderIndication(
+    context: ActorContext,
+    input: {
+      asOf: string
+      candidateCodes?: readonly string[] | undefined
+      catalogItemId?: string | undefined
+      clinicalOverride?: ClinicalOverrideInput | undefined
+      gate: ClinicalQualityGate
+      itemCode: string
+      operation: string
+      orderDisplay?: string | undefined
+      orderKind: OrderIndicationOrderKind
+      subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string }
+      subjectReference: string
+    },
+  ): { effects: CommandEffect[]; receipt?: ClinicalQualityReceipt } {
+    const check = this.checkOrderIndication({
+      asOf: input.asOf,
+      ...(input.candidateCodes === undefined ? {} : { candidateCodes: input.candidateCodes }),
+      ...(input.catalogItemId === undefined ? {} : { catalogItemId: input.catalogItemId }),
+      context,
+      gate: input.gate,
+      itemCode: input.itemCode,
+      ...(input.orderDisplay === undefined ? {} : { orderDisplay: input.orderDisplay }),
+      orderKind: input.orderKind,
+      subject: input.subject,
+    })
+    return this.enforce(context, {
+      check,
+      operation: input.operation,
+      override: input.clinicalOverride,
+      patientId: input.subject.patientId,
+      subjectReference: input.subjectReference,
+    })
   }
 
   readOutpatient(context: ActorContext, input: { encounterId: string; gate: 'outpatient-prescription' | 'outpatient-completion' }): ClinicalQualityCheck {

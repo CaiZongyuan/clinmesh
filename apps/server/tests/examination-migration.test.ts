@@ -60,7 +60,7 @@ it('功能检查重建迁移保留旧费用、精确预览和收费归属并允�
       .run(scope.workspaceId, scope.epoch, now)
     const charges = database.driver.prepare('SELECT * FROM charge_record').all(),
       previews = database.driver.prepare('SELECT * FROM payment_preview').all()
-    expect(applyMigrations(database).applied).toEqual([migration, '0114_outpatient-follow-up-source.sql', '0115_clinical-risk-vitals.sql', '0116_guideline-topic-advice.sql', '0117_clinical-quality-override.sql', '0118_item-insurance-coverage.sql', '0119_medication-route.sql', '0120_surgery-notice-and-consent.sql', '0121_surgery-medications-and-nursing.sql', '0122_surgery-ad-hoc-pci.sql', '0123_surgery-preop-policy-and-postop-investigations.sql', '0124_clinical-fact-verification.sql', '0125_local-source-ingestion.sql', '0126_disease-pack-runtime.sql', '0127_bedside-questionnaire-answers.sql', '0128_clinical-prompt-cards.sql'])
+    expect(applyMigrations(database).applied).toEqual([migration, '0114_outpatient-follow-up-source.sql', '0115_clinical-risk-vitals.sql', '0116_guideline-topic-advice.sql', '0117_clinical-quality-override.sql', '0118_item-insurance-coverage.sql', '0119_medication-route.sql', '0120_surgery-notice-and-consent.sql', '0121_surgery-medications-and-nursing.sql', '0122_surgery-ad-hoc-pci.sql', '0123_surgery-preop-policy-and-postop-investigations.sql', '0124_clinical-fact-verification.sql', '0125_local-source-ingestion.sql', '0126_disease-pack-runtime.sql', '0127_bedside-questionnaire-answers.sql', '0128_clinical-prompt-cards.sql', '0129_pack-exit-state.sql'])
     expect(database.driver.prepare('SELECT * FROM charge_record').all()).toEqual(
       charges.map(row => ({ ...(row as Record<string, unknown>), coverage_json: null })),
     )

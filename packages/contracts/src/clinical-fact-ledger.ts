@@ -151,6 +151,7 @@ export const clinicalFactSchema = z.object({
   clinicianVerification: clinicalFactClinicianVerificationSchema,
   eligibleForScoringAndRedLine: z.boolean(),
   ineligibleReasons: z.array(nonEmpty),
+  abnormal: z.boolean().nullable().optional(),
 }).strict()
 export type ClinicalFact = z.infer<typeof clinicalFactSchema>
 

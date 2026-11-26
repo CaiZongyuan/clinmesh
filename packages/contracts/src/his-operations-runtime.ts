@@ -646,6 +646,7 @@ const correctPathologyReportOperationInputSchema = correctPathologyReportRequest
   .extend(imagingReportVersionInputShape).strict()
 
 const orderHospitalServiceOperationInputSchema = z.object({
+  clinicalOverride: clinicalOverrideInputSchema.optional(),
   encounterId: z.string().min(1),
   expectedVersions: expectedVersionsInputSchema,
   serviceId: z.string().min(1),
@@ -1104,8 +1105,8 @@ const bodyEncoders = {
     return commandBody({ [`DiagnosticReport/${diagnosticReportId}`]: diagnosticReportVersion }, input)
   },
   'service.order': (rawInput: unknown) => {
-    const { expectedVersions } = orderHospitalServiceOperationInputSchema.parse(rawInput)
-    return commandBody(expectedVersions, {})
+    const { clinicalOverride, expectedVersions } = orderHospitalServiceOperationInputSchema.parse(rawInput)
+    return commandBody(expectedVersions, clinicalOverride === undefined ? {} : { clinicalOverride })
   },
   'service.complete': (rawInput: unknown) => {
     const { expectedVersions } = completeHospitalServiceOperationInputSchema.parse(rawInput)

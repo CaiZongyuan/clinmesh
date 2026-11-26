@@ -1028,7 +1028,7 @@ const operationCliMetadataList = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: '在校验现代门诊首版结构化病历已签署（CLINICAL_DOCUMENT_UNSIGNED）且主诊断已确认（DIAGNOSIS_UNCONFIRMED）后，签发当前检验草稿并冻结门诊价目与唯一原费用，足额确定资金后放行原申请；缺价或价目失效以 CATALOG_CONFLICT 拒绝并保留草稿，刷新目录后重新审阅；缺少结果底账时以 LABORATORY_GENERATION_UNSUPPORTED 拒绝，不可重试；返回冻结检验目录采血管容器属性、危急值阈值与定量结果危急值标记',
+    summary: '在校验现代门诊首版结构化病历已签署（CLINICAL_DOCUMENT_UNSIGNED）、主诊断已确认（DIAGNOSIS_UNCONFIRMED）及专病适应证质控警示（INVESTIGATION_WITHOUT_INDICATION，可通过 clinicalOverride 确认重提）后，签发当前检验草稿并冻结门诊价目与唯一原费用，足额确定资金后放行原申请；缺价或价目失效以 CATALOG_CONFLICT 拒绝并保留草稿，刷新目录后重新审阅；缺少结果底账时以 LABORATORY_GENERATION_UNSUPPORTED 拒绝，不可重试；返回冻结检验目录采血管容器属性、危急值阈值与定量结果危急值标记',
     version: 4,
   },
   {
@@ -1132,7 +1132,7 @@ const operationCliMetadataList = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: '在校验现代门诊首版结构化病历已签署（CLINICAL_DOCUMENT_UNSIGNED）且主诊断已确认（DIAGNOSIS_UNCONFIRMED）后，签发当前功能检查申请草稿并冻结门诊价目与唯一原费用，足额确定资金后放行原申请；本院未开展、缺价或价目失效以 CATALOG_CONFLICT 拒绝并保留草稿，刷新目录后重新审阅；同一服务已有进行中申请时以 EXAMINATION_REQUEST_DUPLICATE 拒绝',
+    summary: '在校验现代门诊首版结构化病历已签署（CLINICAL_DOCUMENT_UNSIGNED）、主诊断已确认（DIAGNOSIS_UNCONFIRMED）及专病适应证质控警示（INVESTIGATION_WITHOUT_INDICATION，可通过 clinicalOverride 确认重提）后，签发当前功能检查申请草稿并冻结门诊价目与唯一原费用，足额确定资金后放行原申请；本院未开展、缺价或价目失效以 CATALOG_CONFLICT 拒绝并保留草稿，刷新目录后重新审阅；同一服务已有进行中申请时以 EXAMINATION_REQUEST_DUPLICATE 拒绝',
     version: 2,
   },
   {
@@ -1223,7 +1223,7 @@ const operationCliMetadataList = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: '在校验现代门诊首版结构化病历已签署（CLINICAL_DOCUMENT_UNSIGNED）且主诊断已确认（DIAGNOSIS_UNCONFIRMED）后，签发当前放射申请草稿并冻结门诊价目与唯一原费用，足额确定资金后放行原申请；本院未开展、缺价或价目失效以 CATALOG_CONFLICT 拒绝并保留草稿，刷新目录后重新审阅；同一服务已有进行中申请时以 IMAGING_REQUEST_DUPLICATE 拒绝',
+    summary: '在校验现代门诊首版结构化病历已签署（CLINICAL_DOCUMENT_UNSIGNED）、主诊断已确认（DIAGNOSIS_UNCONFIRMED）及专病适应证质控警示（INVESTIGATION_WITHOUT_INDICATION，可通过 clinicalOverride 确认重提）后，签发当前放射申请草稿并冻结门诊价目与唯一原费用，足额确定资金后放行原申请；本院未开展、缺价或价目失效以 CATALOG_CONFLICT 拒绝并保留草稿，刷新目录后重新审阅；同一服务已有进行中申请时以 IMAGING_REQUEST_DUPLICATE 拒绝',
     version: 2,
   },
   {
@@ -1392,7 +1392,7 @@ const operationCliMetadataList = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Order an active Hospital Service for an Encounter',
+    summary: 'Order an active Hospital Service for an Encounter, enforcing structured clinical indication alerts (CLINICAL_QUALITY_ALERT / INVESTIGATION_WITHOUT_INDICATION unless satisfied in ClinicalFactLedger or acknowledged via clinicalOverride)',
     version: 1,
   },
   {
@@ -2427,7 +2427,7 @@ const operationCliMetadataList = [
     requirements:{expectedVersions:true,idempotency:'required'},
     risk:'write',
     roles:['inpatient-doctor'],
-    summary:'开立住院检验、影像或无像素功能检查（支持可选术后关联 surgeryExecutionId 并写入 FHIR ServiceRequest.supportingInfo），固定来源、价目、采血管容器与危急值定义，等待护士送检',
+    summary:'开立住院检验、影像或无像素功能检查（支持可选术后关联 surgeryExecutionId 与受控越权 clinicalOverride，校验专病无指征开立警示 CLINICAL_QUALITY_ALERT / INVESTIGATION_WITHOUT_INDICATION，并写入 FHIR ServiceRequest.supportingInfo），固定来源、价目、采血管容器与危急值定义，等待护士送检',
     version:5,
   },
   {

@@ -346,6 +346,22 @@ const CANONICAL_CONCEPT_SPECS: readonly CanonicalConceptSpec[] = [
     plausibleRange: { min: 30, max: 260 },
     aliases: ['8302-2'],
   },
+  {
+    canonicalCode: '11524-6',
+    system: LOINC_SYSTEM,
+    display: '十二导联心电图',
+    categoryHint: 'examination',
+    validityDays: null,
+    aliases: ['11524-6', 'ECG-12', 'examination-ecg-12-lead'],
+  },
+  {
+    canonicalCode: '48065-7',
+    system: LOINC_SYSTEM,
+    display: 'D-二聚体',
+    categoryHint: 'laboratory',
+    validityDays: 7,
+    aliases: ['48065-7', '0501703A'],
+  },
 ]
 
 const CONCEPT_BY_ALIAS = new Map<string, CanonicalConceptSpec>()
@@ -406,6 +422,12 @@ export interface FhirQuantityLike {
   system?: string | undefined
 }
 
+export interface FhirReferenceRangeLike {
+  low?: FhirQuantityLike | undefined
+  high?: FhirQuantityLike | undefined
+  text?: string | undefined
+}
+
 export interface FhirObservationComponentLike {
   code?: FhirCodeableConceptLike
   valueQuantity?: FhirQuantityLike
@@ -413,6 +435,8 @@ export interface FhirObservationComponentLike {
   valueString?: string
   valueBoolean?: boolean
   valueInteger?: number
+  interpretation?: readonly FhirCodeableConceptLike[]
+  referenceRange?: readonly FhirReferenceRangeLike[]
 }
 
 export interface FhirObservationLike {
@@ -428,6 +452,8 @@ export interface FhirObservationLike {
   valueString?: string
   valueBoolean?: boolean
   valueInteger?: number
+  interpretation?: readonly FhirCodeableConceptLike[]
+  referenceRange?: readonly FhirReferenceRangeLike[]
   component?: readonly FhirObservationComponentLike[]
   specimen?: { reference?: string; display?: string }
   bodySite?: FhirCodeableConceptLike
@@ -525,6 +551,8 @@ export interface LocalFhirTranscriptionInput {
 
 export interface VisibleSourceObservationFieldsLike {
   code?: FhirCodeableConceptLike | undefined
+  interpretation?: readonly FhirCodeableConceptLike[] | undefined
+  referenceRange?: readonly FhirReferenceRangeLike[] | undefined
   valueBoolean?: boolean | undefined
   valueCodeableConcept?: FhirCodeableConceptLike | undefined
   valueDateTime?: string | undefined
@@ -636,6 +664,7 @@ export interface TranscribedClinicalFactCandidate {
     rawUnit: string | null
   }
   sexRestrictionHint?: 'female' | 'male' | null
+  abnormal?: boolean | null | undefined
 }
 
 function isIsoDateTime(value: string | undefined | null): value is string {
@@ -757,6 +786,111 @@ function extractValueAndQcFromObservationFields(
     value: { rawText: '已记录', normalizedValue: 'recorded' },
     presence: 'present',
   }
+}
+
+function inferObservationAbnormal(
+  fields: {
+    interpretation?: readonly FhirCodeableConceptLike[] | undefined
+    referenceRange?: readonly FhirReferenceRangeLike[] | undefined
+    valueQuantity?: FhirQuantityLike | undefined
+    valueBoolean?: boolean | undefined
+    valueCodeableConcept?: FhirCodeableConceptLike | undefined
+  },
+): boolean | undefined {
+  for (const interp of fields.interpretation ?? []) {
+    for (const coding of interp.coding ?? []) {
+      const code = coding.code?.trim().toUpperCase()
+      if (!code) continue
+      if (['H', 'HH', 'HU', 'L', 'LL', 'LU', 'A', 'AA', 'POS', 'POSITIVE', 'CRIT', 'CRITH', 'CRITL', 'DET', 'IND', 'ABNORMAL', 'HIGH', 'LOW'].includes(code)) {
+        return true
+      }
+      if (['N', 'NORMAL', 'NEG', 'NEGATIVE', 'ND'].includes(code)) {
+        return false
+      }
+    }
+    const text = interp.text?.trim().toLowerCase()
+    if (text) {
+      if (/(?:abnormal|high|low|positive|异常|升高|偏高|降低|偏低|阳性)/.test(text)) return true
+      if (/(?:normal|negative|正常|阴性)/.test(text)) return false
+    }
+  }
+  const value = fields.valueQuantity?.value
+  if (typeof value === 'number' && Number.isFinite(value) && fields.referenceRange && fields.referenceRange.length > 0) {
+    const valUnit = normalizeUnitToken(fields.valueQuantity?.unit ?? fields.valueQuantity?.code ?? '')
+    for (const range of fields.referenceRange) {
+      const low = range.low?.value
+      const high = range.high?.value
+      const rangeUnit = normalizeUnitToken(range.low?.unit ?? range.low?.code ?? range.high?.unit ?? range.high?.code ?? '')
+      if (valUnit && rangeUnit && valUnit !== rangeUnit) continue
+      if (low !== undefined || high !== undefined) {
+        if (low !== undefined && value < low) return true
+        if (high !== undefined && value > high) return true
+        return false
+      }
+    }
+  }
+  return undefined
+}
+
+const EXAM_ABNORMAL_CLAUSE_PATTERN = /(?:ST\s*段(?:抬高|压低|下移|偏移|改变)|T\s*波(?:倒置|低平|平低|高尖)|病理性\s*Q\s*波|急性?心肌缺血|心肌梗死|心律失常|心房颤动|心室颤动|传导阻滞|明显异常|异常)/i
+const EXAM_CLAUSE_NEGATION_PATTERN = /(?:未见|未发现|无(?:明显|急性)?|排除|否定)/
+
+function hasPositiveAbnormalExamClause(text: string): boolean {
+  for (const clause of text.split(/[，,；;。]+|(?=但|而|伴|可见|提示)/)) {
+    const trimmed = clause.trim()
+    if (!trimmed) continue
+    if (EXAM_ABNORMAL_CLAUSE_PATTERN.test(trimmed) && !EXAM_CLAUSE_NEGATION_PATTERN.test(trimmed)) {
+      return true
+    }
+  }
+  return false
+}
+
+function isNegativeNormalExamText(text: string): boolean {
+  const trimmed = text.trim()
+  if (!trimmed || hasPositiveAbnormalExamClause(trimmed)) return false
+  return /(?:未见|未发现|无(?:明显|急性)?异常|心电图正常|窦性心律正常|normal\b)/i.test(trimmed)
+}
+
+function inferExamDiagnosticReportAbnormal(
+  report: FhirDiagnosticReportLike,
+  obsById: ReadonlyMap<string, FhirObservationLike>,
+  conclusionText: string,
+): boolean | undefined {
+  for (const cCode of report.conclusionCode ?? []) {
+    for (const coding of cCode.coding ?? []) {
+      const code = coding.code?.trim().toLowerCase()
+      if (!code) continue
+      if (['a', 'abnormal', 'positive', 'ischemia'].includes(code)) return true
+      if (['n', 'normal', 'negative'].includes(code)) return false
+    }
+  }
+  const childAbnormalFlags: boolean[] = []
+  for (const ref of report.result ?? []) {
+    const obsId = ref.reference?.replace(/^Observation\//, '')
+    if (!obsId) continue
+    const childObs = obsById.get(obsId)
+    if (!childObs) continue
+    const valueStr = childObs.valueString?.trim()
+    if (valueStr && isNegativeNormalExamText(valueStr)) {
+      childAbnormalFlags.push(false)
+      continue
+    }
+    const flag = inferObservationAbnormal(childObs)
+    if (flag !== undefined) childAbnormalFlags.push(flag)
+  }
+  if (childAbnormalFlags.some(flag => flag === true)) return true
+
+  if (conclusionText && hasPositiveAbnormalExamClause(conclusionText)) {
+    return true
+  }
+  if (childAbnormalFlags.length > 0 && childAbnormalFlags.every(flag => flag === false)) {
+    return false
+  }
+  if (conclusionText && isNegativeNormalExamText(conclusionText)) {
+    return false
+  }
+  return undefined
 }
 
 function mapFhirReportOrObsStatus(status: string): ClinicalFactRecordStatus | null {
@@ -947,6 +1081,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
         const extracted = extractValueAndQcFromObservationFields(comp, spec)
         const category = spec?.categoryHint ?? 'vital-sign'
         const factId = buildFactId(obsSourceSystemId, 'Observation', obs.id, recordVersion, itemCode.code)
+        const compAbnormal = inferObservationAbnormal(comp) ?? inferObservationAbnormal(obs)
         candidates.push({
           factId,
           category,
@@ -972,6 +1107,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
           mappingVersion,
           ...(extracted.sourceQuantityForQc ? { sourceQuantityForQc: extracted.sourceQuantityForQc } : {}),
           sexRestrictionHint: inferSexRestrictionFromCodeOrText(itemCode.code, itemCode.display),
+          ...(compAbnormal === undefined ? {} : { abnormal: compAbnormal }),
         })
       }
       if (
@@ -990,6 +1126,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
     const extracted = extractValueAndQcFromObservationFields(obs, spec)
     const category = observationCategory(obs, spec)
 
+    const obsAbnormal = inferObservationAbnormal(obs)
     candidates.push({
       factId: buildFactId(obsSourceSystemId, 'Observation', obs.id, recordVersion),
       category,
@@ -1015,6 +1152,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
       mappingVersion,
       ...(extracted.sourceQuantityForQc ? { sourceQuantityForQc: extracted.sourceQuantityForQc } : {}),
       sexRestrictionHint: inferSexRestrictionFromCodeOrText(itemCode.code, itemCode.display),
+      ...(obsAbnormal === undefined ? {} : { abnormal: obsAbnormal }),
     })
   }
 
@@ -1022,13 +1160,20 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
     const recordStatus = mapFhirReportOrObsStatus(report.status)
     if (!recordStatus) continue
 
-    const isExamOrImaging = Boolean(report.category?.some(cat =>
-      cat.coding?.some(c => {
-        const code = (c.code ?? '').toUpperCase()
-        return code === 'RAD' || code === 'ECG' || code === 'EXAM' || code === 'EXAMINATION'
-          || code === 'DIAGNOSTIC-IMAGING' || code === 'PATH' || code === 'PAT' || code === 'SP'
-      }),
-    ))
+    const { itemCode, method, spec } = pickCodingConcept(report.code, report.id, report.code?.text ?? report.id)
+    const isExamOrImaging = spec?.categoryHint === 'examination'
+      || Boolean(report.category?.some(cat =>
+        cat.coding?.some(c => {
+          const code = (c.code ?? '').toUpperCase()
+          return code === 'RAD' || code === 'ECG' || code === 'EXAM' || code === 'EXAMINATION'
+            || code === 'DIAGNOSTIC-IMAGING' || code === 'PATH' || code === 'PAT' || code === 'SP'
+        }),
+      ))
+      || Boolean(report.code?.coding?.some(c =>
+        c.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service'
+        || c.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/imaging-service'
+        || ['ECG-12', '11524-6', 'examination-ecg-12-lead', 'TTE', '18043-0', 'examination-tte'].includes(c.code ?? ''),
+      ))
     const hasResultObservations = Boolean(report.result && report.result.some(r => {
       const obsId = r.reference?.replace(/^Observation\//, '')
       return Boolean(obsId && obsById.has(obsId))
@@ -1043,7 +1188,6 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
     if (!hasResultObservations && conclusionText.length === 0) continue
 
     const recordVersion = report.meta?.versionId ?? '1'
-    const { itemCode, method } = pickCodingConcept(report.code, report.id, report.code?.text ?? report.id)
     const orderedAt = readOwnRecordValue(input.orderedAtByReportId, report.id)
       ?? report.basedOn?.map(b => (b.reference ? readOwnRecordValue(input.orderedAtByRequestRef, b.reference) : undefined)).find(Boolean)
       ?? null
@@ -1057,6 +1201,9 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
       ? buildFactId(defaultSourceSystemId, 'DiagnosticReport', prevReport.id, prevReport.meta?.versionId ?? '1')
       : null
 
+    const reportAbnormal = isExamOrImaging
+      ? inferExamDiagnosticReportAbnormal(report, obsById, conclusionText)
+      : undefined
     candidates.push({
       factId: buildFactId(defaultSourceSystemId, 'DiagnosticReport', report.id, recordVersion),
       category: isExamOrImaging ? 'examination' : 'laboratory',
@@ -1090,6 +1237,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
       ingestedAt,
       mappingVersion,
       sexRestrictionHint: inferSexRestrictionFromCodeOrText(itemCode.code, `${itemCode.display} ${conclusionText}`),
+      ...(reportAbnormal === undefined ? {} : { abnormal: reportAbnormal }),
     })
   }
 
@@ -2063,6 +2211,7 @@ export function evaluateClinicalFactLedger(input: ClinicalFactLedgerEvaluationIn
       clinicianVerification,
       eligibleForScoringAndRedLine: ineligibleReasons.length === 0,
       ineligibleReasons,
+      ...(candidate.abnormal === undefined ? {} : { abnormal: candidate.abnormal }),
     })
   }
 

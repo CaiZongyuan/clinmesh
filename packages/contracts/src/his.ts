@@ -294,7 +294,9 @@ export const serviceCatalogSearchSchema = z.object({
 
 export const orderHospitalServiceRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
-  input: z.object({}).strict(),
+  input: z.object({
+    clinicalOverride: clinicalOverrideInputSchema.optional(),
+  }).strict(),
 }).strict()
 
 export const orderHospitalServiceResponseSchema = commandResponseSchema(z.object({
@@ -1863,6 +1865,7 @@ export const completedCaseLaboratoryRequestSchema = z.object({
 export const issueLaboratoryRequestRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
+    clinicalOverride: clinicalOverrideInputSchema.optional(),
     expectedDraftVersion: z.number().int().positive(),
   }).strict(),
 }).strict()

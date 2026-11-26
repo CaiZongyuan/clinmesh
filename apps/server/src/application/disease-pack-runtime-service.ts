@@ -31,6 +31,7 @@ import {
   deduplicateQuestionnaireItems,
   evaluateLongitudinalLdlComparison,
   evaluatePackActivation,
+  evaluatePackExit,
   evaluatePackStages,
   evaluateTaskReadiness,
   filterLedgerForTaskView,
@@ -67,6 +68,17 @@ const overrideRowSchema = z.object({
   pack_id: z.string(),
   updated_at: z.string(),
   version: z.number().int().positive(),
+}).strict()
+
+const exitStateRowSchema = z.object({
+  audit_id: z.string(),
+  exit_criterion_id: z.string(),
+  exit_reason_zh: z.string(),
+  exit_summary_delivered: z.number().int(),
+  exited_at: z.string(),
+  matched_fact_ids_json: z.string(),
+  pack_id: z.string(),
+  status: z.enum(['exited', 're-enabled']),
 }).strict()
 
 const stageAuditLatestSchema = z.object({
@@ -593,12 +605,16 @@ export class DiseasePackRuntimeService {
     const ledger = this.#factLedger.buildInternalLedger(input.context, subject, { asOf, includeSuperseded: false })
     const encounterMap = this.#resolveEncounterMap(input.context, patientId)
     const override = this.#loadOverride(input.context, input.subjectKind, input.subjectId, input.packId)
-    const activation = evaluatePackActivation(effective, ledger, {
-      asOf,
-      encounterIdByRecordId: encounterMap,
-      manualOverride: override?.override_mode ?? null,
+    const activation = this.#resolveActivationWithExit(
+      input.context,
+      subject,
+      effective,
+      ledger,
+      encounterMap,
+      override,
       vocabulary,
-    })
+      asOf,
+    )
 
     if (!activation.active) {
       this.#commands.auditRead(input.context, 'DSAP_TOOL_POLICY_DENIED', {
@@ -710,12 +726,16 @@ export class DiseasePackRuntimeService {
     for (const effective of effectiveList) {
       const override = this.#loadOverride(input.context, input.subjectKind, input.subjectId, effective.pack.manifest.id)
       const vocabulary = this.#resolvePackVocabulary(effective)
-      const activation = evaluatePackActivation(effective, ledger, {
-        asOf,
-        encounterIdByRecordId: encounterMap,
-        manualOverride: override?.override_mode ?? null,
+      const activation = this.#resolveActivationWithExit(
+        input.context,
+        subject,
+        effective,
+        ledger,
+        encounterMap,
+        override,
         vocabulary,
-      })
+        asOf,
+      )
       if (!activation.active) continue
 
       const forbidden = new Set(effective.effectiveForbiddenActions)
@@ -868,39 +888,52 @@ export class DiseasePackRuntimeService {
         DELETE FROM disease_pack_activation_override
         WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ? AND pack_id = ?
       `).run(context.workspaceId, context.epoch, subject.kind, subject.id, packId)
-    } else if (existing === undefined) {
       this.#database.driver.prepare(`
-        INSERT INTO disease_pack_activation_override (
-          workspace_id, epoch, subject_kind, subject_id, pack_id,
-          override_mode, note, updated_by_actor_id, updated_at, version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-      `).run(
-        context.workspaceId,
-        context.epoch,
-        subject.kind,
-        subject.id,
-        packId,
-        body.overrideMode,
-        body.note ?? null,
-        context.actorId,
-        now,
-      )
-    } else {
-      this.#database.driver.prepare(`
-        UPDATE disease_pack_activation_override
-        SET override_mode = ?, note = ?, updated_by_actor_id = ?, updated_at = ?, version = version + 1
+        DELETE FROM disease_pack_exit_state
         WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ? AND pack_id = ?
-      `).run(
-        body.overrideMode,
-        body.note ?? null,
-        context.actorId,
-        now,
-        context.workspaceId,
-        context.epoch,
-        subject.kind,
-        subject.id,
-        packId,
-      )
+      `).run(context.workspaceId, context.epoch, subject.kind, subject.id, packId)
+    } else {
+      if (existing === undefined) {
+        this.#database.driver.prepare(`
+          INSERT INTO disease_pack_activation_override (
+            workspace_id, epoch, subject_kind, subject_id, pack_id,
+            override_mode, note, updated_by_actor_id, updated_at, version
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        `).run(
+          context.workspaceId,
+          context.epoch,
+          subject.kind,
+          subject.id,
+          packId,
+          body.overrideMode,
+          body.note ?? null,
+          context.actorId,
+          now,
+        )
+      } else {
+        this.#database.driver.prepare(`
+          UPDATE disease_pack_activation_override
+          SET override_mode = ?, note = ?, updated_by_actor_id = ?, updated_at = ?, version = version + 1
+          WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ? AND pack_id = ?
+        `).run(
+          body.overrideMode,
+          body.note ?? null,
+          context.actorId,
+          now,
+          context.workspaceId,
+          context.epoch,
+          subject.kind,
+          subject.id,
+          packId,
+        )
+      }
+      if (body.overrideMode === 'enabled') {
+        this.#database.driver.prepare(`
+          UPDATE disease_pack_exit_state
+          SET status = 're-enabled', re_enabled_at = ?, re_enabled_by_actor_id = ?
+          WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ? AND pack_id = ? AND status = 'exited'
+        `).run(now, context.actorId, context.workspaceId, context.epoch, subject.kind, subject.id, packId)
+      }
     }
 
     const ledger = this.#factLedger.buildInternalLedger(context, subject, { asOf: now, includeSuperseded: false })
@@ -1038,9 +1071,136 @@ export class DiseasePackRuntimeService {
     })
   }
 
+  readExitMetadata(
+    context: Pick<ActorContext, 'workspaceId' | 'epoch'>,
+    subjectKind: 'outpatient' | 'inpatient',
+    subjectId: string,
+    packId: string,
+  ): { exited: boolean; exitSummaryDelivered: boolean; matchedFactIds: string[] } {
+    const row = this.#loadExitState(context, subjectKind, subjectId, packId)
+    if (row === undefined || row.status !== 'exited') {
+      return { exited: false, exitSummaryDelivered: false, matchedFactIds: [] }
+    }
+    const matchedFactIds = z.array(z.string()).catch([]).parse(JSON.parse(row.matched_fact_ids_json))
+    return {
+      exited: true,
+      exitSummaryDelivered: row.exit_summary_delivered === 1,
+      matchedFactIds,
+    }
+  }
+
+  markExitSummaryDelivered(
+    context: Pick<ActorContext, 'workspaceId' | 'epoch'>,
+    subjectKind: 'outpatient' | 'inpatient',
+    subjectId: string,
+    packId: string,
+  ): void {
+    this.#database.driver.prepare(`
+      UPDATE disease_pack_exit_state
+      SET exit_summary_delivered = 1
+      WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ? AND pack_id = ? AND status = 'exited'
+    `).run(context.workspaceId, context.epoch, subjectKind, subjectId, packId)
+  }
+
+  #resolveActivationWithExit(
+    context: ActorContext,
+    subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string },
+    effective: EffectiveDiseasePack,
+    ledger: ClinicalFactLedger,
+    encounterMap: Readonly<Record<string, string>>,
+    override: z.infer<typeof overrideRowSchema> | undefined,
+    vocabulary: ConceptVocabulary,
+    asOf: string,
+  ) {
+    const evalOptions = {
+      asOf,
+      encounterIdByRecordId: encounterMap,
+      manualOverride: override?.override_mode ?? null,
+      vocabulary,
+    }
+    const activation = evaluatePackActivation(effective, ledger, evalOptions)
+    const packId = effective.pack.manifest.id
+    if (override?.override_mode === 'enabled') {
+      return { ...activation, exitReasonZh: null, exited: false }
+    }
+    const existingExit = this.#loadExitState(context, subject.kind, subject.id, packId)
+    if (existingExit?.status === 'exited') {
+      return {
+        ...activation,
+        activationReason: 'pack-exited' as const,
+        activationStatus: 'inactive' as const,
+        active: false,
+        exitReasonZh: existingExit.exit_reason_zh,
+        exited: true,
+      }
+    }
+    if (activation.active && existingExit?.status !== 're-enabled') {
+      const exitEval = evaluatePackExit(effective, ledger, evalOptions)
+      if (exitEval.exited) {
+        if (!this.#database.driver.inTransaction) {
+          this.#persistExitedState(context, subject, packId, exitEval, asOf)
+        }
+        return {
+          ...activation,
+          activationReason: 'pack-exited' as const,
+          activationStatus: 'inactive' as const,
+          active: false,
+          exitReasonZh: exitEval.exitReasonZh,
+          exited: true,
+        }
+      }
+    }
+    return { ...activation, exitReasonZh: null, exited: false }
+  }
+
+  #persistExitedState(
+    context: ActorContext,
+    subject: { id: string; kind: 'outpatient' | 'inpatient' },
+    packId: string,
+    exitEval: ReturnType<typeof evaluatePackExit>,
+    exitedAt: string,
+  ): void {
+    const existing = this.#loadExitState(context, subject.kind, subject.id, packId)
+    if (existing?.status === 'exited') return
+    const criterionId = exitEval.matchedCriterionId ?? 'exit-criterion'
+    const reasonZh = exitEval.exitReasonZh ?? '满足专病包退出条件'
+    this.#commands.auditRead(context, 'disease-pack.exit', {
+      exitCriterionId: criterionId,
+      exitReasonZh: reasonZh,
+      packId,
+      subjectId: subject.id,
+      subjectKind: subject.kind,
+    }, 'success')
+    const latestAudit = auditIdRowSchema.parse(
+      this.#database.driver.prepare(`
+        SELECT audit_id FROM audit_log
+        WHERE workspace_id = ? AND epoch = ? AND operation = 'disease-pack.exit'
+        ORDER BY sequence DESC LIMIT 1
+      `).get(context.workspaceId, context.epoch),
+    )
+    this.#database.driver.prepare(`
+      INSERT OR REPLACE INTO disease_pack_exit_state (
+        workspace_id, epoch, subject_kind, subject_id, pack_id,
+        status, exit_criterion_id, exit_reason_zh, matched_fact_ids_json,
+        audit_id, exit_summary_delivered, exited_at, re_enabled_at, re_enabled_by_actor_id
+      ) VALUES (?, ?, ?, ?, ?, 'exited', ?, ?, ?, ?, 0, ?, NULL, NULL)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      subject.kind,
+      subject.id,
+      packId,
+      criterionId,
+      reasonZh,
+      JSON.stringify(exitEval.matchedFactIds),
+      latestAudit.audit_id,
+      exitedAt,
+    )
+  }
+
   #evaluateSinglePack(
-    _context: ActorContext,
-    _subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string },
+    context: ActorContext,
+    subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string },
     effective: EffectiveDiseasePack,
     ledger: ClinicalFactLedger,
     encounterMap: Readonly<Record<string, string>>,
@@ -1054,7 +1214,16 @@ export class DiseasePackRuntimeService {
       manualOverride: override?.override_mode ?? null,
       vocabulary,
     }
-    const activation = evaluatePackActivation(effective, ledger, evalOptions)
+    const activation = this.#resolveActivationWithExit(
+      context,
+      subject,
+      effective,
+      ledger,
+      encounterMap,
+      override,
+      vocabulary,
+      asOf,
+    )
     const stageEval = evaluatePackStages(effective, ledger, evalOptions)
     const activeStage = stageEval.currentStageId === null
       ? undefined
@@ -1072,6 +1241,7 @@ export class DiseasePackRuntimeService {
       activationStatus: activation.activationStatus,
       allowedTools: [...effective.effectiveAllowedTools],
       currentStageId: stageEval.currentStageId,
+      ...(activation.exited ? { exitReasonZh: activation.exitReasonZh, exited: true } : {}),
       ...(followUpLdlSummary === null ? {} : { followUpLdlSummary }),
       forbiddenActions: [...effective.effectiveForbiddenActions],
       localizations: effective.localizations,
@@ -1090,6 +1260,22 @@ export class DiseasePackRuntimeService {
       titleZh: effective.pack.manifest.titleZh,
       version: effective.pack.manifest.version,
     })
+  }
+
+  #loadExitState(
+    context: Pick<ActorContext, 'workspaceId' | 'epoch'>,
+    subjectKind: 'outpatient' | 'inpatient',
+    subjectId: string,
+    packId: string,
+  ) {
+    return exitStateRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT pack_id, status, exit_criterion_id, exit_reason_zh, matched_fact_ids_json,
+               audit_id, exit_summary_delivered, exited_at
+        FROM disease_pack_exit_state
+        WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ? AND pack_id = ?
+      `).get(context.workspaceId, context.epoch, subjectKind, subjectId, packId),
+    )
   }
 
   #loadOverride(
