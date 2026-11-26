@@ -26,6 +26,7 @@
     "./knowledge-claims": "./src/knowledge-claims.ts",
     "./knowledge-pipeline": "./src/knowledge-pipeline.ts",
     "./clinical-prompt-cards": "./src/clinical-prompt-cards.ts",
+    "./phenotype-matcher": "./src/phenotype-matcher.ts",
     "./agent-output-scorer": "./src/agent-output-scorer.ts",
     "./insurance": "./src/insurance.ts",
     "./laboratory-specimen-container": "./src/laboratory-specimen-container.ts"
