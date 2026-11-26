@@ -34,7 +34,7 @@ export function write(workspace: WorkspaceView, intent: Intent) {
   const init = jsonBody(op.method, {
     ...intent.fields, epoch: workspace.epoch, expectedVersion: intent.version, idempotencyKey: crypto.randomUUID(),
   });
-  return api(path, z.record(z.string(), z.json()), { ...init, headers: { ...init.headers, ...(['consultation.question', 'consultation.retry'].includes(intent.name) ? modelHeaders('patient') : {}) } });
+  return api(path, z.record(z.string(), z.json()), { ...init, mode: 'same-origin', redirect: 'error', headers: { ...init.headers, ...(['consultation.question', 'consultation.retry'].includes(intent.name) ? modelHeaders('patient') : {}) } });
 }
 
 const messages: Record<string, [string, string]> = {
@@ -49,6 +49,8 @@ const messages: Record<string, [string, string]> = {
   LLM_PROVIDER_RATE_LIMITED: ['The provider is rate limiting requests. Retry later.', '模型提供商已限流，请稍后重试。'],
   LLM_PROVIDER_TIMEOUT: ['The provider timed out. Retry the patient reply.', '等待模型提供商超时，请重试患者回复。'],
   LLM_PROVIDER_FAILED: ['The provider could not answer. Check your model settings and retry.', '模型提供商未能应答，请核对模型设置并重试。'],
+  LLM_PROVIDER_EMPTY_REPLY: ['The provider returned no answer text. Check the model or reasoning setting and retry.', '模型提供商没有返回正文，请检查模型或思考强度后重试。'],
+  LLM_HTTPS_REQUIRED: ['Open this workbench over HTTPS before sending an API key.', '请使用 HTTPS 打开工作台后再发送 API 密钥。'],
   LLM_ENDPOINT_NOT_ALLOWED: ['Choose a provider endpoint allowed by this host.', '请选择此服务允许的模型地址。'],
   LLM_REJOIN_CONFIGURATION_REQUIRED: ['Restore the original model settings to resume, or stop and retry.', '请恢复原模型设置以续接，或停止后重试。'],
   PATIENT_REPLY_NEEDS_RESUME: ['Resume this pending question with your current model settings.', '使用当前模型设置续答此问题。'],

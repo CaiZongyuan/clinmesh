@@ -7,7 +7,7 @@ import { withNodeDatabase } from '../../../../scripts/testing/node-workspace';
 import { receiptSchema } from '../../agent-protocol';
 import { encounterViewSchema } from '../../clinical-core';
 import { openPatient } from './patient-fixture';
-import { openAiText, userProvider, withProvider } from './provider-fixture';
+import { openAiText, userProvider, withProvider } from '../../../../scripts/testing/agent-provider';
 
 it('rejoins a killed Node process at its Pi checkpoint with request-time BYOK, and resumes the SSE cursor', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-patient-recovery-'));

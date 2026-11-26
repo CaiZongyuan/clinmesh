@@ -9,7 +9,7 @@ import { api, errorMessage, words, type Language } from './workbench-api';
 export function ModelSettings({ language }: { language: Language }) {
   const { values, open } = useModelSettings();
   const text = words(language);
-  const test = useMutation({ mutationFn: (role: AgentRole) => api('/api/agents/providers/test', z.object({ ok: z.literal(true) }), { method: 'POST', headers: { 'content-type': 'application/json', ...modelHeaders(role) }, body: JSON.stringify({ role }) }) });
+  const test = useMutation({ mutationFn: (role: AgentRole) => api('/api/agents/providers/test', z.object({ ok: z.literal(true) }), { method: 'POST', mode: 'same-origin', redirect: 'error', headers: { 'content-type': 'application/json', ...modelHeaders(role) }, body: JSON.stringify({ role }) }) });
   useEffect(() => {
     const sync = () => { if (location.hash === '#model-settings') useModelSettings.setState({ open: true }); };
     sync(); window.addEventListener('hashchange', sync); return () => window.removeEventListener('hashchange', sync);

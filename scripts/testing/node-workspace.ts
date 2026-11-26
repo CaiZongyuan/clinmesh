@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 export const teachingGate = { CLINMESH_VISITOR_PASSCODE: 'synthetic-example' };
-export async function withNodeWorkspace(run: (origin: string) => Promise<void>, localOpen = false) {
+export async function withNodeWorkspace(run: (origin: string) => Promise<void>, localOpen = false, environment: Record<string, string> = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-core-http-'));
-  try { await withNodeDatabase(join(directory, 'test.sqlite'), run, localOpen); } finally { await rm(directory, { recursive: true, force: true }); }
+  try { await withNodeDatabase(join(directory, 'test.sqlite'), run, localOpen, environment); } finally { await rm(directory, { recursive: true, force: true }); }
 }
 export async function withNodeDatabase(dbPath: string, run: (origin: string) => Promise<void>, localOpen = false, environment: Record<string, string> = {}) {
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/server/node-server.ts'], {

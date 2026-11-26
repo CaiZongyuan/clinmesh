@@ -12,21 +12,23 @@ import { useModelSettings } from './model-preferences';
 import { createEpochDrafts, type EncounterDrafts } from './encounter-drafts';
 import { api, ApiError, currentSession, errorMessage, scopeKey, sessionKey, words, workspaceKey, write, type Intent, type Language, type Session } from './workbench-api';
 
-const useView = create<{ epoch: string; encounterId: string; queue: boolean }>(() => ({ epoch: '', encounterId: '', queue: true }));
+const useView = create<{ queue: boolean }>(() => ({ queue: true }));
 type Props = { workspace: WorkspaceView; language: Language; languageSelect: ReactNode; panels?: WorkbenchPanels; draftsFor?: (id: string) => EncounterDrafts };
 export function CoreWorkbench({ workspace, language, languageSelect, panels, draftsFor: ownerDrafts }: Props) {
   const draftsFor = useMemo(() => ownerDrafts ?? createEpochDrafts(), [ownerDrafts, workspace.workspaceId, workspace.epoch]);
   const text = words(language);
   const client = useQueryClient();
   const selection = useView();
+  const selectionKey = `clinmesh.encounter.${workspace.workspaceId}.${workspace.epoch}`;
+  const [selectedId, setSelectedId] = useState(() => z.uuidv7().safeParse(sessionStorage.getItem(selectionKey)).data);
   const [resetPack, setResetPack] = useState(workspace.manifest.packId);
   const style = useThemeFont();
   const listKey = scopeKey(workspace, 'encounters');
   const encounters = useQuery({ queryKey: listKey, queryFn: ({ signal }) => api('/api/his/encounters', z.array(summarySchema), { signal }) });
-  const encounterId = (selection.epoch === workspace.epoch && selection.encounterId) || encounters.data?.at(-1)?.id || '';
+  const encounterId = selectedId && (!encounters.data || encounters.data.some(item => item.id === selectedId)) ? selectedId : encounters.data?.at(-1)?.id ?? '';
   const detailKey = scopeKey(workspace, encounterId, 'clinical');
   const detail = useQuery({ queryKey: detailKey, enabled: Boolean(encounterId), queryFn: ({ signal }) => api(`/api/his/encounters/${encounterId}`, encounterViewSchema, { signal }) });
-  const selectEncounter = (id: string) => useView.setState({ epoch: workspace.epoch, encounterId: id });
+  function selectEncounter(id: string) { sessionStorage.setItem(selectionKey, id); setSelectedId(id); }
   const refresh = (key: string[]) => client.invalidateQueries({ queryKey: key, exact: true });
   const sameEpoch = (sent: Session, current = client.getQueryData<Session | null>(sessionKey)) => current?.workspaceId === sent.workspaceId && current.epoch === sent.epoch;
   const change = useMutation({ mutationFn: (intent: Intent) => write(workspace, intent),

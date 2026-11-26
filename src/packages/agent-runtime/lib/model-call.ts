@@ -5,12 +5,13 @@ import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic';
 import { googleProvider } from '@earendil-works/pi-ai/providers/google';
 import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import { v7 } from 'uuid';
+import type { ReplyProgress } from '../../agent-protocol';
 import { CoreError } from '../../platform';
 import type { StorePort, StoreScope } from '../../store';
 import type { AgentProvider } from './configuration';
 
 type CallScope = { store: StorePort; at: StoreScope; sessionId?: string; questionId?: string };
-type CallInput = { context: Context; mockAnswer: string; accept(text: string): boolean; signal?: AbortSignal; sessionId?: string };
+type CallInput = { context: Context; mockAnswer: string; accept(text: string): boolean; signal?: AbortSignal; sessionId?: string; progress?(event: ReplyProgress): void; pass?: 1 | 2 };
 
 function upstream(config: AgentProvider, mockAnswer: string) {
   const models = createModels();
@@ -57,12 +58,23 @@ export async function callModel(scope: CallScope, config: AgentProvider, input: 
         return response;
       } };
     let answer: AssistantMessage;
-    try { answer = await models.completeSimple(model, input.context, options); }
+    try {
+      const stream = models.streamSimple(model, input.context, options);
+      let chunks = 0;
+      for await (const event of stream) {
+        if (event.type !== 'text_delta' && event.type !== 'thinking_delta') continue;
+        chunks++;
+        if (chunks <= 512 && (chunks & (chunks - 1)) === 0) input.progress?.({ phase: 'receiving', pass: input.pass ?? 1, chunks });
+      }
+      answer = await stream.result();
+      if (answer.stopReason === 'stop' || answer.stopReason === 'length') input.progress?.({ phase: 'checking', pass: input.pass ?? 1, chunks });
+    }
     catch { throw modelError(httpStatus, deadline.signal.aborted, input.signal); }
     usage = answer.usage;
     if (signal.aborted || !['stop', 'length'].includes(answer.stopReason)) throw modelError(httpStatus, deadline.signal.aborted, input.signal);
     const text = answer.content.filter(block => block.type === 'text').map(block => block.text).join('').trim();
-    if (!text || (config.apiKey && text.includes(config.apiKey)) || !input.accept(text)) {
+    if (!text) throw new CoreError(502, 'LLM_PROVIDER_EMPTY_REPLY');
+    if ((config.apiKey && text.includes(config.apiKey)) || !input.accept(text)) {
       outcome = 'rejected'; return undefined;
     }
     outcome = 'ok'; return text;

@@ -4,12 +4,13 @@ import { appendPatientReply, requireEncounter } from '../../patient-visit';
 import { authorize, CoreError, resolveActor, type Credential } from '../../platform';
 import type { StorePort, StoreScope } from '../../store';
 import { resolveAgentProvider, type AgentEnvironment, type AgentProvider } from './configuration';
-import { durablePatientAnswer } from './durable-patient';
+import { durablePatientAnswer, stopDurablePatient } from './durable-patient';
 import { callModel } from './model-call';
+import { LiveProgress } from './reply-progress';
 import { assess, providerBinding, publicRun, setPending, type ReplyRun } from './reply-operations';
 
 type Background = (task: Promise<void>) => void;
-type Job = { id: string; attempt: number; controller: AbortController; finished: Promise<void> };
+type Job = { id: string; attempt: number; controller: AbortController; finished: Promise<void>; progress: LiveProgress };
 export class PatientRuntime {
   private readonly jobs = new Map<string, Job>();
   constructor(private readonly store: StorePort, private readonly environment: AgentEnvironment, private readonly background: Background = () => {}) {}
@@ -27,11 +28,11 @@ export class PatientRuntime {
       return { at: actor.at, encounterId, run };
     });
   }
-  private async drive(at: StoreScope, encounterId: string, run: ReplyRun, config: AgentProvider, signal: AbortSignal) {
+  private async drive(at: StoreScope, encounterId: string, run: ReplyRun, config: AgentProvider, signal: AbortSignal, progress: LiveProgress) {
     try {
       const current = await this.store.read(reader => reader.get(at, 'patient_reply_runs', run.id));
       if (current?.status !== 'running' || current.attempt !== run.attempt) return;
-      const answer = await durablePatientAnswer(this.store, at, encounterId, run, config, signal);
+      const answer = await durablePatientAnswer(this.store, at, encounterId, run, config, signal, event => progress.publish(event));
       await this.store.withTransaction(async tx => {
         const live = tx.get(at, 'patient_reply_runs', run.id)!;
         if (live.status !== 'running' || live.attempt !== run.attempt) return;
@@ -54,26 +55,35 @@ export class PatientRuntime {
     const config = resolveAgentProvider(headers, this.environment);
     const bound = await providerBinding(config);
     if (run.provider !== bound.provider || run.model !== bound.model || run.endpoint_hash !== bound.endpoint_hash || run.effort !== bound.effort) throw new CoreError(409, 'LLM_REJOIN_CONFIGURATION_REQUIRED');
+    if (matches(this.jobs.get(run.session_id))) return;
+    this.enqueue(run, (signal, progress) => this.drive(at, encounterId, run, config, signal, progress));
+  }
+  private enqueue(run: ReplyRun, work: (signal: AbortSignal, progress: LiveProgress) => Promise<void>) {
     const previous = this.jobs.get(run.session_id);
-    if (matches(previous)) return;
     const controller = new AbortController();
-    const finished = (previous?.finished ?? Promise.resolve()).then(() => this.drive(at, encounterId, run, config, controller.signal)).finally(() => {
+    const progress = new LiveProgress();
+    const finished = (previous?.finished ?? Promise.resolve()).then(() => work(controller.signal, progress)).finally(() => {
+      progress.close();
       if (this.jobs.get(run.session_id)?.controller === controller) this.jobs.delete(run.session_id);
     });
-    this.jobs.set(run.session_id, { id: run.id, attempt: run.attempt, controller, finished });
+    this.jobs.set(run.session_id, { id: run.id, attempt: run.attempt, controller, finished, progress });
     this.background(finished.catch(() => {}));
+    return finished;
   }
-  async admitted(operation: string, result: unknown, credential: Credential, headers: Headers) {
+  async admitted(operation: string, result: unknown, at: StoreScope, encounterId: string, headers: Headers) {
     const parsed = receiptSchema.safeParse(result);
     if (!parsed.success) return;
     const { sessionId, turnId, attempt } = parsed.data;
+    const run = await this.store.read(reader => reader.getEpoch(at)?.status === 'active' ? reader.get(at, 'patient_reply_runs', turnId) : undefined);
+    if (!run || run.session_id !== sessionId || run.attempt !== attempt) return;
     if (operation === 'consultation.stop') {
+      if (run.status !== 'stopped') return;
       const job = this.jobs.get(sessionId);
-      if (job?.id === turnId && job.attempt === attempt) job.controller.abort();
+      if (job?.id === turnId && job.attempt === attempt) { job.controller.abort(); await job.finished; }
+      else if (!job) await this.enqueue(run, () => stopDurablePatient(this.store, at, run));
       return;
     }
-    const { at, encounterId, run } = await this.locate(credential, sessionId, turnId);
-    if (run.attempt === attempt) await this.join(at, encounterId, run, headers);
+    await this.join(at, encounterId, run, headers);
   }
   async testProvider(credential: Credential, headers: Headers, input: unknown) {
     const { role } = z.strictObject({ role: z.enum(['patient', 'clinician']).default('patient') }).parse(input);
@@ -94,34 +104,29 @@ export class PatientRuntime {
     const cursor = request.headers.get('last-event-id')?.split('/');
     const seen = cursor?.[0] === run.id && cursor[1] === String(run.attempt) ? z.coerce.number().int().nonnegative().max(9000).parse(cursor[2]) : -1;
     const encoder = new TextEncoder();
-    let cancelled = false;
-    const stream = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; }, start: async controller => {
+    const disconnect = new AbortController();
+    const stream = new ReadableStream<Uint8Array>({ cancel() { disconnect.abort(); }, start: async controller => {
       const emit = (ordinal: number, event: object) => {
-        if (ordinal > seen && !cancelled) controller.enqueue(encoder.encode(`id: ${run.id}/${run.attempt}/${ordinal}\ndata: ${JSON.stringify(event)}\n\n`));
+        if (ordinal > seen && !disconnect.signal.aborted) controller.enqueue(encoder.encode(`id: ${run.id}/${run.attempt}/${ordinal}\ndata: ${JSON.stringify(event)}\n\n`));
       };
       try {
         if (run.status === 'running') emit(0, publicRun(run));
         const job = this.jobs.get(sessionId);
-        if (run.status === 'running' && job) await job.finished;
-        if (cancelled) return;
+        if (run.status === 'running' && job?.id === run.id && job.attempt === run.attempt) {
+          for await (const update of job.progress.after(seen, disconnect.signal)) emit(update.ordinal, { ...publicRun(run), status: 'progress', ...update.event });
+        }
+        if (disconnect.signal.aborted) return;
         const current = await this.locate(credential, sessionId, run.id);
-        if (current.run.attempt !== run.attempt) { emit(1, { ...publicRun(run), status: 'stopped' }); return; }
+        if (current.run.attempt !== run.attempt) { emit(8001, { ...publicRun(run), status: 'stopped' }); return; }
         const state = publicRun(current.run);
         const answer = state.status === 'done' ? await this.store.read(reader => {
           const receipt = reader.findCommandReceipt(at, `patient-reply:${run.id}`)!;
           return reader.get(at, 'consultation_turns', z.uuidv7().parse(receipt.result))!.content;
         }) : '';
-        const chars = Array.from(answer);
-        const chunkSize = Math.max(24, Math.ceil(chars.length / 12));
-        let ordinal = 1;
-        for (let end = chunkSize; end < chars.length && !cancelled; end += chunkSize) {
-          emit(ordinal++, { ...state, status: 'text', content: chars.slice(0, end).join('') });
-          if (ordinal > seen) await new Promise(resolve => setTimeout(resolve, 16));
-        }
-        if (answer) emit(ordinal++, { ...state, status: 'text', content: answer });
-        emit(ordinal, state);
+        if (answer) emit(8000, { ...state, status: 'text', content: answer });
+        emit(8001, state);
       } catch { controller.error(new Error('PATIENT_STREAM_INTERRUPTED')); }
-      finally { if (!cancelled) { try { controller.close(); } catch {} } }
+      finally { if (!disconnect.signal.aborted) { try { controller.close(); } catch {} } }
     } });
     return new Response(stream, { headers: { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no' } });
   }

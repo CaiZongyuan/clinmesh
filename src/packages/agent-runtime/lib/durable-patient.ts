@@ -3,6 +3,7 @@ import type { Model, StreamFunction } from '@earendil-works/pi-ai';
 import { createModels, createProvider } from '@earendil-works/pi-ai/models';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream';
 import { AssistantEntry, createRegistry } from '@earendil-works/pi-durable';
+import type { ReplyProgress } from '../../agent-protocol';
 import { CoreError } from '../../platform';
 import type { EntityRow, StorePort, StoreScope } from '../../store';
 import type { AgentProvider } from './configuration';
@@ -14,7 +15,20 @@ const context = BACKGROUND_CONTEXT;
 const model: Model<'patient'> = { provider: 'clinmesh', api: 'patient', id: 'patient', name: 'Patient Agent', baseUrl: '', input: ['text'], reasoning: false, maxTokens: 512, contextWindow: 131072, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 const agent = { model: { provider: model.provider, modelId: model.id }, tools: [], maxTurns: 1 };
 
-export async function durablePatientAnswer(store: StorePort, at: StoreScope, encounterId: string, run: EntityRow<'patient_reply_runs'>, provider: AgentProvider, signal: AbortSignal) {
+export async function stopDurablePatient(store: StorePort, at: StoreScope, run: EntityRow<'patient_reply_runs'>) {
+  const harness = await openDurableAgentSession(store, at, run.session_id, 'patient', { models: createModels(), registry: createRegistry() });
+  try {
+    const pending = await harness.inspect(context);
+    if (pending.submissions.some(item => item.requestId === `${run.id}/${run.attempt}`)) await (await harness.root(context)).abort(context);
+  } finally { await harness.close(context); }
+  await store.withTransaction(tx => {
+    for (const call of tx.list(at, 'agent_model_calls', { session_id: run.session_id, question_id: run.id, status: 'running' })) {
+      tx.update(at, 'agent_model_calls', call.id, call.version, { status: 'PATIENT_REPLY_STOPPED', duration_ms: Math.max(0, Date.now() - Date.parse(call.recorded_at)) });
+    }
+  });
+}
+
+export async function durablePatientAnswer(store: StorePort, at: StoreScope, encounterId: string, run: EntityRow<'patient_reply_runs'>, provider: AgentProvider, signal: AbortSignal, progress: (event: ReplyProgress) => void) {
   const { visible, accepts } = await store.read(reader => ({ visible: patientContext(reader, at, encounterId, run.id), accepts: patientOutputGuard(reader, at, encounterId) }));
   const scope = { store, at, sessionId: run.session_id, questionId: run.id };
   let failure: CoreError | undefined;
@@ -22,11 +36,11 @@ export async function durablePatientAnswer(store: StorePort, at: StoreScope, enc
     const stream = createAssistantMessageEventStream();
     const requestSignal = options?.signal ? AbortSignal.any([signal, options.signal]) : signal;
     async function generate() {
-      const input = { context: visible.context, mockAnswer: visible.mockAnswer, signal: requestSignal, accept: accepts, sessionId: options?.sessionId };
+      const input = { context: visible.context, mockAnswer: visible.mockAnswer, signal: requestSignal, accept: accepts, sessionId: options?.sessionId, progress };
       let approved = await callModel(scope, provider, input);
       if (!approved) {
         const correction = { role: 'user' as const, content: 'Answer again in everyday language. Only describe your own experience.', timestamp: Date.now() };
-        approved = await callModel(scope, provider, { ...input, context: { ...input.context, messages: [...input.context.messages, correction] } }) ?? visible.safeAnswer;
+        approved = await callModel(scope, provider, { ...input, pass: 2, context: { ...input.context, messages: [...input.context.messages, correction] } }) ?? visible.safeAnswer;
       }
       const message = patientMessage(approved);
       stream.push({ type: 'start', partial: patientMessage('') });

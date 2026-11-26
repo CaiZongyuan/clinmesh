@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { createNodeSqliteStore } from '../../store';
 import { openPatient, patientHost } from './patient-fixture';
-import { userProvider, withProvider } from './provider-fixture';
+import { userProvider, withProvider } from '../../../../scripts/testing/agent-provider';
 
 it('uses Anthropic Messages and Gemini generateContent with separate role models and real SDK transports', async () => {
   const requests: { path?: string; key?: string | string[]; payload: string }[] = [];
@@ -28,6 +28,8 @@ it('uses Anthropic Messages and Gemini generateContent with separate role models
       expect(await probe({}, 'patient')).toEqual({ ok: true, provider: 'anthropic', model: 'synthetic-patient' });
       expect(await probe({}, 'clinician')).toEqual({ ok: true, provider: 'anthropic', model: 'synthetic-clinician' });
       expect(await probe(userProvider(baseUrl, 'gemini'), 'patient')).toEqual({ ok: true, provider: 'gemini', model: 'synthetic-model' });
+      expect(await probe({ 'X-ClinMesh-LLM-Api-Key': 'synthetic-browser-only' }, 'clinician')).toEqual({ ok: true, provider: 'anthropic', model: 'synthetic-clinician' });
+      expect(requests[3]?.key).toBe('synthetic-browser-only');
       expect(requests[0]?.path).toMatch(/\/messages/); expect(requests[0]?.key).toBe('synthetic-host-only');
       expect(requests[0]?.payload).toContain('synthetic-patient'); expect(requests[1]?.payload).toContain('synthetic-clinician');
       expect(requests[2]?.path).toContain('synthetic-model:streamGenerateContent'); expect(requests[2]?.key).toBe('synthetic-user-only-key');

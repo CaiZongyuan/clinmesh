@@ -16,7 +16,7 @@ export function resolveAgentProvider(headers: Headers, environment: AgentEnviron
   const parsed = providerName.safeParse(header('Provider') || environment.CLINMESH_LLM_PROVIDER || 'openai');
   if (!parsed.success) throw new CoreError(400, 'LLM_CONFIGURATION_INVALID');
   const provider = parsed.data;
-  const browserEndpoint = !!(header('Base-Url') || header('Provider') || header('Api-Key'));
+  const browserEndpoint = !!(header('Base-Url') || header('Provider'));
   const baseUrl = normalizedUrl(header('Base-Url') || (!browserEndpoint && environment.CLINMESH_LLM_BASE_URL) || defaults[provider][0]);
   const endpoint = URL.canParse(baseUrl) ? new URL(baseUrl) : undefined;
   const allowed = [defaults[provider][0], environment.CLINMESH_LLM_BASE_URL, ...(environment.CLINMESH_LLM_ALLOWED_BASE_URLS ?? '').split(',')].filter((value): value is string => !!value).map(value => normalizedUrl(value.trim()));
