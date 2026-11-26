@@ -64,16 +64,6 @@
     ],
     "nodes": [
       {
-        "code": "11524-6",
-        "displayEn": "12-lead ECG",
-        "displayZh": "常规 12 导联心电图",
-        "domain": "examination",
-        "layer": "disease-pack",
-        "packId": "coronary-cad",
-        "parentCode": null,
-        "synonyms": ["12导联心电图", "ECG", "examination-ecg-12-lead"]
-      },
-      {
         "code": "discharge-time",
         "displayEn": "Hospital Discharge Time / Summary",
         "displayZh": "出院时间/出院小结",
