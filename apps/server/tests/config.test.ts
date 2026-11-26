@@ -236,6 +236,89 @@ describe('Node.js server configuration', () => {
     })).toThrow()
   })
 
+  it('supports optional strong/fast tier models and reasoning efforts while preserving legacy compatibility', () => {
+    const requiredEnvironment = {
+      CLINMESH_AUTH_SECRET: 'auth-secret-with-at-least-32-characters',
+      CLINMESH_CURSOR_SECRET: 'cursor-secret-with-at-least-32-characters',
+      CLINMESH_DATABASE_PATH: '/var/lib/clinmesh/clinmesh.sqlite',
+      CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
+      CLINMESH_AI_API_KEY: 'synthetic-test-key',
+      CLINMESH_AI_BASE_URL: 'https://openrouter.example/api/v1',
+    }
+    const legacy = readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_AI_BRIEF_MODEL: 'brief-model',
+      CLINMESH_AI_INVESTIGATION_MODEL: 'investigation-model',
+    })
+    expect(legacy.ai).toMatchObject({
+      briefModel: 'brief-model',
+      investigationModel: 'investigation-model',
+    })
+    expect(legacy.ai).not.toHaveProperty('strongModel')
+    expect(legacy.ai).not.toHaveProperty('fastModel')
+    expect(legacy.ai).not.toHaveProperty('strongReasoningEffort')
+    expect(legacy.ai).not.toHaveProperty('fastReasoningEffort')
+
+    expect(readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_AI_STRONG_MODEL: 'strong-model',
+      CLINMESH_AI_FAST_MODEL: 'fast-model',
+      CLINMESH_AI_STRONG_REASONING_EFFORT: 'high',
+      CLINMESH_AI_FAST_REASONING_EFFORT: 'low',
+    }).ai).toMatchObject({
+      strongModel: 'strong-model',
+      fastModel: 'fast-model',
+      strongReasoningEffort: 'high',
+      fastReasoningEffort: 'low',
+    })
+
+    const strongOnly = readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_AI_STRONG_MODEL: 'strong-only',
+      CLINMESH_AI_STRONG_REASONING_EFFORT: 'medium',
+    })
+    expect(strongOnly.ai).toMatchObject({
+      strongModel: 'strong-only',
+      strongReasoningEffort: 'medium',
+    })
+    expect(strongOnly.ai).not.toHaveProperty('fastModel')
+    expect(strongOnly.ai).not.toHaveProperty('fastReasoningEffort')
+
+    const fastOnly = readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_AI_FAST_MODEL: 'fast-only',
+      CLINMESH_AI_FAST_REASONING_EFFORT: 'minimal',
+    })
+    expect(fastOnly.ai).toMatchObject({
+      fastModel: 'fast-only',
+      fastReasoningEffort: 'minimal',
+    })
+    expect(fastOnly.ai).not.toHaveProperty('strongModel')
+    expect(fastOnly.ai).not.toHaveProperty('strongReasoningEffort')
+
+    expect(() => readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_AI_STRONG_REASONING_EFFORT: 'high',
+    })).toThrow()
+    expect(() => readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_AI_STRONG_MODEL: 'strong-model',
+      CLINMESH_AI_BRIEF_MODEL: 'brief-model',
+    })).toThrow()
+    expect(() => readServerConfig({
+      CLINMESH_AUTH_SECRET: requiredEnvironment.CLINMESH_AUTH_SECRET,
+      CLINMESH_CURSOR_SECRET: requiredEnvironment.CLINMESH_CURSOR_SECRET,
+      CLINMESH_DATABASE_PATH: requiredEnvironment.CLINMESH_DATABASE_PATH,
+      CLINMESH_DEMO_PASSWORD: requiredEnvironment.CLINMESH_DEMO_PASSWORD,
+      CLINMESH_AI_STRONG_MODEL: 'strong-model',
+    })).toThrow()
+    expect(() => readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_AI_STRONG_MODEL: 'strong-model',
+      CLINMESH_AI_STRONG_REASONING_EFFORT: '   ',
+    })).toThrow()
+  })
+
   it('rejects an invalid listener port before startup', () => {
     expect(() => readServerConfig({ CLINMESH_PORT: 'invalid' })).toThrow()
   })

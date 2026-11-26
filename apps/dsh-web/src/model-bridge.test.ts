@@ -1,10 +1,21 @@
 import { Context } from '@deepseek-ai/cordis'
 import Llm, { LlmAdapter, ReasoningEffortId, type GenerateOptions as SdkGenerateOptions, type StreamChunk as SdkStreamChunk } from '@deepseek-ai/dsh-llm'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
-import { dshDefaultModel, encodeModelRoute } from '@clinmesh/contracts/model-bridge'
+import {
+  decodeModelRoute,
+  dshDefaultModel,
+  dshFastModel,
+  encodeModelRoute,
+  modelCapabilitiesPath,
+} from '@clinmesh/contracts/model-bridge'
 import { afterEach, expect, it, vi } from 'vitest'
 import { DshModelProvider } from '../../server/src/infrastructure/ai/dsh-model-provider.ts'
-import { createModelBridgeHandler } from './model-bridge.ts'
+import {
+  createModelBridgeHandler,
+  createModelCapabilitiesHandler,
+  resolveFastModelRoute,
+  type ModelBridgeSelection,
+} from './model-bridge.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
@@ -271,4 +282,190 @@ it('reports Provider first text independently of the buffered gzip response', as
   await expect(request).resolves.toMatchObject({ content: '{"ok":true}' })
   expect(firstTextMs).toBeGreaterThanOrEqual(0)
   expect(responseAt! - firstTextMs!).toBeGreaterThanOrEqual(70)
+})
+
+it('resolves strong and fast tiers with reasoning efforts and exposes resolveFastModelRoute', async () => {
+  class TieredAdapter extends LlmAdapter {
+    override async listModels(provider: string) {
+      return [
+        { provider, id: 'reasoning-model', name: 'Reasoning model' },
+        { provider, id: 'plain-model', name: 'Plain model' },
+      ]
+    }
+    override async resolveModel(provider: string, model: string) {
+      if (model === 'reasoning-model') {
+        return {
+          provider,
+          id: model,
+          name: 'Reasoning model',
+          reasoning: {
+            efforts: [
+              { id: ReasoningEffortId('low'), name: 'Low' },
+              { id: ReasoningEffortId('medium'), name: 'Medium' },
+              { id: ReasoningEffortId('high'), name: 'High' },
+            ],
+            defaultEffort: ReasoningEffortId('high'),
+          },
+        }
+      }
+      return { provider, id: model, name: 'Plain model' }
+    }
+    override async *stream(_request: SdkGenerateOptions): AsyncIterable<SdkStreamChunk> {
+      yield { type: 'text-delta', index: 0, text: '{"ok":true}' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }
+  }
+  const ctx = new Context()
+  cleanup.push(async () => { await ctx.fiber.dispose() })
+  await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+  await ctx.plugin(Llm)
+  ctx.llm.registerAdapter(['synthetic'], new TieredAdapter())
+  let defaultRoute = { provider: 'synthetic', model: 'reasoning-model', reasoningEffort: 'high' as string | undefined }
+  let selection: ModelBridgeSelection = {
+    generationModel: 'default',
+    generationReasoningEffort: 'default',
+    fastModel: 'default',
+    fastReasoningEffort: 'auto-lowest',
+  }
+  const modelContext = {
+    llm: ctx.llm,
+    agentDefaultModel: { currentSelection: () => defaultRoute },
+  } as HostContext
+  const bridge = createModelBridgeHandler(modelContext, secret, () => selection)
+  cleanup.push(async () => { bridge.dispose() })
+  ctx.webServer.register({ kind: 'exact', path: '/clinmesh-model-bridge', handler: bridge.handler })
+  const origin = `http://127.0.0.1:${ctx.webServer.port}`
+  const resolveViaHttp = async (tier?: 'strong' | 'fast') => {
+    const response = await fetch(`${origin}/clinmesh-model-bridge`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+      body: JSON.stringify({ operation: 'resolve', ...(tier === undefined ? {} : { tier }) }),
+    })
+    expect(response.status).toBe(200)
+    return decodeModelRoute((await response.json() as { model: string }).model)
+  }
+
+  // Default strong inherits agentDefaultModel; fast follows primary with auto-lowest effort.
+  expect(await resolveViaHttp()).toEqual({ provider: 'synthetic', model: 'reasoning-model', reasoningEffort: 'high' })
+  expect(await resolveViaHttp('strong')).toEqual({ provider: 'synthetic', model: 'reasoning-model', reasoningEffort: 'high' })
+  expect(await resolveViaHttp('fast')).toEqual({ provider: 'synthetic', model: 'reasoning-model', reasoningEffort: 'low' })
+  expect(await resolveFastModelRoute(modelContext, () => selection)).toEqual({
+    provider: 'synthetic',
+    model: 'reasoning-model',
+    reasoningEffort: 'low',
+  })
+
+  // Explicit primary/fast models and efforts remain isolated.
+  selection = {
+    generationModel: encodeModelRoute({ provider: 'synthetic', model: 'reasoning-model' }),
+    generationReasoningEffort: 'medium',
+    fastModel: encodeModelRoute({ provider: 'synthetic', model: 'plain-model' }),
+    fastReasoningEffort: 'auto-lowest',
+  }
+  expect(await resolveViaHttp('strong')).toEqual({ provider: 'synthetic', model: 'reasoning-model', reasoningEffort: 'medium' })
+  expect(await resolveViaHttp('fast')).toEqual({ provider: 'synthetic', model: 'plain-model' })
+
+  // Non-reasoning model omits reasoningEffort even when stale explicit effort is stored.
+  defaultRoute = { provider: 'synthetic', model: 'plain-model', reasoningEffort: undefined }
+  selection = {
+    generationModel: 'default',
+    generationReasoningEffort: 'high',
+    fastModel: 'default',
+    fastReasoningEffort: 'high',
+  }
+  expect(await resolveViaHttp('strong')).toEqual({ provider: 'synthetic', model: 'plain-model' })
+  expect(await resolveViaHttp('fast')).toEqual({ provider: 'synthetic', model: 'plain-model' })
+
+  // Fast tier with default effort does not inherit strong tier's reasoningEffort.
+  defaultRoute = { provider: 'synthetic', model: 'reasoning-model', reasoningEffort: 'high' }
+  selection = {
+    generationModel: 'default',
+    generationReasoningEffort: 'default',
+    fastModel: 'default',
+    fastReasoningEffort: 'default',
+  }
+  expect(await resolveViaHttp('fast')).toEqual({ provider: 'synthetic', model: 'reasoning-model' })
+  expect(dshFastModel).toBe('dsh:fast')
+})
+
+it('serves narrow model capabilities only to trusted same-origin browser requests', async () => {
+  class CapabilityAdapter extends LlmAdapter {
+    override async resolveModel(provider: string, model: string) {
+      if (model === 'failing') throw new Error('private upstream token leaked')
+      if (model === 'reasoning') {
+        return {
+          provider,
+          id: model,
+          name: 'Reasoning',
+          reasoning: {
+            efforts: [
+              { id: ReasoningEffortId('low'), name: 'Low', description: 'Fastest' },
+              { id: ReasoningEffortId('high'), name: 'High' },
+            ],
+            defaultEffort: ReasoningEffortId('high'),
+          },
+        }
+      }
+      return { provider, id: model, name: 'Plain' }
+    }
+    override async *stream(_request: SdkGenerateOptions): AsyncIterable<SdkStreamChunk> {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }
+  }
+  const ctx = new Context()
+  cleanup.push(async () => { await ctx.fiber.dispose() })
+  await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+  await ctx.plugin(Llm)
+  ctx.llm.registerAdapter(['synthetic'], new CapabilityAdapter())
+  const capabilities = createModelCapabilitiesHandler({ llm: ctx.llm })
+  cleanup.push(async () => { capabilities.dispose() })
+  ctx.webServer.register({ kind: 'exact', path: modelCapabilitiesPath, handler: capabilities.handler })
+  const origin = `http://127.0.0.1:${ctx.webServer.port}`
+  const url = `${origin}${modelCapabilitiesPath}`
+
+  // Missing origin, cross-origin, and cross-site requests are rejected.
+  expect((await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ provider: 'synthetic', model: 'reasoning' }) })).status).toBe(403)
+  expect((await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://evil.example' },
+    body: JSON.stringify({ provider: 'synthetic', model: 'reasoning' }) })).status).toBe(403)
+  expect((await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', origin, 'sec-fetch-site': 'cross-site' },
+    body: JSON.stringify({ provider: 'synthetic', model: 'reasoning' }) })).status).toBe(403)
+
+  // Non-POST and invalid payloads are rejected cleanly.
+  expect((await fetch(url, { method: 'GET', headers: { origin } })).status).toBe(405)
+  expect((await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', origin },
+    body: JSON.stringify({ provider: '', model: 'reasoning' }) })).status).toBe(400)
+
+  // Trusted same-origin requests receive validated efforts or empty array.
+  const reasoningResponse = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin, 'sec-fetch-site': 'same-origin' },
+    body: JSON.stringify({ provider: 'synthetic', model: 'reasoning' }),
+  })
+  expect(reasoningResponse.status).toBe(200)
+  expect(await reasoningResponse.json()).toEqual({
+    efforts: [
+      { id: 'low', name: 'Low', description: 'Fastest' },
+      { id: 'high', name: 'High' },
+    ],
+    defaultEffort: 'high',
+  })
+
+  const plainResponse = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin },
+    body: JSON.stringify({ provider: 'synthetic', model: 'plain' }),
+  })
+  expect(plainResponse.status).toBe(200)
+  expect(await plainResponse.json()).toEqual({ efforts: [] })
+
+  // Provider failures return 503 without leaking private details.
+  const failingResponse = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin },
+    body: JSON.stringify({ provider: 'synthetic', model: 'failing' }),
+  })
+  expect(failingResponse.status).toBe(503)
+  const failingText = await failingResponse.text()
+  expect(failingText).not.toContain('private upstream token leaked')
 })

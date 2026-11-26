@@ -61,16 +61,19 @@ function validationIssues(error: unknown): unknown {
 try {
   const config = readServerConfig(readServerEnvironment(process.env))
   if (config.ai === undefined) throw new Error('AI configuration is required')
+  const personaModel = config.ai.fastModel ?? config.ai.briefModel
+  if (personaModel === undefined) throw new Error('Patient persona model is required')
   const provider = new OpenAIChatCompletionsClient({
     apiKey: config.ai.apiKey,
     baseUrl: config.ai.baseUrl,
     maxResponseBytes: config.ai.maxResponseBytes,
+    ...(config.ai.fastReasoningEffort === undefined ? {} : { reasoningEffortByTier: { fast: config.ai.fastReasoningEffort } }),
     timeoutMs: config.ai.timeoutMs,
   })
   const startedAt = performance.now()
   const result = await generatePatientPersona({
     hiddenResources,
-    model: config.ai.briefModel,
+    model: personaModel,
     payload,
     provider,
     visibleResources: [],

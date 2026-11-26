@@ -6,8 +6,13 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { z } from 'zod'
 import { createClinMeshProxyHandler, CLINMESH_PROXY_PATH } from './proxy.ts'
 import { installAgentProofBridge } from './agent-proof-bridge.ts'
-import { createModelBridgeHandler } from './model-bridge.ts'
-import { modelBridgePath } from '@clinmesh/contracts/model-bridge'
+import { createModelBridgeHandler, createModelCapabilitiesHandler } from './model-bridge.ts'
+import {
+  modelBridgePath,
+  modelCapabilitiesPath,
+  modelReasoningEffortAutoLowest,
+  modelReasoningEffortDefault,
+} from '@clinmesh/contracts/model-bridge'
 
 export const inject = ['webServer', 'tools', 'llm']
 
@@ -16,7 +21,12 @@ export const Config = Schema.object({
   upstreamOrigin: Schema.string().required(),
   maxRequestBytes: Schema.number(), maxResponseBytes: Schema.number(), requestTimeoutMs: Schema.number(),
   generationModel: Schema.string().default('default').volatile(),
+  generationReasoningEffort: Schema.string().default(modelReasoningEffortDefault).volatile(),
+  fastModel: Schema.string().default('default').volatile(),
+  fastReasoningEffort: Schema.string().default(modelReasoningEffortAutoLowest).volatile(),
 })
+
+const volatileStringSchema = z.custom<Volatile<string>>(value => typeof value === 'object' && value !== null && 'get' in value)
 
 const configSchema = z.object({
   bridgeSecret: z.string().min(32).optional(),
@@ -24,7 +34,10 @@ const configSchema = z.object({
   maxResponseBytes: z.number().int().positive().max(16 * 1024 * 1024).optional(),
   requestTimeoutMs: z.number().int().positive().max(5 * 60_000).optional(),
   upstreamOrigin: z.url(),
-  generationModel: z.custom<Volatile<string>>(value => typeof value === 'object' && value !== null && 'get' in value).optional(),
+  generationModel: volatileStringSchema.optional(),
+  generationReasoningEffort: volatileStringSchema.optional(),
+  fastModel: volatileStringSchema.optional(),
+  fastReasoningEffort: volatileStringSchema.optional(),
 }).strict()
 
 export function apply(ctx: Context, config: unknown): void {
@@ -69,11 +82,23 @@ export function apply(ctx: Context, config: unknown): void {
     }),
     'clinmesh-dsh-web: application proxy',
   )
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['llm'], child => {
+      const capabilities = createModelCapabilitiesHandler(child)
+      child.effect(() => child.webServer.register({ kind: 'exact', path: modelCapabilitiesPath, handler: capabilities.handler }), 'clinmesh-dsh-web: model capabilities')
+      child.effect(() => capabilities.dispose, 'clinmesh-dsh-web: cancel model capability requests')
+    })
+  }
   if (parsed.bridgeSecret !== undefined) installAgentProofBridge(ctx, parsed.bridgeSecret, { upstreamOrigin: parsed.upstreamOrigin })
   if (parsed.bridgeSecret !== undefined) {
     const secret = parsed.bridgeSecret
     ctx.inject(['llm', 'agentDefaultModel'], child => {
-      const bridge = createModelBridgeHandler(child, secret, () => parsed.generationModel?.get() ?? 'default')
+      const bridge = createModelBridgeHandler(child, secret, () => ({
+        generationModel: parsed.generationModel?.get() ?? 'default',
+        generationReasoningEffort: parsed.generationReasoningEffort?.get() ?? modelReasoningEffortDefault,
+        fastModel: parsed.fastModel?.get() ?? 'default',
+        fastReasoningEffort: parsed.fastReasoningEffort?.get() ?? modelReasoningEffortAutoLowest,
+      }))
       child.effect(() => child.webServer.register({ kind: 'exact', path: modelBridgePath, handler: bridge.handler }), 'clinmesh-dsh-web: model bridge')
       child.effect(() => bridge.dispose, 'clinmesh-dsh-web: cancel model requests')
     })

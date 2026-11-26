@@ -135,7 +135,12 @@ function assertRecommendationRequestBudget(input: JsonChatCompletionInput) {
     repairBytes = 4 * 1024
   } else {
     const messages = [{ role: 'system', content: systemPrompt }, { role: 'user', content: JSON.stringify(userPayload) }]
-    const common = { model, temperature: 0, messages }
+    const common = {
+      model,
+      temperature: 0,
+      messages,
+      ...(input.reasoningEffort === undefined ? {} : { reasoning_effort: input.reasoningEffort }),
+    }
     envelopes = [
       { ...common, response_format: { type: 'json_schema', json_schema: { name: schemaName, schema: jsonSchema, strict: true } } },
       { ...common, tool_choice: { type: 'function', function: { name: schemaName } }, tools: [{ type: 'function',
@@ -154,7 +159,8 @@ export class DoctorRecommendationsService {
   readonly #unsubscribe: () => void
   constructor(private readonly options: {
     database: ClinMeshDatabase; workflow: DoctorRecommendationsWorkflowPort; commands: CommandExecutor; referenceData: ReferenceDataService
-    models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider
+    models: GenerationModelBinding; model?: string; selectionModel?: string | null; provider?: JsonChatCompletionsProvider
+    reasoningEffort?: { strong?: string; fast?: string }
     recovery?: ModelTaskRecovery
     automaticRetries?: (workspaceId: string) => boolean
     guidelines?: GuidelineCorpus
@@ -365,12 +371,13 @@ export class DoctorRecommendationsService {
   }
 
   async #selectCaseEvidence(snapshot: { context: ActorContext; caseEvidence: DoctorCaseEvidence[];
-    sourceHashes: string[]; requiredCaseEvidenceIds: string[]; historyEvidenceIds: string[]; contextPolicyVersion: string; guidelines: GuidelineEvidence[] }, caseId: string, model: string, signal: AbortSignal,
+    sourceHashes: string[]; requiredCaseEvidenceIds: string[]; historyEvidenceIds: string[]; contextPolicyVersion: string; guidelines: GuidelineEvidence[] }, caseId: string, model: string | null, fastReasoningEffort: string | undefined, signal: AbortSignal,
     fits: (evidence: DoctorCaseEvidence[]) => boolean, assertCurrent: () => void,
     execution: DoctorRecommendationExecution): Promise<
     { evidence: DoctorCaseEvidence[]; selection?: HistorySelection; droppedHistoryRecords?: number }> {
     assertCurrent()
     if (fits(snapshot.caseEvidence)) return { evidence: snapshot.caseEvidence }
+    if (model === null) throw new ChatCompletionsError('AI_REQUEST_FAILED', 'Selection model is not configured')
     const requiredIds = new Set(snapshot.requiredCaseEvidenceIds)
     const requiredEvidence = snapshot.caseEvidence.filter(item => requiredIds.has(item.id))
     const historyEvidence = snapshot.caseEvidence.filter(item => !requiredIds.has(item.id))
@@ -394,6 +401,7 @@ export class DoctorRecommendationsService {
         const batchSchema = historySelectionSchema.extend({ selectedEvidenceIds: z.array(z.enum(batch.map(item => item.id))).max(100) })
         return {
           model, signal, schemaName: 'doctor_recommendation_history_selection', systemPrompt: historySelectionPrompt,
+          ...(fastReasoningEffort === undefined ? {} : { reasoningEffort: fastReasoningEffort }),
           jsonSchema: z.toJSONSchema(batchSchema) as Record<string, unknown>,
           userPayload: { selectionContextHash, guidelines: snapshot.guidelines, requiredEvidence: compactEvidenceIndex(requiredEvidence), historyEvidence: batch },
           validate: value => {
@@ -462,6 +470,7 @@ export class DoctorRecommendationsService {
         })
         const request: JsonChatCompletionInput = {
           model, signal, schemaName: 'doctor_recommendation_history_consolidation', systemPrompt: historyConsolidationPrompt,
+          ...(fastReasoningEffort === undefined ? {} : { reasoningEffort: fastReasoningEffort }),
           jsonSchema: z.toJSONSchema(consolidationSchema) as Record<string, unknown>,
           userPayload: { capacity, guidelines: snapshot.guidelines, requiredEvidence: compactEvidenceIndex(requiredEvidence),
             selectedRecords: packedSelected.map(({ record, packed }) => ({ selectionId: record.evidence.id, text: packed.text })) },
@@ -497,9 +506,10 @@ export class DoctorRecommendationsService {
   }
 
   async #selectLaboratoryCatalog(snapshot: { context: ActorContext; caseEvidence: DoctorCaseEvidence[];
-    sourceHashes: string[]; guidelines: GuidelineEvidence[]; catalogs: DoctorRecommendationCatalogs }, caseId: string, model: string,
+    sourceHashes: string[]; guidelines: GuidelineEvidence[]; catalogs: DoctorRecommendationCatalogs }, caseId: string, model: string | null, fastReasoningEffort: string | undefined,
     signal: AbortSignal, caseEvidence: DoctorCaseEvidence[], assertCurrent: () => void, execution: DoctorRecommendationExecution) {
     assertCurrent()
+    if (model === null) throw new ChatCompletionsError('AI_REQUEST_FAILED', 'Selection model is not configured')
     const catalogs = projectRecommendationCatalogs(snapshot.catalogs)
     const laboratory = catalogs.laboratory!
     const selected: string[] = []
@@ -510,6 +520,7 @@ export class DoctorRecommendationsService {
         const batchSchema = catalogSelectionSchema.extend({ selectedCatalogItemIds: z.array(z.enum(items.map(item => item.id))).max(8) })
         return {
           model, signal, schemaName: 'doctor_recommendation_catalog_selection', systemPrompt: catalogSelectionPrompt,
+          ...(fastReasoningEffort === undefined ? {} : { reasoningEffort: fastReasoningEffort }),
           jsonSchema: z.toJSONSchema(batchSchema) as Record<string, unknown>,
           userPayload: { selectionContextHash, guidelines: snapshot.guidelines, caseEvidence: compactEvidenceIndex(caseEvidence), catalogs: { laboratory: { ...laboratory, items } } },
           validate: value => {
@@ -700,8 +711,16 @@ export class DoctorRecommendationsService {
         if (stored === undefined || stored.inputFingerprint !== inputFingerprint || !stored.status.canContinue) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The original recommendation task cannot continue')
         }
-        const execution = new DoctorRecommendationExecution({ database: this.options.database, identity,
-          inputFingerprint, model: stored.model, policyVersion: stored.policyVersion, provider: this.options.provider,
+        const execution = new DoctorRecommendationExecution({
+          database: this.options.database,
+          identity,
+          inputFingerprint,
+          model: stored.model,
+          selectionModel: stored.selectionModel,
+          ...(stored.modelReasoningEffort === undefined ? {} : { modelReasoningEffort: stored.modelReasoningEffort }),
+          ...(stored.selectionReasoningEffort === undefined ? {} : { selectionReasoningEffort: stored.selectionReasoningEffort }),
+          policyVersion: stored.policyVersion,
+          provider: this.options.provider,
           automaticRetries: () => this.options.automaticRetries?.(context.workspaceId) !== false,
           assertCurrent: () => {
             this.#authorize(context, caseId)
@@ -1051,10 +1070,23 @@ export class DoctorRecommendationsService {
       }
       const identity = this.#executionIdentity(context, payload.caseId, payload.kind, payload.generation)
       const stored = readDoctorRecommendationExecution(this.options.database, identity)
-      const model = stored?.model ?? await this.options.models.bind(context.workspaceId,
-        `recommendations:${context.epoch}:${payload.contextKey}:${payload.caseId}:${payload.kind}:${payload.generation}`, this.options.model, signal)
+      const bindingBase = `recommendations:${context.epoch}:${payload.contextKey}:${payload.caseId}:${payload.kind}:${payload.generation}`
+      const model = stored?.model ?? await this.options.models.bind(context.workspaceId, bindingBase, this.options.model, signal)
+      const configuredSelectionModel = this.options.selectionModel === undefined ? this.options.model : this.options.selectionModel
+      const selectionModel = stored !== undefined
+        ? stored.selectionModel
+        : configuredSelectionModel === null
+          ? null
+          : configuredSelectionModel === this.options.model
+            ? model
+            : await this.options.models.bind(context.workspaceId, `${bindingBase}:selection`, configuredSelectionModel, signal)
+      const strongReasoningEffort = stored !== undefined ? stored.modelReasoningEffort : this.options.reasoningEffort?.strong
+      const fastReasoningEffort = stored !== undefined ? stored.selectionReasoningEffort : this.options.reasoningEffort?.fast
       execution = new DoctorRecommendationExecution({ database: this.options.database, identity,
-        inputFingerprint, model, policyVersion: 'recommendation-stages-v1', provider: this.options.provider, assertCurrent,
+        inputFingerprint, model, selectionModel,
+        ...(strongReasoningEffort === undefined ? {} : { modelReasoningEffort: strongReasoningEffort }),
+        ...(fastReasoningEffort === undefined ? {} : { selectionReasoningEffort: fastReasoningEffort }),
+        policyVersion: 'recommendation-stages-v1', provider: this.options.provider, assertCurrent,
         automaticRetries: () => this.options.automaticRetries?.(context.workspaceId) !== false,
         usageContext: { trigger: payload.manualIntentKey === undefined ? 'automatic' : 'manual',
           sources: [{ kind: 'job', id: event.eventId, relationship: 'trigger' }] } })
@@ -1082,6 +1114,7 @@ export class DoctorRecommendationsService {
           })).max(8),
         }) : doctorRecommendationGenerationSchema
         return { model, signal, schemaName: 'doctor_recommendations', systemPrompt: generationPrompt,
+          ...(strongReasoningEffort === undefined ? {} : { reasoningEffort: strongReasoningEffort }),
           jsonSchema: z.toJSONSchema(schema) as Record<string, unknown>,
           userPayload: { kind: payload.kind, mode: considerationsOnly ? 'considerations-only' : 'suggestions-and-considerations',
             guidelines: snapshot.guidelines, caseEvidence, catalogs: selectedCatalogs },
@@ -1103,7 +1136,7 @@ export class DoctorRecommendationsService {
         }
       }
       phase = 'selection'
-      const assembled = await this.#selectCaseEvidence(snapshot, payload.caseId, model, signal, historyFits, assertCurrent, execution)
+      const assembled = await this.#selectCaseEvidence(snapshot, payload.caseId, selectionModel, fastReasoningEffort, signal, historyFits, assertCurrent, execution)
       historySelection = assembled.selection
       if (assembled.droppedHistoryRecords !== undefined) {
         notices.push({ category: 'processing', message: `已选既往记录超过本轮生成请求容量，${assembled.droppedHistoryRecords} 条未纳入本次建议；完整记录仍保留在病例资料中。` })
@@ -1113,7 +1146,7 @@ export class DoctorRecommendationsService {
       // 目录筛选始终执行：瘦身后全量目录虽能装进生成请求，但 reviewed/selected 审计与
       // “生成只能使用已筛选目录项”的限制仍由筛选阶段提供；瘦身的收益是批次数量受控。
       if (payload.kind === 'laboratory' && catalogs.laboratory !== undefined && catalogs.laboratory.items.length > 0) {
-        const selected = await this.#selectLaboratoryCatalog(snapshot, payload.caseId, model, signal, assembled.evidence, assertCurrent, execution)
+        const selected = await this.#selectLaboratoryCatalog(snapshot, payload.caseId, selectionModel, fastReasoningEffort, signal, assembled.evidence, assertCurrent, execution)
         catalogs = selected.catalogs
         catalogSelection = selected.selection
         if (catalogSelection.selectedCatalogItemIds.length === 0) {
@@ -1182,6 +1215,7 @@ export class DoctorRecommendationsService {
           const selected = selectedCatalogItems(suggestions)
           return {
             model, signal, schemaName: 'doctor_recommendation_verification', systemPrompt: verificationPrompt,
+            ...(strongReasoningEffort === undefined ? {} : { reasoningEffort: strongReasoningEffort }),
             jsonSchema: z.toJSONSchema(verificationSchema) as Record<string, unknown>,
             userPayload: { kind: payload.kind, items: suggestions, ...(considerations.length === 0 ? {} : { considerations }),
               guidelines: snapshot.guidelines, caseEvidence: base.caseEvidence,

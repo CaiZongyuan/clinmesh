@@ -12,6 +12,9 @@ import { modelTaskOutcomeUnknown } from './model-task-recovery.ts'
 
 const stageSchema = z.enum(['history-selection', 'history-consolidation', 'catalog-selection', 'generation', 'verification'])
 export type DoctorRecommendationExecutionStage = z.infer<typeof stageSchema>
+function isSelectionStage(stage: DoctorRecommendationExecutionStage): boolean {
+  return stage === 'history-selection' || stage === 'history-consolidation' || stage === 'catalog-selection'
+}
 const nameSchema = z.string().min(1).max(256)
 const dependencySchema = z.object({ stage: stageSchema, batchId: nameSchema }).strict()
 const batchSchema = dependencySchema.omit({ stage: true }).extend({
@@ -27,7 +30,13 @@ const identitySchema = z.object({
   caseId: nameSchema, kind: doctorRecommendationKindSchema, generation: z.number().int().positive(),
 }).strict()
 const bindingSchema = z.object({
-  identity: identitySchema, inputFingerprint: nameSchema, model: z.string().min(1).max(1024), policyVersion: nameSchema,
+  identity: identitySchema,
+  inputFingerprint: nameSchema,
+  model: z.string().min(1).max(1024),
+  selectionModel: z.string().min(1).max(1024).nullable(),
+  modelReasoningEffort: z.string().min(1).max(64).optional(),
+  selectionReasoningEffort: z.string().min(1).max(64).optional(),
+  policyVersion: nameSchema,
 }).strict()
 const executionRowSchema = z.object({ binding_json: z.string(), extra_request_count: z.number().int().min(0).max(4) })
 const unitRowSchema = z.object({
@@ -50,7 +59,9 @@ export class DoctorRecommendationExecutionError extends Error {
 }
 
 export function recommendationRequestHash(request: JsonChatCompletionInput): string {
-  return canonicalJsonHash({ model: request.model, schemaName: request.schemaName, jsonSchema: request.jsonSchema,
+  return canonicalJsonHash({ model: request.model,
+    ...(request.reasoningEffort === undefined ? {} : { reasoningEffort: request.reasoningEffort }),
+    schemaName: request.schemaName, jsonSchema: request.jsonSchema,
     systemPrompt: request.systemPrompt, userPayload: request.userPayload,
     maxAttempts: request.maxAttempts, maxInputBytes: request.maxInputBytes })
 }
@@ -92,7 +103,13 @@ function manuallyContinuable(unit: UnitRow): boolean {
 
 /** Read-only projection; never creates a task, changes its binding, or resolves a model. */
 export function readDoctorRecommendationExecution(database: ClinMeshDatabase, identity: z.infer<typeof identitySchema>): {
-  inputFingerprint: string; model: string; policyVersion: string; status: DoctorRecommendationExecutionStatus
+  inputFingerprint: string
+  model: string
+  selectionModel: string | null
+  modelReasoningEffort?: string
+  selectionReasoningEffort?: string
+  policyVersion: string
+  status: DoctorRecommendationExecutionStatus
 } | undefined {
   const parsedIdentity = identitySchema.parse(identity)
   const scope = [parsedIdentity.workspaceId, parsedIdentity.epoch] as const
@@ -102,27 +119,46 @@ export function readDoctorRecommendationExecution(database: ClinMeshDatabase, id
   if (row === undefined) return undefined
   const binding = bindingSchema.parse(JSON.parse(row.binding_json))
   if (canonicalJsonHash(binding.identity) !== key) throw new DoctorRecommendationExecutionError('plan-conflict')
-  return { inputFingerprint: binding.inputFingerprint, model: binding.model, policyVersion: binding.policyVersion,
-    status: executionStatus(executionUnits(database, scope, key), row.extra_request_count) }
+  return {
+    inputFingerprint: binding.inputFingerprint,
+    model: binding.model,
+    selectionModel: binding.selectionModel,
+    ...(binding.modelReasoningEffort === undefined ? {} : { modelReasoningEffort: binding.modelReasoningEffort }),
+    ...(binding.selectionReasoningEffort === undefined ? {} : { selectionReasoningEffort: binding.selectionReasoningEffort }),
+    policyVersion: binding.policyVersion,
+    status: executionStatus(executionUnits(database, scope, key), row.extra_request_count),
+  }
 }
 
 /** Private checkpoints. Only the owning service may publish fully verified recommendations. */
 export class DoctorRecommendationExecution {
   readonly #key: string
   readonly #scope: readonly [string, string]
+  readonly #selectionModel: string | null
   constructor(private readonly options: {
     database: ClinMeshDatabase
     identity: z.infer<typeof identitySchema>
     inputFingerprint: string
     model: string
+    selectionModel?: string | null
+    modelReasoningEffort?: string
+    selectionReasoningEffort?: string
     policyVersion: string
     provider: JsonChatCompletionsProvider
     assertCurrent: () => void
     usageContext?: Pick<ModelUsageContext, 'trigger' | 'sources'>
     automaticRetries?: () => boolean
   }) {
-    const binding = bindingSchema.parse({ identity: options.identity, inputFingerprint: options.inputFingerprint,
-      model: options.model, policyVersion: options.policyVersion })
+    this.#selectionModel = options.selectionModel === undefined ? options.model : options.selectionModel
+    const binding = bindingSchema.parse({
+      identity: options.identity,
+      inputFingerprint: options.inputFingerprint,
+      model: options.model,
+      selectionModel: this.#selectionModel,
+      ...(options.modelReasoningEffort === undefined ? {} : { modelReasoningEffort: options.modelReasoningEffort }),
+      ...(options.selectionReasoningEffort === undefined ? {} : { selectionReasoningEffort: options.selectionReasoningEffort }),
+      policyVersion: options.policyVersion,
+    })
     this.#key = canonicalJsonHash(binding.identity)
     this.#scope = [binding.identity.workspaceId, binding.identity.epoch]
     this.options.database.driver.prepare(`INSERT OR IGNORE INTO doctor_recommendation_execution
@@ -144,6 +180,7 @@ export class DoctorRecommendationExecution {
 
   #selectionCheckpoint<T>(unit: UnitRow, parse: (value: unknown) => T): { value: T } | undefined {
     if (unit.stage !== 'history-selection' && unit.stage !== 'catalog-selection') return undefined
+    if (this.#selectionModel === null) return undefined
     const row = z.object({ execution_key: z.string(), binding_json: z.string(), result_json: z.string() }).optional().parse(
       this.options.database.driver.prepare(`SELECT execution.execution_key, execution.binding_json, unit.result_json
         FROM doctor_recommendation_execution_unit AS unit JOIN doctor_recommendation_execution AS execution
@@ -152,18 +189,20 @@ export class DoctorRecommendationExecution {
           AND json_extract(execution.binding_json, '$.identity.actorId') = ?
           AND json_extract(execution.binding_json, '$.identity.contextKey') = ?
           AND json_extract(execution.binding_json, '$.identity.caseId') = ?
-          AND json_extract(execution.binding_json, '$.model') = ?
+          AND json_extract(execution.binding_json, '$.selectionModel') = ?
           AND json_extract(execution.binding_json, '$.policyVersion') = ?
         ORDER BY unit.rowid LIMIT 1`)
         .get(...this.#scope, unit.stage, unit.input_hash, this.options.identity.actorId,
-          this.options.identity.contextKey, this.options.identity.caseId, this.options.model, this.options.policyVersion))
+          this.options.identity.contextKey, this.options.identity.caseId, this.#selectionModel, this.options.policyVersion))
     if (row !== undefined) {
       const binding = bindingSchema.parse(JSON.parse(row.binding_json))
       if (canonicalJsonHash(binding.identity) !== row.execution_key) throw new DoctorRecommendationExecutionError('plan-conflict')
       const { kind: _kind, generation: _generation, ...sourceScope } = binding.identity
       const { kind: _currentKind, generation: _currentGeneration, ...currentScope } = this.options.identity
       if (canonicalJsonHash(sourceScope) !== canonicalJsonHash(currentScope)
-        || binding.model !== this.options.model || binding.policyVersion !== this.options.policyVersion) {
+        || binding.selectionModel !== this.#selectionModel
+        || binding.selectionReasoningEffort !== this.options.selectionReasoningEffort
+        || binding.policyVersion !== this.options.policyVersion) {
         throw new DoctorRecommendationExecutionError('plan-conflict')
       }
       return { value: parse(JSON.parse(row.result_json)) }
@@ -243,7 +282,14 @@ export class DoctorRecommendationExecution {
 
   async run<T>(input: { stage: DoctorRecommendationExecutionStage; batchId: string; request: JsonChatCompletionInput }, parse: (value: unknown) => T): Promise<T> {
     const unit = this.#units().find(unit => unit.stage === input.stage && unit.batch_id === input.batchId)
-    if (unit === undefined || unit.input_hash !== recommendationRequestHash(input.request) || input.request.model !== this.options.model) {
+    const selectionStage = isSelectionStage(input.stage)
+    const expectedModel = selectionStage ? this.#selectionModel : this.options.model
+    const expectedEffort = selectionStage ? this.options.selectionReasoningEffort : this.options.modelReasoningEffort
+    if (unit === undefined
+      || unit.input_hash !== recommendationRequestHash(input.request)
+      || expectedModel === null
+      || input.request.model !== expectedModel
+      || input.request.reasoningEffort !== expectedEffort) {
       throw new DoctorRecommendationExecutionError('plan-conflict')
     }
     this.options.assertCurrent()

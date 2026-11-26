@@ -3,8 +3,22 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
-import { decodeModelRoute, encodeModelRoute, modelBridgeAccountingMediaType, modelBridgeAccountingSchema,
-  modelBridgeFirstTextHeader, modelBridgeRequestSchema, modelRouteSchema } from '@clinmesh/contracts/model-bridge'
+import {
+  decodeModelRoute,
+  encodeModelRoute,
+  modelBridgeAccountingMediaType,
+  modelBridgeAccountingSchema,
+  modelBridgeFirstTextHeader,
+  modelBridgeRequestSchema,
+  modelCapabilitiesRequestSchema,
+  modelCapabilitiesResponseSchema,
+  modelReasoningEffortAutoLowest,
+  modelReasoningEffortDefault,
+  modelRouteSchema,
+  type ModelCapabilitiesResponse,
+  type ModelRoute,
+  type ModelTier,
+} from '@clinmesh/contracts/model-bridge'
 import { mergeModelTokenUsage, modelUsageConfigurationSchema, modelUsageOutcomeSchema, unknownModelTokenUsage,
   type ModelTokenUsage, type ModelUsageConfiguration } from '@clinmesh/contracts/model-usage'
 import { dshTokenUsage } from './dsh-token-usage.ts'
@@ -17,7 +31,195 @@ class ModelRateLimitError extends Error {
   constructor(readonly retryAfterMs: number | undefined) { super('Model rate limit reached') }
 }
 
-export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaultModel'>, secret: string, selection: () => string) {
+export interface ModelBridgeSelection {
+  generationModel: string
+  generationReasoningEffort?: string
+  fastModel?: string
+  fastReasoningEffort?: string
+}
+
+export type ModelSelectionSource = () => string | ModelBridgeSelection
+
+function normalizeSelection(selection: ModelSelectionSource): Required<ModelBridgeSelection> {
+  const value = selection()
+  if (typeof value === 'string') {
+    return {
+      generationModel: value,
+      generationReasoningEffort: modelReasoningEffortDefault,
+      fastModel: 'default',
+      fastReasoningEffort: modelReasoningEffortAutoLowest,
+    }
+  }
+  return {
+    generationModel: value.generationModel,
+    generationReasoningEffort: value.generationReasoningEffort ?? modelReasoningEffortDefault,
+    fastModel: value.fastModel ?? 'default',
+    fastReasoningEffort: value.fastReasoningEffort ?? modelReasoningEffortAutoLowest,
+  }
+}
+
+function isTrustedBrowserRequest(request: IncomingMessage): boolean {
+  const address = request.socket.remoteAddress?.toLowerCase()
+  const loopback = address === '::1'
+    || address?.startsWith('127.') === true
+    || address?.startsWith('::ffff:127.') === true
+  if (!loopback || request.headers['sec-fetch-site'] === 'cross-site') return false
+  const host = request.headers.host
+  const origin = request.headers.origin
+  if (typeof host !== 'string' || origin === undefined) return false
+  try {
+    return new URL(origin).host === host
+  } catch {
+    return false
+  }
+}
+
+async function readBoundedJson(request: IncomingMessage, maxBytes: number): Promise<unknown> {
+  if (request.headers['content-type']?.split(';')[0]?.trim() !== 'application/json') {
+    throw new TypeError('Invalid content type')
+  }
+  const chunks: Buffer[] = []
+  let bytes = 0
+  for await (const chunk of request) {
+    const buffer = Buffer.from(chunk)
+    bytes += buffer.length
+    if (bytes > maxBytes) throw new RangeError('Request too large')
+    chunks.push(buffer)
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+}
+
+export async function readModelCapabilities(
+  ctx: Pick<Context, 'llm'>,
+  provider: string,
+  model: string,
+  signal?: AbortSignal,
+): Promise<ModelCapabilitiesResponse> {
+  if (typeof ctx.llm.resolveModelInfo !== 'function') return { efforts: [] }
+  const info = await ctx.llm.resolveModelInfo(provider, model, signal)
+  const reasoning = info.reasoning
+  if (reasoning === undefined || reasoning.efforts.length === 0) return { efforts: [] }
+  const efforts = reasoning.efforts.map(item => {
+    const id = String(item.id)
+    const description = item.description?.trim()
+    return {
+      id,
+      name: item.name.trim() || id,
+      ...(description ? { description } : {}),
+    }
+  })
+  const defaultEffort = reasoning.defaultEffort === undefined ? undefined : String(reasoning.defaultEffort)
+  return modelCapabilitiesResponseSchema.parse({
+    efforts,
+    ...(defaultEffort !== undefined && efforts.some(item => item.id === defaultEffort) ? { defaultEffort } : {}),
+  })
+}
+
+export async function resolveModelRoute(
+  ctx: Pick<Context, 'llm' | 'agentDefaultModel'>,
+  selection: ModelSelectionSource,
+  tier: ModelTier = 'strong',
+  signal?: AbortSignal,
+): Promise<ModelRoute> {
+  const config = normalizeSelection(selection)
+  const primaryBase = config.generationModel === 'default'
+    ? modelRouteSchema.parse(ctx.agentDefaultModel.currentSelection())
+    : decodeModelRoute(config.generationModel)
+  const base: ModelRoute = tier === 'fast'
+    ? config.fastModel === 'default'
+      ? { provider: primaryBase.provider, model: primaryBase.model }
+      : (({ provider, model }) => ({ provider, model }))(decodeModelRoute(config.fastModel))
+    : primaryBase
+  const configuredEffort = tier === 'fast'
+    ? config.fastReasoningEffort
+    : config.generationReasoningEffort
+  if (configuredEffort === modelReasoningEffortDefault) {
+    return tier === 'fast' ? { provider: base.provider, model: base.model } : base
+  }
+  if (typeof ctx.llm.resolveModelInfo !== 'function') {
+    if (configuredEffort === modelReasoningEffortAutoLowest) {
+      return { provider: base.provider, model: base.model }
+    }
+    return modelRouteSchema.parse({
+      provider: base.provider,
+      model: base.model,
+      reasoningEffort: configuredEffort,
+    })
+  }
+  const capabilities = await readModelCapabilities(ctx, base.provider, base.model, signal)
+  signal?.throwIfAborted()
+  if (configuredEffort === modelReasoningEffortAutoLowest) {
+    const lowest = capabilities.efforts[0]?.id
+    return {
+      provider: base.provider,
+      model: base.model,
+      ...(lowest === undefined ? {} : { reasoningEffort: lowest }),
+    }
+  }
+  const supported = capabilities.efforts.some(item => item.id === configuredEffort)
+  return {
+    provider: base.provider,
+    model: base.model,
+    ...(supported ? { reasoningEffort: configuredEffort } : {}),
+  }
+}
+
+/** In-process fast-tier route resolver shared with Host-side lightweight callers. */
+export function resolveFastModelRoute(
+  ctx: Pick<Context, 'llm' | 'agentDefaultModel'>,
+  selection: ModelSelectionSource,
+  signal?: AbortSignal,
+): Promise<ModelRoute> {
+  return resolveModelRoute(ctx, selection, 'fast', signal)
+}
+
+export function createModelCapabilitiesHandler(ctx: Pick<Context, 'llm'>) {
+  const closing = new AbortController()
+  const handler = async (request: IncomingMessage, response: ServerResponse) => {
+    if (!isTrustedBrowserRequest(request)) { response.writeHead(403).end(); return }
+    if (request.method !== 'POST') { response.writeHead(405, { allow: 'POST' }).end(); return }
+    let responseStarted = false
+    const send = (status: number, value: unknown) => {
+      if (responseStarted || response.destroyed || response.writableEnded) return
+      responseStarted = true
+      const body = JSON.stringify(value)
+      response.writeHead(status, {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
+        'cache-control': 'no-store',
+      }).end(body)
+    }
+    const cancelled = new AbortController()
+    const abort = () => { if (!response.writableFinished) cancelled.abort() }
+    response.on('close', abort)
+    const signal = AbortSignal.any([closing.signal, cancelled.signal, AbortSignal.timeout(10_000)])
+    const disconnect = () => {
+      if (closing.signal.aborted || cancelled.signal.aborted) response.destroy()
+      else send(503, { error: 'MODEL_TIMEOUT' })
+    }
+    signal.addEventListener('abort', disconnect, { once: true })
+    try {
+      let parsedRequest: ReturnType<typeof modelCapabilitiesRequestSchema.parse>
+      try {
+        parsedRequest = modelCapabilitiesRequestSchema.parse(await readBoundedJson(request, 8 * 1024))
+      } catch {
+        send(400, { error: 'INVALID_REQUEST' }); return
+      }
+      signal.throwIfAborted()
+      const capabilities = await readModelCapabilities(ctx, parsedRequest.provider, parsedRequest.model, signal)
+      signal.throwIfAborted()
+      send(200, capabilities)
+    } catch {
+      send(503, { error: 'MODEL_UNAVAILABLE' })
+    } finally {
+      response.off('close', abort)
+      signal.removeEventListener('abort', disconnect)
+    }
+  }
+  return { handler, dispose: () => closing.abort() }
+}
+
+export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaultModel'>, secret: string, selection: ModelSelectionSource) {
   const closing = new AbortController()
   const handler = async (request: IncomingMessage, response: ServerResponse) => {
     const address = request.socket.remoteAddress
@@ -70,16 +272,7 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
     }
     signal.addEventListener('abort', disconnect, { once: true })
     try {
-      if (request.headers['content-type']?.split(';')[0] !== 'application/json') throw new Error('Invalid content type')
-      const chunks: Buffer[] = []
-      let bytes = 0
-      for await (const chunk of request) {
-        const buffer = Buffer.from(chunk)
-        bytes += buffer.length
-        if (bytes > 256 * 1024) throw new Error('Request too large')
-        chunks.push(buffer)
-      }
-      const input = modelBridgeRequestSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+      const input = modelBridgeRequestSchema.parse(await readBoundedJson(request, 256 * 1024))
       if (input.operation === 'complete') {
         attemptId = input.attemptId
         incremental = attemptId !== undefined && request.headers.accept === modelBridgeAccountingMediaType
@@ -90,7 +283,7 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
         AbortSignal.timeout(input.operation === 'complete' ? input.timeoutMs ?? 60_000 : 60_000)])
       signal.addEventListener('abort', disconnect, { once: true })
       const route = input.operation === 'resolve'
-        ? selection() === 'default' ? modelRouteSchema.parse(ctx.agentDefaultModel.currentSelection()) : decodeModelRoute(selection())
+        ? await resolveModelRoute(ctx, selection, input.tier ?? 'strong', signal)
         : decodeModelRoute(input.model)
       signal.throwIfAborted()
       const model = encodeModelRoute(route)

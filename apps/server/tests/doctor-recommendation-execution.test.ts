@@ -460,3 +460,107 @@ it('scopes reads, plans, recovery, continuation and dispatch accounting even whe
     WHERE workspace_id = 'other-workspace' AND epoch = 'other-epoch' AND execution_key = ?`).get(original.execution_key))
     .toEqual({ extra_request_count: 4 })
 })
+
+it('binds selectionModel separately from strong model, enforces per-stage models, and keys selection reuse on selectionModel', async () => {
+  let sent = 0
+  const { database, options } = fixture(async () => { sent += 1; return success() }, 'strong-model')
+  const selectionRequest: JsonChatCompletionInput = { ...request, model: 'fast-model' }
+  const generationRequest: JsonChatCompletionInput = { ...request, model: 'strong-model' }
+  const identity = { ...options.identity, generation: 10 }
+  const execution = new DoctorRecommendationExecution({ ...options, identity, model: 'strong-model', selectionModel: 'fast-model' })
+
+  expect(readDoctorRecommendationExecution(database, identity)).toMatchObject({
+    model: 'strong-model',
+    selectionModel: 'fast-model',
+  })
+  // Changed selectionModel on the same execution identity fails with plan-conflict.
+  expect(() => new DoctorRecommendationExecution({
+    ...options, identity, model: 'strong-model', selectionModel: 'other-fast-model',
+  })).toThrowError(/plan-conflict/)
+
+  // Selection stages require selectionModel; passing strong model fails plan-conflict.
+  execution.plan('history-selection', [{ batchId: '0', inputHash: recommendationRequestHash(selectionRequest) }])
+  await expect(execution.run({ stage: 'history-selection', batchId: '0', request: generationRequest }, value => output.parse(value)))
+    .rejects.toMatchObject({ kind: 'plan-conflict' })
+  await expect(execution.run({ stage: 'history-selection', batchId: '0', request: selectionRequest }, value => output.parse(value)))
+    .resolves.toEqual({ ok: true })
+  expect(sent).toBe(1)
+
+  // Generation and verification stages require strong model; passing selectionModel fails plan-conflict.
+  execution.plan('generation', [{ batchId: '0', inputHash: recommendationRequestHash(generationRequest) }])
+  await expect(execution.run({ stage: 'generation', batchId: '0', request: selectionRequest }, value => output.parse(value)))
+    .rejects.toMatchObject({ kind: 'plan-conflict' })
+  await expect(execution.run({ stage: 'generation', batchId: '0', request: generationRequest }, value => output.parse(value)))
+    .resolves.toEqual({ ok: true })
+  expect(sent).toBe(2)
+
+  // Cross-category reuse matches selectionModel even when strong model changed.
+  const anotherKindNewStrong = new DoctorRecommendationExecution({
+    ...options,
+    identity: { ...identity, kind: 'laboratory' },
+    model: 'strong-model-v2',
+    selectionModel: 'fast-model',
+  })
+  anotherKindNewStrong.plan('history-selection', [{ batchId: '0', inputHash: recommendationRequestHash(selectionRequest) }])
+  await expect(anotherKindNewStrong.run({ stage: 'history-selection', batchId: '0', request: selectionRequest }, value => output.parse(value)))
+    .resolves.toEqual({ ok: true })
+  expect(sent).toBe(2)
+
+  // Different selectionModel does NOT reuse the previous selection checkpoint.
+  const otherFastRequest: JsonChatCompletionInput = { ...request, model: 'fast-model-v2' }
+  const anotherFast = new DoctorRecommendationExecution({
+    ...options,
+    identity: { ...identity, generation: 11 },
+    model: 'strong-model',
+    selectionModel: 'fast-model-v2',
+  })
+  anotherFast.plan('history-selection', [{ batchId: '0', inputHash: recommendationRequestHash(otherFastRequest) }])
+  await expect(anotherFast.run({ stage: 'history-selection', batchId: '0', request: otherFastRequest }, value => output.parse(value)))
+    .resolves.toEqual({ ok: true })
+  expect(sent).toBe(3)
+
+  // Explicit null selectionModel allows strong generation while rejecting selection stages.
+  const strongOnlyIdentity = { ...identity, generation: 12 }
+  const strongOnly = new DoctorRecommendationExecution({
+    ...options,
+    identity: strongOnlyIdentity,
+    model: 'strong-model',
+    selectionModel: null,
+  })
+  expect(readDoctorRecommendationExecution(database, strongOnlyIdentity)?.selectionModel).toBeNull()
+  strongOnly.plan('history-selection', [{ batchId: '0', inputHash: recommendationRequestHash(generationRequest) }])
+  await expect(strongOnly.run({ stage: 'history-selection', batchId: '0', request: generationRequest }, value => output.parse(value)))
+    .rejects.toMatchObject({ kind: 'plan-conflict' })
+  strongOnly.plan('generation', [{ batchId: '0', inputHash: recommendationRequestHash(generationRequest) }])
+  await expect(strongOnly.run({ stage: 'generation', batchId: '0', request: generationRequest }, value => output.parse(value)))
+    .resolves.toEqual({ ok: true })
+  expect(sent).toBe(4)
+
+  // Persisted reasoning efforts are read back, enforced on run, and isolate selection checkpoints.
+  const effortIdentity = { ...identity, generation: 13 }
+  const effortSelectionRequest: JsonChatCompletionInput = { ...selectionRequest, reasoningEffort: 'low' }
+  const effortGenerationRequest: JsonChatCompletionInput = { ...generationRequest, reasoningEffort: 'high' }
+  const withEfforts = new DoctorRecommendationExecution({
+    ...options,
+    identity: effortIdentity,
+    model: 'strong-model',
+    selectionModel: 'fast-model',
+    modelReasoningEffort: 'high',
+    selectionReasoningEffort: 'low',
+  })
+  expect(readDoctorRecommendationExecution(database, effortIdentity)).toMatchObject({
+    model: 'strong-model',
+    selectionModel: 'fast-model',
+    modelReasoningEffort: 'high',
+    selectionReasoningEffort: 'low',
+  })
+  withEfforts.plan('history-selection', [{ batchId: '0', inputHash: recommendationRequestHash(effortSelectionRequest) }])
+  await expect(withEfforts.run({ stage: 'history-selection', batchId: '0', request: effortSelectionRequest }, value => output.parse(value)))
+    .resolves.toEqual({ ok: true })
+  withEfforts.plan('generation', [{ batchId: '0', inputHash: recommendationRequestHash(effortGenerationRequest) }])
+  await expect(withEfforts.run({ stage: 'generation', batchId: '0', request: { ...generationRequest, reasoningEffort: 'low' } }, value => output.parse(value)))
+    .rejects.toMatchObject({ kind: 'plan-conflict' })
+  await expect(withEfforts.run({ stage: 'generation', batchId: '0', request: effortGenerationRequest }, value => output.parse(value)))
+    .resolves.toEqual({ ok: true })
+  expect(sent).toBe(6)
+})

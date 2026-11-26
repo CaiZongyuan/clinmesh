@@ -45,7 +45,7 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 #### 模型执行恢复
 
 - **自由问诊回复**：`consultation_reply_attempt` 通过局部唯一索引保证每个医生轮次只有一个 `executing` 尝试，`consultation_reply_intent` 按 Actor／operation／幂等键关联调用者回执；控制阻塞同事务保存 `MODEL_CONTROL_BLOCKED` 与 `model_reply_wait` 恢复输入，启动时将缺少匹配待办的遗留阻塞与崩溃尝试统一转为 `unknown`（仅允许医生显式发起新补答），读取时已保存患者回答始终优先于尝试状态。
-- **诊疗建议与通用模型步骤**：`doctor_recommendation_execution`（含 `_plan`、`_unit`、`_continue`）与通用 `model_task_step`／`model_task_wait` 以 `(workspace_id, epoch, ...)` 复合键隔离保存完整输入指纹、每次外部派发前短事务原子预占的单元／额外次数、结构化输出安全分类 `invalid_code` 与控制拒绝码 `blocked_code`。派发后崩溃窗口保留占用并落为未知，禁止自动重发；人工继续意图仅为一个未知、失败或 `MODEL_RETRY_DISABLED` 单元持久保存单次 `resume_available` 授权并在准入事务内与请求预占原子消费，不重置预算。动态额度拒绝在进程内缓存最多 4096 项政策快照（配置缺失以 `runtime-restart` 区分，重启前不因周期轮询唤醒），政策变更、核对结算或淘汰重启后安全重评；`model_host_wait` 仅保存已验证 Host 任务 claims 与 1 秒心跳租约供状态观测。详见[临床决策支持与质控](clinical-decision-support.md)与[模型请求控制与恢复决策](../decisions/implemented/architecture/2026-10-21-model-request-control-recovery.md)。
+- **诊疗建议与通用模型步骤**：`doctor_recommendation_execution`（含 `_plan`、`_unit`、`_continue`）与通用 `model_task_step`／`model_task_wait` 以 `(workspace_id, epoch, ...)` 复合键隔离保存完整输入指纹、每次外部派发前短事务原子预占的单元／额外次数、结构化输出安全分类 `invalid_code` 与控制拒绝码 `blocked_code`。`doctor_recommendation_execution.binding_json` 分别持久化强档生成／核验路由 `model` 与弱档筛选／收敛路由 `selectionModel`（`ai_model_binding` 按任务与筛选后缀分别锁定已解析路由，筛选阶段检查点复用严格匹配 `selectionModel`，自动重试、重启恢复与人工继续不漂移模型）。派发后崩溃窗口保留占用并落为未知，禁止自动重发；人工继续意图仅为一个未知、失败或 `MODEL_RETRY_DISABLED` 单元持久保存单次 `resume_available` 授权并在准入事务内与请求预占原子消费，不重置预算。动态额度拒绝在进程内缓存最多 4096 项政策快照（配置缺失以 `runtime-restart` 区分，重启前不因周期轮询唤醒），政策变更、核对结算或淘汰重启后安全重评；`model_host_wait` 仅保存已验证 Host 任务 claims 与 1 秒心跳租约供状态观测。详见[临床决策支持与质控](clinical-decision-support.md)与[模型请求控制与恢复决策](../decisions/implemented/architecture/2026-10-21-model-request-control-recovery.md)。
 
 ### FHIR 投影
 
@@ -131,7 +131,7 @@ pnpm --filter @clinmesh/server db:restore --authority-database ./.data/clinmesh.
 
 ### 模型调用账本
 
-`model_usage_attempt` 按 Workspace 跨 Epoch 持久保存 Server 直接 Provider、DSH bridge 与 Host 独立医生代问识别（`doctor_delegation`）的逐次尝试。每次实际生成、格式纠错（`format-repair`）和限流重发（`rate-limit-retry`）在网络派发前，于同一短事务内原子创建 UUID 尝试、校验建议单元或任务包络并写入 `model_usage_request_reservation`／`model_usage_dimension_reservation` 预占，账本写入失败立即停止请求。记录仅保存任务、阶段、多来源关联、请求／实际模型、推理策略、可知输出上限、UTC 时间、结果、服务商请求 ID 与归一化 Token 元数据（OpenAI 与 DSH 缓存计入输入子集、推理计入输出子集，`raw` 保留原始分项，未知记 `null`、缺价记 `price-not-configured`，禁存提示词、临床或模型正文与凭证；日期趋势按 `Asia/Shanghai` 汇总）。
+`model_usage_attempt` 按 Workspace 跨 Epoch 持久保存 Server 直接 Provider、DSH bridge 与 Host 独立医生代问识别（`doctor_delegation`）的逐次尝试。每次实际生成、格式纠错（`format-repair`）和限流重发（`rate-limit-retry`）在网络派发前，于同一短事务内原子创建 UUID 尝试、校验建议单元或任务包络并写入 `model_usage_request_reservation`／`model_usage_dimension_reservation` 预占，账本写入失败立即停止请求。记录仅保存任务、阶段、多来源关联、请求／实际模型、思考强度（DSH 实采配置或 OpenAI 直连显式配置的 `reasoningEffort`，未配置记 `null`）、可知输出上限、UTC 时间、结果、服务商请求 ID 与归一化 Token 元数据（OpenAI 与 DSH 缓存计入输入子集、推理计入输出子集，`raw` 保留原始分项，未知记 `null`、缺价记 `price-not-configured`，禁存提示词、临床或模型正文与凭证；日期趋势按 `Asia/Shanghai` 汇总）。
 
 DSH 用量帧到达后以短事务保存可信量、实际配置与已派发证据，多帧快照按已报告分项合并且新帧可信归一化计数不被旧原始分项覆盖；Host 代问期限固定 30 秒，超期在途记录在读取、准入或上报时持久转为未知且不释放消耗。已保存成功、失败或取消终态不可改写，迟到可信用量只补齐未知计数与费用，矛盾报告整体忽略。
 

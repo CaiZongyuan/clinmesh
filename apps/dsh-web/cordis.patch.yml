@@ -45,6 +45,10 @@
         maxRequestBytes: 1048576
         maxResponseBytes: 4194304
         requestTimeoutMs: 30000
+        generationModel: default
+        generationReasoningEffort: default
+        fastModel: default
+        fastReasoningEffort: auto-lowest
 - id: agent-preset-registry
   config:
     default: clinmesh-assistant

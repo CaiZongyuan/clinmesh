@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { fromMarkdown } from 'mdast-util-from-markdown'
+import { modelTaskTierByFeature, type ModelTier } from '@clinmesh/contracts/model-bridge'
 import { modelUsageOutcomeSchema, unknownModelTokenUsage, type ModelUsageContext, type ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
 import type { ModelUsageRecorder } from '../../application/model-usage-lifecycle.ts'
 
@@ -139,6 +140,7 @@ export interface JsonChatCompletionInput {
   onFirstText?: (elapsedMs: number) => void
   jsonSchema: Record<string, unknown>
   model: string
+  reasoningEffort?: string
   schemaName: string
   signal?: AbortSignal
   systemPrompt: string
@@ -212,6 +214,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
   readonly #jsonSchemaRejectedModels = new Set<string>()
   readonly #maxRequestBytes: number
   readonly #maxResponseBytes: number
+  readonly #reasoningEffortByTier: Partial<Record<ModelTier, string>> | undefined
   readonly #timeoutMs: number
 
   constructor(options: {
@@ -220,6 +223,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
     fetch?: CompletionFetch
     maxRequestBytes?: number
     maxResponseBytes?: number
+    reasoningEffortByTier?: Partial<Record<ModelTier, string>>
     timeoutMs?: number
   }) {
     const endpoint = new URL(options.baseUrl)
@@ -234,10 +238,21 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
     this.#fetch = options.fetch ?? globalThis.fetch
     this.#maxRequestBytes = options.maxRequestBytes ?? 256 * 1024
     this.#maxResponseBytes = options.maxResponseBytes ?? 1024 * 1024
+    this.#reasoningEffortByTier = options.reasoningEffortByTier
     this.#timeoutMs = options.timeoutMs ?? 60_000
   }
 
+  #resolveReasoningEffort(input: Pick<JsonChatCompletionInput, 'schemaName' | 'reasoningEffort'>): string | undefined {
+    if (input.reasoningEffort !== undefined) return input.reasoningEffort
+    if (this.#reasoningEffortByTier === undefined) return undefined
+    const tier = Object.hasOwn(modelTaskTierByFeature, input.schemaName)
+      ? modelTaskTierByFeature[input.schemaName as keyof typeof modelTaskTierByFeature]
+      : undefined
+    return tier === undefined ? undefined : this.#reasoningEffortByTier[tier]
+  }
+
   async completeJson(input: JsonChatCompletionInput): Promise<JsonChatCompletionResult> {
+    const reasoningEffort = this.#resolveReasoningEffort(input)
     const commonBody = {
       messages: [{ role: 'system', content: input.systemPrompt }, {
         role: 'user',
@@ -245,6 +260,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
       }],
       model: input.model,
       temperature: 0,
+      ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort }),
     }
     const jsonSchemaBody = {
       ...commonBody,
@@ -277,6 +293,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
       }
       if (signal.aborted) throw new ChatCompletionsError('AI_TIMEOUT', 'The AI provider request was cancelled or timed out')
       const attemptId = beginChatCompletionUsage(input, { provider: this.#endpoint.hostname, model: input.model,
+        ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
         outputLimit: null, kind: attempts === 1 ? input.usageKind ?? 'initial' : 'format-repair',
         // The response byte guard cannot bound provider output or hidden reasoning tokens.
         reservationBoundary: { adapter: 'openai-chat', version: 'openai-chat-v1', inputTokens: null,

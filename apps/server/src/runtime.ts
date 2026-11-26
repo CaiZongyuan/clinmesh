@@ -64,7 +64,8 @@ import { DoctorRecommendationsService } from './application/doctor-recommendatio
 import { GuidelineCorpus } from './infrastructure/sqlite/guideline-corpus.ts'
 import type { GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { DshModelProvider } from './infrastructure/ai/dsh-model-provider.ts'
-import { dshDefaultModel } from '@clinmesh/contracts/model-bridge'
+import { dshModelForTier, modelTaskTierByFeature } from '@clinmesh/contracts/model-bridge'
+import type { ServerConfig } from './config.ts'
 import { ImagingPreparationService } from './application/imaging-preparation-service.ts'
 import { ExaminationResultResolver } from './application/examination-result-resolver.ts'
 import { ImagingStudyReader } from './application/imaging-study-reader.ts'
@@ -133,16 +134,7 @@ export interface CreateClinMeshRuntimeOptions {
   modelPricing?: ModelPricingConfig
   dshModelBridge?: { origin: string; secret: string; timeoutMs: number; maxResponseBytes: number }
   activeReferenceReleaseId?: string
-  ai?: {
-    apiKey: string
-    baseUrl: string
-    briefModel: string
-    catalogEnrichmentModel?: string
-    consultationModel?: string | undefined
-    investigationModel: string
-    maxResponseBytes: number
-    timeoutMs: number
-  }
+  ai?: ServerConfig['ai']
   authBaseUrl: string
   authSecret: string
   autoDispatchIntervalMs?: number
@@ -240,6 +232,12 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const investigationResults = new InvestigationResultRepository(database)
     const laboratoryServicePublications = new LaboratoryServicePublicationRepository(database)
     const modelUsage = new ModelUsageService(database, commands, options.modelUsageControl, options.modelPricing)
+    const reasoningEffortByTier = options.ai === undefined
+      ? undefined
+      : {
+          ...(options.ai.strongReasoningEffort === undefined ? {} : { strong: options.ai.strongReasoningEffort }),
+          ...(options.ai.fastReasoningEffort === undefined ? {} : { fast: options.ai.fastReasoningEffort }),
+        }
     const unaccountedChatCompletions: JsonChatCompletionsProvider | undefined = options.chatCompletionsProvider
       ?? (options.dshModelBridge === undefined ? undefined : new DshModelProvider(options.dshModelBridge))
       ?? (options.ai === undefined
@@ -248,6 +246,9 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             apiKey: options.ai.apiKey,
             baseUrl: options.ai.baseUrl,
             maxResponseBytes: options.ai.maxResponseBytes,
+            ...(reasoningEffortByTier !== undefined && Object.keys(reasoningEffortByTier).length > 0
+              ? { reasoningEffortByTier }
+              : {}),
             timeoutMs: options.ai.timeoutMs,
           }))
     const chatCompletions: JsonChatCompletionsProvider | undefined = unaccountedChatCompletions === undefined ? undefined : {
@@ -259,14 +260,22 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     }
     const modelTasks = new ModelTaskRecovery(database, modelUsage, unaccountedChatCompletions instanceof DshModelProvider)
     const recoverableChatCompletions = chatCompletions === undefined ? undefined : modelTasks.provider(chatCompletions)
-    const hostModel = options.dshModelBridge === undefined ? undefined : dshDefaultModel
+    const hostModelFor = (feature: keyof typeof modelTaskTierByFeature) =>
+      options.dshModelBridge === undefined ? undefined : dshModelForTier(modelTaskTierByFeature[feature])
     const models = new GenerationModelBinding(database, chatCompletions)
-    const patientPersonaModel = hostModel ?? options.patientPersonaModel ?? options.ai?.briefModel
-    const consultationModel = hostModel ?? options.consultationModel ?? options.ai?.consultationModel
+    const legacyStrongFallback = options.consultationModel ?? options.ai?.consultationModel
+      ?? options.investigationModel ?? options.ai?.investigationModel
+      ?? options.patientPersonaModel ?? options.ai?.briefModel
+    const strongTierModel = options.ai?.strongModel
+    const fastTierModel = options.ai?.fastModel
+    const strongModel = hostModelFor('doctor_recommendations') ?? strongTierModel ?? legacyStrongFallback
+    const patientPersonaModel = hostModelFor('patient_persona') ?? options.patientPersonaModel ?? fastTierModel ?? options.ai?.briefModel
+    const consultationModel = hostModelFor('patient_dialogue_reply') ?? options.consultationModel ?? fastTierModel ?? options.ai?.consultationModel
     const recordingModel = options.consultationRecordingModel ?? consultationModel
-    const investigationModel = hostModel ?? options.investigationModel ?? options.ai?.investigationModel
-    const catalogEnrichmentModel = hostModel ?? options.catalogEnrichmentModel
+    const investigationModel = hostModelFor('investigation_result') ?? options.investigationModel ?? fastTierModel ?? options.ai?.investigationModel
+    const catalogEnrichmentModel = hostModelFor('laboratory_service_enrichment') ?? options.catalogEnrichmentModel ?? fastTierModel
       ?? options.ai?.catalogEnrichmentModel
+    const recommendationSelectionModel = hostModelFor('doctor_recommendation_history_selection') ?? fastTierModel ?? legacyStrongFallback
     const investigation = new InvestigationService({
       models,
       cases: syntheticCases,
@@ -283,7 +292,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       },
       assertInpatientInsuranceChangeAllowed: (context, source) => inpatientInsurance.assertFirstSettlementWritable(context, source.target.id),
       consultationRecordingEnabled: options.dshModelBridge !== undefined,
-      qualityModelAvailable: chatCompletions !== undefined && (consultationModel ?? investigationModel ?? patientPersonaModel) !== undefined,
+      qualityModelAvailable: chatCompletions !== undefined && strongModel !== undefined,
       qualityContextStatus: context => identity.clinicalDocumentQualityContextStatus(context),
       consultationRecordingContextStatus: context => identity.consultationRecordingContextStatus(context),
       ...(guidelineCorpus === undefined ? {} : { guidelines: guidelineCorpus }),
@@ -473,13 +482,17 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const aiTimeoutMs = options.dshModelBridge === undefined ? options.ai?.timeoutMs ?? 60_000
       : 3 * (options.dshModelBridge.timeoutMs + 1_000)
     const recommendationTimeoutMs = 2 * aiTimeoutMs
-    const recommendationModel = consultationModel ?? investigationModel ?? patientPersonaModel
+    const recommendationModel = strongModel
     const doctorRecommendations = new DoctorRecommendationsService({
       recovery: modelTasks, automaticRetries: workspaceId => modelUsage.automaticRetries(workspaceId),
       database, workflow, commands, models, referenceData,
       ...(guidelineCorpus === undefined ? {} : { guidelines: guidelineCorpus }),
       contextStatus: context => identity.consultationRecordingContextStatus(context),
       ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
+      selectionModel: recommendationSelectionModel ?? null,
+      ...(reasoningEffortByTier !== undefined && Object.keys(reasoningEffortByTier).length > 0
+        ? { reasoningEffort: reasoningEffortByTier }
+        : {}),
       ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
       investigationCatalogs: async (context, caseId, kind) => {
         if (kind === 'imaging') return { imaging: workflow.imaging.serviceCatalog(context, await imagingLibrary.readyExamCodes()) }

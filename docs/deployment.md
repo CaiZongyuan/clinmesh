@@ -86,14 +86,21 @@ pnpm guidelines:sync -- --check
 
 ## 4. 配置 AI Provider（患者档案必需）
 
-`pnpm dev:dsh` 自动设置 `CLINMESH_AI_SOURCE=dsh` 复用宿主 Provider 与凭据，在 DSH“设置 → 通用 → ClinMesh 模型”即可选择路由（若报 `AI_AUTH_FAILED`，在宿主检查凭据或改选可用模型后对问诊点击重试、对失败检验点击重新生成、对患者档案发起新任务；已在途任务保持原绑定模型）。standalone Web 默认 `CLINMESH_AI_SOURCE=openai`，动态 Synthea 病例的档案生成、检验模型兜底与自由问诊在 `.env` 配置（OpenAI 兼容网关 `baseURL` 须填包含 `/v1` 的实际 API 根路径；仅显式通过 CLI 发布 LOINC 候选服务时才需额外配置 `CLINMESH_AI_CATALOG_ENRICHMENT_MODEL`）：
+`pnpm dev:dsh` 自动设置 `CLINMESH_AI_SOURCE=dsh` 复用宿主 Provider 与凭据，在 DSH“设置 → 通用 → ClinMesh 模型”可分别配置主模型与轻量模型及其思考强度（插件配置为 `generationModel`、`generationReasoningEffort`、`fastModel` 与 `fastReasoningEffort`；轻量模型默认沿用主模型并以 `auto-lowest` 自动选用所选模型支持的最低思考强度，不支持思考强度的模型自动省略思考强度字段；强档用于诊疗建议生成／核验、病历质控与住院 DRG 推理，弱档用于患者对话、病史整理、建议材料／目录筛选、患者档案与检验生成，设计取舍见[强弱双档模型路由与思考强度配置决策](decisions/implemented/architecture/2026-11-26-tiered-model-routing-and-reasoning-effort.md)；若报 `AI_AUTH_FAILED`，在宿主检查凭据或改选可用模型后对问诊点击重试、对失败检验点击重新生成、对患者档案发起新任务；已在途或已绑定的任务保持原路由）。standalone Web 默认 `CLINMESH_AI_SOURCE=openai`，支持按强弱双档变量或原有按任务变量在 `.env` 配置（OpenAI 兼容网关 `baseURL` 须填包含 `/v1` 的实际 API 根路径；未配置强弱思考强度变量时不发送 `reasoning_effort`，显式配置后随对应档位请求发送并在模型用量账本中记录；仅配置单边强档或弱档时两档互不串用；仅显式通过 CLI 发布 LOINC 候选服务且未配置 `CLINMESH_AI_FAST_MODEL` 时才需额外配置 `CLINMESH_AI_CATALOG_ENRICHMENT_MODEL`）：
 
 ```dotenv
 CLINMESH_AI_BASE_URL=https://provider.example/v1
 CLINMESH_AI_API_KEY=replace-with-local-key
-CLINMESH_AI_BRIEF_MODEL=provider/brief-model
-CLINMESH_AI_INVESTIGATION_MODEL=provider/investigation-model
-CLINMESH_AI_CONSULTATION_MODEL=provider/consultation-model
+# 推荐：强弱双档配置（可选思考强度按档位生效）
+CLINMESH_AI_STRONG_MODEL=provider/strong-model
+CLINMESH_AI_FAST_MODEL=provider/fast-model
+# CLINMESH_AI_STRONG_REASONING_EFFORT=medium
+# CLINMESH_AI_FAST_REASONING_EFFORT=low
+
+# 兼容：未设置 STRONG/FAST 时继续沿用原有按任务变量
+# CLINMESH_AI_BRIEF_MODEL=provider/brief-model
+# CLINMESH_AI_INVESTIGATION_MODEL=provider/investigation-model
+# CLINMESH_AI_CONSULTATION_MODEL=provider/consultation-model
 ```
 
 固定 PCI 病例与五例心肾专病 `Authored Case Pack`（Web“模拟数据 → PCI 演示准备”或 `clinmesh admin authored-case-pack prepare`）内置版本化模板 `clinmesh-authored-template` 与分阶段 `Case Truth`，无需配置外部 AI Provider 即可跑通完整门诊与住院流程。缺少 consultation 模型时服务仍正常启动，仅自由问诊返回 `CONSULTATION_REPLY_UNAVAILABLE` 并保留医生提问供恢复后重试；配置外部 Provider 后可显式运行 `pnpm smoke:patient-brief:live` 做单次连通性自检。
@@ -234,4 +241,4 @@ ClinMesh“设置 → 模型用量”提供跨 Epoch 用量总览、Workspace �
 
 ## 实时病历整理模型与负载验证
 
-`CLINMESH_AI_RECORDING_MODEL` 可为门诊实时自动病历整理固定独立路由（如在 DSH 路由 JSON 中显式指定 `"reasoningEffort":"off"` 关闭思考延迟，不设置时沿用问诊模型），超时统一遵循 `CLINMESH_AI_TIMEOUT_MS`（DSH 默认 120 秒、OpenAI 默认 60 秒），批次与来源约束见[门诊业务流程](architecture/outpatient-workflows.md)与[模型调用账本](architecture/storage.md#模型调用账本)。日常开发与验收默认使用合成 Provider 与临时数据库；任何真实模型验证或负载测试均须事先取得用户针对当次运行的明确许可，严格遵循[工程规则](../AGENTS.md)。
+`CLINMESH_AI_RECORDING_MODEL` 可为门诊实时自动病历整理固定独立路由（如在 DSH 路由 JSON 中显式指定 `"reasoningEffort":"off"` 关闭思考延迟；未设置时 DSH 走轻量档 `dsh:fast`，OpenAI 直连依次沿用 `CLINMESH_AI_FAST_MODEL` 或 `CLINMESH_AI_CONSULTATION_MODEL`），超时统一遵循 `CLINMESH_AI_TIMEOUT_MS`（DSH 默认 120 秒、OpenAI 默认 60 秒），批次与来源约束见[门诊业务流程](architecture/outpatient-workflows.md)与[模型调用账本](architecture/storage.md#模型调用账本)。日常开发与验收默认使用合成 Provider 与临时数据库；任何真实模型验证或负载测试均须事先取得用户针对当次运行的明确许可，严格遵循[工程规则](../AGENTS.md)。

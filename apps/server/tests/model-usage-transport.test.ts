@@ -287,3 +287,27 @@ it('does not authorize automatic resends when the bridge stream ends without a t
     expect(accounting.attempts[0]?.outcome).toMatchObject({ status: 'unknown', dispatch: 'dispatched', usage: { totalTokens: 15 } })
   } finally { await bridge.close() }
 })
+
+it('records configured OpenAI direct reasoning_effort per tier in model usage metadata without leaking across tiers', async () => {
+  const accounting = recorder()
+  const bodies: Array<Record<string, unknown>> = []
+  const provider = new OpenAIChatCompletionsClient({
+    apiKey: 'synthetic-secret',
+    baseUrl: 'https://synthetic.invalid',
+    reasoningEffortByTier: { strong: 'high' },
+    fetch: async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      return Response.json({
+        model: 'actual-synthetic',
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        choices: [{ message: { content: '{"ok":true}' } }],
+      })
+    },
+  })
+  await provider.completeJson({ ...input, schemaName: 'doctor_recommendations', usageContext, usageRecorder: accounting.service })
+  await provider.completeJson({ ...input, schemaName: 'patient_dialogue_reply', usageContext, usageRecorder: accounting.service })
+  expect(bodies[0]?.reasoning_effort).toBe('high')
+  expect(bodies[1]).not.toHaveProperty('reasoning_effort')
+  expect(accounting.attempts[0]?.metadata.reasoningEffort).toBe('high')
+  expect(accounting.attempts[1]?.metadata.reasoningEffort).toBeUndefined()
+})

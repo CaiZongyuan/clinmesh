@@ -31,6 +31,10 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_AI_BRIEF_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_CATALOG_ENRICHMENT_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_INVESTIGATION_MODEL: z.string().trim().min(1).max(256).optional(),
+  CLINMESH_AI_STRONG_MODEL: z.string().trim().min(1).max(256).optional(),
+  CLINMESH_AI_FAST_MODEL: z.string().trim().min(1).max(256).optional(),
+  CLINMESH_AI_STRONG_REASONING_EFFORT: z.string().trim().min(1).max(64).optional(),
+  CLINMESH_AI_FAST_REASONING_EFFORT: z.string().trim().min(1).max(64).optional(),
   CLINMESH_AI_MAX_RESPONSE_BYTES: z.string().regex(/^\d+$/)
     .refine(value => Number(value) >= 1_024 && Number(value) <= 10 * 1_024 * 1_024)
     .default('1048576'),
@@ -75,18 +79,39 @@ const serverEnvironmentSchema = z.object({
     }
     return
   }
-  const values = [
-    environment.CLINMESH_AI_API_KEY,
-    environment.CLINMESH_AI_BASE_URL,
-    environment.CLINMESH_AI_BRIEF_MODEL,
-    environment.CLINMESH_AI_INVESTIGATION_MODEL,
-  ]
-  if ((values.some(value => value !== undefined) || environment.CLINMESH_AI_CONSULTATION_MODEL !== undefined) && values.some(value => value === undefined)) {
-    context.addIssue({
-      code: 'custom',
-      message: 'AI base URL, API key, Brief model, and Investigation model must be configured together',
-      path: ['CLINMESH_AI_BASE_URL'],
-    })
+  const hasTierModel = environment.CLINMESH_AI_STRONG_MODEL !== undefined
+    || environment.CLINMESH_AI_FAST_MODEL !== undefined
+  const hasLegacyModel = environment.CLINMESH_AI_BRIEF_MODEL !== undefined
+    || environment.CLINMESH_AI_INVESTIGATION_MODEL !== undefined
+    || environment.CLINMESH_AI_CONSULTATION_MODEL !== undefined
+  const hasReasoningEffort = environment.CLINMESH_AI_STRONG_REASONING_EFFORT !== undefined
+    || environment.CLINMESH_AI_FAST_REASONING_EFFORT !== undefined
+  const hasConnection = environment.CLINMESH_AI_API_KEY !== undefined
+    || environment.CLINMESH_AI_BASE_URL !== undefined
+  if (hasConnection || hasTierModel || hasLegacyModel || hasReasoningEffort) {
+    if (environment.CLINMESH_AI_API_KEY === undefined || environment.CLINMESH_AI_BASE_URL === undefined) {
+      context.addIssue({
+        code: 'custom',
+        message: 'AI base URL and API key must be configured together with AI model settings',
+        path: ['CLINMESH_AI_BASE_URL'],
+      })
+    } else if (!hasTierModel) {
+      if (environment.CLINMESH_AI_BRIEF_MODEL === undefined || environment.CLINMESH_AI_INVESTIGATION_MODEL === undefined) {
+        context.addIssue({
+          code: 'custom',
+          message: 'AI base URL, API key, Brief model, and Investigation model must be configured together',
+          path: ['CLINMESH_AI_BASE_URL'],
+        })
+      }
+    } else if (
+      (environment.CLINMESH_AI_BRIEF_MODEL === undefined) !== (environment.CLINMESH_AI_INVESTIGATION_MODEL === undefined)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'AI Brief model and Investigation model must be configured together when specified',
+        path: ['CLINMESH_AI_BASE_URL'],
+      })
+    }
   }
 })
 
@@ -99,9 +124,13 @@ export interface ServerConfig {
     apiKey: string
     baseUrl: string
     consultationModel?: string | undefined
-    briefModel: string
+    briefModel?: string
     catalogEnrichmentModel?: string
-    investigationModel: string
+    investigationModel?: string
+    strongModel?: string
+    fastModel?: string
+    strongReasoningEffort?: string
+    fastReasoningEffort?: string
     maxResponseBytes: number
     timeoutMs: number
   }
@@ -245,11 +274,21 @@ export function readServerConfig(
             apiKey: parsed.CLINMESH_AI_API_KEY!,
             baseUrl: parsed.CLINMESH_AI_BASE_URL,
             consultationModel: parsed.CLINMESH_AI_CONSULTATION_MODEL,
-            briefModel: parsed.CLINMESH_AI_BRIEF_MODEL!,
+            ...(parsed.CLINMESH_AI_BRIEF_MODEL === undefined ? {} : { briefModel: parsed.CLINMESH_AI_BRIEF_MODEL }),
             ...(parsed.CLINMESH_AI_CATALOG_ENRICHMENT_MODEL === undefined
               ? {}
               : { catalogEnrichmentModel: parsed.CLINMESH_AI_CATALOG_ENRICHMENT_MODEL }),
-            investigationModel: parsed.CLINMESH_AI_INVESTIGATION_MODEL!,
+            ...(parsed.CLINMESH_AI_INVESTIGATION_MODEL === undefined
+              ? {}
+              : { investigationModel: parsed.CLINMESH_AI_INVESTIGATION_MODEL }),
+            ...(parsed.CLINMESH_AI_STRONG_MODEL === undefined ? {} : { strongModel: parsed.CLINMESH_AI_STRONG_MODEL }),
+            ...(parsed.CLINMESH_AI_FAST_MODEL === undefined ? {} : { fastModel: parsed.CLINMESH_AI_FAST_MODEL }),
+            ...(parsed.CLINMESH_AI_STRONG_REASONING_EFFORT === undefined
+              ? {}
+              : { strongReasoningEffort: parsed.CLINMESH_AI_STRONG_REASONING_EFFORT }),
+            ...(parsed.CLINMESH_AI_FAST_REASONING_EFFORT === undefined
+              ? {}
+              : { fastReasoningEffort: parsed.CLINMESH_AI_FAST_REASONING_EFFORT }),
             maxResponseBytes: Number(parsed.CLINMESH_AI_MAX_RESPONSE_BYTES),
             timeoutMs: Number(parsed.CLINMESH_AI_TIMEOUT_MS ?? 60_000),
           },

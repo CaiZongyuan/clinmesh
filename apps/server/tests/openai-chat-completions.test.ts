@@ -430,4 +430,58 @@ describe('OpenAI-compatible Chat Completions client', () => {
       code: 'AI_TIMEOUT',
     })
   })
+
+  it('omits reasoning_effort by default and scopes configured efforts strictly by tier', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const recordingFetch = async (_input: URL | RequestInfo, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      return Response.json({ choices: [{ message: { content: '{"chiefComplaint":"头晕"}' } }] })
+    }
+
+    const plainClient = new OpenAIChatCompletionsClient({
+      apiKey: secret,
+      baseUrl: 'https://openrouter.example/api/v1',
+      fetch: recordingFetch,
+    })
+    await plainClient.completeJson({ ...completionInput, schemaName: 'doctor_recommendations' })
+    expect(bodies[0]).not.toHaveProperty('reasoning_effort')
+
+    const tieredClient = new OpenAIChatCompletionsClient({
+      apiKey: secret,
+      baseUrl: 'https://openrouter.example/api/v1',
+      fetch: recordingFetch,
+      reasoningEffortByTier: { strong: 'high', fast: 'low' },
+    })
+    await tieredClient.completeJson({ ...completionInput, schemaName: 'doctor_recommendations' })
+    await tieredClient.completeJson({ ...completionInput, schemaName: 'patient_dialogue_reply' })
+    await tieredClient.completeJson({ ...completionInput, schemaName: 'doctor_recommendation_history_selection' })
+    await tieredClient.completeJson({ ...completionInput, schemaName: 'doctor_recommendations', reasoningEffort: 'medium' })
+    expect(bodies[1]?.reasoning_effort).toBe('high')
+    expect(bodies[2]?.reasoning_effort).toBe('low')
+    expect(bodies[3]?.reasoning_effort).toBe('low')
+    expect(bodies[4]?.reasoning_effort).toBe('medium')
+
+    // Single-sided reasoning effort configuration never leaks into the other tier.
+    const strongEffortOnly = new OpenAIChatCompletionsClient({
+      apiKey: secret,
+      baseUrl: 'https://openrouter.example/api/v1',
+      fetch: recordingFetch,
+      reasoningEffortByTier: { strong: 'high' },
+    })
+    await strongEffortOnly.completeJson({ ...completionInput, schemaName: 'doctor_recommendations' })
+    await strongEffortOnly.completeJson({ ...completionInput, schemaName: 'patient_dialogue_reply' })
+    expect(bodies[5]?.reasoning_effort).toBe('high')
+    expect(bodies[6]).not.toHaveProperty('reasoning_effort')
+
+    const fastEffortOnly = new OpenAIChatCompletionsClient({
+      apiKey: secret,
+      baseUrl: 'https://openrouter.example/api/v1',
+      fetch: recordingFetch,
+      reasoningEffortByTier: { fast: 'minimal' },
+    })
+    await fastEffortOnly.completeJson({ ...completionInput, schemaName: 'doctor_recommendations' })
+    await fastEffortOnly.completeJson({ ...completionInput, schemaName: 'patient_dialogue_reply' })
+    expect(bodies[7]).not.toHaveProperty('reasoning_effort')
+    expect(bodies[8]?.reasoning_effort).toBe('minimal')
+  })
 })

@@ -12,7 +12,7 @@ import { z } from 'zod'
 import { doctorCaseDetailSchema, clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema, consultationRecordingErrorCodeSchema,
   clinicalDocumentQualityControlStateSchema, checkClinicalDocumentQualityRequestSchema, clinicalDocumentQualityControlResponseSchema } from '../packages/contracts/src/his.ts'
 import { doctorRecommendationStateSchema } from '../packages/contracts/src/doctor-recommendations.ts'
-import { decodeModelRoute, modelBridgeRequestSchema } from '../packages/contracts/src/model-bridge.ts'
+import { decodeModelRoute, dshTierForModel, modelBridgeRequestSchema } from '../packages/contracts/src/model-bridge.ts'
 import { createClinMeshRuntime } from '../apps/server/src/runtime.ts'
 import { DshModelProvider } from '../apps/server/src/infrastructure/ai/dsh-model-provider.ts'
 import { recordingSourceDiagnosticSchema } from '../apps/server/src/application/consultation-history-summary.ts'
@@ -279,7 +279,7 @@ export function apply(ctx) {
   hospital = await createClinMeshRuntime({
     ...recommendationReference,
     chatCompletionsProvider: {
-      resolveModel: (route, signal) => provider.resolveModel(route === 'dsh:default'
+      resolveModel: (route, signal) => provider.resolveModel(dshTierForModel(route) !== undefined
         ? 'dsh:{"provider":"synthetic-consultation","model":"journey"}' : route, signal),
       completeJson: async input => {
         if (['clinical_document_quality', 'clinical_document_quality_verification'].includes(input.schemaName)) {
@@ -656,7 +656,7 @@ export function apply(ctx) {
     const liveRuntime = await createClinMeshRuntime({
       ...recommendationReference,
       dshBridgeSecret: secret,
-      chatCompletionsProvider: { resolveModel: (route, signal) => provider.resolveModel(route === 'dsh:default' ? model : route, signal),
+      chatCompletionsProvider: { resolveModel: (route, signal) => provider.resolveModel(dshTierForModel(route) !== undefined ? model : route, signal),
         completeJson: input => input.schemaName === 'patient_persona'
           ? Promise.resolve({ content: JSON.stringify(persona), model: input.model })
           : input.schemaName === 'patient_dialogue_reply'

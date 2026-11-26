@@ -1,4 +1,4 @@
-import { dshDefaultModel, decodeModelRoute, modelBridgeAccountingMediaType, modelBridgeFrameSchema,
+import { decodeModelRoute, dshTierForModel, modelBridgeAccountingMediaType, modelBridgeFrameSchema,
   modelBridgeErrorSchema, modelBridgeFirstTextHeader, modelBridgePath, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
 import { mergeModelTokenUsage, unknownModelTokenUsage, type ModelTokenUsage, type ModelUsageConfiguration, type ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
 import { beginChatCompletionUsage, settleChatCompletionUsage, ChatCompletionRequestControlError, invokeChatCompletionRequestControl, ChatCompletionsError, StructuredOutputValidationError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from './openai-chat-completions.ts'
@@ -17,8 +17,9 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
   }
 
   async resolveModel(model: string, signal?: AbortSignal, deadline = performance.now() + this.options.timeoutMs): Promise<string> {
-    if (model !== dshDefaultModel) { decodeModelRoute(model); return model }
-    const result = await this.#request({ operation: 'resolve' }, signal, undefined, deadline)
+    const tier = dshTierForModel(model)
+    if (tier === undefined) { decodeModelRoute(model); return model }
+    const result = await this.#request({ operation: 'resolve', tier }, signal, undefined, deadline)
     decodeModelRoute(result.model)
     return result.model
   }
