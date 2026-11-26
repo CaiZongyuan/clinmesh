@@ -21,8 +21,10 @@ const patient = await store.read(reader => reader.get({ workspaceId, epoch }, 'p
 
 在事务中注册 `pi_sessions` 行后，运行时通过 `openPiStorage(scope, sessionId)` 获取官方 `pi-durable` Storage。每个会话在同一个数据库中使用独立的 `pi_*` 表，患者会话绑定具体 Encounter。每个会话由一个运行时管理，结束时调用 SDK 的 `close(context)`。调用方在持久化前处理 Provider 错误与凭据，Store 如实保留提交的记录。
 
-`exportLogicalSnapshot(workspaceId)` 返回 `clinmesh.snapshot.v3` JSON，包含该 Workspace 所有 Epoch、私有 Case Truth、不可变历史和已初始化的 pi 会话。它是受信任的迁移和备份入口。导出包含敏感的私有病例及会话内容，只交给获授权的运维人员。校验摘要是对省略 `sha256` 字段、递归按键名排序的紧凑 UTF-8 JSON 计算的 SHA-256。表和修订按依赖顺序排列。`importLogicalSnapshot(snapshot)` 在空库的一次事务中校验、恢复并核对全部内容。v1、v2 快照先按原格式校验，随后保留原数据并补齐缺少的空表。v3 增加 `lab_drafts` 和 `lab_requests`。JSON 导入导出在内存中完成。
+`exportLogicalSnapshot(workspaceId)` 返回 `clinmesh.snapshot.v4` JSON，包含该 Workspace 所有 Epoch、私有 Case Truth、不可变历史和已初始化的 pi 会话。它是受信任的迁移和备份入口。导出包含敏感的私有病例及会话内容，只交给获授权的运维人员。校验摘要是对省略 `sha256` 字段、递归按键名排序的紧凑 UTF-8 JSON 计算的 SHA-256。表和修订按依赖顺序排列。`importLogicalSnapshot(snapshot)` 在空库的一次事务中校验、恢复并核对全部内容。v2 加入分诊表，v3 加入账务表，v4 加入 `lab_drafts` 和 `lab_requests`。导入各版本时先验证原表清单和校验和，再补齐缺少的空表。JSON 导入导出在内存中完成。
 
 每次开诊写入独立的 `encounter_triage` 分诊事实。v2 快照也记录空分诊表。`visitorSigningSecret()` 供宿主组合根取得 Visitor Gate 的签名材料。Node 在本机数据库保存它，Worker 使用独立命名的门禁 Durable Object。导出的 Workspace 快照范围仅覆盖规定的 Workspace 实体和 pi 会话。
+
+本机物理 schema 3 在 schema 2 的账务布局上追加两张检验表。`snapshot-version.test.ts` 使用 `e3842543` 运行 Store Conformance Suite 导出的完整 v3 快照，逐表核对 55 张旧表及两个 pi 会话。测试工件以 gzip 和 Base64 保存。[合成账务快照](tests/fixtures/e3842543-v3.json.gz.b64)
 
 在 Windows 原生环境执行 `pnpm exec vitest run src/packages/store/tests`。同一套 `runStoreConformanceSuite(source, restoreIntoEmpty)` 驱动独立的源库和恢复目标。该套件会写入合成数据，使用可丢弃的空库运行。测试还在真实 workerd 与本地 SQLite 之间双向迁移数据。构建后执行 `pnpm verify:worker` 检查 Worker 体积与 Node 原生依赖。

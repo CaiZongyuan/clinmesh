@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useLayoutEffect, useState } from 'react';
+import { lazy, useLayoutEffect, useState } from 'react';
 import { create } from 'zustand';
 import logo from '../../assets/logo.webp';
 import { workspaceSchema } from '../packages/clinical-core';
@@ -42,7 +42,7 @@ function WorkspaceLoader({ session, preferred, panels }: { session: Session; pre
   return <CoreWorkbench workspace={{ ...state.data, sessionVersion: session.sessionVersion }} language={language} languageSelect={<LanguageSelect language={language}/>} panels={panels} draftsFor={draftsFor}/>;
 }
 
-const installedPanels: WorkbenchPanels = { lab: LabTab };
+const installedPanels: WorkbenchPanels = { lab: LabTab, billing: lazy(() => import('./modules/billing/BillingPanel')) };
 export function App({ panels = installedPanels }: { panels?: WorkbenchPanels } = {}) {
   const preferred = useLocale(state => state.language);
   const session = useQuery({ queryKey: sessionKey, queryFn: ({ signal }) => currentSession(signal), staleTime: 60_000 });

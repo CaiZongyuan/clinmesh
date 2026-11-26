@@ -59,5 +59,16 @@ it('lets an agent stage an order while issue and version-specific acknowledgemen
     expect(writes.some(path => path.endsWith('/acknowledge'))).toBe(false);
     await formal('Acknowledge opened reports', '/acknowledge');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Acknowledge opened reports' }).hasAttribute('disabled')).toBe(true));
+    await human.click(screen.getByRole('button', { name: 'Close reports' }));
+    expect((await act('Role · Family clinician', 'press', 'Cashier')).ok).toBe(true);
+    await screen.findByRole('button', { name: 'Role · Cashier' });
+    expect((await act('Clinical views', 'setValue', 'Cashier')).ok).toBe(true);
+    const charge = await screen.findByRole('checkbox', { name: /^High-sensitivity cardiac troponin I/ });
+    expect(charge.closest('tr')?.textContent).toContain('22.00');
+    await human.click(charge);
+    await human.click(screen.getByRole('button', { name: 'Collect selected charges' }));
+    await human.click(await screen.findByRole('button', { name: 'Freeze payment preview' }));
+    await human.click(await screen.findByRole('button', { name: 'Close' }));
+    await formal('Confirm frozen preview', '/payment.confirm');
   });
 }, 30_000);

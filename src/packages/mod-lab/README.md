@@ -1,6 +1,6 @@
 # 检验与功能检查
 
-Node 与 Worker 在组合根安装 `createLabModule({ billing })`。Hospital Data Pack 的 `enabledModules` 决定工作台页签、受控操作、虚拟时钟和完诊门禁。免费运行可直接使用 `createLabModule()`。装配收费端口时，开单事务按来源 Clinical Order 冻结目录项目、版本、数量、单价和币种。受理事务向账务模块重读同一来源的放行决定。
+Node 与 Worker 通过 `builtinModules` 安装检验模块和账务端口。Hospital Data Pack 的 `enabledModules` 决定工作台页签、受控操作、虚拟时钟和完诊门禁。独立运行可使用 `createLabModule()`。装配收费端口时，开单事务按来源 Clinical Order 冻结目录项目、版本、数量、单价和币种。受理事务向账务模块重读同一来源的放行决定。预付包须由收费员收齐，支付状态未知时可在收费工作台查明原尝试。免费包直接受理。
 
 ## 工作台操作
 

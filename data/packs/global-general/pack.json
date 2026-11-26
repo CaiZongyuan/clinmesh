@@ -1,7 +1,7 @@
 {
   "manifest": {
     "packId": "global-general",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "schemaVersion": 1,
     "name": { "en": "Teaching outpatient clinic", "zh": "综合教学门诊" },
     "description": {
@@ -315,7 +315,8 @@
             "unit": "qualitative"
           }
         ]
-      }
+      },
+      { "codeSystem": "urn:clinmesh:general:service", "code": "registration", "display": { "en": "Visit registration", "zh": "就诊登记" }, "kind": "registration", "unitPriceMinor": 1200, "unit": "visit", "analytes": [] }
     ],
     "procedures": [],
     "materials": []

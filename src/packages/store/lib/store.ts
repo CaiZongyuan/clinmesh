@@ -1,7 +1,7 @@
 import type { Storage } from '@earendil-works/pi-durable';
 import { z } from 'zod';
 import { createPiSessions } from './pi';
-import { initializeEntity, initializeSchema, type StoreScope } from './schema';
+import { billingEntities, initializeEntity, initializeSchema, labEntities, type StoreScope } from './schema';
 import { createReader, createRepository, type StoreReader, type StoreTx } from './repository';
 import { SerialQueue, duringTransaction, type Schedule, type SqlConnection } from './sqlite';
 import { capture, restore, seal, verifySnapshot, type LogicalSnapshot } from './snapshot';
@@ -20,13 +20,17 @@ export function createStore(db: SqlConnection): StorePort {
   db.atomicSync(() => {
     db.exec('CREATE TABLE IF NOT EXISTS clinmesh_schema (version INTEGER NOT NULL PRIMARY KEY)');
     const versions = db.all('SELECT version FROM clinmesh_schema');
-    if (versions.length === 1 && versions[0]!.version === 1) {
-      for (const name of ['encounter_triage', 'lab_drafts', 'lab_requests'] as const) initializeEntity(db.exec, name);
+    const previous = versions.length === 1 ? versions[0]!.version : undefined;
+    if (previous === 3) return;
+    if (previous === 1 || previous === 2) {
+      if (previous === 1) for (const name of ['encounter_triage', ...billingEntities] as const) initializeEntity(db.exec, name);
+      for (const name of labEntities) initializeEntity(db.exec, name);
+      db.run('UPDATE clinmesh_schema SET version = 3 WHERE version = ?', previous);
       return;
     }
     if (versions.length) throw new Error('Unsupported ClinMesh schema version');
     initializeSchema(db.exec);
-    db.run('INSERT INTO clinmesh_schema (version) VALUES (1)');
+    db.run('INSERT INTO clinmesh_schema (version) VALUES (3)');
   });
   const queue = new SerialQueue();
   let closing: Promise<void> | undefined;
