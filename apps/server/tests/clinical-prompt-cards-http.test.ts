@@ -927,6 +927,7 @@ describe('DSAP Slice S8: Timing Hooks, Unified ClinicalPromptCard, Historical Re
       clinicalPromptBundleSchema,
     )
     expect(openPrompts.cards.some(c => c.category === 'inapplicable-population' && c.packId === 'synthetic-test-syndrome')).toBe(true)
+    expect(openPrompts.cards.some(c => c.category === 'inapplicable-population' && c.packId === 'coronary-cad' && c.summary.includes('超出本包范围，请医生自行决策'))).toBe(true)
 
     // Verify outpatient prescription recommendations filter out metformin (`red-line` / `allergy`) BEFORE publishing!
     const rxBefore = await fixture.read(
@@ -955,8 +956,9 @@ describe('DSAP Slice S8: Timing Hooks, Unified ClinicalPromptCard, Historical Re
     expect(rxAfter.items.some(i => i.kind === 'prescription' && i.catalogItemId === 'medication-amlodipine')).toBe(true)
     expect(rxAfter.promptCards?.some(c => c.cardId === 'rec:safe-amlodipine-rec')).toBe(true)
     expect(rxAfter.promptCards?.some(c => c.cardId === 'rec:unsafe-metformin-rec')).toBe(false)
-    expect(rxAfter.promptCards?.[0]?.packId).toBe('coronary-cad')
-    expect(rxAfter.promptCards?.[0]?.trialBadgeZh).toBe('试用版')
+    // Pregnancy diagnosis O99.8 also makes coronary-cad inapplicable per AC24, so outpatient primaryPack is null (Part C verifies non-pregnant coronary-cad provenance)
+    expect(rxAfter.promptCards?.[0]?.packId).toBeNull()
+    expect(rxAfter.promptCards?.[0]?.trialBadgeZh).toBeNull()
 
     // Safety block audit was recorded in SQLite
     const auditBlocks = fixture.runtime.database.driver.prepare(`

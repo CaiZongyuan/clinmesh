@@ -120,9 +120,20 @@ export const diseasePackReadinessTaskSchema = z.object({
 }).strict()
 export type DiseasePackReadinessTask = z.infer<typeof diseasePackReadinessTaskSchema>
 
+export const diseasePackRuleOutCheckItemSchema = z.object({
+  condition: diseasePackTriggerNodeSchema.optional(),
+  id: diseasePackSlugSchema,
+  labelZh: nonEmptyText,
+  minCount: z.number().int().positive().optional(),
+  requiredItemCodes: z.array(boundedCode).min(1).max(32).optional(),
+  requireNormal: z.boolean().optional(),
+}).strict()
+
 export const diseasePackRuleOutItemSchema = z.object({
   actionHintZh: nonEmptyText,
+  checkItems: z.array(diseasePackRuleOutCheckItemSchema).max(32).optional(),
   id: diseasePackSlugSchema,
+  requiredTestCodes: z.array(boundedCode).max(32).optional(),
   targetConditionCodes: z.array(boundedCode).max(32).default([]),
   titleZh: nonEmptyText,
   trigger: diseasePackTriggerNodeSchema,
@@ -221,9 +232,11 @@ export const diseasePackPointScaleSchema = z.object({
   }).strict(),
   id: diseasePackSlugSchema,
   riskBands: z.array(z.object({
+    guidanceZh: nonEmptyText.optional(),
     labelZh: nonEmptyText,
     maxScore: z.number().finite().nullable(),
     minScore: z.number().finite(),
+    skipTests: z.boolean().optional(),
   }).strict()).min(1).max(16),
   titleZh: nonEmptyText,
 }).strict()
@@ -234,6 +247,7 @@ export const diseasePackIndicationRuleSchema = z.object({
   itemCodePattern: diseasePackRegexPatternSchema,
   orderKind: z.enum(['laboratory', 'examination', 'imaging', 'pathology', 'medication', 'procedure']),
   rationaleZh: nonEmptyText,
+  requiredItemCodes: z.array(boundedCode).min(1).max(32).optional(),
 }).strict()
 
 export const diseasePackRiskTagSchema = z.object({
@@ -411,6 +425,7 @@ export const diseasePackActivationReasonSchema = z.enum([
   'manual-enabled',
   'manual-disabled',
   'inapplicable-population',
+  'pack-exited',
   'pack-draft',
   'pack-retired',
 ])
@@ -473,6 +488,8 @@ export const diseasePackRuntimeEntrySchema = z.object({
   activationStatus: diseasePackActivationStatusSchema,
   allowedTools: z.array(boundedCode),
   currentStageId: diseasePackSlugSchema.nullable(),
+  exited: z.boolean().optional(),
+  exitReasonZh: nonEmptyText.nullable().optional(),
   followUpLdlSummary: followUpLdlSummarySchema.nullable().optional(),
   forbiddenActions: z.array(boundedCode),
   localizations: hospitalOverlayLocalizationsSchema,

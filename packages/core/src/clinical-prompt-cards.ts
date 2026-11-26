@@ -35,7 +35,12 @@ import {
   type QualityMedication,
   type RenalFunctionFact,
 } from './clinical-quality.ts'
-import { evaluatePackTrigger } from './disease-pack.ts'
+import {
+  evaluatePackExit,
+  evaluatePackPointScale,
+  evaluatePackTrigger,
+  type TriggerEvaluationOptions,
+} from './disease-pack.ts'
 import {
   compareKnowledgeEvaluations,
   evaluateKnowledgeSnapshotForPatient,
@@ -90,6 +95,7 @@ const NON_INTERVENTION_DIAGNOSTIC_CATEGORIES = new Set<ClinicalPromptCard['categ
   'inapplicable-population',
   'exit-summary',
   'longitudinal-comparison',
+  'recognition',
 ])
 
 const RETIRED_OR_DEACTIVATED_KNOWLEDGE_STATUSES = new Set<ClinicalPromptCard['knowledgeStatus']>([
@@ -708,6 +714,8 @@ export interface EvaluatedPackForPromptBuild {
   effective: EffectiveDiseasePack
   entry: DiseasePackRuntimeEntry
   vocabulary: ConceptVocabulary
+  exitSummaryAlreadyEmitted?: boolean | undefined
+  exitMatchedFactIds?: readonly string[] | undefined
 }
 
 export interface BuildTimingPromptCardsInput {
@@ -760,6 +768,249 @@ function knowledgeBadgeFields(status: ClinicalPromptCard['knowledgeStatus']): {
     trialBadgeZh: null,
     trialDisclaimerZh: null,
   }
+}
+
+function isPackExitedEntry(entry: DiseasePackRuntimeEntry): boolean {
+  return entry.exited === true || entry.activationReason === 'pack-exited'
+}
+
+function evaluateRuleOutMissingChecks(
+  ruleOut: NonNullable<EffectiveDiseasePack['pack']['ruleOutChecklist']>[number],
+  ledger: ClinicalFactLedger,
+  evalOptions: TriggerEvaluationOptions,
+): { missingCodes: string[]; missingLabels: string[] } {
+  const missingLabels: string[] = []
+  const missingCodes: string[] = []
+
+  if (ruleOut.checkItems && ruleOut.checkItems.length > 0) {
+    for (const checkItem of ruleOut.checkItems) {
+      const node = checkItem.condition ?? (
+        checkItem.requiredItemCodes && checkItem.requiredItemCodes.length > 0
+          ? {
+              kind: 'fact' as const,
+              itemCodes: checkItem.requiredItemCodes,
+              presence: 'present' as const,
+              requireEligible: true,
+              ...(checkItem.minCount !== undefined ? { minCount: checkItem.minCount } : {}),
+              ...(checkItem.requireNormal ? { abnormal: false } : {}),
+            }
+          : undefined
+      )
+      if (!node) continue
+      const res = evaluatePackTrigger(node, ledger, evalOptions)
+      if (!res.matched) {
+        missingLabels.push(checkItem.labelZh)
+        for (const code of checkItem.requiredItemCodes ?? []) missingCodes.push(code)
+      }
+    }
+    return { missingCodes: [...new Set(missingCodes)], missingLabels }
+  }
+
+  for (const code of ruleOut.requiredTestCodes ?? []) {
+    const res = evaluatePackTrigger({
+      kind: 'fact',
+      itemCodes: [code],
+      presence: 'present',
+      requireEligible: true,
+    }, ledger, evalOptions)
+    if (!res.matched) {
+      missingLabels.push(code)
+      missingCodes.push(code)
+    }
+  }
+  return { missingCodes: [...new Set(missingCodes)], missingLabels }
+}
+
+interface ConfusableCluster {
+  packIds: string[]
+  packs: EvaluatedPackForPromptBuild[]
+}
+
+function findMutuallyConfusableClusters(
+  evaluatedPacks: readonly EvaluatedPackForPromptBuild[],
+): { clusters: ConfusableCluster[]; suppressedPackIds: Set<string> } {
+  const activePacks = evaluatedPacks.filter(
+    item => item.entry.activationStatus === 'active' && !isPackExitedEntry(item.entry),
+  )
+  const byId = new Map(activePacks.map(item => [item.effective.pack.manifest.id, item]))
+  const adj = new Map<string, Set<string>>()
+
+  for (const item of activePacks) {
+    const aId = item.effective.pack.manifest.id
+    for (const link of item.effective.pack.confusablePacks ?? []) {
+      const other = byId.get(link.packId)
+      if (!other || link.packId === aId) continue
+      const isMutual = (other.effective.pack.confusablePacks ?? []).some(back => back.packId === aId)
+      if (!isMutual) continue
+      if (!adj.has(aId)) adj.set(aId, new Set())
+      if (!adj.has(link.packId)) adj.set(link.packId, new Set())
+      adj.get(aId)!.add(link.packId)
+      adj.get(link.packId)!.add(aId)
+    }
+  }
+
+  const visited = new Set<string>()
+  const clusters: ConfusableCluster[] = []
+  const suppressedPackIds = new Set<string>()
+
+  for (const startId of [...adj.keys()].sort()) {
+    if (visited.has(startId)) continue
+    const queue = [startId]
+    const component: string[] = []
+    visited.add(startId)
+    while (queue.length > 0) {
+      const current = queue.shift()!
+      component.push(current)
+      for (const neighbor of adj.get(current) ?? []) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor)
+          queue.push(neighbor)
+        }
+      }
+    }
+    if (component.length < 2) continue
+    component.sort()
+    const packs = component.map(id => byId.get(id)!)
+    for (const id of component) suppressedPackIds.add(id)
+    clusters.push({ packIds: component, packs })
+  }
+
+  return { clusters, suppressedPackIds }
+}
+
+function buildConfusableDifferentialCard(
+  cluster: ConfusableCluster,
+  timing: ClinicalPromptTiming,
+  asOf: string,
+  encounterIdByRecordId: Readonly<Record<string, string>> | undefined,
+  ledger: ClinicalFactLedger,
+  factsById: ReadonlyMap<string, ClinicalFact>,
+  snapshotVersionsByPackId: ReadonlyMap<string, string>,
+): ClinicalPromptCard {
+  const clusterSet = new Set(cluster.packIds)
+  const groupKey = `confusable-differential:${cluster.packIds.join('+')}`
+  const primary = cluster.packs[0]!
+  const primaryPackId = primary.effective.pack.manifest.id
+  const primaryPackVersion = primary.effective.pack.manifest.version
+
+  const packTitles = cluster.packs.map(p => `${p.effective.pack.manifest.titleZh}（${p.effective.pack.manifest.id}）`)
+  const differentialHints: string[] = []
+  const suggestions: ClinicalPromptSuggestion[] = []
+  const matchedFactIds = new Set<string>()
+  const missingItemLabels: string[] = []
+
+  for (const packItem of cluster.packs) {
+    const pid = packItem.effective.pack.manifest.id
+    const evalOpts: TriggerEvaluationOptions = {
+      asOf,
+      ...(encounterIdByRecordId ? { encounterIdByRecordId } : {}),
+      vocabulary: packItem.vocabulary,
+    }
+    for (const link of packItem.effective.pack.confusablePacks ?? []) {
+      if (!clusterSet.has(link.packId)) continue
+      differentialHints.push(`${pid} ↔ ${link.packId}：${link.differentialHintZh}`)
+    }
+    for (const ruleOut of packItem.effective.pack.ruleOutChecklist ?? []) {
+      const res = evaluatePackTrigger(ruleOut.trigger, ledger, evalOpts)
+      if (res.matched) {
+        for (const fid of res.matchedFactIds) matchedFactIds.add(fid)
+      }
+      const { missingCodes, missingLabels } = evaluateRuleOutMissingChecks(ruleOut, ledger, evalOpts)
+      missingItemLabels.push(...missingLabels)
+      suggestions.push({
+        actionKind: 'review-differential',
+        id: `differential-${pid}-${ruleOut.id}`,
+        isDraftOnly: true,
+        itemCodes: [...new Set([...ruleOut.targetConditionCodes, ...missingCodes])].slice(0, 16),
+        labelZh: `${packItem.effective.pack.manifest.titleZh}：核对${ruleOut.titleZh}`,
+      })
+    }
+  }
+
+  if (suggestions.length === 0) {
+    for (const packItem of cluster.packs) {
+      suggestions.push({
+        actionKind: 'review-differential',
+        id: `differential-${packItem.effective.pack.manifest.id}`,
+        isDraftOnly: true,
+        itemCodes: [],
+        labelZh: `并排鉴别 ${packItem.effective.pack.manifest.titleZh}（${packItem.effective.pack.manifest.id}）`,
+      })
+    }
+  }
+
+  const uniqueMissing = [...new Set(missingItemLabels)]
+  const missingPart = uniqueMissing.length > 0 ? `；待补鉴别检查：${uniqueMissing.join('、')}` : ''
+
+  return clinicalPromptCardSchema.parse({
+    basedOnFactVersions: toFactVersionRefs([...matchedFactIds], factsById),
+    blockingTier: 'none',
+    cardId: `${timing}:${groupKey}`,
+    category: 'rule-out-checklist',
+    deliveryMode: 'display',
+    detail: `同时触发互为易混淆专病包 ${packTitles.join('、')}，已暂停各自独立治疗与用药建议，请先完成并排鉴别排查：${differentialHints.join('；')}${missingPart}`,
+    indicator: 'warning',
+    knowledgeSnapshotVersion: snapshotVersionsByPackId.get(primaryPackId) ?? null,
+    knowledgeStatus: 'published',
+    overrideReasons: [...clinicalOverrideReasonSchema.options],
+    packId: primaryPackId,
+    packVersion: primaryPackVersion,
+    riskTags: [],
+    sideBySideGroupKey: groupKey,
+    source: { label: `易混淆专病鉴别 · ${cluster.packIds.join(' / ')}` },
+    suggestions: suggestions.slice(0, 12),
+    summary: `易混淆病种并排鉴别（${cluster.packs.map(p => p.effective.pack.manifest.titleZh).join(' vs ')}）`,
+    timing,
+    trialBadgeZh: null,
+    trialDisclaimerZh: null,
+  })
+}
+
+function buildPointScaleCard(
+  scale: NonNullable<EffectiveDiseasePack['pack']['pointScales']>[number],
+  packId: string,
+  packVersion: string,
+  snapshotVersion: string | null,
+  activeRiskTags: ClinicalPromptRiskTag[],
+  ledger: ClinicalFactLedger,
+  evalOptions: TriggerEvaluationOptions,
+  factsById: ReadonlyMap<string, ClinicalFact>,
+): ClinicalPromptCard {
+  const scaleResult = evaluatePackPointScale(scale, ledger, evalOptions)
+  const matchedBand = scale.riskBands.find(item => (
+    scaleResult.score >= item.minScore && (item.maxScore === null || scaleResult.score <= item.maxScore)
+  ))
+  const isLowRiskSkip = matchedBand?.skipTests === true
+    || (matchedBand !== undefined && /低危|阴性|无需|免于|skip|low/i.test(`${matchedBand.labelZh} ${matchedBand.guidanceZh ?? ''}`))
+  const guidance = matchedBand?.guidanceZh
+    ?? (isLowRiskSkip ? '当前为低危分层，可考虑免于进一步侵入性或非必要排查。' : '')
+  const citationText = `${scale.guidelineCitation.sourceTitle}（${scale.guidelineCitation.version}，${scale.guidelineCitation.locator}）`
+  const matchedCriteriaFactIds = scale.criteria
+    .filter(c => scaleResult.matchedCriteriaIds.includes(c.id))
+    .flatMap(c => evaluatePackTrigger(c.condition, ledger, evalOptions).matchedFactIds)
+
+  return clinicalPromptCardSchema.parse({
+    basedOnFactVersions: toFactVersionRefs(matchedCriteriaFactIds, factsById),
+    blockingTier: 'none',
+    cardId: `encounter-open:point-scale:${packId}:${scale.id}`,
+    category: 'recommendation',
+    deliveryMode: 'display',
+    detail: `${scale.titleZh}评分：${scaleResult.score} 分，风险分层：${scaleResult.bandLabelZh ?? '未分级'}。${guidance ? `${guidance} ` : ''}指南依据：${citationText}`,
+    indicator: isLowRiskSkip ? 'info' : 'warning',
+    knowledgeSnapshotVersion: snapshotVersion,
+    knowledgeStatus: 'published',
+    overrideReasons: [...clinicalOverrideReasonSchema.options],
+    packId,
+    packVersion,
+    riskTags: activeRiskTags,
+    sideBySideGroupKey: 'encounter-open:point-scale',
+    source: { label: `${scale.titleZh} · ${citationText}` },
+    suggestions: [],
+    summary: `${scale.titleZh}：${scaleResult.score} 分（${scaleResult.bandLabelZh ?? '已评估'}）${isLowRiskSkip ? ' - 低危可免检' : ''}`,
+    timing: 'encounter-open',
+    trialBadgeZh: null,
+    trialDisclaimerZh: null,
+  })
 }
 
 function evaluateRiskTagsForPack(
@@ -863,7 +1114,10 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
     ...templateClasses,
   ])
 
-  for (const { effective, entry, vocabulary } of input.evaluatedPacks) {
+  const confusable = findMutuallyConfusableClusters(input.evaluatedPacks)
+
+  for (const packItem of input.evaluatedPacks) {
+    const { effective, entry, vocabulary, exitMatchedFactIds, exitSummaryAlreadyEmitted } = packItem
     const packId = effective.pack.manifest.id
     const packVersion = effective.pack.manifest.version
     const evalOptions = {
@@ -908,51 +1162,90 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
       }
     }
 
-    const activeRiskTags: ClinicalPromptRiskTag[] = []
-    for (const tag of effective.pack.riskTags ?? []) {
-      const evaluated = evaluateRiskTagsForPack(tag, input, evalOptions, combinedMedicationClasses)
-      if (!evaluated.matched) continue
-      activeRiskTags.push({ id: tag.id, labelZh: tag.labelZh, severity: tag.severity })
+    // Exited pack: emit ONE final exit-summary card on transition, then silence all timings.
+    if (isPackExitedEntry(entry)) {
+      if (!exitSummaryAlreadyEmitted) {
+        const exitEval = evaluatePackExit(effective, input.ledger, evalOptions)
+        const factIds = exitMatchedFactIds && exitMatchedFactIds.length > 0
+          ? [...exitMatchedFactIds]
+          : exitEval.matchedFactIds
+        const exitReasonZh = entry.exitReasonZh ?? exitEval.exitReasonZh ?? `${effective.pack.manifest.titleZh}已满足退出条件`
+        cards.push(clinicalPromptCardSchema.parse({
+          basedOnFactVersions: toFactVersionRefs(factIds, factsById),
+          blockingTier: 'none',
+          cardId: `exit-summary:${packId}`,
+          category: 'exit-summary',
+          deliveryMode: 'display',
+          detail: `${effective.pack.manifest.titleZh}已退出专病管理路径：${exitReasonZh}。后续时机将不再弹出该包提示，如需重新启用可通过人工开关开启。`,
+          indicator: 'info',
+          knowledgeSnapshotVersion: snapshotVersion,
+          knowledgeStatus: 'published',
+          overrideReasons: [],
+          packId,
+          packVersion,
+          riskTags: [],
+          sideBySideGroupKey: null,
+          source: { label: `${effective.pack.manifest.titleZh} · 路径退出` },
+          suggestions: [],
+          summary: `${effective.pack.manifest.titleZh}已退出：${exitReasonZh.slice(0, 60)}`,
+          timing: input.timing,
+          trialBadgeZh: null,
+          trialDisclaimerZh: null,
+        }))
+      }
+      continue
     }
-    if (activeRiskTags.length > 0) riskTagsByPackId.set(packId, activeRiskTags)
 
-    if (entry.activationStatus === 'inapplicable' && input.timing === 'encounter-open') {
+    const isInapplicable = entry.activationStatus === 'inapplicable'
+    const isActive = entry.activationStatus === 'active'
+    if (!isActive && !isInapplicable) continue
+
+    const isConfusableSuppressed = isActive && confusable.suppressedPackIds.has(packId)
+    const activeRiskTags: ClinicalPromptRiskTag[] = []
+    if (isActive && !isConfusableSuppressed) {
+      for (const tag of effective.pack.riskTags ?? []) {
+        const evaluated = evaluateRiskTagsForPack(tag, input, evalOptions, combinedMedicationClasses)
+        if (!evaluated.matched) continue
+        activeRiskTags.push({ id: tag.id, labelZh: tag.labelZh, severity: tag.severity })
+      }
+      if (activeRiskTags.length > 0) riskTagsByPackId.set(packId, activeRiskTags)
+    }
+
+    if (isInapplicable && input.timing === 'encounter-open') {
       const matchedLabels = effective.pack.inapplicablePopulations
         .filter(item => entry.matchedInapplicableIds.includes(item.id))
         .map(item => item.descriptionZh)
+      const matchedConditionText = matchedLabels.join('；') || '命中专病包不适用条件'
       cards.push(clinicalPromptCardSchema.parse({
         basedOnFactVersions: [],
         blockingTier: 'none',
         cardId: `encounter-open:inapplicable:${packId}`,
         category: 'inapplicable-population',
         deliveryMode: 'display',
-        detail: `${effective.pack.manifest.titleZh}当前处于不适用人群状态：${matchedLabels.join('；') || '命中专病包不适用条件'}。已停用该包治疗建议，保留高危病因排查与缺项核对边界。`,
+        detail: `${effective.pack.manifest.titleZh}命中不适用人群条件（${matchedConditionText}），已超出本包范围，请医生自行决策。已停用该包治疗、用药与血运重建建议，仅保留高危病因排查与关键缺项核对边界。`,
         indicator: 'warning',
         knowledgeSnapshotVersion: snapshotVersion,
         knowledgeStatus: 'published',
         overrideReasons: [],
         packId,
         packVersion,
-        riskTags: activeRiskTags,
+        riskTags: [],
         sideBySideGroupKey: null,
         source: { label: effective.pack.manifest.titleZh },
         suggestions: [],
-        summary: `${effective.pack.manifest.titleZh}不适用于当前人群，仅保留排查边界`,
+        summary: `${effective.pack.manifest.titleZh}（${matchedLabels[0] ?? '不适用人群'}）：超出本包范围，请医生自行决策`,
         timing: 'encounter-open',
         trialBadgeZh: null,
         trialDisclaimerZh: null,
       }))
-      continue
     }
-
-    if (entry.activationStatus !== 'active') continue
 
     const activeStage = entry.currentStageId === null
       ? undefined
       : effective.pack.stages.find(s => s.id === entry.currentStageId)
 
     if (input.timing === 'encounter-open') {
-      // 1. Bedside missing questionnaire prompts (e.g. Killip 心功能分级：没问到)
+      // 1. Bedside missing questionnaire prompts (preserved for both active & inapplicable diagnostic boundaries)
       const questionnaireCodes = activeStage?.questionnaireItemCodes?.length
         ? activeStage.questionnaireItemCodes
         : (effective.pack.questionnaireItems ?? []).map(item => item.code)
@@ -993,117 +1286,170 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
         }))
       }
 
-      // 2. Rule-out checklists (e.g. 急性胸痛高危病因排查清单)
-      for (const ruleOut of effective.pack.ruleOutChecklist ?? []) {
-        const res = evaluatePackTrigger(ruleOut.trigger, input.ledger, evalOptions)
-        if (!res.matched) continue
-        cards.push(clinicalPromptCardSchema.parse({
-          basedOnFactVersions: toFactVersionRefs(res.matchedFactIds, factsById),
-          blockingTier: 'none',
-          cardId: `encounter-open:rule-out:${packId}:${ruleOut.id}`,
-          category: 'rule-out-checklist',
-          deliveryMode: 'display',
-          detail: `${ruleOut.actionHintZh}${ruleOut.targetConditionCodes.length > 0 ? `（重点排查诊断编码：${ruleOut.targetConditionCodes.join('、')}）` : ''}`,
-          indicator: 'warning',
-          knowledgeSnapshotVersion: snapshotVersion,
-          knowledgeStatus: 'published',
-          overrideReasons: [...clinicalOverrideReasonSchema.options],
-          packId,
-          packVersion,
-          riskTags: activeRiskTags,
-          sideBySideGroupKey: 'encounter-open:rule-out-checklist',
-          source: { label: `${effective.pack.manifest.titleZh} · 鉴别排查清单` },
-          suggestions: [
-            {
-              actionKind: 'review-differential',
-              id: `differential-${ruleOut.id}`,
-              isDraftOnly: true,
-              itemCodes: ruleOut.targetConditionCodes.slice(0, 16),
-              labelZh: `核对${ruleOut.titleZh}`,
+      // 2. Rule-out checklists (preserved for inapplicable boundary; merged into single card when mutually confusable)
+      if (!isConfusableSuppressed) {
+        for (const ruleOut of effective.pack.ruleOutChecklist ?? []) {
+          const res = evaluatePackTrigger(ruleOut.trigger, input.ledger, evalOptions)
+          if (!res.matched) continue
+          const { missingCodes, missingLabels } = evaluateRuleOutMissingChecks(ruleOut, input.ledger, evalOptions)
+          const codesText = ruleOut.targetConditionCodes.length > 0
+            ? `（重点排查诊断编码：${ruleOut.targetConditionCodes.join('、')}）`
+            : ''
+          const missingText = missingLabels.length > 0
+            ? `；尚缺排查项：${missingLabels.join('、')}`
+            : (ruleOut.checkItems && ruleOut.checkItems.length > 0 ? '；必备排查项已齐备' : '')
+          cards.push(clinicalPromptCardSchema.parse({
+            basedOnFactVersions: toFactVersionRefs(res.matchedFactIds, factsById),
+            blockingTier: 'none',
+            cardId: `encounter-open:rule-out:${packId}:${ruleOut.id}`,
+            category: 'rule-out-checklist',
+            deliveryMode: 'display',
+            detail: `${ruleOut.actionHintZh}${codesText}${missingText}`,
+            indicator: 'warning',
+            knowledgeSnapshotVersion: snapshotVersion,
+            knowledgeStatus: 'published',
+            overrideReasons: [...clinicalOverrideReasonSchema.options],
+            packId,
+            packVersion,
+            riskTags: activeRiskTags,
+            sideBySideGroupKey: 'encounter-open:rule-out-checklist',
+            source: { label: `${effective.pack.manifest.titleZh} · 鉴别排查清单` },
+            suggestions: [
+              {
+                actionKind: 'review-differential',
+                id: `differential-${ruleOut.id}`,
+                isDraftOnly: true,
+                itemCodes: [...new Set([...ruleOut.targetConditionCodes, ...missingCodes])].slice(0, 16),
+                labelZh: `核对${ruleOut.titleZh}`,
+              },
+            ],
+            summary: missingLabels.length > 0 ? `${ruleOut.titleZh}（尚缺：${missingLabels.join('、')}）` : ruleOut.titleZh,
+            timing: 'encounter-open',
+            trialBadgeZh: null,
+            trialDisclaimerZh: null,
+          }))
+        }
+      }
+
+      // Everything below is active-pack & non-confusable-suppressed clinical advice/treatment/scoring
+      if (isActive && !isConfusableSuppressed) {
+        // 3. Risk tags active at encounter-open
+        for (const tag of effective.pack.riskTags ?? []) {
+          const evaluated = evaluateRiskTagsForPack(tag, input, evalOptions, combinedMedicationClasses)
+          if (!evaluated.matched) continue
+          cards.push(clinicalPromptCardSchema.parse({
+            basedOnFactVersions: toFactVersionRefs(evaluated.matchedFactIds, factsById),
+            blockingTier: 'none',
+            cardId: `encounter-open:risk-tag:${packId}:${tag.id}`,
+            category: 'indication-alert',
+            deliveryMode: 'display',
+            detail: `${tag.descriptionZh ?? tag.labelZh}（专病包风险标签：${tag.id}）`,
+            indicator: tag.severity,
+            knowledgeSnapshotVersion: snapshotVersion,
+            knowledgeStatus: 'published',
+            overrideReasons: [...clinicalOverrideReasonSchema.options],
+            packId,
+            packVersion,
+            riskTags: [{ id: tag.id, labelZh: tag.labelZh, severity: tag.severity }],
+            sideBySideGroupKey: 'encounter-open:indication-alert',
+            source: { label: `${effective.pack.manifest.titleZh} · 风险标签` },
+            suggestions: [],
+            summary: tag.labelZh,
+            timing: 'encounter-open',
+            trialBadgeZh: null,
+            trialDisclaimerZh: null,
+          }))
+        }
+
+        // 4. Longitudinal comparison (e.g. LDL-C 纵向对比)
+        if (entry.followUpLdlSummary) {
+          cards.push(clinicalPromptCardSchema.parse({
+            basedOnFactVersions: toFactVersionRefs(
+              [entry.followUpLdlSummary.baselineFactId, entry.followUpLdlSummary.latestFactId],
+              factsById,
+            ),
+            blockingTier: 'none',
+            cardId: `encounter-open:longitudinal-ldl:${packId}`,
+            category: 'longitudinal-comparison',
+            deliveryMode: 'display',
+            detail: entry.followUpLdlSummary.comparisonTextZh,
+            indicator: entry.followUpLdlSummary.atGoal ? 'info' : 'warning',
+            knowledgeSnapshotVersion: snapshotVersion,
+            knowledgeStatus: 'published',
+            longitudinalComparison: {
+              currentValueText: `${entry.followUpLdlSummary.latestLdlMmolL}`,
+              labelZh: 'LDL-C 纵向达标复查',
+              previousValueText: `${entry.followUpLdlSummary.baselineLdlMmolL}`,
+              unit: 'mmol/L',
             },
-          ],
-          summary: ruleOut.titleZh,
-          timing: 'encounter-open',
-          trialBadgeZh: null,
-          trialDisclaimerZh: null,
-        }))
-      }
+            overrideReasons: [],
+            packId,
+            packVersion,
+            riskTags: activeRiskTags,
+            sideBySideGroupKey: 'encounter-open:longitudinal-comparison',
+            source: { label: `${effective.pack.manifest.titleZh} · 纵向对照` },
+            suggestions: [],
+            summary: entry.followUpLdlSummary.comparisonTextZh,
+            timing: 'encounter-open',
+            trialBadgeZh: null,
+            trialDisclaimerZh: null,
+          }))
+        }
 
-      // 3. Risk tags active at encounter-open
-      for (const tag of effective.pack.riskTags ?? []) {
-        const evaluated = evaluateRiskTagsForPack(tag, input, evalOptions, combinedMedicationClasses)
-        if (!evaluated.matched) continue
-        cards.push(clinicalPromptCardSchema.parse({
-          basedOnFactVersions: toFactVersionRefs(evaluated.matchedFactIds, factsById),
-          blockingTier: 'none',
-          cardId: `encounter-open:risk-tag:${packId}:${tag.id}`,
-          category: 'indication-alert',
-          deliveryMode: 'display',
-          detail: `${tag.descriptionZh ?? tag.labelZh}（专病包风险标签：${tag.id}）`,
-          indicator: tag.severity,
-          knowledgeSnapshotVersion: snapshotVersion,
-          knowledgeStatus: 'published',
-          overrideReasons: [...clinicalOverrideReasonSchema.options],
-          packId,
-          packVersion,
-          riskTags: [{ id: tag.id, labelZh: tag.labelZh, severity: tag.severity }],
-          sideBySideGroupKey: 'encounter-open:indication-alert',
-          source: { label: `${effective.pack.manifest.titleZh} · 风险标签` },
-          suggestions: [],
-          summary: tag.labelZh,
-          timing: 'encounter-open',
-          trialBadgeZh: null,
-          trialDisclaimerZh: null,
-        }))
-      }
-
-      // 4. Longitudinal comparison (e.g. LDL-C 纵向对比)
-      if (entry.followUpLdlSummary) {
-        cards.push(clinicalPromptCardSchema.parse({
-          basedOnFactVersions: toFactVersionRefs(
-            [entry.followUpLdlSummary.baselineFactId, entry.followUpLdlSummary.latestFactId],
+        // 5. Point scales (data-driven from pack.pointScales)
+        for (const scale of effective.pack.pointScales ?? []) {
+          cards.push(buildPointScaleCard(
+            scale,
+            packId,
+            packVersion,
+            snapshotVersion,
+            activeRiskTags,
+            input.ledger,
+            evalOptions,
             factsById,
-          ),
-          blockingTier: 'none',
-          cardId: `encounter-open:longitudinal-ldl:${packId}`,
-          category: 'longitudinal-comparison',
-          deliveryMode: 'display',
-          detail: entry.followUpLdlSummary.comparisonTextZh,
-          indicator: entry.followUpLdlSummary.atGoal ? 'info' : 'warning',
-          knowledgeSnapshotVersion: snapshotVersion,
-          knowledgeStatus: 'published',
-          longitudinalComparison: {
-            currentValueText: `${entry.followUpLdlSummary.latestLdlMmolL}`,
-            labelZh: 'LDL-C 纵向达标复查',
-            previousValueText: `${entry.followUpLdlSummary.baselineLdlMmolL}`,
-            unit: 'mmol/L',
-          },
-          overrideReasons: [],
-          packId,
-          packVersion,
-          riskTags: activeRiskTags,
-          sideBySideGroupKey: 'encounter-open:longitudinal-comparison',
-          source: { label: `${effective.pack.manifest.titleZh} · 纵向对照` },
-          suggestions: [],
-          summary: entry.followUpLdlSummary.comparisonTextZh,
-          timing: 'encounter-open',
-          trialBadgeZh: null,
-          trialDisclaimerZh: null,
-        }))
-      }
+          ))
+        }
 
-      // 5. Active knowledge snapshot claims scoped to active stage topics
-      if (knowledgeEval) {
-        const stageTopicIds = activeStage?.topicIds
-        for (const claim of knowledgeEval.claims) {
-          if (!claim.active || !claim.applicable) continue
-          if (stageTopicIds && stageTopicIds.length > 0 && !stageTopicIds.includes(claim.topicId)) continue
-          cards.push(claimToPromptCard(claim, snapshotVersion, packVersion, 'encounter-open', factsById))
+        // 6. Recognition cards for recognition packs
+        if (effective.pack.manifest.packType === 'recognition' && effective.pack.recognitionCard) {
+          const rc = effective.pack.recognitionCard
+          cards.push(clinicalPromptCardSchema.parse({
+            basedOnFactVersions: [],
+            blockingTier: 'none',
+            cardId: `encounter-open:recognition:${packId}:${rc.id}`,
+            category: 'recognition',
+            deliveryMode: 'display',
+            detail: `${rc.summaryZh}；${rc.escalationGuidanceZh}`,
+            indicator: 'warning',
+            knowledgeSnapshotVersion: snapshotVersion,
+            knowledgeStatus: 'published',
+            overrideReasons: [],
+            packId,
+            packVersion,
+            riskTags: activeRiskTags,
+            sideBySideGroupKey: 'encounter-open:recognition',
+            source: { label: `${effective.pack.manifest.titleZh} · 线索识别` },
+            suggestions: [],
+            summary: rc.titleZh,
+            timing: 'encounter-open',
+            trialBadgeZh: null,
+            trialDisclaimerZh: null,
+          }))
+        }
+
+        // 7. Active knowledge snapshot claims scoped to active stage topics
+        if (knowledgeEval) {
+          const stageTopicIds = activeStage?.topicIds
+          for (const claim of knowledgeEval.claims) {
+            if (!claim.active || !claim.applicable) continue
+            if (stageTopicIds && stageTopicIds.length > 0 && !stageTopicIds.includes(claim.topicId)) continue
+            cards.push(claimToPromptCard(claim, snapshotVersion, packVersion, 'encounter-open', factsById))
+          }
         }
       }
     }
 
-    if (input.timing === 'order-draft-select') {
+    if (isActive && !isConfusableSuppressed && input.timing === 'order-draft-select') {
       for (const tag of effective.pack.riskTags ?? []) {
         const evaluated = evaluateRiskTagsForPack(tag, input, evalOptions, combinedMedicationClasses)
         if (!evaluated.matched) continue
@@ -1132,7 +1478,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
       }
     }
 
-    if (input.timing === 'report-arrived') {
+    if (isActive && input.timing === 'report-arrived') {
       // Newly arrived abnormal/critical findings & unverified external facts & longitudinal LDL comparison
       for (const fact of input.ledger.facts) {
         if (isFactSupersededOrInvalid(fact)) continue
@@ -1169,65 +1515,82 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
           }))
         }
       }
-      for (const tag of effective.pack.riskTags ?? []) {
-        const evaluated = evaluateRiskTagsForPack(tag, input, evalOptions, combinedMedicationClasses)
-        if (!evaluated.matched) continue
-        cards.push(clinicalPromptCardSchema.parse({
-          basedOnFactVersions: toFactVersionRefs(evaluated.matchedFactIds, factsById),
-          blockingTier: 'none',
-          cardId: `report-arrived:risk-tag:${packId}:${tag.id}`,
-          category: 'indication-alert',
-          deliveryMode: 'display',
-          detail: `${tag.descriptionZh ?? tag.labelZh}（报告到达/修订后自动触发）`,
-          indicator: tag.severity,
-          knowledgeSnapshotVersion: snapshotVersion,
-          knowledgeStatus: 'published',
-          overrideReasons: [...clinicalOverrideReasonSchema.options],
-          packId,
-          packVersion,
-          riskTags: [{ id: tag.id, labelZh: tag.labelZh, severity: tag.severity }],
-          sideBySideGroupKey: 'report-arrived:indication-alert',
-          source: { label: `${effective.pack.manifest.titleZh} · 报告事件` },
-          suggestions: [],
-          summary: tag.labelZh,
-          timing: 'report-arrived',
-          trialBadgeZh: null,
-          trialDisclaimerZh: null,
-        }))
+      if (!isConfusableSuppressed) {
+        for (const tag of effective.pack.riskTags ?? []) {
+          const evaluated = evaluateRiskTagsForPack(tag, input, evalOptions, combinedMedicationClasses)
+          if (!evaluated.matched) continue
+          cards.push(clinicalPromptCardSchema.parse({
+            basedOnFactVersions: toFactVersionRefs(evaluated.matchedFactIds, factsById),
+            blockingTier: 'none',
+            cardId: `report-arrived:risk-tag:${packId}:${tag.id}`,
+            category: 'indication-alert',
+            deliveryMode: 'display',
+            detail: `${tag.descriptionZh ?? tag.labelZh}（报告到达/修订后自动触发）`,
+            indicator: tag.severity,
+            knowledgeSnapshotVersion: snapshotVersion,
+            knowledgeStatus: 'published',
+            overrideReasons: [...clinicalOverrideReasonSchema.options],
+            packId,
+            packVersion,
+            riskTags: [{ id: tag.id, labelZh: tag.labelZh, severity: tag.severity }],
+            sideBySideGroupKey: 'report-arrived:indication-alert',
+            source: { label: `${effective.pack.manifest.titleZh} · 报告事件` },
+            suggestions: [],
+            summary: tag.labelZh,
+            timing: 'report-arrived',
+            trialBadgeZh: null,
+            trialDisclaimerZh: null,
+          }))
+        }
+        if (entry.followUpLdlSummary) {
+          cards.push(clinicalPromptCardSchema.parse({
+            basedOnFactVersions: toFactVersionRefs(
+              [entry.followUpLdlSummary.baselineFactId, entry.followUpLdlSummary.latestFactId],
+              factsById,
+            ),
+            blockingTier: 'none',
+            cardId: `report-arrived:longitudinal-ldl:${packId}`,
+            category: 'longitudinal-comparison',
+            deliveryMode: 'display',
+            detail: entry.followUpLdlSummary.comparisonTextZh,
+            indicator: entry.followUpLdlSummary.atGoal ? 'info' : 'warning',
+            knowledgeSnapshotVersion: snapshotVersion,
+            knowledgeStatus: 'published',
+            longitudinalComparison: {
+              currentValueText: `${entry.followUpLdlSummary.latestLdlMmolL}`,
+              labelZh: 'LDL-C 纵向达标复查',
+              previousValueText: `${entry.followUpLdlSummary.baselineLdlMmolL}`,
+              unit: 'mmol/L',
+            },
+            overrideReasons: [],
+            packId,
+            packVersion,
+            riskTags: activeRiskTags,
+            sideBySideGroupKey: 'report-arrived:longitudinal-comparison',
+            source: { label: `${effective.pack.manifest.titleZh} · 报告到达纵向对照` },
+            suggestions: [],
+            summary: entry.followUpLdlSummary.comparisonTextZh,
+            timing: 'report-arrived',
+            trialBadgeZh: null,
+            trialDisclaimerZh: null,
+          }))
+        }
       }
-      if (entry.followUpLdlSummary) {
-        cards.push(clinicalPromptCardSchema.parse({
-          basedOnFactVersions: toFactVersionRefs(
-            [entry.followUpLdlSummary.baselineFactId, entry.followUpLdlSummary.latestFactId],
-            factsById,
-          ),
-          blockingTier: 'none',
-          cardId: `report-arrived:longitudinal-ldl:${packId}`,
-          category: 'longitudinal-comparison',
-          deliveryMode: 'display',
-          detail: entry.followUpLdlSummary.comparisonTextZh,
-          indicator: entry.followUpLdlSummary.atGoal ? 'info' : 'warning',
-          knowledgeSnapshotVersion: snapshotVersion,
-          knowledgeStatus: 'published',
-          longitudinalComparison: {
-            currentValueText: `${entry.followUpLdlSummary.latestLdlMmolL}`,
-            labelZh: 'LDL-C 纵向达标复查',
-            previousValueText: `${entry.followUpLdlSummary.baselineLdlMmolL}`,
-            unit: 'mmol/L',
-          },
-          overrideReasons: [],
-          packId,
-          packVersion,
-          riskTags: activeRiskTags,
-          sideBySideGroupKey: 'report-arrived:longitudinal-comparison',
-          source: { label: `${effective.pack.manifest.titleZh} · 报告到达纵向对照` },
-          suggestions: [],
-          summary: entry.followUpLdlSummary.comparisonTextZh,
-          timing: 'report-arrived',
-          trialBadgeZh: null,
-          trialDisclaimerZh: null,
-        }))
-      }
+    }
+  }
+
+  // Emit ONE merged differential workup card for each mutually-confusable active cluster
+  if (input.timing === 'encounter-open') {
+    for (const cluster of confusable.clusters) {
+      cards.push(buildConfusableDifferentialCard(
+        cluster,
+        input.timing,
+        input.asOf,
+        input.encounterIdByRecordId,
+        input.ledger,
+        factsById,
+        snapshotVersionsByPackId,
+      ))
     }
   }
 

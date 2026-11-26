@@ -136,7 +136,7 @@ const PUBLIC_NODES: readonly ConceptNode[] = [
   // Examinations & modalities
   pubNode('11524-6', '十二导联心电图', 'examination', null, {
     displayEn: '12-Lead Electrocardiogram',
-    synonyms: ['心电图', '12导联心电图', 'ECG'],
+    synonyms: ['心电图', '12导联心电图', 'ECG', 'ECG-12', 'examination-ecg-12-lead'],
   }),
   pubNode('18754-2', '动态心电图', 'examination', null, {
     displayEn: 'Holter Electrocardiogram Monitoring',
@@ -371,6 +371,7 @@ const PUBLIC_MAPPINGS: readonly ConceptMapping[] = [
   pubExactMapping('pub-map-cn-2100604A', 'urn:clinmesh:cn-local', '2100604A', '脑利钠肽 (BNP)', '30934-4'),
   pubExactMapping('pub-map-cn-2100704A', 'urn:clinmesh:cn-local', '2100704A', '氨基末端脑利钠肽前体 (NT-proBNP)', '33762-6'),
   pubExactMapping('pub-map-loinc-88062-5', 'http://loinc.org', '88062-5', '超声心动图', '18043-0'),
+  pubExactMapping('pub-map-clinmesh-ecg12', 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service', 'ECG-12', '常规十二导联心电图', '11524-6'),
   pubExactMapping('pub-map-clinmesh-lvef', 'urn:clinmesh:examination', 'lvef', '左室射血分数 (LVEF)', '10230-1'),
   pubExactMapping('pub-map-pharm-ccb', 'urn:clinmesh:pharmacology', 'calcium-channel-blocker', '钙通道阻滞剂', 'ccb'),
   pubExactMapping('pub-map-pharm-ezetimibe', 'urn:clinmesh:pharmacology', 'cholesterol-absorption-inhibitor', '胆固醇吸收抑制剂', 'ezetimibe'),

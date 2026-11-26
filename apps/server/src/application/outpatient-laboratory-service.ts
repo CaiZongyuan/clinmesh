@@ -14,6 +14,7 @@ import {
   type ApiConflict,
   type LaboratoryRequestCatalogItemId,
 } from '@clinmesh/contracts/his'
+import type { ClinicalOverrideInput, ClinicalQualityReceipt } from '@clinmesh/contracts/clinical-quality'
 import type { FhirResource } from '@clinmesh/contracts/fhir'
 import { referenceConceptSnapshotSchema } from '@clinmesh/contracts/reference-data'
 import type { InvestigationResultContent } from '@clinmesh/contracts/scenario'
@@ -28,6 +29,7 @@ import {
   ExpectedVersionConflictError,
   provenanceAgents,
   type ActorContext,
+  type CommandEffect,
   type CommandResponse,
   type CommandTransaction,
 } from './command-executor.ts'
@@ -273,6 +275,20 @@ export function completedCaseInterpretation(code: string | undefined): string | 
 }
 
 export interface OutpatientLaboratoryHost {
+  enforceOrderIndication?(input: {
+    asOf: string
+    candidateCodes?: readonly string[] | undefined
+    catalogItemId?: string | undefined
+    caseId: string
+    clinicalOverride?: ClinicalOverrideInput | undefined
+    context: ActorContext
+    itemCode: string
+    operation: string
+    orderDisplay?: string | undefined
+    orderKind: 'imaging' | 'examination' | 'laboratory'
+    patientId: string
+    subjectReference: string
+  }): { effects: CommandEffect[]; receipt?: ClinicalQualityReceipt }
   reportPublished(
     transaction: CommandTransaction,
     context: ActorContext,
@@ -694,6 +710,7 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
   }
 
   issueLaboratoryRequest(input: {
+    clinicalOverride?: ClinicalOverrideInput | undefined
     context: ActorContext
     encounterId: string
     expectedDraftVersion: number
@@ -706,6 +723,7 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
+        ...(input.clinicalOverride === undefined ? {} : { clinicalOverride: input.clinicalOverride }),
         encounterId: input.encounterId,
         expectedDraftVersion: input.expectedDraftVersion,
       },
@@ -715,6 +733,7 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
   }
 
   applyIssueLaboratoryRequest(transaction: CommandTransaction, input: {
+    clinicalOverride?: ClinicalOverrideInput | undefined
     context: ActorContext
     encounterId: string
     expectedDraftVersion: number
@@ -808,6 +827,26 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
     if (catalogConfig.contraindicatedAllergyCodes.some(code => allergyCodes.has(code))) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request is contraindicated')
     }
+    const quality = this.#host.enforceOrderIndication?.({
+      asOf: now,
+      candidateCodes: [
+        referenceConcept.code,
+        catalog.code,
+        catalog.item_id,
+        state.draft_catalog_item_id,
+        ...(laboratoryService === undefined ? [] : [laboratoryService.localCode, laboratoryService.referenceConcept.code]),
+      ],
+      catalogItemId: state.draft_catalog_item_id,
+      caseId: outpatientCase.case_id,
+      clinicalOverride: input.clinicalOverride,
+      context: input.context,
+      itemCode: referenceConcept.code,
+      operation: 'laboratory-request.issue',
+      orderDisplay: catalog.name_zh,
+      orderKind: 'laboratory',
+      patientId: outpatientCase.patient_id,
+      subjectReference: `Encounter/${input.encounterId}`,
+    }) ?? { effects: [] }
     const requestId = uuidv7()
     const serviceRequestId = uuidv7()
     const taskId = uuidv7()
@@ -935,7 +974,8 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
         kind: 'created' as const,
         reference: `${resource.resourceType}/${resource.id}`,
         versionId: resource.meta?.versionId ?? '1',
-      })), ...(charge?.effects ?? [])],
+      })), ...(charge?.effects ?? []), ...quality.effects],
+      ...(quality.receipt === undefined ? {} : { clinicalQuality: quality.receipt }),
     }
   }
 

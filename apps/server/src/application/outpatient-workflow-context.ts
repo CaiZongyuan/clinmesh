@@ -793,6 +793,7 @@ export interface OutpatientLaboratoryTransactionPort {
   applyIssueLaboratoryRequest(
     transaction: CommandTransaction,
     input: {
+      clinicalOverride?: ClinicalOverrideInput | undefined
       context: ActorContext
       encounterId: string
       expectedDraftVersion: number
@@ -801,6 +802,7 @@ export interface OutpatientLaboratoryTransactionPort {
       supportingInfo?: Array<{ reference: { reference: string } }>
     },
   ): {
+    clinicalQuality?: ClinicalQualityReceipt | undefined
     data: z.infer<typeof issueLaboratoryRequestResponseSchema.shape.data>
     effects: CommandEffect[]
   }
@@ -843,6 +845,7 @@ export interface ImagingWorkflowPort {
   applyIssue(
     transaction: CommandTransaction,
     input: {
+      clinicalOverride?: ClinicalOverrideInput | undefined
       context: ActorContext
       encounterId: string
       expectedDraftVersion: number
@@ -852,6 +855,7 @@ export interface ImagingWorkflowPort {
       supportingInfo?: Array<{ reference: { reference: string } }>
     },
   ): {
+    clinicalQuality?: ClinicalQualityReceipt | undefined
     data: z.infer<typeof issueImagingRequestResponseSchema.shape.data>
     effects: CommandEffect[]
   }

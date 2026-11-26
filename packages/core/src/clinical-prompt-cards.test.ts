@@ -775,4 +775,525 @@ describe('ClinicalPromptCard core engine', () => {
     expect(diff.retiredHiddenClaimIds).toEqual(['claim-legacy'])
     expect(diff.diffs.find(d => d.claimId === 'claim-legacy')?.diffStatus).toBe('retired-hidden')
   })
+
+  it('tracks dynamic rule-out missing checks, exit summary silencing, and point-scale skip-test guidance (AC18)', () => {
+    const pack = makeEffectivePack('synthetic-ruleout-pack', {
+      exitCriteria: [
+        {
+          condition: {
+            kind: 'allOf',
+            nodes: [
+              {
+                abnormal: false,
+                category: 'examination',
+                itemCodes: ['11524-6'],
+                kind: 'fact',
+                minCount: 1,
+                presence: 'present',
+                requireEligible: true,
+              },
+              {
+                abnormal: false,
+                category: 'laboratory',
+                itemCodes: ['89579-7'],
+                kind: 'fact',
+                minCount: 2,
+                presence: 'present',
+                requireEligible: true,
+              },
+            ],
+          },
+          descriptionZh: '完成心电图及至少 2 次连续正常高敏肌钙蛋白排查后自动退出',
+          id: 'exit-normal-serial',
+        },
+      ],
+      pointScales: [
+        {
+          criteria: [
+            {
+              condition: {
+                category: 'laboratory',
+                itemCodes: ['2160-0'],
+                kind: 'fact',
+                minValue: 133,
+                presence: 'present',
+                requireEligible: true,
+              },
+              id: 'high-cr',
+              labelZh: '血清肌酐 >= 133 umol/L',
+              points: 2,
+            },
+          ],
+          guidelineCitation: {
+            locator: '表 3 第 18 页',
+            sourceTitle: '合成低危胸痛风险分层共识',
+            version: '2026.1',
+          },
+          id: 'low-risk-ruleout-scale',
+          riskBands: [
+            {
+              guidanceZh: '低危评分（0 分）可跳过非必要 D-二聚体检查并建议门急诊留观复评',
+              labelZh: '低风险',
+              maxScore: 0,
+              minScore: 0,
+              skipTests: true,
+            },
+            {
+              labelZh: '高风险',
+              maxScore: null,
+              minScore: 1,
+            },
+          ],
+          titleZh: '合成胸痛低危筛查量表',
+        },
+      ],
+      ruleOutChecklist: [
+        {
+          actionHintZh: '依次完成心电图与两次动态高敏肌钙蛋白 I',
+          checkItems: [
+            {
+              condition: {
+                category: 'examination',
+                itemCodes: ['11524-6'],
+                kind: 'fact',
+                minCount: 1,
+                presence: 'present',
+                requireEligible: true,
+              },
+              id: 'check-ecg',
+              labelZh: '12 导联心电图',
+            },
+            {
+              condition: {
+                category: 'laboratory',
+                itemCodes: ['89579-7'],
+                kind: 'fact',
+                minCount: 2,
+                presence: 'present',
+                requireEligible: true,
+              },
+              id: 'check-serial-tni',
+              labelZh: '连续 ≥ 2 次高敏心肌肌钙蛋白 I',
+            },
+          ],
+          id: 'high-risk-chest-pain-ruleout',
+          requiredTestCodes: ['11524-6', '89579-7'],
+          targetConditionCodes: ['I21.4', 'I26.9', 'I71.0'],
+          titleZh: '急性上腹痛/胸痛三大高危病因排查清单',
+          trigger: {
+            category: 'diagnosis',
+            itemCodes: ['R10.1'],
+            kind: 'fact',
+            presence: 'present',
+            requireEligible: true,
+          },
+        },
+      ],
+      triggers: [
+        {
+          condition: {
+            category: 'diagnosis',
+            itemCodes: ['R10.1'],
+            kind: 'fact',
+            presence: 'present',
+            requireEligible: true,
+          },
+          descriptionZh: 'R10.1 trigger',
+          id: 'trigger-r10',
+        },
+      ],
+    })
+
+    const dxFact = makeFact({
+      itemCode: { code: 'R10.1', display: '上腹痛', system: 'http://hl7.org/fhir/sid/icd-10' },
+      value: { normalizedValue: 'R10.1', rawText: '上腹痛' },
+    })
+    const normalEcg = makeFact({
+      abnormal: false,
+      category: 'examination',
+      factId: 'fact:local:DiagnosticReport:ecg-1:1',
+      itemCode: { code: '11524-6', display: '12 导联心电图', system: 'http://loinc.org' },
+      provenance: { recordId: 'ecg-1', recordType: 'DiagnosticReport', recordVersion: '1', sourceSystemId: 'ris' },
+      value: { normalizedValue: 'normal', rawText: '窦性心律正常' },
+    })
+    const normalTni1 = makeFact({
+      abnormal: false,
+      category: 'laboratory',
+      factId: 'fact:local:Observation:tni-1:1',
+      itemCode: { code: '89579-7', display: '高敏心肌肌钙蛋白 I', system: 'http://loinc.org' },
+      provenance: { recordId: 'tni-1', recordType: 'Observation', recordVersion: '1', sourceSystemId: 'lis' },
+      value: { normalizedValue: { unit: 'ng/L', value: 4 }, rawText: '4 ng/L' },
+    })
+    const normalTni2 = makeFact({
+      abnormal: false,
+      category: 'laboratory',
+      effectiveAt: '2026-08-24T11:00:00Z',
+      factId: 'fact:local:Observation:tni-2:1',
+      itemCode: { code: '89579-7', display: '高敏心肌肌钙蛋白 I', system: 'http://loinc.org' },
+      provenance: { recordId: 'tni-2', recordType: 'Observation', recordVersion: '1', sourceSystemId: 'lis' },
+      reportedAt: '2026-08-24T11:00:00Z',
+      value: { normalizedValue: { unit: 'ng/L', value: 5 }, rawText: '5 ng/L' },
+    })
+
+    const activeEntry = {
+      activationReason: 'trigger-matched' as const,
+      activationStatus: 'active' as const,
+      allowedTools: [],
+      currentStageId: 'acute-stage',
+      forbiddenActions: [],
+      localizations: {},
+      manualOverride: null,
+      manualOverrideVersion: 0,
+      matchedInapplicableIds: [],
+      matchedTriggerIds: ['trigger-r10'],
+      packId: 'synthetic-ruleout-pack',
+      packType: 'full' as const,
+      readinessTasks: [],
+      recognitionCard: null,
+      specialty: 'synthetic',
+      stages: [],
+      status: 'active' as const,
+      titleEn: 'Synthetic Ruleout Pack',
+      titleZh: '合成高危排查包',
+      version: '1.0.0',
+    }
+
+    // 1. Before ECG & troponin: both checks missing + point scale low-risk skip guidance emitted
+    const builtInitial = buildTimingPromptCards({
+      asOf: '2026-08-24T09:00:00Z',
+      evaluatedPacks: [{ effective: pack, entry: activeEntry, vocabulary: PUBLIC_CONCEPT_VOCABULARY }],
+      ledger: makeLedger([dxFact]),
+      timing: 'encounter-open',
+    })
+    const checklistInitial = builtInitial.cards.find(c => c.category === 'rule-out-checklist')
+    expect(checklistInitial?.detail).toContain('I21.4')
+    expect(checklistInitial?.detail).toContain('I26.9')
+    expect(checklistInitial?.detail).toContain('I71.0')
+    expect(checklistInitial?.detail).toContain('12 导联心电图')
+    expect(checklistInitial?.detail).toContain('连续 ≥ 2 次高敏心肌肌钙蛋白 I')
+
+    const pointScaleCard = builtInitial.cards.find(c => c.cardId.includes('point-scale:'))
+    expect(pointScaleCard?.category).toBe('recommendation')
+    expect(pointScaleCard?.detail).toContain('合成低危胸痛风险分层共识')
+    expect(pointScaleCard?.detail).toContain('表 3 第 18 页')
+    expect(pointScaleCard?.detail).toContain('D-二聚体')
+    expect(pointScaleCard?.detail).toContain('低危评分')
+    const filteredInitial = filterPromptCardsBeforeDisplay({
+      allergyCodes: new Set(),
+      cards: builtInitial.cards,
+      effectivePacks: [pack],
+      ledger: makeLedger([dxFact]),
+      renal: { status: 'creatinine-missing' },
+    })
+    expect(filteredInitial.visibleCards.some(c => c.cardId === pointScaleCard?.cardId)).toBe(true)
+
+    // 2. After ECG + 1st troponin: ECG done, serial >=2 troponin still missing
+    const builtOneTrop = buildTimingPromptCards({
+      asOf: '2026-08-24T10:00:00Z',
+      evaluatedPacks: [{ effective: pack, entry: activeEntry, vocabulary: PUBLIC_CONCEPT_VOCABULARY }],
+      ledger: makeLedger([dxFact, normalEcg, normalTni1]),
+      timing: 'encounter-open',
+    })
+    const checklistOneTrop = builtOneTrop.cards.find(c => c.category === 'rule-out-checklist')
+    expect(checklistOneTrop?.detail).not.toContain('尚缺检查/项目：12 导联心电图')
+    expect(checklistOneTrop?.detail).toContain('连续 ≥ 2 次高敏心肌肌钙蛋白 I')
+
+    // 3. Exited pack emits ONE exit-summary card first, then is completely silent across subsequent timings
+    const exitedLedger = makeLedger([dxFact, normalEcg, normalTni1, normalTni2])
+    const exitedEntry = {
+      ...activeEntry,
+      activationReason: 'pack-exited' as const,
+      activationStatus: 'inactive' as const,
+      exited: true,
+      exitReasonZh: '完成心电图及至少 2 次连续正常高敏肌钙蛋白排查后自动退出',
+      matchedTriggerIds: [],
+    }
+    const builtExitedFirst = buildTimingPromptCards({
+      asOf: '2026-08-24T11:30:00Z',
+      evaluatedPacks: [{ effective: pack, entry: exitedEntry, exitSummaryAlreadyEmitted: false, vocabulary: PUBLIC_CONCEPT_VOCABULARY }],
+      ledger: exitedLedger,
+      timing: 'report-arrived',
+    })
+    expect(builtExitedFirst.cards).toHaveLength(1)
+    expect(builtExitedFirst.cards[0]?.category).toBe('exit-summary')
+    expect(builtExitedFirst.cards[0]?.detail).toContain('完成心电图及至少 2 次连续正常高敏肌钙蛋白排查后自动退出')
+
+    const builtExitedLater = buildTimingPromptCards({
+      asOf: '2026-08-24T12:00:00Z',
+      evaluatedPacks: [{ effective: pack, entry: exitedEntry, exitSummaryAlreadyEmitted: true, vocabulary: PUBLIC_CONCEPT_VOCABULARY }],
+      ledger: exitedLedger,
+      timing: 'encounter-open',
+    })
+    expect(builtExitedLater.cards).toEqual([])
+  })
+
+  it('suppresses treatment cards from mutually-confusable packs and emits one merged differential card (AC19)', () => {
+    const packA = makeEffectivePack('confusable-pack-a', {
+      confusablePacks: [{ differentialHintZh: '鉴别急性肺栓塞或大血管夹层', packId: 'confusable-pack-b' }],
+      orderSets: [
+        {
+          id: 'order-set-a',
+          items: [
+            { channel: 'laboratory', key: 'lab-cr', kind: 'laboratory', panelServiceCodes: ['2160-0'], titleZh: '血清肌酐' },
+          ],
+          scopes: ['outpatient'],
+          titleZh: '包 A 组套',
+        },
+      ],
+      ruleOutChecklist: [
+        {
+          actionHintZh: '优先查心电图、hs-cTnI 与 D-二聚体',
+          id: 'ruleout-a',
+          requiredTestCodes: ['11524-6', '89579-7'],
+          targetConditionCodes: ['I21.4'],
+          titleZh: '包 A 排查',
+          trigger: { category: 'diagnosis', itemCodes: ['R07.4'], kind: 'fact', presence: 'present', requireEligible: true },
+        },
+      ],
+      triggers: [
+        {
+          condition: { category: 'diagnosis', itemCodes: ['R07.4'], kind: 'fact', presence: 'present', requireEligible: true },
+          descriptionZh: 'Chest pain',
+          id: 'trigger-a',
+        },
+      ],
+    })
+    const packB = makeEffectivePack('confusable-pack-b', {
+      confusablePacks: [{ differentialHintZh: '鉴别非 ST 段抬高型心肌梗死', packId: 'confusable-pack-a' }],
+      ruleOutChecklist: [
+        {
+          actionHintZh: '优先查 D-二聚体与 CTPA',
+          id: 'ruleout-b',
+          requiredTestCodes: ['48065-7'],
+          targetConditionCodes: ['I26.9'],
+          titleZh: '包 B 排查',
+          trigger: { category: 'diagnosis', itemCodes: ['R07.4'], kind: 'fact', presence: 'present', requireEligible: true },
+        },
+      ],
+      triggers: [
+        {
+          condition: { category: 'diagnosis', itemCodes: ['R07.4'], kind: 'fact', presence: 'present', requireEligible: true },
+          descriptionZh: 'Chest pain',
+          id: 'trigger-b',
+        },
+      ],
+    })
+
+    const ledger = makeLedger([
+      makeFact({
+        itemCode: { code: 'R07.4', display: '胸痛', system: 'http://hl7.org/fhir/sid/icd-10' },
+        value: { normalizedValue: 'R07.4', rawText: '胸痛' },
+      }),
+    ])
+
+    const makeActiveEntry = (id: string, titleZh: string, triggerId: string) => ({
+      activationReason: 'trigger-matched' as const,
+      activationStatus: 'active' as const,
+      allowedTools: [],
+      currentStageId: 'acute-stage',
+      forbiddenActions: [],
+      localizations: {},
+      manualOverride: null,
+      manualOverrideVersion: 0,
+      matchedInapplicableIds: [],
+      matchedTriggerIds: [triggerId],
+      packId: id,
+      packType: 'full' as const,
+      readinessTasks: [],
+      recognitionCard: null,
+      specialty: 'synthetic',
+      stages: [],
+      status: 'active' as const,
+      titleEn: id,
+      titleZh,
+      version: '1.0.0',
+    })
+
+    const built = buildTimingPromptCards({
+      asOf: '2026-08-24T09:00:00Z',
+      evaluatedPacks: [
+        { effective: packA, entry: makeActiveEntry('confusable-pack-a', '专病包甲', 'trigger-a'), vocabulary: PUBLIC_CONCEPT_VOCABULARY },
+        { effective: packB, entry: makeActiveEntry('confusable-pack-b', '专病包乙', 'trigger-b'), vocabulary: PUBLIC_CONCEPT_VOCABULARY },
+      ],
+      ledger,
+      timing: 'encounter-open',
+    })
+
+    // No order-set / treatment recommendation / individual guideline claim cards from confusable packs
+    expect(built.cards.some(c => c.category === 'order-set-risk' || c.category === 'quality-gate' || c.category === 'guideline-advice')).toBe(false)
+    const differentialCards = built.cards.filter(c => c.cardId.includes(':confusable-differential:'))
+    expect(differentialCards).toHaveLength(1)
+    expect(differentialCards[0]?.category).toBe('rule-out-checklist')
+    expect(differentialCards[0]?.detail).toContain('confusable-pack-a')
+    expect(differentialCards[0]?.detail).toContain('confusable-pack-b')
+    expect(differentialCards[0]?.detail).toContain('鉴别急性肺栓塞或大血管夹层')
+    expect(differentialCards[0]?.detail).toContain('鉴别非 ST 段抬高型心肌梗死')
+
+    const filtered = filterPromptCardsBeforeDisplay({
+      allergyCodes: new Set(),
+      cards: built.cards,
+      effectivePacks: [packA, packB],
+      ledger,
+      renal: { status: 'creatinine-missing' },
+    })
+    expect(filtered.visibleCards.some(c => c.cardId === differentialCards[0]?.cardId)).toBe(true)
+  })
+
+  it('emits boundary prompt, preserves rule-out checklist and missing bedside items, and blocks treatments on inapplicable population (AC24)', () => {
+    const pack = makeEffectivePack('synthetic-inapplicable-pack', {
+      ruleOutChecklist: [
+        {
+          actionHintZh: '妊娠期胸痛仍需核查心电图、高敏肌钙蛋白与主动脉夹层高危线索',
+          id: 'preg-ruleout',
+          requiredTestCodes: ['11524-6'],
+          targetConditionCodes: ['I21.4', 'I26.9', 'I71.0'],
+          titleZh: '胸痛高危病因排查',
+          trigger: { category: 'diagnosis', itemCodes: ['R07.4'], kind: 'fact', presence: 'present', requireEligible: true },
+        },
+      ],
+    })
+    const ledger = makeLedger([
+      makeFact({
+        itemCode: { code: 'O99.8', display: '妊娠状态', system: 'http://hl7.org/fhir/sid/icd-10' },
+        value: { normalizedValue: 'O99.8', rawText: '妊娠状态' },
+      }),
+      makeFact({
+        factId: 'fact:local:Condition:cond-2:1',
+        itemCode: { code: 'R07.4', display: '胸痛', system: 'http://hl7.org/fhir/sid/icd-10' },
+        provenance: { recordId: 'cond-2', recordType: 'Condition', recordVersion: '1', sourceSystemId: 'local-his' },
+        value: { normalizedValue: 'R07.4', rawText: '胸痛' },
+      }),
+    ])
+    const inapplicableEntry = {
+      activationReason: 'inapplicable-population' as const,
+      activationStatus: 'inapplicable' as const,
+      allowedTools: [],
+      currentStageId: null,
+      forbiddenActions: [],
+      localizations: {},
+      manualOverride: null,
+      manualOverrideVersion: 0,
+      matchedInapplicableIds: ['pregnancy-excluded'],
+      matchedTriggerIds: [],
+      packId: 'synthetic-inapplicable-pack',
+      packType: 'full' as const,
+      readinessTasks: [],
+      recognitionCard: null,
+      specialty: 'synthetic',
+      stages: [],
+      status: 'active' as const,
+      titleEn: 'Pack Inapplicable',
+      titleZh: '合成包',
+      version: '1.0.0',
+    }
+
+    const built = buildTimingPromptCards({
+      asOf: '2026-08-24T09:00:00Z',
+      evaluatedPacks: [{ effective: pack, entry: inapplicableEntry, vocabulary: PUBLIC_CONCEPT_VOCABULARY }],
+      ledger,
+      timing: 'encounter-open',
+    })
+
+    const boundaryCard = built.cards.find(c => c.category === 'inapplicable-population')
+    expect(boundaryCard).toBeDefined()
+    expect(boundaryCard?.summary).toContain('超出本包范围，请医生自行决策')
+    expect(boundaryCard?.detail).toContain('妊娠合并症不适用本常规路径')
+
+    expect(built.cards.some(c => c.category === 'rule-out-checklist')).toBe(true)
+    expect(built.cards.some(c => c.category === 'missing-fact')).toBe(true)
+    expect(built.cards.some(c => ['recommendation', 'order-set-risk', 'medication-safety', 'guideline-advice'].includes(c.category))).toBe(false)
+  })
+
+  it('emits recognition prompt card when an active recognition pack is triggered', () => {
+    const recPackRaw = validateAndParseDiseasePack({
+      examSuite: { cases: [{ caseId: 'rec-1', expectedActive: true, titleZh: '识别测试' }], passThreshold: 0.8 },
+      formulaRefs: [],
+      inapplicablePopulations: [],
+      manifest: {
+        dependencies: [],
+        fingerprint: SHA_A,
+        id: 'synthetic-recognition',
+        packType: 'recognition',
+        specialty: 'synthetic',
+        status: 'active',
+        supportedTasks: ['early-triage-recognition'],
+        titleEn: 'Synthetic Recognition',
+        titleZh: '合成识别专病包',
+        version: '1.0.0',
+      },
+      recognitionCard: {
+        differentialPackIds: ['synthetic-pack-a'],
+        escalationGuidanceZh: '提示急诊科进一步检查排除高危病变',
+        id: 'red-flag-card',
+        summaryZh: '高危胸痛症状群识别卡',
+        titleZh: '快速识别提示卡',
+      },
+      toolPolicy: { allowedTools: [], forbiddenActions: [] },
+      triggers: [
+        {
+          condition: { category: 'diagnosis', itemCodes: ['R07.4'], kind: 'fact', presence: 'present', requireEligible: true },
+          descriptionZh: 'Chest pain',
+          id: 'rec-trigger',
+        },
+      ],
+    })
+    const recEffective: EffectiveDiseasePack = {
+      effectiveAllowedTools: [],
+      effectiveExamPassThreshold: 0.8,
+      effectiveForbiddenActions: [],
+      effectiveRedLines: [],
+      effectiveValidityDaysByItemCode: {},
+      localizations: {},
+      pack: recPackRaw,
+    }
+    const ledger = makeLedger([
+      makeFact({
+        itemCode: { code: 'R07.4', display: '胸痛', system: 'http://hl7.org/fhir/sid/icd-10' },
+        value: { normalizedValue: 'R07.4', rawText: '胸痛' },
+      }),
+    ])
+    const built = buildTimingPromptCards({
+      asOf: '2026-08-24T09:00:00Z',
+      evaluatedPacks: [{
+        effective: recEffective,
+        entry: {
+          activationReason: 'trigger-matched',
+          activationStatus: 'active',
+          allowedTools: [],
+          currentStageId: null,
+          forbiddenActions: [],
+          localizations: {},
+          manualOverride: null,
+          manualOverrideVersion: 0,
+          matchedInapplicableIds: [],
+          matchedTriggerIds: ['rec-trigger'],
+          packId: 'synthetic-recognition',
+          packType: 'recognition',
+          readinessTasks: [],
+          recognitionCard: recPackRaw.recognitionCard!,
+          specialty: 'synthetic',
+          stages: [],
+          status: 'active',
+          titleEn: 'Synthetic Recognition',
+          titleZh: '合成识别专病包',
+          version: '1.0.0',
+        },
+        vocabulary: PUBLIC_CONCEPT_VOCABULARY,
+      }],
+      ledger,
+      timing: 'encounter-open',
+    })
+
+    const recCard = built.cards.find(c => c.category === 'recognition')
+    expect(recCard?.summary).toContain('快速识别提示卡')
+    expect(recCard?.detail).toContain('提示急诊科进一步检查排除高危病变')
+    const filtered = filterPromptCardsBeforeDisplay({
+      allergyCodes: new Set(),
+      cards: built.cards,
+      effectivePacks: [recEffective],
+      ledger,
+      renal: { status: 'creatinine-missing' },
+    })
+    expect(filtered.visibleCards.some(c => c.category === 'recognition')).toBe(true)
+  })
 })

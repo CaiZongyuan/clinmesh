@@ -961,8 +961,8 @@ export class ClinicalFactLedgerService {
       const codes = codings.map(c => c.code ?? '').filter(Boolean)
       const display = [parsed.data.code?.concept?.text, parsed.data.code?.text, ...codings.map(c => c.display)].filter(Boolean).join(' ')
       if (
-        codes.some(c => c === '11524-6' || c === 'examination-ecg-12-lead')
-        || /12\s*导联心电图|\bECG\b/i.test(display)
+        codes.some(c => c === '11524-6' || c === 'examination-ecg-12-lead' || c === 'ECG-12')
+        || /(?:12|十二)\s*导联心电图|\bECG\b/i.test(display)
       ) {
         pushRequestCandidate({
           category: 'examination',

@@ -213,8 +213,20 @@ export class InpatientOrders {
             throw new InpatientError('CATALOG_CONFLICT', '现有有效药品医嘱不允许此药品组合', 409, 'MEDICATION_COMBINATION_NOT_ALLOWED', redLineCheck())
           }
         }
+        const medicationCheck = this.owner.workflow.clinicalQuality.inpatientOrder(this.owner, context, admission.id, admission.patientId, candidate, activeQuality)
+        const indicationCheck = this.owner.workflow.clinicalQuality.checkOrderIndication({
+          asOf: this.owner.virtualTime(context),
+          candidateCodes: [item.id, catalogRow.code],
+          catalogItemId: item.id,
+          context,
+          gate: 'inpatient-order',
+          itemCode: catalogRow.code,
+          orderDisplay: item.display,
+          orderKind: 'medication',
+          subject: { id: admission.id, kind: 'inpatient', patientId: admission.patientId },
+        })
         quality = this.owner.workflow.clinicalQuality.enforce(context, {
-          check: this.owner.workflow.clinicalQuality.inpatientOrder(this.owner, context, admission.id, admission.patientId, candidate, activeQuality),
+          check: this.owner.workflow.clinicalQuality.mergeChecks(medicationCheck, indicationCheck),
           operation: 'inpatient.order.issue',
           override: input.clinicalOverride,
           patientId: admission.patientId,
@@ -237,8 +249,28 @@ export class InpatientOrders {
       } else {
         const item = catalog.services.find(item => item.id === selection.serviceId)
         if (item === undefined || item.version !== selection.serviceVersion) throw new InpatientError('CATALOG_CONFLICT', '住院服务目录或版本无效')
-        const serviceRow = z.object({ config_json: z.string() }).parse(this.owner.database.driver.prepare(
-          'SELECT config_json FROM hospital_service_catalog WHERE workspace_id=? AND epoch=? AND service_id=?').get(context.workspaceId, context.epoch, item.id))
+        const serviceRow = z.object({ code: z.string(), config_json: z.string() }).parse(this.owner.database.driver.prepare(
+          'SELECT code, config_json FROM hospital_service_catalog WHERE workspace_id=? AND epoch=? AND service_id=?').get(context.workspaceId, context.epoch, item.id))
+        const parsedCategory = z.object({ category: z.object({ code: z.string() }).optional() }).safeParse(JSON.parse(serviceRow.config_json) as unknown)
+        const categoryCode = parsedCategory.success ? parsedCategory.data.category?.code : undefined
+        const orderKind = ({
+          EXAMINATION: 'examination',
+          IMAGING: 'imaging',
+          LABORATORY: 'laboratory',
+        } as const)[categoryCode as 'EXAMINATION' | 'IMAGING' | 'LABORATORY'] ?? 'procedure'
+        quality = this.owner.workflow.clinicalQuality.enforceOrderIndication(context, {
+          asOf: this.owner.virtualTime(context),
+          candidateCodes: [serviceRow.code, item.id],
+          catalogItemId: item.id,
+          clinicalOverride: input.clinicalOverride,
+          gate: 'inpatient-order',
+          itemCode: serviceRow.code,
+          operation: 'inpatient.order.issue',
+          orderDisplay: item.display,
+          orderKind,
+          subject: { id: admission.id, kind: 'inpatient', patientId: admission.patientId },
+          subjectReference: `Encounter/${admission.id}`,
+        })
         itemId = item.id
         display = item.display
         catalogVersion = item.version

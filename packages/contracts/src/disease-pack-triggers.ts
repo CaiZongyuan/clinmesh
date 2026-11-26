@@ -48,6 +48,8 @@ export interface DiseasePackFactTriggerNode {
   textPattern?: string | undefined
   withinDays?: number | undefined
   timestampField?: DiseasePackTimestampField | undefined
+  abnormal?: boolean | undefined
+  minCount?: number | undefined
 }
 
 export interface DiseasePackSequenceTriggerNode {
@@ -97,6 +99,8 @@ export const diseasePackTriggerNodeSchema: z.ZodType<DiseasePackTriggerNode> = z
       textPattern: diseasePackRegexPatternSchema.optional(),
       withinDays: z.number().positive().max(36500).optional(),
       timestampField: diseasePackTimestampFieldSchema.optional(),
+      abnormal: z.boolean().optional(),
+      minCount: z.number().int().positive().optional(),
     }).strict().superRefine((node, ctx) => {
       if (node.category === undefined && node.itemCodes === undefined && node.itemCodePattern === undefined) {
         ctx.addIssue({
@@ -109,6 +113,13 @@ export const diseasePackTriggerNodeSchema: z.ZodType<DiseasePackTriggerNode> = z
           code: 'custom',
           message: 'Fact trigger with withinDays must explicitly specify timestampField',
           path: ['timestampField'],
+        })
+      }
+      if (node.presence === 'absent' && node.minCount !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Fact trigger with presence=absent cannot specify minCount',
+          path: ['minCount'],
         })
       }
     }),

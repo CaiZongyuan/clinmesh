@@ -87,6 +87,7 @@ it('0111非空升级保留原款、零金额分配、旧退款预览和回执并
       '0126_disease-pack-runtime.sql',
       '0127_bedside-questionnaire-answers.sql',
       '0128_clinical-prompt-cards.sql',
+      '0129_pack-exit-state.sql',
     ])
     preservedTables.forEach((table, index) => expect(database.driver.prepare(`SELECT * FROM ${table}`).all()).toEqual(
       table === 'charge_record'

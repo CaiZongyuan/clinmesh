@@ -1,4 +1,39 @@
 {
+  "inapplicablePopulations": [
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodePattern": "^(?:Z33|Z34|O0[0-9]|O[1-9][0-9])",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "descriptionZh": "妊娠期人群（Z33/Z34/O00-O99）不适用常规成人冠心病标准化用药与血运重建路径",
+      "id": "pregnancy-inapplicable"
+    },
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodePattern": "^(?:Z00\\.1|P[0-9]{2})",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "descriptionZh": "儿童及新生儿人群不适用成人冠心病路径",
+      "id": "pediatric-inapplicable"
+    },
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodePattern": "^Z99\\.2",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "descriptionZh": "维持性肾透析患者（Z99.2）药物与造影剂水化方案须个体化决策，不直接套用标准路径",
+      "id": "maintenance-dialysis-inapplicable"
+    }
+  ],
   "triggers": [
     {
       "condition": {

@@ -17,6 +17,7 @@ export const clinicalQualityRedLineCodeSchema = z.enum([
 export const clinicalQualityAlertCodeSchema = z.enum([
   'CHEST_PAIN_WORKUP_INCOMPLETE', 'PCI_NON_ISCHEMIC_LESION', 'DISCHARGE_ANTIPLATELET_MISSING',
   'DISCHARGE_STATIN_MISSING', 'RENAL_CREATININE_MISSING', 'ANTIBIOTIC_WITHOUT_BACTERIAL_INDICATION',
+  'INVESTIGATION_WITHOUT_INDICATION',
 ])
 export type ClinicalQualityAlertCode = z.infer<typeof clinicalQualityAlertCodeSchema>
 
@@ -44,7 +45,7 @@ export const clinicalOverrideReasonSchema = z.enum([
 export type ClinicalOverrideReason = z.infer<typeof clinicalOverrideReasonSchema>
 
 export const clinicalOverrideInputSchema = z.object({
-  acknowledgedAlerts: z.array(clinicalQualityAlertCodeSchema).min(1).max(6)
+  acknowledgedAlerts: z.array(clinicalQualityAlertCodeSchema).min(1).max(16)
     .refine(c => new Set(c).size === c.length, 'Acknowledged alerts must be unique'),
   note: s.trim().min(4).max(500),
   reasonCode: clinicalOverrideReasonSchema,

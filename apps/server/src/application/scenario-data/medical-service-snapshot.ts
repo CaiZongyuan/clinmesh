@@ -12,6 +12,7 @@ export const syntheticNhcMedicalServiceSnapshot = referenceMedicalServiceSchema.
   ['HCT', '合成红细胞压积服务', 'LABORATORY', 'ITEM'],
   ['HBA1C', '合成糖化血红蛋白服务', 'LABORATORY', 'ITEM'],
   ['FUNDUS', '合成眼底检查服务', 'IMAGING', 'ITEM'],
+  ['CORONARY-CTA', '合成冠状动脉 CTA 检查服务', 'IMAGING', 'ITEM'],
   ['DIABETES-EDUCATION', '合成糖尿病健康教育', 'TREATMENT', 'SESSION'],
 ].map(([code, display, categoryCode, billingUnitCode], index) => ({
   billingUnitCode,

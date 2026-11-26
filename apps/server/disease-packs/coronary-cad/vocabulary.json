@@ -60,6 +60,18 @@
         "sourceSystem": "http://loinc.org",
         "targetConceptCode": "discharge-time",
         "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "coronary-map-wst-ddimer-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-cardio-01",
+        "sourceCode": "0501703A",
+        "sourceDisplay": "D-二聚体测定",
+        "sourceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026",
+        "targetConceptCode": "48065-7",
+        "version": "1.0.0"
       }
     ],
     "nodes": [
