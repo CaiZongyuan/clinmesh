@@ -1,0 +1,14 @@
+{
+  "dependencies": [],
+  "fingerprint": "4c4da2f8454034c6938649e96f4cb5ea41b18599030fc7a9604ec76de221505b",
+  "id": "t2dm-renal-care",
+  "packType": "full",
+  "specialty": "endocrinology",
+  "status": "active",
+  "supportedTasks": [
+    "t2dm-renal-medication"
+  ],
+  "titleEn": "Type 2 Diabetes Renal Function Medication Care",
+  "titleZh": "2 型糖尿病肾功能用药专病包",
+  "version": "2026-11-26.r1"
+}

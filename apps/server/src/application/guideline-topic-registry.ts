@@ -59,9 +59,6 @@ export class UnknownGuidelineTopicError extends Error {
   }
 }
 
-const DM_CVD_HASH = '9bcd9a39a232cd028f3d83f775ff3d5663cc199544a0392522c1bba0a886b54b'
-const CVD_GLYCEMIC_HASH = '2dbf8c8053ce6fd10d6eb004d36f8149103260397fd94146bc691f6f8c767b0f'
-
 export function computeGuidelineTopicFingerprint(spec: Omit<GuidelineTopicDefinition, 'fingerprint'>): string {
   return canonicalJsonHash({
     conclusionKinds: spec.conclusionKinds,
@@ -82,60 +79,9 @@ function buildTopic(spec: Omit<GuidelineTopicDefinition, 'fingerprint'>): Guidel
 }
 
 /**
- * Only baseline non-migrated topics remain hardcoded until downstream slices
- * migrate them to pure-JSON disease packs (S13: t2dm-renal-medication).
+ * Baseline non-migrated topics have all been migrated to pure-JSON disease packs (S13: t2dm-renal-care).
  */
-const BASELINE_TOPICS_LIST: readonly GuidelineTopicDefinition[] = [
-  buildTopic({
-    id: 't2dm-renal-medication',
-    titleZh: '2 型糖尿病合并心血管/慢性肾脏病（CKD）降糖药物选择与肾功能调整',
-    titleEn: 'T2DM with CVD/CKD glucose-lowering selection & renal dose adjustment',
-    specialty: 'endocrinology',
-    version: '2026-11-17.r1',
-    conclusionKinds: ['renal-stage-contraindications', 'cardiorenal-agent-selection', 'glycemic-monitoring-and-adjustment'],
-    matchTerms: ['2型糖尿病', '2 型糖尿病', '二型糖尿病', '糖尿病肾病', 'E11', '44054006', 'T2DM', 'type 2 diabetes'],
-    navigation: '适用于 2 型糖尿病合并心血管疾病或慢性肾脏病（CKD）患者按 eGFR 分期核对降糖药物禁忌与调整：重度肾功能不全（eGFR < 30 mL/min/1.73m²，CKD 4–5 期）及急性/失代偿心力衰竭禁用二甲双胍以防乳酸酸中毒，CKD 3b 期（44–30）慎用减量，核对 SGLT-2i/GLP-1RA 适用条件及 CKD 3b–5 期利格列汀或胰岛素替代策略。以下仅为操作性导航，结论必须引用同时回读的原文。',
-    limitations: [
-      '固定引用 2021 糖尿病患者合并心血管疾病诊治专家共识与心血管病合并糖代谢异常专家共识，作为跨病种慢病肾功用药核对依据。',
-      '具体药品能否开立仍受本院审方硬红线（如已证实 eGFR < 30 禁用二甲双胍/达格列净）与药品说明书剂量上限约束。',
-    ],
-    generationRule: '仅依据 guidelines 原文与 clinicalFacts 起草三类只读结论：renal-stage-contraindications（按 CKD 3a/3b/4–5 期 eGFR 核对二甲双胍减量、停用及失代偿心衰乳酸酸中毒风险）、cardiorenal-agent-selection（合并 ASCVD/CKD 时 SGLT-2i、GLP-1RA、DPP-4i 利格列汀及胰岛素的分期选择条件）、glycemic-monitoring-and-adjustment（HbA1c、血糖与肾功能随访监测要求）。缺 eGFR 或 HbA1c 时仅输出 conditional 意见。',
-    references: [
-      {
-        sourceId: 'coronary-25-2021',
-        title: '糖尿病患者合并心血管疾病诊治专家共识（2021）',
-        version: '2021',
-        sha256: DM_CVD_HASH,
-        page: 7,
-        fragments: ['建议二甲双胍为 T2DM 合并 CVD 患者的一线降糖药物', '不建议急性及失代偿性心力衰竭患者使用二甲双胍', 'GLP-1RA 或 SGLT-2i'],
-      },
-      {
-        sourceId: 'coronary-25-2021',
-        title: '糖尿病患者合并心血管疾病诊治专家共识（2021）',
-        version: '2021',
-        sha256: DM_CVD_HASH,
-        page: 8,
-        fragments: ['T2DM 合并 CVD 伴 CKD 患者的降糖药物选择', 'CKD 3b~5 期患者建议胰岛素治疗'],
-      },
-      {
-        sourceId: 'coronary-25-2021',
-        title: '糖尿病患者合并心血管疾病诊治专家共识（2021）',
-        version: '2021',
-        sha256: DM_CVD_HASH,
-        page: 9,
-        fragments: ['双胍类：二甲双胍', '3a期（59~45）', '3b期（44~30）', '4期（29~15）', 'SGLT-2i：达格列净', 'DPP-4i：利格列汀'],
-      },
-      {
-        sourceId: 'coronary-22-2021',
-        title: '心血管病合并糖代谢异常患者心血管风险综合管理中国专家共识（2021）',
-        version: '2021',
-        sha256: CVD_GLYCEMIC_HASH,
-        page: 6,
-        fragments: ['重度肾功能不全', '可能增加乳酸酸中毒风险'],
-      },
-    ],
-  }),
-]
+const BASELINE_TOPICS_LIST: readonly GuidelineTopicDefinition[] = []
 
 export interface RegisteredGuidelineTopicEntry {
   readonly definition: GuidelineTopicDefinition

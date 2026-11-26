@@ -1,0 +1,146 @@
+{
+  "formulaRefs": [
+    { "formulaId": "ckd-epi-2021", "version": 1 }
+  ],
+  "indicationRules": [
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodePattern": "^(?:E11|44054006)",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "id": "t2dm-hba1c-workup",
+      "itemCodePattern": "^(?:4548-4|1500904A)$",
+      "orderKind": "laboratory",
+      "rationaleZh": "评估 2 型糖尿病近 2–3 个月平均血糖控制水平并指导降糖方案调整"
+    },
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodePattern": "^E11\\.65$",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "id": "t2dm-cgm-pro-unindicated",
+      "itemCodePattern": "^(?:T2DM-CGM-PRO-UNINDICATED)$",
+      "orderKind": "laboratory",
+      "rationaleZh": "专业连续动态血糖监测须有明确脆性低血糖或难以解释高血糖波动（E11.65）依据；低危非糖尿病就诊常规开单无适应症",
+      "requiredItemCodes": ["2160-0"]
+    }
+  ],
+  "qualityTightenings": {
+    "examPassThreshold": 0.85,
+    "redLineRules": [],
+    "validityOverrides": []
+  },
+  "questionnaireItems": [
+    {
+      "code": "t2dm-hypoglycemia-history",
+      "labelZh": "近 3 个月反复低血糖发作史",
+      "valueType": "boolean"
+    },
+    {
+      "code": "heart-failure-decompensation-symptom",
+      "labelZh": "急性或失代偿性心衰症状",
+      "valueType": "boolean"
+    }
+  ],
+  "riskTags": [
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodePattern": "^(?:E11|44054006)",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "id": "t2dm-renal-medication-watch",
+      "labelZh": "T2DM 肾功能分层降糖与心肾保护关注",
+      "severity": "info"
+    },
+    {
+      "condition": {
+        "kind": "anyOf",
+        "nodes": [
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^N18",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "category": "laboratory",
+            "itemCodes": ["2160-0", "1700404A"],
+            "kind": "fact",
+            "minValue": 133,
+            "presence": "present",
+            "requireEligible": true,
+            "unit": "umol/L"
+          }
+        ]
+      },
+      "id": "t2dm-renal-impairment-metformin-caution",
+      "labelZh": "合并肾功能减退降糖调整警示（核对 eGFR < 30 禁用二甲双胍风险）",
+      "severity": "warning"
+    }
+  ],
+  "ruleOutChecklist": [
+    {
+      "actionHintZh": "2 型糖尿病患者开启或调整二甲双胍/SGLT-2i 方案前，须核对近 90 天血清肌酐/eGFR 分期，并排除急性失代偿性心衰与高乳酸酸中毒风险因素。",
+      "checkItems": [
+        {
+          "condition": {
+            "category": "laboratory",
+            "itemCodes": ["2160-0", "1700404A"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "id": "serum-creatinine-baseline",
+          "labelZh": "血清肌酐 / eGFR 基线（2160-0）",
+          "minCount": 1,
+          "requireNormal": false,
+          "requiredItemCodes": ["2160-0", "1700404A"]
+        }
+      ],
+      "id": "t2dm-renal-safety-check",
+      "requiredTestCodes": ["2160-0"],
+      "targetConditionCodes": ["N18.3", "N18.4", "E87.2"],
+      "titleZh": "2 型糖尿病肾功能禁忌与乳酸酸中毒风险核对",
+      "trigger": {
+        "category": "diagnosis",
+        "itemCodePattern": "^(?:E11|44054006)",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      }
+    }
+  ],
+  "toolPolicy": {
+    "allowedTools": [
+      "inpatient.clinical-fact-ledger.read",
+      "inpatient.clinical-quality.read",
+      "inpatient.clinical-scores.read",
+      "inpatient.disease-packs.read",
+      "inpatient.disease-pack-task-facts.read",
+      "inpatient.guideline-topics.read",
+      "inpatient.order-set-drafts.read",
+      "outpatient.clinical-fact-ledger.read",
+      "outpatient.clinical-quality.read",
+      "outpatient.clinical-scores.read",
+      "outpatient.disease-packs.read",
+      "outpatient.disease-pack-task-facts.read",
+      "outpatient.guideline-topics.read",
+      "outpatient.order-set-drafts.read"
+    ],
+    "forbiddenActions": [
+      "auto-prescribe-medication",
+      "sign-clinical-document",
+      "autonomous-treatment-decision"
+    ]
+  }
+}

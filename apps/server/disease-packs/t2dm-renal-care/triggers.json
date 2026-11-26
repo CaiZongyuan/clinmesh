@@ -1,0 +1,39 @@
+{
+  "inapplicablePopulations": [
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodePattern": "^(?:Z33|Z34|O0[0-9]|O[1-9][0-9])",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "descriptionZh": "妊娠期糖尿病/妊娠人群（Z33/Z34/O00-O99）须按妊娠期血糖与产科路径个体化管理，不适用本成人常规 T2DM 肾功能降糖包",
+      "id": "t2dm-pregnancy-inapplicable"
+    },
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodePattern": "^(?:Z00\\.1|P[0-9]{2})",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "descriptionZh": "儿童及新生儿人群不适用成人 2 型糖尿病肾功能降糖路径",
+      "id": "t2dm-pediatric-inapplicable"
+    }
+  ],
+  "triggers": [
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodePattern": "^(?:E11|44054006)",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "descriptionZh": "存在 2 型糖尿病（E11/44054006）确认诊断即可独立启用，不要求合并冠心病",
+      "id": "t2dm-diagnosis-trigger"
+    }
+  ]
+}
