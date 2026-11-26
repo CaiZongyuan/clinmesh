@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@earendil-works/chord':
+        specifier: 1.6.0
+        version: 1.6.0(esbuild@0.28.2)(react@19.3.1)(ws@8.23.0)
       '@earendil-works/pi-ai':
         specifier: 1.6.0
         version: 1.6.0(@aws-sdk/credential-provider-node@3.972.99)(@smithy/signature-v4@5.7.5)(google-auth-library@10.9.1)(undici@8.13.1)(ws@8.23.0)(zod@4.6.7)

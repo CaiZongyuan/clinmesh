@@ -22,6 +22,7 @@
     "check": "pnpm typecheck && pnpm lint && pnpm lint:boundaries && pnpm lint:theme && pnpm verify:docs && pnpm test && pnpm build"
   },
   "dependencies": {
+    "@earendil-works/chord": "1.6.0",
     "@earendil-works/pi-ai": "1.6.0",
     "@earendil-works/pi-durable": "1.6.0",
     "@earendil-works/pi-schema": "1.6.0",

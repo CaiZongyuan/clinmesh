@@ -18,7 +18,7 @@ pnpm start
 
 ## 其他运行方式
 
-- 本地 Worker：先 `pnpm build`，再 `pnpm dev:worker`。Wrangler 在 Windows 上启动 workerd 和静态资源服务；`WORKSPACE_DO` 绑定预留给每个 Workspace 的 SQLite Durable Object，尚不建表。
+- 本地 Worker 可通过 `pnpm build` 和 `pnpm dev:worker` 启动。Wrangler 在 Windows 上运行 workerd 和静态资源服务。每个 Workspace 的 `WORKSPACE_DO` 实例首次启动时建立 v1 SQLite 关系模型。[Store 使用说明](src/packages/store/README.md)
 - CLI：`pnpm clinmesh`。入口就绪，尚无已注册操作。
 
 ## 验证与架构

@@ -1,0 +1,90 @@
+import type { StoreTx } from './repository';
+import type { EntityRow, PublicEntity } from './schema';
+
+export const fixtureId = (sequence: number) => `0192eaf2-cb03-7000-8000-${sequence.toString().padStart(12, '0')}`;
+export const at = { workspaceId: fixtureId(1), epoch: fixtureId(2) };
+export const otherEpoch = { ...at, epoch: fixtureId(3) };
+export const otherWorkspace = { workspaceId: fixtureId(4), epoch: at.epoch };
+export const recorded_at = '2025-01-02T16:00:00.000Z';
+const times = { recorded_at, virtual_at: '2024-10-01T08:00:00.000Z' };
+const firstRevision = { revision: 1, previous_revision_id: null };
+export const fixedCase = '99999999-0000-5000-8000-000000000010';
+export const receipt = { id: fixtureId(13), idempotency_key: 'test-command', operation: 'synthetic.sign', request_hash: 'b'.repeat(64), result: { note: { size: 1, color: 'green' }, accepted: true }, recorded_at };
+
+export function seedConformance(tx: StoreTx): string[] {
+  const names = ['workspaces', 'workspace_epochs', 'case_truths', 'command_receipts', 'diagnosis_revisions', 'diagnosis_confirmations'];
+  function add<Name extends Exclude<PublicEntity, 'command_receipts' | 'diagnosis_revisions' | 'diagnosis_confirmations'>>(name: Name, row: EntityRow<NoInfer<Name>>) {
+    tx.insert(at, name, row);
+    if (!names.includes(name)) names.push(name);
+  }
+  tx.createWorkspace({ id: at.workspaceId, recorded_at });
+  tx.createWorkspace({ id: otherWorkspace.workspaceId, recorded_at });
+  for (const location of [at, otherEpoch, otherWorkspace]) {
+    tx.createEpoch(location, { status: location === otherEpoch ? 'closed' : 'active', virtual_time: times.virtual_at, clock_revision: 0 });
+  }
+  const encounter_id = fixtureId(20);
+  const order_id = fixtureId(30);
+  const catalog_item_id = fixtureId(16);
+  const patient_id = fixtureId(18);
+  const installation_id = fixtureId(15);
+  const admission_id = fixtureId(40);
+  const lot_id = fixtureId(36);
+  const surgery_request_id = fixtureId(44);
+  const practitioner_role = 'synthetic-role';
+  const code = { code_system: 'urn:example:catalog', code: 'S1' };
+  const diagnosis = { ...code, is_primary: true, ordinal: 1, poa_code: null };
+  const money = { amount_minor: 12345, currency_code: 'KWD', currency_exponent: 3 };
+  add('visitor_sessions', { id: fixtureId(11), practitioner_role, expires_at: recorded_at, revoked: false, version: 1 });
+  add('capability_tokens', { id: fixtureId(12), token_hash: 'a'.repeat(64), practitioner_role, allowed_operations: ['synthetic.sign'], expires_at: recorded_at, revoked: false, version: 1 });
+  tx.recordCommandReceipt(at, receipt);
+  add('audit_events', { id: fixtureId(14), actor: 'synthetic-actor', practitioner_role, operation: 'synthetic.sign', target_id: encounter_id, outcome: 'accepted', ...times });
+  add('data_pack_installations', { id: installation_id, pack_id: 'synthetic', pack_version: '1', manifest: { locales: ['en', 'zh'] }, organization: { roles: [practitioner_role] }, knowledge: {}, recorded_at });
+  add('catalog_items', { id: catalog_item_id, installation_id, kind: 'service', ...code, definition: { display: 'Synthetic service' }, ...money });
+  add('clinical_cases', { id: fixedCase, installation_id, case_key: 'synthetic', case_version: '1', encounter_class: 'outpatient', demographics: { synthetic: true }, prior_history: {}, triage_vitals: {} });
+  add('case_personas', { id: fixtureId(17), case_id: fixedCase, persona: { greeting: 'Hello' } });
+  tx.writePrivateCaseTruth(at, { id: fixtureId(10), case_id: fixedCase, truth: { finding: 'private-synthetic-sentinel' } });
+  add('patients', { id: patient_id, display_name: 'Synthetic One', birth_date: null, version: 1 });
+  add('patient_identifiers', { id: fixtureId(19), patient_id, issuer: 'synthetic-issuer', value: 'test-01' });
+  add('encounters', { id: encounter_id, patient_id, source_case_id: fixedCase, encounter_class: 'outpatient', status: 'active', active_practitioner_role: practitioner_role, version: 1, ...times });
+  add('pi_sessions', { id: fixtureId(70), agent: 'patient', encounter_id });
+  add('pi_sessions', { id: fixtureId(71), agent: 'clinician', encounter_id: null });
+  add('consultations', { id: fixtureId(21), encounter_id, reply_pending: false, version: 1 });
+  add('consultation_turns', { id: fixtureId(22), consultation_id: fixtureId(21), ordinal: 1, speaker: 'patient', channel: 'voice', content: 'Synthetic turn', ...times });
+  add('clinical_record_drafts', { id: fixtureId(23), encounter_id, fields: { summary: 'Draft' }, version: 1 });
+  add('clinical_record_revisions', { id: fixtureId(25), encounter_id, fields: { summary: 'First' }, signed_by: practitioner_role, ...firstRevision, ...times });
+  add('clinical_record_revisions', { id: fixtureId(24), encounter_id, fields: { summary: 'Correction' }, signed_by: practitioner_role, revision: 2, previous_revision_id: fixtureId(25), ...times });
+  add('diagnosis_drafts', { id: fixtureId(26), encounter_id, ...diagnosis, version: 1 });
+  tx.appendDiagnosisRevision(at, { id: fixtureId(27), encounter_id, confirmed_by: practitioner_role, ...firstRevision, ...times }, [{ id: fixtureId(28), ...diagnosis }]);
+  add('clinical_orders', { id: order_id, encounter_id, catalog_item_id, kind: 'lab', status: 'reported', version: 1, ...times });
+  add('diagnostic_reports', { id: fixtureId(32), order_id, findings: { result: 'First' }, signed_by: practitioner_role, ...firstRevision, ...times });
+  add('diagnostic_reports', { id: fixtureId(31), order_id, findings: { result: 'Correction' }, signed_by: practitioner_role, revision: 2, previous_revision_id: fixtureId(32), ...times });
+  add('report_acknowledgements', { id: fixtureId(33), report_id: fixtureId(32), practitioner_role, ...times });
+  add('clinical_overrides', { id: fixtureId(34), encounter_id, rule_code: 'synthetic-rule', rationale: 'Recorded reason', practitioner_role, ...times });
+  add('prescriptions', { id: fixtureId(35), encounter_id, status: 'issued', version: 1, ...times });
+  add('clinical_orders', { id: fixtureId(60), encounter_id, catalog_item_id, kind: 'medication', status: 'issued', version: 1, ...times });
+  add('prescription_orders', { id: fixtureId(56), prescription_id: fixtureId(35), order_id: fixtureId(60) });
+  add('no_medication_conclusions', { id: fixtureId(39), encounter_id, reason: 'Synthetic review', ...times });
+  add('inventory_lots', { id: lot_id, catalog_item_id, lot_number: 'synthetic-lot', expiry_date: '2028-01-01', unit: 'unit' });
+  add('inventory_movements', { id: fixtureId(37), lot_id, quantity_delta: -2, reason: 'Dispense', ...times });
+  add('dispenses', { id: fixtureId(38), prescription_order_id: fixtureId(56), movement_id: fixtureId(37), quantity: 2, ...times });
+  add('inpatient_admissions', { id: admission_id, encounter_id, ward: 'test-ward', status: 'admitted', version: 1, ...times });
+  add('bed_occupancies', { id: fixtureId(41), admission_id, bed: 'test-bed', occupied_at: times.virtual_at, released_at: null, version: 1 });
+  add('inpatient_transfers', { id: fixtureId(42), admission_id, from_ward: 'ward-a', to_ward: 'ward-b', ...times });
+  add('order_executions', { id: fixtureId(43), order_id, practitioner_role, outcome: 'completed', ...times });
+  add('surgery_requests', { id: surgery_request_id, order_id, procedure_item_id: catalog_item_id, status: 'planned', version: 1 });
+  add('surgery_executions', { id: fixtureId(45), surgery_request_id, outcome: 'completed', ...times });
+  add('material_reservations', { id: fixtureId(46), surgery_request_id, lot_id, quantity: 1, status: 'reserved', version: 1 });
+  add('inventory_movements', { id: fixtureId(55), lot_id, quantity_delta: -1, reason: 'Material use', ...times });
+  add('material_uses', { id: fixtureId(47), reservation_id: fixtureId(46), movement_id: fixtureId(55), quantity: 1, ...times });
+  add('medical_record_archives', { id: fixtureId(48), admission_id, archive: { completed: true }, ...times });
+  add('charge_items', { id: fixtureId(49), encounter_id, order_id, description: 'Synthetic charge', ...money, ...times });
+  add('charge_adjustments', { id: fixtureId(50), charge_id: fixtureId(49), reason: 'Correction', ...money, amount_minor: -45, ...times });
+  add('payment_transactions', { id: fixtureId(51), encounter_id, ...money, ...times });
+  add('payment_tenders', { id: fixtureId(52), payment_id: fixtureId(51), method: 'synthetic-tender', ...money });
+  add('payment_allocations', { id: fixtureId(53), tender_id: fixtureId(52), charge_id: fixtureId(49), ...money });
+  add('refund_transactions', { id: fixtureId(54), allocation_id: fixtureId(53), reason: 'Correction', ...money, ...times });
+  add('regional_payer_records', { id: fixtureId(57), encounter_id, payer_code: 'test-payer', reference: 'test-reference', determination: { status: 'accepted' }, ...times });
+  tx.insert(otherEpoch, 'audit_events', { id: fixtureId(14), actor: 'older-actor', practitioner_role, operation: 'older-audit', target_id: encounter_id, outcome: 'accepted', ...times });
+  tx.insert(otherWorkspace, 'patients', { id: patient_id, display_name: 'Other Workspace', birth_date: null, version: 1 });
+  return names;
+}
