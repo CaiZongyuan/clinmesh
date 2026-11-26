@@ -41,7 +41,7 @@ import {
 } from '@clinmesh/contracts/clinical-scores'
 import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
 import { guidelineTopicQuerySchema } from '@clinmesh/contracts/guideline-topics'
-import { orderSetDraftQuerySchema, orderSetTemplateListQuerySchema } from '@clinmesh/contracts/order-set-templates'
+import { inpatientOrderSetDraftQuerySchema, orderSetDraftQuerySchema, orderSetTemplateListQuerySchema } from '@clinmesh/contracts/order-set-templates'
 import { inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgExplainInputSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
 import { inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionSaveInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
@@ -56,7 +56,7 @@ import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPrevie
 import { inpatientDischargeInputSchema, inpatientDischargeIssueInputSchema, inpatientSettleInputSchema, inpatientDepartInputSchema,
   inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema,
   inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
-import { inpatientSurgeryRequestBodySchema, inpatientLegacySurgeryRequestBodySchema, inpatientSurgeryConfirmConsentBodySchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema, inpatientSurgeryCompletionReviewInputSchema, inpatientSurgeryCompletionPreviewSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientSurgeryRequestBodySchema, inpatientLegacySurgeryRequestBodySchema, inpatientSurgeryConfirmConsentBodySchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgeryRecordMedicationInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema, inpatientSurgeryCompletionReviewInputSchema, inpatientSurgeryCompletionPreviewSchema, inpatientSurgeryConvertToPciInputSchema, inpatientSurgeryFinalizeStandbyInputSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -1927,6 +1927,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(inpatient.surgery.recordMaterial(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/record-medication', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientSurgeryRecordMedicationInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.surgery.recordMedication(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/supplement-material', async context => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -1960,6 +1967,20 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         identity.assertTrustedMutation(context.req.raw.headers)
         const body = z.object({ input: inpatientSurgeryExecuteInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
         return context.json(inpatient.surgery.execute(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/convert-to-pci', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientSurgeryConvertToPciInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.surgery.convertToPci(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/finalize-standby', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientSurgeryFinalizeStandbyInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.surgery.finalizeStandby(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/inpatient/transfer-catalog', async context=>{
@@ -2098,8 +2119,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/order-set-drafts', async context => {
       try {
-        const query = orderSetDraftQuerySchema.parse(context.req.query())
-        return context.json(inpatient.workflow.orderSets.readInpatient(inpatient, await actor(context), context.req.param('admissionId'), query.templateId))
+        const query = inpatientOrderSetDraftQuerySchema.parse(context.req.query())
+        return context.json(inpatient.workflow.orderSets.readInpatient(inpatient, await actor(context), context.req.param('admissionId'), {
+          ...(query.surgeryExecutionId === undefined ? {} : { surgeryExecutionId: query.surgeryExecutionId }),
+          ...(query.templateId === undefined ? {} : { templateId: query.templateId }),
+        }))
       } catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/disease-packs', async context => {

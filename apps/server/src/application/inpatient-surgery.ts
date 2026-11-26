@@ -2,36 +2,58 @@ import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import { pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
 import {
+  medicationPackageInsertSchema,
+  medicationRouteSchema,
+  medicationSafetyRuleSchema,
+} from '@clinmesh/contracts/medication-safety'
+import {
   anesthesiaMethodSchema,
+  inpatientAdHocPciConversionSchema,
+  inpatientBaseStockMedicationSchema,
+  inpatientConsentConfirmationSchema,
   inpatientLegacySurgeryRequestInputSchema,
   inpatientMaterialItemSchema,
   inpatientProcedureItemSchema,
+  inpatientProcedureNursingBindingSchema,
   inpatientSurgeryActionInputSchema,
   inpatientSurgeryCatalogSchema,
   inpatientSurgeryCompleteInputSchema,
   inpatientSurgeryCompletionReviewInputSchema,
   inpatientSurgeryConfirmConsentInputSchema,
+  inpatientSurgeryConvertToPciInputSchema,
   inpatientSurgeryCorrectMaterialInputSchema,
   inpatientSurgeryExecuteInputSchema,
+  inpatientSurgeryFinalizeStandbyInputSchema,
   inpatientSurgeryLocationSchema,
   inpatientSurgeryMaterialHistorySchema,
   inpatientSurgeryMaterialSelectionSchema,
+  inpatientSurgeryMedicationSelectionSchema,
+  inpatientSurgeryNursingChargeSchema,
   inpatientSurgeryPractitionerSchema,
   inpatientSurgeryRecordMaterialInputSchema,
+  inpatientSurgeryRecordMedicationInputSchema,
   inpatientSurgeryRequestInputSchema,
   inpatientSurgeryRequestSchema,
   inpatientSurgeryExecutionSchema,
   inpatientSurgerySchema,
   inpatientSurgeryStartInputSchema,
   inpatientSurgerySupplementMaterialInputSchema,
+  preopOrderPolicySchema,
+  surgeryExecutionStageSchema,
   surgeryTypeSchema,
+  type InpatientBaseStockMedication,
+  type InpatientProcedureNursingBinding,
+  type SurgeryExecutionStage,
   type SurgeryLocationId,
 } from '@clinmesh/contracts/inpatient-surgery'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { ActorContext, CommandTransaction } from './command-executor.ts'
 import type { InpatientEffects } from './inpatient-billing.ts'
+import { freezeCatalogCoverageJson, readConfigInsuranceCoverage } from './catalog-insurance-coverage.ts'
+import { resolveCatalogMedicationRoutes } from './inpatient-medication-config.ts'
 import { businessDate } from './inpatient-orders.ts'
 import { readMaterialSnapshot } from './scenario-data/cardiovascular-materials.ts'
+import { standardMedicationDoseBasis, standardMedicationSafety } from './scenario-data/standard-medications.ts'
 import { planSurgeryCompletion, materialReductions, type MaterialChargeBasis } from './inpatient-surgery-completion.ts'
 import {
   SURGICAL_LOCATIONS,
@@ -39,10 +61,21 @@ import {
   buildSurgeryServiceRequestFields,
   formatPractitionerDisplay,
   formatSurgicalConsentSummaryNote,
+  isCoronaryAngiographyProcedureCode,
 } from '@clinmesh/core/inpatient-surgery-consent'
 import {
+  DEFAULT_INTRAOPERATIVE_MEDICATION_NOTE,
+  buildSurgicalMedicationPackages,
+  linkedNursingForProcedureId,
+  surgicalMedicationSafetyDose,
+  validateSurgicalMedicationSelection,
+} from '@clinmesh/core/inpatient-surgery-medications'
+import { medicationRouteConcept } from '@clinmesh/core/medication-safety'
+import {
+  DEFAULT_AD_HOC_PCI_CONVERSION_NOTE,
   DEFAULT_ROUTINE_EXECUTE_NOTE,
   DEFAULT_ROUTINE_START_NOTE,
+  DEFAULT_STANDBY_FINALIZATION_NOTE,
   evaluateCompletionNoteRequirement,
   evaluateExecuteNoteRequirement,
   formatPlannedReservationMaterialNote,
@@ -90,6 +123,37 @@ const storedPractitionerContentSchema = z.object({
   }).loose()).optional(),
 }).loose()
 
+const surgicalBaseMedicationConfigSchema = z.object({
+  unit: z.string().trim().min(1),
+  defaultRouteCode: medicationRouteSchema.optional(),
+  allowedRouteCodes: z.array(medicationRouteSchema).min(1).optional(),
+  route: z.string().trim().min(1).optional(),
+  product: z.object({
+    strength: z.string().min(1),
+    dosageForm: z.string().min(1),
+    packageDescription: z.string().min(1),
+  }).loose(),
+  inpatientDoses: z.array(z.object({
+    doseText: z.string().trim().min(1).max(120),
+    quantity: z.number().int().positive().max(1000),
+  })).default([]),
+  inpatientDoseBasis: z.object({
+    amount: z.number().positive(),
+    unit: z.string().trim().min(1),
+  }).optional(),
+  inpatientMaxDoseQuantity: z.number().int().positive().max(1000).optional(),
+  safety: medicationSafetyRuleSchema.optional(),
+  packageInsert: medicationPackageInsertSchema.optional().catch(undefined),
+}).loose()
+
+const surgicalNursingServiceConfigSchema = z.object({
+  billingUnit: z.object({ display: z.string().min(1) }).loose(),
+  chargeDefinition: z.object({ priceFen: z.number().int().positive().safe() }).loose(),
+  surgicalProcedureIds: z.array(z.string().min(1)).min(1),
+}).loose()
+
+const storedLinkedNursingSchema = inpatientSurgeryNursingChargeSchema.omit({ chargeId: true })
+
 export class InpatientSurgery {
   #catalogCache: {
     key: string
@@ -113,15 +177,115 @@ export class InpatientSurgery {
     }
     return this.#catalogCache
   }
-  catalog(context: ActorContext) {
+  catalog(context: ActorContext): z.infer<typeof inpatientSurgeryCatalogSchema> {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     const cached = this.#ensureCatalogItems(context)
+    const { medications: baseStockMedications, inactiveIds } = this.#readBaseStockMedications(context)
+    const { bindings: nursingBindings } = this.#readNursingBindings(context)
     return {
       procedures: cached.procedures,
       materials: cached.materials,
       locations: this.#readLocations(context),
       practitioners: this.#readPractitioners(context),
+      baseStockMedications,
+      medicationPackages: buildSurgicalMedicationPackages(baseStockMedications, inactiveIds),
+      nursingBindings,
     }
+  }
+  #readBaseStockMedications(context: RepositoryContext) {
+    const rows = z.array(z.object({
+      item_id: z.string(),
+      code: z.string(),
+      name_zh: z.string(),
+      version: z.number().int().positive(),
+      active: z.number(),
+      price_fen: z.number().int().nonnegative(),
+      config_json: z.string(),
+    })).parse(
+      this.owner.database.driver.prepare(`
+        SELECT item_id, code, name_zh, version, active, price_fen, config_json
+        FROM outpatient_catalog
+        WHERE workspace_id=? AND epoch=? AND kind='medication'
+          AND json_extract(config_json,'$.surgicalBaseStock')=1
+        ORDER BY item_id
+      `).all(context.workspaceId, context.epoch),
+    )
+    const inactiveIds = new Set<string>()
+    const configByItemId = new Map<string, string>()
+    const medications: InpatientBaseStockMedication[] = []
+    for (const row of rows) {
+      if (row.active !== 1) {
+        inactiveIds.add(row.item_id)
+        continue
+      }
+      if (row.price_fen <= 0) continue
+      const parsedConfig = surgicalBaseMedicationConfigSchema.safeParse(JSON.parse(row.config_json))
+      if (!parsedConfig.success) continue
+      const config = parsedConfig.data
+      const routes = resolveCatalogMedicationRoutes(config, row.name_zh)
+      const safety = config.safety ?? standardMedicationSafety(row.item_id)
+      const doseBasis = config.inpatientDoseBasis ?? standardMedicationDoseBasis(row.item_id)
+      const singleLimitQuantity = safety?.doseLimits.unit === config.unit
+        ? Math.floor(safety.doseLimits.maximumSingleDose)
+        : safety && doseBasis && doseBasis.unit === safety.doseLimits.unit
+          ? Math.floor(safety.doseLimits.maximumSingleDose / doseBasis.amount)
+          : 100
+      const maxDoseQuantity = Math.min(
+        1000,
+        config.inpatientMaxDoseQuantity
+          ?? Math.max(1, singleLimitQuantity, ...config.inpatientDoses.map(dose => dose.quantity)),
+      )
+      configByItemId.set(row.item_id, row.config_json)
+      medications.push(inpatientBaseStockMedicationSchema.parse({
+        id: row.item_id,
+        version: row.version,
+        code: row.code,
+        display: row.name_zh,
+        unit: config.unit,
+        priceFen: row.price_fen,
+        strength: config.product.strength,
+        packageDescription: config.product.packageDescription,
+        ...routes,
+        doses: config.inpatientDoses,
+        ...(doseBasis === undefined ? {} : { doseBasis }),
+        maxDoseQuantity,
+        ...(safety === undefined ? {} : { safety }),
+        ...(config.packageInsert === undefined ? {} : { packageInsert: config.packageInsert }),
+      }))
+    }
+    return { medications, inactiveIds, configByItemId }
+  }
+  #readNursingBindings(context: RepositoryContext) {
+    const rows = z.array(z.object({
+      service_id: z.string(),
+      name_zh: z.string(),
+      version: z.number().int().positive(),
+      config_json: z.string(),
+    })).parse(
+      this.owner.database.driver.prepare(`
+        SELECT service_id, name_zh, version, config_json
+        FROM hospital_service_catalog
+        WHERE workspace_id=? AND epoch=? AND active=1
+          AND json_extract(config_json,'$.inpatientBillingTrigger')='surgery-completion'
+        ORDER BY service_id
+      `).all(context.workspaceId, context.epoch),
+    )
+    const configByServiceId = new Map<string, string>()
+    const bindings: InpatientProcedureNursingBinding[] = []
+    for (const row of rows) {
+      const parsed = surgicalNursingServiceConfigSchema.safeParse(JSON.parse(row.config_json))
+      if (!parsed.success) continue
+      configByServiceId.set(row.service_id, row.config_json)
+      bindings.push(inpatientProcedureNursingBindingSchema.parse({
+        serviceId: row.service_id,
+        serviceVersion: row.version,
+        display: row.name_zh,
+        unit: parsed.data.billingUnit.display,
+        priceFen: parsed.data.chargeDefinition.priceFen,
+        procedureIds: parsed.data.surgicalProcedureIds,
+      }))
+    }
+    return { bindings, configByServiceId }
   }
   #readLocations(context: RepositoryContext) {
     const rows = z.array(z.object({ resource_id: z.string(), content_json: z.string() })).parse(
@@ -210,6 +374,10 @@ export class InpatientSurgery {
         ...(row.surgeon_json === null ? {} : { surgeon: JSON.parse(row.surgeon_json) }),
         ...(row.assistant_json === null ? {} : { assistant: JSON.parse(row.assistant_json) }),
         ...(row.anesthesia_method === null ? {} : { anesthesiaMethod: row.anesthesia_method }),
+        preopOrderPolicy: row.preop_order_policy,
+        ...(row.standby_ad_hoc_pci === 1 ? { standbyAdHocPci: true } : {}),
+        ...(row.ad_hoc_pci_json === null ? {} : { adHocPci: JSON.parse(row.ad_hoc_pci_json) }),
+        ...(row.standby_finalization_json === null ? {} : { standbyFinalization: JSON.parse(row.standby_finalization_json) }),
         reason: row.reason, requestedAt: row.requested_at,
         requestedBy: row.requested_by, organizationId: row.organization_id,
         ...(row.preop_check_json === null ? {} : { preopCheck: JSON.parse(row.preop_check_json) }),
@@ -243,20 +411,80 @@ export class InpatientSurgery {
           LEFT JOIN inpatient_surgery_material_correction c ON c.workspace_id=m.workspace_id AND c.epoch=m.epoch AND c.material_use_id=m.material_use_id
           WHERE m.workspace_id=? AND m.epoch=? AND m.execution_id=? ORDER BY m.material_use_id`).all(admissionId, context.workspaceId, context.epoch, row.execution_id))
       const uses = materials.map(item => ({ id: item.material_use_id, item: JSON.parse(item.item_json), quantity: item.quantity, amountFen: item.amount_fen }))
+      const medicationRows = z.array(z.object({
+        medication_use_id: z.string(),
+        administration_id: z.string(),
+        medication_id: z.string(),
+        catalog_version: z.number().int().positive(),
+        display: z.string(),
+        dose_text: z.string(),
+        quantity: z.number().int().positive(),
+        unit: z.string(),
+        route_code: medicationRouteSchema,
+        price_fen: z.number().int().nonnegative(),
+        amount_fen: z.number().int().nonnegative(),
+        recorded_at: z.string(),
+        recorded_by: z.string(),
+        practitioner_role_id: z.string(),
+        note: z.string(),
+        charge_id: z.string().nullable(),
+      })).parse(this.owner.database.driver.prepare(`
+        SELECT m.*, b.charge_id
+        FROM inpatient_surgery_medication m
+        LEFT JOIN inpatient_charge b
+          ON b.workspace_id=m.workspace_id AND b.epoch=m.epoch AND b.source_id=m.medication_use_id AND b.kind='medication' AND b.admission_id=?
+        WHERE m.workspace_id=? AND m.epoch=? AND m.execution_id=?
+        ORDER BY julianday(m.recorded_at), m.medication_use_id
+      `).all(admissionId, context.workspaceId, context.epoch, row.execution_id))
+      const medications = medicationRows.map(item => ({
+        id: item.medication_use_id,
+        administrationId: item.administration_id,
+        medicationId: item.medication_id,
+        catalogVersion: item.catalog_version,
+        display: item.display,
+        doseText: item.dose_text,
+        quantity: item.quantity,
+        unit: item.unit,
+        routeCode: item.route_code,
+        priceFen: item.price_fen,
+        amountFen: item.amount_fen,
+        recordedAt: item.recorded_at,
+        recordedBy: item.recorded_by,
+        practitionerRoleId: item.practitioner_role_id,
+        note: item.note,
+        chargeId: item.charge_id,
+      }))
+      const linkedNursing = row.linked_nursing_json === null
+        ? undefined
+        : (() => {
+            const parsed = storedLinkedNursingSchema.parse(JSON.parse(row.linked_nursing_json))
+            const charge = z.object({ charge_id: z.string() }).optional().parse(
+              this.owner.database.driver.prepare(
+                "SELECT charge_id FROM inpatient_charge WHERE workspace_id=? AND epoch=? AND admission_id=? AND kind='service' AND source_id=?",
+              ).get(context.workspaceId, context.epoch, admissionId, row.execution_id),
+            )
+            return { ...parsed, chargeId: charge?.charge_id ?? null }
+          })()
+      const actualProcedure = inpatientProcedureItemSchema.parse(JSON.parse(row.actual_procedure_json))
+      const sameSessionNursingIncluded = row.same_session_nursing_included === 1
       return inpatientSurgeryExecutionSchema.parse({ id: row.execution_id, admissionId, requestId: row.request_id,
-        actualProcedure: JSON.parse(row.actual_procedure_json), performedAt: row.performed_at, performedBy: row.performed_by,
+        ...(row.execution_stage === 'ad-hoc-pci' ? { executionStage: 'ad-hoc-pci' as const } : {}),
+        actualProcedure, performedAt: row.performed_at, performedBy: row.performed_by,
         practitionerRoleId: row.practitioner_role_id, organizationId: row.organization_id, note: row.note,
         ...(row.completed_at === null ? {} : { completedAt: row.completed_at }), materials: uses.filter((_item, index) => materials[index]!.correction_json === null),
         materialHistory: materials.map((item, index) => ({ ...uses[index], recordedAt: item.recorded_at ?? row.performed_at,
           recordedBy: item.recorded_by ?? row.performed_by, practitionerRoleId: item.practitioner_role_id ?? row.practitioner_role_id,
           recordingKind: item.recording_kind ?? 'initial', note: item.note ?? row.note, reservationId: item.reservation_id, chargeId: item.charge_id, correction: item.correction_json === null ? null : JSON.parse(item.correction_json) })),
+        ...(medications.length === 0 ? {} : { medications }),
+        ...(linkedNursing === undefined ? {} : { linkedNursing }),
+        ...(sameSessionNursingIncluded ? { sameSessionNursingIncluded: true as const } : {}),
       })
     })
   }
   /** 调用者先授权；目标护士在接收事务内检查时尚未接管住院。 */
   assertNoPending(context: ActorContext, admissionId: string) {
-    if (this.owner.database.driver.prepare("SELECT 1 FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? AND status IN ('requested','ready') LIMIT 1")
-      .get(context.workspaceId, context.epoch, admissionId)) throw new InpatientError('INPATIENT_SURGERY_PENDING', '尚有未实施或未取消的手术申请')
+    if (this.owner.database.driver.prepare("SELECT 1 FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? AND status IN ('requested','ready','standby-pci') LIMIT 1")
+      .get(context.workspaceId, context.epoch, admissionId)) throw new InpatientError('INPATIENT_SURGERY_PENDING', '尚有未实施、待同台决策或未取消的手术申请')
   }
   assertExecution(context: ActorContext, admissionId: string, executionId: string) {
     this.owner.admissionBinding(context, admissionId)
@@ -289,6 +517,10 @@ export class InpatientSurgery {
       const admission = this.owner.orders.assertAdmitted(context, input.admissionId), now = this.owner.virtualTime(context)
       if (Date.parse(input.plannedFor) < Date.parse(now)) throw new InpatientError('INPATIENT_SURGERY_TIME_CONFLICT', '计划手术时间不能早于当前虚拟时间')
       const item = this.procedure(context, input.procedureId, input.catalogVersion), id = uuidv7()
+      const standbyAdHocPci = input.standbyAdHocPci === true
+      if (standbyAdHocPci && !isCoronaryAngiographyProcedureCode(item.coding.code)) {
+        throw new InpatientError('INPATIENT_SURGERY_STANDBY_PCI_UNSUPPORTED', '仅冠脉造影术式（88.5500 / 88.5600）支持勾选备选同台 PCI', 400)
+      }
       const location = this.#surgicalLocation(context, input.locationId)
       const surgeon = this.#surgicalPractitioner(context, input.surgeonPractitionerId)
       const assistant = input.assistantPractitionerId === undefined ? undefined : this.#surgicalPractitioner(context, input.assistantPractitionerId)
@@ -306,11 +538,11 @@ export class InpatientSurgery {
         : { effects: [] }
       this.owner.database.driver.prepare(`INSERT INTO inpatient_surgery_request(
         workspace_id,epoch,request_id,admission_id,status,surgery_type,planned_procedure_json,planned_for,
-        location_json,surgeon_json,assistant_json,anesthesia_method,reason,requested_at,requested_by,organization_id
-      ) VALUES(?,?,?,?,'requested',?,?,?,?,?,?,?,?,?,?,?)`).run(
+        location_json,surgeon_json,assistant_json,anesthesia_method,preop_order_policy,standby_ad_hoc_pci,reason,requested_at,requested_by,organization_id
+      ) VALUES(?,?,?,?,'requested',?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
         context.workspaceId, context.epoch, id, admission.id, input.surgeryType, JSON.stringify(item), input.plannedFor,
         JSON.stringify(location), JSON.stringify(surgeon), assistant ? JSON.stringify(assistant) : null, input.anesthesiaMethod,
-        input.reason, now, context.actorId, admission.organizationId,
+        input.preopOrderPolicy, standbyAdHocPci ? 1 : 0, input.reason, now, context.actorId, admission.organizationId,
       )
       this.owner.fhir.create(context, {
         resourceType: 'ServiceRequest',
@@ -323,6 +555,8 @@ export class InpatientSurgery {
           surgeon,
           assistant,
           anesthesiaMethod: input.anesthesiaMethod,
+          preopOrderPolicy: input.preopOrderPolicy,
+          ...(standbyAdHocPci ? { standbyAdHocPci: true } : {}),
         }),
         code: { concept: { coding: [clinicalCoding(item.coding)], text: item.coding.display } },
         subject: { reference: `Patient/${admission.patientId}` },
@@ -362,7 +596,7 @@ export class InpatientSurgery {
       this.owner.assertNotArchived(context, input.admissionId)
       const admission = this.owner.orders.assertAdmitted(context, input.admissionId)
       const row = this.currentRequest(context, input)
-      if (this.executionForRequest(context, row.request_id)) throw new InpatientError('INPATIENT_SURGERY_IN_PROGRESS', '手术已经开始，不能撤销或重做术前准备')
+      if (this.hasAnyExecution(context, row.request_id)) throw new InpatientError('INPATIENT_SURGERY_IN_PROGRESS', '手术已经开始，不能撤销或重做术前准备')
       if (row.consent_confirmation_json !== null) throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '该准备事实已记录，请刷新手术记录')
       const now = this.owner.virtualTime(context)
       const patient = this.owner.fhir.read(context, 'Patient', admission.patientId)
@@ -399,6 +633,7 @@ export class InpatientSurgery {
           anesthesiaMethod: row.anesthesia_method,
           surgeonName: surgeon ? formatPractitionerDisplay(surgeon) : null,
           assistantName: assistant ? formatPractitionerDisplay(assistant) : null,
+          ...(row.standby_ad_hoc_pci === 1 ? { standbyAdHocPci: true } : {}),
         },
         individualizedRisks: input.individualizedRisks,
         signature: {
@@ -433,7 +668,7 @@ export class InpatientSurgery {
       this.owner.assertNotArchived(context,input.admissionId)
       this.owner.orders.assertAdmitted(context, input.admissionId)
       const row = this.currentRequest(context, input)
-      if (this.executionForRequest(context, row.request_id)) throw new InpatientError('INPATIENT_SURGERY_IN_PROGRESS', '手术已经开始，不能撤销或重做术前准备')
+      if (this.hasAnyExecution(context, row.request_id)) throw new InpatientError('INPATIENT_SURGERY_IN_PROGRESS', '手术已经开始，不能撤销或重做术前准备')
       const column = action === 'check-preop' ? 'preop_check_json' : 'cancellation_json'
       if (row[column] !== null) throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '该准备事实已记录，请刷新手术记录')
       const fact = JSON.stringify({ actorId: context.actorId, practitionerRoleId: context.practitionerRoleId, recordedAt: this.owner.virtualTime(context), note: input.note })
@@ -458,12 +693,186 @@ export class InpatientSurgery {
       return { data: this.read(context, input.admissionId), effects }
     })
   }
+  convertToPci(context: ActorContext, raw: unknown, idempotencyKey: string) {
+    const input = inpatientSurgeryConvertToPciInputSchema.parse(raw)
+    return this.owner.commands.execute({
+      context,
+      input,
+      idempotencyKey,
+      operation: 'inpatient.surgery.convert-to-pci',
+      expectedVersions: {},
+      dataSchema: inpatientSurgerySchema,
+      authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']),
+    }, transaction => {
+      this.owner.assertNotArchived(context, input.admissionId)
+      const admission = this.owner.orders.assertAdmitted(context, input.admissionId)
+      const row = this.requestRow(context, input)
+      if (row.standby_ad_hoc_pci !== 1 || row.status !== 'standby-pci') {
+        throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '仅已完成造影且处于同台 PCI 待决策状态的备选申请可直接转行 PCI')
+      }
+      if (row.preop_check_json === null || row.consent_confirmation_json === null) {
+        throw new InpatientError('INPATIENT_SURGERY_NOT_READY', '原术前核对或联合知情同意书缺失，不能直接转行同台 PCI')
+      }
+      const consent = inpatientConsentConfirmationSchema.parse(JSON.parse(row.consent_confirmation_json))
+      if (consent.document?.templateId !== 'coronary-angiography-ad-hoc-pci') {
+        throw new InpatientError('INPATIENT_SURGERY_CONSENT_REQUIRED', '未签署冠脉造影及必要时同台 PCI 联合知情同意书，不能直接转行同台 PCI')
+      }
+      if (row.ad_hoc_pci_json !== null || this.executionForStage(context, row.request_id, 'ad-hoc-pci')) {
+        throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '该申请已存在同台 PCI 转换或执行记录，请刷新核对')
+      }
+      const primaryExecution = this.executionForStage(context, row.request_id, 'primary')
+      if (!primaryExecution || primaryExecution.status !== 'completed') {
+        throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '第一阶段冠脉造影尚未完成，不能转行同台 PCI')
+      }
+      const report = this.owner.angiography.reports(context, admission.id).find(item => item.procedureId === primaryExecution.execution_id)
+      if (!report || report.status === 'processing') {
+        throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '冠脉造影报告仍在生成中，请待造影报告出具后再确认同台转行 PCI')
+      }
+      const usableReport = report.status === 'final'
+        || (report.status === 'partial'
+          && (report.vessels.length > 0 || report.measurements.length > 0 || report.targetSite !== null || report.conclusion !== null))
+      if (!usableReport) {
+        throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '本次冠脉造影未产出有效造影报告，不能直接转行同台 PCI，请仅完成造影结束本台手术')
+      }
+      const procedure = this.procedure(context, input.procedureId, input.catalogVersion)
+      if (!pciSelectionProcedureCodes.includes(procedure.coding.code)) {
+        throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '同台转行仅支持冠脉介入治疗（PCI）术式', 400)
+      }
+      const quality = this.owner.workflow.clinicalQuality.enforce(context, {
+        check: this.owner.workflow.clinicalQuality.inpatientPciPlan(this.owner, context, admission.id, {
+          reportReferences: [`DiagnosticReport/${report.id}`],
+        }),
+        operation: 'inpatient.surgery.convert-to-pci',
+        override: input.clinicalOverride,
+        patientId: admission.patientId,
+        subjectReference: `Encounter/${admission.id}`,
+      })
+      const now = this.owner.virtualTime(context)
+      const conversionNote = input.note?.trim() || DEFAULT_AD_HOC_PCI_CONVERSION_NOTE
+      const conversion = inpatientAdHocPciConversionSchema.parse({
+        status: 'converted',
+        procedure,
+        convertedAt: now,
+        convertedBy: context.actorId,
+        practitionerRoleId: context.practitionerRoleId!,
+        note: conversionNote,
+        angiographyExecutionId: primaryExecution.execution_id,
+        angiographyReportId: report.id,
+      })
+      this.owner.database.driver.prepare(
+        'UPDATE inpatient_surgery_request SET ad_hoc_pci_json=?, version=version+1 WHERE workspace_id=? AND epoch=? AND request_id=? AND version=?',
+      ).run(JSON.stringify(conversion), context.workspaceId, context.epoch, row.request_id, row.version)
+      const effects: InpatientEffects = [
+        { kind: 'updated', reference: `InpatientSurgeryRequest/${row.request_id}`, versionId: String(row.version + 1) },
+        ...quality.effects,
+      ]
+      this.updateRequestProjection(
+        context,
+        row.request_id,
+        'active',
+        effects,
+        `台内转行同台 PCI（${procedure.coding.code} ${procedure.coding.display}）：${conversionNote}`,
+      )
+      this.owner.pciSelection.prepareDraft(context, admission.id, row.request_id)
+      this.owner.materialEstimates.automatic(context, admission.id, row.request_id, transaction, 'ad-hoc-pci')
+      return {
+        data: this.read(context, admission.id),
+        effects,
+        ...(quality.receipt === undefined ? {} : { clinicalQuality: quality.receipt }),
+      }
+    })
+  }
+  finalizeStandby(context: ActorContext, raw: unknown, idempotencyKey: string) {
+    const input = inpatientSurgeryFinalizeStandbyInputSchema.parse(raw)
+    return this.owner.commands.execute({
+      context,
+      input,
+      idempotencyKey,
+      operation: 'inpatient.surgery.finalize-standby',
+      expectedVersions: {},
+      dataSchema: inpatientSurgerySchema,
+      authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']),
+    }, () => {
+      this.owner.assertNotArchived(context, input.admissionId)
+      this.owner.orders.assertAdmitted(context, input.admissionId)
+      const row = this.requestRow(context, input)
+      if (row.status !== 'standby-pci') {
+        throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '仅处于同台 PCI 待决策状态的申请可结束待机收口')
+      }
+      const pciExecution = this.executionForStage(context, row.request_id, 'ad-hoc-pci')
+      if (pciExecution) {
+        throw new InpatientError('INPATIENT_SURGERY_IN_PROGRESS', '同台 PCI 已经开始或完成，不能通过待机收口结束')
+      }
+      const existingAdHoc = row.ad_hoc_pci_json === null
+        ? undefined
+        : inpatientAdHocPciConversionSchema.parse(JSON.parse(row.ad_hoc_pci_json))
+      const explicitNote = input.note?.trim() || undefined
+      if (existingAdHoc?.status === 'converted' && !explicitNote) {
+        throw new InpatientError('INPATIENT_SURGERY_NOTE_REQUIRED', '放弃已确认转换的同台 PCI 计划须填写临床原因', 400)
+      }
+      const now = this.owner.virtualTime(context)
+      const finalNote = explicitNote ?? DEFAULT_STANDBY_FINALIZATION_NOTE
+      const finalization = {
+        actorId: context.actorId,
+        practitionerRoleId: context.practitionerRoleId!,
+        recordedAt: now,
+        note: finalNote,
+      }
+      const nextAdHoc = existingAdHoc?.status === 'converted'
+        ? inpatientAdHocPciConversionSchema.parse({
+            ...existingAdHoc,
+            status: 'cancelled',
+            cancellation: finalization,
+          })
+        : existingAdHoc
+      this.owner.database.driver.prepare(
+        "UPDATE inpatient_surgery_request SET status='completed', ad_hoc_pci_json=?, standby_finalization_json=?, version=version+1 WHERE workspace_id=? AND epoch=? AND request_id=? AND version=?",
+      ).run(
+        nextAdHoc === undefined ? null : JSON.stringify(nextAdHoc),
+        JSON.stringify(finalization),
+        context.workspaceId,
+        context.epoch,
+        row.request_id,
+        row.version,
+      )
+      const effects: InpatientEffects = [
+        { kind: 'updated', reference: `InpatientSurgeryRequest/${row.request_id}`, versionId: String(row.version + 1) },
+      ]
+      this.owner.drg.releaseStageReservationsInTransaction(
+        context,
+        input.admissionId,
+        row.request_id,
+        'ad-hoc-pci',
+        `已放弃同台 PCI：${finalNote}`,
+        effects,
+      )
+      if (existingAdHoc?.status === 'converted') {
+        this.owner.materialEstimates.cancelStageInTransaction(context, input.admissionId, row.request_id, 'ad-hoc-pci', effects)
+        this.owner.guidelineAdvice.cancel(context, input.admissionId, row.request_id)
+      }
+      this.updateRequestProjection(context, row.request_id, 'completed', effects, finalNote)
+      if (row.preop_order_policy === 'stop-on-completion') {
+        const primaryExecution = this.executionForStage(context, row.request_id, 'primary')
+        const procedureDisplay = primaryExecution
+          ? inpatientProcedureItemSchema.parse(JSON.parse(primaryExecution.actual_procedure_json)).coding.display
+          : inpatientProcedureItemSchema.parse(JSON.parse(row.planned_procedure_json)).coding.display
+        this.owner.orders.requestStopForSurgeryCompletion(
+          context,
+          row.admission_id,
+          row.request_id,
+          primaryExecution?.execution_id ?? row.request_id,
+          procedureDisplay,
+          effects,
+        )
+      }
+      return { data: this.read(context, input.admissionId), effects }
+    })
+  }
   execute(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientSurgeryExecuteInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.surgery.execute', expectedVersions: {}, dataSchema: inpatientSurgerySchema,
       authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, transaction => {
-      const row = this.readyRequest(context, input), effects: InpatientEffects = []
-      const planned = inpatientProcedureItemSchema.parse(JSON.parse(row.planned_procedure_json))
+      const { row, stage, planned, partOfExecutionId } = this.readyRequest(context, input), effects: InpatientEffects = []
       const actual = this.procedure(context, input.procedureId, input.catalogVersion)
       const selections = input.materials.map(selection => {
         if (selection.reservationId === undefined) return selection
@@ -476,25 +885,29 @@ export class InpatientSurgery {
         return { ...selection, expectedReservationVersion: reservation.version }
       })
       const activeRequestReservations = z.array(z.object({ reservation_id: z.string(), quantity: z.number() })).parse(this.owner.database.driver.prepare(
-        "SELECT reservation_id, quantity FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? AND status='reserved'")
-        .all(context.workspaceId, context.epoch, input.admissionId, row.request_id))
+        "SELECT reservation_id, quantity FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? AND surgery_stage=? AND status='reserved'")
+        .all(context.workspaceId, context.epoch, input.admissionId, row.request_id, stage))
       const { noteRequired, procedureChanged } = evaluateExecuteNoteRequirement({
         actual,
         planned,
         materials: selections,
         activeRequestReservations: activeRequestReservations.map(item => ({ id: item.reservation_id, quantity: item.quantity })),
-        planBasis: this.owner.materialPlans.forRequestFacts(context, input.admissionId, row.request_id),
+        planBasis: this.owner.materialPlans.forRequestFacts(context, input.admissionId, row.request_id, stage),
       })
       const explicitNote = input.note?.trim() || undefined
       if (noteRequired && !explicitNote) {
         throw new InpatientError('INPATIENT_SURGERY_NOTE_REQUIRED', procedureChanged ? '实际术式偏离原计划术式，请填写变更原因' : '存在计划外耗材或未按本台预留完整消耗，请填写补录依据', 400)
       }
       const resolvedNote = explicitNote ?? DEFAULT_ROUTINE_EXECUTE_NOTE
-      const execution = this.createExecution(context, row, actual, resolvedNote, 'completed', effects)
+      const execution = this.createExecution(context, row, actual, resolvedNote, 'completed', effects, stage, partOfExecutionId)
       this.billProcedure(context, execution, effects)
       for (const selection of selections) {
         this.writeMaterial(context, execution, selection, explicitNote, effects)
       }
+      for (const medication of input.medications ?? []) {
+        this.writeMedication(context, execution, medication, explicitNote, effects)
+      }
+      this.billLinkedNursing(context, execution, effects)
       this.finish(context, row, execution, resolvedNote, effects, transaction)
       return { data: this.read(context, input.admissionId), effects }
     })
@@ -503,14 +916,13 @@ export class InpatientSurgery {
     const input = inpatientSurgeryStartInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.surgery.start', expectedVersions: {}, dataSchema: inpatientSurgerySchema,
       authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, () => {
-      const row = this.readyRequest(context, input), effects: InpatientEffects = []
-      const planned = inpatientProcedureItemSchema.parse(JSON.parse(row.planned_procedure_json))
+      const { row, stage, planned, partOfExecutionId } = this.readyRequest(context, input), effects: InpatientEffects = []
       const actual = this.procedure(context, input.procedureId, input.catalogVersion)
       const explicitNote = input.note?.trim() || undefined
       if (!isSamePlannedProcedure(actual, planned) && !explicitNote) {
         throw new InpatientError('INPATIENT_SURGERY_NOTE_REQUIRED', '实际术式偏离原计划术式，请填写变更原因', 400)
       }
-      this.createExecution(context, row, actual, explicitNote ?? DEFAULT_ROUTINE_START_NOTE, 'in-progress', effects)
+      this.createExecution(context, row, actual, explicitNote ?? DEFAULT_ROUTINE_START_NOTE, 'in-progress', effects, stage, partOfExecutionId)
       this.advanceRequest(context, row, effects)
       return { data: this.read(context, input.admissionId), effects }
     })
@@ -519,16 +931,43 @@ export class InpatientSurgery {
     const input = inpatientSurgeryRecordMaterialInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.surgery.record-material', expectedVersions: {}, dataSchema: inpatientSurgerySchema,
       authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, () => {
-      this.owner.assertNotArchived(context, input.admissionId)
-      this.owner.orders.assertAdmitted(context, input.admissionId)
-      const request = this.currentRequest(context, input), execution = this.executionForRequest(context, request.request_id)
-      if (!execution || execution.execution_id !== input.executionId || execution.status !== 'in-progress')
-        throw new InpatientError('INPATIENT_SURGERY_NOT_IN_PROGRESS', '须引用本次住院正在进行的手术')
+      const { request, execution } = this.#requireInProgressExecution(context, input)
       const effects: InpatientEffects = []
       this.writeMaterial(context, execution, input.material, input.note?.trim() || undefined, effects)
       this.advanceRequest(context, request, effects)
       return { data: this.read(context, input.admissionId), effects }
     })
+  }
+  recordMedication(context: ActorContext, raw: unknown, idempotencyKey: string) {
+    const input = inpatientSurgeryRecordMedicationInputSchema.parse(raw)
+    return this.owner.commands.execute({
+      context,
+      input,
+      idempotencyKey,
+      operation: 'inpatient.surgery.record-medication',
+      expectedVersions: {},
+      dataSchema: inpatientSurgerySchema,
+      authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']),
+    }, () => {
+      const { request, execution } = this.#requireInProgressExecution(context, input)
+      const effects: InpatientEffects = []
+      this.writeMedication(context, execution, input.medication, input.note?.trim() || undefined, effects)
+      this.advanceRequest(context, request, effects)
+      return { data: this.read(context, input.admissionId), effects }
+    })
+  }
+  #requireInProgressExecution(
+    context: ActorContext,
+    input: { admissionId: string; requestId: string; expectedRequestVersion: number; executionId: string },
+  ) {
+    this.owner.assertNotArchived(context, input.admissionId)
+    this.owner.orders.assertAdmitted(context, input.admissionId)
+    const request = this.inProgressRequest(context, input)
+    const execution = this.executionById(context, input.admissionId, input.executionId)
+    if (!execution || execution.request_id !== request.request_id || execution.status !== 'in-progress') {
+      throw new InpatientError('INPATIENT_SURGERY_NOT_IN_PROGRESS', '须引用本次住院正在进行的手术')
+    }
+    return { request, execution }
   }
   supplementMaterial(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientSurgerySupplementMaterialInputSchema.parse(raw)
@@ -538,8 +977,8 @@ export class InpatientSurgery {
       const admission = this.owner.admissionBinding(context, input.admissionId)
       if (admission.financialStatus !== 'open') throw new InpatientError('INPATIENT_ACCOUNT_SETTLED', '已结算住院账户不能补登记耗材')
       if (admission.status !== 'admitted') throw new InpatientError('INPATIENT_STATE_CONFLICT', '仅在院患者可以补登记术后耗材')
-      const request = this.requestRow(context, input), execution = this.executionForRequest(context, request.request_id)
-      if (request.status !== 'completed' || !execution || execution.execution_id !== input.executionId || execution.status !== 'completed')
+      const request = this.requestRow(context, input), execution = this.executionById(context, input.admissionId, input.executionId)
+      if (!['completed', 'standby-pci'].includes(request.status) || !execution || execution.request_id !== request.request_id || execution.status !== 'completed')
         throw new InpatientError('INPATIENT_SURGERY_NOT_COMPLETED', '须引用本次住院已完成的原手术')
       const effects: InpatientEffects = []
       this.writeMaterial(context, execution, input.material, input.note, effects, { addendumCharge: input.expectedCharge, recordingKind: 'postoperative-addendum' })
@@ -552,10 +991,10 @@ export class InpatientSurgery {
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.surgery.correct-material', expectedVersions: {}, dataSchema: inpatientSurgerySchema,
       authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, () => {
       this.owner.assertNotArchived(context, input.admissionId)
-      const request = this.requestRow(context, input), execution = this.executionForRequest(context, request.request_id)
+      const request = this.requestRow(context, input), execution = this.executionById(context, input.admissionId, input.executionId)
       const admission = this.owner.admissionBinding(context, input.admissionId)
       if (admission.financialStatus !== 'open') throw new InpatientError('INPATIENT_ACCOUNT_SETTLED', '已结算住院账户不能更正临床耗材记录')
-      if (!execution || execution.execution_id !== input.executionId) throw new InpatientError('INPATIENT_SURGERY_NOT_FOUND', '未找到本次住院的手术', 404)
+      if (!execution || execution.request_id !== request.request_id) throw new InpatientError('INPATIENT_SURGERY_NOT_FOUND', '未找到本次住院的手术', 404)
       const effects: InpatientEffects = []
       this.applyCorrection(context, input, execution, effects)
       this.advanceRequest(context, request, effects)
@@ -616,9 +1055,10 @@ export class InpatientSurgery {
       authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, transaction => {
       this.owner.assertNotArchived(context, input.admissionId)
       this.owner.orders.assertAdmitted(context, input.admissionId)
-      const request = this.currentRequest(context, input), execution = this.executionForRequest(context, request.request_id)
-      if (!execution || execution.execution_id !== input.executionId || execution.status !== 'in-progress')
+      const request = this.inProgressRequest(context, input), execution = this.executionById(context, input.admissionId, input.executionId)
+      if (!execution || execution.request_id !== request.request_id || execution.status !== 'in-progress')
         throw new InpatientError('INPATIENT_SURGERY_NOT_IN_PROGRESS', '须完成本次住院正在进行的原手术')
+      const stage = execution.execution_stage
       const effects: InpatientEffects = []
       const explicitNote = input.note?.trim() || undefined
       let resolvedNote = explicitNote
@@ -657,11 +1097,13 @@ export class InpatientSurgery {
         }
       } else if (!resolvedNote) {
         const currentExecution = this.read(context, input.admissionId).inProgress.find(item => item.id === input.executionId && item.requestId === input.requestId)!
-        const plannedProcedure = inpatientProcedureItemSchema.parse(JSON.parse(request.planned_procedure_json))
+        const plannedProcedure = stage === 'ad-hoc-pci' && request.ad_hoc_pci_json !== null
+          ? inpatientAdHocPciConversionSchema.parse(JSON.parse(request.ad_hoc_pci_json)).procedure
+          : inpatientProcedureItemSchema.parse(JSON.parse(request.planned_procedure_json))
         const allReservations = this.owner.drg.reservations(context, input.admissionId).reservations
-        const requestReservationIds = new Set(allReservations.filter(item => item.requestId === input.requestId).map(item => item.id))
+        const requestReservationIds = new Set(allReservations.filter(item => item.requestId === input.requestId && (item.surgeryStage ?? 'primary') === stage).map(item => item.id))
         const hasUnusedReservation = allReservations.some(item =>
-          item.requestId === input.requestId && item.status === 'reserved' && (item.remainingQuantity ?? item.quantity - item.consumedQuantity) > 0)
+          item.requestId === input.requestId && (item.surgeryStage ?? 'primary') === stage && item.status === 'reserved' && (item.remainingQuantity ?? item.quantity - item.consumedQuantity) > 0)
         const activeHistory = currentExecution.materialHistory.filter(use => use.correction === null)
         const notePolicy = evaluateCompletionNoteRequirement({
           finalMaterials: activeHistory.map(use => ({
@@ -669,7 +1111,7 @@ export class InpatientSurgery {
           })),
           requestReservationIds,
           hasUnusedReservation,
-          planBasis: this.owner.materialPlans.forRequestFacts(context, input.admissionId, input.requestId),
+          planBasis: this.owner.materialPlans.forRequestFacts(context, input.admissionId, input.requestId, stage),
           samePlannedProcedure: isSamePlannedProcedure(currentExecution.actualProcedure, plannedProcedure),
         })
         if (notePolicy.noteRequired) {
@@ -678,7 +1120,7 @@ export class InpatientSurgery {
         resolvedNote = notePolicy.defaultNote
       }
       this.finish(context, request, execution, resolvedNote, effects, transaction, Boolean(explicitNote))
-      const retained = this.owner.drg.reservations(context, input.admissionId).reservations.filter(item => item.requestId === input.requestId && item.status === 'reserved')
+      const retained = this.owner.drg.reservations(context, input.admissionId).reservations.filter(item => item.requestId === input.requestId && (item.surgeryStage ?? 'primary') === stage && item.status === 'reserved')
       return { data: this.read(context, input.admissionId), effects,
         warnings: retained.map(item => `未选择释放的原预留已保留：${item.id}，余量 ${item.remainingQuantity} ${item.unit ?? '单位未确认'}`) }
     })
@@ -691,10 +1133,13 @@ export class InpatientSurgery {
   private completionPlan(context: ActorContext, input: z.infer<typeof inpatientSurgeryCompletionReviewInputSchema>) {
     this.owner.assertNotArchived(context, input.admissionId)
     this.owner.orders.assertAdmitted(context, input.admissionId)
-    const request = this.currentRequest(context, input)
-    const plannedProcedure = inpatientProcedureItemSchema.parse(JSON.parse(request.planned_procedure_json))
+    const request = this.inProgressRequest(context, input)
     const execution = this.read(context, input.admissionId).inProgress.find(item => item.id === input.executionId && item.requestId === input.requestId)
     if (!execution) throw new InpatientError('INPATIENT_SURGERY_NOT_IN_PROGRESS', '须核实本次住院正在进行的原手术')
+    const stage: SurgeryExecutionStage = execution.executionStage ?? 'primary'
+    const plannedProcedure = stage === 'ad-hoc-pci' && request.ad_hoc_pci_json !== null
+      ? inpatientAdHocPciConversionSchema.parse(JSON.parse(request.ad_hoc_pci_json)).procedure
+      : inpatientProcedureItemSchema.parse(JSON.parse(request.planned_procedure_json))
     const frozen = z.array(z.object({ reservation_id: z.string(), material_snapshot_json: z.string().nullable() })).parse(this.owner.database.driver.prepare(
       'SELECT reservation_id,material_snapshot_json FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY reservation_id')
       .all(context.workspaceId, context.epoch, input.admissionId))
@@ -713,32 +1158,83 @@ export class InpatientSurgery {
         .all(context.workspaceId, context.epoch, input.executionId, input.admissionId))
     const charges: MaterialChargeBasis = Object.fromEntries(chargeRows.map(row => [row.material_use_id,
       { chargeId: row.charge_id, version: row.version, amountFen: row.amount_fen, reversalId: row.reversal_id }]))
-    return planSurgeryCompletion(input, execution, plannedProcedure, this.catalog(context), this.owner.drg.reservations(context, input.admissionId), reservationItems, charges,
+    const catalog = this.catalog(context)
+    const linked = linkedNursingForProcedureId(catalog.nursingBindings, execution.actualProcedure.id)
+    const sameSessionNursingIncluded = stage === 'ad-hoc-pci'
+      && linked !== undefined
+      && this.#primaryHasBilledNursingService(context, input.requestId, linked.serviceId)
+    const willEnterStandbyPci = stage === 'primary'
+      && request.standby_ad_hoc_pci === 1
+      && isCoronaryAngiographyProcedureCode(execution.actualProcedure.coding.code)
+    const autoStopPreopOrders = !willEnterStandbyPci && request.preop_order_policy === 'stop-on-completion'
+      ? this.owner.orders.previewAutoStopPreopOrders(context, input.admissionId, input.requestId)
+      : []
+    return planSurgeryCompletion(input, execution, plannedProcedure, catalog, this.owner.drg.reservations(context, input.admissionId), reservationItems, charges,
       { workspaceId: context.workspaceId, epoch: context.epoch, actorId: context.actorId, practitionerRoleId: context.practitionerRoleId! },
-      this.owner.materialPlans.forRequestFacts(context, input.admissionId, input.requestId))
+      this.owner.materialPlans.forRequestFacts(context, input.admissionId, input.requestId, stage),
+      {
+        executionStage: stage,
+        sameSessionNursingIncluded,
+        preopOrderPolicy: request.preop_order_policy,
+        autoStopPreopOrders,
+      })
   }
   private readyRequest(context: ActorContext, input: { admissionId: string; requestId: string; expectedRequestVersion: number }) {
     this.owner.assertNotArchived(context, input.admissionId)
     this.owner.orders.assertAdmitted(context, input.admissionId)
-    const row = this.currentRequest(context, input)
-    if (row.status !== 'ready' || row.preop_check_json === null || row.consent_confirmation_json === null)
-      throw new InpatientError('INPATIENT_SURGERY_NOT_READY', '术前检查核对与已签署知情同意确认均须完成')
-    if (this.executionForRequest(context, row.request_id)) throw new InpatientError('INPATIENT_SURGERY_IN_PROGRESS', '手术已经开始，请逐笔登记并完成原手术')
-    return row
+    const row = this.requestRow(context, input)
+    if (row.status === 'ready') {
+      if (row.preop_check_json === null || row.consent_confirmation_json === null) {
+        throw new InpatientError('INPATIENT_SURGERY_NOT_READY', '术前检查核对与已签署知情同意确认均须完成')
+      }
+      if (this.executionForStage(context, row.request_id, 'primary')) {
+        throw new InpatientError('INPATIENT_SURGERY_IN_PROGRESS', '手术已经开始，请逐笔登记并完成原手术')
+      }
+      return {
+        row,
+        stage: 'primary' as const,
+        planned: inpatientProcedureItemSchema.parse(JSON.parse(row.planned_procedure_json)),
+        partOfExecutionId: undefined as string | undefined,
+      }
+    }
+    if (row.status === 'standby-pci' && row.standby_ad_hoc_pci === 1) {
+      if (row.preop_check_json === null || row.consent_confirmation_json === null) {
+        throw new InpatientError('INPATIENT_SURGERY_NOT_READY', '原术前检查核对或联合知情同意书缺失')
+      }
+      const adHoc = row.ad_hoc_pci_json === null ? undefined : inpatientAdHocPciConversionSchema.parse(JSON.parse(row.ad_hoc_pci_json))
+      if (adHoc?.status !== 'converted') {
+        throw new InpatientError('INPATIENT_SURGERY_NOT_READY', '请先确认同台转行 PCI 术式后再开始第二阶段手术')
+      }
+      if (this.executionForStage(context, row.request_id, 'ad-hoc-pci')) {
+        throw new InpatientError('INPATIENT_SURGERY_IN_PROGRESS', '同台 PCI 已经开始，请逐笔登记并完成原手术')
+      }
+      return {
+        row,
+        stage: 'ad-hoc-pci' as const,
+        planned: adHoc.procedure,
+        partOfExecutionId: adHoc.angiographyExecutionId,
+      }
+    }
+    if (!['requested', 'ready', 'standby-pci'].includes(row.status)) {
+      throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '手术申请状态已变化')
+    }
+    throw new InpatientError('INPATIENT_SURGERY_NOT_READY', '术前检查核对与已签署知情同意确认均须完成')
   }
   private createExecution(context: ActorContext, row: z.infer<typeof requestRowSchema>, actual: z.infer<typeof inpatientProcedureItemSchema>,
-    note: string, status: 'in-progress' | 'completed', effects: InpatientEffects) {
+    note: string, status: 'in-progress' | 'completed', effects: InpatientEffects, stage: SurgeryExecutionStage = 'primary', partOfExecutionId?: string) {
     const admission = this.owner.admissionBinding(context, row.admission_id), id = uuidv7(), now = this.owner.virtualTime(context)
     this.owner.database.driver.prepare(`INSERT INTO inpatient_surgery_execution
-      (workspace_id,epoch,execution_id,request_id,admission_id,actual_procedure_json,performed_at,performed_by,practitioner_role_id,organization_id,note,status,completed_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(context.workspaceId, context.epoch, id, row.request_id, admission.id,
+      (workspace_id,epoch,execution_id,request_id,admission_id,execution_stage,actual_procedure_json,performed_at,performed_by,practitioner_role_id,organization_id,note,status,completed_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(context.workspaceId, context.epoch, id, row.request_id, admission.id, stage,
         JSON.stringify(actual), now, context.actorId, context.practitionerRoleId!, admission.organizationId, note, status, status === 'completed' ? now : null)
     this.owner.fhir.createProjection(context, { resourceType: 'Procedure', id, status,
       code: { coding: [clinicalCoding(actual.coding)], text: actual.coding.display }, subject: { reference: `Patient/${admission.patientId}` },
-      encounter: { reference: `Encounter/${admission.id}` }, basedOn: [{ reference: `ServiceRequest/${row.request_id}` }], occurrenceDateTime: now,
-      recorded: now, performer: [{ actor: { reference: `PractitionerRole/${context.practitionerRoleId}` }, onBehalfOf: { reference: `Organization/${admission.organizationId}` } }], note: [{ text: note }] })
+      encounter: { reference: `Encounter/${admission.id}` }, basedOn: [{ reference: `ServiceRequest/${row.request_id}` }],
+      ...(partOfExecutionId === undefined ? {} : { partOf: [{ reference: `Procedure/${partOfExecutionId}` }] }),
+      occurrenceDateTime: now, recorded: now,
+      performer: [{ actor: { reference: `PractitionerRole/${context.practitionerRoleId}` }, onBehalfOf: { reference: `Organization/${admission.organizationId}` } }], note: [{ text: note }] })
     effects.push({ kind: 'created', reference: `Procedure/${id}`, versionId: '1' })
-    return this.executionForRequest(context, row.request_id)!
+    return this.executionById(context, row.admission_id, id)!
   }
   private billProcedure(context: ActorContext, execution: z.infer<typeof executionRowSchema>, effects: InpatientEffects) {
     const actual = inpatientProcedureItemSchema.parse(JSON.parse(execution.actual_procedure_json)), now = this.owner.virtualTime(context)
@@ -747,14 +1243,70 @@ export class InpatientSurgery {
       serviceDate: businessDate(now), virtualTime: now, label: actual.coding.display,
       coverageJson: JSON.stringify({ code: `synthetic-inpatient-surgery:${actual.id}`, version: `item-v${actual.version}`, included: true, priorSelfPayBps: 0 }) }, effects)
   }
+  #primaryHasBilledNursingService(context: RepositoryContext, requestId: string, serviceId: string): boolean {
+    const primary = z.object({ linked_nursing_json: z.string().nullable() }).optional().parse(
+      this.owner.database.driver.prepare(
+        "SELECT linked_nursing_json FROM inpatient_surgery_execution WHERE workspace_id=? AND epoch=? AND request_id=? AND execution_stage='primary' AND status='completed' LIMIT 1",
+      ).get(context.workspaceId, context.epoch, requestId),
+    )
+    if (!primary || primary.linked_nursing_json === null) return false
+    return storedLinkedNursingSchema.parse(JSON.parse(primary.linked_nursing_json)).serviceId === serviceId
+  }
+  private billLinkedNursing(context: ActorContext, execution: z.infer<typeof executionRowSchema>, effects: InpatientEffects) {
+    const actual = inpatientProcedureItemSchema.parse(JSON.parse(execution.actual_procedure_json))
+    const { bindings, configByServiceId } = this.#readNursingBindings(context)
+    const linked = linkedNursingForProcedureId(bindings, actual.id)
+    if (!linked) return
+    if (execution.execution_stage === 'ad-hoc-pci' && this.#primaryHasBilledNursingService(context, execution.request_id, linked.serviceId)) {
+      this.owner.database.driver.prepare(
+        'UPDATE inpatient_surgery_execution SET same_session_nursing_included=1 WHERE workspace_id=? AND epoch=? AND execution_id=?',
+      ).run(context.workspaceId, context.epoch, execution.execution_id)
+      return
+    }
+    const now = this.owner.virtualTime(context)
+    const stored = storedLinkedNursingSchema.parse({
+      serviceId: linked.serviceId,
+      serviceVersion: linked.serviceVersion,
+      display: linked.display,
+      unit: linked.unit,
+      amountFen: linked.priceFen,
+    })
+    this.owner.database.driver.prepare(
+      'UPDATE inpatient_surgery_execution SET linked_nursing_json=? WHERE workspace_id=? AND epoch=? AND execution_id=?',
+    ).run(JSON.stringify(stored), context.workspaceId, context.epoch, execution.execution_id)
+    const coverageJson = freezeCatalogCoverageJson(
+      `synthetic-inpatient-service:${linked.serviceId}`,
+      `item-v${linked.serviceVersion}`,
+      readConfigInsuranceCoverage(configByServiceId.get(linked.serviceId)),
+    )
+    this.owner.billing.record(context, {
+      admissionId: execution.admission_id,
+      organizationId: execution.organization_id,
+      kind: 'service',
+      sourceId: execution.execution_id,
+      amountFen: linked.priceFen,
+      serviceDate: businessDate(now),
+      virtualTime: now,
+      label: `${linked.display}（${actual.coding.display}）`,
+      coverageJson,
+    }, effects)
+  }
   private finish(context: ActorContext, request: z.infer<typeof requestRowSchema>, execution: z.infer<typeof executionRowSchema>, note: string, effects: InpatientEffects, transaction: CommandTransaction, explicitNote = true) {
     const now = this.owner.virtualTime(context)
-    if (execution.status === 'in-progress') this.billProcedure(context, execution, effects)
+    if (execution.status === 'in-progress') {
+      this.billProcedure(context, execution, effects)
+      this.billLinkedNursing(context, execution, effects)
+    }
+    const actual = inpatientProcedureItemSchema.parse(JSON.parse(execution.actual_procedure_json))
+    const enterStandbyPci = execution.execution_stage === 'primary'
+      && request.standby_ad_hoc_pci === 1
+      && isCoronaryAngiographyProcedureCode(actual.coding.code)
+    const nextRequestStatus = enterStandbyPci ? 'standby-pci' : 'completed'
     const executionNote = execution.status === 'in-progress' ? mergeExecutionCompletionNote(execution.note, note, explicitNote) : note
     this.owner.database.driver.prepare("UPDATE inpatient_surgery_execution SET status='completed',completed_at=?,note=? WHERE workspace_id=? AND epoch=? AND execution_id=? AND status='in-progress'")
       .run(now, executionNote, context.workspaceId, context.epoch, execution.execution_id)
-    this.owner.database.driver.prepare("UPDATE inpatient_surgery_request SET status='completed',version=version+1 WHERE workspace_id=? AND epoch=? AND request_id=? AND version=?")
-      .run(context.workspaceId, context.epoch, request.request_id, request.version)
+    this.owner.database.driver.prepare('UPDATE inpatient_surgery_request SET status=?,version=version+1 WHERE workspace_id=? AND epoch=? AND request_id=? AND version=?')
+      .run(nextRequestStatus, context.workspaceId, context.epoch, request.request_id, request.version)
     if (execution.status === 'in-progress') {
       const procedure = this.owner.fhir.read(context, 'Procedure', execution.execution_id)
       const updated = this.owner.fhir.updateProjection(context, { ...procedure, status: 'completed',
@@ -762,12 +1314,32 @@ export class InpatientSurgery {
       effects.push({ kind: 'updated', reference: `Procedure/${execution.execution_id}`, versionId: updated.meta!.versionId! })
     }
     effects.push({ kind: 'updated', reference: `InpatientSurgeryRequest/${request.request_id}`, versionId: String(request.version + 1) })
-    this.updateRequestProjection(context, request.request_id, 'completed', effects)
+    if (!enterStandbyPci) {
+      this.updateRequestProjection(context, request.request_id, 'completed', effects)
+      if (request.preop_order_policy === 'stop-on-completion') {
+        this.owner.orders.requestStopForSurgeryCompletion(
+          context,
+          request.admission_id,
+          request.request_id,
+          execution.execution_id,
+          actual.coding.display,
+          effects,
+        )
+      }
+    }
     this.owner.angiography.schedule(context, request.admission_id, execution.execution_id, transaction)
   }
-  private executionForRequest(context: ActorContext, requestId: string) {
+  private executionById(context: RepositoryContext, admissionId: string, executionId: string) {
     return executionRowSchema.optional().parse(this.owner.database.driver.prepare(
-      'SELECT * FROM inpatient_surgery_execution WHERE workspace_id=? AND epoch=? AND request_id=?').get(context.workspaceId, context.epoch, requestId))
+      'SELECT * FROM inpatient_surgery_execution WHERE workspace_id=? AND epoch=? AND admission_id=? AND execution_id=?').get(context.workspaceId, context.epoch, admissionId, executionId))
+  }
+  private executionForStage(context: RepositoryContext, requestId: string, stage: SurgeryExecutionStage) {
+    return executionRowSchema.optional().parse(this.owner.database.driver.prepare(
+      'SELECT * FROM inpatient_surgery_execution WHERE workspace_id=? AND epoch=? AND request_id=? AND execution_stage=?').get(context.workspaceId, context.epoch, requestId, stage))
+  }
+  private hasAnyExecution(context: RepositoryContext, requestId: string) {
+    return this.owner.database.driver.prepare(
+      'SELECT 1 FROM inpatient_surgery_execution WHERE workspace_id=? AND epoch=? AND request_id=? LIMIT 1').get(context.workspaceId, context.epoch, requestId) !== undefined
   }
   private advanceRequest(context: ActorContext, row: z.infer<typeof requestRowSchema>, effects: InpatientEffects) {
     this.owner.database.driver.prepare('UPDATE inpatient_surgery_request SET version=version+1 WHERE workspace_id=? AND epoch=? AND request_id=? AND version=?')
@@ -779,17 +1351,18 @@ export class InpatientSurgery {
       recordingKind?: z.infer<typeof inpatientSurgeryMaterialHistorySchema>['recordingKind'];
       addendumCharge?: z.infer<typeof inpatientSurgerySupplementMaterialInputSchema>['expectedCharge'] } = {}) {
     const reservation = selection.reservationId === undefined ? undefined : z.object({ reservation_id: z.string(), material_id: z.string(), catalog_version: z.number(),
-      request_id: z.string().nullable(), quantity: z.number(), consumed_quantity: z.number(), price_fen: z.number(), status: z.string(), version: z.number(), reason: z.string(), material_snapshot_json: z.string().nullable() }).optional()
+      request_id: z.string().nullable(), surgery_stage: surgeryExecutionStageSchema.default('primary'), quantity: z.number(), consumed_quantity: z.number(), price_fen: z.number(), status: z.string(), version: z.number(), reason: z.string(), material_snapshot_json: z.string().nullable() }).optional()
       .parse(this.owner.database.driver.prepare('SELECT * FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND reservation_id=?')
         .get(context.workspaceId, context.epoch, execution.admission_id, selection.reservationId))
     if (selection.reservationId !== undefined && !reservation) throw new InpatientError('INPATIENT_RESERVATION_NOT_FOUND', '未找到本次住院的耗材预留', 404)
     if (reservation && ((reservation.status !== 'reserved' && !(reservation.status === 'released' && reservation.reservation_id === restoredReservationId))
       || reservation.version !== selection.expectedReservationVersion
       || reservation.material_id !== selection.materialId || reservation.catalog_version !== selection.catalogVersion
-      || reservation.quantity - reservation.consumed_quantity < selection.quantity || (reservation.request_id !== null && reservation.request_id !== execution.request_id)))
+      || reservation.quantity - reservation.consumed_quantity < selection.quantity
+      || (reservation.request_id !== null && (reservation.request_id !== execution.request_id || reservation.surgery_stage !== execution.execution_stage))))
       throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '预留余量、产品、版本或手术归属已变化，请重新核对')
     const explicitNote = note?.trim() || undefined
-    if (!explicitNote && (!reservation || reservation.request_id !== execution.request_id)) {
+    if (!explicitNote && (!reservation || reservation.request_id !== execution.request_id || reservation.surgery_stage !== execution.execution_stage)) {
       throw new InpatientError('INPATIENT_SURGERY_NOTE_REQUIRED', '计划外耗材或非本台手术预留使用须填写临床原因', 400)
     }
     const resolvedNote = explicitNote ?? formatPlannedReservationMaterialNote(reservation!.reason)
@@ -824,6 +1397,123 @@ export class InpatientSurgery {
     effects.push({ kind: 'created', reference: `InpatientSurgeryMaterial/${id}`, versionId: '1' })
     return id
   }
+  private writeMedication(
+    context: ActorContext,
+    execution: z.infer<typeof executionRowSchema>,
+    selection: z.infer<typeof inpatientSurgeryMedicationSelectionSchema>,
+    note: string | undefined,
+    effects: InpatientEffects,
+  ) {
+    const admission = this.owner.admissionBinding(context, execution.admission_id)
+    const { medications, configByItemId } = this.#readBaseStockMedications(context)
+    const item = medications.find(
+      candidate => candidate.id === selection.medicationId && candidate.version === selection.catalogVersion,
+    )
+    if (!item) throw new InpatientError('CATALOG_CONFLICT', '台内基数药目录或版本无效')
+    const safetyDose = surgicalMedicationSafetyDose(item, selection.doseText, selection.quantity)
+    const candidate = {
+      catalogItemId: item.id,
+      code: item.code,
+      display: item.display,
+      pharmacologyClasses: item.safety?.pharmacologyClasses ?? this.owner.workflow.clinicalQuality.medicationClasses(context, item.id),
+      doseLimits: item.safety?.doseLimits,
+      doseText: safetyDose,
+      frequencyCode: 'ONCE',
+    }
+    const redLineCheck = () => {
+      const check = this.owner.workflow.clinicalQuality.inpatientOrder(
+        this.owner,
+        context,
+        admission.id,
+        admission.patientId,
+        candidate,
+        [],
+        { skipRenal: true },
+      )
+      return check.redLines.length > 0 ? check : undefined
+    }
+    const validation = validateSurgicalMedicationSelection(item, selection)
+    if (!validation.ok) {
+      if (validation.reason === 'MEDICATION_ROUTE_NOT_ALLOWED') {
+        throw new InpatientError('CATALOG_CONFLICT', '给药途径不符合台内基数药允许范围', 409, 'MEDICATION_ROUTE_NOT_ALLOWED', redLineCheck())
+      }
+      throw new InpatientError('CATALOG_CONFLICT', '剂量、单位或每次数量不符合台内基数药目录', 409, 'MEDICATION_DOSAGE_NOT_ALLOWED', redLineCheck())
+    }
+    const check = redLineCheck()
+    if (check?.redLines.some(line => line.code === 'MEDICATION_ALLERGY_CONFLICT')) {
+      throw new InpatientError('CATALOG_CONFLICT', '药品与已确认的有效药物过敏冲突', 409, 'MEDICATION_ALLERGY_CONFLICT', check)
+    }
+    const id = uuidv7()
+    const administrationId = uuidv7()
+    const now = this.owner.virtualTime(context)
+    const resolvedNote = note?.trim() || DEFAULT_INTRAOPERATIVE_MEDICATION_NOTE
+    const amountFen = z.number().int().nonnegative().safe().parse(item.priceFen * selection.quantity)
+    this.owner.database.driver.prepare(`
+      INSERT INTO inpatient_surgery_medication(
+        workspace_id,epoch,medication_use_id,execution_id,administration_id,medication_id,catalog_version,
+        display,dose_text,quantity,unit,route_code,price_fen,amount_fen,recorded_at,recorded_by,practitioner_role_id,note
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      id,
+      execution.execution_id,
+      administrationId,
+      item.id,
+      item.version,
+      item.display,
+      selection.doseText,
+      selection.quantity,
+      item.unit,
+      selection.routeCode,
+      item.priceFen,
+      amountFen,
+      now,
+      context.actorId,
+      context.practitionerRoleId!,
+      resolvedNote,
+    )
+    this.owner.fhir.create(context, {
+      resourceType: 'MedicationAdministration',
+      id: administrationId,
+      status: 'completed',
+      medication: { reference: { reference: `Medication/${item.id}`, display: item.display } },
+      subject: { reference: `Patient/${admission.patientId}` },
+      encounter: { reference: `Encounter/${admission.id}` },
+      partOf: [{ reference: `Procedure/${execution.execution_id}` }],
+      occurenceDateTime: now,
+      recorded: now,
+      performer: [{ actor: { reference: { reference: `PractitionerRole/${context.practitionerRoleId}` } } }],
+      dosage: {
+        route: medicationRouteConcept(selection.routeCode),
+        text: selection.doseText,
+        dose: { value: selection.quantity, unit: item.unit },
+      },
+      note: [{ text: resolvedNote }],
+    })
+    const actual = inpatientProcedureItemSchema.parse(JSON.parse(execution.actual_procedure_json))
+    const coverageJson = freezeCatalogCoverageJson(
+      `synthetic-inpatient-medication:${item.id}`,
+      `item-v${item.version}`,
+      readConfigInsuranceCoverage(configByItemId.get(item.id)),
+    )
+    this.owner.billing.record(context, {
+      admissionId: execution.admission_id,
+      organizationId: execution.organization_id,
+      kind: 'medication',
+      sourceId: id,
+      serviceDate: businessDate(now),
+      virtualTime: now,
+      amountFen,
+      label: `${item.display}（${actual.coding.display} · ${selection.doseText}）`,
+      coverageJson,
+    }, effects)
+    effects.push(
+      { kind: 'created', reference: `MedicationAdministration/${administrationId}`, versionId: '1' },
+      { kind: 'created', reference: `InpatientSurgeryMedication/${id}`, versionId: '1' },
+    )
+    return id
+  }
   private authorize(context: ActorContext, admissionId: string, roles: string[]) {
     this.owner.assertRole(context, roles)
     this.owner.admissionBinding(context, admissionId)
@@ -845,9 +1535,17 @@ export class InpatientSurgery {
     if (!['requested','ready'].includes(row.status)) throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '手术申请状态已变化')
     return row
   }
-  private updateRequestProjection(context: ActorContext, id: string, status: 'revoked' | 'completed', effects: InpatientEffects) {
+  private inProgressRequest(context: ActorContext, input: { admissionId: string; requestId: string; expectedRequestVersion: number }) {
+    const row = this.requestRow(context, input)
+    if (!['ready','standby-pci'].includes(row.status)) throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '手术申请状态已变化')
+    return row
+  }
+  private updateRequestProjection(context: ActorContext, id: string, status: 'active' | 'revoked' | 'completed', effects: InpatientEffects, noteText?: string) {
     const request = this.owner.fhir.read(context, 'ServiceRequest', id)
-    const updated = this.owner.fhir.update(context, { ...request, status }, request.meta!.versionId!)
+    const nextNotes = noteText === undefined
+      ? request.note
+      : [...z.array(z.object({ text: z.string() })).parse(request.note ?? []), { text: noteText }]
+    const updated = this.owner.fhir.update(context, { ...request, status, ...(nextNotes === undefined ? {} : { note: nextNotes }) }, request.meta!.versionId!)
     effects.push({ kind: 'updated', reference: `ServiceRequest/${id}`, versionId: updated.meta!.versionId! })
   }
 }
@@ -858,9 +1556,16 @@ const requestRowSchema = z.object({ request_id: z.string(), admission_id: z.stri
   surgeon_json: z.string().nullable().default(null),
   assistant_json: z.string().nullable().default(null),
   anesthesia_method: anesthesiaMethodSchema.nullable().default(null),
+  preop_order_policy: preopOrderPolicySchema.default('continue-active'),
+  standby_ad_hoc_pci: z.union([z.literal(0), z.literal(1)]).default(0),
+  ad_hoc_pci_json: z.string().nullable().default(null),
+  standby_finalization_json: z.string().nullable().default(null),
   reason: z.string(),
   requested_at: z.string(), requested_by: z.string(), organization_id: z.string(), preop_check_json: z.string().nullable(), consent_confirmation_json: z.string().nullable(), cancellation_json: z.string().nullable() })
 const executionRowSchema = z.object({ execution_id: z.string(), admission_id: z.string(), request_id: z.string(),
-  actual_procedure_json: z.string(), performed_at: z.string(), performed_by: z.string(), practitioner_role_id: z.string(), organization_id: z.string(), note: z.string(), status: z.enum(['in-progress','completed']), completed_at: z.string().nullable() })
+  execution_stage: surgeryExecutionStageSchema.default('primary'),
+  actual_procedure_json: z.string(), performed_at: z.string(), performed_by: z.string(), practitioner_role_id: z.string(), organization_id: z.string(), note: z.string(), status: z.enum(['in-progress','completed']), completed_at: z.string().nullable(),
+  linked_nursing_json: z.string().nullable().default(null),
+  same_session_nursing_included: z.union([z.literal(0), z.literal(1)]).default(0) })
 
 function clinicalCoding({ system, version, code, display }: z.infer<typeof inpatientProcedureItemSchema>['coding']) { return { system, version, code, display } }

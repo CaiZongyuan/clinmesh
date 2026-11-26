@@ -68,7 +68,7 @@ const definitions = [
   ['nitroglycerin', '硝酸甘油片', 'nitrate', 'I20,I21,I25', 0.5, 0.5, 1, 4, 'PRN', 30],
   ['heparin', '肝素钠注射液', 'heparin', 'I20,I21,I25,I26,I80,I82', 1, 1, 2, 8, 'PRN', 200],
   ['enoxaparin', '依诺肝素钠注射液', 'heparin', 'I20,I21,I25,I26,I80,I82', 40, 20, 100, 200, 'BID', 300],
-  ['sodium-chloride', '0.9%氯化钠注射液', 'fluid', 'E86,I20,I21,I25,N18,Z', 500, 100, 1000, 3000, 'QD', 100],
+  ['sodium-chloride', '0.9%氯化钠注射液', 'fluid', 'E86,I20,I21,I25,K,N18,Z', 500, 100, 1000, 3000, 'QD', 100],
   ['furosemide', '呋塞米片', 'loop-diuretic', 'I50,I11,N18,R60', 20, 20, 80, 240, 'QD', 30],
   ['spironolactone', '螺内酯片', 'mra', 'I50,I10,I11,R60', 20, 20, 100, 200, 'QD', 30],
   ['dapagliflozin', '达格列净片', 'sglt2', 'E11,I50,N18', 10, 5, 10, 10, 'QD', 200],
@@ -84,6 +84,7 @@ const legacyRules: Record<string, { classes: string[]; prefixes: string[]; basis
 
 export function standardMedicationSafety(id: string): MedicationSafetyRule | undefined {
   if (id === 'medication-pci-iohexol') return { maximumDailyQuantity: 400, pharmacologyClasses: ['contrast'], indicationPrefixes: ['I20', 'I21', 'I25'], doseLimits: { unit: 'mL', minimumSingleDose: 1, maximumSingleDose: 100, maximumDailyDose: 400 } }
+  if (id === 'medication-surgical-lidocaine') return { maximumDailyQuantity: 20, pharmacologyClasses: ['local-anesthetic'], indicationPrefixes: ['I', 'K', 'C', 'D', 'M', 'S', 'T', 'Z'], doseLimits: { unit: 'mg', minimumSingleDose: 20, maximumSingleDose: 400, maximumDailyDose: 400 } }
   const legacy = legacyRules[id]
   if (legacy) return {
     maximumDailyQuantity: legacy.daily / legacy.basis, pharmacologyClasses: legacy.classes, indicationPrefixes: legacy.prefixes,
@@ -102,6 +103,7 @@ export function standardMedicationSafety(id: string): MedicationSafetyRule | und
 }
 
 export function standardMedicationDoseBasis(id: string) {
+  if (id === 'medication-surgical-lidocaine') return { amount: 20, unit: 'mg' }
   const legacy = legacyRules[id]
   if (legacy) return { amount: legacy.basis, unit: 'mg' }
   const definition = definitions.find(([suffix]) => id === `medication-${suffix}` || id === `medication-pci-${suffix}`)
@@ -117,6 +119,7 @@ const specialMedicationRoutes: Readonly<Record<string, { defaultRouteCode: Medic
   'medication-enoxaparin': { defaultRouteCode: 'IH', allowedRouteCodes: ['IH'] },
   'medication-sodium-chloride': { defaultRouteCode: 'IVGTT', allowedRouteCodes: ['IVGTT', 'IV'] },
   'medication-pci-iohexol': { defaultRouteCode: 'IV', allowedRouteCodes: ['IV', 'IVGTT'] },
+  'medication-surgical-lidocaine': { defaultRouteCode: 'IH', allowedRouteCodes: ['IH', 'IM', 'IV'] },
 }
 
 export function standardMedicationRoutes(id: string): { defaultRouteCode: MedicationRoute; allowedRouteCodes: MedicationRoute[] } | undefined {

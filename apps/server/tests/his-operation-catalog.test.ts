@@ -27,7 +27,7 @@ describe('HIS operation route coverage', () => {
     ))
     const excludedRoutes = excludedHisRoutes.map(route => routeKey(route.method, route.path))
 
-    expect(operations).toHaveLength(245)
+    expect(operations).toHaveLength(248)
     expect(canonicalRoutes).toEqual(expect.arrayContaining([
       'GET /api/his/v1/identity-quarantine',
       'POST /api/his/v1/identity-quarantine/:candidateId/confirm-merge',
@@ -62,8 +62,11 @@ describe('HIS operation route coverage', () => {
       'POST /api/his/v1/examination-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge',
       'GET /api/his/v1/inpatient/pci-data',
       'POST /api/his/v1/inpatient/pci-data/prepare',
+      'POST /api/his/v1/inpatient/admissions/:admissionId/surgeries/record-medication',
       'POST /api/his/v1/inpatient/admissions/:admissionId/surgeries/preview-completion',
       'POST /api/his/v1/inpatient/admissions/:admissionId/surgeries/supplement-material',
+      'POST /api/his/v1/inpatient/admissions/:admissionId/surgeries/convert-to-pci',
+      'POST /api/his/v1/inpatient/admissions/:admissionId/surgeries/finalize-standby',
       'POST /api/his/v1/inpatient/admissions/:admissionId/pci-selection/save',
       'GET /api/his/v1/inpatient/admissions/:admissionId/guideline-advice',
       'POST /api/his/v1/inpatient/admissions/:admissionId/guideline-advice/request',

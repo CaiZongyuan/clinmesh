@@ -14,7 +14,7 @@ export async function runInpatientReviewLayout(page: Page, app: { origin: string
   const procedure = catalog.procedures.find(item => item.coding.code === '00.6600')!
   expect((await subject.api.post(`${subject.path}/surgeries/request`, { encounterVersion: (await clinical()).encounterVersion,
     procedureId: procedure.id, catalogVersion: procedure.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
-    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成布局复核手术' })).status()).toBe(200)
   const request = inpatientSurgerySchema.parse(await (await subject.api.get(`${subject.path}/surgeries`)).json()).requests[0]!
   expect((await subject.api.post(`${subject.path}/drg/reservations`, { encounterVersion: (await clinical()).encounterVersion,

@@ -3,6 +3,7 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { InpatientItemRow } from './inpatient-layout.tsx'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { InpatientOrderComposer } from './inpatient-order-composer.tsx'
+import { InpatientPostopComposer } from './inpatient-postop-composer.tsx'
 import { orderDraftKey } from './inpatient-order-drafts.ts'
 import { InpatientChargeList } from './inpatient-charges.tsx'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -37,7 +38,7 @@ import { InpatientExecutionBatch } from './inpatient-execution-batch.tsx'
 type Write = ReturnType<typeof useInpatientWriteIntent>
 
 const inlineQualityOps = new Set([
-  'inpatient.order.issue', 'inpatient.surgery.request', 'inpatient.pci-selection.confirm',
+  'inpatient.order.issue', 'inpatient.surgery.request', 'inpatient.surgery.convert-to-pci', 'inpatient.pci-selection.confirm',
   'inpatient.discharge.issue', 'inpatient.record.submit',
 ])
 
@@ -55,6 +56,7 @@ export function InpatientClinical({ admission, investigations, session, locale, 
   const scope = ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId]
   const messages = getWorkspaceMessages(locale)
   const [composing, setComposing] = useState(false)
+  const [postopComposing, setPostopComposing] = useState(false)
   const [editingDiagnosis, setEditingDiagnosis] = useState(false)
   const [guidelineOpen, setGuidelineOpen] = useState(false)
   const [scoresOpen, setScoresOpen] = useState(false)
@@ -137,9 +139,28 @@ export function InpatientClinical({ admission, investigations, session, locale, 
     }} />)}</section> : null}
     {doctor ? <section aria-label={t('开立医嘱', 'Issue order')}>
       <InpatientPrimaryAction stage="orders" priority={-10}><WorkspaceActionBar summary={t('在弹窗中连续添加并核对医嘱；开立后交病区护士校对。', 'Add and review orders in the composer; ward nurse verification follows.')}
-        action={<Button disabled={admission.status !== 'admitted' || admission.recordStatus === 'archived'} onClick={() => setComposing(true)}>{t('开立医嘱', 'Issue order')}</Button>} /></InpatientPrimaryAction>
+        action={<div className="flex flex-wrap items-center gap-2">
+          {(surgery.data?.executions.length ?? 0) > 0 ? (
+            <Button variant="outline" disabled={admission.status !== 'admitted' || admission.recordStatus === 'archived'} onClick={() => setPostopComposing(true)}>
+              {t('开立术后医嘱', 'Issue postoperative orders')}
+            </Button>
+          ) : null}
+          <Button disabled={admission.status !== 'admitted' || admission.recordStatus === 'archived'} onClick={() => setComposing(true)}>{t('开立医嘱', 'Issue order')}</Button>
+        </div>} /></InpatientPrimaryAction>
       {data ? <InpatientOrderComposer key={orderDraftKey(session, admission)} open={composing && active} onOpenChange={setComposing} active={active} session={session} admission={admission} encounterVersion={data.encounterVersion} diagnosed={diagnosed}
         medications={catalog.data?.medications ?? []} services={catalog.data?.services ?? []} surgeries={surgery.data?.executions ?? []} locale={locale} write={write} loading={catalog.isPending} catalogError={catalog.error} onReload={() => void catalog.refetch()} /> : null}
+      {data && (surgery.data?.executions.length ?? 0) > 0 ? (
+        <InpatientPostopComposer
+          open={postopComposing && active}
+          onOpenChange={setPostopComposing}
+          active={active}
+          session={session}
+          admission={admission}
+          surgeries={surgery.data?.executions ?? []}
+          locale={locale}
+          write={write}
+        />
+      ) : null}
     </section> : null}
   </section>
 }

@@ -720,6 +720,7 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
     expectedDraftVersion: number
     expectedVersions: Record<string, string>
     idempotencyKey: string
+    supportingInfo?: Array<{ reference: { reference: string } }>
   }) {
     const outpatientCase = this.#laboratoryRequestCaseForAction(
       input.context,
@@ -825,6 +826,7 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
       encounter: { reference: `Encounter/${input.encounterId}` },
       authoredOn: now,
       requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+      ...(input.supportingInfo && input.supportingInfo.length > 0 ? { supportingInfo: input.supportingInfo } : {}),
       reason: [{
         concept: {
           coding: [{

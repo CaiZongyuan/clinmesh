@@ -248,7 +248,7 @@ it('医生编辑草稿后新报告不覆盖人工值，旧版本保存返回冲�
   const procedure = s.stay.catalog.procedures.find(item => item.coding.code === '88.5500')!
   const encounterVersion = (await s.fixture.read('inpatient-doctor', s.stay.path, inpatientDetailSchema)).admission.versionId
   const planned = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-    anesthesiaMethod: 'local-infiltration',
+    anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     encounterVersion,
     locationId: 'location-catheterization-lab',
     procedureId: procedure.id,
@@ -501,7 +501,7 @@ describe('多手术计划的选型依据隔离', () => {
     const published = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema))
       .estimates.find(item => item.requestId === s.stay.requestId)!
     expect(published.draft!.items).toHaveLength(4)
-    expect(published.costs?.components.projectedTotalFen).toBe(306598)
+    expect(published.costs?.components.projectedTotalFen).toBe(314598)
     // 首次发布的明确稿进入全住院费用后，沿实际后台周期再核对一次跟进依据。
     await s.fixture.runtime.dispatchPending()
     const beforeFollowup = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)
@@ -517,7 +517,7 @@ describe('多手术计划的选型依据隔离', () => {
 
   it('计划B的编辑草稿不与计划A的默认确认混用，也不污染A预计依据，显式B读取保留其草稿', async () => {
     const planned = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/surgeries/request`, {
-      anesthesiaMethod: 'local-infiltration',
+      anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       encounterVersion,
       locationId: 'location-catheterization-lab',
       procedureId: s.stay.procedure.id,

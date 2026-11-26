@@ -33,7 +33,7 @@ export async function prepareMaterialCorrectionsBatchPatient(page: Page, app: Pa
   const reservations = inpatientMaterialReservationListSchema.parse(await (await s.api.get(`${s.path}/drg/reservations`)).json())
   await s.api.login('cashier')
   const initialCharges = inpatientChargesSchema.parse(await (await s.api.get(`${s.path}/charges`)).json())
-  expect(initialCharges.chargesFen).toBe(320000)
+  expect(initialCharges.chargesFen).toBe(328000)
   await s.api.login('inpatient-doctor')
   return { ...s, requestId: request.id, executionId: execution.id, initial,
     stentReservation: reservations.reservations.find(row => row.materialId === 'hospital-material-stent')!,
@@ -163,7 +163,7 @@ export async function runMaterialCorrectionsBatchJourney(page: Page, s: Patient,
   await s.api.login('cashier')
   const charges = inpatientChargesSchema.parse(await (await s.api.get(`${s.path}/charges`)).json())
   await s.api.login('inpatient-doctor')
-  expect(charges.chargesFen).toBe(200000)
+  expect(charges.chargesFen).toBe(208000)
   expect(charges.charges.filter(charge => charge.reversalOf)).toEqual(expect.arrayContaining([
     expect.objectContaining({ reversalOf: originalStent.chargeId, amountFen: -160000 }),
     expect.objectContaining({ reversalOf: originalBalloon.chargeId, amountFen: -40000 }),

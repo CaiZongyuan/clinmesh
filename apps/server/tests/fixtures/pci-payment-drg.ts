@@ -188,7 +188,7 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     const planned = (await parsePciResponse(inpatientSurgeryResponseSchema, await request('inpatient-doctor', `${path}/surgeries/request`, {
       encounterVersion: stay.encounterVersion, surgeryType: 'elective', procedureId: procedure.id, catalogVersion: procedure.version,
       plannedFor: '2026-08-24T15:00:00+08:00', locationId: 'location-catheterization-lab',
-      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       reason: '合成冠心病PCI支架计划' }))).data.requests[0]!
     let reservations: z.infer<typeof inpatientMaterialReservationListSchema>['reservations'] = []
     const reservationResponse = commandResponseSchema(inpatientMaterialReservationListSchema)
@@ -249,13 +249,20 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     const requested = await parsePciResponse(inpatientSurgeryResponseSchema, await request('inpatient-doctor', `${stay.path}/surgeries/request`, {
       encounterVersion: admission.admission.versionId, surgeryType: 'elective', procedureId: procedure.id, catalogVersion: procedure.version,
       plannedFor: '2026-08-24T15:00:00+08:00', locationId: 'location-catheterization-lab',
-      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       reason: '固定合成病例实际冠脉造影' }))
     const requestId = requested.data.requests.find(item => item.plannedProcedure.id === procedure.id)!.id
     const angiography = { ...stay, procedure, requestId, reservations: [] }
     const input = await pciExecutionInput(angiography)
-    await dispensePciMedications(stay, 'intraoperative')
-    return (await parsePciResponse(inpatientSurgeryResponseSchema, await request('inpatient-doctor', `${stay.path}/surgeries/execute`, input)))
+    const pkg = stay.catalog.medicationPackages.find(item => item.id === 'catheterization-contrast-anticoagulation')!
+    const medications = pkg.items.map(item => ({
+      medicationId: item.medicationId,
+      catalogVersion: item.catalogVersion!,
+      doseText: item.doseText,
+      quantity: item.quantity,
+      routeCode: item.routeCode,
+    }))
+    return (await parsePciResponse(inpatientSurgeryResponseSchema, await request('inpatient-doctor', `${stay.path}/surgeries/execute`, { ...input, medications })))
       .data.executions.find(item => item.requestId === requestId)!
   }
   async function dispensePciMedications(stay: Awaited<ReturnType<typeof preparePciAdmission>>, phase: 'preoperative' | 'intraoperative') {

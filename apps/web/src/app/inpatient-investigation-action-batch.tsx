@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
+import type { z } from 'zod'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
+import type { inpatientSurgeryExecutionSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
@@ -19,7 +21,7 @@ import { canReviewInvestigationAction, investigationActionEntries, investigation
   sameInvestigationActionSnapshot, useInvestigationActionDrafts, type InvestigationAction, type InvestigationActionFacts, type InvestigationActionSnapshot } from './inpatient-investigation-action-drafts.ts'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>;
-  data: InvestigationActionFacts; refresh: () => Promise<InvestigationActionFacts | undefined>; loading: boolean }
+  data: InvestigationActionFacts; surgeries?: readonly z.infer<typeof inpatientSurgeryExecutionSchema>[] | undefined; refresh: () => Promise<InvestigationActionFacts | undefined>; loading: boolean }
 
 export function InpatientInvestigationActionBatch(props: Props) {
   const [action, setAction] = useState<InvestigationAction>('cancel')
@@ -34,7 +36,7 @@ export function InpatientInvestigationActionBatch(props: Props) {
   </section>
 }
 
-function ActionList({ admission, session, locale, write, data, refresh, loading, action }: Props & { action: InvestigationAction }) {
+function ActionList({ admission, session, locale, write, data, surgeries, refresh, loading, action }: Props & { action: InvestigationAction }) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en, cancel = action === 'cancel'
   const label = cancel ? t('取消申请', 'Cancel requests') : t('重新生成', 'Retry generation')
   const batch = useInvestigationActionDrafts({ scope: { accountId: session.user.id, actor: session.actor, patientId: admission.patientId, admissionId: admission.id, action }, session, write, refresh })
@@ -61,7 +63,8 @@ function ActionList({ admission, session, locale, write, data, refresh, loading,
     ? t('申请内容或状态已变化，请重新核对；该项未发送。', 'This request changed. Review it again; this item was not sent.')
     : getWorkspaceErrorMessage(new ApiClientError(0, error?.code ?? '', ''), getWorkspaceMessages(locale))
   const details = (snapshot: InvestigationActionSnapshot) => <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-    <span>{snapshot.kind === 'laboratory' ? t('检验', 'Laboratory') : t('检查', 'Imaging')} · {state(snapshot)}</span>
+    <span>{snapshot.kind === 'laboratory' ? t('检验', 'Laboratory') : snapshot.kind === 'examination' ? t('功能检查', 'Functional examination') : t('检查', 'Imaging')} · {state(snapshot)}</span>
+    {snapshot.request.surgeryExecutionId ? <span>{t('术后复查 · ', 'Postoperative recheck · ')}{surgeries?.find(item => item.id === snapshot.request.surgeryExecutionId)?.actualProcedure.coding.display ?? t('已关联手术', 'Linked procedure')}</span> : null}
     <span>{t('申请指征：', 'Indication: ')}{snapshot.kind === 'laboratory'
       ? indicationLabel(snapshot.request.indicationCode, getWorkspaceMessages(locale)) : snapshot.request.indication}</span>
     {snapshot.request.generationError ? <span>{snapshot.kind === 'laboratory'

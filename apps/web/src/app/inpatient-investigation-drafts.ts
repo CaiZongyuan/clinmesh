@@ -13,8 +13,10 @@ export const investigationAttemptSchema = z.object({ idempotencyKey: z.uuid(), i
 export const investigationDraftRowSchema = z.object({
   id: z.uuid(), item: inpatientInvestigationCatalogSchema.shape.items.element,
   indicationCode: z.string().max(64), indication: z.string().max(500), selected: z.boolean(),
+  surgeryExecutionId: z.string().optional(),
   attempt: investigationAttemptSchema.optional(), error: z.union([z.string(), issueDraftFailureSchema]).optional(),
 }).strict().refine(row => row.attempt === undefined || (row.attempt.input.catalogVersion === row.item.version && row.attempt.input.selection.kind === row.item.kind
+  && row.attempt.input.surgeryExecutionId === row.surgeryExecutionId
   && (row.attempt.input.selection.kind !== 'laboratory' ? row.attempt.input.selection.serviceId : row.attempt.input.selection.catalogItemId) === row.item.id))
 export const investigationDraftSchema = z.object({
   rows: z.array(investigationDraftRowSchema).max(investigationBatchLimit),

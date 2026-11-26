@@ -22,7 +22,12 @@ import {
 import { guidelineTopicIdSchema } from './guideline-topics.ts'
 import { commandResponseSchema } from './his.ts'
 import { knowledgeSnapshotSchema } from './knowledge-claims.ts'
-import { orderSetTemplateIdSchema } from './order-set-templates.ts'
+import {
+  orderSetScopeSchema,
+  orderSetScreeningRuleSchema,
+  orderSetTemplateIdSchema,
+  orderSetTemplateOptionSchema,
+} from './order-set-templates.ts'
 
 export {
   diseasePackSha256Schema,
@@ -144,20 +149,31 @@ export const diseasePackQuestionnaireItemSchema = z.object({
 export const diseasePackOrderSetItemSchema = z.object({
   activeMedicationConflictCodes: z.array(boundedCode).max(32).optional(),
   catalogBindingCode: boundedCode.optional(),
-  channel: z.enum(['laboratory', 'investigation', 'medication', 'procedure', 'nursing']).optional(),
+  channel: z.enum(['laboratory', 'investigation', 'medication', 'procedure', 'nursing', 'service']).optional(),
   key: diseasePackSlugSchema,
-  kind: z.enum(['laboratory', 'examination', 'imaging', 'medication', 'procedure', 'nursing']),
+  kind: z.enum(['laboratory', 'examination', 'imaging', 'medication', 'procedure', 'nursing', 'service']),
+  options: z.array(orderSetTemplateOptionSchema).min(1).max(4).optional(),
   panelServiceCodes: z.array(boundedCode).max(32).optional(),
   procedureCode: boundedCode.optional(),
+  rationaleZh: nonEmptyText.optional(),
+  rules: z.array(orderSetScreeningRuleSchema).max(8).optional(),
+  scopes: z.array(orderSetScopeSchema).min(1).max(2).optional(),
+  tier: z.number().int().min(1).max(4).optional(),
+  titleEn: nonEmptyText.optional(),
   titleZh: nonEmptyText,
+  unlockCondition: diseasePackTriggerNodeSchema.optional(),
 }).strict()
 
 export const diseasePackOrderSetSchema = z.object({
+  applicableProcedureCodes: z.array(boundedCode).min(1).max(32).optional(),
+  descriptionZh: nonEmptyText.optional(),
   id: orderSetTemplateIdSchema,
   items: z.array(diseasePackOrderSetItemSchema).min(1).max(32),
-  scopes: z.array(z.enum(['outpatient', 'inpatient'])).min(1).max(2),
+  scopes: z.array(orderSetScopeSchema).min(1).max(2),
   titleEn: nonEmptyText.optional(),
   titleZh: nonEmptyText,
+  unlockCondition: diseasePackTriggerNodeSchema.optional(),
+  version: z.string().trim().min(1).max(64).optional(),
 }).strict()
 
 export const diseasePackPointScaleSchema = z.object({

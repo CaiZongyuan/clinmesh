@@ -232,7 +232,7 @@ export class ClinicalQualityService {
       if (issueSeq === null) return false
       const stopSeq = z.object({ seq: z.number().nullable() }).parse(this.#database.driver.prepare(`
         SELECT MAX(sequence) AS seq FROM action_trace
-        WHERE workspace_id=? AND epoch=? AND operation='inpatient.order.request-stop' AND outcome='success' AND instr(effect_json, ?) > 0
+        WHERE workspace_id=? AND epoch=? AND operation IN ('inpatient.order.request-stop','inpatient.surgery.complete','inpatient.surgery.execute','inpatient.surgery.finalize-standby') AND outcome='success' AND instr(effect_json, ?) > 0
       `).get(context.workspaceId, context.epoch, `"MedicationRequest/${row.order_id}"`)).seq
       return stopSeq !== null && stopSeq > issueSeq
     })
@@ -305,7 +305,7 @@ export class ClinicalQualityService {
         doseText: this.inpatientSafetyDose(item.config_json, input.doseText),
         frequencyCode: input.frequencyCode,
       }
-      const active = inpatient.orders.facts(context, admission.id).orders.filter(order => order.kind === 'medication' && !['stopped', 'completed'].includes(order.state))
+      const active = inpatient.orders.facts(context, admission.id).orders.filter(order => order.kind === 'medication' && ['signed', 'verified'].includes(order.state))
         .map(order => ({ catalogItemId: order.catalogItemId, display: order.display, pharmacologyClasses: this.medicationClasses(context, order.catalogItemId) }))
       return this.inpatientOrder(inpatient, context, admission.id, admission.patientId, medication, active)
     })

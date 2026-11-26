@@ -3,6 +3,8 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientMaterialReservation } from '@clinmesh/contracts/inpatient-drg-simulation'
 import type { InpatientMaterialPlanBasis } from '@clinmesh/contracts/inpatient-material-plan'
 import type { inpatientSurgeryCatalogSchema, inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { formatPreopOrderPolicy } from '@clinmesh/core/inpatient-surgery-consent'
+import { linkedNursingForProcedureId } from '@clinmesh/core/inpatient-surgery-medications'
 import { evaluateExecuteNoteRequirement, isSamePlannedProcedure } from '@clinmesh/core/inpatient-surgery-notes'
 import { ApiClientError } from './api-client.ts'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
@@ -15,32 +17,39 @@ import { Input } from '@clinmesh/ui/components/input'
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { z } from 'zod'
 import { OrderComposerFooter } from './doctor/order-composer-layout.tsx'
+import { ClinicalQualityBanner, extractClinicalQualityError } from './clinical-quality-banner.tsx'
 import { surgeryDraftScope, useSurgeryDraft } from './inpatient-surgery-draft.ts'
+import { evaluateExecuteMedicationRow, executeMedicationRowSchema, SurgeryBatchMedicationsEditor } from './inpatient-surgery-medications.tsx'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 
-type Catalog = z.infer<typeof inpatientSurgeryCatalogSchema>
+type Catalog = z.input<typeof inpatientSurgeryCatalogSchema>
 type Request = z.infer<typeof inpatientSurgeryRequestSchema>
 const draftSchema = z.object({ procedureId: z.string(), procedureVersion: z.number().int().positive(), note: z.string().max(2000),
   rows: z.array(z.object({ materialId: z.string(), catalogVersion: z.number().int().positive(), display: z.string(),
     quantity: z.string(), reservationId: z.string().nullable() }).strict()).max(20)
     .refine(rows => new Set(rows.map(row => row.materialId)).size === rows.length),
+  medications: z.array(executeMedicationRowSchema).max(20).default([])
+    .refine(rows => new Set(rows.map(row => row.medicationId)).size === rows.length),
 }).strict()
 type Discard = { kind: 'clear' } | { kind: 'remove'; id: string; display: string }
 
-export function SurgeryExecuteComposer({ admission, session, request, catalog, reservations, planBasis, dataReady, onRetry, locale, write, open, focused, onOpenChange, returnFocus }: {
+export function SurgeryExecuteComposer({ admission, session, request, catalog, reservations, planBasis, primaryLinkedNursingServiceId, dataReady, onRetry, locale, write, open, focused, onOpenChange, returnFocus }: {
   admission: InpatientAdmission; session: SessionContext; request: Request; catalog: Catalog | undefined; reservations: InpatientMaterialReservation[];
-  planBasis?: InpatientMaterialPlanBasis | undefined;
+  planBasis?: InpatientMaterialPlanBasis | undefined; primaryLinkedNursingServiceId?: string | undefined;
   locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; open: boolean; focused: boolean;
   dataReady: boolean; onRetry: () => void;
   onOpenChange: (open: boolean) => void; returnFocus: RefObject<HTMLButtonElement | null>;
 }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
-  const scope = surgeryDraftScope({ session, patientId: admission.patientId, admissionId: admission.id, requestId: request.id, action: 'execute' })
-  const draft = useSurgeryDraft({ scope, schema: draftSchema, initial: { procedureId: request.plannedProcedure.id, procedureVersion: request.plannedProcedure.version, note: '', rows: [] } })
+  const adHocConverted = request.status === 'standby-pci' && request.adHocPci?.status === 'converted'
+  const stage = adHocConverted ? 'ad-hoc-pci' as const : 'primary' as const
+  const plannedProcedure = adHocConverted && request.adHocPci ? request.adHocPci.procedure : request.plannedProcedure
+  const scope = surgeryDraftScope({ session, patientId: admission.patientId, admissionId: admission.id, requestId: request.id, stage: adHocConverted ? 'ad-hoc-pci' : undefined, action: 'execute' })
+  const draft = useSurgeryDraft({ scope, schema: draftSchema, initial: { procedureId: plannedProcedure.id, procedureVersion: plannedProcedure.version, note: '', rows: [], medications: [] } })
   const value = draft.value
   const [search, setSearch] = useState(''), [page, setPage] = useState(0), [noteOpen, setNoteOpen] = useState(false)
   const [discard, setDiscard] = useState<Discard | null>(null), [attemptOwner, setAttemptOwner] = useState<string | null>(null)
@@ -53,7 +62,7 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
     if (!focused || previousOwner.current !== owner) { if (open) onOpenChange(false); setDiscard(null); setSearch(''); setPage(0); setNoteOpen(false) }
     previousOwner.current = owner
   }, [focused, owner, open, onOpenChange])
-  const blocked = write.blocked || admission.status !== 'admitted' || admission.recordStatus === 'archived' || request.status !== 'ready' || !focused
+  const blocked = write.blocked || admission.status !== 'admitted' || admission.recordStatus === 'archived' || (request.status !== 'ready' && !adHocConverted) || !focused
   const actual = catalog?.procedures.find(item => item.id === value.procedureId)
   const procedureValid = actual !== undefined && actual.version === value.procedureVersion
   const candidates = (catalog?.materials ?? []).filter(item => item.display.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
@@ -61,7 +70,7 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
   const pageCount = Math.max(1, Math.ceil(candidates.length / 8)), currentPage = Math.min(page, pageCount - 1)
   const eligibleReservation = (reservation: InpatientMaterialReservation, materialId: string, catalogVersion: number) => reservation.status === 'reserved'
     && reservation.materialId === materialId && reservation.catalogVersion === catalogVersion
-    && (!reservation.requestId || reservation.requestId === request.id) && reservation.consumedQuantity === 0
+    && (!reservation.requestId || (reservation.requestId === request.id && (reservation.surgeryStage ?? 'primary') === stage)) && reservation.consumedQuantity === 0
   const rows = value.rows.map(row => {
     const item = catalog?.materials.find(item => item.id === row.materialId)
     const reservation = reservations.find(item => item.id === row.reservationId)
@@ -72,11 +81,11 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
       : row.reservationId && (!reservation || !eligibleReservation(reservation, row.materialId, row.catalogVersion) || quantity !== reservation.quantity) ? t('关联预留已变化、目录依据不符或已部分使用，请取消关联后重新核对', 'The linked reservation changed, uses a different catalog version or was partially used; unlink and review it') : null
     return { row, item, quantity, problem }
   })
-  const activePlanReservations = reservations.filter(item => item.requestId === request.id && item.status === 'reserved')
+  const activePlanReservations = reservations.filter(item => item.requestId === request.id && (item.surgeryStage ?? 'primary') === stage && item.status === 'reserved')
   const positiveRows = rows.filter(row => row.problem === null && row.quantity > 0)
   const notePolicy = actual ? evaluateExecuteNoteRequirement({
     actual,
-    planned: request.plannedProcedure,
+    planned: plannedProcedure,
     materials: positiveRows.map(({ row, quantity }) => ({ materialId: row.materialId, catalogVersion: row.catalogVersion, quantity, reservationId: row.reservationId })),
     activeRequestReservations: activePlanReservations.map(item => ({ id: item.id, quantity: item.quantity })),
     planBasis,
@@ -86,14 +95,17 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
   const noteRequired = notePolicy.noteRequired || serverNoteRequired
   const trimmedNote = value.note.trim()
   const showNote = noteRequired || noteOpen || trimmedNote.length > 0
-  const valid = dataReady && procedureValid && catalog !== undefined && rows.every(row => row.problem === null) && (!noteRequired || !!trimmedNote) && !draft.failed
+  const medicationRows = value.medications.map(row => ({ row, ...evaluateExecuteMedicationRow(row, catalog?.baseStockMedications ?? [], locale) }))
+  const valid = dataReady && procedureValid && catalog !== undefined && rows.every(row => row.problem === null) && medicationRows.every(row => row.problem === null && row.quantity !== null) && (!noteRequired || !!trimmedNote) && !draft.failed
   const updateRow = (id: string, update: Partial<(typeof value.rows)[number]>) => draft.save({ ...value, rows: value.rows.map(row => row.materialId === id ? { ...row, ...update } : row) })
   const submit = () => {
     if (blocked || !valid || !actual) return
     const command = { operation: 'inpatient.surgery.execute' as const, input: { admissionId: admission.id, requestId: request.id, expectedRequestVersion: request.version,
       procedureId: actual.id, catalogVersion: actual.version, ...(trimmedNote ? { note: trimmedNote } : {}), materials: rows.filter(row => row.quantity > 0).map(({ row, quantity }) => ({
         materialId: row.materialId, catalogVersion: row.catalogVersion, quantity, ...(row.reservationId ? { reservationId: row.reservationId } : {}),
-      })) } }
+      })), ...(medicationRows.length > 0 ? { medications: medicationRows.map(({ row, quantity }) => ({
+        medicationId: row.medicationId, catalogVersion: row.catalogVersion, doseText: row.doseText.trim(), quantity: quantity!, routeCode: row.routeCode,
+      })) } : {}) } }
     if (!draft.prepareSubmission(command)) return
     setAttemptOwner(owner)
     const isCurrent = () => mounted.current && current.current.owner === owner && current.current.focused && current.current.open
@@ -104,18 +116,22 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
       <DialogHeader><DialogTitle>{t('整台补录', 'Record entire surgery')}</DialogTitle><DialogDescription>{t('连续添加并核实实际术式与全部耗材，一次提交后手术完成。最多 20 种；数量 0 不记录使用。', 'Add and review all materials, then submit the entire surgery once. Up to 20 materials; zero quantities are not recorded.')}</DialogDescription></DialogHeader>
       <form className="flex min-h-0 flex-1 flex-col" onSubmit={event => { event.preventDefault(); submit() }}>
         <div className="@container/surgery-execute flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
-          <FieldSet disabled={blocked} className="flex-none @min-[38rem]/surgery-execute:min-h-0 @min-[38rem]/surgery-execute:flex-1"><FieldGroup className="flex-none @min-[38rem]/surgery-execute:min-h-0 @min-[38rem]/surgery-execute:flex-1">
+          <FieldSet disabled={blocked} className="flex-none"><FieldGroup className="flex-none">
             {draft.failed ? <Alert variant="destructive"><AlertDescription>{t('未提交输入未能安全保存，已阻止提交。请重试保存或确认清空输入。', 'Draft could not be saved safely. Retry saving or confirm discarding it.')}</AlertDescription><Button type="button" variant="outline" onClick={() => draft.save(value)}>{t('重试保存未提交输入', 'Retry saving draft')}</Button></Alert> : null}
-            {write.mutation.error && attemptOwner === owner ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
+            {write.mutation.error && attemptOwner === owner ? (
+              extractClinicalQualityError(write.mutation.error)
+                ? <ClinicalQualityBanner error={write.mutation.error} locale={locale} />
+                : <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert>
+            ) : null}
             <Field data-invalid={!procedureValid || undefined}><FieldLabel htmlFor={`execute-procedure-${request.id}`}>{t('实际术式', 'Performed procedure')}</FieldLabel>
               <WorkspaceSelect id={`execute-procedure-${request.id}`} value={value.procedureId} items={(catalog?.procedures ?? []).map(item => ({ value: item.id, label: `${item.coding.code} · ${item.coding.display}` }))}
                 onValueChange={id => { const item = catalog?.procedures.find(item => item.id === id); if (item) draft.save({ ...value, procedureId: item.id, procedureVersion: item.version }) }} />
-              <FieldDescription>{procedureValid ? isSamePlannedProcedure(actual, request.plannedProcedure) ? t('默认与计划术式相同', 'Defaults to the planned procedure') : t(`与计划不同（计划：${request.plannedProcedure.coding.display}）；DRG 预分组按实际术式重算`, `Differs from the planned procedure; DRG uses the performed procedure`) : t('实际术式目录未加载或已变化，请重新选择并核对', 'Procedure catalog is unavailable or changed; review and select again')}</FieldDescription>
+              <FieldDescription>{procedureValid ? isSamePlannedProcedure(actual, plannedProcedure) ? t('默认与计划术式相同', 'Defaults to the planned procedure') : t(`与计划不同（计划：${plannedProcedure.coding.display}）；DRG 预分组按实际术式重算`, `Differs from the planned procedure; DRG uses the performed procedure`) : t('实际术式目录未加载或已变化，请重新选择并核对', 'Procedure catalog is unavailable or changed; review and select again')}</FieldDescription>
               {actual && !procedureValid ? <Button type="button" variant="outline" onClick={() => draft.save({ ...value, procedureVersion: actual.version })}>{t('重新核对术式', 'Review procedure again')}</Button> : null}
             </Field>
             {!dataReady ? <Alert><AlertDescription>{t('手术资料正在加载或读取失败，暂不能提交；已有输入保留。', 'Surgery data is loading or unavailable. Submission is blocked and input is retained.')}<Button type="button" variant="outline" size="sm" onClick={onRetry}>{t('重试手术资料', 'Retry surgery records')}</Button></AlertDescription></Alert> : null}
-            <div className="grid min-w-0 flex-none gap-4 @min-[38rem]/surgery-execute:min-h-0 @min-[38rem]/surgery-execute:flex-1 @min-[38rem]/surgery-execute:grid-cols-2">
-              <section aria-label={t('手术耗材目录', 'Surgical material catalog')} className="flex h-[26rem] min-h-0 min-w-0 flex-col gap-3 @min-[38rem]/surgery-execute:h-auto">
+            <div className="grid min-w-0 flex-none gap-4 @min-[38rem]/surgery-execute:grid-cols-2">
+              <section aria-label={t('手术耗材目录', 'Surgical material catalog')} className="flex h-[22rem] min-h-0 min-w-0 flex-col gap-3 overflow-hidden">
                 <Field className="shrink-0"><FieldLabel htmlFor={`execute-search-${request.id}`}>{t('搜索手术耗材', 'Search surgical materials')}</FieldLabel><Input id={`execute-search-${request.id}`} value={search} onChange={event => { setSearch(event.currentTarget.value); setPage(0) }} /></Field>
                 <p className="shrink-0 text-xs text-muted-foreground">{t('添加后保持本窗打开；清单最多 20 种耗材。', 'The window stays open after adding; up to 20 materials.')}</p>
                 {unavailableCount > 0 ? <p className="shrink-0 text-xs text-muted-foreground">{t(`${unavailableCount} 项耗材因计价单位未确认而未启用`, `${unavailableCount} materials are unavailable because their billing unit is unconfirmed`)}</p> : null}
@@ -128,7 +144,7 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
                   })}</ul>}
                 <div className="flex shrink-0 flex-wrap items-center justify-between gap-2"><Button type="button" variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>{t('上一页', 'Previous page')}</Button><span className="text-xs">{t(`第 ${currentPage + 1}/${pageCount} 页 · ${candidates.length} 项`, `Page ${currentPage + 1}/${pageCount} · ${candidates.length} items`)}</span><Button type="button" variant="outline" size="sm" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>{t('下一页', 'Next page')}</Button></div>
               </section>
-              <section aria-label={t('完整待录耗材清单', 'Complete pending material list')} className="flex h-[26rem] min-h-0 min-w-0 flex-col gap-3 @min-[38rem]/surgery-execute:h-auto">
+              <section aria-label={t('完整待录耗材清单', 'Complete pending material list')} className="flex h-[22rem] min-h-0 min-w-0 flex-col gap-3 overflow-hidden">
                 <div className="flex shrink-0 flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-semibold">{t(`待录耗材（${rows.length}/20）`, `Pending materials (${rows.length}/20)`)}</h4><Button type="button" variant="ghost" size="sm" onClick={() => setDiscard({ kind: 'clear' })}>{t('清空输入', 'Discard draft')}</Button></div>
                 {rows.length === 0 ? <Empty><EmptyHeader><EmptyTitle>{t('尚未加入耗材', 'No materials added')}</EmptyTitle><EmptyDescription>{t('从目录连续添加；确无耗材时可仅记录术式。', 'Add materials from the catalog, or record only the procedure when no materials were used.')}</EmptyDescription></EmptyHeader></Empty> : null}
                 <FieldGroup className="min-h-0 flex-1 overflow-y-auto">{rows.map(({ row, item, problem }) => <Field key={row.materialId} data-invalid={!!problem || undefined} className="rounded-md border p-3">
@@ -143,6 +159,37 @@ export function SurgeryExecuteComposer({ admission, session, request, catalog, r
                 </Field>)}</FieldGroup>
               </section>
             </div>
+            <SurgeryBatchMedicationsEditor
+              requestId={request.id}
+              procedure={actual}
+              catalog={catalog}
+              rows={value.medications}
+              disabled={blocked}
+              locale={locale}
+              sameSessionNursingIncluded={adHocConverted && Boolean(
+                primaryLinkedNursingServiceId
+                && actual
+                && linkedNursingForProcedureId(catalog?.nursingBindings ?? [], actual.id)?.serviceId === primaryLinkedNursingServiceId,
+              )}
+              onChange={medications => draft.save({ ...value, medications })}
+            />
+            {request.preopOrderPolicy === 'stop-on-completion' ? (
+              <section aria-label={t('术前医嘱停续策略提示', 'Pre-op order policy notice')} className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-foreground">
+                {stage === 'primary' && request.standbyAdHocPci
+                  ? t(
+                      '本手术术前医嘱策略为「术后自动停术前长期医嘱并重整」：第一阶段造影完成后将先进入同台 PCI 待决策态，待整台手术最终完成或收口时再自动停用术前长期医嘱。',
+                      'Pre-op order policy is stop-on-completion: stage-1 angiography enters standby-pci first; active pre-op long-term orders will be stopped when the session finalizes or completes.',
+                    )
+                  : t(
+                      '本手术术前医嘱策略为「术后自动停术前长期医嘱并重整」：提交完成手术时，将同事务把当前有效术前长期医嘱转为「待停嘱核对」，完成后可直接开立术后医嘱重整。',
+                      'Pre-op order policy is stop-on-completion: submitting will atomically mark active pre-op long-term orders stop-requested so postoperative orders can be reorganized immediately.',
+                    )}
+              </section>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {t(`术前医嘱策略：${formatPreopOrderPolicy(request.preopOrderPolicy, locale)}`, `Pre-op order policy: ${formatPreopOrderPolicy(request.preopOrderPolicy, locale)}`)}
+              </p>
+            )}
             {showNote ? <Field data-invalid={noteRequired && !trimmedNote || undefined}><FieldLabel htmlFor={`execute-note-${request.id}`}>{t('补录依据', 'Record basis')}</FieldLabel><Input id={`execute-note-${request.id}`} maxLength={2000} placeholder={noteRequired ? (procedureChanged ? t('实际术式偏离原计划，请填写变更原因', 'Explain why the performed procedure differs from the plan') : t('存在计划外耗材或未按本台预留完整消耗，请说明依据', 'Explain unplanned materials or unconsumed plan reservations')) : undefined} value={value.note} onChange={event => draft.save({ ...value, note: event.currentTarget.value })} /></Field>
               : <Button type="button" variant="ghost" size="sm" className="self-start" disabled={blocked} onClick={() => setNoteOpen(true)}>{t('添加备注', 'Add note')}</Button>}
           </FieldGroup></FieldSet>

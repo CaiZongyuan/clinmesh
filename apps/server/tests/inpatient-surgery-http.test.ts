@@ -1059,7 +1059,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
   it.each(['request','check-preop','confirm-consent','cancel','execute'])('手术%s拒绝缺失或恶意Origin且不写入，可信Origin正常', async action => {
     const s = await setup(), cookie = action === 'check-preop' ? s.nurse : s.doctor
     let input: Record<string,unknown> = { encounterVersion:s.admission.versionId,procedureId:'hospital-surgery-4',catalogVersion:1,
-      surgeryType:'elective',locationId:'location-operating-center',surgeonPractitionerId:'practitioner-inpatient-doctor',anesthesiaMethod:'general',
+      surgeryType:'elective',locationId:'location-operating-center',surgeonPractitionerId:'practitioner-inpatient-doctor',anesthesiaMethod:'general',preopOrderPolicy:'continue-active',
       plannedFor:'2026-08-25T01:00:00.000Z',reason:'合成Origin门禁验证' }
     if (action === 'execute') {
       const state = await readySurgery(s, false), row = state.requests[0]
@@ -1097,7 +1097,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     const requested = await s.runtime.app.request(`${s.path}/surgeries/request`, { method:'POST',headers:{authorization:`Bearer ${grant.token}`,
       'content-type':'application/json','idempotency-key':randomUUID()},body:JSON.stringify({input:{encounterVersion:s.admission.versionId,
         procedureId:'hospital-surgery-4',catalogVersion:1,surgeryType:'elective',locationId:'location-operating-center',
-        surgeonPractitionerId:'practitioner-inpatient-doctor',anesthesiaMethod:'general',plannedFor:'2026-08-25T01:00:00.000Z',reason:'合成Bearer手术申请'}}) })
+        surgeonPractitionerId:'practitioner-inpatient-doctor',anesthesiaMethod:'general',preopOrderPolicy:'continue-active',plannedFor:'2026-08-25T01:00:00.000Z',reason:'合成Bearer手术申请'}}) })
     expect(requested.status).toBe(200)
     expect((await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests).toHaveLength(1)
   })
@@ -1132,7 +1132,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     const s = await setup()
     const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: s.admission.versionId,
       procedureId:'hospital-surgery-4',catalogVersion:1,surgeryType:'elective',locationId:'location-operating-center',
-      surgeonPractitionerId:'practitioner-inpatient-doctor',anesthesiaMethod:'general',plannedFor:'2026-08-25T01:00:00.000Z',reason:'合成准备审计验证' })
+      surgeonPractitionerId:'practitioner-inpatient-doctor',anesthesiaMethod:'general',preopOrderPolicy:'continue-active',plannedFor:'2026-08-25T01:00:00.000Z',reason:'合成准备审计验证' })
     expect(requested.status).toBe(200)
     const id = (await requested.json()).data.requests[0].id
     const auditCount = async () => (await (await s.request(s.doctor, '/fhir/R5/AuditEvent?_total=accurate&_count=100')).json()).total
@@ -1175,7 +1175,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     const material = catalog.materials.find((item: { id: string }) => item.id === 'hospital-material-suture')
     const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: s.admission.versionId,
       procedureId: planned.id, catalogVersion: planned.version, surgeryType: 'elective', locationId: 'location-operating-center',
-      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general', plannedFor: '2026-08-25T01:00:00.000Z', reason: '合成示教手术申请' })
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general', preopOrderPolicy: 'continue-active', plannedFor: '2026-08-25T01:00:00.000Z', reason: '合成示教手术申请' })
     expect(requested.status).toBe(200)
     let state = (await requested.json()).data
     const id = state.requests[0].id
@@ -1213,7 +1213,10 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       subject: { reference: `Patient/${s.patient.id}` }, basedOn: [{ reference: `ServiceRequest/${id}` }] })
     const ledger = await (await s.request(s.cashier, `${s.path}/charges`)).json()
     expect(ledger.charges.map((charge: { kind: string; amountFen: number }) => ({ kind: charge.kind, amountFen: charge.amountFen }))).toEqual([
-      { kind: 'surgery', amountFen: actual.chargeDefinition.priceFen }, { kind: 'material', amountFen: material.chargeDefinition.priceFen * 2 }])
+      { kind: 'surgery', amountFen: actual.chargeDefinition.priceFen },
+      { kind: 'material', amountFen: material.chargeDefinition.priceFen * 2 },
+      { kind: 'service', amountFen: 10000 },
+    ])
     expect((await s.request(s.doctor, `${s.path}/surgeries/cancel`, { requestId: id, expectedRequestVersion: state.requests[0].version, note: '不能取消已实施事实' })).status).toBe(409)
   })
 
@@ -1221,7 +1224,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     const s = await setup()
     const request = { encounterVersion: s.admission.versionId, procedureId: 'hospital-surgery-1', catalogVersion: 1,
       surgeryType: 'elective', locationId: 'location-catheterization-lab', surgeonPractitionerId: 'practitioner-inpatient-doctor',
-      anesthesiaMethod: 'local-infiltration', plannedFor: '2026-08-25T01:00:00.000Z', reason: '合成申请' }
+      anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active', plannedFor: '2026-08-25T01:00:00.000Z', reason: '合成申请' }
     expect((await s.request(s.nurse, `${s.path}/surgeries/request`, request)).status).toBe(403)
     expect((await s.request(s.cashier, `${s.path}/surgeries`)).status).toBe(403)
     for (const value of [{ ...request, procedureId: '00.6600' }, { ...request, catalogVersion: 999 }, { ...request, plannedFor: '2026-01-01T00:00:00Z' }]) {
@@ -1406,7 +1409,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       const created = inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/request`, {
         encounterVersion: current.encounterVersion, procedureId, catalogVersion: 1,
         surgeryType: 'elective', locationId: 'location-operating-center',
-        surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general',
+        surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general', preopOrderPolicy: 'continue-active',
         plannedFor: '2026-08-25T02:00:00.000Z', reason,
       })).json()).data.requests.find(item => item.reason === reason)!
       expect((await s.request(s.nurse, `${s.path}/surgeries/check-preop`, { requestId: created.id, expectedRequestVersion: created.version, note: '合成术前核对' })).status).toBe(200)
@@ -1576,7 +1579,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       const created = inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/request`, {
         encounterVersion: current.encounterVersion, procedureId, catalogVersion: 1,
         surgeryType: 'elective', locationId: 'location-operating-center',
-        surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general',
+        surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general', preopOrderPolicy: 'continue-active',
         plannedFor: '2026-08-25T02:00:00.000Z', reason,
       })).json()).data.requests.find(row => row.reason === reason)!
       expect((await s.request(s.nurse, `${s.path}/surgeries/check-preop`, { requestId: created.id, expectedRequestVersion: created.version, note: '术前核对完成' })).status).toBe(200)
@@ -1659,7 +1662,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
         { materialId: 'hospital-material-suture', catalogVersion: 1, display: '合成演示缝合材料', specification: '合成规格', quantity: 1, unit: '包', unitPriceFen: 2000, estimatedFen: 2000, reason: '按计划', quantityBasis: '创口缝合', evidenceIds: ['ev-suture'] },
       ],
     }
-    s.runtime.database.driver.prepare('INSERT INTO inpatient_material_plan_confirmation VALUES(?,?,?,?,?,?,?,?)')
+    s.runtime.database.driver.prepare('INSERT INTO inpatient_material_plan_confirmation(workspace_id,epoch,admission_id,request_id,confirmation_id,estimate_id,draft_revision,snapshot_json) VALUES(?,?,?,?,?,?,?,?)')
       .run(authCtx.workspaceId, authCtx.epoch, s.admission.id, planReq.id, 'plan-confirm-1', estimateTaskId, 1, JSON.stringify(planSnapshot))
 
     // 虽然活动预留仅有 stent×1 且已完整关联，但少于已确认清单中的 suture×1，execute 省略 note 须拒绝
@@ -1783,6 +1786,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       surgeonPractitionerId: 'practitioner-surgeon-chief',
       assistantPractitionerId: 'practitioner-surgeon-attending',
       anesthesiaMethod: 'local-sedation' as const,
+      preopOrderPolicy: 'continue-active' as const,
       reason: '急性胸痛急诊冠脉造影评估',
     }
     expect((await s.request(s.doctor, `${s.path}/surgeries/request`, {
@@ -1866,6 +1870,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       locationId: 'location-catheterization-lab',
       surgeonPractitionerId: 'practitioner-inpatient-doctor',
       anesthesiaMethod: 'local-infiltration',
+      preopOrderPolicy: 'continue-active',
       reason: '胸闷待查行冠脉造影明确血管病变',
     })).json()).data.requests[0]!
 
@@ -2006,6 +2011,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
         surgeonPractitionerId: 'practitioner-surgeon-chief',
         assistantPractitionerId: 'practitioner-inpatient-doctor',
         anesthesiaMethod: spec.anesthesiaMethod,
+        preopOrderPolicy: 'continue-active',
         reason: `合成验证 ${spec.code} 一术一议模板`,
       })
       expect(reqResp.status, await reqResp.clone().text()).toBe(200)
@@ -2136,7 +2142,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
         VALUES(?,?,'guide-1','adm-1','pci-stent','req-inflight',1,'{}','{}','f2','automatic','succeeded',?)
       `).run(scope.workspaceId, scope.epoch, now)
 
-      expect(applyMigrations(db).applied).toEqual([migrationFile, '0121_clinical-fact-verification.sql', '0122_local-source-ingestion.sql', '0123_disease-pack-runtime.sql'])
+      expect(applyMigrations(db).applied).toEqual([migrationFile, '0121_surgery-medications-and-nursing.sql', '0122_surgery-ad-hoc-pci.sql', '0123_surgery-preop-policy-and-postop-investigations.sql', '0124_clinical-fact-verification.sql', '0125_local-source-ingestion.sql', '0126_disease-pack-runtime.sql'])
       expect(db.driver.pragma('foreign_key_check')).toEqual([])
       const migratedRows = z.array(z.object({
         request_id: z.string(),
@@ -2177,6 +2183,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       locationId: 'location-catheterization-lab',
       surgeonPractitionerId: 'practitioner-inpatient-doctor',
       anesthesiaMethod: 'local-infiltration',
+      preopOrderPolicy: 'continue-active',
       reason: '模拟 0120 升级前在途申请',
     }, requestReceiptKey)).json()).data.requests[0]!
 
@@ -2237,7 +2244,9 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     // v2 客户端丢失响应后使用原幂等键与原 {requestId, expectedRequestVersion, note} 重试 POST 须 200 原样重放；改载荷报 409，新幂等键仍报 400
     const replayedLegacyConsent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, legacyConsentBody, legacyReceiptKey)
     expect(replayedLegacyConsent.status, await replayedLegacyConsent.clone().text()).toBe(200)
-    expect(inpatientSurgeryResponseSchema.parse(await replayedLegacyConsent.json()).data.requests[0]!.consentConfirmation?.note).toContain('旧版持久回执')
+    const replayedLegacyConsentRequest = inpatientSurgeryResponseSchema.parse(await replayedLegacyConsent.json()).data.requests[0]!
+    expect(replayedLegacyConsentRequest.consentConfirmation?.note).toContain('旧版持久回执')
+    expect(replayedLegacyConsentRequest.preopOrderPolicy).toBe('continue-active')
     const conflictLegacyConsent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, {
       ...legacyConsentBody,
       note: '篡改旧版回执备注',
@@ -2252,7 +2261,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
         .get(auth.workspaceId, auth.epoch, 'inpatient.surgery.request', requestReceiptKey),
     )
     const degradedReqReceipt = JSON.parse(storedReqReceipt.response_json) as { data: { requests: Array<Record<string, unknown>> } }
-    for (const field of ['surgeryType', 'location', 'surgeon', 'assistant', 'anesthesiaMethod']) {
+    for (const field of ['surgeryType', 'location', 'surgeon', 'assistant', 'anesthesiaMethod', 'preopOrderPolicy']) {
       delete degradedReqReceipt.data.requests[0]![field]
     }
     const legacyV3RequestBody = {
@@ -2272,8 +2281,51 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       .run(legacyV3RequestHash, JSON.stringify(degradedReqReceipt), auth.workspaceId, auth.epoch, 'inpatient.surgery.request', requestReceiptKey)
     const replayedLegacyReq = await s.request(s.doctor, `${s.path}/surgeries/request`, legacyV3RequestBody, requestReceiptKey)
     expect(replayedLegacyReq.status, await replayedLegacyReq.clone().text()).toBe(200)
-    expect(inpatientSurgeryResponseSchema.parse(await replayedLegacyReq.json()).data.requests[0]!.surgeryType).toBeUndefined()
+    const replayedLegacyReqData = inpatientSurgeryResponseSchema.parse(await replayedLegacyReq.json()).data.requests[0]!
+    expect(replayedLegacyReqData.surgeryType).toBeUndefined()
+    expect(replayedLegacyReqData.preopOrderPolicy).toBe('continue-active')
     expect((await s.request(s.doctor, `${s.path}/surgeries/request`, legacyV3RequestBody)).status).toBe(400)
+
+    // 同时验证升级前 v4/v5 六要素（含可选 standbyAdHocPci、无 preopOrderPolicy）持久回执在同幂等键重放返回 200，改载荷 409，新幂等键 400
+    const legacyV5RequestKey = `legacy-v5-request-${randomUUID()}`
+    const legacyV5RequestBody = {
+      encounterVersion: s.admission.versionId,
+      surgeryType: 'elective' as const,
+      procedureId: 'hospital-surgery-8',
+      catalogVersion: 1,
+      plannedFor: '2026-08-25T02:00:00.000Z',
+      locationId: 'location-catheterization-lab' as const,
+      surgeonPractitionerId: 'practitioner-inpatient-doctor',
+      anesthesiaMethod: 'local-infiltration' as const,
+      standbyAdHocPci: true,
+      reason: '模拟 0122 升级前六要素无 preopOrderPolicy 回执',
+    }
+    const legacyV5RequestHash = commandRequestHash({
+      context: auth,
+      expectedVersions: { [`Encounter/${s.admission.id}`]: s.admission.versionId },
+      input: { admissionId: s.admission.id, ...legacyV5RequestBody },
+      operation: 'inpatient.surgery.request',
+    })
+    const legacyV5StoredReceipt = JSON.parse(storedReqReceipt.response_json) as { data: { requests: Array<Record<string, unknown>> } }
+    delete legacyV5StoredReceipt.data.requests[0]!.preopOrderPolicy
+    legacyV5StoredReceipt.data.requests[0]!.standbyAdHocPci = true
+    s.runtime.database.driver.prepare(`
+      INSERT INTO command_receipt(workspace_id,epoch,actor_id,practitioner_role_id,operation,idempotency_key,request_hash,status,response_json,created_at,updated_at)
+      VALUES(?,?,?,?,'inpatient.surgery.request',?,?, 'completed',?,?,?)
+    `).run(auth.workspaceId, auth.epoch, auth.actorId, auth.practitionerRoleId, legacyV5RequestKey, legacyV5RequestHash, JSON.stringify(legacyV5StoredReceipt), '2026-08-24T09:00:00.000Z', '2026-08-24T09:00:00.000Z')
+    const replayedLegacyV5Req = await s.request(s.doctor, `${s.path}/surgeries/request`, legacyV5RequestBody, legacyV5RequestKey)
+    expect(replayedLegacyV5Req.status, await replayedLegacyV5Req.clone().text()).toBe(200)
+    const replayedLegacyV5Data = inpatientSurgeryResponseSchema.parse(await replayedLegacyV5Req.json()).data.requests[0]!
+    expect(replayedLegacyV5Data.surgeryType).toBe('elective')
+    expect(replayedLegacyV5Data.standbyAdHocPci).toBe(true)
+    expect(replayedLegacyV5Data.preopOrderPolicy).toBe('continue-active')
+    const conflictLegacyV5Req = await s.request(s.doctor, `${s.path}/surgeries/request`, {
+      ...legacyV5RequestBody,
+      reason: '篡改旧版 v5 回执理由',
+    }, legacyV5RequestKey)
+    expect(conflictLegacyV5Req.status).toBe(409)
+    expect(apiErrorSchema.parse(await conflictLegacyV5Req.json()).error.code).toBe('IDEMPOTENCY_KEY_REUSED')
+    expect((await s.request(s.doctor, `${s.path}/surgeries/request`, legacyV5RequestBody)).status).toBe(400)
 
     const legacyLookup = await s.request(s.doctor, `/api/his/v1/command-receipts?operationId=inpatient.surgery.confirm-consent&idempotencyKey=${legacyReceiptKey}`)
     expect(legacyLookup.status).toBe(200)
@@ -2310,7 +2362,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
 async function readySurgery(s: Awaited<ReturnType<typeof setup>>, complete = true) {
   const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: s.admission.versionId,
     procedureId: 'hospital-surgery-4', catalogVersion: 1, surgeryType: 'elective', locationId: 'location-operating-center',
-    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'general', preopOrderPolicy: 'continue-active',
     plannedFor: '2026-08-25T01:00:00.000Z', reason: '合成手术测试' })
   expect(requested.status).toBe(200)
   const requestedBody = await requested.json()

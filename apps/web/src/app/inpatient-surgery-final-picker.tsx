@@ -8,7 +8,7 @@ import { Input } from '@clinmesh/ui/components/input'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { formatFen } from './workspace-format.ts'
 
-type Props = { catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined; locale: WorkspaceLocale;
+type Props = { catalog: z.input<typeof inpatientSurgeryCatalogSchema> | undefined; locale: WorkspaceLocale;
   count: number; disabled: boolean; onAdd: (item: z.infer<typeof inpatientMaterialItemSchema>) => void; children: ReactNode }
 
 export function SurgeryFinalMaterialPicker({ catalog, locale, count, disabled, onAdd, children }: Props) {

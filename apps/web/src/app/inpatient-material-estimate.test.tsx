@@ -30,7 +30,7 @@ const emptyReservations = inpatientMaterialReservationListSchema.parse({ admissi
   reservationSets: [{ requestId: 'surgery-1', fingerprint: 'c'.repeat(64) }] })
 const pciRequest = inpatientSurgeryRequestSchema.parse({ id: 'surgery-1', admissionId: admission.id, version: 1, status: 'requested',
   plannedProcedure: { id: 'hospital-pci', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '36.0700', display: '合成 PCI 计划', category: '介入治疗', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.test/coding', sourceSha256: '0'.repeat(64), sourceLocator: 'test:1' }, chargeDefinition: { id: 'charge-pci', priceFen: 180000, unit: '次', synthetic: true, trigger: 'execution' } },
-  plannedFor: '2026-08-25T09:00:00+08:00', reason: '合成计划', requestedAt: '2026-08-24T09:00:00+08:00', requestedBy: 'doctor', organizationId: 'organization-inpatient' })
+  plannedFor: '2026-08-25T09:00:00+08:00', preopOrderPolicy: 'continue-active', reason: '合成计划', requestedAt: '2026-08-24T09:00:00+08:00', requestedBy: 'doctor', organizationId: 'organization-inpatient' })
 const pciDraft = inpatientPciSelectionDraftSchema.parse({ requestId: 'surgery-1', version: 1, reportId: 'report-1', reportVersion: 1,
   edited: false, confirmedSelectionVersion: null, parameters: { requestId: 'surgery-1', treatmentPlan: '合成 PCI 计划', targetSite: 'LAD 中段',
     measurements: [{ kind: 'lesion-length', object: 'lesion', site: 'LAD 中段', value: 12, unit: 'mm', method: '合成定量造影',

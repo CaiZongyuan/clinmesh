@@ -4,6 +4,8 @@ import {
   orderSetAllergyReason,
   orderSetDisposition,
   orderSetOutpatientQuantity,
+  screenOrderSetActiveOrder,
+  screenOrderSetInFlightInvestigation,
   screenOrderSetRules,
   type OrderSetScreeningFacts,
 } from './order-set-screening.ts'
@@ -76,5 +78,126 @@ describe('order set screening', () => {
     expect(orderSetOutpatientQuantity({ courseDays: 7, doseText: '1 g', frequencyCode: 'ONCE', strength: '500 mg' })).toBe(2)
     expect(orderSetOutpatientQuantity({ courseDays: 7, doseText: '30 mg', frequencyCode: 'QD', strength: '20 mg' })).toBeUndefined()
     expect(orderSetOutpatientQuantity({ courseDays: 7, doseText: '500 mL', frequencyCode: 'QD', strength: '10 mg' })).toBeUndefined()
+  })
+
+  it('skips already-active orders, mutually-exclusive active medication classes, and in-flight investigations while keeping exclude higher priority than skip', () => {
+    const activeOrders = [
+      {
+        catalogItemId: 'medication-aspirin',
+        code: 'ASPIRIN',
+        display: '阿司匹林肠溶片',
+        duration: 'long' as const,
+        kind: 'medication' as const,
+        orderId: 'order-asp',
+        pharmacologyClasses: ['antiplatelet-aspirin'],
+        reference: 'MedicationRequest/order-asp',
+      },
+      {
+        catalogItemId: 'medication-ticagrelor',
+        code: 'TICAGRELOR',
+        display: '替格瑞洛片',
+        duration: 'long' as const,
+        kind: 'medication' as const,
+        orderId: 'order-tica',
+        pharmacologyClasses: ['p2y12'],
+        reference: 'MedicationRequest/order-tica',
+      },
+      {
+        catalogItemId: 'hospital-service-postop-ecg-monitoring',
+        code: 'POSTOP-ECG-MONITORING',
+        display: '术后持续心电监护',
+        duration: 'temporary' as const,
+        kind: 'service' as const,
+        orderId: 'order-ecg-mon',
+        reference: 'ServiceRequest/order-ecg-mon',
+      },
+    ]
+
+    const exactMed = screenOrderSetActiveOrder(
+      { catalogItemId: 'medication-aspirin', code: 'ASPIRIN', display: '阿司匹林肠溶片', kind: 'medication', pharmacologyClasses: ['antiplatelet-aspirin'] },
+      activeOrders,
+    )
+    expect(exactMed).toMatchObject({ code: 'already-active-order', severity: 'skip', sourceReference: 'MedicationRequest/order-asp' })
+    expect(orderSetDisposition([exactMed!])).toBe('skipped')
+
+    const crossSkuByConcept = screenOrderSetActiveOrder(
+      {
+        catalogItemId: 'medication-pci-aspirin',
+        code: 'XB01AC06',
+        display: '阿司匹林肠溶片（冠脉专包）',
+        drugConceptCode: 'CM-DRUG-ASPIRIN',
+        genericName: '阿司匹林肠溶片',
+        kind: 'medication',
+        pharmacologyClasses: ['antiplatelet-aspirin'],
+      },
+      [{
+        catalogItemId: 'medication-aspirin',
+        code: 'ASPIRIN',
+        display: '阿司匹林肠溶片',
+        drugConceptCode: 'CM-DRUG-ASPIRIN',
+        duration: 'long',
+        genericName: '阿司匹林肠溶片',
+        kind: 'medication',
+        orderId: 'order-asp-alt',
+        pharmacologyClasses: ['antiplatelet-aspirin'],
+        reference: 'MedicationRequest/order-asp-alt',
+      }],
+    )
+    expect(crossSkuByConcept).toMatchObject({ code: 'already-active-order', severity: 'skip', sourceReference: 'MedicationRequest/order-asp-alt' })
+
+    const crossSkuByGeneric = screenOrderSetActiveOrder(
+      {
+        catalogItemId: 'medication-generic-amlodipine-10mg',
+        code: 'NHSA-AML-10',
+        display: '苯磺酸氨氯地平片 10mg',
+        genericName: '苯磺酸氨氯地平片',
+        kind: 'medication',
+      },
+      [{
+        catalogItemId: 'medication-amlodipine',
+        code: 'AMLODIPINE',
+        display: '苯磺酸氨氯地平片 5mg',
+        duration: 'long',
+        genericName: '苯磺酸氨氯地平片',
+        kind: 'medication',
+        orderId: 'order-aml-5',
+        reference: 'MedicationRequest/order-aml-5',
+      }],
+    )
+    expect(crossSkuByGeneric).toMatchObject({ code: 'already-active-order', severity: 'skip', sourceReference: 'MedicationRequest/order-aml-5' })
+
+    const mutexMed = screenOrderSetActiveOrder(
+      { catalogItemId: 'medication-clopidogrel', code: 'CLOPIDOGREL', display: '硫酸氢氯吡格雷片', kind: 'medication', pharmacologyClasses: ['p2y12'] },
+      activeOrders,
+    )
+    expect(mutexMed).toMatchObject({ code: 'mutually-exclusive-active-order', severity: 'skip', sourceReference: 'MedicationRequest/order-tica' })
+    expect(mutexMed!.messageZh).toContain('替格瑞洛片')
+
+    const exactService = screenOrderSetActiveOrder(
+      { catalogItemId: 'hospital-service-postop-ecg-monitoring', code: 'POSTOP-ECG-MONITORING', display: '术后持续心电监护', kind: 'service' },
+      activeOrders,
+    )
+    expect(exactService).toMatchObject({ code: 'already-active-order', severity: 'skip', sourceReference: 'ServiceRequest/order-ecg-mon' })
+
+    const noConflict = screenOrderSetActiveOrder(
+      { catalogItemId: 'medication-sodium-chloride', code: 'SODIUM_CHLORIDE_0_9', display: '0.9%氯化钠注射液', kind: 'medication', pharmacologyClasses: ['crystalloid'] },
+      activeOrders,
+    )
+    expect(noConflict).toBeUndefined()
+
+    const inFlight = screenOrderSetInFlightInvestigation(
+      { catalogItemId: 'lab-hs-ctni', display: '高敏肌钙蛋白I', kind: 'laboratory', referenceCode: '2100404B' },
+      [{ catalogItemId: 'lab-hs-ctni', display: '高敏肌钙蛋白I', kind: 'laboratory', reference: 'ServiceRequest/inv-1', referenceCode: '2100404B', status: 'issued' }],
+    )
+    expect(inFlight).toMatchObject({ code: 'in-flight-investigation', severity: 'skip', sourceReference: 'ServiceRequest/inv-1' })
+    expect(screenOrderSetInFlightInvestigation(
+      { catalogItemId: 'examination-ecg-12-lead', display: '十二导联心电图', examCode: 'ecg-12-lead', kind: 'examination' },
+      [{ catalogItemId: 'lab-hs-ctni', display: '高敏肌钙蛋白I', kind: 'laboratory', reference: 'ServiceRequest/inv-1', referenceCode: '2100404B', status: 'issued' }],
+    )).toBeUndefined()
+
+    const allergyReason = orderSetAllergyReason({ code: 'ASPIRIN', display: '阿司匹林', reference: 'AllergyIntolerance/a' })
+    expect(orderSetDisposition([exactMed!, allergyReason])).toBe('excluded')
+    expect(orderSetDisposition([exactMed!, { code: 'vital-signs-missing', messageZh: '缺体征', observedValue: null, severity: 'pending-verification', sourceReference: null, threshold: null }])).toBe('skipped')
+    expect(orderSetDisposition([exactMed!, { code: 'catalog-unavailable', messageZh: '未开展', observedValue: null, severity: 'unavailable', sourceReference: null, threshold: null }])).toBe('unavailable')
   })
 })

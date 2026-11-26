@@ -15,7 +15,9 @@ export type SurgeryView = ReturnType<typeof useSurgeryView>
 /** 推演的通用 fingerprint 包含收费、申请版本等；只有真实选型修订使已确认清单需要再核对。 */
 export function surgeryPreparation(plan: Plan, selection: Selection | undefined, estimate: InpatientMaterialEstimate | undefined,
   view: SurgeryView[0] = initialSurgeryView, hasReservations = false) {
-  const isPci = pciSelectionProcedureCodes.includes(plan.plannedProcedure.coding.code)
+  const adHocConverted = plan.status === 'standby-pci' && plan.adHocPci?.status === 'converted'
+  const effectiveProcedureCode = adHocConverted && plan.adHocPci ? plan.adHocPci.procedure.coding.code : plan.plannedProcedure.coding.code
+  const isPci = pciSelectionProcedureCodes.includes(effectiveProcedureCode)
   const draft = selection?.drafts?.find(item => item.requestId === plan.id)
   const confirmation = selection?.confirmation?.parameters.requestId === plan.id ? selection.confirmation : undefined
   const planBasis = estimate?.planBasis
@@ -30,7 +32,7 @@ export function surgeryPreparation(plan: Plan, selection: Selection | undefined,
   const needsMaterials = isPci || estimate !== undefined || hasReservations
   const step: 'selection' | 'materials' | 'consent' | 'nurse' | 'start' = !selectionDone ? 'selection' : needsMaterials && !materialsDone ? 'materials'
     : !plan.consentConfirmation ? 'consent' : !plan.preopCheck ? 'nurse' : 'start'
-  return { step, selectionDone, materialsDone, selectionChanged, needsMaterials }
+  return { step, selectionDone, materialsDone, selectionChanged, needsMaterials, isPci, adHocConverted }
 }
 
 export function surgeryStepLabel(step: ReturnType<typeof surgeryPreparation>['step'], locale: WorkspaceLocale) {

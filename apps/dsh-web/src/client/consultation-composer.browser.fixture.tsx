@@ -5,7 +5,7 @@ import { DoctorCaseDetailRegion, DoctorCaseLayout, DoctorWorkspaceLayout } from 
 import { ConsultationPage } from '../../../web/src/app/doctor/consultation-page.tsx'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 import { AgentActionFeedbackProvider, useAgentActionFeedback } from '../../../web/src/app/agent-action-feedback.tsx'
-import { WebRuntimeProvider } from '../../../web/src/app/web-runtime.tsx'
+import { WebRuntimeProvider, type WebSurfaceVoiceInput, type WebSurfaceVoiceSnapshot } from '../../../web/src/app/web-runtime.tsx'
 import { ApiClientError } from '../../../web/src/app/api-client.ts'
 import { findScrollViewport } from '../../../web/e2e/scroll-viewport.browser.fixture.ts'
 
@@ -32,6 +32,46 @@ let feedback: ReturnType<typeof useAgentActionFeedback>
 let retryLocale: 'zh-CN' | 'en-US' | undefined
 let retryClicks = 0
 let manualQuestions = 0
+let voiceSnapshot: WebSurfaceVoiceSnapshot = {
+  installed: true,
+  ready: true,
+  phase: 'idle',
+  shortcutEnabled: true,
+  shortcut: 'ctrl+shift+space',
+}
+const voiceListeners = new Set<() => void>()
+const setVoicePhase = (phase: WebSurfaceVoiceSnapshot['phase']) => {
+  voiceSnapshot = {
+    installed: voiceSnapshot.installed,
+    ready: voiceSnapshot.ready,
+    phase,
+    shortcutEnabled: voiceSnapshot.shortcutEnabled,
+    shortcut: voiceSnapshot.shortcut,
+  }
+  for (const listener of voiceListeners) listener()
+}
+const fixtureVoiceInput: WebSurfaceVoiceInput = {
+  getSnapshot: () => voiceSnapshot,
+  subscribe(listener) {
+    voiceListeners.add(listener)
+    return () => { voiceListeners.delete(listener) }
+  },
+  start(target) {
+    setVoicePhase('recording')
+    target.setDraft(target.getDraft() === '' ? 'Synthetic voice draft' : `${target.getDraft()} Synthetic voice draft`)
+  },
+  stop() {
+    setVoicePhase('idle')
+  },
+  cancel() {
+    setVoicePhase('idle')
+  },
+  clearError() {
+    setVoicePhase('idle')
+  },
+  refresh() {},
+  registerShortcutHandler() { return () => {} },
+}
 function App() {
   feedback = useAgentActionFeedback({ identity: 'test', view: 'consultation', selection: 'case', section: 'consultation' })
   return <div className="flex h-full min-h-0 flex-col">
@@ -56,7 +96,7 @@ function App() {
   </div>
 }
 const reactRoot = createRoot(root)
-const render = () => flushSync(() => reactRoot.render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: root } }}>
+const render = () => flushSync(() => reactRoot.render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: root }, surfaceVoiceInput: fixtureVoiceInput }}>
   <AgentActionFeedbackProvider><App /></AgentActionFeedbackProvider>
 </WebRuntimeProvider>))
 render()
@@ -88,15 +128,29 @@ async function run() {
     flushSync(() => feedback({ id: 'section', operationId: 'outpatient.section.select', input: { section: 'consultation' }, phase: 'completed' }))
     await new Promise(resolve => setTimeout(resolve, 150))
     const button = composer.querySelector<HTMLButtonElement>('button[type="submit"]')!
+    const voiceButton = composer.querySelector<HTMLButtonElement>('button[data-voice-state]')!
     const buttonRect = button.getBoundingClientRect()
+    const voiceRect = voiceButton.getBoundingClientRect()
     const composerRect = composer.getBoundingClientRect()
     const glow = root.querySelector('.clinmesh-agent-target')!.getBoundingClientRect()
+    const questionsBeforeVoice = manualQuestions
+    voiceButton.click()
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    const voiceRecording = voiceButton.getAttribute('data-voice-state') === 'recording'
+      && textarea.value.includes('Synthetic voice draft')
+      && manualQuestions === questionsBeforeVoice
+    voiceButton.click()
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    const voiceStopped = voiceButton.getAttribute('data-voice-state') === 'idle'
     const step = {
       width, height,
       contentScrolled, emptyInputEditable,
       composerStable: Math.abs(afterScroll.top - beforeScroll.top) < 1 && Math.abs(afterScroll.bottom - beforeScroll.bottom) < 1,
       composerVisible: composerRect.top >= host.getBoundingClientRect().top && composerRect.bottom <= host.getBoundingClientRect().bottom - 4,
       buttonInside: buttonRect.bottom < composerRect.bottom && buttonRect.right < composerRect.right,
+      voiceButtonInside: voiceRect.left >= composerRect.left && voiceRect.bottom < composerRect.bottom && voiceRect.right <= buttonRect.left,
+      voiceButtonHit: shadow.elementFromPoint(voiceRect.x + voiceRect.width / 2, voiceRect.y + voiceRect.height / 2)?.closest('button') === voiceButton,
+      voiceDraftWithoutAutoSend: voiceRecording && voiceStopped,
       glowOutside: glow.bottom > buttonRect.bottom && glow.right > buttonRect.right,
       buttonHit: shadow.elementFromPoint(buttonRect.x + buttonRect.width / 2, buttonRect.y + buttonRect.height / 2)?.closest('button') === button,
       historyHeight: root.querySelector('[data-agent-consultation]')!.getBoundingClientRect().height,

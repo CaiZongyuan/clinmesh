@@ -38,7 +38,7 @@ function fixture(role: SessionContext['actor']['roleCode'] = 'inpatient-doctor',
   const plan = inpatientSurgeryRequestSchema.parse({ id: 'plan-pci', admissionId: admission.id, version: 1, status: 'requested',
     plannedProcedure: { id: 'pci', version: 1, coding: { system: 'urn:clinmesh:classification:icd-9-cm-3-clinical', version: '3.0', code: '36.0700', display: '合成 PCI', category: '介入治疗', releaseId: 'clinmesh-surgery-subset-2026-10-20', sourceUrl: 'https://example.test/synthetic', sourceSha256: 'a'.repeat(64), sourceLocator: 'synthetic' },
       chargeDefinition: { id: 'pci-price', priceFen: 180000, unit: '次', synthetic: true, trigger: 'execution' } },
-    plannedFor: time, reason: '合成计划', requestedAt: time, requestedBy: 'doctor', organizationId: 'org-1' })
+    plannedFor: time, preopOrderPolicy: 'continue-active', reason: '合成计划', requestedAt: time, requestedBy: 'doctor', organizationId: 'org-1' })
   const reads: string[] = []
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     reads.push(path)

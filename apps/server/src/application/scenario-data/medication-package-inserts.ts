@@ -215,6 +215,15 @@ const rawInserts: Readonly<Record<string, RawInsert>> = {
     precautions: '术前须核查血肌酐与 eGFR 评估对比剂相关急性肾损伤（CI-AKI）风险，eGFR < 60 mL/min/1.73m² 高危患者围术期给予 0.9% 氯化钠标准水化并严格限制对比剂体积，术后 48–72 小时复查血肌酐；合并使用二甲双胍者按肾功能规范评估围术期停复药，备齐过敏急救设施。',
     adverseReactions: '常见注射时短暂温热感、潮红、恶心或呕吐；偶见荨麻疹、支气管痉挛、低血压及对比剂相关急性肾损伤（血清肌酐升高），罕见严重过敏性休克。',
   },
+  'surgical-lidocaine': {
+    genericName: '盐酸利多卡因注射液',
+    specificationAndForm: '注射剂 · 5mL:100mg（20 mg/mL） · 5支/盒',
+    indicationsSummary: '酰胺类局麻药，用于介入血管穿刺点局部浸润麻醉、普外及腔镜手术切口局部浸润或神经阻滞麻醉。',
+    dosageAndAdministration: '皮下局部浸润注射（IH）、肌内或神经周围注射。成人介入穿刺局部浸润常规单次 5 mL（100 mg）；院内仿真按整 mL 计量（20 mg/mL），单次受控范围 20–400 mg（1–20 mL），单日最大总剂量不超过 400 mg（20 mL）。',
+    contraindications: '对利多卡因或其他酰胺类局麻药过敏、阿-斯综合征（Adams-Stokes）、预激综合征及未置入起搏器的高度窦房/房室或室内传导阻滞患者禁用。',
+    precautions: '推注前必须回抽确认无回血以防误入血管致局麻药全身毒性反应；老年、重度肝功能不全、心力衰竭或低血容量休克患者清除减慢，须减量使用并持续心电血压监护。',
+    adverseReactions: '偶见头晕、嗜睡、口唇麻木、耳鸣或视物模糊等中枢神经系统早期毒性征象；误入血管或过量可致抽搐、低血压、心动过缓甚至心脏骤停。',
+  },
 }
 
 const parsedInserts: Readonly<Record<string, MedicationPackageInsert>> = Object.freeze(

@@ -103,7 +103,7 @@ describe('住院病案首页公共 HTTP', () => {
     const catalog = await (await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json(), procedure = catalog.procedures[0]
     const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: s.admission.versionId,
       procedureId: procedure.id, catalogVersion: procedure.version, surgeryType: 'elective', locationId: 'location-catheterization-lab',
-      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       plannedFor: '2026-08-24T09:00:00+08:00', reason: '合成旧病区实际手术' })
     expect(requested.status).toBe(200)
     let request = (await requested.json()).data.requests[0]
@@ -293,7 +293,7 @@ describe('住院病案首页公共 HTTP', () => {
   it('申请不算实施；有实际操作必须显式选择本次执行，来源保留实际编码、术者和材料', async () => {
     const s = await setup(), catalog = await (await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json(), procedure = catalog.procedures[0]
     const issued = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: s.admission.versionId, procedureId: procedure.id, catalogVersion: procedure.version,
-      surgeryType: 'elective', locationId: 'location-catheterization-lab', surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+      surgeryType: 'elective', locationId: 'location-catheterization-lab', surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
       plannedFor: '2026-08-24T09:00:00+08:00', reason: '合成手术示教' })
     expect(issued.status).toBe(200)
     let request = (await issued.json()).data.requests[0]

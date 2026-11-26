@@ -13,6 +13,7 @@ import type {
   OrderSetTemplateOption,
 } from '@clinmesh/contracts/order-set-templates'
 import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
+import type { PreopOrderPolicy } from '@clinmesh/contracts/inpatient-surgery'
 import { medicationRouteSchema, medicationSafetyRuleSchema } from '@clinmesh/contracts/medication-safety'
 import type { ClinicalScoreBundle } from '@clinmesh/contracts/clinical-scores'
 import { resolveInpatientDose } from '@clinmesh/core/inpatient-dose'
@@ -21,7 +22,11 @@ import {
   orderSetAllergyReason,
   orderSetDisposition,
   orderSetOutpatientQuantity,
+  screenOrderSetActiveOrder,
+  screenOrderSetInFlightInvestigation,
   screenOrderSetRules,
+  type OrderSetActiveOrderFact,
+  type OrderSetInFlightInvestigationFact,
   type OrderSetScreeningFacts,
 } from '@clinmesh/core/order-set-screening'
 import { z } from 'zod'
@@ -38,13 +43,27 @@ import { orderSetTemplate, orderSetTemplates } from './order-set-template-regist
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { WorkflowError } from './workflow-error.ts'
 
-type Resolution = { candidate: OrderSetCandidate; codes?: readonly string[] } | { unavailable: OrderSetReason }
+type Resolution = {
+  candidate: OrderSetCandidate
+  codes?: readonly string[]
+  drugConceptCode?: string | undefined
+  genericName?: string | undefined
+  pharmacologyClasses?: readonly string[]
+  referenceCode?: string
+} | { unavailable: OrderSetReason }
 type Allergy = OrderSetPatientFacts['allergies'][number]
 
 interface CatalogResolver {
   laboratory(option: Extract<OrderSetTemplateOption, { kind: 'laboratory' }>): Resolution
   examination(option: Extract<OrderSetTemplateOption, { kind: 'examination' }>): Resolution
   medication(option: Extract<OrderSetTemplateOption, { kind: 'medication' }>): Resolution
+  service(option: Extract<OrderSetTemplateOption, { kind: 'service' }>): Resolution
+}
+
+interface ActiveDeduplicationContext {
+  activeOrders: readonly OrderSetActiveOrderFact[]
+  inFlightInvestigations: readonly OrderSetInFlightInvestigationFact[]
+  alwaysApply: boolean
 }
 
 const allergySchema = z.object({
@@ -62,9 +81,9 @@ const medicationConfigSchema = z.object({
   allowedRouteCodes: z.array(medicationRouteSchema).min(1).optional(),
   availableScopes: z.array(z.string()).optional(),
   defaultRouteCode: medicationRouteSchema.optional(),
-  drugConcept: z.object({ code: z.string().optional() }).optional(),
+  drugConcept: z.object({ code: z.string().optional(), display: z.string().optional() }).optional(),
   inpatientDoseBasis: z.object({ amount: z.number().positive(), unit: z.string().min(1) }).optional(),
-  product: z.object({ code: z.string().optional(), dosageForm: z.string().optional(), strength: z.string().optional() }).optional(),
+  product: z.object({ code: z.string().optional(), dosageForm: z.string().optional(), genericName: z.string().optional(), strength: z.string().optional() }).optional(),
   route: z.string().optional(),
   safety: medicationSafetyRuleSchema.optional(),
 })
@@ -77,7 +96,7 @@ function unavailable(code: 'catalog-unavailable' | 'catalog-rule-mismatch' | 'ca
 const reducedHydrationInstructionsZh = '静脉滴注，合并心力衰竭或 LVEF ≤ 35% 按 0.5 mL/kg/h 减量调整滴速，覆盖造影前 3–12 h 至术后 6–24 h'
 
 function candidateCatalogId(candidate: OrderSetCandidate): string {
-  return candidate.kind === 'examination' ? candidate.serviceId : candidate.catalogItemId
+  return candidate.kind === 'examination' || candidate.kind === 'service' ? candidate.serviceId : candidate.catalogItemId
 }
 
 /** 门诊与住院共用的组套草稿预装配：只读取正式事实与院内目录，不写入任何业务表。 */
@@ -149,12 +168,46 @@ export class OrderSetDraftService {
     }
   }
 
-  readInpatient(inpatient: InpatientService, context: ActorContext, admissionId: string, templateId?: OrderSetTemplateId): OrderSetDraftBundle {
-    const auditInput = templateId === undefined ? { admissionId } : { admissionId, templateId }
+  readInpatient(
+    inpatient: InpatientService,
+    context: ActorContext,
+    admissionId: string,
+    templateIdOrOptions?: OrderSetTemplateId | { surgeryExecutionId?: string | undefined; templateId?: OrderSetTemplateId | undefined },
+  ): OrderSetDraftBundle {
+    const options = typeof templateIdOrOptions === 'string'
+      ? { templateId: templateIdOrOptions }
+      : (templateIdOrOptions ?? {})
+    const { surgeryExecutionId, templateId } = options
+    const auditInput = {
+      admissionId,
+      ...(templateId === undefined ? {} : { templateId }),
+      ...(surgeryExecutionId === undefined ? {} : { surgeryExecutionId }),
+    }
     try {
       inpatient.assertRole(context, ['inpatient-doctor'])
       const binding = inpatient.admissionBinding(context, admissionId)
-      const templates = this.#templates('inpatient', templateId, reason => new InpatientError('ORDER_SET_SCOPE_NOT_APPLICABLE', reason))
+      let surgeryContext: {
+        executionId: string
+        procedureCode: string
+        procedureDisplay: string
+        preopOrderPolicy: PreopOrderPolicy
+      } | undefined
+      if (surgeryExecutionId !== undefined) {
+        inpatient.surgery.assertExecution(context, admissionId, surgeryExecutionId)
+        const surgery = inpatient.surgery.read(context, admissionId)
+        const execution = surgery.executions.find(item => item.id === surgeryExecutionId)
+        const request = execution === undefined ? undefined : surgery.requests.find(item => item.id === execution.requestId)
+        if (execution === undefined || request === undefined) {
+          throw new InpatientError('INPATIENT_SURGERY_EXECUTION_REQUIRED', '术后医嘱组套须引用本次住院已完成的手术')
+        }
+        surgeryContext = {
+          executionId: execution.id,
+          preopOrderPolicy: request.preopOrderPolicy,
+          procedureCode: execution.actualProcedure.coding.code,
+          procedureDisplay: execution.actualProcedure.coding.display,
+        }
+      }
+      const templates = this.#inpatientTemplates(templateId, surgeryContext)
       const scores = this.#clinicalScores.inpatientSnapshot(inpatient, context, admissionId)
       const weighted = this.#clinicalScores.latestInpatientVitalSignsWithWeight(context, admissionId)
       const facts = this.#facts(
@@ -164,15 +217,130 @@ export class OrderSetDraftService {
         'inpatient-nursing',
         weighted?.weightKg === undefined ? undefined : { ...weighted, weightKg: weighted.weightKg },
       )
-      const bundle = this.#bundle(templates, 'inpatient', facts, this.#inpatientCatalog(inpatient, context), {
-        admissionId, encounterVersion: scores.encounterVersion, scope: 'inpatient',
-      }, inpatient.virtualTime(context), this.#hydrationCautions(inpatient, context, admissionId, scores))
+      const deduplication = this.#inpatientDeduplicationContext(inpatient, context, admissionId, surgeryContext !== undefined)
+      const target: OrderSetDraftBundle['target'] = {
+        admissionId,
+        encounterVersion: scores.encounterVersion,
+        scope: 'inpatient',
+        ...(surgeryContext === undefined
+          ? {}
+          : {
+              preopOrderPolicy: surgeryContext.preopOrderPolicy,
+              surgeryExecutionId: surgeryContext.executionId,
+              surgeryProcedureCode: surgeryContext.procedureCode,
+              surgeryProcedureDisplay: surgeryContext.procedureDisplay,
+            }),
+      }
+      const bundle = this.#bundle(
+        templates,
+        'inpatient',
+        facts,
+        this.#inpatientCatalog(inpatient, context),
+        target,
+        inpatient.virtualTime(context),
+        this.#hydrationCautions(inpatient, context, admissionId, scores),
+        deduplication,
+      )
       inpatient.commands.auditRead(context, 'inpatient.order-set-drafts.read', auditInput, 'success')
       return bundle
     } catch (error) {
       try { inpatient.commands.auditRead(context, 'inpatient.order-set-drafts.read', auditInput, 'failed') } catch { /* preserve original error */ }
       throw error
     }
+  }
+
+  #inpatientDeduplicationContext(
+    inpatient: InpatientService,
+    context: ActorContext,
+    admissionId: string,
+    alwaysApply: boolean,
+  ): ActiveDeduplicationContext {
+    const activeOrders: OrderSetActiveOrderFact[] = inpatient.orders.facts(context, admissionId).orders
+      .filter(order => ['signed', 'verified'].includes(order.state))
+      .map(order => {
+        if (order.kind === 'medication') {
+          const row = z.object({ code: z.string(), config_json: z.string() }).optional().parse(this.#database.driver.prepare(
+            "SELECT code, config_json FROM outpatient_catalog WHERE workspace_id = ? AND epoch = ? AND item_id = ? AND kind = 'medication'",
+          ).get(context.workspaceId, context.epoch, order.catalogItemId))
+          const parsedConfig = row === undefined ? undefined : medicationConfigSchema.safeParse(JSON.parse(row.config_json))
+          const config = parsedConfig?.success ? parsedConfig.data : undefined
+          return {
+            catalogItemId: order.catalogItemId,
+            code: row?.code,
+            display: order.display,
+            drugConceptCode: config?.drugConcept?.code,
+            duration: order.duration,
+            genericName: config?.product?.genericName ?? config?.drugConcept?.display,
+            kind: 'medication' as const,
+            orderId: order.id,
+            pharmacologyClasses: inpatient.workflow.clinicalQuality.medicationClasses(context, order.catalogItemId),
+            reference: `MedicationRequest/${order.id}`,
+          }
+        }
+        return {
+          catalogItemId: order.catalogItemId,
+          display: order.display,
+          duration: order.duration,
+          kind: 'service' as const,
+          orderId: order.id,
+          reference: `ServiceRequest/${order.id}`,
+        }
+      })
+    const investigations = inpatient.investigations.readSnapshot(context, admissionId)
+    const inFlightStatuses = new Set(['issued', 'accepted', 'in-progress', 'generation-failed'])
+    const inFlightInvestigations: OrderSetInFlightInvestigationFact[] = [
+      ...investigations.laboratoryRequests
+        .filter(request => inFlightStatuses.has(request.status))
+        .map(request => ({
+          catalogItemId: request.catalogItemId,
+          display: request.laboratoryService?.nameZh ?? request.referenceConcept?.display ?? request.catalogItemId,
+          kind: 'laboratory' as const,
+          reference: `ServiceRequest/${request.serviceRequestId}`,
+          referenceCode: request.laboratoryService?.referenceConcept.code ?? request.referenceConcept?.code,
+          status: request.status,
+        })),
+      ...investigations.examinationRequests
+        .filter(request => inFlightStatuses.has(request.status))
+        .map(request => ({
+          catalogItemId: request.service.id,
+          display: request.service.name,
+          examCode: request.service.examCode,
+          kind: 'examination' as const,
+          reference: `ServiceRequest/${request.serviceRequestId}`,
+          status: request.status,
+        })),
+    ]
+    return { activeOrders, alwaysApply, inFlightInvestigations }
+  }
+
+  #inpatientTemplates(
+    templateId: OrderSetTemplateId | undefined,
+    surgeryContext: { procedureCode: string; procedureDisplay: string } | undefined,
+  ): OrderSetTemplate[] {
+    if (templateId === undefined) {
+      return orderSetTemplates.filter(template =>
+        template.scopes.includes('inpatient')
+        && (surgeryContext === undefined
+          ? template.applicableProcedureCodes === undefined
+          : template.applicableProcedureCodes?.includes(surgeryContext.procedureCode) === true))
+    }
+    const [template] = this.#templates(
+      'inpatient',
+      templateId,
+      reason => new InpatientError('ORDER_SET_SCOPE_NOT_APPLICABLE', reason),
+    )
+    if (template!.applicableProcedureCodes !== undefined) {
+      if (surgeryContext === undefined) {
+        throw new InpatientError('ORDER_SET_SCOPE_NOT_APPLICABLE', `术后组套 ${template!.titleZh} 须绑定适用术式的已完成手术`)
+      }
+      if (!template!.applicableProcedureCodes.includes(surgeryContext.procedureCode)) {
+        throw new InpatientError(
+          'ORDER_SET_SCOPE_NOT_APPLICABLE',
+          `术后组套 ${template!.titleZh} 不适用于已完成术式 ${surgeryContext.procedureDisplay}（${surgeryContext.procedureCode}）`,
+        )
+      }
+    }
+    return [template!]
   }
 
   #templates(scope: OrderSetScope, templateId: OrderSetTemplateId | undefined, conflict: (reason: string) => Error): OrderSetTemplate[] {
@@ -282,6 +450,7 @@ export class OrderSetDraftService {
     target: OrderSetDraftBundle['target'],
     evaluatedAt: string,
     hydrationCautions: readonly OrderSetReason[] = [],
+    deduplication?: ActiveDeduplicationContext,
   ): OrderSetDraftBundle {
     const vitals = facts.vitalSigns.status === 'present' ? facts.vitalSigns : undefined
     const screening: OrderSetScreeningFacts = {
@@ -293,12 +462,26 @@ export class OrderSetDraftService {
       weightKg: facts.weight.status === 'present' ? { reference: facts.weight.reference, value: facts.weight.weightKg } : null,
     }
     const drafts = templates.map((template): OrderSetDraft => {
+      const applyDedupe = deduplication !== undefined && (deduplication.alwaysApply || template.applicableProcedureCodes !== undefined)
       const items = template.items.filter(item => item.scopes.includes(scope))
-        .map(item => evaluateItem(item, screening, facts, catalog, item.key === 'isotonic-saline-hydration' ? hydrationCautions : []))
+        .map(item => evaluateItem(
+          item,
+          screening,
+          facts,
+          catalog,
+          item.key === 'isotonic-saline-hydration' || item.key === 'postop-saline-hydration' ? hydrationCautions : [],
+          applyDedupe ? deduplication : undefined,
+        ))
       const count = (disposition: OrderSetDraftItem['disposition']) => items.filter(item => item.disposition === disposition).length
       const { items: _templateItems, ...templateSummary } = template
       return {
-        counts: { excluded: count('excluded'), needsReview: count('needs-review'), ready: count('ready'), unavailable: count('unavailable') },
+        counts: {
+          excluded: count('excluded'),
+          needsReview: count('needs-review'),
+          ready: count('ready'),
+          skipped: count('skipped'),
+          unavailable: count('unavailable'),
+        },
         fingerprint: canonicalJsonHash({ facts, items, target, template: { fingerprint: template.fingerprint, id: template.id, version: template.version } }),
         items,
         template: templateSummary,
@@ -351,12 +534,13 @@ export class OrderSetDraftService {
           codes,
         }
       },
+      service: () => unavailable('catalog-unavailable', '病房护理服务仅适用于住院医嘱'),
     }
   }
 
   #inpatientCatalog(inpatient: InpatientService, context: ActorContext): CatalogResolver {
     const investigations = inpatient.investigations.catalog(context, new Set()).items
-    const medications = inpatient.orders.medications(context)
+    const { medications, services } = inpatient.orders.medicationsAndServices(context)
     return {
       examination: option => {
         const serviceId = z.object({ service_id: z.string() }).optional().parse(this.#database.driver.prepare(`
@@ -374,21 +558,26 @@ export class OrderSetDraftService {
           kind: 'examination', outpatientBilling: null, priceFen: item.priceFen, serviceId: item.id } }
       },
       laboratory: option => {
-        const services = this.#laboratoryServices(context, option)
-        if (services.length === 0) return unavailable('catalog-unavailable', '本院目录未发布该检验项目')
-        const entries = services.flatMap(service => {
+        const labServices = this.#laboratoryServices(context, option)
+        if (labServices.length === 0) return unavailable('catalog-unavailable', '本院目录未发布该检验项目')
+        const entries = labServices.flatMap(service => {
           const matched = investigations.find(candidate => candidate.id === service.id && candidate.kind === 'laboratory')
           return matched === undefined ? [] : [matched]
         })
         const ready = entries.find(entry => entry.available && entry.priceFen !== undefined)
         if (ready === undefined) {
           return entries.some(entry => entry.unavailableReason === 'unpriced' || entry.priceFen === undefined)
-            ? unavailable('catalog-unpriced', `${services[0]!.nameZh} 未声明住院价目`)
-            : unavailable('catalog-unavailable', `${services[0]!.nameZh} 本院住院暂未开展`)
+            ? unavailable('catalog-unpriced', `${labServices[0]!.nameZh} 未声明住院价目`)
+            : unavailable('catalog-unavailable', `${labServices[0]!.nameZh} 本院住院暂未开展`)
         }
         const indicationCodes = ready.indicationCodes.length > 0 ? ready.indicationCodes : ['clinical-evaluation']
-        return { candidate: { catalogItemId: ready.id, catalogVersion: ready.version, display: ready.display,
-          indicationCode: indicationCodes[0]!, indicationCodes, kind: 'laboratory', outpatientBilling: null, priceFen: ready.priceFen! } }
+        return {
+          candidate: {
+            catalogItemId: ready.id, catalogVersion: ready.version, display: ready.display,
+            indicationCode: indicationCodes[0]!, indicationCodes, kind: 'laboratory', outpatientBilling: null, priceFen: ready.priceFen!,
+          },
+          referenceCode: option.referenceCode,
+        }
       },
       medication: option => {
         const resolved = this.#medicationEntry(context, option.medicationKey)
@@ -406,6 +595,26 @@ export class OrderSetDraftService {
             frequencyCode: option.frequencyCode, inpatient: { doseQuantity: dose.quantity, duration: option.inpatientDuration },
             instructionsZh: option.instructionsZh ?? null, kind: 'medication', outpatient: null, routeCode: option.routeCode },
           codes: resolved.codes,
+          drugConceptCode: resolved.config.drugConcept?.code,
+          genericName: resolved.config.product?.genericName ?? resolved.config.drugConcept?.display,
+          pharmacologyClasses: resolved.config.safety?.pharmacologyClasses ?? inpatient.workflow.clinicalQuality.medicationClasses(context, item.id),
+        }
+      },
+      service: option => {
+        const item = services.find(candidate => candidate.id === option.serviceId)
+        if (item === undefined) return unavailable('catalog-unavailable', '本院住院服务目录未启用该护理服务')
+        if (item.priceFen <= 0) return unavailable('catalog-unpriced', `${item.display} 未声明有效住院服务价格`)
+        return {
+          candidate: {
+            display: item.display,
+            duration: option.inpatientDuration,
+            kind: 'service',
+            priceFen: item.priceFen,
+            quantity: option.quantity,
+            serviceId: item.id,
+            serviceVersion: item.version,
+            unit: item.unit,
+          },
         }
       },
     }
@@ -459,13 +668,16 @@ function evaluateItem(
   patient: OrderSetPatientFacts,
   catalog: CatalogResolver,
   extraReasons: readonly OrderSetReason[] = [],
+  deduplication?: ActiveDeduplicationContext,
 ): OrderSetDraftItem {
   const base = { key: item.key, kind: item.kind, titleZh: item.titleZh }
   const itemReasons = [...screenOrderSetRules(item.rules, facts), ...extraReasons]
   const unavailableReasons: OrderSetReason[] = []
   for (const option of item.options) {
     const resolution = option.kind === 'laboratory' ? catalog.laboratory(option)
-      : option.kind === 'examination' ? catalog.examination(option) : catalog.medication(option)
+      : option.kind === 'examination' ? catalog.examination(option)
+        : option.kind === 'service' ? catalog.service(option)
+          : catalog.medication(option)
     if ('unavailable' in resolution) {
       unavailableReasons.push(resolution.unavailable)
       continue
@@ -478,12 +690,51 @@ function evaluateItem(
       const allergy = patient.allergies.find((candidate: Allergy) => normalizedCodes.has(candidate.code.trim().toUpperCase()))
       if (allergy !== undefined) reasons.push(orderSetAllergyReason(allergy))
     }
+    if (deduplication !== undefined) {
+      if (resolution.candidate.kind === 'medication') {
+        const skipReason = screenOrderSetActiveOrder({
+          catalogItemId: resolution.candidate.catalogItemId,
+          code: resolution.codes?.[0],
+          display: resolution.candidate.display,
+          drugConceptCode: resolution.drugConceptCode,
+          genericName: resolution.genericName,
+          kind: 'medication',
+          pharmacologyClasses: resolution.pharmacologyClasses,
+        }, deduplication.activeOrders)
+        if (skipReason !== undefined) reasons.push(skipReason)
+      } else if (resolution.candidate.kind === 'service') {
+        const skipReason = screenOrderSetActiveOrder({
+          catalogItemId: resolution.candidate.serviceId,
+          display: resolution.candidate.display,
+          kind: 'service',
+        }, deduplication.activeOrders)
+        if (skipReason !== undefined) reasons.push(skipReason)
+      } else if (resolution.candidate.kind === 'laboratory') {
+        const skipReason = screenOrderSetInFlightInvestigation({
+          catalogItemId: resolution.candidate.catalogItemId,
+          display: resolution.candidate.display,
+          kind: 'laboratory',
+          referenceCode: resolution.referenceCode,
+        }, deduplication.inFlightInvestigations)
+        if (skipReason !== undefined) reasons.push(skipReason)
+      } else if (resolution.candidate.kind === 'examination') {
+        const skipReason = screenOrderSetInFlightInvestigation({
+          catalogItemId: resolution.candidate.serviceId,
+          display: resolution.candidate.display,
+          examCode: resolution.candidate.examCode,
+          kind: 'examination',
+        }, deduplication.inFlightInvestigations)
+        if (skipReason !== undefined) reasons.push(skipReason)
+      }
+    }
     const finalReasons = dedupe(reasons)
     const disposition = orderSetDisposition(finalReasons)
-    if (disposition === 'excluded') {
-      return { ...base, candidate: null, disposition: 'excluded', matchedCatalogId, reasons: finalReasons }
+    if (disposition === 'excluded' || disposition === 'skipped') {
+      return { ...base, candidate: null, disposition, matchedCatalogId, reasons: finalReasons }
     }
-    const candidate = resolution.candidate.kind === 'medication' && item.key === 'isotonic-saline-hydration' && extraReasons.length > 0
+    const candidate = resolution.candidate.kind === 'medication'
+      && (item.key === 'isotonic-saline-hydration' || item.key === 'postop-saline-hydration')
+      && extraReasons.length > 0
       ? { ...resolution.candidate, instructionsZh: reducedHydrationInstructionsZh }
       : resolution.candidate
     return { ...base, candidate, disposition, matchedCatalogId, reasons: finalReasons }

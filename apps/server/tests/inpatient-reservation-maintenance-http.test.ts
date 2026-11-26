@@ -20,7 +20,7 @@ async function setupMaintenance() {
   const planned = await s.request(s.doctor, `${s.path}/surgeries/request`, {
     encounterVersion: initial.encounterVersion, procedureId: 'hospital-surgery-8', catalogVersion: 1,
     surgeryType: 'elective', locationId: 'location-catheterization-lab',
-    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     plannedFor: initial.virtualTime, reason: '合成手工预留维护计划',
   })
   expect(planned.status).toBe(200)

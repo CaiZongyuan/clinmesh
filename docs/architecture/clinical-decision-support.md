@@ -8,15 +8,16 @@
 
 只读风险评分接口（门诊限当前主接诊责任医生的 `doctor.case.clinical-scores.read`，住院限有权读取岗位的 `inpatient.clinical-scores.read`）拒绝调用方传入任何未落库的临时覆盖数值，严格按当前活动时点或就诊结束／出区截止时点（已完诊门诊或已出区住院自动截断晚于本次就诊的跨次记录，保证历史可复现）抽取已确认客观记录，调用纯函数内核 `@clinmesh/core/clinical-scores` 确定性计算肾功能、急性冠脉综合征缺血风险、双抗出血风险与血脂靶标六项算子（`ckd-epi-2021-egfr`、`cockcroft-gault-crcl`、`grace-acs`、`timi-ua-nstemi`、`precise-dapt`、`ascvd-ldl-target`），内置肌酐、血红蛋白与血脂常规双轨单位精确换算；任一必需客观输入缺失时统一返回 `status: 'incomplete'` 与具体缺项清单 `missingInputs`，不调用模型估算或兜底填补。算子边界与可复现取舍见[确定性临床风险算子决策](../decisions/implemented/architecture/2026-11-17-deterministic-clinical-risk-scores.md)。
 
-## 心血管专病医嘱组套与禁忌预筛
+## 心血管专病与术后医嘱组套及禁忌预筛
 
-门诊与住院共享版本固定且携带内容 SHA-256 指纹的心血管专病 `Order Set Template` 注册表（`catalog.order-set-templates.list`），首批覆盖胸痛首诊急查（`chest-pain-stat-workup`）、冠心病入院基线评估（`cad-admission-baseline`）、对比剂肾损高危围术期水化（`cin-perioperative-hydration`）与冠心病／PCI 二级预防标准用药（`cad-pci-secondary-prevention`）四套标准临床组合。
+门诊与住院共享版本固定且携带内容 SHA-256 指纹的 `Order Set Template` 注册表（`catalog.order-set-templates.list` v3），覆盖胸痛首诊急查（`chest-pain-stat-workup`）、冠心病入院基线评估（`cad-admission-baseline`）、对比剂肾损高危围术期水化（`cin-perioperative-hydration`）、冠心病／PCI 二级预防标准用药（`cad-pci-secondary-prevention`），以及两套按已完成术式编码匹配的住院术后成套医嘱模板——PCI 术后标准成套医嘱（`pci-postop-standard`，含水化、心电监护与穿刺部位压迫制动护理、术后心肌标志物／心电图与次日肾功及血常规复查）与普外术后标准成套医嘱（`general-surgery-postop-standard`，含补液、切口与生命体征护理及术后血常规、肾功与电解质复查）；病房术后护理成员以 `kind = 'service'` 表达且仅限住院适用、不含 `routeCode`。
 
-零正式副作用草稿预装配接口（门诊 `doctor.case.order-set-drafts.read` 限责任医生，住院 `inpatient.order-set-drafts.read` 限主管医生；跨适用范围调用返回 `ORDER_SET_SCOPE_NOT_APPLICABLE`）读取当前患者有效确认药物过敏、`ckd-epi-2021-egfr` 及最新结构化生命体征与体重，经纯函数 `@clinmesh/core/order-set-screening` 将每个组套成员分类为 `ready`、`needs-review`、`excluded` 或 `unavailable`：
+零正式副作用草稿预装配接口（门诊 `doctor.case.order-set-drafts.read` 限责任医生，住院 `inpatient.order-set-drafts.read` v3 限主管医生并支持可选 `surgeryExecutionId` 按已完成手术编码自动匹配术后组套；跨适用范围调用返回 `ORDER_SET_SCOPE_NOT_APPLICABLE`）读取当前患者有效确认药物过敏、`ckd-epi-2021-egfr`、最新结构化生命体征与体重，以及住院当前在执医嘱与在途医技申请，经纯函数 `@clinmesh/core/order-set-screening` 将每个组套成员按 `unavailable > excluded > skipped > needs-review > ready` 优先级分类：
 
-- **硬禁忌直接剔除（`excluded`）**：命中有效已确认药物过敏（携带过敏原编码与显示名）、严重心动过缓／低血压生理禁用阈值或严重肾功能不全禁用阈值时，直接从可勾选项剔除并返回 `matchedCatalogId`、客观观测值与来源引用，绝不跨药品自动改选替代药。
+- **硬禁忌直接剔除（`excluded`）**：命中有效已确认药物过敏（携带过敏原编码与显示名）、严重心动过缓／低血压生理禁用阈值或严重肾功能不全禁用阈值时，直接从可勾选项剔除并返回 `matchedCatalogId`、客观观测值与来源引用，绝不跨药品自动改选替代药，且优先级严格高于术前已在用跳过。
+- **术前已在用与在途去重跳过（`skipped`）**：当患者已存在同品规在执医嘱（`already-active-order`）、同药理互斥类在执药嘱（`mutually-exclusive-active-order`，如已在用替格瑞洛或瑞舒伐他汀时自动跳过氯吡格雷或阿托伐他汀）或同项目在途未完成医技申请（`in-flight-investigation`）时，标为 `skipped` 并计入 `counts.skipped`，在界面以「术前已在用 · 默认跳过」分区与硬禁忌明确区分，避免误导为临床禁忌。
 - **缺依据显式待核实（`needs-review`）**：缺少生命体征、体重或近期肾功能检验输入时统一标为 `pending-verification`，默认取消勾选供医生核实，绝不静默假定指标正常；住院医技目录同步区分项目未开展（`catalog-unavailable`）与未声明住院价目（`catalog-unpriced`）。
-- **零正式写入与客户端灌入**：预装配读取不产生任何正式医技申请、处方、住院医嘱或账项；门诊与住院开单器按需拉取预筛结果灌入客户端待开清单（病情更新后重新套用时自动移除新剔除项并取消勾选新待核实项），最终由医生核对后走既有正式 Command 签发。设计取舍见[专病医嘱组套与禁忌预筛决策](../decisions/implemented/architecture/2026-11-18-cardiology-order-set-templates.md)。
+- **零正式写入与客户端灌入**：预装配读取不产生任何正式医技申请、处方、住院医嘱或账项；门诊开单器、住院普通开嘱器与住院术后医嘱重整统一编排器按需拉取预筛结果灌入客户端待开清单（病情更新后重新套用时自动移除新剔除项并取消勾选新待核实项），最终由医生核对后走既有正式 Command 签发。设计取舍见[专病医嘱组套与禁忌预筛决策](../decisions/implemented/architecture/2026-11-18-cardiology-order-set-templates.md)与[手术通知单停续术前医嘱策略与术后成套医嘱重整决策](../decisions/implemented/architecture/2026-11-25-preop-order-policy-and-postop-order-sets.md)。
 
 ## 免费指南全文库与共享指南专题注册表
 
@@ -61,8 +62,8 @@
 
 1. **门诊处方与住院医嘱签发关口**（`encounter.issue-prescription`、门诊处方准备确认、`inpatient.order.issue`）：联合声明式药事安全规则与近期客观肾功能记录，区分绝对用药红线与缺血肌酐／抗菌药指征条件警示（既有药事拒绝同步附带 `error.clinicalQuality` 阻断摘要）。
 2. **门诊完诊关口**（`encounter.complete`）：核对急性胸痛主诉或诊断病例是否已完成已签发 12 导联心电图及心肌损伤标志物评估（`CHEST_PAIN_WORKUP_INCOMPLETE`）。
-3. **冠脉介入计划与选型确认关口**（PCI 术式 `inpatient.surgery.request`、`inpatient.pci-selection.confirm`）：核对最新已签发冠脉造影报告是否存在功能学非缺血临界病变（`FFR > 0.80`）仍拟行 PCI 介入（`PCI_NON_ISCHEMIC_LESION`）；造影前已先开立 PCI 申请并由造影报告自动生成选型草稿时，耗材清单整批确认前必须先经 `inpatient.pci-selection.confirm` 完成质控核对或越权登记。
-4. **住院出院医嘱与离院后病案提交关口**（`inpatient.discharge.issue`、离院后 `inpatient.record.submit`）：对冠心病或本次住院已实施 PCI 病例，按出院医嘱截止时点核对是否已开立长期抗血小板（`DISCHARGE_ANTIPLATELET_MISSING`）与他汀类（`DISCHARGE_STATIN_MISSING`）二级预防医嘱（在院期间仅保存主操作预分组快照不触发出院质控；出院医嘱与离院首页提交各自独立校验并留存越权记录）。
+3. **冠脉介入计划与选型确认关口**（PCI 术式 `inpatient.surgery.request`、同台造影转 PCI `inpatient.surgery.convert-to-pci`、`inpatient.pci-selection.confirm`）：核对最新已签发冠脉造影报告是否存在功能学非缺血临界病变（`FFR > 0.80`）仍拟行 PCI 介入（`PCI_NON_ISCHEMIC_LESION`）；造影前已先开立 PCI 申请并由造影报告自动生成选型草稿时，耗材清单整批确认前必须先经 `inpatient.pci-selection.confirm` 完成质控核对或越权登记。
+4. **住院出院医嘱与离院后病案提交关口**（`inpatient.discharge.issue`、离院后 `inpatient.record.submit`）：对冠心病或本次住院已实施 PCI 病例，按出院医嘱截止时点核对是否已开立长期抗血小板（`DISCHARGE_ANTIPLATELET_MISSING`）与他汀类（`DISCHARGE_STATIN_MISSING`）二级预防医嘱（停嘱时点追溯同时覆盖 `inpatient.order.request-stop` 以及 `stop-on-completion` 手术终结的 `inpatient.surgery.complete` / `inpatient.surgery.execute` / `inpatient.surgery.finalize-standby` 审计事件；在院期间仅保存主操作预分组快照不触发出院质控；出院医嘱与离院首页提交各自独立校验并留存越权记录）。
 
 两层质控规则实行严格的越权边界隔离：
 

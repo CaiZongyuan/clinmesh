@@ -130,7 +130,7 @@ export function useInpatientAgentTools(input: Input) {
         ? { clinical: input.clinical, investigations: input.investigations } : {}) }),
     actions: {
       'inpatient.surgery.read': queryAction('inpatient.surgery.read', '/surgeries', clinicalRoles, ['surgery', 'record'],
-        'Read surgery notice six elements, structured informed consent snapshots, preop checks, and performed procedures for the current inpatient.'),
+        'Read surgery notice six elements, informed consent snapshots, preop checks, performed procedures, intraoperative medications, and linked nursing.'),
       'inpatient.angiography-reports.read': queryAction('inpatient.angiography-reports.read', '/angiography-reports', clinicalRoles, ['investigations', 'surgery', 'record'],
         'Read formal coronary angiography reports, multivessel physiology findings, and QCA measurements for the current inpatient.'),
       'inpatient.clinical-scores.read': queryAction('inpatient.clinical-scores.read', '/clinical-scores', clinicalRoles, ['admission', 'orders', 'surgery', 'discharge', 'record'],
@@ -141,8 +141,8 @@ export function useInpatientAgentTools(input: Input) {
         'Read verified guideline topic excerpts, limitations, and patient indicator gaps for the current inpatient.'),
       'inpatient.clinical-quality.read': queryAction('inpatient.clinical-quality.read', '/clinical-quality', ['inpatient-doctor'], ['orders', 'surgery', 'discharge', 'record'],
         'Run read-only two-tier clinical quality preflight (inpatient-order, inpatient-pci-plan, or inpatient-discharge).'),
-      'inpatient.order-set-drafts.read': queryAction('inpatient.order-set-drafts.read', '/order-set-drafts', ['inpatient-doctor'], ['orders', 'investigations'],
-        'Read version-bound inpatient order-set candidate drafts screened against allergies, eGFR, and nursing vitals.'),
+      'inpatient.order-set-drafts.read': queryAction('inpatient.order-set-drafts.read', '/order-set-drafts', ['inpatient-doctor'], ['orders', 'investigations', 'surgery'],
+        'Read version-bound inpatient or postoperative order-set candidate drafts (optional surgeryExecutionId) screened against allergies, eGFR, vitals, and active orders.'),
       'inpatient.disease-packs.read': queryAction('inpatient.disease-packs.read', '/disease-packs', clinicalRoles, ['admission', 'orders', 'surgery', 'discharge', 'record'],
         'Read active/available declarative disease packs, stages, task readiness, and tool policies for the current inpatient.'),
       'inpatient.disease-pack-task-facts.read': {

@@ -32,12 +32,52 @@ export interface WebSurfaceAgentController {
   }): () => void
 }
 
+export type WebSurfaceVoicePhase =
+  | 'idle'
+  | 'starting'
+  | 'recording'
+  | 'transcribing'
+  | 'polishing'
+  | 'error'
+
+export interface WebSurfaceVoiceSnapshot {
+  installed: boolean
+  ready: boolean
+  phase: WebSurfaceVoicePhase
+  unavailableReason?: string
+  error?: string
+  shortcutEnabled: boolean
+  shortcut: string
+}
+
+export interface WebSurfaceVoiceTarget {
+  getDraft(): string
+  setDraft(next: string): void
+}
+
+export interface WebSurfaceVoiceShortcutContext {
+  shouldHandle(event: KeyboardEvent): boolean
+  toggle(): void
+}
+
+export interface WebSurfaceVoiceInput {
+  getSnapshot(): WebSurfaceVoiceSnapshot
+  subscribe(listener: () => void): () => void
+  start(target: WebSurfaceVoiceTarget): void
+  stop(): void
+  cancel(): void
+  clearError(): void
+  refresh(): void
+  registerShortcutHandler(context: WebSurfaceVoiceShortcutContext): () => void
+}
+
 export interface WebRuntimeOptions {
   surfaceDoctorInput?: (accept: (input: DoctorAgentChatInput, signal: AbortSignal) => Promise<DoctorAgentTaskSubmission>,
     record?: (input: DoctorRecordingSourceInput, signal: AbortSignal) => Promise<void>,
     sourceFailed?: (dshSessionId: string) => void) => (() => void)
   surfaceNavigation?: WebSurfaceNavigation
   surfaceDisplay?: WebSurfaceDisplay
+  surfaceVoiceInput?: WebSurfaceVoiceInput
   apiBasePath?: string
   mode?: WebRuntimeMode
   onExit?: () => void
@@ -54,6 +94,7 @@ export interface WebRuntimeValue {
   surfaceDoctorInput?: WebRuntimeOptions['surfaceDoctorInput']
   surfaceNavigation?: WebSurfaceNavigation
   surfaceDisplay?: WebSurfaceDisplay
+  surfaceVoiceInput?: WebSurfaceVoiceInput
   appearanceRoot: RefObject<HTMLElement | null>
   mode: WebRuntimeMode
   onExit?: () => void

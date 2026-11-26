@@ -1,4 +1,5 @@
 import { medicationScheduledHours } from '@clinmesh/core/medication-safety'
+import { linkedNursingForProcedureId } from '@clinmesh/core/inpatient-surgery-medications'
 import { medicationFrequencySchema } from '@clinmesh/contracts/medication-safety'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
@@ -11,7 +12,7 @@ import { inpatientDrgSimulationSchema, inpatientMaterialReservationListSchema,
   inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema,
   inpatientMaterialReservationBatchInputSchema, type InpatientMaterialReservationBatchInput,
   type InpatientDrgSimulation, type InpatientDrgSimulationInput, type InpatientMaterialReservationList } from '@clinmesh/contracts/inpatient-drg-simulation'
-import { inpatientMaterialItemSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientAdHocPciConversionSchema, inpatientMaterialItemSchema, surgeryExecutionStageSchema, type SurgeryExecutionStage } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewCreateInputSchema, inpatientDrgPayerReviewSchema, inpatientDrgPayerReviewPreviewSchema,
   type InpatientDrgPayerReviewList } from '@clinmesh/contracts/inpatient-drg-payer'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
@@ -127,6 +128,42 @@ export class InpatientDrg {
     })
   }
 
+  #activePlanEntries(surgery: ReturnType<InpatientService['surgery']['read']>) {
+    return surgery.requests.flatMap(request => {
+      if (request.status === 'requested' || request.status === 'ready') {
+        const ongoing = surgery.inProgress.find(execution => execution.requestId === request.id && (execution.executionStage ?? 'primary') === 'primary')
+        return [{ request, stage: 'primary' as SurgeryExecutionStage, procedure: ongoing?.actualProcedure ?? request.plannedProcedure }]
+      }
+      if (request.status === 'standby-pci' && request.adHocPci?.status === 'converted') {
+        const ongoing = surgery.inProgress.find(execution => execution.requestId === request.id && execution.executionStage === 'ad-hoc-pci')
+        return [{ request, stage: 'ad-hoc-pci' as SurgeryExecutionStage, procedure: ongoing?.actualProcedure ?? request.adHocPci.procedure }]
+      }
+      return []
+    })
+  }
+
+  /** 在调用方事务内释放指定手术阶段的全部有效预留（例如放弃已转换的同台 PCI 计划）。 */
+  releaseStageReservationsInTransaction(
+    context: ActorContext,
+    admissionId: string,
+    requestId: string,
+    stage: SurgeryExecutionStage,
+    releaseReason: string,
+    effects: CommandEffect[],
+  ) {
+    const active = z.array(z.object({ reservation_id: z.string(), version: z.number() })).parse(
+      this.owner.database.driver.prepare(
+        "SELECT reservation_id, version FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? AND surgery_stage=? AND status='reserved' ORDER BY created_at, reservation_id",
+      ).all(context.workspaceId, context.epoch, admissionId, requestId, stage),
+    )
+    for (const reservation of active) {
+      this.owner.database.driver.prepare(
+        "UPDATE inpatient_material_reservation SET status='released', release_reason=?, version=version+1 WHERE workspace_id=? AND epoch=? AND reservation_id=? AND version=? AND status='reserved'",
+      ).run(releaseReason, context.workspaceId, context.epoch, reservation.reservation_id, reservation.version)
+      effects.push({ kind: 'updated', reference: `InpatientMaterialReservation/${reservation.reservation_id}`, versionId: String(reservation.version + 1) })
+    }
+  }
+
   /** 归档冻结读取：冻结分组、归档来源哈希与归档快照正式收费净额；未归档或缺冻结明确报错。 */
   #frozenArchive(context: ActorContext, admissionId: string) {
     const row = z.object({ drg_result_json: z.string().nullable(), sources_hash: z.string(), snapshot_json: z.string() }).optional().parse(
@@ -173,14 +210,11 @@ export class InpatientDrg {
     const dependencies = { ...this.#dependencies(context, admissionId, facts.charges, demographics), groupingInput: input }
     const formal = groupDrgCase(rules, input)
     const surgery = this.owner.surgery.read(context, admissionId)
-    const requests = surgery.requests
-      .filter(request => request.status === 'requested' || request.status === 'ready')
-    const primaryRequestId = draft?.primarySurgeryRequestId ?? (requests.length === 1 ? requests[0]!.id : undefined)
-    if (draft?.primarySurgeryRequestId !== undefined && !requests.some(request => request.id === primaryRequestId))
+    const activePlanEntries = this.#activePlanEntries(surgery)
+    const primaryRequestId = draft?.primarySurgeryRequestId ?? (activePlanEntries.length === 1 ? activePlanEntries[0]!.request.id : undefined)
+    if (draft?.primarySurgeryRequestId !== undefined && !activePlanEntries.some(entry => entry.request.id === primaryRequestId))
       throw new InpatientError('INPATIENT_DRG_PLAN_CONFLICT', '计划主操作已取消、完成或不属于本次住院，请刷新后重新选择')
-    const requestProcedures = requests.map(request => ({ request,
-      procedure: surgery.inProgress.find(execution => execution.requestId === request.id)?.actualProcedure ?? request.plannedProcedure }))
-    const plannedOperations = requestProcedures.map(({ request, procedure }) => ({ code: procedure.coding.code, primary: request.id === primaryRequestId }))
+    const plannedOperations = activePlanEntries.map(({ request, procedure }) => ({ code: procedure.coding.code, primary: request.id === primaryRequestId }))
     const projected = plannedOperations.length > 0
       ? groupDrgCase(rules, { ...input, operations: [
         ...input.operations.map(operation => ({ ...operation, primary: false })), ...plannedOperations,
@@ -211,17 +245,18 @@ export class InpatientDrg {
 
   /** 费用与分组共用计价事实；未启用分组规则时仍能展示正式费用和后续承诺。 */
   costProjection(context: ActorContext, admissionId: string, draft?: InpatientDrgSimulationInput,
-    planned?: { requestId: string; items: Array<{ materialId: string; catalogVersion: number; quantity: number; unitPriceFen: number; display: string }> },
+    planned?: { requestId: string; surgeryStage?: SurgeryExecutionStage; items: Array<{ materialId: string; catalogVersion: number; quantity: number; unitPriceFen: number; display: string }> },
     loaded?: { facts: ReturnType<InpatientService['orders']['facts']>; surgery: ReturnType<InpatientService['surgery']['read']> }) {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     if (!loaded) this.owner.readAdmissionBinding(context, admissionId)
     const facts = loaded?.facts ?? this.owner.orders.facts(context, admissionId), surgery = loaded?.surgery ?? this.owner.surgery.read(context, admissionId)
-    const requestProcedures = surgery.requests.filter(request => ['requested', 'ready'].includes(request.status))
-      .map(request => ({ request, procedure: surgery.inProgress.find(execution => execution.requestId === request.id)?.actualProcedure ?? request.plannedProcedure }))
+    const requestProcedures = this.#activePlanEntries(surgery)
+    const nursingBindings = requestProcedures.length === 0 ? [] : this.owner.surgery.catalog(context).nursingBindings
     const chargesFen = facts.charges.reduce((sum, charge) => sum + charge.amountFen, 0)
     const quantities = new Map([
       ...facts.dispenses.map(item => [item.id, item.quantity] as const),
       ...[...surgery.executions, ...surgery.inProgress].flatMap(execution => (execution.materialHistory.length > 0 ? execution.materialHistory : execution.materials).map(item => [item.id, item.quantity] as const)),
+      ...[...surgery.executions, ...surgery.inProgress].flatMap(execution => (execution.medications ?? []).map(item => [item.id, item.quantity] as const)),
       ...facts.executions.map(execution => [execution.id, facts.orders.find(order => order.id === execution.orderId)?.doseQuantity ?? 1] as const),
     ])
     const chargesById = new Map(facts.charges.map(charge => [charge.id, charge]))
@@ -241,15 +276,37 @@ export class InpatientDrg {
           quantity, estimatedFen: quantity * row.price_fen }
       })
         .filter(item => item.quantity > 0),
-      ...requestProcedures.map(({ request, procedure }) => ({
-        kind: 'surgery' as const, id: request.id, display: procedure.coding.display, quantity: 1,
-        estimatedFen: procedure.chargeDefinition.priceFen })),
+      ...requestProcedures.flatMap(({ request, stage, procedure }) => {
+        const linked = linkedNursingForProcedureId(nursingBindings, procedure.id)
+        const nursingAlreadyBilledInSameSession = stage === 'ad-hoc-pci'
+          && linked !== undefined
+          && surgery.executions.some(execution => execution.requestId === request.id
+            && (execution.executionStage ?? 'primary') === 'primary'
+            && execution.linkedNursing?.serviceId === linked.serviceId)
+        return [
+          {
+            kind: 'surgery' as const,
+            id: request.id,
+            display: procedure.coding.display,
+            quantity: 1,
+            estimatedFen: procedure.chargeDefinition.priceFen,
+          },
+          ...(linked === undefined || nursingAlreadyBilledInSameSession ? [] : [{
+            kind: 'surgery' as const,
+            id: `${request.id}.nursing`,
+            display: linked.display,
+            quantity: 1,
+            estimatedFen: linked.priceFen,
+          }]),
+        ]
+      }),
     ]
-    const reserved = z.array(z.object({ reservation_id: z.string(), request_id: z.string().nullable(), material_display: z.string(),
+    const reserved = z.array(z.object({ reservation_id: z.string(), request_id: z.string().nullable(),
+      surgery_stage: surgeryExecutionStageSchema.default('primary'), material_display: z.string(),
       quantity: z.number(), price_fen: z.number() })).parse(this.owner.database.driver.prepare(
-      "SELECT reservation_id, request_id, material_display, quantity-consumed_quantity quantity, price_fen FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND status='reserved' AND quantity>consumed_quantity ORDER BY created_at,reservation_id")
+      "SELECT reservation_id, request_id, surgery_stage, material_display, quantity-consumed_quantity quantity, price_fen FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND status='reserved' AND quantity>consumed_quantity ORDER BY created_at,reservation_id")
       .all(context.workspaceId, context.epoch, admissionId))
-      .filter(row => planned === undefined || row.request_id !== planned.requestId)
+      .filter(row => planned === undefined || row.request_id !== planned.requestId || row.surgery_stage !== (planned.surgeryStage ?? 'primary'))
       .map(row => ({ kind: 'material' as const, id: row.reservation_id, display: row.material_display,
         quantity: row.quantity, estimatedFen: row.price_fen * row.quantity }))
     for (const item of planned?.items ?? []) reserved.push({ kind: 'material', id: item.materialId, display: item.display,
@@ -352,6 +409,7 @@ export class InpatientDrg {
       prices: { medications: catalogPrices.medications,
         services: catalogPrices.services,
         procedures: surgeryCatalog.procedures.map(item => [item.id, item.version, item.chargeDefinition.priceFen]),
+        nursingBindings: surgeryCatalog.nursingBindings.map(item => [item.serviceId, item.serviceVersion, item.priceFen, item.procedureIds]),
         // 计价单位未确认的耗材无价格，指纹以 null 占位；补价后指纹随之变化即过期。
         materials: surgeryCatalog.materials.map(item => [item.id, item.version, 'chargeDefinition' in item ? item.chargeDefinition.priceFen : null]) },
       rulesId: this.rules!.rulesId,
@@ -391,21 +449,29 @@ export class InpatientDrg {
   reservations(context: ActorContext, admissionId: string): InpatientMaterialReservationList {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
     this.owner.readAdmissionBinding(context, admissionId)
-    const rows = z.array(z.object({ reservation_id: z.string(), request_id: z.string().nullable(), material_id: z.string(),
+    const rows = z.array(z.object({ reservation_id: z.string(), request_id: z.string().nullable(),
+      surgery_stage: surgeryExecutionStageSchema.default('primary'), material_id: z.string(),
       material_display: z.string(), catalog_version: z.number(), quantity: z.number(), price_fen: z.number(), status: z.string(),
       consumed_quantity: z.number(), version: z.number(), release_reason: z.string().nullable(),
       material_use_id: z.string().nullable(), reason: z.string(), created_at: z.string(), material_snapshot_json: z.string().nullable() })).parse(this.owner.database.driver.prepare(
       'SELECT * FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY created_at,reservation_id')
       .all(context.workspaceId, context.epoch, admissionId))
-    const requests = z.array(z.object({ request_id: z.string() })).parse(this.owner.database.driver.prepare(
-      'SELECT request_id FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY request_id')
+    const requests = z.array(z.object({ request_id: z.string(), status: z.string(), ad_hoc_pci_json: z.string().nullable().default(null) })).parse(this.owner.database.driver.prepare(
+      'SELECT request_id,status,ad_hoc_pci_json FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY request_id')
       .all(context.workspaceId, context.epoch, admissionId))
     return inpatientMaterialReservationListSchema.parse({
       admissionId,
       encounterVersion: this.owner.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
-      reservationSets: requests.map(request => ({ requestId: request.request_id,
-        fingerprint: reservationSetFingerprint(context, admissionId, request.request_id,
-          rows.filter(row => row.request_id === request.request_id && row.status === 'reserved')) })),
+      reservationSets: requests.map(request => {
+        const adHocConverted = request.status === 'standby-pci' && request.ad_hoc_pci_json !== null
+          && inpatientAdHocPciConversionSchema.parse(JSON.parse(request.ad_hoc_pci_json)).status === 'converted'
+        const stage: SurgeryExecutionStage = adHocConverted ? 'ad-hoc-pci' : 'primary'
+        return {
+          requestId: request.request_id,
+          fingerprint: reservationSetFingerprint(context, admissionId, request.request_id,
+            rows.filter(row => row.request_id === request.request_id && row.surgery_stage === stage && row.status === 'reserved')),
+        }
+      }),
       reservations: rows.map(row => {
         const used = row.material_snapshot_json === null
           ? z.array(z.object({ item_json: z.string() })).parse(this.owner.database.driver.prepare(
@@ -426,6 +492,7 @@ export class InpatientDrg {
         quantity: row.quantity, catalogVersion: row.catalog_version, consumedQuantity: row.consumed_quantity, remainingQuantity: row.status === 'reserved' ? row.quantity - row.consumed_quantity : 0, version: row.version, releaseReason: row.release_reason, priceFen: row.price_fen, status: row.status as 'reserved' | 'replaced' | 'released',
         reason: row.reason, createdAt: row.created_at,
         ...(row.request_id === null ? {} : { requestId: row.request_id }),
+        ...(row.surgery_stage === 'ad-hoc-pci' ? { surgeryStage: 'ad-hoc-pci' as const } : {}),
         ...(row.material_use_id === null ? {} : { replacedByMaterialUseId: row.material_use_id }),
       } }),
     })
@@ -442,18 +509,22 @@ export class InpatientDrg {
       const material = this.owner.surgery.catalog(context).materials
         .find(item => item.id === input.materialId && item.version === input.catalogVersion)
       if (material === undefined || !('chargeDefinition' in material)) throw new InpatientError('CATALOG_CONFLICT', '耗材目录、版本或计价单位不可用')
+      let surgeryStage: SurgeryExecutionStage = 'primary'
       if (input.requestId !== undefined) {
-        const request = z.object({ status: z.string() }).optional().parse(this.owner.database.driver.prepare(
-          'SELECT status FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?')
+        const request = z.object({ status: z.string(), ad_hoc_pci_json: z.string().nullable().default(null) }).optional().parse(this.owner.database.driver.prepare(
+          'SELECT status,ad_hoc_pci_json FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?')
           .get(context.workspaceId, context.epoch, input.admissionId, input.requestId))
-        if (request === undefined || !['requested', 'ready'].includes(request.status))
+        const adHocConverted = request?.status === 'standby-pci' && request.ad_hoc_pci_json !== null
+          && inpatientAdHocPciConversionSchema.parse(JSON.parse(request.ad_hoc_pci_json)).status === 'converted'
+        if (request === undefined || (!['requested', 'ready'].includes(request.status) && !adHocConverted))
           throw new InpatientError('INPATIENT_SURGERY_NOT_FOUND', '预留须引用本次住院未实施或未取消的手术申请', 404)
+        if (adHocConverted) surgeryStage = 'ad-hoc-pci'
       }
       const id = uuidv7()
       this.owner.database.driver.prepare(`INSERT INTO inpatient_material_reservation
-        (workspace_id,epoch,reservation_id,admission_id,request_id,material_id,catalog_version,material_display,price_fen,quantity,status,reason,actor_id,practitioner_role_id,created_at,material_snapshot_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?,'reserved',?,?,?,?,?)`)
-        .run(context.workspaceId, context.epoch, id, admission.id, input.requestId ?? null, input.materialId, input.catalogVersion,
+        (workspace_id,epoch,reservation_id,admission_id,request_id,surgery_stage,material_id,catalog_version,material_display,price_fen,quantity,status,reason,actor_id,practitioner_role_id,created_at,material_snapshot_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,'reserved',?,?,?,?,?)`)
+        .run(context.workspaceId, context.epoch, id, admission.id, input.requestId ?? null, surgeryStage, input.materialId, input.catalogVersion,
           material.display, material.chargeDefinition.priceFen, input.quantity, input.reason, context.actorId, context.practitionerRoleId, this.owner.virtualTime(context), JSON.stringify(material))
       return { data: this.reservations(context, input.admissionId),
         effects: [{ kind: 'created' as const, reference: `InpatientMaterialReservation/${id}`, versionId: '1' }] }
@@ -475,17 +546,20 @@ export class InpatientDrg {
   replaceReservationsInTransaction(context: ActorContext, input: InpatientMaterialReservationBatchInput, effects: CommandEffect[]) {
     this.owner.assertNotArchived(context, input.admissionId)
     this.owner.orders.assertAdmitted(context, input.admissionId)
-    const request = z.object({ version: z.number(), status: z.string() }).optional().parse(this.owner.database.driver.prepare(
-      'SELECT version,status FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?')
+    const request = z.object({ version: z.number(), status: z.string(), ad_hoc_pci_json: z.string().nullable().default(null) }).optional().parse(this.owner.database.driver.prepare(
+      'SELECT version,status,ad_hoc_pci_json FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?')
       .get(context.workspaceId, context.epoch, input.admissionId, input.requestId))
-    if (!request || request.version !== input.expectedRequestVersion || !['requested', 'ready'].includes(request.status))
+    const adHocConverted = request?.status === 'standby-pci' && request.ad_hoc_pci_json !== null
+      && inpatientAdHocPciConversionSchema.parse(JSON.parse(request.ad_hoc_pci_json)).status === 'converted'
+    if (!request || request.version !== input.expectedRequestVersion || (!['requested', 'ready'].includes(request.status) && !adHocConverted))
       throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '计划已变化、取消或实施，请刷新后重新审阅')
-    if (this.owner.database.driver.prepare('SELECT 1 FROM inpatient_surgery_execution WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?')
-      .get(context.workspaceId, context.epoch, input.admissionId, input.requestId))
+    const stage: SurgeryExecutionStage = adHocConverted ? 'ad-hoc-pci' : 'primary'
+    if (this.owner.database.driver.prepare('SELECT 1 FROM inpatient_surgery_execution WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? AND execution_stage=?')
+      .get(context.workspaceId, context.epoch, input.admissionId, input.requestId, stage))
       throw new InpatientError('INPATIENT_SURGERY_IN_PROGRESS', '手术已经开始，不能整批调整术前预留')
     const current = z.array(z.object({ reservation_id: z.string(), version: z.number(), consumed_quantity: z.number() })).parse(
-      this.owner.database.driver.prepare("SELECT reservation_id,version,consumed_quantity FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? AND status='reserved'")
-        .all(context.workspaceId, context.epoch, input.admissionId, input.requestId))
+      this.owner.database.driver.prepare("SELECT reservation_id,version,consumed_quantity FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=? AND surgery_stage=? AND status='reserved'")
+        .all(context.workspaceId, context.epoch, input.admissionId, input.requestId, stage))
     if (reservationSetFingerprint(context, input.admissionId, input.requestId, current) !== input.expectedReservationFingerprint)
       throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '本计划的有效预留已变化，请重新审阅完整清单')
     if (current.some(row => row.consumed_quantity !== 0))
@@ -509,8 +583,8 @@ export class InpatientDrg {
     for (const { item, material } of selections) {
       const id = uuidv7()
       this.owner.database.driver.prepare(`INSERT INTO inpatient_material_reservation
-        (workspace_id,epoch,reservation_id,admission_id,request_id,material_id,catalog_version,material_display,price_fen,quantity,status,reason,actor_id,practitioner_role_id,created_at,material_snapshot_json)
-        VALUES(?,?,?,?,?,?,?,?,?,?,'reserved',?,?,?,?,?)`).run(context.workspaceId, context.epoch, id, input.admissionId, input.requestId,
+        (workspace_id,epoch,reservation_id,admission_id,request_id,surgery_stage,material_id,catalog_version,material_display,price_fen,quantity,status,reason,actor_id,practitioner_role_id,created_at,material_snapshot_json)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,'reserved',?,?,?,?,?)`).run(context.workspaceId, context.epoch, id, input.admissionId, input.requestId, stage,
           item.materialId, item.catalogVersion, material.display, material.chargeDefinition.priceFen, item.quantity, item.reason,
           context.actorId, context.practitionerRoleId, this.owner.virtualTime(context), JSON.stringify(material))
       effects.push({ kind: 'created', reference: `InpatientMaterialReservation/${id}`, versionId: '1' })

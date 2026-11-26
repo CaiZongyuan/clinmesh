@@ -398,7 +398,7 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('inpatient.clinical-fact-ledger.read', 'clinmesh_read_inpatient_clinical_fact_ledger', 'query', ipDoc, inpatientView, ['admission', 'orders', 'surgery', 'discharge', 'record']),
   tool('inpatient.guideline-topics.read', 'clinmesh_read_inpatient_guideline_topics', 'query', ipClinical, inpatientView, ['orders', 'surgery', 'discharge', 'record']),
   tool('inpatient.clinical-quality.read', 'clinmesh_read_inpatient_clinical_quality', 'query', ipDoc, inpatientView, ['orders', 'surgery', 'discharge', 'record']),
-  tool('inpatient.order-set-drafts.read', 'clinmesh_read_inpatient_order_set_drafts', 'query', ipDoc, inpatientView, ['orders', 'investigations']),
+  tool('inpatient.order-set-drafts.read', 'clinmesh_read_inpatient_order_set_drafts', 'query', ipDoc, inpatientView, ['orders', 'investigations', 'surgery']),
   tool('inpatient.disease-packs.read', 'clinmesh_read_inpatient_disease_packs', 'query', ipClinical, inpatientView, ['admission', 'orders', 'surgery', 'discharge', 'record']),
   tool('inpatient.disease-pack-task-facts.read', 'clinmesh_read_inpatient_disease_pack_task_facts', 'query', ipDoc, inpatientView, ['admission', 'orders', 'surgery', 'discharge', 'record']),
   tool('inpatient.order.verify.propose', 'clinmesh_prepare_verify_inpatient_order', 'proposal', ['ward-nurse'], inpatientView, 'orders'),

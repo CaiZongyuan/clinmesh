@@ -16,6 +16,7 @@ export const inpatientInvestigationsSchema = z.object({ admissionId: id, laborat
   sent: z.array(z.object({ requestId: id, sentAt: z.iso.datetime({ offset: true }), sentBy: id }).strict()) }).strict()
 export const inpatientInvestigationResponseSchema = commandResponseSchema(inpatientInvestigationsSchema)
 export const inpatientInvestigationIssueInputSchema = z.object({ admissionId: id, encounterVersion: version, catalogVersion:z.number().int().positive(),
+  surgeryExecutionId: id.optional(),
   selection: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('laboratory'), catalogItemId: catalogId, indicationCode: z.string().min(1).max(64) }).strict(),
     z.object({ kind: z.literal('examination'), serviceId: catalogId, indication: z.string().trim().min(2).max(500) }).strict(),

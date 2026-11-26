@@ -35,7 +35,8 @@ export function useInpatientPciPreparation({ admission, session, plans, allPlans
     cancelled: t('已取消', 'Cancelled'),
   }[status]
   const items = enabled ? plans.flatMap(plan => {
-    const estimate = estimates.error === null ? estimates.data?.estimates.find(item => item.requestId === plan.id) : undefined
+    const stage = plan.status === 'standby-pci' && plan.adHocPci?.status === 'converted' ? 'ad-hoc-pci' : 'primary'
+    const estimate = estimates.error === null ? estimates.data?.estimates.find(item => item.requestId === plan.id && (item.surgeryStage ?? 'primary') === stage) : undefined
     const matConfirmed = Boolean(estimate?.draft && estimate.draft.confirmedRevision === estimate.draft.revision)
     const draft = selection.error === null ? selection.data?.drafts?.find(item => item.requestId === plan.id) : undefined
     const manualConfirmed = selection.error === null && selection.data?.confirmation?.parameters.requestId === plan.id
@@ -46,6 +47,7 @@ export function useInpatientPciPreparation({ admission, session, plans, allPlans
     const fresh = estimate?.status === 'succeeded' && analysis?.basisFingerprint === estimate.basisFingerprint
     const materialReady = fresh && analysis !== null && analysis !== undefined && analysis.items.length > 0
     const loading = t('正在读取', 'Loading'), failed = t('读取失败，请重试', 'Could not load; retry')
+    const display = stage === 'ad-hoc-pci' && plan.adHocPci ? plan.adHocPci.procedure.coding.display : plan.plannedProcedure.coding.display
     return [
       { kind: 'selection', label: t('选型参数', 'Selection parameters'), ready: draftReady || selConfirmed,
         active: Boolean(selection.error || draft || selConfirmed),
@@ -54,7 +56,7 @@ export function useInpatientPciPreparation({ admission, session, plans, allPlans
       { kind: 'materials', label: t('手术耗材', 'Surgical materials'), ready: selection.error === null && (materialReady || matConfirmed || Boolean(estimate && estimate.status !== 'cancelled')),
         active: Boolean(estimates.error || matConfirmed || (estimate && estimate.status !== 'incomplete') || draftReady || selConfirmed),
         status: estimates.error ? failed : estimates.isPending ? loading : matConfirmed ? t('已预留', 'Reserved') : estimateStatus(estimate?.status, selConfirmed) },
-    ].map(item => ({ ...item, requestId: plan.id, planLabel: `${plan.plannedProcedure.coding.display} · ${plan.reason}` }))
+    ].map(item => ({ ...item, requestId: plan.id, planLabel: `${display} · ${plan.reason}` }))
   }) : []
   const showPrepared = items.some(item => item.ready)
   const hasEstimateUsage = (estimates.data?.estimates ?? []).some(item => item.status !== 'incomplete')

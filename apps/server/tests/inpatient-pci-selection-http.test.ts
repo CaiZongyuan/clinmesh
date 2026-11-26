@@ -200,7 +200,7 @@ it('参数关联只接受本次有效PCI计划，其他术式不能混作PCI依�
   const create = async (procedureId: string) => inpatientSurgeryResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries/request`, {
     encounterVersion: s.admission.versionId, procedureId, catalogVersion: 1,
     surgeryType: 'elective', locationId: 'location-catheterization-lab',
-    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration',
+    surgeonPractitionerId: 'practitioner-inpatient-doctor', anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
     plannedFor: '2026-08-25T09:00:00+08:00', reason: '合成关联计划',
   })).json())
   const other = await create('hospital-surgery-4')

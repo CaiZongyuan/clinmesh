@@ -3,7 +3,7 @@ import { expect, test, loginPciBrowser } from './inpatient-pci.fixture.ts'
 import { runPciBrowserJourney } from './inpatient-pci.journey.ts'
 import { preparePciThroughPages, type OpenPciPatient } from './inpatient-pci-preparation.journey.ts'
 
-test('从零页面完成 PCI 九检六次药品执行、未知收款恢复、归档核定与原交易退款', async ({ page, pciApp: app }) => {
+test('从零页面完成 PCI 九检、台内用药与联动专科护理、未知收款恢复、归档核定与原交易退款', async ({ page, pciApp: app }) => {
   test.setTimeout(180_000)
   const errors: string[] = []
   const writes: string[] = []
@@ -26,9 +26,9 @@ test('从零页面完成 PCI 九检六次药品执行、未知收款恢复、归
   const indices = (suffix: string) => writes.flatMap((path, index) => path.endsWith(suffix) ? [index] : [])
   expect(indices('/investigations/issue')).toHaveLength(9)
   expect(indices('/investigations/acknowledge')).toHaveLength(9)
-  expect(indices('/orders/issue')).toHaveLength(6)
-  expect(indices('/executions/dispense')).toHaveLength(6)
-  expect(indices('/executions/administer')).toHaveLength(6)
+  expect(indices('/orders/issue')).toHaveLength(4)
+  expect(indices('/executions/dispense')).toHaveLength(4)
+  expect(indices('/executions/administer')).toHaveLength(4)
   expect(indices('/surgeries/request')).toHaveLength(2)
   expect(indices('/surgeries/confirm-consent')).toHaveLength(2)
   expect(indices('/surgeries/execute')).toHaveLength(2)
@@ -38,13 +38,9 @@ test('从零页面完成 PCI 九检六次药品执行、未知收款恢复、归
   const angiographyExecution = indices('/surgeries/execute')[0]!
   expect(indices('/executions/administer')[2]!).toBeLessThan(angiographyRequest)
   expect(angiographyRequest).toBeLessThan(angiographyConsent)
+  expect(angiographyConsent).toBeLessThan(angiographyExecution)
   for (const suffix of ['/orders/issue', '/executions/dispense', '/executions/administer']) {
-    const intraoperative = indices(suffix).slice(3, 5)
-    expect(intraoperative).toHaveLength(2)
-    for (const index of intraoperative) {
-      expect(index).toBeGreaterThan(angiographyConsent)
-      expect(index).toBeLessThan(angiographyExecution)
-    }
+    expect(indices(suffix).filter(index => index > angiographyConsent && index < angiographyExecution)).toEqual([])
   }
   expect(indices('/surgeries/execute').at(-1)!).toBeLessThan(indices('/orders/issue').at(-1)!)
   expect(indices('/orders/issue').at(-1)!).toBeLessThan(indices('/executions/dispense').at(-1)!)

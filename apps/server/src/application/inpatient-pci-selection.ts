@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import { pciSelectionProcedureCodes, inpatientPciSelectionSchema, inpatientPciSelectionConfirmationSchema, inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionDraftSchema, inpatientPciSelectionSaveInputSchema, type InpatientPciSelectionParameters } from '@clinmesh/contracts/inpatient-pci-selection'
+import { inpatientAdHocPciConversionSchema } from '@clinmesh/contracts/inpatient-surgery'
 import type { ActorContext, CommandEffect } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { pciSelectionEvidence, pciSelectionEvidencePackage, pciSelectionAlternatives, pciEquivalentGroups } from './scenario-data/pci-selection-evidence.ts'
@@ -38,8 +39,12 @@ export class InpatientPciSelection {
       if (kind === 'lesion-length' ? measurement.value < 5 || measurement.value > 16 : measurement.value !== 3)
         incompatible.push(`测量不在已核验仿真范围：${kind}`)
     }
-    if (parameters?.requestId !== undefined && this.owner.surgery.read(context, admissionId).requests
-      .find(request => request.id === parameters.requestId)?.status === 'cancelled') incompatible.push('关联手术计划已取消，需重新确认治疗方向')
+    if (parameters?.requestId !== undefined) {
+      const boundRequest = this.owner.surgery.read(context, admissionId).requests.find(request => request.id === parameters.requestId)
+      if (boundRequest?.status === 'cancelled' || boundRequest?.adHocPci?.status === 'cancelled') {
+        incompatible.push('关联手术计划已取消，需重新确认治疗方向')
+      }
+    }
     const definitions = [...pciSelectionEvidence, ...pciSelectionAlternatives]
     const combinationAvailable = pciSelectionEvidence.every(definition => {
       const group = pciEquivalentGroups.find(group => group.members.some(member => member.materialId === definition.materialId))
@@ -81,11 +86,20 @@ export class InpatientPciSelection {
   }
 
   prepareDraft(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, admissionId: string, requestId: string) {
-    const request = z.object({ planned_procedure_json: z.string(), status: z.string() }).optional().parse(this.owner.database.driver.prepare(
-      'SELECT planned_procedure_json,status FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?')
+    const request = z.object({ planned_procedure_json: z.string(), status: z.string(), ad_hoc_pci_json: z.string().nullable().default(null) }).optional().parse(this.owner.database.driver.prepare(
+      'SELECT planned_procedure_json,status,ad_hoc_pci_json FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?')
       .get(context.workspaceId, context.epoch, admissionId, requestId))
-    if (!request || !['requested', 'ready'].includes(request.status)) return
-    const procedure = z.object({ coding: z.object({ code: z.string(), display: z.string() }) }).parse(JSON.parse(request.planned_procedure_json))
+    if (!request) return
+    let procedure: { coding: { code: string; display: string } }
+    if (['requested', 'ready'].includes(request.status)) {
+      procedure = z.object({ coding: z.object({ code: z.string(), display: z.string() }) }).parse(JSON.parse(request.planned_procedure_json))
+    } else if (request.status === 'standby-pci' && request.ad_hoc_pci_json !== null) {
+      const adHoc = inpatientAdHocPciConversionSchema.parse(JSON.parse(request.ad_hoc_pci_json))
+      if (adHoc.status !== 'converted') return
+      procedure = adHoc.procedure
+    } else {
+      return
+    }
     if (!pciSelectionProcedureCodes.includes(procedure.coding.code)) return
     const confirmed = this.owner.database.driver.prepare(`SELECT 1 FROM inpatient_pci_selection WHERE workspace_id=? AND epoch=? AND admission_id=?
       AND json_extract(confirmation_json,'$.parameters.requestId')=? LIMIT 1`).get(context.workspaceId, context.epoch, admissionId, requestId)
@@ -116,10 +130,13 @@ export class InpatientPciSelection {
       this.owner.assertNotArchived(context, input.admissionId)
       this.owner.orders.assertAdmitted(context, input.admissionId)
       const draft = this.drafts(context, input.admissionId).find(item => item.requestId === input.requestId)
-      const request = this.owner.surgery.read(context, input.admissionId).requests.find(item => item.id === input.requestId)
-      if (!draft || draft.version !== input.expectedDraftVersion || !request || !['requested', 'ready'].includes(request.status)
+      const surgery = this.owner.surgery.read(context, input.admissionId)
+      const request = surgery.requests.find(item => item.id === input.requestId)
+      const isAdHocActive = request?.status === 'standby-pci' && request.adHocPci?.status === 'converted'
+      const activeStage = isAdHocActive ? 'ad-hoc-pci' : 'primary'
+      if (!draft || draft.version !== input.expectedDraftVersion || !request || (!['requested', 'ready'].includes(request.status) && !isAdHocActive)
         || input.parameters.requestId !== undefined && input.parameters.requestId !== input.requestId
-        || this.owner.surgery.read(context, input.admissionId).inProgress.some(item => item.requestId === input.requestId))
+        || surgery.inProgress.some(item => item.requestId === input.requestId && (item.executionStage ?? 'primary') === activeStage))
         throw new InpatientError('INPATIENT_PCI_SELECTION_CONFLICT', '选型草稿或关联计划已变化，请刷新后核对')
       const parameters = { ...input.parameters, requestId: input.requestId }
       this.owner.database.driver.prepare('UPDATE inpatient_pci_selection_draft SET draft_json=? WHERE workspace_id=? AND epoch=? AND request_id=?')
@@ -203,7 +220,11 @@ export class InpatientPciSelection {
     this.owner.orders.assertAdmitted(context, input.admissionId)
     const current = this.read(context, input.admissionId).history[0] ?? null
     if ((current?.version ?? 0) !== input.expectedVersion) throw new InpatientError('INPATIENT_PCI_SELECTION_CONFLICT', '选型参数版本已变化，请刷新后重新确认')
-    if (input.parameters.requestId !== undefined && !this.owner.surgery.read(context, input.admissionId).requests.some(request => request.id === input.parameters.requestId && ['requested', 'ready'].includes(request.status) && pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code)))
+    if (input.parameters.requestId !== undefined && !this.owner.surgery.read(context, input.admissionId).requests.some(request =>
+      request.id === input.parameters.requestId && (
+        (['requested', 'ready'].includes(request.status) && pciSelectionProcedureCodes.includes(request.plannedProcedure.coding.code))
+        || (request.status === 'standby-pci' && request.adHocPci?.status === 'converted' && pciSelectionProcedureCodes.includes(request.adHocPci.procedure.coding.code))
+      )))
       throw new InpatientError('INPATIENT_SURGERY_CONFLICT', '关联手术须为本次住院有效 PCI 计划')
     const id = current?.id ?? uuidv7(), version = input.expectedVersion + 1
     const confirmation = inpatientPciSelectionConfirmationSchema.parse({ id, version,

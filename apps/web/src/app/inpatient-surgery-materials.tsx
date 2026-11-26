@@ -17,11 +17,12 @@ import { InpatientSurgeryCompletion } from './inpatient-surgery-completion.tsx'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 import { correctionDraftScope, useCorrectionBatchDraft, type CorrectionRow } from './inpatient-correction-batch.ts'
 import { InpatientCorrectionComposer } from './inpatient-correction-composer.tsx'
+import { IntraoperativeMedicationsSection } from './inpatient-surgery-medications.tsx'
 import { SurgeryNoticeSummaryList, SurgicalConsentPreviewButton } from './inpatient-surgery-consent.tsx'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale;
   write: ReturnType<typeof useInpatientWriteIntent>; execution: z.infer<typeof inpatientSurgeryExecutionSchema>;
-  request: z.infer<typeof inpatientSurgeryRequestSchema>; catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined;
+  request: z.infer<typeof inpatientSurgeryRequestSchema>; catalog: z.input<typeof inpatientSurgeryCatalogSchema> | undefined;
   reservations: InpatientMaterialReservation[]; dataReady: boolean; running: boolean; active?: boolean; inDialog?: boolean; refresh: () => Promise<unknown> }
 
 const remaining = (item: InpatientMaterialReservation) => item.remainingQuantity ?? (item.status === 'reserved' ? item.quantity - item.consumedQuantity : 0)
@@ -41,10 +42,12 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
   const scope = correctionDraftScope({ session, patientId: admission.patientId, admissionId: admission.id, requestId: request.id, executionId: execution.id })
   const corrections = useCorrectionBatchDraft({ scope, session, write })
   const materials = (catalog?.materials ?? []).filter(item => 'chargeDefinition' in item)
+  const stage = execution.executionStage ?? 'primary'
+  const stageReservations = reservations.filter(item => !item.requestId || (item.requestId === request.id && (item.surgeryStage ?? 'primary') === stage))
   const writable = session.actor.roleCode === 'inpatient-doctor' && admission.recordStatus !== 'archived' && admission.financialStatus === 'open'
-  const supplement = !running && request.status === 'completed' && admission.status === 'admitted'
+  const supplement = !running && (request.status === 'completed' || request.status === 'standby-pci') && admission.status === 'admitted'
   const common = { admissionId: admission.id, requestId: request.id, expectedRequestVersion: request.version, executionId: execution.id }
-  const usable = (id: string | null, version?: number, restoredId?: string | null, restoredQuantity = 0) => reservations.filter(item =>
+  const usable = (id: string | null, version?: number, restoredId?: string | null, restoredQuantity = 0) => stageReservations.filter(item =>
     ((item.status === 'reserved' && remaining(item) > 0) || (item.id === restoredId && item.quantity - item.consumedQuantity + restoredQuantity > 0))
     && item.materialId === id && (item.catalogVersion === undefined || version === undefined || item.catalogVersion === version) && (!item.requestId || item.requestId === request.id))
     .sort((left, right) => Number(right.requestId === request.id) - Number(left.requestId === request.id))
@@ -78,11 +81,11 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
     corrections.save({ ...corrections.value, rows: [...corrections.value.rows.map(row => uses.some(use => use.id === row.id) ? { ...row, selected: true, revision: crypto.randomUUID() } : row), ...added] })
     setSelectionError('')
   }
-  const planned = reservations.filter(item => item.requestId === request.id)
+  const planned = stageReservations.filter(item => item.requestId === request.id)
   const ids = [...new Set([...(!search ? planned.filter(item => !execution.materialHistory.some(use => use.item.id === item.materialId)).map(item => item.materialId) : []), ...visible.map(use => use.item.id)])]
   const live = execution.materials.reduce((sum, use) => sum + use.amountFen, 0)
   const pendingCommand = write.pending?.command
-  const ownPending = pendingCommand && (pendingCommand.operation === 'inpatient.surgery.supplement-material' || pendingCommand.operation === 'inpatient.surgery.correct-material')
+  const ownPending = pendingCommand && (pendingCommand.operation === 'inpatient.surgery.supplement-material' || pendingCommand.operation === 'inpatient.surgery.correct-material' || pendingCommand.operation === 'inpatient.surgery.record-medication')
     && pendingCommand.input.admissionId === admission.id && pendingCommand.input.requestId === request.id && pendingCommand.input.executionId === execution.id
   const readOnlyReason = admission.recordStatus === 'archived' ? t('病案已归档，不能补登记或更正耗材。', 'The record is archived; material entries are read-only.')
     : admission.financialStatus !== 'open' ? t('住院账户已结算，不能补登记或更正耗材。', 'The account is settled; material entries are read-only.')
@@ -111,7 +114,7 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
       />
     </div>
     {running ? <IntraoperativeMaterialRows admissionId={admission.id} session={session} locale={locale} execution={execution} catalog={catalog}
-      reservations={reservations} active={active} dataReady={dataReady} editable={editable} onCorrect={addCorrections} write={write} requestVersion={request.version} /> : <>
+      reservations={stageReservations} active={active} dataReady={dataReady} editable={editable} onCorrect={addCorrections} write={write} requestVersion={request.version} /> : <>
     <div className="flex flex-wrap items-baseline gap-2"><h4 className="text-sm font-semibold">{t('本台耗材', 'Materials for this surgery')}</h4></div>
     {execution.materialHistory.length > 0 ? <div className="flex flex-wrap items-center gap-2">
       <Input aria-label={t('搜索原耗材记录', 'Search original material entries')} value={search} className="min-w-0 flex-1" onChange={event => { setSearch(event.target.value); setPage(1) }} />
@@ -141,8 +144,10 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
     </>}
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
       <span>{t('已登记耗材 ', 'Recorded materials ')}<b className="font-semibold text-foreground tabular-nums">{formatFen(live, locale)}</b></span>
+      {(execution.medications?.length ?? 0) > 0 ? <span>{t('已登记台内药 ', 'Recorded medications ')}<b className="font-semibold text-foreground tabular-nums">{formatFen((execution.medications ?? []).reduce((sum, item) => sum + item.amountFen, 0), locale)}</b></span> : null}
       {running ? <span>{t('术式费 ', 'Procedure fee ')}<b className="font-semibold text-foreground tabular-nums">{formatFen(execution.actualProcedure.chargeDefinition.priceFen, locale)}</b>{t(' 在完成手术时计入', ' is posted at completion')}</span> : null}
     </div>
+    <IntraoperativeMedicationsSection admission={admission} locale={locale} write={write} execution={execution} request={request} catalog={catalog} dataReady={dataReady} running={running} writable={writable} />
     {supplement && writable ? <section aria-label={t('补登记耗材', 'Add omitted material')} className="flex min-w-0 flex-col gap-2 border-t pt-3">
       <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{t('补登记耗材', 'Add omitted material')}</h4></div>
       <FieldGroup className="grid gap-3 @lg:grid-cols-[minmax(0,2fr)_6rem_minmax(0,1.6fr)_auto] @lg:items-end">
@@ -168,8 +173,8 @@ export function InpatientSurgeryMaterials({ admission, session, locale, write, e
     {execution.materialHistory.length > 0 ? <details className="clinmesh-inpatient-disclosure"><summary>{t('登记与更正记录', 'Entry and correction history')}（{execution.materialHistory.length}）</summary>
       <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">{execution.materialHistory.map(use => <p key={use.id}>{formatShanghaiMinute(use.recordedAt)} · {use.recordingKind === 'postoperative-addendum' ? `${t('术后补登记', 'Postoperative addendum')} · ` : ''}{use.recordedBy === session.actor.actorId ? session.user.name : use.recordedBy} · {use.item.display} × {use.quantity} · {use.note}{use.correction ? ` · ${t('已更正：', 'Corrected: ')}${use.correction.note}` : ''}</p>)}</div></details> : null}
     {inDialog && ownPending ? <InpatientWriteRecovery write={write} locale={locale} /> : null}
-    {(writable || corrections.value.rows.length > 0 || corrections.items.length > 0) ? <InpatientCorrectionComposer draft={corrections} write={write} locale={locale} execution={execution} request={request} catalog={catalog} reservations={reservations} active={active} writable={writable} dataReady={dataReady} refresh={refresh} /> : null}
-    {running && writable ? <InpatientSurgeryCompletion admission={admission} session={session} active={active} dataReady={dataReady} execution={execution} request={request} catalog={catalog} reservations={reservations} locale={locale} write={write} refresh={refresh}
+    {(writable || corrections.value.rows.length > 0 || corrections.items.length > 0) ? <InpatientCorrectionComposer draft={corrections} write={write} locale={locale} execution={execution} request={request} catalog={catalog} reservations={stageReservations} active={active} writable={writable} dataReady={dataReady} refresh={refresh} /> : null}
+    {running && writable ? <InpatientSurgeryCompletion admission={admission} session={session} active={active} dataReady={dataReady} execution={execution} request={request} catalog={catalog} reservations={stageReservations} locale={locale} write={write} refresh={refresh}
       summary={`${t('已登记 ', 'Recorded ')}${execution.materials.length}${t(' 笔 · ', ' entries · ')}${formatFen(live, locale)}`} /> : null}
   </section>
 }

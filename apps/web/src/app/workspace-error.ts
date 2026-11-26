@@ -124,6 +124,19 @@ function prescriptionIssueReasonMessage(
   messages: WorkspaceMessages,
 ): string | null {
   if (reason === undefined) return null
+  const inpatientMedicationReasonMap: Record<string, keyof WorkspaceMessages> = {
+    MEDICATION_ALLERGY_CONFLICT: 'prescriptionIssueReason_allergyConflict',
+    MEDICATION_DIAGNOSIS_UNCONFIRMED: 'prescriptionIssueReason_diagnosisUnconfirmed',
+    MEDICATION_DIAGNOSIS_NOT_ALLOWED: 'prescriptionIssueReason_diagnosisNotAllowed',
+    MEDICATION_COMBINATION_NOT_ALLOWED: 'prescriptionIssueReason_combinationNotAllowed',
+    MEDICATION_DOSAGE_NOT_ALLOWED: 'prescriptionIssueReason_dosageNotAllowed',
+    MEDICATION_ROUTE_NOT_ALLOWED: 'prescriptionIssueReason_routeNotAllowed',
+  }
+  const mappedKey = inpatientMedicationReasonMap[reason]
+  if (mappedKey !== undefined) {
+    const mappedText = messages[mappedKey]
+    if (typeof mappedText === 'string') return mappedText
+  }
   const parsed = prescriptionConflictReasonSchema.safeParse(reason)
   if (!parsed.success) return null
   const text = messages[PRESCRIPTION_REASON_MESSAGE_KEYS[parsed.data]]

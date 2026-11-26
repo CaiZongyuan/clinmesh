@@ -16,7 +16,7 @@ import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPrevie
 import { inpatientDischargeInputSchema, inpatientDischargeIssueInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema,
   inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema,
   inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
-import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryConfirmConsentInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryConfirmConsentInputSchema, inpatientSurgeryExecuteInputSchema, inpatientSurgeryStartInputSchema, inpatientSurgeryRecordMaterialInputSchema, inpatientSurgeryRecordMedicationInputSchema, inpatientSurgerySupplementMaterialInputSchema, inpatientSurgeryCorrectMaterialInputSchema, inpatientSurgeryCompleteInputSchema, inpatientSurgeryConvertToPciInputSchema, inpatientSurgeryFinalizeStandbyInputSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema,inpatientInvestigationAcknowledgeInputSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientDiagnosisConfirmInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientChargeReverseInputSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -32,6 +32,7 @@ import { useEffect, useRef, useState } from 'react'
 import { IssueDraftUnreadable, type IssueDraftOutcome } from './inpatient-issue-draft-settlement.ts'
 import { settleIssuedOrder } from './inpatient-order-drafts.ts'
 import { settleIssuedInvestigation } from './inpatient-investigation-drafts.ts'
+import { settlePostopAttempt } from './inpatient-postop-drafts.ts'
 import { consumeSurgeryDraft, SurgeryDraftUnreadable } from './inpatient-surgery-draft.ts'
 import { ReservationDraftUnreadable, settleReservationAttempt } from './inpatient-reservation-batch.ts'
 import { settleCorrectionAttempt } from './inpatient-correction-batch.ts'
@@ -128,10 +129,13 @@ const commandSchema = z.discriminatedUnion('operation', [
   cmd('inpatient.surgery.cancel', inpatientSurgeryActionInputSchema),
   cmd('inpatient.surgery.start', inpatientSurgeryStartInputSchema),
   cmd('inpatient.surgery.record-material', inpatientSurgeryRecordMaterialInputSchema),
+  cmd('inpatient.surgery.record-medication', inpatientSurgeryRecordMedicationInputSchema),
   cmd('inpatient.surgery.supplement-material', inpatientSurgerySupplementMaterialInputSchema),
   cmd('inpatient.surgery.correct-material', inpatientSurgeryCorrectMaterialInputSchema),
   cmd('inpatient.surgery.complete', inpatientSurgeryCompleteInputSchema),
   cmd('inpatient.surgery.execute', inpatientSurgeryExecuteInputSchema),
+  cmd('inpatient.surgery.convert-to-pci', inpatientSurgeryConvertToPciInputSchema),
+  cmd('inpatient.surgery.finalize-standby', inpatientSurgeryFinalizeStandbyInputSchema),
   cmd('inpatient.investigation.issue', inpatientInvestigationIssueInputSchema),
   cmd('inpatient.investigation.send', inpatientInvestigationActionInputSchema),
   cmd('inpatient.investigation.cancel', inpatientInvestigationActionInputSchema),
@@ -271,8 +275,14 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
       const settleIssue = (outcome: IssueDraftOutcome) => {
         try {
           const command = intent.command
-          if (command.operation === 'inpatient.order.issue') settleIssuedOrder(command.input, intent.idempotencyKey, session, outcome)
-          if (command.operation === 'inpatient.investigation.issue') settleIssuedInvestigation(command.input, intent.idempotencyKey, session, outcome)
+          if (command.operation === 'inpatient.order.issue') {
+            settleIssuedOrder(command.input, intent.idempotencyKey, session, outcome)
+            settlePostopAttempt('inpatient.order.issue', command.input, intent.idempotencyKey, session, outcome)
+          }
+          if (command.operation === 'inpatient.investigation.issue') {
+            settleIssuedInvestigation(command.input, intent.idempotencyKey, session, outcome)
+            settlePostopAttempt('inpatient.investigation.issue', command.input, intent.idempotencyKey, session, outcome)
+          }
         } catch (error) {
           if (error instanceof IssueDraftUnreadable) throw new OriginalContinuationUnreadable(intent.idempotencyKey)
           throw storageError()
