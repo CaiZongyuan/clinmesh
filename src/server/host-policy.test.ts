@@ -21,6 +21,7 @@ it('opens a new isolated session on the managed Windows Node loopback listener',
 it('pins the open Wrangler build to its local listener and leaves hosted Workers on passcode policy', () => {
   expect(workerGatePolicy(false, '1')).toEqual({ localOpen: false });
   expect(workerGatePolicy(true, '1')).toEqual({ localOpen: true });
+  expect(workerDevArguments({ CLINMESH_PORT: '51989' }, [])).toEqual(['dev', '--local', '--port', '51989']);
   expect(workerDevArguments({ CLINMESH_LOCAL_DEV_OPEN: '1' }, [])).toEqual(expect.arrayContaining(['--local', '--ip', '127.0.0.1', '--define', 'CLINMESH_LOOPBACK_WRANGLER:true']));
   expect(() => workerDevArguments({ CLINMESH_LOCAL_DEV_OPEN: '1' }, ['--ip', '0.0.0.0'])).toThrow('LOCAL_OPEN_REQUIRES_MANAGED_LISTENER');
 });

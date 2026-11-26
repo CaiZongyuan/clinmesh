@@ -8,6 +8,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createClinMeshUiAgent, ThemeFontProvider } from '../packages/ui-kit';
 import { App } from './App';
 import { sessionSchema } from '../packages/platform';
+import { encounterViewSchema } from '../packages/clinical-core';
 
 const agent = createClinMeshUiAgent();
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -102,11 +103,24 @@ it('discovers the workbench, edits real drafts, and requires human approval for 
     expect(diagnosisWrites[1]!.body.expectedVersion).toBe(Number(diagnosisWrites[0]!.body.expectedVersion) + 1);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Complete encounter' }).hasAttribute('disabled')).toBe(false));
     await set('Clinical views', 'Clinical record'); await set('Reason for visit', 'Revision after confirmation');
+    const visitPath = requests.find(item => item.path.endsWith('/clinical-record/draft'))!.path.replace('/clinical-record/draft', '');
+    const peerRead = async () => encounterViewSchema.parse(await (await transport(origin + visitPath, { headers: { cookie } })).json());
+    const tabSession = sessionSchema.parse(await (await transport(origin + '/api/auth/session', { headers: { cookie } })).json());
+    const peerSave = async (suffix: string, expectedVersion: number, fields: Record<string, unknown>, method = 'PUT') => {
+      const response = await transport(origin + visitPath + suffix, { method, headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ epoch: tabSession.epoch, idempotencyKey: crypto.randomUUID(), expectedVersion, ...fields }) });
+      expect(response.status).toBe(200);
+    };
+    const peerNote = await peerRead();
+    await peerSave('/clinical-record/draft', peerNote.version, { expectedDraftVersion: peerNote.draftVersion, fields: { ...peerNote.fields, concern: 'Independent clinician assessment' } });
     await human.click(screen.getByRole('button', { name: /^Jordan Vale · .*Active$/ })); await screen.findByRole('heading', { name: 'Jordan Vale' });
     await human.click(screen.getByRole('button', { name: /^Avery Reed · .*Active$/ })); await screen.findByRole('heading', { name: 'Avery Reed' });
     expect(screen.getByRole('button', { name: 'Complete encounter' }).hasAttribute('disabled')).toBe(true);
     await set('Clinical views', 'Clinical record'); expect(screen.getByLabelText<HTMLTextAreaElement>('Reason for visit').value).toBe('Revision after confirmation');
-    const tabSession = sessionSchema.parse(await (await transport(origin + '/api/auth/session', { headers: { cookie } })).json());
+    expect(screen.getByText('Saved · Independent clinician assessment')).toBeDefined();
+    expect(screen.getByText('My edits · Revision after confirmation')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Save record draft' }).hasAttribute('disabled')).toBe(true);
+    expect((await peerRead()).fields.concern).toBe('Independent clinician assessment');
+    await human.click(screen.getByRole('button', { name: 'Keep my edits' }));
     const peer = await transport(origin + '/api/workspace/role', { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ epoch: tabSession.epoch, idempotencyKey: 'peer-role', expectedVersion: tabSession.sessionVersion, roleId: tabSession.roleId }) });
     expect(peer.status).toBe(200);
     const switchAdmin = () => agent.act({ steps: [{ ref: 'Role · Family clinician', action: 'press', args: ['Clinic administrator'] }] });
@@ -118,6 +132,24 @@ it('discovers the workbench, edits real drafts, and requires human approval for 
     await press('Save record draft');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Sign record' }).hasAttribute('disabled')).toBe(false));
     await human.click(screen.getByRole('button', { name: 'Sign record' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Complete encounter' }).hasAttribute('disabled')).toBe(false));
+    await set('Clinical views', 'Diagnoses'); await human.click(screen.getByRole('button', { name: 'Remove · I10' }));
+    await peerSave('/consultation/turns', (await peerRead()).version, { channel: 'text', content: 'New consultation question' }, 'POST');
+    const reopenDiagnoses = async () => {
+      await human.click(screen.getByRole('button', { name: /^Jordan Vale · .*Active$/ })); await screen.findByRole('heading', { name: 'Jordan Vale' });
+      await human.click(screen.getByRole('button', { name: /^Avery Reed · .*Active$/ })); await screen.findByRole('heading', { name: 'Avery Reed' }); await set('Clinical views', 'Diagnoses');
+    };
+    await reopenDiagnoses();
+    expect(screen.queryByRole('heading', { name: 'Review conflicting drafts' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save diagnosis draft' }).hasAttribute('disabled')).toBe(false);
+    const peerDx = await peerRead();
+    await peerSave('/diagnosis/draft', peerDx.version, { diagnoses: peerDx.diagnoses.toReversed().map(item => ({ ...item, primary: item.code === 'I10' })) });
+    await reopenDiagnoses();
+    expect(screen.getByRole('heading', { name: 'Review conflicting drafts' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Save diagnosis draft' }).hasAttribute('disabled')).toBe(true);
+    expect((await peerRead()).diagnoses[0]).toMatchObject({ code: 'I10', primary: true });
+    await human.click(screen.getByRole('button', { name: 'Use saved draft' }));
+    await human.click(screen.getByRole('button', { name: 'Confirm diagnoses' }));
     await formal('Complete encounter', '/complete');
     await screen.findByRole('tab', { name: 'Debrief' }); await set('Clinical views', 'Debrief'); await screen.findByRole('heading', { name: 'Case debrief' });
     expect((await agent.act({ steps: [{ ref: 'Role · Family clinician', action: 'press', args: ['Clinic administrator'] }] })).ok).toBe(true);

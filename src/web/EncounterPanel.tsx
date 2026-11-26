@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState, type ComponentType } from 'react';
+import { useState, type ComponentType, type ReactNode } from 'react';
 import { z } from 'zod';
-import { debriefSchema, type EncounterView, type WorkspaceView } from '../packages/clinical-core';
+import { currentRecordFields, debriefSchema, type EncounterView, type WorkspaceView } from '../packages/clinical-core';
 import { Badge, Button, Card, ConfirmActionButton, DetailDrawer, Dialog, Field, Select, Tabs, Textarea } from '../packages/ui-kit';
 import { api, errorMessage, scopeKey, words, type Intent, type Language } from './workbench-api';
 import { createEncounterDrafts, type EncounterDrafts } from './encounter-drafts';
@@ -15,6 +15,16 @@ type Editor = Props & { drafts: EncounterDrafts };
 function run(promise: Promise<unknown>, saved?: () => void) { void promise.then(saved, () => {}); }
 const allowed = (props: Props, operation: string) => props.encounter.status === 'active' && props.encounter.responsibleRole === props.workspace.roleId && props.workspace.operations.some(item => item.name === operation);
 const command = (props: Props, name: string, fields?: Record<string, unknown>) => props.submit({ name, targetId: props.encounter.id, version: props.encounter.version, fields });
+
+function DraftConflict({ language, children, keep, discard }: { language: Language; children: ReactNode; keep(): void; discard(): void }) {
+  const text = words(language);
+  const keepLabel = text('Keep my edits', '保留我的编辑');
+  const discardLabel = text('Use saved draft', '采用已保存草稿');
+  return <Card><h3>{text('Review conflicting drafts', '核对冲突的草稿')}</h3>{children}<div className="cm-actions">
+    <ConfirmActionButton confirmation={keepLabel} onClick={keep}>{keepLabel}</ConfirmActionButton>
+    <ConfirmActionButton confirmation={discardLabel} onClick={discard}>{discardLabel}</ConfirmActionButton>
+  </div></Card>;
+}
 
 function Consultation(props: Props) {
   const text = words(props.language);
@@ -34,12 +44,14 @@ function RecordEditor(props: Editor) {
   const { encounter, drafts, language } = props;
   const text = words(language);
   const note = drafts(state => state.note);
-  const fields = { ...encounter.fields, ...note?.fields };
+  const fields = currentRecordFields(encounter.template, { ...encounter.fields, ...note?.fields });
   const editable = allowed(props, 'record.draft');
+  const conflict = !!note && encounter.draftVersion > note.version;
+  const titles = new Map(props.workspace.manifest.clinicalRecordTemplate.map(field => [field.id, field.title[language]]));
   function save() {
-    if (!note) return;
+    if (!note || conflict) return;
     const version = Math.max(encounter.version, drafts.getState().acknowledgedVersion);
-    run(props.submit({ name: 'record.draft', targetId: encounter.id, version, fields: { fields, expectedDraftVersion: Math.max(note.version, encounter.draftVersion) } }).then(result => {
+    run(props.submit({ name: 'record.draft', targetId: encounter.id, version, fields: { fields, expectedDraftVersion: note.version } }).then(result => {
       const ack = z.object({ version: z.int(), draftVersion: z.int() }).parse(result);
       drafts.setState(current => {
         const remaining = Object.fromEntries(Object.entries(current.note?.fields ?? {}).filter(([key, value]) => note.fields[key] !== value));
@@ -50,11 +62,14 @@ function RecordEditor(props: Editor) {
   return <div className="clinical-panel"><div className="record-fields">{encounter.template.map(field => <Field key={field.id} label={field.title[language]}>
     <Textarea required={field.required} readOnly={!editable} value={fields[field.id] ?? ''} onValueChange={value => drafts.setState({ note: { fields: { ...note?.fields, [field.id]: value }, version: note?.version ?? encounter.draftVersion } })}/>
   </Field>)}</div>
+    {conflict && editable && !props.busy && <DraftConflict language={language} keep={() => drafts.setState({ note: { ...note, version: encounter.draftVersion } })} discard={() => drafts.setState({ note: undefined })}>
+      <dl>{Object.entries(note.fields).map(([id, local]) => <div key={id}><dt>{titles.get(id) ?? id}</dt><dd>{text('Saved', '已保存')} · {encounter.fields[id] || '—'}</dd><dd>{text('My edits', '我的编辑')} · {local || '—'}</dd></div>)}</dl>
+    </DraftConflict>}
     {encounter.status === 'active' && <div className="cm-actions">
-      <Button disabled={props.busy || !editable || !note} onClick={save}>{text('Save record draft', '保存病历草稿')}</Button>
+      <Button disabled={props.busy || !editable || !note || conflict} onClick={save}>{text('Save record draft', '保存病历草稿')}</Button>
       <ConfirmActionButton disabled={props.busy || !allowed(props, 'record.sign') || !!note || !encounter.draftVersion} confirmation={text('Sign this saved clinical record?', '签署当前已保存的病历？')} onClick={() => run(command(props, 'record.sign', { expectedDraftVersion: encounter.draftVersion }))}>{text('Sign record', '签署病历')}</ConfirmActionButton></div>}
     {encounter.recordRevisions.length > 0 && <Dialog title={text('Signed records', '已签病历')} triggers={[text('View signed revisions', '查看病历修订')]} close={text('Close record history', '关闭病历修订')}>
-      {encounter.recordRevisions.map(item => <section key={item.id}><h3>{text('Revision', '修订')} {item.revision} · {item.signedBy}</h3><dl>{encounter.template.map(field => <div key={field.id}><dt>{field.title[language]}</dt><dd>{item.fields[field.id] || '—'}</dd></div>)}</dl></section>)}
+      {encounter.recordRevisions.map(item => <section key={item.id}><h3>{text('Revision', '修订')} {item.revision} · {item.signedBy}</h3><dl>{Object.entries(item.fields).map(([id, value]) => <div key={id}><dt>{titles.get(id) ?? id}</dt><dd>{value || '—'}</dd></div>)}</dl></section>)}
     </Dialog>}
   </div>;
 }
@@ -64,13 +79,17 @@ function DiagnosisEditor(props: Editor) {
   const { encounter, workspace, drafts, language } = props;
   const text = words(language);
   const draft = drafts(state => state.diagnoses);
-  const selected = draft ?? encounter.diagnoses;
+  const selected = draft?.items ?? encounter.diagnoses;
+  const conflict = !!draft && encounter.version > draft.version && !sameDiagnoses(encounter.diagnoses, draft.baseline);
+  function edit(items: Diagnosis[]) {
+    drafts.setState({ diagnoses: { items, baseline: draft?.baseline ?? encounter.diagnoses, version: draft?.version ?? encounter.version } });
+  }
   function save() {
-    if (!draft) return;
-    const version = Math.max(encounter.version, drafts.getState().acknowledgedVersion);
-    run(props.submit({ name: 'diagnosis.draft', targetId: encounter.id, version, fields: { diagnoses: draft } }).then(result => {
+    if (!draft || conflict) return;
+    const version = Math.max(encounter.version, draft.version);
+    run(props.submit({ name: 'diagnosis.draft', targetId: encounter.id, version, fields: { diagnoses: draft.items } }).then(result => {
       const ack = z.object({ version: z.int() }).parse(result);
-      drafts.setState(current => ({ acknowledgedVersion: Math.max(current.acknowledgedVersion, ack.version), diagnoses: current.diagnoses === draft ? undefined : current.diagnoses }));
+      drafts.setState(current => ({ acknowledgedVersion: Math.max(current.acknowledgedVersion, ack.version), diagnoses: current.diagnoses && current.diagnoses !== draft ? { ...current.diagnoses, baseline: draft.items, version: ack.version } : undefined }));
     }));
   }
   const [candidate, setCandidate] = useState('');
@@ -80,18 +99,25 @@ function DiagnosisEditor(props: Editor) {
   const add = () => {
     const item = available.find(option => codingKey(option) === candidate);
     if (!item || selected.length >= 8) return;
-    drafts.setState({ diagnoses: [...selected, { codeSystem: item.codeSystem, code: item.code, primary: !selected.length }] }); setCandidate('');
+    edit([...selected, { codeSystem: item.codeSystem, code: item.code, primary: !selected.length }]); setCandidate('');
   };
   return <div className="clinical-panel">
     {encounter.status === 'active' && <div className="cm-actions"><Field label={text('Diagnosis catalog', '诊断目录')}><Select value={candidate || null} disabled={!editable} options={available.map(item => ({ value: codingKey(item), label: `${item.code} · ${item.display[language]}` }))} onValueChange={value => setCandidate(value ?? '')}/></Field>
       <Button disabled={!editable || !candidate || selected.length >= 8} onClick={add}>{text('Add diagnosis', '添加诊断')}</Button></div>}
     <ul>{selected.map(item => <li key={codingKey(item)} className="diagnosis-row"><span>{label(item)}<small>{item.codeSystem}</small></span>
-      {item.primary ? <Badge tone="info">{text('Primary', '主诊断')}</Badge> : editable && <Button onClick={() => drafts.setState({ diagnoses: selected.map(other => ({ ...other, primary: other === item })) })}>{text('Set primary', '设为主诊断')} · {item.code}</Button>}
-      {editable && <Button onClick={() => drafts.setState({ diagnoses: selected.filter(other => other !== item) })}>{text('Remove', '移除')} · {item.code}</Button>}</li>)}</ul>
-    {encounter.status === 'active' && <div className="cm-actions"><Button disabled={props.busy || !editable || !draft?.length} onClick={save}>{text('Save diagnosis draft', '保存诊断草稿')}</Button>
+      {item.primary ? <Badge tone="info">{text('Primary', '主诊断')}</Badge> : editable && <Button onClick={() => edit(selected.map(other => ({ ...other, primary: other === item })))}>{text('Set primary', '设为主诊断')} · {item.code}</Button>}
+      {editable && <Button onClick={() => edit(selected.filter(other => other !== item))}>{text('Remove', '移除')} · {item.code}</Button>}</li>)}</ul>
+    {conflict && editable && !props.busy && <DraftConflict language={language} keep={() => drafts.setState({ diagnoses: { ...draft, version: encounter.version, baseline: encounter.diagnoses } })} discard={() => drafts.setState({ diagnoses: undefined })}>
+      {[{ title: text('Saved', '已保存'), items: encounter.diagnoses }, { title: text('My edits', '我的编辑'), items: selected }].map(group => <div key={group.title}><strong>{group.title}</strong><ol>{group.items.map(item => <li key={codingKey(item)}>{item.primary && '★ '}{label(item)} · {item.codeSystem}</li>)}</ol></div>)}
+    </DraftConflict>}
+    {encounter.status === 'active' && <div className="cm-actions"><Button disabled={props.busy || !editable || !draft?.items.length || conflict} onClick={save}>{text('Save diagnosis draft', '保存诊断草稿')}</Button>
       <ConfirmActionButton disabled={props.busy || !allowed(props, 'diagnosis.confirm') || !!draft || !selected.length} confirmation={text('Confirm these diagnoses?', '正式确认当前诊断？')} onClick={() => run(command(props, 'diagnosis.confirm'))}>{text('Confirm diagnoses', '确认诊断')}</ConfirmActionButton></div>}
     {encounter.diagnosisRevisions.map(item => <p key={item.id}>{text('Confirmed revision', '确诊修订')} {item.revision} · {item.signedBy} · {item.diagnoses.map(entry => `${entry.primary ? '★ ' : ''}${label(entry)}`).join(' / ')}</p>)}
   </div>;
+}
+
+function sameDiagnoses(first: Diagnosis[], second: Diagnosis[]) {
+  return first.length === second.length && first.every((item, index) => item.code === second[index]?.code && item.codeSystem === second[index]?.codeSystem && item.primary === second[index]?.primary);
 }
 
 function PatientHeader({ encounter, language }: Pick<Props, 'encounter' | 'language'>) {

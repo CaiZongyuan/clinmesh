@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { editEncounter, readVisit, requireEncounter, submitQuestion, turnInput } from '../../patient-visit';
 import { CoreError, type ModuleRegistry, type OperationCatalog } from '../../platform';
 import type { StoreReader, StoreScope } from '../../store';
-import { confirmDiagnoses, diagnosisState, patientPresentation, recordState, saveDiagnoses, saveRecord, signRecord } from './records';
+import { confirmDiagnoses, currentRecordFields, diagnosisState, patientPresentation, recordState, saveDiagnoses, saveRecord, signRecord } from './records';
 import { completionSchema, debriefSchema, diagnosisMembers, encounterViewSchema, noteFields } from './views';
 
 type Registry = ModuleRegistry<OperationCatalog>;
@@ -14,13 +14,16 @@ const version = z.object({ version: z.int().positive() });
 const revision = version.extend({ revision: z.int().positive() });
 
 function clinicalState(reader: StoreReader, at: StoreScope, id: string) {
-  return { ...recordState(reader, at, id), ...diagnosisState(reader, at, id) };
+  const presentation = patientPresentation(reader, at, id);
+  const record = recordState(reader, at, id);
+  return { ...presentation, ...record, fields: currentRecordFields(presentation.template, record.fields), ...diagnosisState(reader, at, id) };
 }
 
 function completion(reader: StoreReader, at: StoreScope, id: string, state: CoreState, registry: Registry, enabled: string[]) {
   const record = state.recordRevisions.at(-1);
   const confirmation = state.diagnosisRevisions.at(-1);
-  const noteClean = record ? Object.keys(state.fields).length === Object.keys(record.fields).length && Object.entries(state.fields).every(([key, value]) => record.fields[key] === value) : !state.draftVersion;
+  const signedFields = record && currentRecordFields(state.template, record.fields);
+  const noteClean = signedFields ? Object.keys(state.fields).length === Object.keys(signedFields).length && Object.entries(state.fields).every(([key, value]) => signedFields[key] === value) : !state.draftVersion;
   const diagnosesClean = confirmation ? confirmation.diagnoses.length === state.diagnoses.length && confirmation.diagnoses.every((item, index) => {
     const draft = state.diagnoses[index];
     return draft && item.code === draft.code && item.codeSystem === draft.codeSystem && item.primary === draft.primary;
@@ -38,7 +41,7 @@ export function registerClinicalOperations(catalog: OperationCatalog, registry: 
   catalog.query({ name: 'encounter.read', path: base, access: {} }, encounterViewSchema, ({ reader, actor, targetId }) => {
     const visit = readVisit(reader, actor.at, targetId);
     const state = clinicalState(reader, actor.at, targetId);
-    return { ...visit, ...state, ...patientPresentation(reader, actor.at, targetId), completion: completion(reader, actor.at, targetId, state, registry, actor.enabledModules) };
+    return { ...visit, ...state, completion: completion(reader, actor.at, targetId, state, registry, actor.enabledModules) };
   });
   catalog.command({ name: 'consultation.question', method: 'POST', path: `${base}/consultation/turns`, access: assess }, turnInput.shape,
     version.extend({ turnId: z.uuidv7() }), (context, { channel, content }) => submitQuestion(context, { channel, content }));

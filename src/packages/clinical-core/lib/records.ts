@@ -36,6 +36,10 @@ export function recordState(reader: StoreReader, at: StoreScope, encounterId: st
   })) };
 }
 
+export function currentRecordFields(template: readonly { id: string }[], fields: Record<string, string>) {
+  return Object.fromEntries(template.filter(field => Object.hasOwn(fields, field.id)).map(field => [field.id, fields[field.id]!]));
+}
+
 export function saveRecord(context: CommandContext, fields: Record<string, string>, expectedDraftVersion: number) {
   const { tx, at, targetId } = context;
   const version = editEncounter(context);
@@ -53,10 +57,12 @@ export function signRecord(context: CommandContext, expectedDraftVersion?: numbe
   const version = editEncounter(context);
   const state = recordState(tx, at, targetId);
   if (expectedDraftVersion !== undefined) checkVersion(state.draftVersion, expectedDraftVersion);
-  if (!state.draftVersion || patientPresentation(tx, at, targetId).template.some(field => field.required && !state.fields[field.id]?.trim())) throw new CoreError(409, 'REQUIRED_FIELDS_MISSING');
+  const { template } = patientPresentation(tx, at, targetId);
+  const fields = currentRecordFields(template, state.fields);
+  if (!state.draftVersion || template.some(field => field.required && !fields[field.id]?.trim())) throw new CoreError(409, 'REQUIRED_FIELDS_MISSING');
   const previous = state.recordRevisions.at(-1);
   const revision = (previous?.revision ?? 0) + 1;
-  tx.insert(at, 'clinical_record_revisions', { id: v7(), encounter_id: targetId, fields: state.fields, revision, previous_revision_id: previous?.id ?? null,
+  tx.insert(at, 'clinical_record_revisions', { id: v7(), encounter_id: targetId, fields, revision, previous_revision_id: previous?.id ?? null,
     signed_by: actor.role.id, virtual_at: context.virtualAt, recorded_at: context.recordedAt });
   return { version, revision };
 }

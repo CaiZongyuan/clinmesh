@@ -14,7 +14,7 @@ export function workerGatePolicy(managedLoopback: boolean, openSetting?: string)
 
 export function workerDevArguments(environment: unknown, extra: string[]) {
   const config = listener.parse(environment);
-  if (config.CLINMESH_LOCAL_DEV_OPEN !== '1') return ['dev', '--local', ...extra];
+  if (config.CLINMESH_LOCAL_DEV_OPEN !== '1') return ['dev', '--local', ...(config.CLINMESH_PORT === undefined ? [] : ['--port', String(config.CLINMESH_PORT)]), ...extra];
   if (extra.length) throw new CoreError(503, 'LOCAL_OPEN_REQUIRES_MANAGED_LISTENER');
   const { hostname } = nodeListener(config);
   return ['dev', '--local', '--ip', hostname, '--port', String(config.CLINMESH_PORT ?? 8787), '--define', 'CLINMESH_LOOPBACK_WRANGLER:true', '--var', 'CLINMESH_LOCAL_DEV_OPEN:1'];
