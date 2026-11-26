@@ -1,6 +1,7 @@
 import { lazy } from 'react';
 
 export const builtinPanels = {
+  billing: lazy(() => import('./modules/billing/BillingPanel')),
   prescriptions: lazy(() => import('./modules/pharmacy/PrescriptionPanel').then(module => ({ default: module.PrescriptionPanel }))),
 };
 export const builtinStations = {

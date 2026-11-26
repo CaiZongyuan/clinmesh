@@ -25,6 +25,7 @@ export interface ClinMeshModule<Operations = never> {
   registerRoutes?(app: Hono): void;
   registerOperations?(catalog: Operations): void;
   initializeEpoch?(tx: StoreTx, at: StoreScope, virtualAt: string, recordedAt: string): void | Promise<void>;
+  encounterStarted?(tx: StoreTx, at: StoreScope, encounterId: string, virtualAt: string, recordedAt: string): void;
   completion?: CompletionCheck;
   midnight?: MidnightHook;
   workbenchTabs?: readonly z.infer<typeof workbenchTab>[];

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { workspaceSchema } from '../../src/packages/clinical-core';
+import { accountSchema } from '../../src/packages/mod-billing';
 import { teachingGate } from './node-workspace';
 
 export type PharmacyHttp = (path: string, init?: { method?: string; body?: string; headers?: Record<string, string> }) => Promise<{ status: number; headers: { get(key: string): string | null }; json(): Promise<unknown> }>;
@@ -23,6 +24,13 @@ export async function pharmacySession(fetchApi: PharmacyHttp, cookie: string) {
   }
   let roleVersion = workspace.sessionVersion;
   const role = (roleId: string) => applied(command('/api/workspace/role', roleVersion++, { roleId }));
+  const account = async (path: string) => accountSchema.parse(await get(`${path}/billing`));
+  const money = async (path: string, operation: string, fields: object) => applied(command(`${path}/billing/${operation}`, (await account(path)).version, fields));
+  async function collect(path: string, orderId: string, simulation: 'approved' | 'delayed-approval' = 'approved') {
+    const charge = (await account(path)).charges.find(item => item.orderId === orderId)!;
+    const preview = z.object({ commitToken: z.uuidv7() }).parse(await money(path, 'payment.preview', { chargeIds: [charge.id], tenders: [{ method: 'card', amountMinor: charge.outstandingMinor }], simulation }));
+    return z.object({ paymentId: z.uuidv7(), status: z.string() }).parse(await money(path, 'payment.confirm', preview));
+  }
   async function start(name: string, code: string) {
     const patient = workspace.cases.find(item => item.demographics.name === name)!;
     const opened = await applied(command(`/api/his/cases/${patient.id}/start-encounter`, 0));
@@ -36,5 +44,5 @@ export async function pharmacySession(fetchApi: PharmacyHttp, cookie: string) {
     return path;
   }
   await role('family-clinician');
-  return { get, workspace, role, command, applied, start, cookie };
+  return { get, workspace, role, command, applied, start, cookie, account, money, collect };
 }

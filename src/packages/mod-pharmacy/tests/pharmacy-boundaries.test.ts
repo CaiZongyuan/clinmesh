@@ -89,7 +89,7 @@ it.each(['global-general', 'cn-cardiology'] as const)('restores the frozen medic
     delete knowledge.pharmacy;
     installed.knowledge = knowledge;
     snapshot.format = 'clinmesh.snapshot.v2';
-    snapshot.tables = snapshot.tables.slice(0, snapshot.tables.findIndex(table => table.name === 'prescription_signatures'));
+    snapshot.tables = snapshot.tables.slice(0, snapshot.tables.findIndex(table => table.name === 'charge_sources'));
     await restored.importLogicalSnapshot(await rehash(snapshot));
     const module = createPharmacyModule();
     expect(await restored.read(reader => module.completion!(reader, at, encounterId))).toEqual([]);

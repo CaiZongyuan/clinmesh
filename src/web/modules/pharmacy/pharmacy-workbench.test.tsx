@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { withNodeWorkspace } from '../../../../scripts/testing/node-workspace';
 import { openPharmacySession } from '../../../../scripts/testing/pharmacy-session';
+import { prescribingViewSchema } from '../../../packages/mod-pharmacy';
 import { createClinMeshUiAgent, ThemeFontProvider } from '../../../packages/ui-kit';
 import { App } from '../../App';
 
@@ -26,7 +27,7 @@ it('lets the UI agent stage medication and batch choices while reserving dispens
   };
   await withNodeWorkspace(async origin => {
     const session = await openPharmacySession((path, init) => transport(origin + path, init));
-    await session.start('Avery Reed', 'J18.9');
+    const path = await session.start('Avery Reed', 'J18.9');
     vi.stubGlobal('fetch', (path: string, init?: RequestInit) => transport(origin + path, { ...init, headers: { ...init?.headers, cookie: session.cookie } }));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><ThemeFontProvider><App/></ThemeFontProvider></QueryClientProvider>);
@@ -44,7 +45,11 @@ it('lets the UI agent stage medication and batch choices while reserving dispens
     await guarded(withdraw.textContent!);
     await human.click(await guarded('Complete encounter'));
     await screen.findByRole('tab', { name: 'Debrief' });
-    expect((await act('Role · Family clinician', 'press', ['Clinical pharmacist'])).ok).toBe(true);
+    const orderId = prescribingViewSchema.parse(await session.get(`${path}/prescriptions`)).prescriptions[0]!.lines[0]!.orderId;
+    expect((await act('Role · Family clinician', 'press', ['Cashier'])).ok).toBe(true);
+    await screen.findByRole('button', { name: 'Role · Cashier' });
+    expect(await session.collect(path, orderId)).toMatchObject({ status: 'succeeded' });
+    expect((await act('Role · Cashier', 'press', ['Clinical pharmacist'])).ok).toBe(true);
     const confirm = await screen.findByRole('button', { name: /^Confirm dispense ·/ });
     expect(screen.getByText(/Confirmed allergies · penicillin/)).toBeDefined();
     const manual = screen.getByRole('switch', { name: /^Select batches manually/ });

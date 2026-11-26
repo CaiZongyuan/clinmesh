@@ -95,6 +95,12 @@ export function seedConformance(tx: StoreTx): string[] {
   add('payment_allocations', { id: fixtureId(53), tender_id: fixtureId(52), charge_id: fixtureId(49), ...money });
   add('refund_transactions', { id: fixtureId(54), allocation_id: fixtureId(53), reason: 'Correction', ...money, ...times });
   add('regional_payer_records', { id: fixtureId(57), encounter_id, payer_code: 'test-payer', reference: 'test-reference', determination: { status: 'accepted' }, ...times });
+  add('charge_sources', { id: fixtureId(102), charge_id: fixtureId(49), order_id, catalog_item_id, catalog_version: '1', quantity: 1, unit_price_minor: 12345, department: null, business_day: '2024-10-01' });
+  add('billing_previews', { id: fixtureId(103), encounter_id, actor_id: fixtureId(11), practitioner_role, plan: { kind: 'collection' }, fingerprint: 'd'.repeat(64), expires_at: recorded_at, ...times });
+  add('billing_attempts', { id: fixtureId(104), payment_id: fixtureId(51), preview_id: fixtureId(103), kind: 'collection', origin_id: null, initial_status: 'unknown', terminal_status: 'succeeded' });
+  add('billing_recoveries', { id: fixtureId(105), payment_id: fixtureId(51), status: 'succeeded', ...times });
+  add('billing_releases', { id: fixtureId(106), charge_id: fixtureId(49), ...times });
+  add('billing_settlements', { id: fixtureId(107), encounter_id, preview_id: fixtureId(103), snapshot: { netMinor: 12300 }, ...times });
   tx.insert(otherEpoch, 'audit_events', { id: fixtureId(14), actor: 'older-actor', practitioner_role, operation: 'older-audit', target_id: encounter_id, outcome: 'accepted', ...times });
   tx.insert(otherWorkspace, 'patients', { id: patient_id, display_name: 'Other Workspace', birth_date: null, version: 1 });
   return names;
