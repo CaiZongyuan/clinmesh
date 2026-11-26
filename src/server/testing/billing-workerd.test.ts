@@ -12,6 +12,8 @@ it('rechecks allocation recovery, frozen ward settlement and surgical projection
     expect(await run('/projection')).toMatchObject({ reserved: { costs: { reservedMinor: 40000, projectedMinor: 220830 } }, awaitingMaterial: { costs: { reservedMinor: 20000, projectedMinor: null } }, planned: { group: { group: 'FM39', referenceMinor: 1200000 }, costs: { projectedMinor: 220830 } } });
     expect(await run('/investigation')).toMatchObject({ before: { projectedMinor: 800 }, awaiting: { projectedMinor: null }, after: { projectedMinor: 800, committedMinor: 0 } });
     expect(await run('/legacy')).toMatchObject({ restoredPaid: 90, refundedBefore: 10, excessive: 'REFUND_LIMIT', finalPaid: 50, overCorrection: 'CORRECTION_LIMIT', remaining: [0, -30], linked: true, originalRules: { status: 409 }, frozenMinor: 100 });
+    expect(await run('/first-settlement')).toMatchObject({ regional: false, old: 'INPATIENT_CHARGES_UNPOSTED', pending: { canClearBed: false, locked: false }, preview: 'INPATIENT_CHARGES_UNPOSTED', due: 'SETTLEMENT_UNBALANCED', replay: 'PREVIEW_STALE', cleared: { canClearBed: true, locked: true }, snapshot: { netMinor: 200000, cashMinor: 200000 } });
+    expect(await run('/free-discharge')).toMatchObject({ regional: false, funds: { canClearBed: true, locked: false }, charges: 0, payments: 0 });
     expect(await run('/currency')).toMatchObject({ collect: { status: 409, data: { code: 'BILLING_CURRENCY_MISMATCH', details: { amountMinor: 1000, currencyCode: 'JPY', minorUnitExponent: 0 } } }, previews: 0 });
   } finally { await harness.close(); }
 }, 45_000);

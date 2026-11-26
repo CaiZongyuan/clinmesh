@@ -3,6 +3,20 @@ import { createNodeSqliteStore } from '../../packages/store';
 import { billingFixture } from './billing-fixture';
 import { outpatientContract } from './outpatient-billing';
 import { legacyCurrencyConflict, restoreLegacyBilling } from './legacy-billing';
+import { firstSettlementContract, freeDischargeContract } from './first-settlement';
+
+it('freezes only a fully posted and balanced admission after a material use appears between review and confirmation', async () => {
+  const store = createNodeSqliteStore({ dbPath: ':memory:' });
+  try {
+    expect(await firstSettlementContract(store)).toMatchObject({ regional: false, old: 'INPATIENT_CHARGES_UNPOSTED', pending: { outstandingMinor: null, canClearBed: false, locked: false }, preview: 'INPATIENT_CHARGES_UNPOSTED', due: 'SETTLEMENT_UNBALANCED', replay: 'PREVIEW_STALE', cleared: { outstandingMinor: 0, canClearBed: true, locked: true }, snapshot: { netMinor: 200000, cashMinor: 200000 } });
+  } finally { await store.close(); }
+});
+
+it('permits the free ward to clear a bed after a reported investigation without payment attempts', async () => {
+  const store = createNodeSqliteStore({ dbPath: ':memory:' });
+  try { expect(await freeDischargeContract(store)).toEqual({ regional: false, funds: { outstandingMinor: 0, canClearBed: true, locked: false }, charges: 0, payments: 0 }); }
+  finally { await store.close(); }
+});
 
 it.each([
   ['charge_items', 'JPY', 0], ['charge_adjustments', 'USD', 0], ['payment_transactions', 'JPY', 0],

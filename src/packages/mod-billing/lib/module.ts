@@ -17,7 +17,7 @@ export function createBillingModule(options: BillingOptions = {}) {
     readAdmissionFunds(reader: StoreReader, at: StoreScope, encounterId: string) {
       if (facility(reader, at).policy === 'free') return { outstandingMinor: 0, canClearBed: true, locked: false };
       const bill = clinicalAccount(reader, at, encounterId, options);
-      const unresolved = bill.pending || bill.payerPending;
+      const unresolved = bill.pending || bill.payerPending || bill.unpostedSources.length > 0;
       return { outstandingMinor: unresolved ? null : Math.max(0, bill.balanceMinor), canClearBed: bill.policy === 'free' || (!unresolved && !bill.balanceMinor && Boolean(bill.settlement)), locked: Boolean(bill.settlement) };
     },
     reconcile: (tx: StoreTx, at: StoreScope, encounterId: string, virtualAt: string, recordedAt: string) => reconcile(tx, at, encounterId, virtualAt, recordedAt, options),

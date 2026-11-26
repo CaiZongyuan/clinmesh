@@ -96,6 +96,7 @@ export function settlementPlan(bill: BillingAccount): Plan {
   requirePool(bill);
   if (bill.settlement) conflict('BILLING_LOCKED');
   if (bill.admissionStatus !== 'departed') conflict('DEPARTURE_REQUIRED');
+  if (bill.unpostedSources.length) conflict('INPATIENT_CHARGES_UNPOSTED');
   if (bill.balanceMinor) conflict('SETTLEMENT_UNBALANCED');
   return { kind: 'settlement', amountMinor: bill.netMinor, allocations: [], tenders: [], originId: null, reason: '', simulation: 'approved' };
 }
@@ -167,7 +168,7 @@ export function recover(context: CommandContext, bill: BillingAccount, paymentId
 export async function settle(context: CommandContext, bill: BillingAccount, commitToken: string) {
   settlementPlan(bill);
   const { fingerprint } = await frozen(context, bill, commitToken, 'settlement');
-  const snapshot = { fingerprint, version: bill.version, charges: bill.charges, payments: bill.payments, netMinor: bill.netMinor, coverageMinor: bill.coverageMinor, cashMinor: bill.cashMinor };
+  const snapshot = { fingerprint, version: bill.version, charges: bill.charges, payments: bill.payments, incurredSources: bill.incurredSources, netMinor: bill.netMinor, coverageMinor: bill.coverageMinor, cashMinor: bill.cashMinor };
   context.tx.insert(context.at, 'billing_settlements', { id: v7(), encounter_id: bill.encounterId, preview_id: commitToken, snapshot, virtual_at: context.virtualAt, recorded_at: context.recordedAt });
   return snapshot;
 }

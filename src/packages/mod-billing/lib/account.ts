@@ -7,6 +7,7 @@ import type { StoreReader, StoreScope, StoreTx } from '../../store';
 import { accountSchema, amount, snapshotSchema, tender, type Attempt, type BillingOptions, type FrozenCharge, type OrderFunds } from './contracts';
 import { requireDenomination, sumMinor, type Currency } from './money';
 import { correctionBalances } from './corrections';
+import { incurredSources } from './posting';
 
 export function conflict(code: string): never { throw new CoreError(409, code); }
 export function facility(reader: StoreReader, at: StoreScope) {
@@ -100,6 +101,8 @@ export function account(reader: StoreReader, at: StoreScope, encounterId: string
   const benefits = options.payerBenefit?.coverage(reader, at, encounterId);
   const admission = reader.list(at, 'inpatient_admissions', { encounter_id: encounterId })[0];
   const settlement = reader.list(at, 'billing_settlements', { encounter_id: encounterId })[0];
+  const incurred = encounter.encounter_class === 'inpatient' && policy !== 'free' ? incurredSources(reader, at, encounterId) : [];
+  const incurredOrders = new Set(incurred.flatMap(source => source.orderId ? [source.orderId] : []));
   const charges = reader.list(at, 'charge_items', { encounter_id: encounterId }).map(line => {
     requireDenomination(line, manifest.currency);
     const source = reader.list(at, 'charge_sources', { charge_id: line.id })[0];
@@ -119,7 +122,7 @@ export function account(reader: StoreReader, at: StoreScope, encounterId: string
     const benefit = benefits?.get(line.id);
     const coverageMinor = benefit?.amountMinor ?? 0;
     const adjustedMinor = sumMinor(adjustments.map(item => item.amountMinor));
-    const netMinor = cancelled && !paidMinor && !coverageMinor ? 0 : sumMinor([line.amount_minor, adjustedMinor]);
+    const netMinor = cancelled && !paidMinor && !coverageMinor && !(line.order_id && incurredOrders.has(line.order_id)) ? 0 : sumMinor([line.amount_minor, adjustedMinor]);
     const releaseRecorded = Boolean(reader.list(at, 'billing_releases', { charge_id: line.id })[0]);
     const payerPending = Boolean(benefit?.requiresReview || (benefit?.basisMinor !== undefined && benefit.basisMinor !== netMinor));
     const pending = assigned.some(item => item.status === 'unknown');
@@ -133,8 +136,11 @@ export function account(reader: StoreReader, at: StoreScope, encounterId: string
   const cashMinor = sumMinor(payments.filter(payment => payment.status === 'succeeded').map(payment => ['deposit-refund', 'refund'].includes(payment.kind) ? -payment.amountMinor : payment.amountMinor));
   const snapshot = settlement ? snapshotSchema.parse(settlement.snapshot) : null;
   const correctionCoverage = snapshot ? options.payerBenefit?.correctionCoverage?.(reader, at, encounterId) : undefined;
+  const postedOrders = new Set(charges.map(line => line.orderId));
+  const postedUses = new Set(charges.map(line => line.materialUseId));
+  const unposted = incurred.filter(source => source.orderId ? !postedOrders.has(source.orderId) : !postedUses.has(source.id));
   return accountSchema.parse({ encounterId, encounterClass: encounter.encounter_class, admissionStatus: admission?.status ?? null, policy, currency: manifest.currency, charges, payments, netMinor, coverageMinor, cashMinor, balanceMinor: sumMinor([netMinor, -coverageMinor, -cashMinor]), pending: payments.some(payment => payment.status === 'unknown'), payerPending: charges.some(line => line.payerPending), settlement: snapshot, corrections: correctionBalances(snapshot, charges, payments, correctionCoverage),
-    version: sumMinor([admission?.version ?? 0, settlement ? 1 : 0, ...payments.map(payment => payment.version), ...charges.map(line => line.version)]) });
+    incurredSources: incurred, unpostedSources: unposted, version: sumMinor([admission?.version ?? 0, settlement ? 1 : 0, ...payments.map(payment => payment.version), ...charges.map(line => line.version)]) });
 }
 
 export function freezeCharge(tx: StoreTx, at: StoreScope, row: FrozenCharge) {
@@ -150,7 +156,7 @@ export function freezeCharge(tx: StoreTx, at: StoreScope, row: FrozenCharge) {
     return existing.charge_id;
   }
   if (tx.list(at, 'billing_settlements', { encounter_id: row.encounterId }).length) conflict('BILLING_LOCKED');
-  if (withdrawn(order.status)) conflict('CHARGE_CANCELLED');
+  if (withdrawn(order.status) && (requireEncounter(tx, at, row.encounterId).encounter_class !== 'inpatient' || !incurredSources(tx, at, row.encounterId).some(source => source.orderId === order.id))) conflict('CHARGE_CANCELLED');
   const chargeId = v7();
   const display = z.object({ display: z.object({ en: z.string(), zh: z.string() }) }).parse(item.definition).display;
   tx.insert(at, 'charge_items', { id: chargeId, encounter_id: row.encounterId, order_id: row.orderId, description: display[manifest.defaultLocale.startsWith('zh') ? 'zh' : 'en'], amount_minor: amountMinor, currency_code: row.currencyCode, currency_exponent: row.currencyExponent, virtual_at: row.virtualAt, recorded_at: row.recordedAt });

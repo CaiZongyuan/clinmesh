@@ -12,6 +12,8 @@ Node 与 Workspace Durable Object 都从 `builtinModules` 装配 `createBillingM
 
 住院耗材使用由 `freezeMaterialUse(tx, at, materialUseId)` 按已登记的使用量、预留批次和冻结品规单价记费，重复提交同一使用 ID 返回原费用。业务日期按医院数据包的时区计算。账项、冲减、收款、渠道、分配和历史退款均核对原币种与精度，冲突时暂停合计及收退操作，收费员可查看原币金额。
 
+收费员预览与确认首次封账时，服务端在同一账务快照中核对已执行医嘱、报告、发药、手术和实际耗材使用。`unpostedSources` 列出待记费的来源。补齐账项并结清差额后可重新预览和确认，清床端口同步读取这项检查。
+
 ## 资金命令
 
 `billing.account` 返回账项、资金尝试、分配、冲减、原始快照及账本版本。所有预览、确认和恢复通过 Operation Catalog 的 Command 事务执行，提交当前 `epoch`、`expectedVersion` 与 `idempotencyKey`。
