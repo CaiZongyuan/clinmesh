@@ -3,6 +3,7 @@ import { createTestHarness, experimental_readRawConfig } from 'wrangler';
 import { z } from 'zod';
 import { visitSchema } from '../packages/patient-visit';
 import { encounterViewSchema, workspaceSchema } from '../packages/clinical-core';
+import { ModuleRegistry, OperationCatalog, registerPlatformOperations } from '../packages/platform';
 import { teachingGate, withNodeWorkspace } from '../../scripts/testing/node-workspace';
 
 type Http = (path: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{ status: number; headers: { get(name: string): string | null }; json(): Promise<unknown> }>;
@@ -65,8 +66,14 @@ async function exercise(fetchApi: Http, reopen?: (workspaceId: string) => Promis
   const grant = { roleId: 'family-clinician', allowedOperations: ['encounter.read'], ttlSeconds: 60 };
   const issued = await command('/api/workspace/capabilities', 0, 'grant', grant);
   expect(issued.status).toBe(200);
-  const capability = z.object({ token: z.string(), tokenId: z.uuidv7() }).parse(await issued.json());
-  expect(await (await command('/api/workspace/capabilities', 0, 'grant', grant)).json()).not.toHaveProperty('token');
+  const catalog = new OperationCatalog();
+  registerPlatformOperations(catalog, { modules: new ModuleRegistry([]), sign: async () => { throw Error('Schema-only reader'); } });
+  const wireSchema = catalog.require('capability.issue').output;
+  const received = wireSchema.parse(await issued.json());
+  const capability = z.object({ token: z.string(), tokenId: z.uuidv7() }).parse(received);
+  const replay = await (await command('/api/workspace/capabilities', 0, 'grant', grant)).json();
+  expect(Object.hasOwn(z.record(z.string(), z.json()).parse(replay), 'token')).toBe(false);
+  expect(z.object({ tokenId: z.uuidv7() }).parse(wireSchema.parse(replay)).tokenId === capability.tokenId).toBe(true);
   const bearer = { authorization: `Bearer ${capability.token}` };
   expect((await fetchApi(`/api/his/encounters/${encounterId}`, { headers: bearer })).status).toBe(200);
   expect((await fetchApi('/api/workspace', { headers: bearer })).status).toBe(403);

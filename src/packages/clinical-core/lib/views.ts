@@ -16,7 +16,7 @@ const revision = z.object({ id: z.uuidv7(), revision: z.int().positive(), previo
 export const recordRevision = revision.extend({ fields: noteFields });
 export const diagnosisRevision = revision.extend({ diagnoses: diagnosisMembers });
 export const completionSchema = z.object({ ready: z.boolean(), checks: z.array(gateItem) });
-export const encounterViewSchema = visitSchema.extend({ template: manifestSchema.shape.clinicalRecordTemplate,
+export const encounterViewSchema = visitSchema.extend({ age: z.int(), template: manifestSchema.shape.clinicalRecordTemplate,
   draftVersion: z.int().nonnegative(), fields: noteFields, diagnoses: z.array(diagnosisMember), recordRevisions: z.array(recordRevision), diagnosisRevisions: z.array(diagnosisRevision), completion: completionSchema });
 export type EncounterView = z.infer<typeof encounterViewSchema>;
 export const debriefSchema = z.object({ caseTruth: caseTruthSchema.extend({ tags: z.array(z.string()) }), recordRevisions: z.array(recordRevision), diagnosisRevisions: z.array(diagnosisRevision) });

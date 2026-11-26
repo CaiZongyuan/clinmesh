@@ -21,8 +21,8 @@ Vite 开发页从 `src/web` 启动，按公开入口的依赖图加载模块与�
 
 ## 其他运行方式
 
-- 本地 Worker 构建后运行 `pnpm dev:worker --var CLINMESH_LOCAL_DEV_OPEN:1`。Wrangler 在 Windows 上运行 workerd 和静态资源服务。每个 Workspace 对应一个 `WORKSPACE_DO` 实例。[Store 使用说明](src/packages/store/README.md)
-- 在 Node 进程环境或 Wrangler 的本地 `.dev.vars` 中设置 `CLINMESH_VISITOR_PASSCODE` 可启用口令门禁。开放开发模式仅对 loopback 地址生效。默认签名材料由宿主生成并持久保存。可通过 `CLINMESH_SESSION_SECRET` 提供至少 32 字符的独立签名密钥。
+- 本地 Worker 构建后运行 `pnpm dev:worker`。在 PowerShell 中设置 `$env:CLINMESH_LOCAL_DEV_OPEN='1'` 后，此入口将 Wrangler/workerd 绑定到回环地址。可用 `CLINMESH_PORT` 指定端口，默认 `8787`。每个 Workspace 对应一个 `WORKSPACE_DO` 实例。[Store 使用说明](src/packages/store/README.md)
+- Node 与本地 Wrangler 在开放模式下校验监听地址，接受 `127.0.0.1`、`::1` 和映射到 `127.0.0.1` 的 `localhost`。共享监听或生产 Worker 使用 `CLINMESH_VISITOR_PASSCODE`。Node 从进程环境读取，Wrangler 本地支持 `.dev.vars`。默认签名材料由宿主生成并持久保存。可通过 `CLINMESH_SESSION_SECRET` 提供至少 32 字符的独立签名密钥。
 - 在浏览器点击「进入工作台」后选择固定病例开诊。顶栏可切换为负责医生，管理岗位可在医院设置中选择数据包并确认重置。问诊支持单个待答问题，Patient Agent 可通过受控答复入口续写。门诊工作台始终允许医生在等候期间编辑草稿。
 - 访问 `/dev/health` 可查看当前运行时和已装载模块。`pnpm clinmesh` 是外部 CLI 入口，操作的输入输出、授权和路由由服务端的 Operation Catalog 定义。
 

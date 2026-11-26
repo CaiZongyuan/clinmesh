@@ -9,7 +9,7 @@ export const sessionSchema = z.object({ workspaceId: z.uuidv7(), epoch: z.uuidv7
 export const sessionView = (actor: Actor) => ({ ...actor.at, roleId: actor.role.id, sessionVersion: actor.sessionVersion });
 const visitor = { visitorOnly: true };
 export const administer = { visitorOnly: true, capabilities: ['workspace-admin'] };
-const capabilityResult = z.object({ tokenId: z.uuidv7(), expiresAt: z.iso.datetime(), version: z.int() });
+const capabilityResult = z.strictObject({ tokenId: z.uuidv7(), expiresAt: z.iso.datetime(), version: z.int() });
 type Dependencies = { sign(ticket: Ticket): Promise<string>; modules: ModuleRegistry<OperationCatalog> };
 
 export function registerPlatformOperations(catalog: OperationCatalog, { sign, modules }: Dependencies) {
@@ -37,12 +37,12 @@ export function registerPlatformOperations(catalog: OperationCatalog, { sign, mo
     }
     context.tx.insert(context.at, 'capability_tokens', { id: prepared.id, token_hash: prepared.hash, practitioner_role: role.id, allowed_operations: [...new Set(input.allowedOperations)], expires_at: prepared.expiresAt, revoked: false, version: 1 });
     return { tokenId: prepared.id, expiresAt: prepared.expiresAt, version: 1 };
-  }, async (actor, input) => {
+  }, { firstOutput: capabilityResult.extend({ token: z.string().min(1) }), async prepare(actor, input) {
     const id = v7();
     const expiresAt = new Date(Math.min(Date.now() + input.ttlSeconds * 1000, Date.parse(actor.expiresAt))).toISOString();
     const token = await sign({ kind: 'capability', ...actor.at, id, expiresAt });
     return { value: { id, expiresAt, hash: await sha256(token) }, firstResponse: { token } };
-  });
+  } });
   catalog.command({ name: 'capability.revoke', method: 'POST', path: '/api/workspace/capabilities/:id/revoke', access: administer }, {}, z.object({ revoked: z.literal(true) }), ({ tx, at, targetId, expectedVersion }) => {
     if (!tx.get(at, 'capability_tokens', targetId)) throw new CoreError(404, 'CAPABILITY_NOT_FOUND');
     tx.update(at, 'capability_tokens', targetId, expectedVersion, { revoked: true });

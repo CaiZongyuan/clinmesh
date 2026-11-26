@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { create } from 'zustand';
 import { z } from 'zod';
 import { encounterViewSchema, type WorkspaceView } from '../packages/clinical-core';
@@ -7,11 +7,13 @@ import { summarySchema } from '../packages/patient-visit';
 import { sessionSchema } from '../packages/platform';
 import { Badge, Button, Dialog, Field, InlineConfirmBar, Menu, Select, WorkspaceCardLayout, useThemeFont } from '../packages/ui-kit';
 import { EncounterPanel, type WorkbenchPanels } from './EncounterPanel';
-import { api, ApiError, errorMessage, scopeKey, sessionKey, words, workspaceKey, write, type Intent, type Language } from './workbench-api';
+import { createEpochDrafts, type EncounterDrafts } from './encounter-drafts';
+import { api, ApiError, currentSession, errorMessage, scopeKey, sessionKey, words, workspaceKey, write, type Intent, type Language, type Session } from './workbench-api';
 
 const useView = create<{ epoch: string; encounterId: string; queue: boolean }>(() => ({ epoch: '', encounterId: '', queue: true }));
-type Props = { workspace: WorkspaceView; language: Language; languageSelect: ReactNode; panels?: WorkbenchPanels };
-export function CoreWorkbench({ workspace, language, languageSelect, panels }: Props) {
+type Props = { workspace: WorkspaceView; language: Language; languageSelect: ReactNode; panels?: WorkbenchPanels; draftsFor?: (id: string) => EncounterDrafts };
+export function CoreWorkbench({ workspace, language, languageSelect, panels, draftsFor: ownerDrafts }: Props) {
+  const draftsFor = useMemo(() => ownerDrafts ?? createEpochDrafts(), [ownerDrafts, workspace.workspaceId, workspace.epoch]);
   const text = words(language);
   const client = useQueryClient();
   const selection = useView();
@@ -24,8 +26,13 @@ export function CoreWorkbench({ workspace, language, languageSelect, panels }: P
   const detail = useQuery({ queryKey: detailKey, enabled: Boolean(encounterId), queryFn: ({ signal }) => api(`/api/his/encounters/${encounterId}`, encounterViewSchema, { signal }) });
   const selectEncounter = (id: string) => useView.setState({ epoch: workspace.epoch, encounterId: id });
   const refresh = (key: string[]) => client.invalidateQueries({ queryKey: key, exact: true });
+  const sameEpoch = (sent: Session, current = client.getQueryData<Session | null>(sessionKey)) => current?.workspaceId === sent.workspaceId && current.epoch === sent.epoch;
   const change = useMutation({ mutationFn: (intent: Intent) => write(workspace, intent),
-    async onSuccess(result, intent) {
+    onMutate: () => ({ workspace, encounterId }),
+    async onSuccess(result, intent, sent) {
+      if (!sameEpoch(sent.workspace)) return;
+      const listKey = scopeKey(sent.workspace, 'encounters');
+      const detailKey = scopeKey(sent.workspace, intent.targetId ?? sent.encounterId, 'clinical');
       if (intent.name === 'visitor.logout') { client.clear(); client.setQueryData(sessionKey, null); return; }
       if (intent.name === 'workspace.role' || intent.name === 'workspace.reset') {
         const session = sessionSchema.parse(result);
@@ -33,12 +40,18 @@ export function CoreWorkbench({ workspace, language, languageSelect, panels }: P
         client.setQueryData(sessionKey, session);
       } else if (intent.name === 'encounter.start') {
         selectEncounter(z.uuidv7().parse(result.encounterId)); await refresh(listKey);
-      } else if (intent.name === 'workspace.advance-time') { await refresh(workspaceKey(workspace)); }
+      } else if (intent.name === 'workspace.advance-time') { await Promise.all([refresh(workspaceKey(sent.workspace)), refresh(detailKey)]); }
       else { await Promise.all([refresh(detailKey), ...(intent.name === 'encounter.complete' ? [refresh(listKey)] : [])]); }
     },
-    async onError(error) {
-      if (error instanceof ApiError && error.status === 401) { client.clear(); client.setQueryData(sessionKey, null); }
-      if (error instanceof ApiError && error.status === 409) await refresh(detailKey);
+    async onError(error, intent, sent) {
+      if (!(error instanceof ApiError) || !sent || !sameEpoch(sent.workspace)) return;
+      if (error.status === 401) { client.clear(); client.setQueryData(sessionKey, null); return; }
+      if (error.status !== 409 && error.status !== 403) return;
+      const live = await client.fetchQuery({ queryKey: sessionKey, queryFn: ({ signal }) => currentSession(signal), staleTime: 0 });
+      if (!live || !sameEpoch(sent.workspace, live)) return;
+      if (intent.name.startsWith('workspace.') || intent.name === 'visitor.logout' || error.status === 403) await refresh(workspaceKey(live));
+      if (intent.name === 'encounter.start') await refresh(scopeKey(live, 'encounters'));
+      else if (intent.targetId || sent.encounterId) await refresh(scopeKey(live, intent.targetId ?? sent.encounterId, 'clinical'));
     },
   });
   const allowed = (name: string) => workspace.operations.some(operation => operation.name === name);
@@ -66,7 +79,7 @@ export function CoreWorkbench({ workspace, language, languageSelect, panels }: P
   </div>)}<h2>{text('Encounters', '已开就诊')}</h2>{encounters.data?.map(item => <Button key={item.id} aria-current={item.id === encounterId ? 'true' : undefined} onClick={() => selectEncounter(item.id)}>{item.name} · {item.id.slice(-6)} · {item.status === 'active' ? text('Active', '进行中') : text('Completed', '已完诊')}</Button>)}</section>}>
     {change.isError && <p role="alert">{errorMessage(change.error, language)}</p>}
     {encounters.isError && <p role="alert">{errorMessage(encounters.error, language)}</p>}
-    {detail.isError ? <p role="alert">{errorMessage(detail.error, language)}</p> : detail.data ? <EncounterPanel key={detail.data.id} encounter={detail.data} workspace={workspace} language={language} busy={change.isPending} submit={intent => change.mutateAsync(intent)} panels={panels}/> :
+    {detail.isError ? <p role="alert">{errorMessage(detail.error, language)}</p> : detail.data ? <EncounterPanel key={detail.data.id} encounter={detail.data} workspace={workspace} language={language} busy={change.isPending} submit={intent => change.mutateAsync(intent)} panels={panels} drafts={draftsFor(detail.data.id)}/> :
     <section className="workbench-empty"><Badge tone="info">{workspace.manifest.name[language]}</Badge><h1>{text('Outpatient workbench', '门诊工作台')}</h1><p>{text('Start a fixed case from the queue to open its encounter.', '从病例队列选择固定病例开诊。')}</p></section>}
   </WorkspaceCardLayout>;
 }

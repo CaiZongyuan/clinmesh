@@ -34,7 +34,7 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
   });
   const catalog = new OperationCatalog();
   const registry = new ModuleRegistry(modules);
-  registerPlatformOperations(catalog, { sign: ticket => createVisitorGate(settings, new URL('http://localhost')).sign(ticket), modules: registry });
+  registerPlatformOperations(catalog, { sign: createVisitorGate(settings).sign, modules: registry });
   catalog.command({ name: 'workspace.reset', method: 'POST', path: '/api/workspace/reset', access: administer }, { packId: z.string().optional() }, sessionSchema, ({ tx, at, actor, expectedVersion, virtualAt, recordedAt }, { packId }) => {
     checkVersion(actor.active.clock_revision, expectedVersion);
     const id = packId ?? tx.list(at, 'data_pack_installations')[0]!.pack_id;

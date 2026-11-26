@@ -10,18 +10,21 @@ export function ageOn(birthDate: string, date: string) {
   return Number(date.slice(0, 4)) - Number(birthDate.slice(0, 4)) - Number(date.slice(5, 10) < birthDate.slice(5));
 }
 
-export function visibleTemplate(reader: StoreReader, at: StoreScope, encounterId: string) {
+export function patientPresentation(reader: StoreReader, at: StoreScope, encounterId: string) {
   const encounter = requireEncounter(reader, at, encounterId);
   const patientCase = readClinicalCase(reader, at, encounter.source_case_id)!;
   const pack = reader.list(at, 'data_pack_installations')[0]!;
   const manifest = manifestSchema.parse(pack.manifest);
   const practitioners = organizationSchema.parse(pack.organization).practitioners.filter(member => member.roleId === encounter.active_practitioner_role);
-  const date = new Intl.DateTimeFormat('en-CA', { timeZone: manifest.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(encounter.virtual_at));
-  const age = ageOn(patientCase.demographics.birthDate, date);
-  return manifest.clinicalRecordTemplate.filter(({ showWhen }) => !showWhen || (
+  const now = reader.getEpoch(at)!.virtual_time;
+  const date = new Intl.DateTimeFormat('en-CA', { timeZone: manifest.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
+  const birthDate = reader.get(at, 'patients', encounter.patient_id)?.birth_date ?? patientCase.demographics.birthDate;
+  const age = ageOn(birthDate, date);
+  const template = manifest.clinicalRecordTemplate.filter(({ showWhen }) => !showWhen || (
     (!showWhen.departmentId || practitioners.some(member => member.departmentId === showWhen.departmentId)) &&
     (!showWhen.encounterClass || showWhen.encounterClass === encounter.encounter_class) && (!showWhen.sex || showWhen.sex === patientCase.demographics.sex) &&
     (showWhen.minAge === undefined || age >= showWhen.minAge) && (showWhen.maxAge === undefined || age <= showWhen.maxAge)));
+  return { age, template };
 }
 
 export function recordState(reader: StoreReader, at: StoreScope, encounterId: string) {
@@ -36,7 +39,7 @@ export function recordState(reader: StoreReader, at: StoreScope, encounterId: st
 export function saveRecord(context: CommandContext, fields: Record<string, string>, expectedDraftVersion: number) {
   const { tx, at, targetId } = context;
   const version = editEncounter(context);
-  const visible = visibleTemplate(tx, at, targetId);
+  const { template: visible } = patientPresentation(tx, at, targetId);
   if (Object.keys(fields).some(id => !visible.some(field => field.id === id))) throw new CoreError(400, 'FIELD_NOT_IN_TEMPLATE');
   const draft = tx.list(at, 'clinical_record_drafts', { encounter_id: targetId })[0];
   checkVersion(draft?.version ?? 0, expectedDraftVersion);
@@ -50,7 +53,7 @@ export function signRecord(context: CommandContext, expectedDraftVersion?: numbe
   const version = editEncounter(context);
   const state = recordState(tx, at, targetId);
   if (expectedDraftVersion !== undefined) checkVersion(state.draftVersion, expectedDraftVersion);
-  if (!state.draftVersion || visibleTemplate(tx, at, targetId).some(field => field.required && !state.fields[field.id]?.trim())) throw new CoreError(409, 'REQUIRED_FIELDS_MISSING');
+  if (!state.draftVersion || patientPresentation(tx, at, targetId).template.some(field => field.required && !state.fields[field.id]?.trim())) throw new CoreError(409, 'REQUIRED_FIELDS_MISSING');
   const previous = state.recordRevisions.at(-1);
   const revision = (previous?.revision ?? 0) + 1;
   tx.insert(at, 'clinical_record_revisions', { id: v7(), encounter_id: targetId, fields: state.fields, revision, previous_revision_id: previous?.id ?? null,

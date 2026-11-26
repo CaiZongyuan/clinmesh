@@ -13,7 +13,7 @@ it('mounts the health route and each enabled module on the Node app', async () =
     registerOperations(catalog) { catalog.query({ name: `${id}.read`, path: `/api/his/${id}/read`, access: {} }, z.literal('ready'), () => 'ready' as const); },
     workbenchTabs: [{ id, label: { en: id, zh: id } }],
   }));
-  const settings = { CLINMESH_LOCAL_DEV_OPEN: '1', loadSigningSecret: () => store.visitorSigningSecret() };
+  const settings = { localOpen: true, loadSigningSecret: () => store.visitorSigningSecret() };
   const workspace = createWorkspaceApp(store, settings, modules);
   const app = createApp('node', settings, (request, credential, entering) => workspace.fetch(request, { credential, entering }), modules);
   try {

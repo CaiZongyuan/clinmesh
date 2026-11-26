@@ -35,17 +35,22 @@ export class OperationCatalog {
 
   command<Fields extends z.ZodRawShape, Output extends Result, Prepared = undefined>(route: Route, fields: Fields, output: z.ZodType<Output>,
     apply: (context: CommandContext, input: z.output<z.ZodObject<Fields>>, prepared: Prepared) => Output | Promise<Output>,
-    prepare?: (actor: Actor, input: z.output<z.ZodObject<Fields>>) => Promise<{ value: Prepared; firstResponse?: Record<string, string> }>) {
+    disclosure?: { firstOutput: z.ZodType<Result>; prepare(actor: Actor, input: z.output<z.ZodObject<Fields>>): Promise<{ value: Prepared; firstResponse: Record<string, string> }> }) {
     route = { ...route, moduleId: this.moduleId ?? route.moduleId };
     const input = commandEnvelope.extend(fields).strict();
-    this.add({ ...route, input, output, async invoke({ store, credential, targetId, body }) {
+    this.add({ ...route, input, output: disclosure ? z.union([disclosure.firstOutput, output]) : output, async invoke({ store, credential, targetId, body }) {
       const actor = await store.read(reader => resolveActor(reader, credential, new Date().toISOString()));
       authorize(actor, route);
       const parsed = input.parse(await body());
       const args = parsed as z.output<z.ZodObject<Fields>>;
-      const prepared = await prepare?.(actor, args);
-      const execution = await executeCommand(store, credential, route, targetId, parsed as z.infer<typeof commandEnvelope>, async context => output.parse(await apply(context, args, prepared?.value as Prepared)));
-      if (prepared?.firstResponse && !execution.replay) return { ...z.record(z.string(), z.json()).parse(execution.result), ...prepared.firstResponse };
+      const prepared = await disclosure?.prepare(actor, args);
+      let firstResponse: Result | undefined;
+      const execution = await executeCommand(store, credential, route, targetId, parsed as z.infer<typeof commandEnvelope>, async context => {
+        const receipt = output.parse(await apply(context, args, prepared?.value as Prepared));
+        if (disclosure && prepared) firstResponse = disclosure.firstOutput.parse({ ...z.record(z.string(), z.json()).parse(receipt), ...prepared.firstResponse });
+        return receipt;
+      });
+      if (!execution.replay && firstResponse !== undefined) return firstResponse;
       return output.parse(execution.result);
     } });
   }

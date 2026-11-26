@@ -5,10 +5,10 @@ import { createReader, createRepository, readEntity, writeEntity } from './repos
 import { entityNames, epoch as epochFields, tables, uuid, workspace as workspaceFields, type TableDefinition } from './schema';
 import type { SqlConnection } from './sqlite';
 
-const format = 'clinmesh.snapshot.v1';
+const format = 'clinmesh.snapshot.v2';
 const record = z.record(z.string(), z.json());
 const snapshotSchema = z.strictObject({
-  format: z.literal(format), workspaceId: uuid,
+  format: z.enum(['clinmesh.snapshot.v1', format]), workspaceId: uuid,
   tables: z.array(z.strictObject({ name: z.string(), rows: z.array(record) })),
   pi: z.array(piImage), sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
@@ -27,10 +27,9 @@ export async function seal(content: SnapshotContent): Promise<LogicalSnapshot> {
 export async function verifySnapshot(input: unknown): Promise<SnapshotContent> {
   const { sha256, ...content } = snapshotSchema.parse(input);
   if ((await seal(content)).sha256 !== sha256) throw new StoreSnapshotError('Snapshot digest mismatch');
-  const includesTriage = content.tables.some(table => table.name === 'encounter_triage');
-  const expected = ['workspaces', 'workspace_epochs', ...entityNames.filter(name => name !== 'encounter_triage' || includesTriage)];
+  const expected = ['workspaces', 'workspace_epochs', ...entityNames.filter(name => name !== 'encounter_triage' || content.format === format)];
   if (content.tables.length !== expected.length || content.tables.some((table, index) => table.name !== expected[index])) throw new StoreSnapshotError('Incomplete or unordered snapshot tables');
-  return content;
+  return content.format === format ? content : { ...content, format, tables: [...content.tables, { name: 'encounter_triage', rows: [] }] };
 }
 
 export function capture(db: SqlConnection, workspaceId: string): SnapshotContent {
@@ -56,7 +55,7 @@ export function capture(db: SqlConnection, workspaceId: string): SnapshotContent
         }
       }
     }
-    if (name !== 'encounter_triage' || rows.length) data.push({ name, rows });
+    data.push({ name, rows });
   }
   return { format, workspaceId, tables: data, pi };
 }

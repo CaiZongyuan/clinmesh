@@ -7,6 +7,7 @@ import { sessionSchema } from '../packages/platform';
 import { Button, Card, Field, Input, Select } from '../packages/ui-kit';
 import { CoreWorkbench } from './CoreWorkbench';
 import type { WorkbenchPanels } from './EncounterPanel';
+import { createEpochDrafts } from './encounter-drafts';
 import { api, currentSession, errorMessage, jsonBody, sessionKey, words, workspaceKey, type Language, type Session } from './workbench-api';
 
 const useLocale = create<{ language?: Language; choose(language: Language): void }>(set => ({ choose: language => set({ language }) }));
@@ -32,11 +33,12 @@ function VisitorGate({ language }: { language: Language }) {
 }
 
 function WorkspaceLoader({ session, preferred, panels }: { session: Session; preferred?: Language; panels?: WorkbenchPanels }) {
+  const [draftsFor] = useState(createEpochDrafts);
   const state = useQuery({ queryKey: workspaceKey(session), queryFn: ({ signal }) => api('/api/workspace', workspaceSchema, { signal }), staleTime: 15 * 60_000 });
   if (state.isError) return <p role="alert">{errorMessage(state.error, preferred ?? 'en')}</p>;
   if (!state.data) return <p role="status">{words(preferred ?? 'en')('Opening workspace…', '正在打开工作台…')}</p>;
   const language = preferred ?? (state.data.manifest.defaultLocale.startsWith('zh') ? 'zh' : 'en');
-  return <CoreWorkbench key={state.data.epoch} workspace={{ ...state.data, sessionVersion: session.sessionVersion }} language={language} languageSelect={<LanguageSelect language={language}/>} panels={panels}/>;
+  return <CoreWorkbench workspace={{ ...state.data, sessionVersion: session.sessionVersion }} language={language} languageSelect={<LanguageSelect language={language}/>} panels={panels} draftsFor={draftsFor}/>;
 }
 
 export function App({ panels }: { panels?: WorkbenchPanels } = {}) {
@@ -44,5 +46,5 @@ export function App({ panels }: { panels?: WorkbenchPanels } = {}) {
   const session = useQuery({ queryKey: sessionKey, queryFn: ({ signal }) => currentSession(signal), staleTime: 60_000 });
   if (session.isError) return <p role="alert">{errorMessage(session.error, preferred ?? 'en')}</p>;
   if (session.isPending) return <p role="status">{words(preferred ?? 'en')('Checking session…', '正在检查会话…')}</p>;
-  return session.data ? <WorkspaceLoader session={session.data} preferred={preferred} panels={panels}/> : <VisitorGate language={preferred ?? 'en'}/>;
+  return session.data ? <WorkspaceLoader key={`${session.data.workspaceId}:${session.data.epoch}`} session={session.data} preferred={preferred} panels={panels}/> : <VisitorGate language={preferred ?? 'en'}/>;
 }

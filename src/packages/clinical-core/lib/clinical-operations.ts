@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { editEncounter, readVisit, requireEncounter, submitQuestion, turnInput } from '../../patient-visit';
 import { CoreError, type ModuleRegistry, type OperationCatalog } from '../../platform';
 import type { StoreReader, StoreScope } from '../../store';
-import { confirmDiagnoses, diagnosisState, recordState, saveDiagnoses, saveRecord, signRecord, visibleTemplate } from './records';
+import { confirmDiagnoses, diagnosisState, patientPresentation, recordState, saveDiagnoses, saveRecord, signRecord } from './records';
 import { completionSchema, debriefSchema, diagnosisMembers, encounterViewSchema, noteFields } from './views';
 
 type Registry = ModuleRegistry<OperationCatalog>;
@@ -38,7 +38,7 @@ export function registerClinicalOperations(catalog: OperationCatalog, registry: 
   catalog.query({ name: 'encounter.read', path: base, access: {} }, encounterViewSchema, ({ reader, actor, targetId }) => {
     const visit = readVisit(reader, actor.at, targetId);
     const state = clinicalState(reader, actor.at, targetId);
-    return { ...visit, ...state, template: visibleTemplate(reader, actor.at, targetId), completion: completion(reader, actor.at, targetId, state, registry, actor.enabledModules) };
+    return { ...visit, ...state, ...patientPresentation(reader, actor.at, targetId), completion: completion(reader, actor.at, targetId, state, registry, actor.enabledModules) };
   });
   catalog.command({ name: 'consultation.question', method: 'POST', path: `${base}/consultation/turns`, access: assess }, turnInput.shape,
     version.extend({ turnId: z.uuidv7() }), (context, { channel, content }) => submitQuestion(context, { channel, content }));

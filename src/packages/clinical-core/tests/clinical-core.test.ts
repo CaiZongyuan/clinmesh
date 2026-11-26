@@ -12,6 +12,10 @@ function verify(result: Awaited<ReturnType<typeof clinicalContract>>, changed: b
   expect(result.before.diagnosisRevisions.map(item => item.diagnoses.filter(member => member.primary).map(member => member.code))).toEqual([['J18.9'], ['I10']]);
   expect(result.before.diagnosisRevisions[1]?.previousId).toBe(result.before.diagnosisRevisions[0]!.id);
   expect(result.before.completion.ready).toBe(true);
+  expect(result.before.age).toBe(17);
+  expect(result.before.template.some(field => field.id === 'adult')).toBe(false);
+  expect(result.atDecision.age).toBe(changed ? 18 : 17);
+  expect(result.atDecision.template.some(field => field.id === 'adult')).toBe(changed);
   expect(result.outcomes).toEqual(Array(2).fill(changed ? 'COMPLETION_BLOCKED' : 'committed'));
   expect(result.after).toMatchObject({ encounter: { status: changed ? 'active' : 'completed', version: changed ? 13 : 14 }, audits: changed ? 0 : 1, receipts: changed ? 0 : 1 });
 }

@@ -10,8 +10,10 @@ import { encounterViewSchema, registerClinicalOperations } from '../index';
 export async function clinicalContract(store: StorePort, changeAfterRead: boolean) {
   const id = v7();
   const workspaceId = v7();
+  const teachingPack = { ...general, manifest: { ...general.manifest, timezone: 'Asia/Shanghai', clinicalRecordTemplate: [...general.manifest.clinicalRecordTemplate, { id: 'adult', title: { en: 'Adult assessment', zh: '成人评估' }, required: false, showWhen: { minAge: 18 } }] },
+    cases: general.cases.map(item => item.demographics.name === 'Avery Reed' ? { ...item, demographics: { ...item.demographics, birthDate: '2010-04-17' } } : item) };
   const at = await store.withTransaction(tx => {
-    const at = installHospitalDataPack(tx, { workspaceId, expectedEpoch: null, virtualTime: '2028-02-28T15:00:00Z' }, general);
+    const at = installHospitalDataPack(tx, { workspaceId, expectedEpoch: null, virtualTime: '2028-04-16T15:59:59Z' }, teachingPack);
     tx.insert(at, 'visitor_sessions', { id, practitioner_role: 'family-clinician', expires_at: '2099-01-01T00:00:00Z', version: 1, revoked: false });
     return at;
   });
@@ -55,14 +57,15 @@ export async function clinicalContract(store: StorePort, changeAfterRead: boolea
   if (changeAfterRead) {
     targetId = workspaceId;
     await call('workspace.role', 1, { roleId: 'coordinator' });
-    await call('workspace.advance-time', 0, { to: '2028-02-29T16:00:00Z' });
+    await call('workspace.advance-time', 0, { to: '2028-04-16T16:00:00Z' });
     await call('workspace.role', 2, { roleId: 'family-clinician' });
     targetId = before.id;
   }
   const key = v7();
+  const atDecision = encounterViewSchema.parse(await call('encounter.read', 13));
   const complete = () => call('encounter.complete', 13, {}, key);
   const outcomes = [await failed(complete()), await failed(complete())];
   const after = await store.read(reader => ({ encounter: reader.get(at, 'encounters', targetId), audits: reader.list(at, 'audit_events', { operation: 'encounter.complete' }).length,
     receipts: reader.list(at, 'command_receipts', { operation: 'encounter.complete' }).length }));
-  return { incomplete, staleDraft, dirty, invalidCoding, twoPrimary, before, outcomes, after };
+  return { incomplete, staleDraft, dirty, invalidCoding, twoPrimary, before, atDecision, outcomes, after };
 }

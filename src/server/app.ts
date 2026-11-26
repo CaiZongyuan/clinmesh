@@ -12,7 +12,7 @@ export function createApp(runtime: RuntimeHealth['runtime'], settings: GateSetti
   app.all('/api/*', async context => {
     const request = context.req.raw;
     const origin = new URL(request.url);
-    const gate = createVisitorGate(settings, origin);
+    const gate = createVisitorGate({ ...settings, localOpen: settings.localOpen && ['127.0.0.1', 'localhost', '[::1]'].includes(origin.hostname) });
     const cookieFlags = `Path=/; HttpOnly; SameSite=Lax${origin.protocol === 'https:' ? '; Secure' : ''}`;
     const crossSite = request.headers.get('origin');
     const checkOrigin = () => { if (!['GET', 'HEAD'].includes(request.method) && crossSite && crossSite !== origin.origin) throw new CoreError(403, 'ORIGIN_FORBIDDEN'); };

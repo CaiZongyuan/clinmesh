@@ -9,19 +9,15 @@ const identity = z.strictObject({ kind: z.literal('visitor'), workspaceId: z.uui
 const ticket = z.discriminatedUnion('kind', [identity, identity.extend({ kind: z.literal('capability'), epoch: z.uuidv7() })]);
 export type Ticket = z.infer<typeof ticket>;
 export type Credential = { ticket: Ticket; tokenHash?: string };
-export type GateSettings = { CLINMESH_VISITOR_PASSCODE?: string; CLINMESH_SESSION_SECRET?: string; CLINMESH_LOCAL_DEV_OPEN?: string; loadSigningSecret?: () => Promise<string> };
+export type GateSettings = { CLINMESH_VISITOR_PASSCODE?: string; CLINMESH_SESSION_SECRET?: string; localOpen?: boolean; loadSigningSecret?: () => Promise<string> };
 const encoder = new TextEncoder();
 const toHex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
 export const sha256 = async (text: string) => toHex(await crypto.subtle.digest('SHA-256', encoder.encode(text)));
 const unauthorized = () => new CoreError(401, 'VISITOR_AUTH_REQUIRED');
-const loopback = (url: URL) => ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
-let localSecret: string | undefined;
-
-export function createVisitorGate(settings: GateSettings, origin: URL) {
-  const localOpen = loopback(origin) && settings.CLINMESH_LOCAL_DEV_OPEN === '1';
+export function createVisitorGate(settings: GateSettings) {
   let imported: Promise<CryptoKey> | undefined;
   async function importKey() {
-    const secret = settings.CLINMESH_SESSION_SECRET || await settings.loadSigningSecret?.() || (localOpen ? localSecret ??= crypto.randomUUID() : undefined);
+    const secret = settings.CLINMESH_SESSION_SECRET || await settings.loadSigningSecret?.();
     if (!secret || secret.length < 32) throw new CoreError(503, 'VISITOR_GATE_UNCONFIGURED');
     return crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
   }
@@ -41,7 +37,7 @@ export function createVisitorGate(settings: GateSettings, origin: URL) {
   }
   return {
     async enter(passcode: string) {
-      if (!localOpen) {
+      if (!settings.localOpen) {
         if (!settings.CLINMESH_VISITOR_PASSCODE) throw new CoreError(503, 'VISITOR_GATE_UNCONFIGURED');
         const comparison = await crypto.subtle.generateKey({ name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
         const digest = await crypto.subtle.sign('HMAC', comparison, encoder.encode(settings.CLINMESH_VISITOR_PASSCODE));
