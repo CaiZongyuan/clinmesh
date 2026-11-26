@@ -49,6 +49,45 @@
         "sourceSystem": "urn:clinmesh:synthetic-pack",
         "targetConceptCode": "6597-9",
         "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-02-01",
+        "id": "syn-map-reviewed-broader",
+        "notesZh": "已初审但未终审批准的宽泛映射（broader），不进入算分红线。",
+        "relation": "broader",
+        "reviewStatus": "reviewed",
+        "reviewerId": "reviewer-syn-cardio-01",
+        "sourceCode": "SYN-CARDIAC-BROAD",
+        "sourceDisplay": "宽泛心肌损伤合成指标",
+        "sourceSystem": "urn:clinmesh:synthetic-pack",
+        "targetConceptCode": "89579-7",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2025-01-01",
+        "id": "syn-map-deprecated-narrower",
+        "notesZh": "已停用窄范围映射（deprecated），仅保留版本历史审计。",
+        "relation": "narrower",
+        "reviewStatus": "deprecated",
+        "reviewerId": "reviewer-syn-cardio-01",
+        "sourceCode": "SYN-OLD-CREAT",
+        "sourceDisplay": "旧版合成肌酐编码",
+        "sourceSystem": "urn:clinmesh:synthetic-pack",
+        "targetConceptCode": "2160-0",
+        "version": "0.9.0"
+      },
+      {
+        "effectiveDate": "2099-01-01",
+        "id": "syn-map-future-effective",
+        "notesZh": "未来生效日期测试条目（effectiveDate=2099-01-01），当前日期未生效。",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-syn-cardio-01",
+        "sourceCode": "SYN-FUTURE-MAP",
+        "sourceDisplay": "未来生效合成编码",
+        "sourceSystem": "urn:clinmesh:synthetic-pack",
+        "targetConceptCode": "2160-0",
+        "version": "2.0.0"
       }
     ],
     "nodes": [

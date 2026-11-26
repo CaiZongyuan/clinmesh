@@ -3,18 +3,32 @@
     "cases": [
       {
         "caseId": "fh-premature-cad-clue-v1",
+        "category": "standard-mild",
         "expectedActive": true,
+        "layer": "workflow",
         "titleZh": "38 岁早发冠心病伴多年 LDL-C 显著升高及早发心梗家族史识别正例"
       },
       {
         "caseId": "cardio-nstemi-chest-pain-v1",
+        "category": "inpatient-severe",
         "expectedActive": false,
+        "layer": "workflow",
         "titleZh": "普通高龄 NSTEMI 病例不误触发 FH 识别负例"
       },
       {
         "caseId": "trap-low-risk-chest-wall-pain-v1",
+        "category": "over-testing-mild",
         "expectedActive": false,
+        "layer": "workflow",
         "titleZh": "低危胸壁痛病例不误触发 FH 识别负例"
+      },
+      {
+        "caseId": "fh-nephrotic-syndrome-inapplicable-v1",
+        "category": "multi-disease-conflict",
+        "expectedActive": false,
+        "expectedInapplicable": true,
+        "layer": "workflow",
+        "titleZh": "肾病综合征继发高胆固醇血症不适用静默边界负例"
       }
     ],
     "passThreshold": 0.9

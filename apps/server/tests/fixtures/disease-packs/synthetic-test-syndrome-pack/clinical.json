@@ -28,6 +28,36 @@
       "version": 1
     }
   ],
+  "guidelineTopics": [
+    {
+      "conclusionKinds": [
+        "synthetic-baseline-risk",
+        "synthetic-renal-threshold",
+        "synthetic-followup-plan"
+      ],
+      "generationRule": "合成测试原件 v1 · Synthetic Only：仅依据合成指南片段与总账事实生成基线与肾功能评估建议。",
+      "id": "synthetic-syndrome-baseline-guidance",
+      "limitations": [
+        "合成测试原件 v1 · Synthetic Only：仅用于平台动态载入与格式验证，不代表真实临床指南。"
+      ],
+      "matchTerms": ["合成测试综合征", "SYN-DX-01", "肌酐评估"],
+      "navigation": "合成测试原件 v1 · Synthetic Only：核对基线肾功能、禁用药物红线与跨就诊随访指标。",
+      "references": [
+        {
+          "fragments": ["In patients undergoing PCI, DES should be used in preference to BMS"],
+          "page": 35,
+          "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+          "sourceId": "coronary-10-2021",
+          "title": "合成测试原件 v1 · Synthetic Only",
+          "version": "2021"
+        }
+      ],
+      "specialty": "synthetic-medicine",
+      "titleEn": "Synthetic Test Syndrome Baseline Guidance (Synthetic Only)",
+      "titleZh": "合成测试综合征基线指导（合成测试原件 v1 · Synthetic Only）",
+      "version": "1.0.0"
+    }
+  ],
   "indicationRules": [
     {
       "condition": {
@@ -41,6 +71,19 @@
       "itemCodePattern": "^2160-0$",
       "orderKind": "laboratory",
       "rationaleZh": "评估术前肾功能与水化阈值"
+    },
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodes": ["SYN-DX-01", "I25.103"],
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "id": "synthetic-advanced-imaging-indication",
+      "itemCodePattern": "^SYN-ADVANCED-IMAGING$",
+      "orderKind": "imaging",
+      "rationaleZh": "合成高级影像检查须具备目标综合征或确诊冠脉病变指征"
     }
   ],
   "orderSets": [

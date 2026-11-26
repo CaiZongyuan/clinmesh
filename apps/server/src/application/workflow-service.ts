@@ -95,6 +95,7 @@ import { ClinicalQualityService } from './clinical-quality-service.ts'
 import { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
 import { LocalSourceIngestionService } from './local-source-ingestion-service.ts'
 import { DiseasePackRegistry, DiseasePackRuntimeService } from './disease-pack-runtime-service.ts'
+import { DiseasePackExamService } from './disease-pack-exam-service.ts'
 import { KnowledgePipelineService } from './knowledge-pipeline-service.ts'
 import { KnowledgeSemanticService } from './knowledge-semantic-service.ts'
 import { AgentOutputScorerService } from './agent-output-scorer-service.ts'
@@ -327,6 +328,7 @@ export class WorkflowService
   readonly clinicalScores: ClinicalScoreService
   readonly clinicalQuality: ClinicalQualityService
   readonly diseasePacks: DiseasePackRuntimeService
+  readonly diseasePackExam: DiseasePackExamService
   readonly knowledgeSemantics: KnowledgeSemanticService
   readonly knowledgePipeline: KnowledgePipelineService
   readonly agentOutputScorer: AgentOutputScorerService
@@ -413,6 +415,13 @@ export class WorkflowService
         ...(options.diseasePacks === undefined ? {} : { packs: options.diseasePacks }),
         ...(options.diseasePackVerifyFingerprint === undefined ? {} : { verifyFingerprint: options.diseasePackVerifyFingerprint }),
       }),
+    })
+    this.diseasePackExam = new DiseasePackExamService({
+      commands,
+      diseasePacks: this.diseasePacks,
+      now: this.#now,
+      ...(options.referenceData === undefined ? {} : { referenceData: options.referenceData }),
+      tokenSecret: options.tokenSecret,
     })
     this.clinicalScores.setDiseasePacks(this.diseasePacks)
     this.clinicalQuality.setDiseasePacks(this.diseasePacks)

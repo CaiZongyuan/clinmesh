@@ -5,6 +5,11 @@ import {
 } from './clinical-fact-ledger.ts'
 import { conceptVocabularySchema } from './concept-vocabulary.ts'
 import {
+  examCategorySchema,
+  examFailureLayerSchema,
+  examPublicTrapKindSchema,
+} from './disease-pack-exam.ts'
+import {
   diseasePackRegexPatternSchema,
   diseasePackSha256Schema,
   diseasePackSlugSchema,
@@ -271,11 +276,23 @@ export type DiseasePackRiskTag = z.infer<typeof diseasePackRiskTagSchema>
 
 export const diseasePackExamCaseSchema = z.object({
   caseId: boundedId,
+  category: examCategorySchema.optional(),
   expectedActive: z.boolean(),
   expectedBlockedTaskIds: z.array(boundedId).max(32).optional(),
+  expectedExited: z.boolean().optional(),
+  expectedInapplicable: z.boolean().optional(),
+  expectedKnowledgeClaimValid: z.boolean().optional(),
+  expectedReadyTaskIds: z.array(boundedId).max(32).optional(),
+  expectedRedLineCodes: z.array(boundedCode).max(32).optional(),
+  expectedRuleOutActive: z.boolean().optional(),
+  expectedScoreFormulaIds: z.array(diseasePackSlugSchema).max(32).optional(),
   expectedStageId: diseasePackSlugSchema.optional(),
+  expectedUnnecessaryOrderCodes: z.array(boundedCode).max(32).optional(),
+  layer: examFailureLayerSchema.optional(),
+  publicTrapKind: examPublicTrapKindSchema.optional(),
   titleZh: nonEmptyText,
 }).strict()
+export type DiseasePackExamCase = z.infer<typeof diseasePackExamCaseSchema>
 
 export const diseasePackExamSuiteSchema = z.object({
   cases: z.array(diseasePackExamCaseSchema).min(1).max(64),

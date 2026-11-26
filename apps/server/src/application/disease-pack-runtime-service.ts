@@ -317,6 +317,53 @@ export class DiseasePackRegistry {
     return entry
   }
 
+  hasPack(packId: string): boolean {
+    return this.#entries.has(packId)
+  }
+
+  activatePack(
+    packId: string,
+    options?: { packDir?: string },
+  ): { previousStatus: 'draft' | 'active' | 'retired'; effective: EffectiveDiseasePack } {
+    if (options?.packDir !== undefined && !this.#entries.has(packId)) {
+      const loaded = this.loadDirectory(options.packDir, { verifyFingerprint: true })
+      if (loaded.pack.manifest.id !== packId) {
+        this.#entries.delete(loaded.pack.manifest.id)
+        throw new DiseasePackRuntimeError(
+          'DISEASE_PACK_NOT_FOUND',
+          `目录 ${options.packDir} 中的专病包标识为 ${loaded.pack.manifest.id}，与请求的 ${packId} 不一致`,
+          404,
+        )
+      }
+    }
+    const existing = this.getEffective(packId)
+    const previousStatus = existing.pack.manifest.status
+    const updatedPack = {
+      ...existing.pack,
+      manifest: {
+        ...existing.pack.manifest,
+        status: 'active' as const,
+      },
+    }
+    const updatedFingerprint = computeDiseasePackFingerprint(
+      updatedPack as unknown as { manifest: Record<string, unknown> },
+    )
+    const promotedPack = {
+      ...updatedPack,
+      manifest: {
+        ...updatedPack.manifest,
+        fingerprint: updatedFingerprint,
+      },
+    }
+    const merged = mergeThreeLayerPack({
+      diseasePack: promotedPack,
+      ...(existing.hospitalOverlay === undefined ? {} : { hospitalOverlay: existing.hospitalOverlay }),
+      ...(this.#publicLayer === undefined ? {} : { publicLayer: this.#publicLayer }),
+    })
+    this.#entries.set(packId, merged)
+    return { effective: merged, previousStatus }
+  }
+
   listCatalogSummaries(): DiseasePackCatalogList {
     return {
       items: this.listEffective().map(entry => ({
