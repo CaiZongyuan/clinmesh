@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { medicationRouteSchema } from '../../store';
 
 const text = z.string().trim().min(1);
 const texts = z.array(text);
@@ -47,10 +48,9 @@ const bounds = z.strictObject({ low: z.number().optional(), high: z.number().opt
   range => (range.low !== undefined || range.high !== undefined) && (range.low === undefined || range.high === undefined || range.low <= range.high),
 );
 const analyte = concept.extend({ unit: text, referenceRange: bounds.optional(), critical: bounds.optional() });
-const routeCode = z.enum(['PO', 'IVGTT', 'IV', 'IM', 'IH', 'SL', 'TOP', 'INH']);
 export const medication = concept.extend({
   source: z.enum(['internal', 'external']).default('internal'), ingredient: coding.optional(),
-  routeCodes: z.strictObject({ default: text, allowed: z.array(routeCode).min(1) }), dosageUnits: texts.min(1),
+  routeCodes: z.strictObject({ default: text, allowed: z.array(medicationRouteSchema).min(1) }), dosageUnits: texts.min(1),
   inpatientDoseBasis: z.strictObject({ amount: positive, unit: text }),
   safety: z.strictObject({
     classCodes: texts.min(1), allergyGroupCodes: texts, indicationPrefixes: texts,

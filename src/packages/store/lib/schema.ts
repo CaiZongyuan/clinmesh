@@ -45,6 +45,12 @@ const money = { amount_minor: integer, currency_code: currency, currency_exponen
 const coding = { code_system: column(z.url()), code: text };
 const encounterClass = choice('outpatient', 'inpatient');
 const diagnosis = { ...coding, is_primary: boolean, poa_code: optional(text), ordinal: positive };
+export const medicationRoute = z.enum(['PO', 'IVGTT', 'IV', 'IM', 'IH', 'SL', 'TOP', 'INH']);
+export const signedDirections = z.strictObject({
+  codeSystem: z.url(), code: z.string().min(1), display: z.strictObject({ en: z.string().min(1), zh: z.string().min(1) }),
+  dose: z.number().positive(), doseUnit: z.string().min(1), routeCode: medicationRoute,
+  timesPerDay: z.int().positive(), days: z.int().min(1).max(30), quantity: z.int().min(1).max(1000),
+});
 
 type Columns = Record<string, Column>;
 export interface TableDefinition {
@@ -110,7 +116,7 @@ export const tables = {
   regional_payer_records: table({ encounter_id: enc, payer_code: text, reference: text, determination: frozen, ...times }),
   encounter_triage: table({ encounter_id: enc, vitals: frozen, ...times }, 'encounter_id'),
   prescription_signatures: table({ prescription_id: ref('prescriptions'), source: choice('internal', 'external'), actor: text, practitioner_role: text, catalog_version: text, snapshot_hash: digest }, 'prescription_id'),
-  prescription_directions: table({ order_id: order, directions: frozen }, 'order_id'),
+  prescription_directions: table({ order_id: order, directions: column(signedDirections, 'json') }, 'order_id'),
   prescription_withdrawals: table({ prescription_id: ref('prescriptions'), actor: text, practitioner_role: text, reason: text, ...times }, 'prescription_id'),
 } satisfies Record<string, TableDefinition>;
 

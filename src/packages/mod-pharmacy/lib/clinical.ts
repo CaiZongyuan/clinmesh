@@ -2,9 +2,9 @@ import { v7 } from 'uuid';
 import { z } from 'zod';
 import { manifestSchema, medicationSchema, pharmacyRulesSchema, publicCaseSchema, readClinicalCase } from '../../data-pack';
 import { editEncounter, requireEncounter } from '../../patient-visit';
-import { checkVersion, CoreError, localizedName, sha256, type CommandContext } from '../../platform';
-import { canonicalJson, type EntityRow, type StoreReader, type StoreScope, type StoreTx } from '../../store';
-import { checkPrescription, pharmacyContextSchema, prescriptionLineSchema, sameCode, type PrescriptionLine } from './safety';
+import { checkVersion, CoreError, sha256, type CommandContext } from '../../platform';
+import { canonicalJson, prescriptionDirectionsSchema, type EntityRow, type StoreReader, type StoreScope, type StoreTx } from '../../store';
+import { checkPrescription, pharmacyContextSchema, sameCode, type PrescriptionLine } from './safety';
 
 type ChargeSource = { encounterId: string; orderId: string; catalogItemId: string; catalogVersion: string; quantity: number; unitPriceMinor: number; currencyCode: string; currencyExponent: number; virtualAt: string; recordedAt: string };
 export interface PharmacyBillingPort {
@@ -12,8 +12,7 @@ export interface PharmacyBillingPort {
   readOrderFunds(reader: StoreReader, at: StoreScope, orderId: string): { state: 'free' | 'unpaid' | 'partial' | 'settled' | 'unknown'; locked: boolean };
 }
 
-const directions = prescriptionLineSchema.extend({ display: localizedName, doseUnit: z.string() });
-const storedLine = directions.extend({ orderId: z.uuidv7() });
+const storedLine = prescriptionDirectionsSchema.extend({ orderId: z.uuidv7() });
 const medicationDecision = z.object({ reason: z.string(), virtualAt: z.iso.datetime() });
 const prescription = z.object({ prescriptionId: z.uuidv7(), encounterId: z.uuidv7(), version: z.int(), source: z.enum(['internal', 'external']),
   status: z.enum(['signed', 'withdrawn', 'dispensed']), signedAt: z.iso.datetime(), actor: z.string(), role: z.string(),
@@ -42,13 +41,12 @@ export function readPrescription(reader: StoreReader, at: StoreScope, prescripti
   if (!rx || !signature) throw new CoreError(404, 'PRESCRIPTION_NOT_FOUND');
   const withdrawal = reader.list(at, 'prescription_withdrawals', { prescription_id: prescriptionId })[0];
   const rows = reader.list(at, 'prescription_orders', { prescription_id: prescriptionId });
-  const dispensed = rows.some(row => reader.list(at, 'dispenses', { prescription_order_id: row.id }).length > 0);
   const lines = rows.map(row => {
     const line = reader.list(at, 'prescription_directions', { order_id: row.order_id })[0];
-    return { ...directions.parse(line?.directions), orderId: row.order_id };
+    return { ...line!.directions, orderId: row.order_id };
   });
-  return prescription.parse({ prescriptionId, encounterId: rx.encounter_id, version: rx.version + Number(Boolean(withdrawal || dispensed)),
-    source: signature.source, status: withdrawal ? 'withdrawn' : dispensed ? 'dispensed' : 'signed', signedAt: rx.virtual_at,
+  return prescription.parse({ prescriptionId, encounterId: rx.encounter_id, version: rx.version,
+    source: signature.source, status: rx.status, signedAt: rx.virtual_at,
     actor: signature.actor, role: signature.practitioner_role, snapshotHash: signature.snapshot_hash, lines, withdrawalReason: withdrawal?.reason ?? null });
 }
 
@@ -110,7 +108,7 @@ export async function signPrescription(context: CommandContext, lines: Prescript
   if (issue) throw new CoreError(409, issue);
   const items = lines.map(line => {
     const item = view.catalog.find(item => sameCode(item, line))!;
-    return { item, snapshot: { ...line, display: item.display, doseUnit: item.inpatientDoseBasis.unit } };
+    return { item, snapshot: prescriptionDirectionsSchema.parse({ ...line, display: item.display, doseUnit: item.inpatientDoseBasis.unit }) };
   });
   const source = items[0]!.item.source;
   const prescriptionId = v7();
@@ -137,7 +135,7 @@ export function requireSigned(rx: ReturnType<typeof readPrescription>, expectedV
   checkVersion(rx.version, expectedVersion);
 }
 
-export function withdrawPrescription(context: CommandContext, reason: string, billing?: PharmacyBillingPort) {
+export function withdrawPrescription(context: CommandContext, reason: string, noMedicationReason: string | undefined, billing?: PharmacyBillingPort) {
   const { tx, at, targetId, expectedVersion, actor } = context;
   const rx = readPrescription(tx, at, targetId);
   const encounter = outpatient(tx, at, rx.encounterId);
@@ -149,7 +147,14 @@ export function withdrawPrescription(context: CommandContext, reason: string, bi
     const order = tx.get(at, 'clinical_orders', orderId)!;
     tx.update(at, 'clinical_orders', orderId, order.version, { status: 'cancelled' });
   }
+  const lastDecision = !tx.list(at, 'prescriptions', { encounter_id: encounter.id }).some(other => other.id !== targetId && ['signed', 'dispensed'].includes(other.status));
+  if (noMedicationReason && !lastDecision) throw new CoreError(409, 'MEDICATION_DECISION_CONFLICT');
+  if (encounter.status === 'completed' && lastDecision && !noMedicationReason) throw new CoreError(409, 'REPLACEMENT_DECISION_REQUIRED');
   tx.insert(at, 'prescription_withdrawals', { id: v7(), prescription_id: targetId, reason, actor: actor.id, practitioner_role: actor.role.id, virtual_at: context.virtualAt, recorded_at: context.recordedAt });
-  if (encounter.status === 'active') tx.update(at, 'encounters', encounter.id, encounter.version, { status: 'active' });
-  return { version: expectedVersion + 1 };
+  tx.update(at, 'prescriptions', targetId, expectedVersion, { status: 'withdrawn' });
+  tx.update(at, 'encounters', encounter.id, encounter.version, { status: encounter.status });
+  if (!noMedicationReason) return { version: expectedVersion + 1, conclusionId: null };
+  const conclusionId = v7();
+  tx.insert(at, 'no_medication_conclusions', { id: conclusionId, encounter_id: encounter.id, reason: noMedicationReason, virtual_at: context.virtualAt, recorded_at: context.recordedAt });
+  return { version: expectedVersion + 1, conclusionId };
 }

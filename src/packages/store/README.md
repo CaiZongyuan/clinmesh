@@ -25,4 +25,6 @@ const patient = await store.read(reader => reader.get({ workspaceId, epoch }, 'p
 
 每次开诊写入独立的 `encounter_triage` 分诊事实。v2 快照也记录空分诊表。`visitorSigningSecret()` 供宿主组合根取得 Visitor Gate 的签名材料。Node 在本机数据库保存它，Worker 使用独立命名的门禁 Durable Object。导出的 Workspace 快照范围仅覆盖规定的 Workspace 实体和 pi 会话。
 
+恢复事务逐批核对库存流水余额，并校验处方正式用法、状态、版本和对应撤回或发药事实。任一批次余额为负会导致整笔恢复回滚，错误包含快照版本和批次 ID。遇到旧版负余额时保留原始快照，在来源系统依据可查的入库或核销凭据完成对账并重新导出。缺少凭据的旧档案可在对应版本只读查阅。
+
 在 Windows 原生环境执行 `pnpm exec vitest run src/packages/store/tests`。同一套 `runStoreConformanceSuite(source, restoreIntoEmpty)` 驱动独立的源库和恢复目标。该套件会写入合成数据，使用可丢弃的空库运行。测试还在真实 workerd 与本地 SQLite 之间双向迁移数据。构建后执行 `pnpm verify:worker` 检查 Worker 体积与 Node 原生依赖。

@@ -20,7 +20,12 @@ export function CoreWorkbench({ workspace, language, languageSelect, panels, dra
   const selection = useView();
   const [resetPack, setResetPack] = useState(workspace.manifest.packId);
   const style = useThemeFont();
-  const Station = Object.entries(builtinStations).find(([name]) => workspace.operations.some(operation => operation.name === name))?.[1];
+  const stations = Object.entries(builtinStations).filter(([name]) => workspace.operations.some(operation => operation.name === name));
+  const clinicAvailable = !stations.length || workspace.operations.some(operation => operation.name === 'encounter.start' || operation.name === 'record.sign');
+  const stationOptions = [...(clinicAvailable ? [{ value: 'clinic', label: text('Clinical workbench', '临床工作台') }] : []), ...stations.map(([value, station]) => ({ value, label: station.name[language] }))];
+  const [preference, setPreference] = useState({ role: '', value: '' });
+  const selected = stationOptions.find(option => preference.role === workspace.roleId && option.value === preference.value) ?? stationOptions[0]!;
+  const Station = stations.find(([name]) => name === selected.value)?.[1].component;
   const listKey = scopeKey(workspace, 'encounters');
   const encounters = useQuery({ queryKey: listKey, enabled: !Station, queryFn: ({ signal }) => api('/api/his/encounters', z.array(summarySchema), { signal }) });
   const encounterId = (selection.epoch === workspace.epoch && selection.encounterId) || encounters.data?.at(-1)?.id || '';
@@ -77,6 +82,7 @@ export function CoreWorkbench({ workspace, language, languageSelect, panels, dra
   return <WorkspaceCardLayout queueVisible={!Station && selection.queue} queueLabel={queueLabel} closeQueue={text('Close queue', '关闭队列')} header={<>
     <strong>ClinMesh</strong>{!Station && <Button className="desktop-queue" onClick={() => useView.setState({ queue: !selection.queue })}>{selection.queue ? text('Hide queue', '收起队列') : text('Show queue', '展开队列')}</Button>}
     <span className="current-patient">{displayName}</span><div className="topbar-controls">
+    {stationOptions.length > 1 && <Field label={text('Workbench', '工作台')}><Select options={stationOptions} value={selected.value} onValueChange={value => { if (value) setPreference({ role: workspace.roleId, value }); }}/></Field>}
     <Menu label={`${text('Role', '岗位')} · ${role.name[language]}`} items={workspace.roles.map(item => ({ value: item.id, label: item.name[language] }))} onAction={roleId => { if (roleId !== role.id) change.mutate({ name: 'workspace.role', version: workspace.sessionVersion, fields: { roleId } }); }}/>
     <Dialog title={text('Workspace settings', '工作台设置')} triggers={[workspace.manifest.name[language]]} close={text('Close settings', '关闭设置')}>{preferences}</Dialog></div>
   </>} queue={!Station && <section className="workbench-queue"><h2>{text('Fixed cases', '固定病例')}</h2>{workspace.cases.map(item => <div key={item.id}>

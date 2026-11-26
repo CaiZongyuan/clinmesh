@@ -37,8 +37,11 @@ async function pharmacyFlow(fetchApi: PharmacyHttp) {
   await role('pharmacist');
   expect(await get(queue)).toMatchObject([{ lines: [{ lots: [{ lotNumber: 'GEN-B', available: 56 }] }] }]);
   await role('family-clinician');
-  expect((await command(`/api/his/prescriptions/${second.prescriptionId}/withdraw`, 1, { reason: 'Reassessed' })).status).toBe(200);
-  expect(await get(`${repeat}/prescriptions`)).toMatchObject({ prescriptions: [{ status: 'withdrawn', withdrawalReason: 'Reassessed' }] });
+  const withdrawal = `/api/his/prescriptions/${second.prescriptionId}/withdraw`;
+  await refused(command(withdrawal, 1, { reason: 'Reassessed' }), 'REPLACEMENT_DECISION_REQUIRED');
+  expect((await command(withdrawal, 1, { reason: 'Reassessed', noMedicationReason: 'Supportive care after reassessment' })).status).toBe(200);
+  expect(await get(`${repeat}/prescriptions`)).toMatchObject({ prescriptions: [{ status: 'withdrawn', version: 2, withdrawalReason: 'Reassessed' }], noMedication: { reason: 'Supportive care after reassessment' } });
+  expect(await get(repeat)).toMatchObject({ status: 'completed', completion: { ready: true }, recordRevisions: [{ revision: 1 }] });
   await role('pharmacist');
   expect(await get(queue)).toEqual([]);
   await refused(command(`/api/his/prescriptions/${second.prescriptionId}/dispense`, 2), 'PRESCRIPTION_WITHDRAWN');
@@ -99,7 +102,7 @@ it('freezes only hospital orders, rereads funding on withdrawal and dispense, an
     await role('family-clinician');
     for (const state of ['partial', 'unknown', 'settled'] as const) {
       funds = { state, locked: state === 'settled' };
-      expect(await (await command(`${rx}/withdraw`, 1, { reason: 'Requested' })).json()).toEqual({ code: 'PRESCRIPTION_FUNDS_LOCKED' });
+      expect(await (await command(`${rx}/withdraw`, 1, { reason: 'Requested', noMedicationReason: 'Reassessed' })).json()).toEqual({ code: 'PRESCRIPTION_FUNDS_LOCKED' });
     }
     funds = { state: 'settled', locked: false };
     await role('pharmacist');

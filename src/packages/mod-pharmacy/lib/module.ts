@@ -17,7 +17,7 @@ export function createPharmacyModule(billing?: PharmacyBillingPort): ClinMeshMod
   return { id: 'mod-pharmacy', kind: 'clinical', version: '1.0.0', initializeEpoch: initializePharmacy,
     workbenchTabs: [{ id: 'prescriptions', label: { en: 'Prescriptions', zh: '处方' }, readOperation: 'prescription.read' }],
     completion(reader, at, id) {
-      if (requireEncounter(reader, at, id).encounter_class !== 'outpatient') return [];
+      if (requireEncounter(reader, at, id).encounter_class !== 'outpatient' || !reader.list(at, 'data_pack_installations')[0]?.knowledge.pharmacy) return [];
       return [{ id: 'medication-decision', label: { en: 'Prescription or no medication', zh: '已签发处方或确认无需用药' }, passed: hasMedicationDecision(reader, at, id) }];
     },
     registerOperations(catalog) {
@@ -25,9 +25,9 @@ export function createPharmacyModule(billing?: PharmacyBillingPort): ClinMeshMod
       catalog.command({ name: 'prescription.sign', method: 'POST', path: `${encounters}/prescriptions`, access: sign },
         { lines: z.array(prescriptionLineSchema).max(64), override: z.unknown().optional(), overrideReason: z.string().optional() }, version.extend({ prescriptionId: z.uuidv7(), snapshotHash: z.string() }), (context, input) => signPrescription(context, input.lines, funds(context.actor)));
       catalog.command({ name: 'prescription.no-medication', method: 'POST', path: `${encounters}/no-medication`, access: sign }, { reason }, version.extend({ conclusionId: z.uuidv7() }), (context, input) => recordNoMedication(context, input.reason));
-      catalog.command({ name: 'prescription.withdraw', method: 'POST', path: `${prescriptions}/withdraw`, access: sign }, { reason }, version, (context, input) => withdrawPrescription(context, input.reason, funds(context.actor)));
+      catalog.command({ name: 'prescription.withdraw', method: 'POST', path: `${prescriptions}/withdraw`, access: sign }, { reason, noMedicationReason: reason.optional() }, version.extend({ conclusionId: z.uuidv7().nullable().default(null) }), (context, input) => withdrawPrescription(context, input.reason, input.noMedicationReason, funds(context.actor)));
       catalog.query({ name: 'pharmacy.queue', path: '/api/his/pharmacy/queue', access: { capabilities: ['dispense'] } }, dispenseQueueSchema, ({ reader, actor }) => dispenseQueue(reader, actor.at, actor.active.virtual_time, funds(actor)));
-      catalog.command({ name: 'pharmacy.dispense', method: 'POST', path: `${prescriptions}/dispense`, access: dispense }, { lots: z.array(selectedLotSchema).min(1).max(128).optional() }, dispenseReceipt, (context, input) => dispensePrescription(context, input.lots, funds(context.actor)));
+      catalog.command({ name: 'pharmacy.dispense', method: 'POST', path: `${prescriptions}/dispense`, access: dispense }, { lots: z.array(selectedLotSchema).min(1).max(8000).optional() }, dispenseReceipt, (context, input) => dispensePrescription(context, input.lots, funds(context.actor)));
     },
   };
 }

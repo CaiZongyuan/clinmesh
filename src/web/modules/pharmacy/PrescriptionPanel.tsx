@@ -34,12 +34,14 @@ function Directions({ line, item, language, change, remove }: { line: Prescripti
     </div></Card>;
 }
 
-function Withdrawal({ rx, language, busy, commit }: { rx: View['prescriptions'][number]; language: Language; busy: boolean; commit(reason: string): void }) {
+function Withdrawal({ rx, language, busy, replace, commit }: { rx: View['prescriptions'][number]; language: Language; busy: boolean; replace: boolean; commit(reason: string, noMedicationReason?: string): void }) {
   const [reason, setReason] = useState('');
+  const [replacement, setReplacement] = useState('');
   const text = words(language);
   const number = rx.prescriptionId.slice(-8);
   return <div className="workbench-fields"><Field label={`${text('Withdrawal reason', '撤回理由')} · ${number}`}><Input value={reason} onValueChange={setReason}/></Field>
-    <ConfirmActionButton confirmation={text('Withdraw this prescription?', '确认撤回此处方？')} disabled={busy || !reason.trim()} onClick={() => commit(reason.trim())}>{text('Withdraw prescription', '撤回处方')} · {number}</ConfirmActionButton></div>;
+    {replace && <Field label={text('Reason for no medication after withdrawal', '撤回后的无需用药理由')}><Textarea value={replacement} onValueChange={setReplacement}/></Field>}
+    <ConfirmActionButton confirmation={replace ? text('Withdraw and record the reviewed no-medication conclusion?', '确认撤回并签署无需用药结论？') : text('Withdraw this prescription?', '确认撤回此处方？')} disabled={busy || !reason.trim() || (replace && !replacement.trim())} onClick={() => commit(reason.trim(), replace ? replacement.trim() : undefined)}>{replace ? text('Withdraw and confirm no medication', '撤回并确认无需用药') : text('Withdraw prescription', '撤回处方')} · {number}</ConfirmActionButton></div>;
 }
 
 function Prescribing({ view, language, encounter, workspace, submit }: WorkbenchPanelProps & { view: View }) {
@@ -75,7 +77,7 @@ function Prescribing({ view, language, encounter, workspace, submit }: Workbench
     {view.prescriptions.map(rx => <Card key={rx.prescriptionId}><div className="cm-section-heading"><h3>{text('Prescription', '处方')} · {rx.prescriptionId.slice(-8)}</h3><Badge>{rx.source === 'internal' ? text('Hospital', '本院') : text('External', '外配')} · {rx.status === 'signed' ? text('Signed', '已签发') : rx.status === 'withdrawn' ? text('Withdrawn', '已撤回') : text('Dispensed', '已发药')}</Badge></div>
       {rx.lines.map(line => <p key={line.orderId}>{line.display[language]} · {line.dose} {line.doseUnit} · {line.routeCode} · {line.timesPerDay}×/{text('day', '日')} · {line.days} {text('days', '天')} · {line.quantity} {text('units', '制剂单位')}</p>)}
       {rx.withdrawalReason && <p>{rx.withdrawalReason}</p>}
-      {allowed && rx.status === 'signed' && <Withdrawal rx={rx} language={language} busy={writes.isPending} commit={reason => writes.mutate({ name: 'prescription.withdraw', targetId: rx.prescriptionId, encounterId: encounter.id, version: rx.version, fields: { reason } })}/>}
+      {allowed && rx.status === 'signed' && <Withdrawal rx={rx} language={language} busy={writes.isPending} replace={encounter.status === 'completed' && view.prescriptions.filter(item => item.status !== 'withdrawn').length === 1} commit={(reason, noMedicationReason) => writes.mutate({ name: 'prescription.withdraw', targetId: rx.prescriptionId, encounterId: encounter.id, version: rx.version, fields: { reason, noMedicationReason } })}/>}
     </Card>)}
   </section>;
 }

@@ -7,6 +7,10 @@ export type PharmacyHttp = (path: string, init?: { method?: string; body?: strin
 export async function openPharmacySession(fetchApi: PharmacyHttp) {
   const entered = await fetchApi('/api/auth/visitor/enter', { method: 'POST', body: JSON.stringify({ passcode: teachingGate.CLINMESH_VISITOR_PASSCODE }) });
   const cookie = entered.headers.get('set-cookie')!.split(';')[0]!;
+  return pharmacySession(fetchApi, cookie);
+}
+
+export async function pharmacySession(fetchApi: PharmacyHttp, cookie: string) {
   const headers = { cookie, 'content-type': 'application/json' };
   const get = async (path: string) => (await fetchApi(path, { headers })).json();
   const workspace = workspaceSchema.parse(await get('/api/workspace'));
@@ -17,7 +21,7 @@ export async function openPharmacySession(fetchApi: PharmacyHttp) {
     if (response.status !== 200) throw Error(`Expected success: ${JSON.stringify(body)}`);
     return body;
   }
-  let roleVersion = 1;
+  let roleVersion = workspace.sessionVersion;
   const role = (roleId: string) => applied(command('/api/workspace/role', roleVersion++, { roleId }));
   async function start(name: string, code: string) {
     const patient = workspace.cases.find(item => item.demographics.name === name)!;

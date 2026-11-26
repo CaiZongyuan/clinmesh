@@ -24,13 +24,14 @@ export async function seal(content: SnapshotContent): Promise<LogicalSnapshot> {
   return { ...content, sha256 };
 }
 
-export async function verifySnapshot(input: unknown): Promise<SnapshotContent> {
+export async function verifySnapshot(input: unknown) {
   const { sha256, ...content } = snapshotSchema.parse(input);
   if ((await seal(content)).sha256 !== sha256) throw new StoreSnapshotError('Snapshot digest mismatch');
   const length = content.format === 'clinmesh.snapshot.v1' ? entityNames.indexOf('encounter_triage') : content.format === 'clinmesh.snapshot.v2' ? entityNames.indexOf('prescription_signatures') : entityNames.length;
   const expected = ['workspaces', 'workspace_epochs', ...entityNames.slice(0, length)];
   if (content.tables.length !== expected.length || content.tables.some((table, index) => table.name !== expected[index])) throw new StoreSnapshotError('Incomplete or unordered snapshot tables');
-  return { ...content, format, tables: [...content.tables, ...entityNames.slice(length).map(name => ({ name, rows: [] }))] };
+  const upgraded: SnapshotContent = { ...content, format, tables: [...content.tables, ...entityNames.slice(length).map(name => ({ name, rows: [] }))] };
+  return { content: upgraded, sourceFormat: content.format };
 }
 
 export function capture(db: SqlConnection, workspaceId: string): SnapshotContent {
@@ -61,7 +62,7 @@ export function capture(db: SqlConnection, workspaceId: string): SnapshotContent
   return { format, workspaceId, tables: data, pi };
 }
 
-export async function restore(db: SqlConnection, content: SnapshotContent): Promise<void> {
+export async function restore(db: SqlConnection, { content, sourceFormat }: Awaited<ReturnType<typeof verifySnapshot>>): Promise<void> {
   if (db.all('SELECT id FROM workspaces LIMIT 1').length) throw new StoreSnapshotError('Snapshot target must be empty');
   const tx = createRepository(db, () => {});
   const { workspaceId } = content;
@@ -92,6 +93,16 @@ export async function restore(db: SqlConnection, content: SnapshotContent): Prom
       WHERE revision.workspace_id = ? AND revision.epoch = ? GROUP BY revision.id
       HAVING COUNT(member.id) NOT BETWEEN 1 AND 8 OR SUM(member.is_primary) <> 1 LIMIT 1`, at.workspaceId, at.epoch);
     if (invalid.length) throw new StoreSnapshotError('Incomplete confirmed diagnosis revision');
+    const [negative] = db.all(`SELECT lot_id FROM inventory_movements WHERE workspace_id = ? AND epoch = ?
+      GROUP BY lot_id HAVING SUM(quantity_delta) < 0 LIMIT 1`, at.workspaceId, at.epoch);
+    if (negative) throw new StoreSnapshotError(`${sourceFormat}: negative inventory in lot ${negative.lot_id}`);
+    const [inconsistent] = db.all(`SELECT rx.id FROM prescriptions rx JOIN prescription_signatures signature
+      ON signature.workspace_id = rx.workspace_id AND signature.epoch = rx.epoch AND signature.prescription_id = rx.id
+      WHERE rx.workspace_id = ? AND rx.epoch = ? AND (
+        (rx.status = 'withdrawn') <> EXISTS (SELECT 1 FROM prescription_withdrawals withdrawal WHERE withdrawal.workspace_id = rx.workspace_id AND withdrawal.epoch = rx.epoch AND withdrawal.prescription_id = rx.id)
+        OR (rx.status = 'dispensed') <> EXISTS (SELECT 1 FROM prescription_orders line JOIN dispenses delivery ON delivery.workspace_id = line.workspace_id AND delivery.epoch = line.epoch AND delivery.prescription_order_id = line.id WHERE line.workspace_id = rx.workspace_id AND line.epoch = rx.epoch AND line.prescription_id = rx.id)
+        OR rx.status NOT IN ('signed', 'withdrawn', 'dispensed') OR rx.version <> CASE WHEN rx.status = 'signed' THEN 1 ELSE 2 END) LIMIT 1`, at.workspaceId, at.epoch);
+    if (inconsistent) throw new StoreSnapshotError(`Prescription state disagrees with its events: ${inconsistent.id}`);
   }
   for (const image of content.pi) await restorePiSession(db, workspaceId, image);
   if (canonicalJson(capture(db, workspaceId)) !== canonicalJson(content)) throw new StoreSnapshotError('Noncanonical snapshot content');

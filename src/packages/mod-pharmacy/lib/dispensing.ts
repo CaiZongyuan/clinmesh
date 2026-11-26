@@ -87,5 +87,6 @@ export function dispensePrescription(context: CommandContext, selections: z.infe
     }
     if (remaining) throw new CoreError(409, 'PHARMACY_INSUFFICIENT_STOCK');
   }
+  tx.update(at, 'prescriptions', targetId, expectedVersion, { status: 'dispensed' });
   return { version: expectedVersion + 1, allocations };
 }

@@ -25,9 +25,9 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     const now = new Date().toISOString();
     const pack = BUILTIN_DATA_PACKS['global-general'];
     const roleId = pack.organization.practitionerRoles[0]!.id;
-    const result = await store.withTransaction(tx => {
+    const result = await store.withTransaction(async tx => {
       const at = installHospitalDataPack(tx, { workspaceId: ticket.workspaceId, expectedEpoch: null, virtualTime: now, recordedAt: now }, pack);
-      for (const module of registry.enabled(pack.manifest.enabledModules)) module.initializeEpoch?.(tx, at, now, now);
+      await registry.initializeEpoch(pack.manifest.enabledModules, tx, at, now, now);
       tx.insert(at, 'visitor_sessions', { id: ticket.id, practitioner_role: roleId, version: 1, revoked: false, expires_at: ticket.expiresAt });
       tx.insert(at, 'audit_events', { id: v7(), actor: ticket.id, practitioner_role: roleId, target_id: at.workspaceId, operation: 'visitor.enter', virtual_at: now, recorded_at: now, outcome: 'applied' });
       return { ...at, roleId, sessionVersion: 1 };
@@ -36,13 +36,13 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
   });
   const catalog = new OperationCatalog();
   registerPlatformOperations(catalog, { sign: createVisitorGate(settings).sign, modules: registry });
-  catalog.command({ name: 'workspace.reset', method: 'POST', path: '/api/workspace/reset', access: administer }, { packId: z.string().optional() }, sessionSchema, ({ tx, at, actor, expectedVersion, virtualAt, recordedAt }, { packId }) => {
+  catalog.command({ name: 'workspace.reset', method: 'POST', path: '/api/workspace/reset', access: administer }, { packId: z.string().optional() }, sessionSchema, async ({ tx, at, actor, expectedVersion, virtualAt, recordedAt }, { packId }) => {
     checkVersion(actor.active.clock_revision, expectedVersion);
     const id = packId ?? tx.list(at, 'data_pack_installations')[0]!.pack_id;
     const nextPack = Object.values(BUILTIN_DATA_PACKS).find(pack => pack.manifest.packId === id);
     if (!nextPack) throw new CoreError(400, 'PACK_NOT_FOUND');
     const next = installHospitalDataPack(tx, { workspaceId: at.workspaceId, expectedEpoch: at.epoch, virtualTime: virtualAt, recordedAt }, nextPack);
-    for (const module of registry.enabled(nextPack.manifest.enabledModules)) module.initializeEpoch?.(tx, next, virtualAt, recordedAt);
+    await registry.initializeEpoch(nextPack.manifest.enabledModules, tx, next, virtualAt, recordedAt);
     const roles = nextPack.organization.practitionerRoles;
     const role = roles.find(role => role.id === actor.role.id) ?? roles.find(role => role.capabilities.includes('workspace-admin')) ?? roles[0]!;
     tx.insert(next, 'visitor_sessions', { id: actor.id, practitioner_role: role.id, expires_at: actor.expiresAt, revoked: false, version: 1 });

@@ -24,7 +24,7 @@ export interface ClinMeshModule<Operations = never> {
   readonly version: string;
   registerRoutes?(app: Hono): void;
   registerOperations?(catalog: Operations): void;
-  initializeEpoch?(tx: StoreTx, at: StoreScope, virtualAt: string, recordedAt: string): void;
+  initializeEpoch?(tx: StoreTx, at: StoreScope, virtualAt: string, recordedAt: string): void | Promise<void>;
   completion?: CompletionCheck;
   midnight?: MidnightHook;
   workbenchTabs?: readonly z.infer<typeof workbenchTab>[];
@@ -46,6 +46,10 @@ export class ModuleRegistry<Operations = never> {
 
   registerOperations(catalog: Operations) {
     for (const module of this.#modules.values()) module.registerOperations?.(catalog);
+  }
+
+  async initializeEpoch(enabled: readonly string[], tx: StoreTx, at: StoreScope, virtualAt: string, recordedAt: string) {
+    for (const module of this.enabled(enabled)) await module.initializeEpoch?.(tx, at, virtualAt, recordedAt);
   }
 
   health(runtime: RuntimeHealth['runtime']): RuntimeHealth {
