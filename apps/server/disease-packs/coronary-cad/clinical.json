@@ -1248,9 +1248,10 @@
         "category": "laboratory",
         "itemCodes": ["2160-0"],
         "kind": "fact",
-        "minValue": 133,
+        "minValue": 1.5,
         "presence": "present",
-        "requireEligible": true
+        "requireEligible": true,
+        "unit": "mg/dL"
       },
       "id": "renal-impairment-contrast-caution",
       "labelZh": "血清肌酐升高警示（造影/PCI 须分层水化并限对比剂剂量）",

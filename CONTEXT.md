@@ -452,6 +452,24 @@ _Avoid_: Balance overwrite, stock status
 跟踪特定药品或耗材包装流转的唯一业务编码。
 _Avoid_: Lot number, product code
 
+## 专病能力平台
+
+**Clinical Fact Ledger**:
+按患者按需投影的只读临床事实总账，带来源系统标识、有效性及可疑/冲突/外院待核实拦截标记；未通过核实的事实不参与算分和红线判定。
+_Avoid_: Second source of truth, raw note dump, Case Truth
+
+**Disease Pack**:
+纯数据文件夹形式的可插拔专病包（含 `full` 诊疗路径包与 `recognition` 识别提示包），通过三层受控叠覆、版本化公式引用与数据指纹校验接入平台。
+_Avoid_: Hardcoded switch branch, embedded script plugin
+
+**Clinical Prompt Card**:
+平台在七个诊疗时机统一呈现的非阻断或警示提示卡（含指南知识、缺项追问、排雷清单、退出总结、不适用边界、无指征黄牌、表型识别与质控映射），默认投递模式为“展示”并绑定依据事实版本。
+_Avoid_: Autonomous order execution, silent auto-override
+
+**Activation Gate**:
+专病包启用前经由真实 HTTP 或 CLI 入口执行的纯机器离线考卷门禁（含六类病种考题与七类公共陷阱题），不及格或导致已有包回退时阻止启用，与主观 Agent 输出评分器解耦。
+_Avoid_: LLM judge, runtime live exam
+
 ## 互操作与审计
 
 **FHIR Projection**:

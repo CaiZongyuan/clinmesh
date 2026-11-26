@@ -371,7 +371,12 @@ describe('Offline Knowledge Pipeline, Diff/Impact Reports & Synonym Search (AC33
       'readiness-task:pci-preop-guideline-advice',
       'indication:creatinine-workup-indication',
     ]))
-    expect(report.affectedExamCaseIds).toEqual(['syn-exam-case-1'])
+    expect(report.affectedExamCaseIds).toEqual([
+      'syn-exam-case-1',
+      'syn-exam-inpatient-severe',
+      'syn-exam-red-line',
+      'syn-exam-standard-mild',
+    ])
 
     // Conflict enters expertAdjudicationQueue while existing claim remains untouched
     expect(report.expertAdjudicationQueue).toHaveLength(1)

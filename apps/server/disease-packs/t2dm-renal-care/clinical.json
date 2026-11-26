@@ -76,10 +76,10 @@
             "category": "laboratory",
             "itemCodes": ["2160-0", "1700404A"],
             "kind": "fact",
-            "minValue": 133,
+            "minValue": 1.5,
             "presence": "present",
             "requireEligible": true,
-            "unit": "umol/L"
+            "unit": "mg/dL"
           }
         ]
       },
