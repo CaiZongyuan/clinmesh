@@ -8,14 +8,14 @@ await store.withTransaction(tx => {
   tx.createEpoch({ workspaceId, epoch }, { status: 'active', virtual_time: virtualTime, clock_revision: 0 });
 });
 
-const patient = await store.withTransaction(tx => tx.get({ workspaceId, epoch }, 'patients', patientId));
+const patient = await store.read(reader => reader.get({ workspaceId, epoch }, 'patients', patientId));
 ```
 
 每次业务读写都携带 Workspace ID 和 Epoch ID。ID 使用小写 UUIDv7，固定病例也支持 UUIDv5。时间戳使用 UTC ISO-8601 `Z`，`virtual_at` 和 `recorded_at` 分别记录业务与审计时间。金额由安全整数 `amount_minor`、`currency_code` 和 `currency_exponent` 共同表达。布尔值在端口中保持 `boolean`。
 
-`StoreTx` 可在本次同步或异步回调期间使用。事务内的操作使用传入的 `tx`。外部 I/O、LLM 请求、嵌套 Store 调用以及 pi 操作须在事务之外执行。Node 用 `BEGIN IMMEDIATE`，DO 用外层异步事务覆盖等待前后的 SQL，并在 `transactionSync` 中启动同步阶段。例外会回滚整笔事务。
+`read` 提供只读的 `StoreReader`，同一回调内的多次查询共享一致视图。Node 的普通查询和快照导出使用 `BEGIN DEFERRED`，在 WAL 写入期间仍可读取已提交的状态。显式写事务在 Node 使用 `BEGIN IMMEDIATE`，在 DO 使用外层异步事务覆盖等待前后的 SQL，并在 `transactionSync` 中启动同步阶段。`StoreReader` 和 `StoreTx` 只在当前同步或异步回调期间有效。事务内使用传入的句柄。外部 I/O、LLM 请求、嵌套 Store 调用以及 pi 操作须在事务之外执行。例外会回滚整笔事务。
 
-通过 `update(scope, table, id, expectedVersion, changes)` 修改可编辑事实。CAS 冲突抛出 `StoreVersionConflictError`。正式病历、诊断、报告和审计保留不可变历史。修订通过前驱 ID 和连续版本号连接。重放同一命令可先调用 `findCommandReceipt`，再在写入事实的同一事务内调用 `recordCommandReceipt`。同幂等键命中不同操作或请求摘要会抛出 `StoreIdempotencyConflictError`。
+通过 `update(scope, table, id, expectedVersion, changes)` 修改可编辑事实。补丁忽略 `undefined` 字段。空补丁仅核对版本。CAS 冲突或安全整数版本耗尽时抛出 `StoreVersionConflictError`。正式病历、诊断、报告和审计保留不可变历史。修订通过前驱 ID 和连续版本号连接。`appendDiagnosisRevision(scope, revision, members)` 一次签发整组 1–8 项诊断，其中恰有一个主诊断。更正时追加一整组新修订。重放同一命令可先调用 `findCommandReceipt`，再在写入事实的同一事务内调用 `recordCommandReceipt`。同幂等键命中不同操作或请求摘要会抛出 `StoreIdempotencyConflictError`。
 
 仿真解析器和完诊复盘通过 `readPrivateCaseTruth(scope, { purpose, encounterId })` 读取该 Encounter 的源病例。`completed-debrief` 验证 Encounter 已完诊。`simulation` 供受信任的服务端仿真解析器使用。临床列表、患者智能体和医生助手应使用公开实体查询。
 

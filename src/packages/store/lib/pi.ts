@@ -63,9 +63,11 @@ const int = z.int();
 const nullableInt = int.nullable();
 const text = z.string();
 const json = text.refine(value => { try { JSON.parse(value); return true; } catch { return false; } });
+const exhaustedId = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
+const nextId = text.regex(/^[1-9]\d{0,15}$/).pipe(text.refine(value => BigInt(value) >= 2n && BigInt(value) <= exhaustedId, 'Invalid pi-durable ID counter'));
 const shapes = {
   durable_schema: { singleton: z.literal(1), version: z.literal(CURRENT_SQLITE_SCHEMA_VERSION) },
-  durable_metadata: { singleton: z.literal(1), next_id: text.regex(/^[1-9]\d*$/).refine(value => Number.isSafeInteger(Number(value)) && Number(value) >= 2), next_seq: int.positive() },
+  durable_metadata: { singleton: z.literal(1), next_id: nextId, next_seq: int.positive() },
   record_ids: { id: int, record_type: text },
   conversations: { id: int, owner_conversation_id: nullableInt, owner_task_id: nullableInt, record: json },
   entries: { id: int, conversation_id: int, head: nullableInt, commit_seq: int, record: json },
@@ -79,6 +81,26 @@ export const piImage = z.strictObject({ epoch: uuid, sessionId: uuid, tables: z.
   name: z.string(), rows: z.array(z.record(z.string(), z.union([text, int, z.null()]))),
 })) });
 export type PiImage = z.infer<typeof piImage>;
+
+function checkHighWaterMarks(image: PiImage) {
+  const metadata = image.tables.find(table => table.name === 'durable_metadata')!.rows[0]!;
+  const nextIdentifier = BigInt(String(metadata.next_id));
+  const nextSequence = Number(metadata.next_seq);
+  const identifiers = ['id', 'document_id', 'conversation_id', 'owner_conversation_id', 'owner_task_id', 'owner_id', 'head'];
+  const sequences = ['commit_seq', 'seq', 'created_at', 'retired_at'];
+  for (const table of image.tables) {
+    for (const row of table.rows) {
+      for (const key of identifiers) {
+        const id = row[key];
+        if (typeof id === 'number' && BigInt(id) >= nextIdentifier) throw new Error('Invalid pi-durable ID counter');
+      }
+      for (const key of sequences) {
+        const sequence = row[key];
+        if (typeof sequence === 'number' && sequence >= nextSequence) throw new Error('Invalid pi-durable sequence counter');
+      }
+    }
+  }
+}
 
 export function exportPiSession(db: SqlConnection, at: StoreScope, sessionId: string): PiImage | undefined {
   const namespace = prefix(at, sessionId);
@@ -104,4 +126,5 @@ export async function restorePiSession(db: SqlConnection, workspaceId: string, i
       db.run(`INSERT INTO ${namespace}${name} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`, ...columns.map(key => row[key]!));
     }
   }
+  checkHighWaterMarks(image);
 }

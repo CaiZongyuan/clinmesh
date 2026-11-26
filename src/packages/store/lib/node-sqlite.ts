@@ -25,9 +25,9 @@ function openDatabase(dbPath: string) {
       exec(sql) { database.exec(sql); },
       run(sql, ...params) { database.prepare(sql).run(...params); },
       all(sql, ...params) { return database.prepare<unknown[], SqlRow>(sql).all(...params); },
-      initialize: work => database.transaction(work).immediate(),
-      async atomic(work) {
-        database.exec('BEGIN IMMEDIATE');
+      atomicSync: work => database.transaction(work).immediate(),
+      async atomic(mode, work) {
+        database.exec(mode === 'read' ? 'BEGIN DEFERRED' : 'BEGIN IMMEDIATE');
         try {
           const result = await work();
           database.exec('COMMIT');

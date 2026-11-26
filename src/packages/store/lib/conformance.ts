@@ -58,11 +58,32 @@ function verifyFacts(tx: StoreTx) {
   check(tx.recordCommandReceipt(at, { ...receipt, id: fixtureId(84), result: null }).id === receipt.id, 'replay original result');
   fails(() => tx.recordCommandReceipt(at, { ...receipt, request_hash: 'c'.repeat(64) }), StoreIdempotencyConflictError);
   check(tx.list(at, 'command_receipts').length === 1 && !tx.findCommandReceipt(otherEpoch, receipt.idempotency_key), 'scope receipts');
+  check(tx.list(at, 'command_receipts', { result: { accepted: true, note: { color: 'green', size: 1 } } }).length === 1, 'object field equality ignores key order');
   const signed = tx.get(at, 'clinical_record_revisions', fixtureId(24))!;
   fails(() => tx.insert(at, 'clinical_record_revisions', { ...signed, id: fixtureId(85), revision: 4, previous_revision_id: signed.id }), /foreign key/i);
   fails(() => tx.insert(at, 'clinical_record_revisions', { ...signed, id: fixtureId(85) }), /unique/i);
-  const diagnosis = tx.get(at, 'diagnosis_confirmations', fixtureId(28))!;
-  fails(() => tx.insert(at, 'diagnosis_confirmations', { ...diagnosis, id: fixtureId(86), ordinal: 2 }), /unique/i);
+  const original = tx.get(at, 'diagnosis_revisions', fixtureId(27))!;
+  const revision = { ...original, id: fixtureId(94), revision: 2, previous_revision_id: original.id };
+  const primary = { id: fixtureId(95), ordinal: 1, is_primary: true, code_system: 'urn:example:catalog', code: 'S1', poa_code: null };
+  const secondary = { ...primary, id: fixtureId(96), ordinal: 2, is_primary: false, code: 'S2' };
+  fails(() => tx.appendDiagnosisRevision(at, revision, [secondary]));
+  fails(() => tx.appendDiagnosisRevision(at, revision, [primary, { ...secondary, id: fixtureId(28) }]));
+  check(!tx.get(at, 'diagnosis_revisions', revision.id) && !tx.get(at, 'diagnosis_confirmations', primary.id), 'failed group did not publish a partial revision');
+  tx.appendDiagnosisRevision(at, revision, [primary, secondary]);
+  fails(() => Reflect.apply(tx.insert, tx, [at, 'diagnosis_confirmations', { ...secondary, id: fixtureId(97), revision_id: original.id }]));
+  check(tx.list(at, 'diagnosis_confirmations', { revision_id: original.id }).length === 1 && tx.list(at, 'diagnosis_confirmations', { revision_id: revision.id }).length === 2, 'confirmed membership is immutable');
+  tx.update(at, 'consultations', fixtureId(21), 1, { reply_pending: true });
+  tx.update(at, 'consultations', fixtureId(21), 2, { reply_pending: undefined });
+  const consultation = tx.get(at, 'consultations', fixtureId(21));
+  check(consultation?.version === 2 && consultation.reply_pending, 'undefined patch changed a boolean or its version');
+  const maximum = Number.MAX_SAFE_INTEGER;
+  tx.insert(at, 'patients', { ...patient, id: fixtureId(98), version: maximum });
+  fails(() => tx.update(at, 'patients', fixtureId(98), maximum, { display_name: 'Invalid advance' }), StoreVersionConflictError);
+  check(tx.get(at, 'patients', fixtureId(98))?.version === maximum, 'patient CAS exceeded safe integers');
+  const saturated = { ...at, epoch: fixtureId(99) };
+  tx.createEpoch(saturated, { status: 'closed', virtual_time: recorded_at, clock_revision: maximum });
+  fails(() => tx.updateEpoch(saturated, maximum, { status: 'closing' }), StoreVersionConflictError);
+  check(tx.getEpoch(saturated)?.clock_revision === maximum && tx.getEpoch(saturated)?.status === 'closed', 'epoch CAS exceeded safe integers');
   check(!tx.list(at, 'report_acknowledgements', { report_id: fixtureId(31) }).length, 'old acknowledgement cannot cover a corrected report');
   for (const name of ['audit_events', 'consultation_turns', 'clinical_record_revisions', 'diagnosis_confirmations', 'diagnostic_reports']) {
     fails(() => Reflect.apply(tx.update, tx, [at, name, signed.id, 1, {}]), /immutable/i);
@@ -92,12 +113,14 @@ async function verifyTransactions(store: StorePort) {
     });
   });
   await entered;
-  const queued = store.withTransaction(tx => [tx.get(at, 'patients', transient.id), tx.get(at, 'patients', fixtureId(91))]);
+  const queued = store.read(reader => [reader.get(at, 'patients', transient.id), reader.get(at, 'patients', fixtureId(91))]);
   resume();
   await rejects(failed, /async abort/);
   check((await queued).every(row => row === undefined), 'queued reader observed uncommitted rows');
   const escaped = await store.withTransaction(async tx => { await Promise.resolve(); return tx; });
   fails(() => escaped.getEpoch(at), /closed/i);
+  const reader = await store.read(view => { check(!('insert' in view) && !('update' in view), 'read handle exposes writes'); return view; });
+  fails(() => reader.getEpoch(at), /closed/i);
   check(await store.withTransaction(() => 7) === 7 && await store.withTransaction(() => Promise.resolve(8)) === 8, 'transaction returns');
 }
 
@@ -126,6 +149,10 @@ export async function runStoreConformanceSuite(store: StorePort, restoreIntoEmpt
   const { conversationId, entryId } = await writePi(patient);
   const assistant = await store.openPiStorage(at, fixtureId(71));
   check(!await assistant.conversation(conversationId, BACKGROUND_CONTEXT), 'pi-durable agent isolation');
+  const maximumId = Number.MAX_SAFE_INTEGER as ConversationId;
+  const finalCommit = await assistant.commit([[{ type: 'conversation', value: { id: maximumId } }]], () => {}, BACKGROUND_CONTEXT);
+  check(finalCommit.stored === 1, 'SDK accepted its last available ID');
+  await rejects(assistant.mintId(), /exhausted/i);
   await patient.close(BACKGROUND_CONTEXT);
   const reopened = await store.openPiStorage(at, fixtureId(70));
   check((await reopened.entry(entryId, BACKGROUND_CONTEXT))?.entry.data === 'Retained turn', 'durable transcript after reopen');

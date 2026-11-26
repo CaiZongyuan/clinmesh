@@ -9,11 +9,11 @@ export const recorded_at = '2025-01-02T16:00:00.000Z';
 const times = { recorded_at, virtual_at: '2024-10-01T08:00:00.000Z' };
 const firstRevision = { revision: 1, previous_revision_id: null };
 export const fixedCase = '99999999-0000-5000-8000-000000000010';
-export const receipt = { id: fixtureId(13), idempotency_key: 'test-command', operation: 'synthetic.sign', request_hash: 'b'.repeat(64), result: { accepted: true }, recorded_at };
+export const receipt = { id: fixtureId(13), idempotency_key: 'test-command', operation: 'synthetic.sign', request_hash: 'b'.repeat(64), result: { note: { size: 1, color: 'green' }, accepted: true }, recorded_at };
 
 export function seedConformance(tx: StoreTx): string[] {
-  const names = ['workspaces', 'workspace_epochs', 'case_truths', 'command_receipts'];
-  function add<Name extends Exclude<PublicEntity, 'command_receipts'>>(name: Name, row: EntityRow<NoInfer<Name>>) {
+  const names = ['workspaces', 'workspace_epochs', 'case_truths', 'command_receipts', 'diagnosis_revisions', 'diagnosis_confirmations'];
+  function add<Name extends Exclude<PublicEntity, 'command_receipts' | 'diagnosis_revisions' | 'diagnosis_confirmations'>>(name: Name, row: EntityRow<NoInfer<Name>>) {
     tx.insert(at, name, row);
     if (!names.includes(name)) names.push(name);
   }
@@ -54,8 +54,7 @@ export function seedConformance(tx: StoreTx): string[] {
   add('clinical_record_revisions', { id: fixtureId(25), encounter_id, fields: { summary: 'First' }, signed_by: practitioner_role, ...firstRevision, ...times });
   add('clinical_record_revisions', { id: fixtureId(24), encounter_id, fields: { summary: 'Correction' }, signed_by: practitioner_role, revision: 2, previous_revision_id: fixtureId(25), ...times });
   add('diagnosis_drafts', { id: fixtureId(26), encounter_id, ...diagnosis, version: 1 });
-  add('diagnosis_revisions', { id: fixtureId(27), encounter_id, confirmed_by: practitioner_role, ...firstRevision, ...times });
-  add('diagnosis_confirmations', { id: fixtureId(28), revision_id: fixtureId(27), ...diagnosis });
+  tx.appendDiagnosisRevision(at, { id: fixtureId(27), encounter_id, confirmed_by: practitioner_role, ...firstRevision, ...times }, [{ id: fixtureId(28), ...diagnosis }]);
   add('clinical_orders', { id: order_id, encounter_id, catalog_item_id, kind: 'lab', status: 'reported', version: 1, ...times });
   add('diagnostic_reports', { id: fixtureId(32), order_id, findings: { result: 'First' }, signed_by: practitioner_role, ...firstRevision, ...times });
   add('diagnostic_reports', { id: fixtureId(31), order_id, findings: { result: 'Correction' }, signed_by: practitioner_role, revision: 2, previous_revision_id: fixtureId(32), ...times });

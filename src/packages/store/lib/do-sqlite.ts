@@ -10,8 +10,9 @@ export function createDurableObjectSqliteStore(storage: WorkspaceStorage) {
     exec(sql) { storage.sql.exec(sql); },
     run(sql, ...params) { storage.sql.exec(sql, ...params); },
     all(sql, ...params) { return storage.sql.exec<SqlRow>(sql, ...params).toArray(); },
-    initialize: work => storage.transactionSync(work),
-    atomic(work) {
+    atomicSync: work => storage.transactionSync(work),
+    atomic(mode, work) {
+      if (mode === 'read') return storage.transaction(async () => work());
       return storage.transaction(async () => {
         let completion!: ReturnType<typeof work>;
         storage.transactionSync(() => { completion = work(); });

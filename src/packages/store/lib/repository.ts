@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { canonicalJson, type JsonValue } from './json';
 import { editable, entityNames, epoch, scope, tables, uuid, workspace, type Changes, type Column, type EditableEntity, type Entity, type EntityRow, type PublicEntity, type StoreScope, type TableDefinition, type Workspace, type WorkspaceEpoch } from './schema';
 import type { SqlConnection, SqlRow, SqlValue } from './sqlite';
 
@@ -15,6 +16,9 @@ export class StorePrivateCaseTruthError extends Error {
 const privateAccess = z.strictObject({ purpose: z.enum(['simulation', 'completed-debrief']), encounterId: uuid });
 type PrivateAccess = z.infer<typeof privateAccess>;
 const removable = ['patients', 'clinical_record_drafts', 'diagnosis_drafts'] as const;
+const dedicatedWrites = ['command_receipts', 'diagnosis_revisions', 'diagnosis_confirmations'] as const;
+type InsertableEntity = Exclude<PublicEntity, (typeof dedicatedWrites)[number]>;
+type DiagnosisMember = Omit<EntityRow<'diagnosis_confirmations'>, 'revision_id'>;
 
 export interface StoreTx {
   createWorkspace(row: Workspace): void;
@@ -23,7 +27,8 @@ export interface StoreTx {
   getEpoch(at: StoreScope): WorkspaceEpoch | undefined;
   listEpochs(workspaceId: string): (WorkspaceEpoch & { epoch: string })[];
   updateEpoch(at: StoreScope, expectedClockRevision: number, changes: Partial<Pick<WorkspaceEpoch, 'status' | 'virtual_time'>>): void;
-  insert<Name extends Exclude<PublicEntity, 'command_receipts'>>(at: StoreScope, name: Name, row: EntityRow<NoInfer<Name>>): void;
+  insert<Name extends InsertableEntity>(at: StoreScope, name: Name, row: EntityRow<NoInfer<Name>>): void;
+  appendDiagnosisRevision(at: StoreScope, revision: EntityRow<'diagnosis_revisions'>, members: readonly DiagnosisMember[]): void;
   get<Name extends PublicEntity>(at: StoreScope, name: Name, id: string): EntityRow<Name> | undefined;
   list<Name extends PublicEntity>(at: StoreScope, name: Name, filter?: Partial<EntityRow<NoInfer<Name>>>): EntityRow<Name>[];
   update<Name extends EditableEntity>(at: StoreScope, name: Name, id: string, expectedVersion: number, changes: Changes<NoInfer<Name>>): void;
@@ -34,14 +39,18 @@ export interface StoreTx {
   readPrivateCaseTruth(at: StoreScope, access: PrivateAccess): EntityRow<'case_truths'> | undefined;
 }
 
+export type StoreReader = Pick<StoreTx, 'getWorkspace' | 'getEpoch' | 'listEpochs' | 'get' | 'list' | 'findCommandReceipt' | 'readPrivateCaseTruth'>;
+
 const definitions: Record<Entity, TableDefinition> = tables;
 const schemas = Object.fromEntries(entityNames.map(name => [name, z.strictObject(Object.fromEntries(
   Object.entries(definitions[name].fields).map(([key, field]) => [key, field.schema]),
 ))])) as Record<Entity, z.ZodObject<Record<string, z.ZodType>>>;
+const diagnosisMembers = z.array(schemas.diagnosis_confirmations.omit({ revision_id: true })).min(1).max(8)
+  .refine(members => members.filter(member => member.is_primary === true).length === 1, 'A revision requires one primary diagnosis');
 
 function encoded(field: Column, value: unknown): SqlValue {
   if (value === null && field.nullable) return null;
-  if (field.kind === 'json') return JSON.stringify(value);
+  if (field.kind === 'json') return canonicalJson(value as JsonValue);
   if (field.kind === 'boolean') return value ? 1 : 0;
   return value as SqlValue;
 }
@@ -85,17 +94,32 @@ export function createRepository(db: SqlConnection, checkOpen: () => void): Stor
     const params: SqlValue[] = keys(at);
     const fields = definitions[name].fields;
     const clauses = [isolation];
+    const jsonFilters: [string, string][] = [];
     for (const [key, value] of Object.entries(schemas[name].partial().parse(filter))) {
-      if (value === null && fields[key]!.nullable) clauses.push(`${key} IS NULL`);
+      if (value === undefined) throw new Error('Undefined filter value');
+      if (fields[key]!.kind === 'json') jsonFilters.push([key, canonicalJson(value as JsonValue)]);
+      else if (value === null && fields[key]!.nullable) clauses.push(`${key} IS NULL`);
       else {
         clauses.push(`${key} = ?`);
         params.push(encoded(fields[key]!, value));
       }
     }
-    return db.all(`SELECT * FROM ${name} WHERE ${clauses.join(' AND ')} ORDER BY id`, ...params).map(row => readEntity(name, row));
+    return db.all(`SELECT * FROM ${name} WHERE ${clauses.join(' AND ')} ORDER BY id`, ...params)
+      .map(row => readEntity(name, row))
+      .filter(row => jsonFilters.every(([key, value]) => canonicalJson(row[key as keyof typeof row] as JsonValue) === value));
   }
   function cas(sql: string, params: SqlValue[]): void {
     if (!db.all(`${sql} RETURNING 1 AS applied`, ...params).length) throw new StoreVersionConflictError();
+  }
+  function applyPatch(name: string, identity: string, params: SqlValue[], version: string, expected: number, values: [string, SqlValue][]) {
+    const where = `${identity} AND ${version} = ?`;
+    if (!values.length) {
+      if (!db.all(`SELECT 1 FROM ${name} WHERE ${where}`, ...params, expected).length) throw new StoreVersionConflictError();
+      return;
+    }
+    const assignments = values.map(([key]) => `${key} = ?`);
+    assignments.push(`${version} = ${version} + 1`);
+    cas(`UPDATE ${name} SET ${assignments.join(', ')} WHERE ${where} AND ${version} < ?`, [...values.map(([, value]) => value), ...params, expected, Number.MAX_SAFE_INTEGER]);
   }
   const tx: StoreTx = {
     createWorkspace(input) {
@@ -122,13 +146,24 @@ export function createRepository(db: SqlConnection, checkOpen: () => void): Stor
     },
     updateEpoch(at, expected, changes) {
       const patch = epoch.omit({ clock_revision: true }).partial().parse(changes);
-      cas(`UPDATE workspace_epochs SET status = COALESCE(?, status), virtual_time = COALESCE(?, virtual_time), clock_revision = clock_revision + 1 WHERE ${isolation} AND clock_revision = ?`, [patch.status ?? null, patch.virtual_time ?? null, ...keys(at), z.int().nonnegative().parse(expected)]);
+      const values = Object.entries(patch).filter((entry): entry is [string, string] => entry[1] !== undefined);
+      applyPatch('workspace_epochs', isolation, keys(at), 'clock_revision', z.int().nonnegative().parse(expected), values);
     },
     insert(at, name, row) {
       publicEntity(name);
-      if (String(name) === 'command_receipts') throw new Error('Use recordCommandReceipt');
+      if ((dedicatedWrites as readonly string[]).includes(name)) throw new Error('Use the aggregate repository operation');
       keys(at);
       writeEntity(db, at, name, row);
+    },
+    appendDiagnosisRevision(location, revision, members) {
+      checkOpen();
+      const at = scope.parse(location);
+      const header = schemas.diagnosis_revisions.parse(revision);
+      const diagnoses = diagnosisMembers.parse(members);
+      db.atomicSync(() => {
+        writeEntity(db, at, 'diagnosis_revisions', header);
+        for (const member of diagnoses) writeEntity(db, at, 'diagnosis_confirmations', { ...member, revision_id: header.id });
+      });
     },
     get(at, name, id) { publicEntity(name); return list(at, name, { id })[0]; },
     list(at, name, filter = {}) { publicEntity(name); return list(at, name, filter); },
@@ -136,10 +171,10 @@ export function createRepository(db: SqlConnection, checkOpen: () => void): Stor
       if (typeof name !== 'string' || !Object.hasOwn(editable, name)) throw new Error('Immutable fact');
       const patch = Object.entries(schemas[name].partial().parse(input));
       const allowed: readonly string[] = editable[name];
-      if (!patch.length || patch.some(([key]) => !allowed.includes(key))) throw new Error('Invalid update fields');
+      if (patch.some(([key]) => !allowed.includes(key))) throw new Error('Invalid update fields');
       const fields = definitions[name].fields;
-      const assignments = patch.map(([key]) => `${key} = ?`);
-      cas(`UPDATE ${name} SET ${assignments.join(', ')}, version = version + 1 WHERE ${isolation} AND id = ? AND version = ?`, [...patch.map(([key, value]) => encoded(fields[key]!, value)), ...keys(at), uuid.parse(id), z.int().positive().parse(expected)]);
+      const values: [string, SqlValue][] = patch.filter(([, value]) => value !== undefined).map(([key, value]) => [key, encoded(fields[key]!, value)]);
+      applyPatch(name, `${isolation} AND id = ?`, [...keys(at), uuid.parse(id)], 'version', z.int().positive().parse(expected), values);
     },
     remove(at, name, id, expected) {
       if (!removable.includes(name)) throw new Error('Deletion is restricted');
@@ -162,4 +197,9 @@ export function createRepository(db: SqlConnection, checkOpen: () => void): Stor
     },
   };
   return Object.freeze(tx);
+}
+
+export function createReader(db: SqlConnection, checkOpen: () => void): StoreReader {
+  const { getWorkspace, getEpoch, listEpochs, get, list, findCommandReceipt, readPrivateCaseTruth } = createRepository(db, checkOpen);
+  return Object.freeze({ getWorkspace, getEpoch, listEpochs, get, list, findCommandReceipt, readPrivateCaseTruth });
 }

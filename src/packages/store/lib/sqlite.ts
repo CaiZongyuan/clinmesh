@@ -6,8 +6,8 @@ export interface SqlConnection {
   exec(sql: string): void;
   run(sql: string, ...params: SqlValue[]): void;
   all(sql: string, ...params: SqlValue[]): SqlRow[];
-  initialize(work: () => void): void;
-  atomic<T>(work: () => T | Promise<T>): Promise<T>;
+  atomicSync<T>(work: () => T): T;
+  atomic<T>(mode: 'read' | 'write', work: () => T | Promise<T>): Promise<T>;
   close(): void;
 }
 

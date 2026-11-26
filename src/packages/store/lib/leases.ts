@@ -19,6 +19,7 @@ export function leaseStore<Key>(owners: Owners<Key>, key: Key, open: () => Store
     return closed ? Promise.reject(new Error('Store is closed')) : work(owner.store);
   }
   return {
+    read: work => use(store => store.read(work)),
     withTransaction: work => use(store => store.withTransaction(work)),
     exportLogicalSnapshot: id => use(store => store.exportLogicalSnapshot(id)),
     importLogicalSnapshot: image => use(store => store.importLogicalSnapshot(image)),

@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { canonicalJson } from './json';
 import { exportPiSession, piImage, restorePiSession, type PiImage } from './pi';
-import { createRepository, readEntity, writeEntity } from './repository';
+import { createReader, createRepository, readEntity, writeEntity } from './repository';
 import { entityNames, epoch as epochFields, tables, uuid, workspace as workspaceFields, type TableDefinition } from './schema';
 import type { SqlConnection } from './sqlite';
 
@@ -17,14 +18,8 @@ export class StoreSnapshotError extends Error {
   constructor(message: string) { super(message); this.name = 'StoreSnapshotError'; }
 }
 
-function canonical(value: z.infer<typeof record>[string]): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key]!)}`).join(',')}}`;
-  return JSON.stringify(value);
-}
-
 export async function seal(content: SnapshotContent): Promise<LogicalSnapshot> {
-  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical(content)));
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalJson(content)));
   const sha256 = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
   return { ...content, sha256 };
 }
@@ -38,10 +33,10 @@ export async function verifySnapshot(input: unknown): Promise<SnapshotContent> {
 }
 
 export function capture(db: SqlConnection, workspaceId: string): SnapshotContent {
-  const tx = createRepository(db, () => {});
-  const workspace = tx.getWorkspace(workspaceId);
+  const reader = createReader(db, () => {});
+  const workspace = reader.getWorkspace(workspaceId);
   if (!workspace) throw new StoreSnapshotError('Unknown snapshot workspace');
-  const epochs = tx.listEpochs(workspaceId);
+  const epochs = reader.listEpochs(workspaceId);
   const data: SnapshotContent['tables'] = [
     { name: 'workspaces', rows: [workspace] },
     { name: 'workspace_epochs', rows: epochs.map(row => ({ workspace_id: workspaceId, ...row })) },
@@ -88,6 +83,14 @@ export async function restore(db: SqlConnection, content: SnapshotContent): Prom
       writeEntity(db, at, name, fields);
     }
   }
+  for (const row of epochs!.rows) {
+    const { at } = scoped(row);
+    const invalid = db.all(`SELECT revision.id FROM diagnosis_revisions revision LEFT JOIN diagnosis_confirmations member
+      ON member.workspace_id = revision.workspace_id AND member.epoch = revision.epoch AND member.revision_id = revision.id
+      WHERE revision.workspace_id = ? AND revision.epoch = ? GROUP BY revision.id
+      HAVING COUNT(member.id) NOT BETWEEN 1 AND 8 OR SUM(member.is_primary) <> 1 LIMIT 1`, at.workspaceId, at.epoch);
+    if (invalid.length) throw new StoreSnapshotError('Incomplete confirmed diagnosis revision');
+  }
   for (const image of content.pi) await restorePiSession(db, workspaceId, image);
-  if (canonical(capture(db, workspaceId)) !== canonical(content)) throw new StoreSnapshotError('Noncanonical snapshot content');
+  if (canonicalJson(capture(db, workspaceId)) !== canonicalJson(content)) throw new StoreSnapshotError('Noncanonical snapshot content');
 }
