@@ -9,7 +9,7 @@
 | --- | --- |
 | [platform](platform/index.ts) | 模块契约、注册冲突与运行时健康投影 |
 | [store](store/index.ts) | 类型化 Store Repository Port、隔离的规范化事实、Node / DO SQLite 适配器与版本化逻辑快照。参见[使用说明](store/README.md) |
-| [data-pack](data-pack/index.ts) | 预留声明式 Hospital Data Pack 边界，不携带地区目录 |
+| [data-pack](data-pack/index.ts) | 五层 Hospital Data Pack 编译、事务安装与公开病例投影。参见[使用说明](data-pack/README.md) |
 | [ui-kit](ui-kit/index.ts) | 预留统一临床控件与 Theme Tokens 的入口 |
 
 依赖守卫：`pnpm lint:boundaries`。设计依据见 [ADR 0001](../../docs/adr/0001-modular-monolith-and-deep-modules.md)。

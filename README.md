@@ -26,4 +26,5 @@ pnpm start
 `pnpm check` 运行严格类型检查、静态检查、真实依赖图守卫、Markdown 校验、测试和构建。构建后执行 `pnpm verify:worker`，用 Wrangler dry-run 生成真实上传包并检查压缩体积严格小于 3 MiB。所有检查均在 Windows 上运行，不需 Cloudflare 账户，也不进行线上部署。
 
 - [深模块契约与包职责](src/packages/README.md)
+- [Hospital Data Pack 编译、热切换与工作台读取](src/packages/data-pack/README.md)、[两套合成教学包的来源](data/packs/README.md)
 - [领域词汇](GLOSSARY.md)、[架构决策](docs/adr/)、[协作规范](AGENTS.md)

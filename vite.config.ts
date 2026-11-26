@@ -5,5 +5,8 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: { outDir: 'dist/client' },
-  server: { proxy: { '/api': `http://${process.env.CLINMESH_HOST ?? '127.0.0.1'}:${process.env.CLINMESH_PORT ?? '51868'}` } },
+  server: {
+    fs: { deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/data/packs/**'] },
+    proxy: { '/api': `http://${process.env.CLINMESH_HOST ?? '127.0.0.1'}:${process.env.CLINMESH_PORT ?? '51868'}` },
+  },
 });
