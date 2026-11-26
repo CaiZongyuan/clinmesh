@@ -1,0 +1,163 @@
+import { z } from 'zod';
+
+export const uuid = z.uuidv7().regex(/^[0-9a-f-]+$/);
+const caseId = z.union([uuid, z.uuid({ version: 'v5' }).regex(/^[0-9a-f-]+$/)]);
+export const instant = z.iso.datetime();
+export const workspace = z.strictObject({ id: uuid, recorded_at: instant });
+export type Workspace = z.infer<typeof workspace>;
+export const scope = z.strictObject({ workspaceId: uuid, epoch: uuid });
+export type StoreScope = z.infer<typeof scope>;
+export const epoch = z.strictObject({
+  status: z.enum(['building', 'active', 'closing', 'closed']), virtual_time: instant, clock_revision: z.int().nonnegative(),
+});
+export type WorkspaceEpoch = z.infer<typeof epoch>;
+
+export interface Column<Value = unknown> {
+  schema: z.ZodType<Value>;
+  kind: 'text' | 'integer' | 'boolean' | 'json';
+  nullable?: boolean;
+  references?: string;
+  check?: (name: string) => string;
+}
+
+const column = <Value>(schema: z.ZodType<Value>, kind: Column['kind'] = 'text', check?: Column['check']): Column<Value> => ({ schema, kind, check });
+const id = column(uuid);
+const text = column(z.string().min(1));
+const timestamp = column(instant);
+const integer = column(z.int(), 'integer');
+const positive = column(z.int().positive(), 'integer', name => `${name} > 0`);
+const boolean = column(z.boolean(), 'boolean', name => `${name} IN (0, 1)`);
+const frozen = column(z.record(z.string(), z.json()), 'json');
+const digest = column(z.string().regex(/^[0-9a-f]{64}$/));
+const optional = <Value>(field: Column<Value>): Column<Value | null> => ({ ...field, nullable: true, schema: field.schema.nullable() });
+const ref = (target: string): Column<string> => ({ ...id, schema: target === 'clinical_cases' ? caseId : uuid, references: target });
+const choice = <const Values extends readonly [string, ...string[]]>(...values: Values) => column(z.enum(values), 'text', name => `${name} IN (${values.map(value => `'${value}'`).join(', ')})`);
+const times = { virtual_at: timestamp, recorded_at: timestamp };
+const version = positive;
+const enc = ref('encounters');
+const catalog = ref('catalog_items');
+const order = ref('clinical_orders');
+const admission = ref('inpatient_admissions');
+const lot = ref('inventory_lots');
+const currency = column(z.string().regex(/^[A-Z]{3}$/));
+const exponent = column(z.int().min(0).max(9), 'integer', name => `${name} BETWEEN 0 AND 9`);
+const money = { amount_minor: integer, currency_code: currency, currency_exponent: exponent };
+const coding = { code_system: column(z.url()), code: text };
+const encounterClass = choice('outpatient', 'inpatient');
+const diagnosis = { ...coding, is_primary: boolean, poa_code: optional(text), ordinal: positive };
+
+type Columns = Record<string, Column>;
+export interface TableDefinition {
+  fields: Columns;
+  unique: string[];
+  chain?: string;
+}
+
+function table<Fields extends Columns>(fields: Fields, ...unique: string[]) {
+  return { fields: { id, ...fields }, unique };
+}
+
+function revisions<Fields extends Columns>(name: string, owner: string, fields: Fields) {
+  return { ...table({ ...fields, revision: positive, previous_revision_id: optional(ref(name)), ...times }, `${owner}, revision`, `${owner}, id, revision`), chain: owner };
+}
+
+export const tables = {
+  visitor_sessions: table({ practitioner_role: text, expires_at: timestamp, revoked: boolean, version }),
+  capability_tokens: table({ token_hash: digest, practitioner_role: text, allowed_operations: column(z.array(z.string().min(1)), 'json'), expires_at: timestamp, revoked: boolean, version }, 'token_hash'),
+  command_receipts: table({ idempotency_key: text, operation: text, request_hash: digest, result: column(z.json(), 'json'), recorded_at: timestamp }, 'idempotency_key'),
+  audit_events: table({ actor: text, practitioner_role: text, operation: text, target_id: column(caseId), outcome: text, ...times }),
+  data_pack_installations: table({ pack_id: text, pack_version: text, manifest: frozen, organization: frozen, knowledge: frozen, recorded_at: timestamp }, 'pack_id, pack_version'),
+  catalog_items: table({ installation_id: ref('data_pack_installations'), kind: text, ...coding, definition: frozen, amount_minor: optional(integer), currency_code: optional(currency), currency_exponent: optional(exponent) }, 'kind, code_system, code'),
+  clinical_cases: table({ id: column(caseId), installation_id: ref('data_pack_installations'), case_key: text, case_version: text, encounter_class: encounterClass, demographics: frozen, prior_history: frozen, triage_vitals: frozen }, 'installation_id, case_key, case_version'),
+  case_personas: table({ case_id: ref('clinical_cases'), persona: frozen }, 'case_id'),
+  case_truths: table({ case_id: ref('clinical_cases'), truth: frozen }, 'case_id'),
+  patients: table({ display_name: text, birth_date: optional(column(z.iso.date())), version }),
+  patient_identifiers: table({ patient_id: ref('patients'), issuer: text, value: text }, 'issuer, value'),
+  encounters: table({ patient_id: ref('patients'), source_case_id: ref('clinical_cases'), encounter_class: encounterClass, status: text, active_practitioner_role: text, version, ...times }),
+  pi_sessions: table({ agent: choice('patient', 'clinician'), encounter_id: optional(enc) }, 'encounter_id, agent'),
+  consultations: table({ encounter_id: enc, reply_pending: boolean, version }, 'encounter_id'),
+  consultation_turns: table({ consultation_id: ref('consultations'), ordinal: positive, speaker: choice('clinician', 'patient'), channel: choice('text', 'voice'), content: text, ...times }, 'consultation_id, ordinal'),
+  clinical_record_drafts: table({ encounter_id: enc, fields: frozen, version }, 'encounter_id'),
+  clinical_record_revisions: revisions('clinical_record_revisions', 'encounter_id', { encounter_id: enc, fields: frozen, signed_by: text }),
+  diagnosis_drafts: table({ encounter_id: enc, ...diagnosis, version }, 'encounter_id, ordinal'),
+  diagnosis_revisions: revisions('diagnosis_revisions', 'encounter_id', { encounter_id: enc, confirmed_by: text }),
+  diagnosis_confirmations: table({ revision_id: ref('diagnosis_revisions'), ...diagnosis }, 'revision_id, ordinal'),
+  clinical_orders: table({ encounter_id: enc, catalog_item_id: catalog, kind: choice('lab', 'examination', 'imaging', 'pathology', 'medication', 'nursing', 'surgery'), status: text, version, ...times }),
+  diagnostic_reports: revisions('diagnostic_reports', 'order_id', { order_id: order, findings: frozen, signed_by: text }),
+  report_acknowledgements: table({ report_id: ref('diagnostic_reports'), practitioner_role: text, ...times }, 'report_id'),
+  clinical_overrides: table({ encounter_id: enc, rule_code: text, rationale: text, practitioner_role: text, ...times }),
+  prescriptions: table({ encounter_id: enc, status: text, version, ...times }),
+  prescription_orders: table({ prescription_id: ref('prescriptions'), order_id: order }, 'order_id'),
+  no_medication_conclusions: table({ encounter_id: enc, reason: text, ...times }),
+  inventory_lots: table({ catalog_item_id: catalog, lot_number: text, expiry_date: column(z.iso.date()), unit: text }, 'catalog_item_id, lot_number'),
+  inventory_movements: table({ lot_id: lot, quantity_delta: column(z.int().refine(value => value !== 0), 'integer', name => `${name} <> 0`), reason: text, ...times }),
+  dispenses: table({ prescription_order_id: ref('prescription_orders'), movement_id: ref('inventory_movements'), quantity: positive, ...times }, 'movement_id'),
+  inpatient_admissions: table({ encounter_id: enc, ward: text, status: text, version, ...times }, 'encounter_id'),
+  bed_occupancies: table({ admission_id: admission, bed: text, occupied_at: timestamp, released_at: optional(timestamp), version }),
+  inpatient_transfers: table({ admission_id: admission, from_ward: text, to_ward: text, ...times }),
+  order_executions: table({ order_id: order, practitioner_role: text, outcome: text, ...times }),
+  surgery_requests: table({ order_id: order, procedure_item_id: catalog, status: text, version }, 'order_id'),
+  surgery_executions: table({ surgery_request_id: ref('surgery_requests'), outcome: text, ...times }),
+  material_reservations: table({ surgery_request_id: ref('surgery_requests'), lot_id: lot, quantity: positive, status: text, version }),
+  material_uses: table({ reservation_id: ref('material_reservations'), movement_id: ref('inventory_movements'), quantity: positive, ...times }, 'movement_id'),
+  medical_record_archives: table({ admission_id: admission, archive: frozen, ...times }, 'admission_id'),
+  charge_items: table({ encounter_id: enc, order_id: optional(order), description: text, ...money, ...times }),
+  charge_adjustments: table({ charge_id: ref('charge_items'), reason: text, ...money, ...times }),
+  payment_transactions: table({ encounter_id: enc, ...money, ...times }),
+  payment_tenders: table({ payment_id: ref('payment_transactions'), method: text, ...money }),
+  payment_allocations: table({ tender_id: ref('payment_tenders'), charge_id: ref('charge_items'), ...money }),
+  refund_transactions: table({ allocation_id: ref('payment_allocations'), reason: text, ...money, ...times }),
+  regional_payer_records: table({ encounter_id: enc, payer_code: text, reference: text, determination: frozen, ...times }),
+} satisfies Record<string, TableDefinition>;
+
+export type Entity = keyof typeof tables;
+export type EntityRow<Name extends Entity> = { [Key in keyof (typeof tables)[Name]['fields']]: (typeof tables)[Name]['fields'][Key] extends Column<infer Value> ? Value : never };
+export type PublicEntity = Exclude<Entity, 'case_truths'>;
+export const entityNames = Object.keys(tables) as Entity[];
+
+export const editable = {
+  patients: ['display_name', 'birth_date'], encounters: ['active_practitioner_role', 'status'], consultations: ['reply_pending'],
+  clinical_record_drafts: ['fields'], diagnosis_drafts: ['code', 'code_system', 'is_primary', 'poa_code', 'ordinal'],
+  visitor_sessions: ['practitioner_role', 'revoked'], capability_tokens: ['revoked'], clinical_orders: ['status'],
+  prescriptions: ['status'], inpatient_admissions: ['status', 'ward'], bed_occupancies: ['released_at'],
+  surgery_requests: ['status'], material_reservations: ['status'],
+} as const satisfies { [Name in Entity]?: readonly (keyof EntityRow<Name>)[] };
+export type EditableEntity = keyof typeof editable;
+export type Changes<Name extends EditableEntity> = Partial<Pick<EntityRow<Name>, (typeof editable)[Name][number] & keyof EntityRow<Name>>>;
+
+const isolation = 'workspace_id, epoch';
+const epochReference = `FOREIGN KEY (${isolation}) REFERENCES workspace_epochs (${isolation}) ON DELETE RESTRICT`;
+
+function createTable(name: Entity, { fields, unique, chain }: TableDefinition): string {
+  const columns = ['workspace_id TEXT NOT NULL', 'epoch TEXT NOT NULL'];
+  const constraints = [`PRIMARY KEY (${isolation}, id)`, epochReference, ...unique.map(keys => `UNIQUE (${isolation}, ${keys})`)];
+  for (const [key, field] of Object.entries(fields)) {
+    const type = field.kind === 'integer' || field.kind === 'boolean' ? 'INTEGER' : 'TEXT';
+    columns.push(`${key} ${type}${field.nullable ? '' : ' NOT NULL'}${field.check ? ` CHECK (${field.check(key)})` : ''}`);
+    if (field.references) constraints.push(`FOREIGN KEY (${isolation}, ${key}) REFERENCES ${field.references} (${isolation}, id) ON DELETE RESTRICT`);
+  }
+  if (chain) {
+    columns.push('previous_revision INTEGER');
+    constraints.push('CHECK ((revision = 1 AND previous_revision_id IS NULL AND previous_revision IS NULL) OR (revision > 1 AND previous_revision_id IS NOT NULL AND previous_revision IS NOT NULL AND previous_revision = revision - 1))',
+      `FOREIGN KEY (${isolation}, ${chain}, previous_revision_id, previous_revision) REFERENCES ${name} (${isolation}, ${chain}, id, revision) ON DELETE RESTRICT`);
+  }
+  if (name === 'catalog_items') constraints.push('CHECK ((amount_minor IS NULL AND currency_code IS NULL AND currency_exponent IS NULL) OR (amount_minor IS NOT NULL AND currency_code IS NOT NULL AND currency_exponent IS NOT NULL))');
+  if (name === 'pi_sessions') constraints.push("CHECK (agent <> 'patient' OR encounter_id IS NOT NULL)");
+  return `CREATE TABLE IF NOT EXISTS ${name} (${[...columns, ...constraints].join(', ')})`;
+}
+
+export function initializeSchema(exec: (sql: string) => void): void {
+  exec('CREATE TABLE IF NOT EXISTS workspaces (id TEXT NOT NULL PRIMARY KEY, recorded_at TEXT NOT NULL)');
+  exec(`CREATE TABLE IF NOT EXISTS workspace_epochs (workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT, epoch TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('building','active','closing','closed')), virtual_time TEXT NOT NULL, clock_revision INTEGER NOT NULL CHECK (clock_revision >= 0), PRIMARY KEY (${isolation}))`);
+  exec("CREATE UNIQUE INDEX IF NOT EXISTS one_active_epoch ON workspace_epochs (workspace_id) WHERE status = 'active'");
+  for (const name of entityNames) {
+    exec(createTable(name, tables[name]));
+    if (!Object.hasOwn(editable, name)) {
+      for (const action of ['UPDATE', 'DELETE']) {
+        exec(`CREATE TRIGGER IF NOT EXISTS immutable_${name}_${action} BEFORE ${action} ON ${name} BEGIN SELECT RAISE(ABORT, 'Immutable fact'); END`);
+      }
+    }
+  }
+  exec(`CREATE UNIQUE INDEX IF NOT EXISTS one_primary_diagnosis ON diagnosis_confirmations (${isolation}, revision_id) WHERE is_primary = 1`);
+  exec(`CREATE UNIQUE INDEX IF NOT EXISTS one_occupied_bed ON bed_occupancies (${isolation}, bed) WHERE released_at IS NULL`);
+}
