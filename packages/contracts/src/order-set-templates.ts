@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { clinicalScoreMissingInputSchema, clinicalScoreSourceReferenceSchema } from './clinical-scores.ts'
+import { packSourceSummarySchema } from './pack-source.ts'
 import { preopOrderPolicySchema } from './inpatient-surgery.ts'
 import { outpatientInvestigationPriceSchema } from './investigation-billing.ts'
 import { medicationFrequencySchema, medicationRouteSchema } from './medication-safety.ts'
@@ -210,6 +211,8 @@ const draft = strict({
   counts: strict({ excluded: nonnegInt, needsReview: nonnegInt, ready: nonnegInt, skipped: nonnegInt.default(0), unavailable: nonnegInt }),
   fingerprint: sha256,
   items: z.array(draftItem).min(1).max(16),
+  packId: slug.optional(),
+  packVersion: text(64).optional(),
   template: draftTemplate,
 })
 export type OrderSetDraft = z.infer<typeof draft>
@@ -234,7 +237,10 @@ export type OrderSetPatientFacts = z.infer<typeof facts>
 export const orderSetDraftBundleSchema = strict({
   drafts: z.array(draft).min(0).max(64),
   evaluatedAt: isoTime,
+  packId: slug.optional(),
+  packVersion: text(64).optional(),
   patientFacts: facts,
+  sourcePacks: z.array(packSourceSummarySchema).max(32).optional(),
   target: z.discriminatedUnion('scope', [
     strict({ caseId: id, encounterId: id, encounterVersion: ver, scope: z.literal('outpatient') }),
     strict({

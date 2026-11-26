@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import type { ClinicalFactLedger } from '@clinmesh/contracts/clinical-fact-ledger'
@@ -12,7 +12,7 @@ import {
   diseasePackTaskReadinessResultSchema,
   diseasePackToggleBodySchema,
   diseasePackToolAuthorizeBodySchema,
-  type DiseasePack,
+  type DeduplicatedQuestionnaireItem,
   type DiseasePackCatalogList,
   type DiseasePackRuntimeBundle,
   type DiseasePackRuntimeEntry,
@@ -21,12 +21,15 @@ import {
   type DiseasePackToggleBody,
   type EffectiveDiseasePack,
 } from '@clinmesh/contracts/disease-pack'
+import { type PackSourceSummary } from '@clinmesh/contracts/guideline-topics'
 import {
   resolveEffectiveConceptVocabulary,
 } from '@clinmesh/core/concept-vocabulary'
 import {
   DiseasePackValidationError,
   collectDeclaredTaskItemCodes,
+  deduplicateQuestionnaireItems,
+  evaluateLongitudinalLdlComparison,
   evaluatePackActivation,
   evaluatePackStages,
   evaluateTaskReadiness,
@@ -91,183 +94,13 @@ export function computeDiseasePackFingerprint(pack: {
   })
 }
 
-function buildBuiltinCoronaryDraftPack(): DiseasePack {
-  const unsigned = {
-    examSuite: {
-      cases: [
-        {
-          caseId: 'coronary-pci-preop-creatinine-gate',
-          expectedActive: true,
-          expectedBlockedTaskIds: ['pci-preop-guideline-advice'],
-          expectedStageId: 'pci-preop',
-          titleZh: '冠心病 PCI 术前肾功就绪门控检验例',
-        },
-      ],
-      passThreshold: 0.85,
-    },
-    formulaRefs: [
-      { formulaId: 'ckd-epi-2021', version: 1 },
-      { formulaId: 'cockcroft-gault', version: 1 },
-      { formulaId: 'grace-acs', version: 1 },
-      { formulaId: 'timi-ua-nstemi', version: 1 },
-      { formulaId: 'precise-dapt', version: 1 },
-      { formulaId: 'ascvd-ldl-target', version: 1 },
-    ],
-    inapplicablePopulations: [],
-    manifest: {
-      dependencies: [],
-      fingerprint: '0'.repeat(64),
-      id: 'coronary-cad',
-      packType: 'full' as const,
-      specialty: 'cardiology',
-      status: 'draft' as const,
-      supportedTasks: ['pci-preop-guideline-advice', 'pci-stent', 'followup-review'],
-      titleEn: 'Coronary Artery Disease & PCI Pathway (Draft Reservation)',
-      titleZh: '冠心病与 PCI 专病路径（预留草案）',
-      version: '2026-11-24.r1',
-    },
-    qualityTightenings: {
-      examPassThreshold: 0.85,
-      redLineRules: [
-        {
-          conditionSummary: 'PCI 术前须完成有效血清肌酐与 eGFR 评估',
-          id: 'pci-preop-renal-redline',
-          itemCode: '2160-0',
-        },
-      ],
-      validityOverrides: [
-        { itemCode: '2160-0', maxValidityDays: 14 },
-      ],
-    },
-    readinessTasks: [
-      {
-        criticalItems: [
-          {
-            alternateItemCodes: ['14682-9', '1700404A'],
-            category: 'laboratory' as const,
-            itemCode: '2160-0',
-            labelZh: '血清肌酐 / eGFR',
-            maxAgeDays: 14,
-          },
-        ],
-        relevantCategories: ['diagnosis' as const],
-        relevantItemCodes: ['2160-0', 'smoking-status'],
-        secondaryItems: [
-          {
-            category: 'bedside-questionnaire' as const,
-            itemCode: 'smoking-status',
-            labelZh: '吸烟状态',
-          },
-        ],
-        taskId: 'pci-preop-guideline-advice',
-        titleZh: 'PCI 术前指南参考意见',
-      },
-      {
-        criticalItems: [
-          {
-            alternateItemCodes: ['14682-9', '1700404A'],
-            category: 'laboratory' as const,
-            itemCode: '2160-0',
-            labelZh: '血清肌酐 / eGFR',
-            maxAgeDays: 14,
-          },
-        ],
-        relevantCategories: ['diagnosis' as const],
-        relevantItemCodes: ['2160-0', 'smoking-status'],
-        secondaryItems: [
-          {
-            category: 'bedside-questionnaire' as const,
-            itemCode: 'smoking-status',
-            labelZh: '吸烟状态',
-          },
-        ],
-        taskId: 'pci-stent',
-        titleZh: 'PCI 支架选型指南参考意见',
-      },
-      {
-        criticalItems: [
-          {
-            alternateItemCodes: ['18262-6', '2089-1', '1700303A'],
-            category: 'laboratory' as const,
-            itemCode: '13457-7',
-            labelZh: '低密度脂蛋白胆固醇 (LDL-C)',
-          },
-        ],
-        relevantCategories: ['medication' as const],
-        relevantItemCodes: ['13457-7', '8480-6', '8462-4', 'discharge-time'],
-        secondaryItems: [
-          {
-            category: 'vital-sign' as const,
-            itemCode: '8480-6',
-            labelZh: '收缩压',
-          },
-          {
-            category: 'vital-sign' as const,
-            itemCode: '8462-4',
-            labelZh: '舒张压',
-          },
-          {
-            alternateItemCodes: ['18842-5', 'discharge-summary'],
-            itemCode: 'discharge-time',
-            labelZh: '出院时间',
-          },
-        ],
-        taskId: 'followup-review',
-        titleZh: '跨就诊复查核对',
-      },
-    ],
-    stages: [
-      {
-        entryCondition: {
-          category: 'diagnosis' as const,
-          itemCodePattern: '^(?:I20|I21|I22|I23|I24|I25)',
-          kind: 'fact' as const,
-          presence: 'present' as const,
-          requireEligible: true,
-        },
-        id: 'pci-preop',
-        order: 1,
-        orderSetIds: ['cad-admission-baseline'],
-        questionnaireItemCodes: ['smoking-status'],
-        taskIds: ['pci-preop-guideline-advice', 'pci-stent', 'followup-review'],
-        titleEn: 'PCI Pre-operative Assessment',
-        titleZh: 'PCI 术前评估期',
-        topicIds: ['pci-stent'],
-      },
-    ],
-    toolPolicy: {
-      allowedTools: [
-        'inpatient.disease-packs.read',
-        'inpatient.disease-pack-task-facts.read',
-        'inpatient.guideline-advice.request',
-        'inpatient.guideline-topics.read',
-        'inpatient.order-set-drafts.read',
-        'outpatient.disease-packs.read',
-        'outpatient.disease-pack-task-facts.read',
-        'outpatient.guideline-topics.read',
-        'outpatient.order-set-drafts.read',
-      ],
-      forbiddenActions: [],
-    },
-    triggers: [
-      {
-        condition: {
-          category: 'diagnosis' as const,
-          itemCodePattern: '^(?:I20|I21|I22|I23|I24|I25)',
-          kind: 'fact' as const,
-          presence: 'present' as const,
-          requireEligible: true,
-        },
-        descriptionZh: '确认冠心病或急性冠脉综合征诊断',
-        id: 'cad-diagnosis-trigger',
-      },
-    ],
-  }
-  const fingerprint = computeDiseasePackFingerprint(unsigned)
-  return validateAndParseDiseasePack({
-    ...unsigned,
-    manifest: { ...unsigned.manifest, fingerprint },
-  })
+export function discoverDefaultDiseasePackDirs(): string[] {
+  const defaultRoot = resolve(import.meta.dirname, '../../disease-packs')
+  if (!existsSync(defaultRoot)) return []
+  return readdirSync(defaultRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(entry => join(defaultRoot, entry.name))
 }
 
 const SPLIT_PACK_FILES = [
@@ -311,10 +144,15 @@ export class DiseasePackRegistry {
     verifyFingerprint?: boolean
   }) {
     this.#publicLayer = options?.publicLayer
-    if (options?.includeBuiltinDraftPacks !== false) {
-      this.registerRawPack(buildBuiltinCoronaryDraftPack(), { verifyFingerprint: true })
-    }
     const loadOptions = { verifyFingerprint: options?.verifyFingerprint !== false }
+    const disableDefaultDirs =
+      options?.includeBuiltinDraftPacks === false ||
+      (options?.packDirs !== undefined && options.packDirs.length === 0)
+    if (!disableDefaultDirs) {
+      for (const dir of discoverDefaultDiseasePackDirs()) {
+        this.loadDirectory(dir, loadOptions)
+      }
+    }
     for (const dir of options?.packDirs ?? []) {
       this.loadDirectory(dir, loadOptions)
     }
@@ -1055,35 +893,105 @@ export class DiseasePackRuntimeService {
     ]
 
     if (entry.activationStatus === 'active' && entry.currentStageId !== null) {
-      const latestStage = stageAuditLatestSchema.optional().parse(
-        this.#database.driver.prepare(`
-          SELECT to_stage_id FROM disease_pack_stage_audit
-          WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ? AND pack_id = ?
-          ORDER BY julianday(recorded_at) DESC, rowid DESC LIMIT 1
-        `).get(context.workspaceId, context.epoch, subject.kind, subject.id, packId),
-      )
-      if (latestStage?.to_stage_id !== entry.currentStageId) {
-        this.#database.driver.prepare(`
-          INSERT INTO disease_pack_stage_audit (
-            workspace_id, epoch, audit_id, subject_kind, subject_id, pack_id,
-            from_stage_id, to_stage_id, recorded_by_actor_id, recorded_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          context.workspaceId,
-          context.epoch,
-          uuidv7(),
-          subject.kind,
-          subject.id,
-          packId,
-          latestStage?.to_stage_id ?? null,
-          entry.currentStageId,
-          context.actorId,
-          now,
-        )
-      }
+      this.#recordStageAuditIfChanged(context, subject, packId, entry.currentStageId, now)
     }
 
     return { data: entry, effects }
+  }
+
+  #recordStageAuditIfChanged(
+    context: ActorContext,
+    subject: { id: string; kind: 'outpatient' | 'inpatient' },
+    packId: string,
+    currentStageId: string,
+    recordedAt: string,
+  ): void {
+    const latestStage = stageAuditLatestSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT to_stage_id FROM disease_pack_stage_audit
+        WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ? AND pack_id = ?
+        ORDER BY julianday(recorded_at) DESC, rowid DESC LIMIT 1
+      `).get(context.workspaceId, context.epoch, subject.kind, subject.id, packId),
+    )
+    if (latestStage?.to_stage_id !== currentStageId) {
+      this.#database.driver.prepare(`
+        INSERT INTO disease_pack_stage_audit (
+          workspace_id, epoch, audit_id, subject_kind, subject_id, pack_id,
+          from_stage_id, to_stage_id, recorded_by_actor_id, recorded_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        context.workspaceId,
+        context.epoch,
+        uuidv7(),
+        subject.kind,
+        subject.id,
+        packId,
+        latestStage?.to_stage_id ?? null,
+        currentStageId,
+        context.actorId,
+        recordedAt,
+      )
+    }
+  }
+
+  activeRuntimeSummaryForSubject(
+    context: ActorContext,
+    subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string },
+    asOf: string,
+    precomputedLedger?: ClinicalFactLedger,
+  ): {
+    activePacks: EffectiveDiseasePack[]
+    activeQuestionnaireItems: DeduplicatedQuestionnaireItem[]
+    allowedPackOrderSetIds: string[]
+    allowedPackTopicIds: string[]
+    entries: DiseasePackRuntimeEntry[]
+    hasStageScopeRestriction: boolean
+    primaryPack: PackSourceSummary | undefined
+    sourcePacks: PackSourceSummary[]
+  } {
+    const ledger = precomputedLedger ?? this.#factLedger.buildInternalLedger(context, subject, { asOf, includeSuperseded: false })
+    const encounterMap = this.#resolveEncounterMap(context, subject.patientId)
+    const activePacks: EffectiveDiseasePack[] = []
+    const entries: DiseasePackRuntimeEntry[] = []
+    const allowedTopicIds = new Set<string>()
+    const allowedOrderSetIds = new Set<string>()
+    let hasStageScopeRestriction = false
+
+    for (const effective of this.registry.listEffective()) {
+      const override = this.#loadOverride(context, subject.kind, subject.id, effective.pack.manifest.id)
+      const entry = this.#evaluateSinglePack(context, subject, effective, ledger, encounterMap, override, asOf)
+      entries.push(entry)
+      if (entry.activationStatus !== 'active') continue
+      activePacks.push(effective)
+      const activeStage = entry.currentStageId === null
+        ? undefined
+        : effective.pack.stages.find(stage => stage.id === entry.currentStageId)
+      if (activeStage?.restrictRuntimeScope === true) {
+        hasStageScopeRestriction = true
+        for (const id of activeStage.topicIds) allowedTopicIds.add(id)
+        for (const id of activeStage.orderSetIds) allowedOrderSetIds.add(id)
+      } else {
+        for (const topic of effective.pack.guidelineTopics ?? []) allowedTopicIds.add(topic.id)
+        for (const orderSet of effective.pack.orderSets ?? []) allowedOrderSetIds.add(orderSet.id)
+      }
+    }
+
+    const activeQuestionnaireItems = deduplicateQuestionnaireItems(activePacks)
+    const sourcePacks: PackSourceSummary[] = activePacks.map(effective => ({
+      packId: effective.pack.manifest.id,
+      packVersion: effective.pack.manifest.version,
+      titleZh: effective.pack.manifest.titleZh,
+    }))
+    return {
+      activePacks,
+      activeQuestionnaireItems,
+      allowedPackOrderSetIds: [...allowedOrderSetIds],
+      allowedPackTopicIds: [...allowedTopicIds],
+      entries,
+      hasStageScopeRestriction,
+      primaryPack: sourcePacks[0],
+      sourcePacks,
+    }
   }
 
   #evaluateAllPacks(
@@ -1091,15 +999,16 @@ export class DiseasePackRuntimeService {
     subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string },
     asOf: string,
   ): DiseasePackRuntimeBundle {
-    const ledger = this.#factLedger.buildInternalLedger(context, subject, { asOf, includeSuperseded: false })
-    const encounterMap = this.#resolveEncounterMap(context, subject.patientId)
-    const packs = this.registry.listEffective().map(effective => {
-      const override = this.#loadOverride(context, subject.kind, subject.id, effective.pack.manifest.id)
-      return this.#evaluateSinglePack(context, subject, effective, ledger, encounterMap, override, asOf)
-    })
+    const summary = this.activeRuntimeSummaryForSubject(context, subject, asOf)
+    for (const entry of summary.entries) {
+      if (entry.activationStatus === 'active' && entry.currentStageId !== null) {
+        this.#recordStageAuditIfChanged(context, subject, entry.packId, entry.currentStageId, asOf)
+      }
+    }
     return diseasePackRuntimeBundleSchema.parse({
+      activeQuestionnaireItems: summary.activeQuestionnaireItems,
       evaluatedAt: asOf,
-      packs,
+      packs: summary.entries,
       subjectId: subject.id,
       subjectKind: subject.kind,
     })
@@ -1123,15 +1032,23 @@ export class DiseasePackRuntimeService {
     }
     const activation = evaluatePackActivation(effective, ledger, evalOptions)
     const stageEval = evaluatePackStages(effective, ledger, evalOptions)
-    const readinessTasks = effective.pack.readinessTasks.map(task => (
+    const activeStage = stageEval.currentStageId === null
+      ? undefined
+      : effective.pack.stages.find(stage => stage.id === stageEval.currentStageId)
+    const visibleReadinessTasks = activeStage?.restrictRuntimeScope === true
+      ? effective.pack.readinessTasks.filter(task => activeStage.taskIds.includes(task.taskId))
+      : effective.pack.readinessTasks
+    const readinessTasks = visibleReadinessTasks.map(task => (
       evaluateTaskReadiness(effective, task.taskId, ledger, { asOf, vocabulary })
     ))
+    const followUpLdlSummary = evaluateLongitudinalLdlComparison(ledger)
 
     return diseasePackRuntimeEntrySchema.parse({
       activationReason: activation.activationReason,
       activationStatus: activation.activationStatus,
       allowedTools: [...effective.effectiveAllowedTools],
       currentStageId: stageEval.currentStageId,
+      ...(followUpLdlSummary === null ? {} : { followUpLdlSummary }),
       forbiddenActions: [...effective.effectiveForbiddenActions],
       localizations: effective.localizations,
       manualOverride: override?.override_mode ?? null,
@@ -1207,6 +1124,36 @@ export class DiseasePackRuntimeService {
         if (!bundle.nextCursor || bundle.nextCursor === cursor) break
         cursor = bundle.nextCursor
       }
+    }
+    const dischargeRows = z.array(z.object({
+      admission_id: z.string().min(1),
+      event_id: z.string().min(1),
+    }).strict()).parse(
+      this.#database.driver.prepare(`
+        SELECT de.event_id, de.admission_id
+        FROM inpatient_discharge_event de
+        JOIN inpatient_admission ia
+          ON ia.workspace_id = de.workspace_id AND ia.epoch = de.epoch AND ia.admission_id = de.admission_id
+        WHERE de.workspace_id = ? AND de.epoch = ? AND ia.patient_id = ?
+      `).all(context.workspaceId, context.epoch, patientId),
+    )
+    for (const row of dischargeRows) {
+      map[row.event_id] = `Admission/${row.admission_id}`
+      map[`DischargeEvent/${row.event_id}`] = `Admission/${row.admission_id}`
+    }
+    const outpatientRows = z.array(z.object({
+      case_id: z.string().min(1),
+      encounter_id: z.string().min(1),
+    }).strict()).parse(
+      this.#database.driver.prepare(`
+        SELECT case_id, encounter_id
+        FROM outpatient_case
+        WHERE workspace_id = ? AND epoch = ? AND patient_id = ?
+      `).all(context.workspaceId, context.epoch, patientId),
+    )
+    for (const row of outpatientRows) {
+      map[`outpatient-encounter-context:${row.case_id}`] = `Encounter/${row.encounter_id}`
+      map[`EncounterContext/outpatient-encounter-context:${row.case_id}`] = `Encounter/${row.encounter_id}`
     }
     return map
   }

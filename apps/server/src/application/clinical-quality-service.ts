@@ -31,6 +31,7 @@ import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts
 import type { ClinicalScoreService } from './clinical-score-service.ts'
 import type { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
 import type { ActorContext, CommandEffect, CommandExecutor } from './command-executor.ts'
+import type { DiseasePackRuntimeService } from './disease-pack-runtime-service.ts'
 import { extractSupplementaryIndicators } from './guideline-topic-registry.ts'
 import { inpatientMedicationConfigSchema } from './inpatient-medication-config.ts'
 import type { InpatientService } from './inpatient-service.ts'
@@ -62,18 +63,42 @@ interface Facts {
 export class ClinicalQualityService {
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
+  #diseasePacks: DiseasePackRuntimeService | undefined
   readonly #factLedger: ClinicalFactLedgerService | undefined
   readonly #fhir: FhirRepository
   readonly #outpatient: OutpatientWorkflowContext
   readonly #scores: ClinicalScoreService
 
-  constructor(options: { commands: CommandExecutor; database: ClinMeshDatabase; factLedger?: ClinicalFactLedgerService; fhir: FhirRepository; outpatientContext: OutpatientWorkflowContext; scores: ClinicalScoreService }) {
+  constructor(options: { commands: CommandExecutor; database: ClinMeshDatabase; diseasePacks?: DiseasePackRuntimeService; factLedger?: ClinicalFactLedgerService; fhir: FhirRepository; outpatientContext: OutpatientWorkflowContext; scores: ClinicalScoreService }) {
     this.#commands = options.commands
     this.#database = options.database
+    this.#diseasePacks = options.diseasePacks
     this.#factLedger = options.factLedger
     this.#fhir = options.fhir
     this.#outpatient = options.outpatientContext
     this.#scores = options.scores
+  }
+
+  setDiseasePacks(diseasePacks: DiseasePackRuntimeService): void {
+    this.#diseasePacks = diseasePacks
+  }
+
+  #withPackProvenance(
+    context: ActorContext,
+    subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string },
+    check: ClinicalQualityCheck,
+    asOf: string,
+  ): ClinicalQualityCheck {
+    if (this.#diseasePacks === undefined) return check
+    const activeRuntime = this.#diseasePacks.activeRuntimeSummaryForSubject(context, subject, asOf)
+    if (activeRuntime.sourcePacks.length === 0) return check
+    return {
+      ...check,
+      ...(activeRuntime.primaryPack === undefined
+        ? {}
+        : { packId: activeRuntime.primaryPack.packId, packVersion: activeRuntime.primaryPack.packVersion }),
+      sourcePacks: activeRuntime.sourcePacks,
+    }
   }
 
   #ineligibleObservationIds(
@@ -247,7 +272,16 @@ export class ClinicalQualityService {
       this.#outpatient.assertRole(context, ['outpatient-doctor'])
       const outpatientCase = this.#outpatient.caseByEncounter(context, input.encounterId)
       this.#outpatient.assertCaseResponsibility(context, outpatientCase.case_id)
-      if (input.gate === 'outpatient-completion') return this.outpatientCompletion(context, { caseId: outpatientCase.case_id, encounterId: input.encounterId })
+      const subject = { id: outpatientCase.case_id, kind: 'outpatient' as const, patientId: outpatientCase.patient_id }
+      const asOf = this.#outpatient.virtualTime(context)
+      if (input.gate === 'outpatient-completion') {
+        return this.#withPackProvenance(
+          context,
+          subject,
+          this.outpatientCompletion(context, { caseId: outpatientCase.case_id, encounterId: input.encounterId }),
+          asOf,
+        )
+      }
       const draft = z.object({ draft_json: z.string().nullable() }).optional().parse(this.#database.driver.prepare(
         'SELECT draft_json FROM prescription_draft_state WHERE workspace_id=? AND epoch=? AND case_id=?').get(context.workspaceId, context.epoch, outpatientCase.case_id))
       const items = draft?.draft_json
@@ -268,12 +302,13 @@ export class ClinicalQualityService {
           frequencyCode: item.frequencyCode,
         }]
       })
-      return this.outpatientPrescription(context, {
+      const check = this.outpatientPrescription(context, {
         caseId: outpatientCase.case_id,
         patientId: outpatientCase.patient_id,
         diagnosisCodes: this.#outpatient.confirmedDiagnoses(context, outpatientCase.case_id)?.entries.map(entry => entry.code) ?? [],
         medications,
       })
+      return this.#withPackProvenance(context, subject, check, asOf)
     })
   }
 
@@ -287,10 +322,20 @@ export class ClinicalQualityService {
     return this.#auditedRead(context, 'inpatient.clinical-quality.read', input, () => {
       inpatient.assertReadRole(context, ['inpatient-doctor'])
       const admission = inpatient.readAdmissionBinding(context, input.admissionId)
-      if (input.gate === 'inpatient-pci-plan') return this.inpatientPciPlan(inpatient, context, admission.id)
+      const subject = { id: admission.id, kind: 'inpatient' as const, patientId: admission.patientId }
+      const asOf = inpatient.virtualTime(context)
+      if (input.gate === 'inpatient-pci-plan') {
+        return this.#withPackProvenance(context, subject, this.inpatientPciPlan(inpatient, context, admission.id), asOf)
+      }
       if (input.gate === 'inpatient-discharge') {
         const latestIssue = admission.status === 'admitted' ? undefined : inpatient.discharge.events(context, admission.id).filter(event => event.kind === 'issue').at(-1)
-        return this.inpatientDischarge(inpatient, context, admission.id, admission.patientId, latestIssue?.virtualTime ?? inpatient.virtualTime(context), latestIssue?.id)
+        const dischargeTime = latestIssue?.virtualTime ?? asOf
+        return this.#withPackProvenance(
+          context,
+          subject,
+          this.inpatientDischarge(inpatient, context, admission.id, admission.patientId, dischargeTime, latestIssue?.id),
+          dischargeTime,
+        )
       }
       const item = z.object({ code: z.string(), name_zh: z.string(), config_json: z.string() }).optional().parse(this.#database.driver.prepare(
         "SELECT code, name_zh, config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=? AND kind='medication' AND active=1").get(context.workspaceId, context.epoch, input.catalogItemId))
@@ -307,7 +352,12 @@ export class ClinicalQualityService {
       }
       const active = inpatient.orders.facts(context, admission.id).orders.filter(order => order.kind === 'medication' && ['signed', 'verified'].includes(order.state))
         .map(order => ({ catalogItemId: order.catalogItemId, display: order.display, pharmacologyClasses: this.medicationClasses(context, order.catalogItemId) }))
-      return this.inpatientOrder(inpatient, context, admission.id, admission.patientId, medication, active)
+      return this.#withPackProvenance(
+        context,
+        subject,
+        this.inpatientOrder(inpatient, context, admission.id, admission.patientId, medication, active),
+        asOf,
+      )
     })
   }
 

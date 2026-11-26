@@ -86,6 +86,7 @@ export const diseasePackStageSchema = z.object({
   order: z.number().int().nonnegative(),
   orderSetIds: z.array(orderSetTemplateIdSchema).max(32).default([]),
   questionnaireItemCodes: z.array(boundedCode).max(32).default([]),
+  restrictRuntimeScope: z.boolean().optional(),
   taskIds: z.array(boundedId).max(32).default([]),
   titleEn: nonEmptyText.optional(),
   titleZh: nonEmptyText,
@@ -145,6 +146,36 @@ export const diseasePackQuestionnaireItemSchema = z.object({
   unit: z.string().trim().min(1).max(32).optional(),
   valueType: z.enum(['boolean', 'number', 'enum', 'text']),
 }).strict()
+export type DiseasePackQuestionnaireItem = z.infer<typeof diseasePackQuestionnaireItemSchema>
+
+export const deduplicatedQuestionnaireItemSchema = diseasePackQuestionnaireItemSchema.extend({
+  packIds: z.array(diseasePackSlugSchema).min(1),
+}).strict()
+export type DeduplicatedQuestionnaireItem = z.infer<typeof deduplicatedQuestionnaireItemSchema>
+
+export const diseasePackGuidelineTopicReferenceSchema = z.object({
+  fragments: z.array(z.string().min(1).max(1000)).min(1).max(16),
+  page: z.number().int().positive(),
+  sha256: diseasePackSha256Schema,
+  sourceId: boundedCode,
+  title: nonEmptyText,
+  version: z.string().trim().min(1).max(64),
+}).strict()
+
+export const diseasePackGuidelineTopicSchema = z.object({
+  conclusionKinds: z.tuple([boundedId, boundedId, boundedId]),
+  generationRule: z.string().trim().min(1).max(4000),
+  id: guidelineTopicIdSchema,
+  limitations: z.array(z.string().trim().min(1).max(4000)).min(1).max(12),
+  matchTerms: z.array(nonEmptyText).min(1).max(64),
+  navigation: z.string().trim().min(1).max(4000),
+  references: z.array(diseasePackGuidelineTopicReferenceSchema).min(1).max(16),
+  specialty: diseasePackSlugSchema,
+  titleEn: z.string().trim().min(1).max(240),
+  titleZh: z.string().trim().min(1).max(240),
+  version: z.string().trim().min(1).max(64),
+}).strict()
+export type DiseasePackGuidelineTopic = z.infer<typeof diseasePackGuidelineTopicSchema>
 
 export const diseasePackOrderSetItemSchema = z.object({
   activeMedicationConflictCodes: z.array(boundedCode).max(32).optional(),
@@ -272,6 +303,7 @@ export const diseasePackSchema = z.object({
   examSuite: diseasePackExamSuiteSchema,
   exitCriteria: z.array(diseasePackExitCriterionSchema).max(32).optional(),
   formulaRefs: z.array(diseasePackFormulaRefSchema).max(32).default([]),
+  guidelineTopics: z.array(diseasePackGuidelineTopicSchema).max(32).optional(),
   inapplicablePopulations: z.array(diseasePackInapplicablePopulationSchema).max(32).default([]),
   indicationRules: z.array(diseasePackIndicationRuleSchema).max(64).optional(),
   knowledgeSnapshots: z.array(knowledgeSnapshotSchema).max(32).optional(),
@@ -410,11 +442,26 @@ export const diseasePackTaskReadinessResultSchema = z.object({
 }).strict()
 export type DiseasePackTaskReadinessResult = z.infer<typeof diseasePackTaskReadinessResultSchema>
 
+export const followUpLdlSummarySchema = z.object({
+  atGoal: z.boolean(),
+  baselineFactId: z.string().min(1),
+  baselineLdlMmolL: z.number().finite().positive(),
+  baselineMeasuredAt: dt,
+  comparisonTextZh: nonEmptyText,
+  deltaMmolL: z.number().finite(),
+  latestFactId: z.string().min(1),
+  latestLdlMmolL: z.number().finite().positive(),
+  latestMeasuredAt: dt,
+  targetLdlMmolL: z.number().finite().positive(),
+}).strict()
+export type FollowUpLdlSummary = z.infer<typeof followUpLdlSummarySchema>
+
 export const diseasePackRuntimeEntrySchema = z.object({
   activationReason: diseasePackActivationReasonSchema,
   activationStatus: diseasePackActivationStatusSchema,
   allowedTools: z.array(boundedCode),
   currentStageId: diseasePackSlugSchema.nullable(),
+  followUpLdlSummary: followUpLdlSummarySchema.nullable().optional(),
   forbiddenActions: z.array(boundedCode),
   localizations: hospitalOverlayLocalizationsSchema,
   manualOverride: z.enum(['enabled', 'disabled']).nullable(),
@@ -435,12 +482,30 @@ export const diseasePackRuntimeEntrySchema = z.object({
 export type DiseasePackRuntimeEntry = z.infer<typeof diseasePackRuntimeEntrySchema>
 
 export const diseasePackRuntimeBundleSchema = z.object({
+  activeQuestionnaireItems: z.array(deduplicatedQuestionnaireItemSchema).max(128).optional(),
   evaluatedAt: dt,
   packs: z.array(diseasePackRuntimeEntrySchema),
   subjectId: boundedId,
   subjectKind: z.enum(['outpatient', 'inpatient']),
 }).strict()
 export type DiseasePackRuntimeBundle = z.infer<typeof diseasePackRuntimeBundleSchema>
+
+export const hospitalGeneralLabPanelSchema = z.object({
+  code: boundedCode,
+  displayZh: nonEmptyText,
+  memberCodes: z.array(boundedCode).min(1).max(32),
+  specimenZh: nonEmptyText,
+}).strict()
+export type HospitalGeneralLabPanel = z.infer<typeof hospitalGeneralLabPanelSchema>
+
+export const hospitalBaselineConfigSchema = z.object({
+  generalLabPanels: z.array(hospitalGeneralLabPanelSchema).min(1).max(32),
+  hospitalId: diseasePackSlugSchema,
+  nameZh: nonEmptyText,
+  orderSets: z.array(diseasePackOrderSetSchema).max(32),
+  version: z.string().trim().min(1).max(64),
+}).strict()
+export type HospitalBaselineConfig = z.infer<typeof hospitalBaselineConfigSchema>
 
 export const diseasePackSummarySchema = z.object({
   fingerprint: diseasePackSha256Schema,

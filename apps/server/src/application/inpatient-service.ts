@@ -16,7 +16,11 @@ import type { ReferenceDataService } from './reference-data-service.ts'
 import { InpatientBilling } from './inpatient-billing.ts'
 import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.ts'
 import { InpatientInsuranceAdjustments } from './inpatient-insurance-adjustments.ts'
-import type { InpatientRiskAssessmentInput, InpatientVitalSignsInput } from '@clinmesh/contracts/clinical-scores'
+import type {
+  InpatientBedsideQuestionnaireRecordInput,
+  InpatientRiskAssessmentInput,
+  InpatientVitalSignsInput,
+} from '@clinmesh/contracts/clinical-scores'
 import { InpatientOrders } from './inpatient-orders.ts'
 import { InpatientCatalogSearch } from './inpatient-catalog-search.ts'
 import { InpatientPciSelection } from './inpatient-pci-selection.ts'
@@ -124,6 +128,12 @@ export class InpatientService {
   }
   readClinicalScores(context: ActorContext, admissionId: string) {
     return this.workflow.clinicalScores.readInpatientClinicalScores(this, context, admissionId)
+  }
+  readBedsideQuestionnaire(context: ActorContext, admissionId: string) {
+    return this.workflow.clinicalScores.readInpatientBedsideQuestionnaire(this, context, admissionId)
+  }
+  recordBedsideQuestionnaire(context: ActorContext, input: InpatientBedsideQuestionnaireRecordInput, idempotencyKey: string) {
+    return this.workflow.clinicalScores.recordInpatientBedsideQuestionnaire(this, context, input, idempotencyKey)
   }
   readClinicalQuality(context: ActorContext, input: Parameters<WorkflowService['clinicalQuality']['readInpatient']>[2]) {
     return this.workflow.clinicalQuality.readInpatient(this, context, input)

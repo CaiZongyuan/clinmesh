@@ -34,8 +34,8 @@ import {
 import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientGuidelineAdviceSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { orderSetTemplateIdSchema } from '@clinmesh/contracts/order-set-templates'
-import { DiseasePackValidationError } from '@clinmesh/core/disease-pack'
-import { DiseasePackRegistry } from '../src/application/disease-pack-runtime-service.ts'
+import { DiseasePackValidationError, validateAndParseDiseasePack } from '@clinmesh/core/disease-pack'
+import { computeDiseasePackFingerprint, DiseasePackRegistry } from '../src/application/disease-pack-runtime-service.ts'
 import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
@@ -922,31 +922,105 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
     expect(apiErrorSchema.parse(await inactiveAuth.json()).error.code).toBe('DSAP_PACK_INACTIVE')
   })
 
-  it('activates built-in coronary-cad draft pack manually via toggle and blocks readiness with 0 LLM calls', async () => {
+  it('auto-activates disk coronary-cad pack to block readiness with 0 LLM calls, and toggles explicit draft pack manually', async () => {
+    const unsignedDraft = {
+      examSuite: {
+        cases: [{ caseId: 'draft-case-1', expectedActive: true, expectedBlockedTaskIds: [], expectedStageId: 'draft-stage', titleZh: '合成草案验证' }],
+        passThreshold: 0.85,
+      },
+      formulaRefs: [],
+      inapplicablePopulations: [],
+      manifest: {
+        dependencies: [],
+        fingerprint: '0'.repeat(64),
+        id: 'synthetic-draft-pack',
+        packType: 'full' as const,
+        specialty: 'cardiology',
+        status: 'draft' as const,
+        supportedTasks: ['pci-stent'],
+        titleEn: 'Synthetic Draft Pack',
+        titleZh: '合成草案专病包',
+        version: '1.0.0',
+      },
+      qualityTightenings: { examPassThreshold: 0.85, redLineRules: [], validityOverrides: [] },
+      readinessTasks: [{ criticalItems: [], secondaryItems: [], taskId: 'pci-stent', titleZh: '草案核对' }],
+      stages: [
+        {
+          entryCondition: {
+            category: 'diagnosis' as const,
+            itemCodePattern: '^I25',
+            kind: 'fact' as const,
+            presence: 'present' as const,
+            requireEligible: true,
+          },
+          id: 'draft-stage',
+          order: 1,
+          orderSetIds: [],
+          questionnaireItemCodes: [],
+          taskIds: ['pci-stent'],
+          titleEn: 'Draft Stage',
+          titleZh: '草案评估期',
+          topicIds: [],
+        },
+      ],
+      toolPolicy: { allowedTools: ['inpatient.disease-packs.read'], forbiddenActions: [] },
+      triggers: [
+        {
+          condition: {
+            category: 'diagnosis' as const,
+            itemCodePattern: '^I25',
+            kind: 'fact' as const,
+            presence: 'present' as const,
+            requireEligible: true,
+          },
+          descriptionZh: '草案触发器测试',
+          id: 'draft-cad-trigger',
+        },
+      ],
+    }
+    const draftPack = validateAndParseDiseasePack({
+      ...unsignedDraft,
+      manifest: { ...unsignedDraft.manifest, fingerprint: computeDiseasePackFingerprint(unsignedDraft) },
+    })
     const { fixture, modelCalls } = await setupRuntimeWithSyntheticPack({ skipSyntheticPack: true, withGuidelineCorpus: true })
+    // Verify active disk coronary-cad blocks readiness immediately before LLM dispatch
     const stay = await fixture.preparePciAdmission([])
-    // Manually enable built-in coronary-cad draft pack on the stay
-    const enableRes = await fixture.request(
-      'inpatient-doctor',
-      `${stay.path}/disease-packs/coronary-cad/toggle`,
-      { expectedVersion: 0, note: '手动启用冠心病路径专病包校验', overrideMode: 'enabled' },
-    )
-    expect(enableRes.status).toBe(200)
-    const enabled = diseasePackToggleResponseSchema.parse(await enableRes.json()).data
-    expect(enabled.activationStatus).toBe('active')
-    expect(enabled.readinessTasks.map(r => r.taskId)).toEqual(
-      expect.arrayContaining(['pci-preop-guideline-advice', 'pci-stent', 'followup-review']),
-    )
-
-    // Pre-existing queued event is blocked right before LLM call (0 model calls)
     await fixture.runtime.dispatchPending()
     expect(modelCalls).toHaveLength(0)
-    const adviceAfterToggle = await fixture.read(
+    const adviceBlocked = await fixture.read(
       'inpatient-doctor',
       `${stay.path}/guideline-advice/${stay.requestId}`,
       inpatientGuidelineAdviceSchema,
     )
-    expect(adviceAfterToggle.status).toBe('blocked')
-    expect(adviceAfterToggle.failureCode).toBe('TASK_READINESS_CRITICAL_MISSING')
+    expect(adviceBlocked.status).toBe('blocked')
+    expect(adviceBlocked.failureCode).toBe('TASK_READINESS_CRITICAL_MISSING')
+
+    const autoPacks = await fixture.read('inpatient-doctor', `${stay.path}/disease-packs`, diseasePackRuntimeBundleSchema)
+    expect(autoPacks.packs.find(p => p.packId === 'coronary-cad')).toMatchObject({
+      activationReason: 'trigger-matched',
+      activationStatus: 'active',
+    })
+
+    // Also verify explicit status: 'draft' pack does NOT auto-activate and requires manual toggle
+    const draftPrep = await preparePciPaymentDrgFixture()
+    cleanups.push(() => rm(draftPrep.directory, { recursive: true, force: true }))
+    draftPrep.options.diseasePacks = [draftPack]
+    const draftFixture = await createPciPaymentDrgFixture(draftPrep)
+    cleanups.push(() => draftFixture.runtime.close())
+    const draftStay = await draftFixture.admitSyntheticCase(['I25.103'], 'bed-general-1')
+    const beforeDraftToggle = await draftFixture.read('inpatient-doctor', `${draftStay.path}/disease-packs`, diseasePackRuntimeBundleSchema)
+    expect(beforeDraftToggle.packs.find(p => p.packId === 'synthetic-draft-pack')).toMatchObject({
+      activationReason: 'pack-draft',
+      activationStatus: 'inactive',
+    })
+    const enableDraftRes = await draftFixture.request(
+      'inpatient-doctor',
+      `${draftStay.path}/disease-packs/synthetic-draft-pack/toggle`,
+      { expectedVersion: 0, note: '手动启用草案测试专病包', overrideMode: 'enabled' },
+    )
+    expect(enableDraftRes.status).toBe(200)
+    const enabledDraft = diseasePackToggleResponseSchema.parse(await enableDraftRes.json()).data
+    expect(enabledDraft.activationStatus).toBe('active')
+    expect(enabledDraft.activationReason).toBe('manual-enabled')
   })
 })

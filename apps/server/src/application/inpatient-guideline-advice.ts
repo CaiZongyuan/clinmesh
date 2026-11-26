@@ -780,7 +780,13 @@ export class InpatientGuidelineAdvice {
       this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
       const { binding, isArchivedCutoff, patientBirthDate, referenceIso } = this.#population(context, admissionId)
       const scores = this.owner.workflow.clinicalScores.inpatientSnapshot(this.owner, context, admissionId, referenceIso, isArchivedCutoff)
+      const activeRuntime = this.owner.workflow.diseasePacks.activeRuntimeSummaryForSubject(
+        context,
+        { id: admissionId, kind: 'inpatient', patientId: binding.patientId },
+        referenceIso,
+      )
       const bundle = buildSynchronousTopicBundle({
+        activeRuntime,
         caseId: admissionId,
         context,
         corpus: this.options.guidelines,
@@ -794,6 +800,7 @@ export class InpatientGuidelineAdvice {
         patientId: binding.patientId,
         populationReferenceIso: referenceIso,
         referenceCutoffIso: referenceIso,
+        registry: this.owner.workflow.diseasePacks.registry,
         scores,
         topicId,
       })

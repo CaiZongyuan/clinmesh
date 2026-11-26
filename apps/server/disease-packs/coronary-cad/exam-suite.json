@@ -1,0 +1,26 @@
+{
+  "examSuite": {
+    "cases": [
+      {
+        "caseId": "coronary-pci-preop-creatinine-gate",
+        "expectedActive": true,
+        "expectedBlockedTaskIds": ["pci-preop-guideline-advice"],
+        "expectedStageId": "pci-preop",
+        "titleZh": "冠心病 PCI 术前肾功就绪门控检验例"
+      },
+      {
+        "caseId": "cardio-nstemi-chest-pain-v1",
+        "expectedActive": true,
+        "expectedStageId": "initial-visit",
+        "titleZh": "急性非 ST 段抬高型心肌梗死首诊检验例"
+      },
+      {
+        "caseId": "trap-epigastric-t2dm-ruleout-v1",
+        "expectedActive": true,
+        "expectedStageId": "initial-visit",
+        "titleZh": "高龄 2 型糖尿病上腹痛非典型胸痛排查检验例"
+      }
+    ],
+    "passThreshold": 0.85
+  }
+}

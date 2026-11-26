@@ -1,0 +1,211 @@
+{
+  "stages": [
+    {
+      "entryCondition": {
+        "kind": "anyOf",
+        "nodes": [
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^R07",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "kind": "allOf",
+            "nodes": [
+              {
+                "category": "diagnosis",
+                "itemCodePattern": "^R10\\.1",
+                "kind": "fact",
+                "presence": "present",
+                "requireEligible": true
+              },
+              {
+                "category": "diagnosis",
+                "itemCodePattern": "^E11",
+                "kind": "fact",
+                "presence": "present",
+                "requireEligible": true
+              },
+              {
+                "kind": "anyOf",
+                "nodes": [
+                  {
+                    "category": "examination",
+                    "itemCodes": ["11524-6", "examination-ecg-12-lead"],
+                    "kind": "fact",
+                    "presence": "present",
+                    "requireEligible": true
+                  },
+                  {
+                    "category": "laboratory",
+                    "itemCodes": ["89579-7", "10839-9", "6597-9", "2100404B", "2100404A", "2100504A", "CN-LAB-CARDIAC"],
+                    "kind": "fact",
+                    "presence": "present",
+                    "requireEligible": true
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "category": "procedure",
+            "itemCodePattern": "^(?:00\\.66|36\\.0[67]|36\\.1|88\\.5[56])",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          }
+        ]
+      },
+      "id": "initial-visit",
+      "order": 1,
+      "orderSetIds": ["chest-pain-stat-workup", "cad-admission-baseline"],
+      "questionnaireItemCodes": [
+        "killip-class",
+        "cardiac-arrest-on-admission",
+        "angina-episodes-24h",
+        "st-segment-deviation",
+        "aspirin-used-last-7-days",
+        "smoking-status",
+        "family-history-premature-cad",
+        "known-coronary-stenosis-ge-50",
+        "prior-bleeding-history"
+      ],
+      "taskIds": ["pci-preop-guideline-advice", "pci-stent", "followup-review"],
+      "titleEn": "Initial Visit & Acute Chest Pain Workup",
+      "titleZh": "首诊与急性胸痛评估期",
+      "topicIds": ["acute-chest-pain-acs", "coronary-revascularization-indication", "contrast-kidney-hydration"]
+    },
+    {
+      "entryCondition": {
+        "kind": "allOf",
+        "nodes": [
+          {
+            "kind": "anyOf",
+            "nodes": [
+              {
+                "category": "diagnosis",
+                "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+                "kind": "fact",
+                "presence": "present",
+                "requireEligible": true
+              },
+              {
+                "category": "procedure",
+                "itemCodePattern": "^(?:00\\.66|36\\.0[67]|36\\.1|88\\.5[56])",
+                "kind": "fact",
+                "presence": "present",
+                "requireEligible": true
+              }
+            ]
+          },
+          {
+            "kind": "anyOf",
+            "nodes": [
+              {
+                "category": "procedure",
+                "itemCodes": ["inpatient-encounter-context"],
+                "kind": "fact",
+                "presence": "present",
+                "requireEligible": true
+              },
+              {
+                "category": "procedure",
+                "itemCodePattern": "^(?:00\\.66|36\\.0[67]|36\\.1)",
+                "kind": "fact",
+                "presence": "present",
+                "requireEligible": true
+              }
+            ]
+          }
+        ]
+      },
+      "id": "pci-preop",
+      "order": 2,
+      "orderSetIds": ["cad-admission-baseline", "cin-perioperative-hydration"],
+      "questionnaireItemCodes": [
+        "killip-class",
+        "cardiac-arrest-on-admission",
+        "smoking-status",
+        "prior-bleeding-history"
+      ],
+      "taskIds": ["pci-preop-guideline-advice", "pci-stent", "followup-review"],
+      "titleEn": "PCI Pre-operative Assessment",
+      "titleZh": "介入前评估期",
+      "topicIds": ["coronary-revascularization-indication", "pci-stent", "contrast-kidney-hydration"]
+    },
+    {
+      "entryCondition": {
+        "category": "procedure",
+        "itemCodePattern": "^(?:00\\.66|36\\.0[67]|36\\.1)",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true,
+        "verificationStatus": "not-applicable"
+      },
+      "id": "pci-postop",
+      "order": 3,
+      "orderSetIds": ["pci-postop-standard", "cad-pci-secondary-prevention"],
+      "questionnaireItemCodes": ["smoking-status", "prior-bleeding-history"],
+      "taskIds": ["pci-stent", "followup-review"],
+      "titleEn": "Post-PCI Revascularization Management",
+      "titleZh": "介入术后重整期",
+      "topicIds": ["pci-stent", "cad-dapt-and-secondary-prevention"]
+    },
+    {
+      "entryCondition": {
+        "category": "procedure",
+        "itemCodes": ["18842-5", "discharge-time"],
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "id": "discharge",
+      "order": 4,
+      "orderSetIds": ["cad-pci-secondary-prevention"],
+      "questionnaireItemCodes": ["smoking-status", "prior-bleeding-history"],
+      "taskIds": ["followup-review"],
+      "titleEn": "Inpatient Discharge Secondary Prevention",
+      "titleZh": "出院带药与二级预防核对期",
+      "topicIds": ["cad-dapt-and-secondary-prevention"]
+    },
+    {
+      "entryCondition": {
+        "first": {
+          "category": "procedure",
+          "itemCodes": ["18842-5", "discharge-time"],
+          "kind": "fact",
+          "presence": "present",
+          "requireEligible": true
+        },
+        "kind": "sequence",
+        "requireDistinctEncounters": true,
+        "then": {
+          "category": "procedure",
+          "itemCodes": ["outpatient-encounter-context"],
+          "kind": "fact",
+          "presence": "present",
+          "requireEligible": true
+        },
+        "timestampField": "effectiveAt"
+      },
+      "id": "follow-up",
+      "order": 5,
+      "orderSetIds": ["cad-pci-secondary-prevention"],
+      "questionnaireItemCodes": ["smoking-status", "prior-bleeding-history"],
+      "restrictRuntimeScope": true,
+      "taskIds": ["followup-review"],
+      "titleEn": "Outpatient Post-Discharge Follow-up",
+      "titleZh": "出院后门诊随访期",
+      "topicIds": ["cad-dapt-and-secondary-prevention"]
+    }
+  ]
+}

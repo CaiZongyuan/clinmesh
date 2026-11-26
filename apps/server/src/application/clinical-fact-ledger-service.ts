@@ -11,14 +11,19 @@ import {
   type ClinicalFactVerificationResponse,
   type RecordClinicalFactVerificationBody,
 } from '@clinmesh/contracts/clinical-fact-ledger'
-import { clinicalRiskAssessmentValuesSchema } from '@clinmesh/contracts/clinical-scores'
+import { bedsideQuestionnaireValueInputSchema, clinicalRiskAssessmentValuesSchema } from '@clinmesh/contracts/clinical-scores'
 import { visibleSourceClinicalSchema } from '@clinmesh/contracts/agent'
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import {
   evaluateClinicalFactLedger,
+  LEGACY_BEDSIDE_QUESTIONNAIRE_FIELDS,
+  normalizeBedsideItemCode,
+  synthesizeUnaskedQuestionnaireCandidates,
   transcribeBedsideQuestionnaireFacts,
   transcribeLocalFhirFacts,
   transcribeVisibleSourceHistoryFacts,
+  type ActivePackPromptItemInput,
+  type BedsideQuestionnaireExtraAnswerInput,
   type FhirAllergyIntoleranceLike,
   type FhirConditionLike,
   type FhirDiagnosticReportLike,
@@ -89,7 +94,15 @@ export interface ClinicalFactLedgerQueryOptions {
   includeSuperseded?: boolean | undefined
 }
 
+export type ActivePackPromptsResolver = (
+  context: ActorContext,
+  subject: { kind: ClinicalFactSubjectKind; id: string; patientId: string },
+  baseLedger: ClinicalFactLedger,
+  asOf: string,
+) => ActivePackPromptItemInput[]
+
 export interface ClinicalFactLedgerServiceOptions {
+  activePromptsResolver?: ActivePackPromptsResolver
   commands: CommandExecutor
   database: ClinMeshDatabase
   fhir: FhirRepository
@@ -185,16 +198,22 @@ const fhirHistoryContentRowSchema = z.object({
 }).strict()
 
 export class ClinicalFactLedgerService {
+  #activePromptsResolver: ActivePackPromptsResolver | undefined
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
   readonly #fhir: FhirRepository
   readonly #outpatient: OutpatientWorkflowContext
 
   constructor(options: ClinicalFactLedgerServiceOptions) {
+    this.#activePromptsResolver = options.activePromptsResolver
     this.#commands = options.commands
     this.#database = options.database
     this.#fhir = options.fhir
     this.#outpatient = options.outpatientContext
+  }
+
+  setActivePromptsResolver(resolver: ActivePackPromptsResolver): void {
+    this.#activePromptsResolver = resolver
   }
 
   readOutpatientLedger(
@@ -447,11 +466,20 @@ export class ClinicalFactLedgerService {
     const patientSex = parsedGender.success ? parsedGender.data : null
 
     const localCandidates = this.#loadLocalFhirCandidates(context, subject.patientId)
+    const orderedCandidates = this.#loadOrderedWorkupAndProcedureCandidates(context, subject.patientId, asOf)
+    const encounterContextCandidates = this.#loadDischargeAndEncounterContextCandidates(context, subject, asOf)
     const visibleCandidates = this.#loadVisibleHistoryCandidates(context, subject)
     const bedsideCandidates = this.#loadBedsideQuestionnaireCandidates(context, subject.patientId)
     const verifications = this.#loadClinicianVerifications(context, subject.patientId)
 
-    return evaluateClinicalFactLedger({
+    const baseCandidates = [
+      ...localCandidates,
+      ...orderedCandidates,
+      ...encounterContextCandidates,
+      ...visibleCandidates,
+      ...bedsideCandidates,
+    ]
+    const evaluationUnfiltered = {
       hospitalId: DEFAULT_CLINICAL_FACT_HOSPITAL_ID,
       patientId: subject.patientId,
       patientSex,
@@ -459,10 +487,44 @@ export class ClinicalFactLedgerService {
       subjectId: subject.id,
       evaluatedAsOf: asOf,
       includeSuperseded: options?.includeSuperseded ?? false,
+      candidates: baseCandidates,
+      verifications,
+    }
+    const filterProps = {
       ...(options?.itemCodes ? { filterItemCodes: options.itemCodes } : {}),
       ...(options?.categories ? { filterCategories: options.categories } : {}),
-      candidates: [...localCandidates, ...visibleCandidates, ...bedsideCandidates],
-      verifications,
+    }
+
+    if (this.#activePromptsResolver === undefined) {
+      return evaluateClinicalFactLedger({ ...evaluationUnfiltered, ...filterProps })
+    }
+
+    const baseLedger = evaluateClinicalFactLedger(evaluationUnfiltered)
+    const promptItems = this.#activePromptsResolver(context as ActorContext, subject, baseLedger, asOf)
+    if (promptItems.length === 0) {
+      return evaluateClinicalFactLedger({ ...evaluationUnfiltered, ...filterProps })
+    }
+
+    const recordedCodes = new Set(
+      bedsideCandidates
+        .filter(c => c.category === 'bedside-questionnaire' && c.presence !== 'not-asked')
+        .map(c => normalizeBedsideItemCode(c.itemCode.code)),
+    )
+    const unaskedCandidates = synthesizeUnaskedQuestionnaireCandidates({
+      evaluatedAt: asOf,
+      items: promptItems,
+      recordedCodes,
+      subjectId: subject.id,
+      subjectKind: subject.kind,
+    })
+    if (unaskedCandidates.length === 0) {
+      return evaluateClinicalFactLedger({ ...evaluationUnfiltered, ...filterProps })
+    }
+
+    return evaluateClinicalFactLedger({
+      ...evaluationUnfiltered,
+      ...filterProps,
+      candidates: [...baseCandidates, ...unaskedCandidates],
     })
   }
 
@@ -807,6 +869,284 @@ export class ClinicalFactLedgerService {
     })
   }
 
+  #loadOrderedWorkupAndProcedureCandidates(
+    context: RepositoryContext,
+    patientId: string,
+    asOf: string,
+  ): TranscribedClinicalFactCandidate[] {
+    const candidates: TranscribedClinicalFactCandidate[] = []
+    const emittedRequestIds = new Set<string>()
+    const srList = this.#searchAllFhirIdsForPatient(context, 'ServiceRequest', patientId)
+    const closedLabReqRows = z.array(z.object({
+      service_request_id: z.string().min(1),
+    }).strict()).parse(
+      this.#database.driver.prepare(`
+        SELECT r.service_request_id
+        FROM laboratory_request AS r
+        JOIN clinical_request_context AS ctx
+          ON ctx.workspace_id = r.workspace_id AND ctx.epoch = r.epoch AND ctx.case_id = r.case_id
+        WHERE r.workspace_id = ? AND r.epoch = ? AND ctx.patient_id = ?
+          AND (r.status IN ('reported', 'acknowledged', 'cancelled') OR r.diagnostic_report_id IS NOT NULL)
+      `).all(context.workspaceId, context.epoch, patientId),
+    )
+    const closedServiceRequestIds = new Set(closedLabReqRows.map(r => r.service_request_id))
+
+    const pushRequestCandidate = (input: {
+      category: 'laboratory' | 'examination' | 'procedure'
+      code: string
+      display: string
+      effectiveAt: string
+      recordId: string
+      system: string
+    }) => {
+      if (emittedRequestIds.has(input.recordId)) return
+      emittedRequestIds.add(input.recordId)
+      candidates.push({
+        category: input.category,
+        effectiveAt: input.effectiveAt,
+        factId: `his-fhir:ServiceRequest:${input.recordId}:1:${input.code}`,
+        ingestedAt: input.effectiveAt,
+        institutionScope: 'local',
+        itemCode: {
+          code: input.code,
+          display: input.display,
+          system: input.system,
+        },
+        mappingVersion: 'clinmesh-fact-map-v1',
+        method: null,
+        orderedAt: input.effectiveAt,
+        presence: 'present',
+        provenance: {
+          recordId: input.recordId,
+          recordType: 'ServiceRequest',
+          recordVersion: '1',
+          sourceSystemId: 'clinmesh-his-fhir',
+        },
+        recordStatus: 'final',
+        reportedAt: null,
+        specimenOrSite: null,
+        supersedesFactId: null,
+        value: {
+          normalizedValue: {
+            code: input.code,
+            display: input.display,
+            system: input.system,
+          },
+          rawText: `已开立${input.display}`,
+        },
+        verificationStatus: 'provisional',
+      })
+    }
+
+    for (const sr of srList) {
+      const parsed = z.object({
+        authoredOn: z.string().optional(),
+        code: z.object({
+          coding: z.array(z.object({ code: z.string().optional(), display: z.string().optional(), system: z.string().optional() }).loose()).optional(),
+          concept: z.object({
+            coding: z.array(z.object({ code: z.string().optional(), display: z.string().optional(), system: z.string().optional() }).loose()).optional(),
+            text: z.string().optional(),
+          }).loose().optional(),
+          text: z.string().optional(),
+        }).loose().optional(),
+        id: z.string().min(1),
+        status: z.string().optional(),
+      }).loose().safeParse(sr.resource)
+      if (!parsed.success || parsed.data.status !== 'active' || closedServiceRequestIds.has(parsed.data.id)) continue
+      const authoredAt = parsed.data.authoredOn ?? asOf
+      const codings = [
+        ...(parsed.data.code?.concept?.coding ?? []),
+        ...(parsed.data.code?.coding ?? []),
+      ]
+      const codes = codings.map(c => c.code ?? '').filter(Boolean)
+      const display = [parsed.data.code?.concept?.text, parsed.data.code?.text, ...codings.map(c => c.display)].filter(Boolean).join(' ')
+      if (
+        codes.some(c => c === '11524-6' || c === 'examination-ecg-12-lead')
+        || /12\s*导联心电图|\bECG\b/i.test(display)
+      ) {
+        pushRequestCandidate({
+          category: 'examination',
+          code: '11524-6',
+          display: '常规 12 导联心电图',
+          effectiveAt: authoredAt,
+          recordId: parsed.data.id,
+          system: 'http://loinc.org',
+        })
+      } else if (
+        codes.some(c => ['89579-7', '10839-9', '6597-9', '2100404B', '2100404A', '2100504A', 'CN-LAB-CARDIAC'].includes(c))
+        || /肌钙蛋白|troponin|hs-?ctn/i.test(display)
+      ) {
+        const matchedCode = codes.find(c => ['89579-7', '10839-9', '6597-9'].includes(c)) ?? '89579-7'
+        pushRequestCandidate({
+          category: 'laboratory',
+          code: matchedCode,
+          display: codings[0]?.display ?? '心肌肌钙蛋白测定',
+          effectiveAt: authoredAt,
+          recordId: parsed.data.id,
+          system: 'http://loinc.org',
+        })
+      } else if (codes.some(c => /^(?:00\.66|36\.0[67]|36\.1|88\.5[56])/.test(c))) {
+        const matchedCode = codes.find(c => /^(?:00\.66|36\.0[67]|36\.1|88\.5[56])/.test(c))!
+        pushRequestCandidate({
+          category: 'procedure',
+          code: matchedCode,
+          display: codings[0]?.display ?? '冠脉介入检查/治疗计划',
+          effectiveAt: authoredAt,
+          recordId: parsed.data.id,
+          system: codings[0]?.system ?? 'http://loinc.org',
+        })
+      }
+    }
+
+    const plannedSurgeries = z.array(z.object({
+      planned_procedure_json: z.string().min(1),
+      request_id: z.string().min(1),
+      requested_at: z.string().min(1),
+    }).strict()).parse(
+      this.#database.driver.prepare(`
+        SELECT s.request_id, s.planned_procedure_json, s.requested_at
+        FROM inpatient_surgery_request AS s
+        JOIN inpatient_admission AS a
+          ON a.workspace_id = s.workspace_id AND a.epoch = s.epoch AND a.admission_id = s.admission_id
+        WHERE s.workspace_id = ? AND s.epoch = ? AND a.patient_id = ?
+          AND s.status IN ('requested', 'ready', 'standby-pci')
+      `).all(context.workspaceId, context.epoch, patientId),
+    )
+    for (const row of plannedSurgeries) {
+      const proc = z.object({
+        coding: z.object({ code: z.string(), display: z.string(), system: z.string() }).optional(),
+        code: z.string().optional(),
+        display: z.string().optional(),
+        system: z.string().optional(),
+      }).loose().safeParse(JSON.parse(row.planned_procedure_json))
+      if (!proc.success) continue
+      const code = proc.data.coding?.code ?? proc.data.code
+      const display = proc.data.coding?.display ?? proc.data.display ?? '计划手术'
+      const system = proc.data.coding?.system ?? proc.data.system ?? 'urn:clinmesh:procedure'
+      if (code && /^(?:00\.66|36\.0[67]|36\.1|88\.5[56])/.test(code)) {
+        pushRequestCandidate({
+          category: 'procedure',
+          code,
+          display,
+          effectiveAt: row.requested_at,
+          recordId: row.request_id,
+          system,
+        })
+      }
+    }
+
+    return candidates
+  }
+
+  #loadDischargeAndEncounterContextCandidates(
+    context: RepositoryContext,
+    subject: { kind: ClinicalFactSubjectKind; id: string; patientId: string },
+    asOf: string,
+  ): TranscribedClinicalFactCandidate[] {
+    const candidates: TranscribedClinicalFactCandidate[] = []
+
+    const dischargeRows = z.array(z.object({
+      event_id: z.string().min(1),
+      virtual_time: z.string().min(1),
+    }).strict()).parse(
+      this.#database.driver.prepare(`
+        SELECT de.event_id, de.virtual_time
+        FROM inpatient_discharge_event de
+        JOIN inpatient_admission ia
+          ON ia.workspace_id = de.workspace_id AND ia.epoch = de.epoch AND ia.admission_id = de.admission_id
+        WHERE de.workspace_id = ? AND de.epoch = ? AND ia.patient_id = ?
+          AND de.kind IN ('issue', 'depart')
+          AND julianday(de.virtual_time) <= julianday(?)
+          AND NOT EXISTS (
+            SELECT 1 FROM inpatient_discharge_event r
+            WHERE r.workspace_id = de.workspace_id AND r.epoch = de.epoch
+              AND r.kind = 'recall' AND r.reverses_event_id = de.event_id
+          )
+        ORDER BY julianday(de.virtual_time) ASC, de.event_id ASC
+      `).all(context.workspaceId, context.epoch, subject.patientId, asOf),
+    )
+    for (const row of dischargeRows) {
+      candidates.push({
+        category: 'procedure',
+        effectiveAt: row.virtual_time,
+        factId: `his-fhir:DischargeEvent:${row.event_id}:1:18842-5`,
+        ingestedAt: row.virtual_time,
+        institutionScope: 'local',
+        itemCode: {
+          code: '18842-5',
+          display: '住院出院时间/出院小结',
+          system: 'http://loinc.org',
+        },
+        mappingVersion: 'clinmesh-fact-map-v1',
+        method: null,
+        orderedAt: null,
+        presence: 'present',
+        provenance: {
+          recordId: row.event_id,
+          recordType: 'DischargeEvent',
+          recordVersion: '1',
+          sourceSystemId: 'clinmesh-his-fhir',
+        },
+        recordStatus: 'final',
+        reportedAt: row.virtual_time,
+        specimenOrSite: null,
+        supersedesFactId: null,
+        value: {
+          normalizedValue: row.virtual_time,
+          rawText: `出院时间 ${row.virtual_time}`,
+        },
+        verificationStatus: 'confirmed',
+      })
+    }
+
+    if (subject.kind === 'outpatient') {
+      const caseRow = z.object({
+        arrived_at: z.string().min(1),
+      }).optional().parse(
+        this.#database.driver.prepare(`
+          SELECT arrived_at FROM outpatient_case
+          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        `).get(context.workspaceId, context.epoch, subject.id),
+      )
+      if (caseRow !== undefined) {
+        const recordId = `outpatient-encounter-context:${subject.id}`
+        candidates.push({
+          category: 'procedure',
+          effectiveAt: caseRow.arrived_at,
+          factId: `his-fhir:EncounterContext:${recordId}:1:outpatient-encounter-context`,
+          ingestedAt: caseRow.arrived_at,
+          institutionScope: 'local',
+          itemCode: {
+            code: 'outpatient-encounter-context',
+            display: '当前门诊接诊上下文',
+            system: 'urn:clinmesh:encounter-context',
+          },
+          mappingVersion: 'clinmesh-fact-map-v1',
+          method: null,
+          orderedAt: null,
+          presence: 'present',
+          provenance: {
+            recordId,
+            recordType: 'EncounterContext',
+            recordVersion: '1',
+            sourceSystemId: 'clinmesh-his-fhir',
+          },
+          recordStatus: 'final',
+          reportedAt: caseRow.arrived_at,
+          specimenOrSite: null,
+          supersedesFactId: null,
+          value: {
+            normalizedValue: subject.id,
+            rawText: `门诊接诊 ${subject.id}`,
+          },
+          verificationStatus: 'confirmed',
+        })
+      }
+    }
+
+    return candidates
+  }
+
   #loadBedsideQuestionnaireCandidates(
     context: RepositoryContext,
     patientId: string,
@@ -838,6 +1178,30 @@ export class ClinicalFactLedgerService {
       else byCaseId.set(row.case_id, [row])
     }
 
+    const legacyCodes = new Set(LEGACY_BEDSIDE_QUESTIONNAIRE_FIELDS.map(field => field.code))
+    const answerRows = z.array(z.object({
+      answers_json: z.string().min(1),
+      recorded_at: z.string().min(1),
+      revision: z.number().int().positive(),
+      subject_id: z.string().min(1),
+      subject_kind: z.enum(['outpatient', 'inpatient']),
+    }).strict()).parse(
+      this.#database.driver.prepare(`
+        SELECT subject_kind, subject_id, revision, answers_json, recorded_at
+        FROM bedside_questionnaire_answers
+        WHERE workspace_id = ? AND epoch = ? AND patient_id = ?
+        ORDER BY subject_kind ASC, subject_id ASC, revision ASC
+      `).all(context.workspaceId, context.epoch, patientId),
+    )
+
+    const extrasBySubject = new Map<string, typeof answerRows>()
+    for (const row of answerRows) {
+      const key = `${row.subject_kind}:${row.subject_id}`
+      const list = extrasBySubject.get(key)
+      if (list) list.push(row)
+      else extrasBySubject.set(key, [row])
+    }
+
     const candidates: TranscribedClinicalFactCandidate[] = []
     for (const [caseId, caseRows] of byCaseId) {
       candidates.push(...transcribeBedsideQuestionnaireFacts({
@@ -851,6 +1215,32 @@ export class ClinicalFactLedgerService {
         })),
       }))
     }
+
+    for (const [subjectKey, subjectRows] of extrasBySubject) {
+      const subjectId = subjectRows[0]!.subject_id
+      const skipLegacyForSubject = byCaseId.has(subjectId)
+      candidates.push(...transcribeBedsideQuestionnaireFacts({
+        revisions: subjectRows.map(row => {
+          const parsedAnswers = z.array(bedsideQuestionnaireValueInputSchema).parse(JSON.parse(row.answers_json))
+          const extraAnswers: BedsideQuestionnaireExtraAnswerInput[] = []
+          for (const answer of parsedAnswers) {
+            const code = normalizeBedsideItemCode(answer.code)
+            if (skipLegacyForSubject && legacyCodes.has(code)) continue
+            const scalar = answer.booleanValue ?? answer.numberValue ?? answer.textValue ?? null
+            extraAnswers.push({ code, value: scalar })
+          }
+          return {
+            extraAnswers,
+            observationId: `questionnaire-${subjectKey}-rev-${row.revision}`,
+            observationVersion: String(row.revision),
+            recordedAt: row.recorded_at,
+            revisionId: `${subjectKey}-q-rev-${row.revision}`,
+            revisionNumber: row.revision,
+          }
+        }),
+      }))
+    }
+
     return candidates
   }
 
