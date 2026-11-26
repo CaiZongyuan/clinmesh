@@ -14,6 +14,7 @@ export async function clockContract(store: StorePort, timezone: string) {
     tx.insert(at, 'visitor_sessions', { id, practitioner_role: 'admin', version: 1, revoked: false, expires_at: credential.ticket.expiresAt });
   });
   let fail = false;
+  let failAdvanced = false;
   const calendar: ClinMeshModule<OperationCatalog> = { id: 'calendar', kind: 'clinical', version: '1', midnight(tx, scope, date) {
     tx.insert(scope, 'patients', { id: v7(), display_name: date, birth_date: null, version: 1 });
     if (fail) {
@@ -22,6 +23,14 @@ export async function clockContract(store: StorePort, timezone: string) {
       return rejected;
     }
     return Promise.resolve();
+  }, clockAdvanced(tx, scope) {
+    if (!failAdvanced) return;
+    const rejected = Promise.resolve().then(() => {
+      tx.insert(scope, 'patients', { id: v7(), display_name: 'Failed clock advance', birth_date: null, version: 1 });
+      throw new CoreError(409, 'ADVANCE_FAILURE');
+    });
+    void rejected.catch(() => {});
+    return rejected;
   } };
   const catalog = new OperationCatalog();
   registerPlatformOperations(catalog, { sign: async () => '', modules: new ModuleRegistry([calendar, { ...calendar, id: 'disabled', midnight() { throw Error('disabled module invoked'); } }]) });
@@ -33,8 +42,12 @@ export async function clockContract(store: StorePort, timezone: string) {
   const failure = await advance('2028-03-01T16:00:00.000Z', 1, 'second').then(() => 'committed', (error: Error) => error.message);
   const rolledBack = await state();
   fail = false;
+  failAdvanced = true;
+  const advancedFailure = await advance('2028-03-01T16:00:00.000Z', 1, 'second').then(() => 'committed', (error: Error) => error.message);
+  const afterAdvancedFailure = await state();
+  failAdvanced = false;
   await advance('2028-03-01T16:00:00.000Z', 1, 'second');
   const last = await state();
   const invalid = await Promise.all(['2028-03-01T16:00:00.000Z', '2029-03-03T16:00:00.000Z'].map(to => advance(to, 2, to).then(() => 'committed', (error: Error) => error.message)));
-  return { first, rolledBack, last, failure, invalid };
+  return { first, rolledBack, last, failure, advancedFailure, afterAdvancedFailure, invalid };
 }

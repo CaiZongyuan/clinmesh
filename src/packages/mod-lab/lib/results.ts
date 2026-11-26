@@ -69,7 +69,8 @@ export function resolveFindings(truth: Truth, service: Service, stages: Result['
     return result && project(service, result);
   }
   const baseline = truth.normalBaselines?.find(item => sameCoding(item.service, service));
-  if (!baseline || revision !== 1 || matches.length) return undefined;
+  if (!baseline || revision !== 1) return undefined;
+  if (matches.some(result => !service.analytes.length || !project(service, result))) return undefined;
   const conflicts = truth.results.some(result => result.observations.some(observation => {
     const leaf = service.analytes.find(item => sameCoding(item, observation.analyte));
     return leaf && interpret(leaf, observation)?.interpretation !== 'normal';

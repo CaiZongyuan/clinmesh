@@ -28,7 +28,7 @@ const visible = await store.read(reader => readHospitalDataPack(reader, at));
 
 已知既往测量写在 `priorHistory.observations`。每项包含 UTC `observedAt`、同包服务和指标的完整编码、值及单位。编译器核对指标所属服务与单位。`caseTruth.results` 保存本次就诊各阶段签发报告所需的私有结果。
 
-`caseTruth.results[].observations` 的定量值携带源 `unit`。无量纲 `1` 和有明确 `interpretation` 的 `qualitative` 结果可省略源单位。`caseTruth.normalBaselines` 可按服务编码给出本病例明确授权的正常报告正文和完整测量值。`services[].turnaroundMinutes` 指定虚拟周转分钟数，默认 30 分钟。`requiresProcedure` 标记需要术式流程执行的检查。
+`caseTruth.results[].observations` 的定量值携带源 `unit`。无量纲 `1` 和有明确 `interpretation` 的 `qualitative` 结果可省略源单位。`caseTruth.normalBaselines` 可按服务编码给出本病例明确授权的正常报告正文和完整测量值。`services[].turnaroundMinutes` 指定虚拟周转分钟数，默认 30 分钟。`requiresProcedure` 标记需要术式流程执行的检查。内置宿主按包 ID、版本及完整服务编码补充旧包遗漏的术式标记。见[历史术式服务清单](../../../data/packs/legacy-procedure-services.json)。
 
 术式 `defaultPreopOrderPolicy` 对应住院模块手术申请的长期医嘱处理策略。`continue-active` 保持术前长期医嘱有效，`stop-on-completion` 在手术完成时请求停用。所需术前检查使用 `preopServices` 指向院内服务目录。每例拟行手术的检查依据取该病例的相应阶段结果。
 

@@ -6,12 +6,17 @@ import { checkVersion, CoreError, type CommandContext } from '../../platform';
 import type { StoreReader, StoreScope } from '../../store';
 import { issueReceipt, quote, type LabBillingPort, type Quote } from './contracts';
 
-export function clinicalServices(reader: StoreReader, at: StoreScope) {
+export const legacyProcedure = z.strictObject({ packId: z.string().min(1), packVersion: z.string().min(1), codeSystem: z.url(), code: z.string().min(1) });
+type LegacyProcedures = readonly z.infer<typeof legacyProcedure>[];
+
+export function clinicalServices(reader: StoreReader, at: StoreScope, legacy: LegacyProcedures) {
   const installation = reader.list(at, 'data_pack_installations')[0]!;
   return reader.list(at, 'catalog_items', { kind: 'services', installation_id: installation.id }).flatMap(row => {
     const definition = catalogSchema.shape.services.element.parse(row.definition);
     const kind = definition.kind;
     if ((kind !== 'lab' && kind !== 'examination') || definition.requiresProcedure || row.amount_minor === null || row.currency_code === null || row.currency_exponent === null) return [];
+    if (kind === 'examination' && definition.requiresProcedure === undefined && legacy.some(item =>
+      item.packId === installation.pack_id && item.packVersion === installation.pack_version && item.codeSystem === row.code_system && item.code === row.code)) return [];
     return [{ definition, kind, quote: { serviceId: row.id, catalogVersion: installation.pack_version, unitPriceMinor: row.amount_minor, currencyCode: row.currency_code, currencyExponent: row.currency_exponent } }];
   });
 }
@@ -41,12 +46,12 @@ function replaceDraft(context: CommandContext, items: Quote[]) {
   return { version: expectedVersion + 1 };
 }
 
-export function saveDraft(context: CommandContext, serviceIds: string[]) {
+export function saveDraft(context: CommandContext, serviceIds: string[], legacy: LegacyProcedures) {
   const { tx, at, targetId, expectedVersion } = context;
   activeEncounter(context, targetId, true);
   const current = savedDraft(tx, at, targetId);
   checkVersion(current.version, expectedVersion);
-  const services = clinicalServices(tx, at);
+  const services = clinicalServices(tx, at, legacy);
   const items = serviceIds.map(id => {
     const service = services.find(item => item.quote.serviceId === id);
     if (!service) throw new CoreError(409, 'CATALOG_CONFLICT');
@@ -59,7 +64,7 @@ function sameQuote(first: Quote | undefined, other: Quote) {
   return first && first.serviceId === other.serviceId && first.catalogVersion === other.catalogVersion && first.unitPriceMinor === other.unitPriceMinor && first.currencyCode === other.currencyCode && first.currencyExponent === other.currencyExponent;
 }
 
-export function issueOrders(context: CommandContext, items: Quote[], billing?: LabBillingPort) {
+export function issueOrders(context: CommandContext, items: Quote[], legacy: LegacyProcedures, billing?: LabBillingPort) {
   const { tx, at, targetId, expectedVersion, virtualAt, recordedAt } = context;
   const encounter = activeEncounter(context, targetId, true);
   const draft = savedDraft(tx, at, targetId);
@@ -67,7 +72,7 @@ export function issueOrders(context: CommandContext, items: Quote[], billing?: L
   const policies = manifestSchema.shape.policies.parse(tx.list(at, 'data_pack_installations')[0]!.manifest.policies);
   if (policies.requireSignedNoteBeforeOrder && !tx.list(at, 'clinical_record_revisions', { encounter_id: targetId }).length) throw new CoreError(409, 'CLINICAL_DOCUMENT_UNSIGNED');
   if (policies.requireDiagnosisBeforeOrder && !tx.list(at, 'diagnosis_revisions', { encounter_id: targetId }).length) throw new CoreError(409, 'DIAGNOSIS_UNCONFIRMED');
-  const services = clinicalServices(tx, at);
+  const services = clinicalServices(tx, at, legacy);
   const orders = labOrders(tx, at, targetId);
   const followUp = tx.list(at, 'encounters', { source_case_id: encounter.source_case_id, status: 'completed' }).length > 0;
   const issued = new Set<string>();

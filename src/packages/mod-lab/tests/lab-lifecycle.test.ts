@@ -99,10 +99,12 @@ it('publishes only released versions, retains old acknowledgements and rechecks 
   expect(JSON.stringify(await view())).not.toContain('Decimal transcription');
   await expect(call('lab.amend', first.id, 4, { reportVersion: 1 })).rejects.toThrow('ROLE_FORBIDDEN');
   await call('lab.acknowledge', first.id, 4, { reportVersion: 1 });
+  const [repeat] = await issue('hs-tni');
   await role(1, 'coordinator');
   await call('lab.amend', first.id, 5, { reportVersion: 1 });
   const revised = (await view()).orders[0]!;
   const latest = revised.reports[1]!;
+  expect((await view()).orders.find(order => order.id === repeat!.id)?.status).toBe('issued');
   expect(revised.status).toBe('reported');
   expect(revised.reports[0]).toMatchObject({ ...first, acknowledged: { role: 'family-clinician' } });
   expect(latest).toMatchObject({ previousId: first.id, version: 2, acknowledged: null, observations: [{ value: 120, interpretation: 'high', critical: true }] });
@@ -113,6 +115,8 @@ it('publishes only released versions, retains old acknowledgements and rechecks 
   await confirmDiagnosis();
   await expect(call('encounter.complete', encounterId, 5)).rejects.toThrow('COMPLETION_BLOCKED');
   await call('lab.acknowledge', latest.id, 6, { reportVersion: 2 });
+  await expect(call('encounter.complete', encounterId, 5)).rejects.toThrow('COMPLETION_BLOCKED');
+  await call('lab.cancel', repeat!.id, 1);
   await expect(call('encounter.complete', encounterId, 5)).resolves.toEqual({ version: 6 });
 });
 
@@ -165,7 +169,7 @@ it('applies signed-note and diagnosis policies before issuing ECG and TTE, then 
   expect(reports.some(report => report.observations.length === 0 && report.summary.en.length > 5)).toBe(true);
 });
 
-it.each(['missing', 'missing unit', 'unsupported unit', 'qualitative instead of number', 'partial result', 'explicit baseline', 'conflicting baseline'] as const)('handles %s without disclosing unused truth or synthesizing a finding', async scenario => {
+it.each(['missing', 'missing unit', 'unsupported unit', 'qualitative instead of number', 'partial result', 'explicit baseline', 'normal follow-up baseline', 'abnormal follow-up baseline', 'conflicting baseline'] as const)('handles %s without disclosing unused truth or synthesizing a finding', async scenario => {
   const host = await clinic(pack => {
     const patient = pack.cases.find(item => item.caseId === 'g02')!;
     const initial = patient.caseTruth.results.find(result => result.service.code === 'hs-tni')!;
@@ -175,6 +179,7 @@ it.each(['missing', 'missing unit', 'unsupported unit', 'qualitative instead of 
     if (scenario === 'unsupported unit') patient.caseTruth.results.push({ ...initial, observations: [{ ...initial.observations[0]!, unit: 'mmHg' }] });
     if (scenario === 'partial result') patient.caseTruth.results.push({ ...initial, observations: [] });
     if (scenario.includes('baseline') || scenario === 'partial result') patient.caseTruth.normalBaselines = [{ service: initial.service, summary: { en: 'Authored normal', zh: '已编写的正常基线' }, observations: initial.observations }];
+    if (scenario.includes('follow-up')) patient.caseTruth.results.push({ ...initial, stage: 'follow-up', observations: [{ ...initial.observations[0]!, value: scenario === 'normal follow-up baseline' ? 10 : 120 }] });
     if (scenario === 'conflicting baseline') {
       const companion = { ...pack.catalog.services.find(item => item.code === 'hs-tni')!, code: 'same-analyte-panel' };
       pack.catalog.services.push(companion);
@@ -184,7 +189,7 @@ it.each(['missing', 'missing unit', 'unsupported unit', 'qualitative instead of 
   const [order] = await host.issue('hs-tni');
   await host.start(order!.id); await host.call('lab.report-now', order!.id, 3);
   const published = (await host.view()).orders[0]!;
-  if (scenario === 'explicit baseline') expect(published.reports[0]).toMatchObject({ summary: { en: 'Authored normal' }, observations: [{ value: 12, interpretation: 'normal' }] });
+  if (scenario === 'explicit baseline' || scenario === 'normal follow-up baseline') expect(published.reports[0]).toMatchObject({ summary: { en: 'Authored normal' }, observations: [{ value: 12, interpretation: 'normal' }] });
   else {
     expect(published).toMatchObject({ status: 'generation-failed', reports: [] });
     await host.call('lab.cancel', order!.id, 4);

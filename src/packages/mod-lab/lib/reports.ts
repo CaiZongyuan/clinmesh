@@ -115,10 +115,7 @@ export function reviewReport(context: CommandContext, reportVersion: number, ame
   checkVersion(report.revision, reportVersion);
   if (!amend && order.status === 'acknowledged' && [order.version - 1, order.version].includes(expectedVersion) && acknowledgement(tx, at, report.id)) return { status: 'acknowledged' as const, version: order.version };
   checkVersion(order.version, expectedVersion);
-  if (amend && (order.status === 'reported' || order.status === 'acknowledged')) {
-    if (labOrders(tx, at, order.encounter_id).some(other => other.id !== order.id && other.catalog_item_id === order.catalog_item_id && !['acknowledged', 'cancelled', 'generation-failed'].includes(other.status))) throw new CoreError(409, 'ACTIVE_ORDER_EXISTS');
-    return publish(context, order, report);
-  }
+  if (amend && (order.status === 'reported' || order.status === 'acknowledged')) return publish(context, order, report);
   if (amend || order.status !== 'reported') throw new CoreError(409, 'INVALID_ORDER_STATE');
   tx.insert(at, 'report_acknowledgements', { id: v7(), report_id: report.id, practitioner_role: actor.role.id, virtual_at: context.virtualAt, recorded_at: context.recordedAt });
   return transition(context, order, 'acknowledged', actor.role.id);
