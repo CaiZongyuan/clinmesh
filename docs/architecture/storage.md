@@ -94,7 +94,7 @@ queued -> claimed -> completed
 queued/claimed    -> abandoned
 ```
 
-每个 `outbox_event` 携带 event ID、Workspace/Epoch、Scenario Run、kind、dedup key、correlation ID、attempt、next attempt、`lease_owner/lease_version/leased_until` 和 payload hash。模型控制拒绝使用独立的 `model-blocked` 完成语义将事件置为关联 `model_task_wait` 的等待态并归还调度 attempt，不消耗技术重试机会；已派发结果未知保持 `ambiguous`，不随控制恢复重领。dispatcher 在外部调用前持久化 lease，提交结果前重验 active Epoch，采用 at-least-once 投递加幂等 consumer（检查报告按申请关联去重，支付仅在未决资金全部收敛且净应收完全覆盖时放行下游），崩溃后由过期 lease 回收。
+每个 `outbox_event` 携带 event ID、Workspace/Epoch、Scenario Run、kind、dedup key、correlation ID、attempt、next attempt、`lease_owner/lease_version/leased_until` 和 payload hash。`CommandTransaction.enqueue` 支持可选非负整数 `delayMs`（默认 `0`），按 `now + delayMs` 写入 `next_attempt_at`（`created_at`/`updated_at` 保持 `now`）。启用自动调度（`autoDispatchIntervalMs !== undefined`，Server 默认兜底扫描周期 `1_000ms`）时，`CommandExecutor` 仅在事务成功 `COMMIT` 后发送新入队事件元数据（回滚、无入队或幂等回放不唤醒）：即时事件（`next_attempt_at <= now`）在当前微任务后立即唤醒对应 lane 的空闲 `pumpSlot`；延迟事件（`next_attempt_at > now`）按 lane 维护单个最早到期定时器并在新到更早事件时重排，到期后先按 SQLite 查询重武装同 lane 下一条未来延迟事件再唤醒执行，`runtime.close()` 时清理全部延迟定时器。未传 `autoDispatchIntervalMs` 时保持完全被动模式，由测试通过 `dispatchPending()`/`dispatchOnce()` 确定性推进。模型控制拒绝使用独立的 `model-blocked` 完成语义将事件置为关联 `model_task_wait` 的等待态并归还调度 attempt，不消耗技术重试机会；已派发结果未知保持 `ambiguous`，不随控制恢复重领。dispatcher 在外部调用前持久化 lease，提交结果前重验 active Epoch，采用 at-least-once 投递加幂等 consumer（检查报告按申请关联去重，支付仅在未决资金全部收敛且净应收完全覆盖时放行下游），崩溃后由过期 lease 回收，详见[Outbox 延迟入队与事件驱动唤醒决策](../decisions/implemented/architecture/2026-11-26-outbox-delay-and-event-wakeup.md)。
 
 <a id="98-文书与附件边界"></a>
 

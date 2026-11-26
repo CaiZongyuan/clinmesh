@@ -9,7 +9,10 @@ import {
   FhirRepositoryError,
   type RepositoryContext,
 } from '../infrastructure/sqlite/fhir-repository.ts'
+import { outboxExhaustedAt } from '../infrastructure/sqlite/outbox-repository.ts'
 import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
+
+const maxOutboxNextAttemptMs = Date.parse(outboxExhaustedAt)
 
 export interface ActorContext extends RepositoryContext {
   actorId: string
@@ -101,10 +104,16 @@ export interface CommandInvocation<Input, Data> {
   storedResponse?: (response: CommandResponse<Data>) => unknown
 }
 
-interface EnqueueInput {
+export interface EnqueueInput {
   dedupKey: string
+  delayMs?: number
   kind: string
   payload: unknown
+}
+
+export interface EnqueuedOutboxEvent {
+  kind: string
+  nextAttemptAt: string
 }
 
 interface CommandExecutorOptions {
@@ -200,21 +209,34 @@ export class CommandTransaction {
   readonly #context: ActorContext
   readonly #database: ClinMeshDatabase
   readonly #now: () => Date
+  readonly #onEnqueue?: (event: EnqueuedOutboxEvent) => void
 
   constructor(
     database: ClinMeshDatabase,
     fhir: FhirRepository,
     context: ActorContext,
     now: () => Date,
+    onEnqueue?: (event: EnqueuedOutboxEvent) => void,
   ) {
     this.#database = database
     this.fhir = fhir
     this.#context = context
     this.#now = now
+    if (onEnqueue !== undefined) this.#onEnqueue = onEnqueue
   }
 
   enqueue(input: EnqueueInput): void {
-    const now = this.#now().toISOString()
+    const delayMs = input.delayMs ?? 0
+    if (!Number.isSafeInteger(delayMs) || delayMs < 0) {
+      throw new RangeError('Outbox delayMs must be a non-negative finite integer')
+    }
+    const nowDate = this.#now()
+    const now = nowDate.toISOString()
+    const nextAttemptMs = nowDate.getTime() + delayMs
+    if (!Number.isFinite(nextAttemptMs) || nextAttemptMs >= maxOutboxNextAttemptMs) {
+      throw new RangeError('Outbox delayMs exceeds valid timestamp range')
+    }
+    const nextAttemptAt = delayMs === 0 ? now : new Date(nextAttemptMs).toISOString()
     const payload = JSON.stringify(canonicalize(input.payload))
     this.#database.driver.prepare(`
       INSERT INTO outbox_event (
@@ -230,19 +252,26 @@ export class CommandTransaction {
       input.dedupKey,
       payload,
       hashJson(input.payload),
-      now,
+      nextAttemptAt,
       now,
       now,
     )
+    this.#onEnqueue?.({ kind: input.kind, nextAttemptAt })
   }
 }
 
 export class CommandExecutor {
   readonly #listeners = new Set<(context: ActorContext, effects: CommandEffect[]) => void>()
+  readonly #outboxListeners = new Set<(events: readonly EnqueuedOutboxEvent[]) => void>()
 
   subscribe(listener: (context: ActorContext, effects: CommandEffect[]) => void): () => void {
     this.#listeners.add(listener)
     return () => { this.#listeners.delete(listener) }
+  }
+
+  subscribeOutbox(listener: (events: readonly EnqueuedOutboxEvent[]) => void): () => void {
+    this.#outboxListeners.add(listener)
+    return () => { this.#outboxListeners.delete(listener) }
   }
   readonly #database: ClinMeshDatabase
   readonly #fhir: FhirRepository
@@ -415,7 +444,14 @@ export class CommandExecutor {
         now,
       )
 
-      const result = handler(new CommandTransaction(this.#database, this.#fhir, context, this.#now))
+      const enqueued: EnqueuedOutboxEvent[] = []
+      const result = handler(new CommandTransaction(
+        this.#database,
+        this.#fhir,
+        context,
+        this.#now,
+        event => { enqueued.push(event) },
+      ))
       const auditId = uuidv7()
       const requestId = uuidv7()
       const response: CommandResponse<Data> = {
@@ -470,6 +506,13 @@ export class CommandExecutor {
       for (const listener of this.#listeners) {
         // Best-effort notifications cannot turn a committed Command into a failure.
         try { listener(context, result.effects) } catch { /* Queries recover missed notifications. */ }
+      }
+      if (enqueued.length > 0) {
+        const committedEvents = Object.freeze(enqueued)
+        for (const listener of this.#outboxListeners) {
+          // Best-effort notifications cannot turn a committed Command into a failure.
+          try { listener(committedEvents) } catch { /* Fallback sweep recovers missed wakeups. */ }
+        }
       }
       return response
     } catch (error) {

@@ -405,4 +405,245 @@ describe('CommandExecutor', () => {
     )).toMatchObject({ total: 1 })
     database.close()
   })
+
+  it('persists delayMs into outbox next_attempt_at and rejects invalid delay values', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-command-delay-'))
+    temporaryDirectories.push(directory)
+    const database = openClinMeshDatabase({
+      busyTimeoutMs: 5_000,
+      databasePath: join(directory, 'clinmesh.sqlite'),
+    })
+    try {
+      applyMigrations(database)
+      const repositoryContext = { epoch: 'epoch-001', workspaceId: 'workspace-001' }
+      new WorkspaceRepository(database).install({
+        ...repositoryContext,
+        scenarioId: 'outpatient-fever-001',
+        scenarioRunId: 'run-001',
+        workspaceName: '合成医院工作区',
+      })
+      const baseTime = new Date('2026-08-24T01:00:00.000Z')
+      const executor = new CommandExecutor(database, new FhirRepository(database), {
+        now: () => baseTime,
+      })
+      const context = {
+        ...repositoryContext,
+        actorId: 'actor-doctor',
+        roleCode: 'outpatient-doctor',
+        scenarioRunId: 'run-001',
+      }
+
+      executor.execute({
+        context,
+        dataSchema: z.object({ ok: z.boolean() }),
+        expectedVersions: {},
+        idempotencyKey: 'delay-valid-001',
+        input: { kind: 'delay-valid' },
+        operation: 'outbox.delay.valid',
+      }, transaction => {
+        transaction.enqueue({
+          dedupKey: 'default-delay',
+          kind: 'delay.test',
+          payload: { case: 'default' },
+        })
+        transaction.enqueue({
+          dedupKey: 'zero-delay',
+          delayMs: 0,
+          kind: 'delay.test',
+          payload: { case: 'zero' },
+        })
+        transaction.enqueue({
+          dedupKey: 'delayed-2500',
+          delayMs: 2_500,
+          kind: 'delay.test',
+          payload: { case: 'delayed' },
+        })
+        return { data: { ok: true }, effects: [] }
+      })
+
+      const rows = database.driver.prepare(`
+        SELECT dedup_key, next_attempt_at, created_at, updated_at
+        FROM outbox_event
+        WHERE workspace_id = ? AND epoch = ?
+        ORDER BY dedup_key
+      `).all('workspace-001', 'epoch-001') as Array<{
+        created_at: string
+        dedup_key: string
+        next_attempt_at: string
+        updated_at: string
+      }>
+      expect(rows).toEqual([
+        {
+          created_at: '2026-08-24T01:00:00.000Z',
+          dedup_key: 'default-delay',
+          next_attempt_at: '2026-08-24T01:00:00.000Z',
+          updated_at: '2026-08-24T01:00:00.000Z',
+        },
+        {
+          created_at: '2026-08-24T01:00:00.000Z',
+          dedup_key: 'delayed-2500',
+          next_attempt_at: '2026-08-24T01:00:02.500Z',
+          updated_at: '2026-08-24T01:00:00.000Z',
+        },
+        {
+          created_at: '2026-08-24T01:00:00.000Z',
+          dedup_key: 'zero-delay',
+          next_attempt_at: '2026-08-24T01:00:00.000Z',
+          updated_at: '2026-08-24T01:00:00.000Z',
+        },
+      ])
+
+      const sentinelBoundaryDelay = Date.parse('9999-12-31T23:59:59.999Z') - baseTime.getTime()
+      for (const [index, invalidDelay] of [
+        -1,
+        1.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        sentinelBoundaryDelay,
+        1e15,
+      ].entries()) {
+        expect(() => executor.execute({
+          context,
+          dataSchema: z.object({ ok: z.boolean() }),
+          expectedVersions: {},
+          idempotencyKey: `delay-invalid-${index}`,
+          input: { invalidDelay: String(invalidDelay) },
+          operation: 'outbox.delay.invalid',
+        }, transaction => {
+          transaction.enqueue({
+            dedupKey: `invalid-${index}`,
+            delayMs: invalidDelay,
+            kind: 'delay.test',
+            payload: { index },
+          })
+          return { data: { ok: true }, effects: [] }
+        })).toThrow(RangeError)
+      }
+      expect(new OutboxRepository(database).list(repositoryContext)).toHaveLength(3)
+    } finally {
+      database.close()
+    }
+  })
+
+  it('notifies outbox subscribers only after COMMIT with enqueued metadata and ignores rollbacks or replays', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-command-outbox-notify-'))
+    temporaryDirectories.push(directory)
+    const database = openClinMeshDatabase({
+      busyTimeoutMs: 5_000,
+      databasePath: join(directory, 'clinmesh.sqlite'),
+    })
+    try {
+      applyMigrations(database)
+      const repositoryContext = { epoch: 'epoch-001', workspaceId: 'workspace-001' }
+      new WorkspaceRepository(database).install({
+        ...repositoryContext,
+        scenarioId: 'outpatient-fever-001',
+        scenarioRunId: 'run-001',
+        workspaceName: '合成医院工作区',
+      })
+      const baseTime = new Date('2026-08-24T01:00:00.000Z')
+      const executor = new CommandExecutor(database, new FhirRepository(database), {
+        now: () => baseTime,
+      })
+      const context = {
+        ...repositoryContext,
+        actorId: 'actor-doctor',
+        roleCode: 'outpatient-doctor',
+        scenarioRunId: 'run-001',
+      }
+
+      const batches: Array<readonly { kind: string; nextAttemptAt: string }[]> = []
+      const unsubscribe = executor.subscribeOutbox(events => {
+        batches.push(events)
+      })
+      const unsubscribeThrowing = executor.subscribeOutbox(() => {
+        throw new Error('outbox listener failure must not fail committed command')
+      })
+
+      let observedInsideTransaction = -1
+      const runEnqueue = () => executor.execute({
+        context,
+        dataSchema: z.object({ ok: z.boolean() }),
+        expectedVersions: {},
+        idempotencyKey: 'notify-commit-001',
+        input: { step: 1 },
+        operation: 'outbox.notify.commit',
+      }, transaction => {
+        transaction.enqueue({
+          dedupKey: 'immediate-1',
+          kind: 'pharmacy.ready',
+          payload: { caseId: 'c1', prescriptionId: 'p1' },
+        })
+        transaction.enqueue({
+          dedupKey: 'delayed-1',
+          delayMs: 1_500,
+          kind: 'consultation.record-history',
+          payload: { turnId: 't1', generation: 1 },
+        })
+        observedInsideTransaction = batches.length
+        return { data: { ok: true }, effects: [] }
+      })
+
+      expect(runEnqueue().data).toEqual({ ok: true })
+      expect(observedInsideTransaction).toBe(0)
+      expect(batches).toEqual([[
+        { kind: 'pharmacy.ready', nextAttemptAt: '2026-08-24T01:00:00.000Z' },
+        { kind: 'consultation.record-history', nextAttemptAt: '2026-08-24T01:00:01.500Z' },
+      ]])
+
+      // Idempotent replay produces no new outbox event and must not emit another wakeup.
+      expect(runEnqueue().data).toEqual({ ok: true })
+      expect(batches).toHaveLength(1)
+
+      // Command without enqueue must not emit outbox notifications.
+      executor.execute({
+        context,
+        dataSchema: z.object({ ok: z.boolean() }),
+        expectedVersions: {},
+        idempotencyKey: 'notify-empty-001',
+        input: { step: 2 },
+        operation: 'outbox.notify.empty',
+      }, () => ({ data: { ok: true }, effects: [] }))
+      expect(batches).toHaveLength(1)
+
+      // Rolled-back transaction must not emit outbox notifications.
+      expect(() => executor.execute({
+        context,
+        dataSchema: z.object({ ok: z.boolean() }),
+        expectedVersions: {},
+        idempotencyKey: 'notify-rollback-001',
+        input: { step: 3 },
+        operation: 'outbox.notify.rollback',
+      }, transaction => {
+        transaction.enqueue({
+          dedupKey: 'rolled-back-1',
+          kind: 'pharmacy.ready',
+          payload: { caseId: 'c2', prescriptionId: 'p2' },
+        })
+        throw new Error('rollback after enqueue')
+      })).toThrow('rollback after enqueue')
+      expect(batches).toHaveLength(1)
+
+      unsubscribe()
+      unsubscribeThrowing()
+      executor.execute({
+        context,
+        dataSchema: z.object({ ok: z.boolean() }),
+        expectedVersions: {},
+        idempotencyKey: 'notify-after-unsub-001',
+        input: { step: 4 },
+        operation: 'outbox.notify.after-unsub',
+      }, transaction => {
+        transaction.enqueue({
+          dedupKey: 'after-unsub-1',
+          kind: 'pharmacy.ready',
+          payload: { caseId: 'c3', prescriptionId: 'p3' },
+        })
+        return { data: { ok: true }, effects: [] }
+      })
+      expect(batches).toHaveLength(1)
+    } finally {
+      database.close()
+    }
+  })
 })

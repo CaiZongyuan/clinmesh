@@ -237,6 +237,7 @@ export async function authorizeAgentTool(
 
 export async function createImagingRuntime(bundles: unknown[], options: {
   assets?: boolean
+  autoDispatchIntervalMs?: number
   catalog?: boolean
   performanceObserver?: SqlitePerformanceObserver
   persona?: boolean
@@ -263,6 +264,7 @@ export async function createImagingRuntime(bundles: unknown[], options: {
   const runtimeOptions: CreateClinMeshRuntimeOptions = {
     authBaseUrl: 'http://localhost',
     authSecret: 'test-auth-secret-with-at-least-32-characters',
+    ...(options.autoDispatchIntervalMs === undefined ? {} : { autoDispatchIntervalMs: options.autoDispatchIntervalMs }),
     cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
     databasePath: join(directory, 'clinmesh.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!',

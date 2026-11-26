@@ -21,7 +21,7 @@ import {
 } from './application/investigation-service.ts'
 import { UnavailableScenarioGenerationProvider } from './application/scenario-data/provider.ts'
 import { WorkflowService } from './application/workflow-service.ts'
-import { OutboxDispatcher } from './application/outbox-dispatcher.ts'
+import { OutboxDispatcher, OutboxLaneScheduler } from './application/outbox-dispatcher.ts'
 import { z } from 'zod'
 import { existsSync } from 'node:fs'
 import {
@@ -713,7 +713,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       retryDelayMs: options.outboxRetryDelayMs ?? 250,
     })
     let closed = false
-    const dispatchCycles = new Map<string, Promise<number>>()
     let generationCycle: Promise<void> | undefined
     let patientPersonaCycle: Promise<void> | undefined
     let laboratoryServicePublicationCycle: Promise<void> | undefined
@@ -726,18 +725,15 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       { id: 'business', concurrency: 2, filter: { excludedKinds: ['consultation.record-history',
         'consultation.record-history-backfill', 'doctor.generate-recommendations'] } },
     ]
-    const pumpSlot = (lane: typeof lanes[number], slot: number): Promise<number> => {
-      const key = `${lane.id}:${slot}`
-      const running = dispatchCycles.get(key)
-      if (running !== undefined) return running
-      const cycle = (async () => {
-        let handled = 0
-        while (!closed && handled < 100 && await dispatcher.dispatchOnce(lane.filter) !== undefined) handled += 1
-        return handled
-      })().finally(() => dispatchCycles.delete(key))
-      dispatchCycles.set(key, cycle)
-      return cycle
-    }
+    const outboxScheduler = new OutboxLaneScheduler({
+      dispatcher,
+      lanes,
+      ...clockOptions,
+      onError: error => reportRuntimeError({ error, scope: 'outbox-dispatch' }),
+    })
+    const unsubscribeOutbox = options.autoDispatchIntervalMs === undefined
+      ? undefined
+      : commands.subscribeOutbox(events => { outboxScheduler.notifyEnqueued(events) })
     const dispatchPending = async (): Promise<void> => {
       inpatient.followup.refreshPending()
       inpatient.drgReview.refreshPending()
@@ -745,11 +741,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       inpatient.materialEstimates.refreshPending()
       modelTasks.wake()
       const dialogueRecovery = consultationDialogue.resumePending()
-      for (let round = 0; !closed && round < 100; round += 1) {
-        const counts = await Promise.all(lanes.map(lane => Promise.all(Array.from(
-          { length: lane.concurrency }, (_, slot) => pumpSlot(lane, slot)))))
-        if (counts.every(lane => lane.every(count => count === 0))) break
-      }
+      await outboxScheduler.drainPending()
       await dialogueRecovery
     }
     const dispatchScenarioGenerationJobs = (): Promise<void> => {
@@ -796,12 +788,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           modelTasks.wake()
           try { inpatient.followup.refreshPending(); inpatient.drgReview.refreshPending(); inpatient.drgAgent.refreshPending(); inpatient.materialEstimates.refreshPending() } catch (error) { reportRuntimeError({ error, scope: 'outbox-dispatch' }) }
           void consultationDialogue.resumePending().catch(error => reportRuntimeError({ error, scope: 'outbox-dispatch' }))
-          for (const lane of lanes) for (let slot = 0; slot < lane.concurrency; slot++) {
-            if (dispatchCycles.has(`${lane.id}:${slot}`)) continue
-            void pumpSlot(lane, slot).catch(error => {
-              reportRuntimeError({ error, scope: 'outbox-dispatch' })
-            })
-          }
+          outboxScheduler.wakeIdleSlots()
         }, options.autoDispatchIntervalMs)
     const generationTimer = options.autoDispatchIntervalMs === undefined
       ? undefined
@@ -878,6 +865,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       close: (): Promise<void> => {
         if (closePromise !== undefined) return closePromise
         closed = true
+        unsubscribeOutbox?.()
+        outboxScheduler.stop()
         clearInterval(modelUsageRetentionTimer)
         if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
         if (generationTimer !== undefined) clearInterval(generationTimer)
@@ -895,7 +884,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         closePromise = (async () => {
           await Promise.all([
             consultationDialogue.close(),
-            ...dispatchCycles.values(),
+            outboxScheduler.whenIdle(),
             generationCycle,
             laboratoryServicePublicationCycle,
             patientPersonaCycle,
@@ -908,6 +897,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         })()
         return closePromise
       },
+      commands,
       database,
       dispatchPending,
       dispatchScenarioGenerationJobs,

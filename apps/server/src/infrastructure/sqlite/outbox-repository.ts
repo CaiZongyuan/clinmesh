@@ -22,12 +22,43 @@ export interface OutboxClaim extends OutboxEventView {
   status: 'claimed'
 }
 
-export interface ClaimOptions {
-  kinds?: readonly string[]
+export interface OutboxFilter {
   excludedKinds?: readonly string[]
+  kinds?: readonly string[]
+}
+
+export interface ClaimOptions extends OutboxFilter {
   leaseDurationMs: number
   leaseOwner: string
   now: Date
+}
+
+export const outboxExhaustedAt = '9999-12-31T23:59:59.999Z'
+
+const activeOutboxFrom = `
+  FROM outbox_event AS event
+  JOIN workspace
+    ON workspace.workspace_id = event.workspace_id
+   AND workspace.active_epoch = event.epoch
+  JOIN workspace_epoch AS epoch
+    ON epoch.workspace_id = event.workspace_id
+   AND epoch.epoch = event.epoch
+   AND epoch.state = 'active'
+`
+
+function buildKindFilterClause(options: OutboxFilter): { clause: string; params: string[] } | undefined {
+  if (options.kinds !== undefined && options.kinds.length === 0) return undefined
+  const clauses: string[] = []
+  const params: string[] = []
+  if (options.kinds !== undefined) {
+    clauses.push(`AND event.kind IN (${options.kinds.map(() => '?').join(',')})`)
+    params.push(...options.kinds)
+  }
+  if (options.excludedKinds !== undefined && options.excludedKinds.length > 0) {
+    clauses.push(`AND event.kind NOT IN (${options.excludedKinds.map(() => '?').join(',')})`)
+    params.push(...options.excludedKinds)
+  }
+  return { clause: clauses.join('\n        '), params }
 }
 
 export type OutboxCompletion = 'ambiguous' | 'completed' | 'retryable-failed' | 'model-blocked'
@@ -80,30 +111,43 @@ export class OutboxRepository {
     return rows.map(toView)
   }
 
+  nextDelayedAttemptAt(options: OutboxFilter & { now: Date }): string | undefined {
+    const kindFilter = buildKindFilterClause(options)
+    if (kindFilter === undefined) return undefined
+    const now = options.now.toISOString()
+    const row = this.#database.driver.prepare(`
+      SELECT event.next_attempt_at
+      ${activeOutboxFrom}
+      WHERE event.status IN ('queued', 'failed')
+        AND event.next_attempt_at > ?
+        AND event.next_attempt_at < ?
+        ${kindFilter.clause}
+      ORDER BY event.next_attempt_at
+      LIMIT 1
+    `).get(now, outboxExhaustedAt, ...kindFilter.params) as {
+      next_attempt_at: string
+    } | undefined
+    return row?.next_attempt_at
+  }
+
   claimNext(options: ClaimOptions): OutboxClaim | undefined {
+    const kindFilter = buildKindFilterClause(options)
+    if (kindFilter === undefined) return undefined
     const now = options.now.toISOString()
     const leasedUntil = new Date(options.now.getTime() + options.leaseDurationMs).toISOString()
     this.#database.driver.exec('BEGIN IMMEDIATE')
     try {
       const candidate = this.#database.driver.prepare(`
         SELECT event.*
-        FROM outbox_event AS event
-        JOIN workspace
-          ON workspace.workspace_id = event.workspace_id
-         AND workspace.active_epoch = event.epoch
-        JOIN workspace_epoch AS epoch
-          ON epoch.workspace_id = event.workspace_id
-         AND epoch.epoch = event.epoch
-         AND epoch.state = 'active'
+        ${activeOutboxFrom}
         WHERE (
           (event.status IN ('queued', 'failed') AND event.next_attempt_at <= ?)
           OR (event.status = 'claimed' AND event.leased_until < ?)
         )
-        ${options.kinds === undefined ? '' : `AND event.kind IN (${options.kinds.map(() => '?').join(',')})`}
-        ${options.excludedKinds === undefined ? '' : `AND event.kind NOT IN (${options.excludedKinds.map(() => '?').join(',')})`}
+        ${kindFilter.clause}
         ORDER BY event.next_attempt_at, event.created_at, event.event_id
         LIMIT 1
-      `).get(now, now, ...(options.kinds ?? []), ...(options.excludedKinds ?? [])) as (OutboxRow & { epoch: string; workspace_id: string }) | undefined
+      `).get(now, now, ...kindFilter.params) as (OutboxRow & { epoch: string; workspace_id: string }) | undefined
       if (candidate === undefined) {
         this.#database.driver.exec('COMMIT')
         return undefined
@@ -179,7 +223,7 @@ export class OutboxRepository {
     )
     const nextAttemptAt = retryable
       ? new Date(options.now.getTime() + retryDelayMs).toISOString()
-      : '9999-12-31T23:59:59.999Z'
+      : outboxExhaustedAt
 
     this.#database.driver.exec('BEGIN IMMEDIATE')
     try {
