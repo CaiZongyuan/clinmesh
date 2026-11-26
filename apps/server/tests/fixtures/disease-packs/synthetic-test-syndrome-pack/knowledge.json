@@ -9,6 +9,201 @@
             "quoteFragment": "In patients undergoing PCI, DES should be used in preference to BMS",
             "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
             "sourceId": "coronary-10-2021",
+            "title": "合成测试原件 v1 · Synthetic Only",
+            "version": "2021"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodes": ["SYN-DX-01"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["syn-syndrome-dx"],
+          "effectiveFrom": "2026-05-01T00:00:00Z",
+          "id": "syn-lifecycle-imported",
+          "packId": "synthetic-test-syndrome",
+          "reviewerId": null,
+          "statementZh": "合成测试原件 v1 · Synthetic Only：imported 阶段候选知识条款。",
+          "status": "imported",
+          "topicId": "syn-pci-guidance-card",
+          "version": "0.1.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 35 页",
+            "page": 35,
+            "quoteFragment": "In patients undergoing PCI, DES should be used in preference to BMS",
+            "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+            "sourceId": "coronary-10-2021",
+            "title": "合成测试原件 v1 · Synthetic Only",
+            "version": "2021"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodes": ["SYN-DX-01"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["syn-syndrome-dx"],
+          "effectiveFrom": "2026-05-01T00:00:00Z",
+          "id": "syn-lifecycle-draft",
+          "packId": "synthetic-test-syndrome",
+          "reviewerId": null,
+          "statementZh": "合成测试原件 v1 · Synthetic Only：draft 阶段知识草稿条款。",
+          "status": "draft",
+          "topicId": "syn-pci-guidance-card",
+          "version": "0.2.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 35 页",
+            "page": 35,
+            "quoteFragment": "In patients undergoing PCI, DES should be used in preference to BMS",
+            "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+            "sourceId": "coronary-10-2021",
+            "title": "合成测试原件 v1 · Synthetic Only",
+            "version": "2021"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodes": ["SYN-DX-01"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["syn-syndrome-dx"],
+          "effectiveFrom": "2026-05-01T00:00:00Z",
+          "id": "syn-lifecycle-concept-mapped",
+          "packId": "synthetic-test-syndrome",
+          "reviewerId": null,
+          "statementZh": "合成测试原件 v1 · Synthetic Only：concept-mapped 阶段概念映射完成条款。",
+          "status": "concept-mapped",
+          "topicId": "syn-pci-guidance-card",
+          "version": "0.3.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 35 页",
+            "page": 35,
+            "quoteFragment": "In patients undergoing PCI, DES should be used in preference to BMS",
+            "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+            "sourceId": "coronary-10-2021",
+            "title": "合成测试原件 v1 · Synthetic Only",
+            "version": "2021"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodes": ["SYN-DX-01"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["syn-syndrome-dx"],
+          "effectiveFrom": "2026-05-01T00:00:00Z",
+          "id": "syn-lifecycle-clinician-reviewed",
+          "packId": "synthetic-test-syndrome",
+          "reviewerId": "reviewer-syn-cardio-01",
+          "statementZh": "合成测试原件 v1 · Synthetic Only：clinician-reviewed 阶段已审阅知识条款。",
+          "status": "clinician-reviewed",
+          "topicId": "syn-pci-guidance-card",
+          "version": "0.5.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 35 页",
+            "page": 35,
+            "quoteFragment": "In patients undergoing PCI, DES should be used in preference to BMS",
+            "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+            "sourceId": "coronary-10-2021",
+            "title": "合成测试原件 v1 · Synthetic Only",
+            "version": "2021"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodes": ["SYN-DX-01"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["syn-syndrome-dx"],
+          "effectiveFrom": "2026-05-01T00:00:00Z",
+          "id": "syn-lifecycle-published",
+          "packId": "synthetic-test-syndrome",
+          "reviewerId": "reviewer-syn-cardio-01",
+          "statementZh": "合成测试原件 v1 · Synthetic Only：published 阶段正式发布知识条款。",
+          "status": "published",
+          "topicId": "syn-pci-guidance-card",
+          "version": "0.6.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 35 页",
+            "page": 35,
+            "quoteFragment": "In patients undergoing PCI, DES should be used in preference to BMS",
+            "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+            "sourceId": "coronary-10-2021",
+            "title": "合成测试原件 v1 · Synthetic Only",
+            "version": "2021"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodes": ["SYN-DX-01"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["syn-syndrome-dx"],
+          "effectiveFrom": "2026-05-01T00:00:00Z",
+          "id": "syn-lifecycle-rejected",
+          "packId": "synthetic-test-syndrome",
+          "reviewerId": null,
+          "statementZh": "合成测试原件 v1 · Synthetic Only：rejected 阶段被驳回知识条款。",
+          "status": "rejected",
+          "topicId": "syn-pci-guidance-card",
+          "version": "0.7.0"
+        }
+      ],
+      "effectiveFrom": "2026-05-01T00:00:00Z",
+      "snapshotVersion": "2026.05.v0-lifecycle",
+      "topics": [
+        {
+          "effectiveFrom": "2026-05-01T00:00:00Z",
+          "id": "syn-pci-guidance-card",
+          "limitationsZh": [
+            "合成测试原件 v1 · Synthetic Only：全发布生命周期覆盖测试快照。"
+          ],
+          "navigationZh": "合成测试原件 v1 · Synthetic Only：覆盖全生命周期状态。",
+          "packId": "synthetic-test-syndrome",
+          "references": [
+            {
+              "locator": "PDF 物理第 35 页",
+              "page": 35,
+              "quoteFragment": "In patients undergoing PCI, DES should be used in preference to BMS",
+              "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+              "sourceId": "coronary-10-2021",
+              "title": "合成测试原件 v1 · Synthetic Only",
+              "version": "2021"
+            }
+          ],
+          "reviewerId": "reviewer-syn-cardio-01",
+          "status": "published",
+          "titleEn": "Synthetic Lifecycle Knowledge Card (Synthetic Only)",
+          "titleZh": "合成测试原件 v1 · Synthetic Only 生命周期知识卡",
+          "version": "0.6.0"
+        }
+      ]
+    },
+    {
+      "claims": [
+        {
+          "anchor": {
+            "locator": "PDF 物理第 35 页",
+            "page": 35,
+            "quoteFragment": "In patients undergoing PCI, DES should be used in preference to BMS",
+            "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+            "sourceId": "coronary-10-2021",
             "title": "合成血运重建指南测试原文",
             "version": "2021"
           },
@@ -231,6 +426,33 @@
           "statementZh": "首版常规人群筛查备注条款（v2 已被新条款替代退役）。",
           "status": "superseded",
           "supersededByClaimId": "syn-claim-oct-left-main-limit",
+          "topicId": "syn-pci-guidance-card",
+          "version": "2.0.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 35 页",
+            "page": 35,
+            "quoteFragment": "Synthetic test passage; assess the clinical population.",
+            "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+            "sourceId": "coronary-10-2021",
+            "title": "合成测试原件 v1 · Synthetic Only",
+            "version": "2021"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodes": ["I25.1", "I25.103", "SYN-DX-01"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["coronary-artery-disease"],
+          "effectiveFrom": "2026-08-24T00:00:00Z",
+          "id": "syn-claim-retracted-v2",
+          "packId": "synthetic-test-syndrome",
+          "reviewerId": null,
+          "statementZh": "合成测试原件 v1 · Synthetic Only：已撤回（retracted）测试条款。",
+          "status": "retracted",
           "topicId": "syn-pci-guidance-card",
           "version": "2.0.0"
         }

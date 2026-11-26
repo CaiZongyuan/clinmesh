@@ -50,6 +50,7 @@
     "./clinical-fact-ledger": "./src/clinical-fact-ledger.ts",
     "./local-source-ingestion": "./src/local-source-ingestion.ts",
     "./disease-pack": "./src/disease-pack.ts",
+    "./disease-pack-exam": "./src/disease-pack-exam.ts",
     "./guideline-topics": "./src/guideline-topics.ts",
     "./concept-vocabulary": "./src/concept-vocabulary.ts",
     "./knowledge-claims": "./src/knowledge-claims.ts",

@@ -49,6 +49,12 @@ import {
   outpatientDiseasePackKnowledgeInputSchema,
 } from './knowledge-claims.ts'
 import {
+  adminDiseasePackActivateInputSchema,
+  adminDiseasePackExamRunInputSchema,
+  diseasePackActivationGateResponseSchema,
+  dsapExamRunResponseSchema,
+} from './disease-pack-exam.ts'
+import {
   diseasePackCatalogListSchema,
   diseasePackRuntimeBundleSchema,
   diseasePackTaskFactsResponseSchema,
@@ -2203,6 +2209,29 @@ const rawOperationRuntimeDefinitions = [
     http: { method: 'POST', path: '/api/sim/v1/synthetic-cases/authored-pack/prepare', encodeBody: raw => ({ input: authoredCasePackPrepareRequestSchema.shape.input.parse(raw) }) },
     input: authoredCasePackPrepareRequestSchema.shape.input,
     output: authoredCasePackPrepareResponseSchema,
+  },
+  {
+    id: 'admin.disease-packs.exam.run',
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/admin/disease-packs/exam/run',
+      encodeBody: raw => adminDiseasePackExamRunInputSchema.parse(raw),
+    },
+    input: adminDiseasePackExamRunInputSchema,
+    output: dsapExamRunResponseSchema,
+  },
+  {
+    id: 'admin.disease-packs.activate',
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/admin/disease-packs/:packId/activate',
+      encodeBody: (raw: unknown) => {
+        const { packId: _packId, ...rest } = adminDiseasePackActivateInputSchema.parse(raw)
+        return rest
+      },
+    },
+    input: adminDiseasePackActivateInputSchema,
+    output: diseasePackActivationGateResponseSchema,
   },
   {
     id: 'registration.synthetic-case.start-inpatient',

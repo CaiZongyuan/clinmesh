@@ -21,6 +21,10 @@ import {
 } from '@clinmesh/contracts/local-source-ingestion'
 import { LocalSourceIngestionError } from './application/local-source-ingestion-service.ts'
 import {
+  adminDiseasePackActivateBodySchema,
+  adminDiseasePackExamRunInputSchema,
+} from '@clinmesh/contracts/disease-pack-exam'
+import {
   diseasePackSlugSchema,
   diseasePackToggleBodySchema,
   diseasePackToolAuthorizeBodySchema,
@@ -31,6 +35,7 @@ import { DiseasePackValidationError } from '@clinmesh/core/disease-pack'
 import { KnowledgeClaimError } from '@clinmesh/core/knowledge-claims'
 import { KnowledgePipelineError as CoreKnowledgePipelineError } from '@clinmesh/core/knowledge-pipeline'
 import { AgentOutputScorerServiceError } from './application/agent-output-scorer-service.ts'
+import { DiseasePackExamGateError } from './application/disease-pack-exam-service.ts'
 import { DiseasePackRuntimeError } from './application/disease-pack-runtime-service.ts'
 import { KnowledgePipelineError } from './application/knowledge-pipeline-service.ts'
 import { KnowledgeSemanticError } from './application/knowledge-semantic-service.ts'
@@ -294,6 +299,7 @@ function apiErrorBody(
   conflict?: unknown,
   reason?: string,
   clinicalQuality?: unknown,
+  details?: unknown,
 ) {
   return {
     error: {
@@ -301,6 +307,7 @@ function apiErrorBody(
       code,
       ...(conflict === undefined ? {} : { conflict }),
       correlationId: requestCorrelationId(context),
+      ...(details === undefined ? {} : { details }),
       message,
       ...(reason === undefined ? {} : { reason }),
     },
@@ -379,6 +386,12 @@ function apiErrorResponse(
   }
   if (error instanceof ClinicalQualityError) {
     return context.json(apiErrorBody(context, error.code, error.message, undefined, undefined, error.check), error.status)
+  }
+  if (error instanceof DiseasePackExamGateError) {
+    return context.json(
+      apiErrorBody(context, error.code, error.message, undefined, undefined, undefined, error.details),
+      error.status,
+    )
   }
     if (
       error instanceof IdentityError
@@ -2437,9 +2450,54 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    const unwrapOfflineBody = (raw: unknown): unknown => {
+      if (raw !== null && typeof raw === 'object' && !Array.isArray(raw) && 'input' in raw) {
+        return z.object({ input: z.unknown() }).strict().parse(raw).input
+      }
+      return raw
+    }
     app.get('/api/his/v1/catalogs/disease-packs', async (context) => {
       try {
         return context.json(workflow.diseasePacks.listCatalog(await actor(context)))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/admin/disease-packs/exam/run', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const administrator = await identity.resolveAdministratorActor(
+          context.req.raw.headers,
+          context.req.raw.method,
+          context.req.path,
+        )
+        const rawText = await context.req.text()
+        const rawBody: unknown = rawText.trim().length === 0 ? {} : JSON.parse(rawText)
+        const unwrapped = unwrapOfflineBody(rawBody)
+        const parsed = adminDiseasePackExamRunInputSchema.parse(unwrapped)
+        return context.json(workflow.diseasePackExam.runExamSuite(administrator, parsed))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/admin/disease-packs/:packId/activate', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const administrator = await identity.resolveAdministratorActor(
+          context.req.raw.headers,
+          context.req.raw.method,
+          context.req.path,
+        )
+        const packId = diseasePackSlugSchema.parse(context.req.param('packId'))
+        const rawText = await context.req.text()
+        const rawBody: unknown = rawText.trim().length === 0 ? {} : JSON.parse(rawText)
+        const unwrapped = unwrapOfflineBody(rawBody)
+        const body = adminDiseasePackActivateBodySchema.parse(unwrapped)
+        return context.json(workflow.diseasePackExam.activatePackWithGate(
+          administrator,
+          { ...body, packId },
+          requestIdempotencyKey(context),
+        ))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
@@ -2454,12 +2512,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
-    const unwrapOfflineBody = (raw: unknown): unknown => {
-      if (raw !== null && typeof raw === 'object' && !Array.isArray(raw) && 'input' in raw) {
-        return z.object({ input: z.unknown() }).strict().parse(raw).input
-      }
-      return raw
-    }
     app.post('/api/his/v1/offline/knowledge-claims/draft-pipeline', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
