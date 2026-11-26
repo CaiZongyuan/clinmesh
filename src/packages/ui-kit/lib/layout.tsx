@@ -1,5 +1,5 @@
 import { Drawer, DrawerBackdrop, DrawerClose, DrawerContent, DrawerTitle, DrawerTrigger } from '@ui-sdk/react/drawer';
-import { useSyncExternalStore, type ComponentProps, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 
 export function Badge({ tone = 'neutral', children }: { tone?: 'neutral' | 'info' | 'success' | 'warning' | 'destructive'; children: ReactNode }) {
   return <span className="cm-badge" data-tone={tone}>{children}</span>;
@@ -24,16 +24,18 @@ export function AgentPanelShell({ title, status, children }: { title: string; st
   </aside>;
 }
 
-const desktopQuery = '(min-width: 800px)';
-function subscribeWidth(notify: () => void) {
-  const viewport = window.matchMedia(desktopQuery);
-  viewport.addEventListener('change', notify);
-  return () => viewport.removeEventListener('change', notify);
-}
-
 export function WorkspaceCardLayout({ header, queueLabel, queue, children }: { header: ReactNode; queueLabel: string; queue: ReactNode; children: ReactNode }) {
-  const desktop = useSyncExternalStore(subscribeWidth, () => window.matchMedia(desktopQuery).matches, () => false);
-  return <div className="cm-workspace">
+  const workspace = useRef<HTMLDivElement>(null);
+  const [desktop, setDesktop] = useState(false);
+  useLayoutEffect(() => {
+    const element = workspace.current!;
+    const measure = () => setDesktop(element.getBoundingClientRect().width >= 800);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return <div ref={workspace} className="cm-workspace">
     <header className="cm-topbar">{header}</header>
     <div className="cm-workspace-body" data-desktop={desktop}>
       {desktop ? <aside className="cm-queue" aria-label={queueLabel}>{queue}</aside> : <div className="cm-queue-trigger">

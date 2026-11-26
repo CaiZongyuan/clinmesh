@@ -6,15 +6,16 @@ import { createClinMeshUiAgent, ThemeFontProvider, ToastProvider } from '../pack
 import UiKitCatalog from './UiKitCatalog';
 
 const agent = createClinMeshUiAgent();
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 
-function openCatalog(desktop: boolean) {
-  vi.stubGlobal('matchMedia', () => Object.assign(new EventTarget(), { matches: desktop }));
+function openCatalog(containerWidth: number) {
+  vi.stubGlobal('matchMedia', () => Object.assign(new EventTarget(), { matches: true }));
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, containerWidth, 800));
   return render(<ThemeFontProvider><ToastProvider><UiKitCatalog /></ToastProvider></ThemeFontProvider>);
 }
 
 it('names the visible controls in the catalogue and restores device preferences after remounting', async () => {
-  const desktop = openCatalog(true);
+  const desktop = openCatalog(800);
   const labels = agent.snapshot().filter(entry => !entry.offPage).map(entry => entry.label);
   expect(labels.every(Boolean)).toBe(true);
   expect(new Set(labels).size).toBe(labels.length);
@@ -29,7 +30,7 @@ it('names the visible controls in the catalogue and restores device preferences 
   expect(await agent.act({ steps: [{ ref: 'Review sample', action: 'press' }, { ref: 'Sign sample', action: 'press' }] })).toMatchObject({ ok: false });
   expect(screen.queryByText('Signed')).toBeNull();
   desktop.unmount();
-  openCatalog(false);
+  openCatalog(799);
   expect(document.documentElement.dataset).toMatchObject({ theme: 'dark', fontScale: 'large' });
   expect(screen.getByRole('button', { name: 'Display preferences' })).toBeDefined();
   expect(screen.queryByRole('combobox', { name: 'Color scheme' })).toBeNull();

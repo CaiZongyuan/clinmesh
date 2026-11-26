@@ -2,7 +2,7 @@ import { Button } from '@ui-sdk/react/button';
 import { Checkbox as SdkCheckbox, CheckboxIndicator } from '@ui-sdk/react/checkbox';
 import { Field as SdkField, FieldDescription, FieldError, FieldLabel } from '@ui-sdk/react/field';
 import { NumberInput as SdkNumberInput, NumberInputControl, NumberInputDecrement, NumberInputGroup, NumberInputIncrement } from '@ui-sdk/react/number-input';
-import { Select as SdkSelect, SelectContent, SelectItem, SelectTrigger, SelectValue, type SelectProps } from '@ui-sdk/react/select';
+import { Select as SdkSelect, SelectContent, SelectItem, SelectItemIndicator, SelectTrigger, SelectValue, type SelectProps } from '@ui-sdk/react/select';
 import { Switch as SdkSwitch, SwitchThumb } from '@ui-sdk/react/switch';
 import type { ComponentProps, ReactNode } from 'react';
 
@@ -41,7 +41,7 @@ export function Select<Value extends string>({ options, ...props }: Omit<Extract
 }) {
   return <SdkSelect<Value> {...props} items={options}>
     <SelectTrigger><SelectValue /></SelectTrigger>
-    <SelectContent>{options.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+    <SelectContent>{options.map(option => <SelectItem key={option.value} value={option.value}>{option.label}<SelectItemIndicator aria-hidden /></SelectItem>)}</SelectContent>
   </SdkSelect>;
 }
 
