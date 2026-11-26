@@ -1,10 +1,29 @@
-# Engineering domain inputs
+# Domain Docs
 
-通用工程 skills 探索 ClinMesh 前读取与任务相关的以下 owner：
+How engineering skills consume ClinMesh's domain model and architectural decisions.
 
-- 根 [领域词汇](../../CONTEXT.md)，用于 issue title、测试名和 interface 命名。
-- [系统架构](../architecture.md) 与适用的 package `AGENTS.md`，用于所有权和依赖方向。
-- [Agent Notes](../decisions/README.md)，用于真实权衡和既有决策。
-- [测试策略](../testing.md)，用于测试 seam、层级和证据选择。
+## Before exploring, read these
 
-ClinMesh 不使用 `docs/adr/`。通用 skill 要求读取或创建 ADR 时，读取相关 Agent Notes，并按 Agent Note 生命周期记录符合条件的决策。缺少某类 owner 时继续检查代码，不预先创建空文档。
+- **`GLOSSARY.md`** at the repo root for canonical domain vocabulary.
+- **`docs/adr/`** for architectural decisions touching the area you are about to modify.
+
+## File structure
+
+Single-context repo:
+
+```text
+/
+├── GLOSSARY.md
+├── docs/adr/
+│   ├── 0001-modular-monolith-and-deep-modules.md
+│   └── ...
+└── src/
+```
+
+## Use the glossary's vocabulary
+
+Name domain concepts consistently across issue titles, code interfaces, tests, and UI copy using `GLOSSARY.md`. Avoid synonyms listed under `_Avoid_`. When a genuinely new concept emerges, update `GLOSSARY.md` cleanly rather than inventing ad-hoc names.
+
+## Flag ADR conflicts
+
+If a proposal or existing code contradicts an accepted ADR in `docs/adr/`, surface the conflict explicitly before proceeding rather than silently diverging.
