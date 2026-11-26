@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { parseRuntimeHealth } from '../packages/platform';
+import { Button } from '../packages/ui-kit';
 import logo from '../../assets/logo.webp';
 
 export function App() {
@@ -25,5 +26,6 @@ export function App() {
           <dt>Loaded modules</dt><dd>{health.data.loadedModules.join(', ') || 'None'}</dd>
         </dl>}
     </section>
+    <nav aria-label="Developer tools" className="mt-6"><Button render={<a href="/dev/ui-kit" />}>UI component catalogue</Button></nav>
   </main>;
 }

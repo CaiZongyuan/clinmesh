@@ -14,11 +14,12 @@
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src scripts *.config.ts .dependency-cruiser.cjs --deny-warnings",
     "lint:boundaries": "tsx scripts/lint-boundaries.ts",
+    "lint:theme": "tsx scripts/lint-theme.ts",
     "verify:docs": "tsx scripts/verify-docs.ts",
     "verify:worker": "wrangler deploy --dry-run --outfile dist/worker.bundle && node scripts/verify-worker-size.ts",
     "test": "vitest run",
     "build": "vite build && vite build --ssr src/server/node-server.ts --outDir dist/server",
-    "check": "pnpm typecheck && pnpm lint && pnpm lint:boundaries && pnpm verify:docs && pnpm test && pnpm build"
+    "check": "pnpm typecheck && pnpm lint && pnpm lint:boundaries && pnpm lint:theme && pnpm verify:docs && pnpm test && pnpm build"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "1.6.0",

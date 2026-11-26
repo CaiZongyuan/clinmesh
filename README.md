@@ -23,7 +23,9 @@ pnpm start
 
 ## 验证与架构
 
-`pnpm check` 运行严格类型检查、静态检查、真实依赖图守卫、Markdown 校验、测试和构建。构建后执行 `pnpm verify:worker`，用 Wrangler dry-run 生成真实上传包并检查压缩体积严格小于 3 MiB。所有检查均在 Windows 上运行，不需 Cloudflare 账户，也不进行线上部署。
+`pnpm check` 运行严格类型检查、静态检查、真实依赖图守卫、`pnpm lint:theme`、Markdown 校验、测试和构建。构建后执行 `pnpm verify:worker`，用 Wrangler dry-run 生成真实上传包并检查压缩体积严格小于 3 MiB。所有检查均在 Windows 上运行，不需 Cloudflare 账户，也不进行线上部署。
+
+打开 `/dev/ui-kit` 可试用组件目录、浅深主题、三档字号和 Agent 活动态。业务页面从 [ui-kit](src/packages/ui-kit/index.ts) 导入控件，以 `Field` 标记输入，用 `ConfirmActionButton` 或 `InlineConfirmBar` 表达正式操作。`createClinMeshUiAgent` 在渲染前创建，`registerWebMCP()` 注册同一套工具并返回注销函数。标记 `data-agent-confirm` 的操作默认拒绝，页面通过人工审批弹窗单次放行。`data-agent-secret` 隐去控件的值，`data-agent-hidden` 隐去整块区域。
 
 - [深模块契约与包职责](src/packages/README.md)
 - [领域词汇](GLOSSARY.md)、[架构决策](docs/adr/)、[协作规范](AGENTS.md)

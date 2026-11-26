@@ -10,6 +10,6 @@
 | [platform](platform/index.ts) | 模块契约、注册冲突与运行时健康投影 |
 | [store](store/index.ts) | 预留可移植 Store Repository Port，不含表和驱动 |
 | [data-pack](data-pack/index.ts) | 预留声明式 Hospital Data Pack 边界，不携带地区目录 |
-| [ui-kit](ui-kit/index.ts) | 预留统一临床控件与 Theme Tokens 的入口 |
+| [ui-kit](ui-kit/index.ts) | 统一临床控件、布局、Theme Tokens，以及带人工审批的 UI Agent 与 WebMCP 桥接 |
 
 依赖守卫：`pnpm lint:boundaries`。设计依据见 [ADR 0001](../../docs/adr/0001-modular-monolith-and-deep-modules.md)。

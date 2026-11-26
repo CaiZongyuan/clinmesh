@@ -6,3 +6,11 @@ body {
   background: var(--ui-background);
   color: var(--ui-foreground);
 }
+
+.catalog-product { padding-inline-start: .75rem; border-inline-start: 1px solid var(--ui-border); color: var(--ui-muted-foreground); }
+.catalog-settings, .catalog-section { display: grid; align-content: start; gap: .9rem; }
+.catalog-settings p, .cm-workspace-main > .cm-section-heading p, .cm-agent-region p { color: var(--ui-muted-foreground); }
+.catalog-section { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--ui-border); }
+.catalog-columns, .catalog-fields { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); }
+.catalog-wide { grid-column: 1 / -1; }
+.catalog-section [data-slot="tabs-panel"], .catalog-section .cm-confirm-bar, .cm-agent-region p, .cm-agent-panel .catalog-settings { margin-top: .75rem; }
