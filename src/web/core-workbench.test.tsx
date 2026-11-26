@@ -1,0 +1,165 @@
+// @vitest-environment jsdom
+import '../../scripts/testing/ui-sdk-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { teachingGate, withNodeWorkspace } from '../../scripts/testing/node-workspace';
+import { afterEach, expect, it, vi } from 'vitest';
+import { createClinMeshUiAgent, ThemeFontProvider } from '../packages/ui-kit';
+import { App } from './App';
+import { sessionSchema } from '../packages/platform';
+import { encounterViewSchema } from '../packages/clinical-core';
+
+const agent = createClinMeshUiAgent();
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it('accepts a secret in the Visitor Gate and reports a rejected passcode', async () => {
+  vi.stubGlobal('fetch', async (path: string) => Response.json({ code: path.endsWith('/enter') ? 'INVALID_VISITOR_PASSCODE' : 'VISITOR_AUTH_REQUIRED' }, { status: 401 }));
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ThemeFontProvider><App /></ThemeFontProvider></QueryClientProvider>);
+  await screen.findByRole('button', { name: 'Enter workspace' });
+  expect((await agent.act({ steps: [{ ref: 'Visitor passcode', action: 'setValue', args: ['synthetic-private'] }, { ref: 'Enter workspace', action: 'press' }] })).ok).toBe(true);
+  expect(JSON.stringify(agent.snapshot())).not.toContain('synthetic-private');
+  expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Incorrect visitor passcode.');
+});
+
+it('discovers the workbench, edits real drafts, and requires human approval for every formal commit', async () => {
+  vi.stubGlobal('matchMedia', () => Object.assign(new EventTarget(), { matches: true }));
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1280, 800));
+  const transport = globalThis.fetch;
+  const human = userEvent.setup();
+  const submitted: string[] = [];
+  const requests: { path: string; body: Record<string, unknown> }[] = [];
+  let hold: { suffix: string; received: () => void; resume: Promise<void> } | undefined;
+  function delay(suffix: string) {
+    let received!: () => void;
+    let release!: () => void;
+    const arrived = new Promise<void>(resolve => { received = resolve; });
+    const resume = new Promise<void>(resolve => { release = resolve; });
+    hold = { suffix, received, resume };
+    return { received: arrived, release };
+  }
+  const press = async (ref: string) => { const result = await agent.act({ steps: [{ ref, action: 'press' }] }); expect(result.ok, result.error?.message).toBe(true); };
+  const set = async (ref: string, value: string) => { const result = await agent.act({ steps: [{ ref, action: 'setValue', args: [value] }] }); expect(result.ok, result.error?.message).toBe(true); };
+  const discover = () => {
+    const visible = agent.snapshot().filter(entry => !entry.offPage && entry.component !== 'more');
+    expect(visible.every(entry => entry.label)).toBe(true);
+    expect(new Set(visible.map(entry => entry.label)).size).toBe(visible.length);
+  };
+  const formal = async (label: string, suffix: string) => {
+    const button = screen.getByRole('button', { name: label });
+    await waitFor(() => expect(button.hasAttribute('disabled')).toBe(false));
+    expect(button.getAttribute('data-agent-confirm')).toBeTruthy();
+    expect((await agent.act({ steps: [{ ref: label, action: 'press' }] })).ok).toBe(false);
+    expect(submitted.filter(path => path.endsWith(suffix))).toHaveLength(0);
+    await human.click(button);
+    await waitFor(() => expect(submitted.filter(path => path.endsWith(suffix))).toHaveLength(1));
+  };
+  await withNodeWorkspace(async origin => {
+    let cookie = '';
+    vi.stubGlobal('fetch', async (path: string, init?: RequestInit) => {
+      if (init?.method && init.method !== 'GET') { submitted.push(path); if (path !== '/api/auth/visitor/enter') requests.push({ path, body: JSON.parse(String(init.body)) }); }
+      const response = await transport(origin + path, { ...init, headers: { ...init?.headers, cookie } });
+      if (hold && path.endsWith(hold.suffix)) { const ack = hold; hold = undefined; ack.received(); await ack.resume; }
+      cookie = response.headers.get('set-cookie')?.split(';')[0] ?? cookie;
+      return response;
+    });
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } })}><ThemeFontProvider><App /></ThemeFontProvider></QueryClientProvider>);
+    await screen.findByRole('button', { name: 'Enter workspace' });
+    await set('Visitor passcode', teachingGate.CLINMESH_VISITOR_PASSCODE); await press('Enter workspace');
+    await screen.findByRole('button', { name: 'Start · Avery Reed' }); discover();
+    await press('Start · Jordan Vale'); await screen.findByRole('heading', { name: 'Jordan Vale' });
+    await press('Start · Avery Reed'); await screen.findByText('I have had a fever and a cough for three days.');
+    expect((await agent.act({ steps: [{ ref: 'Role · Intake coordinator', action: 'press', args: ['Family clinician'] }] })).ok).toBe(true);
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Question for the patient' }).hasAttribute('disabled')).toBe(false));
+    await set('Clinical views', 'Clinical record'); discover();
+    for (const label of ['Reason for visit', 'Subjective history', 'Objective findings', 'Assessment', 'Plan']) await set(label, `Synthetic ${label}`);
+    const noteAck = delay('/clinical-record/draft');
+    await press('Save record draft'); await noteAck.received;
+    await set('Reason for visit', 'Clinician edit during save');
+    await human.click(screen.getByRole('button', { name: /^Jordan Vale · .*Active$/ }));
+    await screen.findByRole('heading', { name: 'Jordan Vale' });
+    await set('Clinical views', 'Clinical record'); await set('Reason for visit', 'Other encounter draft');
+    noteAck.release();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save record draft' }).hasAttribute('disabled')).toBe(false));
+    expect(screen.getByLabelText<HTMLTextAreaElement>('Reason for visit').value).toBe('Other encounter draft');
+    await human.click(screen.getByRole('button', { name: /^Avery Reed · .*Active$/ }));
+    await screen.findByRole('heading', { name: 'Avery Reed' }); await set('Clinical views', 'Clinical record');
+    expect(screen.getByLabelText<HTMLTextAreaElement>('Reason for visit').value).toBe('Clinician edit during save');
+    await press('Save record draft'); await formal('Sign record', '/clinical-record/sign');
+    expect(requests.filter(item => item.path.endsWith('/clinical-record/draft')).map(item => item.body.expectedDraftVersion)).toEqual([0, 1]);
+    await screen.findByRole('button', { name: 'View signed revisions' });
+    await set('Clinical views', 'Diagnoses'); discover();
+    const options = await agent.query({ within: 'Diagnosis catalog' });
+    if ('error' in options) throw Error(String(options.error));
+    await set('Diagnosis catalog', options[0]!.items!.find(item => item.label.includes('J18.9'))!.label);
+    await press('Add diagnosis');
+    const diagnosisAck = delay('/diagnosis/draft');
+    await press('Save diagnosis draft'); await diagnosisAck.received;
+    await set('Diagnosis catalog', options[0]!.items!.find(item => item.label.startsWith('I10 '))!.label); await press('Add diagnosis');
+    diagnosisAck.release();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save diagnosis draft' }).hasAttribute('disabled')).toBe(false));
+    await press('Save diagnosis draft'); await formal('Confirm diagnoses', '/diagnosis/confirm');
+    const diagnosisWrites = requests.filter(item => item.path.endsWith('/diagnosis/draft'));
+    expect(diagnosisWrites[1]!.body.expectedVersion).toBe(Number(diagnosisWrites[0]!.body.expectedVersion) + 1);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Complete encounter' }).hasAttribute('disabled')).toBe(false));
+    await set('Clinical views', 'Clinical record'); await set('Reason for visit', 'Revision after confirmation');
+    const visitPath = requests.find(item => item.path.endsWith('/clinical-record/draft'))!.path.replace('/clinical-record/draft', '');
+    const peerRead = async () => encounterViewSchema.parse(await (await transport(origin + visitPath, { headers: { cookie } })).json());
+    const tabSession = sessionSchema.parse(await (await transport(origin + '/api/auth/session', { headers: { cookie } })).json());
+    const peerSave = async (suffix: string, expectedVersion: number, fields: Record<string, unknown>, method = 'PUT') => {
+      const response = await transport(origin + visitPath + suffix, { method, headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ epoch: tabSession.epoch, idempotencyKey: crypto.randomUUID(), expectedVersion, ...fields }) });
+      expect(response.status).toBe(200);
+    };
+    const peerNote = await peerRead();
+    await peerSave('/clinical-record/draft', peerNote.version, { expectedDraftVersion: peerNote.draftVersion, fields: { ...peerNote.fields, concern: 'Independent clinician assessment' } });
+    await human.click(screen.getByRole('button', { name: /^Jordan Vale · .*Active$/ })); await screen.findByRole('heading', { name: 'Jordan Vale' });
+    await human.click(screen.getByRole('button', { name: /^Avery Reed · .*Active$/ })); await screen.findByRole('heading', { name: 'Avery Reed' });
+    expect(screen.getByRole('button', { name: 'Complete encounter' }).hasAttribute('disabled')).toBe(true);
+    await set('Clinical views', 'Clinical record'); expect(screen.getByLabelText<HTMLTextAreaElement>('Reason for visit').value).toBe('Revision after confirmation');
+    expect(screen.getByText('Saved · Independent clinician assessment')).toBeDefined();
+    expect(screen.getByText('My edits · Revision after confirmation')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Save record draft' }).hasAttribute('disabled')).toBe(true);
+    expect((await peerRead()).fields.concern).toBe('Independent clinician assessment');
+    await human.click(screen.getByRole('button', { name: 'Keep my edits' }));
+    const peer = await transport(origin + '/api/workspace/role', { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ epoch: tabSession.epoch, idempotencyKey: 'peer-role', expectedVersion: tabSession.sessionVersion, roleId: tabSession.roleId }) });
+    expect(peer.status).toBe(200);
+    const switchAdmin = () => agent.act({ steps: [{ ref: 'Role · Family clinician', action: 'press', args: ['Clinic administrator'] }] });
+    await switchAdmin(); await screen.findByText('The record changed. Review the latest version before retrying.');
+    await switchAdmin(); await screen.findByRole('button', { name: 'Role · Clinic administrator' });
+    await agent.act({ steps: [{ ref: 'Role · Clinic administrator', action: 'press', args: ['Family clinician'] }] });
+    await screen.findByRole('button', { name: 'Role · Family clinician' }); await set('Clinical views', 'Clinical record');
+    expect(screen.getByLabelText<HTMLTextAreaElement>('Reason for visit').value).toBe('Revision after confirmation');
+    await press('Save record draft');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sign record' }).hasAttribute('disabled')).toBe(false));
+    await human.click(screen.getByRole('button', { name: 'Sign record' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Complete encounter' }).hasAttribute('disabled')).toBe(false));
+    await set('Clinical views', 'Diagnoses'); await human.click(screen.getByRole('button', { name: 'Remove · I10' }));
+    await peerSave('/consultation/turns', (await peerRead()).version, { channel: 'text', content: 'New consultation question' }, 'POST');
+    const reopenDiagnoses = async () => {
+      await human.click(screen.getByRole('button', { name: /^Jordan Vale · .*Active$/ })); await screen.findByRole('heading', { name: 'Jordan Vale' });
+      await human.click(screen.getByRole('button', { name: /^Avery Reed · .*Active$/ })); await screen.findByRole('heading', { name: 'Avery Reed' }); await set('Clinical views', 'Diagnoses');
+    };
+    await reopenDiagnoses();
+    expect(screen.queryByRole('heading', { name: 'Review conflicting drafts' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save diagnosis draft' }).hasAttribute('disabled')).toBe(false);
+    const peerDx = await peerRead();
+    await peerSave('/diagnosis/draft', peerDx.version, { diagnoses: peerDx.diagnoses.toReversed().map(item => ({ ...item, primary: item.code === 'I10' })) });
+    await reopenDiagnoses();
+    expect(screen.getByRole('heading', { name: 'Review conflicting drafts' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Save diagnosis draft' }).hasAttribute('disabled')).toBe(true);
+    expect((await peerRead()).diagnoses[0]).toMatchObject({ code: 'I10', primary: true });
+    await human.click(screen.getByRole('button', { name: 'Use saved draft' }));
+    await human.click(screen.getByRole('button', { name: 'Confirm diagnoses' }));
+    await formal('Complete encounter', '/complete');
+    await screen.findByRole('tab', { name: 'Debrief' }); await set('Clinical views', 'Debrief'); await screen.findByRole('heading', { name: 'Case debrief' });
+    expect((await agent.act({ steps: [{ ref: 'Role · Family clinician', action: 'press', args: ['Clinic administrator'] }] })).ok).toBe(true);
+    await screen.findByRole('button', { name: 'Role · Clinic administrator' });
+    await human.click(screen.getByRole('button', { name: 'Teaching outpatient clinic' }));
+    await screen.findByRole('button', { name: 'Review epoch reset' }); discover();
+    await set('Hospital data pack', 'Teaching cardiovascular centre');
+    await press('Review epoch reset'); await formal('Reset epoch', '/workspace/reset');
+    await screen.findByRole('heading', { name: '门诊工作台' });
+    expect(screen.getByRole('button', { name: '岗位 · 院务管理员' })).toBeDefined();
+    expect(screen.getByRole('button', { name: '开诊 · 陈志远' })).toBeDefined();
+  });
+}, 30_000);

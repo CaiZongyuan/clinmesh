@@ -109,7 +109,7 @@ const result = z.strictObject({
   amendmentReason: bilingual.optional(), summary: bilingual,
   observations: z.array(observation), images: z.array(asset).optional(),
 });
-const truth = z.strictObject({
+export const truth = z.strictObject({
   primaryDiagnosis: coding, secondaryDiagnoses: z.array(coding), hiddenHistory: z.array(bilingual), results: z.array(result),
   reviewPoints: z.array(bilingual).min(1), expectedMedications: z.array(coding).optional(),
   noMedication: z.literal(true).optional(), expectedProcedures: z.array(coding).optional(), expectedMaterials: z.array(coding).optional(),

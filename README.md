@@ -1,6 +1,6 @@
 # ClinMesh
 
-全球医疗智能体探索平台的模块化运行基座。同一套 Hono 路由运行在原生 Node 和本地 Wrangler/workerd；React 页面从 `/api/health` 读取当前运行时和实际装载的模块。当前未装载 Clinical Module，也不处理病历、患者数据或密钥。
+ClinMesh 是面向合成教学病例的全球医疗智能体探索平台。原生 Node 与本地 Wrangler/workerd 共用一套 Hono 接口。Mini HIS Core 可独立开诊、问诊、签署病历、确认诊断、完诊并解锁病例复盘。
 
 ## Windows 本地启动
 
@@ -11,6 +11,7 @@
 ```powershell
 pnpm install --frozen-lockfile
 pnpm build
+$env:CLINMESH_LOCAL_DEV_OPEN='1'
 pnpm start
 ```
 
@@ -20,8 +21,10 @@ Vite 开发页从 `src/web` 启动，按公开入口的依赖图加载模块与�
 
 ## 其他运行方式
 
-- 本地 Worker 可通过 `pnpm build` 和 `pnpm dev:worker` 启动。Wrangler 在 Windows 上运行 workerd 和静态资源服务。每个 Workspace 的 `WORKSPACE_DO` 实例首次启动时建立 v1 SQLite 关系模型。[Store 使用说明](src/packages/store/README.md)
-- CLI：`pnpm clinmesh`。入口就绪，尚无已注册操作。
+- 本地 Worker 构建后运行 `pnpm dev:worker`。在 PowerShell 中设置 `$env:CLINMESH_LOCAL_DEV_OPEN='1'` 后，此入口将 Wrangler/workerd 绑定到回环地址。可用 `CLINMESH_PORT` 指定端口，默认 `8787`。每个 Workspace 对应一个 `WORKSPACE_DO` 实例。[Store 使用说明](src/packages/store/README.md)
+- Node 与本地 Wrangler 在开放模式下校验监听地址，接受 `127.0.0.1`、`::1` 和映射到 `127.0.0.1` 的 `localhost`。共享监听或生产 Worker 使用 `CLINMESH_VISITOR_PASSCODE`。Node 从进程环境读取，Wrangler 本地支持 `.dev.vars`。默认签名材料由宿主生成并持久保存。可通过 `CLINMESH_SESSION_SECRET` 提供至少 32 字符的独立签名密钥。
+- 在浏览器点击「进入工作台」后选择固定病例开诊。顶栏可切换为负责医生，管理岗位可在医院设置中选择数据包并确认重置。问诊支持单个待答问题，Patient Agent 可通过受控答复入口续写。门诊工作台始终允许医生在等候期间编辑草稿。
+- 访问 `/dev/health` 可查看当前运行时和已装载模块。`pnpm clinmesh` 是外部 CLI 入口，操作的输入输出、授权和路由由服务端的 Operation Catalog 定义。
 
 ## 验证与架构
 
@@ -30,5 +33,6 @@ Vite 开发页从 `src/web` 启动，按公开入口的依赖图加载模块与�
 打开 `/dev/ui-kit` 可试用组件目录、浅深主题、三档字号和 Agent 活动态。业务页面从 [ui-kit](src/packages/ui-kit/index.ts) 导入控件，以 `Field` 标记输入，用 `ConfirmActionButton` 或 `InlineConfirmBar` 表达正式操作。`createClinMeshUiAgent` 在渲染前创建，`registerWebMCP()` 注册同一套工具并返回注销函数。标记 `data-agent-confirm` 的操作默认拒绝，页面通过人工审批弹窗单次放行。`data-agent-secret` 隐去控件的值，`data-agent-hidden` 隐去整块区域。
 
 - [深模块契约与包职责](src/packages/README.md)
+- [工作台 HTTP、Command 和临床扩展接口](src/packages/clinical-core/README.md)
 - [Hospital Data Pack 编译、热切换与工作台读取](src/packages/data-pack/README.md)、[两套合成教学包的来源](data/packs/README.md)
 - [领域词汇](GLOSSARY.md)、[架构决策](docs/adr/)、[协作规范](AGENTS.md)

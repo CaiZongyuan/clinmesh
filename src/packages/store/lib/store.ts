@@ -1,11 +1,13 @@
 import type { Storage } from '@earendil-works/pi-durable';
+import { z } from 'zod';
 import { createPiSessions } from './pi';
-import { initializeSchema, type StoreScope } from './schema';
+import { initializeEntity, initializeSchema, type StoreScope } from './schema';
 import { createReader, createRepository, type StoreReader, type StoreTx } from './repository';
 import { SerialQueue, duringTransaction, type Schedule, type SqlConnection } from './sqlite';
 import { capture, restore, seal, verifySnapshot, type LogicalSnapshot } from './snapshot';
 
 export interface StorePort {
+  visitorSigningSecret(): Promise<string>;
   read<T>(fn: (reader: StoreReader) => Promise<T> | T): Promise<T>;
   withTransaction<T>(fn: (tx: StoreTx) => Promise<T> | T): Promise<T>;
   exportLogicalSnapshot(workspaceId: string): Promise<LogicalSnapshot>;
@@ -18,7 +20,7 @@ export function createStore(db: SqlConnection): StorePort {
   db.atomicSync(() => {
     db.exec('CREATE TABLE IF NOT EXISTS clinmesh_schema (version INTEGER NOT NULL PRIMARY KEY)');
     const versions = db.all('SELECT version FROM clinmesh_schema');
-    if (versions.length === 1 && versions[0]!.version === 1) return;
+    if (versions.length === 1 && versions[0]!.version === 1) { initializeEntity(db.exec, 'encounter_triage'); return; }
     if (versions.length) throw new Error('Unsupported ClinMesh schema version');
     initializeSchema(db.exec);
     db.run('INSERT INTO clinmesh_schema (version) VALUES (1)');
@@ -29,7 +31,19 @@ export function createStore(db: SqlConnection): StorePort {
   const transact: Schedule = work => schedule(() => db.atomic('write', work));
   const pi = createPiSessions(db, schedule, transact);
   const whileOpen = <Result>(mode: 'read' | 'write', work: () => Result | Promise<Result>): Promise<Result> => closing ? Promise.reject(new Error('Store is closed')) : schedule(() => db.atomic(mode, work));
+  let signingSecret: Promise<string> | undefined;
   return {
+    visitorSigningSecret() {
+      if (closing) return Promise.reject(new Error('Store is closed'));
+      return signingSecret ??= whileOpen('write', () => {
+        db.exec('CREATE TABLE IF NOT EXISTS visitor_gate_authority (id INTEGER PRIMARY KEY, secret TEXT NOT NULL)');
+        const stored = db.all('SELECT secret FROM visitor_gate_authority WHERE id = 1')[0];
+        if (stored) return z.string().regex(/^[a-f0-9]{64}$/).parse(stored.secret);
+        const secret = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
+        db.run('INSERT INTO visitor_gate_authority (id, secret) VALUES (1, ?)', secret);
+        return secret;
+      }).catch(error => { signingSecret = undefined; throw error; });
+    },
     read(fn) { return whileOpen('read', () => duringTransaction(check => fn(createReader(db, check)))); },
     withTransaction(fn) { return whileOpen('write', () => duringTransaction(check => fn(createRepository(db, check)))); },
     async exportLogicalSnapshot(workspaceId) { return seal(await whileOpen('read', () => capture(db, workspaceId))); },

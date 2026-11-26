@@ -108,6 +108,7 @@ export const tables = {
   payment_allocations: table({ tender_id: ref('payment_tenders'), charge_id: ref('charge_items'), ...money }),
   refund_transactions: table({ allocation_id: ref('payment_allocations'), reason: text, ...money, ...times }),
   regional_payer_records: table({ encounter_id: enc, payer_code: text, reference: text, determination: frozen, ...times }),
+  encounter_triage: table({ encounter_id: enc, vitals: frozen, ...times }, 'encounter_id'),
 } satisfies Record<string, TableDefinition>;
 
 export type Entity = keyof typeof tables;
@@ -151,13 +152,15 @@ export function initializeSchema(exec: (sql: string) => void): void {
   exec(`CREATE TABLE IF NOT EXISTS workspace_epochs (workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT, epoch TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('building','active','closing','closed')), virtual_time TEXT NOT NULL, clock_revision INTEGER NOT NULL CHECK (clock_revision >= 0), PRIMARY KEY (${isolation}))`);
   exec("CREATE UNIQUE INDEX IF NOT EXISTS one_active_epoch ON workspace_epochs (workspace_id) WHERE status = 'active'");
   for (const name of entityNames) {
-    exec(createTable(name, tables[name]));
-    if (!Object.hasOwn(editable, name)) {
-      for (const action of ['UPDATE', 'DELETE']) {
-        exec(`CREATE TRIGGER IF NOT EXISTS immutable_${name}_${action} BEFORE ${action} ON ${name} BEGIN SELECT RAISE(ABORT, 'Immutable fact'); END`);
-      }
-    }
+    initializeEntity(exec, name);
   }
   exec(`CREATE UNIQUE INDEX IF NOT EXISTS one_primary_diagnosis ON diagnosis_confirmations (${isolation}, revision_id) WHERE is_primary = 1`);
   exec(`CREATE UNIQUE INDEX IF NOT EXISTS one_occupied_bed ON bed_occupancies (${isolation}, bed) WHERE released_at IS NULL`);
+}
+
+export function initializeEntity(exec: (sql: string) => void, name: Entity) {
+  exec(createTable(name, tables[name]));
+  if (!Object.hasOwn(editable, name)) for (const action of ['UPDATE', 'DELETE']) {
+    exec(`CREATE TRIGGER IF NOT EXISTS immutable_${name}_${action} BEFORE ${action} ON ${name} BEGIN SELECT RAISE(ABORT, 'Immutable fact'); END`);
+  }
 }

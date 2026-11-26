@@ -1,6 +1,6 @@
 import { v5, v7 } from 'uuid';
 import { z } from 'zod';
-import type { StoreReader, StoreScope, StoreTx } from '../../store';
+import type { EntityRow, StoreReader, StoreScope, StoreTx } from '../../store';
 import { parseHospitalDataPack } from './compiler';
 import { DataPackError } from './errors';
 import { catalogKinds } from './references';
@@ -60,9 +60,16 @@ export function readHospitalDataPack(reader: StoreReader, at: StoreScope) {
     manifest: manifest.parse(installed.manifest),
     organization: organization.parse(installed.organization),
     catalog: catalog.parse(Object.fromEntries(catalogKinds.map(kind => [kind, rows.filter(row => row.kind === kind).map(row => row.definition)]))),
-    cases: reader.list(at, 'clinical_cases', { installation_id: installed.id }).map(patient => ({
-      id: patient.id, encounterClass: patient.encounter_class, demographics: demographics.parse(patient.demographics),
-      priorHistory: priorHistory.parse(patient.prior_history), triageVitals: triageVitals.parse(patient.triage_vitals),
-    })),
+    cases: reader.list(at, 'clinical_cases', { installation_id: installed.id }).map(publicCase),
   };
+}
+
+export const publicCaseSchema = z.object({ id: z.uuid(), encounterClass: z.enum(['outpatient', 'inpatient']), demographics, priorHistory, triageVitals });
+function publicCase(row: EntityRow<'clinical_cases'>) {
+  return publicCaseSchema.parse({ id: row.id, encounterClass: row.encounter_class, demographics: row.demographics, priorHistory: row.prior_history, triageVitals: row.triage_vitals });
+}
+
+export function readClinicalCase(reader: StoreReader, at: StoreScope, id: string) {
+  const row = reader.get(at, 'clinical_cases', id);
+  return row && publicCase(row);
 }

@@ -52,6 +52,7 @@ body { margin: 0; font: var(--ui-font-size)/var(--ui-line-height) var(--ui-font-
 .cm-topbar { padding-inline: clamp(.75rem, 2vw, 1.5rem); background: var(--ui-card); border-bottom: 1px solid var(--ui-border); }
 .cm-workspace-body { display: grid; min-height: 0; min-width: 0; gap: .75rem; padding: .75rem; grid-template-rows: auto minmax(0, 1fr); }
 .cm-workspace-body[data-desktop="true"] { grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.cm-workspace-body[data-desktop="true"][data-queue-visible="false"] { grid-template-columns: minmax(0, 1fr); }
 .cm-queue, .cm-workspace-main, [data-surface="card"], .cm-agent-panel { background: var(--ui-card); border: 1px solid var(--ui-border); border-radius: var(--ui-surface-radius); }
 .cm-queue, .cm-workspace-main { min-width: 0; min-height: 0; overflow: auto; scrollbar-gutter: stable; padding: clamp(.85rem, 2vw, 1.5rem); }
 .cm-queue-drawer[data-slot="drawer-content"] { width: min(21rem, 90vw); max-height: 100dvh; overflow-y: auto; }

@@ -2,14 +2,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { App } from './App';
+import { RuntimeHealth } from './RuntimeHealth';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 function showHealth(payload: unknown) {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(payload)));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}><App /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><RuntimeHealth /></QueryClientProvider>);
 }
 
 it('renders the runtime and module IDs returned by the API', async () => {
