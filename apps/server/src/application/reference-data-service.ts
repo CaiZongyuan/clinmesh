@@ -118,7 +118,7 @@ function builtinReferenceData(): ReferenceDataReleaseList {
       }, {
         acquisitionMethod: 'generated',
         artifactFormat: 'nhc-medical-service-csv',
-        checksum: '8ed125b9d880f39ff0e7a503229e4bd1d69772ec86ee6c19808d6c68eca3954b',
+        checksum: 'fe44f14ae5bf5c6587d6b09457524aaaeaa16ddcbbf60245cbadaadf272750e7',
         importDiagnostics: {
           acceptedCount: syntheticNhcMedicalServiceSnapshot.length,
           rejectedCount: 0,

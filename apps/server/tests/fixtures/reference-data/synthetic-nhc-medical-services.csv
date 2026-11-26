@@ -7,4 +7,5 @@ CM-NHC-SERVICE-MCV,合成平均红细胞体积服务,LABORATORY,ITEM,ACTIVE,Self
 CM-NHC-SERVICE-HCT,合成红细胞压积服务,LABORATORY,ITEM,ACTIVE,Self-authored synthetic fixture; not NHC content
 CM-NHC-SERVICE-HBA1C,合成糖化血红蛋白服务,LABORATORY,ITEM,ACTIVE,Self-authored synthetic fixture; not NHC content
 CM-NHC-SERVICE-FUNDUS,合成眼底检查服务,IMAGING,ITEM,ACTIVE,Self-authored synthetic fixture; not NHC content
+CM-NHC-SERVICE-CORONARY-CTA,合成冠状动脉 CTA 检查服务,IMAGING,ITEM,ACTIVE,Self-authored synthetic fixture; not NHC content
 CM-NHC-SERVICE-DIABETES-EDUCATION,合成糖尿病健康教育,TREATMENT,SESSION,ACTIVE,Self-authored synthetic fixture; not NHC content
