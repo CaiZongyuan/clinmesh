@@ -109,12 +109,19 @@ export const tables = {
   refund_transactions: table({ allocation_id: ref('payment_allocations'), reason: text, ...money, ...times }),
   regional_payer_records: table({ encounter_id: enc, payer_code: text, reference: text, determination: frozen, ...times }),
   encounter_triage: table({ encounter_id: enc, vitals: frozen, ...times }, 'encounter_id'),
+  charge_sources: table({ charge_id: ref('charge_items'), order_id: order, catalog_item_id: catalog, catalog_version: text, quantity: positive, unit_price_minor: integer, department: optional(text), business_day: column(z.iso.date()) }, 'charge_id', 'order_id'),
+  billing_previews: table({ encounter_id: enc, actor_id: id, practitioner_role: text, plan: frozen, fingerprint: digest, expires_at: timestamp, ...times }),
+  billing_attempts: table({ payment_id: ref('payment_transactions'), preview_id: ref('billing_previews'), kind: choice('collection', 'refund', 'deposit', 'deposit-refund'), origin_id: optional(ref('payment_transactions')), initial_status: choice('succeeded', 'declined', 'unknown'), terminal_status: choice('succeeded', 'declined') }, 'payment_id', 'preview_id'),
+  billing_recoveries: table({ payment_id: ref('payment_transactions'), status: choice('succeeded', 'declined'), ...times }, 'payment_id'),
+  billing_releases: table({ charge_id: ref('charge_items'), ...times }, 'charge_id'),
+  billing_settlements: table({ encounter_id: enc, preview_id: ref('billing_previews'), snapshot: frozen, ...times }, 'encounter_id', 'preview_id'),
 } satisfies Record<string, TableDefinition>;
 
 export type Entity = keyof typeof tables;
 export type EntityRow<Name extends Entity> = { [Key in keyof (typeof tables)[Name]['fields']]: (typeof tables)[Name]['fields'][Key] extends Column<infer Value> ? Value : never };
 export type PublicEntity = Exclude<Entity, 'case_truths'>;
 export const entityNames = Object.keys(tables) as Entity[];
+export const billingEntities = ['charge_sources', 'billing_previews', 'billing_attempts', 'billing_recoveries', 'billing_releases', 'billing_settlements'] as const satisfies readonly Entity[];
 
 export const editable = {
   patients: ['display_name', 'birth_date'], encounters: ['active_practitioner_role', 'status'], consultations: ['reply_pending'],

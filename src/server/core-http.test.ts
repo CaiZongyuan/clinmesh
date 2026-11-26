@@ -37,6 +37,8 @@ async function exercise(fetchApi: Http, reopen?: (workspaceId: string) => Promis
   expect(JSON.stringify(data)).not.toMatch(/caseTruth|case_key|source_case_id|patientPersona|Focal right lower lobe consolidation/i);
   const command = (path: string, expectedVersion: number, idempotencyKey: string, fields: Record<string, unknown> = {}, method = 'POST') => fetchApi(path, { method, headers, body: JSON.stringify({ epoch: workspace.epoch, expectedVersion, idempotencyKey, ...fields }) });
   const path = `/api/his/encounters/${encounterId}`;
+  expect((await fetchApi(`${path}/billing`, { headers })).status).toBe(403);
+  expect((await fetchApi(`${path}/payer`, { headers })).status).toBe(404);
   expect(await (await fetchApi(`${path}/debrief`, { headers })).json()).toEqual({ code: 'CASE_TRUTH_LOCKED' });
   expect((await command(`${path}/complete`, 1, 'unprivileged')).status).toBe(403);
   expect((await command('/api/workspace/role', 1, 'switch-clinician', { roleId: 'family-clinician' })).status).toBe(200);

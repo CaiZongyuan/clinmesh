@@ -1,4 +1,5 @@
 import { Drawer, DrawerBackdrop, DrawerClose, DrawerContent, DrawerTitle, DrawerTrigger } from '@ui-sdk/react/drawer';
+import { Meter as SdkMeter, MeterIndicator, MeterLabel, MeterTrack, MeterValue } from '@ui-sdk/react/meter';
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 
 export function Badge({ tone = 'neutral', children }: { tone?: 'neutral' | 'info' | 'success' | 'warning' | 'destructive'; children: ReactNode }) {
@@ -7,6 +8,10 @@ export function Badge({ tone = 'neutral', children }: { tone?: 'neutral' | 'info
 
 export function Card({ children, ...props }: ComponentProps<'section'>) {
   return <section {...props} data-surface="card">{children}</section>;
+}
+
+export function Meter({ value, max, label }: { value: number; max: number; label: string }) {
+  return <SdkMeter value={value} max={max}><MeterLabel>{label}</MeterLabel><MeterValue/><MeterTrack><MeterIndicator/></MeterTrack></SdkMeter>;
 }
 
 export function Table({ caption, children }: { caption: string; children: ReactNode }) {

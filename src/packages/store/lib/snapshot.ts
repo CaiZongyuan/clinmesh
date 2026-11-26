@@ -2,13 +2,13 @@ import { z } from 'zod';
 import { canonicalJson } from './json';
 import { exportPiSession, piImage, restorePiSession, type PiImage } from './pi';
 import { createReader, createRepository, readEntity, writeEntity } from './repository';
-import { entityNames, epoch as epochFields, tables, uuid, workspace as workspaceFields, type TableDefinition } from './schema';
+import { billingEntities, entityNames, epoch as epochFields, tables, uuid, workspace as workspaceFields, type TableDefinition } from './schema';
 import type { SqlConnection } from './sqlite';
 
-const format = 'clinmesh.snapshot.v2';
+const format = 'clinmesh.snapshot.v3';
 const record = z.record(z.string(), z.json());
 const snapshotSchema = z.strictObject({
-  format: z.enum(['clinmesh.snapshot.v1', format]), workspaceId: uuid,
+  format: z.enum(['clinmesh.snapshot.v1', 'clinmesh.snapshot.v2', format]), workspaceId: uuid,
   tables: z.array(z.strictObject({ name: z.string(), rows: z.array(record) })),
   pi: z.array(piImage), sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
@@ -27,9 +27,10 @@ export async function seal(content: SnapshotContent): Promise<LogicalSnapshot> {
 export async function verifySnapshot(input: unknown): Promise<SnapshotContent> {
   const { sha256, ...content } = snapshotSchema.parse(input);
   if ((await seal(content)).sha256 !== sha256) throw new StoreSnapshotError('Snapshot digest mismatch');
-  const expected = ['workspaces', 'workspace_epochs', ...entityNames.filter(name => name !== 'encounter_triage' || content.format === format)];
+  const missing = content.format === format ? [] : [...(content.format === 'clinmesh.snapshot.v1' ? ['encounter_triage'] : []), ...billingEntities];
+  const expected = ['workspaces', 'workspace_epochs', ...entityNames.filter(name => !missing.includes(name))];
   if (content.tables.length !== expected.length || content.tables.some((table, index) => table.name !== expected[index])) throw new StoreSnapshotError('Incomplete or unordered snapshot tables');
-  return content.format === format ? content : { ...content, format, tables: [...content.tables, { name: 'encounter_triage', rows: [] }] };
+  return { ...content, format, tables: [...content.tables, ...missing.map(name => ({ name, rows: [] }))] };
 }
 
 export function capture(db: SqlConnection, workspaceId: string): SnapshotContent {
