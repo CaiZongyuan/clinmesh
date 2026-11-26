@@ -3,6 +3,7 @@ import { createTestHarness, experimental_readRawConfig } from 'wrangler';
 import { z } from 'zod';
 import { visitSchema } from '../packages/patient-visit';
 import { encounterViewSchema, workspaceSchema } from '../packages/clinical-core';
+import { accountSchema, previewSchema } from '../packages/mod-billing';
 import { ModuleRegistry, OperationCatalog, registerPlatformOperations } from '../packages/platform';
 import { teachingGate, withNodeWorkspace } from '../../scripts/testing/node-workspace';
 
@@ -37,6 +38,8 @@ async function exercise(fetchApi: Http, reopen?: (workspaceId: string) => Promis
   expect(JSON.stringify(data)).not.toMatch(/caseTruth|case_key|source_case_id|patientPersona|Focal right lower lobe consolidation/i);
   const command = (path: string, expectedVersion: number, idempotencyKey: string, fields: Record<string, unknown> = {}, method = 'POST') => fetchApi(path, { method, headers, body: JSON.stringify({ epoch: workspace.epoch, expectedVersion, idempotencyKey, ...fields }) });
   const path = `/api/his/encounters/${encounterId}`;
+  expect((await fetchApi(`${path}/billing`, { headers })).status).toBe(403);
+  expect((await fetchApi(`${path}/payer`, { headers })).status).toBe(404);
   expect(await (await fetchApi(`${path}/debrief`, { headers })).json()).toEqual({ code: 'CASE_TRUTH_LOCKED' });
   expect((await command(`${path}/complete`, 1, 'unprivileged')).status).toBe(403);
   expect((await command('/api/workspace/role', 1, 'switch-clinician', { roleId: 'family-clinician' })).status).toBe(200);
@@ -108,7 +111,31 @@ async function exercise(fetchApi: Http, reopen?: (workspaceId: string) => Promis
   const cardioVisit = encounterViewSchema.parse(await (await fetchApi(`/api/his/encounters/${opened.encounterId}`, { headers })).json());
   expect(cardioVisit.template.map(field => field.id)).toContain('outpatient-followup');
   expect(cardioVisit.template.map(field => field.id)).not.toContain('admission');
-  const logout = await nextCommand('/api/auth/logout', 2, {});
+  const wardCase = cardio.cases.find(item => item.encounterClass === 'inpatient')!;
+  const ward = z.object({ encounterId: z.uuidv7() }).parse(await (await nextCommand(`/api/his/cases/${wardCase.id}/start-encounter`, 0, {})).json());
+  expect((await nextCommand('/api/workspace/role', 2, { roleId: 'payer-reviewer' })).status).toBe(200);
+  const accountPath = (id: string) => `/api/his/encounters/${id}/billing`;
+  const read = async (id: string) => accountSchema.parse(await (await fetchApi(accountPath(id), { headers })).json());
+  const funds = async (id: string, name: string, fields: Record<string, unknown>) => {
+    const result = await nextCommand(`${accountPath(id)}/${name}`, (await read(id)).version, fields);
+    expect(result.status).toBe(200);
+    return z.record(z.string(), z.json()).parse(await result.json());
+  };
+  const bill = await read(opened.encounterId);
+  const [registration] = bill.charges;
+  expect(registration).toMatchObject({ catalogVersion: '1.1.0', amountMinor: 1000, outstandingMinor: 1000 });
+  const collection = previewSchema.parse(await funds(opened.encounterId, 'payment.preview', { chargeIds: [registration!.id], simulation: 'delayed-approval' }));
+  const receipt = await funds(opened.encounterId, 'payment.confirm', { commitToken: collection.commitToken });
+  expect(receipt.status).toBe('unknown');
+  await funds(opened.encounterId, 'payment.recover', { paymentId: receipt.paymentId, paymentVersion: 1 });
+  await funds(opened.encounterId, 'charge.adjust', { chargeId: registration!.id, amountMinor: 200, reason: 'Teaching correction' });
+  const refund = await funds(opened.encounterId, 'refund.allocation.preview', { chargeId: registration!.id, paymentId: receipt.paymentId, amountMinor: 200, reason: 'Refund registration' });
+  await funds(opened.encounterId, 'refund.allocation.confirm', { commitToken: refund.commitToken });
+  expect(await read(opened.encounterId)).toMatchObject({ netMinor: 800, cashMinor: 800, balanceMinor: 0 });
+  const preadmission = await funds(ward.encounterId, 'inpatient.deposit.preview', { amountMinor: 99 });
+  await funds(ward.encounterId, 'inpatient.deposit.confirm', { commitToken: preadmission.commitToken });
+  expect(await read(ward.encounterId)).toMatchObject({ admissionStatus: null, cashMinor: 99, settlement: null });
+  const logout = await nextCommand('/api/auth/logout', 3, {});
   expect(logout.headers.get('set-cookie')).toMatch(/Max-Age=0/i);
   expect((await fetchApi('/api/his/unknown', { headers })).status).toBe(401);
 }

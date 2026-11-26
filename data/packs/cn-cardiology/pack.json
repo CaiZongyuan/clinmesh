@@ -1,7 +1,7 @@
 {
   "manifest": {
     "packId": "cn-cardiology",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "schemaVersion": 1,
     "name": { "en": "Teaching cardiovascular centre", "zh": "心血管介入教学中心" },
     "description": {
@@ -780,7 +780,8 @@
             "unit": "mm"
           }
         ]
-      }
+      },
+      { "codeSystem": "urn:clinmesh:cv:service", "code": "registration", "display": { "en": "Visit registration", "zh": "就诊登记" }, "kind": "registration", "unitPriceMinor": 1000, "unit": "次", "analytes": [] }
     ],
     "procedures": [
       {
@@ -915,7 +916,25 @@
             "weightBp": 8000
           }
         ],
-        "insuranceTiers": ["甲", "乙", "丙"]
+        "diagnosisSystem": "urn:clinmesh:reference:nhsa-diagnosis",
+        "procedureSystem": "urn:clinmesh:classification:icd-9-cm-3-clinical",
+        "insuranceTiers": ["甲", "乙", "丙"],
+        "tiers": {
+          "甲": { "included": true, "priorSelfPayBps": 0 },
+          "乙": { "included": true, "priorSelfPayBps": 1000 },
+          "丙": { "included": false, "priorSelfPayBps": 0 }
+        },
+        "catalogCoverage": {
+          "urn:clinmesh:cv:service": { "registration": "丙", "renal": "甲", "tni": "乙", "ecg": "甲", "tte": "乙", "cag": "乙" },
+          "urn:clinmesh:classification:icd-9-cm-3-clinical": { "36.0700": "乙", "88.5500": "乙" },
+          "urn:clinmesh:cv:material": { "wire-014": "乙", "guide-6f": "乙", "balloon-2.5x15": "乙", "des-3x18": "乙" }
+        },
+        "plans": [
+          { "id": "employee-v1", "name": { "en": "Synthetic employee", "zh": "合成职工" }, "openingAccountMinor": 2000,
+            "outpatient": { "deductibleMinor": 1000, "ratioBps": 7000, "capMinor": 100000 }, "inpatient": { "deductibleMinor": 5000, "ratioBps": 8000, "capMinor": 1000000 } },
+          { "id": "resident-v1", "name": { "en": "Synthetic resident", "zh": "合成居民" }, "openingAccountMinor": 0,
+            "outpatient": { "deductibleMinor": 2000, "ratioBps": 5000, "capMinor": 50000 }, "inpatient": { "deductibleMinor": 10000, "ratioBps": 6000, "capMinor": 500000 } }
+        ]
       }
     }
   },

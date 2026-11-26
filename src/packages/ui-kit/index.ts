@@ -8,6 +8,6 @@ export { Input } from '@ui-sdk/react/input';
 export { Textarea } from '@ui-sdk/react/textarea';
 export { Checkbox, Field, IconButton, NumberInput, Select, Switch } from './lib/forms';
 export { AlertDialog, Dialog, Menu, Tabs, ToastProvider, useToast } from './lib/popups';
-export { AgentGlowRegion, AgentPanelShell, Badge, Card, DetailDrawer, Table, WorkspaceCardLayout } from './lib/layout';
+export { AgentGlowRegion, AgentPanelShell, Badge, Card, DetailDrawer, Meter, Table, WorkspaceCardLayout } from './lib/layout';
 export { ThemeFontProvider, useThemeFont } from './lib/preferences';
 export { themeTokens } from './lib/tokens';

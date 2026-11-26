@@ -13,5 +13,7 @@
 | [store](store/index.ts) | 类型化 Store Repository Port、隔离的规范化事实、Node / DO SQLite 适配器与版本化逻辑快照。参见[使用说明](store/README.md) |
 | [data-pack](data-pack/index.ts) | 五层 Hospital Data Pack 编译、事务安装与公开病例投影。参见[使用说明](data-pack/README.md) |
 | [ui-kit](ui-kit/index.ts) | 统一临床控件、布局、Theme Tokens，以及带人工审批的 UI Agent 与 WebMCP 桥接 |
+| [mod-billing](mod-billing/README.md) | 通用收费员账本、原路退款、住院首次冻结结算和临床资金放行端口 |
+| [mod-drg-cn](mod-drg-cn/README.md) | 数据包声明的合成参保方案、年度累计和住院 DRG 支付参考 |
 
 依赖守卫：`pnpm lint:boundaries`。设计依据见 [ADR 0001](../../docs/adr/0001-modular-monolith-and-deep-modules.md)。
