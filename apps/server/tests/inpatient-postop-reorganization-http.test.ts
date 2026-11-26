@@ -553,7 +553,7 @@ describe('手术通知单停续术前医嘱策略与术后成套医嘱模板重�
          VALUES(?,?,'req-pre0123','adm-1',1,'requested','{}',?,'升级前已有申请',?,'doctor','org-1')`,
       ).run(scope.workspaceId, scope.epoch, now, now)
 
-      expect(applyMigrations(db).applied).toEqual([migrationFile, '0124_clinical-fact-verification.sql', '0125_local-source-ingestion.sql', '0126_disease-pack-runtime.sql', '0127_bedside-questionnaire-answers.sql'])
+      expect(applyMigrations(db).applied).toEqual([migrationFile, '0124_clinical-fact-verification.sql', '0125_local-source-ingestion.sql', '0126_disease-pack-runtime.sql', '0127_bedside-questionnaire-answers.sql', '0128_clinical-prompt-cards.sql'])
       expect(db.driver.pragma('foreign_key_check')).toEqual([])
       const row = z.object({ preop_order_policy: z.literal('continue-active') }).parse(
         db.driver.prepare("SELECT preop_order_policy FROM inpatient_surgery_request WHERE request_id = 'req-pre0123'").get(),

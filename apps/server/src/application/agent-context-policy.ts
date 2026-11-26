@@ -586,6 +586,7 @@ function narrowOperations(
         'inpatient.clinical-quality.read',
         'inpatient.disease-packs.read',
         'inpatient.disease-pack-task-facts.read',
+        'inpatient.clinical-prompts.read',
       )
       if (selection.record_status !== 'archived') {
         operations.push('inpatient.report.acknowledge.propose', 'inpatient.order-set-drafts.read')
@@ -621,6 +622,7 @@ function narrowOperations(
         'outpatient.order-set-drafts.read',
         'outpatient.disease-packs.read',
         'outpatient.disease-pack-task-facts.read',
+        'outpatient.clinical-prompts.read',
       )
     }
     if (selection.status === 'awaiting-doctor' || selection.status === 'awaiting-revisit') {

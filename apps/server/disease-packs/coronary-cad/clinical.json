@@ -1151,6 +1151,33 @@
       "id": "renal-impairment-contrast-caution",
       "labelZh": "血清肌酐升高警示（造影/PCI 须分层水化并限对比剂剂量）",
       "severity": "warning"
+    },
+    {
+      "candidateMedicationClasses": ["antiplatelet-aspirin", "p2y12"],
+      "condition": {
+        "kind": "anyOf",
+        "nodes": [
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25|R07|Z95)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "category": "procedure",
+            "itemCodePattern": "^(?:00\\.66|36\\.0[67]|36\\.1|88\\.5[56])",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          }
+        ]
+      },
+      "descriptionZh": "双联抗血小板（阿司匹林联合 P2Y12 受体拮抗剂）治疗期间出血风险增高，须核对 PRECISE-DAPT 评分、既往自发性出血史及胃黏膜保护指征；如需停用或拒绝本警示，须选择可控原因并记录理由。",
+      "id": "dapt-bleeding-risk",
+      "labelZh": "双联抗血小板（DAPT）出血风险警示",
+      "severity": "warning",
+      "timing": "order-draft-select"
     }
   ],
   "ruleOutChecklist": [

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { clinicalPromptCardSchema } from './clinical-prompt-cards.ts'
 import { guidelineTopicEvidenceSchema, guidelineTopicIdSchema } from './guideline-topics.ts'
 import { commandResponseSchema } from './his.ts'
 
@@ -73,6 +74,7 @@ export const inpatientGuidelineAdviceSchema = z.object({
   message: text,
   missing: z.array(text).max(24),
   failureCode: z.string().nullable(),
+  promptCards: z.array(clinicalPromptCardSchema).max(64).optional(),
   result: inpatientGuidelineAdviceResultSchema.nullable(),
 }).strict()
 

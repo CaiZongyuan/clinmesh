@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { clinicalPromptCardSchema } from './clinical-prompt-cards.ts'
 import { clinicalOverrideInputSchema } from './clinical-quality.ts'
 import { commandResponseSchema, saveDiagnosisDraftRequestSchema, prescriptionDraftItemSchema } from './his.ts'
 import { medicationRouteSchema } from './medication-safety.ts'
@@ -135,6 +136,7 @@ export const doctorRecommendationStateSchema = z.object({
   considerations: z.array(doctorRecommendationConsiderationSchema).max(8).optional(),
   considerationDispositions: z.array(doctorConsiderationDispositionSchema).max(64).optional(),
   notices: z.array(doctorRecommendationNoticeSchema).max(12).optional(),
+  promptCards: z.array(clinicalPromptCardSchema).max(64).optional(),
   guidelines: z.array(guidelineEvidenceSchema).max(64),
   caseEvidence: z.array(doctorCaseEvidenceSchema).max(100),
   missingInformation: z.array(doctorRecommendationNoticeSchema.shape.message).max(12),

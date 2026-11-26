@@ -1,3 +1,5 @@
+import { clinicalPromptDismissBodySchema } from '@clinmesh/contracts/clinical-prompt-cards'
+import { ClinicalPromptCardError } from './application/clinical-prompt-card-service.ts'
 import {
   inpatientClinicalQualityInputSchema,
   outpatientClinicalQualityInputSchema,
@@ -382,6 +384,7 @@ function apiErrorResponse(
       error instanceof IdentityError
       || error instanceof AgentOutputScorerServiceError
       || error instanceof ClinicalFactLedgerError
+      || error instanceof ClinicalPromptCardError
       || error instanceof LocalSourceIngestionError
       || error instanceof DiseasePackRuntimeError
       || error instanceof KnowledgePipelineError
@@ -867,6 +870,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           if (query.operationId === 'outpatient.disease-pack-task-facts.read') {
             const parsed = z.object({ packId: diseasePackSlugSchema, taskId: z.string().trim().min(1).max(64) }).strict().parse(query.input)
             return context.json(workflow.diseasePacks.readOutpatientTaskFacts(session.actor, query.caseId, parsed.packId, parsed.taskId))
+          }
+          if (query.operationId === 'outpatient.clinical-prompts.read') {
+            return context.json(workflow.promptCards.readOutpatientPrompts(session.actor, query.caseId, query.input))
           }
           throw new AgentIntegrationError('AGENT_OPERATION_NOT_ALLOWED', 'The doctor query is not available', 403)
         } catch (error) { return apiErrorResponse(context, error) }
@@ -2151,6 +2157,33 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(inpatient.readDiseasePacks(await actor(context), context.req.param('admissionId')))
       } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/clinical-prompts', async context => {
+      try {
+        return context.json(inpatient.workflow.promptCards.readInpatientPrompts(
+          inpatient,
+          await actor(context),
+          context.req.param('admissionId'),
+          context.req.query(),
+        ))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/clinical-prompts/:cardId/dismiss', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: clinicalPromptDismissBodySchema }).strict().parse(await context.req.json())
+        const key = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+        return context.json(inpatient.workflow.promptCards.dismissInpatientPrompt(
+          inpatient,
+          await actor(context),
+          {
+            ...body.input,
+            admissionId: context.req.param('admissionId'),
+            cardId: context.req.param('cardId'),
+          },
+          key,
+        ))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/disease-packs/:packId/toggle', async context => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -2988,6 +3021,34 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           context.req.param('caseId'),
           diseasePackSlugSchema.parse(context.req.param('packId')),
           context.req.query(),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/doctor/cases/:caseId/clinical-prompts', async (context) => {
+      try {
+        return context.json(workflow.promptCards.readOutpatientPrompts(
+          await actor(context),
+          context.req.param('caseId'),
+          context.req.query(),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/doctor/cases/:caseId/clinical-prompts/:cardId/dismiss', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: clinicalPromptDismissBodySchema }).strict().parse(await context.req.json())
+        return context.json(workflow.promptCards.dismissOutpatientPrompt(
+          await actor(context),
+          {
+            ...body.input,
+            cardId: context.req.param('cardId'),
+            caseId: context.req.param('caseId'),
+          },
+          idempotencyKey(context),
         ))
       } catch (error) {
         return apiErrorResponse(context, error)

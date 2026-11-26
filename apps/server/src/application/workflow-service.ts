@@ -97,6 +97,7 @@ import { KnowledgePipelineService } from './knowledge-pipeline-service.ts'
 import { KnowledgeSemanticService } from './knowledge-semantic-service.ts'
 import { AgentOutputScorerService } from './agent-output-scorer-service.ts'
 import { OrderSetDraftService } from './order-set-draft-service.ts'
+import { ClinicalPromptCardService } from './clinical-prompt-card-service.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
 import {
   casePresentation,
@@ -329,6 +330,8 @@ export class WorkflowService
   readonly agentOutputScorer: AgentOutputScorerService
   /** 专病组套只读草稿预装配；不写入任何正式业务事实。 */
   readonly orderSets: OrderSetDraftService
+  /** 多时机统一临床提示卡与展示前安全过滤引擎（同步零模型调用）。 */
+  readonly promptCards: ClinicalPromptCardService
 
   constructor(
     database: ClinMeshDatabase,
@@ -561,6 +564,17 @@ export class WorkflowService
     this.examination = new ExaminationRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.orderSets = new OrderSetDraftService({
       clinicalScores: this.clinicalScores, commands, database, diseasePacks: this.diseasePacks, examination: this.examination, fhir, outpatientContext: this.#context,
+    })
+    this.promptCards = new ClinicalPromptCardService({
+      clinicalQuality: this.clinicalQuality,
+      clinicalScores: this.clinicalScores,
+      commands,
+      database,
+      diseasePacks: this.diseasePacks,
+      factLedger: this.clinicalFactLedger,
+      fhir,
+      ...(options.guidelines === undefined ? {} : { guidelines: options.guidelines }),
+      outpatientContext: this.#context,
     })
     this.imaging = new ImagingRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.pathology = new PathologyRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })

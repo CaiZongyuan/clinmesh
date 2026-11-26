@@ -254,6 +254,8 @@ clinmesh doctor case disease-packs task-readiness --case-id <case-id> --pack-id 
 clinmesh doctor case disease-packs task-facts --case-id <case-id> --pack-id <pack-id> --task-id <task-id>
 clinmesh doctor case disease-packs authorize-tool --case-id <case-id> --pack-id <pack-id> --operation-id <tool-operation-id>
 clinmesh doctor case disease-packs knowledge --case-id <case-id> --pack-id <pack-id> --as-of 2026-08-24T10:00:00+08:00 --recheck-latest
+clinmesh doctor case clinical-prompts get --case-id <case-id> --timing encounter-open
+clinmesh doctor case clinical-prompts dismiss --input @clinical-prompt-dismiss.json --idempotency-key <key>
 clinmesh encounter risk-assessment record --input @risk-assessment.json --idempotency-key <key>
 clinmesh command receipt get --operation-id encounter.risk-assessment.record --idempotency-key <key>
 ```

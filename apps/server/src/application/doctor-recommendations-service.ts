@@ -1,5 +1,14 @@
 import { z } from 'zod'
-import type { ClinicalQualityReceipt } from '@clinmesh/contracts/clinical-quality'
+import {
+  clinicalPromptCardSchema,
+  type ClinicalPromptCard,
+} from '@clinmesh/contracts/clinical-prompt-cards'
+import {
+  clinicalOverrideReasonSchema,
+  type ClinicalQualityReceipt,
+} from '@clinmesh/contracts/clinical-quality'
+import { SIMULATION_TRIAL_DISCLAIMER_ZH } from '@clinmesh/contracts/knowledge-claims'
+import type { ClinicalPromptCardService } from './clinical-prompt-card-service.ts'
 import type { ModelTaskRecovery } from './model-task-recovery.ts'
 import {
   considerationLabelKey, doctorCaseEvidenceSchema, doctorConsiderationDispositionStatusSchema, doctorRecommendationGenerationSchema,
@@ -155,6 +164,7 @@ export class DoctorRecommendationsService {
   constructor(private readonly options: {
     database: ClinMeshDatabase; workflow: DoctorRecommendationsWorkflowPort; commands: CommandExecutor; referenceData: ReferenceDataService
     models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider
+    promptCards?: ClinicalPromptCardService
     recovery?: ModelTaskRecovery
     automaticRetries?: (workspaceId: string) => boolean
     guidelines?: GuidelineCorpus
@@ -1275,10 +1285,123 @@ export class DoctorRecommendationsService {
       })
       const latest = await this.#input(context, payload.caseId, payload.kind)
       if (row.input_fingerprint !== latest.inputFingerprint) throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed during generation')
-      if (items.length + considerations.length === 0 && notices.length === 0) {
+
+      let finalItems = items
+      let finalConsiderations = considerations
+      let promptCards: ClinicalPromptCard[] | undefined
+      if (this.options.promptCards !== undefined) {
+        const patientRow = z.object({ patient_id: z.string() }).optional().parse(
+          this.options.database.driver.prepare(
+            'SELECT patient_id FROM outpatient_case WHERE workspace_id = ? AND epoch = ? AND case_id = ?',
+          ).get(context.workspaceId, context.epoch, payload.caseId),
+        )
+        if (patientRow !== undefined) {
+          const meta = this.options.promptCards.activePackMetadata(
+            context,
+            { id: payload.caseId, kind: 'outpatient', patientId: patientRow.patient_id },
+          )
+          const knowledgeStatus = meta.primaryPack ? 'auto-verified' as const : 'published' as const
+          const badge = knowledgeStatus === 'auto-verified'
+            ? { trialBadgeZh: '试用版' as const, trialDisclaimerZh: SIMULATION_TRIAL_DISCLAIMER_ZH }
+            : { trialBadgeZh: null, trialDisclaimerZh: null }
+          const guidelineLabel = snapshot.guidelines.map(g => `${g.title} (${g.version})`).join('；').slice(0, 900) || '门诊指南证据'
+          const candidatesCards: ClinicalPromptCard[] = [
+            ...finalItems.map(item => clinicalPromptCardSchema.parse({
+              basedOnFactVersions: [],
+              blockingTier: 'none',
+              cardId: `rec:${item.id}`,
+              category: 'recommendation',
+              deliveryMode: 'display',
+              detail: item.rationale,
+              indicator: 'info',
+              knowledgeSnapshotVersion: meta.primaryPack?.knowledgeSnapshotVersion ?? null,
+              knowledgeStatus,
+              overrideReasons: [...clinicalOverrideReasonSchema.options],
+              packId: meta.primaryPack?.packId ?? null,
+              packVersion: meta.primaryPack?.packVersion ?? null,
+              riskTags: [],
+              sideBySideGroupKey: 'encounter-open:recommendation',
+              source: { label: guidelineLabel },
+              suggestions: [
+                item.kind === 'prescription'
+                  ? {
+                      actionKind: 'draft-medication',
+                      catalogItemId: item.catalogItemId,
+                      ...(item.doseText === null ? {} : { doseText: item.doseText }),
+                      ...(item.frequencyCode === null ? {} : { frequencyCode: item.frequencyCode }),
+                      id: item.id,
+                      isDraftOnly: true,
+                      labelZh: item.label,
+                      ...(item.routeCode === null ? {} : { routeCode: item.routeCode }),
+                    }
+                  : {
+                      actionKind: 'draft-order',
+                      ...(item.kind === 'laboratory' ? { catalogItemId: item.catalogItemId } : {}),
+                      id: item.id,
+                      isDraftOnly: true,
+                      labelZh: item.label,
+                    },
+              ],
+              summary: item.label,
+              timing: 'encounter-open',
+              ...badge,
+            })),
+            ...finalConsiderations.map(item => clinicalPromptCardSchema.parse({
+              basedOnFactVersions: [],
+              blockingTier: 'none',
+              cardId: `cons:${item.id}`,
+              category: 'recommendation',
+              deliveryMode: 'display',
+              detail: item.rationale,
+              indicator: 'info',
+              knowledgeSnapshotVersion: meta.primaryPack?.knowledgeSnapshotVersion ?? null,
+              knowledgeStatus,
+              overrideReasons: [...clinicalOverrideReasonSchema.options],
+              packId: meta.primaryPack?.packId ?? null,
+              packVersion: meta.primaryPack?.packVersion ?? null,
+              riskTags: [],
+              sideBySideGroupKey: 'encounter-open:recommendation',
+              source: { label: guidelineLabel },
+              suggestions: [],
+              summary: item.label,
+              timing: 'encounter-open',
+              ...badge,
+            })),
+          ]
+          const filtered = this.options.promptCards.filterCandidateCardsForSubject({
+            cards: candidatesCards,
+            context,
+            subject: { id: payload.caseId, kind: 'outpatient', patientId: patientRow.patient_id },
+            timing: 'encounter-open',
+          })
+          const blockedCardIds = new Set(filtered.blockedRecords.map(b => b.cardId))
+          if (blockedCardIds.size > 0) {
+            finalItems = finalItems.filter(item => {
+              if (!blockedCardIds.has(`rec:${item.id}`)) return true
+              notices.push({
+                category: 'verification',
+                message: `候选“${item.label}”未通过展示前确定性安全过滤已拦截。`,
+              })
+              return false
+            })
+            finalConsiderations = finalConsiderations.filter(item => {
+              if (!blockedCardIds.has(`cons:${item.id}`)) return true
+              notices.push({
+                category: 'verification',
+                message: `思路“${item.label}”未通过展示前确定性安全过滤已拦截。`,
+              })
+              return false
+            })
+          }
+          promptCards = filtered.visibleCards
+        }
+      }
+
+      if (finalItems.length + finalConsiderations.length === 0 && notices.length === 0) {
         notices.push({ category: 'processing', message: '模型本轮未形成可发布的建议或待核实思路，可核对当前资料后刷新。' })
       }
-      finish({ ...base, items, considerations, notices, status: items.length + considerations.length === 0 ? 'missing-evidence' : 'ready',
+      finish({ ...base, items: finalItems, considerations: finalConsiderations, ...(promptCards === undefined ? {} : { promptCards }), notices,
+        status: finalItems.length + finalConsiderations.length === 0 ? 'missing-evidence' : 'ready',
         missingInformation: notices.map(notice => notice.message).slice(0, 12) }, latest.snapshot.catalogs)
       return { status: 'completed' }
     } catch (caught) {

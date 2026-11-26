@@ -1,4 +1,12 @@
 import {
+  clinicalPromptBundleSchema,
+  clinicalPromptDismissResponseSchema,
+  inpatientClinicalPromptDismissInputSchema,
+  inpatientClinicalPromptReadInputSchema,
+  outpatientClinicalPromptDismissInputSchema,
+  outpatientClinicalPromptReadInputSchema,
+} from './clinical-prompt-cards.ts'
+import {
   clinicalOverrideInputSchema,
   clinicalQualityCheckSchema,
   inpatientClinicalQualityInputSchema,
@@ -1600,6 +1608,25 @@ const rawOperationRuntimeDefinitions = [
     output: diseasePackKnowledgeEvaluationSchema,
   },
   {
+    http: { method: 'GET', path: '/api/his/v1/doctor/cases/:caseId/clinical-prompts' },
+    id: 'doctor.case.clinical-prompts.read',
+    input: outpatientClinicalPromptReadInputSchema,
+    output: clinicalPromptBundleSchema,
+  },
+  {
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/doctor/cases/:caseId/clinical-prompts/:cardId/dismiss',
+      encodeBody: (raw: unknown) => {
+        const { caseId: _caseId, cardId: _cardId, ...input } = outpatientClinicalPromptDismissInputSchema.parse(raw)
+        return { input }
+      },
+    },
+    id: 'doctor.case.clinical-prompts.dismiss',
+    input: outpatientClinicalPromptDismissInputSchema,
+    output: clinicalPromptDismissResponseSchema,
+  },
+  {
     http: { method: 'PUT', path: '/api/his/v1/encounters/:encounterId/risk-assessment' },
     id: 'encounter.risk-assessment.record',
     input: outpatientRiskAssessmentOperationInputSchema,
@@ -2223,6 +2250,20 @@ const rawOperationRuntimeDefinitions = [
   admQuery('inpatient.clinical-quality.read', '/clinical-quality', clinicalQualityCheckSchema, inpatientClinicalQualityInputSchema),
   admQuery('inpatient.order-set-drafts.read', '/order-set-drafts', orderSetDraftBundleSchema, inpatientOrderSetDraftsInputSchema),
   admQuery('inpatient.disease-packs.read', '/disease-packs', diseasePackRuntimeBundleSchema, inpatientDiseasePackReadQuerySchema),
+  admQuery('inpatient.clinical-prompts.read', '/clinical-prompts', clinicalPromptBundleSchema, inpatientClinicalPromptReadInputSchema),
+  {
+    id: 'inpatient.clinical-prompts.dismiss',
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/inpatient/admissions/:admissionId/clinical-prompts/:cardId/dismiss',
+      encodeBody: (raw: unknown) => {
+        const { admissionId: _admissionId, cardId: _cardId, ...input } = inpatientClinicalPromptDismissInputSchema.parse(raw)
+        return { input }
+      },
+    },
+    input: inpatientClinicalPromptDismissInputSchema,
+    output: clinicalPromptDismissResponseSchema,
+  },
   {
     id: 'inpatient.disease-packs.toggle',
     http: {

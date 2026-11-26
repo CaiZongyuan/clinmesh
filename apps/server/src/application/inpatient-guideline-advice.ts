@@ -5,6 +5,12 @@ import {
   clinicalScoreResultSchema,
   inpatientVitalSignsRecordSchema,
 } from '@clinmesh/contracts/clinical-scores'
+import {
+  clinicalPromptCardSchema,
+  type ClinicalPromptCard,
+} from '@clinmesh/contracts/clinical-prompt-cards'
+import { clinicalOverrideReasonSchema } from '@clinmesh/contracts/clinical-quality'
+import { SIMULATION_TRIAL_DISCLAIMER_ZH } from '@clinmesh/contracts/knowledge-claims'
 import { guidelineTopicIdSchema, type GuidelineTopicBundle, type GuidelineTopicId } from '@clinmesh/contracts/guideline-topics'
 import { inpatientAngiographyReportSchema } from '@clinmesh/contracts/inpatient-angiography'
 import { inpatientDiagnosisSchema, inpatientMedicationOrderSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -714,8 +720,159 @@ export class InpatientGuidelineAdvice {
                 : messages[status],
       missing: effectiveMissing,
       failureCode: row?.error_code ?? null,
+      ...(result === null ? {} : {
+        promptCards: this.#evaluatePromptCards(
+          context,
+          admissionId,
+          basis.binding.patientId,
+          topicId,
+          requestId,
+          result.guidelines,
+          result.conclusions,
+          false,
+        ).visibleCards,
+      }),
       result,
     })
+  }
+
+  #evaluatePromptCards(
+    context: ActorContext,
+    admissionId: string,
+    patientId: string,
+    topicId: GuidelineTopicId,
+    requestId: string | null,
+    guidelines: readonly z.infer<typeof inpatientGuidelineAdviceEvidenceSchema>[],
+    conclusions: readonly z.infer<typeof inpatientGuidelineAdviceConclusionSchema>[],
+    recordAudit: boolean,
+  ): { blockedCount: number; visibleCards: ClinicalPromptCard[] } {
+    const asOf = this.owner.virtualTime(context)
+    const meta = this.owner.workflow.promptCards.activePackMetadata(
+      context,
+      { id: admissionId, kind: 'inpatient', patientId },
+      asOf,
+    )
+    const timing = requestId !== null ? 'pci-plan' as const : 'report-arrived' as const
+    const knowledgeStatus = meta.primaryPack ? 'auto-verified' as const : 'published' as const
+    const badge = knowledgeStatus === 'auto-verified'
+      ? { trialBadgeZh: '试用版' as const, trialDisclaimerZh: SIMULATION_TRIAL_DISCLAIMER_ZH }
+      : { trialBadgeZh: null, trialDisclaimerZh: null }
+
+    const candidates: ClinicalPromptCard[] = conclusions.map(conclusion => clinicalPromptCardSchema.parse({
+      basedOnFactVersions: [],
+      blockingTier: 'none',
+      cardId: `${timing}:guideline-advice:${topicId}:${requestId ?? 'admission'}:${conclusion.kind}`,
+      category: 'guideline-advice',
+      deliveryMode: 'display',
+      detail: conclusion.text,
+      indicator: conclusion.applicability === 'conditional' ? 'warning' : 'info',
+      knowledgeSnapshotVersion: meta.primaryPack?.knowledgeSnapshotVersion ?? null,
+      knowledgeStatus,
+      overrideReasons: [...clinicalOverrideReasonSchema.options],
+      packId: meta.primaryPack?.packId ?? null,
+      packVersion: meta.primaryPack?.packVersion ?? null,
+      riskTags: [],
+      sideBySideGroupKey: `${timing}:guideline-advice`,
+      source: {
+        label: guidelines.map(g => `${g.title} (${g.version})`).join('；').slice(0, 900) || topicId,
+        topicId,
+      },
+      suggestions: [],
+      summary: conclusion.text.length > 90 ? `${conclusion.text.slice(0, 87)}...` : conclusion.text,
+      timing,
+      ...badge,
+    }))
+
+    const evaluated = this.owner.workflow.promptCards.filterCandidateCardsForSubject({
+      asOf,
+      cards: candidates,
+      context,
+      inpatient: this.owner,
+      recordAudit,
+      subject: { id: admissionId, kind: 'inpatient', patientId },
+      timing,
+    })
+    return { blockedCount: evaluated.blockedRecords.length, visibleCards: evaluated.visibleCards }
+  }
+
+  /** 报告到达或更正后非阻塞重检已有阻塞（缺关键资料）住院指南任务并按需重新入队（0 LLM 调用）。 */
+  refreshAfterReportArrived(context: ActorContext, admissionId: string): void {
+    const pairs = z.array(z.object({
+      request_id: z.string().nullable(),
+      topic_id: guidelineTopicIdSchema,
+    })).parse(
+      this.owner.database.driver.prepare(`
+        SELECT DISTINCT topic_id, request_id FROM inpatient_guideline_advice
+        WHERE workspace_id = ? AND epoch = ? AND admission_id = ? AND cancelled = 0
+      `).all(context.workspaceId, context.epoch, admissionId),
+    )
+
+    for (const pair of pairs) {
+      const row = this.#row(context, admissionId, pair.topic_id, pair.request_id)
+      if (!row || row.cancelled === 1 || row.status !== 'blocked' || row.error_code !== 'TASK_READINESS_CRITICAL_MISSING') {
+        continue
+      }
+      const parsedContext = contextSchema.safeParse(JSON.parse(row.context_json))
+      if (!parsedContext.success) continue
+      const rowContext = parsedContext.data
+      if (this.options.contextStatus(rowContext, authorizationOperations[row.trigger]) !== 'active') continue
+
+      const basis = this.#basis(rowContext, admissionId, pair.topic_id, pair.request_id)
+      if (basis.frozen || basis.requestStatus === 'cancelled' || basis.input.sourceStatus !== 'available') continue
+
+      const readiness = this.owner.workflow.diseasePacks.evaluateGuidelineAdviceTaskReadiness(
+        this.owner,
+        rowContext,
+        admissionId,
+        pair.topic_id,
+        pair.request_id,
+      )
+      if (readiness.blocked) continue
+
+      const nextVersion = row.version + 1
+      const now = this.owner.virtualTime(rowContext)
+      this.owner.database.driver.transaction(() => {
+        const latestRow = this.#row(rowContext, admissionId, pair.topic_id, pair.request_id)
+        if (!latestRow || latestRow.version !== row.version || latestRow.status !== 'blocked') return
+        this.owner.database.driver.prepare(`
+          INSERT INTO inpatient_guideline_advice (
+            workspace_id, epoch, task_id, admission_id, topic_id, request_id, version,
+            context_json, basis_json, basis_fingerprint, trigger, status, error_code, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, ?)
+        `).run(
+          rowContext.workspaceId,
+          rowContext.epoch,
+          row.task_id,
+          admissionId,
+          pair.topic_id,
+          pair.request_id,
+          nextVersion,
+          row.context_json,
+          JSON.stringify(basis.input),
+          basis.fingerprint,
+          row.trigger,
+          now,
+        )
+        const payloadJson = JSON.stringify({ taskId: row.task_id, version: nextVersion })
+        this.owner.database.driver.prepare(`
+          INSERT INTO outbox_event (
+            workspace_id, epoch, event_id, scenario_run_id, kind, dedup_key,
+            payload_json, payload_hash, status, next_attempt_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, 'inpatient.guideline-advice.prepare', ?, ?, ?, 'queued', ?, ?, ?)
+        `).run(
+          rowContext.workspaceId,
+          rowContext.epoch,
+          uuidv7(),
+          rowContext.scenarioRunId,
+          `${row.task_id}:${nextVersion}:${basis.fingerprint}`,
+          payloadJson,
+          canonicalJsonHash({ taskId: row.task_id, version: nextVersion }),
+          now,
+          now,
+          now,
+        )
+      })()
+    }
   }
 
   read(context: ActorContext, admissionId: string, requestId: string) {
@@ -938,7 +1095,7 @@ export class InpatientGuidelineAdvice {
         expectedVersions: {},
         dataSchema: inpatientGuidelineAdviceSchema,
         authorize: () => this.#authorize(context, input.admissionId, 'manual'),
-        storedResponse: response => ({ ...response, data: { ...response.data, result: null } }),
+        storedResponse: response => ({ ...response, data: { ...response.data, promptCards: undefined, result: null } }),
       },
       transaction => {
         const state = this.#state(context, input.admissionId, topicId, requestId)
@@ -1125,6 +1282,19 @@ export class InpatientGuidelineAdvice {
           || !item.noProductOrQuantity)
       ) {
         throw new InpatientError('INPATIENT_GUIDELINE_REJECTED', '指南意见未通过独立核验')
+      }
+      const safetyCheck = this.#evaluatePromptCards(
+        context,
+        row.admission_id,
+        this.owner.readAdmissionBinding(context, row.admission_id).patientId,
+        row.topic_id,
+        row.request_id,
+        input.guidelines,
+        proposed.conclusions,
+        true,
+      )
+      if (safetyCheck.blockedCount > 0) {
+        throw new InpatientError('INPATIENT_GUIDELINE_REJECTED', '指南意见未通过展示前确定性安全过滤已拦截')
       }
       this.owner.database.driver.transaction(() => {
         assertCurrent()

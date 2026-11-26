@@ -119,6 +119,7 @@ export class InpatientService {
     this.surgeryRequestReasons = new InpatientSurgeryRequestReason(this, estimateContextStatus)
     this.drgExplanations = new InpatientDrgExplanation(this, estimateContextStatus)
     this.intraoperativeReviews = new InpatientIntraoperativeReview(this)
+    workflow.promptCards.setInpatient(this)
   }
   recordVitalSigns(context: ActorContext, input: InpatientVitalSignsInput, idempotencyKey: string) {
     return this.workflow.clinicalScores.recordInpatientVitalSigns(this, context, input, idempotencyKey)

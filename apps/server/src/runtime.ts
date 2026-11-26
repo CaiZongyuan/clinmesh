@@ -489,6 +489,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const doctorRecommendations = new DoctorRecommendationsService({
       recovery: modelTasks, automaticRetries: workspaceId => modelUsage.automaticRetries(workspaceId),
       database, workflow, commands, models, referenceData,
+      promptCards: workflow.promptCards,
       ...(guidelineCorpus === undefined ? {} : { guidelines: guidelineCorpus }),
       contextStatus: context => identity.consultationRecordingContextStatus(context),
       ...(recommendationModel === undefined ? {} : { model: recommendationModel }),

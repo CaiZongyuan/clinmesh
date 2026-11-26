@@ -254,6 +254,8 @@ clinmesh command receipt get --operation-id inpatient.pci-selection.save --idemp
 
 ```bash
 clinmesh inpatient guideline-topics --admission-id <admission-id> --topic-id contrast-kidney-hydration
+clinmesh inpatient clinical-prompts get --admission-id <admission-id> --timing encounter-open
+clinmesh inpatient clinical-prompts dismiss --input @inpatient-clinical-prompt-dismiss.json --idempotency-key <key>
 clinmesh inpatient guideline-advice --admission-id <admission-id>
 clinmesh inpatient guideline-advice --admission-id <admission-id> --topic-id contrast-kidney-hydration
 clinmesh inpatient request-guideline-advice --input @guideline-advice.json --idempotency-key <key>

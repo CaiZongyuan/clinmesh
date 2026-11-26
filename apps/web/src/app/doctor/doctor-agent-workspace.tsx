@@ -109,6 +109,19 @@ export function doctorWorkspaceAgentActions({
       },
       ['packId', 'taskId'],
     ),
+    'outpatient.clinical-prompts.read': docRead(
+      'Read unified ClinicalPromptCard cards (encounter-open, order-draft-select, order-sign, encounter-complete, report-arrived) after deterministic pre-display safety filtering and optional historical knowledge replay (0 LLM calls).',
+      {
+        asOf: { type: 'string' },
+        candidateMedicationClasses: { type: 'string' },
+        catalogItemId: { type: 'string' },
+        includeDismissed: { type: 'boolean' },
+        includeSilent: { type: 'boolean' },
+        reevaluateWithLatestKnowledge: { type: 'boolean' },
+        selectedTemplateId: { type: 'string' },
+        timing: { type: 'string', enum: ['encounter-open', 'order-draft-select', 'order-sign', 'encounter-complete', 'pci-plan', 'discharge', 'report-arrived'] },
+      },
+    ),
     'outpatient.case.select': {
       description: 'Select caseId from loaded queue.items; switch to its waiting or active tab.',
       enabled: (queue.data?.items.length ?? 0) > 0,

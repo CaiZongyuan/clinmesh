@@ -459,6 +459,33 @@
           "status": "auto-verified",
           "topicId": "cad-dapt-and-secondary-prevention",
           "version": "1.0.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 35 页",
+            "page": 35,
+            "quoteFragment": "In patients undergoing PCI, DES should be used in preference to BMS",
+            "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+            "sourceId": "coronary-10-2021",
+            "title": "2021 ACC/AHA/SCAI 血运重建指南",
+            "version": "2021"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["coronary-artery-disease"],
+          "effectiveFrom": "2026-06-01T00:00:00Z",
+          "id": "coronary-claim-legacy-bms-check",
+          "packId": "coronary-cad",
+          "reviewerId": null,
+          "statementZh": "首版固定疗程与早期裸支架过渡备注条款（2026.08 版已退役并由个体化出血分层条款替代）。",
+          "status": "auto-verified",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "1.0.0"
         }
       ],
       "effectiveFrom": "2026-06-01T00:00:00Z",
@@ -563,6 +590,286 @@
           "titleEn": "CAD Secondary Prevention Knowledge Card",
           "titleZh": "冠心病双抗与二级预防知识卡",
           "version": "1.0.0"
+        }
+      ]
+    },
+    {
+      "claims": [
+        {
+          "anchor": {
+            "locator": "PDF 物理第 2 页",
+            "page": 2,
+            "quoteFragment": "10 min 内行标准 12 导联",
+            "sha256": "ed1502f49449419eb1d540e289e15715ea5f58b40a0dc71af281a08e69ed5139",
+            "sourceId": "coronary-31-2019",
+            "title": "急性冠脉综合征急诊快速诊治指南（2019）",
+            "version": "2019"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:R07|R10\\.1|I20|I21)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["11524-6", "89579-7"],
+          "effectiveFrom": "2026-08-20T00:00:00Z",
+          "id": "coronary-claim-acs-ecg-10min",
+          "packId": "coronary-cad",
+          "reviewerId": null,
+          "statementZh": "拟诊急性胸痛或疑似急性冠脉综合征患者须于 10 分钟内行标准 12 导联心电图并检测 cTn/hs-cTn。",
+          "status": "auto-verified",
+          "topicId": "acute-chest-pain-acs",
+          "version": "2.0.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 35 页",
+            "page": 35,
+            "quoteFragment": "In patients undergoing PCI, DES should be used in preference to BMS",
+            "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+            "sourceId": "coronary-10-2021",
+            "title": "2021 ACC/AHA/SCAI 血运重建指南",
+            "version": "2021"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["coronary-artery-disease"],
+          "effectiveFrom": "2026-08-20T00:00:00Z",
+          "id": "coronary-claim-pci-des-over-bms",
+          "packId": "coronary-cad",
+          "reviewerId": null,
+          "statementZh": "拟行冠脉 PCI 治疗的患者优先使用药物洗脱支架（DES）而非金属裸支架（BMS）。",
+          "status": "auto-verified",
+          "topicId": "pci-stent",
+          "version": "2.0.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 4 页",
+            "page": 4,
+            "quoteFragment": "对比剂剂量与 eGFR 的比值不能大于 3.7",
+            "sha256": "332e74aa189a08a56053e38cc8deea8b07aeeb1903770a2b41248692cce77c0e",
+            "sourceId": "coronary-20-2021",
+            "title": "经动脉心血管介入诊治中含碘对比剂相关不良反应防治的中国专家共识（2021）",
+            "version": "2021"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["2160-0", "coronary-artery-disease"],
+          "effectiveFrom": "2026-08-20T00:00:00Z",
+          "id": "coronary-claim-contrast-egfr-limit",
+          "packId": "coronary-cad",
+          "reviewerId": null,
+          "statementZh": "含碘对比剂冠脉介入前须完成血肌酐与 eGFR 危险分层，并控制对比剂剂量与 eGFR 比值不大于 3.7。",
+          "status": "auto-verified",
+          "topicId": "contrast-kidney-hydration",
+          "version": "2.0.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 7 页",
+            "page": 7,
+            "quoteFragment": "推荐以 LDL-C 为首要干预靶点",
+            "sha256": "703136f8921a50cb40c5db7c9033da9c5a21fe3ae7d957d0e60f67492812367b",
+            "sourceId": "coronary-32-2018",
+            "title": "稳定性冠心病诊断与治疗指南（2018）",
+            "version": "2018"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["13457-7", "coronary-artery-disease"],
+          "effectiveFrom": "2026-08-20T00:00:00Z",
+          "id": "coronary-claim-ldl-primary-target",
+          "packId": "coronary-cad",
+          "reviewerId": null,
+          "statementZh": "冠心病二级预防及随访阶段以 LDL-C 为首要调脂干预靶点，未达标时须强化或联合依折麦布治疗。",
+          "status": "auto-verified",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "2.0.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 3 页",
+            "page": 3,
+            "quoteFragment": "PRECISE-DAPT 评分≥25 分",
+            "sha256": "02c7080308bc64e9c499f8ba01f70a572127aee069f256e19937c9749a55f9e9",
+            "sourceId": "coronary-24-2021",
+            "title": "冠心病双联抗血小板治疗中国专家共识（2021）",
+            "version": "2021"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["antiplatelet", "coronary-artery-disease"],
+          "effectiveFrom": "2026-08-20T00:00:00Z",
+          "id": "coronary-claim-dapt-precise-threshold",
+          "packId": "coronary-cad",
+          "reviewerId": null,
+          "statementZh": "双联抗血小板治疗须权衡缺血与出血风险，PRECISE-DAPT 评分 ≥ 25 分高出血风险患者宜缩短 DAPT 疗程。",
+          "status": "auto-verified",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "2.0.0"
+        },
+        {
+          "anchor": {
+            "locator": "PDF 物理第 35 页",
+            "page": 35,
+            "quoteFragment": "In patients undergoing PCI, DES should be used in preference to BMS",
+            "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+            "sourceId": "coronary-10-2021",
+            "title": "2021 ACC/AHA/SCAI 血运重建指南",
+            "version": "2021"
+          },
+          "applicabilityCondition": {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "associatedConceptCodes": ["coronary-artery-disease"],
+          "effectiveFrom": "2026-08-20T00:00:00Z",
+          "id": "coronary-claim-legacy-bms-check",
+          "packId": "coronary-cad",
+          "reviewerId": null,
+          "statementZh": "首版固定疗程与早期裸支架过渡备注条款（2026.08 版已退役并由个体化出血分层条款替代）。",
+          "status": "superseded",
+          "supersededByClaimId": "coronary-claim-dapt-precise-threshold",
+          "topicId": "cad-dapt-and-secondary-prevention",
+          "version": "2.0.0"
+        }
+      ],
+      "effectiveFrom": "2026-08-20T00:00:00Z",
+      "snapshotVersion": "2026.08.v2",
+      "topics": [
+        {
+          "effectiveFrom": "2026-08-20T00:00:00Z",
+          "id": "acute-chest-pain-acs",
+          "limitationsZh": [
+            "单次心电图或单次肌钙蛋白阴性不能直接排除 NSTE-ACS，亦不能跳过出血禁忌直接套用抗栓给药。"
+          ],
+          "navigationZh": "适用于急性胸痛及疑似急性冠脉综合征患者核对首诊 10 分钟 12 导联心电图、动态肌钙蛋白与 GRACE/TIMI 危险分层。",
+          "packId": "coronary-cad",
+          "references": [
+            {
+              "locator": "PDF 物理第 2 页",
+              "page": 2,
+              "quoteFragment": "10 min 内行标准 12 导联",
+              "sha256": "ed1502f49449419eb1d540e289e15715ea5f58b40a0dc71af281a08e69ed5139",
+              "sourceId": "coronary-31-2019",
+              "title": "急性冠脉综合征急诊快速诊治指南（2019）",
+              "version": "2019"
+            }
+          ],
+          "reviewerId": null,
+          "status": "auto-verified",
+          "titleEn": "Acute Chest Pain & ACS Knowledge Card",
+          "titleZh": "急性胸痛与 ACS 评估知识卡",
+          "version": "2.0.0"
+        },
+        {
+          "effectiveFrom": "2026-08-20T00:00:00Z",
+          "id": "pci-stent",
+          "limitationsZh": [
+            "首期固定 2021 版血运重建指南与 CVIT 共识，不替代主管医生个体化术中决策。"
+          ],
+          "navigationZh": "适用于已提出 PCI 计划时核对 DES 支架类别、IVUS/OCT 指导条件与近远端参考段测量要求。",
+          "packId": "coronary-cad",
+          "references": [
+            {
+              "locator": "PDF 物理第 35 页",
+              "page": 35,
+              "quoteFragment": "In patients undergoing PCI, DES should be used in preference to BMS",
+              "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+              "sourceId": "coronary-10-2021",
+              "title": "2021 ACC/AHA/SCAI 血运重建指南",
+              "version": "2021"
+            }
+          ],
+          "reviewerId": null,
+          "status": "auto-verified",
+          "titleEn": "PCI Stent Selection & Imaging Guidance Card",
+          "titleZh": "PCI 支架与腔内影像知识卡",
+          "version": "2.0.0"
+        },
+        {
+          "effectiveFrom": "2026-08-20T00:00:00Z",
+          "id": "contrast-kidney-hydration",
+          "limitationsZh": [
+            "左心功能不全或失代偿心衰患者严禁机械套用高速补液，须结合容量负荷调整。"
+          ],
+          "navigationZh": "适用于拟行或已行含碘对比剂冠脉造影/PCI 患者核对术前 eGFR 分层、0.9% 氯化钠水化与剂量控制。",
+          "packId": "coronary-cad",
+          "references": [
+            {
+              "locator": "PDF 物理第 4 页",
+              "page": 4,
+              "quoteFragment": "对比剂剂量与 eGFR 的比值不能大于 3.7",
+              "sha256": "332e74aa189a08a56053e38cc8deea8b07aeeb1903770a2b41248692cce77c0e",
+              "sourceId": "coronary-20-2021",
+              "title": "经动脉心血管介入诊治中含碘对比剂相关不良反应防治的中国专家共识（2021）",
+              "version": "2021"
+            }
+          ],
+          "reviewerId": null,
+          "status": "auto-verified",
+          "titleEn": "Contrast Kidney Hydration Knowledge Card",
+          "titleZh": "含碘对比剂肾保护与水化知识卡",
+          "version": "2.0.0"
+        },
+        {
+          "effectiveFrom": "2026-08-20T00:00:00Z",
+          "id": "cad-dapt-and-secondary-prevention",
+          "limitationsZh": [
+            "不能对所有支架或冠心病患者机械套用单一双抗月数，须结合 PRECISE-DAPT 出血风险动态权衡。"
+          ],
+          "navigationZh": "适用于冠心病 PCI 术后、出院与门诊随访核对双联抗血小板疗程及 LDL-C 达标管理。",
+          "packId": "coronary-cad",
+          "references": [
+            {
+              "locator": "PDF 物理第 7 页",
+              "page": 7,
+              "quoteFragment": "推荐以 LDL-C 为首要干预靶点",
+              "sha256": "703136f8921a50cb40c5db7c9033da9c5a21fe3ae7d957d0e60f67492812367b",
+              "sourceId": "coronary-32-2018",
+              "title": "稳定性冠心病诊断与治疗指南（2018）",
+              "version": "2018"
+            },
+            {
+              "locator": "PDF 物理第 3 页",
+              "page": 3,
+              "quoteFragment": "PRECISE-DAPT 评分≥25 分",
+              "sha256": "02c7080308bc64e9c499f8ba01f70a572127aee069f256e19937c9749a55f9e9",
+              "sourceId": "coronary-24-2021",
+              "title": "冠心病双联抗血小板治疗中国专家共识（2021）",
+              "version": "2021"
+            }
+          ],
+          "reviewerId": null,
+          "status": "auto-verified",
+          "titleEn": "CAD Secondary Prevention Knowledge Card",
+          "titleZh": "冠心病双抗与二级预防知识卡",
+          "version": "2.0.0"
         }
       ]
     }

@@ -145,6 +145,8 @@ export function useInpatientAgentTools(input: Input) {
         'Read version-bound inpatient or postoperative order-set candidate drafts (optional surgeryExecutionId) screened against allergies, eGFR, vitals, and active orders.'),
       'inpatient.disease-packs.read': queryAction('inpatient.disease-packs.read', '/disease-packs', clinicalRoles, ['admission', 'orders', 'surgery', 'discharge', 'record'],
         'Read active/available declarative disease packs, stages, task readiness, and tool policies for the current inpatient.'),
+      'inpatient.clinical-prompts.read': queryAction('inpatient.clinical-prompts.read', '/clinical-prompts', clinicalRoles, ['admission', 'orders', 'surgery', 'discharge'],
+        'Read unified ClinicalPromptCard cards across timing hooks after deterministic pre-display safety filtering and optional historical knowledge replay (0 LLM calls).'),
       'inpatient.disease-pack-task-facts.read': {
         description: 'Read task-scoped clinical fact ledger and readiness checks for a specific disease pack and task on the current inpatient.',
         parameters: parameters('inpatient.disease-pack-task-facts.read'),

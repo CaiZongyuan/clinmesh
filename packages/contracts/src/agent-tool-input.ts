@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { clinicalPromptReadQuerySchema } from './clinical-prompt-cards.ts'
 import { clinicalOverrideInputSchema, clinicalOverrideReasonSchema, clinicalQualityAlertCodeSchema, outpatientClinicalQualityInputSchema } from './clinical-quality.ts'
 import { clinicalFactLedgerFilterQuerySchema } from './clinical-fact-ledger.ts'
 import { diseasePackSlugSchema } from './disease-pack.ts'
@@ -161,6 +162,7 @@ export const agentToolInputSchemas = Object.freeze({
   'inpatient.order-set-drafts.read': inpatientOrderSetDraftQuerySchema,
   'inpatient.disease-packs.read': emptyInputSchema,
   'inpatient.disease-pack-task-facts.read': z.object({ packId: diseasePackSlugSchema, taskId: boundedIdSchema }).strict(),
+  'inpatient.clinical-prompts.read': clinicalPromptReadQuerySchema,
   'inpatient.order.verify.propose': inpatientOrderActionInputSchema.omit({ admissionId: true }),
   'inpatient.report.acknowledge.propose': inpatientInvestigationAcknowledgeInputSchema.omit({ admissionId: true }),
   'inpatient.payment.draft.set': z.object({ tenders: paymentTendersSchema }).strict(),
@@ -202,6 +204,7 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.order-set-drafts.read': orderSetDraftQuerySchema,
   'outpatient.disease-packs.read': emptyInputSchema,
   'outpatient.disease-pack-task-facts.read': z.object({ packId: diseasePackSlugSchema, taskId: boundedIdSchema }).strict(),
+  'outpatient.clinical-prompts.read': clinicalPromptReadQuerySchema,
   'outpatient.case.select': caseIdInputSchema,
   'outpatient.section.select': z.object({
     /** 同时定位这条功能检查申请的结构化文字报告；只与 `laboratory` 栏目一起使用。 */

@@ -237,11 +237,23 @@ export const diseasePackIndicationRuleSchema = z.object({
 }).strict()
 
 export const diseasePackRiskTagSchema = z.object({
+  candidateMedicationClasses: z.array(boundedCode).min(1).max(16).optional(),
   condition: diseasePackTriggerNodeSchema,
+  descriptionZh: nonEmptyText.optional(),
   id: diseasePackSlugSchema,
   labelZh: nonEmptyText,
   severity: z.enum(['info', 'warning', 'critical']),
+  timing: z.enum([
+    'encounter-open',
+    'order-draft-select',
+    'order-sign',
+    'encounter-complete',
+    'pci-plan',
+    'discharge',
+    'report-arrived',
+  ]).optional(),
 }).strict()
+export type DiseasePackRiskTag = z.infer<typeof diseasePackRiskTagSchema>
 
 export const diseasePackExamCaseSchema = z.object({
   caseId: boundedId,
