@@ -72,6 +72,38 @@ it('distinguishes a hidden code from a known dotted descendant in the same codin
   expect(() => parseHospitalDataPack(pack)).toThrowError(expect.objectContaining({ code: 'PERSONA_TRUTH_LEAK' }));
 });
 
+it.each<[string, boolean]>([
+  ['D4.1', false], ['D4+Q7', false], ['D4.1/D4+Q7', false], ['Q7&D4', false], ['Q7&D4/Q7', true], ['D4 contains text', true],
+  ['D4/Q7', true], ['Q7-D4.1', true], ['D4.1/Q7', true], ['D4.1/D4', true], ['D4+Q7_Q7', true],
+  ['unlisted/Q7', true], ['D4/unknown', true], ['D4+Q7, Q7.', true], ['xD4word', false],
+])('matches registered diagnosis codes in the complete Persona phrase %s', (phrase, leaks) => {
+  const pack = general();
+  const system = 'urn:example:paired-diagnoses';
+  const coding = (code: string) => ({ codeSystem: system, code });
+  for (const [index, code] of ['D4', 'Q7', 'D4.1', 'D4+Q7', 'Q7&D4'].entries()) {
+    pack.catalog.diagnoses.push({ ...coding(code), display: { en: `Teaching concept ${index}`, zh: `教学概念 ${index}` } });
+  }
+  const patient = pack.cases[0]!;
+  patient.caseTruth.primaryDiagnosis = coding('D4');
+  patient.caseTruth.secondaryDiagnoses = [coding('Q7')];
+  patient.priorHistory.diagnoses = [coding('D4.1'), coding('D4+Q7'), coding('Q7&D4')];
+  patient.patientPersona.openingStatement.en = phrase;
+  const compile = () => parseHospitalDataPack(pack);
+  if (leaks) expect(compile).toThrowError(expect.objectContaining({ code: 'PERSONA_TRUTH_LEAK' }));
+  else expect(compile).not.toThrow();
+});
+
+it('limits the exemption for a known code to its own diagnosis system', () => {
+  const pack = general();
+  const patient = pack.cases[0]!;
+  const hidden = patient.caseTruth.primaryDiagnosis;
+  const other = { codeSystem: 'urn:example:other', code: hidden.code };
+  pack.catalog.diagnoses.push({ ...other, display: { en: 'Known other concept', zh: '其他已知概念' } });
+  patient.priorHistory.diagnoses = [other];
+  patient.patientPersona.openingStatement.en = hidden.code;
+  expect(() => parseHospitalDataPack(pack)).toThrowError(expect.objectContaining({ code: 'PERSONA_TRUTH_LEAK' }));
+});
+
 it('validates a preoperative long-term order policy separately from its prerequisite investigations', () => {
   const pack = structuredClone(BUILTIN_DATA_PACKS['cn-cardiology']);
   const [intervention, investigation] = pack.catalog.procedures;

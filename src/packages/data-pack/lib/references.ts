@@ -30,28 +30,63 @@ function normalized(value: string) {
   return value.normalize('NFKC').toLowerCase().replace(/[\u200b-\u200d\ufeff]/gu, '').replace(/\s+/gu, ' ');
 }
 
-function termPattern(term: string, exactCode = false) {
+function termPattern(term: string) {
   const needle = normalized(term);
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const left = /^[a-z0-9]/.test(needle) ? '(?<![a-z0-9])' : '';
   const right = /[a-z0-9]$/.test(needle) ? '(?![a-z0-9])' : '';
-  const codeStart = exactCode ? '(?<![a-z0-9][._/-])' : '';
-  const codeEnd = exactCode ? '(?![._/-][a-z0-9])' : '';
-  return new RegExp(`${left}${codeStart}${escaped}${codeEnd}${right}`, 'u');
+  return new RegExp(`${left}${escaped}${right}`, 'u');
 }
 
-function checkPersona(patient: ClinicalCase, diagnoses: ReadonlyMap<string, Diagnosis>) {
+function groupBy<Item>(items: Iterable<Item>, key: (item: Item) => string) {
+  const groups = new Map<string, Item[]>();
+  for (const item of items) {
+    const id = key(item);
+    const members = groups.get(id);
+    if (members) members.push(item);
+    else groups.set(id, [item]);
+  }
+  return groups;
+}
+
+function registeredCodes(diagnoses: Diagnosis[]) {
+  const systems = groupBy(diagnoses, item => item.codeSystem);
+  return new Map(Array.from(systems, ([system, entries]) => {
+    const longestFirst = entries.map(item => normalized(item.code)).sort((first, second) => second.length - first.length);
+    return [system, groupBy(longestFirst, code => code.charAt(0))] as const;
+  }));
+}
+
+function withinWord(left: string | undefined, right: string | undefined) {
+  return left !== undefined && right !== undefined && /[a-z0-9]/u.test(left) && /[a-z0-9]/u.test(right);
+}
+
+function mentionsCode(text: string, byInitial: ReadonlyMap<string, string[]>, hidden: ReadonlySet<string>) {
+  for (let start = 0; start < text.length;) {
+    const initial = text[start]!;
+    const match = withinWord(text[start - 1], initial) ? undefined : byInitial.get(initial)?.find(code =>
+      text.startsWith(code, start) && !withinWord(code.at(-1), text[start + code.length]),
+    );
+    if (match && hidden.has(match)) return true;
+    start += match?.length ?? 1;
+  }
+  return false;
+}
+
+function checkPersona(patient: ClinicalCase, diagnoses: ReadonlyMap<string, Diagnosis>, codes: ReturnType<typeof registeredCodes>) {
   const known = new Set(patient.priorHistory.diagnoses.map(codingKey));
   const persona = patient.patientPersona;
   const speech = [persona.character, persona.healthLiteracy, persona.speechStyle, persona.openingStatement, ...persona.symptoms, persona.medicationMemory, ...persona.boundaries]
     .flatMap(field => [normalized(field.en), normalized(field.zh)]);
-  for (const diagnosis of [patient.caseTruth.primaryDiagnosis, ...patient.caseTruth.secondaryDiagnoses]) {
-    const key = codingKey(diagnosis);
-    const entry = reference(diagnoses, key, 'caseTruth.diagnoses');
-    if (known.has(key)) continue;
-    const names = [entry.display.en, entry.display.zh, ...entry.aliases ?? []];
-    const forbidden = [termPattern(entry.code, true), ...names.map(name => termPattern(name))];
-    if (forbidden.some(pattern => speech.some(field => pattern.test(field)))) throw new DataPackError('PERSONA_TRUTH_LEAK', 'patientPersona');
+  const hidden = [patient.caseTruth.primaryDiagnosis, ...patient.caseTruth.secondaryDiagnoses]
+    .filter(item => !known.has(codingKey(item))).map(item => reference(diagnoses, codingKey(item), 'caseTruth.diagnoses'));
+  for (const [system, entries] of groupBy(hidden, item => item.codeSystem)) {
+    const hiddenCodes = new Set(entries.map(entry => normalized(entry.code)));
+    const names = entries.flatMap(entry => [entry.display.en, entry.display.zh, ...entry.aliases ?? []])
+      .filter(name => !hiddenCodes.has(normalized(name))).map(termPattern);
+    if (speech.some(field => mentionsCode(field, codes.get(system)!, hiddenCodes) || names.some(pattern => pattern.test(field)))) {
+      throw new DataPackError('PERSONA_TRUTH_LEAK', 'patientPersona');
+    }
   }
 }
 
@@ -135,6 +170,7 @@ export function validateReferences(pack: HospitalDataPack) {
     }
   }
   indexBy(pack.cases, item => JSON.stringify([item.caseId, item.version]), 'cases');
+  const codes = registeredCodes(catalog.diagnoses);
   for (const patient of pack.cases) {
     indexBy(patient.demographics.identifiers, id => JSON.stringify([id.issuer, id.value]), 'demographics.identifiers');
     requireCodes('diagnoses', patient.priorHistory.diagnoses, 'priorHistory.diagnoses');
@@ -153,7 +189,7 @@ export function validateReferences(pack: HospitalDataPack) {
     requireCodes('materials', truth.expectedMaterials ?? [], 'expectedMaterials');
     if (truth.noMedication && truth.expectedMedications?.length) throw new DataPackError('INVALID_PACK', 'noMedication');
     checkResults(truth.results, entries.services);
-    checkPersona(patient, entries.diagnoses);
+    checkPersona(patient, entries.diagnoses, codes);
   }
   return entries;
 }

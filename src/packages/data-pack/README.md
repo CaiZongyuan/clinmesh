@@ -8,6 +8,8 @@
 
 服务端从 `src/server/builtin-data-packs.ts` 导入 `BUILTIN_DATA_PACKS`。它通过静态 JSON 导入携带两套已编译的完整 bundle，供本地 Node 和 Workers 使用。该注册表与编译后的完整数据含私有 Case Truth，使用范围为受信任服务端。`findCatalogItem(pack, kind, coding)` 使用装载时建立的索引，以目录类别、URI 与编码查找条目。
 
+Persona 检查在每项隐藏诊断所属的编码体系中，从左到右识别已登记的完整编码。同一位置优先匹配最长编码，并继续检查后续文本。已知子码和含标点的既往编码可以照录，单独出现的隐藏编码仍触发拒绝。
+
 ```ts
 const at = await store.withTransaction(tx => installHospitalDataPack(tx, {
   workspaceId, expectedEpoch: null, virtualTime: '2026-08-24T00:00:00Z',
