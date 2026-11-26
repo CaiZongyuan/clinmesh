@@ -44,6 +44,14 @@ const messages: Record<string, [string, string]> = {
   FIELD_NOT_IN_TEMPLATE: ['Review the current template and any edits under the previous template.', '请核对当前模板与既往模板字段的更正。'],
   RETIRED_FIELDS_REQUIRE_REVIEW: ['Review and resolve previous template corrections before signing.', '请核对并处置既往模板字段的更正后再签署。'],
   CASE_ALREADY_ACTIVE: ['This case already has an active encounter. Select it in the encounter list.', '该病例已有进行中的就诊，请从就诊列表打开。'],
+  CATALOG_CONFLICT: ['Review the catalog version and price, then save the item again.', '请重新核对目录版本与单价后保存项目。'],
+  ACTIVE_ORDER_EXISTS: ['This investigation already has an open request.', '同一服务已有未终结申请。'],
+  CLINICAL_DOCUMENT_UNSIGNED: ['Sign the clinical record before issuing orders.', '正式开单前请先签署病历。'],
+  DIAGNOSIS_UNCONFIRMED: ['Confirm the primary diagnosis before issuing orders.', '正式开单前请确认主诊断。'],
+  PAYMENT_REQUIRED: ['Payment clearance is required before acceptance.', '受理前须完成收费放行。'],
+  CHARGE_LOCKED: ['The linked financial record prevents cancellation.', '关联账项当前禁止取消申请。'],
+  AMENDMENT_UNAVAILABLE: ['No authored correction is available for this report.', '这份报告暂无已编写的更正版本。'],
+  REPORT_SUPERSEDED: ['Open the latest report version to review it.', '请打开报告的最新版本进行审阅。'],
 };
 export function errorMessage(error: Error, language: Language) {
   const text = messages[error.message];

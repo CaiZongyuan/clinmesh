@@ -1,7 +1,7 @@
 {
   "manifest": {
     "packId": "global-general",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "schemaVersion": 1,
     "name": { "en": "Teaching outpatient clinic", "zh": "综合教学门诊" },
     "description": {
@@ -508,7 +508,7 @@
             "revision": 1,
             "summary": { "en": "Initially reported 12 ng/L.", "zh": "首次签发 12 ng/L。" },
             "observations": [
-              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 12 }
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 12, "unit": "ng/L" }
             ]
           },
           {
@@ -524,7 +524,7 @@
               "zh": "更正为 120 ng/L，须重新确认已阅。"
             },
             "observations": [
-              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 120 }
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 120, "unit": "ng/L" }
             ]
           }
         ],
@@ -594,7 +594,7 @@
             "revision": 1,
             "summary": { "en": "HbA1c 8.6%.", "zh": "糖化血红蛋白 8.6%。" },
             "observations": [
-              { "analyte": { "codeSystem": "http://loinc.org", "code": "4548-4" }, "value": 8.6 }
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "4548-4" }, "value": 8.6, "unit": "%" }
             ]
           },
           {
@@ -605,7 +605,8 @@
             "observations": [
               {
                 "analyte": { "codeSystem": "http://loinc.org", "code": "5802-4" },
-                "value": "positive"
+                "value": "positive",
+                "interpretation": "abnormal"
               }
             ]
           },
@@ -615,7 +616,7 @@
             "revision": 1,
             "summary": { "en": "eGFR 94 mL/min/1.73 m².", "zh": "eGFR 94 mL/min/1.73 m²。" },
             "observations": [
-              { "analyte": { "codeSystem": "http://loinc.org", "code": "98979-8" }, "value": 94 }
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "98979-8" }, "value": 94, "unit": "mL/min/1.73m2" }
             ]
           }
         ],

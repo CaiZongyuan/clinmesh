@@ -109,6 +109,8 @@ export const tables = {
   refund_transactions: table({ allocation_id: ref('payment_allocations'), reason: text, ...money, ...times }),
   regional_payer_records: table({ encounter_id: enc, payer_code: text, reference: text, determination: frozen, ...times }),
   encounter_triage: table({ encounter_id: enc, vitals: frozen, ...times }, 'encounter_id'),
+  lab_drafts: table({ encounter_id: enc, items: column(z.array(frozen.schema), 'json'), version }, 'encounter_id'),
+  lab_requests: table({ order_id: order, stages: column(z.array(z.enum(['follow-up', 'repeat', 'inpatient', 'initial'])).min(1), 'json') }, 'order_id'),
 } satisfies Record<string, TableDefinition>;
 
 export type Entity = keyof typeof tables;
@@ -122,6 +124,7 @@ export const editable = {
   visitor_sessions: ['practitioner_role', 'revoked'], capability_tokens: ['revoked'], clinical_orders: ['status'],
   prescriptions: ['status'], inpatient_admissions: ['status', 'ward'], bed_occupancies: ['released_at'],
   surgery_requests: ['status'], material_reservations: ['status'],
+  lab_drafts: ['items'],
 } as const satisfies { [Name in Entity]?: readonly (keyof EntityRow<Name>)[] };
 export type EditableEntity = keyof typeof editable;
 export type Changes<Name extends EditableEntity> = Partial<Pick<EntityRow<Name>, (typeof editable)[Name][number] & keyof EntityRow<Name>>>;

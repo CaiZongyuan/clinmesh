@@ -20,7 +20,10 @@ export function createStore(db: SqlConnection): StorePort {
   db.atomicSync(() => {
     db.exec('CREATE TABLE IF NOT EXISTS clinmesh_schema (version INTEGER NOT NULL PRIMARY KEY)');
     const versions = db.all('SELECT version FROM clinmesh_schema');
-    if (versions.length === 1 && versions[0]!.version === 1) { initializeEntity(db.exec, 'encounter_triage'); return; }
+    if (versions.length === 1 && versions[0]!.version === 1) {
+      for (const name of ['encounter_triage', 'lab_drafts', 'lab_requests'] as const) initializeEntity(db.exec, name);
+      return;
+    }
     if (versions.length) throw new Error('Unsupported ClinMesh schema version');
     initializeSchema(db.exec);
     db.run('INSERT INTO clinmesh_schema (version) VALUES (1)');

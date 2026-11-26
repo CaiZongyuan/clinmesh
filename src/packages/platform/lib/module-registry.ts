@@ -26,6 +26,7 @@ export interface ClinMeshModule<Operations = never> {
   registerOperations?(catalog: Operations): void;
   completion?: CompletionCheck;
   midnight?: MidnightHook;
+  clockAdvanced?(tx: StoreTx, at: StoreScope, to: string, recordedAt: string): void;
   workbenchTabs?: readonly z.infer<typeof workbenchTab>[];
 }
 
