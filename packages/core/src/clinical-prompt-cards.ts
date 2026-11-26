@@ -561,7 +561,8 @@ export function markStalePromptCardsForLedger(
   const byRecordKey = new Map<string, ClinicalFact[]>()
   for (const fact of ledger.facts) {
     byFactId.set(fact.factId, fact)
-    const key = `${fact.provenance.recordType}:${fact.provenance.recordId}`
+    byFactId.set(clampPromptRefToken(fact.factId, 128), fact)
+    const key = `${clampPromptRefToken(fact.provenance.recordType, 128)}:${clampPromptRefToken(fact.provenance.recordId, 128)}`
     const list = byRecordKey.get(key)
     if (list) list.push(fact)
     else byRecordKey.set(key, [fact])
@@ -576,12 +577,12 @@ export function markStalePromptCardsForLedger(
         (exactFact !== undefined && isFactSupersededOrInvalid(exactFact))
         || recordFacts.some(f => isFactSupersededOrInvalid(f))
       const hasNewerVersion = recordFacts.some(
-        f => !isFactSupersededOrInvalid(f) && f.provenance.recordVersion !== ref.recordVersion,
+        f => !isFactSupersededOrInvalid(f) && clampPromptRefToken(f.provenance.recordVersion, 128) !== ref.recordVersion,
       )
       const activeExactMissing = exactFact === undefined && (
         recordFacts.length > 0
           ? recordFacts.every(
-              f => isFactSupersededOrInvalid(f) || f.provenance.recordVersion !== ref.recordVersion,
+              f => isFactSupersededOrInvalid(f) || clampPromptRefToken(f.provenance.recordVersion, 128) !== ref.recordVersion,
             )
           : !ref.factId.startsWith('ev:')
       )
@@ -733,6 +734,22 @@ export interface BuildTimingPromptCardsInput {
   verifySourcePassage?: KnowledgePassageVerifier | undefined
 }
 
+function fnv1aHex(value: string): string {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0')
+}
+
+/** Clamps prompt identifier and provenance tokens to schema bounds deterministically. */
+export function clampPromptRefToken(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value
+  const suffix = `~${fnv1aHex(value)}`
+  return `${value.slice(0, maxLength - suffix.length)}${suffix}`
+}
+
 function toFactVersionRefs(
   factIds: readonly string[],
   factsById: ReadonlyMap<string, ClinicalFact>,
@@ -745,11 +762,11 @@ function toFactVersionRefs(
     if (!fact) continue
     seen.add(factId)
     refs.push({
-      factId: fact.factId,
-      itemCode: fact.itemCode.code,
-      recordId: fact.provenance.recordId,
-      recordType: fact.provenance.recordType,
-      recordVersion: fact.provenance.recordVersion,
+      factId: clampPromptRefToken(fact.factId, 128),
+      itemCode: clampPromptRefToken(fact.itemCode.code, 128),
+      recordId: clampPromptRefToken(fact.provenance.recordId, 128),
+      recordType: clampPromptRefToken(fact.provenance.recordType, 128),
+      recordVersion: clampPromptRefToken(fact.provenance.recordVersion, 128),
     })
   }
   return refs
@@ -1502,7 +1519,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
           cards.push(clinicalPromptCardSchema.parse({
             basedOnFactVersions: toFactVersionRefs([fact.factId], factsById),
             blockingTier: 'none',
-            cardId: `report-arrived:external-unverified:${packId}:${fact.factId}`,
+            cardId: clampPromptRefToken(`report-arrived:external-unverified:${packId}:${fact.factId}`, 128),
             category: 'missing-fact',
             deliveryMode: 'display',
             detail: `发现外院未核实事实“${fact.itemCode.display}”（${fact.value.rawText}），当前不作为确认或评分依据，请形式核实后再使用。`,
@@ -1518,9 +1535,9 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             suggestions: [
               {
                 actionKind: 'verify-external-fact',
-                id: `verify-${fact.provenance.recordId}`,
+                id: clampPromptRefToken(`verify-${fact.provenance.recordId}`, 128),
                 isDraftOnly: true,
-                itemCodes: [fact.itemCode.code],
+                itemCodes: [clampPromptRefToken(fact.itemCode.code, 128)],
                 labelZh: `形式核实外院${fact.itemCode.display}`,
               },
             ],

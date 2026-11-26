@@ -111,13 +111,18 @@ const catalogSafetyWrapperSchema = z.object({
   safety: medicationSafetyRuleSchema.optional(),
 }).loose()
 
+const optionalBooleanOrFlag = z.custom<boolean | 'true' | 'false'>(
+  value => typeof value === 'boolean' || value === 'true' || value === 'false',
+  { message: 'Expected boolean or "true"/"false" string' },
+).optional()
+
 const rawQueryInputSchema = z.object({
   asOf: z.string().optional(),
   candidateMedicationClasses: z.string().optional(),
   catalogItemId: z.string().optional(),
-  includeDismissed: z.union([z.boolean(), z.enum(['true', 'false'])]).optional(),
-  includeSilent: z.union([z.boolean(), z.enum(['true', 'false'])]).optional(),
-  reevaluateWithLatestKnowledge: z.union([z.boolean(), z.enum(['true', 'false'])]).optional(),
+  includeDismissed: optionalBooleanOrFlag,
+  includeSilent: optionalBooleanOrFlag,
+  reevaluateWithLatestKnowledge: optionalBooleanOrFlag,
   selectedTemplateId: z.string().optional(),
   timing: z.string().optional(),
 }).strict()

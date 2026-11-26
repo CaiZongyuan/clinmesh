@@ -37,6 +37,9 @@ async function recomputeDirManifestFingerprint(packDir: string, mutate?: (rawPac
   }
   if (mutate !== undefined) {
     mutate(rawPack)
+    if (dirFiles.has('stages.json') && rawPack.stages !== undefined) {
+      await writeFile(join(packDir, 'stages.json'), `${JSON.stringify({ stages: rawPack.stages }, null, 2)}\n`)
+    }
     if (dirFiles.has('exam-suite.json') && rawPack.examSuite !== undefined) {
       await writeFile(join(packDir, 'exam-suite.json'), `${JSON.stringify({ examSuite: rawPack.examSuite }, null, 2)}\n`)
     }
@@ -247,6 +250,40 @@ describe('DSAP Slice S11: Exam Runner, 7 Public Traps, 5-Layer Attribution, AC10
     expect(blockPayload.error.details.packId).toBe('synthetic-draft-fail')
     expect(blockPayload.error.details.failedCases.length).toBeGreaterThan(0)
     expect(blockPayload.error.details.layerFailures.workflow).toBeGreaterThan(0)
+
+    // AC10: Corrupting a clinical rule threshold (maxGapDays: 30 -> 1) WITHOUT changing examSuite fails exam & blocks activation
+    const thresholdFailDir = await mkdtemp(join(tmpdir(), 'clinmesh-threshold-fail-'))
+    cleanups.push(() => rm(thresholdFailDir, { recursive: true, force: true }))
+    await cp(SYNTHETIC_PACK_DIR, thresholdFailDir, { recursive: true })
+    await recomputeDirManifestFingerprint(thresholdFailDir, (raw) => {
+      ;(raw.manifest as Record<string, unknown>).id = 'synthetic-threshold-fail'
+      ;(raw.manifest as Record<string, unknown>).status = 'draft'
+      if (raw.conceptVocabulary && typeof raw.conceptVocabulary === 'object') {
+        const vocab = raw.conceptVocabulary as { nodes?: Array<Record<string, unknown>> }
+        for (const node of vocab.nodes ?? []) {
+          if (node.packId !== undefined) node.packId = 'synthetic-threshold-fail'
+        }
+      }
+      if (Array.isArray(raw.knowledgeSnapshots)) {
+        for (const snap of raw.knowledgeSnapshots as Array<{ claims?: Array<Record<string, unknown>>; topics?: Array<Record<string, unknown>> }>) {
+          for (const claim of snap.claims ?? []) claim.packId = 'synthetic-threshold-fail'
+          for (const topic of snap.topics ?? []) topic.packId = 'synthetic-threshold-fail'
+        }
+      }
+      const stages = raw.stages as Array<{ entryCondition?: { maxGapDays?: number }; id: string }>
+      const followupStage = stages.find(s => s.id === 'cross-encounter-followup')!
+      followupStage.entryCondition!.maxGapDays = 1
+    })
+
+    const thresholdBlockRes = await postAdminJson(
+      fixture,
+      'admin',
+      '/api/his/v1/admin/disease-packs/synthetic-threshold-fail/activate',
+      { packDir: thresholdFailDir },
+      randomUUID(),
+    )
+    expect(thresholdBlockRes.status).toBe(409)
+    expect(apiErrorSchema.parse(await thresholdBlockRes.json()).error.code).toBe('DSAP_EXAM_GATE_FAILED')
     expect(prepared.modelCalls).toBe(0)
   }, 60_000)
 

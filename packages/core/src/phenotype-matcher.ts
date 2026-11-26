@@ -21,6 +21,7 @@ import {
   type PhenotypeTimelineEntry,
 } from '@clinmesh/contracts/phenotype-matcher'
 import { resolveCanonicalItemCode } from './clinical-fact-ledger.ts'
+import { clampPromptRefToken } from './clinical-prompt-cards.ts'
 import {
   PUBLIC_CONCEPT_VOCABULARY,
   evaluateConceptMappingEligibility,
@@ -402,21 +403,6 @@ function buildCrossTimeTimeline(
     const phenoCmp = a.phenotypeCode.localeCompare(b.phenotypeCode)
     return phenoCmp !== 0 ? phenoCmp : a.factId.localeCompare(b.factId)
   })
-}
-
-function fnv1aHex(value: string): string {
-  let hash = 0x811c9dc5
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i)
-    hash = Math.imul(hash, 0x01000193)
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0')
-}
-
-function clampPromptRefToken(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value
-  const suffix = `~${fnv1aHex(value)}`
-  return `${value.slice(0, maxLength - suffix.length)}${suffix}`
 }
 
 function projectCandidateToPromptCard(

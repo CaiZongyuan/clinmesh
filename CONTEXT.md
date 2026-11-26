@@ -466,9 +466,21 @@ _Avoid_: Hardcoded switch branch, embedded script plugin
 平台在七个诊疗时机统一呈现的非阻断或警示提示卡（含指南知识、缺项追问、排雷清单、退出总结、不适用边界、无指征黄牌、表型识别与质控映射），默认投递模式为“展示”并绑定依据事实版本。
 _Avoid_: Autonomous order execution, silent auto-override
 
+**Clinical Prompt Timing**:
+临床工作流中确定性触发统一提示卡求值的七个核心节点与异步报告更新时机（含接诊开屏、床旁缺项核对、组套草稿选择、医嘱/处方签署前、完诊、PCI 计划、出院及报告到达/修订），确保正确建议只在正确时机弹出。
+_Avoid_: Arbitrary background cron prompt, live model chat interrupt
+
+**Risk Tag**:
+挂靠在 `Clinical Prompt Card` 与多包并排展示上的结构化临床风险标记（含来源包、严重程度与触发条件），在多专病共存时保留各自来源标签并排提示。
+_Avoid_: Cross-pack winner arbitration, hidden alert suppression
+
 **Activation Gate**:
 专病包启用前经由真实 HTTP 或 CLI 入口执行的纯机器离线考卷门禁（含六类病种考题与七类公共陷阱题），不及格或导致已有包回退时阻止启用，与主观 Agent 输出评分器解耦。
 _Avoid_: LLM judge, runtime live exam
+
+**Standardized Exam Report**:
+每次运行包考卷门禁时由平台确定性生成的结构化审计报告，汇总搬迁前后零差异校验、独立加包对平台与合同的零改动审计、已有包回退检查、不挑来源系统结论及按五层归类的失败明细。
+_Avoid_: Prose summary, subjective score blend
 
 ## 互操作与审计
 

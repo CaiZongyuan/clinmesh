@@ -594,10 +594,12 @@ describe('DSAP Slice S9: Outpatient Rule-Out, Pack Exit & Silence, Confusable Pa
     )
     expect(ddimer.status).toBe('reported')
 
-    const exitPromptBundle = clinicalPromptBundleSchema.parse(await (await runtime.app.request(
+    const exitPromptRaw = await runtime.app.request(
       `/api/his/v1/doctor/cases/${epiVisit.outpatientCaseId}/clinical-prompts?timing=report-arrived`,
       { headers: { cookie: cookies.doctor } },
-    )).json())
+    )
+    expect(exitPromptRaw.status, await exitPromptRaw.clone().text()).toBe(200)
+    const exitPromptBundle = clinicalPromptBundleSchema.parse(await exitPromptRaw.json())
     const exitCards = exitPromptBundle.cards.filter(c => c.category === 'exit-summary')
     expect(exitCards).toHaveLength(1)
     expect(exitCards[0]?.detail).toContain('退出')

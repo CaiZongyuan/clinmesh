@@ -718,6 +718,18 @@ export class DiseasePackExamService {
       throw new DiseasePackRuntimeError('ROLE_NOT_ALLOWED', '仅管理员可执行专病包上线激活门禁', 403)
     }
 
+    const replayed = this.#commands.replayIfExists({
+      context,
+      dataSchema: diseasePackActivationGateResponseSchema,
+      expectedVersions: {},
+      idempotencyKey,
+      input,
+      operation: 'admin.disease-packs.activate',
+    })
+    if (replayed !== null) {
+      return replayed.data
+    }
+
     const registry = this.#resolveEvaluationRegistry({
       packDir: input.packDir,
       packId: input.packId,
