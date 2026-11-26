@@ -1,0 +1,1451 @@
+{
+  "manifest": {
+    "packId": "cn-cardiology",
+    "version": "1.0.0",
+    "schemaVersion": 1,
+    "name": { "en": "Teaching cardiovascular centre", "zh": "心血管介入教学中心" },
+    "description": {
+      "en": "Synthetic coronary and cardiorenal cases with inpatient PCI and follow-up.",
+      "zh": "合成心血管与心肾病例，覆盖住院介入及随访。"
+    },
+    "defaultLocale": "zh-CN",
+    "supportedLocales": ["zh-CN"],
+    "timezone": "Asia/Shanghai",
+    "currency": { "code": "CNY", "symbol": "¥", "minorUnitExponent": 2 },
+    "enabledModules": [
+      "mod-lab",
+      "mod-pharmacy",
+      "mod-billing",
+      "mod-cds",
+      "mod-fhir-r5",
+      "mod-voice",
+      "mod-inpatient",
+      "mod-drg-cn"
+    ],
+    "policies": {
+      "outpatientInvestigationBillingPolicy": "prepaid",
+      "requireSignedNoteBeforeOrder": true,
+      "requireDiagnosisBeforeOrder": true,
+      "completionGates": [
+        "signed-record",
+        "primary-diagnosis",
+        "report-acknowledgement",
+        "medication-decision"
+      ],
+      "shiftSchedule": [
+        { "id": "day", "start": "08:00", "end": "16:00" },
+        { "id": "evening", "start": "16:00", "end": "00:00" },
+        { "id": "night", "start": "00:00", "end": "08:00" }
+      ]
+    },
+    "clinicalRecordTemplate": [
+      {
+        "id": "chief-complaint",
+        "title": { "en": "Chief complaint", "zh": "主诉" },
+        "required": true
+      },
+      {
+        "id": "present-illness",
+        "title": { "en": "History of present illness", "zh": "现病史" },
+        "required": true
+      },
+      {
+        "id": "history",
+        "title": { "en": "Prior history and allergies", "zh": "既往史与过敏史" },
+        "required": true
+      },
+      {
+        "id": "examination",
+        "title": { "en": "Examination and investigations", "zh": "体格与辅助检查" },
+        "required": true
+      },
+      {
+        "id": "assessment-plan",
+        "title": { "en": "Assessment and plan", "zh": "诊断依据与诊疗计划" },
+        "required": true
+      },
+      {
+        "id": "outpatient-followup",
+        "title": { "en": "Outpatient follow-up", "zh": "门诊复诊安排" },
+        "required": true,
+        "showWhen": { "encounterClass": "outpatient" }
+      },
+      {
+        "id": "admission",
+        "title": { "en": "Admission assessment", "zh": "住院入科评估" },
+        "required": true,
+        "showWhen": { "encounterClass": "inpatient" }
+      },
+      {
+        "id": "intervention",
+        "title": { "en": "Intervention course", "zh": "介入诊疗经过" },
+        "required": false,
+        "showWhen": { "departmentId": "cardiology", "encounterClass": "inpatient" }
+      }
+    ]
+  },
+  "organization": {
+    "capabilities": [
+      "register",
+      "triage",
+      "assess",
+      "sign",
+      "review-reports",
+      "dispense",
+      "admit",
+      "execute-orders",
+      "schedule-procedure",
+      "settle",
+      "review-payer",
+      "workspace-admin"
+    ],
+    "departments": [
+      { "id": "cardiology", "name": { "en": "Cardiology", "zh": "心内科" } },
+      { "id": "cath-lab", "name": { "en": "Catheterization laboratory", "zh": "导管室" } }
+    ],
+    "wards": [
+      {
+        "id": "heart-ward",
+        "name": { "en": "Cardiac ward", "zh": "心内一病区" },
+        "departmentId": "cardiology"
+      }
+    ],
+    "beds": [
+      { "id": "heart-01", "name": { "en": "Bed 01", "zh": "01床" }, "wardId": "heart-ward" },
+      { "id": "heart-02", "name": { "en": "Bed 02", "zh": "02床" }, "wardId": "heart-ward" }
+    ],
+    "practitionerRoles": [
+      {
+        "id": "registration-desk",
+        "name": { "en": "Registration desk", "zh": "挂号分诊岗" },
+        "capabilities": ["register", "triage"]
+      },
+      {
+        "id": "cardiologist",
+        "name": { "en": "Cardiologist", "zh": "心内科医师" },
+        "capabilities": ["assess", "sign", "review-reports", "admit", "schedule-procedure"]
+      },
+      {
+        "id": "ward-nurse",
+        "name": { "en": "Ward nurse", "zh": "病房护士" },
+        "capabilities": ["triage", "execute-orders"]
+      },
+      {
+        "id": "ward-pharmacist",
+        "name": { "en": "Ward pharmacist", "zh": "病区药师" },
+        "capabilities": ["dispense"]
+      },
+      {
+        "id": "payer-reviewer",
+        "name": { "en": "Payment reviewer", "zh": "医保办审核员" },
+        "capabilities": ["settle", "review-payer"]
+      },
+      {
+        "id": "hospital-admin",
+        "name": { "en": "Hospital administrator", "zh": "院务管理员" },
+        "capabilities": ["workspace-admin"]
+      }
+    ],
+    "practitioners": [
+      {
+        "id": "cv-staff-01",
+        "name": { "en": "Dr Lin", "zh": "林医师" },
+        "departmentId": "cardiology",
+        "roleId": "cardiologist"
+      },
+      {
+        "id": "cv-staff-02",
+        "name": { "en": "Nurse Lu", "zh": "陆护士" },
+        "departmentId": "cardiology",
+        "roleId": "ward-nurse"
+      }
+    ]
+  },
+  "catalog": {
+    "diagnoses": [
+      {
+        "codeSystem": "urn:clinmesh:reference:nhsa-diagnosis",
+        "code": "I25.103",
+        "display": {
+          "en": "Coronary atherosclerotic heart disease",
+          "zh": "冠状动脉粥样硬化性心脏病"
+        },
+        "aliases": ["coronary artery disease", "CAD", "冠心病"]
+      },
+      {
+        "codeSystem": "http://hl7.org/fhir/sid/icd-10",
+        "code": "N18.3",
+        "display": { "en": "Chronic kidney disease stage 3", "zh": "慢性肾脏病3期" },
+        "aliases": ["CKD stage 3", "慢性肾脏病3b期"]
+      },
+      {
+        "codeSystem": "http://hl7.org/fhir/sid/icd-10",
+        "code": "I21.4",
+        "display": { "en": "Non-ST-elevation myocardial infarction", "zh": "非ST段抬高型心肌梗死" },
+        "aliases": ["NSTEMI", "急性心肌梗死", "心梗"]
+      },
+      {
+        "codeSystem": "http://hl7.org/fhir/sid/icd-10",
+        "code": "I10",
+        "display": { "en": "Hypertension", "zh": "高血压" }
+      },
+      {
+        "codeSystem": "http://hl7.org/fhir/sid/icd-10",
+        "code": "E78.5",
+        "display": { "en": "Dyslipidemia", "zh": "血脂异常" }
+      }
+    ],
+    "medications": [
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "aspirin",
+        "display": { "en": "Enteric-coated aspirin", "zh": "阿司匹林肠溶片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 100, "unit": "mg" },
+        "safety": {
+          "classCodes": ["antiplatelet-aspirin"],
+          "allergyGroupCodes": ["salicylate"],
+          "indicationPrefixes": ["I20", "I21", "I22", "I25", "Z95"],
+          "maxSingleDose": 300,
+          "maxDailyDose": 300
+        },
+        "packageInsertSummary": {
+          "en": "Antiplatelet. Check bleeding and aspirin intolerance.",
+          "zh": "抗血小板药，核对出血及阿司匹林不耐受史。"
+        },
+        "unitPriceMinor": 50,
+        "insuranceTier": "乙"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "clopidogrel",
+        "display": { "en": "Clopidogrel", "zh": "硫酸氢氯吡格雷片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 75, "unit": "mg" },
+        "safety": {
+          "classCodes": ["p2y12"],
+          "allergyGroupCodes": ["clopidogrel"],
+          "indicationPrefixes": ["I20", "I21", "I22", "I25", "Z95"],
+          "maxSingleDose": 300,
+          "maxDailyDose": 300
+        },
+        "packageInsertSummary": {
+          "en": "P2Y12 inhibitor. Review active bleeding and co-medication.",
+          "zh": "P2Y12 抑制剂，核对活动性出血及合并用药。"
+        },
+        "unitPriceMinor": 80,
+        "insuranceTier": "乙"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "ticagrelor",
+        "display": { "en": "Ticagrelor", "zh": "替格瑞洛片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 90, "unit": "mg" },
+        "safety": {
+          "classCodes": ["p2y12"],
+          "allergyGroupCodes": ["ticagrelor"],
+          "indicationPrefixes": ["I20", "I21", "I22", "I25", "Z95"],
+          "maxSingleDose": 180,
+          "maxDailyDose": 180
+        },
+        "packageInsertSummary": {
+          "en": "Review bleeding, dyspnea and other antiplatelets.",
+          "zh": "核对出血、气促及其他抗血小板药。"
+        },
+        "unitPriceMinor": 150,
+        "insuranceTier": "乙"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "atorvastatin",
+        "display": { "en": "Atorvastatin", "zh": "阿托伐他汀钙片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 10, "unit": "mg" },
+        "safety": {
+          "classCodes": ["statin"],
+          "allergyGroupCodes": ["atorvastatin"],
+          "indicationPrefixes": ["I20", "I21", "I22", "I25", "E78", "Z95"],
+          "maxSingleDose": 80,
+          "maxDailyDose": 80
+        },
+        "packageInsertSummary": {
+          "en": "Monitor lipids, liver function and muscle symptoms.",
+          "zh": "复核血脂、肝功能及肌肉症状。"
+        },
+        "unitPriceMinor": 70,
+        "insuranceTier": "乙"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "rosuvastatin",
+        "display": { "en": "Rosuvastatin", "zh": "瑞舒伐他汀钙片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 10, "unit": "mg" },
+        "safety": {
+          "classCodes": ["statin"],
+          "allergyGroupCodes": ["rosuvastatin"],
+          "indicationPrefixes": ["I20", "I21", "I22", "I25", "E78", "Z95"],
+          "maxSingleDose": 20,
+          "maxDailyDose": 20
+        },
+        "packageInsertSummary": {
+          "en": "Review renal function and statin-associated muscle symptoms.",
+          "zh": "核对肾功能及他汀相关肌肉症状。"
+        },
+        "unitPriceMinor": 100,
+        "insuranceTier": "乙"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "ezetimibe",
+        "display": { "en": "Ezetimibe", "zh": "依折麦布片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 10, "unit": "mg" },
+        "safety": {
+          "classCodes": ["ezetimibe"],
+          "allergyGroupCodes": ["ezetimibe"],
+          "indicationPrefixes": ["E78", "I20", "I21", "I25"],
+          "maxSingleDose": 10,
+          "maxDailyDose": 10
+        },
+        "packageInsertSummary": {
+          "en": "Lipid-lowering adjunct. Reassess LDL response.",
+          "zh": "调脂辅助药物，随访低密度脂蛋白变化。"
+        },
+        "unitPriceMinor": 100,
+        "insuranceTier": "丙"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "perindopril",
+        "display": { "en": "Perindopril", "zh": "培哚普利片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 4, "unit": "mg" },
+        "safety": {
+          "classCodes": ["acei"],
+          "allergyGroupCodes": ["acei"],
+          "indicationPrefixes": ["I10", "I11", "I12", "I13", "I25", "I50"],
+          "maxSingleDose": 8,
+          "maxDailyDose": 8
+        },
+        "packageInsertSummary": {
+          "en": "Check blood pressure, potassium, renal function and angioedema history.",
+          "zh": "核对血压、血钾、肾功及血管性水肿史。"
+        },
+        "unitPriceMinor": 80,
+        "insuranceTier": "甲"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "valsartan",
+        "display": { "en": "Valsartan", "zh": "缬沙坦胶囊" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 80, "unit": "mg" },
+        "safety": {
+          "classCodes": ["arb"],
+          "allergyGroupCodes": ["valsartan"],
+          "indicationPrefixes": ["I10", "I11", "I12", "I13", "I50"],
+          "maxSingleDose": 160,
+          "maxDailyDose": 320
+        },
+        "packageInsertSummary": {
+          "en": "Review blood pressure, potassium and renal function.",
+          "zh": "核对血压、血钾及肾功能。"
+        },
+        "unitPriceMinor": 80,
+        "insuranceTier": "乙"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "sacubitril-valsartan",
+        "display": { "en": "Sacubitril/valsartan", "zh": "沙库巴曲缬沙坦钠片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 50, "unit": "mg" },
+        "safety": {
+          "classCodes": ["arni"],
+          "allergyGroupCodes": ["valsartan"],
+          "indicationPrefixes": ["I50"],
+          "maxSingleDose": 200,
+          "maxDailyDose": 400
+        },
+        "packageInsertSummary": {
+          "en": "Review ACE inhibitor washout, other ARBs and blood pressure.",
+          "zh": "核对 ACEI 停药间隔、其他 ARB 及血压。"
+        },
+        "unitPriceMinor": 200,
+        "insuranceTier": "乙"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "metoprolol",
+        "display": { "en": "Metoprolol succinate extended-release", "zh": "琥珀酸美托洛尔缓释片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 47.5, "unit": "mg" },
+        "safety": {
+          "classCodes": ["beta-blocker"],
+          "allergyGroupCodes": ["metoprolol"],
+          "indicationPrefixes": ["I10", "I20", "I21", "I25", "I47", "I48", "I50"],
+          "maxSingleDose": 190,
+          "maxDailyDose": 190
+        },
+        "packageInsertSummary": {
+          "en": "Review pulse, blood pressure and conduction disorders.",
+          "zh": "核对脉搏、血压及传导障碍。"
+        },
+        "unitPriceMinor": 80,
+        "insuranceTier": "甲"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "nitroglycerin",
+        "display": { "en": "Nitroglycerin", "zh": "硝酸甘油片" },
+        "routeCodes": { "default": "SL", "allowed": ["SL", "PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 0.5, "unit": "mg" },
+        "safety": {
+          "classCodes": ["nitrate"],
+          "allergyGroupCodes": ["nitrate"],
+          "indicationPrefixes": ["I20", "I21", "I25"],
+          "maxSingleDose": 1,
+          "maxDailyDose": 4
+        },
+        "packageInsertSummary": {
+          "en": "Review hypotension, formulation and interacting vasodilators.",
+          "zh": "核对低血压、剂型及血管扩张药相互作用。"
+        },
+        "unitPriceMinor": 30,
+        "insuranceTier": "甲"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "heparin",
+        "display": { "en": "Heparin sodium, 6250 IU/mL", "zh": "肝素钠注射液，6250 IU/mL" },
+        "routeCodes": { "default": "IV", "allowed": ["IV", "IVGTT", "IH"] },
+        "dosageUnits": ["mL"],
+        "inpatientDoseBasis": { "amount": 1, "unit": "mL" },
+        "safety": {
+          "classCodes": ["heparin"],
+          "allergyGroupCodes": ["heparin"],
+          "indicationPrefixes": ["I20", "I21", "I25", "I26", "I80", "I82"],
+          "maxSingleDose": 2,
+          "maxDailyDose": 8
+        },
+        "packageInsertSummary": {
+          "en": "Verify concentration, coagulation, platelet count and bleeding.",
+          "zh": "确认浓度、凝血指标、血小板及出血。"
+        },
+        "unitPriceMinor": 200,
+        "insuranceTier": "乙"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "enoxaparin",
+        "display": { "en": "Enoxaparin sodium", "zh": "依诺肝素钠注射液" },
+        "routeCodes": { "default": "IH", "allowed": ["IH"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 40, "unit": "mg" },
+        "safety": {
+          "classCodes": ["heparin"],
+          "allergyGroupCodes": ["heparin"],
+          "indicationPrefixes": ["I20", "I21", "I25", "I26", "I80", "I82"],
+          "maxSingleDose": 100,
+          "maxDailyDose": 200
+        },
+        "packageInsertSummary": {
+          "en": "Review weight, renal function and bleeding risk.",
+          "zh": "核对体重、肾功能及出血风险。"
+        },
+        "unitPriceMinor": 300,
+        "insuranceTier": "乙"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "sodium-chloride",
+        "display": { "en": "Sodium chloride 0.9%", "zh": "0.9%氯化钠注射液" },
+        "routeCodes": { "default": "IVGTT", "allowed": ["IVGTT", "IV"] },
+        "dosageUnits": ["mL"],
+        "inpatientDoseBasis": { "amount": 500, "unit": "mL" },
+        "safety": {
+          "classCodes": ["fluid"],
+          "allergyGroupCodes": [],
+          "indicationPrefixes": ["E86", "I20", "I21", "I25", "K", "N18", "Z"],
+          "maxSingleDose": 1000,
+          "maxDailyDose": 3000
+        },
+        "packageInsertSummary": {
+          "en": "Check volume status and electrolytes with peri-procedural hydration.",
+          "zh": "围术期水化时核对容量状态及电解质。"
+        },
+        "unitPriceMinor": 100,
+        "insuranceTier": "甲"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "furosemide",
+        "display": { "en": "Furosemide", "zh": "呋塞米片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 20, "unit": "mg" },
+        "safety": {
+          "classCodes": ["loop-diuretic"],
+          "allergyGroupCodes": ["furosemide"],
+          "indicationPrefixes": ["I50", "I11", "N18", "R60"],
+          "maxSingleDose": 80,
+          "maxDailyDose": 240
+        },
+        "packageInsertSummary": {
+          "en": "Monitor volume, electrolytes and renal function.",
+          "zh": "监测容量、电解质与肾功能。"
+        },
+        "unitPriceMinor": 30,
+        "insuranceTier": "甲"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "spironolactone",
+        "display": { "en": "Spironolactone", "zh": "螺内酯片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 20, "unit": "mg" },
+        "safety": {
+          "classCodes": ["mra"],
+          "allergyGroupCodes": ["spironolactone"],
+          "indicationPrefixes": ["I50", "I10", "I11", "R60"],
+          "maxSingleDose": 100,
+          "maxDailyDose": 200
+        },
+        "packageInsertSummary": {
+          "en": "Monitor potassium and renal function.",
+          "zh": "监测血钾与肾功能。"
+        },
+        "unitPriceMinor": 30,
+        "insuranceTier": "甲"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "dapagliflozin",
+        "display": { "en": "Dapagliflozin", "zh": "达格列净片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 10, "unit": "mg" },
+        "safety": {
+          "classCodes": ["sglt2"],
+          "allergyGroupCodes": ["dapagliflozin"],
+          "indicationPrefixes": ["E11", "I50", "N18"],
+          "maxSingleDose": 10,
+          "maxDailyDose": 10
+        },
+        "packageInsertSummary": {
+          "en": "Assess renal function for the indication and review peri-operative use.",
+          "zh": "结合适应证核对肾功能及围手术期用药。"
+        },
+        "unitPriceMinor": 200,
+        "insuranceTier": "乙"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "oseltamivir",
+        "display": { "en": "Oseltamivir", "zh": "磷酸奥司他韦胶囊" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 75, "unit": "mg" },
+        "safety": {
+          "classCodes": ["antiviral"],
+          "allergyGroupCodes": ["oseltamivir"],
+          "indicationPrefixes": ["J09", "J10", "J11"],
+          "maxSingleDose": 150,
+          "maxDailyDose": 300
+        },
+        "packageInsertSummary": {
+          "en": "Review influenza indication and renal dosing.",
+          "zh": "核对流感适应证与肾功相关剂量。"
+        },
+        "unitPriceMinor": 760,
+        "insuranceTier": "乙"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "amoxicillin",
+        "display": { "en": "Amoxicillin", "zh": "阿莫西林胶囊" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 500, "unit": "mg" },
+        "safety": {
+          "classCodes": ["penicillin"],
+          "allergyGroupCodes": ["penicillin"],
+          "indicationPrefixes": ["J13", "J18", "N30", "N39"],
+          "maxSingleDose": 1000,
+          "maxDailyDose": 3000
+        },
+        "packageInsertSummary": {
+          "en": "Review bacterial indication and immediate penicillin allergy.",
+          "zh": "核对细菌感染依据及青霉素速发型过敏史。"
+        },
+        "unitPriceMinor": 50,
+        "insuranceTier": "甲"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "acetaminophen",
+        "display": { "en": "Acetaminophen", "zh": "对乙酰氨基酚片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 500, "unit": "mg" },
+        "safety": {
+          "classCodes": ["analgesic"],
+          "allergyGroupCodes": ["acetaminophen"],
+          "indicationPrefixes": ["R50", "R51", "R52", "J"],
+          "maxSingleDose": 1000,
+          "maxDailyDose": 4000
+        },
+        "packageInsertSummary": {
+          "en": "Check liver disease and total intake from combination products.",
+          "zh": "核对肝病史及复方制剂中的累计用量。"
+        },
+        "unitPriceMinor": 25,
+        "insuranceTier": "甲"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "metformin",
+        "display": { "en": "Metformin", "zh": "盐酸二甲双胍片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 500, "unit": "mg" },
+        "safety": {
+          "classCodes": ["biguanide"],
+          "allergyGroupCodes": ["biguanide"],
+          "indicationPrefixes": ["E11"],
+          "maxSingleDose": 1000,
+          "maxDailyDose": 3000,
+          "contraindicatedEgfrBelow": 30
+        },
+        "packageInsertSummary": {
+          "en": "Review eGFR and contrast exposure around interventions.",
+          "zh": "介入前后核对 eGFR 与对比剂暴露。"
+        },
+        "unitPriceMinor": 35,
+        "insuranceTier": "甲"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:drug",
+        "code": "amlodipine",
+        "display": { "en": "Amlodipine", "zh": "苯磺酸氨氯地平片" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 5, "unit": "mg" },
+        "safety": {
+          "classCodes": ["calcium-channel-blocker"],
+          "allergyGroupCodes": ["amlodipine"],
+          "indicationPrefixes": ["I10", "I11", "I20", "I25"],
+          "maxSingleDose": 10,
+          "maxDailyDose": 10
+        },
+        "packageInsertSummary": {
+          "en": "Check blood pressure and peripheral edema.",
+          "zh": "核对血压及外周水肿。"
+        },
+        "unitPriceMinor": 45,
+        "insuranceTier": "甲"
+      }
+    ],
+    "services": [
+      {
+        "codeSystem": "urn:clinmesh:cv:service",
+        "code": "renal",
+        "display": { "en": "Serum creatinine", "zh": "血清肌酐" },
+        "kind": "lab",
+        "unitPriceMinor": 800,
+        "unit": "次",
+        "specimenContainer": { "specimen": "serum", "container": "serum separator" },
+        "analytes": [
+          {
+            "codeSystem": "http://loinc.org",
+            "code": "14682-9",
+            "display": { "en": "Creatinine, molar concentration", "zh": "肌酐物质的量浓度" },
+            "unit": "µmol/L",
+            "referenceRange": { "low": 45, "high": 110 },
+            "critical": { "high": 707 }
+          }
+        ]
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:service",
+        "code": "tni",
+        "display": { "en": "High-sensitivity troponin I", "zh": "高敏心肌肌钙蛋白I" },
+        "kind": "lab",
+        "unitPriceMinor": 8500,
+        "unit": "次",
+        "specimenContainer": { "specimen": "plasma", "container": "lithium-heparin tube" },
+        "analytes": [
+          {
+            "codeSystem": "http://loinc.org",
+            "code": "89579-7",
+            "display": { "en": "hs-cTnI", "zh": "高敏肌钙蛋白I" },
+            "unit": "ng/mL",
+            "referenceRange": { "high": 0.04 }
+          }
+        ]
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:service",
+        "code": "ecg",
+        "display": { "en": "Resting 12-lead ECG", "zh": "静息十二导联心电图" },
+        "kind": "examination",
+        "unitPriceMinor": 2400,
+        "unit": "次",
+        "analytes": []
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:service",
+        "code": "tte",
+        "display": { "en": "Transthoracic echocardiography", "zh": "经胸超声心动图" },
+        "kind": "examination",
+        "unitPriceMinor": 24000,
+        "unit": "次",
+        "analytes": [
+          {
+            "codeSystem": "urn:clinmesh:cv:measurement",
+            "code": "LVEF",
+            "display": { "en": "Left ventricular ejection fraction", "zh": "左室射血分数" },
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:service",
+        "code": "cag",
+        "display": { "en": "Coronary angiography and physiology", "zh": "冠脉造影与功能学评估" },
+        "kind": "examination",
+        "unitPriceMinor": 80000,
+        "unit": "次",
+        "analytes": [
+          {
+            "codeSystem": "urn:clinmesh:cv:measurement",
+            "code": "LM",
+            "display": { "en": "LM stenosis", "zh": "左主干狭窄" },
+            "unit": "%"
+          },
+          {
+            "codeSystem": "urn:clinmesh:cv:measurement",
+            "code": "LAD",
+            "display": { "en": "LAD stenosis", "zh": "前降支狭窄" },
+            "unit": "%"
+          },
+          {
+            "codeSystem": "urn:clinmesh:cv:measurement",
+            "code": "LCX",
+            "display": { "en": "LCX stenosis", "zh": "回旋支狭窄" },
+            "unit": "%"
+          },
+          {
+            "codeSystem": "urn:clinmesh:cv:measurement",
+            "code": "RCA",
+            "display": { "en": "RCA stenosis", "zh": "右冠狭窄" },
+            "unit": "%"
+          },
+          {
+            "codeSystem": "urn:clinmesh:cv:measurement",
+            "code": "LAD-FFR",
+            "display": { "en": "LAD fractional flow reserve", "zh": "前降支血流储备分数" },
+            "unit": "1"
+          },
+          {
+            "codeSystem": "urn:clinmesh:cv:measurement",
+            "code": "length",
+            "display": { "en": "Lesion length", "zh": "病变长度" },
+            "unit": "mm"
+          },
+          {
+            "codeSystem": "urn:clinmesh:cv:measurement",
+            "code": "proximal",
+            "display": { "en": "Proximal reference diameter", "zh": "近端参考直径" },
+            "unit": "mm"
+          },
+          {
+            "codeSystem": "urn:clinmesh:cv:measurement",
+            "code": "distal",
+            "display": { "en": "Distal reference diameter", "zh": "远端参考直径" },
+            "unit": "mm"
+          }
+        ]
+      }
+    ],
+    "procedures": [
+      {
+        "codeSystem": "urn:clinmesh:classification:icd-9-cm-3-clinical",
+        "code": "36.0700",
+        "display": {
+          "en": "Drug-eluting coronary stent insertion",
+          "zh": "药物洗脱冠状动脉支架置入"
+        },
+        "unitPriceMinor": 180000,
+        "unit": "次",
+        "defaultAnesthesia": "local",
+        "defaultLocation": "cath-lab",
+        "defaultPreopOrderPolicy": "stop-on-completion",
+        "preopServices": [
+          { "codeSystem": "urn:clinmesh:cv:service", "code": "cag" },
+          { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" }
+        ]
+      },
+      {
+        "codeSystem": "urn:clinmesh:classification:icd-9-cm-3-clinical",
+        "code": "88.5500",
+        "display": {
+          "en": "Single-catheter coronary angiography",
+          "zh": "单根导管的冠状动脉造影术"
+        },
+        "unitPriceMinor": 80000,
+        "unit": "次",
+        "defaultAnesthesia": "local",
+        "defaultLocation": "cath-lab",
+        "defaultPreopOrderPolicy": "continue-active",
+        "preopServices": [{ "codeSystem": "urn:clinmesh:cv:service", "code": "renal" }]
+      }
+    ],
+    "materials": [
+      {
+        "codeSystem": "urn:clinmesh:cv:material",
+        "code": "wire-014",
+        "display": { "en": "0.014-inch guidewire", "zh": "0.014 英寸导丝" },
+        "unitPriceMinor": 20000,
+        "unit": "根"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:material",
+        "code": "guide-6f",
+        "display": { "en": "6F guiding catheter", "zh": "6F 导引导管" },
+        "unitPriceMinor": 5000,
+        "unit": "根"
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:material",
+        "code": "balloon-2.5x15",
+        "display": { "en": "Predilation balloon", "zh": "预扩球囊" },
+        "unitPriceMinor": 40000,
+        "unit": "个",
+        "diameterMm": 2.5,
+        "lengthMm": 15
+      },
+      {
+        "codeSystem": "urn:clinmesh:cv:material",
+        "code": "des-3x18",
+        "display": { "en": "Teaching drug-eluting stent", "zh": "教学药物洗脱支架" },
+        "unitPriceMinor": 80000,
+        "unit": "枚",
+        "diameterMm": 3,
+        "lengthMm": 18
+      }
+    ]
+  },
+  "knowledge": {
+    "guidelineTopics": [
+      {
+        "id": "hypertension-treatment-principles",
+        "source": "https://www.nhc.gov.cn/fzs/c100048/202509/2f3f7cce449145f8b361e70b3ed4ae9a/files/WS%20T%20872%E2%80%942025-20250930105429913.pdf",
+        "version": "WS/T 872—2025",
+        "physicalPage": 5,
+        "verbatim": "治疗原则为达标、平稳、综合管理。以血压达标为首要治疗目标，除非不能耐受；保持血压长期稳定；积极控制其他心血管危险因素。",
+        "qualifiers": [
+          "第 8.1 条，基层医疗卫生机构高血压管理；个体耐受性与其他心血管危险因素须并行评估。"
+        ],
+        "population": "adult"
+      }
+    ],
+    "orderSetTemplates": [
+      {
+        "id": "pre-cath-kidney-check",
+        "name": { "en": "Pre-catheterization assessment", "zh": "造影术前评估" },
+        "scope": "inpatient",
+        "triggerDiagnoses": [
+          { "codeSystem": "urn:clinmesh:reference:nhsa-diagnosis", "code": "I25.103" }
+        ],
+        "members": [
+          { "kind": "services", "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+          { "kind": "services", "codeSystem": "urn:clinmesh:cv:service", "code": "ecg" }
+        ],
+        "hardContraindications": [],
+        "requiredEvidence": []
+      },
+      {
+        "id": "post-pci-review",
+        "name": { "en": "Post-PCI therapy review", "zh": "PCI 术后用药复核" },
+        "scope": "postop",
+        "triggerDiagnoses": [
+          { "codeSystem": "urn:clinmesh:reference:nhsa-diagnosis", "code": "I25.103" }
+        ],
+        "members": [
+          { "kind": "medications", "codeSystem": "urn:clinmesh:cv:drug", "code": "aspirin" },
+          { "kind": "medications", "codeSystem": "urn:clinmesh:cv:drug", "code": "clopidogrel" },
+          { "kind": "medications", "codeSystem": "urn:clinmesh:cv:drug", "code": "atorvastatin" }
+        ],
+        "hardContraindications": [],
+        "requiredEvidence": [{ "codeSystem": "urn:clinmesh:cv:service", "code": "cag" }]
+      }
+    ],
+    "regionalRules": {
+      "mod-drg-cn": {
+        "version": "CHS-DRG 3.0",
+        "sourceVersion": "opendrg-chs-drg-3.0@2026-10-20",
+        "synthetic": true,
+        "baseRateMinor": 500000,
+        "groups": [
+          {
+            "group": "FM39",
+            "principalDiagnosis": "I25.103",
+            "principalProcedure": "36.0700",
+            "weightBp": 24000
+          },
+          {
+            "group": "FM59",
+            "principalDiagnosis": "I25.103",
+            "principalProcedure": "88.5500",
+            "weightBp": 8000
+          }
+        ],
+        "insuranceTiers": ["甲", "乙", "丙"]
+      }
+    }
+  },
+  "cases": [
+    {
+      "caseId": "c01",
+      "version": "1",
+      "encounterClass": "inpatient",
+      "tags": ["adult", "inpatient"],
+      "demographics": {
+        "name": "赵德明",
+        "sex": "male",
+        "birthDate": "1958-05-10",
+        "identifiers": [{ "issuer": "teaching-centre", "value": "SIM-C01" }]
+      },
+      "priorHistory": {
+        "observations": [
+          {
+            "observedAt": "2026-01-15T01:00:00Z",
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+            "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" },
+            "value": 172,
+            "unit": "µmol/L"
+          }
+        ],
+        "diagnoses": [
+          { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "N18.3" },
+          { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "I10" },
+          { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "E78.5" }
+        ],
+        "medications": [{ "codeSystem": "urn:clinmesh:cv:drug", "code": "amlodipine" }],
+        "allergies": { "status": "none-known" }
+      },
+      "triageVitals": {
+        "temperatureC": 36.7,
+        "heartRateBpm": 74,
+        "respiratoryRate": 18,
+        "systolicMmHg": 136,
+        "diastolicMmHg": 82,
+        "spo2Percent": 97
+      },
+      "patientPersona": {
+        "character": { "en": "Cautious", "zh": "踏实谨慎" },
+        "healthLiteracy": { "en": "Moderate", "zh": "中等" },
+        "speechStyle": { "en": "Measured", "zh": "语速平稳" },
+        "openingStatement": {
+          "en": "Walking makes my chest tight. My kidneys have been weak for years.",
+          "zh": "最近一走路胸口就发闷气短，我肾功能本来就不太好。"
+        },
+        "symptoms": [
+          {
+            "en": "After about 200 metres I stop to catch my breath.",
+            "zh": "走两百米左右就气短，歇几分钟缓解。"
+          },
+          {
+            "en": "I have known about chronic kidney disease stage 3 for two years.",
+            "zh": "以前医生说过慢性肾脏病3期，已经两年多。"
+          }
+        ],
+        "medicationMemory": {
+          "en": "I take one amlodipine tablet daily.",
+          "zh": "我每天按时吃一片氨氯地平。"
+        },
+        "boundaries": [
+          {
+            "en": "Describe the kidney problem as previously explained to you.",
+            "zh": "只讲过去医生告知的肾脏问题。"
+          }
+        ]
+      },
+      "caseTruth": {
+        "primaryDiagnosis": {
+          "codeSystem": "urn:clinmesh:reference:nhsa-diagnosis",
+          "code": "I25.103"
+        },
+        "secondaryDiagnoses": [{ "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "N18.3" }],
+        "hiddenHistory": [
+          {
+            "en": "No recent use of analgesics or herbal remedies.",
+            "zh": "近期没有自行服用止痛药或中草药。"
+          }
+        ],
+        "results": [
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "ecg" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": {
+              "en": "Sinus rhythm at 74/min, no significant ST-T abnormalities.",
+              "zh": "窦性心律 74 次/分，未见明显 ST-T 异常。"
+            },
+            "observations": []
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": {
+              "en": "Creatinine 175 µmol/L, baseline eGFR 36.1.",
+              "zh": "肌酐 175 µmol/L，基线 eGFR 36.1。"
+            },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 175 }
+            ]
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "tte" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": {
+              "en": "LVEF 56%, mild diastolic impairment.",
+              "zh": "左室射血分数 56%，舒张功能 I 级减低。"
+            },
+            "observations": [
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LVEF" },
+                "value": 56
+              }
+            ]
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "cag" },
+            "stage": "inpatient",
+            "revision": 1,
+            "summary": {
+              "en": "Mid LAD 85%, FFR 0.74, TIMI 3. QCA length 14 mm with 3.0 mm reference diameters.",
+              "zh": "前降支中段狭窄 85%，FFR 0.74，TIMI 3 级。病变长 14 mm，两端参考直径均为 3.0 mm。"
+            },
+            "observations": [
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LM" },
+                "value": 0
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LAD" },
+                "value": 85
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LCX" },
+                "value": 30
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "RCA" },
+                "value": 35
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LAD-FFR" },
+                "value": 0.74
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "length" },
+                "value": 14
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "proximal" },
+                "value": 3
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "distal" },
+                "value": 3
+              }
+            ]
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+            "stage": "repeat",
+            "revision": 1,
+            "summary": {
+              "en": "Post-PCI creatinine 168 µmol/L.",
+              "zh": "PCI 后复查肌酐 168 µmol/L。"
+            },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 168 }
+            ]
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+            "stage": "follow-up",
+            "revision": 1,
+            "summary": { "en": "Follow-up creatinine 170 µmol/L.", "zh": "随访肌酐 170 µmol/L。" },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 170 }
+            ]
+          }
+        ],
+        "expectedProcedures": [
+          { "codeSystem": "urn:clinmesh:classification:icd-9-cm-3-clinical", "code": "36.0700" }
+        ],
+        "expectedMaterials": [
+          { "codeSystem": "urn:clinmesh:cv:material", "code": "wire-014" },
+          { "codeSystem": "urn:clinmesh:cv:material", "code": "guide-6f" },
+          { "codeSystem": "urn:clinmesh:cv:material", "code": "balloon-2.5x15" },
+          { "codeSystem": "urn:clinmesh:cv:material", "code": "des-3x18" }
+        ],
+        "reviewPoints": [
+          {
+            "en": "Review kidney protection, contrast burden and serial creatinine. Match one 3.0 × 18 mm teaching stent to the measured lesion.",
+            "zh": "核对肾脏保护、对比剂负荷与复查肌酐，根据造影测量匹配一枚 3.0 × 18 mm 教学支架。"
+          }
+        ]
+      }
+    },
+    {
+      "caseId": "c02",
+      "version": "1",
+      "encounterClass": "inpatient",
+      "tags": ["adult", "inpatient"],
+      "demographics": {
+        "name": "周秀兰",
+        "sex": "female",
+        "birthDate": "1966-11-05",
+        "identifiers": [{ "issuer": "teaching-centre", "value": "SIM-C02" }]
+      },
+      "priorHistory": {
+        "observations": [
+          {
+            "observedAt": "2026-03-08T01:00:00Z",
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+            "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" },
+            "value": 70,
+            "unit": "µmol/L"
+          }
+        ],
+        "diagnoses": [
+          { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "I10" },
+          { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "E78.5" }
+        ],
+        "medications": [{ "codeSystem": "urn:clinmesh:cv:drug", "code": "amlodipine" }],
+        "allergies": { "status": "none-known" }
+      },
+      "triageVitals": {
+        "temperatureC": 36.6,
+        "heartRateBpm": 72,
+        "respiratoryRate": 16,
+        "systolicMmHg": 132,
+        "diastolicMmHg": 78,
+        "spo2Percent": 98
+      },
+      "patientPersona": {
+        "character": { "en": "Detail oriented", "zh": "细致谨慎" },
+        "healthLiteracy": { "en": "Moderate", "zh": "中等" },
+        "speechStyle": { "en": "Gentle and clear", "zh": "温和清楚" },
+        "openingStatement": {
+          "en": "If I walk fast my chest feels tight.",
+          "zh": "我最近走路快了偶尔胸口发闷，想检查清楚。"
+        },
+        "symptoms": [
+          {
+            "en": "It settles when I sit down for two or three minutes.",
+            "zh": "提重物或快走时发闷，坐下两三分钟就好。"
+          }
+        ],
+        "medicationMemory": {
+          "en": "I take amlodipine in the morning.",
+          "zh": "每天按时吃氨氯地平一片。"
+        },
+        "boundaries": [
+          { "en": "Explain the symptoms you have noticed.", "zh": "描述自己经历的症状。" }
+        ]
+      },
+      "caseTruth": {
+        "primaryDiagnosis": {
+          "codeSystem": "urn:clinmesh:reference:nhsa-diagnosis",
+          "code": "I25.103"
+        },
+        "secondaryDiagnoses": [],
+        "hiddenHistory": [
+          { "en": "No rest symptoms or nocturnal breathlessness.", "zh": "无静息痛及夜间憋醒。" }
+        ],
+        "results": [
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": { "en": "Admission creatinine 72 µmol/L.", "zh": "入院肌酐 72 µmol/L。" },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 72 }
+            ]
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "ecg" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": {
+              "en": "Sinus rhythm, 72/min. No significant ST-T abnormality.",
+              "zh": "窦性心律 72 次/分，未见明显 ST-T 异常。"
+            },
+            "observations": []
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "tte" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": {
+              "en": "Preserved LV function, LVEF 62%.",
+              "zh": "左室功能正常，射血分数 62%。"
+            },
+            "observations": [
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LVEF" },
+                "value": 62
+              }
+            ]
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "cag" },
+            "stage": "inpatient",
+            "revision": 1,
+            "summary": {
+              "en": "Mid LAD 60% with FFR 0.86 and TIMI 3 flow.",
+              "zh": "前降支中段临界狭窄 60%，FFR 0.86，TIMI 3 级。"
+            },
+            "observations": [
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LM" },
+                "value": 0
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LAD" },
+                "value": 60
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LCX" },
+                "value": 25
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "RCA" },
+                "value": 30
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LAD-FFR" },
+                "value": 0.86
+              }
+            ]
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+            "stage": "follow-up",
+            "revision": 1,
+            "summary": { "en": "Follow-up creatinine 74 µmol/L.", "zh": "随访肌酐 74 µmol/L。" },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 74 }
+            ]
+          }
+        ],
+        "expectedProcedures": [
+          { "codeSystem": "urn:clinmesh:classification:icd-9-cm-3-clinical", "code": "88.5500" }
+        ],
+        "expectedMaterials": [],
+        "reviewPoints": [
+          {
+            "en": "FFR > 0.80 in this borderline lesion supports deferring stenting and reviewing medical therapy.",
+            "zh": "本例临界病变 FFR > 0.80，质控提示暂缓支架，复核药物优化方案。"
+          }
+        ]
+      }
+    },
+    {
+      "caseId": "c03",
+      "version": "1",
+      "encounterClass": "outpatient",
+      "tags": ["acute", "adult"],
+      "demographics": {
+        "name": "陈志远",
+        "sex": "male",
+        "birthDate": "1959-09-15",
+        "identifiers": [{ "issuer": "teaching-centre", "value": "SIM-C03" }]
+      },
+      "priorHistory": {
+        "observations": [
+          {
+            "observedAt": "2025-10-12T01:30:00Z",
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+            "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" },
+            "value": 102,
+            "unit": "µmol/L"
+          }
+        ],
+        "diagnoses": [
+          { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "I10" },
+          { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "E78.5" }
+        ],
+        "medications": [{ "codeSystem": "urn:clinmesh:cv:drug", "code": "amlodipine" }],
+        "allergies": { "status": "none-known" }
+      },
+      "triageVitals": {
+        "temperatureC": 36.5,
+        "heartRateBpm": 96,
+        "respiratoryRate": 20,
+        "systolicMmHg": 146,
+        "diastolicMmHg": 88,
+        "spo2Percent": 96
+      },
+      "patientPersona": {
+        "character": { "en": "Anxious but cooperative", "zh": "略焦虑但配合" },
+        "healthLiteracy": { "en": "Moderate", "zh": "普通" },
+        "speechStyle": { "en": "Clear", "zh": "条理清晰" },
+        "openingStatement": {
+          "en": "My chest has felt tight on and off since dawn and I keep sweating.",
+          "zh": "我今天凌晨起胸口一阵阵发闷发紧，刚才走路又冒汗。"
+        },
+        "symptoms": [
+          { "en": "Pressure spreads towards my left shoulder.", "zh": "有时隐约牵到左肩背。" }
+        ],
+        "medicationMemory": {
+          "en": "I take amlodipine each morning.",
+          "zh": "每天早上吃一片氨氯地平。"
+        },
+        "boundaries": [
+          {
+            "en": "Describe your symptoms and the medicines you remember.",
+            "zh": "描述真实感受及记得的用药。"
+          }
+        ]
+      },
+      "caseTruth": {
+        "primaryDiagnosis": { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "I21.4" },
+        "secondaryDiagnoses": [
+          { "codeSystem": "urn:clinmesh:reference:nhsa-diagnosis", "code": "I25.103" }
+        ],
+        "hiddenHistory": [
+          {
+            "en": "Repeated pressure lasted about ten minutes per episode.",
+            "zh": "反复压榨感，每次约十分钟。"
+          }
+        ],
+        "results": [
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "renal" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": { "en": "Initial creatinine 118 µmol/L.", "zh": "初诊肌酐 118 µmol/L。" },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 118 }
+            ]
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "ecg" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": {
+              "en": "Horizontal ST depression 0.15–0.20 mV with T inversion in V2–V5.",
+              "zh": "V2–V5 水平型 ST 段压低 0.15–0.20 mV 伴 T 波倒置。"
+            },
+            "observations": []
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "tni" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": { "en": "hs-cTnI 0.68 ng/mL.", "zh": "高敏肌钙蛋白 I 0.68 ng/mL。" },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 0.68 }
+            ]
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "tni" },
+            "stage": "repeat",
+            "revision": 1,
+            "summary": {
+              "en": "Repeat sample rose to 1.45 ng/mL.",
+              "zh": "复查标本升至 1.45 ng/mL。"
+            },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 1.45 }
+            ]
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "cag" },
+            "stage": "inpatient",
+            "revision": 1,
+            "summary": {
+              "en": "Culprit proximal LAD 90%, TIMI 2. Lesion length 15 mm, 3.0 mm reference diameters.",
+              "zh": "罪犯病变为前降支近段 90% 狭窄、TIMI 2 级，长 15 mm，两端参考直径 3.0 mm。"
+            },
+            "observations": [
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LM" },
+                "value": 0
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LAD" },
+                "value": 90
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LCX" },
+                "value": 35
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "RCA" },
+                "value": 40
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "length" },
+                "value": 15
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "proximal" },
+                "value": 3
+              },
+              {
+                "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "distal" },
+                "value": 3
+              }
+            ]
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "tni" },
+            "stage": "follow-up",
+            "revision": 1,
+            "summary": {
+              "en": "Follow-up hs-cTnI 0.012 ng/mL.",
+              "zh": "随访高敏肌钙蛋白 I 0.012 ng/mL。"
+            },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 0.012 }
+            ]
+          }
+        ],
+        "expectedProcedures": [
+          { "codeSystem": "urn:clinmesh:classification:icd-9-cm-3-clinical", "code": "36.0700" }
+        ],
+        "expectedMaterials": [{ "codeSystem": "urn:clinmesh:cv:material", "code": "des-3x18" }],
+        "reviewPoints": [
+          {
+            "en": "Recognize high-risk chest pain and dynamic myocardial injury, then reassess after PCI.",
+            "zh": "识别高危胸痛和动态心肌损伤，介入后复查并安排随访。"
+          }
+        ]
+      }
+    }
+  ]
+}

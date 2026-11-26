@@ -1,0 +1,696 @@
+{
+  "manifest": {
+    "packId": "global-general",
+    "version": "1.0.0",
+    "schemaVersion": 1,
+    "name": { "en": "Teaching outpatient clinic", "zh": "综合教学门诊" },
+    "description": {
+      "en": "Four synthetic bilingual encounters for teaching.",
+      "zh": "四例合成双语门诊教学病例。"
+    },
+    "defaultLocale": "en-US",
+    "supportedLocales": ["en-US", "zh-CN"],
+    "timezone": "UTC",
+    "currency": { "code": "USD", "symbol": "$", "minorUnitExponent": 2 },
+    "enabledModules": [
+      "mod-lab",
+      "mod-pharmacy",
+      "mod-billing",
+      "mod-cds",
+      "mod-fhir-r5",
+      "mod-voice"
+    ],
+    "policies": {
+      "outpatientInvestigationBillingPolicy": "postpaid",
+      "requireSignedNoteBeforeOrder": false,
+      "requireDiagnosisBeforeOrder": false,
+      "completionGates": [
+        "signed-record",
+        "primary-diagnosis",
+        "report-acknowledgement",
+        "medication-decision"
+      ],
+      "shiftSchedule": []
+    },
+    "clinicalRecordTemplate": [
+      {
+        "id": "concern",
+        "title": { "en": "Reason for visit", "zh": "就诊原因" },
+        "required": true
+      },
+      {
+        "id": "subjective",
+        "title": { "en": "Subjective history", "zh": "主观病史" },
+        "required": true
+      },
+      {
+        "id": "objective",
+        "title": { "en": "Objective findings", "zh": "客观发现" },
+        "required": true
+      },
+      { "id": "assessment", "title": { "en": "Assessment", "zh": "评估" }, "required": true },
+      { "id": "plan", "title": { "en": "Plan", "zh": "诊疗计划" }, "required": true },
+      {
+        "id": "follow-up",
+        "title": { "en": "Follow-up and safety net", "zh": "随访与复诊提示" },
+        "required": false
+      }
+    ]
+  },
+  "organization": {
+    "capabilities": [
+      "register",
+      "triage",
+      "assess",
+      "sign",
+      "review-reports",
+      "dispense",
+      "settle",
+      "workspace-admin"
+    ],
+    "departments": [{ "id": "primary-care", "name": { "en": "Primary care", "zh": "全科门诊" } }],
+    "wards": [],
+    "beds": [],
+    "practitionerRoles": [
+      {
+        "id": "intake",
+        "name": { "en": "Intake coordinator", "zh": "接诊协调员" },
+        "capabilities": ["register", "triage"]
+      },
+      {
+        "id": "family-clinician",
+        "name": { "en": "Family clinician", "zh": "全科医生" },
+        "capabilities": ["assess", "sign", "review-reports"]
+      },
+      {
+        "id": "pharmacist",
+        "name": { "en": "Clinical pharmacist", "zh": "临床药师" },
+        "capabilities": ["dispense"]
+      },
+      { "id": "cashier", "name": { "en": "Cashier", "zh": "收费员" }, "capabilities": ["settle"] },
+      {
+        "id": "coordinator",
+        "name": { "en": "Clinic administrator", "zh": "门诊管理员" },
+        "capabilities": ["workspace-admin"]
+      }
+    ],
+    "practitioners": [
+      {
+        "id": "staff-g1",
+        "name": { "en": "Dr Taylor", "zh": "泰勒医生" },
+        "departmentId": "primary-care",
+        "roleId": "family-clinician"
+      }
+    ]
+  },
+  "catalog": {
+    "diagnoses": [
+      {
+        "codeSystem": "http://hl7.org/fhir/sid/icd-10",
+        "code": "J18.9",
+        "display": { "en": "Pneumonia, unspecified organism", "zh": "病原体未特指的肺炎" },
+        "aliases": ["pneumonia", "community-acquired pneumonia", "社区获得性肺炎", "肺炎", "CAP"]
+      },
+      {
+        "codeSystem": "http://hl7.org/fhir/sid/icd-10",
+        "code": "I21.4",
+        "display": { "en": "Non-ST-elevation myocardial infarction", "zh": "非ST段抬高型心肌梗死" },
+        "aliases": ["NSTEMI", "acute coronary syndrome", "ACS", "急性冠脉综合征", "心肌梗死"]
+      },
+      {
+        "codeSystem": "http://hl7.org/fhir/sid/icd-10",
+        "code": "E11.9",
+        "display": { "en": "Type 2 diabetes mellitus", "zh": "2型糖尿病" },
+        "aliases": ["type 2 diabetes", "T2DM", "糖尿病"]
+      },
+      {
+        "codeSystem": "http://hl7.org/fhir/sid/icd-10",
+        "code": "N39.0",
+        "display": { "en": "Urinary tract infection", "zh": "尿路感染" },
+        "aliases": ["UTI", "泌尿系感染"]
+      },
+      {
+        "codeSystem": "http://hl7.org/fhir/sid/icd-10",
+        "code": "J06.9",
+        "display": { "en": "Acute upper respiratory infection", "zh": "急性上呼吸道感染" },
+        "aliases": ["viral upper respiratory infection", "病毒性上呼吸道感染"]
+      },
+      {
+        "codeSystem": "http://hl7.org/fhir/sid/icd-10",
+        "code": "I10",
+        "display": { "en": "Essential hypertension", "zh": "原发性高血压" },
+        "aliases": ["hypertension", "高血压"]
+      }
+    ],
+    "medications": [
+      {
+        "codeSystem": "urn:clinmesh:general:drug",
+        "code": "amoxicillin",
+        "display": { "en": "Amoxicillin", "zh": "阿莫西林" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 500, "unit": "mg" },
+        "safety": {
+          "classCodes": ["antibacterial"],
+          "allergyGroupCodes": ["penicillin"],
+          "indicationPrefixes": ["J18"],
+          "maxSingleDose": 1000,
+          "maxDailyDose": 3000
+        },
+        "packageInsertSummary": {
+          "en": "Penicillin antibacterial. Check immediate hypersensitivity history.",
+          "zh": "青霉素类抗菌药，须核对速发型过敏史。"
+        },
+        "unitPriceMinor": 45
+      },
+      {
+        "codeSystem": "urn:clinmesh:general:drug",
+        "code": "doxycycline",
+        "display": { "en": "Doxycycline", "zh": "多西环素" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 100, "unit": "mg" },
+        "safety": {
+          "classCodes": ["antibacterial"],
+          "allergyGroupCodes": ["tetracycline"],
+          "indicationPrefixes": ["J18"],
+          "maxSingleDose": 100,
+          "maxDailyDose": 200
+        },
+        "packageInsertSummary": {
+          "en": "Tetracycline antibacterial. Review allergy, pregnancy and interactions.",
+          "zh": "四环素类抗菌药，核对过敏、妊娠与相互作用。"
+        },
+        "unitPriceMinor": 75
+      },
+      {
+        "codeSystem": "urn:clinmesh:general:drug",
+        "code": "metformin",
+        "display": { "en": "Metformin", "zh": "二甲双胍" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 500, "unit": "mg" },
+        "safety": {
+          "classCodes": ["biguanide"],
+          "allergyGroupCodes": ["biguanide"],
+          "indicationPrefixes": ["E11"],
+          "maxSingleDose": 1000,
+          "maxDailyDose": 2000,
+          "contraindicatedEgfrBelow": 30
+        },
+        "packageInsertSummary": {
+          "en": "Biguanide. Review kidney function before use.",
+          "zh": "双胍类药物，使用前核对肾功能。"
+        },
+        "unitPriceMinor": 25
+      },
+      {
+        "codeSystem": "urn:clinmesh:general:drug",
+        "code": "nitrofurantoin",
+        "display": { "en": "Nitrofurantoin", "zh": "呋喃妥因" },
+        "routeCodes": { "default": "PO", "allowed": ["PO"] },
+        "dosageUnits": ["mg"],
+        "inpatientDoseBasis": { "amount": 100, "unit": "mg" },
+        "safety": {
+          "classCodes": ["antibacterial"],
+          "allergyGroupCodes": ["nitrofuran"],
+          "indicationPrefixes": ["N39"],
+          "maxSingleDose": 100,
+          "maxDailyDose": 200,
+          "contraindicatedEgfrBelow": 30
+        },
+        "packageInsertSummary": {
+          "en": "Urinary antibacterial. Review renal function and the site of infection.",
+          "zh": "尿路抗菌药，须核对肾功能及感染部位。"
+        },
+        "unitPriceMinor": 95
+      }
+    ],
+    "services": [
+      {
+        "codeSystem": "urn:clinmesh:general:service",
+        "code": "chest-xray",
+        "display": { "en": "Chest radiograph", "zh": "胸部X线片" },
+        "kind": "imaging",
+        "unitPriceMinor": 3500,
+        "unit": "study",
+        "analytes": []
+      },
+      {
+        "codeSystem": "urn:clinmesh:general:service",
+        "code": "ecg12",
+        "display": { "en": "12-lead ECG", "zh": "12导联心电图" },
+        "kind": "examination",
+        "unitPriceMinor": 2850,
+        "unit": "tracing",
+        "analytes": []
+      },
+      {
+        "codeSystem": "urn:clinmesh:general:service",
+        "code": "hs-tni",
+        "display": { "en": "High-sensitivity cardiac troponin I", "zh": "高敏心肌肌钙蛋白I" },
+        "kind": "lab",
+        "unitPriceMinor": 2200,
+        "unit": "test",
+        "specimenContainer": { "specimen": "plasma", "container": "lithium-heparin tube" },
+        "analytes": [
+          {
+            "codeSystem": "http://loinc.org",
+            "code": "89579-7",
+            "display": { "en": "hs-cTnI", "zh": "高敏肌钙蛋白I" },
+            "unit": "ng/L",
+            "referenceRange": { "high": 16 },
+            "critical": { "high": 100 }
+          }
+        ]
+      },
+      {
+        "codeSystem": "urn:clinmesh:general:service",
+        "code": "a1c",
+        "display": { "en": "Hemoglobin A1c", "zh": "糖化血红蛋白" },
+        "kind": "lab",
+        "unitPriceMinor": 1800,
+        "unit": "test",
+        "specimenContainer": { "specimen": "whole blood", "container": "EDTA tube" },
+        "analytes": [
+          {
+            "codeSystem": "http://loinc.org",
+            "code": "4548-4",
+            "display": { "en": "HbA1c", "zh": "糖化血红蛋白" },
+            "unit": "%",
+            "referenceRange": { "low": 4, "high": 5.6 }
+          }
+        ]
+      },
+      {
+        "codeSystem": "urn:clinmesh:general:service",
+        "code": "egfr",
+        "display": { "en": "Estimated GFR", "zh": "估算肾小球滤过率" },
+        "kind": "lab",
+        "unitPriceMinor": 1250,
+        "unit": "test",
+        "analytes": [
+          {
+            "codeSystem": "http://loinc.org",
+            "code": "98979-8",
+            "display": { "en": "Creatinine-based eGFR", "zh": "肌酐估算肾小球滤过率" },
+            "unit": "mL/min/1.73m2",
+            "referenceRange": { "low": 90 }
+          }
+        ]
+      },
+      {
+        "codeSystem": "urn:clinmesh:general:service",
+        "code": "urinalysis",
+        "display": { "en": "Urinalysis", "zh": "尿常规" },
+        "kind": "lab",
+        "unitPriceMinor": 850,
+        "unit": "panel",
+        "specimenContainer": { "specimen": "midstream urine", "container": "sterile cup" },
+        "analytes": [
+          {
+            "codeSystem": "http://loinc.org",
+            "code": "5802-4",
+            "display": { "en": "Urine nitrite", "zh": "尿亚硝酸盐" },
+            "unit": "qualitative"
+          }
+        ]
+      }
+    ],
+    "procedures": [],
+    "materials": []
+  },
+  "knowledge": {
+    "guidelineTopics": [
+      {
+        "id": "acute-chest-pain-troponin",
+        "source": "https://doi.org/10.1161/CIR.0000000000001029",
+        "version": "2021",
+        "physicalPage": 3,
+        "verbatim": "High-sensitivity cardiac troponins are the preferred standard for establishing a biomarker diagnosis of acute myocardial infarction, allowing for more accurate detection and exclusion of myocardial injury.",
+        "qualifiers": [
+          "Top 10 Take-Home Messages, item 2. Interpret a biomarker result alongside the clinical and ECG assessment."
+        ],
+        "population": "adult"
+      }
+    ],
+    "orderSetTemplates": [
+      {
+        "id": "chest-pain-assessment",
+        "name": { "en": "Acute chest pain assessment", "zh": "急性胸痛评估" },
+        "scope": "outpatient",
+        "triggerDiagnoses": [],
+        "members": [
+          { "kind": "services", "codeSystem": "urn:clinmesh:general:service", "code": "ecg12" },
+          { "kind": "services", "codeSystem": "urn:clinmesh:general:service", "code": "hs-tni" }
+        ],
+        "hardContraindications": [],
+        "requiredEvidence": []
+      }
+    ]
+  },
+  "cases": [
+    {
+      "caseId": "g01",
+      "version": "1",
+      "encounterClass": "outpatient",
+      "tags": ["acute", "adult"],
+      "demographics": {
+        "name": "Avery Reed",
+        "sex": "female",
+        "birthDate": "1991-04-17",
+        "identifiers": [{ "issuer": "teaching-clinic", "value": "SIM-G01" }]
+      },
+      "priorHistory": {
+        "observations": [],
+        "diagnoses": [],
+        "medications": [],
+        "allergies": {
+          "status": "confirmed",
+          "items": [
+            {
+              "groupCode": "penicillin",
+              "severity": "severe",
+              "reaction": {
+                "en": "Wheeze, hypotension and emergency epinephrine after penicillin.",
+                "zh": "青霉素后喘鸣、低血压，曾急诊使用肾上腺素。"
+              }
+            }
+          ]
+        }
+      },
+      "triageVitals": {
+        "temperatureC": 38.4,
+        "heartRateBpm": 102,
+        "respiratoryRate": 20,
+        "systolicMmHg": 116,
+        "diastolicMmHg": 72,
+        "spo2Percent": 95
+      },
+      "patientPersona": {
+        "character": { "en": "Worried but cooperative", "zh": "担忧而配合" },
+        "healthLiteracy": { "en": "Everyday vocabulary", "zh": "习惯用日常词汇" },
+        "speechStyle": { "en": "Short sentences", "zh": "短句作答" },
+        "openingStatement": {
+          "en": "I have had a fever and a cough for three days.",
+          "zh": "我发烧咳嗽三天了。"
+        },
+        "symptoms": [
+          { "en": "Breathing deeply hurts my right side.", "zh": "深吸气时右边胸口痛。" }
+        ],
+        "medicationMemory": {
+          "en": "I needed an emergency injection after penicillin.",
+          "zh": "以前用青霉素后抢救过。"
+        },
+        "boundaries": [
+          {
+            "en": "Describe symptoms and past reactions in your own words.",
+            "zh": "用自己的话描述症状与既往过敏反应。"
+          }
+        ]
+      },
+      "caseTruth": {
+        "primaryDiagnosis": { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "J18.9" },
+        "secondaryDiagnoses": [],
+        "hiddenHistory": [
+          { "en": "Fever preceded the productive cough.", "zh": "先发热，随后咳痰。" }
+        ],
+        "results": [
+          {
+            "service": { "codeSystem": "urn:clinmesh:general:service", "code": "chest-xray" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": {
+              "en": "Focal right lower lobe consolidation.",
+              "zh": "右肺下叶局灶性实变。"
+            },
+            "observations": []
+          }
+        ],
+        "expectedMedications": [
+          { "codeSystem": "urn:clinmesh:general:drug", "code": "doxycycline" }
+        ],
+        "reviewPoints": [
+          {
+            "en": "Recognize community-acquired pneumonia and the documented immediate severe penicillin allergy.",
+            "zh": "识别社区获得性肺炎及已记录的青霉素严重速发过敏红线。"
+          }
+        ]
+      }
+    },
+    {
+      "caseId": "g02",
+      "version": "1",
+      "encounterClass": "outpatient",
+      "tags": ["acute", "adult"],
+      "demographics": {
+        "name": "Jordan Vale",
+        "sex": "female",
+        "birthDate": "1964-07-09",
+        "identifiers": [{ "issuer": "teaching-clinic", "value": "SIM-G02" }]
+      },
+      "priorHistory": {
+        "observations": [],
+        "diagnoses": [{ "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "I10" }],
+        "medications": [],
+        "allergies": { "status": "not-asked" }
+      },
+      "triageVitals": {
+        "temperatureC": 36.8,
+        "heartRateBpm": 96,
+        "respiratoryRate": 19,
+        "systolicMmHg": 142,
+        "diastolicMmHg": 88,
+        "spo2Percent": 97
+      },
+      "patientPersona": {
+        "character": { "en": "Reserved", "zh": "较内敛" },
+        "healthLiteracy": { "en": "Understands plain language", "zh": "理解通俗表述" },
+        "speechStyle": { "en": "Quiet and deliberate", "zh": "语速慢，声音轻" },
+        "openingStatement": {
+          "en": "My upper belly feels heavy and I keep sweating.",
+          "zh": "我上腹发闷，还总冒汗。"
+        },
+        "symptoms": [
+          {
+            "en": "It started climbing stairs and has returned at rest.",
+            "zh": "起初爬楼时发作，休息时又出现。"
+          }
+        ],
+        "medicationMemory": {
+          "en": "I cannot recall the name of my blood pressure tablet.",
+          "zh": "我记不清降压药名字了。"
+        },
+        "boundaries": [
+          { "en": "Describe when the pressure occurs.", "zh": "只描述不适发生的情形。" }
+        ]
+      },
+      "caseTruth": {
+        "primaryDiagnosis": { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "I21.4" },
+        "secondaryDiagnoses": [],
+        "hiddenHistory": [
+          { "en": "The pressure spread to the jaw at rest.", "zh": "休息时不适曾放射到下颌。" }
+        ],
+        "results": [
+          {
+            "service": { "codeSystem": "urn:clinmesh:general:service", "code": "ecg12" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": {
+              "en": "Horizontal ST depression and T-wave inversion in V4–V6.",
+              "zh": "V4–V6 水平型 ST 段压低伴 T 波倒置。"
+            },
+            "observations": []
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:general:service", "code": "hs-tni" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": { "en": "Initially reported 12 ng/L.", "zh": "首次签发 12 ng/L。" },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 12 }
+            ]
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:general:service", "code": "hs-tni" },
+            "stage": "initial",
+            "revision": 2,
+            "amendmentReason": {
+              "en": "Decimal transcription error on the same specimen.",
+              "zh": "同一标本的数值小数点誊录错误。"
+            },
+            "summary": {
+              "en": "Corrected to 120 ng/L. A new acknowledgement is required.",
+              "zh": "更正为 120 ng/L，须重新确认已阅。"
+            },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 120 }
+            ]
+          }
+        ],
+        "reviewPoints": [
+          {
+            "en": "Treat atypical symptoms as high-risk chest pain. Review the ECG and explicitly acknowledge the amended report.",
+            "zh": "非典型症状仍触发高危胸痛质控，复核心电图并重新确认更正报告。"
+          }
+        ]
+      }
+    },
+    {
+      "caseId": "g03",
+      "version": "1",
+      "encounterClass": "outpatient",
+      "tags": ["adult", "new-presentation"],
+      "demographics": {
+        "name": "Morgan Pine",
+        "sex": "female",
+        "birthDate": "1978-03-28",
+        "identifiers": [{ "issuer": "teaching-clinic", "value": "SIM-G03" }]
+      },
+      "priorHistory": {
+        "observations": [],
+        "diagnoses": [],
+        "medications": [],
+        "allergies": { "status": "none-known" }
+      },
+      "triageVitals": {
+        "temperatureC": 37.1,
+        "heartRateBpm": 84,
+        "respiratoryRate": 16,
+        "systolicMmHg": 124,
+        "diastolicMmHg": 76,
+        "spo2Percent": 99
+      },
+      "patientPersona": {
+        "character": { "en": "Attentive", "zh": "细心" },
+        "healthLiteracy": { "en": "Asks for explanations", "zh": "会主动追问" },
+        "speechStyle": { "en": "Practical", "zh": "表达直接" },
+        "openingStatement": {
+          "en": "I am always thirsty and it stings when I pass urine.",
+          "zh": "我老是口渴，小便时还刺痛。"
+        },
+        "symptoms": [
+          {
+            "en": "I wake up to urinate several times, without flank pain or fever.",
+            "zh": "夜里要起来好几次，没有发热或腰痛。"
+          }
+        ],
+        "medicationMemory": { "en": "I take no regular medicines.", "zh": "我平时没用药。" },
+        "boundaries": [{ "en": "Speak about what you have experienced.", "zh": "描述亲身感受。" }]
+      },
+      "caseTruth": {
+        "primaryDiagnosis": { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "E11.9" },
+        "secondaryDiagnoses": [{ "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "N39.0" }],
+        "hiddenHistory": [
+          {
+            "en": "Thirst preceded urinary burning by several weeks.",
+            "zh": "口渴比排尿刺痛早出现数周。"
+          }
+        ],
+        "results": [
+          {
+            "service": { "codeSystem": "urn:clinmesh:general:service", "code": "a1c" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": { "en": "HbA1c 8.6%.", "zh": "糖化血红蛋白 8.6%。" },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "4548-4" }, "value": 8.6 }
+            ]
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:general:service", "code": "urinalysis" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": { "en": "Positive nitrite and pyuria.", "zh": "亚硝酸盐阳性，有脓尿。" },
+            "observations": [
+              {
+                "analyte": { "codeSystem": "http://loinc.org", "code": "5802-4" },
+                "value": "positive"
+              }
+            ]
+          },
+          {
+            "service": { "codeSystem": "urn:clinmesh:general:service", "code": "egfr" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": { "en": "eGFR 94 mL/min/1.73 m².", "zh": "eGFR 94 mL/min/1.73 m²。" },
+            "observations": [
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "98979-8" }, "value": 94 }
+            ]
+          }
+        ],
+        "expectedMedications": [
+          { "codeSystem": "urn:clinmesh:general:drug", "code": "metformin" },
+          { "codeSystem": "urn:clinmesh:general:drug", "code": "nitrofurantoin" }
+        ],
+        "reviewPoints": [
+          {
+            "en": "Document both diagnoses and review eGFR before the two-drug teaching prescription.",
+            "zh": "记录两项诊断，在双药教学处方签发前核对 eGFR。"
+          }
+        ]
+      }
+    },
+    {
+      "caseId": "g04",
+      "version": "1",
+      "encounterClass": "outpatient",
+      "tags": ["acute", "adult"],
+      "demographics": {
+        "name": "Riley Dale",
+        "sex": "male",
+        "birthDate": "1998-12-15",
+        "identifiers": [{ "issuer": "teaching-clinic", "value": "SIM-G04" }]
+      },
+      "priorHistory": {
+        "observations": [],
+        "diagnoses": [],
+        "medications": [],
+        "allergies": { "status": "not-asked" }
+      },
+      "triageVitals": {
+        "temperatureC": 37.3,
+        "heartRateBpm": 78,
+        "respiratoryRate": 16,
+        "systolicMmHg": 118,
+        "diastolicMmHg": 72,
+        "spo2Percent": 99
+      },
+      "patientPersona": {
+        "character": { "en": "Curious", "zh": "好奇" },
+        "healthLiteracy": { "en": "Lay vocabulary", "zh": "使用生活用语" },
+        "speechStyle": { "en": "Conversational", "zh": "口语化" },
+        "openingStatement": {
+          "en": "My nose is running and my throat feels scratchy.",
+          "zh": "我流鼻涕，嗓子有点痒。"
+        },
+        "symptoms": [
+          {
+            "en": "I can drink normally and breathe comfortably.",
+            "zh": "我喝水正常，呼吸也顺畅。"
+          }
+        ],
+        "medicationMemory": { "en": "I have not taken anything for this.", "zh": "这次还没吃药。" },
+        "boundaries": [{ "en": "Ask whether medicine is needed.", "zh": "可以询问是否需要用药。" }]
+      },
+      "caseTruth": {
+        "primaryDiagnosis": { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "J06.9" },
+        "secondaryDiagnoses": [],
+        "hiddenHistory": [
+          {
+            "en": "A household member recently had similar self-limited symptoms.",
+            "zh": "家人近期有类似症状，已自行好转。"
+          }
+        ],
+        "results": [],
+        "noMedication": true,
+        "reviewPoints": [
+          {
+            "en": "An antibacterial has no indication here. Record an explicit No Medication decision and return precautions.",
+            "zh": "本例无抗菌药指征，显式记录无需用药结论及复诊提示。"
+          }
+        ]
+      }
+    }
+  ]
+}
