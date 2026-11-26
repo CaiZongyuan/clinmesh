@@ -86,7 +86,7 @@ const PUBLIC_NODES: readonly ConceptNode[] = [
   }),
   pubNode('2160-0', '血清肌酐', 'laboratory', null, {
     displayEn: 'Serum Creatinine',
-    synonyms: ['血肌酐', 'SCr', 'Creatinine', '14682-9', '1700404A'],
+    synonyms: ['血肌酐', '肌酐', 'SCr', 'Creatinine', '14682-9', '1700404A'],
   }),
   pubNode('lipid-panel', '血脂四项', 'laboratory', null, {
     displayEn: 'Lipid Panel',
@@ -94,7 +94,7 @@ const PUBLIC_NODES: readonly ConceptNode[] = [
   }),
   pubNode('13457-7', '低密度脂蛋白胆固醇 (LDL-C)', 'laboratory', 'lipid-panel', {
     displayEn: 'Low-density Lipoprotein Cholesterol',
-    synonyms: ['LDL-C', '低密度脂蛋白胆固醇', '18262-6', '2089-1', '1700303A'],
+    synonyms: ['LDL-C', 'LDL', '低密度脂蛋白胆固醇', '低密度脂蛋白', '18262-6', '2089-1', '1700303A'],
   }),
   pubNode('2093-3', '总胆固醇 (TC)', 'laboratory', 'lipid-panel', {
     displayEn: 'Total Cholesterol',
@@ -115,6 +115,44 @@ const PUBLIC_NODES: readonly ConceptNode[] = [
   pubNode('48065-7', 'D-二聚体', 'laboratory', null, {
     displayEn: 'D-dimer',
     synonyms: ['D-dimer', 'D二聚体'],
+  }),
+  pubNode('2823-3', '血清钾', 'laboratory', null, {
+    displayEn: 'Serum Potassium',
+    synonyms: ['血钾', '血清钾 (K+)', 'K+'],
+  }),
+  pubNode('718-7', '血红蛋白', 'laboratory', null, {
+    displayEn: 'Hemoglobin',
+    synonyms: ['血红蛋白 (Hb)', 'Hb', 'Hgb'],
+  }),
+  pubNode('30934-4', '脑利钠肽 (BNP)', 'laboratory', null, {
+    displayEn: 'B-type Natriuretic Peptide',
+    synonyms: ['BNP', '脑利钠肽', '2100604A'],
+  }),
+  pubNode('33762-6', '氨基末端脑利钠肽前体 (NT-proBNP)', 'laboratory', null, {
+    displayEn: 'N-terminal pro-BNP',
+    synonyms: ['NT-proBNP', 'N末端B型利钠肽前体', '2100704A'],
+  }),
+
+  // Examinations & modalities
+  pubNode('11524-6', '十二导联心电图', 'examination', null, {
+    displayEn: '12-Lead Electrocardiogram',
+    synonyms: ['心电图', '12导联心电图', 'ECG'],
+  }),
+  pubNode('18754-2', '动态心电图', 'examination', null, {
+    displayEn: 'Holter Electrocardiogram Monitoring',
+    synonyms: ['Holter', '24小时动态心电图'],
+  }),
+  pubNode('18043-0', '超声心动图', 'examination', null, {
+    displayEn: 'Echocardiogram',
+    synonyms: ['心脏超声', '心脏彩超', '心超', 'UCG', '88062-5'],
+  }),
+  pubNode('10230-1', '左室射血分数 (LVEF)', 'examination', '18043-0', {
+    displayEn: 'Left Ventricular Ejection Fraction',
+    synonyms: ['LVEF', '左室射血分数', '左心室射血分数', '射血分数'],
+  }),
+  pubNode('24558-9', '心脏MRI', 'examination', null, {
+    displayEn: 'Cardiac MRI',
+    synonyms: ['CMR', '心脏核磁', '心脏磁共振', '心脏核磁共振'],
   }),
 
   // Diagnosis hierarchy
@@ -330,6 +368,10 @@ const PUBLIC_MAPPINGS: readonly ConceptMapping[] = [
   pubExactMapping('pub-map-loinc-2089-1', 'http://loinc.org', '2089-1', 'LDL-C', '13457-7'),
   pubExactMapping('pub-map-cn-1700303A', 'urn:clinmesh:cn-local', '1700303A', 'LDL-C', '13457-7'),
   pubExactMapping('pub-map-cn-1700304A', 'urn:clinmesh:cn-local', '1700304A', '甘油三酯', '2571-8'),
+  pubExactMapping('pub-map-cn-2100604A', 'urn:clinmesh:cn-local', '2100604A', '脑利钠肽 (BNP)', '30934-4'),
+  pubExactMapping('pub-map-cn-2100704A', 'urn:clinmesh:cn-local', '2100704A', '氨基末端脑利钠肽前体 (NT-proBNP)', '33762-6'),
+  pubExactMapping('pub-map-loinc-88062-5', 'http://loinc.org', '88062-5', '超声心动图', '18043-0'),
+  pubExactMapping('pub-map-clinmesh-lvef', 'urn:clinmesh:examination', 'lvef', '左室射血分数 (LVEF)', '10230-1'),
   pubExactMapping('pub-map-pharm-ccb', 'urn:clinmesh:pharmacology', 'calcium-channel-blocker', '钙通道阻滞剂', 'ccb'),
   pubExactMapping('pub-map-pharm-ezetimibe', 'urn:clinmesh:pharmacology', 'cholesterol-absorption-inhibitor', '胆固醇吸收抑制剂', 'ezetimibe'),
 ]

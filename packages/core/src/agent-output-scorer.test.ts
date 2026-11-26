@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentScoringRubricInput } from '@clinmesh/contracts/agent-output-scorer'
+import type { ConceptVocabulary } from '@clinmesh/contracts/concept-vocabulary'
 import { evaluateClinicalFactLedger, transcribeLocalFhirFacts, transcribeVisibleSourceHistoryFacts } from './clinical-fact-ledger.ts'
+import { mergeThreeLayerConceptVocabulary } from './concept-vocabulary.ts'
 import {
   AgentOutputScorerError,
+  buildTextConceptSignaturesFromVocabulary,
   computeClinicianEditMetrics,
   createUnevaluatedAgentOutputState,
   scoreAgentDraftOutput,
@@ -540,5 +543,395 @@ describe('agent-output-scorer core engine', () => {
       ledger,
     })
     expect(futureFactResult.coverageItems[0]?.status).toBe('not-applicable')
+  })
+
+  it('derives text concept signatures purely from a custom ConceptVocabulary with zero hardcoded domain assumptions', () => {
+    const customVocabulary: ConceptVocabulary = {
+      mappings: [
+        {
+          effectiveDate: '2026-01-01',
+          id: 'syn-map-tsh-exact',
+          relation: 'exact',
+          reviewStatus: 'approved',
+          reviewerId: 'reviewer-endo-01',
+          sourceCode: 'LAB-TSH-LOCAL',
+          sourceDisplay: '甲功TSH',
+          sourceSystem: 'urn:clinmesh:synthetic-lab',
+          targetConceptCode: 'SYN-TSH',
+          version: '1.0.0',
+        },
+        {
+          effectiveDate: '2026-01-01',
+          id: 'syn-map-ft4-unapproved',
+          relation: 'exact',
+          reviewStatus: 'proposed',
+          reviewerId: null,
+          sourceCode: 'LAB-FT4-PROP',
+          sourceDisplay: '未审核甲功FT4',
+          sourceSystem: 'urn:clinmesh:synthetic-lab',
+          targetConceptCode: 'SYN-FT4',
+          version: '1.0.0',
+        },
+        {
+          effectiveDate: '2026-01-01',
+          id: 'syn-map-ft4-close',
+          relation: 'close',
+          reviewStatus: 'approved',
+          reviewerId: 'reviewer-endo-01',
+          sourceCode: 'LAB-FT4-CLOSE',
+          sourceDisplay: '总甲状腺素近似项',
+          sourceSystem: 'urn:clinmesh:synthetic-lab',
+          targetConceptCode: 'SYN-FT4',
+          version: '1.0.0',
+        },
+        {
+          effectiveDate: '2026-12-01',
+          id: 'syn-map-tsh-future',
+          relation: 'exact',
+          reviewStatus: 'approved',
+          reviewerId: 'reviewer-endo-01',
+          sourceCode: 'LAB-TSH-FUTURE',
+          sourceDisplay: '未来生效TSH别名',
+          sourceSystem: 'urn:clinmesh:synthetic-lab',
+          targetConceptCode: 'SYN-TSH',
+          version: '1.0.0',
+        },
+      ],
+      nodes: [
+        {
+          code: 'SYN-TSH',
+          displayEn: 'Thyroid Stimulating Hormone',
+          displayZh: '促甲状腺激素 (TSH)',
+          domain: 'laboratory',
+          layer: 'public',
+          parentCode: null,
+          synonyms: ['TSH', '促甲状腺素'],
+        },
+        {
+          code: 'SYN-FT4',
+          displayEn: 'Free Thyroxine',
+          displayZh: '游离甲状腺素 (FT4)',
+          domain: 'laboratory',
+          layer: 'public',
+          parentCode: null,
+          synonyms: ['FT4'],
+        },
+        {
+          code: 'SYN-THYROID-US',
+          displayEn: 'Thyroid Ultrasound',
+          displayZh: '甲状腺超声',
+          domain: 'examination',
+          layer: 'public',
+          parentCode: null,
+          synonyms: ['甲状腺彩超'],
+        },
+        {
+          code: 'SYN-NODULE-DIAM',
+          displayEn: 'Thyroid Nodule Maximum Diameter',
+          displayZh: '甲状腺结节最大径',
+          domain: 'examination',
+          layer: 'public',
+          parentCode: 'SYN-THYROID-US',
+          synonyms: ['结节最大径'],
+        },
+      ],
+      version: 'synthetic-1.0.0',
+    }
+
+    const builtSignatures = buildTextConceptSignaturesFromVocabulary(customVocabulary, { asOfDate: '2026-09-14' })
+    const tshSig = builtSignatures.find(sig => sig.id === 'SYN-TSH')!
+    expect(tshSig).toBeDefined()
+    expect(tshSig.itemCodes).toEqual(['SYN-TSH', 'LAB-TSH-LOCAL'])
+    expect(tshSig.ledgerKeywords).toContain('甲功TSH')
+    expect(tshSig.ledgerKeywords).not.toContain('未来生效TSH别名')
+    const ft4Sig = builtSignatures.find(sig => sig.id === 'SYN-FT4')!
+    expect(ft4Sig.itemCodes).toEqual(['SYN-FT4'])
+    expect(ft4Sig.ledgerKeywords).not.toContain('未审核甲功FT4')
+    expect(ft4Sig.ledgerKeywords).not.toContain('总甲状腺素近似项')
+
+    const ledger = evaluateClinicalFactLedger({
+      candidates: transcribeLocalFhirFacts({
+        observations: [
+          {
+            category: [{ coding: [{ code: 'laboratory' }] }],
+            code: { coding: [{ code: 'LAB-TSH-LOCAL', display: '甲功TSH', system: 'urn:clinmesh:synthetic-lab' }] },
+            effectiveDateTime: '2026-09-14T08:30:00+08:00',
+            id: 'obs-syn-tsh',
+            issued: '2026-09-14T08:45:00+08:00',
+            meta: { lastUpdated: '2026-09-14T08:45:00+08:00', versionId: '1' },
+            status: 'final',
+            valueQuantity: { unit: 'mIU/L', value: 8.2 },
+          },
+        ],
+      }),
+      evaluatedAsOf: '2026-09-14T10:00:00+08:00',
+      patientId: 'syn-endo-patient-01',
+      patientSex: 'female',
+      subjectId: 'case-syn-endo-01',
+      subjectKind: 'outpatient',
+    })
+
+    const endoRubric: AgentScoringRubricInput = {
+      fabricationPenaltyPoints: 5,
+      items: [
+        {
+          expectedPatterns: ['促甲状腺激素|甲功TSH|TSH'],
+          factVerification: {
+            itemCodes: ['SYN-TSH'],
+            minValue: 4.5,
+            unit: 'mIU/L',
+          },
+          id: 'tsh-elevated',
+          labelZh: '促甲状腺激素升高评估',
+          omissionPenaltyPoints: 2,
+          positivePoints: 4,
+          requiredWhenCondition: {
+            category: 'laboratory',
+            itemCodes: ['SYN-TSH'],
+            kind: 'fact',
+            minValue: 4.5,
+            presence: 'present',
+            requireEligible: true,
+            unit: 'mIU/L',
+          },
+        },
+      ],
+      packId: 'synthetic-endocrine-test',
+      rubricId: 'syn-endo-rubric-v1',
+      taskId: 'followup-review',
+      version: '1.0.0',
+    }
+
+    // Accurate draft using mapped local term + uIU/mL unit equivalence (1 uIU/mL === 1 mIU/L);
+    // mentioning an unconfigured non-vocabulary term ("心脏MRI") triggers zero hardcoded matches
+    const accurateResult = scoreAgentDraftOutput({
+      conceptVocabulary: customVocabulary,
+      input: {
+        draftFields: {
+          assessment: '甲功TSH 8.2 uIU/mL，促甲状腺激素明显升高。',
+          note: '既往心脏MRI未见心肌水肿。',
+        },
+        draftText: '促甲状腺激素 8.2 mIU/L 升高。',
+        mode: 'controlled-stream',
+        rubric: endoRubric,
+      },
+      ledger,
+    })
+    expect(accurateResult.positiveScore).toBe(4)
+    expect(accurateResult.fabrications).toEqual([])
+
+    // Fabricating missing SYN-FT4 + missing ultrasound/nodule pair + contradicting SYN-TSH
+    const fabricationResult = scoreAgentDraftOutput({
+      conceptVocabulary: customVocabulary,
+      input: {
+        draftFields: {
+          assessment: 'TSH 2.1 mIU/L；游离甲状腺素 25.0 pmol/L。甲状腺超声未见结节，结节最大径 12 mm。',
+        },
+        draftText: 'TSH 2.1 mIU/L；游离甲状腺素 25.0 pmol/L。甲状腺超声未见结节，结节最大径 12 mm。',
+        mode: 'controlled-stream',
+        rubric: endoRubric,
+      },
+      ledger,
+    })
+    expect(fabricationResult.coverageItems[0]?.status).toBe('covered-inaccurate')
+    expect(fabricationResult.fabrications).toHaveLength(3)
+    expect(fabricationResult.fabrications.map(f => f.reasonCode)).toEqual([
+      'CONTRADICTORY_VALUE',
+      'NONEXISTENT_LAB_OR_EXAM',
+      'NONEXISTENT_LAB_OR_EXAM',
+    ])
+    expect(fabricationResult.fabrications.some(f => f.statementZh.includes('甲状腺超声'))).toBe(true)
+    expect(fabricationResult.fabrications.some(f => f.statementZh.includes('游离甲状腺素'))).toBe(true)
+  })
+
+  it('excludes vocabulary superstrings dynamically (糖化血红蛋白 vs 血红蛋白, 动态心电图 vs 心电图, NT-proBNP vs BNP)', () => {
+    const ledger = evaluateClinicalFactLedger({
+      candidates: transcribeLocalFhirFacts({
+        diagnosticReports: [
+          {
+            category: [{ coding: [{ code: 'ECG' }] }],
+            code: { coding: [{ code: '18754-2', display: '动态心电图', system: 'http://loinc.org' }] },
+            conclusion: '24小时动态心电图提示窦性心律，偶发房早',
+            effectiveDateTime: '2026-09-14T08:00:00+08:00',
+            id: 'rep-holter-only',
+            issued: '2026-09-14T08:30:00+08:00',
+            meta: { lastUpdated: '2026-09-14T08:30:00+08:00', versionId: '1' },
+            status: 'final',
+          },
+        ],
+        observations: [
+          {
+            category: [{ coding: [{ code: 'laboratory' }] }],
+            code: { coding: [{ code: '4548-4', display: '糖化血红蛋白 (HbA1c)', system: 'http://loinc.org' }] },
+            effectiveDateTime: '2026-09-14T08:00:00+08:00',
+            id: 'obs-hba1c-only',
+            issued: '2026-09-14T08:30:00+08:00',
+            meta: { lastUpdated: '2026-09-14T08:30:00+08:00', versionId: '1' },
+            status: 'final',
+            valueQuantity: { unit: '%', value: 7.2 },
+          },
+          {
+            category: [{ coding: [{ code: 'laboratory' }] }],
+            code: { coding: [{ code: '33762-6', display: '氨基末端脑利钠肽前体 (NT-proBNP)', system: 'http://loinc.org' }] },
+            effectiveDateTime: '2026-09-14T08:00:00+08:00',
+            id: 'obs-ntprobnp-only',
+            issued: '2026-09-14T08:30:00+08:00',
+            meta: { lastUpdated: '2026-09-14T08:30:00+08:00', versionId: '1' },
+            status: 'final',
+            valueQuantity: { unit: 'pg/mL', value: 1200 },
+          },
+        ],
+      }),
+      evaluatedAsOf: '2026-09-14T10:00:00+08:00',
+      patientId: 'syn-superstring-01',
+      patientSex: 'male',
+      subjectId: 'case-superstring-01',
+      subjectKind: 'outpatient',
+    })
+
+    const genericRubric: AgentScoringRubricInput = {
+      fabricationPenaltyPoints: 5,
+      items: [
+        {
+          expectedPatterns: ['糖化血红蛋白|HbA1c'],
+          factVerification: { itemCodes: ['4548-4'], minValue: 7.0, unit: '%' },
+          id: 'hba1c-checked',
+          labelZh: '糖化血红蛋白核对',
+          omissionPenaltyPoints: 2,
+          positivePoints: 3,
+        },
+      ],
+      packId: 'synthetic-superstring-test',
+      rubricId: 'superstring-v1',
+      taskId: 'followup-review',
+      version: '1.0.0',
+    }
+
+    // Must NOT falsely trigger missing 718-7 (血红蛋白), 11524-6 (心电图), or 30934-4 (BNP)
+    const cleanResult = scoreAgentDraftOutput({
+      input: {
+        draftFields: {
+          assessment: '糖化血红蛋白 7.2%；NT-proBNP 1200 pg/mL；动态心电图提示窦性心律。',
+        },
+        draftText: '糖化血红蛋白 7.2%，NT-proBNP 1200 pg/mL，动态心电图窦性心律。',
+        mode: 'controlled-stream',
+        rubric: genericRubric,
+      },
+      ledger,
+    })
+    expect(cleanResult.positiveScore).toBe(3)
+    expect(cleanResult.fabrications).toEqual([])
+
+    // Same-clause mention of BOTH 糖化血红蛋白 and missing 血红蛋白 still detects missing 血红蛋白
+    const mixedClauseResult = scoreAgentDraftOutput({
+      input: {
+        draftFields: {
+          assessment: '糖化血红蛋白 7.2% 且血红蛋白 120 g/L。',
+        },
+        draftText: '糖化血红蛋白 7.2% 且血红蛋白 120 g/L。',
+        mode: 'controlled-stream',
+        rubric: genericRubric,
+      },
+      ledger,
+    })
+    expect(mixedClauseResult.fabrications).toHaveLength(1)
+    expect(mixedClauseResult.fabrications[0]?.itemCode).toBe('718-7')
+    expect(mixedClauseResult.fabrications[0]?.reasonCode).toBe('NONEXISTENT_LAB_OR_EXAM')
+  })
+
+  it('supports metadata-driven UCUM unit conversion including hospital-mapped codes', () => {
+    const vocabWithHospitalCreatinine = mergeThreeLayerConceptVocabulary({
+      hospitalLayer: {
+        mappings: [
+          {
+            effectiveDate: '2026-01-01',
+            hospitalId: 'hosp-alpha',
+            id: 'hosp-map-scr-exact',
+            relation: 'exact',
+            reviewStatus: 'approved',
+            reviewerId: 'rev-hosp-01',
+            sourceCode: 'HOSP-SCR-01',
+            sourceDisplay: '本院血肌酐',
+            sourceSystem: 'urn:hosp:alpha',
+            targetConceptCode: '2160-0',
+            version: '1.0.0',
+          },
+        ],
+        nodes: [],
+        version: '1.0.0',
+      },
+    })
+
+    const ledger = evaluateClinicalFactLedger({
+      candidates: transcribeLocalFhirFacts({
+        observations: [
+          {
+            category: [{ coding: [{ code: 'laboratory' }] }],
+            code: { coding: [{ code: 'HOSP-SCR-01', display: '本院血肌酐', system: 'urn:hosp:alpha' }] },
+            effectiveDateTime: '2026-09-14T08:00:00+08:00',
+            id: 'obs-hosp-scr',
+            issued: '2026-09-14T08:30:00+08:00',
+            meta: { lastUpdated: '2026-09-14T08:30:00+08:00', versionId: '1' },
+            status: 'final',
+            valueQuantity: { unit: 'umol/L', value: 112 },
+          },
+          {
+            category: [{ coding: [{ code: 'laboratory' }] }],
+            code: { coding: [{ code: '718-7', display: '血红蛋白', system: 'http://loinc.org' }] },
+            effectiveDateTime: '2026-09-14T08:00:00+08:00',
+            id: 'obs-hb-gl',
+            issued: '2026-09-14T08:30:00+08:00',
+            meta: { lastUpdated: '2026-09-14T08:30:00+08:00', versionId: '1' },
+            status: 'final',
+            valueQuantity: { unit: 'g/L', value: 120 },
+          },
+        ],
+      }),
+      evaluatedAsOf: '2026-09-14T10:00:00+08:00',
+      patientId: 'syn-unit-01',
+      patientSex: 'male',
+      subjectId: 'case-unit-01',
+      subjectKind: 'outpatient',
+    })
+
+    const result = scoreAgentDraftOutput({
+      conceptVocabulary: vocabWithHospitalCreatinine,
+      input: {
+        draftFields: {
+          assessment: '本院血肌酐 1.27 mg/dL，血红蛋白 12 g/dL。',
+        },
+        draftText: '本院血肌酐 1.27 mg/dL，血红蛋白 12 g/dL。',
+        mode: 'controlled-stream',
+        rubric: {
+          fabricationPenaltyPoints: 5,
+          items: [
+            {
+              expectedPatterns: ['血肌酐|肌酐'],
+              factVerification: { itemCodes: ['2160-0'], maxValue: 133, unit: 'umol/L' },
+              id: 'hosp-scr-check',
+              labelZh: '血肌酐核对',
+              omissionPenaltyPoints: 1,
+              positivePoints: 2,
+            },
+            {
+              expectedPatterns: ['血红蛋白'],
+              factVerification: { itemCodes: ['718-7'], minValue: 110, unit: 'g/L' },
+              id: 'hb-check',
+              labelZh: '血红蛋白核对',
+              omissionPenaltyPoints: 1,
+              positivePoints: 2,
+            },
+          ],
+          packId: 'synthetic-unit-test',
+          rubricId: 'unit-conv-v1',
+          taskId: 'followup-review',
+          version: '1.0.0',
+        },
+      },
+      ledger,
+    })
+
+    expect(result.positiveScore).toBe(4)
+    expect(result.fabrications).toEqual([])
   })
 })

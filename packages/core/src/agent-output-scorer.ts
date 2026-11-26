@@ -20,10 +20,32 @@ import {
   type EvaluateAgentOutputRequestInput,
 } from '@clinmesh/contracts/agent-output-scorer'
 import type { ClinicalFact, ClinicalFactLedger } from '@clinmesh/contracts/clinical-fact-ledger'
+import { conceptVocabularySchema, type ConceptVocabulary } from '@clinmesh/contracts/concept-vocabulary'
+import {
+  buildTargetCodeSet,
+  buildTextConceptSignaturesFromVocabulary,
+  buildVocabularyExactCodeMap,
+  collectMatchingClauses,
+  collectUniqueSentences,
+  doesMeasurementMatchFact,
+  extractNumericMeasurementsFromText,
+  factSatisfiesVerificationBounds,
+  findLedgerFactsByItemCodes,
+  findSignatureMatchIndexInText,
+  matchesLedgerFactKeywords,
+  matchesPattern,
+  matchesTextConceptSignature,
+  measurementSatisfiesVerificationBounds,
+  normalizeUnitToken,
+  sortFactsMostRecentFirst,
+  type TextConceptSignature,
+} from './agent-output-scorer-signatures.ts'
 import { resolveCanonicalItemCode } from './clinical-fact-ledger.ts'
+import { PUBLIC_CONCEPT_VOCABULARY } from './concept-vocabulary.ts'
 import { evaluatePackTrigger } from './disease-pack.ts'
 
 export { createUnevaluatedAgentOutputState }
+export { buildTextConceptSignaturesFromVocabulary, type TextConceptSignature }
 
 export type AgentOutputScorerErrorCode =
   | 'LIVE_MODEL_SCORING_PERMISSION_REQUIRED'
@@ -39,475 +61,40 @@ export class AgentOutputScorerError extends Error {
   }
 }
 
-interface TextConceptSignature {
-  readonly id: string
-  readonly kind: 'modality' | 'measurement'
-  readonly labelZh: string
-  readonly pattern: RegExp
-  readonly ledgerKeywords: readonly string[]
-  readonly itemCodes: readonly string[]
-  readonly expectsNumeric: boolean
-  readonly excludePattern?: RegExp
-}
-
-const KNOWN_TEXT_CONCEPT_SIGNATURES: readonly TextConceptSignature[] = [
-  {
-    id: 'cardiac-mri',
-    kind: 'modality',
-    labelZh: '心脏MRI',
-    pattern: /心脏\s*(?:MRI|核磁共振?|磁共振)|\bCMR\b/iu,
-    ledgerKeywords: ['心脏MRI', '心脏核磁', '心脏磁共振', 'CMR', 'MRI'],
-    itemCodes: ['24558-9'],
-    expectsNumeric: false,
-  },
-  {
-    id: 'coronary-cta',
-    kind: 'modality',
-    labelZh: '冠脉CT/CTA',
-    pattern: /冠(?:状动脉|脉)\s*CTA?/iu,
-    ledgerKeywords: ['冠脉CT', '冠状动脉CT', '冠脉CTA', 'CT血管', 'CTA'],
-    itemCodes: [],
-    expectsNumeric: false,
-  },
-  {
-    id: 'echocardiogram',
-    kind: 'modality',
-    labelZh: '超声心动图',
-    pattern: /超声心动图|心脏(?:超声|彩超)|心超|\bUCG\b/iu,
-    ledgerKeywords: ['超声心动图', '心脏超声', '心脏彩超', '心超', 'UCG'],
-    itemCodes: ['10230-1', '18043-0', '88062-5'],
-    expectsNumeric: false,
-  },
-  {
-    id: 'lvef',
-    kind: 'measurement',
-    labelZh: '左室射血分数 (LVEF)',
-    pattern: /\bLVEF\b|左室?射血分数|射血分数/iu,
-    ledgerKeywords: ['LVEF', '射血分数', '超声心动图', '心脏超声', '心脏彩超', '心超'],
-    itemCodes: ['10230-1', '18043-0', '88062-5'],
-    expectsNumeric: true,
-  },
-  {
-    id: 'coronary-angiography',
-    kind: 'modality',
-    labelZh: '冠脉造影',
-    pattern: /冠(?:状动脉|脉)造影|\bCAG\b/iu,
-    ledgerKeywords: ['冠脉造影', '冠状动脉造影', 'CAG', '88.55', '88.56'],
-    itemCodes: ['88.5500', '88.5600', '88.55', '88.56'],
-    expectsNumeric: false,
-  },
-  {
-    id: 'holter',
-    kind: 'modality',
-    labelZh: '动态心电图',
-    pattern: /动态心电图|\bHolter\b/iu,
-    ledgerKeywords: ['动态心电图', 'Holter'],
-    itemCodes: [],
-    expectsNumeric: false,
-  },
-  {
-    id: 'ecg',
-    kind: 'modality',
-    labelZh: '心电图',
-    pattern: /(?:十二导联|12导联)?心电图|\bECG\b/iu,
-    excludePattern: /动态心电图|负荷心电/iu,
-    ledgerKeywords: ['心电图', 'ECG'],
-    itemCodes: ['11524-6'],
-    expectsNumeric: false,
-  },
-  {
-    id: 'chest-ct-xray',
-    kind: 'modality',
-    labelZh: '胸部影像',
-    pattern: /(?:胸部|肺部)\s*(?:CT|平扫|增强|X线)|胸片|\bCTPA\b/iu,
-    ledgerKeywords: ['胸部CT', '肺部CT', '胸片', '胸部X线', 'CTPA'],
-    itemCodes: [],
-    expectsNumeric: false,
-  },
-  {
-    id: 'vascular-abdominal-us',
-    kind: 'modality',
-    labelZh: '血管/腹部超声',
-    pattern: /(?:颈动脉|下肢(?:深)?静脉|腹部)(?:超声|彩超)/iu,
-    ledgerKeywords: ['颈动脉', '下肢静脉', '下肢深静脉', '腹部超声', '腹部彩超'],
-    itemCodes: [],
-    expectsNumeric: false,
-  },
-  {
-    id: 'stress-nuclear',
-    kind: 'modality',
-    labelZh: '负荷试验/心肌核素',
-    pattern: /运动平板|负荷心电|心肌核素|核素显像|\bSPECT\b|\bPET\b/iu,
-    ledgerKeywords: ['运动平板', '负荷', '心肌核素', '核素显像', 'SPECT', 'PET'],
-    itemCodes: [],
-    expectsNumeric: false,
-  },
-  {
-    id: 'troponin',
-    kind: 'measurement',
-    labelZh: '心肌肌钙蛋白',
-    pattern: /高敏(?:心肌)?肌钙蛋白[IT]?|(?:心肌)?肌钙蛋白[IT]?|hs-?cTn[IT]|cTn[IT]/iu,
-    ledgerKeywords: ['肌钙蛋白', 'hs-cTnI', 'cTnI', 'cTnT'],
-    itemCodes: ['89579-7', '10839-9', '6597-9'],
-    expectsNumeric: true,
-  },
-  {
-    id: 'bnp',
-    kind: 'measurement',
-    labelZh: 'BNP/NT-proBNP',
-    pattern: /NT-?proBNP|\bBNP\b|氨基末端脑利钠肽前体|脑利钠肽/iu,
-    ledgerKeywords: ['NT-proBNP', 'BNP', '脑利钠肽', '利钠肽'],
-    itemCodes: ['30934-4', '33762-6'],
-    expectsNumeric: true,
-  },
-  {
-    id: 'd-dimer',
-    kind: 'measurement',
-    labelZh: 'D-二聚体',
-    pattern: /D-?二聚体|D-?dimer/iu,
-    ledgerKeywords: ['D-二聚体', 'D-dimer', '二聚体'],
-    itemCodes: ['48065-7'],
-    expectsNumeric: true,
-  },
-  {
-    id: 'hba1c',
-    kind: 'measurement',
-    labelZh: '糖化血红蛋白',
-    pattern: /糖化血红蛋白|\bHbA1c\b/iu,
-    ledgerKeywords: ['糖化血红蛋白', 'HbA1c'],
-    itemCodes: ['4548-4'],
-    expectsNumeric: true,
-  },
-  {
-    id: 'ldl',
-    kind: 'measurement',
-    labelZh: 'LDL-C',
-    pattern: /\bLDL(?:-?C)?\b|低密度脂蛋白(?:胆固醇)?/iu,
-    ledgerKeywords: ['低密度脂蛋白', 'LDL'],
-    itemCodes: ['13457-7', '2089-1', '18262-6'],
-    expectsNumeric: true,
-  },
-  {
-    id: 'creatinine',
-    kind: 'measurement',
-    labelZh: '血清肌酐',
-    pattern: /(?:血清)?肌酐|\bSCr\b/iu,
-    ledgerKeywords: ['肌酐'],
-    itemCodes: ['2160-0', '14682-9'],
-    expectsNumeric: true,
-  },
-  {
-    id: 'potassium',
-    kind: 'measurement',
-    labelZh: '血清钾',
-    pattern: /(?:血|血清)钾/iu,
-    ledgerKeywords: ['钾'],
-    itemCodes: ['2823-3'],
-    expectsNumeric: true,
-  },
-  {
-    id: 'hemoglobin',
-    kind: 'measurement',
-    labelZh: '血红蛋白',
-    pattern: /血红蛋白/iu,
-    excludePattern: /糖化血红蛋白/iu,
-    ledgerKeywords: ['血红蛋白'],
-    itemCodes: ['718-7'],
-    expectsNumeric: true,
-  },
-]
-
-interface NumericMeasurement {
-  readonly value: number
-  readonly unit: string | null
-  readonly rawMatch: string
-}
-
 function roundRatio(value: number): number {
   if (!Number.isFinite(value) || value <= 0) return 0
   if (value >= 1) return 1
   return Number(value.toFixed(4))
 }
 
-function normalizeUnitToken(rawUnit: string): string {
-  const trimmed = rawUnit.trim().replaceAll('µ', 'u').replaceAll('μ', 'u')
-  const lower = trimmed.toLowerCase()
-  if (lower === 'mg/dl') return 'mg/dL'
-  if (lower === 'umol/l') return 'umol/L'
-  if (lower === 'mmol/l') return 'mmol/L'
-  if (lower === 'meq/l') return 'mEq/L'
-  if (lower === 'g/dl') return 'g/dL'
-  if (lower === 'g/l') return 'g/L'
-  if (lower === 'ng/l' || lower === 'pg/ml') return 'ng/L'
-  if (lower === 'ng/ml' || lower === 'ug/l') return 'ng/mL'
-  if (lower === 'iu/l' || lower === 'u/l') return 'U/L'
-  if (lower === 'miu/ml') return 'mIU/mL'
-  if (lower === '10*9/l' || lower === '10^9/l' || lower === 'x10^9/l' || lower === 'k/ul') return '10*9/L'
-  if (lower === '10*12/l' || lower === '10^12/l') return '10*12/L'
-  if (lower === 'mm[hg]' || lower === 'mmhg') return 'mmHg'
-  if (lower === 'cel' || lower === '°c' || lower === 'c') return 'Cel'
-  if (lower === '/min' || lower === 'beats/min' || lower === 'bpm' || lower === 'breaths/min' || lower === '次/分') return '/min'
-  if (lower === '%') return '%'
-  return trimmed
-}
-
-function convertNumericUnit(
-  value: number,
-  fromUnit: string | null,
-  toUnit: string | null,
-  canonicalCode: string | null,
-): number | null {
-  if (fromUnit === null || toUnit === null) {
-    return fromUnit === toUnit ? value : null
-  }
-  const normFrom = normalizeUnitToken(fromUnit)
-  const normTo = normalizeUnitToken(toUnit)
-  if (normFrom === normTo) return value
-
-  if (canonicalCode === '2160-0') {
-    if (normFrom === 'mg/dL' && normTo === 'umol/L') return value * 88.4
-    if (normFrom === 'umol/L' && normTo === 'mg/dL') return value / 88.4
-  }
-  if (canonicalCode === '2093-3' || canonicalCode === '13457-7' || canonicalCode === '2085-9') {
-    if (normFrom === 'mmol/L' && normTo === 'mg/dL') return value * 38.67
-    if (normFrom === 'mg/dL' && normTo === 'mmol/L') return value / 38.67
-  }
-  if (canonicalCode === '2571-8') {
-    if (normFrom === 'mmol/L' && normTo === 'mg/dL') return value * 88.57
-    if (normFrom === 'mg/dL' && normTo === 'mmol/L') return value / 88.57
-  }
-  if (canonicalCode === '89579-7' || canonicalCode === '10839-9' || canonicalCode === '6597-9' || canonicalCode === '2857-1') {
-    if (normFrom === 'ng/mL' && normTo === 'ng/L') return value * 1000
-    if (normFrom === 'ng/L' && normTo === 'ng/mL') return value / 1000
-  }
-  if (canonicalCode === '718-7') {
-    if (normFrom === 'g/dL' && normTo === 'g/L') return value * 10
-    if (normFrom === 'g/L' && normTo === 'g/dL') return value / 10
-  }
-  return null
-}
-
-function numbersRoughlyEqual(left: number, right: number): boolean {
-  const maxAbs = Math.max(Math.abs(left), Math.abs(right))
-  return Math.abs(left - right) <= Math.max(1e-4, 0.015 * maxAbs)
-}
-
-function extractNumericMeasurementsFromText(text: string): NumericMeasurement[] {
-  const results: NumericMeasurement[] = []
-  const re = /(\d+(?:\.\d+)?)\s*(mmol\/L|umol\/L|[μµ]mol\/L|mg\/dL|ng\/mL|ng\/L|pg\/mL|ug\/L|g\/dL|g\/L|mEq\/L|mIU\/mL|U\/L|IU\/L|mmHg|\/min|次\/分|bpm|%|mg|g|片|粒|支|年|月|日|天|周|小时|次)?/giu
-  const thresholdPrefixRe = /(?:<=|>=|<|>|≤|≥|目标值?为?|参考(?:范围|值)?|正常(?:值|上限)|上限|下限|ULN)\s*$/iu
-  const nonLabUnits = new Set(['mg', 'g', '片', '粒', '支', '年', '月', '日', '天', '周', '小时', '次'])
-
-  for (const match of text.matchAll(re)) {
-    const rawNum = match[1]
-    if (rawNum === undefined) continue
-    const idx = match.index ?? 0
-    const before = text.slice(Math.max(0, idx - 12), idx)
-    if (thresholdPrefixRe.test(before)) continue
-    if (idx > 0 && /[-/.A-Za-z0-9]$/u.test(text.slice(idx - 1, idx))) continue
-
-    const rawUnit = match[2] ?? null
-    if (rawUnit !== null && nonLabUnits.has(rawUnit.toLowerCase())) continue
-
-    const numericValue = Number(rawNum)
-    if (!Number.isFinite(numericValue)) continue
-    results.push({
-      rawMatch: match[0],
-      unit: rawUnit === null ? null : normalizeUnitToken(rawUnit),
-      value: numericValue,
-    })
-  }
-  return results
-}
-
-function extractFactMeasurements(fact: ClinicalFact): NumericMeasurement[] {
-  const candidates: NumericMeasurement[] = []
-  const norm = fact.value.normalizedValue
-  if (typeof norm === 'number' && Number.isFinite(norm)) {
-    candidates.push({ rawMatch: String(norm), unit: null, value: norm })
-  } else if (
-    norm !== null
-    && typeof norm === 'object'
-    && 'value' in norm
-    && typeof norm.value === 'number'
-    && Number.isFinite(norm.value)
-  ) {
-    candidates.push({
-      rawMatch: `${norm.value} ${norm.unit}`,
-      unit: normalizeUnitToken(norm.unit),
-      value: norm.value,
-    })
-  }
-  for (const parsed of extractNumericMeasurementsFromText(fact.value.rawText)) {
-    if (!candidates.some(c => numbersRoughlyEqual(c.value, parsed.value) && c.unit === parsed.unit)) {
-      candidates.push(parsed)
-    }
-  }
-  return candidates
-}
-
-function doesMeasurementMatchFact(
-  claimedValue: number,
-  claimedUnit: string | null,
-  fact: ClinicalFact,
-): boolean {
-  const canonicalCode = resolveCanonicalItemCode(fact.itemCode.code)
-  for (const candidate of extractFactMeasurements(fact)) {
-    if (claimedUnit !== null && candidate.unit !== null) {
-      const converted = convertNumericUnit(claimedValue, claimedUnit, candidate.unit, canonicalCode)
-      if (converted !== null && numbersRoughlyEqual(converted, candidate.value)) {
-        return true
-      }
-    } else if (numbersRoughlyEqual(claimedValue, candidate.value)) {
-      return true
-    }
-  }
-  return false
-}
-
-function factTimestampMs(fact: ClinicalFact): number {
-  const iso = fact.effectiveAt ?? fact.reportedAt ?? fact.ingestedAt
-  const ms = Date.parse(iso)
-  return Number.isFinite(ms) ? ms : 0
-}
-
-function sortFactsMostRecentFirst(facts: readonly ClinicalFact[]): ClinicalFact[] {
-  return [...facts].sort((a, b) => {
-    const diff = factTimestampMs(b) - factTimestampMs(a)
-    if (diff !== 0) return diff
-    return b.factId.localeCompare(a.factId)
-  })
-}
-
-function matchesPattern(text: string, pattern: string): boolean {
-  if (text.toLowerCase().includes(pattern.toLowerCase())) {
-    return true
-  }
-  try {
-    return new RegExp(pattern, 'iu').test(text)
-  } catch {
-    return false
-  }
-}
-
-function collectUniqueSentences(draftText: string, draftFields: Readonly<Record<string, string>>): string[] {
-  const seen = new Set<string>()
-  const unique: string[] = []
-  const sources = [draftText, ...Object.values(draftFields)]
-  for (const source of sources) {
-    for (const rawSentence of source.split(/[。\n；;！？!?]+/u)) {
-      const trimmed = rawSentence.trim()
-      if (trimmed.length === 0) continue
-      const normKey = trimmed.replace(/\s+/gu, '').toLowerCase()
-      if (seen.has(normKey)) continue
-      seen.add(normKey)
-      unique.push(trimmed)
-    }
-  }
-  return unique
-}
-
-function collectMatchingClauses(
-  sentences: readonly string[],
-  patterns: readonly string[],
-  verificationCodes: readonly string[] = [],
-  ledgerFacts: readonly ClinicalFact[] = [],
-): string[] {
-  const matched: string[] = []
-  const targetCodeSet = buildTargetCodeSet(verificationCodes)
-  const matchingSignatures = KNOWN_TEXT_CONCEPT_SIGNATURES.filter(sig => (
-    sig.itemCodes.some(code => targetCodeSet.has(code) || targetCodeSet.has(resolveCanonicalItemCode(code)))
-  ))
-  const factDisplayTerms = ledgerFacts
-    .map(fact => fact.itemCode.display.trim())
-    .filter(display => display.length >= 2)
-
-  for (const sentence of sentences) {
-    const sentenceMatchesPattern = patterns.some(pat => matchesPattern(sentence, pat))
-    const clauses = sentence.split(/[，,]+/u).map(c => c.trim()).filter(Boolean)
-    let sentenceAddedClause = false
-
-    for (const clause of clauses) {
-      const clauseMatchesPattern = patterns.some(pat => matchesPattern(clause, pat))
-      const clauseMatchesVerificationConcept = sentenceMatchesPattern && (
-        matchingSignatures.some(sig => !sig.excludePattern?.test(clause) && sig.pattern.test(clause))
-        || factDisplayTerms.some(term => clause.toLowerCase().includes(term.toLowerCase()))
-      )
-      if (clauseMatchesPattern || clauseMatchesVerificationConcept) {
-        matched.push(clause)
-        sentenceAddedClause = true
-      }
-    }
-
-    if (!sentenceAddedClause && sentenceMatchesPattern) {
-      matched.push(sentence)
-    }
-  }
-  return matched
-}
-
-function buildTargetCodeSet(itemCodes: readonly string[]): Set<string> {
-  return new Set(itemCodes.flatMap(code => [code, resolveCanonicalItemCode(code)]))
-}
-
-function findLedgerFactsByItemCodes(ledger: ClinicalFactLedger, itemCodes: readonly string[]): ClinicalFact[] {
-  const codeSet = buildTargetCodeSet(itemCodes)
-  return ledger.facts.filter(fact => (
-    codeSet.has(fact.itemCode.code) || codeSet.has(resolveCanonicalItemCode(fact.itemCode.code))
-  ))
-}
-
-function factSatisfiesVerificationBounds(
-  fact: ClinicalFact,
-  verification: NonNullable<AgentScoringRubricItem['factVerification']>,
-): boolean {
-  if (!fact.eligibleForScoringAndRedLine || fact.presence === 'not-asked') return false
-  if (verification.minValue === undefined && verification.maxValue === undefined && verification.unit === undefined) {
-    return fact.presence === 'present'
-  }
-  const canonicalCode = resolveCanonicalItemCode(fact.itemCode.code)
-  const measurements = extractFactMeasurements(fact)
-  if (measurements.length === 0) return false
-  return measurements.some(m => {
-    let val = m.value
-    if (verification.unit !== undefined && m.unit !== null) {
-      const converted = convertNumericUnit(m.value, m.unit, verification.unit, canonicalCode)
-      if (converted === null) return false
-      val = converted
-    }
-    if (verification.minValue !== undefined && val < verification.minValue) return false
-    if (verification.maxValue !== undefined && val > verification.maxValue) return false
-    return true
-  })
-}
-
-function measurementSatisfiesVerificationBounds(
-  measurement: NumericMeasurement,
-  verification: NonNullable<AgentScoringRubricItem['factVerification']>,
-  canonicalCode: string | null,
-): boolean {
-  let val = measurement.value
-  if (verification.unit !== undefined && measurement.unit !== null) {
-    const converted = convertNumericUnit(measurement.value, measurement.unit, verification.unit, canonicalCode)
-    if (converted === null) return false
-    val = converted
-  }
-  if (verification.minValue !== undefined && val < verification.minValue) return false
-  if (verification.maxValue !== undefined && val > verification.maxValue) return false
-  return true
-}
-
-function evaluateRubricItemCoverage(
-  item: AgentScoringRubricItem,
-  ledger: ClinicalFactLedger,
-  evaluatedAt: string,
-  combinedDraftText: string,
-  uniqueSentences: readonly string[],
-  structuredClaims: readonly DraftStructuredFactClaim[],
-): AgentFactCoverageItem {
+function evaluateRubricItemCoverage(input: {
+  combinedDraftText: string
+  evaluatedAt: string
+  exactCodeMap: ReadonlyMap<string, ReadonlySet<string>>
+  item: AgentScoringRubricItem
+  ledger: ClinicalFactLedger
+  signatures: readonly TextConceptSignature[]
+  structuredClaims: readonly DraftStructuredFactClaim[]
+  uniqueSentences: readonly string[]
+  vocabulary: ConceptVocabulary
+}): AgentFactCoverageItem {
+  const {
+    combinedDraftText,
+    evaluatedAt,
+    exactCodeMap,
+    item,
+    ledger,
+    signatures,
+    structuredClaims,
+    uniqueSentences,
+    vocabulary,
+  } = input
   let matchedTriggerFactIds: string[] = []
   if (item.requiredWhenCondition !== undefined) {
-    const triggerRes = evaluatePackTrigger(item.requiredWhenCondition, ledger, { asOf: evaluatedAt })
+    const triggerRes = evaluatePackTrigger(item.requiredWhenCondition, ledger, {
+      asOf: evaluatedAt,
+      vocabulary,
+    })
     if (!triggerRes.matched) {
       return {
         labelZh: item.labelZh,
@@ -526,7 +113,7 @@ function evaluateRubricItemCoverage(
     const fallbackFactIds = matchedTriggerFactIds.length > 0
       ? matchedTriggerFactIds
       : item.factVerification !== undefined
-        ? findLedgerFactsByItemCodes(ledger, item.factVerification.itemCodes)
+        ? findLedgerFactsByItemCodes(ledger, item.factVerification.itemCodes, exactCodeMap)
             .filter(f => f.eligibleForScoringAndRedLine)
             .map(f => f.factId)
         : []
@@ -552,7 +139,7 @@ function evaluateRubricItemCoverage(
   }
 
   const verification = item.factVerification
-  const matchingFacts = findLedgerFactsByItemCodes(ledger, verification.itemCodes)
+  const matchingFacts = findLedgerFactsByItemCodes(ledger, verification.itemCodes, exactCodeMap)
   const eligibleFacts = sortFactsMostRecentFirst(
     matchingFacts.filter(f => f.eligibleForScoringAndRedLine && f.presence !== 'not-asked'),
   )
@@ -573,7 +160,7 @@ function evaluateRubricItemCoverage(
 
   const latestEligible = eligibleFacts[0]!
   const hasBoundedCriterion = verification.minValue !== undefined || verification.maxValue !== undefined
-  if (hasBoundedCriterion && !factSatisfiesVerificationBounds(latestEligible, verification)) {
+  if (hasBoundedCriterion && !factSatisfiesVerificationBounds(latestEligible, verification, exactCodeMap)) {
     return {
       labelZh: item.labelZh,
       matchedLedgerFactIds: [latestEligible.factId],
@@ -584,7 +171,7 @@ function evaluateRubricItemCoverage(
     }
   }
 
-  const targetCodes = buildTargetCodeSet(verification.itemCodes)
+  const targetCodes = buildTargetCodeSet(verification.itemCodes, exactCodeMap)
   const relevantClaims = structuredClaims.filter(claim => (
     claim.itemCode !== undefined
     && (targetCodes.has(claim.itemCode) || targetCodes.has(resolveCanonicalItemCode(claim.itemCode)))
@@ -603,7 +190,9 @@ function evaluateRubricItemCoverage(
     }
     if (claim.claimedNumericValue !== undefined) {
       const claimUnit = claim.claimedUnit ? normalizeUnitToken(claim.claimedUnit) : null
-      const matchesAnyEligible = eligibleFacts.some(f => doesMeasurementMatchFact(claim.claimedNumericValue!, claimUnit, f))
+      const matchesAnyEligible = eligibleFacts.some(f => (
+        doesMeasurementMatchFact(claim.claimedNumericValue!, claimUnit, f, [...buildTargetCodeSet([f.itemCode.code], exactCodeMap)])
+      ))
       if (!matchesAnyEligible) {
         return {
           labelZh: item.labelZh,
@@ -614,7 +203,7 @@ function evaluateRubricItemCoverage(
           status: 'covered-inaccurate',
         }
       }
-      const canonicalClaimCode = claim.itemCode ? resolveCanonicalItemCode(claim.itemCode) : null
+      const claimCandidateCodes = claim.itemCode ? [...buildTargetCodeSet([claim.itemCode], exactCodeMap)] : []
       if (
         hasBoundedCriterion
         && !relevantClaims.some(other => (
@@ -626,7 +215,7 @@ function evaluateRubricItemCoverage(
               value: other.claimedNumericValue,
             },
             verification,
-            other.itemCode ? resolveCanonicalItemCode(other.itemCode) : canonicalClaimCode,
+            other.itemCode ? [...buildTargetCodeSet([other.itemCode], exactCodeMap)] : claimCandidateCodes,
           )
         ))
       ) {
@@ -647,15 +236,19 @@ function evaluateRubricItemCoverage(
     item.expectedPatterns,
     verification.itemCodes,
     matchingFacts,
+    signatures,
+    exactCodeMap,
   )
   const extractedNumbers = matchedClauses.flatMap(clause => extractNumericMeasurementsFromText(clause))
   if (extractedNumbers.length > 0) {
     const qualifyingFacts = hasBoundedCriterion
-      ? eligibleFacts.filter(f => factSatisfiesVerificationBounds(f, verification))
+      ? eligibleFacts.filter(f => factSatisfiesVerificationBounds(f, verification, exactCodeMap))
       : eligibleFacts
     const targetFactsToMatch = qualifyingFacts.length > 0 ? qualifyingFacts : [latestEligible]
     const anyMatchesQualifying = extractedNumbers.some(num => (
-      targetFactsToMatch.some(f => doesMeasurementMatchFact(num.value, num.unit, f))
+      targetFactsToMatch.some(f => (
+        doesMeasurementMatchFact(num.value, num.unit, f, [...buildTargetCodeSet([f.itemCode.code], exactCodeMap)])
+      ))
     ))
     if (!anyMatchesQualifying) {
       return {
@@ -708,29 +301,31 @@ function classifyNonBackingReason(facts: readonly ClinicalFact[]): {
 function matchLedgerFactsForTextSignature(
   ledger: ClinicalFactLedger,
   sig: TextConceptSignature,
+  exactCodeMap: ReadonlyMap<string, ReadonlySet<string>>,
 ): ClinicalFact[] {
-  const codeSet = buildTargetCodeSet(sig.itemCodes)
+  const codeSet = buildTargetCodeSet(sig.ledgerLookupCodes, exactCodeMap)
   return ledger.facts.filter(fact => {
     if (codeSet.size > 0 && (codeSet.has(fact.itemCode.code) || codeSet.has(resolveCanonicalItemCode(fact.itemCode.code)))) {
       return true
     }
-    const haystack = `${fact.itemCode.display} ${fact.value.rawText} ${fact.method ?? ''}`.toLowerCase()
-    return sig.ledgerKeywords.some(kw => haystack.includes(kw.toLowerCase()))
+    const haystack = `${fact.itemCode.code} ${fact.itemCode.display} ${fact.value.rawText} ${fact.method ?? ''}`
+    return matchesLedgerFactKeywords(sig, haystack)
   })
 }
 
 function matchLedgerFactsForStructuredClaim(
   ledger: ClinicalFactLedger,
   claim: DraftStructuredFactClaim,
+  signatures: readonly TextConceptSignature[],
+  exactCodeMap: ReadonlyMap<string, ReadonlySet<string>>,
 ): ClinicalFact[] {
   if (claim.itemCode !== undefined) {
-    const byCode = findLedgerFactsByItemCodes(ledger, [claim.itemCode])
+    const byCode = findLedgerFactsByItemCodes(ledger, [claim.itemCode], exactCodeMap)
     if (byCode.length > 0) return byCode
   }
-  for (const sig of KNOWN_TEXT_CONCEPT_SIGNATURES) {
-    if (sig.excludePattern?.test(claim.statementZh)) continue
-    if (sig.pattern.test(claim.statementZh)) {
-      const matched = matchLedgerFactsForTextSignature(ledger, sig)
+  for (const sig of signatures) {
+    if (matchesTextConceptSignature(sig, claim.statementZh)) {
+      const matched = matchLedgerFactsForTextSignature(ledger, sig, exactCodeMap)
       if (matched.length > 0) return matched
     }
   }
@@ -747,12 +342,29 @@ function matchLedgerFactsForStructuredClaim(
   return []
 }
 
+function recordFlaggedClaim(
+  flaggedClaimTexts: Set<string>,
+  flaggedItemCodes: Set<string>,
+  claim: DraftStructuredFactClaim,
+  exactCodeMap: ReadonlyMap<string, ReadonlySet<string>>,
+): void {
+  flaggedClaimTexts.add(claim.statementZh.replace(/\s+/gu, '').toLowerCase())
+  if (claim.itemCode !== undefined) {
+    for (const eq of buildTargetCodeSet([claim.itemCode], exactCodeMap)) {
+      flaggedItemCodes.add(eq)
+    }
+  }
+}
+
 function detectFabrications(input: {
+  exactCodeMap: ReadonlyMap<string, ReadonlySet<string>>
   fabricationPenaltyPoints: number
   ledger: ClinicalFactLedger
+  signatures: readonly TextConceptSignature[]
   structuredClaims: readonly DraftStructuredFactClaim[]
   uniqueSentences: readonly string[]
 }): AgentFabricationFinding[] {
+  const { exactCodeMap, signatures } = input
   const findings: AgentFabricationFinding[] = []
   const coveredSignatureIdsBySentence = new Set<string>()
   const flaggedClaimTexts = new Set<string>()
@@ -760,7 +372,7 @@ function detectFabrications(input: {
 
   // Track 1: Explicit structuredClaims emitted alongside or parsed from the Agent draft
   for (const claim of input.structuredClaims) {
-    const matchedFacts = matchLedgerFactsForStructuredClaim(input.ledger, claim)
+    const matchedFacts = matchLedgerFactsForStructuredClaim(input.ledger, claim, signatures, exactCodeMap)
     const eligibleFacts = matchedFacts.filter(f => f.eligibleForScoringAndRedLine && f.presence !== 'not-asked')
     const ineligibleFacts = matchedFacts.filter(f => !f.eligibleForScoringAndRedLine || f.presence === 'not-asked')
 
@@ -775,8 +387,7 @@ function detectFabrications(input: {
           relatedLedgerFactIds: eligibleFacts.map(f => f.factId),
           statementZh: claim.statementZh,
         })
-        flaggedClaimTexts.add(claim.statementZh.replace(/\s+/gu, '').toLowerCase())
-        if (claim.itemCode) flaggedItemCodes.add(resolveCanonicalItemCode(claim.itemCode))
+        recordFlaggedClaim(flaggedClaimTexts, flaggedItemCodes, claim, exactCodeMap)
       }
       continue
     }
@@ -791,8 +402,7 @@ function detectFabrications(input: {
         relatedLedgerFactIds: [],
         statementZh: claim.statementZh,
       })
-      flaggedClaimTexts.add(claim.statementZh.replace(/\s+/gu, '').toLowerCase())
-      if (claim.itemCode) flaggedItemCodes.add(resolveCanonicalItemCode(claim.itemCode))
+      recordFlaggedClaim(flaggedClaimTexts, flaggedItemCodes, claim, exactCodeMap)
       continue
     }
 
@@ -807,8 +417,7 @@ function detectFabrications(input: {
         relatedLedgerFactIds: ineligibleFacts.map(f => f.factId),
         statementZh: claim.statementZh,
       })
-      flaggedClaimTexts.add(claim.statementZh.replace(/\s+/gu, '').toLowerCase())
-      if (claim.itemCode) flaggedItemCodes.add(resolveCanonicalItemCode(claim.itemCode))
+      recordFlaggedClaim(flaggedClaimTexts, flaggedItemCodes, claim, exactCodeMap)
       continue
     }
 
@@ -823,16 +432,19 @@ function detectFabrications(input: {
         relatedLedgerFactIds: eligibleFacts.map(f => f.factId),
         statementZh: claim.statementZh,
       })
-      flaggedClaimTexts.add(claim.statementZh.replace(/\s+/gu, '').toLowerCase())
-      if (claim.itemCode) flaggedItemCodes.add(resolveCanonicalItemCode(claim.itemCode))
+      recordFlaggedClaim(flaggedClaimTexts, flaggedItemCodes, claim, exactCodeMap)
       continue
     }
 
     if (claim.claimedNumericValue !== undefined) {
       const claimUnit = claim.claimedUnit ? normalizeUnitToken(claim.claimedUnit) : null
-      const matchesEligible = eligibleFacts.some(f => doesMeasurementMatchFact(claim.claimedNumericValue!, claimUnit, f))
+      const matchesEligible = eligibleFacts.some(f => (
+        doesMeasurementMatchFact(claim.claimedNumericValue!, claimUnit, f, [...buildTargetCodeSet([f.itemCode.code], exactCodeMap)])
+      ))
       if (!matchesEligible) {
-        const matchesIneligible = ineligibleFacts.some(f => doesMeasurementMatchFact(claim.claimedNumericValue!, claimUnit, f))
+        const matchesIneligible = ineligibleFacts.some(f => (
+          doesMeasurementMatchFact(claim.claimedNumericValue!, claimUnit, f, [...buildTargetCodeSet([f.itemCode.code], exactCodeMap)])
+        ))
         const classified = matchesIneligible
           ? classifyNonBackingReason(ineligibleFacts)
           : {
@@ -848,14 +460,13 @@ function detectFabrications(input: {
           relatedLedgerFactIds: (matchesIneligible ? ineligibleFacts : eligibleFacts).map(f => f.factId),
           statementZh: claim.statementZh,
         })
-        flaggedClaimTexts.add(claim.statementZh.replace(/\s+/gu, '').toLowerCase())
-        if (claim.itemCode) flaggedItemCodes.add(resolveCanonicalItemCode(claim.itemCode))
+        recordFlaggedClaim(flaggedClaimTexts, flaggedItemCodes, claim, exactCodeMap)
       }
     }
   }
 
-  // Track 2: Deterministic text detection for known exams/labs not backed by ledger
-  const assertionMarkerRe = /(?:显示|提示|示|测得|为|达标|正常|异常|升高|降低|回落|阳性|阴性|压低|抬高|狭窄|阻塞|未见(?:明显)?(?:心肌|异常|梗死|水肿|狭窄|病变|出血|积液)|无(?:明显)?(?:异常|狭窄|水肿))/iu
+  // Track 2: Deterministic text detection for vocabulary concepts not backed by ledger
+  const assertionMarkerRe = /(?:显示|提示|示|测得|为|达标|正常|异常|升高|降低|回落|阳性|阴性|压低|抬高|狭窄|阻塞|未见(?:明显)?(?:心肌|异常|梗死|水肿|狭窄|病变|出血|积液|结节|占位|肿块|钙化|渗出|实变)|无(?:明显)?(?:异常|狭窄|水肿|结节|占位))/iu
   const nonFindingOrderOrAbsentRe = /(?:^|[^未])(?:建议(?:完善|复查|行|申请|加做)|拟(?:行|查|复查|申请)|尚未(?:行|做|查)|未(?:行|做|查)|暂缺|缺少|无.*(?:记录|结果|报告)|未见.*(?:检查记录|结果|报告)|待查)/iu
   const unverifiedQualifierRe = /(?:尚未?(?:经本院)?核验|未经核实|未证实|待核实|需复核|建议复查)/iu
 
@@ -886,16 +497,28 @@ function detectFabrications(input: {
       if (!hasNumericAssertion && nonFindingOrderOrAbsentRe.test(clause)) continue
       if (nonFindingOrderOrAbsentRe.test(clause) && !assertionMarkerRe.test(clause)) continue
 
-      for (const sig of KNOWN_TEXT_CONCEPT_SIGNATURES) {
-        if (sig.excludePattern?.test(clause)) continue
-        if (!sig.pattern.test(clause)) continue
-        if (sig.itemCodes.some(code => flaggedItemCodes.has(resolveCanonicalItemCode(code)))) continue
+      const matchedSigsInClause = signatures
+        .map(sig => ({ matchIndex: findSignatureMatchIndexInText(sig, clause), sig }))
+        .filter(entry => entry.matchIndex !== -1)
+        .sort((a, b) => a.matchIndex - b.matchIndex)
+
+      for (const { matchIndex, sig } of matchedSigsInClause) {
+        if (sig.itemCodes.some(code => flaggedItemCodes.has(code) || flaggedItemCodes.has(resolveCanonicalItemCode(code)))) {
+          continue
+        }
 
         const dedupKey = `${normSentence}::${sig.id}`
         if (coveredSignatureIdsBySentence.has(dedupKey)) continue
         coveredSignatureIdsBySentence.add(dedupKey)
 
-        const matchedFacts = matchLedgerFactsForTextSignature(input.ledger, sig)
+        const nextSigEntry = matchedSigsInClause.find(other => other.matchIndex > matchIndex)
+        const sigMeasurements = matchedSigsInClause.length > 1
+          ? extractNumericMeasurementsFromText(
+              clause.slice(matchIndex, nextSigEntry === undefined ? clause.length : nextSigEntry.matchIndex),
+            )
+          : clauseMeasurements
+
+        const matchedFacts = matchLedgerFactsForTextSignature(input.ledger, sig, exactCodeMap)
         const eligibleFacts = matchedFacts.filter(f => f.eligibleForScoringAndRedLine && f.presence !== 'not-asked')
         const ineligibleFacts = matchedFacts.filter(f => !f.eligibleForScoringAndRedLine || f.presence === 'not-asked')
 
@@ -947,16 +570,22 @@ function detectFabrications(input: {
           continue
         }
 
-        if (sig.expectsNumeric && clauseMeasurements.length > 0) {
-          const allMatchedInEligible = clauseMeasurements.every(num => (
-            eligibleFacts.some(f => doesMeasurementMatchFact(num.value, num.unit, f))
+        if (sig.expectsNumeric && sigMeasurements.length > 0) {
+          const allMatchedInEligible = sigMeasurements.every(num => (
+            eligibleFacts.some(f => (
+              doesMeasurementMatchFact(num.value, num.unit, f, [...buildTargetCodeSet([f.itemCode.code], exactCodeMap)])
+            ))
           ))
           if (!allMatchedInEligible) {
-            const unmatched = clauseMeasurements.filter(num => (
-              !eligibleFacts.some(f => doesMeasurementMatchFact(num.value, num.unit, f))
+            const unmatched = sigMeasurements.filter(num => (
+              !eligibleFacts.some(f => (
+                doesMeasurementMatchFact(num.value, num.unit, f, [...buildTargetCodeSet([f.itemCode.code], exactCodeMap)])
+              ))
             ))
             const matchesIneligible = unmatched.some(num => (
-              ineligibleFacts.some(f => doesMeasurementMatchFact(num.value, num.unit, f))
+              ineligibleFacts.some(f => (
+                doesMeasurementMatchFact(num.value, num.unit, f, [...buildTargetCodeSet([f.itemCode.code], exactCodeMap)])
+              ))
             ))
             if (matchesIneligible && unverifiedQualifierRe.test(sentence)) {
               continue
@@ -1120,6 +749,7 @@ function filterLedgerAtEvaluatedAt(ledger: ClinicalFactLedger, evaluatedAt: stri
 }
 
 export function scoreAgentDraftOutput(params: {
+  conceptVocabulary?: ConceptVocabulary | undefined
   evaluatedAt?: string | undefined
   input: EvaluateAgentOutputRequestInput
   ledger: ClinicalFactLedger
@@ -1139,6 +769,24 @@ export function scoreAgentDraftOutput(params: {
     )
   }
 
+  let effectiveVocabulary: ConceptVocabulary
+  if (params.conceptVocabulary === undefined) {
+    effectiveVocabulary = PUBLIC_CONCEPT_VOCABULARY
+  } else {
+    const vocabResult = conceptVocabularySchema.safeParse(params.conceptVocabulary)
+    if (!vocabResult.success) {
+      const summary = vocabResult.error.issues
+        .slice(0, 5)
+        .map(issue => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
+        .join('; ')
+      throw new AgentOutputScorerError(
+        'SCORER_INVALID_INPUT',
+        `Agent 输出评分概念词表校验失败: ${summary}`,
+      )
+    }
+    effectiveVocabulary = vocabResult.data
+  }
+
   const parsedInput: EvaluateAgentOutputInput = parsedResult.data
   const evaluatedAt = params.evaluatedAt ?? parsedInput.asOf ?? params.ledger.trace.evaluatedAsOf
   if (Number.isNaN(Date.parse(evaluatedAt))) {
@@ -1146,6 +794,9 @@ export function scoreAgentDraftOutput(params: {
   }
 
   const effectiveLedger = filterLedgerAtEvaluatedAt(params.ledger, evaluatedAt)
+  const asOfDate = evaluatedAt.slice(0, 10)
+  const signatures = buildTextConceptSignaturesFromVocabulary(effectiveVocabulary, { asOfDate })
+  const exactCodeMap = buildVocabularyExactCodeMap(effectiveVocabulary, asOfDate)
 
   const badge: AgentOutputEvaluationBadge = parsedInput.mode === 'controlled-stream'
     ? {
@@ -1173,14 +824,17 @@ export function scoreAgentDraftOutput(params: {
   let accurateCount = 0
 
   for (const item of parsedInput.rubric.items) {
-    const itemCoverage = evaluateRubricItemCoverage(
-      item,
-      effectiveLedger,
-      evaluatedAt,
+    const itemCoverage = evaluateRubricItemCoverage({
       combinedDraftText,
+      evaluatedAt,
+      exactCodeMap,
+      item,
+      ledger: effectiveLedger,
+      signatures,
+      structuredClaims: parsedInput.structuredClaims,
       uniqueSentences,
-      parsedInput.structuredClaims,
-    )
+      vocabulary: effectiveVocabulary,
+    })
     coverageItems.push(itemCoverage)
     if (itemCoverage.status === 'not-applicable') continue
 
@@ -1196,8 +850,10 @@ export function scoreAgentDraftOutput(params: {
   }
 
   const fabrications = detectFabrications({
+    exactCodeMap,
     fabricationPenaltyPoints: parsedInput.rubric.fabricationPenaltyPoints,
     ledger: effectiveLedger,
+    signatures,
     structuredClaims: parsedInput.structuredClaims,
     uniqueSentences,
   })
