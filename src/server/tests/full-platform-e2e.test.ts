@@ -33,7 +33,7 @@ it('drives the same two durable agents and clinical objectives through all four 
     const body = await response.json();
     expect(response.status, `${arm} ${JSON.stringify(body).slice(0, 200)}`).toBe(201);
     const run = z.object({ runId: z.uuidv7(), trace: z.array(z.object({ operation: z.string(), error: z.string().optional() })) }).parse(body);
-    expect(JSON.stringify(body.trace)).not.toMatch(/SIM-G01|1991-04-17|"caseTruth"/);
+    expect(JSON.stringify(body)).not.toMatch(/SIM-G01|1991-04-17|"caseTruth"/);
     expect(body, `${arm} ${JSON.stringify(run.trace.filter(row => row.error))}`).toMatchObject({ arm, status: 'completed', patientTurns: 1, error: null, hits: { diagnosis: true, investigations: { matched: 1 }, medications: { matched: 1 } } });
     expect(run.trace.map(item => item.operation)).toEqual(expect.arrayContaining(['consultation.reply', 'diagnosis.confirm', 'lab.acknowledge', 'prescription.sign', 'record.sign', 'encounter.complete']));
     expect(await (await fetch(`${origin}/api/eval/runs/${run.runId}`, { headers })).json()).toEqual(body);
