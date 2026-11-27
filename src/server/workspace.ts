@@ -1,13 +1,14 @@
 import { Hono } from 'hono';
-import { ClinicianAssistant, PatientRuntime, registerPatientOperations, type AgentEnvironment } from '../packages/agent-runtime';
+import { ClinicianAssistant, PatientRuntime, type AgentEnvironment } from '../packages/agent-runtime';
 import { permitsProviderKey } from '../packages/agent-protocol';
 import { openVoiceSession, voiceBinding, voiceHandshake, voiceModule, type BailianConnect, type VoiceSocket } from '../packages/mod-voice';
+import { requireEncounter } from '../packages/patient-visit';
 import { v7 } from 'uuid';
 import { z } from 'zod';
-import { installHospitalDataPack, readHospitalDataPack } from '../packages/data-pack';
-import { registerClinicalOperations, workspaceSchema } from '../packages/clinical-core';
-import { listEncounters, requireEncounter, startEncounter, summarySchema } from '../packages/patient-visit';
-import { administer, authorize, checkVersion, CoreError, createVisitorGate, ModuleRegistry, OperationCatalog, permits, registerPlatformOperations, resolveActor, sessionSchema, sessionView, type ClinMeshModule, type Credential, type GateSettings } from '../packages/platform';
+import { installHospitalDataPack } from '../packages/data-pack';
+import { readCompletedDebrief } from '../packages/clinical-core';
+import { authorize, CoreError, createVisitorGate, resolveActor, type OperationCatalog, type ClinMeshModule, type Credential, type GateSettings } from '../packages/platform';
+import { createOperationCatalog } from '../composition/operation-catalog';
 import { StoreVersionConflictError, type StorePort } from '../packages/store';
 import { BUILTIN_DATA_PACKS } from './builtin-data-packs';
 import { evaluateEncounter } from './evaluation';
@@ -24,7 +25,7 @@ type SocketConnection = { receive(data: unknown): void; close(): void };
 export type UpgradeSocket = (request: Request, connect: (socket: VoiceSocket) => SocketConnection, protocol?: string) => Response | Promise<Response>;
 export function createWorkspaceApp(store: StorePort, settings: GateSettings, modules: readonly ClinMeshModule<OperationCatalog>[] = [], environment: AgentEnvironment & { BAILIAN_TOKEN?: string } = {}, background?: (task: Promise<void>) => void, upgrade?: UpgradeSocket, evaluations?: EvaluationHost, connectVoice?: BailianConnect) {
   const app = new Hono<{ Bindings: { credential: Credential; entering: boolean; upgrade?: UpgradeSocket } }>();
-  const registry = new ModuleRegistry(modules);
+  const { catalog, registry } = createOperationCatalog(modules, { environment, sign: createVisitorGate(settings).sign, packs: () => Object.values(BUILTIN_DATA_PACKS) });
   app.onError(handleError);
   if (modules.some(module => module.id === voiceModule.id)) app.get('/api/voice/session', async context => {
     const binding = voiceBinding.parse(context.req.query());
@@ -56,7 +57,6 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     });
     return context.json(result);
   });
-  const catalog = new OperationCatalog();
   const assistant = new ClinicianAssistant(store, catalog, environment);
   app.post('/api/eval/runs', context => launchEvaluation(store, evaluations, context.env.credential, context.req.raw));
   app.get('/api/eval/runs/:id', context => recoverEvaluation(store, evaluations, context.env.credential, context.req.param('id')));
@@ -71,47 +71,12 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     const connect = await assistant.socket(context.env.credential, { ...context.req.query(), thread: Number(context.req.query('thread')) });
     return open(context.req.raw, connect);
   });
-  catalog.moduleAvailable = (id, reader, actor) => registry.enabled(actor.enabledModules, reader, actor.at).some(module => module.id === id);
-  catalog.guardEncounter = (context, write) => { for (const module of registry.enabled(context.actor.enabledModules)) module.guardEncounter?.(context, write); };
-  catalog.clinicalQuality = (context, intent, override, operation) => registry.enabled(context.actor.enabledModules, context.tx, context.at).flatMap(module => module.clinicalQuality?.(context, intent, override, operation) ?? []);
   const patients = new PatientRuntime(store, environment, background);
-  registerPatientOperations(catalog, environment);
   app.post('/api/agents/providers/test', async context => context.json(await patients.testProvider(context.env.credential, context.req.raw.headers, await context.req.json())));
   app.get('/api/agents/sessions/:id/events', context => patients.events(context.env.credential, context.req.param('id'), context.req.raw));
-  registerPlatformOperations(catalog, { sign: createVisitorGate(settings).sign, modules: registry });
-  catalog.command({ name: 'workspace.reset', method: 'POST', path: '/api/workspace/reset', access: administer }, { packId: z.string().optional() }, sessionSchema, async ({ tx, at, actor, expectedVersion, virtualAt, recordedAt }, { packId }) => {
-    checkVersion(actor.active.clock_revision, expectedVersion);
-    const id = packId ?? tx.list(at, 'data_pack_installations')[0]!.pack_id;
-    const nextPack = Object.values(BUILTIN_DATA_PACKS).find(pack => pack.manifest.packId === id);
-    if (!nextPack) throw new CoreError(400, 'PACK_NOT_FOUND');
-    const next = installHospitalDataPack(tx, { workspaceId: at.workspaceId, expectedEpoch: at.epoch, virtualTime: virtualAt, recordedAt }, nextPack);
-    await registry.initializeEpoch(nextPack.manifest.enabledModules, tx, next, virtualAt, recordedAt);
-    const roles = nextPack.organization.practitionerRoles;
-    const role = roles.find(role => role.id === actor.role.id) ?? roles.find(role => role.capabilities.includes('workspace-admin')) ?? roles[0]!;
-    tx.insert(next, 'visitor_sessions', { id: actor.id, practitioner_role: role.id, expires_at: actor.expiresAt, revoked: false, version: 1 });
-    return { ...next, roleId: role.id, sessionVersion: 1 };
-  });
-  catalog.query({ name: 'workspace.read', path: '/api/workspace', access: {} }, workspaceSchema, ({ reader, actor }) => {
-    const pack = readHospitalDataPack(reader, actor.at)!;
-    const enabled = registry.enabled(actor.enabledModules, reader, actor.at);
-    const effective = { ...actor, enabledModules: enabled.map(module => module.id) };
-    const operations = catalog.entries.filter(entry => permits(effective, entry)).map(({ name, method, path }) => ({ name, method, path }));
-    return { ...sessionView(actor), manifest: pack.manifest, roles: pack.organization.practitionerRoles, cases: pack.cases,
-      diagnoses: pack.catalog.diagnoses, packs: Object.values(BUILTIN_DATA_PACKS).map(({ manifest }) => ({ id: manifest.packId, name: manifest.name })),
-      virtualTime: actor.active.virtual_time, clockRevision: actor.active.clock_revision, enabledModules: enabled.map(module => module.id),
-      tabs: enabled.flatMap(module => module.workbenchTabs ?? []).filter(tab => !tab.readOperation || operations.some(operation => operation.name === tab.readOperation)), operations };
-  });
-  catalog.command({ name: 'encounter.start', method: 'POST', path: '/api/his/cases/:id/start-encounter', access: { capabilities: ['register', 'assess'] } },
-    { language: z.enum(['en', 'zh']).optional() }, z.object({ encounterId: z.uuidv7(), version: z.int() }), (context, input) => {
-      const result = startEncounter(context, input.language);
-      for (const module of registry.enabled(context.actor.enabledModules, context.tx, context.at)) module.encounterStarted?.(context.tx, context.at, result.encounterId, context.virtualAt, context.recordedAt);
-      return { ...result, version: context.tx.get(context.at, 'encounters', result.encounterId)!.version };
-    });
-  catalog.query({ name: 'encounter.list', path: '/api/his/encounters', access: {} }, z.array(summarySchema), ({ reader, actor }) => listEncounters(reader, actor.at));
-  registerClinicalOperations(catalog, registry);
+  app.get('/api/his/encounters/:id/debrief', context => store.read(reader => context.json(readCompletedDebrief(reader, resolveActor(reader, context.env.credential, new Date().toISOString()), context.req.param('id')))));
   for (const module of modules) {
     const moduleId = module.kind === 'core' ? undefined : module.id;
-    if (module.registerOperations) catalog.contribute(moduleId, registry => module.registerOperations!(registry));
     const projection = module.projection;
     if (projection) app.on('ALL', [projection.base, `${projection.base}/*`], context => store.read(reader => {
       const actor = resolveActor(reader, context.env.credential, new Date().toISOString());
@@ -130,12 +95,15 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     }
   }
   for (const entry of catalog.entries) app.on(entry.method, entry.path, async context => {
-    if (entry.assistantRead && new URL(context.req.url).search) throw new CoreError(400, 'INVALID_INPUT');
+    const query = context.req.queries();
+    if (Object.entries(query).some(([key, values]) => !entry.contract.queryFields.includes(key) || values.length !== 1)) throw new CoreError(400, 'INVALID_INPUT');
+    const params = { ...context.req.param(), ...context.req.query() };
+    if (entry.method === 'GET') entry.contract.inputSchema.parse(params);
     const targetId = context.req.param('id') ?? context.env.credential.ticket.workspaceId;
     const credential = context.env.credential;
     const replyOperation = ['consultation.question', 'consultation.retry', 'consultation.stop'].includes(entry.name);
     const providerHeaders = replyOperation ? context.req.raw.headers : undefined;
-    const result = await entry.invoke({ store, credential, targetId, params: context.req.param(), body: () => context.req.json(), providerHeaders });
+    const result = await entry.invoke({ store, credential, targetId, params, body: () => context.req.json(), providerHeaders, confirmedOperation: context.req.header('X-ClinMesh-Confirm') });
     if (providerHeaders) {
       const { epoch } = z.object({ epoch: z.uuidv7() }).parse(await context.req.json());
       await patients.admitted(entry.name, result, { workspaceId: credential.ticket.workspaceId, epoch }, targetId, providerHeaders);

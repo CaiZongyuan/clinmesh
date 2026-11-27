@@ -11,7 +11,7 @@ export { findings as signedFindingsSchema } from './lib/contracts';
 export function acceptDispatchedInvestigation(context: Parameters<typeof moveOrder>[0], billing?: LabBillingPort) { return moveOrder(context, 'accept', billing); }
 
 const base = '/api/his/encounters/:id/lab';
-const sign = { capabilities: ['sign'], visitorOnly: true };
+const sign = { capabilities: ['sign'] };
 export function createLabModule({ billing, legacyProcedures = [] }: { billing?: LabBillingPort; legacyProcedures?: z.infer<typeof legacyProcedure>[] } = {}): ClinMeshModule<OperationCatalog> {
   const legacy = z.array(legacyProcedure).parse(legacyProcedures);
   return { id: 'mod-lab', kind: 'clinical', version: '1', workbenchTabs: [{ id: 'lab', label: { en: 'Investigations', zh: '检验与功能检查' } }],
@@ -24,15 +24,15 @@ export function createLabModule({ billing, legacyProcedures = [] }: { billing?: 
         return { services: clinicalServices(reader, at, legacy).map(({ definition, kind, quote: { serviceId, ...price } }) => ({ id: serviceId, ...price, kind, display: definition.display, codeSystem: definition.codeSystem, code: definition.code })),
           draft: savedDraft(reader, at, targetId), orders: labOrders(reader, at, targetId).map(order => readDiagnosticOrder(reader, at, order, findings.parse)) };
       });
-      catalog.command({ name: 'lab.save-draft', path: `${base}/draft`, method: 'PUT', access: { capabilities: ['assess'] } }, { serviceIds: z.array(z.uuidv7()).max(maxBatch).refine(items => new Set(items).size === items.length) }, z.object({ version: z.int().positive() }), (context, { serviceIds }) => saveDraft(context, serviceIds, legacy));
-      catalog.command({ name: 'lab.issue', path: `${base}/issue`, method: 'POST', access: sign }, { items: z.array(quote).min(1).max(maxBatch).refine(items => new Set(items.map(item => item.serviceId)).size === items.length) }, issueReceipt, (context, { items }) => issueOrders(context, items, legacy, billing));
+      catalog.command({ name: 'lab.save-draft', path: `${base}/draft`, method: 'PUT', access: { capabilities: ['assess'] }, risk: 'write' }, { serviceIds: z.array(z.uuidv7()).max(maxBatch).refine(items => new Set(items).size === items.length) }, z.object({ version: z.int().positive() }), (context, { serviceIds }) => saveDraft(context, serviceIds, legacy));
+      catalog.command({ name: 'lab.issue', cliPath: 'lab order issue', path: `${base}/issue`, method: 'POST', access: sign }, { items: z.array(quote).min(1).max(maxBatch).refine(items => new Set(items.map(item => item.serviceId)).size === items.length) }, issueReceipt, (context, { items }) => issueOrders(context, items, legacy, billing));
       for (const action of ['accept', 'start', 'report-now', 'cancel'] as const) {
-        const access = action === 'cancel' ? sign : { capabilities: ['execute-orders', 'sign', 'workspace-admin'], visitorOnly: true };
-        catalog.command({ name: `lab.${action}`, path: `/api/his/lab/orders/:id/${action}`, method: 'POST', access }, {}, executionReceipt, context => moveOrder(context, action, billing));
+        const access = action === 'cancel' ? { ...sign, visitorOnly: true } : { capabilities: ['execute-orders', 'sign', 'workspace-admin'] };
+        catalog.command({ name: `lab.${action}`, cliPath: `lab order ${action}`, path: `/api/his/lab/orders/:id/${action}`, method: 'POST', access }, {}, executionReceipt, context => moveOrder(context, action, billing));
       }
       for (const action of ['amend', 'acknowledge'] as const) {
         const capabilities = action === 'amend' ? ['workspace-admin', 'administrator'] : ['review-reports'];
-        catalog.command({ name: `lab.${action}`, path: `/api/his/reports/:id/${action}`, method: 'POST', access: { capabilities, visitorOnly: true } }, { reportVersion: z.int().positive() }, executionReceipt, (context, { reportVersion }) => reviewReport(context, reportVersion, action === 'amend'));
+        catalog.command({ name: `lab.${action}`, cliPath: `lab report ${action}`, path: `/api/his/reports/:id/${action}`, method: 'POST', access: { capabilities, visitorOnly: action === 'amend' } }, { reportVersion: z.int().positive() }, executionReceipt, (context, { reportVersion }) => reviewReport(context, reportVersion, action === 'amend'));
       }
     },
   };

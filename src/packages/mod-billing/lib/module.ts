@@ -7,7 +7,7 @@ import { adjust, collect, confirm, currentBill, deposit, paymentResult, preview,
 
 const base = '/api/his/encounters/:id/billing';
 const cashier = { capabilities: ['settle'], visitorOnly: true };
-const route = (name: string) => ({ name, path: `${base}/${name}`, method: 'POST' as const, access: cashier });
+const route = (name: string) => ({ name, path: `${base}/${name}`, method: 'POST' as const, access: cashier, mode: name.endsWith('.preview') ? 'preview' as const : undefined });
 
 export function createBillingModule(options: BillingOptions = {}) {
   return {

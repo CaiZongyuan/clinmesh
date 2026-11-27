@@ -1,6 +1,6 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
-import { checkVersion, type Actor } from './commands';
+import { checkVersion, commandEnvelope, permits, type Actor } from './commands';
 import { CoreError, sha256, type Ticket } from './visitor-gate';
 import type { OperationCatalog } from './operation-catalog';
 import type { ModuleRegistry } from './module-registry';
@@ -13,6 +13,15 @@ const capabilityResult = z.strictObject({ tokenId: z.uuidv7(), expiresAt: z.iso.
 type Dependencies = { sign(ticket: Ticket): Promise<string>; modules: ModuleRegistry<OperationCatalog> };
 
 export function registerPlatformOperations(catalog: OperationCatalog, { sign, modules }: Dependencies) {
+  const receiptQuery = commandEnvelope.pick({ epoch: true, idempotencyKey: true });
+  catalog.query({ name: 'command.receipt.get', path: '/api/commands/receipt', access: {}, queryFields: receiptQuery.shape }, receiptQuery.extend({ operation: z.string(), status: z.literal('applied'), recordedAt: z.iso.datetime(), result: z.json() }), ({ reader, actor, params }) => {
+    const input = receiptQuery.parse(params);
+    const receipt = input.epoch === actor.at.epoch && reader.findCommandReceipt(actor.at, input.idempotencyKey);
+    const audit = receipt && reader.get(actor.at, 'audit_events', receipt.id);
+    const entry = receipt && catalog.entries.find(item => item.name === receipt.operation);
+    if (!receipt || !audit || !entry || audit.actor !== actor.id || audit.practitioner_role !== actor.role.id || audit.operation !== entry.name || !permits(actor, entry) || (entry.moduleId && catalog.moduleAvailable?.(entry.moduleId, reader, actor) === false)) throw new CoreError(404, 'RECEIPT_NOT_FOUND');
+    return { ...input, operation: entry.name, status: 'applied' as const, recordedAt: receipt.recorded_at, result: receipt.result };
+  });
   catalog.query({ name: 'session.read', path: '/api/auth/session', access: visitor }, sessionSchema, ({ actor }) => sessionView(actor));
   catalog.command({ name: 'workspace.role', method: 'POST', path: '/api/workspace/role', access: visitor }, { roleId: z.string().min(1) }, sessionSchema, (context, { roleId }) => {
     const { tx, at, actor, expectedVersion } = context;

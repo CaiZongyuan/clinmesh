@@ -1,5 +1,6 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
+import type { OperationRoute } from '../../operation-catalog';
 import { canonicalJson, type StorePort, type StoreReader, type StoreScope, type StoreTx } from '../../store';
 import { CoreError, sha256, type Credential } from './visitor-gate';
 import type { ClinicalQualityIntent } from './clinical-quality';
@@ -9,12 +10,12 @@ export type CommandEnvelope = z.infer<typeof commandEnvelope>;
 export const localizedName = z.object({ en: z.string(), zh: z.string() });
 export const practitionerRole = z.object({ id: z.string(), name: localizedName, capabilities: z.array(z.string()) });
 const organization = z.object({ practitionerRoles: z.array(practitionerRole) });
-export type Access = { capabilities?: readonly string[]; visitorOnly?: boolean };
+export type Access = OperationRoute['access'];
 export type Actor = ReturnType<typeof resolveActor>;
 export type EncounterWrite = { encounterId: string; kind: 'clinical' | 'record' | 'complete' | 'diagnose' } | { encounterId: string; kind: 'accept-investigation'; orderId: string };
 export type CommandContext = { tx: StoreTx; at: StoreScope; actor: Actor; targetId: string; expectedVersion: number; virtualAt: string; recordedAt: string; guardEncounter?(write: EncounterWrite): void; moduleEnabled?(id: string): boolean; checkClinicalQuality?(intent: ClinicalQualityIntent, clinicalOverride?: unknown): readonly string[] | void };
 export type ClinicalQualityGate = (context: CommandContext, intent: ClinicalQualityIntent, clinicalOverride: unknown, operation: string) => readonly string[] | void;
-export type Route = { name: string; method: 'GET' | 'PUT' | 'POST'; path: string; access: Access; moduleId?: string };
+export type Route = OperationRoute;
 
 export function resolveActor(reader: StoreReader, credential: Credential, now: string) {
   const { ticket, tokenHash } = credential;
@@ -62,8 +63,9 @@ export async function executeCommand(store: StorePort, credential: Credential, r
     if (actor.at.epoch !== input.epoch) throw new CoreError(409, 'EPOCH_CONFLICT');
     const virtualAt = actor.active.virtual_time;
     const result = await apply({ tx, at, actor, targetId, virtualAt, recordedAt, expectedVersion: input.expectedVersion });
-    tx.insert(at, 'audit_events', { id: v7(), actor: actor.id, practitioner_role: actor.role.id, operation: route.name, target_id: targetId, outcome: 'applied', virtual_at: virtualAt, recorded_at: recordedAt });
-    tx.recordCommandReceipt(at, { id: v7(), operation: route.name, idempotency_key: input.idempotencyKey, request_hash: requestHash, result, recorded_at: recordedAt });
+    const receiptId = v7();
+    tx.insert(at, 'audit_events', { id: receiptId, actor: actor.id, practitioner_role: actor.role.id, operation: route.name, target_id: targetId, outcome: 'applied', virtual_at: virtualAt, recorded_at: recordedAt });
+    tx.recordCommandReceipt(at, { id: receiptId, operation: route.name, idempotency_key: input.idempotencyKey, request_hash: requestHash, result, recorded_at: recordedAt });
     return { replay: false, result };
   });
 }

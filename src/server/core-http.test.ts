@@ -71,7 +71,7 @@ async function exercise(fetchApi: Http, reopen?: (workspaceId: string) => Promis
   expect(issued.status).toBe(200);
   const catalog = new OperationCatalog();
   registerPlatformOperations(catalog, { modules: new ModuleRegistry([]), sign: async () => { throw Error('Schema-only reader'); } });
-  const wireSchema = catalog.require('capability.issue').output;
+  const wireSchema = catalog.require('capability.issue').contract.outputSchema;
   const received = wireSchema.parse(await issued.json());
   const capability = z.object({ token: z.string(), tokenId: z.uuidv7() }).parse(received);
   const replay = await (await command('/api/workspace/capabilities', 0, 'grant', grant)).json();

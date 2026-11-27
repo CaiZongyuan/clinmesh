@@ -196,7 +196,7 @@ export function registerSurgery(catalog: OperationCatalog, billing?: WardBilling
     for (const drug of input.medications) recordMedication(ctx, surgery, drug, input.clinicalOverride, billing);
     return complete(ctx, surgery, input.note, billing);
   });
-  catalog.command(route('surgery.preview-completion', 'schedule-procedure'), requestField, completionPreviewSchema, (ctx, { requestId }) => preview(ctx, inProgress(ctx, requestId)));
+  catalog.command({ ...route('surgery.preview-completion', 'schedule-procedure'), mode: 'preview' }, requestField, completionPreviewSchema, (ctx, { requestId }) => preview(ctx, inProgress(ctx, requestId)));
   catalog.command(route('surgery.complete', 'schedule-procedure'), { ...requestField, fingerprint: z.string().length(64), note: text.optional() }, executed, async (ctx, input) => {
     const surgery = inProgress(ctx, input.requestId);
     if ((await preview(ctx, surgery)).fingerprint !== input.fingerprint) conflict('STALE_SURGERY_PREVIEW');

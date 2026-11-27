@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { editEncounter, readVisit, requireEncounter } from '../../patient-visit';
 import { catalogSchema } from '../../data-pack';
-import { CoreError, type ModuleRegistry, type OperationCatalog } from '../../platform';
+import { CoreError, type Actor, type ModuleRegistry, type OperationCatalog } from '../../platform';
 import type { StoreReader, StoreScope } from '../../store';
 import { confirmDiagnoses, currentRecordFields, diagnosisState, patientPresentation, recordState, retiredRecordFields, reviewedDiagnosisDraft, sameRecord, saveDiagnoses, saveRecord, signRecord } from './records';
 import { completionSchema, debriefSchema, diagnosisMembers, encounterViewSchema, noteFields, retiredReview } from './views';
@@ -45,11 +45,11 @@ export function registerClinicalOperations(catalog: OperationCatalog, registry: 
     const state = clinicalState(reader, actor.at, targetId);
     return { ...visit, ...state, completion: completion(reader, actor.at, targetId, state, registry, actor.enabledModules) };
   });
-  catalog.command({ name: 'record.draft', method: 'PUT', path: `${base}/clinical-record/draft`, access: assess }, { expectedDraftVersion: z.int().nonnegative(), fields: noteFields },
+  catalog.command({ name: 'record.draft', method: 'PUT', path: `${base}/clinical-record/draft`, access: assess, risk: 'write' }, { expectedDraftVersion: z.int().nonnegative(), fields: noteFields },
     version.extend({ draftVersion: z.int() }), (context, input) => saveRecord(context, input.fields, input.expectedDraftVersion));
   catalog.command({ name: 'record.sign', method: 'POST', path: `${base}/clinical-record/sign`, access: sign }, { expectedDraftVersion: z.int().nonnegative().optional(), retiredReview: retiredReview.optional() },
     revision.extend({ draftVersion: z.int().positive().optional(), reviewed: retiredReview.shape.decision.optional() }), (context, input) => signRecord(context, input.expectedDraftVersion, input.retiredReview));
-  catalog.command({ name: 'diagnosis.draft', method: 'PUT', path: `${base}/diagnosis/draft`, access: assess }, { diagnoses: diagnosisMembers }, version, (context, input) => saveDiagnoses(context, input.diagnoses));
+  catalog.command({ name: 'diagnosis.draft', method: 'PUT', path: `${base}/diagnosis/draft`, access: assess, risk: 'write' }, { diagnoses: diagnosisMembers }, version, (context, input) => saveDiagnoses(context, input.diagnoses));
   catalog.command({ name: 'diagnosis.confirm', method: 'POST', path: `${base}/diagnosis/confirm`, access: sign }, {}, revision, confirmDiagnoses);
   catalog.query({ name: 'encounter.completion', path: `${base}/completion`, access: {} }, completionSchema, ({ reader, actor, targetId }) => {
     requireEncounter(reader, actor.at, targetId);
@@ -63,11 +63,15 @@ export function registerClinicalOperations(catalog: OperationCatalog, registry: 
     });
     return { version: nextVersion };
   });
-  catalog.query({ name: 'encounter.debrief', path: `${base}/debrief`, access: {} }, debriefSchema, ({ reader, actor, targetId }) => {
-    if (requireEncounter(reader, actor.at, targetId).status !== 'completed') throw new CoreError(403, 'CASE_TRUTH_LOCKED');
-    const row = reader.readPrivateCaseTruth(actor.at, { purpose: 'completed-debrief', encounterId: targetId });
-    if (!row) throw new CoreError(404, 'DEBRIEF_UNAVAILABLE');
-    const { recordRevisions, diagnosisRevisions } = clinicalState(reader, actor.at, targetId);
-    return { caseTruth: debriefSchema.shape.caseTruth.parse(row.truth), recordRevisions, diagnosisRevisions };
-  });
+}
+
+export function readCompletedDebrief(reader: StoreReader, actor: Actor, encounterId: string) {
+  if (actor.kind !== 'visitor') throw new CoreError(403, 'ROLE_FORBIDDEN');
+  const encounter = requireEncounter(reader, actor.at, encounterId);
+  if (encounter.status !== 'completed') throw new CoreError(403, 'CASE_TRUTH_LOCKED');
+  if (actor.role.id !== encounter.active_practitioner_role) throw new CoreError(403, 'RESPONSIBLE_ROLE_REQUIRED');
+  const row = reader.readPrivateCaseTruth(actor.at, { purpose: 'completed-debrief', encounterId });
+  if (!row) throw new CoreError(404, 'DEBRIEF_UNAVAILABLE');
+  const { recordRevisions, diagnosisRevisions } = clinicalState(reader, actor.at, encounterId);
+  return debriefSchema.parse({ caseTruth: row.truth, recordRevisions, diagnosisRevisions });
 }
