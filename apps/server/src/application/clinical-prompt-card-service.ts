@@ -16,7 +16,10 @@ import {
   inpatientClinicalPromptDismissInputSchema,
   outpatientClinicalPromptDismissInputSchema,
 } from '@clinmesh/contracts/clinical-prompt-cards'
-import type { ClinicalQualityCheck } from '@clinmesh/contracts/clinical-quality'
+import type {
+  ClinicalQualityCheck,
+  ClinicalQualityPendingIndication,
+} from '@clinmesh/contracts/clinical-quality'
 import type { ClinicalScoreBundle } from '@clinmesh/contracts/clinical-scores'
 import type { ConceptVocabulary } from '@clinmesh/contracts/concept-vocabulary'
 import type { DiseasePackRuntimeEntry } from '@clinmesh/contracts/disease-pack'
@@ -39,6 +42,7 @@ import {
 import type { QualityMedication, RenalFunctionFact } from '@clinmesh/core/clinical-quality'
 import { PUBLIC_CONCEPT_VOCABULARY } from '@clinmesh/core/concept-vocabulary'
 import { evaluatePackTrigger } from '@clinmesh/core/disease-pack'
+import type { OrderIndicationOrderKind } from '@clinmesh/core/indication-rules'
 import {
   evaluateKnowledgeSnapshotForPatient,
   type KnowledgePassageVerifier,
@@ -819,19 +823,164 @@ export class ClinicalPromptCardService {
     return { evaluatedPacks, retiredClaimIds, riskTagsByPackId, snapshotVersionsByPackId }
   }
 
+  #resolveOrderIndicationTarget(
+    context: ActorContext,
+    catalogItemId: string,
+  ): {
+    candidateCodes: string[]
+    isInpatientMedication: boolean
+    itemCode: string
+    orderDisplay: string
+    orderKind: OrderIndicationOrderKind
+  } | undefined {
+    const hospitalRow = z.object({
+      code: z.string(),
+      config_json: z.string(),
+      name_zh: z.string(),
+      service_id: z.string(),
+    }).optional().parse(
+      this.#database.driver.prepare(`
+        SELECT service_id, code, name_zh, config_json
+        FROM hospital_service_catalog
+        WHERE workspace_id = ? AND epoch = ? AND service_id = ? AND active = 1
+      `).get(context.workspaceId, context.epoch, catalogItemId),
+    )
+    if (hospitalRow !== undefined) {
+      const parsedConfig = z.object({
+        category: z.object({ code: z.string() }).optional(),
+        examinationService: z.object({ code: z.string(), examCode: z.string(), name: z.string() }).optional(),
+        imagingService: z.object({ code: z.string(), examCode: z.string(), name: z.string() }).optional(),
+        nationalService: z.object({ code: z.string() }).optional(),
+      }).safeParse(JSON.parse(hospitalRow.config_json) as unknown)
+      const config = parsedConfig.success ? parsedConfig.data : undefined
+      if (config?.imagingService !== undefined) {
+        return {
+          candidateCodes: [...new Set([config.imagingService.code, config.imagingService.examCode, hospitalRow.service_id])],
+          isInpatientMedication: false,
+          itemCode: config.imagingService.code,
+          orderDisplay: config.imagingService.name,
+          orderKind: 'imaging',
+        }
+      }
+      if (config?.examinationService !== undefined) {
+        return {
+          candidateCodes: [...new Set([config.examinationService.code, config.examinationService.examCode, hospitalRow.service_id])],
+          isInpatientMedication: false,
+          itemCode: config.examinationService.code,
+          orderDisplay: config.examinationService.name,
+          orderKind: 'examination',
+        }
+      }
+      const categoryCode = config?.category?.code
+      const orderKind: OrderIndicationOrderKind = ({
+        EXAMINATION: 'examination',
+        IMAGING: 'imaging',
+        LABORATORY: 'laboratory',
+      } as const)[categoryCode as 'EXAMINATION' | 'IMAGING' | 'LABORATORY'] ?? 'procedure'
+      return {
+        candidateCodes: [...new Set([
+          hospitalRow.code,
+          ...(config?.nationalService?.code === undefined ? [] : [config.nationalService.code]),
+          hospitalRow.service_id,
+        ])],
+        isInpatientMedication: false,
+        itemCode: hospitalRow.code,
+        orderDisplay: hospitalRow.name_zh,
+        orderKind,
+      }
+    }
+
+    const outpatientRow = z.object({
+      code: z.string(),
+      config_json: z.string(),
+      item_id: z.string(),
+      kind: z.string(),
+      name_zh: z.string(),
+    }).optional().parse(
+      this.#database.driver.prepare(`
+        SELECT item_id, kind, code, name_zh, config_json
+        FROM outpatient_catalog
+        WHERE workspace_id = ? AND epoch = ? AND item_id = ? AND active = 1
+      `).get(context.workspaceId, context.epoch, catalogItemId),
+    )
+    if (outpatientRow === undefined) return undefined
+    if (outpatientRow.kind === 'medication') {
+      return {
+        candidateCodes: [...new Set([outpatientRow.item_id, outpatientRow.code])],
+        isInpatientMedication: true,
+        itemCode: outpatientRow.code,
+        orderDisplay: outpatientRow.name_zh,
+        orderKind: 'medication',
+      }
+    }
+    if (outpatientRow.kind === 'laboratory') {
+      const parsedLab = z.object({
+        laboratoryService: z.object({
+          localCode: z.string().optional(),
+          referenceConcept: z.object({ code: z.string() }).optional(),
+        }).optional(),
+        referenceConcept: z.object({ code: z.string() }).optional(),
+      }).safeParse(JSON.parse(outpatientRow.config_json) as unknown)
+      const labConfig = parsedLab.success ? parsedLab.data : undefined
+      const refCode = labConfig?.referenceConcept?.code ?? labConfig?.laboratoryService?.referenceConcept?.code
+      return {
+        candidateCodes: [...new Set([
+          ...(refCode === undefined ? [] : [refCode]),
+          outpatientRow.code,
+          outpatientRow.item_id,
+          ...(labConfig?.laboratoryService?.localCode === undefined ? [] : [labConfig.laboratoryService.localCode]),
+        ])],
+        isInpatientMedication: false,
+        itemCode: refCode ?? outpatientRow.code,
+        orderDisplay: outpatientRow.name_zh,
+        orderKind: 'laboratory',
+      }
+    }
+    return {
+      candidateCodes: [...new Set([outpatientRow.code, outpatientRow.item_id])],
+      isInpatientMedication: false,
+      itemCode: outpatientRow.code,
+      orderDisplay: outpatientRow.name_zh,
+      orderKind: 'procedure',
+    }
+  }
+
   #qualityCheckForTiming(
     context: ActorContext,
     subject: PromptSubject,
     timing: ClinicalPromptTiming,
     query: ClinicalPromptReadQuery,
+    asOf: string,
     inpatient?: InpatientService,
   ): ClinicalQualityCheck | undefined {
+    const orderIndicationCheck = (gate: 'outpatient-prescription' | 'inpatient-order') => {
+      if (query.catalogItemId === undefined) return undefined
+      const target = this.#resolveOrderIndicationTarget(context, query.catalogItemId)
+      if (target === undefined) return undefined
+      return {
+        check: this.#clinicalQuality.checkOrderIndication({
+          asOf,
+          candidateCodes: target.candidateCodes,
+          catalogItemId: query.catalogItemId,
+          context,
+          gate,
+          itemCode: target.itemCode,
+          orderDisplay: target.orderDisplay,
+          orderKind: target.orderKind,
+          subject: { id: subject.id, kind: subject.kind, patientId: subject.patientId },
+        }),
+        target,
+      }
+    }
+
     if (subject.kind === 'outpatient') {
       if (timing === 'order-sign') {
-        return this.#clinicalQuality.previewOutpatient(context, {
+        const base = this.#clinicalQuality.previewOutpatient(context, {
           encounterId: subject.encounterId,
           gate: 'outpatient-prescription',
         })
+        const indication = orderIndicationCheck('outpatient-prescription')
+        return indication === undefined ? base : this.#clinicalQuality.mergeChecks(base, indication.check)
       }
       if (timing === 'encounter-complete') {
         return this.#clinicalQuality.previewOutpatient(context, {
@@ -844,11 +993,16 @@ export class ClinicalPromptCardService {
 
     if (!inpatient || context.roleCode !== 'inpatient-doctor') return undefined
     if (timing === 'order-sign') {
-      return this.#clinicalQuality.previewInpatient(inpatient, context, {
+      const indication = orderIndicationCheck('inpatient-order')
+      if (indication !== undefined && !indication.target.isInpatientMedication) {
+        return indication.check
+      }
+      const base = this.#clinicalQuality.previewInpatient(inpatient, context, {
         admissionId: subject.id,
         ...(query.catalogItemId === undefined ? {} : { catalogItemId: query.catalogItemId }),
         gate: 'inpatient-order',
       })
+      return indication === undefined ? base : this.#clinicalQuality.mergeChecks(base, indication.check)
     }
     if (timing === 'pci-plan') {
       return this.#clinicalQuality.previewInpatient(inpatient, context, {
@@ -964,6 +1118,7 @@ export class ClinicalPromptCardService {
     cards: ClinicalPromptCard[]
     evaluatedPacks: EvaluatedPackForPromptBuild[]
     ledger: ClinicalFactLedger
+    pendingIndications: ClinicalQualityPendingIndication[]
     snapshotVersionsByPackId: Map<string, string>
   } {
     const ledger = this.#factLedger.buildInternalLedger(input.context, input.subject, {
@@ -987,6 +1142,7 @@ export class ClinicalPromptCardService {
       input.subject,
       input.timing,
       input.query,
+      input.asOf,
       input.inpatient,
     )
     const verifySourcePassage = this.#sourceVerifier(input.context, input.subject.patientId, input.asOf)
@@ -1057,6 +1213,7 @@ export class ClinicalPromptCardService {
       cards: attached.cards,
       evaluatedPacks,
       ledger,
+      pendingIndications: qualityCheck?.pendingIndications ?? [],
       snapshotVersionsByPackId: built.snapshotVersionsByPackId,
     }
   }
@@ -1087,6 +1244,7 @@ export class ClinicalPromptCardService {
 
     let workingCards = baseline.cards
     let blockedRecords = baseline.blockedRecords
+    let pendingIndications = baseline.pendingIndications
     let reevaluateDiffs: ClinicalPromptReevaluateDiff[] | undefined
     let historicalReplay: ClinicalPromptHistoricalReplay | null = null
 
@@ -1101,6 +1259,7 @@ export class ClinicalPromptCardService {
         timing,
       })
       blockedRecords = [...baseline.blockedRecords, ...latest.blockedRecords]
+      pendingIndications = latest.pendingIndications
 
       const comparisonsByPack = new Map<string, KnowledgeVersionComparison>()
       const verifyLatest = this.#sourceVerifier(context, subject.patientId, virtualNow)
@@ -1251,6 +1410,7 @@ export class ClinicalPromptCardService {
       evaluatedAt: query.reevaluateWithLatestKnowledge ? virtualNow : baselineAsOf,
       historicalReplay,
       llmInvocationCount: 0,
+      ...(pendingIndications.length === 0 ? {} : { pendingIndications }),
       ...(reevaluateDiffs === undefined ? {} : { reevaluateDiffs }),
       sideBySideGroups: finalizedGroups.sideBySideGroups,
       subjectId: subject.id,

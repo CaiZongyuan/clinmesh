@@ -92,6 +92,7 @@ const PRESERVED_CATEGORIES_FOR_INAPPLICABLE = new Set<ClinicalPromptCard['catego
 
 const NON_INTERVENTION_DIAGNOSTIC_CATEGORIES = new Set<ClinicalPromptCard['category']>([
   'quality-gate',
+  'indication-alert',
   'rule-out-checklist',
   'missing-fact',
   'inapplicable-population',
@@ -1760,13 +1761,15 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
       }))
     }
     for (const alert of input.qualityCheck.alerts) {
+      const isIndicationAlert = alert.code === 'INVESTIGATION_WITHOUT_INDICATION'
       cards.push(clinicalPromptCardSchema.parse({
         basedOnFactVersions: evidenceFactRefs(alert.evidence),
         blockingTier: 'alert',
         cardId: `${input.timing}:quality:${alert.code}${alert.catalogItemId ? `:${alert.catalogItemId}` : ''}`,
-        category: 'quality-gate',
+        category: isIndicationAlert ? 'indication-alert' : 'quality-gate',
         deliveryMode: 'display',
         detail: alert.message,
+        indicationBasis: alert.basis ?? null,
         indicator: 'warning',
         knowledgeSnapshotVersion: primarySnapshotVersion,
         knowledgeStatus: 'published',
@@ -1774,8 +1777,9 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
         packId: primaryPackId,
         packVersion: primaryPackVersion,
         riskTags: primaryRiskTags,
+        ruleId: alert.ruleId ?? null,
         sideBySideGroupKey: null,
-        source: { label: `事中质控警示 · ${input.qualityCheck.gate}` },
+        source: { label: `${isIndicationAlert ? '适应症检查警示' : '事中质控警示'} · ${input.qualityCheck.gate}` },
         suggestions: [],
         summary: alert.message.length > 90 ? `${alert.message.slice(0, 87)}...` : alert.message,
         timing: input.timing,

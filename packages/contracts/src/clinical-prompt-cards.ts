@@ -1,6 +1,10 @@
 import { z } from 'zod'
 import { clinicalFactSubjectKindSchema } from './clinical-fact-ledger.ts'
-import { clinicalOverrideReasonSchema } from './clinical-quality.ts'
+import {
+  clinicalOverrideReasonSchema,
+  clinicalQualityAlertBasisSchema,
+  clinicalQualityPendingIndicationSchema,
+} from './clinical-quality.ts'
 import { diseasePackSlugSchema } from './disease-pack-triggers.ts'
 import { commandResponseSchema } from './his.ts'
 import {
@@ -184,6 +188,8 @@ export const clinicalPromptCardSchema = z.object({
   detail: z.string().trim().min(1).max(4000),
   diffStatus: clinicalPromptDiffStatusSchema.nullable().default(null),
   dismissal: clinicalPromptDismissalRecordSchema.nullable().default(null),
+  /** 无适应证黄牌的“需要／已查到／判断”三段结构，供界面直接渲染，不在正文拼接内部规则 ID。 */
+  indicationBasis: clinicalQualityAlertBasisSchema.nullable().default(null),
   indicator: clinicalPromptIndicatorSchema,
   knowledgeSnapshotVersion: boundedVersion.nullable(),
   knowledgeStatus: clinicalPromptKnowledgeStatusSchema,
@@ -192,6 +198,8 @@ export const clinicalPromptCardSchema = z.object({
   packId: diseasePackSlugSchema.nullable(),
   packVersion: boundedVersion.nullable(),
   riskTags: z.array(clinicalPromptRiskTagSchema).max(32).default([]),
+  /** 命中的适应症规则内部 ID（仅审计与定位使用，界面默认不展示）。 */
+  ruleId: boundedId.nullable().default(null),
   ruleOutItems: z.array(clinicalPromptRuleOutItemSchema).max(32).default([]),
   sideBySideGroupKey: boundedId.nullable().default(null),
   source: clinicalPromptSourceSchema,
@@ -270,6 +278,8 @@ export const clinicalPromptBundleSchema = z.object({
   evaluatedAt: dt,
   historicalReplay: clinicalPromptHistoricalReplaySchema.nullable(),
   llmInvocationCount: z.number().int().nonnegative(),
+  /** 拟开立医嘱（timing=order-sign 且传入 catalogItemId）在适应症资料未齐时的“缺项待补”提示（不拦截保存）。 */
+  pendingIndications: z.array(clinicalQualityPendingIndicationSchema).max(16).optional(),
   reevaluateDiffs: z.array(clinicalPromptReevaluateDiffSchema).max(128).optional(),
   sideBySideGroups: z.array(clinicalPromptSideBySideGroupSchema).max(32),
   subjectId: nonEmptyId,

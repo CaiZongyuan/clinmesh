@@ -1429,4 +1429,45 @@ describe('ClinicalPromptCard core engine', () => {
     expect(merged.suggestions.map(s => s.id)).toEqual(['review-phenotype-fh'])
     expect(merged.trialBadgeZh).toBe('试用版')
   })
+
+  it('maps INVESTIGATION_WITHOUT_INDICATION alert to indication-alert card carrying structured basis and ruleId', () => {
+    const ledger = makeLedger([])
+    const built = buildTimingPromptCards({
+      asOf: '2026-08-24T09:00:00+08:00',
+      evaluatedPacks: [],
+      ledger,
+      qualityCheck: {
+        alerts: [{
+          basis: {
+            foundZh: '心电图未见缺血改变；肌钙蛋白正常',
+            judgementZh: '低危胸壁痛，暂不建议常规行冠状动脉 CTA',
+            needZh: '需具备冠心病/ACS 诊断或心肌缺血客观依据',
+          },
+          catalogItemId: 'hospital-service-coronary-cta',
+          code: 'INVESTIGATION_WITHOUT_INDICATION',
+          evidence: [],
+          message: '冠状动脉 CTA 缺少检查适应证',
+          ruleId: 'coronary-cta-indication',
+          tier: 'alert',
+        }],
+        evaluatedAt: '2026-08-24T09:00:00+08:00',
+        gate: 'outpatient-prescription',
+        packId: 'coronary-cad',
+        packVersion: '1.0.0',
+        redLines: [],
+        status: 'alert',
+      },
+      subjectKind: 'outpatient',
+      timing: 'order-sign',
+    })
+    const card = built.cards.find(c => c.cardId === 'order-sign:quality:INVESTIGATION_WITHOUT_INDICATION:hospital-service-coronary-cta')
+    expect(card?.category).toBe('indication-alert')
+    expect(card?.blockingTier).toBe('alert')
+    expect(card?.indicationBasis).toEqual({
+      foundZh: '心电图未见缺血改变；肌钙蛋白正常',
+      judgementZh: '低危胸壁痛，暂不建议常规行冠状动脉 CTA',
+      needZh: '需具备冠心病/ACS 诊断或心肌缺血客观依据',
+    })
+    expect(card?.ruleId).toBe('coronary-cta-indication')
+  })
 })

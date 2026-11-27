@@ -592,8 +592,8 @@ function normalizeScoreFormulaId(rawId: string): string {
 const startupPackExamCache = new Map<string, { passed: boolean; reasonsZh: string[] }>()
 
 /**
- * Pure deterministic Disease Pack Exam Runner, 7-Trap Gate, 5-Layer Attribution & AC26 Standardized Report Service.
- * Zero LLM invocations and zero Case Truth leakage (AC10, AC15, AC26, AC27, AC28).
+ * Pure deterministic Disease Pack Exam Runner, 7-Trap Gate, 5-Layer Attribution & Standardized Report Service.
+ * Zero LLM invocations and zero Case Truth leakage.
  */
 export class DiseasePackExamService {
   readonly #commands: CommandExecutor
@@ -1605,6 +1605,7 @@ export class DiseasePackExamService {
           detail: '基线肌酐显著升高提示肾功能红线。',
           diffStatus: null,
           dismissal: null,
+          indicationBasis: null,
           indicator: 'critical' as const,
           knowledgeSnapshotVersion: null,
           knowledgeStatus: 'published' as const,
@@ -1613,6 +1614,7 @@ export class DiseasePackExamService {
           packId: null,
           packVersion: null,
           riskTags: [],
+          ruleId: null,
           ruleOutItems: [],
           attachTargets: null,
           sideBySideGroupKey: null,
@@ -1900,6 +1902,7 @@ export class DiseasePackExamService {
                 detail: '不适用人群下的专病治疗建议。',
                 diffStatus: null,
                 dismissal: null,
+                indicationBasis: null,
                 indicator: 'info',
                 knowledgeSnapshotVersion: null,
                 knowledgeStatus: 'published',
@@ -1908,6 +1911,7 @@ export class DiseasePackExamService {
                 packId: candidate.pack.manifest.id,
                 packVersion: candidate.pack.manifest.version,
                 riskTags: [],
+                ruleId: null,
                 ruleOutItems: [],
                 attachTargets: null,
                 sideBySideGroupKey: null,
@@ -1936,6 +1940,7 @@ export class DiseasePackExamService {
                 detail: '当前患者属不适用人群，超出本包范围，请医生自行决策。',
                 diffStatus: null,
                 dismissal: null,
+                indicationBasis: null,
                 indicator: 'warning',
                 knowledgeSnapshotVersion: null,
                 knowledgeStatus: 'published',
@@ -1944,6 +1949,7 @@ export class DiseasePackExamService {
                 packId: candidate.pack.manifest.id,
                 packVersion: candidate.pack.manifest.version,
                 riskTags: [],
+                ruleId: null,
                 ruleOutItems: [],
                 attachTargets: null,
                 sideBySideGroupKey: null,

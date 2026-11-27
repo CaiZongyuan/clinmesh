@@ -796,6 +796,21 @@ describe('DSAP Slice S9: Outpatient Rule-Out, Pack Exit & Silence, Confusable Pa
     })
     expect(pendingEnforce.pendingIndications).toEqual(preWorkupCheck.pendingIndications)
 
+    // 保存前经 clinical-prompts?timing=order-sign&catalogItemId=... 即可获取缺项待补提示（且不出无指征黄牌）
+    const preOrderMissingPromptRes = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${lowRiskVisit.outpatientCaseId}/clinical-prompts?timing=order-sign&catalogItemId=hospital-service-coronary-cta`,
+      { headers: { cookie: cookies.doctor } },
+    )
+    expect(preOrderMissingPromptRes.status, await preOrderMissingPromptRes.clone().text()).toBe(200)
+    const preOrderMissingPrompt = clinicalPromptBundleSchema.parse(await preOrderMissingPromptRes.json())
+    expect(preOrderMissingPrompt.cards.some(c => c.category === 'indication-alert')).toBe(false)
+    expect(preOrderMissingPrompt.pendingIndications).toHaveLength(1)
+    expect(preOrderMissingPrompt.pendingIndications?.[0]).toMatchObject({
+      catalogItemId: 'hospital-service-coronary-cta',
+      orderDisplay: '冠状动脉 CTA',
+    })
+    expect(preOrderMissingPrompt.pendingIndications?.[0]?.messageZh).toContain('缺项待补')
+
     // Complete normal ECG + normal cardiac troponin
     const lowRiskEcg = await orderAndCompleteExam(
       runtime,
@@ -821,6 +836,22 @@ describe('DSAP Slice S9: Outpatient Rule-Out, Pack Exit & Silence, Confusable Pa
       cardiacPanel.allowedIndicationCodes[0]!,
     )
     expect(lowRiskCardiac.status).toBe('reported')
+
+    // 补齐 ECG 与肌钙蛋白后，保存前经 clinical-prompts?timing=order-sign&catalogItemId=... 立即返回结构化无指征黄牌且无缺项待补
+    const preOrderAlertPromptRes = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${lowRiskVisit.outpatientCaseId}/clinical-prompts?timing=order-sign&catalogItemId=hospital-service-coronary-cta`,
+      { headers: { cookie: cookies.doctor } },
+    )
+    expect(preOrderAlertPromptRes.status, await preOrderAlertPromptRes.clone().text()).toBe(200)
+    const preOrderAlertPrompt = clinicalPromptBundleSchema.parse(await preOrderAlertPromptRes.json())
+    expect(preOrderAlertPrompt.pendingIndications ?? []).toEqual([])
+    const preOrderYellowCard = preOrderAlertPrompt.cards.find(c => c.category === 'indication-alert')
+    expect(preOrderYellowCard?.blockingTier).toBe('alert')
+    expect(preOrderYellowCard?.indicationBasis?.needZh).toBeTruthy()
+    expect(preOrderYellowCard?.indicationBasis?.foundZh).toBeTruthy()
+    expect(preOrderYellowCard?.indicationBasis?.judgementZh).toContain('冠状动脉 CTA')
+    expect(preOrderYellowCard?.ruleId).toBeTruthy()
+    expect(preOrderYellowCard?.detail).not.toMatch(/规则/)
 
     // Now order Coronary CTA WITHOUT clinicalOverride -> blocked by 409 CLINICAL_QUALITY_ALERT (INVESTIGATION_WITHOUT_INDICATION)
     const detailBeforeCta = doctorCaseDetailSchema.parse(await (await runtime.app.request(
