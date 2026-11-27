@@ -1,4 +1,5 @@
 import { z } from 'zod';
+export * from './assistant';
 
 export const providerName = z.enum(['openai', 'anthropic', 'gemini']);
 export const reasoningEffort = z.enum(['off', 'minimal', 'low', 'medium', 'high']);

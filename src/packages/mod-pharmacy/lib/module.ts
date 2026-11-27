@@ -21,7 +21,7 @@ export function createPharmacyModule(billing?: PharmacyBillingPort): ClinMeshMod
       return [{ id: 'medication-decision', label: { en: 'Prescription or no medication', zh: '已签发处方或确认无需用药' }, passed: hasMedicationDecision(reader, at, id) }];
     },
     registerOperations(catalog) {
-      catalog.query({ name: 'prescription.read', path: `${encounters}/prescriptions`, access: { capabilities: ['assess', 'sign'] } }, prescribingViewSchema, ({ reader, actor, targetId }) => prescribingView(reader, actor.at, targetId));
+      catalog.query({ name: 'prescription.read', path: `${encounters}/prescriptions`, access: { capabilities: ['assess', 'sign'] }, assistantRead: 'encounter' }, prescribingViewSchema, ({ reader, actor, targetId }) => prescribingView(reader, actor.at, targetId));
       catalog.command({ name: 'prescription.sign', method: 'POST', path: `${encounters}/prescriptions`, access: sign },
         { lines: z.array(prescriptionLineSchema).max(64), clinicalOverride: z.unknown().optional(), override: z.unknown().optional(), overrideReason: z.string().optional() }, version.extend({ prescriptionId: z.uuidv7(), snapshotHash: z.string() }), (context, input) => signPrescription(context, input.lines, funds(context.actor), input.clinicalOverride));
       catalog.command({ name: 'prescription.no-medication', method: 'POST', path: `${encounters}/no-medication`, access: sign }, { reason }, version.extend({ conclusionId: z.uuidv7() }), (context, input) => recordNoMedication(context, input.reason));

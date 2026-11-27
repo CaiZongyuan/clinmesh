@@ -74,8 +74,13 @@ export function qualityIssues(reader: StoreReader, at: StoreScope, data: Clinica
   } else if (intent.kind === 'complete' && data.encounter.encounter_class === 'outpatient') {
     if ((data.bedside.acuteChestPain || data.codes.some(code => /^(R07|I20\.0|I21|I22|I24)/.test(code))) && (!data.firstEcg || !data.biomarker)) alerts.add('CHEST_PAIN_WORKUP_INCOMPLETE');
   } else if (intent.kind === 'pci') {
-    const report = data.reports.filter(report => report.service.modality === 'coronary-angiography').at(-1);
-    const ffr = intent.ffr ?? report?.findings.observations.find(item => item.unit === '1' && data.knowledge.cds?.ffrAnalytes.some(code => sameCoding(code, item)))?.value;
+    const measurements = data.reports.flatMap(report => {
+      const procedure = data.knowledge.inpatient?.procedures.find(rule => rule.kind === 'angiography' && rule.reportService && sameCoding(rule.reportService, report.service));
+      if (!procedure && report.service.modality !== 'coronary-angiography') return [];
+      const declared = procedure?.ffr ? [procedure.ffr] : data.knowledge.cds?.ffrAnalytes ?? [];
+      return [{ value: report.findings.observations.find(item => item.unit === '1' && declared.some(code => sameCoding(code, item)))?.value }];
+    });
+    const ffr = intent.ffr ?? measurements.at(-1)?.value;
     if (typeof ffr === 'number' && ffr > 0.8 && ffr <= 1) alerts.add('PCI_NON_ISCHEMIC_LESION');
   } else if (intent.kind === 'discharge' && (data.facts.confirmedDiagnoses.some(item => /^I2[0-5]/.test(item.code)) || intent.completedPci || completedPci(reader, at, data))) {
     const ids = new Set(intent.activeMedicationIds ?? data.orders.filter(order => order.kind === 'medication' && ['signed', 'verified'].includes(order.status)).map(order => order.catalog_item_id));

@@ -69,7 +69,7 @@ function Prescribing({ view, language, encounter, workspace, submit, drafts }: W
   const commit = (name: string, fields: Intent['fields']) => apply({ name, targetId: encounter.id, version: encounter.version, fields });
   const rejected = writes.variables;
   const alert = rejected?.name === 'prescription.sign' && rejected.targetId === encounter.id && rejected.version === encounter.version && rejected.fields?.lines === lines && writes.error instanceof ApiError && writes.error.message === 'CLINICAL_QUALITY_ALERT' ? writes.error : undefined;
-  return <section className="clinical-panel"><h2>{text('Prescribing', '用药结论')}</h2>
+  return <section className="clinical-panel" data-assistant-field="prescription:draft" data-assistant-list><h2>{text('Prescribing', '用药结论')}</h2>
     {view.context.allergies.length > 0 && <Badge tone="destructive">{text('Confirmed allergies', '已确认过敏')} · {view.context.allergies.join(', ')}</Badge>}
     {view.noMedication && <Card><strong>{text('No medication recorded', '已确认无需用药')}</strong><p>{view.noMedication.reason}</p></Card>}
     {canPrescribe && <><Switch label={text('No medication needed', '无需用药')} disabled={liveRx || Boolean(lines.length)} checked={noMedication} onCheckedChange={setNoMedication}/>

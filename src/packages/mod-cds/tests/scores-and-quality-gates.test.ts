@@ -4,6 +4,9 @@ import { z } from 'zod';
 import { cdsWorkspace } from '../../../server/testing/cds-workspace';
 import { builtinModules } from '../../../server/builtin-modules';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
+import { parseHospitalDataPack } from '../../data-pack';
 import { canonicalJson } from '../../store';
 import { labViewSchema, issueReceipt } from '../../mod-lab';
 import type { ClinMeshModule, OperationCatalog } from '../../platform';
@@ -57,14 +60,10 @@ it('rejects WBC mass concentration and accepts equivalent cell-count units for P
 });
 
 it('completes the frozen global-general 1.3.0 chest-pain encounter after both paid reports are signed and acknowledged', async () => {
-  const host = await cdsWorkspace(pack => {
-    pack.manifest.version = '1.3.0';
-    delete pack.knowledge!.cds;
-    for (const service of pack.catalog.services) delete service.modality;
-    for (const topic of pack.knowledge!.guidelineTopics) delete topic.evidence;
-    for (const patient of pack.cases) for (const result of patient.caseTruth.results) delete result.stSegmentDeviation;
-    expect(createHash('sha256').update(canonicalJson(pack)).digest('hex')).toBe('5d82796c5987c32f0529d1e5c453a00ae68737b943526be659d1441cc67b1207');
-  });
+  const archived = readFileSync(new URL('./fixtures/cc914872-general-v1.3.0.json.gz.b64', import.meta.url), 'utf8');
+  const pack = parseHospitalDataPack(JSON.parse(gunzipSync(Buffer.from(archived, 'base64')).toString()));
+  expect(createHash('sha256').update(canonicalJson(pack)).digest('hex')).toBe('5d82796c5987c32f0529d1e5c453a00ae68737b943526be659d1441cc67b1207');
+  const host = await cdsWorkspace(undefined, builtinModules, pack);
   try {
     const path = await host.start('Jordan Vale', 'I21.4');
     const lab = () => host.get(`${path}/lab`).then(value => labViewSchema.parse(value));

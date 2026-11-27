@@ -25,8 +25,8 @@ async function openFrozen(file: string, hash: string) {
   const app = createWorkspaceApp(store, { localOpen: true }, builtinModules);
   const request = (path: string, init?: RequestInit) => app.request(path, init, { credential: { ticket }, entering: false });
   const get = async (path: string) => (await request(path)).json();
-  const send = (path: string, expectedVersion: number, fields = {}) => request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...fields, expectedVersion, epoch: at.epoch, idempotencyKey: crypto.randomUUID() }) });
-  return { store, encounterId, get, send };
+  const send = (path: string, expectedVersion: number, fields = {}, idempotencyKey = crypto.randomUUID()) => request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...fields, expectedVersion, epoch: at.epoch, idempotencyKey }) });
+  return { store, at, encounterId, get, send };
 }
 
 it('completes the genuine 1.2.0 encounter using its previously signed and acknowledged ECG and troponin', async () => {
@@ -55,5 +55,20 @@ it('retains v8 bed, material, report and surgery facts and enforces PCI quality 
     const refused = await host.send(path, before.version, { requestId: before.surgeries[0]!.id, procedureId: item('36.0700'), materials: [{ itemId: item('des-3x18'), quantity: 1 }] });
     expect([refused.status, await refused.json()]).toEqual([409, { code: 'CLINICAL_QUALITY_ALERT', details: { ruleCodes: 'PCI_NON_ISCHEMIC_LESION' } }]);
     expect(wardViewSchema.parse(await host.get(wardPath))).toEqual(before);
+    const endpoint = (name: string) => ws.operations.find(op => op.name === `ward.surgery.${name}`)!.path.replace(':id', host.encounterId);
+    expect((await host.send(endpoint('finalize-standby'), before.version, { requestId: before.surgeries[0]!.id })).status).toBe(200);
+    const completed = wardViewSchema.parse(await host.get(wardPath));
+    const decision = { procedureId: item('36.0700'), type: 'elective', plannedAt: ws.virtualTime, location: 'cath-lab', surgeon: 'cv-staff-01', anesthesia: 'local', reason: 'Individualized review of coronary physiology', preopOrderPolicy: 'continue-active', materials: [{ itemId: item('des-3x18'), quantity: 1 }] };
+    const blocked = await host.send(endpoint('request'), completed.version, decision);
+    expect([blocked.status, await blocked.json()]).toEqual([409, { code: 'CLINICAL_QUALITY_ALERT', details: { ruleCodes: 'PCI_NON_ISCHEMIC_LESION' } }]);
+    expect(await host.store.read(reader => reader.list(host.at, 'clinical_overrides'))).toEqual([]);
+    const key = crypto.randomUUID();
+    const approve = () => host.send(endpoint('request'), completed.version, { ...decision, clinicalOverride: { reasonCode: 'specialist-judgment', note: 'Documented individualized lesion review.', ruleCodes: ['PCI_NON_ISCHEMIC_LESION'] } }, key);
+    const first = await approve(); expect(first.status).toBe(200);
+    expect(await (await approve()).json()).toEqual(await first.json());
+    await host.store.read(reader => {
+      expect(reader.list(host.at, 'clinical_overrides')).toMatchObject([{ rule_code: 'PCI_NON_ISCHEMIC_LESION' }]);
+      expect(reader.list(host.at, 'audit_events', { operation: 'clinical.override' })).toHaveLength(1);
+    });
   } finally { await host.store.close(); }
 });

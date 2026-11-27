@@ -3,7 +3,7 @@ import { createModels, createProvider } from '@earendil-works/pi-ai/models';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic';
 import { googleProvider } from '@earendil-works/pi-ai/providers/google';
-import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux';
+import { fauxAssistantMessage, fauxProvider, type FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux';
 import { v7 } from 'uuid';
 import type { ReplyProgress } from '../../agent-protocol';
 import { CoreError } from '../../platform';
@@ -13,11 +13,11 @@ import type { AgentProvider } from './configuration';
 type CallScope = { store: StorePort; at: StoreScope; sessionId?: string; questionId?: string };
 type CallInput = { context: Context; mockAnswer: string; accept(text: string): boolean; signal?: AbortSignal; sessionId?: string; progress?(event: ReplyProgress): void; pass?: 1 | 2 };
 
-function upstream(config: AgentProvider, mockAnswer: string) {
+export function upstream(config: AgentProvider, mockAnswer: string | FauxResponseFactory) {
   const models = createModels();
   if (config.provider === 'mock') {
     const faux = fauxProvider({ provider: 'mock', models: [{ id: config.model }], tokensPerSecond: Infinity });
-    faux.setResponses([fauxAssistantMessage(mockAnswer)]);
+    faux.setResponses([typeof mockAnswer === 'string' ? fauxAssistantMessage(mockAnswer) : mockAnswer]);
     models.setProvider(faux.provider);
     return { models, model: faux.getModel() };
   }

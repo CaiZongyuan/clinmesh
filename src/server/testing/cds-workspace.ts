@@ -8,8 +8,8 @@ import { BUILTIN_DATA_PACKS } from '../builtin-data-packs';
 import { builtinModules } from '../builtin-modules';
 import { createWorkspaceApp } from '../workspace';
 
-export async function cdsWorkspace(configure?: (pack: HospitalDataPack) => void, modules: readonly ClinMeshModule<OperationCatalog>[] = builtinModules) {
-  const pack = structuredClone(BUILTIN_DATA_PACKS['global-general']);
+export async function cdsWorkspace(configure?: (pack: HospitalDataPack) => void, modules: readonly ClinMeshModule<OperationCatalog>[] = builtinModules, source: HospitalDataPack = BUILTIN_DATA_PACKS['global-general']) {
+  const pack = structuredClone(source);
   configure?.(pack);
   const store = createNodeSqliteStore({ dbPath: ':memory:' });
   const ticket = { kind: 'visitor' as const, workspaceId: v7(), id: v7(), expiresAt: '2099-01-01T00:00:00.000Z' };

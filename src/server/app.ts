@@ -1,10 +1,10 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { permitsProviderKey } from '../packages/agent-protocol';
 import { CoreError, createVisitorGate, ModuleRegistry, type ClinMeshModule, type Credential, type GateSettings, type OperationCatalog, type RuntimeHealth } from '../packages/platform';
 import { handleError } from './workspace';
 
-export type Dispatch = (request: Request, credential: Credential, entering: boolean) => Promise<Response> | Response;
+export type Dispatch = (request: Request, credential: Credential, entering: boolean, context: Context) => Promise<Response> | Response;
 export function createApp(runtime: RuntimeHealth['runtime'], settings: GateSettings, dispatch: Dispatch, modules: readonly ClinMeshModule<OperationCatalog>[] = []) {
   const app = new Hono();
   app.onError(handleError);
@@ -21,7 +21,7 @@ export function createApp(runtime: RuntimeHealth['runtime'], settings: GateSetti
       checkOrigin();
       const { passcode } = z.strictObject({ passcode: z.string().max(1024).default('') }).parse(await request.json());
       const { ticket, token } = await gate.enter(passcode);
-      const response = await dispatch(new Request(request.url, { method: 'POST' }), { ticket }, true);
+      const response = await dispatch(new Request(request.url, { method: 'POST' }), { ticket }, true, context);
       const result = new Response(response.body, response);
       if (result.ok) result.headers.set('set-cookie', `cm_visitor=${token}; Max-Age=86400; ${cookieFlags}`);
       result.headers.set('cache-control', 'no-store');
@@ -30,7 +30,10 @@ export function createApp(runtime: RuntimeHealth['runtime'], settings: GateSetti
     const credential = await gate.authenticate(context.req.header('cookie'), context.req.header('authorization'));
     if (request.headers.has('X-ClinMesh-LLM-Api-Key') && !permitsProviderKey(origin)) throw new CoreError(400, 'LLM_HTTPS_REQUIRED');
     checkOrigin();
-    const response = await dispatch(request, credential, false);
+    const upgrading = request.headers.get('upgrade')?.toLowerCase() === 'websocket';
+    if (upgrading && crossSite !== origin.origin) throw new CoreError(403, 'ORIGIN_FORBIDDEN');
+    const response = await dispatch(request, credential, false, context);
+    if (upgrading) return response;
     const result = new Response(response.body, response);
     result.headers.set('cache-control', 'no-store');
     if (origin.pathname === '/api/auth/logout' && result.ok) result.headers.set('set-cookie', `cm_visitor=; Max-Age=0; ${cookieFlags}`);

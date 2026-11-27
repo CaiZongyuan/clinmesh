@@ -3,6 +3,7 @@ import type { EncounterView, WorkspaceView } from '../packages/clinical-core';
 import { sessionSchema } from '../packages/platform';
 import { modelHeaders } from './model-preferences';
 import type { EncounterDrafts } from './encounter-drafts';
+import { sendWorkbenchCommand } from './assistant-command';
 
 export type Session = z.infer<typeof sessionSchema>;
 export type Language = 'en' | 'zh';
@@ -36,10 +37,10 @@ export function write(workspace: WorkspaceView, intent: Intent) {
   const op = workspace.operations.find(operation => operation.name === intent.name && operation.method !== 'GET');
   if (!op || !op.path.startsWith('/api/')) throw Error('ROLE_FORBIDDEN');
   const path = op.path.replace(':id', encodeURIComponent(intent.targetId ?? ''));
-  const init = jsonBody(op.method, {
-    ...intent.fields, epoch: workspace.epoch, expectedVersion: intent.version, idempotencyKey: crypto.randomUUID(),
+  return sendWorkbenchCommand(workspace, idempotencyKey => {
+    const init = jsonBody(op.method, { ...intent.fields, epoch: workspace.epoch, expectedVersion: intent.version, idempotencyKey });
+    return api(path, z.record(z.string(), z.json()), { ...init, mode: 'same-origin', redirect: 'error', headers: { ...init.headers, ...(['consultation.question', 'consultation.retry'].includes(intent.name) ? modelHeaders('patient') : {}) } });
   });
-  return api(path, z.record(z.string(), z.json()), { ...init, mode: 'same-origin', redirect: 'error', headers: { ...init.headers, ...(['consultation.question', 'consultation.retry'].includes(intent.name) ? modelHeaders('patient') : {}) } });
 }
 
 const messages: Record<string, [string, string]> = {
