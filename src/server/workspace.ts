@@ -36,6 +36,7 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     return context.json(result);
   });
   const catalog = new OperationCatalog();
+  catalog.guardEncounter = (context, write) => { for (const module of registry.enabled(context.actor.enabledModules)) module.guardEncounter?.(context, write); };
   const patients = new PatientRuntime(store, environment, background);
   registerPatientOperations(catalog, environment);
   app.post('/api/agents/providers/test', async context => context.json(await patients.testProvider(context.env.credential, context.req.raw.headers, await context.req.json())));
@@ -66,7 +67,7 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     { language: z.enum(['en', 'zh']).optional() }, z.object({ encounterId: z.uuidv7(), version: z.int() }), (context, input) => {
       const result = startEncounter(context, input.language);
       for (const module of registry.enabled(context.actor.enabledModules)) module.encounterStarted?.(context.tx, context.at, result.encounterId, context.virtualAt, context.recordedAt);
-      return result;
+      return { ...result, version: context.tx.get(context.at, 'encounters', result.encounterId)!.version };
     });
   catalog.query({ name: 'encounter.list', path: '/api/his/encounters', access: {} }, z.array(summarySchema), ({ reader, actor }) => listEncounters(reader, actor.at));
   registerClinicalOperations(catalog, registry);

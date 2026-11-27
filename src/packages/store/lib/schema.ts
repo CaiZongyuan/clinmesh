@@ -129,6 +129,23 @@ export const tables = {
   prescription_directions: table({ order_id: order, directions: column(signedDirections, 'json') }, 'order_id'),
   prescription_withdrawals: table({ prescription_id: ref('prescriptions'), actor: text, practitioner_role: text, reason: text, ...times }, 'prescription_id'),
   inventory_lot_quarantines: table({ id: lot, source_version: choice('clinmesh.snapshot.v1', 'clinmesh.snapshot.v2', 'clinmesh.snapshot.v3', 'clinmesh.snapshot.v4', 'clinmesh.snapshot.v5', 'sqlite.schema.v1', 'sqlite.schema.v2', 'sqlite.schema.v3', 'sqlite.schema.v4'), source_sha256: optional(digest), quantity_at_migration: column(z.int().negative(), 'integer', name => `${name} < 0`), ledger_fingerprint: column(z.uuid({ version: 'v5' })) }),
+  ward_certificates: table({ source_encounter_id: enc, patient_id: ref('patients'), ward: text, reason: text, signed_by: text, ...times }),
+  ward_referrals: table({ certificate_id: ref('ward_certificates'), admission_id: admission }, 'certificate_id', 'admission_id'),
+  ward_transfer_tasks: table({ id: ref('inpatient_transfers'), status: choice('requested', 'handed-over', 'completed'), version }),
+  ward_order_directions: table({ id: order, frequency: text, duration: choice('long', 'temporary'), directions: frozen, surgery_execution_id: optional(ref('surgery_executions')) }),
+  ward_tasks: table({ order_id: order, business_day: column(z.iso.date()), slot: text, due_at: timestamp, status: choice('pending', 'dispensed', 'administered', 'completed', 'cancelled'), reason: optional(text), version }, 'order_id, business_day, slot'),
+  ward_deliveries: table({ task_id: ref('ward_tasks'), movement_id: ref('inventory_movements'), quantity: positive, ...times }, 'movement_id'),
+  ward_incurred_orders: table({ task_id: ref('ward_tasks'), order_id: order }, 'task_id', 'order_id'),
+  ward_bed_days: table({ admission_id: admission, business_day: column(z.iso.date()), order_id: order }, 'admission_id, business_day', 'order_id'),
+  ward_specimen_dispatches: table({ order_id: order, tube: text, sent_by: text, ...times }, 'order_id'),
+  ward_surgery_plans: table({ id: ref('surgery_requests'), notice: frozen }),
+  ward_surgery_preparations: table({ request_id: ref('surgery_requests'), kind: choice('nursing', 'consent'), document: frozen, signed_by: text, ...times }, 'request_id, kind'),
+  ward_surgery_stages: table({ request_id: ref('surgery_requests'), stage: choice('planned', 'ad-hoc-pci'), order_id: order, parent_execution_id: optional(ref('surgery_executions')), completed_execution_id: optional(ref('surgery_executions')), version }, 'request_id, stage', 'order_id'),
+  ward_surgery_supplies: table({ stage_id: ref('ward_surgery_stages'), reservation_id: ref('material_reservations'), planned: boolean }, 'reservation_id'),
+  ward_material_corrections: table({ use_id: ref('material_uses'), quantity: positive, movement_id: ref('inventory_movements'), reason: text, ...times }, 'movement_id'),
+  ward_surgery_charges: table({ stage_id: ref('ward_surgery_stages'), order_id: order, purpose: choice('medication', 'nursing', 'report') }, 'order_id'),
+  ward_chart_revisions: revisions('ward_chart_revisions', 'admission_id', { admission_id: admission, front_page: frozen, submitted_by: text }),
+  ward_coding_reviews: table({ revision_id: ref('ward_chart_revisions'), reviewed_by: text, coding: frozen, ...times }, 'revision_id'),
 } satisfies Record<string, TableDefinition>;
 
 export type Entity = keyof typeof tables;
@@ -138,6 +155,7 @@ export const entityNames = Object.keys(tables) as Entity[];
 export const billingEntities = ['charge_sources', 'billing_previews', 'billing_attempts', 'billing_recoveries', 'billing_releases', 'billing_settlements'] as const satisfies readonly Entity[];
 export const pharmacyEntities = ['prescription_signatures', 'prescription_directions', 'prescription_withdrawals', 'inventory_lot_quarantines'] as const satisfies readonly Entity[];
 export const labEntities = ['lab_drafts', 'lab_requests'] as const satisfies readonly Entity[];
+export const wardEntities = ['ward_certificates', 'ward_referrals', 'ward_transfer_tasks', 'ward_order_directions', 'ward_tasks', 'ward_deliveries', 'ward_incurred_orders', 'ward_bed_days', 'ward_specimen_dispatches', 'ward_surgery_plans', 'ward_surgery_preparations', 'ward_surgery_stages', 'ward_surgery_supplies', 'ward_material_corrections', 'ward_surgery_charges', 'ward_chart_revisions', 'ward_coding_reviews'] as const satisfies readonly Entity[];
 
 export const editable = {
   patients: ['display_name', 'birth_date'], encounters: ['active_practitioner_role', 'status'], consultations: ['reply_pending'],
@@ -146,6 +164,7 @@ export const editable = {
   prescriptions: ['status'], inpatient_admissions: ['status', 'ward'], bed_occupancies: ['released_at'],
   surgery_requests: ['status'], material_reservations: ['status'],
   lab_drafts: ['items'],
+  ward_transfer_tasks: ['status'], ward_tasks: ['status'], ward_surgery_stages: ['completed_execution_id'],
   patient_reply_runs: ['attempt', 'status', 'provider', 'model', 'endpoint_hash', 'effort', 'error_code'],
   agent_model_calls: ['status', 'input_tokens', 'output_tokens', 'cache_read', 'cache_write', 'duration_ms'],
 } as const satisfies { [Name in Entity]?: readonly (keyof EntityRow<Name>)[] };
@@ -182,6 +201,11 @@ export function initializeSchema(exec: (sql: string) => void): void {
   }
   exec(`CREATE UNIQUE INDEX IF NOT EXISTS one_primary_diagnosis ON diagnosis_confirmations (${isolation}, revision_id) WHERE is_primary = 1`);
   exec(`CREATE UNIQUE INDEX IF NOT EXISTS one_occupied_bed ON bed_occupancies (${isolation}, bed) WHERE released_at IS NULL`);
+  initializeWardIndexes(exec);
+}
+
+export function initializeWardIndexes(exec: (sql: string) => void) {
+  exec(`CREATE UNIQUE INDEX IF NOT EXISTS one_bed_per_admission ON bed_occupancies (${isolation}, admission_id) WHERE released_at IS NULL`);
 }
 
 export function initializeEntity(exec: (sql: string) => void, name: Entity) {

@@ -176,6 +176,10 @@ export function validateReferences(pack: HospitalDataPack) {
   for (const service of catalog.services) indexBy(service.analytes, codingKey, 'services.analytes');
   for (const procedure of catalog.procedures) requireCodes('services', procedure.preopServices, 'preopServices');
   if (pack.knowledge) {
+    for (const alias of pack.knowledge.pharmacy?.indicationAliases ?? []) {
+      reference(entries.diagnoses, codingKey(alias.diagnosis), 'pharmacy.indicationAliases');
+      if (alias.equivalent.codeSystem !== pack.knowledge.pharmacy?.indicationCodeSystem) throw new DataPackError('INVALID_REFERENCE', 'pharmacy.indicationAliases.equivalent');
+    }
     const lotKeys = new Set<string>();
     for (const lot of pack.knowledge.pharmacy?.openingStock ?? []) {
       for (const code of lot.medicationCodes) {
@@ -188,6 +192,22 @@ export function validateReferences(pack: HospitalDataPack) {
     }
     indexBy(pack.knowledge.guidelineTopics, item => item.id, 'guidelineTopics');
     indexBy(pack.knowledge.orderSetTemplates, item => item.id, 'orderSetTemplates');
+    const inpatient = pack.knowledge.inpatient;
+    if (inpatient) {
+      const nursing = (code: Coding) => {
+        if (reference(entries.services, codingKey(code), 'inpatient.nursing').kind !== 'nursing') throw new DataPackError('INVALID_REFERENCE', 'inpatient.nursing');
+      };
+      nursing(inpatient.bedDay);
+      if (!Object.keys(inpatient.schedules).length || ['ONCE', 'PRN'].some(key => Object.hasOwn(inpatient.schedules, key))) throw new DataPackError('INVALID_PACK', 'inpatient.schedules');
+      for (const lot of indexBy(inpatient.materialStock, lot => JSON.stringify([codingKey(lot.item), lot.lotNumber]), 'inpatient.materialStock').values()) reference(entries.materials, codingKey(lot.item), 'inpatient.materialStock');
+      for (const procedure of indexBy(inpatient.procedures, proc => codingKey(proc.item), 'inpatient.procedures').values()) {
+        reference(entries.procedures, codingKey(procedure.item), 'inpatient.procedures');
+        if (procedure.nursing) nursing(procedure.nursing);
+        const report = procedure.reportService && reference(entries.services, codingKey(procedure.reportService), 'inpatient.reportService');
+        if (procedure.kind === 'angiography' && !report?.requiresProcedure || procedure.ffr && !report?.analytes.some(leaf => codingKey(leaf) === codingKey(procedure.ffr!) && leaf.unit === '1')) throw new DataPackError('INVALID_REFERENCE', 'inpatient.reportService');
+        if (procedure.postoperativeSetId && !pack.knowledge.orderSetTemplates.some(set => set.id === procedure.postoperativeSetId && set.scope === 'postop')) throw new DataPackError('INVALID_REFERENCE', 'inpatient.postoperativeSetId');
+      }
+    }
     for (const template of pack.knowledge.orderSetTemplates) {
       requireCodes('diagnoses', template.triggerDiagnoses, 'triggerDiagnoses');
       requireCodes('diagnoses', template.hardContraindications, 'hardContraindications');

@@ -16,7 +16,7 @@ it.each([baseline, baselineV2, billingBaseline, patientBaseline])('imports $form
   try {
     await store.importLogicalSnapshot(previous);
     const upgraded = await store.exportLogicalSnapshot(previous.workspaceId);
-    expect(upgraded.format).toBe('clinmesh.snapshot.v6');
+    expect(upgraded.format).toBe('clinmesh.snapshot.v7');
     expect(upgraded.tables.slice(0, previous.tables.length)).toEqual(previous.tables);
     expect(upgraded.tables.slice(previous.tables.length).filter(table => table.name !== 'inventory_lot_quarantines').every(table => !table.rows.length)).toBe(true);
     const quarantines = upgraded.tables.find(table => table.name === 'inventory_lot_quarantines')!.rows;
@@ -36,18 +36,21 @@ const completePatient = { ...completeBilling, format: 'clinmesh.snapshot.v4', sh
   ...completeBilling.tables.map(table => table.name === 'consultation_turns' ? { ...table, rows: [...table.rows, patientDelta.question] } : table), ...patientDelta.tables,
 ] };
 const completeLab = { ...completePatient, format: 'clinmesh.snapshot.v5', sha256: labDelta.sha256, tables: [...completePatient.tables, ...labDelta.tables] };
+const completePharmacy = { ...completeLab, format: 'clinmesh.snapshot.v6', sha256: 'f66d80a5b1f82410aae556bbc0007a6e69951817c401a9b71a846215141442f8', tables: [...completeLab.tables,
+  ...['prescription_signatures', 'prescription_directions', 'prescription_withdrawals'].map(name => ({ name, rows: [] })),
+  { name: 'inventory_lot_quarantines', rows: [{ workspace_id: '0192eaf2-cb03-7000-8000-000000000001', epoch: '0192eaf2-cb03-7000-8000-000000000002', id: '0192eaf2-cb03-7000-8000-000000000036', source_version: 'clinmesh.snapshot.v5', source_sha256: completeLab.sha256, quantity_at_migration: -3, ledger_fingerprint: '3a54be80-1b67-5634-ab6b-00b08e8cc70d' }] }] };
 
-it.each([completeBilling, completePatient, completeLab])('restores all nonempty tables and both Pi sessions from the published $format', async previous => {
+it.each([completeBilling, completePatient, completeLab, completePharmacy])('restores all previous facts and both Pi sessions from the published $format', async previous => {
   const store = createNodeSqliteStore({ dbPath: ':memory:' });
   try {
     await store.importLogicalSnapshot(previous);
     const current = await store.exportLogicalSnapshot(previous.workspaceId);
     expect(current.tables.slice(0, previous.tables.length)).toEqual(previous.tables);
-    const missing = [...(previous.format === 'clinmesh.snapshot.v3' ? ['patient_reply_runs', 'agent_model_calls'] : []), ...(previous.format !== 'clinmesh.snapshot.v5' ? ['lab_drafts', 'lab_requests'] : []), 'prescription_signatures', 'prescription_directions', 'prescription_withdrawals', 'inventory_lot_quarantines'];
-    expect(current.tables.slice(previous.tables.length).map(table => table.name)).toEqual(missing);
-    expect(current.tables.slice(previous.tables.length, -1).every(table => !table.rows.length)).toBe(true);
-    expect(current.tables.at(-1)?.rows).toMatchObject([{ source_sha256: previous.sha256, source_version: previous.format, quantity_at_migration: -3 }]);
+    const missing = completePharmacy.tables.slice(previous.tables.length).map(table => table.name);
+    expect(current.tables.slice(previous.tables.length, completePharmacy.tables.length).map(table => table.name)).toEqual(missing);
+    expect(current.tables.slice(previous.tables.length).filter(table => table.name !== 'inventory_lot_quarantines').every(table => !table.rows.length)).toBe(true);
+    if (previous !== completePharmacy) expect(current.tables.find(table => table.name === 'inventory_lot_quarantines')?.rows).toMatchObject([{ source_sha256: previous.sha256, source_version: previous.format, quantity_at_migration: -3 }]);
     expect(current.pi).toEqual(previous.pi);
-    expect(current.format).toBe('clinmesh.snapshot.v6');
+    expect(current.format).toBe('clinmesh.snapshot.v7');
   } finally { await store.close(); }
 });

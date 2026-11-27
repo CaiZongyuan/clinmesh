@@ -10,7 +10,8 @@ export const practitionerRole = z.object({ id: z.string(), name: localizedName, 
 const organization = z.object({ practitionerRoles: z.array(practitionerRole) });
 export type Access = { capabilities?: readonly string[]; visitorOnly?: boolean };
 export type Actor = ReturnType<typeof resolveActor>;
-export type CommandContext = { tx: StoreTx; at: StoreScope; actor: Actor; targetId: string; expectedVersion: number; virtualAt: string; recordedAt: string };
+export type EncounterWrite = { encounterId: string; kind: 'clinical' | 'complete' | 'diagnose' } | { encounterId: string; kind: 'accept-investigation'; orderId: string };
+export type CommandContext = { tx: StoreTx; at: StoreScope; actor: Actor; targetId: string; expectedVersion: number; virtualAt: string; recordedAt: string; guardEncounter?(write: EncounterWrite): void };
 export type Route = { name: string; method: 'GET' | 'PUT' | 'POST'; path: string; access: Access; moduleId?: string };
 
 export function resolveActor(reader: StoreReader, credential: Credential, now: string) {

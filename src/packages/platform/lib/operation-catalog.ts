@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { StorePort, StoreReader } from '../../store';
-import { authorize, commandEnvelope, executeCommand, resolveActor, type Actor, type CommandContext, type Route } from './commands';
+import { authorize, commandEnvelope, executeCommand, resolveActor, type Actor, type CommandContext, type EncounterWrite, type Route } from './commands';
 import { CoreError, type Credential } from './visitor-gate';
 
 export type ReadContext = { reader: StoreReader; actor: Actor; targetId: string };
@@ -10,11 +10,13 @@ type Definition = Route & { input: z.ZodType; output: z.ZodType; invoke(call: Ca
 
 export class OperationCatalog {
   readonly #entries: Definition[] = [];
+  guardEncounter?: (context: CommandContext, write: EncounterWrite) => void;
   constructor(private readonly moduleId?: string) {}
   get entries(): readonly Definition[] { return this.#entries; }
 
   contribute(moduleId: string | undefined, register: (catalog: OperationCatalog) => void) {
     const contribution = new OperationCatalog(moduleId);
+    contribution.guardEncounter = this.guardEncounter;
     register(contribution);
     for (const entry of contribution.entries) this.add(entry);
   }
@@ -38,6 +40,7 @@ export class OperationCatalog {
     disclosure?: { firstOutput: z.ZodType<Result>; prepare(actor: Actor, input: z.output<z.ZodObject<Fields>>): Promise<{ value: Prepared; firstResponse: Record<string, string> }> }) {
     route = { ...route, moduleId: this.moduleId ?? route.moduleId };
     const input = commandEnvelope.extend(fields).strict();
+    const guardEncounter = this.guardEncounter;
     this.add({ ...route, input, output: disclosure ? z.union([disclosure.firstOutput, output]) : output, async invoke({ store, credential, targetId, body, providerHeaders }) {
       const actor = await store.read(reader => resolveActor(reader, credential, new Date().toISOString()));
       authorize(actor, route);
@@ -46,6 +49,7 @@ export class OperationCatalog {
       const prepared = await disclosure?.prepare(actor, args);
       let firstResponse: Result | undefined;
       const execution = await executeCommand(store, credential, route, targetId, parsed as z.infer<typeof commandEnvelope>, async context => {
+        if (guardEncounter) context.guardEncounter = write => guardEncounter(context, write);
         const receipt = output.parse(await apply(context, args, prepared?.value as Prepared, providerHeaders));
         if (disclosure && prepared) firstResponse = disclosure.firstOutput.parse({ ...z.record(z.string(), z.json()).parse(receipt), ...prepared.firstResponse });
         return receipt;

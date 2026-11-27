@@ -25,10 +25,10 @@ export function CoreWorkbench({ workspace, language, languageSelect, panels, dra
   const [resetPack, setResetPack] = useState(workspace.manifest.packId);
   const style = useThemeFont();
   const stations = Object.entries(builtinStations).filter(([name]) => workspace.operations.some(operation => operation.name === name));
-  const clinicAvailable = !stations.length || workspace.operations.some(operation => operation.name === 'encounter.start' || operation.name === 'record.sign');
+  const clinicAvailable = !stations.length || workspace.operations.some(operation => ['encounter.start', 'record.sign', 'workspace.reset', 'billing.account'].includes(operation.name));
   const stationOptions = [...(clinicAvailable ? [{ value: 'clinic', label: text('Clinical workbench', '临床工作台') }] : []), ...stations.map(([value, station]) => ({ value, label: station.name[language] }))];
   const [preference, setPreference] = useState({ role: '', value: '' });
-  const selected = stationOptions.find(option => preference.role === workspace.roleId && option.value === preference.value) ?? stationOptions[0]!;
+  const selected = stationOptions.find(option => (preference.role === workspace.roleId || preference.value === 'ward.directory') && option.value === preference.value) ?? stationOptions[0]!;
   const Station = stations.find(([name]) => name === selected.value)?.[1].component;
   const listKey = scopeKey(workspace, 'encounters');
   const encounters = useQuery({ queryKey: listKey, enabled: !Station, queryFn: ({ signal }) => api('/api/his/encounters', z.array(summarySchema), { signal }) });
@@ -91,7 +91,7 @@ export function CoreWorkbench({ workspace, language, languageSelect, panels, dra
     <ModelSettings language={language}/><Dialog title={text('Workspace settings', '工作台设置')} triggers={[workspace.manifest.name[language]]} close={text('Close settings', '关闭设置')}>{preferences}</Dialog></div>
   </>} queue={!Station && <section className="workbench-queue"><h2>{text('Fixed cases', '固定病例')}</h2>{workspace.cases.map(item => <div key={item.id}>
     <strong>{item.demographics.name}</strong><span>{item.encounterClass === 'outpatient' ? text('Outpatient', '门诊') : text('Inpatient', '住院')}</span>
-    <Button disabled={change.isPending || !allowed('encounter.start')} onClick={() => change.mutate({ name: 'encounter.start', targetId: item.id, version: 0, fields: { language } })}>{text('Start', '开诊')} · {item.demographics.name}</Button>
+    {item.encounterClass === 'inpatient' && allowed('ward.directory') ? <Button onClick={() => setPreference({ role: workspace.roleId, value: 'ward.directory' })}>{text('Open ward', '住院登记')} · {item.demographics.name}</Button> : <Button disabled={change.isPending || !allowed('encounter.start')} onClick={() => change.mutate({ name: 'encounter.start', targetId: item.id, version: 0, fields: { language } })}>{text('Start', '开诊')} · {item.demographics.name}</Button>}
   </div>)}<h2>{text('Encounters', '已开就诊')}</h2>{encounters.data?.map(item => <Button key={item.id} aria-current={item.id === encounterId ? 'true' : undefined} onClick={() => selectEncounter(item.id)}>{item.name} · {item.id.slice(-6)} · {item.status === 'active' ? text('Active', '进行中') : text('Completed', '已完诊')}</Button>)}</section>}>
     {change.isError && <div role="alert"><p>{errorMessage(change.error, language)}</p>{change.error.message.startsWith('LLM_') && <Button onClick={() => useModelSettings.setState({ open: true })}>{text('Configure connection', '配置连接')}</Button>}</div>}
     {encounters.isError && <p role="alert">{errorMessage(encounters.error, language)}</p>}

@@ -63,16 +63,25 @@ async function signedVisit(client: ReturnType<typeof visitor>, name: string) {
   const { epoch, cases, diagnoses, tabs } = await client.workspace();
   expect(tabs.map(tab => tab.id)).toEqual(expect.arrayContaining(['lab', 'billing']));
   const patient = cases.find(item => item.demographics.name === name)!;
-  const encounter = await client.write(`/api/his/cases/${patient.id}/start-encounter`, epoch, 0);
+  const inpatient = patient.encounterClass === 'inpatient';
+  const encounter = inpatient ? await client.write(`/api/his/ward/${patient.id}/register`, epoch, 0, { ward: 'heart-ward' }) : await client.write(`/api/his/cases/${patient.id}/start-encounter`, epoch, 0);
   const id = z.uuidv7().parse(encounter.encounterId);
+  if (inpatient) {
+    await client.role('ward-nurse');
+    await client.write(`/api/his/ward/${id}/bed.assign`, epoch, 1, { bed: 'heart-01' });
+    await client.role('cardiologist');
+  }
   const path = `/api/his/encounters/${id}`;
   const { template } = encounterViewSchema.parse(await client.read(path));
   const fields = Object.fromEntries(template.filter(field => field.required).map(field => [field.id, `Synthetic ${field.id}`]));
   await client.write(`${path}/clinical-record/draft`, epoch, 1, { expectedDraftVersion: 0, fields }, 'PUT');
   await client.write(`${path}/clinical-record/sign`, epoch, 2);
   const diagnosis = diagnoses[0]!;
-  await client.write(`${path}/diagnosis/draft`, epoch, 3, { diagnoses: [{ codeSystem: diagnosis.codeSystem, code: diagnosis.code, primary: true }] }, 'PUT');
-  await client.write(`${path}/diagnosis/confirm`, epoch, 4);
+  if (inpatient) await client.write(`/api/his/ward/${id}/diagnose`, epoch, 2, { diagnoses: [{ codeSystem: diagnosis.codeSystem, code: diagnosis.code, primary: true, poa: 'Y', ordinal: 1 }] });
+  else {
+    await client.write(`${path}/diagnosis/draft`, epoch, 3, { diagnoses: [{ codeSystem: diagnosis.codeSystem, code: diagnosis.code, primary: true }] }, 'PUT');
+    await client.write(`${path}/diagnosis/confirm`, epoch, 4);
+  }
   const account = async () => accountSchema.parse(await client.read(`${path}/billing`));
   const funds = async (name: string, input: Record<string, unknown>, status = 200) => client.write(`${path}/billing/${name}`, epoch, (await account()).version, input, 'POST', status);
   return { id, account, funds, path, epoch };
@@ -118,7 +127,8 @@ async function inpatientLab(http: Http) {
   await funds('inpatient.deposit.confirm', { commitToken: preview.commitToken });
   expect(await account()).toMatchObject({ cashMinor: 800, netMinor: 800, balanceMinor: 0 });
   await client.role('cardiologist');
-  await renal.operate('accept', 1);
+  await client.role('ward-nurse');
+  await client.write(`/api/his/ward/${id}/investigation.dispatch`, (await client.workspace()).epoch, 3, { orderIds: [renal.order.id] });
   await client.role('payer-reviewer');
   expect((await account()).incurredSources).toEqual([]);
   await client.role('cardiologist');

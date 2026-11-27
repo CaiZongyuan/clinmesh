@@ -125,6 +125,7 @@ export function saveDiagnoses(context: CommandContext, diagnoses: Diagnosis[]) {
 
 export function confirmDiagnoses(context: CommandContext) {
   const { tx, at, targetId } = context;
+  context.guardEncounter?.({ encounterId: targetId, kind: 'diagnose' });
   const version = editEncounter(context);
   const { diagnoses, diagnosisRevisions } = diagnosisState(tx, at, targetId);
   if (diagnoses.filter(item => item.primary).length !== 1) throw new CoreError(409, 'ONE_PRIMARY_DIAGNOSIS_REQUIRED');

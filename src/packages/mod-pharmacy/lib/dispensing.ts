@@ -30,13 +30,19 @@ function stockDate(reader: StoreReader, at: StoreScope, virtualTime: string) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(virtualTime));
 }
 
-function availableLots(reader: StoreReader, at: StoreScope, orderId: string, date: string) {
-  const item = reader.get(at, 'clinical_orders', orderId)!;
-  return reader.list(at, 'inventory_lots', { catalog_item_id: item.catalog_item_id }).flatMap(lot => {
+export function availableStock(reader: StoreReader, at: StoreScope, catalogItemId: string, date: string) {
+  return reader.list(at, 'inventory_lots', { catalog_item_id: catalogItemId }).flatMap(lot => {
     if (lot.expiry_date < date || reader.get(at, 'inventory_lot_quarantines', lot.id)) return [];
     const available = reader.list(at, 'inventory_movements', { lot_id: lot.id }).reduce((total, movement) => total + movement.quantity_delta, 0);
     return available > 0 ? [{ lotId: lot.id, lotNumber: lot.lot_number, expiryDate: lot.expiry_date, unit: lot.unit, available }] : [];
   }).sort((first, second) => first.expiryDate.localeCompare(second.expiryDate) || first.lotNumber.localeCompare(second.lotNumber));
+}
+
+export function takeStock(tx: StoreTx, at: StoreScope, lotId: string, quantity: number, reason: string, virtualAt: string, recordedAt: string) {
+  const movementId = v7();
+  try { tx.insert(at, 'inventory_movements', { id: movementId, lot_id: lotId, quantity_delta: -z.int().positive().parse(quantity), reason, virtual_at: virtualAt, recorded_at: recordedAt }); }
+  catch (error) { if (error instanceof StoreInsufficientInventoryError) throw new CoreError(409, 'PHARMACY_INSUFFICIENT_STOCK'); throw error; }
+  return movementId;
 }
 
 function releaseIssue(reader: StoreReader, at: StoreScope, rx: ReturnType<typeof readPrescription>, billing?: PharmacyBillingPort) {
@@ -52,7 +58,7 @@ export function dispenseQueue(reader: StoreReader, at: StoreScope, virtualAt: st
     if (rx.status !== 'signed' || releaseIssue(reader, at, rx, billing)) return [];
     const encounter = outpatient(reader, at, rx.encounterId);
     return [{ prescriptionId: rx.prescriptionId, encounterId: rx.encounterId, patientName: reader.get(at, 'patients', encounter.patient_id)!.display_name,
-      version: rx.version, allergies: allergiesFor(reader, at, encounter), lines: rx.lines.map(line => ({ ...line, lots: availableLots(reader, at, line.orderId, date) })) }];
+      version: rx.version, allergies: allergiesFor(reader, at, encounter), lines: rx.lines.map(line => ({ ...line, lots: availableStock(reader, at, reader.get(at, 'clinical_orders', line.orderId)!.catalog_item_id, date) })) }];
   });
 }
 
@@ -66,7 +72,7 @@ export function dispensePrescription(context: CommandContext, selections: z.infe
   const date = stockDate(tx, at, virtualAt);
   const allocations: z.infer<typeof dispenseReceipt>['allocations'] = [];
   for (const line of rx.lines) {
-    const lots = availableLots(tx, at, line.orderId, date);
+    const lots = availableStock(tx, at, tx.get(at, 'clinical_orders', line.orderId)!.catalog_item_id, date);
     const selected = selections?.filter(item => item.orderId === line.orderId);
     if (selected && (new Set(selected.map(item => item.lotId)).size !== selected.length || selected.reduce((quantity, item) => quantity + item.quantity, 0) !== line.quantity ||
       selected.some(item => !lots.some(lot => lot.lotId === item.lotId)))) throw new CoreError(409, 'PHARMACY_LOT_MISMATCH');
@@ -75,11 +81,9 @@ export function dispensePrescription(context: CommandContext, selections: z.infe
     for (const lot of lots) {
       const quantity = selected ? selected.find(item => item.lotId === lot.lotId)?.quantity ?? 0 : Math.min(remaining, lot.available);
       if (!quantity) continue;
-      const movementId = v7();
+      const movementId = takeStock(tx, at, lot.lotId, quantity, 'dispense', virtualAt, recordedAt);
       const dispenseId = v7();
       const times = { virtual_at: virtualAt, recorded_at: recordedAt };
-      try { tx.insert(at, 'inventory_movements', { id: movementId, lot_id: lot.lotId, quantity_delta: -quantity, reason: 'dispense', ...times }); }
-      catch (error) { if (error instanceof StoreInsufficientInventoryError) throw new CoreError(409, 'PHARMACY_INSUFFICIENT_STOCK'); throw error; }
       tx.insert(at, 'dispenses', { id: dispenseId, prescription_order_id: binding!.id, movement_id: movementId, quantity, ...times });
       allocations.push({ orderId: line.orderId, lotId: lot.lotId, lotNumber: lot.lotNumber, quantity, dispenseId });
       remaining -= quantity;
