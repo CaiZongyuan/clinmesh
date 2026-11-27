@@ -448,8 +448,8 @@ describe('DSAP Slice S8: Timing Hooks, Unified ClinicalPromptCard, Historical Re
     expect(openBundle.llmInvocationCount).toBe(0)
     expect(modelCalls).toHaveLength(0)
 
-    // Bedside missing-item prompt (`Killip 心功能分级：没问到`) and rule-out checklist appear
-    expect(openBundle.cards.some(c => c.category === 'missing-fact' && c.summary === 'Killip 心功能分级：没问到')).toBe(true)
+    // 门诊不出床旁缺项卡；排雷清单照常出现
+    expect(openBundle.cards.some(c => c.category === 'missing-fact')).toBe(false)
     expect(openBundle.cards.some(c => c.category === 'rule-out-checklist' && c.packId === 'coronary-cad')).toBe(true)
     expect(openBundle.cards.some(c => c.category === 'rule-out-checklist' && c.packId === 'synthetic-test-syndrome')).toBe(true)
 

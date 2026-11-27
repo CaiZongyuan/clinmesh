@@ -5,6 +5,7 @@ import {
   inpatientVitalSignsValuesSchema,
   outpatientRiskAssessmentResponseSchema,
   type BedsideQuestionnaireItemState,
+  type BedsidePackMissing,
   type BedsideQuestionnaireState,
   type BedsideQuestionnaireValueInput,
   type ClinicalRiskAssessmentFieldsInput,
@@ -651,6 +652,13 @@ export class ClinicalScoreService {
       temperatureC: parsed.temperatureC,
       ...(parsed.weightKg === undefined ? {} : { weightKg: parsed.weightKg }),
     }
+  }
+
+  /** 已由首份已签 12 导联心电图回答、床旁不再算缺项的项目代码。 */
+  satisfiedBedsideCodes(context: RepositoryContext, subjectId: string): string[] {
+    return this.latestRiskAssessment(context, subjectId).effectiveStSegmentDeviation?.source === 'ecg-report'
+      ? ['st-segment-deviation']
+      : []
   }
 
   latestRiskAssessment(
@@ -1413,6 +1421,29 @@ export class ClinicalScoreService {
       })
     }
 
+    const packMissing: BedsidePackMissing[] = []
+    if (options.subjectKind === 'inpatient') {
+      const satisfiedCodes = this.satisfiedBedsideCodes(context, options.subjectId)
+      for (const effective of activeSummary?.activePacks ?? []) {
+        const entry = activeSummary?.entries.find(item => item.packId === effective.pack.manifest.id)
+        const stage = effective.pack.stages.find(item => item.id === entry?.currentStageId)
+        const stageCodes = stage?.questionnaireItemCodes
+        const missingItems = (effective.pack.questionnaireItems ?? [])
+          .filter(item => stageCodes === undefined || stageCodes.length === 0 || stageCodes.includes(item.code))
+          .filter(item => !satisfiedCodes.includes(item.code))
+          .filter(item => itemsByCode.get(normalizeBedsideItemCode(item.code))?.presence === 'not-asked')
+          .map(item => ({ code: item.code, labelZh: item.labelZh }))
+        if (missingItems.length > 0) {
+          packMissing.push({
+            missingCount: missingItems.length,
+            missingItems,
+            packId: effective.pack.manifest.id,
+            titleZh: effective.pack.manifest.titleZh,
+          })
+        }
+      }
+    }
+
     const revision = Math.max(legacyRiskAssessment.revision, answerRow?.revision ?? 0)
     const recordedAtCandidates = [legacyRiskAssessment.recordedAt, answerRow?.recorded_at].filter((v): v is string => typeof v === 'string').sort()
     return bedsideQuestionnaireStateSchema.parse({
@@ -1420,6 +1451,7 @@ export class ClinicalScoreService {
       encounterVersion: options.encounterVersion,
       items: [...itemsByCode.values()],
       legacyRiskAssessment,
+      packMissing,
       recordedAt: recordedAtCandidates.at(-1) ?? null,
       revision,
       subjectId: options.subjectId,

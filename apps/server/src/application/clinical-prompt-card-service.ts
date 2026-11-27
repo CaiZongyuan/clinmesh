@@ -981,7 +981,11 @@ export class ClinicalPromptCardService {
       encounterIdByRecordId: encounterMap,
       evaluatedPacks,
       ledger,
+      subjectKind: input.subject.kind,
       ...(qualityCheck === undefined ? {} : { qualityCheck }),
+      satisfiedBedsideCodes: input.subject.kind === 'inpatient'
+        ? this.#clinicalScores.satisfiedBedsideCodes(input.context, input.subject.id)
+        : [],
       ...(input.query.selectedTemplateId === undefined ? {} : { selectedTemplateId: input.query.selectedTemplateId }),
       templateClassesByTemplateId,
       timing: input.timing,

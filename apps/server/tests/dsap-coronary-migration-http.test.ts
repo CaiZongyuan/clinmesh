@@ -28,6 +28,7 @@ import {
 } from '@clinmesh/contracts/his'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientFullClinicalResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { clinicalPromptBundleSchema } from '@clinmesh/contracts/clinical-prompt-cards'
 import { pciCaseSourceResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import {
   orderSetDraftBundleSchema,
@@ -43,6 +44,7 @@ import {
   preparePciPaymentDrgFixture,
   type PciPaymentDrgFixture,
 } from './fixtures/pci-payment-drg.ts'
+import { insertSyntheticEcgReport } from './fixtures/synthetic-ecg-report.ts'
 
 const SYNTHETIC_PACK_DIR = resolve(import.meta.dirname, 'fixtures/disease-packs/synthetic-test-syndrome-pack')
 
@@ -480,6 +482,8 @@ describe('Coronary Migration (S5): Data Pack, Hospital Separation, Bedside Quest
     expect(smokingItems[0]!.packIds).toEqual(['coronary-cad', 'synthetic-test-syndrome'])
     expect(smokingItems[0]!.presence).toBe('not-asked')
     expect(smokingItems[0]!.valueText).toBe('没问到')
+    // 床旁缺项汇总只在住院填充，门诊返回空
+    expect(qBefore.packMissing).toEqual([])
 
     // Ledger emits active pack unrecorded questionnaire items as not-asked & ineligible
     const ledgerBefore = await fixture.read(
@@ -523,6 +527,46 @@ describe('Coronary Migration (S5): Data Pack, Hospital Separation, Bedside Quest
     )
     expect(scores.riskAssessment.values.smokingStatus).toBe('current')
     expect(scores.riskAssessment.values.killipClass).toBe('I')
+  })
+
+  it('D2b: 住院床旁状态按包汇总缺项并与提示卡口径一致，首份已签心电图有 ST 结论时 ST 项不算缺', async () => {
+    const { fixture } = await setupFixture()
+    const stay = await fixture.admitSyntheticCase(['I25.103'], 'bed-general-2')
+    const initialStage = await fixture.read('inpatient-doctor', `${stay.path}/disease-packs`, diseasePackRuntimeBundleSchema)
+    expect(initialStage.packs.find(p => p.packId === 'coronary-cad')?.currentStageId).toBe('initial-visit')
+
+    const missingCodesOf = (state: Awaited<ReturnType<typeof bedsideQuestionnaireStateSchema.parse>>) =>
+      state.packMissing.find(entry => entry.packId === 'coronary-cad')?.missingItems.map(item => item.code) ?? []
+    const promptCodes = async () => (await fixture.read(
+      'inpatient-doctor',
+      `${stay.path}/clinical-prompts?timing=encounter-open`,
+      clinicalPromptBundleSchema,
+    )).cards.filter(card => card.category === 'missing-fact' && card.packId === 'coronary-cad')
+      .flatMap(card => card.suggestions.flatMap(suggestion => suggestion.itemCodes ?? [])).sort()
+
+    const before = await fixture.read('inpatient-doctor', `${stay.path}/bedside-questionnaire`, bedsideQuestionnaireStateSchema)
+    const entry = before.packMissing.find(item => item.packId === 'coronary-cad')!
+    expect(entry.missingCount).toBe(entry.missingItems.length)
+    expect(entry.titleZh.length).toBeGreaterThan(0)
+    expect(missingCodesOf(before)).toEqual(expect.arrayContaining(['killip-class', 'st-segment-deviation']))
+    expect(await promptCodes()).toEqual([...missingCodesOf(before)].sort())
+
+    const scope = currentScope(fixture)
+    insertSyntheticEcgReport(fixture, {
+      anteriorText: 'V2-V5 导联 ST 段水平型压低 0.15 mV',
+      caseId: stay.admissionId,
+      conclusion: '窦性心律，前壁导联 ST 段压低。',
+      encounterId: stay.admissionId,
+      epoch: scope.epoch,
+      interpretation: 'abnormal',
+      patientId: stay.patientId,
+      workspaceId: scope.workspaceId,
+    })
+    const after = await fixture.read('inpatient-doctor', `${stay.path}/bedside-questionnaire`, bedsideQuestionnaireStateSchema)
+    expect(missingCodesOf(after)).not.toContain('st-segment-deviation')
+    expect(missingCodesOf(after)).toContain('killip-class')
+    expect(after.packMissing.find(item => item.packId === 'coronary-cad')!.missingCount).toBe(entry.missingCount - 1)
+    expect(await promptCodes()).toEqual([...missingCodesOf(after)].sort())
   })
 
   it('AC14 & AC23: populates source pack provenance on all 8 specialist tools and tracks full NSTEMI -> PCI -> discharge -> 1-month outpatient follow-up journey with longitudinal LDL-C', async () => {

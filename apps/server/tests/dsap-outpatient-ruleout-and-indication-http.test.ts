@@ -718,7 +718,7 @@ describe('DSAP Slice S9: Outpatient Rule-Out, Pack Exit & Silence, Confusable Pa
     expect(inapplicableCard?.summary).toContain('超出本包范围，请医生自行决策')
     expect(inapplicableCard?.detail).toContain('妊娠期')
     expect(pregPrompts.cards.some(c => c.category === 'rule-out-checklist')).toBe(true)
-    expect(pregPrompts.cards.some(c => c.category === 'missing-fact')).toBe(true)
+    expect(pregPrompts.cards.some(c => c.category === 'missing-fact')).toBe(false)
     expect(pregPrompts.cards.some(c => ['recommendation', 'order-set-risk', 'guideline-advice'].includes(c.category))).toBe(false)
 
     // Verify coronary-cad clinical.json on disk declares ZERO pointScales (Pending Item #0)

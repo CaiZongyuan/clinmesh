@@ -288,11 +288,24 @@ export const bedsideQuestionnaireItemStateSchema = z.object({
 }).strict()
 export type BedsideQuestionnaireItemState = z.infer<typeof bedsideQuestionnaireItemStateSchema>
 
+export const bedsidePackMissingSchema = z.object({
+  missingCount: z.number().int().positive().max(128),
+  missingItems: z.array(z.object({
+    code: z.string().trim().min(1).max(128),
+    labelZh: z.string().trim().min(1).max(1000),
+  }).strict()).min(1).max(128),
+  packId: z.string().regex(/^[a-z0-9-]{1,64}$/),
+  titleZh: z.string().trim().min(1).max(200),
+}).strict()
+export type BedsidePackMissing = z.infer<typeof bedsidePackMissingSchema>
+
 export const bedsideQuestionnaireStateSchema = z.object({
   encounterId: z.string().min(1).max(64),
   encounterVersion: z.string().min(1).max(64),
   items: z.array(bedsideQuestionnaireItemStateSchema).max(128),
   legacyRiskAssessment: clinicalRiskAssessmentRecordSchema,
+  /** 按已启用专病包汇总的床旁缺项，只住院填充，门诊恒为空。 */
+  packMissing: z.array(bedsidePackMissingSchema).max(32),
   recordedAt: z.iso.datetime({ offset: true }).nullable(),
   revision: z.number().int().nonnegative(),
   subjectId: z.string().min(1).max(64),

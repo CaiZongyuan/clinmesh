@@ -524,6 +524,7 @@ describe('ClinicalPromptCard core engine', () => {
     const ledger = makeLedger([makeFact(), tropFact])
 
     const builtOpen = buildTimingPromptCards({
+      subjectKind: 'inpatient',
       asOf: '2026-08-24T09:00:00Z',
       evaluatedPacks: [
         { effective: packA, entry: {
@@ -591,6 +592,7 @@ describe('ClinicalPromptCard core engine', () => {
 
     // Order-draft-select with DAPT classes emits bleeding risk tag card
     const builtDraft = buildTimingPromptCards({
+      subjectKind: 'outpatient',
       asOf: '2026-08-24T09:00:00Z',
       candidateMedicationClasses: ['antiplatelet-aspirin', 'p2y12'],
       evaluatedPacks: [{
@@ -960,6 +962,7 @@ describe('ClinicalPromptCard core engine', () => {
 
     // 1. Before ECG & troponin: both checks missing + point scale low-risk skip guidance emitted
     const builtInitial = buildTimingPromptCards({
+      subjectKind: 'outpatient',
       asOf: '2026-08-24T09:00:00Z',
       evaluatedPacks: [{ effective: pack, entry: activeEntry, vocabulary: PUBLIC_CONCEPT_VOCABULARY }],
       ledger: makeLedger([dxFact]),
@@ -989,6 +992,7 @@ describe('ClinicalPromptCard core engine', () => {
 
     // 2. After ECG + 1st troponin: ECG done, serial >=2 troponin still missing
     const builtOneTrop = buildTimingPromptCards({
+      subjectKind: 'outpatient',
       asOf: '2026-08-24T10:00:00Z',
       evaluatedPacks: [{ effective: pack, entry: activeEntry, vocabulary: PUBLIC_CONCEPT_VOCABULARY }],
       ledger: makeLedger([dxFact, normalEcg, normalTni1]),
@@ -1009,6 +1013,7 @@ describe('ClinicalPromptCard core engine', () => {
       matchedTriggerIds: [],
     }
     const builtExitedFirst = buildTimingPromptCards({
+      subjectKind: 'outpatient',
       asOf: '2026-08-24T11:30:00Z',
       evaluatedPacks: [{ effective: pack, entry: exitedEntry, exitSummaryAlreadyEmitted: false, vocabulary: PUBLIC_CONCEPT_VOCABULARY }],
       ledger: exitedLedger,
@@ -1019,6 +1024,7 @@ describe('ClinicalPromptCard core engine', () => {
     expect(builtExitedFirst.cards[0]?.detail).toContain('完成心电图及至少 2 次连续正常高敏肌钙蛋白排查后自动退出')
 
     const builtExitedLater = buildTimingPromptCards({
+      subjectKind: 'outpatient',
       asOf: '2026-08-24T12:00:00Z',
       evaluatedPacks: [{ effective: pack, entry: exitedEntry, exitSummaryAlreadyEmitted: true, vocabulary: PUBLIC_CONCEPT_VOCABULARY }],
       ledger: exitedLedger,
@@ -1110,6 +1116,7 @@ describe('ClinicalPromptCard core engine', () => {
     })
 
     const built = buildTimingPromptCards({
+      subjectKind: 'outpatient',
       asOf: '2026-08-24T09:00:00Z',
       evaluatedPacks: [
         { effective: packA, entry: makeActiveEntry('confusable-pack-a', '专病包甲', 'trigger-a'), vocabulary: PUBLIC_CONCEPT_VOCABULARY },
@@ -1188,6 +1195,7 @@ describe('ClinicalPromptCard core engine', () => {
     }
 
     const built = buildTimingPromptCards({
+      subjectKind: 'outpatient',
       asOf: '2026-08-24T09:00:00Z',
       evaluatedPacks: [{ effective: pack, entry: inapplicableEntry, vocabulary: PUBLIC_CONCEPT_VOCABULARY }],
       ledger,
@@ -1200,7 +1208,27 @@ describe('ClinicalPromptCard core engine', () => {
     expect(boundaryCard?.detail).toContain('妊娠合并症不适用本常规路径')
 
     expect(built.cards.some(c => c.category === 'rule-out-checklist')).toBe(true)
-    expect(built.cards.some(c => c.category === 'missing-fact')).toBe(true)
+    // 床旁缺项只在住院提示，门诊不出缺项卡
+    expect(built.cards.some(c => c.category === 'missing-fact')).toBe(false)
+    const inpatientBuilt = buildTimingPromptCards({
+      asOf: '2026-08-24T09:00:00Z',
+      evaluatedPacks: [{ effective: pack, entry: inapplicableEntry, vocabulary: PUBLIC_CONCEPT_VOCABULARY }],
+      ledger,
+      subjectKind: 'inpatient',
+      timing: 'encounter-open',
+    })
+    const missingCards = inpatientBuilt.cards.filter(c => c.category === 'missing-fact')
+    expect(missingCards.length).toBeGreaterThan(0)
+    const satisfiedCodes = missingCards.flatMap(c => c.suggestions.flatMap(s => s.itemCodes)).filter((code): code is string => code !== undefined)
+    const satisfied = buildTimingPromptCards({
+      asOf: '2026-08-24T09:00:00Z',
+      evaluatedPacks: [{ effective: pack, entry: inapplicableEntry, vocabulary: PUBLIC_CONCEPT_VOCABULARY }],
+      ledger,
+      satisfiedBedsideCodes: satisfiedCodes,
+      subjectKind: 'inpatient',
+      timing: 'encounter-open',
+    })
+    expect(satisfied.cards.some(c => c.category === 'missing-fact')).toBe(false)
     expect(built.cards.some(c => ['recommendation', 'order-set-risk', 'medication-safety', 'guideline-advice'].includes(c.category))).toBe(false)
   })
 
@@ -1253,6 +1281,7 @@ describe('ClinicalPromptCard core engine', () => {
       }),
     ])
     const built = buildTimingPromptCards({
+      subjectKind: 'outpatient',
       asOf: '2026-08-24T09:00:00Z',
       evaluatedPacks: [{
         effective: recEffective,

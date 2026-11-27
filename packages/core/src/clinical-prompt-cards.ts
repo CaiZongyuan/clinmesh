@@ -728,7 +728,11 @@ export interface BuildTimingPromptCardsInput {
   evaluatedPacks: readonly EvaluatedPackForPromptBuild[]
   ledger: ClinicalFactLedger
   qualityCheck?: ClinicalQualityCheck | undefined
+  /** 已由其他来源（如首份已签 12 导联心电图的 ST 结论）回答、不应再算缺项的床旁项目代码。 */
+  satisfiedBedsideCodes?: readonly string[] | undefined
   selectedTemplateId?: string | undefined
+  /** 床旁缺项只在住院提示。 */
+  subjectKind: 'outpatient' | 'inpatient'
   templateClassesByTemplateId?: ReadonlyMap<string, readonly string[]> | undefined
   timing: ClinicalPromptTiming
   verifySourcePassage?: KnowledgePassageVerifier | undefined
@@ -1319,7 +1323,9 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
         ? activeStage.questionnaireItemCodes
         : (effective.pack.questionnaireItems ?? []).map(item => item.code)
       for (const qItem of effective.pack.questionnaireItems ?? []) {
+        if (input.subjectKind !== 'inpatient') break
         if (!questionnaireCodes.includes(qItem.code)) continue
+        if (input.satisfiedBedsideCodes?.includes(qItem.code)) continue
         const existingFacts = activeFactsByCode.get(qItem.code) ?? []
         const hasAskedAnswer = existingFacts.some(f => f.presence !== 'not-asked')
         if (hasAskedAnswer) continue
