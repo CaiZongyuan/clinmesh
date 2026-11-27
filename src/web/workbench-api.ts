@@ -42,6 +42,8 @@ export function write(workspace: WorkspaceView, intent: Intent) {
 }
 
 const messages: Record<string, [string, string]> = {
+  FRONT_PAGE_RESUBMISSION_REQUIRED: ['Submit a new front page for the current diagnosis revision and repeat coding review.', '请按当前确诊修订重新提交病案首页并审核编码。'],
+  ADMISSION_DIAGNOSIS_REVIEW_REQUIRED: ['Review the diagnosis draft and POA on the ward Orders tab before discharge.', '请住院主管医生在「诊断医嘱」核对草稿中每项诊断的 POA 后办理出院。'],
   INVALID_VISITOR_PASSCODE: ['Incorrect visitor passcode.', '访客口令不正确。'], VISITOR_GATE_UNCONFIGURED: ['The Visitor Gate has not been configured.', '访客门禁尚未配置。'],
   VISITOR_AUTH_REQUIRED: ['Your session has expired. Enter again.', '会话已到期，请重新进入。'], ROLE_FORBIDDEN: ['Switch to a role with permission for this action.', '请切换到具有此权限的岗位。'],
   VERSION_CONFLICT: ['The record changed. Review the latest version before retrying.', '记录已有更新，请核对最新版本。'],

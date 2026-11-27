@@ -7,6 +7,7 @@ import { clinicalServices, issueOrders, legacyProcedure, savedDraft, saveDraft }
 import { labOrders, moveOrder, publishDue, reportsReviewed, reviewReport } from './lib/reports';
 
 export { labViewSchema, issueReceipt, type LabView, type LabOrder, type LabBillingPort } from './lib/contracts';
+export function acceptDispatchedInvestigation(context: Parameters<typeof moveOrder>[0], billing?: LabBillingPort) { return moveOrder(context, 'accept', billing); }
 
 const base = '/api/his/encounters/:id/lab';
 const sign = { capabilities: ['sign'], visitorOnly: true };

@@ -54,6 +54,8 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     const connect = await assistant.socket(context.env.credential, { ...context.req.query(), thread: Number(context.req.query('thread')) });
     return open(context.req.raw, connect);
   });
+  catalog.moduleAvailable = (id, reader, actor) => registry.enabled(actor.enabledModules, reader, actor.at).some(module => module.id === id);
+  catalog.guardEncounter = (context, write) => { for (const module of registry.enabled(context.actor.enabledModules)) module.guardEncounter?.(context, write); };
   const patients = new PatientRuntime(store, environment, background);
   registerPatientOperations(catalog, environment);
   app.post('/api/agents/providers/test', async context => context.json(await patients.testProvider(context.env.credential, context.req.raw.headers, await context.req.json())));
@@ -73,8 +75,9 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
   });
   catalog.query({ name: 'workspace.read', path: '/api/workspace', access: {} }, workspaceSchema, ({ reader, actor }) => {
     const pack = readHospitalDataPack(reader, actor.at)!;
-    const enabled = registry.enabled(actor.enabledModules);
-    const operations = catalog.entries.filter(entry => permits(actor, entry)).map(({ name, method, path }) => ({ name, method, path }));
+    const enabled = registry.enabled(actor.enabledModules, reader, actor.at);
+    const effective = { ...actor, enabledModules: enabled.map(module => module.id) };
+    const operations = catalog.entries.filter(entry => permits(effective, entry)).map(({ name, method, path }) => ({ name, method, path }));
     return { ...sessionView(actor), manifest: pack.manifest, roles: pack.organization.practitionerRoles, cases: pack.cases,
       diagnoses: pack.catalog.diagnoses, packs: Object.values(BUILTIN_DATA_PACKS).map(({ manifest }) => ({ id: manifest.packId, name: manifest.name })),
       virtualTime: actor.active.virtual_time, clockRevision: actor.active.clock_revision, enabledModules: enabled.map(module => module.id),
@@ -83,8 +86,8 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
   catalog.command({ name: 'encounter.start', method: 'POST', path: '/api/his/cases/:id/start-encounter', access: { capabilities: ['register', 'assess'] } },
     { language: z.enum(['en', 'zh']).optional() }, z.object({ encounterId: z.uuidv7(), version: z.int() }), (context, input) => {
       const result = startEncounter(context, input.language);
-      for (const module of registry.enabled(context.actor.enabledModules)) module.encounterStarted?.(context.tx, context.at, result.encounterId, context.virtualAt, context.recordedAt);
-      return result;
+      for (const module of registry.enabled(context.actor.enabledModules, context.tx, context.at)) module.encounterStarted?.(context.tx, context.at, result.encounterId, context.virtualAt, context.recordedAt);
+      return { ...result, version: context.tx.get(context.at, 'encounters', result.encounterId)!.version };
     });
   catalog.query({ name: 'encounter.list', path: '/api/his/encounters', access: {} }, z.array(summarySchema), ({ reader, actor }) => listEncounters(reader, actor.at));
   registerClinicalOperations(catalog, registry);

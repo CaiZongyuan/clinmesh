@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import type { CommandContext, OperationCatalog } from '../../platform';
+import { CoreError, type CommandContext, type OperationCatalog } from '../../platform';
 import type { StoreReader, StoreScope, StoreTx } from '../../store';
-import { account, clinicalAccount, encounterStarted, facility, freezeCharge, freezeMaterialUse, readOrderFunds, reconcile } from './account';
+import { account, clinicalAccount, encounterStarted, facility, freezeCharge, freezeMaterialUse, readOrderFunds, reconcile, reverseMaterialUse } from './account';
 import { accountSchema, cashierQueueSchema, chargeIds, id, positive, reason, simulation, snapshotSchema, tenders, type BillingOptions } from './contracts';
 import { adjust, collect, confirm, currentBill, deposit, paymentResult, preview, previewSchema, recover, refund, settle, settlementPlan } from './payments';
 
@@ -11,9 +11,16 @@ const route = (name: string) => ({ name, path: `${base}/${name}`, method: 'POST'
 
 export function createBillingModule(options: BillingOptions = {}) {
   return {
-    id: 'mod-billing', kind: 'clinical' as const, version: '1', workbenchTabs: [{ id: 'billing', label: { en: 'Cashier', zh: '收费工作台' } }], freezeCharge, freezeMaterialUse, encounterStarted,
+    id: 'mod-billing', kind: 'clinical' as const, version: '1', workbenchTabs: [{ id: 'billing', label: { en: 'Cashier', zh: '收费工作台' } }], freezeCharge, freezeMaterialUse, reverseMaterialUse, encounterStarted,
     readOrderFunds: (reader: StoreReader, at: StoreScope, orderId: string) => readOrderFunds(reader, at, orderId, options),
     readAccount: (reader: StoreReader, at: StoreScope, encounterId: string) => account(reader, at, encounterId, options),
+    reverseClinicalCharge(ctx: CommandContext, orderId: string, reason: string) {
+      const bill = clinicalAccount(ctx.tx, ctx.at, ctx.targetId, options);
+      if (bill.policy === 'free') return;
+      const line = bill.charges.find(charge => charge.orderId === orderId);
+      if (!line) throw new CoreError(409, 'CLINICAL_CHARGE_NOT_FOUND');
+      if (line.netMinor) adjust(ctx, bill, { chargeId: line.id, amountMinor: line.netMinor, reason }, false, options);
+    },
     readAdmissionFunds(reader: StoreReader, at: StoreScope, encounterId: string) {
       if (facility(reader, at).policy === 'free') return { outstandingMinor: 0, canClearBed: true, locked: false };
       const bill = clinicalAccount(reader, at, encounterId, options);

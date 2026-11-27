@@ -87,6 +87,7 @@ export function createReportLifecycle(workflow: Workflow) {
     checkVersion(order.version, expectedVersion);
     const funds = actor.enabledModules.includes('mod-billing') ? billing : undefined;
     if (operation === 'accept' && order.status === 'issued') {
+      context.guardEncounter?.({ encounterId: order.encounter_id, kind: 'accept-investigation', orderId: order.id });
       if (funds && !funds.readOrderFunds(tx, at, order.id).released) throw new CoreError(409, 'PAYMENT_REQUIRED');
       return transition(context, order, 'accepted', actor.role.id);
     }

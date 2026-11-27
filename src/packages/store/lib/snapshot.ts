@@ -6,11 +6,11 @@ import { createReader, createRepository, readEntity, writeEntity } from './repos
 import { billingEntities, entityNames, epoch as epochFields, labEntities, pharmacyEntities, tables, uuid, workspace as workspaceFields, type EntityRow, type TableDefinition } from './schema';
 import type { SqlConnection } from './sqlite';
 
-const format = 'clinmesh.snapshot.v7';
-const firstTableByVersion = { 'clinmesh.snapshot.v1': 'encounter_triage', 'clinmesh.snapshot.v2': billingEntities[0], 'clinmesh.snapshot.v3': 'patient_reply_runs', 'clinmesh.snapshot.v4': labEntities[0], 'clinmesh.snapshot.v5': pharmacyEntities[0], 'clinmesh.snapshot.v6': 'study_requests' } as const;
+const format = 'clinmesh.snapshot.v8';
+const firstTableByVersion = { 'clinmesh.snapshot.v1': 'encounter_triage', 'clinmesh.snapshot.v2': billingEntities[0], 'clinmesh.snapshot.v3': 'patient_reply_runs', 'clinmesh.snapshot.v4': labEntities[0], 'clinmesh.snapshot.v5': pharmacyEntities[0], 'clinmesh.snapshot.v6': 'study_requests', 'clinmesh.snapshot.v7': 'ward_certificates' } as const;
 const record = z.record(z.string(), z.json());
 const snapshotSchema = z.strictObject({
-  format: z.enum(['clinmesh.snapshot.v1', 'clinmesh.snapshot.v2', 'clinmesh.snapshot.v3', 'clinmesh.snapshot.v4', 'clinmesh.snapshot.v5', 'clinmesh.snapshot.v6', format]), workspaceId: uuid,
+  format: z.enum(['clinmesh.snapshot.v1', 'clinmesh.snapshot.v2', 'clinmesh.snapshot.v3', 'clinmesh.snapshot.v4', 'clinmesh.snapshot.v5', 'clinmesh.snapshot.v6', 'clinmesh.snapshot.v7', format]), workspaceId: uuid,
   tables: z.array(z.strictObject({ name: z.string(), rows: z.array(record) })),
   pi: z.array(piImage), sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
@@ -133,7 +133,7 @@ export async function restore(db: SqlConnection, { content, sourceFormat, source
         OR rx.status NOT IN ('signed', 'withdrawn', 'dispensed') OR rx.version <> CASE WHEN rx.status = 'signed' THEN 1 ELSE 2 END) LIMIT 1`, at.workspaceId, at.epoch);
     if (inconsistent) throw new StoreSnapshotError(`Prescription state disagrees with its events: ${inconsistent.id}`);
   }
-  const migrated = verifyInventoryLots(db, sourceFormat === format || sourceFormat === 'clinmesh.snapshot.v6' ? undefined : { source_version: sourceFormat, source_sha256: sourceDigest });
+  const migrated = verifyInventoryLots(db, sourceFormat === format || sourceFormat === 'clinmesh.snapshot.v7' || sourceFormat === 'clinmesh.snapshot.v6' ? undefined : { source_version: sourceFormat, source_sha256: sourceDigest });
   if (migrated.length) recordsByTable.get('inventory_lot_quarantines')!.push(...migrated);
   for (const image of content.pi) await restorePiSession(db, workspaceId, image);
   if (canonicalJson(capture(db, workspaceId)) !== canonicalJson(content)) throw new StoreSnapshotError('Noncanonical snapshot content');
