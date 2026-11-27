@@ -38,7 +38,7 @@ it('retains an authenticated workspace across Node process restarts and keeps it
       const tableNames = snapshot.tables.map(table => table.name);
       expect(tableNames).toContain('visitor_sessions');
       expect(tableNames).not.toContain('visitor_gate_authority');
-      expect(snapshot.format).toBe('clinmesh.snapshot.v3');
+      expect(snapshot.format).toBe('clinmesh.snapshot.v4');
       expect(snapshot.tables.find(table => table.name === 'encounter_triage')?.rows).toEqual([]);
       expect(JSON.stringify(snapshot).includes(await store.visitorSigningSecret())).toBe(false);
       expect(JSON.stringify(snapshot).includes(token)).toBe(false);

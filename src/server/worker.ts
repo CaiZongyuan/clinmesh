@@ -6,13 +6,14 @@ import { createApp } from './app';
 import { createWorkspaceApp } from './workspace';
 import { BUILTIN_DATA_PACKS } from './builtin-data-packs';
 import { workerGatePolicy } from './host-policy';
+import { builtinModules } from './builtin-modules';
 
 declare const CLINMESH_LOOPBACK_WRANGLER: boolean;
 
 export class WorkspaceDurableObject<Env = unknown> extends DurableObject<Env> {
   protected readonly store = createDurableObjectSqliteStore(this.ctx.storage);
   protected readonly builtinDataPacks = BUILTIN_DATA_PACKS;
-  private readonly workspace = createWorkspaceApp(this.store, gateSettings(this.env as WorkerEnvironment), [], this.env as WorkerEnvironment, task => this.ctx.waitUntil(task));
+  private readonly workspace = createWorkspaceApp(this.store, gateSettings(this.env as WorkerEnvironment), builtinModules, this.env as WorkerEnvironment, task => this.ctx.waitUntil(task));
   async signingSecret(): Promise<string> { return this.store.visitorSigningSecret(); }
   async handle(request: Request, credential: Credential, entering: boolean) { return this.workspace.fetch(request, { credential, entering }); }
 }
@@ -24,5 +25,5 @@ function gateSettings(env: WorkerEnvironment): GateSettings {
     loadSigningSecret: () => env.WORKSPACE_DO.getByName('visitor-gate-authority').signingSecret() };
 }
 export default { fetch(request: Request, env: WorkerEnvironment) {
-  return createApp('cloudflare-worker', gateSettings(env), (incoming, credential, entering) => env.WORKSPACE_DO.getByName(credential.ticket.workspaceId).handle(incoming, credential, entering)).fetch(request);
+  return createApp('cloudflare-worker', gateSettings(env), (incoming, credential, entering) => env.WORKSPACE_DO.getByName(credential.ticket.workspaceId).handle(incoming, credential, entering), builtinModules).fetch(request);
 } };
