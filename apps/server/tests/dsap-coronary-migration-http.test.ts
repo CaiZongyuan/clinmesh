@@ -534,6 +534,10 @@ describe('Coronary Migration (S5): Data Pack, Hospital Separation, Bedside Quest
     const stay = await fixture.admitSyntheticCase(['I25.103'], 'bed-general-2')
     const initialStage = await fixture.read('inpatient-doctor', `${stay.path}/disease-packs`, diseasePackRuntimeBundleSchema)
     expect(initialStage.packs.find(p => p.packId === 'coronary-cad')?.currentStageId).toBe('initial-visit')
+    const activationTriggers = initialStage.packs.find(p => p.packId === 'coronary-cad')!.matchedTriggers
+    expect(activationTriggers.map(item => item.id)).toEqual(initialStage.packs.find(p => p.packId === 'coronary-cad')!.matchedTriggerIds)
+    expect(activationTriggers[0]?.descriptionZh.length).toBeGreaterThan(0)
+    expect(activationTriggers[0]?.basedOnFactVersions.length).toBeGreaterThan(0)
 
     const missingCodesOf = (state: Awaited<ReturnType<typeof bedsideQuestionnaireStateSchema.parse>>) =>
       state.packMissing.find(entry => entry.packId === 'coronary-cad')?.missingItems.map(item => item.code) ?? []

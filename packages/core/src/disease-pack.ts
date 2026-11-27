@@ -711,6 +711,15 @@ export interface PackActivationEvaluation {
     | 'pack-retired'
   readonly matchedTriggerIds: string[]
   readonly matchedInapplicableIds: string[]
+  readonly matchedTriggers: PackMatchedCondition[]
+  readonly matchedInapplicables: PackMatchedCondition[]
+}
+
+/** 命中的启用条件或不适用人群，附命中所依据的事实 ID。 */
+export interface PackMatchedCondition {
+  readonly descriptionZh: string
+  readonly id: string
+  readonly matchedFactIds: string[]
 }
 
 export interface PackExitEvaluation {
@@ -751,13 +760,16 @@ export function evaluatePackActivation(
   ledger: ClinicalFactLedger,
   options?: TriggerEvaluationOptions & { manualOverride?: 'enabled' | 'disabled' | null },
 ): PackActivationEvaluation {
-  const matchedInapplicableIds = effectivePack.pack.inapplicablePopulations
-    .filter(pop => evaluatePackTrigger(pop.condition, ledger, options).matched)
-    .map(pop => pop.id)
-
-  const matchedTriggerIds = effectivePack.pack.triggers
-    .filter(trigger => evaluatePackTrigger(trigger.condition, ledger, options).matched)
-    .map(trigger => trigger.id)
+  const matchedInapplicables = effectivePack.pack.inapplicablePopulations.flatMap((pop): PackMatchedCondition[] => {
+    const res = evaluatePackTrigger(pop.condition, ledger, options)
+    return res.matched ? [{ descriptionZh: pop.descriptionZh, id: pop.id, matchedFactIds: res.matchedFactIds }] : []
+  })
+  const matchedTriggers = effectivePack.pack.triggers.flatMap((trigger): PackMatchedCondition[] => {
+    const res = evaluatePackTrigger(trigger.condition, ledger, options)
+    return res.matched ? [{ descriptionZh: trigger.descriptionZh ?? trigger.id, id: trigger.id, matchedFactIds: res.matchedFactIds }] : []
+  })
+  const matchedInapplicableIds = matchedInapplicables.map(item => item.id)
+  const matchedTriggerIds = matchedTriggers.map(item => item.id)
 
   if (effectivePack.pack.manifest.status === 'retired') {
     return {
@@ -765,7 +777,9 @@ export function evaluatePackActivation(
       activationStatus: 'inactive',
       active: false,
       matchedInapplicableIds,
+      matchedInapplicables,
       matchedTriggerIds,
+      matchedTriggers,
     }
   }
 
@@ -775,7 +789,9 @@ export function evaluatePackActivation(
       activationStatus: 'inactive',
       active: false,
       matchedInapplicableIds,
+      matchedInapplicables,
       matchedTriggerIds,
+      matchedTriggers,
     }
   }
 
@@ -785,7 +801,9 @@ export function evaluatePackActivation(
       activationStatus: 'inapplicable',
       active: false,
       matchedInapplicableIds,
+      matchedInapplicables,
       matchedTriggerIds,
+      matchedTriggers,
     }
   }
 
@@ -795,7 +813,9 @@ export function evaluatePackActivation(
       activationStatus: 'active',
       active: true,
       matchedInapplicableIds,
+      matchedInapplicables,
       matchedTriggerIds,
+      matchedTriggers,
     }
   }
 
@@ -805,7 +825,9 @@ export function evaluatePackActivation(
       activationStatus: 'inactive',
       active: false,
       matchedInapplicableIds,
+      matchedInapplicables,
       matchedTriggerIds,
+      matchedTriggers,
     }
   }
 
@@ -815,7 +837,9 @@ export function evaluatePackActivation(
       activationStatus: 'active',
       active: true,
       matchedInapplicableIds,
+      matchedInapplicables,
       matchedTriggerIds,
+      matchedTriggers,
     }
   }
 
@@ -824,7 +848,9 @@ export function evaluatePackActivation(
     activationStatus: 'inactive',
     active: false,
     matchedInapplicableIds,
+    matchedInapplicables,
     matchedTriggerIds,
+    matchedTriggers,
   }
 }
 

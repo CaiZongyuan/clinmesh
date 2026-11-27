@@ -730,6 +730,13 @@ describe('disease-pack contracts, validator, overlay & runtime evaluators', () =
     expect(inapplicable.active).toBe(false)
     expect(inapplicable.activationStatus).toBe('inapplicable')
     expect(inapplicable.matchedInapplicableIds).toEqual(['pregnancy-excluded'])
+    expect(inapplicable.matchedInapplicables).toEqual([
+      { descriptionZh: expect.any(String), id: 'pregnancy-excluded', matchedFactIds: ['dx-preg'] },
+    ])
+    expect(inapplicable.matchedInapplicables[0]!.descriptionZh.length).toBeGreaterThan(0)
+    const triggered = evaluatePackActivation(merged, readyLedger)
+    expect(triggered.matchedTriggers.map(item => item.id)).toEqual(triggered.matchedTriggerIds)
+    expect(triggered.matchedTriggers[0]!.matchedFactIds).toContain('dx-1')
 
     // Point scale evaluation
     const scaleResult = evaluatePackPointScale(merged.pack.pointScales![0]!, readyLedger)

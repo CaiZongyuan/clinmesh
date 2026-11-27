@@ -717,6 +717,9 @@ describe('DSAP Slice S9: Outpatient Rule-Out, Pack Exit & Silence, Confusable Pa
     )).json())
     expect(pregPacks.packs[0]?.activationStatus).toBe('inapplicable')
     expect(pregPacks.packs[0]?.matchedInapplicableIds).toContain('pregnancy-inapplicable')
+    const pregnancyCondition = pregPacks.packs[0]?.matchedInapplicables.find(item => item.id === 'pregnancy-inapplicable')
+    expect(pregnancyCondition?.descriptionZh).toContain('妊娠')
+    expect(pregnancyCondition?.basedOnFactVersions.length).toBeGreaterThan(0)
 
     const pregPrompts = clinicalPromptBundleSchema.parse(await (await runtime.app.request(
       `/api/his/v1/doctor/cases/${pregVisit.outpatientCaseId}/clinical-prompts?timing=encounter-open`,
@@ -726,6 +729,7 @@ describe('DSAP Slice S9: Outpatient Rule-Out, Pack Exit & Silence, Confusable Pa
     expect(inapplicableCard).toBeDefined()
     expect(inapplicableCard?.summary).toContain('超出本包范围，请医生自行决策')
     expect(inapplicableCard?.detail).toContain('妊娠期')
+    expect(inapplicableCard?.basedOnFactVersions).toEqual(pregnancyCondition?.basedOnFactVersions)
     expect(pregPrompts.cards.some(c => c.category === 'rule-out-checklist')).toBe(true)
     expect(pregPrompts.cards.some(c => c.category === 'missing-fact')).toBe(false)
     expect(pregPrompts.cards.some(c => ['recommendation', 'order-set-risk', 'guideline-advice'].includes(c.category))).toBe(false)

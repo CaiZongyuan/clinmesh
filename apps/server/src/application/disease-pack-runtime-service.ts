@@ -15,6 +15,7 @@ import {
   type DeduplicatedQuestionnaireItem,
   type DiseasePackCatalogList,
   type DiseasePackRuntimeBundle,
+  type DiseasePackMatchedCondition,
   type DiseasePackRuntimeEntry,
   type DiseasePackTaskFactsResponse,
   type DiseasePackTaskReadinessResult,
@@ -40,9 +41,11 @@ import {
   mergeThreeLayerPack,
   scanPackFilesForExecutableCode,
   validateAndParseDiseasePack,
+  type PackMatchedCondition,
   type PackSourceFileInput,
   type PublicLayerPolicyInput,
 } from '@clinmesh/core/disease-pack'
+import { toFactVersionRefs } from '@clinmesh/core/clinical-prompt-cards'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import type { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
@@ -1493,6 +1496,12 @@ export class DiseasePackRuntimeService {
       evaluateTaskReadiness(effective, task.taskId, ledger, { asOf, vocabulary })
     ))
     const followUpLdlSummary = evaluateLongitudinalLdlComparison(ledger)
+    const factsById = new Map(ledger.facts.map(fact => [fact.factId, fact]))
+    const withFactRefs = (condition: PackMatchedCondition): DiseasePackMatchedCondition => ({
+      basedOnFactVersions: toFactVersionRefs(condition.matchedFactIds, factsById).slice(0, 16),
+      descriptionZh: condition.descriptionZh,
+      id: condition.id,
+    })
 
     return diseasePackRuntimeEntrySchema.parse({
       activationReason: activation.activationReason,
@@ -1506,7 +1515,9 @@ export class DiseasePackRuntimeService {
       manualOverride: override?.override_mode ?? null,
       manualOverrideVersion: override?.version ?? 0,
       matchedInapplicableIds: activation.matchedInapplicableIds,
+      matchedInapplicables: activation.matchedInapplicables.map(withFactRefs),
       matchedTriggerIds: activation.matchedTriggerIds,
+      matchedTriggers: activation.matchedTriggers.map(withFactRefs),
       packId: effective.pack.manifest.id,
       packType: effective.pack.manifest.packType,
       readinessTasks,

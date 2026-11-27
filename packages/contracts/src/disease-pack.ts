@@ -24,6 +24,7 @@ import {
   type DiseasePackTimestampField,
   type DiseasePackTriggerNode,
 } from './disease-pack-triggers.ts'
+import { clinicalPromptFactVersionRefSchema } from './clinical-prompt-cards.ts'
 import { guidelineTopicIdSchema } from './guideline-topics.ts'
 import { commandResponseSchema } from './his.ts'
 import { knowledgeSnapshotSchema } from './knowledge-claims.ts'
@@ -501,6 +502,13 @@ export const followUpLdlSummarySchema = z.object({
 }).strict()
 export type FollowUpLdlSummary = z.infer<typeof followUpLdlSummarySchema>
 
+export const diseasePackMatchedConditionSchema = z.object({
+  basedOnFactVersions: z.array(clinicalPromptFactVersionRefSchema).max(16),
+  descriptionZh: nonEmptyText,
+  id: diseasePackSlugSchema,
+}).strict()
+export type DiseasePackMatchedCondition = z.infer<typeof diseasePackMatchedConditionSchema>
+
 export const diseasePackRuntimeEntrySchema = z.object({
   activationReason: diseasePackActivationReasonSchema,
   activationStatus: diseasePackActivationStatusSchema,
@@ -514,7 +522,11 @@ export const diseasePackRuntimeEntrySchema = z.object({
   manualOverride: z.enum(['enabled', 'disabled']).nullable(),
   manualOverrideVersion: z.number().int().nonnegative(),
   matchedInapplicableIds: z.array(diseasePackSlugSchema),
+  /** 命中的不适用人群条件及其依据事实，与 `matchedInapplicableIds` 一一对应。 */
+  matchedInapplicables: z.array(diseasePackMatchedConditionSchema).max(32),
   matchedTriggerIds: z.array(diseasePackSlugSchema),
+  /** 命中的启用条件及其依据事实，与 `matchedTriggerIds` 一一对应。 */
+  matchedTriggers: z.array(diseasePackMatchedConditionSchema).max(32),
   packId: diseasePackSlugSchema,
   packType: diseasePackTypeSchema,
   readinessTasks: z.array(diseasePackTaskReadinessResultSchema),

@@ -756,7 +756,7 @@ export function clampPromptRefToken(value: string, maxLength: number): string {
   return `${value.slice(0, maxLength - suffix.length)}${suffix}`
 }
 
-function toFactVersionRefs(
+export function toFactVersionRefs(
   factIds: readonly string[],
   factsById: ReadonlyMap<string, ClinicalFact>,
 ): ClinicalPromptFactVersionRef[] {
@@ -1312,7 +1312,9 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
         .map(item => item.descriptionZh)
       const matchedConditionText = matchedLabels.join('；') || '命中专病包不适用条件'
       cards.push(clinicalPromptCardSchema.parse({
-        basedOnFactVersions: [],
+        basedOnFactVersions: entry.matchedInapplicables
+          .filter(item => entry.matchedInapplicableIds.includes(item.id))
+          .flatMap(item => item.basedOnFactVersions),
         blockingTier: 'none',
         cardId: `encounter-open:inapplicable:${packId}`,
         category: 'inapplicable-population',
