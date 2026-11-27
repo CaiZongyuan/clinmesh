@@ -14,7 +14,7 @@ const dbPath = process.env.CLINMESH_DATABASE_PATH || '.data/clinmesh.sqlite';
 mkdirSync(dirname(dbPath), { recursive: true });
 const store = createNodeSqliteStore({ dbPath });
 const settings = { CLINMESH_VISITOR_PASSCODE: process.env.CLINMESH_VISITOR_PASSCODE, CLINMESH_SESSION_SECRET: process.env.CLINMESH_SESSION_SECRET, localOpen, loadSigningSecret: () => store.visitorSigningSecret() };
-const workspace = createWorkspaceApp(store, settings, builtinModules);
+const workspace = createWorkspaceApp(store, settings, builtinModules, { ...process.env });
 const app = createApp('node', settings, (request, credential, entering) => workspace.fetch(request, { credential, entering }), builtinModules);
 app.all('/api', context => context.notFound());
 app.all('/api/*', context => context.notFound());

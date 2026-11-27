@@ -163,6 +163,6 @@ export async function runStoreConformanceSuite(store: StorePort, restoreIntoEmpt
   check(!JSON.stringify(snapshot).includes('Other Workspace'), 'workspace snapshot leaked a second workspace');
   check(snapshot.pi[0]?.tables.length === 9 && snapshot.pi[0].tables.every(table => table.rows.length > 0), 'pi-durable migration data');
   const restored = await restoreIntoEmpty(snapshot);
-  check(snapshot.sha256 === restored.sha256 && restored.workspaceId === at.workspaceId && restored.format === 'clinmesh.snapshot.v4', 'lossless canonical round trip');
+  check(snapshot.sha256 === restored.sha256 && restored.workspaceId === at.workspaceId && restored.format === 'clinmesh.snapshot.v5', 'lossless canonical round trip');
   return snapshot;
 }

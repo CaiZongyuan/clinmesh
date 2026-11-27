@@ -21,16 +21,17 @@ export function createStore(db: SqlConnection): StorePort {
     db.exec('CREATE TABLE IF NOT EXISTS clinmesh_schema (version INTEGER NOT NULL PRIMARY KEY)');
     const versions = db.all('SELECT version FROM clinmesh_schema');
     const previous = versions.length === 1 ? versions[0]!.version : undefined;
-    if (previous === 3) return;
-    if (previous === 1 || previous === 2) {
+    if (previous === 4) return;
+    if (previous === 1 || previous === 2 || previous === 3) {
       if (previous === 1) for (const name of ['encounter_triage', ...billingEntities] as const) initializeEntity(db.exec, name);
+      if (previous <= 2) for (const name of ['patient_reply_runs', 'agent_model_calls'] as const) initializeEntity(db.exec, name);
       for (const name of labEntities) initializeEntity(db.exec, name);
-      db.run('UPDATE clinmesh_schema SET version = 3 WHERE version = ?', previous);
+      db.run('UPDATE clinmesh_schema SET version = 4 WHERE version = ?', previous);
       return;
     }
     if (versions.length) throw new Error('Unsupported ClinMesh schema version');
     initializeSchema(db.exec);
-    db.run('INSERT INTO clinmesh_schema (version) VALUES (3)');
+    db.run('INSERT INTO clinmesh_schema (version) VALUES (4)');
   });
   const queue = new SerialQueue();
   let closing: Promise<void> | undefined;
