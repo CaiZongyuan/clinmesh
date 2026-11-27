@@ -119,7 +119,7 @@ export interface BuildDsapStandardizedReportInput {
   readonly sourceSystemAgnostic?: Partial<DsapSourceSystemAgnosticSummary>
   readonly inspectedLedgers?: readonly ClinicalFactLedger[]
   readonly inspectedPacks?: readonly EffectiveDiseasePack[]
-  readonly coronaryRegressionPassed?: boolean
+  readonly activePacksRegressionPassed?: boolean
 }
 
 export function createEmptyLayerCountMap(): ExamLayerFailureCountMap {
@@ -618,7 +618,7 @@ export function buildDsapStandardizedReport(input: BuildDsapStandardizedReportIn
   }
 
   const activeFullRuns = input.packRuns.filter(run => run.packStatus === 'active' && run.packType === 'full')
-  const coronaryRegressionPassed = input.coronaryRegressionPassed
+  const activePacksRegressionPassed = input.activePacksRegressionPassed
     ?? (input.migrationDiffCount === 0 && activeFullRuns.every(run => run.passed))
 
   return dsapStandardizedReportSchema.parse({
@@ -627,7 +627,7 @@ export function buildDsapStandardizedReport(input: BuildDsapStandardizedReportIn
       eligiblePacks,
       llmInvocationCount: 0,
     },
-    coronaryRegressionPassed,
+    activePacksRegressionPassed,
     failureSummaryByLayer,
     generatedAt: input.generatedAt,
     llmInvocationCount: 0,

@@ -19,6 +19,7 @@ import {
   diseasePackToggleResponseSchema,
   diseasePackToolAuthorizeResponseSchema,
 } from '@clinmesh/contracts/disease-pack'
+import { doctorRecommendationStateSchema } from '@clinmesh/contracts/doctor-recommendations'
 import { guidelineTopicIdSchema } from '@clinmesh/contracts/guideline-topics'
 import {
   apiErrorSchema,
@@ -169,6 +170,12 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
     prepared.options.dshBridgeSecret = dshSecret
     if (!options.skipSyntheticPack) {
       prepared.options.diseasePackDirs = [SYNTHETIC_PACK_DIR]
+      prepared.options.registeredClinicianReviewers = [{
+        licenseVerified: true,
+        nameZh: '合成测试审核人',
+        reviewerId: 'reviewer-syn-cardio-01',
+        specialty: 'cardiology',
+      }]
     }
     if (options.verifyFingerprint !== undefined) {
       prepared.options.diseasePackVerifyFingerprint = options.verifyFingerprint
@@ -886,7 +893,7 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
     `).get() as { cnt: number }).cnt
     expect(authCountAfterReplay).toBe(authCountBeforeReplay)
 
-    // Calling /api/agent/v1/tool-calls WITHOUT packId still enforces active pack forbiddenActions (403 DSAP_TOOL_POLICY_DENIED + AuditEvent)
+    // Calling /api/agent/v1/tool-calls WITHOUT packId still enforces active pack forbiddenActions & allowedTools whitelist (403 DSAP_TOOL_POLICY_DENIED + AuditEvent)
     const noPackForbiddenRes = await fixture.runtime.app.request('/api/agent/v1/tool-calls', {
       body: JSON.stringify({
         actionTag: 'auto-prescribe-medication',
@@ -900,6 +907,26 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
     })
     expect(noPackForbiddenRes.status).toBe(403)
     expect(apiErrorSchema.parse(await noPackForbiddenRes.json()).error.code).toBe('DSAP_TOOL_POLICY_DENIED')
+
+    // Disable coronary-cad for this check so ONLY synthetic-test-syndrome is active; calling WITHOUT packId for a tool outside its allowedTools still returns 403 DSAP_TOOL_POLICY_DENIED
+    await fixture.request(
+      'doctor',
+      `/api/his/v1/outpatient/cases/${visit.caseId}/disease-packs/coronary-cad/toggle`,
+      { overrideMode: 'disabled' },
+    )
+    const nonWhitelistedDef = agentToolCatalog.find(item => item.operationId === 'outpatient.order-set-drafts.read')!
+    const noPackUnlistedRes = await fixture.runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({
+        contextToken: ctxBinding.token,
+        executionProof: signProof(nonWhitelistedDef.toolName, 'call-no-pack-unlisted'),
+        input: {},
+        operationId: 'outpatient.order-set-drafts.read',
+      }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    expect(noPackUnlistedRes.status).toBe(403)
+    expect(apiErrorSchema.parse(await noPackUnlistedRes.json()).error.code).toBe('DSAP_TOOL_POLICY_DENIED')
 
     // Disabling synthetic pack causes gateway authorization with packId to reject 409 DSAP_PACK_INACTIVE
     const toggleOff = await fixture.request(
@@ -1022,5 +1049,224 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
     const enabledDraft = diseasePackToggleResponseSchema.parse(await enableDraftRes.json()).data
     expect(enabledDraft.activationStatus).toBe('active')
     expect(enabledDraft.activationReason).toBe('manual-enabled')
+  })
+
+  it('enforces default publicLayer examPassThreshold, registered reviewer publication gate, and outpatient 3-tier prescription readiness gate', async () => {
+    // 1. Default publicLayer floor prevents a hospital overlay from lowering examPassThreshold below 0.8
+    const defaultRegistry = new DiseasePackRegistry({
+      includeBuiltinDraftPacks: false,
+      packDirs: [SYNTHETIC_PACK_DIR],
+      registeredClinicianReviewers: [{
+        licenseVerified: true,
+        nameZh: '合成测试审核人',
+        reviewerId: 'reviewer-syn-cardio-01',
+        specialty: 'cardiology',
+      }],
+      verifyFingerprint: true,
+    })
+    expect(() => defaultRegistry.applyHospitalOverlay({
+      hospitalId: 'hospital-relax',
+      packId: 'synthetic-test-syndrome',
+      safetyAdjustments: { examPassThreshold: 0.7 },
+    })).toThrow(DiseasePackValidationError)
+
+    // 2. Unregistered reviewer cannot publish claims/topics inside a pack (PACK_UNVERIFIED_PUBLICATION)
+    const { fixture: regFixture } = await setupRuntimeWithSyntheticPack()
+    const basePack = regFixture.runtime.workflow.diseasePacks.registry.getEffective('synthetic-test-syndrome').pack
+    const forgedPubUnsigned = {
+      ...basePack,
+      knowledgeSnapshots: (basePack.knowledgeSnapshots ?? []).map(snap => ({
+        ...snap,
+        claims: snap.claims.map(claim => ({ ...claim, reviewerId: 'forged-reviewer', status: 'published' as const })),
+      })),
+    }
+    const forgedPubPack = {
+      ...forgedPubUnsigned,
+      manifest: { ...forgedPubUnsigned.manifest, fingerprint: computeDiseasePackFingerprint(forgedPubUnsigned) },
+    }
+    try {
+      new DiseasePackRegistry({
+        includeBuiltinDraftPacks: false,
+        packs: [forgedPubPack],
+        registeredClinicianReviewers: [],
+        verifyFingerprint: true,
+      })
+      expect.unreachable('should reject unverified publication reviewer')
+    } catch (error) {
+      expect((error as DiseasePackValidationError).code).toBe('PACK_UNVERIFIED_PUBLICATION')
+    }
+
+    // 3. Outpatient 3-tier prescription readiness gate (via T2DM pack):
+    //    Tier 1 (missing-critical: no 2160-0 creatinine) -> missingInformation surfaces 血清肌酐, BOTH recommendation generate AND outpatient.prescription.draft.set fail 409 TASK_READINESS_CRITICAL_MISSING
+    //    Tier 2 (missing-secondary: valid creatinine, no 4548-4 HbA1c) -> missingInformation surfaces 缺糖化血红蛋白 (HbA1c), prescription draft allowed (201)
+    //    Tier 3 (ready: both valid creatinine and HbA1c) -> neither missing label remains
+    const { dshSecret, fixture } = await setupRuntimeWithSyntheticPack({ skipSyntheticPack: true })
+    const visit = await startOutpatientVisitForDoctor(fixture)
+    const doctorCookie = await fixture.login('doctor')
+    const catalog = await fixture.read('doctor', '/api/his/v1/catalogs/clinical', clinicalCatalogSchema)
+    const t2dmDx = catalog.diagnoses.find(d => d.code.startsWith('E11'))
+    const confirmedDx = t2dmDx ?? catalog.diagnoses.find(d => !d.code.startsWith('I2')) ?? catalog.diagnoses[0]!
+    const dxDraft = await fixture.runtime.app.request(`http://localhost/api/his/v1/encounters/${visit.encounterId}/diagnosis/draft`, {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${visit.encounterId}`]: visit.detail.encounter.versionId },
+        input: { entries: [{ catalogItemId: confirmedDx.id, role: 'primary' }], expectedDraftVersion: 0 },
+      }),
+      headers: {
+        'content-type': 'application/json',
+        cookie: doctorCookie,
+        'idempotency-key': randomUUID(),
+        origin: 'http://localhost',
+      },
+      method: 'PUT',
+    })
+    expect(dxDraft.status).toBe(200)
+    const dxDraftData = (await dxDraft.json() as { data: { draftVersion: number } }).data
+    const dxConfirm = await fixture.request(
+      'doctor',
+      `/api/his/v1/encounters/${visit.encounterId}/diagnosis/actions/confirm`,
+      { expectedDraftVersion: dxDraftData.draftVersion },
+      randomUUID(),
+      { [`Encounter/${visit.encounterId}`]: visit.detail.encounter.versionId },
+    )
+    expect(dxConfirm.status).toBe(200)
+    if (t2dmDx === undefined) {
+      fixture.runtime.fhir.create({ epoch: currentEpoch(fixture), workspaceId: 'workspace-demo' }, {
+        clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
+        code: { coding: [{ code: 'E11.9', display: '2型糖尿病', system: 'http://hl7.org/fhir/sid/icd-10' }], text: '2型糖尿病' },
+        encounter: { reference: `Encounter/${visit.encounterId}` },
+        id: `cond-t2dm-${randomUUID()}`,
+        recordedDate: currentVirtualTime(fixture),
+        resourceType: 'Condition',
+        subject: { reference: `Patient/${visit.patientId}` },
+        verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
+      })
+    }
+
+    const rxCatalog = await fixture.read(
+      'doctor',
+      `/api/his/v1/doctor/cases/${visit.caseId}/recommendations/prescription`,
+      doctorRecommendationStateSchema,
+    )
+    expect(rxCatalog.missingInformation.some(msg => msg.includes('血清肌酐'))).toBe(true)
+
+    const blockedRxGen = await fixture.request(
+      'doctor',
+      `/api/his/v1/doctor/cases/${visit.caseId}/recommendations/prescription/actions/generate`,
+      { expectedInputFingerprint: rxCatalog.inputFingerprint, refresh: true },
+      randomUUID(),
+      { [`Encounter/${rxCatalog.encounterId}`]: rxCatalog.encounterVersion },
+    )
+    expect(blockedRxGen.status).toBe(409)
+    expect(apiErrorSchema.parse(await blockedRxGen.json()).error.code).toBe('TASK_READINESS_CRITICAL_MISSING')
+
+    const rxDetail = await fixture.read('doctor', `/api/his/v1/doctor/cases/${visit.caseId}`, doctorCaseDetailSchema)
+    const rxClaim: AgentPageContextClaim = {
+      activeSection: 'prescription',
+      selection: { id: visit.caseId, kind: 'case', version: rxDetail.encounter.versionId },
+      taskEpoch: 'b1b2c3d4-2345-4345-8345-23456789abcd',
+      ui: { status: 'ready' },
+      version: 1,
+      viewId: 'consultation',
+      viewRevision: 'consultation-1',
+    }
+    fixture.runtime.database.driver.prepare(`
+      INSERT OR IGNORE INTO consultation (workspace_id, epoch, case_id, version)
+      VALUES ('workspace-demo', ?, ?, 1)
+    `).run(currentEpoch(fixture), visit.caseId)
+    const rxCtxRes = await fixture.runtime.app.request('/api/agent/v1/page-contexts', {
+      body: JSON.stringify({ claim: rxClaim, client: { id: 'doc-client', revision: 1 }, dshSessionId: 'dsh-dsap-rx-1' }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    expect(rxCtxRes.status).toBe(201)
+    const rxCtx = agentPageContextBindingSchema.parse(await rxCtxRes.json())
+    const draftDef = agentToolCatalog.find(item => item.operationId === 'outpatient.prescription.draft.set')!
+    const signDraftProof = (callId: string) => {
+      const draftProofPayload = {
+        callId,
+        contextId: rxCtx.snapshot.id,
+        dshSessionId: 'dsh-dsap-rx-1',
+        expiresAt: rxCtx.snapshot.expiresAt,
+        issuedAt: rxCtx.snapshot.issuedAt,
+        origin: {
+          request: { pageRevision: agentPageBindingRevision(rxClaim), scopeKey: rxCtx.snapshot.scopeKey },
+          task: { acceptedAt: rxCtx.snapshot.issuedAt, contextId: rxCtx.snapshot.id, messageId: 'm-1', pageRevision: agentPageBindingRevision(rxClaim), rpcId: 'r-1', scopeKey: rxCtx.snapshot.scopeKey, turn: 1 },
+        },
+        pageRevision: agentPageBindingRevision(rxClaim),
+        scopeKey: rxCtx.snapshot.scopeKey,
+        toolName: draftDef.toolName,
+        version: 3,
+      }
+      const draftB64 = Buffer.from(JSON.stringify(draftProofPayload), 'utf8').toString('base64url')
+      return `${draftB64}.${createHmac('sha256', dshSecret).update(draftB64).digest('base64url')}`
+    }
+    const med = catalog.medications[0]!
+    const draftPayload = {
+      items: [{
+        catalogItemId: med.id,
+        courseDays: 7,
+        doseText: med.defaultDoseText,
+        frequencyCode: med.defaultFrequencyCode,
+        quantity: 1,
+        routeCode: med.defaultRouteCode,
+      }],
+    }
+    const blockedDraftNoPack = await fixture.runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({
+        contextToken: rxCtx.token,
+        executionProof: signDraftProof('call-rx-readiness-1'),
+        input: draftPayload,
+        operationId: 'outpatient.prescription.draft.set',
+      }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    expect(blockedDraftNoPack.status, await blockedDraftNoPack.clone().text()).toBe(409)
+    expect(apiErrorSchema.parse(await blockedDraftNoPack.json()).error.code).toBe('TASK_READINESS_CRITICAL_MISSING')
+
+    // Tier 2: insert valid creatinine (2160-0), missing HbA1c (4548-4) -> missing-secondary annotation, draft proceeds (201)
+    insertLocalObservation(fixture, {
+      code: '2160-0',
+      display: '血清肌酐',
+      encounterId: visit.encounterId,
+      patientId: visit.patientId,
+      unit: 'umol/L',
+      value: 88,
+    })
+    const secondaryRxCatalog = await fixture.read(
+      'doctor',
+      `/api/his/v1/doctor/cases/${visit.caseId}/recommendations/prescription`,
+      doctorRecommendationStateSchema,
+    )
+    expect(secondaryRxCatalog.missingInformation.some(msg => msg.includes('HbA1c'))).toBe(true)
+    expect(secondaryRxCatalog.missingInformation.every(msg => !msg.includes('血清肌酐'))).toBe(true)
+
+    const allowedDraftTier2 = await fixture.runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({
+        contextToken: rxCtx.token,
+        executionProof: signDraftProof('call-rx-readiness-2'),
+        input: draftPayload,
+        operationId: 'outpatient.prescription.draft.set',
+      }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    expect(allowedDraftTier2.status, await allowedDraftTier2.clone().text()).toBe(201)
+
+    // Tier 3: insert valid HbA1c (4548-4) -> ready, no missing readiness labels remain
+    insertLocalObservation(fixture, {
+      code: '4548-4',
+      display: '糖化血红蛋白 (HbA1c)',
+      encounterId: visit.encounterId,
+      patientId: visit.patientId,
+      unit: '%',
+      value: 7.2,
+    })
+    const readyRxCatalog = await fixture.read(
+      'doctor',
+      `/api/his/v1/doctor/cases/${visit.caseId}/recommendations/prescription`,
+      doctorRecommendationStateSchema,
+    )
+    expect(readyRxCatalog.missingInformation.every(msg => !msg.includes('血清肌酐') && !msg.includes('HbA1c'))).toBe(true)
   })
 })

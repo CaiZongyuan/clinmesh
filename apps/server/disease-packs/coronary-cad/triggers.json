@@ -92,7 +92,7 @@
     {
       "condition": {
         "category": "diagnosis",
-        "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+        "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25|53741008|22298006)",
         "kind": "fact",
         "presence": "present",
         "requireEligible": true

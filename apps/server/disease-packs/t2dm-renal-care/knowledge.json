@@ -104,9 +104,9 @@
           "effectiveFrom": "2026-08-01T00:00:00Z",
           "id": "t2dm-claim-renal-metformin-egfr-limit",
           "packId": "t2dm-renal-care",
-          "reviewerId": "reviewer-endo-01",
+          "reviewerId": null,
           "statementZh": "降糖药肾功能调整提示：2 型糖尿病按 eGFR 分期调整用药（CKD 3b 期减量、eGFR < 30 即 CKD 4-5 期禁用二甲双胍以防乳酸酸中毒，可选利格列汀或胰岛素替代）。",
-          "status": "published",
+          "status": "auto-verified",
           "topicId": "t2dm-renal-medication",
           "version": "1.0.0"
         },
@@ -131,9 +131,9 @@
           "effectiveFrom": "2026-08-01T00:00:00Z",
           "id": "t2dm-claim-cardiorenal-sglt2-glp1",
           "packId": "t2dm-renal-care",
-          "reviewerId": "reviewer-endo-01",
+          "reviewerId": null,
           "statementZh": "合并 CKD 或心血管风险的 2 型糖尿病患者须评估心肾保护药物（SGLT-2i/GLP-1RA）与重度肾功能不全下的药物减停安全边界。",
-          "status": "published",
+          "status": "auto-verified",
           "topicId": "t2dm-renal-medication",
           "version": "1.0.0"
         }
@@ -169,8 +169,8 @@
               "version": "2021"
             }
           ],
-          "reviewerId": "reviewer-endo-01",
-          "status": "published",
+          "reviewerId": null,
+          "status": "auto-verified",
           "titleEn": "T2DM Renal Function Medication Adjustment",
           "titleZh": "2 型糖尿病肾功能降糖药调整知识卡",
           "version": "1.0.0"

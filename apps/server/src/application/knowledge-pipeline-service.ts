@@ -1,6 +1,6 @@
 import type { ClinicalFactLedger } from '@clinmesh/contracts/clinical-fact-ledger'
 import type { ConceptVocabulary } from '@clinmesh/contracts/concept-vocabulary'
-import { clinicalReviewerRecordSchema } from '@clinmesh/contracts/knowledge-claims'
+import { clinicalReviewerRecordSchema, type ClinicalReviewerRecord } from '@clinmesh/contracts/knowledge-claims'
 import {
   adjudicateConflictRequestSchema,
   conceptMappingImpactRequestSchema,
@@ -57,13 +57,27 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function assertClinicianReviewerAuthorized(rawReviewer: unknown): void {
-  if (rawReviewer === undefined) return
+function assertClinicianReviewerAuthorized(
+  rawReviewer: unknown,
+  registeredReviewers: readonly ClinicalReviewerRecord[],
+): void {
   const check = clinicalReviewerRecordSchema.safeParse(rawReviewer)
   if (!check.success) {
     throw new KnowledgeClaimError(
       'KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED',
       '临床审核人未通过执业校验（licenseVerified 必须为 true），禁止签署或裁决正式知识主张',
+    )
+  }
+  const matched = registeredReviewers.some(registered =>
+    registered.reviewerId === check.data.reviewerId
+    && registered.nameZh === check.data.nameZh
+    && registered.specialty === check.data.specialty
+    && registered.licenseVerified === true,
+  )
+  if (!matched) {
+    throw new KnowledgeClaimError(
+      'KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED',
+      `临床审核人 ${check.data.reviewerId} 未在服务端登记名单中，禁止签署或裁决正式知识主张`,
     )
   }
 }
@@ -80,6 +94,7 @@ export class KnowledgePipelineService {
   readonly #factLedger: ClinicalFactLedgerService
   readonly #guidelines: GuidelineCorpus | undefined
   readonly #outpatient: OutpatientWorkflowContext
+  readonly #registeredReviewers: readonly ClinicalReviewerRecord[]
   readonly #workspaces: WorkspaceRepository
 
   constructor(options: {
@@ -89,6 +104,7 @@ export class KnowledgePipelineService {
     factLedger: ClinicalFactLedgerService
     guidelines?: GuidelineCorpus
     outpatientContext: OutpatientWorkflowContext
+    registeredReviewers?: readonly ClinicalReviewerRecord[]
   }) {
     this.#commands = options.commands
     this.#database = options.database
@@ -96,6 +112,7 @@ export class KnowledgePipelineService {
     this.#factLedger = options.factLedger
     this.#guidelines = options.guidelines
     this.#outpatient = options.outpatientContext
+    this.#registeredReviewers = options.registeredReviewers ?? []
     this.#workspaces = new WorkspaceRepository(options.database)
   }
 
@@ -165,8 +182,11 @@ export class KnowledgePipelineService {
     const auditInput: Record<string, unknown> = {}
     try {
       this.#assertOfflineAdministrator(context)
-      if (isPlainRecord(rawBody)) {
-        assertClinicianReviewerAuthorized(rawBody['clinicianReviewer'])
+      if (isPlainRecord(rawBody) && rawBody['clinicianReviewer'] !== undefined) {
+        throw new KnowledgeClaimError(
+          'KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED',
+          '离线制卡流水线最高仅产出试用版（auto-verified），禁止在草拟阶段传入临床审核人直接发布',
+        )
       }
       const input = offlineKnowledgePipelineInputSchema.parse(rawBody)
       auditInput.packId = input.packId
@@ -255,9 +275,10 @@ export class KnowledgePipelineService {
     const auditInput: Record<string, unknown> = {}
     try {
       this.#assertOfflineAdministrator(context)
-      if (isPlainRecord(rawBody) && isPlainRecord(rawBody['adjudication'])) {
-        assertClinicianReviewerAuthorized(rawBody['adjudication']['reviewer'])
-      }
+      const rawReviewer = isPlainRecord(rawBody) && isPlainRecord(rawBody['adjudication'])
+        ? rawBody['adjudication']['reviewer']
+        : undefined
+      assertClinicianReviewerAuthorized(rawReviewer, this.#registeredReviewers)
       const input = adjudicateConflictRequestSchema.parse(rawBody)
       auditInput.conflictId = input.adjudication.conflictId
       auditInput.decision = input.adjudication.decision
@@ -267,6 +288,7 @@ export class KnowledgePipelineService {
         adjudication: input.adjudication,
         ...(input.effectiveFrom === undefined ? {} : { effectiveFrom: input.effectiveFrom }),
         nowIso: this.#outpatient.virtualTime(context),
+        registeredReviewers: this.#registeredReviewers,
         report: input.report,
         snapshot: input.snapshot,
       })

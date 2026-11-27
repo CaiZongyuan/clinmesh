@@ -14,7 +14,11 @@ describe('DSAP static hardcoded disease pack ID guardrail', () => {
     expect(findHardcodedPackIdViolations(REPOSITORY_ROOT)).toEqual([])
   })
 
-  it('flags hardcoded pack slugs in production sources while allowing test and synthetic fixture exclusions', () => {
+  it('dynamically includes disk pack and topic IDs and detects hardcoded topic slugs too', () => {
+    expect(FORBIDDEN_DISEASE_PACK_IDS).toContain('coronary-cad')
+    expect(FORBIDDEN_DISEASE_PACK_IDS).toContain('t2dm-renal-care')
+    expect(FORBIDDEN_DISEASE_PACK_IDS).toContain('pci-stent')
+    expect(FORBIDDEN_DISEASE_PACK_IDS).toContain('t2dm-renal-medication')
     for (const packId of FORBIDDEN_DISEASE_PACK_IDS) {
       const hit = scanSourceTextForHardcodedPackIds(
         'apps/server/src/application/example-service.ts',

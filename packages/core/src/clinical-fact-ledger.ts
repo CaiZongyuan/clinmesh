@@ -942,6 +942,22 @@ function readOwnRecordValue<T>(map: Readonly<Record<string, T>> | undefined, key
   return map !== undefined && Object.hasOwn(map, key) ? map[key] : undefined
 }
 
+/** Build the composite per-version lookup key for an Observation record. */
+export function observationVersionKey(observationId: string, versionId?: string): string {
+  return `${observationId}::${versionId ?? '1'}`
+}
+
+function readObservationMapValue<T>(
+  map: Readonly<Record<string, T>> | undefined,
+  observationId: string,
+  versionId?: string,
+): T | undefined {
+  return (
+    readOwnRecordValue(map, observationVersionKey(observationId, versionId))
+    ?? readOwnRecordValue(map, observationId)
+  )
+}
+
 function resolveSpecimenOrSite(
   specimenRef: { reference?: string | undefined; display?: string | undefined } | undefined,
   bodySite: FhirCodeableConceptLike | readonly FhirCodeableConceptLike[] | undefined,
@@ -995,7 +1011,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
   }
 
   const resolveOrderedAtForObs = (obs: FhirObservationLike, report?: FhirDiagnosticReportLike): string | null => {
-    const byObs = readOwnRecordValue(input.orderedAtByObservationId, obs.id)
+    const byObs = readObservationMapValue(input.orderedAtByObservationId, obs.id, obs.meta?.versionId)
     if (byObs) return byObs
     const byReport = report ? readOwnRecordValue(input.orderedAtByReportId, report.id) : undefined
     if (byReport) return byReport
@@ -1022,7 +1038,7 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
     if (prevObsId) {
       const prevObs = obsById.get(prevObsId)
       const prevVersion = prevObs?.meta?.versionId ?? '1'
-      const prevSourceSystemId = readOwnRecordValue(input.sourceSystemIdByObservationId, prevObsId) ?? defaultSourceSystemId
+      const prevSourceSystemId = readObservationMapValue(input.sourceSystemIdByObservationId, prevObsId, prevVersion) ?? defaultSourceSystemId
       return buildFactId(prevSourceSystemId, 'Observation', prevObsId, prevVersion, componentCode)
     }
     if (!report) return null
@@ -1037,8 +1053,9 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
       if (!prevObs) continue
       const { itemCode } = pickCodingConcept(prevObs.code, prevObs.id, prevObs.id)
       if (itemCode.code === canonicalCode) {
-        const prevSourceSystemId = readOwnRecordValue(input.sourceSystemIdByObservationId, prevObs.id) ?? defaultSourceSystemId
-        return buildFactId(prevSourceSystemId, 'Observation', prevObs.id, prevObs.meta?.versionId ?? '1')
+        const prevObsVer = prevObs.meta?.versionId ?? '1'
+        const prevSourceSystemId = readObservationMapValue(input.sourceSystemIdByObservationId, prevObs.id, prevObsVer) ?? defaultSourceSystemId
+        return buildFactId(prevSourceSystemId, 'Observation', prevObs.id, prevObsVer)
       }
     }
     return null
@@ -1058,12 +1075,12 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
         ? 'amended'
         : 'final'
 
-    const obsSourceSystemId = readOwnRecordValue(input.sourceSystemIdByObservationId, obs.id) ?? defaultSourceSystemId
+    const obsSourceSystemId = readObservationMapValue(input.sourceSystemIdByObservationId, obs.id, recordVersion) ?? defaultSourceSystemId
     const orderedAt = resolveOrderedAtForObs(obs, linkedReport)
     const reportedAt = pickTimestamp(obs.issued, linkedReport?.issued)
     const effectiveAt = pickTimestamp(obs.effectiveDateTime, linkedReport?.effectiveDateTime, reportedAt)
     const ingestedAt = pickTimestamp(
-      readOwnRecordValue(input.ingestedAtByObservationId, obs.id),
+      readObservationMapValue(input.ingestedAtByObservationId, obs.id, recordVersion),
       obs.issued,
       linkedReport?.issued,
       obs.effectiveDateTime,

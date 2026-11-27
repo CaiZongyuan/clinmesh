@@ -439,8 +439,8 @@ describe('knowledge-pipeline core engine (AC33–AC36)', () => {
       vocabulary: vocab,
     })).toThrow(KnowledgeClaimError)
 
-    // Verified clinician reviewer advances cleanly to 'published'
-    const publishedResult = runOfflineKnowledgeClaimPipeline({
+    // Draft pipeline strictly caps at 'auto-verified' even if a clinicianReviewer is passed
+    expect(() => runOfflineKnowledgeClaimPipeline({
       clinicianReviewer: REVIEWER,
       controlledDraftStream: createPassageBackedDeterministicDraftStream(),
       effectiveFrom: '2026-06-01T00:00:00Z',
@@ -450,10 +450,7 @@ describe('knowledge-pipeline core engine (AC33–AC36)', () => {
       topicId: 'syn-pci-guidance-card',
       version: '2.0.0',
       vocabulary: vocab,
-    })
-    expect(publishedResult.acceptedClaims).toHaveLength(2)
-    expect(publishedResult.acceptedClaims.every(c => c.status === 'published' && c.reviewerId === REVIEWER.reviewerId)).toBe(true)
-    expect(publishedResult.publishedSnapshot?.topics[0]?.status).toBe('published')
+    })).toThrow(KnowledgeClaimError)
 
     // When all claims are rejected, publishedSnapshot stays omitted
     const emptyAccepted = runOfflineKnowledgeClaimPipeline({
@@ -634,6 +631,19 @@ describe('knowledge-pipeline core engine (AC33–AC36)', () => {
     expect(report.snapshot.claims[0]!.statementZh).toBe('v1 原主张：拟行 PCI 患者优先选择 DES 而非 BMS。')
     expect(report.snapshot.claims[0]!.status).toBe('published')
 
+    // Unregistered reviewer cannot adjudicate even with licenseVerified: true
+    expect(() => adjudicateGuidelineClaimConflict({
+      adjudication: {
+        conflictId: conflict.conflictId,
+        decision: 'adopt-new',
+        rationaleZh: '尝试使用未登记但自称持证的审核人',
+        reviewer: REVIEWER,
+      },
+      registeredReviewers: [],
+      report,
+      snapshot: baselineSnapshot,
+    })).toThrow(KnowledgeClaimError)
+
     // Unverified reviewer cannot adjudicate
     expect(() => adjudicateGuidelineClaimConflict({
       adjudication: {
@@ -642,6 +652,7 @@ describe('knowledge-pipeline core engine (AC33–AC36)', () => {
         rationaleZh: '尝试越权裁决',
         reviewer: { ...REVIEWER, licenseVerified: false as unknown as true },
       },
+      registeredReviewers: [REVIEWER],
       report,
       snapshot: baselineSnapshot,
     })).toThrow(KnowledgeClaimError)
@@ -655,6 +666,7 @@ describe('knowledge-pipeline core engine (AC33–AC36)', () => {
         reviewer: REVIEWER,
       },
       nowIso: '2026-08-24T09:30:00Z',
+      registeredReviewers: [REVIEWER],
       report,
       snapshot: baselineSnapshot,
     })
@@ -671,6 +683,7 @@ describe('knowledge-pipeline core engine (AC33–AC36)', () => {
       },
       effectiveFrom: '2026-08-24T00:00:00Z',
       nowIso: '2026-08-24T10:00:00Z',
+      registeredReviewers: [REVIEWER],
       report,
       snapshot: baselineSnapshot,
     })
@@ -690,6 +703,7 @@ describe('knowledge-pipeline core engine (AC33–AC36)', () => {
         rationaleZh: '重复裁决',
         reviewer: REVIEWER,
       },
+      registeredReviewers: [REVIEWER],
       report: adjudicated.updatedReport,
       snapshot: adjudicated.updatedSnapshot,
     })).toThrow(KnowledgePipelineError)

@@ -454,20 +454,12 @@ _Avoid_: Lot number, product code
 
 ## 专病能力平台
 
-**Clinical Fact Ledger**:
-按患者按需投影的只读临床事实总账，带来源系统标识、有效性及可疑/冲突/外院待核实拦截标记；未通过核实的事实不参与算分和红线判定。
-_Avoid_: Second source of truth, raw note dump, Case Truth
-
-**Disease Pack**:
-纯数据文件夹形式的可插拔专病包（含 `full` 诊疗路径包与 `recognition` 识别提示包），通过三层受控叠覆、版本化公式引用与数据指纹校验接入平台。
-_Avoid_: Hardcoded switch branch, embedded script plugin
-
 **Clinical Prompt Card**:
-平台在七个诊疗时机统一呈现的非阻断或警示提示卡（含指南知识、缺项追问、排雷清单、退出总结、不适用边界、无指征黄牌、表型识别与质控映射），默认投递模式为“展示”并绑定依据事实版本。
+平台在六个同步诊疗时机与异步报告更新时机统一呈现的非阻断或警示提示卡（含指南知识、缺项追问、排雷清单、退出总结、不适用边界、无指征黄牌、表型识别与质控映射），默认投递模式为“展示”并绑定依据事实版本。
 _Avoid_: Autonomous order execution, silent auto-override
 
 **Clinical Prompt Timing**:
-临床工作流中确定性触发统一提示卡求值的七个核心节点与异步报告更新时机（含接诊开屏、床旁缺项核对、组套草稿选择、医嘱/处方签署前、完诊、PCI 计划、出院及报告到达/修订），确保正确建议只在正确时机弹出。
+临床工作流中确定性触发统一提示卡求值的六个同步节点与异步报告更新时机（接诊开屏、组套草稿选择、医嘱/处方签署前、完诊、PCI 计划、出院及报告到达/修订），确保正确建议只在正确时机弹出。
 _Avoid_: Arbitrary background cron prompt, live model chat interrupt
 
 **Risk Tag**:

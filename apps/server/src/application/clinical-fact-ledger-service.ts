@@ -18,6 +18,7 @@ import {
   evaluateClinicalFactLedger,
   LEGACY_BEDSIDE_QUESTIONNAIRE_FIELDS,
   normalizeBedsideItemCode,
+  observationVersionKey,
   synthesizeUnaskedQuestionnaireCandidates,
   transcribeBedsideQuestionnaireFacts,
   transcribeLocalFhirFacts,
@@ -621,20 +622,20 @@ export class ClinicalFactLedgerService {
     const ingestedAtByObservationId: Record<string, string> = {}
 
     const existingObsVersionKeys = new Set(
-      observations.map(obs => `${obs.id}::${obs.meta?.versionId ?? '1'}`),
+      observations.map(obs => observationVersionKey(obs.id, obs.meta?.versionId)),
     )
     for (const entry of this.listEligibleIngestedObservations(context, patientId)) {
       const obsId = entry.observation.id
       const obsVer = entry.observation.meta?.versionId ?? '1'
-      const versionKey = `${obsId}::${obsVer}`
+      const versionKey = observationVersionKey(obsId, obsVer)
       if (!existingObsVersionKeys.has(versionKey)) {
         observations.push(entry.observation)
         existingObsVersionKeys.add(versionKey)
       }
-      sourceSystemIdByObservationId[obsId] = entry.sourceSystemId
-      ingestedAtByObservationId[obsId] = entry.ingestedAt
+      sourceSystemIdByObservationId[versionKey] = entry.sourceSystemId
+      ingestedAtByObservationId[versionKey] = entry.ingestedAt
       if (entry.orderedAt) {
-        orderedAtByObservationId[obsId] = entry.orderedAt
+        orderedAtByObservationId[versionKey] = entry.orderedAt
       }
     }
 

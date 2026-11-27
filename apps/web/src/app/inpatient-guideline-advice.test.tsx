@@ -26,7 +26,7 @@ const evidence = [
   { id: 'guideline-measurement', title: '合成 CVIT 测量共识', locator: 'PDF 物理第 6 页', text: 'Distinguish proximal and distal reference lumen and EEM. Length cannot be measured by manual pullback without longitudinal acquisition.' },
 ].map(item => ({ ...item, publisher: '合成指南机构', documentType: 'guideline' as const, version: '2021',
   url: 'https://example.test/verified-guideline', scope: '仅用于合成界面合同', sourceHash: 'c'.repeat(64) }))
-const ready = inpatientGuidelineAdviceSchema.parse({ admissionId: admission.id, requestId: 'surgery-1', taskId: 'guideline-task-1', version: 1,
+const ready = inpatientGuidelineAdviceSchema.parse({ admissionId: admission.id, topicId: 'pci-stent', requestId: 'surgery-1', taskId: 'guideline-task-1', version: 1,
   fingerprint: 'a'.repeat(64), status: 'incomplete', message: '指南参考意见已准备；患者资料仍有缺项，仅供有条件核对。', missing: ['缺少近端参考管径。'], failureCode: null,
   result: { id: 'guideline-result-1', fingerprint: 'a'.repeat(64), model: 'synthetic-guideline-model', createdAt: '2026-08-24T09:00:00+08:00',
     topic: { id: 'pci-stent', version: '2026-11-02.r1', fingerprint: 'b'.repeat(64) }, guidelines: evidence, conclusions: [
@@ -416,73 +416,69 @@ it('无手术单专题选择支持同步零AI读取原文与客观指标、unava
     const url = new URL(String(input), 'http://localhost')
     if (url.pathname === '/api/auth/context') return Response.json(session)
     if (url.pathname.endsWith('/guideline-topics')) {
-      const topicId = url.searchParams.get('topicId') ?? 'contrast-kidney-hydration'
-      if (topicId === 't2dm-renal-medication') {
+      const requestedTopicId = url.searchParams.get('topicId')
+      const makeTopicRead = (topicId: GuidelineTopicId) => ({
+        topic: {
+          id: topicId,
+          version: '2026-11-17.r1',
+          fingerprint: '5'.repeat(64),
+          specialty: topicId === 't2dm-renal-medication' ? 'endocrinology' : 'cardiology',
+          titleZh: topicId === 'coronary-revascularization-indication'
+            ? '冠脉血运重建指征与功能学缺血评估'
+            : topicId === 'pci-stent'
+              ? '冠脉介入支架选型与腔内影像'
+              : topicId === 't2dm-renal-medication'
+                ? '2 型糖尿病合并慢性肾脏病用药'
+                : '对比剂急性肾损伤预防与围术期水化',
+          titleEn: topicId,
+        },
+        status: topicId === 't2dm-renal-medication' ? 'unavailable' : 'available',
+        population: 'adult',
+        navigation: '导航说明',
+        degradedReason: topicId === 't2dm-renal-medication' ? '指南物理第7页未完整保留本专题所需条款与限定语，停止使用专题。' : null,
+        guidelines: topicId === 't2dm-renal-medication'
+          ? []
+          : [{
+              id: `${topicId}-p1`,
+              title: '合成核验指南原文',
+              publisher: '合成发布机构',
+              documentType: 'guideline',
+              version: '2021',
+              url: 'https://example.test/guideline',
+              scope: '仅供合成测试',
+              sourceHash: '6'.repeat(64),
+              locator: 'PDF 物理第 4 页',
+              text: '肾功能不全或高危患者，推荐水化预防；24小时最大剂量不超过500 ml。',
+            }],
+        limitations: ['重度左心衰竭患者水化须由临床医生个体化控制容量。'],
+        patientIndicators: [{
+          code: 'coronary-angiography',
+          labelZh: '冠脉造影解剖狭窄与功能学评估',
+          labelEn: 'Coronary angiography & FFR/iFR',
+          status: 'present',
+          valueText: '最高狭窄 65% · 最低 FFR 0.86（> 0.80 保守治疗范围）',
+          sourceReference: 'Procedure/proc-1',
+          versionId: '2',
+        }],
+        missingPatientInputs: ['缺少术前血肌酐与 eGFR 危险分层依据。'],
+        missingSources: topicId === 't2dm-renal-medication' ? ['指南物理第7页未完整保留本专题所需条款与限定语，停止使用专题。'] : [],
+      })
+      if (requestedTopicId === null) {
         return Response.json({
           encounterId: admission.id,
           evaluatedAt: '2026-08-24T10:00:00+08:00',
-          items: [{
-            topic: {
-              id: 't2dm-renal-medication',
-              version: '2026-11-17.r1',
-              fingerprint: '4'.repeat(64),
-              specialty: 'endocrinology',
-              titleZh: '2 型糖尿病合并慢性肾脏病降糖与心肾保护用药',
-              titleEn: 'T2DM & CKD medication',
-            },
-            status: 'unavailable',
-            population: 'adult',
-            navigation: '导航说明',
-            degradedReason: '指南物理第7页未完整保留本专题所需条款与限定语，停止使用专题。',
-            guidelines: [],
-            limitations: ['仅覆盖成人 2 型糖尿病合并 CKD。'],
-            patientIndicators: [],
-            missingPatientInputs: ['缺少近期糖化血红蛋白（HbA1c）检验记录。'],
-            missingSources: ['指南物理第7页未完整保留本专题所需条款与限定语，停止使用专题。'],
-          }],
+          items: [
+            makeTopicRead('contrast-kidney-hydration'),
+            makeTopicRead('coronary-revascularization-indication'),
+            makeTopicRead('pci-stent'),
+            makeTopicRead('t2dm-renal-medication'),
+          ],
         })
       }
       return Response.json({
         encounterId: admission.id,
         evaluatedAt: '2026-08-24T10:00:00+08:00',
-        items: [{
-          topic: {
-            id: topicId,
-            version: '2026-11-17.r1',
-            fingerprint: '5'.repeat(64),
-            specialty: 'cardiology',
-            titleZh: topicId === 'coronary-revascularization-indication' ? '冠脉血运重建指征与功能学缺血评估' : '对比剂急性肾损伤预防与围术期水化',
-            titleEn: topicId,
-          },
-          status: 'available',
-          population: 'adult',
-          navigation: '导航说明',
-          degradedReason: null,
-          guidelines: [{
-            id: `${topicId}-p1`,
-            title: '合成核验指南原文',
-            publisher: '合成发布机构',
-            documentType: 'guideline',
-            version: '2021',
-            url: 'https://example.test/guideline',
-            scope: '仅供合成测试',
-            sourceHash: '6'.repeat(64),
-            locator: 'PDF 物理第 4 页',
-            text: '肾功能不全或高危患者，推荐水化预防；24小时最大剂量不超过500 ml。',
-          }],
-          limitations: ['重度左心衰竭患者水化须由临床医生个体化控制容量。'],
-          patientIndicators: [{
-            code: 'coronary-angiography',
-            labelZh: '冠脉造影解剖狭窄与功能学评估',
-            labelEn: 'Coronary angiography & FFR/iFR',
-            status: 'present',
-            valueText: '最高狭窄 65% · 最低 FFR 0.86（> 0.80 保守治疗范围）',
-            sourceReference: 'Procedure/proc-1',
-            versionId: '2',
-          }],
-          missingPatientInputs: ['缺少术前血肌酐与 eGFR 危险分层依据。'],
-          missingSources: [],
-        }],
+        items: [makeTopicRead(requestedTopicId as GuidelineTopicId)],
       })
     }
     if (url.pathname.endsWith('/guideline-advice')) {
@@ -564,14 +560,15 @@ it('专题选择器在仅存在已取消历史PCI计划时保留住院级 pci-st
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url, 'http://localhost')
     if (url.pathname.endsWith('/guideline-topics')) {
-      const topicId = (url.searchParams.get('topicId') ?? 'contrast-kidney-hydration') as GuidelineTopicId
+      const requested = url.searchParams.get('topicId')
+      const topicIds = requested === null ? ['contrast-kidney-hydration', 'pci-stent'] : [requested]
       return Response.json({
         encounterId: admission.id,
         evaluatedAt: '2026-08-24T10:00:00+08:00',
-        items: [{
+        items: topicIds.map(topicId => ({
           degradedReason: null,
           guidelines: [],
-          limitations: [],
+          limitations: ['仅作合成测试限定。'],
           missingPatientInputs: [],
           missingSources: [],
           navigation: '导航说明',
@@ -586,7 +583,7 @@ it('专题选择器在仅存在已取消历史PCI计划时保留住院级 pci-st
             titleZh: topicId,
             version: '2026-11-17.r1',
           },
-        }],
+        })),
       })
     }
     if (url.pathname.endsWith('/guideline-advice')) {

@@ -37,6 +37,12 @@ async function recomputeDirManifestFingerprint(packDir: string, mutate?: (rawPac
   }
   if (mutate !== undefined) {
     mutate(rawPack)
+    if (dirFiles.has('clinical.json') && rawPack.riskTags !== undefined) {
+      const clinical = JSON.parse(await readFile(join(packDir, 'clinical.json'), 'utf8')) as Record<string, unknown>
+      if (rawPack.qualityTightenings !== undefined) clinical.qualityTightenings = rawPack.qualityTightenings
+      if (rawPack.riskTags !== undefined) clinical.riskTags = rawPack.riskTags
+      await writeFile(join(packDir, 'clinical.json'), `${JSON.stringify(clinical, null, 2)}\n`)
+    }
     if (dirFiles.has('stages.json') && rawPack.stages !== undefined) {
       await writeFile(join(packDir, 'stages.json'), `${JSON.stringify({ stages: rawPack.stages }, null, 2)}\n`)
     }
@@ -68,6 +74,12 @@ describe('DSAP Slice S11: Exam Runner, 7 Public Traps, 5-Layer Attribution, AC10
   async function setupFixture(options: { withSyntheticPack?: boolean } = {}) {
     const prepared = await preparePciPaymentDrgFixture()
     cleanups.push(() => rm(prepared.directory, { recursive: true, force: true }))
+    prepared.options.registeredClinicianReviewers = [{
+      licenseVerified: true,
+      nameZh: '合成测试审核人',
+      reviewerId: 'reviewer-syn-cardio-01',
+      specialty: 'cardiology',
+    }]
     if (options.withSyntheticPack) {
       prepared.options.diseasePackDirs = [SYNTHETIC_PACK_DIR]
     }
@@ -108,7 +120,7 @@ describe('DSAP Slice S11: Exam Runner, 7 Public Traps, 5-Layer Attribution, AC10
     const { report } = examData
     expect(report.llmInvocationCount).toBe(0)
     expect(report.migrationDiffCount).toBe(0)
-    expect(report.coronaryRegressionPassed).toBe(true)
+    expect(report.activePacksRegressionPassed).toBe(true)
     expect(report.sourceSystemAgnostic.concluded).toBe(true)
     expect(report.packAdditionAudit.platformChangesZero).toBe(true)
     expect(Object.keys(report.failureSummaryByLayer).sort()).toEqual([...EXAM_FAILURE_LAYERS].sort())
@@ -471,5 +483,57 @@ describe('DSAP Slice S11: Exam Runner, 7 Public Traps, 5-Layer Attribution, AC10
         }
       }
     }
+  })
+
+  it('AC10 Startup Gate: demotes an active pack to draft on runtime startup when a clinical threshold is tampered', async () => {
+    const tamperedDir = await mkdtemp(join(tmpdir(), 'clinmesh-startup-tampered-'))
+    cleanups.push(() => rm(tamperedDir, { recursive: true, force: true }))
+    await cp(SYNTHETIC_PACK_DIR, tamperedDir, { recursive: true })
+    await recomputeDirManifestFingerprint(tamperedDir, (raw) => {
+      ;(raw.manifest as Record<string, unknown>).id = 'synthetic-tampered-active'
+      ;(raw.manifest as Record<string, unknown>).status = 'active'
+      if (raw.conceptVocabulary && typeof raw.conceptVocabulary === 'object') {
+        const vocab = raw.conceptVocabulary as { nodes?: Array<Record<string, unknown>> }
+        for (const node of vocab.nodes ?? []) node.packId = 'synthetic-tampered-active'
+      }
+      if (raw.knowledgeSnapshots && Array.isArray(raw.knowledgeSnapshots)) {
+        for (const snap of raw.knowledgeSnapshots as Array<Record<string, unknown>>) {
+          for (const claim of (snap.claims as Array<Record<string, unknown>> | undefined) ?? []) {
+            claim.packId = 'synthetic-tampered-active'
+          }
+          for (const topic of (snap.topics as Array<Record<string, unknown>> | undefined) ?? []) {
+            topic.packId = 'synthetic-tampered-active'
+          }
+        }
+      }
+      // Tamper the mild exam case so expectedStageId contradicts the stages -> fails startup exam suite
+      const examSuite = raw.examSuite as { cases?: Array<Record<string, unknown>> }
+      const mildCase = examSuite.cases?.find(c => c.caseId === 'syn-exam-standard-mild')
+      if (mildCase) {
+        mildCase.expectedActive = false
+      }
+    })
+
+    const prepared = await preparePciPaymentDrgFixture()
+    cleanups.push(() => rm(prepared.directory, { recursive: true, force: true }))
+    prepared.options.includeBuiltinDraftDiseasePacks = false
+    prepared.options.diseasePackDirs = [tamperedDir]
+    prepared.options.diseasePackVerifyFingerprint = true
+    prepared.options.registeredClinicianReviewers = [{
+      licenseVerified: true,
+      nameZh: '合成测试审核人',
+      reviewerId: 'reviewer-syn-cardio-01',
+      specialty: 'cardiology',
+    }]
+    const fixture = await createPciPaymentDrgFixture(prepared)
+    cleanups.push(() => fixture.runtime.close())
+
+    // Startup gate demoted the tampered pre-marked active pack to draft and blocks auto-activation
+    const effective = fixture.runtime.workflow.diseasePacks.registry.getEffective('synthetic-tampered-active')
+    expect(effective.pack.manifest.status).toBe('draft')
+    expect((fixture.runtime.workflow.diseasePacks.registry.startupDemotionReasons('synthetic-tampered-active') ?? []).length).toBeGreaterThan(0)
+
+    const catalog = await fixture.read('doctor', '/api/his/v1/catalogs/disease-packs', diseasePackCatalogListSchema)
+    expect(catalog.items.find(i => i.id === 'synthetic-tampered-active')?.status).toBe('draft')
   })
 })

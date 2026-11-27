@@ -1,4 +1,5 @@
 import { agentToolInputSchemas, clinicalOverrideToolParameters, doctorCaseSectionSchema } from '@clinmesh/contracts/agent'
+import { ASYNC_CLINICAL_PROMPT_TIMINGS, SYNC_CLINICAL_PROMPT_TIMINGS } from '@clinmesh/contracts/clinical-prompt-cards'
 import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
 import {
   doctorQueueViewStatusGroups
@@ -119,7 +120,7 @@ export function doctorWorkspaceAgentActions({
         includeSilent: { type: 'boolean' },
         reevaluateWithLatestKnowledge: { type: 'boolean' },
         selectedTemplateId: { type: 'string' },
-        timing: { type: 'string', enum: ['encounter-open', 'order-draft-select', 'order-sign', 'encounter-complete', 'pci-plan', 'discharge', 'report-arrived'] },
+        timing: { type: 'string', enum: [...SYNC_CLINICAL_PROMPT_TIMINGS, ...ASYNC_CLINICAL_PROMPT_TIMINGS] },
       },
     ),
     'outpatient.case.select': {

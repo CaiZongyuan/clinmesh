@@ -454,6 +454,61 @@ describe('clinical-fact-ledger core transcription and evaluation', () => {
     expect(v1Superseded.ineligibleReasons).toContain('superseded')
   })
 
+  it('preserves per-version ingestedAt timestamps when an Observation is amended under the same Observation ID', () => {
+    const sharedObsId = 'l0-sim-lis-cr-001'
+    const candidates = transcribeLocalFhirFacts({
+      ingestedAtByObservationId: {
+        [`${sharedObsId}::1`]: '2026-08-24T09:05:00+08:00',
+        [`${sharedObsId}::2`]: '2026-08-24T11:05:00+08:00',
+      },
+      observations: [
+        {
+          id: sharedObsId,
+          status: 'final',
+          code: { coding: [{ code: '2160-0', display: '肌酐' }] },
+          valueQuantity: { value: 1.0, unit: 'mg/dL' },
+          issued: '2026-08-24T09:00:00+08:00',
+          meta: { versionId: '1', lastUpdated: '2026-08-24T09:00:00+08:00' },
+        },
+        {
+          id: sharedObsId,
+          status: 'amended',
+          code: { coding: [{ code: '2160-0', display: '肌酐' }] },
+          valueQuantity: { value: 1.8, unit: 'mg/dL' },
+          issued: '2026-08-24T11:00:00+08:00',
+          meta: { versionId: '2', lastUpdated: '2026-08-24T11:00:00+08:00' },
+        },
+      ],
+      sourceSystemIdByObservationId: {
+        [`${sharedObsId}::1`]: 'clinmesh-sim-lis-v2',
+        [`${sharedObsId}::2`]: 'clinmesh-sim-lis-v2',
+      },
+    })
+
+    const atMidpoint = evaluateClinicalFactLedger({
+      patientId: 'pat-1',
+      patientSex: 'male',
+      subjectKind: 'outpatient',
+      subjectId: 'case-1',
+      evaluatedAsOf: '2026-08-24T10:00:00+08:00',
+      candidates,
+    })
+    expect(atMidpoint.facts).toHaveLength(1)
+    expect(atMidpoint.facts[0]?.provenance.recordVersion).toBe('1')
+    expect(atMidpoint.facts[0]?.value.normalizedValue).toEqual({ unit: 'mg/dL', value: 1.0 })
+    expect(atMidpoint.facts[0]?.ingestedAt).toBe('2026-08-24T09:05:00+08:00')
+
+    const atLatest = evaluateClinicalFactLedger({
+      patientId: 'pat-1',
+      patientSex: 'male',
+      subjectKind: 'outpatient',
+      subjectId: 'case-1',
+      evaluatedAsOf: '2026-08-24T12:00:00+08:00',
+      candidates,
+    })
+    expect(atLatest.facts.find(f => f.provenance.recordVersion === '2')?.ingestedAt).toBe('2026-08-24T11:05:00+08:00')
+  })
+
   it('enforces public validity defaults and tightenValidityDays monotonicity', () => {
     expect(getPublicValidityDays('2160-0')).toBe(90)
     expect(getPublicValidityDays('1700404A')).toBe(90)

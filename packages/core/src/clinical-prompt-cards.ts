@@ -772,6 +772,17 @@ function toFactVersionRefs(
   return refs
 }
 
+export function resolvePackCardKnowledgeStatus(
+  effective: EffectiveDiseasePack,
+): ClinicalPromptCard['knowledgeStatus'] {
+  const snapshots = effective.pack.knowledgeSnapshots ?? []
+  if (snapshots.length === 0) return 'auto-verified'
+  const latest = [...snapshots].sort((a, b) => Date.parse(a.effectiveFrom) - Date.parse(b.effectiveFrom)).at(-1)!
+  const nonRetired = latest.claims.filter(claim => claim.status !== 'superseded' && claim.status !== 'retracted')
+  if (nonRetired.length === 0) return 'auto-verified'
+  return nonRetired.every(claim => claim.status === 'published') ? 'published' : 'auto-verified'
+}
+
 function knowledgeBadgeFields(status: ClinicalPromptCard['knowledgeStatus']): {
   trialBadgeZh: ClinicalPromptCard['trialBadgeZh']
   trialDisclaimerZh: ClinicalPromptCard['trialDisclaimerZh']
@@ -959,6 +970,12 @@ function buildConfusableDifferentialCard(
 
   const uniqueMissing = [...new Set(missingItemLabels)]
   const missingPart = uniqueMissing.length > 0 ? `；待补鉴别检查：${uniqueMissing.join('、')}` : ''
+  const clusterStatus: ClinicalPromptCard['knowledgeStatus'] = cluster.packs.every(
+    packItem => resolvePackCardKnowledgeStatus(packItem.effective) === 'published',
+  )
+    ? 'published'
+    : 'auto-verified'
+  const clusterBadge = knowledgeBadgeFields(clusterStatus)
 
   return clinicalPromptCardSchema.parse({
     basedOnFactVersions: toFactVersionRefs([...matchedFactIds], factsById),
@@ -969,7 +986,7 @@ function buildConfusableDifferentialCard(
     detail: `同时触发互为易混淆专病包 ${packTitles.join('、')}，已暂停各自独立治疗与用药建议，请先完成并排鉴别排查：${differentialHints.join('；')}${missingPart}`,
     indicator: 'warning',
     knowledgeSnapshotVersion: snapshotVersionsByPackId.get(primaryPackId) ?? null,
-    knowledgeStatus: 'published',
+    knowledgeStatus: clusterStatus,
     overrideReasons: [...clinicalOverrideReasonSchema.options],
     packId: primaryPackId,
     packVersion: primaryPackVersion,
@@ -979,8 +996,7 @@ function buildConfusableDifferentialCard(
     suggestions: suggestions.slice(0, 12),
     summary: `易混淆病种并排鉴别（${cluster.packs.map(p => p.effective.pack.manifest.titleZh).join(' vs ')}）`,
     timing,
-    trialBadgeZh: null,
-    trialDisclaimerZh: null,
+    ...clusterBadge,
   })
 }
 
@@ -988,6 +1004,7 @@ function buildPointScaleCard(
   scale: NonNullable<EffectiveDiseasePack['pack']['pointScales']>[number],
   packId: string,
   packVersion: string,
+  packKnowledgeStatus: ClinicalPromptCard['knowledgeStatus'],
   snapshotVersion: string | null,
   activeRiskTags: ClinicalPromptRiskTag[],
   ledger: ClinicalFactLedger,
@@ -1006,6 +1023,7 @@ function buildPointScaleCard(
   const matchedCriteriaFactIds = scale.criteria
     .filter(c => scaleResult.matchedCriteriaIds.includes(c.id))
     .flatMap(c => evaluatePackTrigger(c.condition, ledger, evalOptions).matchedFactIds)
+  const badge = knowledgeBadgeFields(packKnowledgeStatus)
 
   return clinicalPromptCardSchema.parse({
     basedOnFactVersions: toFactVersionRefs(matchedCriteriaFactIds, factsById),
@@ -1016,7 +1034,7 @@ function buildPointScaleCard(
     detail: `${scale.titleZh}评分：${scaleResult.score} 分，风险分层：${scaleResult.bandLabelZh ?? '未分级'}。${guidance ? `${guidance} ` : ''}指南依据：${citationText}`,
     indicator: isLowRiskSkip ? 'info' : 'warning',
     knowledgeSnapshotVersion: snapshotVersion,
-    knowledgeStatus: 'published',
+    knowledgeStatus: packKnowledgeStatus,
     overrideReasons: [...clinicalOverrideReasonSchema.options],
     packId,
     packVersion,
@@ -1026,8 +1044,7 @@ function buildPointScaleCard(
     suggestions: [],
     summary: `${scale.titleZh}：${scaleResult.score} 分（${scaleResult.bandLabelZh ?? '已评估'}）${isLowRiskSkip ? ' - 低危可免检' : ''}`,
     timing: 'encounter-open',
-    trialBadgeZh: null,
-    trialDisclaimerZh: null,
+    ...badge,
   })
 }
 
@@ -1106,11 +1123,13 @@ function claimToPromptCard(
 function buildRecognitionPromptCard(input: {
   activeRiskTags: readonly ClinicalPromptRiskTag[]
   effective: EffectiveDiseasePack
+  packKnowledgeStatus: ClinicalPromptCard['knowledgeStatus']
   snapshotVersion: string | null
   timing: 'encounter-open' | 'report-arrived'
 }): ClinicalPromptCard {
   const rc = input.effective.pack.recognitionCard!
   const packId = input.effective.pack.manifest.id
+  const badge = knowledgeBadgeFields(input.packKnowledgeStatus)
   return clinicalPromptCardSchema.parse({
     basedOnFactVersions: [],
     blockingTier: 'none',
@@ -1120,7 +1139,7 @@ function buildRecognitionPromptCard(input: {
     detail: `${rc.summaryZh}；${rc.escalationGuidanceZh}`,
     indicator: 'warning',
     knowledgeSnapshotVersion: input.snapshotVersion,
-    knowledgeStatus: 'published',
+    knowledgeStatus: input.packKnowledgeStatus,
     overrideReasons: [],
     packId,
     packVersion: input.effective.pack.manifest.version,
@@ -1130,8 +1149,7 @@ function buildRecognitionPromptCard(input: {
     suggestions: [],
     summary: rc.titleZh,
     timing: input.timing,
-    trialBadgeZh: null,
-    trialDisclaimerZh: null,
+    ...badge,
   })
 }
 
@@ -1170,6 +1188,8 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
     const { effective, entry, vocabulary, exitMatchedFactIds, exitSummaryAlreadyEmitted } = packItem
     const packId = effective.pack.manifest.id
     const packVersion = effective.pack.manifest.version
+    const packStatus = resolvePackCardKnowledgeStatus(effective)
+    const packBadge = knowledgeBadgeFields(packStatus)
     const evalOptions = {
       asOf: input.asOf,
       ...(input.encounterIdByRecordId ? { encounterIdByRecordId: input.encounterIdByRecordId } : {}),
@@ -1275,7 +1295,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
         detail: `${effective.pack.manifest.titleZh}命中不适用人群条件（${matchedConditionText}），已超出本包范围，请医生自行决策。已停用该包治疗、用药与血运重建建议，仅保留高危病因排查与关键缺项核对边界。`,
         indicator: 'warning',
         knowledgeSnapshotVersion: snapshotVersion,
-        knowledgeStatus: 'published',
+        knowledgeStatus: packStatus,
         overrideReasons: [],
         packId,
         packVersion,
@@ -1285,8 +1305,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
         suggestions: [],
         summary: `${effective.pack.manifest.titleZh}（${matchedLabels[0] ?? '不适用人群'}）：超出本包范围，请医生自行决策`,
         timing: 'encounter-open',
-        trialBadgeZh: null,
-        trialDisclaimerZh: null,
+        ...packBadge,
       }))
     }
 
@@ -1313,7 +1332,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
           detail: `${effective.pack.manifest.titleZh}${activeStage ? `（${activeStage.titleZh}）` : ''}需要核对床旁问诊项目“${qItem.labelZh}”，当前总账状态为没问到，须补问并录入后再采纳依赖该项的危险分层或方案。`,
           indicator: 'warning',
           knowledgeSnapshotVersion: snapshotVersion,
-          knowledgeStatus: 'published',
+          knowledgeStatus: packStatus,
           overrideReasons: [...clinicalOverrideReasonSchema.options],
           packId,
           packVersion,
@@ -1331,8 +1350,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
           ],
           summary: `${qItem.labelZh}：没问到`,
           timing: 'encounter-open',
-          trialBadgeZh: null,
-          trialDisclaimerZh: null,
+          ...packBadge,
         }))
       }
 
@@ -1357,7 +1375,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             detail: `${ruleOut.actionHintZh}${codesText}${missingText}`,
             indicator: 'warning',
             knowledgeSnapshotVersion: snapshotVersion,
-            knowledgeStatus: 'published',
+            knowledgeStatus: packStatus,
             overrideReasons: [...clinicalOverrideReasonSchema.options],
             packId,
             packVersion,
@@ -1375,8 +1393,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             ],
             summary: missingLabels.length > 0 ? `${ruleOut.titleZh}（尚缺：${missingLabels.join('、')}）` : ruleOut.titleZh,
             timing: 'encounter-open',
-            trialBadgeZh: null,
-            trialDisclaimerZh: null,
+            ...packBadge,
           }))
         }
       }
@@ -1396,7 +1413,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             detail: `${tag.descriptionZh ?? tag.labelZh}（专病包风险标签：${tag.id}）`,
             indicator: tag.severity,
             knowledgeSnapshotVersion: snapshotVersion,
-            knowledgeStatus: 'published',
+            knowledgeStatus: packStatus,
             overrideReasons: [...clinicalOverrideReasonSchema.options],
             packId,
             packVersion,
@@ -1406,8 +1423,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             suggestions: [],
             summary: tag.labelZh,
             timing: 'encounter-open',
-            trialBadgeZh: null,
-            trialDisclaimerZh: null,
+            ...packBadge,
           }))
         }
 
@@ -1425,7 +1441,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             detail: entry.followUpLdlSummary.comparisonTextZh,
             indicator: entry.followUpLdlSummary.atGoal ? 'info' : 'warning',
             knowledgeSnapshotVersion: snapshotVersion,
-            knowledgeStatus: 'published',
+            knowledgeStatus: packStatus,
             longitudinalComparison: {
               currentValueText: `${entry.followUpLdlSummary.latestLdlMmolL}`,
               labelZh: 'LDL-C 纵向达标复查',
@@ -1441,8 +1457,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             suggestions: [],
             summary: entry.followUpLdlSummary.comparisonTextZh,
             timing: 'encounter-open',
-            trialBadgeZh: null,
-            trialDisclaimerZh: null,
+            ...packBadge,
           }))
         }
 
@@ -1452,6 +1467,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             scale,
             packId,
             packVersion,
+            packStatus,
             snapshotVersion,
             activeRiskTags,
             input.ledger,
@@ -1465,6 +1481,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
           cards.push(buildRecognitionPromptCard({
             activeRiskTags,
             effective,
+            packKnowledgeStatus: packStatus,
             snapshotVersion,
             timing: 'encounter-open',
           }))
@@ -1495,7 +1512,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
           detail: `${tag.descriptionZh ?? tag.labelZh}${input.selectedTemplateId ? `（所选组套：${input.selectedTemplateId}）` : ''}`,
           indicator: tag.severity,
           knowledgeSnapshotVersion: snapshotVersion,
-          knowledgeStatus: 'published',
+          knowledgeStatus: packStatus,
           overrideReasons: [...clinicalOverrideReasonSchema.options],
           packId,
           packVersion,
@@ -1505,8 +1522,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
           suggestions: [],
           summary: tag.labelZh,
           timing: 'order-draft-select',
-          trialBadgeZh: null,
-          trialDisclaimerZh: null,
+          ...packBadge,
         }))
       }
     }
@@ -1525,7 +1541,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             detail: `发现外院未核实事实“${fact.itemCode.display}”（${fact.value.rawText}），当前不作为确认或评分依据，请形式核实后再使用。`,
             indicator: 'warning',
             knowledgeSnapshotVersion: snapshotVersion,
-            knowledgeStatus: 'published',
+            knowledgeStatus: packStatus,
             overrideReasons: [...clinicalOverrideReasonSchema.options],
             packId,
             packVersion,
@@ -1543,8 +1559,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             ],
             summary: `外院${fact.itemCode.display}待形式核实`,
             timing: 'report-arrived',
-            trialBadgeZh: null,
-            trialDisclaimerZh: null,
+            ...packBadge,
           }))
         }
       }
@@ -1553,6 +1568,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
           cards.push(buildRecognitionPromptCard({
             activeRiskTags,
             effective,
+            packKnowledgeStatus: packStatus,
             snapshotVersion,
             timing: 'report-arrived',
           }))
@@ -1569,7 +1585,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             detail: `${tag.descriptionZh ?? tag.labelZh}（报告到达/修订后自动触发）`,
             indicator: tag.severity,
             knowledgeSnapshotVersion: snapshotVersion,
-            knowledgeStatus: 'published',
+            knowledgeStatus: packStatus,
             overrideReasons: [...clinicalOverrideReasonSchema.options],
             packId,
             packVersion,
@@ -1579,8 +1595,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             suggestions: [],
             summary: tag.labelZh,
             timing: 'report-arrived',
-            trialBadgeZh: null,
-            trialDisclaimerZh: null,
+            ...packBadge,
           }))
         }
         if (entry.followUpLdlSummary) {
@@ -1596,7 +1611,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             detail: entry.followUpLdlSummary.comparisonTextZh,
             indicator: entry.followUpLdlSummary.atGoal ? 'info' : 'warning',
             knowledgeSnapshotVersion: snapshotVersion,
-            knowledgeStatus: 'published',
+            knowledgeStatus: packStatus,
             longitudinalComparison: {
               currentValueText: `${entry.followUpLdlSummary.latestLdlMmolL}`,
               labelZh: 'LDL-C 纵向达标复查',
@@ -1612,8 +1627,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             suggestions: [],
             summary: entry.followUpLdlSummary.comparisonTextZh,
             timing: 'report-arrived',
-            trialBadgeZh: null,
-            trialDisclaimerZh: null,
+            ...packBadge,
           }))
         }
       }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { clinicalFactLedgerSchema, type ClinicalFactLedger } from '@clinmesh/contracts/clinical-fact-ledger'
 import type { ConceptVocabulary } from '@clinmesh/contracts/concept-vocabulary'
+import { SIMULATION_TRIAL_DISCLAIMER_ZH } from '@clinmesh/contracts/knowledge-claims'
 import {
   phenotypeKnowledgeBaseSchema,
   type PhenotypeKnowledgeBase,
@@ -192,7 +193,9 @@ describe('matchPhenotypeCandidates deterministic cross-time phenotype matcher (A
     expect(card.category).toBe('phenotype-candidate')
     expect(card.blockingTier).toBe('none')
     expect(card.deliveryMode).toBe('display')
-    expect(card.knowledgeStatus).toBe('published')
+    expect(card.knowledgeStatus).toBe('auto-verified')
+    expect(card.trialBadgeZh).toBe('试用版')
+    expect(card.trialDisclaimerZh).toBe(SIMULATION_TRIAL_DISCLAIMER_ZH)
     expect(card.suggestions.every(s => s.isDraftOnly)).toBe(true)
 
     const filtered = filterPromptCardsBeforeDisplay({

@@ -32,7 +32,10 @@ import { z } from 'zod'
 import { commandRequestHash, type ActorContext } from './command-executor.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
-import type { DiseasePackRuntimeService } from './disease-pack-runtime-service.ts'
+import {
+  DiseasePackRuntimeError,
+  type DiseasePackRuntimeService,
+} from './disease-pack-runtime-service.ts'
 import type { InpatientService } from './inpatient-service.ts'
 import {
   proposalCommandOperations,
@@ -560,7 +563,7 @@ export class AgentIntegrationService {
             subjectKind,
           })
         } else {
-          this.#diseasePacks.enforceActivePacksForbiddenActions({
+          this.#diseasePacks.enforceActivePacksToolPolicy({
             ...(request.actionTag === undefined ? {} : { actionTag: request.actionTag }),
             context: input.actor,
             ...(subjectKind === 'inpatient' && this.#inpatient !== undefined ? { inpatient: this.#inpatient } : {}),
@@ -568,6 +571,23 @@ export class AgentIntegrationService {
             subjectId: sel.id,
             subjectKind,
           })
+        }
+        if (definition.operationId === 'outpatient.prescription.draft.set' && subjectKind === 'outpatient') {
+          const readiness = this.#diseasePacks.evaluateSubjectStageReadiness({
+            auditBlockedOperation: definition.operationId,
+            context: input.actor,
+            relevantCategory: 'medication',
+            subjectId: sel.id,
+            subjectKind: 'outpatient',
+          })
+          if (readiness.blocked) {
+            throw new DiseasePackRuntimeError(
+              'TASK_READINESS_CRITICAL_MISSING',
+              `当前任务缺少关键前置资料：${readiness.missingCriticalLabels.join('、')}`,
+              409,
+              'DSAP_TASK_READINESS_BLOCKED',
+            )
+          }
         }
       }
     }

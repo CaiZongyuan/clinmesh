@@ -51,7 +51,7 @@ export const inpatientGuidelineAdviceResultSchema = z.object({
 
 export const inpatientGuidelineAdviceSchema = z.object({
   admissionId: id,
-  topicId: guidelineTopicIdSchema.default('pci-stent'),
+  topicId: guidelineTopicIdSchema,
   requestId: id.nullable(),
   taskId: id.nullable(),
   version: z.number().int().nonnegative(),

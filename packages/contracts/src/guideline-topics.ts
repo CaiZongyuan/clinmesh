@@ -4,19 +4,6 @@ import { guidelineEvidenceSchema } from './doctor-recommendations.ts'
 
 export { packSourceSummarySchema, type PackSourceSummary }
 
-/**
- * Legacy built-in cardiology/endocrinology topic ID list retained temporarily for
- * cardiology test iteration until S5 removes it; schemas accept open slugs.
- */
-export const guidelineTopicIds = [
-  'acute-chest-pain-acs',
-  'coronary-revascularization-indication',
-  'pci-stent',
-  'contrast-kidney-hydration',
-  'cad-dapt-and-secondary-prevention',
-  't2dm-renal-medication',
-] as const
-
 export const guidelineTopicIdSchema = z.string().regex(/^[a-z0-9-]{1,64}$/)
 export type GuidelineTopicId = z.infer<typeof guidelineTopicIdSchema>
 

@@ -229,7 +229,7 @@ describe('Core Disease Pack Exam Evaluator & Activation Gate', () => {
     expect(regressedGate.blocksActivation).toBe(true)
 
     const report = buildDsapStandardizedReport({
-      coronaryRegressionPassed: true,
+      activePacksRegressionPassed: true,
       generatedAt: '2026-11-26T09:00:00+08:00',
       inspectedPacks: [effective],
       migrationDiffCount: 0,
@@ -238,7 +238,7 @@ describe('Core Disease Pack Exam Evaluator & Activation Gate', () => {
       publicTrapRun,
     })
     expect(report.migrationDiffCount).toBe(0)
-    expect(report.coronaryRegressionPassed).toBe(true)
+    expect(report.activePacksRegressionPassed).toBe(true)
     expect(report.activationGateSummary.eligiblePacks).toEqual(['sample-eval-pack'])
     expect(report.packAdditionAudit.platformChangesZero).toBe(true)
   })

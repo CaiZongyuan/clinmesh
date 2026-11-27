@@ -151,12 +151,12 @@ export function getGuidelineTopicEntry(
 }
 
 const LEGACY_PCI_STENT_2026_11_02_R1_DEFINITION_FINGERPRINT =
-  listRegisteredGuidelineTopicEntries().find(entry => entry.definition.id === 'pci-stent')?.definition.fingerprint ?? null
+  listRegisteredGuidelineTopicEntries().find(entry => entry.definition.conclusionKinds.includes('stent-category'))?.definition.fingerprint ?? null
 
 export function legacyPciStentTopicFingerprintIfUnchanged(definition: GuidelineTopicDefinition): string | null {
   if (
     LEGACY_PCI_STENT_2026_11_02_R1_DEFINITION_FINGERPRINT === null
-    || definition.id !== 'pci-stent'
+    || !definition.conclusionKinds.includes('stent-category')
     || definition.fingerprint !== LEGACY_PCI_STENT_2026_11_02_R1_DEFINITION_FINGERPRINT
   ) {
     return null
@@ -289,10 +289,6 @@ export function readGuidelineTopicSource(
   }
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^$${}()|[\]\\]/g, ch => `\\${ch}`)
-}
-
 const POSITIVE_TOPIC_TRANSITION_ZH =
   '(?:但|惟|不过|却|而(?=\\s*(?:有|见|呈|出现|存在|考虑|诊断|确诊|拟))|现(?:有|因|诉|考虑|诊断|确诊)|目前(?:有|考虑|诊断|确诊)|拟(?:行|予|用|诊))'
 
@@ -415,81 +411,41 @@ export function scrubNegatedGuidelineTopicCorpus(textCorpus: string): string {
     .join('\n')
 }
 
-let cachedCandidateTopicSignalRe: RegExp | undefined
-
-function getCandidateTopicSignalRe(registry?: DiseasePackRegistry): RegExp {
-  if (registry !== undefined || cachedCandidateTopicSignalRe === undefined) {
-    const compiled = new RegExp(
-      [
-        '2\\s*型糖尿病',
-        ...listGuidelineTopicDefinitions(registry).flatMap(topic =>
-          topic.matchTerms.map(term =>
-            /^[A-Za-z0-9._-]+$/.test(term)
-              ? `(?:^|[^A-Za-z0-9])${escapeRegExp(term)}(?=$|[^A-Za-z0-9])`
-              : escapeRegExp(term),
-          ),
-        ),
-      ].join('|'),
-      'i',
-    )
-    if (registry === undefined) cachedCandidateTopicSignalRe = compiled
-    return compiled
+export function collectActivePackGuidelineTopicIds(
+  activeRuntime: {
+    allowedPackTopicIds: readonly string[]
+    entries?: ReadonlyArray<{ activationStatus: string; currentStageId: string | null; packId: string }>
+  } | undefined,
+  registry?: DiseasePackRegistry,
+): GuidelineTopicId[] {
+  if (activeRuntime === undefined) return []
+  const registeredEntries = listRegisteredGuidelineTopicEntries(registry)
+  const registeredIds = new Set(registeredEntries.map(entry => entry.definition.id))
+  const ordered: GuidelineTopicId[] = []
+  const seen = new Set<string>()
+  const pushTopic = (id: string) => {
+    if (!seen.has(id) && registeredIds.has(id)) {
+      seen.add(id)
+      ordered.push(id)
+    }
   }
-  return cachedCandidateTopicSignalRe
-}
 
-const CORONARY_CONTEXT_SIGNAL_RE =
-  /(?:^|[^A-Za-z0-9])(?:I2[0-5](?:\.[0-9A-Za-z]+)?|Z95\.[15]|Z98\.61|53741008|22298006|ACS|NSTE-?ACS|NSTEMI|STEMI|CCS|PCI|CABG|FFR|iFR|IVUS|DES|PRECISE-DAPT)(?=$|[^A-Za-z0-9])|冠心病|冠状动脉|冠脉|心绞痛|心肌梗死|心梗|急性胸痛|胸骨后压榨|药物洗脱支架|血管内超声|血流储备分数|心血管介入|经动脉|动脉造影|coronary|myocardial\s+infarction|angina/i
-
-function matchesGuidelineTopicTerm(textCorpus: string, lowerCorpus: string, term: string): boolean {
-  if (/^[A-Za-z0-9._-]+$/.test(term)) {
-    return new RegExp(`(?:^|[^A-Za-z0-9])${escapeRegExp(term)}(?=$|[^A-Za-z0-9])`, 'i').test(textCorpus)
+  for (const id of activeRuntime.allowedPackTopicIds) {
+    pushTopic(id)
   }
-  return lowerCorpus.includes(term.toLowerCase())
-}
 
-function hasNonNegatedT2dmSignal(scrubbedCorpus: string): boolean {
-  return (
-    /(?:^|[^A-Za-z0-9])(?:E11(?:\.[0-9A-Za-z]+)?|44054006|T2DM)(?=$|[^A-Za-z0-9])/i.test(scrubbedCorpus)
-    || /2\s*型糖尿病|二型糖尿病|糖尿病肾病|type\s*2\s*diabetes/i.test(scrubbedCorpus)
-  )
-}
+  if (activeRuntime.entries !== undefined) {
+    for (const entry of activeRuntime.entries) {
+      if (entry.activationStatus !== 'active') continue
+      for (const topicEntry of registeredEntries) {
+        if (topicEntry.ownerPack?.packId === entry.packId) {
+          pushTopic(topicEntry.definition.id)
+        }
+      }
+    }
+  }
 
-function hasNonNegatedCoronarySignal(scrubbedCorpus: string): boolean {
-  return CORONARY_CONTEXT_SIGNAL_RE.test(scrubbedCorpus)
-}
-
-export function matchApplicableGuidelineTopicIds(textCorpus: string, registry?: DiseasePackRegistry): GuidelineTopicId[] {
-  const signalRe = getCandidateTopicSignalRe(registry)
-  if (!signalRe.test(textCorpus)) return []
-  const relevantLines = textCorpus
-    .split(/\r?\n/)
-    .filter(line => signalRe.test(line) || CORONARY_CONTEXT_SIGNAL_RE.test(line))
-    .join('\n')
-  if (relevantLines.length === 0) return []
-  const scrubbed = scrubNegatedGuidelineTopicCorpus(relevantLines)
-  const lower = scrubbed.toLowerCase()
-  const hasCoronaryContext = hasNonNegatedCoronarySignal(scrubbed)
-  return listGuidelineTopicDefinitions(registry)
-    .filter(topic => {
-      if (topic.id === 't2dm-renal-medication') {
-        return hasNonNegatedT2dmSignal(scrubbed)
-      }
-      const termMatched = topic.matchTerms.some(term => matchesGuidelineTopicTerm(scrubbed, lower, term))
-      if (!termMatched) return false
-      if (
-        topic.id === 'cad-dapt-and-secondary-prevention'
-        || topic.id === 'pci-stent'
-        || topic.id === 'coronary-revascularization-indication'
-      ) {
-        return hasCoronaryContext
-      }
-      if (topic.id === 'contrast-kidney-hydration') {
-        return hasCoronaryContext || /PCAKI|对比剂肾病/i.test(scrubbed)
-      }
-      return true
-    })
-    .map(topic => topic.id)
+  return ordered
 }
 
 export function collectPciSelectionMissingItems(options: {
@@ -660,6 +616,7 @@ export function buildGuidelineTopicRead(options: {
     options.topicId,
     options.scores,
     options.supplementary,
+    options.registry,
   )
   return guidelineTopicReadSchema.parse({
     degradedReason: clampNullableText(sourceRead.degradedReason, 4000),
@@ -685,7 +642,10 @@ export function evaluateTopicPatientIndicators(
   topicId: GuidelineTopicId,
   scores: ClinicalScoreBundle,
   supplementary: SupplementaryClinicalIndicators,
+  registry?: DiseasePackRegistry,
 ): { indicators: GuidelineTopicPatientIndicator[]; missingPatientInputs: string[] } {
+  const definition = getGuidelineTopicDefinition(topicId, registry)
+  const hasConclusionKind = (kind: InpatientGuidelineAdviceKind) => definition.conclusionKinds.includes(kind)
   const indicators: GuidelineTopicPatientIndicator[] = []
   const missing: string[] = []
 
@@ -734,7 +694,7 @@ export function evaluateTopicPatientIndicators(
     }
   }
 
-  if (topicId === 'acute-chest-pain-acs') {
+  if (hasConclusionKind('initial-triage-diagnostics')) {
     pushExam(
       'acs-presentation',
       '急性胸痛或疑似/确诊 ACS 就诊依据',
@@ -783,7 +743,7 @@ export function evaluateTopicPatientIndicators(
     pushScore('grace-acs', 'GRACE 急性冠脉综合征评分', 'GRACE ACS score', 'GRACE 危险分层未就绪')
     pushScore('timi-ua-nstemi', 'TIMI UA/NSTEMI 评分', 'TIMI UA/NSTEMI score', 'TIMI 缺血评分未就绪')
     pushScore('ckd-epi-2021-egfr', '基线估算肾小球滤过率 (eGFR)', 'Baseline eGFR', '缺少基线血肌酐与 eGFR')
-  } else if (topicId === 'coronary-revascularization-indication') {
+  } else if (hasConclusionKind('revascularization-vs-gdmt')) {
     if (supplementary.angiographySummary !== undefined) {
       indicators.push({
         code: 'coronary-angiography',
@@ -821,7 +781,7 @@ export function evaluateTopicPatientIndicators(
       '缺少经胸超声心动图左室射血分数（LVEF）记录。',
     )
     pushScore('ckd-epi-2021-egfr', '估算肾小球滤过率 (eGFR)', 'eGFR', '缺少造影/血运重建前血肌酐与 eGFR')
-  } else if (topicId === 'pci-stent') {
+  } else if (hasConclusionKind('stent-category')) {
     if (supplementary.pciPlanSummary !== undefined) {
       const plan = supplementary.pciPlanSummary
       const findMeas = (kind: 'lesion-length' | 'proximal-reference-diameter' | 'distal-reference-diameter') => {
@@ -874,7 +834,7 @@ export function evaluateTopicPatientIndicators(
       })
       missing.push('缺少冠脉造影报告及 PCI 靶病变长度、近端/远端参考管径测量。')
     }
-  } else if (topicId === 'contrast-kidney-hydration') {
+  } else if (hasConclusionKind('hydration-and-volume-balance')) {
     pushExam(
       'contrast-procedure-indication',
       '含碘对比剂造影/介入检查或手术计划',
@@ -897,7 +857,7 @@ export function evaluateTopicPatientIndicators(
           },
       '缺少经胸超声心动图 LVEF 或心功能评估（水化须防止左心功能不全容量负荷过重）。',
     )
-  } else if (topicId === 'cad-dapt-and-secondary-prevention') {
+  } else if (hasConclusionKind('dapt-duration-and-bleeding')) {
     pushExam(
       'cad-acs-eligibility',
       '冠心病/ACS 确诊或冠脉血运重建依据',

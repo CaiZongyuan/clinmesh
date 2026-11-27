@@ -60,6 +60,7 @@ describe('Offline Knowledge Pipeline, Diff/Impact Reports & Synonym Search (AC33
   async function setupRuntime(options: {
     extraDocs?: GuidelineDocument[]
     extraPacks?: readonly unknown[]
+    registeredClinicianReviewers?: readonly ClinicalReviewerRecord[]
   } = {}) {
     const prepared = await preparePciPaymentDrgFixture()
     cleanups.push(() => rm(prepared.directory, { recursive: true, force: true }))
@@ -73,6 +74,15 @@ describe('Offline Knowledge Pipeline, Diff/Impact Reports & Synonym Search (AC33
     prepared.options.guidelineDatabasePath = guidelineDbPath
     prepared.options.diseasePackDirs = [SYNTHETIC_PACK_DIR]
     prepared.options.diseasePackVerifyFingerprint = true
+    prepared.options.registeredClinicianReviewers = [
+      {
+        licenseVerified: true,
+        nameZh: '合成测试审核人',
+        reviewerId: 'reviewer-syn-cardio-01',
+        specialty: 'cardiology',
+      },
+      ...(options.registeredClinicianReviewers ?? []),
+    ]
     if (options.extraPacks !== undefined) {
       prepared.options.diseasePacks = options.extraPacks
     }
@@ -112,6 +122,12 @@ describe('Offline Knowledge Pipeline, Diff/Impact Reports & Synonym Search (AC33
       cleanups.push(() => rm(prepared.directory, { recursive: true, force: true }))
       prepared.options.diseasePackDirs = [SYNTHETIC_PACK_DIR]
       prepared.options.diseasePackVerifyFingerprint = true
+      prepared.options.registeredClinicianReviewers = [{
+        licenseVerified: true,
+        nameZh: '合成测试审核人',
+        reviewerId: 'reviewer-syn-cardio-01',
+        specialty: 'cardiology',
+      }]
       const fx = await createPciPaymentDrgFixture(prepared)
       cleanups.push(() => fx.runtime.close())
       return { fixture: fx, preparedModelCalls: () => prepared.modelCalls }
@@ -276,7 +292,7 @@ describe('Offline Knowledge Pipeline, Diff/Impact Reports & Synonym Search (AC33
       'CLAIM_CONCEPT_UNMAPPED',
     ])
 
-    // Verified clinician signoff advances accepted claims to published
+    // Offline draft pipeline strictly caps at auto-verified; even with clinicianReviewer it rejects 403
     const pubRes = await fixture.request('admin', '/api/his/v1/offline/knowledge-claims/draft-pipeline', {
       candidates: [candidates[0]!],
       clinicianReviewer: REVIEWER,
@@ -287,10 +303,8 @@ describe('Offline Knowledge Pipeline, Diff/Impact Reports & Synonym Search (AC33
       topicId: 'syn-pci-guidance-card',
       version: '1.0.0',
     })
-    expect(pubRes.status).toBe(200)
-    const published = offlineKnowledgePipelineResultSchema.parse(await pubRes.json())
-    expect(published.acceptedClaims[0]!.status).toBe('published')
-    expect(published.acceptedClaims[0]!.reviewerId).toBe(REVIEWER.reviewerId)
+    expect(pubRes.status).toBe(403)
+    expect(apiErrorSchema.parse(await pubRes.json()).error.code).toBe('KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED')
 
     const auditRows = fixture.runtime.database.driver.prepare(`
       SELECT operation, outcome FROM audit_log WHERE operation = 'offline.knowledge-claims.draft-pipeline'
@@ -299,7 +313,7 @@ describe('Offline Knowledge Pipeline, Diff/Impact Reports & Synonym Search (AC33
   })
 
   it('AC34: builds synthetic v1 -> v2 guideline diff report and holds conflicts in expert adjudication queue without overwriting existing claims', async () => {
-    const { fixture } = await setupRuntime()
+    const { fixture } = await setupRuntime({ registeredClinicianReviewers: [REVIEWER] })
     const v1Doc = syntheticTestGuidelineDocSchema.parse(
       JSON.parse(readFileSync(join(SYNTHETIC_GUIDELINES_DIR, 'synthetic-syndrome-guideline-v1.json'), 'utf8')),
     )
@@ -400,6 +414,20 @@ describe('Offline Knowledge Pipeline, Diff/Impact Reports & Synonym Search (AC33
     })
     expect(badAdjudicate.status).toBe(403)
     expect(apiErrorSchema.parse(await badAdjudicate.json()).error.code).toBe('KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED')
+
+    // Unregistered reviewer claiming licenseVerified: true fails adjudication with 403 KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED
+    const forgedAdjudicate = await fixture.request('admin', '/api/his/v1/offline/guidelines/adjudicate-conflict', {
+      adjudication: {
+        conflictId: queued.conflictId,
+        decision: 'adopt-new',
+        rationaleZh: '自称持证但未在服务端名单登记',
+        reviewer: { ...REVIEWER, reviewerId: 'forged-reviewer-999' },
+      },
+      report,
+      snapshot: v1Snapshot,
+    })
+    expect(forgedAdjudicate.status).toBe(403)
+    expect(apiErrorSchema.parse(await forgedAdjudicate.json()).error.code).toBe('KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED')
 
     // Missing conflictId returns 404 CONFLICT_NOT_FOUND (not 500 INTERNAL_ERROR)
     const missingConflictRes = await fixture.request('admin', '/api/his/v1/offline/guidelines/adjudicate-conflict', {

@@ -162,7 +162,7 @@ export type DsapActivationGateSummary = z.infer<typeof dsapActivationGateSummary
 
 export const dsapStandardizedReportSchema = z.object({
   activationGateSummary: dsapActivationGateSummarySchema,
-  coronaryRegressionPassed: z.boolean(),
+  activePacksRegressionPassed: z.boolean(),
   failureSummaryByLayer: examLayerFailureSummaryMapSchema,
   generatedAt: dt,
   llmInvocationCount: z.literal(0),

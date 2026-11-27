@@ -32,6 +32,7 @@ import {
 export type DiseasePackErrorCode =
   | 'PACK_CODE_FORBIDDEN'
   | 'PACK_SCHEMA_INVALID'
+  | 'PACK_UNVERIFIED_PUBLICATION'
   | 'PACK_FORMULA_VERSION_NOT_FOUND'
   | 'HOSPITAL_OVERLAY_PACK_MISMATCH'
   | 'HOSPITAL_OVERLAY_SAFETY_RELAXATION_FORBIDDEN'
@@ -231,6 +232,11 @@ export interface PublicLayerPolicyInput {
   readonly examPassThreshold?: number
 }
 
+export const DEFAULT_PUBLIC_DISEASE_PACK_LAYER: PublicLayerPolicyInput = Object.freeze({
+  examPassThreshold: 0.8,
+  validityDaysByItemCode: Object.freeze({ ...PUBLIC_VALIDITY_DAYS_BY_ITEM_CODE }),
+})
+
 function readOwnNumericRecord(map: Readonly<Record<string, number>> | undefined, key: string): number | undefined {
   return map !== undefined && Object.hasOwn(map, key) ? map[key] : undefined
 }
@@ -392,7 +398,9 @@ export function mergeThreeLayerPack(input: {
   const effectivePack: DiseasePack = {
     ...pack,
     qualityTightenings: {
-      examPassThreshold: effectiveExamPassThreshold,
+      ...(pack.qualityTightenings.examPassThreshold === undefined && adjustments?.examPassThreshold === undefined
+        ? {}
+        : { examPassThreshold: effectiveExamPassThreshold }),
       redLineRules: [...redLineById.values()],
       validityOverrides: [
         ...pack.qualityTightenings.validityOverrides,

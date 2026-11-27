@@ -6,6 +6,7 @@ import {
   type ClinicalPromptTiming,
 } from '@clinmesh/contracts/clinical-prompt-cards'
 import type { ConceptVocabulary } from '@clinmesh/contracts/concept-vocabulary'
+import { SIMULATION_TRIAL_DISCLAIMER_ZH } from '@clinmesh/contracts/knowledge-claims'
 import {
   phenotypeMatchResultSchema,
   type PhenotypeAgeThresholdBySex,
@@ -444,7 +445,7 @@ function projectCandidateToPromptCard(
     dismissal: null,
     indicator: candidate.confidenceScore >= 0.75 ? 'warning' : 'info',
     knowledgeSnapshotVersion: null,
-    knowledgeStatus: 'published',
+    knowledgeStatus: 'auto-verified',
     longitudinalComparison: null,
     overrideReasons: ['clinical-judgement', 'result-pending-follow-up'],
     packId: candidate.packId,
@@ -466,8 +467,8 @@ function projectCandidateToPromptCard(
     ],
     summary: `疑似${candidate.titleZh}（${candidate.matchedPhenotypeCount} 项跨期特征，置信度 ${confidencePct}%）`,
     timing,
-    trialBadgeZh: null,
-    trialDisclaimerZh: null,
+    trialBadgeZh: '试用版',
+    trialDisclaimerZh: SIMULATION_TRIAL_DISCLAIMER_ZH,
   })
 }
 

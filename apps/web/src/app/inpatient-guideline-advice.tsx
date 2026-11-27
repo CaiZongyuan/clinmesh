@@ -36,17 +36,6 @@ type Props = {
   initialTopicId?: GuidelineTopicId | undefined
 }
 
-export const guidelineTopicOptionLabels: Record<string, readonly [string, string]> = {
-  'contrast-kidney-hydration': ['对比剂肾损伤预防与围术期水化', 'Contrast kidney protection & hydration'],
-  'coronary-revascularization-indication': ['冠脉血运重建指征与 FFR 功能学评估', 'Coronary revascularization & FFR'],
-  'cad-dapt-and-secondary-prevention': ['双联抗血小板与冠心病二级预防', 'DAPT & secondary prevention'],
-  'acute-chest-pain-acs': ['急性胸痛与 ACS 危险分层', 'Acute chest pain & ACS risk'],
-  'pci-stent': ['冠脉介入支架选型与腔内影像', 'PCI stent category & imaging'],
-  't2dm-renal-medication': ['2 型糖尿病合并慢性肾脏病用药', 'T2DM & CKD medication'],
-}
-
-const orderedPickerTopics = Object.keys(guidelineTopicOptionLabels)
-
 const kinds: Record<string, readonly [string, string]> = {
   'stent-category': ['支架类别', 'Stent category'],
   'imaging-guidance': ['IVUS／OCT 指导条件', 'IVUS / OCT guidance conditions'],
@@ -114,11 +103,20 @@ export function InpatientGuidelineAdvicePanel({
   requestId,
   active = true,
   enableTopicPicker = false,
-  initialTopicId = 'contrast-kidney-hydration',
+  initialTopicId,
 }: Props): React.JSX.Element | null {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const usageId = useId()
-  const [selectedTopic, setSelectedTopic] = useState<GuidelineTopicId>(initialTopicId)
+  const basePath = `/api/his/v1/inpatient/admissions/${admission.id}`, baseKey = [...inpatientScopeKey(session), admission.id]
+  const topicCatalogQuery = useQuery({
+    queryKey: [...baseKey, 'guideline-topics', 'catalog'],
+    queryFn: ({ signal }) => apiGet(`${basePath}/guideline-topics`, guidelineTopicBundleSchema, signal),
+    enabled: active && enableTopicPicker,
+    retry: false,
+  })
+  const catalogTopics = topicCatalogQuery.data?.items.map(item => item.topic) ?? []
+  const [selectedTopicOverride, setSelectedTopicOverride] = useState<GuidelineTopicId | undefined>(initialTopicId)
+  const selectedTopic = selectedTopicOverride ?? initialTopicId ?? catalogTopics[0]?.id ?? ''
   const scope = JSON.stringify([
     session.actor,
     session.user.id,
@@ -145,11 +143,10 @@ export function InpatientGuidelineAdvicePanel({
     }
   }, [])
 
-  const basePath = `/api/his/v1/inpatient/admissions/${admission.id}`, baseKey = [...inpatientScopeKey(session), admission.id]
   const query = useQuery({
     queryKey: enableTopicPicker ? [...baseKey, 'guideline-advice', selectedTopic] : [...baseKey, 'guideline-advice'],
-    queryFn: ({ signal }) => apiGet(`${basePath}/guideline-advice${enableTopicPicker ? `?topicId=${encodeURIComponent(selectedTopic)}` : ''}`, inpatientGuidelineAdviceListSchema, signal),
-    enabled: active,
+    queryFn: ({ signal }) => apiGet(`${basePath}/guideline-advice${enableTopicPicker && selectedTopic ? `?topicId=${encodeURIComponent(selectedTopic)}` : ''}`, inpatientGuidelineAdviceListSchema, signal),
+    enabled: active && (!enableTopicPicker || selectedTopic.length > 0),
     refetchInterval: active ? 3_000 : false,
     refetchIntervalInBackground: false,
     retry: false,
@@ -157,7 +154,7 @@ export function InpatientGuidelineAdvicePanel({
   const topicReadQuery = useQuery({
     queryKey: [...baseKey, 'guideline-topics', selectedTopic],
     queryFn: ({ signal }) => apiGet(`${basePath}/guideline-topics?topicId=${encodeURIComponent(selectedTopic)}`, guidelineTopicBundleSchema, signal),
-    enabled: active && enableTopicPicker,
+    enabled: active && enableTopicPicker && selectedTopic.length > 0,
     retry: false,
   })
 
@@ -199,14 +196,12 @@ export function InpatientGuidelineAdvicePanel({
   if (!active) return null
   const data = query.error === null && query.data?.admissionId === admission.id ? query.data : undefined
   const topicCandidates = data?.advice.filter(item => item.admissionId === admission.id && item.topicId === selectedTopic)
-  const activeSurgeryBoundPci = selectedTopic === 'pci-stent'
-    ? topicCandidates?.filter(item => item.requestId !== null && item.status !== 'cancelled')
-    : undefined
+  const activeSurgeryBoundAdvice = topicCandidates?.filter(item => item.requestId !== null && item.status !== 'cancelled')
   const admissionLevelCandidates = topicCandidates?.filter(item => item.requestId === null)
   const advice = enableTopicPicker
     ? (
-        activeSurgeryBoundPci && activeSurgeryBoundPci.length > 0
-          ? activeSurgeryBoundPci
+        activeSurgeryBoundAdvice && activeSurgeryBoundAdvice.length > 0
+          ? activeSurgeryBoundAdvice
           : (admissionLevelCandidates && admissionLevelCandidates.length > 0
               ? admissionLevelCandidates
               : topicCandidates)
@@ -218,6 +213,15 @@ export function InpatientGuidelineAdvicePanel({
   const topicRead = enableTopicPicker && topicReadQuery.error === null
     ? topicReadQuery.data?.items.find(item => item.topic.id === selectedTopic)
     : undefined
+  const topicOptionsMap = new Map(catalogTopics.map(topic => [topic.id, topic]))
+  for (const item of topicReadQuery.data?.items ?? []) {
+    if (!topicOptionsMap.has(item.topic.id)) topicOptionsMap.set(item.topic.id, item.topic)
+  }
+  const pickerTopicIds = [...new Set([
+    ...topicOptionsMap.keys(),
+    ...(initialTopicId ? [initialTopicId] : []),
+    ...(selectedTopic ? [selectedTopic] : []),
+  ])]
   const attempted = write.mutation.variables
   const command = attempted?.operation === 'inpatient.guideline-advice.request' && attempted.isCurrent?.() !== false ? attempted.input : undefined
 
@@ -237,7 +241,7 @@ export function InpatientGuidelineAdvicePanel({
           {t('刷新指南状态', 'Refresh guideline status')}
         </Button>
       </div>
-      {enableTopicPicker ? (
+      {enableTopicPicker && pickerTopicIds.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <label className="font-medium" htmlFor={`${usageId}-topic-select`}>
             {t('指南专题', 'Guideline topic')}
@@ -250,19 +254,21 @@ export function InpatientGuidelineAdvicePanel({
             onChange={event => {
               const value = event.currentTarget.value
               if (guidelineTopicIdSchema.safeParse(value).success) {
-                setSelectedTopic(value)
+                setSelectedTopicOverride(value)
               }
             }}
           >
-            {[...new Set([
-              ...orderedPickerTopics,
-              ...(initialTopicId ? [initialTopicId] : []),
-              ...(topicReadQuery.data?.items.map(item => item.topic.id) ?? []),
-            ])].map(topicId => (
-              <option key={topicId} value={topicId}>
-                {guidelineTopicOptionLabels[topicId]?.[locale === 'zh-CN' ? 0 : 1] ?? topicId}
-              </option>
-            ))}
+            {pickerTopicIds.map(topicId => {
+              const meta = topicOptionsMap.get(topicId)
+              const label = meta
+                ? (locale === 'zh-CN' ? meta.titleZh : meta.titleEn)
+                : topicId
+              return (
+                <option key={topicId} value={topicId}>
+                  {label}
+                </option>
+              )
+            })}
           </select>
         </div>
       ) : null}
@@ -272,7 +278,7 @@ export function InpatientGuidelineAdvicePanel({
           'Read-only reference. The unconfirmed material list and current reservations are handled separately; advice does not create products or charges.',
         )}
       </p>
-      {enableTopicPicker ? (
+      {enableTopicPicker && pickerTopicIds.length > 0 ? (
         <SynchronousGuidelineTopicCard
           error={topicReadQuery.error}
           loading={topicReadQuery.isPending}

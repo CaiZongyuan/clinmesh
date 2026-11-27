@@ -314,7 +314,13 @@ export function createPassageBackedDeterministicDraftStream(): ControlledClaimDr
     return matchingPassages.map((passage, index) => {
       const conceptCodes = (passage.conceptCodes !== undefined && passage.conceptCodes.length > 0)
         ? [...passage.conceptCodes]
-        : [input.vocabulary.nodes[0]?.code ?? 'coronary-artery-disease']
+        : (input.vocabulary.nodes[0]?.code !== undefined ? [input.vocabulary.nodes[0].code] : [])
+      if (conceptCodes.length === 0) {
+        throw new KnowledgePipelineError(
+          'PIPELINE_INVALID_INPUT',
+          `原件段落 ${passage.locator} 与概念词表均未提供关联概念码，拒绝兜底猜测病种编码`,
+        )
+      }
       const firstSentence = passage.text.trim().split(/(?<=[。.;])/)[0]?.trim() || passage.text.trim()
       const quoteFragment = firstSentence.slice(0, 400)
       return {
@@ -345,41 +351,38 @@ export function createPassageBackedDeterministicDraftStream(): ControlledClaimDr
   })
 }
 
-function advanceClaimPublicationStatus(
-  clinicianReviewer?: ClinicalReviewerRecord,
-): { status: KnowledgePublicationStatus; reviewerId: string | null } {
+function advanceClaimPublicationStatus(): { status: KnowledgePublicationStatus; reviewerId: null } {
   let status: KnowledgePublicationStatus = 'imported'
   status = transitionKnowledgePublicationStatus({ actorKind: 'pipeline', currentStatus: status, nextStatus: 'draft' })
   status = transitionKnowledgePublicationStatus({ actorKind: 'pipeline', currentStatus: status, nextStatus: 'concept-mapped' })
   status = transitionKnowledgePublicationStatus({ actorKind: 'pipeline', currentStatus: status, nextStatus: 'auto-verified' })
+  return { reviewerId: null, status }
+}
 
-  if (clinicianReviewer === undefined) {
-    return { reviewerId: null, status }
-  }
-
-  const parsedReviewer = clinicalReviewerRecordSchema.safeParse(clinicianReviewer)
-  if (!parsedReviewer.success) {
+function assertRegisteredClinicianReviewer(
+  rawReviewer: unknown,
+  registeredReviewers: readonly ClinicalReviewerRecord[],
+): ClinicalReviewerRecord {
+  const parsed = clinicalReviewerRecordSchema.safeParse(rawReviewer)
+  if (!parsed.success) {
     throw new KnowledgeClaimError(
       'KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED',
-      '临床审核人记录未通过执业核验（licenseVerified 必须为 true），拒绝推进至正式版',
+      '冲突裁决必须由已核验执业临床审核人（licenseVerified: true）签署',
     )
   }
-
-  status = transitionKnowledgePublicationStatus({
-    actorKind: 'clinician-reviewer',
-    currentStatus: status,
-    nextStatus: 'clinician-reviewed',
-    registeredReviewers: [parsedReviewer.data],
-    reviewerId: parsedReviewer.data.reviewerId,
-  })
-  status = transitionKnowledgePublicationStatus({
-    actorKind: 'clinician-reviewer',
-    currentStatus: status,
-    nextStatus: 'published',
-    registeredReviewers: [parsedReviewer.data],
-    reviewerId: parsedReviewer.data.reviewerId,
-  })
-  return { reviewerId: parsedReviewer.data.reviewerId, status }
+  const matched = registeredReviewers.find(registered =>
+    registered.reviewerId === parsed.data.reviewerId
+    && registered.nameZh === parsed.data.nameZh
+    && registered.specialty === parsed.data.specialty
+    && registered.licenseVerified === true,
+  )
+  if (matched === undefined) {
+    throw new KnowledgeClaimError(
+      'KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED',
+      `临床审核人 ${parsed.data.reviewerId} 未在服务端已登记审核人名单中，禁止签发或裁决正式知识主张`,
+    )
+  }
+  return matched
 }
 
 function deepFreeze<T>(value: T): T {
@@ -419,13 +422,10 @@ export function runOfflineKnowledgeClaimPipeline(input: {
   }
 
   if (input.clinicianReviewer !== undefined) {
-    const reviewerCheck = clinicalReviewerRecordSchema.safeParse(input.clinicianReviewer)
-    if (!reviewerCheck.success) {
-      throw new KnowledgeClaimError(
-        'KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED',
-        '临床审核人未通过执业校验（licenseVerified 必须为 true），禁止签署正式知识卡',
-      )
-    }
+    throw new KnowledgeClaimError(
+      'KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED',
+      '自动制卡流水线最高仅可推进至试用版（auto-verified），禁止在草拟阶段直接传入临床审核人签发正式版',
+    )
   }
 
   const runtimeWriteToolsCount = countOnlineKnowledgeAndVocabularyWriteTools(input.operations, input.agentTools)
@@ -445,7 +445,7 @@ export function runOfflineKnowledgeClaimPipeline(input: {
 
   const acceptedClaims: KnowledgeClaim[] = []
   const rejectedClaims: StructuralCheckRejection[] = []
-  const { reviewerId, status: targetStatus } = advanceClaimPublicationStatus(input.clinicianReviewer)
+  const { reviewerId, status: targetStatus } = advanceClaimPublicationStatus()
 
   for (const rawCandidate of candidates) {
     const candidate = draftedKnowledgeClaimCandidateSchema.parse(rawCandidate)
@@ -910,16 +910,15 @@ export function adjudicateGuidelineClaimConflict(input: {
   report: GuidelineSourceDiffReport
   snapshot: KnowledgeSnapshot
   adjudication: AdjudicateConflictInput
+  registeredReviewers?: readonly ClinicalReviewerRecord[]
   effectiveFrom?: string
   nowIso?: string
 }): AdjudicateConflictResult {
-  const reviewerCheck = clinicalReviewerRecordSchema.safeParse((input.adjudication as { reviewer?: unknown }).reviewer)
-  if (!reviewerCheck.success) {
-    throw new KnowledgeClaimError(
-      'KNOWLEDGE_CLINICIAN_REVIEWER_REQUIRED',
-      '冲突裁决必须由已核验执业临床审核人（licenseVerified: true）签署',
-    )
-  }
+  const registeredReviewers = input.registeredReviewers ?? []
+  const verifiedReviewer = assertRegisteredClinicianReviewer(
+    (input.adjudication as { reviewer?: unknown }).reviewer,
+    registeredReviewers,
+  )
   const adjudication = adjudicateConflictInputSchema.parse(input.adjudication)
   const report = guidelineSourceDiffReportSchema.parse(input.report)
   const snapshot = knowledgeSnapshotSchema.parse(input.snapshot)
@@ -960,7 +959,21 @@ export function adjudicateGuidelineClaimConflict(input: {
         `新采纳主张编号 ${adoptedId} 不得与被替代旧主张一致，必须保留 superseded 历史记录`,
       )
     }
-    const { status: publishedStatus } = advanceClaimPublicationStatus(adjudication.reviewer)
+    let adoptedStatus = advanceClaimPublicationStatus().status
+    adoptedStatus = transitionKnowledgePublicationStatus({
+      actorKind: 'clinician-reviewer',
+      currentStatus: adoptedStatus,
+      nextStatus: 'clinician-reviewed',
+      registeredReviewers: [verifiedReviewer],
+      reviewerId: verifiedReviewer.reviewerId,
+    })
+    adoptedStatus = transitionKnowledgePublicationStatus({
+      actorKind: 'clinician-reviewer',
+      currentStatus: adoptedStatus,
+      nextStatus: 'published',
+      registeredReviewers: [verifiedReviewer],
+      reviewerId: verifiedReviewer.reviewerId,
+    })
     const adoptedClaim: KnowledgeClaim = {
       anchor: targetConflict.candidateClaim.anchor,
       applicabilityCondition: targetConflict.candidateClaim.applicabilityCondition,
@@ -968,9 +981,9 @@ export function adjudicateGuidelineClaimConflict(input: {
       effectiveFrom: input.effectiveFrom ?? adjudicatedAt,
       id: adoptedId,
       packId: targetConflict.candidateClaim.packId,
-      reviewerId: adjudication.reviewer.reviewerId,
+      reviewerId: verifiedReviewer.reviewerId,
       statementZh: targetConflict.candidateClaim.statementZh,
-      status: publishedStatus,
+      status: adoptedStatus,
       topicId: targetConflict.candidateClaim.topicId,
       version: targetConflict.candidateClaim.version ?? targetConflict.existingClaim.version,
     }
@@ -981,8 +994,8 @@ export function adjudicateGuidelineClaimConflict(input: {
         actorKind: 'clinician-reviewer',
         currentStatus: currentClaim.status,
         nextStatus: 'superseded',
-        registeredReviewers: [adjudication.reviewer],
-        reviewerId: adjudication.reviewer.reviewerId,
+        registeredReviewers: [verifiedReviewer],
+        reviewerId: verifiedReviewer.reviewerId,
       })
       nextSnapshot.claims[existingIndex] = {
         ...currentClaim,

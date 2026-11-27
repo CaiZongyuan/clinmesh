@@ -50,6 +50,7 @@ import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-reposito
 import { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
 import { ClinicalScoreService } from './clinical-score-service.ts'
 import { CommandExecutor, type ActorContext } from './command-executor.ts'
+import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import {
   DiseasePackRegistry,
   DiseasePackRuntimeError,
@@ -588,6 +589,8 @@ function normalizeScoreFormulaId(rawId: string): string {
   return rawId
 }
 
+const startupPackExamCache = new Map<string, { passed: boolean; reasonsZh: string[] }>()
+
 /**
  * Pure deterministic Disease Pack Exam Runner, 7-Trap Gate, 5-Layer Attribution & AC26 Standardized Report Service.
  * Zero LLM invocations and zero Case Truth leakage (AC10, AC15, AC26, AC27, AC28).
@@ -611,6 +614,90 @@ export class DiseasePackExamService {
     this.#now = options.now ?? (() => new Date())
     this.#referenceData = options.referenceData
     this.#tokenSecret = options.tokenSecret
+  }
+
+  /**
+   * Startup gate: verify every pre-marked `status === 'active'` pack against its exam suite
+   * and the 7 public traps (cached per packId + canonical content hash so repeated bootups stay fast).
+   * Any active pack failing exam or trap verification is demoted to `draft` in memory.
+   */
+  verifyStartupActivePacks(): { demotedPackIds: string[]; verifiedPackIds: string[] } {
+    const activeEntries = this.#diseasePacks.registry
+      .listEffective()
+      .filter(entry => entry.pack.manifest.status === 'active')
+    if (activeEntries.length === 0) {
+      return { demotedPackIds: [], verifiedPackIds: [] }
+    }
+
+    const demotedPackIds: string[] = []
+    const verifiedPackIds: string[] = []
+    const uncached: EffectiveDiseasePack[] = []
+
+    for (const effective of activeEntries) {
+      const cacheKey = `${effective.pack.manifest.id}:${canonicalJsonHash(effective.pack)}`
+      const cached = startupPackExamCache.get(cacheKey)
+      if (cached !== undefined) {
+        if (cached.passed) {
+          verifiedPackIds.push(effective.pack.manifest.id)
+        } else {
+          this.#diseasePacks.registry.demotePackToDraft(effective.pack.manifest.id, cached.reasonsZh)
+          demotedPackIds.push(effective.pack.manifest.id)
+        }
+      } else {
+        uncached.push(effective)
+      }
+    }
+
+    if (uncached.length > 0) {
+      const registry = this.#resolveEvaluationRegistry({})
+      const nowIso = this.#now().toISOString()
+      const harness = createEphemeralExamHarness({
+        nowIso,
+        ...(this.#referenceData === undefined ? {} : { referenceData: this.#referenceData }),
+        tokenSecret: this.#tokenSecret,
+      })
+
+      let runs: Array<{ effective: EffectiveDiseasePack; run: PackExamRunResult }> = []
+      let publicTrapRun: PublicTrapSuiteResult
+      try {
+        runs = uncached.map(effective => ({
+          effective,
+          run: this.#evaluateSinglePackExamSuite(harness, registry, effective, {
+            injectFault: 'none',
+            nowIso,
+          }).run,
+        }))
+        const allActiveInRegistry = registry
+          .listEffective()
+          .filter(entry => entry.pack.manifest.status === 'active')
+        publicTrapRun = this.#runSevenPublicTraps(harness, allActiveInRegistry, nowIso)
+      } finally {
+        harness.close()
+      }
+
+      for (const { effective, run } of runs) {
+        const packId = effective.pack.manifest.id
+        const cacheKey = `${packId}:${canonicalJsonHash(effective.pack)}`
+        const reasonsZh: string[] = []
+        if (!run.passed) {
+          reasonsZh.push(...run.caseResults.filter(c => !c.passed).map(c => c.failureReasonZh ?? c.titleZh))
+          if (reasonsZh.length === 0) reasonsZh.push(`专病包 ${packId} 启动考卷未达到通过阈值`)
+        }
+        if (!publicTrapRun.passed) {
+          reasonsZh.push(...publicTrapRun.caseResults.filter(c => !c.passed).map(c => c.failureReasonZh ?? c.titleZh))
+        }
+        const passed = run.passed && publicTrapRun.passed
+        startupPackExamCache.set(cacheKey, { passed, reasonsZh })
+        if (passed) {
+          verifiedPackIds.push(packId)
+        } else {
+          this.#diseasePacks.registry.demotePackToDraft(packId, reasonsZh)
+          demotedPackIds.push(packId)
+        }
+      }
+    }
+
+    return { demotedPackIds, verifiedPackIds }
   }
 
   runExamSuite(context: ActorContext, rawInput: unknown): DsapExamRunResponse {
@@ -673,7 +760,7 @@ export class DiseasePackExamService {
 
       const migrationCheck = this.#verifyFrozenBaselineReferenceIntegrity()
       const report = buildDsapStandardizedReport({
-        coronaryRegressionPassed: migrationCheck.diffCount === 0 && adjustedPackRuns.filter(r => r.packStatus === 'active' && r.packType === 'full').every(r => r.passed),
+        activePacksRegressionPassed: migrationCheck.diffCount === 0 && adjustedPackRuns.filter(r => r.packStatus === 'active' && r.packType === 'full').every(r => r.passed),
         generatedAt: nowIso,
         inspectedLedgers,
         inspectedPacks: effectivePacks,
@@ -849,6 +936,7 @@ export class DiseasePackExamService {
     const registry = new DiseasePackRegistry({
       includeBuiltinDraftPacks: false,
       packs: existingPacks,
+      registeredClinicianReviewers: this.#diseasePacks.registry.listRegisteredClinicianReviewers(),
       verifyFingerprint: false,
     })
     for (const item of this.#diseasePacks.registry.listEffective()) {

@@ -122,6 +122,12 @@ describe('Concept Vocabulary & Knowledge Claims HTTP Contracts (AC8, AC9, AC15)'
 
     prepared.options.diseasePackDirs = [SYNTHETIC_PACK_DIR]
     prepared.options.diseasePackVerifyFingerprint = true
+    prepared.options.registeredClinicianReviewers = [{
+      licenseVerified: true,
+      nameZh: '合成测试审核人',
+      reviewerId: 'reviewer-syn-cardio-01',
+      specialty: 'cardiology',
+    }]
     if (options.extraPacks !== undefined) {
       prepared.options.diseasePacks = options.extraPacks
     }

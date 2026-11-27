@@ -142,7 +142,7 @@ describe('Disease Pack Exam & Standardized Report Contracts', () => {
         eligiblePacks: ['sample-pack'],
         llmInvocationCount: 0,
       },
-      coronaryRegressionPassed: true,
+      activePacksRegressionPassed: true,
       failureSummaryByLayer: {
         'agent-safety': emptyLayerSummary('agent-safety'),
         'data-normalization': emptyLayerSummary('data-normalization'),

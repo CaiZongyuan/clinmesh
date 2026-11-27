@@ -55,6 +55,7 @@ import {
   type SyntheticCaseInstance,
   type SyntheticPatientProfile,
 } from '@clinmesh/contracts/scenario'
+import type { ClinicalReviewerRecord } from '@clinmesh/contracts/knowledge-claims'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
@@ -348,6 +349,8 @@ export class WorkflowService
       diseasePackVerifyFingerprint?: boolean
       hospitalOverlays?: readonly unknown[]
       includeBuiltinDraftDiseasePacks?: boolean
+      registeredClinicianReviewers?: readonly ClinicalReviewerRecord[]
+      skipStartupExamVerification?: boolean
       qualityModelAvailable?: boolean
       qualityContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
       consultationRecordingContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
@@ -414,6 +417,7 @@ export class WorkflowService
         ...(options.diseasePackDirs === undefined ? {} : { packDirs: options.diseasePackDirs }),
         ...(options.diseasePacks === undefined ? {} : { packs: options.diseasePacks }),
         ...(options.diseasePackVerifyFingerprint === undefined ? {} : { verifyFingerprint: options.diseasePackVerifyFingerprint }),
+        ...(options.registeredClinicianReviewers === undefined ? {} : { registeredClinicianReviewers: options.registeredClinicianReviewers }),
       }),
     })
     this.diseasePackExam = new DiseasePackExamService({
@@ -451,6 +455,7 @@ export class WorkflowService
       factLedger: this.clinicalFactLedger,
       ...(options.guidelines === undefined ? {} : { guidelines: options.guidelines }),
       outpatientContext: this.#context,
+      ...(options.registeredClinicianReviewers === undefined ? {} : { registeredReviewers: options.registeredClinicianReviewers }),
     })
     this.agentOutputScorer = new AgentOutputScorerService({
       commands,
@@ -620,6 +625,7 @@ export class WorkflowService
       fhir,
       ...(options.guidelines === undefined ? {} : { guidelines: options.guidelines }),
       outpatientContext: this.#context,
+      ...(options.registeredClinicianReviewers === undefined ? {} : { registeredReviewers: options.registeredClinicianReviewers }),
     })
     this.imaging = new ImagingRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.pathology = new PathologyRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
@@ -666,6 +672,9 @@ export class WorkflowService
         ),
       },
     })
+    if (!options.skipStartupExamVerification) {
+      this.diseasePackExam.verifyStartupActivePacks()
+    }
   }
 
   commandReceipt(context: ActorContext, operationId: string, idempotencyKey: string) {

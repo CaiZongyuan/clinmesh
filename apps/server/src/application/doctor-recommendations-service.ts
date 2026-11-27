@@ -32,9 +32,10 @@ import { ChatCompletionsError, type JsonChatCompletionInput, type JsonChatComple
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
+import { DiseasePackRuntimeError, type DiseasePackRuntimeService } from './disease-pack-runtime-service.ts'
 import { doctorGuidelineGroups, doctorGuidelineRevision, selectDoctorGuidelineEvidence } from './doctor-guideline-evidence.ts'
 import { matchesGuidelinePopulation } from './guideline-corpus.ts'
-import { matchApplicableGuidelineTopicIds, normalizeGuidelineFragmentText, readGuidelineTopicSource } from './guideline-topic-registry.ts'
+import { collectActivePackGuidelineTopicIds, normalizeGuidelineFragmentText, readGuidelineTopicSource } from './guideline-topic-registry.ts'
 import { resolvePatientGuidelinePopulation } from './patient-age.ts'
 import { normalizeDoctorDiagnosisRecommendation, resolveDoctorDiagnosisReference } from './doctor-diagnosis-recommendations.ts'
 import { normalizeInvestigationRecommendation, type DoctorInvestigationRecommendationCatalogs } from './doctor-investigation-recommendations.ts'
@@ -87,6 +88,13 @@ const documentFieldLabels: Record<string, string> = {
   assessment: '诊断分析', auxiliaryExamination: '辅助检查', chiefComplaint: '主诉', disposition: '处理意见',
   followUp: '随访计划', historyOfPresentIllness: '现病史', physicalExamination: '体格检查', priorMedicalHistory: '既往史',
 }
+const recommendationKindReadinessCategory = {
+  diagnosis: 'diagnosis',
+  imaging: 'examination',
+  laboratory: 'laboratory',
+  pathology: 'examination',
+  prescription: 'medication',
+} as const
 // 筛选阶段请求只携带必读与已选证据的索引摘要；完整原文仍进入生成与核验。
 const evidenceExcerptChars = 512
 function compactEvidenceIndex(evidence: DoctorCaseEvidence[]) {
@@ -164,6 +172,7 @@ export class DoctorRecommendationsService {
   constructor(private readonly options: {
     database: ClinMeshDatabase; workflow: DoctorRecommendationsWorkflowPort; commands: CommandExecutor; referenceData: ReferenceDataService
     models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider
+    diseasePacks?: DiseasePackRuntimeService
     promptCards?: ClinicalPromptCardService
     recovery?: ModelTaskRecovery
     automaticRetries?: (workspaceId: string) => boolean
@@ -288,9 +297,21 @@ export class DoctorRecommendationsService {
       population,
       inactiveSources: retrieved?.inactiveSources,
     })
-    const matchedTopicIds = matchApplicableGuidelineTopicIds(searchText)
+    const evaluationAsOf = visitRow?.visit_date ?? visitRow?.virtual_time ?? new Date().toISOString()
+    const activePackRuntime = this.options.diseasePacks?.activeRuntimeSummaryForSubject(
+      context,
+      { id: caseId, kind: 'outpatient', patientId: detail.patient.id },
+      evaluationAsOf,
+    )
+    const matchedTopicIds = collectActivePackGuidelineTopicIds(
+      activePackRuntime,
+      this.options.diseasePacks?.registry,
+    )
     const topicReads = matchedTopicIds
-      .map(topicId => readGuidelineTopicSource(topicId, this.options.guidelines, { population }))
+      .map(topicId => readGuidelineTopicSource(topicId, this.options.guidelines, {
+        population,
+        ...(this.options.diseasePacks === undefined ? {} : { registry: this.options.diseasePacks.registry }),
+      }))
       .filter(result => result.sourceStatus === 'available')
     const seenLocators = new Set<string>()
     const seenTexts = new Set<string>()
@@ -636,6 +657,21 @@ export class DoctorRecommendationsService {
     return dispositions.length === 0 ? state : { ...state, considerationDispositions: dispositions }
   }
 
+  #readinessFor(
+    context: ActorContext,
+    caseId: string,
+    kind: DoctorRecommendationKind,
+    auditBlockedOperation?: string,
+  ) {
+    return this.options.diseasePacks?.evaluateSubjectStageReadiness({
+      ...(auditBlockedOperation === undefined ? {} : { auditBlockedOperation }),
+      context,
+      relevantCategory: recommendationKindReadinessCategory[kind],
+      subjectId: caseId,
+      subjectKind: 'outpatient',
+    })
+  }
+
   async read(context: ActorContext, caseId: string, kind: DoctorRecommendationKind) {
     const { snapshot, inputFingerprint } = await this.#input(context, caseId, kind)
     const row = this.#row(context, caseId, kind)
@@ -651,10 +687,16 @@ export class DoctorRecommendationsService {
           .map(({ id, version, allowedIndicationCodes, outpatientBilling }) => ({ id, version, allowedIndicationCodes, outpatientBilling })) }),
       })
     }
+    const readiness = kind === 'prescription' ? this.#readinessFor(context, caseId, kind) : undefined
+    const idleMissingInformation = readiness?.blocked
+      ? [`当前任务缺少关键前置资料：${readiness.missingCriticalLabels.join('、')}`]
+      : (readiness?.annotations.length ?? 0) > 0
+        ? readiness!.annotations
+        : []
     return this.#withDispositions(context, caseId, kind, doctorRecommendationStateSchema.parse({
       caseId, kind, encounterId: snapshot.encounter.id, encounterVersion: snapshot.encounter.versionId,
       inputFingerprint, status: 'idle', generation: 0, stale: false, items: [],
-      guidelines: [], caseEvidence: [], missingInformation: [],
+      guidelines: [], caseEvidence: [], missingInformation: idleMissingInformation,
     }))
   }
 
@@ -680,6 +722,17 @@ export class DoctorRecommendationsService {
   async generate(context: ActorContext, caseId: string, kind: DoctorRecommendationKind,
     request: GenerateDoctorRecommendationsRequest, idempotencyKey: string) {
     const { snapshot, inputFingerprint } = await this.#input(context, caseId, kind)
+    if (kind === 'prescription') {
+      const readiness = this.#readinessFor(context, caseId, kind, 'doctor.recommendations.generate')
+      if (readiness?.blocked) {
+        throw new DiseasePackRuntimeError(
+          'TASK_READINESS_CRITICAL_MISSING',
+          `当前任务缺少关键前置资料：${readiness.missingCriticalLabels.join('、')}`,
+          409,
+          'DSAP_TASK_READINESS_BLOCKED',
+        )
+      }
+    }
     const encounterReference = `Encounter/${snapshot.encounter.id}`
     if (Object.keys(request.expectedVersions).length !== 1 || request.expectedVersions[encounterReference] === undefined) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The current Encounter expected version is required')
@@ -1398,6 +1451,15 @@ export class DoctorRecommendationsService {
         }
       }
 
+      if (payload.kind === 'prescription') {
+        const readiness = this.#readinessFor(context, payload.caseId, payload.kind)
+        for (const annotation of readiness?.annotations ?? []) {
+          const message = `资料缺项标注：${annotation}`
+          if (!notices.some(notice => notice.message === message)) {
+            notices.push({ category: 'processing', message })
+          }
+        }
+      }
       if (finalItems.length + finalConsiderations.length === 0 && notices.length === 0) {
         notices.push({ category: 'processing', message: '模型本轮未形成可发布的建议或待核实思路，可核对当前资料后刷新。' })
       }

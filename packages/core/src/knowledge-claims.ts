@@ -96,7 +96,7 @@ export function transitionKnowledgePublicationStatus(input: {
 
 export function resolveKnowledgeDisplayStage(status: KnowledgePublicationStatus): KnowledgeDisplayStage {
   if (status === 'auto-verified') return '试用版'
-  if (status === 'clinician-reviewed' || status === 'published') return '正式版'
+  if (status === 'published') return '正式版'
   if (status === 'superseded' || status === 'retracted') return '已退役'
   return '未发布'
 }

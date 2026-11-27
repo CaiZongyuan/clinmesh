@@ -10,6 +10,7 @@ import {
   KnowledgeClaimError,
   compareKnowledgeEvaluations,
   evaluateKnowledgeSnapshotForPatient,
+  resolveKnowledgeDisplayStage,
   transitionKnowledgePublicationStatus,
   verifyKnowledgeAnchor,
   type KnowledgePassageVerifier,
@@ -192,6 +193,13 @@ describe('knowledge-claims state machine and AC8 evaluation', () => {
       registeredReviewers: [REVIEWER],
       reviewerId: REVIEWER.reviewerId,
     })).toBe('published')
+
+    // Only published maps to '正式版'; clinician-reviewed stays '未发布' and auto-verified is '试用版'
+    expect(resolveKnowledgeDisplayStage('auto-verified')).toBe('试用版')
+    expect(resolveKnowledgeDisplayStage('clinician-reviewed')).toBe('未发布')
+    expect(resolveKnowledgeDisplayStage('published')).toBe('正式版')
+    expect(resolveKnowledgeDisplayStage('superseded')).toBe('已退役')
+    expect(resolveKnowledgeDisplayStage('retracted')).toBe('已退役')
 
     // Invalid jump or transition out of retracted fails with KNOWLEDGE_STATUS_TRANSITION_INVALID
     try {

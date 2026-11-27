@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
-import type { ClinicalFactLedger } from '@clinmesh/contracts/clinical-fact-ledger'
+import type { ClinicalFactCategory, ClinicalFactLedger } from '@clinmesh/contracts/clinical-fact-ledger'
 import type { ConceptVocabulary } from '@clinmesh/contracts/concept-vocabulary'
 import {
   diseasePackRuntimeBundleSchema,
@@ -22,10 +22,12 @@ import {
   type EffectiveDiseasePack,
 } from '@clinmesh/contracts/disease-pack'
 import { type PackSourceSummary } from '@clinmesh/contracts/guideline-topics'
+import type { ClinicalReviewerRecord } from '@clinmesh/contracts/knowledge-claims'
 import {
   resolveEffectiveConceptVocabulary,
 } from '@clinmesh/core/concept-vocabulary'
 import {
+  DEFAULT_PUBLIC_DISEASE_PACK_LAYER,
   DiseasePackValidationError,
   collectDeclaredTaskItemCodes,
   deduplicateQuestionnaireItems,
@@ -148,7 +150,9 @@ const packVocabularyCache = new WeakMap<EffectiveDiseasePack, ConceptVocabulary>
 
 export class DiseasePackRegistry {
   readonly #entries = new Map<string, EffectiveDiseasePack>()
-  readonly #publicLayer: PublicLayerPolicyInput | undefined
+  readonly #publicLayer: PublicLayerPolicyInput
+  readonly #registeredClinicianReviewers: readonly ClinicalReviewerRecord[]
+  readonly #startupDemotionReasons = new Map<string, readonly string[]>()
 
   constructor(options?: {
     publicLayer?: PublicLayerPolicyInput
@@ -156,9 +160,11 @@ export class DiseasePackRegistry {
     packs?: readonly unknown[]
     packDirs?: readonly string[]
     overlays?: readonly unknown[]
+    registeredClinicianReviewers?: readonly ClinicalReviewerRecord[]
     verifyFingerprint?: boolean
   }) {
-    this.#publicLayer = options?.publicLayer
+    this.#publicLayer = options?.publicLayer ?? DEFAULT_PUBLIC_DISEASE_PACK_LAYER
+    this.#registeredClinicianReviewers = options?.registeredClinicianReviewers ?? []
     const loadOptions = { verifyFingerprint: options?.verifyFingerprint !== false }
     const disableDefaultDirs =
       options?.includeBuiltinDraftPacks === false ||
@@ -166,6 +172,7 @@ export class DiseasePackRegistry {
     const canUseDefaultDiscoveryCache =
       !disableDefaultDirs
       && options?.publicLayer === undefined
+      && this.#registeredClinicianReviewers.length === 0
       && loadOptions.verifyFingerprint
     if (!disableDefaultDirs) {
       if (canUseDefaultDiscoveryCache && defaultDiscoveredPacksCache !== undefined) {
@@ -221,10 +228,35 @@ export class DiseasePackRegistry {
         )
       }
     }
+    const verifiedReviewerIds = new Set(
+      this.#registeredClinicianReviewers
+        .filter(r => r.licenseVerified === true)
+        .map(r => r.reviewerId),
+    )
+    for (const snapshot of parsed.knowledgeSnapshots ?? []) {
+      for (const claim of snapshot.claims) {
+        if ((claim.status === 'published' || claim.status === 'clinician-reviewed')
+          && (claim.reviewerId === null || !verifiedReviewerIds.has(claim.reviewerId))) {
+          throw new DiseasePackValidationError(
+            'PACK_UNVERIFIED_PUBLICATION',
+            `Disease pack ${parsed.manifest.id} claim ${claim.id} has status '${claim.status}' with unregistered reviewerId '${claim.reviewerId ?? 'null'}'`,
+          )
+        }
+      }
+      for (const topic of snapshot.topics) {
+        if ((topic.status === 'published' || topic.status === 'clinician-reviewed')
+          && (topic.reviewerId === null || !verifiedReviewerIds.has(topic.reviewerId))) {
+          throw new DiseasePackValidationError(
+            'PACK_UNVERIFIED_PUBLICATION',
+            `Disease pack ${parsed.manifest.id} topic ${topic.id} has status '${topic.status}' with unregistered reviewerId '${topic.reviewerId ?? 'null'}'`,
+          )
+        }
+      }
+    }
     const merged = mergeThreeLayerPack({
       diseasePack: parsed,
       ...(options?.overlay === undefined ? {} : { hospitalOverlay: options.overlay }),
-      ...(this.#publicLayer === undefined ? {} : { publicLayer: this.#publicLayer }),
+      publicLayer: this.#publicLayer,
     })
     this.#entries.set(merged.pack.manifest.id, merged)
     return merged
@@ -299,7 +331,7 @@ export class DiseasePackRegistry {
     const merged = mergeThreeLayerPack({
       diseasePack: existing.pack,
       hospitalOverlay: rawOverlay,
-      ...(this.#publicLayer === undefined ? {} : { publicLayer: this.#publicLayer }),
+      publicLayer: this.#publicLayer,
     })
     this.#entries.set(merged.pack.manifest.id, merged)
     return merged
@@ -358,10 +390,48 @@ export class DiseasePackRegistry {
     const merged = mergeThreeLayerPack({
       diseasePack: promotedPack,
       ...(existing.hospitalOverlay === undefined ? {} : { hospitalOverlay: existing.hospitalOverlay }),
-      ...(this.#publicLayer === undefined ? {} : { publicLayer: this.#publicLayer }),
+      publicLayer: this.#publicLayer,
     })
+    this.#startupDemotionReasons.delete(packId)
     this.#entries.set(packId, merged)
     return { effective: merged, previousStatus }
+  }
+
+  demotePackToDraft(packId: string, reasonsZh: readonly string[]): EffectiveDiseasePack {
+    const existing = this.getEffective(packId)
+    const updatedPack = {
+      ...existing.pack,
+      manifest: {
+        ...existing.pack.manifest,
+        status: 'draft' as const,
+      },
+    }
+    const updatedFingerprint = computeDiseasePackFingerprint(
+      updatedPack as unknown as { manifest: Record<string, unknown> },
+    )
+    const demotedPack = {
+      ...updatedPack,
+      manifest: {
+        ...updatedPack.manifest,
+        fingerprint: updatedFingerprint,
+      },
+    }
+    const merged = mergeThreeLayerPack({
+      diseasePack: demotedPack,
+      ...(existing.hospitalOverlay === undefined ? {} : { hospitalOverlay: existing.hospitalOverlay }),
+      publicLayer: this.#publicLayer,
+    })
+    this.#startupDemotionReasons.set(packId, [...reasonsZh])
+    this.#entries.set(packId, merged)
+    return merged
+  }
+
+  startupDemotionReasons(packId: string): readonly string[] | undefined {
+    return this.#startupDemotionReasons.get(packId)
+  }
+
+  listRegisteredClinicianReviewers(): readonly ClinicalReviewerRecord[] {
+    return this.#registeredClinicianReviewers
   }
 
   listCatalogSummaries(): DiseasePackCatalogList {
@@ -725,10 +795,10 @@ export class DiseasePackRuntimeService {
   }
 
   /**
-   * Enforce mandatory & pack/hospital-declared forbiddenActions across all active packs
-   * when an Agent tool call does not target a single explicit packId.
+   * Enforce mandatory/pack/hospital forbiddenActions and allowedTools whitelist across all
+   * active packs even when an Agent tool call omits `packId`.
    */
-  enforceActivePacksForbiddenActions(input: {
+  enforceActivePacksToolPolicy(input: {
     context: ActorContext
     subjectKind: 'outpatient' | 'inpatient'
     subjectId: string
@@ -770,6 +840,7 @@ export class DiseasePackRuntimeService {
     const ledger = this.#factLedger.buildInternalLedger(input.context, subject, { asOf, includeSuperseded: false })
     const encounterMap = this.#resolveEncounterMap(input.context, patientId)
 
+    const activeEntries: EffectiveDiseasePack[] = []
     for (const effective of effectiveList) {
       const override = this.#loadOverride(input.context, input.subjectKind, input.subjectId, effective.pack.manifest.id)
       const vocabulary = this.#resolvePackVocabulary(effective)
@@ -784,6 +855,7 @@ export class DiseasePackRuntimeService {
         asOf,
       )
       if (!activation.active) continue
+      activeEntries.push(effective)
 
       const forbidden = new Set(effective.effectiveForbiddenActions)
       if (forbidden.has(input.operationId) || (input.actionTag !== undefined && forbidden.has(input.actionTag))) {
@@ -802,6 +874,143 @@ export class DiseasePackRuntimeService {
           'DSAP_TOOL_POLICY_DENIED',
         )
       }
+    }
+
+    if (activeEntries.length > 0) {
+      const allowedUnion = new Set(activeEntries.flatMap(entry => [...entry.effectiveAllowedTools]))
+      if (!allowedUnion.has(input.operationId)) {
+        const primaryPackId = activeEntries[0]!.pack.manifest.id
+        this.#commands.auditRead(input.context, 'DSAP_TOOL_POLICY_DENIED', {
+          actionTag: input.actionTag ?? null,
+          operationId: input.operationId,
+          packId: primaryPackId,
+          reason: 'active-pack-tool-not-in-whitelist',
+          subjectId: input.subjectId,
+          subjectKind: input.subjectKind,
+        }, 'failed')
+        throw new DiseasePackRuntimeError(
+          'DSAP_TOOL_POLICY_DENIED',
+          `操作 ${input.operationId} 不在当前已激活专病包允许的工具白名单中`,
+          403,
+          'DSAP_TOOL_POLICY_DENIED',
+        )
+      }
+    }
+  }
+
+  /**
+   * Evaluate 3-tier task readiness across active packs for the subject's current stage tasks.
+   */
+  evaluateSubjectStageReadiness(input: {
+    auditBlockedOperation?: string
+    context: ActorContext
+    relevantCategory?: ClinicalFactCategory
+    subjectKind: 'outpatient' | 'inpatient'
+    subjectId: string
+    inpatient?: InpatientService
+  }): {
+    annotations: string[]
+    blocked: boolean
+    missingCriticalLabels: string[]
+    readinessResults: DiseasePackTaskReadinessResult[]
+  } {
+    const effectiveList = this.registry.listEffective()
+    if (effectiveList.length === 0) {
+      return { annotations: [], blocked: false, missingCriticalLabels: [], readinessResults: [] }
+    }
+
+    let patientId: string | undefined
+    let asOf: string
+    if (input.subjectKind === 'outpatient') {
+      const outpatientRow = z.object({ patient_id: z.string().min(1) }).optional().parse(
+        this.#database.driver.prepare(`
+          SELECT patient_id FROM outpatient_case
+          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        `).get(input.context.workspaceId, input.context.epoch, input.subjectId),
+      )
+      patientId = outpatientRow?.patient_id
+      asOf = this.#outpatient.virtualTime(input.context)
+    } else {
+      if (input.inpatient === undefined) {
+        return { annotations: [], blocked: false, missingCriticalLabels: [], readinessResults: [] }
+      }
+      patientId = input.inpatient.readAdmissionBinding(input.context, input.subjectId).patientId
+      asOf = input.inpatient.virtualTime(input.context)
+    }
+
+    if (patientId === undefined) {
+      return { annotations: [], blocked: false, missingCriticalLabels: [], readinessResults: [] }
+    }
+
+    const subject = { id: input.subjectId, kind: input.subjectKind, patientId }
+    const ledger = this.#factLedger.buildInternalLedger(input.context, subject, { asOf, includeSuperseded: false })
+    const encounterMap = this.#resolveEncounterMap(input.context, patientId)
+
+    const readinessResults: DiseasePackTaskReadinessResult[] = []
+    const annotations: string[] = []
+    const missingCriticalLabels: string[] = []
+    let blocked = false
+
+    for (const effective of effectiveList) {
+      const override = this.#loadOverride(input.context, input.subjectKind, input.subjectId, effective.pack.manifest.id)
+      const vocabulary = this.#resolvePackVocabulary(effective)
+      const activation = this.#resolveActivationWithExit(
+        input.context,
+        subject,
+        effective,
+        ledger,
+        encounterMap,
+        override,
+        vocabulary,
+        asOf,
+      )
+      if (!activation.active) continue
+
+      const stageState = evaluatePackStages(effective, ledger, { asOf, vocabulary })
+      const stage = stageState.currentStageId === null
+        ? undefined
+        : effective.pack.stages.find(item => item.id === stageState.currentStageId)
+      const taskIds = stage !== undefined
+        ? stage.taskIds
+        : effective.pack.stages.length === 0
+          ? effective.pack.readinessTasks.map(t => t.taskId)
+          : []
+
+      for (const taskId of taskIds) {
+        const declaration = effective.pack.readinessTasks.find(task => task.taskId === taskId)
+        if (declaration === undefined) continue
+        if (
+          input.relevantCategory !== undefined
+          && declaration.relevantCategories !== undefined
+          && declaration.relevantCategories.length > 0
+          && !declaration.relevantCategories.includes(input.relevantCategory)
+        ) {
+          continue
+        }
+        const res = evaluateTaskReadiness(effective, taskId, ledger, { asOf, vocabulary })
+        readinessResults.push(res)
+        if (!res.canProceed) {
+          blocked = true
+          missingCriticalLabels.push(...res.missingCriticalItems.map(item => item.labelZh))
+        }
+        annotations.push(...res.annotations)
+      }
+    }
+
+    if (blocked && input.auditBlockedOperation !== undefined) {
+      this.#commands.auditRead(input.context, 'DSAP_TASK_READINESS_BLOCKED', {
+        missingCriticalLabels: [...new Set(missingCriticalLabels)],
+        operationId: input.auditBlockedOperation,
+        subjectId: input.subjectId,
+        subjectKind: input.subjectKind,
+      }, 'failed')
+    }
+
+    return {
+      annotations: [...new Set(annotations)],
+      blocked,
+      missingCriticalLabels: [...new Set(missingCriticalLabels)],
+      readinessResults,
     }
   }
 
@@ -825,13 +1034,15 @@ export class DiseasePackRuntimeService {
     const matchingTaskIdsByPack = new Map<string, string[]>()
     for (const entry of effectiveList) {
       const hasTopicTask = entry.pack.readinessTasks.some(task => task.taskId === topicId)
+      const stageTaskIds = requestId !== null
+        ? entry.pack.stages
+            .filter(stage => stage.topicIds.includes(topicId))
+            .flatMap(stage => stage.taskIds)
+            .filter(taskId => entry.pack.readinessTasks.some(task => task.taskId === taskId))
+        : []
       const matchingTasks = hasTopicTask
         ? [topicId]
-        : topicId === 'pci-stent' && requestId !== null
-          ? entry.pack.readinessTasks
-              .filter(task => task.taskId === 'pci-preop-guideline-advice')
-              .map(task => task.taskId)
-          : []
+        : [...new Set(stageTaskIds)]
       if (matchingTasks.length > 0) {
         matchingTaskIdsByPack.set(entry.pack.manifest.id, matchingTasks)
       }

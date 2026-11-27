@@ -140,6 +140,12 @@ describe('DSAP Slice S8: Timing Hooks, Unified ClinicalPromptCard, Historical Re
     prepared.options.dshBridgeSecret = dshSecret
     if (options.withSyntheticPack) {
       prepared.options.diseasePackDirs = [SYNTHETIC_PACK_DIR]
+      prepared.options.registeredClinicianReviewers = [{
+        licenseVerified: true,
+        nameZh: '合成测试审核人',
+        reviewerId: 'reviewer-syn-cardio-01',
+        specialty: 'cardiology',
+      }]
     }
 
     const modelCalls: Array<{ payload: unknown; schemaName: string }> = []

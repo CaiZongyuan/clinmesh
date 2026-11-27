@@ -60,6 +60,12 @@ describe('Coronary Migration (S5): Data Pack, Hospital Separation, Bedside Quest
     cleanups.push(() => rm(prepared.directory, { recursive: true, force: true }))
     if (options.withSyntheticPack) {
       prepared.options.diseasePackDirs = [SYNTHETIC_PACK_DIR]
+      prepared.options.registeredClinicianReviewers = [{
+        licenseVerified: true,
+        nameZh: '合成测试审核人',
+        reviewerId: 'reviewer-syn-cardio-01',
+        specialty: 'cardiology',
+      }]
     }
     const fixture = await createPciPaymentDrgFixture(prepared)
     cleanups.push(() => fixture.runtime.close())

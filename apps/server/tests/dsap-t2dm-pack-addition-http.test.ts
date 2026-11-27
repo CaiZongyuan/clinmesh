@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { clinicalPromptBundleSchema } from '@clinmesh/contracts/clinical-prompt-cards'
 import { diseasePackCatalogListSchema, diseasePackRuntimeBundleSchema } from '@clinmesh/contracts/disease-pack'
 import { dsapExamRunResponseSchema } from '@clinmesh/contracts/disease-pack-exam'
+import { SIMULATION_TRIAL_DISCLAIMER_ZH } from '@clinmesh/contracts/knowledge-claims'
 import { orderSetDraftBundleSchema, orderSetTemplateListSchema } from '@clinmesh/contracts/order-set-templates'
 import {
   createPatientResponseSchema,
@@ -294,6 +295,14 @@ describe('DSAP Slice S13: Standalone Pure-JSON T2DM Renal Care Pack Addition (#5
     const t2dmKnowledgeCards = t2dmPrompts.cards.filter(c => c.packId === 't2dm-renal-care')
     expect(t2dmKnowledgeCards.length).toBeGreaterThanOrEqual(1)
     expect(t2dmKnowledgeCards.some(c => c.summary.includes('二甲双胍') || c.detail.includes('降糖') || c.detail.includes('eGFR'))).toBe(true)
+    expect(
+      t2dmKnowledgeCards.every(
+        c =>
+          c.knowledgeStatus === 'auto-verified'
+          && c.trialBadgeZh === '试用版'
+          && c.trialDisclaimerZh === SIMULATION_TRIAL_DISCLAIMER_ZH,
+      ),
+    ).toBe(true)
 
     // 2. AC3b: Stable CAD without chest pain activates ONLY coronary-cad; orthopedic control activates 0 packs yet keeps hospital general lab panels & templates
     const stableCadPatient = await createOutpatientPatient(fixture, '无胸痛稳定冠心病')
@@ -370,7 +379,7 @@ describe('DSAP Slice S13: Standalone Pure-JSON T2DM Renal Care Pack Addition (#5
     expect(examData.passed).toBe(true)
     expect(examData.llmInvocationCount).toBe(0)
     expect(prepared.modelCalls).toBe(0)
-    expect(examData.report.coronaryRegressionPassed).toBe(true)
+    expect(examData.report.activePacksRegressionPassed).toBe(true)
     expect(examData.report.publicTrapRun.passedTraps).toBe(7)
     expect(examData.report.packAdditionAudit.platformChangesZero).toBe(true)
 

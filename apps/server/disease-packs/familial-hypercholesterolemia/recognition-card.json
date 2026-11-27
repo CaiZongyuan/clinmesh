@@ -9,17 +9,30 @@
   "toolPolicy": {
     "allowedTools": [
       "inpatient.clinical-fact-ledger.read",
+      "inpatient.clinical-prompts.read",
       "inpatient.clinical-quality.read",
       "inpatient.clinical-scores.read",
       "inpatient.disease-packs.read",
       "inpatient.disease-pack-task-facts.read",
       "inpatient.guideline-topics.read",
+      "inpatient.report.acknowledge.propose",
+      "inpatient.stage.select",
+      "outpatient.case.read",
+      "outpatient.case.select",
       "outpatient.clinical-fact-ledger.read",
+      "outpatient.clinical-prompts.read",
       "outpatient.clinical-quality.read",
       "outpatient.clinical-scores.read",
+      "outpatient.consultation.ask",
       "outpatient.disease-packs.read",
       "outpatient.disease-pack-task-facts.read",
-      "outpatient.guideline-topics.read"
+      "outpatient.guideline-topics.read",
+      "outpatient.history.read",
+      "outpatient.history.search",
+      "outpatient.laboratory.draft.set",
+      "outpatient.laboratory.issue.propose",
+      "outpatient.report.acknowledge.propose",
+      "outpatient.section.select"
     ],
     "forbiddenActions": [
       "auto-prescribe-medication",

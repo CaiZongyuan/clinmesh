@@ -38,6 +38,7 @@ import {
   extractSupplementaryIndicators,
   getGuidelineTopicDefinition,
   legacyPciStentTopicFingerprintIfUnchanged,
+  listGuidelineTopicDefinitions,
   readGuidelineTopicSource,
 } from './guideline-topic-registry.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
@@ -275,6 +276,11 @@ export class InpatientGuidelineAdvice {
     },
   ) {}
 
+  #resolveSurgeryBoundTopicId(): GuidelineTopicId | undefined {
+    const registry = this.owner.workflow.diseasePacks.registry
+    return listGuidelineTopicDefinitions(registry).find(def => def.conclusionKinds.includes('stent-category'))?.id
+  }
+
   #row(
     context: Pick<ActorContext, 'workspaceId' | 'epoch'>,
     admissionId: string,
@@ -327,12 +333,13 @@ export class InpatientGuidelineAdvice {
     requestId: string | null,
   ) {
     const { binding, isArchivedCutoff, population, referenceIso } = this.#population(context, admissionId)
-    const definition = getGuidelineTopicDefinition(topicId)
-    const sourceRead = readGuidelineTopicSource(topicId, this.options.guidelines, { population })
+    const registry = this.owner.workflow.diseasePacks.registry
+    const definition = getGuidelineTopicDefinition(topicId, registry)
+    const sourceRead = readGuidelineTopicSource(topicId, this.options.guidelines, { population, registry })
 
     if (requestId !== null) {
-      if (topicId !== 'pci-stent') {
-        throw new InpatientError('INPATIENT_GUIDELINE_INVALID', '手术申请单绑定仅用于 pci-stent 支架选型专题', 400)
+      if (!definition.conclusionKinds.includes('stent-category')) {
+        throw new InpatientError('INPATIENT_GUIDELINE_INVALID', '手术申请单绑定仅用于支架选型类专题', 400)
       }
       const surgery = this.owner.surgery.read(context, admissionId)
       const request = surgery.requests.find(item => item.id === requestId)
@@ -415,7 +422,7 @@ export class InpatientGuidelineAdvice {
       patientId: binding.patientId,
       referenceCutoffIso: referenceIso,
     })
-    const { missingPatientInputs } = evaluateTopicPatientIndicators(topicId, scores, supplementary)
+    const { missingPatientInputs } = evaluateTopicPatientIndicators(topicId, scores, supplementary, registry)
     const supplementaryIndicators = {
       acsEligibility: supplementary.acsEligibility ?? null,
       angiographySummary: supplementary.angiographySummary ?? null,
@@ -878,7 +885,11 @@ export class InpatientGuidelineAdvice {
 
   read(context: ActorContext, admissionId: string, requestId: string) {
     try {
-      const state = this.#state(context, admissionId, 'pci-stent', requestId)
+      const surgeryTopicId = this.#resolveSurgeryBoundTopicId()
+      if (surgeryTopicId === undefined) {
+        throw new InpatientError('INPATIENT_GUIDELINE_TOPIC_REQUIRED', '当前未注册支架选型类指南专题', 404)
+      }
+      const state = this.#state(context, admissionId, surgeryTopicId, requestId)
       this.owner.commands.auditRead(context, 'inpatient.guideline-advice.read', { admissionId, requestId }, 'success')
       return state
     } catch (error) {
@@ -892,12 +903,15 @@ export class InpatientGuidelineAdvice {
       this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
       const pciRequests = this.owner.surgery.read(context, admissionId).requests
         .filter(item => pciProcedureForRequest(item) !== undefined)
+      const surgeryTopicId = this.#resolveSurgeryBoundTopicId()
 
       let advice: Advice[]
       if (topicId !== undefined) {
         advice = [
           this.#state(context, admissionId, topicId, null),
-          ...(topicId === 'pci-stent' ? pciRequests.map(item => this.#state(context, admissionId, 'pci-stent', item.id)) : []),
+          ...(surgeryTopicId !== undefined && topicId === surgeryTopicId
+            ? pciRequests.map(item => this.#state(context, admissionId, surgeryTopicId, item.id))
+            : []),
         ]
       } else {
         const persistedTopics = z.array(z.object({ topic_id: guidelineTopicIdSchema })).parse(
@@ -908,7 +922,9 @@ export class InpatientGuidelineAdvice {
           `).all(context.workspaceId, context.epoch, admissionId),
         )
         advice = [
-          ...pciRequests.map(item => this.#state(context, admissionId, 'pci-stent', item.id)),
+          ...(surgeryTopicId === undefined
+            ? []
+            : pciRequests.map(item => this.#state(context, admissionId, surgeryTopicId, item.id))),
           ...persistedTopics.map(row => this.#state(context, admissionId, row.topic_id, null)),
         ]
       }
@@ -1039,10 +1055,12 @@ export class InpatientGuidelineAdvice {
 
   automatic(context: ActorContext, admissionId: string, requestId: string, transaction: CommandTransaction) {
     const request = this.owner.surgery.read(context, admissionId).requests.find(item => item.id === requestId)
-    if (!request || pciProcedureForRequest(request) === undefined || request.adHocPci?.status === 'cancelled' || this.#row(context, admissionId, 'pci-stent', requestId)) {
+    const surgeryTopicId = this.#resolveSurgeryBoundTopicId()
+    if (!request || pciProcedureForRequest(request) === undefined || request.adHocPci?.status === 'cancelled'
+      || surgeryTopicId === undefined || this.#row(context, admissionId, surgeryTopicId, requestId)) {
       return
     }
-    this.#create(context, admissionId, 'pci-stent', requestId, 1, 'automatic', transaction)
+    this.#create(context, admissionId, surgeryTopicId, requestId, 1, 'automatic', transaction)
   }
 
   /** Captures which admission-level advice rows were current right before transitioning from admitted to discharge-pending. */
@@ -1083,7 +1101,7 @@ export class InpatientGuidelineAdvice {
   request(context: ActorContext, raw: unknown, key: string) {
     const input = inpatientGuidelineAdviceRequestInputSchema.parse(raw)
     const requestId = input.requestId ?? null
-    const topicId: GuidelineTopicId | undefined = input.topicId ?? (requestId !== null ? 'pci-stent' : undefined)
+    const topicId: GuidelineTopicId | undefined = input.topicId ?? (requestId !== null ? this.#resolveSurgeryBoundTopicId() : undefined)
     if (topicId === undefined) {
       throw new InpatientError('INPATIENT_GUIDELINE_TOPIC_REQUIRED', '无手术申请单时必须显式指定指南专题 topicId', 400)
     }

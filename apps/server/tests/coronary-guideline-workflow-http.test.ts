@@ -3,12 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { guidelineTopicIds } from '@clinmesh/contracts/guideline-topics'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { confirmDoctorPreparationResponseSchema, doctorRecommendationStateSchema,
   generateDoctorRecommendationsResponseSchema, type DoctorPreparationSelection, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
-import { getGuidelineTopicDefinition } from '../src/application/guideline-topic-registry.ts'
+import { getGuidelineTopicDefinition, listGuidelineTopicDefinitions } from '../src/application/guideline-topic-registry.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
 import { pciDataPackage } from '../src/application/scenario-data/pci-data.ts'
@@ -135,8 +134,7 @@ it('门诊诊疗建议复用共享 Guideline Topic 注册表，对派生副本�
   const writer = new GuidelineCorpus({ databasePath: data.guidelineDatabasePath })
   try {
     const bySource = new Map<string, { pages: Map<number, string[]>; sha256: string; specialty: string; title: string; version: string }>()
-    for (const topicId of guidelineTopicIds) {
-      const def = getGuidelineTopicDefinition(topicId)
+    for (const def of listGuidelineTopicDefinitions()) {
       for (const ref of def.references) {
         let entry = bySource.get(ref.sourceId)
         if (!entry) {

@@ -79,7 +79,7 @@
         "known-coronary-stenosis-ge-50",
         "prior-bleeding-history"
       ],
-      "taskIds": ["pci-preop-guideline-advice", "pci-stent", "followup-review"],
+      "taskIds": [],
       "titleEn": "Initial Visit & Acute Chest Pain Workup",
       "titleZh": "首诊与急性胸痛评估期",
       "topicIds": ["acute-chest-pain-acs", "coronary-revascularization-indication", "contrast-kidney-hydration"]
@@ -137,7 +137,7 @@
         "smoking-status",
         "prior-bleeding-history"
       ],
-      "taskIds": ["pci-preop-guideline-advice", "pci-stent", "followup-review"],
+      "taskIds": ["pci-preop-guideline-advice", "pci-stent"],
       "titleEn": "PCI Pre-operative Assessment",
       "titleZh": "介入前评估期",
       "topicIds": ["coronary-revascularization-indication", "pci-stent", "contrast-kidney-hydration"]

@@ -2,13 +2,13 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
-import { guidelineTopicIds } from '@clinmesh/contracts/guideline-topics'
 import { afterEach, expect, it } from 'vitest'
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
 import {
+  collectActivePackGuidelineTopicIds,
   computeGuidelineTopicFingerprint,
   getGuidelineTopicDefinition,
-  matchApplicableGuidelineTopicIds,
+  listGuidelineTopicDefinitions,
   normalizeGuidelineFragmentText,
   readGuidelineTopicSource,
   summarizeCoronaryAngiographyVessels,
@@ -135,8 +135,7 @@ function buildSyntheticTopicCorpusDocuments(options: {
     title: string
     version: string
   }>()
-  for (const topicId of guidelineTopicIds) {
-    const def = getGuidelineTopicDefinition(topicId)
+  for (const def of listGuidelineTopicDefinitions()) {
     for (const ref of def.references) {
       let entry = bySource.get(ref.sourceId)
       if (!entry) {
@@ -199,8 +198,8 @@ it('六个注册 Guideline Topic 均通过精确 SHA-256、物理页码、软连
   const s = setup()
   s.writer.importDocuments(buildSyntheticTopicCorpusDocuments({ useUnicodeNonBreakingHyphen: true }))
 
-  for (const topicId of guidelineTopicIds) {
-    const def = getGuidelineTopicDefinition(topicId)
+  for (const def of listGuidelineTopicDefinitions()) {
+    const topicId = def.id
     const read = readGuidelineTopicSource(topicId, s.reader, { population: 'adult' })
     expect(read.sourceStatus, topicId).toBe('available')
     expect(read.degradedReason, topicId).toBeNull()
@@ -216,7 +215,7 @@ it('六个注册 Guideline Topic 均通过精确 SHA-256、物理页码、软连
 
   const sTruncated = setup()
   sTruncated.writer.importDocuments(buildSyntheticTopicCorpusDocuments({ corruptTopicFragment: true }))
-  for (const topicId of guidelineTopicIds) {
+  for (const { id: topicId } of listGuidelineTopicDefinitions()) {
     const degraded = readGuidelineTopicSource(topicId, sTruncated.reader, { population: 'adult' })
     expect(degraded.sourceStatus, topicId).toBe('unavailable')
     expect(degraded.guidelines, topicId).toEqual([])
@@ -255,50 +254,21 @@ it('六个注册 Guideline Topic 均通过精确 SHA-256、物理页码、软连
   const acsDef = getGuidelineTopicDefinition('acute-chest-pain-acs')
   const { fingerprint: baseFp, ...acsSpec } = acsDef
   expect(computeGuidelineTopicFingerprint(acsSpec)).toBe(baseFp)
-  expect(matchApplicableGuidelineTopicIds('{"speaker":"doctor","text":"description of sacral pain"}')).toEqual([])
-  expect(matchApplicableGuidelineTopicIds('慢性肾脏病3期 N18.3 长期服用达格列净 SGLT-2i（否认2型糖尿病）')).toEqual([])
-  expect(matchApplicableGuidelineTopicIds('患者主诉咽痛咳嗽，否认急性胸痛，已排除 ACS、NSTEMI 及 STEMI')).toEqual([])
-  expect(matchApplicableGuidelineTopicIds('急性胸痛：无；ACS（已排除）；ACS 已排除；2 型糖尿病：否认；未行支架选型；未使用对比剂；否认双抗用药史')).toEqual([])
-  expect(matchApplicableGuidelineTopicIds('Patient denies acute chest pain; ACS and NSTEMI ruled out; STEMI was excluded; no history of T2DM')).toEqual([])
-  expect(matchApplicableGuidelineTopicIds('Presenting with STEMI but T2DM ruled out')).toEqual(['acute-chest-pain-acs'])
-  const largeHistoryStart = performance.now()
+  // Topic applicability now comes strictly from active declarative pack stages (never free-text keyword scanning)
+  expect(collectActivePackGuidelineTopicIds(undefined)).toEqual([])
+  expect(collectActivePackGuidelineTopicIds({ allowedPackTopicIds: [], entries: [] })).toEqual([])
   expect(
-    matchApplicableGuidelineTopicIds(
-      `${'KEEP.'.repeat(50_000)}\n${'history token '.repeat(2_000)} ACS and NSTEMI ruled out`,
-    ),
-  ).toEqual([])
-  expect(performance.now() - largeHistoryStart).toBeLessThan(200)
+    collectActivePackGuidelineTopicIds({
+      allowedPackTopicIds: ['acute-chest-pain-acs', 't2dm-renal-medication', 'non-existent-topic'],
+      entries: [],
+    }),
+  ).toEqual(['acute-chest-pain-acs', 't2dm-renal-medication'])
   expect(
-    matchApplicableGuidelineTopicIds(
-      JSON.stringify({
-        entries: [
-          {
-            clinical: {
-              code: { text: '急性冠脉综合征 ACS I21' },
-              verificationStatus: { coding: [{ code: 'refuted' }] },
-            },
-            entryId: 'cond-refuted',
-          },
-        ],
-        resourceType: 'Condition',
-        source: 'visible-source',
-      }),
-    ),
-  ).toEqual([])
-  expect(matchApplicableGuidelineTopicIds('单次肌钙蛋白阴性不能排除 NSTE-ACS')).toContain('acute-chest-pain-acs')
-  expect(matchApplicableGuidelineTopicIds('非ST段抬高型急性冠脉综合征')).toContain('acute-chest-pain-acs')
-  expect(matchApplicableGuidelineTopicIds('既往无造影剂过敏史，否认2型糖尿病，现因突发急性胸痛拟诊 NSTEMI')).toEqual([
-    'acute-chest-pain-acs',
-  ])
-  expect(matchApplicableGuidelineTopicIds('2型糖尿病 E11.2 合并慢性肾脏病 N18.3')).toContain('t2dm-renal-medication')
-  expect(matchApplicableGuidelineTopicIds('拟行 OCT 指导 DES 支架置入')).toContain('pci-stent')
-  expect(matchApplicableGuidelineTopicIds('脑梗死二级预防长期口服氯吡格雷及依折麦布（否认冠心病）')).toEqual([])
-  expect(matchApplicableGuidelineTopicIds('短暂性脑缺血发作 TIA 短程双抗 DAPT 21天')).toEqual([])
-  expect(matchApplicableGuidelineTopicIds('糖尿病黄斑水肿拟行眼底 OCT 检查')).toEqual([])
-  expect(matchApplicableGuidelineTopicIds('顺铂化疗前后静脉水化治疗')).toEqual([])
-  expect(
-    matchApplicableGuidelineTopicIds('{"entries":[{"code":"I25.103","display":"冠状动脉粥样硬化性心脏病"}]}\n长期口服氯吡格雷及依折麦布二级预防'),
-  ).toEqual(['cad-dapt-and-secondary-prevention'])
+    collectActivePackGuidelineTopicIds({
+      allowedPackTopicIds: [],
+      entries: [{ activationStatus: 'active', currentStageId: null, packId: 't2dm-renal-care' }],
+    }),
+  ).toEqual(['t2dm-renal-medication'])
   expect(computeGuidelineTopicFingerprint({ ...acsSpec, generationRule: `${acsSpec.generationRule}（附加条款）` })).not.toBe(baseFp)
   expect(
     computeGuidelineTopicFingerprint({
