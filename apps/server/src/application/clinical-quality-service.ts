@@ -3,6 +3,7 @@ import type {
   ClinicalQualityAlert,
   ClinicalQualityCheck,
   ClinicalQualityGate,
+  ClinicalQualityPendingIndication,
   ClinicalQualityReceipt,
   ClinicalQualityRedLine,
 } from '@clinmesh/contracts/clinical-quality'
@@ -357,8 +358,17 @@ export class ClinicalQualityService {
     })
     const check = this.#result(input.context, input.gate, [], evalResult.alerts)
     if (evalResult.sourcePacks.length === 0) return check
+    const pendingIndications = evalResult.status === 'missing-inputs' && evalResult.missingMessageZh !== null
+      ? [{
+          ...(input.catalogItemId === undefined ? {} : { catalogItemId: input.catalogItemId }),
+          messageZh: evalResult.missingMessageZh,
+          missingInputs: evalResult.missingInputs,
+          orderDisplay: input.orderDisplay ?? input.itemCode,
+        }]
+      : []
     return {
       ...check,
+      ...(pendingIndications.length === 0 ? {} : { pendingIndications }),
       packId: evalResult.sourcePacks[0]!.packId,
       packVersion: evalResult.sourcePacks[0]!.packVersion,
       sourcePacks: evalResult.sourcePacks,
@@ -368,6 +378,7 @@ export class ClinicalQualityService {
   mergeChecks(base: ClinicalQualityCheck, extra: ClinicalQualityCheck): ClinicalQualityCheck {
     const redLines = [...base.redLines, ...extra.redLines].slice(0, 16)
     const alerts = [...base.alerts, ...extra.alerts].slice(0, 16)
+    const pendingIndications = [...(base.pendingIndications ?? []), ...(extra.pendingIndications ?? [])].slice(0, 16)
     const sourcePacksMap = new Map<string, NonNullable<ClinicalQualityCheck['sourcePacks']>[number]>()
     for (const sp of [...(base.sourcePacks ?? []), ...(extra.sourcePacks ?? [])]) {
       sourcePacksMap.set(sp.packId, sp)
@@ -380,6 +391,7 @@ export class ClinicalQualityService {
       alerts,
       ...(primaryPack === undefined ? {} : { packId: primaryPack }),
       ...(primaryVersion === undefined ? {} : { packVersion: primaryVersion }),
+      ...(pendingIndications.length === 0 ? {} : { pendingIndications }),
       redLines,
       ...(sourcePacks.length === 0 ? {} : { sourcePacks }),
       status: redLines.length > 0 ? 'blocked' : alerts.length > 0 ? 'alert' : 'pass',
@@ -401,7 +413,7 @@ export class ClinicalQualityService {
       subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string }
       subjectReference: string
     },
-  ): { effects: CommandEffect[]; receipt?: ClinicalQualityReceipt } {
+  ): { effects: CommandEffect[]; pendingIndications?: ClinicalQualityPendingIndication[]; receipt?: ClinicalQualityReceipt } {
     const check = this.checkOrderIndication({
       asOf: input.asOf,
       ...(input.candidateCodes === undefined ? {} : { candidateCodes: input.candidateCodes }),
@@ -493,12 +505,13 @@ export class ClinicalQualityService {
 
   /** 在调用方的 Command 事务内执行：红线或未覆盖警示时整笔回滚，越权放行时写入正式留痕并返回回执片段。 */
   enforce(context: ActorContext, input: { check: ClinicalQualityCheck; operation: string; override?: ClinicalOverrideInput | undefined; patientId: string; subjectReference: string })
-    : { effects: CommandEffect[]; receipt?: ClinicalQualityReceipt } {
+    : { effects: CommandEffect[]; pendingIndications?: ClinicalQualityPendingIndication[]; receipt?: ClinicalQualityReceipt } {
     const { check } = input
+    const pending = check.pendingIndications === undefined ? {} : { pendingIndications: check.pendingIndications }
     if (check.redLines.length > 0) {
       throw new ClinicalQualityError('CLINICAL_QUALITY_RED_LINE', `命中药事安全红线，不可越权提交：${check.redLines.map(item => `${item.code} ${item.message}`).join('；')}`, check)
     }
-    if (check.alerts.length === 0) return { effects: [] }
+    if (check.alerts.length === 0) return { effects: [], ...pending }
     if (!clinicalOverrideCovers(input.override, check.alerts)) {
       throw new ClinicalQualityError('CLINICAL_QUALITY_ALERT',
         `临床质控警示待处理（${check.alerts.map(item => item.code).join('、')}）：补齐检查或医嘱后重试，或附 clinicalOverride 逐项确认全部警示并说明原因`, check)
@@ -509,6 +522,7 @@ export class ClinicalQualityService {
       input.subjectReference, input.patientId, JSON.stringify(check.alerts), override.reasonCode, override.note, context.actorId, context.practitionerRoleId ?? null, recordedAt)
     return {
       effects: [{ kind: 'created', reference: `ClinicalQualityOverride/${overrideId}`, versionId: '1' }],
+      ...pending,
       receipt: { alerts: check.alerts, gate: check.gate, override: { note: override.note, reasonCode: override.reasonCode }, overrideId, recordedAt },
     }
   }

@@ -277,6 +277,11 @@ describe('evaluateOrderIndicationRules', () => {
     expect(result.alerts[0]?.message).toContain('冠状动脉 CTA')
     expect(result.alerts[0]?.message).toContain('缺乏明确临床适应症')
     expect(result.alerts[0]?.evidence.length).toBeGreaterThanOrEqual(2)
+    expect(result.alerts[0]?.message).not.toMatch(/规则/)
+    expect(result.alerts[0]?.ruleId).toEqual(expect.any(String))
+    expect(result.alerts[0]?.basis?.needZh.length).toBeGreaterThan(0)
+    expect(result.alerts[0]?.basis?.foundZh).toContain('心电图')
+    expect(result.alerts[0]?.basis?.judgementZh).toContain('冠状动脉 CTA')
     expect(result.sourcePacks).toEqual([
       { packId: 'synthetic-indication-pack', packVersion: '1.0.0', titleZh: '合成适应症核验包' },
     ])

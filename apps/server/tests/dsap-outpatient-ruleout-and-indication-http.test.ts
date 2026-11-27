@@ -784,6 +784,17 @@ describe('DSAP Slice S9: Outpatient Rule-Out, Pack Exit & Silence, Confusable Pa
       subject: { id: lowRiskVisit.outpatientCaseId, kind: 'outpatient', patientId: lowRiskVisit.patientId },
     })
     expect(preWorkupCheck.alerts).toEqual([])
+    expect(preWorkupCheck.status).toBe('pass')
+    expect(preWorkupCheck.pendingIndications).toHaveLength(1)
+    expect(preWorkupCheck.pendingIndications?.[0]).toMatchObject({ catalogItemId: 'hospital-service-coronary-cta', orderDisplay: '冠状动脉 CTA' })
+    expect(preWorkupCheck.pendingIndications?.[0]?.missingInputs.length).toBeGreaterThan(0)
+    expect(preWorkupCheck.pendingIndications?.[0]?.messageZh).toContain('缺项待补')
+    expect(clinicalQualityCheckSchema.safeParse(preWorkupCheck).success).toBe(true)
+    // 缺项待补不拦截保存：enforce 不抛错且返回同一提示
+    const pendingEnforce = runtime.workflow.clinicalQuality.enforce(doctorCtx, {
+      check: preWorkupCheck, operation: 'hospital-service.order', patientId: lowRiskVisit.patientId, subjectReference: `Encounter/${lowRiskVisit.encounterId}`,
+    })
+    expect(pendingEnforce.pendingIndications).toEqual(preWorkupCheck.pendingIndications)
 
     // Complete normal ECG + normal cardiac troponin
     const lowRiskEcg = await orderAndCompleteExam(
@@ -839,6 +850,13 @@ describe('DSAP Slice S9: Outpatient Rule-Out, Pack Exit & Silence, Confusable Pa
     }).parse(await blockedCtaRes.json())
     expect(blockedBody.error.code).toBe('CLINICAL_QUALITY_ALERT')
     expect(blockedBody.error.clinicalQuality.alerts.some(a => a.code === 'INVESTIGATION_WITHOUT_INDICATION')).toBe(true)
+    const yellowCard = blockedBody.error.clinicalQuality.alerts.find(a => a.code === 'INVESTIGATION_WITHOUT_INDICATION')!
+    expect(yellowCard.basis?.needZh).toBeTruthy()
+    expect(yellowCard.basis?.foundZh).toBeTruthy()
+    expect(yellowCard.basis?.judgementZh).toContain('冠状动脉 CTA')
+    expect(yellowCard.message).not.toMatch(/规则/)
+    expect(yellowCard.ruleId).toBeTruthy()
+    expect(blockedBody.error.clinicalQuality.pendingIndications ?? []).toEqual([])
 
     const srCountAfterBlock = (runtime.database.driver.prepare(
       'SELECT COUNT(*) AS count FROM fhir_resource WHERE resource_type = ?',

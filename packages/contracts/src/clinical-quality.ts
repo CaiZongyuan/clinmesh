@@ -22,9 +22,22 @@ export const clinicalQualityAlertCodeSchema = z.enum([
 export type ClinicalQualityAlertCode = z.infer<typeof clinicalQualityAlertCodeSchema>
 
 export const clinicalQualityRedLineSchema = z.object({ ...base, code: clinicalQualityRedLineCodeSchema, tier: z.literal('red-line') }).strict()
-export const clinicalQualityAlertSchema = z.object({ ...base, code: clinicalQualityAlertCodeSchema, tier: z.literal('alert') }).strict()
+/** 无指征黄牌的“需要／已查到／判断”三段，界面直接显示；内部规则 ID 只放 `ruleId`。 */
+export const clinicalQualityAlertBasisSchema = z.object({ foundZh: s.min(1).max(500), judgementZh: s.min(1).max(500), needZh: s.min(1).max(500) }).strict()
+export const clinicalQualityAlertSchema = z.object({
+  ...base, basis: clinicalQualityAlertBasisSchema.optional(), code: clinicalQualityAlertCodeSchema, ruleId: s.min(1).max(128).optional(), tier: z.literal('alert'),
+}).strict()
 export type ClinicalQualityRedLine = z.infer<typeof clinicalQualityRedLineSchema>
 export type ClinicalQualityAlert = z.infer<typeof clinicalQualityAlertSchema>
+
+/** 适应症所需资料未齐时的“缺项待补”提示：不拦截保存，也不判为无指征。 */
+export const clinicalQualityPendingIndicationSchema = z.object({
+  catalogItemId: s.min(1).max(128).optional(),
+  messageZh: s.min(1).max(500),
+  missingInputs: z.array(s.min(1).max(120)).min(1).max(16),
+  orderDisplay: s.min(1).max(240),
+}).strict()
+export type ClinicalQualityPendingIndication = z.infer<typeof clinicalQualityPendingIndicationSchema>
 
 export const clinicalQualityCheckSchema = z.object({
   alerts: z.array(clinicalQualityAlertSchema).max(16),
@@ -32,6 +45,7 @@ export const clinicalQualityCheckSchema = z.object({
   gate: clinicalQualityGateSchema,
   packId: z.string().regex(/^[a-z0-9-]{1,64}$/).optional(),
   packVersion: z.string().trim().min(1).max(64).optional(),
+  pendingIndications: z.array(clinicalQualityPendingIndicationSchema).max(16).optional(),
   redLines: z.array(clinicalQualityRedLineSchema).max(16),
   sourcePacks: z.array(packSourceSummarySchema).max(32).optional(),
   status: z.enum(['pass', 'alert', 'blocked']).optional(),

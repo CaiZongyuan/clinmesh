@@ -266,11 +266,18 @@ export function evaluateOrderIndicationRules(
         ? requiredFacts
         : input.ledger.facts.filter(f => f.eligibleForScoringAndRedLine && f.provenance.recordType !== 'ServiceRequest').slice(0, 4)
 
+      const evidence = toEvidenceList(conditionFacts)
       noIndicationAlerts.push({
+        basis: {
+          foundZh: evidence.length === 0 ? '未查到相关结果' : evidence.map(item => item.label).join('；').slice(0, 500),
+          judgementZh: `${display}暂无明确临床适应症，如仍需开立请填写理由`,
+          needZh: rule.rationaleZh,
+        },
         ...(input.catalogItemId === undefined ? {} : { catalogItemId: input.catalogItemId }),
         code: 'INVESTIGATION_WITHOUT_INDICATION',
-        evidence: toEvidenceList(conditionFacts),
-        message: `${display}缺乏明确临床适应症：${rule.rationaleZh}（规则 ${rule.id}）`,
+        evidence,
+        message: `${display}缺乏明确临床适应症：${rule.rationaleZh}`,
+        ruleId: rule.id,
         tier: 'alert',
       })
     }
