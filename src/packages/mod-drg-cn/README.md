@@ -2,7 +2,7 @@
 
 `cn-cardiology` 在 `knowledge.regionalRules` 声明两个年度方案、目录属性、分组、权重和基准费率。模块通过 `regionalPayer` 向收费账本提供已确认的覆盖额。`global-general` 的岗位操作与收费视图只装载通用账务。
 
-以上待遇参数从 `cn-cardiology` 1.1.0 起随包冻结。1.0.0 的历史 Epoch 可继续收退和住院封账，地区操作返回 `REGIONAL_RULES_UNAVAILABLE`。新装载的 Epoch 使用 1.1.0 规则。
+以上待遇参数从 `cn-cardiology` 1.1.0 起随包冻结。1.0.0 的历史 Epoch 可继续收退和住院封账，地区操作返回 `REGIONAL_RULES_UNAVAILABLE`。新装载的 Epoch 使用当前包声明的待遇规则。
 
 收费员在患者待遇面板预览品规级目录外、先行自付、可纳入金额以及统筹、个人账户和现金负担。确认后按患者、Epoch 和医院时区的业务年累计。门诊与住院分别消耗起付线与封顶线，个人账户跨两类就诊共享。原记录撤销或归档后更正以追溯记录调整原年度累计。医保复核完成后，收费员再处理患者实际现金差额。
 

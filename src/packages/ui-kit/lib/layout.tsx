@@ -49,14 +49,14 @@ export function WorkspaceCardLayout({ header, queueLabel, queue, children, queue
   return <div ref={workspace} className="cm-workspace">
     <header className="cm-topbar">{header}</header>
     <div className="cm-workspace-body" data-desktop={desktop} data-queue-visible={queueVisible}>
-      {desktop ? queueVisible && <aside className="cm-queue" aria-label={queueLabel}>{queue}</aside> : <div className="cm-queue-trigger">
+      {queue && (desktop ? queueVisible && <aside className="cm-queue" aria-label={queueLabel}>{queue}</aside> : <div className="cm-queue-trigger">
         <Drawer side="start">
           <DrawerTrigger>{queueLabel}</DrawerTrigger><DrawerBackdrop />
           <DrawerContent className="cm-queue-drawer">
             <DrawerTitle>{queueLabel}</DrawerTitle>{queue}<DrawerClose>{closeQueue}</DrawerClose>
           </DrawerContent>
         </Drawer>
-      </div>}
+      </div>)}
       <main className="cm-workspace-main" aria-label="Workspace content">{children}</main>
     </div>
   </div>;

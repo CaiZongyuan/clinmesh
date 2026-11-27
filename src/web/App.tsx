@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { lazy, useLayoutEffect, useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import { create } from 'zustand';
 import logo from '../../assets/logo.webp';
 import { workspaceSchema } from '../packages/clinical-core';
@@ -7,8 +7,8 @@ import { sessionSchema } from '../packages/platform';
 import { Button, Card, Field, Input, Select } from '../packages/ui-kit';
 import { CoreWorkbench } from './CoreWorkbench';
 import type { WorkbenchPanels } from './EncounterPanel';
+import { builtinPanels } from './builtin-panels';
 import { createEpochDrafts } from './encounter-drafts';
-import { LabTab } from './modules/lab/LabTab';
 import { api, currentSession, errorMessage, jsonBody, sessionKey, words, workspaceKey, type Language, type Session } from './workbench-api';
 
 const useLocale = create<{ language?: Language; choose(language: Language): void }>(set => ({ choose: language => set({ language }) }));
@@ -42,8 +42,7 @@ function WorkspaceLoader({ session, preferred, panels }: { session: Session; pre
   return <CoreWorkbench workspace={{ ...state.data, sessionVersion: session.sessionVersion }} language={language} languageSelect={<LanguageSelect language={language}/>} panels={panels} draftsFor={draftsFor}/>;
 }
 
-const installedPanels: WorkbenchPanels = { lab: LabTab, billing: lazy(() => import('./modules/billing/BillingPanel')) };
-export function App({ panels = installedPanels }: { panels?: WorkbenchPanels } = {}) {
+export function App({ panels = builtinPanels }: { panels?: WorkbenchPanels } = {}) {
   const preferred = useLocale(state => state.language);
   const session = useQuery({ queryKey: sessionKey, queryFn: ({ signal }) => currentSession(signal), staleTime: 60_000 });
   if (session.isError) return <p role="alert">{errorMessage(session.error, preferred ?? 'en')}</p>;

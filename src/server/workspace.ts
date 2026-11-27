@@ -18,6 +18,7 @@ export function handleError(error: Error) {
 
 export function createWorkspaceApp(store: StorePort, settings: GateSettings, modules: readonly ClinMeshModule<OperationCatalog>[] = [], environment: AgentEnvironment = {}, background?: (task: Promise<void>) => void) {
   const app = new Hono<{ Bindings: { credential: Credential; entering: boolean } }>();
+  const registry = new ModuleRegistry(modules);
   app.onError(handleError);
   app.post('/api/auth/visitor/enter', async context => {
     if (!context.env.entering) throw new CoreError(401, 'VISITOR_AUTH_REQUIRED');
@@ -25,8 +26,9 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     const now = new Date().toISOString();
     const pack = BUILTIN_DATA_PACKS['global-general'];
     const roleId = pack.organization.practitionerRoles[0]!.id;
-    const result = await store.withTransaction(tx => {
+    const result = await store.withTransaction(async tx => {
       const at = installHospitalDataPack(tx, { workspaceId: ticket.workspaceId, expectedEpoch: null, virtualTime: now, recordedAt: now }, pack);
+      await registry.initializeEpoch(pack.manifest.enabledModules, tx, at, now, now);
       tx.insert(at, 'visitor_sessions', { id: ticket.id, practitioner_role: roleId, version: 1, revoked: false, expires_at: ticket.expiresAt });
       tx.insert(at, 'audit_events', { id: v7(), actor: ticket.id, practitioner_role: roleId, target_id: at.workspaceId, operation: 'visitor.enter', virtual_at: now, recorded_at: now, outcome: 'applied' });
       return { ...at, roleId, sessionVersion: 1 };
@@ -38,14 +40,14 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
   registerPatientOperations(catalog, environment);
   app.post('/api/agents/providers/test', async context => context.json(await patients.testProvider(context.env.credential, context.req.raw.headers, await context.req.json())));
   app.get('/api/agents/sessions/:id/events', context => patients.events(context.env.credential, context.req.param('id'), context.req.raw));
-  const registry = new ModuleRegistry(modules);
   registerPlatformOperations(catalog, { sign: createVisitorGate(settings).sign, modules: registry });
-  catalog.command({ name: 'workspace.reset', method: 'POST', path: '/api/workspace/reset', access: administer }, { packId: z.string().optional() }, sessionSchema, ({ tx, at, actor, expectedVersion, virtualAt, recordedAt }, { packId }) => {
+  catalog.command({ name: 'workspace.reset', method: 'POST', path: '/api/workspace/reset', access: administer }, { packId: z.string().optional() }, sessionSchema, async ({ tx, at, actor, expectedVersion, virtualAt, recordedAt }, { packId }) => {
     checkVersion(actor.active.clock_revision, expectedVersion);
     const id = packId ?? tx.list(at, 'data_pack_installations')[0]!.pack_id;
     const nextPack = Object.values(BUILTIN_DATA_PACKS).find(pack => pack.manifest.packId === id);
     if (!nextPack) throw new CoreError(400, 'PACK_NOT_FOUND');
     const next = installHospitalDataPack(tx, { workspaceId: at.workspaceId, expectedEpoch: at.epoch, virtualTime: virtualAt, recordedAt }, nextPack);
+    await registry.initializeEpoch(nextPack.manifest.enabledModules, tx, next, virtualAt, recordedAt);
     const roles = nextPack.organization.practitionerRoles;
     const role = roles.find(role => role.id === actor.role.id) ?? roles.find(role => role.capabilities.includes('workspace-admin')) ?? roles[0]!;
     tx.insert(next, 'visitor_sessions', { id: actor.id, practitioner_role: role.id, expires_at: actor.expiresAt, revoked: false, version: 1 });
@@ -54,10 +56,11 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
   catalog.query({ name: 'workspace.read', path: '/api/workspace', access: {} }, workspaceSchema, ({ reader, actor }) => {
     const pack = readHospitalDataPack(reader, actor.at)!;
     const enabled = registry.enabled(actor.enabledModules);
+    const operations = catalog.entries.filter(entry => permits(actor, entry)).map(({ name, method, path }) => ({ name, method, path }));
     return { ...sessionView(actor), manifest: pack.manifest, roles: pack.organization.practitionerRoles, cases: pack.cases,
       diagnoses: pack.catalog.diagnoses, packs: Object.values(BUILTIN_DATA_PACKS).map(({ manifest }) => ({ id: manifest.packId, name: manifest.name })),
-      virtualTime: actor.active.virtual_time, clockRevision: actor.active.clock_revision, enabledModules: enabled.map(module => module.id), tabs: enabled.flatMap(module => module.workbenchTabs ?? []),
-      operations: catalog.entries.filter(entry => permits(actor, entry)).map(({ name, method, path }) => ({ name, method, path })) };
+      virtualTime: actor.active.virtual_time, clockRevision: actor.active.clock_revision, enabledModules: enabled.map(module => module.id),
+      tabs: enabled.flatMap(module => module.workbenchTabs ?? []).filter(tab => !tab.readOperation || operations.some(operation => operation.name === tab.readOperation)), operations };
   });
   catalog.command({ name: 'encounter.start', method: 'POST', path: '/api/his/cases/:id/start-encounter', access: { capabilities: ['register', 'assess'] } },
     { language: z.enum(['en', 'zh']).optional() }, z.object({ encounterId: z.uuidv7(), version: z.int() }), (context, input) => {

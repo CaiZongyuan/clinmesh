@@ -1,10 +1,10 @@
 import type { Storage } from '@earendil-works/pi-durable';
 import { z } from 'zod';
 import { createPiSessions } from './pi';
-import { billingEntities, initializeEntity, initializeSchema, labEntities, type StoreScope } from './schema';
+import { billingEntities, initializeEntity, initializeSchema, labEntities, pharmacyEntities, type StoreScope } from './schema';
 import { createReader, createRepository, type StoreReader, type StoreTx } from './repository';
 import { SerialQueue, duringTransaction, type Schedule, type SqlConnection } from './sqlite';
-import { capture, restore, seal, verifySnapshot, type LogicalSnapshot } from './snapshot';
+import { capture, restore, seal, verifyInventoryLots, verifySnapshot, type LogicalSnapshot } from './snapshot';
 
 export interface StorePort {
   visitorSigningSecret(): Promise<string>;
@@ -20,18 +20,20 @@ export function createStore(db: SqlConnection): StorePort {
   db.atomicSync(() => {
     db.exec('CREATE TABLE IF NOT EXISTS clinmesh_schema (version INTEGER NOT NULL PRIMARY KEY)');
     const versions = db.all('SELECT version FROM clinmesh_schema');
-    const previous = versions.length === 1 ? versions[0]!.version : undefined;
-    if (previous === 4) return;
-    if (previous === 1 || previous === 2 || previous === 3) {
-      if (previous === 1) for (const name of ['encounter_triage', ...billingEntities] as const) initializeEntity(db.exec, name);
-      if (previous <= 2) for (const name of ['patient_reply_runs', 'agent_model_calls'] as const) initializeEntity(db.exec, name);
-      for (const name of labEntities) initializeEntity(db.exec, name);
-      db.run('UPDATE clinmesh_schema SET version = 4 WHERE version = ?', previous);
+    const installed = versions.length === 1 ? versions[0]!.version : null;
+    if (installed === 5) return;
+    if (installed === 1 || installed === 2 || installed === 3 || installed === 4) {
+      if (installed === 1) for (const name of ['encounter_triage', ...billingEntities] as const) initializeEntity(db.exec, name);
+      if (installed <= 2) for (const name of ['patient_reply_runs', 'agent_model_calls'] as const) initializeEntity(db.exec, name);
+      if (installed <= 3) for (const name of labEntities) initializeEntity(db.exec, name);
+      for (const name of pharmacyEntities) initializeEntity(db.exec, name);
+      verifyInventoryLots(db, { source_version: `sqlite.schema.v${installed}`, source_sha256: null });
+      db.run('UPDATE clinmesh_schema SET version = 5 WHERE version = ?', installed);
       return;
     }
     if (versions.length) throw new Error('Unsupported ClinMesh schema version');
     initializeSchema(db.exec);
-    db.run('INSERT INTO clinmesh_schema (version) VALUES (4)');
+    db.run('INSERT INTO clinmesh_schema (version) VALUES (5)');
   });
   const queue = new SerialQueue();
   let closing: Promise<void> | undefined;

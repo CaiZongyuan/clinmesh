@@ -1,0 +1,7 @@
+{
+  "sha256": "3524f448d31b39a89448a2c8769aa6aec5f2eaa038f897931b7dc2e76210e034",
+  "tables": [
+    { "name": "lab_drafts", "rows": [{ "workspace_id": "0192eaf2-cb03-7000-8000-000000000001", "epoch": "0192eaf2-cb03-7000-8000-000000000002", "id": "0192eaf2-cb03-7000-8000-000000000102", "encounter_id": "0192eaf2-cb03-7000-8000-000000000020", "items": [], "version": 1 }] },
+    { "name": "lab_requests", "rows": [{ "workspace_id": "0192eaf2-cb03-7000-8000-000000000001", "epoch": "0192eaf2-cb03-7000-8000-000000000002", "id": "0192eaf2-cb03-7000-8000-000000000103", "order_id": "0192eaf2-cb03-7000-8000-000000000030", "stages": ["inpatient", "initial"] }] }
+  ]
+}
