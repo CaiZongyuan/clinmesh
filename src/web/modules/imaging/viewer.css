@@ -1,0 +1,8 @@
+.study-canvas {
+  inline-size: min(100%, 40rem);
+  block-size: auto;
+  border: 1px solid var(--ui-border);
+  touch-action: none;
+  cursor: grab;
+}
+.study-canvas:active { cursor: grabbing; }

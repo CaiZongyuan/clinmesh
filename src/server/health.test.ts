@@ -39,7 +39,7 @@ it('serves the same health contract through the workerd fetch entry', async () =
     const worker = server.getWorker();
     const health = await worker.fetch('/api/health');
     expect(health.status).toBe(200);
-    expect(await health.json()).toEqual({ ok: true, runtime: 'cloudflare-worker', loadedModules: ['mod-billing', 'mod-drg-cn', 'mod-lab', 'mod-pharmacy', 'mod-cds', 'mod-fhir-r5'] });
+    expect(await health.json()).toEqual({ ok: true, runtime: 'cloudflare-worker', loadedModules: ['mod-billing', 'mod-drg-cn', 'mod-lab', 'mod-pharmacy', 'mod-imaging', 'mod-pathology', 'mod-cds', 'mod-fhir-r5'] });
     const storage = await worker.getDurableObjectStorage('WORKSPACE_DO', { name: 'health-check' });
     expect(await storage.exec('SELECT 1 AS ready')).toEqual([{ ready: 1 }]);
   } finally {

@@ -1,36 +1,22 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
-import { catalogSchema, manifestSchema } from '../../data-pack';
-import { requireEncounter } from '../../patient-visit';
+import { activeEncounter, pricedServices, requestStages, requireOrderPrerequisites, sameQuote } from '../../diagnostic-workflow';
 import { checkVersion, CoreError, type CommandContext } from '../../platform';
 import type { StoreReader, StoreScope } from '../../store';
 import { issueReceipt, quote, type LabBillingPort, type Quote } from './contracts';
+import { labOrders } from './reports';
 
 export const legacyProcedure = z.strictObject({ packId: z.string().min(1), packVersion: z.string().min(1), codeSystem: z.url(), code: z.string().min(1) });
 type LegacyProcedures = readonly z.infer<typeof legacyProcedure>[];
 
 export function clinicalServices(reader: StoreReader, at: StoreScope, legacy: LegacyProcedures) {
-  const installation = reader.list(at, 'data_pack_installations')[0]!;
-  return reader.list(at, 'catalog_items', { kind: 'services', installation_id: installation.id }).flatMap(row => {
-    const definition = catalogSchema.shape.services.element.parse(row.definition);
+  return pricedServices(reader, at).flatMap(({ definition, quote, packId }) => {
     const kind = definition.kind;
-    if ((kind !== 'lab' && kind !== 'examination') || definition.requiresProcedure || row.amount_minor === null || row.currency_code === null || row.currency_exponent === null) return [];
+    if ((kind !== 'lab' && kind !== 'examination') || definition.requiresProcedure) return [];
     if (kind === 'examination' && definition.requiresProcedure === undefined && legacy.some(item =>
-      item.packId === installation.pack_id && item.packVersion === installation.pack_version && item.codeSystem === row.code_system && item.code === row.code)) return [];
-    return [{ definition, kind, quote: { serviceId: row.id, catalogVersion: installation.pack_version, unitPriceMinor: row.amount_minor, currencyCode: row.currency_code, currencyExponent: row.currency_exponent } }];
+      item.packId === packId && item.packVersion === quote.catalogVersion && item.codeSystem === definition.codeSystem && item.code === definition.code)) return [];
+    return [{ definition, kind, quote }];
   });
-}
-
-export function activeEncounter(context: CommandContext, encounterId: string, responsible: boolean) {
-  const encounter = requireEncounter(context.tx, context.at, encounterId);
-  if (encounter.status !== 'active') throw new CoreError(409, 'ENCOUNTER_COMPLETED');
-  if (responsible && encounter.active_practitioner_role !== context.actor.role.id) throw new CoreError(403, 'RESPONSIBLE_ROLE_REQUIRED');
-  return encounter;
-}
-
-export function labOrders(reader: StoreReader, at: StoreScope, encounterId: string) {
-  return reader.list(at, 'clinical_orders', { encounter_id: encounterId }).filter(order =>
-    (order.kind === 'lab' || order.kind === 'examination') && reader.list(at, 'lab_requests', { order_id: order.id }).length > 0);
 }
 
 export function savedDraft(reader: StoreReader, at: StoreScope, encounterId: string) {
@@ -60,22 +46,15 @@ export function saveDraft(context: CommandContext, serviceIds: string[], legacy:
   return replaceDraft(context, items);
 }
 
-function sameQuote(first: Quote | undefined, other: Quote) {
-  return first && first.serviceId === other.serviceId && first.catalogVersion === other.catalogVersion && first.unitPriceMinor === other.unitPriceMinor && first.currencyCode === other.currencyCode && first.currencyExponent === other.currencyExponent;
-}
-
 export function issueOrders(context: CommandContext, items: Quote[], legacy: LegacyProcedures, billing?: LabBillingPort) {
   const { tx, at, targetId, expectedVersion, virtualAt, recordedAt } = context;
   const encounter = activeEncounter(context, targetId, true);
   const draft = savedDraft(tx, at, targetId);
   checkVersion(draft.version, expectedVersion);
-  const policies = manifestSchema.shape.policies.parse(tx.list(at, 'data_pack_installations')[0]!.manifest.policies);
-  if (policies.requireSignedNoteBeforeOrder && !tx.list(at, 'clinical_record_revisions', { encounter_id: targetId }).length) throw new CoreError(409, 'CLINICAL_DOCUMENT_UNSIGNED');
-  if (policies.requireDiagnosisBeforeOrder && !tx.list(at, 'diagnosis_revisions', { encounter_id: targetId }).length) throw new CoreError(409, 'DIAGNOSIS_UNCONFIRMED');
+  requireOrderPrerequisites(context);
   const services = clinicalServices(tx, at, legacy);
   const orders = labOrders(tx, at, targetId);
   context.checkClinicalQuality?.({ kind: 'investigation', encounterId: targetId, catalogItemIds: items.map(item => item.serviceId) });
-  const followUp = tx.list(at, 'encounters', { source_case_id: encounter.source_case_id, status: 'completed' }).length > 0;
   const issued = new Set<string>();
   const results: z.infer<typeof issueReceipt>['results'] = [];
   for (const item of items) {
@@ -85,18 +64,13 @@ export function issueOrders(context: CommandContext, items: Quote[], legacy: Leg
       results.push({ serviceId, error: 'CATALOG_CONFLICT' }); continue;
     }
     const prior = orders.filter(order => order.catalog_item_id === serviceId);
-    const reviews = new Set(prior.filter(order => tx.list(at, 'diagnostic_reports', { order_id: order.id }).some(report =>
-      tx.list(at, 'report_acknowledgements', { report_id: report.id }).length > 0)).map(order => order.id));
-    if (prior.some(order => !['cancelled', 'generation-failed'].includes(order.status) && !reviews.has(order.id))) {
+    const stages = requestStages(tx, at, encounter, prior);
+    if (!stages) {
       results.push({ serviceId, error: 'ACTIVE_ORDER_EXISTS' }); continue;
     }
     const orderId = v7();
     tx.insert(at, 'clinical_orders', { id: orderId, encounter_id: targetId, catalog_item_id: serviceId, kind: service.kind, status: 'issued', version: 1, virtual_at: virtualAt, recorded_at: recordedAt });
-    const stages: ('follow-up' | 'repeat' | 'inpatient' | 'initial')[] = [];
-    if (followUp) stages.push('follow-up');
-    if (reviews.size) stages.push('repeat');
-    if (encounter.encounter_class === 'inpatient') stages.push('inpatient');
-    tx.insert(at, 'lab_requests', { id: v7(), order_id: orderId, stages: [...stages, 'initial'] });
+    tx.insert(at, 'lab_requests', { id: v7(), order_id: orderId, stages });
     if (context.actor.enabledModules.includes('mod-billing')) billing?.freezeCharge(tx, at, { ...price, orderId, encounterId: targetId, catalogItemId: serviceId, quantity: 1, virtualAt, recordedAt });
     issued.add(serviceId);
     results.push({ serviceId, orderId });

@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { clinicalFactId, clinicalFactSystem, triageMeasures } from '../../clinical-core';
+import { studyReportSectionsSchema } from '../../diagnostic-studies';
 import { signedFindingsSchema } from '../../mod-lab';
 import type { Actor } from '../../platform';
-import { localizedName } from '../../platform';
 import type { StoreReader } from '../../store';
 
 export const types = ['Patient', 'Encounter', 'Condition', 'Observation', 'ServiceRequest', 'DiagnosticReport', 'MedicationRequest', 'MedicationDispense', 'Procedure', 'Composition', 'AuditEvent'] as const;
@@ -17,7 +17,6 @@ function identifierSystem(issuer: string, packId: string) {
 }
 const terminology = 'http://terminology.hl7.org/CodeSystem';
 const local = clinicalFactSystem;
-const studySections = z.discriminatedUnion('kind', [z.object({ kind: z.literal('imaging'), findings: localizedName, impression: localizedName }), z.object({ kind: z.literal('pathology'), microscopy: localizedName, diagnosis: localizedName })]);
 const serviceStatus = (status: string) => ['cancelled', 'withdrawn', 'stopped'].includes(status) ? 'revoked' : ['reported', 'acknowledged', 'completed', 'dispensed'].includes(status) ? 'completed' : status === 'generation-failed' ? 'entered-in-error' : 'active';
 const medicationStatus = (status: string) => ['cancelled', 'withdrawn'].includes(status) ? 'cancelled' : status === 'stopped' ? 'stopped' : ['completed', 'dispensed'].includes(status) ? 'completed' : 'active';
 
@@ -105,9 +104,7 @@ export function projectResources(reader: StoreReader, actor: Actor, type: Resour
         const reports = reader.list(at, 'diagnostic_reports', { order_id: order.id });
         const last = Math.max(0, ...reports.map(item => item.revision));
         for (const report of reports) {
-          const sections = studySections.safeParse(report.findings.sections).data;
-          const studyText = sections?.kind === 'imaging' && order.kind === 'imaging' ? sections.impression.en : sections?.kind === 'pathology' && order.kind === 'pathology' ? sections.diagnosis.en : undefined;
-          const result = studyText ? { observations: [], summary: { en: studyText } } : signedFindingsSchema.safeParse(report.findings).data;
+          const result = reportResult(order.kind, report.findings);
           if (!result) continue;
           const observations = result.observations.map(item => ({ id: clinicalFactId(order.id, item.codeSystem, item.code), item }));
           const status = report.revision === 1 ? 'final' : 'corrected';
@@ -139,6 +136,15 @@ export function projectResources(reader: StoreReader, actor: Actor, type: Resour
 }
 
 function procedureStatus(outcome: string) { return outcome === 'completed' ? 'completed' : ['cancelled', 'not-done'].includes(outcome) ? 'not-done' : outcome === 'started' ? 'in-progress' : 'unknown'; }
+function reportResult(kind: string, findings: Record<string, unknown>) {
+  if (kind === 'imaging' || kind === 'pathology') {
+    const sections = studyReportSectionsSchema.safeParse(findings.sections).data;
+    if (sections?.kind === 'summary') return { observations: [], summary: sections.summary };
+    if (sections?.kind === 'imaging' && kind === 'imaging') return { observations: [], summary: { en: `${sections.findings.en}\n${sections.impression.en}` } };
+    if (sections?.kind === 'pathology' && kind === 'pathology') return { observations: [], summary: { en: `${sections.microscopy.en}\n${sections.diagnosis.en}` } };
+  }
+  return signedFindingsSchema.safeParse(findings).data;
+}
 function auditOutcome(value: string) {
   const codes: Record<string, string> = { applied: '0', accepted: '0', reported: '0', completed: '0', 'generation-failed': '8', failed: '8', rejected: '8' };
   const outcome = Object.hasOwn(codes, value) ? { system: `${terminology}/audit-event-outcome`, code: codes[value] } : { system: `${local}:audit-outcome`, code: value };

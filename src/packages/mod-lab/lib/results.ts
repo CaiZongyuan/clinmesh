@@ -61,7 +61,7 @@ function project(service: Service, source: Pick<Result, 'summary' | 'observation
   return { summary: source.summary, observations, ...(service.modality === 'ecg-12-lead' && source.stSegmentDeviation !== undefined && { stSegmentDeviation: source.stSegmentDeviation }), ...(source.amendmentReason && { amendmentReason: source.amendmentReason }) };
 }
 
-export function resolveFindings(truth: Truth, service: Service, stages: Result['stage'][], revision: number) {
+export function resolveFindings(truth: Pick<Truth, 'results' | 'normalBaselines'>, service: Service, stages: Result['stage'][], revision: number) {
   const matches = truth.results.filter(result => sameCoding(result.service, service));
   const stage = stages.find(stage => matches.some(result => result.stage === stage));
   if (stage) {

@@ -70,6 +70,8 @@ const messages: Record<string, [string, string]> = {
   CHARGE_LOCKED: ['The linked financial record prevents cancellation.', '关联账项当前禁止取消申请。'],
   AMENDMENT_UNAVAILABLE: ['No authored correction is available for this report.', '这份报告暂无已编写的更正版本。'],
   REPORT_SUPERSEDED: ['Open the latest report version to review it.', '请打开报告的最新版本进行审阅。'],
+  VISIBLE_SURGERY_REQUIRED: ['Select a documented prior surgery from this case.', '请选择本病例已记录的既往手术。'],
+  REPORT_REVIEW_MODE_INVALID: ['Review this report’s first frame or its image-load failure before confirming.', '请查看此报告的首帧或图像加载失败提示后再确认。'],
 };
 export function errorMessage(error: Error, language: Language) {
   const text = messages[error.message];

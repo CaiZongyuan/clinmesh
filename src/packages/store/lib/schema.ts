@@ -44,6 +44,7 @@ const exponent = column(z.int().min(0).max(9), 'integer', name => `${name} BETWE
 const money = { amount_minor: integer, currency_code: currency, currency_exponent: exponent };
 const coding = { code_system: column(z.url()), code: text };
 const encounterClass = choice('outpatient', 'inpatient');
+const diagnosticStages = column(z.array(z.enum(['follow-up', 'repeat', 'inpatient', 'initial'])).min(1), 'json');
 const diagnosis = { ...coding, is_primary: boolean, poa_code: optional(text), ordinal: positive };
 export const medicationRoute = z.enum(['PO', 'IVGTT', 'IV', 'IM', 'IH', 'SL', 'TOP', 'INH']);
 export const signedDirections = z.strictObject({
@@ -124,11 +125,12 @@ export const tables = {
   patient_reply_runs: table({ id: ref('consultation_turns'), session_id: ref('pi_sessions'), attempt: positive, status: choice('running', 'done', 'stopped', 'failed'), provider: text, model: text, endpoint_hash: digest, effort: text, error_code: optional(text), version }),
   agent_model_calls: table({ session_id: optional(ref('pi_sessions')), question_id: optional(ref('consultation_turns')), provider: text, model: text, status: text, input_tokens: integer, output_tokens: integer, cache_read: integer, cache_write: integer, duration_ms: integer, recorded_at: timestamp, version }),
   lab_drafts: table({ encounter_id: enc, items: column(z.array(frozen.schema), 'json'), version }, 'encounter_id'),
-  lab_requests: table({ order_id: order, stages: column(z.array(z.enum(['follow-up', 'repeat', 'inpatient', 'initial'])).min(1), 'json') }, 'order_id'),
+  lab_requests: table({ order_id: order, stages: diagnosticStages }, 'order_id'),
   prescription_signatures: table({ prescription_id: ref('prescriptions'), source: choice('internal', 'external'), actor: text, practitioner_role: text, catalog_version: text, snapshot_hash: digest }, 'prescription_id'),
   prescription_directions: table({ order_id: order, directions: column(signedDirections, 'json') }, 'order_id'),
   prescription_withdrawals: table({ prescription_id: ref('prescriptions'), actor: text, practitioner_role: text, reason: text, ...times }, 'prescription_id'),
   inventory_lot_quarantines: table({ id: lot, source_version: choice('clinmesh.snapshot.v1', 'clinmesh.snapshot.v2', 'clinmesh.snapshot.v3', 'clinmesh.snapshot.v4', 'clinmesh.snapshot.v5', 'sqlite.schema.v1', 'sqlite.schema.v2', 'sqlite.schema.v3', 'sqlite.schema.v4'), source_sha256: optional(digest), quantity_at_migration: column(z.int().negative(), 'integer', name => `${name} < 0`), ledger_fingerprint: column(z.uuid({ version: 'v5' })) }),
+  study_requests: table({ order_id: order, stages: diagnosticStages, prior_surgery_id: optional(text) }, 'order_id'),
   clinical_risk_assessments: revisions('clinical_risk_assessments', 'encounter_id', { encounter_id: enc, fields: frozen, signed_by: text }),
   clinical_override_reasons: table({ id: ref('clinical_overrides'), audit_id: ref('audit_events'), reason_code: text, command_name: text }, 'audit_id'),
   patient_identity_versions: table({ patient_id: id, version, display_name: text, birth_date: optional(column(z.iso.date())), identifiers: column(z.array(z.strictObject({ issuer: z.string().min(1), value: z.string().min(1) })), 'json'), replaced_at: timestamp }, 'patient_id, version'),
