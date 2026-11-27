@@ -36,7 +36,12 @@ import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clini
 import { inpatientGuidelineAdviceSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { orderSetTemplateIdSchema } from '@clinmesh/contracts/order-set-templates'
 import { DiseasePackValidationError, validateAndParseDiseasePack } from '@clinmesh/core/disease-pack'
-import { computeDiseasePackFingerprint, DiseasePackRegistry } from '../src/application/disease-pack-runtime-service.ts'
+import {
+  computeDiseasePackFingerprint,
+  discoverDefaultDiseasePackDirs,
+  DiseasePackRegistry,
+  resolveServerPackageAsset,
+} from '../src/application/disease-pack-runtime-service.ts'
 import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
@@ -1270,5 +1275,20 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
       doctorRecommendationStateSchema,
     )
     expect(readyRxCatalog.missingInformation.every(msg => !msg.includes('血清肌酐') && !msg.includes('HbA1c'))).toBe(true)
+  })
+
+  it('resolves built-in disease packs and frozen baseline from both source and bundled dist layouts', () => {
+    const serverRoot = resolve(import.meta.dirname, '..')
+    const expectedDirs = discoverDefaultDiseasePackDirs(resolve(serverRoot, 'src/application'))
+    expect(expectedDirs.map(dir => dir.split('/').at(-1))).toEqual(
+      expect.arrayContaining(['coronary-cad', 'familial-hypercholesterolemia', 't2dm-renal-care']),
+    )
+    expect(discoverDefaultDiseasePackDirs(resolve(serverRoot, 'dist'))).toEqual(expectedDirs)
+    expect(discoverDefaultDiseasePackDirs(resolve(serverRoot, 'dist/assets'))).toEqual(expectedDirs)
+
+    const expectedBaseline = resolve(serverRoot, 'reference-data/dsap-golden-baseline.json')
+    expect(resolveServerPackageAsset('reference-data/dsap-golden-baseline.json', resolve(serverRoot, 'src/application'))).toBe(expectedBaseline)
+    expect(resolveServerPackageAsset('reference-data/dsap-golden-baseline.json', resolve(serverRoot, 'dist'))).toBe(expectedBaseline)
+    expect(resolveServerPackageAsset('reference-data/dsap-golden-baseline.json', resolve(serverRoot, 'dist/assets'))).toBe(expectedBaseline)
   })
 })

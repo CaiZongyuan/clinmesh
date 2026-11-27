@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import type { ClinicalFactCategory, ClinicalFactLedger } from '@clinmesh/contracts/clinical-fact-ledger'
@@ -111,8 +111,31 @@ export function computeDiseasePackFingerprint(pack: {
   })
 }
 
-export function discoverDefaultDiseasePackDirs(): string[] {
-  const defaultRoot = resolve(import.meta.dirname, '../../disease-packs')
+/**
+ * 从当前模块目录向上查找 `@clinmesh/server` 包内资产（兼容 `src/application`、打包后的 `dist/`、`dist/assets/`
+ * 以及任意工作目录），避免 `pnpm start` 运行 `dist/index.js` 时相对路径错位。
+ */
+export function resolveServerPackageAsset(
+  relativePath: string,
+  moduleDir = import.meta.dirname,
+): string {
+  let current = resolve(moduleDir)
+  for (let depth = 0; depth < 5; depth += 1) {
+    const candidate = join(current, relativePath)
+    if (existsSync(candidate)) return candidate
+    const parent = dirname(current)
+    if (parent === current) break
+    current = parent
+  }
+  const cwdDirect = resolve(process.cwd(), relativePath)
+  if (existsSync(cwdDirect)) return cwdDirect
+  const cwdServer = resolve(process.cwd(), 'apps/server', relativePath)
+  if (existsSync(cwdServer)) return cwdServer
+  return resolve(moduleDir, '../..', relativePath)
+}
+
+export function discoverDefaultDiseasePackDirs(moduleDir?: string): string[] {
+  const defaultRoot = resolveServerPackageAsset('disease-packs', moduleDir)
   if (!existsSync(defaultRoot)) return []
   return readdirSync(defaultRoot, { withFileTypes: true })
     .filter(entry => entry.isDirectory())

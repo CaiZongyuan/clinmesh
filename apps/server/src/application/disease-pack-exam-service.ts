@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import type { ClinicalFactLedger } from '@clinmesh/contracts/clinical-fact-ledger'
 import type {
   DiseasePackExamCase,
@@ -54,6 +53,7 @@ import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import {
   DiseasePackRegistry,
   DiseasePackRuntimeError,
+  resolveServerPackageAsset,
   type DiseasePackRuntimeService,
 } from './disease-pack-runtime-service.ts'
 import { LocalSourceIngestionService } from './local-source-ingestion-service.ts'
@@ -2000,7 +2000,7 @@ export class DiseasePackExamService {
   }
 
   #verifyFrozenBaselineReferenceIntegrity(): { diffCount: number; details: string[] } {
-    const baselinePath = resolve(import.meta.dirname, '../../reference-data/dsap-golden-baseline.json')
+    const baselinePath = resolveServerPackageAsset('reference-data/dsap-golden-baseline.json')
     if (!existsSync(baselinePath)) {
       return { details: ['缺少冻结基线参考文件 dsap-golden-baseline.json'], diffCount: 1 }
     }
