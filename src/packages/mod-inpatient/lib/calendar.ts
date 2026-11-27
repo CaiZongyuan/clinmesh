@@ -43,7 +43,7 @@ export function expand(tx: StoreTx, at: StoreScope, order: EntityRow<'ward_order
 }
 export function rollDay(tx: StoreTx, at: StoreScope, day: string, billing?: WardBilling) {
   const patients = tx.list(at, 'inpatient_admissions').filter(row => ['admitted', 'discharge-pending'].includes(row.status));
-  if (!patients.length) return;
+  if (!patients.length || !tx.list(at, 'data_pack_installations')[0]?.knowledge.inpatient) return;
   const calendar = policy(tx, at);
   const bedDay = itemFor(tx, at, 'services', calendar.settings.bedDay);
   const virtualAt = localInstant(day, '00:00', calendar.timezone) ?? localInstant(day, '01:00', calendar.timezone)!;

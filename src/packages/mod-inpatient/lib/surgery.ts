@@ -45,7 +45,7 @@ function post(ctx: CommandContext, surgery: Current, itemId: string, quantity: n
 function recordMedication(ctx: CommandContext, surgery: Current, drug: z.infer<typeof medication>, override: unknown, billing?: WardBilling) {
   const item = ctx.tx.get(ctx.at, 'catalog_items', drug.itemId);
   if (item?.kind !== 'medications') conflict('MEDICATION_NOT_IN_CATALOG');
-  const directions = validateMedication(ctx, item, drug.dose, drug.route, 1, override, true);
+  const directions = validateMedication(ctx, item, drug.dose, drug.route, 1, override);
   post(ctx, surgery, item.id, directions.quantity, 'medication', billing);
 }
 function standby(surgery: Current) { return surgery.stage.stage === 'planned' && surgery.plan.standbyAdHocPci; }

@@ -38,7 +38,8 @@ export function blockers(reader: StoreReader, at: StoreScope, admission: Admissi
   const blocked: string[] = [];
   for (const order of reader.list(at, 'clinical_orders', { encounter_id: admission.encounter_id })) {
     if (reader.get(at, 'ward_order_directions', order.id) && !['completed', 'stopped'].includes(order.status)) blocked.push('ACTIVE_WARD_ORDER');
-    if (reader.list(at, 'lab_requests', { order_id: order.id }).length && (discharge ? !['acknowledged', 'cancelled'].includes(order.status) : order.status === 'issued')) blocked.push('OPEN_INVESTIGATION');
+    const investigation = reader.list(at, 'lab_requests', { order_id: order.id }).length || reader.list(at, 'study_requests', { order_id: order.id }).length;
+    if (investigation && (discharge ? !['acknowledged', 'cancelled'].includes(order.status) : order.status === 'issued')) blocked.push('OPEN_INVESTIGATION');
     if (reader.list(at, 'surgery_requests', { order_id: order.id }).some(row => !['completed', 'cancelled'].includes(row.status))) blocked.push('OPEN_SURGERY');
   }
   return [...new Set(blocked)];

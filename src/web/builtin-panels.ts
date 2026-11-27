@@ -3,6 +3,8 @@ import { LabTab } from './modules/lab/LabTab';
 
 export const builtinPanels = {
   lab: LabTab,
+  imaging: lazy(() => import('./modules/imaging/StudyTab').then(module => ({ default: module.RadiologyTab }))),
+  pathology: lazy(() => import('./modules/imaging/StudyTab').then(module => ({ default: module.PathologyTab }))),
   billing: lazy(() => import('./modules/billing/BillingPanel')),
   prescriptions: lazy(() => import('./modules/pharmacy/PrescriptionPanel').then(module => ({ default: module.PrescriptionPanel }))),
 };

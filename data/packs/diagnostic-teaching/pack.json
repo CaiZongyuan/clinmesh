@@ -1,0 +1,57 @@
+{
+  "manifest": {
+    "packId": "diagnostic-teaching", "version": "1.0.0", "schemaVersion": 1,
+    "name": { "en": "Diagnostic teaching clinic", "zh": "影像病理教学门诊" },
+    "description": { "en": "Synthetic radiology and surgical pathology consultations", "zh": "合成放射检查与术后病理会诊" },
+    "defaultLocale": "en-US", "supportedLocales": ["en-US", "zh-CN"], "timezone": "UTC",
+    "currency": { "code": "USD", "symbol": "$", "minorUnitExponent": 2 },
+    "enabledModules": ["mod-imaging", "mod-pathology", "mod-billing"],
+    "policies": { "outpatientInvestigationBillingPolicy": "postpaid", "requireSignedNoteBeforeOrder": false, "requireDiagnosisBeforeOrder": false, "requireRenderedReportFrame": true, "completionGates": ["imaging-acknowledgement", "pathology-acknowledgement"], "shiftSchedule": [] },
+    "clinicalRecordTemplate": [{ "id": "assessment", "title": { "en": "Assessment and plan", "zh": "评估与计划" }, "required": true }]
+  },
+  "organization": {
+    "capabilities": ["register", "assess", "sign", "review-reports", "settle", "workspace-admin"],
+    "departments": [{ "id": "clinic", "name": { "en": "Teaching clinic", "zh": "教学门诊" } }], "wards": [], "beds": [],
+    "practitionerRoles": [
+      { "id": "clinician", "name": { "en": "Consulting clinician", "zh": "会诊医生" }, "capabilities": ["register", "assess", "sign", "review-reports"] },
+      { "id": "cashier", "name": { "en": "Cashier", "zh": "收费员" }, "capabilities": ["settle"] },
+      { "id": "coordinator", "name": { "en": "Clinic administrator", "zh": "门诊管理员" }, "capabilities": ["workspace-admin"] }
+    ], "practitioners": []
+  },
+  "catalog": {
+    "diagnoses": [{ "codeSystem": "urn:clinmesh:teaching:diagnoses", "code": "FOLLOWUP", "display": { "en": "Postoperative follow-up", "zh": "术后随访" } }],
+    "medications": [], "procedures": [], "materials": [],
+    "services": [
+      { "kind": "imaging", "codeSystem": "urn:clinmesh:teaching:study", "code": "CT", "display": { "en": "Noncontrast chest CT", "zh": "胸部 CT 平扫" }, "unitPriceMinor": 7500, "unit": "study", "turnaroundMinutes": 20, "analytes": [] },
+      { "kind": "imaging", "codeSystem": "urn:clinmesh:teaching:study", "code": "XR", "display": { "en": "Chest radiograph", "zh": "胸部平片" }, "unitPriceMinor": 3000, "unit": "study", "analytes": [] },
+      { "kind": "pathology", "codeSystem": "urn:clinmesh:teaching:study", "code": "CONSULT", "display": { "en": "Surgical pathology consultation", "zh": "手术标本病理会诊" }, "unitPriceMinor": 5000, "unit": "consultation", "analytes": [] }
+    ]
+  },
+  "cases": [{
+    "caseId": "teaching-01", "version": "1", "encounterClass": "outpatient", "tags": ["synthetic"],
+    "demographics": { "name": "Ellis Rowan", "sex": "other", "birthDate": "1972-04-15", "identifiers": [{ "issuer": "Teaching Clinic", "value": "SIM-01" }] },
+    "priorHistory": { "diagnoses": [], "medications": [], "allergies": { "status": "none-known" }, "surgeries": [{ "id": "excision-01", "performedOn": "2024-02-15", "description": { "en": "Excision of a chest wall nodule", "zh": "胸壁结节切除术" } }] },
+    "triageVitals": { "temperatureC": 36.7, "heartRateBpm": 72, "respiratoryRate": 16, "systolicMmHg": 122, "diastolicMmHg": 78, "spo2Percent": 98 },
+    "patientPersona": {
+      "character": { "en": "Calm", "zh": "平静" }, "healthLiteracy": { "en": "Everyday terms", "zh": "使用生活用语" }, "speechStyle": { "en": "Concise", "zh": "简洁" },
+      "openingStatement": { "en": "I came to discuss the lump that was removed.", "zh": "我想问问上次切掉的肿块。" }, "symptoms": [{ "en": "The scar sometimes itches.", "zh": "疤痕偶尔发痒。" }],
+      "medicationMemory": { "en": "No regular medicines", "zh": "平时没有服药" }, "boundaries": [{ "en": "Does not know the tissue results", "zh": "尚不清楚标本结果" }]
+    },
+    "caseTruth": {
+      "primaryDiagnosis": { "codeSystem": "urn:clinmesh:teaching:diagnoses", "code": "FOLLOWUP" }, "secondaryDiagnoses": [], "hiddenHistory": [], "noMedication": true,
+      "reviewPoints": [{ "en": "Compare the signed report versions and document the operative specimen.", "zh": "比较正式报告版本并记录手术标本来源。" }],
+      "results": [
+        { "service": { "codeSystem": "urn:clinmesh:teaching:study", "code": "CT" }, "stage": "initial", "revision": 1, "summary": { "en": "Linear postoperative change", "zh": "术后线状改变" }, "observations": [],
+          "sections": { "kind": "imaging", "findings": { "en": "A thin linear density lies along the right anterior chest wall. Lungs are clear.", "zh": "右前胸壁见细线状密度影，双肺清晰。" }, "impression": { "en": "Postoperative scar without a focal mass.", "zh": "术后瘢痕，未见局灶肿块。" } }, "images": ["phantom-a.png", "phantom-b.png"] },
+        { "service": { "codeSystem": "urn:clinmesh:teaching:study", "code": "CT" }, "stage": "initial", "revision": 2, "summary": { "en": "Scar thickness added", "zh": "补充瘢痕厚度" }, "observations": [],
+          "amendmentReason": { "en": "Added a chest wall measurement.", "zh": "补充胸壁测量值。" }, "sections": { "kind": "imaging", "findings": { "en": "The linear right chest wall scar measures 3 mm in thickness.", "zh": "右侧胸壁线状瘢痕厚约 3 mm。" }, "impression": { "en": "Postoperative scar without a focal mass.", "zh": "术后瘢痕，未见局灶肿块。" } }, "images": ["phantom-a.png", "phantom-b.png"] },
+        { "service": { "codeSystem": "urn:clinmesh:teaching:study", "code": "XR" }, "stage": "initial", "revision": 1, "summary": { "en": "Clear lungs", "zh": "双肺清晰" }, "observations": [],
+          "sections": { "kind": "imaging", "findings": { "en": "Both lung fields are clear. No pleural effusion.", "zh": "双侧肺野清晰，未见胸腔积液。" }, "impression": { "en": "No acute chest finding.", "zh": "胸部未见急性异常。" } } },
+        { "service": { "codeSystem": "urn:clinmesh:teaching:study", "code": "CONSULT" }, "stage": "initial", "revision": 1, "priorSurgeryId": "excision-01", "summary": { "en": "Benign adipose tissue", "zh": "良性脂肪组织" }, "observations": [],
+          "sections": { "kind": "pathology", "microscopy": { "en": "Lobules of mature adipocytes with thin fibrous septa.", "zh": "成熟脂肪细胞呈小叶状排列，间隔纤细。" }, "diagnosis": { "en": "Lipoma of the chest wall.", "zh": "胸壁脂肪瘤。" } }, "images": ["phantom-c.png"] },
+        { "service": { "codeSystem": "urn:clinmesh:teaching:study", "code": "CONSULT" }, "stage": "initial", "revision": 2, "priorSurgeryId": "excision-01", "summary": { "en": "Margin reviewed", "zh": "补充切缘评估" }, "observations": [],
+          "amendmentReason": { "en": "Added the assessment of the excision margin.", "zh": "补充切除标本的切缘评估。" }, "sections": { "kind": "pathology", "microscopy": { "en": "Mature adipose lobules end inside the inked margin.", "zh": "成熟脂肪小叶位于墨染切缘内侧。" }, "diagnosis": { "en": "Lipoma, margin clear.", "zh": "脂肪瘤，切缘阴性。" } } }
+      ]
+    }
+  }]
+}

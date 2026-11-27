@@ -25,13 +25,14 @@ export function wardOrders(reader: StoreReader, at: StoreScope, encounterId: str
 export function activeMedicationIds(reader: StoreReader, at: StoreScope, encounterId: string) {
   return wardOrders(reader, at, encounterId).filter(({ order }) => order.kind === 'medication' && ['signed', 'verified'].includes(order.status)).map(({ order }) => order.catalog_item_id);
 }
-export function validateMedication(ctx: CommandContext, item: EntityRow<'catalog_items'>, dose: number | undefined, routeCode: string | undefined, timesPerDay: number, override: unknown, intraoperative = false) {
+export function validateMedication(ctx: CommandContext, item: EntityRow<'catalog_items'>, dose: number | undefined, routeCode: string | undefined, timesPerDay: number, override: unknown) {
   const { tx, at, targetId } = ctx;
+  if (!ctx.moduleEnabled?.('mod-pharmacy')) conflict('WARD_PHARMACY_UNAVAILABLE');
   const drug = medicationSchema.parse(item.definition);
   if (drug.source !== 'internal' || !dose || !routeCode) conflict('WARD_MEDICATION_DIRECTIONS_REQUIRED');
   const quantity = dose / drug.inpatientDoseBasis.amount;
   if (!Number.isSafeInteger(quantity) || quantity < 1) conflict('INVALID_PREPARATION_QUANTITY');
-  const active = intraoperative ? [] : activeMedicationIds(tx, at, targetId);
+  const active = activeMedicationIds(tx, at, targetId);
   const allergies = readClinicalCase(tx, at, requireEncounter(tx, at, targetId).source_case_id)!.priorHistory.allergies;
   const line = { codeSystem: item.code_system, code: item.code, dose, timesPerDay, routeCode, quantity, days: 1 };
   const rules = tx.list(at, 'data_pack_installations')[0]!.knowledge.pharmacy;
@@ -69,7 +70,6 @@ export function registerOrders(catalog: OperationCatalog, billing?: WardBilling)
     }
     const item = ctx.tx.get(ctx.at, 'catalog_items', input.itemId) ?? conflict('WARD_CATALOG_CONFLICT');
     const medication = item.kind === 'medications';
-    if (medication && !ctx.actor.enabledModules.includes('mod-pharmacy')) conflict('WARD_PHARMACY_UNAVAILABLE');
     if (!medication && (item.kind !== 'services' || item.definition.kind !== 'nursing' || item.code === settings.bedDay.code && item.code_system === settings.bedDay.codeSystem)) conflict('WARD_CATALOG_CONFLICT');
     const sign = medication ? validateMedication(ctx, item, input.dose, input.route, daily, input.clinicalOverride) : {};
     const order = openOrder(ctx.tx, ctx.at, ctx.targetId, item.id, medication ? 'medication' : 'nursing', 'signed', times(ctx));
@@ -82,6 +82,7 @@ export function registerOrders(catalog: OperationCatalog, billing?: WardBilling)
     for (const orderId of orderIds) {
       const order = ctx.tx.get(ctx.at, 'clinical_orders', orderId), schedule = ctx.tx.get(ctx.at, 'ward_order_directions', orderId);
       if (!order || !schedule || order.encounter_id !== ctx.targetId) conflict('WARD_ORDER_NOT_FOUND');
+      if (order.kind === 'medication' && action === 'verify' && !ctx.moduleEnabled?.('mod-pharmacy')) conflict('WARD_PHARMACY_UNAVAILABLE');
       const allowed = action === 'verify' ? ['signed'] : action === 'request-stop' ? ['signed', 'verified'] : ['stop-requested'];
       if (!allowed.includes(order.status)) conflict('WARD_ORDER_STATE_CONFLICT');
       const status = action === 'verify' ? 'verified' : action === 'request-stop' ? 'stop-requested' : 'stopped';
@@ -97,6 +98,7 @@ export function registerOrders(catalog: OperationCatalog, billing?: WardBilling)
     const admission = mutateAdmission(ctx, ['admitted'], 'nurse');
     const order = ctx.tx.get(ctx.at, 'clinical_orders', input.orderId), schedule = ctx.tx.get(ctx.at, 'ward_order_directions', input.orderId);
     if (schedule?.frequency !== 'PRN' || order?.encounter_id !== ctx.targetId || order.status !== 'verified') conflict('PRN_ORDER_REQUIRED');
+    if (order.kind === 'medication' && !ctx.moduleEnabled?.('mod-pharmacy')) conflict('WARD_PHARMACY_UNAVAILABLE');
     const day = localDay(ctx.virtualAt, policy(ctx.tx, ctx.at).timezone);
     const all = ctx.tx.list(ctx.at, 'ward_tasks', { order_id: order.id });
     const today = all.filter(task => task.business_day === day);
@@ -112,6 +114,7 @@ export function registerOrders(catalog: OperationCatalog, billing?: WardBilling)
       const order = task && ctx.tx.get(ctx.at, 'clinical_orders', task.order_id);
       if (!task || !order || order.encounter_id !== ctx.targetId || order.status !== 'verified') conflict('WARD_TASK_CONFLICT');
       const medication = order.kind === 'medication';
+      if (medication && !ctx.moduleEnabled?.('mod-pharmacy')) conflict('WARD_PHARMACY_UNAVAILABLE');
       if (medication === (action === 'complete')) conflict('WARD_TASK_CONFLICT');
       if (action === 'administer' && task.status !== 'dispensed') conflict('DISPENSE_REQUIRED');
       if (action !== 'administer' && task.status !== 'pending') conflict('WARD_TASK_CONFLICT');
@@ -123,7 +126,6 @@ export function registerOrders(catalog: OperationCatalog, billing?: WardBilling)
         ctx.tx.insert(ctx.at, 'ward_incurred_orders', { id: v7(), task_id: taskId, order_id: incurred.id });
         chargeOrder(billing, ctx.tx, ctx.at, incurred, quantity, wardDepartment(ctx.tx, ctx.at, admission.ward));
         if (action === 'dispense') {
-          if (!ctx.actor.enabledModules.includes('mod-pharmacy')) conflict('WARD_PHARMACY_UNAVAILABLE');
           if (billing && !billing.readOrderFunds(ctx.tx, ctx.at, incurred.id).released) conflict('PAYMENT_REQUIRED');
           let remaining = quantity;
           for (const lot of availableStock(ctx.tx, ctx.at, order.catalog_item_id, date)) {

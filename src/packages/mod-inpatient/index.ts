@@ -27,12 +27,12 @@ export function createInpatientModule(billing?: WardBilling): ClinMeshModule<Ope
     },
     guardEncounter({ tx, at }, write) {
       const [admission] = tx.list(at, 'inpatient_admissions', { encounter_id: write.encounterId });
-      if (!admission) return;
+      if (!admission || !tx.list(at, 'data_pack_installations')[0]?.knowledge.inpatient) return;
       if (tx.list(at, 'medical_record_archives', { admission_id: admission.id }).length) conflict('CHART_ARCHIVED');
       if (admission.status === 'cleared' && (write.kind === 'record' || write.kind === 'complete')) return;
       if (write.kind === 'complete' || !['admitted', 'discharge-pending'].includes(admission.status)) conflict('ADMISSION_STATE_CONFLICT');
       if (write.kind === 'diagnose') conflict('ADMISSION_POA_REQUIRED');
-      if (write.kind === 'accept-investigation' && !tx.list(at, 'ward_specimen_dispatches', { order_id: write.orderId }).length) conflict('WARD_DISPATCH_REQUIRED');
+      if (write.kind === 'accept-investigation' && tx.list(at, 'lab_requests', { order_id: write.orderId }).length && !tx.list(at, 'ward_specimen_dispatches', { order_id: write.orderId }).length) conflict('WARD_DISPATCH_REQUIRED');
     }, registerOperations(catalog) {
     registerAdmissions(catalog);
     registerOrders(catalog, billing);
@@ -40,7 +40,7 @@ export function createInpatientModule(billing?: WardBilling): ClinMeshModule<Ope
     registerDischarge(catalog, billing);
     catalog.command(route('investigation.dispatch', 'execute-orders'), { orderIds: identifiers }, receipt, (ctx, { orderIds }) => {
       const admission = mutateAdmission(ctx, ['admitted'], 'nurse');
-      if (!ctx.actor.enabledModules.includes('mod-lab')) conflict('LAB_MODULE_REQUIRED');
+      if (!ctx.moduleEnabled?.('mod-lab')) conflict('LAB_MODULE_REQUIRED');
       const cards = specimenCards(ctx.tx, ctx.at, ctx.targetId);
       for (const orderId of orderIds) {
         const card = cards.find(card => card.orderIds.includes(orderId));
