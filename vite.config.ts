@@ -9,10 +9,10 @@ const clientCache = resolve(root, 'node_modules/.vite-client');
 
 export default defineConfig(({ isSsrBuild }) => ({
   root: isSsrBuild ? root : client,
-  publicDir: false,
+  publicDir: isSsrBuild ? false : resolve(root, 'assets/clinical-public'),
   cacheDir: clientCache,
   plugins: [react(), tailwindcss()],
-  build: { outDir: resolve(root, isSsrBuild ? 'dist/server' : 'dist/client'), emptyOutDir: true },
+  build: { outDir: resolve(root, isSsrBuild ? 'dist/server' : 'dist/client'), emptyOutDir: true, manifest: !isSsrBuild },
   server: {
     fs: {
       allow: [client, clientCache],

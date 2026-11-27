@@ -131,10 +131,11 @@ function checkResults(results: ClinicalCase['caseTruth']['results'], services: R
   const revisions = new Map<string, number[]>();
   for (const result of results) {
     const service = reference(services, codingKey(result.service), 'results.service');
+    if (result.sections && result.sections.kind !== service.kind) throw new DataPackError('INVALID_PACK', 'results.sections.kind');
     const leaves = indexBy(service.analytes, codingKey, 'service.analytes');
     for (const leaf of indexBy(result.observations, item => codingKey(item.analyte), 'observations').keys()) reference(leaves, leaf, 'observations.analyte');
     if ((result.revision > 1) !== Boolean(result.amendmentReason)) throw new DataPackError('INVALID_PACK', 'results.amendmentReason');
-    const key = JSON.stringify([service.codeSystem, service.code, result.stage]);
+    const key = JSON.stringify([service.codeSystem, service.code, result.stage, result.priorSurgeryId]);
     const chain = revisions.get(key) ?? [];
     chain.push(result.revision);
     revisions.set(key, chain);
@@ -192,6 +193,11 @@ export function validateReferences(pack: HospitalDataPack) {
     const allergies = patient.priorHistory.allergies;
     if (allergies.status === 'confirmed' && allergies.items.some(item => !allergyGroups.has(item.groupCode))) throw new DataPackError('INVALID_REFERENCE', 'priorHistory.allergies');
     const truth = patient.caseTruth;
+    const surgeries = indexBy(patient.priorHistory.surgeries ?? [], item => item.id, 'priorHistory.surgeries');
+    for (const result of truth.results) {
+      if (result.priorSurgeryId) reference(surgeries, result.priorSurgeryId, 'results.priorSurgeryId');
+      if ((result.sections?.kind === 'pathology') !== Boolean(result.priorSurgeryId)) throw new DataPackError('INVALID_PACK', 'results.priorSurgeryId');
+    }
     requireCodes('diagnoses', [truth.primaryDiagnosis, ...truth.secondaryDiagnoses], 'caseTruth.diagnoses');
     requireCodes('medications', truth.expectedMedications ?? [], 'expectedMedications');
     requireCodes('procedures', truth.expectedProcedures ?? [], 'expectedProcedures');

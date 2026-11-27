@@ -5,11 +5,11 @@ import { createReader, createRepository, readEntity, writeEntity } from './repos
 import { billingEntities, entityNames, epoch as epochFields, labEntities, tables, uuid, workspace as workspaceFields, type TableDefinition } from './schema';
 import type { SqlConnection } from './sqlite';
 
-const format = 'clinmesh.snapshot.v5';
-const firstTableByVersion = { 'clinmesh.snapshot.v1': 'encounter_triage', 'clinmesh.snapshot.v2': billingEntities[0], 'clinmesh.snapshot.v3': 'patient_reply_runs', 'clinmesh.snapshot.v4': labEntities[0] } as const;
+const format = 'clinmesh.snapshot.v6';
+const firstTableByVersion = { 'clinmesh.snapshot.v1': 'encounter_triage', 'clinmesh.snapshot.v2': billingEntities[0], 'clinmesh.snapshot.v3': 'patient_reply_runs', 'clinmesh.snapshot.v4': labEntities[0], 'clinmesh.snapshot.v5': 'study_requests' } as const;
 const record = z.record(z.string(), z.json());
 const snapshotSchema = z.strictObject({
-  format: z.enum(['clinmesh.snapshot.v1', 'clinmesh.snapshot.v2', 'clinmesh.snapshot.v3', 'clinmesh.snapshot.v4', format]), workspaceId: uuid,
+  format: z.enum(['clinmesh.snapshot.v1', 'clinmesh.snapshot.v2', 'clinmesh.snapshot.v3', 'clinmesh.snapshot.v4', 'clinmesh.snapshot.v5', format]), workspaceId: uuid,
   tables: z.array(z.strictObject({ name: z.string(), rows: z.array(record) })),
   pi: z.array(piImage), sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });

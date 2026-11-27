@@ -29,7 +29,7 @@ export const manifest = z.strictObject({
   enabledModules: texts,
   policies: z.strictObject({
     outpatientInvestigationBillingPolicy: z.enum(['prepaid', 'postpaid', 'free']),
-    requireSignedNoteBeforeOrder: z.boolean(), requireDiagnosisBeforeOrder: z.boolean(), completionGates: texts,
+    requireSignedNoteBeforeOrder: z.boolean(), requireDiagnosisBeforeOrder: z.boolean(), requireRenderedReportFrame: z.boolean().optional(), completionGates: texts,
     shiftSchedule: z.array(z.strictObject({ id: text, start: timeOfDay, end: timeOfDay })),
   }),
   clinicalRecordTemplate: z.array(z.strictObject({ id: text, title: bilingual, required: z.boolean(), showWhen: visibility.optional() })).min(1),
@@ -88,6 +88,7 @@ const allergy = z.strictObject({ groupCode: text, severity: z.enum(['mild', 'mod
 const observation = z.strictObject({ analyte: coding, value: z.union([z.number(), text]) });
 export const priorHistory = z.strictObject({
   diagnoses: z.array(coding), medications: z.array(coding),
+  surgeries: z.array(z.strictObject({ id: text, performedOn: z.iso.date(), description: bilingual })).optional(),
   observations: z.array(observation.extend({ observedAt: z.iso.datetime(), service: coding, unit: text })).default([]),
   allergies: z.discriminatedUnion('status', [
     z.strictObject({ status: z.literal('not-asked') }), z.strictObject({ status: z.literal('none-known') }),
@@ -101,16 +102,23 @@ export const persona = z.strictObject({
   symptoms: z.array(bilingual).min(1), medicationMemory: bilingual, boundaries: z.array(bilingual).min(1),
 });
 
-const asset = text.refine(value => {
-  if (value.startsWith('https://')) return z.httpUrl().safeParse(value).success;
+export const asset = text.max(2048).refine(value => {
+  if (value.startsWith('https://')) {
+    const url = URL.parse(value);
+    return !!url && url.protocol === 'https:' && !url.username && !url.password;
+  }
   return /^(?:[\w-]+\/)*[\w.-]+\.(?:webp|png|jpe?g)$/i.test(value) && !value.includes('..');
 });
 const authoredFindings = z.strictObject({ service: coding, summary: bilingual,
   observations: z.array(observation.extend({ unit: text.optional(), interpretation: z.enum(['normal', 'high', 'low', 'abnormal']).optional() })),
 });
+export const studySections = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('imaging'), findings: bilingual, impression: bilingual }),
+  z.strictObject({ kind: z.literal('pathology'), microscopy: bilingual, diagnosis: bilingual }),
+]);
 const result = authoredFindings.extend({
   stage: z.enum(['initial', 'inpatient', 'repeat', 'follow-up']), revision: z.int().positive(),
-  amendmentReason: bilingual.optional(), images: z.array(asset).optional(),
+  amendmentReason: bilingual.optional(), images: z.array(asset).max(128).optional(), sections: studySections.optional(), priorSurgeryId: text.optional(),
 });
 export const truth = z.strictObject({
   primaryDiagnosis: coding, secondaryDiagnoses: z.array(coding), hiddenHistory: z.array(bilingual), results: z.array(result),

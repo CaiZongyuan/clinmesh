@@ -42,7 +42,10 @@ function WorkspaceLoader({ session, preferred, panels }: { session: Session; pre
   return <CoreWorkbench workspace={{ ...state.data, sessionVersion: session.sessionVersion }} language={language} languageSelect={<LanguageSelect language={language}/>} panels={panels} draftsFor={draftsFor}/>;
 }
 
-const installedPanels: WorkbenchPanels = { lab: LabTab, billing: lazy(() => import('./modules/billing/BillingPanel')) };
+const installedPanels: WorkbenchPanels = { lab: LabTab, billing: lazy(() => import('./modules/billing/BillingPanel')),
+  imaging: lazy(() => import('./modules/imaging/StudyTab').then(module => ({ default: module.RadiologyTab }))),
+  pathology: lazy(() => import('./modules/imaging/StudyTab').then(module => ({ default: module.PathologyTab }))),
+};
 export function App({ panels = installedPanels }: { panels?: WorkbenchPanels } = {}) {
   const preferred = useLocale(state => state.language);
   const session = useQuery({ queryKey: sessionKey, queryFn: ({ signal }) => currentSession(signal), staleTime: 60_000 });

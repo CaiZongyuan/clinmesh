@@ -13,7 +13,7 @@ it.each([baseline, baselineV2, billingBaseline])('imports $format and emits the 
   try {
     await store.importLogicalSnapshot(previous);
     const upgraded = await store.exportLogicalSnapshot(previous.workspaceId);
-    expect(upgraded.format).toBe('clinmesh.snapshot.v5');
+    expect(upgraded.format).toBe('clinmesh.snapshot.v6');
     expect(upgraded.tables.slice(0, previous.tables.length)).toEqual(previous.tables);
     expect(upgraded.tables.slice(previous.tables.length).every(table => !table.rows.length)).toBe(true);
     expect(upgraded.pi).toEqual(previous.pi);
@@ -35,8 +35,8 @@ it.each([completeBilling, completePatient])('restores all nonempty tables and bo
     const current = await store.exportLogicalSnapshot(previous.workspaceId);
     expect(current.tables.slice(0, previous.tables.length)).toEqual(previous.tables);
     const missing = previous.format === 'clinmesh.snapshot.v3' ? ['patient_reply_runs', 'agent_model_calls', 'lab_drafts', 'lab_requests'] : ['lab_drafts', 'lab_requests'];
-    expect(current.tables.slice(previous.tables.length)).toEqual(missing.map(name => ({ name, rows: [] })));
+    expect(current.tables.slice(previous.tables.length)).toEqual([...missing, 'study_requests'].map(name => ({ name, rows: [] })));
     expect(current.pi).toEqual(previous.pi);
-    expect(current.format).toBe('clinmesh.snapshot.v5');
+    expect(current.format).toBe('clinmesh.snapshot.v6');
   } finally { await store.close(); }
 });

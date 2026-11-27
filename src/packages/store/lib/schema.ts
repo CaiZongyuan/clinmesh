@@ -44,6 +44,7 @@ const exponent = column(z.int().min(0).max(9), 'integer', name => `${name} BETWE
 const money = { amount_minor: integer, currency_code: currency, currency_exponent: exponent };
 const coding = { code_system: column(z.url()), code: text };
 const encounterClass = choice('outpatient', 'inpatient');
+const diagnosticStages = column(z.array(z.enum(['follow-up', 'repeat', 'inpatient', 'initial'])).min(1), 'json');
 const diagnosis = { ...coding, is_primary: boolean, poa_code: optional(text), ordinal: positive };
 
 type Columns = Record<string, Column>;
@@ -118,7 +119,8 @@ export const tables = {
   patient_reply_runs: table({ id: ref('consultation_turns'), session_id: ref('pi_sessions'), attempt: positive, status: choice('running', 'done', 'stopped', 'failed'), provider: text, model: text, endpoint_hash: digest, effort: text, error_code: optional(text), version }),
   agent_model_calls: table({ session_id: optional(ref('pi_sessions')), question_id: optional(ref('consultation_turns')), provider: text, model: text, status: text, input_tokens: integer, output_tokens: integer, cache_read: integer, cache_write: integer, duration_ms: integer, recorded_at: timestamp, version }),
   lab_drafts: table({ encounter_id: enc, items: column(z.array(frozen.schema), 'json'), version }, 'encounter_id'),
-  lab_requests: table({ order_id: order, stages: column(z.array(z.enum(['follow-up', 'repeat', 'inpatient', 'initial'])).min(1), 'json') }, 'order_id'),
+  lab_requests: table({ order_id: order, stages: diagnosticStages }, 'order_id'),
+  study_requests: table({ order_id: order, stages: diagnosticStages, prior_surgery_id: optional(text) }, 'order_id'),
 } satisfies Record<string, TableDefinition>;
 
 export type Entity = keyof typeof tables;
