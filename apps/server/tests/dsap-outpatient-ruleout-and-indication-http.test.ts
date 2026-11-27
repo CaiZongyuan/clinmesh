@@ -544,6 +544,15 @@ describe('DSAP Slice S9: Outpatient Rule-Out, Pack Exit & Silence, Confusable Pa
     expect(ruleOutAfterEcg?.detail).toContain('肌钙蛋白')
     expect(ruleOutAfterEcg?.detail).toContain('D-二聚体')
     expect(ruleOutAfterEcg?.detail).not.toContain('12 导联心电图（11524-6）')
+    const ruleOutItems = ruleOutAfterEcg!.ruleOutItems
+    expect(ruleOutItems.map(item => [item.id, item.status, item.purposeZh])).toEqual([
+      ['ecg-12-lead', 'resulted', '排查心梗'],
+      ['serial-hs-ctni', 'not-ordered', '排查心肌损伤'],
+      ['d-dimer', 'not-ordered', '排查肺栓塞'],
+    ])
+    expect(ruleOutItems[0]?.resultText).toBeTruthy()
+    expect(ruleOutItems[0]?.basedOnFactVersions.length).toBeGreaterThan(0)
+    expect(ruleOutItems[1]?.itemCodes).toEqual(['89579-7', '2100404B'])
 
     // Order & complete 1st troponin + D-dimer
     const epiLabs = caseLaboratoryCatalogSearchSchema.parse(await (await runtime.app.request(

@@ -5,6 +5,7 @@ import {
   type ClinicalPromptFactVersionRef,
   type ClinicalPromptReevaluateDiff,
   type ClinicalPromptRiskTag,
+  type ClinicalPromptRuleOutItem,
   type ClinicalPromptSafetyBlock,
   type ClinicalPromptSideBySideGroup,
   type ClinicalPromptSuggestion,
@@ -19,6 +20,7 @@ import type { ConceptVocabulary } from '@clinmesh/contracts/concept-vocabulary'
 import {
   MANDATORY_FORBIDDEN_PACK_ACTIONS,
   type DiseasePackRiskTag,
+  type DiseasePackTriggerNode,
   type DiseasePackRuntimeEntry,
   type EffectiveDiseasePack,
 } from '@clinmesh/contracts/disease-pack'
@@ -807,17 +809,42 @@ function isPackExitedEntry(entry: DiseasePackRuntimeEntry): boolean {
   return entry.exited === true || entry.activationReason === 'pack-exited'
 }
 
-function evaluateRuleOutMissingChecks(
+function evaluateRuleOutItems(
   ruleOut: NonNullable<EffectiveDiseasePack['pack']['ruleOutChecklist']>[number],
   ledger: ClinicalFactLedger,
   evalOptions: TriggerEvaluationOptions,
-): { missingCodes: string[]; missingLabels: string[] } {
-  const missingLabels: string[] = []
-  const missingCodes: string[] = []
+  factsById: ReadonlyMap<string, ClinicalFact>,
+): ClinicalPromptRuleOutItem[] {
+  const orderedCodes = new Set(
+    ledger.facts
+      .filter(fact => fact.provenance.recordType === 'ServiceRequest' && fact.relation.supersededByFactId === null)
+      .map(fact => fact.itemCode.code),
+  )
+  const evaluate = (
+    spec: { id: string; labelZh: string; purposeZh: string; node: DiseasePackTriggerNode | undefined; itemCodes: readonly string[] },
+  ): ClinicalPromptRuleOutItem | undefined => {
+    if (!spec.node) return undefined
+    const res = evaluatePackTrigger(spec.node, ledger, evalOptions)
+    const matchedFacts = res.matched
+      ? res.matchedFactIds.map(id => factsById.get(id)).filter((fact): fact is ClinicalFact => fact !== undefined)
+      : []
+    const resultText = matchedFacts.slice(-3).map(fact => `${fact.itemCode.display}：${fact.value.rawText}`).join('；')
+    return {
+      basedOnFactVersions: res.matched ? toFactVersionRefs(res.matchedFactIds, factsById).slice(0, 16) : [],
+      id: spec.id,
+      itemCodes: [...spec.itemCodes],
+      labelZh: spec.labelZh,
+      purposeZh: spec.purposeZh,
+      ...(resultText === '' ? {} : { resultText }),
+      status: res.matched
+        ? 'resulted'
+        : spec.itemCodes.some(code => orderedCodes.has(code)) ? 'ordered' : 'not-ordered',
+    }
+  }
 
   if (ruleOut.checkItems && ruleOut.checkItems.length > 0) {
-    for (const checkItem of ruleOut.checkItems) {
-      const node = checkItem.condition ?? (
+    return ruleOut.checkItems.flatMap(checkItem => {
+      const node: DiseasePackTriggerNode | undefined = checkItem.condition ?? (
         checkItem.requiredItemCodes && checkItem.requiredItemCodes.length > 0
           ? {
               kind: 'fact' as const,
@@ -829,29 +856,22 @@ function evaluateRuleOutMissingChecks(
             }
           : undefined
       )
-      if (!node) continue
-      const res = evaluatePackTrigger(node, ledger, evalOptions)
-      if (!res.matched) {
-        missingLabels.push(checkItem.labelZh)
-        for (const code of checkItem.requiredItemCodes ?? []) missingCodes.push(code)
-      }
-    }
-    return { missingCodes: [...new Set(missingCodes)], missingLabels }
+      const itemCodes = checkItem.requiredItemCodes ?? (node?.kind === 'fact' ? node.itemCodes ?? [] : [])
+      const item = evaluate({ id: checkItem.id, itemCodes, labelZh: checkItem.labelZh, node, purposeZh: checkItem.purposeZh })
+      return item === undefined ? [] : [item]
+    })
   }
 
-  for (const code of ruleOut.requiredTestCodes ?? []) {
-    const res = evaluatePackTrigger({
-      kind: 'fact',
+  return (ruleOut.requiredTestCodes ?? []).flatMap(code => {
+    const item = evaluate({
+      id: code.toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 64),
       itemCodes: [code],
-      presence: 'present',
-      requireEligible: true,
-    }, ledger, evalOptions)
-    if (!res.matched) {
-      missingLabels.push(code)
-      missingCodes.push(code)
-    }
-  }
-  return { missingCodes: [...new Set(missingCodes)], missingLabels }
+      labelZh: code,
+      node: { kind: 'fact', itemCodes: [code], presence: 'present', requireEligible: true },
+      purposeZh: ruleOut.titleZh,
+    })
+    return item === undefined ? [] : [item]
+  })
 }
 
 interface ConfusableCluster {
@@ -948,8 +968,9 @@ function buildConfusableDifferentialCard(
       if (res.matched) {
         for (const fid of res.matchedFactIds) matchedFactIds.add(fid)
       }
-      const { missingCodes, missingLabels } = evaluateRuleOutMissingChecks(ruleOut, ledger, evalOpts)
-      missingItemLabels.push(...missingLabels)
+      const pendingItems = evaluateRuleOutItems(ruleOut, ledger, evalOpts, factsById).filter(item => item.status !== 'resulted')
+      const missingCodes = pendingItems.flatMap(item => item.itemCodes)
+      missingItemLabels.push(...pendingItems.map(item => item.labelZh))
       suggestions.push({
         actionKind: 'review-differential',
         id: `differential-${pid}-${ruleOut.id}`,
@@ -1365,7 +1386,10 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
         for (const ruleOut of effective.pack.ruleOutChecklist ?? []) {
           const res = evaluatePackTrigger(ruleOut.trigger, input.ledger, evalOptions)
           if (!res.matched) continue
-          const { missingCodes, missingLabels } = evaluateRuleOutMissingChecks(ruleOut, input.ledger, evalOptions)
+          const ruleOutItems = evaluateRuleOutItems(ruleOut, input.ledger, evalOptions, factsById)
+          const pending = ruleOutItems.filter(item => item.status !== 'resulted')
+          const missingLabels = pending.map(item => item.labelZh)
+          const missingCodes = pending.flatMap(item => item.itemCodes)
           const codesText = ruleOut.targetConditionCodes.length > 0
             ? `（重点排查诊断编码：${ruleOut.targetConditionCodes.join('、')}）`
             : ''
@@ -1386,6 +1410,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
             packId,
             packVersion,
             riskTags: activeRiskTags,
+            ruleOutItems,
             sideBySideGroupKey: 'encounter-open:rule-out-checklist',
             source: { label: `${effective.pack.manifest.titleZh} · 鉴别排查清单` },
             suggestions: [

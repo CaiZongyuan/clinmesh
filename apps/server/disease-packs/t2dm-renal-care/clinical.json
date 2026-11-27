@@ -103,6 +103,7 @@
           "id": "serum-creatinine-baseline",
           "labelZh": "血清肌酐 / eGFR 基线（2160-0）",
           "minCount": 1,
+          "purposeZh": "核对肾功能基线以排除二甲双胍禁忌",
           "requireNormal": false,
           "requiredItemCodes": ["2160-0", "1700404A"]
         }

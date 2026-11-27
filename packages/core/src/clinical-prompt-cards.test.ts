@@ -864,6 +864,7 @@ describe('ClinicalPromptCard core engine', () => {
               },
               id: 'check-ecg',
               labelZh: '12 导联心电图',
+              purposeZh: '排查心梗',
             },
             {
               condition: {
@@ -876,6 +877,7 @@ describe('ClinicalPromptCard core engine', () => {
               },
               id: 'check-serial-tni',
               labelZh: '连续 ≥ 2 次高敏心肌肌钙蛋白 I',
+              purposeZh: '排查心肌损伤',
             },
           ],
           id: 'high-risk-chest-pain-ruleout',
@@ -975,6 +977,11 @@ describe('ClinicalPromptCard core engine', () => {
     expect(checklistInitial?.detail).toContain('12 导联心电图')
     expect(checklistInitial?.detail).toContain('连续 ≥ 2 次高敏心肌肌钙蛋白 I')
 
+    expect(checklistInitial?.ruleOutItems).toEqual([
+      { basedOnFactVersions: [], id: 'check-ecg', itemCodes: ['11524-6'], labelZh: '12 导联心电图', purposeZh: '排查心梗', status: 'not-ordered' },
+      { basedOnFactVersions: [], id: 'check-serial-tni', itemCodes: ['89579-7'], labelZh: '连续 ≥ 2 次高敏心肌肌钙蛋白 I', purposeZh: '排查心肌损伤', status: 'not-ordered' },
+    ])
+
     const pointScaleCard = builtInitial.cards.find(c => c.cardId.includes('point-scale:'))
     expect(pointScaleCard?.category).toBe('recommendation')
     expect(pointScaleCard?.detail).toContain('合成低危胸痛风险分层共识')
@@ -1001,6 +1008,30 @@ describe('ClinicalPromptCard core engine', () => {
     const checklistOneTrop = builtOneTrop.cards.find(c => c.category === 'rule-out-checklist')
     expect(checklistOneTrop?.detail).not.toContain('尚缺检查/项目：12 导联心电图')
     expect(checklistOneTrop?.detail).toContain('连续 ≥ 2 次高敏心肌肌钙蛋白 I')
+    const [ecgItem, tniItem] = checklistOneTrop!.ruleOutItems
+    expect(ecgItem).toMatchObject({ id: 'check-ecg', resultText: '12 导联心电图：窦性心律正常', status: 'resulted' })
+    expect(ecgItem?.basedOnFactVersions.map(ref => ref.recordId)).toEqual(['ecg-1'])
+    expect(tniItem?.status).toBe('not-ordered')
+
+    // 已开立但未出结果的申请（总账中的 ServiceRequest 事实）显示为已开立
+    const orderedTni = makeFact({
+      category: 'laboratory',
+      eligibleForScoringAndRedLine: false,
+      factId: 'fact:local:ServiceRequest:sr-tni-2:1',
+      itemCode: { code: '89579-7', display: '高敏心肌肌钙蛋白 I', system: 'http://loinc.org' },
+      provenance: { recordId: 'sr-tni-2', recordType: 'ServiceRequest', recordVersion: '1', sourceSystemId: 'clinmesh-his-fhir' },
+      value: { normalizedValue: null, rawText: '已开立高敏心肌肌钙蛋白 I' },
+      verificationStatus: 'provisional',
+    })
+    const builtOrdered = buildTimingPromptCards({
+      asOf: '2026-08-24T10:30:00Z',
+      evaluatedPacks: [{ effective: pack, entry: activeEntry, vocabulary: PUBLIC_CONCEPT_VOCABULARY }],
+      ledger: makeLedger([dxFact, normalEcg, normalTni1, orderedTni]),
+      subjectKind: 'outpatient',
+      timing: 'encounter-open',
+    })
+    const orderedItems = builtOrdered.cards.find(c => c.category === 'rule-out-checklist')!.ruleOutItems
+    expect(orderedItems.map(item => item.status)).toEqual(['resulted', 'ordered'])
 
     // 3. Exited pack emits ONE exit-summary card first, then is completely silent across subsequent timings
     const exitedLedger = makeLedger([dxFact, normalEcg, normalTni1, normalTni2])

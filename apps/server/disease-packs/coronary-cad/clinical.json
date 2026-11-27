@@ -1301,6 +1301,7 @@
           "id": "ecg-12-lead",
           "labelZh": "12 导联心电图（11524-6）",
           "minCount": 1,
+          "purposeZh": "排查心梗",
           "requireNormal": true,
           "requiredItemCodes": ["11524-6", "examination-ecg-12-lead"]
         },
@@ -1317,6 +1318,7 @@
           "id": "serial-hs-ctni",
           "labelZh": "动态心肌肌钙蛋白（hs-cTnI ≥ 2 次正常）",
           "minCount": 2,
+          "purposeZh": "排查心肌损伤",
           "requireNormal": true,
           "requiredItemCodes": ["89579-7", "2100404B"]
         },
@@ -1332,6 +1334,7 @@
           "id": "d-dimer",
           "labelZh": "D-二聚体（48065-7）",
           "minCount": 1,
+          "purposeZh": "排查肺栓塞",
           "requireNormal": true,
           "requiredItemCodes": ["48065-7", "0501703A"]
         }

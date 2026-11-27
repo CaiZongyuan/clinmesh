@@ -130,6 +130,7 @@ export const diseasePackRuleOutCheckItemSchema = z.object({
   id: diseasePackSlugSchema,
   labelZh: nonEmptyText,
   minCount: z.number().int().positive().optional(),
+  purposeZh: nonEmptyText,
   requiredItemCodes: z.array(boundedCode).min(1).max(32).optional(),
   requireNormal: z.boolean().optional(),
 }).strict()

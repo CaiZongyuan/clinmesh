@@ -156,6 +156,17 @@ export const clinicalPromptDismissalRecordSchema = z.object({
 }).strict()
 export type ClinicalPromptDismissalRecord = z.infer<typeof clinicalPromptDismissalRecordSchema>
 
+export const clinicalPromptRuleOutItemSchema = z.object({
+  basedOnFactVersions: z.array(clinicalPromptFactVersionRefSchema).max(16).default([]),
+  id: diseasePackSlugSchema,
+  itemCodes: z.array(boundedCode).max(32),
+  labelZh: nonEmptyText,
+  purposeZh: nonEmptyText,
+  resultText: z.string().trim().min(1).max(1000).optional(),
+  status: z.enum(['not-ordered', 'ordered', 'resulted']),
+}).strict()
+export type ClinicalPromptRuleOutItem = z.infer<typeof clinicalPromptRuleOutItemSchema>
+
 export const clinicalPromptCardSchema = z.object({
   basedOnFactVersions: z.array(clinicalPromptFactVersionRefSchema).max(64).default([]),
   blockingTier: clinicalPromptBlockingTierSchema.default('none'),
@@ -173,6 +184,7 @@ export const clinicalPromptCardSchema = z.object({
   packId: diseasePackSlugSchema.nullable(),
   packVersion: boundedVersion.nullable(),
   riskTags: z.array(clinicalPromptRiskTagSchema).max(32).default([]),
+  ruleOutItems: z.array(clinicalPromptRuleOutItemSchema).max(32).default([]),
   sideBySideGroupKey: boundedId.nullable().default(null),
   source: clinicalPromptSourceSchema,
   stale: z.boolean().default(false),
