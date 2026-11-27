@@ -12,6 +12,8 @@ import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import type { DoctorCaseModel } from './doctor-case-model.tsx'
 import { doctorCaseSectionTabElementIds, doctorString, requireDoctorDetail, revisitDraftInputSchema, usesStructuredClinicalDocument } from './doctor-case-support.tsx'
 
+const slugPattern = '^[a-z0-9-]{1,64}$'
+
 type Context = Pick<DoctorCaseModel,
   | 'onQueueViewChange'
   | 'onSelectedCaseIdChange'
@@ -88,7 +90,7 @@ export function doctorWorkspaceAgentActions({
     ),
     'outpatient.guideline-topics.read': docRead(
       'Read verified guideline topic excerpts, limitations, and current patient indicator gaps without model calls.',
-      { topicId: { type: 'string', pattern: '^[a-z0-9-]{1,64}$' } },
+      { topicId: { type: 'string', pattern: slugPattern } },
     ),
     'outpatient.clinical-quality.read': docRead(
       'Run read-only two-tier clinical quality preflight (red lines and alerts) for outpatient-prescription or outpatient-completion.',
@@ -97,7 +99,7 @@ export function doctorWorkspaceAgentActions({
     ),
     'outpatient.order-set-drafts.read': docRead(
       'Read version-bound outpatient order-set candidate drafts screened against allergies, eGFR, and triage vitals without issuing orders.',
-      { templateId: { type: 'string', pattern: '^[a-z0-9-]{1,64}$' } },
+      { templateId: { type: 'string', pattern: slugPattern } },
     ),
     'outpatient.disease-packs.read': docRead(
       'Read active/available declarative disease packs, matched stages, task readiness, and tool policies for the current outpatient case.',
@@ -105,7 +107,7 @@ export function doctorWorkspaceAgentActions({
     'outpatient.disease-pack-task-facts.read': docRead(
       'Read task-scoped clinical fact ledger and readiness checks for a specific disease pack and task.',
       {
-        packId: { type: 'string', pattern: '^[a-z0-9-]{1,64}$' },
+        packId: { type: 'string', pattern: slugPattern },
         taskId: { type: 'string', maxLength: 64 },
       },
       ['packId', 'taskId'],
