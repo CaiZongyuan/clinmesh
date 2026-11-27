@@ -13,7 +13,7 @@ export const receipt = { id: fixtureId(13), idempotency_key: 'test-command', ope
 
 export function seedConformance(tx: StoreTx): string[] {
   const names = ['workspaces', 'workspace_epochs', 'case_truths', 'command_receipts', 'diagnosis_revisions', 'diagnosis_confirmations'];
-  function add<Name extends Exclude<PublicEntity, 'command_receipts' | 'diagnosis_revisions' | 'diagnosis_confirmations'>>(name: Name, row: EntityRow<NoInfer<Name>>) {
+  function add<Name extends Exclude<PublicEntity, 'command_receipts' | 'diagnosis_revisions' | 'diagnosis_confirmations' | 'inventory_lot_quarantines'>>(name: Name, row: EntityRow<NoInfer<Name>>) {
     tx.insert(at, name, row);
     if (!names.includes(name)) names.push(name);
   }
@@ -65,13 +65,23 @@ export function seedConformance(tx: StoreTx): string[] {
   add('diagnostic_reports', { id: fixtureId(31), order_id, findings: { result: 'Correction' }, signed_by: practitioner_role, revision: 2, previous_revision_id: fixtureId(32), ...times });
   add('report_acknowledgements', { id: fixtureId(33), report_id: fixtureId(32), practitioner_role, ...times });
   add('clinical_overrides', { id: fixtureId(34), encounter_id, rule_code: 'synthetic-rule', rationale: 'Recorded reason', practitioner_role, ...times });
-  add('prescriptions', { id: fixtureId(35), encounter_id, status: 'issued', version: 1, ...times });
+  add('prescriptions', { id: fixtureId(35), encounter_id, status: 'dispensed', version: 2, ...times });
   add('clinical_orders', { id: fixtureId(60), encounter_id, catalog_item_id, kind: 'medication', status: 'issued', version: 1, ...times });
   add('prescription_orders', { id: fixtureId(56), prescription_id: fixtureId(35), order_id: fixtureId(60) });
   add('no_medication_conclusions', { id: fixtureId(39), encounter_id, reason: 'Synthetic review', ...times });
   add('inventory_lots', { id: lot_id, catalog_item_id, lot_number: 'synthetic-lot', expiry_date: '2028-01-01', unit: 'unit' });
+  add('inventory_movements', { id: fixtureId(105), lot_id, quantity_delta: 5, reason: 'Opening stock', ...times });
   add('inventory_movements', { id: fixtureId(37), lot_id, quantity_delta: -2, reason: 'Dispense', ...times });
   add('dispenses', { id: fixtureId(38), prescription_order_id: fixtureId(56), movement_id: fixtureId(37), quantity: 2, ...times });
+  add('prescription_signatures', { id: fixtureId(102), prescription_id: fixtureId(35), actor: 'synthetic-actor', practitioner_role, source: 'internal', catalog_version: '1', snapshot_hash: '1'.repeat(64) });
+  const directions = { codeSystem: 'urn:example:drug', code: 'D1', display: { en: 'Synthetic drug', zh: '合成药' }, dose: 1, doseUnit: 'unit', routeCode: 'PO' as const, timesPerDay: 1, days: 2, quantity: 2 };
+  add('prescription_directions', { id: fixtureId(103), order_id: fixtureId(60), directions });
+  add('prescriptions', { id: fixtureId(106), encounter_id, status: 'withdrawn', version: 2, ...times });
+  add('prescription_signatures', { id: fixtureId(107), prescription_id: fixtureId(106), actor: 'synthetic-actor', practitioner_role, source: 'external', catalog_version: '1', snapshot_hash: '2'.repeat(64) });
+  add('clinical_orders', { id: fixtureId(108), encounter_id, catalog_item_id, kind: 'medication', status: 'cancelled', version: 2, ...times });
+  add('prescription_orders', { id: fixtureId(109), prescription_id: fixtureId(106), order_id: fixtureId(108) });
+  add('prescription_directions', { id: fixtureId(110), order_id: fixtureId(108), directions });
+  add('prescription_withdrawals', { id: fixtureId(104), prescription_id: fixtureId(106), actor: 'synthetic-actor', practitioner_role, reason: 'Synthetic review', ...times });
   add('inpatient_admissions', { id: admission_id, encounter_id, ward: 'test-ward', status: 'admitted', version: 1, ...times });
   add('bed_occupancies', { id: fixtureId(41), admission_id, bed: 'test-bed', occupied_at: times.virtual_at, released_at: null, version: 1 });
   add('inpatient_transfers', { id: fixtureId(42), admission_id, from_ward: 'ward-a', to_ward: 'ward-b', ...times });

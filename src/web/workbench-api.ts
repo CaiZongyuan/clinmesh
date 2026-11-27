@@ -28,8 +28,9 @@ export async function currentSession(signal: AbortSignal) {
   catch (error) { if (error instanceof ApiError && error.status === 401) return null; throw error; }
 }
 export const jsonBody = (method: string, body: unknown) => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-export type Intent = { name: string; version: number; targetId?: string; fields?: Record<string, unknown> };
-export type WorkbenchPanelProps = { encounter: EncounterView; workspace: WorkspaceView; language: Language; submit(intent: Intent): Promise<unknown> };
+export type Intent = { name: string; version: number; targetId?: string; encounterId?: string; fields?: Record<string, unknown> };
+export type WorkbenchStationProps = { workspace: WorkspaceView; language: Language; submit(intent: Intent): Promise<unknown> };
+export type WorkbenchPanelProps = WorkbenchStationProps & { encounter: EncounterView };
 export function write(workspace: WorkspaceView, intent: Intent) {
   const op = workspace.operations.find(operation => operation.name === intent.name && operation.method !== 'GET');
   if (!op || !op.path.startsWith('/api/')) throw Error('ROLE_FORBIDDEN');

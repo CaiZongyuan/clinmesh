@@ -6,6 +6,9 @@ import type { SqlConnection, SqlRow, SqlValue } from './sqlite';
 export class StoreVersionConflictError extends Error {
   constructor() { super('Store version conflict'); this.name = 'StoreVersionConflictError'; }
 }
+export class StoreInsufficientInventoryError extends Error {
+  constructor() { super('Insufficient inventory'); this.name = 'StoreInsufficientInventoryError'; }
+}
 export class StoreIdempotencyConflictError extends Error {
   constructor() { super('Command key already used for a different request'); this.name = 'StoreIdempotencyConflictError'; }
 }
@@ -16,7 +19,7 @@ export class StorePrivateCaseTruthError extends Error {
 const privateAccess = z.strictObject({ purpose: z.enum(['simulation', 'completed-debrief']), encounterId: uuid });
 type PrivateAccess = z.infer<typeof privateAccess>;
 const removable = ['patients', 'clinical_record_drafts', 'diagnosis_drafts'] as const;
-const dedicatedWrites = ['command_receipts', 'diagnosis_revisions', 'diagnosis_confirmations'] as const;
+const dedicatedWrites = ['command_receipts', 'diagnosis_revisions', 'diagnosis_confirmations', 'inventory_lot_quarantines'] as const;
 type InsertableEntity = Exclude<PublicEntity, (typeof dedicatedWrites)[number]>;
 type DiagnosisMember = Omit<EntityRow<'diagnosis_confirmations'>, 'revision_id'>;
 
@@ -65,7 +68,7 @@ export function readEntity<Name extends Entity>(name: Name, raw: SqlRow): Entity
   return schemas[name].parse(decoded) as EntityRow<Name>;
 }
 
-export function writeEntity(db: SqlConnection, location: StoreScope, name: Entity, input: unknown): void {
+export function writeEntity(db: SqlConnection, location: StoreScope, name: Entity, input: unknown, checkStock = false): void {
   const at = scope.parse(location);
   const row = schemas[name].parse(input);
   const { fields, chain } = definitions[name];
@@ -75,7 +78,14 @@ export function writeEntity(db: SqlConnection, location: StoreScope, name: Entit
     keys.push('previous_revision');
     values.push(row.previous_revision_id === null ? null : Number(row.revision) - 1);
   }
-  db.run(`INSERT INTO ${name} (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`, ...values);
+  const sql = `INSERT INTO ${name} (${keys.join(', ')})`;
+  const placeholders = keys.map(() => '?').join(', ');
+  if (checkStock && name === 'inventory_movements' && db.all(`SELECT 1 FROM inventory_lot_quarantines WHERE ${isolation} AND id = ?`, at.workspaceId, at.epoch, uuid.parse(row.lot_id)).length) throw Error('Inventory lot quarantined');
+  if (checkStock && name === 'inventory_movements' && Number(row.quantity_delta) < 0) {
+    const available = `SELECT COALESCE(SUM(quantity_delta), 0) FROM inventory_movements WHERE ${isolation} AND lot_id = ?`;
+    const applied = db.all(`${sql} SELECT ${placeholders} WHERE (${available}) >= ? RETURNING id`, ...values, at.workspaceId, at.epoch, uuid.parse(row.lot_id), -Number(row.quantity_delta));
+    if (!applied.length) throw new StoreInsufficientInventoryError();
+  } else db.run(`${sql} VALUES (${placeholders})`, ...values);
 }
 
 const isolation = 'workspace_id = ? AND epoch = ?';
@@ -153,7 +163,7 @@ export function createRepository(db: SqlConnection, checkOpen: () => void): Stor
       publicEntity(name);
       if ((dedicatedWrites as readonly string[]).includes(name)) throw new Error('Use the aggregate repository operation');
       keys(at);
-      writeEntity(db, at, name, row);
+      writeEntity(db, at, name, row, true);
     },
     appendDiagnosisRevision(location, revision, members) {
       checkOpen();

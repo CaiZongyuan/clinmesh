@@ -21,6 +21,6 @@
 
 管理员签发令牌时仅首次响应含 `token`。以 `Authorization: Bearer …` 使用。重置会关闭旧 Epoch，旧令牌随之失效。管理员可按 Epoch 查询 `/api/workspace/audit/:id`。`GET /api/his/encounters/:id/debrief` 只在完诊后开放。普通的列表、详情和问诊均使用受控投影。
 
-组合根通过 `ClinMeshModule<OperationCatalog>` 传入模块。同一个模块通过 `registerOperations` 注册 Zod 查询与事务 Command，通过 `completion` 增加完诊条件，通过 `midnight` 处理机构当地的跨日事件，通过 `workbenchTabs` 声明页签。服务端取已装载模块与当前包声明的交集。`registerRoutes` 供带访客门禁的只读 GET 页面使用。业务读写通过 Operation Catalog 获取角色检查、Zod 校验、CAS、回执和审计。工作台的 `App` 接受以页签 ID 为键的 `panels`，组件消费与 UI 相同的受控上下文。
+组合根通过 `ClinMeshModule<OperationCatalog>` 传入模块。同一个模块通过 `registerOperations` 注册 Zod 查询与事务 Command，通过 `completion` 增加完诊条件，通过 `midnight` 处理机构当地的跨日事件，通过 `workbenchTabs` 声明页签。服务端取已装载模块与当前包声明的交集。新建和重置 Workspace 时，服务端在写事务内按注册顺序等待各模块的 `initializeEpoch` 完成，失败时整笔回滚。`registerRoutes` 供带访客门禁的只读 GET 页面使用。业务读写通过 Operation Catalog 获取角色检查、Zod 校验、CAS、回执和审计。工作台的 `App` 接受以页签 ID 为键的 `panels`，组件消费与 UI 相同的受控上下文。
 
 `patient-visit` 的 `appendPatientReply(tx, scope, encounterId, questionId, reply)` 供受信任的 Patient Agent 在已进入的 Store 事务中答复。它核对活动 Epoch、就诊状态和待答问题，实现同一答复重放。正式写入使用业务时间和独立审计时间。午夜钩子按医院当地日期顺序执行，所有钩子完成后提交时钟和事实。外部网络 I/O 应在事务外完成。

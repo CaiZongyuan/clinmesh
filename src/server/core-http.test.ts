@@ -58,8 +58,9 @@ async function exercise(fetchApi: Http, reopen?: (workspaceId: string) => Promis
   const primary = { codeSystem: 'http://hl7.org/fhir/sid/icd-10', code: 'J18.9', primary: true };
   expect((await command(`${path}/diagnosis/draft`, 3, 'save-diagnosis', { diagnoses: [primary] }, 'PUT')).status).toBe(200);
   expect((await command(`${path}/diagnosis/confirm`, 4, 'confirm-diagnosis')).status).toBe(200);
+  expect((await command(`${path}/no-medication`, 5, 'no-medication', { reason: 'Teaching case reviewed' })).status).toBe(200);
   expect(await (await fetchApi(`${path}/completion`, { headers })).json()).toMatchObject({ ready: true });
-  expect((await command(`${path}/complete`, 5, 'complete')).status).toBe(200);
+  expect((await command(`${path}/complete`, 6, 'complete')).status).toBe(200);
   expect(await (await fetchApi(`${path}/debrief`, { headers })).json()).toMatchObject({ caseTruth: { primaryDiagnosis: { code: 'J18.9' } }, recordRevisions: [{ fields }] });
   expect(await (await command(`${path}/consultation/turns`, 6, 'frozen', question)).json()).toEqual({ code: 'ENCOUNTER_COMPLETED' });
   expect((await command(`/api/his/cases/${patientCase.id}/start-encounter`, 0, 'replay-case')).status).toBe(200);

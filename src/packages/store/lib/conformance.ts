@@ -159,10 +159,10 @@ export async function runStoreConformanceSuite(store: StorePort, restoreIntoEmpt
   await rejects(store.openPiStorage(otherEpoch, fixtureId(70)), /unknown/i);
   const snapshot = await store.exportLogicalSnapshot(at.workspaceId);
   for (const name of expectedTables) check(snapshot.tables.find(table => table.name === name)?.rows.length, `missing ${name}`);
-  check(snapshot.tables.length === expectedTables.length, 'unexpected snapshot table');
+  check(snapshot.tables.length === expectedTables.length + 1 && snapshot.tables.find(table => table.name === 'inventory_lot_quarantines')?.rows.length === 0, 'ordinary lots require no migration hold');
   check(!JSON.stringify(snapshot).includes('Other Workspace'), 'workspace snapshot leaked a second workspace');
   check(snapshot.pi[0]?.tables.length === 9 && snapshot.pi[0].tables.every(table => table.rows.length > 0), 'pi-durable migration data');
   const restored = await restoreIntoEmpty(snapshot);
-  check(snapshot.sha256 === restored.sha256 && restored.workspaceId === at.workspaceId && restored.format === 'clinmesh.snapshot.v6', 'lossless canonical round trip');
+  check(snapshot.sha256 === restored.sha256 && restored.workspaceId === at.workspaceId && restored.format === 'clinmesh.snapshot.v7', 'lossless canonical round trip');
   return snapshot;
 }

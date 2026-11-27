@@ -87,7 +87,7 @@ async function prepaid(http: Http) {
   const bill = await account();
   const charges = bill.charges.filter(charge => charge.orderId === lab.order.id);
   expect(charges).toHaveLength(1);
-  expect(charges[0]).toMatchObject({ catalogItemId: lab.service.id, catalogVersion: '1.2.0', quantity: 1, unitPriceMinor: 8500, amountMinor: 8500, outstandingMinor: 8500 });
+  expect(charges[0]).toMatchObject({ catalogItemId: lab.service.id, catalogVersion: (await client.workspace()).manifest.version, quantity: 1, unitPriceMinor: 8500, amountMinor: 8500, outstandingMinor: 8500 });
   expect(bill.currency.code).toBe('CNY');
   const preview = await funds('payment.preview', { chargeIds: [charges[0]!.id], simulation: 'delayed-approval' });
   const attempt = await funds('payment.confirm', { commitToken: preview.commitToken });

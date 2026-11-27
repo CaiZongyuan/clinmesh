@@ -22,6 +22,7 @@ export async function projectionContract(store: StorePort) {
     tx.insert(at, 'surgery_requests', { id: surgeryId, order_id: orderId, procedure_item_id: procedure.id, status: 'planned', version: 1 });
     const wire = tx.list(at, 'catalog_items', { code: 'wire-014' })[0]!;
     tx.insert(at, 'inventory_lots', { id: lotId, catalog_item_id: wire.id, lot_number: 'synthetic', expiry_date: '2027-01-01', unit: 'each' });
+    tx.insert(at, 'inventory_movements', { id: v7(), lot_id: lotId, quantity_delta: 1, reason: 'opening-stock', ...times });
     tx.insert(at, 'material_reservations', { id: reservationId, surgery_request_id: surgeryId, lot_id: lotId, quantity: 2, status: 'reserved', version: 1 });
     return surgeryId;
   });

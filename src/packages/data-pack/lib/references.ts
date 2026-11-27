@@ -1,3 +1,4 @@
+import { medicationRouteSchema } from '../../store';
 import { DataPackError } from './errors';
 import type { CatalogKind, Coding, HospitalDataPack } from './schema';
 
@@ -149,6 +150,10 @@ export const catalogKinds = ['diagnoses', 'medications', 'services', 'procedures
 
 export function validateReferences(pack: HospitalDataPack) {
   checkOrganization(pack);
+  const pharmacyEnabled = pack.manifest.enabledModules.includes('mod-pharmacy');
+  if (pharmacyEnabled && !pack.knowledge?.pharmacy) {
+    throw new DataPackError('INVALID_PACK', 'knowledge.pharmacy');
+  }
   const catalog = pack.catalog;
   const entries = {
     diagnoses: indexBy(catalog.diagnoses, codingKey, 'catalog.diagnoses'), medications: indexBy(catalog.medications, codingKey, 'catalog.medications'),
@@ -160,7 +165,10 @@ export function validateReferences(pack: HospitalDataPack) {
     for (const key of indexBy(codes, codingKey, path).keys()) reference(index, key, path);
   };
   const allergyGroups = new Set<string>();
-  for (const drug of catalog.medications) {
+  for (const [index, drug] of catalog.medications.entries()) {
+    if (pharmacyEnabled && drug.routeCodes.allowed.some(route => !medicationRouteSchema.safeParse(route).success)) {
+      throw new DataPackError('INVALID_PACK', `catalog.medications.${index}.routeCodes.allowed`);
+    }
     reference(distinct(drug.routeCodes.allowed, 'allowedRoutes'), drug.routeCodes.default, 'routeCodes.default');
     reference(distinct(drug.dosageUnits, 'dosageUnits'), drug.inpatientDoseBasis.unit, 'inpatientDoseBasis.unit');
     for (const group of distinct(drug.safety.allergyGroupCodes, 'allergyGroupCodes').keys()) allergyGroups.add(group);
@@ -169,6 +177,16 @@ export function validateReferences(pack: HospitalDataPack) {
   for (const service of catalog.services) indexBy(service.analytes, codingKey, 'services.analytes');
   for (const procedure of catalog.procedures) requireCodes('services', procedure.preopServices, 'preopServices');
   if (pack.knowledge) {
+    const lotKeys = new Set<string>();
+    for (const lot of pack.knowledge.pharmacy?.openingStock ?? []) {
+      for (const code of lot.medicationCodes) {
+        const drug = reference(entries.medications, codingKey({ codeSystem: lot.codeSystem, code }), 'pharmacy.openingStock');
+        const key = JSON.stringify([lot.codeSystem, code, lot.lotNumber]);
+        if (drug.source !== 'internal') throw new DataPackError('INVALID_REFERENCE', 'pharmacy.openingStock.source');
+        if (lotKeys.has(key)) throw new DataPackError('DUPLICATE_KEY', 'pharmacy.openingStock.lotNumber');
+        lotKeys.add(key);
+      }
+    }
     indexBy(pack.knowledge.guidelineTopics, item => item.id, 'guidelineTopics');
     indexBy(pack.knowledge.orderSetTemplates, item => item.id, 'orderSetTemplates');
     for (const template of pack.knowledge.orderSetTemplates) {

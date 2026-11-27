@@ -11,6 +11,7 @@ import { createWorkspaceApp } from './workspace';
 
 it('opens the v2 cardiology snapshot with ECG and TTE available and rejects invasive angiography from the lab draft', async () => {
   const pack = structuredClone(cardiology);
+  Reflect.deleteProperty(pack.knowledge, 'pharmacy');
   pack.manifest.version = '1.0.0';
   pack.catalog.services = pack.catalog.services.filter(service => service.kind !== 'registration');
   const rules = pack.knowledge.regionalRules['mod-drg-cn'];
@@ -28,11 +29,12 @@ it('opens the v2 cardiology snapshot with ECG and TTE available and rejects inva
   const expiresAt = '2099-01-01T00:00:00Z';
   try {
     const { at, caseId, cagId } = await source.withTransaction(tx => {
-      const at = installHospitalDataPack(tx, { workspaceId, expectedEpoch: null, virtualTime: '2028-01-01T00:00:00Z' }, pack);
+      const at = installHospitalDataPack(tx, { workspaceId, expectedEpoch: null, virtualTime: '2028-01-01T00:00:00Z' }, { ...pack, knowledge: { ...pack.knowledge, pharmacy: cardiology.knowledge.pharmacy } });
       tx.insert(at, 'visitor_sessions', { id, practitioner_role: 'cardiologist', revoked: false, expires_at: expiresAt, version: 1 });
       return { at, caseId: tx.list(at, 'clinical_cases')[0]!.id, cagId: tx.list(at, 'catalog_items', { kind: 'services', code: 'cag' })[0]!.id };
     });
     const exported = await source.exportLogicalSnapshot(workspaceId);
+    exported.tables.find(table => table.name === 'data_pack_installations')!.rows[0]!.knowledge = pack.knowledge;
     const v2 = { format: 'clinmesh.snapshot.v2', workspaceId, tables: exported.tables.slice(0, exported.tables.findIndex(table => table.name === 'charge_sources')), pi: exported.pi };
     await restored.importLogicalSnapshot({ ...v2, sha256: digest(v2) });
     const app = createWorkspaceApp(restored, { localOpen: true }, builtinModules);

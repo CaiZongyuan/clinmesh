@@ -14,6 +14,7 @@ export async function firstSettlementContract(store: StorePort) {
     tx.insert(at, 'surgery_executions', { id: v7(), surgery_request_id: surgeryId, outcome: 'completed', ...times });
     billing.freezeCharge(tx, at, { encounterId, orderId, catalogItemId: procedure.id, catalogVersion: pack.manifest.version, quantity: 1, unitPriceMinor: procedure.amount_minor!, currencyCode: 'CNY', currencyExponent: 2, recordedAt: instant, virtualAt: instant });
     tx.insert(at, 'inventory_lots', { id: lotId, catalog_item_id: wire.id, lot_number: 'teaching', expiry_date: '2028-01-01', unit: 'each' });
+    tx.insert(at, 'inventory_movements', { id: v7(), lot_id: lotId, quantity_delta: 1, reason: 'opening-stock', ...times });
     tx.insert(at, 'material_reservations', { id: reservationId, surgery_request_id: surgeryId, lot_id: lotId, quantity: 1, status: 'reserved', version: 1 });
     tx.update(at, 'inpatient_admissions', admissionId, 1, { status: 'departed' });
   });
