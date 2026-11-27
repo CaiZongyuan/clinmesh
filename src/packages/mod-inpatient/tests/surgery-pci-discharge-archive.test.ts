@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { v7 } from 'uuid';
 import { createTestHarness, experimental_readRawConfig } from 'wrangler';
 import { z } from 'zod';
 import { teachingGate, withNodeWorkspace } from '../../../../scripts/testing/node-workspace';
@@ -17,7 +18,8 @@ async function pciJourney(request: Parameters<typeof wardClient>[0]) {
   await ward.role('ward-nurse');
   await act('bed.assign', { bed: 'heart-01' });
   await ward.role('cardiologist');
-  await act('diagnose', { diagnoses: [{ codeSystem: 'urn:clinmesh:reference:nhsa-diagnosis', code: 'I25.103', primary: true, ordinal: 1, poa: 'Y' }] });
+  const diagnoses = (poa: string) => [{ codeSystem: 'urn:clinmesh:reference:nhsa-diagnosis', code: 'I25.103', primary: true, ordinal: 1, poa: 'Y' }, { codeSystem: 'http://hl7.org/fhir/sid/icd-10', code: 'I10', primary: false, ordinal: 2, poa }];
+  await act('diagnose', { diagnoses: diagnoses('U') });
   const items = z.array(z.object({ id: z.string(), code: z.string() })).parse((await ward.get('/api/his/ward')).items);
   const item = (code: string) => items.find(item => item.code === code)!.id;
   const prescription = await act('order.sign', { itemId: item('atorvastatin'), duration: 'long', frequency: 'QN', dose: 10, route: 'PO' });
@@ -82,18 +84,35 @@ async function pciJourney(request: Parameters<typeof wardClient>[0]) {
   await ward.role('cardiologist'); await expect(act('discharge.recall', { reason: 'Late recall' })).rejects.toThrow('SETTLEMENT_LOCKED');
   await ward.role('ward-nurse'); await act('discharge.clear');
   expect(await read()).toMatchObject({ status: 'cleared', bed: null, clinical: 'active' });
-  await ward.role('cardiologist'); await act('chart.submit', { summary: 'Intervention concluded', disposition: 'Home', followUp: 'Cardiac clinic' });
-  await ward.role('records-coder'); await act('chart.review', { revision: 1, coding: 'Primary diagnosis and procedures checked' });
-  await expect(act('chart.archive', { revision: 1 })).rejects.toThrow('CLINICAL_COMPLETION_REQUIRED');
+  const page = { summary: 'Intervention concluded', disposition: 'Home', followUp: 'Cardiac clinic' };
+  await ward.role('cardiologist'); await act('chart.submit', page);
+  await act('diagnose', { diagnoses: diagnoses('Y') });
+  await ward.role('records-coder'); await expect(act('chart.review', { revision: 1, coding: 'First review' })).rejects.toThrow('FRONT_PAGE_RESUBMISSION_REQUIRED');
+  await ward.role('cardiologist'); await act('chart.submit', page);
+  await ward.role('records-coder');
+  const reviewKey = crypto.randomUUID(), reviewVersion = z.int().parse((await read()).version);
+  const reviewSecond = () => ward.send('ward.chart.review', encounter, reviewVersion, { revision: 2, coding: 'Diagnosis and POA checked' }, reviewKey);
+  const firstReview = await reviewSecond();
+  await expect(act('chart.archive', { revision: 2 })).rejects.toThrow('CLINICAL_COMPLETION_REQUIRED');
   await ward.role('cardiologist');
+  await act('diagnose', { diagnoses: diagnoses('N') });
   const visit = encounterViewSchema.parse(await ward.get(`/api/his/encounters/${encounter}`));
   await expect(ward.send('encounter.complete', encounter, visit.version)).rejects.toThrow('COMPLETION_BLOCKED');
   const fields = Object.fromEntries(visit.template.filter(field => field.required).map(field => [field.id, `Reviewed ${field.id} for PCI discharge`]));
   await ward.send('record.draft', encounter, visit.version, { fields, expectedDraftVersion: visit.draftVersion });
   await ward.send('record.sign', encounter, visit.version + 1);
   await ward.send('encounter.complete', encounter, visit.version + 2);
-  await ward.role('records-coder'); await act('chart.archive', { revision: 1 });
-  expect(await read()).toMatchObject({ status: 'cleared', bed: null, clinical: 'completed', chart: { state: 'archived', archive: { patient: '赵德明', revision: 1 } } });
+  await ward.role('records-coder');
+  expect(await reviewSecond()).toEqual(firstReview);
+  expect(await read()).toMatchObject({ chart: { state: 'resubmit-required', review: null } });
+  await expect(act('chart.archive', { revision: 2 })).rejects.toThrow('FRONT_PAGE_RESUBMISSION_REQUIRED');
+  await ward.role('cardiologist'); await act('chart.submit', page);
+  await ward.role('records-coder'); await act('chart.review', { revision: 3, coding: 'Corrected POA checked' });
+  const archiveVersion = z.int().parse((await read()).version), archiveKey = crypto.randomUUID();
+  const archive = () => ward.send('ward.chart.archive', encounter, archiveVersion, { revision: 3 }, archiveKey);
+  expect(await archive()).toEqual(await archive());
+  const frozen = z.object({ chart: z.object({ archive: z.object({ diagnosisRevisionId: z.uuidv7() }) }) }).parse(await read()).chart.archive;
+  expect(await read()).toMatchObject({ status: 'cleared', bed: null, clinical: 'completed', chart: { state: 'archived', archive: { patient: '赵德明', revision: 3, diagnoses: diagnoses('N'), frontPage: { diagnosisRevisionId: frozen.diagnosisRevisionId }, codingReview: { coding: { diagnosisRevisionId: frozen.diagnosisRevisionId, diagnoses: diagnoses('N') } } } } });
   await ward.role('cardiologist'); await expect(act('order.request-stop', { orderIds: [prescription.orderId] })).rejects.toThrow('CHART_ARCHIVED');
 }
 
@@ -145,9 +164,20 @@ it('retains the departed bed until one CAS clear succeeds when the billing modul
     const ready = encounterViewSchema.parse(await ward.get(`/api/his/encounters/${encounter}`));
     expect(ready.completion.ready).toBe(true);
     await ward.send('encounter.complete', encounter, ready.version);
+    const at = { workspaceId: ward.current().workspaceId, epoch: ward.current().epoch };
+    await store.withTransaction(tx => {
+      const admission = tx.list(at, 'inpatient_admissions', { encounter_id: encounter })[0]!;
+      const pageId = v7(), times = { virtual_at: ward.current().virtualTime, recorded_at: new Date().toISOString() };
+      tx.insert(at, 'ward_chart_revisions', { id: pageId, admission_id: admission.id, revision: 1, previous_revision_id: null, front_page: { summary: 'Historical front page', disposition: 'Home', followUp: 'Clinic' }, submitted_by: 'cardiologist', ...times });
+      tx.insert(at, 'ward_coding_reviews', { id: v7(), revision_id: pageId, reviewed_by: 'records-coder', coding: { note: 'Historical review', diagnoses: [{ ...secondary, ordinal: 2, poa: 'Y' }] }, ...times });
+    });
+    await ward.role('records-coder');
+    expect(await ward.get(`/api/his/ward/${encounter}`)).toMatchObject({ chart: { state: 'resubmit-required', revisions: [{ fields: { summary: 'Historical front page' } }] } });
+    await expect(ward.send('ward.chart.archive', encounter, 9, { revision: 1 })).rejects.toThrow('FRONT_PAGE_RESUBMISSION_REQUIRED');
+    await ward.role('cardiologist');
     await ward.send('ward.chart.submit', encounter, 9, { summary: 'Reviewed both diagnoses', disposition: 'Home', followUp: 'Clinic' });
-    await ward.role('records-coder'); await ward.send('ward.chart.review', encounter, 10, { revision: 1, coding: 'POA confirmed' });
-    await ward.send('ward.chart.archive', encounter, 11, { revision: 1 });
+    await ward.role('records-coder'); await ward.send('ward.chart.review', encounter, 10, { revision: 2, coding: 'POA confirmed' });
+    await ward.send('ward.chart.archive', encounter, 11, { revision: 2 });
     expect(await ward.get(`/api/his/ward/${encounter}`)).toMatchObject({ chart: { state: 'archived', archive: { diagnoses: [{ poa: 'Y' }, { code: 'I10', poa: 'N' }] } } });
   } finally { await store.close(); }
 });
