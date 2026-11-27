@@ -29,9 +29,15 @@ Vite 开发页从 `src/web` 启动，按公开入口的依赖图加载模块与�
 - 访问 `/dev/health` 可查看当前运行时和已装载模块。运行 `pnpm --silent clinmesh operations list --json` 可离线发现操作，`pnpm --silent clinmesh operations schema record.sign --json` 显示输入输出契约。联网时配置 `CLINMESH_SERVER_URL` 与管理员签发的短期单岗位 `CLINMESH_TOKEN`。参见[外部 CLI 操作与回执恢复](skills/clinmesh/SKILL.md)。
 - 运行 `pnpm pack --pack-destination dist` 生成供外部项目安装的 CLI 包。包内包含运行时技能、公开操作清单和 TypeScript 入口，运行依赖为 `tsx` 和 `zod`。
 
+## 固定病例对比评测
+
+以可诊疗或管理工作区的访客登录，在该会话中向 `POST /api/eval/runs` 提交 `packId`、`caseId`、两端模型、轮数上限及 `arm`。本地 Node 可选 `direct-tools`、`ui-sdk-webmcp`、`host-cli` 和 `mirage-vfs`，Workers 提供 `direct-tools`。四臂使用同一套病例、临床操作、授权和评分。浏览器实验臂使用 Windows 安装的 Microsoft Edge 和已构建的工作台资源。Mirage 实验臂使用可选的官方 0.1.0 包。完整安装时 pnpm 从 npm 官方源取得这两个包。[请求示例与报告字段](src/packages/agent-runtime/README.md)
+
 ## 验证与架构
 
 `pnpm check` 运行严格类型检查、静态检查、真实依赖图守卫、`pnpm lint:theme`、Markdown 校验、测试和构建。构建后执行 `pnpm verify:worker`，用 Wrangler dry-run 生成真实上传包并检查压缩体积严格小于 3 MiB。所有检查均在 Windows 上运行，不需 Cloudflare 账户，也不进行线上部署。
+
+单独运行 `node scripts/check-worker-size.ts` 会在 `dist/worker-audit` 生成 Wrangler 生产输出，列出完整上传模块及主要依赖对构建产物贡献的未压缩字节。脚本将 Wrangler 的整包 gzip 字节数与上传模块的独立复算结果核对，达到 3,145,728 字节即失败。用 `pnpm exec vitest run src/packages/mod-agent-mirage/tests/mirage-arm.test.ts src/server/tests/full-platform-e2e.test.ts` 验证临床文件策略、四臂和两个真实宿主的整段操作及跨宿主快照恢复。
 
 打开 `/dev/ui-kit` 可试用组件目录、浅深主题、三档字号和 Agent 活动态。业务页面从 [ui-kit](src/packages/ui-kit/index.ts) 导入控件，以 `Field` 标记输入，用 `ConfirmActionButton` 或 `InlineConfirmBar` 表达正式操作。`createClinMeshUiAgent` 在渲染前创建，`registerWebMCP()` 注册同一套工具并返回注销函数。标记 `data-agent-confirm` 的操作默认拒绝，页面通过人工审批弹窗单次放行。`data-agent-secret` 隐去控件的值，`data-agent-hidden` 隐去整块区域。
 

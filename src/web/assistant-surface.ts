@@ -65,7 +65,8 @@ export function createAssistantSurface(root: () => HTMLElement | null, edited: S
         const element = agent.elementOf(change.ref);
         if (!root()?.contains(element) || !['value', 'checked', 'pressed'].includes(change.key)) return;
         if (change.source === 'agent') { state.setState(current => ({ unread: current.unread + 1 })); return; }
-        if (['keyboard', 'pen', 'mouse', 'touch', 'virtual'].includes(change.source)) { mark(fieldKey(element, change.label || change.ref)!); protectedFields(); }
+        const field = fieldKey(element);
+        if (field && ['keyboard', 'pen', 'mouse', 'touch', 'virtual'].includes(change.source)) { mark(field); protectedFields(); }
       });
       function humanIntent() { agentTarget = undefined; capture?.disarm(); protectedFields(); }
       function input(event: Event) { if (event.target instanceof Element && root()?.contains(event.target) && (event.isTrusted || !agentOwnsFocus(event.target))) { const key = fieldKey(event.target); if (key) { mark(key); protectedFields(); } } }

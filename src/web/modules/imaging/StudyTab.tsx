@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { formatMinor } from '../../../packages/mod-billing';
 import { studyViewSchema, type StudyKind, type StudyView } from '../../../packages/diagnostic-studies';
 import { Badge, Card, ConfirmActionButton, Dialog, Field, Select } from '../../../packages/ui-kit';
 import { api, errorMessage, scopeKey, words, type Intent, type WorkbenchPanelProps } from '../../workbench-api';
@@ -39,10 +40,10 @@ function StudyWorkspace({ workspace, encounter, language, kind, submit, data, dr
   const statuses = { issued: text('Issued', '已开立'), accepted: text('Accepted', '已受理'), 'in-progress': text('In progress', '执行中'), reported: text('Reported', '已签发'), acknowledged: text('Acknowledged', '已阅'), cancelled: text('Cancelled', '已取消'), 'generation-failed': text('No authored result', '缺少预置结果') };
   return <div className="clinical-panel">{mutation.isError && <p role="alert">{errorMessage(mutation.error, language)}</p>}
     <Card><h3>{text('Request a study', '开立检查申请')}</h3>{kind === 'pathology' && (surgeries.length ? <Field label={text('Related prior surgery', '关联既往手术')}><Select value={surgery || null} onValueChange={value => setSurgery(value ?? '')} options={surgeries.map(item => ({ value: item.id, label: `${item.performedOn} · ${item.description[language]}` }))}/></Field> : <p>{text('No prior surgery is documented for this case.', '本病例没有可关联的既往手术。')}</p>)}
-      {draft.length > 0 && <><h4>{text('Staged requests', '组套待开申请')}</h4><ul>{draft.map(({ display, quote }) => <li key={quote.serviceId} className="diagnosis-row"><span>{display[language]} · {quote.unitPriceMinor / 10 ** quote.currencyExponent} {quote.currencyCode}</span>
+      {draft.length > 0 && <><h4>{text('Staged requests', '组套待开申请')}</h4><ul>{draft.map(({ display, quote }) => <li key={quote.serviceId} className="diagnosis-row"><span>{display[language]} · {formatMinor(quote.unitPriceMinor, { code: quote.currencyCode, minorUnitExponent: quote.currencyExponent })}</span>
         {responsible && allowed('issue') && <ConfirmActionButton disabled={mutation.isPending || (kind === 'pathology' && !surgery)} confirmation={`${text('Issue the reviewed draft', '签发已核对草稿')} · ${display[language]}?`} onClick={() => mutation.mutate({ name: `${kind}.issue`, targetId: encounter.id, version: encounter.version, fields: { item: quote, ...(kind === 'pathology' && { priorSurgeryId: surgery }) } }, { onSuccess: () => consumeStagedMembers(drafts, member => member.catalogId === quote.serviceId) })}>{text('Issue staged request', '签发组套申请')} · {display[language]}</ConfirmActionButton>}</li>)}</ul></>}
       <ul>{data.services.filter(service => !stagedIds.has(service.quote.serviceId)).map(({ display, quote }) => { const name = display[language];
-        const price = new Intl.NumberFormat(language, { style: 'currency', currency: quote.currencyCode, minimumFractionDigits: quote.currencyExponent, maximumFractionDigits: quote.currencyExponent }).format(quote.unitPriceMinor / 10 ** quote.currencyExponent);
+        const price = formatMinor(quote.unitPriceMinor, { code: quote.currencyCode, minorUnitExponent: quote.currencyExponent });
         return <li key={quote.serviceId} className="diagnosis-row"><span>{name}<small>{price}</small></span>{responsible && allowed('issue') && <ConfirmActionButton disabled={mutation.isPending || (kind === 'pathology' && !surgery)} confirmation={`${text('Issue', '开立')} · ${name} · ${price}?`} onClick={() => send('issue', encounter.id, encounter.version, { item: quote, ...(kind === 'pathology' && { priorSurgeryId: surgery }) })}>{text('Issue', '开立')} · {name}</ConfirmActionButton>}</li>;
       })}</ul></Card>
     {data.orders.toReversed().map(order => {

@@ -1,3 +1,4 @@
+import { formatMinor } from '../../../packages/mod-billing';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { issueReceipt, labViewSchema, type LabOrder, type LabView } from '../../../packages/mod-lab';
 import { Badge, Button, Card, ConfirmActionButton, Dialog } from '../../../packages/ui-kit';
@@ -40,7 +41,7 @@ function LabWorkspace({ workspace, encounter, language, submit, data }: Workbenc
   });
   const ids = data.draft.items.map(item => item.serviceId);
   const edit = (serviceIds: string[]) => mutation.mutate([{ name: 'lab.save-draft', targetId: encounter.id, version: data.draft.version, fields: { serviceIds } }]);
-  const money = (amount: number, code: string, exponent: number) => new Intl.NumberFormat(language, { style: 'currency', currency: code, minimumFractionDigits: exponent, maximumFractionDigits: exponent }).format(amount / 10 ** exponent);
+  const money = (amount: number, code: string, minorUnitExponent: number) => formatMinor(amount, { code, minorUnitExponent });
   const statuses: Record<LabOrder['status'], string> = { issued: text('Issued', '已开立'), accepted: text('Accepted', '已受理'), 'in-progress': text('In progress', '执行中'), reported: text('Reported', '待阅报告'), acknowledged: text('Acknowledged', '已确认审阅'), cancelled: text('Cancelled', '已取消'), 'generation-failed': text('Report generation failed', '报告生成失败') };
   const action = (order: LabOrder, operation: string, label: string) => allowed(operation) && <ConfirmActionButton disabled={mutation.isPending} confirmation={`${label} · ${orderName(order)}?`} onClick={() => mutation.mutate([{ name: `lab.${operation}`, targetId: order.id, version: order.version }])}>{label} · {orderName(order)} · {order.id.slice(-6)}</ConfirmActionButton>;
   return <div className="clinical-panel" data-assistant-field="investigation:draft" data-assistant-list>

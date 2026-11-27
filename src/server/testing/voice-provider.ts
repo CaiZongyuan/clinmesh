@@ -1,12 +1,15 @@
 import { z } from 'zod';
 
 export const hostKey = 'synthetic-voice-host', visitorKey = 'synthetic-voice-visitor';
-export function scriptedBailian(authorization: string | undefined, send: (data: string | ArrayBuffer) => void) {
+export function scriptedBailian(authorization: string | undefined, send: (data: string | ArrayBuffer) => void, microphone: 'fixture' | 'browser' = 'fixture') {
   let id = '';
+  let transcribed = false;
   const event = (event: string, payload = {}) => send(JSON.stringify({ header: { event, task_id: id }, payload }));
   return (frame: string | ArrayBuffer) => {
     if (typeof frame !== 'string') {
-      if (frame.byteLength !== 3200 || new DataView(frame).getInt16(0, true) !== -1600) throw Error('Unexpected PCM');
+      if (!frame.byteLength || frame.byteLength % 2 || (microphone === 'fixture' && (frame.byteLength !== 3200 || new DataView(frame).getInt16(0, true) !== -1600))) throw Error('Unexpected PCM');
+      if (transcribed) return;
+      transcribed = true;
       event('result-generated', { output: { sentence: { sentence_end: false, text: 'A teaching' } } });
       event('result-generated', { output: { sentence: { sentence_end: true, text: 'A teaching question.' } } });
       return;

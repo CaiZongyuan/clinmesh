@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { ClinicianAssistant, PatientRuntime, type AgentEnvironment } from '../packages/agent-runtime';
+import { ClinicianAssistant, PatientRuntime, type AgentEnvironment, type ExecutionEnvironments } from '../packages/agent-runtime';
 import { permitsProviderKey } from '../packages/agent-protocol';
 import { openVoiceSession, voiceBinding, voiceHandshake, voiceModule, type BailianConnect, type VoiceSocket } from '../packages/mod-voice';
 import { requireEncounter } from '../packages/patient-visit';
@@ -115,8 +115,8 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     return context.json({ code: 'ROUTE_NOT_FOUND' }, 404);
   });
   return Object.assign(app, {
-    async runEvaluation(launch: EvaluationLaunch, request: Request): Promise<Response> {
-      try { return Response.json(await evaluateEncounter(store, catalog, registry, environment, launch, request), { status: 201 }); }
+    async runEvaluation(launch: EvaluationLaunch, request: Request, environments: ExecutionEnvironments = {}): Promise<Response> {
+      try { return Response.json(await evaluateEncounter(store, catalog, registry, environment, launch, request, environments), { status: 201 }); }
       catch (error) { return handleError(error instanceof Error ? error : Error('EVALUATION_FAILED')); }
     },
     evaluationReport: (runId: string) => evaluationResult(store, runId),

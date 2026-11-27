@@ -2,14 +2,13 @@
 
 ClinMesh is a global healthcare agent exploration platform built around a modular **Mini HIS Core**, dual isolated `pi-durable` agents (**Patient Agent** and **Clinician Assistant**), declarative **Hospital Data Packs**, `@ui-sdk/react` agent-ready UI, and optional voice (`mod-voice`), running isomorphically on Cloudflare Workers Free (SQLite-backed Durable Objects) and local Node (SQLite, PostgreSQL-portable).
 
-> **Migration note on `refactor/next-gen-modular-his`**: Legacy implementations are available in Git history. New work targets the architecture below exclusively.
-
 ## Where things live
 
 - Domain vocabulary (read before naming types, issues, or tests): [`GLOSSARY.md`](GLOSSARY.md)
 - Architectural decisions (read ADRs touching your module before editing): [`docs/adr/`](docs/adr/0001-modular-monolith-and-deep-modules.md) (`0001`–`0008`)
 - Issue tracker & triage labels (read before creating or triaging GitHub Issues): [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md), [`docs/agents/triage-labels.md`](docs/agents/triage-labels.md)
-- Target code layout: `src/packages/<name>/{index.ts, lib/, tests/}` (deep modules), `src/server/` (`worker.ts` + `node-server.ts`), `src/web/`, `src/cli/`, `data/packs/`
+- Module entries are in `src/packages/<name>/index.ts`. The two hosts share `src/server/workspace.ts`. The workbench is in `src/web/`, the host CLI in `src/cli/`, and the authored cases in `data/packs/`.
+- For local Node, Wrangler, CLI and Evaluation Run entrypoints, follow the [Windows launch guide](README.md). Exercise the complete clinical journey through `src/server/tests/full-platform-e2e.test.ts` and measure the production upload with `pnpm verify:worker`.
 - Local skills (read before touching their domain): `ui-sdk` (any `@ui-sdk/react` component or agent bridge), `voice` (Alibaba Cloud Bailian `paraformer-realtime-v2` / `sambert` or `mod-voice`), `domain-modeling` (`GLOSSARY.md` / `docs/adr/`), `writing-for-agents` (`AGENTS.md` / skills)
 
 ## Architecture contracts
