@@ -1,7 +1,7 @@
 import { open, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep, win32 } from 'node:path';
 import { z } from 'zod';
-import type { OperationDescription } from '../packages/operation-catalog';
+import { inputValidator, type OperationDescription } from '../packages/operation-catalog';
 import { CliError, invalid } from './errors';
 
 export function parseArguments(argv: string[]) {
@@ -72,8 +72,7 @@ function scalar(schema: z.ZodType, text: string) {
 
 export async function operationInput(operation: OperationDescription, args: ReturnType<typeof parseArguments>) {
   const fields = args.input === undefined ? {} : await workspaceInput(args.input);
-  const schema = z.fromJSONSchema(operation.inputSchema);
-  if (!(schema instanceof z.ZodObject)) throw Error('Invalid catalog input contract');
+  const schema = inputValidator(operation);
   const shape: z.ZodRawShape = schema.shape;
   for (const [flag, text] of args.flags) {
     const field = flag.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());

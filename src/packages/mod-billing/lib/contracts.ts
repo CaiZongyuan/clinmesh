@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { distinctInput } from '../../operation-catalog';
 import type { StoreReader, StoreScope, StoreTx } from '../../store';
 import { currencySchema } from './money';
 
@@ -7,9 +8,9 @@ export const positive = z.int().positive();
 export const id = z.uuidv7();
 export const reason = z.string().trim().min(1).max(500);
 export const tender = z.strictObject({ method: z.string().min(1), amountMinor: positive });
-export const tenders = z.array(tender.extend({ method: z.enum(['cash', 'card', 'mobile']) })).min(1).max(3).refine(items => new Set(items.map(item => item.method)).size === items.length);
+export const tenders = distinctInput(z.array(tender.extend({ method: z.enum(['cash', 'card', 'mobile']) })).min(1).max(3), 'method');
 export const simulation = z.enum(['approved', 'declined', 'delayed-approval', 'delayed-decline']).default('approved');
-export const chargeIds = z.array(id).min(1).max(20).refine(ids => new Set(ids).size === ids.length);
+export const chargeIds = distinctInput(z.array(id).min(1).max(20));
 export const allocation = z.object({ chargeId: id, amountMinor: positive });
 export const attemptKind = z.enum(['collection', 'refund', 'deposit', 'deposit-refund']);
 export const fundsStatus = z.enum(['succeeded', 'declined', 'unknown']);

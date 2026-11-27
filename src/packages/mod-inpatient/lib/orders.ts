@@ -1,5 +1,6 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
+import { distinctInput } from '../../operation-catalog';
 import { medicationSchema, pharmacyRulesSchema, readClinicalCase } from '../../data-pack';
 import { availableStock, checkPrescription, takeStock } from '../../mod-pharmacy';
 import { requireEncounter } from '../../patient-visit';
@@ -8,7 +9,7 @@ import type { EntityRow, StoreReader, StoreScope } from '../../store';
 import { expand, localDay, policy, task } from './calendar';
 import { advance, chargeOrder, conflict, id, mutateAdmission, openOrder, receipt, route, text, times, wardDepartment, type WardBilling } from './ward';
 
-export const identifiers = z.array(id).min(1).max(20).refine(ids => new Set(ids).size === ids.length);
+export const identifiers = distinctInput(z.array(id).min(1).max(20));
 const diagnosis = z.strictObject({ codeSystem: z.url(), code: text, primary: z.boolean(), ordinal: z.int().min(1).max(8), poa: z.enum(['Y', 'N', 'U', 'W', '1']) });
 const directions = z.object({ dose: z.number().positive(), route: text, quantity: z.int().positive(), timesPerDay: z.int().positive() });
 export function wardMedicationDirections(reader: StoreReader, at: StoreScope, order: EntityRow<'clinical_orders'>) {

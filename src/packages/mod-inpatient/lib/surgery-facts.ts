@@ -1,5 +1,6 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
+import { distinctInput } from '../../operation-catalog';
 import { caseTruthSchema, catalogSchema, wardKnowledgeSchema, type Coding } from '../../data-pack';
 import { availableStock, takeStock } from '../../mod-pharmacy';
 import { localizedName, type CommandContext } from '../../platform';
@@ -8,7 +9,7 @@ import { itemFor, localDay, policy } from './calendar';
 import { conflict, id, openOrder, text, times, type WardBilling } from './ward';
 
 export const material = z.strictObject({ itemId: id, quantity: z.int().min(1).max(1000) });
-export const materials = z.array(material).max(20).refine(rows => new Set(rows.map(row => row.itemId)).size === rows.length);
+export const materials = distinctInput(z.array(material).max(20), 'itemId');
 export const notice = z.strictObject({ procedureId: id, type: z.enum(['elective', 'urgent', 'emergency', 'day']), plannedAt: z.iso.datetime(), location: text,
   surgeon: text, assistant: text.optional(), anesthesia: text, reason: text, preopOrderPolicy: z.enum(['continue-active', 'stop-on-completion']), standbyAdHocPci: z.boolean().default(false), materials: materials.default([]) });
 export type Stage = EntityRow<'ward_surgery_stages'>;

@@ -51,6 +51,27 @@ export function describeOperation({ inputSchema, outputSchema, paramsSchema: _pa
 
 export type OperationDescription = ReturnType<typeof describeOperation>;
 
+function distinct(values: readonly unknown[], property?: string) {
+  const keys = property ? values.map(value => (value as Record<string, unknown>)[property]) : values;
+  return new Set(keys).size === keys.length;
+}
+
+export function distinctInput<Schema extends z.ZodArray>(schema: Schema, property?: string) {
+  return schema.refine(values => distinct(values, property)).meta({ uniqueItems: true, ...(property && { 'x-clinmesh-uniqueBy': property }) });
+}
+
+export function inputValidator(operation: OperationDescription) {
+  const schema = z.fromJSONSchema(operation.inputSchema);
+  if (!(schema instanceof z.ZodObject)) throw Error('Invalid catalog input contract');
+  return schema.superRefine((input, context) => {
+    for (const [name, field] of Object.entries(operation.inputSchema.properties ?? {})) {
+      const property = 'x-clinmesh-uniqueBy' in field ? field['x-clinmesh-uniqueBy'] : undefined;
+      const values = input[name];
+      if (typeof property === 'string' && Array.isArray(values) && !distinct(values, property)) context.addIssue({ code: 'custom', path: [name], message: `Expected distinct ${property} values` });
+    }
+  });
+}
+
 export function operationRequest(operation: OperationDescription, input: Record<string, unknown>) {
   const path = operation.http.path.replace(/:(\w+)/g, (_, name: string) => encodeURIComponent(String(input[name])));
   const query = new URLSearchParams();

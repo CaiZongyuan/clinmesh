@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
 import { z } from 'zod';
 import pkg from '../../../package.json';
+import { prepareCliPackage } from '../../../scripts/prepare-cli-package';
 import { teachingGate, withNodeWorkspace } from '../../../scripts/testing/node-workspace';
 import { encounterViewSchema, workspaceSchema } from '../../packages/clinical-core';
 import { labViewSchema } from '../../packages/mod-lab';
@@ -45,7 +46,8 @@ it('runs the external package bin in node_modules with only the CLI, public cont
   try {
     const installed = join(cwd, 'node_modules', 'clinmesh');
     await mkdir(join(installed, 'node_modules'), { recursive: true });
-    for (const path of ['package.json', 'bin', 'src/cli', 'src/packages/operation-catalog/index.ts']) await cp(path, join(installed, path), { recursive: true, filter: source => !source.endsWith('tests') });
+    await prepareCliPackage(installed);
+    expect(JSON.parse(await readFile(join(installed, 'package.json'), 'utf8')).dependencies).toEqual({ tsx: pkg.dependencies.tsx, zod: pkg.dependencies.zod });
     for (const dependency of ['tsx', 'zod']) await symlink(await realpath(`node_modules/${dependency}`), join(installed, 'node_modules', dependency), 'junction');
     const options = { cwd, binPath: join(installed, pkg.bin.clinmesh) };
     expect(success(await cli(['--version'], options), 'cli.version')).toEqual({ packageVersion: pkg.version });
@@ -60,7 +62,8 @@ it('discovers offline, prints human tables and rejects invalid and escaping inpu
     const cwd = join(dir, 'workspace'); await mkdir(cwd);
     const outside = join(dir, 'outside'); await mkdir(outside); await writeFile(join(outside, 'input.json'), '{}');
     await symlink(outside, join(cwd, 'link'), 'junction');
-    await writeFile(join(cwd, 'large.json'), ' '.repeat(1024 * 1024 + 1));
+    const oversized = '{}'.padEnd(1024 * 1024 + 1);
+    await writeFile(join(cwd, 'large.json'), oversized);
     const schema = success(await cli(['operations', 'schema', 'lab.issue', '--json']), 'operations.schema');
     expect(schema).toMatchObject({ cliPath: 'lab order issue', inputSchema: { required: expect.arrayContaining(['id', 'epoch', 'items']) }, outputSchema: { required: ['version', 'results'] } });
     const list = success(await cli(['operations', 'list', '--json']), 'operations.list');
@@ -68,7 +71,10 @@ it('discovers offline, prints human tables and rejects invalid and escaping inpu
     const table = await cli(['operations', 'list', '--output', 'table']);
     expect(table.code).toBe(0); expect(table.stderr).toBe(''); expect(table.stdout).toContain('lab order issue');
     const inputs = ['@../outside/input.json', `@${join(outside, 'input.json')}`, '@link/input.json', '@large.json', '-'];
-    for (const input of inputs) rejected(await cli(['encounter', 'list', '--input', input], { cwd, stdin: input === '-' ? ' '.repeat(1024 * 1024 + 1) : '' }), 'INVALID_INPUT');
+    for (const input of inputs) rejected(await cli(['encounter', 'list', '--input', input], { cwd, stdin: input === '-' ? oversized : '' }), 'INVALID_INPUT');
+    const id = '0191abcd-1111-7000-8000-000000000001';
+    rejected(await cli(['command', 'receipt', 'get', '--epoch', id, '--idempotency-key', 'patient-reply:review']), 'INVALID_INPUT');
+    rejected(await cli(['lab', 'save-draft', '--input', '-'], { stdin: JSON.stringify({ id, epoch: id, idempotencyKey: 'repeat', expectedVersion: 0, serviceIds: [id, id] }) }), 'INVALID_INPUT');
     rejected(await cli(['record', 'draft', '--expected-version', 'NaN']), 'INVALID_INPUT');
     rejected(await cli(['encounter', 'read', '--id', '../workspace']), 'INVALID_INPUT');
     rejected(await cli(['operations', 'schema', 'encounter.debrief']), 'INVALID_INPUT');

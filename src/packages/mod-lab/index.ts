@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { requireEncounter } from '../patient-visit';
+import { distinctInput } from '../operation-catalog';
 import { executionReceipt, readDiagnosticOrder } from '../diagnostic-workflow';
 import type { ClinMeshModule, OperationCatalog } from '../platform';
 import { findings, issueReceipt, labViewSchema, maxBatch, quote, type LabBillingPort } from './lib/contracts';
@@ -24,8 +25,8 @@ export function createLabModule({ billing, legacyProcedures = [] }: { billing?: 
         return { services: clinicalServices(reader, at, legacy).map(({ definition, kind, quote: { serviceId, ...price } }) => ({ id: serviceId, ...price, kind, display: definition.display, codeSystem: definition.codeSystem, code: definition.code })),
           draft: savedDraft(reader, at, targetId), orders: labOrders(reader, at, targetId).map(order => readDiagnosticOrder(reader, at, order, findings.parse)) };
       });
-      catalog.command({ name: 'lab.save-draft', path: `${base}/draft`, method: 'PUT', access: { capabilities: ['assess'] }, risk: 'write' }, { serviceIds: z.array(z.uuidv7()).max(maxBatch).refine(items => new Set(items).size === items.length) }, z.object({ version: z.int().positive() }), (context, { serviceIds }) => saveDraft(context, serviceIds, legacy));
-      catalog.command({ name: 'lab.issue', cliPath: 'lab order issue', path: `${base}/issue`, method: 'POST', access: sign, expectedVersionFields: ['items[].catalogVersion'] }, { items: z.array(quote).min(1).max(maxBatch).refine(items => new Set(items.map(item => item.serviceId)).size === items.length) }, issueReceipt, (context, { items }) => issueOrders(context, items, legacy, billing));
+      catalog.command({ name: 'lab.save-draft', path: `${base}/draft`, method: 'PUT', access: { capabilities: ['assess'] }, risk: 'write' }, { serviceIds: distinctInput(z.array(z.uuidv7()).max(maxBatch)) }, z.object({ version: z.int().positive() }), (context, { serviceIds }) => saveDraft(context, serviceIds, legacy));
+      catalog.command({ name: 'lab.issue', cliPath: 'lab order issue', path: `${base}/issue`, method: 'POST', access: sign, expectedVersionFields: ['items[].catalogVersion'] }, { items: distinctInput(z.array(quote).min(1).max(maxBatch), 'serviceId') }, issueReceipt, (context, { items }) => issueOrders(context, items, legacy, billing));
       for (const action of ['accept', 'start', 'report-now', 'cancel'] as const) {
         const access = action === 'cancel' ? { ...sign, visitorOnly: true } : { capabilities: ['execute-orders', 'sign', 'workspace-admin'] };
         catalog.command({ name: `lab.${action}`, cliPath: `lab order ${action}`, path: `/api/his/lab/orders/:id/${action}`, method: 'POST', access }, {}, executionReceipt, context => moveOrder(context, action, billing));

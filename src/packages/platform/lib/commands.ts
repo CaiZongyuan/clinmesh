@@ -5,7 +5,7 @@ import { canonicalJson, type StorePort, type StoreReader, type StoreScope, type 
 import { CoreError, sha256, type Credential } from './visitor-gate';
 import type { ClinicalQualityIntent } from './clinical-quality';
 
-export const commandEnvelope = z.object({ epoch: z.uuidv7(), idempotencyKey: z.string().trim().min(1).max(160).refine(key => !key.startsWith('patient-reply:')), expectedVersion: z.int().nonnegative() });
+export const commandEnvelope = z.object({ epoch: z.uuidv7(), idempotencyKey: z.string().trim().min(1).max(160).regex(/^(?!\s*patient-reply:)(?=[\s\S]*\S)/), expectedVersion: z.int().nonnegative() });
 export type CommandEnvelope = z.infer<typeof commandEnvelope>;
 export const localizedName = z.object({ en: z.string(), zh: z.string() });
 export const practitionerRole = z.object({ id: z.string(), name: localizedName, capabilities: z.array(z.string()) });

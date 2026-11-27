@@ -7,7 +7,7 @@ import { builtinModules } from '../../../server/builtin-modules';
 import { createWorkspaceApp } from '../../../server/workspace';
 import { createNodeSqliteStore } from '../../store';
 import type { OperationCatalog } from '../../platform';
-import { describeOperation, type OperationDescription } from '../index';
+import { describeOperation, inputValidator, type OperationDescription } from '../index';
 
 const hostExceptions = {
   'GET /api/health': 'Public liveness and installed-module check before the Visitor Gate.',
@@ -88,6 +88,35 @@ it('keeps the module receiver when the workspace composes operations', async () 
   const store = createNodeSqliteStore({ dbPath: ':memory:' });
   try { expect(createWorkspaceApp(store, {}, [new Census()]).routes.map(key)).toContain('GET /api/census'); }
   finally { await store.close(); }
+});
+
+it('applies input-only uniqueness, reserved keys and nonzero amounts identically offline and on the server', () => {
+  const { catalog } = createOperationCatalog(builtinModules);
+  const id = '0191abcd-1111-7000-8000-000000000001';
+  const second = '0191abcd-1111-7000-8000-000000000002';
+  const write = { id, epoch: id, expectedVersion: 0, idempotencyKey: 'normal' };
+  const quote = { serviceId: id, catalogVersion: '1', unitPriceMinor: 1, currencyCode: 'USD', currencyExponent: 2 };
+  const cases: [string, object, object][] = [
+    ['encounter.start', write, { idempotencyKey: ' patient-reply:review' }],
+    ['command.receipt.get', { epoch: id, idempotencyKey: 'normal' }, { idempotencyKey: 'patient-reply:review' }],
+    ['lab.save-draft', { ...write, serviceIds: [id, second] }, { serviceIds: [id, id] }],
+    ['lab.issue', { ...write, items: [quote] }, { items: [quote, { ...quote, unitPriceMinor: 2 }] }],
+    ['payment.preview', { ...write, chargeIds: [id] }, { chargeIds: [id, id] }],
+    ['payment.preview', { ...write, chargeIds: [id], tenders: [{ method: 'cash', amountMinor: 1 }] }, { tenders: [{ method: 'cash', amountMinor: 1 }, { method: 'cash', amountMinor: 2 }] }],
+    ['benefit.preview', { ...write, planId: 'example', chargeIds: [id] }, { chargeIds: [id, id] }],
+    ['ward.order.verify', { ...write, orderIds: [id] }, { orderIds: [id, id] }],
+    ['ward.task.administer', { ...write, taskIds: [id] }, { taskIds: [id, id] }],
+    ['ward.surgery.execute', { ...write, requestId: id, materials: [{ itemId: id, quantity: 1 }] }, { materials: [{ itemId: id, quantity: 1 }, { itemId: id, quantity: 2 }] }],
+    ['inpatient.correction', { ...write, chargeId: id, amountMinor: -1, reason: 'Duplicate entry' }, { amountMinor: 0 }],
+  ];
+  for (const [operation, valid, changes] of cases) {
+    const generated = offline.find(entry => entry.id === operation)!;
+    const server = catalog.require(operation).contract.inputSchema;
+    for (const validator of [inputValidator(generated), server]) {
+      expect(validator.safeParse(valid).success, operation).toBe(true);
+      expect(validator.safeParse({ ...valid, ...changes }).success, operation).toBe(false);
+    }
+  }
 });
 
 it('resolves every skill example through the operation paths and schema IDs', () => {
