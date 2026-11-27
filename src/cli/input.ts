@@ -63,7 +63,9 @@ async function workspaceInput(source: string) {
   } catch (error) { if (error instanceof CliError) throw error; return invalid('Cannot read the workspace input file.'); }
 }
 
-function scalar(schema: z.ZodType, text: string) {
+function scalar(field: z.core.JSONSchema.JSONSchema | boolean, text: string) {
+  if (typeof field === 'object' && field.type === 'string') return text;
+  const schema = z.fromJSONSchema(field);
   if (schema.safeParse(text).success) return text;
   if (/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(text) && schema.safeParse(Number(text)).success) return Number(text);
   if (['true', 'false'].includes(text) && schema.safeParse(text === 'true').success) return text === 'true';
@@ -72,12 +74,11 @@ function scalar(schema: z.ZodType, text: string) {
 
 export async function operationInput(operation: OperationDescription, args: ReturnType<typeof parseArguments>) {
   const fields = args.input === undefined ? {} : await workspaceInput(args.input);
-  const schema = inputValidator(operation);
-  const shape: z.ZodRawShape = schema.shape;
+  const shape = operation.inputSchema.properties ?? {};
   for (const [flag, text] of args.flags) {
     const field = flag.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
     if (!Object.hasOwn(shape, field) || Object.hasOwn(fields, field)) invalid(`Unknown or repeated field --${flag}.`);
-    fields[field] = scalar(shape[field] as z.ZodType, text);
+    fields[field] = scalar(shape[field]!, text);
   }
-  return schema.parse(fields);
+  return inputValidator(operation).parse(fields);
 }

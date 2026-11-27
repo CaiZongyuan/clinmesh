@@ -46,12 +46,12 @@ it('discovers the workbench, edits real drafts, and requires human approval for 
     expect(new Set(visible.map(entry => entry.label)).size).toBe(visible.length);
   };
   const formal = async (label: string, suffix: string) => {
-    const button = screen.getByRole('button', { name: label });
-    await waitFor(() => expect(button.hasAttribute('disabled')).toBe(false));
-    expect(button.getAttribute('data-agent-confirm')).toBeTruthy();
+    const button = () => screen.getByRole('button', { name: label });
+    await waitFor(() => expect(button().hasAttribute('disabled'), `${label} must be ready`).toBe(false));
+    expect(button().getAttribute('data-agent-confirm')).toBeTruthy();
     expect((await agent.act({ steps: [{ ref: label, action: 'press' }] })).ok).toBe(false);
     expect(submitted.filter(path => path.endsWith(suffix))).toHaveLength(0);
-    await human.click(button);
+    await human.click(button());
     await waitFor(() => expect(submitted.filter(path => path.endsWith(suffix))).toHaveLength(1));
   };
   await withNodeWorkspace(async origin => {

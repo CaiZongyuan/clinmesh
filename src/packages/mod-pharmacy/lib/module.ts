@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { requireEncounter } from '../../patient-visit';
 import { clinicalOverrideInput, type Actor, type ClinMeshModule, type OperationCatalog } from '../../platform';
-import { compatibleInput } from '../../operation-catalog';
+import { compatibleInput, trimmedInput } from '../../operation-catalog';
 import { hasMedicationDecision, prescribingView, prescribingViewSchema, recordNoMedication, signPrescription, withdrawPrescription, type PharmacyBillingPort } from './clinical';
 import { dispensePrescription, dispenseQueue, dispenseQueueSchema, dispenseReceipt, initializePharmacy, selectedLotSchema } from './dispensing';
 import { prescriptionLineSchema } from './safety';
@@ -11,7 +11,7 @@ const dispense = { capabilities: ['dispense'], visitorOnly: true };
 const encounters = '/api/his/encounters/:id';
 const prescriptions = '/api/his/prescriptions/:id';
 const version = z.object({ version: z.int().positive() });
-const reason = z.string().trim().min(1).max(1000);
+const reason = trimmedInput(1, 1000);
 
 export function createPharmacyModule(billing?: PharmacyBillingPort): ClinMeshModule<OperationCatalog> {
   const funds = (actor: Actor) => actor.enabledModules.includes('mod-billing') ? billing : undefined;

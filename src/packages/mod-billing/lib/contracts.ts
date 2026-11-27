@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import { distinctInput } from '../../operation-catalog';
+import { distinctInput, trimmedInput } from '../../operation-catalog';
 import type { StoreReader, StoreScope, StoreTx } from '../../store';
 import { currencySchema } from './money';
 
 export const amount = z.int().nonnegative();
 export const positive = z.int().positive();
 export const id = z.uuidv7();
-export const reason = z.string().trim().min(1).max(500);
+export const reason = trimmedInput(1, 500);
 export const tender = z.strictObject({ method: z.string().min(1), amountMinor: positive });
 export const tenders = distinctInput(z.array(tender.extend({ method: z.enum(['cash', 'card', 'mobile']) })).min(1).max(3), 'method');
 export const simulation = z.enum(['approved', 'declined', 'delayed-approval', 'delayed-decline']).default('approved');

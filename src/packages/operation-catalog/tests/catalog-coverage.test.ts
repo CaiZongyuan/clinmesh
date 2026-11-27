@@ -119,6 +119,46 @@ it('applies input-only uniqueness, reserved keys and nonzero amounts identically
   }
 });
 
+it('normalizes only the declared text before checking bounds, patterns and nested fields', () => {
+  const { catalog } = createOperationCatalog(builtinModules);
+  const id = '0191abcd-1111-7000-8000-000000000001';
+  const write = { id, epoch: id, expectedVersion: 0, idempotencyKey: 'normal' };
+  const override = (note: string) => ({ clinicalOverride: { note, reasonCode: 'specialist-judgment', ruleCodes: [' rule '] } });
+  const diagnoses = (code: string) => ({ diagnoses: [{ codeSystem: 'urn:teaching', code, primary: true }] });
+  const question = 'a'.repeat(8000);
+  const cases: [string, object, object | false][] = [
+    ['consultation.question', { channel: 'text', content: `  ${question}\t` }, { content: question }],
+    ['consultation.question', { channel: 'text', content: '\t   ' }, false],
+    ['consultation.question', { channel: 'text', content: question + 'b' }, false],
+    ['prescription.no-medication', { reason: '   ' }, false],
+    ['prescription.no-medication', { reason: '\tReason  ' }, { reason: 'Reason' }],
+    ['encounter.complete', override(' 	 '), false],
+    ['encounter.complete', override(' abc  '), false],
+    ['encounter.complete', override('  note\t'), override('note')],
+    ['diagnosis.draft', diagnoses('  J18.9\t'), diagnoses('J18.9')],
+    ['diagnosis.draft', diagnoses('   '), false],
+    ['prescription.withdraw', { reason: ' why ' }, { reason: 'why' }],
+    ['prescription.withdraw', { reason: 'why', noMedicationReason: '  no  ' }, { noMedicationReason: 'no' }],
+    ['prescription.withdraw', { reason: 'why', noMedicationReason: '   ' }, false],
+    ['record.draft', { expectedDraftVersion: 0, fields: { concern: ' \t  ' } }, { fields: { concern: ' \t  ' } }],
+    ['record.sign', { idempotencyKey: ` ${'k'.repeat(160)} ` }, { idempotencyKey: 'k'.repeat(160) }],
+  ];
+  for (const [name, fields, expected] of cases) {
+    const input = { ...write, ...fields };
+    const runtime = catalog.require(name).contract.inputSchema.safeParse(input);
+    const projected = inputValidator(offline.find(operation => operation.id === name)!).safeParse(input);
+    expect(projected.success, name).toBe(expected !== false);
+    expect(runtime.success, name).toBe(projected.success);
+    if (expected !== false) {
+      expect(projected.data, name).toEqual({ ...input, ...expected });
+      expect(runtime.data, name).toEqual(projected.data);
+    }
+  }
+  const workspace = offline.find(operation => operation.id === 'workspace.reset')!;
+  const { id: _id, ...withoutTarget } = write;
+  expect(inputValidator(workspace).parse({ ...withoutTarget, packId: '  ' }).packId).toBe('  ');
+});
+
 it('resolves every skill example through the operation paths and schema IDs', () => {
   const skill = readFileSync('skills/clinmesh/SKILL.md', 'utf8');
   const commands = Array.from(skill.matchAll(/\bclinmesh (?=[a-z-])([^\r\n`]+)/g), match => match[1]!.trim());

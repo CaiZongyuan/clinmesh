@@ -93,7 +93,7 @@ async function enterAndGrant(origin: string) {
   const issued = async (role: string, operations: string[]) => z.object({ token: z.string(), tokenId: z.uuidv7() }).parse(await (await grant(role, operations)).json());
   const intake = await issued('intake', ['workspace.read']);
   const registration = await issued('intake', ['encounter.start']);
-  const clinical = ['encounter.read', 'record.draft', 'record.sign', 'diagnosis.draft', 'diagnosis.confirm', 'lab.read', 'lab.save-draft', 'lab.issue', 'lab.accept', 'lab.start', 'lab.report-now', 'lab.acknowledge', 'prescription.no-medication', 'encounter.completion', 'encounter.complete', 'command.receipt.get'];
+  const clinical = ['encounter.read', 'consultation.question', 'record.draft', 'record.sign', 'diagnosis.draft', 'diagnosis.confirm', 'lab.read', 'lab.save-draft', 'lab.issue', 'lab.accept', 'lab.start', 'lab.report-now', 'lab.acknowledge', 'prescription.no-medication', 'encounter.completion', 'encounter.complete', 'command.receipt.get'];
   const clinician = await issued('family-clinician', clinical);
   const other = await issued('family-clinician', ['record.sign']);
   for (const [role, operation] of [['intake', 'lab.issue'], ['family-clinician', 'lab.amend'], ['family-clinician', 'prescription.sign'], ['coordinator', 'capability.issue']]) {
@@ -104,11 +104,14 @@ async function enterAndGrant(origin: string) {
 
 async function lostResponses(origin: string) {
   const counts = new Map<string, number>();
+  const received = new Map<string, unknown>();
   const proxy = createServer(async (request, reply) => {
     const parts: Buffer[] = [];
     for await (const part of request) parts.push(part);
     const body = Buffer.concat(parts).toString();
-    const key = body && z.object({ idempotencyKey: z.string() }).parse(JSON.parse(body)).idempotencyKey;
+    const payload: unknown = body && JSON.parse(body);
+    const key = body && z.object({ idempotencyKey: z.string() }).parse(payload).idempotencyKey;
+    if (key) received.set(key, payload);
     const headers = new Headers({ authorization: request.headers.authorization!, 'content-type': 'application/json' });
     const confirmation = request.headers['x-clinmesh-confirm'];
     if (typeof confirmation === 'string') headers.set('X-ClinMesh-Confirm', confirmation);
@@ -121,7 +124,7 @@ async function lostResponses(origin: string) {
     else { reply.writeHead(response.status, { 'content-type': 'application/json' }); reply.end(data); }
   });
   proxy.listen(0, '127.0.0.1'); await once(proxy, 'listening');
-  return { origin: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`, counts, close: () => new Promise<void>(resolve => proxy.close(() => resolve())) };
+  return { origin: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`, counts, received, close: () => new Promise<void>(resolve => proxy.close(() => resolve())) };
 }
 
 it('completes a native Hono/SQLite outpatient encounter via scoped CLI subprocesses and recovers committed writes without resending', async () => {
@@ -155,6 +158,19 @@ it('completes a native Hono/SQLite outpatient encounter via scoped CLI subproces
       const opened = success(await run('encounter start --input - --yes', { ...start, id: patient.id }, registration.token), 'encounter.start');
       expect(success(await run('command receipt get --input -', { epoch, idempotencyKey: start.idempotencyKey }, registration.token), 'command.receipt.get')).toMatchObject({ result: opened });
       const { encounterId: id, version } = z.object({ encounterId: z.uuidv7(), version: z.int() }).parse(opened);
+      for (const [operation, path, command, fields] of [
+        ['prescription.no-medication', 'no-medication', 'prescription no-medication', { reason: '  \t ' }],
+        ['encounter.complete', 'complete', 'encounter complete', { clinicalOverride: { reasonCode: 'specialist-judgment', note: '    ', ruleCodes: ['example'] } }],
+      ] as const) {
+        const body = { ...envelope(version, `blank-${operation}`), ...fields };
+        rejected(await run(`${command} --input - --yes`, { id, ...body }), 'INVALID_INPUT');
+        expect(proxy.received.has(body.idempotencyKey)).toBe(false);
+        const response = await fetch(`${origin}/api/his/encounters/${id}/${path}`, { method: 'POST', headers: { authorization: `Bearer ${clinician.token}`, 'X-ClinMesh-Confirm': operation }, body: JSON.stringify(body) });
+        expect(response.status).toBe(400); expect(await response.json()).toEqual({ code: 'INVALID_INPUT' });
+      }
+      const content = 'a'.repeat(8000);
+      rejected(await cli(['consultation', 'question', '--content', `  ${content}  `, '--input', '-'], { origin: proxy.origin, token: clinician.token, stdin: JSON.stringify({ id, ...envelope(version, 'long-question'), channel: 'text' }) }), 'LLM_PROVIDER_UNCONFIGURED');
+      expect(proxy.received.get('long-question')).toMatchObject({ content });
       const cliInput = rejected(await run('record sign --input - --yes', { ...envelope(version), id: 'invalid' }), 'INVALID_INPUT');
       for (const [target, extra] of [['invalid', {}], [id, { id: patient.id }]] as const) {
         const malformed = await fetch(`${origin}/api/his/encounters/${target}/clinical-record/sign`, { method: 'POST', headers: { authorization: `Bearer ${clinician.token}`, 'X-ClinMesh-Confirm': 'record.sign' }, body: JSON.stringify({ ...envelope(version), ...extra }) });
@@ -190,7 +206,8 @@ it('completes a native Hono/SQLite outpatient encounter via scoped CLI subproces
       const report = (await lab()).orders[0]!.reports[0]!;
       expect(report.acknowledged).toBeNull(); expect(report.observations.length).toBeGreaterThan(0);
       await write('lab report acknowledge', 'lab.acknowledge', report.id, orderVersion, { reportVersion: report.version });
-      const medicationVersion = await applied(await run('prescription no-medication --input - --yes', { id, ...envelope(confirmed, 'misdirected'), reason: 'Reviewed for this teaching encounter' }), 'misdirected', 'HTTP_421', 'prescription.no-medication');
+      const medicationVersion = await applied(await run('prescription no-medication --input - --yes', { id, ...envelope(confirmed, 'misdirected'), reason: '  Reviewed for this teaching encounter\t' }), 'misdirected', 'HTTP_421', 'prescription.no-medication');
+      expect(proxy.received.get('misdirected')).toMatchObject({ reason: 'Reviewed for this teaching encounter' });
       expect(await read('encounter completion', id)).toMatchObject({ ready: true });
       await write('encounter complete', 'encounter.complete', id, medicationVersion);
       const final = encounterViewSchema.parse(await read('encounter read', id));

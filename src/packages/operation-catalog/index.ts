@@ -60,10 +60,30 @@ export function distinctInput<Schema extends z.ZodArray>(schema: Schema, propert
   return schema.refine(values => distinct(values, property)).meta({ uniqueItems: true, ...(property && { 'x-clinmesh-uniqueBy': property }) });
 }
 
+export function trimmedInput(minLength: number, maxLength: number, pattern?: RegExp) {
+  const text = z.string().trim().min(minLength).max(maxLength);
+  return (pattern ? text.regex(pattern) : text).meta({ 'x-clinmesh-trim': true });
+}
+
+type FieldSchema = z.core.JSONSchema.JSONSchema | boolean | undefined;
+function normalizeInput(field: FieldSchema, value: unknown): unknown {
+  if (!field || typeof field !== 'object') return value;
+  if (typeof value === 'string' && 'x-clinmesh-trim' in field && field['x-clinmesh-trim'] === true) return value.trim();
+  if (Array.isArray(value) && field.items && !Array.isArray(field.items)) {
+    const item = field.items;
+    return value.map(member => normalizeInput(item, member));
+  }
+  if (field.properties && value && typeof value === 'object' && !Array.isArray(value)) {
+    const properties = field.properties;
+    return Object.fromEntries(Object.entries(value).map(([name, member]) => [name, normalizeInput(properties[name], member)]));
+  }
+  return value;
+}
+
 export function inputValidator(operation: OperationDescription) {
   const schema = z.fromJSONSchema(operation.inputSchema);
   if (!(schema instanceof z.ZodObject)) throw Error('Invalid catalog input contract');
-  return schema.superRefine((input, context) => {
+  return z.preprocess(input => normalizeInput(operation.inputSchema, input), schema).superRefine((input, context) => {
     for (const [name, field] of Object.entries(operation.inputSchema.properties ?? {})) {
       const property = typeof field === 'object' && 'x-clinmesh-uniqueBy' in field ? field['x-clinmesh-uniqueBy'] : undefined;
       const values = input[name];

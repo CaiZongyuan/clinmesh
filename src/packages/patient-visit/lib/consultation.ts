@@ -1,10 +1,11 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
+import { trimmedInput } from '../../operation-catalog';
 import { CoreError, sha256, type CommandContext } from '../../platform';
 import type { StoreScope, StoreTx } from '../../store';
 import { editEncounter, requireEncounter } from './encounters';
 
-export const turnInput = z.strictObject({ content: z.string().trim().min(1).max(8000), channel: z.enum(['text', 'voice']) });
+export const turnInput = z.strictObject({ content: trimmedInput(1, 8000), channel: z.enum(['text', 'voice']) });
 function append(tx: StoreTx, at: StoreScope, encounterId: string, speaker: 'clinician' | 'patient', input: z.infer<typeof turnInput>, virtualAt: string, recordedAt: string, questionId?: string) {
   const consultation = tx.list(at, 'consultations', { encounter_id: encounterId })[0]!;
   const pending = speaker === 'clinician';

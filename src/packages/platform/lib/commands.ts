@@ -1,11 +1,11 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
-import { receiptOperationId, type OperationRoute } from '../../operation-catalog';
+import { receiptOperationId, trimmedInput, type OperationRoute } from '../../operation-catalog';
 import { canonicalJson, type StorePort, type StoreReader, type StoreScope, type StoreTx } from '../../store';
 import { CoreError, sha256, type Credential } from './visitor-gate';
 import type { ClinicalQualityIntent } from './clinical-quality';
 
-export const commandEnvelope = z.object({ epoch: z.uuidv7(), idempotencyKey: z.string().trim().min(1).max(160).regex(/^(?!\s*patient-reply:)(?=[\s\S]*\S)/), expectedVersion: z.int().nonnegative() });
+export const commandEnvelope = z.object({ epoch: z.uuidv7(), idempotencyKey: trimmedInput(1, 160, /^(?!patient-reply:)/), expectedVersion: z.int().nonnegative() });
 export type CommandEnvelope = z.infer<typeof commandEnvelope>;
 export const localizedName = z.object({ en: z.string(), zh: z.string() });
 export const practitionerRole = z.object({ id: z.string(), name: localizedName, capabilities: z.array(z.string()) });
