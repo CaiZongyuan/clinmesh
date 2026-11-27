@@ -1,3 +1,4 @@
+import { medicationRouteSchema } from '../../store';
 import { DataPackError } from './errors';
 import type { CatalogKind, Coding, HospitalDataPack } from './schema';
 
@@ -148,7 +149,8 @@ export const catalogKinds = ['diagnoses', 'medications', 'services', 'procedures
 
 export function validateReferences(pack: HospitalDataPack) {
   checkOrganization(pack);
-  if (pack.manifest.enabledModules.includes('mod-pharmacy') && !pack.knowledge?.pharmacy) {
+  const pharmacyEnabled = pack.manifest.enabledModules.includes('mod-pharmacy');
+  if (pharmacyEnabled && !pack.knowledge?.pharmacy) {
     throw new DataPackError('INVALID_PACK', 'knowledge.pharmacy');
   }
   const catalog = pack.catalog;
@@ -162,7 +164,10 @@ export function validateReferences(pack: HospitalDataPack) {
     for (const key of indexBy(codes, codingKey, path).keys()) reference(index, key, path);
   };
   const allergyGroups = new Set<string>();
-  for (const drug of catalog.medications) {
+  for (const [index, drug] of catalog.medications.entries()) {
+    if (pharmacyEnabled && drug.routeCodes.allowed.some(route => !medicationRouteSchema.safeParse(route).success)) {
+      throw new DataPackError('INVALID_PACK', `catalog.medications.${index}.routeCodes.allowed`);
+    }
     reference(distinct(drug.routeCodes.allowed, 'allowedRoutes'), drug.routeCodes.default, 'routeCodes.default');
     reference(distinct(drug.dosageUnits, 'dosageUnits'), drug.inpatientDoseBasis.unit, 'inpatientDoseBasis.unit');
     for (const group of distinct(drug.safety.allergyGroupCodes, 'allergyGroupCodes').keys()) allergyGroups.add(group);

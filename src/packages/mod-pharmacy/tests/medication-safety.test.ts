@@ -27,6 +27,8 @@ it.each([
 
 it('checks the dispense ceiling, diagnosis system, number of lines and ingredient across sources', () => {
   const order = line('doxycycline', 100);
+  const regionalCatalog = catalog.map(item => ({ ...item, routeCodes: { default: 'PR', allowed: ['PO', 'PR'] } }));
+  expect(checkPrescription(regionalCatalog, [{ ...order, routeCode: 'PR' }], context)).toEqual(['PRESCRIPTION_ROUTE_NOT_ALLOWED']);
   expect(checkPrescription(catalog, [order], { ...context, rules: null })).toEqual(['PHARMACY_RULES_UNAVAILABLE']);
   const external = { ...order, codeSystem: 'urn:clinmesh:general:community-drug', code: 'doxy-100' };
   expect(checkPrescription(catalog, [], context)).toContain('PRESCRIPTION_LINE_COUNT');

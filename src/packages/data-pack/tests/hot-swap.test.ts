@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { v7 } from 'uuid';
 import { expect, it } from 'vitest';
+import general from '../../../../data/packs/global-general/pack.json';
 import { BUILTIN_DATA_PACKS } from '../../../server/builtin-data-packs';
 import { createNodeSqliteStore } from '../../store';
 import { installHospitalDataPack, readHospitalDataPack } from '../index';
@@ -96,5 +97,18 @@ it('rejects installing a new hospital declaring the medication decision gate wit
     expect(await store.exportLogicalSnapshot(workspaceId)).toEqual(before);
     custom.manifest.enabledModules = custom.manifest.enabledModules.filter(id => id !== 'mod-pharmacy');
     await expect(install()).resolves.toMatchObject({ workspaceId });
+  } finally { await store.close(); }
+});
+it('preserves regional medication routes in a hospital catalog and validates them when pharmacy is enabled', async () => {
+  const store = createNodeSqliteStore({ dbPath: ':memory:' });
+  try {
+    const regional = structuredClone(general);
+    regional.catalog.medications[0]!.routeCodes = { default: 'PR', allowed: ['PO', 'PR'] };
+    regional.manifest.enabledModules = regional.manifest.enabledModules.filter(id => id !== 'mod-pharmacy');
+    const at = await store.withTransaction(tx => installHospitalDataPack(tx, initial, regional));
+    const medication = await store.read(reader => readHospitalDataPack(reader, at)!.catalog.medications.find(item => item.code === regional.catalog.medications[0]!.code));
+    expect(medication?.routeCodes).toEqual({ default: 'PR', allowed: ['PO', 'PR'] });
+    regional.manifest.enabledModules.push('mod-pharmacy');
+    await expect(store.withTransaction(tx => installHospitalDataPack(tx, { ...initial, expectedEpoch: at.epoch }, regional))).rejects.toMatchObject({ code: 'INVALID_PACK', message: 'INVALID_PACK (catalog.medications.0.routeCodes.allowed)' });
   } finally { await store.close(); }
 });

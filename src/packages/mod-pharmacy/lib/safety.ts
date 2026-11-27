@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { medicationSchema, pharmacyRulesSchema, type Coding } from '../../data-pack';
+import { medicationRouteSchema } from '../../store';
 
 export type Medication = z.infer<typeof medicationSchema>;
 export const prescriptionLineSchema = z.strictObject({ codeSystem: z.url(), code: z.string().min(1), dose: z.number(),
@@ -24,7 +25,7 @@ export function checkPrescription(catalog: readonly Medication[], lines: readonl
     sources.add(item.source);
     const { safety, inpatientDoseBasis } = item;
     if (safety.allergyGroupCodes.some(group => context.allergies.includes(group))) issues.add('MEDICATION_ALLERGY_CONFLICT');
-    if (!item.routeCodes.allowed.some(code => code === line.routeCode)) issues.add('PRESCRIPTION_ROUTE_NOT_ALLOWED');
+    if (!medicationRouteSchema.safeParse(line.routeCode).success || !item.routeCodes.allowed.includes(line.routeCode)) issues.add('PRESCRIPTION_ROUTE_NOT_ALLOWED');
     if (active.some(other => sameCode(item.ingredient ?? item, other.ingredient ?? other))) issues.add('PRESCRIPTION_DUPLICATE_MEDICATION');
     for (const [first, second] of rules.classConflicts) {
       if (active.some(other => (safety.classCodes.includes(first) && other.safety.classCodes.includes(second)) ||
