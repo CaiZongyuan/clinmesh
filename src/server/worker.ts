@@ -7,6 +7,7 @@ import { createWorkspaceApp } from './workspace';
 import { BUILTIN_DATA_PACKS } from './builtin-data-packs';
 import { workerGatePolicy } from './host-policy';
 import { builtinModules } from './builtin-modules';
+import type { EvaluationLaunch } from './evaluation-host';
 
 declare const CLINMESH_LOOPBACK_WRANGLER: boolean;
 
@@ -22,7 +23,18 @@ export class WorkspaceDurableObject<Env = unknown> extends DurableObject<Env> {
     socket.addEventListener('close', connection.close);
     socket.addEventListener('error', connection.close);
     return new Response(null, { status: 101, webSocket: pair[0] });
+  }, {
+    start: (launch, request) => (this.env as WorkerEnvironment).WORKSPACE_DO.getByName(launch.runId).startEvaluation(launch, request),
+    read: runId => (this.env as WorkerEnvironment).WORKSPACE_DO.getByName(runId).readEvaluation(runId),
   });
+  async startEvaluation(launch: EvaluationLaunch, request: Request): Promise<Response> {
+    if (!this.ctx.id.equals((this.env as WorkerEnvironment).WORKSPACE_DO.idFromName(launch.runId))) return new Response(null, { status: 403 });
+    return this.workspace.runEvaluation(launch, request);
+  }
+  async readEvaluation(runId: string): Promise<Response> {
+    if (!this.ctx.id.equals((this.env as WorkerEnvironment).WORKSPACE_DO.idFromName(runId))) return new Response(null, { status: 403 });
+    return this.workspace.evaluationReport(runId);
+  }
   async signingSecret(): Promise<string> { return this.store.visitorSigningSecret(); }
   async handle(request: Request, credential: Credential, entering: boolean): Promise<Response> { return this.workspace.fetch(request, { credential, entering }); }
   async fetch(request: Request): Promise<Response> {
@@ -35,7 +47,7 @@ export class WorkspaceDurableObject<Env = unknown> extends DurableObject<Env> {
 
 interface WorkerEnvironment extends GateSettings, AgentEnvironment {
   CLINMESH_LOCAL_DEV_OPEN?: string;
-  WORKSPACE_DO: { idFromName(name: string): DurableObjectId; getByName(name: string): Pick<WorkspaceDurableObject, 'fetch' | 'handle' | 'signingSecret'> };
+  WORKSPACE_DO: { idFromName(name: string): DurableObjectId; getByName(name: string): Pick<WorkspaceDurableObject, 'fetch' | 'handle' | 'signingSecret' | 'startEvaluation' | 'readEvaluation'> };
 }
 function gateSettings(env: WorkerEnvironment): GateSettings {
   return { CLINMESH_VISITOR_PASSCODE: env.CLINMESH_VISITOR_PASSCODE, CLINMESH_SESSION_SECRET: env.CLINMESH_SESSION_SECRET,

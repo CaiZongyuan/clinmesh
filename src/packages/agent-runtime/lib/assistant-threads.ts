@@ -1,5 +1,5 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { defineDoc, type Conversation, type ConversationId, type Harness } from '@earendil-works/pi-durable';
+import { defineDoc, defineDocFamily, type Conversation, type ConversationId, type Harness } from '@earendil-works/pi-durable';
 import { z } from 'zod';
 import { assistantSessionCommand, assistantView } from '../../agent-protocol';
 import { CoreError } from '../../platform';
@@ -7,16 +7,34 @@ import { CoreError } from '../../platform';
 const context = BACKGROUND_CONTEXT;
 const directory = defineDoc({ scope: 'session', kind: 'clinmesh.assistant-threads', version: 1, initial: (): { threads: { id: number; roleId: string; title: string }[] } => ({ threads: [] }), checkpointWhen: () => true });
 const admission = defineDoc({ scope: 'conversation', history: 'latest', fork: 'initial', kind: 'clinmesh.assistant-admission', version: 1, initial: () => ({ requestId: '', clientId: '', provider: '', content: '' }), checkpointWhen: () => true });
-export function admitTurn(conversation: Conversation, input: { requestId: string; clientId: string; content?: string }, provider: string) {
+const receipts = defineDocFamily({ scope: 'session', family: true, kind: 'clinmesh.assistant-receipt', version: 1, initial: () => ({ clientId: '', provider: '', content: '', error: '', status: 0 }), checkpointWhen: () => true });
+const status = z.union([z.literal(400), z.literal(401), z.literal(403), z.literal(404), z.literal(409), z.literal(422), z.literal(429), z.literal(502), z.literal(503), z.literal(504)]);
+export function failTurn(conversation: Conversation, requestId: string, failure: CoreError) {
+  return conversation.commit(async tx => { const receipt = await tx.doc(receipts, `${conversation.id}/${requestId}`, null); receipt.error = failure.code; receipt.status = failure.status; }, context);
+}
+export function admitTurn(conversation: Conversation, input: { requestId: string; clientId: string; content?: string; retryOf?: string }, provider: string) {
   return conversation.commit(async tx => {
+    const receipt = await tx.doc(receipts, `${conversation.id}/${input.requestId}`, null);
+    if (receipt.clientId) {
+      if (receipt.clientId !== input.clientId || (input.content && receipt.content !== input.content)) throw new CoreError(409, 'LLM_REJOIN_CONFIGURATION_REQUIRED');
+      if (receipt.error) throw new CoreError(status.parse(receipt.status), receipt.error);
+      if (receipt.provider !== provider) throw new CoreError(409, 'LLM_REJOIN_CONFIGURATION_REQUIRED');
+      return receipt.content;
+    }
     const previous = await tx.doc(admission, conversation.id);
+    let content = input.content;
     if (previous.requestId === input.requestId) {
       if (previous.clientId !== input.clientId || previous.provider !== provider || (input.content && previous.content !== input.content)) throw new CoreError(409, 'LLM_REJOIN_CONFIGURATION_REQUIRED');
-      return previous.content;
+      content = previous.content;
     }
-    if (!input.content) throw new CoreError(409, 'ASSISTANT_REJOIN_REQUIRED');
-    Object.assign(previous, { requestId: input.requestId, clientId: input.clientId, content: input.content, provider });
-    return input.content;
+    if (input.retryOf) {
+      const prior = await tx.doc(receipts, `${conversation.id}/${input.retryOf}`, null);
+      if (prior.clientId !== input.clientId || !prior.error) throw new CoreError(409, 'ASSISTANT_RETRY_UNAVAILABLE');
+      content = prior.content;
+    }
+    if (!content) throw new CoreError(409, 'ASSISTANT_REJOIN_REQUIRED');
+    Object.assign(receipt, { clientId: input.clientId, content, provider });
+    return content;
   }, context);
 }
 async function directoryFor(harness: Harness, roleId: string) {

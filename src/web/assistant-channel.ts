@@ -45,7 +45,12 @@ export function createAmbientQueue(deliver: (events: string[]) => Promise<void>,
     if (!enabled || blocked || draining || !pending.size) return;
     timer = setTimeout(() => {
       draining = true;
-      const batch = [...pending]; pending.clear();
+      const batch: string[] = [];
+      let length = 0;
+      for (const event of pending) {
+        if (batch.length && length + event.length > 10500) break;
+        pending.delete(event); batch.push(event); length += event.length + 1;
+      }
       void deliver(batch).finally(() => { draining = false; schedule(); });
     }, delay);
   }

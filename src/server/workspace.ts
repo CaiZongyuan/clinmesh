@@ -9,6 +9,7 @@ import { administer, authorize, checkVersion, CoreError, createVisitorGate, Modu
 import { StoreVersionConflictError, type StorePort } from '../packages/store';
 import { BUILTIN_DATA_PACKS } from './builtin-data-packs';
 import { evaluateEncounter } from './evaluation';
+import { evaluationResult, launchEvaluation, recoverEvaluation, type EvaluationHost, type EvaluationLaunch } from './evaluation-host';
 
 export function handleError(error: Error) {
   if (error instanceof CoreError) return Response.json(error.code.startsWith('LLM_') ? { code: error.code, settings: '#model-settings' } : { code: error.code, details: error.details }, { status: error.status });
@@ -19,7 +20,7 @@ export function handleError(error: Error) {
 
 type SocketConnection = { receive(data: unknown): void; close(): void };
 export type UpgradeAssistant = (request: Request, connect: (socket: AssistantSocket) => SocketConnection) => Response | Promise<Response>;
-export function createWorkspaceApp(store: StorePort, settings: GateSettings, modules: readonly ClinMeshModule<OperationCatalog>[] = [], environment: AgentEnvironment = {}, background?: (task: Promise<void>) => void, upgrade?: UpgradeAssistant) {
+export function createWorkspaceApp(store: StorePort, settings: GateSettings, modules: readonly ClinMeshModule<OperationCatalog>[] = [], environment: AgentEnvironment = {}, background?: (task: Promise<void>) => void, upgrade?: UpgradeAssistant, evaluations?: EvaluationHost) {
   const app = new Hono<{ Bindings: { credential: Credential; entering: boolean; upgrade?: UpgradeAssistant } }>();
   const registry = new ModuleRegistry(modules);
   app.onError(handleError);
@@ -40,9 +41,11 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
   });
   const catalog = new OperationCatalog();
   const assistant = new ClinicianAssistant(store, catalog, environment);
-  app.post('/api/eval/runs', async context => context.json(await evaluateEncounter(store, catalog, registry, environment, context.env.credential, await context.req.json(), context.req.raw), 201));
+  app.post('/api/eval/runs', context => launchEvaluation(store, evaluations, context.env.credential, context.req.raw));
+  app.get('/api/eval/runs/:id', context => recoverEvaluation(store, evaluations, context.env.credential, context.req.param('id')));
   app.post('/api/assistant/sessions', async context => context.json(await assistant.sessions(context.env.credential, await context.req.json())));
   app.post('/api/assistant/availability', async context => context.json(await assistant.availability(context.env.credential, await context.req.json(), context.req.raw.headers)));
+  app.post('/api/assistant/observations', async context => context.json(await assistant.observations(context.env.credential, await context.req.json())));
   app.post('/api/assistant/turn', async context => context.json(await assistant.turn(context.env.credential, await context.req.json(), context.req.raw.headers)));
   app.post('/api/assistant/stop', async context => context.json(await assistant.stop(context.env.credential, await context.req.json())));
   app.get('/api/assistant/bridge', async context => {
@@ -115,5 +118,11 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     await store.read(reader => resolveActor(reader, context.env.credential, new Date().toISOString()));
     return context.json({ code: 'ROUTE_NOT_FOUND' }, 404);
   });
-  return app;
+  return Object.assign(app, {
+    async runEvaluation(launch: EvaluationLaunch, request: Request): Promise<Response> {
+      try { return Response.json(await evaluateEncounter(store, catalog, registry, environment, launch, request), { status: 201 }); }
+      catch (error) { return handleError(error instanceof Error ? error : Error('EVALUATION_FAILED')); }
+    },
+    evaluationReport: (runId: string) => evaluationResult(store, runId),
+  });
 }

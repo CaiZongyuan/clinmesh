@@ -41,11 +41,12 @@ export function clinicianModels(config: AgentProvider, mock: FauxResponseFactory
   let failure: CoreError | undefined;
   const stream: StreamFunction = (_, transcript, options) => {
     const safe = createAssistantMessageEventStream();
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), 60000);
     async function generate() {
       await authorize();
       const request = upstream(config, mock);
-      const deadline = AbortSignal.timeout(60000);
-      const signals = [deadline, signal, ...(options?.signal ? [options.signal] : [])];
+      const signals = [deadline.signal, signal, ...(options?.signal ? [options.signal] : [])];
       let status = 0;
       const events = request.models.streamSimple(request.model, transcript, { signal: AbortSignal.any(signals), apiKey: config.apiKey || undefined, maxRetries: 0, maxTokens: 4096,
         sessionId: options?.sessionId, reasoning: config.effort === 'off' ? undefined : config.effort, disableContinuation: true,
@@ -66,17 +67,18 @@ export function clinicianModels(config: AgentProvider, mock: FauxResponseFactory
       }
       const message = await events.result();
       if (signal.aborted || options?.signal?.aborted) throw new CoreError(409, 'ASSISTANT_STOPPED');
-      if (deadline.aborted || status === 408 || status === 504) throw new CoreError(504, 'LLM_PROVIDER_TIMEOUT');
+      if (deadline.signal.aborted || status === 408 || status === 504) throw new CoreError(504, 'LLM_PROVIDER_TIMEOUT');
       if (status === 401 || status === 403) throw new CoreError(422, 'LLM_PROVIDER_AUTH_FAILED');
       if (status === 429) throw new CoreError(429, 'LLM_PROVIDER_RATE_LIMITED');
       if (!['stop', 'length', 'toolUse'].includes(message.stopReason) || (config.apiKey && JSON.stringify(message).includes(config.apiKey))) throw new CoreError(502, 'LLM_PROVIDER_FAILED');
+      if (!message.content.some(block => block.type === 'toolCall' || (block.type === 'text' && block.text.trim()))) throw new CoreError(502, 'LLM_PROVIDER_EMPTY_REPLY');
       send(true);
       safe.push({ type: 'done', reason: message.stopReason as 'stop' | 'length' | 'toolUse', message: { ...message, api: clinicianModel.api, provider: clinicianModel.provider, model: clinicianModel.id } });
     }
     void generate().catch(error => {
       failure = error instanceof CoreError ? error : new CoreError(502, 'LLM_PROVIDER_FAILED');
       safe.push({ type: 'error', reason: 'error', error: { ...fauxAssistantMessage(''), stopReason: 'error', errorMessage: failure.code } });
-    }).finally(() => safe.end());
+    }).finally(() => { clearTimeout(timer); safe.end(); });
     return safe;
   };
   models.setProvider(createProvider({ id: clinicianModel.provider, models: [clinicianModel], auth: { apiKey: { name: 'Clinician runtime', resolve: async () => ({ auth: {} }) } }, api: { stream, streamSimple: stream } }));

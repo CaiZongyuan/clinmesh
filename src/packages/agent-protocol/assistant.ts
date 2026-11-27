@@ -2,13 +2,20 @@ import { z } from 'zod';
 
 export const assistantBinding = z.strictObject({ workspaceId: z.uuidv7(), epoch: z.uuidv7(), encounterId: z.uuidv7(), roleId: z.string().min(1).max(128) });
 export type AssistantBinding = z.infer<typeof assistantBinding>;
+export const assistantObservation = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('consultation.final'), id: z.uuidv7(), ordinal: z.int().positive(), question: z.string(), answer: z.string() }),
+  z.object({ type: z.literal('report.signed'), kind: z.enum(['lab', 'imaging', 'pathology']), id: z.uuidv7(), version: z.int().positive(), summary: z.string() }),
+]);
+export const assistantObservations = z.array(assistantObservation);
+export type AssistantObservation = z.infer<typeof assistantObservation>;
+export const observationKey = (event: AssistantObservation) => event.type === 'consultation.final' ? `${event.type}/${event.ordinal}/${event.id}` : `${event.kind}/${event.id}/${event.version}`;
 export const assistantThread = z.object({ id: z.int().positive(), title: z.string().trim().min(1).max(100) });
 export const assistantSessionCommand = assistantBinding.extend({ action: z.enum(['list', 'new', 'rename', 'delete', 'fork']), thread: assistantThread.shape.id.optional(), title: assistantThread.shape.title.optional() });
 export const assistantMessage = z.object({ id: z.string(), role: z.enum(['clinician', 'assistant', 'thinking', 'tool']), text: z.string() });
 export const assistantView = z.object({ threads: z.array(assistantThread), thread: assistantThread.shape.id, messages: z.array(assistantMessage) });
 export const assistantChannel = assistantBinding.extend({ clientId: z.uuid(), thread: assistantThread.shape.id });
 export type AssistantChannel = z.infer<typeof assistantChannel>;
-export const assistantTurn = assistantChannel.extend({ requestId: z.uuid(), content: z.string().trim().min(1).max(12000).optional() });
+export const assistantTurn = assistantChannel.extend({ requestId: z.uuid(), content: z.string().trim().min(1).max(12000).optional(), retryOf: z.uuid().optional() }).refine(input => !(input.content && input.retryOf) && input.requestId !== input.retryOf);
 export const uiStep = z.strictObject({ ref: z.string().min(1).max(250), action: z.string().min(1).max(64), args: z.array(z.union([z.string().max(12000), z.number(), z.boolean(), z.null()])).max(8).optional() });
 export const browserTools = {
   ui_snapshot: z.strictObject({}),

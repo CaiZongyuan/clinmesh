@@ -1,10 +1,19 @@
 import { createStore } from 'zustand/vanilla';
+import { z } from 'zod';
 import type { BrowserRequest } from '../packages/agent-protocol';
 import { createClinMeshUiAgent, mountClinMeshWebMCP } from '../packages/ui-kit';
 
 type Suggestion = { field: string; ref: string; action: string; args: unknown[]; label: string };
 type SurfaceState = { suggestions: Suggestion[]; approval?: { id: string; message: string; answer(value: boolean): void }; protected: string[]; unread: number };
-export function createAssistantSurface(root: () => HTMLElement | null, edited: Set<string>) {
+export function createAssistantSurface(root: () => HTMLElement | null, edited: Set<string>, storageKey?: string) {
+  if (storageKey) {
+    try { for (const field of z.array(z.string().max(250)).parse(JSON.parse(sessionStorage.getItem(storageKey) ?? '[]'))) edited.add(field); } catch {}
+  }
+  function mark(field: string) {
+    if (edited.has(field)) return;
+    edited.add(field);
+    if (storageKey) sessionStorage.setItem(storageKey, JSON.stringify([...edited].filter(id => /^(record|diagnosis|investigation|prescription):/.test(id))));
+  }
   const state = createStore<SurfaceState>(() => ({ suggestions: [], protected: [], unread: 0 }));
   const fieldKey = (element: Element | null | undefined, fallback?: string) => element?.closest<HTMLElement>('[data-assistant-field]')?.dataset.assistantField || fallback;
   let agentTarget: HTMLElement | undefined;
@@ -47,15 +56,16 @@ export function createAssistantSurface(root: () => HTMLElement | null, edited: S
   return { state, agent, remove,
     mount() {
       alive = true;
+      protectedFields();
       const unregister = mountClinMeshWebMCP(agent);
       const unobserve = agent.subscribe(change => {
         const element = agent.elementOf(change.ref);
         if (!root()?.contains(element) || !['value', 'checked', 'pressed'].includes(change.key)) return;
         if (change.source === 'agent') { state.setState(current => ({ unread: current.unread + 1 })); return; }
-        if (['keyboard', 'pen', 'mouse', 'touch', 'virtual'].includes(change.source)) { edited.add(fieldKey(element, change.label || change.ref)!); protectedFields(); }
+        if (['keyboard', 'pen', 'mouse', 'touch', 'virtual'].includes(change.source)) { mark(fieldKey(element, change.label || change.ref)!); protectedFields(); }
       });
       function humanIntent() { agentTarget = undefined; protectedFields(); }
-      function input(event: Event) { if (event.target instanceof Element && root()?.contains(event.target) && (event.isTrusted || !agentOwnsFocus(event.target))) { const key = fieldKey(event.target); if (key) { edited.add(key); protectedFields(); } } }
+      function input(event: Event) { if (event.target instanceof Element && root()?.contains(event.target) && (event.isTrusted || !agentOwnsFocus(event.target))) { const key = fieldKey(event.target); if (key) { mark(key); protectedFields(); } } }
       function editList(event: Event) { humanIntent(); if (event.target instanceof Element && event.target.closest('button') && event.target.closest('[data-assistant-list]') && !event.target.closest('[data-agent-confirm]')) input(event); }
       document.addEventListener('pointerdown', editList, true);
       document.addEventListener('keydown', humanIntent, true);
