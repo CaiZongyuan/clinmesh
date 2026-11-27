@@ -26,7 +26,7 @@ export class WorkspaceDurableObject<Env = unknown> extends DurableObject<Env> {
     socket.addEventListener('error', connection.close);
     return new Response(null, { status: 101, webSocket: pair[0], headers: protocol ? { 'Sec-WebSocket-Protocol': protocol } : undefined });
   }, {
-    start: (launch, request) => (this.env as WorkerEnvironment).WORKSPACE_DO.getByName(launch.runId).startEvaluation(launch, request),
+    start: async (launch, request) => launch.spec.arm === 'direct-tools' ? (this.env as WorkerEnvironment).WORKSPACE_DO.getByName(launch.runId).startEvaluation(launch, request) : Response.json({ code: 'EVALUATION_ARM_UNAVAILABLE' }, { status: 503 }),
     read: runId => (this.env as WorkerEnvironment).WORKSPACE_DO.getByName(runId).readEvaluation(runId),
   }, connectWorkerVoice);
   async startEvaluation(launch: EvaluationLaunch, request: Request): Promise<Response> {

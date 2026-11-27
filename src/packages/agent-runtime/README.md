@@ -34,6 +34,19 @@ Node 环境变量和 Worker 绑定使用同名配置。`CLINMESH_LLM_PROVIDER` �
 
 具有诊疗或工作区管理能力的访客可显式调用 `POST /api/eval/runs`。传入 `packId`、`caseId`、`maxTurns`（1–32）、`clinicianModel`、`patientModel`。沿用模型请求头，显式演示使用 `X-ClinMesh-LLM-Mock: 1`。例如使用 `global-general`、`g01`、12 轮、`scripted-clinician` 与 `scripted-patient` 可重放社区获得性肺炎教学评测。
 
+在已登录的工作台浏览器控制台运行下例即可启动一次本地 Mirage 评测。将 `arm` 改为 `direct-tools`、`ui-sdk-webmcp` 或 `host-cli` 可换用其他执行方式。省略时使用 `direct-tools`。
+
+```js
+const response = await fetch('/api/eval/runs', {
+  method: 'POST', headers: { 'Content-Type': 'application/json', 'X-ClinMesh-LLM-Mock': '1' },
+  body: JSON.stringify({ arm: 'mirage-vfs', packId: 'global-general', caseId: 'g01', maxTurns: 12, clinicianModel: 'scripted-clinician', patientModel: 'scripted-patient' })
+});
+const report = await response.json();
+console.log(report);
+```
+
+Node 的浏览器评测使用 Microsoft Edge 的 WebMCP 注册与 `act` 操作隔离的评测控件，CLI 评测启动真实的 `bin/clinmesh.mjs` 子进程。虚拟终端评测运行 Mirage 的 `clinmesh <operation-id> '<JSON>'`，医生还可通过 `mirage_inspect` 查看 `/workspace`、`/patients`、`/encounters` 与 `/guidelines`。文件依据当前岗位和绑定就诊取最新公开投影。评测正式操作只作用于运行专用的 Workspace。Workers 支持原生工具评测，请用 Node 进行后三种本机实验。报告中的 `arm` 记录实际选择。
+
 每次评测创建独立 Workspace 和活动 Epoch。Workers 将该 Workspace 路由到由 `runId` 命名的 SQLite Durable Object，Node 在当前数据库旁的 `.evaluations/` 目录为每次运行建立独立 SQLite 文件。发起工作区的审计事件保存运行引用。发起访客可在宿主重启后使用 `GET /api/eval/runs/:runId` 读取报告。
 
 医生可调用当前数据包和岗位已获准的查询，选择实际开单项目，并在收到签发回执后阅读指定版本的报告，再决定是否确认已阅。`diagnostic-teaching` 的 `teaching-01` 支持影像与既往手术关联病理会诊。每条操作轨迹含岗位、输入、可见输出或错误码。报告汇总用量、耗时和安全红线，并在正式完诊后对照真值记录命中与缺项。尚未完诊时 `hits` 为 `null`。

@@ -19,7 +19,9 @@
 | [store](store/index.ts) | 类型化 Store Repository Port、隔离的规范化事实、Node / DO SQLite 适配器与版本化逻辑快照。参见[使用说明](store/README.md) |
 | [data-pack](data-pack/index.ts) | 五层 Hospital Data Pack 编译、事务安装与公开病例投影。参见[使用说明](data-pack/README.md) |
 | [ui-kit](ui-kit/index.ts) | 统一临床控件、布局、Theme Tokens，以及带人工审批的 UI Agent 与 WebMCP 桥接 |
-| [agent-runtime](agent-runtime/README.md) | 按 Workspace、Epoch 和 Agent 角色打开 Pi 会话，执行 Patient Agent，保护请求凭据与问诊出口 |
+| [agent-runtime](agent-runtime/README.md) | 按 Workspace、Epoch 和岗位运行隔离的双 Agent，通过 ExecutionEnvironmentPort 执行固定病例评测 |
+| [mod-agent-mirage](mod-agent-mirage/index.ts) | 在 Node 评测中挂载按岗位投影的只读临床文件，以及经 Operation Catalog 校验的虚拟 `clinmesh` 命令 |
+| [mod-voice](mod-voice/README.md) | 百炼 Paraformer 和 Sambert 适配器、WebSocket 会话与双麦交互协议 |
 | [agent-protocol](agent-protocol/index.ts) | 浏览器和服务端共享的 Provider、问诊状态、回执与 SSE 事件契约 |
 | [mod-billing](mod-billing/README.md) | 通用收费员账本、原路退款、住院首次冻结结算和临床资金放行端口 |
 | [mod-inpatient](mod-inpatient/README.md) | 入院转收、床位与转科、跨日医嘱、护士与药师执行、同台介入、出区和病案归档 |

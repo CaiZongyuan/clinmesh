@@ -1,3 +1,4 @@
+import { formatMinor } from '../../../packages/mod-billing';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { issueReceipt, labViewSchema, type LabOrder, type LabView } from '../../../packages/mod-lab';
 import { Badge, Button, Card, ConfirmActionButton, Dialog } from '../../../packages/ui-kit';
@@ -63,4 +64,3 @@ function LabWorkspace({ workspace, encounter, language, submit, data }: Workbenc
       </Dialog>}</Card>
   </div>;
 }
-import { formatMinor } from '../../../packages/mod-billing';

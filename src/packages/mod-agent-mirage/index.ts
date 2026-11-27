@@ -3,7 +3,7 @@ import { Argument, CLI, CLIHandler, CommandSpec, IOResult, MountMode, RAMVFS, Wo
 import { SessionProfile } from '@struktoai/mirage-core/policy/profile';
 import { MirageExecutionEnv } from '@struktoai/mirage-pi-durable';
 import { z } from 'zod';
-import { clinicianTool, type EvaluationGateway, type OperationInput } from '../agent-runtime';
+import { clinicianTool, evaluationProjection, type EvaluationGateway, type OperationInput } from '../agent-runtime';
 import { CoreError } from '../platform';
 
 const bytes = new TextEncoder();
@@ -21,7 +21,7 @@ export function openMirageEnvironment(gateway: EvaluationGateway) {
     handlers: Object.fromEntries(gateway.operations.map(({ id, mode }) => [id, new CLIHandler({ write: mode !== 'query', async fn(_accessor, _paths, texts) {
       try {
         const input = z.record(z.string(), z.json()).parse(JSON.parse(texts[0] ?? '{}'));
-        return [bytes.encode(JSON.stringify({ data: await gateway.invoke(id, input) })), new IOResult()];
+        return [bytes.encode(JSON.stringify({ data: evaluationProjection(id, await gateway.invoke(id, input)) })), new IOResult()];
       } catch (error) {
         return [bytes.encode(JSON.stringify({ error: error instanceof CoreError ? error.code : 'INVALID_INPUT' })), new IOResult({ exitCode: 1 })];
       }
@@ -42,6 +42,9 @@ export function openMirageEnvironment(gateway: EvaluationGateway) {
   async function inspect(command: 'cat' | 'ls', path: string) {
     if (!['cat', 'ls'].includes(command) || !/^\/(?:[\w-]+(?:\.json)?\/?)*$/.test(path)) throw new CoreError(403, 'MIRAGE_PATH_UNAVAILABLE');
     const mount = mounts.find(item => item.path === path);
+    const directory = command === 'ls' && (path === '/' || mounts.some(item => item.root === path));
+    if (!mount && !directory) throw new CoreError(403, 'MIRAGE_PATH_UNAVAILABLE');
+    if (directory) await gateway.invoke('workspace.read', {});
     if (mount && allowed.has(mount.view.operation)) {
       const id = gateway.encounterId();
       if (mount.view.operation !== 'workspace.read' && !id) throw new CoreError(409, 'EVALUATION_ENCOUNTER_REQUIRED');
@@ -50,6 +53,7 @@ export function openMirageEnvironment(gateway: EvaluationGateway) {
     }
     const result = await shell([command, path]);
     if (result.code !== 0) throw new CoreError(403, 'MIRAGE_PATH_UNAVAILABLE');
+    if (path === '/') return result.stdout.split('\n').filter(name => mounts.some(item => item.root === `/${name}`)).join('\n');
     return result.stdout;
   }
   for (const mount of mounts) mount.ram.store.files.set(`/${mount.view.file}`, bytes.encode('{}'));

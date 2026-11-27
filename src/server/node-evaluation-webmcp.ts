@@ -6,7 +6,7 @@ import type { EvaluationGateway, OperationInput } from '../packages/agent-runtim
 import { CoreError } from '../packages/platform';
 
 export async function openWebMcpEnvironment(gateway: EvaluationGateway) {
-  const browser = await chromium.launch({ channel: 'msedge', headless: true, args: ['--enable-blink-features=WebMCP'] });
+  const browser = await chromium.launch({ channel: 'msedge', headless: true, args: ['--enable-blink-features=WebMCP'] }).catch(() => { throw new CoreError(503, 'WEBMCP_BROWSER_UNAVAILABLE'); });
   try {
     const page = await browser.newPage();
     const origin = 'https://evaluation.invalid';
@@ -38,5 +38,5 @@ export async function openWebMcpEnvironment(gateway: EvaluationGateway) {
       return receipt.data;
     }
     return { invoke(id: string, input: OperationInput) { const result = pending.then(() => press(id, input)); pending = result.catch(() => {}); return result; }, close: () => browser.close() };
-  } catch (error) { await browser.close(); throw error; }
+  } catch (error) { await browser.close(); throw error instanceof CoreError ? error : new CoreError(503, 'WEBMCP_REGISTRATION_UNAVAILABLE'); }
 }

@@ -15,10 +15,13 @@ const legalGraph: Record<string, string> = {
   'packages/mod-lab/index': "export type { Value } from '../store';",
   'packages/mod-example/index': 'export {};',
   'server/app': "import '../packages/mod-lab';",
+  'server/worker': "import './app';",
+  'packages/mod-agent-mirage/index': 'export {};',
   'web/main': "import '../packages/store';",
 };
 
 it.each([
+  ['worker-excludes-local-environments', 'server/app', "void import('../packages/mod-agent-mirage')"],
   ['entrypoint-boundary-from-app', 'server/app', "import '../packages/store/lib/value'"],
   ['entrypoint-boundary-from-app', '../vite.config', "import './src/packages/store/lib/value'"],
   ['import-path-case', 'web/main', "import '../Packages/store/lib/value'"],

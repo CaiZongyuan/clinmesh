@@ -1,5 +1,6 @@
 import type { ToolRegistration } from '@earendil-works/pi-durable';
 import { z } from 'zod';
+import { encounterViewSchema } from '../../clinical-core';
 import type { Operation } from '../../operation-catalog';
 import { CoreError } from '../../platform';
 
@@ -18,6 +19,14 @@ export interface ExecutionEnvironmentPort {
   close?(): Promise<void>;
 }
 export type ExecutionEnvironments = Partial<Record<Exclude<ExecutionArm, 'direct-tools'>, (gateway: EvaluationGateway) => Promise<ExecutionEnvironmentPort>>>;
+
+const workspaceFacts = z.object({ roleId: z.string(), epoch: z.string(), manifest: z.object({ packId: z.string() }) });
+const clinicalFacts = encounterViewSchema.omit({ patient: true, patientId: true }).partial().extend({ patient: z.object({ name: z.string() }) });
+export function evaluationProjection(name: string, result: unknown) {
+  if (name === 'workspace.read') return workspaceFacts.parse(result);
+  if (name === 'encounter.read') return clinicalFacts.parse(result);
+  return result;
+}
 
 export async function openExecutionEnvironment(arm: ExecutionArm, gateway: EvaluationGateway, hosts: ExecutionEnvironments): Promise<ExecutionEnvironmentPort> {
   if (arm === 'direct-tools') return gateway;

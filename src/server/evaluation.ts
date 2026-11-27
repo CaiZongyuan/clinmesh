@@ -1,7 +1,7 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
 import { receiptSchema, replyEvent } from '../packages/agent-protocol';
-import { clinicianTool, openExecutionEnvironment, PatientRuntime, resolveAgentProvider, runEvaluationDoctor, type AgentEnvironment, type EvaluationAction, type ExecutionEnvironments } from '../packages/agent-runtime';
+import { clinicianTool, evaluationProjection, openExecutionEnvironment, PatientRuntime, resolveAgentProvider, runEvaluationDoctor, type AgentEnvironment, type EvaluationAction, type ExecutionEnvironments } from '../packages/agent-runtime';
 import { readCompletedDebrief, encounterViewSchema } from '../packages/clinical-core';
 import { installHospitalDataPack, type Coding } from '../packages/data-pack';
 import { prescribingViewSchema } from '../packages/mod-pharmacy';
@@ -42,6 +42,7 @@ export async function evaluateEncounter(store: StorePort, catalog: OperationCata
   });
   const trace: Trace[] = [];
   const signal = request.signal;
+  const refusals = new Map<string, CoreError>();
   const actor = await store.read(reader => resolveActor(reader, credential, new Date().toISOString()));
   const allowed = catalog.entries.filter(entry => permits(actor, entry) && (entry.assistantRead === 'encounter' || /^(workspace\.read|encounter\.(?:start|read|complete)|consultation\.question|diagnosis\.(?:draft|confirm)|record\.(?:draft|sign)|prescription\.(?:read|sign|no-medication)|(?:lab|imaging|pathology)\.(?:read|save-draft|issue|accept|start|report-now|acknowledge))$/.test(entry.name)));
   const has = (operation: string) => allowed.some(entry => entry.name === operation);
@@ -54,7 +55,8 @@ export async function evaluateEncounter(store: StorePort, catalog: OperationCata
       const args = entry.contract.inputSchema.parse(fields);
       const { id, ...body } = args;
       if (name === 'encounter.start' && (id !== caseId || boundEncounter)) throw new CoreError(403, 'EVALUATION_CASE_MISMATCH');
-      return entry.invoke({ store, credential, targetId: typeof id === 'string' ? id : runId, body: async () => body, providerHeaders: name === 'consultation.question' ? patientHeaders : undefined });
+      try { return await entry.invoke({ store, credential, targetId: typeof id === 'string' ? id : runId, body: async () => body, providerHeaders: name === 'consultation.question' ? patientHeaders : undefined }); }
+      catch (error) { if (error instanceof CoreError && typeof body.idempotencyKey === 'string') refusals.set(body.idempotencyKey, error); throw error; }
     },
   }, environments);
   try {
@@ -63,18 +65,24 @@ export async function evaluateEncounter(store: StorePort, catalog: OperationCata
     const entry = catalog.require(operation);
     const action: Trace = { role: role!.id, operation, targetId, input: fields, elapsedMs: Date.now() - started };
     trace.push(action);
+    const idempotencyKey = v7();
     try {
-      const result = await executor.invoke(operation, { ...(entry.contract.pathFields.includes('id') && { id: targetId }), ...(entry.method !== 'GET' && { epoch: at.epoch, expectedVersion, idempotencyKey: v7(), ...fields }) });
+      const result = evaluationProjection(operation, await executor.invoke(operation, { ...(entry.contract.pathFields.includes('id') && { id: targetId }), ...(entry.method !== 'GET' && { epoch: at.epoch, expectedVersion, idempotencyKey, ...fields }) }));
       action.output = result;
       return result;
-    } catch (error) { action.error = error instanceof CoreError ? error.code : 'INVALID_INPUT'; if (error instanceof CoreError && error.details) action.details = error.details; throw error; }
+    } catch (failure) {
+      const error = refusals.get(idempotencyKey) ?? failure;
+      action.error = error instanceof CoreError ? error.code : 'INVALID_INPUT';
+      if (error instanceof CoreError && error.details) action.details = error.details;
+      throw error;
+    } finally { refusals.delete(idempotencyKey); }
   }
   const { encounterId } = z.object({ encounterId: z.uuidv7() }).parse(await call('encounter.start', caseId, 0, { language: 'en' }));
   boundEncounter = encounterId;
   const sessionId = v7();
   await store.withTransaction(tx => tx.insert(at, 'pi_sessions', { id: sessionId, encounter_id: encounterId, agent: 'clinician' }));
   const patient = new PatientRuntime(store, environment);
-  const encounter = async () => encounterViewSchema.parse(await call('encounter.read', encounterId));
+  const encounter = async () => encounterViewSchema.omit({ patient: true, patientId: true }).parse(await call('encounter.read', encounterId));
   const pharmacy = async () => prescribingViewSchema.parse(await call('prescription.read', encounterId));
   const [visit, studies, prescribing] = await Promise.all([encounter(), evaluationStudies(store, at, encounterId, call, has), has('prescription.read') ? pharmacy() : undefined]);
   let patientFailure: string | null = null;
