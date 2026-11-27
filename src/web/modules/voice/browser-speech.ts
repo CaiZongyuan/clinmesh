@@ -1,6 +1,7 @@
 type RecognitionResult = { isFinal: boolean; 0: { transcript: string } };
 interface Recognition {
   lang: string; continuous: boolean; interimResults: boolean;
+  onstart: (() => void) | null; onaudiostart: (() => void) | null;
   onresult: ((event: { resultIndex: number; results: ArrayLike<RecognitionResult> }) => void) | null;
   onspeechstart: (() => void) | null; onend: (() => void) | null; onerror: ((event: { error: string }) => void) | null;
   start(): void; stop(): void; abort(): void;
@@ -12,6 +13,10 @@ export function browserMic(lang: string, events: MicEvents, signal: AbortSignal)
   if (!Constructor) throw Error('VOICE_BROWSER_STT_UNAVAILABLE');
   const recognition = new Constructor();
   recognition.continuous = true; recognition.interimResults = true; recognition.lang = lang;
+  let ready = false;
+  recognition.onstart = recognition.onaudiostart = () => {
+    if (!signal.aborted && !ready) { ready = true; events.ready(); }
+  };
   recognition.onspeechstart = events.speech;
   recognition.onresult = event => {
     if (signal.aborted) return;
@@ -23,13 +28,12 @@ export function browserMic(lang: string, events: MicEvents, signal: AbortSignal)
     }
     events.partial(preview);
   };
-  const cancel = () => { recognition.onend = recognition.onerror = recognition.onspeechstart = recognition.onresult = null; recognition.abort(); };
+  const cancel = () => { recognition.onstart = recognition.onaudiostart = recognition.onend = recognition.onerror = recognition.onspeechstart = recognition.onresult = null; recognition.abort(); };
   recognition.onerror = event => events.end(Error(event.error === 'not-allowed' || event.error === 'audio-capture' ? 'VOICE_MIC_UNAVAILABLE' : 'VOICE_BROWSER_STT_FAILED'));
-  recognition.onend = () => { signal.removeEventListener('abort', cancel); events.end(); };
+  recognition.onend = () => { signal.removeEventListener('abort', cancel); events.end(ready ? undefined : Error('VOICE_MIC_NOT_READY')); };
   signal.addEventListener('abort', cancel, { once: true });
   recognition.start();
-  events.ready();
-  return () => recognition.stop();
+  return () => { if (ready) recognition.stop(); else events.end(Error('VOICE_MIC_NOT_READY')); };
 }
 
 export function browserSpeak(text: string, lang: string, signal: AbortSignal) {

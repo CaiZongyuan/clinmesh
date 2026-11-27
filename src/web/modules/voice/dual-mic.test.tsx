@@ -15,6 +15,8 @@ import { createVoiceDesk } from './voice-desk';
 
 class Recognition {
   static sessions: Recognition[] = [];
+  onstart?: () => void;
+  onaudiostart?: () => void;
   onresult?: (event: object) => void;
   onspeechstart?: () => void;
   onend?: () => void;
@@ -64,6 +66,7 @@ it('sends consultation voice to the Patient Agent and Ambient, interrupts playba
     await waitFor(() => expect(screen.getByRole('switch', { name: 'Ambient Mode' }).getAttribute('aria-checked')).toBe('true'));
     await userEvent.click(screen.getByRole('button', { name: 'Start consultation mic' }));
     const main = Recognition.sessions[0]!;
+    await screen.findByText('Opening consultation mic'); act(() => main.onstart?.()); await screen.findByText('Consultation mic live');
     act(() => main.transcript('Where', false)); await screen.findByText('Where'); expect(questions).toHaveLength(0);
     act(() => main.transcript('Where does it hurt?', true));
     await screen.findByText('Breathing deeply hurts my right side.', {}, { timeout: 10000 });
@@ -76,6 +79,7 @@ it('sends consultation voice to the Patient Agent and Ambient, interrupts playba
     fireEvent.pointerDown(ptt, { button: 0, pointerId: 1 });
     expect(main.abort).toHaveBeenCalled(); await screen.findByText('Consultation mic muted');
     const assistant = Recognition.sessions.at(-1)!;
+    await screen.findByText('Opening assistant mic'); act(() => assistant.onaudiostart?.()); await screen.findByText('Assistant mic live');
     fireEvent.pointerUp(ptt, { pointerId: 1 }); expect(assistant.stop).toHaveBeenCalled();
     act(() => { main.transcript('Stale clinic frame', true); assistant.transcript('Private assistant instruction', true); assistant.onend?.(); });
     expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Instruction to assistant' }).value).toBe('Private assistant instruction');
@@ -87,6 +91,28 @@ it('sends consultation voice to the Patient Agent and Ambient, interrupts playba
     cleanup();
   }, true);
 }, 40_000);
+
+it('reports an early Web Speech release while permission is pending and isolates late recognition events from the next channel', () => {
+  vi.stubGlobal('SpeechRecognition', Recognition);
+  const desk = createVoiceDesk({ epoch: crypto.randomUUID(), encounterId: crypto.randomUUID() });
+  const privateText = vi.fn(), clinicianText = vi.fn();
+  desk.configure({ engine: 'browser' });
+  try {
+    desk.start('assistant', 'en-US', privateText);
+    const pending = Recognition.sessions[0]!;
+    const lateStart = pending.onstart, lateFinal = pending.onresult, lateEnd = pending.onend;
+    expect(desk.state.getState()).toMatchObject({ mic: 'assistant', ready: false });
+    desk.release('assistant');
+    expect(desk.state.getState()).toMatchObject({ mic: undefined, errorChannel: 'assistant', error: 'VOICE_MIC_NOT_READY' });
+    expect(pending.abort).toHaveBeenCalledOnce();
+    desk.start('consultation', 'en-US', clinicianText);
+    lateStart?.(); lateFinal?.({ resultIndex: 0, results: [{ 0: { transcript: 'Private stale command' }, isFinal: true }] }); lateEnd?.();
+    expect(desk.state.getState()).toMatchObject({ mic: 'consultation', ready: false });
+    expect(privateText).not.toHaveBeenCalled(); expect(clinicianText).not.toHaveBeenCalled();
+    Recognition.sessions[1]!.onaudiostart?.();
+    expect(desk.state.getState().ready).toBe(true);
+  } finally { desk.close(); }
+});
 
 it('offers BYOK only in the handshake and drains a short private utterance captured before network readiness', async () => {
   const stop = vi.fn(), message = vi.fn(), closeContext = vi.fn(async () => {});
