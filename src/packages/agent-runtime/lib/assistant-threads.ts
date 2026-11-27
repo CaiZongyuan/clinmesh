@@ -26,7 +26,28 @@ export function settleBrowserAction(conversation: Conversation, token: string) {
 }
 const status = z.union([z.literal(400), z.literal(401), z.literal(403), z.literal(404), z.literal(409), z.literal(422), z.literal(429), z.literal(502), z.literal(503), z.literal(504)]);
 export function failTurn(conversation: Conversation, requestId: string, failure: CoreError) {
-  return conversation.commit(async tx => { const receipt = await tx.doc(receipts, `${conversation.id}/${requestId}`, null); receipt.error = failure.code; receipt.status = failure.status; }, context);
+  return conversation.commit(async tx => { const receipt = await tx.doc(receipts, `${conversation.id}/${requestId}`, null); if (!receipt.error) { receipt.error = failure.code; receipt.status = failure.status; } }, context);
+}
+export function markTurnStopped(conversation: Conversation, input: { requestId: string; clientId: string }) {
+  return conversation.commit(async tx => {
+    const submission = await tx.submissionByRequest(conversation.id, input.requestId);
+    const receipt = await tx.doc(receipts, `${conversation.id}/${input.requestId}`, null);
+    if (!receipt.clientId) throw new CoreError(404, 'ASSISTANT_REQUEST_NOT_FOUND');
+    if (receipt.clientId !== input.clientId) throw new CoreError(403, 'ASSISTANT_CLIENT_MISMATCH');
+    if (receipt.error === 'ASSISTANT_STOPPED') return;
+    if (receipt.error || submission?.status === 'done' || submission?.status === 'unanswered') throw new CoreError(409, 'ASSISTANT_REQUEST_SETTLED');
+    receipt.status = 409; receipt.error = 'ASSISTANT_STOPPED';
+  }, context);
+}
+export async function drainStoppedTurn(harness: Harness, conversation: Conversation, requestId?: string) {
+  const state = await harness.inspect(context);
+  if (state.submissions.length !== 1) return state;
+  const [pending] = state.submissions;
+  if (!pending?.requestId || pending.conversationId !== conversation.id || (requestId && pending.requestId !== requestId)) return state;
+  const stopped = await conversation.commit(async tx => (await tx.doc(receipts, `${conversation.id}/${pending.requestId}`, null)).error === 'ASSISTANT_STOPPED', context);
+  if (!stopped) return state;
+  await conversation.abort(context);
+  return harness.inspect(context);
 }
 export function admitTurn(conversation: Conversation, input: { requestId: string; clientId: string; content?: string; retryOf?: string }, provider: string) {
   return conversation.commit(async tx => {

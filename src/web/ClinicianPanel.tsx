@@ -72,6 +72,7 @@ export function ClinicianPanel({ encounter, workspace, language, children, edite
     setAmbient(false);
   } });
   const busy = submit.isPending || manage.isPending;
+  const stop = useMutation({ mutationFn: (requestId: string) => api('/api/assistant/stop', z.object({ ok: z.boolean() }), jsonBody('POST', { ...channel, requestId })) });
   const enabled = ready && !busy && Boolean(thread);
   const addDelta = useEffectEvent((frame: Delta) => setStream(chunks => {
     const last = chunks.at(-1);
@@ -114,7 +115,7 @@ export function ClinicianPanel({ encounter, workspace, language, children, edite
     batch.add(fresh.map(event => JSON.stringify(event)));
   }, [batch, observations.data]);
   function send(content: string) { if (!enabled || !content.trim()) return; submit.mutate({ requestId: crypto.randomUUID(), content }); setMessage(''); }
-  const error = submit.error ?? manage.error ?? availability.error ?? session.error;
+  const error = submit.error ?? manage.error ?? stop.error ?? availability.error ?? session.error;
   const sessionLabel = text('Clinician Assistant', '医生助手');
   return <section className="assistant-layout" data-expanded={open}><div className="cm-agent-region" ref={root}>{children}</div>
     <aside className="assistant-rail" data-agent-hidden><Button aria-expanded={open} onClick={() => { setOpen(!open); setStarted(true); surface.state.setState({ unread: 0 }); }}>{sessionLabel} · {busy ? text('Working', '处理中') : text('Ready', '就绪')}{state.unread > 0 && ` · ${state.unread}`}</Button>
@@ -125,7 +126,7 @@ export function ClinicianPanel({ encounter, workspace, language, children, edite
         <Switch label={text('Ambient Mode', '环境辅助模式')} checked={ambient} disabled={!ready || availability.isPending} onCheckedChange={checked => { if (checked) availability.mutate(); else setAmbient(false); }}/>
         <div className="assistant-history" aria-live="polite">{[...(session.data?.messages ?? []), ...stream.map((item, index) => ({ id: `live-${index}`, role: item.kind, text: item.text }))].map(item => item.role === 'thinking' || item.role === 'tool' ? <details key={item.id}><summary>{item.role === 'tool' ? text('Tool call', '工具调用') : text('Thinking', '思考过程')}</summary><pre>{item.text}</pre></details> : <div key={item.id}><b>{item.role === 'clinician' ? text('Clinician', '临床人员') : sessionLabel}</b><Markdown body={item.text}/></div>)}</div>
         <Field label={text('Instruction to assistant', '助手指令')}><Textarea value={message} onValueChange={setMessage} maxLength={12000}/></Field><div className="cm-actions"><Button disabled={!enabled || !message.trim()} onClick={() => send(message)}>{text('Send to assistant', '发送给助手')}</Button>
-          {submit.isPending && <Button onClick={() => { void api('/api/assistant/stop', z.object({ ok: z.boolean() }), jsonBody('POST', channel)); }}>{text('Stop assistant', '停止助手')}</Button>}
+          {submit.isPending && <Button disabled={stop.isPending} onClick={() => stop.mutate(submit.variables.requestId)}>{text('Stop assistant', '停止助手')}</Button>}
           {retry && <Button disabled={!enabled} onClick={() => submit.mutate(retry)}>{text('Retry assistant', '重试助手')}</Button>}</div>
         {session.data?.review && <section role="status"><strong>{text('Check the interrupted interface action', '核对中断的界面动作')}</strong><p>{session.data.review.committed.length ? text('Committed commands', '已提交命令') : text('Check the current draft and clinical facts.', '请核对当前草稿及正式临床记录。')}</p>
           {session.data.review.committed.map((receipt, index) => <p key={index}>{receipt.operation} · {JSON.stringify(receipt.result)}</p>)}<Button disabled={busy} onClick={() => manage.mutate({ action: 'reviewed', reviewId: session.data?.review?.id })}>{text('I reviewed the outcome', '我已核对结果')}</Button></section>}

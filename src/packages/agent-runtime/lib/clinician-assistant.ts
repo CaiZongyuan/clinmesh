@@ -3,12 +3,12 @@ import { createModels } from '@earendil-works/pi-ai/models';
 import { createRegistry, type Conversation, type Harness, type ToolRegistration } from '@earendil-works/pi-durable';
 import { v7 } from 'uuid';
 import { z } from 'zod';
-import { assistantBinding, assistantChannel, assistantSessionCommand, assistantTurn, browserRequest, browserTools, maxUiCommands, uiCommandKey, type AssistantBinding } from '../../agent-protocol';
+import { assistantBinding, assistantChannel, assistantSessionCommand, assistantStop, assistantTurn, browserRequest, browserTools, maxUiCommands, uiCommandKey, type AssistantBinding } from '../../agent-protocol';
 import { requireEncounter } from '../../patient-visit';
 import { authorize, CoreError, permits, resolveActor, sha256, type Credential, type OperationCatalog } from '../../platform';
 import type { StorePort, StoreReader } from '../../store';
 import { AssistantBridge, type AssistantSocket } from './assistant-bridge';
-import { admitTurn, boundThread, failTurn, pendingBrowserAction, reserveBrowserAction, settleBrowserAction, threadView } from './assistant-threads';
+import { admitTurn, boundThread, drainStoppedTurn, failTurn, markTurnStopped, pendingBrowserAction, reserveBrowserAction, settleBrowserAction, threadView } from './assistant-threads';
 import { clinicianModel, clinicianModels, mockClinician } from './clinician-model';
 import { resolveAgentProvider, type AgentEnvironment } from './configuration';
 import { openDurableAgentSession } from './session';
@@ -86,10 +86,21 @@ export class ClinicianAssistant {
     return { ...view, review: { id, committed } };
   }
   async stop(credential: Credential, raw: unknown) {
-    const input = assistantChannel.parse(raw);
+    const input = assistantStop.parse(raw);
     await this.check(credential, input);
     const job = this.running.get(threadKey(input));
-    if (job?.thread === input.thread && job.client === input.clientId) await job.stop();
+    if (job) {
+      if (job.thread !== input.thread || job.requestId !== input.requestId) throw new CoreError(409, 'ASSISTANT_REQUEST_CHANGED');
+      if (job.client !== input.clientId) throw new CoreError(403, 'ASSISTANT_CLIENT_MISMATCH');
+      await job.stop();
+      await job.result.catch(() => {});
+    }
+    await this.withSession(credential, input, { models: createModels(), registry: createRegistry() }, async harness => {
+      const conversation = await boundThread(harness, input.roleId, input.thread);
+      await markTurnStopped(conversation, input);
+      const state = await drainStoppedTurn(harness, conversation, input.requestId);
+      if (state.submissions.some(item => item.conversationId === conversation.id && item.requestId === input.requestId)) throw new CoreError(409, 'ASSISTANT_STOP_PENDING');
+    });
     return { ok: true };
   }
   async turn(credential: Credential, raw: unknown, headers: Headers) {
@@ -142,7 +153,7 @@ export class ClinicianAssistant {
     const result = this.withSession(credential, input, { models: model.models, registry, settings: () => ({ retry: { enabled: recoveringGeneration, maxRetries: 3, baseDelayMs: 1 }, compaction: { enabled: false } }) }, async harness => {
       const conversation = await boundThread(harness, input.roleId, input.thread);
       selected = conversation;
-      const pending = await harness.inspect(context);
+      const pending = await drainStoppedTurn(harness, conversation);
       if (pending.submissions.some(item => item.conversationId !== conversation.id || item.requestId !== input.requestId)) throw new CoreError(409, 'ASSISTANT_REJOIN_REQUIRED');
       recoveringGeneration = pending.submissions.some(item => item.conversationId === conversation.id && item.requestId === input.requestId);
       const content = await admitTurn(conversation, input, fingerprint);
@@ -152,14 +163,13 @@ export class ClinicianAssistant {
       const settled = await submission.wait(context);
       if (model.failure() || controller.signal.aborted || settled.status !== 'done') {
         const stopped = controller.signal.aborted || (settled.status === 'unanswered' && settled.reason === 'aborted');
-        const failure = model.failure() ?? new CoreError(409, stopped ? 'ASSISTANT_STOPPED' : 'ASSISTANT_RUN_INTERRUPTED');
+        const failure = stopped ? new CoreError(409, 'ASSISTANT_STOPPED') : model.failure() ?? new CoreError(409, 'ASSISTANT_RUN_INTERRUPTED');
         await failTurn(conversation, input.requestId, failure); throw failure;
       }
       return this.view(harness, { ...input, action: 'list' });
     });
     this.running.set(key, { requestId: input.requestId, thread: input.thread, client: input.clientId, fingerprint, content: input.content, async stop() {
       controller.abort(); emit({ type: 'cancel' });
-      if (selected) await failTurn(selected, input.requestId, new CoreError(409, 'ASSISTANT_STOPPED'));
     }, result });
     try { return await result; } finally { this.running.delete(key); }
   }

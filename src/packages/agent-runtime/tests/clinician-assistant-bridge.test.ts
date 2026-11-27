@@ -141,11 +141,12 @@ it('recovers the original empty-output failure after Node restarts and runs an e
   } finally { await rm(directory, { recursive: true, force: true }); }
 }, 30000);
 
-it.each(['generation', 'unanswered UI', 'approved clinical command', 'clinician stop'] as const)('rejoins an interrupted %s across actual Node process termination', async scenario => {
+it.each(['generation', 'unanswered UI', 'approved clinical command', 'stop before restart', 'stop after restart'] as const)('rejoins an interrupted %s across actual Node process termination', async scenario => {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-assistant-cutoff-'));
   const db = join(directory, 'clinic.sqlite');
   const requestId = crypto.randomUUID();
   const interruptedUi = scenario === 'unanswered UI' || scenario === 'approved clinical command';
+  const cancelled = scenario === 'stop before restart' || scenario === 'stop after restart';
   let upstream = 0; let browserCalls = 0; let signalArrival!: () => void;
   const arrived = new Promise<void>(resolve => { signalArrival = resolve; });
   let cookie = ''; let channel!: AssistantChannel;
@@ -183,15 +184,28 @@ it.each(['generation', 'unanswered UI', 'approved clinical command', 'clinician 
           if (frame.type === 'ready') resolve();
           if (frame.type === 'call') { browserCalls++; if (sign) await sign(frame.commandToken!); signalArrival(); }
         }); socket.once('error', reject); });
+        if (launch === 2 && scenario === 'stop after restart') {
+          expect((await post('stop', { ...channel, clientId: crypto.randomUUID(), requestId })).status).toBe(403);
+          expect((await post('stop', { ...channel, requestId })).status).toBe(200);
+        }
         const task = post('turn', { ...channel, requestId, ...(launch === 1 && { content: 'Review the current instruction.' }) });
         if (launch === 1) {
           void task.catch(() => {}); await arrived;
-          if (scenario === 'clinician stop') { expect((await post('stop', channel)).status).toBe(200); expect(await (await task).json()).toMatchObject({ code: 'ASSISTANT_STOPPED' }); }
+          if (scenario === 'stop before restart') {
+            expect((await post('stop', { ...channel, requestId: crypto.randomUUID() })).status).toBe(409);
+            expect((await post('stop', { ...channel, requestId })).status).toBe(200);
+          }
           return;
         }
         try {
           const response = await task;
-          if (scenario === 'clinician stop') { expect(await response.json()).toMatchObject({ code: 'ASSISTANT_STOPPED' }); expect(upstream).toBe(1); return; }
+          if (cancelled) {
+            expect(await response.json()).toMatchObject({ code: 'ASSISTANT_STOPPED' }); expect(upstream).toBe(1);
+            expect((await post('stop', { ...channel, requestId })).status).toBe(200);
+            const next = await post('turn', { ...channel, requestId: crypto.randomUUID(), content: 'A new clinician instruction.' });
+            expect(assistantView.parse(await next.json()).messages.at(-1)?.text).toBe('Recovered the current instruction.');
+            expect(upstream).toBe(2); return;
+          }
           const output = assistantView.parse(await response.json());
           expect(output.messages.at(-1)?.text).toBe('Recovered the current instruction.');
           expect(output.messages.filter(item => item.role === 'clinician')).toHaveLength(1);

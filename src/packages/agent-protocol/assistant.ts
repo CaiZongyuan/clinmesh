@@ -17,6 +17,7 @@ export const maxUiCommands = 24;
 export const uiCommandKey = (token: string, index: number) => `assistant-ui:${token}:${index}`;
 export const assistantChannel = assistantBinding.extend({ clientId: z.uuid(), thread: assistantThread.shape.id });
 export type AssistantChannel = z.infer<typeof assistantChannel>;
+export const assistantStop = assistantChannel.extend({ requestId: z.uuid() });
 export const assistantTurn = assistantChannel.extend({ requestId: z.uuid(), content: z.string().trim().min(1).max(12000).optional(), retryOf: z.uuid().optional() }).refine(input => !(input.content && input.retryOf) && input.requestId !== input.retryOf);
 export const uiStep = z.strictObject({ ref: z.string().min(1).max(250), action: z.string().min(1).max(64), args: z.array(z.union([z.string().max(12000), z.number(), z.boolean(), z.null()])).max(8).optional() });
 export const browserTools = {
