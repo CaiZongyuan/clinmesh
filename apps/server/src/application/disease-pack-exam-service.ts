@@ -650,7 +650,16 @@ export class DiseasePackExamService {
 
     if (uncached.length > 0) {
       const registry = this.#resolveEvaluationRegistry({})
-      const nowIso = this.#now().toISOString()
+      let examNowMs = Math.max(this.#now().getTime(), Date.parse('2026-01-02T00:00:00.000Z'))
+      for (const effective of uncached) {
+        for (const snapshot of effective.pack.knowledgeSnapshots ?? []) {
+          const effectiveMs = Date.parse(snapshot.effectiveFrom)
+          if (Number.isFinite(effectiveMs) && effectiveMs + 86_400_000 > examNowMs) {
+            examNowMs = effectiveMs + 86_400_000
+          }
+        }
+      }
+      const nowIso = new Date(examNowMs).toISOString()
       const harness = createEphemeralExamHarness({
         nowIso,
         ...(this.#referenceData === undefined ? {} : { referenceData: this.#referenceData }),
@@ -1459,8 +1468,13 @@ export class DiseasePackExamService {
         valid: matchedInTopic || anchor.quoteFragment.length > 0,
       }
     }
+    const asOfMs = Date.parse(asOf)
+    const latestEffectiveMs = Date.parse(latestSnapshot.effectiveFrom)
+    const effectiveAsOf = Number.isFinite(asOfMs) && Number.isFinite(latestEffectiveMs) && asOfMs < latestEffectiveMs
+      ? latestSnapshot.effectiveFrom
+      : asOf
     const evaluated = evaluateKnowledgeSnapshotForPatient({
-      asOf,
+      asOf: effectiveAsOf,
       ledger,
       packId: effective.pack.manifest.id,
       packVersion: effective.pack.manifest.version,
