@@ -1,7 +1,7 @@
 {
   "manifest": {
     "packId": "global-general",
-    "version": "1.3.0",
+    "version": "1.4.0",
     "schemaVersion": 1,
     "name": { "en": "Teaching outpatient clinic", "zh": "综合教学门诊" },
     "description": {
@@ -238,6 +238,16 @@
     "services": [
       {
         "codeSystem": "urn:clinmesh:general:service",
+        "code": "cbc",
+        "display": { "en": "Complete blood count", "zh": "血常规" },
+        "kind": "lab",
+        "unitPriceMinor": 1200,
+        "unit": "panel",
+        "specimenContainer": { "specimen": "whole blood", "container": "EDTA tube" },
+        "analytes": [{ "codeSystem": "http://loinc.org", "code": "6690-2", "display": { "en": "Leukocytes", "zh": "白细胞" }, "unit": "10*9/L", "referenceRange": { "low": 4, "high": 11 } }]
+      },
+      {
+        "codeSystem": "urn:clinmesh:general:service",
         "code": "chest-xray",
         "display": { "en": "Chest radiograph", "zh": "胸部X线片" },
         "kind": "imaging",
@@ -370,7 +380,7 @@
   "cases": [
     {
       "caseId": "g01",
-      "version": "1",
+      "version": "2",
       "encounterClass": "outpatient",
       "tags": ["acute", "adult"],
       "demographics": {
@@ -434,6 +444,13 @@
           { "en": "Fever preceded the productive cough.", "zh": "先发热，随后咳痰。" }
         ],
         "results": [
+          {
+            "service": { "codeSystem": "urn:clinmesh:general:service", "code": "cbc" },
+            "stage": "initial",
+            "revision": 1,
+            "summary": { "en": "Elevated leukocyte count.", "zh": "白细胞计数升高。" },
+            "observations": [{ "analyte": { "codeSystem": "http://loinc.org", "code": "6690-2" }, "value": 15.4, "unit": "10*9/L" }]
+          },
           {
             "service": { "codeSystem": "urn:clinmesh:general:service", "code": "chest-xray" },
             "stage": "initial",

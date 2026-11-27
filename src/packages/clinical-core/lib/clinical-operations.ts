@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { editEncounter, readVisit, requireEncounter } from '../../patient-visit';
+import { catalogSchema } from '../../data-pack';
 import { CoreError, type ModuleRegistry, type OperationCatalog } from '../../platform';
 import type { StoreReader, StoreScope } from '../../store';
 import { confirmDiagnoses, currentRecordFields, diagnosisState, patientPresentation, recordState, retiredRecordFields, reviewedDiagnosisDraft, sameRecord, saveDiagnoses, saveRecord, signRecord } from './records';
@@ -35,7 +36,11 @@ function completion(reader: StoreReader, at: StoreScope, id: string, state: Core
 }
 
 export function registerClinicalOperations(catalog: OperationCatalog, registry: Registry) {
-  catalog.query({ name: 'encounter.read', path: base, access: {} }, encounterViewSchema, ({ reader, actor, targetId }) => {
+  catalog.query({ name: 'catalog.diagnoses', path: `${base}/diagnosis-catalog`, access: assess, assistantRead: 'encounter' }, catalogSchema.shape.diagnoses, ({ reader, actor, targetId }) => {
+    requireEncounter(reader, actor.at, targetId);
+    return reader.list(actor.at, 'catalog_items', { kind: 'diagnoses' }).map(row => catalogSchema.shape.diagnoses.element.parse(row.definition));
+  });
+  catalog.query({ name: 'encounter.read', path: base, access: {}, assistantRead: 'encounter' }, encounterViewSchema, ({ reader, actor, targetId }) => {
     const visit = readVisit(reader, actor.at, targetId);
     const state = clinicalState(reader, actor.at, targetId);
     return { ...visit, ...state, completion: completion(reader, actor.at, targetId, state, registry, actor.enabledModules) };

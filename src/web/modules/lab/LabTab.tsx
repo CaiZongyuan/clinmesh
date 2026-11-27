@@ -43,7 +43,7 @@ function LabWorkspace({ workspace, encounter, language, submit, data }: Workbenc
   const money = (amount: number, code: string, exponent: number) => new Intl.NumberFormat(language, { style: 'currency', currency: code, minimumFractionDigits: exponent, maximumFractionDigits: exponent }).format(amount / 10 ** exponent);
   const statuses: Record<LabOrder['status'], string> = { issued: text('Issued', '已开立'), accepted: text('Accepted', '已受理'), 'in-progress': text('In progress', '执行中'), reported: text('Reported', '待阅报告'), acknowledged: text('Acknowledged', '已确认审阅'), cancelled: text('Cancelled', '已取消'), 'generation-failed': text('Report generation failed', '报告生成失败') };
   const action = (order: LabOrder, operation: string, label: string) => allowed(operation) && <ConfirmActionButton disabled={mutation.isPending} confirmation={`${label} · ${orderName(order)}?`} onClick={() => mutation.mutate([{ name: `lab.${operation}`, targetId: order.id, version: order.version }])}>{label} · {orderName(order)} · {order.id.slice(-6)}</ConfirmActionButton>;
-  return <div className="clinical-panel">
+  return <div className="clinical-panel" data-assistant-field="investigation:draft" data-assistant-list>
     {mutation.data?.map(message => <p key={message} role="alert">{message}</p>)}
     <div className="catalog-columns">{(['lab', 'examination'] as const).map(kind => <Card key={kind}><h3>{kind === 'lab' ? text('Laboratory', '实验室检验') : text('Functional examinations', '功能检查')}</h3>
       <ul>{data.services.filter(service => service.kind === kind).map(service => <li key={service.id} className="diagnosis-row"><span>{service.display[language]}<small>{service.code} · {money(service.unitPriceMinor, service.currencyCode, service.currencyExponent)}</small></span>

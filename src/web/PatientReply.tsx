@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { replyEvent, replyState, type ReplyProgress } from '../packages/agent-protocol';
-import { Button } from '../packages/ui-kit';
+import { Button, ConfirmActionButton } from '../packages/ui-kit';
 import { modelHeaders, useModelSettings } from './model-preferences';
 import { api, ApiError, errorMessage, scopeKey, words, type WorkbenchPanelProps } from './workbench-api';
 
@@ -81,6 +81,6 @@ export function PatientReply(props: WorkbenchPanelProps & { busy: boolean; edita
   const command = (action: 'stop' | 'retry') => { void props.submit({ name: `consultation.${action}`, targetId: encounter.id, version: encounter.version, fields: { questionId: run.questionId, attempt: run.attempt } }).catch(() => {}); };
   if (run.status === 'running' || (encounter.replyPending && run.attempt > 0)) return <><LiveReply key={`${run.questionId}/${run.attempt}`} run={run} refresh={refresh} language={language}/><Button disabled={props.busy || run.status !== 'running'} onClick={() => command('stop')}>{text('Stop patient reply', '停止患者回复')}</Button></>;
   if (run.status === 'failed' || run.status === 'stopped') return <>{run.code ? <ReplyFailure code={run.code} language={language}/> : <p role="status">{text('Patient reply stopped.', '患者回复已停止。')}</p>}
-    <Button disabled={props.busy} onClick={() => command('retry')}>{text('Retry patient reply', '重试患者回复')}</Button></>;
+    <ConfirmActionButton confirmation={text('Ask the patient to answer this question again?', '请患者重新回答此问题？')} disabled={props.busy} onClick={() => command('retry')}>{text('Retry patient reply', '重试患者回复')}</ConfirmActionButton></>;
   return null;
 }

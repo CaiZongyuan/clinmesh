@@ -51,7 +51,7 @@ export function createStudyModule(definition: Definition, billing?: DiagnosticBi
   return { id: `mod-${kind}`, kind: 'clinical', version: '1', workbenchTabs: [{ id: kind, label }], clockAdvanced: lifecycle.publishDue,
     completion: (reader, at, id) => [{ id: `${kind}-acknowledgement`, label: gateLabel, passed: lifecycle.reportsReviewed(reader, at, id) }],
     registerOperations(catalog) {
-      catalog.query({ name: `${kind}.read`, path: base, access: { capabilities: [...execute.capabilities, 'review-reports'] } }, studyViewSchema, context => {
+      catalog.query({ name: `${kind}.read`, path: base, access: { capabilities: [...execute.capabilities, 'review-reports'] }, assistantRead: 'encounter' }, studyViewSchema, context => {
         const { reader, actor, targetId } = context;
         const { at } = actor;
         requireEncounter(reader, at, targetId);

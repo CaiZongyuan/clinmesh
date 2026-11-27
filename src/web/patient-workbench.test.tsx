@@ -2,6 +2,7 @@
 import '../../scripts/testing/ui-sdk-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { teachingGate, withNodeWorkspace } from '../../scripts/testing/node-workspace';
 import { openAiText, withProvider } from '../../scripts/testing/agent-provider';
@@ -32,7 +33,7 @@ it('configures both agents privately, probes explicit Mock Mode, and asks the pa
     await act('Start · Avery Reed', 'press'); await screen.findByRole('heading', { name: 'Avery Reed' });
     await act('Role · Intake coordinator', 'press', 'Family clinician');
     await waitFor(() => expect(screen.getByLabelText('Question for the patient').hasAttribute('disabled')).toBe(false));
-    await act('Question for the patient', 'setValue', 'Where does it hurt?'); await act('Send question', 'press');
+    await act('Question for the patient', 'setValue', 'Where does it hurt?'); await userEvent.click(screen.getByRole('button', { name: 'Send question' }));
     await screen.findByText('Configure a provider or enable Mock Mode.');
     await act('Model settings', 'press'); await screen.findByRole('dialog');
     await act('Provider', 'setValue', 'OpenAI-compatible'); await act('API key', 'setValue', 'synthetic-browser-only');
@@ -41,7 +42,7 @@ it('configures both agents privately, probes explicit Mock Mode, and asks the pa
     await act('Patient reasoning', 'setValue', 'low'); await act('Clinician reasoning', 'setValue', 'high');
     await act('Mock Mode', 'setChecked', true); await act('Test patient provider', 'press'); await screen.findByText('Connection successful.');
     await act('Model and provider settings', 'press', 'Close model settings'); await screen.findByText('Mock Mode');
-    await act('Send question', 'press'); await screen.findByText('Breathing deeply hurts my right side.');
+    await userEvent.click(screen.getByRole('button', { name: 'Send question' })); await screen.findByText('Breathing deeply hurts my right side.');
   });
 }, 30_000);
 
@@ -85,17 +86,17 @@ it('resumes the selected older encounter, stops during generation, and repairs a
       await act('Model settings', 'press'); await screen.findByRole('dialog');
       await act('Mock Mode', 'setChecked', false); await act('Provider', 'setValue', 'Server default');
       await act('API key', 'setValue', 'synthetic-expired'); await act('Model and provider settings', 'press', 'Close model settings');
-      await act('Question for the patient', 'setValue', 'When did you notice it?'); await act('Send question', 'press');
+      await act('Question for the patient', 'setValue', 'When did you notice it?'); await userEvent.click(screen.getByRole('button', { name: 'Send question' }));
       await receiving();
       expect(document.body.textContent).not.toContain('unapproved-stream-fragment');
       initial.unmount(); mount();
       await screen.findByRole('heading', { name: 'Avery Reed' }); await receiving();
       expect(requests).toBe(1); expect(new Set(subscriptions).size).toBe(1);
       await act('Stop patient reply', 'press'); await screen.findByText('Patient reply stopped.');
-      await act('Retry patient reply', 'press'); await screen.findByText('The provider rejected the credential. Check your API key.');
+      await userEvent.click(screen.getByRole('button', { name: 'Retry patient reply' })); await screen.findByText('The provider rejected the credential. Check your API key.');
       await act('Edit reply provider', 'press'); await screen.findByRole('dialog');
       await act('API key', 'setValue', 'synthetic-renewed'); await act('Model and provider settings', 'press', 'Close model settings');
-      await act('Retry patient reply', 'press'); await screen.findByText('I felt it yesterday.');
+      await userEvent.click(screen.getByRole('button', { name: 'Retry patient reply' })); await screen.findByText('I felt it yesterday.');
       await waitFor(() => expect(document.querySelectorAll('.consultation-turns li')).toHaveLength(3));
       expect(requests).toBe(3); expect(new Set(subscriptions).size).toBe(1);
     }, false, { CLINMESH_LLM_BASE_URL: baseUrl, CLINMESH_LLM_MODEL: 'synthetic-model' });

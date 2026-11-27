@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import type { EncounterView } from '../packages/clinical-core';
 
-type Drafts = { note?: { fields: Record<string, string>; version: number }; diagnoses?: { items: EncounterView['diagnoses']; baseline: EncounterView['diagnoses']; version: number }; acknowledgedVersion: number };
-export const createEncounterDrafts = () => create<Drafts>(() => ({ acknowledgedVersion: 0 }));
+type Drafts = { note?: { fields: Record<string, string>; version: number }; diagnoses?: { items: EncounterView['diagnoses']; baseline: EncounterView['diagnoses']; version: number }; acknowledgedVersion: number; manuallyEdited: Set<string> };
+export const createEncounterDrafts = () => create<Drafts>(() => ({ acknowledgedVersion: 0, manuallyEdited: new Set() }));
 export type EncounterDrafts = ReturnType<typeof createEncounterDrafts>;
 
 export function createEpochDrafts() {
