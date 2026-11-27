@@ -65,7 +65,7 @@ export function inputValidator(operation: OperationDescription) {
   if (!(schema instanceof z.ZodObject)) throw Error('Invalid catalog input contract');
   return schema.superRefine((input, context) => {
     for (const [name, field] of Object.entries(operation.inputSchema.properties ?? {})) {
-      const property = 'x-clinmesh-uniqueBy' in field ? field['x-clinmesh-uniqueBy'] : undefined;
+      const property = typeof field === 'object' && 'x-clinmesh-uniqueBy' in field ? field['x-clinmesh-uniqueBy'] : undefined;
       const values = input[name];
       if (typeof property === 'string' && Array.isArray(values) && !distinct(values, property)) context.addIssue({ code: 'custom', path: [name], message: `Expected distinct ${property} values` });
     }
