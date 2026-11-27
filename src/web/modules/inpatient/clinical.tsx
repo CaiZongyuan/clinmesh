@@ -1,13 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { encounterViewSchema } from '../../../packages/clinical-core';
 import { medicationSchema } from '../../../packages/data-pack';
-import { Button, Card } from '../../../packages/ui-kit';
+import { Button, Card, Checkbox } from '../../../packages/ui-kit';
+import type { WardView } from '../../../packages/mod-inpatient';
 import { RecordEditor } from '../../EncounterPanel';
 import { createEncounterDrafts } from '../../encounter-drafts';
 import { api, scopeKey, words } from '../../workbench-api';
 import { LabTab } from '../lab/LabTab';
 import { Choice, Entry, WardAction, namedOptions, selected, type StageProps } from './controls';
+
+const Radiology = lazy(() => import('../imaging/StudyTab').then(module => ({ default: module.RadiologyTab })));
+const Pathology = lazy(() => import('../imaging/StudyTab').then(module => ({ default: module.PathologyTab })));
 
 function Diagnoses(panel: StageProps) {
   const text = words(panel.language);
@@ -47,16 +51,29 @@ export function OrderComposer(panel: StageProps & { proposed?: { itemId: string;
 export function Orders(panel: StageProps) {
   const text = words(panel.language);
   const [reason, setReason] = useState('');
+  const [chosenTasks, chooseTasks] = useState<string[]>([]);
+  const availableTasks = panel.ward.tasks.filter(task => task.status === 'pending' && panel.ward.orders.some(order => order.id === task.orderId && order.kind === 'medication' && order.status === 'verified'));
+  const taskIds = availableTasks.filter(task => chosenTasks.includes(task.id)).map(task => task.id);
   const name = (id: string) => panel.directory.items.find(item => item.id === id)?.display[panel.language] ?? id;
   return <div className="clinical-panel"><Diagnoses {...panel}/>{panel.allowed('ward.order.sign') && panel.ward.status === 'admitted' && <OrderComposer {...panel}/>}
     <Card><h3>{text('Signed orders', '已签医嘱')}</h3>{panel.ward.orders.map(order => <div className="cm-actions" key={order.id}><strong>{name(order.itemId)}</strong><span>{order.frequency} · {order.duration} · {order.status}</span>
       {['admitted', 'discharge-pending'].includes(panel.ward.status) && <>{['signed', 'verified'].includes(order.status) && <WardAction panel={panel} name="order.request-stop" fields={{ orderIds: [order.id] }} label={`${text('Request stop', '申请停嘱')} · ${name(order.itemId)}`}/>}
         {order.frequency === 'PRN' && order.status === 'verified' && panel.allowed('ward.task.request-prn') && <><Entry label={`${text('PRN reason', '按需执行理由')} · ${name(order.itemId)}`} value={reason} change={setReason}/><WardAction panel={panel} name="task.request-prn" fields={{ orderId: order.id, reason }} disabled={!reason.trim()} label={`${text('Request PRN task', '发起按需执行')} · ${name(order.itemId)}`}/></>}</>}
     </div>)}{(['signed', 'stop-requested'] as const).map(status => { const ids = panel.ward.orders.filter(row => row.status === status).slice(0, 20).map(row => row.id); return ids.length ? <WardAction key={status} panel={panel} name={status === 'signed' ? 'order.verify' : 'order.verify-stop'} fields={{ orderIds: ids }} label={status === 'signed' ? text('Verify signed orders', '集中校对新医嘱') : text('Verify stop requests', '集中核停医嘱')}/> : null; })}</Card>
-    <Card><h3>{text('Nursing and pharmacy tasks', '护理与药房执行单')}</h3>{panel.ward.tasks.map(task => { const order = panel.ward.orders.find(order => order.id === task.orderId)!; const caption = `${name(order.itemId)} · ${task.dueAt} · ${task.id.slice(-6)}`;
+    <Card><h3>{text('Nursing and pharmacy tasks', '护理与药房执行单')}</h3>{panel.ward.tasks.map(task => { const order = panel.ward.orders.find(order => order.id === task.orderId)!;
+      const drug = order.kind === 'medication' ? medicationSchema.safeParse(panel.directory.items.find(item => item.id === order.itemId)?.definition).data : undefined;
+      const directions = drug ? `${order.directions.dose} ${drug.inpatientDoseBasis.unit} · ${order.directions.route} · ` : '';
+      const caption = `${name(order.itemId)} · ${directions}${task.dueAt} · ${task.id.slice(-6)}`;
       const action = task.status === 'dispensed' ? 'administer' : task.status === 'pending' ? order.kind === 'medication' ? 'dispense' : 'complete' : undefined;
-      return <div key={task.id}><span>{caption} · {task.status} {task.lots.map(lot => `${lot.lotNumber} × ${lot.quantity}`).join(', ')}</span>{action && <WardAction panel={panel} name={`task.${action}`} fields={{ taskIds: [task.id] }} label={`${action === 'dispense' ? text('Dispense batch', '批次发药') : action === 'administer' ? text('Confirm administration', '核实给药') : text('Complete nursing', '完成护理')} · ${caption}`}/>}</div>;
-    })}</Card></div>;
+      return <div key={task.id}><span>{caption} · {task.status} {task.lots.map(lot => `${lot.lotNumber} × ${lot.quantity}`).join(', ')}</span>{action === 'dispense' && panel.allowed('ward.task.dispense') && order.status === 'verified' ? <Checkbox label={`${text('Select for dispensing', '勾选发药')} · ${caption}`} checked={taskIds.includes(task.id)} disabled={!taskIds.includes(task.id) && taskIds.length >= 20} onCheckedChange={checked => chooseTasks(checked === true ? [...taskIds, task.id] : taskIds.filter(id => id !== task.id))}/> : action && action !== 'dispense' && <WardAction panel={panel} name={`task.${action}`} fields={{ taskIds: [task.id] }} label={`${action === 'administer' ? text('Confirm administration', '核实给药') : text('Complete nursing', '完成护理')} · ${caption}`}/>}</div>;
+    })}{availableTasks.length > 0 && <WardAction panel={panel} name="task.dispense" fields={{ taskIds }} disabled={!taskIds.length} done={() => chooseTasks([])} label={`${text('Dispense selected tasks', '集中发放已选任务')} (${taskIds.length})`}/>}</Card></div>;
+}
+function SpecimenCard({ panel, card }: { panel: StageProps; card: WardView['specimens'][number] }) {
+  const text = words(panel.language);
+  const [selection, setSelection] = useState<string[]>([]);
+  const orderIds = card.orderIds.filter(id => selection.includes(id));
+  return <Card><h3>{card.tube}</h3>{card.items.map(item => <Checkbox key={item.orderId} disabled={!panel.allowed('ward.investigation.dispatch')} label={`${item.display[panel.language]} · ${item.orderId.slice(-6)}`} checked={orderIds.includes(item.orderId)} onCheckedChange={checked => setSelection(checked === true ? [...orderIds, item.orderId] : orderIds.filter(id => id !== item.orderId))}/>)}
+    <WardAction panel={panel} name="investigation.dispatch" fields={{ orderIds }} disabled={!orderIds.length} done={() => setSelection([])} label={`${text('Dispatch selected requests', '送检已核实项目')} (${orderIds.length}) · ${card.tube}`}/></Card>;
 }
 export function Investigations(panel: StageProps) {
   const { workspace, ward, language } = panel;
@@ -66,7 +83,8 @@ export function Investigations(panel: StageProps) {
   const [note, setNote] = useState(false);
   return <div className="clinical-panel">{encounter.data && <>
     {panel.allowed('record.sign') && <><Button onClick={() => setNote(!note)}>{text('Admission assessment', '入院评估文书')}</Button>{note && <RecordEditor {...panel} submit={panel.run} encounter={encounter.data} drafts={drafts}/>}</>}
-    {workspace.enabledModules.includes('mod-lab') && <LabTab {...panel} submit={panel.run} encounter={encounter.data}/>}</>}
-    {ward.specimens.map(card => <Card key={card.tube}><h3>{card.tube}</h3><p>{card.orderIds.length} · {text('items awaiting dispatch', '项待送检')}</p><WardAction panel={panel} name="investigation.dispatch" fields={{ orderIds: card.orderIds }} label={`${text('Dispatch specimen', '核实送检')} · ${card.tube}`}/></Card>)}
+    {workspace.enabledModules.includes('mod-lab') && <LabTab {...panel} submit={panel.run} encounter={encounter.data}/>}
+    <Suspense fallback={null}>{panel.allowed('imaging.read') && <Radiology {...panel} submit={panel.run} encounter={encounter.data}/>}{panel.allowed('pathology.read') && <Pathology {...panel} submit={panel.run} encounter={encounter.data}/>}</Suspense></>}
+    {ward.specimens.map(card => <SpecimenCard key={card.tube} panel={panel} card={card}/>)}
   </div>;
 }

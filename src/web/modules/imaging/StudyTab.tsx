@@ -30,7 +30,7 @@ function StudyWorkspace({ workspace, encounter, language, kind, submit, data }: 
   const allowed = (action: string) => active && operations.has(`${kind}.${action}`);
   const send = (action: string, targetId: string, version: number, fields?: Intent['fields']) => mutation.mutate({ name: `${kind}.${action}`, targetId, version, fields });
   const [surgery, setSurgery] = useState('');
-  const surgeries = encounter.priorHistory.surgeries ?? [];
+  const surgeries = [...encounter.priorHistory.surgeries ?? [], ...data.completedSurgeries];
   const surgeryLabel = (id: string) => surgeries.find(item => item.id === id)?.description[language];
   const statuses = { issued: text('Issued', '已开立'), accepted: text('Accepted', '已受理'), 'in-progress': text('In progress', '执行中'), reported: text('Reported', '已签发'), acknowledged: text('Acknowledged', '已阅'), cancelled: text('Cancelled', '已取消'), 'generation-failed': text('No authored result', '缺少预置结果') };
   return <div className="clinical-panel">{mutation.isError && <p role="alert">{errorMessage(mutation.error, language)}</p>}

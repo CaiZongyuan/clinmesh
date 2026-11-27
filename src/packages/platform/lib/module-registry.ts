@@ -22,6 +22,7 @@ export interface ClinMeshModule<Operations = never> {
   readonly id: string;
   readonly kind: 'core' | 'clinical' | 'extension';
   readonly version: string;
+  availableInEpoch?(reader: StoreReader, at: StoreScope): boolean;
   registerRoutes?(app: Hono): void;
   registerOperations?(catalog: Operations): void;
   initializeEpoch?(tx: StoreTx, at: StoreScope, virtualAt: string, recordedAt: string): void | Promise<void>;
@@ -59,5 +60,7 @@ export class ModuleRegistry<Operations = never> {
     return { ok: true, runtime, loadedModules: [...this.#modules.keys()] };
   }
 
-  enabled(ids: readonly string[]) { return [...this.#modules.values()].filter(module => module.kind === 'core' || ids.includes(module.id)); }
+  enabled(ids: readonly string[], reader?: StoreReader, at?: StoreScope) {
+    return [...this.#modules.values()].filter(module => (module.kind === 'core' || ids.includes(module.id)) && (!reader || !at || module.availableInEpoch?.(reader, at) !== false));
+  }
 }

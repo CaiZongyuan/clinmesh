@@ -12,9 +12,11 @@ import { commonView, directory, directorySchema, specimenCards } from './lib/vie
 import { advance, clinician, conflict, mutateAdmission, organization, receipt, requireAdmission, route, times, wardsBase, type WardBilling } from './lib/ward';
 
 export { directorySchema } from './lib/views';
+export { completionPreviewSchema } from './lib/surgery';
 export { wardViewSchema, type WardView } from './lib/view-contract';
 export function createInpatientModule(billing?: WardBilling): ClinMeshModule<OperationCatalog> {
   return { id: 'mod-inpatient', kind: 'clinical', version: '1', initializeEpoch: initializeMaterials, midnight: (tx, at, day) => rollDay(tx, at, day, billing),
+    availableInEpoch: (reader, at) => !!reader.list(at, 'data_pack_installations')[0]?.knowledge.inpatient,
     encounterStarted(tx, at, encounterId, virtualAt, recordedAt) {
       const encounter = tx.get(at, 'encounters', encounterId)!;
       if (encounter.encounter_class !== 'inpatient' || !tx.list(at, 'data_pack_installations')[0]?.knowledge.inpatient) return;
@@ -27,8 +29,9 @@ export function createInpatientModule(billing?: WardBilling): ClinMeshModule<Ope
     },
     guardEncounter({ tx, at }, write) {
       const [admission] = tx.list(at, 'inpatient_admissions', { encounter_id: write.encounterId });
-      if (!admission || !tx.list(at, 'data_pack_installations')[0]?.knowledge.inpatient) return;
+      if (!admission) return;
       if (tx.list(at, 'medical_record_archives', { admission_id: admission.id }).length) conflict('CHART_ARCHIVED');
+      if (!tx.list(at, 'data_pack_installations')[0]?.knowledge.inpatient) return;
       if (admission.status === 'cleared' && (write.kind === 'record' || write.kind === 'complete')) return;
       if (write.kind === 'complete' || !['admitted', 'discharge-pending'].includes(admission.status)) conflict('ADMISSION_STATE_CONFLICT');
       if (write.kind === 'diagnose') conflict('ADMISSION_POA_REQUIRED');

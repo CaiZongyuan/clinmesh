@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState } from 'react';
 import { z } from 'zod';
 import { catalogSchema, medicationSchema } from '../../../packages/data-pack';
-import type { WardView } from '../../../packages/mod-inpatient';
+import { completionPreviewSchema, type WardView } from '../../../packages/mod-inpatient';
 import { Button, Card, Checkbox } from '../../../packages/ui-kit';
 import { words } from '../../workbench-api';
 import { Choice, Entry, namedOptions, selected, WardAction, type StageProps } from './controls';
@@ -32,7 +32,10 @@ function Request(panel: StageProps) {
 function Procedure(panel: StageProps & { surgery: Surgery }) {
   const { surgery } = panel, text = words(panel.language);
   const [signer, setSigner] = useState(''), [risks, setRisks] = useState(''), [check, setCheck] = useState(''), [note, setNote] = useState('');
-  const [chosen, choose] = useState(''), [amount, setAmount] = useState('1'), [next, setNext] = useState(''), [planned, setPlanned] = useState(false), [fingerprint, setFingerprint] = useState('');
+  const [chosen, choose] = useState(''), [amount, setAmount] = useState('1'), [next, setNext] = useState(''), [planned, setPlanned] = useState(false);
+  const [review, setReview] = useState<{ version: number; result: z.infer<typeof completionPreviewSchema> }>();
+  const preview = review?.version === panel.ward.version ? review.result : undefined;
+  const itemName = (itemId: string) => panel.directory.items.find(item => item.id === itemId)?.display[panel.language] ?? itemId;
   const [drugChoice, setDrug] = useState(''), [dose, setDose] = useState(''), [routeCode, setRoute] = useState('');
   const [postopIndex, setPostopIndex] = useState<number | null>(null);
   const stage = surgery.stages.at(-1)!;
@@ -61,8 +64,13 @@ function Procedure(panel: StageProps & { surgery: Surgery }) {
         <Choice label={text('Intraoperative medication', '术中用药')} options={drugs} value={drugId} change={setDrug}/><Entry label={text('Intraoperative dose', '术中单次剂量')} value={dose} change={setDose}/><Choice label={text('Intraoperative route', '术中给药途径')} options={routes} value={selected(routeCode, routes)} change={setRoute}/>
         {action('record-medication', text('Confirm intraoperative medication', '确认术中给药'), { itemId: drugId, dose: Number(dose), route: selected(routeCode, routes) }, !(Number(dose) > 0))}
         {stage.supplies.flatMap(row => row.uses.filter(use => use.quantity > 0).map(use => <div key={use.id}>{row.lotNumber} × {use.quantity}{action('correct-material', `${text('Correct material use', '耗材更正')} ${use.id.slice(-6)}`, { useId: use.id, quantity, note }, !note.trim())}</div>))}
-        <Button disabled={panel.busy} onClick={() => { void panel.run({ name: 'ward.surgery.preview-completion', targetId: panel.ward.encounterId, version: panel.ward.version, fields }).then(value => setFingerprint(z.object({ fingerprint: z.string() }).parse(value).fingerprint), () => {}); }}>{text('Preview completion', '核实完成清单')}</Button>
-        {action('complete', text('Complete reviewed procedure', '确认手术完成'), { fingerprint, ...(note && { note }) }, !fingerprint)}</>}
+        {stage.administrations.map(row => <p key={row.orderId}>{itemName(row.itemId)} · {row.dose} {row.unit} · {row.route} · {row.lots.map(lot => `${lot.lotNumber} × ${lot.quantity}`).join(', ')} {row.corrected ? text('Corrected', '已冲正') : action('correct-medication', `${text('Correct administration', '冲正给药')} ${row.orderId.slice(-6)}`, { medicationOrderId: row.orderId, note }, !note.trim())}</p>)}
+        <Button disabled={panel.busy} onClick={() => { const version = panel.ward.version; void panel.run({ name: 'ward.surgery.preview-completion', targetId: panel.ward.encounterId, version, fields }).then(value => setReview({ version, result: completionPreviewSchema.parse(value) }), () => {}); }}>{text('Preview completion', '核实完成清单')}</Button>
+        {preview && <Card><h4>{text('Final material reconciliation', '最终耗材核实')}</h4>{preview.materials.map(row => <p key={row.reservationId}>{itemName(row.itemId)} · {row.lotNumber} · {text('Planned', '预计')} {row.planned} · {text('Actual', '实际')} {row.actual} · {text('Difference', '差额')} {row.delta}</p>)}
+          {!preview.materials.length && <p>{text('No material use', '无耗材使用')}</p>}
+          <p>{text('Orders to stop', '将申请停用的医嘱')} · {preview.autoStop.map(id => { const order = panel.ward.orders.find(row => row.id === id); return order ? `${itemName(order.itemId)} (${order.frequency})` : id; }).join('、') || text('None', '无')}</p>
+          {preview.deviation && <p>{text('Reason for deviation', '偏离医学说明')} · {note.trim() || text('Required before completion', '完成前必填')}</p>}</Card>}
+        {action('complete', text('Complete reviewed procedure', '确认手术完成'), { fingerprint: preview?.fingerprint, ...(note && { note }) }, !preview || preview.deviation && !note.trim())}</>}
     </div>}
     {postoperative.length > 0 && <><p>{text('Postoperative order set', '术后成套医嘱')} · {postoperative.map(row => row.display[panel.language]).join(' · ')}</p>
       {panel.ward.status === 'admitted' && panel.allowed('ward.order.sign') && stage.executionId && (proposed ? <Suspense fallback={null}><PostoperativeOrder key={proposed.id} {...panel} proposed={{ itemId: proposed.id, executionId: stage.executionId }} onSigned={() => setPostopIndex(index => index !== null && index + 1 < postoperative.length ? index + 1 : null)}/></Suspense> : <Button onClick={() => setPostopIndex(0)}>{text('Review postoperative order set', '逐项重整术后医嘱')}</Button>)}</>}

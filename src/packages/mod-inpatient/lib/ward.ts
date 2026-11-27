@@ -16,6 +16,7 @@ export const times = (ctx: Pick<CommandContext, 'virtualAt' | 'recordedAt'>) => 
 export function conflict(code: string): never { throw new CoreError(409, code); }
 export type Admission = EntityRow<'inpatient_admissions'>;
 export interface WardBilling extends ClinicalBillingPort {
+  reverseClinicalCharge(ctx: CommandContext, orderId: string, reason: string): void;
   freezeMaterialUse(tx: StoreTx, at: StoreScope, useId: string): string | null;
   reverseMaterialUse(tx: StoreTx, at: StoreScope, useId: string, quantity: number, reason: string, virtualAt: string, recordedAt: string): void;
   readAdmissionFunds(reader: StoreReader, at: StoreScope, encounterId: string): { outstandingMinor: number | null; canClearBed: boolean; locked: boolean };

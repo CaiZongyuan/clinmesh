@@ -12,7 +12,10 @@ export function incurredSources(reader: StoreReader, at: StoreScope, encounterId
   for (const order of reader.list(at, 'clinical_orders', { encounter_id: encounterId })) {
     if (reader.get(at, 'ward_order_directions', order.id) || reader.list(at, 'ward_surgery_charges', { order_id: order.id, purpose: 'report' }).length) continue;
     const surgeries = reader.list(at, 'surgery_requests', { order_id: order.id });
-    if (!surgeries.length && fulfilledOrder(reader, at, order)) sources.push({ kind: 'order', id: order.id, orderId: order.id });
+    if (!surgeries.length && fulfilledOrder(reader, at, order)) {
+      const stage = reader.list(at, 'ward_surgery_stages', { order_id: order.id })[0];
+      sources.push(stage?.completed_execution_id ? { kind: 'procedure', id: stage.completed_execution_id, orderId: order.id } : { kind: 'order', id: order.id, orderId: order.id });
+    }
     for (const surgery of surgeries) {
       const performed = surgery.status === 'completed' || reader.list(at, 'surgery_executions', { surgery_request_id: surgery.id }).some(execution => execution.outcome === 'completed');
       if (performed) sources.push({ kind: 'procedure', id: surgery.id, orderId: order.id });

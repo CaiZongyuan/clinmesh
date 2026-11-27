@@ -150,6 +150,7 @@ export const catalogKinds = ['diagnoses', 'medications', 'services', 'procedures
 
 export function validateReferences(pack: HospitalDataPack) {
   checkOrganization(pack);
+  if (pack.manifest.enabledModules.includes('mod-inpatient') && !pack.knowledge?.inpatient) throw new DataPackError('INVALID_PACK', 'knowledge.inpatient');
   const pharmacyEnabled = pack.manifest.enabledModules.includes('mod-pharmacy');
   if (pharmacyEnabled && !pack.knowledge?.pharmacy) {
     throw new DataPackError('INVALID_PACK', 'knowledge.pharmacy');

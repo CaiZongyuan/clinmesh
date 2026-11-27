@@ -33,7 +33,7 @@ function completion(reader: StoreReader, at: StoreScope, id: string, state: Core
     { id: 'signed-record', label: { en: 'Signed clinical record', zh: '病历已签署' }, passed: Boolean(record) },
     { id: 'primary-diagnosis', label: { en: 'Confirmed primary diagnosis', zh: '主诊断已确认' }, passed: Boolean(confirmation?.diagnoses.some(item => item.primary)) },
     { id: 'drafts-reviewed', label: { en: 'All drafts reviewed', zh: '草稿已核对' }, passed: state.recordReviewed && diagnosesClean },
-    ...registry.enabled(enabled).flatMap(module => module.completion?.(reader, at, id) ?? []),
+    ...registry.enabled(enabled, reader, at).flatMap(module => module.completion?.(reader, at, id) ?? []),
   ];
   return { ready: checks.every(check => check.passed), checks };
 }

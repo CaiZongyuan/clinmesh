@@ -1,15 +1,17 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
-import type { Coding } from '../../data-pack';
+import { medicationSchema, type Coding } from '../../data-pack';
+import { availableStock, takeStock } from '../../mod-pharmacy';
 import { requireEncounter } from '../../patient-visit';
 import { checkVersion, sha256, type CommandContext, type OperationCatalog } from '../../platform';
-import { canonicalJson, type StoreReader, type StoreScope } from '../../store';
-import { itemFor } from './calendar';
+import { canonicalJson, prescriptionDirectionsSchema, type StoreReader, type StoreScope } from '../../store';
+import { itemFor, localDay, policy } from './calendar';
 import { latestDiagnoses, validateMedication, wardOrders } from './orders';
 import { closeReservations, correctSupply, material, materials, notice, openStage, procedure, publishAngiography, reportFor, supplyLedger, useSupply, type Stage } from './surgery-facts';
 import { advance, chargeOrder, conflict, id, mutateAdmission, openOrder, organization, quality, receipt, route, text, times, wardDepartment, type WardBilling } from './ward';
 
 const requestField = { requestId: id };
+export const completionPreviewSchema = z.object({ fingerprint: z.string(), autoStop: z.array(id), deviation: z.boolean(), materials: z.array(z.object({ reservationId: id, itemId: id, lotNumber: z.string(), planned: z.int(), actual: z.int(), delta: z.int() })) });
 const medication = z.strictObject({ itemId: id, dose: z.number().positive(), route: text });
 const staged = (reader: StoreReader, at: StoreScope, requestId: string) => reader.list(at, 'ward_surgery_stages', { request_id: requestId });
 function current(ctx: CommandContext, requestId: string, role: 'doctor' | 'nurse' = 'doctor') {
@@ -24,8 +26,10 @@ type Current = ReturnType<typeof current>;
 function changeStatus(ctx: CommandContext, surgery: Current, status: string) { ctx.tx.update(ctx.at, 'surgery_requests', surgery.request.id, surgery.request.version, { status }); }
 function preoperative(ctx: CommandContext, surgery: Current) {
   if (surgery.plan.preopOrderPolicy !== 'stop-on-completion') return [];
-  return wardOrders(ctx.tx, ctx.at, ctx.targetId).filter(({ order, schedule }) => schedule.duration === 'long' && !schedule.surgery_execution_id && ['signed', 'verified'].includes(order.status)).map(({ order }) => order);
+  const baseline = ctx.tx.get(ctx.at, 'ward_surgery_starts', surgery.stages[0]!.id)?.preoperative_orders;
+  return wardOrders(ctx.tx, ctx.at, ctx.targetId).filter(({ order, schedule }) => schedule.duration === 'long' && (!baseline || baseline.includes(order.id)) && ['signed', 'verified'].includes(order.status)).map(({ order }) => order);
 }
+function markStarted(ctx: CommandContext, surgery: Current) { ctx.tx.insert(ctx.at, 'ward_surgery_starts', { id: surgery.stage.id, preoperative_orders: preoperative(ctx, surgery).map(row => row.id), ...times(ctx) }); }
 function stopOrders(ctx: CommandContext, surgery: Current) {
   for (const order of preoperative(ctx, surgery)) ctx.tx.update(ctx.at, 'clinical_orders', order.id, order.version, { status: 'stop-requested' });
 }
@@ -41,12 +45,35 @@ function post(ctx: CommandContext, surgery: Current, itemId: string, quantity: n
   ctx.tx.insert(ctx.at, 'ward_surgery_charges', { id: v7(), stage_id: surgery.stage.id, order_id: order.id, purpose });
   ctx.tx.insert(ctx.at, 'order_executions', { id: v7(), order_id: order.id, practitioner_role: ctx.actor.role.id, outcome: purpose === 'medication' ? 'administered' : 'completed', ...times(ctx) });
   chargeOrder(billing, ctx.tx, ctx.at, order, quantity, wardDepartment(ctx.tx, ctx.at, surgery.admission.ward));
+  return order.id;
 }
 function recordMedication(ctx: CommandContext, surgery: Current, drug: z.infer<typeof medication>, override: unknown, billing?: WardBilling) {
   const item = ctx.tx.get(ctx.at, 'catalog_items', drug.itemId);
   if (item?.kind !== 'medications') conflict('MEDICATION_NOT_IN_CATALOG');
   const directions = validateMedication(ctx, item, drug.dose, drug.route, 1, override);
-  post(ctx, surgery, item.id, directions.quantity, 'medication', billing);
+  const orderId = post(ctx, surgery, item.id, directions.quantity, 'medication', billing);
+  const definition = medicationSchema.parse(item.definition);
+  ctx.tx.insert(ctx.at, 'prescription_directions', { id: v7(), order_id: orderId, directions: prescriptionDirectionsSchema.parse({ codeSystem: item.code_system, code: item.code, display: definition.display, dose: drug.dose, doseUnit: definition.inpatientDoseBasis.unit, routeCode: drug.route, timesPerDay: 1, days: 1, quantity: directions.quantity }) });
+  let remaining = directions.quantity;
+  const day = localDay(ctx.virtualAt, policy(ctx.tx, ctx.at).timezone);
+  for (const lot of availableStock(ctx.tx, ctx.at, item.id, day)) {
+    const quantity = Math.min(remaining, lot.available);
+    const movementId = takeStock(ctx.tx, ctx.at, lot.lotId, quantity, 'intraoperative-administration', ctx.virtualAt, ctx.recordedAt);
+    ctx.tx.insert(ctx.at, 'ward_surgical_drug_lots', { id: v7(), order_id: orderId, movement_id: movementId, quantity, reverses_id: null, ...times(ctx) });
+    remaining -= quantity;
+    if (!remaining) break;
+  }
+  if (remaining) conflict('PHARMACY_INSUFFICIENT_STOCK');
+  return orderId;
+}
+
+function administrations(reader: StoreReader, at: StoreScope, stageId: string) {
+  return reader.list(at, 'ward_surgery_charges', { stage_id: stageId, purpose: 'medication' }).flatMap(row => {
+    const signed = reader.list(at, 'prescription_directions', { order_id: row.order_id })[0]?.directions;
+    if (!signed) return [];
+    const lots = reader.list(at, 'ward_surgical_drug_lots', { order_id: row.order_id });
+    return [{ orderId: row.order_id, itemId: reader.get(at, 'clinical_orders', row.order_id)!.catalog_item_id, dose: signed.dose, unit: signed.doseUnit, route: signed.routeCode, corrected: lots.some(line => line.reverses_id !== null), lots: lots.filter(line => !line.reverses_id).map(line => ({ lotNumber: reader.get(at, 'inventory_lots', reader.get(at, 'inventory_movements', line.movement_id)!.lot_id)!.lot_number, quantity: line.quantity })) }];
+  });
 }
 function standby(surgery: Current) { return surgery.stage.stage === 'planned' && surgery.plan.standbyAdHocPci; }
 async function preview(ctx: CommandContext, surgery: Current) {
@@ -54,7 +81,7 @@ async function preview(ctx: CommandContext, surgery: Current) {
   const autoStop = standby(surgery) ? [] : preoperative(ctx, surgery).map(order => order.id);
   const deviation = ledger.some(row => row.actual !== row.planned);
   const fingerprint = await sha256(canonicalJson({ request: surgery.request.id, version: surgery.admission.version, stage: surgery.stage.id, autoStop, ledger }));
-  return { fingerprint, autoStop, deviation };
+  return { fingerprint, autoStop, deviation, materials: ledger.map(row => ({ reservationId: row.reservationId, itemId: row.itemId, lotNumber: row.lotNumber, planned: row.planned, actual: row.actual, delta: row.actual - row.planned })) };
 }
 function complete(ctx: CommandContext, surgery: Current, note: string | undefined, billing?: WardBilling) {
   const { stage } = surgery;
@@ -123,6 +150,7 @@ export function registerSurgery(catalog: OperationCatalog, billing?: WardBilling
   catalog.command(route('surgery.start', 'schedule-procedure'), requestField, receipt, (ctx, { requestId }) => {
     const surgery = current(ctx, requestId);
     if (surgery.request.status !== 'ready') conflict('SURGERY_NOT_READY');
+    markStarted(ctx, surgery);
     changeStatus(ctx, surgery, 'in-progress');
     return advance(ctx, surgery.admission);
   });
@@ -141,20 +169,34 @@ export function registerSurgery(catalog: OperationCatalog, billing?: WardBilling
     correctSupply(ctx, surgery.stage, input.useId, input.quantity, input.note, billing);
     return advance(ctx, surgery.admission);
   });
-  catalog.command(route('surgery.record-medication', 'schedule-procedure'), { ...requestField, ...medication.shape, clinicalOverride: z.unknown().optional() }, receipt, (ctx, input) => {
+  catalog.command(route('surgery.record-medication', 'schedule-procedure'), { ...requestField, ...medication.shape, clinicalOverride: z.unknown().optional() }, receipt.extend({ medicationOrderId: id }), (ctx, input) => {
     const surgery = inProgress(ctx, input.requestId);
-    recordMedication(ctx, surgery, input, input.clinicalOverride, billing);
+    const medicationOrderId = recordMedication(ctx, surgery, input, input.clinicalOverride, billing);
+    return { ...advance(ctx, surgery.admission), medicationOrderId };
+  });
+  catalog.command(route('surgery.correct-medication', 'schedule-procedure'), { ...requestField, medicationOrderId: id, note: text }, receipt, (ctx, input) => {
+    const surgery = inProgress(ctx, input.requestId);
+    const administration = administrations(ctx.tx, ctx.at, surgery.stage.id).find(row => row.orderId === input.medicationOrderId);
+    if (!administration || administration.corrected) conflict('MEDICATION_CORRECTION_CONFLICT');
+    for (const row of ctx.tx.list(ctx.at, 'ward_surgical_drug_lots', { order_id: input.medicationOrderId, reverses_id: null })) {
+      const source = ctx.tx.get(ctx.at, 'inventory_movements', row.movement_id)!;
+      const movementId = v7();
+      ctx.tx.insert(ctx.at, 'inventory_movements', { id: movementId, lot_id: source.lot_id, quantity_delta: row.quantity, reason: input.note, ...times(ctx) });
+      ctx.tx.insert(ctx.at, 'ward_surgical_drug_lots', { id: v7(), order_id: row.order_id, movement_id: movementId, quantity: row.quantity, reverses_id: row.id, ...times(ctx) });
+    }
+    billing?.reverseClinicalCharge(ctx, input.medicationOrderId, input.note);
     return advance(ctx, surgery.admission);
   });
   const executed = receipt.extend({ executionId: id });
   catalog.command(route('surgery.execute', 'schedule-procedure'), { ...requestField, materials: materials.default([]), medications: z.array(medication).max(12).default([]), note: text.optional(), clinicalOverride: z.unknown().optional() }, executed, (ctx, input) => {
     const surgery = current(ctx, input.requestId);
     if (surgery.request.status !== 'ready') conflict('SURGERY_NOT_READY');
+    markStarted(ctx, surgery);
     for (const item of input.materials) useSupply(ctx, surgery.stage, item, input.note, billing);
     for (const drug of input.medications) recordMedication(ctx, surgery, drug, input.clinicalOverride, billing);
     return complete(ctx, surgery, input.note, billing);
   });
-  catalog.command(route('surgery.preview-completion', 'schedule-procedure'), requestField, z.object({ fingerprint: z.string(), autoStop: z.array(id), deviation: z.boolean() }), (ctx, { requestId }) => preview(ctx, inProgress(ctx, requestId)));
+  catalog.command(route('surgery.preview-completion', 'schedule-procedure'), requestField, completionPreviewSchema, (ctx, { requestId }) => preview(ctx, inProgress(ctx, requestId)));
   catalog.command(route('surgery.complete', 'schedule-procedure'), { ...requestField, fingerprint: z.string().length(64), note: text.optional() }, executed, async (ctx, input) => {
     const surgery = inProgress(ctx, input.requestId);
     if ((await preview(ctx, surgery)).fingerprint !== input.fingerprint) conflict('STALE_SURGERY_PREVIEW');
@@ -202,7 +244,7 @@ export function surgeryView(reader: StoreReader, at: StoreScope, encounterId: st
       const procedureId = reader.get(at, 'clinical_orders', stage.order_id)!.catalog_item_id;
       const config = procedure(reader, at, procedureId);
       return { id: stage.id, procedureId, kind: config.binding?.kind ?? 'other', stage: stage.stage, parentExecutionId: stage.parent_execution_id, executionId: stage.completed_execution_id, supplies: supplyLedger(reader, at, stage.id),
-        medications: reader.list(at, 'ward_surgery_charges', { stage_id: stage.id, purpose: 'medication' }).map(row => reader.get(at, 'clinical_orders', row.order_id)!.catalog_item_id) };
+        administrations: administrations(reader, at, stage.id), medications: reader.list(at, 'ward_surgery_charges', { stage_id: stage.id, purpose: 'medication' }).map(row => reader.get(at, 'clinical_orders', row.order_id)!.catalog_item_id) };
     });
     const last = stages.filter(stage => stage.executionId).at(-1);
     const setId = last && procedure(reader, at, last.procedureId).binding?.postoperativeSetId;

@@ -54,7 +54,7 @@ export function registerPlatformOperations(catalog: OperationCatalog, { sign, mo
     const delta = Date.parse(to) - Date.parse(actor.active.virtual_time);
     if (delta <= 0 || delta > 366 * 86_400_000) throw new CoreError(400, 'VIRTUAL_TIME_OUT_OF_RANGE');
     tx.updateEpoch(at, expectedVersion, { virtual_time: to });
-    const enabled = modules.enabled(actor.enabledModules);
+    const enabled = modules.enabled(actor.enabledModules, tx, at);
     if (enabled.some(module => module.midnight)) {
       const timezone = z.string().parse(tx.list(at, 'data_pack_installations')[0]?.manifest.timezone);
       for (const date of crossedMidnights(context.virtualAt, to, timezone)) {

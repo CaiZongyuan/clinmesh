@@ -31,6 +31,13 @@ async function pciJourney(request: Parameters<typeof wardClient>[0]) {
   expect(await read()).toMatchObject({ surgeries: [{ status: 'standby-pci', report: { observations: expect.arrayContaining([expect.objectContaining({ code: 'LAD-FFR', value: 0.74 })]) } }], orders: [{ status: 'signed' }] });
   await act('surgery.convert-to-pci', { requestId, procedureId: item('36.0700'), materials: [{ itemId: item('des-3x18'), quantity: 1 }] });
   await act('surgery.start', { requestId });
+  await expect(act('surgery.record-medication', { requestId, itemId: item('rosuvastatin'), dose: 10, route: 'PO' })).rejects.toThrow('PRESCRIPTION_CLASS_CONFLICT');
+  const dose = { requestId, itemId: item('sodium-chloride'), dose: 500, route: 'IVGTT' };
+  const { medicationOrderId } = await act('surgery.record-medication', dose);
+  expect(await read()).toMatchObject({ surgeries: [{ stages: [{}, { administrations: [{ dose: 500, unit: 'mL', route: 'IVGTT', lots: [{ lotNumber: 'CV-A', quantity: 1 }], corrected: false }] }] }] });
+  await act('surgery.correct-medication', { requestId, medicationOrderId, note: 'Bedside check corrected the recorded administration' });
+  await expect(act('surgery.correct-medication', { requestId, medicationOrderId, note: 'Second correction' })).rejects.toThrow('MEDICATION_CORRECTION_CONFLICT');
+  await act('surgery.record-medication', dose);
   const { useId } = await act('surgery.record-material', { requestId, itemId: item('des-3x18'), quantity: 1 });
   await expect(act('surgery.correct-material', { requestId, useId, quantity: 1 })).rejects.toThrow();
   const beforeCorrection = await act('surgery.preview-completion', { requestId });
@@ -65,7 +72,9 @@ async function pciJourney(request: Parameters<typeof wardClient>[0]) {
   const bill = () => ward.get(`/api/his/encounters/${encounter}/billing`);
   const funds = async (name: string, fields = {}) => ward.send(name, encounter, z.int().parse((await bill()).version), fields);
   const account = await bill();
-  expect(account).toMatchObject({ unpostedSources: [], netMinor: 346000, balanceMinor: 346000 });
+  expect(account).toMatchObject({ unpostedSources: [], netMinor: 346100, balanceMinor: 346100 });
+  const drgPath = ward.current().operations.find(row => row.name === 'drg.summary')!.path.replace(':id', encounter);
+  expect(await ward.get(drgPath)).toMatchObject({ group: { group: 'FM39' }, basis: 'performed', costs: { plannedMinor: 0, reservedMinor: 0, committedMinor: 0, incurredMinor: 346100, projectedMinor: 346100 } });
   const pay = await funds('inpatient.deposit.preview', { amountMinor: account.balanceMinor });
   await funds('inpatient.deposit.confirm', { commitToken: pay.commitToken });
   const settlement = await funds('inpatient.settlement.preview');
@@ -111,6 +120,8 @@ it('retains the departed bed until one CAS clear succeeds when the billing modul
     await ward.role('ward-nurse'); await ward.send('ward.bed.assign', encounter, 1, { bed: 'heart-01' });
     await ward.role('cardiologist');
     await ward.send('ward.diagnose', encounter, 2, { diagnoses: [{ codeSystem: 'urn:clinmesh:reference:nhsa-diagnosis', code: 'I25.103', ordinal: 1, primary: true, poa: 'Y' }] });
+    const catalog = z.array(z.object({ id: z.string(), code: z.string() })).parse((await ward.get('/api/his/ward')).items);
+    await expect(ward.send('ward.order.sign', encounter, 3, { itemId: catalog.find(row => row.code === 'atorvastatin')!.id, duration: 'temporary', frequency: 'ONCE', dose: 10, route: 'PO' })).rejects.toThrow('WARD_PHARMACY_UNAVAILABLE');
     await ward.send('ward.discharge.issue', encounter, 3);
     await ward.send('ward.discharge.recall', encounter, 4, { reason: 'Recheck before leaving ward' });
     await ward.send('ward.discharge.issue', encounter, 5);
@@ -121,3 +132,34 @@ it('retains the departed bed until one CAS clear succeeds when the billing modul
     expect(await ward.get(`/api/his/ward/${encounter}`)).toMatchObject({ status: 'cleared', bed: null });
   } finally { await store.close(); }
 });
+
+it('allocates each available material unit once across patients and stops a previous postoperative long order at the next surgery', () => withNodeWorkspace(async origin => {
+  const ward = await wardClient((path, init) => fetch(origin + path, init));
+  const first = await ward.admit('赵德明'), second = await ward.admit('周秀兰');
+  await ward.role('ward-nurse');
+  await ward.send('ward.bed.assign', first, 1, { bed: 'heart-01' }); await ward.send('ward.bed.assign', second, 1, { bed: 'heart-02' });
+  await ward.role('cardiologist');
+  const catalog = z.array(z.object({ id: z.string(), code: z.string() })).parse((await ward.get('/api/his/ward')).items);
+  const item = (code: string) => catalog.find(row => row.code === code)!.id;
+  const act = async (encounter: string, operation: string, fields = {}) => ward.send(`ward.${operation}`, encounter, z.int().parse((await ward.get(`/api/his/ward/${encounter}`)).version), fields);
+  const notice = { procedureId: item('88.5500'), type: 'elective', plannedAt: ward.current().virtualTime, location: 'cath-lab', surgeon: 'cv-staff-01', anesthesia: 'local', reason: 'Review anatomy', preopOrderPolicy: 'stop-on-completion' };
+  await act(first, 'diagnose', { diagnoses: [{ codeSystem: 'urn:clinmesh:reference:nhsa-diagnosis', code: 'I25.103', primary: true, ordinal: 1, poa: 'Y' }] });
+  const { requestId } = await act(first, 'surgery.request', { ...notice, materials: [{ itemId: item('wire-014'), quantity: 25 }] });
+  await expect(act(second, 'surgery.request', { ...notice, materials: [{ itemId: item('wire-014'), quantity: 1 }] })).rejects.toThrow('MATERIAL_INSUFFICIENT_STOCK');
+  await act(first, 'surgery.cancel', { requestId, reason: 'Release material for the receiving patient' });
+  await act(second, 'surgery.request', { ...notice, materials: [{ itemId: item('wire-014'), quantity: 25 }] });
+  const prepare = async () => {
+    const { requestId } = await act(first, 'surgery.request', notice);
+    await act(first, 'surgery.consent', { requestId, diagnosisRevision: 1, signer: 'Patient', risks: 'Reviewed risks' });
+    await ward.role('ward-nurse'); await act(first, 'surgery.check', { requestId, checklist: 'Confirmed patient and procedure' }); await ward.role('cardiologist');
+    return requestId;
+  };
+  const surgery = await prepare();
+  const { executionId } = await act(first, 'surgery.execute', { requestId: surgery });
+  const { orderId } = await act(first, 'order.sign', { itemId: item('atorvastatin'), duration: 'long', frequency: 'QD', dose: 10, route: 'PO', surgeryExecutionId: executionId });
+  const subsequent = await prepare();
+  await act(first, 'surgery.start', { requestId: subsequent });
+  const preview = await act(first, 'surgery.preview-completion', { requestId: subsequent }); expect(preview.autoStop).toEqual([orderId]);
+  await act(first, 'surgery.complete', { requestId: subsequent, fingerprint: preview.fingerprint });
+  expect((await ward.get(`/api/his/ward/${first}`)).orders).toMatchObject([{ id: orderId, status: 'stop-requested' }]);
+}, false, { CLINMESH_PORT: '51963' }), 30_000);

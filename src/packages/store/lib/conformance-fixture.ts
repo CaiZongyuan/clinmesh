@@ -112,6 +112,8 @@ export function seedConformance(tx: StoreTx): string[] {
   add('ward_surgery_charges', { id: fixtureId(127), stage_id: fixtureId(123), order_id, purpose: 'report' });
   add('ward_chart_revisions', { id: fixtureId(128), admission_id, front_page: { summary: 'Synthetic course' }, submitted_by: practitioner_role, ...firstRevision, ...times });
   add('ward_coding_reviews', { id: fixtureId(129), revision_id: fixtureId(128), reviewed_by: practitioner_role, coding: { status: 'reviewed' }, ...times });
+  add('ward_surgery_starts', { id: fixtureId(123), preoperative_orders: [fixtureId(60)], ...times });
+  add('ward_surgical_drug_lots', { id: fixtureId(130), order_id: fixtureId(60), movement_id: fixtureId(37), quantity: 2, reverses_id: null, ...times });
   add('charge_items', { id: fixtureId(49), encounter_id, order_id, description: 'Synthetic charge', ...money, ...times });
   add('charge_adjustments', { id: fixtureId(50), charge_id: fixtureId(49), reason: 'Correction', ...money, amount_minor: -45, ...times });
   add('payment_transactions', { id: fixtureId(51), encounter_id, ...money, ...times });

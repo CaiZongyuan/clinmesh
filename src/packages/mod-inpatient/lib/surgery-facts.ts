@@ -40,11 +40,19 @@ export function supplyLedger(reader: StoreReader, at: StoreScope, stageId: strin
     return { itemId: lot.catalog_item_id, lotId: lot.id, lotNumber: lot.lot_number, reservationId: reservation.id, planned: link.planned ? reservation.quantity : 0, actual, uses };
   });
 }
+function reservedUnits(reader: StoreReader, at: StoreScope, lotId: string, ownReservation?: string) {
+  return reader.list(at, 'material_reservations', { lot_id: lotId, status: 'reserved' }).reduce((held, reservation) => {
+    if (reservation.id === ownReservation) return held;
+    const used = reader.list(at, 'material_uses', { reservation_id: reservation.id }).reduce((sum, use) =>
+      sum + use.quantity - reader.list(at, 'ward_material_corrections', { use_id: use.id }).reduce((count, correction) => count + correction.quantity, 0), 0);
+    return held + Math.max(0, reservation.quantity - used);
+  }, 0);
+}
 function reserve(ctx: CommandContext, stage: Stage, itemId: string, quantity: number, planned: boolean) {
   const item = ctx.tx.get(ctx.at, 'catalog_items', itemId);
   if (item?.kind !== 'materials') conflict('MATERIAL_NOT_IN_CATALOG');
   const date = localDay(ctx.virtualAt, policy(ctx.tx, ctx.at).timezone);
-  const lot = availableStock(ctx.tx, ctx.at, itemId, date).find(row => row.available >= quantity);
+  const lot = availableStock(ctx.tx, ctx.at, itemId, date).find(row => row.available - reservedUnits(ctx.tx, ctx.at, row.lotId) >= quantity);
   if (!lot) conflict('MATERIAL_INSUFFICIENT_STOCK');
   const reservationId = v7();
   ctx.tx.insert(ctx.at, 'material_reservations', { id: reservationId, surgery_request_id: stage.request_id, lot_id: lot.lotId, quantity, status: 'reserved', version: 1 });
@@ -63,7 +71,7 @@ export function useSupply(ctx: CommandContext, stage: Stage, input: z.infer<type
   if ((!planned || planned.actual + input.quantity > planned.planned) && !note) conflict('SURGERY_NOTE_REQUIRED');
   const supply = planned ?? reserve(ctx, stage, input.itemId, input.quantity, false);
   const date = localDay(ctx.virtualAt, policy(ctx.tx, ctx.at).timezone);
-  if (!availableStock(ctx.tx, ctx.at, input.itemId, date).some(lot => lot.lotId === supply.lotId && lot.available >= input.quantity)) conflict('MATERIAL_INSUFFICIENT_STOCK');
+  if (!availableStock(ctx.tx, ctx.at, input.itemId, date).some(lot => lot.lotId === supply.lotId && lot.available - reservedUnits(ctx.tx, ctx.at, lot.lotId, supply.reservationId) >= input.quantity)) conflict('MATERIAL_INSUFFICIENT_STOCK');
   const movementId = takeStock(ctx.tx, ctx.at, supply.lotId, input.quantity, note ?? 'planned surgical use', ctx.virtualAt, ctx.recordedAt);
   const useId = v7();
   ctx.tx.insert(ctx.at, 'material_uses', { id: useId, movement_id: movementId, reservation_id: supply.reservationId, quantity: input.quantity, ...times(ctx) });

@@ -148,6 +148,8 @@ export const tables = {
   ward_surgery_charges: table({ stage_id: ref('ward_surgery_stages'), order_id: order, purpose: choice('medication', 'nursing', 'report') }, 'order_id'),
   ward_chart_revisions: revisions('ward_chart_revisions', 'admission_id', { admission_id: admission, front_page: frozen, submitted_by: text }),
   ward_coding_reviews: table({ revision_id: ref('ward_chart_revisions'), reviewed_by: text, coding: frozen, ...times }, 'revision_id'),
+  ward_surgery_starts: table({ id: ref('ward_surgery_stages'), preoperative_orders: column(z.array(uuid), 'json'), ...times }),
+  ward_surgical_drug_lots: table({ order_id: order, movement_id: ref('inventory_movements'), quantity: positive, reverses_id: optional(ref('ward_surgical_drug_lots')), ...times }, 'movement_id', 'reverses_id'),
 } satisfies Record<string, TableDefinition>;
 
 export type Entity = keyof typeof tables;
@@ -157,7 +159,7 @@ export const entityNames = Object.keys(tables) as Entity[];
 export const billingEntities = ['charge_sources', 'billing_previews', 'billing_attempts', 'billing_recoveries', 'billing_releases', 'billing_settlements'] as const satisfies readonly Entity[];
 export const pharmacyEntities = ['prescription_signatures', 'prescription_directions', 'prescription_withdrawals', 'inventory_lot_quarantines'] as const satisfies readonly Entity[];
 export const labEntities = ['lab_drafts', 'lab_requests'] as const satisfies readonly Entity[];
-export const wardEntities = ['ward_certificates', 'ward_referrals', 'ward_transfer_tasks', 'ward_order_directions', 'ward_tasks', 'ward_deliveries', 'ward_incurred_orders', 'ward_bed_days', 'ward_specimen_dispatches', 'ward_surgery_plans', 'ward_surgery_preparations', 'ward_surgery_stages', 'ward_surgery_supplies', 'ward_material_corrections', 'ward_surgery_charges', 'ward_chart_revisions', 'ward_coding_reviews'] as const satisfies readonly Entity[];
+export const wardEntities = ['ward_certificates', 'ward_referrals', 'ward_transfer_tasks', 'ward_order_directions', 'ward_tasks', 'ward_deliveries', 'ward_incurred_orders', 'ward_bed_days', 'ward_specimen_dispatches', 'ward_surgery_plans', 'ward_surgery_preparations', 'ward_surgery_stages', 'ward_surgery_supplies', 'ward_material_corrections', 'ward_surgery_charges', 'ward_chart_revisions', 'ward_coding_reviews', 'ward_surgery_starts', 'ward_surgical_drug_lots'] as const satisfies readonly Entity[];
 
 export const editable = {
   patients: ['display_name', 'birth_date'], encounters: ['active_practitioner_role', 'status'], consultations: ['reply_pending'],

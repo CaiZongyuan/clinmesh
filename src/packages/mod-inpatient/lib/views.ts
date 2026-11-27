@@ -27,19 +27,21 @@ export const commonWardView = z.object({ encounterId: id, patient: z.string(), w
   transfer: z.object({ id, from: z.string(), to: z.string(), status: z.string(), version: z.int() }).nullable(), diagnosisRevision: z.int(), diagnoses: z.array(z.object({ codeSystem: z.string(), code: z.string(), primary: z.boolean(), ordinal: z.int(), poa: z.string().nullable() })),
   orders: z.array(z.object({ id, itemId: id, status: z.string(), duration: z.string(), frequency: z.string(), kind: z.string(), directions: z.record(z.string(), z.json()), surgeryExecutionId: id.nullable() })),
   tasks: z.array(z.object({ id, orderId: id, day: z.string(), dueAt: z.string(), reason: z.string().nullable(), status: z.string(), lots: z.array(z.object({ lotNumber: z.string(), quantity: z.int() })) })),
-  specimens: z.array(z.object({ tube: z.string(), orderIds: z.array(id) })),
+  specimens: z.array(z.object({ tube: z.string(), orderIds: z.array(id), items: z.array(z.object({ orderId: id, itemId: id, display: localizedName })) })),
 });
 export function specimenCards(reader: StoreReader, at: StoreScope, encounterId: string) {
-  const cards = new Map<string, string[]>();
+  const cards = new Map<string, { orderId: string; itemId: string; display: z.infer<typeof localizedName> }[]>();
   for (const order of reader.list(at, 'clinical_orders', { encounter_id: encounterId, status: 'issued' })) {
     if (!reader.list(at, 'lab_requests', { order_id: order.id }).length) continue;
     const item = reader.get(at, 'catalog_items', order.catalog_item_id)!;
     const container = catalogSchema.shape.services.element.parse(item.definition).specimenContainer;
     const tube = container ? `${container.specimen} / ${container.container} / ${container.capColor ?? '—'}` : String(item.code);
     const group = container?.mergeable && container.capColor ? tube : `${tube} · ${order.id}`;
-    cards.set(group, [...cards.get(group) ?? [], order.id]);
+    const items = cards.get(group) ?? [];
+    items.push({ orderId: order.id, itemId: item.id, display: localizedName.parse(item.definition.display) });
+    cards.set(group, items);
   }
-  return [...cards].map(([tube, orderIds]) => ({ tube, orderIds }));
+  return [...cards].map(([tube, items]) => ({ tube, items, orderIds: items.map(item => item.orderId) }));
 }
 export function commonView(reader: StoreReader, at: StoreScope, encounterId: string, billing?: WardBilling) {
   const admission = requireAdmission(reader, at, encounterId), encounter = requireEncounter(reader, at, encounterId);
