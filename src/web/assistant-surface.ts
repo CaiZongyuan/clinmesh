@@ -7,9 +7,11 @@ type SurfaceState = { suggestions: Suggestion[]; approval?: { id: string; messag
 export function createAssistantSurface(root: () => HTMLElement | null, edited: Set<string>) {
   const state = createStore<SurfaceState>(() => ({ suggestions: [], protected: [], unread: 0 }));
   const fieldKey = (element: Element | null | undefined, fallback?: string) => element?.closest<HTMLElement>('[data-assistant-field]')?.dataset.assistantField || fallback;
+  let agentTarget: HTMLElement | undefined;
+  const agentOwnsFocus = (element: Element | null) => Boolean(element && agentTarget && (agentTarget.contains(element) || (fieldKey(agentTarget) && fieldKey(agentTarget) === fieldKey(element))));
   const protectedFields = () => {
     const focused = document.activeElement;
-    const field = root()?.contains(focused) && (focused?.matches('input, textarea, [role="combobox"], [contenteditable]') || focused?.closest('[data-assistant-field]')) ? fieldKey(focused, focused?.getAttribute('aria-label') ?? focused?.closest('[data-part="root"]')?.textContent?.trim()) : undefined;
+    const field = !agentOwnsFocus(focused) && root()?.contains(focused) && (focused?.matches('input, textarea, [role="combobox"], [contenteditable]') || focused?.closest('[data-assistant-field]')) ? fieldKey(focused, focused?.getAttribute('aria-label') ?? focused?.closest('[data-part="root"]')?.textContent?.trim()) : undefined;
     state.setState({ protected: [...new Set([...edited, ...(field ? [field] : [])])] });
   };
   let accepted: Suggestion | undefined;
@@ -21,12 +23,13 @@ export function createAssistantSurface(root: () => HTMLElement | null, edited: S
       const focus = document.activeElement;
       const adopted = accepted?.ref === step.ref && accepted.action === step.action && JSON.stringify(accepted.args) === JSON.stringify(step.args);
       if (adopted) accepted = undefined;
-      const focused = focus && ((element.contains(focus) && focus.matches('textarea,input,[role="combobox"]')) || fieldKey(focus) === field);
+      const focused = focus && !agentOwnsFocus(focus) && ((element.contains(focus) && focus.matches('textarea,input,[role="combobox"]')) || fieldKey(focus) === field);
       if (!step.confirm && ['setValue', 'clear', 'increment', 'decrement', 'setChecked', 'toggle', 'press'].includes(step.action) && !adopted && (edited.has(field) || focused)) {
         const suggestion = { field, ref: step.ref, action: step.action, args: step.args, label: step.label ?? field };
         state.setState(current => ({ suggestions: [...current.suggestions.filter(item => item.field !== field), suggestion], unread: current.unread + 1 }));
         return false;
       }
+      agentTarget = element;
       const region = root();
       if (region) { region.dataset.agentActive = 'true'; clearTimeout(glow); glow = setTimeout(() => { region.dataset.agentActive = 'false'; }, 1500); }
       return true;
@@ -51,11 +54,13 @@ export function createAssistantSurface(root: () => HTMLElement | null, edited: S
         if (change.source === 'agent') { state.setState(current => ({ unread: current.unread + 1 })); return; }
         if (['keyboard', 'pen', 'mouse', 'touch', 'virtual'].includes(change.source)) { edited.add(fieldKey(element, change.label || change.ref)!); protectedFields(); }
       });
-      function input(event: Event) { if (event.target instanceof Element && root()?.contains(event.target)) { const key = fieldKey(event.target); if (key) { edited.add(key); protectedFields(); } } }
-      function editList(event: Event) { if (event.target instanceof Element && event.target.closest('button') && event.target.closest('[data-assistant-list]') && !event.target.closest('[data-agent-confirm]')) input(event); }
+      function humanIntent() { agentTarget = undefined; protectedFields(); }
+      function input(event: Event) { if (event.target instanceof Element && root()?.contains(event.target) && (event.isTrusted || !agentOwnsFocus(event.target))) { const key = fieldKey(event.target); if (key) { edited.add(key); protectedFields(); } } }
+      function editList(event: Event) { humanIntent(); if (event.target instanceof Element && event.target.closest('button') && event.target.closest('[data-assistant-list]') && !event.target.closest('[data-agent-confirm]')) input(event); }
       document.addEventListener('pointerdown', editList, true);
+      document.addEventListener('keydown', humanIntent, true);
       document.addEventListener('input', input, true); document.addEventListener('focusin', protectedFields); document.addEventListener('focusout', protectedFields);
-      return () => { alive = false; state.getState().approval?.answer(false); clearTimeout(glow); unobserve(); unregister(); document.removeEventListener('pointerdown', editList, true); document.removeEventListener('input', input, true); document.removeEventListener('focusin', protectedFields); document.removeEventListener('focusout', protectedFields); };
+      return () => { alive = false; state.getState().approval?.answer(false); clearTimeout(glow); unobserve(); unregister(); document.removeEventListener('pointerdown', editList, true); document.removeEventListener('keydown', humanIntent, true); document.removeEventListener('input', input, true); document.removeEventListener('focusin', protectedFields); document.removeEventListener('focusout', protectedFields); };
     },
     async accept(suggestion: Suggestion) {
       const target = agent.elementOf(suggestion.ref);

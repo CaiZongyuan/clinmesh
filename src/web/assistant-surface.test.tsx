@@ -3,11 +3,27 @@ import '../../scripts/testing/ui-sdk-dom';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ConfirmActionButton, Field, Textarea } from '../packages/ui-kit';
+import { Button, ConfirmActionButton, Field, Select, Textarea } from '../packages/ui-kit';
 import { createAssistantSurface } from './assistant-surface';
 import { createAmbientQueue } from './assistant-channel';
 
 afterEach(cleanup);
+it('lets the assistant select a diagnosis and add its candidate without treating its own focus as a clinician edit', async () => {
+  const root = document.createElement('div'); document.body.appendChild(root);
+  const surface = createAssistantSurface(() => root, new Set());
+  const stop = surface.mount();
+  const add = vi.fn();
+  try {
+    render(<div data-assistant-field="diagnosis:draft" data-assistant-list><Field label="Diagnosis catalog"><Select options={[{ label: 'Pneumonia', value: 'J18.9' }]}/></Field><Button onClick={add}>Add diagnosis</Button></div>, { container: root });
+    await act(async () => {
+      const result = await surface.call({ tool: 'ui_act', args: { steps: [{ ref: 'Diagnosis catalog', action: 'setValue', args: ['J18.9'] }, { ref: 'Add diagnosis', action: 'press' }] } }, new AbortController().signal);
+      expect(result).toMatchObject({ ok: true });
+    });
+    expect(add).toHaveBeenCalledOnce();
+    expect(surface.state.getState().suggestions).toHaveLength(0);
+  } finally { stop(); root.remove(); }
+});
+
 it('uses the same scoped approval for WebMCP and the native bridge, and preserves a focused or manually edited draft', async () => {
   const send = vi.fn();
   const root = document.createElement('div'); document.body.appendChild(root);
