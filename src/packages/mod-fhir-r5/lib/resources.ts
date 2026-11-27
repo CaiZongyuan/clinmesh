@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { clinicalFactId, clinicalFactSystem, triageMeasures } from '../../clinical-core';
 import { studyReportSectionsSchema } from '../../diagnostic-studies';
 import { signedFindingsSchema } from '../../mod-lab';
-import { completedWardProcedures, signedAngiography } from '../../mod-inpatient';
+import { completedWardProcedures, signedAngiography, wardMedicationDeliveries, wardMedicationDirections } from '../../mod-inpatient';
 import type { Actor } from '../../platform';
 import type { EntityRow, StoreReader, StoreScope } from '../../store';
 
@@ -117,15 +117,18 @@ export function projectResources(reader: StoreReader, actor: Actor, type: Resour
           else for (const { id, item } of observations) emit(id, report.revision, report.recorded_at, { ...context, status: status === 'partial' ? 'preliminary' : status, code: code(item.codeSystem, item.code), effectiveDateTime: report.virtual_at, ...(typeof item.value === 'number' ? { valueQuantity: { value: item.value, unit: item.unit } } : { valueString: item.value }), basedOn: [ref('ServiceRequest', order.id)] }, encounter, undefined, current);
         }
       } else if ((type === 'MedicationRequest' && order.kind === 'medication') || (type === 'ServiceRequest' && order.kind !== 'medication')) {
-        const direction = type === 'MedicationRequest' ? reader.list(at, 'prescription_directions', { order_id: order.id })[0]?.directions : undefined;
+        if (reader.list(at, 'ward_incurred_orders', { order_id: order.id }).length) continue;
+        const instruction = type === 'MedicationRequest' ? medicationInstruction(reader, at, order) : {};
         const states = reader.list(at, 'clinical_order_versions', { order_id: order.id }).sort((first, second) => first.version - second.version);
         let updated = order.recorded_at;
         for (const state of [...states, order]) {
-          const instruction = direction ? { dosageInstruction: [{ timing: { repeat: { frequency: direction.timesPerDay, period: 1, periodUnit: 'd' } }, route: { text: direction.routeCode }, doseAndRate: [{ doseQuantity: { value: direction.dose, unit: direction.doseUnit } }] }] } : {};
           emit(order.id, state.version, updated, { ...context, authoredOn: order.virtual_at, intent: 'order', ...(order.kind === 'medication' ? { status: medicationStatus(state.status), medication: { concept }, ...instruction } : { status: serviceStatus(state.status), code: { concept } }) }, encounter, undefined, state === order);
           if ('replaced_at' in state) updated = state.replaced_at;
         }
       } else if (type === 'MedicationDispense' && order.kind === 'medication') {
+        for (const delivery of wardMedicationDeliveries(reader, at, order.id)) {
+          emit(delivery.id, 1, delivery.recorded_at, { ...context, status: 'completed', medication: { concept }, authorizingPrescription: [ref('MedicationRequest', order.id)], quantity: { value: delivery.quantity, unit: delivery.unit }, whenHandedOver: delivery.virtual_at }, encounter);
+        }
         for (const line of reader.list(at, 'prescription_orders', { order_id: order.id })) for (const dispense of reader.list(at, 'dispenses', { prescription_order_id: line.id })) {
           emit(dispense.id, 1, dispense.recorded_at, { ...context, status: 'completed', medication: { concept }, authorizingPrescription: [ref('MedicationRequest', order.id)], quantity: { value: dispense.quantity }, whenHandedOver: dispense.virtual_at }, encounter);
         }
@@ -141,6 +144,15 @@ export function projectResources(reader: StoreReader, actor: Actor, type: Resour
 }
 
 function procedureStatus(outcome: string) { return outcome === 'completed' ? 'completed' : ['cancelled', 'not-done'].includes(outcome) ? 'not-done' : outcome === 'started' ? 'in-progress' : 'unknown'; }
+function medicationInstruction(reader: StoreReader, at: StoreScope, order: EntityRow<'clinical_orders'>) {
+  const ward = wardMedicationDirections(reader, at, order);
+  const direction = ward ?? reader.list(at, 'prescription_directions', { order_id: order.id })[0]?.directions;
+  if (!direction) return {};
+  const daily = { frequency: direction.timesPerDay, period: 1, periodUnit: 'd' };
+  const prn = ward?.frequency === 'PRN';
+  const timing = { ...(ward && { code: { text: ward.frequency } }), ...(!prn && { repeat: ward?.frequency === 'ONCE' ? { count: 1 } : daily }) };
+  return { dosageInstruction: [{ timing, ...(prn && { asNeeded: true }), route: { text: direction.routeCode }, doseAndRate: [{ doseQuantity: { value: direction.dose, unit: direction.doseUnit } }] }] };
+}
 function reportResult(reader: StoreReader, at: StoreScope, kind: string, report: EntityRow<'diagnostic_reports'>) {
   const { findings } = report;
   if (kind === 'examination') {

@@ -41,6 +41,33 @@ it('completes the genuine 1.2.0 encounter using its previously signed and acknow
   } finally { await host.store.close(); }
 });
 
+it('projects the signed order and immutable pharmacy handover once for a resumed v8 ward admission', async () => {
+  const host = await openFrozen('aabef5a1-c02-v8', '2943217062f8817ca65488766a3efd219d4687b91527614c629d411f071caede');
+  try {
+    const wardPath = `/api/his/ward/${host.encounterId}`;
+    const view = async () => wardViewSchema.parse(await host.get(wardPath));
+    const act = async (name: string, fields: object) => {
+      const ws = workspaceSchema.parse(await host.get('/api/workspace'));
+      const op = ws.operations.find(op => op.name === name)!;
+      const response = await host.send(op.path.replace(':id', host.encounterId), name === 'workspace.role' ? ws.sessionVersion : (await view()).version, fields);
+      expect(response.status, name).toBe(200); return z.record(z.string(), z.json()).parse(await response.json());
+    };
+    const directory = directorySchema.parse(await host.get('/api/his/ward'));
+    const order = await act('ward.order.sign', { itemId: directory.items.find(row => row.code === 'atorvastatin')!.id, dose: 20, route: 'PO', duration: 'temporary', frequency: 'ONCE' });
+    await act('workspace.role', { roleId: 'ward-nurse' }); await act('ward.order.verify', { orderIds: [order.orderId] });
+    const task = (await view()).tasks.find(row => row.orderId === order.orderId)!;
+    await act('workspace.role', { roleId: 'ward-pharmacist' }); await act('ward.task.dispense', { taskIds: [task.id] });
+    await act('workspace.role', { roleId: 'cardiologist' });
+    expect(await host.get(`/fhir/R5/MedicationRequest?encounter=${host.encounterId}`)).toMatchObject({ total: 1, entry: [{ resource: { id: order.orderId, dosageInstruction: [{ timing: { repeat: { count: 1 } }, route: { text: 'PO' }, doseAndRate: [{ doseQuantity: { value: 20, unit: 'mg' } }] }] } }] });
+    expect(await host.get(`/fhir/R5/MedicationDispense?encounter=${host.encounterId}`)).toMatchObject({ total: 1, entry: [{ resource: { authorizingPrescription: [{ reference: `MedicationRequest/${order.orderId}` }], quantity: { value: 2 } } }] });
+    await host.store.read(reader => {
+      expect(reader.get(host.at, 'ward_order_directions', String(order.orderId))?.frequency).toBe('ONCE');
+      expect(reader.list(host.at, 'ward_incurred_orders', { task_id: task.id })).toHaveLength(1);
+      expect(reader.list(host.at, 'ward_deliveries', { task_id: task.id })).toHaveLength(1);
+    });
+  } finally { await host.store.close(); }
+});
+
 it('retains v8 bed, material, report and surgery facts and enforces PCI quality in the active old cardiology pack', async () => {
   const host = await openFrozen('aabef5a1-c02-v8', '2943217062f8817ca65488766a3efd219d4687b91527614c629d411f071caede');
   try {

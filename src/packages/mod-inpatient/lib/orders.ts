@@ -11,6 +11,22 @@ import { advance, chargeOrder, conflict, id, mutateAdmission, openOrder, receipt
 export const identifiers = z.array(id).min(1).max(20).refine(ids => new Set(ids).size === ids.length);
 const diagnosis = z.strictObject({ codeSystem: z.url(), code: text, primary: z.boolean(), ordinal: z.int().min(1).max(8), poa: z.enum(['Y', 'N', 'U', 'W', '1']) });
 const directions = z.object({ dose: z.number().positive(), route: text, quantity: z.int().positive(), timesPerDay: z.int().positive() });
+export function wardMedicationDirections(reader: StoreReader, at: StoreScope, order: EntityRow<'clinical_orders'>) {
+  const signed = reader.get(at, 'ward_order_directions', order.id);
+  if (order.kind !== 'medication' || !signed) return undefined;
+  const item = reader.get(at, 'catalog_items', order.catalog_item_id)!;
+  const { inpatientDoseBasis } = medicationSchema.parse(item.definition);
+  const { dose, route, timesPerDay } = directions.parse(signed.directions);
+  return { dose, routeCode: route, timesPerDay, doseUnit: inpatientDoseBasis.unit, frequency: signed.frequency };
+}
+
+export function wardMedicationDeliveries(reader: StoreReader, at: StoreScope, orderId: string) {
+  return reader.list(at, 'ward_tasks', { order_id: orderId }).flatMap(task => reader.list(at, 'ward_deliveries', { task_id: task.id }).map(delivery => {
+    const movement = reader.get(at, 'inventory_movements', delivery.movement_id)!;
+    const lot = reader.get(at, 'inventory_lots', movement.lot_id)!;
+    return { ...delivery, unit: lot.unit };
+  }));
+}
 export function latestDiagnoses(reader: StoreReader, at: StoreScope, encounterId: string) {
   const latest = reader.list(at, 'diagnosis_revisions', { encounter_id: encounterId }).sort((first, second) => second.revision - first.revision)[0];
   return latest ? reader.list(at, 'diagnosis_confirmations', { revision_id: latest.id }).sort((first, second) => first.ordinal - second.ordinal)
