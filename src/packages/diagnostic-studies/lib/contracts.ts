@@ -9,6 +9,7 @@ export const storedStudy = z.strictObject({ sections: reportSections, amendmentR
 export const reviewMode = z.enum(['text', 'first-frame-rendered', 'frames-unavailable']);
 const report = reportHeader.extend({ sections: reportSections, amendmentReason: localizedName.optional(), frameCount: z.int().nonnegative(), requireFirstFrame: z.boolean() });
 export const studyViewSchema = z.object({
+  completedSurgeries: z.array(z.object({ id: z.uuidv7(), performedOn: z.iso.date(), description: localizedName })).default([]),
   services: z.array(z.object({ quote, display: localizedName })),
   orders: z.array(orderHeader.extend({ priorSurgeryId: z.string().nullable(), reports: z.array(report) })),
 });

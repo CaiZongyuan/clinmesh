@@ -136,7 +136,8 @@ function checkResults(results: ClinicalCase['caseTruth']['results'], services: R
     const leaves = indexBy(service.analytes, codingKey, 'service.analytes');
     for (const leaf of indexBy(result.observations, item => codingKey(item.analyte), 'observations').keys()) reference(leaves, leaf, 'observations.analyte');
     if ((result.revision > 1) !== Boolean(result.amendmentReason)) throw new DataPackError('INVALID_PACK', 'results.amendmentReason');
-    const key = JSON.stringify([service.codeSystem, service.code, result.stage, result.priorSurgeryId]);
+    const source = result.completedProcedure;
+    const key = JSON.stringify([service.codeSystem, service.code, result.stage, result.priorSurgeryId, source?.codeSystem, source?.code, source?.executionStage]);
     const chain = revisions.get(key) ?? [];
     chain.push(result.revision);
     revisions.set(key, chain);
@@ -150,6 +151,7 @@ export const catalogKinds = ['diagnoses', 'medications', 'services', 'procedures
 
 export function validateReferences(pack: HospitalDataPack) {
   checkOrganization(pack);
+  if (pack.manifest.enabledModules.includes('mod-inpatient') && !pack.knowledge?.inpatient) throw new DataPackError('INVALID_PACK', 'knowledge.inpatient');
   const pharmacyEnabled = pack.manifest.enabledModules.includes('mod-pharmacy');
   if (pharmacyEnabled && !pack.knowledge?.pharmacy) {
     throw new DataPackError('INVALID_PACK', 'knowledge.pharmacy');
@@ -177,6 +179,10 @@ export function validateReferences(pack: HospitalDataPack) {
   for (const service of catalog.services) indexBy(service.analytes, codingKey, 'services.analytes');
   for (const procedure of catalog.procedures) requireCodes('services', procedure.preopServices, 'preopServices');
   if (pack.knowledge) {
+    for (const alias of pack.knowledge.pharmacy?.indicationAliases ?? []) {
+      reference(entries.diagnoses, codingKey(alias.diagnosis), 'pharmacy.indicationAliases');
+      if (alias.equivalent.codeSystem !== pack.knowledge.pharmacy?.indicationCodeSystem) throw new DataPackError('INVALID_REFERENCE', 'pharmacy.indicationAliases.equivalent');
+    }
     const lotKeys = new Set<string>();
     for (const lot of pack.knowledge.pharmacy?.openingStock ?? []) {
       for (const code of lot.medicationCodes) {
@@ -189,6 +195,22 @@ export function validateReferences(pack: HospitalDataPack) {
     }
     indexBy(pack.knowledge.guidelineTopics, item => item.id, 'guidelineTopics');
     indexBy(pack.knowledge.orderSetTemplates, item => item.id, 'orderSetTemplates');
+    const inpatient = pack.knowledge.inpatient;
+    if (inpatient) {
+      const nursing = (code: Coding) => {
+        if (reference(entries.services, codingKey(code), 'inpatient.nursing').kind !== 'nursing') throw new DataPackError('INVALID_REFERENCE', 'inpatient.nursing');
+      };
+      nursing(inpatient.bedDay);
+      if (!Object.keys(inpatient.schedules).length || ['ONCE', 'PRN'].some(key => Object.hasOwn(inpatient.schedules, key))) throw new DataPackError('INVALID_PACK', 'inpatient.schedules');
+      for (const lot of indexBy(inpatient.materialStock, lot => JSON.stringify([codingKey(lot.item), lot.lotNumber]), 'inpatient.materialStock').values()) reference(entries.materials, codingKey(lot.item), 'inpatient.materialStock');
+      for (const procedure of indexBy(inpatient.procedures, proc => codingKey(proc.item), 'inpatient.procedures').values()) {
+        reference(entries.procedures, codingKey(procedure.item), 'inpatient.procedures');
+        if (procedure.nursing) nursing(procedure.nursing);
+        const report = procedure.reportService && reference(entries.services, codingKey(procedure.reportService), 'inpatient.reportService');
+        if (procedure.kind === 'angiography' && !report?.requiresProcedure || procedure.ffr && !report?.analytes.some(leaf => codingKey(leaf) === codingKey(procedure.ffr!) && leaf.unit === '1')) throw new DataPackError('INVALID_REFERENCE', 'inpatient.reportService');
+        if (procedure.postoperativeSetId && !pack.knowledge.orderSetTemplates.some(set => set.id === procedure.postoperativeSetId && set.scope === 'postop')) throw new DataPackError('INVALID_REFERENCE', 'inpatient.postoperativeSetId');
+      }
+    }
     for (const template of pack.knowledge.orderSetTemplates) {
       requireCodes('diagnoses', template.triggerDiagnoses, 'triggerDiagnoses');
       requireCodes('diagnoses', template.hardContraindications, 'hardContraindications');
@@ -214,7 +236,10 @@ export function validateReferences(pack: HospitalDataPack) {
     const surgeries = indexBy(patient.priorHistory.surgeries ?? [], item => item.id, 'priorHistory.surgeries');
     for (const result of truth.results) {
       if (result.priorSurgeryId) reference(surgeries, result.priorSurgeryId, 'results.priorSurgeryId');
-      if ((result.sections?.kind === 'pathology') !== Boolean(result.priorSurgeryId)) throw new DataPackError('INVALID_PACK', 'results.priorSurgeryId');
+      if (result.completedProcedure) {
+        reference(entries.procedures, codingKey(result.completedProcedure), 'results.completedProcedure');
+        if (result.priorSurgeryId || result.sections?.kind !== 'pathology') throw new DataPackError('INVALID_PACK', 'results.completedProcedure');
+      } else if ((result.sections?.kind === 'pathology') !== Boolean(result.priorSurgeryId)) throw new DataPackError('INVALID_PACK', 'results.priorSurgeryId');
     }
     requireCodes('diagnoses', [truth.primaryDiagnosis, ...truth.secondaryDiagnoses], 'caseTruth.diagnoses');
     requireCodes('medications', truth.expectedMedications ?? [], 'expectedMedications');

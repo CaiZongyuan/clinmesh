@@ -1,0 +1,76 @@
+import { expect, it } from 'vitest';
+import { z } from 'zod';
+import { encounterViewSchema } from '../../clinical-core';
+import { labViewSchema } from '../../mod-lab';
+import { withNodeWorkspace } from '../../../../scripts/testing/node-workspace';
+import { wardClient } from './ward-client';
+
+it('expands the next local day once, dispensing a real batch before human administration', () => withNodeWorkspace(async origin => {
+  const ward = await wardClient((path, init) => fetch(origin + path, init));
+  const encounter = await ward.admit('赵德明');
+  await ward.role('ward-nurse');
+  await ward.send('ward.bed.assign', encounter, 1, { bed: 'heart-01' });
+  await ward.role('cardiologist');
+  const details = () => ward.get(`/api/his/ward/${encounter}`);
+  const directory = await ward.get('/api/his/ward');
+  const medicines = z.array(z.object({ id: z.string(), code: z.string() })).parse(directory.items);
+  const itemId = medicines.find(item => item.code === 'atorvastatin')!.id;
+  await ward.send('ward.diagnose', encounter, 2, { diagnoses: [{ codeSystem: 'http://hl7.org/fhir/sid/icd-10', code: 'I21.4', primary: true, ordinal: 1, poa: 'Y' }] });
+  const signed = await ward.send('ward.order.sign', encounter, 3, { itemId, duration: 'long', frequency: 'QD', dose: 20, route: 'PO' });
+  await ward.role('ward-nurse');
+  await ward.send('ward.order.verify', encounter, 4, { orderIds: [signed.orderId] });
+  await ward.role('hospital-admin');
+  const current = await ward.workspace();
+  const local = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date(current.virtualTime));
+  const to = new Date(Date.parse(`${local}T06:00:00Z`) + 86_400_000).toISOString();
+  const key = crypto.randomUUID();
+  await ward.send('workspace.advance-time', '', 0, { to }, key);
+  await ward.send('workspace.advance-time', '', 0, { to }, key);
+  await ward.role('ward-nurse');
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date(to));
+  const tomorrow = z.array(z.object({ id: z.string(), day: z.string(), status: z.string(), dueAt: z.string() })).parse((await details()).tasks).filter(task => task.day === day);
+  expect(tomorrow).toHaveLength(1);
+  expect(tomorrow[0]).toMatchObject({ status: 'pending', dueAt: `${day}T00:00:00.000Z` });
+  const taskIds = [tomorrow[0]!.id];
+  await expect(ward.send('ward.task.administer', encounter, 5, { taskIds })).rejects.toThrow('DISPENSE_REQUIRED');
+  await ward.role('ward-pharmacist');
+  await ward.send('ward.task.dispense', encounter, 5, { taskIds });
+  await ward.role('ward-nurse');
+  await ward.send('ward.task.administer', encounter, 6, { taskIds });
+  expect(await details()).toMatchObject({ tasks: expect.arrayContaining([expect.objectContaining({ id: taskIds[0], status: 'administered', lots: [{ lotNumber: 'CV-A', quantity: 2 }] })]) });
+}, false, { CLINMESH_PORT: '51962' }), 30_000);
+
+it('limits PRN to four reasoned requests per local day and merges two serum tests before actual lab acceptance', () => withNodeWorkspace(async origin => {
+  const ward = await wardClient((path, init) => fetch(origin + path, init));
+  const encounter = await ward.admit('赵德明');
+  await ward.role('ward-nurse'); await ward.send('ward.bed.assign', encounter, 1, { bed: 'heart-01' });
+  await ward.role('cardiologist');
+  const diagnosis = { codeSystem: 'http://hl7.org/fhir/sid/icd-10', code: 'I21.4', primary: true, ordinal: 1 };
+  await expect(ward.send('ward.diagnose', encounter, 2, { diagnoses: [diagnosis] })).rejects.toThrow('INVALID_INPUT');
+  await ward.send('ward.diagnose', encounter, 2, { diagnoses: [{ ...diagnosis, poa: 'Y' }] });
+  const path = `/api/his/encounters/${encounter}`;
+  const visit = encounterViewSchema.parse(await ward.get(path));
+  const fields = Object.fromEntries(visit.template.filter(field => field.required).map(field => [field.id, `Reviewed ${field.id}`]));
+  await ward.send('record.draft', encounter, visit.version, { expectedDraftVersion: 0, fields });
+  await ward.send('record.sign', encounter, visit.version + 1);
+  const items = z.array(z.object({ id: z.string(), code: z.string() })).parse((await ward.get('/api/his/ward')).items);
+  const { orderId } = await ward.send('ward.order.sign', encounter, 3, { itemId: items.find(item => item.code === 'cath-nursing')!.id, duration: 'long', frequency: 'PRN' });
+  const lab = async () => labViewSchema.parse(await ward.get(`${path}/lab`));
+  const serviceIds = (await lab()).services.filter(service => ['renal', 'potassium'].includes(service.code)).map(service => service.id);
+  await ward.send('lab.save-draft', encounter, 0, { serviceIds });
+  await ward.send('lab.issue', encounter, 1, { items: (await lab()).draft.items });
+  const orderIds = (await lab()).orders.map(order => order.id);
+  expect(await ward.get(`/api/his/ward/${encounter}`)).toMatchObject({ specimens: [{ tube: 'serum / serum separator / gold', orderIds }] });
+  await expect(ward.send('lab.accept', orderIds[0]!, 1)).rejects.toThrow('WARD_DISPATCH_REQUIRED');
+  await ward.role('ward-nurse'); await ward.send('ward.investigation.dispatch', encounter, 4, { orderIds });
+  expect((await lab()).orders.map(order => order.status)).toEqual(['accepted', 'accepted']);
+  for (const order of (await lab()).orders) {
+    await ward.send('lab.start', order.id, 2); await ward.send('lab.report-now', order.id, 3);
+  }
+  expect((await lab()).orders.flatMap(order => order.reports.flatMap(report => report.observations.map(observation => observation.value))).sort()).toEqual([175, 4.5]);
+  await ward.send('ward.order.verify', encounter, 5, { orderIds: [orderId] });
+  expect((await ward.get(`/api/his/ward/${encounter}`)).tasks).toEqual([]);
+  for (let version = 6; version < 10; version++) await ward.send('ward.task.request-prn', encounter, version, { orderId, reason: 'Bedside reassessment' });
+  await expect(ward.send('ward.task.request-prn', encounter, 10, { orderId, reason: 'Fifth request' })).rejects.toThrow('PRN_DAILY_LIMIT');
+  expect((await ward.get(`/api/his/ward/${encounter}`)).tasks).toHaveLength(4);
+}, false, { CLINMESH_PORT: '51962' }), 30_000);

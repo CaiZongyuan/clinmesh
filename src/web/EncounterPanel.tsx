@@ -42,7 +42,7 @@ function Consultation(props: Props) {
   </div>;
 }
 
-function RecordEditor(props: Editor) {
+export function RecordEditor(props: Editor) {
   const { encounter, drafts, language } = props;
   const text = words(language);
   const note = drafts(state => state.note);

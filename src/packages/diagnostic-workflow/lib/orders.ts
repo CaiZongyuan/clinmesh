@@ -24,6 +24,7 @@ export function pricedServices(reader: StoreReader, at: StoreScope) {
 export function activeEncounter(context: CommandContext, encounterId: string, responsible: boolean) {
   const encounter = requireEncounter(context.tx, context.at, encounterId);
   if (encounter.status !== 'active') throw new CoreError(409, 'ENCOUNTER_COMPLETED');
+  context.guardEncounter?.({ encounterId, kind: 'clinical' });
   if (responsible && encounter.active_practitioner_role !== context.actor.role.id) throw new CoreError(403, 'RESPONSIBLE_ROLE_REQUIRED');
   return encounter;
 }
