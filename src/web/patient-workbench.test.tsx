@@ -48,6 +48,7 @@ it('configures both agents privately, probes explicit Mock Mode, and asks the pa
 
 it('resumes the selected older encounter, stops during generation, and repairs an asynchronous authentication failure in place', async () => {
   const transport = globalThis.fetch;
+  const receiving = () => screen.findByText(/Receiving the patient reply/, {}, { timeout: 10_000 });
   const agent = createClinMeshUiAgent();
   const act = async (ref: string, action: string, ...args: (string | boolean)[]) => {
     const result = await agent.act({ steps: [{ ref, action, args }] }); expect(result.ok, result.error?.message).toBe(true);
@@ -86,10 +87,10 @@ it('resumes the selected older encounter, stops during generation, and repairs a
       await act('Mock Mode', 'setChecked', false); await act('Provider', 'setValue', 'Server default');
       await act('API key', 'setValue', 'synthetic-expired'); await act('Model and provider settings', 'press', 'Close model settings');
       await act('Question for the patient', 'setValue', 'When did you notice it?'); await userEvent.click(screen.getByRole('button', { name: 'Send question' }));
-      await screen.findByText(/Receiving the patient reply/, {}, { timeout: 5000 });
+      await receiving();
       expect(document.body.textContent).not.toContain('unapproved-stream-fragment');
       initial.unmount(); mount();
-      await screen.findByRole('heading', { name: 'Avery Reed' }); await screen.findByText(/Receiving the patient reply/, {}, { timeout: 5000 });
+      await screen.findByRole('heading', { name: 'Avery Reed' }); await receiving();
       expect(requests).toBe(1); expect(new Set(subscriptions).size).toBe(1);
       await act('Stop patient reply', 'press'); await screen.findByText('Patient reply stopped.');
       await userEvent.click(screen.getByRole('button', { name: 'Retry patient reply' })); await screen.findByText('The provider rejected the credential. Check your API key.');

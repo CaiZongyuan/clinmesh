@@ -149,6 +149,7 @@ function PatientHeader({ encounter, language }: Pick<Props, 'encounter' | 'langu
     <DetailDrawer title={text('Prior history', '既往病史')} trigger={text('View prior history', '查看既往史')} close={text('Close history', '关闭既往史')}>
       <p>{allergies}</p>{[...priorHistory.diagnoses, ...priorHistory.medications].map(item => <p key={codingKey(item)}>{item.code} · {item.codeSystem}</p>)}
       {priorHistory.observations.map(item => <p key={`${item.observedAt}-${codingKey(item.analyte)}`}>{item.observedAt} · {item.analyte.code} · {item.value} {item.unit}</p>)}
+      {priorHistory.surgeries?.map(item => <p key={item.id}>{item.performedOn} · {item.description[language]}</p>)}
     </DetailDrawer></header>;
 }
 

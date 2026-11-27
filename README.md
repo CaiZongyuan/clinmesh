@@ -36,5 +36,6 @@ Vite 开发页从 `src/web` 启动，按公开入口的依赖图加载模块与�
 - [深模块契约与包职责](src/packages/README.md)
 - [工作台 HTTP、Command 和临床扩展接口](src/packages/clinical-core/README.md)
 - [检验与功能检查工作台、报告修订与版本已阅](src/packages/mod-lab/README.md)
-- [Hospital Data Pack 编译、热切换与工作台读取](src/packages/data-pack/README.md)、[两套合成教学包的来源](data/packs/README.md)
+- [放射、病理申请与关键帧审阅](src/packages/mod-imaging/README.md)
+- [Hospital Data Pack 编译、热切换与工作台读取](src/packages/data-pack/README.md)、[合成教学包的来源](data/packs/README.md)
 - [领域词汇](GLOSSARY.md)、[架构决策](docs/adr/)、[协作规范](AGENTS.md)
