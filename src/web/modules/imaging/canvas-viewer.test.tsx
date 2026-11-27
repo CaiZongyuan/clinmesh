@@ -33,7 +33,7 @@ function review() {
   });
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 640, 400));
   const drawImage = vi.fn();
-  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => Object.assign(Object.create(CanvasRenderingContextPrototype), { drawImage, clearRect: vi.fn() }));
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(vi.fn().mockReturnValue({ drawImage, clearRect: vi.fn() }));
   const reportId = v7();
   const earlier = '2028-01-01T00:00:00Z';
   const request = vi.fn(async () => Response.json({ reportId, frames: ['one.png', 'two.png'] }));
@@ -47,7 +47,6 @@ function review() {
   }}/></QueryClientProvider>);
   return { images, drawImage, acknowledge, request };
 }
-const CanvasRenderingContextPrototype = {};
 
 it('loads frames only after opening, unlocks after an actual draw and keeps formal review behind human confirmation', async () => {
   const agent = createClinMeshUiAgent();

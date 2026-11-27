@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { studyViewSchema, type StudyKind, type StudyView } from '../../../packages/diagnostic-workflow';
+import { studyViewSchema, type StudyKind, type StudyView } from '../../../packages/diagnostic-studies';
 import { Badge, Card, ConfirmActionButton, Dialog, Field, Select } from '../../../packages/ui-kit';
 import { api, errorMessage, scopeKey, words, type Intent, type WorkbenchPanelProps } from '../../workbench-api';
 import { ReportReview } from './ReportReview';

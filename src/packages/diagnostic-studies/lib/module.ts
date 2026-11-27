@@ -4,9 +4,8 @@ import { caseTruthSchema, manifestSchema } from '../../data-pack';
 import { editEncounter, requireEncounter } from '../../patient-visit';
 import { CoreError, type ClinMeshModule, type CommandContext, type OperationCatalog } from '../../platform';
 import type { EntityRow, StoreReader, StoreScope } from '../../store';
-import { createReportLifecycle, executionReceipt, readDiagnosticOrder, serviceFor } from './lifecycle';
-import { pricedServices, quote, requestStages, requireOrderPrerequisites, sameQuote, type DiagnosticBillingPort } from './orders';
-import { frameList, reviewMode, storedStudy, studyViewSchema, type StudyKind } from './study-contracts';
+import { createReportLifecycle, executionReceipt, pricedServices, quote, readDiagnosticOrder, requestStages, requireOrderPrerequisites, sameQuote, serviceFor, type DiagnosticBillingPort } from '../../diagnostic-workflow';
+import { frameList, reviewMode, storedStudy, studyViewSchema, type StudyKind } from './contracts';
 
 type Definition = {
   kind: StudyKind; label: { en: string; zh: string }; gateLabel: { en: string; zh: string };

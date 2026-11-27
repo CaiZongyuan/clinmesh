@@ -35,30 +35,36 @@ function ImageSurface({ frames, local, language, onFirstFrame, onUnavailable }: 
   useEffect(() => {
     const next = new Image();
     next.referrerPolicy = 'no-referrer';
-    next.onload = () => setLoaded({ source, image: next });
-    next.onerror = () => { setLoaded({ source }); if (first) onUnavailable(); };
+    function discard() { window.clearTimeout(timeout); next.onload = null; next.onerror = null; next.removeAttribute('src'); }
+    function fail() { discard(); setLoaded({ source }); if (first) onUnavailable(); }
+    const timeout = window.setTimeout(fail, 15_000);
+    next.onload = () => { window.clearTimeout(timeout); setLoaded({ source, image: next }); };
+    next.onerror = fail;
     next.src = source;
-    return () => { next.onload = null; next.onerror = null; next.removeAttribute('src'); };
+    return discard;
   }, [source, first, onUnavailable]);
   useLayoutEffect(() => {
     const surface = canvas.current;
-    if (!surface || !image) return;
+    if (!surface) return;
     try {
       const context = surface.getContext('2d');
-      if (!context || !image.naturalWidth || !image.naturalHeight) throw Error();
+      if (!context) throw Error();
+      context.clearRect(0, 0, surface.width, surface.height);
+      if (!image) return;
+      if (!image.naturalWidth || !image.naturalHeight) throw Error();
       const scale = Math.min(surface.width / image.naturalWidth, surface.height / image.naturalHeight) * view.zoom;
       const width = image.naturalWidth * scale;
       const height = image.naturalHeight * scale;
-      context.clearRect(0, 0, surface.width, surface.height);
       context.filter = canvasFilter(view);
       context.drawImage(image, (surface.width - width) / 2 + view.panX, (surface.height - height) / 2 + view.panY, width, height);
+      setDrawError('');
       if (first) onFirstFrame();
     } catch { setDrawError(source); if (first) onUnavailable(); }
   }, [image, view, first, source, onFirstFrame, onUnavailable]);
   const step = (amount: number) => dispatch({ type: 'frame', amount, count });
   return <section className="clinical-panel"><p>{local ? text('Local preview · only on this device', '本地预览 · 仅限本机') : text('Synthetic teaching frames', '合成教学关键帧')} · {view.frame + 1}/{count}</p>
     {failed && <p role="status">{text('Image unavailable. The signed text report remains available.', '图像不可用，仍可阅读已签发的文字报告。')}</p>}
-    <canvas ref={canvas} width={640} height={400} className="study-canvas" hidden={!image || failed} tabIndex={0} role="img" aria-label={text('Study frame, use the arrow keys to change frames', '检查关键帧，使用方向键翻帧')}
+    <canvas ref={canvas} width={640} height={400} className="study-canvas" hidden={failed} tabIndex={0} role="img" aria-label={text('Study frame, use the arrow keys to change frames', '检查关键帧，使用方向键翻帧')}
       onWheel={event => { if (event.deltaY) step(Math.sign(event.deltaY)); }} onKeyDown={event => {
         if (['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(event.key)) { event.preventDefault(); step(event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1); }
       }} onPointerDown={event => { if (event.button !== 0) return; event.currentTarget.setPointerCapture(event.pointerId); drag.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId }; }}

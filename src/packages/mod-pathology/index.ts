@@ -1,5 +1,6 @@
 import { readClinicalCase } from '../data-pack';
-import { createStudyModule, type DiagnosticBillingPort } from '../diagnostic-workflow';
+import { createStudyModule } from '../diagnostic-studies';
+import type { DiagnosticBillingPort } from '../diagnostic-workflow';
 import { CoreError } from '../platform';
 
 export const createPathologyModule = (billing?: DiagnosticBillingPort) => createStudyModule({

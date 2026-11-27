@@ -8,6 +8,7 @@ import billingBaseline from './fixtures/e3842543-v3.json';
 import { patientBaseline } from './patient-baseline';
 import patientDelta from './fixtures/61c01899-v4.delta.json';
 import labDelta from './fixtures/4cd73c40-v5.delta.json';
+import pharmacyDelta from './fixtures/cc914872-v6.delta.json';
 
 const baselineV2 = { ...baseline, format: 'clinmesh.snapshot.v2', tables: [...baseline.tables, { name: 'encounter_triage', rows: [] }], sha256: 'da0e04ceb63d8912c5a11d4ebabb1be1f10497bd42e1c88d96f1d21043c6971f' };
 it.each([baseline, baselineV2, billingBaseline, patientBaseline])('imports $format and emits the previous business facts intact', async previous => {
@@ -36,6 +37,23 @@ const completePatient = { ...completeBilling, format: 'clinmesh.snapshot.v4', sh
   ...completeBilling.tables.map(table => table.name === 'consultation_turns' ? { ...table, rows: [...table.rows, patientDelta.question] } : table), ...patientDelta.tables,
 ] };
 const completeLab = { ...completePatient, format: 'clinmesh.snapshot.v5', sha256: labDelta.sha256, tables: [...completePatient.tables, ...labDelta.tables] };
+
+it('preserves the published pharmacy snapshot, including its two Pi sessions and immutable prescription chain', async () => {
+  const tables = new Map<string, z.core.util.JSONType[]>(completeLab.tables.map(table => [table.name, table.rows]));
+  for (const { name, rows } of pharmacyDelta.tables) {
+    const revised = new Set(rows.map(row => row.id));
+    const retained = (tables.get(name) ?? []).filter(row => !revised.has(z.object({ id: z.string() }).parse(row).id));
+    tables.set(name, [...retained, ...rows]);
+  }
+  const previous = { ...completeLab, sha256: pharmacyDelta.sha256, format: 'clinmesh.snapshot.v6', tables: Array.from(tables, ([name, rows]) => ({ name, rows })) };
+  const store = createNodeSqliteStore({ dbPath: ':memory:' });
+  try {
+    await store.importLogicalSnapshot(previous);
+    const current = await store.exportLogicalSnapshot(previous.workspaceId);
+    expect(current.tables).toEqual([...previous.tables, { name: 'study_requests', rows: [] }]);
+    expect(current.pi).toEqual(previous.pi);
+  } finally { await store.close(); }
+});
 
 it.each([completeBilling, completePatient, completeLab])('restores all nonempty tables and both Pi sessions from the published $format', async previous => {
   const store = createNodeSqliteStore({ dbPath: ':memory:' });

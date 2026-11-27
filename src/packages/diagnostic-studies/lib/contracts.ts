@@ -1,8 +1,7 @@
 import { z } from 'zod';
 import { frameReferenceSchema, studySectionsSchema } from '../../data-pack';
 import { localizedName } from '../../platform';
-import { orderHeader, reportHeader } from './lifecycle';
-import { quote } from './orders';
+import { orderHeader, quote, reportHeader } from '../../diagnostic-workflow';
 
 export const frameList = z.object({ reportId: z.uuidv7(), frames: z.array(frameReferenceSchema).max(128) });
 export const storedStudy = z.strictObject({ sections: studySectionsSchema, amendmentReason: localizedName.optional(), frames: frameList.shape.frames, requireFirstFrame: z.boolean() });

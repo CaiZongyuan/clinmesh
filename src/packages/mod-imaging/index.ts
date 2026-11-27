@@ -1,4 +1,5 @@
-import { createStudyModule, type DiagnosticBillingPort } from '../diagnostic-workflow';
+import { createStudyModule } from '../diagnostic-studies';
+import type { DiagnosticBillingPort } from '../diagnostic-workflow';
 import { CoreError } from '../platform';
 
 export const createImagingModule = (billing?: DiagnosticBillingPort) => createStudyModule({

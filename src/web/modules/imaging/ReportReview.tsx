@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
-import { frameList, type ReviewMode, type StudyKind, type StudyView } from '../../../packages/diagnostic-workflow';
+import { frameList, type ReviewMode, type StudyKind, type StudyView } from '../../../packages/diagnostic-studies';
 import { Button, ConfirmActionButton } from '../../../packages/ui-kit';
 import { api, ApiError, errorMessage, scopeKey, words, type Language, type Session } from '../../workbench-api';
 

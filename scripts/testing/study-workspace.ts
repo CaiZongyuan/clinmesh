@@ -2,7 +2,7 @@ import { v7 } from 'uuid';
 import { z } from 'zod';
 import { workspaceSchema, encounterViewSchema } from '../../src/packages/clinical-core';
 import { installHospitalDataPack, type HospitalDataPack } from '../../src/packages/data-pack';
-import { studyViewSchema, type StudyKind } from '../../src/packages/diagnostic-workflow';
+import { studyViewSchema, type StudyKind } from '../../src/packages/diagnostic-studies';
 import { createNodeSqliteStore } from '../../src/packages/store';
 import { builtinModules } from '../../src/server/builtin-modules';
 import { createWorkspaceApp } from '../../src/server/workspace';
