@@ -1252,6 +1252,8 @@ describe('Disease Pack Runtime, 3-Layer Overlay, Readiness & Agent Gateway', () 
       method: 'POST',
     })
     expect(allowedDraftTier2.status, await allowedDraftTier2.clone().text()).toBe(201)
+    const tier2Authorization = agentToolAuthorizationResponseSchema.parse(await allowedDraftTier2.json())
+    expect(tier2Authorization.readinessAnnotations?.some(note => note.includes('HbA1c'))).toBe(true)
 
     // Tier 3: insert valid HbA1c (4548-4) -> ready, no missing readiness labels remain
     insertLocalObservation(fixture, {

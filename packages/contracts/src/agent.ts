@@ -233,6 +233,8 @@ export const agentToolAuthorizationResponseSchema = z.object({
   dshSessionId: z.string().min(1),
   operationId: z.string().min(1),
   proposalId: z.string().min(1).optional(),
+  /** 专病包就绪判定为“缺次要项”时的逐项标注：可以起草，草稿中每处都要标明缺哪项。 */
+  readinessAnnotations: z.array(z.string().min(1).max(300)).max(12).optional(),
   receiptToken: z.string().min(32),
   status: z.literal('authorized'),
 }).strict()

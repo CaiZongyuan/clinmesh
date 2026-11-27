@@ -478,6 +478,7 @@ export class AgentIntegrationService {
     request: z.infer<typeof agentToolAuthorizationRequestSchema>
     userAccountId: string
   }): z.infer<typeof agentToolAuthorizationResponseSchema> {
+    let readinessAnnotations: string[] = []
     const request = agentToolAuthorizationRequestSchema.parse(input.request)
     const context = this.verifyPageContextToken(request.contextToken)
     this.#assertCurrentCaller(context, input.actor, input.userAccountId)
@@ -588,6 +589,7 @@ export class AgentIntegrationService {
               'DSAP_TASK_READINESS_BLOCKED',
             )
           }
+          readinessAnnotations = readiness.annotations
         }
       }
     }
@@ -657,6 +659,7 @@ export class AgentIntegrationService {
       dshSessionId: proof.dshSessionId,
       operationId: definition.operationId,
       ...(proposalId === undefined ? {} : { proposalId }),
+      ...(readinessAnnotations.length === 0 ? {} : { readinessAnnotations }),
       receiptToken: this.#signReceipt({
         callId: proof.callId,
         contextId: context.id,
