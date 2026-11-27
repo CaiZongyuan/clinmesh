@@ -736,6 +736,8 @@ export interface BuildTimingPromptCardsInput {
   /** 床旁缺项只在住院提示。 */
   subjectKind: 'outpatient' | 'inpatient'
   templateClassesByTemplateId?: ReadonlyMap<string, readonly string[]> | undefined
+  /** 组套内药品项的目录项与药理类别，用于把风险提示挂靠到对应药品行。 */
+  templateMedicationItemsByTemplateId?: ReadonlyMap<string, readonly { catalogItemId: string; classes: readonly string[] }[]> | undefined
   timing: ClinicalPromptTiming
   verifySourcePassage?: KnowledgePassageVerifier | undefined
 }
@@ -1282,7 +1284,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
           sideBySideGroupKey: null,
           source: { label: `${effective.pack.manifest.titleZh} · 路径退出` },
           suggestions: [],
-          summary: `${effective.pack.manifest.titleZh}已退出：${exitReasonZh.slice(0, 60)}`,
+          summary: `${effective.pack.manifest.titleZh}已退出专病管理路径`,
           timing: input.timing,
           trialBadgeZh: null,
           trialDisclaimerZh: null,
@@ -1433,33 +1435,7 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
 
       // Everything below is active-pack & non-confusable-suppressed clinical advice/treatment/scoring
       if (isActive && !isConfusableSuppressed) {
-        // 3. Risk tags active at encounter-open
-        for (const tag of effective.pack.riskTags ?? []) {
-          const evaluated = evaluateRiskTagsForPack(tag, input, evalOptions, combinedMedicationClasses)
-          if (!evaluated.matched) continue
-          cards.push(clinicalPromptCardSchema.parse({
-            basedOnFactVersions: toFactVersionRefs(evaluated.matchedFactIds, factsById),
-            blockingTier: 'none',
-            cardId: `encounter-open:risk-tag:${packId}:${tag.id}`,
-            category: 'indication-alert',
-            deliveryMode: 'display',
-            detail: `${tag.descriptionZh ?? tag.labelZh}（专病包风险标签：${tag.id}）`,
-            indicator: tag.severity,
-            knowledgeSnapshotVersion: snapshotVersion,
-            knowledgeStatus: packStatus,
-            overrideReasons: [...clinicalOverrideReasonSchema.options],
-            packId,
-            packVersion,
-            riskTags: [{ id: tag.id, labelZh: tag.labelZh, severity: tag.severity }],
-            sideBySideGroupKey: 'encounter-open:indication-alert',
-            source: { label: `${effective.pack.manifest.titleZh} · 风险标签` },
-            suggestions: [],
-            summary: tag.labelZh,
-            timing: 'encounter-open',
-            ...packBadge,
-          }))
-        }
-
+        // 风险标签不单独成卡，由 attachRiskTagsAndSideBySide 挂在同包其余提示卡上
         // 4. Longitudinal comparison (e.g. LDL-C 纵向对比)
         if (entry.followUpLdlSummary) {
           cards.push(clinicalPromptCardSchema.parse({
@@ -1539,6 +1515,16 @@ export function buildTimingPromptCards(input: BuildTimingPromptCardsInput): {
         cards.push(clinicalPromptCardSchema.parse({
           basedOnFactVersions: toFactVersionRefs(evaluated.matchedFactIds, factsById),
           blockingTier: tag.severity === 'critical' ? 'alert' : 'none',
+          attachTargets: tag.candidateMedicationClasses === undefined || tag.candidateMedicationClasses.length === 0
+            ? null
+            : {
+                candidateClasses: [...tag.candidateMedicationClasses],
+                catalogItemIds: [...new Set(
+                  (input.selectedTemplateId ? input.templateMedicationItemsByTemplateId?.get(input.selectedTemplateId) ?? [] : [])
+                    .filter(item => item.classes.some(cls => tag.candidateMedicationClasses?.includes(cls)))
+                    .map(item => item.catalogItemId),
+                )],
+              },
           cardId: `order-draft-select:risk-tag:${packId}:${tag.id}`,
           category: 'order-set-risk',
           deliveryMode: 'display',

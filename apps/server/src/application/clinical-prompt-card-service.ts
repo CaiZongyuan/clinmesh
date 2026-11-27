@@ -685,13 +685,17 @@ export class ClinicalPromptCardService {
     return map
   }
 
-  #resolveTemplateClassesMap(
-    context: Pick<ActorContext, 'workspaceId' | 'epoch'>,
+  #resolveTemplateMedicationMaps(
     medicationCatalog: ReadonlyMap<string, PromptMedicationDescriptor>,
-  ): Map<string, string[]> {
-    const map = new Map<string, string[]>()
+  ): {
+    classesByTemplateId: Map<string, string[]>
+    itemsByTemplateId: Map<string, { catalogItemId: string; classes: string[] }[]>
+  } {
+    const classesByTemplateId = new Map<string, string[]>()
+    const itemsByTemplateId = new Map<string, { catalogItemId: string; classes: string[] }[]>()
     for (const entry of listRegisteredOrderSetEntries(this.#diseasePacks.registry)) {
       const classes = new Set<string>()
+      const items: { catalogItemId: string; classes: string[] }[] = []
       for (const item of entry.template.items) {
         if (item.kind !== 'medication') continue
         for (const opt of item.options) {
@@ -702,14 +706,16 @@ export class ClinicalPromptCardService {
           const desc = medicationCatalog.get(opt.medicationKey)
             ?? medicationCatalog.get(`med-${opt.medicationKey}`)
             ?? medicationCatalog.get(`medication-${opt.medicationKey}`)
-          for (const cls of safety?.pharmacologyClasses ?? desc?.pharmacologyClasses ?? []) {
-            classes.add(cls)
-          }
+            ?? medicationCatalog.get(`pci-${opt.medicationKey}`)
+          const optionClasses = [...(safety?.pharmacologyClasses ?? desc?.pharmacologyClasses ?? [])]
+          for (const cls of optionClasses) classes.add(cls)
+          if (desc !== undefined) items.push({ catalogItemId: desc.catalogItemId, classes: optionClasses })
         }
       }
-      map.set(entry.template.id, [...classes])
+      classesByTemplateId.set(entry.template.id, [...classes])
+      itemsByTemplateId.set(entry.template.id, items)
     }
-    return map
+    return { classesByTemplateId, itemsByTemplateId }
   }
 
   #activeMedications(
@@ -957,7 +963,8 @@ export class ClinicalPromptCardService {
     const encounterMap = this.#diseasePacks.resolvePatientEncounterMap(input.context, input.subject.patientId)
     const { evaluatedPacks } = this.#evaluatePacksForSubject(input.context, input.subject, ledger, input.asOf)
     const medicationCatalog = this.#buildMedicationCatalog(input.context)
-    const templateClassesByTemplateId = this.#resolveTemplateClassesMap(input.context, medicationCatalog)
+    const { classesByTemplateId: templateClassesByTemplateId, itemsByTemplateId: templateMedicationItemsByTemplateId } =
+      this.#resolveTemplateMedicationMaps(medicationCatalog)
     const activeMedications = this.#activeMedications(input.context, input.subject, input.inpatient)
     const activeMedicationClasses = [...new Set(activeMedications.flatMap(m => [...m.pharmacologyClasses]))]
     const candidateMedicationClasses = input.query.candidateMedicationClasses
@@ -988,6 +995,7 @@ export class ClinicalPromptCardService {
         : [],
       ...(input.query.selectedTemplateId === undefined ? {} : { selectedTemplateId: input.query.selectedTemplateId }),
       templateClassesByTemplateId,
+      templateMedicationItemsByTemplateId,
       timing: input.timing,
       verifySourcePassage,
     })

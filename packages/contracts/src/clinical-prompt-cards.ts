@@ -167,7 +167,15 @@ export const clinicalPromptRuleOutItemSchema = z.object({
 }).strict()
 export type ClinicalPromptRuleOutItem = z.infer<typeof clinicalPromptRuleOutItemSchema>
 
+export const clinicalPromptAttachTargetsSchema = z.object({
+  candidateClasses: z.array(boundedCode).max(16),
+  catalogItemIds: z.array(boundedId).max(32),
+}).strict()
+export type ClinicalPromptAttachTargets = z.infer<typeof clinicalPromptAttachTargetsSchema>
+
 export const clinicalPromptCardSchema = z.object({
+  /** 提示应挂靠的候选药品类别与目录项（如组套内带出血风险的药品行），无挂靠目标时为空。 */
+  attachTargets: clinicalPromptAttachTargetsSchema.nullable().default(null),
   basedOnFactVersions: z.array(clinicalPromptFactVersionRefSchema).max(64).default([]),
   blockingTier: clinicalPromptBlockingTierSchema.default('none'),
   cardId: boundedId,

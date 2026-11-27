@@ -629,9 +629,20 @@ describe('ClinicalPromptCard core engine', () => {
       }],
       ledger,
       selectedTemplateId: 'cad-pci-secondary-prevention',
+      templateMedicationItemsByTemplateId: new Map([['cad-pci-secondary-prevention', [
+        { catalogItemId: 'med-aspirin', classes: ['antiplatelet-aspirin'] },
+        { catalogItemId: 'med-ticagrelor', classes: ['p2y12'] },
+        { catalogItemId: 'med-atorvastatin', classes: ['statin'] },
+      ]]]),
       timing: 'order-draft-select',
     })
-    expect(builtDraft.cards.some(c => c.riskTags.some(t => t.id === 'dapt-bleeding-risk'))).toBe(true)
+    const daptCard = builtDraft.cards.find(c => c.riskTags.some(t => t.id === 'dapt-bleeding-risk'))
+    expect(daptCard?.category).toBe('order-set-risk')
+    // 风险卡挂靠到触发该风险的候选药品类别与目录项，界面据此放到对应药品行下
+    expect(daptCard?.attachTargets).toEqual({
+      candidateClasses: ['antiplatelet-aspirin', 'p2y12'],
+      catalogItemIds: ['med-aspirin', 'med-ticagrelor'],
+    })
 
     // Mark stale when referenced Observation is superseded in ledger
     const amendedLedger = makeLedger([
@@ -654,8 +665,20 @@ describe('ClinicalPromptCard core engine', () => {
         },
       }),
     ])
-    const refreshedCards = markStalePromptCardsForLedger(builtOpen.cards, amendedLedger)
-    const staleRiskCard = refreshedCards.find(c => c.cardId === 'encounter-open:risk-tag:synthetic-pack-a:troponin-positive-risk')
+    const tropBasedCard = makeCard({
+      basedOnFactVersions: [{
+        factId: tropFact.factId,
+        itemCode: '89579-7',
+        recordId: 'obs-tni-1',
+        recordType: 'Observation',
+        recordVersion: '1',
+      }],
+      cardId: 'trop-based-card',
+    })
+    const refreshedCards = markStalePromptCardsForLedger([...builtOpen.cards, tropBasedCard], amendedLedger)
+    // 风险标签不单独成卡：标签挂在同包其余卡上，其依据事实被修订时该卡同样标为过期
+    expect(builtOpen.cards.some(c => c.cardId.includes(':risk-tag:'))).toBe(false)
+    const staleRiskCard = refreshedCards.find(c => c.cardId === 'trop-based-card')
     expect(staleRiskCard?.stale).toBe(true)
     expect(staleRiskCard?.staleReason).toBeTruthy()
   })
@@ -1061,6 +1084,8 @@ describe('ClinicalPromptCard core engine', () => {
     expect(builtExitedFirst.cards).toHaveLength(1)
     expect(builtExitedFirst.cards[0]?.category).toBe('exit-summary')
     expect(builtExitedFirst.cards[0]?.detail).toContain('完成心电图及至少 2 次连续正常高敏肌钙蛋白排查后自动退出')
+    // 摘要固定为短句，完整退出原因只在 detail，不截断
+    expect(builtExitedFirst.cards[0]?.summary).toBe('专病包 synthetic-ruleout-pack已退出专病管理路径')
 
     const builtExitedLater = buildTimingPromptCards({
       subjectKind: 'outpatient',

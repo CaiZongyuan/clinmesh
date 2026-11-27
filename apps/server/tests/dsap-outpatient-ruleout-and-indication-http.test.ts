@@ -612,6 +612,8 @@ describe('DSAP Slice S9: Outpatient Rule-Out, Pack Exit & Silence, Confusable Pa
     const exitCards = exitPromptBundle.cards.filter(c => c.category === 'exit-summary')
     expect(exitCards).toHaveLength(1)
     expect(exitCards[0]?.detail).toContain('退出')
+    expect(exitCards[0]?.summary).toMatch(/已退出专病管理路径$/)
+    expect(exitCards[0]?.detail).toContain(exitCards[0]!.summary.replace(/已退出专病管理路径$/, ''))
 
     // Verify SQLite exit state & FHIR AuditEvent + audit_log written
     const packsAfterExit = diseasePackRuntimeBundleSchema.parse(await (await runtime.app.request(

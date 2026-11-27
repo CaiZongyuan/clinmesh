@@ -486,6 +486,12 @@ describe('DSAP Slice S8: Timing Hooks, Unified ClinicalPromptCard, Historical Re
     )
     expect(daptCard).toBeDefined()
     expect(daptCard!.overrideReasons).toContain('clinical-judgement')
+    // 风险提示挂靠到组套内触发该风险的药品行
+    const coronaryDapt = orderDraftBundle.cards.find(
+      c => c.cardId === 'order-draft-select:risk-tag:coronary-cad:dapt-bleeding-risk',
+    )
+    expect(coronaryDapt?.attachTargets?.candidateClasses).toEqual(['antiplatelet-aspirin', 'p2y12'])
+    expect(coronaryDapt?.attachTargets?.catalogItemIds).toEqual(expect.arrayContaining(['medication-pci-aspirin', 'medication-pci-clopidogrel']))
 
     const dismissRes = await fixture.request(
       'doctor',
