@@ -4,7 +4,9 @@ import type { z } from 'zod';
 import { checkPrescription, prescribingViewSchema, type Medication, type PrescriptionLine } from '../../../packages/mod-pharmacy';
 import { Badge, Button, Card, ConfirmActionButton, DetailDrawer, Field, Input, Select, Switch, Textarea } from '../../../packages/ui-kit';
 import type { WorkbenchPanelProps } from '../../EncounterPanel';
-import { api, errorMessage, scopeKey, words, type Intent, type Language } from '../../workbench-api';
+import { api, ApiError, errorMessage, scopeKey, words, type Intent, type Language } from '../../workbench-api';
+import { OverrideBar } from '../cds/OverrideBar';
+import { consumeStagedMembers } from '../../encounter-drafts';
 
 const drugKey = ({ code, codeSystem }: { code: string; codeSystem: string }) => JSON.stringify([codeSystem, code]);
 type View = z.infer<typeof prescribingViewSchema>;
@@ -44,21 +46,29 @@ function Withdrawal({ rx, language, busy, replace, commit }: { rx: View['prescri
     <ConfirmActionButton confirmation={replace ? text('Withdraw and record the reviewed no-medication conclusion?', '确认撤回并签署无需用药结论？') : text('Withdraw this prescription?', '确认撤回此处方？')} disabled={busy || !reason.trim() || (replace && !replacement.trim())} onClick={() => commit(reason.trim(), replace ? replacement.trim() : undefined)}>{replace ? text('Withdraw and confirm no medication', '撤回并确认无需用药') : text('Withdraw prescription', '撤回处方')} · {number}</ConfirmActionButton></div>;
 }
 
-function Prescribing({ view, language, encounter, workspace, submit }: WorkbenchPanelProps & { view: View }) {
+function Prescribing({ view, language, encounter, workspace, submit, drafts }: WorkbenchPanelProps & { view: View }) {
   const text = words(language);
   const client = useQueryClient();
   const [source, setSource] = useState<Medication['source']>('internal');
   const [search, setSearch] = useState('');
   const [noMedication, setNoMedication] = useState(false);
   const [reason, setReason] = useState('');
-  const [lines, setLines] = useState<PrescriptionLine[]>([]);
+  const [lines, setDraftLines] = useState<PrescriptionLine[]>(() => (drafts?.getState().orderSet?.members ?? []).flatMap(member => {
+    const item = view.catalog.find(item => item.code === member.code && item.codeSystem === member.codeSystem);
+    return member.kind === 'medications' && item ? [{ codeSystem: item.codeSystem, code: item.code, dose: item.inpatientDoseBasis.amount, routeCode: item.routeCodes.default, timesPerDay: 1, days: 1, quantity: 1 }] : [];
+  }));
   const writes = useMutation({ mutationFn: submit, onSettled: () => client.invalidateQueries({ queryKey: scopeKey(workspace, encounter.id, 'prescriptions') }) });
+  function setLines(next: PrescriptionLine[]) { writes.reset(); setDraftLines(next); }
   const allowed = encounter.responsibleRole === workspace.roleId && workspace.operations.some(op => op.name === 'prescription.sign');
   const canPrescribe = allowed && encounter.status === 'active' && !view.noMedication;
   const liveRx = view.prescriptions.some(rx => rx.status !== 'withdrawn');
   const matches = view.catalog.filter(item => item.source === source && [item.code, item.display.en, item.display.zh].some(value => value.toLowerCase().includes(search.trim().toLowerCase())));
   const issues = checkPrescription(view.catalog, lines, view.context);
-  const commit = (name: string, fields: Intent['fields']) => writes.mutate({ name, targetId: encounter.id, version: encounter.version, fields }, { onSuccess: () => { setLines([]); setReason(''); setNoMedication(false); } });
+  const blocking = issues.filter(issue => issue !== 'PRESCRIPTION_INDICATION_MISMATCH' || !workspace.enabledModules.includes('mod-cds'));
+  const apply = (intent: Intent) => writes.mutate(intent, { onSuccess: () => { consumeStagedMembers(drafts, member => member.kind === 'medications' && lines.some(line => drugKey(line) === drugKey(member))); setDraftLines([]); setReason(''); setNoMedication(false); } });
+  const commit = (name: string, fields: Intent['fields']) => apply({ name, targetId: encounter.id, version: encounter.version, fields });
+  const rejected = writes.variables;
+  const alert = rejected?.name === 'prescription.sign' && rejected.targetId === encounter.id && rejected.version === encounter.version && rejected.fields?.lines === lines && writes.error instanceof ApiError && writes.error.message === 'CLINICAL_QUALITY_ALERT' ? writes.error : undefined;
   return <section className="clinical-panel" data-assistant-field="prescription:draft" data-assistant-list><h2>{text('Prescribing', '用药结论')}</h2>
     {view.context.allergies.length > 0 && <Badge tone="destructive">{text('Confirmed allergies', '已确认过敏')} · {view.context.allergies.join(', ')}</Badge>}
     {view.noMedication && <Card><strong>{text('No medication recorded', '已确认无需用药')}</strong><p>{view.noMedication.reason}</p></Card>}
@@ -72,7 +82,13 @@ function Prescribing({ view, language, encounter, workspace, submit }: Workbench
         {lines.map(line => <Directions key={drugKey(line)} item={view.catalog.find(item => drugKey(item) === drugKey(line))!} line={line} language={language}
           change={next => setLines(lines.map(current => current === line ? next : current))} remove={() => setLines(lines.filter(current => current !== line))}/>)}
         {lines.length > 0 && issues.map(issue => <p role="alert" key={issue}>{issueLabels[issue] ? text(...issueLabels[issue]) : issue}</p>)}
-        <ConfirmActionButton disabled={Boolean(issues.length) || writes.isPending} confirmation={text('Sign all reviewed medication lines?', '确认签发全部已核对药品？')} onClick={() => commit('prescription.sign', { lines })}>{text('Sign prescription', '签发处方')}</ConfirmActionButton>
+        <ConfirmActionButton disabled={Boolean(blocking.length) || writes.isPending} confirmation={text('Sign all reviewed medication lines?', '确认签发全部已核对药品？')} onClick={() => commit('prescription.sign', { lines })}>{text('Sign prescription', '签发处方')}</ConfirmActionButton>
+        {alert && rejected && <OverrideBar key={writes.submittedAt} intent={rejected} codes={String(alert.details?.ruleCodes).split(',')} language={language} submit={apply} cancel={writes.reset}>
+          <strong>{encounter.patient.name} · {encounter.patientId}</strong><ul>{lines.map(line => {
+            const drug = view.catalog.find(item => drugKey(item) === drugKey(line))!;
+            return <li key={drugKey(line)}>{drug.display[language]} ({line.code}) · {line.dose} {drug.inpatientDoseBasis.unit} · {line.routeCode} · {line.timesPerDay}×/{text('day', '日')} · {line.days} {text('days', '天')} · {line.quantity} {text('units', '制剂单位')}</li>;
+          })}</ul>
+        </OverrideBar>}
       </>}</>}
     {view.prescriptions.map(rx => <Card key={rx.prescriptionId}><div className="cm-section-heading"><h3>{text('Prescription', '处方')} · {rx.prescriptionId.slice(-8)}</h3><Badge>{rx.source === 'internal' ? text('Hospital', '本院') : text('External', '外配')} · {rx.status === 'signed' ? text('Signed', '已签发') : rx.status === 'withdrawn' ? text('Withdrawn', '已撤回') : text('Dispensed', '已发药')}</Badge></div>
       {rx.lines.map(line => <p key={line.orderId}>{line.display[language]} · {line.dose} {line.doseUnit} · {line.routeCode} · {line.timesPerDay}×/{text('day', '日')} · {line.days} {text('days', '天')} · {line.quantity} {text('units', '制剂单位')}</p>)}

@@ -1,0 +1,80 @@
+import { expect, it } from 'vitest';
+import { z } from 'zod';
+import { createTestHarness, experimental_readRawConfig } from 'wrangler';
+import { teachingGate, withNodeWorkspace } from '../../../../scripts/testing/node-workspace';
+import { wardViewSchema } from '../index';
+import { wardClient } from './ward-client';
+
+const resource = z.object({ resourceType: z.string(), id: z.string(), meta: z.object({ versionId: z.string(), lastUpdated: z.iso.datetime() }) }).passthrough();
+const bundle = z.object({ total: z.int(), entry: z.array(z.object({ resource })).default([]) });
+async function medicationJourney(request: Parameters<typeof wardClient>[0]) {
+  const ward = await wardClient(request);
+  const encounter = await ward.admit('周秀兰');
+  const get = async (path: string) => (await request(path, { headers: { cookie: ward.cookie } })).json();
+  const view = async () => wardViewSchema.parse(await ward.get(`/api/his/ward/${encounter}`));
+  const act = async (name: string, fields: object) => ward.send(`ward.${name}`, encounter, (await view()).version, fields);
+  const search = async (type: string) => bundle.parse(await get(`/fhir/R5/${type}?encounter=${encounter}`));
+  await ward.role('ward-nurse'); await act('bed.assign', { bed: 'heart-01' });
+  await ward.role('cardiologist');
+  await act('diagnose', { diagnoses: [{ codeSystem: 'urn:clinmesh:reference:nhsa-diagnosis', code: 'I25.103', primary: true, ordinal: 1, poa: 'Y' }] });
+  const directory = z.array(z.object({ id: z.string(), code: z.string() })).parse((await ward.get('/api/his/ward')).items);
+  const signed = await act('order.sign', { itemId: directory.find(item => item.code === 'atorvastatin')!.id, dose: 20, route: 'PO', frequency: 'ONCE', duration: 'temporary' });
+  const locator = `/fhir/R5/MedicationRequest/${signed.orderId}`;
+  const original = await get(`${locator}/_history/1`);
+  await ward.role('ward-nurse'); await act('order.verify', { orderIds: [signed.orderId] });
+  const task = (await view()).tasks.find(item => item.orderId === signed.orderId)!;
+  await ward.role('ward-pharmacist');
+  const version = (await view()).version, key = crypto.randomUUID();
+  const dispense = () => ward.send('ward.task.dispense', encounter, version, { taskIds: [task.id] }, key);
+  expect(await dispense()).toEqual(await dispense());
+  await ward.role('cardiologist');
+  const active = await search('MedicationRequest');
+  expect(active.total).toBe(1);
+  expect(active.entry[0]!.resource).toMatchObject({ id: signed.orderId, status: 'active', meta: { versionId: '2' }, medication: { concept: { coding: [{ code: 'atorvastatin' }] } }, dosageInstruction: [{ timing: { repeat: { count: 1 }, code: { text: 'ONCE' } }, route: { text: 'PO' }, doseAndRate: [{ doseQuantity: { value: 20, unit: 'mg' } }] }] });
+  const deliveries = await search('MedicationDispense');
+  expect(deliveries.total).toBe(1);
+  const delivery = deliveries.entry[0]!.resource;
+  expect(delivery).toMatchObject({ status: 'completed', quantity: { value: 2 }, whenHandedOver: expect.any(String), authorizingPrescription: [{ reference: `MedicationRequest/${signed.orderId}` }], encounter: { reference: `Encounter/${encounter}` } });
+  expect(await get(`/fhir/R5/MedicationDispense/${delivery.id}/_history/1`)).toEqual(delivery);
+  await ward.role('ward-nurse'); await act('task.administer', { taskIds: [task.id] }); await ward.role('cardiologist');
+  expect(await get(locator)).toMatchObject({ id: signed.orderId, status: 'completed', meta: { versionId: '3' } });
+  expect(await get(`${locator}/_history/1`)).toEqual(original);
+  expect(original).toMatchObject({ dosageInstruction: active.entry[0]!.resource.dosageInstruction });
+  expect(bundle.parse(await get(`${locator}/_history`)).entry.map(entry => entry.resource.meta.versionId)).toEqual(['3', '2', '1']);
+  expect(await search('MedicationDispense')).toEqual(deliveries);
+  const prn = await act('order.sign', { itemId: directory.find(item => item.code === 'atorvastatin')!.id, dose: 20, route: 'PO', frequency: 'PRN', duration: 'long' });
+  const prnPath = `/fhir/R5/MedicationRequest/${prn.orderId}`;
+  await ward.role('ward-nurse'); await act('order.verify', { orderIds: [prn.orderId] });
+  await act('task.request-prn', { orderId: prn.orderId, reason: 'Documented clinical assessment' });
+  const prnTask = (await view()).tasks.find(row => row.orderId === prn.orderId)!;
+  await ward.role('ward-pharmacist'); await act('task.dispense', { taskIds: [prnTask.id] });
+  await ward.role('cardiologist');
+  const verified = await get(`${prnPath}/_history/2`);
+  expect(verified).toMatchObject({ status: 'active', dosageInstruction: [{ asNeeded: true }] });
+  const handovers = await search('MedicationDispense');
+  expect(handovers.entry.map(entry => entry.resource.authorizingPrescription)).toContainEqual([{ reference: `MedicationRequest/${prn.orderId}` }]);
+  await act('order.request-stop', { orderIds: [prn.orderId] });
+  expect((await view()).orders.find(row => row.id === prn.orderId)?.status).toBe('stop-requested');
+  const held = await get(prnPath);
+  expect(held).toMatchObject({ status: 'on-hold', meta: { versionId: '3' } });
+  expect(await get(`${prnPath}/_history/3`)).toEqual(held);
+  await ward.role('ward-nurse');
+  await expect(act('task.administer', { taskIds: [prnTask.id] })).rejects.toThrow('WARD_TASK_CONFLICT');
+  await act('order.verify-stop', { orderIds: [prn.orderId] });
+  await ward.role('cardiologist');
+  const stopped = await get(prnPath);
+  expect(stopped).toMatchObject({ status: 'stopped', meta: { versionId: '4' } });
+  expect(await get(`${prnPath}/_history/4`)).toEqual(stopped);
+  expect(await get(`${prnPath}/_history/3`)).toEqual(held);
+  expect(await get(`${prnPath}/_history/2`)).toEqual(verified);
+  expect(bundle.parse(await get(`${prnPath}/_history`)).entry.map(({ resource }) => [resource.meta.versionId, resource.status])).toEqual([['4', 'stopped'], ['3', 'on-hold'], ['2', 'active'], ['1', 'active']]);
+  expect(await search('MedicationDispense')).toEqual(handovers);
+}
+
+it('projects one signed ward medication and the actual pharmacy handover through Node', () => withNodeWorkspace(origin => medicationJourney((path, init) => fetch(origin + path, init))), 45000);
+it('preserves ward medication directions and pharmacy handovers in workerd', async () => {
+  const { rawConfig } = experimental_readRawConfig({ config: 'wrangler.jsonc' });
+  const server = createTestHarness({ workers: [{ config: { ...rawConfig, assets: undefined, vars: teachingGate } }] });
+  try { await server.listen(); await medicationJourney((path, init) => server.getWorker().fetch(path, init)); }
+  finally { await server.close(); }
+}, 45000);

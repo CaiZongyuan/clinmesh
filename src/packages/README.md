@@ -21,5 +21,7 @@
 | [mod-billing](mod-billing/README.md) | 通用收费员账本、原路退款、住院首次冻结结算和临床资金放行端口 |
 | [mod-inpatient](mod-inpatient/README.md) | 入院转收、床位与转科、跨日医嘱、护士与药师执行、同台介入、出区和病案归档 |
 | [mod-drg-cn](mod-drg-cn/README.md) | 数据包声明的合成参保方案、年度累计和住院 DRG 支付参考 |
+| [mod-cds](mod-cds/README.md) | 正式事实评分、指南与组套预筛、命令事务内临床质控 |
+| [mod-fhir-r5](mod-fhir-r5/README.md) | FHIR R5 只读资源、白名单搜索与业务版本历史 |
 
 依赖守卫：`pnpm lint:boundaries`。设计依据见 [ADR 0001](../../docs/adr/0001-modular-monolith-and-deep-modules.md)。

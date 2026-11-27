@@ -10,7 +10,7 @@ export function createApp(runtime: RuntimeHealth['runtime'], settings: GateSetti
   app.onError(handleError);
   const registry = new ModuleRegistry(modules);
   app.get('/api/health', context => context.json(registry.health(runtime)));
-  app.all('/api/*', async context => {
+  app.on('ALL', ['/api/*', '/fhir/R5', '/fhir/R5/*'], async context => {
     const request = context.req.raw;
     const origin = new URL(request.url);
     const gate = createVisitorGate({ ...settings, localOpen: settings.localOpen && ['127.0.0.1', 'localhost', '[::1]'].includes(origin.hostname) });

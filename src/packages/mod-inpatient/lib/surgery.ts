@@ -253,7 +253,7 @@ export function surgeryView(reader: StoreReader, at: StoreScope, encounterId: st
       const sets = z.array(z.object({ id: z.string(), members: z.array(z.object({ kind: z.string(), code: z.string(), codeSystem: z.string() })) })).parse(reader.list(at, 'data_pack_installations')[0]!.knowledge.orderSetTemplates);
       postoperative.push(...sets.find(set => set.id === setId)?.members ?? []);
     }
-    return [{ id: request.id, status: request.status, plan: notice.parse(plan.notice), stages, report: reportFor(reader, at, stages[0]!.id), postoperative,
+    return [{ id: request.id, status: request.status, plan: notice.parse(plan.notice), stages, report: reportFor(reader, at, stages[0]!.id), postoperativeSetId: request.status === 'completed' ? setId ?? null : null, postoperative,
       preparations: reader.list(at, 'ward_surgery_preparations', { request_id: request.id }).map(row => ({ kind: row.kind, signedBy: row.signed_by, at: row.virtual_at, document: row.document })) }];
   }));
 }

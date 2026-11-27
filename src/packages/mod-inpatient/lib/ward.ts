@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { organizationSchema } from '../../data-pack';
 import type { ClinicalBillingPort } from '../../mod-billing';
 import { requireEncounter } from '../../patient-visit';
-import { checkVersion, CoreError, type CommandContext } from '../../platform';
+import { checkVersion, CoreError, type ClinicalQualityIntent, type CommandContext } from '../../platform';
 import type { EntityRow, StoreReader, StoreScope, StoreTx } from '../../store';
 
 export const id = z.uuidv7();
@@ -65,6 +65,4 @@ export function chargeOrder(billing: ClinicalBillingPort | undefined, tx: StoreT
   billing.freezeCharge(tx, at, { orderId: order.id, encounterId: order.encounter_id, catalogItemId: item.id, catalogVersion: tx.get(at, 'data_pack_installations', item.installation_id)!.pack_version,
     unitPriceMinor: item.amount_minor!, currencyCode: item.currency_code!, currencyExponent: item.currency_exponent!, quantity, department, virtualAt: order.virtual_at, recordedAt: order.recorded_at });
 }
-type GateIntent = { kind: 'medication'; encounterId: string; lines: readonly { codeSystem: string; code: string; dose: number; timesPerDay: number }[]; activeMedicationIds: readonly string[] } |
-  { kind: 'pci'; encounterId: string; ffr?: number } | { kind: 'discharge'; encounterId: string; completedPci: boolean; activeMedicationIds: readonly string[] };
-export function quality(context: CommandContext & { checkClinicalQuality?(intent: GateIntent, override: unknown): void }, intent: GateIntent, override: unknown) { context.checkClinicalQuality?.(intent, override); }
+export function quality(context: CommandContext, intent: ClinicalQualityIntent, override: unknown) { return context.checkClinicalQuality?.(intent, override); }

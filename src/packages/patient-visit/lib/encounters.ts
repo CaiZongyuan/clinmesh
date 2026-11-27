@@ -35,7 +35,7 @@ export function startEncounter(context: CommandContext, language?: 'en' | 'zh', 
   if (matches.size > 1) throw new CoreError(409, 'PATIENT_IDENTITY_CONFLICT');
   const patientId = matches.values().next().value ?? v7();
   if (!matches.size) tx.insert(at, 'patients', { id: patientId, display_name: demographics.name, birth_date: demographics.birthDate, version: 1 });
-  for (const { identifier, existing } of identifiers) if (!existing) tx.insert(at, 'patient_identifiers', { id: v7(), patient_id: patientId, ...identifier });
+  tx.addPatientIdentifiers(at, patientId, identifiers.flatMap(({ identifier, existing }) => existing ? [] : [{ id: v7(), ...identifier }]));
   const role = admission ? actor.roles.find(candidate => candidate.id === admission.responsibleRole) : actor.role.capabilities.includes('assess') ? actor.role : actor.roles.find(candidate => candidate.capabilities.includes('assess'));
   if (!role) throw new CoreError(409, 'RESPONSIBLE_ROLE_UNAVAILABLE');
   const encounterId = v7();

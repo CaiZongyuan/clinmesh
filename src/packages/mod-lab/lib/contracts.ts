@@ -7,7 +7,7 @@ export { quote };
 export const maxBatch = 20;
 export const serviceView = quote.omit({ serviceId: true }).extend({ id: z.uuidv7(), codeSystem: z.url(), code: z.string(), display: localizedName, kind: z.enum(['lab', 'examination']) });
 export const interpretation = z.enum(['normal', 'high', 'low', 'abnormal']);
-export const findings = z.object({ summary: localizedName, amendmentReason: localizedName.optional(), observations: z.array(z.object({ codeSystem: z.url(), code: z.string(), display: localizedName, unit: z.string(), value: z.union([z.number(), z.string()]), interpretation, critical: z.boolean() })) });
+export const findings = z.object({ summary: localizedName, stSegmentDeviation: z.boolean().optional(), amendmentReason: localizedName.optional(), observations: z.array(z.object({ codeSystem: z.url(), code: z.string(), display: localizedName, unit: z.string(), value: z.union([z.number(), z.string()]), interpretation, critical: z.boolean() })) });
 export const reportView = reportHeader.extend(findings.shape);
 export const labViewSchema = z.object({
   services: z.array(serviceView), draft: z.object({ version: z.int().nonnegative(), items: z.array(quote) }),

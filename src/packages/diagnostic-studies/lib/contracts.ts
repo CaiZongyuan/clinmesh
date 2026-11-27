@@ -3,7 +3,7 @@ import { frameReferencesSchema, studySectionsSchema } from '../../data-pack';
 import { localizedName } from '../../platform';
 import { orderHeader, quote, reportHeader } from '../../diagnostic-workflow';
 
-const reportSections = z.discriminatedUnion('kind', [...studySectionsSchema.options, z.strictObject({ kind: z.literal('summary'), summary: localizedName })]);
+export const reportSections = z.discriminatedUnion('kind', [...studySectionsSchema.options, z.strictObject({ kind: z.literal('summary'), summary: localizedName })]);
 export const frameList = z.object({ reportId: z.uuidv7(), frames: frameReferencesSchema });
 export const storedStudy = z.strictObject({ sections: reportSections, amendmentReason: localizedName.optional(), frames: frameReferencesSchema, requireFirstFrame: z.boolean() });
 export const reviewMode = z.enum(['text', 'first-frame-rendered', 'frames-unavailable']);

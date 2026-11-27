@@ -56,6 +56,7 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
   });
   catalog.moduleAvailable = (id, reader, actor) => registry.enabled(actor.enabledModules, reader, actor.at).some(module => module.id === id);
   catalog.guardEncounter = (context, write) => { for (const module of registry.enabled(context.actor.enabledModules)) module.guardEncounter?.(context, write); };
+  catalog.clinicalQuality = (context, intent, override, operation) => registry.enabled(context.actor.enabledModules, context.tx, context.at).flatMap(module => module.clinicalQuality?.(context, intent, override, operation) ?? []);
   const patients = new PatientRuntime(store, environment, background);
   registerPatientOperations(catalog, environment);
   app.post('/api/agents/providers/test', async context => context.json(await patients.testProvider(context.env.credential, context.req.raw.headers, await context.req.json())));
@@ -94,6 +95,12 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
   for (const module of modules) {
     const moduleId = module.kind === 'core' ? undefined : module.id;
     if (module.registerOperations) catalog.contribute(moduleId, registry => module.registerOperations!(registry));
+    const projection = module.projection;
+    if (projection) app.on('ALL', [projection.base, `${projection.base}/*`], context => store.read(reader => {
+      const actor = resolveActor(reader, context.env.credential, new Date().toISOString());
+      authorize(actor, { name: `${module.id}.route`, access: { visitorOnly: true }, moduleId });
+      return projection.respond(context.req.raw, reader, actor);
+    }));
     if (!module.registerRoutes) continue;
     const router = new Hono();
     module.registerRoutes(router);
@@ -106,6 +113,7 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     }
   }
   for (const entry of catalog.entries) app.on(entry.method, entry.path, async context => {
+    if (entry.assistantRead && new URL(context.req.url).search) throw new CoreError(400, 'INVALID_INPUT');
     const targetId = context.req.param('id') ?? context.env.credential.ticket.workspaceId;
     const credential = context.env.credential;
     const replyOperation = ['consultation.question', 'consultation.retry', 'consultation.stop'].includes(entry.name);

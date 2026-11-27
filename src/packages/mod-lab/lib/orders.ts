@@ -54,6 +54,7 @@ export function issueOrders(context: CommandContext, items: Quote[], legacy: Leg
   requireOrderPrerequisites(context);
   const services = clinicalServices(tx, at, legacy);
   const orders = labOrders(tx, at, targetId);
+  context.checkClinicalQuality?.({ kind: 'investigation', encounterId: targetId, catalogItemIds: items.map(item => item.serviceId) });
   const issued = new Set<string>();
   const results: z.infer<typeof issueReceipt>['results'] = [];
   for (const item of items) {

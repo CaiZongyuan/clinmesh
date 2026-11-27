@@ -1,7 +1,7 @@
 {
   "manifest": {
     "packId": "cn-cardiology",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "schemaVersion": 1,
     "name": { "en": "Teaching cardiovascular centre", "zh": "心血管介入教学中心" },
     "description": {
@@ -551,6 +551,7 @@
         "safety": {
           "classCodes": ["sglt2"],
           "allergyGroupCodes": ["dapagliflozin"],
+            "contraindicatedEgfrBelow": 30,
           "indicationPrefixes": ["E11", "I50", "N18"],
           "maxSingleDose": 10,
           "maxDailyDose": 10
@@ -710,6 +711,7 @@
       {
         "codeSystem": "urn:clinmesh:cv:service",
         "code": "ecg",
+        "modality": "ecg-12-lead",
         "display": { "en": "Resting 12-lead ECG", "zh": "静息十二导联心电图" },
         "kind": "examination",
         "unitPriceMinor": 2400,
@@ -735,6 +737,7 @@
       {
         "codeSystem": "urn:clinmesh:cv:service",
         "code": "cag",
+        "modality": "coronary-angiography",
         "display": { "en": "Coronary angiography and physiology", "zh": "冠脉造影与功能学评估" },
         "kind": "examination",
         "requiresProcedure": true,
@@ -865,6 +868,11 @@
     ]
   },
   "knowledge": {
+    "cds": {
+      "diagnosticSystems": ["http://hl7.org/fhir/sid/icd-10", "urn:clinmesh:reference:nhsa-diagnosis"],
+      "ffrAnalytes": [{ "codeSystem": "urn:clinmesh:cv:measurement", "code": "LAD-FFR" }],
+      "pciProcedures": [{ "codeSystem": "urn:clinmesh:classification:icd-9-cm-3-clinical", "code": "36.0700" }]
+    },
     "inpatient": {
       "schedules": { "QD": ["08:00"], "BID": ["08:00", "20:00"], "TID": ["08:00", "14:00", "20:00"], "QN": ["22:00"] },
       "bedDay": { "codeSystem": "urn:clinmesh:cv:service", "code": "bed-day" },
@@ -888,6 +896,7 @@
     "guidelineTopics": [
       {
         "id": "hypertension-treatment-principles",
+          "evidence": [{ "codeSystem": "http://loinc.org", "code": "8480-6" }, { "codeSystem": "http://loinc.org", "code": "8462-4" }],
         "source": "https://www.nhc.gov.cn/fzs/c100048/202509/2f3f7cce449145f8b361e70b3ed4ae9a/files/WS%20T%20872%E2%80%942025-20250930105429913.pdf",
         "version": "WS/T 872—2025",
         "physicalPage": 5,
@@ -1055,6 +1064,7 @@
             "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "ecg" },
             "stage": "initial",
             "revision": 1,
+            "stSegmentDeviation": false,
             "summary": {
               "en": "Sinus rhythm at 74/min, no significant ST-T abnormalities.",
               "zh": "窦性心律 74 次/分，未见明显 ST-T 异常。"
@@ -1254,6 +1264,7 @@
             "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "ecg" },
             "stage": "initial",
             "revision": 1,
+            "stSegmentDeviation": false,
             "summary": {
               "en": "Sinus rhythm, 72/min. No significant ST-T abnormality.",
               "zh": "窦性心律 72 次/分，未见明显 ST-T 异常。"
@@ -1413,6 +1424,7 @@
             "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "ecg" },
             "stage": "initial",
             "revision": 1,
+            "stSegmentDeviation": true,
             "summary": {
               "en": "Horizontal ST depression 0.15–0.20 mV with T inversion in V2–V5.",
               "zh": "V2–V5 水平型 ST 段压低 0.15–0.20 mV 伴 T 波倒置。"

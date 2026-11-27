@@ -94,6 +94,23 @@ export function correctSupply(ctx: CommandContext, stage: Stage, useId: string, 
 }
 const observation = z.object({ codeSystem: z.string(), code: z.string(), value: z.union([z.string(), z.number()]), unit: z.string(), display: localizedName });
 export const angiography = z.object({ status: z.enum(['final', 'partial', 'unavailable']), summary: localizedName.nullable(), observations: z.array(observation) });
+export function signedAngiography(reader: StoreReader, at: StoreScope, row: EntityRow<'diagnostic_reports'>) {
+  if (!reader.list(at, 'ward_surgery_charges', { order_id: row.order_id, purpose: 'report' }).length) return undefined;
+  return angiography.parse(row.findings);
+}
+
+export function completedWardProcedures(reader: StoreReader, at: StoreScope, encounterId: string) {
+  return reader.list(at, 'clinical_orders', { encounter_id: encounterId, kind: 'surgery' }).flatMap(order => {
+    const [stage] = reader.list(at, 'ward_surgery_stages', { order_id: order.id });
+    if (!stage?.completed_execution_id) return [];
+    const execution = reader.get(at, 'surgery_executions', stage.completed_execution_id);
+    if (!execution || execution.surgery_request_id !== stage.request_id || execution.outcome !== 'completed') return [];
+    const binding = procedure(reader, at, order.catalog_item_id).binding;
+    const request = reader.get(at, 'surgery_requests', stage.request_id)!;
+    return [{ execution, orderId: order.id, catalogId: order.catalog_item_id, kind: binding?.kind,
+      postoperativeSetId: request.status === 'completed' ? binding?.postoperativeSetId : undefined }];
+  });
+}
 export function reportFor(reader: StoreReader, at: StoreScope, stageId: string) {
   const link = reader.list(at, 'ward_surgery_charges', { stage_id: stageId, purpose: 'report' })[0];
   const row = link && reader.list(at, 'diagnostic_reports', { order_id: link.order_id }).at(-1);

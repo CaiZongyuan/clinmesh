@@ -2,6 +2,7 @@ import { lazy } from 'react';
 import { LabTab } from './modules/lab/LabTab';
 
 export const builtinPanels = {
+  cds: lazy(() => import('./modules/cds/CdsPanel')),
   lab: LabTab,
   imaging: lazy(() => import('./modules/imaging/StudyTab').then(module => ({ default: module.RadiologyTab }))),
   pathology: lazy(() => import('./modules/imaging/StudyTab').then(module => ({ default: module.PathologyTab }))),

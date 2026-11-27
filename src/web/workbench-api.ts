@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { EncounterView, WorkspaceView } from '../packages/clinical-core';
 import { sessionSchema } from '../packages/platform';
 import { modelHeaders } from './model-preferences';
+import type { EncounterDrafts } from './encounter-drafts';
 import { sendWorkbenchCommand } from './assistant-command';
 
 export type Session = z.infer<typeof sessionSchema>;
@@ -31,7 +32,7 @@ export async function currentSession(signal: AbortSignal) {
 export const jsonBody = (method: string, body: unknown) => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 export type Intent = { name: string; version: number; targetId?: string; encounterId?: string; fields?: Record<string, unknown> };
 export type WorkbenchStationProps = { workspace: WorkspaceView; language: Language; submit(intent: Intent): Promise<unknown> };
-export type WorkbenchPanelProps = WorkbenchStationProps & { encounter: EncounterView };
+export type WorkbenchPanelProps = WorkbenchStationProps & { encounter: EncounterView; drafts?: EncounterDrafts };
 export function write(workspace: WorkspaceView, intent: Intent) {
   const op = workspace.operations.find(operation => operation.name === intent.name && operation.method !== 'GET');
   if (!op || !op.path.startsWith('/api/')) throw Error('ROLE_FORBIDDEN');

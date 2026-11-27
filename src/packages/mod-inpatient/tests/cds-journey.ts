@@ -1,0 +1,75 @@
+import { expect } from 'vitest';
+import { z } from 'zod';
+import { wardClient } from './ward-client';
+import { orderSetsSchema } from '../../mod-cds';
+import { wardViewSchema } from '../index';
+
+export async function prepareCompletedPci(request: Parameters<typeof wardClient>[0]) {
+  const ward = await wardClient(request);
+  const encounter = await ward.admit('周秀兰');
+  const read = async () => wardViewSchema.parse(await ward.get(`/api/his/ward/${encounter}`));
+  const act = async (name: string, fields = {}) => ward.send(`ward.${name}`, encounter, (await read()).version, fields);
+  const get = async (path: string) => (await request(path, { headers: { cookie: ward.cookie } })).json();
+  const orderSets = async () => orderSetsSchema.parse(await get(`/api/his/encounters/${encounter}/cds/order-sets`));
+  await ward.role('ward-nurse'); await act('bed.assign', { bed: 'heart-01' });
+  await ward.role('cardiologist');
+  await act('diagnose', { diagnoses: [{ codeSystem: 'urn:clinmesh:reference:nhsa-diagnosis', code: 'I25.103', primary: true, ordinal: 1, poa: 'Y' }] });
+  const items = z.array(z.object({ id: z.string(), code: z.string() })).parse((await ward.get('/api/his/ward')).items);
+  const item = (code: string) => items.find(row => row.code === code)!.id;
+  const { requestId } = await act('surgery.request', { procedureId: item('88.5500'), type: 'elective', plannedAt: ward.current().virtualTime, location: 'cath-lab', surgeon: 'cv-staff-01', anesthesia: 'local', reason: 'Document coronary physiology', preopOrderPolicy: 'continue-active', standbyAdHocPci: true });
+  await act('surgery.consent', { requestId, diagnosisRevision: 1, signer: 'Patient', risks: 'Reviewed contrast and intervention risks' });
+  await ward.role('ward-nurse'); await act('surgery.check', { requestId, checklist: 'Identity and procedure checked' });
+  await ward.role('cardiologist'); await act('surgery.execute', { requestId });
+  expect((await read()).surgeries[0]?.report?.observations).toEqual(expect.arrayContaining([expect.objectContaining({ codeSystem: 'urn:clinmesh:cv:measurement', code: 'LAD-FFR', unit: '1', value: 0.86 })]));
+  expect((await orderSets()).some(set => set.id === 'post-pci-review')).toBe(false);
+  const fields = { requestId, procedureId: item('36.0700'), materials: [{ itemId: item('des-3x18'), quantity: 1 }] };
+  const before = await read();
+  await expect(act('surgery.convert-to-pci', fields)).rejects.toThrow(/409.*CLINICAL_QUALITY_ALERT.*PCI_NON_ISCHEMIC_LESION/);
+  expect(await read()).toEqual(before);
+  const key = crypto.randomUUID();
+  const sign = () => ward.send('ward.surgery.convert-to-pci', encounter, before.version, { ...fields, clinicalOverride: { reasonCode: 'specialist-judgment', note: 'Teaching case reviewed the lesion-specific physiology and individualized intervention rationale.', ruleCodes: ['PCI_NON_ISCHEMIC_LESION'] } }, key);
+  expect(await sign()).toEqual(await sign());
+  await act('surgery.start', { requestId });
+  await act('surgery.record-material', { requestId, itemId: item('des-3x18'), quantity: 1 });
+  const preview = await act('surgery.preview-completion', { requestId });
+  await act('surgery.complete', { requestId, fingerprint: preview.fingerprint });
+  await act('surgery.acknowledge', { requestId });
+  const stage = (await read()).surgeries[0]!.stages.at(-1)!;
+  expect(stage).toMatchObject({ kind: 'pci', stage: 'ad-hoc-pci', procedureId: item('36.0700') });
+  const set = (await orderSets()).find(row => row.id === 'post-pci-review')!;
+  expect(set.members.map(row => [row.code, row.status])).toEqual([['aspirin', 'ready'], ['clopidogrel', 'ready'], ['atorvastatin', 'ready']]);
+  return { ward, encounter, read, act, get, orderSets, stage, item };
+}
+
+export async function c02Journey(request: Parameters<typeof wardClient>[0]) {
+  const { ward, encounter, read, act, get, stage, item, orderSets } = await prepareCompletedPci(request);
+  const clinical = await ward.get(`/api/his/encounters/${encounter}`);
+  await expect(ward.send('encounter.complete', encounter, z.int().parse(clinical.version))).rejects.toThrow('ADMISSION_STATE_CONFLICT');
+  const procedures = z.object({ entry: z.array(z.object({ resource: z.object({ code: z.object({ coding: z.array(z.object({ code: z.string() })) }) }) })) }).parse(await get(`/fhir/R5/Procedure?encounter=${encounter}`));
+  expect(procedures.entry.map(entry => entry.resource.code.coding[0]!.code).sort()).toEqual(['36.0700', '88.5500']);
+  const observations = z.object({ entry: z.array(z.object({ resource: z.object({ code: z.object({ coding: z.array(z.object({ code: z.string() })) }), valueQuantity: z.object({ value: z.number() }).optional() }) })) }).parse(await get(`/fhir/R5/Observation?encounter=${encounter}`));
+  expect(observations.entry.find(entry => entry.resource.code.coding[0]!.code === 'LAD-FFR')?.resource.valueQuantity?.value).toBe(0.86);
+  const { orderId } = await act('order.sign', { itemId: item('aspirin'), frequency: 'QD', duration: 'long', route: 'PO', dose: 100, surgeryExecutionId: stage.executionId });
+  expect((await orderSets()).find(set => set.id === 'post-pci-review')!.members[0]).toMatchObject({ code: 'aspirin', status: 'skipped' });
+  await expect(act('discharge.issue')).rejects.toThrow(/CLINICAL_QUALITY_ALERT.*DISCHARGE_STATIN_MISSING/);
+  await act('order.request-stop', { orderIds: [orderId] });
+  await ward.role('ward-nurse'); await act('order.verify-stop', { orderIds: [orderId] });
+  await ward.role('cardiologist');
+  const codes = ['DISCHARGE_ANTIPLATELET_MISSING', 'DISCHARGE_STATIN_MISSING'];
+  await expect(act('discharge.issue')).rejects.toThrow(codes.join(','));
+  const before = await read(), key = crypto.randomUUID();
+  const approve = () => ward.send('ward.discharge.issue', encounter, before.version, { clinicalOverride: { ruleCodes: codes, reasonCode: 'follow-up-arranged', note: 'Secondary prevention follow-up arranged and both medication decisions documented.' } }, key);
+  expect(await approve()).toEqual(await approve());
+  await ward.role('ward-nurse'); await act('discharge.depart');
+  await expect(act('discharge.clear')).rejects.toThrow('SETTLEMENT_REQUIRED');
+  await ward.role('payer-reviewer');
+  const account = () => ward.get(`/api/his/encounters/${encounter}/billing`);
+  const funds = async (name: string, fields = {}) => ward.send(name, encounter, z.int().parse((await account()).version), fields);
+  const balance = z.int().positive().parse((await account()).balanceMinor);
+  const deposit = await funds('inpatient.deposit.preview', { amountMinor: balance });
+  await funds('inpatient.deposit.confirm', { commitToken: deposit.commitToken });
+  const settlement = await funds('inpatient.settlement.preview');
+  await funds('inpatient.discharge.settle', { commitToken: settlement.commitToken });
+  await ward.role('ward-nurse'); await act('discharge.clear');
+  expect(await read()).toMatchObject({ status: 'cleared', bed: null, clinical: 'active', finance: { locked: true } });
+}
