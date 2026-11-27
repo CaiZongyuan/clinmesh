@@ -17,16 +17,16 @@ function Diagnoses(panel: StageProps) {
   const text = words(panel.language);
   const [chosen, setChosen] = useState('');
   const [poa, setPoa] = useState('Y');
-  const [staged, setStaged] = useState(panel.ward.diagnoses);
+  const [staged, setStaged] = useState(panel.ward.diagnosisDraft);
   const entries = panel.workspace.diagnoses.map(entry => ({ value: JSON.stringify([entry.codeSystem, entry.code]), label: `${entry.code} · ${entry.display[panel.language]}`, entry }));
   const selectedCode = selected(chosen, entries);
   const candidate = entries.find(item => item.value === selectedCode)?.entry;
   const signed = staged.map((entry, index) => ({ ...entry, primary: index === 0, ordinal: index + 1 }));
   return <Card><h3>{text('Admission diagnoses', '住院诊断')}</h3>{panel.ward.diagnoses.map(row => <p key={row.ordinal}>{row.ordinal}. {row.code} · POA {row.poa}</p>)}
-    {panel.allowed('ward.diagnose') && panel.ward.status === 'admitted' && <><Choice label={text('Diagnosis', '诊断条目')} options={entries} value={selectedCode} change={setChosen}/><Choice label={text('Present on admission', '入院病情 POA')} options={namedOptions(['Y', 'N', 'U', 'W', '1'])} value={poa} change={setPoa}/>
+    {panel.allowed('ward.diagnose') && panel.ward.clinical === 'active' && panel.ward.status !== 'registered' && <><Choice label={text('Diagnosis', '诊断条目')} options={entries} value={selectedCode} change={setChosen}/><Choice label={text('Present on admission', '入院病情 POA')} options={namedOptions(['Y', 'N', 'U', 'W', '1'])} value={poa} change={setPoa}/>
       <Button disabled={!candidate || staged.length >= 8 || staged.some(item => item.code === candidate.code && item.codeSystem === candidate.codeSystem)} onClick={() => { if (candidate) setStaged([...signed, { code: candidate.code, codeSystem: candidate.codeSystem, primary: !signed.length, ordinal: signed.length + 1, poa }]); }}>{text('Add diagnosis', '加入诊断')}</Button>
-      {signed.map(row => <Button key={row.ordinal} onClick={() => setStaged(signed.filter(item => item.ordinal !== row.ordinal))}>{text('Remove', '移除')} {row.ordinal}. {row.code} · {row.poa}</Button>)}
-      <WardAction panel={panel} name="diagnose" fields={{ diagnoses: signed }} disabled={!signed.length} label={text('Confirm ordered diagnoses and POA', '确认诊断排序与 POA')}/></>}
+      {signed.map(row => <div key={`${row.codeSystem}:${row.code}`}><Choice label={`POA · ${row.code}`} value={row.poa ?? ''} options={namedOptions(['Y', 'N', 'U', 'W', '1'])} change={value => setStaged(signed.map(item => item.ordinal === row.ordinal ? { ...item, poa: value } : item))}/><Button onClick={() => setStaged(signed.filter(item => item.ordinal !== row.ordinal))}>{text('Remove', '移除')} {row.ordinal}. {row.code}</Button></div>)}
+      <WardAction panel={panel} name="diagnose" fields={{ diagnoses: signed, expectedEncounterVersion: panel.ward.encounterVersion }} disabled={!signed.length || signed.some(row => !row.poa)} label={text('Confirm ordered diagnoses and POA', '确认诊断排序与 POA')}/></>}
   </Card>;
 }
 export function OrderComposer(panel: StageProps & { proposed?: { itemId: string; executionId: string }; onSigned?(): void }) {
@@ -55,7 +55,7 @@ export function Orders(panel: StageProps) {
   const availableTasks = panel.ward.tasks.filter(task => task.status === 'pending' && panel.ward.orders.some(order => order.id === task.orderId && order.kind === 'medication' && order.status === 'verified'));
   const taskIds = availableTasks.filter(task => chosenTasks.includes(task.id)).map(task => task.id);
   const name = (id: string) => panel.directory.items.find(item => item.id === id)?.display[panel.language] ?? id;
-  return <div className="clinical-panel"><Diagnoses {...panel}/>{panel.allowed('ward.order.sign') && panel.ward.status === 'admitted' && <OrderComposer {...panel}/>}
+  return <div className="clinical-panel"><Diagnoses key={JSON.stringify(panel.ward.diagnosisDraft)} {...panel}/>{panel.allowed('ward.order.sign') && panel.ward.status === 'admitted' && <OrderComposer {...panel}/>}
     <Card><h3>{text('Signed orders', '已签医嘱')}</h3>{panel.ward.orders.map(order => <div className="cm-actions" key={order.id}><strong>{name(order.itemId)}</strong><span>{order.frequency} · {order.duration} · {order.status}</span>
       {['admitted', 'discharge-pending'].includes(panel.ward.status) && <>{['signed', 'verified'].includes(order.status) && <WardAction panel={panel} name="order.request-stop" fields={{ orderIds: [order.id] }} label={`${text('Request stop', '申请停嘱')} · ${name(order.itemId)}`}/>}
         {order.frequency === 'PRN' && order.status === 'verified' && panel.allowed('ward.task.request-prn') && <><Entry label={`${text('PRN reason', '按需执行理由')} · ${name(order.itemId)}`} value={reason} change={setReason}/><WardAction panel={panel} name="task.request-prn" fields={{ orderId: order.id, reason }} disabled={!reason.trim()} label={`${text('Request PRN task', '发起按需执行')} · ${name(order.itemId)}`}/></>}</>}

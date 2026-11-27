@@ -136,7 +136,8 @@ function checkResults(results: ClinicalCase['caseTruth']['results'], services: R
     const leaves = indexBy(service.analytes, codingKey, 'service.analytes');
     for (const leaf of indexBy(result.observations, item => codingKey(item.analyte), 'observations').keys()) reference(leaves, leaf, 'observations.analyte');
     if ((result.revision > 1) !== Boolean(result.amendmentReason)) throw new DataPackError('INVALID_PACK', 'results.amendmentReason');
-    const key = JSON.stringify([service.codeSystem, service.code, result.stage, result.priorSurgeryId]);
+    const source = result.completedProcedure;
+    const key = JSON.stringify([service.codeSystem, service.code, result.stage, result.priorSurgeryId, source?.codeSystem, source?.code, source?.executionStage]);
     const chain = revisions.get(key) ?? [];
     chain.push(result.revision);
     revisions.set(key, chain);
@@ -235,7 +236,10 @@ export function validateReferences(pack: HospitalDataPack) {
     const surgeries = indexBy(patient.priorHistory.surgeries ?? [], item => item.id, 'priorHistory.surgeries');
     for (const result of truth.results) {
       if (result.priorSurgeryId) reference(surgeries, result.priorSurgeryId, 'results.priorSurgeryId');
-      if ((result.sections?.kind === 'pathology') !== Boolean(result.priorSurgeryId)) throw new DataPackError('INVALID_PACK', 'results.priorSurgeryId');
+      if (result.completedProcedure) {
+        reference(entries.procedures, codingKey(result.completedProcedure), 'results.completedProcedure');
+        if (result.priorSurgeryId || result.sections?.kind !== 'pathology') throw new DataPackError('INVALID_PACK', 'results.completedProcedure');
+      } else if ((result.sections?.kind === 'pathology') !== Boolean(result.priorSurgeryId)) throw new DataPackError('INVALID_PACK', 'results.priorSurgeryId');
     }
     requireCodes('diagnoses', [truth.primaryDiagnosis, ...truth.secondaryDiagnoses], 'caseTruth.diagnoses');
     requireCodes('medications', truth.expectedMedications ?? [], 'expectedMedications');

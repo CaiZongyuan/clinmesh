@@ -11,6 +11,7 @@ type Definition = {
   kind: StudyKind; label: { en: string; zh: string }; gateLabel: { en: string; zh: string };
   validateHistory(context: CommandContext, encounter: EntityRow<'encounters'>, priorSurgeryId?: string): void;
   completedSurgeries?(context: ReadContext): z.infer<typeof studyViewSchema>['completedSurgeries'];
+  completedProcedure?(reader: StoreReader, at: StoreScope, encounterId: string, executionId: string): { codeSystem: string; code: string; executionStage: string } | undefined;
 };
 const sign = { capabilities: ['sign'], visitorOnly: true };
 const review = { capabilities: ['review-reports'], visitorOnly: true };
@@ -31,7 +32,12 @@ export function createStudyModule(definition: Definition, billing?: DiagnosticBi
       const results = resultSource.safeParse(source?.truth);
       if (!results.success) return undefined;
       const service = serviceFor(reader, at, order);
-      const matches = results.data.results.filter(result => result.service.codeSystem === service.codeSystem && result.service.code === service.code && (result.priorSurgeryId ?? null) === request.prior_surgery_id);
+      const performed = request.prior_surgery_id && definition.completedProcedure?.(reader, at, order.encounter_id, request.prior_surgery_id);
+      const matches = results.data.results.filter(result => {
+        if (result.service.codeSystem !== service.codeSystem || result.service.code !== service.code) return false;
+        if (performed) return result.completedProcedure?.codeSystem === performed.codeSystem && result.completedProcedure.code === performed.code && result.completedProcedure.executionStage === performed.executionStage;
+        return !result.completedProcedure && (result.priorSurgeryId ?? null) === request.prior_surgery_id;
+      });
       const stage = request.stages.find(stage => matches.some(item => item.stage === stage));
       const result = matches.find(item => item.stage === stage && item.revision === revision);
       if (!result || (result.sections ? result.sections.kind !== kind : kind !== 'imaging')) return undefined;

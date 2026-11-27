@@ -13,6 +13,10 @@ function Request(panel: StageProps) {
   const text = words(panel.language);
   const [item, choose] = useState(''), [reason, setReason] = useState(''), [scheduled, setScheduled] = useState(panel.workspace.virtualTime), [urgency, setUrgency] = useState('elective');
   const [location, setLocation] = useState(''), [anesthesia, setAnesthesia] = useState(''), [surgeon, setSurgeon] = useState(''), [assistant, setAssistant] = useState('none'), [policy, setPolicy] = useState(''), [standby, setStandby] = useState(false);
+  const [plannedMaterials, setPlannedMaterials] = useState<{ itemId: string; quantity: number }[]>([]);
+  const [materialChoice, selectMaterial] = useState(''), [units, setUnits] = useState('1');
+  const materialOptions = selector(panel, 'materials'), materialId = selected(materialChoice, materialOptions), quantity = Number(units);
+  const canAdd = materialId && Number.isSafeInteger(quantity) && quantity >= 1 && quantity <= 1000 && !plannedMaterials.some(row => row.itemId === materialId) && plannedMaterials.length < 20;
   const options = selector(panel, 'procedures'), procedureId = selected(item, options);
   const catalog = panel.directory.items.find(item => item.id === procedureId);
   if (!catalog) return null;
@@ -21,12 +25,15 @@ function Request(panel: StageProps) {
   const team = org.practitioners.filter(person => org.practitionerRoles.some(role => role.id === person.roleId && role.capabilities.includes('sign'))).map(person => ({ value: person.id, label: person.name[panel.language] }));
   const lead = selected(surgeon, team);
   return <Card><h3>{text('New procedure request', '新手术申请')}</h3><div className="workbench-fields">
-    <Choice label={text('Procedure', '计划术式')} options={options} value={procedureId} change={value => { choose(value); setPolicy(''); setAnesthesia(''); setLocation(''); }}/><Choice label={text('Procedure type', '手术类型')} options={namedOptions(['elective', 'urgent', 'emergency', 'day'])} value={urgency} change={setUrgency}/>
+    <Choice label={text('Procedure', '计划术式')} options={options} value={procedureId} change={value => { choose(value); setPolicy(''); setAnesthesia(''); setLocation(''); setPlannedMaterials([]); }}/><Choice label={text('Procedure type', '手术类型')} options={namedOptions(['elective', 'urgent', 'emergency', 'day'])} value={urgency} change={setUrgency}/>
     <Entry label={text('Planned time (UTC)', '计划时间（UTC）')} value={scheduled} change={setScheduled}/><Choice label={text('Operating site', '手术地点')} value={location || definition.defaultLocation} options={[...org.departments, ...org.wards].map(site => ({ value: site.id, label: site.name[panel.language] }))} change={setLocation}/>
     <Choice label={text('Primary surgeon', '主刀医师')} value={lead} options={team} change={setSurgeon}/><Choice label={text('First assistant', '第一助手')} value={assistant} options={[{ value: 'none', label: text('None', '无') }, ...team.filter(person => person.value !== lead)]} change={setAssistant}/>
     <Entry label={text('Anesthesia', '麻醉方式')} value={anesthesia || definition.defaultAnesthesia} change={setAnesthesia}/><Choice label={text('Preoperative order policy', '术前医嘱停续策略')} options={namedOptions(['continue-active', 'stop-on-completion'])} value={policy || definition.defaultPreopOrderPolicy} change={setPolicy}/>
     <Entry label={text('Procedure indication', '手术指征')} value={reason} change={setReason}/><Checkbox label={text('Standby for same-session PCI', '备选同台 PCI')} checked={standby} onCheckedChange={checked => setStandby(checked === true)}/>
-    <WardAction panel={panel} name="surgery.request" label={text('Sign procedure request', '签发手术申请')} disabled={!reason.trim() || !lead} fields={{ procedureId, type: urgency, plannedAt: scheduled, location: location || definition.defaultLocation, surgeon: lead, ...(assistant !== 'none' && { assistant }), anesthesia: anesthesia || definition.defaultAnesthesia, reason, preopOrderPolicy: policy || definition.defaultPreopOrderPolicy, standbyAdHocPci: standby }}/>
+    {materialOptions.length > 0 && <><Choice label={text('Planned material', '计划耗材')} options={materialOptions} value={materialId} change={selectMaterial}/><Entry label={text('Planned units', '计划耗材数量')} value={units} change={setUnits}/>
+      <Button disabled={!canAdd} onClick={() => setPlannedMaterials(rows => [...rows, { itemId: materialId, quantity }])}>{text('Add planned material', '加入计划耗材')}</Button>
+      <ul>{plannedMaterials.map(row => <li key={row.itemId}>{materialOptions.find(option => option.value === row.itemId)?.label} × {row.quantity} <Button aria-label={`${text('Remove planned material', '移除计划耗材')} · ${materialOptions.find(option => option.value === row.itemId)?.label}`} onClick={() => setPlannedMaterials(rows => rows.filter(item => item.itemId !== row.itemId))}>{text('Remove', '移除')}</Button></li>)}</ul></>}
+    <WardAction panel={panel} name="surgery.request" label={text('Sign procedure request', '签发手术申请')} disabled={!reason.trim() || !lead} fields={{ procedureId, type: urgency, plannedAt: scheduled, location: location || definition.defaultLocation, surgeon: lead, ...(assistant !== 'none' && { assistant }), anesthesia: anesthesia || definition.defaultAnesthesia, reason, preopOrderPolicy: policy || definition.defaultPreopOrderPolicy, standbyAdHocPci: standby, materials: plannedMaterials }} done={() => setPlannedMaterials([])}/>
   </div></Card>;
 }
 function Procedure(panel: StageProps & { surgery: Surgery }) {

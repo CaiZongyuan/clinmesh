@@ -1,5 +1,6 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
+import { diagnosisState, reviewedDiagnosisDraft } from '../../clinical-core';
 import { requireEncounter } from '../../patient-visit';
 import { checkVersion, type CommandContext, type OperationCatalog } from '../../platform';
 import type { StoreReader, StoreScope } from '../../store';
@@ -19,6 +20,7 @@ export function chartView(reader: StoreReader, at: StoreScope, admission: Admiss
     revisions: revisions.map(row => ({ revision: row.revision, id: row.id, fields: frontPage.parse(row.front_page), submittedBy: row.submitted_by })), review: review?.coding ?? null, archive: archive?.archive ?? null };
 }
 function dischargeReady(ctx: CommandContext, admission: Admission, departing: boolean) {
+  if (!reviewedDiagnosisDraft(diagnosisState(ctx.tx, ctx.at, ctx.targetId))) conflict('ADMISSION_DIAGNOSIS_REVIEW_REQUIRED');
   const surgeries = surgeryView(ctx.tx, ctx.at, ctx.targetId);
   const blocking = blockers(ctx.tx, ctx.at, admission, true).some(issue => departing || issue !== 'ACTIVE_WARD_ORDER');
   if (!latestDiagnoses(ctx.tx, ctx.at, ctx.targetId).some(row => row.primary && row.poa) || blocking || pendingTransfer(ctx.tx, ctx.at, admission) || surgeries.some(surgery => surgery.report && !surgery.report.acknowledged)) conflict('DISCHARGE_BLOCKED');

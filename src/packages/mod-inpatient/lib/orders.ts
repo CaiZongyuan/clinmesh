@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { medicationSchema, pharmacyRulesSchema, readClinicalCase } from '../../data-pack';
 import { availableStock, checkPrescription, takeStock } from '../../mod-pharmacy';
 import { requireEncounter } from '../../patient-visit';
-import type { CommandContext, OperationCatalog } from '../../platform';
+import { checkVersion, type CommandContext, type OperationCatalog } from '../../platform';
 import type { EntityRow, StoreReader, StoreScope } from '../../store';
 import { expand, localDay, policy, task } from './calendar';
 import { advance, chargeOrder, conflict, id, mutateAdmission, openOrder, quality, receipt, route, text, times, wardDepartment, type WardBilling } from './ward';
@@ -45,8 +45,11 @@ export function validateMedication(ctx: CommandContext, item: EntityRow<'catalog
 }
 
 export function registerOrders(catalog: OperationCatalog, billing?: WardBilling) {
-  catalog.command(route('diagnose', 'admit'), { diagnoses: z.array(diagnosis).min(1).max(8) }, receipt, (ctx, { diagnoses }) => {
-    const admission = mutateAdmission(ctx, ['admitted'], 'doctor');
+  catalog.command(route('diagnose', 'admit'), { diagnoses: z.array(diagnosis).min(1).max(8), expectedEncounterVersion: z.int().positive().optional() }, receipt, (ctx, { diagnoses, expectedEncounterVersion }) => {
+    const admission = mutateAdmission(ctx, ['admitted', 'discharge-pending', 'departed', 'cleared'], 'doctor');
+    const encounter = requireEncounter(ctx.tx, ctx.at, ctx.targetId);
+    if (encounter.status !== 'active') conflict('ENCOUNTER_COMPLETED');
+    if (expectedEncounterVersion !== undefined) checkVersion(encounter.version, expectedEncounterVersion);
     const members = diagnoses.toSorted((first, second) => first.ordinal - second.ordinal);
     if (members.filter(item => item.primary).length !== 1 || members.some((item, index) => item.ordinal !== index + 1) || new Set(members.map(item => JSON.stringify([item.codeSystem, item.code]))).size !== members.length) conflict('INVALID_ADMISSION_DIAGNOSIS');
     for (const item of members) if (!ctx.tx.list(ctx.at, 'catalog_items', { kind: 'diagnoses', code_system: item.codeSystem, code: item.code }).length) conflict('DIAGNOSIS_NOT_IN_CATALOG');
@@ -54,6 +57,7 @@ export function registerOrders(catalog: OperationCatalog, billing?: WardBilling)
     for (const row of ctx.tx.list(ctx.at, 'diagnosis_drafts', { encounter_id: ctx.targetId })) ctx.tx.remove(ctx.at, 'diagnosis_drafts', row.id, row.version);
     for (const item of members) ctx.tx.insert(ctx.at, 'diagnosis_drafts', { id: v7(), encounter_id: ctx.targetId, code_system: item.codeSystem, code: item.code, is_primary: item.primary, poa_code: item.poa, ordinal: item.ordinal, version: 1 });
     ctx.tx.appendDiagnosisRevision(ctx.at, { id: v7(), encounter_id: ctx.targetId, confirmed_by: ctx.actor.role.id, revision: (previous?.revision ?? 0) + 1, previous_revision_id: previous?.id ?? null, ...times(ctx) }, members.map(item => ({ id: v7(), code_system: item.codeSystem, code: item.code, ordinal: item.ordinal, is_primary: item.primary, poa_code: item.poa })));
+    ctx.tx.update(ctx.at, 'encounters', encounter.id, encounter.version, { status: encounter.status });
     return advance(ctx, admission);
   });
   catalog.command(route('order.sign', 'admit'), { itemId: id, duration: z.enum(['long', 'temporary']), frequency: text, dose: z.number().positive().optional(), route: text.optional(), surgeryExecutionId: id.optional(), clinicalOverride: z.unknown().optional() }, receipt.extend({ orderId: id }), (ctx, input) => {

@@ -107,6 +107,14 @@ export function diagnosisState(reader: StoreReader, at: StoreScope, encounterId:
     diagnoses: reader.list(at, 'diagnosis_confirmations', { revision_id: row.id }).sort(byOrdinal).map(member) })) };
 }
 
+export function reviewedDiagnosisDraft({ diagnoses, diagnosisRevisions }: ReturnType<typeof diagnosisState>) {
+  const confirmed = diagnosisRevisions.at(-1)?.diagnoses ?? [];
+  return confirmed.length === diagnoses.length && confirmed.every((item, index) => {
+    const draft = diagnoses[index];
+    return draft && item.code === draft.code && item.codeSystem === draft.codeSystem && item.primary === draft.primary;
+  });
+}
+
 export function saveDiagnoses(context: CommandContext, diagnoses: Diagnosis[]) {
   const { tx, at, targetId } = context;
   const version = editEncounter(context);

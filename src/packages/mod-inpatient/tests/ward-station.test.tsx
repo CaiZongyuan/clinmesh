@@ -14,6 +14,39 @@ import { wardClient } from './ward-client';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+it('plans a material on a new PCI notice and completes the reviewed one-unit use without a deviation note', () => withNodeWorkspace(async origin => {
+  const transport = globalThis.fetch, human = userEvent.setup();
+  const ward = await wardClient((path, init) => transport(origin + path, init));
+  const encounter = await ward.admit('赵德明');
+  await ward.role('ward-nurse'); await ward.send('ward.bed.assign', encounter, 1, { bed: 'heart-01' });
+  await ward.role('cardiologist');
+  await ward.send('ward.diagnose', encounter, 2, { diagnoses: [{ codeSystem: 'urn:clinmesh:reference:nhsa-diagnosis', code: 'I25.103', primary: true, ordinal: 1, poa: 'Y' }] });
+  vi.stubGlobal('matchMedia', () => Object.assign(new EventTarget(), { matches: true }));
+  vi.stubGlobal('fetch', (path: string, init?: RequestInit) => transport(origin + path, { ...init, headers: { ...init?.headers, cookie: ward.cookie } }));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><ThemeFontProvider><App/></ThemeFontProvider></QueryClientProvider>);
+  const agent = createClinMeshUiAgent();
+  const pick = async (ref: string, option: string) => { await waitFor(async () => expect((await agent.act({ steps: [{ ref, action: 'setValue', args: [option] }] })).ok).toBe(true)); };
+  await screen.findByRole('combobox', { name: '工作台' }); await pick('工作台', '住院工作台');
+  await screen.findByRole('tab', { name: '手术' }); await pick('住院阶段', '手术');
+  await screen.findByRole('combobox', { name: '计划术式' }); await pick('计划术式', '药物洗脱冠状动脉支架置入');
+  await pick('计划耗材', '0.014 英寸导丝');
+  await human.click(screen.getByRole('button', { name: '加入计划耗材' }));
+  await human.type(screen.getByRole('textbox', { name: '手术指征' }), '已核实介入指征');
+  await human.click(screen.getByRole('button', { name: '签发手术申请' }));
+  const read = () => ward.get(`/api/his/ward/${encounter}`);
+  const schema = z.array(z.object({ id: z.string(), stages: z.array(z.object({ supplies: z.array(z.object({ itemId: z.string(), planned: z.int() })) })) }));
+  await waitFor(async () => expect(schema.parse((await read()).surgeries)[0]?.stages[0]?.supplies[0]?.planned).toBe(1));
+  const [request] = schema.parse((await read()).surgeries), requestId = request!.id, itemId = request!.stages[0]!.supplies[0]!.itemId;
+  await ward.send('ward.surgery.consent', encounter, 4, { requestId, diagnosisRevision: 1, signer: 'Patient', risks: 'Reviewed access and intervention risks' });
+  await ward.role('ward-nurse'); await ward.send('ward.surgery.check', encounter, 5, { requestId, checklist: 'Identity, procedure and access checked' });
+  await ward.role('cardiologist');
+  await expect(ward.send('ward.surgery.execute', encounter, 6, { requestId, materials: [{ itemId, quantity: 2 }] })).rejects.toThrow('SURGERY_NOTE_REQUIRED');
+  await ward.send('ward.surgery.execute', encounter, 6, { requestId, materials: [{ itemId, quantity: 1 }] });
+  expect((await read()).surgeries).toMatchObject([{ status: 'completed', stages: [{ supplies: [{ planned: 1, actual: 1 }] }] }]);
+  cleanup(); client.clear();
+}, false, { CLINMESH_PORT: '51964' }), 30_000);
+
 it('dispenses two selected tasks for one admission and lets the nurse check dose, route and each serum request', () => withNodeWorkspace(async origin => {
   const transport = globalThis.fetch;
   const ward = await wardClient((path, init) => transport(origin + path, init));

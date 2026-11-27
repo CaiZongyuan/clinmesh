@@ -125,11 +125,30 @@ it('retains the departed bed until one CAS clear succeeds when the billing modul
     await ward.send('ward.discharge.issue', encounter, 3);
     await ward.send('ward.discharge.recall', encounter, 4, { reason: 'Recheck before leaving ward' });
     await ward.send('ward.discharge.issue', encounter, 5);
-    await ward.role('ward-nurse'); await ward.send('ward.discharge.depart', encounter, 6);
+    const visit = encounterViewSchema.parse(await ward.get(`/api/his/encounters/${encounter}`));
+    const fields = Object.fromEntries(visit.template.filter(field => field.required).map(field => [field.id, 'Reviewed clinical course']));
+    await ward.send('record.draft', encounter, visit.version, { fields, expectedDraftVersion: 0 });
+    await ward.send('record.sign', encounter, visit.version + 1);
+    const secondary = { codeSystem: 'http://hl7.org/fhir/sid/icd-10', code: 'I10', primary: false };
+    await ward.send('diagnosis.draft', encounter, visit.version + 2, { diagnoses: [...visit.diagnoses, secondary] });
+    await ward.role('ward-nurse');
+    await expect(ward.send('ward.discharge.depart', encounter, 6)).rejects.toThrow('ADMISSION_DIAGNOSIS_REVIEW_REQUIRED');
+    await ward.role('cardiologist');
+    expect((await ward.get(`/api/his/ward/${encounter}`)).diagnosisDraft).toMatchObject([{ poa: 'Y' }, { code: 'I10', poa: null }]);
+    await ward.send('ward.diagnose', encounter, 6, { diagnoses: [{ ...visit.diagnoses[0], ordinal: 1, poa: 'Y' }, { ...secondary, ordinal: 2, poa: 'N' }] });
+    await ward.role('ward-nurse'); await ward.send('ward.discharge.depart', encounter, 7);
     expect(await ward.get(`/api/his/ward/${encounter}`)).toMatchObject({ bed: 'heart-01', finance: { canClearBed: true, locked: false } });
-    const attempts = await Promise.allSettled([ward.send('ward.discharge.clear', encounter, 7), ward.send('ward.discharge.clear', encounter, 7)]);
+    const attempts = await Promise.allSettled([ward.send('ward.discharge.clear', encounter, 8), ward.send('ward.discharge.clear', encounter, 8)]);
     expect(attempts.map(item => item.status).sort()).toEqual(['fulfilled', 'rejected']);
     expect(await ward.get(`/api/his/ward/${encounter}`)).toMatchObject({ status: 'cleared', bed: null });
+    await ward.role('cardiologist');
+    const ready = encounterViewSchema.parse(await ward.get(`/api/his/encounters/${encounter}`));
+    expect(ready.completion.ready).toBe(true);
+    await ward.send('encounter.complete', encounter, ready.version);
+    await ward.send('ward.chart.submit', encounter, 9, { summary: 'Reviewed both diagnoses', disposition: 'Home', followUp: 'Clinic' });
+    await ward.role('records-coder'); await ward.send('ward.chart.review', encounter, 10, { revision: 1, coding: 'POA confirmed' });
+    await ward.send('ward.chart.archive', encounter, 11, { revision: 1 });
+    expect(await ward.get(`/api/his/ward/${encounter}`)).toMatchObject({ chart: { state: 'archived', archive: { diagnoses: [{ poa: 'Y' }, { code: 'I10', poa: 'N' }] } } });
   } finally { await store.close(); }
 });
 

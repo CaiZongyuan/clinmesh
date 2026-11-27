@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { editEncounter, readVisit, requireEncounter } from '../../patient-visit';
 import { CoreError, type ModuleRegistry, type OperationCatalog } from '../../platform';
 import type { StoreReader, StoreScope } from '../../store';
-import { confirmDiagnoses, currentRecordFields, diagnosisState, patientPresentation, recordState, retiredRecordFields, sameRecord, saveDiagnoses, saveRecord, signRecord } from './records';
+import { confirmDiagnoses, currentRecordFields, diagnosisState, patientPresentation, recordState, retiredRecordFields, reviewedDiagnosisDraft, sameRecord, saveDiagnoses, saveRecord, signRecord } from './records';
 import { completionSchema, debriefSchema, diagnosisMembers, encounterViewSchema, noteFields, retiredReview } from './views';
 
 type Registry = ModuleRegistry<OperationCatalog>;
@@ -25,14 +25,10 @@ function clinicalState(reader: StoreReader, at: StoreScope, id: string) {
 function completion(reader: StoreReader, at: StoreScope, id: string, state: CoreState, registry: Registry, enabled: string[]) {
   const record = state.recordRevisions.at(-1);
   const confirmation = state.diagnosisRevisions.at(-1);
-  const diagnosesClean = confirmation ? confirmation.diagnoses.length === state.diagnoses.length && confirmation.diagnoses.every((item, index) => {
-    const draft = state.diagnoses[index];
-    return draft && item.code === draft.code && item.codeSystem === draft.codeSystem && item.primary === draft.primary;
-  }) : !state.diagnoses.length;
   const checks = [
     { id: 'signed-record', label: { en: 'Signed clinical record', zh: '病历已签署' }, passed: Boolean(record) },
     { id: 'primary-diagnosis', label: { en: 'Confirmed primary diagnosis', zh: '主诊断已确认' }, passed: Boolean(confirmation?.diagnoses.some(item => item.primary)) },
-    { id: 'drafts-reviewed', label: { en: 'All drafts reviewed', zh: '草稿已核对' }, passed: state.recordReviewed && diagnosesClean },
+    { id: 'drafts-reviewed', label: { en: 'All drafts reviewed', zh: '草稿已核对' }, passed: state.recordReviewed && reviewedDiagnosisDraft(state) },
     ...registry.enabled(enabled, reader, at).flatMap(module => module.completion?.(reader, at, id) ?? []),
   ];
   return { ready: checks.every(check => check.passed), checks };

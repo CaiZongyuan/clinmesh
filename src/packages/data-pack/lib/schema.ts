@@ -133,6 +133,7 @@ export const studySections = z.discriminatedUnion('kind', [
 const result = authoredFindings.extend({
   stage: z.enum(['initial', 'inpatient', 'repeat', 'follow-up']), revision: z.int().positive(),
   amendmentReason: bilingual.optional(), images: z.array(archivedAsset).optional(), sections: studySections.optional(), priorSurgeryId: text.optional(),
+  completedProcedure: coding.extend({ executionStage: z.enum(['planned', 'ad-hoc-pci']) }).optional(),
 });
 export const truth = z.strictObject({
   primaryDiagnosis: coding, secondaryDiagnoses: z.array(coding), hiddenHistory: z.array(bilingual), results: z.array(result),

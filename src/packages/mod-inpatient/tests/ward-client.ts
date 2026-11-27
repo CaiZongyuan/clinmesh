@@ -4,7 +4,7 @@ import { workspaceSchema } from '../../clinical-core';
 import { teachingGate } from '../../../../scripts/testing/node-workspace';
 
 type WardHttp = (path: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{ ok: boolean; status: number; headers: { get(name: string): string | null }; json(): Promise<unknown> }>;
-export async function wardClient(request: WardHttp) {
+export async function wardClient(request: WardHttp, packId = 'cn-cardiology') {
   const entered = await request('/api/auth/visitor/enter', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passcode: teachingGate.CLINMESH_VISITOR_PASSCODE }) });
   expect(entered.status).toBe(200);
   const headers = { cookie: entered.headers.get('set-cookie')!.split(';')[0]!, 'content-type': 'application/json' };
@@ -27,7 +27,7 @@ export async function wardClient(request: WardHttp) {
     current = await workspace();
   }
   await role('coordinator');
-  await send('workspace.reset', '', 0, { packId: 'cn-cardiology' });
+  await send('workspace.reset', '', 0, { packId });
   current = await workspace();
   async function admit(patientName: string) {
     await role('registration-desk');
